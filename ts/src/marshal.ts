@@ -1,24 +1,39 @@
 /**
- * The marshal layer (PRD-07): fact object ⇄ positional `FactValue[]` by
- * field ordinal, schema-directed, in ONE place only. The write side lowers
- * named host objects to rows in the relation's field-declaration order
+ * The marshal layer: fact object ⇄ positional `FactValue[]` by field
+ * ordinal, schema-directed, in ONE place only. The write side lowers named
+ * host objects to rows in the relation's field-declaration order
  * (declaration order = ordinal ids, the macro's law); the read side decodes
- * rows back to named objects with brands applied by assertion — the store
- * is the proof carrier: a row the engine admitted IS a legal fact of its
- * relation, so readback asserts the brand instead of re-judging the value
- * (the same trust direction as Rust's typed readback). Shape mismatches
- * here are genuine failures and THROW typed; they are never domain data.
+ * rows back to named objects of BARE structural values — the marshal
+ * boundary is pure both ways. CAST-FREE, LITERALLY: with structural values
+ * there is no brand to assert on the way out (the historical "one
+ * sanctioned marshal cast" died with the brand era), so product code
+ * carries zero casts — the only trusted seams are the completeness
+ * PREDICATES below, which verify the checkable half (every declared field
+ * present) and rely on the store as the proof carrier for the rest: a row
+ * the engine admitted IS a legal fact of its relation (the same trust
+ * direction as Rust's typed readback). Shape mismatches here are genuine
+ * failures and THROW typed; they are never domain data.
  */
 
 import * as errors from "@superbuilders/errors"
-import type { FieldData } from "#fields.ts"
+import type { AnyField } from "#fields.ts"
 import type { FactValue } from "#native.ts"
 import type { AnyRelation, Fact, FreshKeys, RelationData } from "#relation.ts"
 
 /**
+ * The fresh-mark probe: `true` exactly for a `.fresh`-marked u64 descriptor
+ * (the S1 kernel's one structural mark — an unmarked u64's `fresh` property
+ * holds the MARKED descriptor, so the probe compares against the literal
+ * `true`, never truthiness).
+ */
+function isFreshField(field: AnyField): boolean {
+	return "fresh" in field && field.fresh === true
+}
+
+/**
  * The inferred object type `tx.insert` returns: one property per
- * fresh-marked field of `R`, carrying the minted (or resupplied) branded
- * id. A relation with no fresh field returns the empty object.
+ * fresh-marked field of `R`, carrying the minted (or resupplied) id as a
+ * bare `bigint`. A relation with no fresh field returns the empty object.
  */
 type Minted<R extends AnyRelation> = { [K in FreshKeys<R>]: Fact<R>[K] }
 
@@ -30,7 +45,8 @@ type Minted<R extends AnyRelation> = { [K in FreshKeys<R>]: Fact<R>[K] }
  * relation's primary key is always its fresh field. When `R` carries a
  * fresh field the type demands exactly that field; otherwise the primary
  * key lives in the schema's statement list, which the type system cannot
- * see (statements are untyped values), so the type admits any partial fact
+ * see (the schema's statement list is not carried in the schema's type,
+ * only in the KeyStatement values themselves), so the type admits any partial fact
  * and the projection is verified at runtime — a missing key field throws
  * naming the projection.
  */
@@ -66,12 +82,13 @@ function recordOf(fact: object): Record<string, unknown> {
 
 /**
  * Marshals one host cell at its field position to the natural wire value,
- * schema-directed by the field's structural type (never guessed). Brands
- * are phantoms, so the runtime values are exactly the wire's natural JS
- * values; only widths and domains are left to the engine's own judge.
+ * schema-directed by the field descriptor's structural kind (never
+ * guessed). Values are bare, so the runtime values ARE the wire's natural
+ * JS values; widths and domain labels are the engine's own judgment at the
+ * write boundary.
  */
-function cellOf(context: string, field: FieldData, value: unknown): FactValue {
-	switch (field.type.kind) {
+function cellOf(context: string, field: AnyField, value: unknown): FactValue {
+	switch (field.kind) {
 		case "bool": {
 			if (typeof value !== "boolean") {
 				throw cellShapeError(context, "boolean", value)
@@ -85,7 +102,7 @@ function cellOf(context: string, field: FieldData, value: unknown): FactValue {
 			}
 			return value
 		}
-		case "string": {
+		case "str": {
 			if (typeof value !== "string") {
 				throw cellShapeError(context, "string", value)
 			}
@@ -101,7 +118,7 @@ function cellOf(context: string, field: FieldData, value: unknown): FactValue {
 			}
 			return value
 		}
-		case "fixedBytes": {
+		case "bytes": {
 			if (!(value instanceof Uint8Array)) {
 				throw cellShapeError(context, "Uint8Array", value)
 			}
@@ -162,11 +179,11 @@ function keyRowOf(
 
 /**
  * The read-side trusted seam: a decoded row carrying every declared field
- * IS a fact of its relation — the engine admitted it, so the brand is
- * asserted, not re-derived. The checkable half (completeness) is verified;
- * the phantom half (brands) is carried by the store's own judgment.
+ * IS a fact of its relation — the engine admitted the row, and the values
+ * are BARE structural values, so nothing is asserted beyond presence (no
+ * brand exists to re-derive; the store is the proof carrier).
  */
-function isBrandedFact<R extends AnyRelation>(
+function isCompleteFact<R extends AnyRelation>(
 	relation: R,
 	decoded: Readonly<Record<string, FactValue>>
 ): decoded is Readonly<Record<string, FactValue>> & Fact<R> {
@@ -178,21 +195,22 @@ function isBrandedFact<R extends AnyRelation>(
 /**
  * The insert-return trusted seam: the collected fresh cells of one insert
  * (minted by the engine or resupplied by the caller) are the relation's
- * branded fresh ids — same assertion direction as {@link isBrandedFact}.
+ * fresh ids as bare bigints — same presence-only direction as
+ * {@link isCompleteFact}.
  */
 function isMintedFresh<R extends AnyRelation>(
 	relation: R,
 	minted: Readonly<Record<string, FactValue>>
 ): minted is Readonly<Record<string, FactValue>> & Minted<R> {
 	return relation.data.fields.every(function presentWhenFresh(declared) {
-		return !declared.field.minted || minted[declared.name] !== undefined
+		return !isFreshField(declared.field) || minted[declared.name] !== undefined
 	})
 }
 
 /**
- * Unmarshals one positional row to the relation's named, branded, frozen
- * fact object — the inverse of {@link rowOf}, ordinal-directed by the same
- * declaration order.
+ * Unmarshals one positional row to the relation's named, frozen fact object
+ * of bare structural values — the inverse of {@link rowOf},
+ * ordinal-directed by the same declaration order.
  */
 function factOf<R extends AnyRelation>(relation: R, row: readonly FactValue[]): Fact<R> {
 	const data = relation.data
@@ -210,11 +228,11 @@ function factOf<R extends AnyRelation>(relation: R, row: readonly FactValue[]): 
 		decoded[declared.name] = cell
 	})
 	Object.freeze(decoded)
-	if (!isBrandedFact(relation, decoded)) {
+	if (!isCompleteFact(relation, decoded)) {
 		throw errors.new(`relation ${data.name}: decoded row is not a complete fact`)
 	}
 	return decoded
 }
 
 export type { KeyFact, Minted }
-export { cellOf, factOf, isMintedFresh, keyRowOf, recordOf, rowOf }
+export { cellOf, factOf, isFreshField, isMintedFresh, keyRowOf, recordOf, rowOf }

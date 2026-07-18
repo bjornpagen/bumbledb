@@ -3,7 +3,7 @@
  * zero-closable surface: create with the Ledger schema; the per-process
  * store cache (same path + identical theory = the SAME `Db` value, a
  * different theory = a typed fingerprint error, create on a cached path
- * refused); fresh-mint insert with the branded id returned and usable;
+ * refused); fresh-mint insert with the bare bigint id returned and usable;
  * delete + resupplied reinsert preserving identity (scan proves); scoped
  * snapshot reads through `read(fn)` with the scope invalidated after `fn`
  * returns; the `db.X` sugar obeying the symmetry rule; violations arriving
@@ -24,7 +24,7 @@ import * as os from "node:os"
 import * as path from "node:path"
 import { after, describe, test } from "node:test"
 
-import type { Brand, Db as DbValue, ReadScope, Tx } from "#index.ts"
+import type { Db as DbValue, ReadScope, Tx } from "#index.ts"
 import {
 	abandon,
 	atMost,
@@ -54,10 +54,10 @@ after(function cleanup() {
 	fs.rmSync(tmpRoot, { recursive: true, force: true })
 })
 
-const HolderId = u64.newtype("HolderId")
-const AccountId = u64.newtype("AccountId")
-const AuditId = u64.newtype("AuditId")
-const ActiveDuring = interval(i64).newtype("ActiveDuring")
+const HolderId = u64.as("HolderId")
+const AccountId = u64.as("AccountId")
+const AuditId = u64.as("AuditId")
+const ActiveDuring = interval(i64).as("ActiveDuring")
 
 const Kind = closed("Kind", ["Checking", "Savings"])
 const Holder = relation("Holder", { id: HolderId.fresh, name: str })
@@ -98,14 +98,14 @@ function must<T>(value: T | undefined): T {
 	return value
 }
 
-/** The branded ids the sequential tests hand forward. */
+/** The minted ids the sequential tests hand forward — bare bigints (structural values). */
 const ids: {
-	ada?: Brand<bigint, "HolderId">
-	adaAccount?: Brand<bigint, "AccountId">
-	grace?: Brand<bigint, "HolderId">
-	graceAccount?: Brand<bigint, "AccountId">
-	kurt?: Brand<bigint, "HolderId">
-	audit?: Brand<bigint, "AuditId">
+	ada?: bigint
+	adaAccount?: bigint
+	grace?: bigint
+	graceAccount?: bigint
+	kurt?: bigint
+	audit?: bigint
 } = {}
 
 describe("the Db runtime against a real store", function suite() {
@@ -117,7 +117,14 @@ describe("the Db runtime against a real store", function suite() {
 	})
 
 	test("create surfaces the engine's schemaError with the message intact", async function schemaError() {
-		const Broken = schema("Broken", { Holder, Account }, [contained(on(Account, "holder"), on(Holder, "name"))])
+		/**
+		 * The two-boundary split: domains pair structurally (rate and score are
+		 * both unlabeled i64, so this containment COMPILES), but whether the
+		 * target face resolves a declared key of its relation is a property of
+		 * the whole statement set no face type can see — Audit(score) keys
+		 * nothing, and the ENGINE's schema judgment refuses it at create.
+		 */
+		const Broken = schema("Broken", { SavingsTerms, Audit }, [contained(on(SavingsTerms, "rate"), on(Audit, "score"))])
 		await assert.rejects(async function badCreate() {
 			await Db.create(path.join(tmpRoot, "broken"), Broken)
 		}, /schemaError/)
@@ -159,7 +166,7 @@ describe("the Db runtime against a real store", function suite() {
 		})
 	})
 
-	test("fresh-mint insert returns branded usable ids; final-state point reads see the delta", function freshMint() {
+	test("fresh-mint insert returns bare usable ids; final-state point reads see the delta", function freshMint() {
 		const result = db.write(function seed(tx) {
 			const holder = tx.insert(Holder, { name: "ada" })
 			ids.ada = holder.id
@@ -456,3 +463,54 @@ describe("the Db runtime against a real store", function suite() {
 		assert.equal(ada.name, "ada lovelace")
 	})
 })
+
+/**
+ * The marshal boundary is typed on the way IN (each `@ts-expect-error`
+ * real): a fact cell at the wrong STRUCTURAL shape is a compile error —
+ * bare values at exact structural types, the wall the runtime shape
+ * refusals at the seam back up. The well-shaped insert compiles as the
+ * control.
+ */
+function marshalShapesAreTyped(tx: Tx<(typeof Ledger)["relations"]>): void {
+	tx.insert(Audit, {
+		flag: true,
+		note: "well-shaped",
+		tag: new Uint8Array([1, 2, 3, 4]),
+		score: -1n,
+		at: span(0n, 1n)
+	})
+	tx.insert(Audit, {
+		// @ts-expect-error — a bool field takes boolean, never a string
+		flag: "yes",
+		note: "ill-shaped bool",
+		tag: new Uint8Array([1, 2, 3, 4]),
+		score: -1n,
+		at: span(0n, 1n)
+	})
+	tx.insert(Audit, {
+		flag: true,
+		note: "ill-shaped i64",
+		tag: new Uint8Array([1, 2, 3, 4]),
+		// @ts-expect-error — an i64 field takes bigint, never number
+		score: -1,
+		at: span(0n, 1n)
+	})
+	tx.insert(Audit, {
+		flag: true,
+		note: "ill-shaped bytes",
+		// @ts-expect-error — a bytes<N> field takes Uint8Array, never a number array
+		tag: [1, 2, 3, 4],
+		score: -1n,
+		at: span(0n, 1n)
+	})
+	tx.insert(Audit, {
+		flag: true,
+		note: "ill-shaped interval",
+		tag: new Uint8Array([1, 2, 3, 4]),
+		score: -1n,
+		// @ts-expect-error — an interval field takes { start, end } bigints, never a bare point
+		at: 5n
+	})
+}
+
+export { marshalShapesAreTyped }

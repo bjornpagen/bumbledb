@@ -32,11 +32,10 @@
 
 import * as path from "node:path"
 import * as errors from "@superbuilders/errors"
-import { phantom } from "#brand.ts"
 import type { Exhumed } from "#exhume.ts"
 import { exhumeStore } from "#exhume.ts"
 import { lower } from "#lower.ts"
-import { factOf, isMintedFresh, type KeyFact, keyRowOf, type Minted, recordOf, rowOf } from "#marshal.ts"
+import { factOf, isFreshField, isMintedFresh, type KeyFact, keyRowOf, type Minted, recordOf, rowOf } from "#marshal.ts"
 
 import type {
 	DbHandle,
@@ -51,7 +50,8 @@ import type {
 	ViolationFact as WireViolationFact
 } from "#native.ts"
 import { native } from "#native.ts"
-import type { Query, SelectColumn } from "#query/lower.ts"
+import type { SelectColumn } from "#query/atom.ts"
+import type { Query } from "#query/lower.ts"
 import { lowerQuery } from "#query/lower.ts"
 import { decodeAnswers, wireParams } from "#query/run.ts"
 import type { ParamEntry, ParamsRecord } from "#query/scope.ts"
@@ -68,8 +68,8 @@ type MemberRelation<Rels extends SchemaRelations> = Extract<Rels[keyof Rels], An
 
 /**
  * The key object of a key-statement-selected `get`: exactly the selected
- * `key()` statement's projection fields, each carrying the relation's own
- * branded value type — the {@link KeyFact} rule generalized from the
+ * `key()` statement's projection fields, each at the relation's own BARE
+ * structural value type — the {@link KeyFact} rule generalized from the
  * primary key to ANY declared key statement.
  */
 type DeclaredKeyFact<R extends AnyRelation, Projection extends readonly string[]> = {
@@ -194,7 +194,7 @@ type WitnessedWriteResult<Rels extends SchemaRelations, R> =
 interface Tx<Rels extends SchemaRelations> {
 	/**
 	 * Records one insert. Omitted fresh fields are MINTED through the
-	 * engine's alloc lane and returned branded; supplying them instead
+	 * engine's alloc lane and returned as bare bigints; supplying them instead
 	 * preserves identity (the resupply idiom). Returns the relation's
 	 * fresh cells, minted or resupplied.
 	 */
@@ -236,7 +236,7 @@ interface ReadScope<Rels extends SchemaRelations> {
 	 * open and the generation read.
 	 */
 	readonly generation: bigint
-	/** Full-relation export in row-id order, decoded to branded facts. */
+	/** Full-relation export in row-id order, decoded to bare structural facts. */
 	scan<R extends MemberRelation<Rels>>(relation: R): Fact<R>[]
 	/**
 	 * Committed-state point lookup through the relation's primary key
@@ -258,11 +258,21 @@ interface ReadScope<Rels extends SchemaRelations> {
 	/**
 	 * Executes a prepared query against this scope's snapshot with the
 	 * typed params object; returns the answer SET as plain rows with
-	 * branded values (no order — the host sorts). This is the ONE
+	 * bare structural values (no order — the host sorts). This is the ONE
 	 * execution spelling ({@link Prepared} carries no `execute`).
 	 */
 	execute<Row, Params extends ParamsRecord>(prepared: Prepared<Rels, Row, Params>, params: Params): Row[]
 }
+
+/**
+ * The module-private inference slot of {@link Prepared}: an optional symbol
+ * property (never set at runtime) that keeps the prepared value's `Row` and
+ * `Params` type arguments load-bearing, so `execute` infers the typed rows
+ * and the typed params object from the value alone — the query module's
+ * `inferred` pattern, local to this module. A type-level carrier only:
+ * values stay bare, nothing is asserted.
+ */
+const preparedTypes: unique symbol = Symbol("bumbledb.prepared.types")
 
 /**
  * One prepared query as a plain VALUE: explicit visible compilation
@@ -281,7 +291,7 @@ interface Prepared<Rels extends SchemaRelations, Row, Params extends ParamsRecor
 	 * re-prepare.
 	 */
 	staleness(snap: ReadScope<Rels>): Staleness
-	readonly [phantom]?: { readonly row: Row; readonly params: Params }
+	readonly [preparedTypes]?: { readonly row: Row; readonly params: Params }
 }
 
 /**
@@ -424,7 +434,7 @@ function impliedKeyEntries(theory: AnySchema): StatementEntry[] {
 			continue
 		}
 		for (const declared of member.data.fields) {
-			if (declared.field.minted) {
+			if (isFreshField(declared.field)) {
 				entries.push({
 					kind: "functionality",
 					statement: undefined,
@@ -642,7 +652,7 @@ function mintFreshCells(
 ): Record<string, FactValue> {
 	const fresh: Record<string, FactValue> = {}
 	for (const declared of relation.data.fields) {
-		if (!declared.field.minted) {
+		if (!isFreshField(declared.field)) {
 			continue
 		}
 		let cell = values[declared.name]
@@ -1338,7 +1348,7 @@ function openDb<Rels extends SchemaRelations>(handle: DbHandle, theory: Schema<R
 			Object.freeze({
 				handle: preparedHandle,
 				owner,
-				params: q.data.registry.params,
+				params: q.data.params,
 				select: q.data.select
 			})
 		)

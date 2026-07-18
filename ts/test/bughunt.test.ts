@@ -16,7 +16,6 @@ import { after, describe, test } from "node:test"
 
 import * as errors from "@superbuilders/errors"
 
-import type { Brand } from "#index.ts"
 import {
 	bool,
 	bytes,
@@ -44,19 +43,19 @@ after(function cleanup() {
 	fs.rmSync(tmpRoot, { recursive: true, force: true })
 })
 
-const NumId = u64.newtype("NumId")
+const NumId = u64.as("NumId")
 const Num = relation("Num", { id: NumId.fresh, u: u64, s: i64 })
-const BlobId = u64.newtype("BlobId")
+const BlobId = u64.as("BlobId")
 const Blob = relation("Blob", { id: BlobId.fresh, tag: bytes(4) })
-const RayId = u64.newtype("RayId")
+const RayId = u64.as("RayId")
 const Ray = relation("Ray", { id: RayId.fresh, at: interval(u64), sat: interval(i64) })
-const SlotId = u64.newtype("SlotId")
+const SlotId = u64.as("SlotId")
 const Slot = relation("Slot", { id: SlotId.fresh, when: interval(u64, 2n) })
-const TxtId = u64.newtype("TxtId")
+const TxtId = u64.as("TxtId")
 const Txt = relation("Txt", { id: TxtId.fresh, note: str })
 
 const Kind = closed("Kind", ["Plain", "Special"])
-const ItemId = u64.newtype("ItemId")
+const ItemId = u64.as("ItemId")
 const Item = relation("Item", { id: ItemId.fresh, kind: Kind.id, flag: bool })
 const Terms = relation("Terms", { item: ItemId, rate: i64 })
 const termsKey = key(Terms, ["item"])
@@ -79,7 +78,7 @@ describe("marshal edges and lifecycle sanity against a real store", async functi
 	const db = await Db.create(path.join(tmpRoot, "store"), Theory)
 
 	test("i64::MIN / i64::MAX / u64::MAX round-trip exactly", function bigintEdges() {
-		let id: Brand<bigint, "NumId"> | undefined
+		let id: bigint | undefined
 		const written = db.write(function seed(tx) {
 			id = tx.insert(Num, { u: U64_MAX, s: I64_MIN }).id
 			tx.insert(Num, { u: 0n, s: I64_MAX })
@@ -131,7 +130,7 @@ describe("marshal edges and lifecycle sanity against a real store", async functi
 		}, /bytes<4>|4/)
 		const backing = new Uint8Array([9, 9, 7, 7, 7, 7, 9, 9])
 		const view = new Uint8Array(backing.buffer, 2, 4)
-		let id: Brand<bigint, "BlobId"> | undefined
+		let id: bigint | undefined
 		const written = db.write(function seed(tx) {
 			id = tx.insert(Blob, { tag: view }).id
 		})
@@ -140,7 +139,7 @@ describe("marshal edges and lifecycle sanity against a real store", async functi
 	})
 
 	test("interval rays (end = MAX_END) round-trip in both element domains", function rays() {
-		let id: Brand<bigint, "RayId"> | undefined
+		let id: bigint | undefined
 		const written = db.write(function seed(tx) {
 			id = tx.insert(Ray, { at: span(3n, U64_MAX), sat: span(I64_MIN, I64_MAX) }).id
 		})
@@ -155,8 +154,9 @@ describe("marshal edges and lifecycle sanity against a real store", async functi
 		assert.throws(function smuggle() {
 			db.write(function bad(tx) {
 				/**
-				 * Ray.at is an UNBRANDED interval field, so the plain object is
-				 * assignable — no cast, the emptiness never touches span().
+				 * Ray.at's value type is the bare structural interval, so the
+				 * plain object is assignable — no cast, the emptiness never
+				 * touches span().
 				 */
 				const fake: { start: bigint; end: bigint } = { start: 5n, end: 5n }
 				tx.insert(Ray, {
@@ -189,8 +189,8 @@ describe("marshal edges and lifecycle sanity against a real store", async functi
 	})
 
 	test("strings: empty, astral, and combining round-trip; contains agrees", function strings() {
-		let emptyId: Brand<bigint, "TxtId"> | undefined
-		let astralId: Brand<bigint, "TxtId"> | undefined
+		let emptyId: bigint | undefined
+		let astralId: bigint | undefined
 		const written = db.write(function seed(tx) {
 			emptyId = tx.insert(Txt, { note: "" }).id
 			astralId = tx.insert(Txt, { note: "𝔽😀́" }).id
@@ -219,7 +219,7 @@ describe("marshal edges and lifecycle sanity against a real store", async functi
 			/well-formed string/,
 			"the write path refuses the malformed string"
 		)
-		let id: Brand<bigint, "TxtId"> | undefined
+		let id: bigint | undefined
 		const seeded = db.write(function seed(tx) {
 			id = tx.insert(Txt, { note: "intact" }).id
 		})
@@ -278,7 +278,7 @@ describe("marshal edges and lifecycle sanity against a real store", async functi
 		 * `violation.canonical === renderStatement(statement)`. schema()
 		 * refuses the bare spelling loudly, naming the missing containment.
 		 */
-		const Item2Id = u64.newtype("Item2Id")
+		const Item2Id = u64.as("Item2Id")
 		const Item2 = relation("Item2", { id: Item2Id.fresh, kind: Kind.id })
 		const Terms2 = relation("Terms2", { item: Item2Id })
 		const bareMirror = mirrors(on(Item2.where({ kind: Kind.Special }), "id"), on(Terms2, "item"))
@@ -399,7 +399,7 @@ describe("marshal edges and lifecycle sanity against a real store", async functi
 })
 
 describe("native handle lifecycle probes", function nativeSuite() {
-	const NativeKindId = u64.newtype("NKindId")
+	const NativeKindId = u64.as("NKindId")
 	const NativeKind = relation("NKind", { id: NativeKindId.fresh, note: str })
 	const NativeTheory = schema("NativeHunt", { NKind: NativeKind }, [])
 

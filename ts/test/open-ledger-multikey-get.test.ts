@@ -36,8 +36,8 @@ after(function cleanup() {
  * lookup the driver actually performs (store-reads.ts programNeighbor,
  * dispatch.ts settleRealize/settleAuthor/settleReviewEdge).
  */
-const GrpId = u64.newtype("GrpId")
-const ProgramId = u64.newtype("ProgramId")
+const GrpId = u64.as("GrpId")
+const ProgramId = u64.as("ProgramId")
 const Grp = relation("Grp", { id: GrpId.fresh, label: str })
 const Program = relation("Program", { id: ProgramId.fresh, grp: GrpId, title: str })
 const programGrpKey = key(Program, ["grp"])
