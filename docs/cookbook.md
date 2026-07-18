@@ -998,8 +998,8 @@ one plan) — write the engine-native form instead:
 // ?root seeds the predicate, the bare rule is the output.
 let native = query!(Closure {
     reach(c) | Node(id: c), c == ?root;
-    reach(c) | Parent(child: c, parent: m), reach(0: m);
-    (c) | reach(0: c);
+    reach(c) | Parent(child: c, parent: m), reach(m);
+    (c) | reach(c);
 });
 let mut prepared = db.prepare(&native)?;
 ```
@@ -1031,8 +1031,8 @@ engine-native form is one program: aggregation *through* a cycle is refused
 ```text
 let native = query!(Accounts {
     sub(a) | Account(id: a), a == ?root;
-    sub(a) | AccountParent(child: a, parent: p), sub(0: p);
-    (total: Sum(minor)) | Posting(id, account: a, minor), sub(0: a);
+    sub(a) | AccountParent(child: a, parent: p), sub(p);
+    (total: Sum(minor)) | Posting(id, account: a, minor), sub(a);
 });
 ```
 

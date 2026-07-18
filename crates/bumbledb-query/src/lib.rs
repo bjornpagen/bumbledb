@@ -28,15 +28,25 @@
 //!          | Allen '(' term ',' mask ',' term ')'
 //!          | term cmp term               // ==  !=  <  <=  >  >=
 //! atom    := Relation '(' binding (',' binding)* ')'
-//!          | pred '(' binding (',' binding)* ')'
-//!                                        // a body atom may name a predicate where it
-//!                                        //   names a relation; its "fields" are head
-//!                                        //   POSITIONS (`0: v`) — positional, never
-//!                                        //   nominal, and never punned
+//!          | pred '(' var (',' var)* ')'
+//!                                        // ordered dense: a body atom may name a
+//!                                        //   predicate where it names a relation;
+//!                                        //   bare idents bind its head POSITIONS
+//!                                        //   left to right from 0 — positional,
+//!                                        //   never nominal
+//!          | pred '(' pbind (',' pbind)* ')'
+//!                                        // indexed: the sparse/selection forms;
+//!                                        //   never mixed with the bare form, and an
+//!                                        //   explicit dense in-order `i: v` list is
+//!                                        //   refused — the ordered form is the one
+//!                                        //   dense spelling
 //! binding := field                       // punning: binds a var named after the field
 //!          | field ':' var               // explicit variable — the join spelling
 //!          | field '==' value            // selection, schema-grammar-verbatim
 //!          | field 'in' ?param           // set membership: field value ∈ the bound set
+//! pbind   := position ':' var            // sparse explicit position
+//!          | position '==' value         // position selection
+//!          | position 'in' ?param        // position set membership
 //! mask    := MASK ('|' MASK)* | ?param   // masks are sets of basics; '|' is set union
 //! term    := var | ?param | literal
 //! pred    := lowercase ident             // macro-LOCAL: resolved at expansion, never
@@ -669,10 +679,10 @@ fn parse_sel_value(tokens: &mut Tokens) -> Parse<SelValue> {
 }
 
 /// One binding's field label: a field name, or — in a predicate atom —
-/// a bare head position (`0: v`; `FieldId(i)` is positional, never
-/// nominal). Which one is legal is the atom's source's business,
-/// decided at emission (the predicate table exists only after every
-/// rule has parsed — mutual recursion reads forward).
+/// a head position (`2: x`, the sparse/selection spelling; `FieldId(i)`
+/// is positional, never nominal). Which one is legal is the atom's
+/// source's business, decided at emission (the predicate table exists
+/// only after every rule has parsed — mutual recursion reads forward).
 fn expect_field_label(tokens: &mut Tokens) -> Parse<Name> {
     match tokens.peek() {
         Some(TokenTree::Literal(lit)) => {
@@ -1142,6 +1152,63 @@ impl Scope {
     }
 }
 
+/// A predicate atom's binding style: `Some(true)` when every binding is
+/// bare (the ordered dense spelling), `Some(false)` when every binding
+/// carries a numeric position label (the sparse/selection spellings),
+/// `None` for an empty binding list. Refuses a bare digit (a variable
+/// is an ident), a named label (predicate columns are positions), and
+/// the two styles mixed — the second style's first occurrence carries
+/// the mixing diagnostic.
+fn idb_style(atom: &Atom) -> Parse<Option<bool>> {
+    let mut style: Option<bool> = None;
+    for binding in &atom.bindings {
+        let (Binding::Pun(field)
+        | Binding::Var { field, .. }
+        | Binding::Value { field, .. }
+        | Binding::SetParam { field, .. }) = binding;
+        let bare = matches!(binding, Binding::Pun(_));
+        let numeric = field
+            .text
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_digit());
+        if bare && numeric {
+            return fail(
+                field.span,
+                "query!: a bare predicate binding is a variable (`reach(m, a)` — \
+                 ordered dense, positions left to right from 0); a position \
+                 label takes a form (`2: x`, `0 == …`, `0 in ?p`)",
+            );
+        }
+        if !bare && !numeric {
+            return fail(
+                field.span,
+                format!(
+                    "query!: `{}` — a predicate atom's bindings address head \
+                     positions, never names: ordered dense is bare \
+                     (`reach(m, a)`), sparse and selection are indexed \
+                     (`2: x`, `0 == …`)",
+                    field.text
+                ),
+            );
+        }
+        match style {
+            None => style = Some(bare),
+            Some(first) if first != bare => {
+                return fail(
+                    field.span,
+                    "query!: bare idents and indexed labels cannot mix in one \
+                     predicate atom — ordered dense bindings are all bare \
+                     (`reach(m, a)`); sparse and selection bindings are all \
+                     indexed (`2: x`, `0 == …`)",
+                );
+            }
+            Some(_) => {}
+        }
+    }
+    Ok(style)
+}
+
 struct Emitter<'a> {
     theory: &'a str,
     params: Params,
@@ -1235,17 +1302,52 @@ impl Emitter<'_> {
 
     /// A predicate atom as an `Atom` expression: an `Idb` source whose
     /// bindings address head positions (`FieldId(i)` is the target's
-    /// column `i` — positional, never nominal, never punned).
+    /// column `i` — positional, never nominal). Two spellings, one
+    /// meaning each: bare idents are ORDERED DENSE variable bindings,
+    /// positions assigned left to right from 0 (`reach(m, a)` lowers to
+    /// `[(0, m), (1, a)]`), and indexed labels are the sparse and
+    /// selection forms (`2: x`, `0 == …`, `0 in ?p`). The two never mix,
+    /// and an explicitly indexed dense in-order variable list is refused
+    /// — canonical utterance, one spelling per meaning.
     fn idb_atom(&mut self, scope: &mut Scope, atom: &Atom, pred: u16) -> Parse<String> {
+        if idb_style(atom)? == Some(true) {
+            // Ordered dense: positions assigned left to right from 0.
+            let mut bindings = String::new();
+            for (position, binding) in atom.bindings.iter().enumerate() {
+                let Binding::Pun(name) = binding else {
+                    unreachable!("the style split sealed an all-bare atom");
+                };
+                let term = Self::var(scope.intern(name)?);
+                let _ = write!(bindings, "(::bumbledb::FieldId({position}), {term}),");
+            }
+            return Ok(format!(
+                "::bumbledb::Atom {{ source: ::bumbledb::AtomSource::Idb(::bumbledb::PredId({pred})), bindings: ::std::vec![{bindings}] }}"
+            ));
+        }
+        // Indexed labels. An explicit dense in-order variable list is the
+        // ordered form's meaning respelled — refused, one spelling per
+        // meaning.
+        let dense_explicit = !atom.bindings.is_empty()
+            && atom.bindings.iter().enumerate().all(|(index, binding)| {
+                matches!(binding, Binding::Var { field, .. }
+                    if field.text.parse::<usize>() == Ok(index))
+            });
+        if dense_explicit {
+            let Binding::Var { field, .. } = &atom.bindings[0] else {
+                unreachable!("dense_explicit is all explicit variables");
+            };
+            return fail(
+                field.span,
+                "query!: dense in-order predicate bindings are written bare — \
+                 `reach(m, a)`, positions left to right from 0; `i: v` is the \
+                 sparse spelling (`2: x`)",
+            );
+        }
         let mut bindings = String::new();
         for binding in &atom.bindings {
             let (field, term) = match binding {
-                Binding::Pun(field) => {
-                    return fail(
-                        field.span,
-                        "query!: a predicate position binds explicitly (`0: v`) — \
-                         punning names a field, and predicate columns are positions",
-                    );
+                Binding::Pun(_) => {
+                    unreachable!("the style split sealed an all-indexed atom")
                 }
                 Binding::Var { field, var } => (field, Self::var(scope.intern(var)?)),
                 Binding::Value {
@@ -1272,16 +1374,10 @@ impl Emitter<'_> {
                     )
                 }
             };
-            let Ok(position) = field.text.parse::<u16>() else {
-                return fail(
-                    field.span,
-                    format!(
-                        "query!: `{}` — a predicate atom's bindings address head \
-                         positions (`0: v`), never names",
-                        field.text
-                    ),
-                );
-            };
+            let position = field
+                .text
+                .parse::<u16>()
+                .expect("the style split sealed numeric labels");
             let _ = write!(bindings, "(::bumbledb::FieldId({position}), {term}),");
         }
         Ok(format!(
@@ -1614,12 +1710,12 @@ fn expand(input: TokenStream) -> Parse<String> {
 ///     (person, during) | Ooo(person, during),  Allen(during, INTERSECTS, ?window);
 /// });
 /// // The program form: named heads declare predicates, a body atom may
-/// // name one (bindings address head POSITIONS), bare rules are the
-/// // output.
+/// // name one (bare idents bind head POSITIONS, ordered dense — left to
+/// // right from 0), bare rules are the output.
 /// let reachable = bumbledb_query::query!(Ledger {
 ///     reach(c, a) | OrgParent(child: c, parent: a);
-///     reach(c, a) | OrgParent(child: c, parent: m), reach(0: m, 1: a);
-///     (c, a) | reach(0: c, 1: a);
+///     reach(c, a) | OrgParent(child: c, parent: m), reach(m, a);
+///     (c, a) | reach(c, a);
 /// });
 /// ```
 ///

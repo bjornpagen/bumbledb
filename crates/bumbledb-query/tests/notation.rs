@@ -554,21 +554,23 @@ fn scalar_comparisons_round_trip() {
 }
 
 /// The named-head program (the notation's recursion form): named heads
-/// declare predicates, a body atom names one (bindings address head
-/// POSITIONS — `0: v`, positional never nominal), and bare rules ARE
-/// the output. The org-hierarchy closure over `OrgParent`, rendered:
-/// interior rules carry the synthesized `p0` name, output rules render
-/// bare — and that normalized text reparses to the same bytes.
+/// declare predicates, a body atom names one (bare idents bind head
+/// POSITIONS, ordered dense — left to right from 0, positional never
+/// nominal), and bare rules ARE the output. The org-hierarchy closure
+/// over `OrgParent`, rendered: interior rules carry the synthesized
+/// `p0` name, output rules render bare, dense predicate atoms render
+/// as bare idents — and that normalized text reparses to the same
+/// bytes.
 const ORG_REACH_NORMALIZED: &str = "p0(v0, v1) | OrgParent(child: v0, parent: v1);\n\
-     p0(v0, v2) | OrgParent(child: v0, parent: v1), p0(0: v1, 1: v2);\n\
-     (v0, v1) | p0(0: v0, 1: v1);";
+     p0(v0, v2) | OrgParent(child: v0, parent: v1), p0(v1, v2);\n\
+     (v0, v1) | p0(v0, v1);";
 
 #[test]
 fn named_head_program_golden() {
     let reachable = query!(Ledger {
         reach(c, a) | OrgParent(child: c, parent: a);
-        reach(c, a) | OrgParent(child: c, parent: m), reach(0: m, 1: a);
-        (c, a) | reach(0: c, 1: a);
+        reach(c, a) | OrgParent(child: c, parent: m), reach(m, a);
+        (c, a) | reach(c, a);
     });
     assert_eq!(
         pin_program("org-reach", Ledger, &reachable),
@@ -580,8 +582,8 @@ fn named_head_program_golden() {
 fn named_head_normalized_text_is_a_fixed_point() {
     let reparsed = query!(Ledger {
         p0(v0, v1) | OrgParent(child: v0, parent: v1);
-        p0(v0, v2) | OrgParent(child: v0, parent: v1), p0(0: v1, 1: v2);
-        (v0, v1) | p0(0: v0, 1: v1);
+        p0(v0, v2) | OrgParent(child: v0, parent: v1), p0(v1, v2);
+        (v0, v1) | p0(v0, v1);
     });
     assert_eq!(
         pin_program("org-reach-fixed-point", Ledger, &reparsed),
@@ -592,15 +594,17 @@ fn named_head_normalized_text_is_a_fixed_point() {
 /// The program lowering pinned as data: predicate names are macro-local
 /// and never enter the IR — the emitted value carries bare `PredId`s,
 /// `Idb` sources, and head-position `FieldId`s, exactly what a host
-/// writes by hand.
+/// writes by hand. The ordered dense spelling IS that lowering:
+/// `reach(m, a)` is bindings `[(0, m), (1, a)]`, positions left to
+/// right from 0.
 #[test]
 fn named_head_program_lowers_to_the_exact_ir() {
     use bumbledb::ir::HeadTerm;
     use bumbledb::{Atom, AtomSource, FieldId, FindTerm, PredId, Rule, Term, VarId};
     let lowered = query!(Ledger {
         reach(c, a) | OrgParent(child: c, parent: a);
-        reach(c, a) | OrgParent(child: c, parent: m), reach(0: m, 1: a);
-        (c, a) | reach(0: c, 1: a);
+        reach(c, a) | OrgParent(child: c, parent: m), reach(m, a);
+        (c, a) | reach(c, a);
     });
     let parent_atom = |child: u16, parent: u16| Atom {
         source: AtomSource::Edb(Ledger::ORG_PARENT),
@@ -639,6 +643,56 @@ fn named_head_program_lowers_to_the_exact_ir() {
         output: PredId(1),
     };
     assert_eq!(lowered, expected);
+}
+
+/// The indexed spellings survive for what the ordered form cannot say —
+/// sparse positions (`2: x`), position selections (`1 == …`), and
+/// position set membership (`0 in ?p`) — and render as `i:`/selection
+/// forms while dense predicate atoms render bare. Both normalized texts
+/// reparse to their own bytes: the fixed-point law holds on both sides
+/// of the split.
+#[test]
+fn sparse_and_selection_positions_round_trip() {
+    let sparse = query!(Ledger {
+        posted(id, account, amount) | Posting(id, account, amount);
+        (x) | posted(2: x, 0 in ?wanted);
+    });
+    let sparse_normalized = "p0(v0, v1, v2) | Posting(id: v0, account: v1, amount: v2);\n\
+         (v0) | p0(2: v0, 0 in ?0);";
+    assert_eq!(
+        pin_program("sparse-positions", Ledger, &sparse),
+        sparse_normalized
+    );
+    let sparse_reparsed = query!(Ledger {
+        p0(v0, v1, v2) | Posting(id: v0, account: v1, amount: v2);
+        (v0) | p0(2: v0, 0 in ?0);
+    });
+    assert_eq!(
+        pin_program("sparse-positions-fixed-point", Ledger, &sparse_reparsed),
+        sparse_normalized
+    );
+
+    // A position selection carries no field name, so its handle is
+    // written qualified; the renderer prints the row id by value (the
+    // handle's home is the field-carrying selection form).
+    let selected = query!(Ledger {
+        acct(id, currency) | Account(id, currency);
+        (a) | acct(0: a, 1 == Currency::Usd);
+    });
+    let selected_normalized = "p0(v0, v1) | Account(id: v0, currency: v1);\n\
+         (v0) | p0(0: v0, 1 == 0);";
+    assert_eq!(
+        pin_program("selected-positions", Ledger, &selected),
+        selected_normalized
+    );
+    let selected_reparsed = query!(Ledger {
+        p0(v0, v1) | Account(id: v0, currency: v1);
+        (v0) | p0(0: v0, 1 == 0);
+    });
+    assert_eq!(
+        pin_program("selected-positions-fixed-point", Ledger, &selected_reparsed),
+        selected_normalized
+    );
 }
 
 /// A non-composite mask unions basics with `|` (set union over the 13),
