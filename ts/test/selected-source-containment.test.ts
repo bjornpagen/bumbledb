@@ -28,18 +28,16 @@ after(function cleanup() {
 	fs.rmSync(tmpRoot, { recursive: true, force: true })
 })
 
-const GrpId = u64.as("GrpId")
-const TaskId = u64.as("TaskId")
-
 const TaskKind = closed("TaskKind", ["Author", "Enrich"])
-const Grp = relation("Grp", { id: GrpId.fresh, label: str })
+const Grp = relation("Grp", { id: u64.fresh, label: str })
 /**
- * `subject` carries the GrpId domain LABEL (the structural link the
- * containment's positionwise domain check reads); the VALUE stays a bare
- * bigint, so a non-Author task's subject is still free to be any number —
- * the kind-scoped law below is the engine's judgment, never the label's.
+ * `subject` is a bare u64 — the LAW types the column: the ψ-selected
+ * containment below pairs Task.subject with Grp.id, so schema() computes
+ * subject into Grp.id's class. The VALUE stays a bare bigint, so a
+ * non-Author task's subject is still free to be any number — the
+ * kind-scoped law below is the engine's judgment, never a label's.
  */
-const Task = relation("Task", { id: TaskId.fresh, kind: TaskKind.id, subject: GrpId })
+const Task = relation("Task", { id: u64.fresh, kind: TaskKind.id, subject: u64 })
 
 /** The exact statement C-07 claims cannot be written. */
 const authorSubjectIsGrp = contained(on(Task.where({ kind: TaskKind.Author }), "subject"), on(Grp, "id"))

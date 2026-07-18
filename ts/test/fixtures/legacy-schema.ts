@@ -26,10 +26,8 @@
 
 import { contained, on, relation, schema, str, u64 } from "#index.ts"
 
-const DocId = u64.as("DocId")
-
-const Doc = relation("Doc", { id: DocId.fresh, title: str })
-const Tagged = relation("Tagged", { doc: DocId, tag: str })
+const Doc = relation("Doc", { id: u64.fresh, title: str })
+const Tagged = relation("Tagged", { doc: u64, tag: str })
 
 const legacySchema = schema("Legacy", { Doc, Tagged }, [contained(on(Tagged, "doc"), on(Doc, "id"))])
 

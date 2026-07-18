@@ -43,21 +43,15 @@ after(function cleanup() {
 	fs.rmSync(tmpRoot, { recursive: true, force: true })
 })
 
-const NumId = u64.as("NumId")
-const Num = relation("Num", { id: NumId.fresh, u: u64, s: i64 })
-const BlobId = u64.as("BlobId")
-const Blob = relation("Blob", { id: BlobId.fresh, tag: bytes(4) })
-const RayId = u64.as("RayId")
-const Ray = relation("Ray", { id: RayId.fresh, at: interval(u64), sat: interval(i64) })
-const SlotId = u64.as("SlotId")
-const Slot = relation("Slot", { id: SlotId.fresh, when: interval(u64, 2n) })
-const TxtId = u64.as("TxtId")
-const Txt = relation("Txt", { id: TxtId.fresh, note: str })
+const Num = relation("Num", { id: u64.fresh, u: u64, s: i64 })
+const Blob = relation("Blob", { id: u64.fresh, tag: bytes(4) })
+const Ray = relation("Ray", { id: u64.fresh, at: interval(u64), sat: interval(i64) })
+const Slot = relation("Slot", { id: u64.fresh, when: interval(u64, 2n) })
+const Txt = relation("Txt", { id: u64.fresh, note: str })
 
 const Kind = closed("Kind", ["Plain", "Special"])
-const ItemId = u64.as("ItemId")
-const Item = relation("Item", { id: ItemId.fresh, kind: Kind.id, flag: bool })
-const Terms = relation("Terms", { item: ItemId, rate: i64 })
+const Item = relation("Item", { id: u64.fresh, kind: Kind.id, flag: bool })
+const Terms = relation("Terms", { item: u64, rate: i64 })
 const termsKey = key(Terms, ["item"])
 const kindRef = contained(on(Item, "kind"), on(Kind, "id"))
 const specialMirror = mirrors(on(Item.where({ kind: Kind.Special }), "id"), on(Terms, "item"))
@@ -278,9 +272,8 @@ describe("marshal edges and lifecycle sanity against a real store", async functi
 		 * `violation.canonical === renderStatement(statement)`. schema()
 		 * refuses the bare spelling loudly, naming the missing containment.
 		 */
-		const Item2Id = u64.as("Item2Id")
-		const Item2 = relation("Item2", { id: Item2Id.fresh, kind: Kind.id })
-		const Terms2 = relation("Terms2", { item: Item2Id })
+		const Item2 = relation("Item2", { id: u64.fresh, kind: Kind.id })
+		const Terms2 = relation("Terms2", { item: u64 })
 		const bareMirror = mirrors(on(Item2.where({ kind: Kind.Special }), "id"), on(Terms2, "item"))
 		assert.throws(function admitBare() {
 			schema("Bare", { Kind, Item2, Terms2 }, [key(Terms2, ["item"]), bareMirror])
@@ -399,8 +392,7 @@ describe("marshal edges and lifecycle sanity against a real store", async functi
 })
 
 describe("native handle lifecycle probes", function nativeSuite() {
-	const NativeKindId = u64.as("NKindId")
-	const NativeKind = relation("NKind", { id: NativeKindId.fresh, note: str })
+	const NativeKind = relation("NKind", { id: u64.fresh, note: str })
 	const NativeTheory = schema("NativeHunt", { NKind: NativeKind }, [])
 
 	test("double abort, commit-after-abort, and a second begin are typed refusals", function lifecycle() {
