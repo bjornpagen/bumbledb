@@ -59,11 +59,9 @@ after(function cleanup() {
 	fs.rmSync(tmpRoot, { recursive: true, force: true })
 })
 
-const SpecimenId = u64.as("SpecimenId")
-
-const Grade = closed("Grade", { points: u64 })({ Pass: { points: 10n }, Fail: { points: 0n } })
+const Grade = closed("Grade", { points: u64 }, { Pass: { points: 10n }, Fail: { points: 0n } })
 const Specimen = relation("Specimen", {
-	id: SpecimenId.fresh,
+	id: u64.fresh,
 	label: str,
 	grade: Grade.id,
 	flag: bool,
@@ -72,7 +70,7 @@ const Specimen = relation("Specimen", {
 	window: interval(u64)
 })
 const Reading = relation("Reading", {
-	specimen: SpecimenId,
+	specimen: u64,
 	note: str,
 	at: interval(i64)
 })

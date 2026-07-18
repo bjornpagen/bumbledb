@@ -27,8 +27,7 @@ after(function cleanup() {
 	fs.rmSync(tmpRoot, { recursive: true, force: true })
 })
 
-const NoteId = u64.as("NoteId")
-const Note = relation("Note", { id: NoteId.fresh, body: str })
+const Note = relation("Note", { id: u64.fresh, body: str })
 const Theory = schema("ReadLeak", { Note }, [])
 
 /**

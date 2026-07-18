@@ -26,9 +26,8 @@ after(function cleanup() {
 	fs.rmSync(tmpRoot, { recursive: true, force: true })
 })
 
-const AttemptId = u64.as("F5AttemptId")
-const Attempt = relation("F5Attempt", { id: AttemptId.fresh, n: u64 })
-const AttemptText = relation("F5AttemptText", { attempt: AttemptId, prompt: str, output: str })
+const Attempt = relation("F5Attempt", { id: u64.fresh, n: u64 })
+const AttemptText = relation("F5AttemptText", { attempt: u64, prompt: str, output: str })
 const attemptTextKey = key(AttemptText, ["attempt"])
 const theory = schema("F5RevisionDance", { F5Attempt: Attempt, F5AttemptText: AttemptText }, [attemptTextKey])
 

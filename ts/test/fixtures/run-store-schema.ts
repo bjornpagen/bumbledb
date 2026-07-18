@@ -1,7 +1,8 @@
 /**
  * Test fixture: an ORDER-EXACT replica of the graph-builder run-store
  * theory (`primer/src/tools/graph-builder/store/schema.ts`, PRD-09) — the
- * 17-newtype, 22-relation, 8-closed-relation schema the driver rides.
+ * 22-relation, 8-closed-relation schema the driver rides, fields pure
+ * structure and every id column law-typed by its containments.
  * Declaration order is copied verbatim because order IS fingerprint
  * identity (materialized order pins statement ids): if this fixture admits,
  * fingerprints deterministically across processes, and reopens, the real
@@ -119,41 +120,23 @@ const diagKindHandles = [
 
 const DiagKind = closed("DiagKind", diagKindHandles)
 
-const CourseMetaId = u64.as("CourseMetaId")
-const SheetId = u64.as("SheetId")
-const UnitId = u64.as("UnitId")
-const ObjectiveId = u64.as("ObjectiveId")
-const GrpId = u64.as("GrpId")
-const StrandEdgeId = u64.as("StrandEdgeId")
-const ProgramId = u64.as("ProgramId")
-const CapsuleId = u64.as("CapsuleId")
-const MemberId = u64.as("MemberId")
-const ReviewId = u64.as("ReviewId")
-const ProgramEdgeId = u64.as("ProgramEdgeId")
-const EdgeId = u64.as("EdgeId")
-const TaskId = u64.as("TaskId")
-const AttemptId = u64.as("AttemptId")
-const DiagnosticId = u64.as("DiagnosticId")
-const SteerId = u64.as("SteerId")
-const ReceiptId = u64.as("ReceiptId")
-
 const courseMeta = relation("courseMeta", {
-	id: CourseMetaId.fresh,
+	id: u64.fresh,
 	courseId: bytes(16),
 	label: str,
 	description: str
 })
 
 const sheet = relation("sheet", {
-	id: SheetId.fresh,
+	id: u64.fresh,
 	name: str,
 	grade: str,
 	contentHash: bytes(32)
 })
 
 const unit = relation("unit", {
-	id: UnitId.fresh,
-	sheet: SheetId,
+	id: u64.fresh,
+	sheet: u64,
 	sourceUnitId: str,
 	title: str,
 	description: str,
@@ -161,44 +144,44 @@ const unit = relation("unit", {
 })
 
 const objective = relation("objective", {
-	id: ObjectiveId.fresh,
-	sheet: SheetId,
-	unit: UnitId,
+	id: u64.fresh,
+	sheet: u64,
+	unit: u64,
 	ref: str,
 	goal: str
 })
 
 const grp = relation("grp", {
-	id: GrpId.fresh,
-	sheet: SheetId,
+	id: u64.fresh,
+	sheet: u64,
 	label: str,
 	context: str
 })
 
 const grpMember = relation("grpMember", {
-	grp: GrpId,
-	objective: ObjectiveId
+	grp: u64,
+	objective: u64
 })
 
 const strandEdge = relation("strandEdge", {
-	id: StrandEdgeId.fresh,
-	fromGrp: GrpId,
-	toGrp: GrpId
+	id: u64.fresh,
+	fromGrp: u64,
+	toGrp: u64
 })
 
 const spine = relation("spine", {
-	grp: GrpId
+	grp: u64
 })
 
 const program = relation("program", {
-	id: ProgramId.fresh,
-	grp: GrpId,
+	id: u64.fresh,
+	grp: u64,
 	kind: ProgramKind.id
 })
 
 const capsule = relation("capsule", {
-	id: CapsuleId.fresh,
-	program: ProgramId,
+	id: u64.fresh,
+	program: u64,
 	ref: str,
 	toi: ToiType.id,
 	taughtClaim: str,
@@ -208,81 +191,81 @@ const capsule = relation("capsule", {
 })
 
 const member = relation("member", {
-	id: MemberId.fresh,
-	program: ProgramId,
-	capsule: CapsuleId,
+	id: u64.fresh,
+	program: u64,
+	capsule: u64,
 	pos: u64,
 	kind: MemberKind.id,
 	toi: ToiType.id
 })
 
 const review = relation("review", {
-	id: ReviewId.fresh,
-	member: MemberId,
-	target: MemberId
+	id: u64.fresh,
+	member: u64,
+	target: u64
 })
 
 const programEdge = relation("programEdge", {
-	id: ProgramEdgeId.fresh,
-	fromProgram: ProgramId,
-	toProgram: ProgramId
+	id: u64.fresh,
+	fromProgram: u64,
+	toProgram: u64
 })
 
 const edge = relation("edge", {
-	id: EdgeId.fresh,
-	fromCapsule: CapsuleId,
-	toCapsule: CapsuleId
+	id: u64.fresh,
+	fromCapsule: u64,
+	toCapsule: u64
 })
 
 const schedule = relation("schedule", {
-	capsule: CapsuleId,
+	capsule: u64,
 	rank: u64
 })
 
 const task = relation("task", {
-	id: TaskId.fresh,
+	id: u64.fresh,
 	kind: TaskKind.id,
-	sheet: SheetId,
+	sheet: u64,
 	subject: u64
 })
 
 const attempt = relation("attempt", {
-	id: AttemptId.fresh,
-	task: TaskId,
+	id: u64.fresh,
+	task: u64,
 	n: u64,
 	pin: Pin.id,
 	promptHash: bytes(32)
 })
 
 const attemptText = relation("attemptText", {
-	attempt: AttemptId,
+	attempt: u64,
 	prompt: str,
 	output: str
 })
 
 const verdict = relation("verdict", {
-	attempt: AttemptId,
+	attempt: u64,
 	outcome: Outcome.id
 })
 
 const diagnostic = relation("diagnostic", {
-	id: DiagnosticId.fresh,
-	attempt: AttemptId,
+	id: u64.fresh,
+	attempt: u64,
 	kind: DiagKind.id,
 	path: str,
 	message: str
 })
 
 const steer = relation("steer", {
-	id: SteerId.fresh,
+	id: u64.fresh,
 	kind: SteerKind.id,
-	task: TaskId,
+	task: u64,
 	note: str
 })
 
 const receipt = relation("receipt", {
-	id: ReceiptId.fresh,
-	sheet: SheetId,
+	id: u64.fresh,
+	sheet: u64,
 	contentHash: bytes(32),
 	courseId: bytes(16)
 })
