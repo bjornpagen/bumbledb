@@ -867,19 +867,39 @@ names — so roster errors print beside the query they reject.
   § the query notation) to the `ir::Query` value at compile time and resolving
   names through the emitted id constants.
 
-## Anticipated bindings — punted, recorded
+## The TypeScript SDK — the shipped binding
 
-JS/N-API bindings are **punted**: pure anticipation, zero deliverable, and no
-engine decision may lean on their existence. The recorded shape for whenever the
-owner wants them: a quarantined downstream crate on the bench-crate precedent (it
-may hold the N-API dependency; the engine never depends on it), compiling the
-application's `schema!` in, exposing prepared-query handles, the dyn read/write
-surfaces, and the manifest; marshaling IR-as-data in and result copies out. The
-engine-side surface is already correct the day they are wanted: the trust-boundary
-law makes foreign IR safe (`20-query-ir.md` § validation boundary), the manifest
-carries the ids as data, the memoized one-copy result heap crosses a language
-boundary where a borrowed result could not, and the dyn write surface's typed
-errors are the portable half of the API.
+The JS binding is built: the TypeScript SDK lives in-tree at `ts/`
+(`@bjornpagen/bumbledb`), on the quarantine shape recorded for it — the napi
+bridge is a downstream crate (`ts/crate/`, kept OUT of the Cargo workspace;
+the engine never depends on it, and no engine decision leans on its
+existence). It speaks the dyn lane end to end: schemas cross as
+`SchemaSpec`-shaped named plain data through the one lowering (so an
+SDK-built theory validates to the same sealed schema and carries the same
+fingerprint as the macro's — the spec/macro parity of § the SchemaSpec
+bindings contract), queries cross as IR data under the trust-boundary law
+(`20-query-ir.md` § validation boundary), the manifest carries the ids as
+data, the memoized one-copy result heap crosses the language boundary where a
+borrowed result could not, and the dyn write surface's typed errors are the
+portable half of the API.
+
+The SDK's skin is **completely structural** — hard structural typing
+restated in a language with no host newtypes to carry nominal safety. A
+field's value type is its bare structural type (`u64`/`i64` → `bigint`,
+`str` → `string`, `bool` → `boolean`, `bytes<N>` → `Uint8Array`,
+`interval<E>` → `{ start; end }`, half-open); no value brands, no phantom
+tags, no minting casts. Domains are labels in the schema type: `.as("HolderId")`
+attaches a string domain label to the field's *descriptor type* — the mirror
+of the macro's `as HolderId` — and the relational builders (`contained`,
+`mirrors`, `window`, query joins) check those labels structurally at compile
+time by comparing descriptor shapes, never by a value brand. The two-boundary
+split is unchanged: what the type layer cannot state (target-resolves-a-key
+and the rest of the semantic roster) stays a typed `Db.create` error, and
+host-variable id-mixing on `insert` — a raw `bigint` in the wrong field —
+stays the engine's containment judgment at commit, exactly as for any host.
+Structural values keep the marshal boundary pure both ways: nothing is
+branded going in, so nothing is asserted coming out, and the SDK's product
+code carries zero casts.
 
 ## The freeze, and the OPEN ledger
 
