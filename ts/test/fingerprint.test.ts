@@ -2,8 +2,12 @@
  * The cross-host fingerprint lock (bumbledb TODO.md §7, the pin the SDK
  * owes): the ONE theory exercising every schema construct — fresh keys,
  * `str`, `bytes<N>`, general and fixed-width intervals INCLUDING a ray
- * literal, both closed tiers, containment with σ on both faces, `==`
- * mirrors, and every legal window spelling — built here through the SDK's
+ * literal, both closed tiers, containment with σ on both faces, a
+ * ψ-selected CLOSED target (`Kind.where({ mastered: true })` — the member
+ * set folds at validate), `==` mirrors including a generator-less pair
+ * (`SavingsTerms == AuditTrail` over columns no mint touches — the class
+ * laws name that class by least coordinate and NEVER leak into the hash),
+ * and every legal window spelling — built here through the SDK's
  * constructors and, in `crate/src/fingerprint_lock.rs`, through the
  * engine's `schema!` macro. Each side independently asserts its
  * engine-computed fingerprint equals the ONE pinned constant, so
@@ -45,7 +49,7 @@ after(function cleanup() {
  * without the twin change there (or vice versa) is exactly the drift this
  * lock exists to catch.
  */
-const PIN = "6120cb184faaacec8f4e146f7d43b5b9c59053f7b560d037754d7cad41401508"
+const PIN = "b330d46f8cf6c91d8e24a6d2c3f9cbde65c2c37f1b90eaffdc3e49a8ae346b0c"
 
 /** `u64::MAX` — an interval ending here is the unbounded ray `[start, ∞)`. */
 const RAY_END = 18446744073709551615n
@@ -86,12 +90,19 @@ const Account = relation("Account", {
 	lease: interval(u64, 7n)
 })
 const SavingsTerms = relation("SavingsTerms", { account: u64, rate_bps: i64 })
+const AuditTrail = relation("AuditTrail", { account: u64, rate_bps: i64 })
 
 /**
  * Statement for statement the Rust twin's declaration order — order is
- * fingerprint identity (materialized order pins statement ids).
+ * fingerprint identity (materialized order pins statement ids). The tail
+ * four are PRD-K7's lock extension: the ψ-on-closed containment (the
+ * engine folds `mastered == true` to the member set {DirectPass} at
+ * validate) and the generator-less `==` pair — `rate_bps` on both faces is
+ * touched by no mint, so its class is named by least coordinate
+ * ("SavingsTerms.rate_bps"); the pinned hex proving the class laws hash
+ * NOTHING (classes are law-born names, never descriptor bytes).
  */
-const CrossHost = schema("CrossHost", { Status, Kind, Holder, Account, SavingsTerms }, [
+const CrossHost = schema("CrossHost", { Status, Kind, Holder, Account, SavingsTerms, AuditTrail }, [
 	key(SavingsTerms, ["account"]),
 	contained(on(Account, "holder"), on(Holder, "id")),
 	contained(on(Account, "kind"), on(Kind, "id")),
@@ -104,7 +115,11 @@ const CrossHost = schema("CrossHost", { Status, Kind, Holder, Account, SavingsTe
 	window(on(Holder, "id"), atLeast(2n), on(Account.where({ status: Status.Frozen }), "holder")),
 	window(on(Holder, "id"), exactly(1n), on(Account.where({ status: Status.Open }), "holder")),
 	window(on(Holder, "id"), none, on(Account.where({ kind: Kind.Failed }), "holder")),
-	window(on(Holder, "id"), between(1n, 4n), on(Account.where({ kind: Kind.DirectPass }), "holder"))
+	window(on(Holder, "id"), between(1n, 4n), on(Account.where({ kind: Kind.DirectPass }), "holder")),
+	contained(on(Account, "kind"), on(Kind.where({ mastered: true }), "id")),
+	key(SavingsTerms, ["account", "rate_bps"]),
+	key(AuditTrail, ["account", "rate_bps"]),
+	mirrors(on(SavingsTerms, ["account", "rate_bps"]), on(AuditTrail, ["account", "rate_bps"]))
 ])
 
 describe("the cross-host fingerprint lock", function suite() {
@@ -170,9 +185,14 @@ describe("the cross-host fingerprint lock", function suite() {
 			})
 			tx.insert(SavingsTerms, { account: frozenA.id, rate_bps: -3n })
 			tx.insert(SavingsTerms, { account: frozenB.id, rate_bps: 25n })
+			// The generator-less mirrors demands the audit twins in the same
+			// delta — SavingsTerms == AuditTrail commits whole or not at all.
+			tx.insert(AuditTrail, { account: frozenA.id, rate_bps: -3n })
+			tx.insert(AuditTrail, { account: frozenB.id, rate_bps: 25n })
 		})
 		assert.ok(result.ok, "the seeded state satisfies every statement of the theory")
 		assert.equal(db.scan(Account).length, 3)
 		assert.equal(db.scan(SavingsTerms).length, 2)
+		assert.equal(db.scan(AuditTrail).length, 2)
 	})
 })
