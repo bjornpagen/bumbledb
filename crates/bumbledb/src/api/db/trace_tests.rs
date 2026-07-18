@@ -323,6 +323,91 @@ fn compact_records_its_completed_durability_chain() {
     assert_eq!(durable.a0, 2, "dest dirent + parent dirent, both synced");
 }
 
+/// Exactly one burn per termination (`EscapedIdBurn`): an `Err`-aborted
+/// and a PANICKED write each advance the escaped `Q` marks through
+/// exactly one counters-only commit — never zero (the mint continues
+/// past every escaped id), never two (one `COUNTERS_FLUSH` span, one
+/// `LMDB_COMMIT` span: the guard owns the whole closure region, and
+/// `commit()` was never reached to flush a second time).
+#[test]
+fn an_aborted_write_burns_escaped_ids_exactly_once_panic_included() {
+    let fresh_schema = SchemaDescriptor {
+        relations: vec![RelationDescriptor {
+            extension: None,
+            name: "S".into(),
+            fields: vec![
+                FieldDescriptor {
+                    name: "id".into(),
+                    value_type: ValueType::U64,
+                    generation: Generation::Fresh,
+                },
+                FieldDescriptor {
+                    name: "v".into(),
+                    value_type: ValueType::U64,
+                    generation: Generation::None,
+                },
+            ],
+        }],
+        statements: vec![],
+    };
+    let dir = TempDir::new("db-trace-abort-burn");
+    let db = Db::create(dir.path(), fresh_schema).expect("create");
+    let id_field = db
+        .fresh_field(RelationId(0), FieldId(0))
+        .expect("fresh field");
+    let flush_counts = |events: &[obs::TraceEvent]| {
+        (
+            events
+                .iter()
+                .filter(|e| e.name == obs::names::COUNTERS_FLUSH)
+                .count(),
+            events
+                .iter()
+                .filter(|e| e.name == obs::names::LMDB_COMMIT)
+                .count(),
+        )
+    };
+
+    // The Err abort: the guard's one counters-only commit.
+    obs::start_capture();
+    let aborted: Result<()> = db.write(|tx| {
+        tx.alloc_at(id_field)?;
+        Err(crate::error::Error::Overflow(
+            crate::error::OverflowKind::Aggregate { find: 0 },
+        ))
+    });
+    let events = obs::finish_capture();
+    assert!(aborted.is_err());
+    assert_eq!(
+        flush_counts(&events),
+        (1, 1),
+        "the Err abort burns exactly once"
+    );
+
+    // The panicked write: the guard's drop is the only flush.
+    obs::start_capture();
+    let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _: Result<()> = db.write(|tx| {
+            assert_eq!(tx.alloc_at(id_field)?, 1, "past the Err abort's burn");
+            panic!("mid-closure");
+        });
+    }));
+    let events = obs::finish_capture();
+    assert!(unwound.is_err(), "the closure's panic propagates");
+    assert_eq!(
+        flush_counts(&events),
+        (1, 1),
+        "the panicked write burns exactly once"
+    );
+
+    // Never zero: both aborts' ids are gone; the mint continues past.
+    db.write(|tx| {
+        assert_eq!(tx.alloc_at(id_field)?, 2);
+        Ok(())
+    })
+    .expect("mint after both aborts");
+}
+
 #[test]
 fn an_aborting_write_records_no_lmdb_commit() {
     let dir = TempDir::new("db-trace-abort");

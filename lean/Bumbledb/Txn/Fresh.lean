@@ -78,6 +78,19 @@ the two concerns never meet.
   `Mint.run` / `Reachable.txn` keep their semantic content:
   in-transaction visibility of a transaction's own allocations, and
   persistence of exactly the final mark whatever the commit's fate.
+* **The abort burn is best-effort — unconditional modulo I/O
+  failure.** The Rust honors the one `Reachable.txn` transition on
+  every termination: `commit`'s reject/infra exits flush for
+  themselves, and the write region's drop guard
+  (`api/db/write.rs::EscapedIdBurn`) covers the `Err`-returning and
+  the PANICKING closure alike. But each abort flush discards its own
+  result (`let _ =`): a burn whose counters-only commit itself fails
+  on disk silently no-ops, because the abort's error (or unwind)
+  dominates and a `Drop` must never raise a second panic. The model's
+  unconditional persistence is therefore mechanized as
+  unconditional-modulo-I/O-failure — the same class as the dirty-mark
+  flush above; `docs/architecture/10-data-model.md` § fields records
+  the same narrowing.
 -/
 
 namespace Bumbledb

@@ -411,6 +411,43 @@ fn a_witness_mints_the_same_sequence_as_the_typed_path() {
     .expect("mint again");
 }
 
+/// The panic gap, closed (`EscapedIdBurn`, the drop guard in
+/// `db/write.rs`): the never-reissue law binds EVERY termination of a
+/// write — a PANICKING closure included. `alloc` hands the id to the
+/// host before the commit's fate is known
+/// (`lean/Bumbledb/Txn/Fresh.lean: never_reissue_observable`), so the
+/// unwound transaction persists no data but burns its escaped mint —
+/// the api-level mirror of the storage-level
+/// `fresh_ids_allocated_in_a_rejected_txn_are_burned`.
+#[test]
+fn a_panicking_write_burns_its_escaped_fresh_ids() {
+    let dir = TempDir::new("db-panic-fresh-burn");
+    let db = Db::create(dir.path(), fresh_schema()).expect("create");
+    let id_field = db
+        .fresh_field(RelationId(0), FieldId(0))
+        .expect("fresh field");
+    let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _: Result<()> = db.write(|tx| {
+            assert_eq!(tx.alloc_at(id_field)?, 0, "the id escapes to the host");
+            panic!("the host's own bug, mid-closure");
+        });
+    }));
+    assert!(unwound.is_err(), "the closure's panic propagates");
+    // The unwound transaction persisted no data — the clock never moved...
+    assert_eq!(db.generation().expect("generation").value(), 0);
+    // ...but the id it handed out is gone forever: the next write mints
+    // PAST the burned id.
+    db.write(|tx| {
+        assert_eq!(
+            tx.alloc_at(id_field)?,
+            1,
+            "0 was issued and never re-issues, the panic notwithstanding"
+        );
+        Ok(())
+    })
+    .expect("the writer surface survives the panic");
+}
+
 /// The drop-order lock window: `Db`'s fields drop in declaration
 /// order, and a parked reader's transaction owns its own env clone —
 /// if the `Environment` (and with it the advisory lock) dropped before

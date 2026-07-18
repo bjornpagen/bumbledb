@@ -5,6 +5,7 @@ use crate::error::{Error, Result};
 use crate::ir::Value;
 use crate::storage::commit::{commit, crashpoint, flush_escaped_fresh_ids};
 use crate::storage::delta::WriteDelta;
+use crate::storage::env::Environment;
 use bumbledb_theory::schema::RelationId;
 
 /// A per-thread key, distinct process-wide (never 0). `ThreadId`
@@ -25,12 +26,74 @@ impl Drop for WriterThreadReset<'_> {
     }
 }
 
+/// Burns the escaped fresh high-water when the write region terminates
+/// without reaching `commit()` — [`WriterThreadReset`]'s sibling drop
+/// guard, and the closure of the one panic gap: `alloc` hands ids to the
+/// host before the commit's fate is known, so an `Err`-returning closure
+/// and a PANICKING closure alike must burn what escaped
+/// (`lean/Bumbledb/Txn/Fresh.lean: never_reissue_observable` — one
+/// `Reachable.txn` transition, the fate irrelevant). Armed while the
+/// delta is alive-but-uncommitted; disarmed (the taken-`Option`) once
+/// the delta moves into `commit()`, which owns the flush for every path
+/// that reaches it — one conceptual owner per region, no path flushing
+/// twice.
+struct EscapedIdBurn<'a, S> {
+    env: &'a Environment,
+    /// `Some` from arming until [`EscapedIdBurn::disarm`]; a disarmed
+    /// guard drops inert.
+    tx: Option<WriteTx<'a, S>>,
+}
+
+impl<'a, S> EscapedIdBurn<'a, S> {
+    /// Arms the guard around the live transaction.
+    fn arm(env: &'a Environment, tx: WriteTx<'a, S>) -> Self {
+        Self { env, tx: Some(tx) }
+    }
+
+    /// The armed transaction, for the closure region. The slot is `Some`
+    /// for the guard's whole life — only [`EscapedIdBurn::disarm`] takes
+    /// it, by consuming the guard.
+    fn tx(&mut self) -> &mut WriteTx<'a, S> {
+        self.tx.as_mut().expect("armed from construction to disarm")
+    }
+
+    /// Disarms the guard and releases the transaction toward
+    /// `commit()`, which owns the flush from here on.
+    fn disarm(mut self) -> WriteTx<'a, S> {
+        self.tx.take().expect("armed from construction to disarm")
+    }
+}
+
+impl<S> Drop for EscapedIdBurn<'_, S> {
+    fn drop(&mut self) {
+        let Some(tx) = self.tx.take() else {
+            // Disarmed: the delta reached `commit()`, which owns the
+            // flush from there.
+            return;
+        };
+        let WriteTx { view, delta, .. } = tx;
+        // The read view closes before the burn's own write transaction —
+        // the same transaction discipline as every other flush site.
+        drop(view);
+        // Best-effort, panic-safe: the result is discarded — the abort's
+        // own error (or unwind) dominates, and a discarded flush failure
+        // never turns an unwind into a double-panic abort. The silently
+        // no-oped disk failure is the recorded narrowing
+        // (`lean/Bumbledb/Txn/Fresh.lean` § narrowings recorded).
+        let _ = flush_escaped_fresh_ids(self.env, &delta);
+    }
+}
+
 impl<S> Db<S> {
     /// Runs `f` as the single writer: takes the writer mutex, hands `f` a
     /// delta transaction, and commits on `Ok`. `Err` or panic drops the
-    /// delta — LMDB was never touched. Dependency statements are judged at
-    /// commit against the final state; a violation aborts the whole
-    /// transaction.
+    /// delta — LMDB never saw a fact — but fresh ids the closure already
+    /// minted burn either way: the `EscapedIdBurn` drop guard flushes the
+    /// escaped high-water on the `Err` exit AND on an unwinding panic,
+    /// exactly once, so the never-reissue law holds on every termination
+    /// (`lean/Bumbledb/Txn/Fresh.lean: never_reissue_observable`).
+    /// Dependency statements are judged at commit against the final
+    /// state; a violation aborts the whole transaction.
     ///
     /// Queries are not reachable from the write closure — [`WriteTx`]
     /// simply offers none (forbidden by representation, `70-api.md`).
@@ -115,9 +178,10 @@ impl<S> Db<S> {
             caller,
             "nested Db::write — re-entrant write transactions are forbidden"
         );
-        // A panicking closure poisons nothing real: the delta died in the
-        // unwind and LMDB was never touched, so the flag is cleared rather
-        // than propagated.
+        // A panicking closure poisons nothing real: the unwind burned the
+        // delta's escaped fresh ids (the `EscapedIdBurn` guard, under this
+        // same lock) and dropped everything else — no fact ever touched
+        // LMDB — so the flag is cleared rather than propagated.
         let _writer_lock = self.writer.lock().unwrap_or_else(PoisonError::into_inner);
         self.writer_thread.store(caller, Ordering::Release);
         let _owner = WriterThreadReset(&self.writer_thread);
@@ -141,31 +205,34 @@ impl<S> Db<S> {
         }
         let mut txn_span =
             crate::obs::span(crate::obs::names::WRITE_TXN, crate::obs::Category::Commit);
-        let mut tx = WriteTx {
-            view,
-            delta: WriteDelta::new(&self.schema),
-            schema: &self.schema,
-            scratch: Vec::new(),
-            refs: Vec::new(),
-            marker: std::marker::PhantomData,
-        };
-        let closure = f(&mut tx);
-        let WriteTx { view, delta, .. } = tx;
+        // The burn region: from here until `disarm` hands the delta to
+        // `commit()`, EVERY termination — an `Err`-returning closure AND
+        // a PANICKING one — burns the escaped fresh high-water through
+        // the guard's drop, exactly once. `alloc` may already have handed
+        // the host fresh ids, and the never-reissue law binds every id
+        // issued, the transaction's fate irrelevant
+        // (`lean/Bumbledb/Txn/Fresh.lean: never_reissue_observable`).
+        // Declared after `_writer_lock` (locals drop in reverse order),
+        // so the burn's counters-only commit runs while the writer lock
+        // is still held.
+        let mut burn = EscapedIdBurn::arm(
+            &self.env,
+            WriteTx {
+                view,
+                delta: WriteDelta::new(&self.schema),
+                schema: &self.schema,
+                scratch: Vec::new(),
+                refs: Vec::new(),
+                marker: std::marker::PhantomData,
+            },
+        );
+        let out = f(burn.tx())?;
+        // Disarmed: the delta moves into `commit()`, which owns the flush
+        // for every path that reaches it — success flushes the marks
+        // inside the commit transaction; reject/infra aborts burn on
+        // their own exit.
+        let WriteTx { view, delta, .. } = burn.disarm();
         drop(view);
-        // A failing closure aborts before commit, but `alloc` may already
-        // have handed the host fresh ids — burn the escaped high-water so
-        // the generator never re-issues them (the never-reissue law binds
-        // every id issued, the transaction's fate irrelevant:
-        // `lean/Bumbledb/Txn/Fresh.lean: never_reissue_observable`). The
-        // commit path burns its own aborts; this covers the one path that
-        // never reaches it. Best-effort — the closure's error dominates.
-        let out = match closure {
-            Ok(out) => out,
-            Err(closure_err) => {
-                let _ = flush_escaped_fresh_ids(&self.env, &delta);
-                return Err(closure_err);
-            }
-        };
         let report = commit(delta, &self.env)?;
         txn_span.set_args(1, 0);
         txn_span.end();
