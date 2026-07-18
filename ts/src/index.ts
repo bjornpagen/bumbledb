@@ -10,7 +10,10 @@
  * `query(S).rule(r => r.match(...).where(...).select(...))` with
  * string-named domain-typed vars, params typed by use, negation,
  * conditions, aggregates, and stratified recursion via `program()`/`rec` —
- * `db.prepare` as a plain value), and the exhume surface
+ * `db.prepare` as a plain value; the comparison/connective builders are
+ * also free exports, and the free names `eq`/`not`/`and`/`or` collide with
+ * common host identifiers — import aliasing is the answer; the SDK does
+ * not rename for collision-avoidance), and the exhume surface
  * (`Db.exhume` — the one schema-independent read path: the store's
  * self-described shapes and raw facts by name, typed at bare structural
  * values, deliberately schema-free). The raw native bridge is not exported.
@@ -63,32 +66,28 @@ export type {
 	Face,
 	FaceArityMismatch,
 	FaceData,
-	FaceDomainMismatch,
-	FaceDomains,
 	FaceFields,
 	FaceOwner,
+	FaceShapeMismatch,
+	FaceShapes,
 	FaceSource,
 	OneOf,
 	SameArity,
-	SameDomains
+	SameShapes
 } from "#face.ts"
 export { on, oneOf } from "#face.ts"
 export type {
 	AnyField,
 	BoolField,
-	BytesCtor,
 	BytesField,
 	ClosedIdField,
 	ClosedRoster,
 	FreshU64Field,
-	I64Ctor,
 	I64Field,
 	Infer,
-	IntervalCtor,
 	IntervalField,
 	IntervalValue,
 	StrField,
-	U64Ctor,
 	U64Field
 } from "#fields.ts"
 export { bool, bytes, i64, interval, span, str, u64 } from "#fields.ts"
@@ -113,7 +112,7 @@ export type {
 	SelectColumn,
 	Tree
 } from "#query/atom.ts"
-export { ALLEN } from "#query/atom.ts"
+export { ALLEN, allen, and, covers, eq, ge, gt, le, lt, ne, not, or, pointIn } from "#query/atom.ts"
 export type {
 	AnyQuery,
 	AnyRuleValue,
@@ -136,7 +135,7 @@ export type {
 export { lowerQuery, query } from "#query/lower.ts"
 export type { ProgramScope, Rec } from "#query/predicate.ts"
 export { program } from "#query/predicate.ts"
-export type { Duration, MaskParam, Param, ParamEntry, ParamsRecord, SetParam, Var } from "#query/scope.ts"
+export type { Duration, MaskParam, Param, ParamEntry, ParamsRecord, SetParam, Var, VarsRecord } from "#query/scope.ts"
 export type { Agg, SelectEntry } from "#query/select.ts"
 export type {
 	AnyRelation,

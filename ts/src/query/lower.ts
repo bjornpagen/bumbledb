@@ -76,6 +76,7 @@ import {
 	makeParam,
 	makeSetParam,
 	makeVar,
+	makeVars,
 	renderFieldKind,
 	term
 } from "#query/scope.ts"
@@ -178,6 +179,8 @@ type CheckIdbVars<Env extends EnvShape, V, Head extends HeadShape = undefined> =
 interface TermOps {
 	/** Declares/names one variable: typed by the field it first binds; reuse joins. */
 	readonly var: typeof makeVar
+	/** Mints several variables at once — `const { service, w } = r.vars("service", "w")`: each name typed exactly; duplicates refuse. */
+	readonly vars: typeof makeVars
 	/** Names one scalar parameter: typed by its use; the key of the execute params object. */
 	readonly param: typeof makeParam
 	/** Names one ∈-set parameter (the IR's `ParamSet`): bound to a readonly array at execution. */
@@ -367,6 +370,7 @@ interface QueryStart<Rels extends SchemaRelations> {
 /** The frozen constructor vocabulary every rule builder spreads. */
 const termOps: TermOps = Object.freeze({
 	var: makeVar,
+	vars: makeVars,
 	param: makeParam,
 	inSet: makeSetParam,
 	maskParam: makeMaskParam,
