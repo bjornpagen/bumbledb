@@ -8,11 +8,13 @@ disagree, the chapter wins and the recipe is amended in the same change
 form, the interval denotation, the modeling discipline, derived relations),
 `30-dependencies.md` (the two
 judgments and their theorems), `20-query-ir.md` (query semantics; § the query
-notation is the grammar the recipes' query comments are written in), `70-api.md`
+notation is the grammar the recipes' `query!` fences are written in), `70-api.md`
 (the `schema!` grammar, conditional writes). Refusals cited below live in
 the architecture chapters they cite.
 
-Every schema below compiles and validates verbatim against the current engine —
+Every schema below compiles and validates verbatim against the current engine,
+and every query fence compiles via `query!`, prepares against a real store of
+its recipe's schema, and round-trips through `ir::render` —
 `crates/bumbledb-query/tests/cookbook.rs` duplicates each block token-for-token
 and a sync test pins the duplication, so a recipe edited here without the test
 following breaks the build.
@@ -45,15 +47,32 @@ bumbledb::schema! {
     // The pointwise key: per service, no two outages share a point — every
     // pair satisfies DISJOINT. SQL:2011's WITHOUT OVERLAPS, as a theorem.
     Outage(service, window) -> Outage;
-
-    // Queries (the notation — 20-query-ir.md § the query notation):
-    //   down at instant t (point membership (`in`) is a typing rule):
-    //     (service) | Outage(service, window: w), ?t in w;
-    //   overlapping an incident window (one Allen mask, no operator zoo):
-    //     (service, w) | Outage(service, window: w), Allen(w, INTERSECTS, ?incident);
-    //   total downtime per service (the denotation's one arithmetic):
-    //     (service, Sum(Duration(window))) | Outage(service, window);
 }
+```
+
+The queries (the notation — `20-query-ir.md` § the query notation). Down at
+instant `t` — point membership (`in`) is a typing rule:
+
+```rust
+let down_at = query!(Uptime {
+    (service) | Outage(service, window: w), ?t in w;
+});
+```
+
+Overlapping an incident window — one Allen mask, no operator zoo:
+
+```rust
+let overlapping = query!(Uptime {
+    (service, w) | Outage(service, window: w), Allen(w, INTERSECTS, ?incident);
+});
+```
+
+Total downtime per service — the denotation's one arithmetic:
+
+```rust
+let downtime = query!(Uptime {
+    (service, Sum(Duration(window))) | Outage(service, window);
+});
 ```
 
 ## 2. Discriminated unions
@@ -114,10 +133,15 @@ bumbledb::schema! {
     // One-way <= on purpose: absence is the fact that isn't. The all-or-nothing
     // column group (line+city together or neither) is unstatable TO VIOLATE —
     // the fact carries both fields or does not exist.
-
-    // Negation is plain anti-join (no null branch exists in any operator):
-    //   (b) | Business(id: b), !MailingAddress(business: b);
 }
+```
+
+Negation is plain anti-join (no null branch exists in any operator):
+
+```rust
+let unaddressed = query!(Optionality {
+    (b) | Business(id: b), !MailingAddress(business: b);
+});
 ```
 
 ## 4. Money
@@ -147,13 +171,18 @@ bumbledb::schema! {
 
     Posting(account)  <= Account(id);
     Posting(currency) <= Currency(id);
-
-    // Multi-currency totals: currency is a group key, never summed across —
-    // Sum folds in i128 with one final range check, so totals cannot wrap
-    // silently. Bind the fresh id: set semantics would collapse two equal
-    // (account, currency, minor) postings without it.
-    //   (account, currency, total: Sum(minor)) | Posting(id, account, currency, minor);
 }
+```
+
+Multi-currency totals: currency is a group key, never summed across — `Sum`
+folds in i128 with one final range check, so totals cannot wrap silently.
+Bind the fresh id: set semantics would collapse two equal
+(account, currency, minor) postings without it.
+
+```rust
+let totals = query!(Money {
+    (account, currency, total: Sum(minor)) | Posting(id, account, currency, minor);
+});
 ```
 
 ## 5. Content addressing
@@ -184,9 +213,15 @@ bumbledb::schema! {
     // order is an encoding artifact, refused as semantics (10-data-model.md).
     // Large objects: facts stay fixed-width; the payload lives in external
     // storage, referenced by identity (the large-object refusal).
-
-    //   (id) | Document(id, payload == ?digest);   // a bytes param self-encodes
 }
+```
+
+The lookup by digest — a bytes param self-encodes:
+
+```rust
+let by_digest = query!(Content {
+    (id) | Document(id, payload == ?digest);
+});
 ```
 
 ## Vocabularies
@@ -226,15 +261,21 @@ bumbledb::schema! {
     // test — one AND, one bit test, no probe (30-dependencies.md).
     Ticket(priority) <= Priority(id);
 
-    // Handles are literals in queries exactly as in statements, and the
-    // renderer prints them back — the round trip runs on names:
-    //   (t) | Ticket(id: t, priority == Urgent);
-    // A query atom over the vocabulary itself folds at prepare; the join
-    // has zero runtime existence (40-execution.md § the grounding).
     // The boundary law: intrinsic meaning goes here (changing it is a new
     // theory); policy that drifts without a rebuild is an ordinary
     // relation — a vocabulary is never written, only declared.
 }
+```
+
+Handles are literals in queries exactly as in statements, and the renderer
+prints them back — the round trip runs on names. A query atom over the
+vocabulary itself folds at prepare; the join has zero runtime existence
+(`40-execution.md` § the grounding):
+
+```rust
+let urgent = query!(Tickets {
+    (t) | Ticket(id: t, priority == Urgent);
+});
 ```
 
 ## 7. The classification
@@ -273,15 +314,21 @@ bumbledb::schema! {
     // member set {DirectPass, JudgedPass} compiles at validate and the
     // judgment is O(1) at commit (recipe 8 is this statement's own recipe).
     Certificate(kind) <= Kind(id | mastered == true);
-
-    // The classification read duplicates no flag onto Attempt — ψ walks
-    // the vocabulary's payload in the query too:
-    //   (a) | Attempt(id: a, kind: k), Kind(id: k, mastered == true);
-    // The Kind atom folds at prepare into a plan-constant handle set on
-    // its sibling; plan introspection prints the set, not a count:
-    //   folded: Kind{mastered == true} → {DirectPass, JudgedPass}
 }
 ```
+
+The classification read duplicates no flag onto `Attempt` — ψ walks the
+vocabulary's payload in the query too:
+
+```rust
+let mastered = query!(Review {
+    (a) | Attempt(id: a, kind: k), Kind(id: k, mastered == true);
+});
+```
+
+The `Kind` atom folds at prepare into a plan-constant handle set on its
+sibling; plan introspection prints the set, not a count:
+`folded: Kind{mastered == true} → {DirectPass, JudgedPass}`.
 
 ## 8. The sub-vocabulary
 
@@ -324,10 +371,15 @@ bumbledb::schema! {
     // {Critical, Fatal}; the judgment is one bit test per touched fact,
     // and an escalation at severity == Info aborts the commit.
     Escalation(severity) <= Severity(id | pages == true);
-
-    //   who is being paged (the same ψ, on the read side):
-    //     (i) | Escalation(incident: i, severity: s), Severity(id: s, pages == true);
 }
+```
+
+Who is being paged — the same ψ, on the read side:
+
+```rust
+let paged = query!(Oncall {
+    (i) | Escalation(incident: i, severity: s), Severity(id: s, pages == true);
+});
 ```
 
 ## Structure
@@ -375,10 +427,15 @@ bumbledb::schema! {
     Extent(playlist, span) -> Extent;       // exact target key (recipe 26's note)
     Slot(playlist, slot) -> Slot;           // one occupant per position
     Extent(playlist, span) == Slot(playlist, slot);  // slots tile the span exactly
-
-    // Positional access is membership — "what plays at position ?pos":
-    //   (track) | Slot(playlist == ?list, slot: s, track), ?pos in s;
 }
+```
+
+Positional access is membership — "what plays at position `?pos`":
+
+```rust
+let at_pos = query!(Playlists {
+    (track) | Slot(playlist == ?list, slot: s, track), ?pos in s;
+});
 ```
 
 Middle insert is honest about its cost: making room at position `k` shifts
@@ -431,9 +488,15 @@ bumbledb::schema! {
     Parent(child) -> Parent;
     Parent(child)  <= Node(id);
     Parent(parent) <= Node(id);
-
-    //   (v) | Add(node == ?n, lhs: l), Lit(node: l, value: v);
 }
+```
+
+A node's left operand, when it is a literal — the arm join:
+
+```rust
+let lhs_lit = query!(Ast {
+    (v) | Add(node == ?n, lhs: l), Lit(node: l, value: v);
+});
 ```
 
 ## 11. Typed graphs
@@ -459,12 +522,17 @@ bumbledb::schema! {
     Maintains(person) <= Person(id);
     Maintains(repo)   <= Repo(id);
     Maintains(person, repo) -> Maintains;
-
-    // Mutual follows — joins are explicit `field: v` on both ends (the
-    // punning law); `<` keeps each pair once:
-    //   (a, b) | Follows(follower: a, followee: b),
-    //            Follows(follower: b, followee: a), a < b;
 }
+```
+
+Mutual follows — joins are explicit `field: v` on both ends (the punning
+law); `<` keeps each pair once:
+
+```rust
+let mutual = query!(Graph {
+    (a, b) | Follows(follower: a, followee: b),
+             Follows(follower: b, followee: a), a < b;
+});
 ```
 
 ## 12. Entity-component
@@ -493,10 +561,15 @@ bumbledb::schema! {
     // An archetype rule is one containment: every Renderable has a Transform
     // (and, through it, an Entity — containment composes).
     Renderable(entity) <= Transform(entity);
-
-    // The physics join is the component intersection:
-    //   (e, x, y, dx, dy) | Transform(entity: e, x, y), Velocity(entity: e, dx, dy);
 }
+```
+
+The physics join is the component intersection:
+
+```rust
+let physics = query!(Ecs {
+    (e, x, y, dx, dy) | Transform(entity: e, x, y), Velocity(entity: e, dx, dy);
+});
 ```
 
 ## 13. State machines
@@ -531,9 +604,15 @@ bumbledb::schema! {
     Shipment(order) == Order(id | state == Shipped);
     // Transition predicates ("only Placed may ship") are host code under the
     // generation witness — recipe 20; the schema pins the states, not the paths.
-
-    //   (id, carrier) | Order(id, state == Shipped), Shipment(order: id, carrier);
 }
+```
+
+Shipped orders with their carriers:
+
+```rust
+let shipped = query!(Orders {
+    (id, carrier) | Order(id, state == Shipped), Shipment(order: id, carrier);
+});
 ```
 
 ## Time and coverage
@@ -565,7 +644,7 @@ bumbledb::schema! {
         rsvp: u64 as RsvpId,
     }
     relation Claim {
-        source: u64,
+        source: u64 as AttendanceId,
         person: u64 as PersonId,
         arm: u64 as ArmId,
         span: interval<i64>,
@@ -592,10 +671,21 @@ bumbledb::schema! {
     Claim(person, span | arm == Busy) <= WorkHours(person, hours);
     Booking(room)  <= Room(id);
     Booking(event) <= Event(id);
-
-    //   (room, s) | Booking(room, span: s), Allen(s, INTERSECTS, ?want);
-    //   (person, s) | Claim(person, span: s), Allen(s, INTERSECTS, ?window);
 }
+```
+
+The conflict probes — one Allen mask against a param, on rooms and on people:
+
+```rust
+let room_conflicts = query!(Calendar {
+    (room, s) | Booking(room, span: s), Allen(s, INTERSECTS, ?want);
+});
+```
+
+```rust
+let busy_people = query!(Calendar {
+    (person, s) | Claim(person, span: s), Allen(s, INTERSECTS, ?window);
+});
 ```
 
 ## 15. Effective-dated configuration
@@ -624,13 +714,24 @@ bumbledb::schema! {
     // Together with the key above this is a disjoint cover, not an exact
     // partition: Version intervals may overhang the Policy lifetime (recipe 16).
     Policy(id, live) <= Version(policy, valid);
-
-    //   in force on date t — one membership probe:
-    //     (rate_bps) | Version(policy == ?p, rate_bps, valid: v), ?t in v;
-    //   clean successions (half-open makes MEETS exact, no ±1 fudge):
-    //     (a, b) | Version(policy: p, valid: a), Version(policy: p, valid: b),
-    //              Allen(a, MEETS, b);
 }
+```
+
+In force on date `t` — one membership probe:
+
+```rust
+let in_force = query!(Pricing {
+    (rate_bps) | Version(policy == ?p, rate_bps, valid: v), ?t in v;
+});
+```
+
+Clean successions — half-open makes MEETS exact, no ±1 fudge:
+
+```rust
+let successions = query!(Pricing {
+    (a, b) | Version(policy: p, valid: a), Version(policy: p, valid: b),
+             Allen(a, MEETS, b);
+});
 ```
 
 ## 16. Disjoint covers
@@ -658,10 +759,15 @@ bumbledb::schema! {
     PayPeriod(year, span) -> PayPeriod;     // disjoint: no shared instant
     // Covering: no holes in the fiscal year's span; pay-period overhang is legal.
     FiscalYear(id, span) <= PayPeriod(year, span);
-
-    //   the period holding date t:
-    //     (seq) | PayPeriod(year == ?y, seq, span: s), ?t in s;
 }
+```
+
+The period holding date `t`:
+
+```rust
+let holding = query!(Payroll {
+    (seq) | PayPeriod(year == ?y, seq, span: s), ?t in s;
+});
 ```
 
 ## 17. Federal income tax
@@ -703,14 +809,20 @@ bumbledb::schema! {
     // Residency exclusion: income counts only where earned inside a residency
     // period — pointwise coverage, the same judgment as recipe 15's.
     Earned(person, span) <= Residency(person, span);
-
-    //   the marginal bracket (membership probes the disjoint bracket set):
-    //     (rate_bps) | Regime(id: r, year == ?y, status == ?s),
-    //                  Bracket(regime: r, income: b, rate_bps), ?taxable in b;
-    // Tax owed is host arithmetic over the bracket walk — arithmetic beyond
-    // the measure is refused (the ledger).
 }
 ```
+
+The marginal bracket — membership probes the disjoint bracket set:
+
+```rust
+let marginal = query!(Tax {
+    (rate_bps) | Regime(id: r, year == ?y, status == ?s),
+                 Bracket(regime: r, income: b, rate_bps), ?taxable in b;
+});
+```
+
+Tax owed is host arithmetic over the bracket walk — arithmetic beyond the
+measure is refused (the ledger).
 
 ## 18. Free time and coalescing
 
@@ -733,16 +845,28 @@ bumbledb::schema! {
     Claim(person) <= Person(id);
     // No pointwise key, on purpose: claims overlap freely and Pack coalesces
     // at read time. Wanting them stored-disjoint is recipe 1's key instead.
-
-    //   busy time, coalesced (adjacent segments merge — the half-open law):
-    //     (person, busy: Pack(span)) | Claim(person, span);
-    //   raw claimed time (overlaps double-count — often the wrong question):
-    //     (person, Sum(Duration(span))) | Claim(person, span);
-    // Coalesced totals = the two-query composition (Pack, then a host fold) —
-    // aggregates never nest; free time (gaps) is the two-line host walk over
-    // sorted packed answers — both refusals recorded in the ledger.
 }
 ```
+
+Busy time, coalesced — adjacent segments merge, the half-open law:
+
+```rust
+let busy = query!(FreeTime {
+    (person, busy: Pack(span)) | Claim(person, span);
+});
+```
+
+Raw claimed time — overlaps double-count, often the wrong question:
+
+```rust
+let claimed = query!(FreeTime {
+    (person, Sum(Duration(span))) | Claim(person, span);
+});
+```
+
+Coalesced totals = the two-query composition (Pack, then a host fold) —
+aggregates never nest; free time (gaps) is the two-line host walk over
+sorted packed answers — both refusals recorded in the ledger.
 
 ## The write side
 
@@ -773,12 +897,24 @@ bumbledb::schema! {
     // agreement statement — refused (the ledger): statements prove presence
     // and topology, never that a value equals a computation. Balance is host
     // arithmetic over Sum; a materialized rollup is recipe 21's shape.
-
-    //   balances (bind the fresh id — set semantics collapses duplicates):
-    //     (account, total: Sum(minor)) | Posting(id, account, minor);
-    //   double-entry audit (host asserts every total is 0 — discipline, not schema):
-    //     (entry, Sum(minor)) | Posting(id, entry, minor);
 }
+```
+
+Balances — bind the fresh id, or set semantics collapses duplicates:
+
+```rust
+let balances = query!(Ledger {
+    (account, total: Sum(minor)) | Posting(id, account, minor);
+});
+```
+
+The double-entry audit — the host asserts every total is 0; discipline, not
+schema:
+
+```rust
+let audit = query!(Ledger {
+    (entry, Sum(minor)) | Posting(id, entry, minor);
+});
 ```
 
 ## 20. Conditional writes
@@ -809,19 +945,25 @@ bumbledb::schema! {
     // A lease exists iff its job is Running (recipe 13's conditional target):
     // claiming a job and leasing it commit together or not at all.
     Lease(job) == Job(id | state == Running);
-
-    // Three write idioms. The first two are snapshot-derived and therefore
-    // use snapshot-query → compute → write_from(&snap) → host retry on
-    // GenerationMoved:
-    //   update-where: query the premise on a snapshot, then delete(old) +
-    //     insert(new) per matched fact — "still Queued" is the witness:
-    //       (id, payload) | Job(id, state == Queued, payload);
-    //   insert-select: query source answers, insert the derived facts — the
-    //     data-modifying CTE with its premises witnessed instead of locked.
-    //   read-modify-write, key-shaped: WriteTx point reads (get/contains) see
-    //     the final state — per-fact premises need no earlier snapshot witness.
 }
 ```
+
+Three write idioms. The first two are snapshot-derived and therefore use
+snapshot-query → compute → `write_from(&snap)` → host retry on
+`GenerationMoved`. **Update-where**: query the premise on a snapshot, then
+`delete(old)` + `insert(new)` per matched fact — "still Queued" is the
+witness:
+
+```rust
+let queued = query!(Jobs {
+    (id, payload) | Job(id, state == Queued, payload);
+});
+```
+
+**Insert-select**: query source answers, insert the derived facts — the
+data-modifying CTE with its premises witnessed instead of locked.
+**Read-modify-write, key-shaped**: WriteTx point reads (get/contains) see
+the final state — per-fact premises need no earlier snapshot witness.
 
 ## 21. Derived relations
 
@@ -855,13 +997,18 @@ bumbledb::schema! {
     // claims — an UNSOUND rollup (claiming busy time that isn't, or surviving
     // its sources' deletion) cannot commit, judged on every touching commit.
     BusySpan(person, span) <= Claim(person, span | arm == Busy);
-
-    // Maintenance is the third witness idiom (recipe 20): re-run the deriving
-    // query on a snapshot, diff, write_from(&snap) — the rollup cannot commit
-    // against sources it didn't actually read.
-    //   the deriving query (Pack IS the coalesce):
-    //     (person, busy: Pack(span)) | Claim(person, span, arm == Busy);
 }
+```
+
+Maintenance is the third witness idiom (recipe 20): re-run the deriving
+query on a snapshot, diff, `write_from(&snap)` — the rollup cannot commit
+against sources it didn't actually read. The deriving query (`Pack` IS the
+coalesce):
+
+```rust
+let deriving = query!(Rollup {
+    (person, busy: Pack(span)) | Claim(person, span, arm == Busy);
+});
 ```
 
 ## 22. Union reads
@@ -889,14 +1036,19 @@ bumbledb::schema! {
     Ach(payment)  -> Ach;
     Payment(id | kind == Card) == Card(payment);
     Payment(id | kind == Ach)  == Ach(payment);
-
-    // One query, two rules (set union). The exclusivity theorem (recipe 2)
-    // is spent a third time here: rules selecting different `kind` values are
-    // provably disjoint, so the executor elides cross-rule dedup — the free
-    // lunch (40-execution.md § set semantics).
-    //   (id, n) | Payment(id, kind == Card), Card(payment: id, last4: n);
-    //   (id, n) | Payment(id, kind == Ach),  Ach(payment: id, routing: n);
 }
+```
+
+One query, two rules (set union). The exclusivity theorem (recipe 2) is
+spent a third time here: rules selecting different `kind` values are
+provably disjoint, so the executor elides cross-rule dedup — the free lunch
+(`40-execution.md` § set semantics):
+
+```rust
+let methods = query!(Payments {
+    (id, n) | Payment(id, kind == Card), Card(payment: id, last4: n);
+    (id, n) | Payment(id, kind == Ach), Ach(payment: id, routing: n);
+});
 ```
 
 ## 23. The anti-recipes: five gravestones
@@ -969,10 +1121,15 @@ bumbledb::schema! {
     Parent(child) -> Parent;
     Parent(child)  <= Node(id);
     Parent(parent) <= Node(id);
-
-    // The loop's one query — the frontier's children, one ∈-set probe:
-    //   (c) | Parent(child: c, parent in ?frontier);
 }
+```
+
+The loop's one query — the frontier's children, one ∈-set probe:
+
+```rust
+let children = query!(Closure {
+    (c) | Parent(child: c, parent in ?frontier);
+});
 ```
 
 The loop (the compiled, tested copy is `reachable` in `cookbook.rs`, driven
@@ -991,19 +1148,19 @@ Termination is the host's theorem: `seen` grows strictly or the loop breaks,
 inside a finite node set. When the idiom's costs bite — **unbounded or
 large depth** (the per-round query cost stops being noise), or **closure
 composed into a larger plan** (the reachable set must join further inside
-one plan) — write the engine-native form instead:
+one plan) — write the engine-native form instead: the same closure, one
+stratified program under the fixpoint driver — `?root` seeds the predicate,
+the bare rule is the output —
 
-```text
-// The same closure, one stratified program under the fixpoint driver:
-// ?root seeds the predicate, the bare rule is the output.
+```rust
 let native = query!(Closure {
     reach(c) | Node(id: c), c == ?root;
     reach(c) | Parent(child: c, parent: m), reach(m);
     (c) | reach(c);
 });
-let mut prepared = db.prepare(&native)?;
 ```
 
+— and `db.prepare(&native)?` runs the rounds inside one plan
 (the compiled copy runs beside the loop in `cookbook.rs`, both dialects
 asserting the same reachable sets, root for root). What stays host-side is
 the **chain-window class** — interval intersection along paths — which the
@@ -1028,7 +1185,7 @@ engine-native form is one program: aggregation *through* a cycle is refused
 (`AggregationThroughCycle`), but a fold over a recursive predicate from a
 **higher stratum** reads a finished set and is ordinary —
 
-```text
+```rust
 let native = query!(Accounts {
     sub(a) | Account(id: a), a == ?root;
     sub(a) | AccountParent(child: a, parent: p), sub(p);
@@ -1056,14 +1213,25 @@ bumbledb::schema! {
     AccountParent(child)  <= Account(id);
     AccountParent(parent) <= Account(id);
     Posting(account) <= Account(id);
-
-    // The two queries the rollup composes:
-    //   the frontier step (recipe 24's loop, verbatim):
-    //     (c) | AccountParent(child: c, parent in ?frontier);
-    //   the rollup over the accumulated subtree (bind the fresh id —
-    //   recipe 19's discipline, spent again):
-    //     (total: Sum(minor)) | Posting(id, account in ?subtree, minor);
 }
+```
+
+The two queries the host rollup composes. The frontier step (recipe 24's
+loop, verbatim):
+
+```rust
+let children = query!(Accounts {
+    (c) | AccountParent(child: c, parent in ?frontier);
+});
+```
+
+The rollup over the accumulated subtree (bind the fresh id — recipe 19's
+discipline, spent again):
+
+```rust
+let rollup = query!(Accounts {
+    (total: Sum(minor)) | Posting(id, account in ?subtree, minor);
+});
 ```
 
 The rollup is two prepared queries with the recipe-24 loop between them;
@@ -1139,11 +1307,15 @@ bumbledb::schema! {
     Claim(person, span) -> Claim;
     BusySpan(person, span) -> BusySpan;
     BusySpan(person, span) <= Claim(person, span | arm == Busy);
-
-    // Derive the desired rollup on the maintenance snapshot:
-    //   (person, busy: Pack(span)) |
-    //       Claim(source, person, arm == Busy, span);
 }
+```
+
+Derive the desired rollup on the maintenance snapshot:
+
+```rust
+let deriving = query!(MaintainedRollup {
+    (person, busy: Pack(span)) | Claim(source, person, arm == Busy, span);
+});
 ```
 
 The host loop is snapshot → derive → diff → `write_from(snapshot)`. On
@@ -1213,11 +1385,16 @@ bumbledb::schema! {
 
     Salary(employee) <= Employee(id);
     Salary(employee, applies) -> Salary;   // one salary per instant
-
-    // The post-migration read — salaries in force at an instant:
-    //   (name, amount) | Employee(id: e, name),
-    //                    Salary(employee: e, amount, applies: w), ?at in w;
 }
+```
+
+The post-migration read — salaries in force at an instant:
+
+```rust
+let in_force = query!(Payroll {
+    (name, amount) | Employee(id: e, name),
+                     Salary(employee: e, amount, applies: w), ?at in w;
+});
 ```
 
 The compiled test drives the whole loop: seed a v1 store, export both
