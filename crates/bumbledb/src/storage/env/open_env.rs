@@ -30,6 +30,26 @@ pub(super) fn open_env(path: &Path, kind: StoreKind) -> Result<heed::Env<Without
         .map_size(MAP_SIZE)
         .max_dbs(3)
         .max_readers(MAX_READERS);
+    // PRD-C1 gravestone — `MDB_NOMEMINIT` on the durable flag set,
+    // measured NEUTRAL, not taken (docs/structural-1.0.0/
+    // prd-C1-heed-flags.md). The twin armed `EnvFlags::NO_MEM_INIT`
+    // right here for the durable kind only (the ephemeral kind runs
+    // `WRITE_MAP`, where LMDB ignores `NOMEMINIT` — writes land in the
+    // map, no malloc'd write buffer exists to zero) and ran the full
+    // oracle green (2862 verify cases), so semantics were untouched.
+    // The interleaved same-session A/B (scripts/measure.sh, twin
+    // binaries alternated, 3 reps per arm, fresh scratch per rep,
+    // min-of-3, scale S) read NEUTRAL everywhere, base → twin p50:
+    // commit_single 5.02 → 5.00 ms (−0.5%), commit_witnessed 5.13 →
+    // 5.06 ms (−1.2%), commit_batch 24.04 → 24.26 ms (+0.9%), bulk
+    // 1.210 → 1.209 s (−0.05%; −0.9% min) — all F_FULLFSYNC-bound —
+    // and the durable-read spot-check point 395 → 398 ns (+0.8%),
+    // range 18.4 → 18.4 µs (0.0%), warm-cache tier, proxy-clean.
+    // Every family inside the ±2% band. Mechanism: durable commits are
+    // fsync-barrier-dominated and bulk is hash+tree-build-dominated,
+    // so LMDB's write-buffer memset is noise at every regime measured;
+    // the flag buys nothing and the shipped durable flag set stays
+    // exactly as derived above.
     if kind == StoreKind::Ephemeral {
         // SAFETY: WRITE_MAP|NO_SYNC trade machine-crash durability away,
         // which is the ephemeral store kind's on-disk claim

@@ -29,6 +29,12 @@ fold-off = []
 # expands to nothing; on, the hooks are still inert unless the
 # environment variable is set. No runtime mode ships.
 crashpoint = []
+# The PRD-C1 measurement twins (`twin-no-mem-init`, `twin-append`)
+# lived here for one measurement session and were removed with their
+# gravestones — `MDB_NOMEMINIT` measured NEUTRAL
+# (`storage/env/open_env.rs` records the numbers), `MDB_APPEND` refuted
+# structurally (`storage/commit/applier.rs: put_data` records the
+# mechanism). No dead flag ships.
 
 [dependencies]
 blake3 = "1"

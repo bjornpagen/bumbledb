@@ -90,15 +90,10 @@ impl Applier<'_> {
             }));
         }
         let row_id = self.next_row_id(rel)?;
-        self.data.put(
-            self.txn.raw_mut(),
-            &self.key[..m_len],
-            row_id.to_le_bytes().as_slice(),
-        )?;
+        self.put_data(m_len, row_id.to_le_bytes().as_slice())?;
         crashpoint!("mid-write-m");
         let f_len = keys::fact_key(&mut self.key, rel, row_id);
-        self.data
-            .put(self.txn.raw_mut(), &self.key[..f_len], op.fact)?;
+        self.put_data(f_len, op.fact)?;
         crashpoint!("mid-write-f");
 
         for determinant in &op.determinants {
@@ -131,11 +126,7 @@ impl Applier<'_> {
                 });
                 continue;
             }
-            self.data.put(
-                self.txn.raw_mut(),
-                &self.key[..u_len],
-                row_id.to_le_bytes().as_slice(),
-            )?;
+            self.put_data(u_len, row_id.to_le_bytes().as_slice())?;
             crashpoint!("mid-write-u");
             if let Some(tail) = determinant.pointwise {
                 // The exact put cannot detect overlap — only equality —
@@ -147,7 +138,7 @@ impl Applier<'_> {
         for edge in &op.edges {
             let r_len =
                 keys::reverse_key(&mut self.key, edge.statement, &edge.key_bytes, rel, row_id);
-            self.data.put(self.txn.raw_mut(), &self.key[..r_len], &[])?;
+            self.put_data(r_len, &[])?;
             crashpoint!("mid-write-r");
         }
         // Window edges (per φ-satisfying child): the same `R` machinery,
@@ -158,8 +149,33 @@ impl Applier<'_> {
         for edge in &op.window_edges {
             let r_len =
                 keys::reverse_key(&mut self.key, edge.statement, &edge.key_bytes, rel, row_id);
-            self.data.put(self.txn.raw_mut(), &self.key[..r_len], &[])?;
+            self.put_data(r_len, &[])?;
         }
+        Ok(())
+    }
+
+    /// The one phase-2 put: every `M`/`F`/`U`/`R` landing funnels through
+    /// here. PRD-C1 gravestone — the bulk-lane `MDB_APPEND` candidate
+    /// died at this site (docs/structural-1.0.0/prd-C1-heed-flags.md).
+    /// The refutation is structural: the bulk lanes
+    /// (`Db::bulk_load`/`bulk_load_dyn`) route through this same
+    /// applier, and its put stream is NEVER key-ordered — a fact's `M`
+    /// key embeds the blake3 fact hash (hash order, never input order,
+    /// so no caller-side sort can order it), its own `F` key (`F` < `M`
+    /// in first-byte namespace order) immediately follows the
+    /// byte-greater `M` put, and the 4096-fact chunking breaks ordering
+    /// across transactions besides (`MDB_APPEND` compares against the
+    /// database's last key, not the transaction's). The armed twin
+    /// (`PutFlags::APPEND` on this put) proved the failure loud and
+    /// atomic, never silent corruption: LMDB rejected the first
+    /// unordered append with `MDB_KEYEXIST` (surfaced typed —
+    /// `BulkLoadError { committed: 0, error: Lmdb(Mdb(KeyExist)) }` on
+    /// the armed bulk run), the transaction aborted whole, and the
+    /// store read clean after. So append mode is unreachable for this
+    /// key architecture — landing it would need input-order `M` keys,
+    /// which the content-hash fact identity forbids by design.
+    fn put_data(&mut self, len: usize, value: &[u8]) -> Result<()> {
+        self.data.put(self.txn.raw_mut(), &self.key[..len], value)?;
         Ok(())
     }
 
