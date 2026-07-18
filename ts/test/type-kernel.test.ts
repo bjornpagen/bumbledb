@@ -123,6 +123,22 @@ describe("closed relations", function describeClosed() {
 		])
 	})
 
+	test("the minted value carries its columns at runtime — the typed carrier's honest twin", function probeColumnsCarrier() {
+		const { Kind, Grade } = buildLedgerPieces()
+		assert.ok(Object.hasOwn(Grade, "columns"), "the payload tier's columns record is an own runtime property")
+		assert.ok(Object.isFrozen(Grade.columns))
+		assert.deepStrictEqual(Object.keys(Grade.columns), ["mastered"])
+		assert.equal(Grade.columns.mastered, bool, "the carrier holds the declared descriptor itself, by identity")
+		assert.equal(Grade.data.columns[0]?.field, Grade.columns.mastered, "the lowering reads the same descriptors")
+		// the bare tier declares no columns — the carrier is present and empty
+		assert.ok(Object.hasOwn(Kind, "columns"), "the bare tier carries the empty columns record")
+		assert.ok(Object.isFrozen(Kind.columns))
+		assert.deepStrictEqual(Kind.columns, {})
+		// the carrier's TYPE flows through the mint: the label reads back as its literal
+		const label: "SevLevel" = closed("Sev", { level: u64.as("SevLevel") })({ Info: { level: 1n } }).columns.level.domain
+		assert.equal(label, "SevLevel")
+	})
+
 	test("duplicate and reserved handles are construction errors in both tiers", function probeHandleGuards() {
 		assert.throws(function duplicateHandle() {
 			closed("Kind", ["Checking", "Checking"])

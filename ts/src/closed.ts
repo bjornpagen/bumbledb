@@ -6,8 +6,10 @@
  * (`Kind.Checking`, ids = declaration order, each a BARE `bigint` — no
  * brand), the `fromId` weld, an `id` field descriptor carrying the handle
  * DOMAIN (`"KindId"`, mirroring Rust's `closed relation Kind as KindId`)
- * for other relations' field blocks (`kind: Kind.id`), and payload
- * readback (`Kind.axioms`). Bare tier: `closed("Kind", ["Checking",
+ * for other relations' field blocks (`kind: Kind.id`), payload readback
+ * (`Kind.axioms`), and the declared payload column descriptors
+ * (`Kind.columns` — the runtime twin of the `Cols` type parameter, which
+ * the face layer's domain wall reads). Bare tier: `closed("Kind", ["Checking",
  * "Savings"])`. Payload tier: `closed("Sev", { pages: bool })({ Critical:
  * { pages: true }, ... })` — the axioms record IS the handle declaration,
  * every handle carrying every column exactly once (type-enforced). No fact
@@ -42,27 +44,6 @@ const reservedHandleNames: readonly string[] = Object.freeze([
 	"relation",
 	"selection"
 ])
-
-/**
- * Reads one handle's axiom row, refusing absence loudly: the payload tier's
- * axioms record is keyed by the handles themselves (a missing row is a
- * missing handle — unrepresentable), and the bare tier never reaches here
- * (it declares no columns).
- */
-function axiomRow(
-	name: string,
-	axioms: Readonly<Record<string, Readonly<Record<string, unknown>>>> | undefined,
-	handle: string
-): Readonly<Record<string, unknown>> {
-	if (axioms === undefined) {
-		throw errors.new(`closed relation ${name}: payload columns declared without ground axioms`)
-	}
-	const row = axioms[handle]
-	if (row === undefined) {
-		throw errors.new(`closed relation ${name}: no ground axiom for handle ${handle}`)
-	}
-	return row
-}
 
 /**
  * A payload column of a closed relation: any field descriptor except a
@@ -125,10 +106,12 @@ interface ClosedCore<Name extends string, Handles extends string, Cols extends R
 	/** Payload readback: handle to its declared column values, bare and structural. */
 	readonly axioms: Axioms<Handles, Cols>
 	/**
-	 * The declared payload columns, name → S1 field descriptor — carried in
-	 * the TYPE so a projected payload column's domain label is recoverable
-	 * off the schema type (the face layer's `ProjectedDomain` reads it; the
-	 * runtime twin is `data.columns`).
+	 * The declared payload columns, name → S1 field descriptor — an HONEST
+	 * frozen runtime record (the descriptors themselves, by identity), and
+	 * the typed carrier a projected payload column's domain label is
+	 * recovered through off the schema type (the face layer's
+	 * `ProjectedDomain` reads it; `data.columns` carries the same
+	 * descriptors in declaration order for the lowering).
 	 */
 	readonly columns: Cols
 	/** The weld: declaration-order id back to its handle, or undefined beyond the roster. */
@@ -163,6 +146,115 @@ function isHandleTuple(
 	return Array.isArray(shape)
 }
 
+/**
+ * The trusted seam of the payload tier's handle enumeration: the axioms
+ * record's own enumerable keys ARE its handle set (the type says so —
+ * {@link Axioms} is keyed by the handles), and this guard verifies exactly
+ * that checkable fact before the key list is admitted at the handle type.
+ */
+function handleKeysOwn<Handles extends string>(
+	axioms: { readonly [H in Handles]: object },
+	names: readonly string[]
+): names is readonly Handles[] {
+	return names.every(function ownHandle(name) {
+		return Object.hasOwn(axioms, name)
+	})
+}
+
+/**
+ * The trusted seam of the axiom-readback mint: every handle carries an own
+ * frozen row and every row carries every declared column as an own
+ * property — verified before the record is admitted as the typed
+ * {@link Axioms} (the `refsComplete` analog of `relation()`).
+ */
+function axiomsMinted<Handles extends string, Cols extends Record<string, PayloadField>>(
+	record: Readonly<Record<string, object>>,
+	handles: readonly Handles[],
+	cols: readonly ClosedColumn[]
+): record is Axioms<Handles, Cols> & Readonly<Record<string, object>> {
+	return handles.every(function rowMinted(handle) {
+		const row = record[handle]
+		return (
+			row !== undefined &&
+			cols.every(function columnMinted(column) {
+				return Object.hasOwn(row, column.name)
+			})
+		)
+	})
+}
+
+/**
+ * The trusted seam of the handle-constant mint: every handle reads back as
+ * an own bigint — verified before the record is admitted at the constants
+ * type (a "__proto__"-named handle riding the object-protocol accessor
+ * would fail exactly this check).
+ */
+function constantsMinted<Handles extends string>(
+	record: Readonly<Record<string, bigint>>,
+	handles: readonly Handles[]
+): record is Readonly<Record<string, bigint>> & { readonly [H in Handles]: bigint } {
+	return handles.every(function constantMinted(handle) {
+		return typeof record[handle] === "bigint"
+	})
+}
+
+/**
+ * Reads one handle's ground axiom row for lowering. The typed payload
+ * surface makes absence unrepresentable ({@link Axioms} carries every
+ * handle's row); the refusal below guards the one ill-typed path — payload
+ * columns with the bare tier's absent axioms — which no public spelling
+ * reaches.
+ */
+function groundRow<Handles extends string, Cols extends Record<string, PayloadField>>(
+	name: string,
+	axioms: Axioms<Handles, Cols> | undefined,
+	handle: Handles
+): Readonly<Record<string, unknown>> {
+	if (axioms === undefined) {
+		throw errors.new(`closed relation ${name}: payload columns declared without ground axioms`)
+	}
+	return axioms[handle]
+}
+
+/**
+ * Mints the axiom-readback record: one own frozen row per handle (the bare
+ * tier's rows are empty — it declares no columns), each row a fresh copy of
+ * its ground axiom.
+ */
+function mintAxioms<Handles extends string, Cols extends Record<string, PayloadField>>(
+	name: string,
+	handles: readonly Handles[],
+	cols: readonly ClosedColumn[],
+	axioms: Axioms<Handles, Cols> | undefined
+): Axioms<Handles, Cols> {
+	const out: Record<string, object> = {}
+	for (const handle of handles) {
+		const row = axioms === undefined ? Object.freeze({}) : Object.freeze({ ...groundRow(name, axioms, handle) })
+		Object.defineProperty(out, handle, { value: row, enumerable: true })
+	}
+	Object.freeze(out)
+	if (!axiomsMinted<Handles, Cols>(out, handles, cols)) {
+		throw errors.new(`closed relation ${name}: axiom-row minting incomplete`)
+	}
+	return out
+}
+
+/** Mints the handle constants: one own bigint per handle, ids = declaration order. */
+function mintHandleConstants<Handles extends string>(
+	name: string,
+	handles: readonly Handles[]
+): { readonly [H in Handles]: bigint } {
+	const out: Record<string, bigint> = {}
+	handles.forEach(function mintHandleConstant(handle, index) {
+		Object.defineProperty(out, handle, { value: BigInt(index), enumerable: true })
+	})
+	Object.freeze(out)
+	if (!constantsMinted(out, handles)) {
+		throw errors.new(`closed relation ${name}: handle-constant minting incomplete`)
+	}
+	return out
+}
+
 /** Bare tier: `closed("Kind", ["Checking", "Savings"])` — handles only. */
 function closed<const Name extends string, const Handles extends readonly [string, ...string[]]>(
 	name: Name,
@@ -181,36 +273,66 @@ function closed<const Name extends string, const Cols extends Record<string, Pay
 	columns: Cols
 ): <Handles extends string>(axioms: Axioms<Handles, Cols>) => Closed<Name, Handles, Cols>
 
-function closed(name: string, shape: readonly [string, ...string[]] | Record<string, PayloadField>): unknown {
+function closed<const Name extends string>(
+	name: Name,
+	shape: readonly [string, ...string[]] | Record<string, PayloadField>
+):
+	| Closed<Name, string, Record<never, never>>
+	| (<Handles extends string>(
+			axioms: Axioms<Handles, Record<string, PayloadField>>
+	  ) => Closed<Name, Handles, Record<string, PayloadField>>) {
 	if (isHandleTuple(shape)) {
-		return mintClosed(name, shape, [], undefined)
+		return closedBare(name, shape)
 	}
-	const cols: ClosedColumn[] = []
-	for (const [columnName, field] of Object.entries(shape)) {
+	return closedPayload(name, shape)
+}
+
+/** The bare tier's precisely-typed builder: no columns, no axioms. */
+function closedBare<Name extends string, Handles extends string>(
+	name: Name,
+	handles: readonly [Handles, ...Handles[]]
+): Closed<Name, Handles, Record<never, never>> {
+	return mintClosed<Name, Handles, Record<never, never>>(name, handles, {}, undefined)
+}
+
+/**
+ * The payload tier's precisely-typed builder: column names are judged
+ * EAGERLY (at `closed(name, columns)`, before any axioms arrive — the
+ * macro-expansion analog), and the returned `withAxioms` reads its handle
+ * set off the axioms record's own keys.
+ */
+function closedPayload<Name extends string, Cols extends Record<string, PayloadField>>(
+	name: Name,
+	columns: Cols
+): <Handles extends string>(axioms: Axioms<Handles, Cols>) => Closed<Name, Handles, Cols> {
+	for (const columnName of Object.keys(columns)) {
 		assertDeclarationOrderKey(`closed relation ${name} column`, columnName)
-		cols.push(Object.freeze({ name: columnName, field }))
 	}
-	Object.freeze(cols)
-	return function withAxioms(axioms: Readonly<Record<string, Readonly<Record<string, unknown>>>>): unknown {
+	return function withAxioms<Handles extends string>(axioms: Axioms<Handles, Cols>): Closed<Name, Handles, Cols> {
 		const handles = Object.keys(axioms)
 		for (const handle of handles) {
 			assertDeclarationOrderKey(`closed relation ${name} handle`, handle)
 		}
-		return mintClosed(name, handles, cols, axioms)
+		if (!handleKeysOwn(axioms, handles)) {
+			throw errors.new(`closed relation ${name}: handle enumeration incomplete`)
+		}
+		return mintClosed<Name, Handles, Cols>(name, handles, columns, axioms)
 	}
 }
 
 /**
- * Mints one closed relation value — the shared seam of both tiers: roster
- * checks, eager axiom lowering, the domain-labeled `id` descriptor, and
- * the handle constants.
+ * Mints one closed relation value — the shared seam of both tiers, HONESTLY
+ * typed end to end (a wrong-shaped mint is a compile error here, not a
+ * laundered `unknown`): roster checks, eager axiom lowering, the
+ * domain-labeled `id` descriptor, the frozen `columns` carrier (the runtime
+ * twin of the `Cols` type parameter), and the handle constants.
  */
-function mintClosed(
-	name: string,
-	handles: readonly string[],
-	cols: readonly ClosedColumn[],
-	axioms: Readonly<Record<string, Readonly<Record<string, unknown>>>> | undefined
-): unknown {
+function mintClosed<Name extends string, Handles extends string, Cols extends Record<string, PayloadField>>(
+	name: Name,
+	handles: readonly Handles[],
+	columns: Cols,
+	axioms: Axioms<Handles, Cols> | undefined
+): Closed<Name, Handles, Cols> {
 	if (handles.length === 0) {
 		throw errors.new(`closed relation ${name}: at least one handle is required (an empty vocabulary declares nothing)`)
 	}
@@ -226,10 +348,17 @@ function mintClosed(
 			)
 		}
 	}
-	const roster: ClosedRoster = Object.freeze({ name, handles: Object.freeze([...handles]) })
-	const rows: ClosedRow[] = handles.map(function lowerRow(handle) {
+	const handleList: readonly Handles[] = Object.freeze([...handles])
+	const roster: ClosedRoster = Object.freeze({ name, handles: handleList })
+	const cols: ClosedColumn[] = []
+	for (const [columnName, field] of Object.entries(columns)) {
+		assertDeclarationOrderKey(`closed relation ${name} column`, columnName)
+		cols.push(Object.freeze({ name: columnName, field }))
+	}
+	Object.freeze(cols)
+	const rows: ClosedRow[] = handleList.map(function lowerRow(handle) {
 		const values = cols.map(function lowerAxiomLiteral(column) {
-			const row = axiomRow(name, axioms, handle)
+			const row = groundRow(name, axioms, handle)
 			return Object.freeze(literalOf(column.field, row[column.name]))
 		})
 		return Object.freeze({ handle, values: Object.freeze(values) })
@@ -237,40 +366,40 @@ function mintClosed(
 	const data: ClosedData = Object.freeze({
 		name,
 		handles: roster.handles,
-		columns: Object.freeze([...cols]),
+		columns: cols,
 		rows: Object.freeze(rows)
 	})
-	const id: ClosedIdField = Object.freeze({
+	const id: ClosedIdField<`${Name}Id`> = Object.freeze({
 		kind: "u64",
 		domain: `${name}Id`,
 		closed: roster
 	})
 	/**
 	 * Handle names are arbitrary identifiers, so rows and constants are
-	 * minted with OWN-property definition, never assignment: a handle named
+	 * minted with OWN-property definition (inside {@link mintAxioms} and
+	 * {@link mintHandleConstants}), never assignment: a handle named
 	 * "__proto__" would otherwise ride the Object.prototype accessor —
 	 * silently swapping the record's prototype instead of creating the row,
 	 * and no-oping the constant (a primitive through the setter) — minting a
 	 * value whose type claims a bigint constant but reads back an object.
+	 * (Object SPREAD is CreateDataProperty by spec, so the copies below are
+	 * own-property safe for column names too.)
 	 */
-	const axiomsOut: Record<string, object> = {}
-	for (const handle of handles) {
-		const row = axioms === undefined ? Object.freeze({}) : Object.freeze({ ...axiomRow(name, axioms, handle) })
-		Object.defineProperty(axiomsOut, handle, { value: row, enumerable: true })
-	}
-	const value: Record<string, unknown> = {
+	const axiomsOut = mintAxioms<Handles, Cols>(name, handleList, cols, axioms)
+	const constants = mintHandleConstants(name, handleList)
+	const columnsOut: Cols = { ...columns }
+	Object.freeze(columnsOut)
+	return Object.freeze({
+		...constants,
 		name,
 		id,
 		data,
-		axioms: Object.freeze(axiomsOut),
-		fromId(idValue: bigint): string | undefined {
-			return roster.handles[Number(idValue)]
+		axioms: axiomsOut,
+		columns: columnsOut,
+		fromId(idValue: bigint): Handles | undefined {
+			return handleList[Number(idValue)]
 		}
-	}
-	handles.forEach(function mintHandleConstant(handle, index) {
-		Object.defineProperty(value, handle, { value: BigInt(index), enumerable: true })
 	})
-	return Object.freeze(value)
 }
 
 export type { AnyClosed, AxiomRow, Axioms, Closed, ClosedColumn, ClosedCore, ClosedData, ClosedRow, PayloadField }

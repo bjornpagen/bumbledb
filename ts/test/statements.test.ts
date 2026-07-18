@@ -27,6 +27,7 @@ import { contained, key, mirrors, renderStatement, window } from "#statements.ts
 const HolderId = u64.as("HolderId")
 const AccountId = u64.as("AccountId")
 const RoomId = u64.as("RoomId")
+const Level = u64.as("Level")
 const ActiveDuring = interval(i64).as("ActiveDuring")
 const BookedDuring = interval(u64).as("BookedDuring")
 
@@ -61,6 +62,22 @@ function buildCalendar() {
 	]
 	const Calendar = schema("Calendar", { Booking, Slot }, statements)
 	return { Booking, Slot, statements, Calendar }
+}
+
+/**
+ * The closed-payload fixtures: a payload column declared with a domain
+ * label (`u64.as("Level")`) facing a relation field carrying the SAME
+ * label — the pairing the typed `columns` carrier exists to admit.
+ */
+function buildSeverity() {
+	const Sev = closed("Sev", { level: Level })({
+		Info: { level: 1n },
+		Critical: { level: 5n }
+	})
+	const Limit = relation("Limit", { level: Level, cap: u64 })
+	const statements = [contained(on(Sev, "level"), on(Limit, "level"))]
+	const Severity = schema("Severity", { Sev, Limit }, statements)
+	return { Sev, Limit, statements, Severity }
 }
 
 describe("the Ledger example", function describeLedger() {
@@ -154,6 +171,40 @@ describe("the Ledger example", function describeLedger() {
 				bidirectional: false
 			}
 		])
+	})
+
+	test("a closed payload column lowers its domain label to the wire — the engine-side twin of the face wall", function probeClosedPayloadLowering() {
+		const { Severity } = buildSeverity()
+		assert.deepStrictEqual(lower(Severity), {
+			relations: [
+				{
+					name: "Sev",
+					newtype: "SevId",
+					fields: [{ name: "level", valueType: { kind: "u64" }, newtype: "Level", fresh: false }],
+					extension: [
+						{ handle: "Info", values: [{ kind: "value", value: { kind: "u64", value: 1n } }] },
+						{ handle: "Critical", values: [{ kind: "value", value: { kind: "u64", value: 5n } }] }
+					]
+				},
+				{
+					name: "Limit",
+					newtype: undefined,
+					fields: [
+						{ name: "level", valueType: { kind: "u64" }, newtype: "Level", fresh: false },
+						{ name: "cap", valueType: { kind: "u64" }, newtype: undefined, fresh: false }
+					],
+					extension: undefined
+				}
+			],
+			statements: [
+				{
+					kind: "containment",
+					source: { relation: "Sev", projection: ["level"], selection: [] },
+					target: { relation: "Limit", projection: ["level"], selection: [] },
+					bidirectional: false
+				}
+			]
+		})
 	})
 
 	test("lowering is deterministic across independent constructions", function probeDeterminism() {
@@ -390,6 +441,28 @@ function domainsAreComparedStructurally(): unknown[] {
 	]
 }
 
+/**
+ * A closed relation's payload columns carry their declared domain labels
+ * through the face wall — read off the typed `columns` carrier (whose
+ * runtime twin is the frozen `columns` record the mint carries), exactly
+ * as an ordinary relation's fields carry theirs.
+ */
+function closedPayloadColumnsCarryDomains(): unknown[] {
+	const { Sev, Limit } = buildSeverity()
+	const { Holder } = buildLedger()
+	return [
+		// the legal pairs compile — Level on both sides, whichever side is closed
+		contained(on(Sev, "level"), on(Limit, "level")),
+		contained(on(Limit, "level"), on(Sev, "level")),
+		// @ts-expect-error — Level vs unlabeled u64: a labeled payload column never links an unlabeled field
+		contained(on(Sev, "level"), on(Limit, "cap")),
+		// @ts-expect-error — Level vs HolderId: a mislabeled pairing refuses exactly as between relations
+		contained(on(Sev, "level"), on(Holder, "id")),
+		// @ts-expect-error — Level vs SevId: a payload column is not the synthetic handle id
+		contained(on(Sev, "level"), on(Sev, "id"))
+	]
+}
+
 /** `where()` selections are typed: handles are the closed value's own constants. */
 function selectionsAreTyped(): unknown[] {
 	const { Kind, Account } = buildLedger()
@@ -427,6 +500,7 @@ function dbTypestateHoldsTheWall(
 
 export {
 	banTableIsUnwritable,
+	closedPayloadColumnsCarryDomains,
 	dbTypestateHoldsTheWall,
 	domainsAreComparedStructurally,
 	fieldReferencesAreTypeChecked,
