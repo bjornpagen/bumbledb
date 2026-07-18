@@ -95,10 +95,10 @@ type WindowSpec =
 	| { readonly kind: "floor"; readonly lo: bigint }
 
 /**
- * One field: name, structural type, host newtype name — the descriptor's
- * DOMAIN label (the macro's `as NewType`; the SDK's `.as("Domain")`),
- * carried for handle resolution only, dropped by the engine at descriptor
- * lowering and never fingerprinted — and the `fresh` mint mark.
+ * One field: name, structural type, host newtype name — the field's
+ * DOMAIN (the macro's declared `as NewType`; the SDK's law-computed class
+ * name), carried for handle resolution only, dropped by the engine at
+ * descriptor lowering and never fingerprinted — and the `fresh` mint mark.
  */
 interface FieldSpec {
 	readonly name: string

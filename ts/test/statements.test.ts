@@ -1,13 +1,17 @@
 /**
- * PRD-S2 pins: the full Ledger example (key, containment, selected `==`,
- * window) lowers to its `SchemaSpec` shape with DOMAINS carried throughout;
- * the canonical-utterance ban table is enumerated one row at a time (each
- * banned LITERAL spelling a REAL `@ts-expect-error` — unwritable — and each
- * computed-bound escape a construction error naming the canonical form);
- * field references are checked in the type (existence and domain, read
- * structurally off the schema type); `schema()` enforces its
- * expansion-boundary checks including the handle-selection paste-back law;
- * and `renderStatement` emits the canonical `70-api.md` spellings exactly.
+ * Statement-algebra pins on the MINIMAL kernel (K3): the full Ledger
+ * example (key, containment, selected `==`, window) lowers to its
+ * `SchemaSpec` shape — the `newtype` slots temporarily `undefined` until
+ * the law-typing lands (K4 computes every field's class name FROM the
+ * statements); the canonical-utterance ban table is enumerated one row at
+ * a time (each banned LITERAL spelling a REAL `@ts-expect-error` —
+ * unwritable — and each computed-bound escape a construction error naming
+ * the canonical form); field references are checked in the type —
+ * existence AND structural shape (positionwise kind/width/element, read
+ * off the schema type; the DOMAIN wall lives at `schema()` and is K4's,
+ * not construction's); `schema()` enforces its expansion-boundary checks
+ * including the handle-selection paste-back law; and `renderStatement`
+ * emits the canonical `70-api.md` spellings exactly.
  */
 
 import assert from "node:assert/strict"
@@ -16,31 +20,23 @@ import { describe, test } from "node:test"
 import { closed } from "#closed.ts"
 import * as countModule from "#count.ts"
 import { atLeast, atMost, between, exactly, none } from "#count.ts"
-import type { Db } from "#db.ts"
 import { on, oneOf } from "#face.ts"
-import { i64, interval, span, str, u64 } from "#fields.ts"
+import { bytes, i64, interval, span, str, u64 } from "#fields.ts"
 import { lower } from "#lower.ts"
-import { type InsertFact, relation } from "#relation.ts"
+import { relation } from "#relation.ts"
 import { schema } from "#schema.ts"
 import { contained, key, mirrors, renderStatement, window } from "#statements.ts"
 
-const HolderId = u64.as("HolderId")
-const AccountId = u64.as("AccountId")
-const RoomId = u64.as("RoomId")
-const Level = u64.as("Level")
-const ActiveDuring = interval(i64).as("ActiveDuring")
-const BookedDuring = interval(u64).as("BookedDuring")
-
 function buildLedger() {
 	const Kind = closed("Kind", ["Checking", "Savings"])
-	const Holder = relation("Holder", { id: HolderId.fresh, name: str })
+	const Holder = relation("Holder", { id: u64.fresh, name: str })
 	const Account = relation("Account", {
-		id: AccountId.fresh,
-		holder: HolderId,
+		id: u64.fresh,
+		holder: u64,
 		kind: Kind.id,
-		active: ActiveDuring
+		active: interval(i64)
 	})
-	const SavingsTerms = relation("SavingsTerms", { account: AccountId })
+	const SavingsTerms = relation("SavingsTerms", { account: u64 })
 	const statements = [
 		key(SavingsTerms, ["account"]),
 		contained(on(Account, "holder"), on(Holder, "id")),
@@ -54,8 +50,8 @@ function buildLedger() {
 
 /** The composite/pointwise fixtures: `on(R, ["a", "b"])` positions and the composite key. */
 function buildCalendar() {
-	const Booking = relation("Booking", { room: RoomId, during: BookedDuring })
-	const Slot = relation("Slot", { room: RoomId, during: BookedDuring })
+	const Booking = relation("Booking", { room: u64, during: interval(u64) })
+	const Slot = relation("Slot", { room: u64, during: interval(u64) })
 	const statements = [
 		key(Booking, ["room", "during"]),
 		contained(on(Slot, ["room", "during"]), on(Booking, ["room", "during"]))
@@ -65,29 +61,29 @@ function buildCalendar() {
 }
 
 /**
- * The closed-payload fixtures: a payload column declared with a domain
- * label (`u64.as("Level")`) facing a relation field carrying the SAME
- * label — the pairing the typed `columns` carrier exists to admit.
+ * The closed-payload fixtures: a payload column facing a relation field of
+ * the SAME structure — the pairing the typed `columns` carrier exists to
+ * admit (its domain, if any, is law-born at `schema()`, never declared).
  */
 function buildSeverity() {
-	const Sev = closed("Sev", { level: Level })({
+	const Sev = closed("Sev", { level: u64 })({
 		Info: { level: 1n },
 		Critical: { level: 5n }
 	})
-	const Limit = relation("Limit", { level: Level, cap: u64 })
+	const Limit = relation("Limit", { level: u64, cap: u64 })
 	const statements = [contained(on(Sev, "level"), on(Limit, "level"))]
 	const Severity = schema("Severity", { Sev, Limit }, statements)
 	return { Sev, Limit, statements, Severity }
 }
 
 describe("the Ledger example", function describeLedger() {
-	test("lowers to the SchemaSpec shape, declaration order and domains throughout", function probeLedgerLowering() {
+	test("lowers to the SchemaSpec shape, declaration order throughout, newtype slots undefined until the law-typing lands", function probeLedgerLowering() {
 		const { Ledger } = buildLedger()
 		assert.deepStrictEqual(lower(Ledger), {
 			relations: [
 				{
 					name: "Kind",
-					newtype: "KindId",
+					newtype: undefined,
 					fields: [],
 					extension: [
 						{ handle: "Checking", values: [] },
@@ -98,7 +94,7 @@ describe("the Ledger example", function describeLedger() {
 					name: "Holder",
 					newtype: undefined,
 					fields: [
-						{ name: "id", valueType: { kind: "u64" }, newtype: "HolderId", fresh: true },
+						{ name: "id", valueType: { kind: "u64" }, newtype: undefined, fresh: true },
 						{ name: "name", valueType: { kind: "string" }, newtype: undefined, fresh: false }
 					],
 					extension: undefined
@@ -107,13 +103,13 @@ describe("the Ledger example", function describeLedger() {
 					name: "Account",
 					newtype: undefined,
 					fields: [
-						{ name: "id", valueType: { kind: "u64" }, newtype: "AccountId", fresh: true },
-						{ name: "holder", valueType: { kind: "u64" }, newtype: "HolderId", fresh: false },
-						{ name: "kind", valueType: { kind: "u64" }, newtype: "KindId", fresh: false },
+						{ name: "id", valueType: { kind: "u64" }, newtype: undefined, fresh: true },
+						{ name: "holder", valueType: { kind: "u64" }, newtype: undefined, fresh: false },
+						{ name: "kind", valueType: { kind: "u64" }, newtype: undefined, fresh: false },
 						{
 							name: "active",
 							valueType: { kind: "interval", element: "i64", width: undefined },
-							newtype: "ActiveDuring",
+							newtype: undefined,
 							fresh: false
 						}
 					],
@@ -122,7 +118,7 @@ describe("the Ledger example", function describeLedger() {
 				{
 					name: "SavingsTerms",
 					newtype: undefined,
-					fields: [{ name: "account", valueType: { kind: "u64" }, newtype: "AccountId", fresh: false }],
+					fields: [{ name: "account", valueType: { kind: "u64" }, newtype: undefined, fresh: false }],
 					extension: undefined
 				}
 			],
@@ -173,14 +169,14 @@ describe("the Ledger example", function describeLedger() {
 		])
 	})
 
-	test("a closed payload column lowers its domain label to the wire — the engine-side twin of the face wall", function probeClosedPayloadLowering() {
+	test("a closed payload column lowers pure structure — the newtype slot awaits the law-typing", function probeClosedPayloadLowering() {
 		const { Severity } = buildSeverity()
 		assert.deepStrictEqual(lower(Severity), {
 			relations: [
 				{
 					name: "Sev",
-					newtype: "SevId",
-					fields: [{ name: "level", valueType: { kind: "u64" }, newtype: "Level", fresh: false }],
+					newtype: undefined,
+					fields: [{ name: "level", valueType: { kind: "u64" }, newtype: undefined, fresh: false }],
 					extension: [
 						{ handle: "Info", values: [{ kind: "value", value: { kind: "u64", value: 1n } }] },
 						{ handle: "Critical", values: [{ kind: "value", value: { kind: "u64", value: 5n } }] }
@@ -190,7 +186,7 @@ describe("the Ledger example", function describeLedger() {
 					name: "Limit",
 					newtype: undefined,
 					fields: [
-						{ name: "level", valueType: { kind: "u64" }, newtype: "Level", fresh: false },
+						{ name: "level", valueType: { kind: "u64" }, newtype: undefined, fresh: false },
 						{ name: "cap", valueType: { kind: "u64" }, newtype: undefined, fresh: false }
 					],
 					extension: undefined
@@ -349,8 +345,8 @@ describe("schema() construction boundary", function describeSchemaBoundary() {
 	})
 
 	test("a same-named but different relation value is rejected", function probeIdentity() {
-		const impostor = relation("Holder", { id: HolderId.fresh })
-		const declared = relation("Holder", { id: HolderId.fresh })
+		const impostor = relation("Holder", { id: u64.fresh })
+		const declared = relation("Holder", { id: u64.fresh })
 		assert.throws(function differentValue() {
 			schema("Broken", { Holder: declared }, [contained(on(impostor, "id"), on(declared, "id"))])
 		}, /different relation value named Holder/)
@@ -391,10 +387,13 @@ describe("schema() construction boundary", function describeSchemaBoundary() {
 })
 
 // ————————————————————————————————————————————————————————————————————————
-// The S2 compile probes: field references are checked in the TYPE —
-// existence (names autocomplete, unknown field = type error) and DOMAIN
-// compatibility (positionwise string-literal equality of the S1 labels,
-// read structurally off the schema type — never a value brand). Each
+// The construction compile probes: field references are checked in the
+// TYPE — existence (names autocomplete, unknown field = type error) and
+// STRUCTURAL compatibility (positionwise kind/width/element, read off the
+// schema type). The old cross-DOMAIN construction probes are gone from
+// here BY DESIGN: at construction there is no domain to compare — the
+// laws are self-defining, and the domain wall is re-homed at the schema
+// level (K4's one-generator-per-class check) and at query joins. Each
 // function is exported-but-uncalled; each directive is REAL.
 // ————————————————————————————————————————————————————————————————————————
 
@@ -416,50 +415,51 @@ function fieldReferencesAreTypeChecked(): unknown[] {
 	]
 }
 
-/** Cross-domain pairs are compile errors on every relating constructor. */
-function domainsAreComparedStructurally(): unknown[] {
-	const { Holder, Account, SavingsTerms } = buildLedger()
+/** Structurally mismatched pairs are compile errors on every relating constructor. */
+function facesArePairedStructurally(): unknown[] {
+	const { Kind, Holder, Account } = buildLedger()
 	const { Booking, Slot } = buildCalendar()
+	const Vault = relation("Vault", { tag: bytes(32), stamp: bytes(16) })
 	return [
-		// the legal pairs compile — same labels, positionwise
+		// the legal pairs compile — positionwise-equal kind/width/element
 		contained(on(Account, "holder"), on(Holder, "id")),
 		contained(on(Slot, ["room", "during"]), on(Booking, ["room", "during"])),
-		// @ts-expect-error — HolderId vs AccountId: a cross-domain containment pair
-		contained(on(Account, "holder"), on(SavingsTerms, "account")),
-		// @ts-expect-error — an unlabeled field (undefined) links only unlabeled fields
+		contained(on(Account, "kind"), on(Kind, "id")),
+		// @ts-expect-error — a u64 face never pairs a str face (kind mismatch)
 		contained(on(Holder, "name"), on(Account, "holder")),
-		// @ts-expect-error — KindId vs HolderId: a closed reference pairs only with its own handle domain
-		contained(on(Account, "kind"), on(Holder, "id")),
-		// @ts-expect-error — composite positions compare positionwise: [RoomId, BookedDuring] vs [BookedDuring, RoomId]
+		// @ts-expect-error — bytes(32) never pairs bytes(16) (width mismatch)
+		contained(on(Vault, "tag"), on(Vault, "stamp")),
+		// @ts-expect-error — interval(i64) never pairs interval(u64) (element mismatch)
+		contained(on(Account, "active"), on(Booking, "during")),
+		// @ts-expect-error — composite positions compare positionwise: [u64, interval] vs [interval, u64]
 		contained(on(Slot, ["room", "during"]), on(Booking, ["during", "room"])),
-		// @ts-expect-error — a mirrors bijection relates domains exactly as containment
-		mirrors(on(Account, "id"), on(Holder, "id")),
-		// @ts-expect-error — a window's grouping join relates domains exactly as containment
-		window(on(Holder, "id"), atMost(3n), on(Account, "id")),
+		// @ts-expect-error — a mirrors bijection pairs structure exactly as containment (u64 vs interval)
+		mirrors(on(Account, "id"), on(Account, "active")),
+		// @ts-expect-error — a window's grouping join pairs structure exactly as containment (u64 vs interval)
+		window(on(Holder, "id"), atMost(3n), on(Account, "active")),
 		// @ts-expect-error — arity mismatch: positional pairing requires equally many fields
 		contained(on(Slot, ["room", "during"]), on(Booking, "room"))
 	]
 }
 
 /**
- * A closed relation's payload columns carry their declared domain labels
- * through the face wall — read off the typed `columns` carrier (whose
- * runtime twin is the frozen `columns` record the mint carries), exactly
- * as an ordinary relation's fields carry theirs.
+ * A closed relation's payload columns pair by their declared descriptors'
+ * STRUCTURE through the typed `columns` carrier (whose runtime twin is the
+ * frozen `columns` record the mint carries), exactly as an ordinary
+ * relation's fields do; the synthetic `id` is a u64.
  */
-function closedPayloadColumnsCarryDomains(): unknown[] {
+function closedPayloadColumnsPairStructurally(): unknown[] {
 	const { Sev, Limit } = buildSeverity()
-	const { Holder } = buildLedger()
+	const { Holder, Account } = buildLedger()
 	return [
-		// the legal pairs compile — Level on both sides, whichever side is closed
+		// the legal pairs compile — u64 against u64, whichever side is closed
 		contained(on(Sev, "level"), on(Limit, "level")),
 		contained(on(Limit, "level"), on(Sev, "level")),
-		// @ts-expect-error — Level vs unlabeled u64: a labeled payload column never links an unlabeled field
-		contained(on(Sev, "level"), on(Limit, "cap")),
-		// @ts-expect-error — Level vs HolderId: a mislabeled pairing refuses exactly as between relations
-		contained(on(Sev, "level"), on(Holder, "id")),
-		// @ts-expect-error — Level vs SevId: a payload column is not the synthetic handle id
-		contained(on(Sev, "level"), on(Sev, "id"))
+		contained(on(Limit, "cap"), on(Sev, "id")),
+		// @ts-expect-error — a payload column pairs by structure: u64 never pairs str
+		contained(on(Sev, "level"), on(Holder, "name")),
+		// @ts-expect-error — the synthetic id is a u64: it never pairs an interval face
+		contained(on(Sev, "id"), on(Account, "active"))
 	]
 }
 
@@ -477,32 +477,10 @@ function selectionsAreTyped(): unknown[] {
 	]
 }
 
-/**
- * `schema()` carries its relation record as typestate: `Db` over one
- * schema's relations accepts exactly those relations — a schema-A fact
- * into a schema-B store is a compile error (relation identity is the
- * membership rule).
- */
-function dbTypestateHoldsTheWall(
-	ledgerDb: Db<ReturnType<typeof buildLedger>["Ledger"]["relations"]>,
-	calendarDb: Db<ReturnType<typeof buildCalendar>["Calendar"]["relations"]>,
-	account: InsertFact<ReturnType<typeof buildLedger>["Account"]>
-): void {
-	const { Account } = buildLedger()
-	ledgerDb.write(function accepts(tx) {
-		tx.insert(Account, account)
-	})
-	calendarDb.write(function rejects(tx) {
-		// @ts-expect-error — a Ledger fact belongs to Db<Ledger>, never Db<Calendar>
-		tx.insert(Account, account)
-	})
-}
-
 export {
 	banTableIsUnwritable,
-	closedPayloadColumnsCarryDomains,
-	dbTypestateHoldsTheWall,
-	domainsAreComparedStructurally,
+	closedPayloadColumnsPairStructurally,
+	facesArePairedStructurally,
 	fieldReferencesAreTypeChecked,
 	selectionsAreTyped
 }

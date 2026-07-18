@@ -57,17 +57,18 @@ function valueTypeOf(field: AnyField): ValueTypeSpec {
 
 /**
  * Lowers one field descriptor to its {@link FieldSpec}: the structural
- * type, the DOMAIN label as the wire's `newtype` (the macro's `as NewType`
- * name — carried for engine handle resolution, dropped at descriptor
- * lowering, never fingerprinted), and the structural fresh mark (`fresh`
- * is the literal `true` exactly on a fresh-marked u64 — on an unmarked one
- * the property holds the marked descriptor, never `true`).
+ * type and the structural fresh mark (`fresh` is the literal `true`
+ * exactly on a fresh-marked u64 — on an unmarked one the property holds
+ * the marked descriptor, never `true`). The wire's `newtype` is the
+ * COMPUTED class name — `schema()` derives it from the statement list (the
+ * laws type the columns); until that law-typing lands the slot is fed
+ * `undefined` (never fingerprinted either way).
  */
 function lowerField(name: string, field: AnyField): FieldSpec {
 	return {
 		name,
 		valueType: valueTypeOf(field),
-		newtype: field.domain,
+		newtype: undefined,
 		fresh: "fresh" in field && field.fresh === true
 	}
 }
@@ -125,12 +126,12 @@ function lowerRelation(relation: AnyRelation): RelationSpec {
 /**
  * Lowers one closed relation to its `RelationSpec` fragment: declared
  * intrinsic columns only (the engine materializes the synthetic `id`),
- * the HANDLE DOMAIN as its handle newtype — the `id` descriptor's own
- * `` `${name}Id` `` label (Rust's `closed relation Kind as KindId`), the
- * same string every referencing field carries, which is exactly how the
- * engine resolves a handle literal back to its roster — and the ground
- * axioms in declaration order (row id = index); the literals were already
- * lowered at `closed()` construction.
+ * the handle newtype — the COMPUTED class name of the id's generator
+ * class (`"Kind.id"`), which `schema()` derives and every referencing
+ * field shares (how the engine resolves a handle literal back to its
+ * roster); until the law-typing lands the slot is fed `undefined` — and
+ * the ground axioms in declaration order (row id = index); the literals
+ * were already lowered at `closed()` construction.
  */
 function lowerClosed(member: AnyClosed): RelationSpec {
 	const fields: FieldSpec[] = member.data.columns.map(function lowerColumn(column) {
@@ -139,7 +140,7 @@ function lowerClosed(member: AnyClosed): RelationSpec {
 	const extension = member.data.rows.map(function lowerRow(row) {
 		return { handle: row.handle, values: row.values }
 	})
-	return { name: member.name, newtype: member.id.domain, fields, extension }
+	return { name: member.name, newtype: undefined, fields, extension }
 }
 
 /**

@@ -34,10 +34,9 @@ import { lowerQuery, query } from "#query/lower.ts"
 import { relation } from "#relation.ts"
 import { schema } from "#schema.ts"
 
-const HolderId = u64.as("HolderId")
-const Holder = relation("Holder", { id: HolderId.fresh, name: str })
+const Holder = relation("Holder", { id: u64.fresh, name: str })
 const Session = relation("Session", {
-	holder: HolderId,
+	holder: u64,
 	at: u64,
 	active: interval(u64)
 })
