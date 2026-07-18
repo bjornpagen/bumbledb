@@ -54,11 +54,19 @@ DELETED once shipped.
    descriptor bytes (`bumbledb-schema-v4`) — never syntax, never spellings,
    never domain labels. Every syntax PRD carries a fingerprint-pin-unchanged
    criterion as its proof.
-9. **Rust stays declared** (`as NewType`); the FLAVOR asymmetry is ratified
-   and documented under the semantic-parity law, not papered over. Labels
-   never reach the store, so a TS schema with `"Service.id"` coordinates and a
-   Rust schema with `as ServiceId` fingerprint identically when
-   names/types/statements agree.
+9. **Rust stays declared AND unchanged — owner ruling 2026-07-18 ("option
+   1").** The macro's notation is untouched: `as NewType`, `fresh`, and every
+   statement form stay exactly as written. Macro-side `ref`, projection
+   sorts, signature blocks, and "structural Rust" (deleting newtypes) are all
+   EXPLICITLY REJECTED — newtypes are Rust's native wall and the notation is
+   the owner's dependency-theoretic canon. What lands instead is M5: the
+   taxonomy becomes CHECKED — newtype coherence across every statement's
+   paired faces, one check in the shared lowering, surfaced as a spanned
+   macro error and as the engine twin of TS's `SameDomains` wall. TS keeps
+   K3/K4 derivation as host sugar over ordinary statements; labels never
+   reach the store, so twins fingerprint identically when
+   names/types/statements agree — and twin COOKBOOK recipes follow the tail
+   convention for statement order so T5's per-recipe equality holds.
 10. **No 1.0.0 anywhere in this packet.** The owner has explicitly deferred it.
    No agent bumps to 1.0.0, tags, or publishes; 0.3.0 staging is agent work,
    the publish itself is owner ceremony.
@@ -82,7 +90,7 @@ DELETED once shipped.
 ```
 PARALLEL START
   T2 readme-truth   T4 todo-collapse   T5 fingerprint-goldens   T6 ci-lane
-  M1 key-arrow-ratified  M2 idb-heads
+  M1 key-arrow-ratified  M2 idb-heads  M5 coherence-check
   K1 psi-statements      K3 coordinate-kernel
 THEN
   M3 cookbook-queries-compiled   (after M2 — queries written in the final notation)
@@ -112,6 +120,7 @@ V1 release-staging: last; owner publishes.
 | M2 | Ordered-dense idb heads | — |
 | M3 | Cookbook queries compiled — comments become `query!` | M2 |
 | M4 | The notation conformance corpus | M2 |
+| M5 | The coherence check — newtype agreement across statement faces | — |
 | K1 | ψ statements: `closed().where()` + the face arms | — |
 | K2 | ψ query atoms: `.match`/`not` over closed relations | K1 |
 | K3 | The coordinate kernel: derived domains, `ref`, `cites`, the dot-ban | — |

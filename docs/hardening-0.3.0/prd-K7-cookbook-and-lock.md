@@ -70,6 +70,14 @@ BOTH sides of the FFI.
 - Never let the two cookbooks (engine `docs/cookbook.md`, SDK `ts/COOKBOOK.md`)
   teach different theories for the same recipe number — T5 is the referee;
   keep it green rather than editing around it.
+- **The tail convention is cross-host**: where a TS recipe derives its
+  reference containments (K4 tail-appends them in relation×field order), the
+  Rust twin's HAND-WRITTEN statement list must place those same containments
+  in the same tail positions, or the twins' fingerprints diverge (statement
+  order is hashed). Reordering `docs/cookbook.md` statement lists to the tail
+  convention is in scope here, coordinated with M3's compiled twins; the
+  Rust notation itself is untouched (owner ruling — statements stay
+  hand-written, only their ORDER in the recipes moves).
 - Guarantee lines citing lean theorem names are load-bearing — do not touch
   the citations except where `scripts/spec-census.sh` proves a rename.
 
