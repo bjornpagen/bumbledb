@@ -68,6 +68,54 @@ then and are dashed where unknown.
   twelve spawning workers), the same machine-load class as the
   2026-07-13 morning-session disposition. Not slow inputs, deleted.
 
+- **2026-07-18, the interrupted pre-hunt theory slice:** eleven
+  `slow-unit` artifacts from a theory session launched ~03:10 local and
+  killed mid-slice (no summary row was appended — the launcher died
+  before its accounting; the corpus additions it merged were kept).
+  Every unit replays to exit 0 in 0.00–0.26 s wall on the quiet
+  machine against the exact session binary — not slow inputs, the
+  machine-load class of the 2026-07-13 morning-session and 2026-07-17
+  dispositions (co-tenant load during the night-train window). Deleted.
+  A second wave of seven more slow-units from the same dying session
+  surfaced at 03:47; every one replays to exit 0 in 0.00–0.29 s wall
+  on the quiet machine — same class, same disposition, deleted. A
+  third wave of six more surfaced at 04:23 (lingering children of the
+  same killed slice, found with no fuzz process left running); every
+  one replays to exit 0 in 0.36–0.41 s wall (process startup
+  inclusive) on the quiet machine — same class, same disposition,
+  deleted.
+
+- **2026-07-18, the long hunt, ops slice 2/5 (35m x 12 workers):**
+  nine `slow-unit` artifacts, every one surfacing in the same
+  wall-minute (05:27) ~24 minutes into the slice, with the co-tenant
+  caught live: `mediaanalysisd` at 86% CPU plus `mds` at 26%
+  (macOS media-analysis/Spotlight background indexing) while the
+  session's cumulative exec/s dipped 3→1 across the same jobs.
+  Every unit replays to exit 0 in 0.02–0.03 s wall (process startup
+  inclusive) on the quiet machine against the exact session binary —
+  not slow inputs, the machine-load class of the 2026-07-13
+  morning-session and 2026-07-17/18 dispositions. Deleted.
+
+- **2026-07-18, the interrupted first query slice (3/5):** a full 35m
+  query slice launched ~05:44 ran its fuzzing to completion (301,920
+  execs, exit 0, oom/timeout/crash 0/0/0, cov 15202 in-run) but the
+  launcher was killed during its post-session `cargo fuzz cmin` —
+  no summary row was appended and the corpus was left pre-cmin at
+  4,107 files (the fork-merge additions kept, per the 07-18 theory
+  precedent). It left 48 `slow-unit` artifacts. Every one replays to
+  exit 0 (every oracle agrees) on the quiet machine against the exact
+  session binary, in two known classes: 30 replay in 0.22–4.8 s wall —
+  the machine-load class of the 2026-07-13/17/18 dispositions; 18
+  replay genuinely slow (11.8–128.2 s), root cause pinned by a
+  mid-replay `sample` of the worst input (128 s): 3852/3852 samples
+  inside `NaiveDb::query → rows_for → rule_bindings → enumerate` —
+  the NAIVE oracle's by-design nested-loop join fanning out at Tiny
+  scale, the engine in zero stacks — the 2026-07-15 query disposition
+  class verbatim (oracle cost, not an engine finding). One of the 18
+  (`slow-unit-d5eadb07…`) IS the 07-15 input, kept in the corpus by
+  cmin and tripping the slow threshold a third time. All 48 deleted;
+  the slice was re-run clean (the 35m row in the Sessions table).
+
 ## Trophies (cross-reference: the ledger in fuzz/README.md)
 
 - 2026-07-13 `ops` — multi-violation citation tie: ruled (oracle 1
@@ -121,6 +169,8 @@ then and are dashed where unknown.
 | 2026-07-17 | query | none | 8m x 12 workers | 50 | 0/s | 14355 | 2738 -> 2455 | 0 |
 | 2026-07-17 | rewrites | none | 8m x 12 workers | 61653 | 93/s | 12592 | 3563 -> 3583 | 8 (slow-units, environmental, triaged above) |
 | 2026-07-17 | crash | none | 8m x 12 workers | 685 | 1/s | 3348 | 614 -> 608 | 12 (slow-units, environmental, triaged above) |
+| 2026-07-18 | theory | none | 35m x 12 workers (the long hunt, slice 1/5) | 212596 | 100/s | 2445 | 400 -> 407 | 0 |
+| 2026-07-18 | ops | none | 35m x 12 workers (the long hunt, slice 2/5) | 78904 | 37/s | 13187 | 3499 -> 3628 | 9 (slow-units, environmental, triaged above) |
 
 ## Saturation (2026-07-17 — the A-FUZZ default-workers verification)
 
@@ -150,6 +200,47 @@ per-process `ps` sums during each slice. What the machine showed:
   hunt should A/B `FUZZ_WORKERS=8` vs 12 on crash before committing
   the worker count.
 
+## Saturation (2026-07-18 — the long hunt, theory slice 1/5)
+
+The 35m theory slice ran the launcher's REAL default (no
+`FUZZ_WORKERS` export, `-fork=12`), sampled with `top -l 2` plus
+per-process `ps` sums in the first minutes and again at the 10-minute
+mark. What the machine showed, honestly: 30 theory processes summing
+283% early and 208% mid-slice, the machine 66–72% idle with 25–30%
+sys — theory's workload-shape ceiling, exactly the 2026-07-17
+analysis (each accepted exec runs a full per-schema store lifecycle,
+so the target is syscall-bound per exec; ~1200% is not reachable on
+this target regardless of workers). No co-tenant load was observed
+(load avg ~2.8, all fuzzer); fuzz validity unaffected. The 35m budget
+did amortize the merge floor: 100 execs/s cumulative against 82–110/s
+on the 07-17 short slices, with 212,596 execs total and cov
+2403→2445 across the sessions since the adversarial tier landed.
+Note for the record: the launcher appends its summary row to the
+FILE END, which since the kill-sessions section landed is no longer
+the Sessions table — this slice's row was moved up into the table by
+hand (launcher fix deferred to the session owner).
+
+## Saturation (2026-07-18 — the long hunt, ops slice 2/5)
+
+The 35m ops slice ran the launcher's REAL default (no `FUZZ_WORKERS`
+export, `-fork=12`), sampled with per-process `ps` sums plus
+`top -l 2` in the first minutes and again at the 18-minute mark. What
+the machine showed, honestly: 13 ops processes summing 23–136%
+(typically ~103%) at both points, the machine 80–81% idle with ~14%
+sys — ops's workload-shape ceiling, deeper than theory's by design
+(each exec runs a generated op sequence against the live LMDB engine
+with the naive model in lockstep, plus reopen and `verify_store`
+oracles — syscall-bound per exec, so ~1200% is not reachable on this
+target regardless of workers). No co-tenant load at either sample
+(load avg 2.2–5.9, all fuzzer). One co-tenant burst DID cross the
+slice near its 24-minute mark — `mediaanalysisd` + `mds` (dispositioned
+above): it cost throughput for a minute and tripped nine spurious
+slow-units, but the oracles judge correctness, not speed; fuzz
+validity unaffected. The 35m budget amortized the merge floor: 37
+cumulative execs/s against 32/s on the 07-17 8m slice, 78,904 execs
+total, cov 13151→13187, corpus 3499→3628 post-cmin. The slice's row
+was again moved up into the Sessions table by hand.
+
 ## Kill sessions (the WRITEMAP commit-window sweep, `fuzz/tests/kill.rs`)
 
 One row per statistical lane (>= 2,000 random-timing SIGKILLs per
@@ -164,3 +255,4 @@ is its µs-scale subset).
 |---|---|---|---|---|---|---|---|---|
 | 2026-07-16 | durable | 2,000 | 20 ms (~4 periods) | ~632 in-commit | 51,257 (25.6 mean) | 37 | 0 | 1784215061224509000 |
 | 2026-07-16 | ephemeral | 2,000 | 20 ms (~4 periods) | ~2,000 whole-call | 68,245 (34.1 mean) | 24 | 0 | 1784215132296546000 |
+| 2026-07-18 | query | none | 35m x 12 workers | 63801 | 29/s | 15206 | 4107 -> 3691 | 38 |
