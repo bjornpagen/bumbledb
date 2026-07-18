@@ -1,24 +1,207 @@
 /**
- * Field type constructors — the value half of the `schema!` field grammar
- * (`docs/architecture/70-api.md`): `bool`, `u64`, `i64`, `str`, `bytes(n)`,
- * `interval(u64|i64[, width])`, each a plain frozen value carrying its
- * structural type at runtime and its host value type in a phantom generic.
- * Newtypes are DECLARATION-FIRST, one spelling only (owner ruling
- * 2026-07-16): `const AccountId = u64.newtype("AccountId")` declares the
- * brand ONCE as a value that IS the field, paired with
- * `type AccountId = Infer<typeof AccountId>` for signatures; every field
- * position references the declared value (`holder: HolderId`). The macro's
- * refusals are reproduced representationally: `.newtype` exists only where
- * Rust's `as` is legal (u64, i64, bytes, intervals — never bool/str),
- * `.fresh` exists only on declared u64 newtypes (the macro demands `as
- * NewType` on fresh fields), and no field-level constraint vocabulary of
- * any kind exists — `unique`/`fk` are unwritable, not rejected.
+ * Field descriptors — the value half of the `schema!` field grammar
+ * (`docs/architecture/70-api.md`), STRUCTURAL edition: `bool`, `u64`, `i64`,
+ * `str`, `bytes(n)`, `interval(u64|i64[, width])`, each a plain frozen value
+ * that IS its own descriptor type — `{ kind, domain, fresh?, width?,
+ * element? }` — honest at runtime and in the type alike. A field's VALUE
+ * type is its bare structural type (`u64` → `bigint`, `str` → `string`,
+ * `bytes(n)` → `Uint8Array`, intervals → `{ start, end }`): no brands, no
+ * phantoms, no minting casts. The domain is a string LABEL in the
+ * descriptor type, attached by `.as("HolderId")` (the mirror of Rust's
+ * `as HolderId`); same-string domains link fields, and the relational
+ * builders (statements, queries) compare the labels structurally — the
+ * domain wall lives in the builders and the engine, never on the value.
+ * The macro's refusals are reproduced representationally: `.as` exists only
+ * where Rust's `as` is legal (u64, i64, bytes, intervals — never bool/str),
+ * `.fresh` exists only on u64 (bare or after `.as`), and no field-level
+ * constraint vocabulary of any kind exists — `unique`/`fk` are unwritable,
+ * not rejected.
  */
 
 import * as errors from "@superbuilders/errors"
-import type { Brand, Interval, IntervalValue } from "#brand.ts"
-import { phantom } from "#brand.ts"
-import type { LiteralSpec, ValueTypeSpec } from "#spec.ts"
+import type { LiteralSpec } from "#spec.ts"
+
+/**
+ * A half-open interval `[start, end)` as a plain value object — the ONE
+ * interval value type, whatever the field's element domain or width label.
+ * The ray is representable (`end` = the element domain's MAX_END); widths
+ * and signedness are NOT modeled on the value — they are descriptor-type
+ * labels the engine judges at the typed write boundary. Interval fields
+ * derive no order (the Rust refusal, `docs/architecture/10-data-model.md`),
+ * so no comparators exist on the value type.
+ */
+interface IntervalValue {
+	readonly start: bigint
+	readonly end: bigint
+}
+
+/**
+ * Constructs an interval literal — the `start..end` spelling. Half-open
+ * and nonempty by construction: `start >= end` is a typed construction
+ * error (parse, don't validate — the same invariant Rust's
+ * `Interval::new` enforces at the host boundary). The value is bare and
+ * structural: it is assignable to any interval field.
+ */
+function span(start: bigint, end: bigint): IntervalValue {
+	if (start >= end) {
+		throw errors.new(`interval is half-open and nonempty: start must be < end (got ${start}..${end})`)
+	}
+	return Object.freeze({ start, end })
+}
+
+/**
+ * A closed relation's roster as seen from a referencing field: the handle
+ * namespace `where()` selections and ground axioms resolve bare handle ids
+ * through (the macro's own rule: a handle is legal exactly on a field whose
+ * domain is a closed relation's handle domain).
+ */
+interface ClosedRoster {
+	readonly name: string
+	readonly handles: readonly string[]
+}
+
+/** The `bool` field descriptor: value type `boolean`. No `.as`, no `.fresh` (macro parity). */
+interface BoolField {
+	readonly kind: "bool"
+	readonly domain: undefined
+}
+
+/** The `str` field descriptor: value type `string`. No `.as`, no `.fresh` (macro parity). */
+interface StrField {
+	readonly kind: "str"
+	readonly domain: undefined
+}
+
+/**
+ * A `fresh`-marked u64 field descriptor — `id: u64.as("AccountId").fresh`
+ * (Rust: `id: u64 as AccountId, fresh`). The mark is a structural label
+ * (`fresh: true`) in the descriptor type AND on the runtime value; it
+ * implies the key `R(field) -> R`, which the ENGINE materializes
+ * (`SchemaDescriptor::materialized_statements`). Terminal: no builder
+ * property survives the mark.
+ */
+interface FreshU64Field<Domain extends string | undefined = undefined> {
+	readonly kind: "u64"
+	readonly domain: Domain
+	readonly fresh: true
+}
+
+/**
+ * A domain-labeled u64 field descriptor — `const HolderId =
+ * u64.as("HolderId")` (Rust: `u64 as HolderId`). The label lives in the
+ * descriptor type only; the value type stays bare `bigint`. `.fresh` marks
+ * the field as engine-minted — the property doubles as the mark itself:
+ * on an unmarked descriptor it holds the marked descriptor, on a marked
+ * one it IS the literal `true` (one structural property, read either way).
+ */
+interface U64Field<Domain extends string | undefined = undefined> {
+	readonly kind: "u64"
+	readonly domain: Domain
+	readonly fresh: FreshU64Field<Domain>
+}
+
+/** The `u64` constructor value: a bare u64 descriptor plus `.as` (one application — `.as` is absent on the result). */
+interface U64Ctor extends U64Field<undefined> {
+	as<const Domain extends string>(domain: Domain): U64Field<Domain>
+}
+
+/** A domain-labeled i64 field descriptor. Terminal: `.fresh` is legal on u64 only. */
+interface I64Field<Domain extends string | undefined = undefined> {
+	readonly kind: "i64"
+	readonly domain: Domain
+}
+
+/** The `i64` constructor value: a bare i64 descriptor plus `.as`. */
+interface I64Ctor extends I64Field<undefined> {
+	as<const Domain extends string>(domain: Domain): I64Field<Domain>
+}
+
+/**
+ * A `bytes<N>` field descriptor. The width is a descriptor-type label
+ * (load-bearing: the engine enforces it at the write boundary) and the
+ * value type is bare `Uint8Array`. No order is derived — no comparators
+ * exist on the value type (the engine refuses order on bytes).
+ */
+interface BytesField<Width extends number = number, Domain extends string | undefined = undefined> {
+	readonly kind: "bytes"
+	readonly width: Width
+	readonly domain: Domain
+}
+
+/** A `bytes(n)` constructor value: a bare bytes descriptor plus `.as`. */
+interface BytesCtor<Width extends number = number> extends BytesField<Width, undefined> {
+	as<const Domain extends string>(domain: Domain): BytesField<Width, Domain>
+}
+
+/**
+ * An interval field descriptor — `interval(i64)` general (rays
+ * representable), `interval(u64, w)` the fixed-width family. Element and
+ * width are descriptor-type labels; the value type is always the bare
+ * {@link IntervalValue}.
+ */
+interface IntervalField<
+	Element extends "u64" | "i64" = "u64" | "i64",
+	Width extends bigint | undefined = bigint | undefined,
+	Domain extends string | undefined = undefined
+> {
+	readonly kind: "interval"
+	readonly element: Element
+	readonly width: Width
+	readonly domain: Domain
+}
+
+/** An `interval(e[, w])` constructor value: a bare interval descriptor plus `.as`. */
+interface IntervalCtor<
+	Element extends "u64" | "i64" = "u64" | "i64",
+	Width extends bigint | undefined = bigint | undefined
+> extends IntervalField<Element, Width, undefined> {
+	as<const Domain extends string>(domain: Domain): IntervalField<Element, Width, Domain>
+}
+
+/**
+ * A closed relation's reference field descriptor (`Kind.id`) — a u64
+ * descriptor whose domain is the closed relation's handle domain
+ * (`"KindId"`, mirroring Rust's `closed relation Kind as KindId`) and
+ * whose roster resolves bare handle ids in selections and ground axioms.
+ * Terminal: no `.as`, no `.fresh` — its domain IS the closed relation's.
+ */
+interface ClosedIdField<Domain extends string = string> {
+	readonly kind: "u64"
+	readonly domain: Domain
+	readonly closed: ClosedRoster
+}
+
+/** Any field descriptor, whatever its kind, domain label, or marks. */
+type AnyField =
+	| BoolField
+	| StrField
+	| U64Field<string | undefined>
+	| FreshU64Field<string | undefined>
+	| I64Field<string | undefined>
+	| BytesField<number, string | undefined>
+	| IntervalField<"u64" | "i64", bigint | undefined, string | undefined>
+	| ClosedIdField
+
+/**
+ * The bare structural VALUE type of a field descriptor — the one total
+ * definition every fact, result row, and query term reads: `bool` →
+ * `boolean`, `str` → `string`, `u64`/`i64` → `bigint` (domain labels
+ * included — the label never touches the value), `bytes<N>` →
+ * `Uint8Array`, intervals → {@link IntervalValue}.
+ */
+type Infer<F extends AnyField> = F extends { readonly kind: "bool" }
+	? boolean
+	: F extends { readonly kind: "str" }
+		? string
+		: F extends { readonly kind: "u64" }
+			? bigint
+			: F extends { readonly kind: "i64" }
+				? bigint
+				: F extends { readonly kind: "bytes" }
+					? Uint8Array
+					: F extends { readonly kind: "interval" }
+						? IntervalValue
+						: never
 
 /**
  * The typed shape refusal of the selection-literal machine — reached only
@@ -41,10 +224,10 @@ function isIntervalLiteral(value: unknown): value is IntervalValue {
 }
 
 /**
- * Resolves one closed-handle literal: the branded id (a bigint at runtime)
- * back to its handle NAME through the roster — an out-of-roster id is a
- * construction error, the belt the type level cannot provide against
- * forged brands.
+ * Resolves one closed-handle literal: the handle id (a bare bigint) back to
+ * its handle NAME through the roster — an out-of-roster id is a
+ * construction error, the belt the type level deliberately does not provide
+ * (structural values make any bigint spellable here; the roster judges).
  */
 function handleLiteral(closed: ClosedRoster, value: unknown): LiteralSpec {
 	if (typeof value !== "bigint") {
@@ -71,136 +254,6 @@ function intervalLiteral(element: "u64" | "i64", value: unknown): LiteralSpec {
 }
 
 /**
- * A closed relation's roster as seen from a referencing field: the handle
- * namespace `where()` selections and ground axioms resolve bare handles
- * through (the macro's own rule: a handle is legal exactly on a field whose
- * newtype is a closed relation's handle newtype).
- */
-interface ClosedRoster {
-	readonly name: string
-	readonly handles: readonly string[]
-}
-
-/**
- * One field's runtime description: structural type, host newtype name, the
- * `fresh` mint mark (`minted` — the property name `fresh` is taken by the
- * builder surface), and the closed-relation reference when the field is a
- * closed relation's id type.
- */
-interface FieldData<Minted extends boolean = boolean> {
-	readonly type: ValueTypeSpec
-	readonly newtype: string | undefined
-	readonly minted: Minted
-	readonly closed: ClosedRoster | undefined
-}
-
-/**
- * The base shape every field value shares: runtime data plus the phantom
- * host value type `V` (never present at runtime).
- */
-interface Field<V> {
-	readonly data: FieldData
-	readonly [phantom]?: V
-}
-
-/** Extracts a field value's host value type from its phantom. */
-type FieldValue<F> = F extends Field<infer V> ? V : never
-
-/** Any field value, whatever its host value type. */
-type AnyField = Field<unknown>
-
-/** The `bool` field: host type `boolean`. No `.newtype`, no `.fresh` (macro parity). */
-interface BoolField extends Field<boolean> {
-	readonly data: FieldData<false>
-}
-
-/** The `str` field: host type `string`. No `.newtype`, no `.fresh` (macro parity). */
-interface StrField extends Field<string> {
-	readonly data: FieldData<false>
-}
-
-/**
- * A `fresh`-marked u64 newtype field — `id: AccountId.fresh` (Rust: `id:
- * u64 as AccountId, fresh`). Terminal: the mark implies the key
- * `R(field) -> R`, which the ENGINE materializes
- * (`SchemaDescriptor::materialized_statements`); `schema()` rejects an
- * explicit duplicate of it (macro parity).
- */
-interface FreshU64Newtype<Name extends string> extends Field<Brand<bigint, Name>> {
-	readonly data: FieldData<true>
-}
-
-/**
- * A declared u64 newtype — `const AccountId = u64.newtype("AccountId")`
- * (Rust: `u64 as AccountId`). The value IS the field: relation blocks
- * reference it (`holder: HolderId`). `.fresh` marks it as minted; the
- * property exists ONLY here (the macro demands `as NewType` on fresh
- * fields, so bare-u64 fresh is unwritable).
- */
-interface U64Newtype<Name extends string> extends Field<Brand<bigint, Name>> {
-	readonly data: FieldData<false>
-	readonly fresh: FreshU64Newtype<Name>
-}
-
-/** The bare `u64` field; `.newtype(name)` declares a branded u64 newtype. */
-interface U64Field extends Field<bigint> {
-	readonly data: FieldData<false>
-	newtype<const Name extends string>(name: Name): U64Newtype<Name>
-}
-
-/** A declared i64 newtype. Terminal: `fresh` is legal on u64 only. */
-interface I64Newtype<Name extends string> extends Field<Brand<bigint, Name>> {
-	readonly data: FieldData<false>
-}
-
-/** The bare `i64` field; `.newtype(name)` declares a branded i64 newtype. */
-interface I64Field extends Field<bigint> {
-	readonly data: FieldData<false>
-	newtype<const Name extends string>(name: Name): I64Newtype<Name>
-}
-
-/** A declared `bytes<N>` newtype (no order derived — no comparators exist). */
-interface BytesNewtype<Name extends string> extends Field<Brand<Uint8Array, Name>> {
-	readonly data: FieldData<false>
-}
-
-/** A `bytes<N>` field; `.newtype(name)` declares a branded bytes newtype. */
-interface BytesField extends Field<Uint8Array> {
-	readonly data: FieldData<false>
-	newtype<const Name extends string>(name: Name): BytesNewtype<Name>
-}
-
-/** A declared interval newtype — Rust: `interval<i64> as ActiveDuring`. */
-interface IntervalNewtype<Name extends string> extends Field<Interval<Name>> {
-	readonly data: FieldData<false>
-}
-
-/** An interval field; `.newtype(name)` brands the whole `{ start, end }` object. */
-interface IntervalField extends Field<IntervalValue> {
-	readonly data: FieldData<false>
-	newtype<const Name extends string>(name: Name): IntervalNewtype<Name>
-}
-
-/**
- * The branded value type of a declared newtype — the type half of the
- * declaration-first pairing (owner ruling 2026-07-16): `const AccountId =
- * u64.newtype("AccountId")` + `type AccountId = Infer<typeof AccountId>`.
- * Reads the phantom, so it works on any field value (a closed relation's
- * `id` field infers its handle brand the same way).
- */
-type Infer<F extends AnyField> = F extends Field<infer V> ? V : never
-
-/**
- * A closed relation's id field constructor (`Kind.id`) — a u64 field
- * pre-branded with the closed relation's handle newtype, for use in other
- * relations' field blocks (`kind: Kind.id`). Terminal: its newtype IS the
- * closed relation, so `.newtype` and `.fresh` do not exist.
- */
-interface ClosedIdField<Name extends string> extends Field<Brand<bigint, Name>> {
-	readonly data: FieldData<false>
-}
-
-/**
  * Rejects a declaration name that JavaScript would re-order. Declaration
  * order = ordinal ids is the law relations, columns, and schemas all lean
  * on, and it is carried by object-literal key order — which ECMA-262's
@@ -218,69 +271,55 @@ function assertDeclarationOrderKey(where: string, name: string): void {
 	}
 }
 
-/**
- * Builds one frozen {@link FieldData}. Internal seam shared by the field
- * constructors here and by `closed()` (which mints {@link ClosedIdField}
- * values against its own roster).
- */
-function fieldData<Minted extends boolean>(
-	type: ValueTypeSpec,
-	newtype: string | undefined,
-	minted: Minted,
-	closed: ClosedRoster | undefined
-): FieldData<Minted> {
-	return Object.freeze({ type: Object.freeze(type), newtype, minted, closed })
+/** Builds one fresh-marked u64 descriptor (the `.fresh` property of an unmarked one). */
+function freshU64<Domain extends string | undefined>(domain: Domain): FreshU64Field<Domain> {
+	return Object.freeze({ kind: "u64", domain, fresh: true })
 }
 
-/** The one `u64` field constructor value. */
-const u64: U64Field = Object.freeze({
-	data: fieldData({ kind: "u64" }, undefined, false, undefined),
-	newtype<const Name extends string>(name: Name): U64Newtype<Name> {
-		const fresh: FreshU64Newtype<Name> = Object.freeze({
-			data: fieldData({ kind: "u64" }, name, true, undefined)
-		})
-		return Object.freeze({
-			data: fieldData({ kind: "u64" }, name, false, undefined),
-			fresh
-		})
+/** The one `u64` constructor value. */
+const u64: U64Ctor = Object.freeze({
+	kind: "u64",
+	domain: undefined,
+	fresh: freshU64(undefined),
+	as<const Domain extends string>(domain: Domain): U64Field<Domain> {
+		return Object.freeze({ kind: "u64", domain, fresh: freshU64(domain) })
 	}
 })
 
-/** The one `i64` field constructor value. */
-const i64: I64Field = Object.freeze({
-	data: fieldData({ kind: "i64" }, undefined, false, undefined),
-	newtype<const Name extends string>(name: Name): I64Newtype<Name> {
-		return Object.freeze({ data: fieldData({ kind: "i64" }, name, false, undefined) })
+/** The one `i64` constructor value. */
+const i64: I64Ctor = Object.freeze({
+	kind: "i64",
+	domain: undefined,
+	as<const Domain extends string>(domain: Domain): I64Field<Domain> {
+		return Object.freeze({ kind: "i64", domain })
 	}
 })
 
-/** The one `bool` field constructor value. */
-const bool: BoolField = Object.freeze({
-	data: fieldData({ kind: "bool" }, undefined, false, undefined)
-})
+/** The one `bool` constructor value. */
+const bool: BoolField = Object.freeze({ kind: "bool", domain: undefined })
 
-/** The one `str` field constructor value. */
-const str: StrField = Object.freeze({
-	data: fieldData({ kind: "string" }, undefined, false, undefined)
-})
+/** The one `str` constructor value. */
+const str: StrField = Object.freeze({ kind: "str", domain: undefined })
 
 /**
- * The `bytes<N>` field constructor. The width is mandatory and part of the
- * type; `len` is validated to 1..=64 here because the grammar pins that
- * range at declaration (`docs/architecture/70-api.md` § the `schema!`
- * grammar: N ∈ 1..=64 — bare `bytes` does not parse), the macro-expansion
- * boundary's analog being construction.
+ * The `bytes<N>` field constructor. The width is mandatory and a
+ * descriptor-type label; `width` is validated to 1..=64 here because the
+ * grammar pins that range at declaration (`docs/architecture/70-api.md`
+ * § the `schema!` grammar: N ∈ 1..=64 — bare `bytes` does not parse), the
+ * macro-expansion boundary's analog being construction.
  */
-function bytes(len: number): BytesField {
-	if (!Number.isInteger(len) || len < 1 || len > 64) {
+function bytes<const Width extends number>(width: Width): BytesCtor<Width> {
+	if (!Number.isInteger(width) || width < 1 || width > 64) {
 		throw errors.new(
-			`bytes width must be an integer in 1..=64 (got ${len}) — docs/architecture/70-api.md pins the range at declaration`
+			`bytes width must be an integer in 1..=64 (got ${width}) — docs/architecture/70-api.md pins the range at declaration`
 		)
 	}
 	return Object.freeze({
-		data: fieldData({ kind: "fixedBytes", len }, undefined, false, undefined),
-		newtype<const Name extends string>(name: Name): BytesNewtype<Name> {
-			return Object.freeze({ data: fieldData({ kind: "fixedBytes", len }, name, false, undefined) })
+		kind: "bytes",
+		width,
+		domain: undefined,
+		as<const Domain extends string>(domain: Domain): BytesField<Width, Domain> {
+			return Object.freeze({ kind: "bytes", width, domain })
 		}
 	})
 }
@@ -288,14 +327,19 @@ function bytes(len: number): BytesField {
 /**
  * The interval field constructor — `interval(u64)` / `interval(i64)` for
  * the general type (rays representable), `interval(u64, w)` for the
- * fixed-width family whose width IS the type. The element is spelled with
- * the u64/i64 field constructor values themselves, never a string. `width
- * >= 1` is validated here because the grammar pins it at declaration
+ * fixed-width family whose width IS a descriptor-type label. The element is
+ * spelled with the u64/i64 constructor values themselves, never a string.
+ * `width >= 1` is validated here because the grammar pins it at declaration
  * (`docs/architecture/70-api.md`: w ≥ 1; `interval<u64, 0>` is an
  * expansion error naming the field).
  */
-function interval(element: U64Field | I64Field, width?: bigint): IntervalField {
-	const elementKind = element.data.type.kind
+function interval<Element extends U64Ctor | I64Ctor>(element: Element): IntervalCtor<Element["kind"], undefined>
+function interval<Element extends U64Ctor | I64Ctor, const Width extends bigint>(
+	element: Element,
+	width: Width
+): IntervalCtor<Element["kind"], Width>
+function interval(element: U64Ctor | I64Ctor, width?: bigint): IntervalCtor<"u64" | "i64", bigint | undefined> {
+	const elementKind = element.kind
 	if (elementKind !== "u64" && elementKind !== "i64") {
 		throw errors.new(`interval element must be the u64 or i64 field constructor (got ${elementKind})`)
 	}
@@ -304,11 +348,13 @@ function interval(element: U64Field | I64Field, width?: bigint): IntervalField {
 			`interval width must be >= 1 (got ${width}) — docs/architecture/70-api.md pins w >= 1 at declaration`
 		)
 	}
-	const type: ValueTypeSpec = { kind: "interval", element: elementKind, width }
 	return Object.freeze({
-		data: fieldData(type, undefined, false, undefined),
-		newtype<const Name extends string>(name: Name): IntervalNewtype<Name> {
-			return Object.freeze({ data: fieldData(type, name, false, undefined) })
+		kind: "interval",
+		element: elementKind,
+		width,
+		domain: undefined,
+		as<const Domain extends string>(domain: Domain): IntervalField<"u64" | "i64", bigint | undefined, Domain> {
+			return Object.freeze({ kind: "interval", element: elementKind, width, domain })
 		}
 	})
 }
@@ -318,15 +364,15 @@ function interval(element: U64Field | I64Field, width?: bigint): IntervalField {
  * {@link LiteralSpec} — the selection-literal machine ground axioms and
  * `where()` bindings both ride (one machine, same errors — the macro's own
  * rule). A value on a closed-reference field resolves to its handle NAME
- * (the id is re-verified against the roster: an out-of-roster id is a
+ * (the id is verified against the roster: an out-of-roster id is a
  * construction error); everything else lowers to a plain value tagged by
- * the field's structural type.
+ * the field's structural kind.
  */
-function literalOf(field: FieldData, value: unknown): LiteralSpec {
-	if (field.closed !== undefined) {
+function literalOf(field: AnyField, value: unknown): LiteralSpec {
+	if ("closed" in field) {
 		return handleLiteral(field.closed, value)
 	}
-	switch (field.type.kind) {
+	switch (field.kind) {
 		case "bool": {
 			if (typeof value !== "boolean") {
 				throw literalShapeError("boolean", value)
@@ -345,41 +391,39 @@ function literalOf(field: FieldData, value: unknown): LiteralSpec {
 			}
 			return { kind: "value", value: { kind: "i64", value } }
 		}
-		case "string": {
+		case "str": {
 			if (typeof value !== "string") {
 				throw literalShapeError("string", value)
 			}
 			return { kind: "value", value: { kind: "string", value } }
 		}
-		case "fixedBytes": {
+		case "bytes": {
 			if (!(value instanceof Uint8Array)) {
 				throw literalShapeError("Uint8Array", value)
 			}
 			return { kind: "value", value: { kind: "fixedBytes", value } }
 		}
 		case "interval":
-			return intervalLiteral(field.type.element, value)
+			return intervalLiteral(field.element, value)
 	}
 }
 
 export type {
 	AnyField,
 	BoolField,
+	BytesCtor,
 	BytesField,
-	BytesNewtype,
 	ClosedIdField,
 	ClosedRoster,
-	Field,
-	FieldData,
-	FieldValue,
-	FreshU64Newtype,
+	FreshU64Field,
+	I64Ctor,
 	I64Field,
-	I64Newtype,
 	Infer,
+	IntervalCtor,
 	IntervalField,
-	IntervalNewtype,
+	IntervalValue,
 	StrField,
-	U64Field,
-	U64Newtype
+	U64Ctor,
+	U64Field
 }
-export { assertDeclarationOrderKey, bool, bytes, fieldData, i64, interval, literalOf, str, u64 }
+export { assertDeclarationOrderKey, bool, bytes, i64, interval, literalOf, span, str, u64 }

@@ -1,7 +1,8 @@
 /**
  * @bjornpagen/bumbledb — the type-theoretic TypeScript SDK for the
- * bumbledb embedded relational engine. Public surface: the type kernel
- * (brands, fields, `relation()`, `closed()` — PRD-05), the statement
+ * bumbledb embedded relational engine. Public surface: the structural type
+ * kernel (fields with schema-level domain labels, `relation()`,
+ * `closed()`), the statement
  * algebra with `schema()` and `SchemaSpec` lowering (PRD-06), the `Db`
  * runtime (path-cached stores, transactions, typed violations, scoped
  * snapshot reads, the witnessed write loop with `abandon` — PRD-07, zero
@@ -14,8 +15,6 @@
  * PRD-03 stub died here as scheduled).
  */
 
-export type { Brand, Interval, IntervalValue } from "#brand.ts"
-export { span } from "#brand.ts"
 export type {
 	AnyClosed,
 	AxiomRow,
@@ -73,24 +72,22 @@ export { on, oneOf } from "#face.ts"
 export type {
 	AnyField,
 	BoolField,
+	BytesCtor,
 	BytesField,
-	BytesNewtype,
 	ClosedIdField,
 	ClosedRoster,
-	Field,
-	FieldData,
-	FieldValue,
-	FreshU64Newtype,
+	FreshU64Field,
+	I64Ctor,
 	I64Field,
-	I64Newtype,
 	Infer,
+	IntervalCtor,
 	IntervalField,
-	IntervalNewtype,
+	IntervalValue,
 	StrField,
-	U64Field,
-	U64Newtype
+	U64Ctor,
+	U64Field
 } from "#fields.ts"
-export { bool, bytes, i64, interval, str, u64 } from "#fields.ts"
+export { bool, bytes, i64, interval, span, str, u64 } from "#fields.ts"
 export { lower, lowerClosed, lowerRelation } from "#lower.ts"
 export type { KeyFact, Minted } from "#marshal.ts"
 export type {

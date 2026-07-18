@@ -1,65 +1,21 @@
 /**
- * Type-level pins for the PRD-05 kernel and PRD-06 statement algebra,
- * compiled by the package typecheck. Negative space is asserted through
- * assignability probes (`X extends Y ? true : false` pinned to `false`)
- * rather than expect-error directives, so every line here is checked
- * positively. The one runtime test at the bottom proves the module loads.
+ * Type-level pins for the STRUCTURAL field & domain kernel (PRD-S1),
+ * compiled by the package typecheck. Values are bare and structural
+ * (`bigint`/`string`/`boolean`/`Uint8Array`/`{ start, end }` — no brands,
+ * no phantoms); domains are string labels in the field DESCRIPTOR type,
+ * attached by `.as("Domain")`. Positive space is asserted through
+ * identity-strength `Equal` probes; the deleted brand-era surface and the
+ * macro's refusals are asserted through REAL `@ts-expect-error` fail-probes
+ * (removing any directive breaks compilation). One runtime test at the
+ * bottom proves the module loads and the closed weld holds.
  */
 
 import assert from "node:assert/strict"
 import { test } from "node:test"
 
-import type {
-	Abandon,
-	AnyRelation,
-	Axioms,
-	BoolField,
-	Brand,
-	Db,
-	FaceArityMismatch,
-	FaceFields,
-	Fact,
-	FreshKeys,
-	Infer,
-	InsertFact,
-	Interval,
-	IntervalValue,
-	KeyFact,
-	OneOf,
-	Prepared,
-	QueryParams,
-	QueryRow,
-	ReadScope,
-	RelationFields,
-	SameArity,
-	SelectionInput,
-	Statement,
-	TermInput,
-	Tx,
-	Var,
-	Violation,
-	WitnessedWriteResult,
-	WriteResult
-} from "#index.ts"
-import {
-	bool,
-	bytes,
-	closed,
-	count,
-	duration,
-	i64,
-	interval,
-	is,
-	match,
-	on,
-	pack,
-	query,
-	relation,
-	schema,
-	str,
-	sum,
-	u64
-} from "#index.ts"
+import { type Axioms, closed } from "#closed.ts"
+import { type BoolField, bool, bytes, type Infer, type IntervalValue, i64, interval, str, u64 } from "#fields.ts"
+import { type AnyRelation, type Fact, type FreshKeys, type InsertFact, relation } from "#relation.ts"
 
 /** The identity-strength equality probe (the standard dual-function trick). */
 type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false
@@ -68,21 +24,21 @@ type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ?
 type Expect<T extends true> = T extends true ? true : never
 
 const Kind = closed("Kind", ["Checking", "Savings"])
-const Grade = closed(
-	"Grade",
-	["DirectPass", "Failed"],
-	{ mastered: bool },
-	{
-		DirectPass: { mastered: true },
-		Failed: { mastered: false }
-	}
-)
-const HolderId = u64.newtype("HolderId")
-const AccountId = u64.newtype("AccountId")
-const EverythingId = u64.newtype("EverythingId")
-const Cents = i64.newtype("Cents")
-const Tag = bytes(4).newtype("Tag")
-const ActiveDuring = interval(i64).newtype("ActiveDuring")
+const Grade = closed("Grade", { mastered: bool })({
+	DirectPass: { mastered: true },
+	Failed: { mastered: false }
+})
+const HolderId = u64.as("HolderId")
+const AccountId = u64.as("AccountId")
+const EverythingId = u64.as("EverythingId")
+const Cents = i64.as("Cents")
+const Tag = bytes(32).as("Tag")
+const ActiveDuring = interval(i64).as("ActiveDuring")
+/** The fixed-width interval family: the width is a descriptor-type label. */
+const Stay = interval(u64, 7n)
+/** Bare (undomained) constructor values used as fields directly. */
+const RawBytes = bytes(4)
+const RawInterval = interval(u64)
 
 const Holder = relation("Holder", { id: HolderId.fresh, name: str })
 const Account = relation("Account", {
@@ -92,13 +48,7 @@ const Account = relation("Account", {
 	active: ActiveDuring
 })
 
-type AccountId = Infer<typeof AccountId>
-type HolderId = Infer<typeof HolderId>
-
-const oneField = on(Holder, "id")
-const twoFields = on(Account, "id", "kind")
-
-/** Every field type in one relation — the PRD-07 round-trip target. */
+/** Every field kind in one relation — the Infer-totality target. */
 const Everything = relation("Everything", {
 	id: EverythingId.fresh,
 	flag: bool,
@@ -107,39 +57,52 @@ const Everything = relation("Everything", {
 	raw: u64,
 	score: Cents,
 	kind: Kind.id,
-	at: interval(u64)
+	at: RawInterval,
+	stay: Stay
 })
 
-/** A keyless-by-type relation: no fresh field, so `KeyFact` falls back to the runtime rule. */
+/** A keyless-by-type relation: no fresh field, so `FreshKeys` is `never`. */
 const Pair = relation("Pair", { a: u64, b: u64 })
 
-const Vault = schema("Vault", { Kind, Grade, Holder, Account, Everything }, [])
-type VaultRels = (typeof Vault)["relations"]
-
-declare const vaultDb: Db<VaultRels>
-declare const snap: ReadScope<VaultRels>
-declare const tx: Tx<VaultRels>
-
-test("type-level pins compile and the weld holds at runtime", function probeCompiled() {
+test("the structural kernel loads and the closed weld holds at runtime", function probeCompiled() {
 	assert.equal(Kind.fromId(Kind.Checking), "Checking")
 	assert.equal(Grade.fromId(Grade.Failed), "Failed")
+	assert.equal(HolderId.domain, "HolderId")
+	assert.equal(AccountId.fresh.fresh, true)
 })
 
 /**
  * The pinned cases, exported so the compiler counts every probe as used.
  * Hover-quality pins lead: `Fact` and `InsertFact` must BE plain object
- * types with named brands — the `Equal` probe fails on any conditional
- * tangle that is not identical to the spelled-out object.
+ * types with bare structural values — the `Equal` probe fails on any
+ * conditional tangle that is not identical to the spelled-out object.
  */
 type Cases = [
+	// ——— values are bare and structural (no brand appears anywhere) ———
 	Expect<
 		Equal<
 			Fact<typeof Account>,
 			{
-				id: Brand<bigint, "AccountId">
-				holder: Brand<bigint, "HolderId">
-				kind: Brand<bigint, "Kind">
-				active: Interval<"ActiveDuring">
+				id: bigint
+				holder: bigint
+				kind: bigint
+				active: IntervalValue
+			}
+		>
+	>,
+	Expect<
+		Equal<
+			Fact<typeof Everything>,
+			{
+				id: bigint
+				flag: boolean
+				note: string
+				tag: Uint8Array
+				raw: bigint
+				score: bigint
+				kind: bigint
+				at: IntervalValue
+				stay: IntervalValue
 			}
 		>
 	>,
@@ -147,187 +110,185 @@ type Cases = [
 		Equal<
 			InsertFact<typeof Account>,
 			{
-				holder: Brand<bigint, "HolderId">
-				kind: Brand<bigint, "Kind">
-				active: Interval<"ActiveDuring">
-				id?: Brand<bigint, "AccountId"> | undefined
+				holder: bigint
+				kind: bigint
+				active: IntervalValue
+				id?: bigint | undefined
 			}
 		>
 	>,
 	Expect<Equal<FreshKeys<typeof Account>, "id">>,
-	Expect<Equal<HolderId extends AccountId ? true : false, false>>,
-	Expect<Equal<AccountId extends HolderId ? true : false, false>>,
-	Expect<Equal<bigint extends AccountId ? true : false, false>>,
-	Expect<Equal<typeof Grade.DirectPass extends typeof Kind.Checking ? true : false, false>>,
-	Expect<Equal<"fresh" extends keyof typeof AccountId ? true : false, true>>,
-	Expect<Equal<"fresh" extends keyof typeof Cents ? true : false, false>>,
-	Expect<Equal<"fresh" extends keyof typeof bool ? true : false, false>>,
-	Expect<Equal<"as" extends keyof typeof u64 ? true : false, false>>,
-	Expect<Equal<"as" extends keyof typeof i64 ? true : false, false>>,
+	Expect<Equal<FreshKeys<typeof Pair>, never>>,
+	// two fields of DIFFERENT domains are mutually assignable at the value
+	// level — that is the point of structural: the domain wall lives in the
+	// builders (S2/S3) and the engine, never on the value.
+	Expect<Equal<Fact<typeof Holder>["id"], Fact<typeof Account>["holder"]>>,
+	Expect<Equal<Infer<typeof HolderId>, Infer<typeof AccountId>>>,
+	// ——— Infer is total and precise over every field kind ———
+	Expect<Equal<Infer<typeof bool>, boolean>>,
+	Expect<Equal<Infer<typeof str>, string>>,
+	Expect<Equal<Infer<typeof u64>, bigint>>,
+	Expect<Equal<Infer<typeof i64>, bigint>>,
+	Expect<Equal<Infer<typeof HolderId>, bigint>>,
+	Expect<Equal<Infer<typeof AccountId.fresh>, bigint>>,
+	Expect<Equal<Infer<typeof Cents>, bigint>>,
+	Expect<Equal<Infer<typeof Tag>, Uint8Array>>,
+	Expect<Equal<Infer<typeof RawBytes>, Uint8Array>>,
+	Expect<Equal<Infer<typeof ActiveDuring>, IntervalValue>>,
+	Expect<Equal<Infer<typeof Stay>, IntervalValue>>,
+	Expect<Equal<Infer<typeof Kind.id>, bigint>>,
+	// ——— the domain is a string-literal label in the DESCRIPTOR type ———
+	Expect<Equal<(typeof HolderId)["domain"], "HolderId">>,
+	Expect<Equal<(typeof AccountId.fresh)["domain"], "AccountId">>,
+	Expect<Equal<(typeof u64)["domain"], undefined>>,
+	Expect<Equal<(typeof Tag)["domain"], "Tag">>,
+	Expect<Equal<(typeof Kind.id)["domain"], "KindId">>,
+	Expect<Equal<(typeof Grade.id)["domain"], "GradeId">>,
+	// ——— the fresh mark is a structural `fresh: true` label ———
+	Expect<Equal<(typeof AccountId.fresh)["fresh"], true>>,
+	Expect<Equal<typeof AccountId.fresh extends { fresh: true } ? true : false, true>>,
+	Expect<Equal<typeof AccountId extends { fresh: true } ? true : false, false>>,
+	// ——— width labels live in the descriptor type, not the value ———
+	Expect<Equal<(typeof Tag)["width"], 32>>,
+	Expect<Equal<(typeof RawBytes)["width"], 4>>,
+	Expect<Equal<(typeof Stay)["width"], 7n>>,
+	Expect<Equal<(typeof Stay)["element"], "u64">>,
+	Expect<Equal<(typeof ActiveDuring)["width"], undefined>>,
+	Expect<Equal<(typeof ActiveDuring)["element"], "i64">>,
+	// ——— `.as` exists on the four Rust-`as`-legal constructors only, once ———
+	Expect<Equal<"as" extends keyof typeof u64 ? true : false, true>>,
+	Expect<Equal<"as" extends keyof typeof i64 ? true : false, true>>,
+	Expect<Equal<"as" extends keyof typeof RawBytes ? true : false, true>>,
+	Expect<Equal<"as" extends keyof typeof RawInterval ? true : false, true>>,
 	Expect<Equal<"as" extends keyof typeof bool ? true : false, false>>,
 	Expect<Equal<"as" extends keyof typeof str ? true : false, false>>,
-	Expect<Equal<"as" extends keyof ReturnType<typeof bytes> ? true : false, false>>,
-	Expect<Equal<"as" extends keyof ReturnType<typeof interval> ? true : false, false>>,
-	Expect<Equal<"as" extends keyof typeof AccountId ? true : false, false>>,
-	Expect<Equal<"newtype" extends keyof typeof u64 ? true : false, true>>,
-	Expect<Equal<"newtype" extends keyof typeof i64 ? true : false, true>>,
-	Expect<Equal<"newtype" extends keyof ReturnType<typeof bytes> ? true : false, true>>,
-	Expect<Equal<"newtype" extends keyof ReturnType<typeof interval> ? true : false, true>>,
-	Expect<Equal<"newtype" extends keyof typeof bool ? true : false, false>>,
-	Expect<Equal<"newtype" extends keyof typeof str ? true : false, false>>,
-	Expect<Equal<"newtype" extends keyof typeof AccountId ? true : false, false>>,
-	Expect<Equal<"newtype" extends keyof typeof Kind.id ? true : false, false>>,
-	Expect<Equal<Infer<typeof AccountId>, Brand<bigint, "AccountId">>>,
-	Expect<Equal<Infer<typeof ActiveDuring>, Interval<"ActiveDuring">>>,
-	Expect<Equal<Fact<typeof Holder>["id"], Fact<typeof Account>["holder"]>>,
-	Expect<Equal<typeof Kind.Checking, Brand<bigint, "Kind">>>,
+	Expect<Equal<"as" extends keyof typeof HolderId ? true : false, false>>,
+	Expect<Equal<"as" extends keyof typeof AccountId.fresh ? true : false, false>>,
+	Expect<Equal<"as" extends keyof typeof Kind.id ? true : false, false>>,
+	// ——— `.fresh` exists only on u64 (bare or after `.as`) ———
+	Expect<Equal<"fresh" extends keyof typeof u64 ? true : false, true>>,
+	Expect<Equal<"fresh" extends keyof typeof HolderId ? true : false, true>>,
+	Expect<Equal<"fresh" extends keyof typeof i64 ? true : false, false>>,
+	Expect<Equal<"fresh" extends keyof typeof Cents ? true : false, false>>,
+	Expect<Equal<"fresh" extends keyof typeof bool ? true : false, false>>,
+	Expect<Equal<"fresh" extends keyof typeof str ? true : false, false>>,
+	Expect<Equal<"fresh" extends keyof typeof RawBytes ? true : false, false>>,
+	Expect<Equal<"fresh" extends keyof typeof RawInterval ? true : false, false>>,
+	Expect<Equal<"fresh" extends keyof typeof Kind.id ? true : false, false>>,
+	// ——— the brand-era `.newtype` spelling is gone from every constructor ———
+	Expect<Equal<"newtype" extends keyof typeof u64 ? true : false, false>>,
+	Expect<Equal<"newtype" extends keyof typeof i64 ? true : false, false>>,
+	Expect<Equal<"newtype" extends keyof typeof RawBytes ? true : false, false>>,
+	Expect<Equal<"newtype" extends keyof typeof RawInterval ? true : false, false>>,
+	// ——— closed(): handle constants are bare bigints; the weld is exact ———
+	Expect<Equal<typeof Kind.Checking, bigint>>,
+	Expect<Equal<typeof Grade.DirectPass, bigint>>,
 	Expect<Equal<ReturnType<typeof Kind.fromId>, "Checking" | "Savings" | undefined>>,
+	Expect<Equal<Parameters<typeof Kind.fromId>, [id: bigint]>>,
 	Expect<
 		Equal<
-			Axioms<["DirectPass", "Failed"], { mastered: BoolField }>,
+			Axioms<"DirectPass" | "Failed", { mastered: BoolField }>,
 			{
 				readonly DirectPass: { readonly mastered: boolean }
 				readonly Failed: { readonly mastered: boolean }
 			}
 		>
 	>,
+	Expect<Equal<typeof Grade.axioms.DirectPass.mastered, boolean>>,
+	// ——— closed relations are unwritable: no relation shape, no fact ———
 	Expect<Equal<typeof Kind extends AnyRelation ? true : false, false>>,
 	Expect<Equal<typeof Grade extends AnyRelation ? true : false, false>>,
 	Expect<Equal<typeof Account extends AnyRelation ? true : false, true>>,
-	Expect<Equal<FaceFields<typeof Account>, "id" | "holder" | "kind" | "active">>,
-	Expect<Equal<FaceFields<typeof Kind>, "id">>,
-	Expect<Equal<FaceFields<typeof Grade>, "id" | "mastered">>,
-	Expect<Equal<SameArity<typeof oneField, typeof oneField>, unknown>>,
-	Expect<Equal<SameArity<typeof twoFields, typeof twoFields>, unknown>>,
-	Expect<Equal<SameArity<typeof oneField, typeof twoFields> extends FaceArityMismatch<1, 2> ? true : false, true>>,
-	Expect<Equal<SameArity<typeof twoFields, typeof oneField> extends FaceArityMismatch<2, 1> ? true : false, true>>,
-	Expect<
-		Equal<
-			SelectionInput<RelationFields<typeof Account>>["kind"],
-			Brand<bigint, "Kind"> | OneOf<Brand<bigint, "Kind">> | undefined
-		>
-	>,
-	Expect<
-		Equal<
-			Fact<typeof Everything>,
-			{
-				id: Brand<bigint, "EverythingId">
-				flag: boolean
-				note: string
-				tag: Brand<Uint8Array, "Tag">
-				raw: bigint
-				score: Brand<bigint, "Cents">
-				kind: Brand<bigint, "Kind">
-				at: IntervalValue
-			}
-		>
-	>,
-	Expect<Equal<ReturnType<typeof snap.scan<typeof Everything>>, Fact<typeof Everything>[]>>,
-	Expect<Equal<ReturnType<typeof snap.get<typeof Everything>>, Fact<typeof Everything> | undefined>>,
-	Expect<Equal<Parameters<typeof snap.contains<typeof Everything>>[1], Fact<typeof Everything>>>,
-	Expect<Equal<Parameters<typeof tx.insert<typeof Account>>[1], InsertFact<typeof Account>>>,
-	Expect<Equal<ReturnType<typeof tx.insert<typeof Account>>, { id: Brand<bigint, "AccountId"> }>>,
-	Expect<Equal<KeyFact<typeof Account>, { id: Brand<bigint, "AccountId"> }>>,
-	Expect<Equal<KeyFact<typeof Pair>, Partial<Fact<typeof Pair>>>>,
-	Expect<Equal<Extract<ReturnType<typeof vaultDb.write>, { ok: true }>["generation"], bigint>>,
-	Expect<Equal<Violation<VaultRels>["statement"], Statement | undefined>>,
-	Expect<
-		Equal<Violation<VaultRels>["facts"][number]["relation"], "Kind" | "Grade" | "Holder" | "Account" | "Everything">
-	>,
-	Expect<Equal<Exclude<WitnessedWriteResult<VaultRels, Abandon<string>>, WriteResult<VaultRels>>["abandoned"], string>>,
-	Expect<Equal<"close" extends keyof typeof vaultDb ? true : false, false>>,
-	Expect<Equal<"snapshot" extends keyof typeof vaultDb ? true : false, false>>,
-	Expect<
-		Equal<
-			keyof typeof vaultDb,
-			"schema" | "read" | "scan" | "get" | "contains" | "execute" | "write" | "writeWitnessed" | "prepare"
-		>
-	>
+	Expect<Equal<"where" extends keyof typeof Kind ? true : false, false>>,
+	Expect<Equal<"fields" extends keyof typeof Grade ? true : false, false>>
 ]
 
 /**
- * PRD-08 query-surface pins: inert query values built at module load (no
- * store is touched), their inferred Row/Params objects asserted exactly,
- * and the nominal join discipline asserted through assignability probes —
- * a Holder-branded var is NOT placeable at a Kind-branded position.
+ * The structural dividend, as a compile-must-PASS probe: a HolderId-domain
+ * value IS an AccountId-domain value at the value level (both bare
+ * `bigint`) — no cast, no mint, no brand assertion.
  */
-const holderAccounts = query(Vault, function build($) {
-	const acct = $.var(Account.fields.id)
-	const holder = $.var(Holder.fields.id)
-	const root = $.param("root", Holder.fields.id)
-	return {
-		rules: [[match(Account, { id: acct, holder }), is(holder, root)]],
-		select: { acct, holder }
-	}
-})
+function domainsShareTheValueLevel(holder: Infer<typeof HolderId>): Infer<typeof AccountId> {
+	return holder
+}
 
-/** Measure, fold, and nullary-count entries in one select. */
-const measured = query(Vault, function build($) {
-	const id = $.var(Everything.fields.id)
-	const at = $.var(Everything.fields.at)
-	const score = $.var(Everything.fields.score)
-	return {
-		rules: [[match(Everything, { id, at, score })]],
-		select: { id, d: duration(at), total: sum(score), n: count() }
-	}
-})
+/** `.as` is a type-level absence on bool/str — Rust's `as` grammar refuses them. */
+function asStaysOffBoolAndStr(): unknown[] {
+	return [
+		// @ts-expect-error — bool carries no reference domain, so `.as` does not exist on it
+		bool.as("Flag"),
+		// @ts-expect-error — str carries no reference domain, so `.as` does not exist on it
+		str.as("Note")
+	]
+}
 
-/** The relation-shaped coalescing fold: the packed column is interval-typed. */
-const packed = query(Vault, function build($) {
-	const kind = $.var(Everything.fields.kind)
-	const at = $.var(Everything.fields.at)
-	return { rules: [[match(Everything, { kind, at })]], select: { kind, cover: pack(at) } }
-})
+/** `.fresh` marks an engine-minted u64 key; every other kind refuses the mark. */
+function freshStaysU64Only(): unknown[] {
+	return [
+		// @ts-expect-error — fresh is legal on u64 only, never i64
+		i64.fresh,
+		// @ts-expect-error — fresh is legal on u64 only, never a domained i64
+		Cents.fresh,
+		// @ts-expect-error — fresh is legal on u64 only, never bool
+		bool.fresh,
+		// @ts-expect-error — fresh is legal on u64 only, never str
+		str.fresh,
+		// @ts-expect-error — fresh is legal on u64 only, never bytes
+		RawBytes.fresh,
+		// @ts-expect-error — fresh is legal on u64 only, never an interval
+		RawInterval.fresh,
+		// @ts-expect-error — a closed reference field is never minted
+		Kind.id.fresh
+	]
+}
 
-declare const holderVar: Var<Brand<bigint, "HolderId">>
-declare const preparedAccounts: Prepared<VaultRels, QueryRow<typeof holderAccounts>, QueryParams<typeof holderAccounts>>
+/** The brand-era `.newtype` spelling has no successor alias: it is unwritable. */
+function newtypeIsGone(): unknown[] {
+	return [
+		// @ts-expect-error — `.newtype` died with the brand era; the spelling is `.as`
+		u64.newtype("AccountId"),
+		// @ts-expect-error — `.newtype` died with the brand era
+		i64.newtype("Cents"),
+		// @ts-expect-error — `.newtype` died with the brand era
+		bytes(4).newtype("Tag"),
+		// @ts-expect-error — `.newtype` died with the brand era
+		interval(i64).newtype("ActiveDuring")
+	]
+}
 
-type QueryCases = [
-	Expect<
-		Equal<
-			QueryRow<typeof holderAccounts>,
-			{
-				readonly acct: Brand<bigint, "AccountId">
-				readonly holder: Brand<bigint, "HolderId">
-			}
-		>
-	>,
-	Expect<Equal<QueryParams<typeof holderAccounts>, { readonly root: Brand<bigint, "HolderId"> }>>,
-	Expect<
-		Equal<
-			QueryRow<typeof measured>,
-			{
-				readonly id: Brand<bigint, "EverythingId">
-				readonly d: bigint
-				readonly total: Brand<bigint, "Cents">
-				readonly n: bigint
-			}
-		>
-	>,
-	Expect<Equal<QueryParams<typeof measured>, Record<never, never>>>,
-	Expect<Equal<QueryRow<typeof packed>, { readonly kind: Brand<bigint, "Kind">; readonly cover: IntervalValue }>>,
-	Expect<Equal<typeof holderVar extends TermInput<Brand<bigint, "Kind">> ? true : false, false>>,
-	Expect<Equal<typeof holderVar extends TermInput<Brand<bigint, "HolderId">> ? true : false, true>>,
-	Expect<Equal<"execute" extends keyof typeof preparedAccounts ? true : false, false>>,
-	Expect<Equal<"close" extends keyof typeof preparedAccounts ? true : false, false>>,
-	Expect<
-		Equal<
-			Parameters<typeof snap.execute<QueryRow<typeof holderAccounts>, QueryParams<typeof holderAccounts>>>[1],
-			{ readonly root: Brand<bigint, "HolderId"> }
-		>
-	>,
-	Expect<
-		Equal<
-			ReturnType<typeof vaultDb.execute<QueryRow<typeof holderAccounts>, QueryParams<typeof holderAccounts>>>,
-			QueryRow<typeof holderAccounts>[]
-		>
-	>,
-	Expect<
-		Equal<
-			Parameters<typeof vaultDb.execute<QueryRow<typeof holderAccounts>, QueryParams<typeof holderAccounts>>>[0],
-			typeof preparedAccounts
-		>
-	>
+// @ts-expect-error — the brand module is deleted with the nominal era: no brand type exists to reference
+type BrandIsGone = typeof import("#brand.ts")
+
+/**
+ * Order stays refused where the engine refuses it — REPRESENTATIONALLY: no
+ * comparator exists anywhere on a `bytes`/interval value (the exact-keyof
+ * pin in {@link OrderCases} holds the interval value to `start`/`end` and
+ * nothing else, and the method probes below are type-level absences).
+ * JavaScript's bare `<` on two objects is not refusable by TypeScript (the
+ * language types relational operators on any mutually-assignable pair), so
+ * the wall is the absence of any order VOCABULARY here plus the query
+ * surface's own operator typing (S3) — the engine refuses order on
+ * bytes/intervals as the final authority.
+ */
+type OrderCases = [
+	Expect<Equal<keyof Infer<typeof ActiveDuring>, "start" | "end">>,
+	Expect<Equal<keyof Infer<typeof Stay>, "start" | "end">>
 ]
 
-export type { Cases, QueryCases }
+/** No comparator method exists on a bytes or interval value — a type-level absence. */
+function orderStaysRefused(
+	tag: Infer<typeof Tag>,
+	otherTag: Infer<typeof Tag>,
+	active: Infer<typeof ActiveDuring>,
+	otherActive: Infer<typeof ActiveDuring>
+): unknown[] {
+	return [
+		// @ts-expect-error — bytes values derive no order: no compare() exists on the value
+		tag.compare(otherTag),
+		// @ts-expect-error — interval values derive no order: no compare() exists on the value
+		active.compare(otherActive)
+	]
+}
+
+export type { BrandIsGone, Cases, OrderCases }
+export { asStaysOffBoolAndStr, domainsShareTheValueLevel, freshStaysU64Only, newtypeIsGone, orderStaysRefused }

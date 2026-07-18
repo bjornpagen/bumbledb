@@ -1,31 +1,30 @@
 /**
  * `relation()` — the ordinary-relation half of the theory's signature. A
  * relation value is a frozen plain object carrying its name, its ordered
- * field metadata (declaration order = ordinal ids, the macro's law), typed
- * field references (`R.fields.holder`), and — since selections are the
- * relation's own vocabulary — `where()`, which resolves a selection into
- * lowered bindings eagerly (handles re-verified against their roster at
+ * field descriptors (declaration order = ordinal ids, the macro's law),
+ * typed field references (`R.fields.holder`), and — since selections are
+ * the relation's own vocabulary — `where()`, which resolves a selection
+ * into lowered bindings eagerly (handles verified against their roster at
  * construction). `Fact<>`/`InsertFact<>` are the inferred row object
- * types: fresh fields are optional on insert input (omit-to-mint) and
- * present on read (resupply-to-preserve-identity), typed exactly.
+ * types at BARE structural value types (no brands): fresh fields are
+ * optional on insert input (omit-to-mint) and present on read
+ * (resupply-to-preserve-identity), typed exactly.
  */
 
 import * as errors from "@superbuilders/errors"
-import { phantom } from "#brand.ts"
 import type { OneOf } from "#face.ts"
-import { type AnyField, assertDeclarationOrderKey, type FieldData, type FieldValue, literalOf } from "#fields.ts"
+import { type AnyField, assertDeclarationOrderKey, type Infer, literalOf } from "#fields.ts"
 import type { LiteralSetSpec, LiteralSpec } from "#spec.ts"
 
 /** Flattens an intersection into one displayed object type (hover legibility). */
 type Flatten<T> = { [K in keyof T]: T[K] }
 
 /**
- * The one nominal step of `relation()`: the reference record is built by
+ * The one trusted seam of `relation()`: the reference record is built by
  * iterating the declared fields, and this guard verifies the checkable
  * facts — one reference per declared field, each carrying its own name —
- * before the record is admitted as the typed {@link FieldRefs}. The
- * phantom halves (brands) are carried by construction; this is the
- * module's single trusted seam, the macro-emission analog.
+ * before the record is admitted as the typed {@link FieldRefs} (the
+ * macro-emission analog).
  */
 function refsComplete<RName extends string, Fields extends FieldsShape>(
 	refs: Record<string, unknown>,
@@ -44,7 +43,7 @@ function refsComplete<RName extends string, Fields extends FieldsShape>(
  * `oneOf` signature — the one-element set is unwritable); anything else is
  * the bare literal.
  */
-function resolveEntry(field: FieldData, entry: unknown): LiteralSetSpec {
+function resolveEntry(field: AnyField, entry: unknown): LiteralSetSpec {
 	if (typeof entry === "object" && entry !== null && "literals" in entry && Array.isArray(entry.literals)) {
 		const literals: LiteralSpec[] = entry.literals.map(function lowerSetLiteral(literal: unknown) {
 			return Object.freeze(literalOf(field, literal))
@@ -86,29 +85,29 @@ function resolveSelection(
 	return Object.freeze(bindings)
 }
 
-/** The field block of a relation: field name to field constructor value. */
+/** The field block of a relation: field name to field descriptor. */
 type FieldsShape = Record<string, AnyField>
 
 /**
  * A typed field reference (`Account.fields.holder`) — the value statements,
- * selections, and queries address a field through; its hover shows the
- * field's brand in the phantom position.
+ * selections, and queries address a field through. Purely positional
+ * (relation name + field name); the field's descriptor (domain label
+ * included) is read off the relation's schema type structurally.
  */
-interface FieldRef<Rel extends string, Name extends string, V> {
+interface FieldRef<Rel extends string, Name extends string> {
 	readonly relation: Rel
 	readonly field: Name
-	readonly [phantom]?: V
 }
 
 /** The typed field-reference record of a relation. */
 type FieldRefs<RName extends string, Fields extends FieldsShape> = {
-	readonly [K in keyof Fields & string]: FieldRef<RName, K, FieldValue<Fields[K]>>
+	readonly [K in keyof Fields & string]: FieldRef<RName, K>
 }
 
-/** One declared field: name plus its runtime description, in declaration order. */
+/** One declared field: name plus its descriptor, in declaration order. */
 interface RelationField {
 	readonly name: string
-	readonly field: FieldData
+	readonly field: AnyField
 }
 
 /** A relation's runtime description. */
@@ -128,15 +127,14 @@ interface SelectionBinding {
 }
 
 /**
- * The `where()` argument: per field, a branded literal of that field's
- * type (a closed handle constant IS such a literal — it carries the closed
- * relation's brand, so it is legal exactly where the field is that closed
- * relation's id type), an `oneOf(a, b, ...)` literal set, or a `span(start,
- * end)` interval literal. Equality-only by construction: no operator
- * parameter exists anywhere.
+ * The `where()` argument: per field, a bare structural literal of that
+ * field's value type (a closed handle constant IS such a literal — a
+ * bigint verified against the roster at construction), an `oneOf(a, b,
+ * ...)` literal set, or a `span(start, end)` interval literal.
+ * Equality-only by construction: no operator parameter exists anywhere.
  */
 type SelectionInput<Fields extends FieldsShape> = {
-	readonly [K in keyof Fields]?: FieldValue<Fields[K]> | OneOf<FieldValue<Fields[K]>>
+	readonly [K in keyof Fields]?: Infer<Fields[K]> | OneOf<Infer<Fields[K]>>
 }
 
 /** A relation with a selection applied — what `on()` consumes as a σ-carrying source. */
@@ -163,25 +161,21 @@ interface AnySelected {
 }
 
 /** Extracts a relation's field block type. */
-type RelationFields<R extends AnyRelation> = R extends Relation<string, infer F> ? F : never
+type RelationFields<R extends AnyRelation> = R extends Relation<string, infer F extends FieldsShape> ? F : never
 
 /**
  * The inferred row object type of a relation as READ: every field present,
- * branded. Closed relations have no `Fact` — they are unwritable, and the
- * type constraint refuses them because a closed value lacks the relation
- * shape.
+ * at its BARE structural value type ({@link Infer}). Closed relations have
+ * no `Fact` — they are unwritable, and the type constraint refuses them
+ * because a closed value lacks the relation shape.
  */
 type Fact<R extends AnyRelation> = {
-	[K in keyof RelationFields<R>]: FieldValue<RelationFields<R>[K]>
+	[K in keyof RelationFields<R>]: Infer<RelationFields<R>[K]>
 }
 
-/** The field names of `R` that carry the fresh mint mark. */
+/** The field names of `R` whose descriptor type carries the fresh mint mark. */
 type FreshKeys<R extends AnyRelation> = {
-	[K in keyof RelationFields<R>]: RelationFields<R>[K] extends {
-		readonly data: { readonly minted: true }
-	}
-		? K
-		: never
+	[K in keyof RelationFields<R>]: RelationFields<R>[K] extends { readonly fresh: true } ? K : never
 }[keyof RelationFields<R>]
 
 /**
@@ -193,10 +187,10 @@ type InsertFact<R extends AnyRelation> = Flatten<Omit<Fact<R>, FreshKeys<R>> & P
 
 /**
  * Declares one relation: `relation("Account", { id: AccountId.fresh,
- * holder: HolderId, ... })` — every field references a declared newtype
- * (`const AccountId = u64.newtype("AccountId")`) or a bare constructor.
- * Field declaration order is ordinal-id order (macro parity); the returned
- * value is frozen and side-effect free.
+ * holder: HolderId, ... })` — every field references a declared
+ * domain-labeled descriptor (`const AccountId = u64.as("AccountId")`) or a
+ * bare constructor. Field declaration order is ordinal-id order (macro
+ * parity); the returned value is frozen and side-effect free.
  */
 function relation<const Name extends string, Fields extends FieldsShape>(
 	name: Name,
@@ -205,7 +199,7 @@ function relation<const Name extends string, Fields extends FieldsShape>(
 	const ordered: RelationField[] = []
 	for (const [fieldName, field] of Object.entries(fields)) {
 		assertDeclarationOrderKey(`relation ${name} field`, fieldName)
-		ordered.push(Object.freeze({ name: fieldName, field: field.data }))
+		ordered.push(Object.freeze({ name: fieldName, field }))
 	}
 	const data: RelationData = Object.freeze({ name, fields: Object.freeze(ordered) })
 	const refs: Record<string, unknown> = {}
