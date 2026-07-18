@@ -1,20 +1,25 @@
 //! Rot-proofing for `docs/cookbook.md` (the intuition unit): every cookbook
 //! schema compiles and **validates** verbatim against the current engine,
 //! the roster is enumerated with a count assertion (a doc recipe without a
-//! test entry fails), and the teachable notation queries round-trip through
-//! `query!` + prepare + `ir::render`, notation.rs-style.
+//! test entry fails), and every doc query fence compiles via `query!`,
+//! prepares against a real store of its recipe's schema, and round-trips
+//! through `ir::render`, notation.rs-style.
 //!
 //! Include-or-duplicate: **duplicate** — markdown cannot be `include!`d at
 //! item position, so each block is duplicated here and the sync test pins
-//! the duplication token-for-token against the doc (comments and whitespace
-//! aside — the token stream never carries them): editing either copy
-//! without the other fails `doc_blocks_match_the_compiled_copies`.
+//! the duplication token-for-token against the doc: editing either copy
+//! without the other fails `doc_blocks_match_the_compiled_copies`. The doc's
+//! rust fences are classified: each recipe has ONE schema fence (starts
+//! `bumbledb::schema!`; compared comment-stripped — the token stream never
+//! carries comments) and zero-or-more query fences (`let <name> = query!`;
+//! compared WITHOUT comment-stripping — they are code, and the stringified
+//! twin cannot carry a comment, so a commented query fence is drift).
 
 use bumbledb::schema::ValidateDescriptor as _;
 use std::collections::BTreeSet;
 
-use bumbledb::ir::Value;
-use bumbledb::ir::render::render;
+use bumbledb::ir::render::{render, render_program};
+use bumbledb::ir::{Program, Value};
 use bumbledb::{
     AnswerValue, Answers, BindValue, Db, Fact, ParamArg, PreparedQuery, Query, Schema, Snapshot,
     Theory,
@@ -27,16 +32,39 @@ mod common;
 use common::TempDir;
 
 /// One module per recipe: the schema compiled, its token source pinned for
-/// the doc-sync test, and a validation entry point for the roster test.
+/// the doc-sync test, a validation entry point for the roster test, and the
+/// recipe's query fences — each compiled by `query!` from the SAME tokens
+/// its `QUERIES` pin stringifies (the duplicate-and-pin law, query side),
+/// with its `ir::render` golden beside it. The emitted host enums live in
+/// the module, so bare handles (`priority == Urgent`) resolve in place.
 macro_rules! recipe {
     ($m:ident, $theory:ident, { $($t:tt)* }) => {
+        recipe!($m, $theory, { $($t)* }, queries {});
+    };
+    ($m:ident, $theory:ident, { $($t:tt)* }, queries {
+        $( $qname:ident: { $($q:tt)* } => $golden:literal; )*
+    }) => {
         mod $m {
             bumbledb::schema! { $($t)* }
             pub const SOURCE: &str = stringify!($($t)*);
+            /// The doc's query fences, reconstructed from the compiling tokens.
+            pub const QUERIES: &[&str] = &[$(concat!(
+                "let ", stringify!($qname), " = query!(", stringify!($theory),
+                " { ", stringify!($($q)*), " });"
+            )),*];
+            /// The `ir::render` goldens, one per query fence, in doc order.
+            pub const RENDERS: &[&str] = &[$($golden),*];
             pub fn validate() -> Result<bumbledb::Schema, bumbledb::error::SchemaError> {
                 use bumbledb::Theory as _;
                 use bumbledb::schema::ValidateDescriptor as _;
                 $theory.descriptor().validate()
+            }
+            /// Prepares every query fence against a real store of this
+            /// recipe's theory and renders it — the `pin()` discipline.
+            pub fn pin() -> Vec<String> {
+                crate::pin_all(concat!("cookbook-pin-", stringify!($m)), $theory, &[$(
+                    crate::PinnedQuery::from(bumbledb_query::query!($theory { $($q)* }))
+                ),*])
             }
         }
     };
@@ -50,6 +78,13 @@ recipe!(r01, Uptime, {
 
     Outage(service) <= Service(id);
     Outage(service, window) -> Outage;
+}, queries {
+    down_at: { (service) | Outage(service, window: w), ?t in w; }
+        => "(v0) | Outage(service: v0, window: v1), ?0 in v1;";
+    overlapping: { (service, w) | Outage(service, window: w), Allen(w, INTERSECTS, ?incident); }
+        => "(v0, v1) | Outage(service: v0, window: v1), Allen(v1, INTERSECTS, ?0);";
+    downtime: { (service, Sum(Duration(window))) | Outage(service, window); }
+        => "(v0, Sum(Duration(v1))) | Outage(service: v0, window: v1);";
 });
 
 recipe!(r02, Grading, {
@@ -76,6 +111,9 @@ recipe!(r03, Optionality, {
 
     MailingAddress(business) -> MailingAddress;
     MailingAddress(business) <= Business(id);
+}, queries {
+    unaddressed: { (b) | Business(id: b), !MailingAddress(business: b); }
+        => "(v0) | Business(id: v0), !MailingAddress(business: v0);";
 });
 
 recipe!(r04, Money, {
@@ -93,6 +131,9 @@ recipe!(r04, Money, {
 
     Posting(account)  <= Account(id);
     Posting(currency) <= Currency(id);
+}, queries {
+    totals: { (account, currency, total: Sum(minor)) | Posting(id, account, currency, minor); }
+        => "(v1, v2, Sum(v3)) | Posting(id: v0, account: v1, currency: v2, minor: v3);";
 });
 
 recipe!(r05, Content, {
@@ -110,6 +151,9 @@ recipe!(r05, Content, {
     Document(payload) -> Document;
     Replica(payload) <= Document(payload);
     Replica(region)  <= Region(id);
+}, queries {
+    by_digest: { (id) | Document(id, payload == ?digest); }
+        => "(v0) | Document(id: v0, payload == ?0);";
 });
 
 recipe!(r06, Tickets, {
@@ -124,6 +168,9 @@ recipe!(r06, Tickets, {
     }
 
     Ticket(priority) <= Priority(id);
+}, queries {
+    urgent: { (t) | Ticket(id: t, priority == Urgent); }
+        => "(v0) | Ticket(id: v0, priority == Urgent);";
 });
 
 recipe!(r07, Review, {
@@ -145,6 +192,9 @@ recipe!(r07, Review, {
     Certificate(attempt) -> Certificate;
     Certificate(attempt) <= Attempt(id);
     Certificate(kind) <= Kind(id | mastered == true);
+}, queries {
+    mastered: { (a) | Attempt(id: a, kind: k), Kind(id: k, mastered == true); }
+        => "(v0) | Attempt(id: v0, kind: v1), Kind(id: v1, mastered == true);";
 });
 
 recipe!(r08, Oncall, {
@@ -172,6 +222,9 @@ recipe!(r08, Oncall, {
     Incident(severity) <= Severity(id);
     Escalation(incident) <= Incident(id);
     Escalation(severity) <= Severity(id | pages == true);
+}, queries {
+    paged: { (i) | Escalation(incident: i, severity: s), Severity(id: s, pages == true); }
+        => "(v0) | Escalation(incident: v0, severity: v1), Severity(id: v1, pages == true);";
 });
 
 recipe!(r09, Playlists, {
@@ -187,6 +240,9 @@ recipe!(r09, Playlists, {
     Extent(playlist, span) -> Extent;
     Slot(playlist, slot) -> Slot;
     Extent(playlist, span) == Slot(playlist, slot);
+}, queries {
+    at_pos: { (track) | Slot(playlist == ?list, slot: s, track), ?pos in s; }
+        => "(v1) | Slot(playlist == ?0, slot: v0, track: v1), ?1 in v0;";
 });
 
 recipe!(r10, Ast, {
@@ -209,6 +265,9 @@ recipe!(r10, Ast, {
     Parent(child) -> Parent;
     Parent(child)  <= Node(id);
     Parent(parent) <= Node(id);
+}, queries {
+    lhs_lit: { (v) | Add(node == ?n, lhs: l), Lit(node: l, value: v); }
+        => "(v1) | Add(node == ?0, lhs: v0), Lit(node: v0, value: v1);";
 });
 
 recipe!(r11, Graph, {
@@ -225,6 +284,11 @@ recipe!(r11, Graph, {
     Maintains(person) <= Person(id);
     Maintains(repo)   <= Repo(id);
     Maintains(person, repo) -> Maintains;
+}, queries {
+    mutual: { (a, b) | Follows(follower: a, followee: b),
+                       Follows(follower: b, followee: a), a < b; }
+        => "(v0, v1) | Follows(follower: v0, followee: v1), \
+            Follows(follower: v1, followee: v0), v0 < v1;";
 });
 
 recipe!(r12, Ecs, {
@@ -241,6 +305,10 @@ recipe!(r12, Ecs, {
     Velocity(entity)   <= Entity(id);
     Renderable(entity) -> Renderable;
     Renderable(entity) <= Transform(entity);
+}, queries {
+    physics: { (e, x, y, dx, dy) | Transform(entity: e, x, y), Velocity(entity: e, dx, dy); }
+        => "(v0, v1, v2, v3, v4) | Transform(entity: v0, x: v1, y: v2), \
+            Velocity(entity: v0, dx: v3, dy: v4);";
 });
 
 recipe!(r13, Orders, {
@@ -257,6 +325,9 @@ recipe!(r13, Orders, {
     Shipment(order)  -> Shipment;
     Placement(order) <= Order(id);
     Shipment(order) == Order(id | state == Shipped);
+}, queries {
+    shipped: { (id, carrier) | Order(id, state == Shipped), Shipment(order: id, carrier); }
+        => "(v0, v1) | Order(id: v0, state == Shipped), Shipment(order: v0, carrier: v1);";
 });
 
 recipe!(r14, Calendar, {
@@ -275,7 +346,7 @@ recipe!(r14, Calendar, {
         rsvp: u64 as RsvpId,
     }
     relation Claim {
-        source: u64,
+        source: u64 as AttendanceId,
         person: u64 as PersonId,
         arm: u64 as ArmId,
         span: interval<i64>,
@@ -296,6 +367,11 @@ recipe!(r14, Calendar, {
     Claim(person, span | arm == Busy) <= WorkHours(person, hours);
     Booking(room)  <= Room(id);
     Booking(event) <= Event(id);
+}, queries {
+    room_conflicts: { (room, s) | Booking(room, span: s), Allen(s, INTERSECTS, ?want); }
+        => "(v0, v1) | Booking(room: v0, span: v1), Allen(v1, INTERSECTS, ?0);";
+    busy_people: { (person, s) | Claim(person, span: s), Allen(s, INTERSECTS, ?window); }
+        => "(v0, v1) | Claim(person: v0, span: v1), Allen(v1, INTERSECTS, ?0);";
 });
 
 recipe!(r15, Pricing, {
@@ -307,6 +383,13 @@ recipe!(r15, Pricing, {
     Version(policy) <= Policy(id);
     Version(policy, valid) -> Version;
     Policy(id, live) <= Version(policy, valid);
+}, queries {
+    in_force: { (rate_bps) | Version(policy == ?p, rate_bps, valid: v), ?t in v; }
+        => "(v0) | Version(policy == ?0, rate_bps: v0, valid: v1), ?1 in v1;";
+    successions: { (a, b) | Version(policy: p, valid: a), Version(policy: p, valid: b),
+                            Allen(a, MEETS, b); }
+        => "(v1, v2) | Version(policy: v0, valid: v1), Version(policy: v0, valid: v2), \
+            Allen(v1, MEETS, v2);";
 });
 
 recipe!(r16, Payroll, {
@@ -319,6 +402,9 @@ recipe!(r16, Payroll, {
     PayPeriod(year, seq)  -> PayPeriod;
     PayPeriod(year, span) -> PayPeriod;
     FiscalYear(id, span) <= PayPeriod(year, span);
+}, queries {
+    holding: { (seq) | PayPeriod(year == ?y, seq, span: s), ?t in s; }
+        => "(v0) | PayPeriod(year == ?0, seq: v0, span: v1), ?1 in v1;";
 });
 
 recipe!(r17, Tax, {
@@ -342,6 +428,11 @@ recipe!(r17, Tax, {
     Earned(regime) <= Regime(id);
     Residency(person, span) -> Residency;
     Earned(person, span) <= Residency(person, span);
+}, queries {
+    marginal: { (rate_bps) | Regime(id: r, year == ?y, status == ?s),
+                             Bracket(regime: r, income: b, rate_bps), ?taxable in b; }
+        => "(v2) | Regime(id: v0, year == ?0, status == ?1), \
+            Bracket(regime: v0, income: v1, rate_bps: v2), ?2 in v1;";
 });
 
 recipe!(r18, FreeTime, {
@@ -351,6 +442,11 @@ recipe!(r18, FreeTime, {
     relation Claim  { person: u64 as PersonId, span: interval<i64> }
 
     Claim(person) <= Person(id);
+}, queries {
+    busy: { (person, busy: Pack(span)) | Claim(person, span); }
+        => "(v0, Pack(v1)) | Claim(person: v0, span: v1);";
+    claimed: { (person, Sum(Duration(span))) | Claim(person, span); }
+        => "(v0, Sum(Duration(v1))) | Claim(person: v0, span: v1);";
 });
 
 recipe!(r19, Ledger, {
@@ -367,6 +463,11 @@ recipe!(r19, Ledger, {
 
     Posting(entry)   <= JournalEntry(id);
     Posting(account) <= Account(id);
+}, queries {
+    balances: { (account, total: Sum(minor)) | Posting(id, account, minor); }
+        => "(v1, Sum(v2)) | Posting(id: v0, account: v1, minor: v2);";
+    audit: { (entry, Sum(minor)) | Posting(id, entry, minor); }
+        => "(v1, Sum(v2)) | Posting(id: v0, entry: v1, minor: v2);";
 });
 
 recipe!(r20, Jobs, {
@@ -384,6 +485,9 @@ recipe!(r20, Jobs, {
     Job(state) <= State(id);
     Lease(job) -> Lease;
     Lease(job) == Job(id | state == Running);
+}, queries {
+    queued: { (id, payload) | Job(id, state == Queued, payload); }
+        => "(v0, v1) | Job(id: v0, state == Queued, payload: v1);";
 });
 
 recipe!(r21, Rollup, {
@@ -404,6 +508,9 @@ recipe!(r21, Rollup, {
     Claim(person, span) -> Claim;
     BusySpan(person, span) -> BusySpan;
     BusySpan(person, span) <= Claim(person, span | arm == Busy);
+}, queries {
+    deriving: { (person, busy: Pack(span)) | Claim(person, span, arm == Busy); }
+        => "(v0, Pack(v1)) | Claim(person: v0, span: v1, arm == Busy);";
 });
 
 recipe!(r22, Payments, {
@@ -420,6 +527,11 @@ recipe!(r22, Payments, {
     Ach(payment)  -> Ach;
     Payment(id | kind == Card) == Card(payment);
     Payment(id | kind == Ach)  == Ach(payment);
+}, queries {
+    methods: { (id, n) | Payment(id, kind == Card), Card(payment: id, last4: n);
+               (id, n) | Payment(id, kind == Ach), Ach(payment: id, routing: n); }
+        => "(v0, v1) | Payment(id: v0, kind == Card), Card(payment: v0, last4: v1);\n\
+            (v0, v1) | Payment(id: v0, kind == Ach), Ach(payment: v0, routing: v1);";
 });
 
 recipe!(r23, Gravestones, {
@@ -446,6 +558,15 @@ recipe!(r24, Closure, {
     Parent(child) -> Parent;
     Parent(child)  <= Node(id);
     Parent(parent) <= Node(id);
+}, queries {
+    children: { (c) | Parent(child: c, parent in ?frontier); }
+        => "(v0) | Parent(child: v0, parent in ?0);";
+    native: { reach(c) | Node(id: c), c == ?root;
+              reach(c) | Parent(child: c, parent: m), reach(m);
+              (c) | reach(c); }
+        => "p0(v0) | Node(id: v0), v0 == ?0;\n\
+            p0(v0) | Parent(child: v0, parent: v1), p0(v1);\n\
+            (v0) | p0(v0);";
 });
 
 recipe!(r25, Accounts, {
@@ -463,6 +584,17 @@ recipe!(r25, Accounts, {
     AccountParent(child)  <= Account(id);
     AccountParent(parent) <= Account(id);
     Posting(account) <= Account(id);
+}, queries {
+    native: { sub(a) | Account(id: a), a == ?root;
+              sub(a) | AccountParent(child: a, parent: p), sub(p);
+              (total: Sum(minor)) | Posting(id, account: a, minor), sub(a); }
+        => "p0(v0) | Account(id: v0), v0 == ?0;\n\
+            p0(v0) | AccountParent(child: v0, parent: v1), p0(v1);\n\
+            (Sum(v2)) | Posting(id: v0, account: v1, minor: v2), p0(v1);";
+    children: { (c) | AccountParent(child: c, parent in ?frontier); }
+        => "(v0) | AccountParent(child: v0, parent in ?0);";
+    rollup: { (total: Sum(minor)) | Posting(id, account in ?subtree, minor); }
+        => "(Sum(v1)) | Posting(id: v0, account in ?0, minor: v1);";
 });
 
 recipe!(r26, ExactPartition, {
@@ -496,6 +628,9 @@ recipe!(r27, MaintainedRollup, {
     Claim(person, span) -> Claim;
     BusySpan(person, span) -> BusySpan;
     BusySpan(person, span) <= Claim(person, span | arm == Busy);
+}, queries {
+    deriving: { (person, busy: Pack(span)) | Claim(source, person, arm == Busy, span); }
+        => "(v1, Pack(v2)) | Claim(source: v0, person: v1, arm == Busy, span: v2);";
 });
 
 mod composite_partition {
@@ -524,6 +659,11 @@ recipe!(r28, Payroll, {
 
     Salary(employee) <= Employee(id);
     Salary(employee, applies) -> Salary;
+}, queries {
+    in_force: { (name, amount) | Employee(id: e, name),
+                                 Salary(employee: e, amount, applies: w), ?at in w; }
+        => "(v1, v2) | Employee(id: v0, name: v1), \
+            Salary(employee: v0, amount: v2, applies: v3), ?0 in v3;";
 });
 
 /// Recipe 28's OLD theory — the v1 store the migration exports from. Not
@@ -560,169 +700,80 @@ recipe!(r29, ZoneLedger, {
     Zone(ledger, at | kind == Pair) == PairSlot(ledger, at);
 });
 
-/// The roster, exhaustively — one entry per doc recipe, in doc order.
+/// The roster, exhaustively — one entry per doc recipe, in doc order: the
+/// schema pin, the validation entry, and the query-fence pins (doc-fence
+/// sources, render goldens, and the prepare-and-render `pin`).
 struct Recipe {
     title: &'static str,
     source: &'static str,
     validate: fn() -> Result<Schema, bumbledb::error::SchemaError>,
+    queries: &'static [&'static str],
+    renders: &'static [&'static str],
+    pin: fn() -> Vec<String>,
+}
+
+/// One roster entry, wired to its recipe module's pinned surfaces.
+macro_rules! entry {
+    ($m:ident, $title:literal) => {
+        Recipe {
+            title: $title,
+            source: $m::SOURCE,
+            validate: $m::validate,
+            queries: $m::QUERIES,
+            renders: $m::RENDERS,
+            pin: $m::pin,
+        }
+    };
 }
 
 const ROSTER: [Recipe; 29] = [
-    Recipe {
-        title: "The minimal interval schema",
-        source: r01::SOURCE,
-        validate: r01::validate,
-    },
-    Recipe {
-        title: "Discriminated unions",
-        source: r02::SOURCE,
-        validate: r02::validate,
-    },
-    Recipe {
-        title: "0..1 optional attributes",
-        source: r03::SOURCE,
-        validate: r03::validate,
-    },
-    Recipe {
-        title: "Money",
-        source: r04::SOURCE,
-        validate: r04::validate,
-    },
-    Recipe {
-        title: "Content addressing",
-        source: r05::SOURCE,
-        validate: r05::validate,
-    },
-    Recipe {
-        title: "The vocabulary",
-        source: r06::SOURCE,
-        validate: r06::validate,
-    },
-    Recipe {
-        title: "The classification",
-        source: r07::SOURCE,
-        validate: r07::validate,
-    },
-    Recipe {
-        title: "The sub-vocabulary",
-        source: r08::SOURCE,
-        validate: r08::validate,
-    },
-    Recipe {
-        title: "Ordered collections",
-        source: r09::SOURCE,
-        validate: r09::validate,
-    },
-    Recipe {
-        title: "Trees and ASTs",
-        source: r10::SOURCE,
-        validate: r10::validate,
-    },
-    Recipe {
-        title: "Typed graphs",
-        source: r11::SOURCE,
-        validate: r11::validate,
-    },
-    Recipe {
-        title: "Entity-component",
-        source: r12::SOURCE,
-        validate: r12::validate,
-    },
-    Recipe {
-        title: "State machines",
-        source: r13::SOURCE,
-        validate: r13::validate,
-    },
-    Recipe {
-        title: "The calendar core",
-        source: r14::SOURCE,
-        validate: r14::validate,
-    },
-    Recipe {
-        title: "Effective-dated configuration",
-        source: r15::SOURCE,
-        validate: r15::validate,
-    },
-    Recipe {
-        title: "Disjoint covers",
-        source: r16::SOURCE,
-        validate: r16::validate,
-    },
-    Recipe {
-        title: "Federal income tax",
-        source: r17::SOURCE,
-        validate: r17::validate,
-    },
-    Recipe {
-        title: "Free time and coalescing",
-        source: r18::SOURCE,
-        validate: r18::validate,
-    },
-    Recipe {
-        title: "The ledger",
-        source: r19::SOURCE,
-        validate: r19::validate,
-    },
-    Recipe {
-        title: "Conditional writes",
-        source: r20::SOURCE,
-        validate: r20::validate,
-    },
-    Recipe {
-        title: "Derived relations",
-        source: r21::SOURCE,
-        validate: r21::validate,
-    },
-    Recipe {
-        title: "Union reads",
-        source: r22::SOURCE,
-        validate: r22::validate,
-    },
-    Recipe {
-        title: "The anti-recipes: five gravestones",
-        source: r23::SOURCE,
-        validate: r23::validate,
-    },
-    Recipe {
-        title: "The closure idiom",
-        source: r24::SOURCE,
-        validate: r24::validate,
-    },
-    Recipe {
-        title: "The chart of accounts",
-        source: r25::SOURCE,
-        validate: r25::validate,
-    },
-    Recipe {
-        title: "Exact partition",
-        source: r26::SOURCE,
-        validate: r26::validate,
-    },
-    Recipe {
-        title: "Derived facts, maintained",
-        source: r27::SOURCE,
-        validate: r27::validate,
-    },
-    Recipe {
-        title: "Migration is ETL",
-        source: r28::SOURCE,
-        validate: r28::validate,
-    },
-    Recipe {
-        title: "The zone ledger",
-        source: r29::SOURCE,
-        validate: r29::validate,
-    },
+    entry!(r01, "The minimal interval schema"),
+    entry!(r02, "Discriminated unions"),
+    entry!(r03, "0..1 optional attributes"),
+    entry!(r04, "Money"),
+    entry!(r05, "Content addressing"),
+    entry!(r06, "The vocabulary"),
+    entry!(r07, "The classification"),
+    entry!(r08, "The sub-vocabulary"),
+    entry!(r09, "Ordered collections"),
+    entry!(r10, "Trees and ASTs"),
+    entry!(r11, "Typed graphs"),
+    entry!(r12, "Entity-component"),
+    entry!(r13, "State machines"),
+    entry!(r14, "The calendar core"),
+    entry!(r15, "Effective-dated configuration"),
+    entry!(r16, "Disjoint covers"),
+    entry!(r17, "Federal income tax"),
+    entry!(r18, "Free time and coalescing"),
+    entry!(r19, "The ledger"),
+    entry!(r20, "Conditional writes"),
+    entry!(r21, "Derived relations"),
+    entry!(r22, "Union reads"),
+    entry!(r23, "The anti-recipes: five gravestones"),
+    entry!(r24, "The closure idiom"),
+    entry!(r25, "The chart of accounts"),
+    entry!(r26, "Exact partition"),
+    entry!(r27, "Derived facts, maintained"),
+    entry!(r28, "Migration is ETL"),
+    entry!(r29, "The zone ledger"),
 ];
 
 /// Comments and whitespace out; what remains is exactly what the token
 /// stream carries, so a stringified duplicate compares against a doc block.
+/// Schema fences only — query fences go through `squish`.
 fn normalize(text: &str) -> String {
     text.lines()
         .map(|line| line.split("//").next().unwrap_or(""))
         .flat_map(str::chars)
         .filter(|c| !c.is_whitespace())
         .collect()
+}
+
+/// Whitespace out, comments KEPT: query fences are code, so their pin is
+/// exact — a comment inside a doc query fence is drift by definition (the
+/// stringified twin cannot carry one), never silently ignored.
+fn squish(text: &str) -> String {
+    text.chars().filter(|c| !c.is_whitespace()).collect()
 }
 
 /// The doc's numbered recipe headings, `## N. Title`, in order.
@@ -738,17 +789,61 @@ fn doc_headings() -> Vec<(usize, String)> {
         .collect()
 }
 
-/// The doc's fenced `rust` blocks, in order.
-fn doc_blocks() -> Vec<String> {
-    let mut blocks = Vec::new();
-    let mut current: Option<String> = None;
+/// One doc recipe's `rust` fences, classified: the ONE schema fence (starts
+/// `bumbledb::schema!`) and its query fences (`let <name> = query!(...)`),
+/// in doc order — a query fence may precede its schema fence (recipe 25's
+/// engine-native program sits in the prose above the block).
+struct DocRecipe {
+    number: usize,
+    schema: String,
+    queries: Vec<String>,
+}
+
+/// The doc's fenced `rust` blocks, grouped per numbered recipe heading and
+/// classified — an unclassifiable fence is a failure, never a skip.
+fn doc_recipes() -> Vec<DocRecipe> {
+    let mut recipes: Vec<DocRecipe> = Vec::new();
+    let mut fence: Option<String> = None;
     for line in COOKBOOK.lines() {
-        match &mut current {
-            None if line.trim() == "```rust" => current = Some(String::new()),
+        if fence.is_none()
+            && let Some(rest) = line.strip_prefix("## ")
+        {
+            if let Some((number, _)) = rest.split_once(". ")
+                && let Ok(number) = number.parse()
+            {
+                recipes.push(DocRecipe {
+                    number,
+                    schema: String::new(),
+                    queries: Vec::new(),
+                });
+            }
+            continue;
+        }
+        match &mut fence {
+            None if line.trim() == "```rust" => fence = Some(String::new()),
             None => {}
             Some(block) if line.trim() == "```" => {
-                blocks.push(std::mem::take(block));
-                current = None;
+                let block = std::mem::take(block);
+                fence = None;
+                let recipe = recipes
+                    .last_mut()
+                    .expect("a rust fence sits under a numbered recipe heading");
+                let head = block.trim_start();
+                if head.starts_with("bumbledb::schema!") {
+                    assert!(
+                        recipe.schema.is_empty(),
+                        "recipe {} has two schema fences",
+                        recipe.number
+                    );
+                    recipe.schema = block;
+                } else if head.starts_with("let ") {
+                    recipe.queries.push(block);
+                } else {
+                    panic!(
+                        "recipe {} has an unclassifiable rust fence: {head:?}",
+                        recipe.number
+                    );
+                }
             }
             Some(block) => {
                 block.push_str(line);
@@ -756,7 +851,7 @@ fn doc_blocks() -> Vec<String> {
             }
         }
     }
-    blocks
+    recipes
 }
 
 /// The first nonblank line after every numbered heading. The label is prose,
@@ -801,15 +896,17 @@ fn the_doc_roster_is_exactly_this_roster() {
     }
 }
 
-/// Every doc schema block is token-identical to its compiled duplicate.
+/// Every doc schema block is token-identical to its compiled duplicate, and
+/// every doc query fence is token-identical to its pinned twin — the same
+/// duplicate-and-pin law on both fence classes, plus the query-fence census.
 #[test]
 fn doc_blocks_match_the_compiled_copies() {
-    let blocks = doc_blocks();
+    let recipes = doc_recipes();
     let labels = doc_labels();
     assert_eq!(
-        blocks.len(),
+        recipes.len(),
         ROSTER.len(),
-        "one schema block per recipe, in roster order"
+        "one classified fence corpus per recipe, in roster order"
     );
     assert_eq!(
         labels.len(),
@@ -823,16 +920,46 @@ fn doc_blocks_match_the_compiled_copies() {
             "recipe {number} has no immediate Guarantee label: {label:?}"
         );
     }
-    for (i, (block, recipe)) in blocks.iter().zip(ROSTER.iter()).enumerate() {
+    let mut query_fences = 0;
+    for (i, (doc, recipe)) in recipes.iter().zip(ROSTER.iter()).enumerate() {
+        assert_eq!(doc.number, i + 1, "recipe numbering follows the roster");
+        assert!(
+            !doc.schema.is_empty(),
+            "recipe {} ({}) has no schema fence",
+            i + 1,
+            recipe.title
+        );
         let expected = format!("bumbledb::schema!{{{}}}", normalize(recipe.source));
         assert_eq!(
-            normalize(block),
+            normalize(&doc.schema),
             expected,
             "recipe {} ({}) drifted between doc and test",
             i + 1,
             recipe.title
         );
+        assert_eq!(
+            doc.queries.len(),
+            recipe.queries.len(),
+            "recipe {} ({}) query fences and pinned twins must correspond one-to-one",
+            i + 1,
+            recipe.title
+        );
+        for (j, (fence, twin)) in doc.queries.iter().zip(recipe.queries.iter()).enumerate() {
+            assert_eq!(
+                squish(fence),
+                squish(twin),
+                "recipe {} ({}) query {} drifted between doc and test",
+                i + 1,
+                recipe.title,
+                j + 1
+            );
+        }
+        query_fences += doc.queries.len();
     }
+    assert_eq!(
+        query_fences, 34,
+        "the doc's compiled query fences, exhaustively"
+    );
 }
 
 /// Every recipe's schema validates against the current engine — the compile
@@ -1369,38 +1496,83 @@ fn r29_coalescing_insensitivity_and_width_by_type() {
     assert!(matches!(error, bumbledb::Error::FactShape(_)));
 }
 
-/// Renders after proving the query real: prepared against a `Db` of the
-/// theory (prepare runs the validation roster) — the notation-test `pin`.
-fn pin<S: Theory + Copy>(tag: &str, theory: S, query: &Query) -> String {
+/// One compiled doc query, either shape `query!` lowers to: the bare-rule
+/// `ir::Query` or the named-head `ir::Program` (recipe 24/25's closures).
+enum PinnedQuery {
+    Query(Query),
+    Program(Program),
+}
+
+impl From<Query> for PinnedQuery {
+    fn from(query: Query) -> Self {
+        Self::Query(query)
+    }
+}
+
+impl From<Program> for PinnedQuery {
+    fn from(program: Program) -> Self {
+        Self::Program(program)
+    }
+}
+
+/// Renders after proving each query real: every query fence of one recipe,
+/// prepared against one `Db` of its theory (prepare runs the validation
+/// roster) — the notation-test `pin`, recipe-wide.
+fn pin_all<S: Theory + Copy>(tag: &str, theory: S, queries: &[PinnedQuery]) -> Vec<String> {
+    if queries.is_empty() {
+        return Vec::new();
+    }
     let dir = TempDir::new(tag);
     let db = Db::create(dir.path(), theory).expect("create the theory's store");
-    db.prepare(query).expect("the cookbook query validates");
     let schema: Schema = theory.descriptor().validate().expect("a landed theory");
-    render(&schema, query)
+    queries
+        .iter()
+        .map(|pinned| match pinned {
+            PinnedQuery::Query(query) => {
+                db.prepare(query).expect("the cookbook query validates");
+                render(&schema, query)
+            }
+            PinnedQuery::Program(program) => {
+                db.prepare(program).expect("the cookbook program validates");
+                render_program(&schema, program)
+            }
+        })
+        .collect()
 }
 
-/// Recipe 1: the measure under `Sum` — total downtime per service.
+/// Every doc query fence compiles via `query!`, prepares against a real
+/// store of its recipe's schema, and round-trips through `ir::render` to
+/// its pinned golden — the `pin()` law over the whole query roster,
+/// recipe 24/25's programs included.
 #[test]
-fn r01_duration_sum_round_trips() {
-    let downtime = query!(r01::Uptime {
-        (service, Sum(Duration(window))) | Outage(service, window);
-    });
-    assert_eq!(
-        pin("r01-downtime", r01::Uptime, &downtime),
-        "(v0, Sum(Duration(v1))) | Outage(service: v0, window: v1);"
-    );
-}
-
-/// Recipe 3: negation is plain anti-join — businesses without an address.
-#[test]
-fn r03_negation_round_trips() {
-    let bare = query!(r03::Optionality {
-        (b) | Business(id: b), !MailingAddress(business: b);
-    });
-    assert_eq!(
-        pin("r03-bare", r03::Optionality, &bare),
-        "(v0) | Business(id: v0), !MailingAddress(business: v0);"
-    );
+fn every_doc_query_compiles_prepares_and_round_trips() {
+    for (i, recipe) in ROSTER.iter().enumerate() {
+        assert_eq!(
+            recipe.queries.len(),
+            recipe.renders.len(),
+            "recipe {} ({}) pins one render golden per query",
+            i + 1,
+            recipe.title
+        );
+        let rendered = (recipe.pin)();
+        assert_eq!(
+            rendered.len(),
+            recipe.renders.len(),
+            "recipe {} ({}) renders every pinned query",
+            i + 1,
+            recipe.title
+        );
+        for (j, (rendered, golden)) in rendered.iter().zip(recipe.renders.iter()).enumerate() {
+            assert_eq!(
+                rendered,
+                golden,
+                "recipe {} ({}) query {} drifted from its render golden",
+                i + 1,
+                recipe.title,
+                j + 1
+            );
+        }
+    }
 }
 
 /// Recipe 3's missing negative witness: the child key is the 0..1 proof,
@@ -1434,100 +1606,6 @@ fn r03_a_second_optional_child_is_rejected() {
     assert!(matches!(error, bumbledb::Error::CommitRejected { .. }));
 }
 
-/// Recipe 9: positional access is membership — "what plays at position
-/// `?pos`" is one point-in probe against the unit slot.
-#[test]
-fn r09_positional_access_round_trips() {
-    let at_pos = query!(r09::Playlists {
-        (track) | Slot(playlist == ?list, slot: s, track), ?pos in s;
-    });
-    assert_eq!(
-        pin("r09-at-pos", r09::Playlists, &at_pos),
-        "(v1) | Slot(playlist == ?0, slot: v0, track: v1), ?1 in v0;"
-    );
-}
-
-/// Recipe 14: the room-conflict probe — one Allen mask against a param.
-#[test]
-fn r14_booking_probe_round_trips() {
-    let conflicts = query!(r14::Calendar {
-        (room, s) | Booking(room, span: s), Allen(s, INTERSECTS, ?want);
-    });
-    assert_eq!(
-        pin("r14-conflicts", r14::Calendar, &conflicts),
-        "(v0, v1) | Booking(room: v0, span: v1), Allen(v1, INTERSECTS, ?0);"
-    );
-}
-
-/// Recipe 15: "in force on date t" is one membership probe.
-#[test]
-fn r15_in_force_round_trips() {
-    let in_force = query!(r15::Pricing {
-        (rate_bps) | Version(policy == ?p, rate_bps, valid: v), ?t in v;
-    });
-    assert_eq!(
-        pin("r15-in-force", r15::Pricing, &in_force),
-        "(v0) | Version(policy == ?0, rate_bps: v0, valid: v1), ?1 in v1;"
-    );
-}
-
-/// Recipe 17: the marginal bracket — membership probes the disjoint bracket set.
-#[test]
-fn r17_marginal_bracket_round_trips() {
-    let marginal = query!(r17::Tax {
-        (rate_bps) | Regime(id: r, year == ?y, status == ?s),
-                     Bracket(regime: r, income: b, rate_bps), ?taxable in b;
-    });
-    assert_eq!(
-        pin("r17-marginal", r17::Tax, &marginal),
-        "(v2) | Regime(id: v0, year == ?0, status == ?1), \
-         Bracket(regime: v0, income: v1, rate_bps: v2), ?2 in v1;"
-    );
-}
-
-/// Recipe 18: `Pack` is the coalescing fold — busy time per person.
-#[test]
-fn r18_pack_round_trips() {
-    let busy = query!(r18::FreeTime {
-        (person, busy: Pack(span)) | Claim(person, span);
-    });
-    assert_eq!(
-        pin("r18-busy", r18::FreeTime, &busy),
-        "(v0, Pack(v1)) | Claim(person: v0, span: v1);"
-    );
-}
-
-/// Recipe 19: balances — bind the fresh id or set semantics collapses
-/// equal (account, minor) pairs.
-#[test]
-fn r19_balances_round_trips() {
-    let balances = query!(r19::Ledger {
-        (account, total: Sum(minor)) | Posting(id, account, minor);
-    });
-    assert_eq!(
-        pin("r19-balances", r19::Ledger, &balances),
-        "(v1, Sum(v2)) | Posting(id: v0, account: v1, minor: v2);"
-    );
-}
-
-/// Recipe 22: the whole-DU read — one head, one rule per arm; the
-/// exclusivity theorem elides cross-rule dedup. The bare handles resolve
-/// through the `Kind` host enum in scope, and the renderer prints them
-/// back as the same bare handles — the round trip runs on names.
-#[test]
-fn r22_union_read_round_trips() {
-    use r22::Kind;
-    let methods = query!(r22::Payments {
-        (id, n) | Payment(id, kind == Card), Card(payment: id, last4: n);
-        (id, n) | Payment(id, kind == Ach), Ach(payment: id, routing: n);
-    });
-    assert_eq!(
-        pin("r22-methods", r22::Payments, &methods),
-        "(v0, v1) | Payment(id: v0, kind == Card), Card(payment: v0, last4: v1);\n\
-         (v0, v1) | Payment(id: v0, kind == Ach), Ach(payment: v0, routing: v1);"
-    );
-}
-
 /// Recipe 22's missing negative witness: one payment cannot inhabit both
 /// key-backed DU arms because the reverse equality requires two distinct
 /// discriminator values for the same fresh id.
@@ -1556,34 +1634,6 @@ fn r22_a_double_arm_payment_is_rejected() {
         })
         .expect_err("one id cannot inhabit Card and Ach simultaneously");
     assert!(matches!(error, bumbledb::Error::CommitRejected { .. }));
-}
-
-/// Recipe 6: the vocabulary — the bare handle is a fixed point of the
-/// round trip (`Priority` is `UpperCamel` of `priority`, so the
-/// renderer's own output reparses through the host enum in scope).
-#[test]
-fn r06_vocabulary_handle_round_trips() {
-    use r06::Priority;
-    let urgent = query!(r06::Tickets {
-        (t) | Ticket(id: t, priority == Urgent);
-    });
-    assert_eq!(
-        pin("r06-urgent", r06::Tickets, &urgent),
-        "(v0) | Ticket(id: v0, priority == Urgent);"
-    );
-}
-
-/// Recipe 7: the classification read — ψ over the vocabulary's payload,
-/// no flag duplicated onto Attempt.
-#[test]
-fn r07_classification_round_trips() {
-    let mastered = query!(r07::Review {
-        (a) | Attempt(id: a, kind: k), Kind(id: k, mastered == true);
-    });
-    assert_eq!(
-        pin("r07-mastered", r07::Review, &mastered),
-        "(v0) | Attempt(id: v0, kind: v1), Kind(id: v1, mastered == true);"
-    );
 }
 
 /// Recipe 8: the sub-vocabulary's judgment is the compiled member set —
