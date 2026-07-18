@@ -1,7 +1,7 @@
 # PRD-M4 — The notation conformance corpus: one grammar, mechanically refereed
 
-Wave M · Repo: bumbledb (`crates/bumbledb-query` + `ts/`) · depends on: M1, M2
-(pins the FINAL notation)
+Wave M · Repo: bumbledb (`crates/bumbledb-query` + `ts/`) · depends on: M2
+(pins the FINAL query notation; the schema notation is not in scope here)
 
 ## Objective
 

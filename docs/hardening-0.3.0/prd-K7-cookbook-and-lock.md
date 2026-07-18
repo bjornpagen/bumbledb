@@ -1,7 +1,7 @@
 # PRD-K7 — The SDK cookbook rewritten + the cross-host lock extended
 
 Wave K · Repo: bumbledb `ts/` (+ `ts/crate` for the lock twin) · depends on:
-K1, K2, K3, K4, K5, K6, M1
+K1, K2, K3, K4, K5, K6
 
 ## Objective
 
@@ -39,9 +39,10 @@ BOTH sides of the FFI.
    rule binds ≥2 vars; free comparisons in `.where`; `Kind.match` where a
    recipe dispatches on handles; the 3-arg `closed` everywhere (the curried
    spelling no longer compiles).
-4. **The `key` spelling** (M1): every schema block in the COOKBOOK uses
-   `key(R, [...])` renders consistent with the new canonical string — verify
-   against `renderStatement` output, not by hand.
+4. **The `key` spelling**: unchanged — the canonical render stays the
+   dependency-theoretic arrow (`R(a, b) -> R`, M1 owner ruling); the TS
+   `key(R, [...])` free function is the host flavor. Verify the COOKBOOK's key
+   statements render to the arrow via `renderStatement` output, not by hand.
 5. **The compile-pin** (`ts/test/cookbook.test.ts`): update every recipe's
    pinned construction to the rewritten text — the pin mechanism itself is
    unchanged (recipes are constructed through the public surface; a COOKBOOK

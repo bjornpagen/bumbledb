@@ -1,8 +1,9 @@
 # PRD-M3 — Cookbook queries compiled: the comments become `query!`
 
 Wave M · Repo: bumbledb (`docs/cookbook.md` + `crates/bumbledb-query/tests/cookbook.rs`)
-· depends on: M1 (same doc file — land the spelling sweep first), M2 (queries
-must be written in the final notation)
+· depends on: M2 (queries must be written in the final notation; the key
+arrow is unchanged per the M1 owner ruling — schema blocks keep their
+spellings)
 
 ## Objective
 
@@ -34,7 +35,8 @@ program form). Promote them all to compiled, pinned `query!` blocks.
    of the schema block into its own ```rust fence immediately after, as
    compiling code: `let q = query!(RecipeSchema { ... });` (program form for
    r24/r25 — promote their ```text fences to rust). Keep the surrounding prose;
-   the notation inside is unchanged except M1/M2 respellings.
+   the notation inside is unchanged except M2's idb-head respelling. Schema
+   blocks (including every key arrow) are untouched.
 2. **The sync test** (`crates/bumbledb-query/tests/cookbook.rs`):
    - Teach `doc_blocks()` to classify fences: a recipe now has one SCHEMA fence
      (starts `bumbledb::schema!` — the existing assertion narrows to this

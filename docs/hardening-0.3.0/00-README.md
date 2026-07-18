@@ -31,20 +31,35 @@ DELETED once shipped.
    `Kind(id | mastered == true)`; the napi marshal passes selections through.
    Only two TS surface holes exist (statements: `closed().where`; query atoms:
    `.match` over closed) and this packet closes both.
-5. **Canonical utterance holds everywhere**: when a spelling changes, the old
-   spelling is DELETED, not dual-accepted. `key R(a, b);` replaces
-   `R(a, b) -> R` in one flag-day; ordered-dense idb heads (`reach(m)`) replace
-   `reach(0: m)` for the dense case; the curried tier-2 `closed()()` dies when
-   the 3-arg form lands.
-6. **Store safety is proven, not assumed**: fingerprints hash canonical
+5. **The key arrow is canon — OWNER RULING (2026-07-18, overrules the earlier
+   memo).** `R(a, b) -> R` stays: it is the dependency-theoretic spelling — the
+   key projection determines the tuple, the arrow closing over its own relation
+   is what makes a key a key. It is never respelled, in either host's renderer.
+   M1 RATIFIES and documents this reading instead of changing it.
+6. **The semantic-parity law (the core goal).** The TS SDK and the Rust macro
+   express EXACTLY the same theory semantics — same statements, same lowered
+   descriptors, same fingerprints, same query IR — while each speaks its host's
+   idiom (Rust: declared `as NewType` + the notation; TS: derived coordinates +
+   value builders). Flavor may differ; meaning may not. Every capability lands
+   in both hosts or is explicitly ratified as host-idiomatic sugar over
+   identical lowering (`ref`/`cites` are sugar — the derived statements are
+   ordinary statements Rust writes by hand). The mechanical referees: the T5
+   per-recipe fingerprint goldens, the M4 notation⇄IR corpus, the render-golden
+   byte-pin, and the CrossHost lock. A capability with no referee is not done.
+7. **Canonical utterance holds everywhere**: when a spelling changes, the old
+   spelling is DELETED, not dual-accepted. Ordered-dense idb heads (`reach(m)`)
+   replace `reach(0: m)` for the dense case; the curried tier-2 `closed()()`
+   dies when the 3-arg form lands.
+8. **Store safety is proven, not assumed**: fingerprints hash canonical
    descriptor bytes (`bumbledb-schema-v4`) — never syntax, never spellings,
    never domain labels. Every syntax PRD carries a fingerprint-pin-unchanged
    criterion as its proof.
-7. **Rust stays declared** (`as NewType`); the asymmetry is ratified and
-   documented, not papered over. Labels never reach the store, so a TS schema
-   with `"Service.id"` coordinates and a Rust schema with `as ServiceId`
-   fingerprint identically when names/types/statements agree.
-8. **No 1.0.0 anywhere in this packet.** The owner has explicitly deferred it.
+9. **Rust stays declared** (`as NewType`); the FLAVOR asymmetry is ratified
+   and documented under the semantic-parity law, not papered over. Labels
+   never reach the store, so a TS schema with `"Service.id"` coordinates and a
+   Rust schema with `as ServiceId` fingerprint identically when
+   names/types/statements agree.
+10. **No 1.0.0 anywhere in this packet.** The owner has explicitly deferred it.
    No agent bumps to 1.0.0, tags, or publishes; 0.3.0 staging is agent work,
    the publish itself is owner ceremony.
 
@@ -67,16 +82,16 @@ DELETED once shipped.
 ```
 PARALLEL START
   T2 readme-truth   T4 todo-collapse   T5 fingerprint-goldens   T6 ci-lane
-  M1 key-respelling      M2 idb-heads
+  M1 key-arrow-ratified  M2 idb-heads
   K1 psi-statements      K3 coordinate-kernel
 THEN
-  M3 cookbook-queries-compiled   (after M1 — same doc file)
-  M4 notation-corpus             (after M1 + M2 — pins the final notation)
+  M3 cookbook-queries-compiled   (after M2 — queries written in the final notation)
+  M4 notation-corpus             (after M2 — pins the final notation)
   K2 psi-query-atoms             (after K1)
   K4 derived-statements          (after K3)
   K5 vars-and-comparisons  K6 closed-ergonomics   (independent; anytime)
 THEN
-  K7 cookbook-and-lock   (after K1 K2 K3 K4 K5 K6 + M1)
+  K7 cookbook-and-lock   (after K1 K2 K3 K4 K5 K6)
   K8 sdk-green           (after all K)
   T3 ts-readme-rewrite   (after K8 — documents the final surface; ships at V1)
 THEN
@@ -93,17 +108,17 @@ V1 release-staging: last; owner publishes.
 | T4 | TODO.md collapsed to reality | — |
 | T5 | Cross-language fingerprint goldens, per recipe | — |
 | T6 | The CI lane that runs the locks | — |
-| M1 | `key R(a, b);` — the ceremony RHS dies | — |
+| M1 | The key arrow ratified — the FD reading documented, never respelled | — |
 | M2 | Ordered-dense idb heads | — |
-| M3 | Cookbook queries compiled — comments become `query!` | M1 |
-| M4 | The notation conformance corpus | M1, M2 |
+| M3 | Cookbook queries compiled — comments become `query!` | M2 |
+| M4 | The notation conformance corpus | M2 |
 | K1 | ψ statements: `closed().where()` + the face arms | — |
 | K2 | ψ query atoms: `.match`/`not` over closed relations | K1 |
 | K3 | The coordinate kernel: derived domains, `ref`, `cites`, the dot-ban | — |
 | K4 | Derived statements: synthesis, dedupe, tail order, closed refs | K3 |
 | K5 | `vars()` + free comparison exports | — |
 | K6 | Closed ergonomics: `Kind.match` + the 3-arg `closed` | — |
-| K7 | The SDK cookbook rewritten + the cross-host lock extended | K1–K6, M1 |
+| K7 | The SDK cookbook rewritten + the cross-host lock extended | K1–K6 |
 | K8 | Whole-SDK green restored | all K |
 | P1 | Primer: the store schema goes derived | K8 |
 | P2 | Primer: the full 0.3.0 cutover sweep | P1 |
