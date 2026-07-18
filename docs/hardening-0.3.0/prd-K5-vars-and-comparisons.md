@@ -19,6 +19,12 @@ which is silently legal as a wildcard — a type/runtime divergence); any
    (`TermOps` merely aliases them; all judgment happens at the `.where` seam
    via `CheckCond` against the rule env). They are simply not exported.
 
+ADDITIVE, not a respelling: `r.var(...)` and the `r.lt(...)`-style method
+forms REMAIN compiled surface (this PRD's own IR-identity golden needs the
+twin, and downstream consumers — primer's 43 queries — compile unchanged).
+Canonical-utterance is not violated: one lowering, two entry flavors, same
+law as `key(R,[...])` vs the arrow.
+
 ## Work
 
 1. **`vars`** on `TermOps` (`ts/src/query/scope.ts` or wherever `TermOps`

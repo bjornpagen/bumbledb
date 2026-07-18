@@ -15,17 +15,22 @@ values, and statement types. Re-derive the truth.)
 ## Work
 
 1. **The battlefield map, fresh**: grep the whole repo for
-   `@bjornpagen/bumbledb` importers (last count 27 files across
-   graph-builder driver/etl/prompts, the two benchmark seeds, and tests).
-   For each, list which imported names' types or spellings K-wave moved
-   (closed values now carry `where`/`match`; query rule scopes carry `vars`;
-   statement/`Fact` types flow coordinates in domains; the curried `closed`
-   died). Files consuming only `Fact`/`Tx`/`Violation`-shaped types may again
-   be no-ops — PROVE each no-op by typechecking, not by analogy.
-2. **Query-construction sites** (`prompts/store-reads.ts` and any
-   driver/etl site building rules): adopt `vars()`, free comparisons, closed
-   atoms where they simplify — and anywhere the old spelling no longer
-   compiles, the new spelling is mandatory (no compat imports).
+   `@bjornpagen/bumbledb` importers (audited 2026-07-18: **28 files** — 13
+   store, 8 driver, 3 prompts, 2 etl, 2 benchmark seeds). For each, list
+   which imported names' types or spellings K-wave moved (closed values now
+   carry `where`/`match`; query rule scopes carry `vars`; statement/`Fact`
+   types flow coordinates in domains; the curried `closed` died). Files
+   consuming only `Fact`/`Tx`/`Violation`-shaped types may again be no-ops —
+   PROVE each no-op by typechecking, not by analogy.
+2. **Query construction lives ENTIRELY in P1's store cluster** (audited:
+   `gates.ts`/`derive.ts`/`observe.ts` + one etl test helper).
+   `prompts/store-reads.ts` builds NO queries and deliberately never will
+   (its own header states the query surface is not a dependency — scan-only
+   by doctrine); do not "adopt" anything there. This PRD's forced edits
+   outside the pin are exactly: `store/rebirth.test.ts` ~lines 490 and 524 —
+   two mini-schemas spelling `u64.as(...).fresh`, a K3 construction error —
+   rewrite to derived coordinates. Optional ergonomics adoption in the store
+   cluster belongs to P1 (see P1 §Work-5); this PRD does not double-claim it.
 3. **The pin**: `package.json` devDependencies `@bjornpagen/bumbledb` →
    `"0.3.0"` exactly. Do not run any install after the local link (the
    0.2.0-train law); the lockfile stays stale until the owner's post-publish

@@ -6,11 +6,23 @@ Wave P · Repo: **primer** (`/Users/bjorn/Documents/primer`) · depends on: K8
 ## Objective
 
 Primer's graph-builder store schema
-(`src/tools/graph-builder/store/schema.ts` — at last count 19 `.as(` sites and
-40 `contained(` statements, 31 of them the simple derivable shape) is the
-first real consumer of the coordinate kernel. Cut it to the 0.3.0 idioms
-fully: derived coordinates, `ref`/`cites`, ψ where its closed vocabularies are
-being complement-worked-around, no hand statement that a `ref` derives.
+(`src/tools/graph-builder/store/schema.ts` — audited 2026-07-18: 22 `.as(`
+sites, 57 `contained(` statements of which 55 are derivable — 43 single-field
+refs + 12 closed-vocab refs; keeps: 2 composite containments, 3 `mirrors`, 31
+keys, 32 windows) is the first real consumer of the coordinate kernel. Cut it
+to the 0.3.0 idioms fully: derived coordinates, `ref`/`cites`, no hand
+statement that a `ref` derives. The audit's bin map is the plan of record:
+all 22 owner `.as` constants become derived fresh coordinates (each is a K3
+construction error if left); ~40 reference fields become `ref`; the three
+assumption-DU arms (`assumptionFromMember.assumption`,
+`assumptionFromEdge.assumption`, `assumptionPreCourse.assumption`,
+schema.ts ~773–796) are the mandated `cites` sites — their only lawful link is
+the selected `mirrors` glue; bin-4 (`.as` kept for shared value domains) is
+EMPTY at HEAD. Record in the map (a comment at the site): `capability: str`
+is the custody spelling joined across four relations and `str` is outside the
+labelable kinds — deliberately unlabeled, policed by the composite
+containments; `task.subject: u64` is a nine-way sum-domain pointer and stays
+deliberately bare (B-min working as designed — do NOT ref or label it).
 
 ## Context / constraints
 
@@ -43,14 +55,36 @@ being complement-worked-around, no hand statement that a `ref` derives.
    fingerprint-stable migrations — primer accepts the motion, so go full
    derivation: the schema file is the representation, the statements the
    derivation).
-3. Adopt ψ/closed atoms and the new ergonomics in the store cluster's OWN
-   code and tests (`schema.test.ts`, `rebirth.test.ts`, and any store file
-   constructing queries): closed `.where` targets where the schema previously
-   spelled complements; `vars()`/free comparisons/`Kind.match`/3-arg `closed`
-   where the old spellings no longer compile.
-4. The cluster's tests: rewrite expectations that pinned old manifest
-   spellings or old fingerprints; assertions on statement lists follow the
-   derived tail order.
+3. ψ adoption: **expect ZERO sites** (audited) — all 10 primer vocabularies
+   are bare-tier, and the complement idioms in the schema are open-relation
+   face families ψ cannot compress. Do not force it. Record in the map: a
+   future "mintable pins only" law would require reshaping `Pin`/`Outcome`/
+   `SteerKind` to payload-tier — a design decision out of this packet's scope.
+4. **Statement identity — the real work item.** K4-derived statements are
+   minted inside `schema()`; primer holds no object references to them, and
+   three consumers key by identity today:
+   - `store/diag-map.ts` (~lines 43–51): a `Map<Statement, RepairMapping>`
+     built from `laws.X` references that THROWS at load on any unmapped
+     statement — re-key by the K4-blessed identity, the `renderStatement`
+     string, so all 55 derived statements resolve;
+   - `driver/dispatch.ts` (~lines 190–203): `buildStaticHints` walks EVERY
+     `runStoreSchema.statements` entry through `diagForStatement` at module
+     load — dies at import unless diag-map covers the derived tail;
+   - `store/schema-ledger.test.ts` (~lines 75–80): `violation.statement ===
+     statement` identity comparisons — move to canonical-string comparison or
+     look derived statements up from `runStoreSchema.statements`; four of its
+     pinned laws are hand statements this PRD deletes in favor of derivation
+     (`candidateVerdictAssumptionRef`, `confusableBRef`, `grpConfusableBRef`,
+     `programEdgeDependentEdgeRef`) — re-pin them against the derived copies.
+   `schema.test.ts` statement-count/shape assertions follow the 68-written +
+   55-derived split and the pinned tail order.
+5. Ergonomics adoption in the store cluster (`gates.ts` 30 queries,
+   `derive.ts` 9, `observe.ts` 4 — 238 `r.var(` sites) is THIS PRD's to do or
+   decline, not P2's: `r.var`/method comparisons remain compiled surface (K5
+   adds, deletes nothing), so adoption is style. Where `vars()` is adopted,
+   rename variables that collide with primer's imported relation identifiers
+   (`program`, `member`, `capsule`, … — the destructured var would SHADOW the
+   relation value inside the rule closure); never shadow.
 
 ## Passing criteria
 
