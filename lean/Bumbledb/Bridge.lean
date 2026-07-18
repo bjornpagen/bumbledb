@@ -275,7 +275,7 @@ def ledger : List Obligation := [
   .row @Query.union_idempotent `Bumbledb.Query.union_idempotent
     "A duplicated rule adds nothing: duplicate derivations, one answer — set semantics at the program level."
     "exec/sink.rs::seen (crates/bumbledb/src/exec/sink.rs)"
-    "r22_union_read_round_trips (crates/bumbledb-query/tests/cookbook.rs)",
+    "an_overlapping_union_has_no_duplicates_and_host_concatenation_does (crates/bumbledb/src/api/prepared/tests/rules.rs)",
 
   .row @Query.ruleAnswers_conditions_congr `Bumbledb.Query.ruleAnswers_conditions_congr
     "Condition lists equal as sets answer alike — the congruence the DNF collapse's set-equality dedup key spends before idempotence deletes the duplicate."
@@ -312,7 +312,7 @@ def ledger : List Obligation := [
   .row @pack_canonical `Bumbledb.pack_canonical
     "Pack output is canonical: sorted, pairwise-disjoint, non-adjacent — only a strict gap breaks a run."
     "interval/sweep.rs::sweep (crates/bumbledb/src/interval/sweep.rs)"
-    "r18_pack_round_trips (crates/bumbledb-query/tests/cookbook.rs)",
+    "pack_coalesces_overlap_adjacency_and_duplicates_per_group (crates/bumbledb/src/api/prepared/tests/pack.rs)",
 
   .row @pack_extensional `Bumbledb.pack_extensional
     "Packing changes the representation of the claim union, never its points."
