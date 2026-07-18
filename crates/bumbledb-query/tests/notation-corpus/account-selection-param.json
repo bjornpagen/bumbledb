@@ -1,0 +1,8 @@
+{
+  "name": "account-selection-param",
+  "builder": true,
+  "productions": ["eq-param"],
+  "notation": "(id) | Posting(id, account == ?acct);",
+  "normalized": "(v0) | Posting(id: v0, account == ?0);",
+  "program": {"predicates":[{"head":[{"kind":"var"}],"rules":[{"finds":[{"kind":"var","var":0}],"atoms":[{"source":{"kind":"edb","relation":7},"bindings":[[0,{"kind":"var","var":0}],[2,{"kind":"param","param":0}]]}],"negated":[],"conditions":[]}]}],"output":0}
+}

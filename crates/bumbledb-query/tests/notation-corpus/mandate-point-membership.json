@@ -1,0 +1,8 @@
+{
+  "name": "mandate-point-membership",
+  "builder": true,
+  "productions": ["point-in"],
+  "notation": "(org) | Mandate(org, active), ?today in active;",
+  "normalized": "(v0) | Mandate(org: v0, active: v1), ?0 in v1;",
+  "program": {"predicates":[{"head":[{"kind":"var"}],"rules":[{"finds":[{"kind":"var","var":0}],"atoms":[{"source":{"kind":"edb","relation":11},"bindings":[[1,{"kind":"var","var":0}],[2,{"kind":"var","var":1}]]}],"negated":[],"conditions":[{"kind":"leaf","cmp":{"op":{"kind":"pointIn"},"lhs":{"kind":"var","var":1},"rhs":{"kind":"param","param":0}}}]}]}],"output":0}
+}

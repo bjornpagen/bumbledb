@@ -1,0 +1,8 @@
+{
+  "name": "amount-selection",
+  "builder": true,
+  "productions": ["eq-literal"],
+  "notation": "(id) | Posting(id, amount == -100);",
+  "normalized": "(v0) | Posting(id: v0, amount == -100);",
+  "program": {"predicates":[{"head":[{"kind":"var"}],"rules":[{"finds":[{"kind":"var","var":0}],"atoms":[{"source":{"kind":"edb","relation":7},"bindings":[[0,{"kind":"var","var":0}],[4,{"kind":"literal","value":{"kind":"i64","value":"-100"}}]]}],"negated":[],"conditions":[]}]}],"output":0}
+}

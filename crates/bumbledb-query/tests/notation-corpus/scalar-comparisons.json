@@ -1,0 +1,8 @@
+{
+  "name": "scalar-comparisons",
+  "builder": true,
+  "productions": ["ne", "lt", "le", "gt", "ge"],
+  "notation": "(id) | Posting(id, entry, account, instrument, amount, at), id == ?wanted, entry != 0, account < 10, instrument <= 10, amount > -10, at >= -10;",
+  "normalized": "(v0) | Posting(id: v0, entry: v1, account: v2, instrument: v3, amount: v4, at: v5), v0 == ?0, v1 != 0, v2 < 10, v3 <= 10, v4 > -10, v5 >= -10;",
+  "program": {"predicates":[{"head":[{"kind":"var"}],"rules":[{"finds":[{"kind":"var","var":0}],"atoms":[{"source":{"kind":"edb","relation":7},"bindings":[[0,{"kind":"var","var":0}],[1,{"kind":"var","var":1}],[2,{"kind":"var","var":2}],[3,{"kind":"var","var":3}],[4,{"kind":"var","var":4}],[5,{"kind":"var","var":5}]]}],"negated":[],"conditions":[{"kind":"leaf","cmp":{"op":{"kind":"eq"},"lhs":{"kind":"var","var":0},"rhs":{"kind":"param","param":0}}},{"kind":"leaf","cmp":{"op":{"kind":"ne"},"lhs":{"kind":"var","var":1},"rhs":{"kind":"literal","value":{"kind":"u64","value":"0"}}}},{"kind":"leaf","cmp":{"op":{"kind":"lt"},"lhs":{"kind":"var","var":2},"rhs":{"kind":"literal","value":{"kind":"u64","value":"10"}}}},{"kind":"leaf","cmp":{"op":{"kind":"le"},"lhs":{"kind":"var","var":3},"rhs":{"kind":"literal","value":{"kind":"u64","value":"10"}}}},{"kind":"leaf","cmp":{"op":{"kind":"gt"},"lhs":{"kind":"var","var":4},"rhs":{"kind":"literal","value":{"kind":"i64","value":"-10"}}}},{"kind":"leaf","cmp":{"op":{"kind":"ge"},"lhs":{"kind":"var","var":5},"rhs":{"kind":"literal","value":{"kind":"i64","value":"-10"}}}}]}]}],"output":0}
+}

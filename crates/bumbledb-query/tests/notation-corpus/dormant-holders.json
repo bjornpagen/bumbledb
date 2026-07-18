@@ -1,0 +1,8 @@
+{
+  "name": "dormant-holders",
+  "builder": true,
+  "productions": ["negation"],
+  "notation": "(holder) | Account(id: a, holder), !Posting(account: a);",
+  "normalized": "(v1) | Account(id: v0, holder: v1), !Posting(account: v0);",
+  "program": {"predicates":[{"head":[{"kind":"var"}],"rules":[{"finds":[{"kind":"var","var":1}],"atoms":[{"source":{"kind":"edb","relation":4},"bindings":[[0,{"kind":"var","var":0}],[1,{"kind":"var","var":1}]]}],"negated":[{"source":{"kind":"edb","relation":7},"bindings":[[2,{"kind":"var","var":0}]]}],"conditions":[]}]}],"output":0}
+}

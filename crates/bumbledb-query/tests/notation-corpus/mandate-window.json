@@ -1,0 +1,8 @@
+{
+  "name": "mandate-window",
+  "builder": true,
+  "productions": ["allen-literal-mask"],
+  "notation": "(org) | Mandate(org, active), Allen(active, INTERSECTS, ?window);",
+  "normalized": "(v0) | Mandate(org: v0, active: v1), Allen(v1, INTERSECTS, ?0);",
+  "program": {"predicates":[{"head":[{"kind":"var"}],"rules":[{"finds":[{"kind":"var","var":0}],"atoms":[{"source":{"kind":"edb","relation":11},"bindings":[[1,{"kind":"var","var":0}],[2,{"kind":"var","var":1}]]}],"negated":[],"conditions":[{"kind":"leaf","cmp":{"op":{"kind":"allen","mask":{"kind":"literal","mask":2044}},"lhs":{"kind":"var","var":1},"rhs":{"kind":"param","param":0}}}]}]}],"output":0}
+}

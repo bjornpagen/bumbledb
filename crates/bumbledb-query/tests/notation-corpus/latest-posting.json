@@ -1,0 +1,8 @@
+{
+  "name": "latest-posting",
+  "builder": true,
+  "productions": ["agg-arg-max"],
+  "notation": "(ArgMax(id, at)) | Posting(id, at);",
+  "normalized": "(ArgMax(v0, v1)) | Posting(id: v0, at: v1);",
+  "program": {"predicates":[{"head":[{"kind":"aggregate","op":"argMax"}],"rules":[{"finds":[{"kind":"aggregate","op":{"kind":"argMax","key":1},"over":0}],"atoms":[{"source":{"kind":"edb","relation":7},"bindings":[[0,{"kind":"var","var":0}],[5,{"kind":"var","var":1}]]}],"negated":[],"conditions":[]}]}],"output":0}
+}

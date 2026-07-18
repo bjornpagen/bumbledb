@@ -1,0 +1,8 @@
+{
+  "name": "amount-floor",
+  "builder": true,
+  "productions": ["agg-min"],
+  "notation": "(account, lo: Min(amount)) | Posting(account, amount);",
+  "normalized": "(v0, Min(v1)) | Posting(account: v0, amount: v1);",
+  "program": {"predicates":[{"head":[{"kind":"var"},{"kind":"aggregate","op":"min"}],"rules":[{"finds":[{"kind":"var","var":0},{"kind":"aggregate","op":{"kind":"min"},"over":1}],"atoms":[{"source":{"kind":"edb","relation":7},"bindings":[[2,{"kind":"var","var":0}],[4,{"kind":"var","var":1}]]}],"negated":[],"conditions":[]}]}],"output":0}
+}

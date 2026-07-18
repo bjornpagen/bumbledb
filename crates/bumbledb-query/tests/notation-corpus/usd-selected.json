@@ -1,0 +1,8 @@
+{
+  "name": "usd-selected",
+  "builder": false,
+  "productions": ["idb-position-selection"],
+  "notation": "acct(id, currency) | Account(id, currency);\n(a) | acct(0: a, 1 == Currency::Usd);",
+  "normalized": "p0(v0, v1) | Account(id: v0, currency: v1);\n(v0) | p0(0: v0, 1 == 0);",
+  "program": {"predicates":[{"head":[{"kind":"var"},{"kind":"var"}],"rules":[{"finds":[{"kind":"var","var":0},{"kind":"var","var":1}],"atoms":[{"source":{"kind":"edb","relation":4},"bindings":[[0,{"kind":"var","var":0}],[2,{"kind":"var","var":1}]]}],"negated":[],"conditions":[]}]},{"head":[{"kind":"var"}],"rules":[{"finds":[{"kind":"var","var":0}],"atoms":[{"source":{"kind":"idb","pred":0},"bindings":[[0,{"kind":"var","var":0}],[1,{"kind":"literal","value":{"kind":"u64","value":"0"}}]]}],"negated":[],"conditions":[]}]}],"output":1}
+}
