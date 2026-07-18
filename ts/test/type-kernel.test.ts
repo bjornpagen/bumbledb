@@ -20,10 +20,14 @@ import { relation } from "#relation.ts"
 
 function buildLedgerPieces() {
 	const Kind = closed("Kind", ["Checking", "Savings"])
-	const Grade = closed("Grade", { mastered: bool })({
-		DirectPass: { mastered: true },
-		Failed: { mastered: false }
-	})
+	const Grade = closed(
+		"Grade",
+		{ mastered: bool },
+		{
+			DirectPass: { mastered: true },
+			Failed: { mastered: false }
+		}
+	)
 	const Holder = relation("Holder", { id: u64.fresh, name: str })
 	const Account = relation("Account", {
 		id: u64.fresh,
@@ -144,7 +148,7 @@ describe("closed relations", function describeClosed() {
 		assert.ok(Object.isFrozen(Kind.columns))
 		assert.deepStrictEqual(Kind.columns, {})
 		// the carrier's TYPE flows through the mint: a width label reads back as its literal
-		const width: 8 = closed("Sev", { tag: bytes(8) })({ Info: { tag: new Uint8Array(8) } }).columns.tag.width
+		const width: 8 = closed("Sev", { tag: bytes(8) }, { Info: { tag: new Uint8Array(8) } }).columns.tag.width
 		assert.equal(width, 8)
 	})
 
@@ -156,22 +160,22 @@ describe("closed relations", function describeClosed() {
 			closed("Kind", ["Checking", "fromId"])
 		}, /collides with the closed value's own surface/)
 		assert.throws(function reservedPayloadHandle() {
-			closed("Sev", { pages: bool })({ fromId: { pages: true } })
+			closed("Sev", { pages: bool }, { fromId: { pages: true } })
 		}, /collides with the closed value's own surface/)
 	})
 
 	test("an empty payload roster is a construction error", function probeEmptyRoster() {
 		assert.throws(function emptyAxioms() {
-			closed("Sev", { pages: bool })({})
+			closed("Sev", { pages: bool }, {})
 		}, /at least one handle/)
 	})
 
 	test("integer-index column and handle names are rejected (declaration-order law)", function probeNumericNames() {
 		assert.throws(function numericColumn() {
-			closed("Bad", { "0": bool })
+			closed("Bad", { "0": bool }, { X: { "0": true } })
 		}, /integer index/)
 		assert.throws(function numericHandle() {
-			closed("Bad", { pages: bool })({ "7": { pages: true } })
+			closed("Bad", { pages: bool }, { "7": { pages: true } })
 		}, /integer index/)
 	})
 
