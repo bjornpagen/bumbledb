@@ -260,6 +260,10 @@ fn aggregate(out: &mut String, op: AggOp, over: Option<VarId>, measure: bool) {
 /// reads as membership under the same bivalent typing rule the IR
 /// binding carries); a param set is membership, `field in ?N`. A literal
 /// word at a closed-reference position prints its handle (module doc).
+/// A predicate atom whose bindings are dense, in-order, and
+/// variable-only renders in the ordered bare form (`p0(v1, v2)`) — the
+/// notation's one dense spelling; sparse positions and selections keep
+/// the indexed `i:`/selection spellings.
 fn atom_item(schema: &Schema, refs: &ClosedRefs, atom: &Atom, negated: bool) -> String {
     let mut out = String::new();
     if negated {
@@ -267,9 +271,21 @@ fn atom_item(schema: &Schema, refs: &ClosedRefs, atom: &Atom, negated: bool) -> 
     }
     source_name(&mut out, schema, atom.source);
     out.push('(');
+    let ordered_dense = matches!(atom.source, crate::ir::AtomSource::Idb(_))
+        && atom
+            .bindings
+            .iter()
+            .enumerate()
+            .all(|(index, (field, term))| {
+                usize::from(field.0) == index && matches!(term, Term::Var(_))
+            });
     for (index, (field, term)) in atom.bindings.iter().enumerate() {
         if index > 0 {
             out.push_str(", ");
+        }
+        if ordered_dense && let Term::Var(var) = term {
+            var_name(&mut out, *var);
+            continue;
         }
         source_field_name(&mut out, schema, atom.source, *field);
         match term {
@@ -524,9 +540,11 @@ fn source_name(out: &mut String, schema: &Schema, source: crate::ir::AtomSource)
     }
 }
 
-/// A binding's field position: the schema name for `Edb`; the bare head
-/// position for `Idb` (`FieldId(i)` addresses the target predicate's
-/// column `i` — positional, never nominal).
+/// A binding's field position: the schema name for `Edb`; the numeric
+/// head position for `Idb` (`FieldId(i)` addresses the target
+/// predicate's column `i` — positional, never nominal; the indexed
+/// spelling is sparse/selection's — a dense in-order variable-only atom
+/// renders bare in [`atom_item`], the ordered form).
 fn source_field_name(
     out: &mut String,
     schema: &Schema,

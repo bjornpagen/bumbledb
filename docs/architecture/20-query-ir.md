@@ -988,10 +988,19 @@ item    := atom                        // positive occurrence
          | Allen '(' term ',' mask ',' term ')'
          | term cmp term               // ==  !=  <  <=  >  >=
 atom    := Relation '(' binding (',' binding)* ')'
-         | pred '(' position ':' var (',' position ':' var)* ')'
+         | pred '(' var (',' var)* ')'  // ordered dense: head positions left to
+                                        //   right from 0 — positional, never nominal
+         | pred '(' pbind (',' pbind)* ')'
+                                        // indexed: the sparse/selection forms; never
+                                        //   mixed with the bare form, and an explicit
+                                        //   dense in-order `i: v` list is refused —
+                                        //   the ordered form is the one dense spelling
 binding := field                       // punning: binds a var named after the field
          | field ':' var               // explicit variable — the join spelling
          | field '==' value            // selection, schema-grammar-verbatim
+pbind   := position ':' var            // sparse explicit position
+         | position '==' value         // position selection
+         | position 'in' ?param        // position set membership
 pred    := lowercase ident             // relations are UpperCamel — the case split
 mask    := MASK ('|' MASK)* | ?param   // masks are sets of basics; '|' is set union
 term    := var | ?param | literal
@@ -1015,8 +1024,14 @@ context-separated exactly as the two levels of `==` are.
 **Named heads are the notation's recursion form — bare rules ARE the
 output predicate.** `path(x, z) | edge(x, y), path(y, z);` declares the
 predicate at its head and reads it as a body atom whose bindings address
-**head positions** (`path(0: y, 1: z)` — positional, never nominal,
-never punned: predicate columns have no fields to name). Predicate names
+**head positions** — positional, never nominal: predicate columns have
+no fields to name. Bare idents are the **ordered dense** spelling,
+positions assigned left to right from 0 (`path(y, z)` is bindings
+`[(0, y), (1, z)]`); the indexed `i:` forms remain exclusively for
+sparse positions (`path(1: z)`) and position selections (`0 == …`,
+`0 in ?p`). The two spellings never mix in one atom, and an explicitly
+indexed dense in-order variable list (`path(0: y, 1: z)`) is refused —
+canonical utterance, one spelling per meaning. Predicate names
 begin lowercase, so a predicate spelled like a relation is unwritable
 (the punning law's discipline applied to names), and a program of only
 named rules is a macro error — bare rules are the output, so every

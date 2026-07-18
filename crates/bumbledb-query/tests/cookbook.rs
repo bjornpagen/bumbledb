@@ -850,6 +850,83 @@ fn every_recipe_schema_validates() {
     }
 }
 
+/// The 64-char lowercase hex of an engine fingerprint — the goldens spelling.
+fn hex_of(fingerprint: &bumbledb::schema::fingerprint::SchemaFingerprint) -> String {
+    fingerprint
+        .0
+        .iter()
+        .fold(String::with_capacity(64), |mut hex, byte| {
+            use std::fmt::Write;
+            write!(hex, "{byte:02x}").expect("writing to a String cannot fail");
+            hex
+        })
+}
+
+/// The per-recipe cross-host goldens (PRD-T5): every roster schema's
+/// fingerprint equals its pinned line in the ONE shared fixture,
+/// `ts/test/fixtures/cookbook-fingerprints.txt` — the same file the SDK
+/// cookbook suite (`ts/test/cookbook.test.ts`) asserts against, and alone
+/// regenerates (`REGEN_FINGERPRINTS=1`; this side never writes it). The TS
+/// side lowers a names-only spec through the napi bridge into the SAME
+/// resolution/validation/blake3 code, so a divergence here is drift
+/// upstream of the hasher on whichever side moved. Missing, extra, or
+/// malformed fixture lines are failures, never skips.
+#[test]
+fn every_recipe_fingerprint_matches_the_cross_host_golden() {
+    let fixture = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../ts/test/fixtures/cookbook-fingerprints.txt"
+    ));
+    let mut goldens = std::collections::BTreeMap::new();
+    for line in fixture.lines().map(str::trim) {
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let (id, hex) = line
+            .split_once(' ')
+            .unwrap_or_else(|| panic!("a goldens line is `rNN <64-hex>`: {line:?}"));
+        let number: usize = id
+            .strip_prefix('r')
+            .and_then(|digits| digits.parse().ok())
+            .unwrap_or_else(|| panic!("a goldens recipe id is rNN: {id:?}"));
+        assert_eq!(hex.len(), 64, "a golden is 64 hex chars: {line:?}");
+        assert!(
+            goldens.insert(number, hex).is_none(),
+            "one goldens line per recipe: {id}"
+        );
+    }
+    assert_eq!(
+        goldens.len(),
+        ROSTER.len(),
+        "the fixture pins exactly one line per roster recipe"
+    );
+    let mut drifted = Vec::new();
+    for (i, recipe) in ROSTER.iter().enumerate() {
+        let number = i + 1;
+        let expected = goldens
+            .get(&number)
+            .unwrap_or_else(|| panic!("recipe {number} ({}) has no goldens line", recipe.title));
+        let schema = (recipe.validate)().unwrap_or_else(|e| {
+            panic!(
+                "recipe {number} ({}) failed validation: {e:?}",
+                recipe.title
+            )
+        });
+        let hex = hex_of(&bumbledb::schema::fingerprint::fingerprint(&schema));
+        if hex != *expected {
+            drifted.push(format!(
+                "recipe {number} ({}): rust {hex} != golden {expected}",
+                recipe.title
+            ));
+        }
+    }
+    assert!(
+        drifted.is_empty(),
+        "recipes drifted from the cross-host goldens:\n{}",
+        drifted.join("\n")
+    );
+}
+
 fn span(start: i64, end: i64) -> bumbledb::Interval<i64> {
     bumbledb::Interval::<i64>::new(start, end).expect("nonempty half-open interval")
 }
@@ -1620,8 +1697,8 @@ fn r24_closure_idiom_reaches_the_exact_set() {
     // — executed whole under the fixpoint driver.
     let native = query!(r24::Closure {
         reach(c) | Node(id: c), c == ?root;
-        reach(c) | Parent(child: c, parent: m), reach(0: m);
-        (c) | reach(0: c);
+        reach(c) | Parent(child: c, parent: m), reach(m);
+        (c) | reach(c);
     });
     let mut native_q = db
         .prepare(&native)
@@ -1720,8 +1797,8 @@ fn r25_subtree_rollup_matches_the_hand_computed_sum() {
     // the strata roster admits.
     let native = query!(r25::Accounts {
         sub(a) | Account(id: a), a == ?root;
-        sub(a) | AccountParent(child: a, parent: p), sub(0: p);
-        (total: Sum(minor)) | Posting(id, account: a, minor), sub(0: a);
+        sub(a) | AccountParent(child: a, parent: p), sub(p);
+        (total: Sum(minor)) | Posting(id, account: a, minor), sub(a);
     });
     let mut native_q = db
         .prepare(&native)
