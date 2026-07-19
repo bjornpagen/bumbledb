@@ -1,0 +1,8 @@
+# pnpm 11 defaults minimumReleaseAge to 1440 minutes: a freshly published
+# package is refused for ~24h as supply-chain protection. Our own scope is
+# exempted so a just-published @bjornpagen/bumbledb(-<platform>) release
+# installs immediately — without this, every post-publish lockfile
+# regeneration (and any fresh install here) fails for a day, and pnpm keeps
+# auto-writing this file to say so. Committed deliberately; do not delete.
+minimumReleaseAgeExclude:
+  - '@bjornpagen/*'

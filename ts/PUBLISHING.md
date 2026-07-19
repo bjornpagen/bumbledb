@@ -112,6 +112,11 @@ cd ts && pnpm install --no-frozen-lockfile
 # commit the regenerated pnpm-lock.yaml (one commit, the known bootstrap gap)
 ```
 
+Note the release-age lag: pnpm 11's default `minimumReleaseAge` (1440
+minutes) refuses any just-published package for ~24h, so consumers who do not
+exclude `@bjornpagen/*` (this repo does, in `ts/pnpm-workspace.yaml`) cannot
+install a fresh release until a day after publish.
+
 ## Post-publish, step two: the primer cutover lands
 
 Primer's 0.4.0 sweep (host-idiom-0.4.0 PRD-P1) is staged on its own branch
