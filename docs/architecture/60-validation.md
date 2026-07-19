@@ -630,8 +630,12 @@ backing; `bench` checks both its corpus `--dir` and its write scratch),
 because a timed number measured on RAM is a number physics never
 signed. The exemption is exactly the untimed lanes above.
 Sizing note: the script's default volume is 5 GiB because an ephemeral
-store's data file is ftruncated to the full 4 GiB map at open
-(`MDB_WRITEMAP`, `50-storage.md` § the ephemeral store kind) and the
+store's data file is ftruncated to the full 4 GiB EPHEMERAL map at open
+(`MDB_WRITEMAP`, `MAP_SIZE_EPHEMERAL` — the per-kind split of the
+incremental-images wave: the durable ceiling rose to 32 GiB, but durable
+opens allocate nothing eagerly and the scratch kind deliberately keeps
+the small map, so this sizing survives the flip; `50-storage.md` § the
+ephemeral store kind) and the
 default HFS+ personality has no sparse files — a smaller volume makes
 every `Db::ephemeral` open (the ephemeral crashpoint sweep under
 `BUMBLEDB_SCRATCH_DIR` included) refuse with the typed

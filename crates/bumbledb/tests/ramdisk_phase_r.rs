@@ -78,9 +78,11 @@ impl RamDisk {
 
     /// [`RamDisk::attach`] with an explicit sector count. R6 needs it:
     /// an EPHEMERAL store's `MDB_WRITEMAP` ftruncates the data file to
-    /// the full 4 GiB map size at open, and HFS+ has no sparse files,
-    /// so the disk must hold the whole map plus slack (a recorded
-    /// consequence — `50-storage.md` § the ephemeral store kind).
+    /// the full 4 GiB ephemeral map (`MAP_SIZE_EPHEMERAL` — the
+    /// per-kind split keeps the scratch kind's map small) at open, and
+    /// HFS+ has no sparse files, so the disk must hold the whole map
+    /// plus slack (a recorded consequence — `50-storage.md` § the
+    /// ephemeral store kind).
     fn attach_sized(personality: &str, label: &str, sectors: u64) -> Self {
         let dev = run(
             "hdiutil",
@@ -588,9 +590,11 @@ fn ramdisk_phase_r_ephemeral() {
     let ssd_dir = common::TempDir::new("ramdisk-phase-r6-ssd");
     let hfs_label = format!("bumbleR6-hfs-{pid}");
     // 6 GiB, not the default 2: WRITEMAP ftruncates the ephemeral
-    // store's data file to the full 4 GiB map at open, and HFS+ has no
-    // sparse files (the SSD cells sit on APFS, which does — no
-    // preallocation there). Ephemeral-on-HFS+ needs map size + slack.
+    // store's data file to the full 4 GiB ephemeral map at open
+    // (MAP_SIZE_EPHEMERAL), and HFS+ has no sparse files (the SSD cells
+    // sit on APFS, where the ftruncate is free but open preallocates the
+    // blocks explicitly — the capacity contract, storage/env/open_env.rs).
+    // Ephemeral-on-HFS+ needs map size + slack.
     let disk = RamDisk::attach_sized("HFS+", &hfs_label, 12_582_912);
     println!("attached {} at {}", disk.dev, disk.mount.display());
 

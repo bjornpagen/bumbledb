@@ -8,7 +8,9 @@ impl View {
     /// # Panics
     ///
     /// Only on a programmer-invariant violation: an image beyond the u32
-    /// position space (the scale axiom sits orders of magnitude below).
+    /// position space (the 32 GiB map physically bounds live rows roughly
+    /// an order of magnitude under u32; the validated scale sits far
+    /// below).
     #[cfg(test)]
     pub fn positions(&self) -> impl Iterator<Item = u32> + '_ {
         // Chained empty arms keep one concrete iterator type without

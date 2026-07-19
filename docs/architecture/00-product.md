@@ -70,20 +70,43 @@ language. **Reverses if:** never — owner axiom.
   reuse-shaped text (`str`, interned) or identity-shaped digests (`bytes<N>`,
   inline), with variable-width binary carrying genuine reuse sighted zero times,
   so that type died and `bytes<N>` took its roster seat.
-- **Write design point:** writes are bursty and batched — one write transaction per
-  burst; the design assumes **≥100 query executions per committed write generation**.
-  Continuous high-frequency commits are out of the envelope (they would defeat the
-  image cache by design).
+- **Write design point:** writes are batched — one write transaction per logical
+  burst — but **no write-frequency assumption remains**: the old "writes are
+  bursty and rare" and its "≥100 query executions per committed write
+  generation" amortization are RETRACTED (the incremental-images wave) — they
+  were workload assumptions, never measurements, and the taught idioms (the
+  cookbook's delete+insert recipes, derive diffs) are steady and often
+  delete-bearing. Steady insert-only commit streams are in-envelope:
+  copy-on-append image maintenance prices the next read at O(delta) plus one
+  column memcpy, not a full rebuild. Delete-bearing commits still pay the
+  per-relation rebuild on next read — priced and measurable (the delete-bearing
+  cold lane), accepted until a real workload demands the mask fork (the
+  recorded decider: the filter-mask twin).
 - **Latency budget:** p99 ≤ **10 ms** per warm prepared-query execution at scale L,
   on the canonical machine. No scale-L corpus has been generated yet, so the budget
   is informational at S and binds only when L exists. The first execution after a commit may additionally
-  pay an image rebuild; rebuild spikes are exempt from the gate but reported by the
-  benchmark. O(n) time-range, membership, and overlap scans must fit this budget or
+  pay image maintenance; the spike is exempt from the gate but reported by the
+  benchmark — with copy-on-append the exempt spike is O(delta) on delete-free
+  commits (the trace counters report appends vs builds), while the
+  delete-bearing rebuild spike's size at large scale is unmeasured and stays
+  PENDING RE-TRUE until the delete-bearing cold lane reports (a ceiling-scale
+  rebuild is seconds-order by arithmetic, `50-storage.md`).
+  O(n) time-range, membership, and overlap scans must fit this budget or
   the range/stabbing-accelerator OPEN item triggers.
 - **Scale axiom, in numbers:** ≤10⁷ facts total, ≤1 GB LMDB file, ≤2 GB peak process
   working set (LMDB pages + columnar images + arenas), minimum machine 16 GB Apple
   Silicon. Data beyond RAM is a non-goal; the hot representation is decoded images, so
   beyond-RAM behavior degrades sharply and no design decision may lean on mmap grace.
+  **The map ceiling no longer tracks this axiom** (the incremental-images wave's
+  32 GiB ruling): the fixed 32 GiB durable map (`50-storage.md`) is the
+  never-resize wall — headroom above the validated envelope, not a new
+  working-set target. These numbers remain the VALIDATED scale (every corpus,
+  margin, and latency claim was earned at or below them); a store pushed toward
+  the ceiling leaves the validated envelope, its memory story is
+  `50-storage.md` § memory discipline (peak ≈ 2–3× the decoded live payload,
+  which only a RAM class well above the store's payload holds), and nothing at
+  that scale is measured yet — the missing big-store witness is recorded, not
+  implied away.
 
 ## Concurrency, process, and durability model
 
@@ -170,9 +193,15 @@ decision accommodates narrower platforms). Full research notes with sources:
   with a portable reference and a bit-identity differential test. Interval
   conditions introduced no new shape — they lower to two-word compares over the
   start/end column pair (`50-storage.md`).
-- **60–120 GB/s memory bandwidth**: sequential scan+decode of a 100 MB relation is
-  single-digit milliseconds — the quantitative reason the image-cache design
-  (`40-execution.md` D1) is sound at this scale.
+- **60–120 GB/s memory bandwidth**: the old inference here — "sequential
+  scan+decode of a 100 MB relation is single-digit milliseconds, the
+  quantitative reason the image-cache design (`40-execution.md` D1) is sound at
+  this scale" — is PENDING RE-TRUE: it was bandwidth arithmetic, never a
+  measurement of the decode-bound build path, and "this scale" moved 32× with
+  the map ceiling, where the soundness argument is copy-on-append maintenance,
+  not build speed (`50-storage.md` § the image cache carries the full
+  re-truing record; the bandwidth numbers themselves are measured and stand,
+  `docs/reference/apple-silicon-performance.md`).
 - **Unaligned loads are near-free (16 KB pages)**: facts are stored dense, with no
   intra-row padding; alignment is spent only where NEON reads column bases.
 - **Columnar data is SoA, 128-byte aligned, with strides padded off 16 KiB
@@ -213,11 +242,13 @@ representation identical to the paper's execution environment, deleting Deviatio
 the image cache entirely. **Why it lost:** LMDB gives crash-safe atomic commits, real
 MVCC read snapshots, and a battle-tested B-tree for free; a hand-rolled WAL is exactly
 the kind of subtle, unglamorous correctness surface this project should not own; the
-image-cache design (`50-storage.md`) recovers the paper's environment at a cost the
-write-rate design point makes negligible; and the ordered B-tree is what makes
+image-cache design (`50-storage.md`) recovers the paper's environment at a cost
+copy-on-append maintenance keeps O(delta) on delete-free commits (the old
+amortize-by-write-rate argument is retracted with the write design point above);
+and the ordered B-tree is what makes
 pointwise keys and coverage walks O(log n) neighbor probes instead of new index
 structures. **Reverses if:** traced image-rebuild cost exceeds the latency budget
-despite caching, or LMDB's write amplification dominates bursty commits.
+despite caching, or LMDB's write amplification dominates batched commits.
 
 **Decision: Free Join is the execution algorithm.** **Alternative (strong):**
 Selinger-planned binary hash joins — for reference-walk-heavy ledger queries they are

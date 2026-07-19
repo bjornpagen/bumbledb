@@ -345,8 +345,9 @@ fn a_v4_store_without_the_database_roster_is_a_format_mismatch_on_both_construct
 /// byte-identity test in `tests/ephemeral.rs`): `Environment::ephemeral`
 /// probed against someone else's LMDB environment refuses
 /// `AlreadyInitialized` and leaves the foreign `data.mdb` byte-identical
-/// — the probe runs without `MDB_WRITEMAP`, so the 4 GiB ftruncate never
-/// touches an environment the refusal protects.
+/// — the probe runs without `MDB_WRITEMAP`, so the full-map ftruncate
+/// (ephemeral-only, `MAP_SIZE_EPHEMERAL`) never touches an environment
+/// the refusal protects.
 #[test]
 #[expect(
     unsafe_code,
@@ -399,14 +400,15 @@ fn ephemeral_refusal_on_a_foreign_env_leaves_the_data_file_byte_identical() {
 /// `Db::compact` of an ephemeral store writes a small `data.mdb` with
 /// the ephemeral kind; a host with a skewed schema then reopens it)
 /// must refuse `SchemaMismatch` BEFORE the `MDB_WRITEMAP` reopen whose
-/// ftruncate would inflate `data.mdb` to the full 4 GiB map. The
-/// refusal leaves the file byte-identical.
+/// ftruncate would inflate `data.mdb` to the full 4 GiB ephemeral map
+/// (`MAP_SIZE_EPHEMERAL`). The refusal leaves the file byte-identical.
 #[test]
 fn ephemeral_schema_mismatch_refusal_leaves_the_data_file_byte_identical() {
     let dir = TempDir::new("env-ephemeral-fingerprint-untouched");
     // A small data file carrying the ephemeral kind: forge the kind on a
     // durable-created store (the compacted-ephemeral shape, without the
-    // 4 GiB fixture an ephemeral create would leave behind).
+    // full-map (4 GiB ephemeral) fixture an ephemeral create would leave
+    // behind).
     forge_meta(&dir, |env, wtxn| {
         env.meta
             .put(wtxn, META_STORE_KIND, &[StoreKind::Ephemeral.meta_byte()])
@@ -424,8 +426,9 @@ fn ephemeral_schema_mismatch_refusal_leaves_the_data_file_byte_identical() {
     let err = Environment::ephemeral(dir.path(), &other_schema()).unwrap_err();
     assert!(matches!(err, Error::SchemaMismatch { .. }), "{err:?}");
 
-    // Length via metadata first: a 4 GiB ftruncate must fail loudly, not
-    // by allocating 4 GiB into the byte compare.
+    // Length via metadata first: a full-map (4 GiB ephemeral) ftruncate
+    // must fail loudly, not by allocating gigabytes into the byte
+    // compare.
     let after_len = std::fs::metadata(&data).expect("stat data.mdb after").len();
     assert_eq!(
         before.len() as u64,

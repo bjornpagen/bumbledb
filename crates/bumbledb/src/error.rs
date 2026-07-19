@@ -1156,8 +1156,11 @@ pub enum OverflowKind {
     /// Carries the find-position index.
     Aggregate { find: usize },
     /// The executor's D2 origin counter would cross u32 — more than 2³²
-    /// absorb-node survivors in one execution. Beyond the scale axiom,
-    /// but valid input, so it errors; checked at batch granularity
+    /// absorb-node survivors in one execution. Beyond any validated
+    /// workload — and survivors are per-execution and can exceed live
+    /// rows via joins, so at map-ceiling-scale stores (~10⁸–10⁹ live
+    /// rows) 2³² is merely large, not absurd — which is exactly why this
+    /// is a typed error, never a panic; checked at batch granularity
     /// (`exec/run/probe_pass.rs`).
     OriginCapacity,
 }
@@ -1427,7 +1430,9 @@ pub enum Error {
     Overflow(OverflowKind),
     /// The result buffer's byte heap crossed the u32 offset space —
     /// more than 4 GiB of distinct string/bytes payload in one result.
-    /// Absurd under the scale axiom, but it is valid input, so it
+    /// (This 4 GiB is the u32 byte-heap offset ceiling, a representation
+    /// limit — NOT the map size; do not sweep it with the map constant.)
+    /// Beyond any validated workload, but it is valid input, so it
     /// errors rather than panics.
     ResultBytesOverflow,
     /// Hard corruption error, never a skip.

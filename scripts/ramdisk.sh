@@ -32,7 +32,12 @@
 # parse it instead of the platform mount tables.
 #
 # Sizing: the default is 5 GiB because an EPHEMERAL store's data file
-# is ftruncated to the full 4 GiB map at open (`MDB_WRITEMAP`,
+# is ftruncated to the full 4 GiB EPHEMERAL map at open (`MDB_WRITEMAP`,
+# MAP_SIZE_EPHEMERAL in crates/bumbledb/src/storage/env.rs — the
+# per-kind split: the DURABLE ceiling is 32 GiB but durable opens
+# allocate nothing eagerly and never ftruncate, so only the ephemeral
+# constant sizes this volume; the scratch kind deliberately keeps the
+# small map so this stays a casual ask of a dev machine —
 # docs/architecture/50-storage.md § the ephemeral store kind), and the
 # default filesystem (HFS+) has no sparse files — a volume below
 # map size + slack refuses every `Db::ephemeral` open with a typed

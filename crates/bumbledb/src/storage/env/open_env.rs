@@ -13,7 +13,7 @@ use heed::{EnvFlags, EnvOpenOptions, WithoutTls};
 
 use crate::error::Result;
 
-use super::{MAP_SIZE, MAX_READERS, StoreKind};
+use super::{MAX_READERS, StoreKind};
 
 /// Opens the raw LMDB environment at `path`, with the environment flags
 /// the store kind dictates and nothing else.
@@ -27,7 +27,7 @@ pub(super) fn open_env(path: &Path, kind: StoreKind) -> Result<heed::Env<Without
     // readers across commits are a designed-for pattern, 40-storage).
     let mut options = EnvOpenOptions::new().read_txn_without_tls();
     options
-        .map_size(MAP_SIZE)
+        .map_size(kind.map_size())
         .max_dbs(3)
         .max_readers(MAX_READERS);
     // PRD-C1 gravestone — `MDB_NOMEMINIT` on the durable flag set,
@@ -91,7 +91,7 @@ fn preallocate(data: &std::path::Path) -> Result<()> {
             .read(true)
             .write(true)
             .open(data)?;
-        preallocate_blocks(&file, super::MAP_SIZE as u64)
+        preallocate_blocks(&file, StoreKind::Ephemeral.map_size() as u64)
     };
     // The same typed shape LMDB's own open produces when a non-sparse
     // filesystem refuses the ftruncate: a StorageFull-carrying Lmdb error.

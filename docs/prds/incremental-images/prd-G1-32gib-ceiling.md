@@ -1,8 +1,9 @@
 # PRD-G1 — The 32 GiB ceiling
 
-Repo: bumbledb (`crates/`, `docs/`, `scripts/`, README, CI) · depends on: the
-32G scout's report (this PRD's work list is a STUB until it lands — see below)
-· gates: `scripts/check.sh` + `scripts/lean.sh`.
+Repo: bumbledb (`crates/`, `docs/`, `scripts/`, README, CI) · refined by: the
+32G scout's report (landed; this PRD now carries everything from it that must
+survive the packet — the /tmp corpus does not) · gates: `scripts/check.sh` +
+`scripts/lean.sh`.
 
 ## The ruling (owner, verbatim in substance)
 
@@ -10,86 +11,133 @@ Repo: bumbledb (`crates/`, `docs/`, `scripts/`, README, CI) · depends on: the
 > engineering problems that follow.
 
 This is a doctrine FLIP: the constant is a decision, not a knob
-(`storage/env.rs:150-151` — "Not configurable — path-only public surface"), and
-the decision changes. A flip is a documented retraction with the new truth
-written, never a silent edit: every sentence that states or leans on 4 GiB is
-rewritten to state 32 GiB and WHY the old number fell, and the engineering
-problems the ruling names are solved or explicitly recorded as accepted costs —
-never silently inherited.
+(`storage/env.rs` — "path-only public surface"), and the decision changes. A
+flip is a documented retraction with the new truth written, never a silent
+edit: every sentence that states or leans on 4 GiB is rewritten to state the
+new truth and WHY the old number fell, and the engineering problems the ruling
+names are solved or explicitly recorded as accepted costs — never silently
+inherited.
 
-## What is known now (the anchors)
+## The structural discovery that reorganized the work (the scout's finding)
 
-- **The constant:** `crates/bumbledb/src/storage/env.rs:168` —
-  `const MAP_SIZE: usize = 4 << 30;` → `32 << 30`, with its doc comment
-  (`env.rs:150-167`) rewritten: the hard-ceiling paragraph (MDB_MAP_FULL, the
-  resize gravestone, "a new store, never a knob" — all unchanged in kind) and
-  the container-filesystem paragraph (the numbers change by 8×; see problems).
-- **The spec of record:** `docs/architecture/50-storage.md:13-14` ("map_size is
-  fixed at 4 GB, comfortably above the 1 GB scale axiom") and `:442` (the
-  WRITEMAP consequence: the data file holds the full map).
-- **The contributor note:** `README.md:430` — "every store opens as a fixed
-  4 GiB memory map" (disk requirements for tests).
-- **The scripts:** `scripts/ramdisk.sh:35` (the comment citing the full-map
-  ftruncate under `MDB_WRITEMAP`) and `:62` (`SIZE_GIB=5` — sized to hold one
-  4 GiB store plus slack; 32 GiB stores do not fit a 5 GiB ramdisk).
-- **Test prose:** `storage/env/tests.rs:348,402,409,427-428` — the
-  no-4-GiB-fixture probes' comments and the "must fail loudly, not by
-  allocating 4 GiB into the byte compare" discipline.
-- **The relation to the scale axiom** (`docs/architecture/00-product.md:83`:
-  ≤10⁷ facts, ≤1 GB LMDB file, ≤2 GB peak process): the ceiling rises; whether
-  the axiom's numbers move is an OPEN QUESTION the scout's report answers —
-  the ruling raises the wall, it does not by itself re-true the axiom.
+The map is materialized eagerly for EPHEMERAL stores only — and for those on
+EVERY filesystem, deliberately (the capacity contract,
+`storage/env/open_env.rs`: `WRITEMAP` ftruncate on non-sparse filesystems,
+explicit `F_PREALLOCATE`/`posix_fallocate` on sparse ones). Durable stores
+carry no `WRITEMAP`, so LMDB never extends `data.mdb` at open (the
+ftruncate-to-map lives inside mdb.c's `WRITEMAP` branch only) — the durable
+map is a pure virtual reservation and `data.mdb` grows with data on every
+filesystem, containers included. Consequences:
 
-## The engineering problems that follow (named, unsolved here)
+- the durable 32 GiB flip is nearly free (address space only);
+- the ephemeral flip would be 32 GiB of REAL disk (or wired ramdisk RAM) per
+  open — one open exceeds a GitHub `macos-latest` runner's ~14 GB total disk,
+  a ≥33 GiB HFS+ ramdisk wires a third of the canonical 96 GB machine, and a
+  32 GB contributor Mac could not run the sanctioned scratch wiring at all;
+- the old container/overlayfs-materialization prose attributed the ftruncate
+  to every open — asserted, not observed, and wrong for durable stores;
+  corrected everywhere it was copied (a Linux spot-check closes the provenance
+  gap — follow-up F4).
 
-1. **Container filesystems materialize the map.** Open ftruncates `data.mdb` to
-   the full map; overlayfs materializes it (`env.rs:161-167`). At 32 GiB per
-   store, test suites (many stores, many temp dirs) go from "can exhaust a
-   container's disk" to "will, almost immediately." CI sizing, the
-   real-filesystem contributor note, and possibly the test-store strategy all
-   need re-truing.
-2. **`preallocate_blocks`** (`storage/env/open_env.rs:94`) runs at the full map
-   size — its cost, its failure mode, and whether it stays unconditional at 8×
-   the size need measurement/ruling.
-3. **The ramdisk strategy** (`scripts/ramdisk.sh`): a 32 GiB-plus ramdisk is
-   not a casual ask of a dev machine; the script's sizing, or the
-   bench-on-ramdisk doctrine itself for full-size stores, needs a decision.
-4. **Sparse-file behavior across hosts** (APFS/ext4 keep it sparse; the
-   ENOSPC-on-overlayfs death) — the loud-failure tests in `env/tests.rs` and
-   their "never allocate the fixture" discipline must survive at 32 GiB.
-5. Anything else the scout finds — address-space, mmap limits, lock-file /
-   reader-table interactions, fuzz/crash-sweep store counts, CI runner disk.
+## THE DECISION TAKEN — per-KIND map size (the scout's Design A)
 
-## Work list — STUB
+**`MAP_SIZE_DURABLE = 32 << 30`; `MAP_SIZE_EPHEMERAL = 4 << 30`**
+(`storage/env.rs`, consumed via `StoreKind::map_size()`). Still a decision,
+not a knob: no public surface, no env var, no feature; the kind is on-disk
+identity so each store's ceiling stays parseable. The resize-gone gravestone
+(`storage/commit/write.rs`) survives verbatim — per-kind constants are set
+once at open and no resize call exists to race. Rationale: the ruling's
+motivation is the durable DATA ceiling; the ephemeral kind is scratch/staging
+whose eager full-map allocation makes big maps expensive BY CONTRACT. This
+dissolves the CI/ramdisk/contributor-disk walls with zero new surface and zero
+test weakening.
 
-**Deliberately a stub.** The 32G scout (a parallel agent of this wave) is
-auditing every consequence of the flip; its report REFINES this section into
-the real work list — sizes, per-site edits, the CI plan, and the accepted-cost
-record. Do not start G1's edits from this stub alone. What is certain
-regardless of the report:
+**The named trade, accepted:** a 32 GiB ephemeral staging store is impossible.
+If the workload inversion ever wants huge staging stores, follow-up F3 (Design
+B below) reopens it.
 
-1. Flip the constant (`env.rs:168`) and rewrite its doc comment.
-2. Sweep every 4 GiB sentence (the anchors above + a fresh
-   `grep -rn '4 GiB\|4 GB\|4 << 30'` at execution time) — each becomes the
-   32 GiB truth with the retraction stated, or is deleted with its reason.
-3. Re-true scripts/tests/CI sizing per the scout's findings; every loud-failure
-   probe stays loud (never weaken a test to pass).
-4. `scripts/spec-census.sh` clean; `scripts/check.sh` + `scripts/lean.sh`
-   exit 0 (no model surface — the map size is below the model).
+**OWNER SIGN-OFF FLAG:** the scout marked the per-kind split "needs owner
+ruling — do not land silently". It is landed here as the only design under
+which the ruling, the CI reality (one 32 GiB ephemeral open structurally
+exceeds the runner's disk — every ephemeral lane red, not flaky), and the
+never-weaken-a-test law are simultaneously satisfiable; this paragraph IS the
+loud record. If the owner instead rules ephemeral must also be 32 GiB, the
+recorded options are: pay 32 GiB of disk/RAM per ephemeral open everywhere, or
+the scout's Design C (a test-scoped compile-time small map via cargo feature —
+rejected this wave because test builds would create stores whose on-disk
+ceiling silently differs from production's, and feature unification can leak
+it downstream; recorded as the least-bad CI mitigation with that dishonesty
+window named).
 
-## Passing criteria (to be sharpened by the scout's report)
+## What landed (the scout's this-wave list, executed)
 
-- `MAP_SIZE = 32 << 30`; zero remaining assertions that the ceiling is 4 GiB
-  anywhere in code, docs, scripts, or README (grep-proven).
+| # | Work | Where |
+|---|---|---|
+| G1-b | Constant split + doc comment rewritten as the documented retraction (kind-split materialization correction, hard-ceiling paragraph number-swept, ceiling/axiom decoupling) | `storage/env.rs`, `storage/env/open_env.rs`, `storage/commit/write.rs` |
+| G1-c | The mis-scoped materialization prose corrected everywhere it was copied | `README.md` (disk requirements), `50-storage.md` §§ env constants + ephemeral kind, `70-api.md` (probe note), `scripts/ramdisk.sh` |
+| G1-d | Scale-axiom decoupling: the map ceiling no longer tracks the axiom — it is the never-resize wall, headroom above the unchanged validated envelope | `00-product.md` § scale axiom, `50-storage.md`, `env.rs` |
+| G1-e | Test prose + literal sweep; assertions stay loud and track `MAP_SIZE_EPHEMERAL` via pointer comments (never weakened); the u32 byte-heap 4 GiB named as a false friend and NOT swept | `tests/ephemeral.rs`, `storage/env/tests.rs`, `tests/ramdisk_phase_r.rs`, `error.rs`, `api/prepared/resolve_memo.rs`, `error/display.rs` (untouched — correct as is) |
+| G1-f | ramdisk sizing: default stays 5 GiB and stays CORRECT under the per-kind split; prose names the ephemeral constant | `scripts/ramdisk.sh`, `60-validation.md` sizing note |
+| G1-g | Ephemeral-open preallocate cost at the shipped (unchanged 4 GiB) size: no change of regime, so no new number owed; the 32 GiB-scale open cost is folded into F1 pending-measurement | this record |
+| G1-h | Gates + the execution-time `grep -rn '4 GiB\|4 GB\|4 << 30'` — every remaining hit is a deliberate ephemeral-map or byte-heap sentence | grep-proven at landing |
+
+The image-memory story at the ceiling (what 32 GiB stores mean for the
+no-budget cache, the copy-on-append 2× transient, the pinned-reader and
+parked-binding retention, the 30–60 GiB plausible peak, and what machine class
+that demands) is written at `50-storage.md` § memory discipline; the
+bursty-rare retraction and its dependents at `00-product.md` § write design
+point, `40-execution.md` D1 (including the fired-trigger reversal record), and
+`50-storage.md` § eviction.
+
+## Follow-ups (recorded, not started)
+
+- **F1 (L, owner-gated machine time):** the large-data measurement campaign —
+  ephemeral-open cost at big maps; image build wall + peak RSS at 8/16/30 GiB;
+  commit latency + freelist length under delete-churn at 10⁸+ facts (LMDB's
+  known large-DB pathology: `mdb_page_alloc` scans the freelist linearly, so
+  churn at tens of GiB inflates page allocation — the big map enables the
+  regime, churn causes it); the `MDB_MAP_FULL` wall exercised functionally on
+  a small-map validation build. Prerequisite to ANY perf claim about
+  32 GiB-scale operation — until it runs, every such claim is
+  pending-measurement, never asserted.
+- **F2 (L + owner ruling):** the image byte-budget/eviction doctrine if the
+  working set is ever meant to approach the ceiling (nothing exists today: no
+  ceiling in `image/build.rs` below `usize`, no cache budget, no
+  reap-on-pressure); chunked columns with structural sharing of full chunks as
+  the copy-on-append-peak killer (kills the prefix copy; the
+  `TransientImage::append` doubling-headroom precedent).
+- **F3 (M): Design B — the persisted per-store map size.** A `_meta` size key
+  written at creation, read by the probe-first open (the probe pattern already
+  exists: the ephemeral constructor probes durable-flagged before the flagged
+  reopen), consumed by `map_size()` and the preallocate request. A new meta
+  key consulted at open is an encoding change → FORMAT_VERSION bump per the
+  version-bump law (`env.rs`). The public surface can stay knob-free (a
+  doc(hidden)/feature-gated creation surface serves validation lanes); whether
+  a public parameter ever appears is a separate owner ruling. Reopens 32 GiB
+  ephemeral staging if ever needed.
+- **F4 (S, needs a Linux box):** verify durable-store non-materialization on
+  ext4/overlayfs and the ephemeral preallocate's `posix_fallocate` behavior
+  (glibc's write-a-byte fallback on non-fallocate filesystems; the ramdisk
+  Linux arm stays honestly labeled "written carefully but untested") — closes
+  the provenance gap of the retracted overlayfs claim.
+
+## Passing criteria
+
+- `MAP_SIZE_DURABLE = 32 << 30`, `MAP_SIZE_EPHEMERAL = 4 << 30`; zero
+  remaining sentences asserting a 4 GiB DURABLE ceiling anywhere in code,
+  docs, scripts, or README (grep-proven); every surviving "4 GiB" names the
+  ephemeral map or the u32 byte-heap false friend explicitly.
 - The retraction written at the spec sites (50-storage, env.rs doc comment,
-  README note) — the old number named as retracted, the ruling cited.
-- Every named engineering problem either solved in this PRD or recorded as an
-  explicit accepted cost with the owner's sign-off noted — no silent
-  inheritance.
+  README note, 00-product scale axiom) — the old number and the old
+  materialization claim named as retracted, the ruling cited.
+- Every named engineering problem solved by the per-kind decision or recorded
+  above as an explicit accepted cost / follow-up — no silent inheritance; the
+  owner sign-off flag on the per-kind split stated loudly.
 - The full gate battery green on the committed tree, including the env tests'
-  no-fixture probes at the new size.
+  no-fixture probes (their bounds unweakened) and the ephemeral crashpoint/kill
+  lanes (unchanged in size by design).
 
 ## Size
 
-**Unknown until the scout reports** — the constant flip is XS; the honest sweep
-plus CI/scripts re-truing is the real body, plausibly M.
+Landed at M: the constant split was XS; the honest sweep (docs, tests, scripts,
+README, packet record) was the body.

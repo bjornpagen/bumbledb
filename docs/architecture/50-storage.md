@@ -10,13 +10,27 @@ writer, many reader threads, one process (`00-product.md`).
 maintained thin binding; raw FFI buys nothing at this layer. **Reverses if:** heed
 becomes a correctness or maintenance liability.
 
-Environment constants are decisions, not knobs: `map_size` is fixed at 4 GB
-(comfortably above the 1 GB scale axiom, allocated sparsely by the OS), and
-`max_readers` at 1024 — inter-query parallelism is the scaling axis and `MDB_NOTLS`
+Environment constants are decisions, not knobs: `map_size` is fixed PER STORE
+KIND — **32 GiB durable** (the hard store ceiling; a pure virtual reservation,
+since durable opens carry no `WRITEMAP` and never extend `data.mdb` at open —
+the file grows with data on every filesystem) and **4 GiB ephemeral** (the
+scratch kind materializes its full map eagerly at open by the capacity
+contract, § the ephemeral store kind, so its constant prices real disk/RAM per
+open and deliberately stays small) — and `max_readers` at 1024 — inter-query
+parallelism is the scaling axis and `MDB_NOTLS`
 binds reader slots to open transaction objects, so LMDB's default 126 would cap
 concurrent snapshots, not threads; the raise costs a measured 64 bytes of lock file
 per slot (~64 KiB total), and the snapshot past the table is the typed `ReadersFull`
-error naming the limit.
+error naming the limit. The old single 4 GiB `map_size` is RETRACTED (owner
+ruling, the incremental-images wave: 4 GiB was too low as a hard limit; 32 GiB
+is the new one), and so is its justification: the ceiling no longer tracks the
+scale axiom — it is the never-resize wall, headroom above the validated
+envelope (`00-product.md`), not a new working-set target. The per-kind split is
+itself the recorded decision, not a knob: the kind is on-disk identity, so each
+store's ceiling stays parseable, and the ruling's motivation is the durable
+DATA ceiling — a 32 GiB ephemeral staging store is the named, accepted
+impossibility (the persisted per-store size is the recorded follow-up design,
+`docs/prds/incremental-images/prd-G1-32gib-ceiling.md`).
 
 ## Design inputs (why this layout)
 
@@ -439,7 +453,10 @@ at a 1.0–1.1x device tax, so nearly nothing
 carries the no-durability claim, not the device, so no lie is possible — a
 machine crash loses an ephemeral store by the store's own definition. (The
 device-honesty rule for *timed* lanes is the orthogonal axis: `60-validation.md`.)
-One stated consequence of WRITEMAP: the data file holds the full 4 GiB map
+One stated consequence of WRITEMAP: the data file holds the full ephemeral map
+(4 GiB — `MAP_SIZE_EPHEMERAL`, the per-kind split above; durable stores never
+ftruncate to the map, so this whole paragraph is ephemeral-only — the old text
+attributed the materialization to every store and is corrected, not inherited)
 from open — the ftruncate allocates it on a filesystem without sparse files
 (an HFS+ ram disk), and on a sparse one (APFS) the open allocates the blocks
 itself (`fcntl(F_PREALLOCATE)` / `posix_fallocate`,
@@ -493,8 +510,19 @@ The bridge to paper-faithful execution (`40-execution.md` D1):
   (one plain word column for N ≤ 8), with the trailing pad validated zero at
   decode. The multi-byte unit exists only in `fact_bytes` and determinant keys, where
   ordering needs it.
-  At ~60 GB/s of single-core scan bandwidth a build is single-digit milliseconds per
-  100 MB — the number that makes the whole cache design sound. **Column strides are
+  A build is linear in image bytes. The old anchor here — "at ~60 GB/s of
+  single-core scan bandwidth a build is single-digit milliseconds per 100 MB,
+  the number that makes the whole cache design sound" — is PENDING RE-TRUE on
+  both counts (the incremental-images wave): it was bandwidth arithmetic, never
+  a measurement of the decode-bound build path (the honest anchors so far:
+  cold_containment_walk p50 4.17–5.00 ms at S = 100 k, and the `#[ignore]`d
+  `image_build_split_evidence` harness, `image/tests/timing.rs`; the
+  copy-on-append measurement re-trues or retracts the per-100 MB figure with a
+  tier stated), and even where the figure holds, its conclusion died at the
+  32 GiB ceiling — a full rebuild of a ceiling-scale (tens of GiB) image is
+  seconds, not milliseconds, so what keeps the cache design sound is
+  copy-on-append maintenance, with the delete-bearing rebuild as the priced
+  exception. **Column strides are
   padded off 16 KiB multiples** (measured): L1D set congruence (256 sets × 64 B
   lines, bits 6–13) costs at most 1.55× on real lockstep scans — never the folklore
   10–20×, which requires a fully dependent load chain — while the hazard that
@@ -510,7 +538,10 @@ The bridge to paper-faithful execution (`40-execution.md` D1):
   **Decision: full-width images, cache key `(relation_id, storage_tx_id)`.**
   **Alternative:** per-field-scope images. **Why it lost:** scope keys are combinatorial
   (defeating sharing and the "tiny key space" claim), overlapping scopes duplicate
-  columns, and at ≤1 GB whole relations are cheap. **Reverses if:** a wide-relation
+  columns, and whole relations are the affordable unit — cheap outright within
+  the validated envelope (≤1 GB), and kept affordable toward the 32 GiB ceiling
+  (where one relation's image reaches tens of GiB and a full build reaches
+  seconds) by copy-on-append maintenance, not by size. **Reverses if:** a wide-relation
   workload appears (it won't; BCNF relations are narrow).
 - **Generation correctness:** a reader's generation T is the storage tx id read from
   `_meta` **inside its own snapshot** — never an in-process counter. This closes the
@@ -519,14 +550,29 @@ The bridge to paper-faithful execution (`40-execution.md` D1):
   (the handle is `Send + Sync`; no `Arc` of the cache itself is needed since one
   handle exists per path). Two readers at the same T racing to build the same image:
   both may build; insert-if-absent, the loser adopts the winner's `Arc` and drops its
-  own (accepted waste, no latch). The insert re-checks the newest generation under
+  own (accepted waste, no latch — priced at the validated ≤1 GB scale, where a
+  duplicate build is milliseconds and megabytes; at a ceiling-scale relation the
+  same race is a seconds-and-gigabytes event, restated honestly in § memory
+  discipline — the no-latch decision itself stands, correctness unaffected).
+  The insert re-checks the newest generation under
   the lock, so a reader racing a commit cannot re-insert an evicted generation.
-- **Eviction:** at each state-changing commit, the writer drops all entries older than
-  the new generation from the map. Readers still pinned at older generations keep their
-  `Arc`s alive until their transactions end; a long-lived old-generation reader that
-  needs an *unbuilt* image builds it query-locally without caching (accepted — writes
-  are bursty and rare). There is **no memory-pressure eviction, ever** — the scale
-  axiom, stated.
+- **Eviction:** at each state-changing commit the writer drops the entries of
+  relations the commit **deleted from**; delete-free relations' images are
+  retained as append bases — the next reader at the new generation copies
+  columns and decodes only the tail (row-id high-water monotonicity is the
+  prefix property), or carries the same `Arc` forward re-keyed when the
+  relation is untouched. Readers still pinned at older generations keep their
+  `Arc`s alive until their transactions end; a long-lived old-generation reader
+  that needs an *unbuilt* image builds it query-locally without caching
+  (accepted — the cost lands on the stale pinned reader alone and poisons
+  nothing shared). The old parenthetical here — "writes are bursty and rare" —
+  is RETRACTED: it was a workload assumption, never a measurement, and
+  steady-write hosts are real; they are served by the copy-on-append path, not
+  by an assumption about write frequency. There is **no memory-pressure
+  eviction, ever** — no longer justified by the scale axiom but by the capacity
+  plan stated in § memory discipline: the working set is the host's to
+  provision, and a machine that cannot hold it is out of envelope for that
+  store (`00-product.md`'s no-mmap-grace rule is what keeps this honest).
 - **Filters:** on a cold relation with a filtered query, one *storage* scan produces
   both the cached unfiltered image and the query-local survivor view (the filter is a
   second pass over the decoded in-memory columns — the storage scan is the expensive
@@ -571,10 +617,52 @@ the theory itself.
 Images are whole-slab allocations freed as wholes; no per-value heap objects in
 storage or images. Query scratch belongs to prepared queries (`40-execution.md`).
 Steady-state process heap = LMDB's mmap + the newest generation's images +
-per-prepared-query pools + a constant. Prepared queries hold current-generation
+at most one below-newest append base per delete-free relation (the lineage law
+keeps that map O(relations)) + per-prepared-query pools + a constant. Prepared
+queries hold current-generation
 images only: prepare binds no image at all (`View::Unbound`), and each execution
 reaps memoized bindings below its generation — old images die with the last pinned
 reader or the first post-commit execution, whichever is later.
+
+**The image-memory story at the 32 GiB ceiling, stated honestly.** A decoded
+image is ≈ the relation's live fact-payload bytes (8 B per word-shaped field,
+8·⌈N/8⌉ per `bytes<N>`, 1 B per bool — two slabs, padding aside), and the cache
+holds the newest generation of every relation ever read with **no byte budget
+anywhere** — no ceiling exists in `image/build.rs` below checked `usize`
+arithmetic, and no memory-pressure eviction exists (above). On a full-map
+32 GiB durable store the live payload plausibly spans ~15 % (narrow facts) to
+~60 %+ (wide facts) of the file — **~4–20 GiB of decoded images**, with a
+single dominating relation's image reaching 10–20 GiB. Transient multipliers on
+top, each real:
+
+- **the append path holds base + successor** — copy-on-append's 2× transient
+  peak is ONE relation's image, per-relation not per-store, while the new `Arc`
+  mints beside the old (today's evict-and-rebuild already reaches the same 2×
+  whenever a pinned reader or parked memo binding holds the old generation
+  during a rebuild — copy-on-append makes the overlap deterministic instead of
+  reader-dependent; within the validated envelope that is ≤ ~2 × 1 GB, the
+  accepted cost);
+- **a racing same-generation double build** — two full slabs at once (the
+  no-latch race above);
+- **a pinned old-generation reader** — worst case one full extra image set per
+  pinned generation;
+- **parked prepared-query bindings** — `ViewMemo` parks up to 3 stale bindings
+  per occurrence, each holding an image `Arc`, reaped only at the next bind: an
+  idle prepared query strands its images' memory until it runs again — invisible
+  at the validated scale, multi-GiB at ceiling scale.
+
+Peak plausible on a full-map store: **2–3× the decoded payload, ~30–60 GiB** —
+the canonical 96 GB machine holds one such store; the 16 GB minimum machine
+cannot open-and-read one at all, and that is in-envelope by rule, not a bug:
+the ceiling is headroom, the validated envelope (`00-product.md`) is unchanged,
+and data beyond RAM stays a non-goal with no mmap grace. **Deferred, recorded:**
+a byte-budget/eviction-under-pressure doctrine (and chunked columns with
+structural sharing of full chunks, which would kill the append path's prefix
+copy) is deliberately NOT designed — nothing today implies one exists. The
+trigger to design it: a real workload whose working set is meant to approach
+the ceiling, at which point the budget story is an owner ruling plus a design
+item, not a patch (`docs/prds/incremental-images/prd-G1-32gib-ceiling.md`
+records it).
 
 ## Operations
 
