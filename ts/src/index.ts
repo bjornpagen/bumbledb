@@ -50,7 +50,7 @@ export type {
 	WitnessedWriteResult,
 	WriteResult
 } from "#db.ts"
-export { abandon, Db, ErrNewtypeMismatch } from "#db.ts"
+export { abandon, Db, ErrNewtypeMismatch, ErrWitnessedLivelock, WITNESSED_ATTEMPT_CAP } from "#db.ts"
 export type {
 	Exhumed,
 	ExhumedAxiom,

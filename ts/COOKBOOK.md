@@ -960,8 +960,11 @@ final-state point reads need no earlier witness.
 The generation witness: read the model, propose a delta, commit iff the model
 you read is still the model. In the SDK the whole loop is `db.writeWitnessed`
 — retry on movement is built in (every generation move is self-inflicted by
-the host's own interleaved writes), and `abandon(payload)` declines to commit
-without issuing anything.
+the host's own interleaved writes), capped at 64 attempts: a callback that
+itself issues a plain `db.write` each try re-moves the generation it is about
+to witness, and past the cap that interleave hazard throws the typed
+`ErrWitnessedLivelock` instead of spinning forever. `abandon(payload)`
+declines to commit without issuing anything.
 
 ```ts
 const State = closed("State", ["Queued", "Running", "Done"])
