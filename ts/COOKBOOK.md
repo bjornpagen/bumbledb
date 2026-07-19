@@ -8,15 +8,19 @@ theory in another skin, and the engine cookbook's deference chain
 (`10-data-model.md`, `30-dependencies.md`, `20-query-ir.md`, `70-api.md`)
 applies here unchanged.
 
-Every schema below compiles and validates verbatim against the current SDK
-and engine — `ts/test/cookbook.test.ts` constructs each one through the
-public surface, admits it on a real store (the engine's schema validation is
-the acceptance judgment), asserts its fingerprint stable across a reopen AND
-equal to the per-recipe cross-host golden the Rust cookbook suite also pins
+Every `ts` fence below compiles VERBATIM against the current SDK —
+`ts/test/cookbook-doc.test.ts` extracts each recipe's fences from this
+document mechanically at test time and type-checks them against
+`src/index.ts` (the TS twin of the Rust cookbook's doc-sync pin), so an
+edit here whose code stops compiling fails the build. The runtime half of
+the claim is `ts/test/cookbook.test.ts`'s, over compiled copies of the
+recipes: each schema is constructed through the public surface, admitted
+on a real store (the engine's schema validation is the acceptance
+judgment), its fingerprint asserted stable across a reopen AND equal to
+the per-recipe cross-host golden the Rust cookbook suite also pins
 (`test/fixtures/cookbook-fingerprints.txt` — the two cookbooks teach one
-theory per recipe number, provably), and lowers every query snippet through
-`db.prepare` (the engine's own IR validation). A recipe that stops compiling
-against the SDK fails the build.
+theory per recipe number, provably), and every query snippet lowered
+through `db.prepare` (the engine's own IR validation).
 
 Guarantee labels that name Lean results cite the checked spec in the engine
 repo's `lean/` by theorem name, exactly as the engine cookbook does
@@ -958,6 +962,9 @@ const stillQueued = query(Jobs).rule((r) => {
 	return r.match(Job, { id, state: State.Queued, payload }).select("id", "payload")
 })
 
+const db = await Db.create("./jobs.db", Jobs)
+const prepared = db.prepare(stillQueued)
+
 // The witnessed loop: premise reads via `snap`, the delta via `tx`; on a
 // moved generation the WHOLE callback reruns on a fresh snapshot. The other
 // two idioms: insert-select is the same shape (query source answers, insert
@@ -1130,6 +1137,10 @@ The loop (the compiled, driven copy is in `test/cookbook.test.ts`, over a
 three-level forest with the exact reachable set asserted):
 
 ```ts
+const db = await Db.create("./closure.db", Closure)
+const stepPrepared = db.prepare(step)
+const root = 1n // the host's chosen root node id
+
 const seen = new Set<bigint>([root])
 let frontier: readonly bigint[] = [root]
 for (;;) {

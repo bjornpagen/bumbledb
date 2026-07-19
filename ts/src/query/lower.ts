@@ -828,7 +828,15 @@ function assertIntervalBound(context: string, varFields: Readonly<Record<string,
 	}
 }
 
-/** Validates one condition's variable references against the rule's bound names. */
+/**
+ * Validates one condition's variable references against the rule's bound
+ * names — and, for `eq`/`ne` over two variables, holds the class wall: the
+ * unification IS a join, so the two slots must be class-equal exactly as a
+ * match-reuse join must be (the construction-time twin of the type tier's
+ * `EqOk` → `JoinOk`; bare pairs only with bare). The engine cannot backstop
+ * this one — the query IR carries no domains — so the wall lives here for
+ * untyped callers too.
+ */
 function validateCond(context: string, varFields: Readonly<Record<string, ClassedField>>, cond: CondData): void {
 	if (cond.kind === "cmp") {
 		for (const side of [cond.lhs, cond.rhs]) {
@@ -837,6 +845,15 @@ function validateCond(context: string, varFields: Readonly<Record<string, Classe
 			}
 			if (side.kind === "measure") {
 				assertIntervalBound(context, varFields, side.name)
+			}
+		}
+		if ((cond.op === "eq" || cond.op === "ne") && cond.lhs.kind === "var" && cond.rhs.kind === "var") {
+			const lhs = assertBound(context, varFields, cond.lhs.name)
+			const rhs = assertBound(context, varFields, cond.rhs.name)
+			if (!fieldJoins(lhs, rhs)) {
+				throw errors.new(
+					`${context}: ${cond.op}(${cond.lhs.name}, ${cond.rhs.name}) unifies domain-unequal fields — ${cond.lhs.name} bound at ${renderFieldKind(lhs)}, ${cond.rhs.name} at ${renderFieldKind(rhs)} (a var joins only class-equal slots; bare pairs only with bare)`
+				)
 			}
 		}
 		return

@@ -114,18 +114,21 @@ describe("vars(): the tuple-to-object multi-var mint", function suite() {
 			})
 		}, /joins domain-unequal fields/)
 
-		// The same law through free eq: var-to-var unification is domain-equal.
-		const crossDomainEq = query(Ledger).rule((r) => {
-			const { a, h } = r.vars("a", "h")
-			return (
-				r
-					.match(Account, { id: a, holder: h })
-					// @ts-expect-error — "a" is in the "Account.id" class, "h" is in the "Holder.id" class
-					.where(eq(a, h))
-					.select("a")
-			)
-		})
-		assert.equal(crossDomainEq.data.rules.length, 1)
+		// The same law through free eq: var-to-var unification IS a join — a
+		// compile error AND a construction refusal (the runtime twin holds for
+		// untyped callers; the engine cannot backstop it — the IR carries no domains).
+		assert.throws(function crossDomainEq() {
+			query(Ledger).rule((r) => {
+				const { a, h } = r.vars("a", "h")
+				return (
+					r
+						.match(Account, { id: a, holder: h })
+						// @ts-expect-error — "a" is in the "Account.id" class, "h" is in the "Holder.id" class
+						.where(eq(a, h))
+						.select("a")
+				)
+			})
+		}, /unifies domain-unequal fields/)
 	})
 
 	test('every name mints an OWN property — a "__proto__" name never writes the prototype', function protoDiscipline() {
