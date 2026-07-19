@@ -1,0 +1,60 @@
+{
+  "session": "cleanup-0.5.0 Measure phase \u2014 ephemeral re-earn (prd-M Part 2)",
+  "date": "2026-07-19",
+  "host": "Apple M2 Max",
+  "verify_stamp": "e597c9f7288b432630ea7c580dab308ef7b4059336ab1b5604aff07e0894c38b",
+  "bench_runs": [
+    "bench-out/eph-nosync-1",
+    "bench-out/eph-nosync-2",
+    "bench-out/eph-nosync-3"
+  ],
+  "read_geomean_gated_22_clean_min_of_3": 21.23,
+  "all_win": [
+    true,
+    true,
+    true
+  ],
+  "dirty_blocks_counted": {
+    "run1": 7,
+    "run2": 6,
+    "run3": 7
+  },
+  "write_families_clean_p50_us": {
+    "commit_witnessed": 56.2,
+    "commit_window_baseline": 29.0,
+    "commit_window_admission": 36.8,
+    "commit_window_exclusion": 35.0,
+    "cold_containment_walk": 4146.9,
+    "commit_single": null,
+    "commit_batch": null,
+    "bulk": null
+  },
+  "r6_sessions": [
+    {
+      "staging_win": 42.7,
+      "flags_dividend_ssd": 27.1,
+      "flags_dividend_ramdisk": 3.5,
+      "device_tax": 1.6
+    },
+    {
+      "staging_win": 70.2,
+      "flags_dividend_ssd": 52.3,
+      "flags_dividend_ramdisk": 3.1,
+      "device_tax": 1.3
+    },
+    {
+      "staging_win": 43.3,
+      "flags_dividend_ssd": 39.5,
+      "flags_dividend_ramdisk": 3.1,
+      "device_tax": 1.1
+    }
+  ],
+  "r6_quiet_machine_guard": "passed all sessions",
+  "bands": {
+    "staging_win": "43-70x",
+    "flags_dividend_ssd": "27-52x",
+    "flags_dividend_ramdisk": "3.1-3.5x",
+    "device_tax": "1.1-1.6x"
+  },
+  "still_owed": "NOSYNC-only >=2000-round statistical kill session"
+}

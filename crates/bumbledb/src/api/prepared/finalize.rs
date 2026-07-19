@@ -1,4 +1,4 @@
-use super::{AnswerHeap, Answers, Cell, EitherSink, ResolveMemo, ValueType};
+use super::{Answers, Cell, EitherSink, ResolveMemo, ValueType};
 
 use crate::error::Result;
 use crate::exec::sink::ProjectionSink;
@@ -24,27 +24,31 @@ use crate::storage::env::ReadTxn;
 /// each column writes strided cell slots. The aggregate drain streams
 /// rows through `finalize_into` (Pack sorts in place; groups are few)
 /// and keeps the row-major path with ONE dispatch per cell.
+///
+/// GRAVESTONE (cleanup-0.5.0 ruling 7, the Measure phase, 2026-07-19,
+/// `bench-out/measure-twins/`): an all-words fast path — a second
+/// `AnswerHeap::Words` route that skipped the memo/byte-heap plumbing
+/// when no column was string/bytes — was measure-or-merge twinned and
+/// REFUTED: resolved/words 0.996–1.005 on both sinks (projection
+/// 20,000-answer fill, aggregate 997-group drain; warm DRAM,
+/// interleaved min-of-7) against the 1.09 pre-stated bar. The word
+/// columns' arms below ARE the word path — the dispatch is per column
+/// (projection) or per cell (aggregate) either way, so the duplicate
+/// route bought nothing. The `AnswerHeap` seal died with it. Reverses
+/// if: a profiled finalize shows the String/FixedBytes match arms'
+/// mere presence taxing an all-words fill ≥ the house bar — re-twin
+/// before believing it.
 pub(super) fn finalize(
     sink: &mut EitherSink,
     answer_scratch: &mut Vec<u64>,
     memo: &mut ResolveMemo,
     txn: &ReadTxn<'_>,
     columns: &[PredicateColumn],
-    answer_heap: AnswerHeap,
     out: &mut Answers,
 ) -> Result<()> {
     memo.clear();
-    // The all-words fast path: one reservation, then
-    // infallible cell writes — no Result, no dictionary plumbing per
-    // cell (intervals are word-backed and stay on it). Interned finds
-    // keep the resolving path (the per-cell memo probe is the resolution
-    // semantics, softened by the run memo).
     match sink {
         EitherSink::Projection(sink) => {
-            if answer_heap == AnswerHeap::Words {
-                fill_word_answers(out, columns, sink);
-                return Ok(());
-            }
             let base = out.cells.len();
             let result = fill_resolved_answers(out, txn, memo, columns, sink);
             if result.is_err() {
@@ -58,28 +62,10 @@ pub(super) fn finalize(
         }
         EitherSink::Aggregate(sink) => {
             out.cells.reserve(sink.group_count() * columns.len());
-            if answer_heap == AnswerHeap::Words {
-                return sink.finalize_into(answer_scratch, |answer| {
-                    push_word_answer(out, columns, answer);
-                    Ok(())
-                });
-            }
             sink.finalize_into(answer_scratch, |answer| {
                 push_resolved_answer(out, txn, memo, columns, answer)
             })
         }
-    }
-}
-
-/// The all-words columnar fill: infallible, no dictionary — every
-/// column is word-backed by the `AnswerHeap::Words` seal.
-fn fill_word_answers(out: &mut Answers, columns: &[PredicateColumn], sink: &ProjectionSink) {
-    let arity = columns.len();
-    let base = out.cells.len();
-    out.cells.resize(base + sink.len() * arity, Cell::U64(0));
-    let mut word = 0;
-    for (col, column) in columns.iter().enumerate() {
-        word += fill_fixed_column(&mut out.cells[base..], arity, col, &column.ty, word, sink);
     }
 }
 
@@ -168,34 +154,10 @@ fn fill_fixed_column(
     1
 }
 
-/// One word answer's cells, all-words regime: infallible, no
-/// dictionary. ONE dispatch per cell — the decode is the match arm,
-/// never re-matched through a second helper.
-fn push_word_answer(out: &mut Answers, columns: &[PredicateColumn], answer: &[u64]) {
-    let mut word = 0;
-    for column in columns {
-        let (cell, width) = match &column.ty {
-            ValueType::Bool => (Cell::Bool(answer[word] != 0), 1),
-            ValueType::U64 => (Cell::U64(answer[word]), 1),
-            ValueType::I64 => (Cell::I64((answer[word] ^ (1 << 63)).cast_signed()), 1),
-            ValueType::Interval { element, .. } => (
-                Answers::interval_cell(*element, answer[word], answer[word + 1]),
-                2,
-            ),
-            ValueType::String => unreachable!("interned finds take the resolving path"),
-            ValueType::FixedBytes { .. } => {
-                unreachable!("bytes<N> finds take the resolving path")
-            }
-        };
-        out.cells.push(cell);
-        word += width;
-    }
-}
-
-/// One word answer's cells, resolving regime: String goes through the
+/// One word answer's cells: String goes through the
 /// intern memo, a `bytes<N>` find re-assembles its padded slot words
 /// (inline — no dictionary); everything else decodes inline. ONE
-/// dispatch per cell, as above.
+/// dispatch per cell.
 fn push_resolved_answer(
     out: &mut Answers,
     txn: &ReadTxn<'_>,

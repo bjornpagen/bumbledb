@@ -777,6 +777,21 @@ therefore **unbounded by construction** — both loops iterate plan-witness list
 so no fixed-width scratch and no eligibility branch exist to cap them. Short
 (fanout-sized) runs resolve per position — both directions measured, both real.
 
+**The leaf fast paths are measured law** (cleanup-0.5.0 ruling 6, the Measure
+phase, 2026-07-19, `bench-out/measure-twins/`). The single-subatom leaf
+classification (`exec/run/leaf_precompute.rs`), its dispatcher, and the
+pinned-row arm (`exec/run/leaf.rs` — a batch of exactly one with every batch
+scaffold skipped) were measure-or-merge twinned against the same plan with
+the classification forced off: **1.69–1.71× generic/elided** end-to-end on a
+mixed pinned+scan self-join (700 answers/exec, warm DRAM, interleaved
+min-of-7, two process runs; pre-stated bar 1.09, the crucible ADOPT
+precedent). KEEP-AS-LAW. **Reverses if:** a ledger-suite A/B on the generic
+batch machinery ever lands within the house bar of this path. The same
+session REFUTED the all-words finalize fast path (ruling 7): resolved/words
+measured 0.996–1.005 on both sinks against the same bar, so the duplicate
+`AnswerHeap::Words` route and its seal were merged into the one resolving
+finalize (the gravestone lives at `api/prepared/finalize.rs`).
+
 **COLT force is single-pass with chunked child lists:** forcing pushes each offset into
 its key's child list, chunked (64 offsets per arena chunk, chained by chunk — bounded
 pointer traversal, independent loads within a chunk), rather than the paper's growable

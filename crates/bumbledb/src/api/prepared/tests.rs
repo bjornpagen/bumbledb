@@ -26,7 +26,6 @@ mod introspection_goldens;
 mod key_probe;
 mod latch;
 mod measure;
-mod measure_twins;
 mod pack;
 mod params;
 mod rules;

@@ -158,12 +158,15 @@ language. **Reverses if:** never — owner axiom.
   never a flag on `create`/`open` — so the cross-open is a typed refusal and no
   durable store can quietly lose its guarantee. The sighting is the ephemeral
   relational engine: staging stores judged before ETL into a durable store, analysis
-  working sets, scratch stores — the small-commit shape where the retired
-  `WRITEMAP|NOSYNC` set measured ~4.2–4.4x over the plain ramdisk and ~75–90x over
-  durable-on-SSD through the real constructor (per-session band across the R6 earn
-  and its 1.0.0 re-earn), with a 1.0–1.1x device tax; the band is PENDING-RE-EARN
-  under `NOSYNC`-only (the Measure phase re-runs the R6 lane of
-  `crates/bumbledb/tests/ramdisk_phase_r.rs`). The owner's doctrine, recorded
+  working sets, scratch stores — the small-commit shape where `NOSYNC`-only
+  measures **27–52x over durable-on-SSD** through the real constructor on the
+  same device, 43–70x for the full staging pattern (ephemeral-on-ramdisk vs
+  durable-on-SSD), 3.1–3.5x over a plain-ramdisk durable store, with a
+  1.1–1.6x device tax (per-session bands across three interleaved R6
+  sessions, the Measure phase 2026-07-19, the R6 lane of
+  `crates/bumbledb/tests/ramdisk_phase_r.rs`,
+  `bench-out/measure-ephemeral-r6/`; the retired `WRITEMAP|NOSYNC` band was
+  ~75–90x / ~4.2–4.4x / 1.0–1.1x). The owner's doctrine, recorded
   verbatim: "everything we can do to make dogfooding easier is upgraded to a
   feature." **Alternative:** an ephemeral constructor gated on a RAM-backed-device
   precondition. **Why it lost:** the KIND carries the no-machine-crash-durability

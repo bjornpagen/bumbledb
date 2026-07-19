@@ -590,10 +590,13 @@ fn ramdisk_phase_r_ephemeral() {
     // eager capacity contract retired (cleanup-0.5.0 ruling 1), an
     // ephemeral store's data file holds only the pages committed —
     // no full-map ftruncate exists for HFS+'s lack of sparse files to
-    // materialize. (This lane's recorded numbers — the 1.0–1.1x device
-    // tax among them — were measured under the retired WRITEMAP|NOSYNC
-    // flag set on a 6 GiB disk: PENDING-RE-EARN, the Measure phase
-    // re-runs the lane.)
+    // materialize. (Re-earned under NOSYNC-only by the Measure phase,
+    // 2026-07-19, three interleaved sessions on this 2 GiB disk:
+    // staging win 43–70x, ssd flags dividend 27–52x, ramdisk flags
+    // dividend 3.1–3.5x, device tax 1.1–1.6x —
+    // `bench-out/measure-ephemeral-r6/`. The WRITEMAP-era band,
+    // ~75–90x / ~4.2–4.4x / 1.0–1.1x on a 6 GiB disk, is history, not
+    // law.)
     let disk = RamDisk::attach("HFS+", &hfs_label);
     println!("attached {} at {}", disk.dev, disk.mount.display());
 

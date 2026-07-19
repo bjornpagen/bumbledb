@@ -239,8 +239,6 @@ pub struct PreparedQuery<'s, S> {
     bindings: Bindings,
     /// Aggregate-finalization answer scratch.
     answer_scratch: Vec<u64>,
-    /// Final answer materialization regime, sealed from the predicate.
-    answer_heap: AnswerHeap,
     /// The per-finalize intern-resolution memo (docs/architecture/40-execution.md).
     resolve_memo: ResolveMemo,
     /// KeyProbe-key byte scratch.
@@ -447,14 +445,6 @@ enum ParamSpec {
     Set { elem: ValueType, point: bool },
     /// An Allen mask: neither a data-model value nor a set/point.
     Mask,
-}
-
-/// Whether finalization can blit words directly or must populate the
-/// owned byte heap for string/fixed-byte answers.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum AnswerHeap {
-    Words,
-    Bytes,
 }
 
 /// Whether every symbolic filter/selection slot was written by a complete

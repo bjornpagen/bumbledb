@@ -61,7 +61,7 @@ pre-rules query is a one-rule program.
   type; the Arg forms the carried payload's type) together with the fold
   producing it. It is derived **once**, at validation, and sealed in the
   witness (`ir/validate`'s `Predicate`); sink construction, result-buffer
-  typing, finalize's all-words decision, and plan introspection's header all read that
+  typing, finalize's column writers, and plan introspection's header all read that
   one object — no second derivation of the answer exists anywhere.
   The fence: the predicate is anonymous and engine-internal, **referenced
   only by `PredId`, from inside the same `Program`** (names live in the

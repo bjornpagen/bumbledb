@@ -18,19 +18,19 @@
   (its ruling record is durable in `50-storage.md` § eviction and
   `40-execution.md` D1); its README re-true and waveM `report.json` land
   with it.
-- **The Measure phase (cleanup-0.5.0 prd-M) — pending measurements, each
-  marked PENDING-RE-EARN where cited:** the ephemeral R6 band (~75–90x /
-  ~4.2–4.4x / 1.0–1.1x device tax) and the README's 18.4× ephemeral
-  read number were earned under the retired `WRITEMAP|NOSYNC` set and
-  re-run under `NOSYNC`-only; a `NOSYNC`-only ≥2,000-round statistical
-  kill session (the recorded ones are 2026-07-16, WRITEMAP-era); and the
-  three measure-or-merge twins (rulings 6–8: leaf elision via
-  `Executor::disable_leaf_elision`, all-words finalize
-  `fill_word_answers`, permuted-identity determinant) — the standing
-  protocol: one isolated measurement each; a recorded win becomes law,
-  no win merges the special case into the generic machinery; the twin
-  and its knob die with the verdict either way. Until M rules, the code
-  stands untouched.
+- **The Measure phase (cleanup-0.5.0 prd-M) — one lane still owed:** a
+  `NOSYNC`-only ≥2,000-round statistical kill session (the recorded ones
+  are 2026-07-16, WRITEMAP-era; the deterministic sweep and the kill
+  smoke re-ran green at the flip). Everything else RULED 2026-07-19,
+  committed run dirs `bench-out/measure-twins/` +
+  `bench-out/measure-ephemeral-r6/` + `bench-out/eph-nosync-{1,2,3}`:
+  twins — leaf elision LAW (1.69–1.71×), permuted-identity determinant
+  LAW (1.23–1.25×), all-words finalize MERGED (0.996–1.005, `AnswerHeap`
+  and both word fills deleted, oracle re-refereed on a fresh 2,862-case
+  stamp); ephemeral re-earn — README 21.2× over all 22 (ALL-WIN ×3),
+  R6 band 43–70x staging / 27–52x ssd dividend / 3.1–3.5x ramdisk
+  dividend / 1.1–1.6x device tax; every planted re-earn mark is closed
+  (prd-M's close-out grep comes back empty).
 - **CI dispatch proof (U4a) — remedies landed, run ids still owed:** the
   miri `.S` stub and the ubuntu lanes want their green run ids recorded
   in PR #11. The only PR run (29697582864) tested `de1bac14` and is green
@@ -92,9 +92,10 @@ wave close per its own survival checklist (serial committer's act).
 tagged `v0.4.0` — the host-idiom SDK on the law-typed 0.3.0 core; primer is
 cut over and merged (PR #85). **The bench pin is healed (2026-07-19):** the
 README's read-family numbers (18.7× durable over clean min-of-2 with
-`mandate_overlap` excluded-and-counted, 18.4× ephemeral over all 22, ALL-WIN
-in both) derive from the committed `bench-out/` artifacts at one rev
-(`adac4010`, 2026-07-16), charts regenerated from the same; the orphaned
+`mandate_overlap` excluded-and-counted at rev `adac4010` 2026-07-16; 21.2×
+ephemeral over all 22, ALL-WIN ×3, re-earned `NOSYNC`-only 2026-07-19 on the
+post-cleanup tree) derive from the committed `bench-out/` artifacts, charts
+regenerated from the durable runs; the orphaned
 mixed-rev run1 is deleted; the tails sentence names its one honest exception
 (`meets_chain` p99). The shipped packets live at their tags. History lives
 in git; this document is not an archive.
