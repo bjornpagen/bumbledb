@@ -82,14 +82,15 @@ test("the minimal kernel loads and the closed weld holds at runtime", function p
  * any conditional tangle that is not identical to the spelled-out object.
  */
 type Cases = [
-	// ——— values are bare and structural (no brand appears anywhere) ———
+	// ——— values are bare and structural (no brand appears anywhere); a
+	// closed reference's value type is the PRECISE handle union (H1) ———
 	Expect<
 		Equal<
 			Fact<typeof Account>,
 			{
 				id: bigint
 				holder: bigint
-				kind: bigint
+				kind: "Checking" | "Savings"
 				active: IntervalValue
 			}
 		>
@@ -104,7 +105,7 @@ type Cases = [
 				tag: Uint8Array
 				raw: bigint
 				score: bigint
-				kind: bigint
+				kind: "Checking" | "Savings"
 				at: IntervalValue
 				stay: IntervalValue
 			}
@@ -115,7 +116,7 @@ type Cases = [
 			InsertFact<typeof Account>,
 			{
 				holder: bigint
-				kind: bigint
+				kind: "Checking" | "Savings"
 				active: IntervalValue
 				id?: bigint | undefined
 			}
@@ -141,7 +142,9 @@ type Cases = [
 	Expect<Equal<Infer<typeof RawBytes>, Uint8Array>>,
 	Expect<Equal<Infer<typeof ActiveDuring>, IntervalValue>>,
 	Expect<Equal<Infer<typeof Stay>, IntervalValue>>,
-	Expect<Equal<Infer<typeof Kind.id>, bigint>>,
+	// a closed reference infers its precise handle union, never bigint (H1)
+	Expect<Equal<Infer<typeof Kind.id>, "Checking" | "Savings">>,
+	Expect<Equal<Infer<typeof Grade.id>, "DirectPass" | "Failed">>,
 	// ——— the fresh mark is a structural `fresh: true` label ———
 	Expect<Equal<(typeof u64.fresh)["fresh"], true>>,
 	Expect<Equal<typeof u64.fresh extends { fresh: true } ? true : false, true>>,

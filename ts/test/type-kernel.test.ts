@@ -242,15 +242,18 @@ describe("selection literal resolution", function describeSelections() {
 		}, /interval/)
 	})
 
-	test("where() rides the same machine: a well-TYPED bare bigint still faces the roster", function probeWhereRoster() {
+	test("where() rides the same machine: an ill-typed forged id still faces the roster", function probeWhereRoster() {
 		/**
-		 * The two-boundary split, demonstrated: structurally, 7n is a legal
-		 * selection literal for a closed-reference field (no brand blocks
-		 * it) — the roster refuses it at construction, and the engine would
-		 * refuse it again at commit.
+		 * The two-boundary split, demonstrated: since H1 the TYPE tier already
+		 * refuses a bigint on a closed-reference field (the value type is the
+		 * precise handle union), so forging an out-of-roster id requires an
+		 * ill-typed call — and the roster STILL refuses it at construction
+		 * (the runtime belt under the type claim; the engine would refuse it
+		 * again at commit).
 		 */
 		const { Account } = buildLedgerPieces()
 		assert.throws(function outOfRoster() {
+			// @ts-expect-error — H1: a closed field's selection literal is the handle union; a bigint no longer typechecks
 			Account.where({ kind: 7n })
 		}, /closed relation Kind has no handle with id 7/)
 		assert.throws(function emptyWhere() {
