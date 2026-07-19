@@ -453,6 +453,19 @@ pub fn parse_stat_key(key: &[u8]) -> Option<(RelationId, u8)> {
 /// never split here): the contiguity is what keeps the determinant B-tree
 /// ordered by interval start within one scalar-prefix group (the fixed
 /// family's one word is the start itself).
+///
+/// MEASURED LAW (cleanup-0.5.0 ruling 8, the Measure phase, 2026-07-19,
+/// `bench-out/measure-twins/`): this direct arm is
+/// [`permuted_determinant_image`] under the identity permutation, and
+/// the identity-permuted route measured **1.23–1.25× slower per fact**
+/// (13 vs 17 ns/fact, commit-shaped 3-field interval projection, warm
+/// DRAM, interleaved min-of-7 × 200k facts, two process runs) — the
+/// permuted arm's O(n²) inverse search is real cost on the hot commit
+/// path, so the pair stays split; pre-stated bar 1.09
+/// (`docs/architecture/50-storage.md` § key encoding).
+/// **Reverses if:** the permuted arm ever precomputes its inverse (the
+/// search hoisted out of the per-fact loop) and re-measures within the
+/// house bar.
 pub fn determinant_image<'a>(
     layout: &FactLayout,
     projection: &[FieldId],
@@ -677,90 +690,6 @@ mod tests {
         assert_eq!(
             (stmt, parsed, src_rel, src_row),
             (StatementId(4), key_bytes.as_bytes(), RelationId(1), 5)
-        );
-    }
-
-    /// MEASURE-OR-MERGE TWIN (cleanup-0.5.0 ruling 8,
-    /// `docs/prds/cleanup-0.5.0/prd-M-measure.md` item 3), prepared by
-    /// U2, MEASURED by the Measure phase alone (idle M2 Max, release,
-    /// pre-stated threshold): [`determinant_image`] (statement
-    /// projection order, no indirection) against
-    /// [`permuted_determinant_image`] under the IDENTITY permutation —
-    /// the former is the latter's identity arm, at the cost of the
-    /// latter's O(n²) inverse search per fact on the hot commit path.
-    /// Byte-equivalence of the two forms is asserted; the timing
-    /// verdict (keep the identity arm as law, or merge the pair)
-    /// belongs to the Measure phase — this twin prints numbers and
-    /// pins NOTHING about the margin. The commit-path context is
-    /// approximated in-process over commit-shaped facts; the Measure
-    /// phase may corroborate on the writebench lane. Invocation:
-    ///
-    /// ```text
-    /// cargo test -p bumbledb --release --lib -- --ignored \
-    ///     permuted_identity_determinant_twin --nocapture --test-threads=1
-    /// ```
-    #[test]
-    #[ignore = "measure-or-merge twin: the Measure phase runs it (release, idle machine, --nocapture)"]
-    fn permuted_identity_determinant_twin() {
-        const REPS: usize = 7;
-        const FACTS: usize = 200_000;
-        let layout = interval_layout();
-        let fact = interval_fact();
-        // Commit-shaped projection: scalar, scalar, whole interval.
-        let projection = [FieldId(2), FieldId(0), FieldId(1)];
-        let identity = [0u16, 1, 2];
-
-        // Byte-equivalence of the identity arm.
-        let mut direct = DeterminantImage::scratch();
-        let mut permuted = DeterminantImage::scratch();
-        determinant_image(&layout, &projection, &fact, &mut direct);
-        permuted_determinant_image(&layout, &projection, &identity, &fact, &mut permuted);
-        assert_eq!(
-            direct.as_bytes(),
-            permuted.as_bytes(),
-            "the identity permutation must be byte-identical to the direct slice"
-        );
-
-        // Interleaved min-of-N (the pins idiom) over FACTS re-derivations
-        // — the shape of the applier's per-fact determinant work.
-        let mut out = DeterminantImage::scratch();
-        let mut direct_best = std::time::Duration::MAX;
-        let mut permuted_best = std::time::Duration::MAX;
-        for _ in 0..REPS {
-            let start = std::time::Instant::now();
-            for _ in 0..FACTS {
-                determinant_image(
-                    &layout,
-                    std::hint::black_box(&projection),
-                    std::hint::black_box(&fact),
-                    &mut out,
-                );
-                std::hint::black_box(out.as_bytes());
-            }
-            direct_best = direct_best.min(start.elapsed());
-            let start = std::time::Instant::now();
-            for _ in 0..FACTS {
-                permuted_determinant_image(
-                    &layout,
-                    std::hint::black_box(&projection),
-                    std::hint::black_box(&identity),
-                    std::hint::black_box(&fact),
-                    &mut out,
-                );
-                std::hint::black_box(out.as_bytes());
-            }
-            permuted_best = permuted_best.min(start.elapsed());
-        }
-        let per_fact = |d: std::time::Duration| d.as_nanos() / FACTS as u128;
-        #[expect(
-            clippy::cast_precision_loss,
-            reason = "reporting accepts lossy integer-to-float conversion"
-        )]
-        let ratio = permuted_best.as_nanos() as f64 / direct_best.as_nanos() as f64;
-        println!(
-            "permuted-identity determinant twin: direct {} ns/fact, identity-permuted {} ns/fact, permuted/direct {ratio:.3}",
-            per_fact(direct_best),
-            per_fact(permuted_best),
         );
     }
 

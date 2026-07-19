@@ -256,7 +256,6 @@ impl<S> PreparedQuery<'_, S> {
                     &mut self.resolve_memo,
                     txn,
                     &self.predicate.columns,
-                    self.answer_heap,
                     &mut out,
                 )?;
             }
@@ -330,7 +329,6 @@ impl<S> PreparedQuery<'_, S> {
                 &mut self.resolve_memo,
                 txn,
                 &self.predicate.columns,
-                self.answer_heap,
                 &mut out,
             )?;
         }

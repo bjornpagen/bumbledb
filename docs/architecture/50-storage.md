@@ -123,6 +123,19 @@ facts, never interned, so the key hash carries no type tag: forward
   stay refused at the query surface; sortedness is the index's need, not a
   semantics). `MAX_DETERMINANT_WIDTH` admits the 16-byte interval contribution and the
   widest `bytes<64>` one; width overflow is a declaration-time error.
+  The determinant is re-derived per fact by slicing projected fields out of
+  `fact_bytes` — two encoders, `determinant_image` (statement projection
+  order, the `U` key's segment) and `permuted_determinant_image` (target-key
+  order for `R` keys). **The direct arm is measured law** (cleanup-0.5.0
+  ruling 8, the Measure phase, 2026-07-19, `bench-out/measure-twins/`):
+  `determinant_image` is the permuted encoder under the identity
+  permutation, and the identity-permuted route measured **1.23–1.25×
+  slower per fact** (13 vs 17 ns/fact, commit-shaped 3-field interval
+  projection, warm DRAM, interleaved min-of-7 × 200k facts, two process
+  runs; pre-stated bar 1.09) — the permuted arm's per-fact inverse search
+  is real cost on the hot commit path, so the pair stays split.
+  **Reverses if:** the permuted arm precomputes its inverse and re-measures
+  within the house bar.
 - **`R` keys are statement-scoped**, not relation-scoped: `statement` is the
   schema-global materialized statement id (`10-data-model.md` fingerprint), and
   `key` is the *target-side* projection value the source fact requires. One source
@@ -455,10 +468,12 @@ Nothing was weakened.)
 
 The kind is **device-independent**: ephemeral-on-SSD is legitimate, and
 ephemeral-on-ramdisk buys the flag's latency on top of the device's — the
-device tax measured ~1.0–1.1x under the retired `WRITEMAP|NOSYNC` set
-(the R6 lane of `crates/bumbledb/tests/ramdisk_phase_r.rs`); the number is
-PENDING-RE-EARN under `NOSYNC`-only (the Measure phase re-runs the lane; the
-device-independence *design* stands on the kind marker, not the number). The kind
+device tax measured **1.1–1.6x** under `NOSYNC`-only (the R6 lane of
+`crates/bumbledb/tests/ramdisk_phase_r.rs`, re-earned by the Measure phase
+2026-07-19 across three interleaved sessions,
+`bench-out/measure-ephemeral-r6/`; the retired `WRITEMAP|NOSYNC` figure was
+~1.0–1.1x — and the device-independence *design* stands on the kind marker,
+not the number). The kind
 carries the no-durability claim, not the device, so no lie is possible — a
 machine crash loses an ephemeral store by the store's own definition. (The
 device-honesty rule for *timed* lanes is the orthogonal axis: `60-validation.md`.)
@@ -490,8 +505,12 @@ the flag set that originally shipped (the sweep convicted nothing and the R4
 cells priced it fastest on the small-commit shape). **Why it lost (reversed,
 cleanup-0.5.0 ruling 1):** WRITEMAP's open-time full-map ftruncate forced the
 eager capacity contract, unpayable at the 32 GiB map; its measured price
-advantage was earned under the old flag set and is PENDING-RE-EARN for
-`NOSYNC`-only (the Measure phase). The deterministic crash sweep and the kill
+advantage was earned under the old flag set, and the Measure phase re-earned
+the kind's price under `NOSYNC`-only (2026-07-19, three interleaved R6
+sessions, `bench-out/measure-ephemeral-r6/`: small-commit flags dividend
+27–52x on SSD and 3.1–3.5x on the ramdisk, staging win 43–70x, device tax
+1.1–1.6x — the WRITEMAP-era ~75–90x / ~4.2–4.4x band narrowed, the win
+stands whole, so the rationale survives its own re-argument). The deterministic crash sweep and the kill
 smoke re-ran green under `NOSYNC`-only, so the kind's claim lost nothing (the
 statistical kill lane re-runs with the Measure phase). **Reverses if:** any
 crashpoint ever shows a non-all-or-nothing recovery on an ephemeral store —

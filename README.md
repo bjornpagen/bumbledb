@@ -90,10 +90,11 @@ conflict pairs, `Pack` free-busy, `Sum(Duration)` accounting). Geomean:
 **18.7×** over SQLite p50 (min over the clean samples of the two committed
 durable runs; one family, `mandate_overlap`, was clock-contaminated in both
 and is excluded and counted per the protocol); the ephemeral-store runs land
-at 18.4× across all twenty-two — reads are mmap-warm either way (the
-ephemeral number is PENDING-RE-EARN: it was measured under the retired
-`WRITEMAP|NOSYNC` flag set, before cleanup-0.5.0 ruling 1 made the
-ephemeral kind `NOSYNC`-only; the Measure phase re-runs the lane):
+at **21.2×** across all twenty-two — reads are mmap-warm either way (the
+ephemeral number was re-earned under `NOSYNC`-only after cleanup-0.5.0
+ruling 1 retired `WRITEMAP`: three fresh runs on the post-cleanup tree,
+2026-07-19, ALL-WIN in each, clean-sample min-of-3,
+`bench-out/eph-nosync-{1,2,3}`):
 
 ![speedup over SQLite](assets/bench-speedup.svg)
 
@@ -117,10 +118,10 @@ engines, and bulk load favors SQLite's write path; we publish it anyway:
 ![writes and cold](assets/bench-writes.svg)
 
 **Context that keeps these numbers honest:** every read-family number above
-derives from the committed artifacts in `bench-out/` (two durable + three
-ephemeral runs, one engine rev, 2026-07-16, per-family clock-proxy
-contamination excluded and counted); the scenario suite is its own committed
-run. S-scale corpora (a 10⁵-fact
+derives from the committed artifacts in `bench-out/` (two durable runs,
+2026-07-16, and three `NOSYNC`-only ephemeral runs, 2026-07-19 on the
+post-cleanup tree, per-family clock-proxy contamination excluded and
+counted); the scenario suite is its own committed run. S-scale corpora (a 10⁵-fact
 fact-table ledger and a calendar world of interval claims, RSVP arms, and
 ray horizons), Apple M2 Max, engine-favorable workload class (point lookups
 through multi-way joins, interval algebra, and aggregates — exactly what a

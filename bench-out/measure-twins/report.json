@@ -1,0 +1,97 @@
+{
+  "session": "cleanup-0.5.0 Measure phase \u2014 measure-or-merge twins (rulings 6, 7, 8)",
+  "date": "2026-07-19",
+  "host": "Apple M2 Max",
+  "protocol": {
+    "lock": "scripts/measure.sh",
+    "build": "release",
+    "idiom": "interleaved min-of-7, two process runs per twin",
+    "tier": "warm DRAM, in-process",
+    "pre_stated_threshold": "fast path is law iff generic/fast >= 1.09 (crucible ADOPT precedent)"
+  },
+  "idle_check": {
+    "load_averages": [
+      2.26,
+      2.95,
+      3.22
+    ],
+    "foreign_heavy_processes": "none"
+  },
+  "twins": [
+    {
+      "name": "leaf-elision complex",
+      "ruling": 6,
+      "runs": [
+        {
+          "elided_ns_per_exec": 138008,
+          "generic_ns_per_exec": 236216,
+          "ratio": 1.712
+        },
+        {
+          "elided_ns_per_exec": 107262,
+          "generic_ns_per_exec": 181104,
+          "ratio": 1.688
+        }
+      ],
+      "verdict": "LAW",
+      "recorded_at": [
+        "crates/bumbledb/src/exec/run/leaf.rs",
+        "docs/architecture/40-execution.md"
+      ]
+    },
+    {
+      "name": "all-words finalize fast path",
+      "ruling": 7,
+      "runs": [
+        {
+          "sink": "projection",
+          "words_ns": 56958,
+          "resolved_ns": 56875,
+          "ratio": 0.999
+        },
+        {
+          "sink": "aggregate",
+          "words_ns": 9166,
+          "resolved_ns": 9167,
+          "ratio": 1.0
+        },
+        {
+          "sink": "projection",
+          "words_ns": 57042,
+          "resolved_ns": 56791,
+          "ratio": 0.996
+        },
+        {
+          "sink": "aggregate",
+          "words_ns": 9125,
+          "resolved_ns": 9167,
+          "ratio": 1.005
+        }
+      ],
+      "verdict": "MERGE",
+      "executed": "AnswerHeap + fill_word_answers + push_word_answer deleted; one resolving finalize route",
+      "gravestone": "crates/bumbledb/src/api/prepared/finalize.rs"
+    },
+    {
+      "name": "permuted-identity determinant",
+      "ruling": 8,
+      "runs": [
+        {
+          "direct_ns_per_fact": 13,
+          "permuted_ns_per_fact": 17,
+          "ratio": 1.233
+        },
+        {
+          "direct_ns_per_fact": 13,
+          "permuted_ns_per_fact": 17,
+          "ratio": 1.249
+        }
+      ],
+      "verdict": "LAW",
+      "recorded_at": [
+        "crates/bumbledb/src/storage/keys.rs",
+        "docs/architecture/50-storage.md"
+      ]
+    }
+  ]
+}

@@ -147,18 +147,6 @@ fn prepare_witnessed<'s, S>(
             .unwrap_or(0),
     );
 
-    // The byte-heap types keep the resolving finalize: String resolves
-    // through the dictionary; a bytes<N> find re-assembles its slot words
-    // into the byte heap (no dictionary — inline values).
-    let answer_heap = if predicate
-        .columns
-        .iter()
-        .all(|column| !matches!(column.ty, ValueType::String | ValueType::FixedBytes { .. }))
-    {
-        super::AnswerHeap::Words
-    } else {
-        super::AnswerHeap::Bytes
-    };
     let unresolved_literals = rules.iter().map(pending_literals).sum();
     let program = if rules.is_empty() {
         Program::Empty
@@ -180,7 +168,6 @@ fn prepare_witnessed<'s, S>(
         sink,
         bindings,
         answer_scratch: Vec::new(),
-        answer_heap,
         resolve_memo: ResolveMemo::new(),
         determinant_key: Vec::new(),
         rendered,
@@ -430,15 +417,6 @@ pub(crate) fn prepare_program<'s, S>(
             .max()
             .unwrap_or(0),
     );
-    let answer_heap = if predicate
-        .columns
-        .iter()
-        .all(|column| !matches!(column.ty, ValueType::String | ValueType::FixedBytes { .. }))
-    {
-        super::AnswerHeap::Words
-    } else {
-        super::AnswerHeap::Bytes
-    };
     let unresolved_literals = predicates
         .iter()
         .flat_map(|pred| pred.rules.iter())
@@ -481,7 +459,6 @@ pub(crate) fn prepare_program<'s, S>(
         sink,
         bindings,
         answer_scratch: Vec::new(),
-        answer_heap,
         resolve_memo: ResolveMemo::new(),
         determinant_key: Vec::new(),
         rendered,

@@ -341,12 +341,11 @@ module, `PreparedQuery`/`Answers`, `SchemaError`, `FactShapeError`,
   an ephemeral store — bulk imports, judged exactly as a durable store judges —
   read/repair until the theory holds, then ETL the survivors into the durable
   store (`snap.scan` → `bulk_load_dyn`, § ETL below) and delete the directory. The
-  staging side pays no fullfsync per commit (the small-commit shape measured
-  ~75–90x over durable-on-SSD and ~4.2–4.4x over a plain ramdisk store across
-  earn sessions, device tax 1.0–1.1x, the R6 lane of
-  `crates/bumbledb/tests/ramdisk_phase_r.rs` — the band was earned under the
-  retired `WRITEMAP|NOSYNC` set and is PENDING-RE-EARN under `NOSYNC`-only,
-  the Measure phase); the durable side's
+  staging side pays no fullfsync per commit (the small-commit shape measures
+  43–70x over durable-on-SSD for the staging pattern and 3.1–3.5x over a
+  plain ramdisk store across the `NOSYNC`-only re-earn sessions, device tax
+  1.1–1.6x, the R6 lane of `crates/bumbledb/tests/ramdisk_phase_r.rs`, the
+  Measure phase 2026-07-19, `bench-out/measure-ephemeral-r6/`); the durable side's
   guarantees never dilute because the kinds cannot cross-open.
 - One process, one handle (`00-product.md`): every open holds an exclusive advisory
   lock on `<dir>/bumbledb.lock`; a second live handle on the same path — in this

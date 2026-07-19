@@ -352,7 +352,7 @@ fn mutual_recursion_parity_matches_the_naive_fixpoint() {
 }
 
 /// A fold at the output head over a finished recursive interior: the
-/// aggregate drain (`finalize_into` → `push_word_answer`) runs on rows
+/// aggregate drain (`finalize_into` → `push_resolved_answer`) runs on rows
 /// grouped from the interior closure's finished image — per-source
 /// reachable-set counts, against the naive closure's group counts.
 #[test]
@@ -892,10 +892,13 @@ fn resolving_columnar_finalize_reproduces_every_cell() {
     .expect("read");
 }
 
-/// The all-words columnar fill (`fill_word_answers` → strided
+/// The columnar fill's strided word arms (`fill_resolved_answers` →
 /// `fill_fixed_column`): no string/bytes column, interval mid-tuple —
 /// the interval column must advance the word cursor by TWO or every
-/// column to its right reads the wrong words.
+/// column to its right reads the wrong words. (This falsifier refereed
+/// the all-words fast path until the Measure phase merged it —
+/// cleanup-0.5.0 ruling 7, the gravestone at `api/prepared/finalize.rs`
+/// — and it pins the surviving route's cursor discipline the same way.)
 #[test]
 fn word_columnar_finalize_reproduces_every_cell() {
     let dir = common::TempDir::new("hunt-finalize-words");

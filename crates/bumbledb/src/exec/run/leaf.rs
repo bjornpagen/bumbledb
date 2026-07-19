@@ -5,34 +5,25 @@ use super::{
     ValidatedPlan,
 };
 
-/// MEASURE-OR-MERGE TWIN SUPPORT (cleanup-0.5.0 ruling 6,
-/// `docs/prds/cleanup-0.5.0/prd-M-measure.md` item 1) — the -off idiom,
-/// `cfg(test)` only: no runtime mode ships, and the switch itself dies
-/// with the Measure phase's verdict (law or merge).
-#[cfg(test)]
-impl Executor {
-    /// Forces the leaf fast-path classification off, routing every leaf
-    /// through the generic batch machinery — the A/B twin's B arm
-    /// (correctness never depends on a fast path firing). One direction
-    /// only: a plan that never classified `single` has no fast-path
-    /// buffers to turn on.
-    pub(crate) fn disable_leaf_elision(&mut self) {
-        self.leaf_single = false;
-    }
-
-    /// Whether the leaf fast paths are engaged — the twin's A-arm
-    /// firing proof.
-    pub(crate) fn leaf_elision_engaged(&self) -> bool {
-        self.leaf_single
-    }
-}
-
 impl Executor {
     /// The leaf fast paths. `None` = declined —
     /// multi-position forced nodes the sink cannot scan, sinks without
     /// scan support, byte-column folds — and the generic batch path runs
     /// instead (conservative by construction: correctness never depends
     /// on a fast path firing).
+    ///
+    /// MEASURED LAW (cleanup-0.5.0 ruling 6, the Measure phase,
+    /// 2026-07-19, `bench-out/measure-twins/`): the leaf-elision
+    /// complex — the single-subatom classification
+    /// (`leaf_precompute.rs`), this dispatcher, and the pinned-row arm
+    /// below — measured **1.69–1.71× generic/elided** end-to-end on a
+    /// mixed pinned+scan self-join (700 answers/exec, warm DRAM,
+    /// interleaved min-of-7, two process runs) against the same plan
+    /// with the classification forced off. The pre-stated bar was
+    /// 1.09 (the crucible ADOPT precedent); the branch is KEEP-AS-LAW
+    /// (`docs/architecture/40-execution.md` § the leaf fast paths).
+    /// **Reverses if:** a ledger-suite A/B on the generic batch
+    /// machinery ever lands within the house bar of this path.
     pub(super) fn run_leaf_fast<S: Sink, C: Counters>(
         &mut self,
         plan: &ValidatedPlan,

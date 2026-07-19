@@ -59,10 +59,10 @@ laws).
   ALL-WIN, and the pinned denominators are earned at scale S (the committed
   `bench-out/` artifacts, engine rev `adac4010`, verify-stamped) — but no L
   corpus exists, so the 10 ms budget and every L-scale claim bind nothing yet
-  (`00-product.md`). The ephemeral-lane numbers are separately
-  PENDING-RE-EARN under `NOSYNC`-only (ruling 1; the Measure phase).
-  *Trigger: generating the L corpus, and the Measure phase's ephemeral re-earn
-  session.*
+  (`00-product.md`). (The ephemeral-lane numbers were re-earned under
+  `NOSYNC`-only by the Measure phase, 2026-07-19 — `bench-out/eph-nosync-*`
+  and `bench-out/measure-ephemeral-r6/`.)
+  *Trigger: generating the L corpus.*
 - **The chain-window class** (interval intersection along paths — "the
   window over which an entire path holds"): outside the landed recursion
   surface by the safety theorem's premise, because the intersected window
