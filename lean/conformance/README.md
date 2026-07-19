@@ -223,7 +223,8 @@ half is pinned by
 `domain_quantification_judgments_are_outside_the_lane`.
 
 The starter roster covers: both classical forms (scalar key;
-containment — scalar, coverage, and the closed member set), the
+containment — scalar, coverage, and the closed member set, plain and
+ψ-narrowed), the
 extension form (windows at floor/ceiling/`n..n`/`0..*`/empty-parent),
 the two-phase preemption mix,
 set-selections deciding a verdict, the delete-then-reinsert

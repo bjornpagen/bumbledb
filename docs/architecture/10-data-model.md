@@ -576,7 +576,7 @@ containment = 1, cardinality window = 2) and its body — sides as
 (relation id, projection field-id list in statement order, selection list as
 (field id, literal count, literal values in canonical set order) bindings in
 statement order); a window adds its lower bound and the upper bound's presence
-tag between its sides. Materialized order = the fresh auto-keys first (one per fresh field, in
+tag — followed, when present, by the bound itself — between its sides. Materialized order = the fresh auto-keys first (one per fresh field, in
 relation-then-field declaration order), then the closed auto-keys (one per closed
 relation, in declaration order), then the declared statements in declaration
 order — a deterministic function of the declaration, so statement ids remain pinned
