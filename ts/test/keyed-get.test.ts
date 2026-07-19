@@ -1,16 +1,18 @@
 /**
- * OPEN-ledger row (b) — multi-key typed `get` (70-api.md § the freeze;
- * TODO.md Phase C verdict table). The 2-arg `get` reads ONLY through the
- * PRIMARY candidate key (marshal.ts PRIMARY-KEY RULE); a declared
- * secondary key — graph-builder's `key(program, ["grp"])` shape exactly —
- * reads through the key-statement-selected form `get(relation,
- * keyStatement, key)`, whose key object is typed by the statement's own
- * projection and whose statement id resolves from the SDK's positional
- * mirror (the native bridge's `snapshotGet(snap, relation, keyStatement,
- * keyValues)` always point-read through ANY key statement; the typed
- * surface now expresses it). Tests pin all sides: the primary form, the
- * 2-arg refusal of a secondary-key object, the typed keyed read, and the
- * engine's own secondary-key read underneath.
+ * Keyed get — the SHIPPED spelling (docs/architecture/70-api.md
+ * § Transactions; the closed ledger's "multi-key typed `tx.get`" row, FIRED
+ * census 2026-07-17). The 2-arg `get` reads ONLY through the PRIMARY
+ * candidate key (marshal.ts PRIMARY-KEY RULE); a declared secondary key —
+ * graph-builder's `key(program, ["grp"])` shape exactly — reads through the
+ * key-statement-selected form `get(relation, keyStatement, key)`, whose key
+ * object is typed by the statement's own projection and whose statement id
+ * resolves from the SDK's positional mirror. Keyed get is the obvious
+ * spelling on the read scope AND the write transaction — `db.get`,
+ * `snap.get`, and `tx.get` all carry the 3-arg form (the symmetry rule; the
+ * transaction side answers FINAL state, base + pending delta). Tests pin
+ * all sides: the primary form, the 2-arg refusal of a secondary-key object,
+ * the typed keyed read on every scope, the projection typing, the statement
+ * membership refusals, and the engine's own secondary-key read underneath.
  */
 
 import assert from "node:assert/strict"
@@ -24,7 +26,7 @@ import { Db, key, relation, schema, str, u64 } from "#index.ts"
 import { lower } from "#lower.ts"
 import { native } from "#native.ts"
 
-const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bumbledb-openledger-"))
+const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bumbledb-keyedget-"))
 
 after(function cleanup() {
 	fs.rmSync(tmpRoot, { recursive: true, force: true })
@@ -39,9 +41,9 @@ after(function cleanup() {
 const Grp = relation("Grp", { id: u64.fresh, label: str })
 const Program = relation("Program", { id: u64.fresh, grp: u64, title: str })
 const programGrpKey = key(Program, ["grp"])
-const Theory = schema("OpenLedgerB", { Grp, Program }, [programGrpKey])
+const Theory = schema("KeyedGet", { Grp, Program }, [programGrpKey])
 
-describe("OPEN-ledger row (b): typed get through a declared secondary key", async function suite() {
+describe("keyed get: typed point reads through a declared key statement", async function suite() {
 	const db = await Db.create(path.join(tmpRoot, "store"), Theory)
 
 	let grpId: Fact<typeof Grp>["id"] | undefined
@@ -102,14 +104,70 @@ describe("OPEN-ledger row (b): typed get through a declared secondary key", asyn
 		const foreignKey = key(Program, ["title"])
 		assert.throws(function foreignStatement() {
 			db.get(Program, foreignKey, { title: "linear equations" })
-		}, /not a declared statement of schema OpenLedgerB/)
+		}, /not a declared statement of schema KeyedGet/)
 		assert.throws(function wrongOwner() {
 			// @ts-expect-error — the statement keys Program, not Grp; the key object is typed by Program's projection
 			db.get(Grp, programGrpKey, { grp })
 		}, /keys Program, not Grp/)
 	})
 
-	test("scan().find() still works (the workaround the driver used before the keyed form)", function workaround() {
+	test("the key object is typed by the statement's projection — a wrong field name is refused", function wrongProjection() {
+		/**
+		 * DeclaredKeyFact<Program, ["grp"]> types the determinant columns
+		 * from the key-FD statement itself, so a key object spelling a
+		 * non-determinant field fails to compile; the runtime projection
+		 * check throws the matching refusal.
+		 */
+		assert.throws(function wrongField() {
+			// @ts-expect-error — programGrpKey's projection is (grp); `title` is not a determinant column of the statement
+			db.get(Program, programGrpKey, { title: "x" })
+		}, /missing field grp/)
+	})
+
+	test("the write transaction point-reads through the declared key, final-state", function txKeyed() {
+		let freshGrp: Fact<typeof Grp>["id"] | undefined
+		let preCommit: Fact<typeof Program> | undefined
+		const outcome = db.write(function mutate(tx) {
+			const g = tx.insert(Grp, { label: "geometry" })
+			const p = tx.insert(Program, { grp: g.id, title: "proofs" })
+			const pending = tx.get(Program, programGrpKey, { grp: g.id })
+			assert.ok(pending, "the pending insert answers the keyed final-state read (read-your-writes)")
+			assert.equal(pending.id, p.id, "the minted id comes back through the declared key")
+			assert.equal(pending.title, "proofs")
+			assert.equal(tx.delete(Program, pending), true, "the delete lands on the final state")
+			preCommit = tx.get(Program, programGrpKey, { grp: g.id })
+			assert.equal(preCommit, undefined, "the delta Absent overlay answers the same keyed read")
+			freshGrp = g.id
+		})
+		assert.ok(outcome.ok, "the commit lands")
+		assert.ok(freshGrp !== undefined)
+		assert.equal(
+			db.get(Program, programGrpKey, { grp: freshGrp }),
+			preCommit,
+			"the committed keyed answer agrees with the pre-commit one"
+		)
+	})
+
+	test("writeWitnessed sees one spelling on both hands", function witnessed() {
+		const outcome = db.writeWitnessed(function bothHands(snap, tx) {
+			const committed = snap.get(Program, programGrpKey, { grp })
+			assert.ok(committed, "the snapshot hand answers the keyed committed-state read")
+			assert.equal(committed.id, program)
+			const g = tx.insert(Grp, { label: "calculus" })
+			const p = tx.insert(Program, { grp: g.id, title: "limits" })
+			const pending = tx.get(Program, programGrpKey, { grp: g.id })
+			assert.ok(pending, "the transaction hand answers the keyed final-state read")
+			assert.equal(pending.id, p.id)
+			assert.equal(
+				snap.get(Program, programGrpKey, { grp: g.id }),
+				undefined,
+				"the snapshot hand still witnesses only committed state"
+			)
+		})
+		assert.ok(outcome.ok, "the witnessed write commits")
+	})
+
+	test("full-scan find remains available (hosts may still fold)", function fullScan() {
 		const row = db.read(function findByGrp(snap) {
 			return snap.scan(Program).find(function forGroup(candidate) {
 				return candidate.grp === grp
@@ -122,8 +180,8 @@ describe("OPEN-ledger row (b): typed get through a declared secondary key", asyn
 	test("the engine point-reads through the declared key statement underneath", function engineSide() {
 		/**
 		 * Same theory, raw native store: the bridge's snapshotGet takes ANY
-		 * key statement id — the declared secondary key included — proving
-		 * the SDK typed surface is the only layer withholding the read.
+		 * key statement id — the declared secondary key included — and the
+		 * SDK's typed keyed form rides exactly this read.
 		 */
 		const spec = lower(Theory)
 		const created = native.dbCreate(path.join(tmpRoot, "native"), spec)
@@ -163,7 +221,7 @@ describe("OPEN-ledger row (b): typed get through a declared secondary key", asyn
 		assert.deepEqual(
 			byGrp,
 			[p, g, "linear equations"],
-			"the engine answers the secondary-key point read the SDK cannot express"
+			"the engine answers the same secondary-key point read the typed surface expresses"
 		)
 	})
 })
