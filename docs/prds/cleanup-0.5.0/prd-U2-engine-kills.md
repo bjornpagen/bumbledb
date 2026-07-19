@@ -37,11 +37,25 @@ behavior; the referees are the existing pins.
    impossible on this fork.** `scan_from` is PR #10's copy-on-append read
    path and this branch forked from main BEFORE that merge — no
    `storage/read/scan_from` target exists here (grep zero;
-   `b0ddb330` touches no `storage/read/scan.rs`). The census sketched the
-   kill against the PR #10 branch tip. Execute the delegation POST-MERGE on
-   the reconciled tree, with the prefix_iter↔range equivalence pin; until
-   then this is one aborted-with-reason, not a landed kill — PR #11's body
-   is corrected to match.
+   `b0ddb330` touches no `storage/read/scan.rs`).
+   **EXECUTED ON THE RECONCILED TREE (2026-07-19, the reconciliation
+   pass): ABORTED-WITH-REASON — the census's ≡ is false at the real
+   site.** The delegation was attempted against the merged code and is
+   refuted by an existing audit pin: `read/tests.rs:
+   a_short_f_key_is_typed_corruption_from_scan` plants a bare 5-byte
+   `F | rel` prefix key and requires `scan` to convict it, but a proper
+   prefix sorts strictly BEFORE `fact_key(rel, 0)` in LMDB byte order,
+   so `scan_from(rel, 0)`'s `Included(fact_key(rel, 0))` range cursor
+   skips it silently — delegating would weaken that pin (forbidden).
+   The two cursor-opens (prefix_iter vs range) encode DIFFERENT
+   corruption envelopes: two meanings, not two spellings; the genuinely
+   shared meaning — the per-entry parse, width check, and error fuse —
+   already has one home (`parse_facts`). The limit clause governs:
+   aborted, recorded here and at the site (`scan`'s doc). The honest
+   half of the sketched pin landed instead:
+   `scan_from_zero_yields_exactly_scan_over_live_facts` pins the
+   row-level agreement over well-formed keys, from zero and from a mid
+   cut.
 7. **`TransientImage::refill` ≡ append-from-0 with a capacity-policy
    parameter** (`image/build.rs`; call sites in `api/prepared/fixpoint.rs`).
 8. **Third copy of the probe hash → `swar::hash_words` widened to
