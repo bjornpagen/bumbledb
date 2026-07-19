@@ -93,6 +93,22 @@ by trigger 1(b) above:
 - Keyed-get/typed lookup for task-by-(kind, subject) — the anyOf
   investigation's "what primer actually needs" aside; smallest of the set.
 
+## FIRED and scheduled (the owner's prioritization, 2026-07-19)
+
+Two OPEN-ledger rows in `docs/architecture/70-api.md` whose triggers already
+FIRED get their own planning wave AFTER cleanup-0.5.0 lands and BEFORE any
+1.0.0 surface freeze (they are surface additions; they belong under the tag):
+
+- **Keyed get** — reading through the declared key FDs becomes the obvious
+  spelling on both the read scope and the write transaction. Evidence: primer
+  re-implements keyed lookup host-side five ways, the ETL shadows its own key
+  laws with five host maps, and the existing primary-key get goes unused
+  (~15 workaround sites total). The keys are laws; the surface exposes them.
+- **Answer ordering/limit conveniences** — the census-split sorting half
+  (four hand-rolled bigint comparators, every rank/pos consumer sorting
+  host-side). Host-side, on the `query!` quarantine — the engine never
+  orders; that ruling stands.
+
 ## Also parked elsewhere (cross-references)
 
 - The deletion-vector/mask fork: **REFUTED BY MEASUREMENT** (the decider
