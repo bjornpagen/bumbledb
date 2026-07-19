@@ -246,6 +246,34 @@ mod imp {
     }
 }
 
+/// Undoes `/proc/mounts` octal escapes (`\040` space, `\011` tab,
+/// `\012` newline, `\134` backslash) — the Linux arm's field decoder.
+/// Escapes decode as BYTES, assembled into UTF-8 once at the end
+/// (`from_utf8_lossy`): a multi-byte mount path (`ö` is `\303\266`)
+/// round-trips, where a char-per-byte push would read it as latin-1.
+/// Pure string logic, so it compiles under `test` on every host — the
+/// canonical macOS machine runs its unit tests too.
+#[cfg(any(target_os = "linux", test))]
+fn unescape(field: &str) -> String {
+    let mut out = Vec::with_capacity(field.len());
+    let mut chars = field.chars();
+    let mut buf = [0u8; 4];
+    while let Some(c) = chars.next() {
+        if c != '\\' {
+            out.extend_from_slice(c.encode_utf8(&mut buf).as_bytes());
+            continue;
+        }
+        let code: String = chars.by_ref().take(3).collect();
+        if let Ok(byte) = u8::from_str_radix(&code, 8) {
+            out.push(byte);
+        } else {
+            out.push(b'\\');
+            out.extend_from_slice(code.as_bytes());
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
 // The Linux arm: WRITTEN CAREFULLY BUT UNTESTED (the owner's explicit
 // instruction — the canonical machine is the macOS M2 Max, and no Linux
 // host has run this). `/proc/mounts` is whitespace-separated with
@@ -255,29 +283,7 @@ mod imp {
 mod imp {
     use std::path::{Path, PathBuf};
 
-    use super::VolumeIdentity;
-
-    /// Undoes `/proc/mounts` octal escapes (`\040` space, `\011` tab,
-    /// `\012` newline, `\134` backslash).
-    fn unescape(field: &str) -> String {
-        let mut out = String::with_capacity(field.len());
-        let mut chars = field.chars();
-        while let Some(c) = chars.next() {
-            if c != '\\' {
-                out.push(c);
-                continue;
-            }
-            let code: String = chars.by_ref().take(3).collect();
-            match u8::from_str_radix(&code, 8) {
-                Ok(byte) => out.push(byte as char),
-                Err(_) => {
-                    out.push('\\');
-                    out.push_str(&code);
-                }
-            }
-        }
-        out
-    }
+    use super::{VolumeIdentity, unescape};
 
     pub(super) fn volume_identity(path: &Path) -> Result<VolumeIdentity, String> {
         let table =

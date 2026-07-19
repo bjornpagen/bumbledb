@@ -149,6 +149,22 @@ impl std::fmt::Display for GenerationId {
 
 /// Fixed map size: comfortably above the 1 GB scale axiom, allocated
 /// sparsely by the OS. Not configurable — path-only public surface.
+/// Two consequences worth naming:
+///
+/// - **The hard capacity ceiling.** Resize is deliberately gone (the
+///   PRD 22 dead end: `mdb_env_set_mapsize` racing readers — see
+///   [`super::commit::write`]'s gravestone), so a store that fills the
+///   map has hit the wall: the commit surfaces
+///   [`crate::error::Error::Lmdb`] wrapping LMDB's `MDB_MAP_FULL`
+///   (`heed::MdbError::MapFull`), nothing persists, and the remedy is
+///   a new store, never a knob.
+/// - **Container filesystems materialize it.** Open ftruncates
+///   `data.mdb` to the full map. APFS/ext4 keep the file sparse;
+///   overlayfs — the default container filesystem — materializes the
+///   whole 4 GiB per store, so test suites (many stores, many temp
+///   dirs) can exhaust a container's disk and die with `ENOSPC`. Run
+///   tests on a real filesystem (a bind-mounted volume) with room to
+///   spare — the README's gate section carries the contributor note.
 const MAP_SIZE: usize = 4 << 30;
 
 /// Fixed reader-table size: comfortably above any plausible snapshot

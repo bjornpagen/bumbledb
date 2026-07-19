@@ -654,14 +654,20 @@ fn widened_band_pads_the_kilobyte_residue() {
 /// where the sweep measured the band already past parity) — every
 /// other relation's layout is byte-identical at every scale, and the
 /// allocated bytes never change anywhere (the per-column slack is
-/// pre-paid). Kept always-on: it pins the tolerance-independence of
-/// allocation and the corpus's distance from the band.
+/// pre-paid). Ignored like its measured siblings, but for
+/// host-pinning, not timing: the `["Holder@L"]` answer transcribes the
+/// reference host's allocator base alignment (the macOS M2 Max) —
+/// under another allocator (linux/glibc) every base shifts and every
+/// shape moves. Run on the reference host, where it pins the
+/// tolerance-independence of allocation and the corpus's distance
+/// from the band.
 ///
 /// Shapes and row counts transcribed from `bumbledb-bench`
 /// (`src/schema.rs`, `corpus_gen::Sizes::of`): postings P with
 /// `accounts = P/200`, `holders = accounts/4`, `entries = P/2`,
 /// `mandates = accounts × 4`.
 #[test]
+#[ignore = "host-pinned falsifier: the expected set transcribes the reference host's allocator layout — run on the macOS M2 Max"]
 fn corpus_shapes_move_only_where_the_band_says() {
     use TypeDesc::{I64, Interval, String as Str, U64};
     let iv = Interval {

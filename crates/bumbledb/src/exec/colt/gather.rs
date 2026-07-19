@@ -174,8 +174,24 @@ impl Colt {
                 ColumnView::Words(words) => {
                     debug_assert!(segment.iter().all(|&p| (p as usize) < words.len()));
                     for (k, &position) in segment.iter().enumerate() {
-                        // SAFETY: positions index the image the view was
-                        // built over — debug-asserted per segment above.
+                        // SAFETY: `position < words.len()` rests on a
+                        // CROSS-MODULE invariant, not a local check:
+                        // every position in `segment` was minted as a
+                        // row index of this exact image — the executor
+                        // builds the view (survivor lists included)
+                        // over one `Arc`'d image, the force pass walks
+                        // that same view, and a `Colt` never re-targets
+                        // its view after construction, so no path can
+                        // pair one colt's positions with another
+                        // image's columns. Debug builds re-check it per
+                        // segment (the assert above); in release the
+                        // standing referee is the fuzz corpus —
+                        // cargo-fuzz builds optimized WITH
+                        // debug-assertions, so every corpus replay
+                        // keeps the assert live under -O. (The Miri
+                        // lane cannot reach this site: colt's test
+                        // fixtures open LMDB, the FFI wall
+                        // scripts/miri.sh names.)
                         let word = unsafe { *words.get_unchecked(position as usize) };
                         keys_out[(out_base + k) * arity + i] = word;
                     }
