@@ -92,7 +92,6 @@
 compile_error!("bumbledb targets 64-bit platforms only (docs/architecture/00-product.md)");
 
 pub mod allen;
-#[cfg(feature = "alloc-counter")]
 pub mod alloc_counter;
 pub(crate) mod api;
 pub(crate) mod arena;
@@ -129,13 +128,6 @@ pub use api::stats::{
     INTROSPECTION_VERSION, KeyProbeStats, NodeStats, PinnedRows, RuleStats,
 };
 pub use error::{Direction, Error, OverflowKind, Result, Violation, Violations};
-/// The image cache's lineage off switch (`image/cache/advance.rs`):
-/// every `advance` behaves as `evict_older_than` — the
-/// pre-copy-on-append eviction — reachable only under the `lineage-off`
-/// test-support feature, which the bench crate's Wave-M cold-lineage
-/// A/B twin enables as a dev-dependency.
-#[cfg(feature = "lineage-off")]
-pub use image::cache::with_lineage_disabled;
 pub use interval::Interval;
 /// The statically-empty fold's off switch (`ir/normalize/fold.rs`):
 /// reachable only under the `fold-off` fuzz-oracle feature. History,

@@ -266,6 +266,54 @@ pub struct PhaseTimers {
 #[derive(Debug, Default, Clone, Copy)]
 pub struct NoopCounters;
 
+/// The phase accumulator's inert twin (the `trace` feature is off): a
+/// ZST with empty bodies, so the execute path's capture branch is
+/// written once, `#[cfg]`-free — the obs.rs law. `obs::capturing()` is
+/// a compile-time `false` off, so this arm is dead code the optimizer
+/// drops; the timing path monomorphizes [`NoopCounters`] exactly as
+/// before.
+#[cfg(not(feature = "trace"))]
+#[derive(Debug, Default, Clone, Copy)]
+pub struct PhaseTimers;
+
+#[cfg(not(feature = "trace"))]
+impl PhaseTimers {
+    #[must_use]
+    pub fn new() -> Self {
+        Self
+    }
+
+    /// Flushes nothing (no capture can exist with `trace` off).
+    #[expect(
+        clippy::unused_self,
+        clippy::trivially_copy_pass_by_ref,
+        reason = "signature twin of the trace-mode flush (the obs.rs law)"
+    )]
+    pub fn flush(&self) {}
+}
+
+#[cfg(not(feature = "trace"))]
+impl Counters for PhaseTimers {
+    #[inline]
+    fn node_entry(&mut self, _: usize) {}
+    #[inline]
+    fn batch(&mut self, _: usize, _: usize) {}
+    #[inline]
+    fn cover_choice(&mut self, _: usize, _: usize, _: bool) {}
+    #[inline]
+    fn probe_hash(&mut self, _: usize, _: usize) {}
+    #[inline]
+    fn probe(&mut self, _: usize, _: usize, _: bool) {}
+    #[inline]
+    fn residual(&mut self, _: usize, _: bool) {}
+    #[inline]
+    fn anti_probe(&mut self, _: usize, _: bool) {}
+    #[inline]
+    fn emit(&mut self) {}
+    #[inline]
+    fn skip(&mut self, _: usize) {}
+}
+
 /// Dense slot-indexed binding array with an epoch discipline instead of
 /// `Option` (branch-light: stale slots are never read — reads are
 /// plan-scoped — the epoch exists for debug assertions).

@@ -8,11 +8,8 @@ use crate::error::{CorruptionError, Error, Result};
 
 use super::acquire_lock::acquire_lock;
 use super::open_env::open_env;
-use super::read_meta::{read_fingerprint, read_store_kind, read_u32};
-use super::{
-    Environment, FORMAT_VERSION, META_FORMAT_VERSION, META_SCHEMA_DESCRIPTOR, NEXT_INSTANCE,
-    StoreKind,
-};
+use super::read_meta::{check_format_version, read_fingerprint, read_store_kind};
+use super::{Environment, META_SCHEMA_DESCRIPTOR, NEXT_INSTANCE, StoreKind};
 
 /// What [`Environment::exhume`] hands the API layer: the opened
 /// environment plus the raw self-description the store carries — the
@@ -63,13 +60,7 @@ impl Environment {
         let meta: Database<Bytes, Bytes> = env
             .open_database(&wtxn, Some("_meta"))?
             .ok_or(Error::Corruption(CorruptionError::MetaMissing))?;
-        let found_version = read_u32(&meta, &wtxn, META_FORMAT_VERSION)?;
-        if found_version != FORMAT_VERSION {
-            return Err(Error::FormatMismatch {
-                found: found_version,
-                expected: FORMAT_VERSION,
-            });
-        }
+        check_format_version(&meta, &wtxn)?;
         let kind = read_store_kind(&meta, &wtxn)?;
         let data: Database<Bytes, Bytes> = env
             .open_database(&wtxn, Some("_data"))?

@@ -13,12 +13,6 @@ alloc-counter = []
 # (`plan/ground.rs`) from the bench crate's dual-run differential unit
 # tests. Enabled only as a bench dev-dependency; no runtime mode ships.
 ground-off = []
-# Test-support: reaches the image cache's thread-local lineage off
-# switch (`image/cache/advance.rs`) — every `advance` behaves as
-# `evict_older_than`, the pre-copy-on-append eviction — from the bench
-# crate's Wave-M cold-lineage A/B twin (a dev-dependency, the
-# `ground-off` precedent). No runtime mode ships.
-lineage-off = []
 # Fuzz-oracle infrastructure: reaches the statically-empty fold's
 # thread-local off switch (`ir/normalize/fold.rs`) from outside the
 # engine. History, recorded honestly: deleted as dead configuration
@@ -49,6 +43,18 @@ image-oracle = []
 # (`storage/env/open_env.rs` records the numbers), `MDB_APPEND` refuted
 # structurally (`storage/commit/applier.rs: put_data` records the
 # mechanism). No dead flag ships.
+# GRAVESTONE (cleanup-0.5.0 ruling 4,
+# docs/prds/cleanup-0.5.0/prd-U2-engine-kills.md): `lineage-off` — the
+# PR #10 branch's image-cache advance-vs-evict A/B knob
+# (`with_lineage_disabled`, the `evict_older_than` feature arm) and its
+# Wave-M cold-lineage bench twin (`bumbledb-bench/src/writebench.rs`) —
+# is ruled DEAD before ever merging here. The copy-on-append number is
+# banked (OFF/ON = 2.54x, cold_containment_walk, commit 7ca120aa) and
+# measurement twins die once their number is banked (the PRD-C1
+# precedent above). The PR #10 merge DID carry the feature — the
+# reconciliation executed this gravestone: the feature, the knob, the
+# twin, and the twin's feature dep died in the same commit;
+# `evict_older_than` itself stays reachable via `cfg(test)`.
 
 [dependencies]
 blake3 = "1"

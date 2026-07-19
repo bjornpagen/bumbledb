@@ -6,9 +6,7 @@ use std::sync::{Mutex, OnceLock};
 use crate::schema::Schema;
 use crate::storage::env::GenerationId;
 
-#[cfg(feature = "trace")]
-use super::stats;
-use super::{CacheInner, ImageCache};
+use super::{CacheInner, ImageCache, stats};
 
 impl ImageCache {
     /// An empty cache for one schema: the generation map starts bare, and
@@ -35,8 +33,7 @@ impl ImageCache {
             }),
             closed_slots,
             closed: (0..count).map(|_| OnceLock::new()).collect(),
-            #[cfg(feature = "trace")]
-            counters: stats::CacheCounters::default(),
+            counters: stats::CacheCounters::new(),
         }
     }
 }

@@ -39,7 +39,6 @@ where
         stats: stats(&mut samples),
         work,
         p50_norm: None,
-        #[cfg(feature = "obs")]
         alloc: None,
         trace: None,
     })

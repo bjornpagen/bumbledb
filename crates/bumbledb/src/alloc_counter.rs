@@ -4,7 +4,10 @@
 //! observability.
 //!
 //! Feature-gated (`alloc-counter`) and thread-naive by design — the gate
-//! protocol is single-threaded. The counter wraps the system allocator and
+//! protocol is single-threaded. Only [`AllocSnapshot`] — plain data, the
+//! bench report's field type — exists without the feature; the
+//! allocator, its statics, and every reading function compile only when
+//! the feature registers the counter. The counter wraps the system allocator and
 //! tracks **events** (allocations including reallocations; deallocations)
 //! and **bytes** (window-relative alloc/dealloc totals; absolute live and
 //! peak-live). A steady-state measured window must see **zero** of either
@@ -32,21 +35,30 @@
 #![allow(unsafe_code)] // GlobalAlloc is an unsafe trait; this module only
 // delegates to the system allocator and counts.
 
+#[cfg(feature = "alloc-counter")]
 use std::alloc::{GlobalAlloc, Layout, System};
+#[cfg(feature = "alloc-counter")]
 use std::sync::atomic::{AtomicU64, Ordering};
 
+#[cfg(feature = "alloc-counter")]
 static ALLOCATIONS: AtomicU64 = AtomicU64::new(0);
+#[cfg(feature = "alloc-counter")]
 static DEALLOCATIONS: AtomicU64 = AtomicU64::new(0);
+#[cfg(feature = "alloc-counter")]
 static ALLOC_BYTES: AtomicU64 = AtomicU64::new(0);
+#[cfg(feature = "alloc-counter")]
 static DEALLOC_BYTES: AtomicU64 = AtomicU64::new(0);
+#[cfg(feature = "alloc-counter")]
 static LIVE_BYTES: AtomicU64 = AtomicU64::new(0);
 
 /// The wrapping allocator, registered as the global allocator whenever the
 /// `alloc-counter` feature is on.
+#[cfg(feature = "alloc-counter")]
 pub struct CountingAllocator;
 
 // SAFETY: every method delegates directly to `System`, which upholds the
 // GlobalAlloc contract; the counters are side effects with no aliasing.
+#[cfg(feature = "alloc-counter")]
 unsafe impl GlobalAlloc for CountingAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         ALLOCATIONS.fetch_add(1, Ordering::Relaxed);
@@ -82,6 +94,7 @@ unsafe impl GlobalAlloc for CountingAllocator {
     }
 }
 
+#[cfg(feature = "alloc-counter")]
 #[global_allocator]
 static GLOBAL: CountingAllocator = CountingAllocator;
 
@@ -101,6 +114,7 @@ pub struct AllocSnapshot {
 }
 
 /// Reads every counter at once.
+#[cfg(feature = "alloc-counter")]
 #[must_use]
 pub fn snapshot() -> AllocSnapshot {
     AllocSnapshot {
@@ -114,6 +128,7 @@ pub fn snapshot() -> AllocSnapshot {
 
 /// Zeroes the window counters (events and bytes) — the start of a measured
 /// window. Live bytes are absolute and unaffected.
+#[cfg(feature = "alloc-counter")]
 pub fn reset() {
     ALLOCATIONS.store(0, Ordering::Relaxed);
     DEALLOCATIONS.store(0, Ordering::Relaxed);
@@ -122,18 +137,20 @@ pub fn reset() {
 }
 
 /// Allocation events (including reallocations) since the last [`reset`].
+#[cfg(feature = "alloc-counter")]
 #[must_use]
 pub fn count() -> u64 {
     ALLOCATIONS.load(Ordering::Relaxed)
 }
 
 /// Deallocation events since the last [`reset`].
+#[cfg(feature = "alloc-counter")]
 #[must_use]
 pub fn dealloc_count() -> u64 {
     DEALLOCATIONS.load(Ordering::Relaxed)
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "alloc-counter"))]
 mod tests {
     use super::*;
     use std::sync::Mutex;

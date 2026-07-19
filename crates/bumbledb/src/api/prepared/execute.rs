@@ -105,8 +105,10 @@ impl<S> PreparedQuery<'_, S> {
         }
         // Phase attribution engages only under an active obs capture
         // (docs/architecture/60-validation.md): timing runs — even obs
-        // builds — monomorphize NoopCounters and pay nothing.
-        #[cfg(feature = "trace")]
+        // builds — monomorphize NoopCounters and pay nothing. With
+        // `trace` off, `obs::capturing()` is a compile-time `false` and
+        // `PhaseTimers` its ZST twin — the branch folds away, written
+        // once, `#[cfg]`-free (the obs.rs law).
         let ran = if obs::capturing() {
             let mut timers = crate::exec::run::PhaseTimers::new();
             let ran = self.run_rules(txn, cache, &mut timers)?;
@@ -115,8 +117,6 @@ impl<S> PreparedQuery<'_, S> {
         } else {
             self.run_rules(txn, cache, &mut NoopCounters)?
         };
-        #[cfg(not(feature = "trace"))]
-        let ran = self.run_rules(txn, cache, &mut NoopCounters)?;
         // The sink-side measure poison (a ray reached a projected or
         // folded `Duration`): the engine's one runtime type error,
         // raised before finalize — never a partial result. Executor-side

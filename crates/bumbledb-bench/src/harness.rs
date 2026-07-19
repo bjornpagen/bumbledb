@@ -65,8 +65,10 @@ pub struct Measurement {
     /// sample/GHz alignment still exists.
     pub p50_norm: Option<u64>,
     /// The allocation window over the measured samples, when
-    /// [`Modes::alloc_window`] ran (needs the `obs` feature).
-    #[cfg(feature = "obs")]
+    /// [`Modes::alloc_window`] ran — a mode only the `obs` build admits,
+    /// so this is always `None` off (the field itself is unconditional:
+    /// the snapshot type is plain data, the counter is what the feature
+    /// gates).
     pub alloc: Option<bumbledb::alloc_counter::AllocSnapshot>,
     /// One additional post-measurement traced sample, when
     /// [`Modes::trace`] ran — traces never contaminate the measured

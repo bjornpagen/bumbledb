@@ -29,6 +29,28 @@ pub(super) fn read_u32(
     Ok(u32::from_le_bytes(bytes))
 }
 
+/// The stored format version checked against [`super::FORMAT_VERSION`]
+/// — ONE definition of the read and the refusal (formerly three
+/// byte-identical blocks), first in the open-time check precedence
+/// everywhere it runs (readers: `verify_and_open`, the ephemeral
+/// constructor's non-mutating probe, and the exhume entry; the
+/// precedence is pinned by the marker-matrix tests). Any other version
+/// is the typed [`Error::FormatMismatch`] naming both; a missing or
+/// mis-sized key is [`CorruptionError::MetaMissing`] via [`read_u32`].
+pub(super) fn check_format_version(
+    meta: &Database<Bytes, Bytes>,
+    rtxn: &RoTxn<'_, AnyTls>,
+) -> Result<()> {
+    let found = read_u32(meta, rtxn, super::META_FORMAT_VERSION)?;
+    if found != super::FORMAT_VERSION {
+        return Err(Error::FormatMismatch {
+            found,
+            expected: super::FORMAT_VERSION,
+        });
+    }
+    Ok(())
+}
+
 /// The `_meta` store-kind marker, decoded with the absent/undecodable
 /// distinction the taxonomy draws: a missing key is
 /// [`CorruptionError::MetaMissing`]; a present key whose value is the

@@ -25,24 +25,20 @@ use bumbledb_theory::schema::RelationId;
 mod advance;
 /// Production commits go through [`ImageCache::advance`]; the
 /// retain-newest form survives as the tests' one-call commit simulation
-/// and the measurement wave's lineage-disabled A/B twin — the gate is
-/// lifted to the `lineage-off` test-support feature (the bench crate's
-/// cold-lineage twin, a dev-dependency; `advance`'s off switch delegates
-/// here).
-#[cfg(any(test, feature = "lineage-off"))]
+/// (the `lineage-off` A/B knob that once also reached it is dead — its
+/// 2.54x number is banked in the manifest's ruling-4 gravestone).
+#[cfg(test)]
 mod evict_older_than;
-
-#[cfg(feature = "lineage-off")]
-pub use advance::with_lineage_disabled;
 mod get_or_build;
 mod new;
 mod peek;
 
 #[cfg(feature = "trace")]
 mod resident;
-/// Cache observability (feature `trace` only — per-op atomics are a cost
-/// the default build must not carry). Reader: the benchmark report.
-#[cfg(feature = "trace")]
+/// Cache observability: real per-op atomics under `trace` (a cost the
+/// default build must not carry), a ZST twin with inline empty bodies
+/// off — call sites are written once, `#[cfg]`-free (the obs.rs law).
+/// Reader: the benchmark report.
 pub mod stats;
 
 #[cfg(test)]
@@ -113,7 +109,6 @@ pub struct ImageCache {
     /// [`ImageCache::evict_older_than`]) skips it by construction,
     /// because it is not in the generation-keyed map at all.
     closed: Box<[OnceLock<Arc<RelationImage>>]>,
-    #[cfg(feature = "trace")]
     counters: stats::CacheCounters,
 }
 

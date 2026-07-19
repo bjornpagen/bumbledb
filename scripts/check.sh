@@ -57,6 +57,15 @@ cargo test -p bumbledb --features fold-off
 echo "==> bumbledb with the trace feature (tests)"
 cargo test -p bumbledb --features trace
 
+# Every engine feature at once, compiled once (the pairwise co-compile
+# check): no other lane co-builds trace with the fuzz-oracle features,
+# so a feature pair broken only in combination would land unseen without
+# this line. Clippy compiles every target and runs nothing — the
+# alloc-counter global allocator and the trace instrumentation are
+# proven to build together, never executed here.
+echo "==> bumbledb --all-features (clippy, the pairwise co-compile check)"
+cargo clippy -p bumbledb --all-targets --all-features -- -D warnings
+
 # The fuzz crate is detached from the workspace on purpose (the
 # crucible packet (git ecec1dc3)): `cargo fuzz` builds its targets, so
 # every --workspace invocation above skips fuzz/src entirely — a

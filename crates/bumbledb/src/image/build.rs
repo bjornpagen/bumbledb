@@ -407,29 +407,10 @@ impl TransientImage {
         row_count: usize,
         rows: impl Iterator<Item = &'r [u64]>,
     ) -> Arc<RelationImage> {
-        let reusable = row_count <= self.capacity
-            && self
-                .image
-                .as_mut()
-                .is_some_and(|arc| Arc::get_mut(arc).is_some());
-        if !reusable {
-            let frame = allocate(field_types, row_count)
-                .expect("seen-set row counts sit far below the checked slab ceiling");
-            self.image = Some(seal(row_count, frame));
-            self.capacity = row_count;
-        }
-        let image = Arc::get_mut(self.image.as_mut().expect("filled above"))
-            .expect("a non-reusable slot was just replaced by a unique Arc");
-        image.row_count = row_count;
-        // The lazy distinct counters restart with the rows (no consumer
-        // reads them on the execution path today; staying honest is one
-        // assignment per column, allocation-free).
-        for lock in &mut image.distincts {
-            *lock = std::sync::OnceLock::new();
-        }
-        let filled = fill_encoded_rows(image, 0, rows);
-        debug_assert_eq!(filled, row_count, "the caller counted its rows");
-        Arc::clone(self.image.as_ref().expect("filled above"))
+        // A refill IS an append from row zero — one fill body, two
+        // capacity policies (the delta slot is re-framed exactly per
+        // round; only the accumulator needs headroom).
+        self.fill(field_types, 0, row_count, |_| rows, CapacityPolicy::Exact)
     }
 
     /// The incremental sibling of [`Self::refill`] — the fixpoint
@@ -456,6 +437,33 @@ impl TransientImage {
     where
         I: Iterator<Item = &'r [u64]>,
     {
+        self.fill(
+            field_types,
+            filled,
+            row_count,
+            rows_since,
+            CapacityPolicy::Doubling,
+        )
+    }
+
+    /// The one fill body behind [`Self::refill`] and [`Self::append`]
+    /// (formerly two ~35-line verbatim siblings): rows `[0, filled)`
+    /// already sit in the slot; the suffix `[filled, row_count)` is
+    /// written in place when the reuse precondition holds — `row_count`
+    /// within the framed capacity AND no view still holding the `Arc` —
+    /// otherwise the slot rebuilds whole from `rows_since(0)`, framed by
+    /// `policy`.
+    fn fill<'r, I>(
+        &mut self,
+        field_types: &[TypeDesc],
+        filled: usize,
+        row_count: usize,
+        rows_since: impl FnOnce(usize) -> I,
+        policy: CapacityPolicy,
+    ) -> Arc<RelationImage>
+    where
+        I: Iterator<Item = &'r [u64]>,
+    {
         debug_assert!(filled <= row_count, "seen-sets never shrink");
         let reusable = row_count <= self.capacity
             && self
@@ -464,7 +472,10 @@ impl TransientImage {
                 .is_some_and(|arc| Arc::get_mut(arc).is_some());
         let base = if reusable { filled } else { 0 };
         if !reusable {
-            let capacity = self.capacity.max(row_count.saturating_mul(2));
+            let capacity = match policy {
+                CapacityPolicy::Exact => row_count,
+                CapacityPolicy::Doubling => self.capacity.max(row_count.saturating_mul(2)),
+            };
             let frame = allocate(field_types, capacity)
                 .expect("seen-set row counts sit far below the checked slab ceiling");
             self.image = Some(seal(row_count, frame));
@@ -473,6 +484,9 @@ impl TransientImage {
         let image = Arc::get_mut(self.image.as_mut().expect("filled above"))
             .expect("a non-reusable slot was just replaced by a unique Arc");
         image.row_count = row_count;
+        // The lazy distinct counters restart with the rows (no consumer
+        // reads them on the execution path today; staying honest is one
+        // assignment per column, allocation-free).
         for lock in &mut image.distincts {
             *lock = std::sync::OnceLock::new();
         }
@@ -480,6 +494,17 @@ impl TransientImage {
         debug_assert_eq!(filled_to, row_count, "the caller counted its rows");
         Arc::clone(self.image.as_ref().expect("filled above"))
     }
+}
+
+/// How a non-reusable slot frames its fresh allocation: the per-round
+/// delta refills exactly (each round's delta is independently sized —
+/// headroom would be dead slab); the accumulator appends with doubling
+/// headroom (monotone growth, never below the retained high-water, so
+/// it reallocates logarithmically often, never per round).
+#[derive(Clone, Copy)]
+enum CapacityPolicy {
+    Exact,
+    Doubling,
 }
 
 /// The shared transpose of both fill paths above: encoded word rows into
