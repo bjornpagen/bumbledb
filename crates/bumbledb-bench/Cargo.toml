@@ -20,12 +20,11 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 # The dual-run grounding differential (src/differential/tests/ground.rs) prepares each
 # eliminable fixture with the rewrite on and off; the off switch is the
 # engine's test-support `ground-off` feature — a dev-dependency feature,
-# so the harness binaries build without it. `lineage-off` is the same
-# idiom for the Wave-M cold-lineage A/B twin
-# (src/writebench.rs::tests::cold_lineage_twin): the image cache's
-# copy-on-append lineage on and off in one process.
+# so the harness binaries build without it. (`lineage-off`, the same
+# idiom's Wave-M cold-lineage A/B twin, died with its banked number —
+# the engine manifest's ruling-4 gravestone.)
 [dev-dependencies]
-bumbledb = { path = "../bumbledb", features = ["ground-off", "lineage-off"] }
+bumbledb = { path = "../bumbledb", features = ["ground-off"] }
 
 [lints]
 workspace = true

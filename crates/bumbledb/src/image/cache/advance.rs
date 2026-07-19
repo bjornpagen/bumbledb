@@ -7,38 +7,6 @@ use super::ImageCache;
 use crate::storage::env::GenerationId;
 use bumbledb_theory::schema::RelationId;
 
-#[cfg(feature = "lineage-off")]
-thread_local! {
-    /// The test-only lineage off switch (the `ground-off` precedent,
-    /// `plan/ground.rs`): the Wave-M A/B twin runs the same cold family
-    /// with copy-on-append lineage on and off, laid out in ONE process.
-    /// Reachable from this crate's own tests and — through the
-    /// `lineage-off` test-support feature, enabled only as the bench
-    /// crate's dev-dependency for its cold-lineage twin — from nowhere a
-    /// production build can see: no runtime mode ships. Thread-local
-    /// because the test harness runs tests concurrently.
-    static DISABLED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-}
-
-/// Runs `f` with image lineage disabled on this thread — every
-/// [`ImageCache::advance`] a commit inside `f` performs behaves as
-/// [`ImageCache::evict_older_than`] (every relation treated as dirty, no
-/// append base survives), so the next reader rebuilds from scratch: the
-/// pre-copy-on-append behavior, the A/B twin's B arm. Restores on
-/// unwind.
-#[cfg(feature = "lineage-off")]
-pub fn with_lineage_disabled<T>(f: impl FnOnce() -> T) -> T {
-    struct Reset;
-    impl Drop for Reset {
-        fn drop(&mut self) {
-            DISABLED.with(|d| d.set(false));
-        }
-    }
-    DISABLED.with(|d| d.set(true));
-    let _reset = Reset;
-    f()
-}
-
 impl ImageCache {
     /// Advances the cache to `generation` — the one commit → cache wiring
     /// point's hook ([`crate::api`]'s `write_witnessed`). `dirty` is the
@@ -67,27 +35,15 @@ impl ImageCache {
     ///
     /// Only on a poisoned cache mutex.
     pub fn advance(&self, generation: GenerationId, dirty: &[RelationId]) {
-        #[cfg(feature = "lineage-off")]
-        if DISABLED.with(std::cell::Cell::get) {
-            return self.evict_older_than(generation);
-        }
         debug_assert!(dirty.is_sorted(), "the delta's ordered pass sorts dirty");
         let keep = |key: &(RelationId, GenerationId)| {
             let (rel, entry_gen) = *key;
             entry_gen >= generation || dirty.binary_search(&rel).is_err()
         };
         let mut inner = self.inner.lock().expect("cache mutex");
-        #[cfg(feature = "trace")]
-        {
-            let before = inner.map.len();
-            inner.map.retain(|key, _| keep(key));
-            let evicted = before - inner.map.len();
-            self.counters
-                .evicted
-                .fetch_add(evicted as u64, std::sync::atomic::Ordering::Relaxed);
-        }
-        #[cfg(not(feature = "trace"))]
+        let before = inner.map.len();
         inner.map.retain(|key, _| keep(key));
+        self.counters.evicted((before - inner.map.len()) as u64);
         inner.newest = inner.newest.max(generation);
     }
 }

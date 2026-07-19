@@ -7,8 +7,8 @@ use crate::schema::Schema;
 
 use super::acquire_lock::acquire_lock;
 use super::open_env::open_env;
-use super::read_meta::{check_fingerprint, read_store_kind, read_u32};
-use super::{Environment, FORMAT_VERSION, META_FORMAT_VERSION, StoreKind};
+use super::read_meta::{check_fingerprint, check_format_version, read_store_kind};
+use super::{Environment, StoreKind};
 
 impl Environment {
     /// Opens or initializes an EPHEMERAL environment at `path`
@@ -108,13 +108,7 @@ impl Environment {
             }
             return Ok(false);
         };
-        let found_version = read_u32(&meta, &rtxn, META_FORMAT_VERSION)?;
-        if found_version != FORMAT_VERSION {
-            return Err(Error::FormatMismatch {
-                found: found_version,
-                expected: FORMAT_VERSION,
-            });
-        }
+        check_format_version(&meta, &rtxn)?;
         let found_kind = read_store_kind(&meta, &rtxn)?;
         if found_kind != StoreKind::Ephemeral {
             return Err(Error::StoreKindMismatch {

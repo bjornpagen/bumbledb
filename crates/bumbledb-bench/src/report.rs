@@ -53,6 +53,20 @@ pub struct AllocReport {
     pub dealloc_bytes: u64,
 }
 
+/// The one snapshot-to-report conversion (previously three verbatim
+/// copies at the report arms): window numbers only — `live_bytes` is
+/// absolute, not window data.
+impl From<bumbledb::alloc_counter::AllocSnapshot> for AllocReport {
+    fn from(s: bumbledb::alloc_counter::AllocSnapshot) -> Self {
+        Self {
+            allocs: s.allocs,
+            deallocs: s.deallocs,
+            alloc_bytes: s.alloc_bytes,
+            dealloc_bytes: s.dealloc_bytes,
+        }
+    }
+}
+
 /// The execution digest: the planner-honesty numbers a human scans.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ExecDigest {

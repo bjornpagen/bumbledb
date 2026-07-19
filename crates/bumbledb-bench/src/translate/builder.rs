@@ -195,11 +195,10 @@ impl Builder<'_> {
                 Ok(format!("{start} <= {point} AND {point} < {end}"))
             })
             .collect::<Result<_, String>>()?;
-        if tests.len() == 1 {
-            Ok(tests.into_iter().next().expect("one test"))
-        } else {
-            Ok(format!("({})", tests.join(" OR ")))
-        }
+        // Always parenthesized — a `(x)` around one test is
+        // SQLite-identical, and the single-test special case bought
+        // nothing but the branch.
+        Ok(format!("({})", tests.join(" OR ")))
     }
 
     /// The non-variable arms of a scalar-field binding — one rule for

@@ -267,11 +267,7 @@ pub fn cmd_bench(args: &BenchArgs) -> Result<i32, String> {
     // of all — asserted inside write_families.
     let writes = write_families(cfg, &out_dir.join("scratch"), &selected, mode)?;
 
-    // Cache residency needs the engine's trace feature (the obs build).
-    #[cfg(feature = "obs")]
-    let (cache_images, cache_bytes) = db.cache_resident();
-    #[cfg(not(feature = "obs"))]
-    let (cache_images, cache_bytes) = (0, 0);
+    let (cache_images, cache_bytes) = cache_residency(&db);
     let store = report::StoreNumbers {
         db_bytes: db.disk_size().map_err(|e| format!("{e:?}"))?,
         sqlite_bytes: std::fs::metadata(&paths.oracle).map_or(0, |m| m.len()),
@@ -313,4 +309,18 @@ pub fn cmd_bench(args: &BenchArgs) -> Result<i32, String> {
 
     let gates_ok = run_report.all_win() && (!run_report.budget_gates || run_report.budget_ok());
     Ok(i32::from(!gates_ok))
+}
+
+/// Cache residency (the engine's trace-gated observability, real only
+/// on the obs build): the feature fork lives here, in one function
+/// twin — the report site is written once, `#[cfg]`-free (the obs.rs
+/// law). Zeros off: no cache counters exist to read.
+#[cfg(feature = "obs")]
+fn cache_residency<S>(db: &bumbledb::Db<S>) -> (u64, u64) {
+    db.cache_resident()
+}
+
+#[cfg(not(feature = "obs"))]
+fn cache_residency<S>(_: &bumbledb::Db<S>) -> (u64, u64) {
+    (0, 0)
 }

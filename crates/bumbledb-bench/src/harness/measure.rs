@@ -77,17 +77,15 @@ where
     if modes.alloc_window && modes.trace {
         return Err("alloc-window and trace-capture are mutually exclusive modes".to_owned());
     }
-    #[cfg(not(feature = "obs"))]
     if modes.alloc_window {
-        return Err("the alloc window needs the obs feature (bumbledb/alloc-counter)".to_owned());
+        alloc_window::require()?;
     }
     for _ in 0..proto.warmups {
         between();
         std::hint::black_box(f()?);
     }
-    #[cfg(feature = "obs")]
     if modes.alloc_window {
-        bumbledb::alloc_counter::reset();
+        alloc_window::arm();
     }
     let mut samples = Vec::with_capacity(proto.samples as usize);
     let mut sample_ghz = modes
@@ -109,8 +107,7 @@ where
         work += std::hint::black_box(count);
     }
 
-    #[cfg(feature = "obs")]
-    let alloc = modes.alloc_window.then(bumbledb::alloc_counter::snapshot);
+    let alloc = modes.alloc_window.then(alloc_window::read).flatten();
     let trace = if modes.trace {
         Some(traced_sample(&mut f)?)
     } else {
@@ -123,8 +120,54 @@ where
         stats: stats(&mut samples),
         work,
         p50_norm,
-        #[cfg(feature = "obs")]
         alloc,
         trace,
     })
+}
+
+/// The alloc-window seam (the obs.rs idiom: the feature fork lives
+/// here, in one module twin — call sites are written once,
+/// `#[cfg]`-free). Under `obs` the engine's counting allocator is
+/// registered: `require` admits the mode, `arm` zeroes the window
+/// counters, `read` takes the reading. Off, `require` is the typed
+/// refusal — so `arm` and `read` are unreachable inert twins, honest
+/// about a counter that does not exist.
+mod alloc_window {
+    use bumbledb::alloc_counter::AllocSnapshot;
+
+    #[cfg(feature = "obs")]
+    #[expect(
+        clippy::unnecessary_wraps,
+        reason = "signature twin of the feature-off refusal (the obs.rs law)"
+    )]
+    pub(super) fn require() -> Result<(), String> {
+        Ok(())
+    }
+
+    #[cfg(feature = "obs")]
+    pub(super) fn arm() {
+        bumbledb::alloc_counter::reset();
+    }
+
+    #[cfg(feature = "obs")]
+    #[expect(
+        clippy::unnecessary_wraps,
+        reason = "signature twin of the feature-off `None` (the obs.rs law)"
+    )]
+    pub(super) fn read() -> Option<AllocSnapshot> {
+        Some(bumbledb::alloc_counter::snapshot())
+    }
+
+    #[cfg(not(feature = "obs"))]
+    pub(super) fn require() -> Result<(), String> {
+        Err("the alloc window needs the obs feature (bumbledb/alloc-counter)".to_owned())
+    }
+
+    #[cfg(not(feature = "obs"))]
+    pub(super) fn arm() {}
+
+    #[cfg(not(feature = "obs"))]
+    pub(super) fn read() -> Option<AllocSnapshot> {
+        None
+    }
 }

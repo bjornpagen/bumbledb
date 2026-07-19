@@ -43,10 +43,10 @@ impl CardinalityCounter {
         let mask = self.slots.len() - 1;
         let mut distinct = 0u64;
         for &word in column {
-            // The COLT's word hash — one avalanche, linear probe.
-            let mut h = 0x517C_C1B7_2722_0A95_u64 ^ word;
-            h = h.wrapping_mul(0x9E37_79B9_7F4A_7C15);
-            h ^= h >> 29;
+            // The shared probe hash (`exec::swar`) — one avalanche,
+            // linear probe; this counter's former byte-identical private
+            // copy was the drift that module exists to prevent.
+            let h = crate::exec::swar::hash_words(std::slice::from_ref(&word));
             let mut idx = usize::try_from(h).expect("64-bit usize") & mask;
             loop {
                 if !self.occupied[idx] {

@@ -82,10 +82,7 @@ impl ImageCache {
         let (newest, base) = {
             let inner = self.inner.lock().expect("cache mutex");
             if let Some(cached) = inner.map.get(&key) {
-                #[cfg(feature = "trace")]
-                self.counters
-                    .hits
-                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                self.counters.hit();
                 crate::obs::event(
                     crate::obs::names::CACHE_HIT,
                     crate::obs::Category::Cache,
@@ -113,10 +110,7 @@ impl ImageCache {
                 .flatten();
             (inner.newest, base)
         };
-        #[cfg(feature = "trace")]
-        self.counters
-            .misses
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.counters.miss();
 
         // Build, append, or carry outside the lock.
         let image = match base {
@@ -184,13 +178,6 @@ impl ImageCache {
 
     /// The from-scratch arm: one full LMDB scan and decode, exactly the
     /// pre-lineage miss path.
-    #[cfg_attr(
-        not(feature = "trace"),
-        expect(
-            clippy::unused_self,
-            reason = "self carries the trace counters; the method shape is uniform across features"
-        )
-    )]
     fn build_full(
         &self,
         txn: &ReadTxn<'_>,
@@ -203,10 +190,7 @@ impl ImageCache {
             u64::from(rel.0),
             0,
         );
-        #[cfg(feature = "trace")]
-        self.counters
-            .builds
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.counters.build();
         let image = build(txn, schema, rel)?;
         span.set_args(u64::from(rel.0), image.byte_size() as u64);
         Ok(image)
@@ -215,13 +199,6 @@ impl ImageCache {
     /// The lineage arms over a surviving base: carry-forward, append, or
     /// typed corruption, decided by this snapshot's row count. Returns
     /// the image; the insert path's per-relation sweep retires the base.
-    #[cfg_attr(
-        not(feature = "trace"),
-        expect(
-            clippy::unused_self,
-            reason = "self carries the trace counters; the method shape is uniform across features"
-        )
-    )]
     fn extend(
         &self,
         txn: &ReadTxn<'_>,
@@ -245,10 +222,7 @@ impl ImageCache {
             // Zero new rows and images are immutable: the same `Arc`,
             // re-keyed at the reader's generation.
             std::cmp::Ordering::Equal => {
-                #[cfg(feature = "trace")]
-                self.counters
-                    .carries
-                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                self.counters.carry();
                 crate::obs::event(
                     crate::obs::names::CACHE_CARRY,
                     crate::obs::Category::Cache,
@@ -266,10 +240,7 @@ impl ImageCache {
                     u64::from(rel.0),
                     0,
                 );
-                #[cfg(feature = "trace")]
-                self.counters
-                    .appends
-                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                self.counters.append();
                 let image = append(txn, schema, rel, &base.image, base.row_id_next)?;
                 span.set_args(u64::from(rel.0), image.byte_size() as u64);
                 image
@@ -290,10 +261,7 @@ impl ImageCache {
     fn get_or_synthesize(&self, schema: &Schema, rel: RelationId) -> Arc<RelationImage> {
         let slot = self.closed_slot(rel).expect("caller probed closed_slot");
         if let Some(image) = slot.get() {
-            #[cfg(feature = "trace")]
-            self.counters
-                .hits
-                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            self.counters.hit();
             crate::obs::event(
                 crate::obs::names::CACHE_HIT,
                 crate::obs::Category::Cache,
@@ -302,10 +270,7 @@ impl ImageCache {
             );
             return Arc::clone(image);
         }
-        #[cfg(feature = "trace")]
-        self.counters
-            .misses
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.counters.miss();
         let image = slot.get_or_init(|| {
             let mut span = crate::obs::span_args(
                 crate::obs::names::IMAGE_BUILD,
@@ -313,10 +278,7 @@ impl ImageCache {
                 u64::from(rel.0),
                 0,
             );
-            #[cfg(feature = "trace")]
-            self.counters
-                .builds
-                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            self.counters.build();
             let image = synthesize_closed(rel, schema.relation(rel));
             span.set_args(u64::from(rel.0), image.byte_size() as u64);
             image

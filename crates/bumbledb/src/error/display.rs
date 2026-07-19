@@ -68,38 +68,67 @@ fn target_key_rejection(
     Ok(())
 }
 
-impl fmt::Display for Violation {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+/// The violation message's shared parts — their ONE home: both
+/// renderers — the plain `Display` below, which cites the statement by
+/// id, and [`Error::display_with`], which cites the rendered `schema!`
+/// notation — compose these three accessors, so no message body exists
+/// twice (the former tandem-edit coupling between the two renderers).
+impl Violation {
+    /// The violated law's name.
+    fn law(&self) -> &'static str {
         match self {
-            Self::Functionality { statement, .. } => write!(
-                f,
-                "statement {}: functionality violated — two live facts claim one key",
-                statement.0
-            ),
+            Self::Functionality { .. } => "functionality",
+            Self::Containment { .. } => "containment",
+            Self::Cardinality { .. } => "cardinality",
+        }
+    }
+
+    /// The side parenthetical `display_with` cites (empty for the
+    /// undirected laws; the plain renderer's tail already names the
+    /// side's meaning).
+    fn side(&self) -> &'static str {
+        match self {
             Self::Containment {
-                statement,
-                direction,
+                direction: Direction::SourceUnsatisfied,
                 ..
-            } => match direction {
-                Direction::SourceUnsatisfied => write!(
-                    f,
-                    "statement {}: containment violated — an inserted source fact has no target",
-                    statement.0
-                ),
-                Direction::TargetRequired => write!(
-                    f,
-                    "statement {}: containment violated — a deleted target key is still required",
-                    statement.0
-                ),
-            },
-            Self::Cardinality {
-                statement, count, ..
-            } => write!(
+            } => " (source side)",
+            Self::Containment {
+                direction: Direction::TargetRequired,
+                ..
+            } => " (target side)",
+            Self::Functionality { .. } | Self::Cardinality { .. } => "",
+        }
+    }
+
+    /// The factual tail after the em-dash: what happened.
+    fn tail(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Functionality { .. } => write!(f, "two live facts claim one key"),
+            Self::Containment {
+                direction: Direction::SourceUnsatisfied,
+                ..
+            } => write!(f, "an inserted source fact has no target"),
+            Self::Containment {
+                direction: Direction::TargetRequired,
+                ..
+            } => write!(f, "a deleted target key is still required"),
+            Self::Cardinality { count, .. } => write!(
                 f,
-                "statement {}: cardinality violated — a parent's child-group count ({count}) falls outside the window",
-                statement.0
+                "a parent's child-group count ({count}) falls outside the window"
             ),
         }
+    }
+}
+
+impl fmt::Display for Violation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "statement {}: {} violated — ",
+            self.statement().0,
+            self.law()
+        )?;
+        self.tail(f)
     }
 }
 
@@ -1021,26 +1050,13 @@ impl fmt::Display for DisplayWith<'_> {
                         write!(f, "; ")?;
                     }
                     let rendered = render::render(self.schema, violation.statement());
-                    match violation {
-                        Violation::Functionality { .. } => write!(
-                            f,
-                            "functionality violated: `{rendered}` — two live facts claim one key"
-                        )?,
-                        Violation::Containment { direction, .. } => match direction {
-                            Direction::SourceUnsatisfied => write!(
-                                f,
-                                "containment violated (source side): `{rendered}` — an inserted source fact has no target"
-                            )?,
-                            Direction::TargetRequired => write!(
-                                f,
-                                "containment violated (target side): `{rendered}` — a deleted target key is still required"
-                            )?,
-                        },
-                        Violation::Cardinality { count, .. } => write!(
-                            f,
-                            "cardinality violated: `{rendered}` — a parent's child-group count ({count}) falls outside the window"
-                        )?,
-                    }
+                    write!(
+                        f,
+                        "{} violated{}: `{rendered}` — ",
+                        violation.law(),
+                        violation.side()
+                    )?;
+                    violation.tail(f)?;
                 }
                 Ok(())
             }

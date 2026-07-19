@@ -44,18 +44,6 @@ fn exec_digest(stats: &bumbledb::ExecutionStats) -> report::ExecDigest {
     }
 }
 
-#[cfg(feature = "obs")]
-fn alloc_report(
-    snapshot: Option<bumbledb::alloc_counter::AllocSnapshot>,
-) -> Option<report::AllocReport> {
-    snapshot.map(|s| report::AllocReport {
-        allocs: s.allocs,
-        deallocs: s.deallocs,
-        alloc_bytes: s.alloc_bytes,
-        dealloc_bytes: s.dealloc_bytes,
-    })
-}
-
 /// One read family's identity, decoupled from its registry: the ledger
 /// families and the calendar families measure through the same core
 /// (one mechanism, two corpora), differing only in the store pair and
@@ -236,10 +224,7 @@ impl BenchRun<'_> {
             reason = "reporting accepts lossy integer-to-float conversion"
         )]
         let ratio_p50 = ours.stats.p50 as f64 / theirs.stats.p50.max(1) as f64;
-        #[cfg(feature = "obs")]
-        let alloc = alloc_report(ours.alloc);
-        #[cfg(not(feature = "obs"))]
-        let alloc = None;
+        let alloc = ours.alloc.map(report::AllocReport::from);
         Ok(report::ReadFamilyReport {
             name: spec.name.to_owned(),
             verdict: report::verdict(spec.kind, ours.stats.p50, theirs.stats.p50),

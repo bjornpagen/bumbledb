@@ -10,9 +10,12 @@
 //! `scripts/check-asm.sh`, not trusted to the attribute.
 #![allow(clippy::inline_always)]
 
-/// The word-tuple probe hash (runtime length).
+/// The word-tuple probe hash (runtime length). `pub(crate)`: the image
+/// cardinality counter's distinct-word set probes with the same hash —
+/// its former private copy was exactly the drift this module exists to
+/// prevent.
 #[inline(always)]
-pub(super) fn hash_words(words: &[u64]) -> u64 {
+pub(crate) fn hash_words(words: &[u64]) -> u64 {
     let mut h = 0x517C_C1B7_2722_0A95_u64;
     for w in words {
         h ^= *w;

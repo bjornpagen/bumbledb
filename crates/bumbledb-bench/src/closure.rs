@@ -394,10 +394,6 @@ pub fn verify_family(
 ///
 /// Refusals (RAM-backed scratch), verify mismatches, and engine errors
 /// — each message names the family.
-#[expect(
-    clippy::too_many_lines,
-    reason = "the linear table or protocol is clearer kept together"
-)] // one lane's full protocol, linear
 pub fn bench_families(
     cfg: GenConfig,
     scratch: &Path,
@@ -488,15 +484,7 @@ pub fn bench_families(
             reason = "reporting accepts lossy integer-to-float conversion"
         )]
         let ratio_p50 = ours.stats.p50 as f64 / theirs.stats.p50.max(1) as f64;
-        #[cfg(feature = "obs")]
-        let alloc_report = ours.alloc.map(|s| report::AllocReport {
-            allocs: s.allocs,
-            deallocs: s.deallocs,
-            alloc_bytes: s.alloc_bytes,
-            dealloc_bytes: s.dealloc_bytes,
-        });
-        #[cfg(not(feature = "obs"))]
-        let alloc_report = None;
+        let alloc_report = ours.alloc.map(report::AllocReport::from);
         let merged = ghz_ours.merge(ghz_theirs);
         out.push(report::ReadFamilyReport {
             name: family.name.to_owned(),

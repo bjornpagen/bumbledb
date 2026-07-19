@@ -481,15 +481,11 @@ fn apply_infallible(
         .iter()
         .position(|p| kernel_scan(image, p, params, &mut buf))
     {
-        let survivors_only = predicates.len() == 1;
-        if survivors_only {
-            return View::Survivors {
-                image: Arc::clone(image),
-                positions: buf,
-            };
-        }
         // Refine in place: evaluate the remaining conjunction per survivor
-        // with the branchless cursor write.
+        // with the branchless cursor write. A single-predicate scan
+        // refines vacuously (`idx == pivot` skips its only predicate;
+        // every survivor keeps) — the loop already handles it, so no
+        // early return exists for it.
         let mut cursor = 0usize;
         for read in 0..buf.len() {
             let position = buf[read] as usize;
