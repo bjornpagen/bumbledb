@@ -75,12 +75,11 @@ export type {
 	FaceShapeMismatch,
 	FaceShapes,
 	FaceSource,
-	OneOf,
 	OwnerOf,
 	SameArity,
 	SameShapes
 } from "#face.ts"
-export { on, oneOf } from "#face.ts"
+export { on } from "#face.ts"
 export type {
 	AnyField,
 	BoolField,

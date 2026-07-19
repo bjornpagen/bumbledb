@@ -89,9 +89,11 @@ const INCIDENT_ID = 1
 const ESCALATION_ID = 2
 
 /** Sorts answer rows of two bigint columns for a set-equality comparison (answers are sets; the host sorts). */
-function sortedPairs(rows: ReadonlyArray<{ readonly i: bigint; readonly s: bigint }>): Array<[bigint, bigint]> {
+function sortedPairs(
+	rows: ReadonlyArray<{ readonly i: bigint; readonly s: bigint | string }>
+): Array<[bigint, bigint | string]> {
 	return rows
-		.map(function pair(row): [bigint, bigint] {
+		.map(function pair(row): [bigint, bigint | string] {
 			return [row.i, row.s]
 		})
 		.sort(function compare(a, b) {
@@ -112,18 +114,21 @@ describe("ψ query atoms over closed relations", function suite() {
 		const created = native.dbCreate(storeDir, lower(Oncall))
 		assert.ok(created.ok, "the store admits")
 		db = created.db
+		// The native seam is RAW: closed cells are declaration-order row ids
+		// (Info 0, Warn 1, Crit 2, Fatal 3) — the name↔id bijection is the
+		// SDK marshal's, above this seam.
 		const tx = native.dbWriteBegin(db)
-		native.txInsert(tx, INCIDENT_ID, [1n, Sev.Info])
-		native.txInsert(tx, INCIDENT_ID, [2n, Sev.Warn])
-		native.txInsert(tx, INCIDENT_ID, [3n, Sev.Crit])
-		native.txInsert(tx, INCIDENT_ID, [4n, Sev.Fatal])
-		native.txInsert(tx, INCIDENT_ID, [5n, Sev.Crit])
-		native.txInsert(tx, ESCALATION_ID, [1n, Sev.Info])
-		native.txInsert(tx, ESCALATION_ID, [2n, Sev.Warn])
-		native.txInsert(tx, ESCALATION_ID, [3n, Sev.Crit])
-		native.txInsert(tx, ESCALATION_ID, [4n, Sev.Fatal])
-		native.txInsert(tx, ESCALATION_ID, [5n, Sev.Crit])
-		native.txInsert(tx, ESCALATION_ID, [5n, Sev.Fatal])
+		native.txInsert(tx, INCIDENT_ID, [1n, 0n])
+		native.txInsert(tx, INCIDENT_ID, [2n, 1n])
+		native.txInsert(tx, INCIDENT_ID, [3n, 2n])
+		native.txInsert(tx, INCIDENT_ID, [4n, 3n])
+		native.txInsert(tx, INCIDENT_ID, [5n, 2n])
+		native.txInsert(tx, ESCALATION_ID, [1n, 0n])
+		native.txInsert(tx, ESCALATION_ID, [2n, 1n])
+		native.txInsert(tx, ESCALATION_ID, [3n, 2n])
+		native.txInsert(tx, ESCALATION_ID, [4n, 3n])
+		native.txInsert(tx, ESCALATION_ID, [5n, 2n])
+		native.txInsert(tx, ESCALATION_ID, [5n, 3n])
 		const committed = native.txCommit(tx)
 		assert.ok(committed.ok, "the seed commit lands")
 	})
@@ -148,28 +153,32 @@ describe("ψ query atoms over closed relations", function suite() {
 				.match(Sev, { id: r.var("s"), pages: true })
 				.select("i", "s")
 		)
-		type RowPin = Expect<Equal<QueryRow<typeof paged>, { readonly i: bigint; readonly s: bigint }>>
+		// "s" is bound at Escalation.sev (the PRECISE roster) and REBOUND at
+		// the ψ atom's own id — the sealed shape's id stays the WIDE fallback
+		// (`ClosedIdField`, H1's ruling), so the joined slot claims `string`
+		// (the runtime VALUE is a bigint until H4's decode makes it true).
+		type RowPin = Expect<Equal<QueryRow<typeof paged>, { readonly i: bigint; readonly s: string }>>
 		const pagedUnion = query(Oncall)
 			.rule((r) =>
 				r
 					.match(Escalation, { incident: r.var("i"), sev: r.var("s") })
-					.where(r.eq(r.var("s"), Sev.Crit))
+					.where(r.eq(r.var("s"), "Crit"))
 					.select("i", "s")
 			)
 			.rule((r) =>
 				r
 					.match(Escalation, { incident: r.var("i"), sev: r.var("s") })
-					.where(r.eq(r.var("s"), Sev.Fatal))
+					.where(r.eq(r.var("s"), "Fatal"))
 					.select("i", "s")
 			)
 		const viaPsi = sortedPairs(run(paged, {}))
 		const viaUnion = sortedPairs(run(pagedUnion, {}))
 		assert.deepEqual(viaPsi, viaUnion, "the two spellings answer identically over the same store")
 		assert.deepEqual(viaPsi, [
-			[3n, Sev.Crit],
-			[4n, Sev.Fatal],
-			[5n, Sev.Crit],
-			[5n, Sev.Fatal]
+			[3n, 2n],
+			[4n, 3n],
+			[5n, 2n],
+			[5n, 3n]
 		])
 		const pins: [RowPin] = [true]
 		assert.equal(pins.length, 1)
@@ -186,31 +195,40 @@ describe("ψ query atoms over closed relations", function suite() {
 			.rule((r) =>
 				r
 					.match(Escalation, { incident: r.var("i"), sev: r.var("s") })
-					.where(r.eq(r.var("s"), Sev.Info))
+					.where(r.eq(r.var("s"), "Info"))
 					.select("i", "s")
 			)
 			.rule((r) =>
 				r
 					.match(Escalation, { incident: r.var("i"), sev: r.var("s") })
-					.where(r.eq(r.var("s"), Sev.Warn))
+					.where(r.eq(r.var("s"), "Warn"))
 					.select("i", "s")
 			)
 		const viaPsi = sortedPairs(run(unpaged, {}))
 		assert.deepEqual(viaPsi, sortedPairs(run(unpagedUnion, {})))
 		assert.deepEqual(viaPsi, [
-			[1n, Sev.Info],
-			[2n, Sev.Warn]
+			[1n, 0n],
+			[2n, 1n]
 		])
 	})
 
 	test("a handle literal sits in the id position; the payload escapes to the head (the engine's fallback join, invisible here)", function handleLiteralAtId() {
-		const critRank = query(Oncall).rule((r) => r.match(Sev, { id: Sev.Crit, rank: r.var("k") }).select("k"))
+		const critRank = query(Oncall).rule((r) => r.match(Sev, { id: "Crit", rank: r.var("k") }).select("k"))
 		type RankPin = Expect<Equal<QueryRow<typeof critRank>, { readonly k: bigint }>>
 		assert.deepEqual(run(critRank, {}), [{ k: 3n }])
-		// The roster judges the id position at lowering — an out-of-vocabulary bigint is a typed refusal, never a silent empty answer.
+		// The roster judges the id position at lowering — an unknown handle
+		// name is a typed refusal, never a silent empty answer. The ψ atom's
+		// OWN id types at the WIDE fallback (any string spells; H1's ruling),
+		// so this belt is the id position's whole wall.
 		assert.throws(function offRoster() {
-			lowerQuery(query(Oncall).rule((r) => r.match(Sev, { id: 9n, rank: r.var("k") }).select("k")))
-		}, /closed relation Sev has no handle with id 9/)
+			lowerQuery(query(Oncall).rule((r) => r.match(Sev, { id: "Panic", rank: r.var("k") }).select("k")))
+		}, /"Panic" is not a handle of Sev — the roster is Info, Warn, Crit, Fatal/)
+		// The bigint spelling is GONE from the closed surface — a raw id is a
+		// shape refusal at lowering and a compile error at the surface.
+		assert.throws(function rawIdSpelling() {
+			// @ts-expect-error — 0n is not a handle name: bigint left the closed surface with 0.4.0
+			lowerQuery(query(Oncall).rule((r) => r.match(Sev, { id: 2n, rank: r.var("k") }).select("k")))
+		}, /expected a Sev handle name \(string\), got bigint/)
 		const pins: [RankPin] = [true]
 		assert.equal(pins.length, 1)
 	})
@@ -312,8 +330,10 @@ describe("ψ query atoms over closed relations", function suite() {
 				.match(Course, { id: r.var("c"), level: r.var("k") })
 				.select("c", "g", "k")
 		)
+		// "g" is bound at the ψ atom's own id — the sealed shape's id is the
+		// WIDE fallback (`ClosedIdField`), so the claim is `string` (H1).
 		type LevelledPin = Expect<
-			Equal<QueryRow<typeof levelled>, { readonly c: bigint; readonly g: bigint; readonly k: bigint }>
+			Equal<QueryRow<typeof levelled>, { readonly c: bigint; readonly g: string; readonly k: bigint }>
 		>
 		assert.equal(levelled.data.rules.length, 1)
 

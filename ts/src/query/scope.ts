@@ -287,7 +287,10 @@ function renderFieldKind(slot: ClassedField): string {
 
 /**
  * What a PARAM anchored at field `F` accepts at execution: the field's
- * bare value type, exactly. At an interval field the engine resolves the
+ * bare value type, exactly — at a CLOSED-reference field that is the
+ * handle-name union (`"DirectPass" | "Failed"`), translated name → row id
+ * at execute through the one roster-verification point
+ * (`taggedHandleId`). At an interval field the engine resolves the
  * bivalent anchor to the INTERVAL reading (value equality) — the point
  * reading of a param is spelled `pointIn(r.param(...), w)`, whose sibling
  * anchors it element-typed.
@@ -304,13 +307,17 @@ type InferredOf<T> = T extends { readonly [inferred]?: infer S } ? Exclude<S, un
  * positions) — the op keeps literal tagging op-aware at `pointIn`
  * (the bug-hunt fix, preserved). `anchor` is `undefined` only on a query
  * built but not yet anchored by any rule; lowering and the wire both refuse
- * that state typed.
+ * that state typed. `members` is present exactly on a MEMBERSHIP-ARRAY
+ * entry (a literal set at a closed field, folded into the program): the
+ * SDK itself translates and supplies the set at every execute — the entry
+ * is never read from, and never demanded of, the host's params object.
  */
 interface ParamEntry {
 	readonly name: string
 	readonly shape: "value" | "set" | "mask"
 	readonly anchor: AnyField | "measure" | undefined
 	readonly op: "binding" | "eq" | "ne" | "lt" | "le" | "gt" | "ge" | "pointIn" | "allen"
+	readonly members: readonly string[] | undefined
 }
 
 export type {

@@ -45,10 +45,23 @@ function wireValue(entry: ParamEntry, context: string, value: unknown): TaggedVa
  * in registry order (= the lowering's dense `ParamId`s). A missing entry
  * is a typed error naming the param; values tag by the anchoring use's
  * structural type; a set param takes a readonly array (the empty set is
- * legal and matches nothing — the engine's rule).
+ * legal and matches nothing — the engine's rule). A MEMBERSHIP-ARRAY
+ * entry (`members` present — a literal set folded into the program) is
+ * supplied by the SDK itself: each handle name rides the one
+ * roster-verification point (`taggedHandleId`, through `wireValue`) and
+ * crosses as the same `{ kind: "set", values }` a bound `r.inSet` param
+ * crosses as — the host's params object is never consulted for it.
  */
 function wireParams(entries: readonly ParamEntry[], supplied: Readonly<Record<string, unknown>>): QueryParam[] {
 	return entries.map(function wireOne(entry): QueryParam {
+		if (entry.members !== undefined) {
+			return {
+				kind: "set",
+				values: entry.members.map(function wireMember(member, index) {
+					return wireValue(entry, `membership array ${entry.name}[${index}]`, member)
+				})
+			}
+		}
 		const value = supplied[entry.name]
 		if (value === undefined) {
 			throw errors.new(`execute params object is missing param ${entry.name}`)

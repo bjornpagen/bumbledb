@@ -28,7 +28,7 @@ import { after, describe, test } from "node:test"
 
 import { closed } from "#closed.ts"
 import { atLeast, atMost, between, exactly, none } from "#count.ts"
-import { on, oneOf } from "#face.ts"
+import { on } from "#face.ts"
 import { bool, bytes, i64, interval, span, str, u64 } from "#fields.ts"
 import { lower } from "#lower.ts"
 import { native } from "#native.ts"
@@ -107,15 +107,15 @@ const CrossHost = schema("CrossHost", { Status, Kind, Holder, Account, SavingsTe
 	contained(on(Account, "holder"), on(Holder, "id")),
 	contained(on(Account, "kind"), on(Kind, "id")),
 	contained(on(Account, "status"), on(Status, "id")),
-	mirrors(on(Account.where({ status: Status.Frozen }), "id"), on(SavingsTerms, "account")),
-	contained(on(Holder.where({ name: oneOf("alpha", "beta") }), "id"), on(Holder, "id")),
+	mirrors(on(Account.where({ status: "Frozen" }), "id"), on(SavingsTerms, "account")),
+	contained(on(Holder.where({ name: ["alpha", "beta"] }), "id"), on(Holder, "id")),
 	contained(on(Holder.where({ at: span(5n, RAY_END), digest: DIGEST }), "id"), on(Holder, "id")),
 	contained(on(SavingsTerms.where({ rate_bps: -3n }), "account"), on(SavingsTerms, "account")),
 	window(on(Holder, "id"), atMost(3n), on(Account, "holder")),
-	window(on(Holder, "id"), atLeast(2n), on(Account.where({ status: Status.Frozen }), "holder")),
-	window(on(Holder, "id"), exactly(1n), on(Account.where({ status: Status.Open }), "holder")),
-	window(on(Holder, "id"), none, on(Account.where({ kind: Kind.Failed }), "holder")),
-	window(on(Holder, "id"), between(1n, 4n), on(Account.where({ kind: Kind.DirectPass }), "holder")),
+	window(on(Holder, "id"), atLeast(2n), on(Account.where({ status: "Frozen" }), "holder")),
+	window(on(Holder, "id"), exactly(1n), on(Account.where({ status: "Open" }), "holder")),
+	window(on(Holder, "id"), none, on(Account.where({ kind: "Failed" }), "holder")),
+	window(on(Holder, "id"), between(1n, 4n), on(Account.where({ kind: "DirectPass" }), "holder")),
 	contained(on(Account, "kind"), on(Kind.where({ mastered: true }), "id")),
 	key(SavingsTerms, ["account", "rate_bps"]),
 	key(AuditTrail, ["account", "rate_bps"]),
@@ -164,22 +164,22 @@ describe("the cross-host fingerprint lock", function suite() {
 			})
 			const frozenA = tx.insert(Account, {
 				holder: ada.id,
-				kind: Kind.DirectPass,
-				status: Status.Frozen,
+				kind: "DirectPass",
+				status: "Frozen",
 				active: span(-5n, 5n),
 				lease: span(0n, 7n)
 			})
 			const frozenB = tx.insert(Account, {
 				holder: ada.id,
-				kind: Kind.DirectPass,
-				status: Status.Frozen,
+				kind: "DirectPass",
+				status: "Frozen",
 				active: span(-1n, 1n),
 				lease: span(7n, 14n)
 			})
 			tx.insert(Account, {
 				holder: ada.id,
-				kind: Kind.DirectPass,
-				status: Status.Open,
+				kind: "DirectPass",
+				status: "Open",
 				active: span(0n, 10n),
 				lease: span(14n, 21n)
 			})

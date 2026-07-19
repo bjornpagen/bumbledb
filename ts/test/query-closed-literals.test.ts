@@ -1,0 +1,295 @@
+/**
+ * PRD-H3 probes: handle NAMES are the query surface's literal vocabulary,
+ * and set membership is a plain ARRAY. A closed-referencing position takes
+ * the handle union — `r.match(Incident, { sev: "Crit" })`, `{ sev:
+ * ["Crit", "Fatal"] }`, `r.param` at a closed field bound to a name,
+ * `r.eq(v, "Fatal")` — while the WIRE still crosses u64 row ids (the
+ * `taggedHandleId` translation, the query tier's single
+ * roster-verification point). Pinned here: the compile-PASS shapes at the
+ * union; the compile-FAIL walls, each `@ts-expect-error` real (a
+ * cross-vocabulary literal, `0n` in every closed position — bigint left
+ * the closed surface, a membership array at an ordinary field — arrays
+ * are CLOSED-ONLY by owner ruling, ordinary membership is `r.inSet`); the
+ * LOWERING GOLDENS — a name literal lowers to the exact IR the old bigint
+ * spelling produced (deep-equal against the pinned program), and a
+ * membership array lowers BYTE-IDENTICAL to the same set spelled
+ * `r.inSet` (the existing set/word-set form the engine folds; the SDK
+ * supplies the translated members itself at execute); the SELECTION
+ * golden — a `where()` array lowers byte-identical to the old set
+ * combinator's `{ kind: "many" }` spec, so no fingerprint moves; the
+ * runtime rows, each equal to what the 0.3.0 bigint twin answered over
+ * the same store; and the structural doctrine: two vocabularies sharing a
+ * handle name overlap exactly on the shared literal.
+ */
+
+import assert from "node:assert/strict"
+import * as fs from "node:fs"
+import * as os from "node:os"
+import * as path from "node:path"
+import { after, before, describe, test } from "node:test"
+import { closed } from "#closed.ts"
+import { on } from "#face.ts"
+import { bool, u64 } from "#fields.ts"
+import { lower } from "#lower.ts"
+import type { DbHandle } from "#native.ts"
+import { native } from "#native.ts"
+import type { Query, QueryParams, QueryRow } from "#query/lower.ts"
+import { lowerQuery, query } from "#query/lower.ts"
+import { decodeAnswers, wireParams } from "#query/run.ts"
+import type { ParamsRecord } from "#query/scope.ts"
+import { relation } from "#relation.ts"
+import { schema } from "#schema.ts"
+import { contained } from "#statements.ts"
+
+/** The identity-strength equality probe (the standard dual-function trick). */
+type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false
+
+/** Pins a probe to `true` at compile time. */
+type Expect<T extends true> = T extends true ? true : never
+
+const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bumbledb-closed-literals-"))
+const storeDir = path.join(tmpRoot, "store")
+
+after(function cleanup() {
+	fs.rmSync(tmpRoot, { recursive: true, force: true })
+})
+
+const Sev = closed(
+	"Sev",
+	{ pages: bool, rank: u64 },
+	{
+		Info: { pages: false, rank: 1n },
+		Warn: { pages: false, rank: 2n },
+		Crit: { pages: true, rank: 3n },
+		Fatal: { pages: true, rank: 4n }
+	}
+)
+/** Shares the handle name "Crit" with `Sev` — the overlap-doctrine pin. */
+const Priority = closed("Priority", ["Crit", "Low"])
+const Incident = relation("Incident", { id: u64.fresh, sev: Sev.id, pri: Priority.id })
+
+const Oncall = schema("Oncall", { Sev, Priority, Incident }, [
+	contained(on(Incident, "sev"), on(Sev, "id")),
+	contained(on(Incident, "pri"), on(Priority, "id"))
+])
+
+type Rels = (typeof Oncall)["relations"]
+
+/** Relation ids = record declaration order (the law `lowerQuery` rides). */
+const INCIDENT_ID = 2
+
+/** Sorts one bigint column for a set-equality comparison (answers are sets; the host sorts). */
+function sorted(values: readonly bigint[]): bigint[] {
+	return [...values].sort(function compare(a, b) {
+		return a < b ? -1 : 1
+	})
+}
+
+describe("query literals, params & membership arrays over closed references", function suite() {
+	let db: DbHandle
+
+	before(function seed() {
+		const created = native.dbCreate(storeDir, lower(Oncall))
+		assert.ok(created.ok, "the store admits")
+		db = created.db
+		// The native seam is RAW: closed cells are declaration-order row ids
+		// (Sev: Info 0, Warn 1, Crit 2, Fatal 3; Priority: Crit 0, Low 1) —
+		// the name↔id bijection is the SDK's, above this seam.
+		const tx = native.dbWriteBegin(db)
+		native.txInsert(tx, INCIDENT_ID, [1n, 0n, 1n])
+		native.txInsert(tx, INCIDENT_ID, [2n, 1n, 1n])
+		native.txInsert(tx, INCIDENT_ID, [3n, 2n, 0n])
+		native.txInsert(tx, INCIDENT_ID, [4n, 3n, 0n])
+		native.txInsert(tx, INCIDENT_ID, [5n, 2n, 1n])
+		const committed = native.txCommit(tx)
+		assert.ok(committed.ok, "the seed commit lands")
+	})
+
+	/** The typed execute seam — exactly the shape the `Db` runtime consumes. */
+	function run<Row, P extends ParamsRecord>(q: Query<Rels, Row, P>, params: P): Row[] {
+		const prepared = native.dbPrepare(db, lowerQuery(q))
+		if (!prepared.ok) {
+			assert.fail(`engine prepare refused: ${prepared.message}`)
+		}
+		const snap = native.dbSnapshot(db)
+		const rows = native.preparedExecute(prepared.prepared, snap, wireParams(q.data.params, params))
+		native.snapshotClose(snap)
+		native.preparedClose(prepared.prepared)
+		return decodeAnswers<Row>(q.data.select, rows)
+	}
+
+	/** Projects the `i` column of an answer set, sorted. */
+	function incidents(rows: ReadonlyArray<{ readonly i: bigint }>): bigint[] {
+		return sorted(
+			rows.map(function i(row) {
+				return row.i
+			})
+		)
+	}
+
+	test("a handle-name literal matches, and lowers to the EXACT program the old bigint spelling produced", function nameLiteral() {
+		const crits = query(Oncall).rule((r) => r.match(Incident, { id: r.var("i"), sev: "Crit" }).select("i"))
+		// The lowering golden: "Crit" translates to declaration-order id 2n
+		// and crosses tagged u64 — the wire program is the old `sev: 2n`
+		// spelling's program, position for position (queries cross ids,
+		// never handle names).
+		assert.deepStrictEqual(lowerQuery(crits), {
+			predicates: [
+				{
+					head: [{ kind: "var" }],
+					rules: [
+						{
+							finds: [{ kind: "var", var: 0 }],
+							atoms: [
+								{
+									source: { kind: "edb", relation: INCIDENT_ID },
+									bindings: [
+										[0, { kind: "var", var: 0 }],
+										[1, { kind: "literal", value: { kind: "u64", value: 2n } }]
+									]
+								}
+							],
+							negated: [],
+							conditions: []
+						}
+					]
+				}
+			],
+			output: 0
+		})
+		// The same rows the 0.3.0 bigint twin (`sev: 2n`) answered over this store.
+		assert.deepEqual(incidents(run(crits, {})), [3n, 5n])
+	})
+
+	test("a membership ARRAY lowers byte-identical to the same set spelled r.inSet, and answers identically", function membershipArray() {
+		const viaArray = query(Oncall).rule((r) =>
+			r.match(Incident, { id: r.var("i"), sev: ["Crit", "Fatal"] }).select("i")
+		)
+		const viaInSet = query(Oncall).rule((r) =>
+			r.match(Incident, { id: r.var("i"), sev: r.inSet("members") }).select("i")
+		)
+		// The wire-program golden, BYTE-compared: one paramSet term over the
+		// one dense ParamId — the array IS the existing set/word-set form,
+		// its members folded by the SDK at execute.
+		assert.equal(JSON.stringify(lowerQuery(viaArray)), JSON.stringify(lowerQuery(viaInSet)))
+		const arrayRows = incidents(run(viaArray, {}))
+		assert.deepEqual(arrayRows, [3n, 4n, 5n])
+		assert.deepEqual(arrayRows, incidents(run(viaInSet, { members: ["Crit", "Fatal"] })))
+	})
+
+	test("a where() selection ARRAY lowers byte-identical to the old set combinator's spec (no fingerprint moves)", function selectionArray() {
+		assert.equal(
+			JSON.stringify(Incident.where({ sev: ["Crit", "Fatal"] }).selection),
+			'[{"field":"sev","set":{"kind":"many","literals":[{"kind":"handle","handle":"Crit"},{"kind":"handle","handle":"Fatal"}]}}]'
+		)
+		// Selections take arrays at EVERY field kind (they have no params to
+		// ride) — a ψ selection over an ordinary payload column included.
+		assert.deepStrictEqual(Sev.where({ rank: [3n, 4n] }).selection, [
+			{
+				field: "rank",
+				set: {
+					kind: "many",
+					literals: [
+						{ kind: "value", value: { kind: "u64", value: 3n } },
+						{ kind: "value", value: { kind: "u64", value: 4n } }
+					]
+				}
+			}
+		])
+	})
+
+	test("a param anchored at a closed field types as the union and translates name → id at execute", function namedParam() {
+		const bySev = query(Oncall).rule((r) => r.match(Incident, { id: r.var("i"), sev: r.param("s") }).select("i"))
+		type ParamPin = Expect<Equal<QueryParams<typeof bySev>, { readonly s: "Info" | "Warn" | "Crit" | "Fatal" }>>
+		// The same rows the 0.3.0 twin answered when executed with { s: 2n }.
+		assert.deepEqual(incidents(run(bySev, { s: "Crit" })), [3n, 5n])
+		assert.throws(function unknownName() {
+			// @ts-expect-error — "Bogus" is not in Sev's handle union (the params object is typed by use)
+			const params: QueryParams<typeof bySev> = { s: "Bogus" }
+			run(bySev, params)
+		}, /"Bogus" is not a handle of Sev — the roster is Info, Warn, Crit, Fatal/)
+		assert.throws(function bigintValue() {
+			// @ts-expect-error — 0n is not a handle name: bigint left the closed surface
+			run(bySev, { s: 2n })
+		}, /expected a Sev handle name \(string\), got bigint/)
+		const pins: [ParamPin] = [true]
+		assert.equal(pins.length, 1)
+	})
+
+	test("eq against a closed-bound var takes the handle union on the literal side", function eqRhs() {
+		const fatal = query(Oncall).rule((r) =>
+			r
+				.match(Incident, { id: r.var("i"), sev: r.var("k") })
+				.where(r.eq(r.var("k"), "Fatal"))
+				.select("i")
+		)
+		assert.deepEqual(incidents(run(fatal, {})), [4n])
+		type RowPin = Expect<Equal<QueryRow<typeof fatal>, { readonly i: bigint }>>
+		const pins: [RowPin] = [true]
+		assert.equal(pins.length, 1)
+	})
+
+	test("two vocabularies sharing a handle name overlap exactly on the shared literal (structural doctrine)", function sharedLiteral() {
+		// "Crit" is a handle of BOTH Sev and Priority: the one literal is
+		// legal at either field, and each lowers through its OWN roster.
+		const sevCrit = query(Oncall).rule((r) => r.match(Incident, { id: r.var("i"), sev: "Crit" }).select("i"))
+		const priCrit = query(Oncall).rule((r) => r.match(Incident, { id: r.var("i"), pri: "Crit" }).select("i"))
+		assert.deepEqual(incidents(run(sevCrit, {})), [3n, 5n])
+		assert.deepEqual(incidents(run(priCrit, {})), [3n, 4n], "Priority's Crit is id 0 — its own declaration order")
+		// "Low" is Priority-only: on the Sev side it is a compile error AND
+		// a lowering refusal (the roster judges; the directive is real).
+		assert.throws(function crossVocabulary() {
+			// @ts-expect-error — "Low" is not in Sev's handle union (cross-vocabulary literals are unwritable)
+			lowerQuery(query(Oncall).rule((r) => r.match(Incident, { id: r.var("i"), sev: "Low" }).select("i")))
+		}, /"Low" is not a handle of Sev — the roster is Info, Warn, Crit, Fatal/)
+	})
+
+	test("the degenerate membership arrays refuse at construction (the canonical-utterance law)", function degenerateArrays() {
+		assert.throws(function emptyArray() {
+			query(Oncall).rule((r) => r.match(Incident, { id: r.var("i"), sev: [] }).select("i"))
+		}, /an empty membership array selects nothing/)
+		assert.throws(function oneElementArray() {
+			query(Oncall).rule((r) => r.match(Incident, { id: r.var("i"), sev: ["Crit"] }).select("i"))
+		}, /a one-element membership array is the bare literal respelled/)
+	})
+
+	test("membership arrays are CLOSED-ONLY (owner ruling): an ordinary field's array is unwritable and refused", function closedOnlyArrays() {
+		assert.throws(function ordinaryFieldArray() {
+			// @ts-expect-error — id is an ordinary u64: membership there is spelled r.inSet, never a literal array
+			query(Oncall).rule((r) => r.match(Incident, { id: [1n, 2n], sev: r.var("s") }).select("s"))
+		}, /a membership array is the closed-reference spelling — ordinary field membership is a bound ∈-set param \(r\.inSet\)/)
+	})
+
+	test("an unknown member name rides the ONE verification point and throws pointed at execute", function unknownMember() {
+		const q = query(Oncall).rule((r) =>
+			// @ts-expect-error — "Bogus" is not in Sev's handle union
+			r.match(Incident, { id: r.var("i"), sev: ["Crit", "Bogus"] }).select("i")
+		)
+		assert.throws(function bogusMember() {
+			run(q, {})
+		}, /"Bogus" is not a handle of Sev — the roster is Info, Warn, Crit, Fatal/)
+	})
+
+	test("0n compile-FAILS in every closed position (bigint is gone from the closed surface)", function bigintGone() {
+		const unspellable: ReadonlyArray<() => unknown> = [
+			function bigintLiteral() {
+				// @ts-expect-error — a closed literal position takes the handle union, never a bigint
+				return query(Oncall).rule((r) => r.match(Incident, { id: r.var("i"), sev: 2n }).select("i"))
+			},
+			function bigintArrayMember() {
+				// @ts-expect-error — a membership array holds handle names, never bigints
+				return query(Oncall).rule((r) => r.match(Incident, { id: r.var("i"), sev: [2n, 3n] }).select("i"))
+			},
+			function bigintEqRhs() {
+				return query(Oncall).rule((r) =>
+					r
+						.match(Incident, { id: r.var("i"), sev: r.var("k") })
+						// @ts-expect-error — the eq literal side of a closed-bound var takes the union, never a bigint
+						.where(r.eq(r.var("k"), 2n))
+						.select("i")
+				)
+			}
+		]
+		assert.equal(unspellable.length, 3)
+	})
+})

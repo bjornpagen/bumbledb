@@ -24,7 +24,7 @@ import { describe, test } from "node:test"
 import { closed } from "#closed.ts"
 import * as countModule from "#count.ts"
 import { atLeast, atMost, between, exactly, none } from "#count.ts"
-import { on, oneOf } from "#face.ts"
+import { on } from "#face.ts"
 import { bool, bytes, i64, interval, span, str, u64 } from "#fields.ts"
 import { lower } from "#lower.ts"
 import { relation } from "#relation.ts"
@@ -45,7 +45,7 @@ function buildLedger() {
 		key(SavingsTerms, ["account"]),
 		contained(on(Account, "holder"), on(Holder, "id")),
 		contained(on(Account, "kind"), on(Kind, "id")),
-		mirrors(on(Account.where({ kind: Kind.Savings }), "id"), on(SavingsTerms, "account")),
+		mirrors(on(Account.where({ kind: "Savings" }), "id"), on(SavingsTerms, "account")),
 		window(on(Holder, "id"), atMost(3n), on(Account, "holder"))
 	]
 	const Ledger = schema("Ledger", { Kind, Holder, Account, SavingsTerms }, statements)
@@ -278,8 +278,8 @@ describe("renderStatement", function describeRender() {
 	})
 
 	test("literal sets and interval literals render in macro notation", function probeSelectionRendering() {
-		const { Kind, Account, SavingsTerms } = buildLedger()
-		const setFace = on(Account.where({ kind: oneOf(Kind.Checking, Kind.Savings) }), "id")
+		const { Account, SavingsTerms } = buildLedger()
+		const setFace = on(Account.where({ kind: ["Checking", "Savings"] }), "id")
 		const spanFace = on(Account.where({ active: span(0n, 10n) }), "id")
 		const target = on(SavingsTerms, "account")
 		assert.equal(
@@ -295,10 +295,14 @@ describe("the ban table, one row at a time — literal spellings are UNWRITABLE"
 		assert.deepStrictEqual(Object.keys(countModule).sort(), ["atLeast", "atMost", "between", "exactly", "none"])
 	})
 
-	test("one-element literal sets are unwritable — oneOf demands two literals", function probeDegenerateSet() {
-		const set = oneOf(1n, 2n)
-		assert.equal(set.literals.length, 2)
-		assert.equal(oneOf.length, 2)
+	test("degenerate literal sets refuse — a membership array needs two members", function probeDegenerateSet() {
+		const { Account } = buildLedger()
+		assert.throws(function emptySet() {
+			Account.where({ kind: [] })
+		}, /an empty literal set selects nothing/)
+		assert.throws(function oneElementSet() {
+			Account.where({ kind: ["Checking"] })
+		}, /a one-element literal set is the bare literal respelled/)
 	})
 })
 
@@ -412,7 +416,7 @@ describe("schema() construction boundary", function describeSchemaBoundary() {
 		const { Kind, Holder, Account, SavingsTerms } = buildLedger()
 		assert.throws(function unresolvedHandleSelection() {
 			schema("Broken", { Kind, Holder, Account, SavingsTerms }, [
-				mirrors(on(Account.where({ kind: Kind.Savings }), "id"), on(SavingsTerms, "account"))
+				mirrors(on(Account.where({ kind: "Savings" }), "id"), on(SavingsTerms, "account"))
 			])
 		}, /no declared containment resolves the closed reference/)
 	})
@@ -452,7 +456,7 @@ describe("ψ statements over closed relations — closed().where() as a face sou
 	test("the closed where() speaks the ordinary selection vocabulary — literal sets and written order", function probePsiVocabulary() {
 		const { Grade, Certificate } = buildMastery()
 		assert.equal(
-			renderStatement(contained(on(Certificate, "grade"), on(Grade.where({ score: oneOf(0n, 2n) }), "id"))),
+			renderStatement(contained(on(Certificate, "grade"), on(Grade.where({ score: [0n, 2n] }), "id"))),
 			"Certificate(grade) <= Grade(id | score == {0, 2})"
 		)
 		assert.deepStrictEqual(
@@ -573,15 +577,16 @@ function closedPayloadColumnsPairStructurally(): unknown[] {
 	]
 }
 
-/** `where()` selections are typed: handles are the closed value's own constants. */
+/** `where()` selections are typed: a closed reference selects by handle NAME (the precise union). */
 function selectionsAreTyped(): unknown[] {
-	const { Kind, Account } = buildLedger()
+	const { Account } = buildLedger()
 	return [
-		Account.where({ kind: Kind.Savings }),
-		// @ts-expect-error — Nope is not a handle of Kind's vocabulary
-		Account.where({ kind: Kind.Nope }),
-		// @ts-expect-error — a closed reference selects by handle id (bigint), never by name string
 		Account.where({ kind: "Savings" }),
+		Account.where({ kind: ["Checking", "Savings"] }),
+		// @ts-expect-error — "Nope" is not a handle of Kind's vocabulary (the union refuses)
+		Account.where({ kind: "Nope" }),
+		// @ts-expect-error — a closed reference selects by handle name, never by raw id: bigint left the closed surface
+		Account.where({ kind: 1n }),
 		// @ts-expect-error — Account has no field `nope` to select on
 		Account.where({ nope: 1n })
 	]
@@ -600,7 +605,7 @@ function closedSelectionsAreTyped(): unknown[] {
 	const { Grade } = buildMastery()
 	return [
 		Grade.where({ mastered: true }),
-		Grade.where({ score: oneOf(0n, 2n) }),
+		Grade.where({ score: [0n, 2n] }),
 		// @ts-expect-error — the bare tier has no payload columns: `.where` does not exist there
 		Kind.where({}),
 		// @ts-expect-error — Grade has no column `nope`

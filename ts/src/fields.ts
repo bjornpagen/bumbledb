@@ -192,22 +192,22 @@ function isIntervalLiteral(value: unknown): value is IntervalValue {
 }
 
 /**
- * Resolves one closed-handle literal: the handle id (a bare bigint) back to
- * its handle NAME through the roster — an out-of-roster id is a
- * construction error, the belt the type level deliberately does not provide
- * (structural values make any bigint spellable here; the roster judges).
+ * Resolves one closed-handle literal: the handle NAME, verified against the
+ * roster — an unknown name is a construction error, the belt the wide
+ * fallback type deliberately does not provide (structural values make any
+ * string spellable here; the roster judges). The name IS the value at the
+ * TS surface (the drizzle law); the wire literal already crossed as
+ * `{ kind: "handle", handle }`, so the output — and every fingerprint
+ * derived from it — is untouched.
  */
 function handleLiteral(closed: ClosedRoster, value: unknown): LiteralSpec {
-	if (typeof value !== "bigint") {
-		throw literalShapeError(`a ${closed.name} handle id (bigint)`, value)
+	if (typeof value !== "string") {
+		throw literalShapeError(`a ${closed.name} handle name (string)`, value)
 	}
-	const handle = closed.handles[Number(value)]
-	if (handle === undefined) {
-		throw errors.new(
-			`closed relation ${closed.name} has no handle with id ${value} (roster holds ${closed.handles.length})`
-		)
+	if (!closed.handles.includes(value)) {
+		throw errors.new(`"${value}" is not a handle of ${closed.name} — the roster is ${closed.handles.join(", ")}`)
 	}
-	return { kind: "handle", handle }
+	return { kind: "handle", handle: value }
 }
 
 /** Lowers one interval literal at its element type. */
@@ -301,10 +301,9 @@ function interval(element: U64Field | I64Field, width?: bigint): IntervalField<"
  * Lowers one host literal at its field position to the wire
  * {@link LiteralSpec} — the selection-literal machine ground axioms and
  * `where()` bindings both ride (one machine, same errors — the macro's own
- * rule). A value on a closed-reference field resolves to its handle NAME
- * (the id is verified against the roster: an out-of-roster id is a
- * construction error); everything else lowers to a plain value tagged by
- * the field's structural kind.
+ * rule). A value on a closed-reference field IS its handle NAME (verified
+ * against the roster: an unknown name is a construction error); everything
+ * else lowers to a plain value tagged by the field's structural kind.
  */
 function literalOf(field: AnyField, value: unknown): LiteralSpec {
 	if ("closed" in field) {

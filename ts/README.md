@@ -103,7 +103,7 @@ real surface by `test/readme.test.ts` — the examples cannot drift.
 ## Surface
 
 - The structural type kernel — fields as pure structure (`bool`, `bytes`, `i64`, `u64`, `str`, `interval`, `span`), `relation()`, and `closed()` sealed rosters with typed axiom payloads and exhaustive host dispatch via `.match`. Domains are never declared: `schema()` computes every field's class from the statement list.
-- The statement algebra — `schema()`, `key`, `contained`, `mirrors`, `window`; faces via `on`/`oneOf`; counts via `exactly`, `atLeast`, `atMost`, `between`, `none`; ψ-selection via `.where` on relations and closed rosters.
+- The statement algebra — `schema()`, `key`, `contained`, `mirrors`, `window`; faces via `on` (set membership is a plain array in `.where`); counts via `exactly`, `atLeast`, `atMost`, `between`, `none`; ψ-selection via `.where` on relations and closed rosters.
 - The `Db` runtime — `Db.create`/`Db.open`, path-cached stores, transactions, typed violations, scoped snapshot reads, the witnessed write loop with `abandon`.
 - The query surface — Datalog as values, `query(S).rule(r => ...)`: named vars, params typed by use, negation, aggregates, and the free comparison/connective exports (`eq`, `ne`, `lt`, `le`, `gt`, `ge`, `and`, `or`, `not`, `allen`/`ALLEN`, `pointIn`, `covers`); stratified recursion via `program()`; `db.prepare` as a plain value.
 - The exhume surface — `Db.exhume`, the schema-independent read path: a store's self-described shapes and raw facts by name, with typed refusals (`ErrExhumeNoDescriptor`, `ErrExhumeFormatMismatch`, `ErrExhumeCorruption`).

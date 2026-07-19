@@ -12,7 +12,6 @@
  */
 
 import * as errors from "@superbuilders/errors"
-import type { OneOf } from "#face.ts"
 import { type AnyField, assertDeclarationOrderKey, type Infer, literalOf } from "#fields.ts"
 import type { LiteralSetSpec, LiteralSpec } from "#spec.ts"
 
@@ -37,15 +36,26 @@ function refsComplete<RName extends string, Fields extends FieldsShape>(
 }
 
 /**
- * Resolves one selection entry to its lowered literal set: an `oneOf`
- * value (detected by its `literals` tuple — no field value is ever an
- * object carrying `literals`) becomes a disjunctive set (≥ 2 by the
- * `oneOf` signature — the one-element set is unwritable); anything else is
- * the bare literal.
+ * Resolves one selection entry to its lowered literal set: a plain ARRAY
+ * (detected by `Array.isArray` — no field's value type is an array;
+ * `Uint8Array` is not one) becomes a disjunctive set, anything else the
+ * bare literal. The degenerate sets are construction errors — the empty
+ * set selects nothing, and the one-element set is the bare literal
+ * respelled (the canonical-utterance law; the old set combinator's
+ * signature made both unwritable, and the refusal here is that law's
+ * runtime seat). The lowered set — `{ kind: "many", literals }` — is
+ * byte-identical to what the combinator produced, so no fingerprint moves.
  */
 function resolveEntry(field: AnyField, entry: unknown): LiteralSetSpec {
-	if (typeof entry === "object" && entry !== null && "literals" in entry && Array.isArray(entry.literals)) {
-		const literals: LiteralSpec[] = entry.literals.map(function lowerSetLiteral(literal: unknown) {
+	if (Array.isArray(entry)) {
+		if (entry.length < 2) {
+			throw errors.new(
+				entry.length === 0
+					? "an empty literal set selects nothing — write the selection you mean"
+					: "a one-element literal set is the bare literal respelled — write the literal (the canonical-utterance law: one meaning, one spelling)"
+			)
+		}
+		const literals: LiteralSpec[] = entry.map(function lowerSetLiteral(literal: unknown) {
 			return Object.freeze(literalOf(field, literal))
 		})
 		return Object.freeze({ kind: "many", literals: Object.freeze(literals) })
@@ -131,13 +141,15 @@ interface SelectionBinding {
 
 /**
  * The `where()` argument: per field, a bare structural literal of that
- * field's value type (a closed handle constant IS such a literal — a
- * bigint verified against the roster at construction), an `oneOf(a, b,
- * ...)` literal set, or a `span(start, end)` interval literal.
- * Equality-only by construction: no operator parameter exists anywhere.
+ * field's value type (a closed reference's literal IS its handle name —
+ * `"Savings"`, verified against the roster at construction), a plain
+ * ARRAY of such literals read disjunctively — `kind: ["Checking",
+ * "Savings"]` — or a `span(start, end)` interval literal. Membership is
+ * an array, never an operator (the drizzle law); equality-only by
+ * construction: no operator parameter exists anywhere.
  */
 type SelectionInput<Fields extends FieldsShape> = {
-	readonly [K in keyof Fields]?: Infer<Fields[K]> | OneOf<Infer<Fields[K]>>
+	readonly [K in keyof Fields]?: Infer<Fields[K]> | readonly Infer<Fields[K]>[]
 }
 
 /** A relation with a selection applied — what `on()` consumes as a σ-carrying source. */

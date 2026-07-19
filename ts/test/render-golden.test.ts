@@ -29,7 +29,7 @@ import { after, describe, test } from "node:test"
 import { closed } from "#closed.ts"
 import { atLeast, atMost, between, exactly, none } from "#count.ts"
 import { Db } from "#db.ts"
-import { on, oneOf } from "#face.ts"
+import { on } from "#face.ts"
 import { bool, bytes, i64, interval, span, str, u64 } from "#fields.ts"
 import { lower } from "#lower.ts"
 import type { DbHandle, Manifest, StatementKindTag } from "#native.ts"
@@ -84,9 +84,9 @@ const plainContainment = contained(on(Account, "holder"), on(Holder, "id"))
 const kindClosedTarget = contained(on(Account, "kind"), on(Kind, "id"))
 const statusClosedTarget = contained(on(Account, "status"), on(Status, "id"))
 const pointwiseContainment = contained(on(Slot, ["room", "during"]), on(Booking, ["room", "during"]))
-const sigmaContainment = contained(on(Account.where({ kind: Kind.Savings }), "holder"), on(Holder, "id"))
-const psiContainment = contained(on(SavingsTerms, "account"), on(Account.where({ status: Status.Active }), "id"))
-const bijection = mirrors(on(Account.where({ kind: Kind.Savings }), "id"), on(SavingsTerms, "account"))
+const sigmaContainment = contained(on(Account.where({ kind: "Savings" }), "holder"), on(Holder, "id"))
+const psiContainment = contained(on(SavingsTerms, "account"), on(Account.where({ status: "Active" }), "id"))
+const bijection = mirrors(on(Account.where({ kind: "Savings" }), "id"), on(SavingsTerms, "account"))
 const ceilingWindow = window(on(Holder, "id"), atMost(3n), on(Account, "holder"))
 const exclusionWindow = window(on(Holder, "id"), none, on(Account.where({ flag: false }), "holder"))
 const exactWindow = window(on(Holder, "id"), exactly(2n), on(Account.where({ label: gauntletLabel }), "holder"))
@@ -94,7 +94,7 @@ const rangeWindow = window(on(Holder, "id"), between(1n, 4n), on(Account.where({
 const floorWindow = window(
 	on(Holder, "id"),
 	atLeast(2n),
-	on(Account.where({ kind: oneOf(Kind.Checking, Kind.Savings) }), "holder")
+	on(Account.where({ kind: ["Checking", "Savings"] }), "holder")
 )
 const psiTargetWindow = window(on(Account.where({ flag: true }), "id"), atMost(1n), on(SavingsTerms, "account"))
 const literalGauntletWindow = window(
@@ -302,12 +302,12 @@ describe("the ψ-on-closed golden: manifest spelling, engine folding, violation 
 		assert.ok(certificate, "the manifest names Certificate")
 
 		const passing = native.dbWriteBegin(handle)
-		assert.equal(native.txInsert(passing, certificate.id, [1n, Grade.DirectPass]), true)
+		assert.equal(native.txInsert(passing, certificate.id, [1n, 1n]), true)
 		const landed = native.txCommit(passing)
 		assert.ok(landed.ok, "a certificate over a ψ-member grade commits")
 
 		const violating = native.dbWriteBegin(handle)
-		assert.equal(native.txInsert(violating, certificate.id, [2n, Grade.Failed]), true)
+		assert.equal(native.txInsert(violating, certificate.id, [2n, 0n]), true)
 		const rejected = native.txCommit(violating)
 		assert.ok(!rejected.ok, "a certificate over a non-member grade is rejected")
 		assert.equal(rejected.violations.length, 1, "exactly the ψ containment is violated")
@@ -325,7 +325,7 @@ describe("the ψ-on-closed golden: manifest spelling, engine folding, violation 
 	test("Db.create accepts the ψ theory and the violation IS the statement value", async function psiDbRuntime() {
 		const masteryDb = await Db.create(psiDbDir, Mastery)
 		const rejected = masteryDb.write(function violate(tx) {
-			tx.insert(Certificate, { grade: Grade.Failed })
+			tx.insert(Certificate, { grade: "Failed" })
 		})
 		assert.ok(!rejected.ok, "the ψ containment rejects the non-member grade")
 		assert.equal(rejected.violations.length, 1)
