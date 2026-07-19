@@ -29,7 +29,7 @@
 
 import * as errors from "@superbuilders/errors"
 import type { AnyClosed } from "#closed.ts"
-import type { AnyField, ClosedIdField, Infer, IntervalValue } from "#fields.ts"
+import type { AnyField, ClosedIdField, ClosedRoster, Infer, IntervalValue } from "#fields.ts"
 import type { ClassLookup, ClassRecordOf, SchemaClasses } from "#law.ts"
 import type {
 	ClassedField,
@@ -145,10 +145,18 @@ type SelectEntryData =
 	| { readonly kind: "measure"; readonly over: string }
 	| { readonly kind: "aggregate"; readonly agg: AggData }
 
-/** One answer column: its name (the row object key) and its entry. */
+/**
+ * One answer column: its name (the row object key), its entry, and — when
+ * the column's value is a closed reference (a projected var or an
+ * Arg-carried payload bound at a closed-referencing field) — the roster the
+ * decode lifts row ids back to handle NAMES through (the read half of the
+ * marshal bijection; `undefined` on every bare column). The slice is
+ * SDK-side marshaling data only: the wire `ProgramIr` never carries it.
+ */
 interface SelectColumn {
 	readonly name: string
 	readonly entry: SelectEntryData
+	readonly closed: ClosedRoster | undefined
 }
 
 /** One body item of a rule, in written order. */
@@ -538,11 +546,22 @@ function not<R extends MatchOwner, const B extends MatchShape<MatchFields<R>>>(
 	return Object.freeze(value)
 }
 
-/** Whether a var name is bound in the environment at an orderable (u64/i64) field. */
+/**
+ * Whether a var name is bound in the environment at an orderable (u64/i64)
+ * field. A CLOSED reference is excluded even though its kind is `u64`: a
+ * vocabulary's declaration-id order is an accident, not semantics
+ * (`docs/architecture/10-data-model.md` § orderability — order on it is
+ * refused exactly as the enum's ordinal order was), so every
+ * order-comparison and fold position refuses closed-bound terms — this
+ * judgment is the one gate they all read, and the construction-time
+ * validations in `#query/lower.ts` are its runtime twin.
+ */
 type OrderVarOk<Env extends EnvShape, N extends string> = N extends keyof Env
-	? Env[N]["field"]["kind"] extends "u64" | "i64"
-		? true
-		: false
+	? Env[N]["field"] extends { readonly closed: ClosedRoster }
+		? false
+		: Env[N]["field"]["kind"] extends "u64" | "i64"
+			? true
+			: false
 	: false
 
 /** Whether a var name is bound at an interval field. */
