@@ -3,12 +3,13 @@
  * honest at runtime (`{ kind, width?, element?, fresh? }` frozen plain
  * objects — PURE STRUCTURE, no `domain` slot, no `.as`: the type-lie sweep
  * below proves the absences own-property by own-property), closed
- * relations in both tiers (bare-bigint handle constants in declaration
- * order, the `fromId` weld, payload readback, the `__proto__`-safe
- * own-property minting), the field constructors' grammar bounds, `span()`'s
- * half-open nonempty law, and the selection-literal machine's roster
- * judgment — the runtime half of the two-boundary split (structural types
- * admit any bigint; the roster and the engine judge).
+ * relations in both tiers (the roster-carrying `id` descriptor in
+ * declaration order, payload readback, the `__proto__`-safe own-property
+ * minting — handles are DATA on the roster, never properties of the
+ * value), the field constructors' grammar bounds, `span()`'s half-open
+ * nonempty law, and the selection-literal machine's roster judgment — the
+ * runtime half of the two-boundary split (structural types admit what the
+ * roster and the engine then judge).
  */
 
 import assert from "node:assert/strict"
@@ -95,22 +96,6 @@ describe("field descriptors", function describeDescriptors() {
 })
 
 describe("closed relations", function describeClosed() {
-	test("handle constants are bare bigints carrying declaration-order ids", function probeHandleIds() {
-		const { Kind, Grade } = buildLedgerPieces()
-		assert.equal(Kind.Checking, 0n)
-		assert.equal(Kind.Savings, 1n)
-		assert.equal(Grade.DirectPass, 0n)
-		assert.equal(Grade.Failed, 1n)
-		assert.equal(typeof Kind.Checking, "bigint")
-	})
-
-	test("fromId welds ids back to handles and misses beyond the roster — no forge needed", function probeWeld() {
-		const { Kind } = buildLedgerPieces()
-		assert.equal(Kind.fromId(Kind.Checking), "Checking")
-		assert.equal(Kind.fromId(Kind.Savings), "Savings")
-		assert.equal(Kind.fromId(99n), undefined)
-	})
-
 	test("the id descriptor is pure structure plus the roster — no declared handle domain", function probeIdDescriptor() {
 		const { Kind } = buildLedgerPieces()
 		assert.deepStrictEqual(Kind.id, {
@@ -152,16 +137,16 @@ describe("closed relations", function describeClosed() {
 		assert.equal(width, 8)
 	})
 
-	test("duplicate and reserved handles are construction errors in both tiers", function probeHandleGuards() {
+	test("duplicate handles are construction errors — no name is reserved (handles are data)", function probeHandleGuards() {
 		assert.throws(function duplicateHandle() {
 			closed("Kind", ["Checking", "Checking"])
 		}, /duplicate handle Checking/)
-		assert.throws(function reservedHandle() {
-			closed("Kind", ["Checking", "fromId"])
-		}, /collides with the closed value's own surface/)
-		assert.throws(function reservedPayloadHandle() {
-			closed("Sev", { pages: bool }, { fromId: { pages: true } })
-		}, /collides with the closed value's own surface/)
+		// H5: the reserved-name wall died with the handle constants — a
+		// method-named handle is ordinary roster data in both tiers.
+		const bare = closed("Kind", ["Checking", "match"])
+		assert.deepStrictEqual(bare.data.handles, ["Checking", "match"])
+		const payload = closed("Sev", { pages: bool }, { where: { pages: true } })
+		assert.equal(payload.axioms.where.pages, true)
 	})
 
 	test("an empty payload roster is a construction error", function probeEmptyRoster() {
@@ -179,29 +164,27 @@ describe("closed relations", function describeClosed() {
 		}, /integer index/)
 	})
 
-	test("handle constants and axiom rows are minted as OWN properties for every admitted name", function probeProtoHandle() {
+	test("axiom rows are minted as OWN properties for every admitted name", function probeProtoHandle() {
 		/**
 		 * "__proto__" is a legal identifier (the macro analog admits it), so
-		 * the constant must work — own-property definition shadows the
-		 * object-protocol accessor instead of silently riding it. The
-		 * computed access below is deliberate: it is exactly how a host loops
-		 * a roster.
+		 * the axiom row must land as an OWN property — own-property definition
+		 * shadows the object-protocol accessor instead of silently riding it
+		 * (which would swap the record's prototype instead of creating the
+		 * row).
 		 */
 		const handles = ["Alpha", "__proto__"] as const
 		const K = closed("K", handles)
-		for (const handle of handles) {
-			assert.equal(
-				typeof K[handle],
-				"bigint",
-				`the ${handle} handle constant must be a bigint, never an accessor no-op`
-			)
-			assert.equal(K.fromId(K[handle]), handle, "the weld agrees with the constant")
-		}
 		assert.deepEqual(
 			Object.keys(K.axioms).toSorted(),
 			[...handles].toSorted(),
 			"the axioms record carries every handle row as an own enumerable property"
 		)
+		assert.equal(
+			Object.getPrototypeOf(K.axioms),
+			Object.prototype,
+			"the __proto__ handle never rides the accessor — the record's prototype is untouched"
+		)
+		assert.deepStrictEqual(K.data.handles, [...handles], "the roster carries the names in declaration order")
 	})
 })
 
@@ -225,12 +208,12 @@ describe("intervals", function describeIntervals() {
 })
 
 describe("selection literal resolution", function describeSelections() {
-	test("the roster judges what the structural type cannot: an out-of-roster handle id", function probeRosterMiss() {
+	test("the roster judges what the structural type cannot: an out-of-roster handle name", function probeRosterMiss() {
 		const { Kind } = buildLedgerPieces()
-		assert.deepStrictEqual(literalOf(Kind.id, Kind.Savings), { kind: "handle", handle: "Savings" })
+		assert.deepStrictEqual(literalOf(Kind.id, "Savings"), { kind: "handle", handle: "Savings" })
 		assert.throws(function outOfRoster() {
-			literalOf(Kind.id, 7n)
-		}, /closed relation Kind has no handle with id 7/)
+			literalOf(Kind.id, "Frozen")
+		}, /"Frozen" is not a handle of Kind/)
 	})
 
 	test("shape mismatches are typed construction errors on the one literal machine", function probeShapeErrors() {
@@ -242,20 +225,24 @@ describe("selection literal resolution", function describeSelections() {
 		}, /interval/)
 	})
 
-	test("where() rides the same machine: an ill-typed forged id still faces the roster", function probeWhereRoster() {
+	test("where() rides the same machine: an ill-typed forged spelling still faces the roster", function probeWhereRoster() {
 		/**
 		 * The two-boundary split, demonstrated: since H1 the TYPE tier already
-		 * refuses a bigint on a closed-reference field (the value type is the
-		 * precise handle union), so forging an out-of-roster id requires an
-		 * ill-typed call — and the roster STILL refuses it at construction
-		 * (the runtime belt under the type claim; the engine would refuse it
-		 * again at commit).
+		 * refuses a bigint and an out-of-roster string on a closed-reference
+		 * field (the value type is the precise handle union), so forging one
+		 * requires an ill-typed call — and the literal machine STILL refuses
+		 * it at construction (the runtime belt under the type claim; the
+		 * engine would refuse it again at commit).
 		 */
 		const { Account } = buildLedgerPieces()
-		assert.throws(function outOfRoster() {
+		assert.throws(function bigintForged() {
 			// @ts-expect-error — H1: a closed field's selection literal is the handle union; a bigint no longer typechecks
 			Account.where({ kind: 7n })
-		}, /closed relation Kind has no handle with id 7/)
+		}, /expected a Kind handle name \(string\), got bigint/)
+		assert.throws(function outOfRoster() {
+			// @ts-expect-error — H1: "Frozen" is off the Kind roster — a wrong string is a compile error
+			Account.where({ kind: "Frozen" })
+		}, /"Frozen" is not a handle of Kind/)
 		assert.throws(function emptyWhere() {
 			Account.where({})
 		}, /bare relation respelled/)

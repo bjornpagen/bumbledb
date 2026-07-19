@@ -1,34 +1,36 @@
 /**
  * Closed relations (`docs/architecture/10-data-model.md` § closed
  * relations): a vocabulary whose extension is declared in the schema — two
- * tiers, one function. The emission per closed relation mirrors the
- * macro's (host-enum analog): handle CONSTANTS on the value
- * (`Kind.Checking`, ids = declaration order, each a BARE `bigint` — no
- * brand), the `fromId` weld, an `id` field descriptor carrying the CLOSED
- * LINKAGE (the roster — pure structure, no declared domain: the laws type
- * the columns, and `schema()` names the id's generator class `"Kind.id"`)
- * for other relations' field blocks (`kind: Kind.id`), payload readback
- * (`Kind.axioms`), and the declared payload column descriptors
- * (`Kind.columns` — the runtime twin of the `Cols` type parameter, which
- * the face layer's structural wall reads). Bare tier: `closed("Kind", ["Checking",
+ * tiers, one function. Bare tier: `closed("Kind", ["Checking",
  * "Savings"])`. Payload tier: `closed("Sev", { pages: bool }, { Critical:
  * { pages: true }, ... })` — one call, three arguments (the curried tier-2
  * spelling is DELETED — canonical utterance): the axioms record IS the
  * handle declaration, every handle carrying every column exactly once
- * (type-enforced). No fact type and no insert surface exist — closed
- * relations are unwritable by construction: the value simply lacks the
- * writable relation shape. Both tiers mint `match()` — exhaustive dispatch
- * over the handle union (arms typed by the mapped type, so a missing or
- * extra arm is a compile error; the payload tier's arm receives the typed
- * axiom row). The payload tier additionally mints `where()` — the
- * ψ-selection surface (`Kind.where({ mastered: true })` as a face source),
- * resolved through the ONE selection machine
- * (`relation.ts::resolveSelection`); the bare tier has no payload columns to
- * select on, so `.where` is absent there, at the type AND on the value.
+ * (type-enforced). At the host surface a handle is its NAME — a string
+ * literal of the roster's union (the drizzle law: translation, not
+ * abstraction; dispatch over a vocabulary is native `switch` narrowing, so
+ * no match operator is minted and no handle constants exist — the literal
+ * `"Checking"` is the ONE spelling). Handles are pure DATA, not properties
+ * of the value, so NO handle name is reserved: a vocabulary may legally
+ * contain handles named `match`, `where`, or `id` — the axioms record and
+ * the roster are their own namespaces. The value's whole surface: `name`;
+ * `id` — the field descriptor carrying the CLOSED LINKAGE (the roster —
+ * pure structure, no declared domain: the laws type the columns, and
+ * `schema()` names the id's generator class `"Kind.id"`) for other
+ * relations' field blocks (`kind: Kind.id`); `data` (the lowering
+ * carrier); `axioms` (payload readback, `Kind.axioms`); `columns` (the
+ * runtime twin of the `Cols` type parameter, which the face layer's
+ * structural wall reads); and — exactly when payload columns exist —
+ * `where()`, the ψ-selection surface (`Kind.where({ mastered: true })` as a
+ * face source), resolved through the ONE selection machine
+ * (`relation.ts::resolveSelection`); the bare tier has no payload columns
+ * to select on, so `.where` is absent there, at the type AND on the value.
+ * No fact type and no insert surface exist — closed relations are
+ * unwritable by construction: the value simply lacks the writable relation
+ * shape.
  */
 
 import * as errors from "@superbuilders/errors"
-import type { OneOf } from "#face.ts"
 import {
 	type AnyField,
 	assertDeclarationOrderKey,
@@ -37,30 +39,8 @@ import {
 	type Infer,
 	literalOf
 } from "#fields.ts"
-import { resolveSelection, type SelectionBinding } from "#relation.ts"
+import { resolveSelection, type SelectionBinding, type SelectionInput } from "#relation.ts"
 import type { LiteralSpec } from "#spec.ts"
-
-/**
- * The value-surface property names a handle may not shadow — the macro's
- * name-collision diagnostic, here over the closed value's own properties
- * (`relation`/`selection` are reserved so a closed value can never be
- * mistaken for a selected relation by `on()`'s discriminant; `where` is
- * reserved because the payload tier mints the ψ-selection method under
- * exactly that name; `match` because BOTH tiers mint the exhaustive
- * dispatch under exactly that name).
- */
-const reservedHandleNames: readonly string[] = Object.freeze([
-	"name",
-	"id",
-	"data",
-	"axioms",
-	"columns",
-	"fromId",
-	"where",
-	"match",
-	"relation",
-	"selection"
-])
 
 /**
  * A payload column of a closed relation: any field descriptor except a
@@ -146,20 +126,18 @@ interface ClosedCore<Name extends string, Handles extends string, Cols extends R
 	 * descriptors in declaration order for the lowering).
 	 */
 	readonly columns: Cols
-	/** The weld: declaration-order id back to its handle, or undefined beyond the roster. */
-	fromId(id: bigint): Handles | undefined
 }
 
 /**
- * The `where()` argument of a closed relation: per PAYLOAD column, a bare
- * structural literal of that column's value type or an `oneOf(a, b, ...)`
- * literal set — the ordinary `where()`'s vocabulary exactly. The synthetic
- * `id` is deliberately absent: an id selection is spelled only as handle
- * literals on the REFERENCING side (the canonical-utterance law).
+ * The `where()` argument of a closed relation: EXACTLY the relation
+ * surface's {@link SelectionInput}, over the declared payload columns — the
+ * ONE selection vocabulary, so a spelling change there (H3's membership
+ * arrays) flows through with no local change here. The synthetic `id` is
+ * deliberately unspellable ({@link PayloadColumns} refuses an `id` column):
+ * an id selection is spelled only as handle literals on the REFERENCING
+ * side (the canonical-utterance law).
  */
-type ClosedSelectionInput<Cols extends Record<string, PayloadField>> = {
-	readonly [C in keyof Cols]?: Infer<Cols[C]> | OneOf<Infer<Cols[C]>>
-}
+type ClosedSelectionInput<Cols extends Record<string, PayloadField>> = SelectionInput<Cols>
 
 /**
  * A closed relation with a ψ selection applied — what `on()` consumes as a
@@ -192,44 +170,19 @@ interface ClosedSelectable<Name extends string, Handles extends string, Cols ext
 }
 
 /**
- * Exhaustive dispatch over a BARE closed vocabulary: one arm per handle,
- * no literal types and no brands — the handle-name union on the value's
- * type IS the exhaustiveness proof (a missing arm is a missing-property
- * compile error; an extra arm an excess-property compile error). The bare
- * tier declares no payload, so an arm takes nothing. The arms record types
- * any `bigint` in — the runtime roster refuses an out-of-vocabulary id
- * with a throw, never a misdispatch.
+ * A closed relation value: the core surface plus — exactly when payload
+ * columns exist — `where()` (the bare tier has nothing to select on, so
+ * the method is ABSENT there, not merely uncallable). NOTHING else:
+ * handles are data on the roster, never properties of the value (the
+ * handle constants, the match operator, and the id-to-handle weld died
+ * with the bigint era — dispatch is native `switch` narrowing over the
+ * handle union).
  */
-interface ClosedMatchBare<Handles extends string> {
-	match<T>(id: bigint, arms: { readonly [H in Handles]: () => T }): T
-}
-
-/**
- * Exhaustive dispatch over a PAYLOAD-tier closed vocabulary: the same
- * mapped-type exhaustiveness as the bare tier, and each arm receives its
- * handle's typed axiom row (the declared columns, bare and structural —
- * the frozen readback row from `axioms`).
- */
-interface ClosedMatchPayload<Handles extends string, Cols extends Record<string, PayloadField>> {
-	match<T>(id: bigint, arms: { readonly [H in Handles]: (row: AxiomRow<Cols>) => T }): T
-}
-
-/**
- * A closed relation value: the core surface plus one BARE constant per
- * handle (`Kind.Checking: bigint`, ids = declaration order — the value is
- * structural; the roster judges out-of-vocabulary ids at construction and
- * the engine at commit), plus `match()` on BOTH tiers (bare arms take
- * nothing; payload arms receive the typed axiom row), plus — exactly when
- * payload columns exist — `where()` (the bare tier has nothing to select
- * on, so the method is ABSENT there, not merely uncallable).
- */
-type Closed<Name extends string, Handles extends string, Cols extends Record<string, PayloadField>> = ClosedCore<
-	Name,
-	Handles,
-	Cols
-> & { readonly [H in Handles]: bigint } & ([keyof Cols] extends [never]
-		? ClosedMatchBare<Handles>
-		: ClosedSelectable<Name, Handles, Cols> & ClosedMatchPayload<Handles, Cols>)
+type Closed<Name extends string, Handles extends string, Cols extends Record<string, PayloadField>> = [
+	keyof Cols
+] extends [never]
+	? ClosedCore<Name, Handles, Cols>
+	: ClosedCore<Name, Handles, Cols> & ClosedSelectable<Name, Handles, Cols>
 
 /** Any closed relation value, whatever its roster and columns. */
 interface AnyClosed {
@@ -285,21 +238,6 @@ function axiomsMinted<Handles extends string, Cols extends Record<string, Payloa
 }
 
 /**
- * The trusted seam of the handle-constant mint: every handle reads back as
- * an own bigint — verified before the record is admitted at the constants
- * type (a "__proto__"-named handle riding the object-protocol accessor
- * would fail exactly this check).
- */
-function constantsMinted<Handles extends string>(
-	record: Readonly<Record<string, bigint>>,
-	handles: readonly Handles[]
-): record is Readonly<Record<string, bigint>> & { readonly [H in Handles]: bigint } {
-	return handles.every(function constantMinted(handle) {
-		return typeof record[handle] === "bigint"
-	})
-}
-
-/**
  * Reads one handle's ground axiom row for lowering. The typed payload
  * surface makes absence unrepresentable ({@link Axioms} carries every
  * handle's row); the refusal below guards the one ill-typed path — payload
@@ -336,22 +274,6 @@ function mintAxioms<Handles extends string, Cols extends Record<string, PayloadF
 	Object.freeze(out)
 	if (!axiomsMinted<Handles, Cols>(out, handles, cols)) {
 		throw errors.new(`closed relation ${name}: axiom-row minting incomplete`)
-	}
-	return out
-}
-
-/** Mints the handle constants: one own bigint per handle, ids = declaration order. */
-function mintHandleConstants<Handles extends string>(
-	name: string,
-	handles: readonly Handles[]
-): { readonly [H in Handles]: bigint } {
-	const out: Record<string, bigint> = {}
-	handles.forEach(function mintHandleConstant(handle, index) {
-		Object.defineProperty(out, handle, { value: BigInt(index), enumerable: true })
-	})
-	Object.freeze(out)
-	if (!constantsMinted(out, handles)) {
-		throw errors.new(`closed relation ${name}: handle-constant minting incomplete`)
 	}
 	return out
 }
@@ -431,19 +353,18 @@ function closedPayload<Name extends string, Handles extends string, Cols extends
 }
 
 /**
- * The trusted seam of the ergonomic-surface mint: `match` reads back as an
- * own function on BOTH tiers, and `where` exactly when payload columns
- * exist — the runtime twin of the {@link Closed} type's conditional arm
- * (`ClosedMatchBare` vs `ClosedSelectable & ClosedMatchPayload`), verified
- * before the minted value is admitted at the conditional type.
+ * The trusted seam of the ergonomic-surface mint: `where` reads back as an
+ * own function exactly when payload columns exist, and is ABSENT otherwise
+ * — the runtime twin of the {@link Closed} type's conditional arm
+ * (`ClosedCore` alone vs `ClosedCore & ClosedSelectable`), verified before
+ * the minted value is admitted at the conditional type.
  */
 function surfaceMinted<Name extends string, Handles extends string, Cols extends Record<string, PayloadField>>(
-	value: ClosedCore<Name, Handles, Cols> & { readonly [H in Handles]: bigint },
+	value: ClosedCore<Name, Handles, Cols>,
 	cols: readonly ClosedColumn[]
-): value is Closed<Name, Handles, Cols> {
-	const matchable = "match" in value && typeof value.match === "function"
+): value is ClosedCore<Name, Handles, Cols> & Closed<Name, Handles, Cols> {
 	const selectable = "where" in value && typeof value.where === "function"
-	return matchable && (cols.length > 0 ? selectable : !selectable)
+	return cols.length > 0 ? selectable : !selectable
 }
 
 /**
@@ -451,8 +372,7 @@ function surfaceMinted<Name extends string, Handles extends string, Cols extends
  * typed end to end (a wrong-shaped mint is a compile error here, not a
  * laundered `unknown`): roster checks, eager axiom lowering, the
  * roster-carrying `id` descriptor, the frozen `columns` carrier (the runtime
- * twin of the `Cols` type parameter), the handle constants, the exhaustive
- * `match()` on both tiers, and — on the payload tier only — the
+ * twin of the `Cols` type parameter), and — on the payload tier only — the
  * ψ-selection `where()`.
  */
 function mintClosed<Name extends string, Handles extends string, Cols extends Record<string, PayloadField>>(
@@ -470,11 +390,6 @@ function mintClosed<Name extends string, Handles extends string, Cols extends Re
 			throw errors.new(`closed relation ${name}: duplicate handle ${handle}`)
 		}
 		seen.add(handle)
-		if (reservedHandleNames.includes(handle)) {
-			throw errors.new(
-				`closed relation ${name}: handle ${handle} collides with the closed value's own surface (${reservedHandleNames.join(", ")})`
-			)
-		}
 	}
 	const handleList: readonly Handles[] = Object.freeze([...handles])
 	const roster: ClosedRoster<Handles> = Object.freeze({ name, handles: handleList })
@@ -504,23 +419,16 @@ function mintClosed<Name extends string, Handles extends string, Cols extends Re
 	})
 	const id: ClosedIdField<Handles> = Object.freeze({ kind: "u64", closed: roster })
 	/**
-	 * Handle names are arbitrary identifiers, so rows and constants are
-	 * minted with OWN-property definition (inside {@link mintAxioms} and
-	 * {@link mintHandleConstants}), never assignment: a handle named
-	 * "__proto__" would otherwise ride the Object.prototype accessor —
-	 * silently swapping the record's prototype instead of creating the row,
-	 * and no-oping the constant (a primitive through the setter) — minting a
-	 * value whose type claims a bigint constant but reads back an object.
-	 * (Object SPREAD is CreateDataProperty by spec, so the copies below are
-	 * own-property safe for column names too.)
+	 * Handle names are arbitrary identifiers, so axiom rows are minted with
+	 * OWN-property definition (inside {@link mintAxioms}), never assignment:
+	 * a handle named "__proto__" would otherwise ride the Object.prototype
+	 * accessor — silently swapping the record's prototype instead of
+	 * creating the row. (Object SPREAD is CreateDataProperty by spec, so the
+	 * copies below are own-property safe for column names too.)
 	 */
 	const axiomsOut = mintAxioms<Handles, Cols>(name, handleList, cols, axioms)
-	const constants = mintHandleConstants(name, handleList)
 	const columnsOut: Cols = { ...columns }
 	Object.freeze(columnsOut)
-	function fromId(idValue: bigint): Handles | undefined {
-		return handleList[Number(idValue)]
-	}
 	const holder: { value: Closed<Name, Handles, Cols> | undefined } = { value: undefined }
 	/**
 	 * The ψ selection: resolved against the declared payload columns through
@@ -538,27 +446,9 @@ function mintClosed<Name extends string, Handles extends string, Cols extends Re
 			selection: resolveSelection(name, cols, Object.entries(selection))
 		})
 	}
-	/**
-	 * The exhaustive dispatch: the ROSTER judges the id (the structural type
-	 * admits any bigint — a dishonest id is a THROW, never a misdispatch),
-	 * and the chosen arm receives the handle's frozen axiom row (the bare
-	 * tier's arms are typed to take nothing; the empty row rides along
-	 * unread). One implementation serves both tiers — the conditional
-	 * {@link Closed} arm claims the tier-exact arm signature and
-	 * {@link surfaceMinted} is the trusted seam that admits it.
-	 */
-	function match<T>(idValue: bigint, arms: { readonly [H in Handles]: (row: AxiomRow<Cols>) => T }): T {
-		const handle = fromId(idValue)
-		if (handle === undefined) {
-			throw errors.new(`closed relation ${name}: match on id ${idValue} misses the roster (${handleList.join(", ")})`)
-		}
-		return arms[handle](axiomsOut[handle])
-	}
-	const core = { name, id, data, axioms: axiomsOut, columns: columnsOut, fromId }
-	const value: ClosedCore<Name, Handles, Cols> & { readonly [H in Handles]: bigint } =
-		cols.length > 0
-			? Object.freeze({ ...constants, ...core, where, match })
-			: Object.freeze({ ...constants, ...core, match })
+	const core = { name, id, data, axioms: axiomsOut, columns: columnsOut }
+	const value: ClosedCore<Name, Handles, Cols> =
+		cols.length > 0 ? Object.freeze({ ...core, where }) : Object.freeze(core)
 	if (!surfaceMinted<Name, Handles, Cols>(value, cols)) {
 		throw errors.new(`closed relation ${name}: ergonomic-surface minting incomplete`)
 	}
@@ -576,6 +466,7 @@ export type {
 	ClosedCore,
 	ClosedData,
 	ClosedRow,
+	ClosedSelectable,
 	ClosedSelectionInput,
 	PayloadField,
 	SelectedClosed
