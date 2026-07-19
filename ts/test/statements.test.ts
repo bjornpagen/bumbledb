@@ -490,13 +490,20 @@ describe("ψ statements over closed relations — closed().where() as a face sou
 		}, /expected boolean/)
 	})
 
-	test("a handle named `where` collides with the ψ surface — a construction error, both tiers", function probeReservedWhere() {
-		assert.throws(function bareTier() {
-			closed("Bad", ["where"])
-		}, /handle where collides with the closed value's own surface/)
-		assert.throws(function payloadTier() {
-			closed("Bad", { pages: bool }, { where: { pages: true } })
-		}, /handle where collides with the closed value's own surface/)
+	test("a handle named `where` is ordinary roster data — NO name is reserved, both tiers", function probeNoReservedNames() {
+		/**
+		 * H5: handles are pure DATA, never properties of the value — the
+		 * axioms record and the roster are their own namespaces, so a
+		 * vocabulary may legally contain handles named like the value's own
+		 * methods, and the payload tier's ψ surface is untouched by them.
+		 */
+		const bare = closed("Fine", ["where"])
+		assert.deepEqual(bare.data.handles, ["where"])
+		const payload = closed("AlsoFine", { pages: bool }, { where: { pages: true } })
+		assert.deepEqual(payload.data.handles, ["where"])
+		assert.equal(payload.axioms.where.pages, true)
+		const selected = payload.where({ pages: true })
+		assert.equal(selected.relation, payload, "the ψ surface is the value's own method, untouched by roster data")
 	})
 })
 

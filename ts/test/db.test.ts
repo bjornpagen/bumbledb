@@ -76,7 +76,7 @@ const savingsKey = key(SavingsTerms, ["account"])
 const holderContainment = contained(on(Account, "holder"), on(Holder, "id"))
 /** The closed-reference companion the `kind == Savings` handle spelling resolves through. */
 const kindContainment = contained(on(Account, "kind"), on(Kind, "id"))
-const savingsMirror = mirrors(on(Account.where({ kind: Kind.Savings }), "id"), on(SavingsTerms, "account"))
+const savingsMirror = mirrors(on(Account.where({ kind: "Savings" }), "id"), on(SavingsTerms, "account"))
 const holderWindow = window(on(Holder, "id"), atMost(3n), on(Account, "holder"))
 
 const Ledger = schema("Ledger", { Kind, Holder, Account, SavingsTerms, Audit }, [
@@ -167,7 +167,7 @@ describe("the Db runtime against a real store", function suite() {
 			ids.ada = holder.id
 			const account = tx.insert(Account, {
 				holder: holder.id,
-				kind: Kind.Checking,
+				kind: "Checking",
 				active: span(0n, 10n)
 			})
 			ids.adaAccount = account.id
@@ -254,14 +254,14 @@ describe("the Db runtime against a real store", function suite() {
 			ids.grace = grace.id
 			const account = tx.insert(Account, {
 				holder: grace.id,
-				kind: Kind.Savings,
+				kind: "Savings",
 				active: span(0n, 5n)
 			})
 			ids.graceAccount = account.id
 			tx.insert(SavingsTerms, { account: account.id, rate: 3n })
 			const kurt = tx.insert(Holder, { name: "kurt" })
 			ids.kurt = kurt.id
-			tx.insert(Account, { holder: kurt.id, kind: Kind.Checking, active: span(0n, 5n) })
+			tx.insert(Account, { holder: kurt.id, kind: "Checking", active: span(0n, 5n) })
 		})
 		assert.ok(setup.ok)
 		assert.deepStrictEqual(db.get(SavingsTerms, { account: must(ids.graceAccount) }), {
@@ -278,9 +278,9 @@ describe("the Db runtime against a real store", function suite() {
 		const ada = must(ids.ada)
 		const kurt = must(ids.kurt)
 		const rejected = db.write(function violate(tx) {
-			tx.insert(Account, { holder: ada, kind: Kind.Checking, active: span(1n, 2n) })
-			tx.insert(Account, { holder: ada, kind: Kind.Checking, active: span(2n, 3n) })
-			tx.insert(Account, { holder: ada, kind: Kind.Checking, active: span(3n, 4n) })
+			tx.insert(Account, { holder: ada, kind: "Checking", active: span(1n, 2n) })
+			tx.insert(Account, { holder: ada, kind: "Checking", active: span(2n, 3n) })
+			tx.insert(Account, { holder: ada, kind: "Checking", active: span(3n, 4n) })
 			tx.delete(Holder, { id: kurt, name: "kurt" })
 		})
 		assert.ok(!rejected.ok, "the statement judgment rejects")

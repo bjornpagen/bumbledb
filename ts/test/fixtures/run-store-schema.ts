@@ -332,19 +332,19 @@ const laws = Object.freeze({
 	capsuleTotality: window(on(capsule, "id"), exactly(1n), on(member, "capsule")),
 
 	hierarchyParentCount: window(
-		on(program.where({ kind: ProgramKind.hierarchy_program }), "id"),
+		on(program.where({ kind: "hierarchy_program" }), "id"),
 		exactly(1n),
-		on(member.where({ toi: ToiType.HigherOrderNoun }), "program")
+		on(member.where({ toi: "HigherOrderNoun" }), "program")
 	),
 	routineIntegratorCount: window(
-		on(program.where({ kind: ProgramKind.cognitive_routine_program }), "id"),
+		on(program.where({ kind: "cognitive_routine_program" }), "id"),
 		exactly(1n),
-		on(member.where({ toi: ToiType.CognitiveRoutine }), "program")
+		on(member.where({ toi: "CognitiveRoutine" }), "program")
 	),
 
 	reviewHolderIsReviewIntegration: contained(
 		on(review, "member"),
-		on(member.where({ kind: MemberKind.ReviewIntegration }), "id")
+		on(member.where({ kind: "ReviewIntegration" }), "id")
 	),
 	reviewTargetIsMember: contained(on(review, "target"), on(member, "id"))
 })
@@ -359,11 +359,7 @@ function misplacedFormBan(programKind: ProgramKindName, toi: ToiTypeName): Mispl
 	return Object.freeze({
 		programKind,
 		toi,
-		statement: window(
-			on(program.where({ kind: ProgramKind[programKind] }), "id"),
-			none,
-			on(member.where({ toi: ToiType[toi] }), "program")
-		)
+		statement: window(on(program.where({ kind: programKind }), "id"), none, on(member.where({ toi }), "program"))
 	})
 }
 
@@ -404,9 +400,9 @@ const entryFormBans: readonly EntryFormBan[] = Object.freeze(
 			return Object.freeze({
 				toi,
 				statement: window(
-					on(program.where({ kind: ProgramKind.hierarchy_program }), "id"),
+					on(program.where({ kind: "hierarchy_program" }), "id"),
 					none,
-					on(member.where({ pos: 1n, toi: ToiType[toi] }), "program")
+					on(member.where({ pos: 1n, toi }), "program")
 				)
 			})
 		})

@@ -114,7 +114,7 @@ function bigintAsDecimalString(_key: string, value: unknown): unknown {
 const constructions: Readonly<Record<string, AnyQuery>> = {
 	"holder-names": query(Ledger).rule((r) => r.match(Holder, { id: r.var("h"), name: r.var("name") }).select("name")),
 	"amount-selection": query(Ledger).rule((r) => r.match(Posting, { id: r.var("id"), amount: -100n }).select("id")),
-	"usd-accounts": query(Ledger).rule((r) => r.match(Account, { id: r.var("id"), currency: Currency.Usd }).select("id")),
+	"usd-accounts": query(Ledger).rule((r) => r.match(Account, { id: r.var("id"), currency: "Usd" }).select("id")),
 	"account-selection-param": query(Ledger).rule((r) =>
 		r.match(Posting, { id: r.var("id"), account: r.param("acct") }).select("id")
 	),
@@ -204,8 +204,8 @@ const constructions: Readonly<Record<string, AnyQuery>> = {
 			.select("org", r.sum(r.duration("active")))
 	),
 	"usd-or-eur-accounts": query(Ledger)
-		.rule((r) => r.match(Account, { id: r.var("id"), currency: Currency.Usd }).select("id"))
-		.rule((r) => r.match(Account, { id: r.var("id"), currency: Currency.Eur }).select("id")),
+		.rule((r) => r.match(Account, { id: r.var("id"), currency: "Usd" }).select("id"))
+		.rule((r) => r.match(Account, { id: r.var("id"), currency: "Eur" }).select("id")),
 	"org-reach-rooted": program(Ledger, (p) => {
 		const declared = p.rec("reach")
 		// One head name across both rules (the TS alignment law names
@@ -384,7 +384,10 @@ const handWritten: Readonly<Record<string, ProgramIr>> = {
 								source: { kind: "idb", pred: 0 },
 								bindings: [
 									[0, v(0)],
-									[1, { kind: "literal", value: { kind: "u64", value: Currency.Usd } }]
+									// The WIRE is raw: "Usd" lowers to its declaration-order
+									// row id (Currency: Usd 0, Eur 1, Gbp 2) — the name↔id
+									// bijection is the SDK's, above this seam.
+									[1, { kind: "literal", value: { kind: "u64", value: 0n } }]
 								]
 							}
 						],

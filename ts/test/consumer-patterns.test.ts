@@ -44,19 +44,12 @@ import {
 	grp,
 	grpMember,
 	laws,
-	MemberKind,
 	member,
-	Outcome,
 	objective,
-	Pin,
-	ProgramKind,
 	program,
 	runStoreSchema,
-	SteerKind,
 	sheet,
 	steer,
-	TaskKind,
-	ToiType,
 	task,
 	unit,
 	verdict
@@ -161,7 +154,7 @@ describe("cross-process reopen of the real run-store theory", function crossProc
 		assert.equal(String(sheetRow.id), report.sheet)
 		const attemptRow = must(db.scan(attempt)[0])
 		const verdictRow = must(db.get(verdict, { attempt: attemptRow.id }))
-		assert.equal(verdictRow.outcome, Outcome.Rejected)
+		assert.equal(verdictRow.outcome, "Rejected")
 		/**
 		 * The fresh high-water survives a clean exit: the child minted grp
 		 * `deletedGrp` and committed its delete (the revert idiom), so a
@@ -262,7 +255,7 @@ describe("the repair loop against the real theory", function repairLoop() {
 				tx.insert(grpMember, { grp: staging.id, objective: minted.id })
 			}
 			const taskRow = tx.insert(task, {
-				kind: TaskKind.Cartograph,
+				kind: "Cartograph",
 				sheet: sheetRow.id,
 				subject: 1n
 			})
@@ -329,12 +322,12 @@ describe("the repair loop against the real theory", function repairLoop() {
 		const written = db.write(function badAuthor(tx) {
 			const programRow = tx.insert(program, {
 				grp: must(ids.planGrps[0]),
-				kind: ProgramKind.hierarchy_program
+				kind: "hierarchy_program"
 			})
 			const capsuleRow = tx.insert(capsule, {
 				program: programRow.id,
 				ref: "fin_entry",
-				toi: ToiType.RegularNoun,
+				toi: "RegularNoun",
 				taughtClaim: "t",
 				priorAssumption: "p",
 				exitCondition: "e",
@@ -344,8 +337,8 @@ describe("the repair loop against the real theory", function repairLoop() {
 				program: programRow.id,
 				capsule: capsuleRow.id,
 				pos: 1n,
-				kind: MemberKind.Taught,
-				toi: ToiType.RegularNoun
+				kind: "Taught",
+				toi: "RegularNoun"
 			})
 		})
 		const violations = rejected(written)
@@ -371,13 +364,13 @@ describe("the repair loop against the real theory", function repairLoop() {
 		const written = db.write(function goodAuthor(tx) {
 			const programRow = tx.insert(program, {
 				grp: must(ids.planGrps[0]),
-				kind: ProgramKind.hierarchy_program
+				kind: "hierarchy_program"
 			})
 			ids.program = programRow.id
 			const parent = tx.insert(capsule, {
 				program: programRow.id,
 				ref: "fin_parent",
-				toi: ToiType.HigherOrderNoun,
+				toi: "HigherOrderNoun",
 				taughtClaim: "t",
 				priorAssumption: "p",
 				exitCondition: "e",
@@ -386,7 +379,7 @@ describe("the repair loop against the real theory", function repairLoop() {
 			const intro = tx.insert(capsule, {
 				program: programRow.id,
 				ref: "fin_intro",
-				toi: ToiType.RegularNoun,
+				toi: "RegularNoun",
 				taughtClaim: "t",
 				priorAssumption: "p",
 				exitCondition: "e",
@@ -396,15 +389,15 @@ describe("the repair loop against the real theory", function repairLoop() {
 				program: programRow.id,
 				capsule: parent.id,
 				pos: 1n,
-				kind: MemberKind.Taught,
-				toi: ToiType.HigherOrderNoun
+				kind: "Taught",
+				toi: "HigherOrderNoun"
 			})
 			tx.insert(member, {
 				program: programRow.id,
 				capsule: intro.id,
 				pos: 2n,
-				kind: MemberKind.Taught,
-				toi: ToiType.RegularNoun
+				kind: "Taught",
+				toi: "RegularNoun"
 			})
 		})
 		assert.ok(written.ok, "the corrected hierarchy program satisfies the family laws")
@@ -458,27 +451,27 @@ describe("the repair loop against the real theory", function repairLoop() {
 			const attemptRow = tx.insert(attempt, {
 				task: must(ids.task),
 				n: 1n,
-				pin: Pin.Gpt56Max,
+				pin: "Gpt56Max",
 				promptHash: new Uint8Array(32)
 			})
 			ids.attempt = attemptRow.id
-			tx.insert(verdict, { attempt: attemptRow.id, outcome: Outcome.Accepted })
+			tx.insert(verdict, { attempt: attemptRow.id, outcome: "Accepted" })
 		})
 		assert.ok(seeded.ok)
 		const attemptId = must(ids.attempt)
 		const current = must(db.get(verdict, { attempt: attemptId }))
-		assert.equal(current.outcome, Outcome.Accepted)
+		assert.equal(current.outcome, "Accepted")
 		const revised = db.write(function revise(tx) {
 			tx.delete(verdict, current)
-			tx.insert(verdict, { attempt: attemptId, outcome: Outcome.Rejected })
+			tx.insert(verdict, { attempt: attemptId, outcome: "Rejected" })
 		})
 		assert.ok(revised.ok, "the settleReviewEdge refutation write commits")
-		assert.equal(must(db.get(verdict, { attempt: attemptId })).outcome, Outcome.Rejected)
+		assert.equal(must(db.get(verdict, { attempt: attemptId })).outcome, "Rejected")
 	})
 
 	test("the revert-capture idiom: a db.read INSIDE a db.write callback sees the committed pre-delta state", function nestedRead() {
 		const written = db.write(function revertShaped(tx) {
-			tx.insert(steer, { kind: SteerKind.Observe, task: must(ids.task), note: "diary" })
+			tx.insert(steer, { kind: "Observe", task: must(ids.task), note: "diary" })
 			/** The nested snapshot must NOT see the pending insert — it reads committed state. */
 			const captured = db.read(function capture(snap) {
 				return snap.scan(steer)
@@ -493,7 +486,7 @@ describe("the repair loop against the real theory", function repairLoop() {
 		db.read(function observe(snap) {
 			const before = snap.scan(steer).length
 			const written = db.write(function interleaved(tx) {
-				tx.insert(steer, { kind: SteerKind.Observe, task: must(ids.task), note: "second" })
+				tx.insert(steer, { kind: "Observe", task: must(ids.task), note: "second" })
 			})
 			assert.ok(written.ok)
 			assert.equal(snap.scan(steer).length, before, "the open scope never sees the new commit")
@@ -507,7 +500,7 @@ describe("the repair loop against the real theory", function repairLoop() {
 		/** The declared identity key (kind, subject) is NOT a get spelling — the driver scans instead (OPEN-ledger row b). */
 		assert.throws(function declaredKeyGet() {
 			// @ts-expect-error — the KeyFact type demands exactly the fresh field; this pins the runtime refusal too
-			db.get(task, { kind: TaskKind.Cartograph, subject: 1n })
+			db.get(task, { kind: "Cartograph", subject: 1n })
 		}, /missing field id/)
 		const objectiveId = must(ids.objectives[0])
 		const membership = db.get(grpMember, { objective: objectiveId })

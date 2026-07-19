@@ -40,7 +40,7 @@ const Grp = relation("Grp", { id: u64.fresh, label: str })
 const Task = relation("Task", { id: u64.fresh, kind: TaskKind.id, subject: u64 })
 
 /** The exact statement C-07 claims cannot be written. */
-const authorSubjectIsGrp = contained(on(Task.where({ kind: TaskKind.Author }), "subject"), on(Grp, "id"))
+const authorSubjectIsGrp = contained(on(Task.where({ kind: "Author" }), "subject"), on(Grp, "id"))
 
 /**
  * The closed-reference companion (`docs/architecture/10-data-model.md`
@@ -71,7 +71,7 @@ describe("C-07 refutation: the selected-source containment is statable and enfor
 
 	test("a fresh Author task with a dangling subject is unwritable (source side)", function danglingMint() {
 		const rejected = db.write(function mintDead(tx) {
-			tx.insert(Task, { kind: TaskKind.Author, subject: 999n })
+			tx.insert(Task, { kind: "Author", subject: 999n })
 		})
 		assert.ok(!rejected.ok, "the CIND judges the inserted source fact")
 		const violation = must(rejected.violations[0])
@@ -81,7 +81,7 @@ describe("C-07 refutation: the selected-source containment is statable and enfor
 
 	test("a non-Author task's subject is outside φ — kind-scoping holds", function scopedFreedom() {
 		const accepted = db.write(function mintEnrich(tx) {
-			tx.insert(Task, { kind: TaskKind.Enrich, subject: 999n })
+			tx.insert(Task, { kind: "Enrich", subject: 999n })
 		})
 		assert.ok(accepted.ok, "the selection scopes the law to Author rows only")
 	})
@@ -90,7 +90,7 @@ describe("C-07 refutation: the selected-source containment is statable and enfor
 		const seeded = db.write(function seed(tx) {
 			const grp = tx.insert(Grp, { label: "sheet-1" })
 			grpId = grp.id
-			tx.insert(Task, { kind: TaskKind.Author, subject: grp.id })
+			tx.insert(Task, { kind: "Author", subject: grp.id })
 		})
 		assert.ok(seeded.ok, "the well-founded pair lands")
 
