@@ -35,7 +35,17 @@ import * as errors from "@superbuilders/errors"
 import type { Exhumed } from "#exhume.ts"
 import { exhumeStore } from "#exhume.ts"
 import { lower } from "#lower.ts"
-import { factOf, isFreshField, isMintedFresh, type KeyFact, keyRowOf, type Minted, recordOf, rowOf } from "#marshal.ts"
+import {
+	factOf,
+	handleOf,
+	isFreshField,
+	isMintedFresh,
+	type KeyFact,
+	keyRowOf,
+	type Minted,
+	recordOf,
+	rowOf
+} from "#marshal.ts"
 
 import type {
 	DbHandle,
@@ -55,7 +65,7 @@ import type { Query } from "#query/lower.ts"
 import { lowerQuery } from "#query/lower.ts"
 import { decodeAnswers, wireParams } from "#query/run.ts"
 import type { ParamEntry, ParamsRecord } from "#query/scope.ts"
-import type { AnyRelation, Fact, InsertFact } from "#relation.ts"
+import type { AnyRelation, Fact, InsertFact, RelationField } from "#relation.ts"
 import type { AnySchema, Schema, SchemaRelation, SchemaRelations } from "#schema.ts"
 import type { KeyStatement, Statement } from "#statements.ts"
 
@@ -79,7 +89,10 @@ type DeclaredKeyFact<R extends AnyRelation, Projection extends readonly string[]
 /**
  * One offending fact of a violation: the cited relation's name (a member
  * of the schema's record) and the fact decoded to a named natural-value
- * object — partial exactly as the engine cites it.
+ * object — partial exactly as the engine cites it. Closed-referencing
+ * cells arrive as handle NAMES (the marshal bijection's read half), so the
+ * record and the violation's `canonical` string — which the engine already
+ * renders with handle names — agree on the one spelling.
  */
 interface OffendingFact<Rels extends SchemaRelations> {
 	readonly relation: keyof Rels & string
@@ -525,6 +538,22 @@ function orientationOf(reversed: boolean | undefined): "written" | "mirrored" | 
 	return "written"
 }
 
+/**
+ * The declared field descriptors a violation's offending cells decode
+ * through: an ordinary relation's declared fields; a closed relation's
+ * SEALED shape — the roster-carrying synthetic `id` (the member's own
+ * reference descriptor) plus its payload columns (a `ClosedColumn` is
+ * structurally a `RelationField`). This is how {@link openDb}'s
+ * `offendingFactOf` reaches the open-time descriptors: the cited relation
+ * name resolves to the schema member, and the member carries them.
+ */
+function declaredFieldsOf(member: SchemaRelation): readonly RelationField[] {
+	if ("axioms" in member) {
+		return [{ name: "id", field: member.id }, ...member.data.columns]
+	}
+	return member.data.fields
+}
+
 /** The id-resolution tables one open builds: relation entries by name, statement slots by id. */
 interface Tables {
 	readonly relations: ReadonlyMap<string, RelationEntry>
@@ -705,12 +734,20 @@ function openDb<Rels extends SchemaRelations>(handle: DbHandle, theory: Schema<R
 	}
 
 	function offendingFactOf(fact: WireViolationFact): OffendingFact<Rels> {
-		if (!isMemberName(fact.relation)) {
+		const entry = tables.relations.get(fact.relation)
+		if (entry === undefined || !isMemberName(fact.relation)) {
 			throw errors.new(`bumbledb violation cites unknown relation ${fact.relation}`)
 		}
+		const declared = declaredFieldsOf(entry.member)
 		const decoded: Record<string, FactValue> = {}
 		for (const cell of fact.fields) {
-			decoded[cell.name] = cell.value
+			const cited = declared.find(function byName(candidate) {
+				return candidate.name === cell.name
+			})
+			decoded[cell.name] =
+				cited !== undefined && "closed" in cited.field
+					? handleOf(`violation fact ${fact.relation} field ${cell.name}`, cited.field.closed, cell.value)
+					: cell.value
 		}
 		return Object.freeze({ relation: fact.relation, fact: Object.freeze(decoded) })
 	}
