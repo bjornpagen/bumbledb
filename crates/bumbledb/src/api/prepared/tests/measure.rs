@@ -590,3 +590,82 @@ fn sum_of_durations_overflow_is_the_typed_overflow_error() {
         other => panic!("expected the typed overflow error, got {other:?}"),
     }
 }
+
+/// The filter-order law for the Eq shapes (20-query-ir § the measure:
+/// "a same-atom predicate always runs before the subtraction, so a
+/// filtered fact never reaches it"): a same-atom Eq — written as a
+/// condition, written as a binding literal, and in either written
+/// order against the measure comparison — excludes the ray BEFORE the
+/// subtraction. Pins `split_filters`' measured-atom rule: lifting the
+/// Eq into a selection level would probe it only after the view (the
+/// measure refinement included) was built, and the excluded ray would
+/// poison the measure.
+#[test]
+fn a_same_atom_eq_protects_the_measure_from_the_ray() {
+    let dir = TempDir::new("measure-eq-order");
+    let schema = measure_schema();
+    let env = Environment::create(dir.path(), &schema).expect("create");
+    insert_sessions(
+        &env,
+        &schema,
+        &[
+            (1, 10, 0, (0, 10)),       // bounded: measure 10
+            (2, 20, 0, (3, u64::MAX)), // the ray [3, ∞) — Eq-excluded
+        ],
+    );
+    let cache = ImageCache::new(&schema);
+    let txn = env.read_txn().expect("txn");
+    let run = |query: &Query| -> Vec<Vec<u64>> {
+        let mut prepared = prepare(&txn, &cache, &schema, query).expect("prepare");
+        let out = prepared
+            .execute_collect(&txn, &cache, &[])
+            .expect("the Eq runs before the subtraction");
+        u64_answers(&out, out.arity())
+    };
+    let eq_tag = ConditionTree::Leaf(Comparison {
+        op: CmpOp::Eq,
+        lhs: Term::Var(VarId(0)),
+        rhs: Term::Literal(Value::U64(10)),
+    });
+    let measure_gt = ConditionTree::Leaf(Comparison {
+        op: CmpOp::Gt,
+        lhs: Term::Measure(VarId(1)),
+        rhs: Term::Literal(Value::U64(5)),
+    });
+
+    // The condition spelling, both written orders.
+    for conditions in [
+        vec![eq_tag.clone(), measure_gt.clone()],
+        vec![measure_gt.clone(), eq_tag],
+    ] {
+        let query = Query::single(Rule {
+            finds: vec![FindTerm::Var(VarId(0))],
+            atoms: vec![Atom {
+                source: crate::ir::AtomSource::Edb(SESSION),
+                bindings: vec![
+                    (FieldId(1), Term::Var(VarId(0))),
+                    (FieldId(3), Term::Var(VarId(1))),
+                ],
+            }],
+            negated: vec![],
+            conditions,
+        });
+        assert_eq!(run(&query), vec![vec![10]]);
+    }
+
+    // The binding-literal spelling — normalization lowers it to the
+    // same per-atom Eq filter (20-query-ir § normalization step 2).
+    let query = Query::single(Rule {
+        finds: vec![FindTerm::Measure(VarId(1))],
+        atoms: vec![Atom {
+            source: crate::ir::AtomSource::Edb(SESSION),
+            bindings: vec![
+                (FieldId(1), Term::Literal(Value::U64(10))),
+                (FieldId(3), Term::Var(VarId(1))),
+            ],
+        }],
+        negated: vec![],
+        conditions: vec![measure_gt],
+    });
+    assert_eq!(run(&query), vec![vec![10]]);
+}

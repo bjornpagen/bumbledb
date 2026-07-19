@@ -27,6 +27,7 @@ import {
 	key,
 	mirrors,
 	on,
+	query,
 	relation,
 	renderStatement,
 	schema,
@@ -224,6 +225,72 @@ describe("marshal edges and lifecycle sanity against a real store", async functi
 			},
 			/well-formed string/,
 			"the lookup path refuses too — a never-written fact must not answer"
+		)
+	})
+
+	test("the query lane refuses a lone surrogate — inline literal, where() literal, and param", function loneSurrogateQueryLane() {
+		/**
+		 * The same bijection law at the query seam (`query/lower.ts`
+		 * taggedLiteral): without the wall a lone surrogate crosses the
+		 * napi boundary lossily (U+FFFD) and silently matches a fact the
+		 * typed write surface can never store, and the DISTINCT strings
+		 * "\uD800" / "\uDC00" collapse to one wire query — one value
+		 * queried two ways would give contradictory answers.
+		 */
+		assert.throws(
+			function inlineLiteralRefused() {
+				db.prepare(query(Theory).rule((r) => r.match(Txt, { id: r.var("i"), note: "\uD800" }).select("i")))
+			},
+			/well-formed string/,
+			"the binding-literal spelling is refused"
+		)
+		assert.throws(
+			function whereLiteralRefused() {
+				db.prepare(
+					query(Theory).rule((r) =>
+						r
+							.match(Txt, { id: r.var("i"), note: r.var("n") })
+							.where(r.eq(r.var("n"), "\uD800"))
+							.select("i")
+					)
+				)
+			},
+			/well-formed string/,
+			"the comparison-literal spelling is refused"
+		)
+		const byNote = query(Theory).rule((r) => r.match(Txt, { id: r.var("i"), note: r.param("note") }).select("i"))
+		const prepared = db.prepare(byNote)
+		assert.throws(
+			function paramRefused() {
+				db.execute(prepared, { note: "\uD800" })
+			},
+			/well-formed string/,
+			"the execute-time string param is refused"
+		)
+	})
+
+	test("the schema-literal lane refuses a lone surrogate — where() selections and closed payloads", function loneSurrogateSchemaLane() {
+		/**
+		 * The third string-admission seam (`fields.ts` literalOf): a lone
+		 * surrogate in a selection literal or a closed payload would cross
+		 * dbCreate lossily (stored as U+FFFD engine-side), collapsing two
+		 * distinct TS schema values into one stored theory/fingerprint and
+		 * splitting the engine's canonical rendering (\u{fffd}) from the
+		 * SDK's renderStatement (\u{d800}) — breaking the paste-back law.
+		 */
+		assert.throws(
+			function whereSelectionRefused() {
+				Txt.where({ note: "\uD800" })
+			},
+			/well-formed string/,
+			"a where() selection literal is refused at construction"
+		)
+		assert.throws(
+			function closedPayloadRefused() {
+				closed("Tag", { label: str }, { A: { label: "\uD800" } })
+			},
+			/well-formed string/,
+			"a closed payload string is refused at construction"
 		)
 	})
 

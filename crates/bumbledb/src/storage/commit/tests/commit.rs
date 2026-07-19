@@ -475,3 +475,63 @@ fn pending_interns_flush_at_commit_and_advance_the_counter() {
     let next = crate::storage::dict::intern_str(&mut wtxn, "other").expect("intern");
     assert_eq!(next, id + 1);
 }
+
+/// The never-reissue law on `commit()`'s own pre-plan exits
+/// (`lean/Bumbledb/Txn/Fresh.lean: never_reissue_observable`): by the
+/// time the delta reaches `commit()`, the write region's drop guard has
+/// disarmed — commit owns the flush on EVERY termination, including the
+/// fallible work BEFORE `commit_bounded` (the plan block's snapshot
+/// read, the empty path's generation read). The injected fault is a
+/// full reader table (`MDB_NOTLS` binds slots to transaction objects,
+/// so one thread exhausts it alone): `env.read_txn()` fails typed while
+/// the burn's own WRITE transaction still succeeds. Both pre-plan exits
+/// are pinned: the plan block (non-empty delta) and the no-op path's
+/// generation read (alloc-only delta).
+#[test]
+fn a_pre_plan_infra_failure_still_burns_the_escaped_fresh_ids() {
+    use crate::storage::env::MAX_READERS;
+    let dir = TempDir::new("commit-preplan-burn");
+    let schema = schema();
+    let env = Environment::create(dir.path(), &schema).expect("create");
+
+    let mint = |env: &Environment, insert: bool| {
+        let view = env.read_txn().expect("txn");
+        let mut delta = WriteDelta::new(&schema);
+        let id = delta.alloc(&view, TARGET, FieldId(0)).expect("alloc");
+        if insert {
+            delta
+                .insert(&view, TARGET, &target_fact(&schema, id))
+                .expect("insert");
+        }
+        drop(view);
+        (id, delta)
+    };
+
+    // The plan-block exit: a non-empty delta whose escaped id must
+    // survive the failed `env.read_txn()` before `plan_commit`.
+    let (id, delta) = mint(&env, true);
+    assert_eq!(id, 0, "the mint's first issue");
+    let held: Vec<_> = (0..MAX_READERS)
+        .map(|_| env.read_txn().expect("slot within the table"))
+        .collect();
+    let err = commit(delta, &env).unwrap_err();
+    assert!(matches!(err, Error::ReadersFull { .. }), "{err:?}");
+    drop(held);
+
+    // The no-op path's generation-read exit: an alloc-only (empty)
+    // delta, same injected fault. Its mint continuing past `id` also
+    // proves the first abort burned.
+    let (id, delta) = mint(&env, false);
+    assert_eq!(id, 1, "the plan-block abort burned its escaped id");
+    assert!(delta.is_empty(), "alloc-only deltas take the no-op path");
+    let held: Vec<_> = (0..MAX_READERS)
+        .map(|_| env.read_txn().expect("slot within the table"))
+        .collect();
+    let err = commit(delta, &env).unwrap_err();
+    assert!(matches!(err, Error::ReadersFull { .. }), "{err:?}");
+    drop(held);
+
+    // Never re-issued: both aborted transactions' ids are gone.
+    let (id, _delta) = mint(&env, false);
+    assert_eq!(id, 2, "the no-op-path abort burned its escaped id");
+}

@@ -48,11 +48,34 @@ that change a PRD's shape are recorded in that PRD; the load-bearing ones:
 | per-kind map_size split (32 GiB durable / 4 GiB ephemeral), `StoreKind::map_size()`, prd-G1 packet | ONE `MAP_SIZE = 4 << 30` (`storage/env.rs:168`), no per-kind split, no `docs/prds/incremental-images/` |
 | `lineage-off` feature + Wave-M A/B twin | absent — never merged |
 | `bench-out/waveM-*`, README bench conflict | PR #10's problem, not this wave's — out of scope, flagged to the serial committer |
+| `scan_from` + the whole I1 copy-on-append machinery (U2 kill 6's target) | absent — the fork predates PR #10's merge; kill 6 is DEFERRED-TO-RECONCILIATION (recorded in prd-U2) |
 
 Every other cited site was re-verified present here (the capacity contract,
-WRITEMAP ephemeral flags, the eager-alloc pin, `covers`, `SameArity`, the ten
-engine kills' sites, the SDK kill sites). Line numbers are census-time —
-re-locate before editing, never trust them blind.
+WRITEMAP ephemeral flags, the eager-alloc pin, `covers`, `SameArity`, the
+remaining engine kills' sites, the SDK kill sites). Line numbers are
+census-time — re-locate before editing, never trust them blind.
+
+**The copy-on-append reconciliation directive (binds the merge of this
+branch, recorded 2026-07-19).** This worktree forked from main BEFORE PR #10
+merged (merged 2026-07-19T17:19:41Z, 47 s before PR #11 opened), so the
+entire I1 copy-on-append feature — the measured 2.54× — exists on merged
+main but NOT here: `image/cache/advance.rs`, `get_or_build`'s
+append/carry/corruption arms, `storage/read/scan.rs::scan_from`,
+`storage/read/row_id_high_water.rs`, the delta accessors'
+`dirty_relations`, `api/db/image_oracle.rs`, `api/db/append_tests.rs`,
+fuzz oracle 6, and the `api/db/write.rs` commit epilogue
+(`dirty_relations()` → `ImageCache::advance(new_generation, &dirty)` where
+this branch still calls `cache.evict_older_than(report.new_generation)`).
+Every test pinning the feature was dropped with the fork, so a
+wrong-direction reconciliation reverts it with ZERO failing tests. The
+three-way reconciliation MUST treat main's I1 file set as the base for
+`api/db/write.rs`'s epilogue, `image/cache/**`,
+`storage/read/{scan.rs,row_id_high_water.rs}`,
+`storage/delta/accessors.rs`, `api/db/{image_oracle.rs,append_tests.rs}`,
+and `fuzz/src/lib.rs` oracle 6, then re-apply this wave's U2 collapses on
+top; verify by grepping the merged tree for `ImageCache::advance` and
+running `append_tests` under `--features trace,image-oracle`. U2 kill 6
+(scan delegation) executes in the same post-merge pass.
 
 ## The rulings, ratified (no PRD re-litigates these)
 

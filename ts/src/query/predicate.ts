@@ -29,7 +29,7 @@
 
 import * as errors from "@superbuilders/errors"
 import type { SchemaClasses } from "#law.ts"
-import type { RecData } from "#query/atom.ts"
+import type { RecData, RuleData, SelectColumn } from "#query/atom.ts"
 import type {
 	AnyRuleValue,
 	HeadOf,
@@ -45,8 +45,8 @@ import type {
 	RuleValue
 } from "#query/lower.ts"
 import { makeOutputRuleScope, makeQuery, makeRawScope } from "#query/lower.ts"
-import type { Flatten, ParamsRecord, ShapeOf } from "#query/scope.ts"
-import { inferred } from "#query/scope.ts"
+import type { ClassedField, Flatten, ParamsRecord, ShapeOf } from "#query/scope.ts"
+import { fieldJoins, inferred, renderFieldKind } from "#query/scope.ts"
 import type { Schema, SchemaRelations } from "#schema.ts"
 
 /**
@@ -112,6 +112,20 @@ interface RawRec<Name extends string> {
 	rule(build: (r: RawScope) => RuleValue<never, never>): RawRec<Name>
 }
 
+/**
+ * The classed slot one rec head column binds, through the rule's own
+ * environment: a rec head projects bound variable NAMES only (the strata
+ * roster's unwritability), so every column is a projected var and its
+ * slot is the var's first positive binding.
+ */
+function recHeadSlotOf(rule: RuleData, column: SelectColumn): ClassedField | undefined {
+	const entry = column.entry
+	if (entry.kind === "var") {
+		return rule.varFields[entry.over]
+	}
+	return undefined
+}
+
 /** Builds the runtime rec handle over shared rec data. */
 function makeRawRec<Name extends string>(state: ProgramState, name: Name, data: RecData): RawRec<Name> {
 	const rec: RawRec<Name> = {
@@ -137,6 +151,26 @@ function makeRawRec<Name extends string>(state: ProgramState, name: Name, data: 
 						`rec ${name}: every rule derives the same head — rule 0 projects (${declared.join(", ")}), this rule projects (${candidate.join(", ")})`
 					)
 				}
+				// The law-class wall on the sealed head: names alone do not
+				// align value spaces. Every rule must bind each head column
+				// at a slot that JOINS rule 0's (the sealing rule — the one
+				// slot every downstream idb pairing class-checks against),
+				// under the same fieldJoins judgment every reuse site
+				// enforces; otherwise a later rule feeds (say) bare weights
+				// into a column the idb joins as Node ids.
+				built.rule.select.forEach(function verifyHeadSlot(column, position) {
+					const lead = head.select[position]
+					if (lead === undefined) {
+						return
+					}
+					const leadSlot = recHeadSlotOf(head, lead)
+					const slot = recHeadSlotOf(built.rule, column)
+					if (leadSlot !== undefined && slot !== undefined && !fieldJoins(leadSlot, slot)) {
+						throw errors.new(
+							`rec ${name}: every rule derives the same head — the head column ${lead.name} is bound at ${renderFieldKind(leadSlot)} in rule 0 but at ${renderFieldKind(slot)} in this rule (a head column joins only class-equal slots; bare pairs only with bare)`
+						)
+					}
+				})
 			}
 			data.rules.push(built.rule)
 			return makeRawRec<Name>(state, name, data)

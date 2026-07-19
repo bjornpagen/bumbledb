@@ -186,6 +186,21 @@ fn occurrence_estimate(
             estimate = allen_keep(estimate, *mask);
             continue;
         }
+        // An Eq-constant riding the residual list (a measure predicate
+        // pinned the whole list residual — `split_filters`): priced
+        // exactly as the selection it would otherwise have been, so a
+        // measured atom's estimate never drifts from its unmeasured
+        // twin's.
+        if let FilterPredicate::Compare {
+            field,
+            op: CmpOp::Eq,
+            value,
+        } = residual
+        {
+            let distinct = distinct_of(txn, schema, occurrence.relation(), *field, image, rows)?;
+            estimate = (estimate.saturating_mul(selection_matches(value)) / distinct.max(1)).max(1);
+            continue;
+        }
         if let FilterPredicate::Compare {
             field,
             op: CmpOp::Lt | CmpOp::Le | CmpOp::Gt | CmpOp::Ge,
@@ -203,7 +218,7 @@ fn occurrence_estimate(
             FilterPredicate::Compare { op, .. } => match op {
                 CmpOp::Lt | CmpOp::Le | CmpOp::Gt | CmpOp::Ge => RANGE_KEEP_DEN,
                 CmpOp::Ne => 1,
-                CmpOp::Eq => unreachable!("split_filters routed Eq into selections"),
+                CmpOp::Eq => unreachable!("Eq residuals priced above"),
                 CmpOp::Allen { .. } | CmpOp::PointIn => {
                     unreachable!("interval conditions lower to their fixed shapes")
                 }

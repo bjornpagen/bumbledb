@@ -98,9 +98,11 @@ pub enum PlanError {
     /// guarantees negated-atom variables are positive-atom-bound, so
     /// this names a hand-built plan or query).
     UnplacedAntiProbe { anti_probe: usize },
-    /// An occurrence's `filters` still carries an Eq-constant compare —
-    /// lowering moves every one into `selections`, so its presence means
-    /// a hand-built occurrence bypassed the split (docs/architecture/40-execution.md).
+    /// An occurrence's `filters` carries an Eq-constant compare with no
+    /// measure predicate beside it — lowering moves every such Eq into
+    /// `selections` (a MEASURED occurrence keeps its whole list residual:
+    /// the filter-order law, `split_filters`), so its presence means a
+    /// hand-built occurrence bypassed the split (docs/architecture/40-execution.md).
     SelectionOnFilteredField { occ: OccId },
     /// A var-sourced membership filter's point variable is never bound —
     /// validation guarantees point variables are positive-atom-bound, so
@@ -160,13 +162,16 @@ pub struct PlanOccurrence {
     /// The field each variable reads from.
     pub vars: Vec<(FieldId, VarId)>,
     /// Probeable equalities, ordered by field id (deterministic plans).
-    /// Always empty for a negated occurrence: its Eq-constants stay in
-    /// `filters` (below).
+    /// Always empty for a negated occurrence — its Eq-constants stay in
+    /// `filters` (below) — and for a MEASURED occurrence, whose whole
+    /// list stays residual (the filter-order law, `split_filters`).
     pub selections: Vec<Selection>,
     /// Residual per-occurrence filters (evaluated at the source view):
     /// non-Eq compares, every `FieldsCompare`, and the interval
-    /// compositions — never an Eq-constant on a positive occurrence,
-    /// which lowering routes into `selections`. A **negated** occurrence
+    /// compositions — an Eq-constant sits here on a positive occurrence
+    /// only under a measure predicate (the filter-order law: the Eq runs
+    /// before the subtraction, `split_filters`); every other one is
+    /// routed into `selections`. A **negated** occurrence
     /// keeps its whole lowered filter list here, Eq-constants included:
     /// the anti-probe runs against the ordinary filtered view, memoized
     /// per (generation, resolved filters), and an empty view just means
