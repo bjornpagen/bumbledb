@@ -17,6 +17,7 @@ use crate::translate::ParamSlot;
 
 mod bulk;
 mod cold_containment_walk;
+mod cold_containment_walk_delete;
 mod commits;
 mod fairness_check;
 mod new;
@@ -27,6 +28,7 @@ mod tests;
 
 pub use bulk::bulk;
 pub use cold_containment_walk::cold_containment_walk;
+pub use cold_containment_walk_delete::cold_containment_walk_delete;
 pub use commits::{commit_batch, commit_single};
 pub use open_for_bench::open_for_bench;
 pub use sample::{sample, sample_args};

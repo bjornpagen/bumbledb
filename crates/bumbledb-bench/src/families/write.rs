@@ -81,5 +81,16 @@ pub fn write_families() -> &'static [WriteFamily] {
             kind: Kind::Report,
             protocol: Protocol::COLD,
         },
+        // The delete-bearing cold lane (PRD-I2): the same timed walk
+        // behind a delete+reinsert touch (the recipe-20/attemptText
+        // revision shape) — the only row where a delete-induced rebuild
+        // is measurable at all. Report-class like every write/cold row,
+        // and structurally outside the ALL-WIN gate (`RunReport::all_win`
+        // covers the read roster only).
+        WriteFamily {
+            name: "cold_containment_walk_delete",
+            kind: Kind::Report,
+            protocol: Protocol::COLD,
+        },
     ]
 }
