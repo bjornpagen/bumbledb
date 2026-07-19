@@ -1246,10 +1246,12 @@ function makeRawScope(context: ChainContext): RawScope {
 }
 
 /**
- * The one trusted admission seam of the rule builders (the `relation()`
- * `refsComplete` pattern): the raw builder is one runtime shape for every
- * context, and this guard verifies the checkable fact — the builder verbs
- * exist — before the value is admitted at its TYPED face. The type-level
+ * The rule builders' trusted admission seam — THE home of the
+ * trusted-admission-seam pattern the other mint guards cite (the face,
+ * class-map, axiom-readback, rec-handle, and query-value seams): the raw
+ * builder is one runtime shape for every context, and this guard verifies
+ * the checkable fact — the builder verbs exist — before the value is
+ * admitted at its TYPED face. The type-level
  * judgments (domain-equal joins, boundness, the recursion cut) live in the
  * interfaces themselves; the runtime twin of every one of them is a
  * construction-time validation in this module.
@@ -1507,7 +1509,7 @@ function makeRawQuery(theory: AnySchema, recs: readonly RecData[], rules: readon
 }
 
 /**
- * The query values' trusted admission seam (the `refsComplete` pattern):
+ * The query values' trusted admission seam (the {@link isTypedScope} pattern):
  * the checkable fact — the value was assembled over the identical theory —
  * is verified before the raw value is admitted at its typed face.
  */
@@ -1687,12 +1689,12 @@ function taggedCmpLiteral(
 		}
 		return { kind: "u64", value }
 	}
-	if (!("closed" in sibling) && sibling.kind === "interval") {
+	if (rosterOf(sibling) === undefined && sibling.kind === "interval") {
 		return taggedAtElementDomain(context, sibling.element, value)
 	}
 	if (
 		op === "pointIn" &&
-		!("closed" in sibling) &&
+		rosterOf(sibling) === undefined &&
 		(sibling.kind === "u64" || sibling.kind === "i64") &&
 		isIntervalValue(value)
 	) {

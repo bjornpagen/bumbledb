@@ -11,7 +11,10 @@
 # compile and run scalar fallback correctly, no performance promises).
 # The suite is linux-clean by construction: every host-pinned falsifier
 # is #[ignore]d and every macos-only integration binary is whole-file
-# cfg(target_os = "macos"). The lean lane could run anywhere but stays
+# cfg(target_os = "macos"). Run 29697582864 falsified that claim once —
+# clockproxy's plausibility band read 0.18 GHz on the shared ubuntu
+# runner — and the probe joined the host-pinned set (arch-conditioned
+# ignore: the band is aarch64 physics). The lean lane could run anywhere but stays
 # put; the sdk lane REQUIRES darwin-arm64 (below); the miri lane's
 # native pass is the reference host's.
 #
@@ -43,8 +46,15 @@ name: ci
 on:
   # Scoped to main + PRs (the cleanup-0.5.0 packet, PRD U4): a WIP push
   # to a PR-less worktree branch no longer burns five macOS lanes.
+  # The wave branch is listed EXPLICITLY because its standing review
+  # surface (PR #11, held open by ruling 14) cannot rely on
+  # pull_request events: GitHub builds no merge ref for a CONFLICTING
+  # PR and creates no runs for its synchronize events — diagnosed
+  # 2026-07-19 (mergeable: CONFLICTING; seven commits after de1bac14,
+  # zero runs). Push is the only per-commit trigger that reaches a
+  # conflicted-but-open PR branch. Drop the entry when PR #11 closes.
   push:
-    branches: [main]
+    branches: [main, worktree-cleanup-050]
   pull_request:
   workflow_dispatch:
   schedule:

@@ -606,19 +606,19 @@ runner.
   on a quiet machine) gets its disposition recorded in `SESSIONS.md`,
   then deleted. Triage is structurally not optional: the launcher
   REFUSES to start while `fuzz/artifacts` holds any file. CI
-  (`.github/workflows/ci.yml`) runs five lanes on pushes to main and
+  (`.github/workflows/ci.yml`) runs four lanes on pushes to main and
   on pull requests (a WIP push to a PR-less branch burns nothing):
   the check lane (`scripts/check.sh`, a macOS + ubuntu matrix — the
   ubuntu run IS the x86-64 scalar-fallback and linux coverage,
   strictly stronger than the retired cross `cargo check`); the
   corpus-replay lane (plain `cargo test` in `fuzz/`, same two-OS
   matrix); the lean lane (`lake build`, the spec census, and the
-  three-way conformance comparator); the sdk lane (the napi bridge +
-  SDK built from source, `pnpm test`, the FFI lint wall, and the
-  cross-language fingerprint lock); and the Miri lane
-  (`scripts/miri.sh`, both interpretation targets) on a nightly cron
-  and manual dispatch (measured 12.5 min locally — over the per-push
-  budget). CI deliberately runs NO benches, NO asm gates, and NO long
+  three-way conformance comparator); and the sdk lane (the napi
+  bridge + SDK built from source, `pnpm test`, the FFI lint wall, and
+  the cross-language fingerprint lock). The fifth lane, Miri
+  (`scripts/miri.sh`, both interpretation targets), runs on a nightly
+  cron and manual dispatch only (measured 12.5 min locally — over the
+  per-push budget). CI deliberately runs NO benches, NO asm gates, and NO long
   fuzz sessions: timing and codegen gates are local measurement
   discipline on the pinned M2 Max, and firepower is the owner's
   machine (the human work register).

@@ -263,7 +263,8 @@ function on<S extends FaceSource>(source: S, fields: string | readonly string[])
 }
 
 /**
- * The trusted seam of the face mint (the `refsComplete` pattern): the
+ * The trusted admission seam of the face mint (the pattern's home is
+ * `isTypedScope` in query/lower.ts): the
  * checkable facts — the value carries exactly the source and projection it
  * was built from, and `data.owner` is exactly the owner {@link faceParts}
  * resolves for that source — are verified before the wide construction is

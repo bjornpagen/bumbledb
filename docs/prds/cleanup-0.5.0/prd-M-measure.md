@@ -16,6 +16,15 @@ Protocol, identical for all three: build an isolated A/B (the fast path
 ON vs routed through the generic machinery), measure on the idle machine,
 then EXACTLY ONE of:
 
+> **Amendment (recorded deviation, 2026-07-19):** the A/B scaffolding was
+> prepared EARLY by the U2 commit (`b0ddb330`), against prd-U2's own
+> scope wall — `Executor::disable_leaf_elision` (`cfg(test)` only, no
+> runtime mode), `api/prepared/tests/measure_twins.rs`, and the ignored
+> determinant twin in `storage/keys.rs`. The fast paths are unmodified;
+> M still owns the measurement and the verdict, and every switch dies
+> with the verdict as this protocol states. The deviation is also
+> recorded in prd-U2's not-in-scope list.
+
 - **Law**: a real win → record the number and the reverses-if clause at the
   site (the scan-pushdown sibling is the template) and in
   `40-execution.md` where the family's numbers live; the branch is
@@ -73,9 +82,14 @@ WRITEMAP): every banked ephemeral number is stale by construction. Re-earn:
   pre-stated threshold, and exactly one verdict executed (law recorded at
   site + docs, or merge landed with oracle + conformance green). No branch
   left in the "measured but unruled" state.
-- Items 4–6: every doc site U1 marked pending-measurement now carries a
-  post-U1 number citing its run dir, or a recorded retraction; `grep -rn
-  "pending-measurement" docs/ README.md crates/` is empty at phase close.
+- Items 4–6: every doc site U1 marked pending now carries a post-U1
+  number citing its run dir, or a recorded retraction. The mark as
+  actually planted is spelled `PENDING-RE-EARN` (50-storage.md,
+  00-product.md, 70-api.md, architecture/README.md, README.md,
+  ramdisk_phase_r.rs, TODO.md), so the close-out check is: `grep -rn
+  "PENDING-RE-EARN" docs/architecture/ README.md crates/ TODO.md` is
+  empty at phase close (the path set deliberately excludes this packet's
+  own prose, which names the mark in order to grep for it).
 - No test/margin weakened to make a number land; the alloc gate and
   check.sh green after any merge.
 - All numbers measured on the idle M2 Max through measure.sh; the landing
