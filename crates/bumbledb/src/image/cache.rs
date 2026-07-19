@@ -62,15 +62,20 @@ struct CacheInner {
     /// delete-free for its relation — maintained unconditionally by
     /// [`ImageCache::advance`] (a commit drops the entries of relations
     /// it deleted from, at every generation below the new one, and
-    /// retains the rest as append bases). The append/carry arms of
-    /// [`ImageCache::get_or_build`] replace their base in the same
-    /// critical section as their insert, so the quiescent flow keeps at
-    /// most one below-newest entry per relation; a reader racing the
-    /// commit epilogue (its snapshot ahead of `newest`) full-builds and
-    /// can strand one extra — still lawful, still bounded — until its
-    /// relation next goes dirty. Either way the map stays O(relations)
-    /// and the scale axiom's no-memory-pressure-eviction stance is
-    /// unstrained.
+    /// retains the rest as append bases). **Corollary, unconditional:**
+    /// every insert in [`ImageCache::get_or_build`] — append, carry, or
+    /// full build — sweeps the relation's entries below its own
+    /// generation in the same critical section, so no entry can outlive
+    /// the next insert above it: quiescent flow keeps exactly one entry
+    /// per relation, and a reader racing the commit epilogue (its
+    /// snapshot ahead of `newest`) supersedes the base it never probed
+    /// instead of stranding it — the pre-sweep design leaked one whole
+    /// image per race won, forever, on a never-deleted relation. Surplus
+    /// is transient and bounded by concurrently racing readers (a reader
+    /// still at the pre-race `newest` can re-add one entry below the
+    /// racer's until the next insert sweeps both), never monotone: the
+    /// map stays O(relations) and the scale axiom's
+    /// no-memory-pressure-eviction stance is unstrained.
     map: HashMap<(RelationId, GenerationId), Cached>,
     /// The newest generation the cache has been advanced to. A reader
     /// below this builds query-locally without inserting (accepted — the

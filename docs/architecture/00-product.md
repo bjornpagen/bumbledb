@@ -86,8 +86,11 @@ language. **Reverses if:** never — owner axiom.
   on the canonical machine. No scale-L corpus has been generated yet, so the budget
   is informational at S and binds only when L exists. The first execution after a commit may additionally
   pay image maintenance; the spike is exempt from the gate but reported by the
-  benchmark — with copy-on-append the exempt spike is O(delta) on delete-free
-  commits (the trace counters report appends vs builds), while the
+  benchmark — with copy-on-append the exempt spike on delete-free commits is
+  an O(delta) tail decode plus one O(relation) column memcpy (the write-design
+  bullet above, stated the same way; the memcpy is the recorded cost the slab
+  follow-on removes and is hundreds of milliseconds at ceiling scale — the
+  trace counters report appends vs builds), while the
   delete-bearing rebuild spike's size at large scale is unmeasured and stays
   PENDING RE-TRUE until the delete-bearing cold lane reports (a ceiling-scale
   rebuild is seconds-order by arithmetic, `50-storage.md`).
@@ -243,7 +246,8 @@ the image cache entirely. **Why it lost:** LMDB gives crash-safe atomic commits,
 MVCC read snapshots, and a battle-tested B-tree for free; a hand-rolled WAL is exactly
 the kind of subtle, unglamorous correctness surface this project should not own; the
 image-cache design (`50-storage.md`) recovers the paper's environment at a cost
-copy-on-append maintenance keeps O(delta) on delete-free commits (the old
+copy-on-append maintenance keeps at an O(delta) tail decode plus one O(relation)
+column memcpy on delete-free commits (the old
 amortize-by-write-rate argument is retracted with the write design point above);
 and the ordered B-tree is what makes
 pointwise keys and coverage walks O(log n) neighbor probes instead of new index

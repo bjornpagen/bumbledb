@@ -217,8 +217,11 @@ pub fn cold_containment_walk(db: &Db<Ledger>, cfg: GenConfig) -> Result<Measurem
 /// delta and commit nothing).
 ///
 /// Delete-bearing **by contract**, not by hope: a no-op delete (the
-/// previous revision absent) is an error, so the lane can never drift
-/// into measuring the insert-only fork. Containment-safe by
+/// previous revision absent) refuses INSIDE the write closure, so the
+/// whole transaction aborts and a refused swap leaves the store
+/// byte-identical — the lane can never drift into measuring the
+/// insert-only fork, and a refusal never commits the replacement insert
+/// it would otherwise have smuggled in. Containment-safe by
 /// construction: the swapped posting is this runner's own (no
 /// `PostingTag` references it), and the replacement's references are
 /// drawn from committed corpus rows.
@@ -232,20 +235,21 @@ pub(crate) fn posting_swap(
     sizes: &Sizes,
     prev: &Posting,
 ) -> Result<Posting, String> {
-    let (deleted, next) = db
-        .write(|tx| {
-            let deleted = tx.delete(prev)?;
-            let id: PostingId = tx.alloc()?;
-            let next = prepared_posting(rng, sizes, id);
-            tx.insert(&next)?;
-            Ok((deleted, next))
-        })
-        .map_err(|e| format!("posting swap: {e:?}"))?;
-    if deleted {
+    db.write(|tx| {
+        if !tx.delete(prev)? {
+            // The in-closure sentinel abort (the fuzz harness's
+            // deliberate-abandon precedent): returning `Err` here drops
+            // the delta whole, so nothing below ever reaches the store.
+            return Err(bumbledb::Error::Io(std::io::Error::other(
+                "the swap touch must be delete-bearing: the previous revision was absent",
+            )));
+        }
+        let id: PostingId = tx.alloc()?;
+        let next = prepared_posting(rng, sizes, id);
+        tx.insert(&next)?;
         Ok(next)
-    } else {
-        Err("the swap touch must be delete-bearing: the previous revision was absent".to_owned())
-    }
+    })
+    .map_err(|e| format!("posting swap: {e:?}"))
 }
 
 /// The first swap target — one seeded posting committed before any
@@ -499,11 +503,12 @@ mod tests {
     /// The touch-shape pin — the lane's reason to exist: every swap
     /// commit genuinely carries one Delete disposition for the walked
     /// relation. Enforced by contract in [`posting_swap`] (a no-op
-    /// delete is an error, so a drift to insert-only cannot silently
-    /// measure the wrong fork), and falsified here from both sides: a
-    /// live previous revision swaps (delete `Ok(true)` inside, fresh id
-    /// out, generation bumped), while a stale one — already deleted —
-    /// REFUSES rather than degrading to an insert.
+    /// delete aborts the transaction whole, so a drift to insert-only
+    /// cannot silently measure the wrong fork), and falsified here from
+    /// both sides: a live previous revision swaps (delete `Ok(true)`
+    /// inside, fresh id out, generation bumped), while a stale one —
+    /// already deleted — REFUSES rather than degrading to an insert,
+    /// and the refusal commits NOTHING (the generation does not move).
     #[test]
     fn posting_swap_touch_is_delete_bearing_by_contract() {
         let dir = scratch("swap-shape");
@@ -521,10 +526,19 @@ mod tests {
         );
         // The stale side: `seed` is gone, so a swap against it must
         // refuse — the delete-bearing contract, not a silent insert.
+        let generation_at_refusal = db.generation().expect("generation");
         let refusal = posting_swap(&db, &mut rng, &sizes, &seed);
         assert!(
             refusal.is_err(),
             "a swap whose delete is a no-op must refuse"
+        );
+        // The refusal aborts the transaction whole: no stray insert-only
+        // commit rides along (the abort happens inside the closure, so
+        // the replacement insert never reaches the store).
+        assert_eq!(
+            db.generation().expect("generation"),
+            generation_at_refusal,
+            "a refused swap must leave the store untouched"
         );
         // The live chain continues: the last revision swaps again.
         let after = posting_swap(&db, &mut rng, &sizes, &next).expect("swap chain");

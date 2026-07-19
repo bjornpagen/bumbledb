@@ -865,8 +865,12 @@ unguarded. Non-recursive execution keeps the unamended stance.
 execution reads **full-width cached columnar images** built once per
 `(relation, storage_tx_id)` and shared across read transactions (`50-storage.md`).
 After warmup, execution runs in exactly the paper's environment. *Why:* LMDB is the
-durable truth; cold cost after a commit is O(delta) for delete-free relations
-(copy-on-append) and O(relation) after a delete. The old soundness clause — "at ≤1 GB the whole
+durable truth; cold cost after a commit is an O(delta) tail decode plus one
+O(relation) column memcpy for delete-free relations (copy-on-append — the
+memcpy is the recorded cost the slab follow-on removes,
+`docs/prds/incremental-images/prd-I1-copy-on-append.md`; at ceiling scale it
+is hundreds of milliseconds, not noise) and a full O(relation) decode after a
+delete. The old soundness clause — "at ≤1 GB the whole
 working set caches and the write design point (≥100 reads/generation) amortizes
 builds to noise" — is RETRACTED on both legs (the ≤1 GB leg fell to the 32 GiB
 ceiling ruling, the ≥100-reads leg to the bursty-rare retraction,

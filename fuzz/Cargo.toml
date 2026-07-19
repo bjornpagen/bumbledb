@@ -20,7 +20,11 @@ libfuzzer-sys = "0.4"
 # feature for EVERY target here (cargo unifies features across this
 # crate's one bumbledb) — safe because the hooks are inert without the
 # BUMBLEDB_CRASHPOINT env var, which only the crash child ever sets.
-bumbledb = { path = "../crates/bumbledb", features = ["ground-off", "fold-off", "crashpoint"] }
+# image-oracle: the copy-on-append column differential
+# (`Db::image_divergence`) — the `ops` target's sixth oracle
+# (docs/prds/incremental-images/prd-I1-copy-on-append.md § coverage
+# item 3(b)); a pure comparison method, inert unless called.
+bumbledb = { path = "../crates/bumbledb", features = ["ground-off", "fold-off", "crashpoint", "image-oracle"] }
 bumbledb-bench = { path = "../crates/bumbledb-bench" }
 rusqlite = { version = "0.32", features = ["bundled"] }
 

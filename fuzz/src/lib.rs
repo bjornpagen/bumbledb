@@ -247,7 +247,7 @@ fn genesis_debt_statements(descriptor: &SchemaDescriptor) -> BTreeSet<StatementI
 /// their contents are schema, not store state, so the view-read and
 /// full-contents comparisons range over the ordinary relations.
 ///
-/// Five oracles, beyond the standing no-panic totality:
+/// Six oracles, beyond the standing no-panic totality:
 /// 1. **Verdict parity** per commit — accept/reject matches the naive
 ///    judgment by STRICT EQUALITY of the COMPLETE violation sets,
 ///    order included: a rejection IS the sealed set (every violated
@@ -269,6 +269,16 @@ fn genesis_debt_statements(descriptor: &SchemaDescriptor) -> BTreeSet<StatementI
 /// 5. **Rejected commits change nothing** — after a judged rejection
 ///    (and after every rollback), full contents equal the model's
 ///    untouched state.
+/// 6. **The copy-on-append column differential** — after every
+///    COMMITTED commit, per touched relation, the engine's served
+///    image (whatever arm produced it: full build, append,
+///    carry-forward, or hit) must be indistinguishable from a
+///    from-scratch build in the same snapshot at the column granularity
+///    (`Db::image_divergence`, feature `image-oracle`;
+///    docs/prds/incremental-images/prd-I1-copy-on-append.md § coverage
+///    item 3(b)) — query parity alone would pass an append that lands
+///    the right multiset at wrong positions or corrupts
+///    lazily-observed metadata.
 pub fn ops(data: &[u8]) {
     let _note = ReplayNote::new(data);
     let mut rng = Rng::from_bytes(data);
@@ -353,9 +363,13 @@ fn epoch(db: &Db<target::Target>, naive: &mut NaiveDb, scenario: &OpScenario, op
                 assert_eq!(engine, model, "commit verdict divergence");
                 // Oracle 4: green after every commit, either verdict.
                 assert_green(db, "commit");
-                if matches!(engine, WriteVerdict::Aborted(_)) {
+                match engine {
+                    // Oracle 6: after a state-changing commit, every
+                    // touched relation's served image matches a
+                    // from-scratch build at the column granularity.
+                    WriteVerdict::Committed => assert_images(db, &delta, "commit"),
                     // Oracle 5: a judged rejection changed nothing.
-                    assert_contents(db, naive, "rejected commit");
+                    WriteVerdict::Aborted(_) => assert_contents(db, naive, "rejected commit"),
                 }
             }
             FuzzOp::Rollback => {
@@ -579,6 +593,38 @@ fn assert_contents(db: &Db<target::Target>, naive: &NaiveDb, when: &str) {
             "contents diverge after {when} (relation {})",
             rel.0
         );
+    }
+}
+
+/// Oracle 6: the copy-on-append column differential, per relation the
+/// committed delta touched — the engine's served image (whatever arm
+/// produced it) against a from-scratch build in the same snapshot,
+/// facet-by-facet (`row_count`, spans, every column slice, every
+/// forced distinct). Touched relations are drawn from the delta itself;
+/// a committed delta names only ordinary relations (a closed-relation
+/// write aborts whole), and `image_divergence` answers `None` vacuously
+/// for closed ones regardless.
+fn assert_images(db: &Db<target::Target>, delta: &Delta, when: &str) {
+    let mut touched: Vec<RelationId> = delta
+        .deletes
+        .iter()
+        .chain(delta.inserts.iter())
+        .map(|(rel, _)| *rel)
+        .collect();
+    touched.sort_unstable();
+    touched.dedup();
+    for rel in touched {
+        match db.image_divergence(rel) {
+            Ok(None) => {}
+            Ok(Some(divergence)) => panic!(
+                "image differential diverges after {when} (relation {}): {divergence:?}",
+                rel.0
+            ),
+            Err(err) => panic!(
+                "image differential errored after {when} (relation {}): {err:?}",
+                rel.0
+            ),
+        }
     }
 }
 

@@ -82,7 +82,14 @@ C. **The three arms in `get_or_build`** (miss at `generation == newest`;
      fuse-on-first-corruption as `scan`) at positions `base.row_count()..claimed`
      via the generalized `fill_columns` (takes iterator + starting position).
      Insert with the existing newest re-check + insert-if-absent adoption,
-     removing the base key in the same critical section.
+     removing the base key in the same critical section. **Amended as built
+     (the review wave):** the insert sweeps EVERY older entry of its relation
+     in that critical section, not one remembered base key — remove-by-key
+     stranded one whole image per commit-epilogue race won (a full build whose
+     snapshot ran ahead of `advance` probes no base and removed nothing),
+     monotone forever on a never-deleted relation; under the sweep no entry
+     outlives the next insert above it — surplus is transient and bounded by
+     concurrently racing readers, never monotone.
    - `claimed < base.row_count()` ⇒ typed `Corruption` (`RowCountMismatch`) —
      under the lineage law only corruption shrinks a count; hard error, never a
      skip.
@@ -190,8 +197,10 @@ none of it).
 The "237 ms / 190 MB" transcript number is recorded NOWHERE in the repo — it is
 not cited; the baseline is re-established. Family: `cold_containment_walk`
 (`bumbledb-bench/src/writebench.rs:174-208`) — the only family whose timed
-region contains a post-commit rebuild; recorded scale-S p50 4.17–5.00 ms vs
-warm ~7 µs. Twin: an `ImageCache` bench/test-only knob that disables lineage
+region contains a post-commit rebuild. No cold-vs-warm digits are asserted
+here either: session-run numbers without `scripts/measure.sh` conditions and
+a tier are not a record (the landing bar), so the baseline row IS the first
+record. Twin: an `ImageCache` bench/test-only knob that disables lineage
 (every `advance` behaves as `evict_older_than`) — the
 `StridePadder::with_tolerance` falsifier precedent — so A/B lay out interleaved
 in ONE process under `scripts/measure.sh` (±2% band; fresh data per rep;

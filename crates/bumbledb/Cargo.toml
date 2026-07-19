@@ -29,6 +29,14 @@ fold-off = []
 # expands to nothing; on, the hooks are still inert unless the
 # environment variable is set. No runtime mode ships.
 crashpoint = []
+# Fuzz-oracle infrastructure: the copy-on-append column differential
+# (`api/db/image_oracle.rs`) — the engine's served image of a relation
+# compared facet-by-facet against a from-scratch build in one snapshot,
+# for the detached fuzz crate's `ops` target (its sixth oracle,
+# docs/prds/incremental-images/prd-I1-copy-on-append.md § coverage
+# item 3(b)) — an external crate cannot reach `cfg(test)`, the fold-off
+# precedent. No runtime mode ships.
+image-oracle = []
 # The PRD-C1 measurement twins (`twin-no-mem-init`, `twin-append`)
 # lived here for one measurement session and were removed with their
 # gravestones — `MDB_NOMEMINIT` measured NEUTRAL

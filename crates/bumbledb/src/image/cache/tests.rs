@@ -478,6 +478,47 @@ fn chained_insert_only_commits_append_once_and_match_a_full_rebuild() {
     assert!(Arc::ptr_eq(&appended, &again));
 }
 
+/// The commit-epilogue race cannot strand append bases: a reader whose
+/// snapshot opened between `mdb_txn_commit` and the epilogue's `advance`
+/// is AHEAD of `newest`, skips the base probe (no arm matches its
+/// generation), and full-builds — and its insert must still sweep the
+/// relation's surviving base in the same critical section. Remove-by-key
+/// left the base behind here (`replaced = None`), leaking one whole
+/// image per race won, forever, on a never-deleted relation.
+#[test]
+fn an_epilogue_racing_full_build_supersedes_the_surviving_base() {
+    let dir = TempDir::new("cache-race-sweep");
+    let schema = schema();
+    let env = Environment::create(dir.path(), &schema).expect("create");
+    let cache = ImageCache::new(&schema);
+
+    // Generation 1: read, then the lawful epilogue.
+    insert_one(&env, &schema, 1);
+    {
+        let txn = env.read_txn().expect("txn");
+        cache.get_or_build(&txn, &schema, R).expect("base build");
+    }
+    cache.advance(gid(1), &[]);
+    assert_eq!(cache.keys(), vec![(R, gid(1))]);
+
+    // Generation 2 commits, and the reader wins the race: its snapshot
+    // opens BEFORE the epilogue's `advance`, so `newest` is still 1 and
+    // the base probe (newest readers only) never fires — a full build.
+    insert_one(&env, &schema, 2);
+    let racing = env.read_txn().expect("txn");
+    let image = cache.get_or_build(&racing, &schema, R).expect("full build");
+    assert_eq!(image.row_count(), 2);
+    assert_eq!(
+        cache.keys(),
+        vec![(R, gid(2))],
+        "the racing insert sweeps the stranded base instead of leaking it"
+    );
+
+    // The late epilogue arrives and changes nothing.
+    cache.advance(gid(2), &[]);
+    assert_eq!(cache.keys(), vec![(R, gid(2))]);
+}
+
 /// The hard-error arm: under the lineage law only storage corruption can
 /// shrink a delete-free relation's row count. The fixture violates the
 /// law on purpose — a deleting commit advanced with an empty dirty set —
