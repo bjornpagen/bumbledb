@@ -33,7 +33,7 @@ pub(crate) fn write_families(
     type EngineRunner = fn(&Db<Ledger>, GenConfig) -> Result<harness::Measurement, String>;
     type OracleRunner =
         fn(&rusqlite::Connection, GenConfig) -> Result<harness::Measurement, String>;
-    const PAIRED: [(&str, EngineRunner, OracleRunner); 3] = [
+    const PAIRED: [(&str, EngineRunner, OracleRunner); 4] = [
         (
             "commit_single",
             writebench::commit_single_bumbledb,
@@ -48,6 +48,13 @@ pub(crate) fn write_families(
             "cold_containment_walk",
             writebench::cold_containment_walk,
             sqlite_run::cold_containment_walk,
+        ),
+        // The delete-bearing cold lane (PRD-I2): the same walk behind a
+        // delete+reinsert touch — the append lane's discriminator twin.
+        (
+            "cold_containment_walk_delete",
+            writebench::cold_containment_walk_delete,
+            sqlite_run::cold_containment_walk_delete,
         ),
     ];
 

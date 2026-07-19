@@ -7,7 +7,11 @@ use crate::writebench::{prepared_posting, write_protocol};
 
 use super::POSTING_INSERT;
 
-fn sqlite_posting_params(rng: &mut Rng, sizes: &Sizes, id: u64) -> [rusqlite::types::Value; 6] {
+pub(super) fn sqlite_posting_params(
+    rng: &mut Rng,
+    sizes: &Sizes,
+    id: u64,
+) -> [rusqlite::types::Value; 6] {
     use rusqlite::types::Value as Sql;
     let posting = prepared_posting(rng, sizes, PostingId(id));
     [

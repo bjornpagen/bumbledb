@@ -1,5 +1,10 @@
 use super::*;
 
+/// The filter-mask decider twin (PRD-I3): test-local masked
+/// `filter_eq_u64`, its masked scalar reference, the always-on
+/// bit-identity pins, and the `#[ignore]`d interleaved timing twin.
+mod filter_mask_twin;
+
 /// A deterministic LCG so the property sweeps are reproducible.
 struct Lcg(u64);
 
