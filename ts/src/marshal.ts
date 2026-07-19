@@ -13,10 +13,22 @@
  * the engine admitted IS a legal fact of its relation (the same trust
  * direction as Rust's typed readback). Shape mismatches here are genuine
  * failures and THROW typed; they are never domain data.
+ *
+ * THE CLOSED BIJECTION (0.4.0): a closed-referencing cell crosses this
+ * boundary as its handle NAME — the write side lowers name → u64 row id
+ * (declaration order = row ids, the sealed roster's own law, ≤ 256 rows),
+ * the read side lifts id → name, and both directions are total and static
+ * over the roster. An unknown name is a pointed THROW at the write seam —
+ * a deliberate UPGRADE over 0.3.0, where any bigint sailed through the
+ * marshal to a commit-time containment violation; the wrong spelling now
+ * dies here, before the engine ever sees the row. An out-of-roster id on
+ * the read side (reachable only in a store whose closed-typed column was
+ * never pinned by its containment law) is equally pointed — never a
+ * silent fallback, never `undefined`.
  */
 
 import * as errors from "@superbuilders/errors"
-import type { AnyField } from "#fields.ts"
+import type { AnyField, ClosedRoster } from "#fields.ts"
 import type { FactValue } from "#native.ts"
 import type { AnyRelation, Fact, FreshKeys, RelationData } from "#relation.ts"
 
@@ -81,13 +93,63 @@ function recordOf(fact: object): Record<string, unknown> {
 }
 
 /**
+ * The write half of the closed bijection: one handle NAME to its u64 row
+ * id (declaration order = row ids — the engine's own minting of the
+ * sealed extension). An unknown name is a pointed refusal naming the
+ * vocabulary and its roster — the 0.4.0 upgrade over any-bigint-compiles:
+ * the wrong spelling dies at the marshal, never as a commit-time
+ * violation. `indexOf` is the whole machine (the roster is ≤ 256 rows,
+ * engine law — no map is warranted).
+ */
+function closedCellOf(context: string, closed: ClosedRoster, name: string): FactValue {
+	const id = closed.handles.indexOf(name)
+	if (id === -1) {
+		throw errors.new(
+			`${context}: "${name}" is not a handle of ${closed.name} — the roster is ${closed.handles.join(", ")}`
+		)
+	}
+	return BigInt(id)
+}
+
+/**
+ * The read half of the closed bijection: one u64 row id back to its handle
+ * NAME (`Number(cell)` is safe — the sealed extension holds at most 256
+ * rows, engine law). An id outside the roster THROWS pointed, never a
+ * silent fallback and never `undefined`: the state is reachable only in a
+ * store whose closed-typed column was never pinned by its containment law,
+ * and the error names that missing piece.
+ */
+function handleOf(context: string, closed: ClosedRoster, cell: FactValue): string {
+	if (typeof cell !== "bigint") {
+		throw cellShapeError(context, `a ${closed.name} handle id (bigint)`, cell)
+	}
+	const handle = closed.handles[Number(cell)]
+	if (handle === undefined) {
+		throw errors.new(
+			`${context}: id ${cell} is outside the ${closed.name} roster (${closed.handles.join(", ")}) — the column types ${closed.name} but no law pins it — a containment statement is the missing piece`
+		)
+	}
+	return handle
+}
+
+/**
  * Marshals one host cell at its field position to the natural wire value,
  * schema-directed by the field descriptor's structural kind (never
- * guessed). Values are bare, so the runtime values ARE the wire's natural
- * JS values; widths and domain labels are the engine's own judgment at the
- * write boundary.
+ * guessed). A closed-referencing cell arrives as its handle NAME and
+ * lowers through {@link closedCellOf} — the arm precedes the switch
+ * because a closed reference is structurally a u64 descriptor plus the
+ * roster (the same precedence `Infer` pins at the type level). Everything
+ * else is bare, so the runtime values ARE the wire's natural JS values;
+ * widths and domain labels are the engine's own judgment at the write
+ * boundary.
  */
 function cellOf(context: string, field: AnyField, value: unknown): FactValue {
+	if ("closed" in field) {
+		if (typeof value !== "string") {
+			throw cellShapeError(context, `a ${field.closed.name} handle name (string)`, value)
+		}
+		return closedCellOf(context, field.closed, value)
+	}
 	switch (field.kind) {
 		case "bool": {
 			if (typeof value !== "boolean") {
@@ -210,7 +272,9 @@ function isMintedFresh<R extends AnyRelation>(
 /**
  * Unmarshals one positional row to the relation's named, frozen fact object
  * of bare structural values — the inverse of {@link rowOf},
- * ordinal-directed by the same declaration order.
+ * ordinal-directed by the same declaration order. Closed-referencing cells
+ * lift id → handle NAME through {@link handleOf} (the read half of the
+ * bijection), so every fact a user sees speaks the roster's vocabulary.
  */
 function factOf<R extends AnyRelation>(relation: R, row: readonly FactValue[]): Fact<R> {
 	const data = relation.data
@@ -225,7 +289,10 @@ function factOf<R extends AnyRelation>(relation: R, row: readonly FactValue[]): 
 		if (cell === undefined) {
 			throw errors.new(`relation ${data.name}: row cell ${ordinal} (${declared.name}) is absent`)
 		}
-		decoded[declared.name] = cell
+		decoded[declared.name] =
+			"closed" in declared.field
+				? handleOf(`relation ${data.name} field ${declared.name}`, declared.field.closed, cell)
+				: cell
 	})
 	Object.freeze(decoded)
 	if (!isCompleteFact(relation, decoded)) {
@@ -235,4 +302,4 @@ function factOf<R extends AnyRelation>(relation: R, row: readonly FactValue[]): 
 }
 
 export type { KeyFact, Minted }
-export { cellOf, factOf, isFreshField, isMintedFresh, keyRowOf, recordOf, rowOf }
+export { cellOf, factOf, handleOf, isFreshField, isMintedFresh, keyRowOf, recordOf, rowOf }
