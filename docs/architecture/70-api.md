@@ -888,11 +888,13 @@ restated in a language with no host newtypes to carry nominal safety. A
 field's value type is its bare structural type (`u64`/`i64` → `bigint`,
 `str` → `string`, `bool` → `boolean`, `bytes<N>` → `Uint8Array`,
 `interval<E>` → `{ start; end }`, half-open); no value brands, no phantom
-tags, no minting casts. Domains are labels in the schema type: `.as("HolderId")`
-attaches a string domain label to the field's *descriptor type* — the mirror
-of the macro's `as HolderId` — and the relational builders (`contained`,
-`mirrors`, `window`, query joins) check those labels structurally at compile
-time by comparing descriptor shapes, never by a value brand. The two-boundary
+tags, no minting casts. Domains are law-born, never declared: relation
+declarations are pure structure, `schema()` computes every field's
+equivalence class FROM the statement list — the containments and mirrors the
+host already writes ARE the typing, the mirror of the macro's declared
+sorts — and the relational builders (`contained`, `mirrors`, `window`,
+query joins) check those classes structurally at compile time, never by a
+value brand. The two-boundary
 split is unchanged: what the type layer cannot state (target-resolves-a-key
 and the rest of the semantic roster) stays a typed `Db.create` error, and
 host-variable id-mixing on `insert` — a raw `bigint` in the wrong field —
@@ -905,6 +907,36 @@ render golden — the semantic-parity law in miniature.
 Structural values keep the marshal boundary pure both ways: nothing is
 branded going in, so nothing is asserted coming out, and the SDK's product
 code carries zero casts.
+
+### The drizzle law (recorded ruling, host-idiom-0.4.0)
+
+**The SDK's job at the host surface is translation, not abstraction: every
+database idiom arrives as the modern TypeScript idiom for that concept, and
+the SDK never invents an operator where the language already has one.**
+Enums arrive as string-literal unions and dispatch is native `switch`
+narrowing with `satisfies never` exhaustiveness; set membership is an
+array; rows are records of meaningful values. A combinator that replaces a
+native control-flow form is a defect — the SDK's `Kind.match` operator was
+exactly that, an imitation of Rust's `match` built because handles were
+opaque bigints, and it died with its cause (0.4.0).
+
+The handle-union texture, concretely: a closed-referencing column TYPES and
+HOLDS the roster's string-literal handle union (`"DirectPass" |
+"JudgedPass" | "Failed"`) at every SDK surface — facts, inserts, query
+match records, select rows, params, selections, violation offending facts —
+with the handle name as the one spelling (no minted constants, no
+id-to-name decode step: rows arrive named). The THEORY is untouched: the
+engine stores u64 row ids (declaration order, ≤256, sealed roster) and the
+SDK's marshal owns the total, static name↔id bijection at the boundary;
+the wire, the manifest, and the fingerprint never moved. This is ruling 9
+of hardening-0.3.0 extended to values: the Rust macro's host enum and the
+TS SDK's literal union are the SAME vocabulary in each host's native
+idiom — each host speaks its own language's enum, and only the marshal
+knows the encoding. Closed fields sit OUTSIDE the orderable/foldable set
+on this surface, type-tier and lowering-tier both: a closed reference's
+declaration-id order is a declaration-order accident, not semantics
+(`10-data-model.md` § orderability), so `lt`/`sum`-family admissions over
+a handle are unspellable and refused.
 
 ## The freeze, and the OPEN ledger
 

@@ -368,7 +368,10 @@ fixed extension.
   declare it (a hand-built descriptor that tries collides on the field name).
   Compiled sub-vocabulary membership is a typed `MemberSet::contains(AxiomIndex)`
   query; an arbitrary fact word narrows at that boundary, and every out-of-range
-  index reads as absence rather than a distinct error.
+  index reads as absence rather than a distinct error. At the TS SDK surface the
+  handle name IS the value — a closed-referencing column types and holds the
+  roster's string-literal union, ids stay the store's encoding, and the SDK's
+  marshal owns the name↔id bijection (`70-api.md` § the drizzle law).
 - **The auto-key.** Closedness materializes `R(id) -> R` exactly as `fresh` does
   (materialized order below) — ordinary in every way and targetable: a reference
   to a closed relation is a plain u64 column plus a declared containment, like any
