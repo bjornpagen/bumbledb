@@ -941,6 +941,12 @@ Six measured decisions, enforced structurally by
   prepended single-column COLT trie level, probed per execution with the
   resolved word (`Colt::select`). Force is O(view) once per generation, probes
   O(1) per param; views carry only residuals (ranges, Ne, `FieldsCompare`).
+  **One carve-out, correctness-owned:** an occurrence carrying a measure
+  predicate keeps its Eq-constants residual (`plan/fj/split_filters.rs`) —
+  a selection probes only after the view (measure refinement included) is
+  built, so a lifted Eq would let a row it excludes reach the subtraction,
+  violating the filter-order law (`20-query-ir.md` § the measure). The
+  measured atom pays with scans instead of probes.
   **Param sets ride this machinery**: a set-bound selection level probes once
   per element (k probes, k small by the documented assumption) and the
   survivor union feeds the node — never a per-element re-execution.

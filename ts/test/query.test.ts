@@ -258,6 +258,60 @@ describe("the query surface against a real store", function suite() {
 		)
 	})
 
+	test("a union head holds the class wall — one answer column is one id space", function unionHeadClassWall() {
+		/**
+		 * Rule 0 binds x at Holder.id (class "Holder.id"), rule 1 at
+		 * Account.id (class "Account.id"): the identical pairing at any
+		 * join/eq position is refused, and the head is a reuse site too — a
+		 * consumer reading the column as Holder ids would silently receive
+		 * Account ids. The engine cannot backstop this (the wire IR carries
+		 * no domains), so the SDK holds the wall at construction.
+		 */
+		assert.throws(function crossClassUnion() {
+			query(Ledger)
+				.rule((r) => r.match(Holder, { id: r.var("x") }).select("x"))
+				.rule((r) => r.match(Account, { id: r.var("x") }).select("x"))
+		}, /unions domain-unequal fields/)
+
+		// The class-equal union stays writable: Account.holder is in the
+		// "Holder.id" class by law, so both rules feed one id space.
+		const legal = query(Ledger)
+			.rule((r) => r.match(Holder, { id: r.var("x") }).select("x"))
+			.rule((r) => r.match(Account, { id: r.var("a"), holder: r.var("x") }).select("x"))
+		assert.deepEqual(
+			sorted(
+				run(legal, {}).map(function x(row) {
+					return row.x
+				})
+			),
+			sorted([ids.ada, ids.grace, ids.kurt, ids.lone]),
+			"every holder id, whether from Holder or through Account.holder"
+		)
+	})
+
+	test("a rec head holds the class wall — the sealed slot binds every rule", function recHeadClassWall() {
+		/**
+		 * Rule 0 seals c at Holder.id (class "Holder.id"); a second rule
+		 * binding c at the BARE Holder.rank would pollute every downstream
+		 * idb join (which class-checks against rule 0 alone): a rank value
+		 * equal to a holder id would make that holder "reachable". The same
+		 * bare-pairs-only-with-bare wall every reuse site enforces.
+		 */
+		assert.throws(function pollutedRecHead() {
+			program(Ledger, (p) => {
+				const reach = p.rec("reach")
+				reach.rule((r) => r.match(Holder, { id: r.var("c") }).select("c"))
+				reach.rule((r) => r.match(Holder, { id: r.var("h"), rank: r.var("c") }).select("c"))
+				return p.output((r) =>
+					r
+						.match(Holder, { id: r.var("c") })
+						.idb(reach, r.var("c"))
+						.select("c")
+				)
+			})
+		}, /joins only class-equal slots/)
+	})
+
 	test("count() groups implicitly by the non-aggregate select entries", function counting() {
 		const accountsPerHolder = query(Ledger).rule((r) =>
 			r.match(Account, { id: r.var("acct"), holder: r.var("holder") }).select("holder", r.count())

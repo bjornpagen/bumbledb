@@ -491,10 +491,12 @@ fn resolve_selection_into(
 /// in place. `Ok(false)` = the positive-occurrence `Eq` short-circuit
 /// (dictionary miss or empty set); on a negated occurrence the miss
 /// resolves to the sentinel id / empty word set — matching nothing, so
-/// the anti-probe never rejects. The `Eq`-Compare arms are unreachable
-/// through positive occurrences (`split_filters` routes every
-/// Eq-constant into selections) and live for negated ones, whose
-/// Eq-constants ARE view filters.
+/// the anti-probe never rejects. The `Eq`-Compare arms are live for
+/// negated occurrences, whose Eq-constants ARE view filters, and for
+/// measured positive ones — `split_filters` routes every other
+/// Eq-constant into selections but pins a measure-carrying atom's
+/// whole list residual (the filter-order law,
+/// `docs/architecture/20-query-ir.md` § the measure).
 #[expect(
     clippy::too_many_lines,
     reason = "the linear table or protocol is clearer kept together"
@@ -576,8 +578,9 @@ fn resolve_filter_into(
                 // set, with no per-execution work and no latch traffic.
                 // (Attached sets land on participating occurrences,
                 // whose Eq compares `split_filters` routes into
-                // selections — this arm exists for the shape's
-                // completeness, not a live path.)
+                // selections unless a measure predicate pins the list
+                // residual — the measured atom is this arm's one live
+                // path.)
                 Const::WordSet(words) => {
                     debug_assert_eq!(*op, CmpOp::Eq, "plan-constant sets ride Eq");
                     write_compare(dst, *field, *op, None);

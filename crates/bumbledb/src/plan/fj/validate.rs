@@ -119,7 +119,10 @@ fn build_occurrences(
                     .collect(),
             };
             // A positive occurrence's Eq-constants become selection
-            // levels (probes); a negated occurrence keeps its whole
+            // levels (probes) — unless a measure predicate rides the
+            // list, which pins the whole list residual so the Eq runs
+            // before the subtraction (the filter-order law,
+            // `split_filters`); a negated occurrence keeps its whole
             // filter list — the ordinary filtered view its anti-probe
             // runs against, memoized per (generation, resolved filters)
             // (docs/architecture/40-execution.md, § anti-probe filters).

@@ -99,11 +99,18 @@ pub fn commit(delta: WriteDelta<'_>, env: &Environment) -> Result<CommitReport> 
     // id is invisible.
     if delta.is_empty() {
         obs::event(obs::names::COMMIT_NOOP, obs::Category::Commit, 0, 0);
+        // The burn precedes the generation read: once the delta reaches
+        // `commit()`, the write region's drop guard has disarmed and
+        // commit owns the flush on EVERY termination — a generation read
+        // failing transiently (readers full, any Lmdb error) must not
+        // skip past the escaped marks, or the next transaction re-issues
+        // an id the host already holds
+        // (`lean/Bumbledb/Txn/Fresh.lean: never_reissue_observable`).
+        flush_escaped_fresh_ids(env, &delta)?;
         let generation = {
             let rtxn = env.read_txn()?;
             rtxn.generation()?
         };
-        flush_escaped_fresh_ids(env, &delta)?;
         return Ok(CommitReport {
             changed: false,
             new_generation: generation,
@@ -116,59 +123,65 @@ pub fn commit(delta: WriteDelta<'_>, env: &Environment) -> Result<CommitReport> 
     // pure function of (delta, schema) before the write lock. Selection
     // literals encode once per commit here — the resolution reads only
     // the committed dictionary (frozen for the single writer) plus the
-    // delta's pending interns.
+    // delta's pending interns. The plan block runs INSIDE `outcome` so
+    // its infra errors (the snapshot read, a corrupt dictionary forward
+    // id) share the burn exit below with `commit_bounded`'s — commit
+    // owns the flush on every termination it owns
+    // (`lean/Bumbledb/Txn/Fresh.lean: never_reissue_observable`).
     let schema = delta.schema();
-    let plan = {
-        let view = env.read_txn()?;
-        let selections = judgment::Selections::encode(&delta, &view)?;
-        plan_commit(&delta, schema, selections)
-    };
-    let outcome = commit_bounded(|| {
-        let Applied {
-            mut txn,
-            row_id_next,
-        } = apply(&plan, env)?;
-        crashpoint!("before-judgment");
+    let outcome = (|| {
+        let plan = {
+            let view = env.read_txn()?;
+            let selections = judgment::Selections::encode(&delta, &view)?;
+            plan_commit(&delta, schema, selections)
+        };
+        commit_bounded(|| {
+            let Applied {
+                mut txn,
+                row_id_next,
+            } = apply(&plan, env)?;
+            crashpoint!("before-judgment");
 
-        // Phase 3, the judgment phase: final-state probes inside this same
-        // write transaction (LMDB write txns read their own writes) — the
-        // containment source side over the plan's probe list, then the
-        // target side over the plan's disestablished-determinant check sets.
-        // Both sides are scan-complete collectors; the rejection is the
-        // sealed COMPLETE violation set, never its first member.
-        let final_state = judgment::FinalStateView::new(&txn, schema, &plan);
-        if let Some(violations) = judgment::judge(&final_state)? {
-            return Err(Error::CommitRejected { violations });
-        }
+            // Phase 3, the judgment phase: final-state probes inside this same
+            // write transaction (LMDB write txns read their own writes) — the
+            // containment source side over the plan's probe list, then the
+            // target side over the plan's disestablished-determinant check sets.
+            // Both sides are scan-complete collectors; the rejection is the
+            // sealed COMPLETE violation set, never its first member.
+            let final_state = judgment::FinalStateView::new(&txn, schema, &plan);
+            if let Some(violations) = judgment::judge(&final_state)? {
+                return Err(Error::CommitRejected { violations });
+            }
 
-        // Phase 4: counters — row counts, row-id high-waters, fresh
-        // sequences, pending dictionary entries and the dictionary
-        // next-id.
-        {
-            let mut span = obs::span(obs::names::COUNTERS_FLUSH, obs::Category::Commit);
-            let interns = delta.pending_interns().count() as u64;
-            flush_counters(&mut txn, &delta, &row_id_next)?;
-            span.set_args(interns, 0);
-        }
+            // Phase 4: counters — row counts, row-id high-waters, fresh
+            // sequences, pending dictionary entries and the dictionary
+            // next-id.
+            {
+                let mut span = obs::span(obs::names::COUNTERS_FLUSH, obs::Category::Commit);
+                let interns = delta.pending_interns().count() as u64;
+                flush_counters(&mut txn, &delta, &row_id_next)?;
+                span.set_args(interns, 0);
+            }
 
-        // The storage tx id advances exactly once per state-changing
-        // commit.
-        let new_generation = txn.generation()?.next();
-        txn.put_generation(new_generation)?;
-        crashpoint!("after-judgment");
+            // The storage tx id advances exactly once per state-changing
+            // commit.
+            let new_generation = txn.generation()?.next();
+            txn.put_generation(new_generation)?;
+            crashpoint!("after-judgment");
 
-        // Phase 5: LMDB commit (fsync per environment defaults) — the
-        // fsync-bound number, isolated.
-        {
-            let _s = obs::span(obs::names::LMDB_COMMIT, obs::Category::Commit);
-            txn.commit()?;
-        }
-        crashpoint!("after-commit");
-        Ok(CommitReport {
-            changed: true,
-            new_generation,
+            // Phase 5: LMDB commit (fsync per environment defaults) — the
+            // fsync-bound number, isolated.
+            {
+                let _s = obs::span(obs::names::LMDB_COMMIT, obs::Category::Commit);
+                txn.commit()?;
+            }
+            crashpoint!("after-commit");
+            Ok(CommitReport {
+                changed: true,
+                new_generation,
+            })
         })
-    });
+    })();
     // The never-reissue law spans the abort: every aborted attempt still
     // handed the host its mints — the closure returned them from `alloc`,
     // and a rejection carries the offending facts back as data — so the

@@ -349,6 +349,18 @@ function literalOf(field: AnyField, value: unknown): LiteralSpec {
 			if (typeof value !== "string") {
 				throw literalShapeError("selection literal", "string", value)
 			}
+			/**
+			 * The marshal's bijection law at the schema-literal seam
+			 * (`marshal.ts` cellOf): a lone surrogate would cross dbCreate
+			 * lossily (stored as U+FFFD engine-side), collapsing two
+			 * distinct TS schema values into one stored theory/fingerprint
+			 * and splitting the canonical statement rendering from the
+			 * SDK's. All three string-admission seams — fact row, query
+			 * literal/param, schema literal — enforce the one law.
+			 */
+			if (!value.isWellFormed()) {
+				throw literalShapeError("selection literal", "well-formed string", value)
+			}
 			return { kind: "value", value: { kind: "string", value } }
 		}
 		case "bytes": {

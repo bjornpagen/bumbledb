@@ -1308,6 +1308,25 @@ function headSignature(column: SelectColumn): string {
 	return `${column.name}:${agg.op}`
 }
 
+/**
+ * The classed slot one answer column's VALUES flow from, resolved through
+ * the rule's own binding environment: a projected var's first-binding slot,
+ * or an Arg-carried payload's (`argMax`/`argMin` carry `over` verbatim —
+ * the same two shapes the closed slice lifts). Counts, folds, `pack` and
+ * the measure derive numbers/intervals rather than carrying a slot's ids,
+ * so they resolve no slot (`undefined`).
+ */
+function headSlotOf(rule: RuleData, column: SelectColumn): ClassedField | undefined {
+	const entry = column.entry
+	if (entry.kind === "var") {
+		return rule.varFields[entry.over]
+	}
+	if (entry.kind === "aggregate" && entry.agg.op === "arg") {
+		return rule.varFields[entry.agg.over]
+	}
+	return undefined
+}
+
 /** The roster a param anchor carries: present exactly on a closed-reference field anchor (rides THE one `rosterOf` reader). */
 function anchorRosterOf(anchor: AnyField | "measure" | undefined): ClosedRoster | undefined {
 	return anchor === "measure" ? undefined : rosterOf(anchor)
@@ -1448,6 +1467,23 @@ function makeRawQuery(theory: AnySchema, recs: readonly RecData[], rules: readon
 			if (lead !== undefined && column.closed !== lead.closed) {
 				throw errors.new(
 					`every rule of a query derives the same head — the answer column ${lead.name} is ${renderClosedSlice(lead.closed)} in rule 0 but ${renderClosedSlice(column.closed)} in rule ${index} (one column decodes through one roster)`
+				)
+			}
+			// The law-class wall on the union head: one answer column is one
+			// value space, so the classed slot each rule binds the column at
+			// must join across rules — the SAME fieldJoins judgment every
+			// join/eq/negated-atom position enforces. The SDK holds this wall
+			// because the wire IR carries no domains: the engine cannot
+			// backstop it, and without it a union mixes (say) Holder ids and
+			// Account ids in one column the consumer reads as one id space.
+			if (lead === undefined) {
+				return
+			}
+			const leadSlot = headSlotOf(first, lead)
+			const slot = headSlotOf(rule, column)
+			if (leadSlot !== undefined && slot !== undefined && !fieldJoins(leadSlot, slot)) {
+				throw errors.new(
+					`every rule of a query derives the same head — the answer column ${lead.name} unions domain-unequal fields: bound at ${renderFieldKind(leadSlot)} in rule 0 but at ${renderFieldKind(slot)} in rule ${index} (a union column joins only class-equal slots; bare pairs only with bare)`
 				)
 			}
 		})
@@ -1600,6 +1636,18 @@ function taggedLiteral(context: string, field: AnyField, value: unknown): Tagged
 		case "str": {
 			if (typeof value !== "string") {
 				throw literalShapeError(context, "string", value)
+			}
+			/**
+			 * The marshal's bijection law at the query seam (`marshal.ts`
+			 * cellOf): a lone surrogate would be lossily replaced with
+			 * U+FFFD at the bridge's UTF-8 crossing and silently match a
+			 * fact the typed write surface can never store — distinct JS
+			 * strings collapsing to one wire query. This is the single
+			 * seam every query string literal, string param
+			 * (`taggedCmpLiteral`), and membership member lowers through.
+			 */
+			if (!value.isWellFormed()) {
+				throw literalShapeError(context, "well-formed string", value)
 			}
 			return { kind: "string", value }
 		}

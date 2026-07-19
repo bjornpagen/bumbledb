@@ -33,6 +33,15 @@ behavior; the referees are the existing pins.
    (Lands after U1's edits in these files.)
 6. **`scan` ≡ `scan_from(rel, 0)` → delegate** (`storage/read/scan.rs`); pin
    prefix_iter↔range equivalence with one test.
+   **DEFERRED-TO-RECONCILIATION (recorded 2026-07-19, the bug-bash pass):
+   impossible on this fork.** `scan_from` is PR #10's copy-on-append read
+   path and this branch forked from main BEFORE that merge — no
+   `storage/read/scan_from` target exists here (grep zero;
+   `b0ddb330` touches no `storage/read/scan.rs`). The census sketched the
+   kill against the PR #10 branch tip. Execute the delegation POST-MERGE on
+   the reconciled tree, with the prefix_iter↔range equivalence pin; until
+   then this is one aborted-with-reason, not a landed kill — PR #11's body
+   is corrected to match.
 7. **`TransientImage::refill` ≡ append-from-0 with a capacity-policy
    parameter** (`image/build.rs`; call sites in `api/prepared/fixpoint.rs`).
 8. **Third copy of the probe hash → `swar::hash_words` widened to
