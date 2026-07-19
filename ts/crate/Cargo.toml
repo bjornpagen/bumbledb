@@ -18,6 +18,29 @@ publish = false
 [lib]
 crate-type = ["cdylib"]
 
+# The FFI lint regime (cleanup-0.5.0 ruling 12): the bridge joins the
+# engine's unsafe wall. `unsafe_code = "deny"` is the same workspace law the
+# engine crates inherit — every unsafe site here is a sanctioned carve-out,
+# `#[expect(unsafe_code, reason = "…")]` with a real per-site reason and a
+# SAFETY comment on the block. `unsafe_op_in_unsafe_fn` keeps the napi trait
+# impls honest: an `unsafe fn` body gets no ambient license — each unsafe
+# operation names its own block. The clippy set is the engine's
+# (workspace.lints.clippy at the repo root), spelled here because a
+# workspace-excluded leaf inherits nothing.
+[lints.rust]
+unsafe_code = "deny"
+unsafe_op_in_unsafe_fn = "deny"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+# The one crate-level carve-out: every export returns napi::Result and the
+# error taxonomy has ONE owner — the lib.rs module doc (domain outcomes are
+# data; programming and shape errors throw) — restated where a surface
+# deviates, never per function. 27 `# Errors` headings would be 27 copies
+# of that one datum.
+missing_errors_doc = "allow"
+
 [dependencies]
 # Path dependency on the in-repo engine crate: ts/crate/../../crates/bumbledb.
 # ORDERING LAW: version discipline here is PRD sequencing, not a version pin —

@@ -92,11 +92,6 @@ bumbledb::schema! {
 /// (`docs/architecture/10-data-model.md`).
 const PIN: &str = "b330d46f8cf6c91d8e24a6d2c3f9cbde65c2c37f1b90eaffdc3e49a8ae346b0c";
 
-/// The 64-char lowercase hex the JS side receives from `dbFingerprint`.
-fn hex_of(bytes: &[u8; 32]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
-}
-
 /// A self-cleaning per-test store directory (the engine's integration
 /// `TempDir` twin — this crate deliberately has no dev-dependencies).
 struct TempDir(std::path::PathBuf);
@@ -123,7 +118,7 @@ fn the_macro_twin_hashes_to_the_pinned_fingerprint() {
         .validate()
         .expect("the twin theory seals");
     assert_eq!(
-        hex_of(&fingerprint(&schema).0),
+        crate::hex_fingerprint(&fingerprint(&schema).0),
         PIN,
         "the schema! twin must hash to the cross-host pin \
          (test/fingerprint.test.ts carries the same constant)"

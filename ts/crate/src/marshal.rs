@@ -62,7 +62,7 @@ fn js_type_name(ty: JsType) -> &'static str {
         JsType::Function => "function",
         JsType::External => "external",
         JsType::BigInt => "bigint",
-        _ => "unknown",
+        JsType::Unknown => "unknown",
     }
 }
 
@@ -111,6 +111,11 @@ fn ordinal(value: f64, ctx: &str) -> napi::Result<u32> {
             "bumbledb marshal: {ctx}: expected a non-negative integer id, got {value}"
         )));
     }
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "the guard above proved: finite, non-negative, integral, <= u32::MAX"
+    )]
     Ok(value as u32)
 }
 
@@ -151,6 +156,12 @@ fn interval_in(obj: &Object, element: IntervalElement, ctx: &str) -> napi::Resul
 
 /// One natural JS value marshaled against the schema-declared type of its
 /// field — the fact-row lane's one conversion.
+#[expect(
+    unsafe_code,
+    reason = "napi declares `Unknown::cast` unsafe (it trusts the caller on the \
+              JS type); every cast below is fenced by the `get_type` check in \
+              its own arm"
+)]
 fn schema_value(
     expected: &ValueType,
     value: &Unknown,
@@ -165,6 +176,8 @@ fn schema_value(
             js_type_name(got)
         ))
     };
+    // SAFETY (each `cast` below): the arm's guard just proved `got` is the
+    // exact JS type the cast assumes; a mismatch returned before the cast.
     match expected {
         ValueType::Bool => {
             if got != JsType::Boolean {
@@ -268,8 +281,10 @@ pub(crate) fn fact_row(
         )));
     }
     let mut row = Vec::with_capacity(fields.len());
-    for (index, (field, expected)) in fields.iter().enumerate() {
-        let value = req_at::<Unknown>(values, index as u32, &format!("relation `{name}` row"))?;
+    // The index rides the Array's own u32 space (arity-checked equal above),
+    // so no usize→u32 cast exists to go wrong.
+    for (index, (field, expected)) in (0..values.len()).zip(fields.iter()) {
+        let value = req_at::<Unknown>(values, index, &format!("relation `{name}` row"))?;
         row.push(schema_value(expected, &value, &name, field)?);
     }
     Ok((rel, row))
@@ -310,14 +325,16 @@ pub(crate) fn key_row(
         )));
     }
     let mut row = Vec::with_capacity(projection.len());
-    for (index, field_id) in projection.iter().enumerate() {
+    // The index rides the Array's own u32 space (arity-checked equal above),
+    // so no usize→u32 cast exists to go wrong.
+    for (index, field_id) in (0..values.len()).zip(projection.iter()) {
         let (field, expected) = fields.get(usize::from(field_id.0)).ok_or_else(|| {
             err(format!(
                 "bumbledb marshal: key of `{name}`: projection field {} out of range",
                 field_id.0
             ))
         })?;
-        let value = req_at::<Unknown>(values, index as u32, &format!("key of `{name}`"))?;
+        let value = req_at::<Unknown>(values, index, &format!("key of `{name}`"))?;
         row.push(schema_value(expected, &value, &name, field)?);
     }
     Ok((rel, statement_id, row))
@@ -944,6 +961,14 @@ impl ValueOut {
 }
 
 impl ToNapiValue for ValueOut {
+    #[expect(
+        unsafe_code,
+        reason = "napi declares `ToNapiValue::to_napi_value` unsafe; every arm \
+                  delegates to napi's own impls on the same live env"
+    )]
+    // SAFETY (each delegation below): `env` is the live environment napi
+    // handed this very call; the interval arms' objects were created
+    // against it lines above.
     unsafe fn to_napi_value(env: sys::napi_env, val: Self) -> napi::Result<sys::napi_value> {
         match val {
             Self::Bool(v) => unsafe { bool::to_napi_value(env, v) },
@@ -981,6 +1006,11 @@ fn statement_kind_out(kind: StatementKind) -> &'static str {
     tags::statement_kind::tag(&kind)
 }
 
+#[expect(
+    unsafe_code,
+    reason = "the rendered object crosses back through napi's own \
+              `Object::to_napi_value` on the same live env"
+)]
 fn value_type_out(env: sys::napi_env, ty: &ValueType) -> napi::Result<sys::napi_value> {
     let env_handle = Env::from_raw(env);
     let mut obj = Object::new(&env_handle)?;
@@ -1000,6 +1030,8 @@ fn value_type_out(env: sys::napi_env, ty: &ValueType) -> napi::Result<sys::napi_
             }
         }
     }
+    // SAFETY: `env` is the live environment the calling impl received from
+    // napi, and `obj` was created against it.
     unsafe { Object::to_napi_value(env, obj) }
 }
 
@@ -1007,6 +1039,12 @@ fn value_type_out(env: sys::napi_env, ty: &ValueType) -> napi::Result<sys::napi_
 pub struct ManifestWire(pub(crate) Manifest);
 
 impl ToNapiValue for ManifestWire {
+    #[expect(
+        unsafe_code,
+        reason = "napi declares `ToNapiValue::to_napi_value` unsafe; the impl \
+                  builds plain objects on the live env and rewraps one raw \
+                  value it just rendered against that same env"
+    )]
     unsafe fn to_napi_value(env: sys::napi_env, val: Self) -> napi::Result<sys::napi_value> {
         let env_handle = Env::from_raw(env);
         let manifest = val.0;
@@ -1022,6 +1060,8 @@ impl ToNapiValue for ManifestWire {
                 field_obj.set("name", field.name.as_ref())?;
                 field_obj.set("id", u32::from(field.id.0))?;
                 let ty = value_type_out(env, &field.value_type)?;
+                // SAFETY: `ty` is the napi value `value_type_out` just
+                // rendered against this same live `env`, one line up.
                 let ty = unsafe { Unknown::from_raw_unchecked(env, ty) };
                 field_obj.set("valueType", ty)?;
                 fields.push(field_obj);
@@ -1057,6 +1097,8 @@ impl ToNapiValue for ManifestWire {
             statements.push(statement_obj);
         }
         root.set("statements", statements)?;
+        // SAFETY: `env` is the live environment napi handed this very call,
+        // and `root` was created against it.
         unsafe { Object::to_napi_value(env, root) }
     }
 }
@@ -1102,6 +1144,11 @@ impl ViolationWire {
 }
 
 impl ToNapiValue for ViolationWire {
+    #[expect(
+        unsafe_code,
+        reason = "napi declares `ToNapiValue::to_napi_value` unsafe; the impl \
+                  only builds plain objects and delegates to napi's own impls"
+    )]
     unsafe fn to_napi_value(env: sys::napi_env, val: Self) -> napi::Result<sys::napi_value> {
         let env_handle = Env::from_raw(env);
         let mut obj = Object::new(&env_handle)?;
@@ -1129,6 +1176,8 @@ impl ToNapiValue for ViolationWire {
             facts.push(fact_obj);
         }
         obj.set("facts", facts)?;
+        // SAFETY: `env` is the live environment napi handed this very call,
+        // and `obj` was created against it.
         unsafe { Object::to_napi_value(env, obj) }
     }
 }
@@ -1141,6 +1190,11 @@ pub struct StalenessWire {
 }
 
 impl ToNapiValue for StalenessWire {
+    #[expect(
+        unsafe_code,
+        reason = "napi declares `ToNapiValue::to_napi_value` unsafe; the impl \
+                  only builds plain objects and delegates to napi's own impls"
+    )]
     unsafe fn to_napi_value(env: sys::napi_env, val: Self) -> napi::Result<sys::napi_value> {
         let env_handle = Env::from_raw(env);
         let mut obj = Object::new(&env_handle)?;
@@ -1155,6 +1209,8 @@ impl ToNapiValue for StalenessWire {
         }
         obj.set("perOccurrence", drifts)?;
         obj.set("maxRatio", val.max_ratio)?;
+        // SAFETY: `env` is the live environment napi handed this very call,
+        // and `obj` was created against it.
         unsafe { Object::to_napi_value(env, obj) }
     }
 }

@@ -220,18 +220,44 @@ decision accommodates narrower platforms). Full research notes with sources:
 - Explicit SIMD lives under `#[cfg(target_arch = "aarch64")]`; other 64-bit platforms
   compile and run scalar fallback correctly, with no performance promises. x86 SIMD is
   forbidden.
-- **The unsafe policy.** `unsafe` —
-  including `core::arch` intrinsics and inline asm — is sanctioned in an explicit
-  allowlist of kernel/hot modules and nowhere else: `exec/kernel.rs`,
-  `exec/colt.rs` (gather/probe paths), `exec/wordmap.rs` (slab probe paths),
-  `exec/run.rs` (leaf/batch paths), `image.rs` (decode kernels), and `obs.rs`
-  (the trace-only fast clock). Each carries `#[allow(unsafe_code)]` at module or
-  item level with a comment naming this policy; the crate denies `unsafe_code`
-  everywhere else. The law, extended from kernel.rs: **every unsafe path has a
-  safe portable reference implementation, and a property test asserts
-  bit-identical results across randomized inputs including boundary shapes**
-  (empty, single, odd lengths, lane-multiple ±1). The differential oracle stays
-  the outer gate; the property tests are the inner one.
+- **The unsafe policy.** The workspace root denies `unsafe_code` for every
+  engine crate; `unsafe` — including `core::arch` intrinsics and inline asm —
+  is sanctioned in an explicit allowlist of modules and nowhere else. Each
+  site carries `#[expect(unsafe_code, reason = …)]` (or a module-inner
+  `#![allow(unsafe_code)]` where the whole module is the sanction) with its
+  safety invariant written at the site. The allowlist, in three categories:
+  - **Compute kernels**: `exec/kernel.rs`'s kernel modules (`neon`, `fold`,
+    `filter`, `compact`, `prefetch`), `exec/colt/gather.rs` (gather/probe
+    paths), `exec/wordmap.rs` with its submodules (slab probe paths), and
+    `image/decode.rs` (the columnar decode kernels). The kernel law: **every
+    unsafe path has a safe portable reference implementation, and a property
+    test asserts bit-identical results across randomized inputs including
+    boundary shapes** (empty, single, odd lengths, lane-multiple ±1). The
+    differential oracle stays the outer gate; the property tests are the
+    inner one.
+  - **Boundary and instrument unsafe** — sites where the unsafety IS the
+    foreign contract, carrying a documented safety invariant in place of a
+    reference twin: `storage/env/open_env.rs` (the one raw-LMDB-open
+    chokepoint — heed marks env opening and flag-setting unsafe; the
+    capacity contract's preallocation sites are retired, cleanup-0.5.0
+    ruling 1), `obs/fastclock.rs` (the trace-only fast clock),
+    `alloc_counter.rs` (the feature-gated counting `GlobalAlloc` behind the
+    allocation gate), and — in the bench crate —
+    `bumbledb-bench/src/clockproxy.rs` (the register-only asm cycle proxy).
+  - **Test scaffolding** — fixture-building unsafe inside test code only,
+    inline-reasoned at each site, never on a shipped path:
+    `tests/alloc_census.rs` (the census `GlobalAlloc`), `tests/api.rs` and
+    `src/storage/env/tests.rs` (foreign/raw heed env fixtures),
+    `tests/ramdisk_phase_r.rs` (the measurement scratch env),
+    `src/exec/kernel/tests.rs` and `src/exec/colt/tests/pins.rs` (the
+    kernel/layout pin rigs).
+
+  Two surfaces sit outside the workspace wall and carry their own: `fuzz/`
+  is deliberately detached (the crucible packet ruling) with one
+  inline-commented `set_var`/`remove_var` pair (`fuzz/src/crash.rs`), and
+  `ts/crate` denies `unsafe_code` and `unsafe_op_in_unsafe_fn` in its own
+  lint table with per-site reasons on the napi FFI sites (cleanup-0.5.0
+  ruling 12).
 
 **Decision:** Apple-Silicon-only performance target. **Alternative:** portable
 performance posture. **Why it lost:** there are no other consumers; portability spends

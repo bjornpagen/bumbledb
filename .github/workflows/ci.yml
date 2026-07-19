@@ -259,5 +259,11 @@ jobs:
         working-directory: ts
       - run: pnpm test
         working-directory: ts
+      - name: the FFI lint wall (cleanup-0.5.0 ruling 12)
+        # ts/crate is workspace-excluded, so lane 1's clippy never reaches
+        # it; this step is what enforces the crate's own lint table
+        # (deny unsafe_code with per-site reasons, deny
+        # unsafe_op_in_unsafe_fn, the engine's clippy all+pedantic set).
+        run: cargo clippy --manifest-path ts/crate/Cargo.toml --all-targets -- -D warnings
       - name: the Rust half of the lock (fingerprint_lock.rs)
         run: cargo test --manifest-path ts/crate/Cargo.toml
