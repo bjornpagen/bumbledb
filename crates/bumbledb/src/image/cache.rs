@@ -29,7 +29,7 @@ mod advance;
 /// lifted to the `lineage-off` test-support feature (the bench crate's
 /// cold-lineage twin, a dev-dependency; `advance`'s off switch delegates
 /// here).
-#[cfg(feature = "lineage-off")]
+#[cfg(any(test, feature = "lineage-off"))]
 mod evict_older_than;
 
 #[cfg(feature = "lineage-off")]
