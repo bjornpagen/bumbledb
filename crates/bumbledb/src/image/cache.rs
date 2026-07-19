@@ -29,10 +29,10 @@ mod advance;
 /// lifted to the `lineage-off` test-support feature (the bench crate's
 /// cold-lineage twin, a dev-dependency; `advance`'s off switch delegates
 /// here).
-#[cfg(any(test, feature = "lineage-off"))]
+#[cfg(feature = "lineage-off")]
 mod evict_older_than;
 
-#[cfg(any(test, feature = "lineage-off"))]
+#[cfg(feature = "lineage-off")]
 pub use advance::with_lineage_disabled;
 mod get_or_build;
 mod new;

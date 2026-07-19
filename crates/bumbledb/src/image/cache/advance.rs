@@ -7,7 +7,7 @@ use super::ImageCache;
 use crate::storage::env::GenerationId;
 use bumbledb_theory::schema::RelationId;
 
-#[cfg(any(test, feature = "lineage-off"))]
+#[cfg(feature = "lineage-off")]
 thread_local! {
     /// The test-only lineage off switch (the `ground-off` precedent,
     /// `plan/ground.rs`): the Wave-M A/B twin runs the same cold family
@@ -26,7 +26,7 @@ thread_local! {
 /// append base survives), so the next reader rebuilds from scratch: the
 /// pre-copy-on-append behavior, the A/B twin's B arm. Restores on
 /// unwind.
-#[cfg(any(test, feature = "lineage-off"))]
+#[cfg(feature = "lineage-off")]
 pub fn with_lineage_disabled<T>(f: impl FnOnce() -> T) -> T {
     struct Reset;
     impl Drop for Reset {
@@ -67,7 +67,7 @@ impl ImageCache {
     ///
     /// Only on a poisoned cache mutex.
     pub fn advance(&self, generation: GenerationId, dirty: &[RelationId]) {
-        #[cfg(any(test, feature = "lineage-off"))]
+        #[cfg(feature = "lineage-off")]
         if DISABLED.with(std::cell::Cell::get) {
             return self.evict_older_than(generation);
         }
