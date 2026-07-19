@@ -62,8 +62,9 @@ type LiteralSpec =
 
 /**
  * One σ binding's right side: a single literal or a literal set (read
- * disjunctively). The SDK's selection constructors make the degenerate sets
- * unwritable (`oneOf` demands two leading literals), so a lowered `many`
+ * disjunctively). The SDK's selection resolver refuses the degenerate sets
+ * (a membership array needs two members — the empty set selects nothing,
+ * the one-element set is the bare literal respelled), so a lowered `many`
  * always carries ≥ 2 literals.
  */
 type LiteralSetSpec =

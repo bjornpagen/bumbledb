@@ -54,27 +54,6 @@ function faceParts(source: FaceSource): {
 	return { owner: source, selection: emptySelection }
 }
 
-/**
- * A disjunctive literal set for a selection binding — `field == {A, B}`.
- * The signature of {@link oneOf} demands two leading literals, so the
- * one-element set (banned: it is the bare literal) and the empty set
- * (banned: it selects nothing) are unwritable.
- */
-interface OneOf<V> {
-	readonly literals: readonly [V, V, ...V[]]
-}
-
-/**
- * Constructs a literal set (read disjunctively) for a `where()` binding.
- * Two leading arguments by signature: the degenerate sets have no spelling
- * (the canonical-utterance law, `docs/architecture/70-api.md`).
- */
-function oneOf<V>(first: V, second: V, ...rest: V[]): OneOf<V> {
-	const literals: readonly [V, V, ...V[]] = [first, second, ...rest]
-	Object.freeze(literals)
-	return Object.freeze({ literals })
-}
-
 /** The relation a face projects from — ordinary or closed. */
 type FaceOwner = AnyRelation | AnyClosed
 
@@ -323,9 +302,8 @@ export type {
 	FaceShapeMismatch,
 	FaceShapes,
 	FaceSource,
-	OneOf,
 	OwnerOf,
 	SameArity,
 	SameShapes
 }
-export { on, oneOf, renderFace }
+export { on, renderFace }

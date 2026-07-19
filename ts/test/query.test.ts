@@ -243,7 +243,7 @@ describe("the query surface against a real store", function suite() {
 			.rule((r) =>
 				r
 					.match(Holder, { id: r.var("h") })
-					.match(Account, { holder: r.var("h"), kind: Kind.Savings })
+					.match(Account, { holder: r.var("h"), kind: "Savings" })
 					.select("h")
 			)
 		const rows = run(adaOrSavings, {})
@@ -379,7 +379,7 @@ describe("the query surface against a real store", function suite() {
 				.where(r.not(Account, { holder: r.var("h"), kind: r.inSet("kinds") }))
 				.select("h")
 		)
-		const rows = run(withoutKinds, { kinds: [Kind.Checking] })
+		const rows = run(withoutKinds, { kinds: ["Checking"] })
 		assert.deepEqual(
 			sorted(
 				rows.map(function h(row) {
@@ -536,7 +536,7 @@ describe("the query surface against a real store", function suite() {
 		const eitherKind = query(Ledger).rule((r) =>
 			r
 				.match(Account, { id: r.var("acct"), kind: r.var("k") })
-				.where(r.or(r.eq(r.var("k"), Kind.Checking), r.eq(r.var("k"), Kind.Savings)))
+				.where(r.or(r.eq(r.var("k"), "Checking"), r.eq(r.var("k"), "Savings")))
 				.select("acct")
 		)
 		assert.equal(run(eitherKind, {}).length, 4, "the disjunction spans both kinds")
@@ -566,7 +566,7 @@ describe("the query surface against a real store", function suite() {
 				)
 				.rule((r) =>
 					r
-						.match(Account, { id: r.var("acct"), holder: r.var("h"), kind: Kind.Savings })
+						.match(Account, { id: r.var("acct"), holder: r.var("h"), kind: "Savings" })
 						.match(Holder, { id: r.var("h") })
 						.where(r.eq(r.var("h"), r.param("root")))
 						.select("acct", r.count())
@@ -609,7 +609,7 @@ describe("the query surface against a real store", function suite() {
 			query(Ledger).rule((r) =>
 				r
 					.match(Account, { id: r.var("acct"), kind: r.var("k"), balance: r.var("b") })
-					.where(r.or(r.and(r.eq(r.var("k"), Kind.Checking), r.gt(r.var("b"), 4n)), r.eq(r.var("k"), Kind.Savings)))
+					.where(r.or(r.and(r.eq(r.var("k"), "Checking"), r.gt(r.var("b"), 4n)), r.eq(r.var("k"), "Savings")))
 					.select("acct")
 			),
 			// countDistinct (all-aggregate select: empty input yields the empty set)
@@ -641,7 +641,7 @@ describe("the query surface against a real store", function suite() {
 			query(Ledger).rule((r) => r.match(Account, { id: r.var("acct"), balance: 5n }).select("acct")),
 			query(Ledger).rule((r) => r.match(Account, { id: r.var("acct"), active: span(0n, 10n) }).select("acct")),
 			query(Ledger).rule((r) => r.match(Holder, { id: r.var("h"), name: "ada" }).select("h")),
-			query(Ledger).rule((r) => r.match(Account, { id: r.var("acct"), kind: Kind.Savings }).select("acct")),
+			query(Ledger).rule((r) => r.match(Account, { id: r.var("acct"), kind: "Savings" }).select("acct")),
 			// a zero-binding atom is a nonemptiness gate
 			query(Ledger).rule((r) =>
 				r

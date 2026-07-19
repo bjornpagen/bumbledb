@@ -4,6 +4,9 @@
  * (`bumbledb/crates/bumbledb/src/ir.rs`, the bijection target;
  * `docs/architecture/20-query-ir.md` normative). A `match` binding record
  * binds fields to vars, params, ∈-set params, or bare structural literals
+ * — a closed-reference field's literal is its handle NAME, and a plain
+ * ARRAY of names there is membership, folded into the program (closed-only
+ * by owner ruling; see {@link BindingInput})
  * (unmentioned fields ARE the wildcard — no wildcard value exists);
  * `not(Rel, {...})` is negation-as-position (anti-join); `eq`/`ne` and the
  * order roster, `pointIn`/`covers` (both spellings of `ir::CmpOp::PointIn`,
@@ -67,11 +70,18 @@ type MatchFields<R extends MatchOwner> = R extends AnyClosed
 		? RelationFields<R>
 		: never
 
-/** One atom-binding position as runtime data. */
+/**
+ * One atom-binding position as runtime data. `literalSet` is a membership
+ * ARRAY at a closed-reference field, folded into the program: `name` is
+ * the content-addressed registry key its dense `ParamId` is minted under
+ * (the lowering rides the existing param-set term; the SDK itself supplies
+ * the translated member set at every execute — never the host).
+ */
 type BindingTermData =
 	| { readonly kind: "var"; readonly name: string }
 	| { readonly kind: "param"; readonly name: string }
 	| { readonly kind: "setParam"; readonly name: string }
+	| { readonly kind: "literalSet"; readonly name: string; readonly members: readonly string[] }
 	| { readonly kind: "literal"; readonly value: unknown }
 
 /** One resolved binding: the field's name, its descriptor, its law-computed class, and the term. */
@@ -151,13 +161,17 @@ type RuleItem =
 /**
  * One use of a parameter inside a rule, in written order: the census the
  * query-level registry folds (first use mints the dense `ParamId`, first
- * FIELD-ANCHORED use types the wire).
+ * FIELD-ANCHORED use types the wire). `members` is present exactly on a
+ * membership-array use (a literal set folded into the program): the handle
+ * names the SDK itself translates and supplies at execute — the entry
+ * never appears in the host's params object.
  */
 interface ParamUse {
 	readonly name: string
 	readonly shape: "value" | "set" | "mask"
 	readonly anchor: AnyField | "measure" | undefined
 	readonly op: "binding" | CmpKind
+	readonly members: readonly string[] | undefined
 }
 
 /** One complete rule as runtime data. */
@@ -184,10 +198,18 @@ interface RecData {
  * of the field's value type, a var/param/∈-set-param term — and, when the
  * field is interval-typed, a bare point literal (the IR's membership
  * typing rule: an element-typed term at an interval field is point
- * membership; an interval-typed term is value equality).
+ * membership; an interval-typed term is value equality). A
+ * CLOSED-reference field additionally takes a plain ARRAY of handle names
+ * read as membership — `kind: ["Practice", "Review"]` (the drizzle law:
+ * set membership is an array, never an operator). Arrays are CLOSED-ONLY
+ * in this packet by owner ruling: ordinary u64/str membership already has
+ * its spelling through `r.inSet` params; widening literal arrays to every
+ * literal-capable kind is a separate future taste call — deliberately not
+ * done here.
  */
 type BindingInput<F extends AnyField> =
 	| Infer<F>
+	| (F extends ClosedIdField ? readonly Infer<F>[] : never)
 	| (F extends { readonly kind: "interval" } ? bigint : never)
 	| Var<string>
 	| Param<string>

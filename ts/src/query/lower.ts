@@ -496,6 +496,45 @@ function matchFieldsOf(owner: MatchOwner): readonly RelationField[] {
 }
 
 /**
+ * Judges one membership ARRAY at a binding position — legal exactly at a
+ * CLOSED-reference field (the owner ruling: ordinary u64/str membership is
+ * spelled through `r.inSet` params; literal arrays are the closed
+ * vocabulary's spelling), holding ≥ 2 handle names (the degenerate sets
+ * are refusals: empty selects nothing, one element is the bare literal
+ * respelled). The returned name is CONTENT-ADDRESSED (vocabulary +
+ * members), so two spellings of one set share one dense `ParamId`; the
+ * members are shape-checked strings here and roster-verified at the one
+ * verification point (`taggedHandleId`) when the SDK supplies the set at
+ * execute — the same moment a bound `r.inSet` param's members are judged.
+ */
+function membershipSet(
+	context: string,
+	field: AnyField,
+	value: readonly unknown[]
+): { readonly name: string; readonly members: readonly string[] } {
+	if (!("closed" in field)) {
+		throw errors.new(
+			`${context}: a membership array is the closed-reference spelling — ordinary field membership is a bound ∈-set param (r.inSet)`
+		)
+	}
+	if (value.length === 0) {
+		throw errors.new(`${context}: an empty membership array selects nothing — write the query you mean`)
+	}
+	if (value.length === 1) {
+		throw errors.new(
+			`${context}: a one-element membership array is the bare literal respelled — write the literal (the canonical-utterance law: one meaning, one spelling)`
+		)
+	}
+	const members = value.map(function memberName(member) {
+		if (typeof member !== "string") {
+			throw literalShapeError(context, `a ${field.closed.name} handle name (string)`, member)
+		}
+		return member
+	})
+	return { name: `∈ ${field.closed.name} ${JSON.stringify(members)}`, members: Object.freeze(members) }
+}
+
+/**
  * Resolves a bindings record against an atom owner's matchable fields (a
  * relation's declared fields; a closed relation's sealed id + columns), in
  * the record's written order: terms classify by their runtime tag,
@@ -539,14 +578,26 @@ function resolveBindings(
 				case "param": {
 					bound = Object.freeze({ kind: "param" as const, name: value.name })
 					uses.push(
-						Object.freeze({ name: value.name, shape: "value" as const, anchor: declared.field, op: "binding" as const })
+						Object.freeze({
+							name: value.name,
+							shape: "value" as const,
+							anchor: declared.field,
+							op: "binding" as const,
+							members: undefined
+						})
 					)
 					break
 				}
 				case "setParam": {
 					bound = Object.freeze({ kind: "setParam" as const, name: value.name })
 					uses.push(
-						Object.freeze({ name: value.name, shape: "set" as const, anchor: declared.field, op: "binding" as const })
+						Object.freeze({
+							name: value.name,
+							shape: "set" as const,
+							anchor: declared.field,
+							op: "binding" as const,
+							members: undefined
+						})
 					)
 					break
 				}
@@ -559,6 +610,18 @@ function resolveBindings(
 						`${context}.${fieldName}: the measure is not a field-typed value — it lives in comparisons and select entries`
 					)
 			}
+		} else if (Array.isArray(value)) {
+			const set = membershipSet(`${context}.${fieldName}`, declared.field, value)
+			bound = Object.freeze({ kind: "literalSet" as const, name: set.name, members: set.members })
+			uses.push(
+				Object.freeze({
+					name: set.name,
+					shape: "set" as const,
+					anchor: declared.field,
+					op: "binding" as const,
+					members: set.members
+				})
+			)
 		} else {
 			bound = Object.freeze({ kind: "literal" as const, value })
 		}
@@ -651,7 +714,8 @@ function sideUses(
 			name: side.name,
 			shape: side.kind === "param" ? ("value" as const) : ("set" as const),
 			anchor,
-			op
+			op,
+			members: undefined
 		})
 	)
 }
@@ -671,7 +735,13 @@ function condDataOf(cond: AnyCond, varFields: Readonly<Record<string, ClassedFie
 			} else if (isTerm(maskValue) && maskValue[term] === "maskParam") {
 				mask = Object.freeze({ kind: "param" as const, name: maskValue.name })
 				uses.push(
-					Object.freeze({ name: maskValue.name, shape: "mask" as const, anchor: undefined, op: "allen" as const })
+					Object.freeze({
+						name: maskValue.name,
+						shape: "mask" as const,
+						anchor: undefined,
+						op: "allen" as const,
+						members: undefined
+					})
 				)
 			} else {
 				throw errors.new("allen: the mask position takes a 13-bit mask number or a maskParam")
@@ -1156,14 +1226,22 @@ function headSignature(column: SelectColumn): string {
  */
 function paramRegistryOf(recs: readonly RecData[], rules: readonly RuleData[]): readonly ParamEntry[] {
 	const order: string[] = []
-	const byName = new Map<string, { shape: ParamEntry["shape"]; anchor: ParamEntry["anchor"]; op: ParamEntry["op"] }>()
+	const byName = new Map<
+		string,
+		{ shape: ParamEntry["shape"]; anchor: ParamEntry["anchor"]; op: ParamEntry["op"]; members: ParamEntry["members"] }
+	>()
 	function fold(uses: readonly ParamUse[]): void {
 		for (const use of uses) {
 			const existing = byName.get(use.name)
 			if (existing === undefined) {
 				order.push(use.name)
-				byName.set(use.name, { shape: use.shape, anchor: use.anchor, op: use.op })
+				byName.set(use.name, { shape: use.shape, anchor: use.anchor, op: use.op, members: use.members })
 				continue
+			}
+			if ((existing.members === undefined) !== (use.members === undefined)) {
+				throw errors.new(
+					`query param ${use.name} collides with a membership array's registry entry — name the param differently`
+				)
 			}
 			if (existing.shape !== use.shape) {
 				throw errors.new(
@@ -1190,7 +1268,7 @@ function paramRegistryOf(recs: readonly RecData[], rules: readonly RuleData[]): 
 			if (entry === undefined) {
 				throw errors.new(`query param ${name} lost its registry entry`)
 			}
-			return Object.freeze({ name, shape: entry.shape, anchor: entry.anchor, op: entry.op })
+			return Object.freeze({ name, shape: entry.shape, anchor: entry.anchor, op: entry.op, members: entry.members })
 		})
 	)
 }
@@ -1305,25 +1383,30 @@ function isIntervalShaped(value: unknown): value is { readonly start: bigint; re
 }
 
 /**
- * Tags one closed-reference literal: the bare handle id, verified against
- * the roster (the belt the type level cannot provide — structural values
- * make any bigint spellable here) and tagged u64 — queries cross ids,
- * never handle names.
+ * Tags one closed-reference literal: the handle NAME, verified against the
+ * roster (the belt the wide fallback type cannot provide — structural
+ * values make any string spellable here) and translated to its
+ * declaration-order row id, tagged u64 — queries cross ids, never handle
+ * names; the wire is untouched. THE single roster-verification point of
+ * the query surface: atom-binding literals, comparison literals,
+ * execute-time params, and membership-array members all reach it (never
+ * duplicate the check per call site).
  */
 function taggedHandleId(
 	context: string,
 	closed: { readonly name: string; readonly handles: readonly string[] },
 	value: unknown
 ): TaggedValue {
-	if (typeof value !== "bigint") {
-		throw literalShapeError(context, `a ${closed.name} handle id (bigint)`, value)
+	if (typeof value !== "string") {
+		throw literalShapeError(context, `a ${closed.name} handle name (string)`, value)
 	}
-	if (closed.handles[Number(value)] === undefined) {
+	const id = closed.handles.indexOf(value)
+	if (id < 0) {
 		throw errors.new(
-			`${context}: closed relation ${closed.name} has no handle with id ${value} (roster holds ${closed.handles.length})`
+			`${context}: "${value}" is not a handle of ${closed.name} — the roster is ${closed.handles.join(", ")}`
 		)
 	}
-	return { kind: "u64", value }
+	return { kind: "u64", value: BigInt(id) }
 }
 
 /**
@@ -1504,7 +1587,12 @@ function lowerAtom(ctx: LowerContext, atom: AtomData, ids: VarIds): AtomIr {
 	return { source: { kind: "edb", relation: relationId }, bindings }
 }
 
-/** Lowers one binding term. */
+/**
+ * Lowers one binding term. A membership ARRAY (`literalSet`) lowers to the
+ * existing param-set term over its content-addressed registry entry — the
+ * program IR is byte-identical to the same set spelled `r.inSet`; the SDK
+ * supplies the translated member set itself at execute (`wireParams`).
+ */
 function lowerBindingTerm(ctx: LowerContext, context: string, binding: BindingEntry, ids: VarIds): TermIr {
 	const bound = binding.term
 	switch (bound.kind) {
@@ -1513,6 +1601,8 @@ function lowerBindingTerm(ctx: LowerContext, context: string, binding: BindingEn
 		case "param":
 			return { kind: "param", param: paramIdOf(ctx, bound.name) }
 		case "setParam":
+			return { kind: "paramSet", param: paramIdOf(ctx, bound.name) }
+		case "literalSet":
 			return { kind: "paramSet", param: paramIdOf(ctx, bound.name) }
 		case "literal":
 			return { kind: "literal", value: taggedLiteral(context, binding.data, bound.value) }
