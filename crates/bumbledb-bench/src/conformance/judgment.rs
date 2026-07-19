@@ -478,8 +478,52 @@ fn cur_account(id: u64, currency: u64) -> (RelationId, Vec<Value>) {
     (RelationId(1), vec![Value::U64(id), Value::U64(currency)])
 }
 
+/// Currency closed WITH a payload column, narrowed by ψ:
+/// `Account(currency) <= Currency(id | region == 1)` — the member set
+/// compiles to the ψ sub-vocabulary {Usd, Eur}, leaving Jpy a REAL
+/// sealed member outside the statement's vocabulary (the K1 face's
+/// engine arm, `schema/validate.rs::compile_member_set`; the model's
+/// σ-over-extension twin, [`NaiveDb::target_facts`]; Lean reads the
+/// selection uniformly — `lean/Bumbledb/Schema.lean:
+/// den_closed_constant`). Sealed field space: 0 = the synthetic id,
+/// 1 = region.
+fn closed_psi_schema() -> SchemaDescriptor {
+    SchemaDescriptor {
+        relations: vec![
+            RelationDescriptor {
+                extension: Some(Box::new([
+                    Row {
+                        handle: "Usd".into(),
+                        values: Box::new([Value::U64(1)]),
+                    },
+                    Row {
+                        handle: "Eur".into(),
+                        values: Box::new([Value::U64(1)]),
+                    },
+                    Row {
+                        handle: "Jpy".into(),
+                        values: Box::new([Value::U64(2)]),
+                    },
+                ])),
+                name: "Currency".into(),
+                fields: vec![field("region", ValueType::U64)],
+            },
+            u64_relation("Account", &["id", "currency"]),
+        ],
+        statements: vec![StatementDescriptor::Containment {
+            source: side(RelationId(1), &[1]),
+            target: side_where(
+                RelationId(0),
+                &[0],
+                &[(1, LiteralSet::One(Value::U64(1)))],
+            ),
+        }],
+    }
+}
+
 /// The starter roster: both classical forms (scalar key, containment —
-/// pointwise key and coverage through the permuted world), the window
+/// pointwise key and coverage through the permuted world, the closed
+/// member set plain and ψ-narrowed), the window
 /// form, the two-phase preemption
 /// mix, set-selections, the exactness/vacuity/empty-parent window
 /// boundaries, the delete-then-reinsert touched-group seam, and the
@@ -608,6 +652,25 @@ fn fixtures() -> Vec<JudgmentFixture> {
             base: vec![],
             deletes: vec![],
             inserts: vec![cur_account(3, 9)],
+        },
+        // The ψ-NARROWED closed member set (the K1 face's third-oracle
+        // witness — the drift audit's D2): references inside the ψ
+        // sub-vocabulary {Usd, Eur} accept...
+        JudgmentFixture {
+            name: "judgment-closed-ref-psi-valid",
+            schema: closed_psi_schema(),
+            base: vec![],
+            deletes: vec![],
+            inserts: vec![cur_account(1, 0), cur_account(2, 1)],
+        },
+        // ...while Jpy — a REAL sealed member — still convicts: outside
+        // the ψ sub-vocabulary is outside the statement's member set.
+        JudgmentFixture {
+            name: "judgment-closed-ref-psi-invalid",
+            schema: closed_psi_schema(),
+            base: vec![],
+            deletes: vec![],
+            inserts: vec![cur_account(3, 2)],
         },
         // The playlist recipe verbatim (Q1 + interval<u64, 1>): an
         // exact tiling COMMITS — unit slots partition the span, mixed
