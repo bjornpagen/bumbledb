@@ -1,6 +1,9 @@
 /**
- * The SDK cookbook's compile-and-run pin (PRD-S5, rewritten to the 0.3.0
- * idioms by PRD-K7). `ts/COOKBOOK.md` carries the engine cookbook's 29
+ * The SDK cookbook's compile-and-run pin (PRD-S5; rewritten to the 0.3.0
+ * idioms by PRD-K7, swept to the 0.4.0 host idiom — handle names as string
+ * literals, native `switch` dispatch, the record-table idiom — by PRD-H6;
+ * the fingerprints never moved: spellings are not the theory).
+ * `ts/COOKBOOK.md` carries the engine cookbook's 29
  * recipes (`bumbledb/docs/cookbook.md`) translated to the structural API,
  * and THIS file is what keeps them true: every recipe's schema is
  * constructed here through the public surface (so it compiles, cast-free),
@@ -28,7 +31,7 @@ import * as path from "node:path"
 import process from "node:process"
 import { after, describe, test } from "node:test"
 
-import type { Schema, SchemaRelations } from "#index.ts"
+import type { Infer, Schema, SchemaRelations } from "#index.ts"
 import {
 	ALLEN,
 	abandon,
@@ -271,19 +274,25 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 			contained(on(Task, "kind"), on(Kind, "id")),
 			key(DeterministicGrading, ["task"]),
 			key(CustomOperatorGrading, ["task"]),
-			mirrors(on(Task.where({ kind: Kind.Deterministic }), "id"), on(DeterministicGrading, "task")),
-			mirrors(on(Task.where({ kind: Kind.CustomOperator }), "id"), on(CustomOperatorGrading, "task"))
+			mirrors(on(Task.where({ kind: "Deterministic" }), "id"), on(DeterministicGrading, "task")),
+			mirrors(on(Task.where({ kind: "CustomOperator" }), "id"), on(CustomOperatorGrading, "task"))
 		])
 
-		// Host dispatch over the discriminator: exhaustive over the sealed
-		// roster by construction (the cookbook's `gradedBy`).
-		const gradedBy = (kind: bigint) =>
-			Kind.match(kind, {
-				Deterministic: () => "tolerance",
-				CustomOperator: () => "operator"
-			})
-		assert.equal(gradedBy(Kind.Deterministic), "tolerance")
-		assert.equal(gradedBy(Kind.CustomOperator), "operator")
+		// Host dispatch over the discriminator: native `switch` narrowing over
+		// the handle union, exhaustive via `satisfies never` (the cookbook's
+		// `gradedBy`).
+		const gradedBy = (kind: Infer<typeof Kind.id>) => {
+			switch (kind) {
+				case "Deterministic":
+					return "tolerance"
+				case "CustomOperator":
+					return "operator"
+				default:
+					return kind satisfies never
+			}
+		}
+		assert.equal(gradedBy("Deterministic"), "tolerance")
+		assert.equal(gradedBy("CustomOperator"), "operator")
 
 		await admit("r02-grading", Grading)
 	})
@@ -361,7 +370,7 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 
 		const urgent = query(Tickets).rule((r) => {
 			const { t } = r.vars("t")
-			return r.match(Ticket, { id: t, priority: Priority.Urgent }).select("t")
+			return r.match(Ticket, { id: t, priority: "Urgent" }).select("t")
 		})
 
 		const { db } = await admit("r06-tickets", Tickets)
@@ -394,16 +403,18 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 			return r.match(Attempt, { id: a, kind: k }).match(Kind, { id: k, mastered: true }).select("a")
 		})
 
-		// The payload tier's host dispatch hands each arm its sealed axiom row.
-		const label = (k: bigint) =>
-			Kind.match(k, {
-				DirectPass: (row) => `mastered, rank ${row.rank}`,
-				JudgedPass: (row) => `mastered, rank ${row.rank}`,
-				Failed: () => "not mastered"
-			})
-		assert.equal(label(Kind.DirectPass), "mastered, rank 30")
-		assert.equal(label(Kind.JudgedPass), "mastered, rank 20")
-		assert.equal(label(Kind.Failed), "not mastered")
+		// The payload tier's host dispatch: the record-table idiom — total by
+		// type over the handle union, each entry reading its sealed axiom row
+		// off the typed `Kind.axioms` readback.
+		const labels: Record<Infer<typeof Kind.id>, string> = {
+			DirectPass: `mastered, rank ${Kind.axioms.DirectPass.rank}`,
+			JudgedPass: `mastered, rank ${Kind.axioms.JudgedPass.rank}`,
+			Failed: "not mastered"
+		}
+		const label = (k: Infer<typeof Kind.id>) => labels[k]
+		assert.equal(label("DirectPass"), "mastered, rank 30")
+		assert.equal(label("JudgedPass"), "mastered, rank 20")
+		assert.equal(label("Failed"), "not mastered")
 
 		const { db } = await admit("r07-review", Review)
 		assert.ok(db.prepare(masteredAttempts))
@@ -475,8 +486,8 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 			contained(on(Node, "kind"), on(Kind, "id")),
 			key(Lit, ["node"]),
 			key(Add, ["node"]),
-			mirrors(on(Node.where({ kind: Kind.Lit }), "id"), on(Lit, "node")),
-			mirrors(on(Node.where({ kind: Kind.Add }), "id"), on(Add, "node")),
+			mirrors(on(Node.where({ kind: "Lit" }), "id"), on(Lit, "node")),
+			mirrors(on(Node.where({ kind: "Add" }), "id"), on(Add, "node")),
 			contained(on(Add, "lhs"), on(Node, "id")),
 			contained(on(Add, "rhs"), on(Node, "id")),
 			key(Parent, ["child"]),
@@ -562,15 +573,12 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 			key(Placement, ["order"]),
 			key(Shipment, ["order"]),
 			contained(on(Placement, "order"), on(Order, "id")),
-			mirrors(on(Shipment, "order"), on(Order.where({ state: State.Shipped }), "id"))
+			mirrors(on(Shipment, "order"), on(Order.where({ state: "Shipped" }), "id"))
 		])
 
 		const shipped = query(Orders).rule((r) => {
 			const { id, carrier } = r.vars("id", "carrier")
-			return r
-				.match(Order, { id, state: State.Shipped })
-				.match(Shipment, { order: id, carrier })
-				.select("id", "carrier")
+			return r.match(Order, { id, state: "Shipped" }).match(Shipment, { order: id, carrier }).select("id", "carrier")
 		})
 
 		const { db } = await admit("r13-orders", Orders)
@@ -609,9 +617,9 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 			contained(on(Claim, "arm"), on(Arm, "id")),
 			key(Booking, ["room", "span"]),
 			// The statement that TYPES Claim.source into "Attendance.id":
-			mirrors(on(Attendance.where({ rsvp: Rsvp.Accepted }), "id"), on(Claim.where({ arm: Arm.Busy }), "source")),
+			mirrors(on(Attendance.where({ rsvp: "Accepted" }), "id"), on(Claim.where({ arm: "Busy" }), "source")),
 			key(WorkHours, ["person", "hours"]),
-			contained(on(Claim.where({ arm: Arm.Busy }), ["person", "span"]), on(WorkHours, ["person", "hours"])),
+			contained(on(Claim.where({ arm: "Busy" }), ["person", "span"]), on(WorkHours, ["person", "hours"])),
 			contained(on(Booking, "room"), on(Room, "id")),
 			contained(on(Booking, "event"), on(Event, "id"))
 		])
@@ -777,12 +785,12 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 		const Jobs = schema("Jobs", { State, Job, Lease }, [
 			contained(on(Job, "state"), on(State, "id")),
 			key(Lease, ["job"]),
-			mirrors(on(Lease, "job"), on(Job.where({ state: State.Running }), "id"))
+			mirrors(on(Lease, "job"), on(Job.where({ state: "Running" }), "id"))
 		])
 
 		const stillQueued = query(Jobs).rule((r) => {
 			const { id, payload } = r.vars("id", "payload")
-			return r.match(Job, { id, state: State.Queued, payload }).select("id", "payload")
+			return r.match(Job, { id, state: "Queued", payload }).select("id", "payload")
 		})
 
 		const { db } = await admit("r20-jobs", Jobs)
@@ -797,8 +805,8 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 				return abandon("nothing queued")
 			}
 			for (const row of queued) {
-				tx.delete(Job, { id: row.id, state: State.Queued, payload: row.payload })
-				tx.insert(Job, { id: row.id, state: State.Running, payload: row.payload })
+				tx.delete(Job, { id: row.id, state: "Queued", payload: row.payload })
+				tx.insert(Job, { id: row.id, state: "Running", payload: row.payload })
 				tx.insert(Lease, { job: row.id, worker: 7n, until: 60n })
 			}
 			return undefined
@@ -817,12 +825,12 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 			key(Claim, ["source"]),
 			key(Claim, ["person", "span"]),
 			key(BusySpan, ["person", "span"]),
-			contained(on(BusySpan, ["person", "span"]), on(Claim.where({ arm: Arm.Busy }), ["person", "span"]))
+			contained(on(BusySpan, ["person", "span"]), on(Claim.where({ arm: "Busy" }), ["person", "span"]))
 		])
 
 		const deriving = query(Rollup).rule((r) => {
 			const { person, span } = r.vars("person", "span")
-			return r.match(Claim, { person, span, arm: Arm.Busy }).select("person", r.pack("span"))
+			return r.match(Claim, { person, span, arm: "Busy" }).select("person", r.pack("span"))
 		})
 
 		const { db } = await admit("r21-rollup", Rollup)
@@ -839,18 +847,18 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 			contained(on(Payment, "kind"), on(Kind, "id")),
 			key(Card, ["payment"]),
 			key(Ach, ["payment"]),
-			mirrors(on(Payment.where({ kind: Kind.Card }), "id"), on(Card, "payment")),
-			mirrors(on(Payment.where({ kind: Kind.Ach }), "id"), on(Ach, "payment"))
+			mirrors(on(Payment.where({ kind: "Card" }), "id"), on(Card, "payment")),
+			mirrors(on(Payment.where({ kind: "Ach" }), "id"), on(Ach, "payment"))
 		])
 
 		const wholeDu = query(Payments)
 			.rule((r) => {
 				const { id, n } = r.vars("id", "n")
-				return r.match(Payment, { id, kind: Kind.Card }).match(Card, { payment: id, last4: n }).select("id", "n")
+				return r.match(Payment, { id, kind: "Card" }).match(Card, { payment: id, last4: n }).select("id", "n")
 			})
 			.rule((r) => {
 				const { id, n } = r.vars("id", "n")
-				return r.match(Payment, { id, kind: Kind.Ach }).match(Ach, { payment: id, routing: n }).select("id", "n")
+				return r.match(Payment, { id, kind: "Ach" }).match(Ach, { payment: id, routing: n }).select("id", "n")
 			})
 
 		const { db } = await admit("r22-payments", Payments)
@@ -1027,12 +1035,12 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 			key(Claim, ["source"]),
 			key(Claim, ["person", "span"]),
 			key(BusySpan, ["person", "span"]),
-			contained(on(BusySpan, ["person", "span"]), on(Claim.where({ arm: Arm.Busy }), ["person", "span"]))
+			contained(on(BusySpan, ["person", "span"]), on(Claim.where({ arm: "Busy" }), ["person", "span"]))
 		])
 
 		const deriving = query(MaintainedRollup).rule((r) => {
 			const { source, person, span } = r.vars("source", "person", "span")
-			return r.match(Claim, { source, person, arm: Arm.Busy, span }).select("person", r.pack("span"))
+			return r.match(Claim, { source, person, arm: "Busy", span }).select("person", r.pack("span"))
 		})
 
 		const { db } = await admit("r27-maintained-rollup", MaintainedRollup)
@@ -1083,8 +1091,8 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 			key(Zone, ["ledger", "at"]),
 			key(UnitSlot, ["ledger", "at"]),
 			key(PairSlot, ["ledger", "at"]),
-			mirrors(on(Zone.where({ kind: Kind.Unit }), ["ledger", "at"]), on(UnitSlot, ["ledger", "at"])),
-			mirrors(on(Zone.where({ kind: Kind.Pair }), ["ledger", "at"]), on(PairSlot, ["ledger", "at"]))
+			mirrors(on(Zone.where({ kind: "Unit" }), ["ledger", "at"]), on(UnitSlot, ["ledger", "at"])),
+			mirrors(on(Zone.where({ kind: "Pair" }), ["ledger", "at"]), on(PairSlot, ["ledger", "at"]))
 		])
 
 		await admit("r29-zone-ledger", ZoneLedger)

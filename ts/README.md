@@ -27,9 +27,11 @@ classes, inferred query rows, and rejections that arrive as data rather than
 exceptions.
 
 ```ts
-import { bool, closed, contained, Db, gt, key, on, query, relation, schema, u64 } from "@bjornpagen/bumbledb"
+import { bool, closed, contained, Db, gt, type Infer, key, on, query, relation, schema, u64 } from "@bjornpagen/bumbledb"
 
 // A closed relation: a sealed roster of axioms with typed payload columns.
+// At the host surface a handle is its NAME — the string literal "DirectPass"
+// is the one spelling, and closed columns type as the handle union.
 const Kind = closed(
 	"Kind",
 	{ mastered: bool, rank: u64 },
@@ -57,10 +59,12 @@ const Review = schema("Review", { Kind, Attempt, Certificate }, [
 
 const db = await Db.create("./review.db", Review)
 
-// Write. The delta is judged against every statement at commit.
+// Write. The delta is judged against every statement at commit. A closed
+// column takes the handle name — a wrong string is a compile error AND a
+// marshal refusal.
 const result = db.write((tx) => {
-	const attempt = tx.insert(Attempt, { kind: Kind.DirectPass }) // attempt.id minted, a bare bigint
-	tx.insert(Certificate, { attempt: attempt.id, kind: Kind.DirectPass })
+	const attempt = tx.insert(Attempt, { kind: "DirectPass" }) // attempt.id minted, a bare bigint
+	tx.insert(Certificate, { attempt: attempt.id, kind: "DirectPass" })
 })
 
 // Rejection-as-data: no throw — a rejected commit is a typed value carrying
@@ -87,14 +91,21 @@ const prepared = db.prepare(certifiedAbove)
 const rows = db.execute(prepared, { floor: 15n }) // rows: { a: bigint; rank: bigint }[]
 console.log(rows)
 
-// Host dispatch over the sealed roster — exhaustive by construction; each
-// arm receives its axiom row.
-const label = Kind.match(Kind.JudgedPass, {
-	DirectPass: (row) => `mastered, rank ${row.rank}`,
-	JudgedPass: (row) => `mastered, rank ${row.rank}`,
-	Failed: () => "not mastered"
-})
-console.log(label) // "mastered, rank 20"
+// Host dispatch over the sealed roster is native `switch` narrowing over
+// the handle union ("DirectPass" | "JudgedPass" | "Failed") — exhaustive
+// via `satisfies never`; the sealed axioms read back typed.
+function describe(kind: Infer<typeof Kind.id>): string {
+	switch (kind) {
+		case "DirectPass":
+		case "JudgedPass":
+			return `mastered, rank ${Kind.axioms[kind].rank}`
+		case "Failed":
+			return "not mastered"
+		default:
+			return kind satisfies never
+	}
+}
+console.log(describe("JudgedPass")) // "mastered, rank 20"
 ```
 
 Every `ts` fence in this README is extracted and type-checked against the
@@ -102,7 +113,9 @@ real surface by `test/readme.test.ts` — the examples cannot drift.
 
 ## Surface
 
-- The structural type kernel — fields as pure structure (`bool`, `bytes`, `i64`, `u64`, `str`, `interval`, `span`), `relation()`, and `closed()` sealed rosters with typed axiom payloads and exhaustive host dispatch via `.match`. Domains are never declared: `schema()` computes every field's class from the statement list.
+The drizzle law governs this surface: the SDK's job at the host boundary is translation, not abstraction — every database idiom arrives as the modern TypeScript idiom for that concept, and the SDK never invents an operator where the language already has one.
+
+- The structural type kernel — fields as pure structure (`bool`, `bytes`, `i64`, `u64`, `str`, `interval`, `span`), `relation()`, and `closed()` sealed rosters with typed axiom payloads. A closed reference's value type IS the handle union (`Infer` speaks it); dispatch is native `switch` narrowing with `satisfies never` exhaustiveness. Domains are never declared: `schema()` computes every field's class from the statement list.
 - The statement algebra — `schema()`, `key`, `contained`, `mirrors`, `window`; faces via `on` (set membership is a plain array in `.where`); counts via `exactly`, `atLeast`, `atMost`, `between`, `none`; ψ-selection via `.where` on relations and closed rosters.
 - The `Db` runtime — `Db.create`/`Db.open`, path-cached stores, transactions, typed violations, scoped snapshot reads, the witnessed write loop with `abandon`.
 - The query surface — Datalog as values, `query(S).rule(r => ...)`: named vars, params typed by use, negation, aggregates, and the free comparison/connective exports (`eq`, `ne`, `lt`, `le`, `gt`, `ge`, `and`, `or`, `not`, `allen`/`ALLEN`, `pointIn`, `covers`); stratified recursion via `program()`; `db.prepare` as a plain value.

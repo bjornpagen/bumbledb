@@ -33,6 +33,7 @@ Everything below imports from the one package entry:
 import {
 	ALLEN,
 	Db,
+	type Infer,
 	abandon,
 	allen,
 	bool,
@@ -150,8 +151,8 @@ relations, glued by bidirectional conditional containments.
 
 ```ts
 // The discriminator vocabulary is a closed relation: its ground axioms are
-// axioms, and the handle constants (`Kind.Deterministic`, bare bigints) are
-// the literals on every surface.
+// axioms, and a handle is its NAME — the string literal "Deterministic" is
+// the ONE spelling, on every surface (statements, inserts, queries, rows).
 const Kind = closed("Kind", ["Deterministic", "CustomOperator"])
 const Task = relation("Task", { id: u64.fresh, kind: Kind.id })
 const DeterministicGrading = relation("DeterministicGrading", { task: u64, tolerance: i64 })
@@ -166,21 +167,28 @@ const Grading = schema("Grading", { Kind, Task, DeterministicGrading, CustomOper
 	// exists WITH that kind — composite-FK-plus-CHECK, one statement. These
 	// mirrors are also what type `task` on both arms: each lands in the
 	// "Task.id" generator class.
-	mirrors(on(Task.where({ kind: Kind.Deterministic }), "id"), on(DeterministicGrading, "task")),
-	mirrors(on(Task.where({ kind: Kind.CustomOperator }), "id"), on(CustomOperatorGrading, "task"))
+	mirrors(on(Task.where({ kind: "Deterministic" }), "id"), on(DeterministicGrading, "task")),
+	mirrors(on(Task.where({ kind: "CustomOperator" }), "id"), on(CustomOperatorGrading, "task"))
 	// Exclusivity is a theorem, not a statement: one id in two arms would
 	// force `kind` to equal two handles against the fresh key on id.
 	// The executor spends the same theorem again — recipe 22's free lunch.
 ])
 
-// Host dispatch over the discriminator is `match` — exhaustive over the
-// sealed roster by construction (a missing arm is a compile error; an
-// out-of-roster id throws, never misdispatches):
-const gradedBy = (kind: bigint) =>
-	Kind.match(kind, {
-		Deterministic: () => "tolerance",
-		CustomOperator: () => "operator"
-	})
+// Host dispatch over the discriminator is native `switch` narrowing over
+// the handle union (`Infer<typeof Kind.id>` = "Deterministic" |
+// "CustomOperator") — rows already arrive carrying the handle name, and
+// `satisfies never` makes the switch exhaustive: a missing arm is a
+// compile error.
+const gradedBy = (kind: Infer<typeof Kind.id>) => {
+	switch (kind) {
+		case "Deterministic":
+			return "tolerance"
+		case "CustomOperator":
+			return "operator"
+		default:
+			return kind satisfies never
+	}
+}
 ```
 
 ## 3. 0..1 optional attributes
@@ -301,13 +309,13 @@ declared priority handles.
 The enum idiom's replacement, first-class: a vocabulary is a **closed
 relation** — its ground axioms are declared in the schema, sealed at
 validate, frozen by the fingerprint, virtual in storage. The store holds zero
-vocabulary bytes, and handles are the literals on every surface.
+vocabulary bytes, and handle names are the string literals on every surface.
 
 ```ts
-// Tier 1: handles only. `closed()` mints one bare-bigint constant per handle
-// (ids = declaration order) — an emission, not a type: the engine's
-// vocabulary stays relational; the host matches on `Priority.Urgent`, or
-// dispatches exhaustively with `Priority.match` (recipe 2).
+// Tier 1: handles only. At the host surface a handle is its NAME — a string
+// literal of the roster's union ("Low" | "Normal" | "Urgent"); the engine's
+// vocabulary stays relational (ids = declaration order) and the marshal
+// owns the bijection. Dispatch is native `switch` narrowing (recipe 2).
 const Priority = closed("Priority", ["Low", "Normal", "Urgent"])
 
 const Ticket = relation("Ticket", { id: u64.fresh, priority: Priority.id, opened_at: i64 })
@@ -327,7 +335,7 @@ const Tickets = schema("Tickets", { Priority, Ticket }, [
 // never written, only declared.
 const urgent = query(Tickets).rule((r) => {
 	const { t } = r.vars("t")
-	return r.match(Ticket, { id: t, priority: Priority.Urgent }).select("t")
+	return r.match(Ticket, { id: t, priority: "Urgent" }).select("t")
 })
 ```
 
@@ -378,13 +386,16 @@ const masteredAttempts = query(Review).rule((r) => {
 		.select("a")
 })
 
-// Host dispatch on the payload tier hands each arm its sealed axiom row:
-const label = (k: bigint) =>
-	Kind.match(k, {
-		DirectPass: (row) => `mastered, rank ${row.rank}`,
-		JudgedPass: (row) => `mastered, rank ${row.rank}`,
-		Failed: () => "not mastered"
-	})
+// Host dispatch on the payload tier is the record-table idiom — a `Record`
+// over the handle union is total by type (a missing or extra entry is a
+// compile error), and each entry reads its sealed axiom row off the typed
+// `Kind.axioms` readback:
+const labels: Record<Infer<typeof Kind.id>, string> = {
+	DirectPass: `mastered, rank ${Kind.axioms.DirectPass.rank}`,
+	JudgedPass: `mastered, rank ${Kind.axioms.JudgedPass.rank}`,
+	Failed: "not mastered"
+}
+const label = (k: Infer<typeof Kind.id>) => labels[k]
 ```
 
 Two honest boundaries. The fold has limits: payload escaping to the head and
@@ -425,7 +436,7 @@ const Oncall = schema("Oncall", { Severity, Incident, Escalation }, [
 	// The sub-vocabulary: an escalation carries a PAGING severity, by
 	// statement. ψ over the sealed extension compiles to the member set
 	// {Critical, Fatal}; the judgment is one bit test per touched fact,
-	// and an escalation at Severity.Info aborts the commit.
+	// and an escalation at "Info" aborts the commit.
 	contained(on(Escalation, "severity"), on(Severity.where({ pages: true }), "id"))
 ])
 
@@ -512,8 +523,8 @@ const Ast = schema("Ast", { Kind, Node, Lit, Add, Parent }, [
 	key(Lit, ["node"]),
 	key(Add, ["node"]),
 	// Every node's arm is total, valid, and exclusive (recipe 2's theorems):
-	mirrors(on(Node.where({ kind: Kind.Lit }), "id"), on(Lit, "node")),
-	mirrors(on(Node.where({ kind: Kind.Add }), "id"), on(Add, "node")),
+	mirrors(on(Node.where({ kind: "Lit" }), "id"), on(Lit, "node")),
+	mirrors(on(Node.where({ kind: "Add" }), "id"), on(Add, "node")),
 	// Every child edge resolves — no dangling subtrees, judged at commit
 	// (these containments also put lhs/rhs in the "Node.id" class, which is
 	// exactly what lets the query below join lhs against Lit.node):
@@ -635,7 +646,7 @@ const Orders = schema("Orders", { State, Order, Placement, Shipment }, [
 	// The conditional target, both ways: every Shipment references an order
 	// THAT IS Shipped (validity), and every Shipped order has its Shipment
 	// (totality) — the transition and its evidence commit together.
-	mirrors(on(Shipment, "order"), on(Order.where({ state: State.Shipped }), "id"))
+	mirrors(on(Shipment, "order"), on(Order.where({ state: "Shipped" }), "id"))
 	// Transition predicates ("only Placed may ship") are host code under the
 	// generation witness — recipe 20; the schema pins the states, not the paths.
 ])
@@ -643,7 +654,7 @@ const Orders = schema("Orders", { State, Order, Placement, Shipment }, [
 const shipped = query(Orders).rule((r) => {
 	const { id, carrier } = r.vars("id", "carrier")
 	return r
-		.match(Order, { id, state: State.Shipped })
+		.match(Order, { id, state: "Shipped" })
 		.match(Shipment, { order: id, carrier })
 		.select("id", "carrier")
 })
@@ -701,11 +712,11 @@ const Calendar = schema("Calendar", { Rsvp, Arm, Person, Room, Event, Attendance
 	// not declared. Policy is the presence or absence of one statement.
 	// Accepting an invitation IS claiming the time (totality + validity) —
 	// and this is the statement that types Claim.source:
-	mirrors(on(Attendance.where({ rsvp: Rsvp.Accepted }), "id"), on(Claim.where({ arm: Arm.Busy }), "source")),
+	mirrors(on(Attendance.where({ rsvp: "Accepted" }), "id"), on(Claim.where({ arm: "Busy" }), "source")),
 	// Busy time lies inside working hours, pointwise — coverage rides the
 	// target's own key (disjoint + ordered is a theorem, not a request):
 	key(WorkHours, ["person", "hours"]),
-	contained(on(Claim.where({ arm: Arm.Busy }), ["person", "span"]), on(WorkHours, ["person", "hours"])),
+	contained(on(Claim.where({ arm: "Busy" }), ["person", "span"]), on(WorkHours, ["person", "hours"])),
 	contained(on(Booking, "room"), on(Room, "id")),
 	contained(on(Booking, "event"), on(Event, "id"))
 ])
@@ -953,13 +964,13 @@ const Jobs = schema("Jobs", { State, Job, Lease }, [
 	key(Lease, ["job"]),
 	// A lease exists iff its job is Running (recipe 13's conditional target):
 	// claiming a job and leasing it commit together or not at all.
-	mirrors(on(Lease, "job"), on(Job.where({ state: State.Running }), "id"))
+	mirrors(on(Lease, "job"), on(Job.where({ state: "Running" }), "id"))
 ])
 
 // update-where's premise — "still Queued" is the witness:
 const stillQueued = query(Jobs).rule((r) => {
 	const { id, payload } = r.vars("id", "payload")
-	return r.match(Job, { id, state: State.Queued, payload }).select("id", "payload")
+	return r.match(Job, { id, state: "Queued", payload }).select("id", "payload")
 })
 
 const db = await Db.create("./jobs.db", Jobs)
@@ -976,8 +987,8 @@ const outcome = db.writeWitnessed(function updateWhere(snap, tx) {
 		return abandon("nothing queued")
 	}
 	for (const row of queued) {
-		tx.delete(Job, { id: row.id, state: State.Queued, payload: row.payload })
-		tx.insert(Job, { id: row.id, state: State.Running, payload: row.payload })
+		tx.delete(Job, { id: row.id, state: "Queued", payload: row.payload })
+		tx.insert(Job, { id: row.id, state: "Running", payload: row.payload })
 		tx.insert(Lease, { job: row.id, worker: 7n, until: 60n })
 	}
 	return undefined
@@ -1007,7 +1018,7 @@ const Rollup = schema("Rollup", { Arm, Claim, BusySpan }, [
 	// Soundness, pointwise: every stored rollup point is covered by busy
 	// claims — an UNSOUND rollup (claiming busy time that isn't, or surviving
 	// its sources' deletion) cannot commit, judged on every touching commit.
-	contained(on(BusySpan, ["person", "span"]), on(Claim.where({ arm: Arm.Busy }), ["person", "span"]))
+	contained(on(BusySpan, ["person", "span"]), on(Claim.where({ arm: "Busy" }), ["person", "span"]))
 ])
 
 // Maintenance is the third witness idiom (recipe 20): re-run the deriving
@@ -1016,7 +1027,7 @@ const Rollup = schema("Rollup", { Arm, Claim, BusySpan }, [
 // coalesce):
 const deriving = query(Rollup).rule((r) => {
 	const { person, span } = r.vars("person", "span")
-	return r.match(Claim, { person, span, arm: Arm.Busy }).select("person", r.pack("span"))
+	return r.match(Claim, { person, span, arm: "Busy" }).select("person", r.pack("span"))
 })
 ```
 
@@ -1040,8 +1051,8 @@ const Payments = schema("Payments", { Kind, Payment, Card, Ach }, [
 	contained(on(Payment, "kind"), on(Kind, "id")),
 	key(Card, ["payment"]),
 	key(Ach, ["payment"]),
-	mirrors(on(Payment.where({ kind: Kind.Card }), "id"), on(Card, "payment")),
-	mirrors(on(Payment.where({ kind: Kind.Ach }), "id"), on(Ach, "payment"))
+	mirrors(on(Payment.where({ kind: "Card" }), "id"), on(Card, "payment")),
+	mirrors(on(Payment.where({ kind: "Ach" }), "id"), on(Ach, "payment"))
 ])
 
 // One query, two rules (set union). The exclusivity theorem (recipe 2) is
@@ -1051,14 +1062,14 @@ const wholeDu = query(Payments)
 	.rule((r) => {
 		const { id, n } = r.vars("id", "n")
 		return r
-			.match(Payment, { id, kind: Kind.Card })
+			.match(Payment, { id, kind: "Card" })
 			.match(Card, { payment: id, last4: n })
 			.select("id", "n")
 	})
 	.rule((r) => {
 		const { id, n } = r.vars("id", "n")
 		return r
-			.match(Payment, { id, kind: Kind.Ach })
+			.match(Payment, { id, kind: "Ach" })
 			.match(Ach, { payment: id, routing: n })
 			.select("id", "n")
 	})
@@ -1323,13 +1334,13 @@ const MaintainedRollup = schema("MaintainedRollup", { Arm, Claim, BusySpan }, [
 	key(Claim, ["source"]),
 	key(Claim, ["person", "span"]),
 	key(BusySpan, ["person", "span"]),
-	contained(on(BusySpan, ["person", "span"]), on(Claim.where({ arm: Arm.Busy }), ["person", "span"]))
+	contained(on(BusySpan, ["person", "span"]), on(Claim.where({ arm: "Busy" }), ["person", "span"]))
 ])
 
 // Derive the desired rollup on the maintenance snapshot:
 const deriving = query(MaintainedRollup).rule((r) => {
 	const { source, person, span } = r.vars("source", "person", "span")
-	return r.match(Claim, { source, person, arm: Arm.Busy, span }).select("person", r.pack("span"))
+	return r.match(Claim, { source, person, arm: "Busy", span }).select("person", r.pack("span"))
 })
 ```
 
@@ -1437,8 +1448,8 @@ const ZoneLedger = schema("ZoneLedger", { Kind, Ledger, Zone, UnitSlot, PairSlot
 	key(PairSlot, ["ledger", "at"]),
 	// Each kind's zones carry exactly its sidecar's points — mixed widths,
 	// one element domain:
-	mirrors(on(Zone.where({ kind: Kind.Unit }), ["ledger", "at"]), on(UnitSlot, ["ledger", "at"])),
-	mirrors(on(Zone.where({ kind: Kind.Pair }), ["ledger", "at"]), on(PairSlot, ["ledger", "at"]))
+	mirrors(on(Zone.where({ kind: "Unit" }), ["ledger", "at"]), on(UnitSlot, ["ledger", "at"])),
+	mirrors(on(Zone.where({ kind: "Pair" }), ["ledger", "at"]), on(PairSlot, ["ledger", "at"]))
 ])
 ```
 
