@@ -1,6 +1,6 @@
 {
 	"name": "@bjornpagen/bumbledb",
-	"version": "0.3.0",
+	"version": "0.4.0",
 	"description": "Type-theoretic TypeScript SDK for the bumbledb embedded relational engine",
 	"module": "dist/index.js",
 	"main": "dist/index.js",
@@ -51,7 +51,7 @@
 		"@superbuilders/errors": "^4.0.2"
 	},
 	"optionalDependencies": {
-		"@bjornpagen/bumbledb-darwin-arm64": "0.3.0"
+		"@bjornpagen/bumbledb-darwin-arm64": "0.4.0"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "^2.0.0-beta.5",
