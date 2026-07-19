@@ -1,7 +1,9 @@
 #!/bin/sh
 # The gate suite (docs/architecture/00-product.md success criterion 3 and
-# 50-validation's sanctioned gates). Run before every commit; CI, when it
-# exists, runs exactly this.
+# 60-validation's sanctioned gates). Run before every commit; CI's check
+# lane (.github/workflows/ci.yml) runs exactly this — on macos-arm64 AND
+# on x86_64-linux, where the run itself is the engine's scalar-fallback
+# and linux-arm coverage.
 set -eu
 
 cd "$(dirname "$0")/.."
@@ -32,8 +34,12 @@ cargo test --features alloc-counter --test alloc_gate --release -- --test-thread
 # The ground-off and fold-off fuzz-oracle features are load-bearing for
 # the fuzz crate's rewrites dual-pipeline differential (the crucible
 # packet (git ecec1dc3)): the engine suite must stay green with each off
-# switch compiled in. The default workspace test/clippy invocations above
-# are the feature-off matrix; these are the feature-on matrix.
+# switch compiled in. What the lanes actually build: the workspace
+# invocations above already compile bumbledb WITH ground-off — the bench
+# crate's dev-dependency turns it on, and cargo unifies features across
+# one build graph — so the -p ground-off lane pins that coverage
+# independently of the bench dep, and the fold-off lane (a -p graph the
+# bench crate is not in) is the only build with ground-off OFF.
 echo "==> bumbledb with the ground-off fuzz-oracle feature (clippy + tests)"
 cargo clippy -p bumbledb --all-targets --features ground-off -- -D warnings
 cargo test -p bumbledb --features ground-off
@@ -70,10 +76,11 @@ cargo clippy --manifest-path fuzz/Cargo.toml --all-targets -- -D warnings
 echo "==> fuzz crate: deterministic crashpoint sweeps (durable + ephemeral)"
 cargo test --manifest-path fuzz/Cargo.toml --test crash every_crashpoint_recovers
 
-# The WRITEMAP commit-window kill smoke (fuzz/tests/kill.rs): the
+# The NOSYNC commit-window kill smoke (fuzz/tests/kill.rs): the
 # crashpoint sweeps cut everywhere EXCEPT inside mdb_txn_commit itself,
-# and inside that window is exactly where WRITEMAP changes the write
-# pattern — so ~30 random-timing SIGKILLs (durable control + ephemeral)
+# and inside that window is exactly where the ephemeral kind's NO_SYNC
+# commits leave un-fsynced state — so ~30 random-timing SIGKILLs
+# (durable control + ephemeral)
 # run per commit (~5-8s), each corpse autopsied for all-or-nothing
 # recovery. The statistical lane (>= 2,000 kills/kind) is the #[ignore]d
 # long variant, recorded in fuzz/SESSIONS.md.
@@ -88,22 +95,12 @@ echo "==> bumbledb-bench with the obs feature (clippy + harness tests)"
 cargo clippy -p bumbledb-bench --features obs --all-targets -- -D warnings
 cargo test -p bumbledb-bench --features obs -- harness trace_out tripwires the_engine_trace_pins
 
-# The x86-64 scalar-fallback check (docs/architecture/00-product.md):
-# report skip-vs-pass honestly. It needs the WHOLE cross toolchain, not
-# just the Rust std: the engine links LMDB's C sources at build-script
-# time, so `cargo check` cross-compiles C — a cross std without a cross
-# C compiler can only fail environmentally, which is a skip, not a
-# verdict. Engine crates only: the portable-fallback promise is the
-# engine's — the bench harness is host tooling (SQLite, host-timed).
-SYSROOT="$(rustc --print sysroot)"
-CROSS_CC="${CC_x86_64_unknown_linux_gnu:-x86_64-linux-gnu-gcc}"
-if [ -d "$SYSROOT/lib/rustlib/x86_64-unknown-linux-gnu/lib" ] \
-    && ls "$SYSROOT/lib/rustlib/x86_64-unknown-linux-gnu/lib"/libstd-*.rlib >/dev/null 2>&1 \
-    && command -v "$CROSS_CC" >/dev/null 2>&1; then
-    echo "==> cargo check -p bumbledb -p bumbledb-macros -p bumbledb-query --target x86_64-unknown-linux-gnu"
-    cargo check -p bumbledb -p bumbledb-macros -p bumbledb-query --target x86_64-unknown-linux-gnu
-else
-    echo "==> SKIPPED: x86_64-unknown-linux-gnu cross check (cross std or cross C compiler missing)"
-fi
+# The x86-64 scalar-fallback promise (docs/architecture/00-product.md)
+# is EXECUTED, not cross-checked: CI's check lane runs this whole script
+# natively on an x86_64-linux runner (.github/workflows/ci.yml), which
+# is strictly stronger than the cross `cargo check` that used to sit
+# here — that check needed a cross std AND a cross C compiler (the
+# engine links LMDB's C at build-script time), so it self-skipped on
+# every machine that ever ran it, reference host and CI runner alike.
 
 echo "==> all gates green"
