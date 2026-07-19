@@ -514,8 +514,10 @@ The bridge to paper-faithful execution (`40-execution.md` D1):
   single-core scan bandwidth a build is single-digit milliseconds per 100 MB,
   the number that makes the whole cache design sound" — is PENDING RE-TRUE on
   both counts (the incremental-images wave): it was bandwidth arithmetic, never
-  a measurement of the decode-bound build path (the honest anchors so far:
-  cold_containment_walk p50 4.17–5.00 ms at S = 100 k, and the `#[ignore]`d
+  a measurement of the decode-bound build path (the honest anchors, once they
+  exist, are the `cold_containment_walk` report row — re-established under
+  `scripts/measure.sh` conditions in Wave M, no digits asserted before that
+  record lands — and the `#[ignore]`d
   `image_build_split_evidence` harness, `image/tests/timing.rs`; the
   copy-on-append measurement re-trues or retracts the per-100 MB figure with a
   tier stated), and even where the figure holds, its conclusion died at the
@@ -598,9 +600,10 @@ the theory itself.
 - **Cache behavior:** the synthesized image lives in a per-relation `OnceLock`
   slot on the cache, sized at cache construction from the schema and keyed
   *outside* the generation map — built on first touch, **never evicted, never
-  rebuilt** (`evict_older_than` skips it by construction; it is not in the
-  generation-keyed map at all). `peek` answers it once resident, with no
-  generation read.
+  rebuilt** (the production commit hook `ImageCache::advance` skips it by
+  construction, as does its test-gated retain-newest twin `evict_older_than`;
+  it is not in the generation-keyed map at all). `peek` answers it once
+  resident, with no generation read.
 - **Read surfaces:** `Snapshot::scan`/`scan_facts` yield the extension's
   canonical fact bytes directly (row id = declaration index); `WriteTx`
   point reads (`get_dyn`) resolve against the extension by re-deriving determinant
@@ -617,8 +620,13 @@ the theory itself.
 Images are whole-slab allocations freed as wholes; no per-value heap objects in
 storage or images. Query scratch belongs to prepared queries (`40-execution.md`).
 Steady-state process heap = LMDB's mmap + the newest generation's images +
-at most one below-newest append base per delete-free relation (the lineage law
-keeps that map O(relations)) + per-prepared-query pools + a constant. Prepared
+at most one below-newest append base per delete-free relation (every cache
+insert sweeps its relation's entries below its own generation in the same
+critical section — `ImageCache::get_or_build` — so no entry outlives the next
+insert above it: an epilogue-racing reader's full build supersedes the base
+instead of stranding it, surplus is transient and bounded by concurrently
+racing readers, and the map stays O(relations)) + per-prepared-query pools +
+a constant. Prepared
 queries hold current-generation
 images only: prepare binds no image at all (`View::Unbound`), and each execution
 reaps memoized bindings below its generation — old images die with the last pinned

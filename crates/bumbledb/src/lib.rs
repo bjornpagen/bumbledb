@@ -111,6 +111,15 @@ mod value;
 mod verify_store;
 
 pub use allen::{AllenMask, Basic, classify};
+/// The copy-on-append column-differential divergence facets
+/// (`api/db/image_oracle.rs`), reachable only under the `image-oracle`
+/// fuzz-oracle feature: the detached fuzz crate's `ops` target compares
+/// the engine's served image against a from-scratch build after every
+/// state-changing commit and panics on the first facet reported here
+/// (docs/prds/incremental-images/prd-I1-copy-on-append.md § coverage
+/// item 3(b)).
+#[cfg(feature = "image-oracle")]
+pub use api::db::image_oracle::ImageDivergence;
 pub use api::db::{BulkLoadError, Db, Exhumed, Fact, Fresh, FreshKeyed, Snapshot, WriteTx, exhume};
 pub use api::prepared::{
     Answer, AnswerValue, Answers, BindValue, OccurrenceDrift, ParamArg, PreparedQuery, Staleness,

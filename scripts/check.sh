@@ -41,6 +41,16 @@ cargo test -p bumbledb --features ground-off
 echo "==> bumbledb with the fold-off fuzz-oracle feature (tests)"
 cargo test -p bumbledb --features fold-off
 
+# The trace-gated referee pins live in the ENGINE crate — the
+# per-relation arm-selection pins (`api/db/append_tests.rs:
+# the_write_path_classifies_deletes_per_relation`, `image/cache/tests.rs:
+# counters_pin_the_per_relation_arm_selection`) and the rest of
+# `trace_tests.rs` — and the bench-crate obs lane below runs bench tests
+# only, so without this lane the pins compile in no gate and the
+# appended-across-a-delete instrument is inert.
+echo "==> bumbledb with the trace feature (tests)"
+cargo test -p bumbledb --features trace
+
 # The fuzz crate is detached from the workspace on purpose (the
 # crucible packet (git ecec1dc3)): `cargo fuzz` builds its targets, so
 # every --workspace invocation above skips fuzz/src entirely — a

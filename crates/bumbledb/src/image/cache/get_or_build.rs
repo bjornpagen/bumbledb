@@ -8,18 +8,17 @@ use std::sync::Arc;
 use crate::error::{CorruptionError, Error, Result};
 use crate::image::{RelationImage, append, build, synthesize_closed};
 use crate::schema::Schema;
-use crate::storage::env::{GenerationId, ReadTxn};
+use crate::storage::env::ReadTxn;
 use crate::storage::read;
 use bumbledb_theory::schema::RelationId;
 
 use super::{Cached, ImageCache};
 
 /// The relation's surviving append base, cloned out of the map under the
-/// probe lock: its generation (the key to remove when the successor
-/// lands), the immutable image, and the append boundary
-/// ([`Cached::row_id_next`]).
+/// probe lock: the immutable image and the append boundary
+/// ([`Cached::row_id_next`]). No key rides along — the insert path
+/// sweeps EVERY older entry of the relation, not one remembered key.
 struct Base {
-    generation: GenerationId,
     image: Arc<RelationImage>,
     row_id_next: u64,
 }
@@ -44,11 +43,16 @@ impl ImageCache {
     ///   lineage law only storage corruption shrinks a delete-free
     ///   relation's count; hard error, never a silent rebuild.
     ///
-    /// Either successor replaces its base in the map in the same critical
-    /// section as its insert, keeping the map O(relations). No base — or
-    /// a reader below `newest` — takes the full build exactly as before
-    /// (below-newest readers stay query-local and never insert, though
-    /// they may now hit a retained base at exactly their generation).
+    /// EVERY insert — successor or full build — sweeps the relation's
+    /// entries below its own generation in the same critical section
+    /// (the lineage law's corollary, `CacheInner::map`: no entry
+    /// outlives the next insert above it, so a full build whose
+    /// snapshot raced ahead of the commit epilogue's `advance`
+    /// supersedes the base it never probed instead of stranding it
+    /// forever). No base — or a reader below `newest` — takes the full
+    /// build exactly as before (below-newest readers stay query-local
+    /// and never insert, though they may now hit a retained base at
+    /// exactly their generation).
     ///
     /// A **closed** relation branches before the generation map is ever
     /// touched: its image is synthesized from the sealed extension — the
@@ -101,8 +105,7 @@ impl ImageCache {
                         .map
                         .iter()
                         .find(|((r, g), _)| *r == rel && *g < generation)
-                        .map(|((_, g), cached)| Base {
-                            generation: *g,
+                        .map(|(_, cached)| Base {
                             image: Arc::clone(&cached.image),
                             row_id_next: cached.row_id_next,
                         })
@@ -116,12 +119,9 @@ impl ImageCache {
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
         // Build, append, or carry outside the lock.
-        let (image, replaced) = match base {
-            Some(base) => {
-                let (image, base_generation) = self.extend(txn, schema, rel, &base)?;
-                (image, Some(base_generation))
-            }
-            None => (self.build_full(txn, schema, rel)?, None),
+        let image = match base {
+            Some(base) => self.extend(txn, schema, rel, &base)?,
+            None => self.build_full(txn, schema, rel)?,
         };
 
         // An old-generation reader keeps its image query-local: inserting it
@@ -167,12 +167,16 @@ impl ImageCache {
                     image: Arc::clone(&image),
                     row_id_next,
                 });
-                // The successor replaces its base — the same critical
-                // section, so the lineage law's one-base-per-relation
-                // corollary holds at every observable instant.
-                if let Some(base_generation) = replaced {
-                    inner.map.remove(&(rel, base_generation));
-                }
+                // The insert supersedes EVERY older entry of its relation
+                // — the same critical section, so no entry outlives the
+                // next insert above it (the lineage law's corollary).
+                // Removing only the probed base would strand one entry
+                // per commit-epilogue race won (a full build whose
+                // snapshot ran ahead of `newest` probes no base),
+                // monotone forever on a never-deleted relation; sweeping
+                // is always sound — map entries are pure caches, and
+                // pinned readers keep their `Arc`s.
+                inner.map.retain(|&(r, g), _| r != rel || g >= generation);
                 Ok(image)
             }
         }
@@ -210,7 +214,7 @@ impl ImageCache {
 
     /// The lineage arms over a surviving base: carry-forward, append, or
     /// typed corruption, decided by this snapshot's row count. Returns
-    /// the image plus the base's generation (the key the insert replaces).
+    /// the image; the insert path's per-relation sweep retires the base.
     #[cfg_attr(
         not(feature = "trace"),
         expect(
@@ -224,7 +228,7 @@ impl ImageCache {
         schema: &Schema,
         rel: RelationId,
         base: &Base,
-    ) -> Result<(Arc<RelationImage>, GenerationId)> {
+    ) -> Result<Arc<RelationImage>> {
         let claimed = read::row_count(txn, rel)?;
         let base_rows = base.image.row_count() as u64;
         let image = match claimed.cmp(&base_rows) {
@@ -271,7 +275,7 @@ impl ImageCache {
                 image
             }
         };
-        Ok((image, base.generation))
+        Ok(image)
     }
 
     /// The virtual branch: the synthesized image of a closed relation,
