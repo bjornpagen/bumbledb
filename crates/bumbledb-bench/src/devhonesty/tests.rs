@@ -4,8 +4,6 @@
 //! through `scripts/ramdisk.sh` (this is the canonical macOS machine)
 //! and detaches it on every path — the drop guard runs on panic too.
 
-use std::path::{Path, PathBuf};
-
 use super::volume_identity;
 
 /// The system temp dir lives on the internal SSD: not RAM-backed.
@@ -27,9 +25,27 @@ fn unborn_path_answers_with_its_ancestor() {
     assert!(!identity.ram_backed);
 }
 
+/// The `/proc/mounts` octal decoder assembles escaped BYTES into UTF-8
+/// once at the end: a multi-byte mount path survives, where the
+/// char-per-byte push it replaced read `\303\266` as two latin-1 chars.
+/// Pure string logic — runs on every host, this one included.
+#[test]
+fn octal_unescape_assembles_multibyte_utf8() {
+    // ö is the two octal-escaped bytes \303 \266; space is \040.
+    assert_eq!(super::unescape(r"/mnt/b\303\266se\040dir"), "/mnt/böse dir");
+    // The single-byte classics: space, tab, newline, backslash.
+    assert_eq!(
+        super::unescape(r"/mnt/a\040b\011c\012d\134e"),
+        "/mnt/a b\tc\nd\\e"
+    );
+    // A malformed escape passes through verbatim, never panics.
+    assert_eq!(super::unescape(r"a\9xb"), r"a\9xb");
+}
+
 #[cfg(target_os = "macos")]
 mod on_a_live_ram_disk {
     use super::*;
+    use std::path::{Path, PathBuf};
     use std::process::Command;
 
     /// A live ram disk created through the script under test, detached

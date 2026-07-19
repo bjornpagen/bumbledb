@@ -427,6 +427,13 @@ feature; and — when the cross std and cross C compiler are present — the
 x86-64 scalar-fallback `cargo check`. The alloc gate's `--test-threads=1` is
 load-bearing: the counting allocator is process-global.
 
+Disk requirements for tests: every store opens as a fixed 4 GiB memory map
+(`MAP_SIZE` in `crates/bumbledb/src/storage/env.rs`), ftruncated at open and
+kept sparse by APFS/ext4 — but overlayfs, the default container filesystem,
+materializes it, so the suite's many stores can exhaust a container's disk and
+fail with `ENOSPC`. Run the gates on a real filesystem (a bind-mounted volume)
+with tens of GiB free.
+
 The Lean gate is `scripts/lean.sh`: `lake build` over the spec tree, the
 proof-escape battery, the spec census, the conformance corpus evaluated under
 the executable Lean denotation, and the three-way comparator replaying that
