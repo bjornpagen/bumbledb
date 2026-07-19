@@ -88,12 +88,10 @@ const SEV_ID = 0
 const INCIDENT_ID = 1
 const ESCALATION_ID = 2
 
-/** Sorts answer rows of two bigint columns for a set-equality comparison (answers are sets; the host sorts). */
-function sortedPairs(
-	rows: ReadonlyArray<{ readonly i: bigint; readonly s: bigint | string }>
-): Array<[bigint, bigint | string]> {
+/** Sorts answer rows (incident id, severity handle NAME) for a set-equality comparison (answers are sets; the host sorts). */
+function sortedPairs(rows: ReadonlyArray<{ readonly i: bigint; readonly s: string }>): Array<[bigint, string]> {
 	return rows
-		.map(function pair(row): [bigint, bigint | string] {
+		.map(function pair(row): [bigint, string] {
 			return [row.i, row.s]
 		})
 		.sort(function compare(a, b) {
@@ -155,8 +153,9 @@ describe("ψ query atoms over closed relations", function suite() {
 		)
 		// "s" is bound at Escalation.sev (the PRECISE roster) and REBOUND at
 		// the ψ atom's own id — the sealed shape's id stays the WIDE fallback
-		// (`ClosedIdField`, H1's ruling), so the joined slot claims `string`
-		// (the runtime VALUE is a bigint until H4's decode makes it true).
+		// (`ClosedIdField`, H1's ruling), so the joined slot claims `string`,
+		// and H4's decode makes the claim TRUE: the runtime value is the
+		// handle NAME, lifted through the marshal's one bijection.
 		type RowPin = Expect<Equal<QueryRow<typeof paged>, { readonly i: bigint; readonly s: string }>>
 		const pagedUnion = query(Oncall)
 			.rule((r) =>
@@ -175,10 +174,10 @@ describe("ψ query atoms over closed relations", function suite() {
 		const viaUnion = sortedPairs(run(pagedUnion, {}))
 		assert.deepEqual(viaPsi, viaUnion, "the two spellings answer identically over the same store")
 		assert.deepEqual(viaPsi, [
-			[3n, 2n],
-			[4n, 3n],
-			[5n, 2n],
-			[5n, 3n]
+			[3n, "Crit"],
+			[4n, "Fatal"],
+			[5n, "Crit"],
+			[5n, "Fatal"]
 		])
 		const pins: [RowPin] = [true]
 		assert.equal(pins.length, 1)
@@ -207,8 +206,8 @@ describe("ψ query atoms over closed relations", function suite() {
 		const viaPsi = sortedPairs(run(unpaged, {}))
 		assert.deepEqual(viaPsi, sortedPairs(run(unpagedUnion, {})))
 		assert.deepEqual(viaPsi, [
-			[1n, 0n],
-			[2n, 1n]
+			[1n, "Info"],
+			[2n, "Warn"]
 		])
 	})
 

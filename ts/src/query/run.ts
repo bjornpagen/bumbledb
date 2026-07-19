@@ -8,12 +8,16 @@
  * values — the marshal boundary is pure both ways: the engine computed
  * the answer under the prepared head, so a decoded row that carries every
  * select column IS a row (the trusted read seam), and nothing is asserted
- * on any value. Answers are SETS — no order or limit exists anywhere;
- * hosts sort. The `Prepared` VALUE itself (no lifecycle, GC-reclaimed
- * plan) lives in `#db.ts`.
+ * on any value. A CLOSED answer column decodes id → handle NAME through
+ * the marshal's one bijection (`handleOf` — the same read half every fact
+ * decode rides; the column's roster rides `SelectColumn.closed`), so query
+ * rows speak the vocabulary exactly as scans and gets do. Answers are
+ * SETS — no order or limit exists anywhere; hosts sort. The `Prepared`
+ * VALUE itself (no lifecycle, GC-reclaimed plan) lives in `#db.ts`.
  */
 
 import * as errors from "@superbuilders/errors"
+import { handleOf } from "#marshal.ts"
 import type { FactValue, QueryParam, TaggedValue } from "#native.ts"
 import type { SelectColumn } from "#query/atom.ts"
 import { taggedCmpLiteral } from "#query/lower.ts"
@@ -103,7 +107,9 @@ function isAnswerRow<Row>(
 /**
  * Decodes positional answer rows (column order = the program's head order
  * = the select's written order) to named, frozen row objects of bare
- * structural values.
+ * structural values. A closed column lifts its row id back to the handle
+ * NAME through the marshal's bijection — an out-of-roster id is the same
+ * pointed throw a fact decode gives, never a silent fallback.
  */
 function decodeAnswers<Row>(select: readonly SelectColumn[], rows: FactValue[][]): Row[] {
 	return rows.map(function decodeRow(row) {
@@ -116,7 +122,8 @@ function decodeAnswers<Row>(select: readonly SelectColumn[], rows: FactValue[][]
 			if (cell === undefined) {
 				throw errors.new(`query answer cell ${ordinal} (${column.name}) is absent`)
 			}
-			decoded[column.name] = cell
+			decoded[column.name] =
+				column.closed === undefined ? cell : handleOf(`query answer column ${column.name}`, column.closed, cell)
 		})
 		Object.freeze(decoded)
 		if (!isAnswerRow<Row>(select, decoded)) {

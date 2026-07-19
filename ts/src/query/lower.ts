@@ -26,7 +26,7 @@
  */
 
 import * as errors from "@superbuilders/errors"
-import type { AnyField } from "#fields.ts"
+import type { AnyField, ClosedRoster } from "#fields.ts"
 import { assertDeclarationOrderKey } from "#fields.ts"
 import type { ClassRecordOf, SchemaClasses } from "#law.ts"
 import type {
@@ -812,14 +812,27 @@ function isAggregateEntry(
 	return typeof value === "object" && value !== null && "agg" in value
 }
 
-/** Classifies one select entry into its named answer column. */
+/**
+ * Classifies one select entry into its named answer column. The `closed`
+ * slice is resolved LATER, at rule completion (`completeRule`), where the
+ * rule's `varFields` are in hand — until then every column is provisionally
+ * bare.
+ */
 function selectColumnOf(entry: unknown): SelectColumn {
 	if (typeof entry === "string") {
-		return Object.freeze({ name: entry, entry: Object.freeze({ kind: "var" as const, over: entry }) })
+		return Object.freeze({
+			name: entry,
+			entry: Object.freeze({ kind: "var" as const, over: entry }),
+			closed: undefined
+		})
 	}
 	if (isTerm(entry)) {
 		if (entry[term] === "duration") {
-			return Object.freeze({ name: entry.name, entry: Object.freeze({ kind: "measure" as const, over: entry.name }) })
+			return Object.freeze({
+				name: entry.name,
+				entry: Object.freeze({ kind: "measure" as const, over: entry.name }),
+				closed: undefined
+			})
 		}
 		throw errors.new(
 			`query select: a ${entry[term]} is not projectable — select takes variable names, duration(v), or aggregates`
@@ -838,7 +851,11 @@ function aggregateColumnOf(entry: {
 	readonly key: unknown
 }): SelectColumn {
 	function column(name: string, agg: AggData): SelectColumn {
-		return Object.freeze({ name, entry: Object.freeze({ kind: "aggregate" as const, agg: Object.freeze(agg) }) })
+		return Object.freeze({
+			name,
+			entry: Object.freeze({ kind: "aggregate" as const, agg: Object.freeze(agg) }),
+			closed: undefined
+		})
 	}
 	const over = entry.over
 	switch (entry.agg) {
@@ -879,6 +896,26 @@ function aggregateColumnOf(entry: {
 	}
 }
 
+/**
+ * The orderable ban's pointed refusal (`docs/architecture/10-data-model.md`
+ * § orderability): a closed reference is equality-and-membership only —
+ * its declaration-id order is an encoding accident, so every
+ * order-comparison and fold position refuses it. The construction-time
+ * twin of the type tier's `OrderVarOk` exclusion, so the wall holds for
+ * untyped callers too (the engine cannot backstop this one: the wire IR
+ * carries plain u64s, no rosters).
+ */
+function closedOrderError(context: string, position: string, vocabulary: string): Error {
+	return errors.new(
+		`${context}: ${position} is a ${vocabulary} reference — declaration order is an accident, not semantics: vocabularies do not order (docs/architecture/10-data-model.md; equality, membership, and counting remain)`
+	)
+}
+
+/** The comparison ops the orderable ban covers (order roster + point membership — every order-comparison position). */
+function isOrderOp(op: CmpKind | "binding"): op is "lt" | "le" | "gt" | "ge" | "pointIn" {
+	return op === "lt" || op === "le" || op === "gt" || op === "ge" || op === "pointIn"
+}
+
 /** Requires a var name to be bound by a relation atom of the rule. */
 function assertBound(context: string, varFields: Readonly<Record<string, ClassedField>>, name: string): ClassedField {
 	const slot = varFields[name]
@@ -911,7 +948,10 @@ function validateCond(context: string, varFields: Readonly<Record<string, Classe
 	if (cond.kind === "cmp") {
 		for (const side of [cond.lhs, cond.rhs]) {
 			if (side.kind === "var") {
-				assertBound(context, varFields, side.name)
+				const slot = assertBound(context, varFields, side.name)
+				if (isOrderOp(cond.op) && "closed" in slot.field) {
+					throw closedOrderError(context, `the ${cond.op} side ${side.name}`, slot.field.closed.name)
+				}
 			}
 			if (side.kind === "measure") {
 				assertIntervalBound(context, varFields, side.name)
@@ -957,20 +997,67 @@ function validateColumn(
 			return
 		case "fold": {
 			if (typeof agg.over === "string") {
-				assertBound(`${context} select ${column.name}`, varFields, agg.over)
+				const slot = assertBound(`${context} select ${column.name}`, varFields, agg.over)
+				if ("closed" in slot.field) {
+					throw closedOrderError(
+						`${context} select ${column.name}`,
+						`the ${agg.fold} input ${agg.over}`,
+						slot.field.closed.name
+					)
+				}
 				return
 			}
 			assertIntervalBound(`${context} select ${column.name}`, varFields, agg.over.duration)
 			return
 		}
-		case "arg":
+		case "arg": {
 			assertBound(`${context} select ${column.name}`, varFields, agg.over)
-			assertBound(`${context} select ${column.name}`, varFields, agg.key)
+			const key = assertBound(`${context} select ${column.name}`, varFields, agg.key)
+			if ("closed" in key.field) {
+				throw closedOrderError(
+					`${context} select ${column.name}`,
+					`the ${agg.direction} key ${agg.key}`,
+					key.field.closed.name
+				)
+			}
 			return
+		}
 		case "pack":
 			assertIntervalBound(`${context} select ${column.name}`, varFields, agg.over)
 			return
 	}
+}
+
+/**
+ * Resolves the roster one select column decodes through: a projected var,
+ * or an Arg-carried payload, bound at a closed-referencing field carries
+ * that field's roster (read off `varFields` — the same slot the domain
+ * machinery reads), and `decodeAnswers` lifts the column's row ids back to
+ * handle NAMES through it — the runtime twin of the row type's `Infer`
+ * claim. Every other entry decodes bare: counts are counts, the measure
+ * and `pack` are never closed, and a closed FOLD is banned outright
+ * ({@link closedOrderError}) before this resolution runs.
+ */
+function selectClosedOf(
+	varFields: Readonly<Record<string, ClassedField>>,
+	entry: SelectEntryData
+): ClosedRoster | undefined {
+	let over: string | undefined
+	if (entry.kind === "var") {
+		over = entry.over
+	} else if (entry.kind === "aggregate" && entry.agg.op === "arg") {
+		over = entry.agg.over
+	} else {
+		over = undefined
+	}
+	if (over === undefined) {
+		return undefined
+	}
+	const field = varFields[over]?.field
+	if (field !== undefined && "closed" in field) {
+		return field.closed
+	}
+	return undefined
 }
 
 /**
@@ -1039,7 +1126,15 @@ function completeRule(context: string, state: RuleBuildState, columns: readonly 
 	}
 	return Object.freeze({
 		items: state.items,
-		select: Object.freeze([...columns]),
+		select: Object.freeze(
+			columns.map(function enrichColumn(column): SelectColumn {
+				return Object.freeze({
+					name: column.name,
+					entry: column.entry,
+					closed: selectClosedOf(state.varFields, column.entry)
+				})
+			})
+		),
 		varFields: state.varFields,
 		paramUses: state.paramUses
 	})
@@ -1202,6 +1297,11 @@ interface ProgramState {
 	sealed: boolean
 }
 
+/** Renders one head column's closed slice for the rule-alignment check's diagnostics. */
+function renderClosedSlice(closed: ClosedRoster | undefined): string {
+	return closed === undefined ? "a bare value" : `a ${closed.name} reference`
+}
+
 /** Renders one head column's signature for the rule-alignment check. */
 function headSignature(column: SelectColumn): string {
 	const entry = column.entry
@@ -1222,20 +1322,36 @@ function headSignature(column: SelectColumn): string {
  * Folds every rule's param uses (recs in declaration order first, output
  * rules last — exactly the lowering walk) into the query's registry:
  * first use mints the dense `ParamId`, the first FIELD-ANCHORED use types
- * the wire, and one name must keep one shape.
+ * the wire, and one name must keep one shape. A param whose anchor is a
+ * CLOSED reference must never sit in an order-comparison position — the
+ * anchor types its value a handle name and the engine would order the
+ * translated row ids, so the pairing is refused here (the registry is the
+ * one place a name's every use and its anchoring field meet).
  */
 function paramRegistryOf(recs: readonly RecData[], rules: readonly RuleData[]): readonly ParamEntry[] {
 	const order: string[] = []
 	const byName = new Map<
 		string,
-		{ shape: ParamEntry["shape"]; anchor: ParamEntry["anchor"]; op: ParamEntry["op"]; members: ParamEntry["members"] }
+		{
+			shape: ParamEntry["shape"]
+			anchor: ParamEntry["anchor"]
+			op: ParamEntry["op"]
+			members: ParamEntry["members"]
+			orderOp: "lt" | "le" | "gt" | "ge" | "pointIn" | undefined
+		}
 	>()
 	function fold(uses: readonly ParamUse[]): void {
 		for (const use of uses) {
 			const existing = byName.get(use.name)
 			if (existing === undefined) {
 				order.push(use.name)
-				byName.set(use.name, { shape: use.shape, anchor: use.anchor, op: use.op, members: use.members })
+				byName.set(use.name, {
+					shape: use.shape,
+					anchor: use.anchor,
+					op: use.op,
+					members: use.members,
+					orderOp: isOrderOp(use.op) ? use.op : undefined
+				})
 				continue
 			}
 			if ((existing.members === undefined) !== (use.members === undefined)) {
@@ -1252,6 +1368,9 @@ function paramRegistryOf(recs: readonly RecData[], rules: readonly RuleData[]): 
 				existing.anchor = use.anchor
 				existing.op = use.op
 			}
+			if (existing.orderOp === undefined && isOrderOp(use.op)) {
+				existing.orderOp = use.op
+			}
 		}
 	}
 	for (const rec of recs) {
@@ -1267,6 +1386,14 @@ function paramRegistryOf(recs: readonly RecData[], rules: readonly RuleData[]): 
 			const entry = byName.get(name)
 			if (entry === undefined) {
 				throw errors.new(`query param ${name} lost its registry entry`)
+			}
+			if (
+				entry.orderOp !== undefined &&
+				entry.anchor !== undefined &&
+				entry.anchor !== "measure" &&
+				"closed" in entry.anchor
+			) {
+				throw closedOrderError(`query param ${name}`, `its ${entry.orderOp} use's anchor`, entry.anchor.closed.name)
 			}
 			return Object.freeze({ name, shape: entry.shape, anchor: entry.anchor, op: entry.op, members: entry.members })
 		})
@@ -1299,6 +1426,19 @@ function makeRawQuery(theory: AnySchema, recs: readonly RecData[], rules: readon
 				`every rule of a query derives the same head — rule 0 selects (${signature}), rule ${index} selects (${candidate})`
 			)
 		}
+		// The closed slice is part of the head too: one answer column decodes
+		// through one roster, so a union whose rules bind a column at
+		// different vocabularies (or one closed, one bare — the ids would
+		// mistranslate silently) is refused pointed. Vocabulary identity is
+		// value identity, the SDK's membership rule everywhere.
+		rule.select.forEach(function verifyClosedSlice(column, position) {
+			const lead = first.select[position]
+			if (lead !== undefined && column.closed !== lead.closed) {
+				throw errors.new(
+					`every rule of a query derives the same head — the answer column ${lead.name} is ${renderClosedSlice(lead.closed)} in rule 0 but ${renderClosedSlice(column.closed)} in rule ${index} (one column decodes through one roster)`
+				)
+			}
+		})
 	})
 	const data: QueryData = Object.freeze({
 		recs: Object.freeze([...recs]),
