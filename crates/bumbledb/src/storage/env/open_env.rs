@@ -1,5 +1,5 @@
-//! The one raw-LMDB-open chokepoint. Unsafe policy (the 40-storage doc
-//! amendment): this module holds the sanctioned `unsafe` of the storage
+//! The one raw-LMDB-open chokepoint. Unsafe policy (the 00-product
+//! allowlist, boundary category): this module holds the sanctioned `unsafe` of the storage
 //! layer — `heed 0.22` marks environment opening unsafe (double-opening
 //! one path in a process is LMDB UB) and marks env-flag setting unsafe
 //! (the flags can break durability or aliasing guarantees). Both are
@@ -28,7 +28,7 @@ use super::{MAP_SIZE, MAX_READERS, StoreKind};
 pub(super) fn open_env(path: &Path, kind: StoreKind) -> Result<heed::Env<WithoutTls>> {
     // MDB_NOTLS: reader slots belong to transaction objects, not threads —
     // a thread may pin an old snapshot while opening new ones (long-lived
-    // readers across commits are a designed-for pattern, 40-storage).
+    // readers across commits are a designed-for pattern, 50-storage).
     let mut options = EnvOpenOptions::new().read_txn_without_tls();
     options
         .map_size(MAP_SIZE)

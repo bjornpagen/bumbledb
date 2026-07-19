@@ -244,7 +244,7 @@ impl<S> Db<S> {
         txn_span.set_args(1, 0);
         txn_span.end();
         if report.changed {
-            // The one commit → cache wiring point (`40-storage.md`):
+            // The one commit → cache wiring point (`50-storage.md`):
             // entries of relations this commit deleted from are stale
             // the moment the new generation exists; every other entry
             // is retained as an append base (`ImageCache::advance`).
@@ -265,7 +265,7 @@ impl<S> Db<S> {
     /// Returns the number of facts that changed state.
     ///
     /// A fresh-database append-order fast path is a documented possibility
-    /// (`40-storage.md`) deliberately not taken: it saves only the
+    /// (`50-storage.md`) deliberately not taken: it saves only the
     /// membership probes on an empty database, and the normal insert path
     /// is the one with the invariants (decision: do not gold-plate).
     ///

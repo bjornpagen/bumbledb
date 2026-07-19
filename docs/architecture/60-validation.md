@@ -606,13 +606,22 @@ runner.
   on a quiet machine) gets its disposition recorded in `SESSIONS.md`,
   then deleted. Triage is structurally not optional: the launcher
   REFUSES to start while `fuzz/artifacts` holds any file. CI
-  (`.github/workflows/ci.yml`) runs the check lane (`scripts/check.sh`)
-  and the corpus-replay lane (plain `cargo test` in `fuzz/`) per push,
-  and the Miri lane (`scripts/miri.sh`) on a nightly cron (measured
-  12.5 min locally — over the per-push budget). CI deliberately runs NO
-  benches, NO asm gates, and NO long fuzz sessions: timing and codegen
-  gates are local measurement discipline on the pinned M2 Max, and
-  firepower is the owner's machine (the human work register).
+  (`.github/workflows/ci.yml`) runs five lanes on pushes to main and
+  on pull requests (a WIP push to a PR-less branch burns nothing):
+  the check lane (`scripts/check.sh`, a macOS + ubuntu matrix — the
+  ubuntu run IS the x86-64 scalar-fallback and linux coverage,
+  strictly stronger than the retired cross `cargo check`); the
+  corpus-replay lane (plain `cargo test` in `fuzz/`, same two-OS
+  matrix); the lean lane (`lake build`, the spec census, and the
+  three-way conformance comparator); the sdk lane (the napi bridge +
+  SDK built from source, `pnpm test`, the FFI lint wall, and the
+  cross-language fingerprint lock); and the Miri lane
+  (`scripts/miri.sh`, both interpretation targets) on a nightly cron
+  and manual dispatch (measured 12.5 min locally — over the per-push
+  budget). CI deliberately runs NO benches, NO asm gates, and NO long
+  fuzz sessions: timing and codegen gates are local measurement
+  discipline on the pinned M2 Max, and firepower is the owner's
+  machine (the human work register).
 
 **The ramdisk sanction.** The verify, differential, and fuzz lanes may
 run their scratch stores on a RAM-backed volume (`scripts/ramdisk.sh`;
@@ -629,17 +638,15 @@ detector resolves the volume's mount identity and its `ram://`-image
 backing; `bench` checks both its corpus `--dir` and its write scratch),
 because a timed number measured on RAM is a number physics never
 signed. The exemption is exactly the untimed lanes above.
-Sizing note: the script's default volume is 5 GiB because an ephemeral
-store's data file is ftruncated to the full 4 GiB EPHEMERAL map at open
-(`MDB_WRITEMAP`, `MAP_SIZE_EPHEMERAL` — the per-kind split of the
-incremental-images wave: the durable ceiling rose to 32 GiB, but durable
-opens allocate nothing eagerly and the scratch kind deliberately keeps
-the small map, so this sizing survives the flip; `50-storage.md` § the
-ephemeral store kind) and the
-default HFS+ personality has no sparse files — a smaller volume makes
-every `Db::ephemeral` open (the ephemeral crashpoint sweep under
-`BUMBLEDB_SCRATCH_DIR` included) refuse with the typed
-StorageFull-carrying `Lmdb` error, loudly but uselessly.
+Sizing note: the script's default volume is 5 GiB of plain headroom
+for the sweeps' many concurrent scratch stores — a store's data file
+holds only the pages ever committed, so any size that holds the
+lanes' actual data works. (Retraction, cleanup-0.5.0 ruling 1,
+mirrored in the script's own header: the old rationale was that an
+ephemeral store's data file was ftruncated to the full 4 GiB map at
+open under the retired `MDB_WRITEMAP` flag and HFS+ has no sparse
+files, so the volume had to hold map size + slack; no open allocates
+the map anymore — `50-storage.md` § environment constants.)
 Scope note: the crash target stays valid on a ramdisk — its adversary
 is process-kill ordering (the child aborts mid-commit and the parent
 autopsies the surviving bytes), which a RAM-backed filesystem preserves
@@ -658,15 +665,17 @@ full relation contents: the flags change the durability mechanism,
 never a semantic; plus the typed cross-open matrix in the same file.
 (2) The **ephemeral crashpoint sweep** (`fuzz/tests/crash.rs`) — the
 identical crashpoint × ops-prefix matrix with the victim store built
-by `Db::ephemeral`: all-or-nothing recovery under `WRITEMAP|NOSYNC`,
-no third observable outcome (the empirical verdict WRITEMAP shipped
-on). (3) The **WRITEMAP commit-window kill sweep**
-(`fuzz/tests/kill.rs`, harness in `fuzz/src/kill.rs`) — the
+by `Db::ephemeral`: all-or-nothing recovery under `NOSYNC`,
+no third observable outcome. (3) The **NOSYNC commit-window kill
+sweep** (`fuzz/tests/kill.rs`, harness in `fuzz/src/kill.rs`; named
+the WRITEMAP sweep until cleanup-0.5.0 ruling 1 retired that flag —
+the instrument is kind-parametric and survives unweakened) — the
 crashpoint sweep's named points bracket `mdb_txn_commit` but nothing
-cuts INSIDE it, and inside that window is exactly where WRITEMAP
-changes the write pattern (dirty pages in the shared page cache, the
-meta update a tearable memcpy into the map instead of a single
-`pwrite`); this instrument fills the gap with real SIGKILLs at
+cuts INSIDE it, and inside that window is exactly where the ephemeral
+kind departs from the durable one (`NOSYNC` commits `pwrite` their
+pages and meta but never cross a sync boundary, so everything a kill
+leaves behind is un-fsynced page-cache state the recovery path must
+still read back all-or-nothing); this instrument fills the gap with real SIGKILLs at
 seeded uniformly-random delays against a child's commit loop, phase
 uniform across the pipeline (the commit duty cycle is measured, the
 kill window derived from it — at least four mean commit periods, so

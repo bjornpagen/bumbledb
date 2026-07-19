@@ -58,7 +58,7 @@ impl WriteDelta<'_> {
             .map(|((rel, _), (slice, _))| (*rel, self.arena.get(*slice)))
     }
 
-    /// Fresh next-values to flush to `Q` (reader: the 40-storage doc phase 4).
+    /// Fresh next-values to flush to `Q` (reader: the 50-storage doc phase 4).
     pub(crate) fn fresh_marks(&self) -> impl Iterator<Item = (RelationId, FieldId, u64)> + '_ {
         self.marks
             .iter()
@@ -77,12 +77,12 @@ impl WriteDelta<'_> {
         })
     }
 
-    /// Net row-count changes to fold into `S` (reader: the 40-storage doc phase 4).
+    /// Net row-count changes to fold into `S` (reader: the 50-storage doc phase 4).
     pub(crate) fn row_count_deltas(&self) -> impl Iterator<Item = (RelationId, i64)> + '_ {
         self.row_count_delta.iter().map(|(rel, d)| (*rel, *d))
     }
 
-    /// Pending intern entries to flush to `_dict` (reader: the 40-storage doc phase 4).
+    /// Pending intern entries to flush to `_dict` (reader: the 50-storage doc phase 4).
     pub(crate) fn pending_interns(&self) -> impl Iterator<Item = (&[u8], u64)> + '_ {
         self.pending_interns
             .iter()

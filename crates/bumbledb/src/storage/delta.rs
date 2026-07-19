@@ -88,7 +88,7 @@ pub struct WriteDelta<'s> {
     /// `(relation, fact_hash) → (fact bytes, net disposition)`. Keyed by the
     /// full 32-byte blake3 of `fact_bytes` — hash equality *is* fact equality
     /// (collision axiom, `10-data-model.md`), and the `BTreeMap` gives the
-    /// deterministic commit order the 40-storage doc requires.
+    /// deterministic commit order the 50-storage doc requires.
     ///
     /// **The net-disposition invariant** (docs/architecture/50-storage.md):
     /// the insert set contains exactly the facts commit will add and the
@@ -124,10 +124,10 @@ pub struct WriteDelta<'s> {
     /// from `Q` once per `(relation, field)`. A mark is *dirty* — it
     /// escaped as an allocation the closure may have returned — iff its
     /// `next` advanced past its `base`. Dirty marks persist even on a
-    /// no-op commit (`40-storage.md`).
+    /// no-op commit (`50-storage.md`).
     marks: BTreeMap<(RelationId, FieldId), FreshMark>,
     /// Net row-count change per relation, maintained alongside the
-    /// changed-state reports (flushed to `S` by the 40-storage doc).
+    /// changed-state reports (flushed to `S` by the 50-storage doc).
     row_count_delta: BTreeMap<RelationId, i64>,
     /// Novel strings interned by this transaction: provisional ids
     /// assigned from the committed dictionary counter (the counter is
@@ -147,7 +147,7 @@ impl<'s> WriteDelta<'s> {
         self.schema
     }
 
-    /// Whether the delta records no dispositions at all (reader: the 40-storage doc's
+    /// Whether the delta records no dispositions at all (reader: the 50-storage doc's
     /// skip-empty-commit rule). A successful commit of an empty delta
     /// still persists any *dirty* fresh marks — the closure may have
     /// returned those ids to the host, and a successful commit persists
@@ -159,7 +159,7 @@ impl<'s> WriteDelta<'s> {
     }
 
     /// The dictionary next-id to flush, if this transaction minted any
-    /// provisional ids (reader: the 40-storage doc phase 4).
+    /// provisional ids (reader: the 50-storage doc phase 4).
     pub(crate) fn dict_next(&self) -> Option<u64> {
         self.dict_next
     }

@@ -5,11 +5,48 @@
 - **The 1.0.0 close (owner-gated, explicitly deferred 2026-07-18)** — R2 of
   `docs/structural-1.0.0/`: crate version `1.0.0` + the annotated `v1.0.0`
   tag. Owner ceremony only; no agent bumps, tags, or publishes.
-- **PR #10 (incremental images + the 32 GiB ceiling)** — complete on its
+- **PR #10 (incremental images)** — complete on its
   branch, gates green, measured (copy-on-append 2.54× on the cold lineage
-  family; the mask fork refuted by the decider twin; durable 32 GiB /
-  ephemeral 4 GiB ceiling split). Held open by owner order; merge is the
-  owner's call.
+  family; the mask fork refuted by the decider twin). Held open by owner
+  order; merge is the owner's call. The merge inherits cleanup-0.5.0
+  obligations: its per-kind ceiling split (durable 32 GiB / ephemeral
+  4 GiB) is superseded by ruling 1's ONE lazy 32 GiB map — reconcile at
+  merge; the `lineage-off` A/B knob and its bench twin die in the merge
+  commit (the gravestone in `crates/bumbledb/Cargo.toml`); the aborted
+  scan≡scan_from kill (U2 — the site is a PR #10 artifact, absent here)
+  re-runs on the merged tree; the incremental-images packet dies at merge
+  (its ruling record is durable in `50-storage.md` § eviction and
+  `40-execution.md` D1); its README re-true and waveM `report.json` land
+  with it.
+- **The Measure phase (cleanup-0.5.0 prd-M) — pending measurements, each
+  marked PENDING-RE-EARN where cited:** the ephemeral R6 band (~75–90x /
+  ~4.2–4.4x / 1.0–1.1x device tax) and the README's 18.4× ephemeral
+  read number were earned under the retired `WRITEMAP|NOSYNC` set and
+  re-run under `NOSYNC`-only; a `NOSYNC`-only ≥2,000-round statistical
+  kill session (the recorded ones are 2026-07-16, WRITEMAP-era); and the
+  three measure-or-merge twins (rulings 6–8: leaf elision via
+  `Executor::disable_leaf_elision`, all-words finalize
+  `fill_word_answers`, permuted-identity determinant) — the standing
+  protocol: one isolated measurement each; a recorded win becomes law,
+  no win merges the special case into the generic machinery; the twin
+  and its knob die with the verdict either way. Until M rules, the code
+  stands untouched.
+- **CI dispatch proof (U4a) + one red lane + a run gap:** the miri `.S`
+  stub and the ubuntu lanes want their green run ids recorded in PR #11.
+  The only PR run (29697582864) tested `de1bac14` and is green everywhere
+  EXCEPT `check (ubuntu-latest)`:
+  `clockproxy::tests::the_estimate_is_a_plausible_core_frequency`
+  measured 0.18 GHz on the shared runner — U4a's named watch item fired;
+  the plausibility band (0.5–6.0 GHz) is a pinned probe, so the remedy
+  is an owner-visible decision, not a band widen. NO run covers the five
+  wave commits after `de1bac14` (the pull_request synchronize events
+  produced no runs — diagnose before trusting the branch's green); one
+  consequence already surfaced: U5's `conformance/judgment.rs` landed
+  with a rustfmt violation no gate ever saw (fixed in the U6 working
+  tree).
+- **For the owner (U4a census):** five stale remote worktree branches
+  deleted; `worktree-structural-sdk` was closed-not-merged but proven
+  subsumed — flagged per census.
 - **Optional, unscheduled:** a fresh one-rev seven-run bench session would
   restore min-of-3 durable sampling and re-clean `mandate_overlap` (excluded
   from the current pin as contaminated-in-both). The current README numbers
@@ -21,6 +58,17 @@
   (`cd ts && pnpm install --no-frozen-lockfile`).
 
 ## Everything else: shipped
+
+**Cleanup-0.5.0 is landed on `worktree-cleanup-050` (PR #11, stays open;
+nobody merges):** ruling 1 (one lazy 32 GiB map; WRITEMAP and the eager
+capacity contract retired, retractions recorded at `MAP_SIZE` and in
+`50-storage.md`), the engine kills (U2: cfg duals into type twins), the
+SDK kills + wire tags (U3), CI reshaped (U4a: main+PR scope, ubuntu
+matrix, miri cron stub) and the FFI lint regime + re-trued unsafe
+allowlist (U4b), lean reconciliation (U5: 26 judgment cases / 272
+total), and the architecture docs swept to the tree's present tense
+(U6). The packet at `docs/prds/cleanup-0.5.0/` is deletion-eligible at
+wave close per its own survival checklist (serial committer's act).
 
 `@bjornpagen/bumbledb@0.4.0` (+ `-darwin-arm64@0.4.0`) is published and
 tagged `v0.4.0` — the host-idiom SDK on the law-typed 0.3.0 core; primer is

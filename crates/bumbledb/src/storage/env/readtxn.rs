@@ -6,7 +6,7 @@ use super::{GenerationId, META_SCHEMA_DESCRIPTOR, META_TX_ID, ReadTxn};
 impl ReadTxn<'_> {
     /// The reader's generation: the storage tx id read from `_meta` *inside
     /// this snapshot* — never an in-process counter. This is the
-    /// race-closing rule of `docs/architecture/50-storage.md`; the 40-storage doc keys
+    /// race-closing rule of `docs/architecture/50-storage.md`; the 50-storage doc keys
     /// the image cache on it.
     ///
     /// # Errors

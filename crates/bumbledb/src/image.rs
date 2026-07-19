@@ -3,7 +3,7 @@
 //! A relation image is **all columns** of a relation, decoded once from one
 //! sequential `F`-prefix scan into structure-of-arrays vectors — the bridge
 //! to paper-faithful execution (`docs/architecture/40-execution.md` D1,
-//! `40-storage.md`). Immutable once built; `Arc` is the sharing unit.
+//! `50-storage.md`). Immutable once built; `Arc` is the sharing unit.
 
 pub mod cache;
 pub mod view;

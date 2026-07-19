@@ -1,6 +1,6 @@
 //! The build path: one sequential scan decodes every column of a relation
 //! into structure-of-arrays slabs (docs/architecture/40-execution.md D1,
-//! `40-storage.md`; the per-fact decode kernel lives in `super::decode`) —
+//! `50-storage.md`; the per-fact decode kernel lives in `super::decode`) —
 //! and the synthesis path, which fills the same slabs from a closed
 //! relation's sealed extension with no LMDB transaction anywhere.
 

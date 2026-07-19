@@ -66,7 +66,7 @@ pub use exhume::{Exhumed, exhume};
 
 /// Facts per write transaction in [`Db::bulk_load`] /
 /// [`Db::bulk_load_dyn`] — the documented chunking convenience
-/// (`40-storage.md`): large imports amortize commit overhead without
+/// (`50-storage.md`): large imports amortize commit overhead without
 /// building one unbounded delta.
 const BULK_CHUNK: usize = 4096;
 

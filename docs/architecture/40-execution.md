@@ -687,7 +687,9 @@ above. **Reverses if:** never — no external SQL engine as infrastructure.
 and probes siblings per batch (§4.3), hardware-generic. We: same algorithm, batch sized
 to fill the M-series' ~28 MLP lanes — model: each probe is ~1–2 dependent loads, so
 ~28 lanes want ≥28 independent probes in flight and the batch amortizes bookkeeping
-across several waves: starting range 64–256, measured (OPEN, README). **Probing is
+across several waves: the decided range is 64–256, the code ships 128
+(`exec/run.rs` `BATCH`), and the exact number is still measurement-owned
+(OPEN, README). **Probing is
 two-phase**: phase one computes keys and hashes for the whole batch (pure ALU, no
 memory dependence); phase two issues all bucket loads — independent chains the OoO
 engine overlaps across the full MLP width. COLT's forced maps use **open addressing
@@ -777,7 +779,7 @@ so no fixed-width scratch and no eligibility branch exist to cap them. Short
 
 **COLT force is single-pass with chunked child lists:** forcing pushes each offset into
 its key's child list, chunked (64 offsets per arena chunk, chained by chunk — bounded
-bounded pointer traversal, independent loads within a chunk), rather than the paper's growable
+pointer traversal, independent loads within a chunk), rather than the paper's growable
 per-key vectors or a two-pass contiguous layout (which decodes and hashes every row
 twice). **Deviation:** the paper's leaves are plain vectors; ours are
 chunked. **Reverses if:** a force+iterate microbenchmark shows two-pass-contiguous

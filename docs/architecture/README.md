@@ -55,9 +55,14 @@ laws).
 
 ## OPEN items
 
-- **Every measured claim is unearned**: the oracle stamp, the benchmark ALL-WIN, and
-  every pinned denominator are void until derived and run on this engine. *Trigger:
-  the implementation reaching the bench milestone.*
+- **Scale-L claims are informational only**: the oracle stamp, the benchmark
+  ALL-WIN, and the pinned denominators are earned at scale S (the committed
+  `bench-out/` artifacts, engine rev `adac4010`, verify-stamped) — but no L
+  corpus exists, so the 10 ms budget and every L-scale claim bind nothing yet
+  (`00-product.md`). The ephemeral-lane numbers are separately
+  PENDING-RE-EARN under `NOSYNC`-only (ruling 1; the Measure phase).
+  *Trigger: generating the L corpus, and the Measure phase's ephemeral re-earn
+  session.*
 - **The chain-window class** (interval intersection along paths — "the
   window over which an entire path holds"): outside the landed recursion
   surface by the safety theorem's premise, because the intersected window
@@ -103,22 +108,27 @@ laws).
   ~2⁻¹⁰⁵ at the scale axiom). *Trigger: a measured write-path or store-size
   violation attributable to `M`-key width; the decision then weighs the 2⁶⁴
   margin against the number (`10-data-model.md` identity-hash decision).*
-- **Incremental image maintenance**: CLOSED (the incremental-images wave) —
-  insert-only commits extend images copy-on-append (column-prefix copy +
-  tail-only decode off the row-id high-water); untouched relations carry the
-  same `Arc` forward; delete-bearing commits rebuild per relation. The old
-  amortization rationale ("the write design point amortizes whole rebuilds")
-  was retracted with the write-frequency assumption (`00-product.md`). The
-  recorded fork: the tombstone/validity-mask route for deletes is priced and
-  parked (the delete-bearing cold lane makes its cost measurable; the
-  filter-mask decider twin is spec'd), reopening only on a real delete-heavy,
-  latency-sensitive workload.
-- **Vectorized batch size**: 64–256 starting range decided; the number is
-  measurement-owned. *Trigger: the ledger benchmark.*
+- **Incremental image maintenance**: CLOSED (the incremental-images wave,
+  merged in the reconciliation of the two waves) — insert-only commits extend
+  images copy-on-append (column-prefix copy + tail-only decode off the row-id
+  high-water); untouched relations carry the same `Arc` forward;
+  delete-bearing commits rebuild per relation. The old amortization rationale
+  ("the write design point amortizes whole rebuilds") was retracted with the
+  write-frequency assumption (`00-product.md`). The recorded fork: the
+  tombstone/validity-mask route for deletes is priced and parked (the
+  delete-bearing cold lane makes its cost measurable; the filter-mask decider
+  twin is spec'd), reopening only on a real delete-heavy, latency-sensitive
+  workload.
+- **Vectorized batch size**: 64–256 starting range decided; the code ships 128
+  (`exec/run.rs` `BATCH`); the number is still measurement-owned — the ledger
+  benchmark has run, but no batch-size sweep was part of it. *Trigger
+  (re-scoped): a dedicated batch-size A/B sweep in a measurement session.*
 - **Unit-slot determinant halving**: a fixed-width interval position stores one
   word, so `interval<E, 1>` sidecar facts and their pointwise-key determinants
   halve against the general spelling — a candidate store-size/write-path win,
-  measurement-owned. *Trigger: the ledger benchmark.*
+  measurement-owned. *Trigger (re-scoped — the ledger benchmark ran without
+  evaluating this): a measured write-path or store-size violation attributable
+  to determinant width.*
 - **`70-api.md` open sub-items**: see that doc's own OPEN list (result ordering,
   multi-key typed `get` sugar, multi-process future).
 

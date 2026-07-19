@@ -10,27 +10,23 @@ writer, many reader threads, one process (`00-product.md`).
 maintained thin binding; raw FFI buys nothing at this layer. **Reverses if:** heed
 becomes a correctness or maintenance liability.
 
-Environment constants are decisions, not knobs: `map_size` is fixed PER STORE
-KIND — **32 GiB durable** (the hard store ceiling; a pure virtual reservation,
-since durable opens carry no `WRITEMAP` and never extend `data.mdb` at open —
-the file grows with data on every filesystem) and **4 GiB ephemeral** (the
-scratch kind materializes its full map eagerly at open by the capacity
-contract, § the ephemeral store kind, so its constant prices real disk/RAM per
-open and deliberately stays small) — and `max_readers` at 1024 — inter-query
-parallelism is the scaling axis and `MDB_NOTLS`
+Environment constants are decisions, not knobs: `map_size` is fixed at 32 GiB
+(comfortably above the 1 GB scale axiom — the map is the hard capacity ceiling,
+headroom, never the design point), and
+`max_readers` at 1024 — inter-query parallelism is the scaling axis and `MDB_NOTLS`
 binds reader slots to open transaction objects, so LMDB's default 126 would cap
 concurrent snapshots, not threads; the raise costs a measured 64 bytes of lock file
 per slot (~64 KiB total), and the snapshot past the table is the typed `ReadersFull`
-error naming the limit. The old single 4 GiB `map_size` is RETRACTED (owner
-ruling, the incremental-images wave: 4 GiB was too low as a hard limit; 32 GiB
-is the new one), and so is its justification: the ceiling no longer tracks the
-scale axiom — it is the never-resize wall, headroom above the validated
-envelope (`00-product.md`), not a new working-set target. The per-kind split is
-itself the recorded decision, not a knob: the kind is on-disk identity, so each
-store's ceiling stays parseable, and the ruling's motivation is the durable
-DATA ceiling — a 32 GiB ephemeral staging store is the named, accepted
-impossibility (the persisted per-store size is the recorded follow-up design,
-`docs/prds/incremental-images/prd-G1-32gib-ceiling.md`).
+error naming the limit. The map is an **address-space reservation, never an
+allocation**: no open path truncates or preallocates `data.mdb` to the map (LMDB's
+full-map ftruncate lives only under `MDB_WRITEMAP` — `mdb_env_map`, mdb.c — and no
+store kind carries that flag), so a store's data file holds exactly the pages ever
+committed, on every filesystem. (Retraction, cleanup-0.5.0 ruling 1: the size was
+4 GiB, priced when the ephemeral kind eagerly materialized its full map at every
+open; dropping `WRITEMAP` and the eager capacity contract — § the ephemeral store
+kind — made the raise free. The retracted text also claimed every open ftruncates
+the map: true only of `WRITEMAP` opens, i.e. never of durable stores; verdict read
+off mdb.c and pinned by the refusal tests' `< 1 GiB` fixture bounds.)
 
 ## Design inputs (why this layout)
 
@@ -365,8 +361,9 @@ detectable at delete time without re-deriving every statement's edges, and the
 class is covered by the offline sweeper, `Db::verify_store` — the same
 compensating control that re-verifies the rest of M↔F↔U↔R consistency.
 **The online path maintains reverse edges; the offline pass proves them** —
-including the delete-asymmetry fixture in the verifier matrix
-(`docs/prd-constitution/22-verifier-matrix.md` § Results). **Counter overflow
+including the delete-asymmetry fixture in the verifier suite
+(`crates/bumbledb/src/verify_store/tests.rs`, the deterministic
+corruption fixtures). **Counter overflow
 checks** — the fresh ceiling is checked
 (`FreshExhausted` at `u64::MAX`, because hosts can supply explicit fresh values),
 while the storage tx id and row-id high-waters are not: they advance by at most one
@@ -405,10 +402,13 @@ which is exactly what a ceiling is allowed to do — and a claim above it is the
 cross-check stays the exactness guarantee. The offline integrity checker,
 `Db::verify_store`, then proves canonical F encodings, M↔F↔U↔R coherence,
 pointwise disjointness, global scalar/coverage containments, virtual-relation
-absence, counters, and dictionary bounds over one snapshot. The complete
-claim × pass × deterministic corruption-fixture coverage ledger is the verifier
-matrix (`docs/prd-constitution/22-verifier-matrix.md` § Results); an empty
-finding list is backed by every row there, not by a smoke test.
+absence, counters, and dictionary bounds over one snapshot. The evidence that an
+empty finding list means something is in-tree: every verifier pass has a
+deterministic corruption fixture that plants the defect raw in `_data` and
+asserts the named conviction (`crates/bumbledb/src/verify_store/tests.rs`) —
+an empty finding list is backed by a fixture per claim, not by a smoke test.
+(The packet-era coverage ledger this section once cited is retired; the
+fixtures are its durable form.)
 
 ## The ephemeral store kind
 
@@ -425,7 +425,7 @@ holding a `Db` handle proves the store's kind, so the durable surface can never
 quietly read a store that skipped its fsyncs.
 
 An ephemeral environment differs from a durable one in exactly one thing: the
-LMDB flags `MDB_WRITEMAP|MDB_NOSYNC` (set inside `storage/env/open_env.rs`, the
+LMDB flag `MDB_NOSYNC` (set inside `storage/env/open_env.rs`, the
 one raw-open chokepoint, where the flags are DERIVED from the kind — no flag
 parameter exists, so the durable paths structurally cannot reach them; the unsafe
 policy allowance and safety comments live there). `NOTLS`, the advisory lock, the
@@ -434,47 +434,50 @@ dependency judgment, and WriteTx point-read semantics are identical — proven b
 the durable/ephemeral differential oracle (`60-validation.md`).
 
 What the kind renounces is machine-crash (power-loss) durability and nothing
-else. **The crash-sweep verdict (empirical, 2026-07-15):** the deterministic
+else. **The crash-sweep evidence:** the deterministic
 crashpoint sweep — every named commit-pipeline point × the ops-prefix matrix,
 `fuzz/tests/crash.rs` — runs against ephemeral stores too, and every combination
-recovers all-or-nothing under `WRITEMAP|NOSYNC` exactly as the durable table
+recovers all-or-nothing under `NOSYNC` exactly as the durable table
 above claims: reopen, `verify_store` green, contents at the expected side, victim
-replay — no third observable outcome, so WRITEMAP shipped (had any point shown
-partial state, the recorded fallback was NOSYNC-only). This is the expected LMDB
-result — WRITEMAP changes *how* dirty pages are written (through the map instead
-of `pwrite`), not the meta-page commit protocol that atomicity stands on; NOSYNC
-removes the fsync, which only a power loss can exploit — and the sweep is the
-proof the expectation is not doing the work.
+replay — no third observable outcome. This is the expected LMDB
+result — `NOSYNC` removes the fsync barrier, which only a power loss can
+exploit, and never touches the meta-page commit protocol that atomicity stands
+on — and the sweep is the proof the expectation is not doing the work.
+(Retraction, cleanup-0.5.0 ruling 1: the flag set was `WRITEMAP|NOSYNC` —
+WRITEMAP shipped on the 2026-07-15 sweep verdict with NOSYNC-only as the
+recorded fallback. Ruling 1 promoted the fallback to the law: WRITEMAP's
+open-time full-map ftruncate forced the eager capacity contract, whose price
+at the 32 GiB map — 32 GiB of real disk or RAM per ephemeral open — no lane
+could pay. The deterministic sweep and the kill smoke re-ran green under
+NOSYNC-only; the ≥2,000-round statistical kill lane's recorded sessions
+predate the flip, and a NOSYNC-only session is owed with the Measure phase.
+Nothing was weakened.)
 
 The kind is **device-independent**: ephemeral-on-SSD is legitimate, and
-ephemeral-on-ramdisk buys the flags' latency on top of the device's — measured
-at a 1.0–1.1x device tax, so nearly nothing
-(the R6 lane of `crates/bumbledb/tests/ramdisk_phase_r.rs`). The kind
+ephemeral-on-ramdisk buys the flag's latency on top of the device's — the
+device tax measured ~1.0–1.1x under the retired `WRITEMAP|NOSYNC` set
+(the R6 lane of `crates/bumbledb/tests/ramdisk_phase_r.rs`); the number is
+PENDING-RE-EARN under `NOSYNC`-only (the Measure phase re-runs the lane; the
+device-independence *design* stands on the kind marker, not the number). The kind
 carries the no-durability claim, not the device, so no lie is possible — a
 machine crash loses an ephemeral store by the store's own definition. (The
 device-honesty rule for *timed* lanes is the orthogonal axis: `60-validation.md`.)
-One stated consequence of WRITEMAP: the data file holds the full ephemeral map
-(4 GiB — `MAP_SIZE_EPHEMERAL`, the per-kind split above; durable stores never
-ftruncate to the map, so this whole paragraph is ephemeral-only — the old text
-attributed the materialization to every store and is corrected, not inherited)
-from open — the ftruncate allocates it on a filesystem without sparse files
-(an HFS+ ram disk), and on a sparse one (APFS) the open allocates the blocks
-itself (`fcntl(F_PREALLOCATE)` / `posix_fallocate`,
-`storage/env/open_env.rs`) — so on EVERY filesystem the volume must hold map
-size + slack or open refuses with a typed `StorageFull`-carrying `Lmdb`
-error (§ R6's harness note). The allocation is what keeps the capacity
-contract honest under `NOSYNC`: without it a sparse filesystem accepts the
-ftruncate, every commit past the volume's physical capacity reports `Ok`,
-and the dirty pages the kernel can never write back are unbackable state a
-clean process handoff may still lose — the one failure the kind does NOT
-renounce. Capacity is judged once, at open, typed.
+Capacity under the lazy map is the filesystem's own story: no open truncates
+or preallocates anything (§ environment constants above), a store's data file
+holds only committed pages, and a volume that fills surfaces as the failing
+commit's typed `Lmdb` error. (Retraction, same ruling: the retired capacity
+contract judged capacity once at open — real blocks for the full map,
+`StorageFull` typed — to keep WRITEMAP's sparse ftruncate honest under
+`NOSYNC`; with no dirty pages ever written through a mapping, the
+unbackable-page hazard it guarded against is gone with the flag, and the
+eager allocation would be pure cost.)
 
 Lean owns none of this: durability and crash recovery are mechanism, outside the
 model (`lean/README.md` § what Lean does NOT own), so the store kind adds no
 Bridge row and the census expects no citation here — the sweep and the
 differential oracle are the evidence.
 
-**Decision: a distinct constructor and an on-disk KIND marker, `WRITEMAP|NOSYNC`.**
+**Decision: a distinct constructor and an on-disk KIND marker, `NOSYNC`.**
 **Alternative 1:** a sync-mode flag on `create`/`open`. **Why it lost:** a mode is
 a runtime claim nobody can read back; a kind is parsed at open and refuses
 mismatches typed — and the durability law (`00-product.md`) stays whole: *no sync
@@ -482,12 +485,17 @@ mode exists on a durable store, and none may be born.* **Alternative 2:** the
 earlier RAM-backed-device precondition (the phase-2 refusal's shape: ephemeral
 only on RAM-backed paths). **Why it lost (superseded):** it tied the API's truth
 conditions to device identity, which the kind marker makes unnecessary — the
-marker, not the medium, carries the claim. **Alternative 3:** NOSYNC without
-WRITEMAP. **Why it lost:** the sweep convicted nothing (no third outcome at any
-crashpoint) and the R4 cells price WRITEMAP|NOSYNC fastest on the small-commit
-shape the feature exists for. **Reverses if:** any crashpoint ever shows a
-non-all-or-nothing recovery on an ephemeral store — drop WRITEMAP first, the
-kind and surface stay.
+marker, not the medium, carries the claim. **Alternative 3:** `WRITEMAP|NOSYNC` —
+the flag set that originally shipped (the sweep convicted nothing and the R4
+cells priced it fastest on the small-commit shape). **Why it lost (reversed,
+cleanup-0.5.0 ruling 1):** WRITEMAP's open-time full-map ftruncate forced the
+eager capacity contract, unpayable at the 32 GiB map; its measured price
+advantage was earned under the old flag set and is PENDING-RE-EARN for
+`NOSYNC`-only (the Measure phase). The deterministic crash sweep and the kill
+smoke re-ran green under `NOSYNC`-only, so the kind's claim lost nothing (the
+statistical kill lane re-runs with the Measure phase). **Reverses if:** any
+crashpoint ever shows a non-all-or-nothing recovery on an ephemeral store —
+the kind and surface stay while the flag set answers for it.
 
 ## The columnar image cache (the hot representation)
 
@@ -517,8 +525,9 @@ The bridge to paper-faithful execution (`40-execution.md` D1):
   a measurement of the decode-bound build path. The Wave-M record landed
   (2026-07-19, Apple M2 Max, `scripts/measure.sh`, scale S seed 1, durable
   stores, min-of-3 p50s): `cold_containment_walk` 1356.4 µs with
-  copy-on-append vs 3405.2 µs with lineage disabled (the in-process A/B twin,
-  `bumbledb-bench`'s `cold_lineage_twin` — 2.54× family-level), and the
+  copy-on-append vs 3405.2 µs with lineage disabled (the in-process A/B twin —
+  since deleted with its number banked, the manifest's ruling-4
+  gravestone — 2.54× family-level), and the
   rebuild-bearing `cold_containment_walk_delete` at 3540.6 µs — so a full
   scale-S ledger rebuild-plus-execute sits at ~3.4–3.5 ms where the append
   path pays ~1.4 ms. The per-100 MB normalization is still open (the
@@ -672,8 +681,9 @@ structural sharing of full chunks, which would kill the append path's prefix
 copy) is deliberately NOT designed — nothing today implies one exists. The
 trigger to design it: a real workload whose working set is meant to approach
 the ceiling, at which point the budget story is an owner ruling plus a design
-item, not a patch (`docs/prds/incremental-images/prd-G1-32gib-ceiling.md`
-records it).
+item, not a patch (this paragraph is the durable copy of that deferral — the
+prd-G1 file that first recorded it was deleted when cleanup-0.5.0 ruling 1
+superseded the per-kind split).
 
 ## Operations
 
