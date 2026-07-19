@@ -68,6 +68,18 @@ const reservedHandleNames: readonly string[] = Object.freeze([
  */
 type PayloadField = Exclude<AnyField, { readonly fresh: true }>
 
+/**
+ * A declared payload column BLOCK: name → descriptor, with `id`
+ * unspellable — the sealed shape mints the synthetic `id` itself (ordinal
+ * 0 of the matchable fields), so a declared column named `id` would be
+ * shadowed by the synthetic slot everywhere the shape resolves by name
+ * (`matchFieldsOf`, the projected face, `spec.rs`'s resolver). The wall is
+ * typed here and judged again at construction in {@link mintClosed} — the
+ * runtime twin for untyped callers, warmer and earlier than the engine's
+ * `DuplicateFieldName` at `Db.create`.
+ */
+type PayloadColumns = Record<string, PayloadField> & { readonly id?: never }
+
 /** One declared payload column: name plus its field descriptor. */
 interface ClosedColumn {
 	readonly name: string
@@ -360,13 +372,13 @@ function closed<const Name extends string, const Handles extends readonly [strin
  * rejected); every row carries every column exactly once (type-enforced by
  * {@link Axioms}).
  */
-function closed<const Name extends string, const Cols extends Record<string, PayloadField>, Handles extends string>(
+function closed<const Name extends string, const Cols extends PayloadColumns, Handles extends string>(
 	name: Name,
 	columns: Cols,
 	axioms: Axioms<Handles, Cols>
 ): Closed<Name, Handles, Cols>
 
-function closed<const Name extends string, const Cols extends Record<string, PayloadField>, Handles extends string>(
+function closed<const Name extends string, const Cols extends PayloadColumns, Handles extends string>(
 	name: Name,
 	shape: readonly [string, ...string[]] | Cols,
 	axioms?: Axioms<Handles, Cols>
@@ -398,7 +410,7 @@ function closedBare<Name extends string, Handles extends string>(
  * first (the macro-expansion analog), then the handle set is read off the
  * axioms record's own keys.
  */
-function closedPayload<Name extends string, Handles extends string, Cols extends Record<string, PayloadField>>(
+function closedPayload<Name extends string, Handles extends string, Cols extends PayloadColumns>(
 	name: Name,
 	columns: Cols,
 	axioms: Axioms<Handles, Cols>
@@ -467,6 +479,11 @@ function mintClosed<Name extends string, Handles extends string, Cols extends Re
 	const cols: ClosedColumn[] = []
 	for (const [columnName, field] of Object.entries(columns)) {
 		assertDeclarationOrderKey(`closed relation ${name} column`, columnName)
+		if (columnName === "id") {
+			throw errors.new(
+				`closed relation ${name}: the payload column id collides with the sealed shape's synthetic id (the relation mints its own id at ordinal 0; name the column something else)`
+			)
+		}
 		cols.push(Object.freeze({ name: columnName, field }))
 	}
 	Object.freeze(cols)

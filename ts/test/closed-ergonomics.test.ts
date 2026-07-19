@@ -232,6 +232,13 @@ describe("match — exhaustive dispatch over the handle union", function describ
 			closed("Bad", { pages: bool }, { where: { pages: true } })
 		}, /collides with the closed value's own surface/)
 	})
+
+	test("a payload column named id is a construction-time error — the sealed shape mints the synthetic id itself", function probeIdColumn() {
+		assert.throws(function idColumn() {
+			// @ts-expect-error — "id" is unspellable in a column block (PayloadColumns); the runtime wall is the twin
+			closed("Bad", { id: bool }, { A: { id: true }, B: { id: false } })
+		}, /closed relation Bad: the payload column id collides with the sealed shape's synthetic id/)
+	})
 })
 
 describe("the 3-arg closed — the payload tier in one call", function describeThreeArg() {

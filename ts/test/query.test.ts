@@ -721,15 +721,47 @@ describe("the query surface against a real store", function suite() {
 			)
 		}, /joins domain-unequal fields/)
 
-		// The same law through eq: var-to-var unification is class-equal.
-		const crossClassEq = query(Ledger).rule((r) =>
+		// The same law through eq: var-to-var unification IS a join — a compile error
+		// AND a construction refusal (the runtime twin; the wall holds for untyped
+		// callers too, and the engine cannot backstop it — the IR carries no domains).
+		assert.throws(function crossClassEq() {
+			query(Ledger).rule((r) =>
+				r
+					.match(Account, { id: r.var("a"), holder: r.var("h") })
+					// @ts-expect-error — "a" is in the "Account.id" class, "h" in "Holder.id"
+					.where(r.eq(r.var("a"), r.var("h")))
+					.select("a")
+			)
+		}, /unifies domain-unequal fields/)
+
+		// ne rides the identical judgment (EqOk covers both ops).
+		assert.throws(function crossClassNe() {
+			query(Ledger).rule((r) =>
+				r
+					.match(Account, { id: r.var("a"), holder: r.var("h") })
+					// @ts-expect-error — ne is the same unification judgment as eq
+					.where(r.ne(r.var("a"), r.var("h")))
+					.select("a")
+			)
+		}, /unifies domain-unequal fields/)
+
+		// The positive twins: class-equal eq constructs, and bare pairs with bare.
+		const sameClassEq = query(Ledger).rule((r) =>
 			r
-				.match(Account, { id: r.var("a"), holder: r.var("h") })
-				// @ts-expect-error — "a" is in the "Account.id" class, "h" in "Holder.id"
-				.where(r.eq(r.var("a"), r.var("h")))
-				.select("a")
+				.match(Account, { holder: r.var("h") })
+				.match(Holder, { id: r.var("h2") })
+				.where(r.eq(r.var("h"), r.var("h2")))
+				.select("h")
 		)
-		assert.equal(crossClassEq.data.rules.length, 1)
+		assert.equal(sameClassEq.data.rules.length, 1)
+		const bareBareEq = query(Ledger).rule((r) =>
+			r
+				.match(Holder, { id: r.var("h"), rank: r.var("z") })
+				.match(Account, { opened: r.var("o") })
+				.where(r.eq(r.var("z"), r.var("o")))
+				.select("h")
+		)
+		assert.equal(bareBareEq.data.rules.length, 1)
 
 		// An interval var under a non-pointIn comparison — the interval-vs-scalar wall.
 		const intervalUnderOrder = query(Ledger).rule((r) =>

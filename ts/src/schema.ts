@@ -269,6 +269,23 @@ interface Schema<Rels extends SchemaRelations, Classes extends SchemaClasses = S
 type AnySchema = Schema<SchemaRelations>
 
 /**
+ * Forces the class map to EVALUATE at the `schema()` boundary: a two-level
+ * mapped copy, type-identical to `C` — but instantiation resolves it to
+ * the finished relation → field → class record, so hovering a schema value
+ * (or anything carrying its `Classes` parameter — queries, `Db`) shows the
+ * computed record instead of the unevaluated `ClassesOf<...>` application
+ * dragging the whole statement-tuple type along. The conditional wrapper
+ * is the display mechanism, not a judgment: resolving it drops the alias
+ * reference, so tsc renders the finished record (measured against tsc's
+ * own type rendering; a bare mapped alias still displays by name).
+ * Display-only by construction; `classesComplete` guards the same type at
+ * the value tier.
+ */
+type EvaluatedClasses<C extends SchemaClasses> = C extends SchemaClasses
+	? { readonly [N in keyof C]: { readonly [F in keyof C[N]]: C[N][F] } }
+	: never
+
+/**
  * Assembles a theory:
  * `schema("Ledger", { Kind, Account, Holder }, [ ...statements ])`.
  *
@@ -302,7 +319,7 @@ function schema<const Rels extends SchemaRelations, const Stmts extends readonly
 	name: string,
 	relations: Rels,
 	statements: Stmts & LawfulStatements<Rels, Stmts>
-): Schema<Rels, ClassesOf<Rels, Stmts>> {
+): Schema<Rels, EvaluatedClasses<ClassesOf<Rels, Stmts>>> {
 	const implied = collectImplied(name, relations)
 	const seen = new Set<string>()
 	for (const statement of statements) {
@@ -321,7 +338,7 @@ function schema<const Rels extends SchemaRelations, const Stmts extends readonly
 	}
 	verifyClosedReferences(name, statements)
 	const classes = computeClasses(name, relations, statements)
-	if (!classesComplete<ClassesOf<Rels, Stmts>>(classes, relations)) {
+	if (!classesComplete<EvaluatedClasses<ClassesOf<Rels, Stmts>>>(classes, relations)) {
 		throw errors.new(`schema ${name}: class-map construction incomplete`)
 	}
 	return Object.freeze({ name, relations, statements: Object.freeze([...statements]), classes })

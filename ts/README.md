@@ -110,7 +110,7 @@ real surface by `test/readme.test.ts` — the examples cannot drift.
 
 ## Cookbook
 
-The engine cookbook's 29 modeling recipes, translated to this SDK's structural API: [COOKBOOK.md](./COOKBOOK.md). Every recipe is compile-pinned by `test/cookbook.test.ts` — each schema is admitted by the real engine, its fingerprint asserted against the cross-host goldens the Rust cookbook suite also pins, and every query snippet lowers through `db.prepare` — so the cookbook can never drift from the surface.
+The engine cookbook's 29 modeling recipes, translated to this SDK's structural API: [COOKBOOK.md](./COOKBOOK.md). Two referees hold it: `test/cookbook-doc.test.ts` extracts the document's own `ts` fences and type-checks them against the real surface (the doc itself cannot drift), and `test/cookbook.test.ts` runs compiled copies of the recipes — each schema admitted by the real engine, its fingerprint asserted against the cross-host goldens the Rust cookbook suite also pins, every query snippet lowered through `db.prepare`.
 
 ## Architecture
 
