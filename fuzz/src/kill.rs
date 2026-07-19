@@ -42,8 +42,9 @@
 //! On any violation the round panics with the full reproduction context
 //! (kind, seed, round, delay, store path) and the store directory is
 //! PRESERVED for autopsy (the success path deletes it; the ramdisk
-//! note: a preserved ephemeral corpse holds the full 4 GiB data file,
-//! so copy it off the volume before the next long session).
+//! note: a preserved ephemeral corpse holds the full 4 GiB ephemeral-map
+//! data file (`MAP_SIZE_EPHEMERAL`), so copy it off the volume before
+//! the next long session).
 //!
 //! Two lanes, run by `fuzz/tests/kill.rs`: the EPHEMERAL lane
 //! (`WRITEMAP|NOSYNC` — the surface under test) and the DURABLE lane as
@@ -301,8 +302,8 @@ pub fn sweep(kind: StoreKind, rounds: u64, seed: u64) {
 /// precedent: a session refuses to start over untriaged evidence): any
 /// `bumbledb-kill-*` entry under the scratch root from ANOTHER process
 /// is either a preserved violation or debris from an interrupted
-/// session — and on the 5 GiB ramdisk a single 4 GiB ephemeral corpse
-/// also starves every following store. Autopsy it
+/// session — and on the 5 GiB ramdisk a single full-ephemeral-map
+/// (4 GiB) corpse also starves every following store. Autopsy it
 /// ([`autopsy`], the `BUMBLEDB_KILL_AUTOPSY` operator test) or remove
 /// it before sweeping.
 fn refuse_stale_corpses() {
@@ -664,9 +665,10 @@ fn calibrate_kind(kind: StoreKind) -> (Duration, f64) {
 /// [`KillStore::delete_on_drop`], so every panic path leaves the corpse
 /// for minimization. The success-path drop truncates `data.mdb` before
 /// unlinking — the same synchronous-reclamation discipline as
-/// [`crate::StoreDir`] (an ephemeral store's 4 GiB WRITEMAP file on the
-/// non-sparse HFS+ ramdisk frees asynchronously after a plain unlink,
-/// and back-to-back rounds outrun it).
+/// [`crate::StoreDir`] (an ephemeral store's full-map — 4 GiB,
+/// `MAP_SIZE_EPHEMERAL` — WRITEMAP file on the non-sparse HFS+ ramdisk
+/// frees asynchronously after a plain unlink, and back-to-back rounds
+/// outrun it).
 struct KillStore {
     path: PathBuf,
     preserve: bool,

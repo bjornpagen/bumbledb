@@ -314,7 +314,8 @@ fn scalar_or_pair(image: &RelationImage, field: FieldId, position: usize) -> Ope
 /// # Panics
 ///
 /// Only on programmer-invariant violations: an image beyond the u32
-/// position space (the 10⁷ scale axiom sits orders of magnitude below).
+/// position space (the 32 GiB map physically bounds live rows roughly an
+/// order of magnitude under u32; the validated 10⁷ scale sits far below).
 pub fn apply(
     image: &Arc<RelationImage>,
     predicates: &[FilterPredicate],

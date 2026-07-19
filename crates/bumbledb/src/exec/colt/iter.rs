@@ -164,8 +164,9 @@ impl Colt {
                 }
                 let packed = (u64::from(chunk) + 2) << 32 | offset as u64;
                 // Bit 63 (the dense tag) is unreachable below 2³⁰ chunks
-                // — the scale axiom sits orders of magnitude under it,
-                // and the u32 chunk space itself wraps first.
+                // — the map's physical row bound (~5×10⁸ at 32 GiB) sits
+                // orders of magnitude under it, and the u32 chunk space
+                // itself wraps first.
                 debug_assert_eq!(packed & DENSE_TOKEN_TAG, 0);
                 (yielded, BatchToken(packed))
             }

@@ -879,8 +879,10 @@ impl StoreDir {
 impl Drop for StoreDir {
     fn drop(&mut self) {
         // Truncate the data file before unlinking it. An EPHEMERAL
-        // store's data.mdb was ftruncated to the full 4 GiB map
-        // (`MDB_WRITEMAP`) and its dirty pages outlive the close in the
+        // store's data.mdb was ftruncated to the full 4 GiB ephemeral
+        // map (`MDB_WRITEMAP`; `MAP_SIZE_EPHEMERAL` — the per-kind
+        // split keeps the scratch map small; durable stores never
+        // ftruncate) and its dirty pages outlive the close in the
         // page cache — a plain unlink on a non-sparse volume (the HFS+
         // ramdisk, `scripts/ramdisk.sh`) then frees the blocks
         // ASYNCHRONOUSLY, seconds later, so back-to-back crash-sweep

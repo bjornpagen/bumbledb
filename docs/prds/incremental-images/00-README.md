@@ -82,7 +82,8 @@ I1 copy-on-append (engine + docs + fuzz) ──→ I1's measurement (Wave M: idl
 I2 delete-bearing cold-read lane (bench)  ──→ feeds Wave M (the delete cost becomes measurable;
                                                also the negative witness: I1 must NOT move it)
 I3 the decider twin (#[ignore]d kernel falsifier) — independent; verdict filed either way
-G1 the 32 GiB ceiling (constant + docs + sizing) — independent; STUB until the 32G scout reports
+G1 the 32 GiB ceiling (constant + docs + sizing) — independent; scout-refined and LANDED
+   (per-kind split: durable 32 GiB / ephemeral 4 GiB — see prd-G1's decision record)
 ```
 
 | PRD | Title | Depends on |
@@ -90,7 +91,7 @@ G1 the 32 GiB ceiling (constant + docs + sizing) — independent; STUB until the
 | I1 | Copy-on-append image maintenance | — |
 | I2 | The delete-bearing cold-read bench lane | — (lands before Wave M) |
 | I3 | The filter-mask decider twin | — |
-| G1 | The 32 GiB ceiling | the 32G scout's report (work-list refinement) |
+| G1 | The 32 GiB ceiling | the 32G scout's report (refined + landed; the per-kind decision recorded in prd-G1) |
 
 ## The gates (every PRD proves its own)
 

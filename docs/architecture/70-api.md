@@ -353,7 +353,8 @@ module, `PreparedQuery`/`Answers`, `SchemaError`, `FactShapeError`,
   destroys data. `Db::ephemeral` never destroys data either — it opens or
   initializes, and deletion of a spent staging store is the host's explicit act.
   Nor does it MUTATE on refusal: an existing data file is probed through a plain
-  durable-flagged open (no `WRITEMAP`, so no 4 GiB ftruncate) before the
+  durable-flagged open (no `WRITEMAP`, so no full-map ftruncate — durable-flagged
+  opens never extend `data.mdb` at all) before the
   ephemeral flags are ever applied, so a refused probe — a durable store, a
   foreign LMDB environment, a stale or forged store — leaves `data.mdb`
   byte-identical (pinned by the byte-identity tests in
@@ -596,7 +597,10 @@ proposition the commit checks in one integer compare.
 - **Retry is host policy.** The engine ships the error, never a loop — the
   staleness-signal doctrine verbatim: the engine's job is to make the condition
   checkable. The host convention is re-run the query → re-compute → `write_from`
-  again; conflicts are rare by the bursty-write design point (`00-product.md`).
+  again; conflict frequency is workload-owned (the old "conflicts are rare by
+  the bursty-write design point" leaned on the retracted write-frequency
+  assumption, `00-product.md`) — the engine ships the typed condition and no
+  retry loop regardless.
 - **The two conditions compose into the complete conditional-write vocabulary:** the
   witness is the scan-shaped condition (premises from full queries, whole-snapshot
   precision), WriteTx point reads remain the key-shaped condition (per-fact

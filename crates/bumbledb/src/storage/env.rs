@@ -95,6 +95,16 @@ impl StoreKind {
             _ => None,
         }
     }
+
+    /// The kind's fixed map size — a per-kind decision, not a knob
+    /// (see [`MAP_SIZE_DURABLE`]'s doc for the split and the
+    /// retraction it records).
+    pub(crate) const fn map_size(self) -> usize {
+        match self {
+            Self::Durable => MAP_SIZE_DURABLE,
+            Self::Ephemeral => MAP_SIZE_EPHEMERAL,
+        }
+    }
 }
 
 impl std::fmt::Display for StoreKind {
@@ -147,9 +157,39 @@ impl std::fmt::Display for GenerationId {
     }
 }
 
-/// Fixed map size: comfortably above the 1 GB scale axiom, allocated
-/// sparsely by the OS. Not configurable — path-only public surface.
-/// Two consequences worth naming:
+/// Fixed map sizes, per store KIND — decisions, not knobs; the public
+/// surface stays path-only. The old single 4 GiB constant is RETRACTED
+/// by owner ruling (the incremental-images wave: "4 GiB is too low as a
+/// hard limit; 32 GiB is the new hard limit") and the flip split the
+/// constant per kind — still a decision, not a knob (the kind is
+/// on-disk identity, so each store's ceiling stays parseable):
+///
+/// - **Durable: 32 GiB.** The map is a virtual reservation — a durable
+///   open carries no `MDB_WRITEMAP`, so LMDB never ftruncates
+///   `data.mdb` to the map at open (the ftruncate-to-map lives inside
+///   mdb.c's `WRITEMAP` branch only); the file grows by `pwrite` to the
+///   data high-water on EVERY filesystem, and the 32 GiB costs address
+///   space, nothing else. The old doc paragraph here attributed the
+///   full-map ftruncate to every open and container death (overlayfs
+///   materialization) to every store — both halves were wrong, asserted
+///   rather than observed, and are RETRACTED: durable stores never
+///   extend the file at open, so there is no length for overlayfs to
+///   materialize (a Linux spot-check is the recorded follow-up,
+///   `docs/prds/incremental-images/prd-G1-32gib-ceiling.md`).
+/// - **Ephemeral: 4 GiB, unchanged.** The scratch/staging kind
+///   materializes its FULL map eagerly on every filesystem by the
+///   capacity contract (`WRITEMAP` ftruncate on non-sparse filesystems,
+///   the explicit block preallocation on sparse ones —
+///   [`open_env`](self)), so its constant prices real disk or ramdisk
+///   RAM per open: at 32 GiB one ephemeral open would exceed a CI
+///   runner's whole disk and a sanctioned ramdisk would wire a third of
+///   the canonical machine's RAM. The ruling's motivation is the
+///   durable DATA ceiling; scratch stores keep the small map. A 32 GiB
+///   ephemeral staging store is therefore impossible — the named trade,
+///   accepted; the persisted per-store size is the recorded follow-up
+///   design if it is ever needed (prd-G1).
+///
+/// Two consequences worth naming, both size-swept, unchanged in kind:
 ///
 /// - **The hard capacity ceiling.** Resize is deliberately gone (the
 ///   PRD 22 dead end: `mdb_env_set_mapsize` racing readers — see
@@ -157,15 +197,20 @@ impl std::fmt::Display for GenerationId {
 ///   map has hit the wall: the commit surfaces
 ///   [`crate::error::Error::Lmdb`] wrapping LMDB's `MDB_MAP_FULL`
 ///   (`heed::MdbError::MapFull`), nothing persists, and the remedy is
-///   a new store, never a knob.
-/// - **Container filesystems materialize it.** Open ftruncates
-///   `data.mdb` to the full map. APFS/ext4 keep the file sparse;
-///   overlayfs — the default container filesystem — materializes the
-///   whole 4 GiB per store, so test suites (many stores, many temp
-///   dirs) can exhaust a container's disk and die with `ENOSPC`. Run
-///   tests on a real filesystem (a bind-mounted volume) with room to
-///   spare — the README's gate section carries the contributor note.
-const MAP_SIZE: usize = 4 << 30;
+///   a new store, never a knob — the remedy's cost scales with the
+///   ceiling (a full-map ETL is minutes at SSD rates, not seconds).
+/// - **The ceiling no longer tracks the scale axiom.** The validated
+///   envelope (≤10⁷ facts, ≤1 GB file, `00-product.md`) is unchanged:
+///   32 GiB is the never-resize wall, headroom above the envelope, not
+///   a new working-set target — a store pushed toward the ceiling has
+///   the memory story of `50-storage.md` § memory discipline (decoded
+///   images ≈ live payload; no memory-pressure eviction exists), not
+///   the axiom's ≤2 GB figure.
+const MAP_SIZE_DURABLE: usize = 32 << 30;
+/// The ephemeral kind's map — see [`MAP_SIZE_DURABLE`]'s doc for the
+/// per-kind split and why this one stays small (eager full-map
+/// allocation is the kind's capacity contract).
+const MAP_SIZE_EPHEMERAL: usize = 4 << 30;
 
 /// Fixed reader-table size: comfortably above any plausible snapshot
 /// concurrency — inter-query parallelism is the design's scaling axis

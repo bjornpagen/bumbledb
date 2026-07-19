@@ -865,9 +865,21 @@ unguarded. Non-recursive execution keeps the unamended stance.
 execution reads **full-width cached columnar images** built once per
 `(relation, storage_tx_id)` and shared across read transactions (`50-storage.md`).
 After warmup, execution runs in exactly the paper's environment. *Why:* LMDB is the
-durable truth; at ≤1 GB the whole working set caches and the write design point
-(≥100 reads/generation) amortizes builds to noise. **Reverses if:** traced rebuild cost
-violates the latency budget despite the cache — then persist columns instead.
+durable truth; cold cost after a commit is O(delta) for delete-free relations
+(copy-on-append) and O(relation) after a delete. The old soundness clause — "at ≤1 GB the whole
+working set caches and the write design point (≥100 reads/generation) amortizes
+builds to noise" — is RETRACTED on both legs (the ≤1 GB leg fell to the 32 GiB
+ceiling ruling, the ≥100-reads leg to the bursty-rare retraction,
+`00-product.md`); the amortization argument is retired, replaced by
+maintenance. **Reversal record, stated honestly:** the recorded trigger
+("traced rebuild cost violates the latency budget despite the cache") FIRED in
+substance at the new ceiling — a ceiling-scale rebuild is seconds by
+arithmetic — and the remedy chosen is incremental maintenance of the cached
+images (copy-on-append), NOT the recorded "persist columns instead": persisting
+columns would re-open Deviation D1 wholesale, while copy-on-append keeps LMDB
+the only durable truth. A documented divergence from the recorded remedy.
+**Reverses if:** traced rebuild cost still violates the latency budget despite
+maintenance — then persist columns.
 
 **The closed carve-out:** a closed relation's image is not built from LMDB at
 all — it is *synthesized* from the theory's sealed extension into a
