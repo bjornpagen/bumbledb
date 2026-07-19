@@ -212,6 +212,36 @@ gravestone lands, not the code): every warm family (the hit path gains zero
 instructions), every commit family (`advance` + classification in the epilogue),
 ALL-WIN untouched (write families are Report-class).
 
+### Recorded (Wave M, 2026-07-19)
+
+The twin landed as `writebench::tests::cold_lineage_twin` (`#[ignore]`d;
+the knob is the engine's `lineage-off` test-support feature —
+`bumbledb::with_lineage_disabled`, every `advance` behaving as
+`evict_older_than` — enabled as the bench crate's dev-dependency, the
+`ground-off` idiom). Conditions: Apple M2 Max, idle machine (verified), release
+build, `scripts/measure.sh`, scale S seed 1, durable stores, fresh store per
+(rep, arm), 3 reps × 2 arms interleaved with rotating order, COLD protocol
+(2 warmups, 16 samples), min-of-3 p50s:
+
+- `cold_containment_walk` — lineage ON p50s [1349.9, 1362.5, 1342.0] µs
+  (min **1342.0**) vs OFF [3536.5, 3555.8, 3405.2] µs (min **3405.2**):
+  **OFF/ON = 2.54×.** The win is real and family-level; the ≥ 5× predicted
+  sign was a prediction — the machine says 2.54×. (The ON arm's residual
+  ~1.3 ms is the priced memo story: every generation bump still re-forces
+  views over the images — change-site D's deliberate zero-diff — plus the
+  Org append itself.)
+- `cold_containment_walk_delete` — ON min 3578.8 µs vs OFF min 3547.0 µs:
+  **OFF/ON = 0.99.** The delete lane is unmoved under the twin — the
+  discriminator's end-to-end negative witness (PRD-I2 §4) holds; the landing
+  proceeds.
+- Clock proxy: every (rep, arm) block stamped 3.00–3.36 GHz (post-fsync DVFS
+  parking) — contamination recorded, never hidden; arms are interleaved and
+  equally touched, so the OFF/ON ratios are the claim, not the absolute p50s.
+- The no-family-loses sweep (warm families, commit families, within the ±2%
+  band) was NOT run in this session — it remains open before any README-level
+  claim rides the win; the twin's delete lane at 0.99 is the first
+  no-loss witness.
+
 ## Passing criteria
 
 - Column differential green across all field shapes, k-chained commits,

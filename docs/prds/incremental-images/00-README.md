@@ -50,6 +50,17 @@ anything**. A serial committer owns git; PRD workers never commit/push.
    and one of its two outcomes permanently retires the fork's kernel-tax half.
    It ships `#[ignore]`d, masked kernel test-local — nothing enters the product
    kernel surface while the fork is gated.
+   **RECORDED (Wave M, 2026-07-19): the CONFIRM branch fired — the fork's
+   kernel-tax half is dead.** B/A ≥ 1.10 at BOTH tiers and both selectivities
+   (L2 1%: 1.2443; L2 50%: 1.2248; DRAM 1%: 1.2355; DRAM 50%: 1.1986), and the
+   codegen-isolated B/A′ also clears 1.10 everywhere (1.13–1.18; A′/A read
+   1.04–1.06, above the noise band, so B/A′ is the load-bearing ratio). C ≈ B:
+   the tax is the mask plumbing, not the holes. Conditions + full table:
+   prd-I3 § the recorded verdict. **Consequence for ruling 2:** the mask is
+   NOT free even at its cheapest surface — a reopened delete fork starts from
+   compact-on-delete (the writer-side compaction-threshold policy), and the
+   mask route needs a workload so delete-heavy it eats a ≥ 1.13× filter-surface
+   tax PLUS the dense→gathered conversion before it re-enters design.
 4. **THE 32 GiB CEILING RULING (owner):** *4 GiB is too low as a hard limit;
    32 GiB is the new hard limit, with the engineering problems that follow.*
    This FLIPS `storage/env.rs:168`'s `MAP_SIZE = 4 << 30` and every sentence

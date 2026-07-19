@@ -83,6 +83,36 @@ Whatever the outcome, the number and verdict are filed in the design notes
 packet is deleted), with tier, machine conditions, and the decision-rule branch
 taken. The gated fork's reopen procedure cites this filing.
 
+## The recorded verdict (Wave M, 2026-07-19)
+
+**Branch taken: CONFIRMS the fork's death.** B/A ≥ 1.10 at BOTH tiers and both
+selectivities — the mask is expensive at its cheapest surface; compact-on-delete
+wins outright and the mask design dies without anyone touching folds, Allen, or
+NEON.
+
+Conditions: Apple M2 Max, idle machine (verified — no foreign bench run, load
+settled), release build, run under `scripts/measure.sh` (the machine-wide
+mutex), 2026-07-19. Test:
+`exec::kernel::tests::filter_mask_twin::filter_mask_twin_shipped_vs_masked` —
+5 arms interleaved in one process, 5 fresh-data blocks × 3 passes, arm order
+rotating per pass; figures are min-of-5 block medians, ns/row; arm agreement
+asserted before timing.
+
+| tier · sel | A shipped | A′ local | B all-live | C 1/64 | C 1/8 | B/A | B/A′ | A′/A |
+|---|---|---|---|---|---|---|---|---|
+| L2 · 1% | 0.3643 | 0.3878 | 0.4533 | 0.4535 | 0.4568 | **1.2443** | 1.1688 | 1.0646 |
+| L2 · 50% | 0.3662 | 0.3816 | 0.4485 | 0.4478 | 0.4481 | **1.2248** | 1.1753 | 1.0421 |
+| DRAM · 1% | 0.3708 | 0.3891 | 0.4581 | 0.4573 | 0.4571 | **1.2355** | 1.1772 | 1.0495 |
+| DRAM · 50% | 0.3857 | 0.4082 | 0.4622 | 0.4572 | 0.4645 | **1.1986** | 1.1324 | 1.0584 |
+
+Honesty notes, per the twin's own escalation clause: A′/A reads 1.04–1.06 —
+above the noise band — so the codegen-isolated **B/A′ is the load-bearing
+ratio, and it also clears 1.10 in every cell** (1.13–1.18); the verdict does
+not rest on the safe-write substitution's cost. C ≈ B across all cells: the
+tax is the mask plumbing itself (the per-chunk bitmap extraction + AND + the
+second load stream), not the holes. The in-between escalation to the
+fold-surface twin is NOT triggered — no cell sits between the thresholds.
+
 ## Passing criteria
 
 - The `#[ignore]`d twin exists beside the kernel, three arms, both tiers, both

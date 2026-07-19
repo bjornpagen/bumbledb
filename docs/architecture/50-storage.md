@@ -514,13 +514,16 @@ The bridge to paper-faithful execution (`40-execution.md` D1):
   single-core scan bandwidth a build is single-digit milliseconds per 100 MB,
   the number that makes the whole cache design sound" — is PENDING RE-TRUE on
   both counts (the incremental-images wave): it was bandwidth arithmetic, never
-  a measurement of the decode-bound build path (the honest anchors, once they
-  exist, are the `cold_containment_walk` report row — re-established under
-  `scripts/measure.sh` conditions in Wave M, no digits asserted before that
-  record lands — and the `#[ignore]`d
-  `image_build_split_evidence` harness, `image/tests/timing.rs`; the
-  copy-on-append measurement re-trues or retracts the per-100 MB figure with a
-  tier stated), and even where the figure holds, its conclusion died at the
+  a measurement of the decode-bound build path. The Wave-M record landed
+  (2026-07-19, Apple M2 Max, `scripts/measure.sh`, scale S seed 1, durable
+  stores, min-of-3 p50s): `cold_containment_walk` 1356.4 µs with
+  copy-on-append vs 3405.2 µs with lineage disabled (the in-process A/B twin,
+  `bumbledb-bench`'s `cold_lineage_twin` — 2.54× family-level), and the
+  rebuild-bearing `cold_containment_walk_delete` at 3540.6 µs — so a full
+  scale-S ledger rebuild-plus-execute sits at ~3.4–3.5 ms where the append
+  path pays ~1.4 ms. The per-100 MB normalization is still open (the
+  `#[ignore]`d `image_build_split_evidence` harness, `image/tests/timing.rs`,
+  has not run under measured conditions), and even where the figure holds, its conclusion died at the
   32 GiB ceiling — a full rebuild of a ceiling-scale (tens of GiB) image is
   seconds, not milliseconds, so what keeps the cache design sound is
   copy-on-append maintenance, with the delete-bearing rebuild as the priced

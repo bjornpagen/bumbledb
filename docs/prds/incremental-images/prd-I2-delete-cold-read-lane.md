@@ -49,6 +49,32 @@ gated mask PRD's reopen trigger (§00-README ruling 2) has nothing to fire on.
 5. **SQLite twin**: the same delete+insert touch on the comparison side, so the
    row's ratio means something — mirroring how `cold.rs` twins the touch today.
 
+## Recorded baseline (Wave M, 2026-07-19)
+
+The lane's first honest numbers — the new lane's baseline, no A/B (there is no
+"before" for a new lane). Conditions: Apple M2 Max, idle machine (verified),
+release driver, three full `bench` invocations each under `scripts/measure.sh`
+(fresh scratch corpus per run), scale S seed 1, durable stores, engine rev
+5f6c746a, verify stamp `1f665e0c…` fresh (2862 oracle cases green, this
+engine); COLD protocol (2 warmups, 16 samples); min-of-3 of the report p50s:
+
+- `cold_containment_walk_delete` — ours p50s [3540.6, 3554.4, 3566.3] µs,
+  **min 3540.6 µs** (that rep's proxy block clean, 3.26/3.26 GHz); SQLite twin
+  p50s [59.2, 56.8, 66.3] µs, min 56.8 µs. The delete-induced rebuild costs
+  ~3.5 ms per cold read at scale S — the compact-vs-mask fork's price tag,
+  measurable at last. Report-class: recorded, not gated.
+- `cold_containment_walk` (the append sibling, same runs, post-I1) — ours p50s
+  [1416.5, 1356.4, 1357.6] µs, min 1356.4 µs; SQLite twin min 56.7 µs. The
+  pair shows the discriminator end-to-end: append lane ~1.4 ms, delete lane
+  ~3.5 ms — consistent with the controlled in-process A/B
+  (`cold_lineage_twin`: walk OFF/ON 2.54×, delete lane 0.99).
+- Clock proxy: rep 1 both blocks clean; rep 2's walk block and rep 3's both
+  blocks stamped CONTAMINATED (post-fsync DVFS) — recorded per the report's
+  own dirty-list; the min-of-3 delete figure comes from a clean block.
+
+The I1-interaction contract held: the delete lane did NOT improve under I1's
+twin (0.99), while the append lane collapsed — the landing proceeds.
+
 ## Explicitly out of scope
 
 - No mask/tombstone implementation, no compaction policy — the fork stays
