@@ -87,14 +87,18 @@ The same data as multiples — twenty-two gated read families across two
 theories, the ledger (point lookups through negation, interval probes, and
 the triangle join) and the calendar (Allen-mask scans, the RSVP-arm union,
 conflict pairs, `Pack` free-busy, `Sum(Duration)` accounting). Geomean:
-**21×** over SQLite p50, min-of-3 both sides; the ephemeral-store runs land
-at 20.9× — reads are mmap-warm either way:
+**18.7×** over SQLite p50 (min over the clean samples of the two committed
+durable runs; one family, `mandate_overlap`, was clock-contaminated in both
+and is excluded and counted per the protocol); the ephemeral-store runs land
+at 18.4× across all twenty-two — reads are mmap-warm either way:
 
 ![speedup over SQLite](assets/bench-speedup.svg)
 
 Latency is a distribution, not a number. p50 → p95 → p99 per family, both
-engines — the bimodal families show their true tails and still sit an order
-of magnitude inside SQLite's:
+engines — the bimodal families show their true tails, and in every gated
+family but one they sit an order of magnitude inside SQLite's (the honest
+exception is `meets_chain`, whose p99 lands ~10× outside SQLite's — its p50
+win is real, its tail is not; the chart shows both):
 
 ![tail behavior](assets/bench-tails.svg)
 
@@ -109,7 +113,11 @@ engines, and bulk load favors SQLite's write path; we publish it anyway:
 
 ![writes and cold](assets/bench-writes.svg)
 
-**Context that keeps these numbers honest:** S-scale corpora (a 10⁵-fact
+**Context that keeps these numbers honest:** every read-family number above
+derives from the committed artifacts in `bench-out/` (two durable + three
+ephemeral runs, one engine rev, 2026-07-16, per-family clock-proxy
+contamination excluded and counted); the scenario suite is its own committed
+run. S-scale corpora (a 10⁵-fact
 fact-table ledger and a calendar world of interval claims, RSVP arms, and
 ray horizons), Apple M2 Max, engine-favorable workload class (point lookups
 through multi-way joins, interval algebra, and aggregates — exactly what a
