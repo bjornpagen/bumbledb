@@ -48,7 +48,7 @@ that change a PRD's shape are recorded in that PRD; the load-bearing ones:
 | per-kind map_size split (32 GiB durable / 4 GiB ephemeral), `StoreKind::map_size()`, prd-G1 packet | ONE `MAP_SIZE = 4 << 30` (`storage/env.rs:168`), no per-kind split, no `docs/prds/incremental-images/` |
 | `lineage-off` feature + Wave-M A/B twin | absent — never merged |
 | `bench-out/waveM-*`, README bench conflict | PR #10's problem, not this wave's — out of scope, flagged to the serial committer |
-| `scan_from` + the whole I1 copy-on-append machinery (U2 kill 6's target) | absent — the fork predates PR #10's merge; kill 6 is DEFERRED-TO-RECONCILIATION (recorded in prd-U2) |
+| `scan_from` + the whole I1 copy-on-append machinery (U2 kill 6's target) | absent — the fork predates PR #10's merge; kill 6 was DEFERRED-TO-RECONCILIATION, then executed on the reconciled tree: ABORTED-WITH-REASON — refuted by the bare-prefix corruption pin (prd-U2 records the verdict) |
 
 Every other cited site was re-verified present here (the capacity contract,
 WRITEMAP ephemeral flags, the eager-alloc pin, `covers`, `SameArity`, the
@@ -75,7 +75,9 @@ three-way reconciliation MUST treat main's I1 file set as the base for
 and `fuzz/src/lib.rs` oracle 6, then re-apply this wave's U2 collapses on
 top; verify by grepping the merged tree for `ImageCache::advance` and
 running `append_tests` under `--features trace,image-oracle`. U2 kill 6
-(scan delegation) executes in the same post-merge pass.
+(scan delegation) executed in the same post-merge pass and ABORTED with
+its reason recorded (prd-U2: the bare-prefix corruption pin refutes the
+≡; the row-level agreement is pinned instead).
 
 ## The rulings, ratified (no PRD re-litigates these)
 

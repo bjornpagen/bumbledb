@@ -35,6 +35,18 @@ impl<T, S: Iterator<Item = T>, C: Iterator<Item = T>> Iterator for Scan<S, C> {
 /// sealed extension's canonical bytes, yielded in declaration order (row
 /// id = declaration index) straight from the theory.
 ///
+/// NOT delegated to [`scan_from`]`(rel, 0)` (the cleanup-0.5.0 kill-6
+/// sketch, aborted-with-reason at this site): the prefix cursor and the
+/// range cursor differ observably on corrupt keys — a bare `F | rel`
+/// prefix key sorts before `fact_key(rel, 0)`, so the range cursor
+/// would silently skip what the audit pin requires this cursor to
+/// convict (`read/tests.rs: a_short_f_key_is_typed_corruption_from_scan`).
+/// The shared meaning — the per-entry parse, width check, and fuse — is
+/// already one body ([`parse_facts`]); the two cursor-opens encode
+/// different corruption envelopes. The row-level agreement over
+/// well-formed keys is pinned
+/// (`scan_from_zero_yields_exactly_scan_over_live_facts`).
+///
 /// # Errors
 ///
 /// `Lmdb` on cursor-open failure; per-item `Corruption` on an `F` key

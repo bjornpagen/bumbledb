@@ -5,19 +5,21 @@
 - **The 1.0.0 close (owner-gated, explicitly deferred 2026-07-18)** — R2 of
   `docs/structural-1.0.0/`: crate version `1.0.0` + the annotated `v1.0.0`
   tag. Owner ceremony only; no agent bumps, tags, or publishes.
-- **PR #10 (incremental images)** — complete on its
-  branch, gates green, measured (copy-on-append 2.54× on the cold lineage
-  family; the mask fork refuted by the decider twin). Held open by owner
-  order; merge is the owner's call. The merge inherits cleanup-0.5.0
-  obligations: its per-kind ceiling split (durable 32 GiB / ephemeral
-  4 GiB) is superseded by ruling 1's ONE lazy 32 GiB map — reconcile at
-  merge; the `lineage-off` A/B knob and its bench twin die in the merge
-  commit (the gravestone in `crates/bumbledb/Cargo.toml`); the aborted
-  scan≡scan_from kill (U2 — the site is a PR #10 artifact, absent here)
-  re-runs on the merged tree; the incremental-images packet dies at merge
-  (its ruling record is durable in `50-storage.md` § eviction and
-  `40-execution.md` D1); its README re-true and waveM `report.json` land
-  with it.
+- **PR #10 (incremental images) — MERGED and reconciled (2026-07-19,
+  the PR #11 reconciliation).** Copy-on-append landed whole (2.54× on
+  the cold lineage family; the mask fork refuted by the decider twin)
+  and every inherited cleanup-0.5.0 obligation is EXECUTED: the
+  per-kind ceiling split superseded by ruling 1's ONE lazy 32 GiB map
+  (prd-G1 deleted, its deferral's durable copy in `50-storage.md`); the
+  `lineage-off` A/B knob and its bench twin died in the U2 commit (the
+  gravestone in `crates/bumbledb/Cargo.toml` records the execution);
+  the scan≡scan_from kill re-ran on the merged tree and ABORTED with
+  reason — the bare-prefix corruption pin refutes the ≡ (prd-U2); the
+  waveM `report.json`s and the ruling records (`50-storage.md`
+  § eviction, `40-execution.md` D1) are durable in-tree. The
+  incremental-images packet survives minus prd-G1: its I-PRDs are the
+  coverage records living code cites (fuzz oracle 6, the decider twin,
+  `append_tests`).
 - **The Measure phase (cleanup-0.5.0 prd-M) — one lane still owed:** a
   `NOSYNC`-only ≥2,000-round statistical kill session (the recorded ones
   are 2026-07-16, WRITEMAP-era; the deterministic sweep and the kill

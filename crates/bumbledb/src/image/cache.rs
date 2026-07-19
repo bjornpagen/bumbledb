@@ -125,8 +125,8 @@ impl ImageCache {
 
 #[cfg(feature = "trace")]
 impl ImageCache {
-    /// The cache counters (feature `trace`): hits, misses, builds, and
-    /// evicted entries since construction.
+    /// The cache counters (feature `trace`): hits, misses, builds,
+    /// appends, carries, and evicted entries since construction.
     #[must_use]
     pub fn stats(&self) -> stats::CacheStats {
         self.counters.read()

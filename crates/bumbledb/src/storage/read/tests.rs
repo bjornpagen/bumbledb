@@ -261,6 +261,46 @@ fn a_short_f_key_is_typed_corruption_from_scan() {
     );
 }
 
+/// The kill-6 verdict's positive half (cleanup-0.5.0 prd-U2,
+/// aborted-with-reason): over WELL-FORMED keys the prefix cursor and the
+/// range cursor agree — `scan_from(rel, 0)` yields exactly `scan(rel)`,
+/// row for row, and a mid-high-water start yields the strict tail. The
+/// delegation itself is refuted one test up: a bare `F | rel` prefix key
+/// sorts BEFORE `fact_key(rel, 0)`, so the range cursor would skip what
+/// `a_short_f_key_is_typed_corruption_from_scan` pins the prefix cursor
+/// to convict — the two cursor-opens encode different corruption
+/// envelopes, two meanings, not two spellings (the shared meaning, the
+/// per-entry parse and fuse, is already one body: `parse_facts`).
+#[test]
+fn scan_from_zero_yields_exactly_scan_over_live_facts() {
+    let dir = TempDir::new("read-scan-from-zero");
+    let schema = schema();
+    let env = fixture(&dir, &schema);
+    let txn = env.read_txn().expect("txn");
+    let via_scan: Vec<(u64, Vec<u8>)> = scan(&txn, &schema, R)
+        .expect("scan")
+        .map(|r| r.map(|(id, b)| (id, b.to_vec())))
+        .collect::<Result<_>>()
+        .expect("no corruption");
+    let via_scan_from: Vec<(u64, Vec<u8>)> = scan_from(&txn, &schema, R, 0)
+        .expect("scan_from")
+        .map(|r| r.map(|(id, b)| (id, b.to_vec())))
+        .collect::<Result<_>>()
+        .expect("no corruption");
+    assert_eq!(
+        via_scan, via_scan_from,
+        "scan_from(rel, 0) is scan's tail-from-zero"
+    );
+    // A mid start yields the strict tail: everything at or above the cut.
+    let cut = via_scan[1].0;
+    let tail: Vec<(u64, Vec<u8>)> = scan_from(&txn, &schema, R, cut)
+        .expect("scan_from tail")
+        .map(|r| r.map(|(id, b)| (id, b.to_vec())))
+        .collect::<Result<_>>()
+        .expect("no corruption");
+    assert_eq!(tail, via_scan[1..].to_vec());
+}
+
 #[test]
 fn row_count_equals_scan_count_after_mixed_commits() {
     let dir = TempDir::new("read-row-count");
