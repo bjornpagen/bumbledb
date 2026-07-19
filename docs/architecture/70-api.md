@@ -1002,7 +1002,12 @@ engine-first change, and nothing re-enters without a new ruling.
   re-implements it generically over scan, roughly ten more
   `scan().find(byId)` sites ride along, and `Tx.get` is likewise untouched.
   The shape the evidence names: keyed get must become the obvious spelling on
-  both the read scope and the write transaction.
+  both the read scope and the write transaction. **SCHEDULED (owner ruling
+  2026-07-19): its own planning wave, after cleanup-0.5.0 lands and BEFORE
+  any 1.0.0 surface freeze** — a surface addition belongs under the tag. The
+  typing flows from the declared key-FD laws, per the law-typing doctrine;
+  design memo → ruling → packet, the standing sequence
+  (`docs/feature-register.md` § FIRED and scheduled).
 - **Answer sorting / `FromAnswers` derive** in `bumbledb-query` (the
   ordering/limit conveniences fold in here — host-side, on the bench-crate
   quarantine like the `query!` macro; answers are sets and the engine never
@@ -1012,7 +1017,10 @@ engine-first change, and nothing re-enters without a new ruling.
   comparators, every rank/pos consumer sorting host-side, and "answers are
   sets; the host sorts" recurring as a consumer comment — the ordering/limit
   conveniences land next, host-side in `bumbledb-query`, on the quarantine
-  already named here. The `FromAnswers` half is **DECLINED** vocabulary:
+  already named here. **SCHEDULED (owner ruling 2026-07-19): paired with
+  keyed get in the pre-1.0.0 surface wave** — host-side only; the
+  engine-never-orders ruling stands untouched
+  (`docs/feature-register.md` § FIRED and scheduled). The `FromAnswers` half is **DECLINED** vocabulary:
   answers already decode to typed named records at the SDK boundary and zero
   hand-destructuring was sighted — the derive has no consumer shape to learn
   from.
