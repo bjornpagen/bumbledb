@@ -50,11 +50,15 @@ function span(start: bigint, end: bigint): IntervalValue {
  * A closed relation's roster as seen from a referencing field: the handle
  * namespace `where()` selections and ground axioms resolve bare handle ids
  * through (the macro's own rule: a handle is legal exactly on a field that
- * references a closed relation).
+ * references a closed relation). The handle union is PRECISE — `H` carries
+ * the literal handle names in declaration order (the unbound `string`
+ * default exists only as the fallback where no roster is in scope); the
+ * runtime twin is the same frozen declaration-order array that was always
+ * there.
  */
-interface ClosedRoster {
+interface ClosedRoster<H extends string = string> {
 	readonly name: string
-	readonly handles: readonly string[]
+	readonly handles: readonly H[]
 }
 
 /** The `bool` field descriptor: value type `boolean`. No `.fresh` (macro parity). */
@@ -125,14 +129,16 @@ interface IntervalField<
 
 /**
  * A closed relation's reference field descriptor (`Kind.id`) — a u64
- * descriptor carrying the closed linkage: the roster resolves bare handle
- * ids in selections and ground axioms, and `schema()` names the id's
- * generator class `"Kind.id"`. Terminal: no `.fresh` — a vocabulary's rows
- * are ground axioms, never minted.
+ * descriptor carrying the closed linkage: the roster resolves handle
+ * literals in selections and ground axioms, and `schema()` names the id's
+ * generator class `"Kind.id"`. The handle union `H` is the field's VALUE
+ * TYPE (see {@link Infer}); `kind: "u64"` stays load-bearing for the class
+ * map and JoinOk, which compare kind/class/width/element. Terminal: no
+ * `.fresh` — a vocabulary's rows are ground axioms, never minted.
  */
-interface ClosedIdField {
+interface ClosedIdField<H extends string = string> {
 	readonly kind: "u64"
-	readonly closed: ClosedRoster
+	readonly closed: ClosedRoster<H>
 }
 
 /** Any field descriptor, whatever its kind or marks. */
@@ -142,21 +148,28 @@ type AnyField = BoolField | StrField | U64Field | FreshU64Field | I64Field | Byt
  * The bare structural VALUE type of a field descriptor — the one total
  * definition every fact, result row, and query term reads: `bool` →
  * `boolean`, `str` → `string`, `u64`/`i64` → `bigint`, `bytes<N>` →
- * `Uint8Array`, intervals → {@link IntervalValue}.
+ * `Uint8Array`, intervals → {@link IntervalValue}, and a closed reference →
+ * its PRECISE handle union (`"DirectPass" | "Failed"` — the string-literal
+ * union IS the value type at the TS surface; the engine keeps u64 row ids
+ * and the marshal owns the bijection). The closed arm precedes the `u64`
+ * arm because a closed reference is structurally a u64 descriptor plus the
+ * roster.
  */
 type Infer<F extends AnyField> = F extends { readonly kind: "bool" }
 	? boolean
 	: F extends { readonly kind: "str" }
 		? string
-		: F extends { readonly kind: "u64" }
-			? bigint
-			: F extends { readonly kind: "i64" }
+		: F extends { readonly closed: { readonly handles: readonly (infer H extends string)[] } }
+			? H
+			: F extends { readonly kind: "u64" }
 				? bigint
-				: F extends { readonly kind: "bytes" }
-					? Uint8Array
-					: F extends { readonly kind: "interval" }
-						? IntervalValue
-						: never
+				: F extends { readonly kind: "i64" }
+					? bigint
+					: F extends { readonly kind: "bytes" }
+						? Uint8Array
+						: F extends { readonly kind: "interval" }
+							? IntervalValue
+							: never
 
 /**
  * The typed shape refusal of the selection-literal machine — reached only

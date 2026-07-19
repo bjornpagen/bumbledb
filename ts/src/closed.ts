@@ -126,12 +126,14 @@ interface ClosedCore<Name extends string, Handles extends string, Cols extends R
 	readonly name: Name
 	/**
 	 * The closed reference descriptor: `kind: Kind.id` in another relation's
-	 * field block is the reference through which bare handle ids become
-	 * legal in that relation's selections. Pure structure plus the roster —
-	 * the referencing field's domain is law-born: `schema()` computes it
-	 * from the declared containment (`"Kind.id"`, the generator class).
+	 * field block is the reference through which handle literals become
+	 * legal in that relation's selections. Pure structure plus the PRECISE
+	 * roster (`ClosedIdField<Handles>` — the handle union is the field's
+	 * value type under `Infer`); the referencing field's domain is law-born:
+	 * `schema()` computes it from the declared containment (`"Kind.id"`, the
+	 * generator class).
 	 */
-	readonly id: ClosedIdField
+	readonly id: ClosedIdField<Handles>
 	readonly data: ClosedData
 	/** Payload readback: handle to its declared column values, bare and structural. */
 	readonly axioms: Axioms<Handles, Cols>
@@ -475,7 +477,7 @@ function mintClosed<Name extends string, Handles extends string, Cols extends Re
 		}
 	}
 	const handleList: readonly Handles[] = Object.freeze([...handles])
-	const roster: ClosedRoster = Object.freeze({ name, handles: handleList })
+	const roster: ClosedRoster<Handles> = Object.freeze({ name, handles: handleList })
 	const cols: ClosedColumn[] = []
 	for (const [columnName, field] of Object.entries(columns)) {
 		assertDeclarationOrderKey(`closed relation ${name} column`, columnName)
@@ -500,7 +502,7 @@ function mintClosed<Name extends string, Handles extends string, Cols extends Re
 		columns: cols,
 		rows: Object.freeze(rows)
 	})
-	const id: ClosedIdField = Object.freeze({ kind: "u64", closed: roster })
+	const id: ClosedIdField<Handles> = Object.freeze({ kind: "u64", closed: roster })
 	/**
 	 * Handle names are arbitrary identifiers, so rows and constants are
 	 * minted with OWN-property definition (inside {@link mintAxioms} and
