@@ -262,7 +262,8 @@ function handleKeysOwn<Handles extends string>(
  * The trusted seam of the axiom-readback mint: every handle carries an own
  * frozen row and every row carries every declared column as an own
  * property — verified before the record is admitted as the typed
- * {@link Axioms} (the `refsComplete` analog of `relation()`).
+ * {@link Axioms} (the trusted-admission-seam pattern — its home is
+ * `isTypedScope` in query/lower.ts).
  */
 function axiomsMinted<Handles extends string, Cols extends Record<string, PayloadField>>(
 	record: Readonly<Record<string, object>>,

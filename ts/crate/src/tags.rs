@@ -14,7 +14,14 @@
 //!   the old silent `other =>` drift (~90 unprotected arms across 16 match
 //!   sites).
 //! - one named `const` per tag — the `*_in` parsers match against these
-//!   (const str patterns), so the IN direction reads the same table.
+//!   (const str patterns), so the IN direction reads the same SPELLINGS.
+//!   The compile tripwire does NOT cover that direction: the parsers keep
+//!   a catch-all `other =>` refusal arm (napi `Object`s cannot be built in
+//!   a plain `cargo test`, so no in-crate round-trip pins them), meaning a
+//!   new variant that satisfies this table still needs its parser arm by
+//!   hand — a miss surfaces at runtime as an "unknown … kind" refusal,
+//!   caught only by the TS-side integration suite, never by this crate's
+//!   compile.
 //! - `TAGS` — every tag in core declaration order; the `tags.json` golden
 //!   (`ts/test/fixtures/tags.json`, verified by `golden::tags_json_matches`
 //!   below) is rendered from these, and a TS test

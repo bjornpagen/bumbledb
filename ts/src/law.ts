@@ -490,7 +490,8 @@ function computeClasses(name: string, relations: SchemaRelations, statements: re
 }
 
 /**
- * The trusted seam of the class-map mint (the `refsComplete` pattern): the
+ * The trusted admission seam of the class-map mint (the pattern's home is
+ * `isTypedScope` in query/lower.ts): the
  * checkable facts — one own record per declared relation, one own entry
  * per declared field (the closed sealed shape's `id` included), everything
  * frozen — are verified before the runtime map is admitted at the computed

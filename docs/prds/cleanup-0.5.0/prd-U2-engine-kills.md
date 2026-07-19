@@ -67,6 +67,15 @@ deleted in the same commit.
 - The measure-or-merge trio (leaf elision, all-words finalize,
   permuted-identity determinant) — M owns them; touching them here violates
   ruling 6–8's protocol.
+  **Amendment (recorded deviation, 2026-07-19):** the U2 commit
+  (`b0ddb330`) prepared the trio's A/B scaffolding early —
+  `Executor::disable_leaf_elision`/`leaf_elision_engaged` (`cfg(test)`
+  only), `api/prepared/tests/measure_twins.rs`, and the ignored
+  `permuted_identity_determinant_twin` in `storage/keys.rs`. The fast
+  paths themselves are unmodified and no runtime mode exists; M still
+  owns the measurement and the verdict, and the switches die with it
+  (prd-M's "never ships" clause now reads: never ships PAST the
+  verdict). The scope wall stands for everything else.
 - Every KEEP-AS-LAW item, including the kind system (U1's remit), the
   closed-relation carve-outs, the sanctioned-unsafe kernels, all platform
   branches, and the copy-on-append fork.

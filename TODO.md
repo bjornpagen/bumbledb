@@ -31,19 +31,37 @@
   no win merges the special case into the generic machinery; the twin
   and its knob die with the verdict either way. Until M rules, the code
   stands untouched.
-- **CI dispatch proof (U4a) + one red lane + a run gap:** the miri `.S`
-  stub and the ubuntu lanes want their green run ids recorded in PR #11.
-  The only PR run (29697582864) tested `de1bac14` and is green everywhere
-  EXCEPT `check (ubuntu-latest)`:
+- **CI dispatch proof (U4a) — remedies landed, run ids still owed:** the
+  miri `.S` stub and the ubuntu lanes want their green run ids recorded
+  in PR #11. The only PR run (29697582864) tested `de1bac14` and is green
+  everywhere EXCEPT `check (ubuntu-latest)`:
   `clockproxy::tests::the_estimate_is_a_plausible_core_frequency`
-  measured 0.18 GHz on the shared runner — U4a's named watch item fired;
-  the plausibility band (0.5–6.0 GHz) is a pinned probe, so the remedy
-  is an owner-visible decision, not a band widen. NO run covers the five
-  wave commits after `de1bac14` (the pull_request synchronize events
-  produced no runs — diagnose before trusting the branch's green); one
-  consequence already surfaced: U5's `conformance/judgment.rs` landed
-  with a rustfmt violation no gate ever saw (fixed in the U6 working
-  tree).
+  measured 0.18 GHz on the shared runner — U4a's named watch item fired.
+  Remedy landed (2026-07-19, owner-visible here): the probe joined the
+  host-pinned falsifier set with an arch-conditioned ignore — the
+  plausibility band transcribes the aarch64 asm chain's by-construction
+  cycle count, and the portable fallback is documented indicative-only —
+  the band itself is untouched (no widen), and the macos lane still runs
+  the probe. The run gap is DIAGNOSED: PR #11 is CONFLICTING against
+  main, GitHub builds no merge ref for a conflicted PR and creates no
+  runs for its synchronize events — hence zero runs for the seven
+  commits after `de1bac14` (one consequence already surfaced: U5's
+  `conformance/judgment.rs` landed with a rustfmt violation no gate ever
+  saw; fixed in the U6 working tree). Remedy landed: ci.yml's push
+  trigger lists `worktree-cleanup-050` explicitly (drop at PR close);
+  pull_request runs stay unavailable until the committer reconciles the
+  branch with main. Remaining act (serial committer): push, then
+  `gh workflow run ci --ref worktree-cleanup-050` (workflow_dispatch
+  runs ALL lanes including miri), record the green run ids in PR #11.
+- **Ruling 13 — the 0.5.0 version bump is PENDING, deliberately last:**
+  `ts/package.json` + `ts/npm/darwin-arm64/package.json` sit at 0.4.0
+  and no crate bumps are staged. U4 item 6 sequences the bump LAST in
+  the wave because it pins a platform package that does not exist on npm
+  yet — the sdk lane is expected-red between bump and owner publish — so
+  it cannot precede the green-dispatch proof above. Stage it (lockstep
+  gate green, no tag, no publish, say "last in the wave" in the commit)
+  once the run ids are recorded; then the post-publish lockfile
+  regeneration commit per the release-flow note below.
 - **For the owner (U4a census):** five stale remote worktree branches
   deleted; `worktree-structural-sdk` was closed-not-merged but proven
   subsumed — flagged per census.

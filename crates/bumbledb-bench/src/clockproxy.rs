@@ -230,7 +230,17 @@ where
 mod tests {
     use super::*;
 
+    /// The plausibility band transcribes aarch64 physics: only there is
+    /// the chain's cycle count known by construction (the register-only
+    /// asm block). The portable fallback's `black_box` round-trips memory
+    /// per mul, so off aarch64 the estimate is indicative, not a claim —
+    /// a shared x86-64 CI runner read 0.18 GHz (run 29697582864) with
+    /// nothing wrong. Host-pinned falsifier, arch-conditioned.
     #[test]
+    #[cfg_attr(
+        not(target_arch = "aarch64"),
+        ignore = "host-pinned falsifier: the plausibility band transcribes the aarch64 asm chain's by-construction cycle count — the portable fallback is indicative only"
+    )]
     fn the_estimate_is_a_plausible_core_frequency() {
         warm_up(Duration::from_millis(20));
         let ghz = effective_ghz();

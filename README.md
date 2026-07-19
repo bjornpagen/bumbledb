@@ -427,12 +427,18 @@ cargo test --features alloc-counter --test alloc_gate --release -- --test-thread
 ```
 
 …then runs the lanes a one-liner can't spell: clippy and tests with each
-fuzz-oracle feature compiled in (`ground-off`, `fold-off`); clippy over the
-detached fuzz crate (which every `--workspace` invocation skips); the
-deterministic crashpoint sweeps, durable and ephemeral; the NOSYNC
-random-timing kill smoke; the bench crate linted and tested under its `obs`
-feature; and — when the cross std and cross C compiler are present — the
-x86-64 scalar-fallback `cargo check`. The alloc gate's `--test-threads=1` is
+fuzz-oracle feature compiled in (`ground-off`, `fold-off`); the
+`--all-features` pairwise co-compile clippy lane (every engine feature
+built together once — the only build that proves the feature pairs
+co-compile); clippy over the detached fuzz crate (which every
+`--workspace` invocation skips); the deterministic crashpoint sweeps,
+durable and ephemeral; the NOSYNC random-timing kill smoke; and the bench
+crate linted and tested under its `obs` feature. The x86-64
+scalar-fallback promise is EXECUTED, not cross-checked: CI's check lane
+runs this whole script natively on an x86_64-linux runner, strictly
+stronger than the cross `cargo check` that used to close the script (it
+needed a cross std and a cross C compiler, so it self-skipped on every
+machine that ever ran it). The alloc gate's `--test-threads=1` is
 load-bearing: the counting allocator is process-global.
 
 Disk requirements for tests: every store opens as a fixed 32 GiB memory map

@@ -71,9 +71,12 @@ two unsafe-policy rulings, which are doc edits.
   "capacity contract" name — the sweep targets are the ftruncate/WRITEMAP/
   preallocation sentences at `50-storage.md:442-450`, `60-validation.md:633`,
   `70-api.md:356`, `README.md:375,438-441`, `scripts/ramdisk.sh:35-47`.)
-- The unsafe allowlist matches `grep -rn "expect(unsafe_code)\|allow(unsafe_code)"`
-  reality exactly — every sanctioned module listed, every listed module
-  sanctioned, the test-scaffolding category named.
+- The unsafe allowlist matches `grep -rln "unsafe_code" crates/` reality
+  exactly (the lint name appears ONLY inside `#[expect(unsafe_code, …)]`
+  attributes, so the bare token enumerates the sanctioned files; the
+  paren-suffixed spellings miss the multi-line `#[expect(` form) — every
+  sanctioned module listed, every listed module sanctioned, the
+  test-scaffolding category named.
 - `scripts/spec-census.sh` green; `scripts/lean.sh` green (doc citations
   unbroken).
 - Present tense throughout; every flip is a recorded retraction.

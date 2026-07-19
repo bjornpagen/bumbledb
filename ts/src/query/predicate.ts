@@ -181,7 +181,8 @@ function makeRawRec<Name extends string>(state: ProgramState, name: Name, data: 
 }
 
 /**
- * The rec handles' trusted admission seam (the `refsComplete` pattern):
+ * The rec handles' trusted admission seam (the pattern's home is
+ * `isTypedScope` in query/lower.ts):
  * the checkable fact — the handle owns exactly the rec data it names — is
  * verified before the raw handle is admitted at its typed face.
  */
