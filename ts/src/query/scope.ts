@@ -21,6 +21,7 @@
 
 import * as errors from "@superbuilders/errors"
 import type { AnyField, Infer } from "#fields.ts"
+import { rosterOf } from "#fields.ts"
 
 /**
  * The runtime discriminant of query term values. Host literals (bigints,
@@ -279,8 +280,8 @@ function fieldJoins(a: ClassedField, b: ClassedField): boolean {
 	const widthB = "width" in b.field ? b.field.width : undefined
 	const elementA = "element" in a.field ? a.field.element : undefined
 	const elementB = "element" in b.field ? b.field.element : undefined
-	const rosterA = "closed" in a.field ? a.field.closed : undefined
-	const rosterB = "closed" in b.field ? b.field.closed : undefined
+	const rosterA = rosterOf(a.field)
+	const rosterB = rosterOf(b.field)
 	return (
 		a.field.kind === b.field.kind &&
 		a.class === b.class &&
@@ -300,8 +301,9 @@ function fieldJoins(a: ClassedField, b: ClassedField): boolean {
 function renderFieldKind(slot: ClassedField): string {
 	const field = slot.field
 	let base: string = field.kind
-	if ("closed" in field) {
-		base = `u64 referencing ${field.closed.name}`
+	const roster = rosterOf(field)
+	if (roster !== undefined) {
+		base = `u64 referencing ${roster.name}`
 	}
 	if (field.kind === "bytes") {
 		base = `bytes<${field.width}>`

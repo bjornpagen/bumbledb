@@ -4,7 +4,7 @@ import { createRequire } from "node:module"
 import * as path from "node:path"
 import { fileURLToPath } from "node:url"
 import * as errors from "@superbuilders/errors"
-import { localPlatformTarget, nativeArtifactName } from "./platform.ts"
+import { deriveDevTwinManifest, localPlatformTarget, nativeArtifactName, PUBLISH_PLATFORM } from "./platform.ts"
 
 /**
  * The package build, end to end, so `pnpm run build` owns both publishable
@@ -31,15 +31,6 @@ import { localPlatformTarget, nativeArtifactName } from "./platform.ts"
  * libraries.
  */
 
-/**
- * The single platform this release PUBLISHES; its package dir is
- * `npm/<target>` and the version-lockstep gate pins it. Deliberately a
- * hand-written constant, never derived from the host: adding a shipped
- * platform is an edit here plus its `npm/<target>` manifest, a decision —
- * building on a linux host must not silently grow the publish set.
- */
-const PUBLISH_PLATFORM = "darwin-arm64"
-
 /** This host's platform target — where placement, link, and smoke-load go. */
 const LOCAL_PLATFORM = localPlatformTarget(process.platform, process.arch)
 
@@ -65,7 +56,7 @@ function build(): void {
 		throw errors.new(`cargo build exited with status ${cargo.status}`)
 	}
 
-	ensureLocalPlatformPackage(publishPackageDir, localPackageDir, version)
+	ensureLocalPlatformPackage(publishPackageDir, localPackageDir)
 	const artifact = path.join(packageRoot, "crate", "target", "release", nativeArtifactName(process.platform))
 	const nodeBinary = path.join(localPackageDir, "bumbledb.node")
 	fs.copyFileSync(artifact, nodeBinary)
@@ -142,29 +133,28 @@ function readJson(file: string): Record<string, unknown> {
  * Guarantees the LOCAL platform package dir exists with a loadable manifest.
  * On the publish platform this is the committed `npm/darwin-arm64` tree and
  * nothing is written. On any other build host (a linux checkout) the dir is
- * SYNTHESIZED — a dev-tree-only, gitignored manifest mirroring the publish
- * one (`main: bumbledb.node`, `os`/`cpu` gates, the lockstep version) plus
- * the LICENSE, so the by-name link, the smoke-load, and the tarball proof
+ * SYNTHESIZED — a dev-tree-only, gitignored manifest DERIVED from the
+ * committed publish manifest: only `name`, `description`, `os`, and `cpu`
+ * are rewritten for the host; every other field (`version`, `main`,
+ * `files`, `engines`, `repository`, `publishConfig`, …) is inherited BY
+ * CONSTRUCTION, so the twin can never drift from the publish shape field
+ * by field (the old hand-written literal had already drifted). The LICENSE
+ * rides along, so the by-name link, the smoke-load, and the tarball proof
  * all exercise the exact shape a published platform package would have.
  * Publishing is untouched: the publish runbook names `./npm/darwin-arm64`
  * explicitly and this dir never enters the registry.
  */
-function ensureLocalPlatformPackage(publishPackageDir: string, localPackageDir: string, version: string): void {
+function ensureLocalPlatformPackage(publishPackageDir: string, localPackageDir: string): void {
 	fs.mkdirSync(localPackageDir, { recursive: true })
 	if (LOCAL_PLATFORM === PUBLISH_PLATFORM) {
 		return
 	}
-	const manifest = {
-		name: `@bjornpagen/bumbledb-${LOCAL_PLATFORM}`,
-		version,
-		description: `Locally built ${LOCAL_PLATFORM} native binary for @bjornpagen/bumbledb (dev tree only, never published)`,
-		os: [process.platform],
-		cpu: [process.arch],
-		main: "bumbledb.node",
-		files: ["bumbledb.node"],
-		author: "Bjorn Pagen",
-		license: "0BSD"
-	}
+	const manifest = deriveDevTwinManifest(
+		readJson(path.join(publishPackageDir, "package.json")),
+		LOCAL_PLATFORM,
+		process.platform,
+		process.arch
+	)
 	fs.writeFileSync(path.join(localPackageDir, "package.json"), `${JSON.stringify(manifest, null, "\t")}\n`)
 	fs.copyFileSync(path.join(publishPackageDir, "LICENSE"), path.join(localPackageDir, "LICENSE"))
 }

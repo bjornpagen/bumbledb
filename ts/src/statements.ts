@@ -12,8 +12,11 @@
  * schema type (the minimal kernel — descriptors are pure structure) and
  * constrained positionwise equal, so a u64 face against a str face, a
  * bytes width mismatch, an interval element mismatch, or a bare column
- * against a closed reference is a compile error. The ROSTER slot carries a
- * construction-time runtime twin here ({@link assertRosterAgreement} —
+ * against a closed reference is a compile error. TWO of those walls carry
+ * construction-time runtime twins here for untyped callers: ARITY
+ * ({@link assertArityAgreement} — cleanup-0.5.0 ruling 9: an
+ * arity-mismatched pairing fails at the statement, never by silent
+ * truncation) and the ROSTER slot ({@link assertRosterAgreement} —
  * roster IDENTITY, positionwise: a closed vocabulary's referencing column
  * is spelled with the vocabulary's own id descriptor, the ONE spelling, so
  * a plain u64 column can never alias a vocabulary through a declared law
@@ -32,9 +35,10 @@
  */
 
 import * as errors from "@superbuilders/errors"
+import { isClosedMember, sealedFieldOf } from "#closed.ts"
 import type { Count } from "#count.ts"
 import { type AnyFace, type FaceData, renderFace, type SameArity, type SameShapes } from "#face.ts"
-import type { AnyField, ClosedRoster } from "#fields.ts"
+import { type ClosedRoster, rosterOf } from "#fields.ts"
 import type { AnyRelation, RelationFields } from "#relation.ts"
 import { renderWindow, type WindowSpec } from "#spec.ts"
 
@@ -105,41 +109,26 @@ interface KeyStatement<R extends AnyRelation, Projection extends readonly string
 	readonly data: KeyData<R, Projection>
 }
 
-/**
- * The field descriptor one face position projects: an ordinary relation's
- * declared field; a closed relation's SEALED shape — the synthetic `id`
- * (the value's own roster-carrying descriptor, by identity) or a declared
- * payload column. `undefined` when the name is foreign (the type tier makes
- * that unwritable; the engine re-judges projections at `Db.create`).
- */
-function projectedFieldOf(face: FaceData, fieldName: string): AnyField | undefined {
-	const owner = face.owner
-	if ("axioms" in owner) {
-		if (fieldName === "id") {
-			return owner.id
-		}
-		const column = owner.data.columns.find(function byName(candidate) {
-			return candidate.name === fieldName
-		})
-		return column?.field
-	}
-	const declared = owner.data.fields.find(function byName(candidate) {
-		return candidate.name === fieldName
-	})
-	return declared?.field
-}
-
-/** The roster a descriptor carries: present exactly on a closed reference, absent on every other kind. */
-function rosterOfField(field: AnyField | undefined): ClosedRoster | undefined {
-	if (field !== undefined && "closed" in field) {
-		return field.closed
-	}
-	return undefined
-}
-
 /** Renders one face position's closedness for the roster-agreement diagnostics. */
 function renderRosterSide(roster: ClosedRoster | undefined): string {
 	return roster === undefined ? "a bare column" : `a ${roster.name} reference`
+}
+
+/**
+ * The runtime twin of {@link SameArity} (cleanup-0.5.0 ruling 9): the two
+ * faces must project equally many fields, judged at CONSTRUCTION for
+ * untyped callers too — without it an arity-mismatched containment
+ * silently truncates to the shorter projection (this module's positionwise
+ * walk and `law.ts`'s `unionSlot` both skip unpaired positions) until
+ * `Db.create`'s colder engine refusal. The error carries the two faces'
+ * own facts: names, arities, and the rendered statement.
+ */
+function assertArityAgreement(source: FaceData, target: FaceData, statement: Statement): void {
+	if (source.projection.length !== target.projection.length) {
+		throw errors.new(
+			`${source.owner.name}(${source.projection.join(", ")}) and ${target.owner.name}(${target.projection.join(", ")}) project ${source.projection.length} vs ${target.projection.length} fields — positional pairing requires both faces to project equally many — ${renderStatement(statement)}`
+		)
+	}
 }
 
 /**
@@ -154,6 +143,9 @@ function renderRosterSide(roster: ClosedRoster | undefined): string {
  * vocabulary's own descriptor (`Kind.id`) is the ONE spelling of a closed
  * reference at this surface (the canonical-utterance law); the engine
  * cannot backstop this one — the wire carries plain u64s, no rosters.
+ * Arity agreement ({@link assertArityAgreement}) runs first, so the
+ * positionwise walk here never sees an unpaired position from a well-typed
+ * OR an untyped caller.
  */
 function assertRosterAgreement(source: FaceData, target: FaceData, statement: Statement): void {
 	source.projection.forEach(function agreeAt(fieldName, position) {
@@ -161,8 +153,8 @@ function assertRosterAgreement(source: FaceData, target: FaceData, statement: St
 		if (targetField === undefined) {
 			return
 		}
-		const sourceRoster = rosterOfField(projectedFieldOf(source, fieldName))
-		const targetRoster = rosterOfField(projectedFieldOf(target, targetField))
+		const sourceRoster = rosterOf(sealedFieldOf(source.owner, fieldName))
+		const targetRoster = rosterOf(sealedFieldOf(target.owner, targetField))
 		if (sourceRoster !== targetRoster) {
 			throw errors.new(
 				`${source.owner.name}.${fieldName} is ${renderRosterSide(sourceRoster)} but ${target.owner.name}.${targetField} is ${renderRosterSide(targetRoster)} — closedness rides the descriptor: a closed reference is spelled with the vocabulary's own id descriptor (one meaning, one spelling), so faces pair closed-with-closed through one roster or bare-with-bare, never across — ${renderStatement(statement)}`
@@ -186,7 +178,7 @@ function key<
 	R extends AnyRelation,
 	const Projection extends readonly [keyof RelationFields<R> & string, ...(keyof RelationFields<R> & string)[]]
 >(relation: R, fields: Projection): KeyStatement<R, Projection> {
-	if (!("fields" in relation.data)) {
+	if (isClosedMember(relation)) {
 		throw errors.new(
 			`key(${relation.name}, ...): closedness already materializes ${relation.name}(id) -> ${relation.name} — an explicit key on a closed relation is rejected as a duplicate`
 		)
@@ -219,6 +211,7 @@ function contained<A extends AnyFace, B extends AnyFace>(
 		bidirectional: false
 	})
 	const statement = Object.freeze({ data })
+	assertArityAgreement(data.source, data.target, statement)
 	assertRosterAgreement(data.source, data.target, statement)
 	return statement
 }
@@ -243,6 +236,7 @@ function mirrors<A extends AnyFace, B extends AnyFace>(
 		bidirectional: true
 	})
 	const statement = Object.freeze({ data })
+	assertArityAgreement(data.source, data.target, statement)
 	assertRosterAgreement(data.source, data.target, statement)
 	return statement
 }
@@ -269,6 +263,7 @@ function window<B extends AnyFace, A extends AnyFace>(
 		source: source.data
 	})
 	const statement = Object.freeze({ data })
+	assertArityAgreement(data.source, data.target, statement)
 	assertRosterAgreement(data.source, data.target, statement)
 	return statement
 }

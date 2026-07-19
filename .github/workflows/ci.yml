@@ -194,9 +194,10 @@ jobs:
   # Lane 5 — the SDK lane (the hardening-0.3.0 packet, PRD T6): both
   # halves of the cross-host fingerprint lock, per push. The TS half is
   # the full SDK gate exactly as run locally — build the napi bridge +
-  # package from source, then tsc, biome, and `node --test` over
-  # test/*.test.ts (test/fixtures/*.ts are spawned-child helpers, never
-  # tests). The Rust half is `cargo test` against ts/crate — the crate
+  # package from source, then tsc, biome, and `pnpm test` (the ONE
+  # test-glob spelling — package.json's `test` script; the rebuild it
+  # fronts is incremental after the named build step; test/fixtures/*.ts
+  # are spawned-child helpers, never tests). The Rust half is `cargo test` against ts/crate — the crate
   # is workspace-excluded, so the root workspace gate (lane 1) never
   # reaches it; this step is what executes
   # ts/crate/src/fingerprint_lock.rs. The T5 per-recipe goldens run
@@ -256,7 +257,7 @@ jobs:
         working-directory: ts
       - run: pnpm exec biome check .
         working-directory: ts
-      - run: node --test $(find test -name '*.test.ts')
+      - run: pnpm test
         working-directory: ts
       - name: the Rust half of the lock (fingerprint_lock.rs)
         run: cargo test --manifest-path ts/crate/Cargo.toml

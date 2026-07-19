@@ -1,25 +1,15 @@
 # Publishing @bjornpagen/bumbledb
 
-## The 0.4.0 one-liner
-
-Owner-run, from the release worktree, on a darwin-arm64 host, logged in to npm
-(`pnpm whoami` answers). Platform first, then main — one `&&` chain; EACH
-publish stops and prompts interactively for the npm OTP (2FA), so run it in a
-real terminal and have the authenticator open:
-
-```sh
-cd /Users/bjorn/Documents/bumbledb/.claude/worktrees/host-idiom-040/ts && pnpm publish --access public --no-git-checks ./npm/darwin-arm64 && pnpm publish --access public --no-git-checks
-```
-
-`--no-git-checks` is REQUIRED here: pnpm refuses to publish from a non-main
-branch, and this worktree sits on `worktree-host-idiom-040`. The main publish
-runs `prepublishOnly` → the full build (lockstep assertion, cargo release
-build, smoke-load through the by-name loader path, tarball-manifest
-verification) before anything uploads.
-
-The owner-run release runbook (host-idiom-0.4.0 PRD-V1). This repo builds and
-verifies both packages; the agent side does NOT publish. `npm publish` /
-`pnpm publish` and the git tag are owner ceremony.
+The owner-run release runbook. Owner-run, from the `ts/` package root, on a
+darwin-arm64 host, logged in to npm (`pnpm whoami` answers). This repo builds
+and verifies both packages; the agent side does NOT publish. `npm publish` /
+`pnpm publish` and the git tag are owner ceremony. The runbook below is the
+ONE spelling of the procedure (the old one-liner duplicated it and carried a
+stale absolute worktree path). Each publish stops and prompts interactively
+for the npm OTP (2FA), so run it in a real terminal with the authenticator
+open. The main publish runs `prepublishOnly` → the full build (lockstep
+assertion, cargo release build, smoke-load through the by-name loader path,
+tarball-manifest verification) before anything uploads.
 
 `0.4.0` is a deliberate backwards-incompatible hard break over `0.3.0` (the
 drizzle law: database idioms arrive as modern TypeScript idioms) — closed
@@ -72,20 +62,19 @@ cd ts
 # 2. Build + verify both trees (fails on version drift, unloadable artifact,
 #    or a mispacked tarball). Produces dist/ and npm/darwin-arm64/bumbledb.node.
 pnpm install
-pnpm run build
-node --test $(find test -name '*.test.ts')
+pnpm test           # runs the build, then node --test (the ONE test spelling)
 pnpm exec tsc --noEmit
 pnpm exec biome check .
 
 # 3. Publish the PLATFORM package FIRST — the main's exact-pinned optional dep
 #    must already exist in the registry when the main resolves.
 #    (Interactive: npm prompts for the 2FA one-time password.)
-pnpm publish --access public --no-git-checks ./npm/darwin-arm64
+pnpm publish --no-git-checks ./npm/darwin-arm64
 
 # 4. Publish the MAIN package SECOND. (`prepublishOnly` reruns the build;
 #    another OTP prompt.) `ts/package.json` already carries "private": false —
 #    there is no toggle to flip since 0.1.0 shipped.
-pnpm publish --access public --no-git-checks
+pnpm publish --no-git-checks
 
 # 5. Verify both versions landed in the registry.
 pnpm view @bjornpagen/bumbledb-darwin-arm64@0.4.0 version
@@ -94,11 +83,11 @@ pnpm view @bjornpagen/bumbledb@0.4.0 version
 # 6. Tag v0.4.0 (owner ceremony; the release-staged commit is already pushed).
 ```
 
-`--access public` is mandatory: scoped packages publish restricted by default,
-and without it coworkers cannot install. Both manifests also carry
-`publishConfig.access: "public"`, so the flag is belt-and-suspenders.
-`--no-git-checks` is needed whenever publishing from a branch other than main
-(true in the release worktree).
+Public access is mandatory (scoped packages publish restricted by default,
+and without it coworkers cannot install) and has ONE spelling: both manifests
+carry `publishConfig.access: "public"` — the redundant `--access public` flag
+is deleted from the commands. `--no-git-checks` is needed whenever publishing
+from a branch other than main (true in a release worktree).
 
 ## Post-publish, step one: the bumbledb lockfile regeneration
 
@@ -166,7 +155,8 @@ node smoke.ts   # prints: SMOKE OK: packed 0.4.0 tarballs — string-handle
 
 ## Provenance (CI only)
 
-`npm publish --provenance --access public` attaches a signed provenance
+`npm publish --provenance` attaches a signed provenance (access stays
+public through `publishConfig.access`, the one spelling)
 attestation, but requires a CI runner (a macOS-arm64 GitHub Actions runner that
 builds the `darwin-arm64` artifact). It is NOT available from a plain local
 publish. If/when CI is added, publish order stays platform-first, main-second.

@@ -35,6 +35,8 @@ use napi::bindgen_prelude::{
 };
 use napi::{Unknown, ValueType as JsType, sys};
 
+use crate::tags;
+
 /// A thrown bridge error: marshaling and shape violations throw across the
 /// boundary (domain outcomes never do — they return as data).
 pub(crate) fn err(message: String) -> napi::Error {
@@ -217,9 +219,11 @@ fn schema_value(
     }
 }
 
-/// A relation's SEALED field roster: a closed relation's synthetic
-/// (`id`, u64) handle field first, declared fields after — the numbering
-/// every dynamic-surface row and statement addresses.
+/// A relation's SEALED field roster — the numbering every dynamic-surface
+/// row and statement addresses, read through THE one owner of the
+/// synthetic-id law (`RelationDescriptor::sealed_fields`: a closed
+/// relation's synthetic (`id`, u64) handle field first, declared fields
+/// after); the bridge re-derives nothing.
 fn sealed_fields(
     descriptor: &SchemaDescriptor,
     relation: RelationId,
@@ -233,14 +237,10 @@ fn sealed_fields(
                 relation.0
             ))
         })?;
-    let mut fields = Vec::with_capacity(rel.fields.len() + 1);
-    if rel.extension.is_some() {
-        fields.push((Box::from("id"), ValueType::U64));
-    }
-    for field in &rel.fields {
-        fields.push((field.name.clone(), field.value_type.clone()));
-    }
-    Ok(fields)
+    Ok(rel
+        .sealed_fields()
+        .map(|slot| (Box::from(slot.name), slot.value_type.clone()))
+        .collect())
 }
 
 fn relation_name(descriptor: &SchemaDescriptor, relation: RelationId) -> String {
@@ -328,28 +328,28 @@ pub(crate) fn key_row(
 pub(crate) fn tagged_value(obj: &Object) -> napi::Result<Value> {
     let kind: String = req(obj, "kind", "value")?;
     match kind.as_str() {
-        "bool" => Ok(Value::Bool(req::<bool>(obj, "value", "bool value")?)),
-        "u64" => Ok(Value::U64(u64_in(
+        tags::value::BOOL => Ok(Value::Bool(req::<bool>(obj, "value", "bool value")?)),
+        tags::value::U64 => Ok(Value::U64(u64_in(
             &req::<BigInt>(obj, "value", "u64 value")?,
             "u64 value",
         )?)),
-        "i64" => Ok(Value::I64(i64_in(
+        tags::value::I64 => Ok(Value::I64(i64_in(
             &req::<BigInt>(obj, "value", "i64 value")?,
             "i64 value",
         )?)),
-        "string" => Ok(Value::String(
+        tags::value::STRING => Ok(Value::String(
             req::<String>(obj, "value", "string value")?
                 .into_bytes()
                 .into_boxed_slice(),
         )),
-        "fixedBytes" => Ok(Value::FixedBytes(
+        tags::value::FIXED_BYTES => Ok(Value::FixedBytes(
             req::<Uint8Array>(obj, "value", "fixedBytes value")?
                 .to_vec()
                 .into_boxed_slice(),
         )),
-        "intervalU64" => interval_in(obj, IntervalElement::U64, "intervalU64 value"),
-        "intervalI64" => interval_in(obj, IntervalElement::I64, "intervalI64 value"),
-        "allenMask" => {
+        tags::value::INTERVAL_U64 => interval_in(obj, IntervalElement::U64, "intervalU64 value"),
+        tags::value::INTERVAL_I64 => interval_in(obj, IntervalElement::I64, "intervalI64 value"),
+        tags::value::ALLEN_MASK => {
             let bits = ordinal(req::<f64>(obj, "mask", "allenMask value")?, "allen mask")?;
             let bits = u16::try_from(bits)
                 .ok()
@@ -377,7 +377,7 @@ pub(crate) fn params_in(arr: &Array) -> napi::Result<Vec<OwnedParam>> {
     for index in 0..arr.len() {
         let obj = req_at::<Object>(arr, index, "params")?;
         let kind: String = req(&obj, "kind", "param")?;
-        if kind == "set" {
+        if kind == tags::param::SET {
             let values: Array = req(&obj, "values", "set param")?;
             let mut set = Vec::with_capacity(values.len() as usize);
             for value_index in 0..values.len() {
@@ -396,21 +396,21 @@ pub(crate) fn params_in(arr: &Array) -> napi::Result<Vec<OwnedParam>> {
 fn value_type_in(obj: &Object) -> napi::Result<ValueType> {
     let kind: String = req(obj, "kind", "value type")?;
     match kind.as_str() {
-        "bool" => Ok(ValueType::Bool),
-        "u64" => Ok(ValueType::U64),
-        "i64" => Ok(ValueType::I64),
-        "string" => Ok(ValueType::String),
-        "fixedBytes" => {
+        tags::value_type::BOOL => Ok(ValueType::Bool),
+        tags::value_type::U64 => Ok(ValueType::U64),
+        tags::value_type::I64 => Ok(ValueType::I64),
+        tags::value_type::STRING => Ok(ValueType::String),
+        tags::value_type::FIXED_BYTES => {
             let len = ordinal(req::<f64>(obj, "len", "fixedBytes type")?, "bytes width")?;
             let len = u16::try_from(len)
                 .map_err(|_| err(format!("bumbledb marshal: bytes width {len} exceeds u16")))?;
             Ok(ValueType::FixedBytes { len })
         }
-        "interval" => {
+        tags::value_type::INTERVAL => {
             let element: String = req(obj, "element", "interval type")?;
             let element = match element.as_str() {
-                "u64" => IntervalElement::U64,
-                "i64" => IntervalElement::I64,
+                tags::interval_element::U64 => IntervalElement::U64,
+                tags::interval_element::I64 => IntervalElement::I64,
                 other => {
                     return Err(err(format!(
                         "bumbledb marshal: unknown interval element `{other}`"
@@ -432,10 +432,10 @@ fn value_type_in(obj: &Object) -> napi::Result<ValueType> {
 fn literal_in(obj: &Object) -> napi::Result<LiteralSpec> {
     let kind: String = req(obj, "kind", "literal")?;
     match kind.as_str() {
-        "handle" => Ok(LiteralSpec::Handle(
+        tags::literal::HANDLE => Ok(LiteralSpec::Handle(
             req::<String>(obj, "handle", "handle literal")?.into(),
         )),
-        "value" => {
+        tags::literal::VALUE => {
             let value: Object = req(obj, "value", "value literal")?;
             Ok(LiteralSpec::Value(tagged_value(&value)?))
         }
@@ -448,11 +448,11 @@ fn literal_in(obj: &Object) -> napi::Result<LiteralSpec> {
 fn literal_set_in(obj: &Object) -> napi::Result<LiteralSetSpec> {
     let kind: String = req(obj, "kind", "literal set")?;
     match kind.as_str() {
-        "one" => {
+        tags::literal_set::ONE => {
             let literal: Object = req(obj, "literal", "one-literal binding")?;
             Ok(LiteralSetSpec::One(literal_in(&literal)?))
         }
-        "many" => {
+        tags::literal_set::MANY => {
             let literals: Array = req(obj, "literals", "literal set")?;
             let mut many = Vec::with_capacity(literals.len() as usize);
             for index in 0..literals.len() {
@@ -491,15 +491,15 @@ fn side_in(obj: &Object) -> napi::Result<SideSpec> {
 fn window_in(obj: &Object) -> napi::Result<WindowSpec> {
     let kind: String = req(obj, "kind", "window")?;
     match kind.as_str() {
-        "exact" => Ok(WindowSpec::Exact(u64_in(
+        tags::window::EXACT => Ok(WindowSpec::Exact(u64_in(
             &req::<BigInt>(obj, "n", "exact window")?,
             "window count",
         )?)),
-        "range" => Ok(WindowSpec::Range {
+        tags::window::RANGE => Ok(WindowSpec::Range {
             lo: u64_in(&req::<BigInt>(obj, "lo", "range window")?, "window lo")?,
             hi: u64_in(&req::<BigInt>(obj, "hi", "range window")?, "window hi")?,
         }),
-        "floor" => Ok(WindowSpec::Floor(u64_in(
+        tags::window::FLOOR => Ok(WindowSpec::Floor(u64_in(
             &req::<BigInt>(obj, "lo", "floor window")?,
             "window lo",
         )?)),
@@ -512,7 +512,7 @@ fn window_in(obj: &Object) -> napi::Result<WindowSpec> {
 fn statement_in(obj: &Object) -> napi::Result<StatementSpec> {
     let kind: String = req(obj, "kind", "statement")?;
     match kind.as_str() {
-        "fd" => {
+        tags::statement::FD => {
             let projection: Array = req(obj, "projection", "fd statement")?;
             let mut fields = Vec::with_capacity(projection.len() as usize);
             for index in 0..projection.len() {
@@ -523,12 +523,12 @@ fn statement_in(obj: &Object) -> napi::Result<StatementSpec> {
                 projection: fields,
             })
         }
-        "containment" => Ok(StatementSpec::Containment {
+        tags::statement::CONTAINMENT => Ok(StatementSpec::Containment {
             source: side_in(&req::<Object>(obj, "source", "containment")?)?,
             target: side_in(&req::<Object>(obj, "target", "containment")?)?,
             bidirectional: req::<bool>(obj, "bidirectional", "containment")?,
         }),
-        "cardinality" => Ok(StatementSpec::Cardinality {
+        tags::statement::CARDINALITY => Ok(StatementSpec::Cardinality {
             target: side_in(&req::<Object>(obj, "target", "cardinality")?)?,
             window: window_in(&req::<Object>(obj, "window", "cardinality")?)?,
             source: side_in(&req::<Object>(obj, "source", "cardinality")?)?,
@@ -613,11 +613,11 @@ fn param_in(obj: &Object, key: &str, ctx: &str) -> napi::Result<ParamId> {
 fn term_in(obj: &Object) -> napi::Result<Term> {
     let kind: String = req(obj, "kind", "term")?;
     match kind.as_str() {
-        "var" => Ok(Term::Var(var_in(obj, "var", "var term")?)),
-        "param" => Ok(Term::Param(param_in(obj, "param", "param term")?)),
-        "paramSet" => Ok(Term::ParamSet(param_in(obj, "param", "paramSet term")?)),
-        "measure" => Ok(Term::Measure(var_in(obj, "var", "measure term")?)),
-        "literal" => {
+        tags::term::VAR => Ok(Term::Var(var_in(obj, "var", "var term")?)),
+        tags::term::PARAM => Ok(Term::Param(param_in(obj, "param", "param term")?)),
+        tags::term::PARAM_SET => Ok(Term::ParamSet(param_in(obj, "param", "paramSet term")?)),
+        tags::term::MEASURE => Ok(Term::Measure(var_in(obj, "var", "measure term")?)),
+        tags::term::LITERAL => {
             let value: Object = req(obj, "value", "literal term")?;
             Ok(Term::Literal(tagged_value(&value)?))
         }
@@ -630,18 +630,18 @@ fn term_in(obj: &Object) -> napi::Result<Term> {
 fn agg_op_in(obj: &Object) -> napi::Result<AggOp> {
     let kind: String = req(obj, "kind", "aggregate op")?;
     match kind.as_str() {
-        "sum" => Ok(AggOp::Sum),
-        "min" => Ok(AggOp::Min),
-        "max" => Ok(AggOp::Max),
-        "count" => Ok(AggOp::Count),
-        "countDistinct" => Ok(AggOp::CountDistinct),
-        "argMax" => Ok(AggOp::ArgMax {
+        tags::head_op::SUM => Ok(AggOp::Sum),
+        tags::head_op::MIN => Ok(AggOp::Min),
+        tags::head_op::MAX => Ok(AggOp::Max),
+        tags::head_op::COUNT => Ok(AggOp::Count),
+        tags::head_op::COUNT_DISTINCT => Ok(AggOp::CountDistinct),
+        tags::head_op::ARG_MAX => Ok(AggOp::ArgMax {
             key: var_in(obj, "key", "argMax op")?,
         }),
-        "argMin" => Ok(AggOp::ArgMin {
+        tags::head_op::ARG_MIN => Ok(AggOp::ArgMin {
             key: var_in(obj, "key", "argMin op")?,
         }),
-        "pack" => Ok(AggOp::Pack),
+        tags::head_op::PACK => Ok(AggOp::Pack),
         other => Err(err(format!(
             "bumbledb marshal: unknown aggregate op `{other}`"
         ))),
@@ -651,18 +651,18 @@ fn agg_op_in(obj: &Object) -> napi::Result<AggOp> {
 fn head_term_in(obj: &Object) -> napi::Result<HeadTerm> {
     let kind: String = req(obj, "kind", "head term")?;
     match kind.as_str() {
-        "var" => Ok(HeadTerm::Var),
-        "aggregate" => {
+        tags::head_term::VAR => Ok(HeadTerm::Var),
+        tags::head_term::AGGREGATE => {
             let op: String = req(obj, "op", "head aggregate")?;
             let op = match op.as_str() {
-                "sum" => HeadOp::Sum,
-                "min" => HeadOp::Min,
-                "max" => HeadOp::Max,
-                "count" => HeadOp::Count,
-                "countDistinct" => HeadOp::CountDistinct,
-                "argMax" => HeadOp::ArgMax,
-                "argMin" => HeadOp::ArgMin,
-                "pack" => HeadOp::Pack,
+                tags::head_op::SUM => HeadOp::Sum,
+                tags::head_op::MIN => HeadOp::Min,
+                tags::head_op::MAX => HeadOp::Max,
+                tags::head_op::COUNT => HeadOp::Count,
+                tags::head_op::COUNT_DISTINCT => HeadOp::CountDistinct,
+                tags::head_op::ARG_MAX => HeadOp::ArgMax,
+                tags::head_op::ARG_MIN => HeadOp::ArgMin,
+                tags::head_op::PACK => HeadOp::Pack,
                 other => {
                     return Err(err(format!("bumbledb marshal: unknown head op `{other}`")));
                 }
@@ -678,9 +678,9 @@ fn head_term_in(obj: &Object) -> napi::Result<HeadTerm> {
 fn find_term_in(obj: &Object) -> napi::Result<FindTerm> {
     let kind: String = req(obj, "kind", "find term")?;
     match kind.as_str() {
-        "var" => Ok(FindTerm::Var(var_in(obj, "var", "var find")?)),
-        "measure" => Ok(FindTerm::Measure(var_in(obj, "var", "measure find")?)),
-        "aggregate" => {
+        tags::find_term::VAR => Ok(FindTerm::Var(var_in(obj, "var", "var find")?)),
+        tags::find_term::MEASURE => Ok(FindTerm::Measure(var_in(obj, "var", "measure find")?)),
+        tags::find_term::AGGREGATE => {
             let op: Object = req(obj, "op", "aggregate find")?;
             let over = match obj.get::<f64>("over")? {
                 None => None,
@@ -694,7 +694,7 @@ fn find_term_in(obj: &Object) -> napi::Result<FindTerm> {
                 over,
             })
         }
-        "aggregateMeasure" => {
+        tags::find_term::AGGREGATE_MEASURE => {
             let op: Object = req(obj, "op", "aggregateMeasure find")?;
             Ok(FindTerm::AggregateMeasure {
                 op: agg_op_in(&op)?,
@@ -711,11 +711,11 @@ fn atom_in(obj: &Object) -> napi::Result<Atom> {
     let source: Object = req(obj, "source", "atom")?;
     let source_kind: String = req(&source, "kind", "atom source")?;
     let source = match source_kind.as_str() {
-        "edb" => AtomSource::Edb(RelationId(ordinal(
+        tags::atom_source::EDB => AtomSource::Edb(RelationId(ordinal(
             req::<f64>(&source, "relation", "edb source")?,
             "edb relation",
         )?)),
-        "idb" => AtomSource::Idb(PredId(u16_id(
+        tags::atom_source::IDB => AtomSource::Idb(PredId(u16_id(
             ordinal(req::<f64>(&source, "pred", "idb source")?, "idb pred")?,
             "idb pred",
         )?)),
@@ -749,18 +749,18 @@ fn comparison_in(obj: &Object) -> napi::Result<Comparison> {
     let op: Object = req(obj, "op", "comparison")?;
     let op_kind: String = req(&op, "kind", "comparison op")?;
     let op = match op_kind.as_str() {
-        "eq" => CmpOp::Eq,
-        "ne" => CmpOp::Ne,
-        "lt" => CmpOp::Lt,
-        "le" => CmpOp::Le,
-        "gt" => CmpOp::Gt,
-        "ge" => CmpOp::Ge,
-        "pointIn" => CmpOp::PointIn,
-        "allen" => {
+        tags::cmp_op::EQ => CmpOp::Eq,
+        tags::cmp_op::NE => CmpOp::Ne,
+        tags::cmp_op::LT => CmpOp::Lt,
+        tags::cmp_op::LE => CmpOp::Le,
+        tags::cmp_op::GT => CmpOp::Gt,
+        tags::cmp_op::GE => CmpOp::Ge,
+        tags::cmp_op::POINT_IN => CmpOp::PointIn,
+        tags::cmp_op::ALLEN => {
             let mask: Object = req(&op, "mask", "allen op")?;
             let mask_kind: String = req(&mask, "kind", "allen mask")?;
             let mask = match mask_kind.as_str() {
-                "literal" => {
+                tags::mask_term::LITERAL => {
                     let bits = ordinal(
                         req::<f64>(&mask, "mask", "allen mask literal")?,
                         "allen mask",
@@ -773,7 +773,9 @@ fn comparison_in(obj: &Object) -> napi::Result<Comparison> {
                         })?;
                     MaskTerm::Literal(mask)
                 }
-                "param" => MaskTerm::Param(param_in(&mask, "param", "allen mask param")?),
+                tags::mask_term::PARAM => {
+                    MaskTerm::Param(param_in(&mask, "param", "allen mask param")?)
+                }
                 other => {
                     return Err(err(format!(
                         "bumbledb marshal: unknown allen mask kind `{other}`"
@@ -811,27 +813,29 @@ fn condition_in(obj: &Object, depth: usize) -> napi::Result<ConditionTree> {
     }
     let kind: String = req(obj, "kind", "condition")?;
     match kind.as_str() {
-        "leaf" => {
+        tags::condition::LEAF => {
             let cmp: Object = req(obj, "cmp", "leaf condition")?;
             Ok(ConditionTree::Leaf(comparison_in(&cmp)?))
         }
-        "and" | "or" => {
-            let children: Array = req(obj, "children", "condition")?;
-            let mut trees = Vec::with_capacity(children.len() as usize);
-            for index in 0..children.len() {
-                let child = req_at::<Object>(&children, index, "condition children")?;
-                trees.push(condition_in(&child, depth + 1)?);
-            }
-            if kind == "and" {
-                Ok(ConditionTree::And(trees))
-            } else {
-                Ok(ConditionTree::Or(trees))
-            }
-        }
+        tags::condition::AND => Ok(ConditionTree::And(condition_children(obj, depth)?)),
+        tags::condition::OR => Ok(ConditionTree::Or(condition_children(obj, depth)?)),
         other => Err(err(format!(
             "bumbledb marshal: unknown condition kind `{other}`"
         ))),
     }
+}
+
+/// The children of one `and`/`or` node — the shared walk of the two
+/// connective arms (each arm names its own constructor; no in-arm tag
+/// re-test exists).
+fn condition_children(obj: &Object, depth: usize) -> napi::Result<Vec<ConditionTree>> {
+    let children: Array = req(obj, "children", "condition")?;
+    let mut trees = Vec::with_capacity(children.len() as usize);
+    for index in 0..children.len() {
+        let child = req_at::<Object>(&children, index, "condition children")?;
+        trees.push(condition_in(&child, depth + 1)?);
+    }
+    Ok(trees)
 }
 
 fn rule_in(obj: &Object) -> napi::Result<Rule> {
@@ -972,35 +976,25 @@ pub(crate) fn rows_out(rows: Vec<Vec<Value>>) -> Vec<Vec<ValueOut>> {
         .collect()
 }
 
+/// The statement form tag, through THE one table (`tags::statement_kind`).
 fn statement_kind_out(kind: StatementKind) -> &'static str {
-    match kind {
-        StatementKind::Functionality => "functionality",
-        StatementKind::Containment => "containment",
-        StatementKind::Cardinality => "cardinality",
-    }
+    tags::statement_kind::tag(&kind)
 }
 
 fn value_type_out(env: sys::napi_env, ty: &ValueType) -> napi::Result<sys::napi_value> {
     let env_handle = Env::from_raw(env);
     let mut obj = Object::new(&env_handle)?;
+    // The kind rides THE one table (`tags::value_type` — the same table
+    // `value_type_in` parses: the old in/out twin is one datum); only the
+    // payload attributes are matched here.
+    obj.set("kind", tags::value_type::tag(ty))?;
     match ty {
-        ValueType::Bool => obj.set("kind", "bool")?,
-        ValueType::U64 => obj.set("kind", "u64")?,
-        ValueType::I64 => obj.set("kind", "i64")?,
-        ValueType::String => obj.set("kind", "string")?,
+        ValueType::Bool | ValueType::U64 | ValueType::I64 | ValueType::String => {}
         ValueType::FixedBytes { len } => {
-            obj.set("kind", "fixedBytes")?;
             obj.set("len", u32::from(*len))?;
         }
         ValueType::Interval { element, width } => {
-            obj.set("kind", "interval")?;
-            obj.set(
-                "element",
-                match element {
-                    IntervalElement::U64 => "u64",
-                    IntervalElement::I64 => "i64",
-                },
-            )?;
+            obj.set("element", tags::interval_element::tag(element))?;
             if let Some(width) = width {
                 obj.set("width", *width)?;
             }
@@ -1086,10 +1080,9 @@ impl ViolationWire {
             statement: rendered.statement.0,
             kind: rendered.kind,
             canonical: rendered.spelling,
-            direction: rendered.direction.map(|direction| match direction {
-                bumbledb::Direction::SourceUnsatisfied => "sourceUnsatisfied",
-                bumbledb::Direction::TargetRequired => "targetRequired",
-            }),
+            direction: rendered
+                .direction
+                .map(|direction| tags::direction::tag(&direction)),
             count: rendered.count,
             facts: rendered
                 .facts

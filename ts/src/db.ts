@@ -32,8 +32,10 @@
 
 import * as path from "node:path"
 import * as errors from "@superbuilders/errors"
+import { isClosedMember, sealedFieldsOf } from "#closed.ts"
 import type { Exhumed } from "#exhume.ts"
 import { exhumeStore } from "#exhume.ts"
+import { rosterOf } from "#fields.ts"
 import { lower } from "#lower.ts"
 import {
 	factOf,
@@ -59,13 +61,13 @@ import type {
 	Violation as WireViolation,
 	ViolationFact as WireViolationFact
 } from "#native.ts"
-import { native } from "#native.ts"
+import { bridged, native } from "#native.ts"
 import type { SelectColumn } from "#query/atom.ts"
 import type { Query } from "#query/lower.ts"
 import { lowerQuery } from "#query/lower.ts"
 import { decodeAnswers, wireParams } from "#query/run.ts"
 import type { ParamEntry, ParamsRecord } from "#query/scope.ts"
-import type { AnyRelation, Fact, InsertFact, RelationField } from "#relation.ts"
+import type { AnyRelation, Fact, InsertFact } from "#relation.ts"
 import type { AnySchema, Schema, SchemaRelation, SchemaRelations } from "#schema.ts"
 import type { KeyStatement, Statement } from "#statements.ts"
 
@@ -348,11 +350,16 @@ interface Db<Rels extends SchemaRelations> {
 	 * The ONE witnessed-write form: snapshot → `fn` (premise reads via
 	 * `snap`, delta via `tx`) → witnessed commit, which lands only if no
 	 * state-changing commit intervened since the snapshot. On a moved
-	 * generation the WHOLE `fn` reruns on a fresh snapshot, unbounded: this
-	 * process holds the store's only write handle, so every generation move
-	 * is self-inflicted by the host's own interleaved writes — contention
-	 * is bounded by the host's own progress, and any retry cap would be an
-	 * invented limit (the house no-limits law). `fn` may decline to commit
+	 * generation the WHOLE `fn` reruns on a fresh snapshot: this process
+	 * holds the store's only write handle, so every generation move is
+	 * self-inflicted by the host's own interleaved writes, and each rerun
+	 * witnesses a strictly newer generation — the benign race converges.
+	 * The loop's honesty bound is {@link WITNESSED_ATTEMPT_CAP}: a callback
+	 * that moves the generation on EVERY attempt (a plain `db.write` before
+	 * its first tx verb) would spin forever, so past the cap the typed
+	 * {@link ErrWitnessedLivelock} is thrown instead of a silent loop (the
+	 * engine's ruling: the error, never a loop — retry is host policy, and
+	 * the cap is that policy's own diagnostic). `fn` may decline to commit
 	 * by returning {@link abandon}`(payload)` — the outcome is then
 	 * `{ ok: false, abandoned: payload }` and NO commit (not even an empty
 	 * one) is issued.
@@ -366,19 +373,6 @@ interface Db<Rels extends SchemaRelations> {
 	 * judgment and throws here carrying its message intact.
 	 */
 	prepare<Row, Params extends ParamsRecord>(q: Query<Rels, Row, Params>): Prepared<Rels, Row, Params>
-}
-
-/**
- * The bridge guard: runs one native call and wraps anything it throws —
- * marshal-shape refusals and handle-lifecycle refusals cross as genuine
- * typed failures, never bare foreign errors.
- */
-function bridged<T>(context: string, run: () => T): T {
-	const result = errors.trySync(run)
-	if (result.error) {
-		throw errors.wrap(result.error, context)
-	}
-	return result.data
 }
 
 /** One relation's runtime tables: engine id, the identical schema member, field ids, primary key. */
@@ -443,7 +437,7 @@ function materializedEntries(theory: AnySchema): StatementEntry[] {
 function impliedKeyEntries(theory: AnySchema): StatementEntry[] {
 	const entries: StatementEntry[] = []
 	for (const member of Object.values(theory.relations)) {
-		if ("handles" in member.data) {
+		if (isClosedMember(member)) {
 			continue
 		}
 		for (const declared of member.data.fields) {
@@ -457,7 +451,7 @@ function impliedKeyEntries(theory: AnySchema): StatementEntry[] {
 		}
 	}
 	for (const member of Object.values(theory.relations)) {
-		if ("handles" in member.data) {
+		if (isClosedMember(member)) {
 			entries.push({
 				kind: "functionality",
 				statement: undefined,
@@ -527,6 +521,33 @@ function isStatementValue<R extends AnyRelation, P extends readonly string[]>(
 	return typeof data === "object" && data !== null && "kind" in data
 }
 
+/**
+ * THE one selector dispatch of the `get` overload pair (primary-key vs
+ * key-statement, `docs/architecture/70-api.md` § the freeze): judges the
+ * middle argument once and hands the narrowed pieces to the chosen
+ * continuation. `Db.get` and the read scope's `get` both dispatch through
+ * here, so the two mismatch refusals speak with one voice and the symmetry
+ * rule (`db.get(...) === db.read(snap => snap.get(...))`) holds by
+ * construction.
+ */
+function selectKeyRead<R extends AnyRelation, P extends readonly string[], T>(
+	keyOrStatement: KeyFact<R> | KeyStatement<R, P>,
+	declaredKey: DeclaredKeyFact<R, P> | undefined,
+	byStatement: (statement: KeyStatement<R, P>, key: DeclaredKeyFact<R, P>) => T,
+	byPrimary: (key: KeyFact<R>) => T
+): T {
+	if (declaredKey !== undefined) {
+		if (!isStatementValue(keyOrStatement)) {
+			throw errors.new("keyed get takes a key() statement value as its second argument")
+		}
+		return byStatement(keyOrStatement, declaredKey)
+	}
+	if (isStatementValue(keyOrStatement)) {
+		throw errors.new("keyed get with a statement selector also takes the key object — get(relation, keyStatement, key)")
+	}
+	return byPrimary(keyOrStatement)
+}
+
 /** Maps a slot's reversal flag to the violation's `orientation` payload. */
 function orientationOf(reversed: boolean | undefined): "written" | "mirrored" | undefined {
 	if (reversed === undefined) {
@@ -536,22 +557,6 @@ function orientationOf(reversed: boolean | undefined): "written" | "mirrored" | 
 		return "mirrored"
 	}
 	return "written"
-}
-
-/**
- * The declared field descriptors a violation's offending cells decode
- * through: an ordinary relation's declared fields; a closed relation's
- * SEALED shape — the roster-carrying synthetic `id` (the member's own
- * reference descriptor) plus its payload columns (a `ClosedColumn` is
- * structurally a `RelationField`). This is how {@link openDb}'s
- * `offendingFactOf` reaches the open-time descriptors: the cited relation
- * name resolves to the schema member, and the member carries them.
- */
-function declaredFieldsOf(member: SchemaRelation): readonly RelationField[] {
-	if ("axioms" in member) {
-		return [{ name: "id", field: member.id }, ...member.data.columns]
-	}
-	return member.data.fields
 }
 
 /** The id-resolution tables one open builds: relation entries by name, statement slots by id. */
@@ -751,7 +756,7 @@ function openDb<Rels extends SchemaRelations>(handle: DbHandle, theory: Schema<R
 		if (entry === undefined || entry.member !== relation) {
 			throw errors.new(`relation ${relation.name} is not a member of schema ${theory.name}`)
 		}
-		if ("handles" in relation.data) {
+		if (isClosedMember(relation)) {
 			throw errors.new(
 				`relation ${relation.name} is closed — its extension is schema data (axioms), never scanned or written`
 			)
@@ -764,15 +769,16 @@ function openDb<Rels extends SchemaRelations>(handle: DbHandle, theory: Schema<R
 		if (entry === undefined || !isMemberName(fact.relation)) {
 			throw errors.new(`bumbledb violation cites unknown relation ${fact.relation}`)
 		}
-		const declared = declaredFieldsOf(entry.member)
+		const declared = sealedFieldsOf(entry.member)
 		const decoded: Record<string, FactValue> = {}
 		for (const cell of fact.fields) {
 			const cited = declared.find(function byName(candidate) {
 				return candidate.name === cell.name
 			})
+			const roster = rosterOf(cited?.field)
 			decoded[cell.name] =
-				cited !== undefined && "closed" in cited.field
-					? handleOf(`violation fact ${fact.relation} field ${cell.name}`, cited.field.closed, cell.value)
+				roster !== undefined
+					? handleOf(`violation fact ${fact.relation} field ${cell.name}`, roster, cell.value)
 					: cell.value
 		}
 		return Object.freeze({ relation: fact.relation, fact: Object.freeze(decoded) })
@@ -854,25 +860,22 @@ function openDb<Rels extends SchemaRelations>(handle: DbHandle, theory: Schema<R
 		): Fact<R> | undefined {
 			assertLive()
 			const entry = resolveOrdinary(relation)
-			if (declaredKey !== undefined) {
-				if (!isStatementValue(keyOrStatement)) {
-					throw errors.new("keyed get takes a key() statement value as its second argument")
+			return selectKeyRead(
+				keyOrStatement,
+				declaredKey,
+				function byStatement(statement, key) {
+					return readThroughKey(relation, entry, declaredKeyOf(relation, statement), recordOf(key))
+				},
+				function byPrimary(key) {
+					const primaryKey = entry.primaryKey
+					if (primaryKey === undefined) {
+						throw errors.new(
+							`relation ${relation.name} has no candidate key — keyed get requires a fresh field or a declared key statement`
+						)
+					}
+					return readThroughKey(relation, entry, primaryKey, recordOf(key))
 				}
-				const selected = declaredKeyOf(relation, keyOrStatement)
-				return readThroughKey(relation, entry, selected, recordOf(declaredKey))
-			}
-			if (isStatementValue(keyOrStatement)) {
-				throw errors.new(
-					"keyed get with a statement selector also takes the key object — get(relation, keyStatement, key)"
-				)
-			}
-			const primaryKey = entry.primaryKey
-			if (primaryKey === undefined) {
-				throw errors.new(
-					`relation ${relation.name} has no candidate key — keyed get requires a fresh field or a declared key statement`
-				)
-			}
-			return readThroughKey(relation, entry, primaryKey, recordOf(keyOrStatement))
+			)
 		}
 		return { contains, get }
 	}
@@ -1029,18 +1032,16 @@ function openDb<Rels extends SchemaRelations>(handle: DbHandle, theory: Schema<R
 		declaredKey?: DeclaredKeyFact<R, P>
 	): Fact<R> | undefined {
 		return read(function getInScope(snap) {
-			if (declaredKey !== undefined) {
-				if (!isStatementValue(keyOrStatement)) {
-					throw errors.new("keyed get takes a key() statement value as its second argument")
+			return selectKeyRead(
+				keyOrStatement,
+				declaredKey,
+				function byStatement(statement, key) {
+					return snap.get(relation, statement, key)
+				},
+				function byPrimary(key) {
+					return snap.get(relation, key)
 				}
-				return snap.get(relation, keyOrStatement, declaredKey)
-			}
-			if (isStatementValue(keyOrStatement)) {
-				throw errors.new(
-					"keyed get with a statement selector also takes the key object — get(relation, keyStatement, key)"
-				)
-			}
-			return snap.get(relation, keyOrStatement)
+			)
 		})
 	}
 
@@ -1371,17 +1372,9 @@ function openDb<Rels extends SchemaRelations>(handle: DbHandle, theory: Schema<R
 			if (member === undefined) {
 				throw errors.new(`bumbledb manifest drift: schema ${theory.name} lost relation ${name}`)
 			}
-			const sealed =
-				"handles" in member.data
-					? [
-							"id",
-							...member.data.columns.map(function columnName(column) {
-								return column.name
-							})
-						]
-					: member.data.fields.map(function fieldName(declared) {
-							return declared.name
-						})
+			const sealed = sealedFieldsOf(member).map(function fieldName(declared) {
+				return declared.name
+			})
 			sealed.forEach(function verifyField(fieldName, fieldOrdinal) {
 				if (entry.fieldIds.get(fieldName) !== fieldOrdinal) {
 					throw errors.new(

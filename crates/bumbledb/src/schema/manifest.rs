@@ -106,16 +106,6 @@ impl ManifestDescriptor for SchemaDescriptor {
                 .iter()
                 .enumerate()
                 .map(|(rel_idx, relation)| {
-                    // A closed relation's sealed field list opens with the
-                    // synthetic (`id`, U64) field, so the manifest reports
-                    // the ids the sealed schema answers to (handle-name
-                    // entries are the emission PRD's).
-                    let synthetic = relation.extension.is_some().then(|| FieldManifest {
-                        name: "id".into(),
-                        id: FieldId(0),
-                        value_type: super::ValueType::U64,
-                    });
-                    let offset = usize::from(synthetic.is_some());
                     // The extension table: handle → declaration-order id →
                     // (column, value) pairs — the vocabulary as data.
                     let extension = relation.extension.as_ref().map(|rows| {
@@ -136,22 +126,23 @@ impl ManifestDescriptor for SchemaDescriptor {
                     RelationManifest {
                         name: relation.name.clone(),
                         id: RelationId(u32::try_from(rel_idx).expect("relation count fits u32")),
-                        fields: synthetic
-                            .into_iter()
-                            .chain(
-                                relation
-                                    .fields
-                                    .iter()
-                                    .enumerate()
-                                    .map(|(field_idx, field)| FieldManifest {
-                                        name: field.name.clone(),
-                                        id: FieldId(
-                                            u16::try_from(field_idx + offset)
-                                                .expect("field count fits u16"),
-                                        ),
-                                        value_type: field.value_type.clone(),
-                                    }),
-                            )
+                        // The SEALED roster — synthetic (`id`, U64) first
+                        // for a closed relation — through THE one owner of
+                        // the synthetic-id law
+                        // (`RelationDescriptor::sealed_fields`); the
+                        // manifest reports the ids the sealed schema
+                        // answers to (handle-name entries are the emission
+                        // PRD's).
+                        fields: relation
+                            .sealed_fields()
+                            .enumerate()
+                            .map(|(field_idx, slot)| FieldManifest {
+                                name: slot.name.into(),
+                                id: FieldId(
+                                    u16::try_from(field_idx).expect("field count fits u16"),
+                                ),
+                                value_type: slot.value_type.clone(),
+                            })
                             .collect(),
                         extension,
                     }

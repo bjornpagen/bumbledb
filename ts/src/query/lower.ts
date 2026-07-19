@@ -26,8 +26,9 @@
  */
 
 import * as errors from "@superbuilders/errors"
+import { sealedFieldsOf } from "#closed.ts"
 import type { AnyField, ClosedRoster } from "#fields.ts"
-import { assertDeclarationOrderKey } from "#fields.ts"
+import { assertDeclarationOrderKey, isIntervalValue, literalShapeError, rosterOf } from "#fields.ts"
 import type { ClassRecordOf, SchemaClasses } from "#law.ts"
 import type {
 	AtomIr,
@@ -68,7 +69,7 @@ import type {
 	SelectEntryData,
 	TreeData
 } from "#query/atom.ts"
-import { allen, and, covers, eq, ge, gt, le, lt, ne, not, or, pointIn } from "#query/atom.ts"
+import { allen, and, eq, ge, gt, le, lt, ne, not, or, pointIn } from "#query/atom.ts"
 import type {
 	ClassedField,
 	EnvShape,
@@ -94,7 +95,7 @@ import {
 } from "#query/scope.ts"
 import type { CheckNameSelect, CheckSelect, RowOfNameSelect, RowOfSelect, SelectEntry } from "#query/select.ts"
 import { argMax, argMin, count, countDistinct, max, min, pack, sum } from "#query/select.ts"
-import type { FieldsShape, RelationField } from "#relation.ts"
+import type { FieldsShape } from "#relation.ts"
 import type { AnySchema, Schema, SchemaRelations } from "#schema.ts"
 
 /**
@@ -215,7 +216,6 @@ interface TermOps {
 	readonly gt: typeof gt
 	readonly ge: typeof ge
 	readonly pointIn: typeof pointIn
-	readonly covers: typeof covers
 	readonly allen: typeof allen
 	readonly and: typeof and
 	readonly or: typeof or
@@ -443,7 +443,6 @@ const termOps: TermOps = Object.freeze({
 	gt,
 	ge,
 	pointIn,
-	covers,
 	allen,
 	and,
 	or,
@@ -480,22 +479,6 @@ interface ResolvedBindings {
 }
 
 /**
- * The ordered matchable fields of an atom owner — the runtime twin of the
- * type tier's `MatchFields`: a relation's declared fields; a closed
- * relation's SEALED shape, the synthetic `id` (the value's own
- * roster-carrying descriptor, by identity) at ordinal 0 and the declared
- * payload columns at declared index + 1 (the sealed shift, mirroring
- * `spec.rs`'s resolver — a `ClosedColumn` is structurally a
- * {@link RelationField}). The lowering golden pins this mapping.
- */
-function matchFieldsOf(owner: MatchOwner): readonly RelationField[] {
-	if ("axioms" in owner) {
-		return [Object.freeze({ name: "id", field: owner.id }), ...owner.data.columns]
-	}
-	return owner.data.fields
-}
-
-/**
  * Judges one membership ARRAY at a binding position — legal exactly at a
  * CLOSED-reference field (the owner ruling: ordinary u64/str membership is
  * spelled through `r.inSet` params; literal arrays are the closed
@@ -515,7 +498,8 @@ function membershipSet(
 	field: AnyField,
 	value: readonly unknown[]
 ): { readonly name: string; readonly members: readonly string[] } {
-	if (!("closed" in field)) {
+	const roster = rosterOf(field)
+	if (roster === undefined) {
 		throw errors.new(
 			`${context}: a membership array is the closed-reference spelling — ordinary field membership is a bound ∈-set param (r.inSet)`
 		)
@@ -531,7 +515,7 @@ function membershipSet(
 	const seen = new Set<string>()
 	const members = value.map(function memberName(member) {
 		if (typeof member !== "string") {
-			throw literalShapeError(context, `a ${field.closed.name} handle name (string)`, member)
+			throw literalShapeError(context, `a ${roster.name} handle name (string)`, member)
 		}
 		if (seen.has(member)) {
 			throw errors.new(
@@ -542,7 +526,7 @@ function membershipSet(
 		return member
 	})
 	const key = [...members].sort()
-	return { name: `∈ ${field.closed.name} ${JSON.stringify(key)}`, members: Object.freeze(members) }
+	return { name: `∈ ${roster.name} ${JSON.stringify(key)}`, members: Object.freeze(members) }
 }
 
 /**
@@ -564,7 +548,7 @@ function resolveBindings(
 	const vars: Array<{ readonly name: string; readonly slot: ClassedField }> = []
 	const uses: ParamUse[] = []
 	const relationClasses = classes[relation.name]
-	const ordered = matchFieldsOf(relation)
+	const ordered = sealedFieldsOf(relation)
 	for (const [fieldName, value] of Object.entries(bindings)) {
 		if (value === undefined) {
 			continue
@@ -922,7 +906,7 @@ function closedOrderError(context: string, position: string, vocabulary: string)
 	)
 }
 
-/** The comparison ops the orderable ban covers (order roster + point membership — every order-comparison position). */
+/** The comparison ops under the orderable ban (order roster + point membership — every order-comparison position). */
 function isOrderOp(op: CmpKind | "binding"): op is "lt" | "le" | "gt" | "ge" | "pointIn" {
 	return op === "lt" || op === "le" || op === "gt" || op === "ge" || op === "pointIn"
 }
@@ -960,8 +944,9 @@ function validateCond(context: string, varFields: Readonly<Record<string, Classe
 		for (const side of [cond.lhs, cond.rhs]) {
 			if (side.kind === "var") {
 				const slot = assertBound(context, varFields, side.name)
-				if (isOrderOp(cond.op) && "closed" in slot.field) {
-					throw closedOrderError(context, `the ${cond.op} side ${side.name}`, slot.field.closed.name)
+				const roster = rosterOf(slot.field)
+				if (isOrderOp(cond.op) && roster !== undefined) {
+					throw closedOrderError(context, `the ${cond.op} side ${side.name}`, roster.name)
 				}
 			}
 			if (side.kind === "measure") {
@@ -1009,12 +994,9 @@ function validateColumn(
 		case "fold": {
 			if (typeof agg.over === "string") {
 				const slot = assertBound(`${context} select ${column.name}`, varFields, agg.over)
-				if ("closed" in slot.field) {
-					throw closedOrderError(
-						`${context} select ${column.name}`,
-						`the ${agg.fold} input ${agg.over}`,
-						slot.field.closed.name
-					)
+				const roster = rosterOf(slot.field)
+				if (roster !== undefined) {
+					throw closedOrderError(`${context} select ${column.name}`, `the ${agg.fold} input ${agg.over}`, roster.name)
 				}
 				return
 			}
@@ -1024,11 +1006,12 @@ function validateColumn(
 		case "arg": {
 			assertBound(`${context} select ${column.name}`, varFields, agg.over)
 			const key = assertBound(`${context} select ${column.name}`, varFields, agg.key)
-			if ("closed" in key.field) {
+			const keyRoster = rosterOf(key.field)
+			if (keyRoster !== undefined) {
 				throw closedOrderError(
 					`${context} select ${column.name}`,
 					`the ${agg.direction} key ${agg.key}`,
-					key.field.closed.name
+					keyRoster.name
 				)
 			}
 			return
@@ -1064,11 +1047,7 @@ function selectClosedOf(
 	if (over === undefined) {
 		return undefined
 	}
-	const field = varFields[over]?.field
-	if (field !== undefined && "closed" in field) {
-		return field.closed
-	}
-	return undefined
+	return rosterOf(varFields[over]?.field)
 }
 
 /**
@@ -1329,15 +1308,9 @@ function headSignature(column: SelectColumn): string {
 	return `${column.name}:${agg.op}`
 }
 
-/** The roster a param anchor carries: present exactly on a closed-reference field anchor. */
+/** The roster a param anchor carries: present exactly on a closed-reference field anchor (rides THE one `rosterOf` reader). */
 function anchorRosterOf(anchor: AnyField | "measure" | undefined): ClosedRoster | undefined {
-	if (anchor === undefined || anchor === "measure") {
-		return undefined
-	}
-	if ("closed" in anchor) {
-		return anchor.closed
-	}
-	return undefined
+	return anchor === "measure" ? undefined : rosterOf(anchor)
 }
 
 /** Renders one param anchor's closedness for the registry's coherence diagnostics. */
@@ -1430,13 +1403,9 @@ function paramRegistryOf(recs: readonly RecData[], rules: readonly RuleData[]): 
 			if (entry === undefined) {
 				throw errors.new(`query param ${name} lost its registry entry`)
 			}
-			if (
-				entry.orderOp !== undefined &&
-				entry.anchor !== undefined &&
-				entry.anchor !== "measure" &&
-				"closed" in entry.anchor
-			) {
-				throw closedOrderError(`query param ${name}`, `its ${entry.orderOp} use's anchor`, entry.anchor.closed.name)
+			const anchorRoster = anchorRosterOf(entry.anchor)
+			if (entry.orderOp !== undefined && anchorRoster !== undefined) {
+				throw closedOrderError(`query param ${name}`, `its ${entry.orderOp} use's anchor`, anchorRoster.name)
 			}
 			return Object.freeze({ name, shape: entry.shape, anchor: entry.anchor, op: entry.op, members: entry.members })
 		})
@@ -1548,23 +1517,6 @@ function query<Rels extends SchemaRelations, Classes extends SchemaClasses>(
 	return start
 }
 
-/** The typed shape refusal of the literal tagger — a genuine failure, never data. */
-function literalShapeError(context: string, expected: string, value: unknown): Error {
-	return errors.new(`${context}: expected ${expected}, got ${typeof value}`)
-}
-
-/** Narrows an interval-shaped literal (a plain `{ start, end }` bigint pair). */
-function isIntervalShaped(value: unknown): value is { readonly start: bigint; readonly end: bigint } {
-	return (
-		typeof value === "object" &&
-		value !== null &&
-		"start" in value &&
-		"end" in value &&
-		typeof value.start === "bigint" &&
-		typeof value.end === "bigint"
-	)
-}
-
 /**
  * Tags one closed-reference literal: the handle NAME, verified against the
  * roster (the belt the wide fallback type cannot provide — structural
@@ -1604,7 +1556,7 @@ function taggedAtElementDomain(context: string, element: "u64" | "i64", value: u
 		}
 		return { kind: "i64", value }
 	}
-	if (isIntervalShaped(value)) {
+	if (isIntervalValue(value)) {
 		if (element === "u64") {
 			return { kind: "intervalU64", start: value.start, end: value.end }
 		}
@@ -1622,8 +1574,9 @@ function taggedAtElementDomain(context: string, element: "u64" | "i64", value: u
  * tagged u64 after a roster verification.
  */
 function taggedLiteral(context: string, field: AnyField, value: unknown): TaggedValue {
-	if ("closed" in field) {
-		return taggedHandleId(context, field.closed, value)
+	const roster = rosterOf(field)
+	if (roster !== undefined) {
+		return taggedHandleId(context, roster, value)
 	}
 	switch (field.kind) {
 		case "bool": {
@@ -1665,11 +1618,11 @@ function taggedLiteral(context: string, field: AnyField, value: unknown): Tagged
  * Tags one host literal at a COMPARISON or PARAM position, where the
  * SIBLING anchors the type: a measure sibling is u64, an interval-field
  * sibling contributes its element domain (so both a point literal in
- * `covers` and a `span` literal in `allen` tag correctly), a scalar
+ * `pointIn` and a `span` literal in `allen` tag correctly), a scalar
  * sibling its own type. At `pointIn` the operand order is interval-left,
  * point-right (`ir::CmpOp::PointIn`), so an interval-shaped literal
- * beside a scalar element-typed sibling is the LEGAL lhs of
- * `covers(span(...), t)` and tags as the interval of the sibling's
+ * beside a scalar element-typed sibling is the LEGAL interval operand of
+ * `pointIn(t, span(...))` and tags as the interval of the sibling's
  * element domain; under every other operator an interval shape against a
  * scalar sibling stays refused (the engine's IllegalComparison — the
  * bug-hunt fix, preserved op-aware).
@@ -1693,7 +1646,7 @@ function taggedCmpLiteral(
 		op === "pointIn" &&
 		!("closed" in sibling) &&
 		(sibling.kind === "u64" || sibling.kind === "i64") &&
-		isIntervalShaped(value)
+		isIntervalValue(value)
 	) {
 		return taggedAtElementDomain(context, sibling.kind, value)
 	}
@@ -1743,7 +1696,7 @@ function paramIdOf(ctx: LowerContext, name: string): number {
  * Lowers one EDB atom (either polarity). A CLOSED owner lowers through the
  * same edb source — its ordinal is its record-declaration slot exactly like
  * an ordinary relation's — with field ordinals over the SEALED shape: `id`
- * at 0, each payload column at its declared index + 1 (`matchFieldsOf`
+ * at 0, each payload column at its declared index + 1 (`sealedFieldsOf`
  * carries the shift; the lowering golden pins it).
  */
 function lowerAtom(ctx: LowerContext, atom: AtomData, ids: VarIds): AtomIr {
@@ -1757,7 +1710,7 @@ function lowerAtom(ctx: LowerContext, atom: AtomData, ids: VarIds): AtomIr {
 	if (relationId === undefined) {
 		throw errors.new(`query lowering: relation ${atom.relation.name} has no ordinal`)
 	}
-	const ordered = matchFieldsOf(atom.relation)
+	const ordered = sealedFieldsOf(atom.relation)
 	const bindings: Array<readonly [number, TermIr]> = atom.bindings.map(function lowerBinding(binding) {
 		const ordinal = ordered.findIndex(function byName(candidate) {
 			return candidate.name === binding.field

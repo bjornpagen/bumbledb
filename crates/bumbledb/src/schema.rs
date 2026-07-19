@@ -38,7 +38,7 @@ use bumbledb_theory::Value;
 pub use bumbledb_theory::schema::spec;
 pub use bumbledb_theory::schema::{
     Extension, FieldDescriptor, FieldId, Generation, IntervalElement, LiteralSet,
-    MAX_EXTENSION_ROWS, RelationDescriptor, RelationId, Row, SchemaDescriptor, Side,
+    MAX_EXTENSION_ROWS, RelationDescriptor, RelationId, Row, SchemaDescriptor, SealedField, Side,
     StatementDescriptor, StatementId, StatementKind, ValueType,
 };
 // The shared Value ↔ ValueType check — crate-internal here exactly as it

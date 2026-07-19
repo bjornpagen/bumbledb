@@ -172,15 +172,31 @@ type Infer<F extends AnyField> = F extends { readonly kind: "bool" }
 							: never
 
 /**
- * The typed shape refusal of the selection-literal machine — reached only
+ * The typed shape refusal shared by every literal machine — the selection
+ * lowering here, the row marshaler (`marshal.ts`), and the query-literal
+ * tagger (`query/lower.ts`) all throw through this ONE voice; reached only
  * through ill-typed input (the well-typed surfaces make it unrepresentable).
  */
-function literalShapeError(expected: string, value: unknown): Error {
-	return errors.new(`selection literal shape mismatch: expected ${expected}, got ${typeof value}`)
+function literalShapeError(context: string, expected: string, value: unknown): Error {
+	return errors.new(`${context}: expected ${expected}, got ${typeof value}`)
 }
 
-/** Narrows an interval literal: a plain object with bigint start/end. */
-function isIntervalLiteral(value: unknown): value is IntervalValue {
+/**
+ * The roster a field descriptor carries — THE one reader: present exactly
+ * on a closed-reference descriptor (the structural `closed` property of
+ * {@link ClosedIdField}), absent on every other field kind. Tolerates
+ * `undefined` so name-lookup misses flow through without a re-spelled
+ * probe at every call site.
+ */
+function rosterOf(field: AnyField | undefined): ClosedRoster | undefined {
+	if (field !== undefined && "closed" in field) {
+		return field.closed
+	}
+	return undefined
+}
+
+/** Narrows an interval-shaped value: a plain object with bigint start/end — THE one interval predicate. */
+function isIntervalValue(value: unknown): value is IntervalValue {
 	return (
 		typeof value === "object" &&
 		value !== null &&
@@ -202,7 +218,7 @@ function isIntervalLiteral(value: unknown): value is IntervalValue {
  */
 function handleLiteral(closed: ClosedRoster, value: unknown): LiteralSpec {
 	if (typeof value !== "string") {
-		throw literalShapeError(`a ${closed.name} handle name (string)`, value)
+		throw literalShapeError("selection literal", `a ${closed.name} handle name (string)`, value)
 	}
 	if (!closed.handles.includes(value)) {
 		throw errors.new(`"${value}" is not a handle of ${closed.name} — the roster is ${closed.handles.join(", ")}`)
@@ -212,8 +228,8 @@ function handleLiteral(closed: ClosedRoster, value: unknown): LiteralSpec {
 
 /** Lowers one interval literal at its element type. */
 function intervalLiteral(element: "u64" | "i64", value: unknown): LiteralSpec {
-	if (!isIntervalLiteral(value)) {
-		throw literalShapeError("interval ({ start, end } bigints)", value)
+	if (!isIntervalValue(value)) {
+		throw literalShapeError("selection literal", "interval ({ start, end } bigints)", value)
 	}
 	if (element === "u64") {
 		return { kind: "value", value: { kind: "intervalU64", start: value.start, end: value.end } }
@@ -306,37 +322,38 @@ function interval(element: U64Field | I64Field, width?: bigint): IntervalField<"
  * else lowers to a plain value tagged by the field's structural kind.
  */
 function literalOf(field: AnyField, value: unknown): LiteralSpec {
-	if ("closed" in field) {
-		return handleLiteral(field.closed, value)
+	const roster = rosterOf(field)
+	if (roster !== undefined) {
+		return handleLiteral(roster, value)
 	}
 	switch (field.kind) {
 		case "bool": {
 			if (typeof value !== "boolean") {
-				throw literalShapeError("boolean", value)
+				throw literalShapeError("selection literal", "boolean", value)
 			}
 			return { kind: "value", value: { kind: "bool", value } }
 		}
 		case "u64": {
 			if (typeof value !== "bigint") {
-				throw literalShapeError("bigint", value)
+				throw literalShapeError("selection literal", "bigint", value)
 			}
 			return { kind: "value", value: { kind: "u64", value } }
 		}
 		case "i64": {
 			if (typeof value !== "bigint") {
-				throw literalShapeError("bigint", value)
+				throw literalShapeError("selection literal", "bigint", value)
 			}
 			return { kind: "value", value: { kind: "i64", value } }
 		}
 		case "str": {
 			if (typeof value !== "string") {
-				throw literalShapeError("string", value)
+				throw literalShapeError("selection literal", "string", value)
 			}
 			return { kind: "value", value: { kind: "string", value } }
 		}
 		case "bytes": {
 			if (!(value instanceof Uint8Array)) {
-				throw literalShapeError("Uint8Array", value)
+				throw literalShapeError("selection literal", "Uint8Array", value)
 			}
 			return { kind: "value", value: { kind: "fixedBytes", value } }
 		}
@@ -359,4 +376,17 @@ export type {
 	StrField,
 	U64Field
 }
-export { assertDeclarationOrderKey, bool, bytes, i64, interval, literalOf, span, str, u64 }
+export {
+	assertDeclarationOrderKey,
+	bool,
+	bytes,
+	i64,
+	interval,
+	isIntervalValue,
+	literalOf,
+	literalShapeError,
+	rosterOf,
+	span,
+	str,
+	u64
+}

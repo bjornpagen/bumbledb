@@ -59,6 +59,7 @@ use napi_derive::napi;
 #[cfg(test)]
 mod fingerprint_lock;
 mod marshal;
+mod tags;
 
 use marshal::{ManifestWire, OwnedParam, StalenessWire, ValueOut, ViolationWire};
 
@@ -117,6 +118,54 @@ fn worker_died(what: &str) -> napi::Error {
     marshal::err(format!("bumbledb: the {what} worker thread died"))
 }
 
+/// An engine error thrown across the boundary — the one spelling of the
+/// render-then-throw chain (five call sites; domain outcomes never ride it).
+fn throw_engine(error: &Error) -> napi::Error {
+    marshal::err(marshal::engine_err(error))
+}
+
+/// Takes a handle's inner value, spending it — the shared close/commit/abort
+/// seam: `None` (already spent) is the typed use-after-close refusal.
+fn take_handle<T>(cell: &RefCell<Option<T>>, what: &str) -> napi::Result<T> {
+    cell.borrow_mut().take().ok_or_else(|| closed_handle(what))
+}
+
+/// The reply-unwrap triplet, ONE spelling (cleanup-0.5.0 U3 kill 12): a
+/// worker call's reply is the expected variant carrying `Ok` (the value),
+/// the expected variant carrying `Err` (an engine error, thrown), or the
+/// wrong variant (the worker died mid-protocol). Ten call sites ride this
+/// macro; the commit/begin verdicts keep their own richer matches.
+macro_rules! reply {
+    ($call:expr, $variant:path, $what:literal) => {
+        match $call {
+            $variant(Ok(value)) => Ok(value),
+            $variant(Err(error)) => Err(thrown(error)),
+            _ => Err(worker_died($what)),
+        }
+    };
+}
+
+/// One domain-outcome `ToNapiValue` impl per line of shape (cleanup-0.5.0
+/// U3 kill 12): every outcome crosses as a plain object built key-by-key
+/// from its variant's own fields — the five near-clone impls are one
+/// declaration each.
+macro_rules! outcome_to_napi {
+    ($ty:ty { $( $variant:ident $(( $($tuple:ident),+ ))? $({ $($field:ident),+ })? => { $($key:literal : $value:expr),+ $(,)? } ),+ $(,)? }) => {
+        impl ToNapiValue for $ty {
+            unsafe fn to_napi_value(env: sys::napi_env, val: Self) -> napi::Result<sys::napi_value> {
+                let env_handle = napi::Env::from_raw(env);
+                let mut obj = Object::new(&env_handle)?;
+                match val {
+                    $(Self::$variant $(( $($tuple),+ ))? $({ $($field),+ })? => {
+                        $(obj.set($key, $value)?;)+
+                    })+
+                }
+                unsafe { Object::to_napi_value(env, obj) }
+            }
+        }
+    };
+}
+
 /// Borrows a handle's live inner value or throws the typed
 /// use-after-close error.
 fn live<'a, T>(cell: &'a RefCell<Option<T>>, what: &str) -> napi::Result<Ref<'a, T>> {
@@ -165,34 +214,12 @@ pub enum OpenOutcome {
     FingerprintMismatch(String),
 }
 
-impl ToNapiValue for OpenOutcome {
-    unsafe fn to_napi_value(env: sys::napi_env, val: Self) -> napi::Result<sys::napi_value> {
-        let env_handle = napi::Env::from_raw(env);
-        let mut obj = Object::new(&env_handle)?;
-        match val {
-            Self::Ok(handle) => {
-                obj.set("ok", true)?;
-                obj.set("db", handle)?;
-            }
-            Self::SchemaError(message) => {
-                obj.set("ok", false)?;
-                obj.set("kind", "schemaError")?;
-                obj.set("message", message)?;
-            }
-            Self::NewtypeMismatch(message) => {
-                obj.set("ok", false)?;
-                obj.set("kind", "newtypeMismatch")?;
-                obj.set("message", message)?;
-            }
-            Self::FingerprintMismatch(message) => {
-                obj.set("ok", false)?;
-                obj.set("kind", "fingerprintMismatch")?;
-                obj.set("message", message)?;
-            }
-        }
-        unsafe { Object::to_napi_value(env, obj) }
-    }
-}
+outcome_to_napi!(OpenOutcome {
+    Ok(handle) => { "ok": true, "db": handle },
+    SchemaError(message) => { "ok": false, "kind": "schemaError", "message": message },
+    NewtypeMismatch(message) => { "ok": false, "kind": "newtypeMismatch", "message": message },
+    FingerprintMismatch(message) => { "ok": false, "kind": "fingerprintMismatch", "message": message },
+});
 
 fn open_with(
     path: &str,
@@ -232,7 +259,7 @@ fn open_with(
         Err(error @ Error::SchemaMismatch { .. }) => Ok(OpenOutcome::FingerprintMismatch(
             marshal::engine_err(&error),
         )),
-        Err(error) => Err(marshal::err(marshal::engine_err(&error))),
+        Err(error) => Err(throw_engine(&error)),
     }
 }
 
@@ -258,10 +285,7 @@ pub fn db_open(path: String, spec: Object) -> napi::Result<OpenOutcome> {
 /// and its exclusive lock — releases when the last of them closes.
 #[napi]
 pub fn db_close(db: &External<DbHandle>) -> napi::Result<()> {
-    let taken = db.inner.borrow_mut().take();
-    if taken.is_none() {
-        return Err(closed_handle("db"));
-    }
+    take_handle(&db.inner, "db")?;
     Ok(())
 }
 
@@ -306,7 +330,7 @@ pub fn db_generation(db: &External<DbHandle>) -> napi::Result<u64> {
     let inner = live(&db.inner, "db")?;
     match inner.db.generation() {
         Ok(generation) => Ok(generation.value()),
-        Err(error) => Err(marshal::err(marshal::engine_err(&error))),
+        Err(error) => Err(throw_engine(&error)),
     }
 }
 
@@ -336,24 +360,10 @@ pub enum ExhumeOutcome {
     Refused { kind: &'static str, message: String },
 }
 
-impl ToNapiValue for ExhumeOutcome {
-    unsafe fn to_napi_value(env: sys::napi_env, val: Self) -> napi::Result<sys::napi_value> {
-        let env_handle = napi::Env::from_raw(env);
-        let mut obj = Object::new(&env_handle)?;
-        match val {
-            Self::Ok(handle) => {
-                obj.set("ok", true)?;
-                obj.set("exhume", handle)?;
-            }
-            Self::Refused { kind, message } => {
-                obj.set("ok", false)?;
-                obj.set("kind", kind)?;
-                obj.set("message", message)?;
-            }
-        }
-        unsafe { Object::to_napi_value(env, obj) }
-    }
-}
+outcome_to_napi!(ExhumeOutcome {
+    Ok(handle) => { "ok": true, "exhume": handle },
+    Refused { kind, message } => { "ok": false, "kind": kind, "message": message },
+});
 
 /// Opens a store from its persisted descriptor (`bumbledb::exhume` — the
 /// crate-root entry; `Db<S>`'s typestate is a theory and this entry's whole
@@ -378,7 +388,7 @@ pub fn db_exhume(path: String) -> napi::Result<ExhumeOutcome> {
             kind: "corruption",
             message: marshal::engine_err(&error),
         }),
-        Err(error) => Err(marshal::err(marshal::engine_err(&error))),
+        Err(error) => Err(throw_engine(&error)),
     }
 }
 
@@ -419,7 +429,7 @@ pub fn exhume_scan(
     });
     match rows {
         Ok(rows) => Ok(marshal::rows_out(rows)),
-        Err(error) => Err(marshal::err(marshal::engine_err(&error))),
+        Err(error) => Err(throw_engine(&error)),
     }
 }
 
@@ -654,10 +664,7 @@ pub fn db_snapshot(db: &External<DbHandle>) -> napi::Result<External<SnapshotHan
 /// Closes the snapshot, releasing its LMDB reader slot.
 #[napi]
 pub fn snapshot_close(snap: &External<SnapshotHandle>) -> napi::Result<()> {
-    let taken = snap.inner.borrow_mut().take();
-    if taken.is_none() {
-        return Err(closed_handle("snapshot"));
-    }
+    take_handle(&snap.inner, "snapshot")?;
     Ok(())
 }
 
@@ -669,11 +676,12 @@ pub fn snapshot_scan(
     relation: u32,
 ) -> napi::Result<Vec<Vec<ValueOut>>> {
     let worker = live(&snap.inner, "snapshot")?;
-    match worker.call(SnapReq::Scan(RelationId(relation)))? {
-        SnapReply::Rows(Ok(rows)) => Ok(marshal::rows_out(rows)),
-        SnapReply::Rows(Err(error)) => Err(thrown(error)),
-        _ => Err(worker_died("snapshot")),
-    }
+    let rows = reply!(
+        worker.call(SnapReq::Scan(RelationId(relation)))?,
+        SnapReply::Rows,
+        "snapshot"
+    )?;
+    Ok(marshal::rows_out(rows))
 }
 
 /// Committed-state membership of one dynamic fact (sealed field order).
@@ -685,11 +693,11 @@ pub fn snapshot_contains(
 ) -> napi::Result<bool> {
     let worker = live(&snap.inner, "snapshot")?;
     let (rel, row) = marshal::fact_row(&worker.sealed.descriptor, relation, &values)?;
-    match worker.call(SnapReq::Contains(rel, row))? {
-        SnapReply::Flag(Ok(found)) => Ok(found),
-        SnapReply::Flag(Err(error)) => Err(thrown(error)),
-        _ => Err(worker_died("snapshot")),
-    }
+    reply!(
+        worker.call(SnapReq::Contains(rel, row))?,
+        SnapReply::Flag,
+        "snapshot"
+    )
 }
 
 /// Committed-state point lookup of the full fact through a key statement
@@ -709,13 +717,12 @@ pub fn snapshot_get(
         key_statement,
         &key_values,
     )?;
-    match worker.call(SnapReq::Get(rel, key, row))? {
-        SnapReply::Row(Ok(found)) => {
-            Ok(found.map(|values| values.iter().map(ValueOut::from_value).collect()))
-        }
-        SnapReply::Row(Err(error)) => Err(thrown(error)),
-        _ => Err(worker_died("snapshot")),
-    }
+    let found = reply!(
+        worker.call(SnapReq::Get(rel, key, row))?,
+        SnapReply::Row,
+        "snapshot"
+    )?;
+    Ok(found.map(|values| values.iter().map(ValueOut::from_value).collect()))
 }
 
 // ---------------------------------------------------------------------------
@@ -916,25 +923,15 @@ pub enum WriteFromOutcome {
     Moved { witnessed: u64, current: u64 },
 }
 
-impl ToNapiValue for WriteFromOutcome {
-    unsafe fn to_napi_value(env: sys::napi_env, val: Self) -> napi::Result<sys::napi_value> {
-        let env_handle = napi::Env::from_raw(env);
-        let mut obj = Object::new(&env_handle)?;
-        match val {
-            Self::Ok(handle) => {
-                obj.set("ok", true)?;
-                obj.set("tx", handle)?;
-            }
-            Self::Moved { witnessed, current } => {
-                obj.set("ok", false)?;
-                obj.set("kind", "generationMoved")?;
-                obj.set("witnessed", witnessed)?;
-                obj.set("current", current)?;
-            }
-        }
-        unsafe { Object::to_napi_value(env, obj) }
-    }
-}
+outcome_to_napi!(WriteFromOutcome {
+    Ok(handle) => { "ok": true, "tx": handle },
+    Moved { witnessed, current } => {
+        "ok": false,
+        "kind": "generationMoved",
+        "witnessed": witnessed,
+        "current": current,
+    },
+});
 
 /// Awaits the worker's begin verdict and wraps the live worker as a handle.
 fn begin_outcome(mut worker: TxWorker) -> napi::Result<WriteFromOutcome> {
@@ -994,43 +991,44 @@ pub fn db_write_from(
 
 fn tx_flag(tx: &External<TxHandle>, req: TxReq) -> napi::Result<bool> {
     let worker = live(&tx.inner, "transaction")?;
-    match worker.call(req)? {
-        TxReply::Flag(Ok(changed)) => Ok(changed),
-        TxReply::Flag(Err(error)) => Err(thrown(error)),
-        _ => Err(worker_died("transaction")),
-    }
+    reply!(worker.call(req)?, TxReply::Flag, "transaction")
+}
+
+/// The one row-verb body the three flag verbs share: marshal the row
+/// against the sealed descriptor, send the caller's request constructor,
+/// unwrap the flag reply (the three verbs were identical modulo the
+/// `TxReq` constructor — the constructor is now the parameter).
+fn tx_row_flag(
+    tx: &External<TxHandle>,
+    relation: u32,
+    values: &Array,
+    req: fn(RelationId, Vec<Value>) -> TxReq,
+) -> napi::Result<bool> {
+    let row = {
+        let worker = live(&tx.inner, "transaction")?;
+        marshal::fact_row(&worker.sealed.descriptor, relation, values)?
+    };
+    tx_flag(tx, req(row.0, row.1))
 }
 
 /// Records an insert into the delta; `true` iff the final state changed.
 /// Shape violations throw typed; nothing is judged until commit.
 #[napi]
 pub fn tx_insert(tx: &External<TxHandle>, relation: u32, values: Array) -> napi::Result<bool> {
-    let row = {
-        let worker = live(&tx.inner, "transaction")?;
-        marshal::fact_row(&worker.sealed.descriptor, relation, &values)?
-    };
-    tx_flag(tx, TxReq::Insert(row.0, row.1))
+    tx_row_flag(tx, relation, &values, TxReq::Insert)
 }
 
 /// Records a delete into the delta; `true` iff the final state changed.
 #[napi]
 pub fn tx_delete(tx: &External<TxHandle>, relation: u32, values: Array) -> napi::Result<bool> {
-    let row = {
-        let worker = live(&tx.inner, "transaction")?;
-        marshal::fact_row(&worker.sealed.descriptor, relation, &values)?
-    };
-    tx_flag(tx, TxReq::Delete(row.0, row.1))
+    tx_row_flag(tx, relation, &values, TxReq::Delete)
 }
 
 /// Final-state membership (base + pending delta — the view the commit
 /// judgment judges, which is what makes check-then-act race-free).
 #[napi]
 pub fn tx_contains(tx: &External<TxHandle>, relation: u32, values: Array) -> napi::Result<bool> {
-    let row = {
-        let worker = live(&tx.inner, "transaction")?;
-        marshal::fact_row(&worker.sealed.descriptor, relation, &values)?
-    };
-    tx_flag(tx, TxReq::Contains(row.0, row.1))
+    tx_row_flag(tx, relation, &values, TxReq::Contains)
 }
 
 /// Final-state point lookup through a key statement; `null` on a miss.
@@ -1049,13 +1047,12 @@ pub fn tx_get(
         key_statement,
         &key_values,
     )?;
-    match worker.call(TxReq::Get(rel, key, row))? {
-        TxReply::Row(Ok(found)) => {
-            Ok(found.map(|values| values.iter().map(ValueOut::from_value).collect()))
-        }
-        TxReply::Row(Err(error)) => Err(thrown(error)),
-        _ => Err(worker_died("transaction")),
-    }
+    let found = reply!(
+        worker.call(TxReq::Get(rel, key, row))?,
+        TxReply::Row,
+        "transaction"
+    )?;
+    Ok(found.map(|values| values.iter().map(ValueOut::from_value).collect()))
 }
 
 /// Mints the next fresh value for `(relation, field)` — the engine's
@@ -1067,11 +1064,11 @@ pub fn tx_alloc(tx: &External<TxHandle>, relation: u32, field: u32) -> napi::Res
     let worker = live(&tx.inner, "transaction")?;
     let field = u16::try_from(field)
         .map_err(|_| marshal::err(format!("bumbledb marshal: field id {field} exceeds u16")))?;
-    match worker.call(TxReq::Alloc(RelationId(relation), FieldId(field)))? {
-        TxReply::Minted(Ok(minted)) => Ok(minted),
-        TxReply::Minted(Err(error)) => Err(thrown(error)),
-        _ => Err(worker_died("transaction")),
-    }
+    reply!(
+        worker.call(TxReq::Alloc(RelationId(relation), FieldId(field)))?,
+        TxReply::Minted,
+        "transaction"
+    )
 }
 
 /// `txCommit`'s domain outcome: the committed generation, or the COMPLETE
@@ -1081,34 +1078,17 @@ pub enum CommitOutcome {
     Rejected(Vec<ViolationWire>),
 }
 
-impl ToNapiValue for CommitOutcome {
-    unsafe fn to_napi_value(env: sys::napi_env, val: Self) -> napi::Result<sys::napi_value> {
-        let env_handle = napi::Env::from_raw(env);
-        let mut obj = Object::new(&env_handle)?;
-        match val {
-            Self::Committed(generation) => {
-                obj.set("ok", true)?;
-                obj.set("generation", generation)?;
-            }
-            Self::Rejected(violations) => {
-                obj.set("ok", false)?;
-                obj.set("violations", violations)?;
-            }
-        }
-        unsafe { Object::to_napi_value(env, obj) }
-    }
-}
+outcome_to_napi!(CommitOutcome {
+    Committed(generation) => { "ok": true, "generation": generation },
+    Rejected(violations) => { "ok": false, "violations": violations },
+});
 
 /// Commits the delta: the engine judges every dependency statement against
 /// the final state; a rejection carries the complete violation set as data.
 /// Either way the handle is spent.
 #[napi]
 pub fn tx_commit(tx: &External<TxHandle>) -> napi::Result<CommitOutcome> {
-    let mut taken = tx
-        .inner
-        .borrow_mut()
-        .take()
-        .ok_or_else(|| closed_handle("transaction"))?;
+    let mut taken = take_handle(&tx.inner, "transaction")?;
     let outcome = match taken.call(TxReq::Commit) {
         Ok(TxReply::Committed(Ok(generation))) => Ok(CommitOutcome::Committed(generation)),
         Ok(TxReply::Committed(Err(error))) => Err(thrown(error)),
@@ -1123,11 +1103,7 @@ pub fn tx_commit(tx: &External<TxHandle>) -> napi::Result<CommitOutcome> {
 /// Aborts the delta — nothing ever touched LMDB. The handle is spent.
 #[napi]
 pub fn tx_abort(tx: &External<TxHandle>) -> napi::Result<()> {
-    let mut taken = tx
-        .inner
-        .borrow_mut()
-        .take()
-        .ok_or_else(|| closed_handle("transaction"))?;
+    let mut taken = take_handle(&tx.inner, "transaction")?;
     let outcome = match taken.call(TxReq::Abort) {
         Ok(TxReply::Aborted) => Ok(()),
         Ok(_) => Err(worker_died("transaction")),
@@ -1158,24 +1134,10 @@ pub enum PrepareOutcome {
     IrError(String),
 }
 
-impl ToNapiValue for PrepareOutcome {
-    unsafe fn to_napi_value(env: sys::napi_env, val: Self) -> napi::Result<sys::napi_value> {
-        let env_handle = napi::Env::from_raw(env);
-        let mut obj = Object::new(&env_handle)?;
-        match val {
-            Self::Ok(handle) => {
-                obj.set("ok", true)?;
-                obj.set("prepared", handle)?;
-            }
-            Self::IrError(message) => {
-                obj.set("ok", false)?;
-                obj.set("kind", "irError")?;
-                obj.set("message", message)?;
-            }
-        }
-        unsafe { Object::to_napi_value(env, obj) }
-    }
-}
+outcome_to_napi!(PrepareOutcome {
+    Ok(handle) => { "ok": true, "prepared": handle },
+    IrError(message) => { "ok": false, "kind": "irError", "message": message },
+});
 
 /// Prepares a program (IR as plain data, ids only — a query is the
 /// one-predicate program; the TS layer embeds it before calling). Roster
@@ -1188,7 +1150,7 @@ pub fn db_prepare(db: &External<DbHandle>, program: Object) -> napi::Result<Prep
     let prepared = match engine.prepare(&program) {
         Ok(prepared) => prepared,
         Err(Error::Validation(error)) => return Ok(PrepareOutcome::IrError(error.to_string())),
-        Err(error) => return Err(marshal::err(marshal::engine_err(&error))),
+        Err(error) => return Err(throw_engine(&error)),
     };
     // SAFETY of the lifetime erasure: the prepared query borrows schema and
     // cache data owned by the engine behind `engine` (an `Arc` whose heap
@@ -1222,14 +1184,15 @@ pub fn prepared_execute(
     let mut prepared_inner = live_mut(&prepared.inner, "prepared query")?;
     let worker = live(&snap.inner, "snapshot")?;
     let address = std::ptr::from_mut(&mut prepared_inner.prepared) as usize;
-    match worker.call(SnapReq::Execute {
-        prepared: address,
-        params,
-    })? {
-        SnapReply::Rows(Ok(rows)) => Ok(marshal::rows_out(rows)),
-        SnapReply::Rows(Err(error)) => Err(thrown(error)),
-        _ => Err(worker_died("snapshot")),
-    }
+    let rows = reply!(
+        worker.call(SnapReq::Execute {
+            prepared: address,
+            params,
+        })?,
+        SnapReply::Rows,
+        "snapshot"
+    )?;
+    Ok(marshal::rows_out(rows))
 }
 
 /// The pull-based plan-drift signal against a snapshot — engine-policy-free;
@@ -1242,19 +1205,16 @@ pub fn prepared_staleness(
     let prepared_inner = live(&prepared.inner, "prepared query")?;
     let worker = live(&snap.inner, "snapshot")?;
     let address = std::ptr::from_ref(&prepared_inner.prepared) as usize;
-    match worker.call(SnapReq::Staleness { prepared: address })? {
-        SnapReply::Staleness(Ok(staleness)) => Ok(staleness),
-        SnapReply::Staleness(Err(error)) => Err(thrown(error)),
-        _ => Err(worker_died("snapshot")),
-    }
+    reply!(
+        worker.call(SnapReq::Staleness { prepared: address })?,
+        SnapReply::Staleness,
+        "snapshot"
+    )
 }
 
 /// Releases the prepared query (its plan, memo, and engine reference).
 #[napi]
 pub fn prepared_close(prepared: &External<PreparedHandle>) -> napi::Result<()> {
-    let taken = prepared.inner.borrow_mut().take();
-    if taken.is_none() {
-        return Err(closed_handle("prepared query"));
-    }
+    take_handle(&prepared.inner, "prepared query")?;
     Ok(())
 }

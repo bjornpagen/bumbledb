@@ -9,7 +9,7 @@
  * by owner ruling; see {@link BindingInput})
  * (unmentioned fields ARE the wildcard — no wildcard value exists);
  * `not(Rel, {...})` is negation-as-position (anti-join); `eq`/`ne` and the
- * order roster, `pointIn`/`covers` (both spellings of `ir::CmpOp::PointIn`,
+ * order roster, `pointIn` (the one spelling of `ir::CmpOp::PointIn`,
  * always lowered interval-left), `allen` (the 13-bit mask pair
  * comparison), and `and`/`or` (the input condition-tree grammar) complete
  * the roster. Nothing beyond the IR exists here — and the walls the engine
@@ -62,7 +62,7 @@ type MatchOwner = AnyRelation | AnyClosed
  * union rides into ψ id bindings and joins exactly as it does on a
  * referencing column) first, then the declared payload columns read
  * through the typed `columns` carrier (the one source of payload typing —
- * no parallel column table exists). The runtime twin is `matchFieldsOf` in
+ * no parallel column table exists). The runtime twin is `sealedFieldsOf` in
  * `#query/lower.ts`; the id-first ordinal shift the two tiers share is
  * pinned by the lowering golden.
  */
@@ -355,10 +355,10 @@ type NeRight = Var<string> | Param<string> | bigint | string | boolean | Uint8Ar
 /** One side of an order comparison: orderable terms only (the IR's comparison rules). */
 type OrderSide = Var<string> | Param<string> | Duration<string> | bigint
 
-/** The point side of `pointIn`/`covers`. */
+/** The point side of `pointIn`. */
 type PointSide = Var<string> | Param<string> | bigint
 
-/** The interval side of `pointIn`/`covers`/`allen`. */
+/** The interval side of `pointIn`/`allen`. */
 type IntervalSide = Var<string> | Param<string> | IntervalValue
 
 /** Builds one comparison value. */
@@ -426,26 +426,18 @@ function ge<const L extends OrderSide, const R extends OrderSide>(left: L, right
 }
 
 /**
- * Point membership as a predicate (`ir::CmpOp::PointIn`), membership
+ * Point membership as a predicate (`ir::CmpOp::PointIn`) — THE one
  * spelling: `pointIn(t, w)` holds iff `w.start ≤ t < w.end`. The IR
  * orders the operands interval-left, point-right; the value stores them
- * that way whatever the surface spelling.
+ * that way whatever the surface argument order (a literal `span(...)`
+ * interval operand is legal and tags by the point sibling's element
+ * domain — the bug-hunt fix, now also a type-level guarantee).
+ * Interval ⊇ interval is NOT this operator; that predicate is
+ * `allen(a, ALLEN.covers, b)` — the name `covers` belongs to the Allen
+ * roster alone (the canonical-utterance law: one meaning, one spelling).
  */
 function pointIn<const P extends PointSide, const I extends IntervalSide>(point: P, interval: I): Cmp<"pointIn", I, P> {
 	assertTermSide("pointIn", point, interval)
-	return comparison("pointIn", interval, point, undefined)
-}
-
-/**
- * Point membership, coverage spelling — `covers(w, t)` is `pointIn(t, w)`
- * with the interval written first (the IR's own operand order; a literal
- * `span(...)` left operand is legal and tags by the point sibling's
- * element domain — the bug-hunt fix, now also a type-level guarantee).
- * Interval ⊇ interval is NOT this operator; that predicate is
- * `allen(a, ALLEN.covers, b)`.
- */
-function covers<const I extends IntervalSide, const P extends PointSide>(interval: I, point: P): Cmp<"pointIn", I, P> {
-	assertTermSide("covers", interval, point)
 	return comparison("pointIn", interval, point, undefined)
 }
 
@@ -619,7 +611,7 @@ type NotOk<Env extends EnvShape, F extends FieldsShape, CR, B> = false extends {
  * twin of the engine's comparison roster: class-equal joins (off the
  * schema type's class map), orderable order sides (an interval var under a
  * non-`pointIn` op is exactly here refused), kind-correct
- * `pointIn`/`covers`/`allen` sides, and negated-atom safety (the negated
+ * `pointIn`/`allen` sides, and negated-atom safety (the negated
  * relation's class record is resolved through `Classes` by its name). The
  * leading `[AnyTreeChild] extends [C]` arm is the recursion's base case:
  * at an UNRESOLVED constraint (the whole condition union — or a tree's
@@ -747,4 +739,4 @@ export type {
 	Tree,
 	TreeData
 }
-export { ALLEN, allen, and, comparison, covers, eq, ge, gt, le, lt, ne, not, or, pointIn }
+export { ALLEN, ALLEN_ALL_BITS, allen, and, comparison, eq, ge, gt, le, lt, ne, not, or, pointIn }

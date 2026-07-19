@@ -29,6 +29,7 @@
 
 import * as errors from "@superbuilders/errors"
 import type { AnyField, ClosedRoster } from "#fields.ts"
+import { isIntervalValue, literalShapeError, rosterOf } from "#fields.ts"
 import type { FactValue } from "#native.ts"
 import type { AnyRelation, Fact, FreshKeys, RelationData } from "#relation.ts"
 
@@ -65,23 +66,6 @@ type Minted<R extends AnyRelation> = { [K in FreshKeys<R>]: Fact<R>[K] }
 type KeyFact<R extends AnyRelation> = [FreshKeys<R>] extends [never]
 	? Partial<Fact<R>>
 	: { [K in FreshKeys<R>]: Fact<R>[K] }
-
-/** The typed shape refusal of the row marshaler — a genuine failure, never data. */
-function cellShapeError(context: string, expected: string, value: unknown): Error {
-	return errors.new(`${context}: expected ${expected}, got ${typeof value}`)
-}
-
-/** Narrows an interval cell: a plain object with bigint start/end. */
-function isIntervalCell(value: unknown): value is { readonly start: bigint; readonly end: bigint } {
-	return (
-		typeof value === "object" &&
-		value !== null &&
-		"start" in value &&
-		"end" in value &&
-		typeof value.start === "bigint" &&
-		typeof value.end === "bigint"
-	)
-}
 
 /**
  * Reprojects any host object to a string-indexed record — the boundary
@@ -121,7 +105,7 @@ function closedCellOf(context: string, closed: ClosedRoster, name: string): Fact
  */
 function handleOf(context: string, closed: ClosedRoster, cell: FactValue): string {
 	if (typeof cell !== "bigint") {
-		throw cellShapeError(context, `a ${closed.name} handle id (bigint)`, cell)
+		throw literalShapeError(context, `a ${closed.name} handle id (bigint)`, cell)
 	}
 	const handle = closed.handles[Number(cell)]
 	if (handle === undefined) {
@@ -144,29 +128,30 @@ function handleOf(context: string, closed: ClosedRoster, cell: FactValue): strin
  * boundary.
  */
 function cellOf(context: string, field: AnyField, value: unknown): FactValue {
-	if ("closed" in field) {
+	const roster = rosterOf(field)
+	if (roster !== undefined) {
 		if (typeof value !== "string") {
-			throw cellShapeError(context, `a ${field.closed.name} handle name (string)`, value)
+			throw literalShapeError(context, `a ${roster.name} handle name (string)`, value)
 		}
-		return closedCellOf(context, field.closed, value)
+		return closedCellOf(context, roster, value)
 	}
 	switch (field.kind) {
 		case "bool": {
 			if (typeof value !== "boolean") {
-				throw cellShapeError(context, "boolean", value)
+				throw literalShapeError(context, "boolean", value)
 			}
 			return value
 		}
 		case "u64":
 		case "i64": {
 			if (typeof value !== "bigint") {
-				throw cellShapeError(context, "bigint", value)
+				throw literalShapeError(context, "bigint", value)
 			}
 			return value
 		}
 		case "str": {
 			if (typeof value !== "string") {
-				throw cellShapeError(context, "string", value)
+				throw literalShapeError(context, "string", value)
 			}
 			/**
 			 * A lone surrogate would be lossily replaced with U+FFFD at the
@@ -176,19 +161,19 @@ function cellOf(context: string, field: AnyField, value: unknown): FactValue {
 			 * lookup lowers through.
 			 */
 			if (!value.isWellFormed()) {
-				throw cellShapeError(context, "well-formed string", value)
+				throw literalShapeError(context, "well-formed string", value)
 			}
 			return value
 		}
 		case "bytes": {
 			if (!(value instanceof Uint8Array)) {
-				throw cellShapeError(context, "Uint8Array", value)
+				throw literalShapeError(context, "Uint8Array", value)
 			}
 			return value
 		}
 		case "interval": {
-			if (!isIntervalCell(value)) {
-				throw cellShapeError(context, "interval ({ start, end } bigints)", value)
+			if (!isIntervalValue(value)) {
+				throw literalShapeError(context, "interval ({ start, end } bigints)", value)
 			}
 			return { start: value.start, end: value.end }
 		}
@@ -289,10 +274,9 @@ function factOf<R extends AnyRelation>(relation: R, row: readonly FactValue[]): 
 		if (cell === undefined) {
 			throw errors.new(`relation ${data.name}: row cell ${ordinal} (${declared.name}) is absent`)
 		}
+		const roster = rosterOf(declared.field)
 		decoded[declared.name] =
-			"closed" in declared.field
-				? handleOf(`relation ${data.name} field ${declared.name}`, declared.field.closed, cell)
-				: cell
+			roster !== undefined ? handleOf(`relation ${data.name} field ${declared.name}`, roster, cell) : cell
 	})
 	Object.freeze(decoded)
 	if (!isCompleteFact(relation, decoded)) {
