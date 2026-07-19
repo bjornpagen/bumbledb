@@ -8,10 +8,16 @@
  * Every field reference is checked against the relation it names in the
  * TYPE — existence through {@link FaceFields} (`on(R, "nope")` does not
  * compile) and STRUCTURAL compatibility through {@link SameShapes}: the two
- * faces' projected kind/width/element triples are read off the schema type
- * (the minimal kernel — descriptors are pure structure) and constrained
- * positionwise equal, so a u64 face against a str face, a bytes width
- * mismatch, or an interval element mismatch is a compile error. Domains are
+ * faces' projected kind/width/element/roster quadruples are read off the
+ * schema type (the minimal kernel — descriptors are pure structure) and
+ * constrained positionwise equal, so a u64 face against a str face, a
+ * bytes width mismatch, an interval element mismatch, or a bare column
+ * against a closed reference is a compile error. The ROSTER slot carries a
+ * construction-time runtime twin here ({@link assertRosterAgreement} —
+ * roster IDENTITY, positionwise: a closed vocabulary's referencing column
+ * is spelled with the vocabulary's own id descriptor, the ONE spelling, so
+ * a plain u64 column can never alias a vocabulary through a declared law
+ * and the SDK's descriptor-keyed closed judgments stay sound). Domains are
  * NOT compared here — there is no domain to compare at construction: the
  * statements themselves are what define the equivalence classes, and the
  * domain wall lives where they aggregate — `schema()` (the
@@ -28,6 +34,7 @@
 import * as errors from "@superbuilders/errors"
 import type { Count } from "#count.ts"
 import { type AnyFace, type FaceData, renderFace, type SameArity, type SameShapes } from "#face.ts"
+import type { AnyField, ClosedRoster } from "#fields.ts"
 import type { AnyRelation, RelationFields } from "#relation.ts"
 import { renderWindow, type WindowSpec } from "#spec.ts"
 
@@ -99,6 +106,72 @@ interface KeyStatement<R extends AnyRelation, Projection extends readonly string
 }
 
 /**
+ * The field descriptor one face position projects: an ordinary relation's
+ * declared field; a closed relation's SEALED shape — the synthetic `id`
+ * (the value's own roster-carrying descriptor, by identity) or a declared
+ * payload column. `undefined` when the name is foreign (the type tier makes
+ * that unwritable; the engine re-judges projections at `Db.create`).
+ */
+function projectedFieldOf(face: FaceData, fieldName: string): AnyField | undefined {
+	const owner = face.owner
+	if ("axioms" in owner) {
+		if (fieldName === "id") {
+			return owner.id
+		}
+		const column = owner.data.columns.find(function byName(candidate) {
+			return candidate.name === fieldName
+		})
+		return column?.field
+	}
+	const declared = owner.data.fields.find(function byName(candidate) {
+		return candidate.name === fieldName
+	})
+	return declared?.field
+}
+
+/** The roster a descriptor carries: present exactly on a closed reference, absent on every other kind. */
+function rosterOfField(field: AnyField | undefined): ClosedRoster | undefined {
+	if (field !== undefined && "closed" in field) {
+		return field.closed
+	}
+	return undefined
+}
+
+/** Renders one face position's closedness for the roster-agreement diagnostics. */
+function renderRosterSide(roster: ClosedRoster | undefined): string {
+	return roster === undefined ? "a bare column" : `a ${roster.name} reference`
+}
+
+/**
+ * The runtime twin of {@link SameShapes}'s roster slot: the two faces'
+ * projected descriptors must agree POSITIONWISE on closedness — the same
+ * roster (value identity — vocabulary identity is value identity, the
+ * SDK's membership rule everywhere) or none. Without this wall a plain u64
+ * column could alias a closed vocabulary through a declared containment
+ * (`docs/architecture/10-data-model.md` spells the ENGINE encoding that
+ * way), and every descriptor-keyed closed judgment — the orderable ban,
+ * the name↔id marshal, answer decode — would silently miss it. The
+ * vocabulary's own descriptor (`Kind.id`) is the ONE spelling of a closed
+ * reference at this surface (the canonical-utterance law); the engine
+ * cannot backstop this one — the wire carries plain u64s, no rosters.
+ */
+function assertRosterAgreement(source: FaceData, target: FaceData, statement: Statement): void {
+	source.projection.forEach(function agreeAt(fieldName, position) {
+		const targetField = target.projection[position]
+		if (targetField === undefined) {
+			return
+		}
+		const sourceRoster = rosterOfField(projectedFieldOf(source, fieldName))
+		const targetRoster = rosterOfField(projectedFieldOf(target, targetField))
+		if (sourceRoster !== targetRoster) {
+			throw errors.new(
+				`${source.owner.name}.${fieldName} is ${renderRosterSide(sourceRoster)} but ${target.owner.name}.${targetField} is ${renderRosterSide(targetRoster)} — closedness rides the descriptor: a closed reference is spelled with the vocabulary's own id descriptor (one meaning, one spelling), so faces pair closed-with-closed through one roster or bare-with-bare, never across — ${renderStatement(statement)}`
+			)
+		}
+	})
+}
+
+/**
  * `R(X) -> R` — the FD key form, composite keys as tuples. No selection
  * parameter exists (the FD-with-selection shape is unrepresentable, as in
  * the grammar), and only ordinary relations are accepted: a closed
@@ -145,7 +218,9 @@ function contained<A extends AnyFace, B extends AnyFace>(
 		target: target.data,
 		bidirectional: false
 	})
-	return Object.freeze({ data })
+	const statement = Object.freeze({ data })
+	assertRosterAgreement(data.source, data.target, statement)
+	return statement
 }
 
 /**
@@ -167,7 +242,9 @@ function mirrors<A extends AnyFace, B extends AnyFace>(
 		target: target.data,
 		bidirectional: true
 	})
-	return Object.freeze({ data })
+	const statement = Object.freeze({ data })
+	assertRosterAgreement(data.source, data.target, statement)
+	return statement
 }
 
 /**
@@ -191,7 +268,9 @@ function window<B extends AnyFace, A extends AnyFace>(
 		window: count.window,
 		source: source.data
 	})
-	return Object.freeze({ data })
+	const statement = Object.freeze({ data })
+	assertRosterAgreement(data.source, data.target, statement)
+	return statement
 }
 
 /**

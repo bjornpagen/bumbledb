@@ -938,6 +938,18 @@ declaration-id order is a declaration-order accident, not semantics
 (`10-data-model.md` § orderability), so `lt`/`sum`-family admissions over
 a handle are unspellable and refused.
 
+One spelling holds the whole texture up: at the TS surface a
+closed-referencing column is declared with the vocabulary's OWN descriptor
+(`Kind.id`) — the ENGINE's encoding ("a plain u64 column plus a declared
+containment", `10-data-model.md` § closed relations) is not a second
+spelling here. The statement constructors compare the two faces' rosters
+positionwise (identity — part of the face SHAPE, type tier and
+construction tier both), so a bare u64 column can never alias a vocabulary
+through a declared law, and every roster-keyed judgment above — the
+orderable ban, the name↔id marshal, answer decode, query joins — is sound
+against the descriptor alone. The engine cannot backstop this wall: the
+wire carries plain u64s, no rosters.
+
 ## The freeze, and the OPEN ledger
 
 **FREEZE IS DECLARED at this commit (2026-07-15).** The surface above — the

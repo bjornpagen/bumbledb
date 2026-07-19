@@ -376,7 +376,11 @@ fixed extension.
   (materialized order below) — ordinary in every way and targetable: a reference
   to a closed relation is a plain u64 column plus a declared containment, like any
   reference. Nested closed-to-closed references are the same shape — no narrow
-  encoding arm, ever (the recorded refusal).
+  encoding arm, ever (the recorded refusal). That is the ENGINE's encoding; the
+  TS SDK gives it exactly one host spelling — the vocabulary's own `Kind.id`
+  descriptor on the referencing column (`70-api.md` § the drizzle law): a bare
+  u64 column cannot alias a vocabulary through a declared law there, so the
+  SDK's roster-keyed judgments stay sound.
 - **Intrinsic columns are value types only**: U64, I64, Bool, `bytes<N>`,
   Interval. `str` is refused — the handle IS the label and the renderer prints
   handles from the theory; interned columns on a virtual relation would force

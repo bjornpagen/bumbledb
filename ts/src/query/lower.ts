@@ -499,13 +499,16 @@ function matchFieldsOf(owner: MatchOwner): readonly RelationField[] {
  * Judges one membership ARRAY at a binding position — legal exactly at a
  * CLOSED-reference field (the owner ruling: ordinary u64/str membership is
  * spelled through `r.inSet` params; literal arrays are the closed
- * vocabulary's spelling), holding ≥ 2 handle names (the degenerate sets
- * are refusals: empty selects nothing, one element is the bare literal
- * respelled). The returned name is CONTENT-ADDRESSED (vocabulary +
- * members), so two spellings of one set share one dense `ParamId`; the
- * members are shape-checked strings here and roster-verified at the one
- * verification point (`taggedHandleId`) when the SDK supplies the set at
- * execute — the same moment a bound `r.inSet` param's members are judged.
+ * vocabulary's spelling), holding ≥ 2 DISTINCT handle names (the
+ * degenerate sets are refusals: empty selects nothing, one element is the
+ * bare literal respelled, and a duplicate member is the same respelling in
+ * disguise — write each member once). The returned name is
+ * CONTENT-ADDRESSED (vocabulary + the member SET — the key sorts a copy,
+ * so two spellings of one set, reordered or not, share one dense
+ * `ParamId`); the members are shape-checked strings here and
+ * roster-verified at the one verification point (`taggedHandleId`) when
+ * the SDK supplies the set at execute — the same moment a bound `r.inSet`
+ * param's members are judged.
  */
 function membershipSet(
 	context: string,
@@ -525,13 +528,21 @@ function membershipSet(
 			`${context}: a one-element membership array is the bare literal respelled — write the literal (the canonical-utterance law: one meaning, one spelling)`
 		)
 	}
+	const seen = new Set<string>()
 	const members = value.map(function memberName(member) {
 		if (typeof member !== "string") {
 			throw literalShapeError(context, `a ${field.closed.name} handle name (string)`, member)
 		}
+		if (seen.has(member)) {
+			throw errors.new(
+				`${context}: the membership array spells ${member} twice — write it once (the canonical-utterance law: one meaning, one spelling)`
+			)
+		}
+		seen.add(member)
 		return member
 	})
-	return { name: `∈ ${field.closed.name} ${JSON.stringify(members)}`, members: Object.freeze(members) }
+	const key = [...members].sort()
+	return { name: `∈ ${field.closed.name} ${JSON.stringify(key)}`, members: Object.freeze(members) }
 }
 
 /**
@@ -1318,15 +1329,38 @@ function headSignature(column: SelectColumn): string {
 	return `${column.name}:${agg.op}`
 }
 
+/** The roster a param anchor carries: present exactly on a closed-reference field anchor. */
+function anchorRosterOf(anchor: AnyField | "measure" | undefined): ClosedRoster | undefined {
+	if (anchor === undefined || anchor === "measure") {
+		return undefined
+	}
+	if ("closed" in anchor) {
+		return anchor.closed
+	}
+	return undefined
+}
+
+/** Renders one param anchor's closedness for the registry's coherence diagnostics. */
+function renderParamAnchor(roster: ClosedRoster | undefined): string {
+	return roster === undefined ? "a non-closed position" : `a ${roster.name} reference`
+}
+
 /**
  * Folds every rule's param uses (recs in declaration order first, output
  * rules last — exactly the lowering walk) into the query's registry:
  * first use mints the dense `ParamId`, the first FIELD-ANCHORED use types
- * the wire, and one name must keep one shape. A param whose anchor is a
+ * the wire, and one name must keep one shape AND one closedness — every
+ * anchored use of one name must agree on the roster (value identity), so a
+ * param anchored at a closed reference is GUARANTEED to ride the one
+ * roster-verification point (`taggedHandleId`) at execute; a name anchored
+ * both at a closed reference and at a non-closed position (or at two
+ * vocabularies) is refused here, because the wire would translate only the
+ * first anchor's reading (the type tier intersects the uses to `never`;
+ * this is its runtime twin for untyped callers). A param whose anchor is a
  * CLOSED reference must never sit in an order-comparison position — the
  * anchor types its value a handle name and the engine would order the
- * translated row ids, so the pairing is refused here (the registry is the
- * one place a name's every use and its anchoring field meet).
+ * translated row ids, so the pairing is refused here too (the registry is
+ * the one place a name's every use and its anchoring field meet).
  */
 function paramRegistryOf(recs: readonly RecData[], rules: readonly RuleData[]): readonly ParamEntry[] {
 	const order: string[] = []
@@ -1363,6 +1397,15 @@ function paramRegistryOf(recs: readonly RecData[], rules: readonly RuleData[]): 
 				throw errors.new(
 					`query param ${use.name} is used both as a ${existing.shape} param and a ${use.shape} param — one name, one shape`
 				)
+			}
+			if (existing.anchor !== undefined && use.anchor !== undefined) {
+				const registered = anchorRosterOf(existing.anchor)
+				const anchored = anchorRosterOf(use.anchor)
+				if (registered !== anchored) {
+					throw errors.new(
+						`query param ${use.name} is anchored at ${renderParamAnchor(registered)} and at ${renderParamAnchor(anchored)} — a closed-anchored param translates handle names through ONE roster (one name, one domain); name the params differently`
+					)
+				}
 			}
 			if (existing.anchor === undefined && use.anchor !== undefined) {
 				existing.anchor = use.anchor

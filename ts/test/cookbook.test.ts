@@ -373,8 +373,16 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 			return r.match(Ticket, { id: t, priority: "Urgent" }).select("t")
 		})
 
+		// Set membership is a plain array — closed-only in query match records
+		// (ordinary-field membership is a bound ∈-set param, r.inSet).
+		const actionable = query(Tickets).rule((r) => {
+			const { t } = r.vars("t")
+			return r.match(Ticket, { id: t, priority: ["Normal", "Urgent"] }).select("t")
+		})
+
 		const { db } = await admit("r06-tickets", Tickets)
 		assert.ok(db.prepare(urgent))
+		assert.ok(db.prepare(actionable))
 	})
 
 	test("7. the classification", async function r07() {

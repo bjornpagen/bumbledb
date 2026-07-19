@@ -58,14 +58,16 @@ type MatchOwner = AnyRelation | AnyClosed
 /**
  * The matchable field block of an atom owner: a relation's declared
  * fields; a closed relation's SEALED shape — the synthetic `id` (the
- * roster-carrying descriptor) first, then the declared payload columns
- * read through the typed `columns` carrier (the one source of payload
- * typing — no parallel column table exists). The runtime twin is
- * `matchFieldsOf` in `#query/lower.ts`; the id-first ordinal shift the two
- * tiers share is pinned by the lowering golden.
+ * value's OWN roster-carrying descriptor, at its precise type: the handle
+ * union rides into ψ id bindings and joins exactly as it does on a
+ * referencing column) first, then the declared payload columns read
+ * through the typed `columns` carrier (the one source of payload typing —
+ * no parallel column table exists). The runtime twin is `matchFieldsOf` in
+ * `#query/lower.ts`; the id-first ordinal shift the two tiers share is
+ * pinned by the lowering golden.
  */
 type MatchFields<R extends MatchOwner> = R extends AnyClosed
-	? { readonly id: ClosedIdField } & R["columns"]
+	? { readonly id: R["id"] } & R["columns"]
 	: R extends AnyRelation
 		? RelationFields<R>
 		: never

@@ -13,7 +13,7 @@
 
 import * as errors from "@superbuilders/errors"
 import { type AnyField, assertDeclarationOrderKey, type Infer, literalOf } from "#fields.ts"
-import type { LiteralSetSpec, LiteralSpec } from "#spec.ts"
+import { type LiteralSetSpec, type LiteralSpec, renderLiteral } from "#spec.ts"
 
 /** Flattens an intersection into one displayed object type (hover legibility). */
 type Flatten<T> = { [K in keyof T]: T[K] }
@@ -39,24 +39,38 @@ function refsComplete<RName extends string, Fields extends FieldsShape>(
  * Resolves one selection entry to its lowered literal set: a plain ARRAY
  * (detected by `Array.isArray` — no field's value type is an array;
  * `Uint8Array` is not one) becomes a disjunctive set, anything else the
- * bare literal. The degenerate sets are construction errors — the empty
- * set selects nothing, and the one-element set is the bare literal
- * respelled (the canonical-utterance law; the old set combinator's
- * signature made both unwritable, and the refusal here is that law's
- * runtime seat). The lowered set — `{ kind: "many", literals }` — is
- * byte-identical to what the combinator produced, so no fingerprint moves.
+ * bare literal. The degenerate sets are construction errors, each
+ * self-locating (`context` names the relation and field) — the empty set
+ * selects nothing, the one-element set is the bare literal respelled, and
+ * a DUPLICATE literal (judged on the canonical rendering — the engine's
+ * own duplicate test, reached here first so its index-speak twin at
+ * `Db.create` stays unreachable from this surface) is the same respelling
+ * in disguise (the canonical-utterance law; the old set combinator's
+ * signature made the length degenerates unwritable, and the refusals here
+ * are that law's runtime seat). The lowered set — `{ kind: "many",
+ * literals }` — is byte-identical to what the combinator produced, so no
+ * fingerprint moves.
  */
-function resolveEntry(field: AnyField, entry: unknown): LiteralSetSpec {
+function resolveEntry(context: string, field: AnyField, entry: unknown): LiteralSetSpec {
 	if (Array.isArray(entry)) {
 		if (entry.length < 2) {
 			throw errors.new(
 				entry.length === 0
-					? "an empty literal set selects nothing — write the selection you mean"
-					: "a one-element literal set is the bare literal respelled — write the literal (the canonical-utterance law: one meaning, one spelling)"
+					? `${context}: an empty literal set selects nothing — write the selection you mean`
+					: `${context}: a one-element literal set is the bare literal respelled — write the literal (the canonical-utterance law: one meaning, one spelling)`
 			)
 		}
+		const seen = new Set<string>()
 		const literals: LiteralSpec[] = entry.map(function lowerSetLiteral(literal: unknown) {
-			return Object.freeze(literalOf(field, literal))
+			const lowered = Object.freeze(literalOf(field, literal))
+			const rendered = renderLiteral(lowered)
+			if (seen.has(rendered)) {
+				throw errors.new(
+					`${context}: the literal set spells ${rendered} twice — write it once (the canonical-utterance law: one meaning, one spelling)`
+				)
+			}
+			seen.add(rendered)
+			return lowered
 		})
 		return Object.freeze({ kind: "many", literals: Object.freeze(literals) })
 	}
@@ -88,7 +102,9 @@ function resolveSelection(
 		if (declared === undefined) {
 			throw errors.new(`relation ${name} has no field ${fieldName}`)
 		}
-		bindings.push(Object.freeze({ field: fieldName, set: resolveEntry(declared.field, entry) }))
+		bindings.push(
+			Object.freeze({ field: fieldName, set: resolveEntry(`relation ${name}.${fieldName}`, declared.field, entry) })
+		)
 	}
 	if (bindings.length === 0) {
 		throw errors.new(

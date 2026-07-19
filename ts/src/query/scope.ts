@@ -228,25 +228,38 @@ type WidthOf<F extends AnyField> = F extends { readonly width: infer W } ? W : u
 /** Reads an interval descriptor's element kind; `undefined` on scalar kinds. */
 type ElementOf<F extends AnyField> = F extends { readonly element: infer E } ? E : undefined
 
+/** Reads a closed reference's handle union; `undefined` on every non-closed kind (the roster IS descriptor structure). */
+type RosterOf<F extends AnyField> = F extends {
+	readonly closed: { readonly handles: readonly (infer H extends string)[] }
+}
+	? H
+	: undefined
+
 /**
  * The join judgment: two bound slots join iff their descriptors' structure
- * agrees (kind, width label, interval element) AND their law-computed
- * classes agree — same class name joins, and bare (`undefined`) pairs only
- * with bare (ruling 3: a field in no law has no class; a bare↔classed
- * pairing refuses). The class names come off the SCHEMA type's class map —
- * the statements are the typing; no descriptor label exists to compare.
+ * agrees (kind, width label, interval element, and the closed ROSTER — a
+ * closed reference pairs only with the same vocabulary, never with a bare
+ * u64: the roster keys every closed judgment downstream, so a join across
+ * it would decode/order/translate incoherently by binding order) AND their
+ * law-computed classes agree — same class name joins, and bare
+ * (`undefined`) pairs only with bare (ruling 3: a field in no law has no
+ * class; a bare↔classed pairing refuses). The class names come off the
+ * SCHEMA type's class map — the statements are the typing; no descriptor
+ * label beyond the roster exists to compare.
  */
 type JoinOk<A extends ClassedField, B extends ClassedField> = [
 	A["field"]["kind"],
 	A["class"],
 	WidthOf<A["field"]>,
-	ElementOf<A["field"]>
-] extends [B["field"]["kind"], B["class"], WidthOf<B["field"]>, ElementOf<B["field"]>]
-	? [B["field"]["kind"], B["class"], WidthOf<B["field"]>, ElementOf<B["field"]>] extends [
+	ElementOf<A["field"]>,
+	RosterOf<A["field"]>
+] extends [B["field"]["kind"], B["class"], WidthOf<B["field"]>, ElementOf<B["field"]>, RosterOf<B["field"]>]
+	? [B["field"]["kind"], B["class"], WidthOf<B["field"]>, ElementOf<B["field"]>, RosterOf<B["field"]>] extends [
 			A["field"]["kind"],
 			A["class"],
 			WidthOf<A["field"]>,
-			ElementOf<A["field"]>
+			ElementOf<A["field"]>,
+			RosterOf<A["field"]>
 		]
 		? true
 		: false
@@ -255,7 +268,8 @@ type JoinOk<A extends ClassedField, B extends ClassedField> = [
 /**
  * The runtime twin of {@link JoinOk}: two bound slots join iff descriptor
  * structure and class agree — the same comparison the type tier makes,
- * judged on the honest runtime values (the descriptor and the schema
+ * judged on the honest runtime values (the descriptor, the roster by VALUE
+ * IDENTITY — vocabulary identity is value identity — and the schema
  * value's frozen class map). The rule builders throw through this on a
  * class-unequal variable reuse, so the wall holds for untyped callers too,
  * not only where the compiler can see.
@@ -265,17 +279,30 @@ function fieldJoins(a: ClassedField, b: ClassedField): boolean {
 	const widthB = "width" in b.field ? b.field.width : undefined
 	const elementA = "element" in a.field ? a.field.element : undefined
 	const elementB = "element" in b.field ? b.field.element : undefined
-	return a.field.kind === b.field.kind && a.class === b.class && widthA === widthB && elementA === elementB
+	const rosterA = "closed" in a.field ? a.field.closed : undefined
+	const rosterB = "closed" in b.field ? b.field.closed : undefined
+	return (
+		a.field.kind === b.field.kind &&
+		a.class === b.class &&
+		widthA === widthB &&
+		elementA === elementB &&
+		rosterA === rosterB
+	)
 }
 
 /**
  * Renders one bound slot for join-mismatch diagnostics — the structural
- * kind in the schema grammar's spelling plus the slot's law-computed class
- * (`u64 in class Holder.id`; a lawless slot renders `bare`).
+ * kind in the schema grammar's spelling (a closed reference names its
+ * vocabulary: the roster is part of the structure being compared) plus the
+ * slot's law-computed class (`u64 in class Holder.id`; a lawless slot
+ * renders `bare`).
  */
 function renderFieldKind(slot: ClassedField): string {
 	const field = slot.field
 	let base: string = field.kind
+	if ("closed" in field) {
+		base = `u64 referencing ${field.closed.name}`
+	}
 	if (field.kind === "bytes") {
 		base = `bytes<${field.width}>`
 	}

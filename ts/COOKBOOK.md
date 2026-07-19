@@ -337,6 +337,15 @@ const urgent = query(Tickets).rule((r) => {
 	const { t } = r.vars("t")
 	return r.match(Ticket, { id: t, priority: "Urgent" }).select("t")
 })
+
+// Set membership is a plain array — the drizzle law's spelling, closed-only
+// in query match records (an ordinary u64/str field's membership is a bound
+// ∈-set param, `r.inSet`); the array folds to the same wire set the param
+// spelling crosses. In `.where()` selections arrays work at EVERY field kind.
+const actionable = query(Tickets).rule((r) => {
+	const { t } = r.vars("t")
+	return r.match(Ticket, { id: t, priority: ["Normal", "Urgent"] }).select("t")
+})
 ```
 
 ## 7. The classification
