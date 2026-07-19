@@ -54,7 +54,7 @@ const Item = relation("Item", { id: u64.fresh, kind: Kind.id, flag: bool })
 const Terms = relation("Terms", { item: u64, rate: i64 })
 const termsKey = key(Terms, ["item"])
 const kindRef = contained(on(Item, "kind"), on(Kind, "id"))
-const specialMirror = mirrors(on(Item.where({ kind: Kind.Special }), "id"), on(Terms, "item"))
+const specialMirror = mirrors(on(Item.where({ kind: "Special" }), "id"), on(Terms, "item"))
 
 const Theory = schema("Hunt", { Kind, Num, Blob, Ray, Slot, Txt, Item, Terms }, [termsKey, kindRef, specialMirror])
 
@@ -233,7 +233,7 @@ describe("marshal edges and lifecycle sanity against a real store", async functi
 		 * the `source <= target` slot as spelled.
 		 */
 		const missingTerms = db.write(function violate(tx) {
-			tx.insert(Item, { kind: Kind.Special, flag: true })
+			tx.insert(Item, { kind: "Special", flag: true })
 		})
 		assert.ok(!missingTerms.ok, "the mirror judges the written orientation")
 		const forward = must(missingTerms.violations[0])
@@ -251,7 +251,7 @@ describe("marshal edges and lifecycle sanity against a real store", async functi
 		 * is carried by `orientation`, never by flipping `direction`.
 		 */
 		const seeded = db.write(function seed(tx) {
-			const plain = tx.insert(Item, { kind: Kind.Plain, flag: false })
+			const plain = tx.insert(Item, { kind: "Plain", flag: false })
 			tx.insert(Terms, { item: plain.id, rate: 1n })
 		})
 		assert.ok(!seeded.ok, "the reverse orientation judges too")
@@ -274,7 +274,7 @@ describe("marshal edges and lifecycle sanity against a real store", async functi
 		 */
 		const Item2 = relation("Item2", { id: u64.fresh, kind: Kind.id })
 		const Terms2 = relation("Terms2", { item: u64 })
-		const bareMirror = mirrors(on(Item2.where({ kind: Kind.Special }), "id"), on(Terms2, "item"))
+		const bareMirror = mirrors(on(Item2.where({ kind: "Special" }), "id"), on(Terms2, "item"))
 		assert.throws(function admitBare() {
 			schema("Bare", { Kind, Item2, Terms2 }, [key(Terms2, ["item"]), bareMirror])
 		}, /no declared containment resolves the closed reference.*contained\(on\(Item2, "kind"\), on\(Kind, "id"\)\)/)
@@ -290,7 +290,7 @@ describe("marshal edges and lifecycle sanity against a real store", async functi
 		])
 		const full = await Db.create(path.join(tmpRoot, "full"), Full)
 		const rejected = full.write(function violate(tx) {
-			tx.insert(Item2, { kind: Kind.Special })
+			tx.insert(Item2, { kind: "Special" })
 		})
 		assert.ok(!rejected.ok)
 		const violation = must(rejected.violations[0])
@@ -339,7 +339,7 @@ describe("marshal edges and lifecycle sanity against a real store", async functi
 	test("a violating delta then a throw still rethrows the host error (no half-judged state)", function violateThenThrow() {
 		assert.throws(function boom() {
 			db.write(function bad(tx) {
-				tx.insert(Item, { kind: Kind.Special, flag: true })
+				tx.insert(Item, { kind: "Special", flag: true })
 				throw errors.new("after violation")
 			})
 		}, /after violation/)

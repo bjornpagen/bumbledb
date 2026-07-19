@@ -150,9 +150,8 @@ describe("handles named like methods — pure data, no reserved names", function
 		assert.equal(Object.hasOwn(Weird, "match"), false)
 	})
 
-	// needs H2 — the marshal bijection translates handle names to row ids at
-	// write and back at decode; until H2 lands this round-trip is red (H7
-	// orders the suite).
+	// The marshal bijection (H2) translates handle names to row ids at write
+	// and back at decode — this round-trip rides it end to end.
 	test("the roster round-trips through a real store", async function probeWeirdRoundTrip() {
 		const Uses = relation("Uses", { id: u64.fresh, kind: Weird.id })
 		const WeirdTheory = schema("WeirdTheory", { Weird, Uses }, [contained(on(Uses, "kind"), on(Weird, "id"))])

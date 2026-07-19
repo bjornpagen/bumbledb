@@ -25,12 +25,9 @@ import {
 	attemptText,
 	grp,
 	grpMember,
-	Outcome,
 	objective,
-	Pin,
 	runStoreSchema,
 	sheet,
-	TaskKind,
 	task,
 	unit,
 	verdict
@@ -85,7 +82,7 @@ const written = db.write(function seed(tx) {
 		tx.insert(grpMember, { grp: staging.id, objective: minted.id })
 	}
 	const taskRow = tx.insert(task, {
-		kind: TaskKind.Enrich,
+		kind: "Enrich",
 		sheet: sheetRow.id,
 		subject: 1n
 	})
@@ -93,12 +90,12 @@ const written = db.write(function seed(tx) {
 	const attemptRow = tx.insert(attempt, {
 		task: taskRow.id,
 		n: 1n,
-		pin: Pin.Gpt56Max,
+		pin: "Gpt56Max",
 		promptHash: new Uint8Array(32)
 	})
 	seeded.attempt = attemptRow.id
 	tx.insert(attemptText, { attempt: attemptRow.id, prompt: "p", output: "o" })
-	tx.insert(verdict, { attempt: attemptRow.id, outcome: Outcome.Rejected })
+	tx.insert(verdict, { attempt: attemptRow.id, outcome: "Rejected" })
 })
 if (!written.ok) {
 	process.stderr.write(`child seed rejected: ${JSON.stringify(written.violations.length)}\n`)

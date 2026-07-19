@@ -137,7 +137,7 @@ describe("the exhume surface against real stores", function suite() {
 		const written = db.write(function seed(tx) {
 			const alpha = tx.insert(Specimen, {
 				label: "alpha",
-				grade: Grade.Pass,
+				grade: "Pass",
 				flag: true,
 				score: -7n,
 				digest: new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]),
@@ -145,7 +145,7 @@ describe("the exhume surface against real stores", function suite() {
 			})
 			const beta = tx.insert(Specimen, {
 				label: "βeta — π ≤ 4",
-				grade: Grade.Fail,
+				grade: "Fail",
 				flag: false,
 				score: 42n,
 				digest: new Uint8Array([255, 0, 254, 1, 253, 2, 252, 3]),
@@ -212,10 +212,19 @@ describe("the exhume surface against real stores", function suite() {
 		assert.equal(atType.element, "i64")
 
 		db.read(function compare(snap) {
+			/**
+			 * The exhume surface is theory-less — BENEATH the marshal's
+			 * name↔id bijection — so its closed cells are raw declaration-
+			 * order row ids where the typed surface speaks handle names
+			 * (H2). The comparison translates through the roster: Grade's
+			 * Pass is row 0, Fail row 1.
+			 */
 			assert.deepStrictEqual(
 				exhumed.scan("Specimen"),
-				snap.scan(Specimen),
-				"exhumed Specimen rows equal the typed snap.scan rows, value for value"
+				snap.scan(Specimen).map(function rawGrade(row) {
+					return { ...row, grade: BigInt(Grade.data.handles.indexOf(row.grade)) }
+				}),
+				"exhumed Specimen rows equal the typed snap.scan rows with grade lowered to its row id"
 			)
 			assert.deepStrictEqual(
 				exhumed.scan("Reading"),

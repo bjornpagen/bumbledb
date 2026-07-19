@@ -67,9 +67,9 @@ const Everything = relation("Everything", {
 /** A keyless-by-type relation: no fresh field, so `FreshKeys` is `never`. */
 const Pair = relation("Pair", { a: u64, b: u64 })
 
-test("the minimal kernel loads and the closed weld holds at runtime", function probeCompiled() {
-	assert.equal(Kind.fromId(Kind.Checking), "Checking")
-	assert.equal(Grade.fromId(Grade.Failed), "Failed")
+test("the minimal kernel loads and the roster is pure data at runtime", function probeCompiled() {
+	assert.deepEqual(Kind.data.handles, ["Checking", "Savings"])
+	assert.deepEqual(Grade.data.handles, ["DirectPass", "Failed"])
 	assert.equal(u64.fresh.fresh, true)
 	assert.equal(u64.kind, "u64")
 })
@@ -186,11 +186,11 @@ type Cases = [
 	Expect<Equal<"newtype" extends keyof typeof i64 ? true : false, false>>,
 	Expect<Equal<"newtype" extends keyof typeof RawBytes ? true : false, false>>,
 	Expect<Equal<"newtype" extends keyof typeof RawInterval ? true : false, false>>,
-	// ——— closed(): handle constants are bare bigints; the weld is exact ———
-	Expect<Equal<typeof Kind.Checking, bigint>>,
-	Expect<Equal<typeof Grade.DirectPass, bigint>>,
-	Expect<Equal<ReturnType<typeof Kind.fromId>, "Checking" | "Savings" | undefined>>,
-	Expect<Equal<Parameters<typeof Kind.fromId>, [id: bigint]>>,
+	// ——— closed(): handles are pure DATA on the roster (H5 killed the
+	// constants and the id weld — the literal "Checking" is the ONE
+	// spelling, and Infer speaks the precise union) ———
+	Expect<Equal<Infer<typeof Kind.id>, "Checking" | "Savings">>,
+	Expect<Equal<(typeof Kind.data.handles)[number], string>>,
 	Expect<
 		Equal<
 			Axioms<"DirectPass" | "Failed", { mastered: BoolField }>,

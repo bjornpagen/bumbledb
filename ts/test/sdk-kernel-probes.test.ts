@@ -129,26 +129,22 @@ test("a param value no rule places never registers — the query lowers under it
 	assert.equal(ir.predicates.length, 1, "the ghost never reaches the IR")
 })
 
-test("closed() handle constants are bare bigints for every admitted handle name", function protoHandle() {
+test("closed() admits every legal handle name as pure roster data", function protoHandle() {
 	/**
-	 * "__proto__" is a legal identifier (the macro analog admits it), so the
-	 * constant must work — own-property definition shadows the
-	 * object-protocol accessor instead of silently riding it. The computed
-	 * access below is deliberate: it is exactly how a host loops a roster.
+	 * "__proto__" is a legal identifier (the macro analog admits it), and
+	 * handles are DATA, never properties of the value — but the axioms
+	 * record IS keyed by handle name, so its rows must be minted with
+	 * own-property definition: assignment would silently ride the
+	 * Object.prototype accessor and swap the record's prototype instead of
+	 * creating the row.
 	 */
 	const handles = ["Alpha", "__proto__"] as const
 	const K = closed("K", handles)
-	for (const handle of handles) {
-		assert.equal(
-			typeof K[handle],
-			"bigint",
-			`the ${handle} handle constant must be a bare bigint, never an accessor no-op`
-		)
-		assert.equal(K.fromId(K[handle]), handle, "the weld agrees with the constant")
-	}
+	assert.deepEqual(K.data.handles, handles, "the roster carries every handle in declaration order")
 	assert.deepEqual(
 		Object.keys(K.axioms).toSorted(),
 		[...handles].toSorted(),
 		"the axioms record carries every handle row as an own enumerable property"
 	)
+	assert.equal(Object.getPrototypeOf(K.axioms), Object.prototype, "the __proto__ row never rode the accessor")
 })
