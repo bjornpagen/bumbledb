@@ -170,11 +170,33 @@ diagnostic.
   memoized `schema()` constructor and no panic path: semantic validation runs inside
   `Db::create`/`Db::open` and surfaces as the typed `SchemaError`.
 - The macro generates: the header's `Theory` unit struct, relation descriptors,
-  dependency statement descriptors, the host newtypes, and per-relation fact structs
-  (`Account { id, holder, kind, active }`). **The one variable-width field kind is
+  dependency statement descriptors, the host newtypes, per-relation fact structs
+  (`Account { id, holder, kind, active }`), and per-declared-key **key structs**
+  (below). **The one variable-width field kind is
   borrowed**: `str` → `&'a str` — a struct with any `str` field gains one lifetime.
   `bytes<N>` → `[u8; N]`: owned, `Copy`, borrow-free (the fixed-width law), so
   all-fixed-width structs stay lifetime-free.
+- **Key structs:** every declared key statement on an ordinary (non-closed)
+  relation emits a generated **key struct** — `Task(kind, subject) -> Task;`
+  emits `TaskByKindSubject { kind, subject }`. The derived name is
+  `{R}By{Fields}` in statement projection order, each snake_case segment of a
+  field name Pascal-cased (`grp` → `Grp`, `source_unit_id` → `SourceUnitId`);
+  a collision with a host declaration is rustc's ordinary duplicate-definition
+  error. Fields are `pub`, cloned from the relation's declaration — newtypes
+  preserved, `str` → `&'a str` (a borrowed determinant gives the key struct a
+  lifetime). Each key struct implements `Key` with its `STATEMENT` computed at
+  expansion from the one materialized order
+  (`SchemaDescriptor::materialized_statements` — the macro and the engine read
+  the same rule, so they cannot drift), and `snap.get(..)` / `tx.get(..)`
+  return `Option<Fact>` through it: the determinant tuple's columns, their
+  newtypes, their order, and the statement they read through are all carried
+  by the type — a wrong column, wrong newtype, wrong relation, or ambiguous
+  multi-key read is a compile error, not a runtime shape check. String
+  determinant cells resolve (pending-first inside a write transaction), never
+  mint. Fresh newtypes read through their auto-materialized `R(field) -> R`
+  keys via the same trait; closed relations emit no key struct (unwritable —
+  reads go through queries and the dyn surface). `get_dyn` remains the dyn
+  lane for data-supplied key statements (normative).
 
 **Decision: the macro surface is the algebra, with no sugar keywords.** Owner ruling
 (`30-dependencies.md` records the alternative and its loss). The macro
