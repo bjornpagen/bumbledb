@@ -31,6 +31,26 @@ impl WriteDelta<'_> {
         self.dispositions(Disposition::Delete)
     }
 
+    /// The relations this commit deletes from, deduplicated, ascending —
+    /// the image cache's per-relation dirty classification (reader:
+    /// `write_witnessed`'s commit epilogue, which hands it to
+    /// `ImageCache::advance`). Net dispositions make the discriminator
+    /// exact: a delete-then-reinsert of the same fact cancels to no entry,
+    /// so "absent here" is precisely "this commit removes no fact from
+    /// the relation" — a delete-free relation's image survives as an
+    /// append base. One ordered pass over the `(relation, hash)`-keyed
+    /// map (contiguous per relation, so the last-pushed dedup is total);
+    /// allocation is at most one small `Vec`.
+    pub(crate) fn dirty_relations(&self) -> Vec<RelationId> {
+        let mut dirty: Vec<RelationId> = Vec::new();
+        for ((rel, _), (_, disposition)) in &self.facts {
+            if *disposition == Disposition::Delete && dirty.last() != Some(rel) {
+                dirty.push(*rel);
+            }
+        }
+        dirty
+    }
+
     fn dispositions(&self, wanted: Disposition) -> impl Iterator<Item = (RelationId, &[u8])> {
         self.facts
             .iter()

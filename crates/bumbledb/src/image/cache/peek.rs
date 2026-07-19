@@ -30,6 +30,9 @@ impl ImageCache {
         }
         let generation = txn.generation()?;
         let inner = self.inner.lock().expect("cache mutex");
-        Ok(inner.map.get(&(rel, generation)).map(Arc::clone))
+        Ok(inner
+            .map
+            .get(&(rel, generation))
+            .map(|cached| Arc::clone(&cached.image)))
     }
 }

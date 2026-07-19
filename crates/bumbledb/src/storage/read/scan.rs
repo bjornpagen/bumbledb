@@ -56,11 +56,68 @@ pub fn scan<'txn>(
     let mut key: KeyBuf = [0; MAX_KEY];
     let len = keys::fact_prefix(&mut key, rel);
     let iter = txn.env().data().prefix_iter(txn.raw(), &key[..len])?;
-    // Fused on error: after the first corruption the iterator yields
-    // nothing more — "never a skip" is structural, not a caller
-    // obligation (a caller ignoring an Err cannot resume past it).
+    Ok(Scan::Store(parse_facts(schema, rel, iter)))
+}
+
+/// [`scan`]'s suffix sibling: the same `F` cursor, opened at
+/// `fact_key(rel, from_row_id)` instead of the prefix start — the image
+/// append path's tail scan (`docs/architecture/50-storage.md` § the
+/// image cache). Row ids are the monotone high-water allocator's, so a
+/// scan from a base image's build-time high-water
+/// ([`super::row_id_high_water`], read in this same transaction) yields
+/// exactly the rows committed after that base. The range's upper bound
+/// is `fact_key(rel, u64::MAX)` inclusive — every 13-byte key in between
+/// shares the `F | rel` prefix by byte order, and any longer key inside
+/// the bounds is a mis-shaped `F` key, typed corruption exactly as in
+/// [`scan`].
+///
+/// Ordinary relations only: a closed relation's image synthesizes from
+/// the theory and is never appended to (the cache branches before either
+/// scan).
+///
+/// # Errors
+///
+/// As [`scan`]: `Lmdb` on cursor-open failure; per-item `Corruption` on
+/// a mis-shaped key or wrong-width fact, fused on the first error.
+pub fn scan_from<'txn>(
+    txn: &'txn ReadTxn<'_>,
+    schema: &'txn Schema,
+    rel: RelationId,
+    from_row_id: u64,
+) -> Result<impl Iterator<Item = Result<(u64, &'txn [u8])>>> {
+    debug_assert!(
+        schema
+            .relation_checked(rel)
+            .and_then(Relation::extension)
+            .is_none(),
+        "closed relations synthesize from the theory and never append"
+    );
+    let mut lo = [0u8; keys::FACT_KEY_LEN];
+    let lo_len = keys::fact_key(&mut lo, rel, from_row_id);
+    debug_assert_eq!(lo_len, lo.len());
+    let mut hi = [0u8; keys::FACT_KEY_LEN];
+    let hi_len = keys::fact_key(&mut hi, rel, u64::MAX);
+    debug_assert_eq!(hi_len, hi.len());
+    let bounds: (std::ops::Bound<&[u8]>, std::ops::Bound<&[u8]>) = (
+        std::ops::Bound::Included(&lo[..]),
+        std::ops::Bound::Included(&hi[..]),
+    );
+    let iter = txn.env().data().range(txn.raw(), &bounds)?;
+    Ok(parse_facts(schema, rel, iter))
+}
+
+/// The shared per-entry parse behind [`scan`] and [`scan_from`]: the
+/// fixed 13-byte `F` key shape, the fact-width check, and the fuse.
+/// Fused on error: after the first corruption the iterator yields
+/// nothing more — "never a skip" is structural, not a caller
+/// obligation (a caller ignoring an Err cannot resume past it).
+fn parse_facts<'txn>(
+    schema: &'txn Schema,
+    rel: RelationId,
+    iter: impl Iterator<Item = std::result::Result<(&'txn [u8], &'txn [u8]), heed::Error>>,
+) -> impl Iterator<Item = Result<(u64, &'txn [u8])>> {
     let mut dead = false;
-    Ok(Scan::Store(iter.map_while(move |entry| {
+    iter.map_while(move |entry| {
         if dead {
             return None;
         }
@@ -77,5 +134,5 @@ pub fn scan<'txn>(
         };
         dead = item.is_err();
         Some(item)
-    })))
+    })
 }

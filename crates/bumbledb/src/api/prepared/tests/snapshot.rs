@@ -72,9 +72,10 @@ fn prepare_pins_no_images_and_reaping_releases_them() {
     );
     drop(txn);
 
-    // Commit generation 2 and evict, exactly as Db::write does; the
-    // first execution at the new generation reaps the stale parked
-    // binding and rebuilds the active one.
+    // Commit generation 2 and evict everything (the lineage-disabled
+    // twin of the `advance` Db::write runs); the first execution at the
+    // new generation reaps the stale parked binding and rebuilds the
+    // active one.
     insert_postings(&env, &schema, &[(3, 7, "c", 30)]);
     cache.evict_older_than(crate::GenerationId::from_storage(2));
     let txn = env.read_txn().expect("txn");

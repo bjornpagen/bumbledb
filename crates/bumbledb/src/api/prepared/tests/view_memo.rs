@@ -413,8 +413,10 @@ fn closed_relation_views_stay_warm_across_generations() {
     assert_eq!((builds, image_builds, rows), (1, 1, 2));
     drop(txn);
 
-    // A state-changing commit advances the storage generation; the write
-    // path evicts the cache exactly as `Db` wires it.
+    // A state-changing commit advances the storage generation; evict
+    // everything — the harshest commit hook (the lineage-disabled twin
+    // of the `advance` `Db` wires), which still cannot touch a closed
+    // slot.
     let view = env.read_txn().expect("txn");
     let mut delta = WriteDelta::new(&schema);
     let mut bytes = Vec::new();

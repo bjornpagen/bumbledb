@@ -71,6 +71,16 @@ pub struct OpScenario {
 /// A whole scenario from one entropy stream, Tiny-bounded: a seed world
 /// (corpus-valid by construction, committed first so later judgments
 /// run against real state), a 1–3 query pool, then 6–24 drawn steps.
+///
+/// One in four scenarios is an **insert streak** (the copy-on-append
+/// direction's stress, `docs/prds/incremental-images/prd-I1-copy-on-append.md`):
+/// the step alphabet narrows to insert batches, commits, and reads, so
+/// long chains of delete-free commits — each read at a new generation
+/// extending the previous image rather than rebuilding it — stop being
+/// rare at the general 20-way weighting. Delete and mixed batches are
+/// excluded by the mode, and insert batches are delete-free by
+/// construction ([`batch`] filters the closed-case arm's delete cases
+/// out of `Kind::Inserts`), so a streak really is append-on-append.
 pub fn random_scenario(rng: &mut Rng) -> OpScenario {
     let cfg = GenConfig {
         seed: rng.u64(),
@@ -79,8 +89,13 @@ pub fn random_scenario(rng: &mut Rng) -> OpScenario {
     let world = world(rng);
     let queries: Vec<Query> = (0..=rng.range(3)).map(|_| random_query(rng, cfg)).collect();
     let mut ops = vec![FuzzOp::InsertBatch(seed_world(cfg, &world)), FuzzOp::Commit];
+    let streak = rng.chance(1, 4);
     for _ in 0..6 + rng.range(19) {
-        ops.push(step(rng, cfg, &world, &queries));
+        ops.push(if streak {
+            streak_step(rng, cfg, &world, &queries)
+        } else {
+            step(rng, cfg, &world, &queries)
+        });
     }
     OpScenario { queries, ops }
 }
@@ -215,6 +230,25 @@ fn step(rng: &mut Rng, cfg: GenConfig, world: &Domains, queries: &[Query]) -> Fu
     }
 }
 
+/// One insert-streak step — the narrowed alphabet of the append-chain
+/// scenarios: insert batches and commits dominate, and executions read
+/// between commits (an image extends only when a reader arrives at the
+/// new generation — a chain nobody reads exercises nothing). No delete,
+/// mixed, rollback, or reopen arm: a delete would fork the lineage back
+/// to a rebuild, and a reopen drops the process-local cache — both
+/// well-covered by the general alphabet.
+fn streak_step(rng: &mut Rng, cfg: GenConfig, world: &Domains, queries: &[Query]) -> FuzzOp {
+    match rng.range(20) {
+        0..=6 => FuzzOp::InsertBatch(batch(rng, cfg, world, Kind::Inserts)),
+        7..=12 => FuzzOp::Commit,
+        13..=17 => execute_step(rng, cfg, queries),
+        18 => FuzzOp::ViewRead {
+            relation: ordinary_relation(rng),
+        },
+        _ => FuzzOp::VerifyStore,
+    }
+}
+
 /// The scenario's data world: a shrunken domain table in the corpus
 /// ladder's shape ([`Domains::of`]) — small enough that the naive
 /// model's nested loops stay inside the Tiny per-iteration budget,
@@ -263,13 +297,24 @@ enum Kind {
 /// the closed/judgment write-case generator ([`closed_write_cases`] —
 /// the existing write-case arm, reused whole); the rest draw from the
 /// corpus row functions under the fact policies below.
+///
+/// An "insert" batch really is one: for `Kind::Inserts` the closed-case
+/// arm keeps only its insert cases (it used to inject a delete into a
+/// tenth of the insert batches silently — neutralized so the streak
+/// scenarios' commit chains stay delete-free and genuinely exercise
+/// append-on-append; the delete cases still flow through the delete and
+/// mixed batches).
 fn batch(rng: &mut Rng, cfg: GenConfig, world: &Domains, kind: Kind) -> Delta {
     let mut delta = Delta::default();
     for _ in 0..=rng.range(3) {
         if rng.chance(1, 10) {
             // The closed-relation surface: closed writes, dangling
-            // handles, roster-cap and ψ-subset misses — all six kinds.
+            // handles, roster-cap and ψ-subset misses — all six kinds
+            // (insert kinds only, under `Kind::Inserts`).
             let mut cases = closed_write_cases(rng, 6);
+            if kind == Kind::Inserts {
+                cases.retain(|case| !case.delete);
+            }
             let case = cases.swap_remove(index(rng, cases.len()));
             if case.delete {
                 delta.deletes.push((case.relation, case.fact));
@@ -497,6 +542,65 @@ mod tests {
         for verb in all {
             assert!(seen.contains(verb), "verb {verb} never drawn in 256 seeds");
         }
+    }
+
+    /// An "insert" batch stages no deletes, ever — the closed-case arm's
+    /// silent delete injection is neutralized for `Kind::Inserts` — so an
+    /// insert-streak scenario's commits are delete-free by construction:
+    /// the copy-on-append lineage the streak exists to stress (a single
+    /// stray delete would fork every chain back to a rebuild).
+    #[test]
+    fn insert_batches_are_delete_free() {
+        for seed in 0..256u64 {
+            let scenario = random_scenario(&mut Rng::new(seed));
+            for op in &scenario.ops {
+                if let FuzzOp::InsertBatch(delta) = op {
+                    assert!(
+                        delta.deletes.is_empty(),
+                        "seed {seed}: an insert batch staged a delete"
+                    );
+                }
+            }
+        }
+    }
+
+    /// The insert-streak variant is reachable and shaped: across a
+    /// modest seed sweep, some scenario runs a long delete-free commit
+    /// chain WITH reads between — at least three commits after the seed
+    /// commit, at least one execution, and no delete/mixed/rollback/
+    /// reopen verb anywhere. That is the append-on-append stress: each
+    /// post-commit read at a new generation extends the previous image.
+    #[test]
+    fn the_streak_variant_reaches_long_read_interleaved_append_chains() {
+        let streaks = (0..256u64)
+            .map(|seed| random_scenario(&mut Rng::new(seed)))
+            .filter(|scenario| {
+                let commits = scenario
+                    .ops
+                    .iter()
+                    .filter(|op| matches!(op, FuzzOp::Commit))
+                    .count();
+                let executes = scenario
+                    .ops
+                    .iter()
+                    .filter(|op| matches!(op, FuzzOp::Execute { .. }))
+                    .count();
+                let forbidden = scenario.ops.iter().any(|op| {
+                    matches!(
+                        op,
+                        FuzzOp::DeleteBatch(_)
+                            | FuzzOp::MixedBatch(_)
+                            | FuzzOp::Rollback
+                            | FuzzOp::Reopen
+                    )
+                });
+                commits >= 4 && executes >= 1 && !forbidden
+            })
+            .count();
+        assert!(
+            streaks >= 8,
+            "append-on-append chains are rare again: {streaks} streak scenarios in 256 seeds"
+        );
     }
 
     /// The crash arm is deterministic in its entropy, and its victim is

@@ -534,3 +534,122 @@ fn drop_leaves_lmdb_untouched() {
     assert_eq!(before, data_snapshot(&env));
     assert!(before.is_empty());
 }
+
+const A: RelationId = RelationId(0);
+const B: RelationId = RelationId(1);
+
+/// A(v u64) + B(v u64) — two ordinary relations for the per-relation
+/// delete classification.
+fn two_relation_schema() -> Schema {
+    let rel = |name: &str| RelationDescriptor {
+        extension: None,
+        name: name.into(),
+        fields: vec![FieldDescriptor {
+            name: "v".into(),
+            value_type: ValueType::U64,
+            generation: Generation::None,
+        }],
+    };
+    SchemaDescriptor {
+        relations: vec![rel("A"), rel("B")],
+        statements: vec![],
+    }
+    .validate()
+    .expect("valid fixture")
+}
+
+fn u64_fact(schema: &Schema, rel: RelationId, v: u64) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    encode_fact(
+        &[ValueRef::U64(v)],
+        schema.relation(rel).layout(),
+        &mut bytes,
+    );
+    bytes
+}
+
+/// The image cache's dirty classification is the delta's net delete set
+/// projected to relations: deduplicated, ascending, and exactly the
+/// relations a fact is removed from — the discriminator the copy-on-append
+/// path stands on (docs/architecture/50-storage.md § the image cache).
+#[test]
+fn dirty_relations_are_the_deleted_from_relations_deduped_ascending() {
+    let dir = TempDir::new("delta-dirty");
+    let schema = two_relation_schema();
+    let env = Environment::create(dir.path(), &schema).expect("create");
+    {
+        let view = env.read_txn().expect("txn");
+        let mut delta = WriteDelta::new(&schema);
+        for v in 0..3 {
+            delta
+                .insert(&view, A, &u64_fact(&schema, A, v))
+                .expect("insert");
+            delta
+                .insert(&view, B, &u64_fact(&schema, B, v))
+                .expect("insert");
+        }
+        drop(view);
+        crate::storage::commit::commit(delta, &env).expect("commit");
+    }
+    let view = env.read_txn().expect("txn");
+
+    // Insert-only: nothing is dirty, whatever the volume.
+    let mut delta = WriteDelta::new(&schema);
+    for v in 10..20 {
+        delta
+            .insert(&view, A, &u64_fact(&schema, A, v))
+            .expect("insert");
+    }
+    assert_eq!(delta.dirty_relations(), vec![]);
+
+    // Multiple deletes in one relation dedup to one entry; both
+    // relations deleted-from report ascending; inserts never dirty.
+    let mut delta = WriteDelta::new(&schema);
+    delta
+        .insert(&view, A, &u64_fact(&schema, A, 10))
+        .expect("insert");
+    delta
+        .delete(&view, B, &u64_fact(&schema, B, 0))
+        .expect("delete");
+    delta
+        .delete(&view, A, &u64_fact(&schema, A, 0))
+        .expect("delete");
+    delta
+        .delete(&view, A, &u64_fact(&schema, A, 1))
+        .expect("delete");
+    assert_eq!(delta.dirty_relations(), vec![A, B]);
+}
+
+/// Cancellation is exact: a delete-then-reinsert of the same committed
+/// fact nets to no entry, so its relation is NOT dirty — no false
+/// positives from cancelled pairs (the delta's net-disposition
+/// invariant), and the untouched relation's image survives as an append
+/// base.
+#[test]
+fn a_cancelled_delete_reinsert_pair_dirties_nothing() {
+    let dir = TempDir::new("delta-dirty-cancel");
+    let schema = schema();
+    let env = Environment::create(dir.path(), &schema).expect("create");
+    let f = fact(&schema, 1, 100);
+    {
+        let view = env.read_txn().expect("txn");
+        let mut delta = WriteDelta::new(&schema);
+        delta.insert(&view, R, &f).expect("insert");
+        drop(view);
+        crate::storage::commit::commit(delta, &env).expect("commit");
+    }
+    let view = env.read_txn().expect("txn");
+    let mut delta = WriteDelta::new(&schema);
+    assert!(delta.delete(&view, R, &f).expect("delete"));
+    assert_eq!(
+        delta.dirty_relations(),
+        vec![R],
+        "a live pending delete dirties its relation"
+    );
+    assert!(delta.insert(&view, R, &f).expect("insert"));
+    assert_eq!(
+        delta.dirty_relations(),
+        vec![],
+        "the reinsert cancelled the delete — nothing is removed from R"
+    );
+}

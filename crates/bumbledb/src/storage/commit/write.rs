@@ -175,7 +175,7 @@ pub fn commit(delta: WriteDelta<'_>, env: &Environment) -> Result<CommitReport> 
     // escaped `Q` high-water burns regardless of the abort's shape
     // (`lean/Bumbledb/Txn/Fresh.lean: never_reissue_observable`; the
     // counters-only commit writes exactly the dirty marks — no generation
-    // bump, no cache eviction). Best-effort: a flush failure must never
+    // bump, no cache advance). Best-effort: a flush failure must never
     // mask the error the caller has to see.
     if outcome.is_err() {
         let _ = flush_escaped_fresh_ids(env, &delta);
@@ -278,7 +278,7 @@ fn decode_cited_facts(
 }
 
 /// The counters-only commit of a successful no-op write: exactly the
-/// dirty `Q` marks — no generation bump, no image eviction, no intern
+/// dirty `Q` marks — no generation bump, no cache advance, no intern
 /// flush, no dict next-id. Sound because the generation identifies
 /// *query-visible* state (`F`/`M`/`U`/`R`) and `Q` marks are write-path
 /// bookkeeping no query reads: every image, memo, and cache key stays

@@ -14,7 +14,7 @@ impl ImageCache {
         let mut bytes: u64 = inner
             .map
             .values()
-            .map(|image| image.byte_size() as u64)
+            .map(|cached| cached.image.byte_size() as u64)
             .sum();
         drop(inner);
         for image in self.closed.iter().filter_map(std::sync::OnceLock::get) {

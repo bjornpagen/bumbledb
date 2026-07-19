@@ -13,7 +13,7 @@ mod cardinality;
 mod decode;
 mod stride;
 
-pub use build::{TransientImage, build, synthesize_closed};
+pub use build::{TransientImage, append, build, synthesize_closed};
 
 /// The 16 KiB granule two hardware structures key on (measured):
 /// the L1D's set congruence (256 sets × 64 B lines,

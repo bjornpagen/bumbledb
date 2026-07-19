@@ -15,7 +15,8 @@ use bumbledb_theory::schema::RelationId;
 
 use super::decode::{decode_fact, decode_plan, fill_columns};
 use super::{
-    Column, ColumnSpan, ColumnWidth, LINE, RelationImage, SET_STRIDE, StridePadder, column_spans,
+    Column, ColumnSpan, ColumnView, ColumnWidth, LINE, RelationImage, SET_STRIDE, StridePadder,
+    column_spans,
 };
 
 /// Checked slab lengths (in words and bytes) for the stored row count.
@@ -216,11 +217,11 @@ pub fn build(txn: &ReadTxn<'_>, schema: &Schema, rel: RelationId) -> Result<Arc<
     // through the hoisted decode plan.
     let plan = decode_plan(&field_types, &frame.spans, &frame.columns, layout);
     let position = fill_columns(
-        txn,
-        schema,
         rel,
+        read::scan(txn, schema, rel)?,
         &plan,
         layout.fact_width(),
+        0,
         row_count,
         &mut frame.words,
         &mut frame.bytes,
@@ -229,6 +230,128 @@ pub fn build(txn: &ReadTxn<'_>, schema: &Schema, rel: RelationId) -> Result<Arc<
         return Err(Error::Corruption(CorruptionError::RowCountMismatch {
             relation: rel,
             stored: row_count as u64,
+        }));
+    }
+
+    Ok(seal(row_count, frame))
+}
+
+/// [`build`]'s copy-on-append sibling (`docs/architecture/50-storage.md`
+/// § the image cache): extends a base image to this snapshot's row count
+/// without re-decoding the base's rows. Sound because a delete-free
+/// lineage makes the base a **logical prefix** of the new image — row ids
+/// are the monotone `S | rel | RowIdHighWater` allocator's, so every row
+/// committed after the base sorts strictly after every base row, same
+/// ordinals, same column words (fact bytes are immutable). The layout is
+/// NOT a physical prefix (column starts and strides are address-dependent,
+/// [`StridePadder`]), so the copy unit is the **column**: a fresh frame at
+/// the new row count, one `copy_from_slice` per column — the image layer
+/// has exactly two column kinds, so the copy is total and safe — then a
+/// tail decode of only the new rows through the identical per-fact kernel,
+/// scanning from `from_row_id` (the base's build-time high-water,
+/// [`read::row_id_high_water`], read in the base's own transaction). The
+/// sealed image mints fresh lazy distinct locks — tail rows change exact
+/// counts, so distincts re-force on demand (the `TransientImage::refill`
+/// precedent), never copy.
+///
+/// The caller (the cache's append arm) owns the lineage claim; this
+/// function still trusts nothing it can check: the stored row count is
+/// ceiling-bounded by the `_data` entry witness before any allocation
+/// (as [`build`]), a count below the base's rows is typed corruption
+/// (only corruption shrinks a delete-free relation), and the tail scan
+/// is cross-checked against the claimed count — hard error, never a
+/// skip.
+///
+/// # Errors
+///
+/// As [`build`]: scan corruption aborts; `CounterDesync` on a count past
+/// the entry witness; `RowCountMismatch` when the count shrank below the
+/// base or the tail scan disagrees with the claimed count.
+///
+/// # Panics
+///
+/// Only on programmer-invariant violations: `rel` names a closed relation,
+/// or `base` was built for a different relation shape (the column layouts
+/// disagree).
+pub fn append(
+    txn: &ReadTxn<'_>,
+    schema: &Schema,
+    rel: RelationId,
+    base: &RelationImage,
+    from_row_id: u64,
+) -> Result<Arc<RelationImage>> {
+    let relation = schema.relation(rel);
+    debug_assert!(
+        !relation.is_closed(),
+        "closed relations synthesize from the theory, never from a scan"
+    );
+    let layout = relation.layout();
+    let claimed = read::row_count(txn, rel)?;
+
+    // The same reopen-trust ceiling as `build`: the stored count is data
+    // and must not size an allocation unchecked.
+    let witness = read::data_entries(txn)?;
+    if claimed > witness {
+        return Err(Error::Corruption(CorruptionError::CounterDesync {
+            relation: rel,
+            claimed,
+            witness,
+        }));
+    }
+    let row_count = usize::try_from(claimed).expect("64-bit usize");
+    let base_rows = base.row_count();
+    // Under a delete-free lineage the count is monotone; a shrink is
+    // storage corruption, typed — hard error, never a silent rebuild.
+    if row_count < base_rows {
+        return Err(Error::Corruption(CorruptionError::RowCountMismatch {
+            relation: rel,
+            stored: claimed,
+        }));
+    }
+
+    let field_types: Vec<TypeDesc> = relation
+        .fields()
+        .iter()
+        .map(|f| f.value_type.type_desc())
+        .collect();
+    let mut frame = allocate(&field_types, row_count)?;
+    assert_eq!(
+        frame.columns.len(),
+        base.columns.len(),
+        "the base image was built from this relation's field→column map"
+    );
+
+    // The prefix copy, one column at a time: the base's rows keep their
+    // ordinals and words; only the slab addresses move.
+    for (index, column) in frame.columns.iter().enumerate() {
+        match (*column, base.column(index)) {
+            (Column::Words { start }, ColumnView::Words(prefix)) => {
+                frame.words[start..start + base_rows].copy_from_slice(prefix);
+            }
+            (Column::Bytes { start }, ColumnView::Bytes(prefix)) => {
+                frame.bytes[start..start + base_rows].copy_from_slice(prefix);
+            }
+            _ => unreachable!("one field→column map drives both layouts"),
+        }
+    }
+
+    // The tail decode: the identical kernel over the suffix scan, filling
+    // positions `base_rows..row_count` — the only rows that decode.
+    let plan = decode_plan(&field_types, &frame.spans, &frame.columns, layout);
+    let position = fill_columns(
+        rel,
+        read::scan_from(txn, schema, rel, from_row_id)?,
+        &plan,
+        layout.fact_width(),
+        base_rows,
+        row_count,
+        &mut frame.words,
+        &mut frame.bytes,
+    )?;
+    if position != row_count {
+        return Err(Error::Corruption(CorruptionError::RowCountMismatch {
+            relation: rel,
+            stored: claimed,
         }));
     }
 
