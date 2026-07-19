@@ -512,11 +512,7 @@ fn closed_psi_schema() -> SchemaDescriptor {
         ],
         statements: vec![StatementDescriptor::Containment {
             source: side(RelationId(1), &[1]),
-            target: side_where(
-                RelationId(0),
-                &[0],
-                &[(1, LiteralSet::One(Value::U64(1)))],
-            ),
+            target: side_where(RelationId(0), &[0], &[(1, LiteralSet::One(Value::U64(1)))]),
         }],
     }
 }

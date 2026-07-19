@@ -98,7 +98,9 @@ language. **Reverses if:** never — owner axiom.
   the range/stabbing-accelerator OPEN item triggers.
 - **Scale axiom, in numbers:** ≤10⁷ facts total, ≤1 GB LMDB file, ≤2 GB peak process
   working set (LMDB pages + columnar images + arenas), minimum machine 16 GB Apple
-  Silicon. Data beyond RAM is a non-goal; the hot representation is decoded images, so
+  Silicon. The 32 GiB map (`50-storage.md`) is the hard capacity ceiling, not the
+  design point — headroom above this axiom, never a license to lean on it.
+  Data beyond RAM is a non-goal; the hot representation is decoded images, so
   beyond-RAM behavior degrades sharply and no design decision may lean on mmap grace.
   **The map ceiling no longer tracks this axiom** (the incremental-images wave's
   32 GiB ruling): the fixed 32 GiB durable map (`50-storage.md`) is the
@@ -149,16 +151,19 @@ language. **Reverses if:** never — owner axiom.
   constructors. SQLite is benchmarked at `synchronous=FULL` for fairness.
   **The carve-out (a decision, not a mode): the ephemeral store kind.**
   `Db::ephemeral` births a store whose `_meta` carries an ephemeral-kind marker and
-  whose environment carries `WRITEMAP|NOSYNC` (`50-storage.md` § the ephemeral store
-  kind): a different store KIND with a different constructor and an on-disk marker —
+  whose environment carries `NOSYNC` (`50-storage.md` § the ephemeral store
+  kind; the retired `WRITEMAP` half of the original flag set is the ruling-1
+  retraction recorded there): a different store KIND with a different constructor
+  and an on-disk marker —
   never a flag on `create`/`open` — so the cross-open is a typed refusal and no
   durable store can quietly lose its guarantee. The sighting is the ephemeral
   relational engine: staging stores judged before ETL into a durable store, analysis
-  working sets, scratch stores — the small-commit shape where the flags measure
-  ~4.2–4.4x over the plain ramdisk and ~75–90x over durable-on-SSD through the
-  real constructor (per-session band across the R6 earn and its 1.0.0 re-earn),
-  with a 1.0–1.1x device tax that makes ephemeral-on-SSD nearly free
-  (the R6 lane of `crates/bumbledb/tests/ramdisk_phase_r.rs`). The owner's doctrine, recorded
+  working sets, scratch stores — the small-commit shape where the retired
+  `WRITEMAP|NOSYNC` set measured ~4.2–4.4x over the plain ramdisk and ~75–90x over
+  durable-on-SSD through the real constructor (per-session band across the R6 earn
+  and its 1.0.0 re-earn), with a 1.0–1.1x device tax; the band is PENDING-RE-EARN
+  under `NOSYNC`-only (the Measure phase re-runs the R6 lane of
+  `crates/bumbledb/tests/ramdisk_phase_r.rs`). The owner's doctrine, recorded
   verbatim: "everything we can do to make dogfooding easier is upgraded to a
   feature." **Alternative:** an ephemeral constructor gated on a RAM-backed-device
   precondition. **Why it lost:** the KIND carries the no-machine-crash-durability
@@ -382,8 +387,10 @@ recursion).
    (cold reported, not gated), SQLite fully indexed + prepared + `ANALYZE`d,
    `synchronous=FULL`, `SELECT DISTINCT` included in timed SQL, canonical machine =
    the owner's. **The claim is unearned until the suite runs green on this
-   engine.** The "ratchet" is a manually re-run report per meaningful change — not
-   a CI gate.
+   engine** — earned at scale S by the committed `bench-out/` artifacts (engine rev
+   `adac4010`, 2026-07-16: verify-stamped, ALL-WIN every gated family), and re-voided
+   by any format or semantics change until re-run. The "ratchet" is a manually
+   re-run report per meaningful change — not a CI gate.
 3. **Allocation:** a warm prepared-query execution within a seen (data generation,
    parameter envelope) performs **zero heap allocations** (and zero deallocations)
    excluding a caller-provided result buffer — scratch is a monotone high-water,

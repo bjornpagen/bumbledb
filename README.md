@@ -429,26 +429,19 @@ cargo test --features alloc-counter --test alloc_gate --release -- --test-thread
 …then runs the lanes a one-liner can't spell: clippy and tests with each
 fuzz-oracle feature compiled in (`ground-off`, `fold-off`); clippy over the
 detached fuzz crate (which every `--workspace` invocation skips); the
-deterministic crashpoint sweeps, durable and ephemeral; the WRITEMAP
+deterministic crashpoint sweeps, durable and ephemeral; the NOSYNC
 random-timing kill smoke; the bench crate linted and tested under its `obs`
 feature; and — when the cross std and cross C compiler are present — the
 x86-64 scalar-fallback `cargo check`. The alloc gate's `--test-threads=1` is
 load-bearing: the counting allocator is process-global.
 
-Disk requirements for tests, per store kind (`MAP_SIZE_DURABLE` = 32 GiB /
-`MAP_SIZE_EPHEMERAL` = 4 GiB in `crates/bumbledb/src/storage/env.rs`): a
-DURABLE test store costs almost nothing — no `WRITEMAP`, so open never
-ftruncates `data.mdb` to the map; the file grows with data (KiB–MB per test
-store) on every filesystem, containers included. (The old note here claimed
-every store is ftruncated at open and that overlayfs materializes the full
-map — both halves were wrong for durable stores and are retracted; a Linux
-spot-check of the overlayfs/`posix_fallocate` behavior is a recorded
-follow-up.) An EPHEMERAL store allocates its full 4 GiB map eagerly on EVERY
-filesystem at open (the capacity contract) — the ephemeral lanes (the
-crashpoint sweep, the kill smoke, `tests/ephemeral.rs`) are what need real
-room: ~5 GiB free per live ephemeral store (they run sequentially and the
-harnesses truncate on drop). Run the gates on a real filesystem with tens of
-GiB free.
+Disk requirements for tests: every store opens as a fixed 32 GiB memory map
+(`MAP_SIZE` in `crates/bumbledb/src/storage/env.rs`), but the map is an
+address-space reservation, never an allocation — no open truncates or
+preallocates `data.mdb` (the old warning here described the retired
+`WRITEMAP` ftruncate, cleanup-0.5.0 ruling 1), so a store's data file holds
+exactly the pages ever committed, on every filesystem, containers included.
+The suite needs only its stores' actual data — a few GiB free is plenty.
 
 The Lean gate is `scripts/lean.sh`: `lake build` over the spec tree, the
 proof-escape battery, the spec census, the conformance corpus evaluated under

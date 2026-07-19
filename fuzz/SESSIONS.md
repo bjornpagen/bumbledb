@@ -241,7 +241,10 @@ cumulative execs/s against 32/s on the 07-17 8m slice, 78,904 execs
 total, cov 13151→13187, corpus 3499→3628 post-cmin. The slice's row
 was again moved up into the Sessions table by hand.
 
-## Kill sessions (the WRITEMAP commit-window sweep, `fuzz/tests/kill.rs`)
+## Kill sessions (the commit-window sweep, `fuzz/tests/kill.rs` — named
+the WRITEMAP sweep until cleanup-0.5.0 ruling 1 made the ephemeral kind
+`NOSYNC`-only; rows below the rename predate the flip and a
+`NOSYNC`-only statistical session is owed)
 
 One row per statistical lane (>= 2,000 random-timing SIGKILLs per
 store kind; the four-point corpse invariant per round — reopen,

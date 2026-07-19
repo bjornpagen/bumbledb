@@ -24,7 +24,7 @@ impl WriteTxn<'_> {
         drop(self.txn);
     }
 
-    /// Advances the storage tx id (reader: the 40-storage doc's commit step 4; the id
+    /// Advances the storage tx id (reader: the 50-storage doc's commit step 4; the id
     /// advances iff the delta changed logical state).
     pub(crate) fn put_generation(&mut self, generation: GenerationId) -> Result<()> {
         self.env.meta.put(
@@ -37,7 +37,7 @@ impl WriteTxn<'_> {
 
     /// Reads the dictionary next-id counter (reader: `storage::dict`'s
     /// direct-write intern, test-only since the delta's pending-intern set
-    /// re-homed the live path in the 40-storage doc), sentinel-checked
+    /// re-homed the live path in the 50-storage doc), sentinel-checked
     /// ([`super::read_meta::read_dict_next_id`]).
     #[cfg(test)]
     pub(crate) fn dict_next_id(&self) -> Result<u64> {

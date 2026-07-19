@@ -326,7 +326,9 @@ module, `PreparedQuery`/`Answers`, `SchemaError`, `FactShapeError`,
   same version/kind/fingerprint checks as `open` (create-or-open: a scratch store
   earns the convenience because a mistaken fresh store at a typo'd path destroys
   nothing durable; the dogfooding doctrine, `00-product.md`). The environment
-  carries `WRITEMAP|NOSYNC`; every semantic — judgment, point reads, queries,
+  carries `NOSYNC` (`50-storage.md` § the ephemeral store kind carries the
+  ruling-1 retraction of the old `WRITEMAP|NOSYNC` set); every semantic —
+  judgment, point reads, queries,
   locking — is identical to a durable store, and only machine-crash durability is
   renounced, by the store's own on-disk claim. Device-independent:
   ephemeral-on-SSD is legitimate.
@@ -342,7 +344,9 @@ module, `PreparedQuery`/`Answers`, `SchemaError`, `FactShapeError`,
   staging side pays no fullfsync per commit (the small-commit shape measured
   ~75–90x over durable-on-SSD and ~4.2–4.4x over a plain ramdisk store across
   earn sessions, device tax 1.0–1.1x, the R6 lane of
-  `crates/bumbledb/tests/ramdisk_phase_r.rs`); the durable side's
+  `crates/bumbledb/tests/ramdisk_phase_r.rs` — the band was earned under the
+  retired `WRITEMAP|NOSYNC` set and is PENDING-RE-EARN under `NOSYNC`-only,
+  the Measure phase); the durable side's
   guarantees never dilute because the kinds cannot cross-open.
 - One process, one handle (`00-product.md`): every open holds an exclusive advisory
   lock on `<dir>/bumbledb.lock`; a second live handle on the same path — in this
@@ -353,9 +357,11 @@ module, `PreparedQuery`/`Answers`, `SchemaError`, `FactShapeError`,
   destroys data. `Db::ephemeral` never destroys data either — it opens or
   initializes, and deletion of a spent staging store is the host's explicit act.
   Nor does it MUTATE on refusal: an existing data file is probed through a plain
-  durable-flagged open (no `WRITEMAP`, so no full-map ftruncate — durable-flagged
-  opens never extend `data.mdb` at all) before the
-  ephemeral flags are ever applied, so a refused probe — a durable store, a
+  durable-flagged open before the
+  ephemeral flags are ever applied — and since ruling 1 no open of ANY kind
+  truncates or preallocates the map (`50-storage.md` § environment constants),
+  the law holds structurally rather than by flag choice — so a refused probe —
+  a durable store, a
   foreign LMDB environment, a stale or forged store — leaves `data.mdb`
   byte-identical (pinned by the byte-identity tests in
   `crates/bumbledb/tests/ephemeral.rs` and `storage/env/tests.rs`).
@@ -597,10 +603,10 @@ proposition the commit checks in one integer compare.
 - **Retry is host policy.** The engine ships the error, never a loop — the
   staleness-signal doctrine verbatim: the engine's job is to make the condition
   checkable. The host convention is re-run the query → re-compute → `write_from`
-  again; conflict frequency is workload-owned (the old "conflicts are rare by
-  the bursty-write design point" leaned on the retracted write-frequency
-  assumption, `00-product.md`) — the engine ships the typed condition and no
-  retry loop regardless.
+  again; conflict frequency is workload-owned (the old "rare by the bursty-write
+  design point" leaned on the retracted write-frequency assumption,
+  `00-product.md`) — the engine ships the typed condition and no retry loop
+  regardless.
 - **The two conditions compose into the complete conditional-write vocabulary:** the
   witness is the scan-shaped condition (premises from full queries, whole-snapshot
   precision), WriteTx point reads remain the key-shaped condition (per-fact
@@ -1016,9 +1022,10 @@ engine-first change, and nothing re-enters without a new ruling.
   (census 2026-07-17).** The sorting half **FIRED**: four hand-rolled bigint
   comparators, every rank/pos consumer sorting host-side, and "answers are
   sets; the host sorts" recurring as a consumer comment — the ordering/limit
-  conveniences land next, host-side in `bumbledb-query`, on the quarantine
-  already named here. **SCHEDULED (owner ruling 2026-07-19): paired with
-  keyed get in the pre-1.0.0 surface wave** — host-side only; the
+  conveniences are OWED, host-side in `bumbledb-query`, on the quarantine
+  already named here (fired, not yet built — no sort surface exists in that
+  crate as of cleanup-0.5.0). **SCHEDULED (owner ruling 2026-07-19): paired
+  with keyed get in the pre-1.0.0 surface wave** — host-side only; the
   engine-never-orders ruling stands untouched
   (`docs/feature-register.md` § FIRED and scheduled). The `FromAnswers` half is **DECLINED** vocabulary:
   answers already decode to typed named records at the SDK boundary and zero
