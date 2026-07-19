@@ -43,7 +43,7 @@ impl<S: Theory> Db<S> {
     /// store kind is marked on disk: `Db::open` on an ephemeral store
     /// and `Db::ephemeral` on a durable store are each the typed
     /// [`crate::error::Error::StoreKindMismatch`]. The environment
-    /// carries `MDB_WRITEMAP|MDB_NOSYNC`, so commits skip the fullfsync
+    /// carries `MDB_NOSYNC`, so commits skip the fullfsync
     /// boundary — a machine crash loses the store BY THE KIND'S OWN
     /// CLAIM (device-independent: ephemeral-on-SSD is legitimate);
     /// process-kill atomicity, the dependency judgment, [`crate::WriteTx`] point

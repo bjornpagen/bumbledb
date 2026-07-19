@@ -49,7 +49,7 @@
 //! trials per child (`k²` per commit — ~17M 24-byte hashes at the
 //! 4096-parent point). The measured span is the engine's own
 //! `judgment_*` trace spans, summed per commit; the store is ephemeral
-//! (`WRITEMAP|NOSYNC`) so no fsync shadows the judgment numbers.
+//! (`NOSYNC`) so no fsync shadows the judgment numbers.
 //!
 //! One command, under the measurement mutex:
 //! `scripts/measure.sh cargo run --release -p bumbledb-bench --features obs -- sweep-commit`

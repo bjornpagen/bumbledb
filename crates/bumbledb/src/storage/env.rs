@@ -70,11 +70,11 @@ pub enum StoreKind {
     /// Durability is LMDB defaults — fsync per commit; a committed
     /// posting survives power loss (`00-product.md`).
     Durable,
-    /// A scratch/staging store: the environment carries
-    /// `MDB_WRITEMAP|MDB_NOSYNC`, so commits skip the fullfsync
-    /// boundary. Process-kill atomicity is unchanged (the crashpoint
-    /// sweep runs against this kind too); a machine crash loses the
-    /// store by definition — the kind says so.
+    /// A scratch/staging store: the environment carries `MDB_NOSYNC`,
+    /// so commits skip the fullfsync boundary. Process-kill atomicity
+    /// is unchanged (the crashpoint sweep runs against this kind too);
+    /// a machine crash loses the store by definition — the kind says
+    /// so.
     Ephemeral,
 }
 
@@ -93,16 +93,6 @@ impl StoreKind {
             0 => Some(Self::Durable),
             1 => Some(Self::Ephemeral),
             _ => None,
-        }
-    }
-
-    /// The kind's fixed map size — a per-kind decision, not a knob
-    /// (see [`MAP_SIZE_DURABLE`]'s doc for the split and the
-    /// retraction it records).
-    pub(crate) const fn map_size(self) -> usize {
-        match self {
-            Self::Durable => MAP_SIZE_DURABLE,
-            Self::Ephemeral => MAP_SIZE_EPHEMERAL,
         }
     }
 }
@@ -157,60 +147,39 @@ impl std::fmt::Display for GenerationId {
     }
 }
 
-/// Fixed map sizes, per store KIND — decisions, not knobs; the public
-/// surface stays path-only. The old single 4 GiB constant is RETRACTED
-/// by owner ruling (the incremental-images wave: "4 GiB is too low as a
-/// hard limit; 32 GiB is the new hard limit") and the flip split the
-/// constant per kind — still a decision, not a knob (the kind is
-/// on-disk identity, so each store's ceiling stays parseable):
+/// Fixed map size, both store kinds: comfortably above the 1 GB scale
+/// axiom. Not configurable — path-only public surface. The map is an
+/// address-space reservation, never an allocation: no open path
+/// truncates or preallocates `data.mdb` to the map (LMDB's full-map
+/// ftruncate lives only under `MDB_WRITEMAP` — `mdb_env_map`, mdb.c —
+/// and no kind carries that flag), so a store's data file holds
+/// exactly the pages ever committed, on every filesystem.
 ///
-/// - **Durable: 32 GiB.** The map is a virtual reservation — a durable
-///   open carries no `MDB_WRITEMAP`, so LMDB never ftruncates
-///   `data.mdb` to the map at open (the ftruncate-to-map lives inside
-///   mdb.c's `WRITEMAP` branch only); the file grows by `pwrite` to the
-///   data high-water on EVERY filesystem, and the 32 GiB costs address
-///   space, nothing else. The old doc paragraph here attributed the
-///   full-map ftruncate to every open and container death (overlayfs
-///   materialization) to every store — both halves were wrong, asserted
-///   rather than observed, and are RETRACTED: durable stores never
-///   extend the file at open, so there is no length for overlayfs to
-///   materialize (a Linux spot-check is the recorded follow-up,
-///   `docs/prds/incremental-images/prd-G1-32gib-ceiling.md`).
-/// - **Ephemeral: 4 GiB, unchanged.** The scratch/staging kind
-///   materializes its FULL map eagerly on every filesystem by the
-///   capacity contract (`WRITEMAP` ftruncate on non-sparse filesystems,
-///   the explicit block preallocation on sparse ones —
-///   [`open_env`](self)), so its constant prices real disk or ramdisk
-///   RAM per open: at 32 GiB one ephemeral open would exceed a CI
-///   runner's whole disk and a sanctioned ramdisk would wire a third of
-///   the canonical machine's RAM. The ruling's motivation is the
-///   durable DATA ceiling; scratch stores keep the small map. A 32 GiB
-///   ephemeral staging store is therefore impossible — the named trade,
-///   accepted; the persisted per-store size is the recorded follow-up
-///   design if it is ever needed (prd-G1).
+/// RETRACTION (cleanup-0.5.0 ruling 1): 4 GiB → 32 GiB, and the
+/// ephemeral kind's eager capacity contract retired with the raise.
+/// The 4 GiB ceiling was priced when the ephemeral kind materialized
+/// its FULL map at every open (WRITEMAP's ftruncate on non-sparse
+/// filesystems; explicit block preallocation on sparse ones) — a
+/// 32 GiB eager map would have been 32 GiB of real disk per ephemeral
+/// open, unpayable on a ~14 GB CI runner, the 5 GiB ramdisk default,
+/// or a contributor laptop. Dropping WRITEMAP (the recorded fallback,
+/// `docs/architecture/50-storage.md` § the ephemeral store kind)
+/// removed the last full-map ftruncate, so the raise costs nothing:
+/// capacity refusal reverts to the filesystem's own lazy behavior.
+/// The retracted comment also claimed EVERY open ftruncates the map
+/// (the container-filesystem `ENOSPC` warning) — that was true only
+/// of WRITEMAP opens, i.e. never of durable stores; verdict read off
+/// mdb.c and pinned in-tree by the refusal tests' `< 1 GiB` fixture
+/// bounds.
 ///
-/// Two consequences worth naming, both size-swept, unchanged in kind:
-///
-/// - **The hard capacity ceiling.** Resize is deliberately gone (the
-///   PRD 22 dead end: `mdb_env_set_mapsize` racing readers — see
-///   [`super::commit::write`]'s gravestone), so a store that fills the
-///   map has hit the wall: the commit surfaces
-///   [`crate::error::Error::Lmdb`] wrapping LMDB's `MDB_MAP_FULL`
-///   (`heed::MdbError::MapFull`), nothing persists, and the remedy is
-///   a new store, never a knob — the remedy's cost scales with the
-///   ceiling (a full-map ETL is minutes at SSD rates, not seconds).
-/// - **The ceiling no longer tracks the scale axiom.** The validated
-///   envelope (≤10⁷ facts, ≤1 GB file, `00-product.md`) is unchanged:
-///   32 GiB is the never-resize wall, headroom above the envelope, not
-///   a new working-set target — a store pushed toward the ceiling has
-///   the memory story of `50-storage.md` § memory discipline (decoded
-///   images ≈ live payload; no memory-pressure eviction exists), not
-///   the axiom's ≤2 GB figure.
-const MAP_SIZE_DURABLE: usize = 32 << 30;
-/// The ephemeral kind's map — see [`MAP_SIZE_DURABLE`]'s doc for the
-/// per-kind split and why this one stays small (eager full-map
-/// allocation is the kind's capacity contract).
-const MAP_SIZE_EPHEMERAL: usize = 4 << 30;
+/// The consequence still worth naming — **the hard capacity
+/// ceiling**: resize is deliberately gone (the PRD 22 dead end:
+/// `mdb_env_set_mapsize` racing readers — see [`super::commit::write`]'s
+/// gravestone), so a store that fills the map has hit the wall: the
+/// commit surfaces [`crate::error::Error::Lmdb`] wrapping LMDB's
+/// `MDB_MAP_FULL` (`heed::MdbError::MapFull`), nothing persists, and
+/// the remedy is a new store, never a knob.
+const MAP_SIZE: usize = 32 << 30;
 
 /// Fixed reader-table size: comfortably above any plausible snapshot
 /// concurrency — inter-query parallelism is the design's scaling axis
@@ -248,8 +217,8 @@ const META_SCHEMA_DESCRIPTOR: &[u8] = &[5];
 /// durable constructors (`create`/`open` pass [`StoreKind::Durable`] to
 /// `open_env`, which derives flags from the kind alone — there is no
 /// flag parameter to reach). An ephemeral store
-/// ([`Environment::ephemeral`]) carries `WRITEMAP|NOSYNC`, and its kind
-/// is marked on disk so the durable constructors refuse it typed.
+/// ([`Environment::ephemeral`]) carries `NOSYNC`, and its kind is
+/// marked on disk so the durable constructors refuse it typed.
 pub struct Environment {
     env: heed::Env<WithoutTls>,
     meta: Database<Bytes, Bytes>,

@@ -72,21 +72,17 @@ impl RamDisk {
     /// journaled personality is spelled `"Journaled HFS+"`; `"APFS"`
     /// creates a synthesized container). `diskutil erasevolume` mounts
     /// the volume at `/Volumes/<label>`.
+    /// (Historical note — cleanup-0.5.0 ruling 1: an `attach_sized`
+    /// variant existed because the retired `MDB_WRITEMAP` flag
+    /// ftruncated an ephemeral store's data file to the full map at
+    /// open and HFS+ has no sparse files, so R6 attached a
+    /// map-plus-slack disk. With WRITEMAP and the eager capacity
+    /// contract retired, an ephemeral data file holds only the pages
+    /// committed, and every lane fits the default size.)
     fn attach(personality: &str, label: &str) -> Self {
-        Self::attach_sized(personality, label, RAM_SECTORS)
-    }
-
-    /// [`RamDisk::attach`] with an explicit sector count. R6 needs it:
-    /// an EPHEMERAL store's `MDB_WRITEMAP` ftruncates the data file to
-    /// the full 4 GiB ephemeral map (`MAP_SIZE_EPHEMERAL` — the
-    /// per-kind split keeps the scratch kind's map small) at open, and
-    /// HFS+ has no sparse files, so the disk must hold the whole map
-    /// plus slack (a recorded consequence — `50-storage.md` § the
-    /// ephemeral store kind).
-    fn attach_sized(personality: &str, label: &str, sectors: u64) -> Self {
         let dev = run(
             "hdiutil",
-            &["attach", "-nomount", &format!("ram://{sectors}")],
+            &["attach", "-nomount", &format!("ram://{RAM_SECTORS}")],
         )
         .trim()
         .to_owned();
@@ -228,8 +224,8 @@ fn engine_cells(dir: &Path) -> EngineCells {
 fn scratch_env(dir: &Path, flags: heed::EnvFlags) -> heed::Env {
     let mut options = heed::EnvOpenOptions::new();
     options.map_size(1 << 30).max_dbs(1);
-    // SAFETY: single-threaded single-process scratch environment; NO_SYNC/
-    // WRITE_MAP only trade durability, which the experiment exists to price.
+    // SAFETY: single-threaded single-process scratch environment; NO_SYNC
+    // only trades durability, which the experiment exists to price.
     unsafe { options.flags(flags) };
     // SAFETY: each scratch environment gets a fresh directory, opened once.
     unsafe { options.open(dir).expect("scratch env opens") }
@@ -434,13 +430,14 @@ fn ramdisk_phase_r() {
         // sequential rerun printed a spurious 2.27x trigger against a
         // quiet-machine ~1.1x (the fixit record).
         let r4_root = disk.store_dir("r4");
+        // (Cleanup-0.5.0 ruling 1 retired the third arm here —
+        // `WRITE_MAP|NO_SYNC`, the flag set the ephemeral kind carried
+        // before the ephemeral-lazy unification dropped WRITEMAP; its
+        // recorded phase-2 numbers stand in the decision record, and
+        // the engine no longer has a WRITEMAP configuration to price.)
         let configs = [
             ("default", heed::EnvFlags::empty()),
             ("NO_SYNC", heed::EnvFlags::NO_SYNC),
-            (
-                "WRITE_MAP|NO_SYNC",
-                heed::EnvFlags::WRITE_MAP.union(heed::EnvFlags::NO_SYNC),
-            ),
         ];
         let mut cells: Vec<FlagCell> = configs
             .into_iter()
@@ -589,13 +586,15 @@ fn ramdisk_phase_r_ephemeral() {
 
     let ssd_dir = common::TempDir::new("ramdisk-phase-r6-ssd");
     let hfs_label = format!("bumbleR6-hfs-{pid}");
-    // 6 GiB, not the default 2: WRITEMAP ftruncates the ephemeral
-    // store's data file to the full 4 GiB ephemeral map at open
-    // (MAP_SIZE_EPHEMERAL), and HFS+ has no sparse files (the SSD cells
-    // sit on APFS, where the ftruncate is free but open preallocates the
-    // blocks explicitly — the capacity contract, storage/env/open_env.rs).
-    // Ephemeral-on-HFS+ needs map size + slack.
-    let disk = RamDisk::attach_sized("HFS+", &hfs_label, 12_582_912);
+    // The default 2 GiB disk holds the R6 cells: with WRITEMAP and the
+    // eager capacity contract retired (cleanup-0.5.0 ruling 1), an
+    // ephemeral store's data file holds only the pages committed —
+    // no full-map ftruncate exists for HFS+'s lack of sparse files to
+    // materialize. (This lane's recorded numbers — the 1.0–1.1x device
+    // tax among them — were measured under the retired WRITEMAP|NOSYNC
+    // flag set on a 6 GiB disk: PENDING-RE-EARN, the Measure phase
+    // re-runs the lane.)
+    let disk = RamDisk::attach("HFS+", &hfs_label);
     println!("attached {} at {}", disk.dev, disk.mount.display());
 
     // Cells declared AFTER the disk so their environments close before

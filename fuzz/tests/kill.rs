@@ -1,8 +1,9 @@
-//! The WRITEMAP commit-window kill sweep's deterministic lane
+//! The NOSYNC commit-window kill sweep's deterministic lane
 //! (`fuzz/src/kill.rs` — random-timing SIGKILL against a child's commit
 //! loop, filling the one window the crashpoint sweep cannot cut:
-//! `mdb_txn_commit`'s interior, where `MDB_WRITEMAP` changes the write
-//! pattern). Two lanes: the ephemeral store (`WRITEMAP|NOSYNC`, the
+//! `mdb_txn_commit`'s interior, where the ephemeral kind's `NO_SYNC`
+//! commits leave un-fsynced page-cache state). Two lanes: the
+//! ephemeral store (`NO_SYNC`, the
 //! surface under test) and the durable store as the control; both
 //! assert the same four-point corpse invariant — reopen, `verify_store`
 //! green, a complete batch prefix (all-or-nothing, no third state), and
@@ -66,7 +67,7 @@ fn autopsy_a_preserved_corpse() {
 }
 
 /// The long ephemeral lane: >= 2,000 random-timing kills against
-/// `WRITEMAP|NOSYNC` commit loops.
+/// `NO_SYNC` commit loops.
 #[test]
 #[ignore = "long kill session; see the module doc for the invocation"]
 fn random_kills_recover_on_an_ephemeral_store_long() {

@@ -925,18 +925,19 @@ impl StoreDir {
 impl Drop for StoreDir {
     fn drop(&mut self) {
         // Truncate the data file before unlinking it. An EPHEMERAL
-        // store's data.mdb was ftruncated to the full 4 GiB ephemeral
-        // map (`MDB_WRITEMAP`; `MAP_SIZE_EPHEMERAL` — the per-kind
-        // split keeps the scratch map small; durable stores never
-        // ftruncate) and its dirty pages outlive the close in the
-        // page cache — a plain unlink on a non-sparse volume (the HFS+
-        // ramdisk, `scripts/ramdisk.sh`) then frees the blocks
-        // ASYNCHRONOUSLY, seconds later, so back-to-back crash-sweep
-        // cases outrun reclamation and die StorageFull even on a volume
-        // that comfortably holds one store (the fixit record).
-        // `set_len(0)` discards the dirty pages and frees the blocks
-        // synchronously; on durable stores and non-RAM volumes it is a
-        // harmless no-op-sized truncate.
+        // store commits under `NO_SYNC`, so its pages outlive the close
+        // as dirty page-cache state — a plain unlink on a non-sparse
+        // volume (the HFS+ ramdisk, `scripts/ramdisk.sh`) then frees
+        // the blocks ASYNCHRONOUSLY, seconds later, so back-to-back
+        // crash-sweep cases can outrun reclamation and die StorageFull
+        // (the fixit record — minted when the retired `MDB_WRITEMAP`
+        // flag set ftruncated every ephemeral data file to the full
+        // 4 GiB map, which made the lag fatal on a 5 GiB volume;
+        // cleanup-0.5.0 ruling 1 dropped WRITEMAP, so the file now
+        // holds only the pages committed and the reason survives at
+        // data size, not map size). `set_len(0)` discards the dirty
+        // pages and frees the blocks synchronously; on durable stores
+        // and non-RAM volumes it is a harmless no-op-sized truncate.
         if let Ok(file) = std::fs::OpenOptions::new()
             .write(true)
             .open(self.0.join("data.mdb"))

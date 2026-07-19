@@ -39,7 +39,7 @@ pub fn help() -> String {
          \x20 --samples N     measured samples per read family (default 256)\n\
          \x20 --trace         capture one traced warm+cold sample per family\n\
          \x20 --alloc         allocation windows (needs the obs feature build)\n\
-         \x20 --ephemeral     time against Db::ephemeral stores (WRITEMAP|NOSYNC;\n\
+         \x20 --ephemeral     time against Db::ephemeral stores (NOSYNC;\n\
          \x20                 the in-memory characterization lane)\n\
          \x20 --proxy-per-rep per-sample GHz stamps + normalized p50 (confirm runs)\n\
          \x20 --out PATH      artifact dir (default bench-out/<timestamp>)\n\

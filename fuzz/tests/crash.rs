@@ -34,7 +34,7 @@ fn every_crashpoint_recovers_across_the_prefix_matrix() {
 }
 
 /// The ephemeral twin: the identical crashpoint × matrix product with
-/// the victim store built by `Db::ephemeral` (`WRITEMAP|NOSYNC`) — the
+/// the victim store built by `Db::ephemeral` (`NOSYNC`) — the
 /// empirical verdict on the ephemeral kind's process-kill atomicity
 /// (`docs/architecture/50-storage.md` § the ephemeral store kind): the
 /// same all-or-nothing table, no third observable outcome.

@@ -1,14 +1,20 @@
-//! The WRITEMAP commit-window kill sweep: random-timing SIGKILL against
+//! The NOSYNC commit-window kill sweep: random-timing SIGKILL against
 //! a child committing in a loop — the one crash surface the
-//! deterministic crashpoint sweep structurally cannot reach.
+//! deterministic crashpoint sweep structurally cannot reach. (Named
+//! the WRITEMAP sweep until cleanup-0.5.0 ruling 1 retired `WRITE_MAP`
+//! from the ephemeral flag set; the sweep survives unweakened as the
+//! `NO_SYNC` sweep — the claim it referees is about ephemeral commits
+//! that skip the sync boundary, and those still exist.)
 //!
 //! The gap (`storage/commit.rs` CRASHPOINTS): the named points bracket
 //! `mdb_txn_commit` (`after-judgment` before it, `after-commit` after
 //! it) but nothing cuts INSIDE it — and inside that window is exactly
-//! where `MDB_WRITEMAP` changes the write pattern (dirty pages live in
-//! the shared page cache, the meta update is a plain memcpy into the
-//! map a signal can tear mid-struct, not a single `pwrite`). This
-//! harness fills the gap with the only instrument that can: a real
+//! where the ephemeral kind departs from the durable one (`NO_SYNC`
+//! commits `pwrite` their pages and meta but never cross a sync
+//! boundary, so everything a kill leaves behind is un-fsynced
+//! page-cache state the recovery path must still read back
+//! all-or-nothing). This harness fills the gap with the only
+//! instrument that can: a real
 //! SIGKILL at a uniformly random moment of a commit loop, so kills land
 //! at every instruction boundary of the pipeline, `mdb_txn_commit`'s
 //! interior included.
@@ -28,7 +34,7 @@
 //! session — the calibration).
 //!
 //! The invariant on the corpse (both kinds — the ephemeral admission's
-//! claim is that `WRITEMAP|NOSYNC` changes machine-crash durability and
+//! claim is that `NOSYNC` changes machine-crash durability and
 //! NOTHING about process-kill atomicity):
 //!
 //! 1. the store REOPENS through its kind's constructor — no panic, no
@@ -42,13 +48,13 @@
 //! On any violation the round panics with the full reproduction context
 //! (kind, seed, round, delay, store path) and the store directory is
 //! PRESERVED for autopsy (the success path deletes it; the ramdisk
-//! note: a preserved ephemeral corpse holds the full 4 GiB ephemeral-map
-//! data file (`MAP_SIZE_EPHEMERAL`), so copy it off the volume before
-//! the next long session).
+//! note: a preserved corpse holds only the pages its batches
+//! committed — copy it off the volume before the next long session if
+//! space is tight).
 //!
 //! Two lanes, run by `fuzz/tests/kill.rs`: the EPHEMERAL lane
-//! (`WRITEMAP|NOSYNC` — the surface under test) and the DURABLE lane as
-//! the control (default flags, `pwrite`-based commits). The long lane
+//! (`NO_SYNC` — the surface under test) and the DURABLE lane as
+//! the control (default flags, fsync per commit). The long lane
 //! (>= 2,000 kills each) is `#[ignore]`d; the ~30-round smoke runs in
 //! `scripts/check.sh`. Sessions are recorded in `fuzz/SESSIONS.md`.
 
@@ -302,8 +308,8 @@ pub fn sweep(kind: StoreKind, rounds: u64, seed: u64) {
 /// precedent: a session refuses to start over untriaged evidence): any
 /// `bumbledb-kill-*` entry under the scratch root from ANOTHER process
 /// is either a preserved violation or debris from an interrupted
-/// session — and on the 5 GiB ramdisk a single full-ephemeral-map
-/// (4 GiB) corpse also starves every following store. Autopsy it
+/// session — and on the 5 GiB ramdisk a single 4 GiB ephemeral corpse
+/// also starves every following store. Autopsy it
 /// ([`autopsy`], the `BUMBLEDB_KILL_AUTOPSY` operator test) or remove
 /// it before sweeping.
 fn refuse_stale_corpses() {
@@ -376,7 +382,7 @@ fn run_round(kind: StoreKind, seed: u64, round: u64, delay: Duration) -> u64 {
 /// surviving high-water batch count.
 fn verify_round(store: &Path, kind: StoreKind, ctx: &str) -> u64 {
     // Point 1: the corpse reopens through its kind's constructor. The
-    // ephemeral reopen runs the non-mutating probe plus the WRITEMAP
+    // ephemeral reopen runs the non-mutating probe plus the flagged
     // reopen — both must cross the killed store without refusal.
     let reopened = match kind {
         StoreKind::Durable => Db::open(store, descriptor()),
@@ -562,13 +568,13 @@ impl Drop for ChildGuard {
 /// update). The `mdb_txn_commit` sub-window is not separately
 /// observable from outside the process, so the durable lane's share is
 /// estimated from the kind differential: a durable commit is an
-/// ephemeral commit plus the page `pwrite`s and the sync boundary, and
-/// that surplus lives inside `mdb_txn_commit` (a LOWER bound — the
-/// ephemeral commit's own meta write is in the window too). On the
-/// EPHEMERAL kind the estimate is the duty cycle itself: under
-/// `MDB_WRITEMAP` the dirty pages hit the shared map from the first
-/// staged put, so the OS-flushed-dirty-page surface under test spans
-/// the whole write call, torn-meta sliver included.
+/// ephemeral commit plus the sync boundary, and that surplus lives
+/// inside `mdb_txn_commit` (a LOWER bound — the ephemeral commit's own
+/// page and meta `pwrite`s are in the window too). On the EPHEMERAL
+/// kind the estimate is the duty cycle itself, the honest upper bound:
+/// every kill that interrupts the write call leaves un-fsynced
+/// page-cache state — the `NO_SYNC` surface under test —
+/// `mdb_txn_commit`'s own `pwrite` window included.
 #[derive(Clone, Copy)]
 struct Calibration {
     durable_commit: Duration,
@@ -595,7 +601,7 @@ impl Calibration {
 
     /// The estimated fraction of uniformly-timed kills landing inside
     /// the kind's window under test: `mdb_txn_commit` itself on the
-    /// durable kind, the whole WRITEMAP dirty-page window on the
+    /// durable kind, the whole un-fsynced write-call window on the
     /// ephemeral one (see the struct doc for the model).
     fn in_window_fraction(&self, kind: StoreKind) -> f64 {
         match kind {
@@ -665,10 +671,9 @@ fn calibrate_kind(kind: StoreKind) -> (Duration, f64) {
 /// [`KillStore::delete_on_drop`], so every panic path leaves the corpse
 /// for minimization. The success-path drop truncates `data.mdb` before
 /// unlinking — the same synchronous-reclamation discipline as
-/// [`crate::StoreDir`] (an ephemeral store's full-map — 4 GiB,
-/// `MAP_SIZE_EPHEMERAL` — WRITEMAP file on the non-sparse HFS+ ramdisk
-/// frees asynchronously after a plain unlink, and back-to-back rounds
-/// outrun it).
+/// [`crate::StoreDir`] (un-fsynced dirty pages on the HFS+ ramdisk
+/// free asynchronously after a plain unlink, and back-to-back rounds
+/// outrun reclamation; see the `StoreDir` drop for the fixit record).
 struct KillStore {
     path: PathBuf,
     preserve: bool,

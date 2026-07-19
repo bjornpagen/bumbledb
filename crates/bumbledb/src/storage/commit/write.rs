@@ -31,9 +31,9 @@ const COMMIT_SYNC_RETRIES: u32 = 3;
 /// every commit that reports success fsynced — no mode was born.
 ///
 /// Dead end, recorded per PRD 22: `mdb_env_set_mapsize` racing readers
-/// is eliminated — the map size (`MAP_SIZE_DURABLE`/`MAP_SIZE_EPHEMERAL`,
-/// a per-kind constant, still not a knob) is set once at open and no
-/// resize call exists to race.
+/// is eliminated — the map size (`MAP_SIZE`, one constant for both
+/// kinds, still not a knob) is set once at open and no resize call
+/// exists to race.
 pub(super) fn commit_bounded<T>(mut attempt: impl FnMut() -> Result<T>) -> Result<T> {
     let mut retries = 0u32;
     loop {
