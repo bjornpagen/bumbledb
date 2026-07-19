@@ -152,11 +152,14 @@ describe("ψ query atoms over closed relations", function suite() {
 				.select("i", "s")
 		)
 		// "s" is bound at Escalation.sev (the PRECISE roster) and REBOUND at
-		// the ψ atom's own id — the sealed shape's id stays the WIDE fallback
-		// (`ClosedIdField`, H1's ruling), so the joined slot claims `string`,
-		// and H4's decode makes the claim TRUE: the runtime value is the
-		// handle NAME, lifted through the marshal's one bijection.
-		type RowPin = Expect<Equal<QueryRow<typeof paged>, { readonly i: bigint; readonly s: string }>>
+		// the ψ atom's own id — the sealed shape's id carries the value's OWN
+		// descriptor at its precise type (H1: stop widening the roster), so
+		// the joined slot claims the handle union, and H4's decode makes the
+		// claim TRUE: the runtime value is the handle NAME, lifted through
+		// the marshal's one bijection.
+		type RowPin = Expect<
+			Equal<QueryRow<typeof paged>, { readonly i: bigint; readonly s: "Info" | "Warn" | "Crit" | "Fatal" }>
+		>
 		const pagedUnion = query(Oncall)
 			.rule((r) =>
 				r
@@ -217,9 +220,11 @@ describe("ψ query atoms over closed relations", function suite() {
 		assert.deepEqual(run(critRank, {}), [{ k: 3n }])
 		// The roster judges the id position at lowering — an unknown handle
 		// name is a typed refusal, never a silent empty answer. The ψ atom's
-		// OWN id types at the WIDE fallback (any string spells; H1's ruling),
-		// so this belt is the id position's whole wall.
+		// OWN id types at the PRECISE union too (the sealed shape carries the
+		// value's own descriptor), so the compile tier refuses first and this
+		// belt holds the same wall for untyped callers.
 		assert.throws(function offRoster() {
+			// @ts-expect-error — "Panic" is not in Sev's handle union (the ψ id position is precise)
 			lowerQuery(query(Oncall).rule((r) => r.match(Sev, { id: "Panic", rank: r.var("k") }).select("k")))
 		}, /"Panic" is not a handle of Sev — the roster is Info, Warn, Crit, Fatal/)
 		// The bigint spelling is GONE from the closed surface — a raw id is a
@@ -329,10 +334,11 @@ describe("ψ query atoms over closed relations", function suite() {
 				.match(Course, { id: r.var("c"), level: r.var("k") })
 				.select("c", "g", "k")
 		)
-		// "g" is bound at the ψ atom's own id — the sealed shape's id is the
-		// WIDE fallback (`ClosedIdField`), so the claim is `string` (H1).
+		// "g" is bound at the ψ atom's own id — the sealed shape carries the
+		// value's OWN descriptor at its precise type, so the claim is the
+		// handle union (H1: stop widening the roster).
 		type LevelledPin = Expect<
-			Equal<QueryRow<typeof levelled>, { readonly c: bigint; readonly g: string; readonly k: bigint }>
+			Equal<QueryRow<typeof levelled>, { readonly c: bigint; readonly g: "Failed" | "Passed"; readonly k: bigint }>
 		>
 		assert.equal(levelled.data.rules.length, 1)
 

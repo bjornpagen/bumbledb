@@ -50,8 +50,11 @@ function generate(): string {
 	}
 	lines.push("")
 	for (let i = 0; i < RELATIONS; i += 1) {
+		// The closed reference is spelled with the vocabulary's OWN descriptor
+		// (`Vocab.id`) — the one spelling: a plain u64 column cannot alias a
+		// vocabulary through a declared containment (the roster-agreement wall).
 		lines.push(
-			`const R${i} = relation("R${i}", { id: u64.fresh, ref: u64, kind: u64, at: interval(u64), label: str, score: i64 })`
+			`const R${i} = relation("R${i}", { id: u64.fresh, ref: u64, kind: Vocab${i % VOCABS}.id, at: interval(u64), label: str, score: i64 })`
 		)
 	}
 	lines.push("")

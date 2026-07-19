@@ -253,6 +253,74 @@ describe("query literals, params & membership arrays over closed references", fu
 		}, /a one-element membership array is the bare literal respelled/)
 	})
 
+	test("a duplicate member is the banned respelling — refused at construction, matching the selection tier's voice", function duplicateMembers() {
+		assert.throws(function duplicatePair() {
+			query(Oncall).rule((r) => r.match(Incident, { id: r.var("i"), sev: ["Crit", "Crit"] }).select("i"))
+		}, /relation Incident\.sev: the membership array spells Crit twice — write it once/)
+		assert.throws(function duplicateAmongMany() {
+			query(Oncall).rule((r) => r.match(Incident, { id: r.var("i"), sev: ["Crit", "Fatal", "Crit"] }).select("i"))
+		}, /the membership array spells Crit twice/)
+	})
+
+	test("reordered membership spellings are ONE set — content-addressed to one dense ParamId", function contentAddressed() {
+		// The registry key sorts a copy of the members, so `["Crit","Fatal"]`
+		// in rule 0 and `["Fatal","Crit"]` in rule 1 mint ONE ParamId and one
+		// wire set — the stated sharing law holds for every spelling order.
+		const reordered = query(Oncall)
+			.rule((r) => r.match(Incident, { id: r.var("i"), sev: ["Crit", "Fatal"] }).select("i"))
+			.rule((r) => r.match(Incident, { id: r.var("i"), sev: ["Fatal", "Crit"] }).select("i"))
+		assert.equal(reordered.data.params.length, 1, "two spellings of one set share one registry entry")
+		const oneSpelling = query(Oncall)
+			.rule((r) => r.match(Incident, { id: r.var("i"), sev: ["Crit", "Fatal"] }).select("i"))
+			.rule((r) => r.match(Incident, { id: r.var("i"), sev: ["Crit", "Fatal"] }).select("i"))
+		assert.equal(
+			JSON.stringify(lowerQuery(reordered)),
+			JSON.stringify(lowerQuery(oneSpelling)),
+			"the wire program is the one-spelling program, byte for byte"
+		)
+		assert.deepEqual(incidents(run(reordered, {})), [3n, 4n, 5n])
+	})
+
+	test("a param anchored at both a closed reference and a bare field refuses at construction (one name, one roster)", function paramAnchorCoherence() {
+		// The runtime twin of the type tier's never-intersection: an untyped
+		// caller's mixed-anchor param would ride the FIRST anchor's reading
+		// only (a raw bigint binding the closed field untranslated and
+		// unverified), so the registry refuses the pairing outright.
+		assert.throws(function bareFirst() {
+			query(Oncall).rule((r) => r.match(Incident, { id: r.param("p"), sev: r.param("p"), pri: r.var("x") }).select("x"))
+		}, /query param p is anchored at a non-closed position and at a Sev reference — a closed-anchored param translates handle names through ONE roster/)
+		assert.throws(function closedFirst() {
+			query(Oncall).rule((r) => r.match(Incident, { sev: r.param("p"), id: r.param("p"), pri: r.var("x") }).select("x"))
+		}, /query param p is anchored at a Sev reference and at a non-closed position/)
+		assert.throws(function twoVocabularies() {
+			query(Oncall).rule((r) => r.match(Incident, { id: r.var("i"), sev: r.param("p"), pri: r.param("p") }).select("i"))
+		}, /query param p is anchored at a Sev reference and at a Priority reference/)
+		// One roster across many uses stays legal — the honest spelling executes.
+		const legal = query(Oncall)
+			.rule((r) => r.match(Incident, { id: r.var("i"), sev: r.param("s") }).select("i"))
+			.rule((r) => r.match(Incident, { id: r.var("i"), sev: r.param("s") }).select("i"))
+		assert.deepEqual(incidents(run(legal, { s: "Crit" })), [3n, 5n])
+	})
+
+	test("a closed-descriptor slot never joins a bare u64 slot, even lawless (the roster is join structure)", function rosterJoinWall() {
+		// Without the roster arm a Tag-referencing column with no containment
+		// (bare class) would join a plain bare u64 — and ordering, decode,
+		// and translation would then depend on binding order. The wall holds
+		// at both tiers: the directive is real, the runtime names the slots.
+		const Tag = closed("Tag", ["A", "B"])
+		const Note = relation("Note", { id: u64.fresh, tag: Tag.id, val: u64 })
+		const Twin = schema("Twin", { Tag, Note }, [])
+		assert.throws(function joinAcross() {
+			query(Twin).rule((r) =>
+				r
+					.match(Note, { val: r.var("x") })
+					// @ts-expect-error — "x" first bound at a bare u64: a Tag-referencing slot never joins it (the roster is part of the join shape)
+					.match(Note, { tag: r.var("x") })
+					.select("x")
+			)
+		}, /joins domain-unequal fields — first bound at u64 \(bare\), reused at u64 referencing Tag \(bare\)/)
+	})
+
 	test("membership arrays are CLOSED-ONLY (owner ruling): an ordinary field's array is unwritable and refused", function closedOnlyArrays() {
 		assert.throws(function ordinaryFieldArray() {
 			// @ts-expect-error — id is an ordinary u64: membership there is spelled r.inSet, never a literal array

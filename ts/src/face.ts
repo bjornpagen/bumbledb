@@ -11,11 +11,12 @@
  * positional: tuple order is preserved in the type, and the statement
  * constructors pair the two sides' tuples by arity ({@link SameArity}) AND
  * by structural shape ({@link SameShapes}) — every projected field's
- * kind/width/element triple is read off the schema type (the minimal
- * kernel: descriptors are pure structure) and compared positionwise. There
- * is no domain to compare at construction — domains are LAW-BORN: the
- * statements themselves define the equivalence classes, and `schema()` is
- * where they aggregate and get judged (the one-generator-per-class wall).
+ * kind/width/element/roster quadruple is read off the schema type (the
+ * minimal kernel: descriptors are pure structure, and a closed reference's
+ * roster IS part of that structure) and compared positionwise. There is no
+ * domain to compare at construction — domains are LAW-BORN: the statements
+ * themselves define the equivalence classes, and `schema()` is where they
+ * aggregate and get judged (the one-generator-per-class wall).
  */
 
 import * as errors from "@superbuilders/errors"
@@ -110,20 +111,28 @@ type FaceFields<S extends FaceSource> = S extends AnySelected
 				: never
 
 /**
- * One descriptor's structural comparand: the kind/width/element triple —
- * exactly the structure the minimal kernel carries, compared exactly as the
- * engine's Q1 law pairs positions (`schema/validate.rs`): a `bytes` width is
- * bound (bytes<16> vs bytes<32> mismatch), while an INTERVAL width is FREE —
- * the pointwise judgments quantify over points, which carry an element
- * domain and not a width, so `interval(u64)` pairs with `interval(u64, 1n)`
- * (recipe 9's extent/slot mirrors, recipe 29's mixed-width zones) and the
- * width slot reads `undefined` for every interval. Elements stay bound:
- * u64-vs-i64 interval pairs still mismatch.
+ * One descriptor's structural comparand: the kind/width/element/roster
+ * quadruple — exactly the structure the minimal kernel carries. The first
+ * three slots compare exactly as the engine's Q1 law pairs positions
+ * (`schema/validate.rs`): a `bytes` width is bound (bytes<16> vs bytes<32>
+ * mismatch), while an INTERVAL width is FREE — the pointwise judgments
+ * quantify over points, which carry an element domain and not a width, so
+ * `interval(u64)` pairs with `interval(u64, 1n)` (recipe 9's extent/slot
+ * mirrors, recipe 29's mixed-width zones) and the width slot reads
+ * `undefined` for every interval. Elements stay bound: u64-vs-i64 interval
+ * pairs still mismatch. The ROSTER slot is SDK-only structure (the engine's
+ * wire carries plain u64s): a closed reference contributes its handle
+ * union, every other kind `undefined`, so a plain u64 face cannot pair with
+ * a closed `[id]` face — the vocabulary's own descriptor (`Kind.id`) is the
+ * ONE spelling of a closed reference at this surface, and a bare column
+ * cannot alias a vocabulary through a declared law. The runtime twin is the
+ * statement constructors' roster-identity walk (`statements.ts`).
  */
 type ShapeOf<F extends AnyField> = readonly [
 	F["kind"],
 	F extends { readonly element: unknown } ? undefined : F extends { readonly width: infer W } ? W : undefined,
-	F extends { readonly element: infer E } ? E : undefined
+	F extends { readonly element: infer E } ? E : undefined,
+	F extends { readonly closed: { readonly handles: readonly (infer H extends string)[] } } ? H : undefined
 ]
 
 /** One field's structural shape within a declared field block (`undefined` when the name is foreign). */
@@ -195,10 +204,11 @@ type SameArity<A extends AnyFace, B extends AnyFace> =
  * bijection, or window project structurally incompatible fields at any
  * position, this type is intersected into the second face's parameter and
  * names both shape tuples — a u64 face against a str face, a bytes width
- * mismatch, or an interval element mismatch is a COMPILE error.
+ * mismatch, an interval element mismatch, or a bare column against a
+ * closed reference (the roster slot) is a COMPILE error.
  */
 interface FaceShapeMismatch<Left, Right> {
-	readonly "face shape mismatch — positionwise kind, width, and element must be equal on both sides": readonly [
+	readonly "face shape mismatch — positionwise kind, width, element, and closed roster must be equal on both sides": readonly [
 		Left,
 		Right
 	]
@@ -208,11 +218,12 @@ interface FaceShapeMismatch<Left, Right> {
  * Resolves to `unknown` (a no-op intersection) when the two faces project
  * positionwise-equal structural shapes, and to {@link FaceShapeMismatch}
  * otherwise. Equality is mutual tuple assignability over the
- * kind/width/element triples. This is the whole construction-time wall —
- * deliberately: there is no domain to compare here. The domain wall lives
- * where domains are BORN: `schema()` computes every field's class from the
- * statement list and holds the one-generator-per-class law, and query
- * joins compare class names off the schema type.
+ * kind/width/element/roster quadruples. This is the whole
+ * construction-time wall — deliberately: there is no domain to compare
+ * here (the roster is descriptor STRUCTURE, not a domain). The domain wall
+ * lives where domains are BORN: `schema()` computes every field's class
+ * from the statement list and holds the one-generator-per-class law, and
+ * query joins compare class names off the schema type.
  */
 type SameShapes<A extends AnyFace, B extends AnyFace> =
 	FaceShapes<A> extends FaceShapes<B>

@@ -46,9 +46,12 @@ type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ?
 
 describe("the three class laws", function laws() {
 	test("generators name their classes; a 3-hop chain lands the whole chain in the generator's class; bare stays bare", function chainGolden() {
+		// Closedness rides the descriptor: every chain member referencing the
+		// vocabulary is spelled with the vocabulary's OWN descriptor (the
+		// roster-agreement wall — a plain u64 cannot alias Vocab.id).
 		const Vocab = closed("Vocab", ["Alpha", "Beta"])
-		const A = relation("A", { x: u64, note: str })
-		const B = relation("B", { y: u64 })
+		const A = relation("A", { x: Vocab.id, note: str })
+		const B = relation("B", { y: Vocab.id })
 		const Chain = schema("Chain", { Vocab, A, B }, [
 			contained(on(A, "x"), on(B, "y")),
 			contained(on(B, "y"), on(Vocab, "id"))
@@ -95,7 +98,7 @@ describe("the three class laws", function laws() {
 
 	test("a ψ-selected closed face pairs exactly like the bare face — the selection changes classes not at all", function psiPairing() {
 		const Grade = closed("Grade", { mastered: str }, { Failed: { mastered: "no" }, DirectPass: { mastered: "yes" } })
-		const Certificate = relation("Certificate", { id: u64.fresh, grade: u64 })
+		const Certificate = relation("Certificate", { id: u64.fresh, grade: Grade.id })
 		const Mastery = schema("Mastery", { Grade, Certificate }, [
 			contained(on(Certificate, "grade"), on(Grade.where({ mastered: "yes" }), "id"))
 		])
@@ -164,11 +167,16 @@ describe("the one-generator wall — two mints cannot share a carrier (the re-ho
 		}, /two mints cannot share a carrier.*Left\(id\) <=\{0\.\.3\} Right\(id\)/)
 	})
 
-	test("a closed relation's id is a generator too — unifying it with a fresh coordinate refuses", function closedWall() {
+	test("a closed relation's id is a generator too — unifying it with a fresh coordinate refuses (the roster wall fires first, at construction)", function closedWall() {
+		// The two-mint collision through a closed id is now unreachable: the
+		// statement constructors' roster-agreement wall refuses the pairing
+		// EARLIER (a fresh u64 is a bare column; the closed [id] carries its
+		// roster), so the generator wall behind it can never be reached
+		// through a closed id — the refusal moved earlier and warmer.
 		assert.throws(function runtimeTwin() {
-			// @ts-expect-error — the closed synthetic id generates "Vocab.id"; Left.id is a second mint
+			// @ts-expect-error — a fresh u64 mint never pairs the closed [id]: the roster rides the face shape
 			schema("Broken", { Vocab, Left }, [contained(on(Left, "id"), on(Vocab, "id"))])
-		}, /Left\.id and Vocab\.id|Vocab\.id and Left\.id/)
+		}, /Left\.id is a bare column but Vocab\.id is a Vocab reference — closedness rides the descriptor/)
 	})
 
 	test("the wall fires through a TRANSITIVE chain, naming the statement that closed it", function transitiveWall() {
@@ -188,7 +196,7 @@ describe("the runtime/type agreement and the wire", function agreement() {
 	function buildFixture() {
 		const Vocab = closed("Vocab", ["Alpha", "Beta"])
 		const Holder = relation("Holder", { id: u64.fresh, name: str })
-		const Account = relation("Account", { id: u64.fresh, holder: u64, kind: u64, note: str })
+		const Account = relation("Account", { id: u64.fresh, holder: u64, kind: Vocab.id, note: str })
 		const Terms = relation("Terms", { account: u64 })
 		return schema("Agreement", { Vocab, Holder, Account, Terms }, [
 			contained(on(Account, "holder"), on(Holder, "id")),

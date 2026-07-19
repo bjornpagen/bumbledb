@@ -295,14 +295,52 @@ describe("the ban table, one row at a time — literal spellings are UNWRITABLE"
 		assert.deepStrictEqual(Object.keys(countModule).sort(), ["atLeast", "atMost", "between", "exactly", "none"])
 	})
 
-	test("degenerate literal sets refuse — a membership array needs two members", function probeDegenerateSet() {
+	test("degenerate literal sets refuse — a membership array needs two DISTINCT members, and the refusal locates itself", function probeDegenerateSet() {
 		const { Account } = buildLedger()
+		// Every refusal names the relation and field (`relation Account.kind:`)
+		// — self-locating, the same texture as the query tier's membershipSet.
 		assert.throws(function emptySet() {
 			Account.where({ kind: [] })
-		}, /an empty literal set selects nothing/)
+		}, /relation Account\.kind: an empty literal set selects nothing/)
 		assert.throws(function oneElementSet() {
 			Account.where({ kind: ["Checking"] })
-		}, /a one-element literal set is the bare literal respelled/)
+		}, /relation Account\.kind: a one-element literal set is the bare literal respelled/)
+		// A duplicate member is the banned one-element set respelled — refused
+		// HERE with the canonical-utterance voice, so the engine's index-speak
+		// duplicate error at Db.create is unreachable from this surface.
+		assert.throws(function duplicateMember() {
+			Account.where({ kind: ["Checking", "Checking"] })
+		}, /relation Account\.kind: the literal set spells Checking twice — write it once/)
+		// The ordinary-field twin, same voice (the one selection machine).
+		assert.throws(function duplicateOrdinary() {
+			const { Holder } = buildLedger()
+			Holder.where({ name: ["a", "b", "a"] })
+		}, /relation Holder\.name: the literal set spells "a" twice — write it once/)
+	})
+
+	test("a plain u64 face never pairs a closed [id] face — closedness rides the descriptor (both tiers)", function probeRosterWall() {
+		const { Sev, Limit } = buildSeverity()
+		// The alias spelling — a bare u64 column into the vocabulary's [id] —
+		// dies at statement construction: the vocabulary's own descriptor
+		// (`Sev.id`) is the ONE spelling of a closed reference, so every
+		// descriptor-keyed closed judgment (the orderable ban, the name↔id
+		// marshal, answer decode) stays sound. The directives are real: the
+		// roster is the fourth slot of the face shape.
+		assert.throws(function aliasContainment() {
+			// @ts-expect-error — a plain u64 column cannot alias a closed vocabulary through a containment
+			contained(on(Limit, "cap"), on(Sev, "id"))
+		}, /Limit\.cap is a bare column but Sev\.id is a Sev reference — closedness rides the descriptor/)
+		assert.throws(function aliasReversed() {
+			// @ts-expect-error — the reverse orientation is the same wall (pairing is symmetric)
+			mirrors(on(Sev, "id"), on(Limit, "cap"))
+		}, /Sev\.id is a Sev reference but Limit\.cap is a bare column/)
+		assert.throws(function aliasWindow() {
+			// @ts-expect-error — a window's grouping join holds the roster wall exactly as containment
+			window(on(Sev, "id"), atMost(1n), on(Limit, "cap"))
+		}, /Limit\.cap is a bare column but Sev\.id is a Sev reference/)
+		// The one spelling still constructs and renders canonically.
+		const Alert = relation("Alert", { sev: Sev.id })
+		assert.equal(renderStatement(contained(on(Alert, "sev"), on(Sev, "id"))), "Alert(sev) <= Sev(id)")
 	})
 })
 
@@ -567,15 +605,21 @@ function facesArePairedStructurally(): unknown[] {
  * A closed relation's payload columns pair by their declared descriptors'
  * STRUCTURE through the typed `columns` carrier (whose runtime twin is the
  * frozen `columns` record the mint carries), exactly as an ordinary
- * relation's fields do; the synthetic `id` is a u64.
+ * relation's fields do; the synthetic `id` is a u64 CARRYING ITS ROSTER —
+ * it pairs only a column spelled with the vocabulary's own descriptor
+ * (the roster slot of the face shape; a plain u64 cannot alias it).
  */
 function closedPayloadColumnsPairStructurally(): unknown[] {
 	const { Sev, Limit } = buildSeverity()
 	const { Holder, Account } = buildLedger()
+	const Alert = relation("Alert", { sev: Sev.id })
 	return [
 		// the legal pairs compile — u64 against u64, whichever side is closed
 		contained(on(Sev, "level"), on(Limit, "level")),
 		contained(on(Limit, "level"), on(Sev, "level")),
+		// the closed [id] pairs the vocabulary's OWN descriptor — the one spelling
+		contained(on(Alert, "sev"), on(Sev, "id")),
+		// @ts-expect-error — a plain u64 never pairs a closed [id]: closedness rides the descriptor (the roster slot)
 		contained(on(Limit, "cap"), on(Sev, "id")),
 		// @ts-expect-error — a payload column pairs by structure: u64 never pairs str
 		contained(on(Sev, "level"), on(Holder, "name")),
