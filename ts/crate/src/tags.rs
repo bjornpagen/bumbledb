@@ -162,7 +162,7 @@ wire_tags! {
     /// table serves both op parsers: `agg_op_in` matches these consts and
     /// attaches the Arg keys, `head_term_in` matches them bare — the old
     /// verbatim-duplicate table is dead. `AggOp::head_op` is the engine's
-    /// own exhaustive AggOp ↔ HeadOp twin, so this table covers both enums.
+    /// own exhaustive `AggOp` ↔ `HeadOp` twin, so this table covers both enums.
     mod head_op for HeadOp {
         SUM: HeadOp::Sum => "sum",
         MIN: HeadOp::Min => "min",

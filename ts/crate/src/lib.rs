@@ -17,7 +17,7 @@
 //! argument for the two raw pointers that cross threads here (a prepared
 //! query during `preparedExecute`/`preparedStaleness`, the witness snapshot
 //! during `dbWriteFrom` entry — each dereferenced only while the JS thread
-//! is blocked on the corresponding reply). WriteTx point reads are the
+//! is blocked on the corresponding reply). `WriteTx` point reads are the
 //! engine's own final-state view, live, never simulated.
 //!
 //! # Handle lifecycle
@@ -70,6 +70,7 @@ use marshal::{ManifestWire, OwnedParam, StalenessWire, ValueOut, ViolationWire};
 /// engine's `STORAGE_FORMAT_VERSION` — a genuine engine export, which is what
 /// makes the string proof rather than decoration.
 #[napi]
+#[must_use]
 pub fn engine_version() -> String {
     format!(
         "bumbledb-node {} (bumbledb storage format v{})",
@@ -152,6 +153,11 @@ macro_rules! reply {
 macro_rules! outcome_to_napi {
     ($ty:ty { $( $variant:ident $(( $($tuple:ident),+ ))? $({ $($field:ident),+ })? => { $($key:literal : $value:expr),+ $(,)? } ),+ $(,)? }) => {
         impl ToNapiValue for $ty {
+            #[expect(
+                unsafe_code,
+                reason = "napi declares `ToNapiValue::to_napi_value` unsafe; the impl only \
+                          builds a plain object and delegates to napi's own impls"
+            )]
             unsafe fn to_napi_value(env: sys::napi_env, val: Self) -> napi::Result<sys::napi_value> {
                 let env_handle = napi::Env::from_raw(env);
                 let mut obj = Object::new(&env_handle)?;
@@ -160,6 +166,8 @@ macro_rules! outcome_to_napi {
                         $(obj.set($key, $value)?;)+
                     })+
                 }
+                // SAFETY: `env` is the live environment napi handed this very
+                // call, and `obj` was created against it two lines up.
                 unsafe { Object::to_napi_value(env, obj) }
             }
         }
@@ -267,6 +275,11 @@ fn open_with(
 /// ruling 3: the bridge exposes no ephemeral kind). Schema resolution and
 /// validation failures return as data; environment failures throw.
 #[napi]
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "napi export signature: the FFI hands the bridge an owned String \\
+              (an `expect` is untrackable through the #[napi] expansion)"
+)]
 pub fn db_create(path: String, spec: Object) -> napi::Result<OpenOutcome> {
     open_with(&path, &spec, |path, descriptor| {
         Db::create(path, descriptor)
@@ -276,8 +289,13 @@ pub fn db_create(path: String, spec: Object) -> napi::Result<OpenOutcome> {
 /// Opens an existing durable store, verifying format version, store kind,
 /// and schema fingerprint (`fingerprintMismatch` as data).
 #[napi]
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "napi export signature: the FFI hands the bridge an owned String \\
+              (an `expect` is untrackable through the #[napi] expansion)"
+)]
 pub fn db_open(path: String, spec: Object) -> napi::Result<OpenOutcome> {
-    open_with(&path, &spec, |path, descriptor| Db::open(path, descriptor))
+    open_with(&path, &spec, Db::open)
 }
 
 /// Closes the handle. Dependent handles (snapshots, transactions, prepared
@@ -315,11 +333,20 @@ pub fn db_fingerprint(db: &External<DbHandle>) -> napi::Result<String> {
         .validate()
         .map_err(|error| marshal::err(error.to_string()))?;
     let fingerprint = bumbledb::schema::fingerprint::fingerprint(&schema);
-    Ok(fingerprint
-        .0
+    Ok(hex_fingerprint(&fingerprint.0))
+}
+
+/// 32 fingerprint bytes as their 64 lowercase hex chars — the ONE wire
+/// spelling of the cross-host identity (the `fingerprint_lock` test renders
+/// its pin through this same function).
+fn hex_fingerprint(bytes: &[u8; 32]) -> String {
+    use std::fmt::Write as _;
+    bytes
         .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect())
+        .fold(String::with_capacity(64), |mut hex, byte| {
+            let _ = write!(hex, "{byte:02x}");
+            hex
+        })
 }
 
 /// The current committed generation (diagnostics; the write-side witness is
@@ -355,6 +382,12 @@ pub struct ExhumeHandle {
 /// adoption-era refusals as data (`descriptorMissing`, `formatMismatch`,
 /// `corruption`). Everything else — a missing path, a held exclusive lock —
 /// throws, exactly as `dbOpen`'s environment failures do.
+#[expect(
+    clippy::large_enum_variant,
+    reason = "the outcome is built once, marshaled to JS, and dropped — it \
+              never sits in a collection, so boxing would buy one allocation \
+              per crossing and nothing else"
+)]
 pub enum ExhumeOutcome {
     Ok(External<ExhumeHandle>),
     Refused { kind: &'static str, message: String },
@@ -373,6 +406,11 @@ outcome_to_napi!(ExhumeOutcome {
 /// mismatch, and the descriptor integrity corruptions
 /// (fingerprint/descriptor desync, undecodable bytes).
 #[napi]
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "napi export signature: the FFI hands the bridge an owned String \\
+              (an `expect` is untrackable through the #[napi] expansion)"
+)]
 pub fn db_exhume(path: String) -> napi::Result<ExhumeOutcome> {
     match exhume(std::path::Path::new(&path)) {
         Ok(exhumed) => Ok(ExhumeOutcome::Ok(External::new(ExhumeHandle { exhumed }))),
@@ -410,6 +448,11 @@ pub fn exhume_descriptor(exhume: &External<ExhumeHandle>) -> napi::Result<Manife
 /// descriptor is the caller's roster, so a miss is a programming error,
 /// never a domain outcome.
 #[napi]
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "napi export signature: the FFI hands the bridge an owned String \\
+              (an `expect` is untrackable through the #[napi] expansion)"
+)]
 pub fn exhume_scan(
     exhume: &External<ExhumeHandle>,
     relation_name: String,
@@ -555,6 +598,11 @@ fn param_args(params: &[OwnedParam]) -> Result<Vec<ParamArg<'_>>, WireError> {
         .collect()
 }
 
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "thread entry: the worker must OWN its engine reference and \
+              channel ends for the 'static spawn"
+)]
 fn run_snapshot(db: Arc<Engine>, requests: Receiver<SnapReq>, replies: Sender<SnapReply>) {
     let outcome = db.read(|snap| {
         if replies.send(SnapReply::Ready(Ok(()))).is_err() {
@@ -570,12 +618,33 @@ fn run_snapshot(db: Arc<Engine>, requests: Receiver<SnapReq>, replies: Sender<Sn
                     SnapReply::Row(snap.get_dyn(relation, key, &values).map_err(|e| wire(&e)))
                 }
                 SnapReq::Execute { prepared, params } => {
+                    // SAFETY: the address is `preparedExecute`'s live
+                    // `&mut PreparedInner::prepared`, taken under `live_mut`'s
+                    // exclusive borrow; the JS thread blocks on this request's
+                    // reply for the whole dereference (module doc, threading
+                    // model), so no second reference exists anywhere.
+                    #[expect(
+                        unsafe_code,
+                        reason = "a prepared query cannot cross the FFI as a closure \
+                                  capture; its address rides the request while the JS \
+                                  thread blocks on the reply"
+                    )]
                     let prepared = unsafe {
                         &mut *(prepared as *mut PreparedQuery<'static, SchemaDescriptor>)
                     };
                     SnapReply::Rows(execute_rows(snap, prepared, &params))
                 }
                 SnapReq::Staleness { prepared } => {
+                    // SAFETY: `preparedStaleness`'s live shared borrow of
+                    // `PreparedInner::prepared`; the JS thread blocks on this
+                    // request's reply for the whole dereference, so the borrow
+                    // outlives every use here.
+                    #[expect(
+                        unsafe_code,
+                        reason = "a prepared query cannot cross the FFI as a closure \
+                                  capture; its address rides the request while the JS \
+                                  thread blocks on the reply"
+                    )]
                     let prepared =
                         unsafe { &*(prepared as *const PreparedQuery<'static, SchemaDescriptor>) };
                     SnapReply::Staleness(staleness_wire(snap, prepared))
@@ -800,6 +869,11 @@ impl Drop for TxWorker {
     }
 }
 
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "thread entry: the worker must OWN its engine reference and \
+              channel ends for the 'static spawn"
+)]
 fn run_tx(
     db: Arc<Engine>,
     sealed: Arc<Sealed>,
@@ -854,6 +928,18 @@ fn run_tx(
     };
     let result = match witness {
         Some(address) => {
+            // SAFETY: the address is the snapshot worker's own
+            // `SnapReq::Witness` reply — a `Snapshot` parked inside
+            // `Db::read` on a thread that outlives this entry: `dbWriteFrom`
+            // holds the snapshot handle's live borrow and blocks on the
+            // begin verdict, so the snapshot cannot close before
+            // `write_from` has read its generation.
+            #[expect(
+                unsafe_code,
+                reason = "the witness snapshot lives inside another worker's engine \
+                          closure and cannot cross the FFI; its address rides the \
+                          spawn while the JS thread blocks on the begin verdict"
+            )]
             let snap = unsafe { &*(address as *const Snapshot<'static, SchemaDescriptor>) };
             db.write_from(snap, serve)
         }
@@ -1129,6 +1215,12 @@ struct PreparedInner {
 }
 
 /// `dbPrepare`'s domain outcome.
+#[expect(
+    clippy::large_enum_variant,
+    reason = "the outcome is built once, marshaled to JS, and dropped — it \
+              never sits in a collection, so boxing would buy one allocation \
+              per crossing and nothing else"
+)]
 pub enum PrepareOutcome {
     Ok(External<PreparedHandle>),
     IrError(String),
@@ -1156,6 +1248,12 @@ pub fn db_prepare(db: &External<DbHandle>, program: Object) -> napi::Result<Prep
     // cache data owned by the engine behind `engine` (an `Arc` whose heap
     // address is stable); `PreparedInner` carries that `Arc` and declares
     // `prepared` first, so the borrow always drops before its owner.
+    #[expect(
+        unsafe_code,
+        reason = "the self-referential handle (prepared query + its owning Arc) \
+                  needs a lifetime erasure; the SAFETY comment above carries the \
+                  drop-order argument"
+    )]
     let prepared = unsafe {
         std::mem::transmute::<
             PreparedQuery<'_, SchemaDescriptor>,
