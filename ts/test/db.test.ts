@@ -23,6 +23,7 @@ import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
 import { after, describe, test } from "node:test"
+import * as errors from "@superbuilders/errors"
 
 import type { Db as DbValue, InsertFact, ReadScope, Tx } from "#index.ts"
 import {
@@ -33,6 +34,7 @@ import {
 	closed,
 	contained,
 	Db,
+	ErrWitnessedLivelock,
 	i64,
 	interval,
 	key,
@@ -44,6 +46,7 @@ import {
 	span,
 	str,
 	u64,
+	WITNESSED_ATTEMPT_CAP,
 	window
 } from "#index.ts"
 
@@ -397,6 +400,37 @@ describe("the Db runtime against a real store", function suite() {
 			return holder.name.startsWith("wit-count-")
 		})
 		assert.equal(landed.length, 1, "only the fresh-premise attempt committed")
+	})
+
+	test("writeWitnessed refuses the livelock with the typed cap error", function witnessedLivelock() {
+		/**
+		 * The pathology the cap exists for: the callback itself commits an
+		 * interleaved plain write before its first tx verb on EVERY attempt,
+		 * so every rerun re-moves the generation it is about to witness —
+		 * an uncapped loop would spin forever. The typed error must arrive
+		 * after exactly WITNESSED_ATTEMPT_CAP attempts (the cap is what
+		 * keeps this test fast), and it is THROWN — host-policy pathology,
+		 * never a WriteResult arm.
+		 */
+		let attempts = 0
+		const spun = errors.trySync(function spin() {
+			return db.writeWitnessed(function livelock(snap, tx) {
+				attempts += 1
+				const mover = db.write(function race(inner) {
+					inner.insert(Holder, { name: `livelock-mover-${attempts}-${snap.generation}` })
+				})
+				assert.ok(mover.ok, "each interleaved write lands and moves the generation")
+				tx.insert(Holder, { name: "livelock-never-lands" })
+			})
+		})
+		assert.ok(spun.error, "the capped loop throws instead of spinning")
+		assert.ok(errors.is(spun.error, ErrWitnessedLivelock), "the throw is the typed livelock error, errors.is-matchable")
+		assert.match(spun.error.message, /livelock/, "the message names the livelock shape")
+		assert.equal(attempts, WITNESSED_ATTEMPT_CAP, "every attempt ran once, then the cap refused promptly")
+		const ghosts = db.scan(Holder).filter(function witnessedRows(holder) {
+			return holder.name === "livelock-never-lands"
+		})
+		assert.equal(ghosts.length, 0, "no witnessed attempt ever committed")
 	})
 
 	test("writeWitnessed surfaces engine rejection as data", function witnessedRejection() {

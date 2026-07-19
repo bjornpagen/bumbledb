@@ -668,6 +668,32 @@ const planReclaimer = new FinalizationRegistry<PreparedHandle>(function reclaimP
 const generationMovedSignal = errors.new("bumbledb witnessed generation moved")
 
 /**
+ * The witnessed loop's attempt cap — a generous power of two. Benign
+ * self-inflicted contention (the host's own commits landing between an
+ * attempt's snapshot and its witnessed begin) converges in a handful of
+ * retries because each rerun reads a FRESHER snapshot; a workload that moves
+ * the generation on EVERY one of this many consecutive attempts is not
+ * converging and never will (see {@link ErrWitnessedLivelock}).
+ */
+const WITNESSED_ATTEMPT_CAP = 64
+
+/**
+ * The typed livelock refusal `writeWitnessed` throws past
+ * {@link WITNESSED_ATTEMPT_CAP} attempts: every attempt found the generation
+ * moved, which is only sustainable when the callback ITSELF (even
+ * indirectly) issues an interleaved plain `db.write` before its first tx
+ * verb on every attempt — each rerun then re-moves the generation it is
+ * about to witness, forever. That is host-policy pathology, not engine
+ * judgment (the engine ships the error, never a loop), so it THROWS rather
+ * than returning a result arm. Match with `errors.is`; the remedy is to
+ * move the interleaved write out of the callback (or make it first-attempt
+ * only — the delta belongs on `tx`, premise reads on `snap`).
+ */
+const ErrWitnessedLivelock = errors.new(
+	"bumbledb writeWitnessed livelock: the generation moved on every attempt — the callback itself commits an interleaved write each try, so no snapshot can ever stay current"
+)
+
+/**
  * Fills one insert's omitted fresh cells through the engine's
  * alloc-then-insert dyn lane (there is no insert-with-omitted-fields wire
  * spelling) and collects every fresh cell — minted or resupplied — for the
@@ -1298,13 +1324,32 @@ function openDb<Rels extends SchemaRelations>(handle: DbHandle, theory: Schema<R
 		return commitWitnessed(state, txHandle)
 	}
 
+	/**
+	 * The witnessed retry loop. What it retries: the benign race — the
+	 * host's OWN interleaved commit landing between an attempt's snapshot
+	 * and its witnessed begin (every writer shares this handle, so a move
+	 * is always self-inflicted) — by rerunning the WHOLE callback on a
+	 * fresh snapshot, which converges because each rerun witnesses a
+	 * strictly newer generation. What it refuses: the pathology where the
+	 * callback itself (even indirectly) issues a plain `db.write` before
+	 * its first tx verb, moving the generation on EVERY attempt — an
+	 * unbounded loop would spin forever with no diagnostic, so past
+	 * {@link WITNESSED_ATTEMPT_CAP} attempts the loop throws the typed
+	 * {@link ErrWitnessedLivelock} instead (the engine's ruling: the
+	 * error, never a loop — retry is host policy, and this is the host
+	 * policy's own honesty bound).
+	 */
 	function writeWitnessed<R>(fn: (snap: ReadScope<Rels>, tx: Tx<Rels>) => R): WitnessedWriteResult<Rels, R> {
-		for (;;) {
+		for (let attempts = 0; attempts < WITNESSED_ATTEMPT_CAP; attempts += 1) {
 			const attempt = witnessedAttempt(fn)
 			if (attempt !== undefined) {
 				return attempt
 			}
 		}
+		throw errors.wrap(
+			ErrWitnessedLivelock,
+			`writeWitnessed livelock: the generation moved on all ${WITNESSED_ATTEMPT_CAP} attempts against schema ${theory.name}`
+		)
 	}
 
 	/**
@@ -1581,4 +1626,4 @@ export type {
 	WitnessedWriteResult,
 	WriteResult
 }
-export { abandon, Db, ErrNewtypeMismatch }
+export { abandon, Db, ErrNewtypeMismatch, ErrWitnessedLivelock, WITNESSED_ATTEMPT_CAP }
