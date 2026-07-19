@@ -65,7 +65,7 @@ function build(): void {
 		throw errors.new(`cargo build exited with status ${cargo.status}`)
 	}
 
-	ensureLocalPlatformPackage(packageRoot, publishPackageDir, localPackageDir, version)
+	ensureLocalPlatformPackage(publishPackageDir, localPackageDir, version)
 	const artifact = path.join(packageRoot, "crate", "target", "release", nativeArtifactName(process.platform))
 	const nodeBinary = path.join(localPackageDir, "bumbledb.node")
 	fs.copyFileSync(artifact, nodeBinary)
@@ -149,12 +149,7 @@ function readJson(file: string): Record<string, unknown> {
  * Publishing is untouched: the publish runbook names `./npm/darwin-arm64`
  * explicitly and this dir never enters the registry.
  */
-function ensureLocalPlatformPackage(
-	packageRoot: string,
-	publishPackageDir: string,
-	localPackageDir: string,
-	version: string
-): void {
+function ensureLocalPlatformPackage(publishPackageDir: string, localPackageDir: string, version: string): void {
 	fs.mkdirSync(localPackageDir, { recursive: true })
 	if (LOCAL_PLATFORM === PUBLISH_PLATFORM) {
 		return
