@@ -480,9 +480,18 @@ is the consumer that names its shape.)
   `Db::bulk_load_dyn` (the ETL/FFI lane) — `Db`-level methods,
   not write-closure operations (see the ETL section).
 - **WriteTx point reads (decision):** `tx.contains(&fact) -> bool` (membership — the `insert`/`delete`
-  return value's read-only sibling) and `tx.get::<F>(key) -> Option<F<'_>>` — lookup
-  of the full fact through any key FD of its relation (typed via the key's newtype
-  signature; `_dyn` form takes relation + statement id + encoded key). The typed get
+  return value's read-only sibling) and `tx.get(key) -> Option<K::Fact>` — lookup
+  of the full fact through a typed key value: `key` implements the `Key` trait,
+  whose TYPE carries the fact type it determines and the key statement it reads
+  through (`K::STATEMENT`, computed at `schema!` expansion from the materialized
+  order). Key values are the generated fresh newtypes (each fresh field's auto
+  key) and — KG-2 — the generated key structs of declared `R(x, ..) -> R`
+  statements; two key FDs over one newtype are two distinct Rust types, so which
+  statement a read goes through is never a runtime question, and a cross-schema
+  key is a compile error. The committed-state twin is `snap.get(key)` on the read
+  scope (`db.read(|snap| snap.get(key))` — no `Db`-level sugar: the freeze keeps
+  `Db` minimal, TS carries the symmetry sugar). The `_dyn` form takes relation +
+  statement id + encoded key for data-supplied statements. The typed get
   returns a **view at the transaction lifetime**: variable-width fields borrow from
   the committed dictionary (mmap pages, txn-stable by LMDB CoW) or this
   transaction's pending interns (the delta arena — read-your-writes included),
@@ -494,7 +503,7 @@ is the consumer that names its shape.)
 
   ```rust
   db.write(|tx| {
-      match tx.get::<Account>(id)? {
+      match tx.get(id)? {
           Some(old) => { tx.delete(&old)?; tx.insert(&Account { balance: old.balance + x, ..old })?; }
           None      => { tx.insert(&Account { id, balance: x, ..default })?; }
       }

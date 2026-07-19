@@ -1,4 +1,4 @@
-use super::{Fact, Snapshot};
+use super::{Fact, Key, Snapshot};
 use crate::api::prepared::{Answers, BindValue, ParamArg, PreparedQuery};
 use crate::error::{FactShapeError, Result};
 use crate::ir::Value;
@@ -203,6 +203,49 @@ impl<S> Snapshot<'_, S> {
                 })
             })
             .transpose()
+    }
+
+    /// Point lookup of the full fact through a typed key value ([`Key`]),
+    /// against committed state — the committed-state sibling of
+    /// [`super::WriteTx::get`]: the key value's TYPE carries the relation
+    /// and the key statement (`K::STATEMENT`, computed at `schema!`
+    /// expansion), so which key FD a read goes through is never a runtime
+    /// question. A **closed** relation resolves against its sealed
+    /// extension. No `Db`-level sugar fronts this — the Rust read scope IS
+    /// `db.read(|snap| snap.get(key))` (recorded decision: the freeze
+    /// keeps `Db` minimal; the TS surface carries the symmetry sugar).
+    ///
+    /// Variable-width fields of the returned fact borrow from the
+    /// snapshot's dictionary at the snapshot lifetime — copy
+    /// (`to_owned()`) what must outlive it.
+    ///
+    /// # Errors
+    ///
+    /// `FactShape` when a manual `Key` impl lies about its statement
+    /// (typed, never a panic); `Lmdb`/`Corruption` from storage.
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "a key value is the read's input, spelled `snap.get(id)`: fresh \
+                  newtypes are Copy and generated key structs are small — \
+                  by-value keeps every call site free of `&` noise"
+    )]
+    pub fn get<'snap, K: Key<'snap, Schema = S>>(&'snap self, key: K) -> Result<Option<K::Fact>> {
+        let relation = <K::Fact as Fact<'snap>>::RELATION;
+        let (_, statement) = super::get::key_statement_of(self.schema, relation, K::STATEMENT)?;
+        let mut determinant = Vec::new();
+        if !key.determinant_read(self, &mut determinant)? {
+            return Ok(None);
+        }
+        let rel = self.schema.relation(relation);
+        let bytes = if rel.is_closed() {
+            super::get::closed_fact_by_determinant(rel, statement, &determinant)
+        } else {
+            match read::determinant_row(&self.txn, relation, statement.id, &determinant)? {
+                Some(row) => Some(read::fetch(&self.txn, self.schema, relation, row)?),
+                None => None,
+            }
+        };
+        bytes.map(|fact| K::Fact::decode(self, fact)).transpose()
     }
 
     /// The typed sibling of [`Snapshot::scan`]: decodes each fact into its

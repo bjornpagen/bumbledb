@@ -37,7 +37,13 @@
 //! and a trailing comma with no width are expansion errors naming the
 //! field); a vocabulary is a closed relation, never a type. `as NewType` generates the host-side nominal newtype
 //! (legal on u64, i64, `bytes<N>`, and both intervals). `fresh`
-//! auto-materializes `R(field) -> R` at schema resolution. **There are no field-level constraint modifiers** — everything
+//! auto-materializes `R(field) -> R` at schema resolution, and its
+//! newtype implements the engine's `Key`: the auto key's `StatementId`
+//! is computed here at expansion (the fresh field's ordinal in the
+//! materialized order's first block), so `tx.get(id)` / `snap.get(id)`
+//! read through the key value's type — every fresh field of every
+//! ordinary relation gets one, several keys over one relation being
+//! several distinct Rust types. **There are no field-level constraint modifiers** — everything
 //! relational is a dependency statement between the relation blocks
 //! (docs/architecture/30-dependencies.md): `R(X) -> R` (functionality —
 //! read as the functional dependency it spells: the key projection
@@ -1029,16 +1035,25 @@ pub fn schema(input: TokenStream) -> TokenStream {
     emit_id_constants(&mut out, &schema);
     emit_newtypes(&mut out, &schema.relations);
     emit_closed(&mut out, &schema.relations);
+    // The running fresh-field ordinal across ALL relations in declaration
+    // order (field order within) — exactly the first block of
+    // `SchemaDescriptor::materialized_statements`, so each fresh field's
+    // ordinal IS its auto-key `StatementId`, computed here at expansion,
+    // never discovered at runtime.
+    let mut fresh_ordinal = 0usize;
     for (index, relation) in schema.relations.iter().enumerate() {
+        let fresh_count = relation.fields.iter().filter(|field| field.fresh).count();
         // No fact struct and no `Fact`/`Fresh` impls for a closed relation:
         // its rows are ground axioms and the relation is unwritable — a
         // writable struct would be a lie the type system tells. Reads go
         // through queries and the dyn surface
         // (`docs/architecture/70-api.md`).
         if relation.closed.is_some() {
+            fresh_ordinal += fresh_count;
             continue;
         }
-        emit_fact_struct(&mut out, &schema.name, index, relation);
+        emit_fact_struct(&mut out, &schema.name, index, relation, fresh_ordinal);
+        fresh_ordinal += fresh_count;
     }
     out.parse().expect("schema!: generated code parses")
 }
@@ -2331,7 +2346,13 @@ fn decode_arm(field: &Field, idx: usize, ctx: &str, suffix: &str) -> String {
     }
 }
 
-fn emit_fact_struct(out: &mut String, schema_name: &str, index: usize, relation: &Relation) {
+fn emit_fact_struct(
+    out: &mut String,
+    schema_name: &str,
+    index: usize,
+    relation: &Relation,
+    fresh_base: usize,
+) {
     let name = &relation.name;
     // A struct with any variable-width field gains one lifetime: those
     // fields are borrowed (`&'a str` / `&'a [u8]`) — from the host at
@@ -2402,7 +2423,16 @@ fn emit_fact_struct(out: &mut String, schema_name: &str, index: usize, relation:
          }}\n",
     );
 
-    // Fresh-minting newtypes: `tx.alloc::<NewType>()` knows its field.
+    // Fresh-minting newtypes: `tx.alloc::<NewType>()` knows its field,
+    // and each newtype is a typed point-read key (`::bumbledb::Key`) —
+    // the value reads through its auto-materialized `R(field) -> R`,
+    // whose `StatementId` is this fresh field's ordinal among ALL fresh
+    // fields (relation declaration order, then field order): the first
+    // block of `SchemaDescriptor::materialized_statements`, replayed
+    // here at expansion. EVERY fresh field of an ordinary relation gets
+    // one — several fresh keys over one relation are several distinct
+    // Rust types, so no single-fresh restriction exists.
+    let mut auto_key_id = fresh_base;
     for (field_idx, field) in relation.fields.iter().enumerate() {
         let (true, Some(newtype)) = (field.fresh, &field.newtype) else {
             continue;
@@ -2415,25 +2445,21 @@ fn emit_fact_struct(out: &mut String, schema_name: &str, index: usize, relation:
                  const FIELD: ::bumbledb::schema::FieldId = ::bumbledb::schema::FieldId({field_idx});\n\
                  fn from_fresh(raw: u64) -> Self {{ Self(raw) }}\n\
                  fn fresh(self) -> u64 {{ self.0 }}\n\
+             }}\n\
+             impl<'a> ::bumbledb::Key<'a> for {newtype} {{\n\
+                 type Schema = {schema_name};\n\
+                 type Fact = {self_ty};\n\
+                 const STATEMENT: ::bumbledb::schema::StatementId = ::bumbledb::schema::StatementId({auto_key_id});\n\
+                 fn determinant_read(&self, _snap: &::bumbledb::Snapshot<'_, {schema_name}>, out: &mut ::std::vec::Vec<u8>) -> ::bumbledb::Result<bool> {{\n\
+                     ::bumbledb::__private::append_key_field(::bumbledb::__private::ValueRef::U64(self.0), out);\n\
+                     Ok(true)\n\
+                 }}\n\
+                 fn determinant_write(&self, _tx: &::bumbledb::WriteTx<'_, {schema_name}>, out: &mut ::std::vec::Vec<u8>) -> ::bumbledb::Result<bool> {{\n\
+                     ::bumbledb::__private::append_key_field(::bumbledb::__private::ValueRef::U64(self.0), out);\n\
+                     Ok(true)\n\
+                 }}\n\
              }}\n",
         );
-    }
-
-    // Exactly one fresh field: the typed point-read key
-    // (`WriteTx::get::<Fact>(id)`). Relations with zero or several fresh
-    // fields have no single dominant key — those read through `get_dyn`
-    // (the multi-key typed shape is an OPEN item, 70-api.md).
-    let fresh_fields: Vec<&Field> = relation.fields.iter().filter(|f| f.fresh).collect();
-    if let [fresh_field] = fresh_fields.as_slice() {
-        let newtype = fresh_field
-            .newtype
-            .as_ref()
-            .expect("parser demands `as NewType` on fresh fields");
-        let _ = write!(
-            out,
-            "impl<'a> ::bumbledb::FreshKeyed<'a> for {self_ty} {{\n\
-                 type FreshKey = {newtype};\n\
-             }}\n",
-        );
+        auto_key_id += 1;
     }
 }

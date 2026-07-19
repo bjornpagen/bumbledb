@@ -6,7 +6,7 @@
 //! determinant gets: no images, no plans, no snapshot.
 
 use super::encode_dyn::shape_mismatch;
-use super::{Fact, Fresh, FreshKeyed, InternMode, WriteTx, plumbing};
+use super::{Fact, InternMode, Key, WriteTx, plumbing};
 use crate::encoding::encode_u64;
 use crate::error::{FactShapeError, Result};
 use crate::ir::Value;
@@ -155,12 +155,14 @@ impl<S> WriteTx<'_, S> {
         })
     }
 
-    /// Point lookup of the full fact through the relation's fresh key —
+    /// Point lookup of the full fact through a typed key value ([`Key`]) —
     /// reads observe the final-state view the judgment phase will judge
     /// (`docs/architecture/70-api.md`): the delta's determinant map first, the
-    /// committed `U` → `F` path otherwise. Typed sugar for the dominant
-    /// single-fresh-field case; every other key goes through
-    /// [`WriteTx::get_dyn`].
+    /// committed `U` → `F` path otherwise. The key value's TYPE carries the
+    /// relation and the key statement (`K::STATEMENT`, computed at `schema!`
+    /// expansion), so which key FD a read goes through is never a runtime
+    /// question. The committed-state sibling is [`super::Snapshot::get`];
+    /// data-supplied key statements go through [`WriteTx::get_dyn`].
     ///
     /// The returned fact is a **view at the transaction's lifetime**:
     /// variable-width fields borrow from the committed dictionary (mmap
@@ -180,7 +182,7 @@ impl<S> WriteTx<'_, S> {
     ///
     /// fn add(db: &bumbledb::Db<Ledger>, id: AccountId, x: i64) -> bumbledb::Result<()> {
     ///     db.write(|tx| {
-    ///         match tx.get::<Account>(id)? {
+    ///         match tx.get(id)? {
     ///             Some(old) => {
     ///                 tx.delete(&old)?;
     ///                 tx.insert(&Account { balance: old.balance + x, ..old })?;
@@ -200,26 +202,41 @@ impl<S> WriteTx<'_, S> {
     /// # add(&db, id, 10).unwrap();
     /// # add(&db, id, 32).unwrap();
     /// # db.write(|tx| {
-    /// #     assert_eq!(tx.get::<Account>(id)?.expect("upserted").balance, 42);
+    /// #     assert_eq!(tx.get(id)?.expect("upserted").balance, 42);
     /// #     Ok(())
     /// # }).unwrap();
     /// ```
     ///
     /// # Errors
     ///
-    /// `Lmdb` on the determinant probe, `Corruption` on undecodable stored
-    /// bytes.
-    pub fn get<'tx, F>(&'tx self, id: F::FreshKey) -> Result<Option<F>>
-    where
-        F: FreshKeyed<'tx, Schema = S>,
-    {
-        // The fresh field's determinant is its canonical u64 encoding — the
-        // one-field instance of the determinant-byte format `get_dyn` spells
-        // out value by value.
-        let determinant = encode_u64(id.fresh());
-        let key = self.fresh_key(F::RELATION, <F::FreshKey as Fresh>::FIELD);
-        match self.fact_by_determinant(F::RELATION, key, &determinant)? {
-            Some(bytes) => F::decode_write(self, bytes).map(Some),
+    /// `FactShape` when a manual `Key` impl lies about its statement
+    /// (typed, never a panic); `Lmdb` on the determinant probe,
+    /// `Corruption` on undecodable stored bytes.
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "a key value is the read's input, spelled `tx.get(id)`: fresh \
+                  newtypes are Copy and generated key structs are small — \
+                  by-value keeps every call site free of `&` noise"
+    )]
+    pub fn get<'tx, K: Key<'tx, Schema = S>>(&'tx mut self, key: K) -> Result<Option<K::Fact>> {
+        let (key_id, _) =
+            key_statement_of(self.schema, <K::Fact as Fact<'tx>>::RELATION, K::STATEMENT)?;
+        // The scratch discipline, by hand: the borrowed result rules out
+        // `with_scratch`'s closure shape, and the determinant must not
+        // allocate per call (point reads are allocation-free,
+        // `docs/architecture/70-api.md`) — so encode into the taken
+        // buffer, restore it, then downgrade to the shared borrow the
+        // decode lifetime needs.
+        let mut determinant = std::mem::take(&mut self.scratch);
+        determinant.clear();
+        let filled = key.determinant_write(self, &mut determinant);
+        self.scratch = determinant;
+        if !filled? {
+            return Ok(None);
+        }
+        let this: &'tx Self = self;
+        match this.fact_by_determinant(<K::Fact as Fact<'tx>>::RELATION, key_id, &this.scratch)? {
+            Some(bytes) => K::Fact::decode_write(this, bytes).map(Some),
             None => Ok(None),
         }
     }
@@ -330,15 +347,5 @@ impl<S> WriteTx<'_, S> {
                 plumbing::resolve_string_write(self, id)?.as_bytes(),
             ))
         })
-    }
-
-    /// The auto-materialized `Functionality` statement for one fresh
-    /// field (schema validation guarantees exactly one exists).
-    fn fresh_key(&self, relation: RelationId, field: FieldId) -> KeyId {
-        let rel = self.schema.relation(relation);
-        *rel.keys()
-            .iter()
-            .find(|&&key| self.schema.key(key).projection.as_ref() == [field])
-            .expect("fresh generation materializes its key")
     }
 }

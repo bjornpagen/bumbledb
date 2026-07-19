@@ -112,7 +112,52 @@ pub fn encode_literal(value: &Value, desc: TypeDesc, out: &mut Vec<u8>) {
     }
 }
 
-/// Appends the canonical encoding of a full fact to `out`.
+/// Appends the canonical encoding of ONE field value — the per-field
+/// unit the fact encoder and the typed-key determinant path
+/// (`api/db`'s `Key` trait) share. One definition site: a key value's
+/// determinant bytes and the span `storage/keys::determinant_image`
+/// slices out of a stored fact are the same encoding by construction
+/// (the parity law, pinned by
+/// `append_key_field_matches_determinant_image_slices`). `String`
+/// carries a resolved intern id (resolution is the caller's boundary);
+/// the fixed-width interval family writes ONE word — the start; the
+/// width is the type's and the end derives at decode
+/// (`docs/architecture/50-storage.md`).
+pub fn append_key_field(value: ValueRef, out: &mut Vec<u8>) {
+    match value {
+        ValueRef::Bool(v) => {
+            out.push(encode_bool(v));
+        }
+        ValueRef::U64(v) => {
+            out.extend_from_slice(&encode_u64(v));
+        }
+        ValueRef::I64(v) => {
+            out.extend_from_slice(&encode_i64(v));
+        }
+        ValueRef::String(id) => {
+            out.extend_from_slice(&encode_u64(id));
+        }
+        ValueRef::FixedBytes(value) => {
+            out.extend_from_slice(value.padded());
+        }
+        ValueRef::IntervalU64(interval) => {
+            out.extend_from_slice(&encode_interval_u64(interval));
+        }
+        ValueRef::IntervalI64(interval) => {
+            out.extend_from_slice(&encode_interval_i64(interval));
+        }
+        ValueRef::FixedIntervalU64(interval) => {
+            out.extend_from_slice(&encode_u64(interval.start()));
+        }
+        ValueRef::FixedIntervalI64(interval) => {
+            out.extend_from_slice(&encode_i64(interval.start()));
+        }
+    }
+}
+
+/// Appends the canonical encoding of a full fact to `out` — each field
+/// through [`append_key_field`], so the fact encoding IS the field
+/// encoding concatenated (no second per-field encoder can drift).
 ///
 /// `values` match the layout positionally by construction: typed fact codegen
 /// emits both from one schema declaration, while dynamic ingress builds the
@@ -122,37 +167,6 @@ pub fn encode_literal(value: &Value, desc: TypeDesc, out: &mut Vec<u8>) {
 pub fn encode_fact(values: &[ValueRef], layout: &FactLayout, out: &mut Vec<u8>) {
     out.reserve(layout.fact_width());
     for value in values {
-        match *value {
-            ValueRef::Bool(v) => {
-                out.push(encode_bool(v));
-            }
-            ValueRef::U64(v) => {
-                out.extend_from_slice(&encode_u64(v));
-            }
-            ValueRef::I64(v) => {
-                out.extend_from_slice(&encode_i64(v));
-            }
-            ValueRef::String(id) => {
-                out.extend_from_slice(&encode_u64(id));
-            }
-            ValueRef::FixedBytes(value) => {
-                out.extend_from_slice(value.padded());
-            }
-            ValueRef::IntervalU64(interval) => {
-                out.extend_from_slice(&encode_interval_u64(interval));
-            }
-            ValueRef::IntervalI64(interval) => {
-                out.extend_from_slice(&encode_interval_i64(interval));
-            }
-            // The fixed-width family writes ONE word — the start; the
-            // width is the type's and the end derives at decode
-            // (`docs/architecture/50-storage.md`).
-            ValueRef::FixedIntervalU64(interval) => {
-                out.extend_from_slice(&encode_u64(interval.start()));
-            }
-            ValueRef::FixedIntervalI64(interval) => {
-                out.extend_from_slice(&encode_i64(interval.start()));
-            }
-        }
+        append_key_field(*value, out);
     }
 }

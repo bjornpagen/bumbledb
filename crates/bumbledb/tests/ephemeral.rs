@@ -261,7 +261,7 @@ fn replay(db: &Db<Staging>) -> Vec<StepOutcome> {
                 point_read: db
                     .write(|tx| {
                         Ok(tx
-                            .get::<Account>(AccountId::from_fresh(probe))?
+                            .get(AccountId::from_fresh(probe))?
                             .map(|account| account.balance))
                     })
                     .expect("the point-read probe transaction commits"),

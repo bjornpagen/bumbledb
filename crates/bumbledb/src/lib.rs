@@ -119,7 +119,7 @@ pub use allen::{AllenMask, Basic, classify};
 /// item 3(b)).
 #[cfg(feature = "image-oracle")]
 pub use api::db::image_oracle::ImageDivergence;
-pub use api::db::{BulkLoadError, Db, Exhumed, Fact, Fresh, FreshKeyed, Snapshot, WriteTx, exhume};
+pub use api::db::{BulkLoadError, Db, Exhumed, Fact, Fresh, Key, Snapshot, WriteTx, exhume};
 pub use api::prepared::{
     Answer, AnswerValue, Answers, BindValue, OccurrenceDrift, ParamArg, PreparedQuery, Staleness,
 };
@@ -284,7 +284,7 @@ pub mod __private {
         fixed_interval_u64, intern_str_delete, intern_str_read, intern_str_write, resolve_string,
         resolve_string_write,
     };
-    pub use crate::encoding::ValueRef;
+    pub use crate::encoding::{ValueRef, append_key_field};
 }
 
 #[cfg(test)]
