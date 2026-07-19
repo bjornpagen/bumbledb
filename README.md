@@ -90,7 +90,10 @@ conflict pairs, `Pack` free-busy, `Sum(Duration)` accounting). Geomean:
 **18.7×** over SQLite p50 (min over the clean samples of the two committed
 durable runs; one family, `mandate_overlap`, was clock-contaminated in both
 and is excluded and counted per the protocol); the ephemeral-store runs land
-at 18.4× across all twenty-two — reads are mmap-warm either way:
+at 18.4× across all twenty-two — reads are mmap-warm either way (the
+ephemeral number is PENDING-RE-EARN: it was measured under the retired
+`WRITEMAP|NOSYNC` flag set, before cleanup-0.5.0 ruling 1 made the
+ephemeral kind `NOSYNC`-only; the Measure phase re-runs the lane):
 
 ![speedup over SQLite](assets/bench-speedup.svg)
 
@@ -371,11 +374,8 @@ by machinery, not judgment:
 ## Repository layout
 
 ```
-crates/bumbledb/         the engine — external deps: heed (LMDB), blake3, and
-                         libc (the ephemeral kind's open-time preallocation;
-                         already in the graph under heed's lmdb-master-sys, so
-                         it adds no node) — plus the in-house bumbledb-macros
-                         and bumbledb-theory
+crates/bumbledb/         the engine — external deps: heed (LMDB) and blake3 —
+                         plus the in-house bumbledb-macros and bumbledb-theory
   src/exec/              executor, COLT, sinks, wordmap, NEON kernels
   src/storage/           LMDB env, deltas, commit, interning
   src/api/               Db, transactions, prepared queries

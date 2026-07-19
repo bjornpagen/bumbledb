@@ -34,7 +34,7 @@ impl Environment {
     /// format version first, then the store-kind marker — read and
     /// validated but never compared against an expectation, because
     /// exhume takes no durability decision and reads BOTH kinds (the
-    /// environment opens with plain durable flags either way: `WRITEMAP`
+    /// environment opens with plain durable flags either way: `NOSYNC`
     /// is a write-path affordance and exhume never writes — the
     /// ephemeral probe's precedent). There is no fingerprint CHECK here:
     /// with no theory in hand there is nothing to compare, and the

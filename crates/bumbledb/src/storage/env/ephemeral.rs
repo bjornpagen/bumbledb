@@ -17,22 +17,26 @@ impl Environment {
     /// ephemeral kind marked in `_meta`; an existing ephemeral store is
     /// opened (version, kind, fingerprint — the same checks as
     /// [`Environment::open`]); a durable store refuses typed
-    /// (`StoreKindMismatch`). The environment carries
-    /// `MDB_WRITEMAP|MDB_NOSYNC` — the store's on-disk kind IS the
-    /// no-machine-crash-durability claim, so the flags lie to no one.
-    /// Everything else (NOTLS, the advisory lock, map size, reader
-    /// table) is identical to a durable store.
+    /// (`StoreKindMismatch`). The environment carries `MDB_NOSYNC` —
+    /// the store's on-disk kind IS the no-machine-crash-durability
+    /// claim, so the flag lies to no one. Everything else (NOTLS, the
+    /// advisory lock, map size, reader table) is identical to a
+    /// durable store.
     ///
-    /// REFUSAL NEVER MUTATES: `MDB_WRITEMAP` ftruncates the data file
-    /// to the full map size at open, so an existing data file is probed
-    /// first through a plain durable-flagged open (which leaves the
-    /// file's bytes untouched) — the ephemeral flags are applied only
-    /// after the probe runs EVERY check `verify_and_open` would. A
-    /// refusal (`StoreKindMismatch` on a durable store,
-    /// `AlreadyInitialized` on a foreign LMDB environment,
-    /// `FormatMismatch`/`Corruption` on a stale or forged store,
-    /// `SchemaMismatch` on a skewed fingerprint) leaves `data.mdb`
-    /// byte-identical.
+    /// REFUSAL NEVER MUTATES — a law of the constructor, not of any
+    /// flag set: an existing data file is probed first through a plain
+    /// durable-flagged open, and the ephemeral flags are applied only
+    /// after the probe runs EVERY check `verify_and_open` would, so
+    /// every refusal fires before the flagged reopen ever holds the
+    /// file. (The fixit that minted the law was WRITEMAP's open-time
+    /// ftruncate, retired by cleanup-0.5.0 ruling 1; the probe-first
+    /// shape stays because it keeps the reopen path itself — whatever
+    /// flags the kind carries, now or later — structurally unable to
+    /// touch a store it must refuse.) A refusal (`StoreKindMismatch`
+    /// on a durable store, `AlreadyInitialized` on a foreign LMDB
+    /// environment, `FormatMismatch`/`Corruption` on a stale or forged
+    /// store, `SchemaMismatch` on a skewed fingerprint) leaves
+    /// `data.mdb` byte-identical.
     ///
     /// # Errors
     ///
@@ -45,12 +49,12 @@ impl Environment {
     pub fn ephemeral(path: &Path, schema: &Schema) -> Result<Self> {
         std::fs::create_dir_all(path)?;
         let lock = acquire_lock(path)?;
-        // A directory without a data file is fresh: nothing exists that
-        // the WRITEMAP ftruncate could damage, so create directly with
-        // the ephemeral flags. Anything else is probed WITHOUT the
-        // flags first — every refusal must fire before the mutating
-        // open. The advisory lock (held above) keeps the probe→reopen
-        // window race-free against other bumbledb handles.
+        // A directory without a data file is fresh: nothing exists for
+        // any open to damage, so create directly with the ephemeral
+        // flags. Anything else is probed WITHOUT the flags first —
+        // every refusal must fire before the flagged reopen. The
+        // advisory lock (held above) keeps the probe→reopen window
+        // race-free against other bumbledb handles.
         let has_meta = if path.join("data.mdb").try_exists()? {
             Self::probe_ephemeral_kind(path, schema)?
         } else {
@@ -65,9 +69,9 @@ impl Environment {
     }
 
     /// The non-mutating probe over an EXISTING data file: a plain
-    /// durable-flagged open (no `WRITEMAP`, so no ftruncate — the
-    /// data file's byte length and contents stay identical; the
-    /// byte-identity is pinned by `ephemeral_refusal_on_a_durable_store_
+    /// durable-flagged open (which leaves the data file's byte length
+    /// and contents identical; the byte-identity is pinned by
+    /// `ephemeral_refusal_on_a_durable_store_
     /// leaves_the_data_file_byte_identical` and its foreign-env,
     /// fingerprint-mismatch, and fingerprint-missing twins), one read
     /// transaction, and EVERY check [`Environment::verify_and_open`]
@@ -119,8 +123,8 @@ impl Environment {
             });
         }
         // The refusals `verify_and_open` would raise past the kind
-        // check, raised here instead — after the reopen they would
-        // land on an already-ftruncated file: the three databases'
+        // check, raised here instead — no refusal may wait until the
+        // flagged reopen holds the file: the three databases'
         // presence, then the fingerprint.
         if env
             .open_database::<Bytes, Bytes>(&rtxn, Some("_data"))?

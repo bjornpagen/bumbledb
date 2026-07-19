@@ -53,8 +53,8 @@ pub(super) fn read_store_kind(
 /// The stored schema fingerprint checked against the opening schema —
 /// one definition of the decode and the mismatch (readers:
 /// `verify_and_open`, and the ephemeral constructor's non-mutating
-/// probe, which must raise the refusal BEFORE the `MDB_WRITEMAP`
-/// reopen's ftruncate). A missing or mis-sized key is
+/// probe, which must raise the refusal BEFORE the ephemeral-flagged
+/// reopen holds the file). A missing or mis-sized key is
 /// [`CorruptionError::MetaMissing`]; a present-but-different image is
 /// the typed [`Error::SchemaMismatch`] naming both fingerprints.
 pub(super) fn check_fingerprint(

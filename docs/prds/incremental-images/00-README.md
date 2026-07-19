@@ -66,8 +66,14 @@ anything**. A serial committer owns git; PRD workers never commit/push.
    This FLIPS `storage/env.rs:168`'s `MAP_SIZE = 4 << 30` and every sentence
    downstream of it (`50-storage.md:13-14,442`, `README.md:430`, the container
    /ramdisk/test sizing). A flip is a documented retraction with the new truth
-   written — never a silent edit. G1 owns it; its work list is a stub pending
-   the 32G scout's report.
+   written — never a silent edit. G1 owned it; its work list was a stub pending
+   the 32G scout's report. **SUPERSEDED (cleanup-0.5.0 ruling 1):** G1's
+   per-kind split (durable 32 GiB / ephemeral 4 GiB, `StoreKind::map_size()`)
+   is retired in favor of ONE lazy 32 GiB `MAP_SIZE` for both kinds — no
+   `WRITEMAP`, no eager capacity contract, no preallocation
+   (`docs/prds/cleanup-0.5.0/prd-U1-ephemeral-lazy.md`). The prd-G1 file is
+   deleted with the split; the ceiling ruling itself (32 GiB, never a knob)
+   stands.
 5. **The epistemic retractions** (each lands WITH the code that replaces it):
    - *"writes are bursty and rare"* (`image/cache.rs:37-39`,
      `docs/architecture/50-storage.md:524-528`) — RETRACTED. A workload
@@ -93,8 +99,8 @@ I1 copy-on-append (engine + docs + fuzz) ──→ I1's measurement (Wave M: idl
 I2 delete-bearing cold-read lane (bench)  ──→ feeds Wave M (the delete cost becomes measurable;
                                                also the negative witness: I1 must NOT move it)
 I3 the decider twin (#[ignore]d kernel falsifier) — independent; verdict filed either way
-G1 the 32 GiB ceiling (constant + docs + sizing) — independent; scout-refined and LANDED
-   (per-kind split: durable 32 GiB / ephemeral 4 GiB — see prd-G1's decision record)
+G1 the 32 GiB ceiling (constant + docs + sizing) — independent; scout-refined, LANDED,
+   then SUPERSEDED by cleanup-0.5.0 ruling 1 (one lazy 32 GiB map, both kinds)
 ```
 
 | PRD | Title | Depends on |
@@ -102,7 +108,7 @@ G1 the 32 GiB ceiling (constant + docs + sizing) — independent; scout-refined 
 | I1 | Copy-on-append image maintenance | — |
 | I2 | The delete-bearing cold-read bench lane | — (lands before Wave M) |
 | I3 | The filter-mask decider twin | — |
-| G1 | The 32 GiB ceiling | the 32G scout's report (refined + landed; the per-kind decision recorded in prd-G1) |
+| G1 | The 32 GiB ceiling | the 32G scout's report (refined + landed; the per-kind split since superseded — cleanup-0.5.0 ruling 1, prd-G1 deleted) |
 
 ## The gates (every PRD proves its own)
 

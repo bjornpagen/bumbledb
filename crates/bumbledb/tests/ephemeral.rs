@@ -5,8 +5,8 @@
 //! oracle: one deterministic ops sequence replayed against both kinds,
 //! asserting identical commit verdicts, identical COMPLETE violation
 //! sets, identical `WriteTx` point reads, and identical full relation
-//! contents. The flags an ephemeral store carries (`WRITEMAP|NOSYNC`)
-//! change durability mechanism only; every semantic is shared.
+//! contents. The flag an ephemeral store carries (`NOSYNC`)
+//! changes durability mechanism only; every semantic is shared.
 
 use bumbledb::{Db, Error, Fact, Fresh, StoreKind, Value};
 
@@ -113,59 +113,29 @@ fn ephemeral_on_an_ephemeral_store_reopens_with_contents() {
     .expect("read back");
 }
 
-/// The capacity contract, enforced on SPARSE filesystems too
-/// (`docs/architecture/50-storage.md` § the ephemeral store kind: "the
-/// volume must hold map size + slack or open refuses with a typed
-/// `StorageFull`-carrying `Lmdb` error"): an ephemeral open allocates
-/// the data file's blocks up to the full 4 GiB ephemeral map
-/// (`MAP_SIZE_EPHEMERAL` — the per-kind split; durable stores allocate
-/// nothing eagerly) eagerly, so an
-/// undersized volume refuses AT OPEN — on a sparse filesystem (APFS)
-/// the `WRITEMAP` ftruncate alone allocates nothing, and without this
-/// allocation every commit past the volume's physical capacity would
-/// report `Ok` while its dirty pages can never be written back. The
-/// blocks assertion is the mechanism pin; the refusal itself follows
-/// from it exactly as on the non-sparse (HFS+) path.
-#[cfg(unix)]
-#[test]
-fn ephemeral_open_allocates_the_full_map_eagerly() {
-    use std::os::unix::fs::MetadataExt;
-    let dir = common::TempDir::new("ephemeral-prealloc");
-    let db = Db::ephemeral(dir.path(), Staging).expect("create ephemeral");
-    let allocated = std::fs::metadata(dir.path().join("data.mdb"))
-        .expect("data.mdb exists")
-        .blocks()
-        .saturating_mul(512);
-    assert!(
-        // The literal tracks MAP_SIZE_EPHEMERAL (storage/env.rs) — the
-        // ephemeral kind's map, deliberately small under the per-kind
-        // split; never weaken this bound to pass.
-        allocated >= 4 << 30,
-        "the full map's blocks are allocated at open, sparse filesystem or not \
-         (allocated {allocated} bytes)"
-    );
-    drop(db);
-    // The reopen requests nothing new and still holds the allocation.
-    let db = Db::ephemeral(dir.path(), Staging).expect("reopen ephemeral");
-    drop(db);
-    let reopened = std::fs::metadata(dir.path().join("data.mdb"))
-        .expect("data.mdb exists")
-        .blocks()
-        .saturating_mul(512);
-    // Same MAP_SIZE_EPHEMERAL-tracking literal as above.
-    assert!(reopened >= 4 << 30, "reopen keeps the allocation");
-}
+// GRAVESTONE — `ephemeral_open_allocates_the_full_map_eagerly` (the
+// capacity contract's pin: `blocks() * 512 >= 4 << 30` at open and
+// again at reopen — the eager-allocation mechanism assertion). DELETED,
+// not retargeted, by cleanup-0.5.0 ruling 1 (the ephemeral-lazy
+// unification, docs/prds/cleanup-0.5.0/prd-U1-ephemeral-lazy.md): the
+// eager capacity contract it pinned is retired — one 32 GiB `MAP_SIZE`
+// for both kinds, no `WRITE_MAP`, no open-time preallocation — so the
+// pinned behavior no longer exists to assert. A 32 GiB eager assertion
+// cannot run on a ~14 GB CI runner, and retargeting the 4 GiB bound
+// downward is the forbidden weakening — DO NOT retarget this test.
+// Laziness is now the contract (capacity refusal is the filesystem's
+// own, at write time), and the refusal byte-identity tests below are
+// the surviving pins of the open path.
 
 /// Matrix cell 3's non-mutation lock (`docs/architecture/70-api.md`:
 /// `Db::ephemeral` never destroys data — and never mutates on refusal):
 /// the refusal on a durable store leaves `data.mdb` byte-identical.
-/// `MDB_WRITEMAP` ftruncates the data file to the full 4 GiB ephemeral
-/// map at open (`MAP_SIZE_EPHEMERAL`; a durable open never ftruncates),
-/// so a constructor that opened with the ephemeral flags BEFORE
-/// verifying the kind would permanently resize the durable store it
-/// refuses (the fixit record); the probe-first open must leave the
-/// file's length and bytes untouched, and the store must still open
-/// durable with its contents intact.
+/// A constructor that opened with the ephemeral flags BEFORE verifying
+/// the kind would hold a store it must refuse (the fixit record: under
+/// the retired `MDB_WRITEMAP` flag set that reopen permanently resized
+/// the durable store); the probe-first open must leave the file's
+/// length and bytes untouched, and the store must still open durable
+/// with its contents intact.
 #[test]
 fn ephemeral_refusal_on_a_durable_store_leaves_the_data_file_byte_identical() {
     let dir = common::TempDir::new("ephemeral-refusal-no-mutation");
@@ -181,9 +151,10 @@ fn ephemeral_refusal_on_a_durable_store_leaves_the_data_file_byte_identical() {
 
     let data = dir.path().join("data.mdb");
     let before = std::fs::read(&data).expect("read data.mdb before the refusal");
-    // A real store's data file is tiny — far below the probe's 1 GiB
-    // bound (a durable store grows with data, never to the map) — the
-    // assertion below would be vacuous otherwise.
+    // A real store's data file is orders of magnitude below the map —
+    // the assertion below would be vacuous otherwise (and this bound is
+    // itself the pin that no open path truncates a durable store's
+    // data file to the full map).
     assert!(
         before.len() < 1 << 30,
         "fixture data file unexpectedly large: {} bytes",

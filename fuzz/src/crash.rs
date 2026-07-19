@@ -61,7 +61,7 @@ const INPUT_VAR: &str = "BUMBLEDB_CRASH_INPUT";
 /// The engine hook's own switch — armed by the CHILD, mid-process.
 const ARM_VAR: &str = "BUMBLEDB_CRASHPOINT";
 /// The store-kind axis (the ephemeral campaign): set (to any value) when
-/// the child's victim store is `Db::ephemeral` — `WRITEMAP|NOSYNC`
+/// the child's victim store is `Db::ephemeral` — `NOSYNC`
 /// instead of the durable defaults. Process-kill atomicity is the SAME
 /// claim on both kinds (`docs/architecture/50-storage.md` § the
 /// ephemeral store kind): the adversary here is abort ordering, not
@@ -147,7 +147,7 @@ pub fn sweep(cell: usize, index: usize) {
 
 /// The sweep's ephemeral twin: the identical crashpoint × matrix
 /// product against a `Db::ephemeral` store — the empirical arm of the
-/// claim that `WRITEMAP|NOSYNC` preserves process-kill all-or-nothing
+/// claim that `NOSYNC` preserves process-kill all-or-nothing
 /// atomicity (there is no third observable outcome on either kind).
 ///
 /// # Panics

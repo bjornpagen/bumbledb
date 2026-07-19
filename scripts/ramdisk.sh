@@ -31,20 +31,14 @@
 # it did not create, and any future std-only RAM-backedness check may
 # parse it instead of the platform mount tables.
 #
-# Sizing: the default is 5 GiB because an EPHEMERAL store's data file
-# is ftruncated to the full 4 GiB EPHEMERAL map at open (`MDB_WRITEMAP`,
-# MAP_SIZE_EPHEMERAL in crates/bumbledb/src/storage/env.rs — the
-# per-kind split: the DURABLE ceiling is 32 GiB but durable opens
-# allocate nothing eagerly and never ftruncate, so only the ephemeral
-# constant sizes this volume; the scratch kind deliberately keeps the
-# small map so this stays a casual ask of a dev machine —
-# docs/architecture/50-storage.md § the ephemeral store kind), and the
-# default filesystem (HFS+) has no sparse files — a volume below
-# map size + slack refuses every `Db::ephemeral` open with a typed
-# StorageFull-carrying Lmdb error, which breaks the sanctioned
-# BUMBLEDB_SCRATCH_DIR wiring for the ephemeral crashpoint sweep (the
-# fixit record). Shrink below 5 GiB only for lanes that open no
-# ephemeral store.
+# Sizing: the default is 5 GiB of plain headroom for the sweeps' many
+# concurrent scratch stores — a store's data file holds only the pages
+# ever committed. (Retraction, cleanup-0.5.0 ruling 1: the old rationale
+# was that an EPHEMERAL store's data file was ftruncated to the full
+# 4 GiB map at open under the retired `MDB_WRITEMAP` flag, and HFS+ has
+# no sparse files, so the volume had to hold map size + slack; with
+# WRITEMAP and the eager capacity contract retired no open allocates
+# the map, and any size that holds the lanes' actual data works.)
 #
 # macOS arm (the canonical M2 Max): hdiutil ram:// needs no sudo; the
 # default filesystem is non-journaled HFS+ (`diskutil erasevolume HFS+`

@@ -59,11 +59,6 @@ bumbledb-macros = { path = "../bumbledb-macros" }
 # (docs/architecture/70-api.md § the SchemaSpec bindings contract).
 bumbledb-theory = { path = "../bumbledb-theory" }
 heed = { version = "0.22", default-features = false } # no serde codecs: the engine reads raw bytes; the dependency law's serde grep stays empty
-# The ephemeral kind's open-time block allocation (storage/env/open_env.rs:
-# fcntl(F_PREALLOCATE) / posix_fallocate) — the capacity contract enforced
-# uniformly on sparse filesystems. Already in the graph under heed's
-# lmdb-master-sys; this adds no node.
-libc = "0.2"
 
 # On Apple platforms LMDB's default lock implementation is SysV semaphores,
 # keyed by ftok(lock.mdb) — 16 bits of inode — so ANY other LMDB environment

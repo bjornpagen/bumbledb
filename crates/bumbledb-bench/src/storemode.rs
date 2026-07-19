@@ -1,5 +1,5 @@
 //! The timed lanes' store constructor switch. `bench --ephemeral` runs
-//! the roster against [`Db::ephemeral`] stores (`MDB_WRITEMAP|MDB_NOSYNC`
+//! the roster against [`Db::ephemeral`] stores (`MDB_NOSYNC`
 //! — the in-memory characterization lane, `docs/architecture/70-api.md`
 //! § environment lifecycle); the default is the durable constructor.
 //! A mode over the bench's scratch stores, never a flag on the engine:
