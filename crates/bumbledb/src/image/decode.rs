@@ -3,9 +3,6 @@
 
 use crate::encoding::{TypeDesc, decode_bool};
 use crate::error::{CorruptionError, Error, Result};
-use crate::schema::Schema;
-use crate::storage::env::ReadTxn;
-use crate::storage::read;
 use bumbledb_theory::schema::RelationId;
 
 use super::{Column, ColumnSpan, ColumnWidth};
@@ -151,23 +148,30 @@ pub(super) fn decode_plan(
 }
 
 /// The scan loop: one width check per fact, then unchecked loads and
-/// slab stores through the plan. Returns the rows filled.
+/// slab stores through the plan, filling positions `from..` in scan
+/// order. Returns one past the last position filled. Both fill paths
+/// share it: a full build passes [`crate::storage::read::scan`] and
+/// `from = 0`; the append path passes [`crate::storage::read::scan_from`]
+/// and the base image's row count, so only the tail rows decode
+/// (`docs/architecture/50-storage.md`
+/// § the image cache). The row id is discarded at this boundary — row
+/// ids never enter images; positions are dense scan ordinals.
 #[expect(
     clippy::too_many_arguments,
     reason = "the split borrows and execution context are clearer unpacked"
 )]
-pub(super) fn fill_columns(
-    txn: &ReadTxn<'_>,
-    schema: &Schema,
+pub(super) fn fill_columns<'txn>(
     rel: RelationId,
+    scan: impl Iterator<Item = Result<(u64, &'txn [u8])>>,
     plan: &[Decode],
     fact_width: usize,
+    from: usize,
     row_count: usize,
     words: &mut [u64],
     bytes: &mut [u8],
 ) -> Result<usize> {
-    let mut position = 0usize;
-    for entry in read::scan(txn, schema, rel)? {
+    let mut position = from;
+    for entry in scan {
         let (_row_id, fact_bytes) = entry?;
         if position >= row_count {
             return Err(Error::Corruption(CorruptionError::RowCountMismatch {

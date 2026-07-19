@@ -3,10 +3,17 @@
 //!
 //! Keyed by `(relation, generation)` where generation is the reader's
 //! *snapshot-sourced* storage tx id — never an in-process counter
-//! (`docs/architecture/50-storage.md`'s race-closing rule). Retain-newest
-//! eviction runs at each state-changing commit; readers pinned at older
-//! generations keep their `Arc`s alive until their transactions end. There
-//! is no memory-pressure eviction, ever — the scale axiom.
+//! (`docs/architecture/50-storage.md`'s race-closing rule). At each
+//! state-changing commit the writer [`ImageCache::advance`]s the cache:
+//! entries of relations the commit **deleted from** drop (their ordinals
+//! shifted — evict-and-rebuild, exactly as before); delete-free
+//! relations' images are retained as **append bases** — the next reader
+//! at the new generation copies columns and decodes only the tail
+//! ([`crate::image::append`]; row-id high-water monotonicity is the
+//! prefix property), or carries the same `Arc` forward when the relation
+//! is untouched. Readers pinned at older generations keep their `Arc`s
+//! alive until their transactions end. There is no memory-pressure
+//! eviction, ever — the scale axiom.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -15,6 +22,12 @@ use crate::image::RelationImage;
 use crate::storage::env::GenerationId;
 use bumbledb_theory::schema::RelationId;
 
+mod advance;
+/// Test-gated today: production commits go through [`ImageCache::advance`];
+/// the retain-newest form survives as the tests' one-call commit
+/// simulation and the measurement wave's lineage-disabled A/B twin (the
+/// gate lifts when the bench knob lands).
+#[cfg(test)]
 mod evict_older_than;
 mod get_or_build;
 mod new;
@@ -32,11 +45,41 @@ mod keys;
 #[cfg(test)]
 mod tests;
 
+/// One cached image plus the append boundary it was built against: the
+/// relation's row-id high-water, read in the image's own build
+/// transaction — snapshot-consistent by construction. Every row in the
+/// image has id strictly below it; every row a later commit adds has id
+/// at or above it, so a tail scan from here decodes exactly the rows the
+/// image is missing ([`crate::image::append`]).
+struct Cached {
+    image: Arc<RelationImage>,
+    row_id_next: u64,
+}
+
 struct CacheInner {
-    map: HashMap<(RelationId, GenerationId), Arc<RelationImage>>,
-    /// The newest generation the cache has been evicted to. A reader below
-    /// this builds query-locally without inserting (accepted — writes are
-    /// bursty and rare).
+    /// **The lineage law:** an entry at generation `g < newest` exists
+    /// only if every state-changing commit in `(g, newest]` was
+    /// delete-free for its relation — maintained unconditionally by
+    /// [`ImageCache::advance`] (a commit drops the entries of relations
+    /// it deleted from, at every generation below the new one, and
+    /// retains the rest as append bases). The append/carry arms of
+    /// [`ImageCache::get_or_build`] replace their base in the same
+    /// critical section as their insert, so the quiescent flow keeps at
+    /// most one below-newest entry per relation; a reader racing the
+    /// commit epilogue (its snapshot ahead of `newest`) full-builds and
+    /// can strand one extra — still lawful, still bounded — until its
+    /// relation next goes dirty. Either way the map stays O(relations)
+    /// and the scale axiom's no-memory-pressure-eviction stance is
+    /// unstrained.
+    map: HashMap<(RelationId, GenerationId), Cached>,
+    /// The newest generation the cache has been advanced to. A reader
+    /// below this builds query-locally without inserting (accepted — the
+    /// cost lands on the stale pinned reader alone and poisons nothing
+    /// shared). The old parenthetical here — "writes are bursty and
+    /// rare" — is RETRACTED: it was a workload assumption, never a
+    /// measurement, and steady-write hosts are real; they are served by
+    /// the copy-on-append path, not by an assumption about write
+    /// frequency.
     newest: GenerationId,
 }
 
@@ -56,8 +99,9 @@ pub struct ImageCache {
     /// § virtual relations): a closed relation's storage is the theory
     /// and its "generation" is the fingerprint, so each slot builds on
     /// first touch and is **never evicted, never rebuilt** —
-    /// [`ImageCache::evict_older_than`] skips it by construction, because
-    /// it is not in the generation-keyed map at all.
+    /// [`ImageCache::advance`] (and its lineage-disabled twin
+    /// [`ImageCache::evict_older_than`]) skips it by construction,
+    /// because it is not in the generation-keyed map at all.
     closed: Box<[OnceLock<Arc<RelationImage>>]>,
     #[cfg(feature = "trace")]
     counters: stats::CacheCounters,

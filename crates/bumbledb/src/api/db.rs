@@ -391,5 +391,8 @@ pub mod plumbing;
 #[cfg(test)]
 mod tests;
 
+#[cfg(test)]
+mod append_tests;
+
 #[cfg(all(test, feature = "trace"))]
 mod trace_tests;

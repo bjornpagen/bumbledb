@@ -233,14 +233,22 @@ impl<S> Db<S> {
         // their own exit.
         let WriteTx { view, delta, .. } = burn.disarm();
         drop(view);
+        // The per-relation delete classification, read off the delta's
+        // net dispositions before `commit` consumes it: which relations
+        // does this commit delete from? (Cancelled delete-then-reinsert
+        // pairs net to nothing, so the answer is exact.) The cache hook
+        // below needs it — a deleted-from relation's ordinals shifted;
+        // a delete-free relation's image survives as an append base.
+        let dirty = delta.dirty_relations();
         let report = commit(delta, &self.env)?;
         txn_span.set_args(1, 0);
         txn_span.end();
         if report.changed {
             // The one commit → cache wiring point (`40-storage.md`):
-            // images of older generations are stale the moment the new
-            // generation exists.
-            self.cache.evict_older_than(report.new_generation);
+            // entries of relations this commit deleted from are stale
+            // the moment the new generation exists; every other entry
+            // is retained as an append base (`ImageCache::advance`).
+            self.cache.advance(report.new_generation, &dirty);
             // Invalidate any snapshot parked mid-write by a concurrent
             // reader: the next read must begin fresh.
             CommitSeq::advance(&self.commit_seq, Ordering::Release);

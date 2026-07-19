@@ -78,7 +78,7 @@ pub enum CrashpointSide {
 /// | `mid-write-s` | `write.rs` `flush_counters`: after an `S` row-count put (phase 4) | prefix |
 /// | `after-judgment` | `write.rs` `commit`: phases 3–4 done, before `mdb_txn_commit` | prefix |
 /// | `after-commit` | `write.rs` `commit`: `mdb_txn_commit` returned, before the memo update | post |
-/// | `after-memo-update` | `api/db/write.rs` `write_witnessed`: after the image-cache eviction and commit-seq bump | post |
+/// | `after-memo-update` | `api/db/write.rs` `write_witnessed`: after the image-cache advance and commit-seq bump | post |
 ///
 /// The counters-only no-op commit (`flush_escaped_fresh_ids`) is
 /// deliberately outside the table: it never changes query-visible state,
@@ -140,7 +140,7 @@ pub struct Applied<'env> {
 }
 
 /// The commit outcome: whether logical state changed, and the resulting
-/// storage generation (the 50-storage doc's cache-eviction subscriber; the
+/// storage generation (the 50-storage doc's cache-advance subscriber; the
 /// 70-api doc wires it).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CommitReport {

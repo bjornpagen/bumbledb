@@ -13,6 +13,7 @@ mod determinant_row;
 mod fact_row;
 mod fetch;
 mod row_count;
+mod row_id_high_water;
 mod row_id_value;
 mod scan;
 
@@ -24,4 +25,5 @@ pub use determinant_row::determinant_row;
 pub use fact_row::{fact_row, fact_row_by_hash};
 pub use fetch::fetch;
 pub use row_count::row_count;
-pub use scan::scan;
+pub use row_id_high_water::row_id_high_water;
+pub use scan::{scan, scan_from};

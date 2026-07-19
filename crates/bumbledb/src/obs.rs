@@ -152,6 +152,13 @@ pub mod names {
     pub const CACHE_HIT: &str = "cache_hit";
     /// A full image decode. (relation id, slab bytes)
     pub const IMAGE_BUILD: &str = "image_build";
+    /// An append-path image extension: the base's columns copied, only
+    /// the tail rows decoded (docs/architecture/50-storage.md § the
+    /// image cache). (relation id, slab bytes)
+    pub const IMAGE_APPEND: &str = "image_append";
+    /// An untouched relation's image carried forward to the reader's
+    /// generation — the same Arc, re-keyed. (relation id, -)
+    pub const CACHE_CARRY: &str = "cache_carry";
     /// Lost the insert race; adopted the winner's image. (relation id, -)
     pub const CACHE_ADOPT: &str = "cache_adopt";
     /// Old-generation reader built without caching. (relation id, -)
