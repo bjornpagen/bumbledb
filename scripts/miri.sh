@@ -83,8 +83,14 @@ echo "==> cargo miri test --target x86_64-unknown-linux-gnu (cross-interpreted)"
 # staticlib is a build-graph artifact only — cargo-miri never links a
 # native binary, and the filter list never calls into LMDB (an mdb_*
 # call IS the FFI wall this lane is scoped around) — so a host-arch
-# stand-in compile satisfies the graph (scripts/miri-cross-cc.sh
-# carries the full rationale).
+# stand-in compile satisfies the graph; blake3's x86-64 assembly units
+# are stubbed to empty objects, dead under Miri by blake3's own
+# cfg!(miri) dispatch guards (scripts/miri-cross-cc.sh carries the
+# full rationale). Without the stand-in, blake3's build script finds
+# no x86_64 cc and falls back to its portable Rust body — which is why
+# a machine whose build cache predates this env var stays green while
+# a fresh runner, probing successfully THROUGH the shim, was handed
+# the assembly and turned the nightly cron red.
 # shellcheck disable=SC2086
 CC_x86_64_unknown_linux_gnu="$(pwd)/scripts/miri-cross-cc.sh" \
 AR_x86_64_unknown_linux_gnu=ar \

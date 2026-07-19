@@ -4,6 +4,16 @@
 # nightly cron.
 # The SDK lane (the hardening-0.3.0 packet, PRD T6) joins them as the
 # fifth: both halves of the cross-host fingerprint lock, per push.
+# The check and corpus-replay lanes run on ubuntu-latest (x86_64-linux)
+# as well as macos (the cleanup-0.5.0 packet, PRD U4): the first real
+# execution of the engine's linux arms and of the scalar-fallback
+# promise (docs/architecture/00-product.md — other 64-bit platforms
+# compile and run scalar fallback correctly, no performance promises).
+# The suite is linux-clean by construction: every host-pinned falsifier
+# is #[ignore]d and every macos-only integration binary is whole-file
+# cfg(target_os = "macos"). The lean lane could run anywhere but stays
+# put; the sdk lane REQUIRES darwin-arm64 (below); the miri lane's
+# native pass is the reference host's.
 #
 # Wall-time record (measured locally on the pinned M2 Max, 2026-07-13):
 #   * corpus-replay lane: 463 s test wall (the query three-way replay
@@ -14,8 +24,7 @@
 #   Per-push wall = max(check, corpus-replay) since the lanes run in
 #   parallel: estimated under 15 minutes with warm caches; the first
 #   run on a cold cache (toolchain download + full builds) will exceed
-#   it once. First-run verification on a real push: pending (this
-#   workflow cannot be exercised from the local machine).
+#   it once.
 #
 # Deliberate exclusions (each per the measurement discipline,
 # docs/architecture/60-validation.md):
@@ -32,7 +41,11 @@
 name: ci
 
 on:
+  # Scoped to main + PRs (the cleanup-0.5.0 packet, PRD U4): a WIP push
+  # to a PR-less worktree branch no longer burns five macOS lanes.
   push:
+    branches: [main]
+  pull_request:
   workflow_dispatch:
   schedule:
     # Nightly Miri lane only (see the job-level `if`): 09:17 UTC.
@@ -45,20 +58,25 @@ jobs:
   # Lane 1 — the workspace gate: exactly scripts/check.sh (fmt, clippy
   # -D warnings, workspace tests + doctests, the release alloc gate,
   # the fold-off matrix build from PRD 13, the bench-crate obs config).
-  # The x86_64-linux cross check inside it self-reports SKIPPED where
-  # the cross C compiler is absent — a skip, not a verdict, on the
-  # runner as locally.
+  # Both runners run the identical script; on ubuntu the run itself IS
+  # the x86-64 scalar-fallback and linux-arm coverage (the cross
+  # `cargo check` that used to self-skip at the end of check.sh died
+  # superseded — executing the tests is strictly stronger).
   check:
     if: github.event_name != 'schedule'
-    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: install the pinned toolchain
         # rust-toolchain.toml owns the channel (nightly-2026-07-12) and
         # components; `rustup show` resolves and installs it.
         run: rustup show
-      - uses: actions/cache@v4
+      - uses: actions/cache@v5
         with:
           path: |
             ~/.cargo/registry
@@ -74,13 +92,17 @@ jobs:
   # accumulated corpus replays deterministically on every push.
   corpus-replay:
     if: github.event_name != 'schedule'
-    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: install the pinned toolchain
         run: rustup show
-      - uses: actions/cache@v4
+      - uses: actions/cache@v5
         with:
           path: |
             ~/.cargo/registry
@@ -100,10 +122,10 @@ jobs:
     runs-on: macos-latest
     timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: install the pinned toolchain
         run: rustup show
-      - uses: actions/cache@v4
+      - uses: actions/cache@v5
         with:
           path: |
             ~/.cargo/registry
@@ -123,16 +145,14 @@ jobs:
   # executable denotation vs the recorded engine answers).
   # Per push — the build is seconds at this size; if it exceeds
   # 2 minutes by campaign end, PRD 14 moves it to the Miri cron and
-  # records the number. First-run verification on a real push:
-  # pending (this workflow cannot be exercised from the local
-  # machine — the PRD-16-of-crucible precedent).
+  # records the number.
   lean:
     if: github.event_name != 'schedule'
     runs-on: macos-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/cache@v4
+      - uses: actions/checkout@v5
+      - uses: actions/cache@v5
         with:
           path: |
             ~/.elan
@@ -161,7 +181,7 @@ jobs:
       # cargo cache absorbs.
       - name: install the pinned Rust toolchain (for the comparator)
         run: rustup show
-      - uses: actions/cache@v4
+      - uses: actions/cache@v5
         with:
           path: |
             ~/.cargo/registry
@@ -196,14 +216,14 @@ jobs:
     runs-on: macos-latest
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: install the pinned toolchain
         # rust-toolchain.toml at the repo root owns the channel for
         # ts/crate too: the crate is workspace-excluded but sits under
         # the root, and rustup resolves the toolchain file by walking
         # up from cwd, not from the manifest path.
         run: rustup show
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           # ts/package.json engines pins node >=24 (the build script
           # and the tests run as .ts through native type stripping).
@@ -212,7 +232,7 @@ jobs:
         # ts/package.json#packageManager (pnpm@11.9.0) owns the exact
         # version; corepack reads and activates that pin.
         run: corepack enable pnpm
-      - uses: actions/cache@v4
+      - uses: actions/cache@v5
         with:
           path: |
             ~/.cargo/registry
@@ -223,7 +243,7 @@ jobs:
         id: pnpm-store
         run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
         working-directory: ts
-      - uses: actions/cache@v4
+      - uses: actions/cache@v5
         with:
           path: ${{ steps.pnpm-store.outputs.path }}
           key: sdk-pnpm-${{ runner.os }}-${{ hashFiles('ts/pnpm-lock.yaml') }}
