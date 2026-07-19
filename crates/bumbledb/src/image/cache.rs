@@ -23,12 +23,17 @@ use crate::storage::env::GenerationId;
 use bumbledb_theory::schema::RelationId;
 
 mod advance;
-/// Test-gated today: production commits go through [`ImageCache::advance`];
-/// the retain-newest form survives as the tests' one-call commit
-/// simulation and the measurement wave's lineage-disabled A/B twin (the
-/// gate lifts when the bench knob lands).
-#[cfg(test)]
+/// Production commits go through [`ImageCache::advance`]; the
+/// retain-newest form survives as the tests' one-call commit simulation
+/// and the measurement wave's lineage-disabled A/B twin — the gate is
+/// lifted to the `lineage-off` test-support feature (the bench crate's
+/// cold-lineage twin, a dev-dependency; `advance`'s off switch delegates
+/// here).
+#[cfg(any(test, feature = "lineage-off"))]
 mod evict_older_than;
+
+#[cfg(any(test, feature = "lineage-off"))]
+pub use advance::with_lineage_disabled;
 mod get_or_build;
 mod new;
 mod peek;

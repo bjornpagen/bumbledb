@@ -13,6 +13,12 @@ alloc-counter = []
 # (`plan/ground.rs`) from the bench crate's dual-run differential unit
 # tests. Enabled only as a bench dev-dependency; no runtime mode ships.
 ground-off = []
+# Test-support: reaches the image cache's thread-local lineage off
+# switch (`image/cache/advance.rs`) — every `advance` behaves as
+# `evict_older_than`, the pre-copy-on-append eviction — from the bench
+# crate's Wave-M cold-lineage A/B twin (a dev-dependency, the
+# `ground-off` precedent). No runtime mode ships.
+lineage-off = []
 # Fuzz-oracle infrastructure: reaches the statically-empty fold's
 # thread-local off switch (`ir/normalize/fold.rs`) from outside the
 # engine. History, recorded honestly: deleted as dead configuration

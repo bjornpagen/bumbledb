@@ -546,4 +546,129 @@ mod tests {
         drop(db);
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    /// The Wave-M cold-lineage A/B twin (PRD-I1's measurement;
+    /// `docs/prds/incremental-images/prd-I1-copy-on-append.md`
+    /// § Measurement): the copy-on-append win laid out beside its own
+    /// absence in ONE process. Arm ON is the shipped path
+    /// (`ImageCache::advance` — dirty relations evict, delete-free ones
+    /// survive as append bases); arm OFF runs under
+    /// `bumbledb::with_lineage_disabled` (every `advance` behaves as
+    /// `evict_older_than` — the pre-copy-on-append eviction; the
+    /// `ground-off` switch idiom, enabled here as a dev-dependency
+    /// feature). Both cold lanes run per arm: `cold_containment_walk`
+    /// is the append-path win's witness (the Org-insert touch leaves
+    /// every walked relation delete-free, so the timed read appends or
+    /// carries instead of rebuilding), and `cold_containment_walk_delete`
+    /// is the discriminator's NEGATIVE witness (the swap touch dirties
+    /// `Posting` every sample — the append arm never fires for the
+    /// walked mass; if this lane moves materially between arms, the
+    /// discriminator is wrong and the landing stops — PRD-I2 §4).
+    ///
+    /// Protocol: 3 reps × 2 arms, arm order rotating per rep (drift
+    /// cancellation); fresh data per (rep, arm) — a fresh durable store,
+    /// freshly corpus-loaded, so no cache, page, or store state crosses
+    /// arms; each family runs its registered COLD protocol (2 warmups,
+    /// 16 samples, touch commit + spin-settle before every timed read);
+    /// the per-arm figure is the min of the 3 rep p50s. Each (rep, arm)
+    /// block is clock-proxy bracketed with the non-retrying write-form
+    /// stamp (`clockproxy::stamped` — fsync-parked cores read low; the
+    /// run records contamination instead of hiding it). The test PRINTS
+    /// its numbers and asserts only work sanity — never a timing (the
+    /// landing bar: the verdict is read from the measured run).
+    ///
+    /// Invocation (the Measure phase owns execution — minutes of
+    /// fsync-bound touch commits):
+    /// `scripts/measure.sh cargo test --release -p bumbledb-bench cold_lineage_twin -- --ignored --nocapture`
+    ///
+    /// **Recorded (Wave M, 2026-07-19; Apple M2 Max, idle machine,
+    /// release, `scripts/measure.sh`, scale S seed 1, durable stores):**
+    /// `cold_containment_walk` ON p50s [1349.9, 1362.5, 1342.0] µs
+    /// (min 1342.0) vs OFF [3536.5, 3555.8, 3405.2] µs (min 3405.2) —
+    /// **OFF/ON = 2.54×** (the copy-on-append win, family-level; the
+    /// PRD's ≥ 5× prediction was a prediction — the machine says 2.54×).
+    /// `cold_containment_walk_delete` ON min 3578.8 µs vs OFF min
+    /// 3547.0 µs — **OFF/ON = 0.99**: the delete lane is unmoved, the
+    /// discriminator's negative witness holds. Every block's GHz stamp
+    /// read 3.00–3.36 (post-fsync DVFS) — contamination recorded, not
+    /// hidden; both arms are equally touched and interleaved, so the
+    /// ratio is the claim, not the absolute p50s.
+    #[test]
+    #[ignore = "the Wave-M A/B twin: minutes of fsync-bound touches; scripts/measure.sh owns invocation"]
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "nanosecond p50s sit far below 2^52"
+    )]
+    fn cold_lineage_twin() {
+        const REPS: usize = 3;
+        let dir = scratch("lineage-twin");
+        // [arm][rep] p50 ns; arm 0 = lineage ON (shipped), 1 = OFF.
+        let mut walk = [[0u64; REPS]; 2];
+        let mut walk_delete = [[0u64; REPS]; 2];
+        for rep in 0..REPS {
+            let order: [usize; 2] = if rep % 2 == 0 { [0, 1] } else { [1, 0] };
+            for arm in order {
+                // Fresh data per (rep, arm): a fresh durable store,
+                // freshly corpus-loaded — no cache, page, or store
+                // state crosses arms.
+                let store = dir.join(format!("rep{rep}-arm{arm}"));
+                std::fs::create_dir_all(&store).expect("store dir");
+                let db = Db::create(&store, Ledger).expect("create");
+                corpus::load_bumbledb(&db, CFG).expect("load");
+                let mut run = || -> Result<(Measurement, Measurement), String> {
+                    let w = cold_containment_walk(&db, CFG)?;
+                    let d = cold_containment_walk_delete(&db, CFG)?;
+                    Ok((w, d))
+                };
+                let ((w, d), ghz) = if arm == 0 {
+                    crate::clockproxy::stamped(&mut run).expect("arm ON")
+                } else {
+                    bumbledb::with_lineage_disabled(|| crate::clockproxy::stamped(&mut run))
+                        .expect("arm OFF")
+                };
+                assert!(w.stats.min > 0, "walk work sanity");
+                assert!(d.stats.min > 0, "delete-walk work sanity");
+                walk[arm][rep] = w.stats.p50;
+                walk_delete[arm][rep] = d.stats.p50;
+                println!(
+                    "rep {rep} arm {} — walk p50 {:.1} us, delete-walk p50 {:.1} us, ghz {:.2}/{:.2}{}",
+                    if arm == 0 { "ON " } else { "OFF" },
+                    w.stats.p50 as f64 / 1e3,
+                    d.stats.p50 as f64 / 1e3,
+                    ghz.pre,
+                    ghz.post,
+                    if ghz.contaminated() {
+                        " (CONTAMINATED)"
+                    } else {
+                        ""
+                    },
+                );
+                drop(db);
+            }
+        }
+        let min = |xs: &[u64; REPS]| *xs.iter().min().expect("nonempty");
+        let us = |ns: u64| ns as f64 / 1e3;
+        println!(
+            "cold_lineage_twin: scale {} seed {}, durable stores, \
+             fresh store per (rep, arm), COLD protocol (2 warmups, 16 samples), \
+             min-of-{REPS} p50s",
+            CFG.scale.label(),
+            CFG.seed,
+        );
+        for (name, arms) in [
+            ("cold_containment_walk", &walk),
+            ("cold_containment_walk_delete", &walk_delete),
+        ] {
+            let (on, off) = (min(&arms[0]), min(&arms[1]));
+            println!(
+                "{name}: ON p50s {:?} us (min {:.1}) | OFF p50s {:?} us (min {:.1}) | OFF/ON = {:.2}",
+                arms[0].map(us),
+                us(on),
+                arms[1].map(us),
+                us(off),
+                us(off) / us(on).max(f64::EPSILON),
+            );
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
