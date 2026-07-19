@@ -9,11 +9,12 @@
  */
 
 import type { AnyClosed } from "#closed.ts"
+import { isClosedMember } from "#closed.ts"
 import type { FaceData } from "#face.ts"
 import type { AnyField } from "#fields.ts"
 import type { RelationClasses } from "#law.ts"
 import type { AnyRelation } from "#relation.ts"
-import type { AnySchema, SchemaRelation } from "#schema.ts"
+import type { AnySchema } from "#schema.ts"
 import type {
 	FieldSpec,
 	LiteralSetSpec,
@@ -24,14 +25,6 @@ import type {
 	ValueTypeSpec
 } from "#spec.ts"
 import type { Statement } from "#statements.ts"
-
-/**
- * The relation-kind discriminant: a closed relation's runtime description
- * carries its handle roster, an ordinary relation's never does.
- */
-function isClosedMember(member: SchemaRelation): member is AnyClosed {
-	return "handles" in member.data
-}
 
 /**
  * Lowers one field descriptor's structural type to the wire

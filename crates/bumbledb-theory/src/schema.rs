@@ -343,6 +343,46 @@ pub struct RelationDescriptor {
     pub extension: Option<Extension>,
 }
 
+/// One slot of a relation's SEALED shape — the numbering every dynamic
+/// row, statement projection, and manifest field id addresses: a closed
+/// relation's synthetic (`id`, u64) handle field at sealed ordinal 0
+/// (`declared: None` — validation mints it; no [`FieldDescriptor`]
+/// exists), then the declared fields in declaration order.
+#[derive(Debug, Clone, Copy)]
+pub struct SealedField<'a> {
+    pub name: &'a str,
+    pub value_type: &'a ValueType,
+    /// The declared descriptor — `None` exactly at the synthetic id.
+    pub declared: Option<&'a FieldDescriptor>,
+}
+
+impl RelationDescriptor {
+    /// The SEALED field roster in sealed-ordinal order (index =
+    /// [`FieldId`]): an ordinary relation's declared fields; a closed
+    /// relation's synthetic (`id`, u64) handle field first, declared
+    /// fields shifted by one. THE one owner of the synthetic-id law —
+    /// the manifest renderer, the materialized-statement ordinals
+    /// ([`SchemaDescriptor::materialized_statements`]), and the node
+    /// bridge's row marshaling all read the sealed shape through this
+    /// accessor, never through re-derived offset arithmetic.
+    pub fn sealed_fields(&self) -> impl Iterator<Item = SealedField<'_>> {
+        const SYNTHETIC_ID_TYPE: &ValueType = &ValueType::U64;
+        self.extension
+            .is_some()
+            .then_some(SealedField {
+                name: "id",
+                value_type: SYNTHETIC_ID_TYPE,
+                declared: None,
+            })
+            .into_iter()
+            .chain(self.fields.iter().map(|field| SealedField {
+                name: &field.name,
+                value_type: &field.value_type,
+                declared: Some(field),
+            }))
+    }
+}
+
 /// The schema as declared: input to validation. Statements are
 /// schema-level, between relations, in declaration order.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -371,11 +411,14 @@ impl SchemaDescriptor {
     pub fn materialized_statements(&self) -> Vec<StatementDescriptor> {
         let mut statements: Vec<StatementDescriptor> = Vec::new();
         for (rel_idx, relation) in self.relations.iter().enumerate() {
-            for (field_idx, field) in relation.fields.iter().enumerate() {
-                // A closed relation's sealed field list opens with the
-                // synthetic id, so its declared fields sit at idx + 1.
-                let sealed_idx = field_idx + usize::from(relation.extension.is_some());
-                if field.generation == Generation::Fresh {
+            // The sealed roster carries the synthetic-id shift (a closed
+            // relation's declared fields sit at declared idx + 1), so the
+            // enumeration index IS the sealed ordinal — no offset math.
+            for (sealed_idx, slot) in relation.sealed_fields().enumerate() {
+                if slot
+                    .declared
+                    .is_some_and(|field| field.generation == Generation::Fresh)
+                {
                     statements.push(StatementDescriptor::Functionality {
                         relation: RelationId(
                             u32::try_from(rel_idx).expect("relation count fits u32"),

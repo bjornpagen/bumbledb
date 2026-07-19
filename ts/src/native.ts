@@ -241,7 +241,7 @@ interface Violation {
 }
 
 /**
- * `dbCreate`/`dbOpen`'s domain outcome. `schemaError` covers both spec
+ * `dbCreate`/`dbOpen`'s domain outcome. `schemaError` spans both spec
  * resolution (unresolvable names, banned spellings — every issue in one
  * message) and schema validation at the declaration boundary;
  * `newtypeMismatch` is the coherence wall's own kind — a spec whose
@@ -471,8 +471,12 @@ interface Native {
  * The sole platform this release ships (PRD-03 ruling 1: prebuilt-only,
  * darwin-arm64). The per-platform-package structure below makes adding
  * `darwin-x64`/`linux-*`/`win32-*` pure addition — one more `os`/`cpu`-gated
- * package plus a CI matrix — never a redesign, so this string is the only
- * place the shipped set is named for the unsupported-platform message.
+ * package plus a CI matrix — never a redesign. This constant names the
+ * shipped set for the unsupported-platform message; the build's
+ * `PUBLISH_PLATFORM` (`scripts/platform.ts` — src cannot import scripts,
+ * the packaging boundary) and the `ts/.gitignore` carve-out spell the same
+ * target, and the single-source pin in `test/build-platform.test.ts` holds
+ * all three in lockstep.
  */
 const SHIPPED_PLATFORMS = "darwin-arm64"
 
@@ -536,6 +540,20 @@ function loadNativeBinding(platform: string, arch: string): Native {
  */
 const native: Native = loadNativeBinding(process.platform, process.arch)
 
+/**
+ * The bridge guard — THE one wrapper every native call crosses (db.ts and
+ * exhume.ts both import it): runs one native call and wraps anything it
+ * throws, so marshal-shape refusals and handle-lifecycle refusals cross as
+ * genuine typed failures, never bare foreign errors.
+ */
+function bridged<T>(context: string, run: () => T): T {
+	const result = errors.trySync(run)
+	if (result.error) {
+		throw errors.wrap(result.error, context)
+	}
+	return result.data
+}
+
 export type {
 	AggOpIr,
 	AtomIr,
@@ -577,4 +595,4 @@ export type {
 	ViolationFact,
 	WriteFromResult
 }
-export { loadNativeBinding, native }
+export { bridged, loadNativeBinding, native, SHIPPED_PLATFORMS }

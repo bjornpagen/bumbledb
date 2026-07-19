@@ -39,6 +39,7 @@ import {
 	type Infer,
 	literalOf
 } from "#fields.ts"
+import type { AnyRelation, RelationField } from "#relation.ts"
 import { resolveSelection, type SelectionBinding, type SelectionInput } from "#relation.ts"
 import type { LiteralSpec } from "#spec.ts"
 
@@ -53,7 +54,7 @@ type PayloadField = Exclude<AnyField, { readonly fresh: true }>
  * unspellable — the sealed shape mints the synthetic `id` itself (ordinal
  * 0 of the matchable fields), so a declared column named `id` would be
  * shadowed by the synthetic slot everywhere the shape resolves by name
- * (`matchFieldsOf`, the projected face, `spec.rs`'s resolver). The wall is
+ * (`sealedFieldsOf`, the projected face, `spec.rs`'s resolver). The wall is
  * typed here and judged again at construction in {@link mintClosed} — the
  * runtime twin for untyped callers, warmer and earlier than the engine's
  * `DuplicateFieldName` at `Db.create`.
@@ -193,6 +194,48 @@ interface AnyClosed {
 	readonly columns: Readonly<Record<string, PayloadField>>
 }
 
+/**
+ * THE relation-kind discriminant — the ONE spelling of "is this schema
+ * member closed?" (the type tier's twin is the `AnyClosed` conditional
+ * arms). A closed relation's runtime description carries its handle
+ * roster; an ordinary relation's never does. Every runtime closed/ordinary
+ * fork in the SDK judges through this predicate — never a re-spelled
+ * structural probe.
+ */
+function isClosedMember(member: AnyRelation | AnyClosed): member is AnyClosed {
+	return "handles" in member.data
+}
+
+/**
+ * The SEALED field list of a schema member — THE one reader of "what
+ * fields does this owner expose": an ordinary relation's declared fields;
+ * a closed relation's sealed shape — the synthetic `id` (the value's own
+ * roster-carrying descriptor, by identity) at ordinal 0, then the declared
+ * payload columns at declared index + 1 (the sealed shift, mirroring the
+ * engine's `SchemaDescriptor::sealed_fields`). A `ClosedColumn` is
+ * structurally a `RelationField`, so both kinds read uniformly.
+ */
+function sealedFieldsOf(member: AnyRelation | AnyClosed): readonly RelationField[] {
+	if (isClosedMember(member)) {
+		return Object.freeze([Object.freeze({ name: "id", field: member.id }), ...member.data.columns])
+	}
+	return member.data.fields
+}
+
+/**
+ * One sealed field by name — derived from {@link sealedFieldsOf}, so the
+ * closed synthetic `id` resolves everywhere a name is looked up (no reader
+ * can silently lack the `id` arm). `undefined` when the name is foreign
+ * (the type tiers make that unwritable; the engine re-judges at
+ * `Db.create`).
+ */
+function sealedFieldOf(member: AnyRelation | AnyClosed, fieldName: string): AnyField | undefined {
+	const declared = sealedFieldsOf(member).find(function byName(candidate) {
+		return candidate.name === fieldName
+	})
+	return declared?.field
+}
+
 /** Narrows the two-tier second argument: a handle tuple (bare tier) or a column block (payload tier). */
 function isHandleTuple(
 	shape: readonly [string, ...string[]] | Record<string, PayloadField>
@@ -238,37 +281,21 @@ function axiomsMinted<Handles extends string, Cols extends Record<string, Payloa
 }
 
 /**
- * Reads one handle's ground axiom row for lowering. The typed payload
- * surface makes absence unrepresentable ({@link Axioms} carries every
- * handle's row); the refusal below guards the one ill-typed path — payload
- * columns with the bare tier's absent axioms — which no public spelling
- * reaches.
- */
-function groundRow<Handles extends string, Cols extends Record<string, PayloadField>>(
-	name: string,
-	axioms: Axioms<Handles, Cols> | undefined,
-	handle: Handles
-): Readonly<Record<string, unknown>> {
-	if (axioms === undefined) {
-		throw errors.new(`closed relation ${name}: payload columns declared without ground axioms`)
-	}
-	return axioms[handle]
-}
-
-/**
  * Mints the axiom-readback record: one own frozen row per handle (the bare
  * tier's rows are empty — it declares no columns), each row a fresh copy of
- * its ground axiom.
+ * its ground axiom. Both tiers supply a REAL axioms record ({@link
+ * closedBare} mints its empty rows), so the columns-without-axioms state is
+ * unrepresentable here — no undefined arm exists to guard.
  */
 function mintAxioms<Handles extends string, Cols extends Record<string, PayloadField>>(
 	name: string,
 	handles: readonly Handles[],
 	cols: readonly ClosedColumn[],
-	axioms: Axioms<Handles, Cols> | undefined
+	axioms: Axioms<Handles, Cols>
 ): Axioms<Handles, Cols> {
 	const out: Record<string, object> = {}
 	for (const handle of handles) {
-		const row = axioms === undefined ? Object.freeze({}) : Object.freeze({ ...groundRow(name, axioms, handle) })
+		const row = Object.freeze({ ...axioms[handle] })
 		Object.defineProperty(out, handle, { value: row, enumerable: true })
 	}
 	Object.freeze(out)
@@ -321,12 +348,29 @@ function closed<const Name extends string, const Cols extends PayloadColumns, Ha
 	return closedPayload(name, shape, axioms)
 }
 
-/** The bare tier's precisely-typed builder: no columns, no axioms. */
+/**
+ * The bare tier's precisely-typed builder: no columns, and the axioms
+ * record is the EMPTY-ROW record over the handle roster (one own frozen
+ * `{}` per handle, `__proto__`-safe own-property definition) — the same
+ * representation the payload tier carries, so `mintClosed` never sees a
+ * tier fork and the columns-without-axioms state stops being spellable.
+ */
 function closedBare<Name extends string, Handles extends string>(
 	name: Name,
 	handles: readonly [Handles, ...Handles[]]
 ): Closed<Name, Handles, Record<never, never>> {
-	return mintClosed<Name, Handles, Record<never, never>>(name, handles, {}, undefined)
+	const empty: Record<string, object> = {}
+	for (const handle of handles) {
+		/** A duplicated name mints one row; the roster's own duplicate refusal in {@link mintClosed} stays the judge. */
+		if (!Object.hasOwn(empty, handle)) {
+			Object.defineProperty(empty, handle, { value: Object.freeze({}), enumerable: true })
+		}
+	}
+	Object.freeze(empty)
+	if (!axiomsMinted<Handles, Record<never, never>>(empty, handles, [])) {
+		throw errors.new(`closed relation ${name}: bare-tier axiom-row minting incomplete`)
+	}
+	return mintClosed<Name, Handles, Record<never, never>>(name, handles, {}, empty)
 }
 
 /**
@@ -379,7 +423,7 @@ function mintClosed<Name extends string, Handles extends string, Cols extends Re
 	name: Name,
 	handles: readonly Handles[],
 	columns: Cols,
-	axioms: Axioms<Handles, Cols> | undefined
+	axioms: Axioms<Handles, Cols>
 ): Closed<Name, Handles, Cols> {
 	if (handles.length === 0) {
 		throw errors.new(`closed relation ${name}: at least one handle is required (an empty vocabulary declares nothing)`)
@@ -405,8 +449,8 @@ function mintClosed<Name extends string, Handles extends string, Cols extends Re
 	}
 	Object.freeze(cols)
 	const rows: ClosedRow[] = handleList.map(function lowerRow(handle) {
+		const row: Readonly<Record<string, unknown>> = axioms[handle]
 		const values = cols.map(function lowerAxiomLiteral(column) {
-			const row = groundRow(name, axioms, handle)
 			return Object.freeze(literalOf(column.field, row[column.name]))
 		})
 		return Object.freeze({ handle, values: Object.freeze(values) })
@@ -471,4 +515,4 @@ export type {
 	PayloadField,
 	SelectedClosed
 }
-export { closed }
+export { closed, isClosedMember, sealedFieldOf, sealedFieldsOf }

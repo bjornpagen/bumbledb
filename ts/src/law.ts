@@ -52,6 +52,7 @@
 
 import * as errors from "@superbuilders/errors"
 import type { AnyClosed } from "#closed.ts"
+import { isClosedMember, sealedFieldsOf } from "#closed.ts"
 import type { FaceData } from "#face.ts"
 import type { AnyRelation, RelationFields } from "#relation.ts"
 import type { SchemaRelation, SchemaRelations } from "#schema.ts"
@@ -328,22 +329,21 @@ interface MemberCoords {
 	readonly fields: ReadonlyArray<{ readonly name: string; readonly generator: boolean }>
 }
 
-/** Reads every member's coordinates off the relation record, declaration order throughout. */
+/**
+ * Reads every member's coordinates off the relation record, declaration
+ * order throughout — the sealed shape through THE one reader
+ * (`sealedFieldsOf`): a closed member's generator is its synthetic `id`
+ * (ordinal 0), an ordinary member's generators are its fresh-marked fields.
+ */
 function memberCoords(relations: SchemaRelations): MemberCoords[] {
 	const out: MemberCoords[] = []
 	for (const [relationName, member] of Object.entries(relations)) {
-		if ("handles" in member.data) {
-			const fields = [
-				{ name: "id", generator: true },
-				...member.data.columns.map(function columnCoord(column) {
-					return { name: column.name, generator: false }
-				})
-			]
-			out.push({ relation: relationName, fields })
-			continue
-		}
-		const fields = member.data.fields.map(function fieldCoord(declared) {
-			return { name: declared.name, generator: "fresh" in declared.field && declared.field.fresh === true }
+		const closed = isClosedMember(member)
+		const fields = sealedFieldsOf(member).map(function fieldCoord(declared) {
+			return {
+				name: declared.name,
+				generator: closed ? declared.name === "id" : "fresh" in declared.field && declared.field.fresh === true
+			}
 		})
 		out.push({ relation: relationName, fields })
 	}

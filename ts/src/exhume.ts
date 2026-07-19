@@ -26,7 +26,7 @@
 
 import * as errors from "@superbuilders/errors"
 import type { FactValue, Manifest } from "#native.ts"
-import { native } from "#native.ts"
+import { bridged, native } from "#native.ts"
 import type { ValueTypeSpec } from "#spec.ts"
 
 /**
@@ -130,20 +130,6 @@ interface Exhumed {
 	 * descriptor is the caller's roster.
 	 */
 	scan(relation: string): readonly ExhumedFact[]
-}
-
-/**
- * The bridge guard (db.ts's twin over this module's calls): runs one
- * native call and wraps anything it throws, so marshal-shape and
- * handle-lifecycle refusals cross as genuine typed failures, never bare
- * foreign errors.
- */
-function bridged<T>(context: string, run: () => T): T {
-	const result = errors.trySync(run)
-	if (result.error) {
-		throw errors.wrap(result.error, context)
-	}
-	return result.data
 }
 
 /**

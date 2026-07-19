@@ -11,8 +11,9 @@
 
 import * as errors from "@superbuilders/errors"
 import type { AnyClosed } from "#closed.ts"
+import { isClosedMember, sealedFieldOf } from "#closed.ts"
 import type { FaceData } from "#face.ts"
-import { type AnyField, assertDeclarationOrderKey, type ClosedRoster } from "#fields.ts"
+import { assertDeclarationOrderKey, rosterOf } from "#fields.ts"
 import { type ClassesOf, classesComplete, computeClasses, type LawfulStatements, type SchemaClasses } from "#law.ts"
 import type { AnyRelation } from "#relation.ts"
 import type { LiteralSetSpec, LiteralSpec } from "#spec.ts"
@@ -34,7 +35,7 @@ function collectImplied(name: string, relations: SchemaRelations): Set<string> {
 				`schema ${name}: record key ${recordKey} holds relation ${member.name} — the key must equal the relation's declared name`
 			)
 		}
-		if ("handles" in member.data) {
+		if (isClosedMember(member)) {
 			implied.add(`${member.name}(id) -> ${member.name}`)
 			continue
 		}
@@ -75,33 +76,6 @@ function verifyMembership(name: string, relations: SchemaRelations, statement: S
 	}
 }
 
-/** Finds a face's field descriptor by name, across both relation kinds. */
-function faceField(face: FaceData, fieldName: string): AnyField | undefined {
-	const data = face.owner.data
-	if ("handles" in data) {
-		const column = data.columns.find(function byName(candidate) {
-			return candidate.name === fieldName
-		})
-		return column?.field
-	}
-	const declared = data.fields.find(function byName(candidate) {
-		return candidate.name === fieldName
-	})
-	return declared?.field
-}
-
-/**
- * The roster a field resolves handles through: present exactly on a closed
- * reference descriptor (the structural `closed` property — S1's
- * `ClosedIdField`), absent on every other field kind.
- */
-function rosterOf(field: AnyField | undefined): ClosedRoster | undefined {
-	if (field !== undefined && "closed" in field) {
-		return field.closed
-	}
-	return undefined
-}
-
 /** Flattens one binding's literal set into its literals. */
 function bindingLiterals(set: LiteralSetSpec): readonly LiteralSpec[] {
 	if (set.kind === "one") {
@@ -122,7 +96,7 @@ function verifyBindingHandles(
 	binding: { readonly field: string; readonly set: LiteralSetSpec },
 	rendered: string
 ): void {
-	const roster = rosterOf(faceField(face, binding.field))
+	const roster = rosterOf(sealedFieldOf(face.owner, binding.field))
 	for (const literal of bindingLiterals(binding.set)) {
 		if (literal.kind !== "handle") {
 			continue
@@ -177,7 +151,7 @@ function closedTargetOf(statements: readonly Statement[], owner: string, field: 
 				source.projection[0] === field &&
 				target.projection.length === 1 &&
 				target.projection[0] === "id" &&
-				"handles" in target.owner.data
+				isClosedMember(target.owner)
 			) {
 				return target.owner.name
 			}
@@ -227,11 +201,11 @@ function verifyClosedReferenceBinding(
 	if (!spellsHandle) {
 		return
 	}
-	const roster = rosterOf(faceField(face, binding.field))
+	const roster = rosterOf(sealedFieldOf(face.owner, binding.field))
 	if (roster === undefined) {
 		return
 	}
-	if ("handles" in face.owner.data && binding.field === "id") {
+	if (isClosedMember(face.owner) && binding.field === "id") {
 		return
 	}
 	const resolved = closedTargetOf(statements, face.owner.name, binding.field)

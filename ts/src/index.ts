@@ -119,7 +119,7 @@ export type {
 	SelectColumn,
 	Tree
 } from "#query/atom.ts"
-export { ALLEN, allen, and, covers, eq, ge, gt, le, lt, ne, not, or, pointIn } from "#query/atom.ts"
+export { ALLEN, allen, and, eq, ge, gt, le, lt, ne, not, or, pointIn } from "#query/atom.ts"
 export type {
 	AnyQuery,
 	AnyRuleValue,
@@ -158,8 +158,6 @@ export type {
 	AnyRelation,
 	AnySelected,
 	Fact,
-	FieldRef,
-	FieldRefs,
 	FieldsShape,
 	FreshKeys,
 	InsertFact,

@@ -27,3 +27,8 @@ crate-type = ["cdylib"]
 bumbledb = { path = "../../crates/bumbledb" }
 napi = { version = "3", default-features = true, features = ["napi8"] }
 napi-derive = "3"
+
+[dev-dependencies]
+# The tags.json golden test parses the committed fixture structurally (the
+# TS repo's formatter owns the bytes); dev-only, never in the cdylib.
+serde_json = "1"

@@ -2,12 +2,14 @@
  * `relation()` — the ordinary-relation half of the theory's signature. A
  * relation value is a frozen plain object carrying its name, its ordered
  * field descriptors (declaration order = ordinal ids, the macro's law),
- * typed field references (`R.fields.holder`), and — since selections are
- * the relation's own vocabulary — `where()`, which resolves a selection
- * into lowered bindings eagerly (handles verified against their roster at
- * construction). `Fact<>`/`InsertFact<>` are the inferred row object
- * types at BARE structural value types (no brands): fresh fields are
- * optional on insert input (omit-to-mint) and present on read
+ * and — since selections are the relation's own vocabulary — `where()`,
+ * which resolves a selection into lowered bindings eagerly (handles
+ * verified against their roster at construction). Fields are addressed by
+ * NAME everywhere — statements (`on(R, "holder")`), selections, and match
+ * records all spell the field's own name, checked by type
+ * (`FaceFields`/`MatchShape`). `Fact<>`/`InsertFact<>` are the inferred
+ * row object types at BARE structural value types (no brands): fresh
+ * fields are optional on insert input (omit-to-mint) and present on read
  * (resupply-to-preserve-identity), typed exactly.
  */
 
@@ -17,23 +19,6 @@ import { type LiteralSetSpec, type LiteralSpec, renderLiteral } from "#spec.ts"
 
 /** Flattens an intersection into one displayed object type (hover legibility). */
 type Flatten<T> = { [K in keyof T]: T[K] }
-
-/**
- * The one trusted seam of `relation()`: the reference record is built by
- * iterating the declared fields, and this guard verifies the checkable
- * facts — one reference per declared field, each carrying its own name —
- * before the record is admitted as the typed {@link FieldRefs} (the
- * macro-emission analog).
- */
-function refsComplete<RName extends string, Fields extends FieldsShape>(
-	refs: Record<string, unknown>,
-	fields: Fields
-): refs is FieldRefs<RName, Fields> {
-	return Object.keys(fields).every(function hasRef(fieldName) {
-		const ref = refs[fieldName]
-		return typeof ref === "object" && ref !== null && "field" in ref && ref.field === fieldName
-	})
-}
 
 /**
  * Resolves one selection entry to its lowered literal set: a plain ARRAY
@@ -117,22 +102,6 @@ function resolveSelection(
 /** The field block of a relation: field name to field descriptor. */
 type FieldsShape = Record<string, AnyField>
 
-/**
- * A typed field reference (`Account.fields.holder`) — the value statements,
- * selections, and queries address a field through. Purely positional
- * (relation name + field name); the field's descriptor is read off the
- * relation's schema type structurally.
- */
-interface FieldRef<Rel extends string, Name extends string> {
-	readonly relation: Rel
-	readonly field: Name
-}
-
-/** The typed field-reference record of a relation. */
-type FieldRefs<RName extends string, Fields extends FieldsShape> = {
-	readonly [K in keyof Fields & string]: FieldRef<RName, K>
-}
-
 /** One declared field: name plus its descriptor, in declaration order. */
 interface RelationField {
 	readonly name: string
@@ -178,7 +147,6 @@ interface Selected<Name extends string, Fields extends FieldsShape> {
 interface Relation<Name extends string, Fields extends FieldsShape> {
 	readonly name: Name
 	readonly data: RelationData
-	readonly fields: FieldRefs<Name, Fields>
 	where(selection: SelectionInput<Fields>): Selected<Name, Fields>
 }
 
@@ -236,14 +204,6 @@ function relation<const Name extends string, Fields extends FieldsShape>(
 		ordered.push(Object.freeze({ name: fieldName, field }))
 	}
 	const data: RelationData = Object.freeze({ name, fields: Object.freeze(ordered) })
-	const refs: Record<string, unknown> = {}
-	for (const declared of ordered) {
-		refs[declared.name] = Object.freeze({ relation: name, field: declared.name })
-	}
-	Object.freeze(refs)
-	if (!refsComplete<Name, Fields>(refs, fields)) {
-		throw errors.new(`relation ${name}: field-reference construction incomplete`)
-	}
 	const holder: { value: Relation<Name, Fields> | undefined } = { value: undefined }
 	function where(selection: SelectionInput<Fields>): Selected<Name, Fields> {
 		const owner = holder.value
@@ -255,7 +215,7 @@ function relation<const Name extends string, Fields extends FieldsShape>(
 			selection: resolveSelection(name, ordered, Object.entries(selection))
 		})
 	}
-	const value: Relation<Name, Fields> = Object.freeze({ name, data, fields: refs, where })
+	const value: Relation<Name, Fields> = Object.freeze({ name, data, where })
 	holder.value = value
 	return value
 }
@@ -264,8 +224,6 @@ export type {
 	AnyRelation,
 	AnySelected,
 	Fact,
-	FieldRef,
-	FieldRefs,
 	FieldsShape,
 	FreshKeys,
 	InsertFact,

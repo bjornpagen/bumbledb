@@ -4,8 +4,8 @@
  * with a param, negation as a safe anti-join, a union of two rules (set
  * semantics dedup), `count()` with implicit grouping, the recursive
  * closure and the finished-stratum aggregate fold as one stratified
- * `program()`, point membership (literal, param, and `pointIn`/`covers`
- * both spellings), `allen` with a literal and a bound mask, ∈-set params,
+ * `program()`, point membership (literal, param, and `pointIn` — the one
+ * spelling), `allen` with a literal and a bound mask, ∈-set params,
  * the or-tree, deterministic lowering (same query built twice →
  * deeply-equal IR), the engine's prepare ACCEPTING every construct the
  * surface can spell (the IR-bijection pin), the unused-param law (a param
@@ -391,7 +391,7 @@ describe("the query surface against a real store", function suite() {
 		)
 	})
 
-	test("point membership: literal, param (both value shapes), pointIn, and covers", function membership() {
+	test("point membership: literal, param (both value shapes), and pointIn", function membership() {
 		const activeAtFive = query(Ledger).rule((r) => r.match(Account, { id: r.var("acct"), active: 5n }).select("acct"))
 		assert.deepEqual(
 			sorted(
@@ -436,20 +436,20 @@ describe("the query surface against a real store", function suite() {
 			sorted([ids.adaChecking, ids.graceSavings])
 		)
 
-		const coversLiteralLeft = query(Ledger).rule((r) =>
+		const intervalLiteralOperand = query(Ledger).rule((r) =>
 			r
 				.match(Account, { id: r.var("acct"), opened: r.var("t") })
-				.where(r.covers(span(0n, 10n), r.var("t")))
+				.where(r.pointIn(r.var("t"), span(0n, 10n)))
 				.select("acct")
 		)
 		assert.deepEqual(
 			sorted(
-				run(coversLiteralLeft, {}).map(function acct(row) {
+				run(intervalLiteralOperand, {}).map(function acct(row) {
 					return row.acct
 				})
 			),
 			sorted([ids.adaChecking, ids.graceSavings]),
-			"covers(span(...), t) — the legal interval-left pointIn, literal lhs tagged by the point sibling"
+			"pointIn(t, span(...)) — the legal interval-literal operand, lowered interval-left, tagged by the point sibling"
 		)
 		const pin: ParamsPin = true
 		assert.ok(pin)

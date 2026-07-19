@@ -20,11 +20,9 @@ import * as errors from "@superbuilders/errors"
 import { handleOf } from "#marshal.ts"
 import type { FactValue, QueryParam, TaggedValue } from "#native.ts"
 import type { SelectColumn } from "#query/atom.ts"
+import { ALLEN_ALL_BITS } from "#query/atom.ts"
 import { taggedCmpLiteral } from "#query/lower.ts"
 import type { ParamEntry } from "#query/scope.ts"
-
-/** The 13-bit Allen mask ceiling (`bumbledb/crates/bumbledb/src/allen.rs`: bits above the low 13 are unrepresentable). */
-const ALLEN_ALL_BITS = (1 << 13) - 1
 
 /** Tags one supplied mask-param value. */
 function wireMask(name: string, value: unknown): TaggedValue {

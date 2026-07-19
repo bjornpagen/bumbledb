@@ -101,11 +101,11 @@ type FaceSource = AnyRelation | AnyClosed | AnySelected | AnySelectedClosed
  * names address the sealed shape).
  */
 type FaceFields<S extends FaceSource> = S extends AnySelected
-	? keyof S["relation"]["fields"] & string
+	? keyof RelationFields<S["relation"]> & string
 	: S extends AnySelectedClosed
 		? "id" | (keyof S["relation"]["columns"] & string)
 		: S extends AnyRelation
-			? keyof S["fields"] & string
+			? keyof RelationFields<S> & string
 			: S extends { readonly axioms: Readonly<Record<string, infer Row>> }
 				? "id" | (keyof Row & string)
 				: never

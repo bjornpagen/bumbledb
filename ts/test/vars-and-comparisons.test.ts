@@ -2,7 +2,7 @@
  * PRD-K5 probes: `vars()` (the tuple-to-object multi-var mint) and the free
  * comparison/connective exports. Every import here comes from the PACKAGE
  * ROOT — this file IS the export pin for the enumerated names
- * (`eq/ne/lt/le/gt/ge/pointIn/covers/allen/and/or/not`). Pinned: `vars`
+ * (`eq/ne/lt/le/gt/ge/pointIn/allen/and/or/not`). Pinned: `vars`
  * inference is exact (`Var<"service">`, Equal-strength) and identical to
  * the `r.var` baseline; the record is minted with OWN properties (a
  * `"__proto__"` name never writes the prototype); duplicate names in one
@@ -30,7 +30,6 @@ import {
 	allen,
 	and,
 	contained,
-	covers,
 	eq,
 	ge,
 	gt,
@@ -168,7 +167,7 @@ describe("vars(): the tuple-to-object multi-var mint", function suite() {
 
 describe("the free comparison exports", function suite() {
 	test("each enumerated name is a package-root export (the grep pin)", function exportPin() {
-		const roster = [eq, ne, lt, le, gt, ge, pointIn, covers, allen, and, or, not]
+		const roster = [eq, ne, lt, le, gt, ge, pointIn, allen, and, or, not]
 		for (const builder of roster) {
 			assert.equal(typeof builder, "function")
 		}
@@ -190,7 +189,6 @@ describe("the free comparison exports", function suite() {
 		assert.equal(ops.gt, gt)
 		assert.equal(ops.ge, ge)
 		assert.equal(ops.pointIn, pointIn)
-		assert.equal(ops.covers, covers)
 		assert.equal(ops.allen, allen)
 		assert.equal(ops.and, and)
 		assert.equal(ops.or, or)
@@ -258,7 +256,7 @@ describe("the free comparison exports", function suite() {
 				.where(ge(b, -5n))
 				.where(le(b, 100n))
 				.where(pointIn(r.param("at"), w))
-				.where(covers(w, 3n))
+				.where(pointIn(3n, w))
 				.where(allen(w, ALLEN.before | ALLEN.meets, span(0n, 10n)))
 				.where(not(Account, { holder: h, balance: 99n }))
 				.select("acct")
@@ -272,7 +270,7 @@ describe("the free comparison exports", function suite() {
 				.where(r.ge(r.var("b"), -5n))
 				.where(r.le(r.var("b"), 100n))
 				.where(r.pointIn(r.param("at"), r.var("w")))
-				.where(r.covers(r.var("w"), 3n))
+				.where(r.pointIn(3n, r.var("w")))
 				.where(r.allen(r.var("w"), ALLEN.before | ALLEN.meets, span(0n, 10n)))
 				.where(r.not(Account, { holder: r.var("h"), balance: 99n }))
 				.select("acct")

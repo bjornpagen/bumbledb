@@ -2,9 +2,6 @@
 	"name": "@bjornpagen/bumbledb",
 	"version": "0.4.0",
 	"description": "Type-theoretic TypeScript SDK for the bumbledb embedded relational engine",
-	"module": "dist/index.js",
-	"main": "dist/index.js",
-	"types": "dist/index.d.ts",
 	"type": "module",
 	"exports": {
 		".": {

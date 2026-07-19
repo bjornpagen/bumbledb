@@ -4,14 +4,14 @@
  * behavior; the controls beside it pin the adjacent behavior that always
  * held.
  *
- *   1. covers() with a literal interval left operand — legal per the type
+ *   1. pointIn() with a literal interval operand — legal per the type
  *      surface and per the IR (`ir::CmpOp::PointIn` is interval-left,
  *      point-right; `Term::Literal(Value::IntervalU64)` is a legal lhs) —
- *      lowers to PointIn: comparison-literal tagging is op-aware and tags
- *      the interval-shaped literal by the point sibling's element domain.
- *      The structural surface also makes it a TYPE-level guarantee: the
- *      interval shape is legal exactly at `pointIn`/`covers`/`allen`
- *      positions.
+ *      lowers to PointIn interval-left: comparison-literal tagging is
+ *      op-aware and tags the interval-shaped literal by the point
+ *      sibling's element domain. The structural surface also makes it a
+ *      TYPE-level guarantee: the interval shape is legal exactly at
+ *      `pointIn`/`allen` positions.
  *   2. The unused-param law, structural form: params are typed BY USE and
  *      the registry is usage-derived, so a param VALUE no rule places
  *      never registers — the query lowers, prepares, and executes under
@@ -54,11 +54,11 @@ test("CONTROL: allen() accepts a literal interval side (sibling is interval-type
 	})
 })
 
-test("CONTROL: covers() accepts an interval var left with a point literal right", function coversVarLeft() {
+test("CONTROL: pointIn() accepts a point literal with an interval var", function pointInVarInterval() {
 	const q = query(Probe).rule((r) =>
 		r
 			.match(Session, { active: r.var("iv") })
-			.where(r.covers(r.var("iv"), 5n))
+			.where(r.pointIn(5n, r.var("iv")))
 			.select("iv")
 	)
 	assert.doesNotThrow(function lowerIt() {
@@ -66,16 +66,16 @@ test("CONTROL: covers() accepts an interval var left with a point literal right"
 	})
 })
 
-test("covers() with a literal interval left operand lowers to PointIn (interval-left, point-right)", function coversLiteralLeft() {
+test("pointIn() with a literal interval operand lowers to PointIn (interval-left, point-right)", function pointInLiteralInterval() {
 	/**
 	 * "sessions whose timestamp falls inside a fixed window" — the literal
-	 * interval is the lhs, exactly the IR's operand order; the point-typed
-	 * sibling's element domain tags it intervalU64.
+	 * interval lands as the IR's lhs whatever the surface argument order;
+	 * the point-typed sibling's element domain tags it intervalU64.
 	 */
 	const q = query(Probe).rule((r) =>
 		r
 			.match(Session, { holder: r.var("h"), at: r.var("t") })
-			.where(r.covers(span(0n, 10n), r.var("t")))
+			.where(r.pointIn(r.var("t"), span(0n, 10n)))
 			.select("h", "t")
 	)
 	const ir = lowerQuery(q)

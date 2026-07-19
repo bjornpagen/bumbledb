@@ -342,6 +342,34 @@ describe("the ban table, one row at a time — literal spellings are UNWRITABLE"
 		const Alert = relation("Alert", { sev: Sev.id })
 		assert.equal(renderStatement(contained(on(Alert, "sev"), on(Sev, "id"))), "Alert(sev) <= Sev(id)")
 	})
+
+	test("an arity-mismatched pairing is a construction error — the SameArity runtime twin (untyped path)", function probeArityWall() {
+		/**
+		 * Ruling 9 (cleanup-0.5.0): SameArity's runtime seat. The type tier
+		 * already refuses these (the directives are real); before the twin an
+		 * UNTYPED caller's mismatch silently truncated to the shorter
+		 * projection (the positionwise walks skip unpaired positions) until
+		 * Db.create's colder engine refusal — now the statement itself judges.
+		 */
+		const { Booking, Slot } = buildCalendar()
+		assert.throws(function truncatedContainment() {
+			// @ts-expect-error — SameArity refuses the pairing at the type tier; this is its construction-time twin
+			contained(on(Booking, ["room", "during"]), on(Slot, "room"))
+		}, /Booking\(room, during\) and Slot\(room\) project 2 vs 1 fields — positional pairing requires both faces to project equally many/)
+		assert.throws(function truncatedMirrors() {
+			// @ts-expect-error — the == abbreviation holds the same arity wall
+			mirrors(on(Slot, "room"), on(Booking, ["room", "during"]))
+		}, /Slot\(room\) and Booking\(room, during\) project 1 vs 2 fields/)
+		assert.throws(function truncatedWindow() {
+			// @ts-expect-error — a window's grouping join holds the arity wall exactly as containment
+			window(on(Slot, "room"), atMost(1n), on(Booking, ["room", "during"]))
+		}, /Booking\(room, during\) and Slot\(room\) project 2 vs 1 fields/)
+		// The paired spelling still constructs.
+		assert.equal(
+			renderStatement(contained(on(Slot, ["room", "during"]), on(Booking, ["room", "during"]))),
+			"Slot(room, during) <= Booking(room, during)"
+		)
+	})
 })
 
 /**
