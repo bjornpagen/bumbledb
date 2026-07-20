@@ -62,7 +62,7 @@ import type {
 	ViolationFact as WireViolationFact
 } from "#native.ts"
 import { bridged, native } from "#native.ts"
-import type { SelectColumn } from "#query/atom.ts"
+import type { FindColumn } from "#query/atom.ts"
 import type { Query } from "#query/lower.ts"
 import { lowerQuery } from "#query/lower.ts"
 import { decodeAnswers, wireParams } from "#query/run.ts"
@@ -643,7 +643,7 @@ interface PreparedPlan {
 	readonly handle: PreparedHandle
 	readonly owner: object
 	readonly params: readonly ParamEntry[]
-	readonly select: readonly SelectColumn[]
+	readonly finds: readonly FindColumn[]
 }
 
 /** The private engine halves of this module's prepared values. */
@@ -938,7 +938,7 @@ function openDb<Rels extends SchemaRelations>(handle: DbHandle, theory: Schema<R
 			const rows = bridged("execute bumbledb prepared query", function callExecute() {
 				return native.preparedExecute(plan.handle, state.handle, wire)
 			})
-			return decodeAnswers<Row>(plan.select, rows)
+			return decodeAnswers<Row>(plan.finds, rows)
 		}
 		const scope: ReadScope<Rels> = Object.freeze({
 			generation,
@@ -1424,7 +1424,7 @@ function openDb<Rels extends SchemaRelations>(handle: DbHandle, theory: Schema<R
 				handle: preparedHandle,
 				owner,
 				params: q.data.params,
-				select: q.data.select
+				finds: q.data.finds
 			})
 		)
 		planReclaimer.register(prepared, preparedHandle)

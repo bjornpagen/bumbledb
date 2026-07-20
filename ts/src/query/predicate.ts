@@ -5,31 +5,39 @@
  *
  *   program(S, (p) => {
  *     const reach = p.rec("reach")
- *     reach.rule((r) => r.match(Node, { id: r.var("c") })
- *       .where(r.eq(r.var("c"), r.param("root"))).select("c"))
- *     reach.rule((r) => r.match(Parent, { child: r.var("c"), parent: r.var("m") })
- *       .idb(reach, r.var("m")).select("c"))
- *     return p.output((r) => r.match(Posting, { account: r.var("a"), minor: r.var("m") })
- *       .idb(reach, r.var("a")).select(r.sum("m")))
+ *     reach.rule((r) => {
+ *       const n = v(Node)
+ *       return r.match(Node, { id: n.id }).where(r.eq(n.id, r.param("root"))).find({ c: n.id })
+ *     })
+ *     reach.rule((r) => {
+ *       const e = v(Parent)
+ *       return r.match(Parent, { child: e.child, parent: e.parent }).idb(reach, { c: e.parent }).find({ c: e.child })
+ *     })
+ *     return p.output((r) => {
+ *       const post = v(Posting)
+ *       return r.match(Posting, { account: post.account, minor: post.minor })
+ *         .idb(reach, { c: post.account }).find({ total: r.sum(post.minor) })
+ *     })
  *   })
  *
  * `p.rec(name)` declares one recursive predicate (declaration order = its
  * dense `PredId`); `rec.rule(...)` attaches one clause — its builder's
  * `idb` accepts ONLY the rec itself (the self-recursion cut as a
- * type-level boundary: mutual recursion is unwritable) and its head
- * projects bound variable NAMES only (aggregation/measure through a cycle
- * is unrepresentable — the strata judge's roster, made unwritable);
+ * type-level boundary: mutual recursion is unwritable) and its `find` head
+ * projects bound variables only (aggregation/measure through a cycle is
+ * unrepresentable — the strata judge's roster, made unwritable);
  * `p.output(...)` seals the recs and builds the output rules, whose `idb`
- * folds any FINISHED stratum (recipe 25's form). The rec value `.rule`
- * returns carries the params its rules used — thread it into the output's
- * `idb` and the program's inferred `Params` stays exactly the params the
- * rules use. Everything deeper — strata legality, signature sealing, the
- * three oracles — is the ENGINE's judge, surfacing typed at prepare.
+ * folds any FINISHED stratum by NAMED record over its head keys (recipe
+ * 25's form). The rec value `.rule` returns carries the params its rules
+ * used — thread it into the output's `idb` and the program's inferred
+ * `Params` stays exactly the params the rules use. Everything deeper —
+ * strata legality, signature sealing, the three oracles — is the ENGINE's
+ * judge, surfacing typed at prepare.
  */
 
 import * as errors from "@superbuilders/errors"
 import type { SchemaClasses } from "#law.ts"
-import type { RecData, RuleData, SelectColumn } from "#query/atom.ts"
+import type { RecData } from "#query/atom.ts"
 import type {
 	AnyRuleValue,
 	HeadOf,
@@ -45,7 +53,7 @@ import type {
 	RuleValue
 } from "#query/lower.ts"
 import { makeOutputRuleScope, makeQuery, makeRawScope } from "#query/lower.ts"
-import type { ClassedField, Flatten, ParamsRecord, ShapeOf } from "#query/scope.ts"
+import type { Flatten, ParamsRecord, ShapeOf } from "#query/scope.ts"
 import { fieldJoins, inferred, renderFieldKind } from "#query/scope.ts"
 import type { Schema, SchemaRelations } from "#schema.ts"
 
@@ -112,20 +120,6 @@ interface RawRec<Name extends string> {
 	rule(build: (r: RawScope) => RuleValue<never, never>): RawRec<Name>
 }
 
-/**
- * The classed slot one rec head column binds, through the rule's own
- * environment: a rec head projects bound variable NAMES only (the strata
- * roster's unwritability), so every column is a projected var and its
- * slot is the var's first positive binding.
- */
-function recHeadSlotOf(rule: RuleData, column: SelectColumn): ClassedField | undefined {
-	const entry = column.entry
-	if (entry.kind === "var") {
-		return rule.varFields[entry.over]
-	}
-	return undefined
-}
-
 /** Builds the runtime rec handle over shared rec data. */
 function makeRawRec<Name extends string>(state: ProgramState, name: Name, data: RecData): RawRec<Name> {
 	const rec: RawRec<Name> = {
@@ -137,13 +131,13 @@ function makeRawRec<Name extends string>(state: ProgramState, name: Name, data: 
 					`rec ${name}: the program's output is already declared — recursive rules attach before p.output`
 				)
 			}
-			const built = build(makeRawScope({ kind: "rec", self: data, classes: state.classes }))
+			const built = build(makeRawScope({ kind: "rec", self: data, classes: state.classes, theory: state.theory }))
 			const head = data.rules[0]
 			if (head !== undefined) {
-				const declared = head.select.map(function columnName(column) {
+				const declared = head.finds.map(function columnName(column) {
 					return column.name
 				})
-				const candidate = built.rule.select.map(function columnName(column) {
+				const candidate = built.rule.finds.map(function columnName(column) {
 					return column.name
 				})
 				if (declared.join(", ") !== candidate.join(", ")) {
@@ -153,21 +147,19 @@ function makeRawRec<Name extends string>(state: ProgramState, name: Name, data: 
 				}
 				// The law-class wall on the sealed head: names alone do not
 				// align value spaces. Every rule must bind each head column
-				// at a slot that JOINS rule 0's (the sealing rule — the one
-				// slot every downstream idb pairing class-checks against),
-				// under the same fieldJoins judgment every reuse site
-				// enforces; otherwise a later rule feeds (say) bare weights
-				// into a column the idb joins as Node ids.
-				built.rule.select.forEach(function verifyHeadSlot(column, position) {
-					const lead = head.select[position]
+				// at a classed mint slot that JOINS rule 0's (the sealing rule
+				// — the one slot every downstream idb pairing class-checks
+				// against), under the same fieldJoins judgment every reuse
+				// site enforces; otherwise a later rule feeds (say) bare
+				// weights into a column the idb joins as Node ids.
+				built.rule.finds.forEach(function verifyHeadSlot(column, position) {
+					const lead = head.finds[position]
 					if (lead === undefined) {
 						return
 					}
-					const leadSlot = recHeadSlotOf(head, lead)
-					const slot = recHeadSlotOf(built.rule, column)
-					if (leadSlot !== undefined && slot !== undefined && !fieldJoins(leadSlot, slot)) {
+					if (lead.slot !== undefined && column.slot !== undefined && !fieldJoins(lead.slot, column.slot)) {
 						throw errors.new(
-							`rec ${name}: every rule derives the same head — the head column ${lead.name} is bound at ${renderFieldKind(leadSlot)} in rule 0 but at ${renderFieldKind(slot)} in this rule (a head column joins only class-equal slots; bare pairs only with bare)`
+							`rec ${name}: every rule derives the same head — the head column ${lead.name} is bound at ${renderFieldKind(lead.slot)} in rule 0 but at ${renderFieldKind(column.slot)} in this rule (a head column joins only class-equal slots; bare pairs only with bare)`
 						)
 					}
 				})
@@ -221,7 +213,7 @@ function program<
 	Classes extends SchemaClasses,
 	Q extends Query<Rels, unknown, ParamsRecord, Classes>
 >(theory: Schema<Rels, Classes>, build: (p: ProgramScope<Rels, Classes>) => Q): Q {
-	const state: ProgramState = { recs: [], classes: theory.classes, sealed: false }
+	const state: ProgramState = { recs: [], classes: theory.classes, theory, sealed: false }
 	const names = new Set<string>()
 	const made: { query: unknown } = { query: undefined }
 	const scope: ProgramScope<Rels, Classes> = {
