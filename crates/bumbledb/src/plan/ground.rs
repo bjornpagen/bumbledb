@@ -425,8 +425,8 @@ pub(crate) struct Subsumption {
 /// deleted rule's answers contained in the keeper's, and
 /// `RewriteStep.subsume` puts the deletion in `rewrite_composition`'s
 /// chain — the sixth rewrite, discharged (the module doc's record
-/// names the spent half). The ground-off dual-pipeline differential
-/// and the prepare-level tests stay as the empirical arm.
+/// names the spent half). The bench crate's ground-off dual-run
+/// differential and the prepare-level tests stay as the empirical arm.
 pub(crate) fn subsume(rules: &[NormalizedQuery], finds: &[&[FindTerm]]) -> Vec<Subsumption> {
     #[cfg(any(test, feature = "ground-off"))]
     if DISABLED.with(std::cell::Cell::get) {

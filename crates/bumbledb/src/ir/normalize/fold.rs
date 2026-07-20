@@ -16,7 +16,8 @@
 //!    (`lean/Bumbledb/Exec/Rewrites.lean`: `range_summary_replacement`,
 //!    with `range_pin_subsumes` for the Eq-pin arm; the
 //!    filter-level transport is the recorded narrowing in that module's
-//!    doc, with the fold-off differential as its empirical arm).
+//!    doc, with the fold-preservation differential tests below as its
+//!    empirical arm — the switch is test-only).
 //!    Fewer residuals means fewer keep-fraction
 //!    multiplications (`plan/selectivity.rs` counts a folded summary
 //!    once) and fewer kernel passes.
@@ -50,22 +51,23 @@ use crate::schema::{Relation, Schema};
 use bumbledb_theory::allen::AllenMask;
 use bumbledb_theory::schema::{FieldId, IntervalElement, ValueType};
 
-#[cfg(any(test, feature = "fold-off"))]
+#[cfg(test)]
 thread_local! {
     /// The test-only off switch (the ground-off-switch precedent,
     /// `plan/ground.rs`): the fold-preservation differential runs the
     /// same query folded and unfolded. Reachable from this crate's own
-    /// tests and — through the `fold-off` fuzz-oracle feature, enabled
-    /// only by the detached fuzz crate's `rewrites` dual-pipeline
-    /// differential — from nowhere a production build can see: no
-    /// runtime mode ships.
+    /// tests and from nowhere a production build can see: no runtime
+    /// mode ships. (The `fold-off` feature that once exposed it to the
+    /// detached fuzz crate died with the fuzzing apparatus — the
+    /// 2026-07-20 hard-delete ruling,
+    /// docs/architecture/60-validation.md § the deletion record.)
     /// Thread-local because the test harness runs tests concurrently.
     static DISABLED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 /// Runs `f` with the fold bypassed on this thread — the fold-preservation
 /// differential's off switch. Restores on unwind.
-#[cfg(any(test, feature = "fold-off"))]
+#[cfg(test)]
 pub fn with_fold_disabled<T>(f: impl FnOnce() -> T) -> T {
     struct Reset;
     impl Drop for Reset {
@@ -82,7 +84,7 @@ pub fn with_fold_disabled<T>(f: impl FnOnce() -> T) -> T {
 /// the first contradiction's rendered picture — the rule's
 /// statically-empty verdict ([`super::NormalizedQuery::dead`]).
 pub(super) fn fold(schema: &Schema, occurrences: &mut [Occurrence]) -> Option<String> {
-    #[cfg(any(test, feature = "fold-off"))]
+    #[cfg(test)]
     if DISABLED.with(std::cell::Cell::get) {
         return None;
     }

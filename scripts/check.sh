@@ -31,21 +31,18 @@ echo "==> allocation gate (release): steady-state + escalating high-water"
 # flag keeps even an accidental second test from turning it flaky.
 cargo test --features alloc-counter --test alloc_gate --release -- --test-threads=1
 
-# The ground-off and fold-off fuzz-oracle features are load-bearing for
-# the fuzz crate's rewrites dual-pipeline differential (the crucible
-# packet (git ecec1dc3)): the engine suite must stay green with each off
-# switch compiled in. What the lanes actually build: the workspace
-# invocations above already compile bumbledb WITH ground-off — the bench
-# crate's dev-dependency turns it on, and cargo unifies features across
-# one build graph — so the -p ground-off lane pins that coverage
-# independently of the bench dep, and the fold-off lane (a -p graph the
-# bench crate is not in) is the only build with ground-off OFF.
-echo "==> bumbledb with the ground-off fuzz-oracle feature (clippy + tests)"
+# The ground-off test-support feature is load-bearing for the bench
+# crate's dual-run grounding/fold differentials
+# (crates/bumbledb-bench/src/differential/tests): the engine suite must
+# stay green with the off switch compiled in. What the lane actually
+# builds: the workspace invocations above already compile bumbledb WITH
+# ground-off — the bench crate's dev-dependency turns it on, and cargo
+# unifies features across one build graph — so this -p lane pins that
+# coverage independently of the bench dep; the trace lane below (a -p
+# graph the bench crate is not in) covers the build with ground-off OFF.
+echo "==> bumbledb with the ground-off test-support feature (clippy + tests)"
 cargo clippy -p bumbledb --all-targets --features ground-off -- -D warnings
 cargo test -p bumbledb --features ground-off
-
-echo "==> bumbledb with the fold-off fuzz-oracle feature (tests)"
-cargo test -p bumbledb --features fold-off
 
 # The trace-gated referee pins live in the ENGINE crate — the
 # per-relation arm-selection pins (`api/db/append_tests.rs:
@@ -58,43 +55,13 @@ echo "==> bumbledb with the trace feature (tests)"
 cargo test -p bumbledb --features trace
 
 # Every engine feature at once, compiled once (the pairwise co-compile
-# check): no other lane co-builds trace with the fuzz-oracle features,
+# check): no other lane co-builds trace with the test-support features,
 # so a feature pair broken only in combination would land unseen without
 # this line. Clippy compiles every target and runs nothing — the
 # alloc-counter global allocator and the trace instrumentation are
 # proven to build together, never executed here.
 echo "==> bumbledb --all-features (clippy, the pairwise co-compile check)"
 cargo clippy -p bumbledb --all-targets --all-features -- -D warnings
-
-# The fuzz crate is detached from the workspace on purpose (the
-# crucible packet (git ecec1dc3)): `cargo fuzz` builds its targets, so
-# every --workspace invocation above skips fuzz/src entirely — a
-# breakage there would pass this gate unseen (the fixit record). This
-# lane compiles and lints it; the corpus REPLAY (plain `cargo test` in
-# fuzz/, ~8 min) stays a CI lane, not a per-commit gate.
-echo "==> fuzz crate (out-of-workspace): clippy -D warnings"
-cargo clippy --manifest-path fuzz/Cargo.toml --all-targets -- -D warnings
-
-# The deterministic crashpoint sweeps — durable and ephemeral — ARE a
-# per-commit gate (the fixit record): the ephemeral admission's reversal
-# clause ("reverses if the crash sweep ever convicts a crashpoint on an
-# ephemeral store") needs a standing executed lane, and the sweeps are
-# SECONDS (~1s durable, ~0.5s ephemeral) — this is NOT the ~8-min corpus
-# replay, which stays a CI lane. The filter matches both sweep parents
-# and excludes the replay test and the ignored crash-child body.
-echo "==> fuzz crate: deterministic crashpoint sweeps (durable + ephemeral)"
-cargo test --manifest-path fuzz/Cargo.toml --test crash every_crashpoint_recovers
-
-# The NOSYNC commit-window kill smoke (fuzz/tests/kill.rs): the
-# crashpoint sweeps cut everywhere EXCEPT inside mdb_txn_commit itself,
-# and inside that window is exactly where the ephemeral kind's NO_SYNC
-# commits leave un-fsynced state — so ~30 random-timing SIGKILLs
-# (durable control + ephemeral)
-# run per commit (~5-8s), each corpse autopsied for all-or-nothing
-# recovery. The statistical lane (>= 2,000 kills/kind) is the #[ignore]d
-# long variant, recorded in fuzz/SESSIONS.md.
-echo "==> fuzz crate: random-timing kill smoke (durable + ephemeral)"
-cargo test --manifest-path fuzz/Cargo.toml --test kill random_kills_recover_on_both_kinds_smoke
 
 # The bench crate must build and lint with the engine's observability on
 # (docs/architecture/60-validation.md); the harness tests run under both configs.

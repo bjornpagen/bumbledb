@@ -1,18 +1,18 @@
-//! The copy-on-append column differential as an engine-hosted fuzz
-//! oracle (feature `image-oracle`;
+//! The copy-on-append column differential, engine-hosted test support
+//! (feature `image-oracle`;
 //! docs/prds/incremental-images/prd-I1-copy-on-append.md § coverage
 //! item 3(b)): the image the engine SERVES for a relation — whatever
 //! arm produced it (full build, append, carry-forward, or a plain
 //! cache hit) — compared facet-by-facet against a from-scratch
-//! [`crate::image::build`] in the SAME read transaction. The detached
-//! fuzz crate's `ops` target runs this after every state-changing
-//! commit, per touched relation: set-semantic query parity already
-//! catches wrong tail CONTENT, but an append landing the right
-//! multiset at wrong positions, or corrupting lazily-observed
-//! metadata (spans, forced distincts), passes every other oracle —
-//! this is the only in-tree comparison of the two fill paths under
-//! fuzz entropy (the one-shot integration referee lives in
-//! `append_tests.rs`).
+//! [`crate::image::build`] in the SAME read transaction. Set-semantic
+//! query parity already catches wrong tail CONTENT, but an append
+//! landing the right multiset at wrong positions, or corrupting
+//! lazily-observed metadata (spans, forced distincts), passes every
+//! other referee — this is the only in-tree comparison of the two fill
+//! paths (the one-shot integration referee lives in `append_tests.rs`).
+//! Its former consumer, the detached fuzz crate's `ops` target, died
+//! with the fuzzing apparatus (the 2026-07-20 hard-delete ruling,
+//! docs/architecture/60-validation.md § the deletion record).
 
 use bumbledb_theory::schema::{FieldId, RelationId};
 
@@ -55,7 +55,7 @@ impl<S> Db<S> {
     /// # Panics
     ///
     /// Only on a foreign `rel` (internal ids are dense and validated —
-    /// the fuzz harness draws relations from the target schema).
+    /// a caller draws relations from the target schema).
     pub fn image_divergence(&self, rel: RelationId) -> Result<Option<ImageDivergence>> {
         let relation = self.schema.relation(rel);
         if relation.extension().is_some() {

@@ -1,10 +1,9 @@
-# The CI spine (the crucible packet (git ecec1dc3)). Four lanes on
-# macos arm64 (macos-latest is M-series): the workspace gate, the
-# corpus-replay lane, and the Lean gate per push; the Miri lane on a
-# nightly cron.
-# The SDK lane (the hardening-0.3.0 packet, PRD T6) joins them as the
-# fifth: both halves of the cross-host fingerprint lock, per push.
-# The check and corpus-replay lanes run on ubuntu-latest (x86_64-linux)
+# The CI spine (the crucible packet (git ecec1dc3)). Three lanes on
+# macos arm64 (macos-latest is M-series): the workspace gate and the
+# Lean gate per push; the Miri lane on a nightly cron.
+# The SDK lane (the hardening-0.3.0 packet, PRD T6) joins them:
+# both halves of the cross-host fingerprint lock, per push.
+# The check lane runs on ubuntu-latest (x86_64-linux)
 # as well as macos (the cleanup-0.5.0 packet, PRD U4): the first real
 # execution of the engine's linux arms and of the scalar-fallback
 # promise (docs/architecture/00-product.md — other 64-bit platforms
@@ -19,15 +18,12 @@
 # native pass is the reference host's.
 #
 # Wall-time record (measured locally on the pinned M2 Max, 2026-07-13):
-#   * corpus-replay lane: 463 s test wall (the query three-way replay
-#     dominates at ~400 s) + fuzz-crate build.
 #   * Miri lane: 752 s ≈ 12.5 min — OVER the 10-minute per-push budget,
 #     hence the cron (the "measure first, decide by the number" rule).
 #   * check lane: 178 s local wall (scripts/check.sh, warm build).
-#   Per-push wall = max(check, corpus-replay) since the lanes run in
-#   parallel: estimated under 15 minutes with warm caches; the first
-#   run on a cold cache (toolchain download + full builds) will exceed
-#   it once.
+#   The lanes run in parallel: estimated under 15 minutes with warm
+#   caches; the first run on a cold cache (toolchain download + full
+#   builds) will exceed it once.
 #
 # Deliberate exclusions (each per the measurement discipline,
 # docs/architecture/60-validation.md):
@@ -36,11 +32,9 @@
 #   * NO asm gates (scripts/check-asm.sh): aarch64 codegen inspection
 #     is a local gate for the same reason — runner codegen/toolchain
 #     drift would make it flaky without making it informative.
-#   * NO long fuzz sessions and NO ASAN lane: firepower is
-#     scripts/fuzz.sh on the owner's machine (the human work register);
-#     CI replays the checked-in corpus deterministically instead —
-#     every corpus entry a local session banked is thereafter
-#     CI-guarded.
+#   * NO fuzzing lanes: the fuzzing apparatus was hard-deleted by owner
+#     ruling (2026-07-20, docs/architecture/60-validation.md § the
+#     deletion record); the corpus-replay lane died with it.
 name: ci
 
 on:
@@ -67,7 +61,7 @@ env:
 jobs:
   # Lane 1 — the workspace gate: exactly scripts/check.sh (fmt, clippy
   # -D warnings, workspace tests + doctests, the release alloc gate,
-  # the fold-off matrix build from PRD 13, the bench-crate obs config).
+  # the feature matrix builds, the bench-crate obs config).
   # Both runners run the identical script; on ubuntu the run itself IS
   # the x86-64 scalar-fallback and linux-arm coverage (the cross
   # `cargo check` that used to self-skip at the end of check.sh died
@@ -95,34 +89,7 @@ jobs:
           key: check-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
       - run: scripts/check.sh
 
-  # Lane 2 — corpus replay: NOT libFuzzer-in-CI (fork mode and long
-  # sessions do not belong here). Plain `cargo test` in the detached
-  # fuzz crate iterates every checked-in corpus and trophy entry
-  # through the runner functions directly (fuzz/tests/), so the
-  # accumulated corpus replays deterministically on every push.
-  corpus-replay:
-    if: github.event_name != 'schedule'
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [macos-latest, ubuntu-latest]
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@v5
-      - name: install the pinned toolchain
-        run: rustup show
-      - uses: actions/cache@v5
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            fuzz/target
-          key: replay-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'fuzz/Cargo.lock') }}
-      - run: cargo test
-        working-directory: fuzz
-
-  # Lane 3 — Miri, both interpretation targets (native arm64 + the
+  # Lane 2 — Miri, both interpretation targets (native arm64 + the
   # x86_64-linux cross-interpretation): 752 s ≈ 12.5 min measured
   # locally (2026-07-13, M2 Max, warm sysroot), over the 10-minute
   # per-push budget — so it runs on the nightly cron (and on manual
@@ -144,12 +111,12 @@ jobs:
           key: miri-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
       - run: scripts/miri.sh
 
-  # Lane 4 — the Lean gate (the covenant campaign, PRD 01; census
+  # Lane 3 — the Lean gate (the covenant campaign, PRD 01; census
   # added by PRD 10; the conformance lane by PRD 13): elan installs the
   # toolchain pinned in lean/lean-toolchain, then scripts/lean.sh runs
   # `lake build` (the conformance exe is a default target), the
   # placeholder battery, scripts/spec-census.sh (the Bridge ledger's
-  # mechanism/instrument tokens against crates/ and fuzz/, the docs'
+  # mechanism/instrument tokens against crates/, the docs'
   # lean/ citations against the tree), and the conformance corpus run
   # (`lake exe conformance` over lean/conformance/cases — the
   # executable denotation vs the recorded engine answers).
@@ -183,8 +150,8 @@ jobs:
       # case, replayed from its recorded provenance, the engine fresh +
       # the naive model fresh, byte-held to the corpus file, then
       # `lake exe conformance` — engine vs naive vs the Lean
-      # denotation; a disagreement names the case file and is a trophy
-      # (triage per the fuzzing charter). Placed HERE per the measured
+      # denotation; a disagreement names the case file and demands
+      # triage before anything else merges. Placed HERE per the measured
       # numbers (2026-07-14, pinned M2 Max, debug build): 12.4 s
       # engine+naive replay + 1.2 s Lean corpus run — the per-push
       # budget holds; the cost is the bench-crate build, which the
@@ -201,7 +168,7 @@ jobs:
       - name: the three-way conformance comparator
         run: cargo test -p bumbledb-bench three_way_conformance -- --ignored --nocapture
 
-  # Lane 5 — the SDK lane (the hardening-0.3.0 packet, PRD T6): both
+  # Lane 4 — the SDK lane (the hardening-0.3.0 packet, PRD T6): both
   # halves of the cross-host fingerprint lock, per push. The TS half is
   # the full SDK gate exactly as run locally — build the napi bridge +
   # package from source, then tsc, biome, and `pnpm test` (the ONE

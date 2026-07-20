@@ -184,11 +184,13 @@ impl Colt {
                         // its view after construction, so no path can
                         // pair one colt's positions with another
                         // image's columns. Debug builds re-check it per
-                        // segment (the assert above); in release the
-                        // standing referee is the fuzz corpus —
-                        // cargo-fuzz builds optimized WITH
-                        // debug-assertions, so every corpus replay
-                        // keeps the assert live under -O. (The Miri
+                        // segment (the assert above); the release-mode
+                        // standing referee — the fuzz corpus replay,
+                        // built optimized WITH debug-assertions — died
+                        // with the fuzzing apparatus (the 2026-07-20
+                        // hard-delete ruling,
+                        // docs/architecture/60-validation.md § the
+                        // deletion record). (The Miri
                         // lane cannot reach this site: colt's test
                         // fixtures open LMDB, the FFI wall
                         // scripts/miri.sh names.)

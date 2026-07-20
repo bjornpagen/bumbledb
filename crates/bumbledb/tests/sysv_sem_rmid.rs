@@ -20,7 +20,7 @@
 //! the reader-slot `semop`), so the first WRITE is where it surfaces.
 //! On a volume with heavy file churn the inode counter sweeps the 2^16
 //! space, so any other LMDB user on the machine (the engine's own test
-//! and fuzz lanes included) eventually mints a colliding lockfile.
+//! lanes included) eventually mints a colliding lockfile.
 //!
 //! This test distills the collision to its kernel mechanism: remove the
 //! open store's semaphore set exactly as a colliding close would, then

@@ -112,11 +112,12 @@ mod verify_store;
 pub use allen::{AllenMask, Basic, classify};
 /// The copy-on-append column-differential divergence facets
 /// (`api/db/image_oracle.rs`), reachable only under the `image-oracle`
-/// fuzz-oracle feature: the detached fuzz crate's `ops` target compares
-/// the engine's served image against a from-scratch build after every
-/// state-changing commit and panics on the first facet reported here
+/// test-support feature: the served image compared against a
+/// from-scratch build, facet by facet
 /// (docs/prds/incremental-images/prd-I1-copy-on-append.md § coverage
-/// item 3(b)).
+/// item 3(b)). Its former consumer, the detached fuzz crate's `ops`
+/// target, died with the fuzzing apparatus (the 2026-07-20 hard-delete
+/// ruling, docs/architecture/60-validation.md § the deletion record).
 #[cfg(feature = "image-oracle")]
 pub use api::db::image_oracle::ImageDivergence;
 pub use api::db::{BulkLoadError, Db, Exhumed, Fact, Fresh, Key, Snapshot, WriteTx, exhume};
@@ -129,28 +130,19 @@ pub use api::stats::{
 };
 pub use error::{Direction, Error, OverflowKind, Result, Violation, Violations};
 pub use interval::Interval;
-/// The statically-empty fold's off switch (`ir/normalize/fold.rs`):
-/// reachable only under the `fold-off` fuzz-oracle feature. History,
-/// recorded honestly: deleted as dead configuration 2026-07-12 (nothing
-/// in-workspace consumed it), revived 2026-07-13 with a named consumer —
-/// the detached fuzz crate's `rewrites` dual-pipeline differential
-/// (the crucible packet (git ecec1dc3)), which an external
-/// crate can only reach through a feature, never through `cfg(test)`.
-#[cfg(feature = "fold-off")]
-pub use ir::normalize::with_fold_disabled;
 /// The grounding's test-support off switch (`plan/ground.rs`): reachable only
 /// under the `ground-off` feature, which the bench crate's dual-run
-/// differential unit tests (as a dev-dependency) and the fuzz crate's
-/// `rewrites` dual-pipeline differential enable.
+/// differential unit tests (as a dev-dependency) enable.
 #[cfg(feature = "ground-off")]
 pub use plan::ground::with_grounding_disabled;
 /// The crashpoint table (`storage/commit.rs`): the commit pipeline's
 /// named phase boundaries with their expected recovery sides, reachable
-/// only under the `crashpoint` fuzz-oracle feature. The detached fuzz
-/// crate's `crash` target (the crucible packet (git ecec1dc3)) consumes
-/// the table as its single authority — the harness draws points from it
-/// and judges recovery by its sides, so the engine's claimed atomicity
-/// structure and the adversary's expectations are one value.
+/// only under the `crashpoint` test-support feature. Its consumer — the
+/// detached fuzz crate's `crash` target, which drew points from the
+/// table and judged recovery by its sides — died with the fuzzing
+/// apparatus (the 2026-07-20 hard-delete ruling,
+/// docs/architecture/60-validation.md § the deletion record); the table
+/// remains the engine's claimed atomicity structure, as data.
 #[cfg(feature = "crashpoint")]
 pub use storage::commit::{CRASHPOINTS, CrashpointSide};
 /// The storage format version (`storage/env.rs`), public so

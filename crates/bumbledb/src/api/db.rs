@@ -46,11 +46,14 @@ mod delete_dyn;
 mod encode_dyn;
 mod exhume;
 mod get;
-/// Fuzz-oracle infrastructure (feature `image-oracle`): the
-/// copy-on-append column differential, engine-hosted so the detached
-/// fuzz crate's `ops` target can compare the served image against a
-/// from-scratch build — an external crate cannot reach `cfg(test)`
-/// (the fold-off precedent). No runtime mode ships.
+/// Test-support infrastructure (feature `image-oracle`): the
+/// copy-on-append column differential — the served image compared
+/// against a from-scratch build. Engine-hosted behind a feature because
+/// an external crate cannot reach `cfg(test)`; its former consumer, the
+/// detached fuzz crate's `ops` target, died with the fuzzing apparatus
+/// (the 2026-07-20 hard-delete ruling,
+/// docs/architecture/60-validation.md § the deletion record). No
+/// runtime mode ships.
 #[cfg(feature = "image-oracle")]
 pub mod image_oracle;
 mod insert;

@@ -13,29 +13,25 @@ alloc-counter = []
 # (`plan/ground.rs`) from the bench crate's dual-run differential unit
 # tests. Enabled only as a bench dev-dependency; no runtime mode ships.
 ground-off = []
-# Fuzz-oracle infrastructure: reaches the statically-empty fold's
-# thread-local off switch (`ir/normalize/fold.rs`) from outside the
-# engine. History, recorded honestly: deleted as dead configuration
-# 2026-07-12 (936ede5 — nothing in-workspace consumed it), revived
-# 2026-07-13 with a named consumer: the detached fuzz crate's `rewrites`
-# dual-pipeline differential (the crucible packet (git ecec1dc3))
-# — an external crate cannot reach `cfg(test)`. No runtime mode ships.
-fold-off = []
-# Fuzz-oracle infrastructure: the crashpoint hooks — the commit
-# pipeline's named phase boundaries (`storage/commit.rs`, the table)
-# consult `BUMBLEDB_CRASHPOINT` and abort the process on match, for the
-# detached fuzz crate's `crash` target
-# (the crucible packet (git ecec1dc3)). Off (the default) the hook macro
-# expands to nothing; on, the hooks are still inert unless the
-# environment variable is set. No runtime mode ships.
+# Test-support: the crashpoint hooks — the commit pipeline's named
+# phase boundaries (`storage/commit.rs`, the table) consult
+# `BUMBLEDB_CRASHPOINT` and abort the process on match. Its consumer
+# (the detached fuzz crate's `crash` target) died with the fuzzing
+# apparatus (the 2026-07-20 hard-delete ruling,
+# docs/architecture/60-validation.md § the deletion record); the
+# feature currently has no in-workspace consumer. Off (the default)
+# the hook macro expands to nothing; on, the hooks are still inert
+# unless the environment variable is set. No runtime mode ships.
 crashpoint = []
-# Fuzz-oracle infrastructure: the copy-on-append column differential
+# Test-support: the copy-on-append column differential
 # (`api/db/image_oracle.rs`) — the engine's served image of a relation
-# compared facet-by-facet against a from-scratch build in one snapshot,
-# for the detached fuzz crate's `ops` target (its sixth oracle,
-# docs/prds/incremental-images/prd-I1-copy-on-append.md § coverage
-# item 3(b)) — an external crate cannot reach `cfg(test)`, the fold-off
-# precedent. No runtime mode ships.
+# compared facet-by-facet against a from-scratch build in one snapshot
+# (docs/prds/incremental-images/prd-I1-copy-on-append.md § coverage
+# item 3(b)). Its consumer (the detached fuzz crate's `ops` target)
+# died with the fuzzing apparatus (the 2026-07-20 hard-delete ruling,
+# docs/architecture/60-validation.md § the deletion record); the
+# feature currently has no in-workspace consumer. No runtime mode
+# ships.
 image-oracle = []
 # The PRD-C1 measurement twins (`twin-no-mem-init`, `twin-append`)
 # lived here for one measurement session and were removed with their

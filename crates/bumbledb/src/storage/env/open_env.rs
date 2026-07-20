@@ -59,8 +59,10 @@ pub(super) fn open_env(path: &Path, kind: StoreKind) -> Result<heed::Env<Without
         // SAFETY: NO_SYNC trades machine-crash durability away, which
         // is the ephemeral store kind's on-disk claim
         // (docs/architecture/50-storage.md § the ephemeral store kind);
-        // process-kill atomicity is preserved (the crashpoint sweep runs
-        // against ephemeral stores, fuzz/tests/crash.rs) — commits still
+        // process-kill atomicity is preserved (verified by the ephemeral
+        // crashpoint sweep while it lived — the sweep died with the
+        // fuzzing apparatus, docs/architecture/60-validation.md § the
+        // deletion record) — commits still
         // pwrite through LMDB's ordinary path, they only skip the fsync
         // boundary, so no writable mapping and no aliasing hazard exists.
         unsafe { options.flags(EnvFlags::NO_SYNC) };
