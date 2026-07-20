@@ -118,8 +118,8 @@ const Uptime = schema("Uptime", { Service, Outage }, [
 	key(Outage, ["service", "window"])
 ])
 
-// down at instant t — `r.var` mints one domain-typed variable per name,
-// and shorthand punning binds same-named columns:
+// down at instant t — `r.var` names each variable (typed by the field it
+// first binds), and shorthand punning binds same-named columns:
 const downAt = query(Uptime).rule((r) => {
 	const service = r.var("service")
 	const window = r.var("window")
