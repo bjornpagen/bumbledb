@@ -7,96 +7,50 @@
   bumps, tags, or publishes. Planned fresh when the owner calls it (the old
   packet was deleted 2026-07-20 with every completed PRD packet — its C2 fuzz
   hunt was mooted by the fuzzer deletion; history in git).
-- **PR #10 (incremental images) — MERGED and reconciled (2026-07-19,
-  the PR #11 reconciliation).** Copy-on-append landed whole (2.54× on
-  the cold lineage family; the mask fork refuted by the decider twin)
-  and every inherited cleanup-0.5.0 obligation is EXECUTED: the
-  per-kind ceiling split superseded by ruling 1's ONE lazy 32 GiB map
-  (prd-G1 deleted, its deferral's durable copy in `50-storage.md`); the
-  `lineage-off` A/B knob and its bench twin died in the U2 commit (the
-  gravestone in `crates/bumbledb/Cargo.toml` records the execution);
-  the scan≡scan_from kill re-ran on the merged tree and ABORTED with
-  reason — the bare-prefix corruption pin refutes the ≡ (prd-U2); the
-  waveM `report.json`s and the ruling records (`50-storage.md`
-  § eviction, `40-execution.md` D1) are durable in-tree. The
-  incremental-images packet survives minus prd-G1: its I-PRDs are the
-  coverage records living code cites (the decider twin,
-  `append_tests`).
-- **The Measure phase (cleanup-0.5.0 prd-M) — the owed lane is MOOT:** the
-  `NOSYNC`-only ≥2,000-round statistical kill session can no longer run —
-  the kill harness died with the fuzzing apparatus
-  (`docs/architecture/60-validation.md` § the deletion record; the
-  recorded sessions are 2026-07-16, WRITEMAP-era, and the deterministic
-  sweep and kill smoke re-ran green at the flip while they lived).
-  Everything else RULED 2026-07-19,
-  committed run dirs `bench-out/measure-twins/` +
-  `bench-out/measure-ephemeral-r6/` + `bench-out/eph-nosync-{1,2,3}`:
-  twins — leaf elision LAW (1.69–1.71×), permuted-identity determinant
-  LAW (1.23–1.25×), all-words finalize MERGED (0.996–1.005, `AnswerHeap`
-  and both word fills deleted, oracle re-refereed on a fresh 2,862-case
-  stamp); ephemeral re-earn — README 21.2× over all 22 (ALL-WIN ×3),
-  R6 band 43–70x staging / 27–52x ssd dividend / 3.1–3.5x ramdisk
-  dividend / 1.1–1.6x device tax; every planted re-earn mark is closed
-  (prd-M's close-out grep comes back empty).
-- **CI dispatch proof (U4a) — remedies landed, run ids still owed:** the
-  miri `.S` stub and the ubuntu lanes want their green run ids recorded
-  in PR #11. The only PR run (29697582864) tested `de1bac14` and is green
-  everywhere EXCEPT `check (ubuntu-latest)`:
-  `clockproxy::tests::the_estimate_is_a_plausible_core_frequency`
-  measured 0.18 GHz on the shared runner — U4a's named watch item fired.
-  Remedy landed (2026-07-19, owner-visible here): the probe joined the
-  host-pinned falsifier set with an arch-conditioned ignore — the
-  plausibility band transcribes the aarch64 asm chain's by-construction
-  cycle count, and the portable fallback is documented indicative-only —
-  the band itself is untouched (no widen), and the macos lane still runs
-  the probe. The run gap is DIAGNOSED: PR #11 is CONFLICTING against
-  main, GitHub builds no merge ref for a conflicted PR and creates no
-  runs for its synchronize events — hence zero runs for the seven
-  commits after `de1bac14` (one consequence already surfaced: U5's
-  `conformance/judgment.rs` landed with a rustfmt violation no gate ever
-  saw; fixed in the U6 working tree). Remedy landed: ci.yml's push
-  trigger lists `worktree-cleanup-050` explicitly (drop at PR close);
-  pull_request runs stay unavailable until the committer reconciles the
-  branch with main. Remaining act (serial committer): push, then
-  `gh workflow run ci --ref worktree-cleanup-050` (workflow_dispatch
-  runs ALL lanes including miri), record the green run ids in PR #11.
-- **The 0.6.0 destructure release — STAGED, owner publish pending:** vars
-  become values (`v(relation)` mints class-typed variable records; identity
-  is object reference — reuse IS the join), `select` died into `find({...})`,
-  `r.var` is dead with no shim; zero fingerprint pins moved
-  (`ts/test/fixtures/cookbook-fingerprints.txt` byte-identical). The lockstep
-  sits at 0.6.0 in all three places; NO tag, NO publish — owner ceremony,
-  pinged separately (runbook: `ts/PUBLISHING.md`). The pnpm-lock is
-  deliberately untouched (the 0.6.0 platform pin is unpublished — the
-  documented bootstrap gap; the CI sdk lane is expected-red between bump and
-  publish), so the post-publish lockfile-regeneration commit is owed per the
-  release-flow note below. Primer's 0.6.0 adoption is staged at its
-  `bumbledb-060` worktree.
-- **For the owner (U4a census):** five stale remote worktree branches
-  deleted; `worktree-structural-sdk` was closed-not-merged but proven
-  subsumed — flagged per census.
+- **The crashpoint + image-oracle disposition (owner call, flagged
+  2026-07-20):** the `crashpoint` and `image-oracle` test-support features
+  lost their only consumers when the fuzzing apparatus was hard-deleted
+  (`crates/bumbledb/Cargo.toml` records both as currently
+  consumer-less; `docs/architecture/60-validation.md` § the deletion
+  record). They still compile in every gate (`check.sh`'s
+  `--all-features` co-compile lane) but no lane executes them. Keep as
+  dormant instruments or delete — an owner ruling, not yet made; until
+  it is, they stay.
+- **Primer 0.6.0 cutover — unblocked by the publish:** the adoption is
+  staged at the primer `bumbledb-060` worktree; now that both packages
+  are in the registry the lockfile can move (install → typecheck →
+  commit → merge — the steps live there and in `ts/PUBLISHING.md`
+  § post-publish, step two).
 - **Optional, unscheduled:** a fresh one-rev seven-run bench session would
   restore min-of-3 durable sampling and re-clean `mandate_overlap` (excluded
   from the current pin as contaminated-in-both). The current README numbers
   are fully derivable from the committed artifacts and need nothing.
-- **Release-flow note (recurs every version):** the version-bump commit
-  pins the exact platform optional-dep before the package exists, so the
-  CI sdk lane's `--frozen-lockfile` fails between bump and publish. The
-  post-publish step is a lockfile regeneration commit
-  (`cd ts && pnpm install --no-frozen-lockfile`).
 
 ## Everything else: shipped
 
-**Cleanup-0.5.0 is landed on `worktree-cleanup-050` (PR #11, stays open;
-nobody merges):** ruling 1 (one lazy 32 GiB map; WRITEMAP and the eager
-capacity contract retired, retractions recorded at `MAP_SIZE` and in
-`50-storage.md`), the engine kills (U2: cfg duals into type twins), the
-SDK kills + wire tags (U3), CI reshaped (U4a: main+PR scope, ubuntu
-matrix, miri cron stub) and the FFI lint regime + re-trued unsafe
-allowlist (U4b), lean reconciliation (U5: 26 judgment cases / 272
-total), and the architecture docs swept to the tree's present tense
-(U6). The cleanup packet was deleted at wave close per its own survival
-checklist (all PRD packets removed 2026-07-20; history in git).
+**The 0.6.0 destructure release is published and tagged `v0.6.0`
+(2026-07-20):** vars become values (`v(relation)` mints class-typed variable
+records; identity is object reference — reuse IS the join), `select` died
+into `find({...})`, `r.var` is dead with no shim; zero fingerprint pins moved
+(`ts/test/fixtures/cookbook-fingerprints.txt` byte-identical).
+`@bjornpagen/bumbledb@0.6.0` + `-darwin-arm64@0.6.0` are in the registry and
+the post-publish lockfile regeneration landed (4b2b3a0c), closing the
+documented bootstrap gap (the recurring gap and its remedy live in
+`ts/PUBLISHING.md` § post-publish, step one).
+
+**Cleanup-0.5.0 landed via PR #11 (merged):** ruling 1 (one lazy 32 GiB map;
+WRITEMAP and the eager capacity contract retired, retractions recorded at
+`MAP_SIZE` and in `50-storage.md`), the engine kills (U2: cfg duals into type
+twins), the SDK kills + wire tags (U3), CI reshaped (U4a: main+PR scope,
+ubuntu matrix, miri cron stub) and the FFI lint regime + re-trued unsafe
+allowlist (U4b), lean reconciliation (U5: 26 judgment cases / 272 total), and
+the architecture docs swept to the tree's present tense (U6). Its Measure
+phase closed RULED 2026-07-19 (run dirs under `bench-out/`; the one owed
+`NOSYNC` statistical kill lane is moot — the kill harness died with the
+fuzzing apparatus). PR #10 (incremental images, copy-on-append 2.54×) merged
+and reconciled 2026-07-19 with every inherited obligation executed. The
+cleanup packet was deleted at wave close per its own survival checklist (all
+PRD packets removed 2026-07-20; history in git).
 
 `@bjornpagen/bumbledb@0.5.0` (+ `-darwin-arm64@0.5.0`) is published and
 tagged `v0.5.0` — the surface-pair SDK (keyed get + host-side ordering, the

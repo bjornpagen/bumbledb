@@ -69,7 +69,7 @@ are set to `0.6.0` in this tree; `pnpm run build` asserts the lockstep on
 every run (`bumbledb build: version 0.6.0 (main == platform ==
 optionalDependencies pin)`).
 
-## Runbook (0.6.0, darwin-arm64 host, owner)
+## Runbook (0.6.0, darwin-arm64 host, owner — executed 2026-07-20; recurs as the template for the next version)
 
 ```sh
 # 0. From the ts/ package root, on a macOS Apple Silicon machine.
@@ -115,7 +115,7 @@ from a branch other than main (true in a release worktree).
 
 ## Post-publish, step one: the bumbledb lockfile regeneration
 
-TODO.md's standing release-flow note (recurs every version): the version-bump
+The standing release-flow gap (recurs every version): the version-bump
 commit pins the exact platform optional-dep BEFORE that package exists in the
 registry, so the CI sdk lane's `--frozen-lockfile` install fails between bump
 and publish. Immediately after both packages verify in the registry:
@@ -124,6 +124,11 @@ and publish. Immediately after both packages verify in the registry:
 cd ts && pnpm install --no-frozen-lockfile
 # commit the regenerated pnpm-lock.yaml (one commit, the known bootstrap gap)
 ```
+
+For 0.6.0 this landed (4b2b3a0c, 2026-07-20). One sharp edge learned there:
+with a warm `node_modules`, `pnpm install` may answer "Already up to date"
+without re-resolving — remove `node_modules` first if the lockfile refuses
+to move.
 
 Note the release-age lag: pnpm 11's default `minimumReleaseAge` (1440
 minutes) refuses any just-published package for ~24h, so consumers who do not
@@ -135,9 +140,9 @@ install a fresh release until a day after publish.
 Primer main is already cut over to `^0.5.0` (the 0.5.0 cutover merged). The
 0.6.0 adoption is staged at the primer `bumbledb-060` worktree (branch
 `worktree-bumbledb-060`) with `@bjornpagen/bumbledb` pinned `^0.6.0` and its
-`bun.lock` deliberately untouched — the same documented bootstrap gap: the
-registry has no 0.6.0 yet, so the lockfile cannot move until publish. After
-both packages verify in the registry: install (the lockfile moves) →
+`bun.lock` deliberately untouched — the same documented bootstrap gap, now
+UNBLOCKED: both 0.6.0 packages are in the registry (published + tagged
+`v0.6.0`, 2026-07-20). Remaining: install (the lockfile moves) →
 typecheck → commit the lockfile → merge. The steps live there, not here.
 
 ## The pre-publish proof (executed for 0.4.0; re-run the same shape for 0.6.0)
