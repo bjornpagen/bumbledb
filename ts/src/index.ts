@@ -8,8 +8,10 @@
  * runtime (path-cached stores, transactions, typed violations, scoped
  * snapshot reads, the witnessed write loop with `abandon` — PRD-07, zero
  * closables), the query surface (Datalog as values, kysely-shaped:
- * `query(S).rule(r => r.match(...).where(...).select(...))` with
- * string-named domain-typed vars, params typed by use, negation,
+ * `query(S).rule(r => { const { id, name } = v(Holder); return r.match(Holder, { id, name }).find({ name }) })` —
+ * variables minted by `v()` and joined by OBJECT REFERENCE (reuse is the
+ * join), the head a `find` RECORD whose keys name the answer columns
+ * (renames are real), params still STRING-named, plus negation,
  * conditions, aggregates, and stratified recursion via `program()`/`rec` —
  * `db.prepare` as a plain value; the comparison/connective builders are
  * also free exports, and the free names `eq`/`not`/`and`/`or` collide with
@@ -115,16 +117,15 @@ export type {
 	AnyCond,
 	BindingInput,
 	Cmp,
-	MatchFields,
-	MatchOwner,
+	FindColumn,
 	MatchShape,
 	NotAtom,
 	RecData,
 	RuleData,
-	SelectColumn,
 	Tree
 } from "#query/atom.ts"
 export { ALLEN, allen, and, eq, ge, gt, le, lt, ne, not, or, pointIn } from "#query/atom.ts"
+export type { Agg, FindEntry } from "#query/find.ts"
 export type {
 	AnyQuery,
 	AnyRuleValue,
@@ -151,13 +152,16 @@ export type {
 	ClassedField,
 	Duration,
 	MaskParam,
+	MatchFields,
+	MatchOwner,
 	Param,
 	ParamEntry,
 	ParamsRecord,
 	SetParam,
-	Var
+	Var,
+	VarsOf
 } from "#query/scope.ts"
-export type { Agg, SelectEntry } from "#query/select.ts"
+export { v } from "#query/scope.ts"
 export type {
 	AnyRelation,
 	AnySelected,

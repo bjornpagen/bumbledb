@@ -973,7 +973,7 @@ opaque bigints, and it died with its cause (0.4.0).
 The handle-union texture, concretely: a closed-referencing column TYPES and
 HOLDS the roster's string-literal handle union (`"DirectPass" |
 "JudgedPass" | "Failed"`) at every SDK surface — facts, inserts, query
-match records, select rows, params, selections, violation offending facts —
+match records, find rows, params, selections, violation offending facts —
 with the handle name as the one spelling (no minted constants, no
 id-to-name decode step: rows arrive named). The THEORY is untouched: the
 engine stores u64 row ids (declaration order, ≤256, sealed roster) and the
@@ -999,6 +999,44 @@ through a declared law, and every roster-keyed judgment above — the
 orderable ban, the name↔id marshal, answer decode, query joins — is sound
 against the descriptor alone. The engine cannot backstop this wall: the
 wire carries plain u64s, no rosters.
+
+### Vars are values (recorded ruling, destructure-0.6.0)
+
+**Query variables are minted values, and identity is the object reference —
+not the name.** `v(relation)` mints a record of FRESH query variables, one
+per column, each typed at mint by that column's law-computed class (the
+statement-derived equivalence class `schema()` already gives the field) — a
+concrete mapped type over the relation's statically-known columns. So
+destructuring the record preserves every literal and every class: `const {
+id, toGrp } = v(candidateEdge)`. Each `v()` call mints a fresh batch, and
+property access within one record is stable.
+
+The join is where the representation earns the ruling. Reusing one minted var
+value across two binding positions IS the join — the rule builder's env keys
+on the var's object reference, not on a name (it re-keys name→slot to
+reference→slot). Because there is no name to collide,
+**the name-collision join is unrepresentable**: a var reused by accident and
+a var reused on purpose are the same act, because they are the same value.
+`JoinOk` (class equality; bare pairs only with bare) is judged at every
+binding position against the var's mint class and against every prior binding.
+
+The head is a record too: `find({ key: varOrAgg })` names the result row from
+the vars' own classes — the find object's keys ARE the row's column names, so
+renames are real (`find({ edgeId: id, group: toGrp })`). `select(strings)` is
+dead and the old name-keyed variable accessor is gone — no shims, no
+deprecation alias; 0.6.0 is a deliberate hard break. Params, by contrast,
+stay STRING-NAMED: `r.param`/`r.inSet` and the mask params keep their string
+names, because those names are the `execute()` params object's runtime keys —
+an honest, load-bearing channel, not a type-level lie. ES shorthand is the
+binding idiom (`{ id, requires }`); a join spells as `{ id: toGrp }`;
+literals inline as before.
+
+**SEMANTIC PARITY is law.** The IR/`VarId` theory is UNCHANGED: lowering
+assigns dense `VarId`s from reference identity in deterministic first-use
+order, so the Rust `query!` macro, the wire, the manifest, and the
+fingerprints are all untouched — zero fingerprint pins move. The cookbook's
+cross-host goldens staying byte-identical is the proof, not the hope: this is
+a new spelling of the same sentences the engine already judged.
 
 ## The freeze, and the OPEN ledger
 

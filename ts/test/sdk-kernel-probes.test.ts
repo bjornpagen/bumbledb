@@ -31,6 +31,7 @@ import { interval, span, str, u64 } from "#fields.ts"
 import { ALLEN } from "#query/atom.ts"
 import type { QueryParams } from "#query/lower.ts"
 import { lowerQuery, query } from "#query/lower.ts"
+import { v } from "#query/scope.ts"
 import { relation } from "#relation.ts"
 import { schema } from "#schema.ts"
 
@@ -43,24 +44,23 @@ const Session = relation("Session", {
 const Probe = schema("Probe", { Holder, Session }, [])
 
 test("CONTROL: allen() accepts a literal interval side (sibling is interval-typed)", function allenLiteralLeft() {
-	const q = query(Probe).rule((r) =>
-		r
-			.match(Session, { active: r.var("iv") })
-			.where(r.allen(span(0n, 12n), ALLEN.intersects, r.var("iv")))
-			.select("iv")
-	)
+	const q = query(Probe).rule((r) => {
+		const { active } = v(Session)
+		return r
+			.match(Session, { active })
+			.where(r.allen(span(0n, 12n), ALLEN.intersects, active))
+			.find({ iv: active })
+	})
 	assert.doesNotThrow(function lowerIt() {
 		lowerQuery(q)
 	})
 })
 
 test("CONTROL: pointIn() accepts a point literal with an interval var", function pointInVarInterval() {
-	const q = query(Probe).rule((r) =>
-		r
-			.match(Session, { active: r.var("iv") })
-			.where(r.pointIn(5n, r.var("iv")))
-			.select("iv")
-	)
+	const q = query(Probe).rule((r) => {
+		const { active } = v(Session)
+		return r.match(Session, { active }).where(r.pointIn(5n, active)).find({ iv: active })
+	})
 	assert.doesNotThrow(function lowerIt() {
 		lowerQuery(q)
 	})
@@ -72,12 +72,13 @@ test("pointIn() with a literal interval operand lowers to PointIn (interval-left
 	 * interval lands as the IR's lhs whatever the surface argument order;
 	 * the point-typed sibling's element domain tags it intervalU64.
 	 */
-	const q = query(Probe).rule((r) =>
-		r
-			.match(Session, { holder: r.var("h"), at: r.var("t") })
-			.where(r.pointIn(r.var("t"), span(0n, 10n)))
-			.select("h", "t")
-	)
+	const q = query(Probe).rule((r) => {
+		const { holder, at } = v(Session)
+		return r
+			.match(Session, { holder, at })
+			.where(r.pointIn(at, span(0n, 10n)))
+			.find({ h: holder, t: at })
+	})
 	const ir = lowerQuery(q)
 	const conditions = ir.predicates[0]?.rules[0]?.conditions
 	assert.ok(conditions !== undefined && conditions.length === 1)
@@ -96,12 +97,13 @@ test("a param value no rule places never registers — the query lowers under it
 	 * and lands in the wire registry — the params contract the
 	 * usage-derived registry protects.
 	 */
-	const used = query(Probe).rule((r) =>
-		r
-			.match(Holder, { id: r.var("h") })
-			.where(r.eq(r.var("h"), r.param("wanted")))
-			.select("h")
-	)
+	const used = query(Probe).rule((r) => {
+		const { id } = v(Holder)
+		return r
+			.match(Holder, { id })
+			.where(r.eq(id, r.param("wanted")))
+			.find({ h: id })
+	})
 	assert.deepEqual(
 		used.data.params.map(function name(entry) {
 			return entry.name
@@ -120,7 +122,8 @@ test("a param value no rule places never registers — the query lowers under it
 		 */
 		const ghost = r.param("ghost")
 		assert.equal(ghost.name, "ghost")
-		return r.match(Holder, { id: r.var("h") }).select("h")
+		const { id } = v(Holder)
+		return r.match(Holder, { id }).find({ h: id })
 	})
 	assert.deepEqual(q.data.params, [], "the registry is usage-derived")
 	const inferrred: QueryParams<typeof q> = {}

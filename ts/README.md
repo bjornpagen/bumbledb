@@ -27,7 +27,7 @@ classes, inferred query rows, and rejections that arrive as data rather than
 exceptions.
 
 ```ts
-import { bool, closed, contained, Db, gt, type Infer, key, on, query, relation, schema, u64 } from "@bjornpagen/bumbledb"
+import { bool, closed, contained, Db, gt, type Infer, key, on, query, relation, schema, u64, v } from "@bjornpagen/bumbledb"
 
 // A closed relation: a sealed roster of axioms with typed payload columns.
 // At the host surface a handle is its NAME — the string literal "DirectPass"
@@ -75,18 +75,18 @@ if (!result.ok) {
 	}
 }
 
-// Query: Datalog as values. Vars are named and typed by the class of their
-// first binding; params are typed by use; rows are typed from the select.
+// Query: Datalog as values. v(R) mints a fresh variable per column, typed by
+// the column's law-class; reusing one by object reference IS the join, and
+// rows are typed from the find keys. Params are typed by use.
 // `gt` is one of the free comparison exports.
 const certifiedAbove = query(Review).rule((r) => {
-	const a = r.var("a")
-	const k = r.var("k")
-	const rank = r.var("rank")
+	const { attempt: a, kind: k } = v(Certificate)
+	const { rank } = v(Kind)
 	return r
 		.match(Certificate, { attempt: a, kind: k })
-		.match(Kind, { id: k, mastered: true, rank }) // ψ on the read side too
+		.match(Kind, { id: k, mastered: true, rank }) // k reused at Kind.id — that reuse is the join; ψ on the read side too
 		.where(gt(rank, r.param("floor")))
-		.select("a", "rank")
+		.find({ a, rank })
 })
 
 const prepared = db.prepare(certifiedAbove)
@@ -120,7 +120,7 @@ The drizzle law governs this surface: the SDK's job at the host boundary is tran
 - The structural type kernel — fields as pure structure (`bool`, `bytes`, `i64`, `u64`, `str`, `interval`, `span`), `relation()`, and `closed()` sealed rosters with typed axiom payloads. A closed reference's value type IS the handle union (`Infer` speaks it); dispatch is native `switch` narrowing with `satisfies never` exhaustiveness. Domains are never declared: `schema()` computes every field's class from the statement list.
 - The statement algebra — `schema()`, `key`, `contained`, `mirrors`, `window`; faces via `on` (set membership is a plain array in `.where`); counts via `exactly`, `atLeast`, `atMost`, `between`, `none`; ψ-selection via `.where` on relations and closed rosters.
 - The `Db` runtime — `Db.create`/`Db.open`, path-cached stores, transactions, typed violations, scoped snapshot reads, the witnessed write loop with `abandon`.
-- The query surface — Datalog as values, `query(S).rule(r => ...)`: named vars, params typed by use, negation, aggregates, and the free comparison/connective exports (`eq`, `ne`, `lt`, `le`, `gt`, `ge`, `and`, `or`, `not`, `allen`/`ALLEN`, `pointIn`); set membership at a closed field is a plain array in the match record (`r.match(Ticket, { priority: ["Normal", "Urgent"] })` — closed-only there: an ordinary field's membership is a bound `r.inSet` param); stratified recursion via `program()`; `db.prepare` as a plain value.
+- The query surface — Datalog as values, `query(S).rule(r => ...)`: `v(R)`-minted vars (identity is the object reference — reusing one across binding positions IS the join), `find({...})` named result heads (renames are real), params typed by use unchanged, negation, aggregates, and the free comparison/connective exports (`eq`, `ne`, `lt`, `le`, `gt`, `ge`, `and`, `or`, `not`, `allen`/`ALLEN`, `pointIn`); set membership at a closed field is a plain array in the match record (`r.match(Ticket, { priority: ["Normal", "Urgent"] })` — closed-only there: an ordinary field's membership is a bound `r.inSet` param); stratified recursion via `program()`; `db.prepare` as a plain value.
 - The exhume surface — `Db.exhume`, the schema-independent read path: a store's self-described shapes and raw facts by name, with typed refusals (`ErrExhumeNoDescriptor`, `ErrExhumeFormatMismatch`, `ErrExhumeCorruption`).
 
 ## Cookbook

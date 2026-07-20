@@ -1,27 +1,33 @@
 /**
- * Query-surface pins against a REAL durable store, STRUCTURAL edition —
- * the kysely-shaped builder end to end: a multi-atom domain-equal join
- * with a param, negation as a safe anti-join, a union of two rules (set
- * semantics dedup), `count()` with implicit grouping, the recursive
- * closure and the finished-stratum aggregate fold as one stratified
- * `program()`, point membership (literal, param, and `pointIn` — the one
- * spelling), `allen` with a literal and a bound mask, ∈-set params,
- * the or-tree, deterministic lowering (same query built twice →
- * deeply-equal IR), the engine's prepare ACCEPTING every construct the
- * surface can spell (the IR-bijection pin), the unused-param law (a param
- * value no rule uses never registers — the query executes under its own
- * inferred `Params`), and the type walls (each `@ts-expect-error` real):
- * cross-CLASS joins (the schema is LAW-TYPED — rulings 2/3: the statement
- * list is what puts `Account.holder` and `Holder.id` in one class while
- * `Account.id` generates its own; the four join-law probes — same-class
- * joins, cross-class refusal at the use site, bare↔bare joining, and
- * bare↔classed refusal — are pinned through `r.var`), interval-vs-scalar
- * comparisons outside `pointIn`, minting terms in heads, wrong-typed
- * params, and mismatched result shapes are all unwritable. Execution
- * rides the native bridge directly — the `Db` runtime's typed
- * prepare/execute is S4's surface; the typed seams exercised here
- * (`lowerQuery` + `wireParams` + `decodeAnswers`) are exactly what it
- * consumes.
+ * Query-surface pins against a REAL durable store, REFERENCE-IDENTITY edition
+ * — the kysely-shaped builder end to end: variables minted by `v(relation)`
+ * and joined by OBJECT REFERENCE (reusing one mint across binding positions
+ * IS the join), the head a `find` RECORD whose keys name the answer columns
+ * (renames are real), params still STRING-named. A multi-atom domain-equal
+ * join with a param, negation as a safe anti-join, a union of two rules (set
+ * semantics dedup), `count()` with implicit grouping, the recursive closure
+ * and the finished-stratum aggregate fold as one stratified `program()`,
+ * point membership (literal, param, and `pointIn` — the one spelling),
+ * `allen` with a literal and a bound mask, ∈-set params, the or-tree,
+ * deterministic lowering (same query built twice → deeply-equal IR), the
+ * engine's prepare ACCEPTING every construct the surface can spell (the
+ * IR-bijection pin), the unused-param law (a param value no rule uses never
+ * registers — the query executes under its own inferred `Params`), and the
+ * type walls (each `@ts-expect-error` real): `r.var` and `select` are dead
+ * spellings (accessing either is a compile error), cross-CLASS joins (the
+ * schema is LAW-TYPED — rulings 2/3: the statement list is what puts
+ * `Account.holder` and `Holder.id` in one class while `Account.id` generates
+ * its own; the four join-law probes — same-class joins, cross-class refusal
+ * at the use site, bare↔bare joining, and bare↔classed refusal — are pinned
+ * through reference-identity vars minted by `v`), interval-vs-scalar
+ * comparisons outside `pointIn`, minting terms in heads, wrong-typed params,
+ * and mismatched result shapes are all unwritable. The name-collision join is
+ * unrepresentable (two mints are two var ids — pinned on lowered IR), and the
+ * boundness walls (invisible to the type tier — scope.ts THE DESIGN THEOREM)
+ * are construction-time refusals. Execution rides the native bridge directly
+ * — the `Db` runtime's typed prepare/execute is S4's surface; the typed seams
+ * exercised here (`lowerQuery` + `wireParams` + `decodeAnswers`) are exactly
+ * what it consumes.
  */
 
 import assert from "node:assert/strict"
@@ -41,6 +47,7 @@ import { lowerQuery, query } from "#query/lower.ts"
 import { program } from "#query/predicate.ts"
 import { decodeAnswers, wireParams } from "#query/run.ts"
 import type { Param, ParamsRecord } from "#query/scope.ts"
+import { v } from "#query/scope.ts"
 import { relation } from "#relation.ts"
 import { schema } from "#schema.ts"
 import { contained } from "#statements.ts"
@@ -196,7 +203,7 @@ describe("the query surface against a real store", function suite() {
 		const rows = native.preparedExecute(prepared.prepared, snap, wireParams(q.data.params, params))
 		native.snapshotClose(snap)
 		native.preparedClose(prepared.prepared)
-		return decodeAnswers<Row>(q.data.select, rows)
+		return decodeAnswers<Row>(q.data.finds, rows)
 	}
 
 	/** The prepare-acceptance pin: the engine's own validation admits the lowered IR. */
@@ -209,13 +216,14 @@ describe("the query surface against a real store", function suite() {
 	}
 
 	test("a multi-atom domain-equal join with a param returns the typed answer set", function joinWithParam() {
-		const accountsOf = query(Ledger).rule((r) =>
-			r
-				.match(Account, { id: r.var("acct"), holder: r.var("h") })
-				.match(Holder, { id: r.var("h") })
-				.where(r.eq(r.var("h"), r.param("root")))
-				.select("acct", "h")
-		)
+		const accountsOf = query(Ledger).rule((r) => {
+			const { id: acct, holder: h } = v(Account)
+			return r
+				.match(Account, { id: acct, holder: h })
+				.match(Holder, { id: h })
+				.where(r.eq(h, r.param("root")))
+				.find({ acct, h })
+		})
 		type RowPin = Expect<Equal<QueryRow<typeof accountsOf>, { readonly acct: bigint; readonly h: bigint }>>
 		type ParamsPin = Expect<Equal<QueryParams<typeof accountsOf>, { readonly root: bigint }>>
 		const rows = run(accountsOf, { root: ids.ada })
@@ -239,13 +247,14 @@ describe("the query surface against a real store", function suite() {
 
 	test("a union of two rules deduplicates under set semantics", function union() {
 		const adaOrSavings = query(Ledger)
-			.rule((r) => r.match(Holder, { id: r.var("h"), name: "ada" }).select("h"))
-			.rule((r) =>
-				r
-					.match(Holder, { id: r.var("h") })
-					.match(Account, { holder: r.var("h"), kind: "Savings" })
-					.select("h")
-			)
+			.rule((r) => {
+				const { id: h } = v(Holder)
+				return r.match(Holder, { id: h, name: "ada" }).find({ h })
+			})
+			.rule((r) => {
+				const { id: h } = v(Holder)
+				return r.match(Holder, { id: h }).match(Account, { holder: h, kind: "Savings" }).find({ h })
+			})
 		const rows = run(adaOrSavings, {})
 		assert.deepEqual(
 			sorted(
@@ -269,15 +278,27 @@ describe("the query surface against a real store", function suite() {
 		 */
 		assert.throws(function crossClassUnion() {
 			query(Ledger)
-				.rule((r) => r.match(Holder, { id: r.var("x") }).select("x"))
-				.rule((r) => r.match(Account, { id: r.var("x") }).select("x"))
+				.rule((r) => {
+					const { id: x } = v(Holder)
+					return r.match(Holder, { id: x }).find({ x })
+				})
+				.rule((r) => {
+					const { id: x } = v(Account)
+					return r.match(Account, { id: x }).find({ x })
+				})
 		}, /unions domain-unequal fields/)
 
 		// The class-equal union stays writable: Account.holder is in the
 		// "Holder.id" class by law, so both rules feed one id space.
 		const legal = query(Ledger)
-			.rule((r) => r.match(Holder, { id: r.var("x") }).select("x"))
-			.rule((r) => r.match(Account, { id: r.var("a"), holder: r.var("x") }).select("x"))
+			.rule((r) => {
+				const { id: x } = v(Holder)
+				return r.match(Holder, { id: x }).find({ x })
+			})
+			.rule((r) => {
+				const { id: a, holder: x } = v(Account)
+				return r.match(Account, { id: a, holder: x }).find({ x })
+			})
 		assert.deepEqual(
 			sorted(
 				run(legal, {}).map(function x(row) {
@@ -300,22 +321,27 @@ describe("the query surface against a real store", function suite() {
 		assert.throws(function pollutedRecHead() {
 			program(Ledger, (p) => {
 				const reach = p.rec("reach")
-				reach.rule((r) => r.match(Holder, { id: r.var("c") }).select("c"))
-				reach.rule((r) => r.match(Holder, { id: r.var("h"), rank: r.var("c") }).select("c"))
-				return p.output((r) =>
-					r
-						.match(Holder, { id: r.var("c") })
-						.idb(reach, r.var("c"))
-						.select("c")
-				)
+				reach.rule((r) => {
+					const { id: c } = v(Holder)
+					return r.match(Holder, { id: c }).find({ c })
+				})
+				reach.rule((r) => {
+					const { id: h, rank: c } = v(Holder)
+					return r.match(Holder, { id: h, rank: c }).find({ c })
+				})
+				return p.output((r) => {
+					const { id: c } = v(Holder)
+					return r.match(Holder, { id: c }).idb(reach, { c }).find({ c })
+				})
 			})
 		}, /joins only class-equal slots/)
 	})
 
 	test("count() groups implicitly by the non-aggregate select entries", function counting() {
-		const accountsPerHolder = query(Ledger).rule((r) =>
-			r.match(Account, { id: r.var("acct"), holder: r.var("holder") }).select("holder", r.count())
-		)
+		const accountsPerHolder = query(Ledger).rule((r) => {
+			const { id: acct, holder } = v(Account)
+			return r.match(Account, { id: acct, holder }).find({ holder, count: r.count() })
+		})
 		type RowPin = Expect<Equal<QueryRow<typeof accountsPerHolder>, { readonly holder: bigint; readonly count: bigint }>>
 		const rows = run(accountsPerHolder, {})
 		const byHolder = new Map(
@@ -335,24 +361,21 @@ describe("the query surface against a real store", function suite() {
 		const reachable = program(Ledger, (p) => {
 			const reach = p.rec("reach")
 			const seeded = reach
-				.rule((r) =>
-					r
-						.match(Holder, { id: r.var("c") })
-						.where(r.eq(r.var("c"), r.param("root")))
-						.select("c")
-				)
-				.rule((r) =>
-					r
-						.match(Parent, { child: r.var("c"), parent: r.var("m") })
-						.idb(reach, r.var("m"))
-						.select("c")
-				)
-			return p.output((r) =>
-				r
-					.match(Holder, { id: r.var("c") })
-					.idb(seeded, r.var("c"))
-					.select("c")
-			)
+				.rule((r) => {
+					const { id: c } = v(Holder)
+					return r
+						.match(Holder, { id: c })
+						.where(r.eq(c, r.param("root")))
+						.find({ c })
+				})
+				.rule((r) => {
+					const { child: c, parent: m } = v(Parent)
+					return r.match(Parent, { child: c, parent: m }).idb(reach, { c: m }).find({ c })
+				})
+			return p.output((r) => {
+				const { id: c } = v(Holder)
+				return r.match(Holder, { id: c }).idb(seeded, { c }).find({ c })
+			})
 		})
 		type ParamsPin = Expect<Equal<QueryParams<typeof reachable>, { readonly root: bigint }>>
 		const fromAda = run(reachable, { root: ids.ada })
@@ -382,24 +405,24 @@ describe("the query surface against a real store", function suite() {
 		const reachBalance = program(Ledger, (p) => {
 			const reach = p.rec("reach")
 			const seeded = reach
-				.rule((r) =>
-					r
-						.match(Holder, { id: r.var("c") })
-						.where(r.eq(r.var("c"), r.param("root")))
-						.select("c")
-				)
-				.rule((r) =>
-					r
-						.match(Parent, { child: r.var("c"), parent: r.var("m") })
-						.idb(reach, r.var("m"))
-						.select("c")
-				)
-			return p.output((r) =>
-				r
-					.match(Account, { holder: r.var("a"), balance: r.var("m") })
-					.idb(seeded, r.var("a"))
-					.select(r.sum("m"))
-			)
+				.rule((r) => {
+					const { id: c } = v(Holder)
+					return r
+						.match(Holder, { id: c })
+						.where(r.eq(c, r.param("root")))
+						.find({ c })
+				})
+				.rule((r) => {
+					const { child: c, parent: m } = v(Parent)
+					return r.match(Parent, { child: c, parent: m }).idb(reach, { c: m }).find({ c })
+				})
+			return p.output((r) => {
+				const { holder: a, balance: m } = v(Account)
+				return r
+					.match(Account, { holder: a, balance: m })
+					.idb(seeded, { c: a })
+					.find({ m: r.sum(m) })
+			})
 		})
 		type RowPin = Expect<Equal<QueryRow<typeof reachBalance>, { readonly m: bigint }>>
 		const total = run(reachBalance, { root: ids.ada })
@@ -411,12 +434,13 @@ describe("the query surface against a real store", function suite() {
 	})
 
 	test("negation is a safe anti-join", function negation() {
-		const holdersWithoutAccounts = query(Ledger).rule((r) =>
-			r
-				.match(Holder, { id: r.var("h") })
-				.where(r.not(Account, { holder: r.var("h") }))
-				.select("h")
-		)
+		const holdersWithoutAccounts = query(Ledger).rule((r) => {
+			const { id: h } = v(Holder)
+			return r
+				.match(Holder, { id: h })
+				.where(r.not(Account, { holder: h }))
+				.find({ h })
+		})
 		const rows = run(holdersWithoutAccounts, {})
 		assert.deepEqual(
 			rows.map(function h(row) {
@@ -427,12 +451,13 @@ describe("the query surface against a real store", function suite() {
 	})
 
 	test("an ∈-set param in a negated atom rejects per element", function negatedSetParam() {
-		const withoutKinds = query(Ledger).rule((r) =>
-			r
-				.match(Holder, { id: r.var("h") })
-				.where(r.not(Account, { holder: r.var("h"), kind: r.inSet("kinds") }))
-				.select("h")
-		)
+		const withoutKinds = query(Ledger).rule((r) => {
+			const { id: h } = v(Holder)
+			return r
+				.match(Holder, { id: h })
+				.where(r.not(Account, { holder: h, kind: r.inSet("kinds") }))
+				.find({ h })
+		})
 		const rows = run(withoutKinds, { kinds: ["Checking"] })
 		assert.deepEqual(
 			sorted(
@@ -446,7 +471,10 @@ describe("the query surface against a real store", function suite() {
 	})
 
 	test("point membership: literal, param (both value shapes), and pointIn", function membership() {
-		const activeAtFive = query(Ledger).rule((r) => r.match(Account, { id: r.var("acct"), active: 5n }).select("acct"))
+		const activeAtFive = query(Ledger).rule((r) => {
+			const { id: acct } = v(Account)
+			return r.match(Account, { id: acct, active: 5n }).find({ acct })
+		})
 		assert.deepEqual(
 			sorted(
 				run(activeAtFive, {}).map(function acct(row) {
@@ -457,9 +485,10 @@ describe("the query surface against a real store", function suite() {
 			"ada's checking [0,10) and grace's [5,15) cover the point 5"
 		)
 
-		const activeAt = query(Ledger).rule((r) =>
-			r.match(Account, { id: r.var("acct"), active: r.param("at") }).select("acct")
-		)
+		const activeAt = query(Ledger).rule((r) => {
+			const { id: acct } = v(Account)
+			return r.match(Account, { id: acct, active: r.param("at") }).find({ acct })
+		})
 		type ParamsPin = Expect<
 			Equal<QueryParams<typeof activeAt>, { readonly at: { readonly start: bigint; readonly end: bigint } }>
 		>
@@ -475,12 +504,13 @@ describe("the query surface against a real store", function suite() {
 			run(activeAt, { at: 5n })
 		}, /expected Interval/)
 
-		const pointInParam = query(Ledger).rule((r) =>
-			r
-				.match(Account, { id: r.var("acct"), active: r.var("w") })
-				.where(r.pointIn(r.param("t"), r.var("w")))
-				.select("acct")
-		)
+		const pointInParam = query(Ledger).rule((r) => {
+			const { id: acct, active: w } = v(Account)
+			return r
+				.match(Account, { id: acct, active: w })
+				.where(r.pointIn(r.param("t"), w))
+				.find({ acct })
+		})
 		assert.deepEqual(
 			sorted(
 				run(pointInParam, { t: 5n }).map(function acct(row) {
@@ -490,12 +520,13 @@ describe("the query surface against a real store", function suite() {
 			sorted([ids.adaChecking, ids.graceSavings])
 		)
 
-		const intervalLiteralOperand = query(Ledger).rule((r) =>
-			r
-				.match(Account, { id: r.var("acct"), opened: r.var("t") })
-				.where(r.pointIn(r.var("t"), span(0n, 10n)))
-				.select("acct")
-		)
+		const intervalLiteralOperand = query(Ledger).rule((r) => {
+			const { id: acct, opened: t } = v(Account)
+			return r
+				.match(Account, { id: acct, opened: t })
+				.where(r.pointIn(t, span(0n, 10n)))
+				.find({ acct })
+		})
 		assert.deepEqual(
 			sorted(
 				run(intervalLiteralOperand, {}).map(function acct(row) {
@@ -510,12 +541,13 @@ describe("the query surface against a real store", function suite() {
 	})
 
 	test("allen with a literal mask and with a bound mask param", function allenComparisons() {
-		const intersecting = query(Ledger).rule((r) =>
-			r
-				.match(Account, { id: r.var("acct"), active: r.var("w") })
-				.where(r.allen(r.var("w"), ALLEN.intersects, span(0n, 12n)))
-				.select("acct")
-		)
+		const intersecting = query(Ledger).rule((r) => {
+			const { id: acct, active: w } = v(Account)
+			return r
+				.match(Account, { id: acct, active: w })
+				.where(r.allen(w, ALLEN.intersects, span(0n, 12n)))
+				.find({ acct })
+		})
 		assert.deepEqual(
 			sorted(
 				run(intersecting, {}).map(function acct(row) {
@@ -526,12 +558,13 @@ describe("the query surface against a real store", function suite() {
 			"[0,10) and [5,15) intersect [0,12); [20,30) and [40,50) are disjoint from it"
 		)
 
-		const related = query(Ledger).rule((r) =>
-			r
-				.match(Account, { id: r.var("acct"), active: r.var("w") })
-				.where(r.allen(r.var("w"), r.maskParam("rel"), span(0n, 12n)))
-				.select("acct")
-		)
+		const related = query(Ledger).rule((r) => {
+			const { id: acct, active: w } = v(Account)
+			return r
+				.match(Account, { id: acct, active: w })
+				.where(r.allen(w, r.maskParam("rel"), span(0n, 12n)))
+				.find({ acct })
+		})
 		type ParamsPin = Expect<Equal<QueryParams<typeof related>, { readonly rel: number }>>
 		assert.deepEqual(
 			sorted(
@@ -555,7 +588,10 @@ describe("the query surface against a real store", function suite() {
 	})
 
 	test("∈-set params match on membership; the empty set matches nothing", function setParams() {
-		const namedSet = query(Ledger).rule((r) => r.match(Holder, { id: r.var("h"), name: r.inSet("names") }).select("h"))
+		const namedSet = query(Ledger).rule((r) => {
+			const { id: h } = v(Holder)
+			return r.match(Holder, { id: h, name: r.inSet("names") }).find({ h })
+		})
 		type ParamsPin = Expect<Equal<QueryParams<typeof namedSet>, { readonly names: readonly string[] }>>
 		assert.deepEqual(
 			sorted(
@@ -567,12 +603,13 @@ describe("the query surface against a real store", function suite() {
 		)
 		assert.deepEqual(run(namedSet, { names: [] }), [], "the empty set matches nothing")
 
-		const idSet = query(Ledger).rule((r) =>
-			r
-				.match(Holder, { id: r.var("h") })
-				.where(r.eq(r.var("h"), r.inSet("wanted")))
-				.select("h")
-		)
+		const idSet = query(Ledger).rule((r) => {
+			const { id: h } = v(Holder)
+			return r
+				.match(Holder, { id: h })
+				.where(r.eq(h, r.inSet("wanted")))
+				.find({ h })
+		})
 		assert.deepEqual(
 			sorted(
 				run(idSet, { wanted: [ids.ada, ids.lone] }).map(function h(row) {
@@ -587,12 +624,13 @@ describe("the query surface against a real store", function suite() {
 	})
 
 	test("the or-tree is the rule-level disjunction", function orTree() {
-		const eitherKind = query(Ledger).rule((r) =>
-			r
-				.match(Account, { id: r.var("acct"), kind: r.var("k") })
-				.where(r.or(r.eq(r.var("k"), "Checking"), r.eq(r.var("k"), "Savings")))
-				.select("acct")
-		)
+		const eitherKind = query(Ledger).rule((r) => {
+			const { id: acct, kind: k } = v(Account)
+			return r
+				.match(Account, { id: acct, kind: k })
+				.where(r.or(r.eq(k, "Checking"), r.eq(k, "Savings")))
+				.find({ acct })
+		})
 		assert.equal(run(eitherKind, {}).length, 4, "the disjunction spans both kinds")
 	})
 
@@ -600,7 +638,8 @@ describe("the query surface against a real store", function suite() {
 		let ghost: Param<"ghost"> | undefined
 		const everyone = query(Ledger).rule((r) => {
 			ghost = r.param("ghost")
-			return r.match(Holder, { id: r.var("h") }).select("h")
+			const { id: h } = v(Holder)
+			return r.match(Holder, { id: h }).find({ h })
 		})
 		assert.ok(ghost !== undefined, "the param value exists — it was simply never placed in a rule")
 		assert.deepEqual(everyone.data.params, [], "the registry is usage-derived; a dropped param value never registers")
@@ -612,19 +651,21 @@ describe("the query surface against a real store", function suite() {
 	test("the same query built twice lowers to deeply-equal IR", function determinism() {
 		function build() {
 			return query(Ledger)
-				.rule((r) =>
-					r
-						.match(Account, { id: r.var("acct"), holder: r.var("h") })
-						.where(r.eq(r.var("h"), r.param("root")))
-						.select("acct", r.count())
-				)
-				.rule((r) =>
-					r
-						.match(Account, { id: r.var("acct"), holder: r.var("h"), kind: "Savings" })
-						.match(Holder, { id: r.var("h") })
-						.where(r.eq(r.var("h"), r.param("root")))
-						.select("acct", r.count())
-				)
+				.rule((r) => {
+					const { id: acct, holder: h } = v(Account)
+					return r
+						.match(Account, { id: acct, holder: h })
+						.where(r.eq(h, r.param("root")))
+						.find({ acct, count: r.count() })
+				})
+				.rule((r) => {
+					const { id: acct, holder: h } = v(Account)
+					return r
+						.match(Account, { id: acct, holder: h, kind: "Savings" })
+						.match(Holder, { id: h })
+						.where(r.eq(h, r.param("root")))
+						.find({ acct, count: r.count() })
+				})
 		}
 		const first = build()
 		const second = build()
@@ -633,80 +674,219 @@ describe("the query surface against a real store", function suite() {
 		assert.deepStrictEqual(lowerQuery(first), lowerQuery(first), "lowering is stable per value too")
 	})
 
+	test("reference identity IS the join: one var value reused joins; two fresh mints never join", function referenceIdentityJoin() {
+		// Reusing ONE var value across binding positions IS the join: `h`, minted
+		// at Account.holder, placed again at Holder.id, unifies the two atoms —
+		// each account pairs with ITS OWN holder's name.
+		const joined = query(Ledger).rule((r) => {
+			const { id: acct, holder: h } = v(Account)
+			const { name } = v(Holder)
+			return r.match(Account, { id: acct, holder: h }).match(Holder, { id: h, name }).find({ acct, name })
+		})
+		// The two-mint twin: `hid` is a FRESH Holder.id variable, never unified
+		// with `h`, so the atoms cross-product — every account against every name.
+		const crossed = query(Ledger).rule((r) => {
+			const { id: acct, holder: h } = v(Account)
+			const { id: hid, name } = v(Holder)
+			return r.match(Account, { id: acct, holder: h }).match(Holder, { id: hid, name }).find({ acct, name })
+		})
+		const joinedRows = run(joined, {})
+		const byAccount = new Map(
+			joinedRows.map(function pair(row) {
+				return [row.acct, row.name] as const
+			})
+		)
+		assert.equal(joinedRows.length, 4, "the join answers each account with its own holder — one row per account")
+		assert.equal(byAccount.get(ids.adaChecking), "ada")
+		assert.equal(byAccount.get(ids.adaSavings), "ada")
+		assert.equal(byAccount.get(ids.graceSavings), "grace")
+		assert.equal(byAccount.get(ids.kurtChecking), "kurt")
+		assert.equal(
+			run(crossed, {}).length,
+			16,
+			"two fresh mints never join — 4 accounts × 4 holders is the cross product"
+		)
+		assert.notDeepStrictEqual(
+			lowerQuery(joined),
+			lowerQuery(crossed),
+			"reference reuse and two fresh mints lower to DIFFERENT IR"
+		)
+	})
+
+	test("the name-collision join is unrepresentable: same-named columns of two mints are unrelated variables", function nameCollision() {
+		// Two v(Parent) batches mint two DISTINCT `child` variables. Placing
+		// a.child and b.child in two atoms — the very spelling the name-keyed
+		// edition JOINED into one variable — now lowers to TWO var ids and
+		// cross-products at runtime: identity is the object reference, so a
+		// name-collision join has no spelling.
+		const twoParents = query(Ledger).rule((r) => {
+			const a = v(Parent)
+			const b = v(Parent)
+			return r
+				.match(Parent, { child: a.child, parent: a.parent })
+				.match(Parent, { child: b.child, parent: b.parent })
+				.find({ x: a.child, y: b.child })
+		})
+		const lowered = lowerQuery(twoParents)
+		const outputRule = lowered.predicates[lowered.output]?.rules[0]
+		assert.ok(outputRule !== undefined, "the output predicate carries the one rule")
+		const findVars = outputRule.finds.map(function idOf(entry) {
+			assert.equal(entry.kind, "var", "both find entries project a variable")
+			return entry.kind === "var" ? entry.var : -1
+		})
+		assert.equal(findVars.length, 2)
+		assert.notEqual(
+			findVars[0],
+			findVars[1],
+			"two same-named mints are two var ids — the join by name is unrepresentable"
+		)
+		// And by rows: two Parent facts, two unrelated child variables → the
+		// full 2 × 2 cross product, never the 2-row diagonal a join would give.
+		assert.equal(run(twoParents, {}).length, 4, "same-named columns of two mints cross-product, never join")
+	})
+
+	test("find keys name the answer columns: renames are real", function renamesAreReal() {
+		// The find key IS the answer column — a rename is a real, fully typed
+		// key. `QueryRow` extends `{ renamed: bigint }` (the Equal-probe sees it),
+		// and the decoded row is keyed by the find name at runtime too.
+		const renamed = query(Ledger).rule((r) => {
+			const { id: h } = v(Holder)
+			return r.match(Holder, { id: h }).find({ renamed: h })
+		})
+		type RenamePin = Expect<Equal<QueryRow<typeof renamed>, { readonly renamed: bigint }>>
+		const renamePin: RenamePin = true
+		assert.ok(renamePin)
+		const renamedRows = run(renamed, {})
+		assert.equal(renamedRows.length, 4)
+		const probe = renamedRows[0]
+		assert.ok(probe !== undefined)
+		const typedProbe = probe satisfies { readonly renamed: bigint }
+		assert.equal(typeof typedProbe.renamed, "bigint")
+		assert.deepEqual(
+			sorted(
+				renamedRows.map(function renamedOf(row) {
+					return row.renamed
+				})
+			),
+			sorted([ids.ada, ids.grace, ids.kurt, ids.lone]),
+			"the row carries every holder id under the renamed key"
+		)
+	})
+
 	test("the engine's prepare accepts every construct the surface can spell (the IR-bijection pin)", function prepareSweep() {
 		const constructs: AnyQuery[] = [
 			// ne
-			query(Ledger).rule((r) =>
-				r
-					.match(Holder, { id: r.var("h") })
-					.where(r.ne(r.var("h"), 1n))
-					.select("h")
-			),
+			query(Ledger).rule((r) => {
+				const { id: h } = v(Holder)
+				return r.match(Holder, { id: h }).where(r.ne(h, 1n)).find({ h })
+			}),
 			// the order roster over an i64 variable
-			query(Ledger).rule((r) =>
-				r
-					.match(Account, { id: r.var("acct"), balance: r.var("b") })
-					.where(r.le(r.var("b"), 7n))
-					.where(r.gt(r.var("b"), 0n))
-					.where(r.ge(r.var("b"), 3n))
-					.where(r.lt(r.var("b"), 100n))
-					.select("acct")
-			),
+			query(Ledger).rule((r) => {
+				const { id: acct, balance: b } = v(Account)
+				return r
+					.match(Account, { id: acct, balance: b })
+					.where(r.le(b, 7n))
+					.where(r.gt(b, 0n))
+					.where(r.ge(b, 3n))
+					.where(r.lt(b, 100n))
+					.find({ acct })
+			}),
 			// the measure as an order side and a projected entry
-			query(Ledger).rule((r) =>
-				r
-					.match(Account, { id: r.var("acct"), active: r.var("w") })
-					.where(r.lt(r.duration("w"), 100n))
-					.select("acct", r.duration("w"))
-			),
+			query(Ledger).rule((r) => {
+				const { id: acct, active: w } = v(Account)
+				return r
+					.match(Account, { id: acct, active: w })
+					.where(r.lt(r.duration(w), 100n))
+					.find({ acct, w: r.duration(w) })
+			}),
 			// nested and/or trees
-			query(Ledger).rule((r) =>
-				r
-					.match(Account, { id: r.var("acct"), kind: r.var("k"), balance: r.var("b") })
-					.where(r.or(r.and(r.eq(r.var("k"), "Checking"), r.gt(r.var("b"), 4n)), r.eq(r.var("k"), "Savings")))
-					.select("acct")
-			),
-			// countDistinct (all-aggregate select: empty input yields the empty set)
-			query(Ledger).rule((r) => r.match(Account, { holder: r.var("h") }).select(r.countDistinct("h"))),
+			query(Ledger).rule((r) => {
+				const { id: acct, kind: k, balance: b } = v(Account)
+				return r
+					.match(Account, { id: acct, kind: k, balance: b })
+					.where(r.or(r.and(r.eq(k, "Checking"), r.gt(b, 4n)), r.eq(k, "Savings")))
+					.find({ acct })
+			}),
+			// countDistinct (all-aggregate find: empty input yields the empty set)
+			query(Ledger).rule((r) => {
+				const { holder: h } = v(Account)
+				return r.match(Account, { holder: h }).find({ h: r.countDistinct(h) })
+			}),
 			// the folds over a variable
-			query(Ledger).rule((r) => r.match(Account, { holder: r.var("h"), balance: r.var("b") }).select("h", r.sum("b"))),
-			query(Ledger).rule((r) => r.match(Account, { holder: r.var("h"), balance: r.var("b") }).select("h", r.min("b"))),
-			query(Ledger).rule((r) => r.match(Account, { holder: r.var("h"), balance: r.var("b") }).select("h", r.max("b"))),
+			query(Ledger).rule((r) => {
+				const { holder: h, balance: b } = v(Account)
+				return r.match(Account, { holder: h, balance: b }).find({ h, b: r.sum(b) })
+			}),
+			query(Ledger).rule((r) => {
+				const { holder: h, balance: b } = v(Account)
+				return r.match(Account, { holder: h, balance: b }).find({ h, b: r.min(b) })
+			}),
+			query(Ledger).rule((r) => {
+				const { holder: h, balance: b } = v(Account)
+				return r.match(Account, { holder: h, balance: b }).find({ h, b: r.max(b) })
+			}),
 			// the folds over the measure
-			query(Ledger).rule((r) =>
-				r.match(Account, { holder: r.var("h"), active: r.var("w") }).select("h", r.sum(r.duration("w")))
-			),
+			query(Ledger).rule((r) => {
+				const { holder: h, active: w } = v(Account)
+				return r.match(Account, { holder: h, active: w }).find({ h, w: r.sum(r.duration(w)) })
+			}),
 			// the Arg forms
-			query(Ledger).rule((r) =>
-				r
-					.match(Account, { id: r.var("acct"), holder: r.var("h"), balance: r.var("b") })
-					.select("h", r.argMax("acct", "b"))
-			),
-			query(Ledger).rule((r) =>
-				r
-					.match(Account, { id: r.var("acct"), holder: r.var("h"), balance: r.var("b") })
-					.select("h", r.argMin("acct", "b"))
-			),
+			query(Ledger).rule((r) => {
+				const { id: acct, holder: h, balance: b } = v(Account)
+				return r.match(Account, { id: acct, holder: h, balance: b }).find({ h, acct: r.argMax(acct, b) })
+			}),
+			query(Ledger).rule((r) => {
+				const { id: acct, holder: h, balance: b } = v(Account)
+				return r.match(Account, { id: acct, holder: h, balance: b }).find({ h, acct: r.argMin(acct, b) })
+			}),
 			// pack (the coalescing fold)
-			query(Ledger).rule((r) => r.match(Account, { holder: r.var("h"), active: r.var("w") }).select("h", r.pack("w"))),
+			query(Ledger).rule((r) => {
+				const { holder: h, active: w } = v(Account)
+				return r.match(Account, { holder: h, active: w }).find({ h, w: r.pack(w) })
+			}),
 			// literal bindings at every structural kind
-			query(Ledger).rule((r) => r.match(Account, { id: r.var("acct"), flagged: true }).select("acct")),
-			query(Ledger).rule((r) => r.match(Account, { id: r.var("acct"), tag: new Uint8Array([1, 2]) }).select("acct")),
-			query(Ledger).rule((r) => r.match(Account, { id: r.var("acct"), balance: 5n }).select("acct")),
-			query(Ledger).rule((r) => r.match(Account, { id: r.var("acct"), active: span(0n, 10n) }).select("acct")),
-			query(Ledger).rule((r) => r.match(Holder, { id: r.var("h"), name: "ada" }).select("h")),
-			query(Ledger).rule((r) => r.match(Account, { id: r.var("acct"), kind: "Savings" }).select("acct")),
+			query(Ledger).rule((r) => {
+				const { id: acct } = v(Account)
+				return r.match(Account, { id: acct, flagged: true }).find({ acct })
+			}),
+			query(Ledger).rule((r) => {
+				const { id: acct } = v(Account)
+				return r.match(Account, { id: acct, tag: new Uint8Array([1, 2]) }).find({ acct })
+			}),
+			query(Ledger).rule((r) => {
+				const { id: acct } = v(Account)
+				return r.match(Account, { id: acct, balance: 5n }).find({ acct })
+			}),
+			query(Ledger).rule((r) => {
+				const { id: acct } = v(Account)
+				return r.match(Account, { id: acct, active: span(0n, 10n) }).find({ acct })
+			}),
+			query(Ledger).rule((r) => {
+				const { id: h } = v(Holder)
+				return r.match(Holder, { id: h, name: "ada" }).find({ h })
+			}),
+			query(Ledger).rule((r) => {
+				const { id: acct } = v(Account)
+				return r.match(Account, { id: acct, kind: "Savings" }).find({ acct })
+			}),
 			// a zero-binding atom is a nonemptiness gate
-			query(Ledger).rule((r) =>
-				r
-					.match(Holder, { id: r.var("h") })
-					.match(Parent, {})
-					.select("h")
-			),
+			query(Ledger).rule((r) => {
+				const { id: h } = v(Holder)
+				return r.match(Holder, { id: h }).match(Parent, {}).find({ h })
+			}),
 			// params: scalar at a field, at an interval field, and a set at a field
-			query(Ledger).rule((r) => r.match(Holder, { id: r.var("h"), name: r.param("n") }).select("h")),
-			query(Ledger).rule((r) => r.match(Account, { id: r.var("acct"), active: r.param("at") }).select("acct")),
-			query(Ledger).rule((r) => r.match(Account, { id: r.var("acct"), kind: r.inSet("kinds") }).select("acct"))
+			query(Ledger).rule((r) => {
+				const { id: h } = v(Holder)
+				return r.match(Holder, { id: h, name: r.param("n") }).find({ h })
+			}),
+			query(Ledger).rule((r) => {
+				const { id: acct } = v(Account)
+				return r.match(Account, { id: acct, active: r.param("at") }).find({ acct })
+			}),
+			query(Ledger).rule((r) => {
+				const { id: acct } = v(Account)
+				return r.match(Account, { id: acct, kind: r.inSet("kinds") }).find({ acct })
+			})
 		]
 		for (const construct of constructs) {
 			accepted(construct)
@@ -714,11 +894,10 @@ describe("the query surface against a real store", function suite() {
 	})
 
 	test("engine roster refusals surface as typed prepare errors", function rosterError() {
-		const argAndFoldMixed = query(Ledger).rule((r) =>
-			r
-				.match(Account, { id: r.var("acct"), holder: r.var("h"), balance: r.var("b") })
-				.select("h", r.argMax("acct", "b"), r.sum("b"))
-		)
+		const argAndFoldMixed = query(Ledger).rule((r) => {
+			const { id: acct, holder: h, balance: b } = v(Account)
+			return r.match(Account, { id: acct, holder: h, balance: b }).find({ h, acct: r.argMax(acct, b), b: r.sum(b) })
+		})
 		const prepared = native.dbPrepare(db, lowerQuery(argAndFoldMixed))
 		assert.ok(!prepared.ok, "Arg and fold aggregates never mix — the engine's typed rule")
 		assert.equal(prepared.kind, "irError")
@@ -727,29 +906,37 @@ describe("the query surface against a real store", function suite() {
 	test("every rule of a query derives the same head", function headAlignment() {
 		assert.throws(function misaligned() {
 			query(Ledger)
-				.rule((r) => r.match(Holder, { id: r.var("h") }).select("h"))
-				.rule((r) => r.match(Account, { id: r.var("acct") }).select("acct"))
+				.rule((r) => {
+					const { id: h } = v(Holder)
+					return r.match(Holder, { id: h }).find({ h })
+				})
+				.rule((r) => {
+					const { id: acct } = v(Account)
+					return r.match(Account, { id: acct }).find({ acct })
+				})
 		}, /derives the same head/)
 	})
 
 	test("a param name keeps one wire shape", function paramShapeConflict() {
 		assert.throws(function conflicted() {
-			query(Ledger).rule((r) =>
-				r
-					.match(Holder, { id: r.var("h"), name: r.param("who") })
-					.where(r.eq(r.var("h"), r.inSet("who")))
-					.select("h")
-			)
+			query(Ledger).rule((r) => {
+				const { id: h } = v(Holder)
+				return r
+					.match(Holder, { id: h, name: r.param("who") })
+					.where(r.eq(h, r.inSet("who")))
+					.find({ h })
+			})
 		}, /one name, one shape/)
 	})
 
 	test("execute refuses a missing param, typed", function missingParam() {
-		const withParam = query(Ledger).rule((r) =>
-			r
-				.match(Holder, { id: r.var("h") })
-				.where(r.eq(r.var("h"), r.param("root")))
-				.select("h")
-		)
+		const withParam = query(Ledger).rule((r) => {
+			const { id: h } = v(Holder)
+			return r
+				.match(Holder, { id: h })
+				.where(r.eq(h, r.param("root")))
+				.find({ h })
+		})
 		assert.throws(function missing() {
 			// @ts-expect-error — the inferred params object demands root; omitting it is a compile error too
 			run(withParam, {})
@@ -763,143 +950,210 @@ describe("the query surface against a real store", function suite() {
 	})
 
 	test("TYPE WALLS: the unwritable queries are unwritable (each expect-error real)", function typeWalls() {
-		// A "Holder.id"-class var joined to the "Account.id" generator class — the class-equal
-		// join law, a compile error AND a construction refusal (the wall holds for untyped callers too).
+		// (a) r.var is dead — the free `v()` mints variables now, and the rule
+		// builder carries no `var` member. Accessing it is a compile error; at
+		// runtime the property is simply absent (no shim, no alias).
+		const varDied = query(Ledger).rule((r) => {
+			const { id: h } = v(Holder)
+			// @ts-expect-error — r.var died with 0.6.0
+			const deadVar = r.var
+			assert.equal(deadVar, undefined)
+			return r.match(Holder, { id: h }).find({ h })
+		})
+		assert.equal(varDied.data.rules.length, 1)
+
+		// (b) select is dead — the head is a `find` record; the chain carries
+		// no `select` member. Accessing it is a compile error; at runtime the
+		// method is absent.
+		const selectDied = query(Ledger).rule((r) => {
+			const { id: h } = v(Holder)
+			const chain = r.match(Holder, { id: h })
+			// @ts-expect-error — select died into find
+			const deadSelect = chain.select
+			assert.equal(deadSelect, undefined)
+			return chain.find({ h })
+		})
+		assert.equal(selectDied.data.rules.length, 1)
+
+		// (c) A "Holder.id"-class mint reused at the "Account.id" generator
+		// class — the class-equal join law, refused AT THE POSITION (compile)
+		// AND at construction (the wall holds for untyped callers too).
 		assert.throws(function crossClassJoin() {
-			query(Ledger).rule((r) =>
-				r
-					.match(Holder, { id: r.var("x") })
-					// @ts-expect-error — "x" first bound in the "Holder.id" class; Account.id generates "Account.id"
-					.match(Account, { id: r.var("x") })
-					.select("x")
-			)
+			query(Ledger).rule((r) => {
+				const { id: h } = v(Holder)
+				return (
+					r
+						.match(Holder, { id: h })
+						// @ts-expect-error — h minted in the "Holder.id" class; Account.id generates "Account.id"
+						.match(Account, { id: h })
+						.find({ h })
+				)
+			})
 		}, /joins domain-unequal fields/)
 
-		// The same law through eq: var-to-var unification IS a join — a compile error
-		// AND a construction refusal (the runtime twin; the wall holds for untyped
-		// callers too, and the engine cannot backstop it — the IR carries no domains).
+		// The same law through eq: var-to-var unification IS a join — a compile
+		// error AND a construction refusal (the runtime twin; the wall holds
+		// for untyped callers too, and the engine cannot backstop it — the IR
+		// carries no domains).
 		assert.throws(function crossClassEq() {
-			query(Ledger).rule((r) =>
-				r
-					.match(Account, { id: r.var("a"), holder: r.var("h") })
-					// @ts-expect-error — "a" is in the "Account.id" class, "h" in "Holder.id"
-					.where(r.eq(r.var("a"), r.var("h")))
-					.select("a")
-			)
+			query(Ledger).rule((r) => {
+				const { id: a, holder: h } = v(Account)
+				return (
+					r
+						.match(Account, { id: a, holder: h })
+						// @ts-expect-error — "a" is in the "Account.id" class, "h" in "Holder.id"
+						.where(r.eq(a, h))
+						.find({ a })
+				)
+			})
 		}, /unifies domain-unequal fields/)
 
 		// ne rides the identical judgment (EqOk covers both ops).
 		assert.throws(function crossClassNe() {
-			query(Ledger).rule((r) =>
-				r
-					.match(Account, { id: r.var("a"), holder: r.var("h") })
-					// @ts-expect-error — ne is the same unification judgment as eq
-					.where(r.ne(r.var("a"), r.var("h")))
-					.select("a")
-			)
+			query(Ledger).rule((r) => {
+				const { id: a, holder: h } = v(Account)
+				return (
+					r
+						.match(Account, { id: a, holder: h })
+						// @ts-expect-error — ne is the same unification judgment as eq
+						.where(r.ne(a, h))
+						.find({ a })
+				)
+			})
 		}, /unifies domain-unequal fields/)
 
+		// (d) Bare↔classed refuses through references: Account.opened is bare,
+		// Account.holder is in "Holder.id" — a bare mint cannot reuse at a
+		// classed slot.
+		assert.throws(function bareClassedWall() {
+			query(Ledger).rule((r) => {
+				const { opened: z } = v(Account)
+				return (
+					r
+						.match(Account, { opened: z })
+						// @ts-expect-error — bare pairs only with bare; a classed slot refuses a bare mint
+						.match(Account, { holder: z })
+						.find({ z })
+				)
+			})
+		}, /joins domain-unequal fields/)
+
 		// The positive twins: class-equal eq constructs, and bare pairs with bare.
-		const sameClassEq = query(Ledger).rule((r) =>
-			r
-				.match(Account, { holder: r.var("h") })
-				.match(Holder, { id: r.var("h2") })
-				.where(r.eq(r.var("h"), r.var("h2")))
-				.select("h")
-		)
+		const sameClassEq = query(Ledger).rule((r) => {
+			const { holder: h } = v(Account)
+			const { id: h2 } = v(Holder)
+			return r.match(Account, { holder: h }).match(Holder, { id: h2 }).where(r.eq(h, h2)).find({ h })
+		})
 		assert.equal(sameClassEq.data.rules.length, 1)
-		const bareBareEq = query(Ledger).rule((r) =>
-			r
-				.match(Holder, { id: r.var("h"), rank: r.var("z") })
-				.match(Account, { opened: r.var("o") })
-				.where(r.eq(r.var("z"), r.var("o")))
-				.select("h")
-		)
+		const bareBareEq = query(Ledger).rule((r) => {
+			const { id: h, rank: z } = v(Holder)
+			const { opened: o } = v(Account)
+			return r.match(Holder, { id: h, rank: z }).match(Account, { opened: o }).where(r.eq(z, o)).find({ h })
+		})
 		assert.equal(bareBareEq.data.rules.length, 1)
 
 		// An interval var under a non-pointIn comparison — the interval-vs-scalar wall.
-		const intervalUnderOrder = query(Ledger).rule((r) =>
-			r
-				.match(Account, { id: r.var("acct"), active: r.var("w") })
-				// @ts-expect-error — an interval-typed variable has no order; pointIn/allen are the interval predicates
-				.where(r.lt(r.var("w"), 5n))
-				.select("acct")
-		)
+		const intervalUnderOrder = query(Ledger).rule((r) => {
+			const { id: acct, active: w } = v(Account)
+			return (
+				r
+					.match(Account, { id: acct, active: w })
+					// @ts-expect-error — an interval-typed variable has no order; pointIn/allen are the interval predicates
+					.where(r.lt(w, 5n))
+					.find({ acct })
+			)
+		})
 		assert.equal(intervalUnderOrder.data.rules.length, 1)
 
-		const intervalUnderEq = query(Ledger).rule((r) =>
-			r
-				.match(Account, { id: r.var("acct"), active: r.var("w") })
-				// @ts-expect-error — eq of an interval variable takes an interval, never a scalar point
-				.where(r.eq(r.var("w"), 5n))
-				.select("acct")
-		)
+		const intervalUnderEq = query(Ledger).rule((r) => {
+			const { id: acct, active: w } = v(Account)
+			return (
+				r
+					.match(Account, { id: acct, active: w })
+					// @ts-expect-error — eq of an interval variable takes an interval, never a scalar point
+					.where(r.eq(w, 5n))
+					.find({ acct })
+			)
+		})
 		assert.equal(intervalUnderEq.data.rules.length, 1)
 
-		// A minting/arithmetic term in a head — unrepresentable: a select entry is a name, the measure, or an aggregate.
+		// A minting/arithmetic term in a head — unrepresentable: a find entry is a variable, the measure, or an aggregate.
 		assert.throws(function mintingHead() {
-			query(Ledger).rule((r) =>
-				r
-					.match(Account, { id: r.var("acct"), balance: r.var("b") })
-					// @ts-expect-error — no minting or arithmetic term exists in the head vocabulary (the creation quarantine)
-					.select(1n + 2n)
-			)
-		}, /not a select entry/)
+			query(Ledger).rule((r) => {
+				const { id: acct, balance: b } = v(Account)
+				return (
+					r
+						.match(Account, { id: acct, balance: b })
+						// @ts-expect-error — no minting or arithmetic term exists in the head vocabulary (the creation quarantine)
+						.find({ sum: 1n + 2n })
+				)
+			})
+		}, /not a find entry/)
 
 		// A param supplied at the wrong type.
-		const byName = query(Ledger).rule((r) => r.match(Holder, { id: r.var("h"), name: r.param("who") }).select("h"))
+		const byName = query(Ledger).rule((r) => {
+			const { id: h } = v(Holder)
+			return r.match(Holder, { id: h, name: r.param("who") }).find({ h })
+		})
 		assert.throws(function wrongParamType() {
 			// @ts-expect-error — "who" is string-typed by its binding field
 			run(byName, { who: 5n })
 		}, /expected string/)
 
 		// A results shape mismatched to the head.
-		const everyone = query(Ledger).rule((r) => r.match(Holder, { id: r.var("h") }).select("h"))
+		const everyone = query(Ledger).rule((r) => {
+			const { id: h } = v(Holder)
+			return r.match(Holder, { id: h }).find({ h })
+		})
 		// @ts-expect-error — the result row is typed by the head: h is bigint, never string
 		const wrong: { h: string }[] = run(everyone, {})
 		assert.equal(wrong.length, 4)
 
-		// A negated atom over an unbound variable — the safety rule as a compile error, and a construction refusal.
+		// A negated atom over an unbound variable — the safety rule. BOUNDNESS
+		// is invisible to the type tier (scope.ts THE DESIGN THEOREM: TS types
+		// cannot see object identity), so this pin is a construction-time wall
+		// only, no longer a compile error.
 		assert.throws(function unsafeNegation() {
-			query(Ledger).rule((r) =>
-				r
-					.match(Holder, { id: r.var("h") })
-					// @ts-expect-error — "ghost" is bound by no positive atom of the rule
-					.where(r.not(Account, { id: r.var("ghost"), holder: r.var("h") }))
-					.select("h")
-			)
-		}, /ghost/)
+			query(Ledger).rule((r) => {
+				const { id: h } = v(Holder)
+				const { parent: ghost } = v(Parent)
+				return r
+					.match(Holder, { id: h })
+					.where(r.not(Account, { holder: ghost }))
+					.find({ h })
+			})
+		}, /Parent\.parent/)
 	})
 
 	test("THE FOUR JOIN LAWS: same-class joins+lowers, cross-class refuses at the use site, bare↔bare joins, bare↔classed refuses", function joinLaws() {
 		// 1. Same-class join compiles AND lowers (Account.holder and Holder.id share "Holder.id").
-		const sameClass = query(Ledger).rule((r) =>
-			r
-				.match(Account, { id: r.var("acct"), holder: r.var("h") })
-				.match(Holder, { id: r.var("h") })
-				.select("acct")
-		)
+		const sameClass = query(Ledger).rule((r) => {
+			const { id: acct, holder: h } = v(Account)
+			return r.match(Account, { id: acct, holder: h }).match(Holder, { id: h }).find({ acct })
+		})
 		assert.equal(lowerQuery(sameClass).predicates.length, 1)
 
 		// 2. Cross-class pairing fails at the use site (compile) and at construction (runtime twin).
 		assert.throws(function crossClass() {
-			query(Ledger).rule((r) =>
-				r
-					.match(Holder, { id: r.var("x") })
-					// @ts-expect-error — the use site: Account.id generates its own class
-					.match(Account, { id: r.var("x") })
-					.select("x")
-			)
+			query(Ledger).rule((r) => {
+				const { id: x } = v(Holder)
+				return (
+					r
+						.match(Holder, { id: x })
+						// @ts-expect-error — the use site: Account.id generates its own class
+						.match(Account, { id: x })
+						.find({ x })
+				)
+			})
 		}, /joins domain-unequal fields/)
 
 		// 3. Bare pairs with bare: Holder.rank and Account.opened are in no law — the join is legal,
 		// lowers, and runs (ada's rank 1 = the opened stamp of her checking account).
-		const bareBare = query(Ledger).rule((r) =>
-			r
-				.match(Holder, { id: r.var("h"), rank: r.var("z") })
-				.match(Account, { opened: r.var("z") })
-				.select("h")
-		)
+		const bareBare = query(Ledger).rule((r) => {
+			const { id: h, rank: z } = v(Holder)
+			const { opened: o } = v(Account)
+			return r.match(Holder, { id: h, rank: z }).match(Account, { opened: o }).where(r.eq(z, o)).find({ h })
+		})
 		assert.deepEqual(
 			run(bareBare, {}).map(function h(row) {
 				return row.h
@@ -909,13 +1163,16 @@ describe("the query surface against a real store", function suite() {
 
 		// 4. Bare↔classed refuses: Account.opened is bare, Account.holder is in "Holder.id".
 		assert.throws(function bareClassed() {
-			query(Ledger).rule((r) =>
-				r
-					.match(Account, { opened: r.var("z") })
-					// @ts-expect-error — bare pairs only with bare; "Holder.id" is a classed slot
-					.match(Account, { holder: r.var("z") })
-					.select("z")
-			)
+			query(Ledger).rule((r) => {
+				const { opened: z } = v(Account)
+				return (
+					r
+						.match(Account, { opened: z })
+						// @ts-expect-error — bare pairs only with bare; "Holder.id" is a classed slot
+						.match(Account, { holder: z })
+						.find({ z })
+				)
+			})
 		}, /joins domain-unequal fields/)
 	})
 
@@ -925,20 +1182,24 @@ describe("the query surface against a real store", function suite() {
 			program(Ledger, (p) => {
 				const a = p.rec("a")
 				const b = p.rec("b")
-				a.rule((r) =>
-					r
-						.match(Parent, { child: r.var("c"), parent: r.var("m") })
-						// @ts-expect-error — the self-recursion-only cut: rec "a" cannot reference rec "b"
-						.idb(b, r.var("m"))
-						.select("c")
-				)
-				b.rule((r) => r.match(Holder, { id: r.var("h") }).select("h"))
-				return p.output((r) =>
-					r
-						.match(Holder, { id: r.var("h") })
-						.idb(b, r.var("h"))
-						.select("h")
-				)
+				a.rule((r) => {
+					const { child: c, parent: m } = v(Parent)
+					return (
+						r
+							.match(Parent, { child: c, parent: m })
+							// @ts-expect-error — the self-recursion-only cut: rec "a" cannot reference rec "b"
+							.idb(b, { h: m })
+							.find({ c })
+					)
+				})
+				b.rule((r) => {
+					const { id: h } = v(Holder)
+					return r.match(Holder, { id: h }).find({ h })
+				})
+				return p.output((r) => {
+					const { id: h } = v(Holder)
+					return r.match(Holder, { id: h }).idb(b, { h }).find({ h })
+				})
 			})
 		}, /self-recursion-only cut/)
 
@@ -946,38 +1207,45 @@ describe("the query surface against a real store", function suite() {
 		assert.throws(function aggregateThroughCycle() {
 			program(Ledger, (p) => {
 				const reach = p.rec("reach")
-				reach.rule((r) =>
-					r
-						.match(Account, { holder: r.var("h"), balance: r.var("b") })
-						// @ts-expect-error — a recursive head projects bound variable names only
-						.select(r.sum("b"))
-				)
-				return p.output((r) =>
-					r
-						.match(Holder, { id: r.var("h") })
-						.idb(reach, r.var("h"))
-						.select("h")
-				)
+				reach.rule((r) => {
+					const { holder: h, balance: b } = v(Account)
+					return (
+						r
+							.match(Account, { holder: h, balance: b })
+							// @ts-expect-error — a recursive head projects bound variables only
+							.find({ b: r.sum(b) })
+					)
+				})
+				return p.output((r) => {
+					const { id: h } = v(Holder)
+					return r.match(Holder, { id: h }).idb(reach, { b: h }).find({ h })
+				})
 			})
-		}, /NAMES only/)
+		}, /projects bound variables only/)
 
 		// An idb variable no relation atom binds — an idb atom is a join position.
+		// BOUNDNESS is invisible to the type tier (scope.ts THE DESIGN THEOREM),
+		// so this is a construction-time wall, not a compile error.
 		assert.throws(function unboundIdbVar() {
 			program(Ledger, (p) => {
 				const reach = p.rec("reach")
-				reach.rule((r) => r.match(Holder, { id: r.var("h") }).select("h"))
-				return p.output((r) =>
-					r
-						.match(Holder, { id: r.var("h") })
-						// @ts-expect-error — "ghost" is bound by no relation atom of the rule
-						.idb(reach, r.var("ghost"))
-						.select("h")
-				)
+				reach.rule((r) => {
+					const { id: h } = v(Holder)
+					return r.match(Holder, { id: h }).find({ h })
+				})
+				return p.output((r) => {
+					const { id: h } = v(Holder)
+					const { child: ghost } = v(Parent)
+					return r.match(Holder, { id: h }).idb(reach, { h: ghost }).find({ h })
+				})
 			})
-		}, /ghost/)
+		}, /Parent\.child/)
 
 		// idb in a plain query is a construction error (and the scope carries no idb to spell).
-		const plain = query(Ledger).rule((r) => r.match(Holder, { id: r.var("h") }).select("h"))
+		const plain = query(Ledger).rule((r) => {
+			const { id: h } = v(Holder)
+			return r.match(Holder, { id: h }).find({ h })
+		})
 		assert.equal("idb" in plain.data, false, "a plain query's data carries rules, not predicates")
 	})
 })

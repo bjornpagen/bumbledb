@@ -1,86 +1,60 @@
 /**
- * Atoms and conditions, STRUCTURAL edition — the body vocabulary of a
- * rule, mirroring the engine IR variant for variant
+ * Atoms and conditions, REFERENCE-IDENTITY edition — the body vocabulary of
+ * a rule, mirroring the engine IR variant for variant
  * (`bumbledb/crates/bumbledb/src/ir.rs`, the bijection target;
  * `docs/architecture/20-query-ir.md` normative). A `match` binding record
- * binds fields to vars, params, ∈-set params, or bare structural literals
- * — a closed-reference field's literal is its handle NAME, and a plain
- * ARRAY of names there is membership, folded into the program (closed-only
- * by owner ruling; see {@link BindingInput})
+ * binds fields to VARIABLES (minted by {@link v}), params, ∈-set params, or
+ * bare structural literals — a closed-reference field's literal is its
+ * handle NAME, and a plain ARRAY of names there is membership
  * (unmentioned fields ARE the wildcard — no wildcard value exists);
  * `not(Rel, {...})` is negation-as-position (anti-join); `eq`/`ne` and the
  * order roster, `pointIn` (the one spelling of `ir::CmpOp::PointIn`,
  * always lowered interval-left), `allen` (the 13-bit mask pair
  * comparison), and `and`/`or` (the input condition-tree grammar) complete
  * the roster. Nothing beyond the IR exists here — and the walls the engine
- * enforces at prepare are TYPES first: a var joins only domain-equal
- * fields (`JoinOk`, checked against the rule environment AND against the
- * binding record's own same-named siblings — two first occurrences of one
- * name inside one record are a join too), an
- * interval-typed var under a non-`pointIn` comparison is unwritable, and a
- * negated atom's variables must be positively bound (env membership IS the
- * safety rule). Every condition value carries its operands raw — the
- * runtime representation is the type-inference carrier, no phantoms.
+ * enforces at prepare are TYPES first: a variable joins only class-equal
+ * fields, judged at every binding position against the var's MINT slot
+ * ({@link MintSlotOf}); because {@link JoinOk} is an equality, that ALONE
+ * makes every cross-binding join transitively class-equal (the env/sibling
+ * checks the name-keyed edition needed are gone). An interval-typed var
+ * under a non-`pointIn` comparison is unwritable. BOUNDNESS (a negated
+ * atom's variables must be positively bound) is the one check types cannot
+ * carry — object identity is invisible to TS — so it is a construction-time
+ * wall only.
  *
  * This module also owns the plain runtime DATA a built rule is made of
  * (`RuleData`/`RecData` and friends): frozen values the lowering walks —
- * pure data, so lowering stays a pure, stable function of the query value.
+ * pure data (variable references included), so lowering stays a pure,
+ * stable function of the query value.
  */
 
 import * as errors from "@superbuilders/errors"
-import type { AnyClosed } from "#closed.ts"
 import type { AnyField, ClosedIdField, ClosedRoster, Infer, IntervalValue } from "#fields.ts"
 import type { ClassLookup, ClassRecordOf, SchemaClasses } from "#law.ts"
 import type {
+	AnyVar,
 	ClassedField,
 	Duration,
-	EnvShape,
 	JoinOk,
 	MaskParam,
+	MatchFields,
+	MatchOwner,
+	MintSlotOf,
 	Param,
 	ParamValueAt,
 	SetParam,
-	ShapeOf,
-	Var
+	ShapeOf
 } from "#query/scope.ts"
 import { isTerm } from "#query/scope.ts"
-import type { AnyRelation, FieldsShape, RelationFields } from "#relation.ts"
+import type { FieldsShape } from "#relation.ts"
 
 /**
- * What a query atom matches over: an ordinary relation or a CLOSED
- * vocabulary (ψ query atoms — the engine folds a resolvable closed atom
- * into a plan-constant member set at prepare, or joins the L1-resident
- * virtual image when the shape does not fold; the SDK never pre-folds and
- * never knows which — transparency is the contract).
- */
-type MatchOwner = AnyRelation | AnyClosed
-
-/**
- * The matchable field block of an atom owner: a relation's declared
- * fields; a closed relation's SEALED shape — the synthetic `id` (the
- * value's OWN roster-carrying descriptor, at its precise type: the handle
- * union rides into ψ id bindings and joins exactly as it does on a
- * referencing column) first, then the declared payload columns read
- * through the typed `columns` carrier (the one source of payload typing —
- * no parallel column table exists). The runtime twin is `sealedFieldsOf` in
- * `#query/lower.ts`; the id-first ordinal shift the two tiers share is
- * pinned by the lowering golden.
- */
-type MatchFields<R extends MatchOwner> = R extends AnyClosed
-	? { readonly id: R["id"] } & R["columns"]
-	: R extends AnyRelation
-		? RelationFields<R>
-		: never
-
-/**
- * One atom-binding position as runtime data. `literalSet` is a membership
- * ARRAY at a closed-reference field, folded into the program: `name` is
- * the content-addressed registry key its dense `ParamId` is minted under
- * (the lowering rides the existing param-set term; the SDK itself supplies
- * the translated member set at every execute — never the host).
+ * One atom-binding position as runtime data. A variable rides BY REFERENCE
+ * (`ref`) — object identity is the join. `literalSet` is a membership
+ * ARRAY at a closed-reference field, folded into the program.
  */
 type BindingTermData =
-	| { readonly kind: "var"; readonly name: string }
+	| { readonly kind: "var"; readonly ref: AnyVar }
 	| { readonly kind: "param"; readonly name: string }
 	| { readonly kind: "setParam"; readonly name: string }
 	| { readonly kind: "literalSet"; readonly name: string; readonly members: readonly string[] }
@@ -103,12 +77,12 @@ interface AtomData {
 /** One comparison operator name (mirrors `ir::CmpOp`). */
 type CmpKind = "eq" | "ne" | "lt" | "le" | "gt" | "ge" | "pointIn" | "allen"
 
-/** One comparison side as runtime data. */
+/** One comparison side as runtime data (variables and the measure ride BY REFERENCE). */
 type CmpTermData =
-	| { readonly kind: "var"; readonly name: string }
+	| { readonly kind: "var"; readonly ref: AnyVar }
 	| { readonly kind: "param"; readonly name: string }
 	| { readonly kind: "setParam"; readonly name: string }
-	| { readonly kind: "measure"; readonly name: string }
+	| { readonly kind: "measure"; readonly ref: AnyVar }
 	| { readonly kind: "literal"; readonly value: unknown }
 
 /** The `allen` mask position as runtime data. */
@@ -133,48 +107,61 @@ interface TreeData {
 /** Any condition node as runtime data. */
 type CondData = CmpData | TreeData
 
-/** One aggregate's runtime description (select vocabulary, over var NAMES). */
+/** One aggregate's runtime description (find vocabulary, over variable REFERENCES). */
 type AggData =
 	| { readonly op: "count" }
-	| { readonly op: "countDistinct"; readonly over: string }
-	| { readonly op: "fold"; readonly fold: "sum" | "min" | "max"; readonly over: string | { readonly duration: string } }
-	| { readonly op: "arg"; readonly direction: "argMax" | "argMin"; readonly over: string; readonly key: string }
-	| { readonly op: "pack"; readonly over: string }
+	| { readonly op: "countDistinct"; readonly over: AnyVar }
+	| {
+			readonly op: "fold"
+			readonly fold: "sum" | "min" | "max"
+			readonly over: AnyVar | { readonly duration: AnyVar }
+	  }
+	| { readonly op: "arg"; readonly direction: "argMax" | "argMin"; readonly over: AnyVar; readonly key: AnyVar }
+	| { readonly op: "pack"; readonly over: AnyVar }
 
-/** One classified select entry as runtime data. */
-type SelectEntryData =
-	| { readonly kind: "var"; readonly over: string }
-	| { readonly kind: "measure"; readonly over: string }
+/** One classified find entry as runtime data (variables and the measure ride BY REFERENCE). */
+type FindEntryData =
+	| { readonly kind: "var"; readonly over: AnyVar }
+	| { readonly kind: "measure"; readonly over: AnyVar }
 	| { readonly kind: "aggregate"; readonly agg: AggData }
 
 /**
- * One answer column: its name (the row object key), its entry, and — when
- * the column's value is a closed reference (a projected var or an
- * Arg-carried payload bound at a closed-referencing field) — the roster the
- * decode lifts row ids back to handle NAMES through (the read half of the
- * marshal bijection; `undefined` on every bare column). The slice is
- * SDK-side marshaling data only: the wire `ProgramIr` never carries it.
+ * One answer column: its name (the row object key — the find record's key,
+ * so renames are real and a duplicate column is unrepresentable), its entry,
+ * the classed mint SLOT its values flow from (a projected var or an
+ * Arg-carried payload; `undefined` for counts/folds/measures/pack, which
+ * derive numbers or intervals), and — when that slot is a closed reference —
+ * the roster the decode lifts row ids back to handle NAMES through
+ * (`undefined` on every bare column). The slice is SDK-side marshaling data
+ * only: the wire `ProgramIr` never carries it.
  */
-interface SelectColumn {
+interface FindColumn {
 	readonly name: string
-	readonly entry: SelectEntryData
+	readonly entry: FindEntryData
 	readonly closed: ClosedRoster | undefined
+	readonly slot: ClassedField | undefined
 }
 
-/** One body item of a rule, in written order. */
+/**
+ * One body item of a rule, in written order. The idb join is a NAMED record
+ * over the rec's head keys (`key`) bound to local variables (`ref`) — the
+ * typed wall a record's unordered keys would otherwise lose.
+ */
 type RuleItem =
 	| { readonly kind: "atom"; readonly atom: AtomData }
 	| { readonly kind: "negated"; readonly atom: AtomData }
-	| { readonly kind: "idb"; readonly rec: RecData; readonly vars: readonly string[] }
+	| {
+			readonly kind: "idb"
+			readonly rec: RecData
+			readonly bindings: ReadonlyArray<{ readonly key: string; readonly ref: AnyVar }>
+	  }
 	| { readonly kind: "cond"; readonly cond: CondData }
 
 /**
  * One use of a parameter inside a rule, in written order: the census the
  * query-level registry folds (first use mints the dense `ParamId`, first
  * FIELD-ANCHORED use types the wire). `members` is present exactly on a
- * membership-array use (a literal set folded into the program): the handle
- * names the SDK itself translates and supplies at execute — the entry
- * never appears in the host's params object.
+ * membership-array use.
  */
 interface ParamUse {
 	readonly name: string
@@ -187,9 +174,7 @@ interface ParamUse {
 /** One complete rule as runtime data. */
 interface RuleData {
 	readonly items: readonly RuleItem[]
-	readonly select: readonly SelectColumn[]
-	/** Variable name → the classed slot its FIRST positive binding carries (the runtime env — descriptor + class). */
-	readonly varFields: Readonly<Record<string, ClassedField>>
+	readonly finds: readonly FindColumn[]
 	readonly paramUses: readonly ParamUse[]
 }
 
@@ -205,23 +190,15 @@ interface RecData {
 
 /**
  * What a binding position of field `F` accepts: a bare structural literal
- * of the field's value type, a var/param/∈-set-param term — and, when the
- * field is interval-typed, a bare point literal (the IR's membership
- * typing rule: an element-typed term at an interval field is point
- * membership; an interval-typed term is value equality). A
- * CLOSED-reference field additionally takes a plain ARRAY of handle names
- * read as membership — `kind: ["Practice", "Review"]` (the drizzle law:
- * set membership is an array, never an operator). Arrays are CLOSED-ONLY
- * in this packet by owner ruling: ordinary u64/str membership already has
- * its spelling through `r.inSet` params; widening literal arrays to every
- * literal-capable kind is a separate future taste call — deliberately not
- * done here.
+ * of the field's value type, a variable/param/∈-set-param term — and, when
+ * the field is interval-typed, a bare point literal. A CLOSED-reference
+ * field additionally takes a plain ARRAY of handle names read as membership.
  */
 type BindingInput<F extends AnyField> =
 	| Infer<F>
 	| (F extends ClosedIdField ? readonly Infer<F>[] : never)
 	| (F extends { readonly kind: "interval" } ? bigint : never)
-	| Var<string>
+	| AnyVar
 	| Param<string>
 	| SetParam<string>
 
@@ -237,8 +214,8 @@ type MatchShape<F extends FieldsShape> = {
 /**
  * One field position of a bindings record as a classed slot: the declared
  * descriptor plus the slot's law-computed class, read off the relation's
- * class record (`CR` — the schema class map's entry for the atom's
- * relation). The one shape every join judgment compares.
+ * class record (`CR`). The one shape a binding position's join judgment
+ * compares against.
  */
 type SlotAt<F extends FieldsShape, CR, K> = {
 	readonly field: F[K & keyof F]
@@ -246,49 +223,20 @@ type SlotAt<F extends FieldsShape, CR, K> = {
 }
 
 /**
- * The var binding's judgment against the incoming rule environment: a name
- * already bound must land on a class-equal slot (bare pairs only with bare).
+ * The per-property join judgment of a bindings record: a VARIABLE binding
+ * must join its own MINT slot to the position slot (a cross-class reuse maps
+ * the property to `never`). Because {@link JoinOk} is an equality, judging
+ * every position against the mint slot makes all cross-binding joins
+ * mutually class-equal by transitivity — no env or sibling arm is needed.
  */
-type EnvJoinOk<Env extends EnvShape, F extends FieldsShape, CR, K, N extends string> = N extends keyof Env
-	? JoinOk<Env[N], SlotAt<F, CR, K>>
-	: true
-
-/**
- * The var binding's judgment against its OWN record's siblings: two
- * bindings of one var name inside a single bindings record are the same
- * join the environment check judges across atoms, so every same-named
- * sibling must be class-equal too. Without this arm two FIRST occurrences
- * of one name (a record the environment has not seen yet) would meet no
- * check at all — the intra-atom join would silently cross classes.
- */
-type SiblingJoinOk<F extends FieldsShape, CR, B, K extends keyof B, N extends string> = false extends {
-	[K2 in Exclude<keyof B & keyof F, K>]: B[K2] extends Var<N> ? JoinOk<SlotAt<F, CR, K2>, SlotAt<F, CR, K>> : true
-}[Exclude<keyof B & keyof F, K>]
-	? false
-	: true
-
-/**
- * The per-property join judgment of a bindings record: a var binding must
- * be class-equal to the rule environment's binding of the name AND to
- * every same-named sibling of its own record (a cross-class reuse maps
- * the property to `never` — the compile error the old value brand carried,
- * now law-born off the schema type's class map).
- */
-type BindingOk<Env extends EnvShape, F extends FieldsShape, CR, B, K extends keyof B> =
-	B[K] extends Var<infer N extends string>
-		? [EnvJoinOk<Env, F, CR, K, N>, SiblingJoinOk<F, CR, B, K, N>] extends [true, true]
-			? true
-			: false
-		: true
-
-/** The validated bindings record (intersect with the inferred `B` — errors land on the offending property). */
-type CheckBindings<Env extends EnvShape, F extends FieldsShape, CR, B> = {
-	readonly [K in keyof B]: K extends keyof F ? (BindingOk<Env, F, CR, B, K> extends true ? B[K] : never) : never
-}
-
-/** The environment a bindings record contributes: var name → the bound slot (descriptor + class). */
-type BindEnv<F extends FieldsShape, CR, B> = {
-	readonly [K in keyof B & keyof F as B[K] extends Var<infer N extends string> ? N : never]: SlotAt<F, CR, K>
+type CheckBindings<Classes extends SchemaClasses, F extends FieldsShape, CR, B> = {
+	readonly [K in keyof B]: K extends keyof F
+		? B[K] extends AnyVar
+			? JoinOk<MintSlotOf<Classes, B[K]>, SlotAt<F, CR, K>> extends true
+				? B[K]
+				: never
+			: B[K]
+		: never
 }
 
 /** The params-object fragments a bindings record contributes (one union member per param use). */
@@ -302,8 +250,8 @@ type BindParams<F extends FieldsShape, B> = {
 
 /**
  * One comparison VALUE: op plus its operands, raw — the runtime
- * representation carries the operand types, so `.where`'s environment
- * check and the params inference both read the value itself (no phantom).
+ * representation carries the operands (variable references included), so
+ * `.where`'s judgment and the params inference both read the value itself.
  * `mask` is populated exactly for `allen`.
  */
 interface Cmp<Op extends CmpKind, L, R, M = undefined> {
@@ -324,9 +272,9 @@ interface Tree<Ch extends readonly AnyTreeChild[]> {
 /**
  * One negated-atom VALUE — negation is a position in the rule (anti-join
  * over sets, no null trick): a binding satisfies it iff NO fact matches.
- * Its variables must be positively bound in the rule — environment
- * membership at `.where` IS the safety rule, a compile error before it is
- * the engine's refusal.
+ * Its variables must be positively bound in the rule — a construction-time
+ * wall (BOUNDNESS is invisible to the type tier), before the engine's own
+ * refusal.
  */
 interface NotAtom<R extends MatchOwner, B> {
 	readonly cond: "not"
@@ -347,19 +295,19 @@ type AnyNotAtom = NotAtom<MatchOwner, unknown>
 type AnyCond = AnyCmp | Tree<readonly AnyTreeChild[]> | AnyNotAtom
 
 /** What `eq`'s right side accepts (`ParamSet` is `Eq`-only — the IR's rule). */
-type EqRight = Var<string> | Param<string> | SetParam<string> | bigint | string | boolean | Uint8Array | IntervalValue
+type EqRight = AnyVar | Param<string> | SetParam<string> | bigint | string | boolean | Uint8Array | IntervalValue
 
 /** What `ne`'s right side accepts. */
-type NeRight = Var<string> | Param<string> | bigint | string | boolean | Uint8Array | IntervalValue
+type NeRight = AnyVar | Param<string> | bigint | string | boolean | Uint8Array | IntervalValue
 
 /** One side of an order comparison: orderable terms only (the IR's comparison rules). */
-type OrderSide = Var<string> | Param<string> | Duration<string> | bigint
+type OrderSide = AnyVar | Param<string> | Duration | bigint
 
 /** The point side of `pointIn`. */
-type PointSide = Var<string> | Param<string> | bigint
+type PointSide = AnyVar | Param<string> | bigint
 
 /** The interval side of `pointIn`/`allen`. */
-type IntervalSide = Var<string> | Param<string> | IntervalValue
+type IntervalSide = AnyVar | Param<string> | IntervalValue
 
 /** Builds one comparison value. */
 function comparison<Op extends CmpKind, L, R, M>(op: Op, lhs: L, rhs: R, mask: M): Cmp<Op, L, R, M> {
@@ -381,17 +329,17 @@ function assertTermSide(op: string, lhs: unknown, rhs: unknown): void {
 
 /**
  * The equality comparison (`ir::CmpOp::Eq`) — a bound variable against a
- * variable (var-to-var unification, domain-equal by the environment
- * check), a param (typed by the variable), an ∈-set param (`Eq`-only, the
- * IR's set rule), or a bare literal of the variable's own value type.
- * Prefer direct placement in `match` where punning applies.
+ * variable (var-to-var unification, class-equal by the join judgment), a
+ * param (typed by the variable), an ∈-set param (`Eq`-only), or a bare
+ * literal of the variable's own value type. Prefer direct placement in
+ * `match` where punning applies.
  */
-function eq<L extends Var<string>, const R extends EqRight>(left: L, right: R): Cmp<"eq", L, R> {
+function eq<L extends AnyVar, const R extends EqRight>(left: L, right: R): Cmp<"eq", L, R> {
 	return comparison("eq", left, right, undefined)
 }
 
 /** Typed disequality (`ir::CmpOp::Ne`). "Not in set" has no operator — write a negated atom. */
-function ne<L extends Var<string>, const R extends NeRight>(left: L, right: R): Cmp<"ne", L, R> {
+function ne<L extends AnyVar, const R extends NeRight>(left: L, right: R): Cmp<"ne", L, R> {
 	return comparison("ne", left, right, undefined)
 }
 
@@ -429,12 +377,8 @@ function ge<const L extends OrderSide, const R extends OrderSide>(left: L, right
  * Point membership as a predicate (`ir::CmpOp::PointIn`) — THE one
  * spelling: `pointIn(t, w)` holds iff `w.start ≤ t < w.end`. The IR
  * orders the operands interval-left, point-right; the value stores them
- * that way whatever the surface argument order (a literal `span(...)`
- * interval operand is legal and tags by the point sibling's element
- * domain — the bug-hunt fix, now also a type-level guarantee).
- * Interval ⊇ interval is NOT this operator; that predicate is
- * `allen(a, ALLEN.covers, b)` — the name `covers` belongs to the Allen
- * roster alone (the canonical-utterance law: one meaning, one spelling).
+ * that way whatever the surface argument order. Interval ⊇ interval is NOT
+ * this operator; that predicate is `allen(a, ALLEN.covers, b)`.
  */
 function pointIn<const P extends PointSide, const I extends IntervalSide>(point: P, interval: I): Cmp<"pointIn", I, P> {
 	assertTermSide("pointIn", point, interval)
@@ -444,17 +388,14 @@ function pointIn<const P extends PointSide, const I extends IntervalSide>(point:
 /**
  * The 13-bit mask range: bits above the low 13 are unrepresentable in the
  * engine's `AllenMask` (`bumbledb/crates/bumbledb/src/allen.rs`:
- * `AllenMask::new` refuses them) — the check here is the same boundary,
- * moved to construction where the message can name the constants.
+ * `AllenMask::new` refuses them).
  */
 const ALLEN_ALL_BITS = (1 << 13) - 1
 
 /**
  * The Allen coordinate system's named constants — the 13 basics in the
- * engine's palindromic bit order (bit i = basic i:
- * `bumbledb/crates/bumbledb/src/allen.rs`, a specified representation)
- * plus the workload composites, values identical to the engine's. Compose
- * with `|`: `ALLEN.before | ALLEN.meets`.
+ * engine's palindromic bit order plus the workload composites, values
+ * identical to the engine's. Compose with `|`: `ALLEN.before | ALLEN.meets`.
  */
 const ALLEN = Object.freeze({
 	before: 1 << 0,
@@ -484,9 +425,7 @@ const ALLEN = Object.freeze({
  * THE interval-pair comparison (`ir::CmpOp::Allen`): two interval terms of
  * one element type, satisfied iff the pair's classification is in the
  * 13-bit mask — a literal built from the `ALLEN` constants, or a mask
- * parameter (`r.maskParam`). Vacuous masks (empty/full) are the engine's
- * two distinct typed rejections; nothing is pre-judged here beyond the
- * representable bit range.
+ * parameter (`r.maskParam`).
  */
 function allen<const A extends IntervalSide, const M extends number | MaskParam<string>, const B extends IntervalSide>(
 	left: A,
@@ -515,22 +454,18 @@ function and<const C extends readonly AnyTreeChild[]>(...children: C): Tree<C> {
 /**
  * Disjunction node of the input condition grammar (`ConditionTree::Or`) —
  * the one place the surface admits a nested OR; validation distributes it
- * to DNF rules engine-side (OR is data or it is nothing). `Or([])` keeps
- * its algebraic reading (false: the rule denotes nothing).
+ * to DNF rules engine-side. `Or([])` keeps its algebraic reading (false).
  */
 function or<const C extends readonly AnyTreeChild[]>(...children: C): Tree<C> {
 	return Object.freeze({ cond: "tree", op: "or", children: Object.freeze(children) })
 }
 
 /**
- * Negation — anti-join over sets: `not(Rel, { field: r.var("x"), ... })`
+ * Negation — anti-join over sets: `not(Rel, { field: someVar, ... })`
  * rejects every binding some matching fact extends. A negated atom binds
  * nothing, only rejects: every variable it names must be positively bound
- * in the rule, which `.where`'s environment check makes a COMPILE error
- * (the engine's safety refusal stands behind it). A CLOSED owner is legal
- * here too — the engine folds a resolvable negated closed atom to the
- * COMPLEMENT of its member set (domain-witness guarded), and the SDK's
- * negation rules apply to it unchanged.
+ * in the rule, a construction-time wall (the engine's safety refusal stands
+ * behind it). A CLOSED owner is legal here too.
  */
 function not<R extends MatchOwner, const B extends MatchShape<MatchFields<R>>>(
 	relation: R,
@@ -541,122 +476,106 @@ function not<R extends MatchOwner, const B extends MatchShape<MatchFields<R>>>(
 }
 
 /**
- * Whether a var name is bound in the environment at an orderable (u64/i64)
- * field. A CLOSED reference is excluded even though its kind is `u64`: a
- * vocabulary's declaration-id order is an accident, not semantics
- * (`docs/architecture/10-data-model.md` § orderability — order on it is
- * refused exactly as the enum's ordinal order was), so every
- * order-comparison and fold position refuses closed-bound terms — this
- * judgment is the one gate they all read, and the construction-time
- * validations in `#query/lower.ts` are its runtime twin.
+ * Whether a variable's OWN field is orderable (u64/i64). A CLOSED reference
+ * is excluded even though its kind is `u64`: a vocabulary's declaration-id
+ * order is an accident, not semantics (`docs/architecture/10-data-model.md`
+ * § orderability), so every order-comparison and fold position refuses
+ * closed-bound terms — this judgment is the one gate they all read, and the
+ * construction-time validations in `#query/lower.ts` are its runtime twin.
  */
-type OrderVarOk<Env extends EnvShape, N extends string> = N extends keyof Env
-	? Env[N]["field"] extends { readonly closed: ClosedRoster }
-		? false
-		: Env[N]["field"]["kind"] extends "u64" | "i64"
-			? true
-			: false
-	: false
-
-/** Whether a var name is bound at an interval field. */
-type IntervalVarOk<Env extends EnvShape, N extends string> = N extends keyof Env
-	? Env[N]["field"]["kind"] extends "interval"
+type OrderVarOk<V extends AnyVar> = V["field"] extends { readonly closed: ClosedRoster }
+	? false
+	: V["field"]["kind"] extends "u64" | "i64"
 		? true
 		: false
-	: false
 
-/** One order-comparison side's judgment against the environment. */
-type OrderSideOk<Env extends EnvShape, T> =
-	T extends Var<infer N extends string>
-		? OrderVarOk<Env, N>
-		: T extends Duration<infer N extends string>
-			? IntervalVarOk<Env, N>
-			: true
+/** Whether a variable's OWN field is interval-typed. */
+type IntervalVarOk<V extends AnyVar> = V["field"]["kind"] extends "interval" ? true : false
+
+/** One order-comparison side's judgment (off the term's own field). */
+type OrderSideOk<T> = T extends AnyVar
+	? OrderVarOk<T>
+	: T extends Duration<infer V extends AnyVar>
+		? IntervalVarOk<V>
+		: true
 
 /** One point side's judgment. */
-type PointSideOk<Env extends EnvShape, T> = T extends Var<infer N extends string> ? OrderVarOk<Env, N> : true
+type PointSideOk<T> = T extends AnyVar ? OrderVarOk<T> : true
 
 /** One interval side's judgment. */
-type IntervalSideOk<Env extends EnvShape, T> = T extends Var<infer N extends string> ? IntervalVarOk<Env, N> : true
+type IntervalSideOk<T> = T extends AnyVar ? IntervalVarOk<T> : true
 
-/** The `eq`/`ne` judgment: left var bound; right joins it (class-equal var, param, or an exact-type literal). */
-type EqOk<Env extends EnvShape, L, R> =
-	L extends Var<infer N extends string>
-		? N extends keyof Env
-			? R extends Var<infer M extends string>
-				? M extends keyof Env
-					? JoinOk<Env[N], Env[M]>
-					: false
-				: R extends Param<string> | SetParam<string>
-					? true
-					: [R] extends [Infer<Env[N]["field"]>]
-						? true
-						: false
+/** The `eq`/`ne` judgment: var-var joins by mint slot; var-literal is exact-typed by the var's own field. */
+type EqOk<Classes extends SchemaClasses, L, R> = L extends AnyVar
+	? R extends AnyVar
+		? JoinOk<MintSlotOf<Classes, L>, MintSlotOf<Classes, R>> extends true
+			? true
 			: false
-		: false
+		: R extends Param<string> | SetParam<string>
+			? true
+			: [R] extends [Infer<L["field"]>]
+				? true
+				: false
+	: false
 
-/** One negated-atom binding's judgment: a var must be positively bound (safety) AND class-equal. */
-type NotBindingOk<Env extends EnvShape, S extends ClassedField, T> =
-	T extends Var<infer N extends string> ? (N extends keyof Env ? JoinOk<Env[N], S> : false) : true
+/** One negated-atom binding's judgment: a variable must be class-equal (boundness is a runtime wall). */
+type NotBindingOk<Classes extends SchemaClasses, S extends ClassedField, T> = T extends AnyVar
+	? JoinOk<MintSlotOf<Classes, T>, S> extends true
+		? true
+		: false
+	: true
 
 /** The whole negated atom's judgment (`CR` — the negated relation's class record off the schema class map). */
-type NotOk<Env extends EnvShape, F extends FieldsShape, CR, B> = false extends {
-	[K in keyof B]: NotBindingOk<Env, SlotAt<F, CR, K>, B[K]>
+type NotOk<Classes extends SchemaClasses, F extends FieldsShape, CR, B> = false extends {
+	[K in keyof B]: NotBindingOk<Classes, SlotAt<F, CR, K>, B[K]>
 }[keyof B]
 	? false
 	: true
 
 /**
- * One condition's judgment against the rule environment — the type-level
- * twin of the engine's comparison roster: class-equal joins (off the
- * schema type's class map), orderable order sides (an interval var under a
- * non-`pointIn` op is exactly here refused), kind-correct
- * `pointIn`/`allen` sides, and negated-atom safety (the negated
- * relation's class record is resolved through `Classes` by its name). The
- * leading `[AnyTreeChild] extends [C]` arm is the recursion's base case:
- * at an UNRESOLVED constraint (the whole condition union — or a tree's
- * child union, which is the union itself) the judgment is vacuously true —
- * without it the constraint instantiation recurses into itself.
+ * One condition's judgment — the type-level twin of the engine's comparison
+ * roster: class-equal joins (off the mint slots), orderable order sides (an
+ * interval var under a non-`pointIn` op is exactly here refused),
+ * kind-correct `pointIn`/`allen` sides, and negated-atom class safety. The
+ * leading `[AnyTreeChild] extends [C]` arm is the recursion's base case.
  */
-type CondOkBool<Env extends EnvShape, Classes extends SchemaClasses, C> = [AnyTreeChild] extends [C]
+type CondOkBool<Classes extends SchemaClasses, C> = [AnyTreeChild] extends [C]
 	? true
 	: C extends Cmp<infer Op, infer L, infer R, unknown>
 		? Op extends "eq" | "ne"
-			? EqOk<Env, L, R>
+			? EqOk<Classes, L, R>
 			: Op extends "lt" | "le" | "gt" | "ge"
-				? [OrderSideOk<Env, L>, OrderSideOk<Env, R>] extends [true, true]
+				? [OrderSideOk<L>, OrderSideOk<R>] extends [true, true]
 					? true
 					: false
 				: Op extends "pointIn"
-					? [IntervalSideOk<Env, L>, PointSideOk<Env, R>] extends [true, true]
+					? [IntervalSideOk<L>, PointSideOk<R>] extends [true, true]
 						? true
 						: false
 					: Op extends "allen"
-						? [IntervalSideOk<Env, L>, IntervalSideOk<Env, R>] extends [true, true]
+						? [IntervalSideOk<L>, IntervalSideOk<R>] extends [true, true]
 							? true
 							: false
 						: false
 		: C extends Tree<infer Ch extends readonly AnyTreeChild[]>
-			? false extends CondOkBool<Env, Classes, Ch[number]>
+			? false extends CondOkBool<Classes, Ch[number]>
 				? false
 				: true
 			: C extends NotAtom<infer R extends MatchOwner, infer B>
-				? NotOk<Env, MatchFields<R>, ClassRecordOf<Classes, R["name"]>, B>
+				? NotOk<Classes, MatchFields<R>, ClassRecordOf<Classes, R["name"]>, B>
 				: false
 
 /** The validated `.where` argument (intersect with the inferred condition type). */
-type CheckCond<Env extends EnvShape, Classes extends SchemaClasses, C> =
-	CondOkBool<Env, Classes, C> extends true ? C : never
+type CheckCond<Classes extends SchemaClasses, C> = CondOkBool<Classes, C> extends true ? C : never
 
-/** The `eq`/`ne` params contribution: the param typed by the left variable's field. */
-type EqParams<Env extends EnvShape, L, R> =
-	L extends Var<infer N extends string>
-		? R extends Param<infer P extends string>
-			? { readonly [Q in P]: Infer<Env[N & keyof Env]["field"]> }
-			: R extends SetParam<infer P extends string>
-				? { readonly [Q in P]: readonly Infer<Env[N & keyof Env]["field"]>[] }
-				: never
-		: never
+/** The `eq`/`ne` params contribution: the param typed by the left variable's own field. */
+type EqParams<L, R> = L extends AnyVar
+	? R extends Param<infer P extends string>
+		? { readonly [Q in P]: Infer<L["field"]> }
+		: R extends SetParam<infer P extends string>
+			? { readonly [Q in P]: readonly Infer<L["field"]>[] }
+			: never
+	: never
 
 /** An order side's params contribution (order params are always `bigint`). */
 type OrderSideParams<T> = T extends Param<infer P extends string> ? { readonly [Q in P]: bigint } : never
@@ -670,14 +589,13 @@ type MaskParams<M> = M extends MaskParam<infer P extends string> ? { readonly [Q
 /**
  * One condition's params-object fragments (a union; the rule builder folds
  * them into the inferred `Params` record) — every param typed by its use.
- * The leading arm is the same base case as {@link CondOkBool}'s: the
- * unresolved constraint contributes nothing.
+ * The leading arm is the same base case as {@link CondOkBool}'s.
  */
-type CondParams<Env extends EnvShape, C> = [AnyTreeChild] extends [C]
+type CondParams<C> = [AnyTreeChild] extends [C]
 	? never
 	: C extends Cmp<infer Op, infer L, infer R, infer M>
 		? Op extends "eq" | "ne"
-			? EqParams<Env, L, R>
+			? EqParams<L, R>
 			: Op extends "lt" | "le" | "gt" | "ge"
 				? OrderSideParams<L> | OrderSideParams<R>
 				: Op extends "pointIn"
@@ -686,7 +604,7 @@ type CondParams<Env extends EnvShape, C> = [AnyTreeChild] extends [C]
 						? IntervalSideParams<L> | IntervalSideParams<R> | MaskParams<M>
 						: never
 		: C extends Tree<infer Ch extends readonly AnyTreeChild[]>
-			? CondParams<Env, Ch[number]>
+			? CondParams<Ch[number]>
 			: C extends NotAtom<infer R extends MatchOwner, infer B>
 				? BindParams<MatchFields<R>, B>
 				: never
@@ -695,7 +613,7 @@ type CondParams<Env extends EnvShape, C> = [AnyTreeChild] extends [C]
 type BindParamsShape<F extends FieldsShape, B> = ShapeOf<BindParams<F, B>>
 
 /** The flattened params record one condition contributes. */
-type CondParamsShape<Env extends EnvShape, C> = ShapeOf<CondParams<Env, C>>
+type CondParamsShape<C> = ShapeOf<CondParams<C>>
 
 export type {
 	AggData,
@@ -704,7 +622,6 @@ export type {
 	AnyNotAtom,
 	AnyTreeChild,
 	AtomData,
-	BindEnv,
 	BindingEntry,
 	BindingInput,
 	BindingTermData,
@@ -720,6 +637,8 @@ export type {
 	CondOkBool,
 	CondParams,
 	CondParamsShape,
+	FindColumn,
+	FindEntryData,
 	IntervalSide,
 	IntervalVarOk,
 	MaskData,
@@ -734,8 +653,7 @@ export type {
 	RecData,
 	RuleData,
 	RuleItem,
-	SelectColumn,
-	SelectEntryData,
+	SlotAt,
 	Tree,
 	TreeData
 }

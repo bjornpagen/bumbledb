@@ -60,15 +60,18 @@
   branch with main. Remaining act (serial committer): push, then
   `gh workflow run ci --ref worktree-cleanup-050` (workflow_dispatch
   runs ALL lanes including miri), record the green run ids in PR #11.
-- **Ruling 13 — the 0.5.0 version bump is PENDING, deliberately last:**
-  `ts/package.json` + `ts/npm/darwin-arm64/package.json` sit at 0.4.0
-  and no crate bumps are staged. U4 item 6 sequences the bump LAST in
-  the wave because it pins a platform package that does not exist on npm
-  yet — the sdk lane is expected-red between bump and owner publish — so
-  it cannot precede the green-dispatch proof above. Stage it (lockstep
-  gate green, no tag, no publish, say "last in the wave" in the commit)
-  once the run ids are recorded; then the post-publish lockfile
-  regeneration commit per the release-flow note below.
+- **The 0.6.0 destructure release — STAGED, owner publish pending:** vars
+  become values (`v(relation)` mints class-typed variable records; identity
+  is object reference — reuse IS the join), `select` died into `find({...})`,
+  `r.var` is dead with no shim; zero fingerprint pins moved
+  (`ts/test/fixtures/cookbook-fingerprints.txt` byte-identical). The lockstep
+  sits at 0.6.0 in all three places; NO tag, NO publish — owner ceremony,
+  pinged separately (runbook: `ts/PUBLISHING.md`). The pnpm-lock is
+  deliberately untouched (the 0.6.0 platform pin is unpublished — the
+  documented bootstrap gap; the CI sdk lane is expected-red between bump and
+  publish), so the post-publish lockfile-regeneration commit is owed per the
+  release-flow note below. Primer's 0.6.0 adoption is staged at its
+  `bumbledb-060` worktree.
 - **For the owner (U4a census):** five stale remote worktree branches
   deleted; `worktree-structural-sdk` was closed-not-merged but proven
   subsumed — flagged per census.
@@ -95,9 +98,11 @@ total), and the architecture docs swept to the tree's present tense
 (U6). The cleanup packet was deleted at wave close per its own survival
 checklist (all PRD packets removed 2026-07-20; history in git).
 
-`@bjornpagen/bumbledb@0.4.0` (+ `-darwin-arm64@0.4.0`) is published and
-tagged `v0.4.0` — the host-idiom SDK on the law-typed 0.3.0 core; primer is
-cut over and merged (PR #85). **The bench pin is healed (2026-07-19):** the
+`@bjornpagen/bumbledb@0.5.0` (+ `-darwin-arm64@0.5.0`) is published and
+tagged `v0.5.0` — the surface-pair SDK (keyed get + host-side ordering, the
+plural mint removed) on the 0.3.0 law-typed core; the post-publish lockfile
+regeneration landed (81ceb89b) and primer main is cut over (`^0.5.0`).
+**The bench pin is healed (2026-07-19):** the
 README's read-family numbers (18.7× durable over clean min-of-2 with
 `mandate_overlap` excluded-and-counted at rev `adac4010` 2026-07-16; 21.2×
 ephemeral over all 22, ALL-WIN ×3, re-earned `NOSYNC`-only 2026-07-19 on the

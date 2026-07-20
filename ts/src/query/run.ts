@@ -10,7 +10,7 @@
  * select column IS a row (the trusted read seam), and nothing is asserted
  * on any value. A CLOSED answer column decodes id → handle NAME through
  * the marshal's one bijection (`handleOf` — the same read half every fact
- * decode rides; the column's roster rides `SelectColumn.closed`), so query
+ * decode rides; the column's roster rides `FindColumn.closed`), so query
  * rows speak the vocabulary exactly as scans and gets do. Answers are
  * SETS — no order or limit exists anywhere; hosts sort. The `Prepared`
  * VALUE itself (no lifecycle, GC-reclaimed plan) lives in `#db.ts`.
@@ -19,7 +19,7 @@
 import * as errors from "@superbuilders/errors"
 import { handleOf } from "#marshal.ts"
 import type { FactValue, QueryParam, TaggedValue } from "#native.ts"
-import type { SelectColumn } from "#query/atom.ts"
+import type { FindColumn } from "#query/atom.ts"
 import { ALLEN_ALL_BITS } from "#query/atom.ts"
 import { taggedCmpLiteral } from "#query/lower.ts"
 import type { ParamEntry } from "#query/scope.ts"
@@ -94,10 +94,10 @@ function wireParams(entries: readonly ParamEntry[], supplied: Readonly<Record<st
  * re-derive).
  */
 function isAnswerRow<Row>(
-	select: readonly SelectColumn[],
+	finds: readonly FindColumn[],
 	decoded: Readonly<Record<string, FactValue>>
 ): decoded is Readonly<Record<string, FactValue>> & Row {
-	return select.every(function present(column) {
+	return finds.every(function present(column) {
 		return decoded[column.name] !== undefined
 	})
 }
@@ -109,13 +109,13 @@ function isAnswerRow<Row>(
  * NAME through the marshal's bijection — an out-of-roster id is the same
  * pointed throw a fact decode gives, never a silent fallback.
  */
-function decodeAnswers<Row>(select: readonly SelectColumn[], rows: FactValue[][]): Row[] {
+function decodeAnswers<Row>(finds: readonly FindColumn[], rows: FactValue[][]): Row[] {
 	return rows.map(function decodeRow(row) {
-		if (row.length !== select.length) {
-			throw errors.new(`query answer arity ${row.length} does not match the ${select.length} select columns`)
+		if (row.length !== finds.length) {
+			throw errors.new(`query answer arity ${row.length} does not match the ${finds.length} find columns`)
 		}
 		const decoded: Record<string, FactValue> = {}
-		select.forEach(function decodeCell(column, ordinal) {
+		finds.forEach(function decodeCell(column, ordinal) {
 			const cell = row[ordinal]
 			if (cell === undefined) {
 				throw errors.new(`query answer cell ${ordinal} (${column.name}) is absent`)
@@ -124,8 +124,8 @@ function decodeAnswers<Row>(select: readonly SelectColumn[], rows: FactValue[][]
 				column.closed === undefined ? cell : handleOf(`query answer column ${column.name}`, column.closed, cell)
 		})
 		Object.freeze(decoded)
-		if (!isAnswerRow<Row>(select, decoded)) {
-			throw errors.new("query answer row is not a complete select record")
+		if (!isAnswerRow<Row>(finds, decoded)) {
+			throw errors.new("query answer row is not a complete find record")
 		}
 		return decoded
 	})
