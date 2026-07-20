@@ -8,9 +8,11 @@
 //! vocabulary with payload — the `RequiresState.terminal` shape), so
 //! the lanes measure laws a real application judges, never synthetic
 //! constraints. Commit throughput and rejection latency ride on top of
-//! this foundation (the lanes are later packets); this module is the
-//! judged schema, the sizes, and (in the submodules) the seeded corpus,
-//! the enforcement map, and the durability-paired twin loader.
+//! this foundation ([`lanes`] holds the six family runners, [`run`] the
+//! orchestration, [`render`] the artifacts); this module is the judged
+//! schema, the sizes, the family registry ([`families`]), and (in the
+//! submodules) the seeded corpus, the enforcement map, and the
+//! durability-paired twin loader.
 //!
 //! REPORT-class, never gated: lawful rows land in the artifact and
 //! nothing else — no budget gate ever reads them (the standing
@@ -32,12 +34,19 @@
 //! [`crate::naive::NaiveDb`], verdicts and citations compared whole).
 
 use crate::corpus_gen::Scale;
+use crate::harness::Protocol;
 
 pub mod corpus;
 pub mod enforcement;
+pub mod lanes;
 pub mod load;
+pub mod render;
+pub mod run;
 #[cfg(test)]
 mod tests;
+
+pub use lanes::{AttemptOp, LawCursor};
+pub use run::{LawRow, run, run_with};
 
 bumbledb::schema! {
     pub LawfulWorld;
@@ -162,4 +171,82 @@ impl LawSizes {
             },
         }
     }
+}
+
+/// One registered lawful family: the name reports print, the honest
+/// one-line description, and the registered protocol. The protocol is
+/// DATA handed to the runners ([`lanes`]) at orchestration time
+/// ([`run`]), never baked into a runner — tests run the same runners
+/// under tiny protocols (the crud registry precedent).
+#[derive(Debug, Clone, Copy)]
+pub struct LawFamily {
+    pub name: &'static str,
+    pub about: &'static str,
+    pub protocol: Protocol,
+}
+
+/// The six lawful families in THE run order — legal commits before
+/// rejections, and the registry order IS the run order (the
+/// orchestration iterates this slice, never reorders). The ordering is
+/// load-bearing twice over: the legal lanes' shared fresh cursors must
+/// see the store the window setup left (task 0 saturated, both engines'
+/// counters in lockstep), and the rejection lanes burn the engine's
+/// escaped fresh high-water mark past [`lanes::REJECT_ID_BASE`] (the
+/// never-reissue law — an aborted explicit insert burns like a
+/// committed one), so no legal commit may ever mint after them.
+#[must_use]
+pub fn families() -> &'static [LawFamily] {
+    &[
+        LawFamily {
+            name: "law_commit_attempt",
+            about: "one judged Attempt insert per commit under the full law roster \
+                    (key + containment + window)",
+            protocol: Protocol {
+                warmups: 8,
+                samples: 64,
+            },
+        },
+        LawFamily {
+            name: "law_commit_cluster",
+            about: "one judged 4-row cluster per commit: attempt + verdict + steer + scope \
+                    — every statement family exercised in one commit",
+            protocol: Protocol {
+                warmups: 8,
+                samples: 64,
+            },
+        },
+        LawFamily {
+            name: "law_reject_key",
+            about: "one REFUSED duplicate-(task, n) commit per sample (Functionality cited)",
+            protocol: Protocol {
+                warmups: 8,
+                samples: 64,
+            },
+        },
+        LawFamily {
+            name: "law_reject_containment",
+            about: "one REFUSED absent-task commit per sample (Containment cited)",
+            protocol: Protocol {
+                warmups: 8,
+                samples: 64,
+            },
+        },
+        LawFamily {
+            name: "law_reject_window",
+            about: "one REFUSED 9th-attempt commit on the saturated task 0 per sample \
+                    (Cardinality cited)",
+            protocol: Protocol {
+                warmups: 8,
+                samples: 64,
+            },
+        },
+        LawFamily {
+            name: "law_reject_scope",
+            about: "one REFUSED Observe-steer scope commit per sample (the ψ containment cited)",
+            protocol: Protocol {
+                warmups: 8,
+                samples: 64,
+            },
+        },
+    ]
 }
