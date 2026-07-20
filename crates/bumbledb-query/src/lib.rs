@@ -3,6 +3,10 @@
 //! this crate, the engine never depends back. This is the one name hosts
 //! spell; the `query!` proc-macro mechanics — and the notation grammar's
 //! normative module doc — live with the macro in `bumbledb-query-macros`,
-//! re-exported here.
+//! re-exported here. The quarantine's second member is [`order`]:
+//! host-side answer ordering, sort keys as data folded into one
+//! comparator for the language's own sort.
+
+pub mod order;
 
 pub use bumbledb_query_macros::query;
