@@ -121,6 +121,12 @@ pub fn help() -> String {
          \x20 --out PATH      artifact dir (default bench-out/<timestamp>-churn)\n\
          \x20 report-class; series artifact churn-report.json — never a gate\n\
          \n\
+         SHARED-MACHINE BOOST (owner ruling 2026-07-20):\n\
+         \x20 BUMBLEDB_BENCH_BOOST=1  claim user-interactive QoS before any\n\
+         \x20                 measurement subcommand (macOS; no-op elsewhere)\n\
+         \x20                 and stamp shared_machine provenance. Default off\n\
+         \x20                 (unset/0); bench-night.sh --shared sets it.\n\
+         \n\
          EXIT CODES: 0 ok / gate won; 1 verify mismatch, store findings, or\n\
          gate loss; 2 usage.\n",
         env!("CARGO_PKG_VERSION"),

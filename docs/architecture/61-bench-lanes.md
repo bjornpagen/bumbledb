@@ -194,7 +194,8 @@ three-way posting-multiset equality (driver model, engine, every twin) plus
 ## The night runbook
 
 `scripts/bench-night.sh <out-dir>` — the one-command night, run by the owner
-on an idle machine.
+on an idle machine (or, under the shared-machine ruling below, with
+`--shared` on a loaded one).
 
 - **Mutex.** Refuses with exit 2 if the measurement mutex is already held
   (a night never queues behind another measurement), otherwise re-execs
@@ -221,6 +222,18 @@ on an idle machine.
 - **`--plan`** prints the lane table with the statuses the run would have
   (RUN / SKIP-EXISTING / SKIP-UNAVAILABLE) — no lock, no build, no
   execution, no viz.
+- **`--shared`** — the shared-machine night (owner ruling, 2026-07-20: the
+  bench outranks the owner's own background agents). The idle-machine
+  requirement is waived for the run: every lane launches with
+  `BUMBLEDB_BENCH_BOOST=1`, the binary claims user-interactive QoS at its
+  dispatch seam (`pthread_set_qos_class_self_np`, macOS; no-op elsewhere,
+  never sudo — `crate::boost`), and every lane report's provenance stamps
+  `shared_machine: true`, `boost: "qos-user-interactive"`, and the 1/5/15
+  load averages at lane start and lane end — a boosted number can never
+  pass as an idle-machine number. The measurement mutex stays mandatory
+  (it is not an idleness check), and the honesty floor under load is
+  unchanged: interleaved A/B sampling and the clock-proxy contamination
+  exclude-and-count still govern every timed block.
 
 **The chart inventory** (the `CHARTS` registry in `bench_viz.py`, one line
 per svg → source lane → what it shows):
@@ -251,5 +264,5 @@ per svg → source lane → what it shows):
 **The agent law**, stated plainly: agents never run timing lanes. Correctness
 smoke tests (tiny corpora, oracle multiset-agreement gates, the fixture
 dry-runs) are not measurement and run anywhere; every number arrives only
-from the owner's night on an idle machine, under the one lock, published by
-hand.
+from the owner's night — idle-machine, or a declared `--shared` night
+stamped as such in provenance — under the one lock, published by hand.

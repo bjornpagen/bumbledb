@@ -110,6 +110,37 @@ pub enum Cmd {
     Churn(ChurnArgs),
 }
 
+impl Cmd {
+    /// The measurement-running subcommands — the scheduler-boost seam's
+    /// membership. `main` engages the shared-machine boost
+    /// ([`crate::boost::engage_from_env`], switched by
+    /// `BUMBLEDB_BENCH_BOOST=1`, default off) for exactly these; the
+    /// non-measuring commands never boost, whatever the environment
+    /// says. Exhaustive on purpose: a new command must declare its side
+    /// here or it will not compile.
+    #[must_use]
+    pub fn runs_measurements(&self) -> bool {
+        match self {
+            Self::Bench(_)
+            | Self::Trace { .. }
+            | Self::Scenarios(_)
+            | Self::Crud(_)
+            | Self::Lawful(_)
+            | Self::SweepCommit(_)
+            | Self::Storage(_)
+            | Self::Writes(_)
+            | Self::Curves(_)
+            | Self::Churn(_) => true,
+            Self::Help
+            | Self::Queries
+            | Self::Gen(_)
+            | Self::Verify { .. }
+            | Self::VerifyStore(_)
+            | Self::Merge { .. } => false,
+        }
+    }
+}
+
 /// `sweep-commit`'s knobs. No scale flag: the sweep owns its ambient
 /// mass (a fixed tree; the swept parameter is the commit size).
 #[derive(Debug, Clone, PartialEq, Eq)]

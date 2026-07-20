@@ -17,21 +17,13 @@ pub mod writes;
 use std::fmt::Write as _;
 
 use crate::harness::Stats;
-use crate::json;
-use crate::report::{GhzReport, Provenance};
+use crate::report::GhzReport;
 
-/// Appends the provenance object (the same fields `report.json` pins).
-pub(crate) fn push_provenance(out: &mut String, provenance: &Provenance) {
-    out.push_str("{\"crate_version\":");
-    json::push_str_lit(out, &provenance.crate_version);
-    out.push_str(",\"git_rev\":");
-    json::push_str_lit(out, &provenance.git_rev);
-    out.push_str(",\"timestamp\":");
-    json::push_str_lit(out, &provenance.timestamp);
-    out.push_str(",\"host\":");
-    json::push_str_lit(out, &provenance.host);
-    out.push('}');
-}
+// The provenance object emitter is `report.json`'s own
+// (`crate::report::push_provenance`) — one spelling, so the lane
+// reports and the ledger report can never drift, shared-machine stamp
+// included.
+pub(crate) use crate::report::push_provenance;
 
 /// Appends one stats object — the exact `report/json_out.rs` shape.
 pub(crate) fn push_stats(out: &mut String, stats: &Stats) {
@@ -77,5 +69,67 @@ pub(crate) fn per_unit(bytes: u64, count: u64) -> f64 {
         0.0
     } else {
         bytes as f64 / count as f64
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::json::{self, Value};
+    use crate::report::{Provenance, SharedMachine};
+
+    /// The one provenance emitter every lane report shares: boost-on
+    /// stamps `shared_machine`/`boost`/`load_start`/`load_end` (the
+    /// owner's 2026-07-20 shared-machine ruling), boost-off emits the
+    /// pre-boost block byte-identically.
+    #[test]
+    fn the_shared_machine_stamp_shape_is_pinned() {
+        let base = Provenance {
+            crate_version: "0.0.0-test".to_owned(),
+            git_rev: "deadbeef".to_owned(),
+            timestamp: "2026-07-19T00:00:00Z".to_owned(),
+            host: "test-host".to_owned(),
+            shared: None,
+        };
+        let mut off = String::new();
+        super::push_provenance(&mut off, &base);
+        assert_eq!(
+            off,
+            "{\"crate_version\":\"0.0.0-test\",\"git_rev\":\"deadbeef\",\
+             \"timestamp\":\"2026-07-19T00:00:00Z\",\"host\":\"test-host\"}",
+            "boost-off is the pre-boost block, byte for byte"
+        );
+
+        let boosted = Provenance {
+            shared: Some(SharedMachine {
+                boost: "qos-user-interactive",
+                load_start: [1.25, 2.5, 3.75],
+                load_end: [4.0, 5.0, 6.0],
+            }),
+            ..base
+        };
+        let mut on = String::new();
+        super::push_provenance(&mut on, &boosted);
+        let parsed = json::parse(&on).expect("valid JSON");
+        assert_eq!(
+            parsed.get("shared_machine").and_then(Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            parsed.get("boost").and_then(Value::as_str),
+            Some("qos-user-interactive")
+        );
+        let start = parsed
+            .get("load_start")
+            .and_then(Value::as_arr)
+            .expect("load_start");
+        assert_eq!(start.len(), 3);
+        assert_eq!(start[0].as_f64(), Some(1.25));
+        assert_eq!(start[2].as_f64(), Some(3.75));
+        let end = parsed
+            .get("load_end")
+            .and_then(Value::as_arr)
+            .expect("load_end");
+        assert_eq!(end.len(), 3);
+        assert_eq!(end[1].as_f64(), Some(5.0));
     }
 }

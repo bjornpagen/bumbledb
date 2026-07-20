@@ -930,6 +930,7 @@ mod tests {
             git_rev: "deadbeef".to_owned(),
             timestamp: "2026-07-19T00:00:00Z".to_owned(),
             host: "test-host".to_owned(),
+            shared: None,
         }
     }
 
@@ -1022,6 +1023,13 @@ mod tests {
                 .and_then(|p| p.get("host"))
                 .and_then(Value::as_str),
             Some("test-host")
+        );
+        assert!(
+            parsed
+                .get("provenance")
+                .and_then(|p| p.get("shared_machine"))
+                .is_none(),
+            "boost-off keeps the pre-boost provenance shape"
         );
         assert_eq!(parsed.get("scale").and_then(Value::as_str), Some("S"));
         assert_eq!(parsed.get("seed").and_then(Value::as_f64), Some(9.0));

@@ -192,17 +192,11 @@ fn push_run(out: &mut String, run: &RunSeries) {
 #[must_use]
 pub fn to_json(report: &ChurnReport) -> String {
     let mut out = String::new();
-    out.push_str("{\"churn_schema\":1,\"provenance\":{\"crate_version\":");
-    json::push_str_lit(&mut out, &report.provenance.crate_version);
-    out.push_str(",\"git_rev\":");
-    json::push_str_lit(&mut out, &report.provenance.git_rev);
-    out.push_str(",\"timestamp\":");
-    json::push_str_lit(&mut out, &report.provenance.timestamp);
-    out.push_str(",\"host\":");
-    json::push_str_lit(&mut out, &report.provenance.host);
+    out.push_str("{\"churn_schema\":1,\"provenance\":");
+    crate::report::push_provenance(&mut out, &report.provenance);
     let _ = write!(
         out,
-        "}},\"config\":{{\"scale\":\"{}\",\"seed\":{},\"cycles\":{},\"sample_every\":{},\
+        ",\"config\":{{\"scale\":\"{}\",\"seed\":{},\"cycles\":{},\"sample_every\":{},\
          \"vacuum_every\":{},\"analyze_every\":{}}}",
         report.config.scale,
         report.config.seed,
@@ -270,6 +264,9 @@ pub fn to_markdown(report: &ChurnReport) -> String {
     let _ = writeln!(out, "- engine rev: {}", p.git_rev);
     let _ = writeln!(out, "- timestamp: {}", p.timestamp);
     let _ = writeln!(out, "- host: {}", p.host);
+    if let Some(shared) = &p.shared {
+        let _ = writeln!(out, "- shared machine: {}", shared.describe());
+    }
     let c = &report.config;
     let _ = writeln!(
         out,
@@ -362,6 +359,7 @@ mod tests {
                 git_rev: "deadbeef".to_owned(),
                 timestamp: "2026-07-20T00:00:00Z".to_owned(),
                 host: "fixture-host".to_owned(),
+                shared: None,
             },
             config: ConfigReport {
                 scale: "Tiny",

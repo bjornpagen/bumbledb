@@ -1,9 +1,11 @@
 use std::path::Path;
 
-use super::Provenance;
+use super::{Provenance, SharedMachine};
 
 /// Resolves provenance from the environment (best-effort fields fall
-/// back to "unknown").
+/// back to "unknown"). Every lane builds its provenance here when the
+/// report is assembled — lane end — so the shared-machine stamp's
+/// `load_end` sample is the lane-end reading by construction.
 #[must_use]
 pub fn provenance(repo_dir: &Path) -> Provenance {
     Provenance {
@@ -11,7 +13,21 @@ pub fn provenance(repo_dir: &Path) -> Provenance {
         git_rev: git_rev(repo_dir),
         timestamp: timestamp_iso8601(),
         host: host_description(),
+        shared: shared_stamp(crate::boost::engaged()),
     }
+}
+
+/// The boost→provenance bridge, pure over its input for testing: an
+/// engaged boost stamps the shared-machine block, `load_end` sampled at
+/// call time (provenance is built when the report is — lane end); no
+/// boost stamps nothing, keeping the artifact byte-identical to the
+/// pre-boost shape.
+pub(super) fn shared_stamp(engaged: Option<crate::boost::Engaged>) -> Option<SharedMachine> {
+    engaged.map(|engaged| SharedMachine {
+        boost: engaged.boost,
+        load_start: engaged.load_start,
+        load_end: crate::boost::loadavg(),
+    })
 }
 
 fn command_line(program: &str, args: &[&str], dir: Option<&Path>) -> Option<String> {

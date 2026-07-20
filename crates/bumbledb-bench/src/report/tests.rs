@@ -19,6 +19,7 @@ fn fixture() -> RunReport {
             git_rev: "unknown".to_owned(),
             timestamp: "2026-01-01T00:00:00Z".to_owned(),
             host: "test-host".to_owned(),
+            shared: None,
         },
         config: RunConfig {
             scale: "S",
@@ -162,6 +163,62 @@ fn the_json_is_structurally_sound() {
         "\"flames\":[]",
     ] {
         assert!(text.contains(key), "missing {key} in {text}");
+    }
+    // Boost-off: no shared-machine keys anywhere — the pre-boost
+    // artifact is unchanged.
+    assert!(!text.contains("shared_machine"), "{text}");
+}
+
+/// Boost-on stamps the shared-machine honesty fields (owner ruling,
+/// 2026-07-20) into the ledger `report.json` provenance block, and the
+/// markdown face names the same numbers.
+#[test]
+fn a_boosted_run_stamps_shared_machine_provenance() {
+    let mut boosted = fixture();
+    boosted.provenance.shared = Some(SharedMachine {
+        boost: "qos-user-interactive",
+        load_start: [1.25, 2.5, 3.75],
+        load_end: [4.0, 5.0, 6.0],
+    });
+    let text = to_json(&boosted);
+    for key in [
+        "\"shared_machine\":true",
+        "\"boost\":\"qos-user-interactive\"",
+        "\"load_start\":[1.25,2.50,3.75]",
+        "\"load_end\":[4.00,5.00,6.00]",
+    ] {
+        assert!(text.contains(key), "missing {key} in {text}");
+    }
+    let md = to_markdown(&boosted);
+    assert!(
+        md.contains("- shared machine: boost qos-user-interactive"),
+        "{md}"
+    );
+    assert!(md.contains("1.25 2.50 3.75 (start)"), "{md}");
+}
+
+/// The boost→provenance bridge: an engaged boost stamps the block with
+/// the engagement's own start sample and a fresh end sample; no boost
+/// stamps nothing.
+#[test]
+fn the_shared_stamp_bridges_the_engaged_boost() {
+    assert_eq!(provenance::shared_stamp(None), None);
+    let engaged = crate::boost::Engaged {
+        boost: "qos-user-interactive",
+        load_start: [1.0, 2.0, 3.0],
+    };
+    let shared = provenance::shared_stamp(Some(engaged)).expect("an engaged boost stamps");
+    assert_eq!(shared.boost, "qos-user-interactive");
+    for (slot, expected) in shared.load_start.iter().zip([1.0, 2.0, 3.0]) {
+        assert!((slot - expected).abs() < f64::EPSILON, "start {slot}");
+    }
+    // load_end is sampled at stamp time: every slot is a real sample
+    // (>= 0) or the explicit -1.0 unsampled marker.
+    for slot in shared.load_end {
+        assert!(
+            slot >= 0.0 || (slot + 1.0).abs() < f64::EPSILON,
+            "end slot {slot} is neither a sample nor the marker"
+        );
     }
 }
 

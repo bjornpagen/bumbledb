@@ -18,6 +18,9 @@ fn markdown_header(out: &mut String, report: &RunReport) {
     let _ = writeln!(out, "- engine rev: {}", p.git_rev);
     let _ = writeln!(out, "- timestamp: {}", p.timestamp);
     let _ = writeln!(out, "- host: {}", p.host);
+    if let Some(shared) = &p.shared {
+        let _ = writeln!(out, "- shared machine: {}", shared.describe());
+    }
     let _ = writeln!(
         out,
         "- config: scale {}, seed {}, {} samples, {} stores",

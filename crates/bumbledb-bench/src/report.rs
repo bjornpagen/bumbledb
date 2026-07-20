@@ -11,13 +11,48 @@ use crate::harness::Stats;
 /// (`git rev-parse HEAD` from the repo dir, "unknown" outside one) —
 /// a build script would freeze the rev at compile time and lie after a
 /// rebase; runtime resolution names the tree the binary actually ran in.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Provenance {
     pub crate_version: String,
     pub git_rev: String,
     /// ISO-8601 UTC, hand-formatted.
     pub timestamp: String,
     pub host: String,
+    /// The shared-machine honesty stamp — present iff the scheduling
+    /// boost was engaged ([`crate::boost`]); absent, the JSON shape is
+    /// byte-identical to the pre-boost artifact.
+    pub shared: Option<SharedMachine>,
+}
+
+/// The shared-machine stamp (owner ruling, 2026-07-20): this run
+/// competed with background load instead of claiming an idle machine.
+/// `boost` names the claimed scheduling class; the 1/5/15-minute load
+/// averages bracket the lane — start sampled at boost engagement, end
+/// sampled when the report's provenance is built. An unsampled slot
+/// reads -1.0 ([`crate::boost::loadavg`]).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SharedMachine {
+    pub boost: &'static str,
+    pub load_start: [f64; 3],
+    pub load_end: [f64; 3],
+}
+
+impl SharedMachine {
+    /// The one human-readable spelling (the markdown renderers share
+    /// it, so the prose face can never drift per artifact).
+    #[must_use]
+    pub fn describe(&self) -> String {
+        format!(
+            "boost {} — load 1/5/15 {:.2} {:.2} {:.2} (start) → {:.2} {:.2} {:.2} (end)",
+            self.boost,
+            self.load_start[0],
+            self.load_start[1],
+            self.load_start[2],
+            self.load_end[0],
+            self.load_end[1],
+            self.load_end[2],
+        )
+    }
 }
 
 /// The run's configuration, as printed.
@@ -170,6 +205,7 @@ mod verdict;
 mod write_artifacts;
 
 pub use budget::within_budget;
+pub(crate) use json_out::push_provenance;
 pub use json_out::to_json;
 pub use markdown::to_markdown;
 pub use merge::merge_markdown;

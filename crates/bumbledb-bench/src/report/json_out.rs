@@ -1,6 +1,6 @@
 use std::fmt::Write as _;
 
-use super::{GhzReport, ReadFamilyReport, RunReport, WriteFamilyReport};
+use super::{GhzReport, Provenance, ReadFamilyReport, RunReport, WriteFamilyReport};
 
 // The one stats JSON format, shared with the scenario emitter — the
 // spelling is owned there (crate::scenarios::json_out) and reused here,
@@ -61,6 +61,37 @@ fn push_read_family(out: &mut String, family: &ReadFamilyReport) {
     out.push('}');
 }
 
+/// The one provenance object emitter — `report.json`, the metric lanes,
+/// and churn all spell the block here, so the shapes can never drift.
+/// With no shared-machine stamp the object is byte-identical to the
+/// pre-boost artifact; with one it gains `shared_machine`, `boost`, and
+/// the bracketing 1/5/15 load averages.
+pub(crate) fn push_provenance(out: &mut String, provenance: &Provenance) {
+    out.push_str("{\"crate_version\":");
+    json::push_str_lit(out, &provenance.crate_version);
+    out.push_str(",\"git_rev\":");
+    json::push_str_lit(out, &provenance.git_rev);
+    out.push_str(",\"timestamp\":");
+    json::push_str_lit(out, &provenance.timestamp);
+    out.push_str(",\"host\":");
+    json::push_str_lit(out, &provenance.host);
+    if let Some(shared) = &provenance.shared {
+        out.push_str(",\"shared_machine\":true,\"boost\":");
+        json::push_str_lit(out, shared.boost);
+        push_load(out, "load_start", shared.load_start);
+        push_load(out, "load_end", shared.load_end);
+    }
+    out.push('}');
+}
+
+fn push_load(out: &mut String, key: &str, load: [f64; 3]) {
+    let _ = write!(
+        out,
+        ",\"{key}\":[{:.2},{:.2},{:.2}]",
+        load[0], load[1], load[2]
+    );
+}
+
 fn push_ghz(out: &mut String, ghz: Option<GhzReport>) {
     out.push_str(",\"ghz\":");
     match ghz {
@@ -100,17 +131,11 @@ fn push_write_family(out: &mut String, family: &WriteFamilyReport) {
 #[must_use]
 pub fn to_json(report: &RunReport) -> String {
     let mut out = String::new();
-    out.push_str("{\"provenance\":{\"crate_version\":");
-    json::push_str_lit(&mut out, &report.provenance.crate_version);
-    out.push_str(",\"git_rev\":");
-    json::push_str_lit(&mut out, &report.provenance.git_rev);
-    out.push_str(",\"timestamp\":");
-    json::push_str_lit(&mut out, &report.provenance.timestamp);
-    out.push_str(",\"host\":");
-    json::push_str_lit(&mut out, &report.provenance.host);
+    out.push_str("{\"provenance\":");
+    push_provenance(&mut out, &report.provenance);
     let _ = write!(
         out,
-        "}},\"config\":{{\"scale\":\"{}\",\"seed\":{},\"samples\":{},\"store\":\"{}\"}}",
+        ",\"config\":{{\"scale\":\"{}\",\"seed\":{},\"samples\":{},\"store\":\"{}\"}}",
         report.config.scale, report.config.seed, report.config.samples, report.config.store
     );
     out.push_str(",\"corpus_digest\":");

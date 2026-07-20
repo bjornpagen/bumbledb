@@ -41,6 +41,15 @@ fn main() {
             std::process::exit(2);
         }
     };
+    // The scheduler-boost seam (owner ruling 2026-07-20): one place, for
+    // exactly the measurement-running subcommands, switched by
+    // BUMBLEDB_BENCH_BOOST=1 (default off — ordinary runs never boost).
+    if cmd.runs_measurements()
+        && let Err(message) = bumbledb_bench::boost::engage_from_env()
+    {
+        eprintln!("error: {message}");
+        std::process::exit(2);
+    }
     match dispatch(&cmd) {
         Ok(code) => std::process::exit(code),
         Err(message) => {

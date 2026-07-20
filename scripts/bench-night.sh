@@ -14,20 +14,47 @@
 # BUMBLEDB_MEASURE_LOCK, shared with measure.sh, so the refusal is testable
 # without ever touching the real lock.
 #
-# usage: bench-night.sh <out-dir> [--plan]
+# usage: bench-night.sh <out-dir> [--plan] [--shared]
 #
-#   --plan  print the manifest-style lane table with the statuses the run
-#           WOULD have (RUN / SKIP-EXISTING / SKIP-UNAVAILABLE); no lock,
-#           no build, no lane execution, no viz. Exit 0.
+#   --plan    print the manifest-style lane table with the statuses the run
+#             WOULD have (RUN / SKIP-EXISTING / SKIP-UNAVAILABLE); no lock,
+#             no build, no lane execution, no viz. Exit 0.
+#
+#   --shared  the shared-machine night (owner ruling, 2026-07-20): the
+#             idle-machine requirement is WAIVED for this run. Every lane
+#             launches with BUMBLEDB_BENCH_BOOST=1, so the binary claims
+#             user-interactive QoS at its dispatch seam (macOS; no-op
+#             elsewhere, never sudo) and stamps shared_machine provenance
+#             (boost + 1/5/15 load averages at lane start/end) into every
+#             report. A loud banner marks the run. Neither this script nor
+#             measure.sh performs an idleness check today, so there is
+#             nothing further to bypass — the flag exists so any future
+#             idleness gate must honor it. The measurement mutex below is
+#             NOT an idleness check and stays MANDATORY, --shared or not.
 #
 # Exit codes: 0 night complete (SKIPs are not failures); 1 at least one
 # lane RUN-FAILed; 2 usage or lock refusal.
 set -euo pipefail
 
+print_usage() {
+    echo "usage: bench-night.sh <out-dir> [--plan] [--shared]"
+    echo "  --plan    print the lane table with planned statuses; run nothing"
+    echo "  --shared  shared-machine night: boost every lane (BUMBLEDB_BENCH_BOOST=1),"
+    echo "            stamp shared_machine provenance; idle-machine requirement"
+    echo "            waived (owner ruling 2026-07-20); the mutex stays mandatory"
+}
+
 usage() {
-    echo "usage: bench-night.sh <out-dir> [--plan]" >&2
+    print_usage >&2
     exit 2
 }
+
+case "${1:-}" in
+    --help | -h)
+        print_usage
+        exit 0
+        ;;
+esac
 
 [ "$#" -ge 1 ] || usage
 [ -n "$1" ] || usage
@@ -41,9 +68,11 @@ LOCK="${BUMBLEDB_MEASURE_LOCK:-/tmp/bumbledb.measure.lock}"
 OUT_ARG=$1
 shift
 PLAN=0
+SHARED=0
 for arg in "$@"; do
     case "$arg" in
         --plan) PLAN=1 ;;
+        --shared) SHARED=1 ;;
         *) usage ;;
     esac
 done
@@ -127,9 +156,30 @@ if [ "$PLAN" -eq 0 ] && [ "${BENCH_NIGHT_UNDER_LOCK:-}" != 1 ]; then
         exit 2
     fi
     export BUMBLEDB_MEASURE_LOCK="$LOCK"
+    # The re-exec'd child must keep the shared-machine mode.
+    if [ "$SHARED" -eq 1 ]; then
+        exec "$REPO/scripts/measure.sh" \
+            env BENCH_NIGHT_UNDER_LOCK=1 BUMBLEDB_MEASURE_LOCK="$LOCK" \
+            "$0" "$OUT" --shared
+    fi
     exec "$REPO/scripts/measure.sh" \
         env BENCH_NIGHT_UNDER_LOCK=1 BUMBLEDB_MEASURE_LOCK="$LOCK" \
         "$0" "$OUT"
+fi
+
+# --- SHARED-MACHINE MODE (owner ruling, 2026-07-20) -------------------------
+# The boost env reaches every lane below; the banner keeps the run honest
+# to whoever reads the log. The mutex hold above is unaffected.
+if [ "$SHARED" -eq 1 ] && [ "$PLAN" -eq 0 ]; then
+    export BUMBLEDB_BENCH_BOOST=1
+    echo "#############################################################"
+    echo "##  SHARED-MACHINE NIGHT — scheduler boost ACTIVE          ##"
+    echo "##  every lane runs with BUMBLEDB_BENCH_BOOST=1            ##"
+    echo "##  (user-interactive QoS; owner ruling 2026-07-20).       ##"
+    echo "##  The idle-machine requirement is WAIVED for this run;   ##"
+    echo "##  the measurement mutex is still held. Every report      ##"
+    echo "##  stamps shared_machine provenance (boost + load avgs).  ##"
+    echo "#############################################################"
 fi
 
 # --- BUILD (building is not measurement; skipped in --plan) ----------------
@@ -163,6 +213,9 @@ header() {
     echo "date: $(date '+%Y-%m-%dT%H:%M:%S')"
     echo "rev: $(git -C "$REPO" rev-parse --short HEAD)"
     echo "out: $OUT"
+    if [ "$SHARED" -eq 1 ]; then
+        echo "mode: shared-machine (boosted; idle-machine requirement waived)"
+    fi
     echo ""
 }
 

@@ -418,6 +418,45 @@ fn help_names_the_home_turf_worlds() {
 }
 
 #[test]
+fn help_names_the_shared_machine_boost_switch() {
+    let text = help();
+    assert!(text.contains("BUMBLEDB_BENCH_BOOST"), "{text}");
+    assert!(text.contains("shared_machine"), "{text}");
+}
+
+/// The boost seam's membership: every measurement-running subcommand
+/// boosts, every non-measuring one never does.
+#[test]
+fn the_boost_seam_membership_is_pinned() {
+    for tokens in [
+        vec!["bench"],
+        vec!["trace", "--family", "point"],
+        vec!["scenarios"],
+        vec!["crud"],
+        vec!["lawful"],
+        vec!["sweep-commit"],
+        vec!["storage"],
+        vec!["writes"],
+        vec!["curves"],
+        vec!["churn"],
+    ] {
+        let cmd = parse(&argv(&tokens)).expect("parses");
+        assert!(cmd.runs_measurements(), "{tokens:?} runs measurements");
+    }
+    for tokens in [
+        vec!["help"],
+        vec!["queries"],
+        vec!["gen"],
+        vec!["verify"],
+        vec!["verify-store"],
+        vec!["merge", "some-dir"],
+    ] {
+        let cmd = parse(&argv(&tokens)).expect("parses");
+        assert!(!cmd.runs_measurements(), "{tokens:?} never boosts");
+    }
+}
+
+#[test]
 fn garbage_names_the_offending_token() {
     let err = parse(&argv(&["frobnicate"])).unwrap_err();
     assert!(err.contains("frobnicate"), "{err}");

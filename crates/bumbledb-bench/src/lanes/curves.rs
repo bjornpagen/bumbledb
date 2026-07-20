@@ -1194,6 +1194,7 @@ mod tests {
             git_rev: "deadbeef".to_owned(),
             timestamp: "2026-07-19T00:00:00Z".to_owned(),
             host: "test-host".to_owned(),
+            shared: None,
         }
     }
 
@@ -1270,13 +1271,13 @@ mod tests {
             }],
         };
         let parsed = crate::json::parse(&to_json(&report)).expect("valid JSON");
+        let provenance = parsed.get("provenance").expect("provenance");
         assert_eq!(
-            parsed
-                .get("provenance")
-                .and_then(|p| p.get("timestamp"))
-                .and_then(Json::as_str),
+            provenance.get("timestamp").and_then(Json::as_str),
             Some("2026-07-19T00:00:00Z")
         );
+        // Boost-off keeps the pre-boost provenance shape.
+        assert!(provenance.get("shared_machine").is_none());
         assert_eq!(parsed.get("seed").and_then(Json::as_f64), Some(3.0));
         assert_eq!(parsed.get("samples").and_then(Json::as_f64), Some(16.0));
         assert_eq!(parsed.get("cap_ms").and_then(Json::as_f64), Some(5000.0));
