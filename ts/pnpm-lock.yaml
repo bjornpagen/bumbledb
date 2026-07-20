@@ -21,6 +21,10 @@ importers:
       typescript:
         specifier: ^7.0.2
         version: 7.0.2
+    optionalDependencies:
+      '@bjornpagen/bumbledb-darwin-arm64':
+        specifier: 0.5.0
+        version: 0.5.0
 
 packages:
 
@@ -80,6 +84,12 @@ packages:
     engines: {node: '>=14.21.3'}
     cpu: [x64]
     os: [win32]
+
+  '@bjornpagen/bumbledb-darwin-arm64@0.5.0':
+    resolution: {integrity: sha512-jNEBWdrjlzTuAOOppBdO/Dpo/WirKVHsBnLfOyV03RPA7wGEXFm2SMJaWVQqXO5xolsRRM77nTgy8Ia2XkNr9w==}
+    engines: {node: '>=24'}
+    cpu: [arm64]
+    os: [darwin]
 
   '@superbuilders/errors@4.0.2':
     resolution: {integrity: sha512-Fr4fSeh4CH6GD3dvsOrsBGH+9EVq6nh1qDkVh17D6S6hX+MTdK+t+b/qfvMNUhShp/VRWHF6urWn875w5ZA8Qw==}
@@ -253,6 +263,9 @@ snapshots:
     optional: true
 
   '@biomejs/cli-win32-x64@2.5.4':
+    optional: true
+
+  '@bjornpagen/bumbledb-darwin-arm64@0.5.0':
     optional: true
 
   '@superbuilders/errors@4.0.2(typescript@7.0.2)':

@@ -25,7 +25,7 @@ pub const ENV: &str = "BUMBLEDB_BENCH_BOOST";
 /// The provenance spelling of the claimed scheduling class.
 #[cfg(target_os = "macos")]
 pub const QOS_LABEL: &str = "qos-user-interactive";
-/// The provenance spelling where no QoS API exists (the no-op claim).
+/// The provenance spelling where no `QoS` API exists (the no-op claim).
 #[cfg(not(target_os = "macos"))]
 pub const QOS_LABEL: &str = "noop";
 
@@ -122,16 +122,13 @@ pub fn claim_qos() -> Result<(), String> {
     }
 }
 
-/// The no-op fallback: only darwin exposes the QoS API.
+/// The no-op fallback: only darwin exposes the `QoS` API.
 ///
 /// # Errors
 ///
-/// Never — the signature is the platform-independent seam.
+/// Never — the signature is the platform-independent seam
+/// (`unnecessary_wraps` never fires here: the fn is exported API).
 #[cfg(not(target_os = "macos"))]
-#[expect(
-    clippy::unnecessary_wraps,
-    reason = "the signature is the platform-independent seam"
-)]
 pub fn claim_qos() -> Result<(), String> {
     Ok(())
 }
