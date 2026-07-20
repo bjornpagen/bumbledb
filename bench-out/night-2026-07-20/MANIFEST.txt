@@ -1,0 +1,23 @@
+bumbledb bench night
+date: 2026-07-20T08:35:16
+rev: 4b031a15
+out: /Users/bjorn/Documents/bumbledb/bench-out/night-2026-07-20
+mode: shared-machine (boosted; idle-machine requirement waived)
+
+gen	SKIP-UNNEEDED	SETUP
+verify	SKIP-UNNEEDED	SETUP
+bench-durable-r1	SKIP-EXISTING	/Users/bjorn/Documents/bumbledb/bench-out/night-2026-07-20/bench-durable-r1/report.json
+bench-durable-r2	SKIP-EXISTING	/Users/bjorn/Documents/bumbledb/bench-out/night-2026-07-20/bench-durable-r2/report.json
+bench-durable-r3	SKIP-EXISTING	/Users/bjorn/Documents/bumbledb/bench-out/night-2026-07-20/bench-durable-r3/report.json
+bench-ephemeral-r1	SKIP-EXISTING	/Users/bjorn/Documents/bumbledb/bench-out/night-2026-07-20/bench-ephemeral-r1/report.json
+bench-ephemeral-r2	SKIP-EXISTING	/Users/bjorn/Documents/bumbledb/bench-out/night-2026-07-20/bench-ephemeral-r2/report.json
+bench-ephemeral-r3	SKIP-EXISTING	/Users/bjorn/Documents/bumbledb/bench-out/night-2026-07-20/bench-ephemeral-r3/report.json
+scenarios	SKIP-EXISTING	/Users/bjorn/Documents/bumbledb/bench-out/night-2026-07-20/scenarios/scenarios.md
+sweep-commit	SKIP-EXISTING	/Users/bjorn/Documents/bumbledb/bench-out/night-2026-07-20/sweep-commit/sweep.md
+storage	SKIP-EXISTING	/Users/bjorn/Documents/bumbledb/bench-out/night-2026-07-20/storage/storage-report.json
+curves	SKIP-EXISTING	/Users/bjorn/Documents/bumbledb/bench-out/night-2026-07-20/curves/curves-report.json
+writes	SKIP-EXISTING	/Users/bjorn/Documents/bumbledb/bench-out/night-2026-07-20/writes/writes-report.json
+adversarial	SKIP-UNAVAILABLE	/Users/bjorn/Documents/bumbledb/bench-out/night-2026-07-20/adversarial/report.json
+churn	SKIP-EXISTING	/Users/bjorn/Documents/bumbledb/bench-out/night-2026-07-20/churn/churn-report.json
+charts: 13 svg
+night: COMPLETE
