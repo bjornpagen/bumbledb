@@ -1,6 +1,6 @@
 //! The copy-on-append column differential, engine-hosted test support
 //! (feature `image-oracle`;
-//! docs/prds/incremental-images/prd-I1-copy-on-append.md § coverage
+//! the retired I1 copy-on-append packet (git history) § coverage
 //! item 3(b)): the image the engine SERVES for a relation — whatever
 //! arm produced it (full build, append, carry-forward, or a plain
 //! cache hit) — compared facet-by-facet against a from-scratch

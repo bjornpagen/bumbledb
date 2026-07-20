@@ -1,5 +1,5 @@
 //! The filter-mask decider twin (PRD-I3; the delete-fork analysis,
-//! `docs/prds/incremental-images/prd-I3-decider-twin.md`): prices the
+//! `the retired I3 decider-twin packet (git history)`): prices the
 //! validity-mask tax at its CHEAPEST surface — `filter_eq_u64`, the
 //! representative of the six survivor-producing filter kernels, the
 //! shape where the one-op-per-chunk claim lives — so the gated delete

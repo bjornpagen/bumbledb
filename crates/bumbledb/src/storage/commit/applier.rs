@@ -156,7 +156,7 @@ impl Applier<'_> {
 
     /// The one phase-2 put: every `M`/`F`/`U`/`R` landing funnels through
     /// here. PRD-C1 gravestone — the bulk-lane `MDB_APPEND` candidate
-    /// died at this site (docs/structural-1.0.0/prd-C1-heed-flags.md).
+    /// died at this site (the retired C1 heed-flags packet, git history).
     /// The refutation is structural: the bulk lanes
     /// (`Db::bulk_load`/`bulk_load_dyn`) route through this same
     /// applier, and its put stream is NEVER key-ordered — a fact's `M`

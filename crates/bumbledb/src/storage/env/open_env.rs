@@ -35,8 +35,8 @@ pub(super) fn open_env(path: &Path, kind: StoreKind) -> Result<heed::Env<Without
         .max_dbs(3)
         .max_readers(MAX_READERS);
     // PRD-C1 gravestone — `MDB_NOMEMINIT` on the durable flag set,
-    // measured NEUTRAL, not taken (docs/structural-1.0.0/
-    // prd-C1-heed-flags.md). The twin armed `EnvFlags::NO_MEM_INIT`
+    // measured NEUTRAL, not taken (the retired C1 heed-flags packet,
+    // git history). The twin armed `EnvFlags::NO_MEM_INIT`
     // right here for the durable kind only (the ephemeral kind then
     // ran `WRITE_MAP`, where LMDB ignores `NOMEMINIT` — writes landed
     // in the map, no malloc'd write buffer existed to zero; ruling 1

@@ -73,7 +73,7 @@ pub struct OpScenario {
 /// run against real state), a 1–3 query pool, then 6–24 drawn steps.
 ///
 /// One in four scenarios is an **insert streak** (the copy-on-append
-/// direction's stress, `docs/prds/incremental-images/prd-I1-copy-on-append.md`):
+/// direction's stress, `the retired I1 copy-on-append packet (git history)`):
 /// the step alphabet narrows to insert batches, commits, and reads, so
 /// long chains of delete-free commits — each read at a new generation
 /// extending the previous image rather than rebuilding it — stop being

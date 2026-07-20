@@ -26,7 +26,7 @@ crashpoint = []
 # Test-support: the copy-on-append column differential
 # (`api/db/image_oracle.rs`) — the engine's served image of a relation
 # compared facet-by-facet against a from-scratch build in one snapshot
-# (docs/prds/incremental-images/prd-I1-copy-on-append.md § coverage
+# (the retired I1 copy-on-append packet (git history) § coverage
 # item 3(b)). Its consumer (the detached fuzz crate's `ops` target)
 # died with the fuzzing apparatus (the 2026-07-20 hard-delete ruling,
 # docs/architecture/60-validation.md § the deletion record); the
@@ -40,7 +40,7 @@ image-oracle = []
 # structurally (`storage/commit/applier.rs: put_data` records the
 # mechanism). No dead flag ships.
 # GRAVESTONE (cleanup-0.5.0 ruling 4,
-# docs/prds/cleanup-0.5.0/prd-U2-engine-kills.md): `lineage-off` — the
+# the retired U2 engine-kills packet (git history)): `lineage-off` — the
 # PR #10 branch's image-cache advance-vs-evict A/B knob
 # (`with_lineage_disabled`, the `evict_older_than` feature arm) and its
 # Wave-M cold-lineage bench twin (`bumbledb-bench/src/writebench.rs`) —

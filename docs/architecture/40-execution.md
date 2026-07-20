@@ -885,8 +885,8 @@ execution reads **full-width cached columnar images** built once per
 After warmup, execution runs in exactly the paper's environment. *Why:* LMDB is the
 durable truth; cold cost after a commit is an O(delta) tail decode plus one
 O(relation) column memcpy for delete-free relations (copy-on-append — the
-memcpy is the recorded cost the slab follow-on removes,
-`docs/prds/incremental-images/prd-I1-copy-on-append.md`; at ceiling scale it
+memcpy is the recorded cost the slab follow-on removes
+(the copy-on-append ruling record, I1 — packet retired, history in git); at ceiling scale it
 is hundreds of milliseconds, not noise) and a full O(relation) decode after a
 delete. The old soundness clause — "at ≤1 GB the whole
 working set caches and the write design point (≥100 reads/generation) amortizes

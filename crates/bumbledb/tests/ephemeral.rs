@@ -117,7 +117,7 @@ fn ephemeral_on_an_ephemeral_store_reopens_with_contents() {
 // capacity contract's pin: `blocks() * 512 >= 4 << 30` at open and
 // again at reopen — the eager-allocation mechanism assertion). DELETED,
 // not retargeted, by cleanup-0.5.0 ruling 1 (the ephemeral-lazy
-// unification, docs/prds/cleanup-0.5.0/prd-U1-ephemeral-lazy.md): the
+// unification, the retired U1 ephemeral-lazy packet, git history): the
 // eager capacity contract it pinned is retired — one 32 GiB `MAP_SIZE`
 // for both kinds, no `WRITE_MAP`, no open-time preallocation — so the
 // pinned behavior no longer exists to assert. A 32 GiB eager assertion

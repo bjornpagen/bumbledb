@@ -2,9 +2,11 @@
 
 ## Open
 
-- **The 1.0.0 close (owner-gated, explicitly deferred 2026-07-18)** — R2 of
-  `docs/structural-1.0.0/`: crate version `1.0.0` + the annotated `v1.0.0`
-  tag. Owner ceremony only; no agent bumps, tags, or publishes.
+- **The 1.0.0 close (owner-gated, explicitly deferred 2026-07-18)** — crate
+  version `1.0.0` + the annotated `v1.0.0` tag. Owner ceremony only; no agent
+  bumps, tags, or publishes. Planned fresh when the owner calls it (the old
+  packet was deleted 2026-07-20 with every completed PRD packet — its C2 fuzz
+  hunt was mooted by the fuzzer deletion; history in git).
 - **PR #10 (incremental images) — MERGED and reconciled (2026-07-19,
   the PR #11 reconciliation).** Copy-on-append landed whole (2.54× on
   the cold lineage family; the mask fork refuted by the decider twin)
@@ -90,8 +92,8 @@ SDK kills + wire tags (U3), CI reshaped (U4a: main+PR scope, ubuntu
 matrix, miri cron stub) and the FFI lint regime + re-trued unsafe
 allowlist (U4b), lean reconciliation (U5: 26 judgment cases / 272
 total), and the architecture docs swept to the tree's present tense
-(U6). The packet at `docs/prds/cleanup-0.5.0/` is deletion-eligible at
-wave close per its own survival checklist (serial committer's act).
+(U6). The cleanup packet was deleted at wave close per its own survival
+checklist (all PRD packets removed 2026-07-20; history in git).
 
 `@bjornpagen/bumbledb@0.4.0` (+ `-darwin-arm64@0.4.0`) is published and
 tagged `v0.4.0` — the host-idiom SDK on the law-typed 0.3.0 core; primer is

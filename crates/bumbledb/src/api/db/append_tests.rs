@@ -5,7 +5,7 @@
 //! every column's full slice byte-for-byte, every forced distinct count —
 //! across every field shape, over a chain of insert-only commits with
 //! interleaved untouched relations, ending in the delete that forces the
-//! rebuild fallback (docs/prds/incremental-images/prd-I1-copy-on-append.md).
+//! rebuild fallback (the retired I1 copy-on-append packet (git history)).
 
 use std::sync::Arc;
 

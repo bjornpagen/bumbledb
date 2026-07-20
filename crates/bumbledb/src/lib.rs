@@ -114,7 +114,7 @@ pub use allen::{AllenMask, Basic, classify};
 /// (`api/db/image_oracle.rs`), reachable only under the `image-oracle`
 /// test-support feature: the served image compared against a
 /// from-scratch build, facet by facet
-/// (docs/prds/incremental-images/prd-I1-copy-on-append.md § coverage
+/// (the retired I1 copy-on-append packet (git history) § coverage
 /// item 3(b)). Its former consumer, the detached fuzz crate's `ops`
 /// target, died with the fuzzing apparatus (the 2026-07-20 hard-delete
 /// ruling, docs/architecture/60-validation.md § the deletion record).
