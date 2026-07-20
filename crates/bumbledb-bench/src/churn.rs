@@ -21,11 +21,15 @@
 //! - [`engines`] — the twin stores and the per-cycle appliers: one
 //!   `db.write` per cycle on ours, one transaction per cycle on each
 //!   mirror, the identical logical operations.
+//! - [`probes`] — the pinned read probes whose per-sample p50 is the
+//!   degradation curve's y-axis: exact IR, stationary draws, and the
+//!   per-sample oracle gate carried by type.
 //! - [`verify_end`] — the three-way end gate: model vs engine vs
 //!   `SQLite` posting multisets, then the store sweeper.
 
 pub mod engines;
 pub mod ops;
+pub mod probes;
 pub mod verify_end;
 
 #[cfg(test)]
