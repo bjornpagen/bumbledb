@@ -40,6 +40,7 @@ import { lowerQuery, query } from "#query/lower.ts"
 import { program } from "#query/predicate.ts"
 import { decodeAnswers, wireParams } from "#query/run.ts"
 import type { ParamsRecord } from "#query/scope.ts"
+import { v } from "#query/scope.ts"
 import { relation } from "#relation.ts"
 import { schema } from "#schema.ts"
 import { contained } from "#statements.ts"
@@ -136,7 +137,7 @@ describe("answer rows arrive named + the orderable ban", function suite() {
 		const rows = native.preparedExecute(prepared.prepared, snap, wireParams(q.data.params, params))
 		native.snapshotClose(snap)
 		native.preparedClose(prepared.prepared)
-		return decodeAnswers<Row>(q.data.select, rows)
+		return decodeAnswers<Row>(q.data.finds, rows)
 	}
 
 	/** The RAW positional rows of a query — the 0.3.0 twin's view (bigint ids, undecoded). */
@@ -153,7 +154,10 @@ describe("answer rows arrive named + the orderable ban", function suite() {
 	}
 
 	test("a closed select column decodes to handle NAMES — strict-equality members of the roster, and the 0.3.0 twin's rows modulo the translation", function namedRows() {
-		const all = query(Oncall).rule((r) => r.match(Incident, { id: r.var("n"), sev: r.var("s") }).select("n", "s"))
+		const all = query(Oncall).rule((r) => {
+			const { id, sev } = v(Incident)
+			return r.match(Incident, { id, sev }).find({ n: id, s: sev })
+		})
 		// H1's claim (the precise union) now carries H4's runtime twin: the VALUE is the string.
 		type RowPin = Expect<
 			Equal<QueryRow<typeof all>, { readonly n: bigint; readonly s: "Info" | "Warn" | "Crit" | "Fatal" }>
@@ -206,26 +210,28 @@ describe("answer rows arrive named + the orderable ban", function suite() {
 		const reach = program(Oncall, (p) => {
 			const seen = p.rec("seen")
 			const seeded = seen
-				.rule((r) =>
-					r
-						.match(Incident, { id: r.var("n"), sev: r.var("s") })
-						.where(r.eq(r.var("n"), 1n))
-						.select("n", "s")
-				)
-				.rule((r) =>
-					r
-						.match(Edge, { src: r.var("m"), dst: r.var("n") })
-						.match(Incident, { id: r.var("n"), sev: r.var("s") })
-						.match(Incident, { id: r.var("m"), sev: r.var("sm") })
-						.idb(seen, r.var("m"), r.var("sm"))
-						.select("n", "s")
-				)
-			return p.output((r) =>
-				r
-					.match(Incident, { id: r.var("n"), sev: r.var("s") })
-					.idb(seeded, r.var("n"), r.var("s"))
-					.select("n", "s")
-			)
+				.rule((r) => {
+					const { id, sev } = v(Incident)
+					return r
+						.match(Incident, { id, sev })
+						.where(r.eq(id, 1n))
+						.find({ n: id, s: sev })
+				})
+				.rule((r) => {
+					const e = v(Edge)
+					const near = v(Incident)
+					const far = v(Incident)
+					return r
+						.match(Edge, { src: e.src, dst: e.dst })
+						.match(Incident, { id: e.dst, sev: near.sev })
+						.match(Incident, { id: e.src, sev: far.sev })
+						.idb(seen, { n: e.src, s: far.sev })
+						.find({ n: e.dst, s: near.sev })
+				})
+			return p.output((r) => {
+				const { id, sev } = v(Incident)
+				return r.match(Incident, { id, sev }).idb(seeded, { n: id, s: sev }).find({ n: id, s: sev })
+			})
 		})
 		type RecRowPin = Expect<
 			Equal<QueryRow<typeof reach>, { readonly n: bigint; readonly s: "Info" | "Warn" | "Crit" | "Fatal" }>
@@ -240,9 +246,10 @@ describe("answer rows arrive named + the orderable ban", function suite() {
 	})
 
 	test("an Arg-carried closed payload decodes named too (the key orders, the carried value only rides)", function argCarried() {
-		const topSev = query(Oncall).rule((r) =>
-			r.match(Incident, { id: r.var("n"), sev: r.var("s") }).select(r.argMax("s", "n"))
-		)
+		const topSev = query(Oncall).rule((r) => {
+			const { id, sev } = v(Incident)
+			return r.match(Incident, { id, sev }).find({ s: r.argMax(sev, id) })
+		})
 		type ArgRowPin = Expect<Equal<QueryRow<typeof topSev>, { readonly s: "Info" | "Warn" | "Crit" | "Fatal" }>>
 		assert.deepEqual(run(topSev, {}), [{ s: "Fatal" }], "incident 4 is the max key; its severity arrives named")
 		const pins: [ArgRowPin] = [true]
@@ -250,83 +257,109 @@ describe("answer rows arrive named + the orderable ban", function suite() {
 	})
 
 	test("COUNTING IS NOT ORDERING: count over closed-atom-filtered rules and countDistinct over the closed var stay legal", function countingStays() {
-		const paged = query(Oncall).rule((r) =>
-			r.match(Incident, { id: r.var("n"), sev: ["Crit", "Fatal"] }).select(r.count())
-		)
+		const paged = query(Oncall).rule((r) => {
+			const { id } = v(Incident)
+			return r.match(Incident, { id, sev: ["Crit", "Fatal"] }).find({ count: r.count() })
+		})
 		assert.deepEqual(run(paged, {}), [{ count: 2n }])
-		const distinct = query(Oncall).rule((r) => r.match(Incident, { sev: r.var("s") }).select(r.countDistinct("s")))
+		const distinct = query(Oncall).rule((r) => {
+			const { sev } = v(Incident)
+			return r.match(Incident, { sev }).find({ s: r.countDistinct(sev) })
+		})
 		assert.deepEqual(run(distinct, {}), [{ s: 4n }])
 		// A closed vocabulary's ORDINARY payload column still folds — the ban
 		// covers the reference id, never the payload's own structural type.
-		const totalRank = query(Oncall).rule((r) => r.match(Sev, { id: r.var("s"), rank: r.var("k") }).select(r.sum("k")))
+		const totalRank = query(Oncall).rule((r) => {
+			const { id, rank } = v(Sev)
+			return r.match(Sev, { id, rank }).find({ k: r.sum(rank) })
+		})
 		assert.deepEqual(run(totalRank, {}), [{ k: 10n }])
 	})
 
 	test("the orderable ban, comparison tier: lt/ge and the pointIn point side refuse closed-bound vars (both tiers)", function comparisonBan() {
 		assert.throws(function ltClosed() {
-			query(Oncall).rule((r) =>
-				r
-					.match(Incident, { id: r.var("n"), sev: r.var("s") })
-					// @ts-expect-error — a closed-bound var left the orderable set: vocabularies do not order
-					.where(r.lt(r.var("s"), r.var("s")))
-					.select("n")
-			)
+			query(Oncall).rule((r) => {
+				const { id, sev } = v(Incident)
+				return (
+					r
+						.match(Incident, { id, sev })
+						// @ts-expect-error — a closed-bound var left the orderable set: vocabularies do not order
+						.where(r.lt(sev, sev))
+						.find({ n: id })
+				)
+			})
 		}, BAN)
 		assert.throws(function geClosed() {
-			query(Oncall).rule((r) =>
-				r
-					.match(Incident, { id: r.var("n"), sev: r.var("s") })
-					// @ts-expect-error — the whole order roster refuses a closed-bound var, ge included
-					.where(r.ge(r.var("s"), 1n))
-					.select("n")
-			)
+			query(Oncall).rule((r) => {
+				const { id, sev } = v(Incident)
+				return (
+					r
+						.match(Incident, { id, sev })
+						// @ts-expect-error — the whole order roster refuses a closed-bound var, ge included
+						.where(r.ge(sev, 1n))
+						.find({ n: id })
+				)
+			})
 		}, BAN)
 		assert.throws(function pointInClosed() {
-			query(Oncall).rule((r) =>
-				r
-					.match(Incident, { id: r.var("n"), sev: r.var("s") })
-					// @ts-expect-error — a closed-bound var is no point: point membership is an order comparison over the element domain
-					.where(r.pointIn(r.var("s"), { start: 0n, end: 10n }))
-					.select("n")
-			)
+			query(Oncall).rule((r) => {
+				const { id, sev } = v(Incident)
+				return (
+					r
+						.match(Incident, { id, sev })
+						// @ts-expect-error — a closed-bound var is no point: point membership is an order comparison over the element domain
+						.where(r.pointIn(sev, { start: 0n, end: 10n }))
+						.find({ n: id })
+				)
+			})
 		}, BAN)
 	})
 
 	test("the orderable ban, fold tier: sum/max over a closed column and the argMax key refuse (both tiers)", function foldBan() {
 		assert.throws(function sumClosed() {
-			query(Oncall).rule((r) =>
-				r
-					.match(Incident, { id: r.var("n"), sev: r.var("s") })
-					// @ts-expect-error — a fold over a closed column orders ids: banned
-					.select(r.sum("s"))
-			)
+			query(Oncall).rule((r) => {
+				const { sev } = v(Incident)
+				return (
+					r
+						.match(Incident, { sev })
+						// @ts-expect-error — a fold over a closed column orders ids: banned
+						.find({ s: r.sum(sev) })
+				)
+			})
 		}, BAN)
 		assert.throws(function maxClosed() {
-			query(Oncall).rule((r) =>
-				r
-					.match(Incident, { id: r.var("n"), sev: r.var("s") })
-					// @ts-expect-error — max over a closed column is the same accident
-					.select(r.max("s"))
-			)
+			query(Oncall).rule((r) => {
+				const { sev } = v(Incident)
+				return (
+					r
+						.match(Incident, { sev })
+						// @ts-expect-error — max over a closed column is the same accident
+						.find({ s: r.max(sev) })
+				)
+			})
 		}, BAN)
 		assert.throws(function argMaxClosedKey() {
-			query(Oncall).rule((r) =>
-				r
-					.match(Incident, { id: r.var("n"), sev: r.var("s") })
-					// @ts-expect-error — the argMax KEY must be orderable; a closed key is banned (the carried value may be closed)
-					.select(r.argMax("n", "s"))
-			)
+			query(Oncall).rule((r) => {
+				const { id, sev } = v(Incident)
+				return (
+					r
+						.match(Incident, { id, sev })
+						// @ts-expect-error — the argMax KEY must be orderable; a closed key is banned (the carried value may be closed)
+						.find({ n: r.argMax(id, sev) })
+				)
+			})
 		}, BAN)
 	})
 
 	test("the orderable ban, param tier: an order-comparison param anchored at a closed field is unsuppliable and refused", function paramBan() {
 		function buildOrderedParam() {
-			return query(Oncall).rule((r) =>
-				r
-					.match(Incident, { id: r.var("n"), sev: r.param("p") })
+			return query(Oncall).rule((r) => {
+				const { id } = v(Incident)
+				return r
+					.match(Incident, { id, sev: r.param("p") })
 					.where(r.lt(r.param("p"), 2n))
-					.select("n")
-			)
+					.find({ n: id })
+			})
 		}
 		// The compile-FAIL is the params object itself: the closed anchor
 		// claims the handle union, the order use claims bigint, and the
@@ -341,19 +374,38 @@ describe("answer rows arrive named + the orderable ban", function suite() {
 	test("one answer column decodes through one roster: a union head disagreeing on the closed slice is refused pointed", function headAgreement() {
 		assert.throws(function twoRosters() {
 			query(Oncall)
-				.rule((r) => r.match(Incident, { id: r.var("n"), sev: r.var("k") }).select("n", "k"))
-				.rule((r) => r.match(Incident, { id: r.var("n"), pri: r.var("k") }).select("n", "k"))
+				.rule((r) => {
+					const { id, sev } = v(Incident)
+					return r.match(Incident, { id, sev }).find({ n: id, k: sev })
+				})
+				.rule((r) => {
+					const { id, pri } = v(Incident)
+					return r.match(Incident, { id, pri }).find({ n: id, k: pri })
+				})
 		}, /the answer column k is a Sev reference in rule 0 but a Priority reference in rule 1 \(one column decodes through one roster\)/)
 		assert.throws(function closedAgainstBare() {
 			query(Oncall)
-				.rule((r) => r.match(Incident, { id: r.var("n"), sev: r.var("k") }).select("k"))
-				.rule((r) => r.match(Incident, { id: r.var("k") }).select("k"))
+				.rule((r) => {
+					const { sev } = v(Incident)
+					return r.match(Incident, { sev }).find({ k: sev })
+				})
+				.rule((r) => {
+					const { id } = v(Incident)
+					return r.match(Incident, { id }).find({ k: id })
+				})
 		}, /the answer column k is a Sev reference in rule 0 but a bare value in rule 1/)
 	})
 
 	test("an out-of-roster id on answer decode throws pointed through the marshal's ONE bijection (shared with fact decode)", function outsideRoster() {
+		// The FindColumn is hand-built: decode reads only `name` and `closed`,
+		// but the entry's `over` is now a variable REFERENCE (identity edition),
+		// so we mint one over the closed column to satisfy the type.
+		const svar = v(Incident).sev
 		assert.throws(function nineIsOutside() {
-			decodeAnswers([{ name: "s", entry: { kind: "var", over: "s" }, closed: Sev.id.closed }], [[9n]])
+			decodeAnswers(
+				[{ name: "s", entry: { kind: "var", over: svar }, closed: Sev.id.closed, slot: undefined }],
+				[[9n]]
+			)
 		}, /query answer column s: id 9 is outside the Sev roster \(Info, Warn, Crit, Fatal\) — the column types Sev but no law pins it — a containment statement is the missing piece/)
 	})
 })

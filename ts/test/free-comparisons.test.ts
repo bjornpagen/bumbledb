@@ -1,17 +1,19 @@
 /**
  * The free comparison/connective export pins. Every import here comes from
  * the PACKAGE ROOT — this file IS the export pin for the enumerated names
- * (`eq/ne/lt/le/gt/ge/pointIn/allen/and/or/not`). Pinned: the free
- * spellings judge at the `.where` seam exactly like the method spellings
- * (params inference identical, interval-var-under-lt refused, unbound var
- * refused); and a rule written with the free comparisons lowers to IR
- * identical to its method-spelling twin (one lowering, two entry flavors —
- * also pinned by function IDENTITY: the TermOps methods ARE the free
- * exports). Each `Equal` probe is a value (`const probe: Equal<A, B> =
- * true`), so the compile-time claim carries its own runtime assertion. The
- * schema is LAW-TYPED (rulings 2/3): fields are pure structure and the
- * containment statement is what puts `Holder.id` and `Account.holder` in
- * one class while `Account.id` generates its own.
+ * (`eq/ne/lt/le/gt/ge/pointIn/allen/and/or/not`, and now the load-bearing
+ * mint `v`). Pinned: the free spellings judge at the `.where` seam exactly
+ * like the method spellings (params inference identical, interval-var-under-lt
+ * refused, unbound var refused at construction); and a rule written with the
+ * free comparisons lowers to IR identical to its method-spelling twin (one
+ * lowering, two entry flavors — also pinned by function IDENTITY: the TermOps
+ * methods ARE the free exports). Each `Equal` probe is a value (`const probe:
+ * Equal<A, B> = true`), so the compile-time claim carries its own runtime
+ * assertion. Variables are minted by the free `v()` and joined by OBJECT
+ * REFERENCE (reuse is the join); the head is a `find` RECORD whose keys name
+ * the answer columns. The schema is LAW-TYPED (rulings 2/3): fields are pure
+ * structure and the containment statement is what puts `Holder.id` and
+ * `Account.holder` in one class while `Account.id` generates its own.
  */
 
 import assert from "node:assert/strict"
@@ -40,7 +42,8 @@ import {
 	schema,
 	span,
 	str,
-	u64
+	u64,
+	v
 } from "#index.ts"
 
 /** The identity-strength equality probe (the standard dual-function trick). */
@@ -63,10 +66,11 @@ const Ledger = schema("Ledger", { Holder, Account }, [contained(on(Account, "hol
 
 describe("the free comparison exports", function suite() {
 	test("each enumerated name is a package-root export (the grep pin)", function exportPin() {
-		const roster = [eq, ne, lt, le, gt, ge, pointIn, allen, and, or, not]
+		const roster = [eq, ne, lt, le, gt, ge, pointIn, allen, and, or, not, v]
 		for (const builder of roster) {
 			assert.equal(typeof builder, "function")
 		}
+		assert.equal(v.name, "v", "v is the free variable-record mint export")
 		assert.equal(typeof ALLEN.before, "number")
 	})
 
@@ -74,8 +78,8 @@ describe("the free comparison exports", function suite() {
 		let ops: TermOps | undefined
 		query(Ledger).rule((r) => {
 			ops = r
-			const h = r.var("h")
-			return r.match(Holder, { id: h }).select("h")
+			const h = v(Holder)
+			return r.match(Holder, { id: h.id }).find({ h: h.id })
 		})
 		assert.ok(ops !== undefined, "the scope was captured")
 		assert.equal(ops.eq, eq)
@@ -93,20 +97,20 @@ describe("the free comparison exports", function suite() {
 
 	test("free lt through .where: params inference identical to the method spelling", function paramsInference() {
 		const capped = query(Ledger).rule((r) => {
-			const acct = r.var("acct")
-			const b = r.var("b")
+			const { id, balance } = v(Account)
 			return r
-				.match(Account, { id: acct, balance: b })
-				.where(lt(b, r.param("cap")))
-				.select("acct")
+				.match(Account, { id, balance })
+				.where(lt(balance, r.param("cap")))
+				.find({ acct: id })
 		})
 		const probeParams: Equal<QueryParams<typeof capped>, { readonly cap: bigint }> = true
-		const cappedTwin = query(Ledger).rule((r) =>
-			r
-				.match(Account, { id: r.var("acct"), balance: r.var("b") })
-				.where(r.lt(r.var("b"), r.param("cap")))
-				.select("acct")
-		)
+		const cappedTwin = query(Ledger).rule((r) => {
+			const { id, balance } = v(Account)
+			return r
+				.match(Account, { id, balance })
+				.where(r.lt(balance, r.param("cap")))
+				.find({ acct: id })
+		})
 		const probeIdentical: Equal<QueryParams<typeof capped>, QueryParams<typeof cappedTwin>> = true
 		const probeRows: Equal<QueryRow<typeof capped>, QueryRow<typeof cappedTwin>> = true
 		assert.ok(probeParams && probeIdentical && probeRows)
@@ -115,68 +119,67 @@ describe("the free comparison exports", function suite() {
 
 	test("free lt through .where: an interval-typed variable under an order comparison is refused", function intervalWall() {
 		const intervalUnderFreeLt = query(Ledger).rule((r) => {
-			const acct = r.var("acct")
-			const w = r.var("w")
+			const { id, active } = v(Account)
 			return (
 				r
-					.match(Account, { id: acct, active: w })
+					.match(Account, { id, active })
 					// @ts-expect-error — an interval-typed variable has no order; pointIn/allen are the interval predicates
-					.where(lt(w, 5n))
-					.select("acct")
+					.where(lt(active, 5n))
+					.find({ acct: id })
 			)
 		})
 		assert.equal(intervalUnderFreeLt.data.rules.length, 1)
 	})
 
-	test("free lt through .where: an unbound variable is refused (compile + construction)", function unboundWall() {
+	test("free lt through .where: an unbound variable is refused at construction (object identity is invisible to types — the boundness wall is runtime)", function unboundWall() {
+		// The scope.ts design theorem: TypeScript types cannot see object
+		// identity, so boundness (is this var positively bound by a relation
+		// atom of the rule) cannot be a compile pin — it moves to a
+		// construction-time wall alone. The old @ts-expect-error half dies with
+		// the name-keyed env; only the runtime throw survives.
 		assert.throws(function unboundVar() {
 			query(Ledger).rule((r) => {
-				const h = r.var("h")
-				const ghost = r.var("ghost")
-				return (
-					r
-						.match(Holder, { id: h })
-						// @ts-expect-error — "ghost" is bound by no relation atom of the rule
-						.where(lt(ghost, 5n))
-						.select("h")
-				)
+				const h = v(Holder)
+				const ghost = v(Holder)
+				return r
+					.match(Holder, { id: h.id })
+					.where(lt(ghost.id, 5n))
+					.find({ h: h.id })
 			})
-		}, /the variable ghost is not bound by a relation atom/)
+		}, /the variable Holder\.id is not bound by a relation atom/)
 	})
 
 	test("IR-identity golden: a rule written with free comparisons lowers to its method-spelling twin", function irGolden() {
 		const viaFree = query(Ledger).rule((r) => {
-			const acct = r.var("acct")
-			const h = r.var("h")
-			const b = r.var("b")
-			const w = r.var("w")
+			const { id, holder, balance, active } = v(Account)
 			return r
-				.match(Account, { id: acct, holder: h, balance: b, active: w })
-				.match(Holder, { id: h })
-				.where(and(gt(b, 0n), or(lt(b, r.param("cap")), eq(h, r.param("root")))))
-				.where(ne(h, 7n))
-				.where(ge(b, -5n))
-				.where(le(b, 100n))
-				.where(pointIn(r.param("at"), w))
-				.where(pointIn(3n, w))
-				.where(allen(w, ALLEN.before | ALLEN.meets, span(0n, 10n)))
-				.where(not(Account, { holder: h, balance: 99n }))
-				.select("acct")
+				.match(Account, { id, holder, balance, active })
+				.match(Holder, { id: holder })
+				.where(and(gt(balance, 0n), or(lt(balance, r.param("cap")), eq(holder, r.param("root")))))
+				.where(ne(holder, 7n))
+				.where(ge(balance, -5n))
+				.where(le(balance, 100n))
+				.where(pointIn(r.param("at"), active))
+				.where(pointIn(3n, active))
+				.where(allen(active, ALLEN.before | ALLEN.meets, span(0n, 10n)))
+				.where(not(Account, { holder, balance: 99n }))
+				.find({ acct: id })
 		})
-		const viaMethods = query(Ledger).rule((r) =>
-			r
-				.match(Account, { id: r.var("acct"), holder: r.var("h"), balance: r.var("b"), active: r.var("w") })
-				.match(Holder, { id: r.var("h") })
-				.where(r.and(r.gt(r.var("b"), 0n), r.or(r.lt(r.var("b"), r.param("cap")), r.eq(r.var("h"), r.param("root")))))
-				.where(r.ne(r.var("h"), 7n))
-				.where(r.ge(r.var("b"), -5n))
-				.where(r.le(r.var("b"), 100n))
-				.where(r.pointIn(r.param("at"), r.var("w")))
-				.where(r.pointIn(3n, r.var("w")))
-				.where(r.allen(r.var("w"), ALLEN.before | ALLEN.meets, span(0n, 10n)))
-				.where(r.not(Account, { holder: r.var("h"), balance: 99n }))
-				.select("acct")
-		)
+		const viaMethods = query(Ledger).rule((r) => {
+			const { id, holder, balance, active } = v(Account)
+			return r
+				.match(Account, { id, holder, balance, active })
+				.match(Holder, { id: holder })
+				.where(r.and(r.gt(balance, 0n), r.or(r.lt(balance, r.param("cap")), r.eq(holder, r.param("root")))))
+				.where(r.ne(holder, 7n))
+				.where(r.ge(balance, -5n))
+				.where(r.le(balance, 100n))
+				.where(r.pointIn(r.param("at"), active))
+				.where(r.pointIn(3n, active))
+				.where(r.allen(active, ALLEN.before | ALLEN.meets, span(0n, 10n)))
+				.where(r.not(Account, { holder, balance: 99n }))
+				.find({ acct: id })
+		})
 		const probeParams: Equal<QueryParams<typeof viaFree>, QueryParams<typeof viaMethods>> = true
 		const probeRows: Equal<QueryRow<typeof viaFree>, QueryRow<typeof viaMethods>> = true
 		assert.ok(probeParams && probeRows)

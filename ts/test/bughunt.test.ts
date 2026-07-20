@@ -33,7 +33,8 @@ import {
 	schema,
 	span,
 	str,
-	u64
+	u64,
+	v
 } from "#index.ts"
 import { lower } from "#lower.ts"
 import { native } from "#native.ts"
@@ -239,7 +240,12 @@ describe("marshal edges and lifecycle sanity against a real store", async functi
 		 */
 		assert.throws(
 			function inlineLiteralRefused() {
-				db.prepare(query(Theory).rule((r) => r.match(Txt, { id: r.var("i"), note: "\uD800" }).select("i")))
+				db.prepare(
+					query(Theory).rule((r) => {
+						const { id } = v(Txt)
+						return r.match(Txt, { id, note: "\uD800" }).find({ i: id })
+					})
+				)
 			},
 			/well-formed string/,
 			"the binding-literal spelling is refused"
@@ -247,18 +253,22 @@ describe("marshal edges and lifecycle sanity against a real store", async functi
 		assert.throws(
 			function whereLiteralRefused() {
 				db.prepare(
-					query(Theory).rule((r) =>
-						r
-							.match(Txt, { id: r.var("i"), note: r.var("n") })
-							.where(r.eq(r.var("n"), "\uD800"))
-							.select("i")
-					)
+					query(Theory).rule((r) => {
+						const { id, note } = v(Txt)
+						return r
+							.match(Txt, { id, note })
+							.where(r.eq(note, "\uD800"))
+							.find({ i: id })
+					})
 				)
 			},
 			/well-formed string/,
 			"the comparison-literal spelling is refused"
 		)
-		const byNote = query(Theory).rule((r) => r.match(Txt, { id: r.var("i"), note: r.param("note") }).select("i"))
+		const byNote = query(Theory).rule((r) => {
+			const { id } = v(Txt)
+			return r.match(Txt, { id, note: r.param("note") }).find({ i: id })
+		})
 		const prepared = db.prepare(byNote)
 		assert.throws(
 			function paramRefused() {
