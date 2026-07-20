@@ -4,7 +4,7 @@
 //! test pins the planted ring's hit and miss.
 
 use bumbledb::schema::SchemaDescriptor;
-use bumbledb::{Answers, AnswerValue, Db, Query, Value};
+use bumbledb::{AnswerValue, Answers, Db, Query, Value};
 
 use crate::families::bind_values;
 
@@ -50,6 +50,34 @@ fn rings_smoke_gate_agrees_on_every_family() {
     crate::scenarios::gate_scenario(&dir, &super::scenario_smoke(), 7)
         .expect("every rings family agrees with SQLite at smoke scale");
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The mechanical tuning law: the hand-tuned r2 twin actually removed
+/// the inflation — the pinned constant contains no Allen OR-chain — and
+/// it is still the counted fold.
+#[test]
+fn r2_tuned_twin_has_no_or_chain() {
+    assert!(
+        !super::HAND_R2.contains(" OR "),
+        "the tuned rendering must carry no Allen OR-chain"
+    );
+    assert!(
+        super::HAND_R2.contains("COUNT"),
+        "the tuned rendering is still the counted fold"
+    );
+}
+
+/// The tuned lane's placeholder row mirrors the canonical translation's
+/// exactly — same slots, same order — so both lanes bind identically.
+#[test]
+fn r2_tuned_param_slots_match_canonical() {
+    let canonical = crate::translate::translate(&super::temporal_ring(), super::schema(), &[])
+        .expect("r2 translates");
+    assert_eq!(
+        super::r2_tuned().params,
+        canonical.params,
+        "the tuned param slots mirror the canonical translation"
+    );
 }
 
 /// The construction theorem, asserted: each bomb's bipartite part is

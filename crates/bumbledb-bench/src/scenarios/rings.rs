@@ -206,6 +206,29 @@ fn temporal_ring() -> Query {
     })
 }
 
+/// r2's hand-tuned `SQLite` twin (the never-flatter-ourselves law): the
+/// canonical translation of [`temporal_ring`] renders each
+/// `Allen(INTERSECTS)` as the 9-basic endpoint-formula OR-chain; here
+/// each chain is replaced by the two-comparison half-open overlap
+/// `LS < RE AND RS < LE` — exactly INTERSECTS over half-open intervals
+/// (it excludes Before/After/Meets/MetBy and admits the other 9 basics;
+/// Meets has LE = RS, failing RS < LE). Every other byte is the
+/// canonical output. Written BY HAND from the captured canonical SQL,
+/// never regenerated; the no-` OR ` law and the param-slot mirror are
+/// asserted in `tests`, and semantic identity is proven by the same
+/// uncapped multiset oracle gate that guards every lane.
+const HAND_R2: &str = "SELECT COUNT(*) FROM (SELECT DISTINCT t0.\"src\" AS v0, t0.\"dst\" AS v1, t1.\"dst\" AS v2, t0.\"amount\" AS v3, t0.\"span_start\" AS v4_start, t0.\"span_end\" AS v4_end, t1.\"span_start\" AS v5_start, t1.\"span_end\" AS v5_end, t2.\"span_start\" AS v6_start, t2.\"span_end\" AS v6_end FROM \"Transfer\" AS t0, \"Transfer\" AS t1, \"Transfer\" AS t2 WHERE t0.\"dst\" = t1.\"src\" AND t1.\"dst\" = t2.\"src\" AND t0.\"src\" = t2.\"dst\" AND t0.\"src\" < t0.\"dst\" AND t0.\"src\" < t1.\"dst\" AND t0.\"amount\" >= ?1 AND (t0.\"span_start\" < t1.\"span_end\" AND t1.\"span_start\" < t0.\"span_end\") AND (t1.\"span_start\" < t2.\"span_end\" AND t2.\"span_start\" < t1.\"span_end\") AND (t2.\"span_start\" < t0.\"span_end\" AND t0.\"span_start\" < t2.\"span_end\")) HAVING COUNT(*) > 0";
+
+/// The tuned lane value for r2: [`HAND_R2`] with the canonical
+/// placeholder row (?1 = the amount threshold, param 0), mirrored
+/// exactly — asserted equal to the canonical `.params` in `tests`.
+fn r2_tuned() -> crate::translate::Translated {
+    crate::translate::Translated {
+        sql: HAND_R2.to_owned(),
+        params: vec![crate::translate::ParamSlot::Whole(ParamId(0))],
+    }
+}
+
 /// r3/r4 — the full triangle count over one bomb tier. The corpus
 /// theorem (`corpus::bomb`) makes the answer exactly 3 by construction.
 fn bomb_triangle(rel: RelationId) -> Query {
@@ -308,7 +331,7 @@ fn queries() -> Vec<ScenarioQuery> {
             query: temporal_ring,
             params: amount_params,
             about: "the ring + pairwise Allen INTERSECTS — the temporal-ring shape",
-            twin: Twin::Canonical,
+            twin: Twin::Tuned(r2_tuned),
             cap: Some(DEFAULT_CAP),
         },
         ScenarioQuery {
