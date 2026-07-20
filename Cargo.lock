@@ -79,7 +79,12 @@ name = "bumbledb-query"
 version = "0.1.0"
 dependencies = [
  "bumbledb",
+ "bumbledb-query-macros",
 ]
+
+[[package]]
+name = "bumbledb-query-macros"
+version = "0.1.0"
 
 [[package]]
 name = "bumbledb-theory"

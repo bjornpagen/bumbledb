@@ -11,8 +11,10 @@
 //! The runner drives `rustc` directly against the workspace's own build
 //! artifacts: this integration test lives in `target/…/deps`, so its
 //! parent directory holds the `bumbledb` rlib and the `bumbledb_query`
-//! proc-macro library the fixtures need — no second cargo build, no
-//! version skew.
+//! facade rlib the fixtures need — no second cargo build, no version
+//! skew. The `bumbledb_query_macros` proc-macro dylib resolves
+//! transitively through the `-L dependency=<deps>` flag: rustc loads an
+//! rlib's proc-macro dependency from the -L search paths.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -90,7 +92,7 @@ fn check_fixture(fixture: &Path, deps: &Path, out_dir: &Path) {
     let source = std::fs::read_to_string(fixture).expect("read fixture");
     let expected = expectation(&source, fixture);
     let bumbledb = newest_artifact(deps, "bumbledb", &["rlib"]);
-    let query_macro = newest_artifact(deps, "bumbledb_query", &["dylib", "so"]);
+    let query_facade = newest_artifact(deps, "bumbledb_query", &["rlib"]);
     let rustc = std::env::var("RUSTC").unwrap_or_else(|_| "rustc".to_owned());
     let output = Command::new(rustc)
         .arg("--edition=2021")
@@ -103,7 +105,7 @@ fn check_fixture(fixture: &Path, deps: &Path, out_dir: &Path) {
         .arg("--extern")
         .arg(format!("bumbledb={}", bumbledb.display()))
         .arg("--extern")
-        .arg(format!("bumbledb_query={}", query_macro.display()))
+        .arg(format!("bumbledb_query={}", query_facade.display()))
         .arg(fixture)
         .output()
         .expect("spawn rustc");
