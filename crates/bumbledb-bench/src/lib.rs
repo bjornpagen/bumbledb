@@ -25,6 +25,7 @@ pub(crate) mod fixture;
 pub mod harness;
 pub mod json;
 pub mod lanes;
+pub mod lawful;
 pub mod naive;
 pub mod poststate;
 pub mod querygen;
