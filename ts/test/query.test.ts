@@ -674,20 +674,60 @@ describe("the query surface against a real store", function suite() {
 		assert.deepStrictEqual(lowerQuery(first), lowerQuery(first), "lowering is stable per value too")
 	})
 
-	test("two mints never join: the name-collision join is unrepresentable", function nameCollision() {
-		// Two v(Account) batches mint two DISTINCT id variables. Placing both
-		// in one rule — the very spelling the name-keyed edition JOINED into
-		// one variable — now lowers to TWO var ids: identity is the object
-		// reference, so a name-collision join has no spelling.
-		const twoAccounts = query(Ledger).rule((r) => {
-			const first = v(Account)
-			const second = v(Account)
-			return r
-				.match(Account, { id: first.id, holder: first.holder })
-				.match(Account, { id: second.id, holder: second.holder })
-				.find({ a: first.id, b: second.id })
+	test("reference identity IS the join: one var value reused joins; two fresh mints never join", function referenceIdentityJoin() {
+		// Reusing ONE var value across binding positions IS the join: `h`, minted
+		// at Account.holder, placed again at Holder.id, unifies the two atoms —
+		// each account pairs with ITS OWN holder's name.
+		const joined = query(Ledger).rule((r) => {
+			const { id: acct, holder: h } = v(Account)
+			const { name } = v(Holder)
+			return r.match(Account, { id: acct, holder: h }).match(Holder, { id: h, name }).find({ acct, name })
 		})
-		const lowered = lowerQuery(twoAccounts)
+		// The two-mint twin: `hid` is a FRESH Holder.id variable, never unified
+		// with `h`, so the atoms cross-product — every account against every name.
+		const crossed = query(Ledger).rule((r) => {
+			const { id: acct, holder: h } = v(Account)
+			const { id: hid, name } = v(Holder)
+			return r.match(Account, { id: acct, holder: h }).match(Holder, { id: hid, name }).find({ acct, name })
+		})
+		const joinedRows = run(joined, {})
+		const byAccount = new Map(
+			joinedRows.map(function pair(row) {
+				return [row.acct, row.name] as const
+			})
+		)
+		assert.equal(joinedRows.length, 4, "the join answers each account with its own holder — one row per account")
+		assert.equal(byAccount.get(ids.adaChecking), "ada")
+		assert.equal(byAccount.get(ids.adaSavings), "ada")
+		assert.equal(byAccount.get(ids.graceSavings), "grace")
+		assert.equal(byAccount.get(ids.kurtChecking), "kurt")
+		assert.equal(
+			run(crossed, {}).length,
+			16,
+			"two fresh mints never join — 4 accounts × 4 holders is the cross product"
+		)
+		assert.notDeepStrictEqual(
+			lowerQuery(joined),
+			lowerQuery(crossed),
+			"reference reuse and two fresh mints lower to DIFFERENT IR"
+		)
+	})
+
+	test("the name-collision join is unrepresentable: same-named columns of two mints are unrelated variables", function nameCollision() {
+		// Two v(Parent) batches mint two DISTINCT `child` variables. Placing
+		// a.child and b.child in two atoms — the very spelling the name-keyed
+		// edition JOINED into one variable — now lowers to TWO var ids and
+		// cross-products at runtime: identity is the object reference, so a
+		// name-collision join has no spelling.
+		const twoParents = query(Ledger).rule((r) => {
+			const a = v(Parent)
+			const b = v(Parent)
+			return r
+				.match(Parent, { child: a.child, parent: a.parent })
+				.match(Parent, { child: b.child, parent: b.parent })
+				.find({ x: a.child, y: b.child })
+		})
+		const lowered = lowerQuery(twoParents)
 		const outputRule = lowered.predicates[lowered.output]?.rules[0]
 		assert.ok(outputRule !== undefined, "the output predicate carries the one rule")
 		const findVars = outputRule.finds.map(function idOf(entry) {
@@ -698,7 +738,38 @@ describe("the query surface against a real store", function suite() {
 		assert.notEqual(
 			findVars[0],
 			findVars[1],
-			"two same-coordinate mints are two var ids — the join by name is unrepresentable"
+			"two same-named mints are two var ids — the join by name is unrepresentable"
+		)
+		// And by rows: two Parent facts, two unrelated child variables → the
+		// full 2 × 2 cross product, never the 2-row diagonal a join would give.
+		assert.equal(run(twoParents, {}).length, 4, "same-named columns of two mints cross-product, never join")
+	})
+
+	test("find keys name the answer columns: renames are real", function renamesAreReal() {
+		// The find key IS the answer column — a rename is a real, fully typed
+		// key. `QueryRow` extends `{ renamed: bigint }` (the Equal-probe sees it),
+		// and the decoded row is keyed by the find name at runtime too.
+		const renamed = query(Ledger).rule((r) => {
+			const { id: h } = v(Holder)
+			return r.match(Holder, { id: h }).find({ renamed: h })
+		})
+		type RenamePin = Expect<Equal<QueryRow<typeof renamed>, { readonly renamed: bigint }>>
+		const renamePin: RenamePin = true
+		assert.ok(renamePin)
+		const renamedRows = run(renamed, {})
+		assert.equal(renamedRows.length, 4)
+		const probe = renamedRows[0]
+		assert.ok(probe !== undefined)
+		const typedProbe = probe satisfies { readonly renamed: bigint }
+		assert.equal(typeof typedProbe.renamed, "bigint")
+		assert.deepEqual(
+			sorted(
+				renamedRows.map(function renamedOf(row) {
+					return row.renamed
+				})
+			),
+			sorted([ids.ada, ids.grace, ids.kurt, ids.lone]),
+			"the row carries every holder id under the renamed key"
 		)
 	})
 
@@ -980,22 +1051,6 @@ describe("the query surface against a real store", function suite() {
 			return r.match(Holder, { id: h, rank: z }).match(Account, { opened: o }).where(r.eq(z, o)).find({ h })
 		})
 		assert.equal(bareBareEq.data.rules.length, 1)
-
-		// (e) The find key IS the answer column — a rename is a real, fully
-		// typed key. `QueryRow` extends `{ renamed: bigint }` (satisfies probe).
-		const renamed = query(Ledger).rule((r) => {
-			const { id: h } = v(Holder)
-			return r.match(Holder, { id: h }).find({ renamed: h })
-		})
-		type RenamePin = Expect<Equal<QueryRow<typeof renamed>, { readonly renamed: bigint }>>
-		const renamePin: RenamePin = true
-		assert.ok(renamePin)
-		const renamedRows = run(renamed, {})
-		assert.equal(renamedRows.length, 4)
-		const probe = renamedRows[0]
-		assert.ok(probe !== undefined)
-		const typedProbe = probe satisfies { readonly renamed: bigint }
-		assert.equal(typeof typedProbe.renamed, "bigint")
 
 		// An interval var under a non-pointIn comparison — the interval-vs-scalar wall.
 		const intervalUnderOrder = query(Ledger).rule((r) => {
