@@ -1,5 +1,7 @@
 use super::*;
 
+use crate::lanes::writes::DurabilityLane;
+
 fn argv(args: &[&str]) -> Vec<String> {
     args.iter().map(ToString::to_string).collect()
 }
@@ -148,6 +150,141 @@ fn sweep_commit_parses_its_knobs() {
 }
 
 #[test]
+fn storage_parses_the_lane_flags() {
+    let cmd = parse(&argv(&[
+        "storage",
+        "--scales",
+        "S,M,L",
+        "--seed",
+        "7",
+        "--dir",
+        "/tmp/x",
+        "--churn-dir",
+        "/tmp/churn",
+        "--out",
+        "artifacts",
+    ]))
+    .expect("parses");
+    assert_eq!(
+        cmd,
+        Cmd::Storage(StorageArgs {
+            scales: vec![Scale::S, Scale::M, Scale::L],
+            seed: 7,
+            dir: PathBuf::from("/tmp/x"),
+            churn_dir: Some(PathBuf::from("/tmp/churn")),
+            out: Some(PathBuf::from("artifacts")),
+        })
+    );
+    // Bare `storage` is the defaults.
+    assert_eq!(
+        parse(&argv(&["storage"])),
+        Ok(Cmd::Storage(StorageArgs::default()))
+    );
+    assert_eq!(StorageArgs::default().scales, vec![Scale::S]);
+    // A bad scale token inside the list is named.
+    let err = parse(&argv(&["storage", "--scales", "S,XXL"])).unwrap_err();
+    assert!(err.contains("XXL"), "{err}");
+    let err = parse(&argv(&["storage", "--scales", ""])).unwrap_err();
+    assert!(err.contains("--scales"), "{err}");
+}
+
+#[test]
+fn writes_parses_the_lane_flags() {
+    let cmd = parse(&argv(&[
+        "writes",
+        "--scale",
+        "M",
+        "--seed",
+        "9",
+        "--dir",
+        "/tmp/w",
+        "--lanes",
+        "durable,nosync",
+        "--batches",
+        "1,10,100,1000",
+        "--samples",
+        "4",
+        "--out",
+        "artifacts",
+    ]))
+    .expect("parses");
+    assert_eq!(
+        cmd,
+        Cmd::Writes(WritesArgs {
+            scale: Scale::M,
+            seed: 9,
+            dir: PathBuf::from("/tmp/w"),
+            lanes: vec![DurabilityLane::Durable, DurabilityLane::NoSync],
+            batches: vec![1, 10, 100, 1000],
+            samples: Some(4),
+            out: Some(PathBuf::from("artifacts")),
+        })
+    );
+    // Bare `writes` is the defaults: NoSync FIRST (the durable lane's
+    // fsync shadow lands after every nosync sample), the batch ladder.
+    assert_eq!(
+        parse(&argv(&["writes"])),
+        Ok(Cmd::Writes(WritesArgs::default()))
+    );
+    assert_eq!(
+        WritesArgs::default().lanes,
+        vec![DurabilityLane::NoSync, DurabilityLane::Durable]
+    );
+    assert_eq!(WritesArgs::default().batches, vec![1, 10, 100, 1000]);
+    // A zero batch is rejected, naming the flag.
+    let err = parse(&argv(&["writes", "--batches", "0"])).unwrap_err();
+    assert!(err.contains("--batches"), "{err}");
+    // An unknown lane token is named.
+    let err = parse(&argv(&["writes", "--lanes", "durable,paranoid"])).unwrap_err();
+    assert!(err.contains("paranoid"), "{err}");
+}
+
+#[test]
+fn curves_parses_the_lane_flags() {
+    let cmd = parse(&argv(&[
+        "curves",
+        "--scales",
+        "S,M",
+        "--families",
+        "triangle,point",
+        "--seed",
+        "3",
+        "--dir",
+        "/tmp/c",
+        "--samples",
+        "8",
+        "--cap-ms",
+        "5000",
+        "--warmth",
+        "--out",
+        "artifacts",
+    ]))
+    .expect("parses");
+    assert_eq!(
+        cmd,
+        Cmd::Curves(CurvesArgs {
+            scales: vec![Scale::S, Scale::M],
+            families: Some(vec!["triangle".to_owned(), "point".to_owned()]),
+            seed: 3,
+            dir: PathBuf::from("/tmp/c"),
+            samples: Some(8),
+            cap_ms: 5000,
+            warmth: true,
+            out: Some(PathBuf::from("artifacts")),
+        })
+    );
+    // Bare `curves` is the defaults: 30 s cap, no warmth panel.
+    assert_eq!(
+        parse(&argv(&["curves"])),
+        Ok(Cmd::Curves(CurvesArgs::default()))
+    );
+    assert_eq!(CurvesArgs::default().cap_ms, 30_000);
+    assert!(!CurvesArgs::default().warmth);
+    let err = parse(&argv(&["curves", "--cap-ms", "banana"])).unwrap_err();
+    assert!(err.contains("banana"), "{err}");
+}
+
+#[test]
 fn garbage_names_the_offending_token() {
     let err = parse(&argv(&["frobnicate"])).unwrap_err();
     assert!(err.contains("frobnicate"), "{err}");
@@ -167,6 +304,9 @@ fn help_text_names_the_binary_and_version() {
         "bench",
         "trace",
         "sweep-commit",
+        "storage",
+        "writes",
+        "curves",
         "queries",
     ] {
         assert!(text.contains(command), "{command}");

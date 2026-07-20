@@ -2,7 +2,7 @@
 //! lives in the library. Exit codes: 0 ok / gates won; 1 verify mismatch
 //! or gate loss; 2 usage or refusal (each refusal names the remedy).
 
-use bumbledb_bench::{cli, driver, families};
+use bumbledb_bench::{cli, driver, families, lanes};
 
 fn dispatch(cmd: &cli::Cmd) -> Result<i32, String> {
     match cmd {
@@ -22,6 +22,9 @@ fn dispatch(cmd: &cli::Cmd) -> Result<i32, String> {
         cli::Cmd::Scenarios(args) => driver::cmd_scenarios(args),
         cli::Cmd::SweepCommit(args) => driver::cmd_sweep_commit(args).map(|()| 0),
         cli::Cmd::Merge { dirs } => driver::cmd_merge(dirs),
+        cli::Cmd::Storage(args) => lanes::storage::run(args),
+        cli::Cmd::Writes(args) => lanes::writes::run(args),
+        cli::Cmd::Curves(args) => lanes::curves::run(args),
     }
 }
 

@@ -1,9 +1,12 @@
 use std::path::PathBuf;
 
 use crate::corpus_gen::Scale;
+use crate::lanes::writes::DurabilityLane;
 use crate::verify::DEFAULT_RANDOM_CASES;
 
-use super::{BenchArgs, Cmd, CorpusArgs, ScenarioArgs, SweepArgs};
+use super::{
+    BenchArgs, Cmd, CorpusArgs, CurvesArgs, ScenarioArgs, StorageArgs, SweepArgs, WritesArgs,
+};
 
 struct Tokens<'a> {
     args: &'a [String],
@@ -29,6 +32,15 @@ fn parse_scale(raw: &str) -> Result<Scale, String> {
         "L" => Ok(Scale::L),
         other => Err(format!("unknown scale `{other}` (expected S, M, or L)")),
     }
+}
+
+/// A comma-separated scale list; the error names the bad token, an
+/// empty list is rejected.
+fn parse_scale_list(flag: &str, raw: &str) -> Result<Vec<Scale>, String> {
+    if raw.is_empty() {
+        return Err(format!("`{flag}` needs at least one scale"));
+    }
+    raw.split(',').map(parse_scale).collect()
 }
 
 fn parse_u64(flag: &str, raw: &str) -> Result<u64, String> {
@@ -198,6 +210,96 @@ fn parse_sweep_commit(tokens: &mut Tokens<'_>) -> Result<Cmd, String> {
     Ok(Cmd::SweepCommit(args))
 }
 
+fn parse_storage(tokens: &mut Tokens<'_>) -> Result<Cmd, String> {
+    let mut args = StorageArgs::default();
+    while let Some(flag) = tokens.next() {
+        let flag = flag.to_owned();
+        match flag.as_str() {
+            "--scales" => args.scales = parse_scale_list(&flag, tokens.value(&flag)?)?,
+            "--seed" => args.seed = parse_u64(&flag, tokens.value(&flag)?)?,
+            "--dir" => args.dir = PathBuf::from(tokens.value(&flag)?),
+            "--churn-dir" => args.churn_dir = Some(PathBuf::from(tokens.value(&flag)?)),
+            "--out" => args.out = Some(PathBuf::from(tokens.value(&flag)?)),
+            _ => return Err(unknown("storage", &flag)),
+        }
+    }
+    Ok(Cmd::Storage(args))
+}
+
+/// A comma-separated durability-lane list; unknown lane tokens are
+/// named, an empty list is rejected.
+fn parse_lane_list(flag: &str, raw: &str) -> Result<Vec<DurabilityLane>, String> {
+    if raw.is_empty() {
+        return Err(format!("`{flag}` needs at least one lane"));
+    }
+    raw.split(',')
+        .map(|token| match token {
+            "durable" => Ok(DurabilityLane::Durable),
+            "nosync" => Ok(DurabilityLane::NoSync),
+            other => Err(format!(
+                "unknown lane `{other}` (expected durable or nosync)"
+            )),
+        })
+        .collect()
+}
+
+/// A comma-separated batch-size list; zero and empty are rejected.
+fn parse_batch_list(flag: &str, raw: &str) -> Result<Vec<u32>, String> {
+    if raw.is_empty() {
+        return Err(format!("`{flag}` needs at least one batch size"));
+    }
+    raw.split(',')
+        .map(|token| {
+            let batch = parse_u32(flag, token)?;
+            if batch == 0 {
+                return Err(format!(
+                    "`{flag}` rejects 0 — a commit needs at least one row"
+                ));
+            }
+            Ok(batch)
+        })
+        .collect()
+}
+
+fn parse_writes(tokens: &mut Tokens<'_>) -> Result<Cmd, String> {
+    let mut args = WritesArgs::default();
+    while let Some(flag) = tokens.next() {
+        let flag = flag.to_owned();
+        match flag.as_str() {
+            "--scale" => args.scale = parse_scale(tokens.value(&flag)?)?,
+            "--seed" => args.seed = parse_u64(&flag, tokens.value(&flag)?)?,
+            "--dir" => args.dir = PathBuf::from(tokens.value(&flag)?),
+            "--lanes" => args.lanes = parse_lane_list(&flag, tokens.value(&flag)?)?,
+            "--batches" => args.batches = parse_batch_list(&flag, tokens.value(&flag)?)?,
+            "--samples" => args.samples = Some(parse_u32(&flag, tokens.value(&flag)?)?),
+            "--out" => args.out = Some(PathBuf::from(tokens.value(&flag)?)),
+            _ => return Err(unknown("writes", &flag)),
+        }
+    }
+    Ok(Cmd::Writes(args))
+}
+
+fn parse_curves(tokens: &mut Tokens<'_>) -> Result<Cmd, String> {
+    let mut args = CurvesArgs::default();
+    while let Some(flag) = tokens.next() {
+        let flag = flag.to_owned();
+        match flag.as_str() {
+            "--scales" => args.scales = parse_scale_list(&flag, tokens.value(&flag)?)?,
+            "--families" => {
+                args.families = Some(tokens.value(&flag)?.split(',').map(str::to_owned).collect());
+            }
+            "--seed" => args.seed = parse_u64(&flag, tokens.value(&flag)?)?,
+            "--dir" => args.dir = PathBuf::from(tokens.value(&flag)?),
+            "--samples" => args.samples = Some(parse_u32(&flag, tokens.value(&flag)?)?),
+            "--cap-ms" => args.cap_ms = parse_u64(&flag, tokens.value(&flag)?)?,
+            "--warmth" => args.warmth = true,
+            "--out" => args.out = Some(PathBuf::from(tokens.value(&flag)?)),
+            _ => return Err(unknown("curves", &flag)),
+        }
+    }
+    Ok(Cmd::Curves(args))
+}
+
 /// Parses one invocation.
 ///
 /// # Errors
@@ -224,6 +326,9 @@ pub fn parse(args: &[String]) -> Result<Cmd, String> {
         "trace" => parse_trace(&mut tokens),
         "scenarios" => parse_scenarios(&mut tokens),
         "sweep-commit" => parse_sweep_commit(&mut tokens),
+        "storage" => parse_storage(&mut tokens),
+        "writes" => parse_writes(&mut tokens),
+        "curves" => parse_curves(&mut tokens),
         "merge" => {
             let mut dirs = Vec::new();
             while let Some(token) = tokens.next() {

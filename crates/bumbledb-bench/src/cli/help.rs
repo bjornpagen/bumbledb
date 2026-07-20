@@ -23,6 +23,12 @@ pub fn help() -> String {
          \x20          touched-parent count, delta vs key-sorted probe order\n\
          \x20          (ephemeral windowed twins; needs --features obs)\n\
          \x20 merge    min-of-runs table from N run dirs' report.json\n\
+         \x20 storage  on-disk bytes per corpus scale, both engines\n\
+         \x20          (report-class; no timing)\n\
+         \x20 writes   write/commit/delete throughput ladder across\n\
+         \x20          durability lanes (report-class)\n\
+         \x20 curves   scale-curve runner + cold/warm/memoized panel\n\
+         \x20          (report-class)\n\
          \x20 queries  print the versioned query list (QUERIES.md)\n\
          \x20 help     print this text\n\
          \n\
@@ -63,6 +69,33 @@ pub fn help() -> String {
          \x20 --samples N     commits per (size, order) cell (default 8, max 48)\n\
          \x20 --seed N        draw seed                (default 1)\n\
          \x20 --dir PATH      scratch root             (default bench-data)\n\
+         \n\
+         STORAGE:\n\
+         \x20 --scales S,M,L  corpus scales            (default S)\n\
+         \x20 --seed N        corpus seed              (default 1)\n\
+         \x20 --dir PATH      corpus cache root        (default bench-data)\n\
+         \x20 --churn-dir PATH  scratch root for the churn ladder (default off)\n\
+         \x20 --out PATH      artifact dir (default bench-out/<timestamp>-storage)\n\
+         \n\
+         WRITES:\n\
+         \x20 --scale S|M|L   corpus scale             (default S)\n\
+         \x20 --seed N        corpus seed              (default 1)\n\
+         \x20 --dir PATH      scratch root             (default bench-data)\n\
+         \x20 --lanes a,b     durability lanes, run order: durable, nosync\n\
+         \x20                 (default nosync,durable — fsync shadows last)\n\
+         \x20 --batches a,b   rows per commit          (default 1,10,100,1000)\n\
+         \x20 --samples N     measured samples per cell\n\
+         \x20 --out PATH      artifact dir (default bench-out/<timestamp>-writes)\n\
+         \n\
+         CURVES:\n\
+         \x20 --scales S,M,L  corpus scales            (default S)\n\
+         \x20 --families a,b  run only these families  (default the full roster)\n\
+         \x20 --seed N        corpus seed              (default 1)\n\
+         \x20 --dir PATH      corpus cache root        (default bench-data)\n\
+         \x20 --samples N     measured samples per point\n\
+         \x20 --cap-ms N      per-sample SQLite wall-clock cap (default 30000)\n\
+         \x20 --warmth        add the cold/warm/memoized panel\n\
+         \x20 --out PATH      artifact dir (default bench-out/<timestamp>-curves)\n\
          \n\
          EXIT CODES: 0 ok / gate won; 1 verify mismatch, store findings, or\n\
          gate loss; 2 usage.\n",

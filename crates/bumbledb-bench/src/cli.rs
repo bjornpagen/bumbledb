@@ -5,6 +5,7 @@
 use std::path::PathBuf;
 
 use crate::corpus_gen::Scale;
+use crate::lanes::writes::DurabilityLane;
 
 mod help;
 mod parse;
@@ -84,6 +85,15 @@ pub enum Cmd {
     SweepCommit(SweepArgs),
     /// Merge N run directories' `report.json` into a min-of-runs table.
     Merge { dirs: Vec<PathBuf> },
+    /// The storage metric lane: on-disk bytes per corpus scale, both
+    /// engines (report-class; no timing).
+    Storage(StorageArgs),
+    /// The writes metric lane: write/commit/delete throughput ladder
+    /// across durability lanes (report-class).
+    Writes(WritesArgs),
+    /// The curves metric lane: scale-curve runner + the
+    /// cold/warm/memoized panel (report-class).
+    Curves(CurvesArgs),
 }
 
 /// `sweep-commit`'s knobs. No scale flag: the sweep owns its ambient
@@ -131,6 +141,95 @@ impl Default for ScenarioArgs {
             dir: PathBuf::from("bench-data"),
             only: None,
             samples: None,
+            out: None,
+        }
+    }
+}
+
+/// `storage`'s knobs ([`crate::lanes::storage`]). `Scale::Tiny` stays a
+/// test-injection point through this struct, never a CLI token.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StorageArgs {
+    /// Corpus scales, in run order.
+    pub scales: Vec<Scale>,
+    pub seed: u64,
+    pub dir: PathBuf,
+    /// Scratch root for the churn ladder; `None` = skip churn.
+    pub churn_dir: Option<PathBuf>,
+    pub out: Option<PathBuf>,
+}
+
+impl Default for StorageArgs {
+    fn default() -> Self {
+        Self {
+            scales: vec![Scale::S],
+            seed: 1,
+            dir: PathBuf::from("bench-data"),
+            churn_dir: None,
+            out: None,
+        }
+    }
+}
+
+/// `writes`' knobs ([`crate::lanes::writes`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WritesArgs {
+    pub scale: Scale,
+    pub seed: u64,
+    pub dir: PathBuf,
+    /// Durability lanes, in run order. `NoSync` first by default: the
+    /// durable lane's fsync shadow must land after every nosync sample
+    /// (the write-order pin, `driver/write_families.rs`).
+    pub lanes: Vec<DurabilityLane>,
+    /// Rows-per-commit ladder; zero is rejected at parse time.
+    pub batches: Vec<u32>,
+    /// Measured samples per cell; `None` = the lane default.
+    pub samples: Option<u32>,
+    pub out: Option<PathBuf>,
+}
+
+impl Default for WritesArgs {
+    fn default() -> Self {
+        Self {
+            scale: Scale::S,
+            seed: 1,
+            dir: PathBuf::from("bench-data"),
+            lanes: vec![DurabilityLane::NoSync, DurabilityLane::Durable],
+            batches: vec![1, 10, 100, 1000],
+            samples: None,
+            out: None,
+        }
+    }
+}
+
+/// `curves`' knobs ([`crate::lanes::curves`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CurvesArgs {
+    /// Corpus scales, in run order.
+    pub scales: Vec<Scale>,
+    /// Selected family names; `None` = the full lane roster.
+    pub families: Option<Vec<String>>,
+    pub seed: u64,
+    pub dir: PathBuf,
+    /// Measured samples per point; `None` = the lane default.
+    pub samples: Option<u32>,
+    /// The DNF cap: per-sample `SQLite` wall-clock bound, milliseconds.
+    pub cap_ms: u64,
+    /// Add the cold/warm/memoized panel.
+    pub warmth: bool,
+    pub out: Option<PathBuf>,
+}
+
+impl Default for CurvesArgs {
+    fn default() -> Self {
+        Self {
+            scales: vec![Scale::S],
+            families: None,
+            seed: 1,
+            dir: PathBuf::from("bench-data"),
+            samples: None,
+            cap_ms: 30_000,
+            warmth: false,
             out: None,
         }
     }
