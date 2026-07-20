@@ -5,7 +5,10 @@ use crate::corpus_gen::{GenConfig, Scale, Sizes};
 use crate::storemode::StoreMode;
 
 use super::engines::{self, OursLane, SqliteSync};
+use super::lanes;
 use super::ops::{self, ChurnConfig, Mix};
+use super::report::Counters;
+use super::run;
 use super::verify_end;
 
 fn scratch(tag: &str) -> std::path::PathBuf {
@@ -328,4 +331,158 @@ fn churn_validate_refuses_bad_configs() {
         ops::validate(&good, &past_the_floor).is_err(),
         "2 x 600 > Tiny's 1024 postings"
     );
+}
+
+/// The probe registry's names, in registry order — every sample point
+/// must carry exactly these.
+const PROBE_NAMES: [&str; 3] = ["churn_point", "churn_balance", "churn_window"];
+
+/// The shape every driven lane must share: samples exactly at the
+/// stride's cycle boundaries, three probes named as the registry, and
+/// positive observables at every point.
+fn assert_series_shape(series: &super::report::RunSeries, cycles: &[u64]) {
+    for lane in &series.lanes {
+        let sampled: Vec<u64> = lane.samples.iter().map(|sample| sample.cycle).collect();
+        assert_eq!(sampled, cycles, "{}: samples land on the stride", lane.lane);
+        for sample in &lane.samples {
+            let names: Vec<&str> = sample
+                .probes
+                .iter()
+                .map(|probe| probe.name.as_str())
+                .collect();
+            assert_eq!(names, PROBE_NAMES, "{}: the probe registry", lane.lane);
+            assert!(sample.disk_bytes > 0, "{}: disk_bytes > 0", lane.lane);
+            assert!(
+                sample.commits_per_sec > 0.0,
+                "{}: commits_per_sec > 0",
+                lane.lane
+            );
+        }
+    }
+}
+
+/// The full "steady" run at smoke scale: three lanes in registry order,
+/// the sample stride, the probe registry at every point, the engine
+/// counters on the right lanes, and the maintenance ledger — nonzero
+/// somewhere on the maint lane (`vacuum_every` 2 guarantees it), zero
+/// everywhere else.
+#[test]
+fn churn_run_steady_smoke_produces_the_full_series() {
+    let cfg = ChurnConfig::smoke(1);
+    let dir = scratch("run-steady");
+    let spec = &lanes::all()[0];
+    assert_eq!(spec.name, "steady");
+    let series = run::run_spec(spec, &cfg, &dir).expect("the steady run drives");
+    let labels: Vec<&str> = series.lanes.iter().map(|lane| lane.lane.as_str()).collect();
+    assert_eq!(labels, ["ours-durable", "sqlite-bare", "sqlite-maint"]);
+    assert_series_shape(&series, &[3, 6]);
+    let ours = &series.lanes[0];
+    assert_eq!(ours.engine, super::report::Engine::Bumbledb);
+    for sample in &ours.samples {
+        let Counters::Ours {
+            generation,
+            id_high_water,
+        } = sample.counters
+        else {
+            panic!("the ours lane carries ours counters");
+        };
+        assert!(id_high_water > 1023, "fresh mints moved the high-water");
+        assert!(generation > 0, "committed cycles moved the generation");
+        assert_eq!(sample.maintenance_ns, 0, "ours never maintains");
+    }
+    for lane in &series.lanes[1..] {
+        assert_eq!(lane.engine, super::report::Engine::Sqlite);
+        for sample in &lane.samples {
+            let Counters::Sqlite { page_count, .. } = sample.counters else {
+                panic!("a sqlite lane carries sqlite counters");
+            };
+            assert!(page_count > 0, "{}: a loaded store has pages", lane.lane);
+        }
+    }
+    assert!(
+        series.lanes[2]
+            .samples
+            .iter()
+            .any(|sample| sample.maintenance_ns > 0),
+        "vacuum_every 2 guarantees maintenance inside every maint window"
+    );
+    assert!(
+        series.lanes[1]
+            .samples
+            .iter()
+            .all(|sample| sample.maintenance_ns == 0),
+        "the bare lane never maintains"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The "nosync" matched pair at smoke scale: the ephemeral minter and
+/// its `synchronous=OFF` twin drive to Ok — the end gate passing IS the
+/// value-identity claim.
+#[test]
+fn churn_run_nosync_smoke_agrees() {
+    let cfg = ChurnConfig::smoke(2);
+    let dir = scratch("run-nosync");
+    let spec = &lanes::all()[1];
+    assert_eq!(spec.name, "nosync");
+    let series = run::run_spec(spec, &cfg, &dir).expect("the nosync twins agree end to end");
+    let labels: Vec<&str> = series.lanes.iter().map(|lane| lane.lane.as_str()).collect();
+    assert_eq!(labels, ["ours-ephemeral", "sqlite-nosync"]);
+    assert_series_shape(&series, &[3, 6]);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The "delete-heavy" run at smoke scale: two lanes agree end to end,
+/// and the monotone burn is EXACT — 512 mints per cycle for 4 cycles
+/// over the initial high-water of 1023.
+#[test]
+fn churn_run_delete_heavy_smoke_agrees() {
+    let cfg = ChurnConfig {
+        cycles: 4,
+        sample_every: 2,
+        ..ChurnConfig::smoke(3)
+    };
+    let dir = scratch("run-delete-heavy");
+    let spec = &lanes::all()[2];
+    assert_eq!(spec.name, "delete-heavy");
+    let series = run::run_spec(spec, &cfg, &dir).expect("the delete-heavy run drives");
+    assert_eq!(series.lanes.len(), 2, "one minter, one twin");
+    assert_series_shape(&series, &[2, 4]);
+    let last = series.lanes[0].samples.last().expect("a final sample");
+    let Counters::Ours { id_high_water, .. } = last.counters else {
+        panic!("the ours lane carries ours counters");
+    };
+    assert_eq!(
+        id_high_water,
+        1023 + 2048,
+        "the monotone burn is exact: 4 cycles x 512 mints over the initial 1023"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The registry covers the five mandated lanes in exactly three rows,
+/// under unique run names.
+#[test]
+fn churn_registry_covers_the_mandated_lanes() {
+    let specs = lanes::all();
+    assert_eq!(specs.len(), 3, "three rows cover the five mandated lanes");
+    let mut labels = std::collections::BTreeSet::new();
+    let mut names = std::collections::BTreeSet::new();
+    for spec in specs {
+        assert!(names.insert(spec.name), "spec names are unique");
+        labels.insert(lanes::ours_label(spec.ours));
+        for kind in spec.sqlite {
+            labels.insert(kind.label());
+        }
+    }
+    let mandated: std::collections::BTreeSet<&str> = [
+        "ours-durable",
+        "ours-ephemeral",
+        "sqlite-bare",
+        "sqlite-maint",
+        "sqlite-nosync",
+    ]
+    .into_iter()
+    .collect();
+    assert_eq!(labels, mandated, "the five mandated lanes, exactly");
 }
