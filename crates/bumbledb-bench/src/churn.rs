@@ -24,12 +24,16 @@
 //! - [`probes`] — the pinned read probes whose per-sample p50 is the
 //!   degradation curve's y-axis: exact IR, stationary draws, and the
 //!   per-sample oracle gate carried by type.
+//! - [`report`] — the time-series report artifact (`churn_schema: 1`):
+//!   cycle → sample per lane, hand-rolled JSON + markdown, pinned by a
+//!   parse round-trip.
 //! - [`verify_end`] — the three-way end gate: model vs engine vs
 //!   `SQLite` posting multisets, then the store sweeper.
 
 pub mod engines;
 pub mod ops;
 pub mod probes;
+pub mod report;
 pub mod verify_end;
 
 #[cfg(test)]
