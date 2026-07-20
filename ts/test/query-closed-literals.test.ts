@@ -36,7 +36,7 @@ import { native } from "#native.ts"
 import type { Query, QueryParams, QueryRow } from "#query/lower.ts"
 import { lowerQuery, query } from "#query/lower.ts"
 import { decodeAnswers, wireParams } from "#query/run.ts"
-import type { ParamsRecord } from "#query/scope.ts"
+import { v, type ParamsRecord } from "#query/scope.ts"
 import { relation } from "#relation.ts"
 import { schema } from "#schema.ts"
 import { contained } from "#statements.ts"
@@ -115,7 +115,7 @@ describe("query literals, params & membership arrays over closed references", fu
 		const rows = native.preparedExecute(prepared.prepared, snap, wireParams(q.data.params, params))
 		native.snapshotClose(snap)
 		native.preparedClose(prepared.prepared)
-		return decodeAnswers<Row>(q.data.select, rows)
+		return decodeAnswers<Row>(q.data.finds, rows)
 	}
 
 	/** Projects the `i` column of an answer set, sorted. */
@@ -128,7 +128,10 @@ describe("query literals, params & membership arrays over closed references", fu
 	}
 
 	test("a handle-name literal matches, and lowers to the EXACT program the old bigint spelling produced", function nameLiteral() {
-		const crits = query(Oncall).rule((r) => r.match(Incident, { id: r.var("i"), sev: "Crit" }).select("i"))
+		const crits = query(Oncall).rule(function rule(r) {
+			const inc = v(Incident)
+			return r.match(Incident, { id: inc.id, sev: "Crit" }).find({ i: inc.id })
+		})
 		// The lowering golden: "Crit" translates to declaration-order id 2n
 		// and crosses tagged u64 — the wire program is the old `sev: 2n`
 		// spelling's program, position for position (queries cross ids,
@@ -162,12 +165,14 @@ describe("query literals, params & membership arrays over closed references", fu
 	})
 
 	test("a membership ARRAY lowers byte-identical to the same set spelled r.inSet, and answers identically", function membershipArray() {
-		const viaArray = query(Oncall).rule((r) =>
-			r.match(Incident, { id: r.var("i"), sev: ["Crit", "Fatal"] }).select("i")
-		)
-		const viaInSet = query(Oncall).rule((r) =>
-			r.match(Incident, { id: r.var("i"), sev: r.inSet("members") }).select("i")
-		)
+		const viaArray = query(Oncall).rule(function rule(r) {
+			const inc = v(Incident)
+			return r.match(Incident, { id: inc.id, sev: ["Crit", "Fatal"] }).find({ i: inc.id })
+		})
+		const viaInSet = query(Oncall).rule(function rule(r) {
+			const inc = v(Incident)
+			return r.match(Incident, { id: inc.id, sev: r.inSet("members") }).find({ i: inc.id })
+		})
 		// The wire-program golden, BYTE-compared: one paramSet term over the
 		// one dense ParamId — the array IS the existing set/word-set form,
 		// its members folded by the SDK at execute.
@@ -199,7 +204,10 @@ describe("query literals, params & membership arrays over closed references", fu
 	})
 
 	test("a param anchored at a closed field types as the union and translates name → id at execute", function namedParam() {
-		const bySev = query(Oncall).rule((r) => r.match(Incident, { id: r.var("i"), sev: r.param("s") }).select("i"))
+		const bySev = query(Oncall).rule(function rule(r) {
+			const inc = v(Incident)
+			return r.match(Incident, { id: inc.id, sev: r.param("s") }).find({ i: inc.id })
+		})
 		type ParamPin = Expect<Equal<QueryParams<typeof bySev>, { readonly s: "Info" | "Warn" | "Crit" | "Fatal" }>>
 		// The same rows the 0.3.0 twin answered when executed with { s: 2n }.
 		assert.deepEqual(incidents(run(bySev, { s: "Crit" })), [3n, 5n])
@@ -217,12 +225,13 @@ describe("query literals, params & membership arrays over closed references", fu
 	})
 
 	test("eq against a closed-bound var takes the handle union on the literal side", function eqRhs() {
-		const fatal = query(Oncall).rule((r) =>
-			r
-				.match(Incident, { id: r.var("i"), sev: r.var("k") })
-				.where(r.eq(r.var("k"), "Fatal"))
-				.select("i")
-		)
+		const fatal = query(Oncall).rule(function rule(r) {
+			const inc = v(Incident)
+			return r
+				.match(Incident, { id: inc.id, sev: inc.sev })
+				.where(r.eq(inc.sev, "Fatal"))
+				.find({ i: inc.id })
+		})
 		assert.deepEqual(incidents(run(fatal, {})), [4n])
 		type RowPin = Expect<Equal<QueryRow<typeof fatal>, { readonly i: bigint }>>
 		const pins: [RowPin] = [true]
@@ -232,33 +241,56 @@ describe("query literals, params & membership arrays over closed references", fu
 	test("two vocabularies sharing a handle name overlap exactly on the shared literal (structural doctrine)", function sharedLiteral() {
 		// "Crit" is a handle of BOTH Sev and Priority: the one literal is
 		// legal at either field, and each lowers through its OWN roster.
-		const sevCrit = query(Oncall).rule((r) => r.match(Incident, { id: r.var("i"), sev: "Crit" }).select("i"))
-		const priCrit = query(Oncall).rule((r) => r.match(Incident, { id: r.var("i"), pri: "Crit" }).select("i"))
+		const sevCrit = query(Oncall).rule(function rule(r) {
+			const inc = v(Incident)
+			return r.match(Incident, { id: inc.id, sev: "Crit" }).find({ i: inc.id })
+		})
+		const priCrit = query(Oncall).rule(function rule(r) {
+			const inc = v(Incident)
+			return r.match(Incident, { id: inc.id, pri: "Crit" }).find({ i: inc.id })
+		})
 		assert.deepEqual(incidents(run(sevCrit, {})), [3n, 5n])
 		assert.deepEqual(incidents(run(priCrit, {})), [3n, 4n], "Priority's Crit is id 0 — its own declaration order")
 		// "Low" is Priority-only: on the Sev side it is a compile error AND
 		// a lowering refusal (the roster judges; the directive is real).
 		assert.throws(function crossVocabulary() {
-			// @ts-expect-error — "Low" is not in Sev's handle union (cross-vocabulary literals are unwritable)
-			lowerQuery(query(Oncall).rule((r) => r.match(Incident, { id: r.var("i"), sev: "Low" }).select("i")))
+			lowerQuery(
+				query(Oncall).rule(function rule(r) {
+					const inc = v(Incident)
+					// @ts-expect-error — "Low" is not in Sev's handle union (cross-vocabulary literals are unwritable)
+					return r.match(Incident, { id: inc.id, sev: "Low" }).find({ i: inc.id })
+				})
+			)
 		}, /"Low" is not a handle of Sev — the roster is Info, Warn, Crit, Fatal/)
 	})
 
 	test("the degenerate membership arrays refuse at construction (the canonical-utterance law)", function degenerateArrays() {
 		assert.throws(function emptyArray() {
-			query(Oncall).rule((r) => r.match(Incident, { id: r.var("i"), sev: [] }).select("i"))
+			query(Oncall).rule(function rule(r) {
+				const inc = v(Incident)
+				return r.match(Incident, { id: inc.id, sev: [] }).find({ i: inc.id })
+			})
 		}, /an empty membership array selects nothing/)
 		assert.throws(function oneElementArray() {
-			query(Oncall).rule((r) => r.match(Incident, { id: r.var("i"), sev: ["Crit"] }).select("i"))
+			query(Oncall).rule(function rule(r) {
+				const inc = v(Incident)
+				return r.match(Incident, { id: inc.id, sev: ["Crit"] }).find({ i: inc.id })
+			})
 		}, /a one-element membership array is the bare literal respelled/)
 	})
 
 	test("a duplicate member is the banned respelling — refused at construction, matching the selection tier's voice", function duplicateMembers() {
 		assert.throws(function duplicatePair() {
-			query(Oncall).rule((r) => r.match(Incident, { id: r.var("i"), sev: ["Crit", "Crit"] }).select("i"))
+			query(Oncall).rule(function rule(r) {
+				const inc = v(Incident)
+				return r.match(Incident, { id: inc.id, sev: ["Crit", "Crit"] }).find({ i: inc.id })
+			})
 		}, /relation Incident\.sev: the membership array spells Crit twice — write it once/)
 		assert.throws(function duplicateAmongMany() {
-			query(Oncall).rule((r) => r.match(Incident, { id: r.var("i"), sev: ["Crit", "Fatal", "Crit"] }).select("i"))
+			query(Oncall).rule(function rule(r) {
+				const inc = v(Incident)
+				return r.match(Incident, { id: inc.id, sev: ["Crit", "Fatal", "Crit"] }).find({ i: inc.id })
+			})
 		}, /the membership array spells Crit twice/)
 	})
 
@@ -267,12 +299,24 @@ describe("query literals, params & membership arrays over closed references", fu
 		// in rule 0 and `["Fatal","Crit"]` in rule 1 mint ONE ParamId and one
 		// wire set — the stated sharing law holds for every spelling order.
 		const reordered = query(Oncall)
-			.rule((r) => r.match(Incident, { id: r.var("i"), sev: ["Crit", "Fatal"] }).select("i"))
-			.rule((r) => r.match(Incident, { id: r.var("i"), sev: ["Fatal", "Crit"] }).select("i"))
+			.rule(function rule(r) {
+				const inc = v(Incident)
+				return r.match(Incident, { id: inc.id, sev: ["Crit", "Fatal"] }).find({ i: inc.id })
+			})
+			.rule(function rule(r) {
+				const inc = v(Incident)
+				return r.match(Incident, { id: inc.id, sev: ["Fatal", "Crit"] }).find({ i: inc.id })
+			})
 		assert.equal(reordered.data.params.length, 1, "two spellings of one set share one registry entry")
 		const oneSpelling = query(Oncall)
-			.rule((r) => r.match(Incident, { id: r.var("i"), sev: ["Crit", "Fatal"] }).select("i"))
-			.rule((r) => r.match(Incident, { id: r.var("i"), sev: ["Crit", "Fatal"] }).select("i"))
+			.rule(function rule(r) {
+				const inc = v(Incident)
+				return r.match(Incident, { id: inc.id, sev: ["Crit", "Fatal"] }).find({ i: inc.id })
+			})
+			.rule(function rule(r) {
+				const inc = v(Incident)
+				return r.match(Incident, { id: inc.id, sev: ["Crit", "Fatal"] }).find({ i: inc.id })
+			})
 		assert.equal(
 			JSON.stringify(lowerQuery(reordered)),
 			JSON.stringify(lowerQuery(oneSpelling)),
@@ -287,18 +331,33 @@ describe("query literals, params & membership arrays over closed references", fu
 		// only (a raw bigint binding the closed field untranslated and
 		// unverified), so the registry refuses the pairing outright.
 		assert.throws(function bareFirst() {
-			query(Oncall).rule((r) => r.match(Incident, { id: r.param("p"), sev: r.param("p"), pri: r.var("x") }).select("x"))
+			query(Oncall).rule(function rule(r) {
+				const inc = v(Incident)
+				return r.match(Incident, { id: r.param("p"), sev: r.param("p"), pri: inc.pri }).find({ x: inc.pri })
+			})
 		}, /query param p is anchored at a non-closed position and at a Sev reference — a closed-anchored param translates handle names through ONE roster/)
 		assert.throws(function closedFirst() {
-			query(Oncall).rule((r) => r.match(Incident, { sev: r.param("p"), id: r.param("p"), pri: r.var("x") }).select("x"))
+			query(Oncall).rule(function rule(r) {
+				const inc = v(Incident)
+				return r.match(Incident, { sev: r.param("p"), id: r.param("p"), pri: inc.pri }).find({ x: inc.pri })
+			})
 		}, /query param p is anchored at a Sev reference and at a non-closed position/)
 		assert.throws(function twoVocabularies() {
-			query(Oncall).rule((r) => r.match(Incident, { id: r.var("i"), sev: r.param("p"), pri: r.param("p") }).select("i"))
+			query(Oncall).rule(function rule(r) {
+				const inc = v(Incident)
+				return r.match(Incident, { id: inc.id, sev: r.param("p"), pri: r.param("p") }).find({ i: inc.id })
+			})
 		}, /query param p is anchored at a Sev reference and at a Priority reference/)
 		// One roster across many uses stays legal — the honest spelling executes.
 		const legal = query(Oncall)
-			.rule((r) => r.match(Incident, { id: r.var("i"), sev: r.param("s") }).select("i"))
-			.rule((r) => r.match(Incident, { id: r.var("i"), sev: r.param("s") }).select("i"))
+			.rule(function rule(r) {
+				const inc = v(Incident)
+				return r.match(Incident, { id: inc.id, sev: r.param("s") }).find({ i: inc.id })
+			})
+			.rule(function rule(r) {
+				const inc = v(Incident)
+				return r.match(Incident, { id: inc.id, sev: r.param("s") }).find({ i: inc.id })
+			})
 		assert.deepEqual(incidents(run(legal, { s: "Crit" })), [3n, 5n])
 	})
 
@@ -311,28 +370,37 @@ describe("query literals, params & membership arrays over closed references", fu
 		const Note = relation("Note", { id: u64.fresh, tag: Tag.id, val: u64 })
 		const Twin = schema("Twin", { Tag, Note }, [])
 		assert.throws(function joinAcross() {
-			query(Twin).rule((r) =>
-				r
-					.match(Note, { val: r.var("x") })
-					// @ts-expect-error — "x" first bound at a bare u64: a Tag-referencing slot never joins it (the roster is part of the join shape)
-					.match(Note, { tag: r.var("x") })
-					.select("x")
-			)
-		}, /joins domain-unequal fields — first bound at u64 \(bare\), reused at u64 referencing Tag \(bare\)/)
+			query(Twin).rule(function rule(r) {
+				const n = v(Note)
+				return (
+					r
+						.match(Note, { val: n.val })
+						// @ts-expect-error — n.val first bound at a bare u64: a Tag-referencing slot never joins it (the roster is part of the join shape)
+						.match(Note, { tag: n.val })
+						.find({ x: n.val })
+				)
+			})
+		}, /joins domain-unequal fields — minted at u64 \(bare\), reused at u64 referencing Tag \(bare\)/)
 	})
 
 	test("membership arrays are CLOSED-ONLY (owner ruling): an ordinary field's array is unwritable and refused", function closedOnlyArrays() {
 		assert.throws(function ordinaryFieldArray() {
-			// @ts-expect-error — id is an ordinary u64: membership there is spelled r.inSet, never a literal array
-			query(Oncall).rule((r) => r.match(Incident, { id: [1n, 2n], sev: r.var("s") }).select("s"))
+			query(Oncall).rule(function rule(r) {
+				const inc = v(Incident)
+				// @ts-expect-error — id is an ordinary u64: membership there is spelled r.inSet, never a literal array
+				return r.match(Incident, { id: [1n, 2n], sev: inc.sev }).find({ s: inc.sev })
+			})
 		}, /a membership array is the closed-reference spelling — ordinary field membership is a bound ∈-set param \(r\.inSet\)/)
 	})
 
 	test("an unknown member name rides the ONE verification point and throws pointed at execute", function unknownMember() {
-		const q = query(Oncall).rule((r) =>
-			// @ts-expect-error — "Bogus" is not in Sev's handle union
-			r.match(Incident, { id: r.var("i"), sev: ["Crit", "Bogus"] }).select("i")
-		)
+		const q = query(Oncall).rule(function rule(r) {
+			const inc = v(Incident)
+			return (
+				// @ts-expect-error — "Bogus" is not in Sev's handle union
+				r.match(Incident, { id: inc.id, sev: ["Crit", "Bogus"] }).find({ i: inc.id })
+			)
+		})
 		assert.throws(function bogusMember() {
 			run(q, {})
 		}, /"Bogus" is not a handle of Sev — the roster is Info, Warn, Crit, Fatal/)
@@ -341,20 +409,23 @@ describe("query literals, params & membership arrays over closed references", fu
 	test("0n compile-FAILS in every closed position (bigint is gone from the closed surface)", function bigintGone() {
 		const unspellable: ReadonlyArray<() => unknown> = [
 			function bigintLiteral() {
+				const inc = v(Incident)
 				// @ts-expect-error — a closed literal position takes the handle union, never a bigint
-				return query(Oncall).rule((r) => r.match(Incident, { id: r.var("i"), sev: 2n }).select("i"))
+				return query(Oncall).rule((r) => r.match(Incident, { id: inc.id, sev: 2n }).find({ i: inc.id }))
 			},
 			function bigintArrayMember() {
+				const inc = v(Incident)
 				// @ts-expect-error — a membership array holds handle names, never bigints
-				return query(Oncall).rule((r) => r.match(Incident, { id: r.var("i"), sev: [2n, 3n] }).select("i"))
+				return query(Oncall).rule((r) => r.match(Incident, { id: inc.id, sev: [2n, 3n] }).find({ i: inc.id }))
 			},
 			function bigintEqRhs() {
+				const inc = v(Incident)
 				return query(Oncall).rule((r) =>
 					r
-						.match(Incident, { id: r.var("i"), sev: r.var("k") })
+						.match(Incident, { id: inc.id, sev: inc.sev })
 						// @ts-expect-error — the eq literal side of a closed-bound var takes the union, never a bigint
-						.where(r.eq(r.var("k"), 2n))
-						.select("i")
+						.where(r.eq(inc.sev, 2n))
+						.find({ i: inc.id })
 				)
 			}
 		]
