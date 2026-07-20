@@ -6,7 +6,8 @@ document: a DEFERRED or REJECTED feature carries a RECORDED TRIGGER — a
 concrete, observable condition under which the question reopens — so nothing
 is relitigated from vibes and nothing worthy is forgotten. Investigated
 2026-07-19 against primer's real workload (50 prepared queries, the store
-schema, the host-gate census).
+schema, the host-gate census); the notation verdicts (5–6) recorded
+2026-07-20 from the destructure-060 owner ruling.
 
 ## Verdicts
 
@@ -72,24 +73,51 @@ schema, the host-gate census).
   read-only/multi-process open (owner decisions); a graph workload too big
   or write-hot to materialize.
 
-### 5. Tagged-template query notation — REJECT
-- The destructure-0.6.0 alternative surface: queries spelled as
-  `` rule`...` `` template literals with a type-level string parser
-  re-deriving the columns, vars, and joins from the literal text. **REJECTED
-  by the owner during the destructure-0.6.0 ruling, 2026-07-20**, verbatim
-  ground: "the type-level string feels like a lie" — a template's type-level
-  parse re-derives what the value tier already IS; the string is a second,
-  weaker encoding of facts the vars and relations already carry as real
-  values.
-- The value-builder shipped instead (0.6.0): the `v()` mint (one fresh record
-  of law-classed query variables per call), joins spelled by minted-var OBJECT
-  REFERENCE (reusing a var value across binding positions IS the join —
-  name-collision joins are unrepresentable), and the head a `find` RECORD
-  whose keys name the answer columns (renames are real).
-- **TRIGGER**: TypeScript ships type-system machinery that types template-hole
-  bindings at full parity with the value builder (per-hole class inference,
-  reference-identity joins) AND a censused readability regression in the
-  destructured idiom appears in a real consumer — reopen only on both.
+### 5. Tagged-template query notation — REJECT (owner ruling 2026-07-20)
+- **The tagged-template notation — a template-literal query string parsed at
+  the type level — is REJECTED by direct owner ruling, 2026-07-20**, during
+  the destructure-060 (0.6.0) notation decision. The owner's words, verbatim:
+  "the type-level string feels like a lie". The type-level parse re-derives
+  what TypeScript's own binding constructs already carry natively; a string
+  that pretends to be a type is the wrong representation when real values with
+  real types are available (the destructured mint, verdict 6, is what shipped
+  instead).
+- **The ramp stays.** The conformance corpus
+  (`crates/bumbledb-query/tests/notation-corpus/`, 27 Rust⇄TS ProgramIr JSON
+  cases) remains in-tree and available — feasibility was never the question,
+  and the corpus is not deleted.
+- **TRIGGER**: only a direct owner reversal reopens it. No workload
+  observation, census, or whisper can — this was a taste ruling by the owner,
+  and it is relitigated only by the owner. This is the register's one entry
+  whose trigger is deliberately NOT an observable condition; it is stated so
+  explicitly here so the asymmetry reads as intended, not as an omission.
+
+### 6. Destructured variable mint (vars become values) — RULED AND ADOPTED, ships as 0.6.0 (owner ruling 2026-07-20)
+- **The mint, adopted.** `v(relation)` mints a record of fresh query
+  variables, one per column, each typed at mint by the column's law-computed
+  class — a concrete mapped type over the relation's statically-known columns,
+  so ES destructuring (`const { id, toGrp } = v(candidateEdge)`) preserves
+  every literal and every class. Variable identity moves from name to an
+  OBJECT REFERENCE: reusing the same var value across binding positions IS the
+  join, and name-collision joins become unrepresentable. `select(strings)`
+  dies into
+  `find({ key: varOrAgg })` — the find object's keys name the result row,
+  fully typed. `r.var` dies with no shim. Params stay string-named
+  (`r.param`/`r.inSet`/mask params): their names are execute()'s runtime
+  params-object keys — an honest load-bearing channel, not a lie.
+- **The rationale (the reason, not decoration).** This is the TRUE UNION —
+  TypeScript's own binding constructs carrying the calculus's classes — and
+  hygienic imperative composition: each `v()` call mints a fresh batch, so
+  composed rule fragments cannot capture each other's variables by accidental
+  name collision.
+- **The parity law (a criterion, not a hope).** Semantic parity IS LAW: the
+  IR/VarId theory is UNCHANGED — lowering assigns VarIds from reference
+  identity in deterministic first-use order — and the Rust macro, the wire,
+  the manifest, and the fingerprints are untouched. Zero fingerprint pins
+  move: `ts/test/fixtures/cookbook-fingerprints.txt` is byte-identical across
+  the break.
+- **Status**: ships as 0.6.0, a deliberate hard break; version staged in
+  lockstep, NO tag, NO publish (owner ceremony).
 
 ## The host-fold register (the census's residual unspellables)
 
@@ -154,6 +182,6 @@ under the tag) — both rows shipped 2026-07-19:
   (copy-on-append ruling record).
 - The per-store map size parameter: recorded follow-up design (G1), only if
   a real ephemeral capacity need appears.
-- The tagged-template query notation: the conformance corpus
-  (`crates/bumbledb-query/tests/notation-corpus/`) is the pre-built ramp;
-  a taste decision, not a feasibility one.
+- The tagged-template query notation: REJECTED, verdict 5 above (owner ruling
+  2026-07-20); the conformance corpus
+  (`crates/bumbledb-query/tests/notation-corpus/`) stays as the ramp.
