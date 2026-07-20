@@ -1,37 +1,53 @@
 #!/usr/bin/env python3
 """Benchmark visuals: committed report artifacts -> the README charts.
 
-Takes N run directories (each holding a report.json from `bumbledb-bench
-bench`), computes the min-of-N p50 per family (the suite's merge rule),
-and renders the legacy charts; the three metric-lane report flags render
-one chart (or two) each from their committed report JSONs:
+Charts are data: the CHARTS registry is an ordered list of specs
+(filename, required inputs keys, render fn) and lane inputs are data —
+one `inputs` dict keyed by lane id, filled by discovery or by flags. A
+chart renders only when every key it requires is present and truthy;
+otherwise it SKIPs by table lookup. "Chart rendered against an absent
+lane" is unrepresentable: render is never called without its inputs.
 
-  bench-vs-sqlite.svg     ours vs SQLite p50 per read family (log scale)
-  bench-speedup.svg       the same data as multipliers, big and readable
-  bench-tails.svg         p50 -> p99 per family: tail behavior, both engines
-  bench-writes.svg        the honest chart: writes + cold, where fsync physics rules
-  bench-scenarios.svg     the non-ledger worlds (joins/graph/olap/points), per query
-  bench-storage.svg       bytes per fact per scale/world (+ churn checkpoints)
-  bench-writes-rates.svg  rows/sec per (family, batch), one panel per durability lane
-  bench-curves.svg        log-log scale curves per family, fitted exponents, DNF caps
-  bench-warmth.svg        cold/warm/memoized, both engines, per warmth-carrying family
+The lane discriminant: a report.json whose top level carries a string
+"lane" key is a lane payload, stored under inputs[payload["lane"]] (the
+first occurrence of a lane wins; later duplicates print a note). A
+report.json WITHOUT that key is a suite RunReport, classified by
+config.store into the durable / ephemeral run pools. The preferred pool
+(durable when non-empty, else ephemeral) merges min-of-N per percentile
+(p50/p90/p95/p99) into inputs["reads"] / inputs["writes"]; the pool's
+kind and size ride along as inputs["store_kind"] / inputs["rep_count"].
 
-Usage: python3 scripts/bench_viz.py [<run-dir> ...]
-           [--scenarios <scenarios.md>] [--out-dir <dir>]
-           [--storage-report <storage-report.json>]
-           [--writes-report <writes-report.json>]
-           [--curves-report <curves-report.json>]
+  bench-vs-sqlite.svg     ours vs SQLite p50 per read family (log scale)   [reads]
+  bench-speedup.svg       the same data as multipliers, big and readable   [reads]
+  bench-tails.svg         p50 -> p99 per family: tails, both engines       [reads]
+  bench-writes.svg        the honest chart: writes + cold, fsync physics   [writes]
+  bench-scenarios.svg     the non-ledger worlds, per query                 [scenarios_md]
+  bench-storage.svg       bytes per fact per scale/world (+ churn)         [storage]
+  bench-writes-rates.svg  rows/sec per (family, batch), per lane           [writes_rates]
+  bench-curves.svg        log-log scale curves, exponents, DNF caps        [curves]
+  bench-warmth.svg        cold/warm/memoized, both engines                 [curves]
 
-`--out-dir` defaults to assets/ (the owner's ceremony path); every other
-invocation should point it elsewhere. Charts render ONLY from committed
-report pins — never from live runs.
+Usage:
+  python3 scripts/bench_viz.py <run-dir> ... [--scenarios <scenarios.md>] [--out <dir>]
+  python3 scripts/bench_viz.py --night <night-dir> [--out <dir>]
+
+Exactly one of {run dirs, --night} supplies run reports. --night scans a
+night out-dir's one-level children: every <child>/report.json is ingested
+through the lane discriminant, and the first <child>/scenarios.md becomes
+inputs["scenarios_md"]. The committed lane-report flags work in either
+mode, each filling one inputs key: --storage-report -> storage,
+--writes-report -> writes_rates, --curves-report -> curves.
+
+`--out` (alias `--out-dir`) defaults to assets/ (the owner's ceremony
+path); every other invocation should point it elsewhere. Charts render
+ONLY from committed report pins — never from live runs.
 Needs: matplotlib (`python3 -m pip install matplotlib`).
 """
 
+import argparse
 import json
 import math
-import os
-import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -52,19 +68,68 @@ READ_ORDER = [
 WRITE_ORDER = ["commit_single", "commit_witnessed", "commit_batch",
                "cold_containment_walk", "bulk"]
 
+# The merged percentile set (p90 exists in every committed pin; the
+# tail fan reads it).
+PCTS = ("p50", "p90", "p95", "p99")
+
 OURS, THEIRS, FG, DIM, GRID, BG = (
     "#f0b429", "#8b949e", "#e6edf3", "#9da7b3", "#2d333b", "#0d1117",
 )
 
 
-def load(dirs):
+# -------------------------------------------------------------- inputs
+
+
+def ingest_report(inputs, path):
+    """One report.json into the inputs dict, dispatched on the lane
+    discriminant: a top-level "lane" string names a lane payload; its
+    absence means a suite RunReport, classified by config.store."""
+    payload = json.loads(Path(path).read_text())
+    lane = payload.get("lane")
+    if isinstance(lane, str):
+        if lane in inputs:
+            print(f"note: duplicate lane '{lane}' ({path}) — keeping the first")
+        else:
+            inputs[lane] = payload
+        return
+    config = payload.get("config")
+    store = config.get("store") if isinstance(config, dict) else None
+    if store in ("durable", "ephemeral"):
+        inputs[f"{store}_runs"].append(payload)
+    else:
+        print(f"note: {path} is neither a lane payload nor a RunReport — skipped")
+
+
+def discover(night_dir):
+    """A night out-dir -> the inputs dict: every one-level child's
+    report.json through the lane discriminant, plus the first
+    scenarios.md found one level down."""
+    inputs = {"durable_runs": [], "ephemeral_runs": []}
+    night = Path(night_dir)
+    for report_path in sorted(night.glob("*/report.json")):
+        ingest_report(inputs, report_path)
+    for md in sorted(night.glob("*/scenarios.md")):
+        inputs["scenarios_md"] = str(md)
+        break
+    return inputs
+
+
+def gather(run_dirs):
+    """Legacy mode -> the same inputs dict: each positional run dir's
+    report.json, classified exactly like discovery."""
+    inputs = {"durable_runs": [], "ephemeral_runs": []}
+    for d in run_dirs:
+        ingest_report(inputs, Path(d) / "report.json")
+    return inputs
+
+
+def merge_runs(runs):
     """Min-of-N stats per family for ours and sqlite, reads + writes.
 
-    Values are dicts of percentile -> min-across-runs (the merge rule,
-    applied per percentile)."""
+    Values are dicts of percentile -> min-across-runs (the suite's merge
+    rule, applied per percentile)."""
     reads, writes = {}, {}
-    for d in dirs:
-        r = json.loads((Path(d) / "report.json").read_text())
+    for r in runs:
         for table, out in ((r["reads"], reads), (r["writes"], writes)):
             for fam in table:
                 slot = out.setdefault(fam["name"], {"ours": [], "theirs": []})
@@ -74,12 +139,25 @@ def load(dirs):
     def merge(rows):
         return {
             k: {
-                side: {p: min(s[p] for s in samples) for p in ("p50", "p95", "p99")}
+                side: {p: min(s[p] for s in samples) for p in PCTS}
                 for side, samples in vv.items() if samples
             }
             for k, vv in rows.items()
         }
     return merge(reads), merge(writes)
+
+
+def derive_pools(inputs):
+    """The merged reads/writes tables ride on the preferred pool —
+    durable when non-empty, else ephemeral — with the pool's kind and
+    size recorded for captions."""
+    for kind in ("durable", "ephemeral"):
+        pool = inputs[f"{kind}_runs"]
+        if pool:
+            inputs["reads"], inputs["writes"] = merge_runs(pool)
+            inputs["store_kind"] = kind
+            inputs["rep_count"] = len(pool)
+            return
 
 
 def load_scenarios(path):
@@ -99,6 +177,9 @@ def load_scenarios(path):
 def load_report(path):
     """One committed lane report JSON, whole."""
     return json.loads(Path(path).read_text())
+
+
+# --------------------------------------------------------------- style
 
 
 def fmt_us(ns, _pos=None):
@@ -181,7 +262,11 @@ def paired_bars(ax, names, table, note_ratio=True):
               labelcolor=FG, fontsize=9)
 
 
-def chart_vs_sqlite(reads, out):
+# -------------------------------------------------------------- charts
+
+
+def chart_vs_sqlite(inputs, out):
+    reads = inputs["reads"]
     names = [n for n in READ_ORDER if n in reads]
     fig, ax = plt.subplots(figsize=(9.6, 6.2), facecolor=BG)
     dark(ax)
@@ -196,7 +281,8 @@ def chart_vs_sqlite(reads, out):
     plt.close(fig)
 
 
-def chart_speedup(reads, out):
+def chart_speedup(inputs, out):
+    reads = inputs["reads"]
     names = [n for n in READ_ORDER if n in reads and "theirs" in reads[n]]
     ratios = [reads[n]["theirs"]["p50"] / reads[n]["ours"]["p50"] for n in names]
     fig, ax = plt.subplots(figsize=(9.6, 5.2), facecolor=BG)
@@ -222,7 +308,8 @@ def chart_speedup(reads, out):
     plt.close(fig)
 
 
-def chart_tails(reads, out):
+def chart_tails(inputs, out):
+    reads = inputs["reads"]
     names = [n for n in READ_ORDER if n in reads and "theirs" in reads[n]]
     fig, ax = plt.subplots(figsize=(9.6, 6.2), facecolor=BG)
     dark(ax)
@@ -260,7 +347,8 @@ def chart_tails(reads, out):
     plt.close(fig)
 
 
-def chart_scenarios(rows, out):
+def chart_scenarios(inputs, out):
+    rows = load_scenarios(inputs["scenarios_md"])
     fig, ax = plt.subplots(figsize=(9.6, 0.34 * len(rows) + 1.6), facecolor=BG)
     dark(ax)
     y, yticks, ylabels, seen = 0, [], [], None
@@ -296,7 +384,8 @@ def chart_scenarios(rows, out):
     plt.close(fig)
 
 
-def chart_writes(writes, out):
+def chart_writes(inputs, out):
+    writes = inputs["writes"]
     names = [n for n in WRITE_ORDER if n in writes]
     fig, ax = plt.subplots(figsize=(9.6, 3.4), facecolor=BG)
     dark(ax)
@@ -314,11 +403,12 @@ def chart_writes(writes, out):
 # -------------------------------------------------- the metric lanes
 
 
-def chart_storage(report, out):
+def chart_storage(inputs, out):
     """bench-storage.svg: bytes per fact per scale, one panel per world
     (engine compacted vs sqlite indexed vs sqlite table-only), absolute
     store bytes annotated; churn checkpoints, when the report carries
     them, as an extra panel of absolute post-state bytes."""
+    report = inputs["storage"]
     scales = report["scales"]
     churn = report.get("churn") or []
     worlds = [w["world"] for w in scales[0]["worlds"]] if scales else []
@@ -406,11 +496,12 @@ def chart_storage(report, out):
     plt.close(fig)
 
 
-def chart_writes_rates(report, out):
+def chart_writes_rates(inputs, out):
     """bench-writes-rates.svg: rows/sec per (family, batch) row, ours vs
     theirs paired, one panel per durability lane — the lane + sqlite_sync
     labels ride in the panel title, so the number never appears without
     its durability context."""
+    report = inputs["writes_rates"]
     lanes = report["lanes"]
     heights = [0.5 * len(lane["rows"]) + 1.2 for lane in lanes]
     fig, axes = plt.subplots(len(lanes), 1, facecolor=BG,
@@ -453,11 +544,12 @@ def chart_writes_rates(report, out):
     plt.close(fig)
 
 
-def chart_curves(report, out):
+def chart_curves(inputs, out):
     """bench-curves.svg: log-log p50-vs-facts lines, one panel per
     family — ours solid, sqlite canonical dashed, sqlite hand-tuned
     dotted; fitted exponents annotated; capped points drawn as open
     markers pinned at the cap ceiling and counted in the footer."""
+    report = inputs["curves"]
     families = report["families"]
     cap_ns = report["cap_ms"] * 1e6
     cols = 2
@@ -520,10 +612,11 @@ def chart_curves(report, out):
     plt.close(fig)
 
 
-def chart_warmth(report, out):
+def chart_warmth(inputs, out):
     """bench-warmth.svg: cold/warm/memoized p50 per warmth-carrying
     family, ours vs sqlite paired per group — the memo effect made an
     explicit chart instead of an implicit flatterer."""
+    report = inputs["curves"]
     families = [f for f in report["families"] if f.get("warmth")]
     phases = ("cold", "warm", "memoized")
     fig, ax = plt.subplots(figsize=(9.6, 4.2), facecolor=BG)
@@ -567,55 +660,86 @@ def chart_warmth(report, out):
     plt.close(fig)
 
 
+# ---------------------------------------------------------- the registry
+
+
+@dataclass(frozen=True)
+class ChartSpec:
+    """One chart as data: what it's called, what it needs, how it draws."""
+    filename: str
+    requires: tuple  # inputs keys, all required present and truthy
+    render: object   # fn(inputs, outpath)
+
+
+CHARTS = [
+    ChartSpec("bench-vs-sqlite.svg", ("reads",), chart_vs_sqlite),
+    ChartSpec("bench-speedup.svg", ("reads",), chart_speedup),
+    ChartSpec("bench-tails.svg", ("reads",), chart_tails),
+    ChartSpec("bench-writes.svg", ("writes",), chart_writes),
+    ChartSpec("bench-scenarios.svg", ("scenarios_md",), chart_scenarios),
+    ChartSpec("bench-storage.svg", ("storage",), chart_storage),
+    ChartSpec("bench-writes-rates.svg", ("writes_rates",), chart_writes_rates),
+    ChartSpec("bench-curves.svg", ("curves",), chart_curves),
+    ChartSpec("bench-warmth.svg", ("curves",), chart_warmth),
+]
+
+
 # --------------------------------------------------------------- main
 
 
-def pop_flag(args, name):
-    """Pops `name <value>` out of args, returning the value or None."""
-    if name not in args:
-        return None
-    i = args.index(name)
-    value = args[i + 1]
-    del args[i:i + 2]
-    return value
-
-
 def main():
-    args = sys.argv[1:]
-    scenarios_md = pop_flag(args, "--scenarios")
-    out_dir = pop_flag(args, "--out-dir") or "assets"
-    storage_json = pop_flag(args, "--storage-report")
-    writes_json = pop_flag(args, "--writes-report")
-    curves_json = pop_flag(args, "--curves-report")
-    if not args and not (storage_json or writes_json or curves_json):
-        sys.exit("usage: bench_viz.py [<run-dir> ...] [--scenarios <scenarios.md>]"
-                 " [--out-dir <dir>] [--storage-report <json>]"
-                 " [--writes-report <json>] [--curves-report <json>]")
-    Path(out_dir).mkdir(parents=True, exist_ok=True)
-    if args:
-        reads, writes = load(args)
-        chart_vs_sqlite(reads, os.path.join(out_dir, "bench-vs-sqlite.svg"))
-        chart_speedup(reads, os.path.join(out_dir, "bench-speedup.svg"))
-        chart_tails(reads, os.path.join(out_dir, "bench-tails.svg"))
-        chart_writes(writes, os.path.join(out_dir, "bench-writes.svg"))
-        if scenarios_md:
-            chart_scenarios(load_scenarios(scenarios_md),
-                            os.path.join(out_dir, "bench-scenarios.svg"))
-        for name in READ_ORDER:
-            if name in reads and "theirs" in reads[name]:
-                r = reads[name]
-                print(f"{name:10} ours {fmt_us(r['ours']['p50']):>8}  sqlite {fmt_us(r['theirs']['p50']):>8}  "
-                      f"{r['theirs']['p50'] / r['ours']['p50']:5.1f}x")
-    if storage_json:
-        chart_storage(load_report(storage_json),
-                      os.path.join(out_dir, "bench-storage.svg"))
-    if writes_json:
-        chart_writes_rates(load_report(writes_json),
-                           os.path.join(out_dir, "bench-writes-rates.svg"))
-    if curves_json:
-        report = load_report(curves_json)
-        chart_curves(report, os.path.join(out_dir, "bench-curves.svg"))
-        chart_warmth(report, os.path.join(out_dir, "bench-warmth.svg"))
+    ap = argparse.ArgumentParser(
+        description="Render the README benchmark charts from committed report pins.")
+    ap.add_argument("run_dirs", nargs="*", metavar="run-dir",
+                    help="suite run directories, each holding a report.json")
+    ap.add_argument("--scenarios", metavar="PATH",
+                    help="a committed scenarios.md")
+    ap.add_argument("--night", metavar="DIR",
+                    help="a night out-dir to discover: */report.json through the "
+                         "lane discriminant, plus */scenarios.md")
+    ap.add_argument("--out", "--out-dir", dest="out", default="assets", metavar="DIR",
+                    help="output directory (default: assets — the owner's ceremony path)")
+    ap.add_argument("--storage-report", metavar="PATH",
+                    help="a committed storage-report.json (fills the storage lane)")
+    ap.add_argument("--writes-report", metavar="PATH",
+                    help="a committed writes-report.json (fills the writes_rates lane)")
+    ap.add_argument("--curves-report", metavar="PATH",
+                    help="a committed curves-report.json (fills the curves lane)")
+    args = ap.parse_args()
+
+    if args.run_dirs and args.night:
+        ap.error("pass run dirs or --night, not both")
+    lane_flags = ((args.storage_report, "storage"),
+                  (args.writes_report, "writes_rates"),
+                  (args.curves_report, "curves"))
+    if not (args.run_dirs or args.night or any(path for path, _ in lane_flags)):
+        ap.error("nothing to render: pass run dirs, --night, or a lane-report flag")
+
+    inputs = discover(args.night) if args.night else gather(args.run_dirs)
+    if args.scenarios:
+        inputs["scenarios_md"] = args.scenarios
+    derive_pools(inputs)
+    for path, key in lane_flags:
+        if path:
+            inputs[key] = load_report(path)
+
+    out_dir = Path(args.out)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    for spec in CHARTS:
+        missing = [k for k in spec.requires if not inputs.get(k)]
+        if missing:
+            print(f"SKIP {spec.filename} (missing: {', '.join(missing)})")
+            continue
+        outpath = out_dir / spec.filename
+        spec.render(inputs, outpath)
+        print(f"wrote {outpath}")
+
+    reads = inputs.get("reads") or {}
+    for name in READ_ORDER:
+        if name in reads and "theirs" in reads[name]:
+            r = reads[name]
+            print(f"{name:10} ours {fmt_us(r['ours']['p50']):>8}  sqlite {fmt_us(r['theirs']['p50']):>8}  "
+                  f"{r['theirs']['p50'] / r['ours']['p50']:5.1f}x")
 
 
 if __name__ == "__main__":
