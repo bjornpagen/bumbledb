@@ -155,8 +155,7 @@ export type {
 	ParamEntry,
 	ParamsRecord,
 	SetParam,
-	Var,
-	VarsRecord
+	Var
 } from "#query/scope.ts"
 export type { Agg, SelectEntry } from "#query/select.ts"
 export type {
