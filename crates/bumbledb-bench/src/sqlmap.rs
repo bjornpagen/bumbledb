@@ -164,21 +164,19 @@ pub fn ddl(schema: &Schema) -> Vec<String> {
     statements
 }
 
-/// The schema-derived DDL: one STRICT table per relation (NOT NULL
-/// everywhere — no nulls exist; interval fields split into their half
-/// columns), a PRIMARY KEY on the lone fresh auto-key, then the
-/// statement-derived indexes ([`index_plan`]). A **closed** relation is
-/// an ordinary mirrored table — INTEGER id (the synthetic handle,
-/// PRIMARY KEY) plus its payload columns — whose rows come from the
-/// sealed extension at mirror-build time ([`extension_ddl`], part of
-/// the schema surface, never the corpus: a closed relation is never
-/// empty). Closed atoms are ordinary tables on the `SQLite` side; the
-/// ψ-subset WRITE judgments stay naive-only (the recorded division of
-/// labor — `SQLite` does not express commit-time CINDs,
-/// [`crate::translate::Inexpressible`]). The scenario loaders enter
-/// here (each scenario carries its own predicate-column indexes).
+/// The index-free table surface: one STRICT table per relation (NOT
+/// NULL everywhere — no nulls exist; interval fields split into their
+/// half columns), a PRIMARY KEY on the lone fresh auto-key (or the
+/// closed synthetic id). This is exactly [`schema_ddl`]'s opening — the
+/// table-only storage lane measures this representation with no
+/// secondary structure at all ([`crate::lanes::storage`]). A **closed**
+/// relation is an ordinary mirrored table — INTEGER id (the synthetic
+/// handle, PRIMARY KEY) plus its payload columns — whose rows come from
+/// the sealed extension at mirror-build time ([`extension_ddl`], part
+/// of the schema surface, never the corpus: a closed relation is never
+/// empty).
 #[must_use]
-pub fn schema_ddl(schema: &Schema) -> Vec<String> {
+pub fn table_ddl(schema: &Schema) -> Vec<String> {
     let mut statements = Vec::new();
     for relation in schema.relations() {
         let mut columns: Vec<String> = Vec::new();
@@ -201,6 +199,19 @@ pub fn schema_ddl(schema: &Schema) -> Vec<String> {
             ));
         }
     }
+    statements
+}
+
+/// The schema-derived DDL: the index-free tables ([`table_ddl`]), then
+/// the statement-derived indexes ([`index_plan`]). Closed atoms are
+/// ordinary tables on the `SQLite` side; the ψ-subset WRITE judgments
+/// stay naive-only (the recorded division of labor — `SQLite` does not
+/// express commit-time CINDs, [`crate::translate::Inexpressible`]). The
+/// scenario loaders enter here (each scenario carries its own
+/// predicate-column indexes).
+#[must_use]
+pub fn schema_ddl(schema: &Schema) -> Vec<String> {
+    let mut statements = table_ddl(schema);
     for spec in index_plan(schema) {
         let cols = spec
             .columns
@@ -659,6 +670,39 @@ mod tests {
             insert_sql(schema.relation(RelationId(2))),
             "INSERT INTO \"Mandate\" VALUES (?1, ?2, ?3, ?4)",
             "the placeholder count follows the split"
+        );
+    }
+
+    /// The representational split ([`table_ddl`] / [`schema_ddl`]):
+    /// `table_ddl` is exactly the CREATE TABLE prefix of `schema_ddl`,
+    /// the remainder is exactly the CREATE [UNIQUE ]INDEX statements,
+    /// and the lengths add up — applied to the real ledger schema, so
+    /// the storage lane's table-only fork can never be a string filter
+    /// over the indexed DDL.
+    #[test]
+    fn table_ddl_is_the_index_free_prefix() {
+        let schema = crate::schema::schema();
+        let tables = table_ddl(schema);
+        let full = schema_ddl(schema);
+        assert!(!tables.is_empty());
+        for statement in &tables {
+            assert!(
+                statement.starts_with("CREATE TABLE "),
+                "not a table: {statement}"
+            );
+        }
+        assert_eq!(full[..tables.len()], tables[..], "the index-free prefix");
+        for statement in &full[tables.len()..] {
+            assert!(
+                statement.starts_with("CREATE INDEX ")
+                    || statement.starts_with("CREATE UNIQUE INDEX "),
+                "not an index: {statement}"
+            );
+        }
+        assert_eq!(
+            full.len(),
+            tables.len() + index_plan(schema).len(),
+            "the lengths add up"
         );
     }
 
