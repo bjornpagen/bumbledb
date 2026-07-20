@@ -11,17 +11,29 @@ open. The main publish runs `prepublishOnly` → the full build (lockstep
 assertion, cargo release build, smoke-load through the by-name loader path,
 tarball-manifest verification) before anything uploads.
 
-`0.5.0` is a deliberate backwards-incompatible hard break over `0.4.0`: the
-plural variable mint is REMOVED — `r.var` is the sole variable constructor —
-and the pre-1.0.0 surface pair lands: the keyed point
-read `get(relation, keyStatement, key)` (the key object typed from the
-relation's declared key FDs, on `Db`, `ReadScope`, and `Tx` alike) and
-host-side answer ordering (`by()`/`desc()` in `ts/src/order.ts`; the engine
-still never orders — answers remain sets). The fingerprint statement: zero
-existing fingerprint pins moved, and exactly ONE was ADDED — `r30`, the
-keyed-read recipe.
+`0.6.0` is a deliberate backwards-incompatible hard break over `0.5.0` —
+VARS BECOME VALUES: `v(relation)` mints a record of fresh, class-typed query
+variables (one per column; each `v()` call a fresh batch), built for ES
+destructuring (`const { id, toGrp } = v(candidateEdge)`). Variable identity
+moves from name to OBJECT REFERENCE — reusing the same var value across
+binding positions IS the join, and name-collision joins are now
+unrepresentable. `select(strings)` is REMOVED in favor of
+`find({ key: varOrAgg })`, whose keys name the fully-typed result row so
+renames are real. `r.var` is REMOVED with no shim and no deprecation alias.
+Params remain string-named (`r.param`/`r.inSet`/mask params — their names are
+the `execute()` params object's runtime keys, an honest load-bearing channel).
+The fingerprint statement: zero fingerprint pins moved and zero added — the
+wire, the manifest, and the Rust macro are untouched;
+`ts/test/fixtures/cookbook-fingerprints.txt` is byte-identical across the
+break (semantic parity: VarIds are assigned from reference identity in
+deterministic first-use order, so lowered programs are identical).
 
-Lineage: `0.4.0` was the previous hard break, over `0.3.0` (the drizzle law:
+Lineage: `0.5.0` was the previous hard break, over `0.4.0` — it removed the
+plural variable mint (`r.var` became the sole variable constructor) and landed
+the pre-1.0.0 surface pair: the keyed point read `get()` and host-side answer
+ordering (`by()`/`desc()`; the engine still never orders), adding exactly one
+fingerprint pin (`r30`, the keyed-read recipe). Before it, `0.4.0` was a hard
+break over `0.3.0` (the drizzle law:
 database idioms arrive as modern TypeScript idioms) — closed handles became
 string-literal unions on every surface, `Kind.match`/`fromId`/the handle
 constants/`oneOf()` died, dispatch became native `switch` narrowing, set
@@ -53,21 +65,21 @@ fails if they diverge:
 3. `ts/npm/darwin-arm64/package.json` `version`
 
 A release bump edits all three, then the build enforces the match. All three
-are set to `0.5.0` in this tree; `pnpm run build` asserts the lockstep on
-every run (`bumbledb build: version 0.5.0 (main == platform ==
+are set to `0.6.0` in this tree; `pnpm run build` asserts the lockstep on
+every run (`bumbledb build: version 0.6.0 (main == platform ==
 optionalDependencies pin)`).
 
-## Runbook (0.5.0, darwin-arm64 host, owner)
+## Runbook (0.6.0, darwin-arm64 host, owner)
 
 ```sh
 # 0. From the ts/ package root, on a macOS Apple Silicon machine.
 cd ts
 
-# 1. The lockstep is already set to 0.5.0 in all THREE places (done in this
+# 1. The lockstep is already set to 0.6.0 in all THREE places (done in this
 #    tree; the build asserts it):
-#    - ts/package.json                    "version": "0.5.0"
-#    - ts/package.json                    optionalDependencies pin -> "0.5.0"
-#    - ts/npm/darwin-arm64/package.json   "version": "0.5.0"
+#    - ts/package.json                    "version": "0.6.0"
+#    - ts/package.json                    optionalDependencies pin -> "0.6.0"
+#    - ts/npm/darwin-arm64/package.json   "version": "0.6.0"
 
 # 2. Build + verify both trees (fails on version drift, unloadable artifact,
 #    or a mispacked tarball). Produces dist/ and npm/darwin-arm64/bumbledb.node.
@@ -87,10 +99,12 @@ pnpm publish --no-git-checks ./npm/darwin-arm64
 pnpm publish --no-git-checks
 
 # 5. Verify both versions landed in the registry.
-pnpm view @bjornpagen/bumbledb-darwin-arm64@0.5.0 version
-pnpm view @bjornpagen/bumbledb@0.5.0 version
+pnpm view @bjornpagen/bumbledb-darwin-arm64@0.6.0 version
+pnpm view @bjornpagen/bumbledb@0.6.0 version
 
-# 6. Tag v0.5.0 (owner ceremony; the release-staged commit is already pushed).
+# 6. Tag v0.6.0 (owner ceremony; the release-staged commit is already pushed).
+#    The tag AND both publishes are owner ceremony, pinged separately — the
+#    agent side stages the release commit only, and never publishes or tags.
 ```
 
 Public access is mandatory (scoped packages publish restricted by default,
@@ -118,14 +132,22 @@ install a fresh release until a day after publish.
 
 ## Post-publish, step two: the primer cutover lands
 
-Primer's 0.5.0 adoption is staged at the primer `bumbledb-050` worktree with
-`@bjornpagen/bumbledb` pinned `^0.5.0` and its `bun.lock` deliberately
-untouched — the documented bootstrap gap: the registry has no 0.5.0 yet, so
-the lockfile cannot move until publish. After both packages verify in the
-registry: publish 0.5.0 → install (the lockfile moves) → typecheck → commit
-the lockfile → merge. The steps live there, not here.
+Primer main is already cut over to `^0.5.0` (the 0.5.0 cutover merged). The
+0.6.0 adoption is staged at the primer `bumbledb-060` worktree (branch
+`worktree-bumbledb-060`) with `@bjornpagen/bumbledb` pinned `^0.6.0` and its
+`bun.lock` deliberately untouched — the same documented bootstrap gap: the
+registry has no 0.6.0 yet, so the lockfile cannot move until publish. After
+both packages verify in the registry: install (the lockfile moves) →
+typecheck → commit the lockfile → merge. The steps live there, not here.
 
-## The pre-publish proof (executed for 0.4.0; re-run the same shape for 0.5.0)
+## The pre-publish proof (executed for 0.4.0; re-run the same shape for 0.6.0)
+
+The 0.6.0 rerun keeps this exact tarball proof shape but must exercise the NEW
+surface in place of the 0.4.0 host-idiom checks: a destructured `v()` mint
+joined by reference (`const { id, toGrp } = v(candidateEdge)`, the same var
+value reused across binding positions to spell the join) and a
+`find({ ... })` renamed result row whose keys strict-equal the answer's named
+columns.
 
 Before publish, both packages were packed and scratch-installed from tarballs
 — the same proof shape as 0.1.0/0.2.0/0.3.0, upgraded to exercise the 0.4.0
