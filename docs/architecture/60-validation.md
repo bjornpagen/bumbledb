@@ -364,6 +364,103 @@ one integer compare). SQLite-unpaired by decision: SQLite has no
 snapshot-witness surface, and a BEGIN-IMMEDIATE + user-version emulation would
 time the emulation, not the engine.
 
+## The churn lanes: degradation over a long-lived life
+
+The axis the scalar-median roster cannot see: what a long-lived, high-churn
+life does to BOTH engines over time. `bumbledb-bench churn`
+(`crates/bumbledb-bench/src/churn/`, the driver command in
+`src/driver/churn_cmd.rs`) drives C cycles of a configured mix over a
+steady-state posting working set and emits one metrics sample every k-th
+cycle: warm p50 for the three pinned probes (`churn_point`, `churn_balance`,
+`churn_window` — `churn/probes.rs`, a registry of exactly three rows, the
+identity asserted by test), commit throughput over the last window,
+post-checkpoint on-disk size, and cheap engine counters — ours: the
+generation plus the driver-witnessed row-id high-water (the never-reissue law
+burns the id space monotonically under churn, an aborted mint exactly like a
+committed one, and the series watches whether anything degrades with the
+burn); SQLite: `freelist_count` + `page_count`. The output is degradation
+curves, never medians: whatever ages, ages on the record, on both engines.
+
+**The representation rulings.** The mix carries ONE `churn` field — "this
+many postings enter AND this many leave per cycle" — so facts-in ≈ facts-out
+is a construction, not a discipline (`churn/ops.rs: Mix`; there are no
+separate insert/delete counts to drift apart), and `growth` is the explicit
+slow-growth mode, its own field, zero in steady state. Updates are the
+recipe-20 write shape — delete + fresh reinsert — and the swap is
+delete-bearing BY CONTRACT: a removal whose delete is a no-op returns `Err`
+inside the write closure, aborting the cycle whole
+(`churn/engines.rs: apply_ours`, the in-closure sentinel abort; falsified
+from both sides by `churn_stale_removal_refuses_the_whole_cycle` — a live
+removal commits, the same removal again refuses and the generation does not
+move), so the lane can never silently degrade into an insert-only
+measurement. And the op stream is a pure function of
+`(seed, cycle, live-set length)` with no wall clock anywhere in protocol
+logic (`churn/ops.rs: cycle_plan`; `Instant` is banned from `ops.rs` — only
+`churn/run.rs` imports the clock), so any cycle's plan regenerates without
+replaying its predecessors: resumable-friendly by signature, not by
+discipline.
+
+**Oracle discipline: gated at every sample, not once.** The ours-side
+sampler RETURNS the reference answer multisets
+(`churn/probes.rs: sample_ours` → `ProbeRun`) and the SQLite sampler
+type-requires them (`sample_sqlite` takes the `ProbeRun` by argument) —
+value-identical multiset agreement per draw, the `run_query` gate wired per
+lane, so a mirror sample that skipped the gate is untypeable, a disagreement
+names the lane, probe, and draw index, and nothing gets timed. The end of
+every run is a THREE-WAY posting-multiset equality — the driver's `LiveSet`
+model (normative), the engine, and every SQLite twin
+(`churn/verify_end.rs: assert_end_state`) — plus `Db::verify_store` green:
+the write-verification pattern extended to a whole churned life.
+
+**The lanes** — five mandated lanes as three registry rows
+(`churn/lanes.rs: all`; a `RunSpec` structurally carries exactly ONE ours
+lane, the id-minter whose alloc stream names the fresh ids all twins share,
+so lockstep twinning is a property of the type):
+
+| run | mix | ours lane | SQLite twins |
+|---|---|---|---|
+| `steady` | steady churn with swap updates riding along | `ours-durable` | `sqlite-bare`, `sqlite-maint` |
+| `nosync` | the same steady mix | `ours-ephemeral` | `sqlite-nosync` |
+| `delete-heavy` | half the working set churned per cycle | `ours-durable` | `sqlite-bare` |
+
+Parity config, exact. `bare` and `maint` run the standard fairness session
+(`corpus::configure_sqlite` — WAL, `synchronous=FULL`, `fullfsync=ON` +
+`checkpoint_fullfsync=ON`, 256 MiB cache, `temp_store=MEMORY`;
+statement-derived and per-family indexes are n/a here — the schema DDL comes
+from `sqlmap`, `ANALYZE` runs at load, DML is prepared via `prepare_cached`,
+and probe statements are prepared FRESH per sample point on BOTH engines by
+protocol, so the plan reflects the current store and prepare cost stays
+outside the timed reps). `maint` additionally runs the operator's periodic
+`VACUUM` and `ANALYZE` on the configured schedule with the wall time charged
+INTO its own throughput window and recorded as `maintenance_ns` —
+maintenance-included honesty: the time spent in `VACUUM` is SQLite's, on the
+record (`churn/run.rs: maintain` charges both ledgers in one place). `nosync`
+is the same session with `synchronous=OFF`, the documented match for the
+ephemeral store kind's `MDB_NOSYNC` — both sides commit into the OS page
+cache with no sync boundary. The sampler's `wal_checkpoint(TRUNCATE)` is
+size accounting only, excluded from every throughput window (it exists so
+`disk_bytes` reads the main file honestly); SQLite's own autocheckpoints
+ride inside the timed applies.
+
+**The report shape.** A NEW time-series artifact, `churn-report.json` under
+`churn_schema: 1` (`churn/report.rs`, the emission pinned by a parse
+round-trip through the crate's own parser): cycle → sample per lane, with
+the engine counters a sum type in memory (`Counters` — a lane carrying the
+wrong engine's counters is unrepresentable) rendered on the JSON face as
+four documented nullable fields (`generation`, `id_high_water`,
+`freelist_count`, `page_count`; the other engine's pair present and `null`).
+Never merged into `report.json`; charts, when they come, render only from
+committed pins.
+
+**Classification and claims.** `Kind::Report`-class, structurally outside
+ALL-WIN and every budget gate, forever — nothing here gates, and no number
+is claimed here or anywhere: the first honest series arrive only from the
+owner's night session under `scripts/measure.sh`. The smoke configs in cargo
+tests are correctness instruments (`ChurnConfig::smoke` — Tiny working set,
+single-digit cycles), never measurements. Defaults are sized for the night
+session and overridable: cycles 10 000, sample every 250, vacuum and analyze
+every 500 (`churn/ops.rs: DEFAULT_CYCLES` and friends).
+
 ## The scenario worlds
 
 The non-ledger schema+corpus+query worlds (`crates/bumbledb-bench/src/scenarios`

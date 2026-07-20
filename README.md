@@ -146,6 +146,7 @@ cargo build --release -p bumbledb-bench
 target/release/bumbledb-bench gen && target/release/bumbledb-bench verify
 target/release/bumbledb-bench bench --out bench-out/run1   # ×3
 target/release/bumbledb-bench scenarios --out bench-out/scen   # emits scenarios.md + scenarios.json
+target/release/bumbledb-bench churn --out bench-out/churn   # degradation series (report-class)
 target/release/bumbledb-bench storage --out bench-out/storage   # on-disk bytes per fact, both engines
 target/release/bumbledb-bench writes --out bench-out/writes     # commit/delete/bulk throughput, per durability lane
 target/release/bumbledb-bench curves --warmth --out bench-out/curves  # oracle-gated scale curves + the warmth panel
@@ -415,7 +416,7 @@ crates/bumbledb-query/   the host-surface sugar crate: the query! re-export +
                          the order module (downstream sugar; lowers to IR)
 crates/bumbledb-query-macros/  the query! proc-macro mechanics behind it
 crates/bumbledb-bench/   the oracle + benchmark suite
-                         (gen/verify/verify-store/bench/trace/scenarios/
+                         (gen/verify/verify-store/bench/trace/scenarios/churn/
                          storage/writes/curves/crud/lawful)
 ts/                      the TypeScript SDK — @bjornpagen/bumbledb on npm; the
                          napi bridge crate lives at ts/crate
