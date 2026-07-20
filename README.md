@@ -358,19 +358,19 @@ by machinery, not judgment:
 - **Checked lint exceptions**: suppressions are `#[expect]` claims with a
   reason, so an exception that stops being necessary fails the gate itself.
 - **One pinned toolchain**: `rust-toolchain.toml` names one dated nightly
-  (edition 2024, every gate and the fuzzer on the same compiler); the pin
+  (edition 2024, every gate on the same compiler); the pin
   moves deliberately — a PRD-sized action carrying the microbench re-earn
   session — never implicitly.
 - **Microbench pins**: load-bearing mechanisms carry `#[ignore]`d in-tree
   benchmarks that re-assert their measured margins on demand.
-- **Fuzzed continuously**: five coverage-guided targets over the public API
-  drive the same oracles at full firepower (`scripts/fuzz.sh`, all cores,
-  fork mode), every session on the record in
-  [`fuzz/SESSIONS.md`](fuzz/SESSIONS.md) — including the zero-finding ones —
-  and every checked-in corpus entry replayed deterministically in CI.
+- **Deletion is gated exactly like addition.** The fuzzing apparatus is the
+  worked example: after thousands of executions its trophy ledger held zero
+  engine bugs (the Lean spec, the conformance corpus, and the two-oracle
+  differentials were already holding the same seams), so it was hard-deleted
+  by owner ruling rather than kept as ceremony —
+  `docs/architecture/60-validation.md` § the deletion record.
 - **Refutation is a result.** A mechanism that measures as a loss is
-  reverted, and the record keeps the numbers and the failure mechanism —
-  deletion is gated exactly like addition.
+  reverted, and the record keeps the numbers and the failure mechanism.
 
 ## Repository layout
 
@@ -394,8 +394,6 @@ ts/                      the TypeScript SDK — @bjornpagen/bumbledb on npm; the
                          napi bridge crate lives at ts/crate
 lean/                    the Lean spec + the conformance corpus — the one
                          normative home of the semantics
-fuzz/                    the detached fuzz crate: five coverage-guided targets,
-                         the replayed corpus, SESSIONS.md, trophies
 docs/                    the normative architecture + the cookbook (docs/cookbook.md)
 docs/reference/          background dossiers (apple-silicon-performance.md)
 scripts/
@@ -403,8 +401,6 @@ scripts/
   check.sh               the engine gate suite (below)
   check-asm.sh           disassembly gates: machine-code properties of hot
                          symbols asserted against objdump output
-  fuzz.sh                the all-cores fuzz launcher: five targets, fork mode,
-                         time-sliced
   lean.sh                the Lean gate (below)
   measure.sh             the machine-wide measurement mutex — two agents'
                          timing runs never overlap
@@ -413,7 +409,7 @@ scripts/
   miri-cross-cc.sh       stand-in cross C compiler so the Miri cross pass can
                          satisfy LMDB's build script without a linux toolchain
   ramdisk.sh             the RAM-backed scratch volume for the adversarial
-                         lanes (verify/differential/fuzz); every timed lane
+                         lanes (verify/differential); every timed lane
                          refuses it
   spec-census.sh         the Bridge's grep-checked half: mechanism, instrument,
                          and doc citations resolve against the tree
@@ -429,13 +425,12 @@ cargo test --workspace --doc
 cargo test --features alloc-counter --test alloc_gate --release -- --test-threads=1
 ```
 
-…then runs the lanes a one-liner can't spell: clippy and tests with each
-fuzz-oracle feature compiled in (`ground-off`, `fold-off`); the
+…then runs the lanes a one-liner can't spell: clippy and tests with the
+`ground-off` test-support feature compiled in (the bench crate's dual-run
+differential switch); the
 `--all-features` pairwise co-compile clippy lane (every engine feature
 built together once — the only build that proves the feature pairs
-co-compile); clippy over the detached fuzz crate (which every
-`--workspace` invocation skips); the deterministic crashpoint sweeps,
-durable and ephemeral; the NOSYNC random-timing kill smoke; and the bench
+co-compile); the trace-feature test lane; and the bench
 crate linted and tested under its `obs` feature. The x86-64
 scalar-fallback promise is EXECUTED, not cross-checked: CI's check lane
 runs this whole script natively on an x86_64-linux runner, strictly

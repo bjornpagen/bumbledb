@@ -480,10 +480,10 @@ not a join to plan — it is a three-element id-set computed before the DP ever
 sees the query, residual cost zero. Both rewrites — and any chain of them with
 the statically-empty kill, in any order — preserve the query's answers
 (`lean/Bumbledb/Exec/Rewrites.lean: grounding_preserves_answers`,
-`elimination_sound`, composed by `rewrite_composition`), and the rewrites fuzz
-target checks the same statement empirically (`60-validation.md` § the
-fuzzing charter — the dual-pipeline differential through the `ground-off`
-switch).
+`elimination_sound`, composed by `rewrite_composition`), and the bench
+crate's dual-run differential checks the same statement empirically
+(`crates/bumbledb-bench/src/differential/tests` — through the
+`ground-off` switch).
 
 *Elimination.* An accepted containment
 `A(X | φ) <= B(Y | ψ)` makes the query's join of `A` to `B` on X→Y redundant
@@ -607,9 +607,10 @@ payload): `folded: Kind{mastered == true} → {DirectPass, JudgedPass}` (negated
 dual-run corpus pins byte-identical results — the fold is never semantic
 (`lean/Bumbledb/Exec/Rewrites.lean: grounding_preserves_answers`).
 The normalization fold's narrower `with_fold_disabled` switch is compiled under
-`cfg(any(test, feature = "fold-off"))` — the engine unit suites and, through the
-revived `fold-off` fuzz-oracle feature, the fuzz crate's rewrites dual-pipeline
-differential reach it; the bench differential deliberately uses the grounding switch
+`cfg(test)` — the engine unit suites alone reach it (the `fold-off` feature that
+once exposed it to the detached fuzz crate died with the fuzzing apparatus,
+`60-validation.md` § the deletion record); the bench differential deliberately
+uses the grounding switch
 because that switch covers the evaluator in the same fixpoint.
 
 **Rule subsumption, the restricted witness.** After elimination, if one rule's

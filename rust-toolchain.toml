@@ -4,7 +4,9 @@
 #   (a) the workspace compiles on it (edition 2024, all crates);
 #   (b) miri and llvm-tools components install and work on
 #       aarch64-apple-darwin;
-#   (c) cargo-fuzz (0.13.1) accepts it.
+#   (c) cargo-fuzz (0.13.1) accepted it — a selection check that died
+#       with the fuzzing apparatus (2026-07-20 ruling,
+#       docs/architecture/60-validation.md § the deletion record).
 # The pin moves DELIBERATELY, never implicitly: moving it is a PRD-sized
 # action that carries the #[ignore]d microbench re-earn session with it
 # (codegen changes invalidate every pinned margin).

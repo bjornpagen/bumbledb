@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # The RAM-backed scratch volume for the adversarial lanes
-# (docs/architecture/60-validation.md § the ramdisk sanction). Verify,
-# differential, and fuzz lanes may run their scratch stores on RAM —
+# (docs/architecture/60-validation.md § the ramdisk sanction). Verify
+# and differential lanes may run their scratch stores on RAM —
 # they check answers, not wall clocks. Every timed lane refuses
 # RAM-backed volumes: `bench` checks its corpus `--dir` (the read
 # families time against it) and its write scratch alike (the
@@ -12,9 +12,8 @@
 #   destroy [--name NAME]                          detach/unmount (idempotent)
 #   path    [--name NAME]                          prints the mount path if live; exit 1 otherwise
 #
-# Wiring: the fuzz harness's per-iteration store directories
-# (fuzz/src/lib.rs StoreDir) and the bench crate's test scratch
-# directories (crates/bumbledb-bench/src/fixture.rs TempDir) respect
+# Wiring: the bench crate's test scratch directories
+# (crates/bumbledb-bench/src/fixture.rs TempDir) respect
 # BUMBLEDB_SCRATCH_DIR, so a lane points itself at the ram disk with:
 #
 #   export BUMBLEDB_SCRATCH_DIR="$(scripts/ramdisk.sh path || scripts/ramdisk.sh create)"

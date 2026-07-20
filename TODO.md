@@ -18,12 +18,15 @@
   waveM `report.json`s and the ruling records (`50-storage.md`
   § eviction, `40-execution.md` D1) are durable in-tree. The
   incremental-images packet survives minus prd-G1: its I-PRDs are the
-  coverage records living code cites (fuzz oracle 6, the decider twin,
+  coverage records living code cites (the decider twin,
   `append_tests`).
-- **The Measure phase (cleanup-0.5.0 prd-M) — one lane still owed:** a
-  `NOSYNC`-only ≥2,000-round statistical kill session (the recorded ones
-  are 2026-07-16, WRITEMAP-era; the deterministic sweep and the kill
-  smoke re-ran green at the flip). Everything else RULED 2026-07-19,
+- **The Measure phase (cleanup-0.5.0 prd-M) — the owed lane is MOOT:** the
+  `NOSYNC`-only ≥2,000-round statistical kill session can no longer run —
+  the kill harness died with the fuzzing apparatus
+  (`docs/architecture/60-validation.md` § the deletion record; the
+  recorded sessions are 2026-07-16, WRITEMAP-era, and the deterministic
+  sweep and kill smoke re-ran green at the flip while they lived).
+  Everything else RULED 2026-07-19,
   committed run dirs `bench-out/measure-twins/` +
   `bench-out/measure-ephemeral-r6/` + `bench-out/eph-nosync-{1,2,3}`:
   twins — leaf elision LAW (1.69–1.71×), permuted-identity determinant

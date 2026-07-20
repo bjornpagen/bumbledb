@@ -260,12 +260,12 @@ decision accommodates narrower platforms). Full research notes with sources:
     `src/exec/kernel/tests.rs` and `src/exec/colt/tests/pins.rs` (the
     kernel/layout pin rigs).
 
-  Two surfaces sit outside the workspace wall and carry their own: `fuzz/`
-  is deliberately detached (the crucible packet ruling) with one
-  inline-commented `set_var`/`remove_var` pair (`fuzz/src/crash.rs`), and
+  One surface sits outside the workspace wall and carries its own:
   `ts/crate` denies `unsafe_code` and `unsafe_op_in_unsafe_fn` in its own
   lint table with per-site reasons on the napi FFI sites (cleanup-0.5.0
-  ruling 12).
+  ruling 12). (The detached `fuzz/` crate was the other, until the
+  fuzzing apparatus was deleted — `60-validation.md` § the deletion
+  record.)
 
 **Decision:** Apple-Silicon-only performance target. **Alternative:** portable
 performance posture. **Why it lost:** there are no other consumers; portability spends
@@ -300,10 +300,10 @@ kernel measurably slower than a plain hash join on the same plans.
 
 **Decision: one pinned nightly toolchain, edition 2024.** `rust-toolchain.toml`
 names one dated nightly (`nightly-2026-07-12`; the comment block records the
-selection checks). **Alternative (refused):** a stable pin with a nightly split
-for the fuzz targets — a dual toolchain is a dual truth: two codegens, two sets
-of measured margins, two CI stories. **Why one nightly:** cargo-fuzz needs
-nightly anyway; a single dated pin keeps reproducibility while deleting the
+selection checks). **Alternative (refused):** a stable/nightly split
+per surface — a dual toolchain is a dual truth: two codegens, two sets
+of measured margins, two CI stories. **Why one nightly:** a single dated pin
+keeps reproducibility while deleting the
 split before it exists, and nightly features are adopted only as dividends —
 where they delete code, never because they exist. **The deliberate-move rule:**
 the pin moves only as an explicit PRD-sized action that carries the `#[ignore]`d

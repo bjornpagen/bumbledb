@@ -212,7 +212,7 @@ about a predicate is unwritable, not rejected).
 **Alternative:** a full Datalog runtime (the Soufflé/Ascent shape).
 **Why it lost:** program-scale workloads invalidate the prepared-query
 economics wholesale, and every accreted feature pays this project's full
-oracle + differential + fuzz cost — cheap in a Datalog engine, ruinous
+oracle + differential cost — cheap in a Datalog engine, ruinous
 here. **Reverses if:** never — the identity is the thesis.
 
 ## Semantics
@@ -787,10 +787,11 @@ three; **normalization lowers IR form to paper form**:
    anti-probe just never rejects). Estimator note: a folded summary is ONE
    range condition — its keep fraction applies once per slot, never per
    constituent (`plan/selectivity.rs`; the fold is also the
-   double-counted-range selectivity fix). The fold is continuously
-   verified semantics-preserving by the rewrites fuzz target
-   (`60-validation.md` § the fuzzing charter — the dual-pipeline
-   differential through the `fold-off` switch).
+   double-counted-range selectivity fix). The fold is verified
+   semantics-preserving by the engine's test-only fold-preservation
+   differential (`api/prepared/tests/statically_empty.rs` — folded and
+   unfolded executions compared through the `with_fold_disabled`
+   switch).
 
 **Deviation (paper §2):** the paper assumes selections pre-pushed and per-atom variables
 distinct; we accept the richer surface and own the lowering, because there is no

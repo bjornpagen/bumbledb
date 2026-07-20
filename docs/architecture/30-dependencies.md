@@ -732,4 +732,4 @@ own them). Every refusal names its replacement; none of them is a gap.
 
 The obligation ledger replaced this chapter's prose theorem-to-evidence table: each Lean premise, its exact Rust discharge site, and the instrument that watches the seam is one machine-listable row of `Bumbledb.Bridge.ledger`.
 It lives in `lean/Bumbledb/Bridge.lean`, whose every row carries a term-level theorem reference, so a renamed or deleted theorem fails `lake build`.
-The Rust and docs half is grep-checked by `scripts/spec-census.sh` (mechanism and instrument tokens against `crates/` and `fuzz/`, `lean/` citations in these docs against the tree), run by `scripts/lean.sh` and CI's lean lane.
+The Rust and docs half is grep-checked by `scripts/spec-census.sh` (mechanism and instrument tokens against `crates/`, `lean/` citations in these docs against the tree), run by `scripts/lean.sh` and CI's lean lane.

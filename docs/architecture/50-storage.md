@@ -327,18 +327,21 @@ User operation order inside the closure is therefore semantically irrelevant
 (`lean/Bumbledb/Txn.lean: final_state_judgment_order_free`); the
 delete-before-insert trap and reference-insertion-ordering are unrepresentable. Crash
 consistency is LMDB atomicity — *tested* (the kill-during-commit crash/reopen family,
-`60-validation.md`, plus the crashpoint table below, exercised adversarially by the
-`crash` fuzz target). Dictionary entries are never removed (accepted leak; the delete
+`60-validation.md`; the crashpoint table below was additionally exercised
+adversarially until the fuzzing apparatus was deleted, `60-validation.md` § the
+deletion record). Dictionary entries are never removed (accepted leak; the delete
 path never *adds* one either — a never-interned value proves its fact absent).
 
 **Crashpoints: the named atomicity structure.** Under the `crashpoint` feature (off
 by default; the hook macro expands to nothing without it, and the compiled hooks are
 inert unless `BUMBLEDB_CRASHPOINT` is set) every phase boundary above is NAMED, and a
 process whose environment names one aborts there — a real unclean death, no unwinding
-cleanup. The table (`storage/commit.rs`, the code authority the fuzz harness consumes)
+cleanup. The table (`storage/commit.rs`)
 IS the claimed atomicity structure, reviewable in one grep of the hook macro's call
-sites, and the recovery claim it makes is proven per point by the `crash` fuzz target
-and its deterministic sweep (`60-validation.md` § the fuzzing charter): the store
+sites. The recovery claim it makes was proven per point by the `crash` fuzz target
+and its deterministic sweep before the fuzzing apparatus was deleted
+(`60-validation.md` § the deletion record — the sweeps ran green, every point): the
+store
 reopens, `verify_store` is green, full contents equal the pre-victim state at every
 point before `mdb_txn_commit` and the post-commit state after it (all-or-nothing —
 there is no third observable outcome), and re-running the torn commit lands its post
@@ -447,15 +450,16 @@ dependency judgment, and WriteTx point-read semantics are identical — proven b
 the durable/ephemeral differential oracle (`60-validation.md`).
 
 What the kind renounces is machine-crash (power-loss) durability and nothing
-else. **The crash-sweep evidence:** the deterministic
-crashpoint sweep — every named commit-pipeline point × the ops-prefix matrix,
-`fuzz/tests/crash.rs` — runs against ephemeral stores too, and every combination
-recovers all-or-nothing under `NOSYNC` exactly as the durable table
+else. **The crash-sweep evidence** (banked; the sweep died with the fuzzing
+apparatus, `60-validation.md` § the deletion record): the deterministic
+crashpoint sweep — every named commit-pipeline point × the ops-prefix matrix —
+ran against ephemeral stores too, and every combination
+recovered all-or-nothing under `NOSYNC` exactly as the durable table
 above claims: reopen, `verify_store` green, contents at the expected side, victim
 replay — no third observable outcome. This is the expected LMDB
 result — `NOSYNC` removes the fsync barrier, which only a power loss can
 exploit, and never touches the meta-page commit protocol that atomicity stands
-on — and the sweep is the proof the expectation is not doing the work.
+on — and the sweep was the proof the expectation was not doing the work.
 (Retraction, cleanup-0.5.0 ruling 1: the flag set was `WRITEMAP|NOSYNC` —
 WRITEMAP shipped on the 2026-07-15 sweep verdict with NOSYNC-only as the
 recorded fallback. Ruling 1 promoted the fallback to the law: WRITEMAP's
@@ -511,8 +515,9 @@ sessions, `bench-out/measure-ephemeral-r6/`: small-commit flags dividend
 27–52x on SSD and 3.1–3.5x on the ramdisk, staging win 43–70x, device tax
 1.1–1.6x — the WRITEMAP-era ~75–90x / ~4.2–4.4x band narrowed, the win
 stands whole, so the rationale survives its own re-argument). The deterministic crash sweep and the kill
-smoke re-ran green under `NOSYNC`-only, so the kind's claim lost nothing (the
-statistical kill lane re-runs with the Measure phase). **Reverses if:** any
+smoke re-ran green under `NOSYNC`-only while they lived (they died with the
+fuzzing apparatus, `60-validation.md` § the deletion record), so the kind's
+claim lost nothing. **Reverses if:** any
 crashpoint ever shows a non-all-or-nothing recovery on an ephemeral store —
 the kind and surface stay while the flag set answers for it.
 
