@@ -1,0 +1,18 @@
+{
+  "lane": "storage",
+  "_fixture": "tiny synthetic fixture for bench_viz.py validation — never a measured claim",
+  "worlds": [
+    {
+      "name": "ledger",
+      "facts": 100000,
+      "ours_bytes": 77955072,
+      "theirs_bytes": 18464768
+    },
+    {
+      "name": "calendar",
+      "facts": 80000,
+      "ours_bytes": 52428800,
+      "theirs_bytes": 14680064
+    }
+  ]
+}

@@ -22,7 +22,11 @@ kind and size ride along as inputs["store_kind"] / inputs["rep_count"].
   bench-tails.svg         p50 -> p99 per family: tails, both engines       [reads]
   bench-writes.svg        the honest chart: writes + cold, fsync physics   [writes]
   bench-scenarios.svg     the non-ledger worlds, per query                 [scenarios_md]
-  bench-storage.svg       bytes per fact per scale/world (+ churn)         [storage]
+  world-<world>.svg       one file per scenario world: paired p50 bars     [scenarios_md]
+  ratio-waterfall.svg     every family + query as one sorted ratio bar     [reads (+scenarios_md)]
+  tails-fan.svg           p50 -> p90 -> p99 fan per family, both engines   [reads]
+  bench-storage.svg       bytes per fact per scale/world (+ churn)         [storage_report]
+  storage-bytes-per-fact.svg  bytes per stored fact per world              [storage]
   bench-writes-rates.svg  rows/sec per (family, batch), per lane           [writes_rates]
   bench-curves.svg        log-log scale curves, exponents, DNF caps        [curves]
   bench-warmth.svg        cold/warm/memoized, both engines                 [curves]
@@ -35,8 +39,15 @@ Exactly one of {run dirs, --night} supplies run reports. --night scans a
 night out-dir's one-level children: every <child>/report.json is ingested
 through the lane discriminant, and the first <child>/scenarios.md becomes
 inputs["scenarios_md"]. The committed lane-report flags work in either
-mode, each filling one inputs key: --storage-report -> storage,
+mode, each filling one inputs key: --storage-report -> storage_report,
 --writes-report -> writes_rates, --curves-report -> curves.
+
+Lanes with a pinned contract validate at ingest: LANE_LOADERS maps a
+lane name to its loader, so "chart fed a shapeless lane file" is
+unrepresentable — the loader names its required keys and rejects
+anything else with the file path in the error. The storage lane's
+contract (DOC-1) is fixed as a committed fixture:
+scripts/viz-fixtures/fixture-storage.report.json.
 
 `--out` (alias `--out-dir`) defaults to assets/ (the owner's ceremony
 path); every other invocation should point it elsewhere. Charts render
@@ -80,6 +91,33 @@ OURS, THEIRS, FG, DIM, GRID, BG = (
 # -------------------------------------------------------------- inputs
 
 
+def load_storage(payload):
+    """The storage lane contract (DOC-1), validated: "worlds" is a
+    non-empty list and every entry carries name / facts > 0 /
+    ours_bytes / theirs_bytes. Unknown extra keys are ignored
+    (forward-compatible). A shapeless payload raises ValueError naming
+    the missing key; the caller attaches the file path."""
+    worlds = payload.get("worlds")
+    if not isinstance(worlds, list) or not worlds:
+        raise ValueError('storage lane: "worlds" must be a non-empty list')
+    for world in worlds:
+        if not isinstance(world, dict) or not isinstance(world.get("name"), str) \
+                or not world["name"]:
+            raise ValueError('storage lane: every world needs a "name" string')
+        name = world["name"]
+        facts = world.get("facts")
+        if not isinstance(facts, (int, float)) or facts <= 0:
+            raise ValueError(f'storage lane world "{name}": "facts" must be a number > 0')
+        for key in ("ours_bytes", "theirs_bytes"):
+            if not isinstance(world.get(key), (int, float)):
+                raise ValueError(f'storage lane world "{name}": "{key}" must be a number')
+    return payload
+
+
+# Lane name -> contract loader; a lane without one is stored raw.
+LANE_LOADERS = {"storage": load_storage}
+
+
 def ingest_report(inputs, path):
     """One report.json into the inputs dict, dispatched on the lane
     discriminant: a top-level "lane" string names a lane payload; its
@@ -89,8 +127,14 @@ def ingest_report(inputs, path):
     if isinstance(lane, str):
         if lane in inputs:
             print(f"note: duplicate lane '{lane}' ({path}) — keeping the first")
-        else:
-            inputs[lane] = payload
+            return
+        loader = LANE_LOADERS.get(lane)
+        if loader:
+            try:
+                payload = loader(payload)
+            except ValueError as e:
+                raise SystemExit(f"{path}: {e}")
+        inputs[lane] = payload
         return
     config = payload.get("config")
     store = config.get("store") if isinstance(config, dict) else None
@@ -384,6 +428,129 @@ def chart_scenarios(inputs, out):
     plt.close(fig)
 
 
+def chart_worlds(inputs, out):
+    """world-<world>.svg, one file per scenario world: horizontal
+    paired log-scale p50 bars per query — SQLite grey above, ours amber
+    below (the paired_bars idiom; the markdown's µs floats become ns so
+    fmt_us and the ratio labels apply unchanged). One registry row
+    emits the N files; render returns the written paths."""
+    rows = load_scenarios(inputs["scenarios_md"])
+    out_dir = Path(out).parent
+    worlds = []
+    by_world = {}
+    for scenario, query, ours_us, sqlite_us, _ratio in rows:
+        if scenario not in by_world:
+            worlds.append(scenario)
+            by_world[scenario] = {}
+        by_world[scenario][query] = {
+            "ours": {"p50": ours_us * 1000.0},
+            "theirs": {"p50": sqlite_us * 1000.0},
+        }
+    written = []
+    for world in worlds:
+        table = by_world[world]
+        names = list(table)
+        fig, ax = plt.subplots(figsize=(9.6, 0.62 * len(names) + 1.8), facecolor=BG)
+        dark(ax)
+        paired_bars(ax, names, table)
+        vals = [table[n][side]["p50"] for n in names for side in ("ours", "theirs")]
+        ax.set_xlim(min(vals) * 0.4, max(vals) * 25)
+        ax.set_title(f"{world} · ours vs SQLite p50 per query · oracle-gated, report-class",
+                     fontsize=12, loc="left", pad=14, family="monospace")
+        fig.text(0.01, 0.005, "log scale — shorter is faster",
+                 fontsize=8, color=DIM, family="monospace")
+        fig.tight_layout()
+        outpath = out_dir / f"world-{world}.svg"
+        fig.savefig(outpath, facecolor=BG, bbox_inches="tight")
+        plt.close(fig)
+        written.append(outpath)
+    return written
+
+
+def chart_ratio_waterfall(inputs, out):
+    """ratio-waterfall.svg: every read family and every scenario query
+    as one bar of SQLite-p50 ÷ ours-p50, sorted descending — the
+    composite honesty chart; a ratio below parity draws red."""
+    reads = inputs["reads"]
+    rows = [(name, slot["theirs"]["p50"] / slot["ours"]["p50"])
+            for name, slot in reads.items() if "theirs" in slot]
+    scenario_rows = (load_scenarios(inputs["scenarios_md"])
+                     if inputs.get("scenarios_md") else [])
+    for scenario, query, ours_us, sqlite_us, _ratio in scenario_rows:
+        if ours_us > 0:
+            rows.append((f"{scenario}/{query}", sqlite_us / ours_us))
+    rows.sort(key=lambda row: row[1], reverse=True)
+    labels = [name for name, _ in rows]
+    ratios = [r for _, r in rows]
+    fig, ax = plt.subplots(figsize=(9.6, 0.28 * len(rows) + 1.8), facecolor=BG)
+    dark(ax)
+    for y, r in enumerate(ratios):
+        color = OURS if r >= 1 else "#f85149"
+        ax.barh(y, r, height=0.62, color=color, zorder=3)
+        ax.text(r * 1.06, y, f"{r:.0f}×" if r >= 10 else f"{r:.1f}×",
+                va="center", fontsize=8, color=color, fontweight="bold",
+                family="monospace")
+    ax.axvline(1.0, color=DIM, linewidth=1, linestyle="--")
+    ax.text(1.0, -0.9, "parity", fontsize=9, color=DIM, ha="center",
+            family="monospace")
+    ax.set_yticks(range(len(labels)), labels, fontsize=8, family="monospace",
+                  color=FG)
+    ax.invert_yaxis()
+    ax.set_xscale("log")
+    xlo, xhi = min(0.4, min(ratios) * 0.7), max(ratios) * 3
+    ax.set_xlim(xlo, xhi)
+    ticks = [t for t in (1, 3, 10, 30, 100, 300, 1000) if xlo < t < xhi]
+    ax.set_xticks(ticks, [f"{t}×" for t in ticks])
+    ax.grid(axis="x", color=GRID, linewidth=0.6, zorder=0)
+    ax.set_title("every family and query · SQLite-p50 ÷ ours-p50, sorted · "
+                 "report-class composite",
+                 fontsize=12, loc="left", pad=14, family="monospace")
+    footer = (f"ledger+calendar families (min-of-{inputs['rep_count']}, "
+              f"{inputs['store_kind']} store)")
+    if scenario_rows:
+        footer += " + scenario worlds"
+    fig.text(0.01, 0.005, footer, fontsize=8, color=DIM, family="monospace")
+    fig.tight_layout()
+    fig.savefig(out, facecolor=BG, bbox_inches="tight")
+    plt.close(fig)
+
+
+def chart_tails_fan(inputs, out):
+    """tails-fan.svg: the p50 → p90 → p99 fan per read family, both
+    engines — the legacy bench-tails.svg (p95) chart stays untouched."""
+    reads = inputs["reads"]
+    names = [n for n in READ_ORDER if n in reads and "theirs" in reads[n]]
+    fig, ax = plt.subplots(figsize=(9.6, 6.2), facecolor=BG)
+    dark(ax)
+    for y, n in enumerate(names):
+        for side, color, dy in (("theirs", THEIRS, 0.18), ("ours", OURS, -0.18)):
+            st = reads[n][side]
+            ax.plot([st["p50"], st["p99"]], [y + dy, y + dy], color=color,
+                    linewidth=2.2, solid_capstyle="round", zorder=3, alpha=0.85)
+            ax.plot(st["p50"], y + dy, "o", ms=6, color=color, zorder=4)
+            ax.plot(st["p90"], y + dy, "d", ms=4.5, color=color, zorder=4)
+            ax.plot(st["p99"], y + dy, "s", ms=3.5, color=color, zorder=4)
+    ax.set_yticks(range(len(names)), names, fontsize=10, family="monospace", color=FG)
+    ax.invert_yaxis()
+    ax.set_xscale("log")
+    ax.xaxis.set_major_formatter(FuncFormatter(fmt_us))
+    ax.grid(axis="x", color=GRID, linewidth=0.6, zorder=0)
+    from matplotlib.lines import Line2D
+    ax.legend(handles=[
+        Line2D([], [], color=OURS, marker="o", label="bumbledb  p50 ● p90 ◆ p99 ■"),
+        Line2D([], [], color=THEIRS, marker="o", label="SQLite"),
+    ], loc="lower right", facecolor=BG, edgecolor=GRID, labelcolor=FG, fontsize=9)
+    ax.set_title("latency tail fan · p50 → p90 → p99 per read family, both engines",
+                 fontsize=12, loc="left", pad=14, family="monospace")
+    fig.text(0.01, 0.005,
+             f"log scale · line spans p50 → p99 · min-of-{inputs['rep_count']} merge, "
+             f"{inputs['store_kind']} store",
+             fontsize=8, color=DIM, family="monospace")
+    fig.tight_layout()
+    fig.savefig(out, facecolor=BG, bbox_inches="tight")
+    plt.close(fig)
+
+
 def chart_writes(inputs, out):
     writes = inputs["writes"]
     names = [n for n in WRITE_ORDER if n in writes]
@@ -403,12 +570,50 @@ def chart_writes(inputs, out):
 # -------------------------------------------------- the metric lanes
 
 
+def chart_storage_per_fact(inputs, out):
+    """storage-bytes-per-fact.svg: grouped horizontal bars per world —
+    ours vs SQLite bytes per stored fact, linear scale. This chart does
+    not flatter us (the pinned store block shows ours ~4× SQLite's
+    bytes); it renders whatever the lane payload says."""
+    worlds = inputs["storage"]["worlds"]
+    ys = range(len(worlds))
+    ours = [w["ours_bytes"] / w["facts"] for w in worlds]
+    theirs = [w["theirs_bytes"] / w["facts"] for w in worlds]
+    fig, ax = plt.subplots(figsize=(9.6, 1.0 * len(worlds) + 1.9), facecolor=BG)
+    dark(ax)
+    ax.barh([y + 0.19 for y in ys], theirs, height=0.34, color=THEIRS,
+            label="SQLite", zorder=3)
+    ax.barh([y - 0.19 for y in ys], ours, height=0.34, color=OURS,
+            label="bumbledb", zorder=3)
+    peak = max(ours + theirs)
+    for y, (o, t) in enumerate(zip(ours, theirs)):
+        ax.text(o + peak * 0.015, y - 0.19, f"{o:.0f} B/fact", va="center",
+                fontsize=9, color=OURS, fontweight="bold", family="monospace")
+        ax.text(t + peak * 0.015, y + 0.19, f"{t:.0f} B/fact", va="center",
+                fontsize=8, color=DIM, family="monospace")
+    ax.set_yticks(list(ys), [w["name"] for w in worlds], fontsize=10,
+                  family="monospace", color=FG)
+    ax.invert_yaxis()
+    ax.set_xlim(0, peak * 1.22)
+    ax.set_xlabel("bytes per stored fact", fontsize=9, family="monospace")
+    ax.grid(axis="x", color=GRID, linewidth=0.6, zorder=0)
+    ax.legend(loc="lower right", facecolor=BG, edgecolor=GRID,
+              labelcolor=FG, fontsize=9)
+    ax.set_title("storage · bytes per stored fact per world · both engines",
+                 fontsize=12, loc="left", pad=14, family="monospace")
+    fig.text(0.01, 0.005, "bytes per stored fact · lower is smaller · report-class",
+             fontsize=8, color=DIM, family="monospace")
+    fig.tight_layout()
+    fig.savefig(out, facecolor=BG, bbox_inches="tight")
+    plt.close(fig)
+
+
 def chart_storage(inputs, out):
     """bench-storage.svg: bytes per fact per scale, one panel per world
     (engine compacted vs sqlite indexed vs sqlite table-only), absolute
     store bytes annotated; churn checkpoints, when the report carries
     them, as an extra panel of absolute post-state bytes."""
-    report = inputs["storage"]
+    report = inputs["storage_report"]
     scales = report["scales"]
     churn = report.get("churn") or []
     worlds = [w["world"] for w in scales[0]["worlds"]] if scales else []
@@ -665,10 +870,13 @@ def chart_warmth(inputs, out):
 
 @dataclass(frozen=True)
 class ChartSpec:
-    """One chart as data: what it's called, what it needs, how it draws."""
+    """One chart as data: what it's called, what it needs, how it draws.
+
+    A render fn may return the list of paths it wrote (a spec that
+    emits one file per world); None means the single outpath."""
     filename: str
     requires: tuple  # inputs keys, all required present and truthy
-    render: object   # fn(inputs, outpath)
+    render: object   # fn(inputs, outpath) -> None | [written paths]
 
 
 CHARTS = [
@@ -677,7 +885,11 @@ CHARTS = [
     ChartSpec("bench-tails.svg", ("reads",), chart_tails),
     ChartSpec("bench-writes.svg", ("writes",), chart_writes),
     ChartSpec("bench-scenarios.svg", ("scenarios_md",), chart_scenarios),
-    ChartSpec("bench-storage.svg", ("storage",), chart_storage),
+    ChartSpec("world-<world>.svg", ("scenarios_md",), chart_worlds),
+    ChartSpec("ratio-waterfall.svg", ("reads",), chart_ratio_waterfall),
+    ChartSpec("tails-fan.svg", ("reads",), chart_tails_fan),
+    ChartSpec("bench-storage.svg", ("storage_report",), chart_storage),
+    ChartSpec("storage-bytes-per-fact.svg", ("storage",), chart_storage_per_fact),
     ChartSpec("bench-writes-rates.svg", ("writes_rates",), chart_writes_rates),
     ChartSpec("bench-curves.svg", ("curves",), chart_curves),
     ChartSpec("bench-warmth.svg", ("curves",), chart_warmth),
@@ -700,7 +912,8 @@ def main():
     ap.add_argument("--out", "--out-dir", dest="out", default="assets", metavar="DIR",
                     help="output directory (default: assets — the owner's ceremony path)")
     ap.add_argument("--storage-report", metavar="PATH",
-                    help="a committed storage-report.json (fills the storage lane)")
+                    help="a committed storage-report.json (fills the storage_report "
+                         "artifact behind bench-storage.svg)")
     ap.add_argument("--writes-report", metavar="PATH",
                     help="a committed writes-report.json (fills the writes_rates lane)")
     ap.add_argument("--curves-report", metavar="PATH",
@@ -709,7 +922,7 @@ def main():
 
     if args.run_dirs and args.night:
         ap.error("pass run dirs or --night, not both")
-    lane_flags = ((args.storage_report, "storage"),
+    lane_flags = ((args.storage_report, "storage_report"),
                   (args.writes_report, "writes_rates"),
                   (args.curves_report, "curves"))
     if not (args.run_dirs or args.night or any(path for path, _ in lane_flags)):
@@ -731,8 +944,9 @@ def main():
             print(f"SKIP {spec.filename} (missing: {', '.join(missing)})")
             continue
         outpath = out_dir / spec.filename
-        spec.render(inputs, outpath)
-        print(f"wrote {outpath}")
+        written = spec.render(inputs, outpath)
+        for path in written if written is not None else [outpath]:
+            print(f"wrote {path}")
 
     reads = inputs.get("reads") or {}
     for name in READ_ORDER:
