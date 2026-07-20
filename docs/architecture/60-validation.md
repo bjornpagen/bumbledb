@@ -568,6 +568,98 @@ uncheckpointed emission is visible in the data instead of silently
 distorting a byte count. The harness composes with the lane through data
 on disk — checkpoint subdirectories — never through code coupling.
 
+## The home-turf worlds: crud and lawful
+
+Two REPORT-class worlds (`bumbledb-bench crud` / `bumbledb-bench lawful` —
+`crates/bumbledb-bench/src/crud.rs` and `src/lawful.rs`) built where SQLite
+is expected to be strong: we bench to lose honestly where we lose. Each
+world loads its own scratch twin stores and lives OUTSIDE the stamped
+corpus, the gate registry, the ALL-WIN set, and the family digest — Kind is
+Report by construction, the metric-lanes charter restated: no budget gate
+ever reads a crud or lawful number.
+**Decision.** **Alternative:** fold the worlds into the gated suite once
+numbers exist. **Why it lost:** a gate on the opponent's turf either
+flatters us (thresholds weak enough to pass) or blocks unrelated work
+(thresholds honest enough to mean something); the regime is evidence about
+where the engine is *not* built to win, and evidence is report data.
+**Reverses if:** never.
+
+**crud is the OLTP turf.** The eleven families (`crud::families` — the
+registry order IS the run order) cover the single-row insert/read/update/
+delete round-trips, the hot-row single-writer update, keyed upsert, the
+1/10/100/1k insert batch ladder, read-modify-write, and the 90/10 mixed
+loop. Each family folds ONE shared precomputed op stream through both
+engines (`crud::ops` — every generator a pure function of seed, sizes, and
+count), so different keys, different values, or different op counts between
+the twins are unrepresentable, not merely untested. Durability parity is
+the `DurabilityLane` sum (`crates/bumbledb-bench/src/duralane.rs` — the one
+constructor of both sides' config and the authority for every pragma): the
+durable pair is `Db::create` — LMDB issues `F_FULLFSYNC` unconditionally on
+macOS, the durability-parity clause above restated — against SQLite WAL
+`synchronous=FULL` `fullfsync=ON`; the nosync pair is `Db::ephemeral`
+(`MDB_NOSYNC`, no sync boundary ever crossed) against WAL
+`synchronous=OFF`. **Decision:** OFF, not NORMAL. **Alternative:**
+`synchronous=NORMAL`, the usual "relaxed" WAL setting. **Why it lost:**
+NORMAL still syncs at WAL checkpoints, so it would cross-match a store kind
+that never crosses a sync boundary at all. Matched pairs only, never
+cross-matched, by type — and `DurabilityLane::assert_parity` reads the
+session pragmas back, so a misconfigured twin fails before flattering
+anyone. **Reverses if:** never.
+
+**Decision:** the SQLite write twins are hand-authored NATIVE SQL — bound
+`UPDATE`, `INSERT .. ON CONFLICT`, `DELETE` (the `sqlite_run/commits.rs`
+precedent) — never a rendering of our delete+reinsert revision idiom.
+**Alternative:** translate our write shape onto SQLite. **Why it lost:**
+forcing our idiom on SQLite would flatter us; the canonical-vs-hand-tuned
+fork (the Allen OR-chain rule) governs *translator output* only, and the
+one translated query in this world — the point read, gated in
+`crud/run.rs: gate` — does not inflate, so no hand-tuned twin lane exists,
+stated. **Reverses if:** a translated query whose canonical rendering
+inflates ever enters either world — then the twin-lane law applies as
+written. And no DNF cap exists in either world: every twin statement is a
+point, insert, or update form, so no adversarial SQL shape ever runs —
+stated here so nobody adds a progress-handler ritual without a reason.
+
+**The verification law of both worlds.** Every query is oracle-gated before
+it may ever be timed — the `run_query` wiring copied faithfully
+(`crud/run.rs: gate`): value-identical result multisets against SQLite per
+param set, a disagreement fails the run naming the family, the set, and the
+lane, and nothing gets timed. Every WRITE family is verified by POST-STATE
+COMPARISON: after a lane runs on both twins, both stores must end
+value-identical over full relation scans through one shared comparator
+(`poststate.rs` — the writebench verification pattern extended into the
+fold every write family reuses, never per-family prose). The lawful world's
+judgment oracle is the naive model through the differential runner
+(`differential::run` against `naive::NaiveDb` — verdicts compared whole,
+citations and directions included, the windowed precedent).
+
+**lawful is the integrity turf nobody benches.** The schema (`lawful.rs` —
+the schema block is the authority) is primer-shaped, and its statement
+families are the point: identity keys, the containment chain, the
+ψ-selected `SteerScope(steer) <= Steer(id | kind == Repartition)`, the
+payload-bearing closed `Outcome`, and the
+`Task(id) <={0..8} Attempt(task)` window. The question the world prices:
+judged commit throughput against SQLite carrying EQUIVALENT enforcement —
+FKs, UNIQUE, CHECK, and the two triggers (the ψ containment and the
+attempt window) — assembled from the enforcement map as data
+(`lawful/enforcement.rs: MAP`, one row per materialized engine statement,
+the twin DDL derived FROM the table), whose totality over the materialized
+statements is a test: an engine law without a SQLite enforcement row is a
+failing build, never a silent parity gap. The rejection-latency families
+price a REFUSED commit round-trip on both sides — the typed
+`Error::CommitRejected` plus abort against constraint failure plus
+`ROLLBACK` — and structurally cannot measure an accepted commit. One
+honest asymmetry, recorded rather than hidden: with `foreign_keys=ON`
+SQLite checks constraints per statement (immediate) while the engine
+judges final states; for the single-insert and insert-ordered cluster
+shapes these lanes exercise, the two disciplines render the same verdicts,
+and that agreement is exactly what the naive-parity slice pins.
+
+**The measurement stance.** Both worlds landed UNMEASURED in this change:
+the first honest numbers arrive in the owner's night session under
+`scripts/measure.sh`, and nothing is claimed before that run — no geomean,
+no per-family sentence, nothing.
+
 ## Differential and property tests
 
 - The **naive model** (promoted above) executes the same IR and judges the same

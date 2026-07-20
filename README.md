@@ -387,6 +387,14 @@ by machinery, not judgment:
   differentials were already holding the same seams), so it was hard-deleted
   by owner ruling rather than kept as ceremony —
   `docs/architecture/60-validation.md` § the deletion record.
+- **Two home-turf worlds bench the regimes where SQLite is expected to
+  win.** `crud` (OLTP round-trips under matched durability pairs) and
+  `lawful` (judged-law admission and refusal pricing against SQLite
+  FK/UNIQUE/CHECK/trigger enforcement) ship as report-class subcommands,
+  oracle-gated and post-state-verified, deliberately built on the
+  opponent's turf — `docs/architecture/60-validation.md` § the home-turf
+  worlds. Their numbers land when the owner's measurement session runs
+  them, and nothing is claimed before that.
 - **Refutation is a result.** A mechanism that measures as a loss is
   reverted, and the record keeps the numbers and the failure mechanism.
 
@@ -408,7 +416,7 @@ crates/bumbledb-query/   the host-surface sugar crate: the query! re-export +
 crates/bumbledb-query-macros/  the query! proc-macro mechanics behind it
 crates/bumbledb-bench/   the oracle + benchmark suite
                          (gen/verify/verify-store/bench/trace/scenarios/
-                         storage/writes/curves)
+                         storage/writes/curves/crud/lawful)
 ts/                      the TypeScript SDK — @bjornpagen/bumbledb on npm; the
                          napi bridge crate lives at ts/crate
 lean/                    the Lean spec + the conformance corpus — the one
