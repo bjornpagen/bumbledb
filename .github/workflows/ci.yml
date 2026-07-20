@@ -40,15 +40,11 @@ name: ci
 on:
   # Scoped to main + PRs (the cleanup-0.5.0 packet, PRD U4): a WIP push
   # to a PR-less worktree branch no longer burns five macOS lanes.
-  # The wave branch is listed EXPLICITLY because its standing review
-  # surface (PR #11, held open by ruling 14) cannot rely on
-  # pull_request events: GitHub builds no merge ref for a CONFLICTING
-  # PR and creates no runs for its synchronize events — diagnosed
-  # 2026-07-19 (mergeable: CONFLICTING; seven commits after de1bac14,
-  # zero runs). Push is the only per-commit trigger that reaches a
-  # conflicted-but-open PR branch. Drop the entry when PR #11 closes.
+  # (The explicit worktree-cleanup-050 entry that once lived here — the
+  # workaround for a conflicted-but-open PR getting no pull_request
+  # runs — died on schedule when PR #11 merged, per its own drop rule.)
   push:
-    branches: [main, worktree-cleanup-050]
+    branches: [main]
   pull_request:
   workflow_dispatch:
   schedule:
