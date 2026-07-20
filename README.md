@@ -194,6 +194,44 @@ counted):
 
 ![adversarial DNFs](assets/adversarial-dnf.svg)
 
+### The home-turf worlds: crud and lawful — where SQLite wins
+
+Two worlds built deliberately on the opponent's turf, the regimes where
+SQLite is expected to be strong — measured this night and published as the
+losses they are. Both are report-class (no gate reads a number), run as
+durability-paired twins (durable and NOSYNC) folding one shared op stream
+per family, with post-state value-verification on every relation.
+
+`crud` — OLTP round-trips: point reads, single/batched inserts, keyed
+updates, upserts, read-modify-write, deletes, a 90/10 mix. SQLite wins
+**20 of 22 rows**; the world's geomean is **0.51×** (durable lane 0.82×,
+NOSYNC 0.32×). The keyed point read is ours (**2.3× durable, 2.4×
+NOSYNC**) — every write family is SQLite's: near parity where fsync
+physics dominates (durable single-row families land 0.81–0.91×) and
+decisively where it doesn't — batched inserts fall to **0.22× durable /
+0.12× NOSYNC** at 1000 rows per commit, and NOSYNC keyed writes sit at
+0.21–0.44×. A B-tree with a page cache is very good at this workload, and
+the chart says so in red:
+
+![crud world](assets/world-crud.svg)
+
+`lawful` — the integrity turf: a primer-shaped schema (identity keys,
+relation containments, a ψ-selected containment, closed vocabularies, an
+attempt-count window) with the full law roster judged on every commit,
+against SQLite carrying equivalent UNIQUE / FK / CHECK / trigger
+enforcement. Geomean **0.32×**, SQLite winning **10 of 12 rows**. Judged
+admission itself is competitive — we win `law_commit_attempt` durable
+(**1.2×**) and `law_commit_cluster` NOSYNC (**1.1×**) — but every refusal
+row is SQLite's: a constraint failure refuses in single-digit µs while our
+rejection prices the full dependency judgment plus the decoded violation
+set (0.21–0.58×). The floor row is `law_reject_key` durable at **0.002×**
+(4.4 ms vs 7.7 µs): each sample's sacrificial id advances the fresh
+high-water mark, and the never-reissue law flushes the burned mark durably
+even on an abort — that refusal pays an fsync by design, and the price is
+printed rather than excused:
+
+![lawful world](assets/world-lawful.svg)
+
 ### Writes: fsync physics, published anyway
 
 Durable commits are an fsync-latency product on both engines — the durable
@@ -297,6 +335,8 @@ target/release/bumbledb-bench bench --out out/r1                # ×3, + --ephem
 target/release/bumbledb-bench scenarios --out out/scenarios
 target/release/bumbledb-bench storage --out out/storage
 target/release/bumbledb-bench writes --out out/writes
+target/release/bumbledb-bench crud --out out/crud
+target/release/bumbledb-bench lawful --out out/lawful
 target/release/bumbledb-bench curves --warmth --out out/curves
 target/release/bumbledb-bench churn --out out/churn
 
@@ -543,8 +583,9 @@ by machinery, not judgment:
   FK/UNIQUE/CHECK/trigger enforcement) ship as report-class subcommands,
   oracle-gated and post-state-verified, deliberately built on the
   opponent's turf — `docs/architecture/60-validation.md` § the home-turf
-  worlds. Their numbers land when the owner's measurement session runs
-  them, and nothing is claimed before that.
+  worlds. Their numbers landed with the 2026-07-20 night and are published
+  above as the losses they are (crud geomean 0.51×, lawful 0.32× — the
+  home-turf section).
 - **Refutation is a result.** A mechanism that measures as a loss is
   reverted, and the record keeps the numbers and the failure mechanism.
 
