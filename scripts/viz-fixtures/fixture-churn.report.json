@@ -1,0 +1,14 @@
+{"lane": "churn",
+ "_fixture": "tiny synthetic fixture for bench_viz.py validation — never a measured claim",
+ "probe_family": "containment_walk",
+ "cycle_facts": 10000,
+ "cycles": [
+  {"cycle": 0, "ours": {"probe_p50_ns": 21000, "db_bytes": 77955072, "write_facts_per_sec": 150000.0}, "theirs": {"probe_p50_ns": 410000, "db_bytes": 18464768, "write_facts_per_sec": 160000.0, "vacuum": false}},
+  {"cycle": 1, "ours": {"probe_p50_ns": 21500, "db_bytes": 78217216, "write_facts_per_sec": 148600.0}, "theirs": {"probe_p50_ns": 431000, "db_bytes": 20889600, "write_facts_per_sec": 156800.0, "vacuum": false}},
+  {"cycle": 2, "ours": {"probe_p50_ns": 21900, "db_bytes": 78479360, "write_facts_per_sec": 147300.0}, "theirs": {"probe_p50_ns": 452000, "db_bytes": 23289856, "write_facts_per_sec": 153900.0, "vacuum": false}},
+  {"cycle": 3, "ours": {"probe_p50_ns": 22400, "db_bytes": 78741504, "write_facts_per_sec": 146100.0}, "theirs": {"probe_p50_ns": 474000, "db_bytes": 25690112, "write_facts_per_sec": 151200.0, "vacuum": false}},
+  {"cycle": 4, "ours": {"probe_p50_ns": 22800, "db_bytes": 79003648, "write_facts_per_sec": 144900.0}, "theirs": {"probe_p50_ns": 497000, "db_bytes": 28090368, "write_facts_per_sec": 148700.0, "vacuum": false}},
+  {"cycle": 5, "ours": {"probe_p50_ns": 23300, "db_bytes": 79265792, "write_facts_per_sec": 143800.0}, "theirs": {"probe_p50_ns": 445000, "db_bytes": 19922944, "write_facts_per_sec": 146400.0, "vacuum": true}},
+  {"cycle": 6, "ours": {"probe_p50_ns": 23700, "db_bytes": 79527936, "write_facts_per_sec": 142700.0}, "theirs": {"probe_p50_ns": 466000, "db_bytes": 22323200, "write_facts_per_sec": 144300.0, "vacuum": false}},
+  {"cycle": 7, "ours": {"probe_p50_ns": 24200, "db_bytes": 79790080, "write_facts_per_sec": 141600.0}, "theirs": {"probe_p50_ns": 488000, "db_bytes": 24723456, "write_facts_per_sec": 142300.0, "vacuum": false}}
+ ]}

@@ -34,6 +34,9 @@ kind and size ride along as inputs["store_kind"] / inputs["rep_count"].
   write-throughput.svg    facts/sec per commit batch, per durability lane  [write_throughput]
   cold-warm-memo.svg      cold → warm → memo phases, both engines          [cold_warm_memo]
   adversarial-dnf.svg     ours vs SQLite, capped twins drawn as capped     [adversarial]
+  churn-latency.svg       probe p50 over delete+insert cycles, VACUUMs     [churn]
+  churn-size.svg          store size over cycles, VACUUM events marked     [churn]
+  churn-throughput.svg    write facts/sec over cycles, VACUUMs marked      [churn]
 
 Usage:
   python3 scripts/bench_viz.py <run-dir> ... [--scenarios <scenarios.md|scenarios.json>] [--out <dir>]
@@ -67,10 +70,15 @@ unrepresentable — the loader names its required keys and rejects
 anything else with the file path in the error. Each lane's contract
 (DOC-1) is fixed as a committed fixture under scripts/viz-fixtures/:
 fixture-storage / fixture-curves / fixture-write-throughput /
-fixture-cold-warm-memo / fixture-adversarial (.report.json each). The
-adversarial lane carries its DNF law in the shape: theirs_exceeded_cap
-=> theirs is null, so a capped SQLite time can never be drawn as a
-measurement — there are no stats to draw, only the cap.
+fixture-cold-warm-memo / fixture-adversarial / fixture-churn
+(.report.json each). The adversarial lane carries its DNF law in the
+shape: theirs_exceeded_cap => theirs is null, so a capped SQLite time
+can never be drawn as a measurement — there are no stats to draw, only
+the cap. The churn lane is one time-series payload — cycles as rows,
+both engines as columns, VACUUM as a per-cycle boolean on the SQLite
+side — so the VACUUM marker can never drift from the measurement it
+annotates; its three charts are one helper driven by the CHURN_CHARTS
+tuple table.
 
 `--out` (alias `--out-dir`) defaults to assets/ (the owner's ceremony
 path); every other invocation should point it elsewhere. Charts render
@@ -85,7 +93,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import matplotlib.pyplot as plt
-from matplotlib.ticker import FuncFormatter
+from matplotlib.ticker import FuncFormatter, MaxNLocator
 
 # ---------------------------------------------------------------- data
 
@@ -266,6 +274,43 @@ def load_adversarial(payload):
     return payload
 
 
+def load_churn(payload):
+    """The churn lane contract (DOC-1): "cycles" is a non-empty list;
+    every cycle record carries an integer "cycle" plus "ours"
+    {probe_p50_ns, db_bytes, write_facts_per_sec} and "theirs" {the
+    same three + a boolean "vacuum"} — the VACUUM event is data ON the
+    cycle record, so the chart marker can never drift from the
+    measurement it annotates. lane=="churn" is the dispatch key, so it
+    holds by construction. Unknown extra keys are ignored
+    (forward-compatible); the caller attaches the file path to errors.
+
+    Distinct artifact, for the record: the bench crate's churn runner
+    (crates/bumbledb-bench/src/churn/report.rs) writes churn-report.json
+    ("churn_schema":1, runs -> lanes -> samples) — a different filename
+    with no top-level "lane" discriminant, so it never flows through
+    ingest_report; THIS payload is the viz-facing condensation."""
+    cycles = payload.get("cycles")
+    if not isinstance(cycles, list) or not cycles:
+        raise ValueError('churn lane: "cycles" must be a non-empty list')
+    for record in cycles:
+        if not isinstance(record, dict) or not isinstance(record.get("cycle"), int):
+            raise ValueError('churn lane: every cycle record needs an integer "cycle"')
+        n = record["cycle"]
+        for side, extras in (("ours", ()), ("theirs", ("vacuum",))):
+            block = record.get(side)
+            if not isinstance(block, dict):
+                raise ValueError(f'churn lane cycle {n}: "{side}" must be an object')
+            for key in ("probe_p50_ns", "db_bytes", "write_facts_per_sec"):
+                if not isinstance(block.get(key), (int, float)):
+                    raise ValueError(
+                        f'churn lane cycle {n} "{side}": "{key}" must be a number')
+            for key in extras:
+                if not isinstance(block.get(key), bool):
+                    raise ValueError(
+                        f'churn lane cycle {n} "{side}": "{key}" must be a boolean')
+    return payload
+
+
 # Lane name -> contract loader; a lane without one is stored raw.
 LANE_LOADERS = {
     "storage": load_storage,
@@ -273,6 +318,7 @@ LANE_LOADERS = {
     "write_throughput": load_write_throughput,
     "cold_warm_memo": load_cold_warm_memo,
     "adversarial": load_adversarial,
+    "churn": load_churn,
 }
 
 
@@ -1320,6 +1366,85 @@ def chart_adversarial_dnf(inputs, out):
     plt.close(fig)
 
 
+def chart_churn_series(inputs, out, key, formatter, yscale, title):
+    """The one churn time-series scaffold behind the three churn charts:
+    x = cycle (integer ticks), one line per engine (o markers, ours
+    amber / theirs grey), y drawn through the given accessor key,
+    formatter, and scale ("auto" goes log only when the payload's value
+    spread exceeds 20x, else linear). Every cycle whose theirs.vacuum
+    is true gets the identical treatment on every chart: a dotted grey
+    vertical line under the series, a downward triangle on the SQLite
+    point at that cycle, and one VACUUM label near the axes top."""
+    payload = inputs["churn"]
+    cycles = payload["cycles"]
+    xs = [c["cycle"] for c in cycles]
+    ours = [c["ours"][key] for c in cycles]
+    theirs = [c["theirs"][key] for c in cycles]
+    vacuums = [(c["cycle"], c["theirs"][key]) for c in cycles if c["theirs"]["vacuum"]]
+    fig, ax = plt.subplots(figsize=(9.6, 4.8), facecolor=BG)
+    dark(ax)
+    for x, _ in vacuums:
+        ax.axvline(x, color=THEIRS, linewidth=1.1, linestyle=":", alpha=0.7,
+                   zorder=1)
+        ax.text(x, 0.97, "VACUUM", transform=ax.get_xaxis_transform(),
+                ha="center", va="top", fontsize=8, color=THEIRS,
+                family="monospace")
+    ax.plot(xs, theirs, "-", color=THEIRS, marker="o", ms=4.5, linewidth=2,
+            zorder=3, label="SQLite")
+    ax.plot(xs, ours, "-", color=OURS, marker="o", ms=4.5, linewidth=2,
+            zorder=3, label="bumbledb")
+    if vacuums:
+        vx, vy = zip(*vacuums)
+        ax.plot(vx, vy, "v", ms=8, color=THEIRS, zorder=4)
+    values = ours + theirs
+    if yscale == "auto":
+        yscale = "log" if max(values) / min(values) > 20 else "linear"
+    ax.set_yscale(yscale)
+    ax.margins(y=0.18)  # headroom for the VACUUM labels at the axes top
+    ax.yaxis.set_major_formatter(FuncFormatter(formatter))
+    # A series spanning less than a decade on a log axis auto-labels
+    # minor ticks in scientific notation — keep the lane's voice there
+    # (the curves-loglog precedent).
+    if yscale == "log" and max(values) / min(values) < 10:
+        ax.yaxis.set_minor_formatter(FuncFormatter(formatter))
+    ax.xaxis.set_major_locator(MaxNLocator(integer=True))
+    ax.set_xlabel("cycle", fontsize=9, family="monospace")
+    ax.grid(color=GRID, linewidth=0.6, zorder=0)
+    ax.legend(loc="best", facecolor=BG, edgecolor=GRID, labelcolor=FG,
+              fontsize=9)
+    ax.set_title(title.format(probe_family=payload.get("probe_family", "probe")),
+                 fontsize=12, loc="left", pad=14, family="monospace")
+    fig.text(0.01, 0.005,
+             f"churn lane · {len(cycles)} cycles × "
+             f"{payload.get('cycle_facts', '?')} facts delete+insert · "
+             "VACUUM events marked · report-class",
+             fontsize=8, color=DIM, family="monospace")
+    fig.tight_layout()
+    fig.savefig(out, facecolor=BG, bbox_inches="tight")
+    plt.close(fig)
+
+
+# The churn chart roster, pure data: (filename, y accessor key, y
+# formatter, y scale, title) — the three charts ARE these tuples driving
+# chart_churn_series; {probe_family} is filled from the payload.
+CHURN_CHARTS = (
+    ("churn-latency.svg", "probe_p50_ns", fmt_us, "log",
+     "churn degradation · {probe_family} p50 over delete+insert cycles, "
+     "both engines"),
+    ("churn-size.svg", "db_bytes", fmt_bytes, "auto",
+     "churn degradation · store size over cycles, both engines"),
+    ("churn-throughput.svg", "write_facts_per_sec", fmt_rate, "log",
+     "churn degradation · write throughput over cycles, both engines"),
+)
+
+
+def churn_render(key, formatter, yscale, title):
+    """One CHURN_CHARTS tuple -> a registry render fn."""
+    def render(inputs, out):
+        chart_churn_series(inputs, out, key, formatter, yscale, title)
+    return render
+
+
 # ---------------------------------------------------------- the registry
 
 
@@ -1352,6 +1477,9 @@ CHARTS = [
     ChartSpec("write-throughput.svg", ("write_throughput",), chart_write_throughput),
     ChartSpec("cold-warm-memo.svg", ("cold_warm_memo",), chart_cold_warm_memo),
     ChartSpec("adversarial-dnf.svg", ("adversarial",), chart_adversarial_dnf),
+] + [
+    ChartSpec(filename, ("churn",), churn_render(key, formatter, yscale, title))
+    for filename, key, formatter, yscale, title in CHURN_CHARTS
 ]
 
 
