@@ -3,9 +3,11 @@ use bumbledb::FieldId;
 use crate::compare::Owned;
 use crate::corpus_gen::Scale;
 use crate::duralane::{self, DurabilityLane};
+use crate::harness::Protocol;
 use crate::poststate;
 
-use super::{CrudSizes, ids};
+use super::lanes::{self, FreshCursor};
+use super::{CrudSizes, ids, ops};
 
 fn scratch(tag: &str) -> std::path::PathBuf {
     let dir = std::env::temp_dir().join(format!("bumbledb-crud-{tag}"));
@@ -87,6 +89,256 @@ fn the_lane_parity_assertion_catches_a_mismatched_synchronous() {
     assert!(err.contains("synchronous"), "{err}");
     drop(conn);
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The test fixture seed. The three seeded `Counter` streams (update,
+/// upsert; hot is fixed at key 0) must draw keys that keep every
+/// stream's `prev` accounting true when the families run back to back
+/// on ONE twin pair — any collision aborts LOUDLY inside a write
+/// closure (the refusal contract under test), so a colliding seed
+/// fails deterministically here, never silently. (Seed 7, for the
+/// record, collides: its update stream touches a key the upsert
+/// stream's seeded-0 accounting still expects — and the abort said so.)
+const SEED: u64 = 1;
+
+/// The tiny per-family protocol: 1 warmup + 2 measured samples = 3
+/// closure invocations (the delete pool at Tiny, 256, covers it).
+const TINY_PROTO: Protocol = Protocol {
+    warmups: 1,
+    samples: 2,
+};
+
+/// Total closure invocations under [`TINY_PROTO`].
+const COUNT: usize = 3;
+
+/// The post-state judgment over both relations — the one fold every
+/// write-family test ends on.
+fn assert_twins_identical(db: &bumbledb::Db<super::CrudWorld>, conn: &rusqlite::Connection) {
+    for rel in [ids::DOC, ids::COUNTER] {
+        let name = super::schema().relation(rel).name();
+        let ours = poststate::engine_rows(db, rel).expect("engine rows");
+        let theirs =
+            poststate::sqlite_rows(conn, super::schema().relation(rel)).expect("mirror rows");
+        poststate::assert_identical("crud", name, ours, theirs).expect(name);
+    }
+}
+
+/// The mixed lane's expected work under [`TINY_PROTO`]: the rotation
+/// is deterministic (4 sets — 3 one-row hits, 1 miss — cycled across
+/// 9 reads per invocation, warmups included), and work counts the
+/// measured samples only: drained answers + 1 insert row per sample.
+fn expected_mixed_work() -> u64 {
+    let mut work = 0u64;
+    let mut cursor = 0usize;
+    for invocation in 0..COUNT {
+        for _ in 0..9 {
+            let hit = cursor % 4 != 3;
+            if invocation >= 1 && hit {
+                work += 1;
+            }
+            cursor += 1;
+        }
+        if invocation >= 1 {
+            work += 1;
+        }
+    }
+    work
+}
+
+/// EVERY write family runs its engine runner then its `SQLite` runner
+/// over the one shared op stream on a Durable twin pair, in registry
+/// order, and the twins end value-identical on BOTH relations — the
+/// representation verdict's proof: one stream, two engines, post-state
+/// equality as a consequence. Each measurement's work is the family's
+/// rows-per-sample × samples.
+#[test]
+fn every_crud_write_family_leaves_the_twins_value_identical() {
+    let sizes = CrudSizes::of(Scale::Tiny);
+    let dir = scratch("families-durable");
+    let (db, conn) =
+        super::corpus::load_stores(&dir, SEED, sizes, DurabilityLane::Durable).expect("load");
+    // One cursor per engine pass: both mint the identical id sequence.
+    let mut ours_cursor = FreshCursor::at_base(sizes);
+    let mut theirs_cursor = FreshCursor::at_base(sizes);
+
+    // The insert ladder (crud_insert, _10, _100, _1k).
+    for per_commit in [1u64, 10, 100, 1_000] {
+        let ours = lanes::insert_bumbledb(&db, TINY_PROTO, SEED, per_commit, &mut ours_cursor)
+            .expect("insert engine");
+        let theirs = lanes::insert_sqlite(&conn, TINY_PROTO, SEED, per_commit, &mut theirs_cursor)
+            .expect("insert sqlite");
+        assert_eq!(
+            ours.work,
+            per_commit * 2,
+            "insert x{per_commit}: engine work"
+        );
+        assert_eq!(
+            theirs.work,
+            per_commit * 2,
+            "insert x{per_commit}: mirror work"
+        );
+    }
+    assert_eq!(ours_cursor, theirs_cursor, "the cursors stay in lockstep");
+
+    // crud_update.
+    let stream = ops::update_stream(SEED, sizes, COUNT);
+    let ours = lanes::update_bumbledb(&db, TINY_PROTO, &stream).expect("update engine");
+    let theirs = lanes::update_sqlite(&conn, TINY_PROTO, &stream).expect("update sqlite");
+    assert_eq!(ours.work, 2, "update: engine work");
+    assert_eq!(theirs.work, 2, "update: mirror work");
+
+    // crud_update_hot (the same runners over the hot stream).
+    let stream = ops::hot_update_stream(COUNT);
+    let ours = lanes::update_bumbledb(&db, TINY_PROTO, &stream).expect("hot engine");
+    let theirs = lanes::update_sqlite(&conn, TINY_PROTO, &stream).expect("hot sqlite");
+    assert_eq!(ours.work, 2, "hot: engine work");
+    assert_eq!(theirs.work, 2, "hot: mirror work");
+
+    // crud_upsert.
+    let stream = ops::upsert_stream(SEED, sizes, COUNT);
+    let ours = lanes::upsert_bumbledb(&db, TINY_PROTO, &stream).expect("upsert engine");
+    let theirs = lanes::upsert_sqlite(&conn, TINY_PROTO, &stream).expect("upsert sqlite");
+    assert_eq!(ours.work, 2, "upsert: engine work");
+    assert_eq!(theirs.work, 2, "upsert: mirror work");
+
+    // crud_rmw.
+    let keys = ops::rmw_stream(SEED, sizes, COUNT);
+    let ours = lanes::rmw_bumbledb(&db, TINY_PROTO, &keys).expect("rmw engine");
+    let theirs = lanes::rmw_sqlite(&conn, TINY_PROTO, &keys).expect("rmw sqlite");
+    assert_eq!(ours.work, 2, "rmw: engine work");
+    assert_eq!(theirs.work, 2, "rmw: mirror work");
+
+    // crud_delete.
+    let ours = lanes::delete_bumbledb(&db, TINY_PROTO, SEED, sizes).expect("delete engine");
+    let theirs = lanes::delete_sqlite(&conn, TINY_PROTO, sizes).expect("delete sqlite");
+    assert_eq!(ours.work, 2, "delete: engine work");
+    assert_eq!(theirs.work, 2, "delete: mirror work");
+
+    // crud_mixed_90_10.
+    let ours = lanes::mixed_bumbledb(&db, TINY_PROTO, SEED, sizes, &mut ours_cursor)
+        .expect("mixed engine");
+    let theirs = lanes::mixed_sqlite(&conn, TINY_PROTO, SEED, sizes, &mut theirs_cursor)
+        .expect("mixed sqlite");
+    assert_eq!(ours.work, expected_mixed_work(), "mixed: engine work");
+    assert_eq!(theirs.work, expected_mixed_work(), "mixed: mirror work");
+    assert_eq!(ours_cursor, theirs_cursor, "the cursors end in lockstep");
+
+    assert_twins_identical(&db, &conn);
+    drop((db, conn));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The Nosync lane runs the same families identically — the other
+/// [`DurabilityLane`] constructor drives the identical runners over a
+/// representative write subset and the twins still end value-identical.
+#[test]
+fn the_nosync_lane_runs_the_same_families_identically() {
+    let sizes = CrudSizes::of(Scale::Tiny);
+    let dir = scratch("families-nosync");
+    let (db, conn) =
+        super::corpus::load_stores(&dir, SEED, sizes, DurabilityLane::Nosync).expect("load");
+    let mut ours_cursor = FreshCursor::at_base(sizes);
+    let mut theirs_cursor = FreshCursor::at_base(sizes);
+
+    lanes::insert_bumbledb(&db, TINY_PROTO, SEED, 1, &mut ours_cursor).expect("insert engine");
+    lanes::insert_sqlite(&conn, TINY_PROTO, SEED, 1, &mut theirs_cursor).expect("insert sqlite");
+
+    let stream = ops::upsert_stream(SEED, sizes, COUNT);
+    lanes::upsert_bumbledb(&db, TINY_PROTO, &stream).expect("upsert engine");
+    lanes::upsert_sqlite(&conn, TINY_PROTO, &stream).expect("upsert sqlite");
+
+    let keys = ops::rmw_stream(SEED, sizes, COUNT);
+    lanes::rmw_bumbledb(&db, TINY_PROTO, &keys).expect("rmw engine");
+    lanes::rmw_sqlite(&conn, TINY_PROTO, &keys).expect("rmw sqlite");
+
+    lanes::delete_bumbledb(&db, TINY_PROTO, SEED, sizes).expect("delete engine");
+    lanes::delete_sqlite(&conn, TINY_PROTO, sizes).expect("delete sqlite");
+
+    assert_twins_identical(&db, &conn);
+    drop((db, conn));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The delete lane's refusal contract, falsified from both sides:
+/// deleting the same pool row twice makes the second engine call `Err`
+/// (the in-closure sentinel — the lane never degrades to a no-op
+/// measurement), and the refusal commits NOTHING: the store generation
+/// does not move across it.
+#[test]
+fn the_delete_lane_refuses_a_missing_row() {
+    let sizes = CrudSizes::of(Scale::Tiny);
+    let dir = scratch("delete-refusal");
+    let (db, conn) =
+        super::corpus::load_stores(&dir, SEED, sizes, DurabilityLane::Durable).expect("load");
+    let one = Protocol {
+        warmups: 0,
+        samples: 1,
+    };
+    lanes::delete_bumbledb(&db, one, SEED, sizes).expect("the first delete bears");
+    let generation = db.generation().expect("generation");
+    let err = lanes::delete_bumbledb(&db, one, SEED, sizes)
+        .expect_err("the second delete of the same pool row must refuse");
+    assert!(err.contains("delete-bearing"), "{err}");
+    assert_eq!(
+        db.generation().expect("generation"),
+        generation,
+        "a refused delete must leave the store untouched"
+    );
+    drop((db, conn));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The upsert stream genuinely exercises both arms at Tiny — at least
+/// one hit (`Some` prev) and one miss (`None` prev) — and the engine
+/// runner follows it to a post-state value-identical with `SQLite`'s
+/// native conflict-target upsert.
+#[test]
+fn the_upsert_follows_its_stream_through_hits_and_misses() {
+    let sizes = CrudSizes::of(Scale::Tiny);
+    let proto = Protocol {
+        warmups: 2,
+        samples: 6,
+    };
+    let stream = ops::upsert_stream(SEED, sizes, 8);
+    assert!(
+        stream.iter().any(|op| op.prev.is_some()),
+        "the stream must carry at least one hit: {stream:?}"
+    );
+    assert!(
+        stream.iter().any(|op| op.prev.is_none()),
+        "the stream must carry at least one miss: {stream:?}"
+    );
+    let dir = scratch("upsert-stream");
+    let (db, conn) =
+        super::corpus::load_stores(&dir, SEED, sizes, DurabilityLane::Durable).expect("load");
+    lanes::upsert_bumbledb(&db, proto, &stream).expect("upsert engine");
+    lanes::upsert_sqlite(&conn, proto, &stream).expect("upsert sqlite");
+    assert_twins_identical(&db, &conn);
+    drop((db, conn));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The read query translates to SQL (the canonical twin exists), and
+/// the stream generators are pure: the same `(seed, sizes, count)`
+/// yields the identical stream twice.
+#[test]
+fn the_read_query_translates_and_the_stream_generators_are_pure() {
+    let translated = crate::translate::translate(&lanes::read_query(), super::schema(), &[])
+        .expect("the read query translates");
+    assert!(translated.sql.contains("SELECT"), "{}", translated.sql);
+    let sizes = CrudSizes::of(Scale::Tiny);
+    assert_eq!(
+        ops::update_stream(SEED, sizes, 16),
+        ops::update_stream(SEED, sizes, 16)
+    );
+    assert_eq!(
+        ops::upsert_stream(SEED, sizes, 16),
+        ops::upsert_stream(SEED, sizes, 16)
+    );
+    assert_eq!(
+        ops::rmw_stream(SEED, sizes, 16),
+        ops::rmw_stream(SEED, sizes, 16)
+    );
 }
 
 /// A one-row post-state divergence is loud: the error names the world
