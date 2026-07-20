@@ -18,7 +18,7 @@ pub fn help() -> String {
          \x20          coherence + global judgments over the committed store\n\
          \x20 bench    the timing run (requires a fresh verify stamp)\n\
          \x20 trace    one traced warm+cold pair for one family\n\
-         \x20 scenarios non-ledger worlds (joins/graph/olap/points/rings), gated then timed\n\
+         \x20 scenarios non-ledger worlds (joins/graph/olap/points/rings/temporal), gated then timed\n\
          \x20 sweep-commit  the T8 commit-size sweep: judgment spans by\n\
          \x20          touched-parent count, delta vs key-sorted probe order\n\
          \x20          (ephemeral windowed twins; needs --features obs)\n\
@@ -60,7 +60,7 @@ pub fn help() -> String {
          SCENARIOS:\n\
          \x20 --seed N        corpus seed              (default 1)\n\
          \x20 --dir PATH      scratch root             (default bench-data)\n\
-         \x20 --only a,b      run only these scenarios (joins graph olap points rings)\n\
+         \x20 --only a,b      run only these scenarios (joins graph olap points rings temporal)\n\
          \x20 --samples N     measured samples/query   (default 64)\n\
          \x20 --out PATH      artifact dir (default bench-out/<timestamp>-scenarios)\n\
          \n\

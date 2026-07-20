@@ -25,6 +25,7 @@ pub mod joins;
 pub mod olap;
 pub mod points;
 pub mod rings;
+pub mod temporal;
 
 mod all;
 mod geomean;
