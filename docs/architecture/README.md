@@ -49,6 +49,7 @@ laws).
 | `40-execution.md` | Mechanism only: access paths, Free Join over COLT, anti-probes, planner, vectorization, allocation — every semantic sentence cites its `lean/Bumbledb/Exec/` theorem |
 | `50-storage.md` | Mechanism only: LMDB layout, determinant namespaces as judgment accelerators, the delta write path, images — encoding laws by citation |
 | `60-validation.md` | The three oracles (SQLite + naive model + the Lean denotation, `lean/conformance/`), ledger benchmark protocol, test families |
+| `61-bench-lanes.md` | Report-class bench lanes: the lane registry, SQLite parity configs, the DNF-cap law, the churn protocol, lane artifact contracts, the night runbook |
 | `70-api.md` | Embedding surface: the schema! grammar, transactions (semantics by `lean/Bumbledb/Txn.lean` citation), point reads, results, ETL |
 | `../cookbook.md` | The cookbook — modeling intuition as worked schemas; illustrative, never normative; `Guarantee:` labels cite `lean/` theorems, census-checked (reader: the owner and any agent writing a theory) |
 | `../../lean/` | The specification itself: the value universe through the lifecycle, `Bridge.lean` (the obligation ledger), `Countermodels.lean` (the design scratchpad), the conformance corpus — `lean/README.md` carries the laws and the provenance history |

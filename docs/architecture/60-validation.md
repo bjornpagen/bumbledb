@@ -364,6 +364,8 @@ one integer compare). SQLite-unpaired by decision: SQLite has no
 snapshot-witness surface, and a BEGIN-IMMEDIATE + user-version emulation would
 time the emulation, not the engine.
 
+The Report-class lane registry, the per-lane SQLite parity configs, and the one-command night runbook live in `61-bench-lanes.md`.
+
 ## The churn lanes: degradation over a long-lived life
 
 The axis the scalar-median roster cannot see: what a long-lived, high-churn

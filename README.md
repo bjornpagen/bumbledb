@@ -160,6 +160,8 @@ python3 scripts/bench_viz.py bench-out/run1 bench-out/run2 bench-out/run3 \
 # scenarios.md form above still renders the committed pin.
 ```
 
+The full Report-class lane registry, parity configs, and the one-command night runbook: [docs/architecture/61-bench-lanes.md](docs/architecture/61-bench-lanes.md) (`scripts/bench-night.sh <out-dir>`).
+
 ## Why it's fast
 
 Three design decisions do most of the work; deliberate microarchitecture
