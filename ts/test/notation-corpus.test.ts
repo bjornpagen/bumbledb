@@ -33,6 +33,7 @@ import { ALLEN } from "#query/atom.ts"
 import type { AnyQuery } from "#query/lower.ts"
 import { lowerQuery, query } from "#query/lower.ts"
 import { program } from "#query/predicate.ts"
+import { v } from "#query/scope.ts"
 import { relation } from "#relation.ts"
 import { schema } from "#schema.ts"
 import { contained, key } from "#statements.ts"
@@ -112,128 +113,151 @@ function bigintAsDecimalString(_key: string, value: unknown): unknown {
  * must equal after lowering.
  */
 const constructions: Readonly<Record<string, AnyQuery>> = {
-	"holder-names": query(Ledger).rule((r) => r.match(Holder, { id: r.var("h"), name: r.var("name") }).select("name")),
-	"amount-selection": query(Ledger).rule((r) => r.match(Posting, { id: r.var("id"), amount: -100n }).select("id")),
-	"usd-accounts": query(Ledger).rule((r) => r.match(Account, { id: r.var("id"), currency: "Usd" }).select("id")),
-	"account-selection-param": query(Ledger).rule((r) =>
-		r.match(Posting, { id: r.var("id"), account: r.param("acct") }).select("id")
-	),
-	"scalar-comparisons": query(Ledger).rule((r) =>
-		r
-			.match(Posting, {
-				id: r.var("id"),
-				entry: r.var("entry"),
-				account: r.var("account"),
-				instrument: r.var("instrument"),
-				amount: r.var("amount"),
-				at: r.var("at")
-			})
-			.where(r.eq(r.var("id"), r.param("wanted")))
-			.where(r.ne(r.var("entry"), 0n))
-			.where(r.lt(r.var("account"), 10n))
-			.where(r.le(r.var("instrument"), 10n))
-			.where(r.gt(r.var("amount"), -10n))
-			.where(r.ge(r.var("at"), -10n))
-			.select("id")
-	),
-	"currency-in-set": query(Ledger).rule((r) =>
-		r.match(Account, { id: r.var("id"), currency: r.inSet("currencies") }).select("id")
-	),
-	"mandate-point-membership": query(Ledger).rule((r) =>
-		r
-			.match(Mandate, { org: r.var("org"), active: r.var("active") })
-			.where(r.pointIn(r.param("today"), r.var("active")))
-			.select("org")
-	),
-	"mandate-window": query(Ledger).rule((r) =>
-		r
-			.match(Mandate, { org: r.var("org"), active: r.var("active") })
-			.where(r.allen(r.var("active"), ALLEN.intersects, r.param("window")))
-			.select("org")
-	),
-	"mandate-adjacent": query(Ledger).rule((r) =>
-		r
-			.match(Mandate, { org: r.var("org"), active: r.var("active") })
-			.where(r.allen(r.var("active"), ALLEN.before | ALLEN.meets, r.param("window")))
-			.select("org")
-	),
-	"mandate-mask-param": query(Ledger).rule((r) =>
-		r
-			.match(Mandate, { account: r.var("a"), active: r.var("s") })
-			.match(Mandate, { account: r.var("b"), active: r.var("t") })
-			.where(r.lt(r.var("a"), r.var("b")))
-			.where(r.allen(r.var("s"), r.maskParam("rel"), r.var("t")))
-			.select("a", "b")
-	),
-	"dormant-holders": query(Ledger).rule((r) =>
-		r
-			.match(Account, { id: r.var("a"), holder: r.var("holder") })
-			.where(r.not(Posting, { account: r.var("a") }))
-			.select("holder")
-	),
-	balances: query(Ledger).rule((r) =>
-		r
-			.match(Posting, { account: r.var("account"), amount: r.var("amount") })
-			.select("account", r.sum("amount"), r.count())
-	),
-	"entry-fanout": query(Ledger).rule((r) =>
-		r.match(Posting, { entry: r.var("entry"), account: r.var("account") }).select("account", r.countDistinct("entry"))
-	),
-	"amount-floor": query(Ledger).rule((r) =>
-		r.match(Posting, { account: r.var("account"), amount: r.var("amount") }).select("account", r.min("amount"))
-	),
-	"amount-ceiling": query(Ledger).rule((r) =>
-		r.match(Posting, { account: r.var("account"), amount: r.var("amount") }).select("account", r.max("amount"))
-	),
-	"latest-posting": query(Ledger).rule((r) =>
-		r.match(Posting, { id: r.var("id"), at: r.var("at") }).select(r.argMax("id", "at"))
-	),
-	"earliest-posting": query(Ledger).rule((r) =>
-		r.match(Posting, { id: r.var("id"), at: r.var("at") }).select(r.argMin("id", "at"))
-	),
-	"mandate-pack": query(Ledger).rule((r) =>
-		r.match(Mandate, { org: r.var("org"), active: r.var("active") }).select("org", r.pack("active"))
-	),
-	"mandate-durations": query(Ledger).rule((r) =>
-		r.match(Mandate, { org: r.var("org"), active: r.var("active") }).select("org", r.duration("active"))
-	),
-	"long-mandates": query(Ledger).rule((r) =>
-		r
-			.match(Mandate, { org: r.var("org"), active: r.var("active") })
-			.where(r.ge(r.duration("active"), 3600n))
-			.select("org", r.sum(r.duration("active")))
-	),
+	"holder-names": query(Ledger).rule((r) => {
+		const { id: h, name } = v(Holder)
+		return r.match(Holder, { id: h, name }).find({ name })
+	}),
+	"amount-selection": query(Ledger).rule((r) => {
+		const { id } = v(Posting)
+		return r.match(Posting, { id, amount: -100n }).find({ id })
+	}),
+	"usd-accounts": query(Ledger).rule((r) => {
+		const { id } = v(Account)
+		return r.match(Account, { id, currency: "Usd" }).find({ id })
+	}),
+	"account-selection-param": query(Ledger).rule((r) => {
+		const { id } = v(Posting)
+		return r.match(Posting, { id, account: r.param("acct") }).find({ id })
+	}),
+	"scalar-comparisons": query(Ledger).rule((r) => {
+		const { id, entry, account, instrument, amount, at } = v(Posting)
+		return r
+			.match(Posting, { id, entry, account, instrument, amount, at })
+			.where(r.eq(id, r.param("wanted")))
+			.where(r.ne(entry, 0n))
+			.where(r.lt(account, 10n))
+			.where(r.le(instrument, 10n))
+			.where(r.gt(amount, -10n))
+			.where(r.ge(at, -10n))
+			.find({ id })
+	}),
+	"currency-in-set": query(Ledger).rule((r) => {
+		const { id } = v(Account)
+		return r.match(Account, { id, currency: r.inSet("currencies") }).find({ id })
+	}),
+	"mandate-point-membership": query(Ledger).rule((r) => {
+		const { org, active } = v(Mandate)
+		return r
+			.match(Mandate, { org, active })
+			.where(r.pointIn(r.param("today"), active))
+			.find({ org })
+	}),
+	"mandate-window": query(Ledger).rule((r) => {
+		const { org, active } = v(Mandate)
+		return r
+			.match(Mandate, { org, active })
+			.where(r.allen(active, ALLEN.intersects, r.param("window")))
+			.find({ org })
+	}),
+	"mandate-adjacent": query(Ledger).rule((r) => {
+		const { org, active } = v(Mandate)
+		return r
+			.match(Mandate, { org, active })
+			.where(r.allen(active, ALLEN.before | ALLEN.meets, r.param("window")))
+			.find({ org })
+	}),
+	"mandate-mask-param": query(Ledger).rule((r) => {
+		const { account: a, active: s } = v(Mandate)
+		const { account: b, active: t } = v(Mandate)
+		return r
+			.match(Mandate, { account: a, active: s })
+			.match(Mandate, { account: b, active: t })
+			.where(r.lt(a, b))
+			.where(r.allen(s, r.maskParam("rel"), t))
+			.find({ a, b })
+	}),
+	"dormant-holders": query(Ledger).rule((r) => {
+		const { id: a, holder } = v(Account)
+		return r
+			.match(Account, { id: a, holder })
+			.where(r.not(Posting, { account: a }))
+			.find({ holder })
+	}),
+	balances: query(Ledger).rule((r) => {
+		const { account, amount } = v(Posting)
+		return r.match(Posting, { account, amount }).find({ account, amount: r.sum(amount), count: r.count() })
+	}),
+	"entry-fanout": query(Ledger).rule((r) => {
+		const { entry, account } = v(Posting)
+		return r.match(Posting, { entry, account }).find({ account, entry: r.countDistinct(entry) })
+	}),
+	"amount-floor": query(Ledger).rule((r) => {
+		const { account, amount } = v(Posting)
+		return r.match(Posting, { account, amount }).find({ account, amount: r.min(amount) })
+	}),
+	"amount-ceiling": query(Ledger).rule((r) => {
+		const { account, amount } = v(Posting)
+		return r.match(Posting, { account, amount }).find({ account, amount: r.max(amount) })
+	}),
+	"latest-posting": query(Ledger).rule((r) => {
+		const { id, at } = v(Posting)
+		return r.match(Posting, { id, at }).find({ id: r.argMax(id, at) })
+	}),
+	"earliest-posting": query(Ledger).rule((r) => {
+		const { id, at } = v(Posting)
+		return r.match(Posting, { id, at }).find({ id: r.argMin(id, at) })
+	}),
+	"mandate-pack": query(Ledger).rule((r) => {
+		const { org, active } = v(Mandate)
+		return r.match(Mandate, { org, active }).find({ org, active: r.pack(active) })
+	}),
+	"mandate-durations": query(Ledger).rule((r) => {
+		const { org, active } = v(Mandate)
+		return r.match(Mandate, { org, active }).find({ org, active: r.duration(active) })
+	}),
+	"long-mandates": query(Ledger).rule((r) => {
+		const { org, active } = v(Mandate)
+		return r
+			.match(Mandate, { org, active })
+			.where(r.ge(r.duration(active), 3600n))
+			.find({ org, active: r.sum(r.duration(active)) })
+	}),
 	"usd-or-eur-accounts": query(Ledger)
-		.rule((r) => r.match(Account, { id: r.var("id"), currency: "Usd" }).select("id"))
-		.rule((r) => r.match(Account, { id: r.var("id"), currency: "Eur" }).select("id")),
+		.rule((r) => {
+			const { id } = v(Account)
+			return r.match(Account, { id, currency: "Usd" }).find({ id })
+		})
+		.rule((r) => {
+			const { id } = v(Account)
+			return r.match(Account, { id, currency: "Eur" }).find({ id })
+		}),
 	"org-reach-rooted": program(Ledger, (p) => {
 		const declared = p.rec("reach")
 		// One head name across both rules (the TS alignment law names
 		// columns; the notation's `o`/`p` are macro-local and erased —
-		// the lowered IR is identical either way).
-		const rooted = declared.rule((r) =>
-			r
-				.match(Org, { id: r.var("n") })
-				.where(r.eq(r.var("n"), r.param("root")))
-				.select("n")
-		)
-		const reach = rooted.rule((r) =>
-			r
-				.match(OrgParent, { child: r.var("c"), parent: r.var("n") })
-				.idb(rooted, r.var("c"))
-				.select("n")
-		)
-		return p.output((r) =>
-			r
-				.match(Org, { id: r.var("p") })
-				.idb(reach, r.var("p"))
-				.select("p")
-		)
+		// the lowered IR is identical either way). Head keys name the idb
+		// join positions: rooted's rule-0 head column is `n`, so both idb
+		// records bind `{ n: <var> }`.
+		const rooted = declared.rule((r) => {
+			const { id: n } = v(Org)
+			return r
+				.match(Org, { id: n })
+				.where(r.eq(n, r.param("root")))
+				.find({ n })
+		})
+		const reach = rooted.rule((r) => {
+			const { child: c, parent: n } = v(OrgParent)
+			return r.match(OrgParent, { child: c, parent: n }).idb(rooted, { n: c }).find({ n })
+		})
+		return p.output((r) => {
+			const { id: p2 } = v(Org)
+			return r.match(Org, { id: p2 }).idb(reach, { n: p2 }).find({ p: p2 })
+		})
 	})
 }
 
 /** One positional variable term (assignable at both term and find positions). */
-function v(id: number): { readonly kind: "var"; readonly var: number } {
+function posVar(id: number): { readonly kind: "var"; readonly var: number } {
 	return { kind: "var", var: id }
 }
 
@@ -251,13 +275,13 @@ const handWritten: Readonly<Record<string, ProgramIr>> = {
 				head: [{ kind: "var" }, { kind: "var" }],
 				rules: [
 					{
-						finds: [v(0), v(1)],
+						finds: [posVar(0), posVar(1)],
 						atoms: [
 							{
 								source: { kind: "edb", relation: ORG_PARENT_ID },
 								bindings: [
-									[0, v(0)],
-									[1, v(1)]
+									[0, posVar(0)],
+									[1, posVar(1)]
 								]
 							}
 						],
@@ -265,20 +289,20 @@ const handWritten: Readonly<Record<string, ProgramIr>> = {
 						conditions: []
 					},
 					{
-						finds: [v(0), v(2)],
+						finds: [posVar(0), posVar(2)],
 						atoms: [
 							{
 								source: { kind: "edb", relation: ORG_PARENT_ID },
 								bindings: [
-									[0, v(0)],
-									[1, v(1)]
+									[0, posVar(0)],
+									[1, posVar(1)]
 								]
 							},
 							{
 								source: { kind: "idb", pred: 0 },
 								bindings: [
-									[0, v(1)],
-									[1, v(2)]
+									[0, posVar(1)],
+									[1, posVar(2)]
 								]
 							}
 						],
@@ -291,13 +315,13 @@ const handWritten: Readonly<Record<string, ProgramIr>> = {
 				head: [{ kind: "var" }, { kind: "var" }],
 				rules: [
 					{
-						finds: [v(0), v(1)],
+						finds: [posVar(0), posVar(1)],
 						atoms: [
 							{
 								source: { kind: "idb", pred: 0 },
 								bindings: [
-									[0, v(0)],
-									[1, v(1)]
+									[0, posVar(0)],
+									[1, posVar(1)]
 								]
 							}
 						],
@@ -315,14 +339,14 @@ const handWritten: Readonly<Record<string, ProgramIr>> = {
 				head: [{ kind: "var" }, { kind: "var" }, { kind: "var" }],
 				rules: [
 					{
-						finds: [v(0), v(1), v(2)],
+						finds: [posVar(0), posVar(1), posVar(2)],
 						atoms: [
 							{
 								source: { kind: "edb", relation: POSTING_ID },
 								bindings: [
-									[0, v(0)],
-									[2, v(1)],
-									[4, v(2)]
+									[0, posVar(0)],
+									[2, posVar(1)],
+									[4, posVar(2)]
 								]
 							}
 						],
@@ -335,12 +359,12 @@ const handWritten: Readonly<Record<string, ProgramIr>> = {
 				head: [{ kind: "var" }],
 				rules: [
 					{
-						finds: [v(0)],
+						finds: [posVar(0)],
 						atoms: [
 							{
 								source: { kind: "idb", pred: 0 },
 								bindings: [
-									[2, v(0)],
+									[2, posVar(0)],
 									[0, { kind: "paramSet", param: 0 }]
 								]
 							}
@@ -359,13 +383,13 @@ const handWritten: Readonly<Record<string, ProgramIr>> = {
 				head: [{ kind: "var" }, { kind: "var" }],
 				rules: [
 					{
-						finds: [v(0), v(1)],
+						finds: [posVar(0), posVar(1)],
 						atoms: [
 							{
 								source: { kind: "edb", relation: ACCOUNT_ID },
 								bindings: [
-									[0, v(0)],
-									[2, v(1)]
+									[0, posVar(0)],
+									[2, posVar(1)]
 								]
 							}
 						],
@@ -378,12 +402,12 @@ const handWritten: Readonly<Record<string, ProgramIr>> = {
 				head: [{ kind: "var" }],
 				rules: [
 					{
-						finds: [v(0)],
+						finds: [posVar(0)],
 						atoms: [
 							{
 								source: { kind: "idb", pred: 0 },
 								bindings: [
-									[0, v(0)],
+									[0, posVar(0)],
 									// The WIRE is raw: "Usd" lowers to its declaration-order
 									// row id (Currency: Usd 0, Eur 1, Gbp 2) — the name↔id
 									// bijection is the SDK's, above this seam.
