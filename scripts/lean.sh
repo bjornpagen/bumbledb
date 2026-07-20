@@ -48,7 +48,7 @@ if [ "$fail" -ne 0 ]; then
 fi
 
 # Battery 3 (PRD 10): the spec census — the Bridge ledger's mechanism
-# and instrument tokens resolve against crates/ and fuzz/, and the
+# and instrument tokens resolve against crates/, and the
 # docs' lean/ citations resolve against the tree.
 cd ..
 scripts/spec-census.sh

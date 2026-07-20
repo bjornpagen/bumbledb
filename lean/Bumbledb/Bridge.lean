@@ -36,18 +36,18 @@ lived in `docs/architecture/30-dependencies.md`.
   (`scripts/spec-census.sh`, run via `scripts/lean.sh` and the CI lean
   job): every `mechanism` and `instrument` token of the form
   `symbol (path)` must find its path on disk and its symbol inside that
-  path; bare `crates/…` / `fuzz/…` tokens must exist on disk; and every
+  path; bare `crates/…` tokens must exist on disk; and every
   `lean/…` citation in `docs/architecture/` and `docs/cookbook.md` must
   resolve to a real declaration in this tree.
 
 ## String conventions (the census's parse contract)
 
-* `premise` is ONE prose sentence — no `::`, no `crates/`, no `fuzz/`
+* `premise` is ONE prose sentence — no `::`, no `crates/`
   (any such token would make the census scan it).
 * `mechanism` and `instrument` are census-scanned: semicolon-joined
   `symbol (path)` pairs (the symbol's final `::`-segment must grep
   word-bounded inside the path) and bare repository paths (existence).
-  An instrument names a test fn, a fuzz target, or a trophy path.
+  An instrument names a test fn or a conformance case.
 
 ## The inline residue
 
@@ -71,8 +71,8 @@ structure Obligation where
   premise : String
   /-- The Rust discharge site, exact: `symbol (path)`. -/
   mechanism : String
-  /-- What empirically watches the seam: a test fn, fuzz target, or
-  trophy — `symbol (path)` or a bare repository path. -/
+  /-- What empirically watches the seam: a test fn or conformance
+  case — `symbol (path)` or a bare repository path. -/
   instrument : String
 
 /-- The checked row constructor — the PRD's "lightest mechanism that
@@ -225,7 +225,7 @@ def ledger : List Obligation := [
   .row @Query.matches_def `Bumbledb.Query.matches_def
     "The matching equation: a fact matches an atom iff every binding's term selects the fact's value at that field, absence of a field being the wildcard."
     "crate::ir::Atom (crates/bumbledb/src/ir.rs)"
-    "fuzz/fuzz_targets/query.rs",
+    "three_way_conformance_over_the_checked_in_corpus (crates/bumbledb-bench/src/conformance.rs)",
 
   .row @Query.repeated_var_unifies `Bumbledb.Query.repeated_var_unifies
     "A repeated variable unifies: within one atom it forces same-fact field equality, and across atoms of one rule it denotes the equijoin (the cross-atom companion sits beside it)."
@@ -275,7 +275,7 @@ def ledger : List Obligation := [
   .row @Query.dnf_preserves_denotation `Bumbledb.Query.dnf_preserves_denotation
     "Lowering condition trees to DNF preserves the rule's answers — the engine never sees a disjunction."
     "dnf.rs::distribute (crates/bumbledb/src/ir/normalize/dnf.rs); dnf.rs::collapse (crates/bumbledb/src/ir/normalize/dnf.rs)"
-    "fuzz/fuzz_targets/query.rs",
+    "dnf_distributes_or_pairs_to_four_rules (crates/bumbledb/src/ir/validate/tests/rules.rs); dnf_residue_subsumption_deletes_the_filtered_rule (crates/bumbledb/src/api/prepared/tests/ground.rs)",
 
   .row @Query.union_idempotent `Bumbledb.Query.union_idempotent
     "A duplicated rule adds nothing: duplicate derivations, one answer — set semantics at the program level."
@@ -300,7 +300,7 @@ def ledger : List Obligation := [
   .row @Query.eval_sound `Bumbledb.Query.eval_sound
     "The refinement theorem: list-backed evaluation over a concrete finite world equals the set denotation, under exactly the two premises the validator discharges — safety and the measure-free binding shape."
     "context.rs::check_atoms (crates/bumbledb/src/ir/validate/context.rs)"
-    "three_way_conformance_over_the_checked_in_corpus (crates/bumbledb-bench/src/conformance.rs); fuzz/fuzz_targets/query.rs",
+    "three_way_conformance_over_the_checked_in_corpus (crates/bumbledb-bench/src/conformance.rs)",
 
   /- ## PRD 05 — Aggregates -/
 
@@ -433,22 +433,22 @@ def ledger : List Obligation := [
   .row @Query.grounding_preserves_answers `Bumbledb.Query.grounding_preserves_answers
     "Grounding is denotation-preserving partial evaluation: on any instance agreeing with the ground axioms, the folded contribution means exactly what the closed atom meant, and rule death is honest emptiness."
     "evaluate.rs::surviving_ids (crates/bumbledb/src/plan/ground/evaluate.rs); evaluate.rs::fold_positive (crates/bumbledb/src/plan/ground/evaluate.rs)"
-    "fuzz/fuzz_targets/rewrites.rs",
+    "the_existence_walk_agrees_three_ways_on_both_sinks (crates/bumbledb-bench/src/differential/tests/ground.rs); the_fold_family_agrees_three_ways_across_randomized_draws (crates/bumbledb-bench/src/differential/tests/fold.rs)",
 
   .row @Query.elimination_sound `Bumbledb.Query.elimination_sound
     "Under the elimination shape and the theory's containment, dropping the target atom preserves the rule's answers — existence rides the containment."
     "Role::Eliminated (crates/bumbledb/src/ir/normalize.rs)"
-    "fuzz/fuzz_targets/rewrites.rs",
+    "eliminated_and_disabled_executions_agree_on_both_sinks (crates/bumbledb/src/api/prepared/tests/ground.rs); the_existence_walk_agrees_three_ways_on_both_sinks (crates/bumbledb-bench/src/differential/tests/ground.rs)",
 
   .row @Query.chained_elimination_sound `Bumbledb.Query.chained_elimination_sound
     "A discharged occurrence may source a later elimination: the support pair composes answer-preservingly, provided the chain roots in a surviving occurrence — the acyclic-support premise."
     "chain_reaches (crates/bumbledb/src/plan/ground.rs)"
-    "fuzz/fuzz_targets/rewrites.rs",
+    "a_containment_chain_eliminates_both_targets_in_fixpoint (crates/bumbledb/src/plan/ground/tests.rs); a_chained_elimination_executes_result_identical_to_the_disabled_plan (crates/bumbledb/src/api/prepared/tests/ground.rs)",
 
   .row @Query.subsume_containment `Bumbledb.Query.subsume_containment
     "Under the subsumption witness the deleted rule's answers are contained in the kept sibling's on every instance, so the prepare-time deletion preserves the program union — the sixth rewrite, in the composition chain."
     "subsume (crates/bumbledb/src/plan/ground.rs); subsumes (crates/bumbledb/src/plan/ground.rs); ground_program (crates/bumbledb/src/api/prepared/build.rs)"
-    "the_dnf_residue_subsumes_the_filtered_rule (crates/bumbledb/src/plan/ground/tests.rs); dnf_residue_subsumption_deletes_the_filtered_rule (crates/bumbledb/src/api/prepared/tests/ground.rs); fuzz/fuzz_targets/rewrites.rs",
+    "the_dnf_residue_subsumes_the_filtered_rule (crates/bumbledb/src/plan/ground/tests.rs); dnf_residue_subsumption_deletes_the_filtered_rule (crates/bumbledb/src/api/prepared/tests/ground.rs)",
 
   .row @Query.keyprobe_equiv_join `Bumbledb.Query.keyprobe_equiv_join
     "Under the accepted shape and the key's uniqueness, the point-probe evaluation equals the join denotation — one get finds exactly the one deriving fact, and the residual per-field filters only shrink that at-most-one hit."
@@ -468,12 +468,12 @@ def ledger : List Obligation := [
   .row @Query.range_summary_replacement `Bumbledb.Query.range_summary_replacement
     "On the bounded word domain one slot's conjunction of constant order bounds means exactly its folded summary's at-most-two emitted bounds, and an in-range equality pin implies every constituent — the filter replacement never changes which words pass."
     "RangeSummary (crates/bumbledb/src/ir/normalize/fold.rs); fold.rs::narrow (crates/bumbledb/src/ir/normalize/fold.rs); fold.rs::emit (crates/bumbledb/src/ir/normalize/fold.rs)"
-    "an_order_conjunction_folds_to_one_summary (crates/bumbledb/src/ir/normalize/fold/tests.rs); an_eq_pin_subsumes_its_folded_bounds (crates/bumbledb/src/ir/normalize/fold/tests.rs); fuzz/fuzz_targets/rewrites.rs",
+    "an_order_conjunction_folds_to_one_summary (crates/bumbledb/src/ir/normalize/fold/tests.rs); an_eq_pin_subsumes_its_folded_bounds (crates/bumbledb/src/ir/normalize/fold/tests.rs)",
 
   .row @Query.filter_fold_transport `Bumbledb.Query.filter_fold_transport
     "The fold's filter replacement transports from encoded words to slot values: through the two order-embedding encodings and the in-place splice that lands a slot's folded bounds at its first constituent's position, the rewritten filter list accepts exactly the typed rows the original accepted — the emitted-bounds arm and the Eq-pinned all-drop arm both."
     "fold.rs::emit (crates/bumbledb/src/ir/normalize/fold.rs); fold.rs::constant_order_bound (crates/bumbledb/src/ir/normalize/fold.rs); crate::encoding::encode::encode_u64 (crates/bumbledb/src/encoding/encode.rs); crate::encoding::encode::encode_i64 (crates/bumbledb/src/encoding/encode.rs)"
-    "fuzz/fuzz_targets/rewrites.rs; an_eq_pin_subsumes_its_folded_bounds (crates/bumbledb/src/ir/normalize/fold/tests.rs)",
+    "folded_and_unfolded_executions_agree_on_random_single_slot_filters (crates/bumbledb/src/api/prepared/tests/statically_empty.rs); an_eq_pin_subsumes_its_folded_bounds (crates/bumbledb/src/ir/normalize/fold/tests.rs)",
 
   /- ## PRD 09 — the lifecycle -/
 
@@ -490,7 +490,7 @@ def ledger : List Obligation := [
   .row @Txn.rejection_is_complete `Bumbledb.Txn.rejection_is_complete
     "A rejection carries the failing phase's complete violation set — the violated key statements when any key fails (the preemption: the statement phase's probes are defined over the keyed final state), else the violated non-key statements — sound, nonempty, never a mix."
     "crate::error::Violations (crates/bumbledb/src/error.rs); apply.rs::apply (crates/bumbledb/src/storage/commit/apply.rs); judgment.rs::judge (crates/bumbledb/src/storage/commit/judgment.rs)"
-    "fuzz/trophies/ops/multi-violation-citation-order",
+    "statement_phase_cites_containments_and_windows_together (crates/bumbledb/src/storage/commit/tests/marks.rs); key_violation_preempts_the_window_judgment (crates/bumbledb/src/storage/commit/tests/marks.rs)",
 
   .row @Txn.witness_conflict_distinct `Bumbledb.Txn.witness_conflict_distinct
     "Witness conflicts are not dependency violations: the two failure kinds are distinct constructors, and the one generation compare aborts before anything is judged."

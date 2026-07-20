@@ -378,6 +378,153 @@ fn eliminated_and_disabled_executions_agree_on_both_sinks() {
     }
 }
 
+/// `A(id fresh, b_ref u64)`; `B(id fresh, c_ref u64)`; `C(id fresh)`;
+/// `A(b_ref) <= B(id)` (statement 3 after the three fresh auto-keys),
+/// `B(c_ref) <= C(id)` (statement 4) — the `A<=B<=C` chain fixture (the
+/// plan-level twin lives in `plan/ground/tests.rs: chain_schema`).
+fn chain_schema() -> Schema {
+    let containment = |source: u32, target: u32| StatementDescriptor::Containment {
+        source: Side {
+            relation: RelationId(source),
+            projection: Box::new([FieldId(1)]),
+            selection: Box::new([]),
+        },
+        target: Side {
+            relation: RelationId(target),
+            projection: Box::new([FieldId(0)]),
+            selection: Box::new([]),
+        },
+    };
+    let fresh = |name: &str| FieldDescriptor {
+        name: name.into(),
+        value_type: ValueType::U64,
+        generation: Generation::Fresh,
+    };
+    let plain = |name: &str| FieldDescriptor {
+        name: name.into(),
+        value_type: ValueType::U64,
+        generation: Generation::None,
+    };
+    SchemaDescriptor {
+        relations: vec![
+            RelationDescriptor {
+                extension: None,
+                name: "A".into(),
+                fields: vec![fresh("id"), plain("b_ref")],
+            },
+            RelationDescriptor {
+                extension: None,
+                name: "B".into(),
+                fields: vec![fresh("id"), plain("c_ref")],
+            },
+            RelationDescriptor {
+                extension: None,
+                name: "C".into(),
+                fields: vec![fresh("id")],
+            },
+        ],
+        statements: vec![containment(0, 1), containment(1, 2)],
+    }
+    .validate()
+    .expect("valid fixture")
+}
+
+/// The chained elimination executed end to end (the empirical arm of
+/// `lean/Bumbledb/Exec/Rewrites.lean: Query.chained_elimination_sound`):
+/// on the `A<=B<=C` chain, `B` falls with `A` as its pairing source and
+/// `C` falls with the already-eliminated `B` as its source — the plan
+/// keeps one occurrence — and the execution's answers are identical to
+/// the grounding-disabled three-way join's.
+#[test]
+fn a_chained_elimination_executes_result_identical_to_the_disabled_plan() {
+    let dir = TempDir::new("grounding-chain-differential");
+    let schema = chain_schema();
+    let env = Environment::create(dir.path(), &schema).expect("create");
+    {
+        let view = env.read_txn().expect("txn");
+        let mut delta = WriteDelta::new(&schema);
+        let mut insert = |relation: u32, values: &[ValueRef]| {
+            let mut bytes = Vec::new();
+            encode_fact(
+                values,
+                schema.relation(RelationId(relation)).layout(),
+                &mut bytes,
+            );
+            delta
+                .insert(&view, RelationId(relation), &bytes)
+                .expect("insert");
+        };
+        for id in [1u64, 2] {
+            insert(2, &[ValueRef::U64(id)]);
+        }
+        for (id, c_ref) in [(10u64, 1u64), (11, 2)] {
+            insert(1, &[ValueRef::U64(id), ValueRef::U64(c_ref)]);
+        }
+        for (id, b_ref) in [(100u64, 10u64), (101, 11), (102, 10)] {
+            insert(0, &[ValueRef::U64(id), ValueRef::U64(b_ref)]);
+        }
+        drop(view);
+        commit(delta, &env).expect("commit");
+    }
+    let cache = ImageCache::new(&schema);
+    let txn = env.read_txn().expect("txn");
+    // Q(a) :- A(id = a, b_ref = x), B(id = x, c_ref = w), C(id = w).
+    let query = Query::single(Rule {
+        finds: vec![FindTerm::Var(VarId(0))],
+        atoms: vec![
+            Atom {
+                source: crate::ir::AtomSource::Edb(RelationId(0)),
+                bindings: vec![
+                    (FieldId(0), Term::Var(VarId(0))),
+                    (FieldId(1), Term::Var(VarId(1))),
+                ],
+            },
+            Atom {
+                source: crate::ir::AtomSource::Edb(RelationId(1)),
+                bindings: vec![
+                    (FieldId(0), Term::Var(VarId(1))),
+                    (FieldId(1), Term::Var(VarId(2))),
+                ],
+            },
+            Atom {
+                source: crate::ir::AtomSource::Edb(RelationId(2)),
+                bindings: vec![(FieldId(0), Term::Var(VarId(2)))],
+            },
+        ],
+        negated: vec![],
+        conditions: vec![],
+    });
+    let mut grounded = prepare(&txn, &cache, &schema, &query).expect("prepare");
+    assert_eq!(
+        plan_roles(&grounded, 0),
+        vec![
+            Role::Positive,
+            Role::Eliminated(bumbledb_theory::schema::StatementId(3)),
+            Role::Eliminated(bumbledb_theory::schema::StatementId(4)),
+        ],
+        "the chain eliminates both targets, each mark carrying its own containment"
+    );
+    let mut disabled =
+        with_grounding_disabled(|| prepare(&txn, &cache, &schema, &query)).expect("prepare");
+    assert_eq!(
+        plan_roles(&disabled, 0),
+        vec![Role::Positive, Role::Positive, Role::Positive],
+        "the off switch keeps all three occurrences joining"
+    );
+    let with_grounding = grounded
+        .execute_collect(&txn, &cache, &[])
+        .expect("execute");
+    let without = disabled
+        .execute_collect(&txn, &cache, &[])
+        .expect("execute");
+    assert_eq!(
+        answers(&with_grounding),
+        answers(&without),
+        "the chained elimination is result-identical"
+    );
+    assert_eq!(with_grounding.len(), 3, "every A row survives the walk");
+}
+
 /// The grounding runs per rule, independently: a two-rule union where the
 /// walk's Account occurrence is containment-implied in rule 0 but
 /// filter-blocked in rule 1 (an extra selection beyond ψ — condition

@@ -57,7 +57,7 @@ project needs no build programmability.
   theorems (`Txn`), plus the fresh-mint allocation model
   (`Txn/Fresh`).
 - **Level 3 — verified Rust: REFUSED, permanently.** The Rust↔Lean
-  link is empirical: the differential, fuzz, and exhaustive estates,
+  link is empirical: the differential and exhaustive estates,
   plus the executable-denotation conformance lane.
 
 `Bridge.lean` is the obligation ledger (each Lean premise ↔ the Rust

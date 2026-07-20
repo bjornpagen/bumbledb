@@ -123,7 +123,9 @@ the checked-in corpus was built at **219/325 expressible** (200 seeded
 (they have no expressibility gate):
 
 * **hostile arm** — not drawn at all: structurally-free IR types
-  nothing and belongs to the validation-totality fuzz lane.
+  nothing and belonged to the validation-totality fuzz lane (deleted
+  with the fuzzing apparatus, `docs/architecture/60-validation.md` §
+  the deletion record).
 * **unresolved string literals** (31) — the model has no intern
   dictionary; a query/param string outside the world's vocabulary is
   the engine's dictionary-miss latch, excluded on principle.
@@ -311,7 +313,7 @@ stays a per-push lane.
 * Lean alone: `lake exe conformance conformance/cases` from `lean/`
   (wired into `scripts/lean.sh`).
 
-A DISAGREEMENT IS A TROPHY — engine bug, naive-model bug, or spec bug
-all count; triage per the fuzzing charter
+A DISAGREEMENT IS A FINDING — engine bug, naive-model bug, or spec bug
+all count; triage it before anything else merges
 (`docs/architecture/60-validation.md`). Report prominently; never
 "fix" the corpus to make a disagreement go away.

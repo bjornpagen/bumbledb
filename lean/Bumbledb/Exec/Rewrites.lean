@@ -5,8 +5,9 @@ import Bumbledb.Query.Denotation
 
 Grounding as denotation-preserving partial evaluation, the key-probe
 plan, statically-empty folds, the subsumption deletion, and their
-composition — the formal arm of the claim the rewrites fuzz target
-checks empirically: "rewrites are semantics-preserving". Algorithmic
+composition — the formal arm of the claim the bench crate's dual-run
+differentials check empirically: "rewrites are semantics-preserving".
+Algorithmic
 essence only, per the mechanism fence: grounding is substitution
 against ground axioms, a key probe is one determinant get, static
 emptiness is a refuted condition, subsumption is rule containment at
@@ -120,7 +121,8 @@ the identity variable mapping.
   own recorded fence (`plan/ground.rs`'s module doc): the witness
   never searches variable mappings, and neither does the model —
   `VarId`s must already agree, exactly what DNF-cloned rules provide.
-  The ground-off dual-pipeline differential (the fuzz rewrites target)
+  The ground-off dual-run differential
+  (`crates/bumbledb-bench/src/differential/tests`)
   and the prepare-level instruments
   (`the_dnf_residue_subsumes_the_filtered_rule`,
   `crates/bumbledb/src/plan/ground/tests.rs`;
@@ -233,9 +235,10 @@ the identity variable mapping.
   code; and the raise-order half of the filter-order law
   (`image/view.rs`, the measure guard) is mechanism below the
   conjunction reading — order filters never raise, so landing them at
-  the first constituent's position unlocks nothing. The fold-off
-  dual-pipeline differential (the rewrites fuzz target, feature
-  `fold-off`) stays as the plumbing's empirical arm.
+  the first constituent's position unlocks nothing. The engine's
+  test-only fold-preservation differential
+  (`statically_empty.rs::folded_and_unfolded_executions_agree_on_random_single_slot_filters`)
+  stays as the plumbing's empirical arm.
 -/
 
 namespace Bumbledb.Query
@@ -521,9 +524,9 @@ agreeing with the theory's ground axioms, the grounding step preserves
 the rule's answers: the folded contribution means exactly what the
 closed atom meant (closed extensions are instance-invariant — 03's
 sealed constants, `den_closed_constant`), and the refutation verdict
-is honest emptiness. Bridge: `plan/ground`, the `ground-off` dual
-pipeline (the rewrites fuzz target's empirical arm of this exact
-statement). -/
+is honest emptiness. Bridge: `plan/ground`, the `ground-off` dual-run
+differential (`crates/bumbledb-bench/src/differential/tests` — the
+empirical arm of this exact statement). -/
 theorem grounding_preserves_answers {T : Theory} (C : Classify)
     (r : Rule) {I : Instance} (hax : AgreesWithAxioms T I)
     (ρ : ParamEnv) :
@@ -2235,9 +2238,10 @@ holds at the row itself. The premise is `emit`'s per-slot decision,
 arm for arm (folded bounds, or the pinned all-drop under rule (c)'s
 in-summary screen); the conclusion composes the splice discipline
 (step 2), the list transfer (step 1), and the two order embeddings
-(step 3). Bridge: `fold.rs::emit`; the fold-off dual-pipeline
-differential (the rewrites fuzz target) is this statement's
-empirical arm. -/
+(step 3). Bridge: `fold.rs::emit`; the engine's test-only
+fold-preservation differential
+(`statically_empty.rs::folded_and_unfolded_executions_agree_on_random_single_slot_filters`)
+is this statement's empirical arm. -/
 theorem filter_fold_transport {dom : FieldId → Elem} {π : Type}
     {den : π → Prop} (v : (i : FieldId) → elemDomain (dom i))
     (fs : List (TypedFilter dom π))

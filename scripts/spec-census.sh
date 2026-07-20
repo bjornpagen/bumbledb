@@ -6,13 +6,13 @@
 #
 #   (a) every `mechanism` token of `lean/Bumbledb/Bridge.lean` greps to
 #       an existing path and symbol under crates/;
-#   (b) every `instrument` token greps to an existing test fn, fuzz
-#       target, or trophy;
+#   (b) every `instrument` token greps to an existing test fn or
+#       conformance case;
 #   (c) every `lean/…` citation in docs/architecture/ and
 #       docs/cookbook.md resolves to a real file — and, when it names a
 #       declaration (`lean/….lean: name`), to a real declaration in it;
 #   (d) every backticked `path.rs::symbol` citation in lean/ doc
-#       comments resolves: some file under crates/*/src or fuzz/src
+#       comments resolves: some file under crates/*/src
 #       whose path ends with the cited path contains the symbol's
 #       final `::`-segment word-bounded. (Line-number citations inside
 #       lean doc comments are NOT checked — they drift silently; prefer
@@ -22,8 +22,8 @@
 # instrument strings are semicolon-joined tokens, each either
 # `symbol (path)` — the path must exist and the symbol's final
 # `::`-segment must grep word-bounded inside it — or a bare
-# `crates/…`/`fuzz/…` path (existence). Premise strings carry none of
-# `crates/`, `fuzz/`, `::`, so only mechanism/instrument strings are
+# `crates/…` path (existence). Premise strings carry none of
+# `crates/`, `::`, so only mechanism/instrument strings are
 # scanned. Exit nonzero on any dangler. Conventions follow check.sh.
 set -euo pipefail
 
@@ -44,14 +44,14 @@ scanned=0
 # census-scannable token (strings are single-line by construction).
 while IFS= read -r str; do
   case "$str" in
-    *crates/* | *fuzz/* | *::*) ;;
+    *crates/* | *::*) ;;
     *) continue ;;
   esac
   # Split the string on '; ' into tokens.
   while IFS= read -r tok; do
     [ -n "$tok" ] || continue
     scanned=$((scanned + 1))
-    if [[ "$tok" =~ ^(.+)\ \(((crates|fuzz)/[^\)]+)\)$ ]]; then
+    if [[ "$tok" =~ ^(.+)\ \((crates/[^\)]+)\)$ ]]; then
       sym="${BASH_REMATCH[1]}"
       path="${BASH_REMATCH[2]}"
       final="${sym##*::}"
@@ -62,13 +62,13 @@ while IFS= read -r str; do
         echo "spec-census: FAIL — symbol '$final' (token '$tok') not found in $path" >&2
         fail=1
       fi
-    elif [[ "$tok" =~ ^(crates|fuzz)/[A-Za-z0-9_./-]+$ ]]; then
+    elif [[ "$tok" =~ ^crates/[A-Za-z0-9_./-]+$ ]]; then
       if [ ! -e "$tok" ]; then
         echo "spec-census: FAIL — path '$tok' does not exist" >&2
         fail=1
       fi
     else
-      echo "spec-census: FAIL — unparseable census token '$tok' (the parse contract: 'symbol (path)' or a bare crates/|fuzz/ path)" >&2
+      echo "spec-census: FAIL — unparseable census token '$tok' (the parse contract: 'symbol (path)' or a bare crates/ path)" >&2
       fail=1
     fi
   done < <(printf '%s\n' "$str" | sed 's/; /\n/g')
@@ -122,7 +122,7 @@ done < <(grep -ohE 'lean/[A-Za-z0-9_/.-]+\.lean: *[A-Za-z_][A-Za-z0-9_.]*' "${do
 # code. Line-number anchors drift silently (the 2026-07-15 fidelity
 # review found four drifted ranges); symbol anchors are checkable, so
 # they are what this lane keeps honest: `path.rs::symbol` in backticks,
-# path resolved as a suffix under crates/*/src or fuzz/src, the
+# path resolved as a suffix under crates/*/src, the
 # symbol's final `::`-segment grepped word-bounded in a matching file.
 
 lean_cites=0
@@ -139,10 +139,10 @@ while IFS= read -r cite; do
       break
     fi
   done < <([ -f "$path" ] && printf '%s\n' "$path"; \
-           find crates/*/src fuzz/src -type f -path "*/$path" 2>/dev/null; \
-           find crates/*/src fuzz/src -type f -name "$path" 2>/dev/null)
+           find crates/*/src -type f -path "*/$path" 2>/dev/null; \
+           find crates/*/src -type f -name "$path" 2>/dev/null)
   if [ "$found" -ne 1 ]; then
-    echo "spec-census: FAIL — lean cites '$cite' but no crates/*/src or fuzz/src file matching '$path' contains '$final'" >&2
+    echo "spec-census: FAIL — lean cites '$cite' but no crates/*/src file matching '$path' contains '$final'" >&2
     fail=1
   fi
 done < <(grep -rhoIE --include='*.lean' --include='*.md' --exclude-dir=.lake \

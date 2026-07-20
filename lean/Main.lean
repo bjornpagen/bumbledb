@@ -8,8 +8,8 @@ import Bumbledb.Exec.Fixpoint
 `lake exe conformance [cases-dir]`: read every `*.json` case, dispatch
 on the case kind, and compare against the recorded engine verdicts.
 Exit 0 on full agreement; exit 1 with the offending case files named
-otherwise — a disagreement is a TROPHY (engine bug / naive-model bug /
-spec bug), triaged per the fuzzing charter, never repaired here.
+otherwise — a disagreement is a finding (engine bug / naive-model bug /
+spec bug), triaged before anything else merges, never repaired here.
 
 Three arms, dispatched by file name (`lean/conformance/README.md`):
 
