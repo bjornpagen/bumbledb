@@ -418,6 +418,32 @@ lane, DNFs named) and `scenarios.json` (the machine artifact, hand-rolled —
 the one stats format shared with `report.json`). Charts render ONLY from
 committed `scenarios.json` pins, never from live runs.
 
+**The rings world** (`scenarios/rings.rs`). Thesis: cyclic joins expose the
+binary-join exponent on hub data — a 3-ring over a power-law transfer graph
+has no join order that avoids materializing a 2-path intermediate, and the
+hubs make that intermediate quadratic. Five family stories: `r1_wash_ring`
+(the equality 3-ring with a strict-minimum tiebreak and an amount threshold —
+the exponent on realistic skew, capped) and `r2_temporal_ring` (the same ring
+plus pairwise Allen INTERSECTS over the hop spans — the temporal-ring shape);
+the bipartite-bomb tiers `r3_bomb_t1`/`r4_bomb_t2`, two separate relations
+(`Bomb1`, `Bomb2` — the tier is a type, each with its own statement-derived
+composite index on both engines, so a `WHERE tier=?` plan asymmetry is
+unrepresentable) under the tier law: tier 1 (m=48, m³ ≈ 1.1e5 closing probes)
+is sized to finish within the 1000 ms cap, tier 2 (m=384, m³ ≈ 5.7e7) is sized
+≥ two decades past it — SQLite is expected to report exceeded-cap there,
+excluded-and-counted; the magnitudes are exponent-arithmetic design constants,
+never timed at authoring. `r5_reciprocal` (the kind-filtered 2-cycle, uncapped)
+and `r6_two_path_count` (the denominator story: the distinct 2-path count a
+binary-join plan must materialize) complete the set. The bomb answer is an
+analytic oracle, not a measurement: each bomb is K_{m,m} with edges in both
+directions plus one planted directed triangle on ids disjoint from both sides —
+the bipartite part is triangle-free by construction (a directed 3-cycle would
+alternate sides and need an A→A or B→B edge the generator cannot emit), so the
+triangle query's full binding set is exactly the planted cycle's 3 rotations,
+asserted in the world's smoke tests. Corpus sizes live in a `Sizes` struct
+(`FULL`/`SMOKE`); every param policy is size-independent, so the smoke gate
+runs the same queries and params as the night run, only smaller.
+
 ## Differential and property tests
 
 - The **naive model** (promoted above) executes the same IR and judges the same

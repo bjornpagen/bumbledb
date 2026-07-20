@@ -24,6 +24,7 @@ pub mod graph;
 pub mod joins;
 pub mod olap;
 pub mod points;
+pub mod rings;
 
 mod all;
 mod geomean;
