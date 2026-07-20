@@ -1,0 +1,331 @@
+//! The churn smoke suite: `Tiny` scale, correctness only, milliseconds
+//! — the oracle gate the lane must pass before the owner ever times it.
+
+use crate::corpus_gen::{GenConfig, Scale, Sizes};
+use crate::storemode::StoreMode;
+
+use super::engines::{self, OursLane, SqliteSync};
+use super::ops::{self, ChurnConfig, Mix};
+use super::verify_end;
+
+fn scratch(tag: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!("bumbledb-bench-churn-{tag}"));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("scratch dir");
+    dir
+}
+
+/// Drives one full churn run: one ours lane plus the requested mirrors,
+/// every cycle planned, resolved, applied to every store, and folded
+/// into the model. Returns the lane, the labeled mirrors, the model,
+/// and the scratch dir (for cleanup).
+fn drive(
+    cfg: &ChurnConfig,
+    mix: &Mix,
+    mode: StoreMode,
+    syncs: &[SqliteSync],
+    tag: &str,
+) -> (
+    OursLane,
+    Vec<(&'static str, rusqlite::Connection)>,
+    ops::LiveSet,
+    std::path::PathBuf,
+) {
+    ops::validate(cfg, mix).expect("a smoke config validates");
+    let dir = scratch(tag);
+    let mut lane = engines::create_ours(&dir.join("ours"), cfg.r#gen, mode).expect("ours lane");
+    let mirrors: Vec<(&'static str, rusqlite::Connection)> = syncs
+        .iter()
+        .map(|sync| {
+            let path = dir.join(format!("mirror-{}.sqlite", sync.label()));
+            let conn = engines::create_sqlite(&path, cfg.r#gen, *sync).expect("mirror");
+            (sync.label(), conn)
+        })
+        .collect();
+    let mut live = ops::LiveSet::from_corpus(cfg.r#gen);
+    for cycle in 1..=cfg.cycles {
+        let plan = ops::cycle_plan(cfg.r#gen, mix, cycle, live.len());
+        let removals = live.resolve(&plan);
+        let added = engines::apply_ours(&mut lane, &removals, &plan.bodies).expect("apply ours");
+        for (label, conn) in &mirrors {
+            engines::apply_sqlite(conn, &removals, &added)
+                .unwrap_or_else(|e| panic!("apply sqlite-{label}: {e}"));
+        }
+        live.apply(&plan, added);
+    }
+    (lane, mirrors, live, dir)
+}
+
+fn assert_agreement(
+    lane: &OursLane,
+    mirrors: &[(&'static str, rusqlite::Connection)],
+    live: &ops::LiveSet,
+) {
+    let refs: Vec<(&str, &rusqlite::Connection)> =
+        mirrors.iter().map(|(label, conn)| (*label, conn)).collect();
+    verify_end::assert_end_state(lane, &refs, live).expect("end states agree");
+}
+
+fn tiny_postings() -> usize {
+    usize::try_from(Sizes::of(Scale::Tiny).postings).expect("64-bit usize")
+}
+
+/// The full three-way gate on the steady default: model, engine, and
+/// both mirror kinds agree, and steady state holds — facts in == facts
+/// out, so the working set never moved.
+#[test]
+fn churn_smoke_end_states_agree_three_ways() {
+    let cfg = ChurnConfig::smoke(1);
+    let (lane, mirrors, live, dir) = drive(
+        &cfg,
+        &ops::STEADY,
+        StoreMode::Durable,
+        &[SqliteSync::Full, SqliteSync::Nosync],
+        "smoke",
+    );
+    assert_agreement(&lane, &mirrors, &live);
+    assert_eq!(
+        live.len(),
+        tiny_postings(),
+        "steady state: facts in == facts out"
+    );
+    drop((lane, mirrors));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The growth mode: the working set grows by exactly `growth` per
+/// cycle, and the three views still agree.
+#[test]
+fn churn_growth_mode_grows_the_working_set() {
+    let cfg = ChurnConfig {
+        cycles: 4,
+        sample_every: 2,
+        ..ChurnConfig::smoke(2)
+    };
+    let mix = Mix {
+        churn: 8,
+        updates: 4,
+        growth: 2,
+    };
+    let (lane, mirrors, live, dir) = drive(
+        &cfg,
+        &mix,
+        StoreMode::Durable,
+        &[SqliteSync::Full],
+        "growth",
+    );
+    assert_agreement(&lane, &mirrors, &live);
+    assert_eq!(live.len(), tiny_postings() + 8, "4 cycles x growth 2");
+    drop((lane, mirrors));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The delete-heavy mix — half the Tiny working set churned per cycle —
+/// still lands on three-way agreement at the original working-set size.
+#[test]
+fn churn_delete_heavy_end_state_agrees() {
+    let cfg = ChurnConfig {
+        cycles: 4,
+        sample_every: 2,
+        ..ChurnConfig::smoke(3)
+    };
+    let (lane, mirrors, live, dir) = drive(
+        &cfg,
+        &ops::DELETE_HEAVY,
+        StoreMode::Durable,
+        &[SqliteSync::Full],
+        "delete-heavy",
+    );
+    assert_agreement(&lane, &mirrors, &live);
+    assert_eq!(live.len(), tiny_postings(), "delete-heavy stays steady");
+    drop((lane, mirrors));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The pure-function law made observable: the same seed drives the
+/// identical run twice — equal posting multisets, equal id burn.
+#[test]
+fn churn_replay_is_deterministic() {
+    let cfg = ChurnConfig::smoke(4);
+    let (first, _, _, dir_a) = drive(&cfg, &ops::STEADY, StoreMode::Durable, &[], "replay-a");
+    let (second, _, _, dir_b) = drive(&cfg, &ops::STEADY, StoreMode::Durable, &[], "replay-b");
+    let ours_a = verify_end::posting_multiset_ours(&first.db).expect("first multiset");
+    let ours_b = verify_end::posting_multiset_ours(&second.db).expect("second multiset");
+    crate::compare::multisets(ours_a, ours_b).expect("replayed multisets are equal");
+    assert_eq!(
+        first.last_minted, second.last_minted,
+        "the id burn replays exactly"
+    );
+    drop((first, second));
+    let _ = std::fs::remove_dir_all(&dir_a);
+    let _ = std::fs::remove_dir_all(&dir_b);
+}
+
+/// The durable/ephemeral differential, extended to churn: the two store
+/// kinds land on the identical posting multiset and the identical mint
+/// high-water.
+#[test]
+fn churn_ephemeral_minter_matches_durable() {
+    let cfg = ChurnConfig::smoke(5);
+    let (durable, _, _, dir_a) = drive(&cfg, &ops::STEADY, StoreMode::Durable, &[], "kind-d");
+    let (ephemeral, _, _, dir_b) = drive(&cfg, &ops::STEADY, StoreMode::Ephemeral, &[], "kind-e");
+    let ours_d = verify_end::posting_multiset_ours(&durable.db).expect("durable multiset");
+    let ours_e = verify_end::posting_multiset_ours(&ephemeral.db).expect("ephemeral multiset");
+    crate::compare::multisets(ours_d, ours_e).expect("store kinds agree");
+    assert_eq!(
+        durable.last_minted, ephemeral.last_minted,
+        "both kinds burn the id space identically"
+    );
+    drop((durable, ephemeral));
+    let _ = std::fs::remove_dir_all(&dir_a);
+    let _ = std::fs::remove_dir_all(&dir_b);
+}
+
+/// The delete-bearing contract falsified from both sides (the
+/// `posting_swap` test's twin): a live removal commits; the SAME
+/// removal again must refuse the whole cycle, and the refusal commits
+/// nothing — the generation does not move.
+#[test]
+fn churn_stale_removal_refuses_the_whole_cycle() {
+    let dir = scratch("stale");
+    let cfg = ChurnConfig::smoke(6);
+    let mut lane =
+        engines::create_ours(&dir.join("ours"), cfg.r#gen, StoreMode::Durable).expect("ours lane");
+    let live = ops::LiveSet::from_corpus(cfg.r#gen);
+    let victim = live.rows()[0].clone();
+    engines::apply_ours(&mut lane, std::slice::from_ref(&victim), &[])
+        .expect("the live removal commits");
+    let generation = lane.db.generation().expect("generation");
+    let refusal = engines::apply_ours(&mut lane, &[victim], &[]);
+    assert!(
+        refusal.is_err(),
+        "a stale removal must refuse the whole cycle"
+    );
+    assert_eq!(
+        lane.db.generation().expect("generation"),
+        generation,
+        "a refused cycle must leave the store untouched"
+    );
+    drop(lane);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The plan is a pure function of its arguments, its removal indices
+/// are distinct and in range, and its counts follow the mix exactly.
+#[test]
+fn churn_cycle_plan_is_pure_and_distinct() {
+    let r#gen = GenConfig {
+        seed: 9,
+        scale: Scale::Tiny,
+    };
+    let mix = ops::STEADY;
+    let live_len = tiny_postings();
+    let plan = ops::cycle_plan(r#gen, &mix, 5, live_len);
+    assert_eq!(
+        plan,
+        ops::cycle_plan(r#gen, &mix, 5, live_len),
+        "the plan is a pure function of (seed, cycle, live_len)"
+    );
+    let mut seen = std::collections::BTreeSet::new();
+    for &index in plan.updates.iter().chain(plan.deletes.iter()) {
+        assert!(index < live_len, "every removal index is live");
+        assert!(seen.insert(index), "removal indices are distinct");
+    }
+    assert_eq!(
+        u64::try_from(plan.updates.len()).expect("fits"),
+        mix.updates
+    );
+    assert_eq!(u64::try_from(plan.deletes.len()).expect("fits"), mix.churn);
+    assert_eq!(
+        u64::try_from(plan.bodies.len()).expect("fits"),
+        mix.arrivals()
+    );
+}
+
+/// The nosync twin genuinely engages: `synchronous` reads 0 (OFF) on
+/// the nosync mirror and 2 (FULL) on the fairness session.
+#[test]
+fn churn_nosync_pragma_engages() {
+    let dir = scratch("nosync");
+    let r#gen = GenConfig {
+        seed: 8,
+        scale: Scale::Tiny,
+    };
+    let nosync = engines::create_sqlite(&dir.join("nosync.sqlite"), r#gen, SqliteSync::Nosync)
+        .expect("nosync mirror");
+    let sync: i64 = nosync
+        .query_row("PRAGMA synchronous", [], |row| row.get(0))
+        .expect("pragma");
+    assert_eq!(sync, 0, "OFF");
+    let full = engines::create_sqlite(&dir.join("full.sqlite"), r#gen, SqliteSync::Full)
+        .expect("full mirror");
+    let sync: i64 = full
+        .query_row("PRAGMA synchronous", [], |row| row.get(0))
+        .expect("pragma");
+    assert_eq!(sync, 2, "FULL");
+    drop((nosync, full));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Every refusal arm of [`ops::validate`], hit once — and the shipped
+/// configs pass.
+#[test]
+fn churn_validate_refuses_bad_configs() {
+    let good = ChurnConfig::smoke(1);
+    assert!(ops::validate(&good, &ops::STEADY).is_ok());
+    assert!(
+        ops::validate(&good, &ops::DELETE_HEAVY).is_ok(),
+        "Tiny admits DELETE_HEAVY exactly: 1024 == 2 x 512"
+    );
+
+    let zero_cycles = ChurnConfig {
+        cycles: 0,
+        ..good.clone()
+    };
+    assert!(ops::validate(&zero_cycles, &ops::STEADY).is_err());
+
+    let zero_stride = ChurnConfig {
+        sample_every: 0,
+        ..good.clone()
+    };
+    assert!(ops::validate(&zero_stride, &ops::STEADY).is_err());
+
+    let off_boundary = ChurnConfig {
+        cycles: 7,
+        sample_every: 3,
+        ..good.clone()
+    };
+    assert!(
+        ops::validate(&off_boundary, &ops::STEADY).is_err(),
+        "samples must land on cycle boundaries"
+    );
+
+    let zero_vacuum = ChurnConfig {
+        vacuum_every: 0,
+        ..good.clone()
+    };
+    assert!(ops::validate(&zero_vacuum, &ops::STEADY).is_err());
+
+    let zero_analyze = ChurnConfig {
+        analyze_every: 0,
+        ..good.clone()
+    };
+    assert!(ops::validate(&zero_analyze, &ops::STEADY).is_err());
+
+    let empty_mix = Mix {
+        churn: 0,
+        updates: 0,
+        growth: 0,
+    };
+    assert!(ops::validate(&good, &empty_mix).is_err());
+
+    let past_the_floor = Mix {
+        churn: 600,
+        updates: 0,
+        growth: 0,
+    };
+    assert!(
+        ops::validate(&good, &past_the_floor).is_err(),
+        "2 x 600 > Tiny's 1024 postings"
+    );
+}

@@ -7,6 +7,7 @@
 //! statistics, argument parsing, and randomness are hand-rolled.
 
 pub mod calendar;
+pub mod churn;
 pub mod cli;
 pub mod clockproxy;
 pub mod closure;
