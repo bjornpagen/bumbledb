@@ -79,7 +79,9 @@ if (!result.ok) {
 // first binding; params are typed by use; rows are typed from the select.
 // `gt` is one of the free comparison exports.
 const certifiedAbove = query(Review).rule((r) => {
-	const { a, k, rank } = r.vars("a", "k", "rank")
+	const a = r.var("a")
+	const k = r.var("k")
+	const rank = r.var("rank")
 	return r
 		.match(Certificate, { attempt: a, kind: k })
 		.match(Kind, { id: k, mastered: true, rank }) // ψ on the read side too

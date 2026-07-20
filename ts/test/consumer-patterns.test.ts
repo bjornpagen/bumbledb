@@ -497,7 +497,7 @@ describe("the repair loop against the real theory", function repairLoop() {
 	test("the PRIMARY-KEY rule: get reads through the fresh field or the first declared key, and NOTHING else", function primaryKeyRule() {
 		const taskId = must(ids.task)
 		assert.ok(db.get(task, { id: taskId }) !== undefined, "fresh-keyed get hits")
-		/** The declared identity key (kind, subject) is NOT a get spelling — the driver scans instead (OPEN-ledger row b). */
+		/** The 2-arg form refuses the declared identity key (kind, subject): its KeyFact is the primary projection alone. The declared-key read is the 3-arg keyed form — get(task, keyStatement, key) (70-api ledger row (b), SHIPPED 2026-07-19; ts/test/keyed-get.test.ts pins it). */
 		assert.throws(function declaredKeyGet() {
 			// @ts-expect-error — the KeyFact type demands exactly the fresh field; this pins the runtime refusal too
 			db.get(task, { kind: "Cartograph", subject: 1n })

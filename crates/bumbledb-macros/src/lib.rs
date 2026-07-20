@@ -37,7 +37,23 @@
 //! and a trailing comma with no width are expansion errors naming the
 //! field); a vocabulary is a closed relation, never a type. `as NewType` generates the host-side nominal newtype
 //! (legal on u64, i64, `bytes<N>`, and both intervals). `fresh`
-//! auto-materializes `R(field) -> R` at schema resolution. **There are no field-level constraint modifiers** — everything
+//! auto-materializes `R(field) -> R` at schema resolution, and its
+//! newtype implements the engine's `Key`: the auto key's `StatementId`
+//! is computed here at expansion (the fresh field's ordinal in the
+//! materialized order's first block), so `tx.get(id)` / `snap.get(id)`
+//! read through the key value's type — every fresh field of every
+//! ordinary relation gets one, several keys over one relation being
+//! several distinct Rust types. Every DECLARED key statement on an
+//! ordinary relation gets the same treatment: `Task(kind, subject) ->
+//! Task;` emits the generated **key struct** `TaskByKindSubject { kind,
+//! subject }` (`{R}By{Fields}`, each snake segment Pascal-cased; fields
+//! cloned from the relation's declaration, newtypes preserved, `str`
+//! borrowed) implementing `Key` with its `StatementId` computed here
+//! from the same materialized order — key structs join the newtypes,
+//! host enums, and fact structs in the emission roster, so a keyed
+//! `snap.get(..)` / `tx.get(..)` through a wrong column, wrong newtype,
+//! or wrong relation is a compile error, never a runtime shape check.
+//! **There are no field-level constraint modifiers** — everything
 //! relational is a dependency statement between the relation blocks
 //! (docs/architecture/30-dependencies.md): `R(X) -> R` (functionality —
 //! read as the functional dependency it spells: the key projection
@@ -995,9 +1011,11 @@ fn parse_schema(input: TokenStream) -> Result<SchemaAst, ParseError> {
 }
 
 /// The declarative schema surface: expands to the header's `Theory`
-/// unit struct, host-side newtypes and host enums, and one typed fact struct
+/// unit struct, host-side newtypes and host enums, one typed fact struct
 /// per relation with `encode_write`/`encode_delete`/`encode_read`/`decode`
-/// boundaries. The expansion builds a `SchemaSpec` plus a span table, runs
+/// boundaries, and one generated key struct per declared key statement
+/// on an ordinary relation (`{R}By{Fields}`, implementing `Key`). The
+/// expansion builds a `SchemaSpec` plus a span table, runs
 /// the ONE shared lowering (`SchemaSpec::descriptor` — name→id resolution
 /// and the canonical-utterance ban table, the same pass the runtime spec
 /// path runs), and emits the lowered `SchemaDescriptor` as const
@@ -1029,17 +1047,27 @@ pub fn schema(input: TokenStream) -> TokenStream {
     emit_id_constants(&mut out, &schema);
     emit_newtypes(&mut out, &schema.relations);
     emit_closed(&mut out, &schema.relations);
+    // The running fresh-field ordinal across ALL relations in declaration
+    // order (field order within) — exactly the first block of
+    // `SchemaDescriptor::materialized_statements`, so each fresh field's
+    // ordinal IS its auto-key `StatementId`, computed here at expansion,
+    // never discovered at runtime.
+    let mut fresh_ordinal = 0usize;
     for (index, relation) in schema.relations.iter().enumerate() {
+        let fresh_count = relation.fields.iter().filter(|field| field.fresh).count();
         // No fact struct and no `Fact`/`Fresh` impls for a closed relation:
         // its rows are ground axioms and the relation is unwritable — a
         // writable struct would be a lie the type system tells. Reads go
         // through queries and the dyn surface
         // (`docs/architecture/70-api.md`).
         if relation.closed.is_some() {
+            fresh_ordinal += fresh_count;
             continue;
         }
-        emit_fact_struct(&mut out, &schema.name, index, relation);
+        emit_fact_struct(&mut out, &schema.name, index, relation, fresh_ordinal);
+        fresh_ordinal += fresh_count;
     }
+    emit_key_structs(&mut out, &schema);
     out.parse().expect("schema!: generated code parses")
 }
 
@@ -2222,12 +2250,30 @@ fn rust_field_ty(field: &Field) -> String {
     }
 }
 
+/// The expression context one boundary set encodes against: the
+/// relation-id expression and the write/delete/read context bindings.
+/// The fact structs pass `<Self as Fact<'a>>::RELATION` (the impl block
+/// knows its own relation); the generated key structs pass the literal
+/// `::bumbledb::schema::RelationId({rel_idx})` — a `Key` impl has no
+/// `Fact` supertrait to read the id through.
+struct EncodeCx<'s> {
+    /// The `RelationId` expression the width-checked boundaries cite.
+    relation: &'s str,
+    /// The write-context binding (mints through the delta).
+    write: &'s str,
+    /// The delete-context binding (resolves pending-then-committed,
+    /// never mints).
+    delete: &'s str,
+    /// The read-context binding (committed dictionary only).
+    read: &'s str,
+}
+
 /// The per-field encode expressions for the three `Fact` boundaries:
 /// write (mints through the delta), delete (resolves pending-then-
 /// committed, never mints — a miss proves the fact absent), read
 /// (committed dictionary only). Word-backed fields encode identically in
 /// every context; only the interned kinds (str/bytes) split by boundary.
-fn encode_exprs(field: &Field, idx: usize) -> (String, String, String) {
+fn encode_exprs(field: &Field, idx: usize, cx: &EncodeCx<'_>) -> (String, String, String) {
     let access = if field.newtype.is_some() {
         format!("self.{}.0", field.name)
     } else {
@@ -2248,16 +2294,17 @@ fn encode_exprs(field: &Field, idx: usize) -> (String, String, String) {
         // marks the one-word encoding.
         FieldTy::Interval(element, Some(width)) => same(format!(
             "::bumbledb::__private::fixed_interval_{}(\
-             <Self as ::bumbledb::Fact<'a>>::RELATION, \
+             {relation}, \
              ::bumbledb::schema::FieldId({idx}), {access}, {width}u64)?",
-            element_rust(*element)
+            element_rust(*element),
+            relation = cx.relation,
         )),
         // Inline in every context: bytes<N> never touches the dictionary,
         // so write/delete/read share one self-encoding expression.
         FieldTy::FixedBytes(_) => same(format!(
             "::bumbledb::__private::ValueRef::fixed_bytes(&{access})"
         )),
-        FieldTy::Str => interned_exprs("str", "String", &field.name),
+        FieldTy::Str => interned_exprs("str", "String", &field.name, cx),
     }
 }
 
@@ -2265,9 +2312,14 @@ fn encode_exprs(field: &Field, idx: usize) -> (String, String, String) {
 /// selects the plumbing functions (`intern_{family}_{write,delete,read}`)
 /// and `variant` the `ValueRef` constructor. Delete and read share the
 /// miss shape — `Ok(false)`, the fact provably absent — differing only
-/// in context binding. The field is already a borrow (`&'a str`), so it
-/// passes straight through.
-fn interned_exprs(family: &str, variant: &str, name: &str) -> (String, String, String) {
+/// in context binding (`cx`'s). The field is already a borrow
+/// (`&'a str`), so it passes straight through.
+fn interned_exprs(
+    family: &str,
+    variant: &str,
+    name: &str,
+    cx: &EncodeCx<'_>,
+) -> (String, String, String) {
     let miss = |boundary: &str, ctx: &str| {
         format!(
             "match ::bumbledb::__private::intern_{family}_{boundary}({ctx}, self.{name})? {{ Some(id) => ::bumbledb::__private::ValueRef::{variant}(id), None => return Ok(false) }}"
@@ -2275,10 +2327,11 @@ fn interned_exprs(family: &str, variant: &str, name: &str) -> (String, String, S
     };
     (
         format!(
-            "::bumbledb::__private::ValueRef::{variant}(::bumbledb::__private::intern_{family}_write(tx, self.{name})?)"
+            "::bumbledb::__private::ValueRef::{variant}(::bumbledb::__private::intern_{family}_write({ctx}, self.{name})?)",
+            ctx = cx.write,
         ),
-        miss("delete", "tx"),
-        miss("read", "snap"),
+        miss("delete", cx.delete),
+        miss("read", cx.read),
     )
 }
 
@@ -2331,7 +2384,13 @@ fn decode_arm(field: &Field, idx: usize, ctx: &str, suffix: &str) -> String {
     }
 }
 
-fn emit_fact_struct(out: &mut String, schema_name: &str, index: usize, relation: &Relation) {
+fn emit_fact_struct(
+    out: &mut String,
+    schema_name: &str,
+    index: usize,
+    relation: &Relation,
+    fresh_base: usize,
+) {
     let name = &relation.name;
     // A struct with any variable-width field gains one lifetime: those
     // fields are borrowed (`&'a str` / `&'a [u8]`) — from the host at
@@ -2358,8 +2417,14 @@ fn emit_fact_struct(out: &mut String, schema_name: &str, index: usize, relation:
     let mut read_values = String::new();
     let mut decode_fields = String::new();
     let mut decode_write_fields = String::new();
+    let cx = EncodeCx {
+        relation: "<Self as ::bumbledb::Fact<'a>>::RELATION",
+        write: "tx",
+        delete: "tx",
+        read: "snap",
+    };
     for (idx, field) in relation.fields.iter().enumerate() {
-        let (write_expr, delete_expr, read_expr) = encode_exprs(field, idx);
+        let (write_expr, delete_expr, read_expr) = encode_exprs(field, idx, &cx);
         let _ = write!(write_values, "{write_expr},");
         let _ = write!(delete_values, "{delete_expr},");
         let _ = write!(read_values, "{read_expr},");
@@ -2402,7 +2467,16 @@ fn emit_fact_struct(out: &mut String, schema_name: &str, index: usize, relation:
          }}\n",
     );
 
-    // Fresh-minting newtypes: `tx.alloc::<NewType>()` knows its field.
+    // Fresh-minting newtypes: `tx.alloc::<NewType>()` knows its field,
+    // and each newtype is a typed point-read key (`::bumbledb::Key`) —
+    // the value reads through its auto-materialized `R(field) -> R`,
+    // whose `StatementId` is this fresh field's ordinal among ALL fresh
+    // fields (relation declaration order, then field order): the first
+    // block of `SchemaDescriptor::materialized_statements`, replayed
+    // here at expansion. EVERY fresh field of an ordinary relation gets
+    // one — several fresh keys over one relation are several distinct
+    // Rust types, so no single-fresh restriction exists.
+    let mut auto_key_id = fresh_base;
     for (field_idx, field) in relation.fields.iter().enumerate() {
         let (true, Some(newtype)) = (field.fresh, &field.newtype) else {
             continue;
@@ -2415,25 +2489,213 @@ fn emit_fact_struct(out: &mut String, schema_name: &str, index: usize, relation:
                  const FIELD: ::bumbledb::schema::FieldId = ::bumbledb::schema::FieldId({field_idx});\n\
                  fn from_fresh(raw: u64) -> Self {{ Self(raw) }}\n\
                  fn fresh(self) -> u64 {{ self.0 }}\n\
+             }}\n\
+             impl<'a> ::bumbledb::Key<'a> for {newtype} {{\n\
+                 type Schema = {schema_name};\n\
+                 type Fact = {self_ty};\n\
+                 const STATEMENT: ::bumbledb::schema::StatementId = ::bumbledb::schema::StatementId({auto_key_id});\n\
+                 fn determinant_read(&self, _snap: &::bumbledb::Snapshot<'_, {schema_name}>, out: &mut ::std::vec::Vec<u8>) -> ::bumbledb::Result<bool> {{\n\
+                     ::bumbledb::__private::append_key_field(::bumbledb::__private::ValueRef::U64(self.0), out);\n\
+                     Ok(true)\n\
+                 }}\n\
+                 fn determinant_write(&self, _tx: &::bumbledb::WriteTx<'_, {schema_name}>, out: &mut ::std::vec::Vec<u8>) -> ::bumbledb::Result<bool> {{\n\
+                     ::bumbledb::__private::append_key_field(::bumbledb::__private::ValueRef::U64(self.0), out);\n\
+                     Ok(true)\n\
+                 }}\n\
              }}\n",
         );
+        auto_key_id += 1;
     }
+}
 
-    // Exactly one fresh field: the typed point-read key
-    // (`WriteTx::get::<Fact>(id)`). Relations with zero or several fresh
-    // fields have no single dominant key — those read through `get_dyn`
-    // (the multi-key typed shape is an OPEN item, 70-api.md).
-    let fresh_fields: Vec<&Field> = relation.fields.iter().filter(|f| f.fresh).collect();
-    if let [fresh_field] = fresh_fields.as_slice() {
-        let newtype = fresh_field
-            .newtype
-            .as_ref()
-            .expect("parser demands `as NewType` on fresh fields");
+/// A `snake_case` declaration name as a Pascal-cased key-struct segment:
+/// each `_`-separated segment capitalized (`grp` → `Grp`,
+/// `source_unit_id` → `SourceUnitId`) — the `{R}By{Fields}` naming rule.
+fn pascal(name: &str) -> String {
+    let mut out = String::with_capacity(name.len());
+    for segment in name.split('_') {
+        let mut chars = segment.chars();
+        if let Some(first) = chars.next() {
+            out.push(first.to_ascii_uppercase());
+            out.extend(chars);
+        }
+    }
+    out
+}
+
+/// One generated key struct per declared `R(x, ..) -> R` on an ORDINARY
+/// (non-closed) relation: the FD law given a value-level inhabitant — the
+/// statement's projection IS the struct's field list (named fields, so a
+/// wrong column, wrong newtype, wrong order, or wrong relation is a
+/// compile error, not a runtime shape check), and the statement id is a
+/// const computed here at expansion by EXACTLY
+/// `SchemaDescriptor::materialized_statements`' rule: the implied prefix
+/// (one auto-`Functionality` per fresh field in relation declaration
+/// order, then one closed auto-key per closed relation) followed by the
+/// declared statements in declaration order, a bidirectional `==`
+/// occupying TWO materialized slots (it lowers to the two adjacent
+/// containments). Closed relations get no key struct — they are
+/// unwritable and their handle reads go through queries and the dyn
+/// surface. A name collision with a host declaration surfaces as rustc's
+/// duplicate-definition error.
+fn emit_key_structs(out: &mut String, schema: &SchemaAst) {
+    // The implied prefix's total width, replaying the materialized
+    // order's first two blocks: fresh fields across ALL relations in
+    // declaration order (field order within), then one auto-key per
+    // closed relation.
+    let implied_total: usize = schema
+        .relations
+        .iter()
+        .map(|relation| {
+            relation.fields.iter().filter(|field| field.fresh).count()
+                + usize::from(relation.closed.is_some())
+        })
+        .sum();
+    let mut offset = 0usize;
+    for statement in &schema.statements {
+        // A bidirectional `==` lowers to two adjacent containments —
+        // two materialized slots; every other declared statement is one.
+        let width = match statement {
+            Statement::Containment {
+                bidirectional: true,
+                ..
+            } => 2,
+            _ => 1,
+        };
+        let id = implied_total + offset;
+        offset += width;
+        let Statement::Functionality {
+            relation,
+            projection,
+            ..
+        } = statement
+        else {
+            continue;
+        };
+        let (rel_idx, rel) = schema
+            .relations
+            .iter()
+            .enumerate()
+            .find(|(_, r)| r.name == *relation)
+            .expect("the shared lowering resolved every statement relation");
+        if rel.closed.is_some() {
+            continue;
+        }
+        emit_key_struct(out, &schema.name, rel_idx, rel, projection, id);
+    }
+}
+
+/// The one key struct: `{R}By{Pascal(field)..}` in statement projection
+/// order, `pub` fields cloned from the relation's declared `Field`s
+/// (newtypes preserved; `str` → `&'a str`, so a borrowed determinant
+/// gives the struct a lifetime), implementing [`::bumbledb::Key`] with
+/// the statement id in hand. The determinant boundaries run the same
+/// per-field encode expressions the fact struct's delete/read boundaries
+/// run — resolve, never mint — against the literal `RelationId`.
+fn emit_key_struct(
+    out: &mut String,
+    schema_name: &str,
+    rel_idx: usize,
+    relation: &Relation,
+    projection: &[(String, Span)],
+    statement_id: usize,
+) {
+    let rel_name = &relation.name;
+    let fields: Vec<(usize, &Field)> = projection
+        .iter()
+        .map(|(name, _)| {
+            relation
+                .fields
+                .iter()
+                .enumerate()
+                .find(|(_, field)| field.name == *name)
+                .expect("the shared lowering resolved every projected field")
+        })
+        .collect();
+    let key_name = format!(
+        "{rel_name}By{}",
+        projection
+            .iter()
+            .map(|(name, _)| pascal(name))
+            .collect::<String>()
+    );
+    let borrowed = fields.iter().any(|(_, field)| is_borrowed(field));
+    let fact_borrowed = relation.fields.iter().any(is_borrowed);
+    let (struct_params, impl_params, impl_ty) = if borrowed {
+        ("<'a>", "<'a, 'k>", format!("{key_name}<'k>"))
+    } else {
+        ("", "<'a>", key_name.clone())
+    };
+    let fact_ty = if fact_borrowed {
+        format!("{rel_name}<'a>")
+    } else {
+        rel_name.clone()
+    };
+    let mut struct_fields = String::new();
+    for (_, field) in &fields {
         let _ = write!(
-            out,
-            "impl<'a> ::bumbledb::FreshKeyed<'a> for {self_ty} {{\n\
-                 type FreshKey = {newtype};\n\
-             }}\n",
+            struct_fields,
+            "pub {}: {},",
+            field.name,
+            rust_field_ty(field)
         );
     }
+    // The determinant boundaries: per projected field in projection
+    // order, the read-context / delete-context boundary expression
+    // (resolve, never mint), each produced `ValueRef` appended as one
+    // canonical key field. The context bindings go underscored when no
+    // projected field is interned — nothing references them.
+    let relation_expr = format!("::bumbledb::schema::RelationId({rel_idx})");
+    let cx = EncodeCx {
+        relation: &relation_expr,
+        write: "tx",
+        delete: "tx",
+        read: "snap",
+    };
+    let (tx_binding, snap_binding) = if borrowed {
+        ("tx", "snap")
+    } else {
+        ("_tx", "_snap")
+    };
+    let mut read_body = String::new();
+    let mut write_body = String::new();
+    for (idx, field) in &fields {
+        let (_, delete_expr, read_expr) = encode_exprs(field, *idx, &cx);
+        let _ = write!(
+            read_body,
+            "::bumbledb::__private::append_key_field({read_expr}, out);"
+        );
+        let _ = write!(
+            write_body,
+            "::bumbledb::__private::append_key_field({delete_expr}, out);"
+        );
+    }
+    let spelling = format!(
+        "{rel_name}({}) -> {rel_name}",
+        projection
+            .iter()
+            .map(|(name, _)| name.as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+    let _ = write!(
+        out,
+        "/// The typed key of `{spelling}` — `snap.get(..)` / `tx.get(..)`\n\
+         /// return `Option<{rel_name}>`.\n\
+         #[derive(Debug, Clone, Copy, PartialEq)]\n\
+         pub struct {key_name}{struct_params} {{ {struct_fields} }}\n\
+         impl{impl_params} ::bumbledb::Key<'a> for {impl_ty} {{\n\
+             type Schema = {schema_name};\n\
+             type Fact = {fact_ty};\n\
+             const STATEMENT: ::bumbledb::schema::StatementId = ::bumbledb::schema::StatementId({statement_id});\n\
+             fn determinant_read(&self, {snap_binding}: &::bumbledb::Snapshot<'_, {schema_name}>, out: &mut ::std::vec::Vec<u8>) -> ::bumbledb::Result<bool> {{\n\
+                 {read_body}\n\
+                 Ok(true)\n\
+             }}\n\
+             fn determinant_write(&self, {tx_binding}: &::bumbledb::WriteTx<'_, {schema_name}>, out: &mut ::std::vec::Vec<u8>) -> ::bumbledb::Result<bool> {{\n\
+                 {write_body}\n\
+                 Ok(true)\n\
+             }}\n\
+         }}\n",
+    );
 }

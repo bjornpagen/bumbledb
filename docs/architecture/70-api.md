@@ -170,11 +170,33 @@ diagnostic.
   memoized `schema()` constructor and no panic path: semantic validation runs inside
   `Db::create`/`Db::open` and surfaces as the typed `SchemaError`.
 - The macro generates: the header's `Theory` unit struct, relation descriptors,
-  dependency statement descriptors, the host newtypes, and per-relation fact structs
-  (`Account { id, holder, kind, active }`). **The one variable-width field kind is
+  dependency statement descriptors, the host newtypes, per-relation fact structs
+  (`Account { id, holder, kind, active }`), and per-declared-key **key structs**
+  (below). **The one variable-width field kind is
   borrowed**: `str` → `&'a str` — a struct with any `str` field gains one lifetime.
   `bytes<N>` → `[u8; N]`: owned, `Copy`, borrow-free (the fixed-width law), so
   all-fixed-width structs stay lifetime-free.
+- **Key structs:** every declared key statement on an ordinary (non-closed)
+  relation emits a generated **key struct** — `Task(kind, subject) -> Task;`
+  emits `TaskByKindSubject { kind, subject }`. The derived name is
+  `{R}By{Fields}` in statement projection order, each snake_case segment of a
+  field name Pascal-cased (`grp` → `Grp`, `source_unit_id` → `SourceUnitId`);
+  a collision with a host declaration is rustc's ordinary duplicate-definition
+  error. Fields are `pub`, cloned from the relation's declaration — newtypes
+  preserved, `str` → `&'a str` (a borrowed determinant gives the key struct a
+  lifetime). Each key struct implements `Key` with its `STATEMENT` computed at
+  expansion from the one materialized order
+  (`SchemaDescriptor::materialized_statements` — the macro and the engine read
+  the same rule, so they cannot drift), and `snap.get(..)` / `tx.get(..)`
+  return `Option<Fact>` through it: the determinant tuple's columns, their
+  newtypes, their order, and the statement they read through are all carried
+  by the type — a wrong column, wrong newtype, wrong relation, or ambiguous
+  multi-key read is a compile error, not a runtime shape check. String
+  determinant cells resolve (pending-first inside a write transaction), never
+  mint. Fresh newtypes read through their auto-materialized `R(field) -> R`
+  keys via the same trait; closed relations emit no key struct (unwritable —
+  reads go through queries and the dyn surface). `get_dyn` remains the dyn
+  lane for data-supplied key statements (normative).
 
 **Decision: the macro surface is the algebra, with no sugar keywords.** Owner ruling
 (`30-dependencies.md` records the alternative and its loss). The macro
@@ -480,9 +502,18 @@ is the consumer that names its shape.)
   `Db::bulk_load_dyn` (the ETL/FFI lane) — `Db`-level methods,
   not write-closure operations (see the ETL section).
 - **WriteTx point reads (decision):** `tx.contains(&fact) -> bool` (membership — the `insert`/`delete`
-  return value's read-only sibling) and `tx.get::<F>(key) -> Option<F<'_>>` — lookup
-  of the full fact through any key FD of its relation (typed via the key's newtype
-  signature; `_dyn` form takes relation + statement id + encoded key). The typed get
+  return value's read-only sibling) and `tx.get(key) -> Option<K::Fact>` — lookup
+  of the full fact through a typed key value: `key` implements the `Key` trait,
+  whose TYPE carries the fact type it determines and the key statement it reads
+  through (`K::STATEMENT`, computed at `schema!` expansion from the materialized
+  order). Key values are the generated fresh newtypes (each fresh field's auto
+  key) and — KG-2 — the generated key structs of declared `R(x, ..) -> R`
+  statements; two key FDs over one newtype are two distinct Rust types, so which
+  statement a read goes through is never a runtime question, and a cross-schema
+  key is a compile error. The committed-state twin is `snap.get(key)` on the read
+  scope (`db.read(|snap| snap.get(key))` — no `Db`-level sugar: the freeze keeps
+  `Db` minimal, TS carries the symmetry sugar). The `_dyn` form takes relation +
+  statement id + encoded key for data-supplied statements. The typed get
   returns a **view at the transaction lifetime**: variable-width fields borrow from
   the committed dictionary (mmap pages, txn-stable by LMDB CoW) or this
   transaction's pending interns (the delta arena — read-your-writes included),
@@ -494,7 +525,7 @@ is the consumer that names its shape.)
 
   ```rust
   db.write(|tx| {
-      match tx.get::<Account>(id)? {
+      match tx.get(id)? {
           Some(old) => { tx.delete(&old)?; tx.insert(&Account { balance: old.balance + x, ..old })?; }
           None      => { tx.insert(&Account { id, balance: x, ..default })?; }
       }
@@ -874,7 +905,13 @@ names — so roster errors print beside the query they reject.
   blessed Rust sugar is `crates/bumbledb-query`'s `query!` macro** — a downstream
   crate on the bench-crate quarantine, lowering the notation (`20-query-ir.md`
   § the query notation) to the `ir::Query` value at compile time and resolving
-  names through the emitted id constants.
+  names through the emitted id constants. The crate has exactly TWO members:
+  the `query!` macro (its proc-macro mechanics live in
+  `bumbledb-query-macros`, re-exported — packaging, not surface) and the
+  `order` module (host-side answer ordering over the engine's unordered
+  sets: `SortKey` data, `by`, `value_cmp`) — both under the same
+  one-directional quarantine: hosts may depend on the crate, the engine
+  never does.
 
 ## The TypeScript SDK — the shipped binding
 
@@ -890,7 +927,11 @@ bindings contract), queries cross as IR data under the trust-boundary law
 (`20-query-ir.md` § validation boundary), the manifest carries the ids as
 data, the memoized one-copy result heap crosses the language boundary where a
 borrowed result could not, and the dyn write surface's typed errors are the
-portable half of the API.
+portable half of the API. The keyed point read is part of the shipped
+binding on both the read and write surfaces: `get(relation, keyStatement,
+key)` — the key object typed by the statement's own projection — lives on
+`Db`, `ReadScope`, and `Tx` alike (the symmetry rule; the terminal record
+is the OPEN ledger's keyed-get row, below).
 
 The SDK's skin is **completely structural** — hard structural typing
 restated in a language with no host newtypes to carry nominal safety. A
@@ -1007,12 +1048,20 @@ engine-first change, and nothing re-enters without a new ruling.
   re-implements it generically over scan, roughly ten more
   `scan().find(byId)` sites ride along, and `Tx.get` is likewise untouched.
   The shape the evidence names: keyed get must become the obvious spelling on
-  both the read scope and the write transaction. **SCHEDULED (owner ruling
-  2026-07-19): its own planning wave, after cleanup-0.5.0 lands and BEFORE
-  any 1.0.0 surface freeze** — a surface addition belongs under the tag. The
-  typing flows from the declared key-FD laws, per the law-typing doctrine;
-  design memo → ruling → packet, the standing sequence
-  (`docs/feature-register.md` § FIRED and scheduled).
+  both the read scope and the write transaction. **SHIPPED (this wave,
+  2026-07-19).** The final spelling: Rust — `snap.get(key)` / `tx.get(key)`
+  over the generated `Key` values (fresh newtypes; one generated
+  `{R}By{Fields}` struct per declared key statement — § the `schema!`
+  grammar, § Transactions); TS — `get(relation, keyStatement, key)` on
+  `Db`/`ReadScope`/`Tx`, the key object typed by the statement's own
+  projection (already shipped surface, now pinned on the write transaction
+  too). `get_dyn` remains the dyn/FFI lane for data-supplied key statements,
+  and the bridge (`snapshotGet`/`txGet`) always carried any key statement —
+  the ship was typing, not plumbing. The at-most-one answer is the FD's
+  injectivity, derived
+  (`lean/Bumbledb/Dependencies.lean: keyed_get_at_most_one`; Bridge row).
+  Pins: `crates/bumbledb/tests/keyed_get.rs`, `ts/test/keyed-get.test.ts`,
+  cookbook recipe 30.
 - **Answer sorting / `FromAnswers` derive** in `bumbledb-query` (the
   ordering/limit conveniences fold in here — host-side, on the bench-crate
   quarantine like the `query!` macro; answers are sets and the engine never
@@ -1020,13 +1069,22 @@ engine-first change, and nothing re-enters without a new ruling.
   and destructures `Answers` by hand tells us the derive's shape. **SPLIT
   (census 2026-07-17).** The sorting half **FIRED**: four hand-rolled bigint
   comparators, every rank/pos consumer sorting host-side, and "answers are
-  sets; the host sorts" recurring as a consumer comment — the ordering/limit
-  conveniences are OWED, host-side in `bumbledb-query`, on the quarantine
-  already named here (fired, not yet built — no sort surface exists in that
-  crate as of cleanup-0.5.0). **SCHEDULED (owner ruling 2026-07-19): paired
-  with keyed get in the pre-1.0.0 surface wave** — host-side only; the
-  engine-never-orders ruling stands untouched
-  (`docs/feature-register.md` § FIRED and scheduled). The `FromAnswers` half is **DECLINED** vocabulary:
+  sets; the host sorts" recurring as a consumer comment.
+  **SHIPPED (2026-07-19, the surface-pair wave)** — host-side only, the
+  engine-never-orders ruling untouched (answers remain sets). The final
+  spelling, both hosts: TS — `ts/src/order.ts`, sort keys as data (`"rank"`
+  bare = ascending, `desc("rank")` descending) folded by `by(...)` into a
+  row-typed comparator for the language's own `Array.prototype.sort`; a key
+  the row lacks or a non-FactValue column is a compile error at the sort
+  site. Rust — `bumbledb_query::order` (`SortKey::{Asc, Desc}` as data,
+  `by(&keys)` for `Vec::sort_by`, `value_cmp` the total cell order), in the
+  quarantine crate, whose proc-macro mechanics now live in
+  `bumbledb-query-macros` (packaging, not surface — hosts still spell
+  `bumbledb-query`). LIMIT REFUSED AS SURFACE, recorded: `.slice(0, n)` /
+  `truncate`/`take` are the language's own operators (the drizzle law) and
+  zero limit-shaped call sites were sighted in the census consumer. No `asc`
+  wrapper exists: the bare spelling IS ascending — one spelling per meaning.
+  The `FromAnswers` half is **DECLINED** vocabulary:
   answers already decode to typed named records at the SDK boundary and zero
   hand-destructuring was sighted — the derive has no consumer shape to learn
   from.

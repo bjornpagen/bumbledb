@@ -91,23 +91,40 @@ by trigger 1(b) above:
 - The idb re-grounding tax (an idb atom is a join position) — engine law,
   documented, ~6 recursive queries carry one extra `.match`.
 - Keyed-get/typed lookup for task-by-(kind, subject) — the anyOf
-  investigation's "what primer actually needs" aside; smallest of the set.
+  investigation's "what primer actually needs" aside; smallest of the set
+  (shipped: keyed get, 70-api ledger row (b)) — the fold is now expressible
+  as a point read.
 
 ## FIRED and scheduled (the owner's prioritization, 2026-07-19)
 
 Two OPEN-ledger rows in `docs/architecture/70-api.md` whose triggers already
-FIRED get their own planning wave AFTER cleanup-0.5.0 lands and BEFORE any
-1.0.0 surface freeze (they are surface additions; they belong under the tag):
+FIRED got their own wave (the surface-pair wave) AFTER cleanup-0.5.0 landed
+and BEFORE any 1.0.0 surface freeze (they are surface additions; they belong
+under the tag) — both rows shipped 2026-07-19:
 
-- **Keyed get** — reading through the declared key FDs becomes the obvious
-  spelling on both the read scope and the write transaction. Evidence: primer
+- **Keyed get** — **shipped (this wave, 2026-07-19)**: reading through the
+  declared key FDs IS the obvious spelling on both the read scope and the
+  write transaction — Rust `snap.get(key)` / `tx.get(key)` over the generated
+  `Key` values, TS `get(relation, keyStatement, key)` on
+  `Db`/`ReadScope`/`Tx`; the terminal record is
+  `docs/architecture/70-api.md` ledger row (b), the at-most-one answer
+  derived (`lean/Bumbledb/Dependencies.lean: keyed_get_at_most_one`), pinned
+  by `crates/bumbledb/tests/keyed_get.rs`, `ts/test/keyed-get.test.ts`, and
+  cookbook recipe 30. Evidence (the record of why): primer
   re-implements keyed lookup host-side five ways, the ETL shadows its own key
   laws with five host maps, and the existing primary-key get goes unused
   (~15 workaround sites total). The keys are laws; the surface exposes them.
-- **Answer ordering/limit conveniences** — the census-split sorting half
-  (four hand-rolled bigint comparators, every rank/pos consumer sorting
-  host-side). Host-side, on the `query!` quarantine — the engine never
-  orders; that ruling stands.
+- **Answer ordering/limit conveniences** — **SHIPPED (2026-07-19)**: the
+  census-split sorting half (four hand-rolled bigint comparators, every
+  rank/pos consumer sorting host-side) landed host-side, on the `query!`
+  quarantine — the engine never orders; that ruling stands. The two
+  spellings: TS `by`/`desc` in `ts/src/order.ts` (a bare column name IS
+  ascending; keys as data folded into one row-typed comparator for the
+  language's own `.sort`); Rust `bumbledb_query::order::{SortKey, by,
+  value_cmp}` (direction as the `SortKey` variant, `by` folds for
+  `Vec::sort_by`). Limit REFUSED, recorded: the language owns it —
+  `.slice(0, n)` / `truncate`/`take` — no operator invented where one
+  already exists.
 
 ## Also parked elsewhere (cross-references)
 

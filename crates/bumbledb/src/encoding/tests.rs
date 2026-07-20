@@ -202,6 +202,80 @@ fn field_bytes_slices_equal_independent_encodings() {
     );
 }
 
+/// The parity law behind the typed-key determinant path (`Key`'s
+/// `determinant_read`/`determinant_write`): for EVERY field type — Bool,
+/// U64, I64, String, bytes<N>, both general intervals, both fixed-width
+/// intervals — the bytes [`append_key_field`] produces for one value
+/// equal the span `storage/keys::determinant_image` slices out of the
+/// encoded fact at that field. One encoder, one slicer, byte-identical:
+/// encoder drift between a key probe and stored determinants is
+/// impossible.
+#[test]
+fn append_key_field_matches_determinant_image_slices() {
+    use bumbledb_theory::schema::FieldId;
+    let layout = FactLayout::new(&[
+        TypeDesc::Bool,
+        TypeDesc::U64,
+        TypeDesc::I64,
+        TypeDesc::String,
+        TypeDesc::FixedBytes { len: 12 },
+        TypeDesc::Interval {
+            element: IntervalElement::U64,
+            width: None,
+        },
+        TypeDesc::Interval {
+            element: IntervalElement::I64,
+            width: None,
+        },
+        TypeDesc::Interval {
+            element: IntervalElement::U64,
+            width: Some(5),
+        },
+        TypeDesc::Interval {
+            element: IntervalElement::I64,
+            width: Some(3),
+        },
+    ]);
+    let values = [
+        ValueRef::Bool(true),
+        ValueRef::U64(u64::MAX),
+        ValueRef::I64(i64::MIN),
+        ValueRef::String(7),
+        ValueRef::fixed_bytes(&[0xAA; 12]),
+        ValueRef::IntervalU64(
+            bumbledb_theory::Interval::<u64>::new(3, u64::MAX).expect("nonempty interval"),
+        ),
+        ValueRef::IntervalI64(
+            bumbledb_theory::Interval::<i64>::new(i64::MIN, -5).expect("nonempty interval"),
+        ),
+        ValueRef::FixedIntervalU64(
+            bumbledb_theory::Interval::<u64>::fixed(9, 5).expect("inside the Q2 bound"),
+        ),
+        ValueRef::FixedIntervalI64(
+            bumbledb_theory::Interval::<i64>::fixed(-2, 3).expect("inside the Q2 bound"),
+        ),
+    ];
+    let mut fact = Vec::new();
+    encode_fact(&values, &layout, &mut fact);
+    assert_eq!(fact.len(), layout.fact_width());
+    for (idx, &value) in values.iter().enumerate() {
+        let mut appended = Vec::new();
+        append_key_field(value, &mut appended);
+        let mut sliced = crate::storage::keys::DeterminantImage::scratch();
+        crate::storage::keys::determinant_image(
+            &layout,
+            &[FieldId(u16::try_from(idx).expect("nine fields fit u16"))],
+            &fact,
+            &mut sliced,
+        );
+        assert_eq!(
+            appended.as_slice(),
+            sliced.as_bytes(),
+            "field {idx}: append_key_field diverges from the stored-fact slice"
+        );
+    }
+}
+
 #[test]
 fn decode_field_round_trips_every_type() {
     let layout = mixed_layout();

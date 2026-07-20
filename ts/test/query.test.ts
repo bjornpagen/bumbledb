@@ -15,13 +15,13 @@
  * list is what puts `Account.holder` and `Holder.id` in one class while
  * `Account.id` generates its own; the four join-law probes — same-class
  * joins, cross-class refusal at the use site, bare↔bare joining, and
- * bare↔classed refusal — are pinned through `r.var` AND re-pinned through
- * `r.vars`), interval-vs-scalar comparisons outside `pointIn`, minting
- * terms in heads, wrong-typed params, and mismatched result shapes are
- * all unwritable. Execution rides the native bridge directly — the `Db`
- * runtime's typed prepare/execute is S4's surface; the typed seams
- * exercised here (`lowerQuery` + `wireParams` + `decodeAnswers`) are
- * exactly what it consumes.
+ * bare↔classed refusal — are pinned through `r.var`), interval-vs-scalar
+ * comparisons outside `pointIn`, minting terms in heads, wrong-typed
+ * params, and mismatched result shapes are all unwritable. Execution
+ * rides the native bridge directly — the `Db` runtime's typed
+ * prepare/execute is S4's surface; the typed seams exercised here
+ * (`lowerQuery` + `wireParams` + `decodeAnswers`) are exactly what it
+ * consumes.
  */
 
 import assert from "node:assert/strict"
@@ -871,7 +871,7 @@ describe("the query surface against a real store", function suite() {
 		}, /ghost/)
 	})
 
-	test("THE FOUR JOIN LAWS, r.var spelling: same-class joins+lowers, cross-class refuses at the use site, bare↔bare joins, bare↔classed refuses", function joinLaws() {
+	test("THE FOUR JOIN LAWS: same-class joins+lowers, cross-class refuses at the use site, bare↔bare joins, bare↔classed refuses", function joinLaws() {
 		// 1. Same-class join compiles AND lowers (Account.holder and Holder.id share "Holder.id").
 		const sameClass = query(Ledger).rule((r) =>
 			r
@@ -916,51 +916,6 @@ describe("the query surface against a real store", function suite() {
 					.match(Account, { holder: r.var("z") })
 					.select("z")
 			)
-		}, /joins domain-unequal fields/)
-	})
-
-	test("THE FOUR JOIN LAWS re-pinned through vars() — one lowering, two entry flavors", function joinLawsViaVars() {
-		const sameClass = query(Ledger).rule((r) => {
-			const { acct, h } = r.vars("acct", "h")
-			return r.match(Account, { id: acct, holder: h }).match(Holder, { id: h }).select("acct")
-		})
-		assert.equal(lowerQuery(sameClass).predicates.length, 1)
-
-		assert.throws(function crossClass() {
-			query(Ledger).rule((r) => {
-				const { x } = r.vars("x")
-				return (
-					r
-						.match(Holder, { id: x })
-						// @ts-expect-error — the vars-minted name meets the same use-site wall
-						.match(Account, { id: x })
-						.select("x")
-				)
-			})
-		}, /joins domain-unequal fields/)
-
-		const bareBare = query(Ledger).rule((r) => {
-			const { h, z } = r.vars("h", "z")
-			return r.match(Holder, { id: h, rank: z }).match(Account, { opened: z }).select("h")
-		})
-		assert.deepEqual(
-			run(bareBare, {}).map(function h(row) {
-				return row.h
-			}),
-			[ids.ada]
-		)
-
-		assert.throws(function bareClassed() {
-			query(Ledger).rule((r) => {
-				const { z } = r.vars("z")
-				return (
-					r
-						.match(Account, { opened: z })
-						// @ts-expect-error — bare pairs only with bare, vars-minted or not
-						.match(Account, { holder: z })
-						.select("z")
-				)
-			})
 		}, /joins domain-unequal fields/)
 	})
 

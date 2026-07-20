@@ -409,7 +409,7 @@ cross-host lock pins the schema hash only, `ts/crate/src/fingerprint_lock.rs`).
 
 ### 7.4 Notation, corpus, fuzz
 
-- `query!`: grammar at `crates/bumbledb-query/src/lib.rs:10-56`; named head
+- `query!`: grammar at `crates/bumbledb-query-macros/src/lib.rs:10-56`; named head
   positions (`total: Sum(x)`, lib.rs:594-630) already give the vocabulary a
   HAVING clause would reference; renderer `ir/render.rs:209-232` and round-trip
   goldens move together.

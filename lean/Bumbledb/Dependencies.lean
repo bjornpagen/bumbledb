@@ -131,6 +131,20 @@ determinant images during the insert phase. -/
 def Functionality (R : Set Fact) (X : List FieldId) : Prop :=
   ∀ f g, f ∈ R → g ∈ R → f.project X = g.project X → f = g
 
+/-- The keyed read: under a functionality statement, a fixed determinant
+image identifies at most one fact — the read surface's at-most-one answer
+is the FD's injectivity INSTANTIATED, derived, never a new axiom. The
+host surfaces (Rust `Snapshot::get`/`WriteTx::get`, the SDK's
+`get(relation, keyStatement, key)`) are read conveniences over this fact:
+keyed get changes no commit judgment and no query denotation, so no
+conformance case moves.
+Bridge: `key_statement_of (crates/bumbledb/src/api/db/get.rs)`;
+`get (crates/bumbledb/src/api/db/snapshot.rs)`. -/
+theorem keyed_get_at_most_one {R : Set Fact} {X : List FieldId}
+    (h : Functionality R X) (v : List Value) :
+    ∀ f g, f ∈ R → g ∈ R → f.project X = v → g.project X = v → f = g :=
+  fun f g hf hg hfv hgv => h f g hf hg (hfv.trans hgv.symm)
+
 /-- The pointwise key `R(S…, i) -> R`: two DISTINCT facts agreeing on
 the scalar prefix `S` share no point of their interval position `i`
 (read via `Value.points`, i.e. `Interval.points`). The "exclusion

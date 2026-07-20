@@ -11,14 +11,24 @@ open. The main publish runs `prepublishOnly` → the full build (lockstep
 assertion, cargo release build, smoke-load through the by-name loader path,
 tarball-manifest verification) before anything uploads.
 
-`0.4.0` is a deliberate backwards-incompatible hard break over `0.3.0` (the
-drizzle law: database idioms arrive as modern TypeScript idioms) — closed
-handles are string-literal unions on every surface, `Kind.match`/`fromId`/the
-handle constants/`oneOf()` are gone, dispatch is native `switch` narrowing,
-set membership is a plain array, and closed fields left the
-orderable/foldable set. The wire, manifest, and fingerprint are UNTOUCHED:
-zero fingerprint pins moved (the cross-host lock and the T5 cookbook goldens
-are byte-identical to the 0.3.0 tree).
+`0.5.0` is a deliberate backwards-incompatible hard break over `0.4.0`: the
+plural variable mint is REMOVED — `r.var` is the sole variable constructor —
+and the pre-1.0.0 surface pair lands: the keyed point
+read `get(relation, keyStatement, key)` (the key object typed from the
+relation's declared key FDs, on `Db`, `ReadScope`, and `Tx` alike) and
+host-side answer ordering (`by()`/`desc()` in `ts/src/order.ts`; the engine
+still never orders — answers remain sets). The fingerprint statement: zero
+existing fingerprint pins moved, and exactly ONE was ADDED — `r30`, the
+keyed-read recipe.
+
+Lineage: `0.4.0` was the previous hard break, over `0.3.0` (the drizzle law:
+database idioms arrive as modern TypeScript idioms) — closed handles became
+string-literal unions on every surface, `Kind.match`/`fromId`/the handle
+constants/`oneOf()` died, dispatch became native `switch` narrowing, set
+membership a plain array, and closed fields left the orderable/foldable set.
+That break left the wire, manifest, and fingerprint UNTOUCHED: zero
+fingerprint pins moved (the cross-host lock and the T5 cookbook goldens
+stayed byte-identical to the 0.3.0 tree).
 
 ## The two packages
 
@@ -43,21 +53,21 @@ fails if they diverge:
 3. `ts/npm/darwin-arm64/package.json` `version`
 
 A release bump edits all three, then the build enforces the match. All three
-are set to `0.4.0` in this tree, and `pnpm run build` has confirmed the
-lockstep (`bumbledb build: version 0.4.0 (main == platform ==
+are set to `0.5.0` in this tree; `pnpm run build` asserts the lockstep on
+every run (`bumbledb build: version 0.5.0 (main == platform ==
 optionalDependencies pin)`).
 
-## Runbook (0.4.0, darwin-arm64 host, owner)
+## Runbook (0.5.0, darwin-arm64 host, owner)
 
 ```sh
 # 0. From the ts/ package root, on a macOS Apple Silicon machine.
 cd ts
 
-# 1. The lockstep is already set to 0.4.0 in all THREE places (done in this
+# 1. The lockstep is already set to 0.5.0 in all THREE places (done in this
 #    tree; the build asserts it):
-#    - ts/package.json                    "version": "0.4.0"
-#    - ts/package.json                    optionalDependencies pin -> "0.4.0"
-#    - ts/npm/darwin-arm64/package.json   "version": "0.4.0"
+#    - ts/package.json                    "version": "0.5.0"
+#    - ts/package.json                    optionalDependencies pin -> "0.5.0"
+#    - ts/npm/darwin-arm64/package.json   "version": "0.5.0"
 
 # 2. Build + verify both trees (fails on version drift, unloadable artifact,
 #    or a mispacked tarball). Produces dist/ and npm/darwin-arm64/bumbledb.node.
@@ -77,10 +87,10 @@ pnpm publish --no-git-checks ./npm/darwin-arm64
 pnpm publish --no-git-checks
 
 # 5. Verify both versions landed in the registry.
-pnpm view @bjornpagen/bumbledb-darwin-arm64@0.4.0 version
-pnpm view @bjornpagen/bumbledb@0.4.0 version
+pnpm view @bjornpagen/bumbledb-darwin-arm64@0.5.0 version
+pnpm view @bjornpagen/bumbledb@0.5.0 version
 
-# 6. Tag v0.4.0 (owner ceremony; the release-staged commit is already pushed).
+# 6. Tag v0.5.0 (owner ceremony; the release-staged commit is already pushed).
 ```
 
 Public access is mandatory (scoped packages publish restricted by default,
@@ -108,14 +118,14 @@ install a fresh release until a day after publish.
 
 ## Post-publish, step two: the primer cutover lands
 
-Primer's 0.4.0 sweep (host-idiom-0.4.0 PRD-P1) is staged on its own branch
-with `@bjornpagen/bumbledb` pinned exactly `0.4.0` and its lockfile
-deliberately stale. After both packages verify in the registry, follow the
-runbook in that branch's PR body — publish 0.4.0 → `pnpm update -i` (or
-`pnpm install --no-frozen-lockfile`) → typecheck → commit the lockfile →
-merge. The steps live there, not here.
+Primer's 0.5.0 adoption is staged at the primer `bumbledb-050` worktree with
+`@bjornpagen/bumbledb` pinned `^0.5.0` and its `bun.lock` deliberately
+untouched — the documented bootstrap gap: the registry has no 0.5.0 yet, so
+the lockfile cannot move until publish. After both packages verify in the
+registry: publish 0.5.0 → install (the lockfile moves) → typecheck → commit
+the lockfile → merge. The steps live there, not here.
 
-## The 0.4.0 pre-publish proof (already executed)
+## The pre-publish proof (executed for 0.4.0; re-run the same shape for 0.5.0)
 
 Before publish, both packages were packed and scratch-installed from tarballs
 — the same proof shape as 0.1.0/0.2.0/0.3.0, upgraded to exercise the 0.4.0

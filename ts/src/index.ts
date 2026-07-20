@@ -14,10 +14,13 @@
  * `db.prepare` as a plain value; the comparison/connective builders are
  * also free exports, and the free names `eq`/`not`/`and`/`or` collide with
  * common host identifiers — import aliasing is the answer; the SDK does
- * not rename for collision-avoidance), and the exhume surface
+ * not rename for collision-avoidance), the exhume surface
  * (`Db.exhume` — the one schema-independent read path: the store's
  * self-described shapes and raw facts by name, typed at bare structural
- * values, deliberately schema-free). The raw native bridge is not exported.
+ * values, deliberately schema-free), and the answer-ordering helpers
+ * (`by`/`desc` — sort keys as data for the language's own `.sort`; answers
+ * are sets, the engine never orders, and limit is the language's own
+ * `.slice`). The raw native bridge is not exported.
  */
 
 export type {
@@ -105,6 +108,8 @@ export type {
 	Staleness,
 	StatementKindTag
 } from "#native.ts"
+export type { Desc, SortKey } from "#order.ts"
+export { by, desc } from "#order.ts"
 
 export type {
 	AnyCond,
@@ -150,8 +155,7 @@ export type {
 	ParamEntry,
 	ParamsRecord,
 	SetParam,
-	Var,
-	VarsRecord
+	Var
 } from "#query/scope.ts"
 export type { Agg, SelectEntry } from "#query/select.ts"
 export type {

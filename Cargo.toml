@@ -5,6 +5,7 @@ members = [
     "crates/bumbledb-bench",
     "crates/bumbledb-macros",
     "crates/bumbledb-query",
+    "crates/bumbledb-query-macros",
     "crates/bumbledb-theory",
 ]
 # The napi bridge crate at ts/crate is NOT a member: the engine workspace stays

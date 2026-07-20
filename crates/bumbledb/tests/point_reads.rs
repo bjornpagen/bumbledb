@@ -40,11 +40,11 @@ fn point_reads_observe_the_final_state_before_commit() {
             // holder string exists only as a provisional intern id here.
             assert!(tx.insert(&acct)?);
             assert!(tx.contains(&acct)?);
-            assert_eq!(tx.get::<Account>(id)?, Some(acct.clone()));
+            assert_eq!(tx.get(id)?, Some(acct.clone()));
             // Delete: the final state no longer holds the fact.
             assert!(tx.delete(&acct)?);
             assert!(!tx.contains(&acct)?);
-            assert_eq!(tx.get::<Account>(id)?, None);
+            assert_eq!(tx.get(id)?, None);
             // Delete + reinsert(modified): the key re-establishes with
             // the modified fact.
             let modified = Account {
@@ -54,7 +54,7 @@ fn point_reads_observe_the_final_state_before_commit() {
             assert!(tx.insert(&modified)?);
             assert!(tx.contains(&modified)?);
             assert!(!tx.contains(&acct)?);
-            assert_eq!(tx.get::<Account>(id)?, Some(modified));
+            assert_eq!(tx.get(id)?, Some(modified));
             Ok(id)
         })
         .expect("write");
@@ -71,7 +71,7 @@ fn point_reads_observe_the_final_state_before_commit() {
             balance: 10,
             ..survivor.clone()
         })?);
-        assert_eq!(tx.get::<Account>(id)?, Some(survivor.clone()));
+        assert_eq!(tx.get(id)?, Some(survivor.clone()));
         Ok(())
     })
     .expect("post-commit point reads");
@@ -119,7 +119,7 @@ fn point_reads_fall_through_to_committed_state() {
             balance: 7,
         };
         assert!(tx.contains(&seeded)?);
-        assert_eq!(tx.get::<Account>(id)?, Some(seeded));
+        assert_eq!(tx.get(id)?, Some(seeded));
         // A never-interned holder short-circuits to false — the fact
         // provably exists nowhere.
         assert!(!tx.contains(&Account {
@@ -128,7 +128,7 @@ fn point_reads_fall_through_to_committed_state() {
             balance: 0,
         })?);
         // An unallocated key misses cleanly.
-        assert_eq!(tx.get::<Account>(AccountId(999))?, None);
+        assert_eq!(tx.get(AccountId(999))?, None);
         Ok(())
     })
     .expect("fallthrough reads");
@@ -177,7 +177,7 @@ fn a_cancelled_insert_never_shadows_the_committed_row() {
             balance: 10,
         };
         assert!(tx.contains(&committed)?);
-        assert_eq!(tx.get::<Account>(id)?, Some(committed));
+        assert_eq!(tx.get(id)?, Some(committed));
         let row = tx.get_dyn(
             bumbledb::schema::RelationId(0),
             bumbledb::schema::StatementId(0),
@@ -218,15 +218,99 @@ fn a_cancelled_insert_never_shadows_the_committed_row() {
     .expect("read");
 }
 
+bumbledb::schema! {
+    pub Registry;
+
+    relation Pair {
+        left: u64 as LeftId, fresh,
+        right: u64 as RightId, fresh,
+    }
+    relation Tag {
+        id: u64 as TagId, fresh,
+        label: str,
+    }
+}
+
+/// The single-fresh restriction is dead: a relation with SEVERAL fresh
+/// fields reads through each key as its own Rust type — `LeftId` and
+/// `RightId` carry distinct `Key::STATEMENT`s (the materialized order's
+/// first block: relation declaration order, then field order), so which
+/// FD a point read goes through is the key value's type, never a
+/// runtime question. Both transaction kinds answer through both keys,
+/// and a later relation's fresh key ordinal follows on.
+#[test]
+fn every_fresh_field_is_its_own_typed_key() {
+    use bumbledb::Key;
+    assert_eq!(<LeftId as Key>::STATEMENT, bumbledb::schema::StatementId(0));
+    assert_eq!(
+        <RightId as Key>::STATEMENT,
+        bumbledb::schema::StatementId(1)
+    );
+    assert_eq!(<TagId as Key>::STATEMENT, bumbledb::schema::StatementId(2));
+
+    let dir = common::TempDir::new("points-multi-fresh-keys");
+    let db = Db::create(dir.path(), Registry).expect("create");
+    let (left, right) = db
+        .write(|tx| {
+            let left = tx.alloc::<LeftId>()?;
+            let right = tx.alloc::<RightId>()?;
+            tx.insert(&Pair { left, right })?;
+            assert_eq!(tx.get(left)?, Some(Pair { left, right }));
+            assert_eq!(tx.get(right)?, Some(Pair { left, right }));
+            Ok((left, right))
+        })
+        .expect("seed");
+    db.read(|snap| {
+        assert_eq!(snap.get(left)?, Some(Pair { left, right }));
+        assert_eq!(snap.get(right)?, Some(Pair { left, right }));
+        assert_eq!(snap.get(RightId(999))?, None);
+        Ok(())
+    })
+    .expect("read");
+}
+
+/// `Snapshot::get` — the committed-state sibling of `WriteTx::get`,
+/// through the same typed key value: a committed fact comes back from
+/// the read scope (`db.read(|snap| snap.get(id))`), and an unallocated
+/// id misses cleanly.
+#[test]
+fn snapshot_get_reads_committed_state_through_the_fresh_key() {
+    let dir = common::TempDir::new("points-snapshot-get");
+    let db = Db::create(dir.path(), Ledger).expect("create");
+    let id = db
+        .write(|tx| {
+            let id = tx.alloc::<AccountId>()?;
+            tx.insert(&Account {
+                id,
+                holder: "ada",
+                balance: 7,
+            })?;
+            Ok(id)
+        })
+        .expect("seed");
+
+    db.read(|snap| {
+        assert_eq!(
+            snap.get(id)?,
+            Some(Account {
+                id,
+                holder: "ada",
+                balance: 7,
+            })
+        );
+        assert_eq!(snap.get(AccountId(999))?, None);
+        Ok(())
+    })
+    .expect("read");
+}
+
 /// The blessed upsert idiom, as written in `70-api.md`: get → delete +
 /// insert, or insert. The holder string comes back as a borrowed view of
 /// the transaction, so ownership is an explicit host act — copy the
 /// fields out before mutating the transaction again.
 fn add(db: &Db<Ledger>, id: AccountId, x: i64) -> bumbledb::Result<()> {
     db.write(|tx| {
-        let old = tx
-            .get::<Account>(id)?
-            .map(|old| (old.holder.to_owned(), old.balance));
+        let old = tx.get(id)?.map(|old| (old.holder.to_owned(), old.balance));
         match old {
             Some((holder, balance)) => {
                 tx.delete(&Account {

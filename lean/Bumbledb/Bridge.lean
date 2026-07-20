@@ -190,6 +190,11 @@ def ledger : List Obligation := [
     "schema/validate.rs::validate_functionality (crates/bumbledb/src/schema/validate.rs); applier.rs::Applier (crates/bumbledb/src/storage/commit/applier.rs)"
     "scalar_key_conflict_in_one_delta_aborts_with_the_statement_id (crates/bumbledb/src/storage/commit/tests/commit.rs); scalar_key_conflict_across_deltas_aborts_with_the_statement_id (crates/bumbledb/src/storage/commit/tests/commit.rs)",
 
+  .row @keyed_get_at_most_one `Bumbledb.keyed_get_at_most_one
+    "A keyed point read returns at most one fact: the functionality statement's injectivity at a fixed determinant image, derived — the read surface adds no semantics."
+    "get (crates/bumbledb/src/api/db/snapshot.rs); get (crates/bumbledb/src/api/db/get.rs)"
+    "keyed_get_reads_through_a_declared_key_on_both_scopes (crates/bumbledb/tests/keyed_get.rs)",
+
   .row @pointwise_key_disjoint `Bumbledb.pointwise_key_disjoint
     "A pointwise key gives per-scalar-group pairwise disjointness of interval point sets — the premise the coverage sweep's witness token attests."
     "crate::schema::DisjointDeterminantProof (crates/bumbledb/src/schema.rs); Applier::probe_neighbors (crates/bumbledb/src/storage/commit/applier.rs)"
@@ -593,7 +598,7 @@ def ledger : List Obligation := [
 /-- The ledger count, asserted: a dropped or added row moves this
 number, so the census (which re-derives the count by grep) and the
 build (which checks this literal) both notice. -/
-theorem ledger_count : ledger.length = 93 := rfl
+theorem ledger_count : ledger.length = 94 := rfl
 
 end Bridge
 end Bumbledb

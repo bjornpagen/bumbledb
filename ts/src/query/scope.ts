@@ -19,7 +19,6 @@
  * inference ride.
  */
 
-import * as errors from "@superbuilders/errors"
 import type { AnyField, Infer } from "#fields.ts"
 import { rosterOf } from "#fields.ts"
 
@@ -109,57 +108,6 @@ function isTerm(value: unknown): value is AnyTerm {
 function makeVar<const Name extends string>(name: Name): Var<Name> {
 	const value: Var<Name> = { [term]: "var", name }
 	return Object.freeze(value)
-}
-
-/** The record `makeVars` mints: one own frozen `Var<Name>` per requested name, each typed exactly. */
-type VarsRecord<Names extends string> = { readonly [N in Names]: Var<N> }
-
-/**
- * The trusted seam of the vars mint: every requested name reads back as an
- * own var term of exactly that name — verified before the record is
- * admitted at the {@link VarsRecord} type (a name riding the
- * object-protocol accessor instead of an own definition would fail exactly
- * this check).
- */
-function varsMinted<Names extends string>(
-	record: Readonly<Record<string, unknown>>,
-	names: readonly Names[]
-): record is Readonly<Record<string, unknown>> & VarsRecord<Names> {
-	return names.every(function varMinted(name) {
-		if (!Object.hasOwn(record, name)) {
-			return false
-		}
-		const value = record[name]
-		return isTerm(value) && value[term] === "var" && value.name === name
-	})
-}
-
-/**
- * Mints several variables at once — `const { service, w } = r.vars("service",
- * "w")`: tuple-to-object, each name typed exactly (`Var<"service">`),
- * inference identical to the one-at-a-time `r.var` spelling (one lowering,
- * two entry flavors). Each key is defined as an OWN property (a name like
- * `"__proto__"` is a record key like any other, never a prototype write),
- * and a duplicate name in one call is a construction error: each name mints
- * one variable — write it once and reuse the binding.
- */
-function makeVars<const Names extends readonly string[]>(...names: Names): VarsRecord<Names[number]> {
-	const out: Record<string, unknown> = {}
-	const seen = new Set<string>()
-	for (const name of names) {
-		if (seen.has(name)) {
-			throw errors.new(
-				`vars: duplicate name ${name} — each name mints one variable; write it once and reuse the binding`
-			)
-		}
-		seen.add(name)
-		Object.defineProperty(out, name, { value: makeVar(name), enumerable: true })
-	}
-	Object.freeze(out)
-	if (!varsMinted<Names[number]>(out, names)) {
-		throw errors.new("vars: variable minting incomplete")
-	}
-	return out
 }
 
 /** Builds one scalar-parameter term. */
@@ -365,8 +313,7 @@ export type {
 	SetParam,
 	ShapeOf,
 	UnionToIntersection,
-	Var,
-	VarsRecord
+	Var
 }
 export {
 	fieldJoins,
@@ -377,7 +324,6 @@ export {
 	makeParam,
 	makeSetParam,
 	makeVar,
-	makeVars,
 	renderFieldKind,
 	term
 }

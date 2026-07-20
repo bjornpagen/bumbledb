@@ -1,20 +1,20 @@
-# The blessed Rust query sugar (docs/architecture/70-api.md § host-side
-# sugar), quarantined on the bench-crate precedent: hosts may depend on
-# this crate; nothing in the engine ever depends back. Zero foreign
-# dependencies — the parser is hand-rolled over the token stream
-# (`bumbledb-macros`' precedent), and the engine appears only as a
-# dev-dependency of the round-trip tests.
+# The blessed Rust HOST-SIDE QUERY SURFACE (docs/architecture/70-api.md
+# § host-side sugar), quarantined on the bench-crate precedent: hosts may
+# depend on this crate; nothing in the engine ever depends back. Zero
+# FOREIGN dependencies — the proc-macro mechanics live in
+# `bumbledb-query-macros` (internal packaging, hand-rolled parser), this
+# crate is the one name hosts spell, and the engine is a real dependency
+# of the `order` surface (the quarantine direction is one-way and
+# unbroken: hosts → bumbledb-query → bumbledb).
 [package]
 name = "bumbledb-query"
 version = "0.1.0"
 edition = "2024"
 publish = false
 
-[lib]
-proc-macro = true
-
-[dev-dependencies]
+[dependencies]
 bumbledb = { path = "../bumbledb" }
+bumbledb-query-macros = { path = "../bumbledb-query-macros" }
 
 [lints]
 workspace = true

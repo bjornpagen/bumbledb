@@ -1130,7 +1130,7 @@ fn borrowed_struct_gate() {
             memo: "memo-borrowed",
         };
         tx.insert(&fact)?;
-        let got = tx.get::<GateItem>(item)?.expect("present");
+        let got = tx.get(item)?.expect("present");
         assert_eq!(got.memo, "memo-borrowed");
         let bytes = alloc_counter::snapshot();
         assert_eq!(

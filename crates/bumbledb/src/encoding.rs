@@ -17,7 +17,9 @@ pub use decode::{
     field_word_bytes,
 };
 pub(crate) use decode::{decode_values, split_halves};
-pub use encode::{encode_bool, encode_fact, encode_i64, encode_literal, encode_u64};
+pub use encode::{
+    append_key_field, encode_bool, encode_fact, encode_i64, encode_literal, encode_u64,
+};
 // The bytes<N> padder's production users live inside this module (the
 // type-aware `encode_literal` and `encode_fact` arms) — the bind path
 // resolves through `ir::normalize::fixed_bytes_word_buf` instead (no
