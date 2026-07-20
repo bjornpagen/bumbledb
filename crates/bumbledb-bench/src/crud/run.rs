@@ -144,7 +144,11 @@ pub(crate) fn fold(
         // order. One fresh-mint cursor per engine pass per lane
         // ([`LaneRun`]): the two passes mint identical id sequences by
         // construction, and a filtered family skips on BOTH sides at
-        // once.
+        // once. ONE counter model per lane, threaded through the stream
+        // generators in this same order, so every stream's `prev`
+        // accounting describes the store the families actually run over
+        // — filtered families never touch the model, exactly as they
+        // never touch the store.
         let mut lane_run = LaneRun {
             db: &db,
             conn: &conn,
@@ -154,6 +158,7 @@ pub(crate) fn fold(
             types: &types,
             ours_cursor: FreshCursor::at_base(sizes),
             theirs_cursor: FreshCursor::at_base(sizes),
+            model: ops::CounterModel::at_load(sizes),
         };
         for family in families() {
             if let Some(only) = only
@@ -206,9 +211,10 @@ pub(crate) fn fold(
 }
 
 /// One lane's timing context: both stores, the gate's translation and
-/// output signature (reused by the read-point twin), and the pair of
+/// output signature (reused by the read-point twin), the pair of
 /// lane-scoped fresh-mint cursors the insert-bearing families advance
-/// in lockstep.
+/// in lockstep, and the lane's single evolving counter model every
+/// stream generator draws from and writes back to.
 struct LaneRun<'l> {
     db: &'l Db<CrudWorld>,
     conn: &'l Connection,
@@ -218,13 +224,15 @@ struct LaneRun<'l> {
     types: &'l [ValueType],
     ours_cursor: FreshCursor,
     theirs_cursor: FreshCursor,
+    model: ops::CounterModel,
 }
 
 impl LaneRun<'_> {
     /// One family pair under the clock proxy: the engine runner then
-    /// the `SQLite` runner over the ONE shared op stream (derived here,
-    /// a pure function of `(seed, sizes, count)`), stamped as a block
-    /// (the `driver/write_families.rs` shape).
+    /// the `SQLite` runner over the ONE shared op stream (derived here
+    /// from `(seed, sizes, count)` and the lane's evolving counter
+    /// model), stamped as a block (the `driver/write_families.rs`
+    /// shape).
     fn time_family(
         &mut self,
         name: &'static str,
@@ -245,7 +253,7 @@ impl LaneRun<'_> {
             "crud_insert_100" => self.insert_pair(proto, 100),
             "crud_insert_1k" => self.insert_pair(proto, 1_000),
             "crud_update" => {
-                let stream = ops::update_stream(seed, sizes, count);
+                let stream = ops::update_stream(seed, sizes, count, &mut self.model);
                 clockproxy::stamped(|| {
                     Ok((
                         lanes::update_bumbledb(db, proto, &stream)?,
@@ -254,7 +262,7 @@ impl LaneRun<'_> {
                 })
             }
             "crud_update_hot" => {
-                let stream = ops::hot_update_stream(count);
+                let stream = ops::hot_update_stream(count, &mut self.model);
                 clockproxy::stamped(|| {
                     Ok((
                         lanes::update_bumbledb(db, proto, &stream)?,
@@ -263,7 +271,7 @@ impl LaneRun<'_> {
                 })
             }
             "crud_upsert" => {
-                let stream = ops::upsert_stream(seed, sizes, count);
+                let stream = ops::upsert_stream(seed, sizes, count, &mut self.model);
                 clockproxy::stamped(|| {
                     Ok((
                         lanes::upsert_bumbledb(db, proto, &stream)?,
@@ -272,7 +280,7 @@ impl LaneRun<'_> {
                 })
             }
             "crud_rmw" => {
-                let keys = ops::rmw_stream(seed, sizes, count);
+                let keys = ops::rmw_stream(seed, sizes, count, &mut self.model);
                 clockproxy::stamped(|| {
                     Ok((
                         lanes::rmw_bumbledb(db, proto, &keys)?,

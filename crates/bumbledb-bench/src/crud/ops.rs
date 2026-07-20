@@ -3,11 +3,14 @@
 //! truth both engines fold over ([`super::lanes`]), so different keys,
 //! different values, or different op counts between the twins simply
 //! cannot be expressed. Every generator is a pure function of
-//! `(seed, sizes, count)` where `count = protocol.warmups +
+//! `(seed, sizes, count, model)` where `count = protocol.warmups +
 //! protocol.samples` — the runner's total closure invocations (batch
 //! families multiply per-commit work internally, never the stream
-//! length). Identical inputs ⇒ identical streams, forever; purity is
-//! pinned by test.
+//! length) — and `model` is the lane's ONE evolving [`CounterModel`],
+//! threaded through the generators in the exact run order, so a later
+//! family's `prev` accounting always describes the store the earlier
+//! families actually left. Identical inputs ⇒ identical streams,
+//! forever; purity is pinned by test.
 //!
 //! Entropy: [`Rng`] seeded `seed ^ <per-family salt>` — one documented
 //! salt const per family, so no two families ever share a draw
@@ -32,6 +35,53 @@ pub const READ_SALT: u64 = 0xC24D_0004;
 /// The insert lanes' payload salt (mixed with the mint cursor).
 pub const INSERT_SALT: u64 = 0xC24D_0005;
 
+/// The lane's single evolving account of the `Counter` relation — the
+/// representation that makes stream drift unrepresentable. Every
+/// counter-stream generator draws its `prev` from this model and writes
+/// its `next` back, and the lane fold ([`super::run`]) threads ONE model
+/// through the generators in the exact run order, so a family's stream
+/// always describes the store the earlier families actually left.
+///
+/// Before the model, each generator privately assumed the pristine
+/// loaded corpus, and the no-collision condition between the seeded
+/// streams lived in prose and hand-picked seeds — seed 1 under the
+/// registry protocols collided (`crud_update` touched keys the
+/// `crud_upsert` stream still modeled as the loaded 0), and the upsert
+/// lane's drift check aborted the run, exactly as its contract promises.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CounterModel {
+    /// The loaded mass: keys `0..counters` hold the seeded 0 at load.
+    counters: u64,
+    /// Every value a stream has written over the load, keyed.
+    vals: HashMap<u64, i64>,
+}
+
+impl CounterModel {
+    /// The model of the freshly loaded corpus: keys `0..sizes.counters`
+    /// hold 0 ([`corpus::relation_rows`]), every other key misses.
+    #[must_use]
+    pub fn at_load(sizes: CrudSizes) -> Self {
+        Self {
+            counters: sizes.counters,
+            vals: HashMap::new(),
+        }
+    }
+
+    /// The modeled stored value at `key` (`None` = the key misses).
+    #[must_use]
+    pub fn get(&self, key: u64) -> Option<i64> {
+        self.vals
+            .get(&key)
+            .copied()
+            .or_else(|| (key < self.counters).then_some(0))
+    }
+
+    /// One modeled write: `Counter{key}` now holds `val`.
+    fn set(&mut self, key: u64, val: i64) {
+        self.vals.insert(key, val);
+    }
+}
+
 /// One update op: replace `Counter{key, prev}` with `Counter{key, next}`.
 /// `prev` is part of the stream so the engine's delete half is
 /// delete-bearing BY CONTRACT — a stale `prev` aborts instead of
@@ -44,45 +94,51 @@ pub struct UpdateOp {
 }
 
 /// The `crud_update` stream: keys drawn over the standing `Counter`
-/// mass, `prev` tracked through a local map initialized to the seeded 0
-/// (repeat keys chain correctly), `next = prev + 1 + draw(1000)` —
+/// mass, `prev` drawn from the lane model (repeat keys and earlier
+/// families chain correctly), `next = prev + 1 + draw(1000)` —
 /// strictly increasing per key, so a delete+insert never cancels.
 ///
 /// # Panics
 ///
-/// Never in practice: the value chain stays far below `i64::MAX`.
+/// Never in practice: the keys draw over the loaded mass (always
+/// present in the model) and the value chain stays far below
+/// `i64::MAX`.
 #[must_use]
-pub fn update_stream(seed: u64, sizes: CrudSizes, count: usize) -> Vec<UpdateOp> {
+pub fn update_stream(
+    seed: u64,
+    sizes: CrudSizes,
+    count: usize,
+    model: &mut CounterModel,
+) -> Vec<UpdateOp> {
     let mut rng = Rng::new(seed ^ UPDATE_SALT);
-    let mut vals: HashMap<u64, i64> = HashMap::new();
     (0..count)
         .map(|_| {
             let key = rng.range(sizes.counters);
-            let prev = vals.get(&key).copied().unwrap_or(0);
+            let prev = model
+                .get(key)
+                .expect("update keys draw over the loaded mass");
             let next = prev + 1 + i64::try_from(rng.range(1000)).expect("small");
-            vals.insert(key, next);
+            model.set(key, next);
             UpdateOp { key, prev, next }
         })
         .collect()
 }
 
-/// The `crud_update_hot` stream: key fixed at 0, value chain 0→1→2… —
-/// the hot-row single-writer contention shape. A pure function of
-/// `count` alone; no entropy exists to draw.
+/// The `crud_update_hot` stream: key fixed at 0, the value chain
+/// stepping +1 from wherever the lane model holds key 0 — the hot-row
+/// single-writer contention shape. No entropy exists to draw.
 ///
 /// # Panics
 ///
-/// Never in practice: protocol counts fit `i64`.
+/// Never in practice: key 0 is loaded, and protocol counts fit `i64`.
 #[must_use]
-pub fn hot_update_stream(count: usize) -> Vec<UpdateOp> {
+pub fn hot_update_stream(count: usize, model: &mut CounterModel) -> Vec<UpdateOp> {
     (0..count)
-        .map(|i| {
-            let prev = i64::try_from(i).expect("protocol counts are small");
-            UpdateOp {
-                key: 0,
-                prev,
-                next: prev + 1,
-            }
+        .map(|_| {
+            let prev = model.get(0).expect("key 0 is loaded");
+            let next = prev + 1;
+            model.set(0, next);
+            UpdateOp { key: 0, prev, next }
         })
         .collect()
 }
@@ -99,26 +155,28 @@ pub struct UpsertOp {
 }
 
 /// The `crud_upsert` stream: keys drawn over TWICE the standing
-/// `Counter` mass (≈half the draws miss), `prev` tracked through a map
-/// lazily seeded with 0 for keys below `sizes.counters` (the loaded
-/// corpus value) and `None` above (never loaded — a miss until this
-/// stream's own upsert lands it).
+/// `Counter` mass (≈half the draws miss), `prev` drawn from the lane
+/// model — `Some` for keys the load or an earlier family landed,
+/// `None` above the loaded mass until this stream's own upsert lands
+/// them.
 ///
 /// # Panics
 ///
 /// Never in practice: the value chain stays far below `i64::MAX`.
 #[must_use]
-pub fn upsert_stream(seed: u64, sizes: CrudSizes, count: usize) -> Vec<UpsertOp> {
+pub fn upsert_stream(
+    seed: u64,
+    sizes: CrudSizes,
+    count: usize,
+    model: &mut CounterModel,
+) -> Vec<UpsertOp> {
     let mut rng = Rng::new(seed ^ UPSERT_SALT);
-    let mut vals: HashMap<u64, Option<i64>> = HashMap::new();
     (0..count)
         .map(|_| {
             let key = rng.range(sizes.counters * 2);
-            let prev = *vals
-                .entry(key)
-                .or_insert_with(|| (key < sizes.counters).then_some(0));
+            let prev = model.get(key);
             let next = prev.unwrap_or(0) + 1 + i64::try_from(rng.range(1000)).expect("small");
-            vals.insert(key, Some(next));
+            model.set(key, next);
             UpsertOp { key, prev, next }
         })
         .collect()
@@ -128,11 +186,24 @@ pub fn upsert_stream(seed: u64, sizes: CrudSizes, count: usize) -> Vec<UpsertOp>
 /// values ride along — the read half of the round trip fetches the
 /// stored value and the host computes `val + 1`, so both engines'
 /// results are functions of their own committed states (which start
-/// identical and therefore stay identical).
+/// identical and therefore stay identical). The `+1` is still applied
+/// to the lane model, so any family after rmw models the store rmw
+/// actually left.
+///
+/// # Panics
+///
+/// Never in practice: the keys draw over the loaded mass.
 #[must_use]
-pub fn rmw_stream(seed: u64, sizes: CrudSizes, count: usize) -> Vec<u64> {
+pub fn rmw_stream(seed: u64, sizes: CrudSizes, count: usize, model: &mut CounterModel) -> Vec<u64> {
     let mut rng = Rng::new(seed ^ RMW_SALT);
-    (0..count).map(|_| rng.range(sizes.counters)).collect()
+    (0..count)
+        .map(|_| {
+            let key = rng.range(sizes.counters);
+            let prev = model.get(key).expect("rmw keys draw over the loaded mass");
+            model.set(key, prev + 1);
+            key
+        })
+        .collect()
 }
 
 /// The point-read rotation: EXACTLY 4 param sets (the rotation and the

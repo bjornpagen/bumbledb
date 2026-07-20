@@ -101,14 +101,21 @@ fn push_row(out: &mut String, row: &LawRow) {
 
 /// The machine artifact — emitted only after every lane's post-state
 /// fold passed (the orchestration renders last), so `"poststate":"ok"`
-/// is a certified claim, never a default.
+/// is a certified claim, never a default. Carries the provenance stamp
+/// (the one shared emitter in [`crate::report`], shared-machine stamp
+/// included, built here at render time = lane end).
 #[must_use]
 pub fn json(seed: u64, rows: &[LawRow]) -> String {
     let mut out = String::new();
     let _ = write!(
         out,
-        "{{\"world\":\"lawful\",\"seed\":{seed},\"enforcement\":["
+        "{{\"world\":\"lawful\",\"seed\":{seed},\"provenance\":"
     );
+    crate::report::push_provenance(
+        &mut out,
+        &crate::report::provenance(std::path::Path::new(".")),
+    );
+    out.push_str(",\"enforcement\":[");
     for (index, row) in enforcement::MAP.iter().enumerate() {
         if index > 0 {
             out.push(',');

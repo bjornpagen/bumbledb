@@ -523,5 +523,11 @@ fn the_full_lawful_run_renders_the_enforcement_map_and_both_lanes() {
         "one row per (family × lane)"
     );
     assert_eq!(parsed.get("poststate").and_then(Json::as_str), Some("ok"));
+    assert!(
+        parsed
+            .get("provenance")
+            .is_some_and(|p| p.get("host").is_some()),
+        "the provenance stamp rides the artifact (the one shared emitter)"
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }

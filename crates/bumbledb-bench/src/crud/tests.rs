@@ -91,14 +91,12 @@ fn the_lane_parity_assertion_catches_a_mismatched_synchronous() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// The test fixture seed. The three seeded `Counter` streams (update,
-/// upsert; hot is fixed at key 0) must draw keys that keep every
-/// stream's `prev` accounting true when the families run back to back
-/// on ONE twin pair — any collision aborts LOUDLY inside a write
-/// closure (the refusal contract under test), so a colliding seed
-/// fails deterministically here, never silently. (Seed 7, for the
-/// record, collides: its update stream touches a key the upsert
-/// stream's seeded-0 accounting still expects — and the abort said so.)
+/// The test fixture seed — the CLI default, deliberately: seed 1's
+/// update and upsert streams collide (the update lane touches keys the
+/// upsert stream also draws), which is exactly what the shared
+/// [`ops::CounterModel`] must absorb. No seed needs hand-picking
+/// anymore: every stream draws its `prev` from the one model threaded
+/// in run order, so a collision is ordinary chaining, not an abort.
 const SEED: u64 = 1;
 
 /// The tiny per-family protocol: 1 warmup + 2 measured samples = 3
@@ -180,29 +178,33 @@ fn every_crud_write_family_leaves_the_twins_value_identical() {
     }
     assert_eq!(ours_cursor, theirs_cursor, "the cursors stay in lockstep");
 
+    // ONE counter model, threaded through the stream derivations in the
+    // exact order the families run — the lane fold's own shape.
+    let mut model = ops::CounterModel::at_load(sizes);
+
     // crud_update.
-    let stream = ops::update_stream(SEED, sizes, COUNT);
+    let stream = ops::update_stream(SEED, sizes, COUNT, &mut model);
     let ours = lanes::update_bumbledb(&db, TINY_PROTO, &stream).expect("update engine");
     let theirs = lanes::update_sqlite(&conn, TINY_PROTO, &stream).expect("update sqlite");
     assert_eq!(ours.work, 2, "update: engine work");
     assert_eq!(theirs.work, 2, "update: mirror work");
 
     // crud_update_hot (the same runners over the hot stream).
-    let stream = ops::hot_update_stream(COUNT);
+    let stream = ops::hot_update_stream(COUNT, &mut model);
     let ours = lanes::update_bumbledb(&db, TINY_PROTO, &stream).expect("hot engine");
     let theirs = lanes::update_sqlite(&conn, TINY_PROTO, &stream).expect("hot sqlite");
     assert_eq!(ours.work, 2, "hot: engine work");
     assert_eq!(theirs.work, 2, "hot: mirror work");
 
     // crud_upsert.
-    let stream = ops::upsert_stream(SEED, sizes, COUNT);
+    let stream = ops::upsert_stream(SEED, sizes, COUNT, &mut model);
     let ours = lanes::upsert_bumbledb(&db, TINY_PROTO, &stream).expect("upsert engine");
     let theirs = lanes::upsert_sqlite(&conn, TINY_PROTO, &stream).expect("upsert sqlite");
     assert_eq!(ours.work, 2, "upsert: engine work");
     assert_eq!(theirs.work, 2, "upsert: mirror work");
 
     // crud_rmw.
-    let keys = ops::rmw_stream(SEED, sizes, COUNT);
+    let keys = ops::rmw_stream(SEED, sizes, COUNT, &mut model);
     let ours = lanes::rmw_bumbledb(&db, TINY_PROTO, &keys).expect("rmw engine");
     let theirs = lanes::rmw_sqlite(&conn, TINY_PROTO, &keys).expect("rmw sqlite");
     assert_eq!(ours.work, 2, "rmw: engine work");
@@ -243,11 +245,12 @@ fn the_nosync_lane_runs_the_same_families_identically() {
     lanes::insert_bumbledb(&db, TINY_PROTO, SEED, 1, &mut ours_cursor).expect("insert engine");
     lanes::insert_sqlite(&conn, TINY_PROTO, SEED, 1, &mut theirs_cursor).expect("insert sqlite");
 
-    let stream = ops::upsert_stream(SEED, sizes, COUNT);
+    let mut model = ops::CounterModel::at_load(sizes);
+    let stream = ops::upsert_stream(SEED, sizes, COUNT, &mut model);
     lanes::upsert_bumbledb(&db, TINY_PROTO, &stream).expect("upsert engine");
     lanes::upsert_sqlite(&conn, TINY_PROTO, &stream).expect("upsert sqlite");
 
-    let keys = ops::rmw_stream(SEED, sizes, COUNT);
+    let keys = ops::rmw_stream(SEED, sizes, COUNT, &mut model);
     lanes::rmw_bumbledb(&db, TINY_PROTO, &keys).expect("rmw engine");
     lanes::rmw_sqlite(&conn, TINY_PROTO, &keys).expect("rmw sqlite");
 
@@ -299,7 +302,7 @@ fn the_upsert_follows_its_stream_through_hits_and_misses() {
         warmups: 2,
         samples: 6,
     };
-    let stream = ops::upsert_stream(SEED, sizes, 8);
+    let stream = ops::upsert_stream(SEED, sizes, 8, &mut ops::CounterModel::at_load(sizes));
     assert!(
         stream.iter().any(|op| op.prev.is_some()),
         "the stream must carry at least one hit: {stream:?}"
@@ -320,37 +323,92 @@ fn the_upsert_follows_its_stream_through_hits_and_misses() {
 
 /// The read query translates to SQL (the canonical twin exists), and
 /// the stream generators are pure: the same `(seed, sizes, count)`
-/// yields the identical stream twice.
+/// folded over equal models yields identical streams AND identical
+/// end models — the two engine passes share one derivation by
+/// construction.
 #[test]
 fn the_read_query_translates_and_the_stream_generators_are_pure() {
     let translated = crate::translate::translate(&lanes::read_query(), super::schema(), &[])
         .expect("the read query translates");
     assert!(translated.sql.contains("SELECT"), "{}", translated.sql);
     let sizes = CrudSizes::of(Scale::Tiny);
+    let mut a = ops::CounterModel::at_load(sizes);
+    let mut b = ops::CounterModel::at_load(sizes);
     assert_eq!(
-        ops::update_stream(SEED, sizes, 16),
-        ops::update_stream(SEED, sizes, 16)
+        ops::update_stream(SEED, sizes, 16, &mut a),
+        ops::update_stream(SEED, sizes, 16, &mut b)
     );
     assert_eq!(
-        ops::upsert_stream(SEED, sizes, 16),
-        ops::upsert_stream(SEED, sizes, 16)
+        ops::hot_update_stream(16, &mut a),
+        ops::hot_update_stream(16, &mut b)
     );
     assert_eq!(
-        ops::rmw_stream(SEED, sizes, 16),
-        ops::rmw_stream(SEED, sizes, 16)
+        ops::upsert_stream(SEED, sizes, 16, &mut a),
+        ops::upsert_stream(SEED, sizes, 16, &mut b)
     );
+    assert_eq!(
+        ops::rmw_stream(SEED, sizes, 16, &mut a),
+        ops::rmw_stream(SEED, sizes, 16, &mut b)
+    );
+    assert_eq!(a, b, "the models fold identically");
 }
 
-/// The orchestration tests' seed. The full run replays every family
-/// back to back under the REGISTRY warmups plus the 2-sample override
-/// (10 invocations for the counter streams, not [`COUNT`]), so the
-/// no-collision condition on the seeded streams is re-satisfied at
-/// those lengths: seed 0's update stream never draws key 0 (the hot
-/// lane's row) and its upsert stream never draws a key the update
-/// stream touched. (Seed 1 — [`SEED`] — collides at length 10: the
-/// upsert abort said so, loudly, exactly as the refusal contract
-/// promises.)
-const RUN_SEED: u64 = 0;
+/// THE night-run regression, pinned (tiny corpus, no timing): seed 1's
+/// update/hot streams touch keys the upsert stream also draws —
+/// asserted below, so the collision is genuinely exercised — and
+/// before the shared [`ops::CounterModel`] the upsert lane aborted with
+/// "the upsert drifted from its stream: the stored value is not the
+/// stream's prev". With every stream drawing `prev` from the one model
+/// threaded in run order, the runners follow their streams through the
+/// collision and the twins end value-identical.
+#[test]
+fn a_colliding_seed_is_absorbed_by_the_counter_model() {
+    let sizes = CrudSizes::of(Scale::Tiny);
+    let proto = Protocol {
+        warmups: 2,
+        samples: 8,
+    };
+    let count = 10usize;
+    let mut model = ops::CounterModel::at_load(sizes);
+    let update = ops::update_stream(SEED, sizes, count, &mut model);
+    let hot = ops::hot_update_stream(count, &mut model);
+    let upsert = ops::upsert_stream(SEED, sizes, count, &mut model);
+    let touched: std::collections::HashSet<u64> =
+        update.iter().chain(hot.iter()).map(|op| op.key).collect();
+    let collided: Vec<_> = upsert
+        .iter()
+        .filter(|op| touched.contains(&op.key))
+        .collect();
+    assert!(
+        !collided.is_empty(),
+        "seed {SEED} must exercise the collision this test pins"
+    );
+    assert!(
+        collided.iter().any(|op| op.prev != Some(0)),
+        "a collided key's prev must carry the earlier family's write, not the loaded 0: {collided:?}"
+    );
+    let dir = scratch("colliding-seed");
+    let (db, conn) =
+        super::corpus::load_stores(&dir, SEED, sizes, DurabilityLane::Durable).expect("load");
+    lanes::update_bumbledb(&db, proto, &update).expect("update engine");
+    lanes::update_sqlite(&conn, proto, &update).expect("update sqlite");
+    lanes::update_bumbledb(&db, proto, &hot).expect("hot engine");
+    lanes::update_sqlite(&conn, proto, &hot).expect("hot sqlite");
+    lanes::upsert_bumbledb(&db, proto, &upsert).expect("upsert engine");
+    lanes::upsert_sqlite(&conn, proto, &upsert).expect("upsert sqlite");
+    assert_twins_identical(&db, &conn);
+    drop((db, conn));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The orchestration tests' seed — [`SEED`], the CLI default, on
+/// purpose: the full run replays every family back to back under the
+/// REGISTRY warmups plus the 2-sample override (10 invocations for the
+/// counter streams), the exact lengths at which seed 1's streams
+/// collide. The full run passing IS the night-run regression at the
+/// orchestration level: the fold's one [`ops::CounterModel`] absorbs
+/// the collision that used to abort the upsert lane.
+const RUN_SEED: u64 = SEED;
 
 /// A loader that loads the real twin, then poisons the `SQLite` mirror
 /// with one extra `Doc` row at the read rotation's guaranteed-miss key
@@ -430,6 +488,12 @@ fn the_full_crud_run_produces_both_lanes_and_parses() {
         parsed.get("poststate").and_then(crate::json::Value::as_str),
         Some("ok"),
         "the post-state field"
+    );
+    assert!(
+        parsed
+            .get("provenance")
+            .is_some_and(|p| p.get("host").is_some()),
+        "the provenance stamp rides the artifact (the one shared emitter)"
     );
     let _ = std::fs::remove_dir_all(&dir);
 }

@@ -70,13 +70,21 @@ pub fn markdown(rows: &[CrudRow], seed: u64) -> String {
 }
 
 /// The machine artifact, hand-rolled through [`crate::json`] (the
-/// dependency quarantine forbids serde): lanes in report order, each
-/// carrying its verbatim config prose and its rows; stats objects
-/// byte-shaped like `report.json`'s.
+/// dependency quarantine forbids serde): the provenance stamp (the one
+/// shared emitter — `report.json`, the metric lanes, and churn all
+/// spell the block in [`crate::report`], shared-machine stamp
+/// included, built here at render time = lane end), then lanes in
+/// report order, each carrying its verbatim config prose and its rows;
+/// stats objects byte-shaped like `report.json`'s.
 #[must_use]
 pub fn json(rows: &[CrudRow], seed: u64) -> String {
     let mut out = String::new();
-    let _ = write!(out, "{{\"world\":\"crud\",\"seed\":{seed},\"lanes\":[");
+    let _ = write!(out, "{{\"world\":\"crud\",\"seed\":{seed},\"provenance\":");
+    crate::report::push_provenance(
+        &mut out,
+        &crate::report::provenance(std::path::Path::new(".")),
+    );
+    out.push_str(",\"lanes\":[");
     for (index, lane) in duralane::ALL.iter().enumerate() {
         if index > 0 {
             out.push(',');
