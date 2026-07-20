@@ -905,7 +905,13 @@ names — so roster errors print beside the query they reject.
   blessed Rust sugar is `crates/bumbledb-query`'s `query!` macro** — a downstream
   crate on the bench-crate quarantine, lowering the notation (`20-query-ir.md`
   § the query notation) to the `ir::Query` value at compile time and resolving
-  names through the emitted id constants.
+  names through the emitted id constants. The crate has exactly TWO members:
+  the `query!` macro (its proc-macro mechanics live in
+  `bumbledb-query-macros`, re-exported — packaging, not surface) and the
+  `order` module (host-side answer ordering over the engine's unordered
+  sets: `SortKey` data, `by`, `value_cmp`) — both under the same
+  one-directional quarantine: hosts may depend on the crate, the engine
+  never does.
 
 ## The TypeScript SDK — the shipped binding
 
@@ -1063,13 +1069,22 @@ engine-first change, and nothing re-enters without a new ruling.
   and destructures `Answers` by hand tells us the derive's shape. **SPLIT
   (census 2026-07-17).** The sorting half **FIRED**: four hand-rolled bigint
   comparators, every rank/pos consumer sorting host-side, and "answers are
-  sets; the host sorts" recurring as a consumer comment — the ordering/limit
-  conveniences are OWED, host-side in `bumbledb-query`, on the quarantine
-  already named here (fired, not yet built — no sort surface exists in that
-  crate as of cleanup-0.5.0). **SCHEDULED (owner ruling 2026-07-19): paired
-  with keyed get in the pre-1.0.0 surface wave** — host-side only; the
-  engine-never-orders ruling stands untouched
-  (`docs/feature-register.md` § FIRED and scheduled). The `FromAnswers` half is **DECLINED** vocabulary:
+  sets; the host sorts" recurring as a consumer comment.
+  **SHIPPED (2026-07-19, the surface-pair wave)** — host-side only, the
+  engine-never-orders ruling untouched (answers remain sets). The final
+  spelling, both hosts: TS — `ts/src/order.ts`, sort keys as data (`"rank"`
+  bare = ascending, `desc("rank")` descending) folded by `by(...)` into a
+  row-typed comparator for the language's own `Array.prototype.sort`; a key
+  the row lacks or a non-FactValue column is a compile error at the sort
+  site. Rust — `bumbledb_query::order` (`SortKey::{Asc, Desc}` as data,
+  `by(&keys)` for `Vec::sort_by`, `value_cmp` the total cell order), in the
+  quarantine crate, whose proc-macro mechanics now live in
+  `bumbledb-query-macros` (packaging, not surface — hosts still spell
+  `bumbledb-query`). LIMIT REFUSED AS SURFACE, recorded: `.slice(0, n)` /
+  `truncate`/`take` are the language's own operators (the drizzle law) and
+  zero limit-shaped call sites were sighted in the census consumer. No `asc`
+  wrapper exists: the bare spelling IS ascending — one spelling per meaning.
+  The `FromAnswers` half is **DECLINED** vocabulary:
   answers already decode to typed named records at the SDK boundary and zero
   hand-destructuring was sighted — the derive has no consumer shape to learn
   from.

@@ -866,7 +866,9 @@ let claimed = query!(FreeTime {
 
 Coalesced totals = the two-query composition (Pack, then a host fold) —
 aggregates never nest; free time (gaps) is the two-line host walk over
-sorted packed answers — both refusals recorded in the ledger.
+sorted packed answers (the sort itself is `bumbledb_query::order::by` over
+`SortKey` data — the engine never orders) — both refusals recorded in the
+ledger.
 
 ## The write side
 

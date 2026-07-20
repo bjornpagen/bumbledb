@@ -98,8 +98,9 @@ by trigger 1(b) above:
 ## FIRED and scheduled (the owner's prioritization, 2026-07-19)
 
 Two OPEN-ledger rows in `docs/architecture/70-api.md` whose triggers already
-FIRED get their own planning wave AFTER cleanup-0.5.0 lands and BEFORE any
-1.0.0 surface freeze (they are surface additions; they belong under the tag):
+FIRED got their own wave (the surface-pair wave) AFTER cleanup-0.5.0 landed
+and BEFORE any 1.0.0 surface freeze (they are surface additions; they belong
+under the tag) — both rows shipped 2026-07-19:
 
 - **Keyed get** — **shipped (this wave, 2026-07-19)**: reading through the
   declared key FDs IS the obvious spelling on both the read scope and the
@@ -113,10 +114,17 @@ FIRED get their own planning wave AFTER cleanup-0.5.0 lands and BEFORE any
   re-implements keyed lookup host-side five ways, the ETL shadows its own key
   laws with five host maps, and the existing primary-key get goes unused
   (~15 workaround sites total). The keys are laws; the surface exposes them.
-- **Answer ordering/limit conveniences** — the census-split sorting half
-  (four hand-rolled bigint comparators, every rank/pos consumer sorting
-  host-side). Host-side, on the `query!` quarantine — the engine never
-  orders; that ruling stands.
+- **Answer ordering/limit conveniences** — **SHIPPED (2026-07-19)**: the
+  census-split sorting half (four hand-rolled bigint comparators, every
+  rank/pos consumer sorting host-side) landed host-side, on the `query!`
+  quarantine — the engine never orders; that ruling stands. The two
+  spellings: TS `by`/`desc` in `ts/src/order.ts` (a bare column name IS
+  ascending; keys as data folded into one row-typed comparator for the
+  language's own `.sort`); Rust `bumbledb_query::order::{SortKey, by,
+  value_cmp}` (direction as the `SortKey` variant, `by` folds for
+  `Vec::sort_by`). Limit REFUSED, recorded: the language owns it —
+  `.slice(0, n)` / `truncate`/`take` — no operator invented where one
+  already exists.
 
 ## Also parked elsewhere (cross-references)
 

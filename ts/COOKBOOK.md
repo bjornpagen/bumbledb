@@ -37,9 +37,11 @@ import {
 	abandon,
 	allen,
 	bool,
+	by,
 	bytes,
 	closed,
 	contained,
+	desc,
 	eq,
 	i64,
 	interval,
@@ -116,10 +118,11 @@ const Uptime = schema("Uptime", { Service, Outage }, [
 	key(Outage, ["service", "window"])
 ])
 
-// down at instant t — `r.vars` mints the rule's whole variable scope at
-// once, and shorthand punning binds same-named columns:
+// down at instant t — `r.var` mints one domain-typed variable per name,
+// and shorthand punning binds same-named columns:
 const downAt = query(Uptime).rule((r) => {
-	const { service, window } = r.vars("service", "window")
+	const service = r.var("service")
+	const window = r.var("window")
 	return r
 		.match(Outage, { service, window })
 		.where(pointIn(r.param("t"), window))
@@ -127,7 +130,8 @@ const downAt = query(Uptime).rule((r) => {
 })
 // overlapping an incident window (one Allen mask, no operator zoo):
 const overlapping = query(Uptime).rule((r) => {
-	const { service, window } = r.vars("service", "window")
+	const service = r.var("service")
+	const window = r.var("window")
 	return r
 		.match(Outage, { service, window })
 		.where(allen(window, ALLEN.intersects, r.param("incident")))
@@ -135,7 +139,8 @@ const overlapping = query(Uptime).rule((r) => {
 })
 // total downtime per service (the denotation's one arithmetic):
 const downtime = query(Uptime).rule((r) => {
-	const { service, window } = r.vars("service", "window")
+	const service = r.var("service")
+	const window = r.var("window")
 	return r.match(Outage, { service, window }).select("service", r.sum(r.duration("window")))
 })
 ```
@@ -215,7 +220,7 @@ const Optionality = schema("Optionality", { Business, MailingAddress }, [
 
 // Negation is plain anti-join (no null branch exists in any operator):
 const unaddressed = query(Optionality).rule((r) => {
-	const { b } = r.vars("b")
+	const b = r.var("b")
 	return r
 		.match(Business, { id: b })
 		.where(not(MailingAddress, { business: b }))
@@ -255,7 +260,10 @@ const Money = schema("Money", { Currency, Account, Posting }, [
 // silently. Bind the fresh id: set semantics would collapse two equal
 // (account, currency, minor) postings without it.
 const totals = query(Money).rule((r) => {
-	const { id, account, currency, minor } = r.vars("id", "account", "currency", "minor")
+	const id = r.var("id")
+	const account = r.var("account")
+	const currency = r.var("currency")
+	const minor = r.var("minor")
 	return r.match(Posting, { id, account, currency, minor }).select("account", "currency", r.sum("minor"))
 })
 ```
@@ -292,7 +300,7 @@ const Content = schema("Content", { Region, Document, Replica }, [
 
 // a bytes param self-encodes (Uint8Array by inference):
 const byDigest = query(Content).rule((r) => {
-	const { id } = r.vars("id")
+	const id = r.var("id")
 	return r.match(Document, { id, payload: r.param("digest") }).select("id")
 })
 ```
@@ -334,7 +342,7 @@ const Tickets = schema("Tickets", { Priority, Ticket }, [
 // that drifts without a rebuild is an ordinary relation — a vocabulary is
 // never written, only declared.
 const urgent = query(Tickets).rule((r) => {
-	const { t } = r.vars("t")
+	const t = r.var("t")
 	return r.match(Ticket, { id: t, priority: "Urgent" }).select("t")
 })
 
@@ -343,7 +351,7 @@ const urgent = query(Tickets).rule((r) => {
 // ∈-set param, `r.inSet`); the array folds to the same wire set the param
 // spelling crosses. In `.where()` selections arrays work at EVERY field kind.
 const actionable = query(Tickets).rule((r) => {
-	const { t } = r.vars("t")
+	const t = r.var("t")
 	return r.match(Ticket, { id: t, priority: ["Normal", "Urgent"] }).select("t")
 })
 ```
@@ -388,7 +396,8 @@ const Review = schema("Review", { Kind, Attempt, Certificate }, [
 // exactly like an ordinary one, and the atom folds at prepare into a
 // plan-constant handle set on its sibling.
 const masteredAttempts = query(Review).rule((r) => {
-	const { a, k } = r.vars("a", "k")
+	const a = r.var("a")
+	const k = r.var("k")
 	return r
 		.match(Attempt, { id: a, kind: k })
 		.match(Kind, { id: k, mastered: true })
@@ -451,7 +460,8 @@ const Oncall = schema("Oncall", { Severity, Incident, Escalation }, [
 
 // who is being paged — the same ψ, on the read side:
 const paged = query(Oncall).rule((r) => {
-	const { i, s } = r.vars("i", "s")
+	const i = r.var("i")
+	const s = r.var("s")
 	return r
 		.match(Escalation, { incident: i, severity: s })
 		.match(Severity, { id: s, pages: true })
@@ -468,7 +478,8 @@ plus pointwise keys realizes exact partition
 (`lean/Bumbledb/Dependencies.lean: exact_partition_iff`), and the mixed-width
 interval positions type by element domain
 (`lean/Bumbledb/Schema.lean: Value.points_one_tag_u64`); ordering the result
-remains a host presentation step.
+remains a host presentation step — the SDK ships the comparator (`by`/`desc`,
+keys as data); the engine never orders.
 
 The linked-list verdict: successor pointers are control flow smuggled into
 data. Order is a value. The idiomatic ordered collection is an interval
@@ -496,12 +507,21 @@ const Playlists = schema("Playlists", { Playlist, Extent, Slot }, [
 
 // Positional access is membership — "what plays at position ?pos":
 const playingAt = query(Playlists).rule((r) => {
-	const { slot, track } = r.vars("slot", "track")
+	const slot = r.var("slot")
+	const track = r.var("track")
 	return r
 		.match(Slot, { playlist: r.param("list"), slot, track })
 		.where(pointIn(r.param("pos"), slot))
 		.select("track")
 })
+
+// Answers are SETS — the host sorts them, and the SDK ships the comparator:
+// sort keys as data, a bare name ascending, `desc(...)` the flip; intervals
+// order by (start, end). Limit is the language's own `.slice(0, n)`.
+const inPlayOrder = [
+	{ slot: { start: 1n, end: 2n }, track: "b" },
+	{ slot: { start: 0n, end: 1n }, track: "a" }
+].sort(by("slot", "track"))
 ```
 
 Middle insert is honest about its cost: making room at position `k` shifts
@@ -548,7 +568,8 @@ const Ast = schema("Ast", { Kind, Node, Lit, Add, Parent }, [
 ])
 
 const lhsLiteral = query(Ast).rule((r) => {
-	const { l, v } = r.vars("l", "v")
+	const l = r.var("l")
+	const v = r.var("v")
 	return r
 		.match(Add, { node: r.param("n"), lhs: l })
 		.match(Lit, { node: l, value: v })
@@ -583,7 +604,8 @@ const Graph = schema("Graph", { Person, Repo, Follows, Maintains }, [
 // live in the "Person.id" class, so the reuse is lawful); `lt` keeps each
 // pair once:
 const mutual = query(Graph).rule((r) => {
-	const { a, b } = r.vars("a", "b")
+	const a = r.var("a")
+	const b = r.var("b")
 	return r
 		.match(Follows, { follower: a, followee: b })
 		.match(Follows, { follower: b, followee: a })
@@ -621,7 +643,11 @@ const Ecs = schema("Ecs", { Entity, Transform, Velocity, Renderable }, [
 
 // The physics join is the component intersection:
 const physics = query(Ecs).rule((r) => {
-	const { entity, x, y, dx, dy } = r.vars("entity", "x", "y", "dx", "dy")
+	const entity = r.var("entity")
+	const x = r.var("x")
+	const y = r.var("y")
+	const dx = r.var("dx")
+	const dy = r.var("dy")
 	return r
 		.match(Transform, { entity, x, y })
 		.match(Velocity, { entity, dx, dy })
@@ -661,7 +687,8 @@ const Orders = schema("Orders", { State, Order, Placement, Shipment }, [
 ])
 
 const shipped = query(Orders).rule((r) => {
-	const { id, carrier } = r.vars("id", "carrier")
+	const id = r.var("id")
+	const carrier = r.var("carrier")
 	return r
 		.match(Order, { id, state: "Shipped" })
 		.match(Shipment, { order: id, carrier })
@@ -731,14 +758,16 @@ const Calendar = schema("Calendar", { Rsvp, Arm, Person, Room, Event, Attendance
 ])
 
 const roomConflicts = query(Calendar).rule((r) => {
-	const { room, span } = r.vars("room", "span")
+	const room = r.var("room")
+	const span = r.var("span")
 	return r
 		.match(Booking, { room, span })
 		.where(allen(span, ALLEN.intersects, r.param("want")))
 		.select("room", "span")
 })
 const personLoad = query(Calendar).rule((r) => {
-	const { person, span } = r.vars("person", "span")
+	const person = r.var("person")
+	const span = r.var("span")
 	return r
 		.match(Claim, { person, span })
 		.where(allen(span, ALLEN.intersects, r.param("window")))
@@ -774,7 +803,8 @@ const Pricing = schema("Pricing", { Policy, Version }, [
 
 // in force on date t — one membership probe:
 const inForce = query(Pricing).rule((r) => {
-	const { rate_bps, valid } = r.vars("rate_bps", "valid")
+	const rate_bps = r.var("rate_bps")
+	const valid = r.var("valid")
 	return r
 		.match(Version, { policy: r.param("p"), rate_bps, valid })
 		.where(pointIn(r.param("t"), valid))
@@ -782,7 +812,9 @@ const inForce = query(Pricing).rule((r) => {
 })
 // clean successions (half-open makes MEETS exact, no ±1 fudge):
 const successions = query(Pricing).rule((r) => {
-	const { p, a, b } = r.vars("p", "a", "b")
+	const p = r.var("p")
+	const a = r.var("a")
+	const b = r.var("b")
 	return r
 		.match(Version, { policy: p, valid: a })
 		.match(Version, { policy: p, valid: b })
@@ -816,7 +848,8 @@ const Payroll = schema("Payroll", { FiscalYear, PayPeriod }, [
 
 // the period holding date t:
 const holding = query(Payroll).rule((r) => {
-	const { seq, span } = r.vars("seq", "span")
+	const seq = r.var("seq")
+	const span = r.var("span")
 	return r
 		.match(PayPeriod, { year: r.param("y"), seq, span })
 		.where(pointIn(r.param("t"), span))
@@ -864,7 +897,9 @@ const Tax = schema("Tax", { Status, Regime, Bracket, Residency, Earned }, [
 // owed is host arithmetic over the bracket walk — arithmetic beyond the
 // measure is refused (the ledger).
 const marginal = query(Tax).rule((r) => {
-	const { reg, b, rate_bps } = r.vars("reg", "b", "rate_bps")
+	const reg = r.var("reg")
+	const b = r.var("b")
+	const rate_bps = r.var("rate_bps")
 	return r
 		.match(Regime, { id: reg, year: r.param("y"), status: r.param("s") })
 		.match(Bracket, { regime: reg, income: b, rate_bps })
@@ -896,17 +931,21 @@ const FreeTime = schema("FreeTime", { Person, Claim }, [
 
 // busy time, coalesced (adjacent segments merge — the half-open law):
 const busy = query(FreeTime).rule((r) => {
-	const { person, span } = r.vars("person", "span")
+	const person = r.var("person")
+	const span = r.var("span")
 	return r.match(Claim, { person, span }).select("person", r.pack("span"))
 })
 // raw claimed time (overlaps double-count — often the wrong question):
 const claimed = query(FreeTime).rule((r) => {
-	const { person, span } = r.vars("person", "span")
+	const person = r.var("person")
+	const span = r.var("span")
 	return r.match(Claim, { person, span }).select("person", r.sum(r.duration("span")))
 })
 // Coalesced totals = the two-query composition (pack, then a host fold) —
 // aggregates never nest; free time (gaps) is the two-line host walk over
-// sorted packed answers — both refusals recorded in the ledger.
+// sorted packed answers (`rows.sort(by("person", "span"))` — the
+// keys-as-data comparator; limit is the language's own `.slice`) — both
+// refusals recorded in the ledger.
 ```
 
 ## The write side
@@ -940,12 +979,16 @@ const Ledger = schema("Ledger", { Account, JournalEntry, Posting }, [
 
 // balances (bind the fresh id — set semantics collapses duplicates):
 const balances = query(Ledger).rule((r) => {
-	const { id, account, minor } = r.vars("id", "account", "minor")
+	const id = r.var("id")
+	const account = r.var("account")
+	const minor = r.var("minor")
 	return r.match(Posting, { id, account, minor }).select("account", r.sum("minor"))
 })
 // double-entry audit (host asserts every total is 0 — discipline, not schema):
 const doubleEntry = query(Ledger).rule((r) => {
-	const { id, entry, minor } = r.vars("id", "entry", "minor")
+	const id = r.var("id")
+	const entry = r.var("entry")
+	const minor = r.var("minor")
 	return r.match(Posting, { id, entry, minor }).select("entry", r.sum("minor"))
 })
 ```
@@ -981,7 +1024,8 @@ const Jobs = schema("Jobs", { State, Job, Lease }, [
 
 // update-where's premise — "still Queued" is the witness:
 const stillQueued = query(Jobs).rule((r) => {
-	const { id, payload } = r.vars("id", "payload")
+	const id = r.var("id")
+	const payload = r.var("payload")
 	return r.match(Job, { id, state: "Queued", payload }).select("id", "payload")
 })
 
@@ -1038,7 +1082,8 @@ const Rollup = schema("Rollup", { Arm, Claim, BusySpan }, [
 // against sources it didn't actually read. The deriving query (pack IS the
 // coalesce):
 const deriving = query(Rollup).rule((r) => {
-	const { person, span } = r.vars("person", "span")
+	const person = r.var("person")
+	const span = r.var("span")
 	return r.match(Claim, { person, span, arm: "Busy" }).select("person", r.pack("span"))
 })
 ```
@@ -1072,14 +1117,16 @@ const Payments = schema("Payments", { Kind, Payment, Card, Ach }, [
 // provably disjoint, so the executor elides cross-rule dedup — the free lunch.
 const wholeDu = query(Payments)
 	.rule((r) => {
-		const { id, n } = r.vars("id", "n")
+		const id = r.var("id")
+		const n = r.var("n")
 		return r
 			.match(Payment, { id, kind: "Card" })
 			.match(Card, { payment: id, last4: n })
 			.select("id", "n")
 	})
 	.rule((r) => {
-		const { id, n } = r.vars("id", "n")
+		const id = r.var("id")
+		const n = r.var("n")
 		return r
 			.match(Payment, { id, kind: "Ach" })
 			.match(Ach, { payment: id, routing: n })
@@ -1151,7 +1198,7 @@ const Closure = schema("Closure", { Node, Parent }, [
 
 // The loop's one query — the frontier's children, one ∈-set probe:
 const step = query(Closure).rule((r) => {
-	const { c } = r.vars("c")
+	const c = r.var("c")
 	return r.match(Parent, { child: c, parent: r.inSet("frontier") }).select("c")
 })
 ```
@@ -1195,21 +1242,22 @@ const reach = program(Closure, (p) => {
 	const rec = p.rec("reach")
 	const seeded = rec
 		.rule((r) => {
-			const { c } = r.vars("c")
+			const c = r.var("c")
 			return r
 				.match(Node, { id: c })
 				.where(eq(c, r.param("root")))
 				.select("c")
 		})
 		.rule((r) => {
-			const { c, parent } = r.vars("c", "parent")
+			const c = r.var("c")
+			const parent = r.var("parent")
 			return r
 				.match(Parent, { child: c, parent })
 				.idb(rec, parent)
 				.select("c")
 		})
 	return p.output((r) => {
-		const { c } = r.vars("c")
+		const c = r.var("c")
 		return r.match(Node, { id: c }).idb(seeded, c).select("c")
 	})
 })
@@ -1252,13 +1300,14 @@ const Accounts = schema("Accounts", { Account, AccountParent, Posting }, [
 // The two queries the host rollup composes:
 //   the frontier step (recipe 24's loop, verbatim):
 const frontierStep = query(Accounts).rule((r) => {
-	const { c } = r.vars("c")
+	const c = r.var("c")
 	return r.match(AccountParent, { child: c, parent: r.inSet("frontier") }).select("c")
 })
 //   the rollup over the accumulated subtree (bind the fresh id — recipe
 //   19's discipline, spent again; equal postings to one account both count):
 const subtreeRollup = query(Accounts).rule((r) => {
-	const { id, minor } = r.vars("id", "minor")
+	const id = r.var("id")
+	const minor = r.var("minor")
 	return r.match(Posting, { id, account: r.inSet("subtree"), minor }).select(r.sum("minor"))
 })
 // The engine-native form: the closure stratum converges first, then the
@@ -1267,21 +1316,24 @@ const nativeRollup = program(Accounts, (p) => {
 	const sub = p.rec("sub")
 	const seeded = sub
 		.rule((r) => {
-			const { a } = r.vars("a")
+			const a = r.var("a")
 			return r
 				.match(Account, { id: a })
 				.where(eq(a, r.param("root")))
 				.select("a")
 		})
 		.rule((r) => {
-			const { a, parent } = r.vars("a", "parent")
+			const a = r.var("a")
+			const parent = r.var("parent")
 			return r
 				.match(AccountParent, { child: a, parent })
 				.idb(sub, parent)
 				.select("a")
 		})
 	return p.output((r) => {
-		const { id, a, minor } = r.vars("id", "a", "minor")
+		const id = r.var("id")
+		const a = r.var("a")
+		const minor = r.var("minor")
 		return r
 			.match(Posting, { id, account: a, minor })
 			.idb(seeded, a)
@@ -1351,7 +1403,9 @@ const MaintainedRollup = schema("MaintainedRollup", { Arm, Claim, BusySpan }, [
 
 // Derive the desired rollup on the maintenance snapshot:
 const deriving = query(MaintainedRollup).rule((r) => {
-	const { source, person, span } = r.vars("source", "person", "span")
+	const source = r.var("source")
+	const person = r.var("person")
+	const span = r.var("span")
 	return r.match(Claim, { source, person, arm: "Busy", span }).select("person", r.pack("span"))
 })
 ```
@@ -1405,7 +1459,10 @@ const Payroll = schema("Payroll", { Employee, Salary }, [
 
 // The post-migration read — salaries in force at an instant:
 const inForceAt = query(Payroll).rule((r) => {
-	const { e, name, amount, w } = r.vars("e", "name", "amount", "w")
+	const e = r.var("e")
+	const name = r.var("name")
+	const amount = r.var("amount")
+	const w = r.var("w")
 	return r
 		.match(Employee, { id: e, name })
 		.match(Salary, { employee: e, amount, applies: w })
