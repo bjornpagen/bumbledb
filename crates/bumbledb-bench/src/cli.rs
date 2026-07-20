@@ -80,6 +80,14 @@ pub enum Cmd {
     Trace { corpus: CorpusArgs, family: String },
     /// The scenario suites: non-ledger worlds, oracle-gated then timed.
     Scenarios(ScenarioArgs),
+    /// The crud home-turf world (report-class): OLTP round-trips under
+    /// matched durability pairs — `SQLite`'s strong regime, benched to
+    /// lose honestly.
+    Crud(ScenarioArgs),
+    /// The lawful home-turf world (report-class): judged-law admission
+    /// vs SQL constraint enforcement — `SQLite`'s strong regime,
+    /// benched to lose honestly.
+    Lawful(ScenarioArgs),
     /// The T8 commit-size sweep: judgment spans by touched-parent count
     /// over ephemeral windowed twins, delta-order vs key-sorted probes.
     SweepCommit(SweepArgs),
@@ -122,7 +130,8 @@ impl Default for SweepArgs {
 }
 
 /// `scenarios`' knobs. Scenarios own their sizes (no scale flag): the
-/// corpus identity is (scenario, seed).
+/// corpus identity is (scenario, seed). The `crud` and `lawful` worlds
+/// share this shape — one flag vocabulary across the world commands.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScenarioArgs {
     pub seed: u64,

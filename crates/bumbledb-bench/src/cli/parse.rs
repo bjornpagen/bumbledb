@@ -169,7 +169,9 @@ fn parse_trace(tokens: &mut Tokens<'_>) -> Result<Cmd, String> {
     Ok(Cmd::Trace { corpus, family })
 }
 
-fn parse_scenarios(tokens: &mut Tokens<'_>) -> Result<Cmd, String> {
+/// The shared world-args walk (`scenarios`, `crud`, `lawful` — one
+/// flag vocabulary, [`ScenarioArgs`]); an unknown flag names `cmd`.
+fn parse_world(cmd: &str, tokens: &mut Tokens<'_>) -> Result<ScenarioArgs, String> {
     let mut args = ScenarioArgs::default();
     while let Some(flag) = tokens.next() {
         let flag = flag.to_owned();
@@ -181,10 +183,22 @@ fn parse_scenarios(tokens: &mut Tokens<'_>) -> Result<Cmd, String> {
             }
             "--samples" => args.samples = Some(parse_u32(&flag, tokens.value(&flag)?)?),
             "--out" => args.out = Some(PathBuf::from(tokens.value(&flag)?)),
-            _ => return Err(unknown("scenarios", &flag)),
+            _ => return Err(unknown(cmd, &flag)),
         }
     }
-    Ok(Cmd::Scenarios(args))
+    Ok(args)
+}
+
+fn parse_scenarios(tokens: &mut Tokens<'_>) -> Result<Cmd, String> {
+    Ok(Cmd::Scenarios(parse_world("scenarios", tokens)?))
+}
+
+fn parse_crud(tokens: &mut Tokens<'_>) -> Result<Cmd, String> {
+    Ok(Cmd::Crud(parse_world("crud", tokens)?))
+}
+
+fn parse_lawful(tokens: &mut Tokens<'_>) -> Result<Cmd, String> {
+    Ok(Cmd::Lawful(parse_world("lawful", tokens)?))
 }
 
 fn parse_sweep_commit(tokens: &mut Tokens<'_>) -> Result<Cmd, String> {
@@ -325,6 +339,8 @@ pub fn parse(args: &[String]) -> Result<Cmd, String> {
         "bench" => parse_bench(&mut tokens),
         "trace" => parse_trace(&mut tokens),
         "scenarios" => parse_scenarios(&mut tokens),
+        "crud" => parse_crud(&mut tokens),
+        "lawful" => parse_lawful(&mut tokens),
         "sweep-commit" => parse_sweep_commit(&mut tokens),
         "storage" => parse_storage(&mut tokens),
         "writes" => parse_writes(&mut tokens),

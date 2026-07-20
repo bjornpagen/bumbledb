@@ -285,6 +285,81 @@ fn curves_parses_the_lane_flags() {
 }
 
 #[test]
+fn crud_parses_its_flags() {
+    let cmd = parse(&argv(&[
+        "crud",
+        "--seed",
+        "7",
+        "--only",
+        "crud_insert,crud_rmw",
+        "--samples",
+        "9",
+        "--dir",
+        "x",
+        "--out",
+        "y",
+    ]))
+    .expect("parses");
+    assert_eq!(
+        cmd,
+        Cmd::Crud(ScenarioArgs {
+            seed: 7,
+            dir: PathBuf::from("x"),
+            only: Some(vec!["crud_insert".to_owned(), "crud_rmw".to_owned()]),
+            samples: Some(9),
+            out: Some(PathBuf::from("y")),
+        })
+    );
+}
+
+#[test]
+fn lawful_parses_its_flags() {
+    let cmd = parse(&argv(&[
+        "lawful",
+        "--seed",
+        "7",
+        "--only",
+        "law_insert_legal,law_reject_window",
+        "--samples",
+        "9",
+        "--dir",
+        "x",
+        "--out",
+        "y",
+    ]))
+    .expect("parses");
+    assert_eq!(
+        cmd,
+        Cmd::Lawful(ScenarioArgs {
+            seed: 7,
+            dir: PathBuf::from("x"),
+            only: Some(vec![
+                "law_insert_legal".to_owned(),
+                "law_reject_window".to_owned()
+            ]),
+            samples: Some(9),
+            out: Some(PathBuf::from("y")),
+        })
+    );
+}
+
+#[test]
+fn crud_refuses_an_unknown_flag() {
+    // The worlds own their sizes — no scale flag (the scenarios
+    // precedent); the refusal names both the token and the command.
+    let err = parse(&argv(&["crud", "--scale", "S"])).unwrap_err();
+    assert!(err.contains("--scale"), "{err}");
+    assert!(err.contains("crud"), "{err}");
+}
+
+#[test]
+fn help_names_the_home_turf_worlds() {
+    let text = help();
+    assert!(text.contains("crud"), "{text}");
+    assert!(text.contains("lawful"), "{text}");
+}
+
+#[test]
 fn garbage_names_the_offending_token() {
     let err = parse(&argv(&["frobnicate"])).unwrap_err();
     assert!(err.contains("frobnicate"), "{err}");
