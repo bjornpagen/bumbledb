@@ -455,7 +455,7 @@ engine's own ray representation, never a flag); MEETS and DURING witnesses
 planted deterministically on the low keys 0..8 that exist at every scale (one
 exact-abutment pair and one strict-containment pair per key, plus two planted
 rays on keys 0 and 1); and key 0 as the deterministic Zipf head (a 1-in-50
-redirect) at both scales. Four family stories: `t1_stab` (point-in-span
+redirect) at both scales. Five family stories: `t1_stab` (point-in-span
 membership at in-horizon instants, plus the pre-base miss — the instant rides
 a `PointIn` predicate, the bivalent-anchor rule's surviving point form);
 `t2_overlap_join` (the pairwise span-overlap self-join per key, counted — the
@@ -467,10 +467,18 @@ guard because equal intervals satisfy neither basic); `t4_ray_stab` (the SAME
 IR shape as t1 at post-horizon instants: past the horizon only rays answer,
 so "the family whose answers are exactly the rays" needs no ray predicate —
 the special case lives in the coordinates, Dijkstra's move; the smoke test
-asserts the answer set equals the ray set exactly). Corpus sizes live in a
-`Sizes` struct (`FULL`/`SMOKE`) with size-independent param policies over the
-fixed horizon, so the smoke gate runs the same queries and params as the
-night run, only smaller.
+asserts the answer set equals the ray set exactly); and `t5_pack_key` (the
+per-key Snodgrass coalesce — the `Pack` head the translator refuses, so its
+SQLite lane is the hand-written islands SQL, the `free_busy` precedent).
+t5's correctness rests on a three-oracle triangle with no shared algorithm:
+the engine's `Pack` kernel agrees with the hand islands SQL through the
+uncapped multiset gate, and with the naive model's from-the-definition
+coalesce in the world's smoke test. t2 carries the twin-lane pair — the
+canonical Allen OR-chain plus the hand-tuned two-comparison overlap
+rendering — both gated, both timed, both reported (the never-flatter law).
+Corpus sizes live in a `Sizes` struct (`FULL`/`SMOKE`) with size-independent
+param policies over the fixed horizon, so the smoke gate runs the same
+queries and params as the night run, only smaller.
 
 ## The metric lanes: storage, writes, curves
 

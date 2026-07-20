@@ -1,8 +1,11 @@
 //! The temporal smoke tests: tiny corpora, zero timing. The gate test
-//! runs the full uncapped multiset oracle for every family; the ray
+//! runs the full uncapped multiset oracle for every family (t5's hand
+//! islands lane and t2's canonical + tuned pair included); the ray
 //! test asserts the corpus law's consequence (past the horizon the
 //! answer set IS the ray set); the mixed-mask test asserts both planted
-//! witness arms answer. Determinism is covered by the registry-wide
+//! witness arms answer; the pack test closes t5's three-oracle triangle
+//! against the naive model; the twin tests pin the tuned/hand laws
+//! locally. Determinism is covered by the registry-wide
 //! `scenario_rows_are_deterministic`.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -125,4 +128,90 @@ fn planted_meets_and_during_answer_at_smoke() {
     assert!(during, "at least one answered pair nests strictly (DURING)");
     drop(db);
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The third oracle of t5's triangle: the engine's `Pack` against the
+/// naive model's from-the-definition coalesce over the SAME smoke rows,
+/// for every t5 param draw (the empty-key miss included) — no shared
+/// algorithm anywhere in the triangle (engine kernel, naive definition,
+/// hand islands SQL), the `free_busy` precedent.
+#[test]
+fn t5_pack_matches_naive_at_smoke() {
+    let mut naive = crate::naive::NaiveDb::new(&bumbledb::Theory::descriptor(super::Temporal));
+    let mut inserts = Vec::new();
+    for (rel, rows) in super::corpus::rows_smoke(7) {
+        for row in rows {
+            inserts.push((rel, row));
+        }
+    }
+    let delta = crate::naive::Delta {
+        deletes: vec![],
+        inserts,
+    };
+    naive
+        .apply(&delta)
+        .expect("smoke corpus satisfies the schema");
+    let (db, dir) = smoke_store("bumbledb-temporal-pack-naive");
+    for params in super::key_params(7) {
+        let param = match params.as_slice() {
+            [value] => value.clone(),
+            other => panic!("a t5 draw is one key, got {other:?}"),
+        };
+        let args = vec![crate::naive::ParamValue::Scalar(param)];
+        let engine = crate::differential::engine_query(&db, &super::pack_key(), &args);
+        let model = naive
+            .query(&super::pack_key(), &args)
+            .expect("the naive Pack evaluates");
+        assert_eq!(
+            engine,
+            crate::differential::Answers::Ok(model),
+            "engine Pack and the naive coalesce agree on every t5 draw"
+        );
+    }
+    drop(db);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The mechanical tuning law: the hand-tuned t2 twin actually removed
+/// the inflation — the pinned constant contains no Allen OR-chain — and
+/// it is still the counted fold.
+#[test]
+fn t2_tuned_twin_has_no_or_chain() {
+    assert!(
+        !super::HAND_T2.contains(" OR "),
+        "the tuned rendering must carry no Allen OR-chain"
+    );
+    assert!(
+        super::HAND_T2.contains("COUNT"),
+        "the tuned rendering is still the counted fold"
+    );
+}
+
+/// The tuned lane's placeholder row mirrors the canonical translation's
+/// exactly — t2 is parameterless, so both rows are empty.
+#[test]
+fn t2_tuned_param_slots_match_canonical() {
+    let canonical = crate::translate::translate(&super::overlap_join(), super::schema(), &[])
+        .expect("t2 translates");
+    assert_eq!(
+        super::t2_tuned().params,
+        canonical.params,
+        "the tuned param slots mirror the canonical translation"
+    );
+    assert!(
+        canonical.params.is_empty(),
+        "t2 is parameterless on both lanes"
+    );
+}
+
+/// The Hand law, pinned locally (the registry-wide
+/// `every_scenario_query_prepares_and_translates` enforces it for all
+/// worlds): t5's hand lane is legal ONLY because the translator refuses
+/// the `Pack` head.
+#[test]
+fn t5_hand_lane_is_translator_refused() {
+    assert!(
+        crate::translate::translate(&super::pack_key(), super::schema(), &[]).is_err(),
+        "Hand is legal only where the translator refuses"
+    );
 }

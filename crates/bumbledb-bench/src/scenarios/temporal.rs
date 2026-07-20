@@ -1,5 +1,5 @@
 //! The temporal scenario: the Allen kernel on its own turf — stabbing,
-//! overlap joins, mixed masks, rays. The corpus makes the stress cases
+//! overlap joins, mixed masks, rays, coalesce. The corpus makes the stress cases
 //! INVARIANTS instead of query-side filters: rays are `end == i64::MAX`
 //! interval values (the engine's own ray representation), every bounded
 //! span ends strictly inside the fixed horizon (the corpus law,
@@ -181,6 +181,28 @@ fn overlap_join() -> Query {
     })
 }
 
+/// t5 — the per-key coalescing fold: `Q(Pack(v)) :- Span(key = ?0,
+/// span = v)` — Snodgrass coalescing of one key's spans into maximal
+/// disjoint half-open segments (adjacency merges; a packed ray is a
+/// ray; the empty binding set packs to the empty answer set). The one
+/// head SQL cannot express: the translator refuses `Pack`
+/// (`Inexpressible::PackAggregate`), so the `SQLite` side is the
+/// hand-written islands SQL ([`HAND_T5`]) — the `free_busy` precedent.
+fn pack_key() -> Query {
+    Query::single(Rule {
+        finds: vec![FindTerm::Aggregate {
+            op: AggOp::Pack,
+            over: Some(VarId(0)),
+        }],
+        atoms: vec![Atom {
+            source: bumbledb::AtomSource::Edb(ids::SPAN),
+            bindings: vec![(ids::span::KEY, param(0)), (ids::span::SPAN, var(0))],
+        }],
+        negated: vec![],
+        conditions: vec![],
+    })
+}
+
 /// t3 — the mixed-mask pair join on one key: `Q(a, b) :- Span(id = a,
 /// key = ?0, span = u), Span(id = b, key = ?0, span = v),
 /// Allen(u, v, DURING ∪ MEETS)` — `BitOr` composes the mask, the
@@ -239,9 +261,11 @@ fn ray_params(_seed: u64) -> Vec<Vec<Value>> {
     ]
 }
 
-/// t3's key policy: the heavy key 0 (the deterministic Zipf head), two
-/// planted-witness keys, and the key miss — all present at both scales
-/// (the planted witnesses live on keys 0..8).
+/// t3/t5's key policy: the heavy key 0 (the deterministic Zipf head),
+/// two planted-witness keys, and the key miss — all present at both
+/// scales (the planted witnesses live on keys 0..8). For t5 the miss is
+/// the empty-fold case: an empty binding set packs to the empty answer
+/// set, never a NULL row.
 fn key_params(_seed: u64) -> Vec<Vec<Value>> {
     vec![
         vec![Value::U64(0)],
@@ -249,6 +273,57 @@ fn key_params(_seed: u64) -> Vec<Vec<Value>> {
         vec![Value::U64(5)],
         vec![Value::U64(1_000_000)],
     ]
+}
+
+// ---------------------------------------------------------------------
+// Hand-written SQL lanes (docs/architecture/60-validation.md): pinned
+// constants, never regenerated from the translator; every lane passes
+// the same uncapped multiset gate as the canonical translations.
+// ---------------------------------------------------------------------
+
+/// t2's hand-tuned twin: the canonical translation captured verbatim
+/// (via a temporary printing test, the `HAND_R2` procedure), with the
+/// single 9-basic `INTERSECTS` OR-block replaced by the two-comparison
+/// overlap `(LS < RE AND RS < LE)` over the same column aliases —
+/// everything else identical, so the lanes differ ONLY in the mask
+/// rendering (the never-flatter-ourselves law: `SQLite` gets its best
+/// shot beside the canonical OR-chain, both gated, both reported).
+const HAND_T2: &str = "SELECT COUNT(*) FROM (SELECT DISTINCT t0.\"id\" AS v0, t1.\"id\" AS v1, t0.\"key\" AS v2, t0.\"span_start\" AS v3_start, t0.\"span_end\" AS v3_end, t1.\"span_start\" AS v4_start, t1.\"span_end\" AS v4_end FROM \"Span\" AS t0, \"Span\" AS t1 WHERE t0.\"key\" = t1.\"key\" AND t0.\"id\" < t1.\"id\" AND (t0.\"span_start\" < t1.\"span_end\" AND t1.\"span_start\" < t0.\"span_end\")) HAVING COUNT(*) > 0";
+
+/// The tuned lane value for t2: [`HAND_T2`] with the canonical
+/// placeholder row mirrored exactly — t2 is parameterless, so the row
+/// is empty (asserted equal to the canonical `.params` in `tests`).
+fn t2_tuned() -> crate::translate::Translated {
+    crate::translate::Translated {
+        sql: HAND_T2.to_owned(),
+        params: vec![],
+    }
+}
+
+/// t5's `SQLite` lane: the hand-written islands-and-gaps
+/// window-function coalesce, adapted from the calendar `free_busy`
+/// golden (`calendar/families.rs: FREE_BUSY` — verified row-identical
+/// against the engine's `Pack` there): one key, so the person partition
+/// drops; no window filter, so the innermost select is the bare
+/// distinct span set of `"key" = ?1`. Order the distinct spans, start a
+/// new island where a start exceeds the running max end (`s <= MAX(e)`
+/// merges — half-open adjacency, exactly `Pack`'s law), fold each
+/// island to `(MIN(s), MAX(e))` — one row per maximal segment, matching
+/// the engine's relation-shaped `Pack` answers; the result signature is
+/// the single Interval column, which `compare::from_sqlite` reassembles
+/// from the two INTEGER halves. Rays: `end == i64::MAX` is an ordinary
+/// INTEGER, so `MAX()` over it is correct — a packed ray is a ray. The
+/// empty key (the miss draw): zero inner rows `GROUP BY` to zero
+/// segments, the engine's empty answer set.
+const HAND_T5: &str = "SELECT MIN(s), MAX(e) FROM (SELECT s, e, SUM(head) OVER (ORDER BY s, e ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS island FROM (SELECT s, e, CASE WHEN s <= MAX(e) OVER (ORDER BY s, e ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) THEN 0 ELSE 1 END AS head FROM (SELECT DISTINCT t0.\"span_start\" AS s, t0.\"span_end\" AS e FROM \"Span\" AS t0 WHERE t0.\"key\" = ?1))) GROUP BY island";
+
+/// The hand lane value for t5: [`HAND_T5`] with one placeholder slot —
+/// the SQL names the key once as `?1`, bound from param 0.
+fn t5_hand() -> crate::translate::Translated {
+    crate::translate::Translated {
+        sql: HAND_T5.to_owned(),
+        params: vec![crate::translate::ParamSlot::Whole(ParamId(0))],
+    }
 }
 
 fn queries() -> Vec<ScenarioQuery> {
@@ -266,7 +341,7 @@ fn queries() -> Vec<ScenarioQuery> {
             query: overlap_join,
             params: |_| vec![vec![]],
             about: "pairwise span-overlap self-join per key, counted — the Allen OR-chain's price on SQLite",
-            twin: Twin::Canonical,
+            twin: Twin::Tuned(t2_tuned),
             cap: Some(DEFAULT_CAP),
         },
         ScenarioQuery {
@@ -283,6 +358,14 @@ fn queries() -> Vec<ScenarioQuery> {
             params: ray_params,
             about: "open-ended rays: past the horizon only rays answer — the ray case lives in the corpus coordinates, not in a filter",
             twin: Twin::Canonical,
+            cap: None,
+        },
+        ScenarioQuery {
+            name: "t5_pack_key",
+            query: pack_key,
+            params: key_params,
+            about: "Pack/coalesce: Snodgrass coalescing per key — SQLite's lane is the hand-written islands SQL (the free_busy precedent)",
+            twin: Twin::Hand(t5_hand),
             cap: None,
         },
     ]
