@@ -730,9 +730,8 @@ fn warmth_panel<S: bumbledb::Theory + Copy>(
     oracle_path: &Path,
     bundle: &Bundle,
 ) -> Result<Warmth, String> {
-    let open_db = || {
-        open_absorbing_lock_window(db_path, theory).map_err(|e| format!("warmth reopen: {e}"))
-    };
+    let open_db =
+        || open_absorbing_lock_window(db_path, theory).map_err(|e| format!("warmth reopen: {e}"));
     let types: Vec<ValueType> = {
         let db = open_db()?;
         let prepared = db
