@@ -54,9 +54,9 @@ fn owned_value(value: &Value) -> Result<Owned, String> {
         Value::Bool(v) => Owned::Bool(*v),
         Value::U64(v) => Owned::U64(*v),
         Value::I64(v) => Owned::I64(*v),
-        Value::String(raw) => Owned::Str(
-            String::from_utf8(raw.to_vec()).map_err(|_| "non-UTF-8 text".to_owned())?,
-        ),
+        Value::String(raw) => {
+            Owned::Str(String::from_utf8(raw.to_vec()).map_err(|_| "non-UTF-8 text".to_owned())?)
+        }
         Value::FixedBytes(raw) => Owned::Bytes(raw.to_vec()),
         Value::IntervalU64(interval) => Owned::IntervalU64(interval.start(), interval.end()),
         Value::IntervalI64(interval) => Owned::IntervalI64(interval.start(), interval.end()),
@@ -119,8 +119,7 @@ pub fn from_sqlite(
                 sqlmap::from_sql_value(&raw, ty)
                     .map_err(|e| format!("column {}: {e}", column - 1))?
             };
-            canonical
-                .push(owned_value(&value).map_err(|e| format!("column {}: {e}", column - 1))?);
+            canonical.push(owned_value(&value).map_err(|e| format!("column {}: {e}", column - 1))?);
         }
         out.push(canonical);
     }
