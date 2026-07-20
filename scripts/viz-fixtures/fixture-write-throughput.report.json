@@ -1,0 +1,24 @@
+{
+  "lane": "write_throughput",
+  "_fixture": "tiny synthetic fixture for bench_viz.py validation — never a measured claim",
+  "lanes": [
+    {
+      "name": "durable-full",
+      "batches": [
+        {"batch": 1, "ours_facts_per_sec": 250.0, "theirs_facts_per_sec": 210.0},
+        {"batch": 16, "ours_facts_per_sec": 3900.0, "theirs_facts_per_sec": 3300.0},
+        {"batch": 256, "ours_facts_per_sec": 61000.0, "theirs_facts_per_sec": 52000.0},
+        {"batch": 4096, "ours_facts_per_sec": 150000.0, "theirs_facts_per_sec": 160000.0}
+      ]
+    },
+    {
+      "name": "nosync",
+      "batches": [
+        {"batch": 1, "ours_facts_per_sec": 90000.0, "theirs_facts_per_sec": 41000.0},
+        {"batch": 16, "ours_facts_per_sec": 420000.0, "theirs_facts_per_sec": 230000.0},
+        {"batch": 256, "ours_facts_per_sec": 1400000.0, "theirs_facts_per_sec": 700000.0},
+        {"batch": 4096, "ours_facts_per_sec": 2100000.0, "theirs_facts_per_sec": 1200000.0}
+      ]
+    }
+  ]
+}

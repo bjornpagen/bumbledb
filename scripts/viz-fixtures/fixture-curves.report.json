@@ -1,0 +1,22 @@
+{
+  "lane": "curves",
+  "_fixture": "tiny synthetic fixture for bench_viz.py validation — never a measured claim",
+  "families": [
+    {
+      "name": "point",
+      "points": [
+        {"n": 1000, "ours": {"p50": 800}, "theirs": {"p50": 2100}},
+        {"n": 10000, "ours": {"p50": 850}, "theirs": {"p50": 2600}},
+        {"n": 100000, "ours": {"p50": 900}, "theirs": {"p50": 3400}}
+      ]
+    },
+    {
+      "name": "triangle",
+      "points": [
+        {"n": 1000, "ours": {"p50": 50000}, "theirs": {"p50": 400000}},
+        {"n": 10000, "ours": {"p50": 5200000}, "theirs": {"p50": 52000000}},
+        {"n": 100000, "ours": {"p50": 610000000}, "theirs": {"p50": 7100000000}}
+      ]
+    }
+  ]
+}

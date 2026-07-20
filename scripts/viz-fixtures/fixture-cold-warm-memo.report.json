@@ -1,0 +1,16 @@
+{
+  "lane": "cold_warm_memo",
+  "_fixture": "tiny synthetic fixture for bench_viz.py validation — never a measured claim",
+  "families": [
+    {
+      "name": "containment_walk",
+      "ours": {"cold": {"p50": 5200000}, "warm": {"p50": 21000}, "memo": {"p50": 900}},
+      "theirs": {"cold": {"p50": 9100000}, "warm": {"p50": 410000}}
+    },
+    {
+      "name": "balance",
+      "ours": {"cold": {"p50": 3100000}, "warm": {"p50": 52000}, "memo": {"p50": 1100}},
+      "theirs": {"cold": {"p50": 7800000}, "warm": {"p50": 600000}}
+    }
+  ]
+}

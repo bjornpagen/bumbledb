@@ -1,0 +1,10 @@
+{
+  "lane": "adversarial",
+  "_fixture": "tiny synthetic fixture for bench_viz.py validation — never a measured claim",
+  "cap_ms": 1000,
+  "queries": [
+    {"name": "allen_or_chain_8", "ours": {"p50": 310000}, "theirs": {"p50": 48000000}, "theirs_exceeded_cap": false},
+    {"name": "dnf_width_64", "ours": {"p50": 2200000}, "theirs": null, "theirs_exceeded_cap": true},
+    {"name": "negation_stack_6", "ours": {"p50": 140000}, "theirs": {"p50": 9100000}, "theirs_exceeded_cap": false}
+  ]
+}
