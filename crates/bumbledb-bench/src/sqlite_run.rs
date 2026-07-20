@@ -93,5 +93,7 @@ pub fn bind_args(
 /// misconfigured oracle fails the run instead of flattering the engine.
 pub struct FairnessCheck;
 
-/// The `SQLite` posting insert, mirroring the corpus loader's shape.
-const POSTING_INSERT: &str = "INSERT INTO \"Posting\" VALUES (?1, ?2, ?3, ?4, ?5, ?6)";
+/// The `SQLite` posting insert, mirroring the corpus loader's shape —
+/// `pub(crate)` so the writes lane (`crate::lanes::writes`) shares the
+/// one definition instead of restating the string.
+pub(crate) const POSTING_INSERT: &str = "INSERT INTO \"Posting\" VALUES (?1, ?2, ?3, ?4, ?5, ?6)";
