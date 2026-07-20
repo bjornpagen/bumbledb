@@ -12,8 +12,8 @@ assertion, cargo release build, smoke-load through the by-name loader path,
 tarball-manifest verification) before anything uploads.
 
 `0.5.0` is a deliberate backwards-incompatible hard break over `0.4.0`: the
-`.vars()` mint and `VarsRecord`/`makeVars` are REMOVED — `r.var` is the sole
-variable constructor — and the pre-1.0.0 surface pair lands: the keyed point
+plural variable mint is REMOVED — `r.var` is the sole variable constructor —
+and the pre-1.0.0 surface pair lands: the keyed point
 read `get(relation, keyStatement, key)` (the key object typed from the
 relation's declared key FDs, on `Db`, `ReadScope`, and `Tx` alike) and
 host-side answer ordering (`by()`/`desc()` in `ts/src/order.ts`; the engine
