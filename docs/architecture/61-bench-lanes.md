@@ -77,6 +77,10 @@ here, never restated.
 | `adversarial` | worst-case query shapes (the rings/temporal bomb precedent) | p50 both engines under the per-sample cap; capped twins reported as DNF | contract spelling `adversarial --out` — the subcommand has not landed; the night probe reports it SKIP-UNAVAILABLE until it does | `report.json` carrying `"lane": "adversarial"` per §contracts | Report | scenarios parity + the DNF cap below; canonical translation the default lane, hand-tuned twin lanes alongside where canonical inflates — both reported |
 | `churn` | steady-state posting working set | per-cycle probe warm p50, store bytes, write facts/sec, engine counters | `churn --out` | `churn-report.json` (`churn_schema: 1`, auto-ingested and charted directly by the viz) + `churn.md`; the one-run condensation is retired — §contracts | Report | per-lane sessions per `60-validation.md` § the churn lanes: `sqlite-bare`/`sqlite-maint` durable, `sqlite-nosync` ephemeral-matched; probes prepared fresh per sample point on both engines; `maint`'s VACUUM/ANALYZE charged into its own throughput window |
 
+Answer ordering is deliberately not a lane: ordering is the host
+language's own sort over returned rows — there is no engine work to
+measure.
+
 **The canonical-translation law**, registry-wide: the SQL twin is the
 canonical IR→SQL rendering (`translate`), always gated and always reported.
 Where the canonical rendering inflates SQL — the Allen basics OR-chains are

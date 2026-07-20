@@ -15,7 +15,7 @@ use bumbledb::{
     RelationId, Rule, Term, Value, VarId,
 };
 
-use super::{DEFAULT_CAP, Scenario, ScenarioQuery, Twin};
+use super::{DEFAULT_CAP, Scenario, ScenarioQuery, Surface, Twin};
 use crate::fixture::var;
 
 mod corpus;
@@ -330,7 +330,7 @@ fn queries() -> Vec<ScenarioQuery> {
     vec![
         ScenarioQuery {
             name: "t1_stab",
-            query: stab,
+            surface: Surface::Query(stab),
             params: stab_params,
             about: "interval stabbing: point-in-span membership probe",
             twin: Twin::Canonical,
@@ -338,7 +338,7 @@ fn queries() -> Vec<ScenarioQuery> {
         },
         ScenarioQuery {
             name: "t2_overlap_join",
-            query: overlap_join,
+            surface: Surface::Query(overlap_join),
             params: |_| vec![vec![]],
             about: "pairwise span-overlap self-join per key, counted — the Allen OR-chain's price on SQLite",
             twin: Twin::Tuned(t2_tuned),
@@ -346,7 +346,7 @@ fn queries() -> Vec<ScenarioQuery> {
         },
         ScenarioQuery {
             name: "t3_mixed_mask",
-            query: mixed_mask,
+            surface: Surface::Query(mixed_mask),
             params: key_params,
             about: "mixed-mask (DURING ∪ MEETS) pair join on one key — the composite-mask disjunction as data",
             twin: Twin::Canonical,
@@ -354,7 +354,7 @@ fn queries() -> Vec<ScenarioQuery> {
         },
         ScenarioQuery {
             name: "t4_ray_stab",
-            query: stab,
+            surface: Surface::Query(stab),
             params: ray_params,
             about: "open-ended rays: past the horizon only rays answer — the ray case lives in the corpus coordinates, not in a filter",
             twin: Twin::Canonical,
@@ -362,7 +362,7 @@ fn queries() -> Vec<ScenarioQuery> {
         },
         ScenarioQuery {
             name: "t5_pack_key",
-            query: pack_key,
+            surface: Surface::Query(pack_key),
             params: key_params,
             about: "Pack/coalesce: Snodgrass coalescing per key — SQLite's lane is the hand-written islands SQL (the free_busy precedent)",
             twin: Twin::Hand(t5_hand),

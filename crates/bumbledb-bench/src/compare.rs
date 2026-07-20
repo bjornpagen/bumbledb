@@ -46,6 +46,38 @@ pub fn from_answers(answers: &Answers, types: &[ValueType]) -> Vec<Answer> {
         .collect()
 }
 
+/// One engine [`Value`] in canonical form — the ONE `Value` → [`Owned`]
+/// mapping, shared by the `SQLite` decode ([`from_sqlite`]) and the
+/// keyed-get fact decode ([`from_fact`]).
+fn owned_value(value: &Value) -> Result<Owned, String> {
+    Ok(match value {
+        Value::Bool(v) => Owned::Bool(*v),
+        Value::U64(v) => Owned::U64(*v),
+        Value::I64(v) => Owned::I64(*v),
+        Value::String(raw) => Owned::Str(
+            String::from_utf8(raw.to_vec()).map_err(|_| "non-UTF-8 text".to_owned())?,
+        ),
+        Value::FixedBytes(raw) => Owned::Bytes(raw.to_vec()),
+        Value::IntervalU64(interval) => Owned::IntervalU64(interval.start(), interval.end()),
+        Value::IntervalI64(interval) => Owned::IntervalI64(interval.start(), interval.end()),
+        Value::AllenMask(_) => return Err("mask values are not results".to_owned()),
+    })
+}
+
+/// Decodes one dynamic fact (owned engine [`Value`]s in field declaration
+/// order — the keyed-get surface's answer shape) into a canonical answer.
+///
+/// # Errors
+///
+/// Non-UTF-8 text or a mask value, as a message naming the field —
+/// neither exists in a decoded fact.
+pub fn from_fact(fact: &[Value]) -> Result<Answer, String> {
+    fact.iter()
+        .enumerate()
+        .map(|(field, value)| owned_value(value).map_err(|e| format!("field {field}: {e}")))
+        .collect()
+}
+
 /// Executes a prepared `SQLite` statement with the given typed params and
 /// decodes every answer into canonical form, guided by the expected column
 /// types (the engine side already knows them — aggregate columns
@@ -87,28 +119,8 @@ pub fn from_sqlite(
                 sqlmap::from_sql_value(&raw, ty)
                     .map_err(|e| format!("column {}: {e}", column - 1))?
             };
-            canonical.push(match value {
-                Value::Bool(v) => Owned::Bool(v),
-                Value::U64(v) => Owned::U64(v),
-                Value::I64(v) => Owned::I64(v),
-                Value::String(raw) => Owned::Str(
-                    String::from_utf8(raw.to_vec())
-                        .map_err(|_| format!("column {}: non-UTF-8 text", column - 1))?,
-                ),
-                Value::FixedBytes(raw) => Owned::Bytes(raw.to_vec()),
-                Value::IntervalU64(interval) => {
-                    Owned::IntervalU64(interval.start(), interval.end())
-                }
-                Value::IntervalI64(interval) => {
-                    Owned::IntervalI64(interval.start(), interval.end())
-                }
-                Value::AllenMask(_) => {
-                    return Err(format!(
-                        "column {}: mask values are not results",
-                        column - 1
-                    ));
-                }
-            });
+            canonical
+                .push(owned_value(&value).map_err(|e| format!("column {}: {e}", column - 1))?);
         }
         out.push(canonical);
     }

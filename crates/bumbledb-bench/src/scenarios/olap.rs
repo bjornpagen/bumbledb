@@ -11,7 +11,7 @@ use bumbledb::{
     Value, VarId,
 };
 
-use super::{Scenario, ScenarioQuery, Twin, mix};
+use super::{Scenario, ScenarioQuery, Surface, Twin, mix};
 use crate::corpus_gen::Rng;
 use crate::fixture::var;
 
@@ -392,7 +392,7 @@ pub fn scenario() -> Scenario {
             vec![
                 ScenarioQuery {
                     name: "o1_revenue_by_region",
-                    query: revenue_by_region,
+                    surface: Surface::Query(revenue_by_region),
                     params: |_| vec![vec![]],
                     about: "full-fact Sum through one dimension, 6 groups",
                     twin: Twin::Canonical,
@@ -400,7 +400,7 @@ pub fn scenario() -> Scenario {
                 },
                 ScenarioQuery {
                     name: "o2_category_window",
-                    query: category_window,
+                    surface: Surface::Query(category_window),
                     params: day_windows,
                     about: "Sum+Count by category inside day windows",
                     twin: Twin::Canonical,
@@ -408,7 +408,7 @@ pub fn scenario() -> Scenario {
                 },
                 ScenarioQuery {
                     name: "o3_promo_split",
-                    query: promo_split,
+                    surface: Surface::Query(promo_split),
                     params: |_| vec![vec![]],
                     about: "bool group key, full-scan fold",
                     twin: Twin::Canonical,
@@ -416,7 +416,7 @@ pub fn scenario() -> Scenario {
                 },
                 ScenarioQuery {
                     name: "o4_segment_category",
-                    query: segment_category,
+                    surface: Surface::Query(segment_category),
                     params: |_| vec![vec![]],
                     about: "two-dimension rollup, 64 groups, 3-way join",
                     twin: Twin::Canonical,
@@ -424,7 +424,7 @@ pub fn scenario() -> Scenario {
                 },
                 ScenarioQuery {
                     name: "o5_store_extremes",
-                    query: store_extremes,
+                    surface: Surface::Query(store_extremes),
                     params: |_| vec![vec![]],
                     about: "Min+Max per store, 200 groups",
                     twin: Twin::Canonical,
@@ -432,7 +432,7 @@ pub fn scenario() -> Scenario {
                 },
                 ScenarioQuery {
                     name: "o6_brand_drill",
-                    query: brand_drill,
+                    surface: Surface::Query(brand_drill),
                     params: brand_drill_params,
                     about: "selective brand point + day range, one Sum",
                     twin: Twin::Canonical,

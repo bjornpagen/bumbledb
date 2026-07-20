@@ -11,7 +11,7 @@ use bumbledb::{
     Value, VarId,
 };
 
-use super::{Scenario, ScenarioQuery, Twin, mix};
+use super::{Scenario, ScenarioQuery, Surface, Twin, mix};
 use crate::corpus_gen::Rng;
 use crate::fixture::var;
 
@@ -66,11 +66,24 @@ pub mod ids {
 pub const BUCKETS: u64 = 4_096;
 pub const DOCS: u64 = 300_000;
 
+/// The smoke corpus (tests only): the same generators over tiny counts,
+/// so the tier-0 keyed-get gate exercises exactly what the night times.
+#[cfg(test)]
+const BUCKETS_SMOKE: u64 = 16;
+#[cfg(test)]
+const DOCS_SMOKE: u64 = 512;
+
 fn bucket_row(i: u64) -> Vec<Value> {
     vec![Value::U64(i), Value::U64(i % 4)]
 }
 
 fn doc_row(seed: u64, i: u64) -> Vec<Value> {
+    doc_row_sized(seed, i, BUCKETS)
+}
+
+/// One doc row with its bucket drawn from `buckets` — the full corpus
+/// and the smoke twin share the generator, differing only in counts.
+fn doc_row_sized(seed: u64, i: u64, buckets: u64) -> Vec<Value> {
     let mut rng = Rng::new(mix(seed, ids::DOC.0, i));
     let mut payload = Vec::with_capacity(32);
     for _ in 0..4 {
@@ -79,7 +92,7 @@ fn doc_row(seed: u64, i: u64) -> Vec<Value> {
     vec![
         Value::U64(i),
         Value::String(format!("doc/{i:08x}").into_bytes().into()),
-        Value::U64(rng.range(BUCKETS)),
+        Value::U64(rng.range(buckets)),
         Value::I64(i64::try_from(rng.range(1_000_000)).expect("small")),
         // Identity-shaped: a random 32-byte payload digest, inline.
         Value::FixedBytes(payload.into()),
@@ -136,6 +149,41 @@ fn by_key() -> Query {
 
 fn key_params(seed: u64) -> Vec<Vec<Value>> {
     let mut rng = Rng::new(mix(seed, 903, 2));
+    let key = |i: u64| Value::String(format!("doc/{i:08x}").into_bytes().into());
+    vec![
+        vec![key(rng.range(DOCS))],
+        vec![key(rng.range(DOCS))],
+        vec![key(rng.range(DOCS))],
+        vec![Value::String(b"doc/never-a-key".to_vec().into())],
+    ]
+}
+
+/// p5 — the keyed GET surface (0.5.0's flagship): the typed point read
+/// through the declared key law `Doc(key) -> Doc`, via the dynamic entry
+/// the TS SDK bridge calls (`Snapshot::get_dyn` — the scenario stores
+/// are `Db<SchemaDescriptor>`, so the dynamic surface is the reachable
+/// twin of the macro-typed `snap.get(key)`). No query, no plan, no
+/// prepared object: determinant encode → index probe → full-fact decode.
+/// The statement resolves on the validated schema by relation +
+/// projection — materialized order is a fact of validation, never a
+/// literal in this table.
+///
+/// # Panics
+///
+/// Never: the `Doc(key) -> Doc` law is declared above.
+fn doc_key_statement(schema: &bumbledb::Schema) -> bumbledb::StatementId {
+    schema
+        .keys()
+        .iter()
+        .find(|statement| statement.relation == ids::DOC && *statement.projection == [FieldId(1)])
+        .expect("the Doc(key) -> Doc law is declared")
+        .id
+}
+
+/// p5's params: p2's shape — 3 real keys + 1 miss — under its own draw
+/// salt, so the two lanes never share a rotation by accident.
+fn keyed_get_params(seed: u64) -> Vec<Vec<Value>> {
+    let mut rng = Rng::new(mix(seed, 903, 5));
     let key = |i: u64| Value::String(format!("doc/{i:08x}").into_bytes().into());
     vec![
         vec![key(rng.range(DOCS))],
@@ -236,7 +284,7 @@ pub fn scenario() -> Scenario {
             vec![
                 ScenarioQuery {
                     name: "p1_by_id",
-                    query: by_id,
+                    surface: Surface::Query(by_id),
                     params: |seed| id_params(seed, 1),
                     about: "fresh-id point: key probe vs B-tree descent",
                     twin: Twin::Canonical,
@@ -244,7 +292,7 @@ pub fn scenario() -> Scenario {
                 },
                 ScenarioQuery {
                     name: "p2_by_key",
-                    query: by_key,
+                    surface: Surface::Query(by_key),
                     params: key_params,
                     about: "keyed string point: dictionary + determinant index",
                     twin: Twin::Canonical,
@@ -252,7 +300,7 @@ pub fn scenario() -> Scenario {
                 },
                 ScenarioQuery {
                     name: "p3_bucket_fetch",
-                    query: bucket_fetch,
+                    surface: Surface::Query(bucket_fetch),
                     params: bucket_params,
                     about: "small fan-out through a dimension + id ceiling",
                     twin: Twin::Canonical,
@@ -260,13 +308,128 @@ pub fn scenario() -> Scenario {
                 },
                 ScenarioQuery {
                     name: "p4_size_band",
-                    query: size_band,
+                    surface: Surface::Query(size_band),
                     params: size_band_params,
                     about: "secondary range folded to Count",
                     twin: Twin::Canonical,
                     cap: None,
                 },
+                ScenarioQuery {
+                    name: "p5_keyed_get",
+                    surface: Surface::KeyedGet {
+                        relation: ids::DOC,
+                        key: doc_key_statement,
+                    },
+                    params: keyed_get_params,
+                    about: "keyed get (0.5.0): the point read through Doc(key) -> Doc — determinant probe, no query machinery",
+                    twin: Twin::Canonical,
+                    cap: None,
+                },
             ]
         },
+    }
+}
+
+/// The smoke twin (tests only): identical schema, the keyed-get lane's
+/// registration over the tiny corpus with hit keys drawn from it — the
+/// oracle-gate entry for the p5 unit smoke (zero timing).
+#[cfg(test)]
+fn scenario_smoke() -> Scenario {
+    #[expect(
+        clippy::type_complexity,
+        reason = "the tuple shape directly represents parallel protocol streams"
+    )]
+    fn rows_smoke(seed: u64) -> Vec<(bumbledb::RelationId, Box<dyn Iterator<Item = Vec<Value>>>)> {
+        vec![
+            (ids::BUCKET, Box::new((0..BUCKETS_SMOKE).map(bucket_row))),
+            (
+                ids::DOC,
+                Box::new((0..DOCS_SMOKE).map(move |i| doc_row_sized(seed, i, BUCKETS_SMOKE))),
+            ),
+        ]
+    }
+    fn keyed_get_params_smoke(seed: u64) -> Vec<Vec<Value>> {
+        let mut rng = Rng::new(mix(seed, 903, 5));
+        let key = |i: u64| Value::String(format!("doc/{i:08x}").into_bytes().into());
+        vec![
+            vec![key(rng.range(DOCS_SMOKE))],
+            vec![key(rng.range(DOCS_SMOKE))],
+            vec![key(rng.range(DOCS_SMOKE))],
+            vec![Value::String(b"doc/never-a-key".to_vec().into())],
+        ]
+    }
+    Scenario {
+        name: "points",
+        about: "keyed-get smoke twin",
+        schema,
+        descriptor: || bumbledb::Theory::descriptor(Points),
+        rows: rows_smoke,
+        extra_indexes: &[],
+        queries: || {
+            vec![ScenarioQuery {
+                name: "p5_keyed_get",
+                surface: Surface::KeyedGet {
+                    relation: ids::DOC,
+                    key: doc_key_statement,
+                },
+                params: keyed_get_params_smoke,
+                about: "keyed get (0.5.0), smoke scale",
+                twin: Twin::Canonical,
+                cap: None,
+            }]
+        },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The p5 smoke gate: tiny corpus, zero timing — the FULL uncapped
+    /// multiset oracle (3 hits + the miss) through the exact gate seam
+    /// the night run times (`gate_scenario` → the keyed-get arm).
+    #[test]
+    fn keyed_get_smoke_gate_agrees() {
+        let dir = std::env::temp_dir().join("bumbledb-points-keyed-get-smoke");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("scratch dir");
+        crate::scenarios::gate_scenario(&dir, &scenario_smoke(), 7)
+            .expect("p5 agrees with SQLite at smoke scale");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The surface pinned directly against the corpus truth: a known key
+    /// returns exactly its generated row (every field, declaration
+    /// order); a never-interned key answers `None`.
+    #[test]
+    fn keyed_get_returns_the_exact_fact() {
+        let dir = std::env::temp_dir().join("bumbledb-points-keyed-get-exact");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("scratch dir");
+        let db = bumbledb::Db::create(&dir, bumbledb::Theory::descriptor(Points)).expect("create");
+        let seed = 7;
+        db.bulk_load_dyn(ids::BUCKET, (0..BUCKETS_SMOKE).map(bucket_row))
+            .expect("buckets");
+        db.bulk_load_dyn(
+            ids::DOC,
+            (0..DOCS_SMOKE).map(|i| doc_row_sized(seed, i, BUCKETS_SMOKE)),
+        )
+        .expect("docs");
+        let statement = doc_key_statement(schema());
+        for i in [0u64, 3, DOCS_SMOKE - 1] {
+            let key = Value::String(format!("doc/{i:08x}").into_bytes().into());
+            let fact = db
+                .read(|snap| snap.get_dyn(ids::DOC, statement, std::slice::from_ref(&key)))
+                .expect("get_dyn")
+                .expect("a loaded key is a hit");
+            assert_eq!(fact, doc_row_sized(seed, i, BUCKETS_SMOKE));
+        }
+        let miss = Value::String(b"doc/never-a-key".to_vec().into());
+        let absent = db
+            .read(|snap| snap.get_dyn(ids::DOC, statement, std::slice::from_ref(&miss)))
+            .expect("get_dyn");
+        assert!(absent.is_none(), "a never-interned key proves the miss");
+        drop(db);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

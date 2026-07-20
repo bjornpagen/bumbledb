@@ -48,8 +48,8 @@
 
 use std::collections::BTreeMap;
 
-use bumbledb::schema::StatementDescriptor;
-use bumbledb::{ParamId, Query, Schema, Value, VarId};
+use bumbledb::schema::{KeyStatement, StatementDescriptor};
+use bumbledb::{ParamId, Query, RelationId, Schema, Value, VarId};
 
 mod builder;
 mod program;
@@ -94,6 +94,60 @@ pub enum ParamSlot {
 pub struct Translated {
     pub sql: String,
     pub params: Vec<ParamSlot>,
+}
+
+/// The keyed-get surface's canonical `SQLite` twin
+/// (`crate::scenarios::Surface::KeyedGet`): the prepared point SELECT of
+/// the full fact through the key statement's UNIQUE index — every column
+/// in field declaration order (an `Interval` field spans its two half
+/// columns, `crate::sqlmap::field_columns` — the one naming authority),
+/// one equality conjunct per projection field. Placeholder positions
+/// follow projection order: one [`ParamSlot::Whole`] per scalar key
+/// field, the [`ParamSlot::Start`]/[`ParamSlot::End`] pair per interval
+/// one — so [`crate::sqlite_run::bind_params`] binds the same
+/// projection-ordered value slice the engine's `get_dyn` consumes.
+///
+/// # Panics
+///
+/// Never on a validated schema: projections fit `u16` and every
+/// projection field exists on the relation.
+#[must_use]
+pub fn keyed_get(schema: &Schema, relation: RelationId, statement: &KeyStatement) -> Translated {
+    let rel = schema.relation(relation);
+    let select: Vec<String> = rel
+        .fields()
+        .iter()
+        .flat_map(|field| {
+            crate::sqlmap::field_columns(field)
+                .into_iter()
+                .map(|(name, _)| format!("\"{name}\""))
+        })
+        .collect();
+    let mut params: Vec<ParamSlot> = Vec::new();
+    let mut conjuncts: Vec<String> = Vec::new();
+    for (position, &field) in statement.projection.iter().enumerate() {
+        let param = ParamId(u16::try_from(position).expect("a projection fits u16"));
+        let columns = crate::sqlmap::field_columns(&rel.fields()[usize::from(field.0)]);
+        if let [(start, _), (end, _)] = columns.as_slice() {
+            conjuncts.push(format!("\"{start}\" = ?{}", params.len() + 1));
+            params.push(ParamSlot::Start(param));
+            conjuncts.push(format!("\"{end}\" = ?{}", params.len() + 1));
+            params.push(ParamSlot::End(param));
+        } else {
+            let (name, _) = &columns[0];
+            conjuncts.push(format!("\"{name}\" = ?{}", params.len() + 1));
+            params.push(ParamSlot::Whole(param));
+        }
+    }
+    Translated {
+        sql: format!(
+            "SELECT {} FROM \"{}\" WHERE {}",
+            select.join(", "),
+            rel.name(),
+            conjuncts.join(" AND ")
+        ),
+        params,
+    }
 }
 
 /// A variable's column reference(s) in the positive join: one column for

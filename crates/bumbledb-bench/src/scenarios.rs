@@ -40,7 +40,7 @@ mod run_query;
 mod tests;
 
 use bumbledb::schema::{Schema, SchemaDescriptor};
-use bumbledb::{Db, Query, RelationId, Value};
+use bumbledb::{Db, Query, RelationId, StatementId, Value};
 use rusqlite::Connection;
 
 use crate::harness;
@@ -71,10 +71,36 @@ pub enum Twin {
     Hand(fn() -> crate::translate::Translated),
 }
 
+/// The engine-side surface one scenario query measures — data on the
+/// query, never a branch grown in the runner: the gate/time split folds
+/// over this sum, so a new surface is a new arm here, not a bypass.
+pub enum Surface {
+    /// A prepared query (IR → `PreparedQuery`), executed per sample —
+    /// the default lane; its `SQLite` twins come from [`Twin`] over the
+    /// canonical translation.
+    Query(fn() -> Query),
+    /// 0.5.0's keyed get: the typed point read through a declared key FD,
+    /// via the dynamic entry the TS SDK bridge calls
+    /// (`Snapshot::get_dyn` — scenario stores are `Db<SchemaDescriptor>`,
+    /// so the dynamic surface is the reachable twin of the macro-typed
+    /// `snap.get(key)`). The answer is the full fact in field declaration
+    /// order (0 or 1 rows); the `SQLite` twin is the prepared point
+    /// SELECT through the statement's UNIQUE index
+    /// ([`crate::translate::keyed_get`]) — gated and timed exactly like
+    /// every query lane.
+    KeyedGet {
+        relation: RelationId,
+        /// Resolves the key statement on the validated schema —
+        /// statement ids are materialized facts of the schema, never
+        /// literals in a scenario table.
+        key: fn(&Schema) -> StatementId,
+    },
+}
+
 /// One scenario query: IR + seeded param sets + a one-line regime note.
 pub struct ScenarioQuery {
     pub name: &'static str,
-    pub query: fn() -> Query,
+    pub surface: Surface,
     /// Seeded param sets; rotation order is the measurement order.
     pub params: fn(u64) -> Vec<Vec<Value>>,
     /// What regime this query stresses (rendered in the report).

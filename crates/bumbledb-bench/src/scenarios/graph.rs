@@ -11,7 +11,7 @@ use bumbledb::{
     Value, VarId,
 };
 
-use super::{Scenario, ScenarioQuery, Twin, mix};
+use super::{Scenario, ScenarioQuery, Surface, Twin, mix};
 use crate::corpus_gen::Rng;
 use crate::fixture::var;
 
@@ -316,7 +316,7 @@ pub fn scenario() -> Scenario {
             vec![
                 ScenarioQuery {
                     name: "g1_neighbors",
-                    query: neighbors,
+                    surface: Surface::Query(neighbors),
                     params: |seed| start_params(seed, 1),
                     about: "single hop: hub ~1.5k edges, normal ~4",
                     twin: Twin::Canonical,
@@ -324,7 +324,7 @@ pub fn scenario() -> Scenario {
                 },
                 ScenarioQuery {
                     name: "g2_two_hop",
-                    query: two_hop,
+                    surface: Surface::Query(two_hop),
                     params: |seed| start_params(seed, 2),
                     about: "two hops, deduplicated destination set",
                     twin: Twin::Canonical,
@@ -332,7 +332,7 @@ pub fn scenario() -> Scenario {
                 },
                 ScenarioQuery {
                     name: "g3_three_hop_count",
-                    query: three_hop_count,
+                    surface: Surface::Query(three_hop_count),
                     params: |seed| start_params(seed, 3),
                     about: "three-hop reach folded to Count",
                     twin: Twin::Canonical,
@@ -340,7 +340,7 @@ pub fn scenario() -> Scenario {
                 },
                 ScenarioQuery {
                     name: "g4_mutual",
-                    query: mutual,
+                    surface: Surface::Query(mutual),
                     params: |_| {
                         vec![
                             vec![Value::U64(0)],
@@ -355,7 +355,7 @@ pub fn scenario() -> Scenario {
                 },
                 ScenarioQuery {
                     name: "g5_triangles_from",
-                    query: triangles_from,
+                    surface: Surface::Query(triangles_from),
                     params: |seed| start_params(seed, 5),
                     about: "3-cycle through a start node, counted",
                     twin: Twin::Canonical,
@@ -363,7 +363,7 @@ pub fn scenario() -> Scenario {
                 },
                 ScenarioQuery {
                     name: "g6_weighted_hop",
-                    query: weighted_hop,
+                    surface: Surface::Query(weighted_hop),
                     params: weighted_hop_params,
                     about: "hop + weight range + target-score range",
                     twin: Twin::Canonical,

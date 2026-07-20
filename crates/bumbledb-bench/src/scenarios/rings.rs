@@ -15,7 +15,7 @@ use bumbledb::{
     RelationId, Rule, Term, Value, VarId,
 };
 
-use super::{DEFAULT_CAP, Scenario, ScenarioQuery, Twin};
+use super::{DEFAULT_CAP, Scenario, ScenarioQuery, Surface, Twin};
 use crate::fixture::var;
 
 mod corpus;
@@ -320,7 +320,7 @@ fn queries() -> Vec<ScenarioQuery> {
     vec![
         ScenarioQuery {
             name: "r1_wash_ring",
-            query: wash_ring,
+            surface: Surface::Query(wash_ring),
             params: amount_params,
             about: "the equality 3-ring (wash-trade) over power-law hubs — the binary-join exponent, capped",
             twin: Twin::Canonical,
@@ -328,7 +328,7 @@ fn queries() -> Vec<ScenarioQuery> {
         },
         ScenarioQuery {
             name: "r2_temporal_ring",
-            query: temporal_ring,
+            surface: Surface::Query(temporal_ring),
             params: amount_params,
             about: "the ring + pairwise Allen INTERSECTS — the temporal-ring shape",
             twin: Twin::Tuned(r2_tuned),
@@ -336,7 +336,7 @@ fn queries() -> Vec<ScenarioQuery> {
         },
         ScenarioQuery {
             name: "r3_bomb_t1",
-            query: bomb_t1,
+            surface: Surface::Query(bomb_t1),
             params: |_| vec![vec![]],
             about: "bipartite-bomb tier 1 (m=48): K_{m,m} + one planted triangle — answer 3 by construction; sized to finish within the cap",
             twin: Twin::Canonical,
@@ -344,7 +344,7 @@ fn queries() -> Vec<ScenarioQuery> {
         },
         ScenarioQuery {
             name: "r4_bomb_t2",
-            query: bomb_t2,
+            surface: Surface::Query(bomb_t2),
             params: |_| vec![vec![]],
             about: "bipartite-bomb tier 2 (m=384): m^3≈5.7e7 closing probes — the exponent evidence; SQLite predictably exceeds the cap, reported exceeded-cap, excluded and counted",
             twin: Twin::Canonical,
@@ -352,7 +352,7 @@ fn queries() -> Vec<ScenarioQuery> {
         },
         ScenarioQuery {
             name: "r5_reciprocal",
-            query: reciprocal,
+            surface: Surface::Query(reciprocal),
             params: |_| {
                 vec![
                     vec![Value::U64(0)],
@@ -367,7 +367,7 @@ fn queries() -> Vec<ScenarioQuery> {
         },
         ScenarioQuery {
             name: "r6_two_path_count",
-            query: two_path_count,
+            surface: Surface::Query(two_path_count),
             params: |_| vec![vec![]],
             about: "the denominator story: the distinct 2-path count binary joins must materialize",
             twin: Twin::Canonical,

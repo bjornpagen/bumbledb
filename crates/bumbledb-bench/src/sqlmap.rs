@@ -28,7 +28,10 @@ fn sql_type(ty: &ValueType) -> &'static str {
 
 /// The SQL column(s) of one field: scalars map to one column of the same
 /// name; an `Interval` field splits into `<name>_start`, `<name>_end`.
-fn field_columns(field: &FieldDescriptor) -> Vec<(String, &'static str)> {
+/// `pub(crate)`: the keyed-get twin rendering
+/// ([`crate::translate::keyed_get`]) walks the same naming — one
+/// mapping, it cannot drift apart.
+pub(crate) fn field_columns(field: &FieldDescriptor) -> Vec<(String, &'static str)> {
     match &field.value_type {
         ValueType::Interval { .. } => vec![
             (format!("{}_start", field.name), "INTEGER"),
