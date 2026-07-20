@@ -118,6 +118,11 @@ pub fn frequency() -> u64 {
 }
 
 /// Portable fallback: nanoseconds from a process anchor.
+///
+/// # Panics
+///
+/// Never in practice: process uptime in nanoseconds overflows `u64`
+/// after ~584 years.
 #[cfg(not(target_arch = "aarch64"))]
 #[must_use]
 pub fn ticks() -> u64 {
