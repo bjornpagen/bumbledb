@@ -1,8 +1,8 @@
 use std::path::Path;
 
 use super::load::load;
-use super::run_query::run_query;
-use super::{QueryReport, all, render};
+use super::run_query::{gate, run_query};
+use super::{QueryReport, Scenario, all, render};
 use crate::harness::Protocol;
 
 /// Runs every scenario (or the selected subset): load, gate, time,
@@ -35,4 +35,21 @@ pub fn run(
         return Err("no scenario selected".to_owned());
     }
     Ok((render(&reports, proto), reports))
+}
+
+/// Gates one scenario without timing anything: load, then the oracle
+/// gate for every query × param set × `SQLite` lane — the world
+/// packets' smoke-test entry (correctness only; zero measured windows).
+///
+/// # Errors
+///
+/// Load/prepare/translate failures and oracle disagreements, as
+/// messages naming the scenario, query, and lane.
+pub fn gate_scenario(dir: &Path, scenario: &Scenario, seed: u64) -> Result<(), String> {
+    let stores = load(dir, scenario, seed)?;
+    for sq in (scenario.queries)() {
+        eprintln!("scenario {}: gate {}", scenario.name, sq.name);
+        gate(&stores, scenario, &sq, seed)?;
+    }
+    Ok(())
 }

@@ -1,9 +1,12 @@
 use super::*;
 use crate::translate::translate;
 
-/// Every scenario query validates, prepares, and translates against
-/// its own schema (no corpus needed), and its param sets are seeded
-/// deterministic with at least one set.
+/// Every scenario query validates, prepares, and (per its [`Twin`])
+/// translates against its own schema (no corpus needed), its param sets
+/// are seeded deterministic with at least one set, and the twin
+/// invariants hold: `Canonical`/`Tuned` queries MUST translate, a
+/// `Tuned`/`Hand` rendering must be nonempty, and `Hand` is legal ONLY
+/// where the translator refuses.
 #[test]
 fn every_scenario_query_prepares_and_translates() {
     for scenario in all() {
@@ -15,8 +18,38 @@ fn every_scenario_query_prepares_and_translates() {
         for sq in (scenario.queries)() {
             db.prepare(&(sq.query)())
                 .unwrap_or_else(|e| panic!("{}/{}: validation: {e:?}", scenario.name, sq.name));
-            translate(&(sq.query)(), schema, &[])
-                .unwrap_or_else(|e| panic!("{}/{}: translation: {e}", scenario.name, sq.name));
+            match sq.twin {
+                Twin::Canonical => {
+                    translate(&(sq.query)(), schema, &[]).unwrap_or_else(|e| {
+                        panic!("{}/{}: translation: {e}", scenario.name, sq.name)
+                    });
+                }
+                Twin::Tuned(tuned) => {
+                    translate(&(sq.query)(), schema, &[]).unwrap_or_else(|e| {
+                        panic!("{}/{}: translation: {e}", scenario.name, sq.name)
+                    });
+                    assert!(
+                        !tuned().sql.is_empty(),
+                        "{}/{}: the tuned rendering must be nonempty",
+                        scenario.name,
+                        sq.name
+                    );
+                }
+                Twin::Hand(hand) => {
+                    assert!(
+                        translate(&(sq.query)(), schema, &[]).is_err(),
+                        "{}/{}: Hand is legal only where the translator refuses",
+                        scenario.name,
+                        sq.name
+                    );
+                    assert!(
+                        !hand().sql.is_empty(),
+                        "{}/{}: the hand rendering must be nonempty",
+                        scenario.name,
+                        sq.name
+                    );
+                }
+            }
             let a = (sq.params)(1);
             let b = (sq.params)(1);
             assert_eq!(a, b, "{}/{}: params must be seeded", scenario.name, sq.name);

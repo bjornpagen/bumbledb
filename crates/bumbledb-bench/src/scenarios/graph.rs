@@ -11,7 +11,7 @@ use bumbledb::{
     Value, VarId,
 };
 
-use super::{Scenario, ScenarioQuery, mix};
+use super::{Scenario, ScenarioQuery, Twin, mix};
 use crate::corpus_gen::Rng;
 use crate::fixture::var;
 
@@ -319,18 +319,24 @@ pub fn scenario() -> Scenario {
                     query: neighbors,
                     params: |seed| start_params(seed, 1),
                     about: "single hop: hub ~1.5k edges, normal ~4",
+                    twin: Twin::Canonical,
+                    cap: None,
                 },
                 ScenarioQuery {
                     name: "g2_two_hop",
                     query: two_hop,
                     params: |seed| start_params(seed, 2),
                     about: "two hops, deduplicated destination set",
+                    twin: Twin::Canonical,
+                    cap: None,
                 },
                 ScenarioQuery {
                     name: "g3_three_hop_count",
                     query: three_hop_count,
                     params: |seed| start_params(seed, 3),
                     about: "three-hop reach folded to Count",
+                    twin: Twin::Canonical,
+                    cap: None,
                 },
                 ScenarioQuery {
                     name: "g4_mutual",
@@ -344,18 +350,24 @@ pub fn scenario() -> Scenario {
                         ]
                     },
                     about: "reciprocal-edge 2-cycle over the full graph",
+                    twin: Twin::Canonical,
+                    cap: None,
                 },
                 ScenarioQuery {
                     name: "g5_triangles_from",
                     query: triangles_from,
                     params: |seed| start_params(seed, 5),
                     about: "3-cycle through a start node, counted",
+                    twin: Twin::Canonical,
+                    cap: None,
                 },
                 ScenarioQuery {
                     name: "g6_weighted_hop",
                     query: weighted_hop,
                     params: weighted_hop_params,
                     about: "hop + weight range + target-score range",
+                    twin: Twin::Canonical,
+                    cap: None,
                 },
             ]
         },

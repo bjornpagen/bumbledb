@@ -57,7 +57,8 @@ Tiny worlds + queries + engine answers into the checked-in replay corpus
 (`three_way_conformance_over_the_checked_in_corpus`, run by `scripts/lean.sh`
 — the Lean-dependent lane owns the Lean-dependent test) holds engine, naive
 model, and `lake exe conformance` to agreement per case — any disagreement
-names the case file and is a trophy triaged per the fuzzing charter (below),
+names the case file and is a finding (engine bug, naive-model bug, or spec
+bug all count) triaged before anything else merges,
 whichever oracle turns out wrong.
 
 **The Lean judge is the third oracle for the write side** (the judgment arm of
@@ -363,6 +364,60 @@ one integer compare). SQLite-unpaired by decision: SQLite has no
 snapshot-witness surface, and a BEGIN-IMMEDIATE + user-version emulation would
 time the emulation, not the engine.
 
+## The scenario worlds
+
+The non-ledger schema+corpus+query worlds (`crates/bumbledb-bench/src/scenarios`
+— graph fan-out, OLAP rollups, point lookups, JOB-style join stress, and
+whatever a future packet adds), run by `bench scenarios`. Their laws:
+
+**Report-class, by law.** Scenarios exist to *measure* regimes, never to gate
+the suite: the ledger's families remain the gate, and the existing budget gates
+and their family sets are untouched by any scenario addition. A scenario number
+is evidence for a claim only through the owner's ceremony, never through CI.
+
+**The oracle-gate law.** Every scenario query × param set × SQLite lane must
+produce value-identical result multisets on both engines (`compare::multisets`)
+before any timing — a disagreement fails the run naming the scenario, query,
+lane, and param set, and nothing gets timed. The gate is **never capped**:
+correctness is sacred, and the DNF cap below bounds timed and pre-flight
+samples only. The gate/time split is code (`scenarios::gate_scenario` gates a
+world with zero measured windows — the world smoke-test entry), so
+"oracle-gated before ever timed" is a call-order fact, not discipline.
+
+**The twin-lane law** (the `Twin` type on every `ScenarioQuery`). The canonical
+IR→SQL translation is THE SQLite lane (`Twin::Canonical`, lane `sqlite`). Where
+the canonical rendering inflates SQL — the Allen basics OR-chains are the named
+case — a hand-tuned twin lane (`Twin::Tuned`, lane `sqlite-tuned`) runs
+alongside and BOTH are gated, timed, and reported: we never flatter ourselves,
+in either direction. Where the translator refuses the query outright (`Pack` —
+the enumerated `Inexpressible` set), the lane is a hand-written best shot
+(`Twin::Hand`, lane `sqlite-hand`) — the `free_busy` precedent — and `Hand` is
+legal *only* where translation errs, asserted by test.
+
+**The DNF-cap law** (the `CapMs` type; `Option<CapMs>` per query, per-family
+config as data). Adversarial lanes carry a per-sample wall-clock cap enforced
+by SQLite's progress handler at 50k-VM-op granularity (negligible overhead
+against any statement worth capping); `None` means the handler is never
+installed, so pre-existing lanes are untouched by construction. Protocol:
+one untimed capped pre-flight sample per param set, then the capped timed
+window. A lane whose sample trips the cap reports `ExceededCap` — NO
+percentiles exist for it (a censored p50 is not a p50, unrepresentable by
+type), and the lane is excluded from every geomean and *counted* beside it in
+both renderers. Honesty in both directions: SQLite is never billed a fake
+number, and the DNF is never hidden.
+
+**Parity config.** Every scenario oracle runs under the ledger protocol's
+SQLite configuration (`sqlite_run::open_for_bench` and `corpus::configure_sqlite`
+own it): WAL, `synchronous=FULL`, 256 MiB cache, 1 GiB mmap,
+`wal_autocheckpoint=0` with one pre-run truncating checkpoint, prepared
+statements reused across every warmup and sample, per-world extra indexes,
+`ANALYZE` before timing.
+
+**Artifacts.** One run writes `scenarios.md` (the human table: one row per
+lane, DNFs named) and `scenarios.json` (the machine artifact, hand-rolled —
+the one stats format shared with `report.json`). Charts render ONLY from
+committed `scenarios.json` pins, never from live runs.
+
 ## Differential and property tests
 
 - The **naive model** (promoted above) executes the same IR and judges the same
@@ -433,11 +488,12 @@ time the emulation, not the engine.
   — the snapshot stays usable.
 - **The entropy seam** (`corpus_gen::rng`): every generator draw goes through
   one closed sum — `Rng::Seeded` (the bench/differential arm, the seeded
-  stream above) and `Rng::Bytes` (the fuzzer arm: draws consume a fuzzer's
-  byte string; exhaustion falls back to a deterministic zero tail, never a
-  panic) — two sources, one generation path, with the corpus digest pinning
-  the seeded arm byte-identically across the seam. The fuzz lanes generate at
-  `Scale::Tiny`, the scale ladder's fuzz-iteration point (ledger: 1 024
+  stream above) and `Rng::Bytes` (the byte-string arm: draws consume a
+  caller-supplied byte string; exhaustion falls back to a deterministic zero
+  tail, never a panic — its coverage-guided consumer died with the fuzzing
+  apparatus, § the deletion record below) — two sources, one generation path,
+  with the corpus digest pinning the seeded arm byte-identically across the
+  seam. `Scale::Tiny` is the ladder's smallest point (ledger: 1 024
   postings / 32 instruments / 8 orgs; calendar: 32 persons with 16-segment
   max chains — everything else derives as at S/M/L), sized so a full
   build-store → ops → oracles iteration is milliseconds; Tiny is a
@@ -503,131 +559,50 @@ time the emulation, not the engine.
   (`50-storage.md`); full round-trip (export → fresh database → import in
   dependency-cluster order → oracle-equal results). ETL is the migration story; an
   ETL bug is a data-loss bug.
-- **Encoding round-trip fuzzing is retained** (decision: the one *in-tree* fuzz
-  target — order-preserving encodings and composite determinant keys are where a
+- **Encoding round-trip randomization is retained** (decision: the one
+  randomized in-crate battery, `encoding/tests.rs` — order-preserving encodings
+  and composite determinant keys are where a
   boundary bug corrupts sort order silently; i64::MIN, empty bytes, max-length
   values, and now interval starts/ends at element extremes and `start+1 == end`
   minimal intervals). Executor differential fuzzing is subsumed by the seeded
-  generator above; the coverage-guided campaign over the public API lives in the
-  detached `fuzz/` crate (the fuzzing charter, below).
+  generator above; the coverage-guided campaign over the public API died with
+  the detached `fuzz/` crate (§ the deletion record, below).
 
-## The fuzzing charter
+## The fuzzing apparatus — deleted (the deletion record)
 
-The detached `fuzz/` crate (cargo-fuzz layout, its own workspace — the
-workspace gates never build fuzz artifacts) is the adversary-first lane:
-coverage-guided, structure-aware generation through the entropy seam
-(`Rng::Bytes` steering the same `corpus_gen` generators the seeded lanes
-run, at `Scale::Tiny`), driving the REAL public API against the oracles
-this engine already owns. The harness owns no logic worth fuzzing
-(refusal: we do not fuzz the harness — a fuzzer for the judge has no
-judge); generation arms live in `bumbledb-bench`'s `corpus_gen`, and each
-target in `fuzz/fuzz_targets/` is one thin call into one shared-harness
-runner.
+Owner ruling, 2026-07-20: "hard delete rather than keep a lie." The
+evidence that earned the ruling: after thousands of executions across
+five coverage-guided targets, the trophy ledger held 3 rows and zero
+engine bugs — one oracle contract-gap ruling, one generator hang, one
+harness-oracle bug. Every zero was honest, and the reason was standing
+upstream of the fuzzer: the Lean spec with its executable conformance
+corpus, the seeded generator differentials, and the two-oracle bench
+gates were already holding the same seams. What was deleted: the
+detached `fuzz/` crate (targets, corpus, trophies, session log),
+`scripts/fuzz.sh`, the engine's `fold-off` feature (its only consumer
+was the fuzz crate's dual-pipeline differential; the engine-internal
+switch survives as `cfg(test)`), and CI's corpus-replay lane. The
+per-commit crashpoint and kill sweeps lived in `fuzz/tests/` and died
+with the directory. The full apparatus — code, corpus, ledger, and
+operating charter — lives in git history at this commit's parent.
 
-- **Targets** (one entry point each): `theory` — schema acceptance over
-  the random-descriptor arm (`corpus_gen::theorygen`): structurally-free
-  descriptors, deliberately-invalid shapes alongside valid ones, judged
-  by `Db::create`. `ops` — the op-stream flagship: generated lifecycle
-  sequences (`corpus_gen::opgen`) over a ten-verb alphabet (insert,
-  delete, and mixed batches; commit; rollback; prepared execution with
-  live params; re-prepare; view read; reopen from disk; `verify_store`)
-  against the live engine with the naive model in lockstep, under five
-  oracles — commit-verdict parity by strict equality of the COMPLETE
-  violation sets, order included (a rejection IS the sealed set on both
-  sides — `30-dependencies.md`; the theorem this oracle samples is
-  `lean/Bumbledb/Txn.lean: rejection_is_complete`), set-semantic query parity, reopen equivalence
-  over full relation contents, `verify_store` green after every commit
-  and reopen, and rejected-commits-change-nothing. `query` — three-way parity per iteration over a
-  cached Tiny target corpus: querygen's valid-by-construction arm
-  compared across the prepared engine, the naive model, and the `SQLite`
-  lane where the ψ-subset mapping expresses the shape (drops counted and
-  logged, never silent), plus a hostile structurally-free-IR arm
-  (`corpus_gen::irgen`) under the validation-totality oracle and
-  prepare/execute determinism. `rewrites` — the dual-pipeline
-  differential: every query × draw executed through the rewritten
-  pipeline and the rewrite-free one (the `ground-off`/`fold-off`
-  thread-local switches, one build — cargo refuses a dual-build
-  dependency on one package), demanding identical result sets: the
-  rewrite layers continuously proven semantics-preserving, never
-  assumed — the empirical arm of
-  `lean/Bumbledb/Exec/Rewrites.lean: grounding_preserves_answers` (and its
-  chain form, `rewrite_composition`). `crash` — durability under torn commits: an ops prefix plus
-  one victim commit, replayed in a CHILD process that aborts at a drawn
-  crashpoint (the commit pipeline's named phase boundaries,
-  `50-storage.md` § crashpoints — engine hooks under the `crashpoint`
-  feature, env-var-armed, compiled to nothing by default); the parent
-  autopsies the corpse: reopen succeeds, `verify_store` green, full
-  contents equal the naive model at the point's expected side (prefix
-  before `mdb_txn_commit`, post after — all-or-nothing), and the victim
-  commit replays to the post state. A deterministic sweep
-  (`fuzz/tests/crash.rs`) kills every crashpoint × a small ops-prefix
-  matrix under plain `cargo test`; the fuzzer explores prefixes and
-  victims around them.
-- **Oracle discipline** (every iteration, all of them): *no-panic
-  totality* — hostile input yields `Ok` or a typed error, any
-  panic/abort is a finding by definition; *typed rejection* — every
-  `Err` is a named variant, matched TOTALLY in the harness (zero `_ =>`
-  arms over engine error enums, so a new variant is a compile error —
-  the matcher is a census instrument); *judgment determinism* — the same
-  input judged twice on fresh stores yields the identical verdict, and
-  accepted schemas reopen cleanly with `verify_store` on the empty store
-  reporting exactly the schema's genesis debt — nothing more. Genesis
-  debt (`30-dependencies.md`: "the empty store violates the statement
-  until the handlers land") is the two extension-sourced classes the
-  sweeper owns: a closed-source containment against an ordinary target
-  with a φ-selected axiom, and a closed-parent floor window (`lo >= 1`,
-  ordinary child) with a ψ-selected axiom — the acceptance gate judges
-  the theory, never genesis satisfiability, so those citations on a
-  fresh store are the sweeper doing its documented job (the harness's
-  `genesis_debt_statements` computes the expected set; the trophy
-  `fuzz/trophies/theory/genesis-debt-closed-parent-window` pins it).
-- **Corpus policy**: `fuzz/corpus/<target>/` is a checked-in seed corpus
-  from a small deterministic generator run; `fuzz/artifacts/` is
-  gitignored. Every real counterexample is minimized (`cargo fuzz tmin`)
-  and pinned as a permanent regression test in the crate that owns the
-  bug.
-- **Trophy ledger**: `fuzz/README.md` — one row per real finding (date,
-  target, root cause, the pinning test).
-- **Operations** (crucible packet, git ecec1dc3): `scripts/fuzz.sh`
-  is the firepower launcher — no args runs all five targets time-sliced
-  in libFuzzer fork mode across the machine's 12 cores (the all-cores
-  default IS the default); `fuzz.sh <target> [minutes]` bounds one
-  target; `fuzz.sh --asan <target>` is the sanitizer lane (query carries
-  `-rss_limit_mb=4096` there, the PRD 15 disposition). After every
-  session the launcher minimizes the target's corpus (`cargo fuzz cmin`)
-  and appends one line to `fuzz/SESSIONS.md` — the honest zero
-  ("0 findings in N executions") is a recorded result. **The trophy
-  pipeline:** an artifact that reproduces is minimized, becomes a NAMED
-  `#[test]` in the crate that owns the bug (input inlined or checked
-  into `fuzz/trophies/<target>/`, replayed by `fuzz/tests/replay*.rs`),
-  gets its ledger row, and THEN the artifact is deleted; an artifact
-  that triages environmental (the worked example: the `Lmdb(Io(EINVAL))`
-  storms under concurrent compile load — every artifact replayed clean
-  on a quiet machine) gets its disposition recorded in `SESSIONS.md`,
-  then deleted. Triage is structurally not optional: the launcher
-  REFUSES to start while `fuzz/artifacts` holds any file. CI
-  (`.github/workflows/ci.yml`) runs four lanes on pushes to main and
-  on pull requests (a WIP push to a PR-less branch burns nothing):
-  the check lane (`scripts/check.sh`, a macOS + ubuntu matrix — the
-  ubuntu run IS the x86-64 scalar-fallback and linux coverage,
-  strictly stronger than the retired cross `cargo check`); the
-  corpus-replay lane (plain `cargo test` in `fuzz/`, same two-OS
-  matrix); the lean lane (`lake build`, the spec census, and the
-  three-way conformance comparator); and the sdk lane (the napi
-  bridge + SDK built from source, `pnpm test`, the FFI lint wall, and
-  the cross-language fingerprint lock). The fifth lane, Miri
-  (`scripts/miri.sh`, both interpretation targets), runs on a nightly
-  cron and manual dispatch only (measured 12.5 min locally — over the
-  per-push budget). CI deliberately runs NO benches, NO asm gates, and NO long
-  fuzz sessions: timing and codegen gates are local measurement
-  discipline on the pinned M2 Max, and firepower is the owner's
-  machine (the human work register).
+CI after the deletion (`.github/workflows/ci.yml`): the check lane
+(`scripts/check.sh`, a macOS + ubuntu matrix — the ubuntu run IS the
+x86-64 scalar-fallback and linux coverage), the lean lane (`lake
+build`, the spec census, and the three-way conformance comparator),
+the sdk lane (the napi bridge + SDK built from source, `pnpm test`,
+the FFI lint wall, and the cross-language fingerprint lock), and the
+Miri lane (`scripts/miri.sh`, both interpretation targets) on a
+nightly cron and manual dispatch (measured 12.5 min locally — over
+the per-push budget). CI deliberately runs NO benches and NO asm
+gates: timing and codegen gates are local measurement discipline on
+the pinned M2 Max.
 
-**The ramdisk sanction.** The verify, differential, and fuzz lanes may
+**The ramdisk sanction.** The verify and differential lanes may
 run their scratch stores on a RAM-backed volume (`scripts/ramdisk.sh`;
 the lanes point themselves there via `BUMBLEDB_SCRATCH_DIR`, which the
-fuzz harness's `StoreDir` and the bench tests' scratch `TempDir`
-respect) — they check answers, not wall clocks, and the ram disk buys
+bench tests' scratch `TempDir`
+respects) — they check answers, not wall clocks, and the ram disk buys
 them the fullfsync floor back (~21x per small commit, ~94–100x on
 back-to-back commit loops on the pinned M2 Max —
 the phase-R harness, `crates/bumbledb/tests/ramdisk_phase_r.rs`). Timing is governed by the
@@ -647,69 +622,41 @@ ephemeral store's data file was ftruncated to the full 4 GiB map at
 open under the retired `MDB_WRITEMAP` flag and HFS+ has no sparse
 files, so the volume had to hold map size + slack; no open allocates
 the map anymore — `50-storage.md` § environment constants.)
-Scope note: the crash target stays valid on a ramdisk — its adversary
-is process-kill ordering (the child aborts mid-commit and the parent
-autopsies the surviving bytes), which a RAM-backed filesystem preserves
-exactly; only power-loss durability is lost, and no test tests power
-loss.
 
 **The ephemeral store kind's evidence** (`50-storage.md` § the
 ephemeral store kind; Lean owns none of it — durability and crash are
 mechanism, outside the model, so no Bridge row and no citation exist
-to expect). Three instruments: (1) the **durable/ephemeral differential
-oracle** (`crates/bumbledb/tests/ephemeral.rs`) — one deterministic
-ops sequence replayed against a `Db::create` store and a
+to expect). The standing instrument: the **durable/ephemeral
+differential oracle** (`crates/bumbledb/tests/ephemeral.rs`) — one
+deterministic ops sequence replayed against a `Db::create` store and a
 `Db::ephemeral` store, asserting identical commit verdicts, identical
 COMPLETE violation sets, identical WriteTx point reads, and identical
 full relation contents: the flags change the durability mechanism,
 never a semantic; plus the typed cross-open matrix in the same file.
-(2) The **ephemeral crashpoint sweep** (`fuzz/tests/crash.rs`) — the
-identical crashpoint × ops-prefix matrix with the victim store built
-by `Db::ephemeral`: all-or-nothing recovery under `NOSYNC`,
-no third observable outcome. (3) The **NOSYNC commit-window kill
-sweep** (`fuzz/tests/kill.rs`, harness in `fuzz/src/kill.rs`; named
-the WRITEMAP sweep until cleanup-0.5.0 ruling 1 retired that flag —
-the instrument is kind-parametric and survives unweakened) — the
-crashpoint sweep's named points bracket `mdb_txn_commit` but nothing
-cuts INSIDE it, and inside that window is exactly where the ephemeral
-kind departs from the durable one (`NOSYNC` commits `pwrite` their
-pages and meta but never cross a sync boundary, so everything a kill
-leaves behind is un-fsynced page-cache state the recovery path must
-still read back all-or-nothing); this instrument fills the gap with real SIGKILLs at
-seeded uniformly-random delays against a child's commit loop, phase
-uniform across the pipeline (the commit duty cycle is measured, the
-kill window derived from it — at least four mean commit periods, so
-no device's sync cost can vacate a session — and the in-window hit
-estimate logged per session), on both kinds — ephemeral under test,
-durable as the control. The estimate's honesty: the durable number
-is the sync-surplus estimate of kills inside `mdb_txn_commit`
-itself; the ephemeral duty covers the whole write call, of which the
-torn-meta sliver is a µs-scale subset — expect O(1) sliver hits per
-thousands of rounds, which is what the >= 2,000-round statistical
-lane is FOR, and why the smoke is a mechanism check, not coverage. The corpse invariant is
-four points: reopen through the kind's constructor, `verify_store`
-green, a complete batch prefix (all-or-nothing, no gap, no torn
-batch — every committed state is a pure function of the high-water
-commit number), and a working post-recovery commit. The ~30-kill
-smoke is a `scripts/check.sh` stage; the statistical lane is the
-`#[ignore]`d long variant (>= 2,000 kills per kind, sessions recorded
-in `fuzz/SESSIONS.md`):
-`BUMBLEDB_SCRATCH_DIR=... cargo test --manifest-path fuzz/Cargo.toml
---test kill -- --ignored --test-threads=1 --nocapture random_kills`.
+Two further instruments — the ephemeral crashpoint sweep and the
+NOSYNC commit-window kill sweep — lived in `fuzz/tests/` and died
+with the fuzzing apparatus (§ the deletion record, above). Their
+verdicts while they lived: every sweep green, all-or-nothing recovery
+on both kinds, no third observable outcome; the admission's reversal
+clause ("reverses if a sweep ever convicts a crashpoint on an
+ephemeral store") was never triggered and now stands without a
+standing executed lane — the sweeps' mechanism and session numbers
+live in git history at the deletion commit's parent.
 Device honesty is unchanged and orthogonal: *ephemeral* is a
 store kind (an on-disk durability claim), *RAM-backed* is a device
 fact — the timed lanes' refusal keys on the device, never the kind,
 and an ephemeral store on the SSD is as legitimate as a durable store
 on a ramdisk is for the untimed lanes.
 
-## Small worlds, Miri, and ASAN — the charter's complement
+## Small worlds and Miri — the exhaustive complement
 
 Where a domain is finite and small, random exploration is strictly worse than
 exhaustive enumeration: enumerate it once and close the question forever
 (crucible packet, git ecec1dc3). Three small worlds are enumerated as
 plain `#[test]`s, each carrying its domain-size arithmetic in a comment — the
-loop bound is the claim, never a sample — and are therefore **never fuzzed**
-(a fuzz iteration inside an exhaustively closed domain is spent evidence):
+loop bound is the claim, never a sample — so no randomized lane ever spent
+iterations inside them (a random draw inside an exhaustively closed domain is
+spent evidence):
 
 - **The Allen mask space** (`exec/kernel/tests.rs`, `allen.rs` tests): all
   2¹³ = 8,192 masks × all 784 configuration classes (every ordered pair of
@@ -735,8 +682,8 @@ loop bound is the claim, never a sample — and are therefore **never fuzzed**
   intern-id word (id order only — string-value order stays refused,
   `10-data-model.md`).
 
-**The Miri lane** (`scripts/miri.sh`) covers the one axis neither oracle nor
-fuzzer sees: undefined behavior that happens to produce right answers today.
+**The Miri lane** (`scripts/miri.sh`) covers the one axis no oracle
+sees: undefined behavior that happens to produce right answers today.
 Its scope is the honest FFI boundary — LMDB is foreign code Miri cannot
 cross, so every Db-touching test is out (each exclusion is commented with its
 reason in the script). The lane interprets the pure modules — encodings, the
@@ -749,13 +696,10 @@ non-interpretable (intrinsics, the same wall as FFI): natively its batch tests
 are skipped; the cross pass runs them through the scalar reference dispatch,
 so the whole Allen kernel surface is interpreted on one target or the other.
 
-**The ASAN lane** covers what Miri cannot reach: the FFI boundary itself.
-Every fuzz target runs under `cargo fuzz run <target> -s address` — LMDB map
-handling, the unsafe key-slice reads at the heed seam, the crash target's
-child-process autopsies — with zero suppressions (a suppression is a conflict
-block, not a shrug). PRD 15 proved every target clean for 1k iterations; the
-long-exploration sessions of the human work register inherit the flag through
-the PRD 16 orchestrator.
+The ASAN lane — every fuzz target under `-s address`, zero suppressions,
+covering the FFI boundary Miri cannot reach — died with the fuzzing
+apparatus (§ the deletion record, above); PRD 15's clean verdicts stand
+in git history.
 
 ## Golden set
 

@@ -170,6 +170,35 @@ fn write_mirrors_run_with_sane_direction() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// The DNF cap's interrupt mechanism, smoked for correctness (not a
+/// benchmark): a query that cannot finish inside its cap comes back
+/// [`CapOutcome::Tripped`]; a trivial one under a generous cap comes
+/// back [`CapOutcome::Done`] — and the handler is cleared between the
+/// two, so the second run is uncapped-equivalent.
+#[test]
+fn cap_trips_on_a_slow_query_and_passes_a_fast_one() {
+    let conn = Connection::open_in_memory().expect("open");
+    let mut slow = conn
+        .prepare(
+            "WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c WHERE x < 1000000000) \
+             SELECT COUNT(*) FROM c",
+        )
+        .expect("prepare");
+    let outcome = with_cap(&conn, CapMs(50), || {
+        slow.query_row([], |r| r.get::<_, i64>(0))
+    })
+    .expect("the interrupt is a CapOutcome, not an error");
+    assert_eq!(outcome, CapOutcome::Tripped);
+    drop(slow);
+
+    let mut fast = conn.prepare("SELECT 1").expect("prepare");
+    let outcome = with_cap(&conn, CapMs(10_000), || {
+        fast.query_row([], |r| r.get::<_, i64>(0))
+    })
+    .expect("a fast query under a generous cap");
+    assert_eq!(outcome, CapOutcome::Done(1));
+}
+
 /// The bulk mirror reports positive throughput over its protocol.
 #[test]
 fn bulk_mirror_reports_positive_throughput() {

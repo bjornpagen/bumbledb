@@ -11,7 +11,7 @@ use bumbledb::{
     Value, VarId,
 };
 
-use super::{Scenario, ScenarioQuery, mix};
+use super::{Scenario, ScenarioQuery, Twin, mix};
 use crate::corpus_gen::Rng;
 use crate::fixture::var;
 
@@ -239,24 +239,32 @@ pub fn scenario() -> Scenario {
                     query: by_id,
                     params: |seed| id_params(seed, 1),
                     about: "fresh-id point: key probe vs B-tree descent",
+                    twin: Twin::Canonical,
+                    cap: None,
                 },
                 ScenarioQuery {
                     name: "p2_by_key",
                     query: by_key,
                     params: key_params,
                     about: "keyed string point: dictionary + determinant index",
+                    twin: Twin::Canonical,
+                    cap: None,
                 },
                 ScenarioQuery {
                     name: "p3_bucket_fetch",
                     query: bucket_fetch,
                     params: bucket_params,
                     about: "small fan-out through a dimension + id ceiling",
+                    twin: Twin::Canonical,
+                    cap: None,
                 },
                 ScenarioQuery {
                     name: "p4_size_band",
                     query: size_band,
                     params: size_band_params,
                     about: "secondary range folded to Count",
+                    twin: Twin::Canonical,
+                    cap: None,
                 },
             ]
         },

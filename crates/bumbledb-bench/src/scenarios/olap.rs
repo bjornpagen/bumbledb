@@ -11,7 +11,7 @@ use bumbledb::{
     Value, VarId,
 };
 
-use super::{Scenario, ScenarioQuery, mix};
+use super::{Scenario, ScenarioQuery, Twin, mix};
 use crate::corpus_gen::Rng;
 use crate::fixture::var;
 
@@ -395,36 +395,48 @@ pub fn scenario() -> Scenario {
                     query: revenue_by_region,
                     params: |_| vec![vec![]],
                     about: "full-fact Sum through one dimension, 6 groups",
+                    twin: Twin::Canonical,
+                    cap: None,
                 },
                 ScenarioQuery {
                     name: "o2_category_window",
                     query: category_window,
                     params: day_windows,
                     about: "Sum+Count by category inside day windows",
+                    twin: Twin::Canonical,
+                    cap: None,
                 },
                 ScenarioQuery {
                     name: "o3_promo_split",
                     query: promo_split,
                     params: |_| vec![vec![]],
                     about: "bool group key, full-scan fold",
+                    twin: Twin::Canonical,
+                    cap: None,
                 },
                 ScenarioQuery {
                     name: "o4_segment_category",
                     query: segment_category,
                     params: |_| vec![vec![]],
                     about: "two-dimension rollup, 64 groups, 3-way join",
+                    twin: Twin::Canonical,
+                    cap: None,
                 },
                 ScenarioQuery {
                     name: "o5_store_extremes",
                     query: store_extremes,
                     params: |_| vec![vec![]],
                     about: "Min+Max per store, 200 groups",
+                    twin: Twin::Canonical,
+                    cap: None,
                 },
                 ScenarioQuery {
                     name: "o6_brand_drill",
                     query: brand_drill,
                     params: brand_drill_params,
                     about: "selective brand point + day range, one Sum",
+                    twin: Twin::Canonical,
+                    cap: None,
                 },
             ]
         },

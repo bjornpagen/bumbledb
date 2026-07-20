@@ -1,8 +1,12 @@
 use std::fmt::Write as _;
 
-use super::{GhzReport, ReadFamilyReport, RunReport, Stats, WriteFamilyReport};
+use super::{GhzReport, ReadFamilyReport, RunReport, WriteFamilyReport};
 
+// The one stats JSON format, shared with the scenario emitter — the
+// spelling is owned there (crate::scenarios::json_out) and reused here,
+// so `report.json` and `scenarios.json` can never drift apart.
 use crate::json;
+use crate::scenarios::json_out::push_stats;
 
 fn push_read_family(out: &mut String, family: &ReadFamilyReport) {
     out.push_str("{\"name\":");
@@ -90,14 +94,6 @@ fn push_write_family(out: &mut String, family: &WriteFamilyReport) {
     }
     push_ghz(out, family.ghz);
     out.push('}');
-}
-
-fn push_stats(out: &mut String, stats: &Stats) {
-    let _ = write!(
-        out,
-        "{{\"min\":{},\"p50\":{},\"p90\":{},\"p95\":{},\"p99\":{},\"max\":{},\"mean_ns\":{}}}",
-        stats.min, stats.p50, stats.p90, stats.p95, stats.p99, stats.max, stats.mean_ns
-    );
 }
 
 /// The machine-consumable artifact — every field, hand-rolled.

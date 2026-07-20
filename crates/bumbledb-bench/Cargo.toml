@@ -11,11 +11,14 @@ publish = false
 obs = ["bumbledb/trace", "bumbledb/alloc-counter"]
 
 # The quarantined member (docs/architecture/00-product.md, Dependencies):
-# rusqlite (bundled) and nothing else. Argument parsing, JSON, statistics,
-# and randomness are hand-rolled.
+# rusqlite (bundled) and nothing else — still the one quarantined
+# dependency. The `hooks` feature exists solely for the DNF-cap progress
+# handler (src/sqlite_run/cap.rs): a feature of the quarantined crate,
+# not a new crate. Argument parsing, JSON, statistics, and randomness
+# are hand-rolled.
 [dependencies]
 bumbledb = { path = "../bumbledb" }
-rusqlite = { version = "0.32", features = ["bundled"] }
+rusqlite = { version = "0.32", features = ["bundled", "hooks"] }
 
 # The dual-run grounding differential (src/differential/tests/ground.rs) prepares each
 # eliminable fixture with the rewrite on and off; the off switch is the
