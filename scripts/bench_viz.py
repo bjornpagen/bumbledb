@@ -26,17 +26,23 @@ kind and size ride along as inputs["store_kind"] / inputs["rep_count"].
   ratio-waterfall.svg     every family + query as one sorted ratio bar     [reads (+scenarios)]
   tails-fan.svg           p50 -> p90 -> p99 fan per family, both engines   [reads]
   bench-storage.svg       bytes per fact per scale/world (+ churn)         [storage_report]
-  storage-bytes-per-fact.svg  bytes per stored fact per world              [storage]
   bench-writes-rates.svg  rows/sec per (family, batch), per lane           [writes_rates]
   bench-curves.svg        log-log scale curves, exponents, DNF caps        [curves_report]
   bench-warmth.svg        cold/warm/memoized, both engines                 [curves_report]
-  curves-loglog.svg       log-log p50 lines + fitted exponents per family  [curves]
   write-throughput.svg    facts/sec per commit batch, per durability lane  [write_throughput]
-  cold-warm-memo.svg      cold → warm → memo phases, both engines          [cold_warm_memo]
   adversarial-dnf.svg     ours vs SQLite, capped twins drawn as capped     [adversarial]
-  churn-latency.svg       probe p50 over delete+insert cycles, VACUUMs     [churn]
-  churn-size.svg          store size over cycles, VACUUM events marked     [churn]
-  churn-throughput.svg    write facts/sec over cycles, VACUUMs marked      [churn]
+  churn-latency-<run>.svg    probe p50 over cycles, every lane, per run    [churn_report]
+  churn-size-<run>.svg       store size over cycles, every lane, per run   [churn_report]
+  churn-throughput-<run>.svg commits/sec over cycles, every lane, per run  [churn_report]
+
+Retired charts, reasons on the record (docs/architecture/61-bench-lanes.md
+§ the chart inventory): storage-bytes-per-fact.svg and curves-loglog.svg
+consumed lane payloads no emitter writes — their data is fully rendered by
+bench-storage.svg / bench-curves.svg from the real flag-shaped reports;
+cold-warm-memo.svg's contract had no theirs-memo slot, so it could not even
+represent the real warmth measurement (curves-report.json times
+theirs_memoized) that bench-warmth.svg draws whole. No phantom-input chart
+survives.
 
 Usage:
   python3 scripts/bench_viz.py <run-dir> ... [--scenarios <scenarios.md|scenarios.json>] [--out <dir>]
@@ -57,30 +63,48 @@ consume that one tagged input.
 
 Exactly one of {run dirs, --night} supplies run reports. --night scans a
 night out-dir's one-level children: every <child>/report.json is ingested
-through the lane discriminant, and the first <child>/scenarios.json
-(preferred) or <child>/scenarios.md becomes inputs["scenarios"]. The
-committed lane-report flags work in either
-mode, each filling one inputs key: --storage-report -> storage_report,
---writes-report -> writes_rates, --curves-report -> curves_report (the
-flag-fed families/rows curves-report.json and the {"lane":"curves"}
-families/points lane payload are two shapes, so they live under two
-keys — a collision between them is unrepresentable).
+through the lane discriminant, the first <child>/scenarios.json
+(preferred) or <child>/scenarios.md becomes inputs["scenarios"], and the
+real lane reports auto-ingest from their canonical night paths
+(NIGHT_LANE_REPORTS: storage/storage-report.json -> storage_report,
+writes/writes-report.json -> writes_rates, curves/curves-report.json ->
+curves_report, churn/churn-report.json -> churn_report). The committed
+lane-report flags work in either mode and OVERRIDE discovery, each
+filling one inputs key: --storage-report -> storage_report,
+--writes-report -> writes_rates, --curves-report -> curves_report.
+
+A run dir carrying a CONTAMINATED.md marker is excluded and counted —
+the contamination record is a file ON the pinned run, so "a contaminated
+run leaked into the merge" is a missing file, not a forgotten footnote;
+the excluded count rides the chart footers, and every chart whose
+provenance says shared_machine carries the boosted-QoS caveat.
+
+Two chart inputs are DERIVED from real artifacts (derive_lanes), each
+passed through its lane-contract loader so the contract stays honest as
+the adapter's output shape: adversarial from scenarios.json's
+exceeded_cap lanes (the DNF data's one real home while the adversarial
+subcommand remains unlanded), and write_throughput from
+writes-report.json's commit/delete batch ladders (bulk_append is a
+single point, fully drawn in bench-writes-rates.svg). A real lane
+payload of the same name, once an emitter writes one, wins over the
+derivation.
 
 Lanes with a pinned contract validate at ingest: LANE_LOADERS maps a
 lane name to its loader, so "chart fed a shapeless lane file" is
 unrepresentable — the loader names its required keys and rejects
-anything else with the file path in the error. Each lane's contract
-(DOC-1) is fixed as a committed fixture under scripts/viz-fixtures/:
-fixture-storage / fixture-curves / fixture-write-throughput /
-fixture-cold-warm-memo / fixture-adversarial / fixture-churn
-(.report.json each). The adversarial lane carries its DNF law in the
-shape: theirs_exceeded_cap => theirs is null, so a capped SQLite time
-can never be drawn as a measurement — there are no stats to draw, only
-the cap. The churn lane is one time-series payload — cycles as rows,
-both engines as columns, VACUUM as a per-cycle boolean on the SQLite
-side — so the VACUUM marker can never drift from the measurement it
-annotates; its three charts are one helper driven by the CHURN_CHARTS
-tuple table.
+anything else with the file path in the error. The surviving contracts
+are fixed as committed fixtures under scripts/viz-fixtures/:
+fixture-write-throughput / fixture-adversarial (.report.json, the lane
+payload shapes) and fixture-churn.report.json (the REAL churn_schema:1
+runs -> lanes -> samples artifact). The adversarial lane carries its
+DNF law in the shape: theirs_exceeded_cap => theirs is null, so a
+capped SQLite time can never be drawn as a measurement — there are no
+stats to draw, only the cap. The churn charts consume the runner's real
+artifact directly — every run and every lane draws (steady's
+sqlite-bare AND sqlite-maint side by side), one file per run per
+metric, VACUUM/ANALYZE cycles marked from the maintenance_ns the run
+recorded, so the marker can never drift from the measurement it
+annotates.
 
 `--out` (alias `--out-dir`) defaults to assets/ (the owner's ceremony
 path); every other invocation should point it elsewhere. Charts render
@@ -112,6 +136,13 @@ READ_ORDER = [
 WRITE_ORDER = ["commit_single", "commit_witnessed", "commit_batch",
                "cold_containment_walk", "bulk"]
 
+
+def ordered(table, order):
+    """Every family in the merged table, canonical names first in
+    registry order, the rest in the report's own row order — a family
+    present in the pin but absent from the chart is unrepresentable."""
+    return [n for n in order if n in table] + [n for n in table if n not in order]
+
 # The merged percentile set (p90 exists in every committed pin; the
 # tail fan reads it).
 PCTS = ("p50", "p90", "p95", "p99")
@@ -124,29 +155,6 @@ OURS, THEIRS, FG, DIM, GRID, BG = (
 # -------------------------------------------------------------- inputs
 
 
-def load_storage(payload):
-    """The storage lane contract (DOC-1), validated: "worlds" is a
-    non-empty list and every entry carries name / facts > 0 /
-    ours_bytes / theirs_bytes. Unknown extra keys are ignored
-    (forward-compatible). A shapeless payload raises ValueError naming
-    the missing key; the caller attaches the file path."""
-    worlds = payload.get("worlds")
-    if not isinstance(worlds, list) or not worlds:
-        raise ValueError('storage lane: "worlds" must be a non-empty list')
-    for world in worlds:
-        if not isinstance(world, dict) or not isinstance(world.get("name"), str) \
-                or not world["name"]:
-            raise ValueError('storage lane: every world needs a "name" string')
-        name = world["name"]
-        facts = world.get("facts")
-        if not isinstance(facts, (int, float)) or facts <= 0:
-            raise ValueError(f'storage lane world "{name}": "facts" must be a number > 0')
-        for key in ("ours_bytes", "theirs_bytes"):
-            if not isinstance(world.get(key), (int, float)):
-                raise ValueError(f'storage lane world "{name}": "{key}" must be a number')
-    return payload
-
-
 def _stats_p50(container, key, where):
     """One optional stats slot: absent or null is fine (drawn as
     nothing); present means a dict carrying a numeric "p50"."""
@@ -156,31 +164,6 @@ def _stats_p50(container, key, where):
     if not isinstance(stats, dict) or not isinstance(stats.get("p50"), (int, float)):
         raise ValueError(f'{where}: "{key}" must be null or an object with a numeric "p50"')
     return stats
-
-
-def load_curves(payload):
-    """The curves lane contract: "families" is a non-empty list; every
-    family carries a "name" and a non-empty "points" list; every point
-    carries "n" > 0 plus optional ours/theirs stats objects (numeric
-    "p50", ns). Unknown extra keys are ignored (forward-compatible)."""
-    families = payload.get("families")
-    if not isinstance(families, list) or not families:
-        raise ValueError('curves lane: "families" must be a non-empty list')
-    for family in families:
-        if not isinstance(family, dict) or not isinstance(family.get("name"), str) \
-                or not family["name"]:
-            raise ValueError('curves lane: every family needs a "name" string')
-        name = family["name"]
-        points = family.get("points")
-        if not isinstance(points, list) or not points:
-            raise ValueError(f'curves lane family "{name}": "points" must be a non-empty list')
-        for point in points:
-            if not isinstance(point, dict) \
-                    or not isinstance(point.get("n"), (int, float)) or point["n"] <= 0:
-                raise ValueError(f'curves lane family "{name}": every point needs "n" > 0')
-            for side in ("ours", "theirs"):
-                _stats_p50(point, side, f'curves lane family "{name}" point n={point["n"]}')
-    return payload
 
 
 def load_write_throughput(payload):
@@ -209,39 +192,6 @@ def load_write_throughput(payload):
                 if not isinstance(row.get(key), (int, float)):
                     raise ValueError(f'write_throughput lane "{name}" batch '
                                      f'{row["batch"]}: "{key}" must be a number')
-    return payload
-
-
-def load_cold_warm_memo(payload):
-    """The cold_warm_memo lane contract: "families" is a non-empty
-    list; every family carries a "name" plus "ours" (cold/warm/memo)
-    and "theirs" (cold/warm) phase blocks — any phase (and either
-    block) may be null or absent; every present phase carries a numeric
-    "p50". A family with no phase at all is rejected: there would be
-    nothing to draw."""
-    families = payload.get("families")
-    if not isinstance(families, list) or not families:
-        raise ValueError('cold_warm_memo lane: "families" must be a non-empty list')
-    for family in families:
-        if not isinstance(family, dict) or not isinstance(family.get("name"), str) \
-                or not family["name"]:
-            raise ValueError('cold_warm_memo lane: every family needs a "name" string')
-        name = family["name"]
-        present = 0
-        for side, phases in (("ours", ("cold", "warm", "memo")),
-                             ("theirs", ("cold", "warm"))):
-            block = family.get(side)
-            if block is None:
-                continue
-            if not isinstance(block, dict):
-                raise ValueError(
-                    f'cold_warm_memo lane family "{name}": "{side}" must be null or an object')
-            for phase in phases:
-                if _stats_p50(block, phase,
-                              f'cold_warm_memo lane family "{name}" {side}') is not None:
-                    present += 1
-        if not present:
-            raise ValueError(f'cold_warm_memo lane family "{name}": no phase carries stats')
     return payload
 
 
@@ -276,51 +226,67 @@ def load_adversarial(payload):
     return payload
 
 
-def load_churn(payload):
-    """The churn lane contract (DOC-1): "cycles" is a non-empty list;
-    every cycle record carries an integer "cycle" plus "ours"
-    {probe_p50_ns, db_bytes, write_facts_per_sec} and "theirs" {the
-    same three + a boolean "vacuum"} — the VACUUM event is data ON the
-    cycle record, so the chart marker can never drift from the
-    measurement it annotates. lane=="churn" is the dispatch key, so it
-    holds by construction. Unknown extra keys are ignored
-    (forward-compatible); the caller attaches the file path to errors.
-
-    Distinct artifact, for the record: the bench crate's churn runner
-    (crates/bumbledb-bench/src/churn/report.rs) writes churn-report.json
-    ("churn_schema":1, runs -> lanes -> samples) — a different filename
-    with no top-level "lane" discriminant, so it never flows through
-    ingest_report; THIS payload is the viz-facing condensation."""
-    cycles = payload.get("cycles")
-    if not isinstance(cycles, list) or not cycles:
-        raise ValueError('churn lane: "cycles" must be a non-empty list')
-    for record in cycles:
-        if not isinstance(record, dict) or not isinstance(record.get("cycle"), int):
-            raise ValueError('churn lane: every cycle record needs an integer "cycle"')
-        n = record["cycle"]
-        for side, extras in (("ours", ()), ("theirs", ("vacuum",))):
-            block = record.get(side)
-            if not isinstance(block, dict):
-                raise ValueError(f'churn lane cycle {n}: "{side}" must be an object')
-            for key in ("probe_p50_ns", "db_bytes", "write_facts_per_sec"):
-                if not isinstance(block.get(key), (int, float)):
-                    raise ValueError(
-                        f'churn lane cycle {n} "{side}": "{key}" must be a number')
-            for key in extras:
-                if not isinstance(block.get(key), bool):
-                    raise ValueError(
-                        f'churn lane cycle {n} "{side}": "{key}" must be a boolean')
+def load_churn_report(payload):
+    """The churn runner's REAL artifact (churn_schema: 1, the frozen
+    JSON face of crates/bumbledb-bench/src/churn/report.rs): runs ->
+    lanes -> samples. Validated: "runs" non-empty; every run carries a
+    "name", a "mix" object, and non-empty "lanes"; every lane carries a
+    "lane" string, an "engine" in {bumbledb, sqlite}, and non-empty
+    "samples"; every sample carries an integer "cycle", non-empty
+    "probes" ({name, p50_ns} each), and numeric commits_per_sec /
+    maintenance_ns / disk_bytes. The one-ours-one-theirs "lane":"churn"
+    condensation is DELETED — it could not carry the steady run's two
+    SQLite lanes (bare + maint) without hiding one, so no fixture-only
+    path survives. Unknown extra keys are ignored (forward-compatible);
+    the caller attaches the file path to errors."""
+    if payload.get("churn_schema") != 1:
+        raise ValueError('churn report: "churn_schema" must be 1')
+    runs = payload.get("runs")
+    if not isinstance(runs, list) or not runs:
+        raise ValueError('churn report: "runs" must be a non-empty list')
+    for run in runs:
+        if not isinstance(run, dict) or not isinstance(run.get("name"), str) \
+                or not run["name"]:
+            raise ValueError('churn report: every run needs a "name" string')
+        name = run["name"]
+        if not isinstance(run.get("mix"), dict):
+            raise ValueError(f'churn report run "{name}": "mix" must be an object')
+        lanes = run.get("lanes")
+        if not isinstance(lanes, list) or not lanes:
+            raise ValueError(f'churn report run "{name}": "lanes" must be a non-empty list')
+        for lane in lanes:
+            if not isinstance(lane, dict) or not isinstance(lane.get("lane"), str) \
+                    or not lane["lane"]:
+                raise ValueError(f'churn report run "{name}": every lane needs a "lane" string')
+            where = f'churn report run "{name}" lane "{lane["lane"]}"'
+            if lane.get("engine") not in ("bumbledb", "sqlite"):
+                raise ValueError(f'{where}: "engine" must be "bumbledb" or "sqlite"')
+            samples = lane.get("samples")
+            if not isinstance(samples, list) or not samples:
+                raise ValueError(f'{where}: "samples" must be a non-empty list')
+            for sample in samples:
+                if not isinstance(sample, dict) or not isinstance(sample.get("cycle"), int):
+                    raise ValueError(f'{where}: every sample needs an integer "cycle"')
+                cycle = sample["cycle"]
+                for key in ("commits_per_sec", "maintenance_ns", "disk_bytes"):
+                    if not isinstance(sample.get(key), (int, float)):
+                        raise ValueError(f'{where} cycle {cycle}: "{key}" must be a number')
+                probes = sample.get("probes")
+                if not isinstance(probes, list) or not probes:
+                    raise ValueError(f'{where} cycle {cycle}: "probes" must be a non-empty list')
+                for probe in probes:
+                    if not isinstance(probe, dict) \
+                            or not isinstance(probe.get("name"), str) or not probe["name"] \
+                            or not isinstance(probe.get("p50_ns"), (int, float)):
+                        raise ValueError(f'{where} cycle {cycle}: every probe needs a '
+                                         '"name" string and a numeric "p50_ns"')
     return payload
 
 
 # Lane name -> contract loader; a lane without one is stored raw.
 LANE_LOADERS = {
-    "storage": load_storage,
-    "curves": load_curves,
     "write_throughput": load_write_throughput,
-    "cold_warm_memo": load_cold_warm_memo,
     "adversarial": load_adversarial,
-    "churn": load_churn,
 }
 
 
@@ -350,30 +316,74 @@ def ingest_report(inputs, path):
         print(f"note: {path} is neither a lane payload nor a RunReport — skipped")
 
 
+# The night dir's real lane reports, auto-ingested by discovery: the
+# canonical child path, the inputs key EXACTLY as the matching flag sets
+# it (flags override discovery), and the contract loader (None = the
+# flag-shaped reports, consumed raw by their charts).
+NIGHT_LANE_REPORTS = (
+    ("storage/storage-report.json", "storage_report", None),
+    ("writes/writes-report.json", "writes_rates", None),
+    ("curves/curves-report.json", "curves_report", None),
+    ("churn/churn-report.json", "churn_report", load_churn_report),
+)
+
+
+def contaminated(inputs, report_path):
+    """The contamination record is a FILE on the pinned run dir
+    (CONTAMINATED.md, the recorded ruling): a marked run is excluded
+    from every merge and counted — it stays committed as the honest
+    record, and it can never leak into a chart by someone forgetting a
+    footnote."""
+    marker = Path(report_path).parent / "CONTAMINATED.md"
+    if not marker.exists():
+        return False
+    inputs["contaminated_runs"] += 1
+    print(f"note: {Path(report_path).parent.name} excluded — {marker.name} "
+          "(contaminated run, excluded and counted)")
+    return True
+
+
 def discover(night_dir):
     """A night out-dir -> the inputs dict: every one-level child's
-    report.json through the lane discriminant, plus the scenario
-    artifact one level down — the first scenarios.json when present
-    (the tagged union is the true representation), else the first
-    scenarios.md (its rendering)."""
-    inputs = {"durable_runs": [], "ephemeral_runs": []}
+    report.json through the lane discriminant (CONTAMINATED.md-marked
+    runs excluded and counted), the scenario artifact one level down —
+    the first scenarios.json when present (the tagged union is the true
+    representation), else the first scenarios.md (its rendering) — and
+    the real lane reports from their canonical night paths
+    (NIGHT_LANE_REPORTS; the flags override)."""
+    inputs = {"durable_runs": [], "ephemeral_runs": [], "contaminated_runs": 0}
     night = Path(night_dir)
     for report_path in sorted(night.glob("*/report.json")):
-        ingest_report(inputs, report_path)
+        if not contaminated(inputs, report_path):
+            ingest_report(inputs, report_path)
     for pattern, kind in (("*/scenarios.json", "json"), ("*/scenarios.md", "md")):
         found = sorted(night.glob(pattern))
         if found:
             inputs["scenarios"] = (kind, str(found[0]))
             break
+    for rel, key, loader in NIGHT_LANE_REPORTS:
+        path = night / rel
+        if not path.exists():
+            continue
+        payload = json.loads(path.read_text())
+        if loader:
+            try:
+                payload = loader(payload)
+            except ValueError as e:
+                raise SystemExit(f"{path}: {e}")
+        inputs[key] = payload
     return inputs
 
 
 def gather(run_dirs):
     """Legacy mode -> the same inputs dict: each positional run dir's
-    report.json, classified exactly like discovery."""
-    inputs = {"durable_runs": [], "ephemeral_runs": []}
+    report.json, classified exactly like discovery (the contamination
+    marker honored identically)."""
+    inputs = {"durable_runs": [], "ephemeral_runs": [], "contaminated_runs": 0}
     for d in run_dirs:
-        ingest_report(inputs, Path(d) / "report.json")
+        report_path = Path(d) / "report.json"
+        if not contaminated(inputs, report_path):
+            ingest_report(inputs, report_path)
     return inputs
 
 
@@ -403,15 +413,106 @@ def merge_runs(runs):
 
 def derive_pools(inputs):
     """The merged reads/writes tables ride on the preferred pool —
-    durable when non-empty, else ephemeral — with the pool's kind and
-    size recorded for captions."""
+    durable when non-empty, else ephemeral — with the pool's kind,
+    size, corpus scale, host, and shared-machine flag recorded for
+    captions (a boosted number never rides a chart without its flag)."""
     for kind in ("durable", "ephemeral"):
         pool = inputs[f"{kind}_runs"]
         if pool:
             inputs["reads"], inputs["writes"] = merge_runs(pool)
             inputs["store_kind"] = kind
             inputs["rep_count"] = len(pool)
+            provenance = pool[0].get("provenance") or {}
+            inputs["host"] = provenance.get("host", "unknown host")
+            inputs["shared_machine"] = any(
+                (r.get("provenance") or {}).get("shared_machine") for r in pool)
+            inputs["scale"] = (pool[0].get("config") or {}).get("scale", "?")
             return
+
+
+def prov_note(payload):
+    """The shared-machine caveat from the payload's OWN provenance
+    stamp — a lane measured on a loaded machine under boosted QoS says
+    so on the chart itself (owner ruling 2026-07-20; the protocol lives
+    in docs/architecture/61-bench-lanes.md)."""
+    provenance = payload.get("provenance") if isinstance(payload, dict) else None
+    if isinstance(provenance, dict) and provenance.get("shared_machine"):
+        return " · shared-machine night, boosted QoS"
+    return ""
+
+
+def pool_note(inputs):
+    """The merged-pool caption tail: min-of-N, store kind, exclusions,
+    and the shared-machine caveat."""
+    note = f"min-of-{inputs['rep_count']}, {inputs['store_kind']} store"
+    if inputs.get("contaminated_runs"):
+        n = inputs["contaminated_runs"]
+        note += f" · {n} contaminated run{'s' if n != 1 else ''} excluded and counted"
+    if inputs.get("shared_machine"):
+        note += " · shared-machine night, boosted QoS"
+    return note
+
+
+def derive_write_throughput(inputs):
+    """writes-report.json's commit/delete batch ladders -> the
+    write_throughput lane payload, THROUGH the lane's contract loader
+    (the contract is the adapter's output shape). One derived
+    durability lane per (report lane × ladder): the batch ladder is the
+    x-axis, rows/sec both engines the y. bulk_append is a single point,
+    not a ladder — it stays fully drawn in bench-writes-rates.svg. A
+    real write_throughput lane payload, once an emitter writes one,
+    wins over this derivation."""
+    if inputs.get("write_throughput") or not inputs.get("writes_rates"):
+        return
+    lanes = []
+    for lane in inputs["writes_rates"].get("lanes", []):
+        for prefix, label in (("commit_b", "commits"), ("delete_b", "deletes")):
+            batches = [{"batch": row["batch"],
+                        "ours_facts_per_sec": row["rows_per_sec_ours"],
+                        "theirs_facts_per_sec": row["rows_per_sec_theirs"]}
+                       for row in lane["rows"] if row["name"].startswith(prefix)]
+            if batches:
+                lanes.append({"name": f"{lane['lane']} {label}", "batches": batches})
+    if lanes:
+        payload = {"lane": "write_throughput", "lanes": lanes,
+                   "provenance": inputs["writes_rates"].get("provenance")}
+        inputs["write_throughput"] = load_write_throughput(payload)
+
+
+def derive_adversarial(inputs):
+    """scenarios.json's exceeded_cap lanes -> the adversarial lane
+    payload, THROUGH the lane's contract loader — the DNF data's one
+    real home while the adversarial subcommand remains unlanded
+    (SKIP-UNAVAILABLE by design). Only capped lanes join: a timed lane
+    already draws in the scenario and world charts. The cap => null law
+    holds by construction (an exceeded_cap lane HAS no stats). A real
+    adversarial lane payload wins over this derivation."""
+    if inputs.get("adversarial") or not inputs.get("scenarios"):
+        return
+    kind, path = inputs["scenarios"]
+    if kind != "json":
+        return
+    queries, caps = [], set()
+    for scenario, query, lane_name, ours, lane in load_scenarios_json(path):
+        if lane["outcome"] == "exceeded_cap":
+            caps.add(lane["cap_ms"])
+            queries.append({"name": f"{scenario}/{query}" + lane_suffix(lane_name),
+                            "ours": ours, "theirs": None,
+                            "theirs_exceeded_cap": True})
+    if not queries:
+        return
+    if len(caps) != 1:
+        raise SystemExit(f"{path}: exceeded_cap lanes carry mixed cap_ms values "
+                         f"{sorted(caps)} — one adversarial payload cannot state them")
+    payload = {"lane": "adversarial", "cap_ms": caps.pop(), "queries": queries}
+    inputs["adversarial"] = load_adversarial(payload)
+
+
+def derive_lanes(inputs):
+    """Every derived chart input, in one place, after discovery and
+    flags — real payloads always win over derivations."""
+    derive_write_throughput(inputs)
+    derive_adversarial(inputs)
 
 
 def _md_p50(cell):
@@ -588,14 +689,20 @@ def paired_bars(ax, names, table, note_ratio=True):
 
 def chart_vs_sqlite(inputs, out):
     reads = inputs["reads"]
-    names = [n for n in READ_ORDER if n in reads]
-    fig, ax = plt.subplots(figsize=(9.6, 6.2), facecolor=BG)
+    names = ordered(reads, READ_ORDER)
+    fig, ax = plt.subplots(figsize=(9.6, max(6.2, 0.30 * len(names) + 1.6)),
+                           facecolor=BG)
     dark(ax)
     paired_bars(ax, names, reads)
-    ax.set_xlim(2e2, 2e9)
-    ax.set_title("read families · p50, min-of-3 · same corpus, oracle-verified identical results",
+    values = [slot[side]["p50"] for slot in reads.values()
+              for side in ("ours", "theirs") if side in slot]
+    ax.set_xlim(min(values) * 0.4, max(values) * 40)
+    ax.set_title(f"read families · p50, min-of-{inputs['rep_count']} · "
+                 "same corpus, oracle-verified identical results",
                  fontsize=12, loc="left", pad=14, family="monospace")
-    fig.text(0.01, 0.005, "log scale — shorter is faster · S-scale ledger corpus · Apple M2 Max",
+    fig.text(0.01, 0.005,
+             f"log scale — shorter is faster · {inputs['scale']}-scale corpus · "
+             f"{inputs['host']} · {pool_note(inputs)}",
              fontsize=8, color=DIM, family="monospace")
     fig.tight_layout()
     fig.savefig(out, facecolor=BG, bbox_inches="tight")
@@ -604,26 +711,33 @@ def chart_vs_sqlite(inputs, out):
 
 def chart_speedup(inputs, out):
     reads = inputs["reads"]
-    names = [n for n in READ_ORDER if n in reads and "theirs" in reads[n]]
+    names = [n for n in ordered(reads, READ_ORDER) if "theirs" in reads[n]]
     ratios = [reads[n]["theirs"]["p50"] / reads[n]["ours"]["p50"] for n in names]
-    fig, ax = plt.subplots(figsize=(9.6, 5.2), facecolor=BG)
+    fig, ax = plt.subplots(figsize=(9.6, max(5.2, 0.30 * len(names) + 1.6)),
+                           facecolor=BG)
     dark(ax)
-    ax.barh(range(len(names)), ratios, height=0.62, color=OURS, zorder=3)
+    ax.barh(range(len(names)), ratios, height=0.62,
+            color=[OURS if r >= 1 else "#f85149" for r in ratios], zorder=3)
     for y, r in enumerate(ratios):
-        ax.text(r * 1.04, y, f"{r:.0f}×" if r >= 10 else f"{r:.1f}×",
-                va="center", fontsize=13, color=OURS, fontweight="bold",
-                family="monospace")
+        ax.text(max(r, 1.0) * 1.06, y, f"{r:.0f}×" if r >= 10 else f"{r:.1f}×",
+                va="center", fontsize=12, color=OURS if r >= 1 else "#f85149",
+                fontweight="bold", family="monospace")
     ax.axvline(1.0, color=DIM, linewidth=1, linestyle="--")
     ax.text(1.0, -0.8, "parity", fontsize=9, color=DIM, ha="center", family="monospace")
     ax.set_yticks(range(len(names)), names, fontsize=11, family="monospace", color=FG)
     ax.invert_yaxis()
     ax.set_xscale("log")
-    ax.set_xlim(0.5, 700)
-    ax.set_xticks([1, 2, 5, 10, 20, 50, 100, 200, 500],
-                  ["1×", "2×", "5×", "10×", "20×", "50×", "100×", "200×", "500×"])
+    xlo, xhi = min(0.5, min(ratios) * 0.7), max(700, max(ratios) * 2)
+    ax.set_xlim(xlo, xhi)
+    ticks = [t for t in (1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000)
+             if xlo < t < xhi]
+    ax.set_xticks(ticks, [f"{t}×" for t in ticks])
     ax.grid(axis="x", color=GRID, linewidth=0.6, zorder=0)
-    ax.set_title("speedup over SQLite · read-family p50 multiples · min-of-3 both sides",
+    ax.set_title("speedup over SQLite · read-family p50 multiples · "
+                 f"min-of-{inputs['rep_count']} both sides",
                  fontsize=12, loc="left", pad=14, family="monospace")
+    fig.text(0.01, 0.005, pool_note(inputs), fontsize=8, color=DIM,
+             family="monospace")
     fig.tight_layout()
     fig.savefig(out, facecolor=BG, bbox_inches="tight")
     plt.close(fig)
@@ -631,8 +745,9 @@ def chart_speedup(inputs, out):
 
 def chart_tails(inputs, out):
     reads = inputs["reads"]
-    names = [n for n in READ_ORDER if n in reads and "theirs" in reads[n]]
-    fig, ax = plt.subplots(figsize=(9.6, 6.2), facecolor=BG)
+    names = [n for n in ordered(reads, READ_ORDER) if "theirs" in reads[n]]
+    fig, ax = plt.subplots(figsize=(9.6, max(6.2, 0.30 * len(names) + 1.6)),
+                           facecolor=BG)
     dark(ax)
     for y, n in enumerate(names):
         for side, color, dy in (("theirs", THEIRS, 0.18), ("ours", OURS, -0.18)):
@@ -661,7 +776,9 @@ def chart_tails(inputs, out):
     # draw (0.34-2.01 pair ratios on identical binaries), not an engine
     # mode. Mechanism + falsification evidence: the family doc comments
     # (crates/bumbledb-bench/src/{calendar/families.rs,families/read.rs}).
-    fig.text(0.01, 0.005, "bimodal families (containment_walk, balance, skew, chain) show their true tails — gated on p95, published anyway",
+    fig.text(0.01, 0.005,
+             "bimodal families (containment_walk, balance, skew, chain) show their "
+             f"true tails — gated on p95, published anyway · {pool_note(inputs)}",
              fontsize=8, color=DIM, family="monospace")
     fig.tight_layout()
     fig.savefig(out, facecolor=BG, bbox_inches="tight")
@@ -876,8 +993,7 @@ def chart_ratio_waterfall(inputs, out):
     if dnf:
         title += f"\n{dnf} lane{'s' if dnf != 1 else ''} DNF > cap — excluded and counted"
     ax.set_title(title, fontsize=12, loc="left", pad=14, family="monospace")
-    footer = (f"ledger+calendar families (min-of-{inputs['rep_count']}, "
-              f"{inputs['store_kind']} store)")
+    footer = f"ledger+calendar families ({pool_note(inputs)})"
     if srows:
         footer += " + scenario worlds"
     fig.text(0.01, 0.005, footer, fontsize=8, color=DIM, family="monospace")
@@ -890,8 +1006,9 @@ def chart_tails_fan(inputs, out):
     """tails-fan.svg: the p50 → p90 → p99 fan per read family, both
     engines — the legacy bench-tails.svg (p95) chart stays untouched."""
     reads = inputs["reads"]
-    names = [n for n in READ_ORDER if n in reads and "theirs" in reads[n]]
-    fig, ax = plt.subplots(figsize=(9.6, 6.2), facecolor=BG)
+    names = [n for n in ordered(reads, READ_ORDER) if "theirs" in reads[n]]
+    fig, ax = plt.subplots(figsize=(9.6, max(6.2, 0.30 * len(names) + 1.6)),
+                           facecolor=BG)
     dark(ax)
     for y, n in enumerate(names):
         for side, color, dy in (("theirs", THEIRS, 0.18), ("ours", OURS, -0.18)):
@@ -914,8 +1031,7 @@ def chart_tails_fan(inputs, out):
     ax.set_title("latency tail fan · p50 → p90 → p99 per read family, both engines",
                  fontsize=12, loc="left", pad=14, family="monospace")
     fig.text(0.01, 0.005,
-             f"log scale · line spans p50 → p99 · min-of-{inputs['rep_count']} merge, "
-             f"{inputs['store_kind']} store",
+             f"log scale · line spans p50 → p99 · {pool_note(inputs)}",
              fontsize=8, color=DIM, family="monospace")
     fig.tight_layout()
     fig.savefig(out, facecolor=BG, bbox_inches="tight")
@@ -924,14 +1040,19 @@ def chart_tails_fan(inputs, out):
 
 def chart_writes(inputs, out):
     writes = inputs["writes"]
-    names = [n for n in WRITE_ORDER if n in writes]
-    fig, ax = plt.subplots(figsize=(9.6, 3.4), facecolor=BG)
+    names = ordered(writes, WRITE_ORDER)
+    fig, ax = plt.subplots(figsize=(9.6, max(3.4, 0.55 * len(names) + 1.6)),
+                           facecolor=BG)
     dark(ax)
     paired_bars(ax, names, writes, note_ratio=False)
-    ax.set_xlim(5e5, 8e9)
+    values = [slot[side]["p50"] for slot in writes.values()
+              for side in ("ours", "theirs") if side in slot]
+    ax.set_xlim(min(values) * 0.4, max(values) * 40)
     ax.set_title("write + cold families · p50 · where fsync physics rules, honesty does too",
                  fontsize=12, loc="left", pad=14, family="monospace")
-    fig.text(0.01, 0.005, "durable commits are an fsync-latency product on both engines; shown as measured",
+    fig.text(0.01, 0.005,
+             "durable commits are an fsync-latency product on both engines; "
+             f"shown as measured · {pool_note(inputs)}",
              fontsize=8, color=DIM, family="monospace")
     fig.tight_layout()
     fig.savefig(out, facecolor=BG, bbox_inches="tight")
@@ -939,44 +1060,6 @@ def chart_writes(inputs, out):
 
 
 # -------------------------------------------------- the metric lanes
-
-
-def chart_storage_per_fact(inputs, out):
-    """storage-bytes-per-fact.svg: grouped horizontal bars per world —
-    ours vs SQLite bytes per stored fact, linear scale. This chart does
-    not flatter us (the pinned store block shows ours ~4× SQLite's
-    bytes); it renders whatever the lane payload says."""
-    worlds = inputs["storage"]["worlds"]
-    ys = range(len(worlds))
-    ours = [w["ours_bytes"] / w["facts"] for w in worlds]
-    theirs = [w["theirs_bytes"] / w["facts"] for w in worlds]
-    fig, ax = plt.subplots(figsize=(9.6, 1.0 * len(worlds) + 1.9), facecolor=BG)
-    dark(ax)
-    ax.barh([y + 0.19 for y in ys], theirs, height=0.34, color=THEIRS,
-            label="SQLite", zorder=3)
-    ax.barh([y - 0.19 for y in ys], ours, height=0.34, color=OURS,
-            label="bumbledb", zorder=3)
-    peak = max(ours + theirs)
-    for y, (o, t) in enumerate(zip(ours, theirs)):
-        ax.text(o + peak * 0.015, y - 0.19, f"{o:.0f} B/fact", va="center",
-                fontsize=9, color=OURS, fontweight="bold", family="monospace")
-        ax.text(t + peak * 0.015, y + 0.19, f"{t:.0f} B/fact", va="center",
-                fontsize=8, color=DIM, family="monospace")
-    ax.set_yticks(list(ys), [w["name"] for w in worlds], fontsize=10,
-                  family="monospace", color=FG)
-    ax.invert_yaxis()
-    ax.set_xlim(0, peak * 1.22)
-    ax.set_xlabel("bytes per stored fact", fontsize=9, family="monospace")
-    ax.grid(axis="x", color=GRID, linewidth=0.6, zorder=0)
-    ax.legend(loc="lower right", facecolor=BG, edgecolor=GRID,
-              labelcolor=FG, fontsize=9)
-    ax.set_title("storage · bytes per stored fact per world · both engines",
-                 fontsize=12, loc="left", pad=14, family="monospace")
-    fig.text(0.01, 0.005, "bytes per stored fact · lower is smaller · report-class",
-             fontsize=8, color=DIM, family="monospace")
-    fig.tight_layout()
-    fig.savefig(out, facecolor=BG, bbox_inches="tight")
-    plt.close(fig)
 
 
 def chart_storage(inputs, out):
@@ -1065,7 +1148,7 @@ def chart_storage(inputs, out):
 
     fig.text(0.01, 0.005,
              "storage lane · report-class · every byte behind a count cross-check "
-             "against the generator stream",
+             f"against the generator stream{prov_note(report)}",
              fontsize=8, color=DIM, family="monospace")
     fig.tight_layout()
     fig.savefig(out, facecolor=BG, bbox_inches="tight")
@@ -1113,7 +1196,7 @@ def chart_writes_rates(inputs, out):
                   labelcolor=FG, fontsize=8)
     fig.text(0.01, 0.005,
              "writes lane · report-class · post-state value-verified (count arithmetic "
-             "+ body multisets, ids projected out) · log scale",
+             f"+ body multisets, ids projected out) · log scale{prov_note(report)}",
              fontsize=8, color=DIM, family="monospace")
     fig.tight_layout()
     fig.savefig(out, facecolor=BG, bbox_inches="tight")
@@ -1182,6 +1265,7 @@ def chart_curves(inputs, out):
         footer += (f" · {capped_total} SQLite point"
                    + ("s" if capped_total != 1 else "")
                    + " exceeded the cap — excluded and counted")
+    footer += prov_note(report)
     fig.text(0.01, 0.005, footer, fontsize=8, color=DIM, family="monospace")
     fig.tight_layout()
     fig.savefig(out, facecolor=BG, bbox_inches="tight")
@@ -1229,64 +1313,9 @@ def chart_warmth(inputs, out):
               labelcolor=FG, fontsize=9)
     fig.text(0.01, 0.005,
              "what it prices: the (relation, generation) image cache and the "
-             "resolved-filter view slots — the memo effect explicit",
+             f"resolved-filter view slots — the memo effect explicit{prov_note(report)}",
              fontsize=8, color=DIM, family="monospace")
     fig.tight_layout()
-    fig.savefig(out, facecolor=BG, bbox_inches="tight")
-    plt.close(fig)
-
-
-def chart_curves_loglog(inputs, out):
-    """curves-loglog.svg: the exponent chart — small multiples, one
-    log-log axes per curve family, n vs p50 for both engines, each
-    series annotated with its least-squares-fitted exponent beside the
-    last point. The slope, not the height, is the story."""
-    families = inputs["curves"]["families"]
-    cols = 2
-    rows_n = (len(families) + cols - 1) // cols
-    fig, axes = plt.subplots(rows_n, cols, facecolor=BG,
-                             figsize=(9.6, 3.2 * rows_n + 0.9))
-    flat = list(axes.flat)
-    for ax, family in zip(flat, families):
-        dark(ax)
-        p50s = [p[side]["p50"] for p in family["points"]
-                for side in ("ours", "theirs") if p.get(side)]
-        for side, color, label in (("ours", OURS, "bumbledb"),
-                                   ("theirs", THEIRS, "SQLite")):
-            pts = [(p["n"], p[side]["p50"]) for p in family["points"] if p.get(side)]
-            if not pts:
-                continue
-            xs, ys = zip(*pts)
-            ax.plot(xs, ys, "-", color=color, marker="o", ms=4, linewidth=2,
-                    zorder=3, label=label)
-            slope = fit_exponent(xs, ys)
-            if slope is not None:
-                ax.annotate(f"~n^{slope:.2f}", (xs[-1], ys[-1]),
-                            textcoords="offset points", xytext=(5, 4),
-                            fontsize=8, color=color, family="monospace")
-        ax.set_xscale("log")
-        ax.set_yscale("log")
-        ax.yaxis.set_major_formatter(FuncFormatter(fmt_us))
-        # A family spanning less than a decade auto-labels minor ticks
-        # in scientific notation — keep the µs voice there; a wide span
-        # keeps its minors silent (the majors carry the story).
-        if p50s and max(p50s) / min(p50s) < 10:
-            ax.yaxis.set_minor_formatter(FuncFormatter(fmt_us))
-        ax.set_xlabel("n", fontsize=9, family="monospace")
-        ax.grid(color=GRID, linewidth=0.6, zorder=0)
-        ax.set_title(family["name"], fontsize=11, loc="left", pad=8,
-                     family="monospace")
-        ax.legend(loc="upper left", facecolor=BG, edgecolor=GRID,
-                  labelcolor=FG, fontsize=8)
-    for ax in flat[len(families):]:
-        ax.set_visible(False)
-    fig.suptitle("scale curves · p50 vs corpus size, log-log · the fitted "
-                 "exponent is the story",
-                 x=0.01, y=0.995, ha="left", fontsize=12, color=FG,
-                 family="monospace")
-    fig.text(0.01, 0.005, "report-class · slopes from least-squares on log-log",
-             fontsize=8, color=DIM, family="monospace")
-    fig.tight_layout(rect=(0, 0.02, 1, 0.95))
     fig.savefig(out, facecolor=BG, bbox_inches="tight")
     plt.close(fig)
 
@@ -1323,74 +1352,8 @@ def chart_write_throughput(inputs, out):
                  fontsize=12, loc="left", pad=14, family="monospace")
     fig.text(0.01, 0.005,
              "durable lanes are an fsync-latency product on both engines — "
-             "shown as measured · report-class",
-             fontsize=8, color=DIM, family="monospace")
-    fig.tight_layout()
-    fig.savefig(out, facecolor=BG, bbox_inches="tight")
-    plt.close(fig)
-
-
-# The cold_warm_memo bar roster, in draw order: (side, phase, color,
-# alpha) — ours at three warmth alphas, theirs at two; memo has no
-# SQLite twin, so a "theirs memo" bar is not in the roster at all.
-CWM_BARS = (
-    ("ours", "cold", OURS, 0.45),
-    ("ours", "warm", OURS, 0.75),
-    ("ours", "memo", OURS, 1.0),
-    ("theirs", "cold", THEIRS, 0.55),
-    ("theirs", "warm", THEIRS, 0.9),
-)
-
-
-def chart_cold_warm_memo(inputs, out):
-    """cold-warm-memo.svg: the panel — horizontal grouped bars per
-    family, up to five (ours cold/warm/memo, theirs cold/warm), phase
-    named in each bar's label; a missing phase simply has no bar."""
-    families = inputs["cold_warm_memo"]["families"]
-    fig_rows = []  # (y, value, color, alpha, label, label_color, bold)
-    yticks, ylabels = [], []
-    y = 0.0
-    for family in families:
-        group_start = y
-        for side, phase, color, alpha in CWM_BARS:
-            block = family.get(side) or {}
-            stats = block.get(phase)
-            if not stats:
-                continue
-            engine = "bumbledb" if side == "ours" else "SQLite"
-            fig_rows.append((y, stats["p50"], color, alpha,
-                             f"{engine} {phase}  {fmt_us(stats['p50'])}",
-                             OURS if side == "ours" else DIM,
-                             side == "ours"))
-            y += 1.0
-        yticks.append((group_start + y - 1.0) / 2)
-        ylabels.append(family["name"])
-        y += 0.8  # the gap between family groups
-    fig, ax = plt.subplots(figsize=(9.6, 0.42 * y + 1.9), facecolor=BG)
-    dark(ax)
-    for row_y, value, color, alpha, label, label_color, bold in fig_rows:
-        ax.barh(row_y, value, height=0.72, color=color, alpha=alpha, zorder=3)
-        ax.text(value * 1.12, row_y, label, va="center", fontsize=8,
-                color=label_color, family="monospace",
-                fontweight="bold" if bold else "normal")
-    ax.set_yticks(yticks, ylabels, fontsize=10, family="monospace", color=FG)
-    ax.invert_yaxis()
-    ax.set_xscale("log")
-    values = [value for _, value, *_ in fig_rows]
-    ax.set_xlim(min(values) * 0.5, max(values) * 40)
-    ax.xaxis.set_major_formatter(FuncFormatter(fmt_us))
-    ax.grid(axis="x", color=GRID, linewidth=0.6, zorder=0)
-    from matplotlib.patches import Patch
-    ax.legend(handles=[Patch(color=OURS, label="bumbledb (cold → warm → memo)"),
-                       Patch(color=THEIRS, label="SQLite (cold → warm)")],
-              loc="lower right", facecolor=BG, edgecolor=GRID,
-              labelcolor=FG, fontsize=8)
-    ax.set_title("cold → warm → memo · p50 per phase, both engines where a "
-                 "twin exists",
-                 fontsize=12, loc="left", pad=14, family="monospace")
-    fig.text(0.01, 0.005,
-             "memo is the image-cache-hot phase — no SQLite twin exists; "
-             "report-class",
+             "shown as measured · report-class"
+             + prov_note(inputs["write_throughput"]),
              fontsize=8, color=DIM, family="monospace")
     fig.tight_layout()
     fig.savefig(out, facecolor=BG, bbox_inches="tight")
@@ -1401,7 +1364,10 @@ def chart_adversarial_dnf(inputs, out):
     """adversarial-dnf.svg: paired horizontal log bars, ours vs SQLite
     p50 — a capped twin has NO stats to draw (the loader enforced the
     cap => null law), so its bar is the cap itself: hatched, hollow,
-    drawn to cap_ms, labeled DNF in red, never given a ratio."""
+    drawn to cap_ms, labeled DNF in red, never given a ratio. The
+    payload arrives from an adversarial lane report.json when one
+    lands, else derived from scenarios.json's exceeded_cap lanes
+    (derive_adversarial) — the same contract either way."""
     report = inputs["adversarial"]
     cap_ms = report["cap_ms"]
     cap_ns = cap_ms * 1e6
@@ -1448,7 +1414,7 @@ def chart_adversarial_dnf(inputs, out):
                              label="SQLite DNF — drawn to the cap")],
               loc="lower right", facecolor=BG, edgecolor=GRID,
               labelcolor=FG, fontsize=8)
-    ax.set_title("adversarial lane · ours vs SQLite p50 · capped twins shown "
+    ax.set_title("adversarial DNFs · ours vs SQLite p50 · capped twins shown "
                  "as capped, never as numbers",
                  fontsize=12, loc="left", pad=14, family="monospace")
     fig.text(0.01, 0.005,
@@ -1460,82 +1426,170 @@ def chart_adversarial_dnf(inputs, out):
     plt.close(fig)
 
 
-def chart_churn_series(inputs, out, key, formatter, yscale, title):
-    """The one churn time-series scaffold behind the three churn charts:
-    x = cycle (integer ticks), one line per engine (o markers, ours
-    amber / theirs grey), y drawn through the given accessor key,
-    formatter, and scale ("auto" goes log only when the payload's value
-    spread exceeds 20x, else linear). Every cycle whose theirs.vacuum
-    is true gets the identical treatment on every chart: a dotted grey
-    vertical line under the series, a downward triangle on the SQLite
-    point at that cycle, and one VACUUM label near the axes top."""
-    payload = inputs["churn"]
-    cycles = payload["cycles"]
-    xs = [c["cycle"] for c in cycles]
-    ours = [c["ours"][key] for c in cycles]
-    theirs = [c["theirs"][key] for c in cycles]
-    vacuums = [(c["cycle"], c["theirs"][key]) for c in cycles if c["theirs"]["vacuum"]]
-    fig, ax = plt.subplots(figsize=(9.6, 4.8), facecolor=BG)
-    dark(ax)
-    for x, _ in vacuums:
-        ax.axvline(x, color=THEIRS, linewidth=1.1, linestyle=":", alpha=0.7,
-                   zorder=1)
-        ax.text(x, 0.97, "VACUUM", transform=ax.get_xaxis_transform(),
-                ha="center", va="top", fontsize=8, color=THEIRS,
-                family="monospace")
-    ax.plot(xs, theirs, "-", color=THEIRS, marker="o", ms=4.5, linewidth=2,
-            zorder=3, label="SQLite")
-    ax.plot(xs, ours, "-", color=OURS, marker="o", ms=4.5, linewidth=2,
-            zorder=3, label="bumbledb")
-    if vacuums:
-        vx, vy = zip(*vacuums)
-        ax.plot(vx, vy, "v", ms=8, color=THEIRS, zorder=4)
-    values = ours + theirs
-    if yscale == "auto":
-        yscale = "log" if max(values) / min(values) > 20 else "linear"
-    ax.set_yscale(yscale)
-    ax.margins(y=0.18)  # headroom for the VACUUM labels at the axes top
-    ax.yaxis.set_major_formatter(FuncFormatter(formatter))
-    # A series spanning less than a decade on a log axis auto-labels
-    # minor ticks in scientific notation — keep the lane's voice there
-    # (the curves-loglog precedent).
-    if yscale == "log" and max(values) / min(values) < 10:
-        ax.yaxis.set_minor_formatter(FuncFormatter(formatter))
-    ax.xaxis.set_major_locator(MaxNLocator(integer=True))
-    ax.set_xlabel("cycle", fontsize=9, family="monospace")
-    ax.grid(color=GRID, linewidth=0.6, zorder=0)
-    ax.legend(loc="best", facecolor=BG, edgecolor=GRID, labelcolor=FG,
-              fontsize=9)
-    ax.set_title(title.format(probe_family=payload.get("probe_family", "probe")),
-                 fontsize=12, loc="left", pad=14, family="monospace")
-    fig.text(0.01, 0.005,
-             f"churn lane · {len(cycles)} cycles × "
-             f"{payload.get('cycle_facts', '?')} facts delete+insert · "
-             "VACUUM events marked · report-class",
-             fontsize=8, color=DIM, family="monospace")
-    fig.tight_layout()
-    fig.savefig(out, facecolor=BG, bbox_inches="tight")
-    plt.close(fig)
+def chart_churn_series(inputs, out, stem, values_of, formatter, yscale, what):
+    """The one churn time-series scaffold behind every churn chart: one
+    FILE PER RUN (the world-*.svg multi-file idiom), one line per lane
+    in that run — nothing condensed away, nothing hidden. Engine picks
+    the color (ours amber, SQLite grey), the Nth lane of an engine
+    picks the Nth linestyle. Every sample whose maintenance_ns > 0 (the
+    sqlite-maint lane's VACUUM+ANALYZE window, recorded BY the run)
+    draws a downward triangle on that lane's point — the marker is data
+    on the sample, so it can never drift from the measurement it
+    annotates. The title names the run, its cycle mix, and the working
+    set; yscale "auto" goes log only past a 20x value spread."""
+    report = inputs["churn_report"]
+    config = report.get("config", {})
+    out_dir = Path(out).parent
+    written = []
+    for run in report["runs"]:
+        fig, ax = plt.subplots(figsize=(9.6, 4.8), facecolor=BG)
+        dark(ax)
+        values = churn_series(ax, run, values_of)
+        if yscale == "auto":
+            scale = "log" if max(values) / max(min(values), 1e-12) > 20 else "linear"
+        else:
+            scale = yscale
+        ax.set_yscale(scale)
+        ax.yaxis.set_major_formatter(FuncFormatter(formatter))
+        # A series spanning less than a decade on a log axis auto-labels
+        # minor ticks in scientific notation — keep the lane's voice there.
+        if scale == "log" and max(values) / max(min(values), 1e-12) < 10:
+            ax.yaxis.set_minor_formatter(FuncFormatter(formatter))
+        ax.xaxis.set_major_locator(MaxNLocator(integer=True))
+        ax.set_xlabel("cycle", fontsize=9, family="monospace")
+        ax.grid(color=GRID, linewidth=0.6, zorder=0)
+        ax.legend(loc="best", facecolor=BG, edgecolor=GRID, labelcolor=FG,
+                  fontsize=8)
+        mix = run.get("mix", {})
+        mix_note = " ".join(f"{k}={v}" for k, v in mix.items())
+        ax.set_title(f"churn · run {run['name']} ({mix_note}, working set "
+                     f"{run.get('working_set', '?')}) · {what}",
+                     fontsize=12, loc="left", pad=14, family="monospace")
+        fig.text(0.01, 0.005, churn_footer(report, config), fontsize=8,
+                 color=DIM, family="monospace")
+        fig.tight_layout()
+        outpath = out_dir / f"{stem}-{run['name']}.svg"
+        fig.savefig(outpath, facecolor=BG, bbox_inches="tight")
+        plt.close(fig)
+        written.append(outpath)
+    return written
 
 
-# The churn chart roster, pure data: (filename, y accessor key, y
-# formatter, y scale, title) — the three charts ARE these tuples driving
-# chart_churn_series; {probe_family} is filled from the payload.
-CHURN_CHARTS = (
-    ("churn-latency.svg", "probe_p50_ns", fmt_us, "log",
-     "churn degradation · {probe_family} p50 over delete+insert cycles, "
-     "both engines"),
-    ("churn-size.svg", "db_bytes", fmt_bytes, "auto",
-     "churn degradation · store size over cycles, both engines"),
-    ("churn-throughput.svg", "write_facts_per_sec", fmt_rate, "log",
-     "churn degradation · write throughput over cycles, both engines"),
-)
+CHURN_LINE_STYLES = ("-", "--", ":", "-.")
 
 
-def churn_render(key, formatter, yscale, title):
-    """One CHURN_CHARTS tuple -> a registry render fn."""
+def churn_lane_styles(run):
+    """lane name -> (color, linestyle): engine picks the color, the Nth
+    lane of an engine picks the Nth linestyle — every lane in the run
+    draws distinguishably, by construction."""
+    counts, styles = {}, {}
+    for lane in run["lanes"]:
+        n = counts.get(lane["engine"], 0)
+        counts[lane["engine"]] = n + 1
+        color = OURS if lane["engine"] == "bumbledb" else THEIRS
+        styles[lane["lane"]] = (color, CHURN_LINE_STYLES[n % len(CHURN_LINE_STYLES)])
+    return styles
+
+
+def churn_series(ax, run, values_of):
+    """Every lane of one run onto one axes through the values_of
+    accessor; maintenance samples (VACUUM/ANALYZE charged, from the
+    data) get the triangle marker and the lane's legend label says so.
+    Returns every plotted value (for the scale decision)."""
+    styles = churn_lane_styles(run)
+    values = []
+    for lane in run["lanes"]:
+        pts = [(s["cycle"], values_of(s)) for s in lane["samples"]]
+        pts = [(x, y) for x, y in pts if y is not None]
+        if not pts:
+            continue
+        color, style = styles[lane["lane"]]
+        maint = [(s["cycle"], values_of(s)) for s in lane["samples"]
+                 if s["maintenance_ns"] > 0 and values_of(s) is not None]
+        label = lane["lane"] + (" (▼ VACUUM+ANALYZE)" if maint else "")
+        ax.plot([x for x, _ in pts], [y for _, y in pts], style, color=color,
+                marker="o", ms=3, linewidth=1.8, zorder=3, label=label)
+        if maint:
+            ax.plot([x for x, _ in maint], [y for _, y in maint], "v", ms=7,
+                    color=color, zorder=4)
+        values += [y for _, y in pts]
+    return values
+
+
+def churn_footer(report, config):
+    """The one churn caption: the protocol strides from the report's own
+    config, plus the provenance caveat."""
+    return (f"churn lane · {config.get('cycles', '?')} cycles sampled every "
+            f"{config.get('sample_every', '?')} · sqlite-maint VACUUM every "
+            f"{config.get('vacuum_every', '?')} / ANALYZE every "
+            f"{config.get('analyze_every', '?')}, charged as maintenance · "
+            f"report-class{prov_note(report)}")
+
+
+def churn_probe_value(probe_name):
+    """A values_of accessor for one probe's p50 at a sample (None when
+    the sample lacks the probe — drawn as nothing, never as zero)."""
+    def value(sample):
+        for probe in sample["probes"]:
+            if probe["name"] == probe_name:
+                return probe["p50_ns"]
+        return None
+    return value
+
+
+def chart_churn_latency(inputs, out):
+    """churn-latency-<run>.svg, one file per run: every probe family as
+    its own panel, every lane as its own line, warm p50 over cycles —
+    the degradation story with nothing condensed away."""
+    report = inputs["churn_report"]
+    config = report.get("config", {})
+    out_dir = Path(out).parent
+    written = []
+    for run in report["runs"]:
+        probes = []
+        for lane in run["lanes"]:
+            for probe in lane["samples"][0]["probes"]:
+                if probe["name"] not in probes:
+                    probes.append(probe["name"])
+        fig, axes = plt.subplots(len(probes), 1, facecolor=BG,
+                                 figsize=(9.6, 3.0 * len(probes) + 0.9))
+        flat = [axes] if len(probes) == 1 else list(axes)
+        for ax, probe_name in zip(flat, probes):
+            dark(ax)
+            churn_series(ax, run, churn_probe_value(probe_name))
+            ax.set_yscale("log")
+            ax.yaxis.set_major_formatter(FuncFormatter(fmt_us))
+            ax.xaxis.set_major_locator(MaxNLocator(integer=True))
+            ax.grid(color=GRID, linewidth=0.6, zorder=0)
+            ax.set_title(f"{probe_name} · warm p50 over cycles", fontsize=10,
+                         loc="left", pad=8, family="monospace")
+            if ax is flat[0]:
+                ax.legend(loc="best", facecolor=BG, edgecolor=GRID,
+                          labelcolor=FG, fontsize=8)
+            if ax is flat[-1]:
+                ax.set_xlabel("cycle", fontsize=9, family="monospace")
+        mix = run.get("mix", {})
+        mix_note = " ".join(f"{k}={v}" for k, v in mix.items())
+        fig.suptitle(f"churn · run {run['name']} ({mix_note}, working set "
+                     f"{run.get('working_set', '?')}) · probe latency",
+                     x=0.01, y=0.998, ha="left", fontsize=12, color=FG,
+                     family="monospace")
+        fig.text(0.01, 0.002, churn_footer(report, config), fontsize=8,
+                 color=DIM, family="monospace")
+        fig.tight_layout(rect=(0, 0.015, 1, 0.97))
+        outpath = out_dir / f"churn-latency-{run['name']}.svg"
+        fig.savefig(outpath, facecolor=BG, bbox_inches="tight")
+        plt.close(fig)
+        written.append(outpath)
+    return written
+
+
+def churn_metric_render(stem, values_of, formatter, yscale, what):
+    """One churn metric -> a registry render fn over the per-run
+    scaffold."""
     def render(inputs, out):
-        chart_churn_series(inputs, out, key, formatter, yscale, title)
+        return chart_churn_series(inputs, out, stem=stem, values_of=values_of,
+                                  formatter=formatter, yscale=yscale, what=what)
     return render
 
 
@@ -1563,17 +1617,19 @@ CHARTS = [
     ChartSpec("ratio-waterfall.svg", ("reads",), chart_ratio_waterfall),
     ChartSpec("tails-fan.svg", ("reads",), chart_tails_fan),
     ChartSpec("bench-storage.svg", ("storage_report",), chart_storage),
-    ChartSpec("storage-bytes-per-fact.svg", ("storage",), chart_storage_per_fact),
     ChartSpec("bench-writes-rates.svg", ("writes_rates",), chart_writes_rates),
     ChartSpec("bench-curves.svg", ("curves_report",), chart_curves),
     ChartSpec("bench-warmth.svg", ("curves_report",), chart_warmth),
-    ChartSpec("curves-loglog.svg", ("curves",), chart_curves_loglog),
     ChartSpec("write-throughput.svg", ("write_throughput",), chart_write_throughput),
-    ChartSpec("cold-warm-memo.svg", ("cold_warm_memo",), chart_cold_warm_memo),
     ChartSpec("adversarial-dnf.svg", ("adversarial",), chart_adversarial_dnf),
-] + [
-    ChartSpec(filename, ("churn",), churn_render(key, formatter, yscale, title))
-    for filename, key, formatter, yscale, title in CHURN_CHARTS
+    ChartSpec("churn-latency-<run>.svg", ("churn_report",), chart_churn_latency),
+    ChartSpec("churn-size-<run>.svg", ("churn_report",),
+              churn_metric_render("churn-size", lambda s: s["disk_bytes"],
+                                  fmt_bytes, "auto", "store size over cycles")),
+    ChartSpec("churn-throughput-<run>.svg", ("churn_report",),
+              churn_metric_render("churn-throughput",
+                                  lambda s: s["commits_per_sec"], fmt_rate,
+                                  "auto", "write commits/sec over cycles")),
 ]
 
 
@@ -1620,6 +1676,7 @@ def main():
     for path, key in lane_flags:
         if path:
             inputs[key] = load_report(path)
+    derive_lanes(inputs)
 
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)

@@ -70,12 +70,12 @@ here, never restated.
 | `bench-ephemeral-r1..r3` (×3) | ledger + calendar | the same roster | `bench --ephemeral --out` | `report.json` (RunReport, `config.store` ephemeral) | Report — the NOSYNC characterization lane | the same session minus the sync boundary: `synchronous=OFF`, `fullfsync=OFF` — the honest `MDB_NOSYNC` twin |
 | `scenarios` | joins / graph / olap / points / rings / temporal | warm p50 per (query, SQLite lane); 8 warmups / 64 samples | `scenarios --out` | `scenarios.md` + `scenarios.json` | Report | the ledger protocol via `open_for_bench` + `configure_sqlite`: WAL, `synchronous=FULL`, 256 MiB cache, 1 GiB mmap, `wal_autocheckpoint=0` + one pre-run truncating checkpoint, prepared statements reused, per-world indexes, `ANALYZE` (`60-validation.md` § the scenario worlds) |
 | `sweep-commit` | ledger commit sizes | judgment spans by touched-parent count | `sweep-commit` (obs build), stdout | `sweep.md` | Report | n/a — engine-only, no twin |
-| `storage` | ledger + calendar scales (+ churn checkpoints via `--churn-dir`) | on-disk bytes per fact, absolute store bytes; not timed | `storage --out` | `storage-report.json` / `.md`; lane payload `"lane": "storage"` per §contracts | Report | durable config, indexed and table-only twins both reported; byte counts read post-checkpoint; row-count cross-check before any byte is reported (`60-validation.md` § the metric lanes) |
-| `curves` | existing families at parameterized scale + the closure world | warm p50 vs corpus size (the fitted exponent is the story); the warmth panel: cold → warm → memoized p50, both engines | `curves --warmth --out` | `curves-report.json` / `.md`; lane payload `"lane": "curves"` per §contracts | Report | durable config, prepared statements reused, `ANALYZE`; inline per-draw multiset gate dominates every timer; canonical translation always reported, hand-tuned twin beside it where canonical inflates (`busy_scan`); SQLite points run under the DNF cap |
-| `cold-warm-memo` | warmth-carrying families | p50 per phase — ours cold/warm/memo, theirs cold/warm (memo has no SQLite twin, stated) | landed folded into `curves --warmth` (no separate subcommand) | lane payload `"lane": "cold_warm_memo"` per §contracts | Report | as the curves row; cold = process-fresh reopen (OS-page-cache-warm, the honesty bound stated in the report), prepared statements fresh for the cold phase by definition |
-| `write-throughput` | commit/delete ladders + bulk | facts/sec per commit batch size, per durability lane | landed as `writes --out` | `writes-report.json` / `.md`; lane payload `"lane": "write_throughput"` per §contracts | Report | matched durability pairs only, by type (`DurabilityLane`): durable = WAL `synchronous=FULL` `fullfsync=ON` vs `Db::create`; nosync = WAL `synchronous=OFF` vs `Db::ephemeral`; hand-authored native SQL write twins; post-state value-verified |
+| `storage` | ledger + calendar scales (+ churn checkpoints via `--churn-dir`) | on-disk bytes per fact, absolute store bytes; not timed | `storage --out` | `storage-report.json` / `.md` (auto-ingested by night discovery; the `storage` lane-payload contract is retired — §contracts) | Report | durable config, indexed and table-only twins both reported; byte counts read post-checkpoint; row-count cross-check before any byte is reported (`60-validation.md` § the metric lanes) |
+| `curves` | existing families at parameterized scale + the closure world | warm p50 vs corpus size (the fitted exponent is the story); the warmth panel: cold → warm → memoized p50, both engines | `curves --warmth --out` | `curves-report.json` / `.md` (auto-ingested by night discovery; the `curves` lane-payload contract is retired — §contracts) | Report | durable config, prepared statements reused, `ANALYZE`; inline per-draw multiset gate dominates every timer; canonical translation always reported, hand-tuned twin beside it where canonical inflates (`busy_scan`); SQLite points run under the DNF cap |
+| `cold-warm-memo` | warmth-carrying families | p50 per phase — ours cold/warm/memo, theirs cold/warm (memo has no SQLite twin, stated) | landed folded into `curves --warmth` (no separate subcommand) | the `warmth` blocks of `curves-report.json` (the separate `cold_warm_memo` payload and chart are retired — §contracts) | Report | as the curves row; cold = process-fresh reopen (OS-page-cache-warm, the honesty bound stated in the report), prepared statements fresh for the cold phase by definition |
+| `write-throughput` | commit/delete ladders + bulk | facts/sec per commit batch size, per durability lane | landed as `writes --out` | `writes-report.json` / `.md` (auto-ingested by night discovery); the `write_throughput` chart input derives from its batch ladders per §contracts | Report | matched durability pairs only, by type (`DurabilityLane`): durable = WAL `synchronous=FULL` `fullfsync=ON` vs `Db::create`; nosync = WAL `synchronous=OFF` vs `Db::ephemeral`; hand-authored native SQL write twins; post-state value-verified |
 | `adversarial` | worst-case query shapes (the rings/temporal bomb precedent) | p50 both engines under the per-sample cap; capped twins reported as DNF | contract spelling `adversarial --out` — the subcommand has not landed; the night probe reports it SKIP-UNAVAILABLE until it does | `report.json` carrying `"lane": "adversarial"` per §contracts | Report | scenarios parity + the DNF cap below; canonical translation the default lane, hand-tuned twin lanes alongside where canonical inflates — both reported |
-| `churn` | steady-state posting working set | per-cycle probe warm p50, store bytes, write facts/sec, engine counters | `churn --out` | `churn-report.json` (`churn_schema: 1`) + `churn.md`; viz condensation `"lane": "churn"` per §contracts | Report | per-lane sessions per `60-validation.md` § the churn lanes: `sqlite-bare`/`sqlite-maint` durable, `sqlite-nosync` ephemeral-matched; probes prepared fresh per sample point on both engines; `maint`'s VACUUM/ANALYZE charged into its own throughput window |
+| `churn` | steady-state posting working set | per-cycle probe warm p50, store bytes, write facts/sec, engine counters | `churn --out` | `churn-report.json` (`churn_schema: 1`, auto-ingested and charted directly by the viz) + `churn.md`; the one-run condensation is retired — §contracts | Report | per-lane sessions per `60-validation.md` § the churn lanes: `sqlite-bare`/`sqlite-maint` durable, `sqlite-nosync` ephemeral-matched; probes prepared fresh per sample point on both engines; `maint`'s VACUUM/ANALYZE charged into its own throughput window |
 
 **The canonical-translation law**, registry-wide: the SQL twin is the
 canonical IR→SQL rendering (`translate`), always gated and always reported.
@@ -114,61 +114,61 @@ there are no stats to draw, only the cap.
 whose top level carries `"lane": "<id>"`; the suite RunReport carries **no
 `"lane"` key** and is classified by `config.store` into the durable/ephemeral
 pools (`bench_viz.py: ingest_report` is the executable form). A duplicate
-lane in one night keeps the first occurrence and prints a note. Each lane's
-contract below is fixed as a committed synthetic fixture under
-`scripts/viz-fixtures/` — `fixture-storage.report.json`,
-`fixture-curves.report.json`, `fixture-write-throughput.report.json`,
-`fixture-cold-warm-memo.report.json`, `fixture-adversarial.report.json`,
-`fixture-churn.report.json` — the machine-checked twins of these schemas
-(each carries a `_fixture` marker naming itself synthetic, never a measured
-claim), validated by the matching `LANE_LOADERS` loader in
-`scripts/bench_viz.py`, so "chart fed a shapeless lane file" is
-unrepresentable. Unknown extra keys are ignored everywhere
-(forward-compatible); readers: the `bench_viz.py` loaders and the lane
-emitters.
+lane in one night keeps the first occurrence and prints a note. Each surviving
+lane contract below is fixed as a committed synthetic fixture under
+`scripts/viz-fixtures/` — `fixture-write-throughput.report.json`,
+`fixture-adversarial.report.json`, and `fixture-churn.report.json` (the
+last a schema-exact twin of the runner's REAL `churn_schema: 1` artifact) —
+each carrying a `_fixture` marker naming itself synthetic, never a measured
+claim, validated by the matching loader in `scripts/bench_viz.py`, so
+"chart fed a shapeless lane file" is unrepresentable. Unknown extra keys
+are ignored everywhere (forward-compatible); readers: the `bench_viz.py`
+loaders and the lane emitters.
 
-Two live emitters ship *flag-fed* shapes distinct from their lane payloads,
-recorded so nobody conflates them: `storage-report.json` (scales → worlds,
-fed by `--storage-report`), `writes-report.json` (lanes → rows, fed by
-`--writes-report`), and `curves-report.json` (families → rows + `warmth`
-blocks, fed by `--curves-report`) render their own charts through their own
-inputs keys — the flag shape and the lane payload live under different keys,
-so a collision between them is unrepresentable. Night discovery scans only
-`<child>/report.json` through the discriminant (plus the first
-`scenarios.json`, the md rendering as fallback), so the flag-fed charts belong to the owner's ceremony
-invocation; a lane payload enters the night render the day its emitter
-writes it as `report.json`.
+The live emitters ship *flag-fed* shapes, and night discovery ingests them
+from their canonical paths (`bench_viz.py: NIGHT_LANE_REPORTS`; the flags
+override): `storage/storage-report.json` (scales → worlds), `writes/
+writes-report.json` (lanes → rows), `curves/curves-report.json` (families →
+rows + `warmth` blocks), and `churn/churn-report.json` (`churn_schema: 1`,
+runs → lanes → samples, validated by `load_churn_report`). Beyond those,
+discovery scans `<child>/report.json` through the discriminant (plus the
+first `scenarios.json`, the md rendering as fallback). **The contamination
+marker:** a run dir carrying `CONTAMINATED.md` (the recorded ruling, prose
+in the file) is excluded from every merge and counted in the chart footers —
+the exclusion is a file ON the pin, so a contaminated number can never leak
+into a chart by someone forgetting a footnote.
 
-- **`storage`** — `{"lane": "storage", "worlds": [{"name": str, "facts": int > 0,
-  "ours_bytes": int, "theirs_bytes": int}, …]}`; `worlds` non-empty.
-- **`curves`** — `{"lane": "curves", "families": [{"name": str, "points":
-  [{"n": int > 0, "ours": {"p50": ns} | null, "theirs": {"p50": ns} | null}, …]}, …]}`;
-  `families` and every `points` non-empty; an absent side is drawn as
-  nothing, never as zero.
+Two chart inputs are *derived* from real artifacts (`bench_viz.py:
+derive_lanes`), each passed through its lane-contract loader so the
+contract stays honest as the adapter's output shape — and a real lane
+payload of the same name, once an emitter writes one, wins over the
+derivation: `adversarial` derives from `scenarios.json`'s `exceeded_cap`
+lanes (the DNF data's one real home while the `adversarial` subcommand
+remains unlanded), and `write_throughput` derives from
+`writes-report.json`'s commit/delete batch ladders (`bulk_append` is a
+single point, not a ladder — it stays fully drawn in
+`bench-writes-rates.svg`).
+
 - **`write_throughput`** (the `write-throughput` lane) — `{"lane":
   "write_throughput", "lanes": [{"name": str, "batches": [{"batch": int > 0,
   "ours_facts_per_sec": number, "theirs_facts_per_sec": number}, …]}, …]}`;
   the durability lane's name rides every row, so a rate is never quoted
   without its durability context.
-- **`cold_warm_memo`** (the `cold-warm-memo` lane) — `{"lane":
-  "cold_warm_memo", "families": [{"name": str, "ours": {"cold"|"warm"|"memo":
-  {"p50": ns} | null} | null, "theirs": {"cold"|"warm": {"p50": ns} | null} | null}, …]}`;
-  a family with no phase at all is rejected (nothing to draw); `theirs` has
-  no `memo` slot — the memo phase has no SQLite twin, by shape.
 - **`adversarial`** — `{"lane": "adversarial", "cap_ms": number > 0,
   "queries": [{"name": str, "ours": {"p50": ns}, "theirs": {"p50": ns} | null,
   "theirs_exceeded_cap": bool}, …]}`; `ours` stats required;
   `theirs_exceeded_cap: true` ⇒ `theirs` null, loader-enforced (the DNF-cap
   law's shape).
-- **`churn`** — `{"lane": "churn", "probe_family": str, "cycle_facts": int,
-  "cycles": [{"cycle": int, "ours": {"probe_p50_ns": number, "db_bytes":
-  number, "write_facts_per_sec": number}, "theirs": {the same three,
-  "vacuum": bool}}, …]}` — the fixture is
-  `fixture-churn.report.json`. Distinct artifact, for the record: the bench
-  crate's churn runner writes `churn-report.json` under `churn_schema: 1`
-  (runs → lanes → samples, `churn/report.rs`) — a different filename with no
-  top-level `"lane"` discriminant, so it never flows through `ingest_report`;
-  the `"lane": "churn"` payload is the viz-facing condensation of one run.
+- **`churn`** — the runner's real `churn-report.json` under
+  `churn_schema: 1` (runs → lanes → samples, `churn/report.rs`), consumed
+  directly. **Retired:** the one-ours-one-theirs `"lane": "churn"`
+  condensation (2026-07-20) — it could not carry the steady run's two
+  SQLite lanes (`sqlite-bare` + `sqlite-maint`) without hiding one, so the
+  fixture-only shape died and the charts draw every lane of every run.
+- **Retired contracts** (2026-07-20, with the charts that consumed them):
+  the `storage` and `curves` lane payloads and the `cold_warm_memo` payload
+  — no emitter ever wrote them, and their data is fully rendered from the
+  real flag-shaped reports (see the chart inventory's retirement notes).
 
 ## The churn protocol
 
@@ -240,26 +240,33 @@ per svg → source lane → what it shows):
 
 | svg | source | shows |
 |---|---|---|
-| `bench-vs-sqlite.svg` | RunReport pool (reads) | ours vs SQLite p50 per read family, log scale |
-| `bench-speedup.svg` | RunReport pool (reads) | the same data as multipliers |
+| `bench-vs-sqlite.svg` | RunReport pool (reads) | ours vs SQLite p50 per read family — EVERY family in the pin, gate and report class alike — log scale |
+| `bench-speedup.svg` | RunReport pool (reads) | the same data as multipliers; below-parity draws red |
 | `bench-tails.svg` | RunReport pool (reads) | p50 → p95 → p99 per family, both engines |
 | `bench-writes.svg` | RunReport pool (writes) | writes + cold — fsync physics, published anyway |
 | `bench-scenarios.svg` | `scenarios.json` preferred, `scenarios.md` fallback | the non-ledger worlds per (query, lane); a DNF lane draws no bar, only the annotation |
 | `world-<world>.svg` | `scenarios.json` preferred, `scenarios.md` fallback | one file per scenario world, paired p50 bars per (query, lane); DNF lanes annotated, excluded and counted |
 | `ratio-waterfall.svg` | reads (+ `scenarios.json`/`.md`) | every family + (query, lane) as one sorted ratio bar from raw p50s; below-parity draws red; DNF lanes excluded and counted |
 | `tails-fan.svg` | reads | the p50 → p90 → p99 fan per family, both engines |
-| `bench-storage.svg` | `storage-report.json` (flag) | bytes per fact per scale/world + churn checkpoints |
-| `storage-bytes-per-fact.svg` | `storage` lane | bytes per stored fact per world, both engines |
-| `bench-writes-rates.svg` | `writes-report.json` (flag) | rows/sec per (family, batch), per durability lane |
-| `bench-curves.svg` | `curves-report.json` (flag) | log-log scale curves, exponents, DNF caps |
-| `bench-warmth.svg` | `curves-report.json` (flag) | cold/warm/memoized, both engines |
-| `curves-loglog.svg` | `curves` lane | log-log p50 lines + fitted exponents per family |
-| `write-throughput.svg` | `write_throughput` lane | facts/sec per commit batch, per durability lane |
-| `cold-warm-memo.svg` | `cold_warm_memo` lane | cold → warm → memo phases, both engines where a twin exists |
-| `adversarial-dnf.svg` | `adversarial` lane | ours vs SQLite p50; capped twins drawn as capped (hatched to the cap), never as numbers |
-| `churn-latency.svg` | `churn` lane | probe p50 over delete+insert cycles, VACUUMs marked |
-| `churn-size.svg` | `churn` lane | store size over cycles, VACUUM events marked |
-| `churn-throughput.svg` | `churn` lane | write facts/sec over cycles, VACUUMs marked |
+| `bench-storage.svg` | `storage-report.json` (night path, flag override) | bytes per fact per scale/world + churn checkpoints |
+| `bench-writes-rates.svg` | `writes-report.json` (night path, flag override) | rows/sec per (family, batch), per durability lane |
+| `bench-curves.svg` | `curves-report.json` (night path, flag override) | log-log scale curves, exponents, DNF caps |
+| `bench-warmth.svg` | `curves-report.json` (night path, flag override) | cold/warm/memoized, both engines |
+| `write-throughput.svg` | `write_throughput` lane, else derived from `writes-report.json` | facts/sec per commit batch, per durability lane × ladder |
+| `adversarial-dnf.svg` | `adversarial` lane, else derived from `scenarios.json` `exceeded_cap` lanes | ours vs SQLite p50; capped twins drawn as capped (hatched to the cap), never as numbers |
+| `churn-latency-<run>.svg` | `churn-report.json` (night path) | one file per run: every probe's warm p50 over cycles, every lane; VACUUM+ANALYZE samples marked from `maintenance_ns` |
+| `churn-size-<run>.svg` | `churn-report.json` (night path) | store size over cycles, every lane, per run |
+| `churn-throughput-<run>.svg` | `churn-report.json` (night path) | write commits/sec over cycles, every lane, per run |
+
+**Retired charts** (2026-07-20, the owner's bench-refresh pass — no
+phantom-input chart survives): `storage-bytes-per-fact.svg` and
+`curves-loglog.svg` consumed lane payloads no emitter writes, and their
+data is fully rendered by `bench-storage.svg` / `bench-curves.svg` from the
+real reports; `cold-warm-memo.svg`'s contract had no theirs-memo slot, so
+it could not represent the real warmth measurement (`curves --warmth` times
+`theirs_memoized`) that `bench-warmth.svg` draws whole; the single-file
+`churn-*.svg` trio consumed the retired churn condensation and is replaced
+by the per-run set above.
 
 **The agent law**, stated plainly: agents never run timing lanes. Correctness
 smoke tests (tiny corpora, oracle multiset-agreement gates, the fixture

@@ -1,14 +1,38 @@
-{"lane": "churn",
- "_fixture": "tiny synthetic fixture for bench_viz.py validation — never a measured claim",
- "probe_family": "containment_walk",
- "cycle_facts": 10000,
- "cycles": [
-  {"cycle": 0, "ours": {"probe_p50_ns": 21000, "db_bytes": 77955072, "write_facts_per_sec": 150000.0}, "theirs": {"probe_p50_ns": 410000, "db_bytes": 18464768, "write_facts_per_sec": 160000.0, "vacuum": false}},
-  {"cycle": 1, "ours": {"probe_p50_ns": 21500, "db_bytes": 78217216, "write_facts_per_sec": 148600.0}, "theirs": {"probe_p50_ns": 431000, "db_bytes": 20889600, "write_facts_per_sec": 156800.0, "vacuum": false}},
-  {"cycle": 2, "ours": {"probe_p50_ns": 21900, "db_bytes": 78479360, "write_facts_per_sec": 147300.0}, "theirs": {"probe_p50_ns": 452000, "db_bytes": 23289856, "write_facts_per_sec": 153900.0, "vacuum": false}},
-  {"cycle": 3, "ours": {"probe_p50_ns": 22400, "db_bytes": 78741504, "write_facts_per_sec": 146100.0}, "theirs": {"probe_p50_ns": 474000, "db_bytes": 25690112, "write_facts_per_sec": 151200.0, "vacuum": false}},
-  {"cycle": 4, "ours": {"probe_p50_ns": 22800, "db_bytes": 79003648, "write_facts_per_sec": 144900.0}, "theirs": {"probe_p50_ns": 497000, "db_bytes": 28090368, "write_facts_per_sec": 148700.0, "vacuum": false}},
-  {"cycle": 5, "ours": {"probe_p50_ns": 23300, "db_bytes": 79265792, "write_facts_per_sec": 143800.0}, "theirs": {"probe_p50_ns": 445000, "db_bytes": 19922944, "write_facts_per_sec": 146400.0, "vacuum": true}},
-  {"cycle": 6, "ours": {"probe_p50_ns": 23700, "db_bytes": 79527936, "write_facts_per_sec": 142700.0}, "theirs": {"probe_p50_ns": 466000, "db_bytes": 22323200, "write_facts_per_sec": 144300.0, "vacuum": false}},
-  {"cycle": 7, "ours": {"probe_p50_ns": 24200, "db_bytes": 79790080, "write_facts_per_sec": 141600.0}, "theirs": {"probe_p50_ns": 488000, "db_bytes": 24723456, "write_facts_per_sec": 142300.0, "vacuum": false}}
+{"churn_schema": 1,
+ "_fixture": "tiny synthetic fixture for bench_viz.py validation — never a measured claim; the schema-exact twin of crates/bumbledb-bench/src/churn/report.rs to_json (runs -> lanes -> samples)",
+ "provenance": {"crate_version": "0.0.0-fixture", "git_rev": "fixture", "timestamp": "2026-07-20T00:00:00Z", "host": "fixture-host", "shared_machine": false},
+ "config": {"scale": "Tiny", "seed": 1, "cycles": 8, "sample_every": 2, "vacuum_every": 4, "analyze_every": 4},
+ "runs": [
+  {"name": "steady", "mix": {"churn": 64, "updates": 32, "growth": 0}, "working_set": 1024,
+   "lanes": [
+    {"lane": "ours-durable", "engine": "bumbledb", "samples": [
+      {"cycle": 2, "probes": [{"name": "churn_point", "p50_ns": 540, "answers": 1}, {"name": "churn_window", "p50_ns": 19500, "answers": 20}], "commits_per_sec": 44.2, "maintenance_ns": 0, "disk_bytes": 77955072, "generation": 4, "id_high_water": 1312, "freelist_count": null, "page_count": null},
+      {"cycle": 4, "probes": [{"name": "churn_point", "p50_ns": 552, "answers": 1}, {"name": "churn_window", "p50_ns": 19750, "answers": 20}], "commits_per_sec": 43.9, "maintenance_ns": 0, "disk_bytes": 78217216, "generation": 6, "id_high_water": 1440, "freelist_count": null, "page_count": null},
+      {"cycle": 6, "probes": [{"name": "churn_point", "p50_ns": 561, "answers": 1}, {"name": "churn_window", "p50_ns": 20100, "answers": 20}], "commits_per_sec": 43.5, "maintenance_ns": 0, "disk_bytes": 78479360, "generation": 8, "id_high_water": 1568, "freelist_count": null, "page_count": null},
+      {"cycle": 8, "probes": [{"name": "churn_point", "p50_ns": 570, "answers": 1}, {"name": "churn_window", "p50_ns": 20400, "answers": 20}], "commits_per_sec": 43.1, "maintenance_ns": 0, "disk_bytes": 78741504, "generation": 10, "id_high_water": 1696, "freelist_count": null, "page_count": null}
+    ]},
+    {"lane": "sqlite-bare", "engine": "sqlite", "samples": [
+      {"cycle": 2, "probes": [{"name": "churn_point", "p50_ns": 1150, "answers": 1}, {"name": "churn_window", "p50_ns": 277000, "answers": 20}], "commits_per_sec": 55.4, "maintenance_ns": 0, "disk_bytes": 14753792, "generation": null, "id_high_water": null, "freelist_count": 0, "page_count": 3602},
+      {"cycle": 4, "probes": [{"name": "churn_point", "p50_ns": 1160, "answers": 1}, {"name": "churn_window", "p50_ns": 301000, "answers": 20}], "commits_per_sec": 54.1, "maintenance_ns": 0, "disk_bytes": 15630336, "generation": null, "id_high_water": null, "freelist_count": 44, "page_count": 3816},
+      {"cycle": 6, "probes": [{"name": "churn_point", "p50_ns": 1170, "answers": 1}, {"name": "churn_window", "p50_ns": 334000, "answers": 20}], "commits_per_sec": 52.8, "maintenance_ns": 0, "disk_bytes": 16506880, "generation": null, "id_high_water": null, "freelist_count": 97, "page_count": 4030},
+      {"cycle": 8, "probes": [{"name": "churn_point", "p50_ns": 1180, "answers": 1}, {"name": "churn_window", "p50_ns": 371000, "answers": 20}], "commits_per_sec": 51.6, "maintenance_ns": 0, "disk_bytes": 17383424, "generation": null, "id_high_water": null, "freelist_count": 151, "page_count": 4244}
+    ]},
+    {"lane": "sqlite-maint", "engine": "sqlite", "samples": [
+      {"cycle": 2, "probes": [{"name": "churn_point", "p50_ns": 1150, "answers": 1}, {"name": "churn_window", "p50_ns": 277500, "answers": 20}], "commits_per_sec": 55.1, "maintenance_ns": 0, "disk_bytes": 14753792, "generation": null, "id_high_water": null, "freelist_count": 0, "page_count": 3602},
+      {"cycle": 4, "probes": [{"name": "churn_point", "p50_ns": 1155, "answers": 1}, {"name": "churn_window", "p50_ns": 285000, "answers": 20}], "commits_per_sec": 49.7, "maintenance_ns": 106000000, "disk_bytes": 14753792, "generation": null, "id_high_water": null, "freelist_count": 0, "page_count": 3602},
+      {"cycle": 6, "probes": [{"name": "churn_point", "p50_ns": 1160, "answers": 1}, {"name": "churn_window", "p50_ns": 289000, "answers": 20}], "commits_per_sec": 52.3, "maintenance_ns": 0, "disk_bytes": 15630336, "generation": null, "id_high_water": null, "freelist_count": 42, "page_count": 3816},
+      {"cycle": 8, "probes": [{"name": "churn_point", "p50_ns": 1165, "answers": 1}, {"name": "churn_window", "p50_ns": 292000, "answers": 20}], "commits_per_sec": 49.2, "maintenance_ns": 108000000, "disk_bytes": 14753792, "generation": null, "id_high_water": null, "freelist_count": 0, "page_count": 3602}
+    ]}
+   ]},
+  {"name": "delete-heavy", "mix": {"churn": 512, "updates": 0, "growth": 0}, "working_set": 1024,
+   "lanes": [
+    {"lane": "ours-durable", "engine": "bumbledb", "samples": [
+      {"cycle": 2, "probes": [{"name": "churn_point", "p50_ns": 545, "answers": 1}, {"name": "churn_window", "p50_ns": 20800, "answers": 20}], "commits_per_sec": 21.0, "maintenance_ns": 0, "disk_bytes": 141639680, "generation": 4, "id_high_water": 2280, "freelist_count": null, "page_count": null},
+      {"cycle": 4, "probes": [{"name": "churn_point", "p50_ns": 556, "answers": 1}, {"name": "churn_window", "p50_ns": 20900, "answers": 20}], "commits_per_sec": 20.7, "maintenance_ns": 0, "disk_bytes": 141901824, "generation": 6, "id_high_water": 3304, "freelist_count": null, "page_count": null}
+    ]},
+    {"lane": "sqlite-bare", "engine": "sqlite", "samples": [
+      {"cycle": 2, "probes": [{"name": "churn_point", "p50_ns": 1125, "answers": 1}, {"name": "churn_window", "p50_ns": 502000, "answers": 20}], "commits_per_sec": 28.2, "maintenance_ns": 0, "disk_bytes": 17346560, "generation": null, "id_high_water": null, "freelist_count": 153, "page_count": 4235},
+      {"cycle": 4, "probes": [{"name": "churn_point", "p50_ns": 1140, "answers": 1}, {"name": "churn_window", "p50_ns": 531000, "answers": 20}], "commits_per_sec": 27.8, "maintenance_ns": 0, "disk_bytes": 17346560, "generation": null, "id_high_water": null, "freelist_count": 121, "page_count": 4235}
+    ]}
+   ]}
  ]}
