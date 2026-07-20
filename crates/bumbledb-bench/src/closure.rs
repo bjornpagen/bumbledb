@@ -315,7 +315,22 @@ pub fn load_stores(
     cfg: GenConfig,
     mode: crate::storemode::StoreMode,
 ) -> Result<(Db<Reachability>, rusqlite::Connection), String> {
-    let sizes = ClosSizes::of(cfg.scale);
+    load_stores_sized(dir, ClosSizes::of(cfg.scale), mode)
+}
+
+/// [`load_stores`] with the sizes given directly — one loader, sized.
+/// This lane's identity stays [`ClosSizes::of`]; the curves lane
+/// (`crate::lanes::curves`) passes its lane-local `curve_sizes(scale)`
+/// ladder through here without touching that identity.
+///
+/// # Errors
+///
+/// Engine and `SQLite` errors, stringified.
+pub fn load_stores_sized(
+    dir: &Path,
+    sizes: ClosSizes,
+    mode: crate::storemode::StoreMode,
+) -> Result<(Db<Reachability>, rusqlite::Connection), String> {
     let db = mode.create(&dir.join("db"), Reachability)?;
     for rel in [ids::NODE, ids::EDGE] {
         db.bulk_load_dyn(rel, relation_rows(sizes, rel))
