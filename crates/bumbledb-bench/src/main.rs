@@ -27,6 +27,7 @@ fn dispatch(cmd: &cli::Cmd) -> Result<i32, String> {
         cli::Cmd::Storage(args) => lanes::storage::run(args),
         cli::Cmd::Writes(args) => lanes::writes::run(args),
         cli::Cmd::Curves(args) => lanes::curves::run(args),
+        cli::Cmd::Churn(args) => driver::cmd_churn(args),
     }
 }
 

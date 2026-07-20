@@ -5,7 +5,8 @@ use crate::lanes::writes::DurabilityLane;
 use crate::verify::DEFAULT_RANDOM_CASES;
 
 use super::{
-    BenchArgs, Cmd, CorpusArgs, CurvesArgs, ScenarioArgs, StorageArgs, SweepArgs, WritesArgs,
+    BenchArgs, ChurnArgs, Cmd, CorpusArgs, CurvesArgs, ScenarioArgs, StorageArgs, SweepArgs,
+    WritesArgs,
 };
 
 struct Tokens<'a> {
@@ -314,6 +315,28 @@ fn parse_curves(tokens: &mut Tokens<'_>) -> Result<Cmd, String> {
     Ok(Cmd::Curves(args))
 }
 
+fn parse_churn(tokens: &mut Tokens<'_>) -> Result<Cmd, String> {
+    let mut args = ChurnArgs::default();
+    while let Some(flag) = tokens.next() {
+        let flag = flag.to_owned();
+        if corpus_flag(&mut args.corpus, &flag, tokens)? {
+            continue;
+        }
+        match flag.as_str() {
+            "--cycles" => args.cycles = parse_u64(&flag, tokens.value(&flag)?)?,
+            "--sample-every" => args.sample_every = parse_u64(&flag, tokens.value(&flag)?)?,
+            "--vacuum-every" => args.vacuum_every = parse_u64(&flag, tokens.value(&flag)?)?,
+            "--analyze-every" => args.analyze_every = parse_u64(&flag, tokens.value(&flag)?)?,
+            "--runs" => {
+                args.runs = Some(tokens.value(&flag)?.split(',').map(str::to_owned).collect());
+            }
+            "--out" => args.out = Some(PathBuf::from(tokens.value(&flag)?)),
+            _ => return Err(unknown("churn", &flag)),
+        }
+    }
+    Ok(Cmd::Churn(args))
+}
+
 /// Parses one invocation.
 ///
 /// # Errors
@@ -345,6 +368,7 @@ pub fn parse(args: &[String]) -> Result<Cmd, String> {
         "storage" => parse_storage(&mut tokens),
         "writes" => parse_writes(&mut tokens),
         "curves" => parse_curves(&mut tokens),
+        "churn" => parse_churn(&mut tokens),
         "merge" => {
             let mut dirs = Vec::new();
             while let Some(token) = tokens.next() {

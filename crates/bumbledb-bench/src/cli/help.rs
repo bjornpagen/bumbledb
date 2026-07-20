@@ -25,6 +25,7 @@ const COMMANDS: &str = "COMMANDS:\n\
     \x20          durability lanes (report-class)\n\
     \x20 curves   scale-curve runner + cold/warm/memoized panel\n\
     \x20          (report-class)\n\
+    \x20 churn    long-lived churn: degradation time series, both engines\n\
     \x20 queries  print the versioned query list (QUERIES.md)\n\
     \x20 help     print this text\n";
 
@@ -106,6 +107,19 @@ pub fn help() -> String {
          \x20 --cap-ms N      per-sample SQLite wall-clock cap (default 30000)\n\
          \x20 --warmth        add the cold/warm/memoized panel\n\
          \x20 --out PATH      artifact dir (default bench-out/<timestamp>-curves)\n\
+         \n\
+         CHURN:\n\
+         \x20 --scale S|M|L   corpus scale             (default S)\n\
+         \x20 --seed N        corpus seed              (default 1)\n\
+         \x20 --dir PATH      scratch root             (default bench-data)\n\
+         \x20 --cycles N      total cycles             (default 10000)\n\
+         \x20 --sample-every N  probe stride, cycles   (default 250)\n\
+         \x20 --vacuum-every N  SQLite VACUUM stride   (default 500)\n\
+         \x20 --analyze-every N SQLite ANALYZE stride  (default 500)\n\
+         \x20 --runs a,b      run only these runs\n\
+         \x20                 (default steady,nosync,delete-heavy)\n\
+         \x20 --out PATH      artifact dir (default bench-out/<timestamp>-churn)\n\
+         \x20 report-class; series artifact churn-report.json — never a gate\n\
          \n\
          EXIT CODES: 0 ok / gate won; 1 verify mismatch, store findings, or\n\
          gate loss; 2 usage.\n",

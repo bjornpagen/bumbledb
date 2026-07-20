@@ -14,6 +14,7 @@ use crate::report;
 use crate::schema::Ledger;
 
 mod bench;
+mod churn_cmd;
 mod corpus;
 mod corpus_gen;
 mod crud;
@@ -31,6 +32,7 @@ mod verify_store;
 pub(crate) mod write_families;
 
 pub use bench::cmd_bench;
+pub use churn_cmd::cmd_churn;
 pub use corpus::{corpus_paths, ensure_corpus, ensure_corpus_with};
 pub use corpus_gen::{cmd_gen, cmd_verify};
 pub use crud::cmd_crud;

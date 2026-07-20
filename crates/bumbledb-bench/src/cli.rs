@@ -4,6 +4,9 @@
 
 use std::path::PathBuf;
 
+use crate::churn::ops::{
+    DEFAULT_ANALYZE_EVERY, DEFAULT_CYCLES, DEFAULT_SAMPLE_EVERY, DEFAULT_VACUUM_EVERY,
+};
 use crate::corpus_gen::Scale;
 use crate::lanes::writes::DurabilityLane;
 
@@ -102,6 +105,9 @@ pub enum Cmd {
     /// The curves metric lane: scale-curve runner + the
     /// cold/warm/memoized panel (report-class).
     Curves(CurvesArgs),
+    /// The long-lived churn lanes: degradation series on both engines,
+    /// oracle-gated per sample.
+    Churn(ChurnArgs),
 }
 
 /// `sweep-commit`'s knobs. No scale flag: the sweep owns its ambient
@@ -239,6 +245,42 @@ impl Default for CurvesArgs {
             samples: None,
             cap_ms: 30_000,
             warmth: false,
+            out: None,
+        }
+    }
+}
+
+/// `churn`'s knobs ([`crate::churn`]). `corpus.dir` is the SCRATCH root
+/// here — churn builds its own twin stores and never touches the
+/// stamped corpus, so no verify stamp gates it; the lanes are
+/// Report-class and self-gated inline (the displaced/closure
+/// precedent).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChurnArgs {
+    pub corpus: CorpusArgs,
+    /// Total cycles to drive.
+    pub cycles: u64,
+    /// Probe stride, in cycles.
+    pub sample_every: u64,
+    /// `SQLite` VACUUM stride, in cycles (maintained lanes only).
+    pub vacuum_every: u64,
+    /// `SQLite` ANALYZE stride, in cycles (maintained lanes only).
+    pub analyze_every: u64,
+    /// Selected run names; `None` = the full registry
+    /// ([`crate::churn::lanes::all`]).
+    pub runs: Option<Vec<String>>,
+    pub out: Option<PathBuf>,
+}
+
+impl Default for ChurnArgs {
+    fn default() -> Self {
+        Self {
+            corpus: CorpusArgs::default(),
+            cycles: DEFAULT_CYCLES,
+            sample_every: DEFAULT_SAMPLE_EVERY,
+            vacuum_every: DEFAULT_VACUUM_EVERY,
+            analyze_every: DEFAULT_ANALYZE_EVERY,
+            runs: None,
             out: None,
         }
     }
