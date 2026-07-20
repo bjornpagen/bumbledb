@@ -1,0 +1,179 @@
+{
+  "provenance": {
+    "crate_version": "0.0.0-fixture",
+    "git_rev": "fixture",
+    "timestamp": "2026-01-01T00:00:00Z",
+    "host": "fixture"
+  },
+  "scale": "S",
+  "seed": 1,
+  "samples": 32,
+  "lanes": [
+    {
+      "lane": "nosync",
+      "sqlite_sync": "wal+synchronous=OFF",
+      "rows": [
+        {
+          "name": "commit_b1",
+          "batch": 1,
+          "ours": {"min": 14000, "p50": 18000, "p90": 24000, "p95": 27000, "p99": 34000, "max": 51000, "mean_ns": 19500},
+          "theirs": {"min": 21000, "p50": 26000, "p90": 33000, "p95": 38000, "p99": 47000, "max": 72000, "mean_ns": 28000},
+          "commits_per_sec_ours": 51282.05,
+          "commits_per_sec_theirs": 35714.29,
+          "rows_per_sec_ours": 51282.05,
+          "rows_per_sec_theirs": 35714.29,
+          "ghz": {"pre": 3.5, "post": 3.48, "retried": false, "contaminated": false}
+        },
+        {
+          "name": "commit_b10",
+          "batch": 10,
+          "ours": {"min": 31000, "p50": 39000, "p90": 48000, "p95": 54000, "p99": 66000, "max": 91000, "mean_ns": 41000},
+          "theirs": {"min": 52000, "p50": 63000, "p90": 78000, "p95": 86000, "p99": 101000, "max": 140000, "mean_ns": 66000},
+          "commits_per_sec_ours": 24390.24,
+          "commits_per_sec_theirs": 15151.52,
+          "rows_per_sec_ours": 243902.44,
+          "rows_per_sec_theirs": 151515.15,
+          "ghz": null
+        },
+        {
+          "name": "commit_b100",
+          "batch": 100,
+          "ours": {"min": 170000, "p50": 210000, "p90": 260000, "p95": 285000, "p99": 330000, "max": 410000, "mean_ns": 218000},
+          "theirs": {"min": 340000, "p50": 420000, "p90": 510000, "p95": 560000, "p99": 640000, "max": 790000, "mean_ns": 435000},
+          "commits_per_sec_ours": 4587.16,
+          "commits_per_sec_theirs": 2298.85,
+          "rows_per_sec_ours": 458715.6,
+          "rows_per_sec_theirs": 229885.06,
+          "ghz": null
+        },
+        {
+          "name": "commit_b1000",
+          "batch": 1000,
+          "ours": {"min": 1400000, "p50": 1700000, "p90": 2100000, "p95": 2300000, "p99": 2700000, "max": 3300000, "mean_ns": 1760000},
+          "theirs": {"min": 2900000, "p50": 3500000, "p90": 4200000, "p95": 4600000, "p99": 5300000, "max": 6400000, "mean_ns": 3610000},
+          "commits_per_sec_ours": 568.18,
+          "commits_per_sec_theirs": 277.01,
+          "rows_per_sec_ours": 568181.82,
+          "rows_per_sec_theirs": 277008.31,
+          "ghz": null
+        },
+        {
+          "name": "delete_b1",
+          "batch": 1,
+          "ours": {"min": 15000, "p50": 19000, "p90": 25000, "p95": 28000, "p99": 35000, "max": 52000, "mean_ns": 20500},
+          "theirs": {"min": 22000, "p50": 27000, "p90": 34000, "p95": 39000, "p99": 48000, "max": 73000, "mean_ns": 29000},
+          "commits_per_sec_ours": 48780.49,
+          "commits_per_sec_theirs": 34482.76,
+          "rows_per_sec_ours": 48780.49,
+          "rows_per_sec_theirs": 34482.76,
+          "ghz": null
+        },
+        {
+          "name": "delete_b100",
+          "batch": 100,
+          "ours": {"min": 180000, "p50": 220000, "p90": 270000, "p95": 295000, "p99": 340000, "max": 420000, "mean_ns": 228000},
+          "theirs": {"min": 360000, "p50": 440000, "p90": 530000, "p95": 580000, "p99": 660000, "max": 810000, "mean_ns": 455000},
+          "commits_per_sec_ours": 4385.96,
+          "commits_per_sec_theirs": 2197.8,
+          "rows_per_sec_ours": 438596.49,
+          "rows_per_sec_theirs": 219780.22,
+          "ghz": null
+        },
+        {
+          "name": "bulk_append",
+          "batch": 4096,
+          "ours": {"min": 41000000, "p50": 46000000, "p90": 52000000, "p95": 55000000, "p99": 60000000, "max": 67000000, "mean_ns": 47000000},
+          "theirs": {"min": 52000000, "p50": 58000000, "p90": 65000000, "p95": 69000000, "p99": 75000000, "max": 83000000, "mean_ns": 59000000},
+          "commits_per_sec_ours": 519.31,
+          "commits_per_sec_theirs": 411.65,
+          "rows_per_sec_ours": 2127104.0,
+          "rows_per_sec_theirs": 1686118.4,
+          "ghz": {"pre": 3.5, "post": 3.41, "retried": true, "contaminated": false}
+        }
+      ]
+    },
+    {
+      "lane": "durable",
+      "sqlite_sync": "wal+synchronous=FULL+fullfsync=ON",
+      "rows": [
+        {
+          "name": "commit_b1",
+          "batch": 1,
+          "ours": {"min": 3100000, "p50": 3800000, "p90": 4600000, "p95": 5000000, "p99": 5900000, "max": 7200000, "mean_ns": 3950000},
+          "theirs": {"min": 3300000, "p50": 4100000, "p90": 4900000, "p95": 5400000, "p99": 6300000, "max": 7700000, "mean_ns": 4250000},
+          "commits_per_sec_ours": 253.16,
+          "commits_per_sec_theirs": 235.29,
+          "rows_per_sec_ours": 253.16,
+          "rows_per_sec_theirs": 235.29,
+          "ghz": {"pre": 3.5, "post": 3.49, "retried": false, "contaminated": false}
+        },
+        {
+          "name": "commit_b10",
+          "batch": 10,
+          "ours": {"min": 3200000, "p50": 3900000, "p90": 4700000, "p95": 5100000, "p99": 6000000, "max": 7300000, "mean_ns": 4050000},
+          "theirs": {"min": 3500000, "p50": 4300000, "p90": 5200000, "p95": 5700000, "p99": 6600000, "max": 8100000, "mean_ns": 4450000},
+          "commits_per_sec_ours": 246.91,
+          "commits_per_sec_theirs": 224.72,
+          "rows_per_sec_ours": 2469.14,
+          "rows_per_sec_theirs": 2247.19,
+          "ghz": null
+        },
+        {
+          "name": "commit_b100",
+          "batch": 100,
+          "ours": {"min": 3400000, "p50": 4200000, "p90": 5100000, "p95": 5600000, "p99": 6500000, "max": 7900000, "mean_ns": 4350000},
+          "theirs": {"min": 3900000, "p50": 4800000, "p90": 5800000, "p95": 6400000, "p99": 7400000, "max": 9000000, "mean_ns": 4980000},
+          "commits_per_sec_ours": 229.89,
+          "commits_per_sec_theirs": 200.8,
+          "rows_per_sec_ours": 22988.51,
+          "rows_per_sec_theirs": 20080.32,
+          "ghz": null
+        },
+        {
+          "name": "commit_b1000",
+          "batch": 1000,
+          "ours": {"min": 4800000, "p50": 5900000, "p90": 7100000, "p95": 7800000, "p99": 9000000, "max": 11000000, "mean_ns": 6100000},
+          "theirs": {"min": 6600000, "p50": 8100000, "p90": 9800000, "p95": 10700000, "p99": 12400000, "max": 15100000, "mean_ns": 8380000},
+          "commits_per_sec_ours": 163.93,
+          "commits_per_sec_theirs": 119.33,
+          "rows_per_sec_ours": 163934.43,
+          "rows_per_sec_theirs": 119331.74,
+          "ghz": null
+        },
+        {
+          "name": "delete_b1",
+          "batch": 1,
+          "ours": {"min": 3100000, "p50": 3850000, "p90": 4650000, "p95": 5050000, "p99": 5950000, "max": 7250000, "mean_ns": 4000000},
+          "theirs": {"min": 3400000, "p50": 4200000, "p90": 5000000, "p95": 5500000, "p99": 6400000, "max": 7800000, "mean_ns": 4350000},
+          "commits_per_sec_ours": 250.0,
+          "commits_per_sec_theirs": 229.89,
+          "rows_per_sec_ours": 250.0,
+          "rows_per_sec_theirs": 229.89,
+          "ghz": null
+        },
+        {
+          "name": "delete_b100",
+          "batch": 100,
+          "ours": {"min": 3500000, "p50": 4300000, "p90": 5200000, "p95": 5700000, "p99": 6600000, "max": 8000000, "mean_ns": 4450000},
+          "theirs": {"min": 4000000, "p50": 4900000, "p90": 5900000, "p95": 6500000, "p99": 7500000, "max": 9200000, "mean_ns": 5070000},
+          "commits_per_sec_ours": 224.72,
+          "commits_per_sec_theirs": 197.24,
+          "rows_per_sec_ours": 22471.91,
+          "rows_per_sec_theirs": 19723.87,
+          "ghz": null
+        },
+        {
+          "name": "bulk_append",
+          "batch": 4096,
+          "ours": {"min": 52000000, "p50": 58000000, "p90": 66000000, "p95": 70000000, "p99": 77000000, "max": 85000000, "mean_ns": 59500000},
+          "theirs": {"min": 61000000, "p50": 68000000, "p90": 77000000, "p95": 81000000, "p99": 89000000, "max": 98000000, "mean_ns": 69500000},
+          "commits_per_sec_ours": 410.26,
+          "commits_per_sec_theirs": 351.2,
+          "rows_per_sec_ours": 1680424.96,
+          "rows_per_sec_theirs": 1438515.2,
+          "ghz": null
+        }
+      ]
+    }
+  ]
+}

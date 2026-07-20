@@ -444,6 +444,122 @@ asserted in the world's smoke tests. Corpus sizes live in a `Sizes` struct
 (`FULL`/`SMOKE`); every param policy is size-independent, so the smoke gate
 runs the same queries and params as the night run, only smaller.
 
+**The temporal world** (`scenarios/temporal.rs`). Thesis: the Allen kernel on
+its own turf — and the stress cases are corpus INVARIANTS, never query-side
+filters. The corpus laws: a fixed value horizon (every bounded span starts
+below `TP_BASE + TP_HORIZON − 200_000` with width ≤ two days, so every bounded
+span ends **strictly inside** `[TP_BASE, TP_BASE + TP_HORIZON)` — a
+construction law, doc-commented on the generator); ~2% of spans are rays,
+represented as `end == i64::MAX` interval values (`Interval::<i64>::ray` — the
+engine's own ray representation, never a flag); MEETS and DURING witnesses
+planted deterministically on the low keys 0..8 that exist at every scale (one
+exact-abutment pair and one strict-containment pair per key, plus two planted
+rays on keys 0 and 1); and key 0 as the deterministic Zipf head (a 1-in-50
+redirect) at both scales. Four family stories: `t1_stab` (point-in-span
+membership at in-horizon instants, plus the pre-base miss — the instant rides
+a `PointIn` predicate, the bivalent-anchor rule's surviving point form);
+`t2_overlap_join` (the pairwise span-overlap self-join per key, counted — the
+Allen OR-chain's price on SQLite; it carries the DNF cap and gains the
+hand-tuned twin lane in the same wave, the never-flatter law); `t3_mixed_mask`
+(the composite `DURING ∪ MEETS` mask on one key — the disjunction as data,
+both arms asserted non-empty against the planted witnesses, and no self-pair
+guard because equal intervals satisfy neither basic); `t4_ray_stab` (the SAME
+IR shape as t1 at post-horizon instants: past the horizon only rays answer,
+so "the family whose answers are exactly the rays" needs no ray predicate —
+the special case lives in the coordinates, Dijkstra's move; the smoke test
+asserts the answer set equals the ray set exactly). Corpus sizes live in a
+`Sizes` struct (`FULL`/`SMOKE`) with size-independent param policies over the
+fixed horizon, so the smoke gate runs the same queries and params as the
+night run, only smaller.
+
+## The metric lanes: storage, writes, curves
+
+Three REPORT-class subcommands (`crates/bumbledb-bench/src/lanes/`) measure
+what the gate suite deliberately does not: on-disk bytes, write/delete
+throughput under an explicit durability axis, and scale curves. Each lane
+writes one machine artifact and one human table under `--out` —
+`storage-report.json`/`.md`, `writes-report.json`/`.md`,
+`curves-report.json`/`.md`. Charts render ONLY from committed report pins
+(`scripts/bench_viz.py --storage-report/--writes-report/--curves-report`),
+never from live runs; the synthetic chart-validation fixtures under
+`scripts/fixtures/` are named as fixtures and are never measurement output.
+
+**Report-class, by law.** The lanes never construct the budget-gated run
+report, never join ALL-WIN, and never touch the verdict or the p99 budget
+gates — the gate families and their sets are untouched by any lane
+addition. This is structural, not disciplinary: the lane reports are their
+own plain-data types that cannot reach the gated `crate::report` type
+(`lanes.rs` carries the charter). Published numbers come only from the
+owner's measurement sessions under `scripts/measure.sh`; a tool run never
+times for publication.
+
+**The oracle law, per lane.**
+
+- *storage*: both stores load the one generator stream, and per-relation
+  row counts are cross-checked across the engine store, the generator
+  sizes, and both SQLite lanes before a single byte is reported — an
+  inequality is an `Err`, nothing is reported. Not a timed lane: no wall
+  clock feeds it.
+- *writes*: value-verified post-state — count arithmetic (corpus +
+  inserted − deleted, tracked exactly) plus body-multiset equality with
+  ids projected OUT (the engine fresh-mints ids, SQLite mints `MAX+1`;
+  different representations of the same bodies, so comparing bodies is the
+  honest equality). The delete ladder is delete-bearing BY CONTRACT: a
+  no-op delete returns `Err` inside the write closure, aborting the
+  transaction whole, so the lane can never silently degrade into an
+  insert-only measurement.
+- *curves*: the inline per-draw multiset gate dominates every timer — for
+  every draw the engine's and the SQLite twin's answers must be
+  value-identical multisets before anything reaches a timer (the scenarios
+  precedent: worlds outside the stamped family registry gate inline). No
+  new query semantics: existing families at parameterized scale, the
+  closure world under a lane-local curve ladder.
+
+**SQLite parity, per lane.** The durable config: WAL, `synchronous=FULL`,
+`fullfsync=ON`, 256 MiB page cache, prepared statements reused, `ANALYZE`
+after load — the read path opens through `open_for_bench`, which adds the
+mmap and `wal_autocheckpoint` settings. The nosync config is identical
+minus the sync boundary (`synchronous=OFF`, `fullfsync=OFF`) — the honest
+`MDB_NOSYNC` twin: WAL frames written, never synced, on both engines. The
+engine's durability axis has exactly two points — `Db::create` (durable)
+and `Db::ephemeral` (NOSYNC) — and every writes row rides inside a lane
+object carrying its `lane` and `sqlite_sync` labels, so a number can never
+be quoted without its durability context.
+
+**Canonical vs hand-tuned twins.** The canonical IR→SQL translation is
+always reported. Where the canonical rendering inflates SQL — the Allen
+9-basic OR-chain (`busy_scan`) is the named case — a hand-tuned twin lane
+runs BESIDE it, gated exactly like the canonical before it is ever timed,
+and both are published: we never flatter ourselves, in either direction.
+
+**The DNF cap.** Adversarial SQLite regions run under a per-region
+wall-clock deadline (`--cap-ms`, enforced by the progress handler).
+Exceeded-cap is a typed `CapEvent` naming where it fired (`gate`,
+`timing`, `hand`), reported excluded-and-counted — no percentiles exist
+for a capped region, and a capped GATE means nothing on that point is
+timed at all, on either side: never time what is not verified.
+
+**The warmth panel** (`curves --warmth`). The memo the warm suite
+otherwise silently enjoys, made an explicit chart instead of an implicit
+flatterer: *cold* (process-fresh reopen — the honesty bound stated in the
+report: reopen-cold is OS-page-cache-warm, as close to cold as the harness
+allows without dropping kernel caches), *warm* (the second execution of
+the same prepared statement), *memoized* (the steady-state median). What
+the engine side prices: the (relation, generation) image cache and the
+resolved-filter view slots (`50-storage.md`). Both engines run the panel
+symmetrically, and only stores already gated at that scale this run enter
+it.
+
+**The churn-checkpoint directory contract.** The storage lane's seam for a
+future churn harness: `--churn-dir` names a directory whose immediate
+subdirectories, in lexicographic name order, are churn checkpoints —
+`<churn-dir>/<checkpoint>/{db/data.mdb, oracle.sqlite[, oracle.sqlite-wal]}`,
+absent artifacts reported as JSON `null`, an empty churn directory an
+`Err` naming the contract. Wal bytes are a REPORTED field so an
+uncheckpointed emission is visible in the data instead of silently
+distorting a byte count. The harness composes with the lane through data
+on disk — checkpoint subdirectories — never through code coupling.
+
 ## Differential and property tests
 
 - The **naive model** (promoted above) executes the same IR and judges the same

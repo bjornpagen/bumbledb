@@ -137,8 +137,14 @@ cargo build --release -p bumbledb-bench
 target/release/bumbledb-bench gen && target/release/bumbledb-bench verify
 target/release/bumbledb-bench bench --out bench-out/run1   # ×3
 target/release/bumbledb-bench scenarios --out bench-out/scen
+target/release/bumbledb-bench storage --out bench-out/storage   # on-disk bytes per fact, both engines
+target/release/bumbledb-bench writes --out bench-out/writes     # commit/delete/bulk throughput, per durability lane
+target/release/bumbledb-bench curves --warmth --out bench-out/curves  # oracle-gated scale curves + the warmth panel
 python3 scripts/bench_viz.py bench-out/run1 bench-out/run2 bench-out/run3 \
-        --scenarios bench-out/scen/scenarios.md
+        --scenarios bench-out/scen/scenarios.md \
+        --storage-report bench-out/storage/storage-report.json \
+        --writes-report bench-out/writes/writes-report.json \
+        --curves-report bench-out/curves/curves-report.json
 ```
 
 ## Why it's fast
@@ -389,7 +395,8 @@ crates/bumbledb-query/   the host-surface sugar crate: the query! re-export +
                          the order module (downstream sugar; lowers to IR)
 crates/bumbledb-query-macros/  the query! proc-macro mechanics behind it
 crates/bumbledb-bench/   the oracle + benchmark suite
-                         (gen/verify/verify-store/bench/trace/scenarios)
+                         (gen/verify/verify-store/bench/trace/scenarios/
+                         storage/writes/curves)
 ts/                      the TypeScript SDK — @bjornpagen/bumbledb on npm; the
                          napi bridge crate lives at ts/crate
 lean/                    the Lean spec + the conformance corpus — the one
@@ -397,7 +404,9 @@ lean/                    the Lean spec + the conformance corpus — the one
 docs/                    the normative architecture + the cookbook (docs/cookbook.md)
 docs/reference/          background dossiers (apple-silicon-performance.md)
 scripts/
-  bench_viz.py           bench run dirs -> the README charts
+  bench_viz.py           committed bench artifacts (run dirs + the
+                         storage/writes/curves lane reports) -> the
+                         README charts
   check.sh               the engine gate suite (below)
   check-asm.sh           disassembly gates: machine-code properties of hot
                          symbols asserted against objdump output

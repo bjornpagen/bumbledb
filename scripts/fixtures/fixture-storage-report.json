@@ -1,0 +1,87 @@
+{
+  "provenance": {
+    "crate_version": "0.0.0-fixture",
+    "git_rev": "fixture",
+    "timestamp": "2026-01-01T00:00:00Z",
+    "host": "fixture"
+  },
+  "seed": 1,
+  "scales": [
+    {
+      "scale": "S",
+      "worlds": [
+        {
+          "world": "ledger",
+          "facts": 100000,
+          "engine_raw_bytes": 9000000,
+          "engine_compacted_bytes": 4200000,
+          "engine_bytes_per_fact": 42.0,
+          "sqlite_indexed_bytes": 12800000,
+          "sqlite_indexed_wal_bytes": 0,
+          "sqlite_indexed_bytes_per_fact": 128.0,
+          "sqlite_tableonly_bytes": 6400000,
+          "sqlite_tableonly_wal_bytes": 0,
+          "sqlite_tableonly_bytes_per_fact": 64.0
+        },
+        {
+          "world": "calendar",
+          "facts": 80000,
+          "engine_raw_bytes": 7200000,
+          "engine_compacted_bytes": 3600000,
+          "engine_bytes_per_fact": 45.0,
+          "sqlite_indexed_bytes": 11200000,
+          "sqlite_indexed_wal_bytes": 4096,
+          "sqlite_indexed_bytes_per_fact": 140.0,
+          "sqlite_tableonly_bytes": 5600000,
+          "sqlite_tableonly_wal_bytes": 0,
+          "sqlite_tableonly_bytes_per_fact": 70.0
+        }
+      ]
+    },
+    {
+      "scale": "M",
+      "worlds": [
+        {
+          "world": "ledger",
+          "facts": 1000000,
+          "engine_raw_bytes": 90000000,
+          "engine_compacted_bytes": 41000000,
+          "engine_bytes_per_fact": 41.0,
+          "sqlite_indexed_bytes": 130000000,
+          "sqlite_indexed_wal_bytes": 0,
+          "sqlite_indexed_bytes_per_fact": 130.0,
+          "sqlite_tableonly_bytes": 66000000,
+          "sqlite_tableonly_wal_bytes": 0,
+          "sqlite_tableonly_bytes_per_fact": 66.0
+        },
+        {
+          "world": "calendar",
+          "facts": 800000,
+          "engine_raw_bytes": 72000000,
+          "engine_compacted_bytes": 35200000,
+          "engine_bytes_per_fact": 44.0,
+          "sqlite_indexed_bytes": 116800000,
+          "sqlite_indexed_wal_bytes": 0,
+          "sqlite_indexed_bytes_per_fact": 146.0,
+          "sqlite_tableonly_bytes": 56800000,
+          "sqlite_tableonly_wal_bytes": 8192,
+          "sqlite_tableonly_bytes_per_fact": 71.0
+        }
+      ]
+    }
+  ],
+  "churn": [
+    {
+      "name": "c0-loaded",
+      "engine_bytes": 4200000,
+      "sqlite_bytes": 12800000,
+      "sqlite_wal_bytes": 0
+    },
+    {
+      "name": "c1-churned",
+      "engine_bytes": 5100000,
+      "sqlite_bytes": 13100000,
+      "sqlite_wal_bytes": 524288
+    }
+  ]
+}
