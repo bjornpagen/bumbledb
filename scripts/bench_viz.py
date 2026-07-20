@@ -21,33 +21,56 @@ kind and size ride along as inputs["store_kind"] / inputs["rep_count"].
   bench-speedup.svg       the same data as multipliers, big and readable   [reads]
   bench-tails.svg         p50 -> p99 per family: tails, both engines       [reads]
   bench-writes.svg        the honest chart: writes + cold, fsync physics   [writes]
-  bench-scenarios.svg     the non-ledger worlds, per query                 [scenarios_md]
+  bench-scenarios.svg     the non-ledger worlds, per query (or lane)       [scenarios]
   world-<world>.svg       one file per scenario world: paired p50 bars     [scenarios_md]
   ratio-waterfall.svg     every family + query as one sorted ratio bar     [reads (+scenarios_md)]
   tails-fan.svg           p50 -> p90 -> p99 fan per family, both engines   [reads]
   bench-storage.svg       bytes per fact per scale/world (+ churn)         [storage_report]
   storage-bytes-per-fact.svg  bytes per stored fact per world              [storage]
   bench-writes-rates.svg  rows/sec per (family, batch), per lane           [writes_rates]
-  bench-curves.svg        log-log scale curves, exponents, DNF caps        [curves]
-  bench-warmth.svg        cold/warm/memoized, both engines                 [curves]
+  bench-curves.svg        log-log scale curves, exponents, DNF caps        [curves_report]
+  bench-warmth.svg        cold/warm/memoized, both engines                 [curves_report]
+  curves-loglog.svg       log-log p50 lines + fitted exponents per family  [curves]
+  write-throughput.svg    facts/sec per commit batch, per durability lane  [write_throughput]
+  cold-warm-memo.svg      cold → warm → memo phases, both engines          [cold_warm_memo]
+  adversarial-dnf.svg     ours vs SQLite, capped twins drawn as capped     [adversarial]
 
 Usage:
-  python3 scripts/bench_viz.py <run-dir> ... [--scenarios <scenarios.md>] [--out <dir>]
+  python3 scripts/bench_viz.py <run-dir> ... [--scenarios <scenarios.md|scenarios.json>] [--out <dir>]
   python3 scripts/bench_viz.py --night <night-dir> [--out <dir>]
+
+--scenarios dispatches on extension: `.json` is the scenario runner's
+machine artifact (scenarios.json), whose lanes are a tagged union —
+{"outcome":"timed", stats, ratio_p50} | {"outcome":"exceeded_cap",
+cap_ms} — so bench-scenarios.svg renders one bar per (query, lane) and
+a DNF lane draws NO bar (there is no stats object to draw): it becomes
+a right-edge annotation, excluded and counted in the title. Anything
+else is the rendered scenarios.md table (the committed pre-lane pin),
+whose lane structure is unrecoverable from prose — it renders the
+legacy per-query chart. inputs["scenarios"] carries the parsed tag
+("json"|"md", path); the world/waterfall charts keep reading the
+markdown pin only.
 
 Exactly one of {run dirs, --night} supplies run reports. --night scans a
 night out-dir's one-level children: every <child>/report.json is ingested
 through the lane discriminant, and the first <child>/scenarios.md becomes
 inputs["scenarios_md"]. The committed lane-report flags work in either
 mode, each filling one inputs key: --storage-report -> storage_report,
---writes-report -> writes_rates, --curves-report -> curves.
+--writes-report -> writes_rates, --curves-report -> curves_report (the
+flag-fed families/rows curves-report.json and the {"lane":"curves"}
+families/points lane payload are two shapes, so they live under two
+keys — a collision between them is unrepresentable).
 
 Lanes with a pinned contract validate at ingest: LANE_LOADERS maps a
 lane name to its loader, so "chart fed a shapeless lane file" is
 unrepresentable — the loader names its required keys and rejects
-anything else with the file path in the error. The storage lane's
-contract (DOC-1) is fixed as a committed fixture:
-scripts/viz-fixtures/fixture-storage.report.json.
+anything else with the file path in the error. Each lane's contract
+(DOC-1) is fixed as a committed fixture under scripts/viz-fixtures/:
+fixture-storage / fixture-curves / fixture-write-throughput /
+fixture-cold-warm-memo / fixture-adversarial (.report.json each). The
+adversarial lane carries its DNF law in the shape: theirs_exceeded_cap
+=> theirs is null, so a capped SQLite time can never be drawn as a
+measurement — there are no stats to draw, only the cap.
 
 `--out` (alias `--out-dir`) defaults to assets/ (the owner's ceremony
 path); every other invocation should point it elsewhere. Charts render
@@ -114,8 +137,143 @@ def load_storage(payload):
     return payload
 
 
+def _stats_p50(container, key, where):
+    """One optional stats slot: absent or null is fine (drawn as
+    nothing); present means a dict carrying a numeric "p50"."""
+    stats = container.get(key)
+    if stats is None:
+        return None
+    if not isinstance(stats, dict) or not isinstance(stats.get("p50"), (int, float)):
+        raise ValueError(f'{where}: "{key}" must be null or an object with a numeric "p50"')
+    return stats
+
+
+def load_curves(payload):
+    """The curves lane contract: "families" is a non-empty list; every
+    family carries a "name" and a non-empty "points" list; every point
+    carries "n" > 0 plus optional ours/theirs stats objects (numeric
+    "p50", ns). Unknown extra keys are ignored (forward-compatible)."""
+    families = payload.get("families")
+    if not isinstance(families, list) or not families:
+        raise ValueError('curves lane: "families" must be a non-empty list')
+    for family in families:
+        if not isinstance(family, dict) or not isinstance(family.get("name"), str) \
+                or not family["name"]:
+            raise ValueError('curves lane: every family needs a "name" string')
+        name = family["name"]
+        points = family.get("points")
+        if not isinstance(points, list) or not points:
+            raise ValueError(f'curves lane family "{name}": "points" must be a non-empty list')
+        for point in points:
+            if not isinstance(point, dict) \
+                    or not isinstance(point.get("n"), (int, float)) or point["n"] <= 0:
+                raise ValueError(f'curves lane family "{name}": every point needs "n" > 0')
+            for side in ("ours", "theirs"):
+                _stats_p50(point, side, f'curves lane family "{name}" point n={point["n"]}')
+    return payload
+
+
+def load_write_throughput(payload):
+    """The write_throughput lane contract: "lanes" is a non-empty list;
+    every durability lane carries a "name" and a non-empty "batches"
+    list; every batch row carries "batch" > 0 plus numeric
+    ours_facts_per_sec / theirs_facts_per_sec."""
+    lanes = payload.get("lanes")
+    if not isinstance(lanes, list) or not lanes:
+        raise ValueError('write_throughput lane: "lanes" must be a non-empty list')
+    for lane in lanes:
+        if not isinstance(lane, dict) or not isinstance(lane.get("name"), str) \
+                or not lane["name"]:
+            raise ValueError('write_throughput lane: every lane needs a "name" string')
+        name = lane["name"]
+        batches = lane.get("batches")
+        if not isinstance(batches, list) or not batches:
+            raise ValueError(
+                f'write_throughput lane "{name}": "batches" must be a non-empty list')
+        for row in batches:
+            if not isinstance(row, dict) \
+                    or not isinstance(row.get("batch"), (int, float)) or row["batch"] <= 0:
+                raise ValueError(f'write_throughput lane "{name}": every batch row needs '
+                                 '"batch" > 0')
+            for key in ("ours_facts_per_sec", "theirs_facts_per_sec"):
+                if not isinstance(row.get(key), (int, float)):
+                    raise ValueError(f'write_throughput lane "{name}" batch '
+                                     f'{row["batch"]}: "{key}" must be a number')
+    return payload
+
+
+def load_cold_warm_memo(payload):
+    """The cold_warm_memo lane contract: "families" is a non-empty
+    list; every family carries a "name" plus "ours" (cold/warm/memo)
+    and "theirs" (cold/warm) phase blocks — any phase (and either
+    block) may be null or absent; every present phase carries a numeric
+    "p50". A family with no phase at all is rejected: there would be
+    nothing to draw."""
+    families = payload.get("families")
+    if not isinstance(families, list) or not families:
+        raise ValueError('cold_warm_memo lane: "families" must be a non-empty list')
+    for family in families:
+        if not isinstance(family, dict) or not isinstance(family.get("name"), str) \
+                or not family["name"]:
+            raise ValueError('cold_warm_memo lane: every family needs a "name" string')
+        name = family["name"]
+        present = 0
+        for side, phases in (("ours", ("cold", "warm", "memo")),
+                             ("theirs", ("cold", "warm"))):
+            block = family.get(side)
+            if block is None:
+                continue
+            if not isinstance(block, dict):
+                raise ValueError(
+                    f'cold_warm_memo lane family "{name}": "{side}" must be null or an object')
+            for phase in phases:
+                if _stats_p50(block, phase,
+                              f'cold_warm_memo lane family "{name}" {side}') is not None:
+                    present += 1
+        if not present:
+            raise ValueError(f'cold_warm_memo lane family "{name}": no phase carries stats')
+    return payload
+
+
+def load_adversarial(payload):
+    """The adversarial lane contract: "cap_ms" > 0 and a non-empty
+    "queries" list; every query carries a "name", an "ours" stats
+    object (numeric "p50") and a boolean "theirs_exceeded_cap". THE LAW
+    carried by the shape: theirs_exceeded_cap=true => "theirs" is null
+    — a payload claiming both a cap and a number is rejected, so a
+    capped SQLite time can never be drawn as a measurement."""
+    cap_ms = payload.get("cap_ms")
+    if not isinstance(cap_ms, (int, float)) or cap_ms <= 0:
+        raise ValueError('adversarial lane: "cap_ms" must be a number > 0')
+    queries = payload.get("queries")
+    if not isinstance(queries, list) or not queries:
+        raise ValueError('adversarial lane: "queries" must be a non-empty list')
+    for query in queries:
+        if not isinstance(query, dict) or not isinstance(query.get("name"), str) \
+                or not query["name"]:
+            raise ValueError('adversarial lane: every query needs a "name" string')
+        name = query["name"]
+        if _stats_p50(query, "ours", f'adversarial lane query "{name}"') is None:
+            raise ValueError(f'adversarial lane query "{name}": "ours" stats are required')
+        capped = query.get("theirs_exceeded_cap")
+        if not isinstance(capped, bool):
+            raise ValueError(
+                f'adversarial lane query "{name}": "theirs_exceeded_cap" must be a boolean')
+        theirs = _stats_p50(query, "theirs", f'adversarial lane query "{name}"')
+        if capped and theirs is not None:
+            raise ValueError(f'adversarial lane query "{name}": theirs_exceeded_cap=true '
+                             'yet "theirs" carries stats — a capped twin has no number')
+    return payload
+
+
 # Lane name -> contract loader; a lane without one is stored raw.
-LANE_LOADERS = {"storage": load_storage}
+LANE_LOADERS = {
+    "storage": load_storage,
+    "curves": load_curves,
+    "write_throughput": load_write_throughput,
+    "cold_warm_memo": load_cold_warm_memo,
+    "adversarial": load_adversarial,
+}
 
 
 def ingest_report(inputs, path):
@@ -154,6 +312,7 @@ def discover(night_dir):
         ingest_report(inputs, report_path)
     for md in sorted(night.glob("*/scenarios.md")):
         inputs["scenarios_md"] = str(md)
+        inputs["scenarios"] = ("md", str(md))
         break
     return inputs
 
@@ -216,6 +375,18 @@ def load_scenarios(path):
                 rows.append((scenario, cells[0], float(cells[2]), float(cells[3]),
                              float(cells[4])))
     return rows
+
+
+def load_scenarios_json(path):
+    """Parse the runner's scenarios.json: [(scenario, query, lane,
+    outcome_dict)] — one row per (query, lane), the outcome dict verbatim
+    from the emitter's tagged union (crates/bumbledb-bench/src/scenarios/
+    json_out.rs): {"outcome": "timed", "stats": {...}, "ratio_p50": f}
+    or {"outcome": "exceeded_cap", "cap_ms": n}. Unknown extra keys are
+    ignored (standard dict access, forward-compatible)."""
+    doc = json.loads(Path(path).read_text())
+    return [(q["scenario"], q["name"], lane["lane"], lane)
+            for q in doc["queries"] for lane in q["lanes"]]
 
 
 def load_report(path):
@@ -391,8 +562,68 @@ def chart_tails(inputs, out):
     plt.close(fig)
 
 
+def chart_scenarios_lanes(rows, out):
+    """The lane-aware bench-scenarios.svg, from scenarios.json rows:
+    one bar per (query, lane) — speedup is 1/ratio_p50 (the json's
+    ratio is ours/theirs), non-canonical lanes carry a ·suffix in the
+    label (r2_temporal_ring·tuned). An exceeded_cap lane draws NO bar —
+    a censored bar is unrepresentable because there is no stats object
+    to draw — it renders as a right-edge `DNF > {cap_ms}ms` annotation
+    beside the query label, excluded and counted in the title line."""
+    speeds = [1.0 / lane["ratio_p50"]
+              for _, _, _, lane in rows
+              if lane["outcome"] == "timed" and lane["ratio_p50"] > 0]
+    xhi = max(2500, max(speeds) * 3) if speeds else 2500
+    fig, ax = plt.subplots(figsize=(9.6, 0.34 * len(rows) + 1.6), facecolor=BG)
+    dark(ax)
+    y, yticks, ylabels, seen, dnf = 0, [], [], None, 0
+    for scenario, query, lane_name, lane in rows:
+        if scenario != seen:
+            seen = scenario
+            ax.text(0.55, y - 0.15, scenario, fontsize=11, color=FG,
+                    fontweight="bold", family="monospace")
+            y += 1
+        suffix = ("" if lane_name == "sqlite" else
+                  "·" + lane_name.removeprefix("sqlite-"))
+        yticks.append(y)
+        ylabels.append(query + suffix)
+        if lane["outcome"] == "timed":
+            speed = 1.0 / lane["ratio_p50"] if lane["ratio_p50"] > 0 else 0
+            color = OURS if speed >= 1 else "#f85149"
+            ax.barh(y, speed, height=0.6, color=color, zorder=3)
+            label = f"{speed:.0f}×" if speed >= 10 else f"{speed:.1f}×"
+            ax.text(max(speed * 1.06, 1.15), y, label, va="center", fontsize=9,
+                    color=color, fontweight="bold", family="monospace")
+        else:  # exceeded_cap: no stats, no bar — the annotation IS the datum
+            dnf += 1
+            ax.text(xhi * 0.85, y, f"DNF > {lane['cap_ms']}ms", va="center",
+                    ha="right", fontsize=9, color=THEIRS, fontweight="bold",
+                    family="monospace")
+        y += 1
+    ax.axvline(1.0, color=DIM, linewidth=1, linestyle="--")
+    ax.set_yticks(yticks, ylabels, fontsize=9, family="monospace", color=FG)
+    ax.set_ylim(y - 0.3, -0.7)
+    ax.set_xscale("log")
+    ax.set_xlim(0.4, xhi)
+    ax.set_xticks([1, 3, 10, 30, 100, 300, 1000],
+                  ["1×", "3×", "10×", "30×", "100×", "300×", "1000×"])
+    ax.grid(axis="x", color=GRID, linewidth=0.6, zorder=0)
+    title = ("scenario worlds · speedup over SQLite per (query, lane) · "
+             "oracle-gated, non-ledger corpora")
+    if dnf:
+        title += f"\n{dnf} lane{'s' if dnf != 1 else ''} DNF > cap — excluded and counted"
+    ax.set_title(title, fontsize=12, loc="left", pad=14, family="monospace")
+    fig.tight_layout()
+    fig.savefig(out, facecolor=BG, bbox_inches="tight")
+    plt.close(fig)
+
+
 def chart_scenarios(inputs, out):
-    rows = load_scenarios(inputs["scenarios_md"])
+    kind, path = inputs["scenarios"]
+    if kind == "json":
+        chart_scenarios_lanes(load_scenarios_json(path), out)
+        return
+    rows = load_scenarios(path)
     fig, ax = plt.subplots(figsize=(9.6, 0.34 * len(rows) + 1.6), facecolor=BG)
     dark(ax)
     y, yticks, ylabels, seen = 0, [], [], None
@@ -754,7 +985,7 @@ def chart_curves(inputs, out):
     family — ours solid, sqlite canonical dashed, sqlite hand-tuned
     dotted; fitted exponents annotated; capped points drawn as open
     markers pinned at the cap ceiling and counted in the footer."""
-    report = inputs["curves"]
+    report = inputs["curves_report"]
     families = report["families"]
     cap_ns = report["cap_ms"] * 1e6
     cols = 2
@@ -821,7 +1052,7 @@ def chart_warmth(inputs, out):
     """bench-warmth.svg: cold/warm/memoized p50 per warmth-carrying
     family, ours vs sqlite paired per group — the memo effect made an
     explicit chart instead of an implicit flatterer."""
-    report = inputs["curves"]
+    report = inputs["curves_report"]
     families = [f for f in report["families"] if f.get("warmth")]
     phases = ("cold", "warm", "memoized")
     fig, ax = plt.subplots(figsize=(9.6, 4.2), facecolor=BG)
@@ -865,6 +1096,230 @@ def chart_warmth(inputs, out):
     plt.close(fig)
 
 
+def chart_curves_loglog(inputs, out):
+    """curves-loglog.svg: the exponent chart — small multiples, one
+    log-log axes per curve family, n vs p50 for both engines, each
+    series annotated with its least-squares-fitted exponent beside the
+    last point. The slope, not the height, is the story."""
+    families = inputs["curves"]["families"]
+    cols = 2
+    rows_n = (len(families) + cols - 1) // cols
+    fig, axes = plt.subplots(rows_n, cols, facecolor=BG,
+                             figsize=(9.6, 3.2 * rows_n + 0.9))
+    flat = list(axes.flat)
+    for ax, family in zip(flat, families):
+        dark(ax)
+        p50s = [p[side]["p50"] for p in family["points"]
+                for side in ("ours", "theirs") if p.get(side)]
+        for side, color, label in (("ours", OURS, "bumbledb"),
+                                   ("theirs", THEIRS, "SQLite")):
+            pts = [(p["n"], p[side]["p50"]) for p in family["points"] if p.get(side)]
+            if not pts:
+                continue
+            xs, ys = zip(*pts)
+            ax.plot(xs, ys, "-", color=color, marker="o", ms=4, linewidth=2,
+                    zorder=3, label=label)
+            slope = fit_exponent(xs, ys)
+            if slope is not None:
+                ax.annotate(f"~n^{slope:.2f}", (xs[-1], ys[-1]),
+                            textcoords="offset points", xytext=(5, 4),
+                            fontsize=8, color=color, family="monospace")
+        ax.set_xscale("log")
+        ax.set_yscale("log")
+        ax.yaxis.set_major_formatter(FuncFormatter(fmt_us))
+        # A family spanning less than a decade auto-labels minor ticks
+        # in scientific notation — keep the µs voice there; a wide span
+        # keeps its minors silent (the majors carry the story).
+        if p50s and max(p50s) / min(p50s) < 10:
+            ax.yaxis.set_minor_formatter(FuncFormatter(fmt_us))
+        ax.set_xlabel("n", fontsize=9, family="monospace")
+        ax.grid(color=GRID, linewidth=0.6, zorder=0)
+        ax.set_title(family["name"], fontsize=11, loc="left", pad=8,
+                     family="monospace")
+        ax.legend(loc="upper left", facecolor=BG, edgecolor=GRID,
+                  labelcolor=FG, fontsize=8)
+    for ax in flat[len(families):]:
+        ax.set_visible(False)
+    fig.suptitle("scale curves · p50 vs corpus size, log-log · the fitted "
+                 "exponent is the story",
+                 x=0.01, y=0.995, ha="left", fontsize=12, color=FG,
+                 family="monospace")
+    fig.text(0.01, 0.005, "report-class · slopes from least-squares on log-log",
+             fontsize=8, color=DIM, family="monospace")
+    fig.tight_layout(rect=(0, 0.02, 1, 0.95))
+    fig.savefig(out, facecolor=BG, bbox_inches="tight")
+    plt.close(fig)
+
+
+def chart_write_throughput(inputs, out):
+    """write-throughput.svg: facts/sec across commit batch sizes, one
+    line per (durability lane × engine) — engine by color, durability
+    lane by linestyle, both axes log."""
+    lanes = inputs["write_throughput"]["lanes"]
+    styles = ("-", "--", ":", "-.")
+    fig, ax = plt.subplots(figsize=(9.6, 5.4), facecolor=BG)
+    dark(ax)
+    batches = sorted({row["batch"] for lane in lanes for row in lane["batches"]})
+    for index, lane in enumerate(lanes):
+        style = styles[index % len(styles)]
+        xs = [row["batch"] for row in lane["batches"]]
+        for key, color, engine in (("ours_facts_per_sec", OURS, "bumbledb"),
+                                   ("theirs_facts_per_sec", THEIRS, "SQLite")):
+            ax.plot(xs, [row[key] for row in lane["batches"]], style,
+                    color=color, marker="o", ms=4, linewidth=2, zorder=3,
+                    label=f"{lane['name']} · {engine}")
+    ax.set_xscale("log", base=2)
+    ax.set_yscale("log")
+    ax.set_xticks(batches, [str(b) for b in batches])
+    ax.yaxis.set_major_formatter(FuncFormatter(fmt_rate))
+    ax.set_xlabel("commit batch size (facts per commit)", fontsize=9,
+                  family="monospace")
+    ax.set_ylabel("facts/sec", fontsize=9, family="monospace")
+    ax.grid(color=GRID, linewidth=0.6, zorder=0)
+    ax.legend(loc="upper left", facecolor=BG, edgecolor=GRID,
+              labelcolor=FG, fontsize=8)
+    ax.set_title("write throughput · facts/sec across commit batch sizes, "
+                 "per durability lane",
+                 fontsize=12, loc="left", pad=14, family="monospace")
+    fig.text(0.01, 0.005,
+             "durable lanes are an fsync-latency product on both engines — "
+             "shown as measured · report-class",
+             fontsize=8, color=DIM, family="monospace")
+    fig.tight_layout()
+    fig.savefig(out, facecolor=BG, bbox_inches="tight")
+    plt.close(fig)
+
+
+# The cold_warm_memo bar roster, in draw order: (side, phase, color,
+# alpha) — ours at three warmth alphas, theirs at two; memo has no
+# SQLite twin, so a "theirs memo" bar is not in the roster at all.
+CWM_BARS = (
+    ("ours", "cold", OURS, 0.45),
+    ("ours", "warm", OURS, 0.75),
+    ("ours", "memo", OURS, 1.0),
+    ("theirs", "cold", THEIRS, 0.55),
+    ("theirs", "warm", THEIRS, 0.9),
+)
+
+
+def chart_cold_warm_memo(inputs, out):
+    """cold-warm-memo.svg: the panel — horizontal grouped bars per
+    family, up to five (ours cold/warm/memo, theirs cold/warm), phase
+    named in each bar's label; a missing phase simply has no bar."""
+    families = inputs["cold_warm_memo"]["families"]
+    fig_rows = []  # (y, value, color, alpha, label, label_color, bold)
+    yticks, ylabels = [], []
+    y = 0.0
+    for family in families:
+        group_start = y
+        for side, phase, color, alpha in CWM_BARS:
+            block = family.get(side) or {}
+            stats = block.get(phase)
+            if not stats:
+                continue
+            engine = "bumbledb" if side == "ours" else "SQLite"
+            fig_rows.append((y, stats["p50"], color, alpha,
+                             f"{engine} {phase}  {fmt_us(stats['p50'])}",
+                             OURS if side == "ours" else DIM,
+                             side == "ours"))
+            y += 1.0
+        yticks.append((group_start + y - 1.0) / 2)
+        ylabels.append(family["name"])
+        y += 0.8  # the gap between family groups
+    fig, ax = plt.subplots(figsize=(9.6, 0.42 * y + 1.9), facecolor=BG)
+    dark(ax)
+    for row_y, value, color, alpha, label, label_color, bold in fig_rows:
+        ax.barh(row_y, value, height=0.72, color=color, alpha=alpha, zorder=3)
+        ax.text(value * 1.12, row_y, label, va="center", fontsize=8,
+                color=label_color, family="monospace",
+                fontweight="bold" if bold else "normal")
+    ax.set_yticks(yticks, ylabels, fontsize=10, family="monospace", color=FG)
+    ax.invert_yaxis()
+    ax.set_xscale("log")
+    values = [value for _, value, *_ in fig_rows]
+    ax.set_xlim(min(values) * 0.5, max(values) * 40)
+    ax.xaxis.set_major_formatter(FuncFormatter(fmt_us))
+    ax.grid(axis="x", color=GRID, linewidth=0.6, zorder=0)
+    from matplotlib.patches import Patch
+    ax.legend(handles=[Patch(color=OURS, label="bumbledb (cold → warm → memo)"),
+                       Patch(color=THEIRS, label="SQLite (cold → warm)")],
+              loc="lower right", facecolor=BG, edgecolor=GRID,
+              labelcolor=FG, fontsize=8)
+    ax.set_title("cold → warm → memo · p50 per phase, both engines where a "
+                 "twin exists",
+                 fontsize=12, loc="left", pad=14, family="monospace")
+    fig.text(0.01, 0.005,
+             "memo is the image-cache-hot phase — no SQLite twin exists; "
+             "report-class",
+             fontsize=8, color=DIM, family="monospace")
+    fig.tight_layout()
+    fig.savefig(out, facecolor=BG, bbox_inches="tight")
+    plt.close(fig)
+
+
+def chart_adversarial_dnf(inputs, out):
+    """adversarial-dnf.svg: paired horizontal log bars, ours vs SQLite
+    p50 — a capped twin has NO stats to draw (the loader enforced the
+    cap => null law), so its bar is the cap itself: hatched, hollow,
+    drawn to cap_ms, labeled DNF in red, never given a ratio."""
+    report = inputs["adversarial"]
+    cap_ms = report["cap_ms"]
+    cap_ns = cap_ms * 1e6
+    queries = report["queries"]
+    fig, ax = plt.subplots(figsize=(9.6, 0.9 * len(queries) + 1.9), facecolor=BG)
+    dark(ax)
+    peaks, capped_count = [cap_ns], 0
+    for y, query in enumerate(queries):
+        o = query["ours"]["p50"]
+        peaks.append(o)
+        if query["theirs_exceeded_cap"]:
+            capped_count += 1
+            ax.barh(y + 0.19, cap_ns, height=0.34, facecolor="none",
+                    edgecolor=THEIRS, hatch="///", linewidth=1.0, zorder=3)
+            ax.text(cap_ns * 1.15, y + 0.19, f"DNF > {cap_ms} ms cap",
+                    va="center", fontsize=9, color="#f85149",
+                    fontweight="bold", family="monospace")
+            label = fmt_us(o)  # no ratio against a cap — there is no number
+        elif query.get("theirs"):
+            t = query["theirs"]["p50"]
+            peaks.append(t)
+            ax.barh(y + 0.19, t, height=0.34, color=THEIRS, zorder=3)
+            ax.text(t * 1.15, y + 0.19, fmt_us(t), va="center", fontsize=8,
+                    color=DIM, family="monospace")
+            ratio = t / o
+            label = fmt_us(o) + (f"   {ratio:.0f}×" if ratio >= 10
+                                 else f"   {ratio:.1f}×")
+        else:
+            label = fmt_us(o)  # no twin at all: ours stands alone
+        ax.barh(y - 0.19, o, height=0.34, color=OURS, zorder=3)
+        ax.text(o * 1.15, y - 0.19, label, va="center", fontsize=9,
+                color=OURS, fontweight="bold", family="monospace")
+    ax.set_yticks(range(len(queries)), [q["name"] for q in queries],
+                  fontsize=10, family="monospace", color=FG)
+    ax.invert_yaxis()
+    ax.set_xscale("log")
+    ax.set_xlim(min(q["ours"]["p50"] for q in queries) * 0.5, max(peaks) * 60)
+    ax.xaxis.set_major_formatter(FuncFormatter(fmt_us))
+    ax.grid(axis="x", color=GRID, linewidth=0.6, zorder=0)
+    from matplotlib.patches import Patch
+    ax.legend(handles=[Patch(color=OURS, label="bumbledb"),
+                       Patch(color=THEIRS, label="SQLite"),
+                       Patch(facecolor="none", edgecolor=THEIRS, hatch="///",
+                             label="SQLite DNF — drawn to the cap")],
+              loc="lower right", facecolor=BG, edgecolor=GRID,
+              labelcolor=FG, fontsize=8)
+    ax.set_title("adversarial lane · ours vs SQLite p50 · capped twins shown "
+                 "as capped, never as numbers",
+                 fontsize=12, loc="left", pad=14, family="monospace")
+    fig.text(0.01, 0.005,
+             f"{capped_count} of {len(queries)} SQLite twins exceeded the "
+             f"{cap_ms} ms per-sample cap — excluded from ratios, counted here",
+             fontsize=8, color=DIM, family="monospace")
+    fig.tight_layout()
+    fig.savefig(out, facecolor=BG, bbox_inches="tight")
+    plt.close(fig)
+
+
 # ---------------------------------------------------------- the registry
 
 
@@ -884,15 +1339,19 @@ CHARTS = [
     ChartSpec("bench-speedup.svg", ("reads",), chart_speedup),
     ChartSpec("bench-tails.svg", ("reads",), chart_tails),
     ChartSpec("bench-writes.svg", ("writes",), chart_writes),
-    ChartSpec("bench-scenarios.svg", ("scenarios_md",), chart_scenarios),
+    ChartSpec("bench-scenarios.svg", ("scenarios",), chart_scenarios),
     ChartSpec("world-<world>.svg", ("scenarios_md",), chart_worlds),
     ChartSpec("ratio-waterfall.svg", ("reads",), chart_ratio_waterfall),
     ChartSpec("tails-fan.svg", ("reads",), chart_tails_fan),
     ChartSpec("bench-storage.svg", ("storage_report",), chart_storage),
     ChartSpec("storage-bytes-per-fact.svg", ("storage",), chart_storage_per_fact),
     ChartSpec("bench-writes-rates.svg", ("writes_rates",), chart_writes_rates),
-    ChartSpec("bench-curves.svg", ("curves",), chart_curves),
-    ChartSpec("bench-warmth.svg", ("curves",), chart_warmth),
+    ChartSpec("bench-curves.svg", ("curves_report",), chart_curves),
+    ChartSpec("bench-warmth.svg", ("curves_report",), chart_warmth),
+    ChartSpec("curves-loglog.svg", ("curves",), chart_curves_loglog),
+    ChartSpec("write-throughput.svg", ("write_throughput",), chart_write_throughput),
+    ChartSpec("cold-warm-memo.svg", ("cold_warm_memo",), chart_cold_warm_memo),
+    ChartSpec("adversarial-dnf.svg", ("adversarial",), chart_adversarial_dnf),
 ]
 
 
@@ -905,11 +1364,13 @@ def main():
     ap.add_argument("run_dirs", nargs="*", metavar="run-dir",
                     help="suite run directories, each holding a report.json")
     ap.add_argument("--scenarios", metavar="PATH",
-                    help="a committed scenarios.md")
+                    help="a committed scenarios.md (legacy per-query table) or "
+                         "scenarios.json (the lane-aware machine artifact); "
+                         "dispatched on the extension")
     ap.add_argument("--night", metavar="DIR",
                     help="a night out-dir to discover: */report.json through the "
                          "lane discriminant, plus */scenarios.md")
-    ap.add_argument("--out", "--out-dir", dest="out", default="assets", metavar="DIR",
+    ap.add_argument('--out', '--out-dir', dest="out", default="assets", metavar="DIR",
                     help="output directory (default: assets — the owner's ceremony path)")
     ap.add_argument("--storage-report", metavar="PATH",
                     help="a committed storage-report.json (fills the storage_report "
@@ -917,20 +1378,25 @@ def main():
     ap.add_argument("--writes-report", metavar="PATH",
                     help="a committed writes-report.json (fills the writes_rates lane)")
     ap.add_argument("--curves-report", metavar="PATH",
-                    help="a committed curves-report.json (fills the curves lane)")
+                    help="a committed curves-report.json (fills the curves_report "
+                         "artifact behind bench-curves.svg / bench-warmth.svg)")
     args = ap.parse_args()
 
     if args.run_dirs and args.night:
         ap.error("pass run dirs or --night, not both")
     lane_flags = ((args.storage_report, "storage_report"),
                   (args.writes_report, "writes_rates"),
-                  (args.curves_report, "curves"))
+                  (args.curves_report, "curves_report"))
     if not (args.run_dirs or args.night or any(path for path, _ in lane_flags)):
         ap.error("nothing to render: pass run dirs, --night, or a lane-report flag")
 
     inputs = discover(args.night) if args.night else gather(args.run_dirs)
     if args.scenarios:
-        inputs["scenarios_md"] = args.scenarios
+        if args.scenarios.endswith(".json"):
+            inputs["scenarios"] = ("json", args.scenarios)
+        else:
+            inputs["scenarios"] = ("md", args.scenarios)
+            inputs["scenarios_md"] = args.scenarios
     derive_pools(inputs)
     for path, key in lane_flags:
         if path:

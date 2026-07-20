@@ -1,0 +1,51 @@
+{
+  "_note": "synthetic fixture for bench_viz dry-runs — not a measurement",
+  "timestamp": "2026-07-20T00:00:00Z",
+  "git_rev": "fixture",
+  "seed": 42,
+  "warmups": 8,
+  "samples": 64,
+  "queries": [
+    {
+      "scenario": "rings",
+      "name": "r1_wash_ring",
+      "about": "fixture: canonical timed lane",
+      "answers": 12,
+      "ours": {"min": 2000, "p50": 2400, "p90": 2600, "p95": 2700, "p99": 2900, "max": 3200, "mean_ns": 2450},
+      "lanes": [
+        {"lane": "sqlite", "outcome": "timed", "stats": {"min": 40000, "p50": 48000, "p90": 52000, "p95": 54000, "p99": 58000, "max": 64000, "mean_ns": 49000}, "ratio_p50": 0.0500}
+      ]
+    },
+    {
+      "scenario": "rings",
+      "name": "r2_temporal_ring",
+      "about": "fixture: canonical + hand-tuned twin pair",
+      "answers": 7,
+      "ours": {"min": 4500, "p50": 5000, "p90": 5400, "p95": 5600, "p99": 6000, "max": 6800, "mean_ns": 5100},
+      "lanes": [
+        {"lane": "sqlite", "outcome": "timed", "stats": {"min": 22000, "p50": 25000, "p90": 27000, "p95": 28000, "p99": 30000, "max": 33000, "mean_ns": 25500}, "ratio_p50": 0.2000},
+        {"lane": "sqlite-tuned", "outcome": "timed", "stats": {"min": 9000, "p50": 10000, "p90": 10800, "p95": 11200, "p99": 12000, "max": 13500, "mean_ns": 10200}, "ratio_p50": 0.5000}
+      ]
+    },
+    {
+      "scenario": "rings",
+      "name": "r3_bomb_t1",
+      "about": "fixture: adversarial lane that trips the cap",
+      "answers": 0,
+      "ours": {"min": 90000, "p50": 100000, "p90": 108000, "p95": 112000, "p99": 120000, "max": 135000, "mean_ns": 101000},
+      "lanes": [
+        {"lane": "sqlite", "outcome": "exceeded_cap", "cap_ms": 1000}
+      ]
+    },
+    {
+      "scenario": "temporal",
+      "name": "t5_pack_key",
+      "about": "fixture: translator-refused query, hand-written lane",
+      "answers": 31,
+      "ours": {"min": 7200, "p50": 8000, "p90": 8700, "p95": 9000, "p99": 9600, "max": 10500, "mean_ns": 8100},
+      "lanes": [
+        {"lane": "sqlite-hand", "outcome": "timed", "stats": {"min": 92000, "p50": 100000, "p90": 108000, "p95": 112000, "p99": 120000, "max": 132000, "mean_ns": 101500}, "ratio_p50": 0.0800}
+      ]
+    }
+  ]
+}

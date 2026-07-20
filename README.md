@@ -106,11 +106,20 @@ win is real, its tail is not; the chart shows both):
 
 ![tail behavior](assets/bench-tails.svg)
 
-Beyond the ledger, the suite runs four non-ledger scenario worlds —
-JOB-shaped joins, a social graph, an OLAP star, and point-lookup surfaces —
-22 queries, each oracle-gated before timing. Geomean across all 22: **17×**:
+Beyond the ledger, the suite runs six non-ledger scenario worlds
+(joins/graph/olap/points/rings/temporal); the committed pin below covers the
+first four — 22 queries, each oracle-gated before timing. Geomean across
+those 22: **17×**:
 
 ![scenario worlds](assets/bench-scenarios.svg)
+
+The two newest worlds are the adversarial pair: rings, where cyclic joins
+expose the binary-join exponent (with tiered bipartite bombs), and temporal,
+the Allen kernel — stabbing, overlap twins, rays, and `Pack`. Their honesty
+law: adversarial SQLite lanes run under a per-sample wall-clock cap — a lane
+that trips reports DNF > cap, excluded from geomeans and counted — and
+hand-tuned SQLite twins are reported beside the canonical translation; we
+never flatter ourselves.
 
 And the honest chart — durable writes are an fsync-latency product on both
 engines, and bulk load favors SQLite's write path; we publish it anyway:
@@ -136,7 +145,7 @@ this scale, not a production database. Regenerate everything yourself:
 cargo build --release -p bumbledb-bench
 target/release/bumbledb-bench gen && target/release/bumbledb-bench verify
 target/release/bumbledb-bench bench --out bench-out/run1   # ×3
-target/release/bumbledb-bench scenarios --out bench-out/scen
+target/release/bumbledb-bench scenarios --out bench-out/scen   # emits scenarios.md + scenarios.json
 target/release/bumbledb-bench storage --out bench-out/storage   # on-disk bytes per fact, both engines
 target/release/bumbledb-bench writes --out bench-out/writes     # commit/delete/bulk throughput, per durability lane
 target/release/bumbledb-bench curves --warmth --out bench-out/curves  # oracle-gated scale curves + the warmth panel
@@ -145,6 +154,9 @@ python3 scripts/bench_viz.py bench-out/run1 bench-out/run2 bench-out/run3 \
         --storage-report bench-out/storage/storage-report.json \
         --writes-report bench-out/writes/writes-report.json \
         --curves-report bench-out/curves/curves-report.json
+# lane-aware scenario chart (one bar per query × SQLite lane, DNF > cap
+# annotated): swap in --scenarios bench-out/scen/scenarios.json — the
+# scenarios.md form above still renders the committed pin.
 ```
 
 ## Why it's fast
