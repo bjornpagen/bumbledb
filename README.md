@@ -139,9 +139,9 @@ a DNF lane joins no bar (excluded and counted in the title):
 
 ### The scenario worlds
 
-Six non-ledger worlds — joins, graph, olap, points, rings, temporal — 35
+Six non-ledger worlds — joins, graph, olap, points, rings, temporal — 36
 (query, SQLite-lane) pairs, each oracle-gated before timing. Geomean across
-the **33 timed lanes: 12.9×**; the 2 lanes where SQLite exceeded the
+the **34 timed lanes: 12.0×**; the 2 lanes where SQLite exceeded the
 per-sample cap are excluded from that geomean and counted (they get their
 own chart below):
 
@@ -162,15 +162,18 @@ Per world, paired p50 bars (SQLite grey, ours amber):
 ![olap world](assets/world-olap.svg)
 
 `points` — deliberate home turf for SQLite: point reads by id and key,
-bucket fetches. This is the closest world on the board (`p2_by_key`
-**1.52×**) — a B-tree point lookup is the thing SQLite is best at, and we
-publish the world at full prominence:
+bucket fetches, and 0.5.0's keyed GET (`p5_keyed_get` — the typed point
+read through the declared key FD, full fact decoded, no query machinery).
+This is the closest world on the board: `p2_by_key` **1.50×**, and p5 is a
+dead heat at **1.00×** against SQLite's prepared point SELECT through the
+unique index — a B-tree point lookup is the thing SQLite is best at, and
+we publish the world at full prominence:
 
 ![points world](assets/world-points.svg)
 
 `rings` — cyclic joins, where the binary-join exponent lives; `r1_wash_ring`
-at **1.9×** is among our narrowest wins, `r3_bomb_t1` (the tier-1 bipartite
-bomb) is **11×**, and tier 2 is a DNF (below):
+at **1.8×** is among our narrowest wins, `r3_bomb_t1` (the tier-1 bipartite
+bomb) is **10.8×**, and tier 2 is a DNF (below):
 
 ![rings world](assets/world-rings.svg)
 
@@ -185,9 +188,9 @@ hand-tuned SQLite twins are reported beside the canonical translation
 Adversarial SQLite lanes run under a 1000 ms per-sample wall-clock cap. A
 capped lane has no number — it is drawn as the cap (hatched), never as a
 measurement, and never enters a ratio. The night's two DNFs: `r4_bomb_t2`
-(the tier-2 bipartite bomb — ours answers in **1.45 s**, SQLite's canonical
+(the tier-2 bipartite bomb — ours answers in **1.58 s**, SQLite's canonical
 plan exceeds the cap) and `t2_overlap_join` (the temporal overlap join —
-ours **157 ms**, canonical SQLite DNF > cap; the hand-tuned SQLite twin
+ours **163 ms**, canonical SQLite DNF > cap; the hand-tuned SQLite twin
 does finish and loses at 3.1×, on the temporal chart above — the canonical
 DNF is the binary-join exponent showing up as wall-clock, excluded and
 counted):
