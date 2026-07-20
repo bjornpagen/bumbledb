@@ -77,90 +77,237 @@ type discipline is enforced by rustc, not by runtime checks.
 
 ## The numbers
 
-Same corpus, same queries, results verified identical against SQLite — and
-every write judged identically by an independent naive model — across a
-2,862-case differential oracle before any timing is believed:
+**The protocol note, once, for every number and chart below.** Everything
+derives from one committed artifact set: the 2026-07-20 bench night
+(`bench-out/night-2026-07-20/`, engine rev `ec0b9c75`, Apple M2 Max,
+S-scale corpora). It was a **shared-machine night** under the recorded
+ruling: the process ran at boosted (user-interactive) QoS while the owner's
+background agents ran on the same box — every report stamps
+`shared_machine: true` plus the load averages, and the honesty floor is
+interleaved A/B sampling with contamination excluded-and-counted. One
+durable run (r2) WAS contaminated (agent load hit its write families
+mid-run; the report records the night's only `LOSS` verdict); it stays
+committed with its `CONTAMINATED.md` marker and is excluded from every
+number here — merged pools are min-over-clean (durable r1+r3, all three
+ephemeral runs). Every query is oracle-gated before it is ever timed:
+value-identical multisets against SQLite (2,862 differential cases for the
+suite; per-draw gates in the lanes), and every write verdict matches an
+independent naive model. SQLite is measured warm, prepared, and
+well-indexed on identical data, under the parity configs in
+[61 — Bench lanes](docs/architecture/61-bench-lanes.md). This is an
+engine-favorable workload class (joins, interval algebra, aggregates) at
+research scale — and the charts below include every regime we lose.
+
+### Reads: every family in the pin
+
+Same corpus, same queries, results verified identical before timing. All
+**32** read families — the 22 gated ledger+calendar families and the 10
+report-class families (slots, closures, the displaced-window set) — nothing
+filtered:
 
 ![read families vs SQLite](assets/bench-vs-sqlite.svg)
 
-The same data as multiples — twenty-two gated read families across two
-theories, the ledger (point lookups through negation, interval probes, and
-the triangle join) and the calendar (Allen-mask scans, the RSVP-arm union,
-conflict pairs, `Pack` free-busy, `Sum(Duration)` accounting). Geomean:
-**18.7×** over SQLite p50 (min over the clean samples of the two committed
-durable runs; one family, `mandate_overlap`, was clock-contaminated in both
-and is excluded and counted per the protocol); the ephemeral-store runs land
-at **21.2×** across all twenty-two — reads are mmap-warm either way (the
-ephemeral number was re-earned under `NOSYNC`-only after cleanup-0.5.0
-ruling 1 retired `WRITEMAP`: three fresh runs on the post-cleanup tree,
-2026-07-19, ALL-WIN in each, clean-sample min-of-3,
-`bench-out/eph-nosync-{1,2,3}`):
+The same data as multipliers. Geomean over the 22 gated families:
+**19.3×** SQLite p50 (durable store, min-over-clean); the ephemeral runs
+land at **21.3×** (min-of-3) — reads are mmap-warm either way. Across all
+32 families the durable geomean is **21.8×**. The spread is honest: `point`
+lookups are only **2.8×** (a B-tree is good at this), `triangle` **3.8×**,
+while `balance` is **263×**, `busy_scan` **471×**, and the displaced-stream
+family ~**295×**:
 
 ![speedup over SQLite](assets/bench-speedup.svg)
 
-Latency is a distribution, not a number. p50 → p95 → p99 per family, both
-engines — the bimodal families show their true tails, and in every gated
-family but one they sit an order of magnitude inside SQLite's (the honest
-exception is `meets_chain`, whose p99 lands ~10× outside SQLite's — its p50
-win is real, its tail is not; the chart shows both):
+Latency is a distribution, not a number — p50 → p95 → p99 per family, both
+engines. The bimodal families (`containment_walk`, `balance`, `skew`,
+`chain`) show their true tails. The night's suite reports carry
+`budget_ok: false`, published as such: `spread` and `triangle` (and the
+report-class `disp_probe` trio) land p99 outside their per-family budget
+gates on this shared-machine night — the p50 wins are real, those tails did
+not clear the bar, and both facts are on the chart:
 
 ![tail behavior](assets/bench-tails.svg)
 
-Beyond the ledger, the suite runs six non-ledger scenario worlds
-(joins/graph/olap/points/rings/temporal); the committed pin below covers the
-first four — 22 queries, each oracle-gated before timing. Geomean across
-those 22: **17×**:
+The same tails as a p50 → p90 → p99 fan:
+
+![latency tail fan](assets/tails-fan.svg)
+
+And the composite honesty chart — every read family and every scenario
+(query, lane) as one sorted ratio bar; anything below parity draws red, and
+a DNF lane joins no bar (excluded and counted in the title):
+
+![ratio waterfall](assets/ratio-waterfall.svg)
+
+### The scenario worlds
+
+Six non-ledger worlds — joins, graph, olap, points, rings, temporal — 35
+(query, SQLite-lane) pairs, each oracle-gated before timing. Geomean across
+the **33 timed lanes: 12.9×**; the 2 lanes where SQLite exceeded the
+per-sample cap are excluded from that geomean and counted (they get their
+own chart below):
 
 ![scenario worlds](assets/bench-scenarios.svg)
 
-The two newest worlds are the adversarial pair: rings, where cyclic joins
-expose the binary-join exponent (with tiered bipartite bombs), and temporal,
-the Allen kernel — stabbing, overlap twins, rays, and `Pack`. Their honesty
-law: adversarial SQLite lanes run under a per-sample wall-clock cap — a lane
-that trips reports DNF > cap, excluded from geomeans and counted — and
-hand-tuned SQLite twins are reported beside the canonical translation; we
-never flatter ourselves.
+Per world, paired p50 bars (SQLite grey, ours amber):
 
-And the honest chart — durable writes are an fsync-latency product on both
-engines, and bulk load favors SQLite's write path; we publish it anyway:
+`joins` — the IMDB-shaped join battery, two- through five-way:
+
+![joins world](assets/world-joins.svg)
+
+`graph` — neighborhoods, two-hop, mutual edges, triangles:
+
+![graph world](assets/world-graph.svg)
+
+`olap` — group-by rollups, windows, drill-downs:
+
+![olap world](assets/world-olap.svg)
+
+`points` — deliberate home turf for SQLite: point reads by id and key,
+bucket fetches. This is the closest world on the board (`p2_by_key`
+**1.52×**) — a B-tree point lookup is the thing SQLite is best at, and we
+publish the world at full prominence:
+
+![points world](assets/world-points.svg)
+
+`rings` — cyclic joins, where the binary-join exponent lives; `r1_wash_ring`
+at **1.9×** is among our narrowest wins, `r3_bomb_t1` (the tier-1 bipartite
+bomb) is **11×**, and tier 2 is a DNF (below):
+
+![rings world](assets/world-rings.svg)
+
+`temporal` — the Allen kernel: stabbing, overlap twins, rays, `Pack`. The
+hand-tuned SQLite twins are reported beside the canonical translation
+(`·tuned` rows) — we never flatter ourselves in either direction:
+
+![temporal world](assets/world-temporal.svg)
+
+### The adversarial story: DNF > cap
+
+Adversarial SQLite lanes run under a 1000 ms per-sample wall-clock cap. A
+capped lane has no number — it is drawn as the cap (hatched), never as a
+measurement, and never enters a ratio. The night's two DNFs: `r4_bomb_t2`
+(the tier-2 bipartite bomb — ours answers in **1.45 s**, SQLite's canonical
+plan exceeds the cap) and `t2_overlap_join` (the temporal overlap join —
+ours **157 ms**, canonical SQLite DNF > cap; the hand-tuned SQLite twin
+does finish and loses at 3.1×, on the temporal chart above — the canonical
+DNF is the binary-join exponent showing up as wall-clock, excluded and
+counted):
+
+![adversarial DNFs](assets/adversarial-dnf.svg)
+
+### Writes: fsync physics, published anyway
+
+Durable commits are an fsync-latency product on both engines — the durable
+suite families land at parity-shaped numbers (`commit_single` p50 4.5 ms
+ours vs 5.1 ms SQLite, min-over-clean) — and **bulk load favors SQLite's
+write path** (durable `bulk`: 1.25 s ours vs 0.93 s SQLite; we lose ~1.35×
+and publish it):
 
 ![writes and cold](assets/bench-writes.svg)
 
-**Context that keeps these numbers honest:** every read-family number above
-derives from the committed artifacts in `bench-out/` (two durable runs,
-2026-07-16, and three `NOSYNC`-only ephemeral runs, 2026-07-19 on the
-post-cleanup tree, per-family clock-proxy contamination excluded and
-counted); the scenario suite is its own committed run. S-scale corpora (a 10⁵-fact
-fact-table ledger and a calendar world of interval claims, RSVP arms, and
-ray horizons), Apple M2 Max, engine-favorable workload class (point lookups
-through multi-way joins, interval algebra, and aggregates — exactly what a
-set-semantic Free Join engine is built for). SQLite is measured warm,
-prepared, and well-indexed on the identical data. One internal experiment is
-a recorded refutation: replacing the multi-rule spanning seen-set with
-per-rule drains measured ~32% slower, so that optimization was removed and
-the proof remains diagnostic only. This is a research engine validated at
-this scale, not a production database. Regenerate everything yourself:
+The writes lane prices the whole ladder — commits and deletes at batch
+1/10/100/1000 plus bulk append, per durability lane, post-state
+value-verified. SQLite wins single-fact NOSYNC commits (24.7k vs 18.1k
+rows/s) and bulk append in both lanes (468k vs 253k rows/s NOSYNC); we win
+the batched middle (109k vs 87k rows/s at `commit_b1000` NOSYNC):
+
+![write rates per family and batch](assets/bench-writes-rates.svg)
+
+The same ladders as throughput curves — facts/sec against commit batch
+size, per durability lane:
+
+![write throughput](assets/write-throughput.svg)
+
+### Storage: we spend bytes, and the chart says so
+
+bumbledb stores ~**308 B/fact** on the ledger and ~**392 B/fact** on the
+calendar (compacted, S scale) against SQLite's **73/93 B/fact** indexed and
+**20/24 B/fact** table-only — roughly **4× SQLite's indexed footprint**.
+That is the price of the determinant indexes and the columnar layout the
+read numbers ride on; every byte is behind a row-count cross-check:
+
+![storage bytes per fact](assets/bench-storage.svg)
+
+### Scale curves and warmth
+
+The curves lane re-times four families at the pinned scale under per-draw
+oracle gates (this night pinned one scale point per family, so the chart
+shows gated points, not fitted exponents): `busy_scan` at S scale is
+**477×** against canonical SQL and still **168×** against the hand-tuned
+twin; `closure_fanout` is **30×**:
+
+![scale curves](assets/bench-curves.svg)
+
+Warmth is where honesty gets granular: cold (process-fresh reopen, OS-warm
+— the honesty bound stated in the report), warm, then memoized. The memo
+effect is explicit rather than a hidden flatterer — and cold starts are a
+regime we can lose: `closure_fanout` cold is **379 µs ours vs 16 µs
+SQLite** (we win it warm, 1.0 µs vs 9.4 µs):
+
+![warmth](assets/bench-warmth.svg)
+
+### Churn: what a long-lived life does to both engines
+
+The churn lane runs 10,000 delete+insert cycles against a 100k-fact working
+set, three runs (steady 64/32 churn/update mix, the same mix NOSYNC, and
+delete-heavy 512/0), with every lane drawn — including `sqlite-maint`, the
+operator who runs periodic VACUUM+ANALYZE with the wall time charged into
+its own throughput window (marked ▼ from the recorded data). The
+degradation story over 10k cycles, per the pinned series: SQLite's window
+probe drifts 277 → 561 µs bare (and 277 → 791 µs on the maint lane) while
+ours holds 19 → 21.5 µs; our store stays byte-flat (95.9 → 96.9 MB —
+roughly 5.6× SQLite's on-disk size, consistent with the storage chart)
+while SQLite's grows 14.8 → 17.3 MB bare and VACUUM claws it back;
+write throughput: SQLite bare slides 55.6 → 47.5 commits/s vs ours
+44.4 → 43.1 (SQLite ahead throughout on the durable steady run — shown),
+and NOSYNC ours 309 → 257 vs SQLite 253 → 221.
+
+Probe latency, every lane, per run:
+
+![churn latency, steady](assets/churn-latency-steady.svg)
+![churn latency, nosync](assets/churn-latency-nosync.svg)
+![churn latency, delete-heavy](assets/churn-latency-delete-heavy.svg)
+
+Store size over cycles (the VACUUM sawtooth is visible on the maint lane):
+
+![churn size, steady](assets/churn-size-steady.svg)
+![churn size, nosync](assets/churn-size-nosync.svg)
+![churn size, delete-heavy](assets/churn-size-delete-heavy.svg)
+
+Write throughput over cycles:
+
+![churn throughput, steady](assets/churn-throughput-steady.svg)
+![churn throughput, nosync](assets/churn-throughput-nosync.svg)
+![churn throughput, delete-heavy](assets/churn-throughput-delete-heavy.svg)
+
+### Regenerate everything yourself
+
+One internal experiment is a recorded refutation: replacing the multi-rule
+spanning seen-set with per-rule drains measured ~32% slower, so that
+optimization was removed and the proof remains diagnostic only. This is a
+research engine validated at this scale, not a production database.
 
 ```sh
+scripts/bench-night.sh bench-out/night-$(date +%F)   # the whole night, one command
+# (--shared for a loaded machine — provenance stamps it; --plan to preview)
+
+# or lane by lane:
 cargo build --release -p bumbledb-bench
 target/release/bumbledb-bench gen && target/release/bumbledb-bench verify
-target/release/bumbledb-bench bench --out bench-out/run1   # ×3
-target/release/bumbledb-bench scenarios --out bench-out/scen   # emits scenarios.md + scenarios.json
-target/release/bumbledb-bench churn --out bench-out/churn   # degradation series (report-class)
-target/release/bumbledb-bench storage --out bench-out/storage   # on-disk bytes per fact, both engines
-target/release/bumbledb-bench writes --out bench-out/writes     # commit/delete/bulk throughput, per durability lane
-target/release/bumbledb-bench curves --warmth --out bench-out/curves  # oracle-gated scale curves + the warmth panel
-python3 scripts/bench_viz.py bench-out/run1 bench-out/run2 bench-out/run3 \
-        --scenarios bench-out/scen/scenarios.md \
-        --storage-report bench-out/storage/storage-report.json \
-        --writes-report bench-out/writes/writes-report.json \
-        --curves-report bench-out/curves/curves-report.json
-# lane-aware scenario chart (one bar per query × SQLite lane, DNF > cap
-# annotated): swap in --scenarios bench-out/scen/scenarios.json — the
-# scenarios.md form above still renders the committed pin.
+target/release/bumbledb-bench bench --out out/r1                # ×3, + --ephemeral ×3
+target/release/bumbledb-bench scenarios --out out/scenarios
+target/release/bumbledb-bench storage --out out/storage
+target/release/bumbledb-bench writes --out out/writes
+target/release/bumbledb-bench curves --warmth --out out/curves
+target/release/bumbledb-bench churn --out out/churn
+
+# every chart, from the pinned night (discovery finds every lane report;
+# a run dir carrying CONTAMINATED.md is excluded and counted):
+python3 scripts/bench_viz.py --night bench-out/night-2026-07-20 --out assets
 ```
 
-The full Report-class lane registry, parity configs, and the one-command night runbook: [docs/architecture/61-bench-lanes.md](docs/architecture/61-bench-lanes.md) (`scripts/bench-night.sh <out-dir>`).
+The full Report-class lane registry, parity configs, the DNF-cap law, the
+shared-machine ruling, and the night runbook:
+[docs/architecture/61-bench-lanes.md](docs/architecture/61-bench-lanes.md).
 
 ## Why it's fast
 
@@ -427,9 +574,9 @@ lean/                    the Lean spec + the conformance corpus — the one
 docs/                    the normative architecture + the cookbook (docs/cookbook.md)
 docs/reference/          background dossiers (apple-silicon-performance.md)
 scripts/
-  bench_viz.py           committed bench artifacts (run dirs + the
-                         storage/writes/curves lane reports) -> the
-                         README charts
+  bench_viz.py           committed bench artifacts -> the README charts
+                         (--night discovers every lane report; contaminated
+                         runs excluded-and-counted by their marker file)
   check.sh               the engine gate suite (below)
   check-asm.sh           disassembly gates: machine-code properties of hot
                          symbols asserted against objdump output
