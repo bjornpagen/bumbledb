@@ -36,7 +36,7 @@ import { native } from "#native.ts"
 import type { Query, QueryParams, QueryRow } from "#query/lower.ts"
 import { lowerQuery, query } from "#query/lower.ts"
 import { decodeAnswers, wireParams } from "#query/run.ts"
-import { v, type ParamsRecord } from "#query/scope.ts"
+import { type ParamsRecord, v } from "#query/scope.ts"
 import { relation } from "#relation.ts"
 import { schema } from "#schema.ts"
 import { contained } from "#statements.ts"
@@ -227,10 +227,7 @@ describe("query literals, params & membership arrays over closed references", fu
 	test("eq against a closed-bound var takes the handle union on the literal side", function eqRhs() {
 		const fatal = query(Oncall).rule(function rule(r) {
 			const inc = v(Incident)
-			return r
-				.match(Incident, { id: inc.id, sev: inc.sev })
-				.where(r.eq(inc.sev, "Fatal"))
-				.find({ i: inc.id })
+			return r.match(Incident, { id: inc.id, sev: inc.sev }).where(r.eq(inc.sev, "Fatal")).find({ i: inc.id })
 		})
 		assert.deepEqual(incidents(run(fatal, {})), [4n])
 		type RowPin = Expect<Equal<QueryRow<typeof fatal>, { readonly i: bigint }>>

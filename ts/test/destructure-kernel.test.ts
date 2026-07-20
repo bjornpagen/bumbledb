@@ -385,7 +385,7 @@ function compileProbes(r: QueryRuleScope<Rels, (typeof Theory)["classes"]>): voi
 	r.var
 	const chain = r.match(Holder, { id: h.id })
 	// @ts-expect-error — select died into find
-	chain.select("id")
+	chain.select
 	// @ts-expect-error — a class-mismatched reference reuse is rejected at the position
 	r.match(Holder, { rank: h.id })
 }

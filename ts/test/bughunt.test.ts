@@ -255,10 +255,7 @@ describe("marshal edges and lifecycle sanity against a real store", async functi
 				db.prepare(
 					query(Theory).rule((r) => {
 						const { id, note } = v(Txt)
-						return r
-							.match(Txt, { id, note })
-							.where(r.eq(note, "\uD800"))
-							.find({ i: id })
+						return r.match(Txt, { id, note }).where(r.eq(note, "\uD800")).find({ i: id })
 					})
 				)
 			},

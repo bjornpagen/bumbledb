@@ -141,10 +141,7 @@ describe("the free comparison exports", function suite() {
 			query(Ledger).rule((r) => {
 				const h = v(Holder)
 				const ghost = v(Holder)
-				return r
-					.match(Holder, { id: h.id })
-					.where(lt(ghost.id, 5n))
-					.find({ h: h.id })
+				return r.match(Holder, { id: h.id }).where(lt(ghost.id, 5n)).find({ h: h.id })
 			})
 		}, /the variable Holder\.id is not bound by a relation atom/)
 	})

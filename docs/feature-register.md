@@ -72,6 +72,26 @@ schema, the host-gate census).
   read-only/multi-process open (owner decisions); a graph workload too big
   or write-hot to materialize.
 
+### 5. Tagged-template rule notation — REJECT
+- The destructure-060 alternative surface: rules spelled as
+  `` rule`...` `` template literals with a type-level string parser
+  re-deriving the columns, vars, and joins from the literal text. **REJECTED
+  by the owner, 2026-07-20**, verbatim ground: "the type-level string feels
+  like a lie" — a template's type-level parse re-derives what the value tier
+  already IS; the string is a second, weaker encoding of facts the vars and
+  relations already carry as real values.
+- The ratified surface is the value tier itself: the `v()` mint (one fresh
+  record of law-classed query variables per call), joins spelled by OBJECT
+  REFERENCE (reusing a var value across binding positions IS the join —
+  name-collision joins are unrepresentable), and the head a `find` RECORD
+  whose keys name the answer columns (renames are real). Shipped 0.6.0.
+- **TRIGGERS**: (a) TypeScript ships a facility giving template spellings real
+  per-call-site value identity — so a `` rule`...` `` occurrence carries
+  reference semantics and the string stops lying about what it denotes;
+  (b) a measured host-ergonomics failure of the destructuring surface — three
+  or more primer modules regressing to building rule fragments by string
+  assembly — reopens the notation question with evidence.
+
 ## The host-fold register (the census's residual unspellables)
 
 Query shapes primer legitimately folds in the HOST, each a recorded citation

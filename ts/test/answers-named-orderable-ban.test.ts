@@ -212,10 +212,7 @@ describe("answer rows arrive named + the orderable ban", function suite() {
 			const seeded = seen
 				.rule((r) => {
 					const { id, sev } = v(Incident)
-					return r
-						.match(Incident, { id, sev })
-						.where(r.eq(id, 1n))
-						.find({ n: id, s: sev })
+					return r.match(Incident, { id, sev }).where(r.eq(id, 1n)).find({ n: id, s: sev })
 				})
 				.rule((r) => {
 					const e = v(Edge)
@@ -402,10 +399,7 @@ describe("answer rows arrive named + the orderable ban", function suite() {
 		// so we mint one over the closed column to satisfy the type.
 		const svar = v(Incident).sev
 		assert.throws(function nineIsOutside() {
-			decodeAnswers(
-				[{ name: "s", entry: { kind: "var", over: svar }, closed: Sev.id.closed, slot: undefined }],
-				[[9n]]
-			)
+			decodeAnswers([{ name: "s", entry: { kind: "var", over: svar }, closed: Sev.id.closed, slot: undefined }], [[9n]])
 		}, /query answer column s: id 9 is outside the Sev roster \(Info, Warn, Crit, Fatal\) — the column types Sev but no law pins it — a containment statement is the missing piece/)
 	})
 })

@@ -59,10 +59,7 @@ test("CONTROL: allen() accepts a literal interval side (sibling is interval-type
 test("CONTROL: pointIn() accepts a point literal with an interval var", function pointInVarInterval() {
 	const q = query(Probe).rule((r) => {
 		const { active } = v(Session)
-		return r
-			.match(Session, { active })
-			.where(r.pointIn(5n, active))
-			.find({ iv: active })
+		return r.match(Session, { active }).where(r.pointIn(5n, active)).find({ iv: active })
 	})
 	assert.doesNotThrow(function lowerIt() {
 		lowerQuery(q)
