@@ -3,9 +3,10 @@
 //! module is the world's foundation: the schema, the sizes, (in
 //! [`corpus`]) the seeded rows and the durability-paired twin loader,
 //! the precomputed op streams ([`ops`]), the family runners
-//! ([`lanes`]), and the family registry ([`families`]). Everything here
-//! is REPORT-class infrastructure — no budget gate ever reads a crud
-//! number.
+//! ([`lanes`]), the family registry ([`families`]), the orchestration
+//! fold ([`run`]), and the artifact renderers ([`render`]). Everything
+//! here is REPORT-class infrastructure — no budget gate ever reads a
+//! crud number.
 //!
 //! The world's shape: `Doc` — a keyed row store (fresh id, a u64 `key`
 //! under a scalar key statement, an i64 `val`, a 32-byte payload — the
@@ -25,8 +26,12 @@ use crate::harness::Protocol;
 pub mod corpus;
 pub mod lanes;
 pub mod ops;
+pub mod render;
+pub mod run;
 #[cfg(test)]
 mod tests;
+
+pub use run::{CrudRow, run, run_with};
 
 bumbledb::schema! {
     pub CrudWorld;

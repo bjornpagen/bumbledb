@@ -341,6 +341,134 @@ fn the_read_query_translates_and_the_stream_generators_are_pure() {
     );
 }
 
+/// The orchestration tests' seed. The full run replays every family
+/// back to back under the REGISTRY warmups plus the 2-sample override
+/// (10 invocations for the counter streams, not [`COUNT`]), so the
+/// no-collision condition on the seeded streams is re-satisfied at
+/// those lengths: seed 0's update stream never draws key 0 (the hot
+/// lane's row) and its upsert stream never draws a key the update
+/// stream touched. (Seed 1 — [`SEED`] — collides at length 10: the
+/// upsert abort said so, loudly, exactly as the refusal contract
+/// promises.)
+const RUN_SEED: u64 = 0;
+
+/// A loader that loads the real twin, then poisons the `SQLite` mirror
+/// with one extra `Doc` row at the read rotation's guaranteed-miss key
+/// (`u64::MAX / 2` — a key no insert lane can mint), so the gate's miss
+/// set finds a row on one engine only. The fold under test is the SAME
+/// fold [`super::run_with`] runs — only the store source differs.
+fn load_poisoned(
+    dir: &std::path::Path,
+    lane: DurabilityLane,
+    sizes: CrudSizes,
+) -> Result<(bumbledb::Db<super::CrudWorld>, rusqlite::Connection), String> {
+    let (db, conn) = super::corpus::load_stores(dir, RUN_SEED, sizes, lane)?;
+    conn.execute(
+        "INSERT INTO \"Doc\" VALUES (?1, ?2, ?3, ?4)",
+        (
+            999_999_999_i64,
+            i64::try_from(u64::MAX / 2).expect("fits"),
+            1_i64,
+            vec![0u8; 32],
+        ),
+    )
+    .map_err(|e| format!("poison: {e}"))?;
+    Ok((db, conn))
+}
+
+/// The oracle gate refuses a divergent mirror: a poisoned `SQLite` twin
+/// makes the fold `Err` naming the disagreement — nothing gets timed,
+/// nothing gets rendered.
+#[test]
+fn the_crud_gate_refuses_a_divergent_oracle() {
+    let sizes = CrudSizes::of(Scale::Tiny);
+    let dir = scratch("run-gate-divergent");
+    let err = super::run::fold(&dir, RUN_SEED, sizes, Some(2), None, &|lane_dir, lane| {
+        load_poisoned(lane_dir, lane, sizes)
+    })
+    .expect_err("a poisoned mirror must not be timed");
+    assert!(err.contains("ENGINES DISAGREE"), "{err}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The full orchestration at `Tiny` with 2 samples per family: both
+/// lane sections render with every family row, and the JSON artifact
+/// parses back through our own parser with 2 lanes × 11 rows and the
+/// post-state verdict. This is a correctness smoke test — no number it
+/// produces is recorded anywhere.
+#[test]
+fn the_full_crud_run_produces_both_lanes_and_parses() {
+    let sizes = CrudSizes::of(Scale::Tiny);
+    let dir = scratch("run-full");
+    let (md, json_text) =
+        super::run_with(&dir, RUN_SEED, sizes, Some(2), None).expect("the full crud run");
+    assert!(md.contains("## lane durable"), "{md}");
+    assert!(md.contains("## lane nosync"), "{md}");
+    for family in super::families() {
+        assert!(md.contains(family.name), "missing {} in\n{md}", family.name);
+    }
+    let parsed = crate::json::parse(&json_text).expect("the artifact parses");
+    let lanes = parsed
+        .get("lanes")
+        .and_then(crate::json::Value::as_arr)
+        .expect("lanes array");
+    assert_eq!(lanes.len(), 2, "two durability lanes");
+    for lane in lanes {
+        let rows = lane
+            .get("rows")
+            .and_then(crate::json::Value::as_arr)
+            .expect("rows array");
+        assert_eq!(rows.len(), super::families().len(), "eleven rows per lane");
+        assert!(
+            lane.get("config")
+                .and_then(crate::json::Value::as_str)
+                .is_some_and(|config| config.contains("SQLite WAL")),
+            "the lane carries its parity config prose"
+        );
+    }
+    assert_eq!(
+        parsed.get("poststate").and_then(crate::json::Value::as_str),
+        Some("ok"),
+        "the post-state field"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// An unknown `--only` name is refused before anything loads, and the
+/// refusal lists the registry.
+#[test]
+fn an_unknown_only_name_is_refused() {
+    let sizes = CrudSizes::of(Scale::Tiny);
+    let dir = scratch("run-unknown-only");
+    let err = super::run_with(&dir, RUN_SEED, sizes, Some(2), Some(&["nope".to_owned()]))
+        .expect_err("an unknown family name must refuse");
+    assert!(err.contains("unknown family `nope`"), "{err}");
+    assert!(err.contains("crud_read_point"), "{err}");
+    assert!(err.contains("crud_mixed_90_10"), "{err}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The gate is UNCONDITIONAL: filtering the run down to `crud_insert`
+/// (the read query untimed as its own family) still gates the read
+/// query, so a poisoned mirror still refuses the whole run.
+#[test]
+fn a_filtered_run_still_gates_the_read_query() {
+    let sizes = CrudSizes::of(Scale::Tiny);
+    let dir = scratch("run-filtered-gate");
+    let only = vec!["crud_insert".to_owned()];
+    let err = super::run::fold(
+        &dir,
+        RUN_SEED,
+        sizes,
+        Some(2),
+        Some(&only),
+        &|lane_dir, lane| load_poisoned(lane_dir, lane, sizes),
+    )
+    .expect_err("the gate must run even when read_point is filtered out");
+    assert!(err.contains("ENGINES DISAGREE"), "{err}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// A one-row post-state divergence is loud: the error names the world
 /// and the relation before rendering the multiset diff.
 #[test]
