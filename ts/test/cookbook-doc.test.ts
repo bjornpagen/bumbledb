@@ -31,7 +31,7 @@ const packageRoot = path.join(import.meta.dirname, "..")
 const cookbookPath = path.join(packageRoot, "COOKBOOK.md")
 
 /** The cookbook's recipe count — the roster the Rust twin also pins. */
-const RECIPE_COUNT = 29
+const RECIPE_COUNT = 30
 
 /**
  * Every ```ts fence body of a markdown chunk, in document order — the
@@ -84,7 +84,7 @@ test("every ts fence in COOKBOOK.md type-checks against src/index.ts at HEAD, se
 	const recipes = parts.filter(function isRecipe(section) {
 		return /^## \d+\. /.test(section.heading)
 	})
-	assert.equal(recipes.length, RECIPE_COUNT, "the cookbook holds all 29 recipes")
+	assert.equal(recipes.length, RECIPE_COUNT, "the cookbook holds all 30 recipes")
 	recipes.forEach(function numbered(section, index) {
 		assert.ok(
 			section.heading.startsWith(`## ${index + 1}. `),

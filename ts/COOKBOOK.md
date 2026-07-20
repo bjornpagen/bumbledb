@@ -1,6 +1,6 @@
 # The cookbook — modeling intuition as schemas, in TypeScript
 
-The bumbledb engine's 29 cookbook recipes (`bumbledb/docs/cookbook.md`),
+The bumbledb engine's 30 cookbook recipes (`bumbledb/docs/cookbook.md`),
 translated to this SDK's structural API. **This document is illustrative,
 never normative**: where a recipe and an engine architecture chapter disagree,
 the chapter wins (`docs/architecture/README.md` rule 5) — the SDK is the same
@@ -1471,3 +1471,77 @@ unit slots `[4,5)`, `[5,6)` satisfies both directions, because nothing forces
 the witness rows to mirror the sidecar's segmentation — only its points. If
 per-row correspondence matters, the host writes zones at slot granularity;
 the schema proves disjointness and coverage either way.
+
+## Point reads
+
+## 30. The keyed read
+
+Guarantee: validator/runtime premises — a declared key FD admits at most one
+fact per determinant tuple (the key phase of the commit judgment), and every
+keyed point read answers exactly that fact or nothing, on every scope
+(`ts/test/keyed-get.test.ts`; the engine half is
+`crates/bumbledb/tests/keyed_get.rs`).
+
+The key is a **law**, and the read surface is that law made callable. The
+schema says `key(Program, ["grp"])` — one program per group — so "the
+program of a group" is a well-posed question with at most one answer, and
+the store already enforces that on every commit. Hold the statement VALUE:
+it is the read's selector below (statement identity is the membership rule).
+
+```ts
+const Grp = relation("Grp", { id: u64.fresh, label: str })
+const Program = relation("Program", { id: u64.fresh, grp: u64, title: str })
+// The law: one program per group — the callable key.
+const programGrpKey = key(Program, ["grp"])
+
+const KeyedRead = schema("KeyedRead", { Grp, Program }, [
+	contained(on(Program, "grp"), on(Grp, "id")),
+	programGrpKey
+])
+```
+
+The point read is the statement handed back to `get` — one spelling on
+every scope (the symmetry rule): `db.get` standalone, `snap.get` inside a
+read scope, `tx.get` inside a write transaction, where the transaction side
+answers the FINAL state (base plus pending delta: read-your-writes, a
+pending delete answers `undefined`). The key object is typed by the
+statement's own projection — a wrong field name is a compile error, never a
+runtime shape check. The primary 2-arg form needs no statement: the fresh
+field IS the primary key.
+
+```ts
+const db = await Db.create("./programs.db", KeyedRead)
+
+const minted: { grp?: bigint } = {}
+db.write((tx) => {
+	const g = tx.insert(Grp, { label: "algebra" })
+	tx.insert(Program, { grp: g.id, title: "linear equations" })
+	minted.grp = g.id
+})
+const grp = minted.grp ?? 0n
+
+// db.get — the standalone keyed read through the declared law:
+const byGroup = db.get(Program, programGrpKey, { grp })
+
+// snap.get — the same spelling inside a read scope:
+const viaSnap = db.read((snap) => snap.get(Program, programGrpKey, { grp }))
+
+// tx.get — key-shaped read-modify-write, final-state (recipe 20's third
+// idiom): per-fact premises need no earlier snapshot witness.
+db.write((tx) => {
+	const current = tx.get(Program, programGrpKey, { grp })
+	if (current !== undefined) {
+		tx.delete(Program, current)
+		tx.insert(Program, { id: current.id, grp: current.grp, title: "linear equations II" })
+	}
+})
+
+// The primary 2-arg form — the fresh field is the primary key:
+const byId = byGroup === undefined ? undefined : db.get(Program, { id: byGroup.id })
+```
+
+The anti-pattern this recipe retires: a scan-and-find where a key law
+exists — `snap.scan(Program).find((row) => row.grp === grp)` — re-derives
+in the host what the store already enforces. The uniqueness the fold
+quietly assumes IS the declared key statement; spell the law and the point
+read comes with it.

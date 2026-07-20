@@ -700,6 +700,20 @@ recipe!(r29, ZoneLedger, {
     Zone(ledger, at | kind == Pair) == PairSlot(ledger, at);
 });
 
+recipe!(r30, KeyedRead, {
+    pub KeyedRead;
+
+    relation Grp     { id: u64 as GrpId, fresh, label: str }
+    relation Program {
+        id: u64 as ProgramId, fresh,
+        grp: u64 as GrpId,
+        title: str,
+    }
+
+    Program(grp) <= Grp(id);
+    Program(grp) -> Program;
+});
+
 /// The roster, exhaustively — one entry per doc recipe, in doc order: the
 /// schema pin, the validation entry, and the query-fence pins (doc-fence
 /// sources, render goldens, and the prepare-and-render `pin`).
@@ -726,7 +740,7 @@ macro_rules! entry {
     };
 }
 
-const ROSTER: [Recipe; 29] = [
+const ROSTER: [Recipe; 30] = [
     entry!(r01, "The minimal interval schema"),
     entry!(r02, "Discriminated unions"),
     entry!(r03, "0..1 optional attributes"),
@@ -756,6 +770,7 @@ const ROSTER: [Recipe; 29] = [
     entry!(r27, "Derived facts, maintained"),
     entry!(r28, "Migration is ETL"),
     entry!(r29, "The zone ledger"),
+    entry!(r30, "The keyed read"),
 ];
 
 /// Comments and whitespace out; what remains is exactly what the token
@@ -891,7 +906,7 @@ fn the_doc_roster_is_exactly_this_roster() {
         "doc recipes and test entries must correspond one-to-one"
     );
     for (i, ((n, title), recipe)) in headings.iter().zip(ROSTER.iter()).enumerate() {
-        assert_eq!(*n, i + 1, "recipe numbering is 1..=29 in order");
+        assert_eq!(*n, i + 1, "recipe numbering is 1..=30 in order");
         assert_eq!(title, recipe.title, "recipe {} title", i + 1);
     }
 }
@@ -2142,4 +2157,81 @@ fn r28_migration_is_etl() {
         .map(|(n, a)| (n.to_owned(), a))
         .collect();
     assert_eq!(answers, expected, "the v1 facts answer under the v2 theory");
+}
+
+/// Recipe 30: the keyed read — the declared law `Program(grp) -> Program`
+/// made callable. The generated key struct (`ProgramByGrp`, the
+/// `{R}By{Fields}` derived-name rule) answers on BOTH scopes, the fresh
+/// newtype reads the primary form, and a determinant nobody wrote misses
+/// cleanly — the recipe's taught spellings, exercised verbatim.
+#[test]
+fn r30_keyed_read_reads_through_the_law_on_both_scopes() {
+    use r30::{Grp, GrpId, KeyedRead, Program, ProgramByGrp, ProgramId};
+
+    let dir = TempDir::new("r30-keyed-read");
+    let db = Db::create(dir.path(), KeyedRead).expect("create the KeyedRead store");
+    let (grp, empty_grp, program) = db
+        .write(|tx| {
+            let grp: GrpId = tx.alloc()?;
+            tx.insert(&Grp {
+                id: grp,
+                label: "algebra",
+            })?;
+            let empty_grp: GrpId = tx.alloc()?;
+            tx.insert(&Grp {
+                id: empty_grp,
+                label: "geometry",
+            })?;
+            let program: ProgramId = tx.alloc()?;
+            tx.insert(&Program {
+                id: program,
+                grp,
+                title: "linear equations",
+            })?;
+            Ok((grp, empty_grp, program))
+        })
+        .expect("seed the keyed-read store");
+
+    db.read(|snap| {
+        // The law made callable: the doc's snapshot spelling.
+        assert_eq!(
+            snap.get(ProgramByGrp { grp })?,
+            Some(Program {
+                id: program,
+                grp,
+                title: "linear equations",
+            })
+        );
+        // The fresh newtype is the primary key made callable.
+        assert_eq!(
+            snap.get(program)?,
+            Some(Program {
+                id: program,
+                grp,
+                title: "linear equations",
+            })
+        );
+        // A group with no program misses cleanly — no fold, no assumption.
+        assert_eq!(snap.get(ProgramByGrp { grp: empty_grp })?, None);
+        Ok(())
+    })
+    .expect("snapshot keyed reads");
+
+    // The same spellings inside the write transaction answer the final state.
+    db.write(|tx| {
+        let found = tx
+            .get(ProgramByGrp { grp })?
+            .expect("the law answers in write scope");
+        assert_eq!(found.id, program);
+        assert_eq!(
+            tx.get(program)?,
+            Some(Program {
+                id: program,
+                grp,
+                title: "linear equations",
+            })
+        );
+        Ok(())
+    })
+    .expect("write-scope keyed reads");
 }

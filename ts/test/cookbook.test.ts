@@ -3,7 +3,7 @@
  * idioms by PRD-K7, swept to the 0.4.0 host idiom — handle names as string
  * literals, native `switch` dispatch, the record-table idiom — by PRD-H6;
  * the fingerprints never moved: spellings are not the theory).
- * `ts/COOKBOOK.md` carries the engine cookbook's 29
+ * `ts/COOKBOOK.md` carries the engine cookbook's 30
  * recipes (`bumbledb/docs/cookbook.md`) translated to the structural API,
  * and THIS file is what keeps them true: every recipe's schema is
  * constructed here through the public surface (so it compiles, cast-free),
@@ -1106,9 +1106,67 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 		await admit("r29-zone-ledger", ZoneLedger)
 	})
 
-	test("the goldens fixture pins exactly the 29 recipes, one line each", function goldensShape() {
+	test("30. the keyed read — the key law made callable, on every scope", async function r30() {
+		const Grp = relation("Grp", { id: u64.fresh, label: str })
+		const Program = relation("Program", { id: u64.fresh, grp: u64, title: str })
+		// The law: one program per group — hold the statement VALUE, it is
+		// the read's selector (statement identity is the membership rule).
+		const programGrpKey = key(Program, ["grp"])
+
+		const KeyedRead = schema("KeyedRead", { Grp, Program }, [
+			contained(on(Program, "grp"), on(Grp, "id")),
+			programGrpKey
+		])
+
+		const { db } = await admit("r30-keyed-read", KeyedRead)
+
+		const minted: { grp?: bigint; program?: bigint } = {}
+		const seeded = db.write(function seed(tx) {
+			const g = tx.insert(Grp, { label: "algebra" })
+			const p = tx.insert(Program, { grp: g.id, title: "linear equations" })
+			minted.grp = g.id
+			minted.program = p.id
+		})
+		assert.ok(seeded.ok, "the seed commits")
+		const grp = must(minted.grp)
+		const program = must(minted.program)
+
+		// db.get, 3-arg — the declared key statement selects the read:
+		const byGroup = db.get(Program, programGrpKey, { grp })
+		assert.ok(byGroup, "the declared key answers the typed point read")
+		assert.equal(byGroup.id, program)
+		assert.equal(byGroup.title, "linear equations")
+
+		// The primary 2-arg form — the fresh field IS the primary key:
+		const byId = db.get(Program, { id: program })
+		assert.ok(byId, "the fresh field answers the primary point read")
+		assert.equal(byId.grp, grp)
+
+		// snap.get — the same spelling inside a read scope (the symmetry rule):
+		assert.equal(
+			db.read(function inScope(snap) {
+				return snap.get(Program, programGrpKey, { grp })?.id
+			}),
+			program,
+			"the read scope agrees with the standalone spelling"
+		)
+
+		// tx.get — the write transaction answers the FINAL state
+		// (read-your-writes), through the key statement and the primary form:
+		const mutated = db.write(function mutate(tx) {
+			const g = tx.insert(Grp, { label: "geometry" })
+			const p = tx.insert(Program, { grp: g.id, title: "proofs" })
+			const pending = tx.get(Program, programGrpKey, { grp: g.id })
+			assert.ok(pending, "the pending insert answers through the declared key")
+			assert.equal(pending.id, p.id)
+			assert.equal(tx.get(Program, { id: p.id })?.title, "proofs", "the primary form agrees pre-commit")
+		})
+		assert.ok(mutated.ok, "the keyed read-modify-write commits")
+	})
+
+	test("the goldens fixture pins exactly the 30 recipes, one line each", function goldensShape() {
 		const expected: string[] = []
-		for (let recipe = 1; recipe <= 29; recipe += 1) {
+		for (let recipe = 1; recipe <= 30; recipe += 1) {
 			expected.push(`r${String(recipe).padStart(2, "0")}`)
 		}
 		assert.deepEqual([...witnessed.keys()].sort(), expected, "every recipe admitted exactly one pinned theory")

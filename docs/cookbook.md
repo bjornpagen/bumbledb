@@ -1460,3 +1460,52 @@ slots `[4,5)`, `[5,6)` satisfies both directions, because nothing forces the
 witness rows to mirror the sidecar's segmentation — only its points. If
 per-row correspondence matters, the host writes zones at slot granularity;
 the schema proves disjointness and coverage either way.
+
+## Point reads
+
+## 30. The keyed read
+
+Guarantee: validator/runtime premises — a declared key FD admits at most one
+fact per determinant tuple (the key phase of the commit judgment), and every
+keyed point read answers exactly that fact or nothing, on both scopes
+(`crates/bumbledb/tests/keyed_get.rs`).
+
+The key is a **law**, and the read surface is that law made callable. The
+schema says `Program(grp) -> Program` — one program per group — so "the
+program of a group" is a well-posed question with at most one answer, and
+the store already enforces that on every commit:
+
+```rust
+bumbledb::schema! {
+    pub KeyedRead;
+
+    relation Grp     { id: u64 as GrpId, fresh, label: str }
+    relation Program {
+        id: u64 as ProgramId, fresh,
+        grp: u64 as GrpId,
+        title: str,
+    }
+
+    Program(grp) <= Grp(id);
+    Program(grp) -> Program;    // one program per group — the callable law
+}
+```
+
+Every declared `R(x, ..) -> R` on an ordinary relation emits a generated
+**key struct** named by the derived-name rule (`{R}By{Fields}`, each snake
+segment Pascal-cased) — here `ProgramByGrp { grp }` — implementing `Key`
+with its statement id computed at expansion. The point read is that struct
+handed to `get` on either scope: `snap.get(ProgramByGrp { grp })` inside
+`db.read`, and `tx.get(ProgramByGrp { grp })` inside `db.write`, where the
+transaction side answers the FINAL state (base plus pending delta:
+read-your-writes, a pending delete answers `None`). The fresh newtype is
+the primary key made callable the same way: `snap.get(id)` / `tx.get(id)`
+through a `ProgramId` value reads the one `Program` fact that minted it.
+A wrong column, wrong newtype, or wrong relation is a compile error, never
+a runtime shape check.
+
+The anti-pattern this recipe retires: a scan-and-find where a key law
+exists — `snap.scan_facts::<Program>()` folded host-side, hunting for a
+`grp` — re-derives in the host what the store already enforces. The
+uniqueness the fold quietly assumes IS the declared FD; spell the law and
+the point read comes with it.
