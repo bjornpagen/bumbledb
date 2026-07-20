@@ -240,21 +240,24 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 		)
 
 		const downAt = query(Uptime).rule((r) => {
-			const { service, window } = r.vars("service", "window")
+			const service = r.var("service")
+			const window = r.var("window")
 			return r
 				.match(Outage, { service, window })
 				.where(pointIn(r.param("t"), window))
 				.select("service")
 		})
 		const overlapping = query(Uptime).rule((r) => {
-			const { service, window } = r.vars("service", "window")
+			const service = r.var("service")
+			const window = r.var("window")
 			return r
 				.match(Outage, { service, window })
 				.where(allen(window, ALLEN.intersects, r.param("incident")))
 				.select("service", "window")
 		})
 		const downtime = query(Uptime).rule((r) => {
-			const { service, window } = r.vars("service", "window")
+			const service = r.var("service")
+			const window = r.var("window")
 			return r.match(Outage, { service, window }).select("service", r.sum(r.duration("window")))
 		})
 
@@ -307,7 +310,7 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 		])
 
 		const unaddressed = query(Optionality).rule((r) => {
-			const { b } = r.vars("b")
+			const b = r.var("b")
 			return r
 				.match(Business, { id: b })
 				.where(not(MailingAddress, { business: b }))
@@ -334,7 +337,10 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 		])
 
 		const totals = query(Money).rule((r) => {
-			const { id, account, currency, minor } = r.vars("id", "account", "currency", "minor")
+			const id = r.var("id")
+			const account = r.var("account")
+			const currency = r.var("currency")
+			const minor = r.var("minor")
 			return r.match(Posting, { id, account, currency, minor }).select("account", "currency", r.sum("minor"))
 		})
 
@@ -354,7 +360,7 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 		])
 
 		const byDigest = query(Content).rule((r) => {
-			const { id } = r.vars("id")
+			const id = r.var("id")
 			return r.match(Document, { id, payload: r.param("digest") }).select("id")
 		})
 
@@ -369,14 +375,14 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 		const Tickets = schema("Tickets", { Priority, Ticket }, [contained(on(Ticket, "priority"), on(Priority, "id"))])
 
 		const urgent = query(Tickets).rule((r) => {
-			const { t } = r.vars("t")
+			const t = r.var("t")
 			return r.match(Ticket, { id: t, priority: "Urgent" }).select("t")
 		})
 
 		// Set membership is a plain array — closed-only in query match records
 		// (ordinary-field membership is a bound ∈-set param, r.inSet).
 		const actionable = query(Tickets).rule((r) => {
-			const { t } = r.vars("t")
+			const t = r.var("t")
 			return r.match(Ticket, { id: t, priority: ["Normal", "Urgent"] }).select("t")
 		})
 
@@ -407,7 +413,8 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 
 		// ψ on the read side: the closed atom is matchable like any relation.
 		const masteredAttempts = query(Review).rule((r) => {
-			const { a, k } = r.vars("a", "k")
+			const a = r.var("a")
+			const k = r.var("k")
 			return r.match(Attempt, { id: a, kind: k }).match(Kind, { id: k, mastered: true }).select("a")
 		})
 
@@ -449,7 +456,8 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 		])
 
 		const paged = query(Oncall).rule((r) => {
-			const { i, s } = r.vars("i", "s")
+			const i = r.var("i")
+			const s = r.var("s")
 			return r.match(Escalation, { incident: i, severity: s }).match(Severity, { id: s, pages: true }).select("i")
 		})
 
@@ -472,7 +480,8 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 		])
 
 		const playingAt = query(Playlists).rule((r) => {
-			const { slot, track } = r.vars("slot", "track")
+			const slot = r.var("slot")
+			const track = r.var("track")
 			return r
 				.match(Slot, { playlist: r.param("list"), slot, track })
 				.where(pointIn(r.param("pos"), slot))
@@ -504,7 +513,8 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 		])
 
 		const lhsLiteral = query(Ast).rule((r) => {
-			const { l, v } = r.vars("l", "v")
+			const l = r.var("l")
+			const v = r.var("v")
 			return r
 				.match(Add, { node: r.param("n"), lhs: l })
 				.match(Lit, { node: l, value: v })
@@ -531,7 +541,8 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 		])
 
 		const mutual = query(Graph).rule((r) => {
-			const { a, b } = r.vars("a", "b")
+			const a = r.var("a")
+			const b = r.var("b")
 			return r
 				.match(Follows, { follower: a, followee: b })
 				.match(Follows, { follower: b, followee: a })
@@ -559,7 +570,11 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 		])
 
 		const physics = query(Ecs).rule((r) => {
-			const { entity, x, y, dx, dy } = r.vars("entity", "x", "y", "dx", "dy")
+			const entity = r.var("entity")
+			const x = r.var("x")
+			const y = r.var("y")
+			const dx = r.var("dx")
+			const dy = r.var("dy")
 			return r
 				.match(Transform, { entity, x, y })
 				.match(Velocity, { entity, dx, dy })
@@ -585,7 +600,8 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 		])
 
 		const shipped = query(Orders).rule((r) => {
-			const { id, carrier } = r.vars("id", "carrier")
+			const id = r.var("id")
+			const carrier = r.var("carrier")
 			return r.match(Order, { id, state: "Shipped" }).match(Shipment, { order: id, carrier }).select("id", "carrier")
 		})
 
@@ -633,14 +649,16 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 		])
 
 		const roomConflicts = query(Calendar).rule((r) => {
-			const { room, span } = r.vars("room", "span")
+			const room = r.var("room")
+			const span = r.var("span")
 			return r
 				.match(Booking, { room, span })
 				.where(allen(span, ALLEN.intersects, r.param("want")))
 				.select("room", "span")
 		})
 		const personLoad = query(Calendar).rule((r) => {
-			const { person, span } = r.vars("person", "span")
+			const person = r.var("person")
+			const span = r.var("span")
 			return r
 				.match(Claim, { person, span })
 				.where(allen(span, ALLEN.intersects, r.param("window")))
@@ -663,14 +681,17 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 		])
 
 		const inForce = query(Pricing).rule((r) => {
-			const { rate_bps, valid } = r.vars("rate_bps", "valid")
+			const rate_bps = r.var("rate_bps")
+			const valid = r.var("valid")
 			return r
 				.match(Version, { policy: r.param("p"), rate_bps, valid })
 				.where(pointIn(r.param("t"), valid))
 				.select("rate_bps")
 		})
 		const successions = query(Pricing).rule((r) => {
-			const { p, a, b } = r.vars("p", "a", "b")
+			const p = r.var("p")
+			const a = r.var("a")
+			const b = r.var("b")
 			return r
 				.match(Version, { policy: p, valid: a })
 				.match(Version, { policy: p, valid: b })
@@ -695,7 +716,8 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 		])
 
 		const holding = query(Payroll).rule((r) => {
-			const { seq, span } = r.vars("seq", "span")
+			const seq = r.var("seq")
+			const span = r.var("span")
 			return r
 				.match(PayPeriod, { year: r.param("y"), seq, span })
 				.where(pointIn(r.param("t"), span))
@@ -724,7 +746,9 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 		])
 
 		const marginal = query(Tax).rule((r) => {
-			const { reg, b, rate_bps } = r.vars("reg", "b", "rate_bps")
+			const reg = r.var("reg")
+			const b = r.var("b")
+			const rate_bps = r.var("rate_bps")
 			return r
 				.match(Regime, { id: reg, year: r.param("y"), status: r.param("s") })
 				.match(Bracket, { regime: reg, income: b, rate_bps })
@@ -743,11 +767,13 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 		const FreeTime = schema("FreeTime", { Person, Claim }, [contained(on(Claim, "person"), on(Person, "id"))])
 
 		const busy = query(FreeTime).rule((r) => {
-			const { person, span } = r.vars("person", "span")
+			const person = r.var("person")
+			const span = r.var("span")
 			return r.match(Claim, { person, span }).select("person", r.pack("span"))
 		})
 		const claimed = query(FreeTime).rule((r) => {
-			const { person, span } = r.vars("person", "span")
+			const person = r.var("person")
+			const span = r.var("span")
 			return r.match(Claim, { person, span }).select("person", r.sum(r.duration("span")))
 		})
 
@@ -772,11 +798,15 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 		])
 
 		const balances = query(Ledger).rule((r) => {
-			const { id, account, minor } = r.vars("id", "account", "minor")
+			const id = r.var("id")
+			const account = r.var("account")
+			const minor = r.var("minor")
 			return r.match(Posting, { id, account, minor }).select("account", r.sum("minor"))
 		})
 		const doubleEntry = query(Ledger).rule((r) => {
-			const { id, entry, minor } = r.vars("id", "entry", "minor")
+			const id = r.var("id")
+			const entry = r.var("entry")
+			const minor = r.var("minor")
 			return r.match(Posting, { id, entry, minor }).select("entry", r.sum("minor"))
 		})
 
@@ -797,7 +827,8 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 		])
 
 		const stillQueued = query(Jobs).rule((r) => {
-			const { id, payload } = r.vars("id", "payload")
+			const id = r.var("id")
+			const payload = r.var("payload")
 			return r.match(Job, { id, state: "Queued", payload }).select("id", "payload")
 		})
 
@@ -837,7 +868,8 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 		])
 
 		const deriving = query(Rollup).rule((r) => {
-			const { person, span } = r.vars("person", "span")
+			const person = r.var("person")
+			const span = r.var("span")
 			return r.match(Claim, { person, span, arm: "Busy" }).select("person", r.pack("span"))
 		})
 
@@ -861,11 +893,13 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 
 		const wholeDu = query(Payments)
 			.rule((r) => {
-				const { id, n } = r.vars("id", "n")
+				const id = r.var("id")
+				const n = r.var("n")
 				return r.match(Payment, { id, kind: "Card" }).match(Card, { payment: id, last4: n }).select("id", "n")
 			})
 			.rule((r) => {
-				const { id, n } = r.vars("id", "n")
+				const id = r.var("id")
+				const n = r.var("n")
 				return r.match(Payment, { id, kind: "Ach" }).match(Ach, { payment: id, routing: n }).select("id", "n")
 			})
 
@@ -902,7 +936,7 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 
 		// The loop's one query — the frontier's children, one ∈-set probe:
 		const step = query(Closure).rule((r) => {
-			const { c } = r.vars("c")
+			const c = r.var("c")
 			return r.match(Parent, { child: c, parent: r.inSet("frontier") }).select("c")
 		})
 		// The same closure, one stratified program under the fixpoint driver
@@ -913,18 +947,19 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 			const rec = p.rec("reach")
 			const seeded = rec
 				.rule((r) => {
-					const { c } = r.vars("c")
+					const c = r.var("c")
 					return r
 						.match(Node, { id: c })
 						.where(eq(c, r.param("root")))
 						.select("c")
 				})
 				.rule((r) => {
-					const { c, parent } = r.vars("c", "parent")
+					const c = r.var("c")
+					const parent = r.var("parent")
 					return r.match(Parent, { child: c, parent }).idb(rec, parent).select("c")
 				})
 			return p.output((r) => {
-				const { c } = r.vars("c")
+				const c = r.var("c")
 				return r.match(Node, { id: c }).idb(seeded, c).select("c")
 			})
 		})
@@ -983,11 +1018,12 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 
 		// The host composition's two queries (recipe 24's loop runs between them):
 		const frontierStep = query(Accounts).rule((r) => {
-			const { c } = r.vars("c")
+			const c = r.var("c")
 			return r.match(AccountParent, { child: c, parent: r.inSet("frontier") }).select("c")
 		})
 		const subtreeRollup = query(Accounts).rule((r) => {
-			const { id, minor } = r.vars("id", "minor")
+			const id = r.var("id")
+			const minor = r.var("minor")
 			return r.match(Posting, { id, account: r.inSet("subtree"), minor }).select(r.sum("minor"))
 		})
 		// The engine-native form: the closure stratum converges first, then the
@@ -996,18 +1032,21 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 			const sub = p.rec("sub")
 			const seeded = sub
 				.rule((r) => {
-					const { a } = r.vars("a")
+					const a = r.var("a")
 					return r
 						.match(Account, { id: a })
 						.where(eq(a, r.param("root")))
 						.select("a")
 				})
 				.rule((r) => {
-					const { a, parent } = r.vars("a", "parent")
+					const a = r.var("a")
+					const parent = r.var("parent")
 					return r.match(AccountParent, { child: a, parent }).idb(sub, parent).select("a")
 				})
 			return p.output((r) => {
-				const { id, a, minor } = r.vars("id", "a", "minor")
+				const id = r.var("id")
+				const a = r.var("a")
+				const minor = r.var("minor")
 				return r.match(Posting, { id, account: a, minor }).idb(seeded, a).select(r.sum("minor"))
 			})
 		})
@@ -1047,7 +1086,9 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 		])
 
 		const deriving = query(MaintainedRollup).rule((r) => {
-			const { source, person, span } = r.vars("source", "person", "span")
+			const source = r.var("source")
+			const person = r.var("person")
+			const span = r.var("span")
 			return r.match(Claim, { source, person, arm: "Busy", span }).select("person", r.pack("span"))
 		})
 
@@ -1072,7 +1113,10 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 		])
 
 		const inForceAt = query(Payroll).rule((r) => {
-			const { e, name, amount, w } = r.vars("e", "name", "amount", "w")
+			const e = r.var("e")
+			const name = r.var("name")
+			const amount = r.var("amount")
+			const w = r.var("w")
 			return r
 				.match(Employee, { id: e, name })
 				.match(Salary, { employee: e, amount, applies: w })
