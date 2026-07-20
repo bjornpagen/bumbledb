@@ -135,7 +135,7 @@ blocks, fed by `--curves-report`) render their own charts through their own
 inputs keys — the flag shape and the lane payload live under different keys,
 so a collision between them is unrepresentable. Night discovery scans only
 `<child>/report.json` through the discriminant (plus the first
-`scenarios.md`), so the flag-fed charts belong to the owner's ceremony
+`scenarios.json`, the md rendering as fallback), so the flag-fed charts belong to the owner's ceremony
 invocation; a lane payload enters the night render the day its emitter
 writes it as `report.json`.
 
@@ -244,9 +244,9 @@ per svg → source lane → what it shows):
 | `bench-speedup.svg` | RunReport pool (reads) | the same data as multipliers |
 | `bench-tails.svg` | RunReport pool (reads) | p50 → p95 → p99 per family, both engines |
 | `bench-writes.svg` | RunReport pool (writes) | writes + cold — fsync physics, published anyway |
-| `bench-scenarios.svg` | `scenarios.md`/`.json` | the non-ledger worlds per (query, lane); a DNF lane draws no bar, only the annotation |
-| `world-<world>.svg` | `scenarios.md` | one file per scenario world, paired p50 bars |
-| `ratio-waterfall.svg` | reads (+ `scenarios.md`) | every family + query as one sorted ratio bar; below-parity draws red |
+| `bench-scenarios.svg` | `scenarios.json` preferred, `scenarios.md` fallback | the non-ledger worlds per (query, lane); a DNF lane draws no bar, only the annotation |
+| `world-<world>.svg` | `scenarios.json` preferred, `scenarios.md` fallback | one file per scenario world, paired p50 bars per (query, lane); DNF lanes annotated, excluded and counted |
+| `ratio-waterfall.svg` | reads (+ `scenarios.json`/`.md`) | every family + (query, lane) as one sorted ratio bar from raw p50s; below-parity draws red; DNF lanes excluded and counted |
 | `tails-fan.svg` | reads | the p50 → p90 → p99 fan per family, both engines |
 | `bench-storage.svg` | `storage-report.json` (flag) | bytes per fact per scale/world + churn checkpoints |
 | `storage-bytes-per-fact.svg` | `storage` lane | bytes per stored fact per world, both engines |

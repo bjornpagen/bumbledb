@@ -22,8 +22,8 @@ kind and size ride along as inputs["store_kind"] / inputs["rep_count"].
   bench-tails.svg         p50 -> p99 per family: tails, both engines       [reads]
   bench-writes.svg        the honest chart: writes + cold, fsync physics   [writes]
   bench-scenarios.svg     the non-ledger worlds, per query (or lane)       [scenarios]
-  world-<world>.svg       one file per scenario world: paired p50 bars     [scenarios_md]
-  ratio-waterfall.svg     every family + query as one sorted ratio bar     [reads (+scenarios_md)]
+  world-<world>.svg       one file per scenario world: paired p50 bars     [scenarios]
+  ratio-waterfall.svg     every family + query as one sorted ratio bar     [reads (+scenarios)]
   tails-fan.svg           p50 -> p90 -> p99 fan per family, both engines   [reads]
   bench-storage.svg       bytes per fact per scale/world (+ churn)         [storage_report]
   storage-bytes-per-fact.svg  bytes per stored fact per world              [storage]
@@ -45,19 +45,21 @@ Usage:
 --scenarios dispatches on extension: `.json` is the scenario runner's
 machine artifact (scenarios.json), whose lanes are a tagged union —
 {"outcome":"timed", stats, ratio_p50} | {"outcome":"exceeded_cap",
-cap_ms} — so bench-scenarios.svg renders one bar per (query, lane) and
-a DNF lane draws NO bar (there is no stats object to draw): it becomes
-a right-edge annotation, excluded and counted in the title. Anything
-else is the rendered scenarios.md table (the committed pre-lane pin),
-whose lane structure is unrecoverable from prose — it renders the
-legacy per-query chart. inputs["scenarios"] carries the parsed tag
-("json"|"md", path); the world/waterfall charts keep reading the
-markdown pin only.
+cap_ms} — the true representation; the scenarios.md table is its
+rendering. A DNF lane has no stats object, so it draws NO bar anywhere:
+it becomes a right-edge annotation, excluded and counted in the title.
+Anything else is a rendered scenarios.md table, parsed by its own
+header row (the legacy 6-col pin and the lane-bearing 7-col format both
+parse; a `DNF>cap` p50 cell parses to None and is skipped-and-counted
+with the same annotation idiom). inputs["scenarios"] carries the parsed
+tag ("json"|"md", path); the scenario, world, and waterfall charts all
+consume that one tagged input.
 
 Exactly one of {run dirs, --night} supplies run reports. --night scans a
 night out-dir's one-level children: every <child>/report.json is ingested
-through the lane discriminant, and the first <child>/scenarios.md becomes
-inputs["scenarios_md"]. The committed lane-report flags work in either
+through the lane discriminant, and the first <child>/scenarios.json
+(preferred) or <child>/scenarios.md becomes inputs["scenarios"]. The
+committed lane-report flags work in either
 mode, each filling one inputs key: --storage-report -> storage_report,
 --writes-report -> writes_rates, --curves-report -> curves_report (the
 flag-fed families/rows curves-report.json and the {"lane":"curves"}
@@ -350,16 +352,19 @@ def ingest_report(inputs, path):
 
 def discover(night_dir):
     """A night out-dir -> the inputs dict: every one-level child's
-    report.json through the lane discriminant, plus the first
-    scenarios.md found one level down."""
+    report.json through the lane discriminant, plus the scenario
+    artifact one level down — the first scenarios.json when present
+    (the tagged union is the true representation), else the first
+    scenarios.md (its rendering)."""
     inputs = {"durable_runs": [], "ephemeral_runs": []}
     night = Path(night_dir)
     for report_path in sorted(night.glob("*/report.json")):
         ingest_report(inputs, report_path)
-    for md in sorted(night.glob("*/scenarios.md")):
-        inputs["scenarios_md"] = str(md)
-        inputs["scenarios"] = ("md", str(md))
-        break
+    for pattern, kind in (("*/scenarios.json", "json"), ("*/scenarios.md", "md")):
+        found = sorted(night.glob(pattern))
+        if found:
+            inputs["scenarios"] = (kind, str(found[0]))
+            break
     return inputs
 
 
@@ -409,30 +414,85 @@ def derive_pools(inputs):
             return
 
 
+def _md_p50(cell):
+    """One p50 cell from the markdown table: a µs float, or None for the
+    honest `DNF>cap` token — a capped lane has no number, so a number is
+    never invented for it."""
+    return None if cell.startswith("DNF") else float(cell)
+
+
 def load_scenarios(path):
-    """Parse scenarios.md: [(scenario, query, ours_us, sqlite_us, ratio)]."""
-    rows, scenario = [], None
+    """Parse scenarios.md: [(scenario, query, lane, ours_us, sqlite_us)].
+
+    Column indices come from each table's own header row, so the legacy
+    6-col pin and the lane-bearing 7-col format both parse — no
+    positional indexing. A table without a `lane` column is the
+    pre-lane pin: every row is the canonical "sqlite" lane. A `DNF>cap`
+    p50 cell parses to None (consumers skip-and-count it under the
+    annotation idiom); the rounded ratio column is never read — every
+    ratio derives from the raw p50s."""
+    rows, scenario, cols = [], None, None
     for line in Path(path).read_text().splitlines():
         if line.startswith("## "):
             scenario = line[3:].split(" (")[0]
-        elif line.startswith("|") and scenario and "---" not in line and "query" not in line:
+        elif line.startswith("|") and scenario and "---" not in line:
             cells = [c.strip() for c in line.strip("|").split("|")]
-            if len(cells) >= 5:
-                rows.append((scenario, cells[0], float(cells[2]), float(cells[3]),
-                             float(cells[4])))
+            if cells[0] == "query":  # the header row names its columns
+                cols = {name: index for index, name in enumerate(cells)}
+                for needed in ("ours p50 (us)", "sqlite p50 (us)"):
+                    if needed not in cols:
+                        raise SystemExit(f'{path}: table header lacks "{needed}"')
+            elif cols:
+                lane = cells[cols["lane"]] if "lane" in cols else "sqlite"
+                rows.append((scenario, cells[cols["query"]], lane,
+                             _md_p50(cells[cols["ours p50 (us)"]]),
+                             _md_p50(cells[cols["sqlite p50 (us)"]])))
     return rows
 
 
 def load_scenarios_json(path):
     """Parse the runner's scenarios.json: [(scenario, query, lane,
-    outcome_dict)] — one row per (query, lane), the outcome dict verbatim
-    from the emitter's tagged union (crates/bumbledb-bench/src/scenarios/
-    json_out.rs): {"outcome": "timed", "stats": {...}, "ratio_p50": f}
-    or {"outcome": "exceeded_cap", "cap_ms": n}. Unknown extra keys are
-    ignored (standard dict access, forward-compatible)."""
+    ours_stats, outcome_dict)] — one row per (query, lane); ours_stats
+    is the query's own stats object (ns percentiles), the outcome dict
+    verbatim from the emitter's tagged union (crates/bumbledb-bench/src/
+    scenarios/json_out.rs): {"outcome": "timed", "stats": {...},
+    "ratio_p50": f} or {"outcome": "exceeded_cap", "cap_ms": n}. Unknown
+    extra keys are ignored (standard dict access, forward-compatible)."""
     doc = json.loads(Path(path).read_text())
-    return [(q["scenario"], q["name"], lane["lane"], lane)
+    return [(q["scenario"], q["name"], lane["lane"], q["ours"], lane)
             for q in doc["queries"] for lane in q["lanes"]]
+
+
+def lane_suffix(lane_name):
+    """The ·tuned-style label idiom: the canonical "sqlite" lane rides
+    unsuffixed; any other lane suffixes the query label."""
+    return "" if lane_name == "sqlite" else "·" + lane_name.removeprefix("sqlite-")
+
+
+def scenario_rows(scenarios):
+    """The one normalized scenario row shape behind the world and
+    waterfall charts, from the tagged scenarios input: [(scenario,
+    label, ours_ns, sqlite_ns, dnf_note)]. The label carries the lane
+    suffix; a DNF lane has sqlite_ns None plus its annotation text, so
+    a capped time can never be drawn or ratioed — and every downstream
+    ratio derives from these raw p50s (the md's rounded ratio column is
+    never read)."""
+    kind, path = scenarios
+    if kind == "json":
+        rows = []
+        for scenario, query, lane_name, ours, lane in load_scenarios_json(path):
+            label = query + lane_suffix(lane_name)
+            if lane["outcome"] == "timed":
+                rows.append((scenario, label, ours["p50"],
+                             lane["stats"]["p50"], None))
+            else:  # exceeded_cap: no stats — the annotation IS the datum
+                rows.append((scenario, label, ours["p50"], None,
+                             f"DNF > {lane['cap_ms']}ms"))
+        return rows
+    return [(scenario, query + lane_suffix(lane_name), ours_us * 1000.0,
+             None if sqlite_us is None else sqlite_us * 1000.0,
+             None if sqlite_us is not None else "DNF > cap")
+            for scenario, query, lane_name, ours_us, sqlite_us in load_scenarios(path)]
 
 
 def load_report(path):
@@ -617,22 +677,20 @@ def chart_scenarios_lanes(rows, out):
     to draw — it renders as a right-edge `DNF > {cap_ms}ms` annotation
     beside the query label, excluded and counted in the title line."""
     speeds = [1.0 / lane["ratio_p50"]
-              for _, _, _, lane in rows
+              for _, _, _, _, lane in rows
               if lane["outcome"] == "timed" and lane["ratio_p50"] > 0]
     xhi = max(2500, max(speeds) * 3) if speeds else 2500
     fig, ax = plt.subplots(figsize=(9.6, 0.34 * len(rows) + 1.6), facecolor=BG)
     dark(ax)
     y, yticks, ylabels, seen, dnf = 0, [], [], None, 0
-    for scenario, query, lane_name, lane in rows:
+    for scenario, query, lane_name, _ours, lane in rows:
         if scenario != seen:
             seen = scenario
             ax.text(0.55, y - 0.15, scenario, fontsize=11, color=FG,
                     fontweight="bold", family="monospace")
             y += 1
-        suffix = ("" if lane_name == "sqlite" else
-                  "·" + lane_name.removeprefix("sqlite-"))
         yticks.append(y)
-        ylabels.append(query + suffix)
+        ylabels.append(query + lane_suffix(lane_name))
         if lane["outcome"] == "timed":
             speed = 1.0 / lane["ratio_p50"] if lane["ratio_p50"] > 0 else 0
             color = OURS if speed >= 1 else "#f85149"
@@ -672,23 +730,29 @@ def chart_scenarios(inputs, out):
     rows = load_scenarios(path)
     fig, ax = plt.subplots(figsize=(9.6, 0.34 * len(rows) + 1.6), facecolor=BG)
     dark(ax)
-    y, yticks, ylabels, seen = 0, [], [], None
-    for scenario, query, ours_us, sqlite_us, _ratio in rows:
+    y, yticks, ylabels, seen, dnf = 0, [], [], None, 0
+    for scenario, query, lane_name, ours_us, sqlite_us in rows:
         if scenario != seen:
             seen = scenario
             ax.text(0.55, y - 0.15, scenario, fontsize=11, color=FG,
                     fontweight="bold", family="monospace")
             y += 1
-        # From the raw p50 columns — the markdown's ratio rounds to 2
-        # decimals, which floors the >100x queries to 0.00.
-        speed = sqlite_us / ours_us if ours_us > 0 else 0
-        color = OURS if speed >= 1 else "#f85149"
-        ax.barh(y, speed, height=0.6, color=color, zorder=3)
-        label = f"{speed:.0f}×" if speed >= 10 else f"{speed:.1f}×"
-        ax.text(max(speed * 1.06, 1.15), y, label, va="center", fontsize=9,
-                color=color, fontweight="bold", family="monospace")
         yticks.append(y)
-        ylabels.append(query)
+        ylabels.append(query + lane_suffix(lane_name))
+        if sqlite_us is None:  # DNF > cap: no number, no bar — skipped, counted
+            dnf += 1
+            ax.text(2500 * 0.85, y, "DNF > cap", va="center", ha="right",
+                    fontsize=9, color=THEIRS, fontweight="bold",
+                    family="monospace")
+        else:
+            # From the raw p50 columns — the markdown's ratio rounds to 2
+            # decimals, which floors the >100x queries to 0.00.
+            speed = sqlite_us / ours_us if ours_us > 0 else 0
+            color = OURS if speed >= 1 else "#f85149"
+            ax.barh(y, speed, height=0.6, color=color, zorder=3)
+            label = f"{speed:.0f}×" if speed >= 10 else f"{speed:.1f}×"
+            ax.text(max(speed * 1.06, 1.15), y, label, va="center", fontsize=9,
+                    color=color, fontweight="bold", family="monospace")
         y += 1
     ax.axvline(1.0, color=DIM, linewidth=1, linestyle="--")
     ax.set_yticks(yticks, ylabels, fontsize=9, family="monospace", color=FG)
@@ -698,8 +762,11 @@ def chart_scenarios(inputs, out):
     ax.set_xticks([1, 3, 10, 30, 100, 300, 1000],
                   ["1×", "3×", "10×", "30×", "100×", "300×", "1000×"])
     ax.grid(axis="x", color=GRID, linewidth=0.6, zorder=0)
-    ax.set_title("scenario worlds · speedup over SQLite per query · oracle-gated, non-ledger corpora",
-                 fontsize=12, loc="left", pad=14, family="monospace")
+    title = ("scenario worlds · speedup over SQLite per query · "
+             "oracle-gated, non-ledger corpora")
+    if dnf:
+        title += f"\n{dnf} lane{'s' if dnf != 1 else ''} DNF > cap — excluded and counted"
+    ax.set_title(title, fontsize=12, loc="left", pad=14, family="monospace")
     fig.tight_layout()
     fig.savefig(out, facecolor=BG, bbox_inches="tight")
     plt.close(fig)
@@ -707,33 +774,51 @@ def chart_scenarios(inputs, out):
 
 def chart_worlds(inputs, out):
     """world-<world>.svg, one file per scenario world: horizontal
-    paired log-scale p50 bars per query — SQLite grey above, ours amber
-    below (the paired_bars idiom; the markdown's µs floats become ns so
-    fmt_us and the ratio labels apply unchanged). One registry row
-    emits the N files; render returns the written paths."""
-    rows = load_scenarios(inputs["scenarios_md"])
+    paired log-scale p50 bars per (query, lane) label — SQLite grey
+    above, ours amber below (the paired_bars idiom; p50s arrive as ns
+    so fmt_us and the ratio labels apply unchanged). Consumes the one
+    tagged scenarios input — json preferred, header-parsed md fallback.
+    A DNF lane has no SQLite number, so it draws NO SQLite bar: a
+    right-edge annotation marks it and the title counts it, excluded.
+    One registry row emits the N files; render returns the written
+    paths."""
+    rows = scenario_rows(inputs["scenarios"])
     out_dir = Path(out).parent
     worlds = []
     by_world = {}
-    for scenario, query, ours_us, sqlite_us, _ratio in rows:
+    for scenario, label, ours_ns, sqlite_ns, note in rows:
         if scenario not in by_world:
             worlds.append(scenario)
-            by_world[scenario] = {}
-        by_world[scenario][query] = {
-            "ours": {"p50": ours_us * 1000.0},
-            "theirs": {"p50": sqlite_us * 1000.0},
-        }
+            by_world[scenario] = []
+        by_world[scenario].append((label, ours_ns, sqlite_ns, note))
     written = []
     for world in worlds:
-        table = by_world[world]
-        names = list(table)
+        entries = by_world[world]
+        names = [label for label, _, _, _ in entries]
+        table = {}
+        for label, ours_ns, sqlite_ns, _note in entries:
+            slot = {"ours": {"p50": ours_ns}}
+            if sqlite_ns is not None:
+                slot["theirs"] = {"p50": sqlite_ns}
+            table[label] = slot
         fig, ax = plt.subplots(figsize=(9.6, 0.62 * len(names) + 1.8), facecolor=BG)
         dark(ax)
         paired_bars(ax, names, table)
-        vals = [table[n][side]["p50"] for n in names for side in ("ours", "theirs")]
-        ax.set_xlim(min(vals) * 0.4, max(vals) * 25)
-        ax.set_title(f"{world} · ours vs SQLite p50 per query · oracle-gated, report-class",
-                     fontsize=12, loc="left", pad=14, family="monospace")
+        vals = [v for _, o, t, _ in entries for v in (o, t) if v is not None]
+        xhi = max(vals) * 25
+        ax.set_xlim(min(vals) * 0.4, xhi)
+        dnf = 0
+        for y, (_label, _ours, sqlite_ns, note) in enumerate(entries):
+            if note:  # the capped lane: no bar to draw — the annotation IS the datum
+                dnf += 1
+                ax.text(xhi * 0.85, y + 0.19, note, va="center", ha="right",
+                        fontsize=9, color=THEIRS, fontweight="bold",
+                        family="monospace")
+        title = f"{world} · ours vs SQLite p50 per query · oracle-gated, report-class"
+        if dnf:
+            title += (f"\n{dnf} lane{'s' if dnf != 1 else ''} DNF > cap — "
+                      "excluded and counted")
+        ax.set_title(title, fontsize=12, loc="left", pad=14, family="monospace")
         fig.text(0.01, 0.005, "log scale — shorter is faster",
                  fontsize=8, color=DIM, family="monospace")
         fig.tight_layout()
@@ -745,17 +830,24 @@ def chart_worlds(inputs, out):
 
 
 def chart_ratio_waterfall(inputs, out):
-    """ratio-waterfall.svg: every read family and every scenario query
-    as one bar of SQLite-p50 ÷ ours-p50, sorted descending — the
-    composite honesty chart; a ratio below parity draws red."""
+    """ratio-waterfall.svg: every read family and every scenario
+    (query, lane) as one bar of SQLite-p50 ÷ ours-p50, sorted
+    descending — the composite honesty chart; a ratio below parity
+    draws red. Scenario rows come through the one tagged input (json
+    preferred, header-parsed md fallback); every ratio derives from the
+    raw p50s, and a DNF lane — no SQLite number — joins no bar: it is
+    excluded and counted in the title."""
     reads = inputs["reads"]
     rows = [(name, slot["theirs"]["p50"] / slot["ours"]["p50"])
             for name, slot in reads.items() if "theirs" in slot]
-    scenario_rows = (load_scenarios(inputs["scenarios_md"])
-                     if inputs.get("scenarios_md") else [])
-    for scenario, query, ours_us, sqlite_us, _ratio in scenario_rows:
-        if ours_us > 0:
-            rows.append((f"{scenario}/{query}", sqlite_us / ours_us))
+    srows = (scenario_rows(inputs["scenarios"])
+             if inputs.get("scenarios") else [])
+    dnf = 0
+    for scenario, label, ours_ns, sqlite_ns, _note in srows:
+        if sqlite_ns is None:  # DNF > cap: no number to ratio — skipped, counted
+            dnf += 1
+        elif ours_ns > 0:
+            rows.append((f"{scenario}/{label}", sqlite_ns / ours_ns))
     rows.sort(key=lambda row: row[1], reverse=True)
     labels = [name for name, _ in rows]
     ratios = [r for _, r in rows]
@@ -779,12 +871,14 @@ def chart_ratio_waterfall(inputs, out):
     ticks = [t for t in (1, 3, 10, 30, 100, 300, 1000) if xlo < t < xhi]
     ax.set_xticks(ticks, [f"{t}×" for t in ticks])
     ax.grid(axis="x", color=GRID, linewidth=0.6, zorder=0)
-    ax.set_title("every family and query · SQLite-p50 ÷ ours-p50, sorted · "
-                 "report-class composite",
-                 fontsize=12, loc="left", pad=14, family="monospace")
+    title = ("every family and query · SQLite-p50 ÷ ours-p50, sorted · "
+             "report-class composite")
+    if dnf:
+        title += f"\n{dnf} lane{'s' if dnf != 1 else ''} DNF > cap — excluded and counted"
+    ax.set_title(title, fontsize=12, loc="left", pad=14, family="monospace")
     footer = (f"ledger+calendar families (min-of-{inputs['rep_count']}, "
               f"{inputs['store_kind']} store)")
-    if scenario_rows:
+    if srows:
         footer += " + scenario worlds"
     fig.text(0.01, 0.005, footer, fontsize=8, color=DIM, family="monospace")
     fig.tight_layout()
@@ -1465,7 +1559,7 @@ CHARTS = [
     ChartSpec("bench-tails.svg", ("reads",), chart_tails),
     ChartSpec("bench-writes.svg", ("writes",), chart_writes),
     ChartSpec("bench-scenarios.svg", ("scenarios",), chart_scenarios),
-    ChartSpec("world-<world>.svg", ("scenarios_md",), chart_worlds),
+    ChartSpec("world-<world>.svg", ("scenarios",), chart_worlds),
     ChartSpec("ratio-waterfall.svg", ("reads",), chart_ratio_waterfall),
     ChartSpec("tails-fan.svg", ("reads",), chart_tails_fan),
     ChartSpec("bench-storage.svg", ("storage_report",), chart_storage),
@@ -1520,11 +1614,8 @@ def main():
 
     inputs = discover(args.night) if args.night else gather(args.run_dirs)
     if args.scenarios:
-        if args.scenarios.endswith(".json"):
-            inputs["scenarios"] = ("json", args.scenarios)
-        else:
-            inputs["scenarios"] = ("md", args.scenarios)
-            inputs["scenarios_md"] = args.scenarios
+        kind = "json" if args.scenarios.endswith(".json") else "md"
+        inputs["scenarios"] = (kind, args.scenarios)
     derive_pools(inputs)
     for path, key in lane_flags:
         if path:
