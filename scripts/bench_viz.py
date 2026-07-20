@@ -25,6 +25,8 @@ kind and size ride along as inputs["store_kind"] / inputs["rep_count"].
   world-<world>.svg       one file per scenario world: paired p50 bars     [scenarios]
   ratio-waterfall.svg     every family + query as one sorted ratio bar     [reads (+scenarios)]
   tails-fan.svg           p50 -> p90 -> p99 fan per family, both engines   [reads]
+  world-crud.svg          the OLTP home turf: speedup per (family, lane)   [crud_report]
+  world-lawful.svg        the integrity home turf: same treatment          [lawful_report]
   bench-storage.svg       bytes per fact per scale/world (+ churn)         [storage_report]
   bench-writes-rates.svg  rows/sec per (family, batch), per lane           [writes_rates]
   bench-curves.svg        log-log scale curves, exponents, DNF caps        [curves_report]
@@ -68,7 +70,8 @@ through the lane discriminant, the first <child>/scenarios.json
 real lane reports auto-ingest from their canonical night paths
 (NIGHT_LANE_REPORTS: storage/storage-report.json -> storage_report,
 writes/writes-report.json -> writes_rates, curves/curves-report.json ->
-curves_report, churn/churn-report.json -> churn_report). The committed
+curves_report, crud/crud.json -> crud_report, lawful/lawful.json ->
+lawful_report, churn/churn-report.json -> churn_report). The committed
 lane-report flags work in either mode and OVERRIDE discovery, each
 filling one inputs key: --storage-report -> storage_report,
 --writes-report -> writes_rates, --curves-report -> curves_report.
@@ -283,6 +286,58 @@ def load_churn_report(payload):
     return payload
 
 
+def world_report_rows(report):
+    """The two home-turf report shapes as ONE row stream of
+    (lane_label, row): crud nests its rows under durability-lane
+    objects; lawful's "lanes" entries ARE the rows (each carries its
+    own "lane" label). Yields defensively — the contract loader is the
+    validator; charts consume only validated payloads."""
+    for entry in report.get("lanes", []):
+        if not isinstance(entry, dict):
+            continue
+        if isinstance(entry.get("rows"), list):
+            for row in entry["rows"]:
+                if isinstance(row, dict):
+                    yield entry.get("lane"), row
+        else:
+            yield entry.get("lane"), entry
+
+
+def load_world_report(world):
+    """The home-turf world contract (crud / lawful): "world" names the
+    payload, "lanes" is non-empty, and every row carries a "family"
+    string, a durability-lane label, and BOTH engines' stats with a
+    numeric "p50" — these worlds have no DNF arm (a lane that cannot
+    complete fails the whole run instead of rendering), so a missing
+    twin number is a shape error, never a censoring."""
+    def load(payload):
+        if payload.get("world") != world:
+            raise ValueError(f'{world} report: "world" must be "{world}"')
+        lanes = payload.get("lanes")
+        if not isinstance(lanes, list) or not lanes:
+            raise ValueError(f'{world} report: "lanes" must be a non-empty list')
+        count = 0
+        for lane_label, row in world_report_rows(payload):
+            if not isinstance(lane_label, str) or not lane_label \
+                    or not isinstance(row.get("family"), str) or not row["family"]:
+                raise ValueError(f'{world} report: every row needs "family" '
+                                 'and lane label strings')
+            where = f'{world} report row "{row["family"]}" [{lane_label}]'
+            for side in ("ours", "theirs"):
+                if _stats_p50(row, side, where) is None:
+                    raise ValueError(f'{where}: "{side}" stats are required — '
+                                     'this world has no DNF arm')
+            count += 1
+        if count == 0:
+            raise ValueError(f'{world} report: "lanes" carries no rows')
+        return payload
+    return load
+
+
+load_crud_report = load_world_report("crud")
+load_lawful_report = load_world_report("lawful")
+
+
 # Lane name -> contract loader; a lane without one is stored raw.
 LANE_LOADERS = {
     "write_throughput": load_write_throughput,
@@ -324,6 +379,8 @@ NIGHT_LANE_REPORTS = (
     ("storage/storage-report.json", "storage_report", None),
     ("writes/writes-report.json", "writes_rates", None),
     ("curves/curves-report.json", "curves_report", None),
+    ("crud/crud.json", "crud_report", load_crud_report),
+    ("lawful/lawful.json", "lawful_report", load_lawful_report),
     ("churn/churn-report.json", "churn_report", load_churn_report),
 )
 
@@ -1426,6 +1483,71 @@ def chart_adversarial_dnf(inputs, out):
     plt.close(fig)
 
 
+def home_turf_render(key, world, regime, oracle_note):
+    """world-crud.svg / world-lawful.svg: the home-turf worlds where
+    SQLite is expected to be strong, benched to lose honestly (the
+    owner's standing order). One bar per (family, durability lane) —
+    speedup = SQLite p50 ÷ ours p50 from the raw stats, grouped under a
+    lane header carrying the lane's parity config in the row label. A
+    below-parity bar (SQLite faster) draws red and the title COUNTS the
+    losses — the caption never spins a loss into a footnote. No DNF arm
+    exists in these worlds (the loader enforced both numbers), so every
+    row draws a real bar."""
+    def render(inputs, out):
+        report = inputs[key]
+        rows = [(lane, row["family"], row["ours"]["p50"], row["theirs"]["p50"])
+                for lane, row in world_report_rows(report)]
+        speeds = [t / o for _, _, o, t in rows if o > 0]
+        losses = sum(1 for s in speeds if s < 1)
+        fig, ax = plt.subplots(figsize=(9.6, 0.34 * (len(rows) + 2) + 1.9),
+                               facecolor=BG)
+        dark(ax)
+        y, yticks, ylabels, seen = 0, [], [], None
+        for lane, family, ours_ns, theirs_ns in rows:
+            if lane != seen:
+                seen = lane
+                ax.text(0.28, y - 0.15, f"lane {lane}", fontsize=11, color=FG,
+                        fontweight="bold", family="monospace")
+                y += 1
+            yticks.append(y)
+            ylabels.append(family)
+            speed = theirs_ns / ours_ns if ours_ns > 0 else 0
+            color = OURS if speed >= 1 else "#f85149"
+            ax.barh(y, speed, height=0.6, color=color, zorder=3)
+            label = (f"{speed:.0f}×" if speed >= 10
+                     else f"{speed:.3f}×" if speed < 0.01
+                     else f"{speed:.2f}×" if speed < 1 else f"{speed:.1f}×")
+            ax.text(max(speed * 1.08, 1.12), y, label, va="center", fontsize=9,
+                    color=color, fontweight="bold", family="monospace")
+            y += 1
+        ax.axvline(1.0, color=DIM, linewidth=1, linestyle="--")
+        ax.text(1.0, -0.45, "parity", fontsize=9, color=DIM, ha="center",
+                family="monospace")
+        ax.set_yticks(yticks, ylabels, fontsize=9, family="monospace", color=FG)
+        ax.set_ylim(y - 0.3, -0.7)
+        ax.set_xscale("log")
+        xlo = min(0.25, min(speeds) * 0.6) if speeds else 0.25
+        xhi = max(6, max(speeds) * 4) if speeds else 6
+        ax.set_xlim(xlo, xhi)
+        ticks = [t for t in (0.1, 0.3, 1, 3, 10, 30, 100) if xlo < t < xhi]
+        ax.set_xticks(ticks, [f"{t:g}×" for t in ticks])
+        ax.grid(axis="x", color=GRID, linewidth=0.6, zorder=0)
+        title = (f"{world} — {regime} · speedup over SQLite "
+                 "per (family, lane) · report-class")
+        if losses:
+            title += (f"\nSQLite wins {losses} of {len(rows)} rows — "
+                      "drawn red, below parity, as measured")
+        ax.set_title(title, fontsize=12, loc="left", pad=14, family="monospace")
+        fig.text(0.01, 0.005,
+                 f"seed {report.get('seed', '?')} · {oracle_note} · red = SQLite "
+                 f"faster — benched to lose honestly{prov_note(report)}",
+                 fontsize=8, color=DIM, family="monospace")
+        fig.tight_layout()
+        fig.savefig(out, facecolor=BG, bbox_inches="tight")
+        plt.close(fig)
+    return render
+
+
 def chart_churn_series(inputs, out, stem, values_of, formatter, yscale, what):
     """The one churn time-series scaffold behind every churn chart: one
     FILE PER RUN (the world-*.svg multi-file idiom), one line per lane
@@ -1622,6 +1744,17 @@ CHARTS = [
     ChartSpec("bench-warmth.svg", ("curves_report",), chart_warmth),
     ChartSpec("write-throughput.svg", ("write_throughput",), chart_write_throughput),
     ChartSpec("adversarial-dnf.svg", ("adversarial",), chart_adversarial_dnf),
+    ChartSpec("world-crud.svg", ("crud_report",),
+              home_turf_render("crud_report", "crud",
+                               "the OLTP home turf, SQLite's strong regime",
+                               "oracle-gated read query + post-state "
+                               "value-verified, both relations, both lanes")),
+    ChartSpec("world-lawful.svg", ("lawful_report",),
+              home_turf_render("lawful_report", "lawful",
+                               "the integrity home turf: judged-law admission "
+                               "vs SQL constraints",
+                               "post-state fold over all five relations + "
+                               "naive verdict parity")),
     ChartSpec("churn-latency-<run>.svg", ("churn_report",), chart_churn_latency),
     ChartSpec("churn-size-<run>.svg", ("churn_report",),
               churn_metric_render("churn-size", lambda s: s["disk_bytes"],

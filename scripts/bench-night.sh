@@ -92,12 +92,13 @@ esac
 #
 # PROBED lanes are the expansion lanes: available iff the binary's help
 # lists the subcommand (token == lane id). Live spellings as of this
-# writing: storage, curves, writes, churn landed (write-throughput landed
-# as `writes`; the cold/warm/memoized panel landed as `curves --warmth`,
-# so that lane is folded into the curves row rather than kept as a
-# never-landing spelling). `adversarial` has not landed yet and keeps its
-# contract spelling — the probe reports it SKIP-UNAVAILABLE until it does.
-PROBED=" storage curves writes adversarial churn "
+# writing: storage, curves, writes, crud, lawful, churn landed
+# (write-throughput landed as `writes`; the cold/warm/memoized panel
+# landed as `curves --warmth`, so that lane is folded into the curves row
+# rather than kept as a never-landing spelling). `adversarial` has not
+# landed yet and keeps its contract spelling — the probe reports it
+# SKIP-UNAVAILABLE until it does.
+PROBED=" storage curves writes crud lawful adversarial churn "
 
 lane_table() {
     cat <<EOF
@@ -114,6 +115,8 @@ sweep-commit|$OUT/sweep-commit/sweep.md|mkdir -p "$OUT/sweep-commit" && "$OBS_BI
 storage|$OUT/storage/storage-report.json|"$BIN" storage --out "$OUT/storage"
 curves|$OUT/curves/curves-report.json|"$BIN" curves --warmth --out "$OUT/curves"
 writes|$OUT/writes/writes-report.json|"$BIN" writes --out "$OUT/writes"
+crud|$OUT/crud/crud.json|"$BIN" crud --out "$OUT/crud"
+lawful|$OUT/lawful/lawful.json|"$BIN" lawful --out "$OUT/lawful"
 adversarial|$OUT/adversarial/report.json|"$BIN" adversarial --out "$OUT/adversarial"
 churn|$OUT/churn/churn-report.json|"$BIN" churn --out "$OUT/churn"
 EOF
