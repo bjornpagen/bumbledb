@@ -921,7 +921,11 @@ bindings contract), queries cross as IR data under the trust-boundary law
 (`20-query-ir.md` § validation boundary), the manifest carries the ids as
 data, the memoized one-copy result heap crosses the language boundary where a
 borrowed result could not, and the dyn write surface's typed errors are the
-portable half of the API.
+portable half of the API. The keyed point read is part of the shipped
+binding on both the read and write surfaces: `get(relation, keyStatement,
+key)` — the key object typed by the statement's own projection — lives on
+`Db`, `ReadScope`, and `Tx` alike (the symmetry rule; the terminal record
+is the OPEN ledger's keyed-get row, below).
 
 The SDK's skin is **completely structural** — hard structural typing
 restated in a language with no host newtypes to carry nominal safety. A
@@ -1038,12 +1042,20 @@ engine-first change, and nothing re-enters without a new ruling.
   re-implements it generically over scan, roughly ten more
   `scan().find(byId)` sites ride along, and `Tx.get` is likewise untouched.
   The shape the evidence names: keyed get must become the obvious spelling on
-  both the read scope and the write transaction. **SCHEDULED (owner ruling
-  2026-07-19): its own planning wave, after cleanup-0.5.0 lands and BEFORE
-  any 1.0.0 surface freeze** — a surface addition belongs under the tag. The
-  typing flows from the declared key-FD laws, per the law-typing doctrine;
-  design memo → ruling → packet, the standing sequence
-  (`docs/feature-register.md` § FIRED and scheduled).
+  both the read scope and the write transaction. **SHIPPED (this wave,
+  2026-07-19).** The final spelling: Rust — `snap.get(key)` / `tx.get(key)`
+  over the generated `Key` values (fresh newtypes; one generated
+  `{R}By{Fields}` struct per declared key statement — § the `schema!`
+  grammar, § Transactions); TS — `get(relation, keyStatement, key)` on
+  `Db`/`ReadScope`/`Tx`, the key object typed by the statement's own
+  projection (already shipped surface, now pinned on the write transaction
+  too). `get_dyn` remains the dyn/FFI lane for data-supplied key statements,
+  and the bridge (`snapshotGet`/`txGet`) always carried any key statement —
+  the ship was typing, not plumbing. The at-most-one answer is the FD's
+  injectivity, derived
+  (`lean/Bumbledb/Dependencies.lean: keyed_get_at_most_one`; Bridge row).
+  Pins: `crates/bumbledb/tests/keyed_get.rs`, `ts/test/keyed-get.test.ts`,
+  cookbook recipe 30.
 - **Answer sorting / `FromAnswers` derive** in `bumbledb-query` (the
   ordering/limit conveniences fold in here — host-side, on the bench-crate
   quarantine like the `query!` macro; answers are sets and the engine never
