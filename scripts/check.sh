@@ -8,6 +8,27 @@ set -eu
 
 cd "$(dirname "$0")/.."
 
+# A libtest filter that matches nothing still exits 0 — the vacuous
+# pass (the same hazard lean.sh's battery-5 guard refuses). Every
+# filtered gate below runs through this: the passed counts are summed
+# across the package's test binaries and a zero-match filter fails, so
+# a module or test rename can never silently drop the coverage the
+# filter names.
+filtered_test() {
+    log=$(cargo test "$@" 2>&1) || {
+        printf '%s\n' "$log" >&2
+        exit 1
+    }
+    printf '%s\n' "$log"
+    passed=$(printf '%s\n' "$log" \
+        | sed -n 's/^test result: ok\. \([0-9][0-9]*\) passed.*/\1/p' \
+        | awk '{ s += $1 } END { print s + 0 }')
+    if [ "$passed" -eq 0 ]; then
+        echo "check.sh: FAIL — 'cargo test $*' matched zero tests (the vacuous pass)" >&2
+        exit 1
+    fi
+}
+
 echo "==> cargo fmt --all --check"
 cargo fmt --all --check
 
@@ -69,7 +90,12 @@ cargo clippy -p bumbledb --all-targets --all-features -- -D warnings
 # the engine's own colt_force trace — obs-gated, so it only runs here.
 echo "==> bumbledb-bench with the obs feature (clippy + harness tests)"
 cargo clippy -p bumbledb-bench --features obs --all-targets -- -D warnings
-cargo test -p bumbledb-bench --features obs -- harness trace_out tripwires the_engine_trace_pins
+# One guarded run per filter: this lane is the ONLY execution of the
+# obs-gated tests, so each of the four names must match something.
+filtered_test -p bumbledb-bench --features obs -- harness
+filtered_test -p bumbledb-bench --features obs -- trace_out
+filtered_test -p bumbledb-bench --features obs -- tripwires
+filtered_test -p bumbledb-bench --features obs -- the_engine_trace_pins
 
 # The x86-64 scalar-fallback promise (docs/architecture/00-product.md)
 # is EXECUTED, not cross-checked: CI's check lane runs this whole script
