@@ -419,6 +419,20 @@ pub enum SchemaError {
         statement: StatementId,
         relation: RelationId,
     },
+    /// Roster "a closed-target projection that is not the synthetic id":
+    /// the handle id is the ONE probe-able identity of a closed target
+    /// (the auto-key `R(id) -> R`), so the projection must be exactly
+    /// `{id}`. Its own variant, not a reused
+    /// [`SchemaError::NoMatchingTargetKey`]: declared payload keys on a
+    /// closed relation are legal, point-read-served objects whose field
+    /// set may equal the refused projection — the refusal reason is
+    /// closedness, a different fact than key absence, and the two carry
+    /// different encodings.
+    ClosedTargetNotHandle {
+        statement: StatementId,
+        target: RelationId,
+        projection: Box<[FieldId]>,
+    },
     /// A statement between constants that the ground axioms refute: both
     /// sides of the judgment are sealed at validate, so its truth is
     /// decidable here — and a theory whose axioms refute its own statement

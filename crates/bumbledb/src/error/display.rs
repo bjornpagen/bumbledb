@@ -239,9 +239,14 @@ impl fmt::Display for CorruptionError {
                 f,
                 "bytes<N> trailing word {tail:02x?}: nonzero pad byte — the pad is encoding, not data"
             ),
-            Self::DescriptorFingerprintDesync { .. } => write!(
+            Self::DescriptorFingerprintDesync {
+                fingerprint,
+                descriptor_hash,
+            } => write!(
                 f,
-                "the persisted schema descriptor hashes to something other than the stored fingerprint"
+                "the persisted schema descriptor hashes to {}, the stored fingerprint is {}",
+                crate::schema::fingerprint::SchemaFingerprint(*descriptor_hash),
+                crate::schema::fingerprint::SchemaFingerprint(*fingerprint)
             ),
         }
     }
@@ -490,6 +495,20 @@ impl fmt::Display for SchemaError {
                  pointwise judgments against a virtual extension are refused",
                 s.0, r.0
             ),
+            Self::ClosedTargetNotHandle {
+                statement: s,
+                target,
+                projection,
+            } => {
+                write!(
+                    f,
+                    "statement {}: closed target relation {} is addressed by its synthetic id \
+                     only — projection ",
+                    s.0, target.0
+                )?;
+                field_set(f, projection)?;
+                write!(f, " must be exactly {{0}} (rewrite the target side as `R(id)`)")
+            }
             Self::ClosedStatementRefuted {
                 statement: s,
                 relation: r,
@@ -850,8 +869,11 @@ impl fmt::Display for Error {
                     "storage format version {found}, this build expects {expected}"
                 )
             }
-            Self::SchemaMismatch { .. } => {
-                write!(f, "the compiled schema's fingerprint is not the stored one")
+            Self::SchemaMismatch { found, expected } => {
+                write!(
+                    f,
+                    "stored schema fingerprint {found}, this build's schema is {expected}"
+                )
             }
             Self::AlreadyInitialized => {
                 write!(
@@ -1101,6 +1123,7 @@ impl SchemaError {
             | Self::NoMatchingTargetKey { statement, .. }
             | Self::NoPointwiseTargetKey { statement, .. }
             | Self::ClosedContainmentInterval { statement, .. }
+            | Self::ClosedTargetNotHandle { statement, .. }
             | Self::ClosedStatementRefuted { statement, .. }
             | Self::DuplicateStatement { statement, .. }
             | Self::DegenerateSelectionSet { statement, .. }

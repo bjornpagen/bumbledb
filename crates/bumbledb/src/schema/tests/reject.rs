@@ -1126,7 +1126,9 @@ fn rejects_an_interval_position_from_a_closed_source() {
 #[test]
 fn rejects_a_closed_target_projection_that_is_not_the_id() {
     // The handle id is the one probe-able identity of a closed relation:
-    // a payload-column target matches no key.
+    // a payload-column target is refused by the closedness rule itself —
+    // never the no-matching-key rejection, whose candidate roster speaks
+    // about key absence.
     let decl = SchemaDescriptor {
         relations: vec![
             closed(
@@ -1147,11 +1149,52 @@ fn rejects_a_closed_target_projection_that_is_not_the_id() {
     };
     assert_eq!(
         decl.validate().unwrap_err(),
-        SchemaError::NoMatchingTargetKey {
+        SchemaError::ClosedTargetNotHandle {
             statement: StatementId(1),
             target: RelationId(0),
             projection: Box::new([FieldId(1)]),
-            available: Box::new([target_key(0, &[FieldId(0)])]),
+        }
+    );
+}
+
+#[test]
+fn a_declared_key_on_the_closed_target_does_not_soften_the_handle_rule() {
+    // The contradiction pinned shut: `Kind(weight) -> Kind` is a legal,
+    // point-read-served key whose field set equals the refused
+    // projection — the old no-matching-key rejection simultaneously
+    // claimed "matches no declared key" and listed that key as
+    // available. The refusal names closedness, the actual rule.
+    let decl = SchemaDescriptor {
+        relations: vec![
+            closed(
+                "Kind",
+                vec![field("weight", ValueType::U64)],
+                vec![row("Light", vec![Value::U64(1)]), row("Heavy", vec![Value::U64(2)])],
+            ),
+            RelationDescriptor {
+                extension: None,
+                name: "Task".into(),
+                fields: vec![field("weight_ref", ValueType::U64)],
+            },
+        ],
+        statements: vec![
+            // Kind(weight) -> Kind — legal on a closed relation, judged
+            // against the sealed extension once.
+            fd(RelationId(0), &[FieldId(1)]),
+            // Task(weight_ref) <= Kind(weight): the target is closed, so
+            // the declared key does not make `weight` a probe identity.
+            containment(
+                side(RelationId(1), &[FieldId(0)]),
+                side(RelationId(0), &[FieldId(1)]),
+            ),
+        ],
+    };
+    assert_eq!(
+        decl.validate().unwrap_err(),
+        SchemaError::ClosedTargetNotHandle {
+            statement: StatementId(2),
+            target: RelationId(0),
+            projection: Box::new([FieldId(1)]),
         }
     );
 }

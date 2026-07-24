@@ -40,6 +40,20 @@ pub(super) const FORMAT_VERSION_LABEL: &[u8] = b"bumbledb-schema-v4";
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SchemaFingerprint(pub [u8; 32]);
 
+/// The 64-char lowercase hex of the 32 bytes — the fingerprint's one
+/// rendering, so the mismatch and desync diagnostics
+/// ([`crate::error::Error::SchemaMismatch`],
+/// [`crate::error::CorruptionError::DescriptorFingerprintDesync`]) print
+/// the values a host must compare, never a payload-free sentence.
+impl std::fmt::Display for SchemaFingerprint {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for byte in self.0 {
+            write!(f, "{byte:02x}")?;
+        }
+        Ok(())
+    }
+}
+
 /// Appends the canonical encoding of the schema to `out` — one linear
 /// pass over the fingerprint inputs, exhaustively
 /// (`docs/architecture/10-data-model.md` § Schema):
@@ -321,23 +335,16 @@ mod tests {
         fingerprint(&schema_of(base()))
     }
 
-    fn hex_of(fp: &SchemaFingerprint) -> String {
-        fp.0.iter()
-            .fold(String::with_capacity(64), |mut hex, byte| {
-                use std::fmt::Write;
-                write!(hex, "{byte:02x}").expect("writing to a String cannot fail");
-                hex
-            })
-    }
-
     #[test]
     fn golden_fingerprint_pins_the_hash() {
         // Pinned: the canonical encoding (and therefore blake3 of it)
         // must not drift while the format label stays `v4`. `base()` covers
         // every literal-adjacent input: fresh auto-keys, a declared key,
-        // and a containment with a selection literal.
+        // and a containment with a selection literal. Pinned through
+        // `Display` — the fingerprint's one rendering, hex of all 32
+        // bytes, the same string the mismatch diagnostics print.
         assert_eq!(
-            hex_of(&base_fingerprint()),
+            base_fingerprint().to_string(),
             "1e5963bb9a5f3165c1aa3738791cf5b426cf5b2c8196aaef4e606811dd9aedcf"
         );
     }
@@ -365,7 +372,7 @@ mod tests {
             Some(StatementId(4))
         );
         assert_eq!(
-            hex_of(&fingerprint(&schema)),
+            fingerprint(&schema).to_string(),
             "9e2cf875bbedd38baada9bc454b3a445a1a331b0d62c1d92d22d2de05170d33f"
         );
     }
