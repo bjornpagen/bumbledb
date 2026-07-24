@@ -1697,7 +1697,10 @@ conjunctive face. The effect-free boolean model (PRD 04's recorded
 narrowing: a ray's measure comparison is FALSE at that level) is the
 `holds`-PROJECTION of this fold — `Verdict3.toBool` is a homomorphism
 for both connectives (`toBool_and` / `toBool_or`) — so the
-three-valued refinement never disturbs the proved denotation.
+three-valued refinement never disturbs the proved denotation. The
+tree-level evaluator is `condVerdict` (below) — `condHoldsB` on the
+lattice, with `condVerdict_toBool` the projection and
+`condVerdict_of_rayFree` the ray-free agreement.
 Bridge: the engine's typed `crate::Error::MeasureOfRay` raise; the
 naive oracle folds verdicts commutatively in this lattice — the
 order-insensitive verdict IS its spec. -/
@@ -1835,7 +1838,199 @@ theorem orFold_eq_ray : ∀ {l : List Verdict3},
     cases x <;> cases h : orFold l <;>
       simp_all [Verdict3.or, List.mem_cons]
 
+/-- The lattice image of a decided boolean pair is the decided
+conjunction — the leaf-level composition the ray-free agreement
+folds. -/
+theorem and_ofOption (a b : Bool) :
+    (ofOption (some a)).and (ofOption (some b)) =
+      ofOption (some (a && b)) := by
+  cases a <;> cases b <;> rfl
+
+/-- The disjunctive face. -/
+theorem or_ofOption (a b : Bool) :
+    (ofOption (some a)).or (ofOption (some b)) =
+      ofOption (some (a || b)) := by
+  cases a <;> cases b <;> rfl
+
 end Verdict3
+
+/-! ### The tree-level verdict evaluator — `condHoldsB` on the lattice
+
+The executable face of R6: `condVerdict` mirrors `condHoldsB` clause
+for clause with the boolean connectives replaced by the Kleene folds,
+and a leaf renders `ray` exactly when a side demands the measure of a
+ray (`Term.poisonedB` — `Value.measure?` reads `none`). The two
+agreement lemmas tie it to the proved boolean evaluator: the
+`holds`-projection is `condHoldsB` UNCONDITIONALLY
+(`condVerdict_toBool` — a poisoned leaf reads `false` on both sides,
+PRD 04's recorded narrowing), and on ray-free inputs the verdict IS
+the boolean decision's image, never `ray`
+(`condVerdict_of_rayFree`). -/
+
+/-- A term demands the measure of a ray: the one partial leaf input —
+`Value.measure?` reads `none` exactly on rays and non-intervals
+(`measure?_ray_none`; the non-interval arm is validator-unreachable,
+module narrowing of PRD 04). -/
+def Term.poisonedB (σ : Assignment) : Term → Bool
+  | .measure v => (σ v).measure?.isNone
+  | _ => false
+
+/-- A poisoned term selects nothing — its candidate list is empty,
+which is why the boolean evaluator reads a poisoned leaf `false`. -/
+theorem Term.values_eq_nil_of_poisoned {ρ : ParamEnv} {σ : Assignment}
+    {t : Term} (h : t.poisonedB σ = true) : Term.values ρ σ t = [] := by
+  cases t with
+  | measure v =>
+    have hnone : (σ v).measure? = none :=
+      Option.isNone_iff_eq_none.mp h
+    simp [Term.values, hnone]
+  | var v => simp [Term.poisonedB] at h
+  | param p => simp [Term.poisonedB] at h
+  | paramSet p => simp [Term.poisonedB] at h
+  | lit c => simp [Term.poisonedB] at h
+
+/-- One comparison's verdict: `ray` iff a side demands the measure of
+a ray, else the boolean decision (`compHoldsB`) on the lattice. -/
+def compVerdict (C : Classify) (ρ : ParamEnv) (σ : Assignment)
+    (c : Comparison) : Verdict3 :=
+  if c.lhs.poisonedB σ || c.rhs.poisonedB σ then .ray
+  else .ofOption (some (compHoldsB C ρ σ c))
+
+/-- The leaf projection: a poisoned leaf reads `false` on both sides
+(the poisoned term's empty candidate list empties the `any`), an
+unpoisoned leaf is the decision itself. -/
+theorem compVerdict_toBool (C : Classify) (ρ : ParamEnv)
+    (σ : Assignment) (c : Comparison) :
+    (compVerdict C ρ σ c).toBool = compHoldsB C ρ σ c := by
+  unfold compVerdict
+  by_cases h : (c.lhs.poisonedB σ || c.rhs.poisonedB σ) = true
+  · rw [if_pos h]
+    show false = compHoldsB C ρ σ c
+    rcases Bool.or_eq_true .. |>.mp h with hl | hr
+    · rw [compHoldsB, Term.values_eq_nil_of_poisoned hl]
+      rfl
+    · rw [compHoldsB, Term.values_eq_nil_of_poisoned hr]
+      simp
+  · rw [if_neg h]
+    cases compHoldsB C ρ σ c <;> rfl
+
+mutual
+  /-- One condition tree's verdict — `condHoldsB` on the Verdict3
+  lattice (ruled 2026-07-23, R6): the naive oracle's spec for the
+  MeasureOfRay raise, order-insensitive by the lattice laws. -/
+  def condVerdict (C : Classify) (ρ : ParamEnv) (σ : Assignment) :
+      Condition → Verdict3
+    | .leaf c => compVerdict C ρ σ c
+    | .and cs => condAllV C ρ σ cs
+    | .or cs => condAnyV C ρ σ cs
+
+  /-- A condition list's verdict, conjunctive (`holds` is the unit). -/
+  def condAllV (C : Classify) (ρ : ParamEnv) (σ : Assignment) :
+      List Condition → Verdict3
+    | [] => .holds
+    | t :: ts => (condVerdict C ρ σ t).and (condAllV C ρ σ ts)
+
+  /-- A condition list's verdict, disjunctive (`fails` is the unit). -/
+  def condAnyV (C : Classify) (ρ : ParamEnv) (σ : Assignment) :
+      List Condition → Verdict3
+    | [] => .fails
+    | t :: ts => (condVerdict C ρ σ t).or (condAnyV C ρ σ ts)
+end
+
+mutual
+  /-- **The `holds`-projection agreement, unconditional**: the
+  three-valued refinement projects onto the proved boolean evaluator —
+  `toBool` is a homomorphism for both connectives, and a poisoned leaf
+  reads `false` on both sides. Refining never disturbs the proved
+  denotation. -/
+  theorem condVerdict_toBool (C : Classify) (ρ : ParamEnv)
+      (σ : Assignment) :
+      ∀ t : Condition,
+        (condVerdict C ρ σ t).toBool = condHoldsB C ρ σ t
+    | .leaf c => compVerdict_toBool C ρ σ c
+    | .and cs => by
+      simp only [condVerdict, condHoldsB]
+      exact condAllV_toBool C ρ σ cs
+    | .or cs => by
+      simp only [condVerdict, condHoldsB]
+      exact condAnyV_toBool C ρ σ cs
+
+  theorem condAllV_toBool (C : Classify) (ρ : ParamEnv)
+      (σ : Assignment) :
+      ∀ cs : List Condition,
+        (condAllV C ρ σ cs).toBool = condAllB C ρ σ cs
+    | [] => rfl
+    | t :: ts => by
+      simp only [condAllV, condAllB, Verdict3.toBool_and,
+        condVerdict_toBool C ρ σ t, condAllV_toBool C ρ σ ts]
+
+  theorem condAnyV_toBool (C : Classify) (ρ : ParamEnv)
+      (σ : Assignment) :
+      ∀ cs : List Condition,
+        (condAnyV C ρ σ cs).toBool = condAnyB C ρ σ cs
+    | [] => rfl
+    | t :: ts => by
+      simp only [condAnyV, condAnyB, Verdict3.toBool_or,
+        condVerdict_toBool C ρ σ t, condAnyV_toBool C ρ σ ts]
+end
+
+mutual
+  /-- No leaf of the tree demands a measure of a ray under `σ`. -/
+  def condRayFreeB (σ : Assignment) : Condition → Bool
+    | .leaf c => !c.lhs.poisonedB σ && !c.rhs.poisonedB σ
+    | .and cs => condListRayFreeB σ cs
+    | .or cs => condListRayFreeB σ cs
+
+  /-- Ray-freeness of every tree in a list. -/
+  def condListRayFreeB (σ : Assignment) : List Condition → Bool
+    | [] => true
+    | t :: ts => condRayFreeB σ t && condListRayFreeB σ ts
+end
+
+mutual
+  /-- **The ray-free agreement (ruled 2026-07-23, R6)**: on ray-free
+  inputs the tree's verdict IS the boolean evaluator's decision on the
+  lattice — never `ray`, so the three-valued evaluator and
+  `condHoldsB` are ONE evaluator wherever no measure meets a ray. -/
+  theorem condVerdict_of_rayFree (C : Classify) (ρ : ParamEnv)
+      (σ : Assignment) :
+      ∀ t : Condition, condRayFreeB σ t = true →
+        condVerdict C ρ σ t = .ofOption (some (condHoldsB C ρ σ t))
+    | .leaf c, h => by
+      have hfree : (c.lhs.poisonedB σ || c.rhs.poisonedB σ) = false := by
+        simp only [condRayFreeB, Bool.and_eq_true, Bool.not_eq_true'] at h
+        simp [h.1, h.2]
+      simp only [condVerdict, condHoldsB, compVerdict, hfree]
+      rfl
+    | .and cs, h => by
+      simp only [condVerdict, condHoldsB]
+      exact condAllV_of_rayFree C ρ σ cs (by simpa [condRayFreeB] using h)
+    | .or cs, h => by
+      simp only [condVerdict, condHoldsB]
+      exact condAnyV_of_rayFree C ρ σ cs (by simpa [condRayFreeB] using h)
+
+  theorem condAllV_of_rayFree (C : Classify) (ρ : ParamEnv)
+      (σ : Assignment) :
+      ∀ cs : List Condition, condListRayFreeB σ cs = true →
+        condAllV C ρ σ cs = .ofOption (some (condAllB C ρ σ cs))
+    | [], _ => rfl
+    | t :: ts, h => by
+      obtain ⟨ht, hts⟩ := Bool.and_eq_true .. |>.mp h
+      simp only [condAllV, condAllB,
+        condVerdict_of_rayFree C ρ σ t ht,
+        condAllV_of_rayFree C ρ σ ts hts, Verdict3.and_ofOption]
+
+  theorem condAnyV_of_rayFree (C : Classify) (ρ : ParamEnv)
+      (σ : Assignment) :
+      ∀ cs : List Condition, condListRayFreeB σ cs = true →
+        condAnyV C ρ σ cs = .ofOption (some (condAnyB C ρ σ cs))
+    | [], _ => rfl
+    | t :: ts, h => by
+      obtain ⟨ht, hts⟩ := Bool.and_eq_true .. |>.mp h
+      simp only [condAnyV, condAnyB,
+        condVerdict_of_rayFree C ρ σ t ht,
+        condAnyV_of_rayFree C ρ σ ts hts, Verdict3.or_ofOption]
+end
 
 /-! ## Arg-restriction — restrict-then-project -/
 
