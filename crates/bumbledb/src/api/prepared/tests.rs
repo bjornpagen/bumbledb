@@ -32,6 +32,7 @@ mod rules;
 mod selection;
 mod sets;
 mod snapshot;
+mod staleness;
 mod statically_empty;
 mod view_memo;
 

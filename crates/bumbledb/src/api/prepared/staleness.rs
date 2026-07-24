@@ -11,7 +11,7 @@ use super::PreparedQuery;
 use crate::api::db::Snapshot;
 use crate::error::Result;
 use crate::ir::normalize::OccId;
-use crate::storage::read;
+use crate::plan::selectivity::relation_rows;
 use bumbledb_theory::schema::RelationId;
 
 /// One occurrence's pinned prepare-time statistics — the pin record
@@ -67,9 +67,13 @@ impl<S> PreparedQuery<'_, S> {
     /// statistics this plan was costed with — the pull-based staleness
     /// signal, the pin-at-prepare decision's compensating control
     /// (docs/architecture/20-query-ir.md, § prepared queries). One O(1)
-    /// `S`-counter get per participating occurrence (≤ 20 by the roster
-    /// cap). Each ratio is `max(live, pinned) / max(1, min(live,
-    /// pinned))`, so shrink and growth both read as drift ≥ 1.
+    /// row-count read per participating occurrence (≤ 20 by the roster
+    /// cap), routed through `plan/selectivity`'s `relation_rows` like
+    /// every planner read — a kept closed occurrence's live count IS its
+    /// sealed extension (the raw `S` counter never exists for it and
+    /// reads 0), so a closed pin never phantom-drifts. Each ratio is
+    /// `max(live, pinned) / max(1, min(live, pinned))`, so shrink and
+    /// growth both read as drift ≥ 1.
     ///
     /// The engine never calls this and no threshold exists in code —
     /// the host owns policy (docs/architecture/00-product.md). There is
@@ -95,7 +99,7 @@ impl<S> PreparedQuery<'_, S> {
             .all_rules()
             .flat_map(super::PreparedRule::pinned)
             .map(|pin| {
-                let live = read::row_count(snap.txn(), pin.relation)?;
+                let live = relation_rows(snap.txn(), self.schema, pin.relation)?;
                 Ok(OccurrenceDrift {
                     relation: pin.relation,
                     pinned: pin.rows,
