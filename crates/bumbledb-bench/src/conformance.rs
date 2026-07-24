@@ -98,8 +98,8 @@ use bumbledb::{
 };
 
 use crate::corpus_gen::{GenConfig, Rng, Scale};
-use crate::edb::EdbAtom;
 use crate::differential::{self, Answers};
+use crate::edb::EdbAtom;
 use crate::naive::{Delta, NaiveDb, ParamValue, Tuple};
 use crate::querygen::{self, ParamDraw, target};
 
@@ -613,14 +613,24 @@ fn push_find(out: &mut String, find: &FindTerm) {
             // (`Exclusion::MeasureArgKey`) — a plain `"key"` var is the
             // only spelled form, so a measure key can never silently
             // serialize as an interval-ordering the Lean side refuses.
-            (AggOp::ArgMax { key: bumbledb::ArgKey::Var(key) }, Some(v)) => {
+            (
+                AggOp::ArgMax {
+                    key: bumbledb::ArgKey::Var(key),
+                },
+                Some(v),
+            ) => {
                 let _ = write!(
                     out,
                     "{{\"agg\":{{\"op\":\"arg_max\",\"over\":{},\"key\":{}}}}}",
                     v.0, key.0
                 );
             }
-            (AggOp::ArgMin { key: bumbledb::ArgKey::Var(key) }, Some(v)) => {
+            (
+                AggOp::ArgMin {
+                    key: bumbledb::ArgKey::Var(key),
+                },
+                Some(v),
+            ) => {
                 let _ = write!(
                     out,
                     "{{\"agg\":{{\"op\":\"arg_min\",\"over\":{},\"key\":{}}}}}",
@@ -1340,7 +1350,15 @@ fn hand_cases(cfg: GenConfig) -> Vec<HandCase> {
         HandCase {
             name: "hand-arg-max-ties",
             query: Query::single(rule(
-                vec![fv(1), agg(AggOp::ArgMax { key: bumbledb::ArgKey::Var(VarId(2)) }, 0)],
+                vec![
+                    fv(1),
+                    agg(
+                        AggOp::ArgMax {
+                            key: bumbledb::ArgKey::Var(VarId(2)),
+                        },
+                        0,
+                    ),
+                ],
                 vec![atom(
                     ids::POSTING,
                     &[

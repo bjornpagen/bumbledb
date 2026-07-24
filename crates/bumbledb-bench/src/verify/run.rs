@@ -430,7 +430,13 @@ pub fn run_prepared(
         // scale would be the harness's own DNF).
         if run.bundles.len() < MAX_BUNDLES && !naive_routed.is_empty() {
             let mut world = crate::conformance::build_world(cfg.corpus_gen.seed);
-            naive_routed_lane(&mut run, "random", &world.db, &mut world.naive, &naive_routed);
+            naive_routed_lane(
+                &mut run,
+                "random",
+                &world.db,
+                &mut world.naive,
+                &naive_routed,
+            );
         }
     }
 

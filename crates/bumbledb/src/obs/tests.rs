@@ -98,7 +98,11 @@ fn nested_start_capture_extends_instead_of_discarding() {
     start_capture(); // idempotent: the live buffer survives
     event("after", Category::Harness, 2, 0);
     let events = finish_capture();
-    assert_eq!(events.len(), 2, "no event was destroyed by the nested start");
+    assert_eq!(
+        events.len(),
+        2,
+        "no event was destroyed by the nested start"
+    );
     assert_eq!(events[0].name, "before");
     assert_eq!(events[1].name, "after");
     assert!(!capturing(), "one finish drains the whole capture");

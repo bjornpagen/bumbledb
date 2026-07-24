@@ -265,11 +265,7 @@ fn rich_dnf_ops(seed: u64, sizes: &Sizes) -> Vec<Op> {
             let (param_leaf, params) = match rng.range(3) {
                 0 => (None, vec![]),
                 1 => (
-                    Some(leaf(
-                        CmpOp::Eq,
-                        var(0),
-                        Term::Param(bumbledb::ParamId(0)),
-                    )),
+                    Some(leaf(CmpOp::Eq, var(0), Term::Param(bumbledb::ParamId(0)))),
                     vec![crate::naive::ParamValue::Scalar(Value::U64(
                         rng.range(sizes.accounts + 2),
                     ))],
@@ -315,11 +311,15 @@ fn rich_dnf_ops(seed: u64, sizes: &Sizes) -> Vec<Op> {
                 3 => leaf(
                     order_op(rng),
                     Term::Measure(VarId(1)),
-                    Term::Literal(Value::U64(rng.range(
-                        u64::try_from(4 * AT_STEP).expect("positive"),
-                    ))),
+                    Term::Literal(Value::U64(
+                        rng.range(u64::try_from(4 * AT_STEP).expect("positive")),
+                    )),
                 ),
-                _ if joined => leaf(op_of(rng), var(2), Term::Literal(Value::I64(at_literal(rng)))),
+                _ if joined => leaf(
+                    op_of(rng),
+                    var(2),
+                    Term::Literal(Value::I64(at_literal(rng))),
+                ),
                 _ => leaf(
                     op_of(rng),
                     var(0),
@@ -377,11 +377,9 @@ fn rich_dnf_ops(seed: u64, sizes: &Sizes) -> Vec<Op> {
 fn param_leaf_of(params: &[crate::naive::ParamValue]) -> Option<ConditionTree> {
     match params.first() {
         None => None,
-        Some(crate::naive::ParamValue::Scalar(_)) => Some(leaf(
-            CmpOp::Eq,
-            var(0),
-            Term::Param(bumbledb::ParamId(0)),
-        )),
+        Some(crate::naive::ParamValue::Scalar(_)) => {
+            Some(leaf(CmpOp::Eq, var(0), Term::Param(bumbledb::ParamId(0))))
+        }
         Some(crate::naive::ParamValue::Set(_)) => Some(leaf(
             CmpOp::Eq,
             var(0),
@@ -705,10 +703,7 @@ pub(super) fn error_parity<S, T>(db: &Db<S>, run: &mut Run<'_, T>) {
         // The bind-time rows: prepare ACCEPTS the param mask; the
         // vacuous binding is a typed execution refusal carrying the
         // param id.
-        if matches!(
-            expected,
-            Expected::EmptyMaskParam | Expected::FullMaskParam
-        ) {
+        if matches!(expected, Expected::EmptyMaskParam | Expected::FullMaskParam) {
             let (mask, empty) = match expected {
                 Expected::EmptyMaskParam => (bumbledb::AllenMask::EMPTY, true),
                 _ => (bumbledb::AllenMask::FULL, false),
@@ -717,8 +712,7 @@ pub(super) fn error_parity<S, T>(db: &Db<S>, run: &mut Run<'_, T>) {
                 Ok(mut prepared) => {
                     let params = [crate::naive::ParamValue::Scalar(Value::AllenMask(mask))];
                     let args = crate::families::param_args(&params);
-                    let outcome =
-                        db.read(|snap| snap.execute_collect_args(&mut prepared, &args));
+                    let outcome = db.read(|snap| snap.execute_collect_args(&mut prepared, &args));
                     let agree = match outcome {
                         Err(Error::EmptyAllenMaskParam { param }) => {
                             empty && param == bumbledb::ParamId(0)

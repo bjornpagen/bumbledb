@@ -79,12 +79,14 @@ pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
         .max_fresh
         .iter()
         .filter(|(spot, max_fresh)| !seen.contains(spot) && ratchet_broken(0, **max_fresh))
-        .map(|(&(relation, field), &max_fresh)| StoreFinding::FreshNextValueLow {
-            relation,
-            field,
-            stored: 0,
-            max_fresh,
-        })
+        .map(
+            |(&(relation, field), &max_fresh)| StoreFinding::FreshNextValueLow {
+                relation,
+                field,
+                stored: 0,
+                max_fresh,
+            },
+        )
         .collect();
     s.findings.extend(absent);
     Ok(())

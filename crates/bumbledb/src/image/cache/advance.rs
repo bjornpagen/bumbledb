@@ -41,7 +41,12 @@ impl ImageCache {
     /// # Panics
     ///
     /// Only on a poisoned cache mutex.
-    pub fn advance(&self, generation: GenerationId, dirty: &[RelationId], floors: &[(RelationId, u64)]) {
+    pub fn advance(
+        &self,
+        generation: GenerationId,
+        dirty: &[RelationId],
+        floors: &[(RelationId, u64)],
+    ) {
         debug_assert!(dirty.is_sorted(), "the delta's ordered pass sorts dirty");
         debug_assert!(
             floors.is_sorted_by_key(|&(rel, _)| rel),

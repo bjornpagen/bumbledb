@@ -50,8 +50,8 @@ impl Colt {
                 };
                 let last_chunk = self.chunks[last as usize];
                 if last_chunk.len < last_chunk.cap {
-                    self.chunk_positions
-                        [last_chunk.start as usize + usize::from(last_chunk.len)] = position;
+                    self.chunk_positions[last_chunk.start as usize + usize::from(last_chunk.len)] =
+                        position;
                     self.chunks[last as usize].len += 1;
                     self.nodes[node_ref.0 as usize] = NodeState::Unforced(Positions::Chunks {
                         first,

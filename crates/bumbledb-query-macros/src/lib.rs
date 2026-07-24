@@ -437,8 +437,7 @@ fn is_int_magnitude(text: &str) -> bool {
         [b'0', b'b', ..] => (2, &text[2..]),
         _ => (10, text),
     };
-    digits.chars().any(|c| c != '_')
-        && digits.chars().all(|c| c == '_' || c.is_digit(radix))
+    digits.chars().any(|c| c != '_') && digits.chars().all(|c| c == '_' || c.is_digit(radix))
 }
 
 /// Parses one `[-] int`, classifying by spelling: negative or

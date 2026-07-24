@@ -682,7 +682,10 @@ impl fmt::Display for ValidationError {
             Self::DuplicateFindTerm { index } => write!(f, "find term {index} is a duplicate"),
             Self::NoPositiveAtoms => write!(f, "the query has no positive atoms"),
             Self::AggregateInputType { find } => {
-                write!(f, "find {find}: aggregate input outside the fold's type roster")
+                write!(
+                    f,
+                    "find {find}: aggregate input outside the fold's type roster"
+                )
             }
             Self::AggregateOverClosedReference { find } => write!(
                 f,

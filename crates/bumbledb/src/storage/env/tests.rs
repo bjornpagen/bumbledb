@@ -158,8 +158,7 @@ fn exhume_takes_no_lock_and_reads_without_write_permission() {
     set(&dir.path().join("data.mdb"), 0o644);
     let exhumed = exhumed.expect("exhume works on read-only media, lockless");
     assert!(
-        !dir
-            .path()
+        !dir.path()
             .join("bumbledb.lock")
             .try_exists()
             .expect("probe"),

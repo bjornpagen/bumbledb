@@ -207,7 +207,7 @@ pub fn decode_field(
                         decode_i64(end_word.to_be_bytes()),
                     )
                     .expect("the Q2 bound implies start < end"),
-                )
+                ),
             })
         }
     }

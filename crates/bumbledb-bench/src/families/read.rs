@@ -561,7 +561,9 @@ fn latest_posting_per_account_query() -> Query {
         finds: vec![
             FindTerm::Var(VarId(0)),
             FindTerm::Aggregate {
-                op: AggOp::ArgMax { key: bumbledb::ArgKey::Var(VarId(2)) },
+                op: AggOp::ArgMax {
+                    key: bumbledb::ArgKey::Var(VarId(2)),
+                },
                 over: Some(VarId(1)),
             },
         ],

@@ -539,9 +539,8 @@ fn namespace_schema_ownership_is_rechecked() {
 fn namespace_row_images_are_width_checked() {
     let (_dir, db) = fixture_with_healthy_sibling("verify-namespace-values");
     let m = key(|b| keys::membership_key(b, BOOKING, &[0x22; 32]));
-    let u = key(|b| {
-        keys::determinant_key(b, BOOKING, BOOKING_KEY, &booking_determinant(99, 0, 10))
-    });
+    let u =
+        key(|b| keys::determinant_key(b, BOOKING, BOOKING_KEY, &booking_determinant(99, 0, 10)));
     raw_write(&db, |txn| {
         let data = txn.env().data();
         data.put(txn.raw_mut(), &m, &[])

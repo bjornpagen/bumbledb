@@ -10,9 +10,7 @@ use bumbledb_theory::schema::spec::{
     ClosedSpec, FieldSpec, LiteralAt, LiteralSetSpec, LiteralSpec, RelationSpec, RowSpec,
     SchemaSpec, SideSpec, SpecIssue, StatementSpec,
 };
-use bumbledb_theory::schema::{
-    FieldId, LiteralSet, RelationId, StatementDescriptor, ValueType,
-};
+use bumbledb_theory::schema::{FieldId, LiteralSet, RelationId, StatementDescriptor, ValueType};
 
 fn field(name: &str, newtype: Option<&str>) -> FieldSpec {
     FieldSpec {
@@ -137,12 +135,14 @@ fn synthetic_id_newtype_rides_the_sealed_slot() {
         }],
     };
     let err = spec.descriptor().expect_err("the faces disagree");
-    let [SpecIssue::StatementNewtypeMismatch {
-        statement: 0,
-        position: 0,
-        source,
-        target,
-    }] = err.issues()
+    let [
+        SpecIssue::StatementNewtypeMismatch {
+            statement: 0,
+            position: 0,
+            source,
+            target,
+        },
+    ] = err.issues()
     else {
         panic!("one mismatch issue, not {:?}", err.issues());
     };

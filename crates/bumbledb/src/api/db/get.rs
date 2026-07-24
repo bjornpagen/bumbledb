@@ -86,11 +86,9 @@ pub(super) fn encode_determinant_with(
             // a stored fact (String peeled above per the encoder's
             // contract; a mask value is unreachable — the check
             // rejected it: not a field type).
-            Ok(None) => crate::encoding::encode_literal(
-                value,
-                rel.field(field).value_type.type_desc(),
-                out,
-            ),
+            Ok(None) => {
+                crate::encoding::encode_literal(value, rel.field(field).value_type.type_desc(), out)
+            }
         }
     }
     Ok(true)

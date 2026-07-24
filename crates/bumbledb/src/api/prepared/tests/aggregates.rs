@@ -197,9 +197,13 @@ fn arg_max_picks_the_latest_posting_per_account() {
                 FindTerm::Var(VarId(0)),
                 FindTerm::Aggregate {
                     op: if max {
-                        AggOp::ArgMax { key: crate::ir::ArgKey::Var(VarId(2)) }
+                        AggOp::ArgMax {
+                            key: crate::ir::ArgKey::Var(VarId(2)),
+                        }
                     } else {
-                        AggOp::ArgMin { key: crate::ir::ArgKey::Var(VarId(2)) }
+                        AggOp::ArgMin {
+                            key: crate::ir::ArgKey::Var(VarId(2)),
+                        }
                     },
                     over: Some(VarId(1)),
                 },
@@ -242,7 +246,9 @@ fn arg_max_picks_the_latest_posting_per_account() {
     // Global group: the latest posting overall.
     let global = Query::single(Rule {
         finds: vec![FindTerm::Aggregate {
-            op: AggOp::ArgMax { key: crate::ir::ArgKey::Var(VarId(2)) },
+            op: AggOp::ArgMax {
+                key: crate::ir::ArgKey::Var(VarId(2)),
+            },
             over: Some(VarId(1)),
         }],
         atoms,
@@ -290,7 +296,9 @@ fn arg_ties_are_set_honest() {
         finds: vec![
             FindTerm::Var(VarId(0)),
             FindTerm::Aggregate {
-                op: AggOp::ArgMax { key: crate::ir::ArgKey::Var(VarId(1)) },
+                op: AggOp::ArgMax {
+                    key: crate::ir::ArgKey::Var(VarId(1)),
+                },
                 over: Some(VarId(2)),
             },
         ],
@@ -333,7 +341,9 @@ fn arg_ties_are_set_honest() {
         finds: vec![
             FindTerm::Var(VarId(0)),
             FindTerm::Aggregate {
-                op: AggOp::ArgMax { key: crate::ir::ArgKey::Var(VarId(1)) },
+                op: AggOp::ArgMax {
+                    key: crate::ir::ArgKey::Var(VarId(1)),
+                },
                 over: Some(VarId(1)),
             },
         ],

@@ -359,10 +359,7 @@ fn the_ray_verdict_is_child_order_blind() {
     }
     // And: the scalar child holds, so the conjunction demands the
     // measure — `Ray` in either order.
-    for children in [
-        vec![scalar.clone(), measure.clone()],
-        vec![measure, scalar],
-    ] {
+    for children in [vec![scalar.clone(), measure.clone()], vec![measure, scalar]] {
         let query = Query::single(span_rule(vec![ConditionTree::And(children)]));
         assert_eq!(
             db.query(&query, &[]),

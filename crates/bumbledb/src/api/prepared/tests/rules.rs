@@ -454,8 +454,16 @@ fn an_or_spelled_fold_keeps_the_written_rules_full_binding_domain() {
     // ≥ 55 binding satisfying both disjuncts folds once (the widened
     // membership collapses in the set). Sum = 145, Count = 4 — exactly
     // the leaf spelling `amount >= 25`'s answers.
-    assert_eq!(out.get(0, 0), AnswerValue::I64(145), "or moved no fold domain");
-    assert_eq!(out.get(0, 1), AnswerValue::U64(4), "Count counts full bindings");
+    assert_eq!(
+        out.get(0, 0),
+        AnswerValue::I64(145),
+        "or moved no fold domain"
+    );
+    assert_eq!(
+        out.get(0, 1),
+        AnswerValue::U64(4),
+        "Count counts full bindings"
+    );
 }
 
 /// introspection over a program: per-rule node stats plus the head-level union
@@ -569,7 +577,9 @@ fn arg_restriction_across_rules_is_the_typed_validation_refusal() {
 
     let arg_rule = |account: u64| Rule {
         finds: vec![FindTerm::Aggregate {
-            op: AggOp::ArgMax { key: crate::ir::ArgKey::Var(VarId(1)) },
+            op: AggOp::ArgMax {
+                key: crate::ir::ArgKey::Var(VarId(1)),
+            },
             over: Some(VarId(0)),
         }],
         atoms: vec![Atom {

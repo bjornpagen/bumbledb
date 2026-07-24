@@ -671,12 +671,11 @@ fn curve_point<S>(
             )
         })?;
         if hand_gate.is_some() {
-            theirs_hand = time_lane(conn, cap, hand, &bundle.draws, &types, proto)?.map(
-                |(stats, stamp)| {
+            theirs_hand =
+                time_lane(conn, cap, hand, &bundle.draws, &types, proto)?.map(|(stats, stamp)| {
                     ghz = ghz.merge(stamp);
                     stats
-                },
-            );
+                });
         }
         if theirs_hand.is_none() {
             cap_event = cap_event.or(Some(CapEvent { at: "hand" }));

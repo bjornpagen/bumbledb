@@ -316,10 +316,7 @@ impl AggregateSink {
                 key_words,
                 "one radix per group-key word"
             );
-            let product: u32 = dense_groups
-                .iter()
-                .map(|radix| u32::from(*radix))
-                .product();
+            let product: u32 = dense_groups.iter().map(|radix| u32::from(*radix)).product();
             debug_assert!(
                 0 < product && product <= DENSE_GROUPS_CAP,
                 "the caller caps the dense product"

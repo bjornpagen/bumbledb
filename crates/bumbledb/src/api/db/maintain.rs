@@ -89,4 +89,3 @@ impl<S> Db<S> {
         self.env.read_txn()?.generation()
     }
 }
-

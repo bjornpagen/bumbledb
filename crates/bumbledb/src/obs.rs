@@ -378,7 +378,8 @@ mod imp {
             // start extends the live capture, never destroys it — the
             // silent mid-run timeline reset was the one way this seam
             // could lie by omission.
-            b.borrow_mut().get_or_insert_with(|| Vec::with_capacity(4096));
+            b.borrow_mut()
+                .get_or_insert_with(|| Vec::with_capacity(4096));
         });
     }
 

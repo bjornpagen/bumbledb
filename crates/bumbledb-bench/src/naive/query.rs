@@ -477,7 +477,14 @@ impl NaiveDb {
         let mut assignment = vec![None; var_count];
         let mut pending = Vec::new();
         let mut ray = false;
-        enumerate(&env, 0, &mut assignment, &mut pending, &mut bindings, &mut ray);
+        enumerate(
+            &env,
+            0,
+            &mut assignment,
+            &mut pending,
+            &mut bindings,
+            &mut ray,
+        );
         if ray {
             return Err(QueryError::MeasureOfRay);
         }
@@ -612,7 +619,11 @@ impl NaiveDb {
         }
     }
 
-    fn edb_field_is_interval(&self, relation: bumbledb::RelationId, field: bumbledb::FieldId) -> bool {
+    fn edb_field_is_interval(
+        &self,
+        relation: bumbledb::RelationId,
+        field: bumbledb::FieldId,
+    ) -> bool {
         matches!(
             self.field_type(relation.0 as usize, usize::from(field.0)),
             ValueType::Interval { .. }
@@ -1029,9 +1040,11 @@ impl Verdict3 {
 fn tree_verdict(tree: &SubstitutedTree, assignment: &[Option<Value>]) -> Verdict3 {
     match tree {
         SubstitutedTree::Leaf(op, lhs, rhs) => leaf_comparison(*op, lhs, rhs, assignment),
-        SubstitutedTree::And(children) => children.iter().fold(Verdict3::Holds, |verdict, child| {
-            verdict.and(tree_verdict(child, assignment))
-        }),
+        SubstitutedTree::And(children) => {
+            children.iter().fold(Verdict3::Holds, |verdict, child| {
+                verdict.and(tree_verdict(child, assignment))
+            })
+        }
         SubstitutedTree::Or(children) => children.iter().fold(Verdict3::Fails, |verdict, child| {
             verdict.or(tree_verdict(child, assignment))
         }),

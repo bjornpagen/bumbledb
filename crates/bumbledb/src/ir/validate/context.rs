@@ -550,10 +550,7 @@ impl Context {
                         && let Term::Var(var) = term
                         && let Some(closed) = closed_refs.target(relation_id, *field)
                     {
-                        let rows = schema
-                            .relation(closed)
-                            .extension()
-                            .map_or(0, <[_]>::len);
+                        let rows = schema.relation(closed).extension().map_or(0, <[_]>::len);
                         self.closed_vars
                             .insert(*var, u16::try_from(rows).expect("extensions seal at ≤256"));
                     }
@@ -1145,10 +1142,7 @@ impl Context {
                     self.screen_order_closed(index, *var)?;
                 }
                 let lhs_type = self.resolved_var_type(*lhs).clone();
-                if !matches!(
-                    lhs_type,
-                    ValueType::U64 | ValueType::I64 | ValueType::Bool
-                ) {
+                if !matches!(lhs_type, ValueType::U64 | ValueType::I64 | ValueType::Bool) {
                     return Err(ValidationError::IllegalComparison { index });
                 }
                 if *self.resolved_var_type(*rhs) != lhs_type {
@@ -1178,10 +1172,7 @@ impl Context {
                 }
                 self.screen_order_closed(index, *var)?;
                 let var_type = self.resolved_var_type(*var).clone();
-                if !matches!(
-                    var_type,
-                    ValueType::U64 | ValueType::I64 | ValueType::Bool
-                ) {
+                if !matches!(var_type, ValueType::U64 | ValueType::I64 | ValueType::Bool) {
                     return Err(ValidationError::IllegalComparison { index });
                 }
                 let value = self.check_const(index, constant, &var_type)?;

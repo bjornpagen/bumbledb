@@ -169,5 +169,8 @@ fn compile_fail_fixtures() {
     // the measure under a non-fold op, an unbound head variable, a
     // negative `u64`, a foreign integer suffix, a binding's `in` without
     // its ?param, a numeric label on a relation atom.
-    assert_eq!(seen, 23, "the compile-fail roster has twenty-three fixtures");
+    assert_eq!(
+        seen, 23,
+        "the compile-fail roster has twenty-three fixtures"
+    );
 }

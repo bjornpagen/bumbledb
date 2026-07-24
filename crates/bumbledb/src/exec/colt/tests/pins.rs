@@ -539,10 +539,7 @@ fn chunk_geometry_force_iterate_ab() {
             }
         }
         assert_eq!(sums.0, sums.1, "the geometries agree bit for bit");
-        let (g_ns, f_ns) = (
-            graded_best.as_nanos() as f64,
-            flat_best.as_nanos() as f64,
-        );
+        let (g_ns, f_ns) = (graded_best.as_nanos() as f64, flat_best.as_nanos() as f64);
         println!(
             "fanout {fanout}: graded {g_ns:.0} ns / flat {f_ns:.0} ns (ratio {:.2}), \
              footprint graded {} B / flat {} B (ratio {:.2})",

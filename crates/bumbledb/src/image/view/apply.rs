@@ -448,7 +448,8 @@ fn refine_measure(
                 View::All(_) => {
                     let mut positions = std::mem::take(spare);
                     positions.clear();
-                    positions.extend(0..u32::try_from(image.row_count()).expect("positions fit u32"));
+                    positions
+                        .extend(0..u32::try_from(image.row_count()).expect("positions fit u32"));
                     positions
                 }
                 View::Survivors { positions, .. } => positions,

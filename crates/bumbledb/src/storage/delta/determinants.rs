@@ -44,10 +44,7 @@ impl WriteDelta<'_> {
                 {
                     self.determinant_scratch_clones += 1;
                 }
-                per_key.insert(
-                    self.determinant_scratch.clone(),
-                    vec![(slice, disposition)],
-                );
+                per_key.insert(self.determinant_scratch.clone(), vec![(slice, disposition)]);
             }
         }
     }

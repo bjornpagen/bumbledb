@@ -534,7 +534,10 @@ fn interval_typed_predicate_columns_agree_engine_vs_naive() {
         let model = naive
             .program(program, &[])
             .expect("the fixture raises no runtime error");
-        assert_eq!(model, expected, "naive {name} disagrees with the hand answer");
+        assert_eq!(
+            model, expected,
+            "naive {name} disagrees with the hand answer"
+        );
         let engine = crate::differential::engine_program(&db, program, &[]);
         assert_eq!(
             engine,

@@ -134,11 +134,7 @@ pub(crate) fn reverse_entries<'txn>(
 /// (finding 004: a referenced id without one is the offline twin of the
 /// runtime `Corruption(DanglingInternId)`).
 pub(crate) fn has_reverse(txn: &ReadTxn<'_>, id: u64) -> Result<bool> {
-    Ok(txn
-        .env()
-        .dict()
-        .get(txn.raw(), &reverse_key(id))?
-        .is_some())
+    Ok(txn.env().dict().get(txn.raw(), &reverse_key(id))?.is_some())
 }
 
 /// Resolves an id to its raw bytes, borrowed from the LMDB page for the

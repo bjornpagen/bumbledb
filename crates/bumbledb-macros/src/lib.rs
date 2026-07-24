@@ -924,7 +924,10 @@ fn parse_statement(
 /// never wrote.
 fn duplicate_determinant_field(side: &Side) -> Option<ParseError> {
     for (idx, (field, span)) in side.projection.iter().enumerate() {
-        if side.projection[..idx].iter().any(|(prior, _)| prior == field) {
+        if side.projection[..idx]
+            .iter()
+            .any(|(prior, _)| prior == field)
+        {
             let fields: Vec<&str> = side
                 .projection
                 .iter()
@@ -2183,9 +2186,7 @@ fn emit_newtypes(out: &mut String, relations: &[Relation]) {
             let inner = match field.ty {
                 FieldTy::U64 => ("u64".to_owned(), "u64".to_owned(), false),
                 FieldTy::I64 => ("i64".to_owned(), "i64".to_owned(), false),
-                FieldTy::FixedBytes(len) => {
-                    (format!("bytes<{len}>"), format!("[u8; {len}]"), true)
-                }
+                FieldTy::FixedBytes(len) => (format!("bytes<{len}>"), format!("[u8; {len}]"), true),
                 FieldTy::Interval(element, width) => (
                     match width {
                         None => format!("interval<{}>", element_rust(element)),

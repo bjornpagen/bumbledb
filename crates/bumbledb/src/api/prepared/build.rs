@@ -802,12 +802,12 @@ fn prepare_rule_variant(
     // has no fold to push down): group variables form their own prefix
     // levels so leaf scan runs are group-constant and the aggregate
     // sink's scan-fold pushdown can fire (`plan/fj/fold_split.rs`).
-    if rule
-        .rule()
-        .finds
-        .iter()
-        .any(|term| matches!(term, FindTerm::Aggregate { .. } | FindTerm::AggregateMeasure { .. }))
-    {
+    if rule.rule().finds.iter().any(|term| {
+        matches!(
+            term,
+            FindTerm::Aggregate { .. } | FindTerm::AggregateMeasure { .. }
+        )
+    }) {
         let group_key: std::collections::BTreeSet<crate::ir::VarId> = rule
             .rule()
             .finds
@@ -825,12 +825,7 @@ fn prepare_rule_variant(
     // (`RuleWitness::sink_vars`).
     let sink_vars = rule.sink_vars();
     let plan = crate::plan::fj::validate_with_signatures(
-        &fj,
-        normalized,
-        schema,
-        signatures,
-        estimates,
-        &sink_vars,
+        &fj, normalized, schema, signatures, estimates, &sink_vars,
     )
     .expect("binary2fj + factor + fold_split + gj_split construct valid plans");
     lower_span.end();

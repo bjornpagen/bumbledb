@@ -244,8 +244,12 @@ fn find_term(rng: &mut Rng) -> FindTerm {
         3 => AggOp::Count,
         4 => AggOp::CountDistinct,
         5 => AggOp::Pack,
-        6 => AggOp::ArgMax { key: ArgKey::Var(VarId(1)) },
-        _ => AggOp::ArgMin { key: ArgKey::Var(VarId(999)) },
+        6 => AggOp::ArgMax {
+            key: ArgKey::Var(VarId(1)),
+        },
+        _ => AggOp::ArgMin {
+            key: ArgKey::Var(VarId(999)),
+        },
     };
     match rng.below(6) {
         0..=2 => FindTerm::Var(var(rng)),

@@ -49,11 +49,11 @@ pub(super) fn dyn_value_refs(
     }
     for (idx, (value, field)) in values.iter().zip(fields).enumerate() {
         let field_id = FieldId(u16::try_from(idx).expect("field count fits u16"));
-        let parsed =
-            match bumbledb_theory::schema::value_matches_parsing(value, &field.value_type) {
-                Ok(parsed) => parsed,
-                Err(mismatch) => return Err(shape_mismatch(rel, field_id, mismatch).into()),
-            };
+        let parsed = match bumbledb_theory::schema::value_matches_parsing(value, &field.value_type)
+        {
+            Ok(parsed) => parsed,
+            Err(mismatch) => return Err(shape_mismatch(rel, field_id, mismatch).into()),
+        };
         let value_ref = match value {
             Value::AllenMask(_) => {
                 unreachable!("the check rejected mask values above: not a field type")

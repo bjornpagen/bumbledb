@@ -393,7 +393,9 @@ fn accepts_arg_restriction_with_a_projected_key() {
         vec![
             FindTerm::Var(VarId(0)),
             FindTerm::Aggregate {
-                op: AggOp::ArgMax { key: crate::ir::ArgKey::Var(VarId(0)) },
+                op: AggOp::ArgMax {
+                    key: crate::ir::ArgKey::Var(VarId(0)),
+                },
                 over: Some(VarId(1)),
             },
         ],
@@ -407,7 +409,9 @@ fn accepts_an_arg_carry_equal_to_its_key() {
     // over = the carry, and it may equal the key: ArgMax_{at}(at).
     let query = simple(
         vec![FindTerm::Aggregate {
-            op: AggOp::ArgMax { key: crate::ir::ArgKey::Var(VarId(0)) },
+            op: AggOp::ArgMax {
+                key: crate::ir::ArgKey::Var(VarId(0)),
+            },
             over: Some(VarId(0)),
         }],
         vec![atom(POSTING, vec![(3, var(0)), (1, var(1))])],

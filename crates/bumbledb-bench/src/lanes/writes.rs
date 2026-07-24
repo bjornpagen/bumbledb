@@ -47,11 +47,11 @@ use bumbledb::{Db, Value};
 use rusqlite::Connection;
 
 use crate::corpus_gen::{GenConfig, Rng, Sizes};
+use crate::duralane::DurabilityLane;
 use crate::harness::{self, Measurement, Protocol, Stats};
 use crate::json;
 use crate::report::{GhzReport, Provenance};
 use crate::schema::{Ledger, Posting, PostingId, ids, schema};
-use crate::duralane::DurabilityLane;
 use crate::sqlite_run::POSTING_INSERT;
 use crate::{clockproxy, corpus, sqlmap, writebench};
 

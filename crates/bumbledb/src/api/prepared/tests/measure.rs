@@ -684,11 +684,11 @@ fn arg_max_keys_on_the_measure_longest_interval_per_group() {
         &env,
         &schema,
         &[
-            (1, 10, 0, (0, 10)), // tag 10: measure 10 — the longest
-            (2, 10, 0, (0, 5)),  // tag 10: measure 5 — restricted away
-            (3, 20, 0, (3, 4)),  // tag 20: measure 1 — restricted away
-            (4, 20, 0, (7, 20)), // tag 20: measure 13 — the longest
-            (5, 30, 0, (0, 5)),  // tag 30: measure 5 — the tie...
+            (1, 10, 0, (0, 10)),  // tag 10: measure 10 — the longest
+            (2, 10, 0, (0, 5)),   // tag 10: measure 5 — restricted away
+            (3, 20, 0, (3, 4)),   // tag 20: measure 1 — restricted away
+            (4, 20, 0, (7, 20)),  // tag 20: measure 13 — the longest
+            (5, 30, 0, (0, 5)),   // tag 30: measure 5 — the tie...
             (6, 30, 0, (10, 15)), // tag 30: measure 5 — ...keeps both
         ],
     );

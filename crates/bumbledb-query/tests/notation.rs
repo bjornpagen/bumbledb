@@ -876,9 +876,7 @@ fn condition_tree_comparison_leaves_round_trip() {
 /// engine-side, so the macro never hand-lowers a disjunction.
 #[test]
 fn condition_tree_lowers_to_the_exact_ir() {
-    use bumbledb::{
-        Atom, CmpOp, Comparison, ConditionTree, FindTerm, Rule, Term, Value, VarId,
-    };
+    use bumbledb::{Atom, CmpOp, Comparison, ConditionTree, FindTerm, Rule, Term, Value, VarId};
     let banded = query!(Ledger {
         (id) | Posting(id, amount), or(amount == -100, and(amount > -50, amount < -10));
     });

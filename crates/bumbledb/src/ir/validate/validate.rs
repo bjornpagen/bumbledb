@@ -440,14 +440,16 @@ fn lower_rules(
     // counts.
     if lowered.len() > 1
         && dnf_derived(&lowered).is_none()
-        && head
-            .iter()
-            .any(|term| matches!(term, crate::ir::HeadTerm::Aggregate(crate::ir::HeadOp::Count)))
+        && head.iter().any(|term| {
+            matches!(
+                term,
+                crate::ir::HeadTerm::Aggregate(crate::ir::HeadOp::Count)
+            )
+        })
         && head.iter().all(|term| {
             matches!(
                 term,
-                crate::ir::HeadTerm::Var
-                    | crate::ir::HeadTerm::Aggregate(crate::ir::HeadOp::Count)
+                crate::ir::HeadTerm::Var | crate::ir::HeadTerm::Aggregate(crate::ir::HeadOp::Count)
             )
         })
     {

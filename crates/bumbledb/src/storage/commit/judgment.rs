@@ -687,7 +687,12 @@ fn establishing_fact<'t>(
         let word: [u8; 8] = determinant.try_into().map_err(|_| {
             Error::Corruption(CorruptionError::MalformedValue("fresh-row key width"))
         })?;
-        return fact_by_row(data, txn.raw(), statement.relation, u64::from_be_bytes(word));
+        return fact_by_row(
+            data,
+            txn.raw(),
+            statement.relation,
+            u64::from_be_bytes(word),
+        );
     }
     let mut buf: KeyBuf = [0; MAX_KEY];
     let u_len = keys::determinant_key(&mut buf, statement.relation, statement.id, determinant);

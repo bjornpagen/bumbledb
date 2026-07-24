@@ -90,10 +90,7 @@ mod tests {
         };
         for len in [0usize, 1, 2, 63, 64, 500] {
             let words: Vec<u64> = (0..len).map(|_| next() % 17).collect();
-            let naive = words
-                .iter()
-                .collect::<std::collections::HashSet<_>>()
-                .len() as u64;
+            let naive = words.iter().collect::<std::collections::HashSet<_>>().len() as u64;
             assert_eq!(count_words(&words), naive, "len {len}");
         }
         assert_eq!(count_words(&[0, 0, 0]), 1, "the zero word counts once");

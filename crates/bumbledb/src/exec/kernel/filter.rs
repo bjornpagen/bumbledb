@@ -276,7 +276,10 @@ fn write_survivor_bits<const N: usize>(
     mut pos: u32,
     bits: u64,
 ) -> (usize, u32) {
-    debug_assert!(write + N <= out.capacity(), "the callers' reserve invariant");
+    debug_assert!(
+        write + N <= out.capacity(),
+        "the callers' reserve invariant"
+    );
     let ptr = out.as_mut_ptr();
     for lane in 0..N {
         // SAFETY: `write + N <= out.capacity()` on entry (asserted

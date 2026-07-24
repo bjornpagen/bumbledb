@@ -92,7 +92,13 @@ pub(super) fn run_empty_store<S>(cfg: &VerifyConfig, run: &mut Run<'_, S>) {
     // both sides, or the divergence says otherwise).
     if !naive_routed.is_empty() {
         let mut naive = crate::naive::NaiveDb::new(&target::descriptor());
-        super::run::naive_routed_lane(run, "empty random", &empty_target, &mut naive, &naive_routed);
+        super::run::naive_routed_lane(
+            run,
+            "empty random",
+            &empty_target,
+            &mut naive,
+            &naive_routed,
+        );
     }
     // The structural check holds only for a full slice — a bundle-budget
     // cutoff already fails the run.
