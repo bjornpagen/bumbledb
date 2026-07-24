@@ -135,6 +135,31 @@ measure(group) ∈ window        where measure = Σ weight(row) over the group
 - The v0 interval-position refusal (`CardinalityIntervalPosition`) survives *for
   projections*: intervals enter through the measure argument, never the group key.
 
+### Where the weight ladder tops out: composition, not paths (ruled 2026-07-24)
+
+Unit and column weights are two instances of the general object — a functional term over
+the source row — and the next instance is a term that walks a reference (the weight lives
+on a catalog relation: `Device.model → Model.watts`). That use case is real and, in
+normalized stores, the default. It is supported **by composition** in the existing
+algebra, not by admitting paths into the bracket:
+
+```
+Device(model, watts) <=                    Model(id, watts)   -- watts pinned to the catalog
+Pool(id, supply)     <=[watts]{0..supply}  Device(pool)       -- capacity reads the local column
+```
+
+The two-column containment IS the join, stated as a law: a device's watts provably equals
+its model's, at every commit, through the judge that already exists. Path weights
+(`[model.watts]`) are a typed refusal whose diagnostic names this idiom, because the deep
+form is wrong three ways: the index-slot weight would become a cached copy of another
+relation's field (the maintained-ledger drift class, resurrected); a `Model.watts` update
+would need a new reverse-adjacency walk re-judging every transitively affected group (a
+query evaluator growing inside the judge); and the live semantics is worse — catalog
+edits silently re-weigh deployed fleets, where the pinned form refuses the inconsistent
+commit at the right site and makes the migration explicit. The weight vocabulary is
+closed: `[field]`, `[Duration(field)]`, absent. Everything further factors through
+statements composing — the algebra is the join language for laws.
+
 ### Overflow
 
 The engine accumulates in **u128**: `2^64` max weight × any realistic group cardinality
@@ -303,6 +328,11 @@ compat, hard deletion of all of the cardinality logic")
    The word "cardinality" survives nowhere in the mechanism — it was the unit-weight
    instance naming the whole, and the audit's own doctrine applies: the special case does
    not get to keep the family name.
+6. **The weight vocabulary is closed at the row: `[field]` / `[Duration(field)]` / absent.**
+   Joined weights are supported by composition (§ 3, the pinned-column idiom) and the path
+   spelling `[a.b]` is a typed refusal whose diagnostic names the idiom. No recorded
+   trigger — this is a boundary, not a deferral: admitting terms into the bracket grows a
+   query evaluator inside the judge and reopens the cached-truth drift class.
 
 ## 9. Sequencing
 
