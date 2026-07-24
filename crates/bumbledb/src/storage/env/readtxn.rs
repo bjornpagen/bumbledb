@@ -11,12 +11,14 @@ impl ReadTxn<'_> {
     ///
     /// # Errors
     ///
-    /// `Corruption(MetaMissing)` if the tx-id key is absent or malformed.
+    /// `Corruption(MetaMissing)` if the tx-id key is absent,
+    /// `Corruption(MalformedValue)` if its value is mis-sized.
     pub fn generation(&self) -> Result<GenerationId> {
         if let Some(g) = self.generation.get() {
             return Ok(*g);
         }
-        let g = GenerationId::from_storage(read_u64(&self.env.meta, &self.txn, META_TX_ID)?);
+        let g =
+            GenerationId::from_storage(read_u64(&self.env.meta, &self.txn, META_TX_ID, "tx id")?);
         Ok(*self.generation.get_or_init(|| g))
     }
 

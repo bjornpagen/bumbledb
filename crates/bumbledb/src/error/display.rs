@@ -185,7 +185,7 @@ impl fmt::Display for CorruptionError {
                 f,
                 "fixed-width interval start {bytes:02x?}: start + w at or past the domain ceiling"
             ),
-            Self::MetaMissing => write!(f, "the _meta database is absent or malformed"),
+            Self::MetaMissing => write!(f, "the _meta database or a required key is absent"),
             Self::StoreKindInvalid => write!(
                 f,
                 "the _meta store-kind marker is present but not a valid kind encoding"
@@ -835,6 +835,13 @@ impl fmt::Display for Error {
                 write!(
                     f,
                     "the directory already holds an LMDB environment; open it instead"
+                )
+            }
+            Self::NotInitialized => {
+                write!(
+                    f,
+                    "the store was never initialized (a crash interrupted creation); \
+                     run Db::create to initialize it"
                 )
             }
             Self::EnvironmentLocked => {

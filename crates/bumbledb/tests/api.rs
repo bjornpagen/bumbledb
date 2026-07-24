@@ -1080,6 +1080,11 @@ fn create_refuses_a_foreign_lmdb_environment() {
         let wtxn = env.write_txn().expect("txn");
         wtxn.commit().expect("commit nothing");
     }
+    // A supervisor's "directory exists → open" reflex gets the typed
+    // not-initialized refusal naming create as the remedy — never a
+    // corruption conviction for a store that was never born.
+    let err = Db::open(dir.path(), Ledger).map(|_| ()).unwrap_err();
+    assert!(matches!(err, bumbledb::Error::NotInitialized), "{err:?}");
     drop(Db::create(dir.path(), Ledger).expect("an empty root is recoverable"));
 }
 

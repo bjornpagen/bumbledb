@@ -39,8 +39,16 @@ pub enum CorruptionError {
     /// overflow the domain, so a stored such start is corruption exactly
     /// as an inverted interval is. Carries the raw 8 start bytes.
     InvalidFixedIntervalStart([u8; 8]),
-    /// The `_meta` database or one of its required keys is absent or
-    /// malformed: the environment is not a usable bumbledb database.
+    /// The `_meta` database or one of its required keys is genuinely
+    /// absent inside an initialized store: the environment is not a
+    /// usable bumbledb database. A present value that fails to decode is
+    /// [`CorruptionError::MalformedValue`] naming the key — the two
+    /// states point at opposite remedies (initialize vs. investigate a
+    /// torn write), so one error value never encodes both
+    /// (`docs/architecture/50-storage.md` § the `_meta` block, ruled
+    /// 2026-07-23, R18). A half-created store (no `_meta` over an empty
+    /// root) is [`crate::error::Error::NotInitialized`], never
+    /// corruption.
     MetaMissing,
     /// The `_meta` store-kind marker is PRESENT but undecodable — a
     /// wrong-width value or a byte no [`crate::StoreKind`] encodes to.
@@ -1217,6 +1225,13 @@ pub enum Error {
     /// data would be silent corruption; open it instead) or anyone
     /// else's (a non-`_meta` environment is not ours to move into).
     AlreadyInitialized,
+    /// `open` reached a half-created store: the crash window between
+    /// environment creation and the meta commit left an empty root and
+    /// no `_meta` — a store never born, holding zero data. `Db::create`
+    /// is the remedy (creation heals it); corruption it is not
+    /// (`docs/architecture/50-storage.md` § open-time taxonomy, ruled
+    /// 2026-07-23, R18).
+    NotInitialized,
     /// Another live handle — a second process, or a second `Db` in this
     /// one — holds the environment's advisory lock. One writer, many
     /// reader threads, one handle, one process (`00-product.md`).
