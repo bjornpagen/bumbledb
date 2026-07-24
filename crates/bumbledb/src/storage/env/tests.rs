@@ -48,6 +48,128 @@ fn create_then_open_round_trips() {
     Environment::open(dir.path(), &schema).expect("open after create");
 }
 
+/// The ephemeral crash contract (R18), clean side: the dirty marker is
+/// set while the session lives, a clean close (the handle's drop)
+/// clears it, and contents survive the clean handoff.
+#[test]
+fn a_clean_ephemeral_close_clears_the_marker_and_contents_survive() {
+    let dir = TempDir::new("env-ephemeral-clean-close");
+    let schema = schema();
+    let marker = dirty_marker_path(dir.path());
+    let raw = |env: &Environment, k: &[u8], v: &[u8]| {
+        let mut wtxn = env.write_txn().expect("txn");
+        let data = env.data();
+        data.put(wtxn.raw_mut(), k, v).expect("put");
+        wtxn.commit().expect("commit");
+    };
+    {
+        let env = Environment::ephemeral(dir.path(), &schema).expect("create ephemeral");
+        assert!(
+            marker.try_exists().expect("probe"),
+            "the marker is set for the session's whole life"
+        );
+        raw(&env, b"Zprobe", b"alive");
+    }
+    assert!(
+        !marker.try_exists().expect("probe"),
+        "a clean close clears the marker"
+    );
+    let env = Environment::ephemeral(dir.path(), &schema).expect("clean reopen");
+    let rtxn = env.read_txn().expect("txn");
+    assert_eq!(
+        env.data().get(rtxn.raw(), b"Zprobe").expect("get"),
+        Some(&b"alive"[..]),
+        "contents survive a clean process handoff"
+    );
+}
+
+/// The ephemeral crash contract (R18), crash side: a set marker at
+/// reopen — power loss or a process death that never reached clean
+/// close — wipes the store and re-initializes it. The possibly-torn
+/// store is never opened; reopening after a crash yields a valid empty
+/// store, always.
+#[test]
+fn a_marker_set_reopen_wipes_and_reinitializes_the_ephemeral_store() {
+    let dir = TempDir::new("env-ephemeral-crash-reopen");
+    let schema = schema();
+    {
+        let env = Environment::ephemeral(dir.path(), &schema).expect("create ephemeral");
+        let mut wtxn = env.write_txn().expect("txn");
+        let data = env.data();
+        data.put(wtxn.raw_mut(), b"Zprobe", b"doomed").expect("put");
+        wtxn.commit().expect("commit");
+    }
+    // Plant the crash state: the marker a dead session leaves behind
+    // (drop never ran, or its sync was never proven).
+    std::fs::File::create(dirty_marker_path(dir.path())).expect("plant marker");
+    let env = Environment::ephemeral(dir.path(), &schema).expect("crash reopen");
+    let rtxn = env.read_txn().expect("txn");
+    assert_eq!(
+        env.data().get(rtxn.raw(), b"Zprobe").expect("get"),
+        None,
+        "the wipe left a valid EMPTY store — the crash contract's whole extent"
+    );
+    assert_eq!(
+        rtxn.generation().expect("generation").value(),
+        0,
+        "re-initialized from birth"
+    );
+}
+
+/// Durable stores never mint a dirty marker — the crash contract is the
+/// ephemeral kind's alone.
+#[test]
+fn a_durable_store_never_mints_a_dirty_marker() {
+    let dir = TempDir::new("env-durable-no-marker");
+    let schema = schema();
+    let marker = dirty_marker_path(dir.path());
+    {
+        let env = Environment::create(dir.path(), &schema).expect("create");
+        assert!(!marker.try_exists().expect("probe"));
+        drop(env);
+    }
+    assert!(!marker.try_exists().expect("probe"));
+    drop(Environment::open(dir.path(), &schema).expect("open"));
+    assert!(!marker.try_exists().expect("probe"));
+}
+
+/// The lock law is a writer law (R17): exhume opens `MDB_RDONLY`, takes
+/// no advisory lock, and reads without any write permission — the
+/// archival lane on read-only media. The fixture removes the writer's
+/// lock file and drops the write bits a lock-taking open would need
+/// (LMDB's own reader table stays writable — a chmod fixture cannot
+/// spell EROFS; on a genuinely read-only FILESYSTEM mdb.c omits the
+/// lockfile under `MDB_RDONLY`, mdb_env_setup_locks).
+#[test]
+fn exhume_takes_no_lock_and_reads_without_write_permission() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = TempDir::new("env-exhume-readonly");
+    let schema = schema();
+    drop(Environment::create(dir.path(), &schema).expect("create"));
+    std::fs::remove_file(dir.path().join("bumbledb.lock")).expect("remove writer lock");
+    let set = |p: &std::path::Path, mode: u32| {
+        std::fs::set_permissions(p, std::fs::Permissions::from_mode(mode)).expect("chmod");
+    };
+    set(&dir.path().join("data.mdb"), 0o444);
+    set(dir.path(), 0o555);
+    let exhumed = Environment::exhume(dir.path());
+    // Restore before asserting so the TempDir cleans up either way.
+    set(dir.path(), 0o755);
+    set(&dir.path().join("data.mdb"), 0o644);
+    let exhumed = exhumed.expect("exhume works on read-only media, lockless");
+    assert!(
+        !dir
+            .path()
+            .join("bumbledb.lock")
+            .try_exists()
+            .expect("probe"),
+        "no advisory lock was created — the lock law is a writer law"
+    );
+    assert_eq!(exhumed.kind, StoreKind::Durable);
+    let rtxn = exhumed.env.read_txn().expect("read snapshot");
+    assert_eq!(rtxn.generation().expect("generation").value(), 0);
+}
+
 #[test]
 fn create_refuses_an_existing_environment() {
     // Re-initializing `_meta` over live data would reset the tx id and
@@ -315,7 +437,8 @@ fn a_v4_store_without_the_database_roster_is_a_format_mismatch_on_both_construct
         // doubly-faulted shape no bumbledb constructor can produce
         // (initialize creates the roster in one atomic commit) but a
         // damaged or forged store can carry.
-        let env = open_env::open_env(dir.path(), StoreKind::Durable).expect("raw fixture env");
+        let env = open_env::open_env(dir.path(), open_env::OpenLane::Write(StoreKind::Durable))
+            .expect("raw fixture env");
         let mut wtxn = env.write_txn().expect("txn");
         let meta = env
             .create_database::<heed::types::Bytes, heed::types::Bytes>(&mut wtxn, Some("_meta"))
@@ -509,4 +632,91 @@ fn a_corrupt_dict_counter_is_typed_corruption() {
             "dict next id"
         ))
     ));
+}
+
+/// Mis-sized meta values are the malformed-value corruption NAMING the
+/// key — never `MetaMissing` (one decode discipline for every `_meta`
+/// value, the split the store-kind matrix above pins; ruled 2026-07-23,
+/// R18). The two states point at opposite remedies, so one error value
+/// never encodes both.
+#[test]
+fn a_mis_sized_meta_value_is_malformed_never_missing() {
+    use crate::error::CorruptionError;
+    // Truncated format version — first in the check precedence, so both
+    // constructors diagnose it.
+    let dir = TempDir::new("env-malformed-version");
+    forge_meta(&dir, |env, wtxn| {
+        env.meta
+            .put(wtxn, META_FORMAT_VERSION, &[5u8, 0, 0])
+            .expect("truncate version");
+    });
+    for err in [
+        Environment::open(dir.path(), &schema()).unwrap_err(),
+        Environment::ephemeral(dir.path(), &schema()).unwrap_err(),
+    ] {
+        assert!(
+            matches!(
+                err,
+                Error::Corruption(CorruptionError::MalformedValue("format version"))
+            ),
+            "{err:?}"
+        );
+    }
+    // Truncated fingerprint (durable open — the ephemeral constructor
+    // refuses the kind first).
+    let dir = TempDir::new("env-malformed-fingerprint");
+    forge_meta(&dir, |env, wtxn| {
+        env.meta
+            .put(wtxn, META_FINGERPRINT, &[0xABu8; 31])
+            .expect("truncate fingerprint");
+    });
+    let err = Environment::open(dir.path(), &schema()).unwrap_err();
+    assert!(
+        matches!(
+            err,
+            Error::Corruption(CorruptionError::MalformedValue("schema fingerprint"))
+        ),
+        "{err:?}"
+    );
+    // Truncated tx id — open verifies other keys, so the first
+    // generation read raises the diagnosis.
+    let dir = TempDir::new("env-malformed-txid");
+    forge_meta(&dir, |env, wtxn| {
+        env.meta
+            .put(wtxn, META_TX_ID, &[1u8; 7])
+            .expect("truncate tx id");
+    });
+    let env = Environment::open(dir.path(), &schema()).expect("open verifies other keys");
+    let err = env.read_txn().expect("txn").generation().unwrap_err();
+    assert!(
+        matches!(
+            err,
+            Error::Corruption(CorruptionError::MalformedValue("tx id"))
+        ),
+        "{err:?}"
+    );
+}
+
+/// The half-created store (empty root, no `_meta` — the crash window
+/// between environment creation and the meta commit) is classified ONCE
+/// (`read_meta::classify_meta_block`; ruled 2026-07-23, R18): open
+/// refuses it with the typed `NotInitialized` — never `Corruption` —
+/// and the ephemeral constructor treats the same state as fresh.
+#[test]
+fn a_half_created_store_is_not_initialized_on_open_and_fresh_on_ephemeral() {
+    let dir = TempDir::new("env-half-created-taxonomy");
+    {
+        let env = super::open_env::open_env(
+            dir.path(),
+            super::open_env::OpenLane::Write(StoreKind::Durable),
+        )
+        .expect("raw env");
+        let wtxn = env.write_txn().expect("txn");
+        wtxn.commit().expect("commit nothing");
+    }
+    let err = Environment::open(dir.path(), &schema()).unwrap_err();
+    assert!(matches!(err, Error::NotInitialized), "{err:?}");
+    // The same never-born state initializes fresh under the ephemeral
+    // constructor (its create-or-open contract).
+    drop(Environment::ephemeral(dir.path(), &schema()).expect("fresh init"));
 }

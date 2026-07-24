@@ -3,9 +3,10 @@
 //! layer — `heed 0.22` marks environment opening unsafe (double-opening
 //! one path in a process is LMDB UB) and marks env-flag setting unsafe
 //! (the flags can break durability or aliasing guarantees). Both are
-//! confined here; the flags are DERIVED from the store kind — no caller
-//! can pass a flag, so the durable paths structurally cannot reach
-//! `NO_SYNC`. (Cleanup-0.5.0 ruling 1 retired `WRITE_MAP` from the
+//! confined here; the flags are DERIVED from the store kind and the
+//! open lane ([`OpenLane`] — `MDB_RDONLY` belongs to the read-only
+//! lane, R17) — no caller can pass a flag, so the durable paths
+//! structurally cannot reach `NO_SYNC`. (Cleanup-0.5.0 ruling 1 retired `WRITE_MAP` from the
 //! ephemeral flag set — the recorded fallback,
 //! `docs/architecture/50-storage.md` § the ephemeral store kind — and
 //! with it the capacity contract's two preallocation `unsafe` sites
@@ -19,13 +20,29 @@ use crate::error::Result;
 
 use super::{MAP_SIZE, MAX_READERS, StoreKind};
 
+/// Which surface is opening the environment — the flags are DERIVED
+/// from this one value, so no caller can pass a flag
+/// (`docs/architecture/50-storage.md`; the lock law is a writer law,
+/// R17).
+pub(super) enum OpenLane {
+    /// The writing constructors (`Db` handles, durable or ephemeral):
+    /// plain LMDB flags, `NO_SYNC` for the ephemeral kind.
+    Write(StoreKind),
+    /// The read-only lane (`exhume`): `MDB_RDONLY` — works on read-only
+    /// media, and from a read-only environment the write path is
+    /// unrepresentable (LMDB refuses write transactions outright). No
+    /// kind rides along: a read-only open takes no durability decision,
+    /// and `NO_SYNC` is a write-path affordance with nothing to affect.
+    ReadOnly,
+}
+
 /// Opens the raw LMDB environment at `path`, with the environment flags
-/// the store kind dictates and nothing else.
+/// the open lane dictates and nothing else.
 #[expect(
     unsafe_code,
     reason = "the localized unsafe operations have documented safety invariants"
 )]
-pub(super) fn open_env(path: &Path, kind: StoreKind) -> Result<heed::Env<WithoutTls>> {
+pub(super) fn open_env(path: &Path, lane: OpenLane) -> Result<heed::Env<WithoutTls>> {
     // MDB_NOTLS: reader slots belong to transaction objects, not threads —
     // a thread may pin an old snapshot while opening new ones (long-lived
     // readers across commits are a designed-for pattern, 50-storage).
@@ -55,17 +72,27 @@ pub(super) fn open_env(path: &Path, kind: StoreKind) -> Result<heed::Env<Without
     // so LMDB's write-buffer memset is noise at every regime measured;
     // the flag buys nothing and the shipped durable flag set stays
     // exactly as derived above.
-    if kind == StoreKind::Ephemeral {
-        // SAFETY: NO_SYNC trades machine-crash durability away, which
-        // is the ephemeral store kind's on-disk claim
-        // (docs/architecture/50-storage.md § the ephemeral store kind);
-        // process-kill atomicity is preserved (verified by the ephemeral
-        // crashpoint sweep while it lived — the sweep died with the
-        // fuzzing apparatus, docs/architecture/60-validation.md § the
-        // deletion record) — commits still
-        // pwrite through LMDB's ordinary path, they only skip the fsync
-        // boundary, so no writable mapping and no aliasing hazard exists.
-        unsafe { options.flags(EnvFlags::NO_SYNC) };
+    match lane {
+        OpenLane::Write(StoreKind::Ephemeral) => {
+            // SAFETY: NO_SYNC trades machine-crash durability away, which
+            // is the ephemeral store kind's on-disk claim
+            // (docs/architecture/50-storage.md § the ephemeral store kind);
+            // process-kill atomicity is preserved (verified by the ephemeral
+            // crashpoint sweep while it lived — the sweep died with the
+            // fuzzing apparatus, docs/architecture/60-validation.md § the
+            // deletion record) — commits still
+            // pwrite through LMDB's ordinary path, they only skip the fsync
+            // boundary, so no writable mapping and no aliasing hazard exists.
+            unsafe { options.flags(EnvFlags::NO_SYNC) };
+        }
+        OpenLane::ReadOnly => {
+            // SAFETY: READ_ONLY weakens nothing — the environment maps
+            // read-only, LMDB refuses write transactions, and durability
+            // is moot with no writes; it is the flag LMDB documents as
+            // REQUIRED on read-only media (R17).
+            unsafe { options.flags(EnvFlags::READ_ONLY) };
+        }
+        OpenLane::Write(StoreKind::Durable) => {}
     }
     // SAFETY: bumbledb opens each environment through exactly this function,
     // and heed itself refuses (Error::EnvAlreadyOpened) to open a path that

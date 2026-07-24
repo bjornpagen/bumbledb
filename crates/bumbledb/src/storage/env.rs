@@ -235,8 +235,71 @@ pub struct Environment {
     /// it is.
     instance: u64,
     /// The exclusive advisory lock on `<dir>/bumbledb.lock`, held for the
-    /// environment's lifetime. Dropping the handle releases it.
-    _lock: std::fs::File,
+    /// environment's lifetime; dropping the handle releases it. Writers
+    /// only — the lock law is a writer law (R17): the read-only lane
+    /// ([`Environment::exhume`]) opens `MDB_RDONLY`, can corrupt
+    /// nothing, and takes none.
+    _lock: Option<std::fs::File>,
+    /// The ephemeral kind's on-disk dirty marker
+    /// (`<dir>/ephemeral.dirty` — the crash contract, ruled 2026-07-23,
+    /// R18), `Some` only on an ephemeral environment: set synced at
+    /// open, cleared at clean close (this handle's drop, after one
+    /// forced data sync) — the kind's only fsyncs, bracketing its
+    /// lifetime. A reopen that finds it set wipes and re-initializes:
+    /// the possibly-torn store is never opened at all.
+    dirty_marker: Option<std::path::PathBuf>,
+}
+
+/// The clean-close half of the ephemeral crash contract (R18): force
+/// the environment's pages down (the close-side fsync — marker-absent
+/// must imply data-synced, or a post-close power loss would reopen a
+/// torn store as verified), then clear the marker and sync its dirent
+/// chain. Durable environments carry no marker and drop untouched.
+/// Best-effort: a failed sync LEAVES the marker set — the next open
+/// wipes, which is exactly the contract for a store whose sync was
+/// never proven.
+impl Drop for Environment {
+    fn drop(&mut self) {
+        let Some(marker) = self.dirty_marker.take() else {
+            return;
+        };
+        if self.env.force_sync().is_err() {
+            return;
+        }
+        if std::fs::remove_file(&marker).is_ok() {
+            let _ = sync_dirent_chain(marker.parent().unwrap_or(std::path::Path::new(".")));
+        }
+    }
+}
+
+/// The ephemeral dirty marker's on-disk home (R18): a sibling FILE, not
+/// a `_meta` key — the marker must be readable before any LMDB page is
+/// trusted, and the whole point is never opening a possibly-torn store.
+pub(crate) fn dirty_marker_path(dir: &std::path::Path) -> std::path::PathBuf {
+    dir.join("ephemeral.dirty")
+}
+
+/// Fsyncs `dir`'s dirent chain: the directory itself, then its parent —
+/// what a power loss must survive for entries inside `dir` to still
+/// exist. LMDB fsyncs file CONTENTS per commit and never opens a
+/// directory (no directory fsync anywhere in mdb.c), so this is the
+/// one mechanism behind its three callers: `Db::compact`'s copy,
+/// `Environment::create`'s birth (finding 022), and the ephemeral dirty
+/// marker's bracket (R18). Directories above the immediate parent are
+/// the caller's own story.
+pub(crate) fn sync_dirent_chain(dir: &std::path::Path) -> std::io::Result<()> {
+    for d in [dir, parent_dir(dir)] {
+        std::fs::File::open(d)?.sync_all()?;
+    }
+    Ok(())
+}
+
+/// `dir`'s parent, or `.` when the path has none — where the chain ends.
+fn parent_dir(dir: &std::path::Path) -> &std::path::Path {
+    match dir.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent,
+        _ => std::path::Path::new("."),
+    }
 }
 
 /// Test-only `_meta` fixture surgery: the pre-descriptor-store,

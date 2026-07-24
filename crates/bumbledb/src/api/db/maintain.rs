@@ -55,13 +55,11 @@ impl<S> Db<S> {
         // Durable before the caller swaps directories: the file, its
         // dirent in `dest`, then `dest`'s own dirent in the parent —
         // without the parent sync, power loss could keep a durable file
-        // inside a directory entry that was never made durable.
+        // inside a directory entry that was never made durable. The
+        // chain sync is shared with `Environment::create`'s birth
+        // (finding 022 — one mechanism, two sites).
         file.sync_all().map_err(crate::error::Error::Io)?;
-        for dir in [dest, parent_dir(dest)] {
-            std::fs::File::open(dir)
-                .and_then(|dir| dir.sync_all())
-                .map_err(crate::error::Error::Io)?;
-        }
+        crate::storage::env::sync_dirent_chain(dest).map_err(crate::error::Error::Io)?;
         crate::obs::event(
             crate::obs::names::COMPACT_DURABLE,
             crate::obs::Category::Storage,
@@ -92,12 +90,3 @@ impl<S> Db<S> {
     }
 }
 
-/// The directory whose entry names `dest` — `dest.parent()`, with the
-/// empty relative parent (`"x"` → `""`) spelled as the cwd so it can be
-/// opened and fsynced.
-fn parent_dir(dest: &Path) -> &Path {
-    match dest.parent() {
-        Some(parent) if !parent.as_os_str().is_empty() => parent,
-        _ => Path::new("."),
-    }
-}

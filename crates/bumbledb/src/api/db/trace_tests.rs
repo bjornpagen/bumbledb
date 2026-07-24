@@ -323,6 +323,24 @@ fn compact_records_its_completed_durability_chain() {
     assert_eq!(durable.a0, 2, "dest dirent + parent dirent, both synced");
 }
 
+/// `Db::create`'s birth dirent chain (finding 022) — compact's pin,
+/// applied to the other site of the one mechanism: `CREATE_DURABLE`
+/// records only after the store directory and its parent have both been
+/// fsynced behind the initialize commit, so the event's presence pins
+/// that the create-path syncs executed.
+#[test]
+fn create_records_its_completed_durability_chain() {
+    let dir = TempDir::new("db-trace-create");
+    obs::start_capture();
+    let _db = Db::create(dir.path(), schema()).expect("create");
+    let events = obs::finish_capture();
+    let durable = events
+        .iter()
+        .find(|e| e.name == obs::names::CREATE_DURABLE)
+        .expect("the durability-chain event");
+    assert_eq!(durable.a0, 2, "store dirent + parent dirent, both synced");
+}
+
 /// Exactly one burn per termination (`EscapedIdBurn`): an `Err`-aborted
 /// and a PANICKED write each advance the escaped `Q` marks through
 /// exactly one counters-only commit — never zero (the mint continues

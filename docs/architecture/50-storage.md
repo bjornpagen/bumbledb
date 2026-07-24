@@ -542,8 +542,11 @@ Nothing was weakened.)
 **The crash contract** (ruled 2026-07-23, R18): contents survive process
 restarts, never machine crashes — and reopening after a crash yields a valid
 empty store, always. Every ephemeral open sets a synced dirty marker before
-trusting anything else, and a clean close clears it in a small synced commit —
-the kind's only fsyncs, bracketing its lifetime. A reopen that finds the marker
+trusting anything else, and a clean close clears it behind one forced data
+sync — the kind's only fsyncs, bracketing its lifetime. The marker's on-disk
+home is a sibling FILE, `<dir>/ephemeral.dirty` — never a `_meta` key,
+because the marker must be readable before any LMDB page is trusted, and
+the whole point is never opening a possibly-torn store. A reopen that finds the marker
 set — power loss, or a process death that never reached clean close — wipes the
 store and re-initializes it; the verified reopen (version, kind, fingerprint,
 the same checks as `open`) is reserved for the marker-proven clean lineage.

@@ -207,6 +207,12 @@ pub mod names {
     /// presence pins that the parent-dirent sync path executed.
     /// (directory fsyncs performed, -)
     pub const COMPACT_DURABLE: &str = "compact_durable";
+    /// `Db::create`'s birth dirent chain completed: the store directory
+    /// and its parent fsynced after the initialize commit (finding 022 —
+    /// LMDB fsyncs file contents, never a directory), so a create-time
+    /// power loss cannot lose the whole store. Fires only after the last
+    /// sync succeeds. (directory fsyncs performed, -)
+    pub const CREATE_DURABLE: &str = "create_durable";
     /// One `Db::write`, closure plus commit. (1 committed / 0 aborted, -)
     pub const WRITE_TXN: &str = "write_txn";
 

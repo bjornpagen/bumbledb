@@ -8,8 +8,10 @@ use crate::error::{CorruptionError, Error, Result};
 use crate::schema::Schema;
 
 use super::acquire_lock::acquire_lock;
-use super::open_env::open_env;
-use super::read_meta::{check_fingerprint, check_format_version, read_store_kind};
+use super::open_env::{OpenLane, open_env};
+use super::read_meta::{
+    MetaBlock, check_fingerprint, check_format_version, classify_meta_block, read_store_kind,
+};
 use super::{Environment, NEXT_INSTANCE, StoreKind};
 
 impl Environment {
@@ -20,13 +22,15 @@ impl Environment {
     /// # Errors
     ///
     /// `EnvironmentLocked` if another handle holds the environment;
+    /// `NotInitialized` on a half-created store (`Db::create` is the
+    /// remedy); `AlreadyInitialized` on a foreign LMDB environment;
     /// `FormatMismatch`, then `StoreKindMismatch`, then `SchemaMismatch`;
-    /// `Corruption(MetaMissing)` if the environment lacks bumbledb's
+    /// `Corruption(MetaMissing)` if an initialized store lacks bumbledb's
     /// databases or meta keys; `Corruption(StoreKindInvalid)` on a
     /// present-but-undecodable kind marker; `Lmdb` otherwise.
     pub fn open(path: &Path, schema: &Schema) -> Result<Self> {
         let lock = acquire_lock(path)?;
-        let env = open_env(path, StoreKind::Durable)?;
+        let env = open_env(path, OpenLane::Write(StoreKind::Durable))?;
         Self::verify_and_open(env, lock, schema, StoreKind::Durable)
     }
 
@@ -54,9 +58,10 @@ impl Environment {
         // write transaction — which normally commits without writing
         // anything, except for the one descriptor back-fill below.
         let mut wtxn = env.write_txn()?;
-        let meta: Database<Bytes, Bytes> = env
-            .open_database(&wtxn, Some("_meta"))?
-            .ok_or(Error::Corruption(CorruptionError::MetaMissing))?;
+        let meta = match classify_meta_block(&env, &wtxn)? {
+            MetaBlock::Present(meta) => meta,
+            MetaBlock::HalfCreated => return Err(Error::NotInitialized),
+        };
         check_format_version(&meta, &wtxn)?;
         let found_kind = read_store_kind(&meta, &wtxn)?;
         if found_kind != expected_kind {
@@ -97,7 +102,8 @@ impl Environment {
             data,
             dict,
             instance: NEXT_INSTANCE.fetch_add(1, Ordering::Relaxed),
-            _lock: lock,
+            _lock: Some(lock),
+            dirty_marker: None,
         })
     }
 }

@@ -6,8 +6,10 @@ use crate::error::{CorruptionError, Error, Result};
 use crate::schema::Schema;
 
 use super::acquire_lock::acquire_lock;
-use super::open_env::open_env;
-use super::read_meta::{check_fingerprint, check_format_version, read_store_kind};
+use super::open_env::{OpenLane, open_env};
+use super::read_meta::{
+    MetaBlock, check_fingerprint, check_format_version, classify_meta_block, read_store_kind,
+};
 use super::{Environment, StoreKind};
 
 impl Environment {
@@ -49,23 +51,53 @@ impl Environment {
     pub fn ephemeral(path: &Path, schema: &Schema) -> Result<Self> {
         std::fs::create_dir_all(path)?;
         let lock = acquire_lock(path)?;
+        // The crash contract (ruled 2026-07-23, R18): a set dirty marker
+        // means the last session never reached clean close — power loss,
+        // or a process death — and `NOSYNC` makes the data pages
+        // untrustworthy in exactly the way `_meta` cannot see (a meta
+        // page flushed by incidental writeback over data pages that
+        // never landed). The possibly-torn store is never opened at all:
+        // wipe and re-initialize. The marker carries the claim — only
+        // ephemeral opens mint one, and only a proven-synced close
+        // clears it — so the wipe destroys nothing the kind promised to
+        // keep.
+        let marker = super::dirty_marker_path(path);
+        let crashed = marker.try_exists()?;
+        if crashed {
+            for file in ["data.mdb", "data.mdb-lock"] {
+                match std::fs::remove_file(path.join(file)) {
+                    Ok(()) => {}
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(e) => return Err(Error::Io(e)),
+                }
+            }
+        }
         // A directory without a data file is fresh: nothing exists for
         // any open to damage, so create directly with the ephemeral
         // flags. Anything else is probed WITHOUT the flags first —
         // every refusal must fire before the flagged reopen. The
         // advisory lock (held above) keeps the probe→reopen window
         // race-free against other bumbledb handles.
-        let has_meta = if path.join("data.mdb").try_exists()? {
+        let has_meta = if !crashed && path.join("data.mdb").try_exists()? {
             Self::probe_ephemeral_kind(path, schema)?
         } else {
             false
         };
-        let env = open_env(path, StoreKind::Ephemeral)?;
-        if has_meta {
-            Self::verify_and_open(env, lock, schema, StoreKind::Ephemeral)
+        // Set the marker, SYNCED, before the NOSYNC environment writes
+        // anything — the open-side half of the kind's only fsyncs (the
+        // clean close's forced data sync and marker clear is the other,
+        // `Environment`'s drop). Set after the probe: a refusal must
+        // leave the store byte-identical, marker included.
+        std::fs::File::create(&marker)?.sync_all()?;
+        super::sync_dirent_chain(path)?;
+        let env = open_env(path, OpenLane::Write(StoreKind::Ephemeral))?;
+        let mut opened = if has_meta {
+            Self::verify_and_open(env, lock, schema, StoreKind::Ephemeral)?
         } else {
-            Self::initialize(env, lock, schema, StoreKind::Ephemeral)
-        }
+            Self::initialize(env, lock, schema, StoreKind::Ephemeral)?
+        };
+        opened.dirty_marker = Some(marker);
+        Ok(opened)
     }
 
     /// The non-mutating probe over an EXISTING data file: a plain
@@ -98,14 +130,9 @@ impl Environment {
     /// (heed closes the LMDB env when the last handle drops), so the
     /// caller's flagged reopen of the same path is legal.
     fn probe_ephemeral_kind(path: &Path, schema: &Schema) -> Result<bool> {
-        let env = open_env(path, StoreKind::Durable)?;
+        let env = open_env(path, OpenLane::Write(StoreKind::Durable))?;
         let rtxn = env.read_txn()?;
-        let Some(meta) = env.open_database::<Bytes, Bytes>(&rtxn, Some("_meta"))? else {
-            if let Some(root) = env.open_database::<Bytes, Bytes>(&rtxn, None)?
-                && !root.is_empty(&rtxn)?
-            {
-                return Err(Error::AlreadyInitialized);
-            }
+        let MetaBlock::Present(meta) = classify_meta_block(&env, &rtxn)? else {
             return Ok(false);
         };
         check_format_version(&meta, &rtxn)?;

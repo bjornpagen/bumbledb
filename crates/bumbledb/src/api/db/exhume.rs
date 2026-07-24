@@ -49,9 +49,10 @@ pub struct Exhumed {
 ///
 /// # Errors
 ///
-/// `Io` on a nonexistent path; `EnvironmentLocked`, `FormatMismatch`,
-/// and the `_meta` `Corruption` refusals exactly as `Db::open` raises
-/// them; [`Error::DescriptorMissing`] on a store not yet adopted (the
+/// `Io` on a nonexistent path; `FormatMismatch` and the `_meta`
+/// `Corruption` refusals exactly as `Db::open` raises them — but never
+/// `EnvironmentLocked`: the lock law is a writer law (R17), and this
+/// read-only lane takes none; [`Error::DescriptorMissing`] on a store not yet adopted (the
 /// remedy: one `Db::open` under the creating schema);
 /// `Corruption(DescriptorFingerprintDesync)` when the stored descriptor
 /// hashes to something other than the stored fingerprint;

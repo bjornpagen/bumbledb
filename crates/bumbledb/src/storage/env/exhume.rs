@@ -6,8 +6,7 @@ use heed::types::Bytes;
 
 use crate::error::{CorruptionError, Error, Result};
 
-use super::acquire_lock::acquire_lock;
-use super::open_env::open_env;
+use super::open_env::{OpenLane, open_env};
 use super::read_meta::{check_format_version, read_fingerprint, read_store_kind};
 use super::{Environment, META_SCHEMA_DESCRIPTOR, NEXT_INSTANCE, StoreKind};
 
@@ -30,50 +29,56 @@ impl Environment {
     /// § exhume). The open-time precedence holds where it applies:
     /// format version first, then the store-kind marker — read and
     /// validated but never compared against an expectation, because
-    /// exhume takes no durability decision and reads BOTH kinds (the
-    /// environment opens with plain durable flags either way: `NOSYNC`
-    /// is a write-path affordance and exhume never writes — the
-    /// ephemeral probe's precedent). There is no fingerprint CHECK here:
-    /// with no theory in hand there is nothing to compare, and the
-    /// caller's descriptor-hash verification is the integrity gate.
+    /// exhume takes no durability decision and reads BOTH kinds. There
+    /// is no fingerprint CHECK here: with no theory in hand there is
+    /// nothing to compare, and the caller's descriptor-hash verification
+    /// is the integrity gate.
     ///
-    /// Holds the same exclusive advisory lock as every other constructor
-    /// (one handle per path — the record being read stays still); what
-    /// an exhumed handle never takes is the writer path, which the API
-    /// layer does not expose.
+    /// Genuinely read-only down to the storage layer (the lock law is a
+    /// writer law — ruled 2026-07-23, R17): the environment opens
+    /// `MDB_RDONLY` through the read-only lane of the one raw-open
+    /// chokepoint, dbis register through a read transaction, and no
+    /// advisory lock is taken — a read-only environment can corrupt
+    /// nothing, so there is nothing for a lock to protect. The archival
+    /// lane thereby works on read-only media, restored snapshots, and
+    /// mounted backups, with no carve-outs; from a read-only environment
+    /// the write path is unrepresentable (LMDB refuses write
+    /// transactions outright).
     ///
     /// # Errors
     ///
-    /// `Io` on a nonexistent path, `EnvironmentLocked` if another handle
-    /// holds the environment, `FormatMismatch` on any other version,
-    /// `Corruption(MetaMissing)`/`Corruption(StoreKindInvalid)` on a
-    /// store missing its databases or meta keys, `DescriptorMissing` on
-    /// a store not yet adopted (the remedy: one `Db::open` under the
-    /// creating schema back-fills it), `Lmdb` otherwise.
+    /// `Io` on a nonexistent path, `FormatMismatch` on any other
+    /// version, `Corruption(MetaMissing)`/`Corruption(StoreKindInvalid)`
+    /// on a store missing its databases or meta keys,
+    /// `DescriptorMissing` on a store not yet adopted (the remedy: one
+    /// `Db::open` under the creating schema back-fills it), `Lmdb`
+    /// otherwise.
     pub(crate) fn exhume(path: &Path) -> Result<ExhumedEnvironment> {
-        let lock = acquire_lock(path)?;
-        let env = open_env(path, StoreKind::Durable)?;
-        // Dbi registration goes through a write transaction exactly as
-        // `verify_and_open`'s does; it commits without writing anything
-        // — exhume never mutates a store, not even to adopt it.
-        let wtxn = env.write_txn()?;
+        let env = open_env(path, OpenLane::ReadOnly)?;
+        // Dbi registration through a read transaction — LMDB opens
+        // existing named databases read-only, so the old
+        // write-txn-that-writes-nothing oddity is gone with the lock.
+        let rtxn = env.read_txn()?;
         let meta: Database<Bytes, Bytes> = env
-            .open_database(&wtxn, Some("_meta"))?
+            .open_database(&rtxn, Some("_meta"))?
             .ok_or(Error::Corruption(CorruptionError::MetaMissing))?;
-        check_format_version(&meta, &wtxn)?;
-        let kind = read_store_kind(&meta, &wtxn)?;
+        check_format_version(&meta, &rtxn)?;
+        let kind = read_store_kind(&meta, &rtxn)?;
         let data: Database<Bytes, Bytes> = env
-            .open_database(&wtxn, Some("_data"))?
+            .open_database(&rtxn, Some("_data"))?
             .ok_or(Error::Corruption(CorruptionError::MetaMissing))?;
         let dict: Database<Bytes, Bytes> = env
-            .open_database(&wtxn, Some("_dict"))?
+            .open_database(&rtxn, Some("_dict"))?
             .ok_or(Error::Corruption(CorruptionError::MetaMissing))?;
-        let fingerprint = read_fingerprint(&meta, &wtxn)?;
+        let fingerprint = read_fingerprint(&meta, &rtxn)?;
         let descriptor = meta
-            .get(&wtxn, META_SCHEMA_DESCRIPTOR)?
+            .get(&rtxn, META_SCHEMA_DESCRIPTOR)?
             .map(<[u8]>::to_vec)
             .ok_or(Error::DescriptorMissing)?;
-        wtxn.commit()?;
+        // Committed, not dropped: LMDB keeps txn-opened dbi handles alive
+        // past a COMMIT only (an abort closes them) — a read commit
+        // writes nothing, so the read-only lane stays read-only.
+        rtxn.commit()?;
         Ok(ExhumedEnvironment {
             env: Self {
                 env,
@@ -81,7 +86,10 @@ impl Environment {
                 data,
                 dict,
                 instance: NEXT_INSTANCE.fetch_add(1, Ordering::Relaxed),
-                _lock: lock,
+                // The lock law is a writer law (R17): the read-only lane
+                // holds none.
+                _lock: None,
+                dirty_marker: None,
             },
             kind,
             fingerprint,

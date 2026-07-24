@@ -16,14 +16,6 @@ impl WriteTxn<'_> {
         self.txn.commit().map_err(Error::from_commit)
     }
 
-    /// Aborts: drops the transaction, nothing persists. Test-only since
-    /// the counters-only flush stopped opening a transaction it might
-    /// discard (the live abort path is simply dropping the value).
-    #[cfg(test)]
-    pub(crate) fn abort(self) {
-        drop(self.txn);
-    }
-
     /// Advances the storage tx id (reader: the 50-storage doc's commit step 4; the id
     /// advances iff the delta changed logical state).
     pub(crate) fn put_generation(&mut self, generation: GenerationId) -> Result<()> {
@@ -33,15 +25,6 @@ impl WriteTxn<'_> {
             generation.storage_word().to_le_bytes().as_slice(),
         )?;
         Ok(())
-    }
-
-    /// Reads the dictionary next-id counter (reader: `storage::dict`'s
-    /// direct-write intern, test-only since the delta's pending-intern set
-    /// re-homed the live path in the 50-storage doc), sentinel-checked
-    /// ([`super::read_meta::read_dict_next_id`]).
-    #[cfg(test)]
-    pub(crate) fn dict_next_id(&self) -> Result<u64> {
-        super::read_meta::read_dict_next_id(&self.env.meta, &self.txn)
     }
 
     /// Writes the dictionary next-id counter.
@@ -58,8 +41,9 @@ impl WriteTxn<'_> {
     ///
     /// # Errors
     ///
-    /// `Corruption(MetaMissing)` if the tx-id key is absent or malformed.
+    /// `Corruption(MetaMissing)` if the tx-id key is absent,
+    /// `Corruption(MalformedValue)` if its value is mis-sized.
     pub fn generation(&self) -> Result<GenerationId> {
-        read_u64(&self.env.meta, &self.txn, META_TX_ID).map(GenerationId::from_storage)
+        read_u64(&self.env.meta, &self.txn, META_TX_ID, "tx id").map(GenerationId::from_storage)
     }
 }
