@@ -73,15 +73,27 @@ def Value.point : Value → Option Point
   | { type := .i64, val := x } => some (.i64 x)
   | _ => none
 
-/-- The encoded order word of an orderable scalar, tagged by its
-element domain — order comparisons read THIS, so the order the model
+/-- The order tag: the orderable vocabulary's domains — the two
+interval element domains plus bool (ruled 2026-07-23, R3). `Elem`
+stays exactly the interval element type (an interval over bool is
+unrepresentable); the TAG is where bool joins the order vocabulary. -/
+inductive OrderTag where
+  | bool
+  | elem (e : Elem)
+deriving DecidableEq
+
+/-- The encoded order word of an orderable value, tagged by its
+order domain — order comparisons read THIS, so the order the model
 compares is the order the storage encodings sort
-(`encode_u64_order_embedding` / `encode_i64_order_embedding` carry it
-to the numeric order). Cross-domain comparison is unrepresentable:
-the tags must agree. -/
-def Value.orderWord : Value → Option (Elem × Word)
-  | { type := .u64, val := x } => some (.u64, encodeU64 x)
-  | { type := .i64, val := x } => some (.i64, encodeI64 x)
+(`encode_u64_order_embedding` / `encode_i64_order_embedding` /
+`encode_bool_order_embedding` carry it to the domain order; bool
+enters with false < true, its 0/1 encoding's own order — ruled
+2026-07-23, R3). Cross-domain comparison is unrepresentable: the tags
+must agree. -/
+def Value.orderWord : Value → Option (OrderTag × Word)
+  | { type := .bool, val := b } => some (.bool, encodeBool b)
+  | { type := .u64, val := x } => some (.elem .u64, encodeU64 x)
+  | { type := .i64, val := x } => some (.elem .i64, encodeI64 x)
   | _ => none
 
 /-- Strict value order: same element domain, strictly smaller encoded
@@ -97,6 +109,28 @@ def Value.vle (a b : Value) : Prop :=
   match a.orderWord, b.orderWord with
   | some (e₁, w₁), some (e₂, w₂) => e₁ = e₂ ∧ w₁ ≤ w₂
   | _, _ => False
+
+/-- **The bool arm realizes the embedding (ruled 2026-07-23, R3)**:
+strict value order on bool values IS `false < true` —
+`encode_bool_lt_iff`, surfaced through `Value.orderWord`. With it the
+quantifier pair is free on the value order: `Max` over bool is Any and
+`Min` is All (`encode_bool_max_any` / `encode_bool_min_all` — the two
+extremes of the 0/1 encoding). -/
+theorem Value.vlt_bool (a b : Bool) :
+    Value.vlt ⟨.bool, a⟩ ⟨.bool, b⟩ ↔ a < b := by
+  show (OrderTag.bool = OrderTag.bool ∧ encodeBool a < encodeBool b) ↔
+    a < b
+  rw [← encode_bool_lt_iff]
+  simp
+
+/-- The non-strict face (ruled 2026-07-23, R3):
+`encode_bool_order_embedding`, realized on the value order. -/
+theorem Value.vle_bool (a b : Bool) :
+    Value.vle ⟨.bool, a⟩ ⟨.bool, b⟩ ↔ a ≤ b := by
+  show (OrderTag.bool = OrderTag.bool ∧ encodeBool a ≤ encodeBool b) ↔
+    a ≤ b
+  rw [← encode_bool_order_embedding]
+  simp
 
 /-- The `U64` value a gap denotes — total via the domain-ceiling guard
 (the recorded narrowing: the `none` arm is unreachable on gaps of

@@ -617,10 +617,12 @@ The payoff is the quantifier pair for free: over the 0/1 encoding the
 two order extremes ARE the two quantifiers — `Max` over a bool column
 is Any (the `||`-fold, `encode_bool_max_any`), `Min` is All (the
 `&&`-fold, `encode_bool_min_all`) — the documented idiom, true with
-no dedicated operators. OBLIGATION (R3): the denotation's order
-vocabulary (`Value.orderWord` and the comparison deciders, PRD 04)
-and both implementations' validation rosters widen to the bool arm;
-the theorems below are the value-level law that widening realizes. -/
+no dedicated operators. The denotation's order vocabulary carries the
+bool arm (`Value.orderWord`'s `OrderTag.bool`, PRD 04, with
+`Value.vlt_bool` / `Value.vle_bool` realizing the embedding on the
+value order — the R3 widening, discharged); the implementations'
+validation rosters widen beside it (`ir/validate/finds.rs`, the
+engine's roster; the TS types mirror). -/
 
 /-- The bool encoding, named: the 0/1 word `encodeAt`'s bool arm
 already writes. -/
