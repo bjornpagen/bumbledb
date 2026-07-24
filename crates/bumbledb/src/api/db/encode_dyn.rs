@@ -49,20 +49,32 @@ pub(super) fn dyn_value_refs(
     }
     for (idx, (value, field)) in values.iter().zip(fields).enumerate() {
         let field_id = FieldId(u16::try_from(idx).expect("field count fits u16"));
-        if let Err(mismatch) = bumbledb_theory::schema::value_matches(value, &field.value_type) {
-            return Err(shape_mismatch(rel, field_id, mismatch).into());
-        }
+        let parsed =
+            match bumbledb_theory::schema::value_matches_parsing(value, &field.value_type) {
+                Ok(parsed) => parsed,
+                Err(mismatch) => return Err(shape_mismatch(rel, field_id, mismatch).into()),
+            };
         let value_ref = match value {
             Value::AllenMask(_) => {
-                unreachable!("value_matches rejected mask values above: not a field type")
+                unreachable!("the check rejected mask values above: not a field type")
+            }
+            // A String's acceptance IS its parse (parse, don't
+            // validate): the checked `&str` feeds the dictionary
+            // directly, no second scan.
+            Value::String(_) => {
+                let text = parsed.expect("value_matches_parsing parses every accepted String");
+                let Some(id) = resolve_str(text)? else {
+                    return Ok(false);
+                };
+                ValueRef::String(id)
             }
             Value::Bool(v) => ValueRef::Bool(*v),
             Value::U64(v) => ValueRef::U64(*v),
             Value::I64(v) => ValueRef::I64(*v),
-            // The interval family splits by the FIELD's width:
-            // `value_matches` above already enforced the fixed
-            // type's exact width and Q2 bound, so the fixed ref just
-            // marks the one-word encoding.
+            // The interval family splits by the FIELD's width: the
+            // check above already enforced the fixed type's exact
+            // width and Q2 bound, so the fixed ref just marks the
+            // one-word encoding.
             Value::IntervalU64(interval) => match field.value_type {
                 bumbledb_theory::schema::ValueType::Interval { width: Some(_), .. } => {
                     ValueRef::FixedIntervalU64(*interval)
@@ -75,13 +87,6 @@ pub(super) fn dyn_value_refs(
                 }
                 _ => ValueRef::IntervalI64(*interval),
             },
-            Value::String(raw) => {
-                let text = std::str::from_utf8(raw).expect("value_matches validated UTF-8 above");
-                let Some(id) = resolve_str(text)? else {
-                    return Ok(false);
-                };
-                ValueRef::String(id)
-            }
             // Identity-shaped: bytes<N> values encode inline —
             // no dictionary traffic in either mode.
             Value::FixedBytes(raw) => ValueRef::fixed_bytes(raw),

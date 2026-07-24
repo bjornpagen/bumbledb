@@ -95,8 +95,8 @@ fn answer_reuse_retains_capacity_and_answers_stay_identical() {
         .execute(&txn, &cache, &params, &mut out)
         .expect("execute");
     let first = answers_of(&out);
-    let (cells_cap, bytes_cap) = (out.cells.capacity(), out.bytes.capacity());
-    assert!(cells_cap > 0 && bytes_cap > 0);
+    let (cells_cap, text_cap) = (out.cells.capacity(), out.text.capacity());
+    assert!(cells_cap > 0 && text_cap > 0);
 
     prepared
         .execute(&txn, &cache, &params, &mut out)
@@ -104,7 +104,7 @@ fn answer_reuse_retains_capacity_and_answers_stay_identical() {
     assert_eq!(answers_of(&out), first);
     // Capacity is retained across reuse (the zero-alloc path).
     assert!(out.cells.capacity() >= cells_cap);
-    assert!(out.bytes.capacity() >= bytes_cap);
+    assert!(out.text.capacity() >= text_cap);
     assert_eq!(first.len(), 3);
 }
 

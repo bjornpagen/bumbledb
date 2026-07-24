@@ -49,18 +49,16 @@ pub(crate) fn fixed_bytes_const(raw: &[u8]) -> Const {
 /// A `bytes<N>` value's `⌈N/8⌉` column words in a fixed buffer — the
 /// padded canonical bytes as big-endian words, exactly what the image's
 /// word columns hold, with zero heap traffic (8 words is the validated
-/// 64-byte ceiling). Returns the buffer and the span's word count.
+/// 64-byte ceiling; [`crate::encoding::FixedBytesValue`] is a stack
+/// `Copy` type, and its `padded()` is the zero-pad law's one owner —
+/// every chunk is exactly 8 bytes by the padded-length invariant).
+/// Returns the buffer and the span's word count.
 pub(crate) fn fixed_bytes_word_buf(raw: &[u8]) -> ([u64; 8], usize) {
-    debug_assert!(
-        raw.len() <= crate::encoding::MAX_FIXED_BYTES,
-        "bytes<N> widths are 1..=64"
-    );
+    let value = crate::encoding::FixedBytesValue::new(raw);
     let mut words = [0u64; 8];
     let mut count = 0;
-    for (word, chunk) in words.iter_mut().zip(raw.chunks(8)) {
-        let mut padded = [0u8; 8];
-        padded[..chunk.len()].copy_from_slice(chunk);
-        *word = u64::from_be_bytes(padded);
+    for (word, chunk) in words.iter_mut().zip(value.padded().chunks_exact(8)) {
+        *word = u64::from_be_bytes(chunk.try_into().expect("chunks_exact yields 8-byte chunks"));
         count += 1;
     }
     (words, count)
@@ -85,4 +83,30 @@ pub(super) fn point_word(value: &Value) -> u64 {
 /// The biased I64 column word (u64 word order equals i64 value order).
 fn i64_word(value: i64) -> u64 {
     u64::from_be_bytes(encode_i64(value))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::fixed_bytes_word_buf;
+
+    /// The bind path's word view agrees with an independently computed
+    /// zero-padded chunking at every width astride the word boundaries —
+    /// the warm-path pin the padded encoding's one owner is held to.
+    #[test]
+    fn word_buf_matches_the_padded_chunking() {
+        for len in [1usize, 7, 8, 9, 16, 63, 64] {
+            let raw: Vec<u8> = (0..len)
+                .map(|i| u8::try_from(i % 251).expect("small").wrapping_add(1))
+                .collect();
+            let mut expected = Vec::new();
+            for chunk in raw.chunks(8) {
+                let mut padded = [0u8; 8];
+                padded[..chunk.len()].copy_from_slice(chunk);
+                expected.push(u64::from_be_bytes(padded));
+            }
+            let (words, count) = fixed_bytes_word_buf(&raw);
+            assert_eq!(count, expected.len(), "len {len}");
+            assert_eq!(&words[..count], &expected[..], "len {len}");
+        }
+    }
 }

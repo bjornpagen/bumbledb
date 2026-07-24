@@ -30,38 +30,32 @@ pub const fn decode_i64(bytes: [u8; 8]) -> i64 {
     (u64::from_be_bytes(bytes) ^ I64_SIGN_BIT).cast_signed()
 }
 
-/// Decodes an Interval-over-U64's `start ‖ end` bytes, validating strict
-/// `start < end`.
+/// Decodes an Interval-over-U64's `start ‖ end` bytes into the checked
+/// host type — construction is the validation boundary (parse, don't
+/// validate): the `start < end` proof rides the returned [`Interval`],
+/// so no consumer re-derives it.
 ///
 /// # Errors
 ///
 /// [`CorruptionError::InvalidInterval`] when `start >= end` — a stored
 /// empty or inverted interval denotes nothing, exactly as corrupt as a
 /// non-0/1 Bool byte.
-pub const fn decode_interval_u64(bytes: [u8; 16]) -> Result<(u64, u64), CorruptionError> {
+pub fn decode_interval_u64(bytes: [u8; 16]) -> Result<Interval<u64>, CorruptionError> {
     let (start_bytes, end_bytes) = split_halves(bytes);
-    let (start, end) = (decode_u64(start_bytes), decode_u64(end_bytes));
-    if start < end {
-        Ok((start, end))
-    } else {
-        Err(CorruptionError::InvalidInterval(bytes))
-    }
+    Interval::new(decode_u64(start_bytes), decode_u64(end_bytes))
+        .ok_or(CorruptionError::InvalidInterval(bytes))
 }
 
-/// Decodes an Interval-over-I64's `start ‖ end` bytes, validating strict
-/// `start < end`.
+/// Decodes an Interval-over-I64's `start ‖ end` bytes into the checked
+/// host type, as [`decode_interval_u64`].
 ///
 /// # Errors
 ///
 /// [`CorruptionError::InvalidInterval`], as [`decode_interval_u64`].
-pub const fn decode_interval_i64(bytes: [u8; 16]) -> Result<(i64, i64), CorruptionError> {
+pub fn decode_interval_i64(bytes: [u8; 16]) -> Result<Interval<i64>, CorruptionError> {
     let (start_bytes, end_bytes) = split_halves(bytes);
-    let (start, end) = (decode_i64(start_bytes), decode_i64(end_bytes));
-    if start < end {
-        Ok((start, end))
-    } else {
-        Err(CorruptionError::InvalidInterval(bytes))
-    }
+    Interval::new(decode_i64(start_bytes), decode_i64(end_bytes))
+        .ok_or(CorruptionError::InvalidInterval(bytes))
 }
 
 /// Decodes a fixed-width interval's stored START word (either element
@@ -183,19 +177,11 @@ pub fn decode_field(
             let bytes: [u8; 16] = bytes
                 .try_into()
                 .expect("interval field: the layout derives the width");
+            // The decoders parse into the checked type; the proof
+            // arrives with the value, nothing re-derives it.
             match element {
-                IntervalElement::U64 => decode_interval_u64(bytes).map(|(start, end)| {
-                    ValueRef::IntervalU64(
-                        Interval::<u64>::new(start, end)
-                            .expect("decode_interval_u64 accepted these bounds"),
-                    )
-                }),
-                IntervalElement::I64 => decode_interval_i64(bytes).map(|(start, end)| {
-                    ValueRef::IntervalI64(
-                        Interval::<i64>::new(start, end)
-                            .expect("decode_interval_i64 accepted these bounds"),
-                    )
-                }),
+                IntervalElement::U64 => decode_interval_u64(bytes).map(ValueRef::IntervalU64),
+                IntervalElement::I64 => decode_interval_i64(bytes).map(ValueRef::IntervalI64),
             }
         }
         TypeDesc::Interval {
@@ -212,13 +198,16 @@ pub fn decode_field(
                     Interval::<u64>::new(start_word, end_word)
                         .expect("the Q2 bound implies start < end"),
                 ),
-                IntervalElement::I64 => {
-                    let decode = |word: u64| (word ^ I64_SIGN_BIT).cast_signed();
-                    ValueRef::FixedIntervalI64(
-                        Interval::<i64>::new(decode(start_word), decode(end_word))
-                            .expect("the Q2 bound implies start < end"),
+                IntervalElement::I64 => ValueRef::FixedIntervalI64(
+                    // The sign-flip law's one decode-side owner, per
+                    // bound (the words are the biased order-preserving
+                    // form).
+                    Interval::<i64>::new(
+                        decode_i64(start_word.to_be_bytes()),
+                        decode_i64(end_word.to_be_bytes()),
                     )
-                }
+                    .expect("the Q2 bound implies start < end"),
+                )
             })
         }
     }

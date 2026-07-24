@@ -14,7 +14,8 @@ impl Answers {
     /// Empties the buffer, retaining capacity (the zero-alloc reuse path).
     pub fn clear(&mut self) {
         self.cells.clear();
-        self.bytes.clear();
+        self.text.clear();
+        self.blob.clear();
     }
 
     /// Number of answers.
@@ -34,20 +35,19 @@ impl Answers {
         self.arity
     }
 
-    /// The byte heap's length — memory observability (each distinct
-    /// String value is stored once per buffer; bytes<N> cells copy their
-    /// N bytes per answer — docs/architecture/40-execution.md).
+    /// The byte heaps' combined length — memory observability (each
+    /// distinct String value is stored once per buffer; bytes<N> cells
+    /// copy their N bytes per answer — docs/architecture/40-execution.md).
     #[must_use]
     pub fn byte_len(&self) -> usize {
-        self.bytes.len()
+        self.text.len() + self.blob.len()
     }
 
     /// The value at `(answer, column)`.
     ///
     /// # Panics
     ///
-    /// On out-of-range coordinates, and on a programmer-invariant violation
-    /// (string cells are UTF-8-validated at materialization).
+    /// On out-of-range coordinates.
     #[must_use]
     pub fn get(&self, answer: usize, column: usize) -> AnswerValue<'_> {
         assert!(column < self.arity && answer < self.len());
@@ -55,12 +55,12 @@ impl Answers {
             Cell::Bool(v) => AnswerValue::Bool(v),
             Cell::U64(v) => AnswerValue::U64(v),
             Cell::I64(v) => AnswerValue::I64(v),
-            Cell::String { start, len } => AnswerValue::String(
-                std::str::from_utf8(&self.bytes[start..start + len])
-                    .expect("validated at materialization"),
-            ),
+            // O(1): the text heap carries the materialization proof
+            // (whole validated strings appended end-to-end, so every
+            // range is a char boundary) — no per-access rescan.
+            Cell::String { start, len } => AnswerValue::String(&self.text[start..start + len]),
             Cell::FixedBytes { start, len } => {
-                AnswerValue::FixedBytes(&self.bytes[start..start + len])
+                AnswerValue::FixedBytes(&self.blob[start..start + len])
             }
             Cell::IntervalU64(interval) => AnswerValue::IntervalU64(interval),
             Cell::IntervalI64(interval) => AnswerValue::IntervalI64(interval),
@@ -104,11 +104,11 @@ impl Answers {
     /// cell is returned, not pushed: the columnar fill writes strided
     /// slots (`finalize.rs`).
     pub(super) fn fixed_bytes_cell(&mut self, len: u16, words: &[u64]) -> Cell {
-        let start = self.bytes.len();
+        let start = self.blob.len();
         for word in words {
-            self.bytes.extend_from_slice(&word.to_be_bytes());
+            self.blob.extend_from_slice(&word.to_be_bytes());
         }
-        self.bytes.truncate(start + usize::from(len));
+        self.blob.truncate(start + usize::from(len));
         Cell::FixedBytes {
             start,
             len: usize::from(len),

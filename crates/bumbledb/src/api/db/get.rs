@@ -70,28 +70,24 @@ pub(super) fn encode_determinant_with(
         .into());
     }
     for (value, &field) in key_values.iter().zip(projection) {
-        if let Err(mismatch) =
-            bumbledb_theory::schema::value_matches(value, &rel.field(field).value_type)
-        {
-            return Err(shape_mismatch(relation, field, mismatch).into());
-        }
-        match value {
-            Value::String(raw) => {
-                let text = std::str::from_utf8(raw).expect("value_matches validated UTF-8 above");
-                match resolve_str(text)? {
-                    Some(id) => out.extend_from_slice(&encode_u64(id)),
-                    None => return Ok(false),
-                }
-            }
+        match bumbledb_theory::schema::value_matches_parsing(value, &rel.field(field).value_type) {
+            Err(mismatch) => return Err(shape_mismatch(relation, field, mismatch).into()),
+            // The check's parse travels with the acceptance (parse,
+            // don't validate) — the dictionary probe consumes the
+            // `&str` directly, no second scan.
+            Ok(Some(text)) => match resolve_str(text)? {
+                Some(id) => out.extend_from_slice(&encode_u64(id)),
+                None => return Ok(false),
+            },
             // Every self-encoding value takes the one type-aware
             // literal encoder — a fixed-width interval position
             // contributes its 8-byte start, a general one its 16
             // bytes, exactly what `determinant_image` slices out of
             // a stored fact (String peeled above per the encoder's
-            // contract; a mask value is unreachable — `value_matches`
+            // contract; a mask value is unreachable — the check
             // rejected it: not a field type).
-            encodable => crate::encoding::encode_literal(
-                encodable,
+            Ok(None) => crate::encoding::encode_literal(
+                value,
                 rel.field(field).value_type.type_desc(),
                 out,
             ),

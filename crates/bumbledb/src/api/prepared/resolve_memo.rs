@@ -18,11 +18,13 @@ impl ResolveMemo {
         self.last = None;
     }
 
-    /// The byte range for one string intern word: memoized, or resolved
-    /// through the dictionary (emitting `dict_resolve`), UTF-8-checked,
-    /// and appended to the buffer once. Strings are the only interned
-    /// type, so the key is the bare word — the tag byte died with
-    /// variable bytes (docs/architecture/50-storage.md).
+    /// The text range for one string intern word: memoized, or resolved
+    /// through the dictionary (emitting `dict_resolve`), UTF-8-parsed,
+    /// and appended to the buffer's text heap once — the parse's proof
+    /// travels with the heap's type, so reads never re-validate.
+    /// Strings are the only interned type, so the key is the bare word —
+    /// the tag byte died with variable bytes
+    /// (docs/architecture/50-storage.md).
     pub(super) fn resolve(
         &mut self,
         txn: &ReadTxn<'_>,
@@ -47,10 +49,10 @@ impl ResolveMemo {
             word,
             raw.len() as u64,
         );
-        std::str::from_utf8(raw)
+        let text = std::str::from_utf8(raw)
             .map_err(|_| Error::Corruption(crate::error::CorruptionError::NonUtf8Intern(word)))?;
-        let start = buffer.bytes.len();
-        buffer.bytes.extend_from_slice(raw);
+        let start = buffer.text.len();
+        buffer.text.push_str(text);
         // The byte heap's offsets are u32: a >4 GiB distinct-payload
         // result (the u32 byte-heap ceiling — a representation limit,
         // not the map size) is beyond any validated workload but valid

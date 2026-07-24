@@ -213,6 +213,28 @@ pub fn value_matches(value: &Value, expected: &ValueType) -> Result<(), ValueMis
     }
 }
 
+/// [`value_matches`] keeping what its `String` arm proves — the parsed
+/// `&str` rides the `Ok` (parse, don't validate): the dynamic
+/// write/read surfaces probe the dictionary with the text right after
+/// this check, and re-deriving the parse there was a second full scan
+/// per value. `None` for every non-String acceptance.
+///
+/// # Errors
+///
+/// As [`value_matches`].
+pub fn value_matches_parsing<'v>(
+    value: &'v Value,
+    expected: &ValueType,
+) -> Result<Option<&'v str>, ValueMismatch> {
+    if let (Value::String(raw), ValueType::String) = (value, expected) {
+        return match std::str::from_utf8(raw) {
+            Ok(text) => Ok(Some(text)),
+            Err(_) => Err(ValueMismatch::Utf8),
+        };
+    }
+    value_matches(value, expected).map(|()| None)
+}
+
 /// One σ binding's literal set — the disjunctive selection fragment
 /// (`lean/Bumbledb/Schema.lean: Selection`): the selected field's value is
 /// a MEMBER of the spelled set, bindings read conjunctively. The singleton

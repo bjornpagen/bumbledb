@@ -116,14 +116,20 @@ enum Cell {
 }
 
 /// The caller-owned, reusable answer set: columns are the find terms in
-/// order; answers are unordered (query denotations are sets — the host sorts). The byte
-/// heap is the single sanctioned allocation site of a warm execution, and
-/// `clear` retains every capacity.
+/// order; answers are unordered (query denotations are sets — the host sorts). The two
+/// byte heaps are the single sanctioned allocation site of a warm
+/// execution, and `clear` retains every capacity.
 #[derive(Debug, Default)]
 pub struct Answers {
     arity: usize,
     cells: Vec<Cell>,
-    bytes: Vec<u8>,
+    /// The String cells' heap: whole UTF-8-validated strings appended
+    /// end-to-end, so every cell range is a char boundary by
+    /// construction — the type carries the materialization proof and
+    /// `get` never re-validates (parse, don't validate).
+    text: String,
+    /// The `bytes<N>` cells' heap: raw payloads, no text contract.
+    blob: Vec<u8>,
 }
 
 /// The per-finalize intern-resolution memo (docs/architecture/40-execution.md): each
@@ -137,7 +143,7 @@ pub struct Answers {
 /// bytes (docs/architecture/50-storage.md).
 #[derive(Debug)]
 struct ResolveMemo {
-    /// word → packed `(start, len)` into the buffer's bytes.
+    /// word → packed `(start, len)` into the buffer's text heap.
     ranges: crate::exec::wordmap::WordMap<(u32, u32)>,
     /// The last resolution: run-coherent columns
     /// (few distinct interns, clustered answers) skip even the map probe.

@@ -1,6 +1,6 @@
 //! The encode side: canonical per-type encoders and the fact encoder.
 
-use super::{FactLayout, I64_SIGN_BIT, TypeDesc, ValueRef, fixed_bytes_words};
+use super::{FactLayout, I64_SIGN_BIT, TypeDesc, ValueRef};
 use bumbledb_theory::{Interval, Value};
 
 /// Encodes a Bool as its canonical single byte.
@@ -51,33 +51,24 @@ fn concat_halves(start: [u8; 8], end: [u8; 8]) -> [u8; 16] {
     out
 }
 
-/// Appends the canonical `bytes<N>` encoding: the N raw bytes themselves,
-/// zero-padded to the word boundary (`⌈N/8⌉ × 8` bytes) — the pad is
-/// encoding, not data. Injective for a fixed N, and memcmp order over the
-/// padded bytes equals byte order over the values (uniform width, zero
-/// tail), which is all the determinant B-tree needs — order *operations* stay
-/// refused at the query surface.
-pub fn encode_fixed_bytes(raw: &[u8], out: &mut Vec<u8>) {
-    let width = fixed_bytes_words(u16::try_from(raw.len()).expect("validated: N <= 64")) * 8;
-    out.extend_from_slice(raw);
-    out.resize(out.len() + width - raw.len(), 0);
-}
-
 /// Appends the canonical encoding of a self-encoding literal AT ITS
 /// FIELD'S ENCODING — every [`Value`] variant whose canonical bytes are
-/// a pure function of the value and its field type. The one definition
-/// site for selection-literal encoding: the commit judgment's
-/// pre-encoded σ literals and the schema fingerprint's canonical
-/// encoding both call this, so the two can never drift apart. The
-/// `desc` parameter carries the field's [`TypeDesc`] because a type is
-/// an encoding and the FIELD owns it: the same checked interval value
-/// encodes as 16 bytes at a general interval position and as its
-/// 8-byte start at a fixed-width one (`interval<E, w>` — the width is
-/// the type's, so the end is derived, never stored). `String` is the
-/// deliberate exception — its fact encoding is a per-database intern
-/// id, not a function of the value — so each consumer resolves it at
-/// its own boundary before calling. `FixedBytes` is self-encoding: the
-/// raw bytes, word-padded, inline in the fact.
+/// a pure function of the value and its field type. A lowering plus
+/// delegation, not a second per-field encoder: the `(value, desc)` pair
+/// lowers to the [`ValueRef`] variant that already reifies the
+/// fixed-width distinction, and [`append_key_field`] writes the bytes —
+/// so the commit judgment's pre-encoded σ literals, the schema
+/// fingerprint's canonical encoding, and the fact encoding agree by
+/// construction, never by discipline. The `desc` parameter carries the
+/// field's [`TypeDesc`] because a type is an encoding and the FIELD
+/// owns it: the same checked interval value encodes as 16 bytes at a
+/// general interval position and as its 8-byte start at a fixed-width
+/// one (`interval<E, w>` — the width is the type's, so the end is
+/// derived, never stored). `String` is the deliberate exception — its
+/// fact encoding is a per-database intern id, not a function of the
+/// value — so each consumer resolves it at its own boundary before
+/// calling. `FixedBytes` is self-encoding: the raw bytes, word-padded,
+/// inline in the fact.
 ///
 /// # Panics
 ///
@@ -85,31 +76,22 @@ pub fn encode_fixed_bytes(raw: &[u8], out: &mut Vec<u8>) {
 /// variant first.
 pub fn encode_literal(value: &Value, desc: TypeDesc, out: &mut Vec<u8>) {
     let fixed_width = matches!(desc, TypeDesc::Interval { width: Some(_), .. });
-    match value {
-        Value::Bool(v) => out.push(encode_bool(*v)),
-        Value::U64(v) => out.extend_from_slice(&encode_u64(*v)),
-        Value::I64(v) => out.extend_from_slice(&encode_i64(*v)),
-        Value::FixedBytes(raw) => encode_fixed_bytes(raw, out),
-        Value::IntervalU64(interval) => {
-            if fixed_width {
-                out.extend_from_slice(&encode_u64(interval.start()));
-            } else {
-                out.extend_from_slice(&encode_interval_u64(*interval));
-            }
-        }
-        Value::IntervalI64(interval) => {
-            if fixed_width {
-                out.extend_from_slice(&encode_i64(interval.start()));
-            } else {
-                out.extend_from_slice(&encode_interval_i64(*interval));
-            }
-        }
+    let value = match value {
+        Value::Bool(v) => ValueRef::Bool(*v),
+        Value::U64(v) => ValueRef::U64(*v),
+        Value::I64(v) => ValueRef::I64(*v),
+        Value::FixedBytes(raw) => ValueRef::fixed_bytes(raw),
+        Value::IntervalU64(interval) if fixed_width => ValueRef::FixedIntervalU64(*interval),
+        Value::IntervalU64(interval) => ValueRef::IntervalU64(*interval),
+        Value::IntervalI64(interval) if fixed_width => ValueRef::FixedIntervalI64(*interval),
+        Value::IntervalI64(interval) => ValueRef::IntervalI64(*interval),
         Value::String(_) => {
             unreachable!("interned literals resolve at their consumer's boundary")
         }
         // A mask is not a field type; nothing storable carries one.
         Value::AllenMask(_) => unreachable!("mask values never encode"),
-    }
+    };
+    append_key_field(value, out);
 }
 
 /// Appends the canonical encoding of ONE field value — the per-field

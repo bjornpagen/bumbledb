@@ -4,6 +4,13 @@ use super::*;
 use crate::error::CorruptionError;
 use bumbledb_theory::schema::IntervalElement;
 
+/// The byte-level fixtures' `bytes<N>` padder, spelled through the pad
+/// law's one owner ([`FixedBytesValue::padded`]) — no second
+/// implementation site survives outside it.
+fn encode_fixed_bytes(raw: &[u8], out: &mut Vec<u8>) {
+    out.extend_from_slice(FixedBytesValue::new(raw).padded());
+}
+
 /// A deterministic LCG so the property sweeps are reproducible.
 struct Lcg(u64);
 
@@ -407,7 +414,8 @@ fn interval_round_trip_edges_and_random_pairs() {
         assert_eq!(
             decode_interval_i64(encode_interval_i64(
                 bumbledb_theory::Interval::<i64>::new(start, end).expect("nonempty interval")
-            )),
+            ))
+            .map(|interval| interval.bounds()),
             Ok((start, end))
         );
     }
@@ -415,7 +423,8 @@ fn interval_round_trip_edges_and_random_pairs() {
         assert_eq!(
             decode_interval_u64(encode_interval_u64(
                 bumbledb_theory::Interval::<u64>::new(start, end).expect("nonempty interval")
-            )),
+            ))
+            .map(|interval| interval.bounds()),
             Ok((start, end))
         );
     }
@@ -426,7 +435,8 @@ fn interval_round_trip_edges_and_random_pairs() {
         assert_eq!(
             decode_interval_u64(encode_interval_u64(
                 bumbledb_theory::Interval::<u64>::new(start, end).expect("nonempty interval")
-            )),
+            ))
+            .map(|interval| interval.bounds()),
             Ok((start, end))
         );
         let (start, end) = (
@@ -436,7 +446,8 @@ fn interval_round_trip_edges_and_random_pairs() {
         assert_eq!(
             decode_interval_i64(encode_interval_i64(
                 bumbledb_theory::Interval::<i64>::new(start, end).expect("nonempty interval")
-            )),
+            ))
+            .map(|interval| interval.bounds()),
             Ok((start, end))
         );
     }
