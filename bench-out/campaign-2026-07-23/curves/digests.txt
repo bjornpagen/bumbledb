@@ -1,0 +1,14 @@
+campaign RUN 2 curves fixtures — regenerated at load under the fixed RNG (R20); wall power (AC verified before launch and at lane close)
+rev: 687f0201f0a2fc12ef121bf9e6f0c97d408f39b5
+seed: 1
+scales: S
+worlds: ledger + calendar from the digest-keyed corpus cache (bench-data/6518394f080c2273, ensure_corpus discipline); closure built fresh in <out>/scratch/closure-S at load, deleted after
+corpus identity digest (corpus_gen::corpus_digest, scale S seed 1): 6518394f080c2273299b55e00a8b022f88505650932a4d57fba40bd0bdf9a86b
+verify stamp (bench-data/6518394f080c2273, families + 500 randomized cases): f1af7aff7b1dac94d67278ef6f82469fc7b7daf04d6c87aa5539fb8ab8a2511b
+sha256 over the loaded reference stores (lock files excluded — runtime state, not corpus):
+
+99f6203a8e547e5268a0751704053262dda73d3e643a31a607d200adb6d37544  bench-data/6518394f080c2273/db/data.mdb
+73d053601b2433870ee8b99aca0d8191f60f95f3b5a6a3785641a8a220fc736b  bench-data/6518394f080c2273/cal-db/data.mdb
+e71bfb9a91736a3a0377a2577c7d664fa11486871358f53a355c1c235b3eea1a  bench-data/6518394f080c2273/oracle.sqlite
+15e88ef7d76b9b2f2b08c00d21a20dc55b7fafbcb61db29deb99d0792fa0488d  bench-data/6518394f080c2273/cal-oracle.sqlite
+36d5b2b4edaa54a0dbcc1850b246f5bf4e93b5925952f9c2b7ebfb631b618ef9  bench-data/6518394f080c2273/verify.stamp

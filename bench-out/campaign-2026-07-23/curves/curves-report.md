@@ -1,0 +1,27 @@
+# Curves report
+
+Scale curves, report-class. Every point is oracle-gated inline (value-identical multiset agreement against `SQLite`) before either engine is timed; a capped `SQLite` region is excluded-and-counted (`cap` names where it fired). `busy_scan` carries the hand-tuned twin beside the canonical OR-chain — both reported. p50 in ns; seed 1, 64 samples per point, cap 30000 ms per region.
+
+| family | world | scale | facts | answers | ours p50 | sqlite p50 | hand p50 | cap |
+|---|---|---|---:|---:|---:|---:|---:|---|
+| triangle | ledger | S | 253264 | 3 | 2749167 | 38134250 | — | — |
+| point | ledger | S | 253264 | 0 | 333 | 1417 | — | — |
+| busy_scan | calendar | S | 192369 | 410 | 8166 | 3463542 | 1231667 | — |
+| closure_fanout | closure | S | 17554 | 1316 | 1083 | 14458 | — | — |
+
+capped points: 0 (excluded-and-counted)
+
+## Warmth panel (cold/warm/memoized, p50 ns)
+
+Reopen-cold is process-fresh but OS-page-cache-warm — as close as the harness allows. The engine side prices the (relation, generation) image cache and the resolved-filter view slots.
+
+| family | engine | cold | warm | memoized |
+|---|---|---:|---:|---:|
+| triangle | bumbledb | 9047959 | 2764208 | 2745084 |
+| triangle | sqlite | 39139083 | 39109792 | 38844542 |
+| point | bumbledb | 3125 | 334 | 333 |
+| point | sqlite | 8333 | 1875 | 1541 |
+| busy_scan | bumbledb | 808917 | 8792 | 7959 |
+| busy_scan | sqlite | 3756250 | 3566375 | 3566917 |
+| closure_fanout | bumbledb | 315417 | 667 | 1375 |
+| closure_fanout | sqlite | 22583 | 12875 | 18708 |

@@ -1,0 +1,10 @@
+scheduler boost: user-interactive QoS claimed
+# Storage report
+
+On-disk bytes per corpus scale, both engines — report-class, no clocks. Engine bytes = `data.mdb` (raw after load; compacted via `Db::compact`). `SQLite` parity config: WAL, `synchronous=FULL`, `fullfsync=ON`, 256 MiB cache, prepared statements in 4096-row transactions; indexed lane = full DDL + family indexes + ANALYZE; table-only lane = index-free STRICT tables, no ANALYZE. Every file statted after a truncating WAL checkpoint with the connection dropped; wal bytes are reported so an uncheckpointed emission is visible. facts = writable-relation rows (closed vocabularies excluded). seed 1.
+
+| scale | world | facts | engine raw | engine compacted | B/fact | sqlite indexed | B/fact | sqlite table-only | B/fact | wal ix/to |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| S | ledger | 253264 | 80543744 | 64274432 | 253.8 | 18432000 | 72.8 | 5128192 | 20.2 | 0/0 |
+| S | calendar | 192369 | 81985536 | 64684032 | 336.2 | 17928192 | 93.2 | 4665344 | 24.3 | 0/0 |
+artifacts: /Users/bjorn/Documents/bumbledb/bench-out/campaign-2026-07-23/storage

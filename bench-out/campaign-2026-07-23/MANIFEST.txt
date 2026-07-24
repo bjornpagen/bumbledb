@@ -1,13 +1,13 @@
 bumbledb bench campaign (full-suite rerun — RUN 2, wall power)
 date: 2026-07-24 (lanes landed across 2026-07-24; battery-era estate retired whole at f474202a)
-revs: 7cef4e13 (scenarios, bench-durable-r1..r3, bench-ephemeral-r1..r3)
+revs: 7cef4e13 (scenarios, bench-durable-r1..r3, bench-ephemeral-r1..r3) / 687f0201 (storage, curves, crud, lawful)
 out: /Users/bjorn/Documents/bumbledb/bench-out/campaign-2026-07-23
-power: wall (AC verified via pmset before launch and at close; every rep ran between)
+power: wall (AC verified via pmset before launch and at close of every lane — report-class per run-report-class.log, suites per run-suites.log with a hard assert_ac before AND after each lane that voids any lane a battery drop touches; the suites launch WAITED on AC after catching the machine discharging)
 mode: shared-machine (boosted; standing owner greenlight 2026-07-20 — every lane BUMBLEDB_BENCH_BOOST=1, shared_machine provenance with 1/5/15 load averages stamped into every report; measurement mutex held per lane via scripts/measure.sh; no builds during timing — the release binary built before the first rep)
-protocol: identical to bench-out/night-2026-07-20 — seed 1, scale S, 256 samples per read family, oracle-gated everywhere the night run gated (fresh verify stamp required by the bench gate; value-identical multisets before any timed window)
-corpora: regenerated under the fixed RNG (R20); identity digest (corpus_gen::corpus_digest, scale S seed 1): 6518394f080c2273299b55e00a8b022f88505650932a4d57fba40bd0bdf9a86b; verify stamp (bench-data/6518394f080c2273, families + 500 randomized cases): f1af7aff7b1dac94d67278ef6f82469fc7b7daf04d6c87aa5539fb8ab8a2511b; per-lane store hashes in <lane>/digests.txt (identical across all six reps)
+protocol: identical to bench-out/night-2026-07-20 — seed 1, scale S, registered lane protocols (256 samples per read family in the report-class reps, 64 per family/point in the suite lanes, curves cap 30000 ms per SQLite region), oracle-gated everywhere the night run gated (fresh verify stamp required by the bench gate; value-identical multisets before any timed window; post-state folds on crud/lawful), capped or DNF regions excluded-and-counted
+corpora: regenerated under the fixed RNG (R20); identity digest (corpus_gen::corpus_digest, scale S seed 1): 6518394f080c2273299b55e00a8b022f88505650932a4d57fba40bd0bdf9a86b; verify stamp (bench-data/6518394f080c2273, families + 500 randomized cases): f1af7aff7b1dac94d67278ef6f82469fc7b7daf04d6c87aa5539fb8ab8a2511b; per-lane store hashes in <lane>/digests.txt (reference stores identical across all six reps AND the curves/storage loads; crud/lawful post-run twin hashes byte-identical to the battery-era run — the R20 streams are deterministic end to end)
 ephemeral pairing: like-for-like this run (finding 020, fixed e5f35cb2 + 60d11a4d) — bench --ephemeral times the MDB_NOSYNC engine against SQLite WAL synchronous=OFF fullfsync=OFF checkpoint_fullfsync=OFF via the lane-typed write-family seam, parity read back before timing; config.store labels the run and merge refuses mixed labels
-clock proxy: bounded-retry brackets on every block; contaminated finals reported never hidden — reads r1 8/33, r2 9/33, r3 2/33, e1 6/33, e2 4/33, e3 4/33 (night: 0); durable writes 7/9 per rep (night: 8-9/9, fsync-DVFS physics); ephemeral writes 1-3/9
+clock proxy: bounded-retry brackets on every block; contaminated finals reported never hidden — reads r1 8/33, r2 9/33, r3 2/33, e1 6/33, e2 4/33, e3 4/33 (night: 0); durable writes 7/9 per rep (night: 8-9/9, fsync-DVFS physics); ephemeral writes 1-3/9; crud 7/22 (night 14/22), lawful 3/12 (night 8/12); curves timed blocks 0/4 contaminated with ghz stamped on every point per finding 072 (the night carried no discriminator), warmth panel 2/4 stamped (busy_scan post 3.179, closure_fanout 3.128/3.129 GHz vs the 3.2 floor)
 roster: 33 read families (the night's 32 + deep_chain, R22-088)
 
 bench-durable-r1	COMPLETE	/Users/bjorn/Documents/bumbledb/bench-out/campaign-2026-07-23/bench-durable-r1/report.json
@@ -17,7 +17,16 @@ bench-ephemeral-r1	COMPLETE	/Users/bjorn/Documents/bumbledb/bench-out/campaign-2
 bench-ephemeral-r2	COMPLETE	/Users/bjorn/Documents/bumbledb/bench-out/campaign-2026-07-23/bench-ephemeral-r2/report.json
 bench-ephemeral-r3	COMPLETE	/Users/bjorn/Documents/bumbledb/bench-out/campaign-2026-07-23/bench-ephemeral-r3/report.json
 scenarios	COMPLETE (landed 7cef4e13)	/Users/bjorn/Documents/bumbledb/bench-out/campaign-2026-07-23/scenarios/scenarios.md
+storage	COMPLETE	/Users/bjorn/Documents/bumbledb/bench-out/campaign-2026-07-23/storage/storage-report.json
+curves	COMPLETE (0 capped points; 072 bracket live)	/Users/bjorn/Documents/bumbledb/bench-out/campaign-2026-07-23/curves/curves-report.json
+crud	COMPLETE (post-state ok)	/Users/bjorn/Documents/bumbledb/bench-out/campaign-2026-07-23/crud/crud.json
+lawful	COMPLETE (post-state ok)	/Users/bjorn/Documents/bumbledb/bench-out/campaign-2026-07-23/lawful/lawful.json
+writes	PENDING (battery-era rerun retired at f474202a; wall-power rerun outstanding)	/Users/bjorn/Documents/bumbledb/bench-out/campaign-2026-07-23/writes/writes-report.json
+churn	PENDING (battery-era rerun retired at f474202a; wall-power rerun outstanding)	/Users/bjorn/Documents/bumbledb/bench-out/campaign-2026-07-23/churn/churn-report.json
+sweep-commit	PENDING (needs the obs build)	/Users/bjorn/Documents/bumbledb/bench-out/campaign-2026-07-23/sweep-commit/sweep.md
+adversarial	SKIP-UNAVAILABLE (subcommand not landed; probe-parity with the night)	/Users/bjorn/Documents/bumbledb/bench-out/campaign-2026-07-23/adversarial/report.json
 
-oracle mismatches: 0 (all six reps re-gated clean before timing; run logs grep clean)
+oracle mismatches: 0 (every gated lane re-gated clean before timing; run logs grep clean)
 report-class reps: every rep all_win=true, partial=false, 33/33 read families WIN, read geomean(ratio_p50) 0.041-0.046 (night: 0.045-0.046); ephemeral write rows now honest under the 020 pairing (commit_single 1.35x, commit_batch 0.87x vs the nosync twin)
-DNF/caps: none in the report-class reps; four engine-only write families carry no SQLite twin by design (commit_witnessed, commit_window_*), same as the night
+DNF/caps: none in the report-class or suite lanes; curves 0 capped points; scenarios r4_bomb_t2 + t2_overlap_join SQLite DNF>1000ms (same two as the night, excluded-and-counted); four engine-only write families carry no SQLite twin by design (commit_witnessed, commit_window_*), same as the night
+campaign: 11 of 14 landable lanes COMPLETE (writes, churn, sweep-commit outstanding); suite geomeans vs the night in SUMMARY.md
