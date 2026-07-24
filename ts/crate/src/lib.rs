@@ -14,11 +14,13 @@
 //! over an mpsc channel pair. Every request is a synchronous round trip: the
 //! JS thread sends, blocks on the reply, and returns — so at most one thread
 //! touches any engine object at any instant, which is the whole soundness
-//! argument for the two raw pointers that cross threads here (a prepared
-//! query during `preparedExecute`/`preparedStaleness`, the witness snapshot
-//! during `dbWriteFrom` entry — each dereferenced only while the JS thread
-//! is blocked on the corresponding reply). `WriteTx` point reads are the
-//! engine's own final-state view, live, never simulated.
+//! argument for the one raw pointer that crosses threads here (a prepared
+//! query during `preparedExecute`/`preparedStaleness`, dereferenced only
+//! while the JS thread is blocked on the corresponding reply). The
+//! `dbWriteFrom` witness is NOT a pointer: the snapshot worker mints the
+//! engine's own `Witness` value inside its closure and the value moves —
+//! snapshot close order cannot dangle anything. `WriteTx` point reads are
+//! the engine's own final-state view, live, never simulated.
 //!
 //! # Handle lifecycle
 //!
@@ -49,7 +51,7 @@ use std::thread::JoinHandle;
 use bumbledb::schema::{SpecIssue, StatementDescriptor};
 use bumbledb::{
     Answers, BindValue, Db, Error, Exhumed, FieldId, ParamArg, PreparedQuery, RelationId,
-    SchemaDescriptor, Snapshot, StatementId, Theory, Value, Violations, WriteTx, exhume,
+    SchemaDescriptor, Snapshot, StatementId, Theory, Value, Violations, Witness, WriteTx, exhume,
     render_rejection,
 };
 use napi::bindgen_prelude::{Array, External, Object, ToNapiValue};
@@ -510,8 +512,9 @@ enum SnapReq {
         /// `*const PreparedQuery<'static, SchemaDescriptor>` as an address.
         prepared: usize,
     },
-    /// Replies with the parked `Snapshot`'s address for `dbWriteFrom`'s
-    /// witness entry.
+    /// Replies with the parked `Snapshot`'s minted [`Witness`] value for
+    /// `dbWriteFrom` — evidence minted where the snapshot lives, moved
+    /// across the channel; no snapshot reference ever leaves this worker.
     Witness,
     Close,
 }
@@ -522,7 +525,7 @@ enum SnapReply {
     Flag(Result<bool, WireError>),
     Row(Result<Option<Vec<Value>>, WireError>),
     Staleness(Result<StalenessWire, WireError>),
-    Witness(usize),
+    Witness(Result<Witness<SchemaDescriptor>, WireError>),
 }
 
 /// The opaque snapshot handle: one worker thread parked inside `Db::read`,
@@ -664,7 +667,7 @@ fn run_snapshot(db: Arc<Engine>, requests: Receiver<SnapReq>, replies: Sender<Sn
                         unsafe { &*(prepared as *const PreparedQuery<'static, SchemaDescriptor>) };
                     SnapReply::Staleness(staleness_wire(snap, prepared))
                 }
-                SnapReq::Witness => SnapReply::Witness(std::ptr::from_ref(snap) as usize),
+                SnapReq::Witness => SnapReply::Witness(snap.witness().map_err(|e| wire(&e))),
                 SnapReq::Close => break,
             };
             if replies.send(reply).is_err() {
@@ -892,7 +895,7 @@ impl Drop for TxWorker {
 fn run_tx(
     db: Arc<Engine>,
     sealed: Arc<Sealed>,
-    witness: Option<usize>,
+    witness: Option<Witness<SchemaDescriptor>>,
     requests: Receiver<TxReq>,
     replies: Sender<TxReply>,
 ) {
@@ -942,22 +945,10 @@ fn run_tx(
         }
     };
     let result = match witness {
-        Some(address) => {
-            // SAFETY: the address is the snapshot worker's own
-            // `SnapReq::Witness` reply — a `Snapshot` parked inside
-            // `Db::read` on a thread that outlives this entry: `dbWriteFrom`
-            // holds the snapshot handle's live borrow and blocks on the
-            // begin verdict, so the snapshot cannot close before
-            // `write_from` has read its generation.
-            #[expect(
-                unsafe_code,
-                reason = "the witness snapshot lives inside another worker's engine \
-                          closure and cannot cross the FFI; its address rides the \
-                          spawn while the JS thread blocks on the begin verdict"
-            )]
-            let snap = unsafe { &*(address as *const Snapshot<'static, SchemaDescriptor>) };
-            db.write_from(snap, serve)
-        }
+        // The witness is the engine's own minted value (`Snapshot::witness`
+        // on the snapshot worker), moved here — snapshot close order is
+        // irrelevant to soundness by representation.
+        Some(witness) => db.write_from_witness(witness, serve),
         None => db.write(serve),
     };
     let reply = match result {
@@ -996,7 +987,10 @@ fn violations_wire(sealed: &Sealed, violations: &Violations) -> Vec<ViolationWir
         .collect()
 }
 
-fn spawn_tx(inner: &DbInner, witness: Option<usize>) -> napi::Result<TxWorker> {
+fn spawn_tx(
+    inner: &DbInner,
+    witness: Option<Witness<SchemaDescriptor>>,
+) -> napi::Result<TxWorker> {
     if inner.tx_open.swap(true, Ordering::AcqRel) {
         return Err(marshal::err(
             "bumbledb: a write transaction is already open on this db handle \
@@ -1069,23 +1063,26 @@ pub fn db_write_begin(db: &External<DbHandle>) -> napi::Result<External<TxHandle
     }
 }
 
-/// Begins a WITNESSED write transaction (`Db::write_from`): the witness is
-/// the snapshot handle itself — evidence, never a caller-supplied integer
-/// (the engine's recorded refusal). A state-changing commit since the
-/// witness returns `generationMoved` as data; retry policy stays host-side.
+/// Begins a WITNESSED write transaction (`Db::write_from_witness`): the
+/// witness is the snapshot handle's own minted [`Witness`] value —
+/// evidence the snapshot worker constructs where the snapshot lives,
+/// never a caller-supplied integer (the engine's recorded refusal). A
+/// state-changing commit since the witness returns `generationMoved` as
+/// data; retry policy stays host-side.
 #[napi]
 pub fn db_write_from(
     db: &External<DbHandle>,
     snap: &External<SnapshotHandle>,
 ) -> napi::Result<WriteFromOutcome> {
     let inner = live(&db.inner, "db")?;
-    let witness = {
-        let snap_worker = live(&snap.inner, "snapshot")?;
-        match snap_worker.call(SnapReq::Witness)? {
-            SnapReply::Witness(address) => address,
-            _ => return Err(worker_died("snapshot")),
-        }
-    };
+    let witness = reply!(
+        {
+            let snap_worker = live(&snap.inner, "snapshot")?;
+            snap_worker.call(SnapReq::Witness)?
+        },
+        SnapReply::Witness,
+        "snapshot"
+    )?;
     let worker = spawn_tx(&inner, Some(witness))?;
     begin_outcome(worker)
 }
