@@ -15,14 +15,18 @@
  *   (`fixtures/legacy-store`, created by the pre-descriptor engine — see
  *   `fixtures/legacy-schema.ts` for provenance) refuses exhume with the
  *   typed `ErrExhumeNoDescriptor`, ONE fingerprint-matching `Db.open` under
- *   the creating schema (run in a child process, since an open in this
- *   process would hold the exclusive lock forever) back-fills the
- *   descriptor, and the same path then exhumes successfully;
+ *   the creating schema (run in a child process: an in-process `Db.open`
+ *   would hold the environment forever, and heed's single-open rule
+ *   refuses a second same-path open) back-fills the descriptor, and the
+ *   same path then exhumes successfully;
  * - lifetimes are disposables (R12): `Symbol.dispose` releases the engine
- *   handle and the store's exclusive lock deterministically (the same path
+ *   handle and its environment deterministically (the same path
  *   re-exhumes in-process after disposal), no `close` verb exists, a
  *   disposed value's verbs are typed refusals, disposal is idempotent, and
- *   an unknown relation name is a typed refusal.
+ *   an unknown relation name is a typed refusal;
+ * - the lock law is a writer law (R17): exhume never creates the advisory
+ *   `bumbledb.lock`, and reads a store whose data file and directory
+ *   carry no write bits — the archival lane on read-only media.
  */
 
 import assert from "node:assert/strict"
@@ -245,15 +249,15 @@ describe("the exhume surface against real stores", function suite() {
 		)
 	})
 
-	test("lifetimes are disposables (R12): Symbol.dispose releases the lock, and no close verb exists", async function surfaceShape() {
+	test("lifetimes are disposables (R12): Symbol.dispose releases the environment, and no close verb exists", async function surfaceShape() {
 		const surfaceCopy = path.join(tmpRoot, "store-copy-surface")
 		copyStore(storeDir, surfaceCopy)
 		{
 			/**
 			 * The `using` idiom: disposal at scope exit releases the engine
-			 * handle AND the store's exclusive lock deterministically — the
-			 * exact lifetime GC reclamation could never promise (066: retry
-			 * after a half-failed migration, a second forensic read).
+			 * handle AND its environment deterministically — the exact
+			 * lifetime GC reclamation could never promise (066: retry after
+			 * a half-failed migration, a second forensic read).
 			 */
 			using exhumed = await Db.exhume(surfaceCopy)
 			assert.equal("close" in exhumed, false, "no close verb exists — lifetimes are disposables, never close()")
@@ -271,8 +275,9 @@ describe("the exhume surface against real stores", function suite() {
 				exhumed.scan("Ghost")
 			}, /declares no relation Ghost/)
 		}
-		// The lock released at scope exit: the SAME path exhumes again
-		// in-process — deterministic, never a GC race.
+		// The environment released at scope exit: the SAME path exhumes
+		// again in-process (heed's single-open rule refuses a still-live
+		// handle) — deterministic, never a GC race.
 		using again = await Db.exhume(surfaceCopy)
 		assert.ok(again.descriptor.relations.length > 0, "the same-path re-exhume lands after disposal")
 	})
@@ -287,6 +292,44 @@ describe("the exhume surface against real stores", function suite() {
 		assert.throws(function scanAfterDispose() {
 			exhumed.scan("Specimen")
 		}, /disposed — its using scope already exited/)
+	})
+
+	test("the lock law is a writer law (R17): exhume takes no advisory lock and reads on read-only media", async function locklessArchival() {
+		const roCopy = path.join(tmpRoot, "store-copy-readonly")
+		copyStore(storeDir, roCopy)
+		{
+			// A first exhume while the directory is writable: LMDB re-mints
+			// its reader table (`lock.mdb`, stripped by the copy), and the
+			// advisory `bumbledb.lock` never appears — no lock is taken even
+			// where one could be.
+			using minted = await Db.exhume(roCopy)
+			assert.ok(minted.scan("Specimen").length > 0)
+		}
+		assert.equal(
+			fs.existsSync(path.join(roCopy, "bumbledb.lock")),
+			false,
+			"no advisory lock was created — the lock law is a writer law"
+		)
+		// Read-only media, as far as a chmod fixture can spell it: the data
+		// file and directory lose their write bits (LMDB's reader table
+		// stays writable — on a genuinely read-only FILESYSTEM mdb.c omits
+		// the lockfile under MDB_RDONLY).
+		fs.chmodSync(path.join(roCopy, "data.mdb"), 0o444)
+		fs.chmodSync(roCopy, 0o555)
+		try {
+			using exhumed = await Db.exhume(roCopy)
+			assert.deepEqual(
+				exhumed.descriptor.relations.map(function name(rel) {
+					return rel.name
+				}),
+				["Grade", "Specimen", "Reading"],
+				"the descriptor reads back from read-only media"
+			)
+			assert.ok(exhumed.scan("Specimen").length > 0, "rows read back from read-only media")
+		} finally {
+			fs.chmodSync(roCopy, 0o755)
+			fs.chmodSync(path.join(roCopy, "data.mdb"), 0o644)
+		}
 	})
 
 	test("the adoption loop: a legacy store refuses exhume, one open under the creating schema adopts it", async function adoption() {

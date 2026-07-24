@@ -385,8 +385,12 @@ pub struct ExhumeHandle {
 
 /// `dbExhume`'s domain outcome: the live handle, or one of the three
 /// adoption-era refusals as data (`descriptorMissing`, `formatMismatch`,
-/// `corruption`). Everything else — a missing path, a held exclusive lock —
-/// throws, exactly as `dbOpen`'s environment failures do.
+/// `corruption`). Everything else — a missing path, an unreadable
+/// environment — throws, exactly as `dbOpen`'s environment failures do.
+/// A writer's held lock is on neither list: the lock law is a writer law
+/// (ruled 2026-07-23, R17), so exhume opens lockless read-only — another
+/// process's live writer never turns the archival read away, and the
+/// lane works on read-only media outright.
 #[expect(
     clippy::large_enum_variant,
     reason = "the outcome is built once, marshaled to JS, and dropped — it \
@@ -449,10 +453,12 @@ pub fn exhume_descriptor(exhume: &External<ExhumeHandle>) -> napi::Result<Manife
     Ok(ManifestWire(exhumed.descriptor().clone().manifest()))
 }
 
-/// Closes the exhume handle, releasing its environment (and the store's
-/// exclusive lock) deterministically — the native teardown under the
-/// SDK's `Symbol.dispose` (ruled 2026-07-23, R12: lifetimes are
-/// disposables, never `close()` methods to remember).
+/// Closes the exhume handle, releasing its read-only environment
+/// deterministically — the native teardown under the SDK's
+/// `Symbol.dispose` (ruled 2026-07-23, R12: lifetimes are disposables,
+/// never `close()` methods to remember). No lock releases here because
+/// none was taken: the lock law is a writer law (ruled 2026-07-23, R17),
+/// and exhume reads lockless.
 #[napi]
 pub fn exhume_close(exhume: &External<ExhumeHandle>) -> napi::Result<()> {
     take_handle(&exhume.inner, "exhume")?;
