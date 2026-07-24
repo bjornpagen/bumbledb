@@ -285,12 +285,7 @@ pub fn write_families(
                 ours: ours.stats,
                 theirs: None,
                 facts_per_sec: None,
-                ghz: Some(crate::report::GhzReport {
-                    pre: ghz.pre,
-                    post: ghz.post,
-                    retried: ghz.retried,
-                    contaminated: ghz.contaminated(),
-                }),
+                ghz: Some(ghz.into()),
             });
             Ok(())
         };

@@ -185,12 +185,7 @@ pub(crate) fn fold(
                 theirs: theirs.stats,
                 ratio_p50,
                 work: ours.work,
-                ghz: Some(report::GhzReport {
-                    pre: stamp.pre,
-                    post: stamp.post,
-                    retried: stamp.retried,
-                    contaminated: stamp.contaminated(),
-                }),
+                ghz: Some(stamp.into()),
             });
         }
 

@@ -102,6 +102,20 @@ impl From<bumbledb::alloc_counter::AllocSnapshot> for AllocReport {
     }
 }
 
+/// The one stamp-to-report conversion (previously a per-lane "local
+/// twin" in the driver, the writes lane, and the lawful lane): the
+/// proxy bracket's plain-data form.
+impl From<crate::clockproxy::GhzStamp> for GhzReport {
+    fn from(stamp: crate::clockproxy::GhzStamp) -> Self {
+        Self {
+            pre: stamp.pre,
+            post: stamp.post,
+            retried: stamp.retried,
+            contaminated: stamp.contaminated(),
+        }
+    }
+}
+
 /// The execution digest: the planner-honesty numbers a human scans.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ExecDigest {

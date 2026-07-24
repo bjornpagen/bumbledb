@@ -510,12 +510,7 @@ pub fn bench_families(
             ratio_p50,
             alloc: alloc_report,
             exec: None, // the profile path is query-shaped; programs skip it
-            ghz: Some(report::GhzReport {
-                pre: merged.pre,
-                post: merged.post,
-                retried: merged.retried,
-                contaminated: merged.contaminated(),
-            }),
+            ghz: Some(merged.into()),
             p50_norm: ours.p50_norm,
         });
     }

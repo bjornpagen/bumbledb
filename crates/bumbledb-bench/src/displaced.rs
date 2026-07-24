@@ -692,12 +692,7 @@ pub fn bench_families(
             ratio_p50,
             alloc: alloc_report,
             exec: None, // the profile pass would time nothing new; the plan digest is the tests' job
-            ghz: Some(report::GhzReport {
-                pre: merged.pre,
-                post: merged.post,
-                retried: merged.retried,
-                contaminated: merged.contaminated(),
-            }),
+            ghz: Some(merged.into()),
             p50_norm: ours.p50_norm,
         });
     }

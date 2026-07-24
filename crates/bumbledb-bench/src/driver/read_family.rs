@@ -210,11 +210,10 @@ impl BenchRun<'_> {
                 types.clone(),
             )?);
         }
-        let mut cursor = 0usize;
+        let mut rotation = Rotation::new((0..sets.len()).collect::<Vec<_>>());
         let (theirs, ghz_theirs) = clockproxy::frequency_checked(|| {
             harness::measure_batched(proto, Modes::default(), batch, || {
-                let index = cursor;
-                cursor = (cursor + 1) % sets.len();
+                let index = rotation.next_index();
                 sqlite_run::sample_args(&mut sqlite_families[index], &sets[index])
             })
         })?;
@@ -234,7 +233,7 @@ impl BenchRun<'_> {
             ratio_p50,
             alloc,
             exec,
-            ghz: Some(super::ghz_report(ghz_ours.merge(ghz_theirs))),
+            ghz: Some(ghz_ours.merge(ghz_theirs).into()),
             p50_norm: ours.p50_norm,
         })
     }

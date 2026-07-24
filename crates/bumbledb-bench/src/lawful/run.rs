@@ -115,17 +115,6 @@ fn proto_of(family: &LawFamily, samples: Option<u32>) -> Protocol {
     }
 }
 
-/// The driver's stamp→report conversion, local twin (every lane module
-/// keeps its own private copy).
-fn ghz_report(stamp: clockproxy::GhzStamp) -> GhzReport {
-    GhzReport {
-        pre: stamp.pre,
-        post: stamp.post,
-        retried: stamp.retried,
-        contaminated: stamp.contaminated(),
-    }
-}
-
 /// The read-family ratio convention: ours p50 over theirs p50.
 #[expect(
     clippy::cast_precision_loss,
@@ -224,7 +213,7 @@ fn run_lane(
             theirs: theirs.stats,
             ratio_p50: ratio(ours.stats.p50, theirs.stats.p50),
             work: ours.work,
-            ghz: ghz_report(stamp),
+            ghz: stamp.into(),
         });
     }
 

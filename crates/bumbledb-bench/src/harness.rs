@@ -97,6 +97,19 @@ pub struct Modes {
 /// batches executes per sample and divides.
 pub const QUANTUM_FLOOR_NS: u64 = 500;
 
+/// Total work over total measured seconds — the one rate derivation
+/// (previously a per-lane "local twin" in the driver and the writes
+/// lane), owned by the module that owns [`Measurement`].
+#[must_use]
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "reporting accepts lossy integer-to-float conversion"
+)]
+pub fn facts_per_sec(m: &Measurement, samples: u32) -> f64 {
+    let total_secs = (m.stats.mean_ns * u64::from(samples)) as f64 / 1e9;
+    m.work as f64 / total_secs.max(f64::EPSILON)
+}
+
 /// Round-robin over a fixed param-set vector — the gate-style rotation
 /// (misses included exactly where the family's policy says so). Generic
 /// over the set representation: scenario worlds rotate plain
