@@ -315,7 +315,20 @@ fn randomized_differential_against_the_nested_loop_oracle() {
             let j = usize::try_from(next()).expect("64-bit") % (i + 1);
             order.swap(i, j);
         }
-        let plan = planned(&normalized, &schema, &order);
+        // The PRODUCTION lowering tail, GJ split included (009): the
+        // differential covers the plans prepare actually builds, not
+        // just the binary2fj + factor prefix.
+        let plan = {
+            let join_order = JoinOrder {
+                order: order.iter().map(|o| OccId(*o)).collect(),
+                estimates: vec![0; n],
+            };
+            let mut fj = binary2fj(&normalized, &join_order);
+            factor(&mut fj);
+            crate::plan::fj::gj_split(&mut fj);
+            validate(&fj, &normalized, &schema, vec![0; n], &BTreeSet::new())
+                .expect("valid plan")
+        };
 
         // The oracle: brute-force nested loops over the shape.
         let mut expected = BTreeSet::new();
