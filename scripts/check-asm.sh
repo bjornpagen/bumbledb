@@ -30,11 +30,17 @@ FAIL=0
 # The flag-free law, structural (docs/architecture/40-execution.md, the
 # configuration kernel; m2max.core.flag-port-asymmetry /
 # m2max.core.flag-strand-mlp): the Allen hot path carries zero scalar
-# flag-writing instructions — cmp/csel/adds/ccmp confine to the 3-port
-# triad dense and halve gathered miss lanes (~28 -> ~14) — so the gate
-# greps the kernel symbols' machine code for them (LLVM substitutes;
-# the source proves nothing). Calls are forbidden too: a bl would
-# launder a flag writer into another symbol.
+# flag-writing instructions — flag µops as a CLASS confine to the
+# 3-port triad and halve gathered miss lanes (~28 -> ~14) — so the gate
+# greps the kernel symbols' machine code for every NZCV-writing
+# spelling LLVM can substitute (cmp/cmn/ccmp/ccmn/tst/adds/adcs/subs/
+# sbcs/ands/bics/negs/ngcs/fcmp/fccmp; the source proves nothing),
+# for csel (the flag consumer), and for the structural witness: any
+# condition-code branch (b.<cond>) proves a flag write occurred,
+# whatever mnemonic produced it — the kernels' legitimate branches
+# (cbz/cbnz/tbz/tbnz) read a register, never NZCV, and stay legal.
+# Calls are forbidden too: a bl/blr would launder a flag writer into
+# another symbol.
 no_flag_writers_inside() {
     sym="$1"; label="$2"
     if ! grep -qE "^[0-9a-f]+ <[^>]*${sym}[^>]*>:" "$DUMP"; then
@@ -46,12 +52,12 @@ no_flag_writers_inside() {
         /^[0-9a-f]+ <.*>:/ { insym = (index($0, pat) != 0) }
         insym { print }
     ' "$DUMP" > "$SYM"
-    if grep -E "[[:space:]](cmp|csel|adds|ccmp|bl)[[:space:]]" "$SYM" > "$BAD"; then
-        echo "check-asm: FAIL [$label] — flag writers (or calls) inside '${sym}':"
+    if grep -E "[[:space:]](cmp|cmn|ccmp|ccmn|tst|adds|adcs|subs|sbcs|ands|bics|negs|ngcs|csel|fcmp|fccmp|bl|blr)[[:space:]]|[[:space:]]b\.[a-z]{2}[[:space:]]" "$SYM" > "$BAD"; then
+        echo "check-asm: FAIL [$label] — flag writers (or b.cond/calls) inside '${sym}':"
         sed 's/^/  /' "$BAD" | head -8
         FAIL=1
     else
-        echo "check-asm: ok   [$label] ${sym} free of scalar flag writers (cmp/csel/adds/ccmp)"
+        echo "check-asm: ok   [$label] ${sym} free of scalar flag writers (the NZCV class, csel, b.cond, calls)"
     fi
 }
 
