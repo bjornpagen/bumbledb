@@ -562,6 +562,15 @@ impl<'a> RuleWitness<'a> {
         self.rule.written
     }
 
+    /// The full mint set — every written rule this disjunct belongs to
+    /// (`written`'s uncompressed form; a cross-written collapse erases
+    /// `written` but unions here). The ray-probe verdict fold (R6)
+    /// groups disjuncts by it.
+    #[must_use]
+    pub fn minted(&self) -> &[u16] {
+        &self.rule.minted
+    }
+
     /// The resolved structural type of one of this rule's variables.
     ///
     /// # Panics

@@ -670,6 +670,108 @@ fn a_same_atom_eq_protects_the_measure_from_the_ray() {
     assert_eq!(run(&query), vec![vec![10]]);
 }
 
+/// The verdict algebra (ruled 2026-07-23, R6): a binding raises iff its
+/// Kleene-folded verdict is Ray. Fails absorbs the conjunction — a
+/// failing negated atom (finding 024's engine half: the differential's
+/// op-108 shape) or a failing cross-atom conjunct suppresses the ray —
+/// and Holds absorbs the disjunction: a sibling disjunct that holds
+/// saves the binding whether or not this one measures a ray. Only a
+/// binding where some disjunct rays and none holds raises.
+#[test]
+fn the_ray_verdict_folds_in_the_kleene_lattice() {
+    let dir = TempDir::new("measure-kleene");
+    let schema = measure_schema();
+    let env = Environment::create(dir.path(), &schema).expect("create");
+    insert_sessions(
+        &env,
+        &schema,
+        &[
+            (1, 10, 0, (0, 4)),        // bounded: measure 4
+            (2, 20, 0, (7, u64::MAX)), // the ray [7, ∞)
+        ],
+    );
+    insert_windows(&env, &schema, &[(1, 10, 2), (2, 20, 2)]);
+    let cache = ImageCache::new(&schema);
+    let txn = env.read_txn().expect("txn");
+    let session_atom = Atom {
+        source: crate::ir::AtomSource::Edb(SESSION),
+        bindings: vec![
+            (FieldId(1), Term::Var(VarId(0))),
+            (FieldId(3), Term::Var(VarId(1))),
+        ],
+    };
+    let measure_lt = |bound: u64| {
+        ConditionTree::Leaf(Comparison {
+            op: CmpOp::Lt,
+            lhs: Term::Measure(VarId(1)),
+            rhs: Term::Literal(Value::U64(bound)),
+        })
+    };
+    let tag_eq = |tag: u64| {
+        ConditionTree::Leaf(Comparison {
+            op: CmpOp::Eq,
+            lhs: Term::Var(VarId(0)),
+            rhs: Term::Literal(Value::U64(tag)),
+        })
+    };
+
+    // Fails absorbs And, the anti-join conjunct: every session tag has
+    // a Window, so the negated atom fails EVERY binding — the ray's
+    // verdict is Fails, the result is empty, and no error exists (the
+    // reach-based poison this pins against raised here).
+    let negated = Query::single(Rule {
+        finds: vec![
+            FindTerm::Var(VarId(0)),
+            FindTerm::Aggregate {
+                op: AggOp::Count,
+                over: None,
+            },
+        ],
+        atoms: vec![session_atom.clone()],
+        negated: vec![Atom {
+            source: crate::ir::AtomSource::Edb(WINDOW),
+            bindings: vec![(FieldId(1), Term::Var(VarId(0)))],
+        }],
+        conditions: vec![measure_lt(100)],
+    });
+    let mut prepared = prepare(&txn, &cache, &schema, &negated).expect("prepare");
+    let out = prepared
+        .execute_collect(&txn, &cache, &[])
+        .expect("the failing negation absorbs the ray");
+    assert_eq!(out.len(), 0, "every binding Fails; none rays");
+
+    // Holds absorbs Or: the ray's own disjunct rays, but its sibling
+    // holds at that binding — the binding is saved, never raised.
+    let saved = Query::single(Rule {
+        finds: vec![FindTerm::Var(VarId(0))],
+        atoms: vec![session_atom.clone()],
+        negated: vec![],
+        conditions: vec![ConditionTree::Or(vec![tag_eq(20), measure_lt(100)])],
+    });
+    let mut prepared = prepare(&txn, &cache, &schema, &saved).expect("prepare");
+    let out = prepared
+        .execute_collect(&txn, &cache, &[])
+        .expect("the holding sibling disjunct saves the ray binding");
+    assert_eq!(u64_answers(&out, 1), vec![vec![10], vec![20]]);
+
+    // Ray propagates: at the ray's binding no disjunct holds and one
+    // rays — the fold is Ray and the typed error raises, offending
+    // words included.
+    let poisoned = Query::single(Rule {
+        finds: vec![FindTerm::Var(VarId(0))],
+        atoms: vec![session_atom],
+        negated: vec![],
+        conditions: vec![ConditionTree::Or(vec![tag_eq(999), measure_lt(100)])],
+    });
+    let mut prepared = prepare(&txn, &cache, &schema, &poisoned).expect("prepare");
+    match prepared.execute_collect(&txn, &cache, &[]) {
+        Err(Error::MeasureOfRay { start, end }) => {
+            assert_eq!((start, end), (7, u64::MAX), "the offending interval words");
+        }
+        other => panic!("expected MeasureOfRay, got {other:?}"),
+    }
+}
+
 /// The measure-keyed Arg restriction (ruled 2026-07-23, R5):
 /// Q(tag, ArgMax(span, Duration(span))) :- Session(tag, span) — "the
 /// longest interval per group", end to end. The restriction sweeps the

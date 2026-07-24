@@ -399,6 +399,7 @@ fn lower_rules(
             let written = u16::try_from(written).expect("rule count capped");
             distribute(rule).into_iter().map(move |mut lowered| {
                 lowered.written = Some(written);
+                lowered.minted = vec![written];
                 lowered
             })
         })

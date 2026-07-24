@@ -86,7 +86,7 @@ fn reset_retains_selection_capacity() {
     let mut colt = Colt::new(all(&image), &scalars(&[0]), vec![vec![1]]);
     colt.select(&[vec![3]]).expect("key 3 exists");
     let first = colt.watermark();
-    colt.reset(apply(&image, &[], &[], Vec::new()).expect("no measure filters"));
+    colt.reset(apply(&image, &[], &[], Vec::new()));
     assert_eq!(colt.watermark(), 1, "reset empties the pools");
     colt.select(&[vec![3]]).expect("key 3 exists");
     assert_eq!(colt.watermark(), first, "same shape, same footprint");

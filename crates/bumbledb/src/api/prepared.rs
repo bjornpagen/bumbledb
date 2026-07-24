@@ -238,6 +238,12 @@ pub struct PreparedQuery<'s, S> {
     /// projected tuples, or head projections under the multi-rule
     /// aggregate regime — so the seen-set spanning rules is the union.
     sink: EitherSink,
+    /// Per written rule with measure conditions: its ray probes and
+    /// compiled Kleene fold ([`RayProbeSet`] — the verdict algebra,
+    /// ruled 2026-07-23, R6), run after the rule loop; the first Ray
+    /// verdict raises the typed `MeasureOfRay`. Empty for measure-free
+    /// programs and (deferred) recursive programs.
+    ray_probes: Vec<RayProbeSet>,
     /// The rule-shared binding-slot scratch (docs/architecture/
     /// 40-execution.md § the rule loop): written in place by each rule's
     /// recursion, re-sized to the rule's slot layout at rule entry —
@@ -353,6 +359,36 @@ struct FreeJoinRule {
     /// [`PreparedQuery::staleness`] and the stats surface, never by
     /// execution.
     pinned: Box<[OccurrencePin]>,
+}
+
+/// One written rule's ray probes (the Kleene verdict algebra, ruled
+/// 2026-07-23, R6; `docs/architecture/20-query-ir.md` § the measure):
+/// the mainline rules never render Ray — measure filters and residuals
+/// drop rays, because a ray never *Holds* — so the Ray verdict is
+/// rendered here, after the rule loop: per measured interval variable,
+/// one probe rule (the written rule's atoms, negations, and
+/// memberships, conditions replaced by the is-ray filter) enumerates
+/// the ray-carrying bindings, and the written rule's compiled Kleene
+/// fold ([`crate::exec::verdict::CompiledVerdict`]) arbitrates each —
+/// a binding whose folded verdict is Ray raises the typed
+/// `MeasureOfRay`. Groups form on the mint set (`RuleWitness::minted`),
+/// so every written rule folds exactly its own disjuncts even across a
+/// cross-written collapse.
+struct RayProbeSet {
+    /// The written rule's Kleene fold, compiled against the probes'
+    /// shared slot layout (one written rule, one variable scope).
+    verdict: crate::exec::verdict::CompiledVerdict,
+    probes: Vec<RayProbe>,
+}
+
+/// One measured variable's probe: an ordinary Free Join rule (plan,
+/// executor, memo, resolved-filter scratch — the `FreeJoinRule`
+/// machinery verbatim) run into the [`crate::exec::verdict::RayArbiter`].
+struct RayProbe {
+    rule: FreeJoinRule,
+    /// The probed variable's first binding slot — the offending
+    /// interval's two encoded words for the error payload.
+    measured_slot: usize,
 }
 
 struct KeyProbeRule {

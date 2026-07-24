@@ -92,8 +92,9 @@ pub fn allen_keep(codes: &[u8], mask_bits: u16, keep: &mut [u8]) {
 }
 
 /// Scalar reference of [`super::filter_duration_range_u64`]: the ray
-/// test first (`end == MAX` is the first-in-scan-order error), then the
-/// exact encoded-word subtraction against the inclusive range.
+/// test first (`end == MAX` never survives — its verdict is Ray, the
+/// ray-probe pass's territory, ruled 2026-07-23, R6), then the exact
+/// encoded-word subtraction against the inclusive range.
 #[cfg(test)]
 pub fn filter_duration_range_u64(
     starts: &[u64],
@@ -101,20 +102,19 @@ pub fn filter_duration_range_u64(
     lo: u64,
     hi: u64,
     out: &mut Vec<u32>,
-) -> Result<(), usize> {
+) {
     let start = out.len();
     out.resize(start + starts.len(), 0);
     let mut write = start;
     for i in 0..starts.len() {
-        if ends[i] == u64::MAX {
-            return Err(i);
-        }
-        let duration = ends[i] - starts[i];
+        let keep = ends[i] != u64::MAX && {
+            let duration = ends[i] - starts[i];
+            (lo..=hi).contains(&duration)
+        };
         out[write] = u32::try_from(i).expect("positions fit u32");
-        write += usize::from((lo..=hi).contains(&duration));
+        write += usize::from(keep);
     }
     out.truncate(write);
-    Ok(())
 }
 
 /// Scalar reference of [`super::compact_u32_by_mask`]: the fully

@@ -101,16 +101,13 @@ pub fn filter_any_point_in_u64(starts: &[u64], ends: &[u64], points: &[u64], out
 /// Encoded-word subtraction is exact for both element types: the
 /// encodings are unit-spaced order-preserving maps onto u64 words (u64
 /// the identity, I64 the +2⁶³ bias, which cancels), and the constructor
-/// invariant `end > start` keeps the difference positive. The ray test
-/// is fused as one more lane compare; on a hit the mask's first set
-/// lane names the first offending position in scan order.
-///
-/// # Errors
-///
-/// The first ray in scan order (`ends[i] == u64::MAX` — ∞ in both
-/// element encodings): a ray has no finite measure, and the caller
-/// raises the typed [`crate::Error::MeasureOfRay`]. `out`'s contents are
-/// unspecified after an error.
+/// invariant `end > start` keeps the difference positive. A ray
+/// (`ends[i] == u64::MAX` — ∞ in both element encodings) has no finite
+/// measure and never survives the comparison — its verdict is Ray, not
+/// Fails, and the ray-probe pass renders it (the Kleene verdict
+/// algebra, ruled 2026-07-23, R6; `docs/architecture/20-query-ir.md`
+/// § the measure): the ray test is fused as one more lane compare
+/// masking rays out of the survivors.
 #[expect(
     unsafe_code,
     reason = "the localized unsafe operation has a documented safety invariant"
@@ -121,7 +118,7 @@ pub fn filter_duration_range_u64(
     lo: u64,
     hi: u64,
     out: &mut Vec<u32>,
-) -> Result<(), usize> {
+) {
     debug_assert_eq!(starts.len(), ends.len(), "an interval span's column pair");
     let start = out.len();
     out.reserve(starts.len());
@@ -136,32 +133,29 @@ pub fn filter_duration_range_u64(
         let base = chunk_idx * U64_LANES;
         let s = Simd::from_array(*chunk);
         let e = Simd::<u64, U64_LANES>::from_slice(&ends[base..base + U64_LANES]);
-        let ray = e.simd_eq(inf);
-        if ray.any() {
-            let lane = usize::try_from(ray.to_bitmask().trailing_zeros()).expect("lane index");
-            return Err(base + lane);
-        }
+        let bounded = !e.simd_eq(inf);
+        // A ray lane's difference is `MAX − start` — meaningless, and
+        // its `bounded` bit is already clear, so it never survives.
         let duration = e - s;
-        let mask = duration.simd_ge(lo_v) & duration.simd_le(hi_v);
+        let mask = bounded & duration.simd_ge(lo_v) & duration.simd_le(hi_v);
         (write, pos) = write_survivor_bits::<U64_LANES>(out, write, pos, mask.to_bitmask());
     }
     for i in tail_start..starts.len() {
-        if ends[i] == u64::MAX {
-            return Err(i);
-        }
-        let duration = ends[i] - starts[i];
+        let keep = ends[i] != u64::MAX && {
+            let duration = ends[i] - starts[i];
+            (lo..=hi).contains(&duration)
+        };
         // SAFETY: the reserve above owns one slot per visited position
         // and the cursor advances at most once each, so the store lands
         // in owned capacity; `set_len` exposes only cursor-written slots.
         unsafe { out.as_mut_ptr().add(write).write(pos) };
-        write += usize::from((lo..=hi).contains(&duration));
+        write += usize::from(keep);
         pos = pos.wrapping_add(1);
     }
     // SAFETY: every slot in `[start, write)` was cursor-written above
     // and `write <= start + starts.len() <= capacity` (`u32` carries no
     // drop obligation).
     unsafe { out.set_len(write) };
-    Ok(())
 }
 
 /// Branchless cursor-write over the whole column: lane chunks through

@@ -112,7 +112,7 @@ pub(super) fn run_join<S: crate::exec::run::Sink, C: crate::exec::run::Counters>
                 // first spare-starved rebind takes it back.
                 buffer = pooled;
             }
-            let view = apply(image, &resolved_filters[occ_idx], &[], buffer)?;
+            let view = apply(image, &resolved_filters[occ_idx], &[], buffer);
             build_span.set_args(occ_idx as u64, view.len() as u64);
             let old = memo.colts[occ_idx].reset(view);
             memo.spare_buffers[occ_idx] = old.recycle();
@@ -152,7 +152,7 @@ pub(super) fn run_join<S: crate::exec::run::Sink, C: crate::exec::run::Counters>
         );
         let image = cache.get_or_build(txn, schema, relation)?;
         let buffer = std::mem::take(&mut memo.spare_buffers[occ_idx]);
-        let view = apply(&image, &resolved_filters[occ_idx], &[], buffer)?;
+        let view = apply(&image, &resolved_filters[occ_idx], &[], buffer);
         build_span.set_args(occ_idx as u64, view.len() as u64);
         let old = memo.colts[occ_idx].reset(view);
         memo.spare_buffers[occ_idx] = old.recycle();

@@ -323,6 +323,11 @@ impl<S> PreparedQuery<'_, S> {
             });
         }
         if ran {
+            // The ray-probe pass (R6), execute-parity: profiling a
+            // query whose Kleene verdict is Ray raises exactly like
+            // executing it. Uncounted — the arbiter consumes no
+            // answers and belongs to no rule's node table.
+            self.run_ray_probes(txn, cache, &mut crate::exec::run::NoopCounters)?;
             finalize(
                 &mut self.sink,
                 &mut self.answer_scratch,

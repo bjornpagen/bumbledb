@@ -145,11 +145,7 @@ fn hoisted_gathers_match_the_per_position_reference() {
 
     for &size in &[1usize, 3, 8, 64, 128] {
         // Identity root suffix over (k, b): word + byte columns.
-        let mut colt = Colt::new(
-            apply(&image, &[], &[], Vec::new()).expect("no measure filters"),
-            &[],
-            vec![vec![0, 2]],
-        );
+        let mut colt = Colt::new(apply(&image, &[], &[], Vec::new()), &[], vec![vec![0, 2]]);
         let got = drain_at(&mut colt, Colt::root(), 0, size);
         let expected: Vec<(Vec<u64>, Cursor)> = (0..n_rows)
             .map(|pos| {
@@ -163,7 +159,7 @@ fn hoisted_gathers_match_the_per_position_reference() {
 
         // Chunked child suffix over (v, b) under each key.
         let mut colt = Colt::new(
-            apply(&image, &[], &[], Vec::new()).expect("no measure filters"),
+            apply(&image, &[], &[], Vec::new()),
             &[],
             vec![vec![0], vec![1, 2]],
         );

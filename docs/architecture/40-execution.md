@@ -391,6 +391,23 @@ and stays a non-goal.
 - **Key-probe rules** union through the sink like any other rule; the direct
   no-sink decode lane applies only to the single-rule key-probe program (the union must
   hear every rule).
+- **The ray-probe pass (ruled 2026-07-23, R6).** The rule loop never renders
+  the Ray verdict: a measure filter or residual DROPS a ray (a ray never
+  *Holds*, and its Fails-vs-Ray distinction is not the mainline's to make).
+  After the loop, each written rule with measure conditions runs one probe
+  per measured interval variable — the rule's atoms, negations, and
+  memberships with the conditions replaced by an `Allen(INTERSECTS)` filter
+  against the ray probe `[MAX−1, ∞)`, which only rays intersect — through
+  the ordinary Free Join machinery into an arbiter sink
+  (`exec/verdict.rs`). The arbiter folds the written rule's compiled
+  three-valued verdict (Or over its lowered disjuncts of And over their
+  sealed comparisons — equal to the written tree's Kleene fold by
+  distributivity) at every enumerated binding; the first Ray raises the
+  typed `MeasureOfRay` with the offending words. Probes group on the
+  witness's mint set, so a cross-written collapse still folds each rule
+  over exactly its own disjuncts. Recursive programs defer the pass (no
+  probe over a transient `Idb` image yet); the degenerate embedding probes
+  like any query.
 - **The view memo under rules:** occurrences of one relation in different rules share
   the image `Arc` by construction (one `ImageCache`, one build per
   `(relation, storage_tx_id)`), and each occurrence's filtered views memoize per

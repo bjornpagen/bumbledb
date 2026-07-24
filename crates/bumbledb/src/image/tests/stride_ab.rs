@@ -192,7 +192,7 @@ fn scan(
     buf: Vec<u32>,
 ) -> (Duration, Vec<u32>) {
     let t = Instant::now();
-    let view = apply(image, preds, &[], buf).expect("no measure predicates");
+    let view = apply(image, preds, &[], buf);
     let dt = t.elapsed();
     assert_eq!(view.len(), 0, "the last predicate rejects every row");
     (dt, view.recycle())

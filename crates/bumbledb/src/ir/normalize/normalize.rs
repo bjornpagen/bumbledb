@@ -55,6 +55,56 @@ fn normalize_rule(
     signatures: &[&crate::ir::validate::Predicate],
     rule: &RuleWitness<'_>,
 ) -> NormalizedQuery {
+    normalize_rule_with(schema, signatures, rule, rule.classified_comparisons())
+}
+
+/// A written rule's **ray probe** (the Kleene verdict algebra, ruled
+/// 2026-07-23, R6): the rule's atoms, negations, and memberships with
+/// every condition replaced by ONE filter — `measured` intersects the
+/// ray probe `[MAX−1, ∞)`, which only rays do (bounded ends encode
+/// strictly below the ∞ sentinel and half-open adjacency excludes the
+/// touch) — so the probe enumerates exactly the bindings whose measured
+/// interval is a ray. The prepared query folds each one's verdict over
+/// the written rule's disjuncts (`exec/verdict.rs`) and raises
+/// `MeasureOfRay` iff some verdict is Ray.
+#[must_use]
+pub fn normalize_ray_probe(
+    schema: &Schema,
+    signatures: &[&crate::ir::validate::Predicate],
+    rule: &RuleWitness<'_>,
+    measured: VarId,
+) -> NormalizedQuery {
+    let probe = match rule.var_type(measured) {
+        ValueType::Interval {
+            element: bumbledb_theory::schema::IntervalElement::U64,
+            ..
+        } => Value::IntervalU64(
+            bumbledb_theory::interval::Interval::ray(u64::MAX - 1).expect("below the ceiling"),
+        ),
+        ValueType::Interval {
+            element: bumbledb_theory::schema::IntervalElement::I64,
+            ..
+        } => Value::IntervalI64(
+            bumbledb_theory::interval::Interval::ray(i64::MAX - 1).expect("below the ceiling"),
+        ),
+        other => unreachable!("validated: the measure reads an interval variable, got {other:?}"),
+    };
+    let is_ray = crate::ir::validate::ClassifiedComparison::AllenVarConst {
+        var: measured,
+        other: crate::ir::validate::SealedConst::Literal(probe),
+        mask: crate::image::view::MaskConst::Mask(bumbledb_theory::allen::AllenMask::INTERSECTS),
+    };
+    normalize_rule_with(schema, signatures, rule, std::slice::from_ref(&is_ray))
+}
+
+/// [`normalize_rule`]'s body over an explicit comparison list — the one
+/// extra caller is the ray probe, whose comparisons are not the rule's.
+fn normalize_rule_with(
+    schema: &Schema,
+    signatures: &[&crate::ir::validate::Predicate],
+    rule: &RuleWitness<'_>,
+    comparisons: &[crate::ir::validate::ClassifiedComparison],
+) -> NormalizedQuery {
     let positive = rule.rule().atoms.len();
     let mut occurrences: Vec<Occurrence> = Vec::with_capacity(positive + rule.rule().negated.len());
     for (idx, atom) in rule.rule().atoms.iter().enumerate() {
@@ -90,7 +140,7 @@ fn normalize_rule(
         .collect();
 
     let (residuals, word_residuals, allen_residuals, duration_residuals) =
-        place_comparisons(rule.classified_comparisons(), &mut occurrences);
+        place_comparisons(comparisons, &mut occurrences);
 
     // The binding-slot widths — the two-slot interval layout, decided at
     // [`SlotWidth`] and exported here to the plan witness.

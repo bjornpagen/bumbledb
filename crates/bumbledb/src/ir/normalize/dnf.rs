@@ -37,6 +37,14 @@ pub struct LoweredRule {
     /// `docs/architecture/20-query-ir.md` § aggregation); any other set
     /// is hand-written and keys the head projection.
     pub written: Option<u16>,
+    /// The full mint set: EVERY written rule this disjunct belongs to —
+    /// `written`'s uncompressed form, unioned by [`collapse`] where a
+    /// cross-written merge erases `written`. The ray-probe verdict fold
+    /// (the Kleene algebra, ruled 2026-07-23, R6) reads it: a written
+    /// rule's verdict at a binding is the Or over exactly its own
+    /// disjuncts, so a collapsed duplicate must still count for each
+    /// rule that minted it.
+    pub minted: Vec<u16>,
 }
 
 /// The nesting depth of a rule's condition trees — a leaf is depth 1, a
@@ -107,6 +115,7 @@ pub fn distribute(rule: &Rule) -> Vec<LoweredRule> {
             negated: rule.negated.clone(),
             conditions,
             written: None,
+            minted: Vec::new(),
         })
         .collect()
 }
@@ -162,8 +171,15 @@ pub fn collapse(rules: Vec<LoweredRule>) -> Vec<LoweredRule> {
             // survivor shared vocabulary of neither: provenance clears,
             // so the set reads as hand-written (the R2 provenance split
             // is judged on every member carrying ONE written index).
+            // The mint SET unions regardless — the verdict fold (R6)
+            // still counts the disjunct for every rule that wrote it.
             if earlier.written != rule.written {
                 earlier.written = None;
+            }
+            for idx in rule.minted {
+                if !earlier.minted.contains(&idx) {
+                    earlier.minted.push(idx);
+                }
             }
         } else {
             kept.push(rule);

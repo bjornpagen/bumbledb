@@ -406,9 +406,6 @@ impl Executor {
         // The poison drain: set-once, so the first typed stop IS the
         // execution's one honest answer — no precedence to adjudicate.
         match self.poison.take() {
-            Some(super::Poison::MeasureOfRay([start, end])) => {
-                Err(crate::error::Error::MeasureOfRay { start, end })
-            }
             Some(super::Poison::OriginOverflow) => Err(crate::error::Error::Overflow(
                 crate::error::OverflowKind::OriginCapacity,
             )),

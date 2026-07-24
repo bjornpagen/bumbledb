@@ -178,8 +178,7 @@ fn colts_with_params(
                     &occurrence.filters,
                     params,
                     Vec::new(),
-                )
-                .expect("no measure filters"),
+                ),
                 &[],
                 columns,
             )

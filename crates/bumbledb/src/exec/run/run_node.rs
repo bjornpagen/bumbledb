@@ -347,9 +347,10 @@ impl Executor {
                 crate::exec::kernel::compact_u32_by_mask(&mut scratch.survivors, &scratch.mask);
             }
             // Measure residuals: per survivor, read the interval pair at
-            // the word base, test the ray — `end == MAX` poisons the
-            // execution with the offending words (`execute` raises the
-            // typed `MeasureOfRay`) — subtract, and compare the u64 word;
+            // the word base, test the ray — a ray never survives the
+            // comparison (its verdict is Ray, not Fails; the Kleene
+            // verdict algebra, R6 — the prepared query's ray-probe pass
+            // renders it) — subtract, and compare the u64 word;
             // survivors compact on the same cursor-write. The gathered
             // shape stays scalar per the standing rule (the dense
             // stride-1 twin is the view kernel,
@@ -357,11 +358,6 @@ impl Executor {
             for (r_idx, (interval_src, scalar_src)) in scratch.duration_sources.iter().enumerate() {
                 let op = self.duration_residual_slots[node_idx][r_idx].0.op;
                 let n = scratch.survivors.len();
-                // The ray-poison break leaves a mask tail unwritten —
-                // legal only because that path `break 'outer`s before
-                // the mask is read (the compaction is skipped);
-                // grow-only sizing keeps exactly that write-before-read
-                // truth.
                 grow_scratch(&mut scratch.mask, n);
                 for k in 0..n {
                     let e = scratch.survivors[k];
@@ -371,17 +367,9 @@ impl Executor {
                         Source::Slot(slot) => bindings.get(slot + offset),
                     };
                     let (start, end) = (value(interval_src, 0), value(interval_src, 1));
-                    if end == u64::MAX {
-                        self.poison(super::Poison::MeasureOfRay([start, end]));
-                        break;
-                    }
-                    let pass = op.compare(&(end - start), &value(scalar_src, 0));
+                    let pass = end != u64::MAX && op.compare(&(end - start), &value(scalar_src, 0));
                     counters.residual(node_idx, pass);
                     scratch.mask[k] = u8::from(pass);
-                }
-                if self.poison.is_some() {
-                    counters.phase_end(node_idx, JoinPhase::Residual);
-                    break 'outer;
                 }
                 crate::exec::kernel::compact_u32_by_mask(&mut scratch.survivors, &scratch.mask);
             }

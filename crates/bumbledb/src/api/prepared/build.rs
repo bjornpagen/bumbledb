@@ -65,6 +65,10 @@ pub(crate) fn prepare<'s, S>(
 /// gapped yet roster-valid, and its bind contract must carry the unified
 /// table — re-validating it under the query roster would refuse the
 /// former and shrink the latter.
+#[expect(
+    clippy::too_many_lines,
+    reason = "the prepare pipeline reads as one protocol: normalize, ground, per-rule prepare, probes, artifacts"
+)]
 fn prepare_witnessed<'s, S>(
     txn: &ReadTxn<'_>,
     cache: &ImageCache,
@@ -167,17 +171,41 @@ fn prepare_witnessed<'s, S>(
             )
         },
     );
-    // The rule-shared binding-slot scratch, sized at the rules'
-    // high-water so the per-rule resize never allocates.
+    // The ray probes (the Kleene verdict algebra, ruled 2026-07-23,
+    // R6): per written rule with measure conditions, one probe per
+    // measured variable plus the rule's compiled verdict fold — the
+    // mainline rules drop rays (a ray never Holds), so the probes are
+    // the ONE place a Ray verdict is rendered, after the rule loop.
+    // A dead program skips them at execution (`Program::Empty` returns
+    // before the rule loop; a dead disjunct's constant refutation is a
+    // Fails leaf, so its verdict is never Ray anyway).
+    let ray_probes = if rules.is_empty() {
+        Vec::new()
+    } else {
+        prepare_ray_probes(txn, cache, schema, witness)?
+    };
+
+    // The rule-shared binding-slot scratch, sized at the rules' AND
+    // probes' high-water so the per-rule resize never allocates.
     let bindings = Bindings::new(
         rules
             .iter()
             .map(PreparedRule::slot_count)
+            .chain(
+                ray_probes
+                    .iter()
+                    .flat_map(|set| set.probes.iter().map(|p| p.rule.plan.slot_count())),
+            )
             .max()
             .unwrap_or(0),
     );
 
-    let unresolved_literals = rules.iter().map(pending_literals).sum();
+    let unresolved_literals = rules.iter().map(pending_literals).sum::<u32>()
+        + ray_probes
+            .iter()
+            .flat_map(|set| &set.probes)
+            .map(|probe| plan_pending_literals(&probe.rule.plan))
+            .sum::<u32>();
     let program = if rules.is_empty() {
         Program::Empty
     } else {
@@ -196,6 +224,7 @@ fn prepare_witnessed<'s, S>(
         unresolved_literals,
         missed_params: Vec::new(),
         sink,
+        ray_probes,
         bindings,
         answer_scratch: Vec::new(),
         resolve_memo: ResolveMemo::new(),
@@ -509,6 +538,13 @@ pub(crate) fn prepare_program<'s, S>(
         unresolved_literals,
         missed_params: Vec::new(),
         sink,
+        // Ray probes over a recursive program are DEFERRED: an `Idb`
+        // occurrence's probe would need the fixpoint's transient images
+        // (the driver's round machinery), and no generator exercises a
+        // measure condition through a cycle today. The degenerate
+        // embedding routes through `prepare_witnessed` and probes like
+        // any query.
+        ray_probes: Vec::new(),
         bindings,
         answer_scratch: Vec::new(),
         resolve_memo: ResolveMemo::new(),
@@ -854,6 +890,155 @@ fn prepare_rule_variant(
         memo,
         pinned: pins.into_boxed_slice(),
     }))
+}
+
+/// The ray probes (the Kleene verdict algebra, ruled 2026-07-23, R6):
+/// per written rule with measure conditions, one probe rule per
+/// measured interval variable — the rule's atoms, negations, and
+/// memberships with every condition replaced by the is-ray filter
+/// (`ir/normalize::normalize_ray_probe`) — plus the rule's compiled
+/// verdict fold over ALL its lowered disjuncts (dead and subsumed
+/// included: a constant refutation is a Fails leaf and folds itself
+/// out). Grouping reads the mint set, not `written`: a cross-written
+/// collapse erases the latter but unions the former, so each rule
+/// folds exactly its own disjunct set. Disjuncts of one written rule
+/// share one variable scope — one slot layout serves the group's
+/// probes and its verdict.
+fn prepare_ray_probes(
+    txn: &ReadTxn<'_>,
+    cache: &ImageCache,
+    schema: &Schema,
+    witness: &crate::ir::validate::ValidatedQuery,
+) -> Result<Vec<super::RayProbeSet>> {
+    use crate::ir::validate::ClassifiedComparison;
+    let mut groups: Vec<u16> = witness
+        .rules()
+        .flat_map(|rule| rule.minted().to_vec())
+        .collect();
+    groups.sort_unstable();
+    groups.dedup();
+    let mut sets = Vec::new();
+    for written in groups {
+        let members: Vec<crate::ir::validate::RuleWitness<'_>> = witness
+            .rules()
+            .filter(|rule| rule.minted().contains(&written))
+            .collect();
+        let mut measured: Vec<crate::ir::VarId> = members
+            .iter()
+            .flat_map(crate::ir::validate::RuleWitness::classified_comparisons)
+            .filter_map(|comparison| match comparison {
+                ClassifiedComparison::Duration { interval, .. } => Some(*interval),
+                _ => None,
+            })
+            .collect();
+        measured.sort_unstable();
+        measured.dedup();
+        if measured.is_empty() {
+            continue;
+        }
+        // Any member speaks for the group's atom scope: disjuncts of
+        // one written rule are clones of it, and a cross-written
+        // duplicate collapsed only by body identity.
+        let template = members[0];
+        let mut probes = Vec::with_capacity(measured.len());
+        for var in measured {
+            let normalized = crate::ir::normalize::normalize_ray_probe(schema, &[], &template, var);
+            if normalized.dead.is_some() {
+                // The probe folded to ∅ on constants (e.g. the measured
+                // variable literal-bound to a bounded interval): no
+                // binding of this rule ever carries a ray there.
+                continue;
+            }
+            probes.push(prepare_ray_probe(
+                txn,
+                cache,
+                schema,
+                &template,
+                &normalized,
+                var,
+            )?);
+        }
+        if probes.is_empty() {
+            continue;
+        }
+        let disjuncts: Vec<&[ClassifiedComparison]> = members
+            .iter()
+            .map(crate::ir::validate::RuleWitness::classified_comparisons)
+            .collect();
+        let plan = &probes[0].rule.plan;
+        let verdict = crate::exec::verdict::CompiledVerdict::compile(
+            &disjuncts,
+            &|var| plan.slot_of(var),
+            &|var| plan.width_of(var),
+        );
+        sets.push(super::RayProbeSet { verdict, probes });
+    }
+    Ok(sets)
+}
+
+/// One probe rule's pipeline tail — `prepare_rule_variant` minus
+/// classification (a probe is always Free Join: the arbiter consumes
+/// bindings, never a point fetch), minus the fold split (no aggregate),
+/// minus pins (probe plan quality never gates staleness), with EVERY
+/// variable sink-relevant: the verdict fold reads arbitrary condition
+/// slots, so no suffix is skippable — exactly the aggregate plan's
+/// relevance rule.
+fn prepare_ray_probe(
+    txn: &ReadTxn<'_>,
+    cache: &ImageCache,
+    schema: &Schema,
+    rule: &RuleWitness<'_>,
+    normalized: &NormalizedQuery,
+    measured: crate::ir::VarId,
+) -> Result<super::RayProbe> {
+    let mut stats = Vec::with_capacity(normalized.occurrences.len());
+    for occurrence in normalized
+        .occurrences
+        .iter()
+        .filter(|o| o.role.participates())
+    {
+        let relation = occurrence
+            .source
+            .edb()
+            .expect("prepare_witnessed programs carry no Idb occurrence");
+        let rows = crate::plan::selectivity::relation_rows(txn, schema, relation)?;
+        stats.push(crate::plan::selectivity::occurrence_stats(
+            txn, cache, schema, occurrence, rows,
+        )?);
+    }
+    let order = plan_order(normalized, schema, &stats);
+    let mut fj = binary2fj(normalized, &order);
+    factor(&mut fj);
+    let estimates = order.estimates.clone();
+    gj_split(&mut fj);
+    let sink_vars: std::collections::BTreeSet<crate::ir::VarId> =
+        rule.var_types().map(|(var, _)| var).collect();
+    let plan = crate::plan::fj::validate_with_signatures(
+        &fj,
+        normalized,
+        schema,
+        &[],
+        estimates,
+        &sink_vars,
+    )
+    .expect("binary2fj + factor + gj_split construct valid plans");
+    let executor = Executor::new(&plan);
+    let occurrence_count = plan.occurrences().len();
+    let memo = build_view_memo(&plan);
+    Ok(super::RayProbe {
+        measured_slot: plan.slot_of(measured),
+        rule: FreeJoinRule {
+            plan,
+            executor,
+            finds: Vec::new(),
+            dedup_spans: Box::default(),
+            resolved_filters: vec![Vec::new(); occurrence_count],
+            resolved_selections: vec![Vec::new(); occurrence_count],
+            resolution: super::ResolutionState::Pending,
+            memo,
+            pinned: Box::default(),
+        },
+    })
 }
 
 /// COLT sources with their fixed column schemas over [`View::Unbound`]:

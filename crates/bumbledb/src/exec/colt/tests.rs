@@ -65,7 +65,7 @@ fn view_of(
 }
 
 fn all(image: &Arc<crate::image::RelationImage>) -> View {
-    apply(image, &[], &[], Vec::new()).expect("no measure filters")
+    apply(image, &[], &[], Vec::new())
 }
 
 /// Scalar selection levels over the given single columns.

@@ -157,10 +157,10 @@ impl Executor {
             crate::exec::kernel::compact_u32_by_mask(&mut scratch.survivors, &scratch.mask);
         }
         // Measure residuals: the line-parallel twin of `run_node`'s pass
-        // — per-parent Slot reads, ray poison (`execute` raises the typed
-        // `MeasureOfRay`), subtraction feeding the ordinary word compare.
-        // Indexed (`PlacedDuration` is `Copy`): the poison call needs
-        // `&mut self` inside the loop.
+        // — per-parent Slot reads, subtraction feeding the ordinary word
+        // compare. A ray never survives the comparison (its verdict is
+        // Ray, not Fails; the Kleene verdict algebra, R6 — the prepared
+        // query's ray-probe pass renders it).
         for r_idx in 0..self.duration_residual_slots[node_idx].len() {
             let (residual, interval_slot, scalar_slot) =
                 self.duration_residual_slots[node_idx][r_idx];
@@ -169,10 +169,6 @@ impl Executor {
                 super::word_base(cover_vars, residual.interval, |v| self.width_of(v));
             let scalar_word = super::word_base(cover_vars, residual.scalar, |v| self.width_of(v));
             let n = scratch.survivors.len();
-            // The ray-poison break below leaves a mask tail unwritten —
-            // legal only because that path returns before the mask is
-            // read (the compaction is skipped); grow-only sizing keeps
-            // exactly that write-before-read truth.
             grow_scratch(&mut scratch.mask, n);
             for k in 0..n {
                 let element = usize::try_from(scratch.survivors[k]).expect("batch fits usize");
@@ -183,21 +179,12 @@ impl Executor {
                 };
                 let start = value(interval_word, interval_slot, 0);
                 let end = value(interval_word, interval_slot, 1);
-                if end == u64::MAX {
-                    self.poison(super::Poison::MeasureOfRay([start, end]));
-                    break;
-                }
-                let pass = residual
-                    .op
-                    .compare(&(end - start), &value(scalar_word, scalar_slot, 0));
+                let pass = end != u64::MAX
+                    && residual
+                        .op
+                        .compare(&(end - start), &value(scalar_word, scalar_slot, 0));
                 counters.residual(node_idx, pass);
                 scratch.mask[k] = u8::from(pass);
-            }
-            if self.all_cancelled {
-                counters.phase_end(node_idx, JoinPhase::Residual);
-                scratch.parents.clear();
-                scratch.element_origins.clear();
-                return;
             }
             crate::exec::kernel::compact_u32_by_mask(&mut scratch.survivors, &scratch.mask);
         }

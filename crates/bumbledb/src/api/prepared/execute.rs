@@ -166,7 +166,91 @@ impl<S> PreparedQuery<'_, S> {
         for rule_idx in 0..rule_count {
             ran |= self.run_rule(rule_idx, txn, cache, counters)?;
         }
+        // The ray-probe pass (the Kleene verdict algebra, ruled
+        // 2026-07-23, R6): the rules above never render Ray — measure
+        // filters and residuals drop rays, because a ray never Holds —
+        // so each written rule's probes enumerate its ray-carrying
+        // bindings here and the compiled fold arbitrates; the first
+        // Ray verdict is the typed `MeasureOfRay`. Skipped when
+        // nothing ran: a probe shares the short-circuited rule's
+        // selections and would empty identically.
+        if ran {
+            self.run_ray_probes(txn, cache, counters)?;
+        }
         Ok(ran)
+    }
+
+    /// One written rule's probes: resolve (the rule loop's latch
+    /// discipline verbatim), run the probe's Free Join into the
+    /// [`crate::exec::verdict::RayArbiter`], and raise on the first
+    /// Ray verdict.
+    pub(super) fn run_ray_probes<C: Counters>(
+        &mut self,
+        txn: &ReadTxn<'_>,
+        cache: &ImageCache,
+        counters: &mut C,
+    ) -> Result<()> {
+        let fast_eligible = self.unresolved_literals == 0 && self.params.is_empty();
+        let mut latched = 0u32;
+        for set in &mut self.ray_probes {
+            // `str` literals in the verdict's leaves latch to their
+            // dictionary words (append-only: a hit is final; a miss
+            // evaluates as the never-minted sentinel this execution).
+            set.verdict.resolve_interns(txn)?;
+            let super::RayProbeSet { verdict, probes } = set;
+            for probe in probes {
+                let resolved =
+                    if fast_eligible && probe.rule.resolution == super::ResolutionState::Complete {
+                        true
+                    } else {
+                        let complete = resolve_filters(
+                            txn,
+                            &mut probe.rule.plan,
+                            &self.resolved_params,
+                            &self.missed_params,
+                            &mut probe.rule.resolved_filters,
+                            &mut probe.rule.resolved_selections,
+                            &mut latched,
+                        )?;
+                        probe.rule.resolution = if complete {
+                            super::ResolutionState::Complete
+                        } else {
+                            super::ResolutionState::Pending
+                        };
+                        complete
+                    };
+                if !resolved {
+                    continue; // an Eq-anchored miss: the probe is empty
+                }
+                self.bindings.resize(probe.rule.plan.slot_count());
+                let mut arbiter = crate::exec::verdict::RayArbiter::new(
+                    verdict,
+                    &self.resolved_params,
+                    probe.measured_slot,
+                );
+                let mut no_retired = Vec::new();
+                run_join(
+                    &probe.rule.plan,
+                    self.schema,
+                    txn,
+                    cache,
+                    &mut probe.rule.executor,
+                    &mut self.bindings,
+                    &probe.rule.resolved_filters,
+                    &probe.rule.resolved_selections,
+                    &mut probe.rule.memo,
+                    &[],
+                    &mut no_retired,
+                    &mut arbiter,
+                    counters,
+                )?;
+                if let Some([start, end]) = arbiter.measure_of_ray() {
+                    return Err(crate::error::Error::MeasureOfRay { start, end });
+                }
+            }
+        }
+        self.unresolved_literals = self.unresolved_literals.saturating_sub(latched);
+        Ok(())
     }
 
     /// One rule of the loop: re-aim the sink's slot tables at the rule's

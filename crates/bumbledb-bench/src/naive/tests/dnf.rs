@@ -140,6 +140,7 @@ fn lowered_rule_set_union_equals_naive_tree_evaluation() {
                 negated,
                 conditions,
                 written: _,
+                minted: _,
             } = lowered;
             let conjunctive = Query::single(Rule {
                 finds,

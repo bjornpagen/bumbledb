@@ -301,29 +301,27 @@ fn scalar_or_pair(image: &RelationImage, field: FieldId, position: usize) -> Ope
 ///
 /// **The filter-order law** (docs/architecture/20-query-ir.md, § the
 /// measure): the measure kinds evaluate last, over the survivors of every
-/// other predicate of the atom — an `Allen` ray filter or a bounded-end
-/// filter on the same atom always runs before the subtraction, so a
-/// filtered fact never reaches it. On the survivors, `end == MAX` raises
-/// the typed [`crate::Error::MeasureOfRay`] — the engine's one runtime
-/// type error.
-///
-/// # Errors
-///
-/// `MeasureOfRay` when a measure filter's subtraction reaches a ray.
+/// other predicate of the atom. A ray (`end == MAX`) never survives the
+/// comparison — its verdict is Ray, not Fails, and it is never an error
+/// HERE: the Kleene verdict algebra (ruled 2026-07-23, R6) raises
+/// `MeasureOfRay` only for a complete binding whose folded verdict is
+/// Ray, which the prepared query's ray-probe pass renders after the
+/// rule loop (`api/prepared/build.rs` § ray probes).
 ///
 /// # Panics
 ///
 /// Only on programmer-invariant violations: an image beyond the u32
 /// position space (the 32 GiB map physically bounds live rows roughly an
 /// order of magnitude under u32; the validated 10⁷ scale sits far below).
+#[must_use]
 pub fn apply(
     image: &Arc<RelationImage>,
     predicates: &[FilterPredicate],
     params: &[Const],
     buf: Vec<u32>,
-) -> crate::error::Result<View> {
+) -> View {
     if !predicates.iter().any(is_measure) {
-        return Ok(apply_infallible(image, predicates, params, buf));
+        return apply_infallible(image, predicates, params, buf);
     }
     // The measure path, correct by order: the infallible predicates run
     // through the ordinary machinery first — over the SAME borrowed
@@ -339,9 +337,9 @@ pub fn apply(
         (apply_infallible(image, predicates, params, buf), Vec::new())
     };
     for predicate in predicates.iter().filter(|p| is_measure(p)) {
-        view = refine_measure(image, predicate, params, view, &mut spare)?;
+        view = refine_measure(image, predicate, params, view, &mut spare);
     }
-    Ok(view)
+    view
 }
 
 /// The measure kinds — evaluated last by the filter-order law, fallibly
@@ -356,17 +354,18 @@ fn is_measure(p: &FilterPredicate) -> bool {
 /// One measure predicate over the current survivors. A full view takes
 /// the fused dense kernel (subtract + range test + ray test in one
 /// stride-1 pass); survivor views refine scalar, position by position.
-/// `spare` is the pooled survivor buffer a `View::All` input consumes
-/// (capacity retained across executions — finding 051); survivor inputs
-/// refine their own buffer in place and never touch it.
+/// A ray never survives (its verdict is Ray — the ray-probe pass's
+/// territory, R6), and never errors here. `spare` is the pooled
+/// survivor buffer a `View::All` input consumes (capacity retained
+/// across executions — finding 051); survivor inputs refine their own
+/// buffer in place and never touch it.
 fn refine_measure(
     image: &Arc<RelationImage>,
     predicate: &FilterPredicate,
     params: &[Const],
     view: View,
     spare: &mut Vec<u32>,
-) -> crate::error::Result<View> {
-    let ray = |start: u64, end: u64| crate::error::Error::MeasureOfRay { start, end };
+) -> View {
     match predicate {
         FilterPredicate::DurationCompare { field, op, value } => {
             let Const::Word(bound) = resolve(value, params) else {
@@ -398,12 +397,11 @@ fn refine_measure(
                         lo,
                         hi,
                         &mut positions,
-                    )
-                    .map_err(|position| ray(starts[position], ends[position]))?;
-                    Ok(View::Survivors {
+                    );
+                    View::Survivors {
                         image: Arc::clone(image),
                         positions,
-                    })
+                    }
                 }
                 View::Survivors {
                     image: view_image,
@@ -413,17 +411,15 @@ fn refine_measure(
                     for read in 0..positions.len() {
                         let p = positions[read] as usize;
                         let (start, end) = (starts[p], ends[p]);
-                        if end == u64::MAX {
-                            return Err(ray(start, end));
-                        }
                         positions[cursor] = positions[read];
-                        cursor += usize::from(lo <= end - start && end - start <= hi);
+                        cursor +=
+                            usize::from(end != u64::MAX && lo <= end - start && end - start <= hi);
                     }
                     positions.truncate(cursor);
-                    Ok(View::Survivors {
+                    View::Survivors {
                         image: view_image,
                         positions,
-                    })
+                    }
                 }
                 View::Unbound => unreachable!("apply binds the view it filters"),
             }
@@ -459,17 +455,14 @@ fn refine_measure(
             for read in 0..positions.len() {
                 let p = positions[read] as usize;
                 let (start, end) = (starts[p], ends[p]);
-                if end == u64::MAX {
-                    return Err(ray(start, end));
-                }
                 positions[cursor] = positions[read];
-                cursor += usize::from(op.compare(&(end - start), &scalars[p]));
+                cursor += usize::from(end != u64::MAX && op.compare(&(end - start), &scalars[p]));
             }
             positions.truncate(cursor);
-            Ok(View::Survivors {
+            View::Survivors {
                 image: Arc::clone(image),
                 positions,
-            })
+            }
         }
         _ => unreachable!("refine_measure takes the measure kinds"),
     }

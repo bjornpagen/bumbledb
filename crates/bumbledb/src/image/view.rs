@@ -197,9 +197,12 @@ pub enum FilterPredicate {
     /// measure evaluates only on facts surviving the atom's *other*
     /// filters — an `Allen` ray filter or a bounded-end filter on the
     /// same atom always runs first, so a filtered fact never reaches the
-    /// subtraction. On the survivors the subtraction path tests
-    /// `end == MAX` and raises [`crate::Error::MeasureOfRay`] — the
-    /// engine's one runtime type error — before comparing.
+    /// subtraction. On the survivors a ray (`end == MAX`) never passes
+    /// the comparison AND never errors here: its verdict is Ray, not
+    /// Fails (the Kleene verdict algebra, ruled 2026-07-23, R6), and the
+    /// prepared query's ray-probe pass renders it after the rule loop —
+    /// [`crate::Error::MeasureOfRay`] iff some complete binding's folded
+    /// verdict is Ray (`exec/verdict.rs`).
     DurationCompare {
         field: FieldId,
         op: CmpOp,

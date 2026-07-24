@@ -651,10 +651,6 @@ pub struct Executor {
 /// path. `execute` drains it into the typed error; adding a kind here
 /// forces the drain's `match` to answer for it.
 enum Poison {
-    /// A measure residual reached a ray (`end == MAX`): the offending
-    /// interval's two encoded words — the engine's one runtime type
-    /// error ([`crate::error::Error::MeasureOfRay`]).
-    MeasureOfRay([u64; 2]),
     /// The origin mint space would cross u32 (checked at mint
     /// granularity in `probe_pass`):
     /// [`crate::error::Error::Overflow`].

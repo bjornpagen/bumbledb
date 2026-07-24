@@ -288,8 +288,7 @@ fn colts_for(plan: &ValidatedPlan, images: &[Arc<crate::image::RelationImage>]) 
                     &[],
                     &[],
                     Vec::new(),
-                )
-                .expect("no measure filters"),
+                ),
                 &[],
                 columns,
             )
