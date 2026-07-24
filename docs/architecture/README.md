@@ -73,9 +73,11 @@ laws).
   in the host's frontier meanwhile (`../cookbook.md` recipe 24). *Trigger:
   a real workload dominated by interval-intersection-along-paths — it
   re-opens theory before engineering.*
-- **Ordering/limit conveniences and top-k pushdown**: presentation-layer; results are
-  sets, the host sorts. *Trigger: owner pain, or a measured materialize-then-sort
-  latency-budget violation.*
+- **Engine-side top-k pushdown**: results are sets and the host sorts — the
+  host-side ordering conveniences are shipped surface (`bumbledb_query::order`,
+  `ts/src/order.ts`) and `limit` was refused as surface (`70-api.md`, the
+  closed ledger), so pushdown is the only live residue. *Trigger: a measured
+  materialize-then-sort latency-budget violation.*
 - **Declared range/stabbing accelerators**: time-range, point-membership, and
   overlap scans are O(n) by decision; accelerators return only with a benchmark that
   demands them. Candidate mechanism on trigger: determinant skip scan (cursor `set_range`
@@ -130,8 +132,10 @@ laws).
   measurement-owned. *Trigger (re-scoped — the ledger benchmark ran without
   evaluating this): a measured write-path or store-size violation attributable
   to determinant width.*
-- **`70-api.md` open sub-items**: see that doc's own OPEN list (result ordering,
-  multi-key typed `get` sugar, multi-process future).
+- **The multi-process future**: one process per store stands; the `70-api.md`
+  ledger row is CLOSED with its trigger intact and unfired. *Trigger: a second
+  process with a legitimate claim on one store.* (The 70-api ledger is CLOSED
+  whole — every other row is terminal, nothing there is OPEN.)
 
 ## Closed by ruling
 
