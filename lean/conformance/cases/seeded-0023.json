@@ -1,6 +1,6 @@
 {
 "case":"seeded-0023",
-"provenance":{"world_seed":12603137,"case_seed":1245214,"draw":2},
+"provenance":{"world_seed":12603138,"case_seed":1245223,"draw":3},
 "strings":[],
 "theory":{"relations":[{"id":3,"name":"JournalEntry","closed":false,"fields":["u64","u64","i64"]},
 {"id":10,"name":"ImportBatch","closed":false,"fields":["u64","u64"]}],
@@ -696,11 +696,13 @@
 {"finds":[{"var":0}],
  "atoms":[{"relation":3,"bindings":[[0,{"var":0}],[1,{"lit":{"u64":1}}]]}],
  "negated":[],
- "conditions":[]},
+ "conditions":[],
+ "width":1},
 {"finds":[{"var":0}],
  "atoms":[{"relation":10,"bindings":[[0,{"var":0}]]}],
  "negated":[],
- "conditions":[]}
+ "conditions":[],
+ "width":1}
 ]},
 "params":[],
 "answers":[

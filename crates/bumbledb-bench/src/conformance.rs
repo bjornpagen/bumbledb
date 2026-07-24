@@ -140,6 +140,11 @@ pub struct Report {
     pub excluded_negated_membership: u64,
     /// An element-typed param-set membership binding.
     pub excluded_set_membership: u64,
+    /// A measure-keyed Arg restriction (`ArgKey::Measure`, R5): the
+    /// Lean model's `PFind.argMax` carries a plain variable key — the
+    /// shape is fenced, counted, until the denotation lands (the
+    /// engine-vs-naive differential already quantifies it in querygen).
+    pub excluded_measure_arg_key: u64,
     /// The engine answered `Overflow` / `MeasureOfRay`.
     pub excluded_engine_error: u64,
     /// Naive wall time over [`NAIVE_BUDGET_MS`].
@@ -154,13 +159,14 @@ impl Report {
     pub fn coverage_line(&self) -> String {
         format!(
             "conformance coverage: {}/{} expressible (excluded: {} unresolved-literal, \
-             {} negated-membership, {} set-membership, \
+             {} negated-membership, {} set-membership, {} measure-arg-key, \
              {} engine-error, {} slow, {} wide)",
             self.written,
             self.attempted,
             self.excluded_unresolved,
             self.excluded_negated_membership,
             self.excluded_set_membership,
+            self.excluded_measure_arg_key,
             self.excluded_engine_error,
             self.excluded_slow,
             self.excluded_wide,
@@ -174,6 +180,7 @@ enum Exclusion {
     UnresolvedLiteral,
     NegatedMembership,
     SetMembership,
+    MeasureArgKey,
 }
 
 /// One loaded Tiny world: the engine store, the naive model, and the
@@ -602,18 +609,22 @@ fn push_find(out: &mut String, find: &FindTerm) {
             (AggOp::Pack, Some(v)) => {
                 let _ = write!(out, "{{\"agg\":{{\"op\":\"pack\",\"over\":{}}}}}", v.0);
             }
-            (AggOp::ArgMax { key }, Some(v)) => {
+            // The measure-keyed face is fenced upstream
+            // (`Exclusion::MeasureArgKey`) — a plain `"key"` var is the
+            // only spelled form, so a measure key can never silently
+            // serialize as an interval-ordering the Lean side refuses.
+            (AggOp::ArgMax { key: bumbledb::ArgKey::Var(key) }, Some(v)) => {
                 let _ = write!(
                     out,
                     "{{\"agg\":{{\"op\":\"arg_max\",\"over\":{},\"key\":{}}}}}",
-                    v.0, key.var().0
+                    v.0, key.0
                 );
             }
-            (AggOp::ArgMin { key }, Some(v)) => {
+            (AggOp::ArgMin { key: bumbledb::ArgKey::Var(key) }, Some(v)) => {
                 let _ = write!(
                     out,
                     "{{\"agg\":{{\"op\":\"arg_min\",\"over\":{},\"key\":{}}}}}",
-                    v.0, key.var().0
+                    v.0, key.0
                 );
             }
             other => unreachable!("validated: no such aggregate shape {other:?}"),
@@ -871,6 +882,30 @@ fn render_case(
     params: &[ParamValue],
     answers: &BTreeSet<Tuple>,
 ) -> Result<String, Exclusion> {
+    // Measure-keyed Arg (ruled 2026-07-23, R5) has no Lean denotation
+    // yet — `PFind.argMax` carries a plain variable key — so the corpus
+    // fences the shape, counted, and the engine-vs-naive differential
+    // (querygen's fleet) owns its oracle coverage meanwhile.
+    let measure_key = |find: &FindTerm| {
+        matches!(
+            find,
+            FindTerm::Aggregate {
+                op: AggOp::ArgMax {
+                    key: bumbledb::ArgKey::Measure(_)
+                } | AggOp::ArgMin {
+                    key: bumbledb::ArgKey::Measure(_)
+                },
+                ..
+            }
+        )
+    };
+    if query
+        .rules
+        .iter()
+        .any(|rule| rule.finds.iter().any(measure_key))
+    {
+        return Err(Exclusion::MeasureArgKey);
+    }
     let mut used = BTreeSet::new();
     let lowered: Vec<LoweredRule<'_>> = query
         .rules
@@ -1155,6 +1190,10 @@ fn one_case(
         }
         Err(Exclusion::SetMembership) => {
             report.excluded_set_membership += 1;
+            None
+        }
+        Err(Exclusion::MeasureArgKey) => {
+            report.excluded_measure_arg_key += 1;
             None
         }
     }
@@ -1459,27 +1498,32 @@ fn hand_cases(cfg: GenConfig) -> Vec<HandCase> {
             },
             params: vec![],
         },
-        // The multi-rule aggregate head: the union fold.
+        // The multi-rule aggregate head: the union fold. A VALUED fold
+        // — the nullary Count across written rules is definitionally
+        // constant 1 and refuses now (ruled 2026-07-23, R1:
+        // `CountAcrossRules`; the refusal row is the verify error-parity
+        // lane's), so the case carries the fold the union can inform.
         HandCase {
             name: "hand-union-aggregate-fold",
             query: Query {
                 head: vec![
                     bumbledb::HeadTerm::Var,
-                    bumbledb::HeadTerm::Aggregate(bumbledb::HeadOp::Count),
+                    bumbledb::HeadTerm::Aggregate(bumbledb::HeadOp::CountDistinct),
                 ],
                 rules: vec![
                     rule(
                         vec![
                             fv(0),
                             FindTerm::Aggregate {
-                                op: AggOp::Count,
-                                over: None,
+                                op: AggOp::CountDistinct,
+                                over: Some(VarId(1)),
                             },
                         ],
                         vec![atom(
                             ids::POSTING,
                             &[
                                 (ids::posting::ACCOUNT, v(0)),
+                                (ids::posting::ENTRY, v(1)),
                                 (ids::posting::RECONCILED, Term::Literal(Value::Bool(true))),
                             ],
                         )],
@@ -1490,11 +1534,17 @@ fn hand_cases(cfg: GenConfig) -> Vec<HandCase> {
                         vec![
                             fv(0),
                             FindTerm::Aggregate {
-                                op: AggOp::Count,
-                                over: None,
+                                op: AggOp::CountDistinct,
+                                over: Some(VarId(1)),
                             },
                         ],
-                        vec![atom(ids::ORG_PARENT, &[(ids::org_parent::CHILD, v(0))])],
+                        vec![atom(
+                            ids::ORG_PARENT,
+                            &[
+                                (ids::org_parent::CHILD, v(0)),
+                                (ids::org_parent::PARENT, v(1)),
+                            ],
+                        )],
                         vec![],
                         vec![],
                     ),

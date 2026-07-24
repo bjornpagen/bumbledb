@@ -1,6 +1,6 @@
 {
 "case":"program-seeded-0011",
-"provenance":{"world_seed":12603137,"case_seed":1310731,"variant":"EmptyDelta"},
+"provenance":{"world_seed":12603137,"case_seed":1310739,"variant":"EmptyDelta"},
 "strings":[],
 "theory":{"relations":[{"id":7,"name":"OrgParent","closed":false,"fields":["u64","u64"]}],
 "ground_axioms":[]},

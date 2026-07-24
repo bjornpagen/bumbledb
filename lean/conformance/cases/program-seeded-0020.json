@@ -1,6 +1,6 @@
 {
 "case":"program-seeded-0020",
-"provenance":{"world_seed":12603137,"case_seed":1310740,"variant":"NonLinear"},
+"provenance":{"world_seed":12603137,"case_seed":1310750,"variant":"Linear"},
 "strings":[],
 "theory":{"relations":[{"id":7,"name":"OrgParent","closed":false,"fields":["u64","u64"]}],
 "ground_axioms":[]},
@@ -16,10 +16,10 @@
 "program":{"predicates":[
 {"arity":2,"rules":[
 {"finds":[0,1],"atoms":[{"edb":7,"bindings":[[0,{"var":0}],[1,{"var":1}]]}],"negated":[],"conditions":[]},
-{"finds":[0,2],"atoms":[{"idb":0,"bindings":[[0,{"var":0}],[1,{"var":1}]]},{"idb":0,"bindings":[[0,{"var":1}],[1,{"var":2}]]}],"negated":[],"conditions":[]}
+{"finds":[0,2],"atoms":[{"edb":7,"bindings":[[0,{"var":0}],[1,{"var":1}]]},{"idb":0,"bindings":[[0,{"var":1}],[1,{"var":2}]]}],"negated":[],"conditions":[]}
 ]},
 {"arity":1,"rules":[
-{"finds":[0],"atoms":[{"idb":0,"bindings":[[0,{"var":0}],[1,{"lit":{"u64":7}}]]}],"negated":[],"conditions":[]}
+{"finds":[0],"atoms":[{"idb":0,"bindings":[[0,{"var":0}],[1,{"lit":{"u64":5}}]]}],"negated":[],"conditions":[]}
 ]}
 ],"output":1,"strata":[0,0]},
 "params":[],
