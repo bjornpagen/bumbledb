@@ -569,7 +569,11 @@ interface Tables {
  * Builds the id-resolution tables from the manifest, verifying the SDK's
  * positional mirror against the engine's reported order — any drift
  * (count, kind, id, or membership) is a construction-time failure, never a
- * silent misattribution of a violation to the wrong statement value.
+ * silent misattribution of a violation to the wrong statement value. The
+ * declaration-ordinal law the query lowering leans on is verified in the
+ * same walks: relation ids and sealed field ids both equal declaration
+ * order, so a constructed `Tables` IS the proof and `prepare` inherits it
+ * structurally — never a silently misaddressed query.
  */
 function tablesOf(theory: AnySchema, manifest: Manifest): Tables {
 	const entries = materializedEntries(theory)
@@ -596,6 +600,13 @@ function tablesOf(theory: AnySchema, manifest: Manifest): Tables {
 		for (const field of relation.fields) {
 			fieldIds.set(field.name, field.id)
 		}
+		sealedFieldsOf(member).forEach(function verifyField(declared, fieldOrdinal) {
+			if (fieldIds.get(declared.name) !== fieldOrdinal) {
+				throw errors.new(
+					`bumbledb manifest drift: ${relation.name}.${declared.name} has engine field id ${fieldIds.get(declared.name)}, its sealed ordinal is ${fieldOrdinal}`
+				)
+			}
+		})
 		let primaryKey: PrimaryKey | undefined
 		entries.forEach(function firstOwnedKey(entry, index) {
 			if (primaryKey === undefined && entry.key !== undefined && entry.key.owner === relation.name) {
@@ -604,11 +615,17 @@ function tablesOf(theory: AnySchema, manifest: Manifest): Tables {
 		})
 		relations.set(relation.name, Object.freeze({ id: relation.id, member, fieldIds, primaryKey }))
 	}
-	for (const name of Object.keys(theory.relations)) {
-		if (!relations.has(name)) {
+	Object.keys(theory.relations).forEach(function verifyRelation(name, ordinal) {
+		const entry = relations.get(name)
+		if (entry === undefined) {
 			throw errors.new(`bumbledb manifest drift: schema relation ${name} is not in the manifest`)
 		}
-	}
+		if (entry.id !== ordinal) {
+			throw errors.new(
+				`bumbledb manifest drift: relation ${name} has engine id ${entry.id}, its declaration ordinal is ${ordinal} — query lowering depends on declaration order = ids`
+			)
+		}
+	})
 	return Object.freeze({ relations, statements: Object.freeze(entries) })
 }
 
@@ -1183,15 +1200,10 @@ function openDb<Rels extends SchemaRelations>(handle: DbHandle, theory: Schema<R
 	}
 
 	function write(fn: DeltaBuild<Rels>): WriteResult<Rels> {
-		const begun = errors.trySync(function beginDelta() {
-			return bridged("begin bumbledb write transaction", function begin() {
-				return native.dbWriteBegin(handle)
-			})
+		const txHandle = bridged(`begin bumbledb write transaction (live snapshots: ${liveSnapshots})`, function begin() {
+			return native.dbWriteBegin(handle)
 		})
-		if (begun.error) {
-			throw errors.wrap(begun.error, `begin bumbledb write transaction (live snapshots at fault: ${liveSnapshots})`)
-		}
-		return runDelta(begun.data, fn)
+		return runDelta(txHandle, fn)
 	}
 
 	/**
@@ -1353,45 +1365,12 @@ function openDb<Rels extends SchemaRelations>(handle: DbHandle, theory: Schema<R
 		)
 	}
 
-	/**
-	 * Verifies the declaration-ordinal law the query lowering leans on
-	 * against the live manifest tables: relation ids and sealed field ids
-	 * both equal declaration order (`dbManifest` is the engine's own
-	 * pinning of it). Any drift is a construction-time failure here, never
-	 * a silently misaddressed query.
-	 */
-	function assertOrdinalAlignment(): void {
-		Object.keys(theory.relations).forEach(function verifyRelation(name, ordinal) {
-			const entry = tables.relations.get(name)
-			if (entry === undefined || entry.id !== ordinal) {
-				throw errors.new(
-					`bumbledb manifest drift: relation ${name} has engine id ${entry?.id}, its declaration ordinal is ${ordinal} — query lowering depends on declaration order = ids`
-				)
-			}
-			const member = theory.relations[name]
-			if (member === undefined) {
-				throw errors.new(`bumbledb manifest drift: schema ${theory.name} lost relation ${name}`)
-			}
-			const sealed = sealedFieldsOf(member).map(function fieldName(declared) {
-				return declared.name
-			})
-			sealed.forEach(function verifyField(fieldName, fieldOrdinal) {
-				if (entry.fieldIds.get(fieldName) !== fieldOrdinal) {
-					throw errors.new(
-						`bumbledb manifest drift: ${name}.${fieldName} has engine field id ${entry.fieldIds.get(fieldName)}, its sealed ordinal is ${fieldOrdinal}`
-					)
-				}
-			})
-		})
-	}
-
 	function prepare<Row, Params extends ParamsRecord>(q: Query<Rels, Row, Params>): Prepared<Rels, Row, Params> {
 		if (q.schema !== theory) {
 			throw errors.new(
 				`query was built against schema ${q.schema.name}, not the identical schema value this store opened with — schema identity is the membership rule`
 			)
 		}
-		assertOrdinalAlignment()
 		const program = lowerQuery(q)
 		const outcome = bridged("prepare bumbledb program", function callPrepare() {
 			return native.dbPrepare(handle, program)

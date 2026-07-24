@@ -410,7 +410,7 @@ describe("the ban table's construction tier — computed bounds the type cannot 
 	test("a computed banned bound is a construction error naming the canonical form", function probeComputedBans() {
 		assert.throws(function computedExactZero() {
 			exactly(computed(0n))
-		}, /use none/)
+		}, /`\{0\}` is the exclusion — write none/)
 		assert.throws(function computedFloorOne() {
 			atLeast(computed(1n))
 		}, /says only what the bare containment says/)

@@ -133,7 +133,7 @@ function exactly<const N extends bigint>(n: N & ExactlyBan<N>): Count {
 		throw errors.new(`window counts are u64: exactly(${n}) is out of domain`)
 	}
 	if (n === 0n) {
-		throw errors.new("`{0..0}`-shaped spelling: the exclusion is written `{0}` — use none")
+		throw errors.new("`{0}` is the exclusion — write none")
 	}
 	return admit(Object.freeze({ kind: "exact", n }))
 }

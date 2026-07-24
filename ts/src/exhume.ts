@@ -209,6 +209,11 @@ function exhumeStore(canonical: string): Exhumed {
 		})
 		return Object.freeze(
 			rows.map(function factOf(row): ExhumedFact {
+				if (row.length !== names.length) {
+					throw errors.new(
+						`bumbledb exhume drift: relation ${relation} row arity ${row.length} does not match the ${names.length} descriptor fields`
+					)
+				}
 				const fact: Record<string, FactValue> = {}
 				names.forEach(function pair(name, index) {
 					const cell = row[index]
