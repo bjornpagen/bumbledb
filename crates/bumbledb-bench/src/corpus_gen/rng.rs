@@ -4,42 +4,41 @@
 //! is the entropy source and nothing else.
 
 /// Where generation entropy comes from. `Seeded` is the
-/// bench/differential arm and must remain byte-identical to the
-/// pre-seam stream — the corpus digest pin arbitrates. `Bytes` is the
-/// fuzzer arm: draws consume the fuzzer's data; exhaustion falls back
-/// to a fixed deterministic tail (zeros), never a panic — libFuzzer
-/// shrinks better when short inputs are legal.
+/// bench/differential arm; both arms emit full 64-bit words, so raw-word
+/// consumers see one value space regardless of source (ruled 2026-07-23,
+/// R20) — the corpus digest pin arbitrates any deliberate stream change.
+/// `Bytes` is the fuzzer arm: draws consume the fuzzer's data; exhaustion
+/// falls back to a fixed deterministic tail (zeros), never a panic —
+/// libFuzzer shrinks better when short inputs are legal.
 #[derive(Debug, Clone)]
 pub enum Rng {
-    /// The seeded generator, unchanged — today's deterministic stream.
-    Seeded(XorShift),
+    /// The seeded generator — the deterministic bench stream.
+    Seeded(SplitMix),
     /// A cursor over fuzzer-provided `&[u8]`.
     Bytes(ByteSource),
 }
 
-/// The house LCG (the engine's test constants): deterministic, fast,
-/// and dependency-free — the seeded arm's concrete source. Generator
+/// splitmix64: deterministic, fast, dependency-free, and full-width —
+/// every draw is a genuine 64-bit word, so "random payload" corpora are
+/// what they claim and `range(n)` is sound for any bound. Generator
 /// logic never touches this type; it draws through [`Rng`].
 #[derive(Debug, Clone)]
-pub struct XorShift {
+pub struct SplitMix {
     state: u64,
 }
 
-impl XorShift {
+impl SplitMix {
     #[must_use]
     pub fn new(seed: u64) -> Self {
-        Self {
-            // Scramble the seed so small seeds diverge immediately.
-            state: seed ^ 0x9E37_79B9_7F4A_7C15,
-        }
+        Self { state: seed }
     }
 
     pub fn u64(&mut self) -> u64 {
-        self.state = self
-            .state
-            .wrapping_mul(6_364_136_223_846_793_005)
-            .wrapping_add(1_442_695_040_888_963_407);
-        self.state >> 33
+        self.state = self.state.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        let mut word = self.state;
+        word = (word ^ (word >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        word = (word ^ (word >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        word ^ (word >> 31)
     }
 }
 
@@ -78,7 +77,7 @@ impl Rng {
     /// The seeded arm — the bench/differential constructor.
     #[must_use]
     pub fn new(seed: u64) -> Self {
-        Self::Seeded(XorShift::new(seed))
+        Self::Seeded(SplitMix::new(seed))
     }
 
     /// The fuzzer arm — generation steered by a fuzzer's byte stream.
@@ -152,6 +151,19 @@ mod tests {
             .flat_map(|i| i.wrapping_mul(0xC2B2_AE3D_27D4_EB4F).to_le_bytes())
             .collect();
         assert_ne!(first, artifacts(&other), "bytes steer generation");
+    }
+
+    /// The seeded arm emits genuine 64-bit words — every bit position
+    /// is live, so "random payload" corpora are full-entropy and
+    /// `range(n)` is sound for any bound (ruled 2026-07-23, R20).
+    #[test]
+    fn the_seeded_arm_emits_full_width_words() {
+        let mut rng = Rng::new(1);
+        let mut acc = 0u64;
+        for _ in 0..64 {
+            acc |= rng.u64();
+        }
+        assert_eq!(acc, u64::MAX, "all 64 bit positions reachable");
     }
 
     /// Exhaustion is legal: a short (even empty) input completes the
