@@ -360,11 +360,19 @@ impl RelationDescriptor {
     /// The SEALED field roster in sealed-ordinal order (index =
     /// [`FieldId`]): an ordinary relation's declared fields; a closed
     /// relation's synthetic (`id`, u64) handle field first, declared
-    /// fields shifted by one. THE one owner of the synthetic-id law —
-    /// the manifest renderer, the materialized-statement ordinals
+    /// fields shifted by one. THE descriptor-side READ of the
+    /// synthetic-id law — the manifest renderer, the
+    /// materialized-statement ordinals
     /// ([`SchemaDescriptor::materialized_statements`]), and the node
     /// bridge's row marshaling all read the sealed shape through this
-    /// accessor, never through re-derived offset arithmetic.
+    /// accessor, never through re-derived offset arithmetic. The law is
+    /// otherwise stated exactly where a descriptor cannot serve: the
+    /// spec path's name resolution (`spec.rs: Resolver::slot`, this
+    /// accessor's structural peer over [`spec::RelationSpec`] — the
+    /// spec carries the newtypes a descriptor deliberately drops), the
+    /// engine seal that MATERIALIZES the synthetic field
+    /// (`bumbledb::schema::validate`), and the codec decode that
+    /// re-parses it (`bumbledb::schema::descriptor_codec`).
     pub fn sealed_fields(&self) -> impl Iterator<Item = SealedField<'_>> {
         const SYNTHETIC_ID_TYPE: &ValueType = &ValueType::U64;
         self.extension

@@ -527,6 +527,17 @@ struct Resolver<'spec> {
     issues: Vec<SpecIssue>,
 }
 
+/// One slot of a relation's SEALED shape, resolved by name: the field id
+/// plus the newtype label the position carries — a closed relation's
+/// synthetic `id` carries the handle newtype. The spec-side peer of
+/// [`RelationDescriptor::sealed_fields`] (which cannot serve here: the
+/// descriptor deliberately drops the newtypes this resolution needs).
+#[derive(Clone, Copy)]
+struct SealedSlot<'spec> {
+    field: FieldId,
+    newtype: Option<&'spec str>,
+}
+
 impl<'spec> Resolver<'spec> {
     /// The relation's declaration index, or an issue.
     fn relation(&mut self, statement: usize, name: &str) -> Option<usize> {
@@ -540,54 +551,45 @@ impl<'spec> Resolver<'spec> {
         found
     }
 
-    /// A field's SEALED id within relation `rel_idx` — for a closed
-    /// relation, `id` is the synthetic handle field at 0 and declared
-    /// columns sit at index + 1, the numbering every sealed statement
-    /// addresses (the macro materializes the same shape at parse).
-    fn field(&mut self, statement: usize, rel_idx: usize, name: &str) -> Option<FieldId> {
+    /// Relation `rel_idx`'s sealed slot named `name`, or `None` when the
+    /// sealed shape never declares it — THE one spec-side judgment of
+    /// the synthetic-id law: a closed relation's `id` is the synthetic
+    /// handle field at [`FieldId`] 0 (carrying the handle newtype) and
+    /// declared columns sit at index + 1, the numbering every sealed
+    /// statement addresses (the macro materializes the same shape at
+    /// parse). Silent: the issue-pushing face is [`Resolver::field`].
+    fn slot(&self, rel_idx: usize, name: &str) -> Option<SealedSlot<'spec>> {
         let relation = &self.spec.relations[rel_idx];
-        let closed = relation.closed.is_some();
-        if closed && name == "id" {
-            return Some(FieldId(0));
-        }
-        let found = relation.fields.iter().position(|f| &*f.name == name);
-        let Some(index) = found else {
-            self.issues.push(SpecIssue::UnknownField {
-                statement,
-                relation: relation.name.clone(),
-                field: name.into(),
+        if let (Some(closed), "id") = (&relation.closed, name) {
+            return Some(SealedSlot {
+                field: FieldId(0),
+                newtype: Some(&closed.newtype),
             });
-            return None;
-        };
-        let sealed = index + usize::from(closed);
+        }
+        let index = relation.fields.iter().position(|f| &*f.name == name)?;
+        let sealed = index + usize::from(relation.closed.is_some());
         // A past-u16 sealed index exists only on a relation the
         // sealed-field cap already issued (`RelationTooManyFields`), so
         // the placeholder never escapes (a nonempty issue list fails
         // the whole construction — the `literal` law).
-        Some(FieldId(u16::try_from(sealed).unwrap_or(0)))
+        Some(SealedSlot {
+            field: FieldId(u16::try_from(sealed).unwrap_or(0)),
+            newtype: relation.fields[index].newtype.as_deref(),
+        })
     }
 
-    /// The newtype of a sealed field position: the synthetic `id` field
-    /// of a closed relation carries the relation's handle newtype.
-    fn field_newtype(&self, rel_idx: usize, name: &str) -> Option<&'spec str> {
-        let relation = &self.spec.relations[rel_idx];
-        if let (Some(closed), "id") = (&relation.closed, name) {
-            return Some(&closed.newtype);
+    /// [`Resolver::slot`] for statement resolution: the slot, or an
+    /// [`SpecIssue::UnknownField`].
+    fn field(&mut self, statement: usize, rel_idx: usize, name: &str) -> Option<SealedSlot<'spec>> {
+        let slot = self.slot(rel_idx, name);
+        if slot.is_none() {
+            self.issues.push(SpecIssue::UnknownField {
+                statement,
+                relation: self.spec.relations[rel_idx].name.clone(),
+                field: name.into(),
+            });
         }
-        relation
-            .fields
-            .iter()
-            .find(|f| &*f.name == name)
-            .and_then(|f| f.newtype.as_deref())
-    }
-
-    /// Whether relation `rel_idx`'s SEALED shape declares `name` — the
-    /// silent twin of [`Resolver::field`], for the checks that run
-    /// where resolution already reports the unknown name.
-    fn declares(&self, rel_idx: usize, name: &str) -> bool {
-        let relation = &self.spec.relations[rel_idx];
-        (relation.closed.is_some() && name == "id")
-            || relation.fields.iter().any(|f| &*f.name == name)
+        slot
     }
 
     /// The coherence check — the newtype law over one statement's
@@ -614,13 +616,13 @@ impl<'spec> Resolver<'spec> {
         for (position, (source_field, target_field)) in
             source.projection.iter().zip(&target.projection).enumerate()
         {
-            if !(self.declares(source_rel, source_field) && self.declares(target_rel, target_field))
-            {
+            let (Some(source_slot), Some(target_slot)) = (
+                self.slot(source_rel, source_field),
+                self.slot(target_rel, target_field),
+            ) else {
                 continue;
-            }
-            let source_newtype = self.field_newtype(source_rel, source_field);
-            let target_newtype = self.field_newtype(target_rel, target_field);
-            if source_newtype == target_newtype {
+            };
+            if source_slot.newtype == target_slot.newtype {
                 continue;
             }
             let face = |rel_idx: usize, field: &str, newtype: Option<&str>| FaceNewtype {
@@ -628,8 +630,8 @@ impl<'spec> Resolver<'spec> {
                 field: field.into(),
                 newtype: newtype.map(Into::into),
             };
-            let source_face = face(source_rel, source_field, source_newtype);
-            let target_face = face(target_rel, target_field, target_newtype);
+            let source_face = face(source_rel, source_field, source_slot.newtype);
+            let target_face = face(target_rel, target_field, target_slot.newtype);
             self.issues.push(SpecIssue::StatementNewtypeMismatch {
                 statement,
                 position,
@@ -640,25 +642,25 @@ impl<'spec> Resolver<'spec> {
     }
 
     /// One literal at its field position — a [`LiteralSpec::Handle`]
-    /// resolves through the field's newtype to its closed relation's
-    /// declaration-order row id, the macro's own resolution. `at` is the
-    /// literal's structural address, carried by the handle-shaped issues.
-    /// On an issue the placeholder `Value::U64(0)` stands in;
-    /// placeholders never escape (a nonempty issue list fails the whole
-    /// construction).
+    /// resolves through `newtype`, the field's already-resolved label
+    /// (threaded from the caller's [`SealedSlot`] — never a by-name
+    /// rescan), to its closed relation's declaration-order row id, the
+    /// macro's own resolution. `at` is the literal's structural address,
+    /// carried by the handle-shaped issues. On an issue the placeholder
+    /// `Value::U64(0)` stands in; placeholders never escape (a nonempty
+    /// issue list fails the whole construction).
     fn literal(
         &mut self,
         at: LiteralAt,
         rel_idx: usize,
         field: &str,
+        newtype: Option<&str>,
         literal: &LiteralSpec,
     ) -> Value {
         match literal {
             LiteralSpec::Value(value) => value.clone(),
             LiteralSpec::Handle(handle) => {
-                let owner = self
-                    .field_newtype(rel_idx, field)
-                    .and_then(|newtype| self.handles.get(newtype).copied());
+                let owner = newtype.and_then(|newtype| self.handles.get(newtype).copied());
                 let Some(owner) = owner else {
                     self.issues.push(SpecIssue::NotAHandleField {
                         at,
@@ -694,13 +696,13 @@ impl<'spec> Resolver<'spec> {
         let rel_idx = self.relation(statement, &side.relation)?;
         let mut projection = Vec::with_capacity(side.projection.len());
         for field in &side.projection {
-            if let Some(id) = self.field(statement, rel_idx, field) {
-                projection.push(id);
+            if let Some(slot) = self.field(statement, rel_idx, field) {
+                projection.push(slot.field);
             }
         }
         let mut selection = Vec::with_capacity(side.selection.len());
         for (binding, (field, literals)) in side.selection.iter().enumerate() {
-            let Some(field_id) = self.field(statement, rel_idx, field) else {
+            let Some(slot) = self.field(statement, rel_idx, field) else {
                 continue;
             };
             let at = |literal: usize| LiteralAt::Selection {
@@ -711,7 +713,7 @@ impl<'spec> Resolver<'spec> {
             };
             let set = match literals {
                 LiteralSetSpec::One(literal) => {
-                    LiteralSet::One(self.literal(at(0), rel_idx, field, literal))
+                    LiteralSet::One(self.literal(at(0), rel_idx, field, slot.newtype, literal))
                 }
                 LiteralSetSpec::Many(many) if many.len() < 2 => {
                     self.issues.push(SpecIssue::DegenerateLiteralSet {
@@ -724,11 +726,13 @@ impl<'spec> Resolver<'spec> {
                 LiteralSetSpec::Many(many) => LiteralSet::Many(
                     many.iter()
                         .enumerate()
-                        .map(|(index, literal)| self.literal(at(index), rel_idx, field, literal))
+                        .map(|(index, literal)| {
+                            self.literal(at(index), rel_idx, field, slot.newtype, literal)
+                        })
                         .collect(),
                 ),
             };
-            selection.push((field_id, set));
+            selection.push((slot.field, set));
         }
         (self.issues.is_empty()).then(|| Side {
             relation: RelationId(u32::try_from(rel_idx).expect("relation count fits u32")),
@@ -898,7 +902,13 @@ impl SchemaSpec {
                                             row: row_idx,
                                             column,
                                         };
-                                        resolver.literal(at, rel_idx, &field.name, literal)
+                                        resolver.literal(
+                                            at,
+                                            rel_idx,
+                                            &field.name,
+                                            field.newtype.as_deref(),
+                                            literal,
+                                        )
                                     })
                                     .collect(),
                             }
@@ -920,8 +930,8 @@ impl SchemaSpec {
                     };
                     let mut fields = Vec::with_capacity(projection.len());
                     for field in projection {
-                        if let Some(id) = resolver.field(index, rel_idx, field) {
-                            fields.push(id);
+                        if let Some(slot) = resolver.field(index, rel_idx, field) {
+                            fields.push(slot.field);
                         }
                     }
                     statements.push(StatementDescriptor::Functionality {

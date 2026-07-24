@@ -97,6 +97,59 @@ fn closed_spec_carries_the_handle_newtype_by_construction() {
     assert_eq!(&*target.projection, [FieldId(0)]);
 }
 
+/// The one sealed-slot lookup (finding 126): the synthetic `id` carries
+/// its relation's handle newtype into the coherence check, so pairing it
+/// with a bare column is the mismatch — the same judgment handle
+/// resolution reads, never a second scan's opinion.
+#[test]
+fn synthetic_id_newtype_rides_the_sealed_slot() {
+    let spec = SchemaSpec {
+        relations: vec![
+            RelationSpec {
+                name: "Status".into(),
+                fields: vec![],
+                closed: Some(ClosedSpec {
+                    newtype: "StatusId".into(),
+                    rows: vec![RowSpec {
+                        handle: "Active".into(),
+                        values: vec![],
+                    }],
+                }),
+            },
+            RelationSpec {
+                name: "Account".into(),
+                fields: vec![field("status", None)],
+                closed: None,
+            },
+        ],
+        statements: vec![StatementSpec::Containment {
+            source: SideSpec {
+                relation: "Account".into(),
+                projection: vec!["status".into()],
+                selection: vec![],
+            },
+            target: SideSpec {
+                relation: "Status".into(),
+                projection: vec!["id".into()],
+                selection: vec![],
+            },
+            bidirectional: false,
+        }],
+    };
+    let err = spec.descriptor().expect_err("the faces disagree");
+    let [SpecIssue::StatementNewtypeMismatch {
+        statement: 0,
+        position: 0,
+        source,
+        target,
+    }] = err.issues()
+    else {
+        panic!("one mismatch issue, not {:?}", err.issues());
+    };
+    assert_eq!(source.newtype, None);
+    assert_eq!(target.newtype.as_deref(), Some("StatusId"));
+}
+
 /// The sealed-field cap (finding 059): a relation past the u16 field-id
 /// space is a typed issue at lowering — never a panic on the wire-facing
 /// path, even when a statement addresses a field past the id space.
