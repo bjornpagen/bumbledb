@@ -1,0 +1,10 @@
+campaign lawful fixtures — regenerated at load under the fixed RNG (R20)
+rev: 8065d38c3bd01d9eec8561591e6a188bf0ba352b
+seed: 1
+dir: bench-data/<lane> (twin stores built fresh at load per durability lane from the lawful world corpus, seed 1; the judged op stream commits and refusals fold identically on both engines and the post-state fold certifies it, so the post-run hashes below are deterministic)
+sha256 over the post-run stores (data.mdb = bumbledb store, oracle.sqlite = SQLite twin; lock files excluded — runtime state, not corpus):
+
+c56e15d8c6c4023cb4149ed0a82310a0ff48a0976923f54e0625142cb81d208a  durable/db/data.mdb
+8f8cb730a10e9d2e9eafc81f5e3942150814fb5842180b2a68bfa1df80b964ba  durable/oracle.sqlite
+9dea2591930cac3cc2938fca5a185bde199b75a1352ceea94f6b327c86e79225  nosync/db/data.mdb
+8f8cb730a10e9d2e9eafc81f5e3942150814fb5842180b2a68bfa1df80b964ba  nosync/oracle.sqlite
