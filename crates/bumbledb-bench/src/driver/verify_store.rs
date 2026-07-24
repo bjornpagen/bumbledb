@@ -53,12 +53,18 @@ fn finding_statement(finding: &StoreFinding) -> Option<StatementId> {
         | StoreFinding::FactWithoutReverseEdge { statement, .. }
         | StoreFinding::ReverseEdgeWithoutFact { statement, .. }
         | StoreFinding::JudgmentViolation { statement, .. }
-        | StoreFinding::WindowViolation { statement, .. } => Some(*statement),
+        | StoreFinding::WindowViolation { statement, .. }
+        | StoreFinding::FreshRowDeterminantEntry { statement, .. } => Some(*statement),
         StoreFinding::FactWithoutMembership { .. }
         | StoreFinding::MembershipWithoutFact { .. }
         | StoreFinding::RowCountDesync { .. }
         | StoreFinding::RowIdHighWaterLow { .. }
+        | StoreFinding::FreshRowDesync { .. }
         | StoreFinding::InternBeyondNextId { .. }
+        | StoreFinding::FreshNextValueLow { .. }
+        | StoreFinding::DanglingInternId { .. }
+        | StoreFinding::DictForwardDesync { .. }
+        | StoreFinding::DictNextIdLow { .. }
         | StoreFinding::ClosedRelationEntry { .. }
         | StoreFinding::Malformed { .. }
         | StoreFinding::DescriptorFingerprintDesync { .. } => None,

@@ -196,7 +196,7 @@ fn arg_tie_yields_every_attaining_row() {
     ]);
     let query = Query::single(Rule {
         finds: vec![FindTerm::Aggregate {
-            op: AggOp::ArgMax { key: VarId(2) },
+            op: AggOp::ArgMax { key: bumbledb::ArgKey::Var(VarId(2)) },
             over: Some(VarId(1)),
         }],
         atoms: vec![atom(POSTING, &[(0, var(1)), (1, var(0)), (2, var(2))])],

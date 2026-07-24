@@ -322,7 +322,7 @@ fn head_group_names(arms: &[String], position: usize) -> Vec<String> {
 /// The Arg key and direction, if any find term is an Arg-restriction
 /// (validation guarantees all Arg terms share one key and direction,
 /// that no fold aggregate mixes in, and that Arg heads are single-rule).
-fn arg_restriction(finds: &[FindTerm]) -> Option<(VarId, bool)> {
+fn arg_restriction(finds: &[FindTerm]) -> Option<(bumbledb::ArgKey, bool)> {
     finds.iter().find_map(|find| match find {
         FindTerm::Aggregate {
             op: AggOp::ArgMax { key },
@@ -458,7 +458,7 @@ fn arg_sql(
     b: &Builder,
     from: &str,
     where_clause: &str,
-    key: VarId,
+    key: bumbledb::ArgKey,
     is_max: bool,
 ) -> Result<String, String> {
     let inner = format!(
@@ -500,13 +500,22 @@ fn arg_sql(
         }
     }
     let extreme = if is_max { "MAX" } else { "MIN" };
-    // The key is orderable (U64/I64) by validation — always one column.
-    let key_col = format!("v{}", key.0);
+    // The key expression per side: an orderable variable is one column
+    // by validation; a measure key (R5) is the end − start arithmetic
+    // over the interval halves.
+    let key_expr = |prefix: &str| match key {
+        bumbledb::ArgKey::Var(var) => format!("{prefix}v{}", var.0),
+        bumbledb::ArgKey::Measure(var) => {
+            format!("({prefix}v{0}_end - {prefix}v{0}_start)", var.0)
+        }
+    };
     let outer = outer.join(", ");
     if group.is_empty() {
         return Ok(format!(
             "WITH d AS ({inner}) SELECT DISTINCT {outer} FROM d \
-             JOIN (SELECT {extreme}({key_col}) AS mk FROM d) m ON d.{key_col} = m.mk"
+             JOIN (SELECT {extreme}({key}) AS mk FROM d) m ON {dkey} = m.mk",
+            key = key_expr(""),
+            dkey = key_expr("d.")
         ));
     }
     let group_eq = group
@@ -526,7 +535,9 @@ fn arg_sql(
         .join(", ");
     Ok(format!(
         "WITH d AS ({inner}) SELECT DISTINCT {outer} FROM d \
-         JOIN (SELECT {select}, {extreme}({key_col}) AS mk FROM d GROUP BY {group_by}) m \
-         ON {group_eq} AND d.{key_col} = m.mk"
+         JOIN (SELECT {select}, {extreme}({key}) AS mk FROM d GROUP BY {group_by}) m \
+         ON {group_eq} AND {dkey} = m.mk",
+        key = key_expr(""),
+        dkey = key_expr("d.")
     ))
 }

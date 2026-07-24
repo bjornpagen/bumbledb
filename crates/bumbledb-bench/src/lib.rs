@@ -22,6 +22,7 @@ pub mod differential;
 pub mod displaced;
 pub mod driver;
 pub mod duralane;
+pub mod edb;
 pub mod families;
 pub(crate) mod fixture;
 pub mod harness;

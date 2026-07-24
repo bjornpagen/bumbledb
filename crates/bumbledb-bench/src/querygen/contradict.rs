@@ -8,6 +8,7 @@
 use bumbledb::{CmpOp, Comparison, ConditionTree, FieldId, Query, RelationId, Rule, Term, Value};
 
 use crate::corpus_gen::{GenConfig, Rng};
+use crate::edb::EdbAtom;
 use crate::querygen::target::ids;
 
 /// A generated query whose EVERY rule carries a constant contradiction

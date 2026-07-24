@@ -2,6 +2,7 @@ use bumbledb::{
     Atom, ConditionTree, FieldId, FindTerm, ParamId, Query, RelationId, Rule, Term, VarId,
 };
 
+use crate::edb::EdbAtom;
 use crate::querygen::Builder;
 
 impl Builder {

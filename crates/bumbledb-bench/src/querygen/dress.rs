@@ -1,6 +1,7 @@
 use bumbledb::{CmpOp, Comparison, FieldId, RelationId, Term, Value};
 
 use crate::corpus_gen::{GenConfig, Rng};
+use crate::edb::EdbAtom;
 use crate::querygen::dress_posting::dress_posting;
 use crate::querygen::target::{self, Domains, ids};
 use crate::querygen::{Builder, DRESS_PCT, interval_data};

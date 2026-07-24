@@ -346,7 +346,7 @@ fn queries() -> Vec<(Query, Vec<ParamValue>)> {
         // 11: the room carrying the maximal reference.
         (
             plain(
-                vec![agg(AggOp::ArgMax { key: VarId(2) }, Some(0))],
+                vec![agg(AggOp::ArgMax { key: bumbledb::ArgKey::Var(VarId(2)) }, Some(0))],
                 vec![booking_atom()],
             ),
             vec![],
@@ -354,7 +354,7 @@ fn queries() -> Vec<(Query, Vec<ParamValue>)> {
         // 12: the span carrying the minimal reference.
         (
             plain(
-                vec![agg(AggOp::ArgMin { key: VarId(2) }, Some(1))],
+                vec![agg(AggOp::ArgMin { key: bumbledb::ArgKey::Var(VarId(2)) }, Some(1))],
                 vec![booking_atom()],
             ),
             vec![],

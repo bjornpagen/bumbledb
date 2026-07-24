@@ -67,7 +67,7 @@ fn the_schema_is_statement_complete() {
     let mut pointwise = Vec::new();
     let mut containments = Vec::new();
     for statement in s.keys() {
-        if statement.pointwise {
+        if statement.pointwise() {
             pointwise.push(statement.relation);
         } else if s.relation(statement.relation).is_closed() {
             closed_keys += 1;

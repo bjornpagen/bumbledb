@@ -94,7 +94,7 @@ fn index_plan(schema: &Schema) -> Vec<IndexSpec> {
                 if covered_by_rowid {
                     continue;
                 }
-                let key = !statement.pointwise;
+                let key = !statement.pointwise();
                 plan.push(IndexSpec {
                     table: rel.name().to_owned(),
                     name: format!("{}_{}_s{sid}", if key { "uq" } else { "ix" }, rel.name()),

@@ -163,8 +163,20 @@ fn random_agg(rng: &mut Rng) -> AggOp {
         2 => AggOp::Max,
         3 => AggOp::Count,
         4 => AggOp::CountDistinct,
-        5 => AggOp::ArgMax { key: var(rng) },
-        6 => AggOp::ArgMin { key: var(rng) },
+        5 => AggOp::ArgMax {
+            key: if rng.chance(1, 4) {
+                bumbledb::ArgKey::Measure(var(rng))
+            } else {
+                bumbledb::ArgKey::Var(var(rng))
+            },
+        },
+        6 => AggOp::ArgMin {
+            key: if rng.chance(1, 4) {
+                bumbledb::ArgKey::Measure(var(rng))
+            } else {
+                bumbledb::ArgKey::Var(var(rng))
+            },
+        },
         _ => AggOp::Pack,
     }
 }

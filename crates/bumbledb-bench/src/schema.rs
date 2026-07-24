@@ -237,7 +237,7 @@ mod tests {
         let mut containments = Vec::new();
         let mut pointwise = 0;
         for statement in schema.keys() {
-            if statement.pointwise {
+            if statement.pointwise() {
                 pointwise += 1;
                 assert_eq!(statement.relation, ids::MANDATE);
             } else {

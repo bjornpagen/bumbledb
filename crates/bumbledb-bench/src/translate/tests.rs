@@ -741,7 +741,7 @@ fn arg_restriction_matches_its_goldens() {
         finds: vec![
             FindTerm::Var(VarId(0)),
             FindTerm::Aggregate {
-                op: AggOp::ArgMax { key: VarId(2) },
+                op: AggOp::ArgMax { key: bumbledb::ArgKey::Var(VarId(2)) },
                 over: Some(VarId(1)),
             },
         ],
@@ -762,7 +762,7 @@ fn arg_restriction_matches_its_goldens() {
     // Global: Q(ArgMax_at(p)) :- Posting(id = p, at = t).
     let query = Query::single(Rule {
         finds: vec![FindTerm::Aggregate {
-            op: AggOp::ArgMax { key: VarId(1) },
+            op: AggOp::ArgMax { key: bumbledb::ArgKey::Var(VarId(1)) },
             over: Some(VarId(0)),
         }],
         atoms: vec![Atom {
@@ -778,7 +778,7 @@ fn arg_restriction_matches_its_goldens() {
     // ArgMin swaps the extreme.
     let query = Query::single(Rule {
         finds: vec![FindTerm::Aggregate {
-            op: AggOp::ArgMin { key: VarId(1) },
+            op: AggOp::ArgMin { key: bumbledb::ArgKey::Var(VarId(1)) },
             over: Some(VarId(0)),
         }],
         atoms: vec![Atom {
