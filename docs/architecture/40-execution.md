@@ -845,7 +845,8 @@ so no fixed-width scratch and no eligibility branch exist to cap them. Short
 (fanout-sized) runs resolve per position — both directions measured, both real.
 
 **The leaf fast paths are measured law** (cleanup-0.5.0 ruling 6, the Measure
-phase, 2026-07-19, `bench-out/measure-twins/`). The single-subatom leaf
+phase, 2026-07-19; the artifact retired with the 2026-07-20 pin swap,
+`6d5560a8` — git history). The single-subatom leaf
 classification (`exec/run/leaf_precompute.rs`), its dispatcher, and the
 pinned-row arm (`exec/run/leaf.rs` — a batch of exactly one with every batch
 scaffold skipped) were measure-or-merge twinned against the same plan with

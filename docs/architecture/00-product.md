@@ -169,8 +169,9 @@ language. **Reverses if:** never — owner axiom.
   durable-on-SSD), 3.1–3.5x over a plain-ramdisk durable store, with a
   1.1–1.6x device tax (per-session bands across three interleaved R6
   sessions, the Measure phase 2026-07-19, the R6 lane of
-  `crates/bumbledb/tests/ramdisk_phase_r.rs`,
-  `bench-out/measure-ephemeral-r6/`; the retired `WRITEMAP|NOSYNC` band was
+  `crates/bumbledb/tests/ramdisk_phase_r.rs`; the measurement artifact
+  retired with the 2026-07-20 pin swap, `6d5560a8` — a git-history record,
+  not a tree path; the retired `WRITEMAP|NOSYNC` band was
   ~75–90x / ~4.2–4.4x / 1.0–1.1x). The owner's doctrine, recorded
   verbatim: "everything we can do to make dogfooding easier is upgraded to a
   feature." **Alternative:** an ephemeral constructor gated on a RAM-backed-device
@@ -399,8 +400,10 @@ recursion).
    (cold reported, not gated), SQLite fully indexed + prepared + `ANALYZE`d,
    `synchronous=FULL`, `SELECT DISTINCT` included in timed SQL, canonical machine =
    the owner's. **The claim is unearned until the suite runs green on this
-   engine** — earned at scale S by the committed `bench-out/` artifacts (engine rev
-   `adac4010`, 2026-07-16: verify-stamped, ALL-WIN every gated family), and re-voided
+   engine** — earned at scale S by the committed
+   `bench-out/campaign-2026-07-23/` artifacts (report provenance rev
+   `1e9d39ad`, 2026-07-24: verify-stamped, `all_win: true` on every gated
+   family, corpora regenerated under the fixed RNG per R20), and re-voided
    by any format or semantics change until re-run. The "ratchet" is a manually
    re-run report per meaningful change — not a CI gate.
 3. **Allocation:** a warm prepared-query execution within a seen (data generation,

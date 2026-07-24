@@ -390,7 +390,8 @@ module, `PreparedQuery`/`Answers`, `SchemaError`, `FactShapeError`,
   43–70x over durable-on-SSD for the staging pattern and 3.1–3.5x over a
   plain ramdisk store across the `NOSYNC`-only re-earn sessions, device tax
   1.1–1.6x, the R6 lane of `crates/bumbledb/tests/ramdisk_phase_r.rs`, the
-  Measure phase 2026-07-19, `bench-out/measure-ephemeral-r6/`); the durable side's
+  Measure phase 2026-07-19; the artifact retired with the 2026-07-20 pin
+  swap, `6d5560a8` — git history); the durable side's
   guarantees never dilute because the kinds cannot cross-open.
 - **The lock law is a writer law** (ruled 2026-07-23, R17): one handle per path
   (`00-product.md`) governs writers. Every writing constructor —

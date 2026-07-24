@@ -167,12 +167,14 @@ facts, never interned, so the key hash carries no type tag: forward
   (determinant position → projection index), minted once at validation, so
   the permuted encoder is a straight indexed gather per position. This
   cashes the recorded reversal clause of cleanup-0.5.0 ruling 8 (the
-  Measure phase, 2026-07-19, `bench-out/measure-twins/`): the split's
+  Measure phase, 2026-07-19; the artifact retired with the 2026-07-20 pin
+  swap, `6d5560a8` — git history): the split's
   measured 1.23–1.25× per-fact cost (13 vs 17 ns/fact, commit-shaped
   3-field interval projection, warm DRAM, interleaved min-of-7 × 200k
   facts, two process runs; pre-stated bar 1.09) was entirely the permuted
   arm's per-fact O(k²) inverse search, now hoisted to the seal; the
-  re-measure rides the end-of-campaign bench night (R20/R21).
+  campaign writes rerun re-earned the ladders whole
+  (`bench-out/campaign-2026-07-23/writes/`, R20/R21).
 - **`R` keys are statement-scoped**, not relation-scoped: `statement` is the
   schema-global materialized statement id (`10-data-model.md` fingerprint), and
   `key` is the *target-side* projection value the source fact requires. One source
@@ -566,8 +568,8 @@ The kind is **device-independent**: ephemeral-on-SSD is legitimate, and
 ephemeral-on-ramdisk buys the flag's latency on top of the device's — the
 device tax measured **1.1–1.6x** under `NOSYNC`-only (the R6 lane of
 `crates/bumbledb/tests/ramdisk_phase_r.rs`, re-earned by the Measure phase
-2026-07-19 across three interleaved sessions,
-`bench-out/measure-ephemeral-r6/`; the retired `WRITEMAP|NOSYNC` figure was
+2026-07-19 across three interleaved sessions; the artifact retired with the
+2026-07-20 pin swap, `6d5560a8` — git history; the retired `WRITEMAP|NOSYNC` figure was
 ~1.0–1.1x — and the device-independence *design* stands on the kind marker,
 not the number). The kind
 carries the no-durability claim, not the device, so no lie is possible — a
@@ -603,7 +605,8 @@ cleanup-0.5.0 ruling 1):** WRITEMAP's open-time full-map ftruncate forced the
 eager capacity contract, unpayable at the 32 GiB map; its measured price
 advantage was earned under the old flag set, and the Measure phase re-earned
 the kind's price under `NOSYNC`-only (2026-07-19, three interleaved R6
-sessions, `bench-out/measure-ephemeral-r6/`: small-commit flags dividend
+sessions; the artifact retired with the pin swap `6d5560a8`, git history:
+small-commit flags dividend
 27–52x on SSD and 3.1–3.5x on the ramdisk, staging win 43–70x, device tax
 1.1–1.6x — the WRITEMAP-era ~75–90x / ~4.2–4.4x band narrowed, the win
 stands whole, so the rationale survives its own re-argument). The deterministic crash sweep and the kill
