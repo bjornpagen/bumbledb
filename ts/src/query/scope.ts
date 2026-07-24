@@ -36,6 +36,7 @@ import { sealedFieldsOf } from "#closed.ts"
 import type { AnyField, Infer } from "#fields.ts"
 import { rosterOf } from "#fields.ts"
 import type { ClassLookup, ClassRecordOf, SchemaClasses } from "#law.ts"
+import type { QueryParam } from "#native.ts"
 import type { AnyRelation, RelationFields } from "#relation.ts"
 
 /**
@@ -382,15 +383,18 @@ type InferredOf<T> = T extends { readonly [inferred]?: infer S } ? Exclude<S, un
  * name, the wire shape, the field descriptor (or the measure) that anchored
  * it, and the comparison op the anchor came from (`"binding"` for atom
  * positions). `anchor` is `undefined` only on a query built but not yet
- * anchored by any rule. `members` is present exactly on a MEMBERSHIP-ARRAY
- * entry.
+ * anchored by any rule. `membership` is present exactly on a
+ * MEMBERSHIP-ARRAY entry: the FROZEN wire param, already resolved through
+ * the one roster-verification point at BUILD time (the entry stores the
+ * image, never the pre-image — no per-execute re-translation exists, and an
+ * out-of-roster handle name fails where the mistake was made).
  */
 interface ParamEntry {
 	readonly name: string
 	readonly shape: "value" | "set" | "mask"
 	readonly anchor: AnyField | "measure" | undefined
 	readonly op: "binding" | "eq" | "ne" | "lt" | "le" | "gt" | "ge" | "pointIn" | "allen"
-	readonly members: readonly string[] | undefined
+	readonly membership: QueryParam | undefined
 }
 
 export type {

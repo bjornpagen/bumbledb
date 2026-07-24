@@ -48,6 +48,7 @@ import type {
 	HeadTermIr,
 	PredicateDefIr,
 	ProgramIr,
+	QueryParam,
 	RuleIr,
 	TaggedValue,
 	TermIr
@@ -1259,7 +1260,7 @@ function paramRegistryOf(recs: readonly RecData[], rules: readonly RuleData[]): 
 			shape: ParamEntry["shape"]
 			anchor: ParamEntry["anchor"]
 			op: ParamEntry["op"]
-			members: ParamEntry["members"]
+			members: readonly string[] | undefined
 			orderOp: "lt" | "le" | "gt" | "ge" | "pointIn" | undefined
 		}
 	>()
@@ -1323,7 +1324,30 @@ function paramRegistryOf(recs: readonly RecData[], rules: readonly RuleData[]): 
 			if (entry.orderOp !== undefined && anchorRoster !== undefined) {
 				throw closedOrderError(`query param ${name}`, `its ${entry.orderOp} use's anchor`, anchorRoster.name)
 			}
-			return Object.freeze({ name, shape: entry.shape, anchor: entry.anchor, op: entry.op, members: entry.members })
+			/**
+			 * A membership array's handle names are program constants, so the
+			 * entry stores the resolved IMAGE: each name rides the one
+			 * roster-verification point (`taggedHandleId`, through
+			 * `taggedCmpLiteral`) exactly once, HERE — an out-of-roster name
+			 * fails at build, and every execute returns this frozen value by
+			 * reference.
+			 */
+			let membership: QueryParam | undefined
+			if (entry.members !== undefined) {
+				const anchor = entry.anchor
+				if (anchor === undefined) {
+					throw errors.new(`query param ${name} lost its membership anchor`)
+				}
+				membership = Object.freeze({
+					kind: "set" as const,
+					values: Object.freeze(
+						entry.members.map(function tagMember(member, index) {
+							return Object.freeze(taggedCmpLiteral(`membership array ${name}[${index}]`, anchor, member, entry.op))
+						})
+					)
+				})
+			}
+			return Object.freeze({ name, shape: entry.shape, anchor: entry.anchor, op: entry.op, membership })
 		})
 	)
 }

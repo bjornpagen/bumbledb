@@ -390,16 +390,21 @@ describe("query literals, params & membership arrays over closed references", fu
 		}, /a membership array is the closed-reference spelling — ordinary field membership is a bound ∈-set param \(r\.inSet\)/)
 	})
 
-	test("an unknown member name rides the ONE verification point and throws pointed at execute", function unknownMember() {
-		const q = query(Oncall).rule(function rule(r) {
-			const inc = v(Incident)
-			return (
-				// @ts-expect-error — "Bogus" is not in Sev's handle union
-				r.match(Incident, { id: inc.id, sev: ["Crit", "Bogus"] }).find({ i: inc.id })
-			)
-		})
+	test("an unknown member name rides the ONE verification point and throws pointed at BUILD", function unknownMember() {
+		/**
+		 * The registry resolves membership members to their frozen wire param
+		 * when the query value is assembled (131: the entry stores the image),
+		 * so the out-of-roster name fails where the mistake was made — at the
+		 * query build, never the first execute.
+		 */
 		assert.throws(function bogusMember() {
-			run(q, {})
+			query(Oncall).rule(function rule(r) {
+				const inc = v(Incident)
+				return (
+					// @ts-expect-error — "Bogus" is not in Sev's handle union
+					r.match(Incident, { id: inc.id, sev: ["Crit", "Bogus"] }).find({ i: inc.id })
+				)
+			})
 		}, /"Bogus" is not a handle of Sev — the roster is Info, Warn, Crit, Fatal/)
 	})
 

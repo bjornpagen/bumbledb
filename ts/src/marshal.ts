@@ -70,10 +70,31 @@ type KeyFact<R extends AnyRelation> = [FreshKeys<R>] extends [never]
 /**
  * Reprojects any host object to a string-indexed record — the boundary
  * through which generic fact objects (whose type parameters carry no index
- * signature) enter the name-directed marshaling below, without a cast.
+ * signature) enter the name-directed marshaling below, without a cast. An
+ * ALLOCATION-FREE IDENTITY (the admission predicate is the type
+ * reprojection; the value passes through untouched): every consumer
+ * downstream — `rowOf`, `keyRowOf`, the query param marshal — only READS
+ * properties, so no copy is warranted. The one mutating consumer
+ * (`mintFreshCells` on the insert path) takes its own spread copy at the
+ * call site, so the caller's fact object is never written through this
+ * seam.
  */
-function recordOf(fact: object): Record<string, unknown> {
-	return Object.fromEntries(Object.entries(fact))
+function recordOf(fact: object): Readonly<Record<string, unknown>> {
+	if (!isStringIndexed(fact)) {
+		throw errors.new("fact object is not string-indexable")
+	}
+	return fact
+}
+
+/**
+ * The trusted admission seam of {@link recordOf}: every JS object IS
+ * string-indexable (property reads on absent names yield `undefined`,
+ * which every consumer already guards), so the predicate verifies the one
+ * checkable fact — objecthood — and admits the value at the indexed type
+ * without a copy or a cast.
+ */
+function isStringIndexed(value: object): value is Readonly<Record<string, unknown>> {
+	return typeof value === "object" || typeof value === "function"
 }
 
 /**

@@ -1104,7 +1104,8 @@ function openDb<Rels extends SchemaRelations>(handle: DbHandle, theory: Schema<R
 			assertLive()
 			const entry = resolveOrdinary(relation)
 			const txHandle = resolveTx()
-			const values = recordOf(fact)
+			/** The one spread copy of the write path: `mintFreshCells` writes minted cells in place, and they must never land in the caller's own fact object. */
+			const values: Record<string, unknown> = { ...recordOf(fact) }
 			const fresh = mintFreshCells(txHandle, entry, relation, values)
 			const row = rowOf(relation.data, values)
 			bridged("bumbledb tx insert", function record() {
