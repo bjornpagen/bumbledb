@@ -9,7 +9,11 @@
 //! - **DNF**: seeded random predicate trees to depth 3 — the naive
 //!   model evaluates the *input tree*; the engine evaluates the lowered
 //!   rules. The differential is the lowering proof, now inside every
-//!   verify run.
+//!   verify run — and the tree grammar meets the engine OUTSIDE the
+//!   degenerate corner (finding 085): Allen, `PointIn`, params, and
+//!   ray-bearing measure leaves under 1–2 atoms, optional negation,
+//!   and aggregate heads over overlapping disjuncts (R2's re-keyed
+//!   union fold; R6's Kleene raise, tree-quantified).
 //! - **`Pack`**: `SQLite` cannot express the coalescing fold
 //!   ([`crate::translate::Inexpressible::PackAggregate`]) — these rows
 //!   run **naive-only by decision**, counted and reported, never
@@ -108,30 +112,11 @@ fn rules_ops(sizes: &Sizes) -> Vec<Op> {
             posting_arm(AT_BASE + span / 4, vec![FindTerm::Var(VarId(0))]),
             posting_arm(AT_BASE + span / 2, vec![FindTerm::Var(VarId(0))]),
         ])),
-        // The union folds: Count's constant-filler head position, and a
-        // valued fold over the head projection.
-        query(assemble(vec![
-            posting_arm(
-                AT_BASE,
-                vec![
-                    FindTerm::Var(VarId(0)),
-                    FindTerm::Aggregate {
-                        op: AggOp::Count,
-                        over: None,
-                    },
-                ],
-            ),
-            posting_arm(
-                AT_BASE + span / 3,
-                vec![
-                    FindTerm::Var(VarId(0)),
-                    FindTerm::Aggregate {
-                        op: AggOp::Count,
-                        over: None,
-                    },
-                ],
-            ),
-        ])),
+        // The union fold: a valued fold over the head projection. The
+        // nullary-Count twin this row once carried is definitionally
+        // constant 1 under the head-projection law and REFUSES now
+        // (ruled 2026-07-23, R1 — `CountAcrossRules`); the flipped
+        // refusal row lives in [`error_parity`].
         query(assemble(vec![
             posting_arm(
                 AT_BASE,
@@ -204,7 +189,7 @@ fn dnf_ops(seed: u64, sizes: &Sizes) -> Vec<Op> {
             leaf(op, var(1), Term::Literal(Value::I64(at)))
         }
     };
-    (0..12)
+    let mut ops: Vec<Op> = (0..12)
         .map(|_| {
             let conditions: Vec<ConditionTree> = (0..=rng.range(2))
                 .map(|_| tree(&mut rng, 3, &mut tree_leaf))
@@ -226,7 +211,205 @@ fn dnf_ops(seed: u64, sizes: &Sizes) -> Vec<Op> {
                 query(Query::single(rule))
             }
         })
+        .collect();
+    ops.extend(rich_dnf_ops(seed, sizes));
+    ops
+}
+
+/// The OR-tree grammar OUT of its degenerate corner (finding 085): the
+/// leaf pool widens to the full vocabulary the spec admits under a tree
+/// — Allen with a literal interval, `PointIn`, params and param sets,
+/// and the MEASURE over the ray-bearing mandate lane (the Kleene
+/// verdict engine-vs-naive, ruled R6, quantified over trees for the
+/// first time) — while the rule template varies over 1–2 atoms, an
+/// optional negated atom, and aggregate heads over deliberately
+/// overlapping disjuncts (Count/Max under Or — R2's re-keyed union
+/// fold, the class the known divergence lived in).
+fn rich_dnf_ops(seed: u64, sizes: &Sizes) -> Vec<Op> {
+    let mut rng = Rng::new(seed ^ 0x0085_D2F1);
+    let at_span = i64::try_from(sizes.postings).expect("fits") * AT_STEP;
+    let at_literal = |rng: &mut Rng| {
+        AT_BASE + i64::try_from(rng.range(u64::try_from(at_span).expect("positive"))).expect("fits")
+    };
+    let interval_literal = |rng: &mut Rng| {
+        let start = at_literal(rng);
+        let width = 1 + i64::try_from(rng.range(u64::try_from(4 * AT_STEP).expect("positive")))
+            .expect("fits");
+        Term::Literal(Value::IntervalI64(
+            bumbledb::Interval::<i64>::new(start, start + width).expect("nonempty by construction"),
+        ))
+    };
+    (0..12)
+        .map(|round| {
+            // The scope: Mandate(account = v0, active = v1), half the
+            // rounds joined through Posting(account = v0, at = v2), a
+            // quarter carrying a negated per-account Posting probe.
+            let joined = rng.chance(1, 2);
+            let mut atoms = vec![mandate_atom()];
+            if joined {
+                atoms.push(Atom {
+                    source: bumbledb::AtomSource::Edb(ids::POSTING),
+                    bindings: vec![(ids::posting::ACCOUNT, var(0)), (ids::posting::AT, var(2))],
+                });
+            }
+            let negated = if rng.chance(1, 4) {
+                vec![Atom {
+                    source: bumbledb::AtomSource::Edb(ids::POSTING),
+                    bindings: vec![(ids::posting::ACCOUNT, var(0))],
+                }]
+            } else {
+                vec![]
+            };
+            // One optional param, referenced by a dedicated conjunct so
+            // a supplied binding is never dangling.
+            let (param_leaf, params) = match rng.range(3) {
+                0 => (None, vec![]),
+                1 => (
+                    Some(leaf(
+                        CmpOp::Eq,
+                        var(0),
+                        Term::Param(bumbledb::ParamId(0)),
+                    )),
+                    vec![crate::naive::ParamValue::Scalar(Value::U64(
+                        rng.range(sizes.accounts + 2),
+                    ))],
+                ),
+                _ => (
+                    Some(leaf(
+                        CmpOp::Eq,
+                        var(0),
+                        Term::ParamSet(bumbledb::ParamId(0)),
+                    )),
+                    vec![crate::naive::ParamValue::Set(
+                        (0..rng.range(4))
+                            .map(|_| Value::U64(rng.range(sizes.accounts + 2)))
+                            .collect(),
+                    )],
+                ),
+            };
+            let mut rich_leaf = |rng: &mut Rng| match rng.range(6) {
+                0 => leaf(
+                    op_of(rng),
+                    var(0),
+                    Term::Literal(Value::U64(rng.range(sizes.accounts + 2))),
+                ),
+                1 => leaf(
+                    CmpOp::Allen {
+                        mask: MaskTerm::Literal(match rng.range(4) {
+                            0 => AllenMask::INTERSECTS,
+                            1 => AllenMask::DISJOINT,
+                            2 => AllenMask::COVERS,
+                            _ => AllenMask::BEFORE,
+                        }),
+                    },
+                    var(1),
+                    interval_literal(rng),
+                ),
+                2 => leaf(
+                    CmpOp::PointIn,
+                    var(1),
+                    Term::Literal(Value::I64(at_literal(rng))),
+                ),
+                // The measure leaf — the tree grammar's one partial
+                // predicate, over rays (even accounts carry `[s, ∞)`).
+                3 => leaf(
+                    order_op(rng),
+                    Term::Measure(VarId(1)),
+                    Term::Literal(Value::U64(rng.range(
+                        u64::try_from(4 * AT_STEP).expect("positive"),
+                    ))),
+                ),
+                _ if joined => leaf(op_of(rng), var(2), Term::Literal(Value::I64(at_literal(rng)))),
+                _ => leaf(
+                    op_of(rng),
+                    var(0),
+                    Term::Literal(Value::U64(rng.range(sizes.accounts + 2))),
+                ),
+            };
+            let mut conditions: Vec<ConditionTree> = (0..=rng.range(2))
+                .map(|_| tree(&mut rng, 3, &mut rich_leaf))
+                .collect();
+            conditions.extend(param_leaf);
+            // The head: projection, or an aggregate over the Or tree —
+            // the fold-transparency class (R2): the disjuncts overlap
+            // by construction (random bands over eight accounts).
+            let finds = match round % 3 {
+                0 if joined => vec![
+                    FindTerm::Var(VarId(0)),
+                    FindTerm::Aggregate {
+                        op: AggOp::Max,
+                        over: Some(VarId(2)),
+                    },
+                ],
+                0 | 1 => vec![
+                    FindTerm::Var(VarId(0)),
+                    FindTerm::Aggregate {
+                        op: AggOp::Count,
+                        over: None,
+                    },
+                ],
+                _ => vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
+            };
+            let rule = Rule {
+                finds,
+                atoms,
+                negated,
+                conditions,
+            };
+            let rule = if dnf_width(&rule) > bumbledb::MAX_RULES || dnf_width(&rule) == 0 {
+                let mut trimmed = rule;
+                trimmed.conditions = vec![rich_leaf(&mut rng)];
+                trimmed.conditions.extend(param_leaf_of(&params));
+                trimmed
+            } else {
+                rule
+            };
+            Op::Query {
+                query: Query::single(rule),
+                params,
+            }
+        })
         .collect()
+}
+
+/// The trim fallback's param conjunct: re-derived from the params the
+/// op carries, so a trimmed rule never dangles its binding.
+fn param_leaf_of(params: &[crate::naive::ParamValue]) -> Option<ConditionTree> {
+    match params.first() {
+        None => None,
+        Some(crate::naive::ParamValue::Scalar(_)) => Some(leaf(
+            CmpOp::Eq,
+            var(0),
+            Term::Param(bumbledb::ParamId(0)),
+        )),
+        Some(crate::naive::ParamValue::Set(_)) => Some(leaf(
+            CmpOp::Eq,
+            var(0),
+            Term::ParamSet(bumbledb::ParamId(0)),
+        )),
+    }
+}
+
+/// A uniformly drawn scalar comparison operator.
+fn op_of(rng: &mut Rng) -> CmpOp {
+    match rng.range(6) {
+        0 => CmpOp::Eq,
+        1 => CmpOp::Ne,
+        2 => CmpOp::Lt,
+        3 => CmpOp::Le,
+        4 => CmpOp::Gt,
+        _ => CmpOp::Ge,
+    }
+}
+
+/// A uniformly drawn order operator (the measure's roster).
+fn order_op(rng: &mut Rng) -> CmpOp {
+    match rng.range(4) {
+        0 => CmpOp::Lt,
+        1 => CmpOp::Le,
+        2 => CmpOp::Gt,
+        _ => CmpOp::Ge,
+    }
 }
 
 /// The `Pack` rows (naive-only by decision) and the measure's ray rows.
@@ -368,6 +551,10 @@ enum Expected {
     EmptyMaskParam,
     /// The bind-time "always", `FULL` at execute.
     FullMaskParam,
+    /// The fold-free nullary Count across 2+ written rules —
+    /// definitionally constant 1 under the head-projection law, a
+    /// typed refusal since R1 (the flipped acceptance row).
+    CountAcrossRules { rules: usize },
 }
 
 /// The parity cases: the invalid shapes the roster owns, each paired
@@ -437,6 +624,35 @@ fn parity_cases() -> Vec<(&'static str, Query, Expected)> {
             mask_query(AllenMask::FULL),
             Expected::FullMask,
         ),
+        {
+            // The flipped R1 row: the once-accepted multi-rule nullary
+            // Count (one Count per disjunct is the modeling answer).
+            let count_head = || {
+                vec![
+                    FindTerm::Var(VarId(0)),
+                    FindTerm::Aggregate {
+                        op: AggOp::Count,
+                        over: None,
+                    },
+                ]
+            };
+            let arm = |floor: i64| Rule {
+                finds: count_head(),
+                atoms: vec![posting_atom()],
+                negated: vec![],
+                conditions: vec![leaf(CmpOp::Ge, var(1), Term::Literal(Value::I64(floor)))],
+            };
+            let q = Query {
+                head: arm(0).head(),
+                rules: vec![arm(0), arm(1)],
+            };
+            let rules = q.rules.len();
+            (
+                "count across rules (R1)",
+                q,
+                Expected::CountAcrossRules { rules },
+            )
+        },
         (
             "vacuous mask param (EMPTY)",
             mask_param_query(),
@@ -569,6 +785,11 @@ pub(super) fn error_parity<S, T>(db: &Db<S>, run: &mut Run<'_, T>) {
                     bumbledb::error::ValidationError::FullAllenMask { .. }
                 )
             }
+            Expected::CountAcrossRules { rules } => matches!(
+                verdict,
+                bumbledb::error::ValidationError::CountAcrossRules { rules: found }
+                    if found == rules
+            ),
             Expected::EmptyMaskParam | Expected::FullMaskParam => {
                 unreachable!("the bind-time rows are handled above")
             }

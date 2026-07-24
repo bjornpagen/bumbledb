@@ -63,8 +63,10 @@ pub use query::translate;
 
 /// The SQL translation is conjunctive-only: it consumes the flat leaf
 /// list (the fleet's generators and scenarios emit no trees). The tree
-/// grammar's OR shapes are proven against the naive model by the DNF
-/// property suite, never round-tripped through SQL.
+/// grammar's OR shapes run ENGINE-vs-naive in the verify algebra rows
+/// (`verify/run_algebra.rs` — the widened leaf pool and aggregate
+/// heads, finding 085) and naive-vs-naive in the DNF property suite;
+/// they are never round-tripped through SQL.
 fn leaf(tree: &bumbledb::ConditionTree) -> &bumbledb::Comparison {
     match tree {
         bumbledb::ConditionTree::Leaf(comparison) => comparison,
