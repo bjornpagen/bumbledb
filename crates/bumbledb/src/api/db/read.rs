@@ -31,6 +31,7 @@ impl<S> Db<S> {
             txn,
             cache: &self.cache,
             schema: &self.schema,
+            scratch: &self.read_scratch,
             marker: std::marker::PhantomData,
         };
         let result = f(&snap);

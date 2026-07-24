@@ -216,13 +216,16 @@ const ITEM_CHAIN: u64 = 8;
 const ITEM_LADDER: [u64; 5] = [6, 24, 72, 240, 660];
 
 // The borrowed-struct gate's typed schema (PRD 22): a str-bearing
-// relation whose generated struct borrows its memo (`&'a str`).
+// relation whose generated struct borrows its memo (`&'a str`). The
+// declared memo key is the p5 bench shape (`Doc(key str) -> Doc`) —
+// the snapshot keyed-get gate probes through it.
 bumbledb::schema! {
     pub GateLedger;
     relation GateItem {
         id: u64 as GateItemId, fresh,
         memo: str,
     }
+    GateItem(memo) -> GateItem;
 }
 
 /// The high-water window's escalation ladder: per rung, one account that
@@ -1146,6 +1149,46 @@ fn borrowed_struct_gate() {
         Ok(())
     })
     .expect("borrowed-struct gate");
+
+    // The snapshot twin (ruled 2026-07-23, R15): the committed-state
+    // keyed get through the declared str key — the p5 bench shape
+    // (`Doc(key str) -> Doc`) — draws its composed-key scratch from the
+    // Db-owned pool, so the measured probe + borrowed decode is
+    // host-allocation-free exactly as the WriteTx window above. The
+    // miss leg is the never-interned short-circuit; the membership leg
+    // is the typed committed-state `contains`.
+    db.read(|snap| {
+        // Warm the pool entry outside the window — the get and the
+        // membership probe each set their high-water capacity.
+        let key = GateItemByMemo {
+            memo: "memo-borrowed",
+        };
+        let warm = snap.get(key)?.expect("present");
+        assert!(snap.contains(&warm)?);
+        alloc_counter::reset();
+        let got = snap.get(key)?.expect("present");
+        assert_eq!(got.memo, "memo-borrowed");
+        assert!(snap.contains(&warm)?);
+        assert!(
+            snap.get(GateItemByMemo {
+                memo: "memo-never-interned",
+            })?
+            .is_none()
+        );
+        let bytes = alloc_counter::snapshot();
+        assert_eq!(
+            (
+                bytes.allocs,
+                bytes.deallocs,
+                bytes.alloc_bytes,
+                bytes.dealloc_bytes
+            ),
+            (0, 0, 0, 0),
+            "snapshot keyed get (hit, contains, miss) must be host-allocation-free"
+        );
+        Ok(())
+    })
+    .expect("snapshot point-read gate");
 }
 
 /// One test function: the gate binary is single-threaded by construction.

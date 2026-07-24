@@ -124,6 +124,32 @@ impl<S> Snapshot<'_, S> {
 }
 
 impl<S> Snapshot<'_, S> {
+    /// Committed-state membership of a typed fact — the snapshot sibling
+    /// of [`super::WriteTx::contains`], completing the point-operation
+    /// matrix (typed/dyn × write/snapshot, `docs/architecture/70-api.md`
+    /// § point reads): the fact encodes through [`Fact::encode_read`] —
+    /// the committed dictionary, never minting — so a string or bytes
+    /// value the dictionary does not know proves the fact absent and the
+    /// probe short-circuits to `false`. A **closed** relation answers
+    /// from its sealed extension (virtual storage — no `M` rows exist).
+    ///
+    /// # Errors
+    ///
+    /// `Lmdb` on the membership probe or dictionary reads.
+    pub fn contains<'f, F: Fact<'f, Schema = S>>(&self, fact: &F) -> Result<bool> {
+        self.with_scratch(|scratch| {
+            if !fact.encode_read(self, &mut scratch.bytes)? {
+                return Ok(false);
+            }
+            if let Some(extension) = self.schema.relation(F::RELATION).extension() {
+                return Ok(extension
+                    .iter()
+                    .any(|row| row.fact.as_ref() == scratch.bytes.as_slice()));
+            }
+            read::fact_row(&self.txn, F::RELATION, &scratch.bytes).map(|row| row.is_some())
+        })
+    }
+
     /// Committed-state membership of a dynamic fact — the snapshot
     /// sibling of [`super::WriteTx::contains_dyn`], completing the
     /// schema-generic read surface (`docs/architecture/70-api.md` § the
@@ -142,18 +168,24 @@ impl<S> Snapshot<'_, S> {
         let Some(relation) = self.schema.relation_checked(rel) else {
             return Err(FactShapeError::UnknownRelation { relation: rel }.into());
         };
-        let mut refs = Vec::with_capacity(values.len());
-        if !super::encode_dyn::dyn_value_refs(rel, values, relation.fields(), &mut refs, |text| {
-            dict::lookup_str(&self.txn, text)
-        })? {
-            return Ok(false);
-        }
-        let mut fact = Vec::new();
-        crate::encoding::encode_fact(&refs, relation.layout(), &mut fact);
-        if let Some(extension) = relation.extension() {
-            return Ok(extension.iter().any(|row| row.fact.as_ref() == fact));
-        }
-        read::fact_row(&self.txn, rel, &fact).map(|row| row.is_some())
+        self.with_scratch(|scratch| {
+            if !super::encode_dyn::dyn_value_refs(
+                rel,
+                values,
+                relation.fields(),
+                &mut scratch.refs,
+                |text| dict::lookup_str(&self.txn, text),
+            )? {
+                return Ok(false);
+            }
+            crate::encoding::encode_fact(&scratch.refs, relation.layout(), &mut scratch.bytes);
+            if let Some(extension) = relation.extension() {
+                return Ok(extension
+                    .iter()
+                    .any(|row| row.fact.as_ref() == scratch.bytes.as_slice()));
+            }
+            read::fact_row(&self.txn, rel, &scratch.bytes).map(|row| row.is_some())
+        })
     }
 
     /// Point lookup of the full fact through any key statement of
@@ -176,33 +208,50 @@ impl<S> Snapshot<'_, S> {
         key_values: &[Value],
     ) -> Result<Option<Vec<Value>>> {
         let (_, statement) = super::get::key_statement_of(self.schema, relation, key)?;
-        let mut determinant = Vec::new();
-        if !super::get::encode_determinant_with(
-            self.schema,
-            relation,
-            &statement.projection,
-            key_values,
-            &mut determinant,
-            |text| dict::lookup_str(&self.txn, text),
-        )? {
-            return Ok(None);
-        }
-        let rel = self.schema.relation(relation);
-        let bytes = if rel.is_closed() {
-            super::get::closed_fact_by_determinant(rel, statement, &determinant)
-        } else {
-            match read::determinant_row(&self.txn, relation, statement.id, &determinant)? {
-                Some(row) => Some(read::fetch(&self.txn, self.schema, relation, row)?),
-                None => None,
+        self.with_scratch(|scratch| {
+            let key_bytes = &mut scratch.bytes;
+            read::begin_determinant_key(key_bytes, relation, statement.id);
+            if !super::get::encode_determinant_with(
+                self.schema,
+                relation,
+                &statement.projection,
+                key_values,
+                key_bytes,
+                |text| dict::lookup_str(&self.txn, text),
+            )? {
+                return Ok(None);
             }
-        };
-        bytes
-            .map(|fact| {
-                crate::encoding::decode_values(fact, rel.layout(), |id| {
-                    Ok(Box::from(dict::resolve(&self.txn, id)?))
+            let rel = self.schema.relation(relation);
+            let bytes = if rel.is_closed() {
+                super::get::closed_fact_by_determinant(
+                    rel,
+                    statement,
+                    &key_bytes[read::DETERMINANT_KEY_HEADER..],
+                )
+            } else if statement.fresh_row {
+                // The fresh-row auto-key reads `F` directly: its
+                // determinant IS the row id (R16).
+                read::fact_at(
+                    &self.txn,
+                    self.schema,
+                    relation,
+                    super::get::fresh_row_id(&key_bytes[read::DETERMINANT_KEY_HEADER..]),
+                )?
+            } else {
+                read::fact_for_key(&self.txn, self.schema, relation, key_bytes)?
+            };
+            bytes
+                .map(|fact| {
+                    crate::encoding::decode_values_keyed(
+                        fact,
+                        rel.layout(),
+                        &statement.projection,
+                        key_values,
+                        |id| Ok(Box::from(dict::resolve(&self.txn, id)?)),
+                    )
                 })
-            })
-            .transpose()
+                .transpose()
+        })
     }
 
     /// Point lookup of the full fact through a typed key value ([`Key`]),
@@ -232,20 +281,33 @@ impl<S> Snapshot<'_, S> {
     pub fn get<'snap, K: Key<'snap, Schema = S>>(&'snap self, key: K) -> Result<Option<K::Fact>> {
         let relation = <K::Fact as Fact<'snap>>::RELATION;
         let (_, statement) = super::get::key_statement_of(self.schema, relation, K::STATEMENT)?;
-        let mut determinant = Vec::new();
-        if !key.determinant_read(self, &mut determinant)? {
-            return Ok(None);
-        }
-        let rel = self.schema.relation(relation);
-        let bytes = if rel.is_closed() {
-            super::get::closed_fact_by_determinant(rel, statement, &determinant)
-        } else {
-            match read::determinant_row(&self.txn, relation, statement.id, &determinant)? {
-                Some(row) => Some(read::fetch(&self.txn, self.schema, relation, row)?),
-                None => None,
+        self.with_scratch(|scratch| {
+            let key_bytes = &mut scratch.bytes;
+            read::begin_determinant_key(key_bytes, relation, statement.id);
+            if !key.determinant_read(self, key_bytes)? {
+                return Ok(None);
             }
-        };
-        bytes.map(|fact| K::Fact::decode(self, fact)).transpose()
+            let rel = self.schema.relation(relation);
+            let bytes = if rel.is_closed() {
+                super::get::closed_fact_by_determinant(
+                    rel,
+                    statement,
+                    &key_bytes[read::DETERMINANT_KEY_HEADER..],
+                )
+            } else if statement.fresh_row {
+                // The fresh-row auto-key reads `F` directly: its
+                // determinant IS the row id (R16).
+                read::fact_at(
+                    &self.txn,
+                    self.schema,
+                    relation,
+                    super::get::fresh_row_id(&key_bytes[read::DETERMINANT_KEY_HEADER..]),
+                )?
+            } else {
+                read::fact_for_key(&self.txn, self.schema, relation, key_bytes)?
+            };
+            bytes.map(|fact| K::Fact::decode(self, fact)).transpose()
+        })
     }
 
     /// The typed sibling of [`Snapshot::scan`]: decodes each fact into its

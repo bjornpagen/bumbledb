@@ -100,6 +100,18 @@ pub(super) fn encode_determinant_with(
     Ok(true)
 }
 
+/// The fresh-row auto-key's committed probe target (the one id
+/// allocator, ruled 2026-07-23, R16): the determinant IS the big-endian
+/// row id — schema validation seals the auto-key's projection as the
+/// one u64 fresh field, so the word is total.
+pub(super) fn fresh_row_id(determinant: &[u8]) -> u64 {
+    u64::from_be_bytes(
+        determinant
+            .try_into()
+            .expect("a fresh-row determinant is one u64 word"),
+    )
+}
+
 /// A **closed** relation's determinant lookup: virtual storage holds no
 /// `U` determinants, so the key's determinant bytes re-derive per sealed
 /// row by the same slicing the commit path uses — ≤256 rows, L1-resident
@@ -219,23 +231,24 @@ impl<S> WriteTx<'_, S> {
                   by-value keeps every call site free of `&` noise"
     )]
     pub fn get<'tx, K: Key<'tx, Schema = S>>(&'tx mut self, key: K) -> Result<Option<K::Fact>> {
-        let (key_id, _) =
-            key_statement_of(self.schema, <K::Fact as Fact<'tx>>::RELATION, K::STATEMENT)?;
+        let relation = <K::Fact as Fact<'tx>>::RELATION;
+        let (key_id, _) = key_statement_of(self.schema, relation, K::STATEMENT)?;
         // The scratch discipline, by hand: the borrowed result rules out
         // `with_scratch`'s closure shape, and the determinant must not
         // allocate per call (point reads are allocation-free,
-        // `docs/architecture/70-api.md`) — so encode into the taken
-        // buffer, restore it, then downgrade to the shared borrow the
-        // decode lifetime needs.
-        let mut determinant = std::mem::take(&mut self.scratch);
-        determinant.clear();
-        let filled = key.determinant_write(self, &mut determinant);
-        self.scratch = determinant;
+        // `docs/architecture/70-api.md`) — so compose the `U` key into
+        // the taken buffer, restore it, then downgrade to the shared
+        // borrow the decode lifetime needs.
+        let mut key_bytes = std::mem::take(&mut self.scratch);
+        key_bytes.clear();
+        read::begin_determinant_key(&mut key_bytes, relation, K::STATEMENT);
+        let filled = key.determinant_write(self, &mut key_bytes);
+        self.scratch = key_bytes;
         if !filled? {
             return Ok(None);
         }
         let this: &'tx Self = self;
-        match this.fact_by_determinant(<K::Fact as Fact<'tx>>::RELATION, key_id, &this.scratch)? {
+        match this.fact_by_key(relation, key_id, &this.scratch)? {
             Some(bytes) => K::Fact::decode_write(this, bytes).map(Some),
             None => Ok(None),
         }
@@ -267,20 +280,21 @@ impl<S> WriteTx<'_, S> {
     ) -> Result<Option<Vec<Value>>> {
         let (key_id, statement) = key_statement_of(self.schema, relation, key)?;
         let projection = &statement.projection;
-        self.with_scratch(|tx, determinant| {
+        self.with_scratch(|tx, key_bytes| {
             let (delta, view, schema) = (&tx.delta, &tx.view, tx.schema);
+            read::begin_determinant_key(key_bytes, relation, statement.id);
             if !encode_determinant_with(
                 schema,
                 relation,
                 projection,
                 key_values,
-                determinant,
+                key_bytes,
                 |text| delta.resolve_str(view, text),
             )? {
                 return Ok(None);
             }
-            tx.fact_by_determinant(relation, key_id, determinant)?
-                .map(|bytes| tx.decode_values(relation, bytes))
+            tx.fact_by_key(relation, key_id, key_bytes)?
+                .map(|bytes| tx.decode_values_keyed(relation, projection, key_values, bytes))
                 .transpose()
         })
     }
@@ -310,42 +324,56 @@ impl<S> WriteTx<'_, S> {
         self.delta.contains(&self.view, rel, &self.scratch)
     }
 
-    /// The shared lookup leg: delta determinant map first (`Present` → the
-    /// pending fact's bytes, `Absent` → known deleted), then the committed
-    /// view — `U` get → `F` fetch.
+    /// The shared lookup leg over a composed `U` key
+    /// ([`read::begin_determinant_key`] + determinant bytes): delta
+    /// determinant map first (`Present` → the pending fact's bytes,
+    /// `Absent` → known deleted), then the committed view — `U` get →
+    /// `F` fetch (the fresh-row auto-key reads `F` directly: its
+    /// determinant IS the row id, R16), no per-probe key scratch.
     ///
     /// A **closed** relation resolves against its sealed extension instead
     /// ([`closed_fact_by_determinant`] — virtual storage, no `U`
     /// determinants exist). No delta arm: writes are refused at entry.
-    fn fact_by_determinant(
-        &self,
-        relation: RelationId,
-        key: KeyId,
-        determinant: &[u8],
-    ) -> Result<Option<&[u8]>> {
+    fn fact_by_key(&self, relation: RelationId, key: KeyId, u_key: &[u8]) -> Result<Option<&[u8]>> {
         let rel = self.schema.relation(relation);
         let statement = self.schema.key(key);
+        let determinant = &u_key[read::DETERMINANT_KEY_HEADER..];
         if rel.is_closed() {
             return Ok(closed_fact_by_determinant(rel, statement, determinant));
         }
         match self.delta.determinant_overlay(key, determinant) {
             Some(DeterminantOverlay::Present(bytes)) => Ok(Some(bytes)),
             Some(DeterminantOverlay::Absent) => Ok(None),
-            None => match read::determinant_row(&self.view, relation, statement.id, determinant)? {
-                Some(row) => read::fetch(&self.view, self.schema, relation, row).map(Some),
-                None => Ok(None),
-            },
+            None if statement.fresh_row => {
+                read::fact_at(&self.view, self.schema, relation, fresh_row_id(determinant))
+            }
+            None => read::fact_for_key(&self.view, self.schema, relation, u_key),
         }
     }
 
     /// Decodes canonical fact bytes into owned values, resolving intern
     /// ids pending-first (a fact inserted this transaction carries
     /// provisional ids) — the dynamic sibling of [`Fact::decode_write`].
-    fn decode_values(&self, relation: RelationId, fact: &[u8]) -> Result<Vec<Value>> {
-        crate::encoding::decode_values(fact, self.schema.relation(relation).layout(), |id| {
-            Ok(Box::from(
-                plumbing::resolve_string_write(self, id)?.as_bytes(),
-            ))
-        })
+    /// Fields the key statement's projection fixed take the caller's
+    /// supplied values ([`crate::encoding::decode_values_keyed`] — the
+    /// probe already proved them byte-identical to the stored ones).
+    fn decode_values_keyed(
+        &self,
+        relation: RelationId,
+        projection: &[FieldId],
+        key_values: &[Value],
+        fact: &[u8],
+    ) -> Result<Vec<Value>> {
+        crate::encoding::decode_values_keyed(
+            fact,
+            self.schema.relation(relation).layout(),
+            projection,
+            key_values,
+            |id| {
+                Ok(Box::from(
+                    plumbing::resolve_string_write(self, id)?.as_bytes(),
+                ))
+            },
+        )
     }
 }

@@ -945,3 +945,36 @@ fn exhaustive_fixed_interval_start_word_preserves_start_order() {
         }
     }
 }
+
+/// The keyed decode substitutes the caller's supplied values for the
+/// projected fields WITHOUT invoking the string resolver — the keyed-get
+/// hit path re-derives nothing the caller handed it (the `U` probe
+/// already matched the determinant byte-for-byte). Non-projected fields
+/// decode exactly as [`decode_values`] does.
+#[test]
+fn decode_values_keyed_never_resolves_a_projected_field() {
+    use bumbledb_theory::Value;
+    use bumbledb_theory::schema::FieldId;
+    let layout = mixed_layout();
+    let mut fact = Vec::new();
+    encode_fact(&mixed_values(), &layout, &mut fact);
+    // Projection (u64 field 2, str field 4): the resolver must never see
+    // the projected string's id — a call is the failure.
+    let supplied = [Value::U64(u64::MAX), Value::String(Box::from(*b"supplied"))];
+    let decoded =
+        super::decode_values_keyed(&fact, &layout, &[FieldId(2), FieldId(4)], &supplied, |id| {
+            panic!("projected field resolved through the dictionary (id {id})")
+        })
+        .expect("decode");
+    assert_eq!(decoded[2], supplied[0]);
+    assert_eq!(decoded[4], supplied[1]);
+    // The unkeyed decode of the same fact agrees everywhere else.
+    let plain = super::decode_values(&fact, &layout, |id| {
+        assert_eq!(id, 7);
+        Ok(Box::from(*b"resolved"))
+    })
+    .expect("decode");
+    for idx in [0, 1, 3, 5, 6, 7] {
+        assert_eq!(decoded[idx], plain[idx]);
+    }
+}

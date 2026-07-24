@@ -101,6 +101,19 @@ fn membership_probe_hit_and_miss() {
     );
 }
 
+/// Composes a `U` key and probes it — the read path's shape, as a test
+/// convenience.
+fn probe(
+    txn: &crate::storage::env::ReadTxn<'_>,
+    statement: StatementId,
+    determinant: &[u8],
+) -> Option<u64> {
+    let mut key = Vec::new();
+    begin_determinant_key(&mut key, R, statement);
+    key.extend_from_slice(determinant);
+    determinant_row_for_key(txn, &key).expect("probe")
+}
+
 #[test]
 fn key_probe_hit_and_miss() {
     let dir = TempDir::new("read-determinant");
@@ -110,19 +123,24 @@ fn key_probe_hit_and_miss() {
     let row = fact_row(&txn, R, &fact(&schema, 2, 30))
         .expect("probe")
         .expect("present");
-    // The fresh auto-key (statement 0) on id and the declared key
-    // (statement 1) on amount both resolve to the same row.
+    // The fresh auto-key (statement 0) maintains no `U` tree (the one id
+    // allocator, R16): its determinant IS the row id, and the committed
+    // probe is the direct `F` get — an honest miss on the deleted row.
+    assert_eq!(probe(&txn, StatementId(0), &encode_u64(2)), None);
+    assert_eq!(row, 2, "the fresh field's value IS the F row id");
     assert_eq!(
-        determinant_row(&txn, R, StatementId(0), &encode_u64(2)).expect("probe"),
+        fact_at(&txn, &schema, R, 2).expect("probe"),
+        Some(&fact(&schema, 2, 30)[..])
+    );
+    assert_eq!(fact_at(&txn, &schema, R, 1).expect("probe"), None);
+    // The declared key (statement 1) on amount keeps its `U` tree.
+    assert_eq!(
+        probe(&txn, StatementId(1), &crate::encoding::encode_i64(30)),
         Some(row)
     );
+    // The deleted fact's declared-key tuple is gone.
     assert_eq!(
-        determinant_row(&txn, R, StatementId(1), &crate::encoding::encode_i64(30)).expect("probe"),
-        Some(row)
-    );
-    // The deleted fact's determinant tuples are gone.
-    assert_eq!(
-        determinant_row(&txn, R, StatementId(0), &encode_u64(1)).expect("probe"),
+        probe(&txn, StatementId(1), &crate::encoding::encode_i64(20)),
         None
     );
 }
@@ -310,4 +328,40 @@ fn row_count_equals_scan_count_after_mixed_commits() {
     let scanned = scan(&txn, &schema, R).expect("scan").count() as u64;
     assert_eq!(row_count(&txn, R).expect("count"), scanned);
     assert_eq!(scanned, 2);
+}
+
+/// The composed-key writer is byte-identical to the codec's
+/// [`keys::determinant_key`] — the coupling the point-read paths lean on
+/// when they encode a determinant directly behind
+/// [`begin_determinant_key`]'s header.
+#[test]
+fn composed_determinant_key_matches_the_codec() {
+    let determinant = encode_u64(0xAABB_CCDD_EE01_0203);
+    let mut composed = Vec::new();
+    begin_determinant_key(&mut composed, RelationId(7), StatementId(3));
+    assert_eq!(composed.len(), DETERMINANT_KEY_HEADER);
+    composed.extend_from_slice(&determinant);
+    let codec =
+        keys::key(|b| keys::determinant_key(b, RelationId(7), StatementId(3), &determinant));
+    assert_eq!(composed, codec);
+}
+
+/// [`fact_for_key`] chains the `F` fetch behind a composed-key hit and
+/// misses honestly behind a probe miss.
+#[test]
+fn fact_for_key_chains_the_fetch_and_misses_honestly() {
+    let dir = TempDir::new("read-composed-key");
+    let schema = schema();
+    let env = fixture(&dir, &schema);
+    let txn = env.read_txn().expect("txn");
+    let mut key = Vec::new();
+    begin_determinant_key(&mut key, R, StatementId(1));
+    key.extend_from_slice(&crate::encoding::encode_i64(30));
+    let hit = fact_for_key(&txn, &schema, R, &key)
+        .expect("probe")
+        .expect("present");
+    assert_eq!(hit, &fact(&schema, 2, 30)[..]);
+    key.truncate(DETERMINANT_KEY_HEADER);
+    key.extend_from_slice(&crate::encoding::encode_i64(20));
+    assert_eq!(fact_for_key(&txn, &schema, R, &key).expect("probe"), None);
 }

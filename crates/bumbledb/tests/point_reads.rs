@@ -364,3 +364,43 @@ fn the_upsert_idiom_round_trips_a_counter_across_three_transactions() {
     })
     .expect("read");
 }
+
+/// Committed-state membership of a TYPED fact — the snapshot sibling of
+/// `tx.contains`, closing the point-operation matrix: a committed fact
+/// answers true, a value-modified twin false, and a fact carrying a
+/// never-interned string short-circuits to false (the read-context
+/// encode proves it cannot exist — no probe, no error).
+#[test]
+fn snapshot_contains_answers_typed_membership_against_committed_state() {
+    let dir = common::TempDir::new("points-snap-contains");
+    let db = Db::create(dir.path(), Ledger).expect("create");
+    let id = db
+        .write(|tx| {
+            let id = tx.alloc::<AccountId>()?;
+            tx.insert(&Account {
+                id,
+                holder: "ada",
+                balance: 10,
+            })?;
+            Ok(id)
+        })
+        .expect("write");
+    db.read(|snap| {
+        let committed = Account {
+            id,
+            holder: "ada",
+            balance: 10,
+        };
+        assert!(snap.contains(&committed)?);
+        assert!(!snap.contains(&Account {
+            balance: 11,
+            ..committed.clone()
+        })?);
+        assert!(!snap.contains(&Account {
+            holder: "ghost",
+            ..committed
+        })?);
+        Ok(())
+    })
+    .expect("read");
+}

@@ -82,6 +82,7 @@ impl<S: Theory> Db<S> {
             writer_thread: std::sync::atomic::AtomicU64::new(0),
             read_cache: Mutex::new(None),
             commit_seq: std::sync::atomic::AtomicU64::new(CommitSeq::INITIAL.atomic_word()),
+            read_scratch: super::ScratchPool::new(),
             schema,
             marker: std::marker::PhantomData,
         }

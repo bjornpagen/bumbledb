@@ -235,11 +235,33 @@ pub fn decode_field(
 pub(crate) fn decode_values(
     fact: &[u8],
     layout: &FactLayout,
+    resolve_str: impl FnMut(u64) -> crate::error::Result<Box<[u8]>>,
+) -> crate::error::Result<Vec<bumbledb_theory::Value>> {
+    decode_values_keyed(fact, layout, &[], &[], resolve_str)
+}
+
+/// [`decode_values`] for the keyed point-read hit (`Snapshot::get_dyn` /
+/// `WriteTx::get_dyn`): fields the key statement's projection fixed take
+/// the caller's supplied values — the `U` probe matched the determinant
+/// byte-for-byte and hash equality is fact equality
+/// (`docs/architecture/10-data-model.md`), so the stored field IS the
+/// supplied one, and resolving it through the reverse dictionary would
+/// re-derive the input with an extra storage descent. Non-projected
+/// fields decode as [`decode_values`] does.
+pub(crate) fn decode_values_keyed(
+    fact: &[u8],
+    layout: &FactLayout,
+    projection: &[bumbledb_theory::schema::FieldId],
+    key_values: &[bumbledb_theory::Value],
     mut resolve_str: impl FnMut(u64) -> crate::error::Result<Box<[u8]>>,
 ) -> crate::error::Result<Vec<bumbledb_theory::Value>> {
     use bumbledb_theory::Value;
+    debug_assert_eq!(projection.len(), key_values.len());
     (0..layout.field_count())
         .map(|idx| {
+            if let Some(pos) = projection.iter().position(|f| usize::from(f.0) == idx) {
+                return Ok(key_values[pos].clone());
+            }
             Ok(match decode_field(fact, layout, idx)? {
                 ValueRef::Bool(v) => Value::Bool(v),
                 ValueRef::U64(v) => Value::U64(v),

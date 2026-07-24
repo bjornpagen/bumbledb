@@ -21,9 +21,9 @@ mod scan;
 mod tests;
 
 pub use data_entries::data_entries;
-pub use determinant_row::determinant_row;
+pub use determinant_row::{DETERMINANT_KEY_HEADER, begin_determinant_key, determinant_row_for_key};
 pub use fact_row::{fact_row, fact_row_by_hash};
-pub use fetch::fetch;
+pub use fetch::{fact_at, fact_for_key, fetch};
 pub use row_count::row_count;
 pub use row_id_high_water::row_id_high_water;
 pub use scan::{scan, scan_from};

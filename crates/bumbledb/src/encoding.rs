@@ -16,7 +16,7 @@ pub use decode::{
     decode_bool, decode_field, decode_fixed_interval_start, decode_i64, decode_u64, field_bytes,
     field_word_bytes,
 };
-pub(crate) use decode::{decode_values, split_halves};
+pub(crate) use decode::{decode_values, decode_values_keyed, split_halves};
 pub use encode::{
     append_key_field, encode_bool, encode_fact, encode_i64, encode_literal, encode_u64,
 };

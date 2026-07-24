@@ -245,11 +245,16 @@ pub(crate) fn key_probe_fact<'t>(
     params: &[Const],
     key_scratch: &mut Vec<u8>,
 ) -> Result<Option<&'t [u8]>> {
-    // Build the key bytes in the caller's reused scratch — the statement's
-    // projection order for a `U` key_probe, full canonical fact bytes for `M`.
-    // A dictionary miss lands the sentinel id in the key, and the probe
+    // Build the key bytes in the caller's reused scratch — the whole
+    // composed `U` key (header + statement-projection-ordered
+    // determinant) for a key_probe, full canonical fact bytes for `M` —
+    // so no per-probe key buffer is zeroed (post-mortem §25). A
+    // dictionary miss lands the sentinel id in the key, and the probe
     // below misses.
     key_scratch.clear();
+    if let Some(statement) = plan.statement {
+        read::begin_determinant_key(key_scratch, plan.relation, statement);
+    }
     let layout = schema.relation(plan.relation).layout();
     for (field, value) in &plan.key {
         let desc = layout.field_type(usize::from(field.0));
@@ -257,15 +262,34 @@ pub(crate) fn key_probe_fact<'t>(
     }
 
     let mut probe_span = obs::span(obs::names::KEY_PROBE, obs::Category::Execute);
-    let row_id = match plan.statement {
-        Some(statement) => read::determinant_row(txn, plan.relation, statement, key_scratch)?,
-        None => read::fact_row(txn, plan.relation, key_scratch)?,
+    // The fresh-row auto-key maintains no `U` tree (the one id allocator,
+    // ruled 2026-07-23, R16): its determinant IS the row id, so the probe
+    // reads `F` directly — an honest miss, one descent.
+    let fact = if let Some(statement) = plan.statement
+        && let Some(crate::schema::StatementView::Key(_, key)) = schema.statement_checked(statement)
+        && key.fresh_row
+    {
+        let row_id = u64::from_be_bytes(
+            key_scratch[read::DETERMINANT_KEY_HEADER..]
+                .try_into()
+                .expect("a fresh-row determinant is one u64 word"),
+        );
+        read::fact_at(txn, schema, plan.relation, row_id)?
+    } else if plan.statement.is_some() {
+        match read::determinant_row_for_key(txn, key_scratch)? {
+            Some(row_id) => Some(read::fetch(txn, schema, plan.relation, row_id)?),
+            None => None,
+        }
+    } else {
+        match read::fact_row(txn, plan.relation, key_scratch)? {
+            Some(row_id) => Some(read::fetch(txn, schema, plan.relation, row_id)?),
+            None => None,
+        }
     };
-    probe_span.set_args(u64::from(row_id.is_some()), 0);
-    let Some(row_id) = row_id else {
+    probe_span.set_args(u64::from(fact.is_some()), 0);
+    let Some(fact) = fact else {
         return Ok(None); // miss: empty result
     };
-    let fact = read::fetch(txn, schema, plan.relation, row_id)?;
 
     // Remaining filters run on the fact bytes.
     for filter in &plan.remaining_filters {

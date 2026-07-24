@@ -320,6 +320,8 @@ pub struct Db<S> {
     /// Commits since open (monotone; bumped only when a commit changed
     /// state). The parked reader's validity token.
     commit_seq: std::sync::atomic::AtomicU64,
+    /// The snapshot point-read scratch pool (R15) — see [`ScratchPool`].
+    read_scratch: ScratchPool,
     schema: Schema,
     /// The typestate marker (`fn() -> S` keeps `Send + Sync` independent
     /// of `S` — the definition value itself is consumed at open).
@@ -368,6 +370,46 @@ struct ParkedReader {
     commit_seq: CommitSeq,
 }
 
+/// One snapshot point read's reusable buffers: the composed `U` key /
+/// encoded fact bytes, and the dyn membership probe's column refs.
+#[derive(Default)]
+pub(crate) struct ReadScratch {
+    pub(crate) bytes: Vec<u8>,
+    pub(crate) refs: Vec<ValueRef>,
+}
+
+/// The `Db`-owned point-read scratch pool (`docs/architecture/70-api.md`
+/// § the write path — the allocation contract is symmetric across
+/// transaction kinds, ruled 2026-07-23, R15): snapshot point reads take
+/// a scratch set and restore it — the `&self` twin of
+/// [`WriteTx::with_scratch`]'s take/restore. One entry per concurrent
+/// point reader; contention grows the pool once, then the steady state
+/// allocates nothing. `try_lock` on both sides: readers never block on
+/// each other's scratch.
+pub(crate) struct ScratchPool(Mutex<Vec<ReadScratch>>);
+
+impl ScratchPool {
+    fn new() -> Self {
+        Self(Mutex::new(Vec::new()))
+    }
+
+    fn take(&self) -> ReadScratch {
+        self.0
+            .try_lock()
+            .ok()
+            .and_then(|mut pool| pool.pop())
+            .unwrap_or_default()
+    }
+
+    fn restore(&self, mut scratch: ReadScratch) {
+        scratch.bytes.clear();
+        scratch.refs.clear();
+        if let Ok(mut pool) = self.0.try_lock() {
+            pool.push(scratch);
+        }
+    }
+}
+
 /// Clears the owner mark when the write closure exits — normally, by
 /// error, or by unwind — so the next `write` on this thread proceeds.
 struct WriterThreadReset<'a>(&'a std::sync::atomic::AtomicU64);
@@ -391,6 +433,7 @@ pub struct Snapshot<'db, S> {
     txn: ReadTxn<'db>,
     cache: &'db ImageCache,
     schema: &'db Schema,
+    scratch: &'db ScratchPool,
     marker: PhantomData<fn() -> S>,
 }
 
@@ -400,6 +443,16 @@ impl<'db, S> Snapshot<'db, S> {
     /// rather than routing through a `Snapshot` wrapper method).
     pub(crate) fn txn(&self) -> &ReadTxn<'db> {
         &self.txn
+    }
+
+    /// Runs `body` with a pooled point-read scratch set, restoring it
+    /// afterward — capacity included — success or error. The one scratch
+    /// discipline of every snapshot point read (R15).
+    fn with_scratch<R>(&self, body: impl FnOnce(&mut ReadScratch) -> Result<R>) -> Result<R> {
+        let mut scratch = self.scratch.take();
+        let out = body(&mut scratch);
+        self.scratch.restore(scratch);
+        out
     }
 }
 

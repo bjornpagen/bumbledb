@@ -545,9 +545,13 @@ is the consumer that names its shape.)
   key) and — KG-2 — the generated key structs of declared `R(x, ..) -> R`
   statements; two key FDs over one newtype are two distinct Rust types, so which
   statement a read goes through is never a runtime question, and a cross-schema
-  key is a compile error. The committed-state twin is `snap.get(key)` on the read
-  scope (`db.read(|snap| snap.get(key))` — no `Db`-level sugar: the freeze keeps
-  `Db` minimal, TS carries the symmetry sugar). The `_dyn` form takes relation +
+  key is a compile error. The committed-state twins are `snap.get(key)` and
+  `snap.contains(&fact)` on the read scope (`db.read(|snap| snap.get(key))` —
+  no `Db`-level sugar: the freeze keeps `Db` minimal, TS carries the symmetry
+  sugar); the typed/dyn × write/snapshot point-operation matrix is complete,
+  and `snap.contains` encodes through `Fact::encode_read` (the committed
+  dictionary, never minting — a never-interned value short-circuits to
+  `false`). The `_dyn` form takes relation +
   statement id + encoded key for data-supplied statements. The typed get
   returns a **view at the transaction lifetime**: variable-width fields borrow from
   the committed dictionary (mmap pages, txn-stable by LMDB CoW) or this
