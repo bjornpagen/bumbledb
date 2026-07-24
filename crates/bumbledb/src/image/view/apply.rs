@@ -322,41 +322,49 @@ pub fn apply(
     params: &[Const],
     buf: Vec<u32>,
 ) -> crate::error::Result<View> {
-    let is_measure = |p: &FilterPredicate| {
-        matches!(
-            p,
-            FilterPredicate::DurationCompare { .. } | FilterPredicate::DurationFieldsCompare { .. }
-        )
-    };
     if !predicates.iter().any(is_measure) {
         return Ok(apply_infallible(image, predicates, params, buf));
     }
-    // The measure path (cold by shape, correct by order): the other
-    // predicates run through the ordinary machinery first, then each
-    // measure predicate refines their survivors — dense survivors take
-    // the fused gather+subtract kernel; everything else is the scalar
-    // subtraction (strided stays scalar until measured, the standing
-    // rule).
-    let others: Vec<FilterPredicate> = predicates
-        .iter()
-        .filter(|p| !is_measure(p))
-        .cloned()
-        .collect();
-    let mut view = apply_infallible(image, &others, params, buf);
+    // The measure path, correct by order: the infallible predicates run
+    // through the ordinary machinery first — over the SAME borrowed
+    // list, skipping the measure kinds in place (no partition, no
+    // per-build `Vec`, no predicate deep-clones: the steady-state
+    // allocation contract, finding 051) — then each measure kind
+    // refines their survivors. When EVERY predicate is a measure, the
+    // caller's pooled survivor buffer stays in hand and seeds the first
+    // refinement instead of being dropped for a fresh allocation.
+    let (mut view, mut spare) = if predicates.iter().all(is_measure) {
+        (View::All(Arc::clone(image)), buf)
+    } else {
+        (apply_infallible(image, predicates, params, buf), Vec::new())
+    };
     for predicate in predicates.iter().filter(|p| is_measure(p)) {
-        view = refine_measure(image, predicate, params, view)?;
+        view = refine_measure(image, predicate, params, view, &mut spare)?;
     }
     Ok(view)
+}
+
+/// The measure kinds — evaluated last by the filter-order law, fallibly
+/// ([`refine_measure`]); everything else is the infallible conjunction.
+fn is_measure(p: &FilterPredicate) -> bool {
+    matches!(
+        p,
+        FilterPredicate::DurationCompare { .. } | FilterPredicate::DurationFieldsCompare { .. }
+    )
 }
 
 /// One measure predicate over the current survivors. A full view takes
 /// the fused dense kernel (subtract + range test + ray test in one
 /// stride-1 pass); survivor views refine scalar, position by position.
+/// `spare` is the pooled survivor buffer a `View::All` input consumes
+/// (capacity retained across executions — finding 051); survivor inputs
+/// refine their own buffer in place and never touch it.
 fn refine_measure(
     image: &Arc<RelationImage>,
     predicate: &FilterPredicate,
     params: &[Const],
     view: View,
+    spare: &mut Vec<u32>,
 ) -> crate::error::Result<View> {
     let ray = |start: u64, end: u64| crate::error::Error::MeasureOfRay { start, end };
     match predicate {
@@ -382,7 +390,8 @@ fn refine_measure(
             let (starts, ends) = interval_columns(image, *field);
             match view {
                 View::All(_) => {
-                    let mut positions = Vec::new();
+                    let mut positions = std::mem::take(spare);
+                    positions.clear();
                     crate::exec::kernel::filter_duration_range_u64(
                         starts,
                         ends,
@@ -426,18 +435,25 @@ fn refine_measure(
         } => {
             // Two varying columns per position — no constant side, no
             // kernel shape (the `FieldsCompare` precedent): scalar over
-            // whatever positions survive.
+            // whatever positions survive. The variant dispatch is the
+            // TYPE's, exactly as the `DurationCompare` arm above — never
+            // an emptiness sentinel reconstructing the erased view
+            // (finding 115).
             let (starts, ends) = interval_columns(image, *interval);
             let scalars = match scalar_column(image, *scalar) {
                 ColumnView::Words(words) => words,
                 ColumnView::Bytes(_) => unreachable!("validated: the measure side is u64"),
             };
-            let row_count = view.len();
-            let mut positions = view.recycle();
-            let survivors_input = !positions.is_empty() || row_count == 0;
-            if !survivors_input {
-                positions.extend(0..u32::try_from(row_count).expect("positions fit u32"));
-            }
+            let mut positions = match view {
+                View::All(_) => {
+                    let mut positions = std::mem::take(spare);
+                    positions.clear();
+                    positions.extend(0..u32::try_from(image.row_count()).expect("positions fit u32"));
+                    positions
+                }
+                View::Survivors { positions, .. } => positions,
+                View::Unbound => unreachable!("apply binds the view it filters"),
+            };
             let mut cursor = 0usize;
             for read in 0..positions.len() {
                 let p = positions[read] as usize;
@@ -458,7 +474,10 @@ fn refine_measure(
     }
 }
 
-/// The infallible conjunction — every non-measure predicate kind.
+/// The infallible conjunction — every non-measure predicate kind. Called
+/// with the atom's WHOLE borrowed filter list: measure kinds are skipped
+/// in place (they refine afterward, [`refine_measure`]), so no partition
+/// or clone ever materializes (finding 051).
 #[must_use]
 fn apply_infallible(
     image: &Arc<RelationImage>,
@@ -475,11 +494,12 @@ fn apply_infallible(
 
     // Kernel fast path: the *first kernel-compatible* predicate (not
     // blindly `predicates[0]` — a leading FieldsCompare or byte-column
-    // `Ne` must not hide the SIMD path) produces the initial survivor
-    // set; every other predicate refines it below.
+    // `Ne` must not hide the SIMD path; measure kinds never kernel-scan
+    // here) produces the initial survivor set; every other predicate
+    // refines it below.
     if let Some(pivot) = predicates
         .iter()
-        .position(|p| kernel_scan(image, p, params, &mut buf))
+        .position(|p| !is_measure(p) && kernel_scan(image, p, params, &mut buf))
     {
         // Refine in place: evaluate the remaining conjunction per survivor
         // with the branchless cursor write. A single-predicate scan
@@ -491,7 +511,7 @@ fn apply_infallible(
             let position = buf[read] as usize;
             let mut keep = true;
             for (idx, predicate) in predicates.iter().enumerate() {
-                if idx == pivot {
+                if idx == pivot || is_measure(predicate) {
                     continue;
                 }
                 keep &= row_matches(image, std::slice::from_ref(predicate), params, position);
@@ -512,7 +532,10 @@ fn apply_infallible(
     // unconditional store, conditional cursor advance — no `if` in this
     // loop body.
     for position in 0..row_count {
-        let keep = row_matches(image, predicates, params, position);
+        let keep = predicates
+            .iter()
+            .filter(|p| !is_measure(p))
+            .all(|p| row_matches(image, std::slice::from_ref(p), params, position));
         buf[cursor] = u32::try_from(position).expect("checked above");
         cursor += usize::from(keep);
     }
