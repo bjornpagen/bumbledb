@@ -15,22 +15,26 @@ impl<V: Copy> WordMap<V> {
         // arity taxed every dedup row +4.3-4.9 ns via the general-length
         // compare/copy ladder, the slot*arity multiplies, and the blocked
         // hash hoisting. One predictable branch here (the same arm every
-        // call from a given sink) buys straight-line monomorphs for the
-        // widths in use: group keys are 1-4, full bindings 2-6, 8 is
-        // headroom. Exotic widths keep the dyn path.
+        // call from a given sink) buys straight-line monomorphs for every
+        // width through 8: group keys are 1-4 (0 the global-aggregate
+        // group — its hash constant-folds to the seed), full bindings
+        // 2-6, 8 is headroom. Only widths past 8 keep the dyn path.
         match self.arity {
+            0 => self.entry_core::<0>(key, make),
             1 => self.entry_core::<1>(key, make),
             2 => self.entry_core::<2>(key, make),
             3 => self.entry_core::<3>(key, make),
             4 => self.entry_core::<4>(key, make),
+            5 => self.entry_core::<5>(key, make),
             6 => self.entry_core::<6>(key, make),
+            7 => self.entry_core::<7>(key, make),
             8 => self.entry_core::<8>(key, make),
             _ => self.entry_dyn_hashing(key, make),
         }
     }
 
     /// The runtime-arity fallback's hashing shell, deliberately
-    /// outlined: exotic widths only — a `bl` here is the cold
+    /// outlined: widths past 8 only — a `bl` here is the cold
     /// arm, and keeping `hash_words` inside it keeps the hot sink
     /// symbols free of hash calls (the check-asm gate).
     #[cold]
@@ -79,7 +83,7 @@ impl<V: Copy> WordMap<V> {
     }
 
     /// The runtime-arity fallback for widths without a monomorph — the
-    /// general-length body, kept for exotic widths (0, 5, 7, > 8).
+    /// general-length body, kept for widths past 8.
     pub(super) fn entry_dyn(
         &mut self,
         key: &[u64],

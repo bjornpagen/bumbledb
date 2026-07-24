@@ -25,11 +25,14 @@ impl<V: Copy> WordMap<V> {
         // The rehash re-probes every key, so it rides the same const-
         // arity dispatch as the entry points.
         match self.arity {
+            0 => self.rehash_core::<0>(&old_keys, &old_values),
             1 => self.rehash_core::<1>(&old_keys, &old_values),
             2 => self.rehash_core::<2>(&old_keys, &old_values),
             3 => self.rehash_core::<3>(&old_keys, &old_values),
             4 => self.rehash_core::<4>(&old_keys, &old_values),
+            5 => self.rehash_core::<5>(&old_keys, &old_values),
             6 => self.rehash_core::<6>(&old_keys, &old_values),
+            7 => self.rehash_core::<7>(&old_keys, &old_values),
             8 => self.rehash_core::<8>(&old_keys, &old_values),
             _ => self.rehash_dyn(&old_keys, &old_values),
         }

@@ -105,14 +105,14 @@ fn zero_arity_keys_share_one_group() {
 /// reference model (`HashMap` + insertion-order list) across randomized
 /// operation sequences — inserted flags, values, iteration order,
 /// lengths — including growth boundaries, adversarial equal-low-bits
-/// keys, clear cycles, and every arity in use: all six monomorph
-/// widths plus a dyn-arm width (5). The window
-/// probe rides the same differential: the
+/// keys, clear cycles, and every arity in use: all nine monomorph
+/// widths (1 through 8; 0 has its own pin above) plus a dyn-arm
+/// width (9). The window probe rides the same differential: the
 /// reference IS the portable implementation of record.
 #[test]
 fn differential_against_the_reference_model() {
     // The Miri lane (scripts/miri.sh) interprets this differential;
-    // 2,000 ops × 7 arities × 3 rounds is ~16 interpreter-minutes for
+    // 2,000 ops × 9 arities × 3 rounds is ~16 interpreter-minutes for
     // code paths the first few hundred ops already cover (growth from
     // both hint shapes included), so the interpreted run scales down.
     // Native runs keep the full sweep.
@@ -124,7 +124,7 @@ fn differential_against_the_reference_model() {
             .wrapping_add(1_442_695_040_888_963_407);
         rng >> 33
     };
-    for arity in [1usize, 2, 3, 4, 5, 6, 8] {
+    for arity in [1usize, 2, 3, 4, 5, 6, 7, 8, 9] {
         for round in 0..3 {
             let mut map: WordMap<u64> = if round == 0 {
                 WordMap::new(arity)
