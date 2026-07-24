@@ -27,6 +27,16 @@ pub struct LoweredRule {
     pub negated: Vec<Atom>,
     /// The disjunct's leaves — a flat conjunction.
     pub conditions: Vec<Comparison>,
+    /// Written-rule provenance (ruled 2026-07-23, R2): the index of the
+    /// input rule this disjunct was minted from, stamped by
+    /// `lower_rules` and cleared to `None` when [`collapse`] merges
+    /// duplicates minted by DIFFERENT written rules. A rule set whose
+    /// every member carries one shared index is **DNF-derived** — its
+    /// disjuncts share one variable scope, so the union dedup re-keys
+    /// on the shared slot arrays (the or-transparency law,
+    /// `docs/architecture/20-query-ir.md` § aggregation); any other set
+    /// is hand-written and keys the head projection.
+    pub written: Option<u16>,
 }
 
 /// The nesting depth of a rule's condition trees — a leaf is depth 1, a
@@ -85,6 +95,8 @@ fn tree_count(tree: &ConditionTree) -> usize {
 /// term, atoms and finds cloned, conditions = that term's leaves in
 /// left-to-right tree order. Callers judge the cap on
 /// [`disjunct_count`] **first** — distribution materializes every term.
+/// Provenance is the caller's to stamp (`lower_rules` writes the written
+/// index; the terms leave here unstamped).
 #[must_use]
 pub fn distribute(rule: &Rule) -> Vec<LoweredRule> {
     conjunction_terms(&rule.conditions)
@@ -94,6 +106,7 @@ pub fn distribute(rule: &Rule) -> Vec<LoweredRule> {
             atoms: rule.atoms.clone(),
             negated: rule.negated.clone(),
             conditions,
+            written: None,
         })
         .collect()
 }
@@ -141,10 +154,18 @@ fn tree_terms(tree: &ConditionTree) -> Vec<Vec<Comparison>> {
 pub fn collapse(rules: Vec<LoweredRule>) -> Vec<LoweredRule> {
     let mut kept: Vec<LoweredRule> = Vec::with_capacity(rules.len());
     for rule in rules {
-        if !kept
-            .iter()
-            .any(|earlier| same_normalized_body(earlier, &rule))
+        if let Some(earlier) = kept
+            .iter_mut()
+            .find(|earlier| same_normalized_body(earlier, &rule))
         {
+            // A duplicate minted by a DIFFERENT written rule makes the
+            // survivor shared vocabulary of neither: provenance clears,
+            // so the set reads as hand-written (the R2 provenance split
+            // is judged on every member carrying ONE written index).
+            if earlier.written != rule.written {
+                earlier.written = None;
+            }
+        } else {
             kept.push(rule);
         }
     }

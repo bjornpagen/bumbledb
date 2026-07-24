@@ -8,10 +8,15 @@
 //! spanning rules — reset once per execution, never per rule — so a later
 //! rule re-deriving a head fact is absorbed exactly like a within-rule
 //! duplicate. No merge node, no concat-then-dedup pass exists anywhere
-//! else. The seen-set keys are **head-shaped** by construction: the
-//! projection sink keys the projected find tuple, and the multi-rule
-//! aggregate sink keys the head projection (`union_spans`), never the
-//! rule's full slot array — dedup keys must be rule-independent.
+//! else. The seen-set keys are **rule-independent by provenance**
+//! (ruled 2026-07-23, R2): the projection sink keys the projected find
+//! tuple; the multi-rule aggregate sink keys the head projection
+//! (`union_spans`) for a hand-written rule set — variables are
+//! rule-scoped there, so the head is the only shared vocabulary — and
+//! the **shared slot arrays** for a DNF-derived rule set (the disjuncts
+//! of one written rule share one variable scope, so disjunction widens
+//! membership without moving the fold domain — the or-transparency law,
+//! `lean/Bumbledb/Exec/Dedup.lean: dnf_rekey_transparent`).
 //! Rule-disjointness remains diagnostic knowledge, but the executor does
 //! not spend it: a measured attempt to replace the spanning map with
 //! per-rule drains was slower. See the refutation in
@@ -21,7 +26,10 @@
 //! the fold domain of every aggregate is the group's **set of distinct
 //! full bindings over all query variables** — two postings of amount 100
 //! to one account are two distinct bindings (their fresh ids differ), so
-//! `Sum(amount) by account` is 200. The stated footgun: joining a
+//! `Sum(amount) by account` is 200, under ANY spelling of the rule's
+//! conditions (`or` included — the DNF re-key above). Only a
+//! hand-written multi-rule program coarsens the domain to the head
+//! projection. The stated footgun: joining a
 //! multiplicity-adding relation multiplies the binding set, exactly as in
 //! SQL.
 //!
@@ -387,15 +395,25 @@ pub struct AggregateSink {
     /// ([`Self::union_spans`]).
     seen: Option<WordMap<()>>,
     /// The multi-rule union regime's dedup-key spans (`None` =
-    /// single-rule, key = the whole slot array): per head position in
-    /// head order, the slot span the position reads from THIS rule's
+    /// single-rule, key = the whole slot array), split by provenance
+    /// (ruled 2026-07-23, R2). Hand-written rule set: per head position
+    /// in head order, the slot span the position reads from THIS rule's
     /// binding layout — group variables and fold inputs; the nullary
-    /// `Count` contributes nothing. The extracted words are the
-    /// **head projection** of the binding — rule-independent by
-    /// construction, so one seen-set spanning rules is the fold domain's
-    /// union (20-query-ir § aggregation, "aggregates read the head").
-    /// Re-aimed per rule by [`Self::aim`].
+    /// `Count` contributes nothing; the extracted words are the **head
+    /// projection**, rule-independent because the head is the rules'
+    /// only shared vocabulary (20-query-ir § aggregation, "aggregates
+    /// read the head"). DNF-derived rule set ([`Self::dnf_rekey`]): the
+    /// rule's **full slot array in `VarId` order** — the disjuncts of
+    /// one written rule share one variable scope, so the VarId-ordered
+    /// spans read the same binding tuple through every clone's own
+    /// layout and the fold domain never moves (the or-transparency
+    /// law). Re-aimed per rule by [`Self::aim`].
     union_spans: Option<Vec<(usize, usize)>>,
+    /// The union key's provenance shape: `true` re-keys on the caller-
+    /// supplied shared slot arrays at [`Self::aim`] (a DNF-derived rule
+    /// set), `false` rebuilds the head projection from the finds (a
+    /// hand-written rule set). Meaningless without `union_spans`.
+    dnf_rekey: bool,
     /// Head-projection key assembly scratch (union regime only).
     union_scratch: Vec<u64>,
     key_scratch: Vec<u64>,

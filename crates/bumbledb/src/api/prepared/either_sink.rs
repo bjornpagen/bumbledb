@@ -16,11 +16,18 @@ impl EitherSink {
 
     /// Re-aims the sink's slot tables at one rule's binding layout —
     /// the rule loop's per-rule step; the shared maps (the union) are
-    /// untouched.
-    pub(super) fn aim(&mut self, finds: &[FindSpec], slot_count: usize) {
+    /// untouched. `shared_slots` is the rule's full slot array in
+    /// `VarId` order — the DNF-derived union regime's re-key (R2); the
+    /// projection and head-projection regimes never read it.
+    pub(super) fn aim(
+        &mut self,
+        finds: &[FindSpec],
+        slot_count: usize,
+        shared_slots: &[(usize, usize)],
+    ) {
         match self {
             Self::Projection(sink) => sink.aim(finds, slot_count),
-            Self::Aggregate(sink) => sink.aim(finds, slot_count),
+            Self::Aggregate(sink) => sink.aim(finds, slot_count, shared_slots),
         }
     }
 

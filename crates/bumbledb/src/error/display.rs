@@ -628,6 +628,13 @@ impl fmt::Display for ValidationError {
                  rule-scoped and the union's extreme is undefined — write one Arg query \
                  per disjunct and merge in the host"
             ),
+            Self::CountAcrossRules { rules } => write!(
+                f,
+                "nullary Count in a fold-free head of a hand-written {rules}-rule \
+                 program: the head projection admits one row per group, so the Count \
+                 is the constant 1 — write one Count query per disjunct and merge in \
+                 the host"
+            ),
             Self::UnknownRelation { atom, relation } => {
                 write!(f, "atom {atom}: unknown relation {}", relation.0)
             }

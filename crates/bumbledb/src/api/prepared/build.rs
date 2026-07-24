@@ -89,6 +89,9 @@ fn prepare_witnessed<'s, S>(
     // so the empty program still types its result columns.
     let predicate = witness.predicate().clone();
     let mut rules = Vec::with_capacity(survivors.len());
+    // Written-rule provenance per surviving rule (R2): the sink regime
+    // splits on it below.
+    let mut written = Vec::with_capacity(survivors.len());
     let mut dead = Vec::new();
     for (rule_idx, normalized_rule) in survivors {
         // Rule death (ir/normalize/fold.rs): a statically-empty rule is
@@ -103,6 +106,7 @@ fn prepare_witnessed<'s, S>(
             continue;
         }
         let rule = witness.rule(rule_idx);
+        written.push(rule.written());
         rules.push(prepare_rule(
             txn,
             cache,
@@ -123,14 +127,16 @@ fn prepare_witnessed<'s, S>(
     // and re-aimed per rule by the rule loop. Presized against the
     // rules' worst estimate (one sink hears every rule). A single-rule
     // aggregate may elide its seen-set under the plan's distinct-bindings
-    // proof. Every multi-rule sink keeps one head-projection seen-set
-    // spanning all rules: that map is the union representation.
+    // proof. Every multi-rule sink keeps one seen-set spanning all rules
+    // — that map is the union representation — keyed by provenance
+    // (R2): the head projection for a hand-written rule set, the shared
+    // slot arrays for a DNF-derived one.
     let output_hint = output_hint(&rules);
     let sink = rules.first().map_or_else(
         || make_sink(&[], 0, SinkProgram::SingleRule(None), 0),
         |first| {
             let program = if rules.len() > 1 {
-                SinkProgram::Union
+                union_regime(&written, first)
             } else {
                 SinkProgram::SingleRule(first.distinct_witness())
             };
@@ -257,6 +263,9 @@ pub(crate) fn prepare_program<'s, S>(
     let mut subsumed_record = Vec::new();
     let mut dead_record = Vec::new();
     let mut disjoint_rules = None;
+    // The output predicate's surviving written-rule provenance (R2) —
+    // the whole-query sink regime splits on it below.
+    let mut output_written = Vec::new();
     for p in 0..count {
         let pred_id = crate::ir::PredId(u16::try_from(p).expect("capped"));
         let stratum = strata[p];
@@ -298,6 +307,9 @@ pub(crate) fn prepare_program<'s, S>(
                 continue;
             }
             let rule = wq.rule(rule_idx);
+            if pred_id == output {
+                output_written.push(rule.written());
+            }
             // The recursive atoms: positive occurrences reading this
             // predicate's own stratum (same SCC — the strata judge's
             // witness). Negated and fold-input same-stratum reads were
@@ -401,7 +413,7 @@ pub(crate) fn prepare_program<'s, S>(
         || make_sink(&[], 0, SinkProgram::SingleRule(None), 0),
         |first| {
             let regime = if output_rules.len() > 1 {
-                SinkProgram::Union
+                union_regime(&output_written, first)
             } else {
                 SinkProgram::SingleRule(first.distinct_witness())
             };
@@ -677,10 +689,12 @@ fn prepare_rule_variant(
     if let Some(plan) = classified {
         let finds = find_specs(rule, &plan);
         let key_probe_finds = key_probe_find_table(&plan, &finds, columns);
+        let dedup_spans = shared_slot_spans(rule, &plan);
         return Ok(PreparedRule::KeyProbe(KeyProbeRule {
             plan,
             distinct_witness,
             finds,
+            dedup_spans,
             key_probe_finds,
         }));
     }
@@ -781,6 +795,7 @@ fn prepare_rule_variant(
     lower_span.end();
 
     let finds = find_specs(rule, &plan);
+    let dedup_spans = shared_slot_spans(rule, &plan);
     let executor = Executor::new(&plan);
     let occurrence_count = plan.occurrences().len();
 
@@ -795,6 +810,7 @@ fn prepare_rule_variant(
         plan,
         executor,
         finds,
+        dedup_spans,
         resolved_filters: vec![Vec::new(); occurrence_count],
         resolved_selections: vec![Vec::new(); occurrence_count],
         resolution: super::ResolutionState::Pending,
@@ -902,6 +918,30 @@ impl SlotLayout for crate::exec::dispatch::KeyProbePlan {
     fn width_of(&self, var: crate::ir::VarId) -> usize {
         self.width_of(var)
     }
+}
+
+/// The rule's full slot array as `VarId`-ordered spans — the DNF-derived
+/// union regime's shared dedup key (ruled 2026-07-23, R2): the disjuncts
+/// of one written rule share one variable scope, so the `VarId` order
+/// reads the same binding tuple through every clone's own layout, and
+/// the re-keyed union folds the written rule's distinct full bindings
+/// (`lean/Bumbledb/Exec/Dedup.lean: dnf_rekey_transparent`).
+/// Aggregate-bearing heads only — every rule variable is sink-relevant
+/// there, so the plan binds each one; a projection head's union key is
+/// head-shaped already and never reads these spans.
+fn shared_slot_spans(rule: &RuleWitness<'_>, layout: &impl SlotLayout) -> Box<[(usize, usize)]> {
+    let aggregate_head = rule.rule().finds.iter().any(|term| {
+        matches!(
+            term,
+            FindTerm::Aggregate { .. } | FindTerm::AggregateMeasure { .. }
+        )
+    });
+    if !aggregate_head {
+        return Box::default();
+    }
+    rule.var_types()
+        .map(|(var, _)| (layout.slot_of(var), layout.width_of(var)))
+        .collect()
 }
 
 fn find_specs(rule: &RuleWitness<'_>, layout: &impl SlotLayout) -> Vec<FindSpec> {
@@ -1036,14 +1076,33 @@ fn disjointness(
         .flatten()
 }
 
+/// The multi-rule sink regime by provenance (ruled 2026-07-23, R2): a
+/// surviving rule set minted wholly by ONE written rule is DNF-derived
+/// — the union dedup re-keys on the shared slot arrays (rule 0 supplies
+/// the spans here; the rule loop re-aims per rule) — and any other set
+/// is hand-written, keying the head projection.
+fn union_regime<'r>(written: &[Option<u16>], first: &'r PreparedRule) -> SinkProgram<'r> {
+    let dnf_derived = written
+        .first()
+        .copied()
+        .flatten()
+        .is_some_and(|minting| written.iter().all(|rule| *rule == Some(minting)));
+    if dnf_derived {
+        SinkProgram::DnfUnion(first.dedup_spans())
+    } else {
+        SinkProgram::Union
+    }
+}
+
 /// Builds the sink matching the head shape (the variant is fixed per
 /// prepared query — an enum, not `dyn`), aimed at rule 0's binding
 /// layout. The program regime structurally selects single-rule binding
-/// dedup, witnessed elision, or the mandatory union seen-set.
+/// dedup, witnessed elision, or the mandatory union seen-set — keyed by
+/// provenance (R2).
 fn make_sink(
     finds: &[FindSpec],
     slot_count: usize,
-    program: SinkProgram,
+    program: SinkProgram<'_>,
     hint: usize,
 ) -> EitherSink {
     let all_plain = finds
@@ -1064,13 +1123,20 @@ fn make_sink(
                 AggregateSink::with_capacity_hint(finds, slot_count, hint)
             }
             SinkProgram::Union => AggregateSink::for_union(finds, slot_count, hint),
+            SinkProgram::DnfUnion(spans) => {
+                AggregateSink::for_dnf_union(finds, slot_count, spans, hint)
+            }
         };
         EitherSink::Aggregate(Box::new(sink))
     }
 }
 
 #[derive(Debug, Clone, Copy)]
-enum SinkProgram {
+enum SinkProgram<'r> {
     SingleRule(Option<DistinctWitness>),
+    /// Hand-written multi-rule: the head-projection union key.
     Union,
+    /// DNF-derived multi-rule (R2): the shared-slot union key — rule
+    /// 0's `VarId`-ordered spans.
+    DnfUnion(&'r [(usize, usize)]),
 }

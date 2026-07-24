@@ -194,7 +194,8 @@ impl<S> PreparedQuery<'_, S> {
         let rule_count = self.program.rules().len();
         if rule_count > 1 {
             let rule = &self.program.rules()[rule_idx];
-            self.sink.aim(rule.finds(), rule.slot_count());
+            self.sink
+                .aim(rule.finds(), rule.slot_count(), rule.dedup_spans());
         }
         // The rule-shared binding-slot scratch, sized to this rule's
         // layout (capacity is the high-water across all rules).

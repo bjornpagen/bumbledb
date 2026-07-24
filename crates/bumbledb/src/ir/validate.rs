@@ -549,6 +549,16 @@ impl<'a> RuleWitness<'a> {
         self.rule
     }
 
+    /// This lowered rule's written-rule provenance (ruled 2026-07-23,
+    /// R2): `Some(idx)` iff the disjunct was minted from written rule
+    /// `idx` alone — the union sink's regime split reads it (a
+    /// surviving rule set carrying ONE shared index is DNF-derived and
+    /// re-keys the dedup on the shared slot arrays).
+    #[must_use]
+    pub fn written(&self) -> Option<u16> {
+        self.rule.written
+    }
+
     /// The resolved structural type of one of this rule's variables.
     ///
     /// # Panics

@@ -390,7 +390,20 @@ fn lower_rules(
             cap: MAX_RULES,
         });
     }
-    let lowered = collapse(rules.iter().flat_map(distribute).collect());
+    let distributed = rules
+        .iter()
+        .enumerate()
+        .flat_map(|(written, rule)| {
+            // The written-rule provenance stamp (R2): rule counts are
+            // capped above, so the index fits.
+            let written = u16::try_from(written).expect("rule count capped");
+            distribute(rule).into_iter().map(move |mut lowered| {
+                lowered.written = Some(written);
+                lowered
+            })
+        })
+        .collect();
+    let lowered = collapse(distributed);
     if lowered.is_empty() {
         // Every rule's disjunction was empty: the program lowered to the
         // empty union — no query.
@@ -416,7 +429,46 @@ fn lower_rules(
             rules: lowered.len(),
         });
     }
+    // Cross-rule fold-free nullary `Count` refuses beside the Arg
+    // refusal (ruled 2026-07-23, R1): under the head-projection law a
+    // fold-free head admits one projection per group, so the Count is
+    // definitionally the constant 1 — uninformative, made
+    // unrepresentable, same modeling answer (one Count per disjunct,
+    // host-merged). Judged on PROVENANCE, not the lowered count: a
+    // DNF-derived rule set is exempt — or-transparency (R2) keeps its
+    // fold domain the written rule's full binding set, so its Count
+    // counts.
+    if lowered.len() > 1
+        && dnf_derived(&lowered).is_none()
+        && head
+            .iter()
+            .any(|term| matches!(term, crate::ir::HeadTerm::Aggregate(crate::ir::HeadOp::Count)))
+        && head.iter().all(|term| {
+            matches!(
+                term,
+                crate::ir::HeadTerm::Var
+                    | crate::ir::HeadTerm::Aggregate(crate::ir::HeadOp::Count)
+            )
+        })
+    {
+        return Err(ValidationError::CountAcrossRules {
+            rules: lowered.len(),
+        });
+    }
     Ok(lowered)
+}
+
+/// The provenance judgment (ruled 2026-07-23, R2): `Some(written)` iff
+/// every lowered rule carries the ONE shared written-rule index — the
+/// set is DNF-derived from that rule and the union dedup re-keys on
+/// the shared slot arrays. `None` is a hand-written rule set (or a
+/// cross-written collapse), which keys the head projection.
+pub(crate) fn dnf_derived(lowered: &[LoweredRule]) -> Option<u16> {
+    let first = lowered.first()?.written?;
+    lowered
+        .iter()
+        .all(|rule| rule.written == Some(first))
+        .then_some(first)
 }
 
 /// Head alignment, the shape half: arity, then var-vs-aggregate-op kind

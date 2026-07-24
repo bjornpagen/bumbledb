@@ -752,7 +752,9 @@ fn the_union_seen_set_keys_head_projections_across_rule_layouts() {
 
     // Rule B, re-aimed to its own layout: re-derives (g = 7, x = 100)
     // at different slots (absorbed) and adds (g = 7, x = 300).
-    sink.aim(&spec(2, 0), 3);
+    // Hand-written provenance: the head-projection key never reads the
+    // shared-slot spans.
+    sink.aim(&spec(2, 0), 3, &[]);
     let mut bindings = Bindings::new(3);
     for (x, existential) in [(100u64, 41u64), (300, 42)] {
         bindings.reset();
@@ -772,5 +774,73 @@ fn the_union_seen_set_keys_head_projections_across_rule_layouts() {
         rows,
         vec![vec![7, 650, 3]],
         "Sum folds {{100, 250, 300}} once each; Count counts the union"
+    );
+}
+
+/// The DNF-derived union regime re-keys on the SHARED SLOT ARRAYS
+/// (ruled 2026-07-23, R2): the disjuncts of one written rule share one
+/// variable scope, so the `VarId`-ordered spans read the same binding
+/// tuple through each clone's own layout — a cross-disjunct
+/// re-derivation is absorbed, while distinct full bindings projecting
+/// to EQUAL head rows all fold (the head-projection key would eat
+/// them; the or-transparency law forbids exactly that —
+/// `lean/Bumbledb/Exec/Dedup.lean: dnf_rekey_transparent`).
+#[test]
+fn the_dnf_union_seen_set_keys_shared_slot_arrays_across_clone_layouts() {
+    use crate::exec::run::{Bindings, Sink};
+
+    // Head: (g, Sum(x)) over the scope {g = v0, x = v1, e = v2} — e is
+    // an existential outside the head. Clone A lays out g@0, x@1, e@2;
+    // clone B lays out e@0, x@1, g@2 (the DP is free to reorder nodes,
+    // never the shared scope).
+    let spec = |g: usize, x: usize| {
+        vec![
+            FindSpec::Var { slot: g, width: 1 },
+            FindSpec::Agg {
+                op: FoldOp::Sum,
+                over_slot: Some(x),
+                over_width: 1,
+                signed: false,
+            },
+        ]
+    };
+    // VarId order: v0 → g's slot, v1 → x's, v2 → e's, per clone.
+    let spans_a = [(0, 1), (1, 1), (2, 1)];
+    let spans_b = [(2, 1), (1, 1), (0, 1)];
+    let mut sink = AggregateSink::for_dnf_union(&spec(0, 1), 3, &spans_a, 0);
+    sink.reset(); // once per execution, never per rule
+
+    // Clone A: (g = 7, x = 100, e = 5).
+    let mut bindings = Bindings::new(3);
+    bindings.reset();
+    bindings.set(0, 7);
+    bindings.set(1, 100);
+    bindings.set(2, 5);
+    sink.emit(&bindings);
+    assert_eq!(sink.distinct_seen(), Some(1), "clone A seeds the union");
+
+    // Clone B, re-aimed with ITS spans: the same full binding
+    // (7, 100, 5) is absorbed across layouts, and (7, 100, 6) — equal
+    // head row, distinct existential — folds.
+    sink.aim(&spec(2, 1), 3, &spans_b);
+    let mut bindings = Bindings::new(3);
+    for existential in [5u64, 6] {
+        bindings.reset();
+        bindings.set(0, existential);
+        bindings.set(1, 100);
+        bindings.set(2, 7);
+        sink.emit(&bindings);
+    }
+    assert_eq!(
+        sink.distinct_seen(),
+        Some(2),
+        "the cross-disjunct re-derivation was absorbed; the distinct binding was not"
+    );
+
+    let rows = sink.into_answers().expect("in range");
+    assert_eq!(
+        rows,
+        vec![vec![7, 200]],
+        "Sum folds the written rule's distinct full bindings: 100 + 100"
     );
 }

@@ -158,12 +158,13 @@ impl AggregateSink {
 }
 
 /// The binding-dedup key for the row in `binding_scratch`
-/// (docs/architecture/40-execution.md § the rule loop): the head
-/// projection under the multi-rule union regime — the words each head
-/// position reads, gathered in head order into `scratch` — or the whole
-/// slot array for a single-rule program. Head projections are
-/// rule-independent by construction; full slot arrays are not, which is
-/// why the union regime never keys them.
+/// (docs/architecture/40-execution.md § the rule loop): the union
+/// spans' gathered words under the multi-rule regime — the head
+/// projection for a hand-written rule set, the `VarId`-ordered shared
+/// slot arrays for a DNF-derived one (R2) — or the whole slot array
+/// verbatim for a single-rule program. Both span shapes are
+/// rule-independent: the head is the hand-written rules' only shared
+/// vocabulary, and DNF clones share one variable scope.
 pub(super) fn dedup_key<'k>(
     union_spans: Option<&[(usize, usize)]>,
     scratch: &'k mut Vec<u64>,

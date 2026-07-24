@@ -319,6 +319,11 @@ struct FreeJoinRule {
     /// over this rule's binding-slot layout (result types live on the
     /// query — they are the head's, identical across rules).
     finds: Vec<FindSpec>,
+    /// The rule's full slot array as `VarId`-ordered spans — the
+    /// DNF-derived union regime's shared dedup key (ruled 2026-07-23,
+    /// R2). Aggregate-bearing heads only; empty (and never read) for
+    /// projection heads.
+    dedup_spans: Box<[(usize, usize)]>,
     /// Per occurrence: residual filters with symbolic constants
     /// substituted, reused — in place, so a set-carrying filter's
     /// `WordSet` capacity survives re-binds (the allocation contract).
@@ -348,6 +353,9 @@ struct KeyProbeRule {
     plan: KeyProbePlan,
     distinct_witness: Option<crate::plan::fj::DistinctWitness>,
     finds: Vec<FindSpec>,
+    /// As [`FreeJoinRule::dedup_spans`] — the R2 shared-slot key over
+    /// this rule's key-probe layout.
+    dedup_spans: Box<[(usize, usize)]>,
     /// The direct point lane's find table. `Some` iff every find is a plain
     /// variable; aggregate and measure key-probe rules keep the shared sink.
     key_probe_finds: Option<Vec<(bumbledb_theory::schema::FieldId, ValueType)>>,
@@ -416,6 +424,20 @@ impl PreparedRule {
             // A recursive rule reads its own predicate's transient set —
             // no key coverage exists (`plan/fj/provably_distinct.rs`).
             Self::Recursive(_) => None,
+        }
+    }
+
+    /// The rule's `VarId`-ordered full slot spans — the DNF-derived
+    /// union regime's shared dedup key (R2); empty for projection heads.
+    fn dedup_spans(&self) -> &[(usize, usize)] {
+        match self {
+            Self::FreeJoin(rule) => &rule.dedup_spans,
+            Self::KeyProbe(rule) => &rule.dedup_spans,
+            // One rule, one variable scope: every variant shares the
+            // rule's slot layout (plans reorder nodes, never slots) —
+            // and a recursive rule's head is projection-shaped anyway
+            // (folds are refused through cycles).
+            Self::Recursive(rule) => &rule.variants[0].rule.dedup_spans,
         }
     }
 

@@ -756,7 +756,7 @@ fn run_unit<C: Counters>(
             }
             (None, true) => {
                 if multi_unit {
-                    main.aim(&rule.finds, rule.plan.slot_count());
+                    main.aim(&rule.finds, rule.plan.slot_count(), &rule.dedup_spans);
                 }
                 crate::exec::dispatch::execute_key_probe(
                     &rule.plan,
@@ -825,7 +825,7 @@ fn run_unit<C: Counters>(
         }
         (None, true) => {
             if multi_unit {
-                main.aim(&rule.finds, rule.plan.slot_count());
+                main.aim(&rule.finds, rule.plan.slot_count(), &rule.dedup_spans);
             }
             match main {
                 EitherSink::Projection(sink) => run_join(

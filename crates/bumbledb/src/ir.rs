@@ -168,7 +168,12 @@ pub struct Atom {
 /// Aggregate operators (`docs/architecture/20-query-ir.md`, § aggregation).
 /// The fold domain of every aggregate is the group's set of distinct full
 /// bindings over all query variables; the group key is the values of the
-/// non-aggregated find variables.
+/// non-aggregated find variables. Across rules the domain splits by
+/// provenance (ruled 2026-07-23, R2): a DNF-derived rule set keeps the
+/// written rule's full binding set (surface `or` is fold-transparent),
+/// while a hand-written multi-rule program folds the union of the rules'
+/// binding sets projected to the head — the head is the only shared
+/// vocabulary — with the fold-free nullary `Count` refused there (R1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AggOp {
     /// Accumulates in i128 and range-checks the final value once:

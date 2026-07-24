@@ -576,6 +576,18 @@ pub enum ValidationError {
     ArgAcrossRules {
         rules: usize,
     },
+    /// A nullary `Count` in a fold-free head of a hand-written 2+-rule
+    /// program (ruled 2026-07-23, R1): under the head-projection law a
+    /// fold-free head admits one projection per group, so the Count is
+    /// definitionally the constant 1 — an uninformative query, made
+    /// unrepresentable beside [`Self::ArgAcrossRules`] with the same
+    /// modeling answer: one Count per disjunct, host-merged. DNF-derived
+    /// rule sets are exempt — or-transparency (R2) keeps their fold
+    /// domain the written rule's full binding set, so their Count counts
+    /// (`docs/architecture/20-query-ir.md` § aggregation).
+    CountAcrossRules {
+        rules: usize,
+    },
     UnknownRelation {
         atom: usize,
         relation: RelationId,

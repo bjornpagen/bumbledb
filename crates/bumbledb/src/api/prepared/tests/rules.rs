@@ -286,12 +286,14 @@ fn a_grouped_fold_absorbs_the_cross_rule_duplicate() {
     );
 }
 
-/// The degenerate all-`Count` head over rules: every binding projects to
-/// the empty head tuple, so the union has exactly one element and Count
-/// is 1 — the naive model's constant-filler semantics, pinned so the
-/// zero-arity dedup key stays representable.
+/// Cross-rule fold-free nullary `Count` is refused at validation (ruled
+/// 2026-07-23, R1): under the head-projection law every binding projects
+/// to the empty head tuple, so the union is a singleton and the Count is
+/// definitionally the constant 1 — an uninformative query, made
+/// unrepresentable beside `ArgAcrossRules` with the same modeling
+/// answer: one Count per disjunct, host-merged.
 #[test]
-fn the_all_count_head_counts_the_singleton_union() {
+fn the_all_count_head_across_rules_is_the_typed_validation_refusal() {
     let dir = TempDir::new("prepared-rules-count");
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
@@ -318,12 +320,142 @@ fn the_all_count_head_counts_the_singleton_union() {
         head: vec![HeadTerm::Aggregate(crate::ir::HeadOp::Count)],
         rules: vec![rule(3), rule(7)],
     };
+    let Err(err) = prepare(&txn, &cache, &schema, &query) else {
+        panic!("fold-free nullary Count across written rules must refuse at validation");
+    };
+    assert!(
+        matches!(
+            err,
+            Error::Validation(crate::error::ValidationError::CountAcrossRules { rules: 2 })
+        ),
+        "typed, named, counted: {err:?}"
+    );
+}
+
+/// A grouped fold-free Count head refuses identically (R1): the group
+/// variables are constant per group, so the head projection is one row
+/// per group and the Count is 1 for every inhabited group.
+#[test]
+fn a_grouped_count_head_across_rules_is_the_typed_validation_refusal() {
+    let dir = TempDir::new("prepared-rules-grouped-count");
+    let schema = schema();
+    let env = Environment::create(dir.path(), &schema).expect("create");
+    insert_postings(&env, &schema, &overlap_postings());
+    let cache = ImageCache::new(&schema);
+    let txn = env.read_txn().expect("txn");
+
+    let rule = |account: u64| Rule {
+        finds: vec![
+            FindTerm::Var(VarId(0)),
+            FindTerm::Aggregate {
+                op: AggOp::Count,
+                over: None,
+            },
+        ],
+        atoms: vec![Atom {
+            source: crate::ir::AtomSource::Edb(POSTING),
+            bindings: vec![
+                (FieldId(1), Term::Literal(Value::U64(account))),
+                (FieldId(2), Term::Var(VarId(0))),
+                (FieldId(3), Term::Var(VarId(1))),
+            ],
+        }],
+        negated: vec![],
+        conditions: vec![],
+    };
+    let query = Query {
+        head: vec![HeadTerm::Var, HeadTerm::Aggregate(crate::ir::HeadOp::Count)],
+        rules: vec![rule(3), rule(7)],
+    };
+    let Err(err) = prepare(&txn, &cache, &schema, &query) else {
+        panic!("grouped fold-free Count across written rules must refuse at validation");
+    };
+    assert!(
+        matches!(
+            err,
+            Error::Validation(crate::error::ValidationError::CountAcrossRules { rules: 2 })
+        ),
+        "typed, named, counted: {err:?}"
+    );
+}
+
+/// The or-transparency law (ruled 2026-07-23, R2): a DNF-derived rule
+/// set re-keys the union dedup on the shared slot arrays, so surface
+/// `or` never changes a fold domain — distinct full bindings that
+/// project to EQUAL head rows all fold, and the nullary Count counts
+/// the written rule's binding set
+/// (`lean/Bumbledb/Exec/Dedup.lean: dnf_rekey_transparent`).
+#[test]
+fn an_or_spelled_fold_keeps_the_written_rules_full_binding_domain() {
+    let dir = TempDir::new("prepared-rules-dnf-fold");
+    let schema = schema();
+    let env = Environment::create(dir.path(), &schema).expect("create");
+    insert_postings(&env, &schema, &overlap_postings());
+    let cache = ImageCache::new(&schema);
+    let txn = env.read_txn().expect("txn");
+
+    // Q(Sum(amount), Count) :- Posting(account, memo, amount),
+    // amount >= 25 or amount >= 55 — ONE written rule whose disjuncts
+    // overlap on every amount ≥ 55 binding, and whose bindings
+    // ("b", 25) × accounts {3, 7} project to the same head row.
+    let rule = Rule {
+        finds: vec![
+            FindTerm::Aggregate {
+                op: AggOp::Sum,
+                over: Some(VarId(0)),
+            },
+            FindTerm::Aggregate {
+                op: AggOp::Count,
+                over: None,
+            },
+        ],
+        atoms: vec![Atom {
+            source: crate::ir::AtomSource::Edb(POSTING),
+            bindings: vec![
+                (FieldId(1), Term::Var(VarId(1))),
+                (FieldId(2), Term::Var(VarId(2))),
+                (FieldId(3), Term::Var(VarId(0))),
+            ],
+        }],
+        negated: vec![],
+        conditions: vec![ConditionTree::Or(vec![
+            ConditionTree::Leaf(Comparison {
+                op: CmpOp::Ge,
+                lhs: Term::Var(VarId(0)),
+                rhs: Term::Literal(Value::I64(25)),
+            }),
+            ConditionTree::Leaf(Comparison {
+                op: CmpOp::Ge,
+                lhs: Term::Var(VarId(0)),
+                rhs: Term::Literal(Value::I64(55)),
+            }),
+        ])],
+    };
+    let query = Query {
+        head: vec![
+            HeadTerm::Aggregate(crate::ir::HeadOp::Sum),
+            HeadTerm::Aggregate(crate::ir::HeadOp::Count),
+        ],
+        rules: vec![rule],
+    };
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
+    assert_eq!(
+        prepared.program.rules().len(),
+        2,
+        "the or lowered to two disjunct rules"
+    );
     let out = prepared
         .execute_collect(&txn, &cache, &[])
         .expect("execute");
     assert_eq!(out.len(), 1);
-    assert_eq!(out.get(0, 0), AnswerValue::U64(1));
+    // Distinct full bindings with amount ≥ 25: (3, "b", 25),
+    // (7, "b", 25), (7, "c", 40), (9, "d", 55) — the two 25s project to
+    // one head row yet BOTH fold (the shared-slot re-key), and the
+    // ≥ 55 binding satisfying both disjuncts folds once (the widened
+    // membership collapses in the set). Sum = 145, Count = 4 — exactly
+    // the leaf spelling `amount >= 25`'s answers.
+    assert_eq!(out.get(0, 0), AnswerValue::I64(145), "or moved no fold domain");
+    assert_eq!(out.get(0, 1), AnswerValue::U64(4), "Count counts full bindings");
 }
 
 /// introspection over a program: per-rule node stats plus the head-level union

@@ -116,8 +116,10 @@ impl AggregateSink {
     /// groups).
     ///
     /// Dedup is structural: this constructor keys a single rule's whole
-    /// slot array; [`Self::for_union`] keys the rule-independent head
-    /// projection; [`Self::without_seen_set`] alone accepts the proof and
+    /// slot array; [`Self::for_union`] keys the head projection
+    /// (hand-written provenance) and [`Self::for_dnf_union`] the shared
+    /// slot arrays (DNF-derived provenance — R2);
+    /// [`Self::without_seen_set`] alone accepts the proof and
     /// omits the map. Multi-rule sinks always retain the spanning union
     /// representation, even when the rules are provably disjoint.
     #[must_use]
@@ -125,11 +127,28 @@ impl AggregateSink {
         Self::build(finds, slot_count, DedupRegime::Bindings, hint)
     }
 
-    /// Presized multi-rule construction: the head-projection seen-set is
-    /// structurally mandatory because it is the union representation.
+    /// Presized multi-rule construction, hand-written provenance: the
+    /// head-projection seen-set is structurally mandatory because it is
+    /// the union representation.
     #[must_use]
     pub fn for_union(finds: &[FindSpec], slot_count: usize, hint: usize) -> Self {
         Self::build(finds, slot_count, DedupRegime::Union, hint)
+    }
+
+    /// Presized multi-rule construction, DNF-derived provenance (ruled
+    /// 2026-07-23, R2): the union seen-set re-keys on the **shared slot
+    /// arrays** — `spans` is rule 0's full slot array in `VarId` order,
+    /// re-supplied per rule at [`Self::aim`] — so disjunction widens
+    /// membership without moving the fold domain (the or-transparency
+    /// law, `lean/Bumbledb/Exec/Dedup.lean: dnf_rekey_transparent`).
+    #[must_use]
+    pub fn for_dnf_union(
+        finds: &[FindSpec],
+        slot_count: usize,
+        spans: &[(usize, usize)],
+        hint: usize,
+    ) -> Self {
+        Self::build(finds, slot_count, DedupRegime::DnfUnion(spans), hint)
     }
 
     /// Presized single-rule construction without a binding seen-set. The
@@ -144,11 +163,11 @@ impl AggregateSink {
         Self::build(finds, slot_count, DedupRegime::Elided(witness), hint)
     }
 
-    fn build(finds: &[FindSpec], slot_count: usize, regime: DedupRegime, hint: usize) -> Self {
-        let union = matches!(regime, DedupRegime::Union);
+    fn build(finds: &[FindSpec], slot_count: usize, regime: DedupRegime<'_>, hint: usize) -> Self {
+        let union = matches!(regime, DedupRegime::Union | DedupRegime::DnfUnion(_));
         let distinct_witness = match regime {
             DedupRegime::Elided(witness) => Some(witness),
-            DedupRegime::Bindings | DedupRegime::Union => None,
+            DedupRegime::Bindings | DedupRegime::Union | DedupRegime::DnfUnion(_) => None,
         };
         // Parse first: everything below sees the measure-free execution
         // vocabulary over the extended scratch row.
@@ -208,7 +227,14 @@ impl AggregateSink {
                     }
                 )
             });
-        let union_spans = union.then(|| union_key_spans(&finds));
+        // The union key by provenance (R2): head projection for a
+        // hand-written rule set, the shared slot arrays for a
+        // DNF-derived one.
+        let union_spans = match regime {
+            DedupRegime::Union => Some(union_key_spans(&finds)),
+            DedupRegime::DnfUnion(spans) => Some(spans.to_vec()),
+            DedupRegime::Bindings | DedupRegime::Elided(_) => None,
+        };
         let union_words: usize = union_spans
             .as_ref()
             .map_or(0, |spans| spans.iter().map(|(_, width)| width).sum());
@@ -218,6 +244,7 @@ impl AggregateSink {
         );
         Self {
             distinct_witness,
+            dnf_rekey: matches!(regime, DedupRegime::DnfUnion(_)),
             groups: WordMap::with_capacity_hint(key_words, hint.min(4096)),
             key_scratch: vec![0; key_words],
             binding_scratch: vec![0; scratch_words],
@@ -264,7 +291,7 @@ impl AggregateSink {
     /// retained; the shared maps — groups, seen, value sets — carry
     /// across rules untouched: the spanning is the union). Single-rule
     /// sinks are built aimed and never call this.
-    pub fn aim(&mut self, finds: &[FindSpec], slot_count: usize) {
+    pub fn aim(&mut self, finds: &[FindSpec], slot_count: usize, shared_slots: &[(usize, usize)]) {
         debug_assert_eq!(finds.len(), self.finds.len(), "one head, fixed arity");
         // The parse, per rule: derived words sit past this
         // rule's real slots (the head's measure positions are fixed, so
@@ -283,7 +310,14 @@ impl AggregateSink {
         self.pack = pack_slot(&self.finds);
         if let Some(spans) = &mut self.union_spans {
             spans.clear();
-            spans.extend(self.finds.iter().filter_map(union_span));
+            if self.dnf_rekey {
+                // DNF-derived provenance (R2): the caller supplies this
+                // rule's full slot array in `VarId` order — the shared
+                // vocabulary every disjunct reads identically.
+                spans.extend_from_slice(shared_slots);
+            } else {
+                spans.extend(self.finds.iter().filter_map(union_span));
+            }
         }
         debug_assert!(
             self.arg.is_none() && !self.finds.iter().any(|f| matches!(f, SinkSpec::Arg { .. })),
@@ -360,10 +394,19 @@ impl AggregateSink {
     }
 }
 
+/// The dedup regime, structural at construction (ruled 2026-07-23, R2:
+/// the multi-rule key splits by written-rule provenance).
 #[derive(Debug, Clone, Copy)]
-enum DedupRegime {
+enum DedupRegime<'k> {
+    /// Single rule: the whole slot array.
     Bindings,
+    /// Hand-written multi-rule: the head projection — the rules' only
+    /// shared vocabulary.
     Union,
+    /// DNF-derived multi-rule: the shared slot arrays — rule 0's full
+    /// slot spans in `VarId` order, one variable scope across disjuncts.
+    DnfUnion(&'k [(usize, usize)]),
+    /// Single rule under the plan's distinct-bindings proof: no set.
     Elided(crate::plan::fj::DistinctWitness),
 }
 
