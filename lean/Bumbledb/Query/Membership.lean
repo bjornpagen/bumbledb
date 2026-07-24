@@ -79,19 +79,25 @@ nothing (`normalize.rs` pass 1) — is answer-invisible, and
   typing witness and the mint are too; `queryAnswers` is the rules'
   union (`mem_queryAnswers`), and the query-level statement is the
   pointwise lift of the rule-level theorem.
-* **The fold-level companion is owed (2026-07-23 audit, finding 087;
-  the R2 fold-domain docket).** A membership term SELECTS, it never
-  binds: the aggregate fold domain of a lowered membership rule is
-  the SURFACE rule's distinct binding set — the minted interval
+* **The fold-level companion, DISCHARGED (2026-07-23 audit, finding
+  087; the R2 fold-domain docket).** A membership term SELECTS, it
+  never binds: the aggregate fold domain of a lowered membership rule
+  is the SURFACE rule's distinct binding set — the minted interval
   variable is no fold slot (the aggregation contract,
   `20-query-ir.md`: every aggregate folds the query's distinct full
-  bindings; the mint is answer-invisible, and it must be
-  fold-invisible on the same ground). PROOF OBLIGATION: the
-  fold-level `membership_lowering_preserves` companion — aggregates
-  over the lowered rule with the mint projected away equal aggregates
-  over the surface reading — plus the conformance glue folding the
-  surface width and the corpus fence
-  (`Exclusion::AggregateMembership`) lifted, so the third oracle
+  bindings; the mint is answer-invisible, and it is fold-invisible on
+  the same ground). The lowering is now proved at the BINDING level
+  (`stepLower_derives_forward` / `stepLower_derives_backward`,
+  iterated by `lowerFuel_derives_forward` /
+  `lowerFuel_derives_backward` — forward extends at the mints alone,
+  agreeing on every written variable; backward reuses the assignment
+  unchanged), and `membership_lowering_preserves_fold`
+  (`Exec/Dedup.lean` — where the fold domains live) composes them:
+  aggregates over the lowered rule with the mint projected away equal
+  aggregates over the surface reading, fiber for fiber, uniformly in
+  the fold. The conformance glue folds the surface width (the
+  serializer's `"width"` key, `Conformance.lean`) and the corpus
+  fence (`Exclusion::AggregateMembership`) lifts, so the third oracle
   adjudicates membership-under-additive-fold instead of excluding it.
 -/
 
@@ -778,17 +784,18 @@ theorem binding_vars_sub_atom {a : Atom} {b : FieldId × Term}
     v ∈ a.vars :=
   List.mem_flatMap.mpr ⟨b, hb, hv⟩
 
-/-- **The step theorem**: one lowering step preserves the SURFACE
-denotation — the minted variable pins the lowered field's value, and
-the appended `pointIn` condition says exactly what the membership
-binding said. Both directions are direct: forward extends the
-assignment at the mint with the witnessing fact's field value;
-backward reuses the assignment unchanged. -/
-theorem stepLower_preserves {Γ : Typing} {C : Classify} {r : Rule}
-    {I : Instance} {ρ : ParamEnv} {u : VarId} {Γ' : Typing} {r' : Rule}
-    (hu : u ∉ r.allVars) (hstep : stepLower Γ u r = some (Γ', r')) :
-    ∀ tup, tup ∈ surfaceRuleAnswers Γ C r I ρ ↔
-      tup ∈ surfaceRuleAnswers Γ' C r' I ρ := by
+/-- **The step theorem at the BINDING level, forward**: every surface
+derivation of the written rule extends — at the mint alone — to one
+of the lowered rule: the mint takes the witnessing fact's field value
+and every other variable keeps its own. The fold-level companion
+(`membership_lowering_preserves_fold`, `Exec/Dedup.lean` — finding
+087) spends exactly this agreement. -/
+theorem stepLower_derives_forward {Γ : Typing} {C : Classify}
+    {r : Rule} {I : Instance} {ρ : ParamEnv} {u : VarId} {Γ' : Typing}
+    {r' : Rule} (hu : u ∉ r.allVars)
+    (hstep : stepLower Γ u r = some (Γ', r')) {σ : Assignment}
+    (hσ : surfaceDerives Γ C r I ρ σ) :
+    ∃ σ', surfaceDerives Γ' C r' I ρ σ' ∧ ∀ v, v ≠ u → σ' v = σ v := by
   obtain ⟨pre, a, post, bpre, i, t₀, bpost, hatoms, hbind, hmem, hout⟩ :=
     stepLower_some hstep
   injection hout with hΓ hr
@@ -809,154 +816,206 @@ theorem stepLower_preserves {Γ : Typing} {C : Classify} {r : Rule}
         a.relation i (Term.var u) = false := by
     unfold Typing.membership Typing.termInterval Typing.updateVar
     simp [hIntF]
-  intro tup
-  constructor
-  · rintro ⟨σ, ⟨hpos, hneg, hcond⟩, rfl⟩
-    obtain ⟨f, hf, hSM⟩ := hpos a haMem
-    refine ⟨fun v => if v = u then f i else σ v, ⟨?_, ?_, ?_⟩, ?_⟩
-    · -- positive atoms of the lowered rule
-      intro a'' ha''
-      rcases List.mem_append.mp ha'' with hpre | hmid
-      · obtain ⟨g, hg, hSMg⟩ := hpos a'' (by
-          rw [hatoms]; exact List.mem_append.mpr (Or.inl hpre))
-        refine ⟨g, hg, (surfaceMatches_stable
-          (hneA a'' (by rw [hatoms]; exact List.mem_append.mpr (Or.inl hpre)))
-          (fun v hv => by
-            simp [hneA a''
-              (by rw [hatoms]; exact List.mem_append.mpr (Or.inl hpre))
-              v hv]) ).mp hSMg⟩
-      · rcases List.mem_cons.mp hmid with rfl | hpost
-        · -- the lowered atom, matched by the SAME fact
-          refine ⟨f, hf, ?_⟩
-          intro b hb
-          rcases List.mem_append.mp hb with hbpre | hbmid
+  obtain ⟨hpos, hneg, hcond⟩ := hσ
+  obtain ⟨f, hf, hSM⟩ := hpos a haMem
+  refine ⟨fun v => if v = u then f i else σ v, ⟨?_, ?_, ?_⟩,
+    fun v hv => by simp [hv]⟩
+  · -- positive atoms of the lowered rule
+    intro a'' ha''
+    rcases List.mem_append.mp ha'' with hpre | hmid
+    · obtain ⟨g, hg, hSMg⟩ := hpos a'' (by
+        rw [hatoms]; exact List.mem_append.mpr (Or.inl hpre))
+      refine ⟨g, hg, (surfaceMatches_stable
+        (hneA a'' (by rw [hatoms]; exact List.mem_append.mpr (Or.inl hpre)))
+        (fun v hv => by
+          simp [hneA a''
+            (by rw [hatoms]; exact List.mem_append.mpr (Or.inl hpre))
+            v hv]) ).mp hSMg⟩
+    · rcases List.mem_cons.mp hmid with rfl | hpost
+      · -- the lowered atom, matched by the SAME fact
+        refine ⟨f, hf, ?_⟩
+        intro b hb
+        rcases List.mem_append.mp hb with hbpre | hbmid
+        · have hbOrig : b ∈ a.bindings := by
+            rw [hbind]; exact List.mem_append.mpr (Or.inl hbpre)
+          exact (selectsAt_stable
+            (fun v hv => hneA a haMem v (binding_vars_sub_atom hbOrig hv))
+            (fun v hv => by
+              simp [hneA a haMem v (binding_vars_sub_atom hbOrig hv)]))
+            |>.mp (hSM b hbOrig)
+        · rcases List.mem_cons.mp hbmid with rfl | hbpost
+          · -- the minted binding pins the field value
+            refine (selectsAt_of_not_membership hNewFalse).mpr ?_
+            show (if u = u then f i else σ u) = f i
+            simp
           · have hbOrig : b ∈ a.bindings := by
-              rw [hbind]; exact List.mem_append.mpr (Or.inl hbpre)
+              rw [hbind]
+              exact List.mem_append.mpr
+                (Or.inr (List.mem_cons_of_mem _ hbpost))
             exact (selectsAt_stable
               (fun v hv => hneA a haMem v (binding_vars_sub_atom hbOrig hv))
               (fun v hv => by
                 simp [hneA a haMem v (binding_vars_sub_atom hbOrig hv)]))
               |>.mp (hSM b hbOrig)
-          · rcases List.mem_cons.mp hbmid with rfl | hbpost
-            · -- the minted binding pins the field value
-              refine (selectsAt_of_not_membership hNewFalse).mpr ?_
-              show (if u = u then f i else σ u) = f i
-              simp
-            · have hbOrig : b ∈ a.bindings := by
-                rw [hbind]
-                exact List.mem_append.mpr
-                  (Or.inr (List.mem_cons_of_mem _ hbpost))
-              exact (selectsAt_stable
-                (fun v hv => hneA a haMem v (binding_vars_sub_atom hbOrig hv))
-                (fun v hv => by
-                  simp [hneA a haMem v (binding_vars_sub_atom hbOrig hv)]))
-                |>.mp (hSM b hbOrig)
-        · obtain ⟨g, hg, hSMg⟩ := hpos a'' (by
-            rw [hatoms]
-            exact List.mem_append.mpr (Or.inr (List.mem_cons_of_mem _ hpost)))
-          have ha''r : a'' ∈ r.atoms := by
-            rw [hatoms]
-            exact List.mem_append.mpr (Or.inr (List.mem_cons_of_mem _ hpost))
-          exact ⟨g, hg, (surfaceMatches_stable (hneA a'' ha''r)
-            (fun v hv => by simp [hneA a'' ha''r v hv])).mp hSMg⟩
-    · -- negated atoms: unchanged, transported
-      rintro a'' ha'' ⟨g, hg, hSMg⟩
-      exact hneg a'' ha'' ⟨g, hg, (surfaceMatches_stable (hneN a'' ha'')
-        (fun v hv => by simp [hneN a'' ha'' v hv])).mpr hSMg⟩
-    · -- conditions: the old ones transported, the new one discharged
-      intro c hc
-      rcases List.mem_append.mp hc with hold | hnew
-      · exact (condHolds_congr C ρ σ _ c
-          (fun v hv => by simp [hneC c hold v hv])).mp (hcond c hold)
-      · rcases List.mem_cons.mp hnew with rfl | hemp
-        · -- the appended pointIn condition
-          have hsel := (selectsAt_of_membership hmem).mp (hSM _ hbMem)
-          obtain ⟨x, hx, hpm⟩ := hsel
-          refine ⟨f i, x, ?_, ?_, hpm⟩
-          · show (if u = u then f i else σ u) = f i
-            simp
-          · refine (selects_congr fun v hv => ?_).mp hx
-            have hvne : v ≠ u :=
-              hneA a haMem v (binding_vars_sub_atom hbMem hv)
-            simp [hvne]
-        · cases hemp
-    · -- the projected tuple is unchanged: the mint is not a find
-      refine List.map_congr_left fun v hv => ?_
-      simp [hneF v hv]
-  · rintro ⟨σ, ⟨hpos, hneg, hcond⟩, rfl⟩
-    -- the SAME assignment derives the original rule
-    have hcNew : Condition.holds C ρ σ
-        (.leaf ⟨.pointIn, .var u, t₀⟩) :=
-      hcond _ (List.mem_append.mpr (Or.inr (List.mem_cons_self ..)))
-    obtain ⟨A, hAMem, hSMA⟩ := hpos
-      (⟨a.relation, bpre ++ (i, Term.var u) :: bpost⟩ : Atom)
-      (List.mem_append.mpr (Or.inr (List.mem_cons_self ..)))
-    refine ⟨σ, ⟨?_, ?_, ?_⟩, rfl⟩
-    · intro a'' ha''
-      rw [hatoms] at ha''
-      rcases List.mem_append.mp ha'' with hpre | hmid
-      · obtain ⟨g, hg, hSMg⟩ := hpos a''
-          (List.mem_append.mpr (Or.inl hpre))
+      · obtain ⟨g, hg, hSMg⟩ := hpos a'' (by
+          rw [hatoms]
+          exact List.mem_append.mpr (Or.inr (List.mem_cons_of_mem _ hpost)))
         have ha''r : a'' ∈ r.atoms := by
-          rw [hatoms]; exact List.mem_append.mpr (Or.inl hpre)
+          rw [hatoms]
+          exact List.mem_append.mpr (Or.inr (List.mem_cons_of_mem _ hpost))
         exact ⟨g, hg, (surfaceMatches_stable (hneA a'' ha''r)
-          (fun v hv => rfl)).mpr hSMg⟩
-      · rcases List.mem_cons.mp hmid with heq | hpost
-        · -- the original membership atom, matched by the lowered
-          -- atom's fact: the mint pins the field, the condition says
-          -- the membership
-          rw [heq]
-          refine ⟨A, hAMem, ?_⟩
-          have hAu : σ u = A i := by
-            have := hSMA (i, Term.var u)
-              (List.mem_append.mpr (Or.inr (List.mem_cons_self ..)))
-            exact (selectsAt_of_not_membership hNewFalse).mp this
-          intro b hb
-          rw [hbind] at hb
-          rcases List.mem_append.mp hb with hbpre | hbmid
+          (fun v hv => by simp [hneA a'' ha''r v hv])).mp hSMg⟩
+  · -- negated atoms: unchanged, transported
+    rintro a'' ha'' ⟨g, hg, hSMg⟩
+    exact hneg a'' ha'' ⟨g, hg, (surfaceMatches_stable (hneN a'' ha'')
+      (fun v hv => by simp [hneN a'' ha'' v hv])).mpr hSMg⟩
+  · -- conditions: the old ones transported, the new one discharged
+    intro c hc
+    rcases List.mem_append.mp hc with hold | hnew
+    · exact (condHolds_congr C ρ σ _ c
+        (fun v hv => by simp [hneC c hold v hv])).mp (hcond c hold)
+    · rcases List.mem_cons.mp hnew with rfl | hemp
+      · -- the appended pointIn condition
+        have hsel := (selectsAt_of_membership hmem).mp (hSM _ hbMem)
+        obtain ⟨x, hx, hpm⟩ := hsel
+        refine ⟨f i, x, ?_, ?_, hpm⟩
+        · show (if u = u then f i else σ u) = f i
+          simp
+        · refine (selects_congr fun v hv => ?_).mp hx
+          have hvne : v ≠ u :=
+            hneA a haMem v (binding_vars_sub_atom hbMem hv)
+          simp [hvne]
+      · cases hemp
+
+/-- **The step theorem at the BINDING level, backward**: the SAME
+assignment derives the written rule — the mint pinned the field's
+value, and the appended `pointIn` condition said exactly what the
+membership binding said. -/
+theorem stepLower_derives_backward {Γ : Typing} {C : Classify}
+    {r : Rule} {I : Instance} {ρ : ParamEnv} {u : VarId} {Γ' : Typing}
+    {r' : Rule} (hu : u ∉ r.allVars)
+    (hstep : stepLower Γ u r = some (Γ', r')) {σ : Assignment}
+    (hσ : surfaceDerives Γ' C r' I ρ σ) :
+    surfaceDerives Γ C r I ρ σ := by
+  obtain ⟨pre, a, post, bpre, i, t₀, bpost, hatoms, hbind, hmem, hout⟩ :=
+    stepLower_some hstep
+  injection hout with hΓ hr
+  subst hΓ hr
+  obtain ⟨hneF, hneA, hneN, hneC⟩ := not_mint_of_allVars hu
+  have haMem : a ∈ r.atoms := by
+    rw [hatoms]; exact List.mem_append.mpr (Or.inr (List.mem_cons_self ..))
+  have hIntF : (Γ.header.fieldType a.relation i).isInterval = true := by
+    have h : (Γ.header.isInterval a.relation i
+        && !(Γ.termInterval t₀)) = true := hmem
+    rw [Bool.and_eq_true] at h
+    exact Header.fieldType_isInterval.mp h.1
+  have hNewFalse :
+      (Γ.updateVar u (Γ.header.fieldType a.relation i)).membership
+        a.relation i (Term.var u) = false := by
+    unfold Typing.membership Typing.termInterval Typing.updateVar
+    simp [hIntF]
+  obtain ⟨hpos, hneg, hcond⟩ := hσ
+  have hcNew : Condition.holds C ρ σ
+      (.leaf ⟨.pointIn, .var u, t₀⟩) :=
+    hcond _ (List.mem_append.mpr (Or.inr (List.mem_cons_self ..)))
+  obtain ⟨A, hAMem, hSMA⟩ := hpos
+    (⟨a.relation, bpre ++ (i, Term.var u) :: bpost⟩ : Atom)
+    (List.mem_append.mpr (Or.inr (List.mem_cons_self ..)))
+  refine ⟨?_, ?_, ?_⟩
+  · intro a'' ha''
+    rw [hatoms] at ha''
+    rcases List.mem_append.mp ha'' with hpre | hmid
+    · obtain ⟨g, hg, hSMg⟩ := hpos a''
+        (List.mem_append.mpr (Or.inl hpre))
+      have ha''r : a'' ∈ r.atoms := by
+        rw [hatoms]; exact List.mem_append.mpr (Or.inl hpre)
+      exact ⟨g, hg, (surfaceMatches_stable (hneA a'' ha''r)
+        (fun v hv => rfl)).mpr hSMg⟩
+    · rcases List.mem_cons.mp hmid with heq | hpost
+      · -- the original membership atom, matched by the lowered
+        -- atom's fact: the mint pins the field, the condition says
+        -- the membership
+        rw [heq]
+        refine ⟨A, hAMem, ?_⟩
+        have hAu : σ u = A i := by
+          have := hSMA (i, Term.var u)
+            (List.mem_append.mpr (Or.inr (List.mem_cons_self ..)))
+          exact (selectsAt_of_not_membership hNewFalse).mp this
+        intro b hb
+        rw [hbind] at hb
+        rcases List.mem_append.mp hb with hbpre | hbmid
+        · have hbLow : b ∈
+              (⟨a.relation, bpre ++ (i, Term.var u) :: bpost⟩ :
+                Atom).bindings :=
+            List.mem_append.mpr (Or.inl hbpre)
+          have hbOrig : b ∈ a.bindings := by
+            rw [hbind]; exact List.mem_append.mpr (Or.inl hbpre)
+          exact (selectsAt_stable
+            (fun v hv => hneA a haMem v (binding_vars_sub_atom hbOrig hv))
+            (fun v hv => rfl)).mpr (hSMA b hbLow)
+        · rcases List.mem_cons.mp hbmid with rfl | hbpost
+          · -- the membership binding itself, from the condition
+            refine (selectsAt_of_membership hmem).mpr ?_
+            obtain ⟨x, y, hx, hy, hden⟩ := hcNew
+            have hxu : σ u = x := hx
+            exact ⟨y, hy, by
+              show ∃ p, y.point = some p ∧ p ∈ (A i).points
+              rw [← hAu, hxu]
+              exact hden⟩
           · have hbLow : b ∈
                 (⟨a.relation, bpre ++ (i, Term.var u) :: bpost⟩ :
                   Atom).bindings :=
-              List.mem_append.mpr (Or.inl hbpre)
+              List.mem_append.mpr
+                (Or.inr (List.mem_cons_of_mem _ hbpost))
             have hbOrig : b ∈ a.bindings := by
-              rw [hbind]; exact List.mem_append.mpr (Or.inl hbpre)
+              rw [hbind]
+              exact List.mem_append.mpr
+                (Or.inr (List.mem_cons_of_mem _ hbpost))
             exact (selectsAt_stable
-              (fun v hv => hneA a haMem v (binding_vars_sub_atom hbOrig hv))
+              (fun v hv =>
+                hneA a haMem v (binding_vars_sub_atom hbOrig hv))
               (fun v hv => rfl)).mpr (hSMA b hbLow)
-          · rcases List.mem_cons.mp hbmid with rfl | hbpost
-            · -- the membership binding itself, from the condition
-              refine (selectsAt_of_membership hmem).mpr ?_
-              obtain ⟨x, y, hx, hy, hden⟩ := hcNew
-              have hxu : σ u = x := hx
-              exact ⟨y, hy, by
-                show ∃ p, y.point = some p ∧ p ∈ (A i).points
-                rw [← hAu, hxu]
-                exact hden⟩
-            · have hbLow : b ∈
-                  (⟨a.relation, bpre ++ (i, Term.var u) :: bpost⟩ :
-                    Atom).bindings :=
-                List.mem_append.mpr
-                  (Or.inr (List.mem_cons_of_mem _ hbpost))
-              have hbOrig : b ∈ a.bindings := by
-                rw [hbind]
-                exact List.mem_append.mpr
-                  (Or.inr (List.mem_cons_of_mem _ hbpost))
-              exact (selectsAt_stable
-                (fun v hv =>
-                  hneA a haMem v (binding_vars_sub_atom hbOrig hv))
-                (fun v hv => rfl)).mpr (hSMA b hbLow)
-        · obtain ⟨g, hg, hSMg⟩ := hpos a''
-            (List.mem_append.mpr (Or.inr (List.mem_cons_of_mem _ hpost)))
-          have ha''r : a'' ∈ r.atoms := by
-            rw [hatoms]
-            exact List.mem_append.mpr (Or.inr (List.mem_cons_of_mem _ hpost))
-          exact ⟨g, hg, (surfaceMatches_stable (hneA a'' ha''r)
-            (fun v hv => rfl)).mpr hSMg⟩
-    · rintro a'' ha'' ⟨g, hg, hSMg⟩
-      exact hneg a'' ha'' ⟨g, hg, (surfaceMatches_stable (hneN a'' ha'')
-        (fun v hv => rfl)).mp hSMg⟩
-    · intro c hc
-      exact hcond c (List.mem_append.mpr (Or.inl hc))
+      · obtain ⟨g, hg, hSMg⟩ := hpos a''
+          (List.mem_append.mpr (Or.inr (List.mem_cons_of_mem _ hpost)))
+        have ha''r : a'' ∈ r.atoms := by
+          rw [hatoms]
+          exact List.mem_append.mpr (Or.inr (List.mem_cons_of_mem _ hpost))
+        exact ⟨g, hg, (surfaceMatches_stable (hneA a'' ha''r)
+          (fun v hv => rfl)).mpr hSMg⟩
+  · rintro a'' ha'' ⟨g, hg, hSMg⟩
+    exact hneg a'' ha'' ⟨g, hg, (surfaceMatches_stable (hneN a'' ha'')
+      (fun v hv => rfl)).mp hSMg⟩
+  · intro c hc
+    exact hcond c (List.mem_append.mpr (Or.inl hc))
+
+/-- The lowering never touches the head: the lowered rule's finds are
+the written rule's. -/
+theorem stepLower_finds {Γ : Typing} {u : VarId} {r : Rule}
+    {Γ' : Typing} {r' : Rule}
+    (hstep : stepLower Γ u r = some (Γ', r')) : r'.finds = r.finds := by
+  obtain ⟨_, _, _, _, _, _, _, _, _, _, hout⟩ := stepLower_some hstep
+  injection hout with _ hr
+  rw [hr]
+
+/-- **The step theorem**: one lowering step preserves the SURFACE
+denotation — the binding-level halves, projected: the mint is not a
+find, so the head reads only agreeing variables. -/
+theorem stepLower_preserves {Γ : Typing} {C : Classify} {r : Rule}
+    {I : Instance} {ρ : ParamEnv} {u : VarId} {Γ' : Typing} {r' : Rule}
+    (hu : u ∉ r.allVars) (hstep : stepLower Γ u r = some (Γ', r')) :
+    ∀ tup, tup ∈ surfaceRuleAnswers Γ C r I ρ ↔
+      tup ∈ surfaceRuleAnswers Γ' C r' I ρ := by
+  intro tup
+  constructor
+  · rintro ⟨σ, hσ, rfl⟩
+    obtain ⟨σ', hσ', hag⟩ := stepLower_derives_forward hu hstep hσ
+    refine ⟨σ', hσ', ?_⟩
+    rw [stepLower_finds hstep]
+    exact List.map_congr_left fun v hv =>
+      (hag v ((not_mint_of_allVars hu).1 v hv)).symm
+  · rintro ⟨σ, hσ, rfl⟩
+    exact ⟨σ, stepLower_derives_backward hu hstep hσ,
+      by rw [stepLower_finds hstep]⟩
 
 /-! ## The membership count — the lowering's fuel -/
 
@@ -1200,6 +1259,146 @@ theorem lowerFuel_posFree :
       refine lowerFuel_posFree n Γ' r' ?_
       have hdec := stepLower_decrement r.freshVar_not_mem hstep
       omega
+
+/-! ## The binding-level lowering — what the fold companion spends -/
+
+/-- One step never loses a variable: the displaced term's variables
+move from the lowered binding into the appended condition, everything
+else stays — `r.allVars ⊆ r'.allVars`, as membership. -/
+theorem stepLower_allVars_sub {Γ : Typing} {u : VarId} {r : Rule}
+    {Γ' : Typing} {r' : Rule}
+    (hstep : stepLower Γ u r = some (Γ', r')) :
+    ∀ v, v ∈ r.allVars → v ∈ r'.allVars := by
+  obtain ⟨pre, a, post, bpre, i, t₀, bpost, hatoms, hbind, hmem, hout⟩ :=
+    stepLower_some hstep
+  injection hout with hΓ hr
+  subst hΓ hr
+  intro v hv
+  rcases mem_allVars.mp hv with hf | ⟨x, hx, hvx⟩ | ⟨x, hx, hvx⟩ |
+    ⟨c, hc, hvc⟩
+  · exact mem_allVars.mpr (Or.inl hf)
+  · rw [hatoms] at hx
+    rcases List.mem_append.mp hx with hxpre | hxmid
+    · exact mem_allVars.mpr (Or.inr (Or.inl
+        ⟨x, List.mem_append.mpr (Or.inl hxpre), hvx⟩))
+    · rcases List.mem_cons.mp hxmid with rfl | hxpost
+      · -- the lowered atom: the binding either survives in place or
+        -- its displaced term's variables live in the new condition
+        obtain ⟨b, hb, hvb⟩ := List.mem_flatMap.mp hvx
+        rw [hbind] at hb
+        rcases List.mem_append.mp hb with hbpre | hbmid
+        · exact mem_allVars.mpr (Or.inr (Or.inl
+            ⟨⟨x.relation, bpre ++ (i, Term.var u) :: bpost⟩,
+             List.mem_append.mpr (Or.inr (List.mem_cons_self ..)),
+             List.mem_flatMap.mpr
+               ⟨b, List.mem_append.mpr (Or.inl hbpre), hvb⟩⟩))
+        · rcases List.mem_cons.mp hbmid with rfl | hbpost
+          · refine mem_allVars.mpr (Or.inr (Or.inr (Or.inr
+              ⟨.leaf ⟨.pointIn, .var u, t₀⟩,
+               List.mem_append.mpr (Or.inr (List.mem_cons_self ..)),
+               ?_⟩)))
+            show v ∈ Term.vars (.var u) ++ t₀.vars
+            exact List.mem_append.mpr (Or.inr hvb)
+          · exact mem_allVars.mpr (Or.inr (Or.inl
+              ⟨⟨x.relation, bpre ++ (i, Term.var u) :: bpost⟩,
+               List.mem_append.mpr (Or.inr (List.mem_cons_self ..)),
+               List.mem_flatMap.mpr
+                 ⟨b, List.mem_append.mpr
+                   (Or.inr (List.mem_cons_of_mem _ hbpost)), hvb⟩⟩))
+      · exact mem_allVars.mpr (Or.inr (Or.inl
+          ⟨x, List.mem_append.mpr
+            (Or.inr (List.mem_cons_of_mem _ hxpost)), hvx⟩))
+  · exact mem_allVars.mpr (Or.inr (Or.inr (Or.inl ⟨x, hx, hvx⟩)))
+  · exact mem_allVars.mpr (Or.inr (Or.inr (Or.inr
+      ⟨c, List.mem_append.mpr (Or.inl hc), hvc⟩)))
+
+/-- The step subset, iterated: the full lowering never loses a
+variable. -/
+theorem lowerFuel_allVars_sub :
+    ∀ (n : Nat) (Γ : Typing) (r : Rule) (v : VarId),
+      v ∈ r.allVars → v ∈ (lowerFuel n Γ r).2.allVars
+  | 0, _, _, _, h => h
+  | n + 1, Γ, r, v, h => by
+    cases hstep : stepLower Γ r.freshVar r with
+    | none => simpa only [lowerFuel, hstep] using h
+    | some out =>
+      obtain ⟨Γ₁, r₁⟩ := out
+      simp only [lowerFuel, hstep]
+      exact lowerFuel_allVars_sub n Γ₁ r₁ v
+        (stepLower_allVars_sub hstep v h)
+
+/-- **The binding-level lowering, forward**: every surface derivation
+of the written rule extends — at the mints alone — to one of the
+lowered rule, agreeing on every variable the written rule mentions.
+The mint takes the witnessing fact's field value at each step; the
+fold companion (`membership_lowering_preserves_fold`,
+`Exec/Dedup.lean`) spends exactly this agreement. -/
+theorem lowerFuel_derives_forward (C : Classify) (I : Instance)
+    (ρ : ParamEnv) :
+    ∀ (n : Nat) (Γ : Typing) (r : Rule) {σ : Assignment},
+      surfaceDerives Γ C r I ρ σ →
+      ∃ σ', surfaceDerives (lowerFuel n Γ r).1 C
+          (lowerFuel n Γ r).2 I ρ σ' ∧
+        ∀ v, v ∈ r.allVars → σ' v = σ v
+  | 0, _, _, σ, h => ⟨σ, h, fun _ _ => rfl⟩
+  | n + 1, Γ, r, σ, h => by
+    cases hstep : stepLower Γ r.freshVar r with
+    | none =>
+      simp only [lowerFuel, hstep]
+      exact ⟨σ, h, fun _ _ => rfl⟩
+    | some out =>
+      obtain ⟨Γ₁, r₁⟩ := out
+      simp only [lowerFuel, hstep]
+      obtain ⟨σ₁, h₁, hag₁⟩ :=
+        stepLower_derives_forward r.freshVar_not_mem hstep h
+      obtain ⟨σ', h', hag'⟩ :=
+        lowerFuel_derives_forward C I ρ n Γ₁ r₁ h₁
+      refine ⟨σ', h', fun v hv => ?_⟩
+      rw [hag' v (stepLower_allVars_sub hstep v hv)]
+      exact hag₁ v fun heq => r.freshVar_not_mem (heq ▸ hv)
+
+/-- **The binding-level lowering, backward**: an assignment deriving
+the lowered rule derives the written rule UNCHANGED. -/
+theorem lowerFuel_derives_backward (C : Classify) (I : Instance)
+    (ρ : ParamEnv) :
+    ∀ (n : Nat) (Γ : Typing) (r : Rule) {σ : Assignment},
+      surfaceDerives (lowerFuel n Γ r).1 C (lowerFuel n Γ r).2 I ρ σ →
+      surfaceDerives Γ C r I ρ σ
+  | 0, _, _, _, h => h
+  | n + 1, Γ, r, σ, h => by
+    cases hstep : stepLower Γ r.freshVar r with
+    | none => simpa only [lowerFuel, hstep] using h
+    | some out =>
+      obtain ⟨Γ₁, r₁⟩ := out
+      simp only [lowerFuel, hstep] at h
+      exact stepLower_derives_backward r.freshVar_not_mem hstep
+        (lowerFuel_derives_backward C I ρ n Γ₁ r₁ h)
+
+/-- On a rule whose atoms (both polarities) are membership-free, the
+surface body judgment IS `derives` — the binding-level face of
+`surface_eq_denotation_of_free`. -/
+theorem surfaceDerives_iff_derives_of_free {Γ : Typing} {C : Classify}
+    {r : Rule} {I : Instance} {ρ : ParamEnv} {σ : Assignment}
+    (hpos : ∀ a, a ∈ r.atoms → Atom.membershipFree Γ a)
+    (hneg : ∀ a, a ∈ r.negated → Atom.membershipFree Γ a) :
+    surfaceDerives Γ C r I ρ σ ↔ derives C r I ρ σ := by
+  constructor
+  · rintro ⟨hp, hn, hc⟩
+    refine ⟨?_, ?_, hc⟩
+    · intro a ha
+      obtain ⟨f, hf, hm⟩ := hp a ha
+      exact ⟨f, hf, (surfaceMatches_of_membershipFree (hpos a ha)).mp hm⟩
+    · rintro a ha ⟨f, hf, hm⟩
+      exact hn a ha
+        ⟨f, hf, (surfaceMatches_of_membershipFree (hneg a ha)).mpr hm⟩
+  · rintro ⟨hp, hn, hc⟩
+    refine ⟨?_, ?_, hc⟩
+    · intro a ha
+      obtain ⟨f, hf, hm⟩ := hp a ha
+      exact ⟨f, hf, (surfaceMatches_of_membershipFree (hpos a ha)).mpr hm⟩
+    · rintro a ha ⟨f, hf, hm⟩
+      exact hn a ha
+        ⟨f, hf, (surfaceMatches_of_membershipFree (hneg a ha)).mp hm⟩
 
 /-! ## THE theorems -/
 
