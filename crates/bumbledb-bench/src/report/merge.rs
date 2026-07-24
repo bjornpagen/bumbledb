@@ -40,10 +40,33 @@ fn merge_rows(parsed: &json::Value, key: &str) -> Vec<(String, MergeRow)> {
 /// bracket stayed contaminated are excluded from the minima, and the
 /// exclusion count is printed.
 ///
+/// Runs must share one durability label (`config.store`): min-merging a
+/// no-sync run into a durable table would publish an `MDB_NOSYNC` p50
+/// as the per-family minimum with no marker (finding 020).
+///
 /// # Errors
 ///
-/// A run with no readable read families.
+/// A run with no readable read families, a run missing its
+/// `config.store` label, or runs whose durability labels differ.
 pub fn merge_markdown(runs: &[(String, json::Value)]) -> Result<String, String> {
+    let stores: Vec<(&str, &str)> = runs
+        .iter()
+        .map(|(label, parsed)| {
+            let store = parsed
+                .get("config")
+                .and_then(|c| c.get("store"))
+                .and_then(json::Value::as_str)
+                .ok_or_else(|| format!("{label}: report.json carries no config.store label"))?;
+            Ok((label.as_str(), store))
+        })
+        .collect::<Result<_, String>>()?;
+    if let Some(&(label, store)) = stores.iter().find(|(_, store)| *store != stores[0].1) {
+        return Err(format!(
+            "merge refuses mixed durability: {} is `{}` but {label} is `{store}` — \
+             a min column across sync levels labels nothing",
+            stores[0].0, stores[0].1
+        ));
+    }
     let mut out = String::new();
     let _ = writeln!(out, "# bumbledb bench merge ({} runs)\n", runs.len());
     let per_run: Vec<(String, Vec<(String, MergeRow)>)> = runs

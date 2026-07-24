@@ -147,10 +147,10 @@ pub fn cmd_bench(args: &BenchArgs) -> Result<i32, String> {
     });
     std::fs::create_dir_all(&out_dir).map_err(|e| format!("out dir: {e}"))?;
 
-    let mode = if args.ephemeral {
-        StoreMode::Ephemeral
+    let lane = if args.ephemeral {
+        crate::duralane::DurabilityLane::Nosync
     } else {
-        StoreMode::Durable
+        crate::duralane::DurabilityLane::Durable
     };
     // The ephemeral read twins: `Db::ephemeral` on the stamped durable
     // corpus is the typed `StoreKindMismatch` refusal (the kind is
@@ -242,7 +242,7 @@ pub fn cmd_bench(args: &BenchArgs) -> Result<i32, String> {
         proto,
         args.alloc,
         args.proxy_per_rep,
-        mode,
+        lane.store_mode(),
     )?);
 
     // The displaced lanes (the roster extension): the DRAM-tier
@@ -257,7 +257,7 @@ pub fn cmd_bench(args: &BenchArgs) -> Result<i32, String> {
         args.samples,
         args.alloc,
         args.proxy_per_rep,
-        mode,
+        lane.store_mode(),
     )?);
 
     // Write families run AFTER every read family (measured): an
@@ -265,7 +265,7 @@ pub fn cmd_bench(args: &BenchArgs) -> Result<i32, String> {
     // demand-driven recovery, so any read family measured in that
     // shadow reads slow-clock time. `bulk` (seconds of fsync) is last
     // of all — asserted inside write_families.
-    let writes = write_families(cfg, &out_dir.join("scratch"), &selected, mode)?;
+    let writes = write_families(cfg, &out_dir.join("scratch"), &selected, lane)?;
 
     let (cache_images, cache_bytes) = cache_residency(&db);
     let store = report::StoreNumbers {
@@ -281,7 +281,7 @@ pub fn cmd_bench(args: &BenchArgs) -> Result<i32, String> {
             scale: cfg.scale.label(),
             seed: cfg.seed,
             samples: proto.samples,
-            store: mode.label(),
+            store: lane.store_mode().label(),
         },
         corpus_digest: corpus_gen::digest_hex(&corpus_gen::corpus_digest(cfg)),
         verify_stamp: if verified {

@@ -8,7 +8,7 @@ use crate::churn::ops::{
     DEFAULT_ANALYZE_EVERY, DEFAULT_CYCLES, DEFAULT_SAMPLE_EVERY, DEFAULT_VACUUM_EVERY,
 };
 use crate::corpus_gen::Scale;
-use crate::lanes::writes::DurabilityLane;
+use crate::duralane::DurabilityLane;
 
 mod help;
 mod parse;
@@ -223,7 +223,7 @@ pub struct WritesArgs {
     pub scale: Scale,
     pub seed: u64,
     pub dir: PathBuf,
-    /// Durability lanes, in run order. `NoSync` first by default: the
+    /// Durability lanes, in run order. `Nosync` first by default: the
     /// durable lane's fsync shadow must land after every nosync sample
     /// (the write-order pin, `driver/write_families.rs`).
     pub lanes: Vec<DurabilityLane>,
@@ -240,7 +240,7 @@ impl Default for WritesArgs {
             scale: Scale::S,
             seed: 1,
             dir: PathBuf::from("bench-data"),
-            lanes: vec![DurabilityLane::NoSync, DurabilityLane::Durable],
+            lanes: vec![DurabilityLane::Nosync, DurabilityLane::Durable],
             batches: vec![1, 10, 100, 1000],
             samples: None,
             out: None,

@@ -8,11 +8,13 @@ use super::FairnessCheck;
 impl FairnessCheck {
     /// Asserts the session and store shape: WAL on, `synchronous=FULL`,
     /// `fullfsync`/`checkpoint_fullfsync` ON (flush-to-media parity with
-    /// LMDB's macOS commits — docs/architecture/60-validation.md), every
-    /// expected index present (the statement-derived
-    /// [`sqlmap::expected_indexes`] registry PLUS the family-owned
-    /// composites, `crate::families::expected_indexes`, against
-    /// `PRAGMA index_list`), and `ANALYZE` statistics populated.
+    /// LMDB's macOS commits — docs/architecture/60-validation.md), the
+    /// mmap covering the whole file (the memory-residency parity claim
+    /// as a checked invariant, finding 074 — LMDB maps the whole store
+    /// unconditionally), every expected index present (the
+    /// statement-derived [`sqlmap::expected_indexes`] registry PLUS the
+    /// family-owned composites, `crate::families::expected_indexes`,
+    /// against `PRAGMA index_list`), and `ANALYZE` statistics populated.
     /// Statement reuse needs no runtime check — [`PreparedFamily`] owns
     /// the only construction site by type.
     ///
@@ -62,6 +64,19 @@ impl FairnessCheck {
                 .map_err(|e| format!("{pragma}: {e}"))?;
             if on != 1 {
                 return Err(format!("fairness: {pragma} is OFF — flush to media"));
+            }
+        }
+        if let Some(path) = conn.path().filter(|p| !p.is_empty()) {
+            let file_bytes = std::fs::metadata(path)
+                .map_err(|e| format!("fairness: stat {path}: {e}"))?
+                .len();
+            let mmap: i64 = conn
+                .query_row("PRAGMA mmap_size", [], |row| row.get(0))
+                .map_err(|e| format!("mmap_size: {e}"))?;
+            if u64::try_from(mmap).unwrap_or(0) < file_bytes {
+                return Err(format!(
+                    "fairness: mmap_size {mmap} < the {file_bytes}-byte file —                      the memory-residency parity claim is broken"
+                ));
             }
         }
         for (table, index) in expected {

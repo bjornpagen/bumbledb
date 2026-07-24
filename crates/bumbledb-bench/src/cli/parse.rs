@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use crate::corpus_gen::Scale;
-use crate::lanes::writes::DurabilityLane;
+use crate::duralane::DurabilityLane;
 use crate::verify::DEFAULT_RANDOM_CASES;
 
 use super::{
@@ -250,7 +250,7 @@ fn parse_lane_list(flag: &str, raw: &str) -> Result<Vec<DurabilityLane>, String>
     raw.split(',')
         .map(|token| match token {
             "durable" => Ok(DurabilityLane::Durable),
-            "nosync" => Ok(DurabilityLane::NoSync),
+            "nosync" => Ok(DurabilityLane::Nosync),
             other => Err(format!(
                 "unknown lane `{other}` (expected durable or nosync)"
             )),

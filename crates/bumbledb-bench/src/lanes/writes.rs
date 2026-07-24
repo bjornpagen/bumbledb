@@ -4,26 +4,25 @@
 //! the owner's measurement sessions; a tool run never times for
 //! publication).
 //!
-//! The durability axis is [`DurabilityLane`], a two-point enum whose
-//! [`DurabilityLane::store_mode`] and [`DurabilityLane::apply_sqlite`]
-//! are total functions — a lane/pragma cross-match is unrepresentable —
-//! and every report row rides inside a lane object carrying its `lane`
-//! and `sqlite_sync` labels, so a number can never be quoted without its
-//! durability context.
+//! The durability axis is [`crate::duralane::DurabilityLane`] — the one
+//! constructor of both sides' config and the authority for every pragma
+//! (`docs/architecture/60-validation.md`; the writes-local twin enum
+//! died into it, finding 071) — so a lane/pragma cross-match is
+//! unrepresentable, and every report row rides inside a lane object
+//! carrying its `lane` and `sqlite_sync` labels: a number can never be
+//! quoted without its durability context.
 //!
-//! **The `SQLite` parity config, per lane** (documented here and carried
-//! in the report labels): both lanes load their oracle twin through
+//! **The `SQLite` parity config, per lane** (carried in the report
+//! labels): both lanes load their oracle twin through
 //! [`crate::corpus::load_sqlite`] — WAL asserted, `synchronous=FULL`,
 //! `fullfsync=ON`, `checkpoint_fullfsync=ON`, 256 MiB page cache,
 //! `temp_store=MEMORY`, prepared statements reused via `prepare_cached`,
 //! `ANALYZE` after load, `wal_checkpoint(TRUNCATE)` after load — then
-//! [`DurabilityLane::apply_sqlite`]: `Durable` re-asserts
-//! `synchronous=FULL` + `fullfsync=ON` + `checkpoint_fullfsync=ON` (the
-//! standing config already set them; the arm re-applies rather than
-//! trusting call order, keeping the function total), `NoSync` sets
-//! `synchronous=OFF` + `fullfsync=OFF` + `checkpoint_fullfsync=OFF` —
-//! the honest `MDB_NOSYNC` twin: no commit-time sync boundary on either
-//! side.
+//! [`DurabilityLane::configure`] applies the lane's whole session
+//! envelope (the sync trio per arm, plus the shared whole-file mmap and
+//! `wal_autocheckpoint=0`) and [`DurabilityLane::assert_parity`] reads
+//! the pragmas back: a misconfigured twin fails before flattering
+//! anyone.
 //!
 //! **Post-state verification is arithmetic over representations, not
 //! spot-checking:** both engines consume the identical seeded
@@ -52,77 +51,9 @@ use crate::harness::{self, Measurement, Protocol, Stats};
 use crate::json;
 use crate::report::{GhzReport, Provenance};
 use crate::schema::{Ledger, Posting, PostingId, ids, schema};
+use crate::duralane::DurabilityLane;
 use crate::sqlite_run::POSTING_INSERT;
 use crate::{clockproxy, corpus, sqlmap, writebench};
-
-/// The engine's durability axis has exactly two points — `Db::create`
-/// (durable) and `Db::ephemeral` (`MDB_NOSYNC`). The mandate's
-/// "durable / NOSYNC / ephemeral" collapses to these two because
-/// ephemeral IS the NOSYNC constructor (docs/architecture/70-api.md);
-/// making the third label unrepresentable is the honest representation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DurabilityLane {
-    Durable,
-    NoSync,
-}
-
-impl DurabilityLane {
-    /// The lane's name, as reports and `--lanes` tokens spell it.
-    #[must_use]
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Durable => "durable",
-            Self::NoSync => "nosync",
-        }
-    }
-
-    /// The `SQLite` twin's documented parity config for this lane.
-    #[must_use]
-    pub fn sqlite_sync_label(self) -> &'static str {
-        match self {
-            Self::Durable => "wal+synchronous=FULL+fullfsync=ON",
-            Self::NoSync => "wal+synchronous=OFF",
-        }
-    }
-
-    /// The bench store constructor this lane maps to.
-    #[must_use]
-    pub fn store_mode(self) -> crate::storemode::StoreMode {
-        match self {
-            Self::Durable => crate::storemode::StoreMode::Durable,
-            Self::NoSync => crate::storemode::StoreMode::Ephemeral,
-        }
-    }
-
-    /// The lane's `SQLite` pragma application — total over both arms, so
-    /// a lane/pragma mismatch is unrepresentable. `Durable` re-asserts
-    /// what [`crate::corpus::configure_sqlite`] already set (kept total
-    /// rather than trusting call order); `NoSync` removes the sync
-    /// boundary — the honest `MDB_NOSYNC` twin: WAL frames written,
-    /// never synced, on both engines.
-    ///
-    /// # Errors
-    ///
-    /// `SQLite` errors, stringified with the pragma named.
-    pub fn apply_sqlite(self, conn: &Connection) -> Result<(), String> {
-        let set = |name: &str, value: &str| {
-            conn.pragma_update(None, name, value)
-                .map_err(|e| format!("pragma {name}={value}: {e}"))
-        };
-        match self {
-            Self::Durable => {
-                set("synchronous", "FULL")?;
-                set("fullfsync", "ON")?;
-                set("checkpoint_fullfsync", "ON")
-            }
-            Self::NoSync => {
-                set("synchronous", "OFF")?;
-                set("fullfsync", "OFF")?;
-                set("checkpoint_fullfsync", "OFF")
-            }
-        }
-    }
-}
 
 /// The whole writes report, plain data.
 #[derive(Debug, Clone, PartialEq)]
@@ -264,17 +195,6 @@ const BULK_TX_CHUNK: u32 = 4096;
 /// The `SQLite` posting delete, mirroring [`POSTING_INSERT`]'s shape.
 const POSTING_DELETE: &str = "DELETE FROM \"Posting\" WHERE \"id\" = ?1";
 
-/// The driver's stamp→report conversion, local twin (the driver keeps
-/// its own private copy).
-fn ghz_report(stamp: clockproxy::GhzStamp) -> GhzReport {
-    GhzReport {
-        pre: stamp.pre,
-        post: stamp.post,
-        retried: stamp.retried,
-        contaminated: stamp.contaminated(),
-    }
-}
-
 /// One committed transaction per sample, so the mean sample time
 /// inverts to commits/sec.
 #[expect(
@@ -283,18 +203,6 @@ fn ghz_report(stamp: clockproxy::GhzStamp) -> GhzReport {
 )]
 fn commits_per_sec(stats: &Stats) -> f64 {
     1e9 / (stats.mean_ns.max(1) as f64)
-}
-
-/// The `driver/write_families.rs` `facts_per_sec` derivation, copied
-/// locally (the driver keeps its own): total work over total measured
-/// seconds.
-#[expect(
-    clippy::cast_precision_loss,
-    reason = "reporting accepts lossy integer-to-float conversion"
-)]
-fn facts_per_sec(m: &Measurement, samples: u32) -> f64 {
-    let total_secs = (m.stats.mean_ns * u64::from(samples)) as f64 / 1e9;
-    m.work as f64 / total_secs.max(f64::EPSILON)
 }
 
 /// One ladder cell from its pair of measurements: `commits_per_sec =
@@ -552,7 +460,8 @@ fn bulk_sqlite(
         let path = scratch.join(format!("bulk-oracle-{sample}.sqlite"));
         let conn = Connection::open(&path).map_err(|e| format!("open: {e}"))?;
         corpus::configure_sqlite(&conn).map_err(|e| format!("configure: {e}"))?;
-        lane.apply_sqlite(&conn)?;
+        lane.configure(&conn)?;
+        lane.assert_parity(&conn)?;
         for statement in sqlmap::ddl(schema()) {
             conn.execute(&statement, [])
                 .map_err(|e| format!("ddl: {e}"))?;
@@ -746,7 +655,8 @@ fn run_lane(
     // the lane's pragmas.
     let (conn, _) = corpus::load_sqlite(&scratch.join("oracle.sqlite"), cfg)
         .map_err(|e| format!("oracle load ({}): {e}", lane.label()))?;
-    lane.apply_sqlite(&conn)?;
+    lane.configure(&conn)?;
+    lane.assert_parity(&conn)?;
 
     let per_family = u64::from(proto.warmups + proto.samples);
     let mut inserted = 0u64;
@@ -770,7 +680,7 @@ fn run_lane(
             batch,
             ours.stats,
             theirs.stats,
-            Some(ghz_report(ghz)),
+            Some(ghz.into()),
         ));
     }
 
@@ -802,7 +712,7 @@ fn run_lane(
             batch,
             ours.stats,
             theirs.stats,
-            Some(ghz_report(ghz)),
+            Some(ghz.into()),
         ));
     }
 
@@ -826,8 +736,8 @@ fn run_lane(
         ))
     })?;
     verify_bulk_pair(&bulk_scratch, lane, sizes.postings)?;
-    let ours_rate = facts_per_sec(&ours, bulk_proto.samples);
-    let theirs_rate = facts_per_sec(&theirs, bulk_proto.samples);
+    let ours_rate = harness::facts_per_sec(&ours, bulk_proto.samples);
+    let theirs_rate = harness::facts_per_sec(&theirs, bulk_proto.samples);
     rows.push(WriteRow {
         name: "bulk_append".to_owned(),
         batch: BULK_TX_CHUNK,
@@ -837,7 +747,7 @@ fn run_lane(
         commits_per_sec_theirs: theirs_rate / f64::from(BULK_TX_CHUNK),
         rows_per_sec_ours: ours_rate,
         rows_per_sec_theirs: theirs_rate,
-        ghz: Some(ghz_report(ghz)),
+        ghz: Some(ghz.into()),
     });
     // The write-order pin: bulk is the last row, always.
     debug_assert!(
@@ -855,7 +765,7 @@ fn run_lane(
 
 /// The writes lane entry point: device honesty first, then one
 /// [`run_lane`] per requested lane in args order (the default runs
-/// `NoSync` first and `Durable` last — the fsync-shadow law lifted to
+/// `Nosync` first and `Durable` last — the fsync-shadow law lifted to
 /// the lane axis: the durable lane's seconds of fsync leave the deepest
 /// clock shadow, so they land after every nosync sample), then the two
 /// artifacts.
@@ -956,13 +866,13 @@ mod tests {
     #[test]
     fn the_durability_axis_has_exactly_two_points() {
         assert_eq!(DurabilityLane::Durable.label(), "durable");
-        assert_eq!(DurabilityLane::NoSync.label(), "nosync");
+        assert_eq!(DurabilityLane::Nosync.label(), "nosync");
         assert_eq!(
             DurabilityLane::Durable.sqlite_sync_label(),
             "wal+synchronous=FULL+fullfsync=ON"
         );
         assert_eq!(
-            DurabilityLane::NoSync.sqlite_sync_label(),
+            DurabilityLane::Nosync.sqlite_sync_label(),
             "wal+synchronous=OFF"
         );
         assert_eq!(
@@ -970,7 +880,7 @@ mod tests {
             crate::storemode::StoreMode::Durable
         );
         assert_eq!(
-            DurabilityLane::NoSync.store_mode(),
+            DurabilityLane::Nosync.store_mode(),
             crate::storemode::StoreMode::Ephemeral
         );
     }
@@ -983,8 +893,8 @@ mod tests {
             seed: 9,
             samples: 8,
             lanes: vec![LaneReport {
-                lane: DurabilityLane::NoSync.label(),
-                sqlite_sync: DurabilityLane::NoSync.sqlite_sync_label(),
+                lane: DurabilityLane::Nosync.label(),
+                sqlite_sync: DurabilityLane::Nosync.sqlite_sync_label(),
                 rows: vec![
                     WriteRow {
                         name: "append".to_owned(),
@@ -1097,7 +1007,7 @@ mod tests {
             scale: Scale::Tiny,
             seed: 1,
             dir: dir.clone(),
-            lanes: vec![DurabilityLane::NoSync],
+            lanes: vec![DurabilityLane::Nosync],
             batches: vec![1, 10],
             samples: Some(4),
             out: Some(out.clone()),

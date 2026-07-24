@@ -3,22 +3,20 @@ use std::path::Path;
 use bumbledb::Db;
 
 use crate::corpus_gen::GenConfig;
+use crate::duralane::DurabilityLane;
 use crate::schema::Ledger;
-use crate::storemode::StoreMode;
 use crate::{clockproxy, corpus, families, harness, report, sqlite_run, writebench};
-
-#[expect(
-    clippy::cast_precision_loss,
-    reason = "reporting accepts lossy integer-to-float conversion"
-)]
-fn facts_per_sec(m: &harness::Measurement, samples: u32) -> f64 {
-    let total_secs = (m.stats.mean_ns * u64::from(samples)) as f64 / 1e9;
-    m.work as f64 / total_secs.max(f64::EPSILON)
-}
 
 /// The write/cold families, run against a scratch corpus loaded under
 /// `scratch` — bench never mutates the verified digest-dir corpus, so
 /// the stamp stays honest.
+///
+/// The seam is typed [`DurabilityLane`], never a bare store mode: the
+/// lane constructs BOTH sides — engine store and oracle pragmas — so an
+/// `--ephemeral` run can no longer time `MDB_NOSYNC` against a
+/// fullfsync oracle (the cross-matched pair the lane sum makes
+/// unrepresentable; finding 020, `docs/architecture/61-bench-lanes.md`
+/// § the ephemeral lane).
 ///
 /// `pub(crate)` (not `pub(super)`) so the device-honesty lock test can
 /// point it at a live ram disk and assert the refusal.
@@ -26,7 +24,7 @@ pub(crate) fn write_families(
     cfg: GenConfig,
     scratch: &Path,
     selected: &dyn Fn(&str) -> bool,
-    mode: StoreMode,
+    lane: DurabilityLane,
 ) -> Result<Vec<report::WriteFamilyReport>, String> {
     // The scratch-corpus write families, table-driven: one entry per
     // family, an engine runner beside its `SQLite` mirror.
@@ -69,10 +67,12 @@ pub(crate) fn write_families(
     let mut out = Vec::new();
     if PAIRED.iter().any(|(name, ..)| selected(name)) || selected("commit_witnessed") {
         eprintln!("bench: loading the scratch write corpus");
-        let db = mode.create(&scratch.join("db"), Ledger)?;
+        let db = lane.store_mode().create(&scratch.join("db"), Ledger)?;
         corpus::load_bumbledb(&db, cfg).map_err(|e| format!("{e:?}"))?;
         let (conn, _) =
             corpus::load_sqlite(&scratch.join("oracle.sqlite"), cfg).map_err(|e| format!("{e}"))?;
+        lane.configure(&conn)?;
+        lane.assert_parity(&conn)?;
         for (name, engine, oracle) in PAIRED {
             if !selected(name) {
                 continue;
@@ -85,7 +85,7 @@ pub(crate) fn write_families(
                 ours: ours.stats,
                 theirs: Some(theirs.stats),
                 facts_per_sec: None,
-                ghz: Some(super::ghz_report(ghz)),
+                ghz: Some(ghz.into()),
             });
         }
         // The witnessed-write row (the PRD-18 spine debt): engine-only —
@@ -100,7 +100,7 @@ pub(crate) fn write_families(
                 ours: ours.stats,
                 theirs: None,
                 facts_per_sec: None,
-                ghz: Some(super::ghz_report(ghz)),
+                ghz: Some(ghz.into()),
             });
         }
     }
@@ -111,7 +111,7 @@ pub(crate) fn write_families(
         cfg,
         &scratch.join("windowed"),
         selected,
-        mode,
+        lane.store_mode(),
     )?);
 
     // bulk stays LAST: seconds of fsync — nothing
@@ -125,16 +125,16 @@ pub(crate) fn write_families(
             .protocol;
         let ((ours, theirs), ghz) = clockproxy::stamped(|| {
             Ok((
-                writebench::bulk_bumbledb(cfg, scratch, mode)?,
-                sqlite_run::bulk(cfg, scratch)?,
+                writebench::bulk_bumbledb(cfg, scratch, lane.store_mode())?,
+                sqlite_run::bulk(cfg, scratch, lane)?,
             ))
         })?;
         out.push(report::WriteFamilyReport {
             name: "bulk".to_owned(),
-            facts_per_sec: Some(facts_per_sec(&ours, proto.samples)),
+            facts_per_sec: Some(harness::facts_per_sec(&ours, proto.samples)),
             ours: ours.stats,
             theirs: Some(theirs.stats),
-            ghz: Some(super::ghz_report(ghz)),
+            ghz: Some(ghz.into()),
         });
     }
     // The write-order pin (measured): bulk's seconds of fsync

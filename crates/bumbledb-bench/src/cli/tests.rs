@@ -1,6 +1,6 @@
 use super::*;
 
-use crate::lanes::writes::DurabilityLane;
+use crate::duralane::DurabilityLane;
 
 fn argv(args: &[&str]) -> Vec<String> {
     args.iter().map(ToString::to_string).collect()
@@ -214,7 +214,7 @@ fn writes_parses_the_lane_flags() {
             scale: Scale::M,
             seed: 9,
             dir: PathBuf::from("/tmp/w"),
-            lanes: vec![DurabilityLane::Durable, DurabilityLane::NoSync],
+            lanes: vec![DurabilityLane::Durable, DurabilityLane::Nosync],
             batches: vec![1, 10, 100, 1000],
             samples: Some(4),
             out: Some(PathBuf::from("artifacts")),
@@ -228,7 +228,7 @@ fn writes_parses_the_lane_flags() {
     );
     assert_eq!(
         WritesArgs::default().lanes,
-        vec![DurabilityLane::NoSync, DurabilityLane::Durable]
+        vec![DurabilityLane::Nosync, DurabilityLane::Durable]
     );
     assert_eq!(WritesArgs::default().batches, vec![1, 10, 100, 1000]);
     // A zero batch is rejected, naming the flag.

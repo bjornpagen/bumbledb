@@ -3,6 +3,7 @@ use std::path::Path;
 use rusqlite::Connection;
 
 use crate::corpus_gen::GenConfig;
+use crate::duralane::DurabilityLane;
 use crate::harness::{self, Measurement};
 use crate::schema::schema;
 use crate::writebench::{non_posting_relations, write_protocol};
@@ -10,7 +11,9 @@ use crate::{corpus, sqlmap};
 
 /// `bulk` on `SQLite`: pre-seeded throwaway files (the corpus minus
 /// postings, built before any timing), the full posting stream timed in
-/// 4096-row transactions per sample.
+/// 4096-row transactions per sample — every throwaway session under the
+/// lane's pragmas, parity-checked (the standing config alone would pin
+/// the durable trio regardless of lane; finding 020).
 ///
 /// # Errors
 ///
@@ -19,7 +22,7 @@ use crate::{corpus, sqlmap};
 /// # Panics
 ///
 /// On scratch I/O failures.
-pub fn bulk(cfg: GenConfig, scratch: &Path) -> Result<Measurement, String> {
+pub fn bulk(cfg: GenConfig, scratch: &Path, lane: DurabilityLane) -> Result<Measurement, String> {
     use std::cell::RefCell;
     let proto = write_protocol("bulk");
     let mut pending = std::collections::VecDeque::new();
@@ -27,6 +30,8 @@ pub fn bulk(cfg: GenConfig, scratch: &Path) -> Result<Measurement, String> {
         let path = scratch.join(format!("bulk-oracle-{sample}.sqlite"));
         let conn = Connection::open(&path).map_err(|e| format!("open: {e}"))?;
         corpus::configure_sqlite(&conn).map_err(|e| format!("configure: {e}"))?;
+        lane.configure(&conn)?;
+        lane.assert_parity(&conn)?;
         for statement in sqlmap::ddl(schema()) {
             conn.execute(&statement, [])
                 .map_err(|e| format!("ddl: {e}"))?;

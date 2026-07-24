@@ -32,7 +32,7 @@ pub use cap::{CapMs, CapOutcome, DEFAULT_CAP, with_cap};
 pub use cold_containment_walk::cold_containment_walk;
 pub use cold_containment_walk_delete::cold_containment_walk_delete;
 pub use commits::{commit_batch, commit_single};
-pub use open_for_bench::open_for_bench;
+pub use open_for_bench::{mmap_whole_file, open_for_bench};
 pub use sample::{sample, sample_args, sample_capped};
 
 /// A family's statement, prepared exactly once and reused across every

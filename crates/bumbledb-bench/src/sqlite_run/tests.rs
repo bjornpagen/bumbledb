@@ -203,7 +203,7 @@ fn cap_trips_on_a_slow_query_and_passes_a_fast_one() {
 #[test]
 fn bulk_mirror_reports_positive_throughput() {
     let dir = scratch("bulk");
-    let m = bulk(CFG, &dir).expect("bulk");
+    let m = bulk(CFG, &dir, crate::duralane::DurabilityLane::Durable).expect("bulk");
     let sizes = corpus_gen::Sizes::of(CFG.scale);
     assert_eq!(m.work, (sizes.postings + sizes.posting_tags) * 8);
     assert!(m.stats.min > 0);

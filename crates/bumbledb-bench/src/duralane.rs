@@ -46,12 +46,21 @@ impl DurabilityLane {
         }
     }
 
-    /// The lane's name, as reports print it.
+    /// The lane's name, as reports and `--lanes` tokens spell it.
     #[must_use]
     pub fn label(self) -> &'static str {
         match self {
             Self::Durable => "durable",
             Self::Nosync => "nosync",
+        }
+    }
+
+    /// The `SQLite` twin's documented parity config for this lane.
+    #[must_use]
+    pub fn sqlite_sync_label(self) -> &'static str {
+        match self {
+            Self::Durable => "wal+synchronous=FULL+fullfsync=ON",
+            Self::Nosync => "wal+synchronous=OFF",
         }
     }
 
@@ -62,14 +71,14 @@ impl DurabilityLane {
             Self::Durable => {
                 "Db::create (LMDB issues F_FULLFSYNC unconditionally on macOS) vs SQLite WAL \
                  synchronous=FULL fullfsync=ON checkpoint_fullfsync=ON, cache_size=-262144, \
-                 temp_store=MEMORY, mmap_size=1GiB, wal_autocheckpoint=0 — both engines flush \
-                 to media on every commit"
+                 temp_store=MEMORY, whole-file mmap (coverage asserted), wal_autocheckpoint=0 — \
+                 both engines flush to media on every commit"
             }
             Self::Nosync => {
                 "Db::ephemeral (MDB_NOSYNC: pages and meta pwritten, no sync boundary ever \
                  crossed) vs SQLite WAL synchronous=OFF fullfsync=OFF checkpoint_fullfsync=OFF, \
-                 cache_size=-262144, temp_store=MEMORY, mmap_size=1GiB, wal_autocheckpoint=0 — \
-                 WAL frames written, never synced (OFF, not NORMAL: NORMAL still syncs at \
+                 cache_size=-262144, temp_store=MEMORY, whole-file mmap (coverage asserted), \
+                 wal_autocheckpoint=0 — WAL frames written, never synced (OFF, not NORMAL: NORMAL still syncs at \
                  checkpoints, which would cross-match a store kind that never syncs)"
             }
         }
@@ -77,7 +86,7 @@ impl DurabilityLane {
 
     /// The `SQLite` side of the pair: `Durable` is the standing fairness
     /// config ([`crate::corpus::configure_sqlite`]) plus the bench-open
-    /// pragmas (`mmap_size` 1 GiB, `wal_autocheckpoint=0` — the
+    /// pragmas (whole-file `mmap_size`, coverage asserted; `wal_autocheckpoint=0` — the
     /// `open_for_bench` set); `Nosync` is the same WAL session with the
     /// sync boundary removed (`synchronous=OFF`, `fullfsync=OFF`,
     /// `checkpoint_fullfsync=OFF`) and the identical cache, temp-store,
@@ -109,8 +118,8 @@ impl DurabilityLane {
                 pragma(conn, "temp_store", "MEMORY")?;
             }
         }
-        pragma(conn, "mmap_size", 1_073_741_824_i64)?;
         pragma(conn, "wal_autocheckpoint", 0)?;
+        crate::sqlite_run::mmap_whole_file(conn)?;
         Ok(())
     }
 
