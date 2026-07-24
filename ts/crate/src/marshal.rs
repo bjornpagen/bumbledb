@@ -20,8 +20,8 @@
 //! to the engine's own typed boundaries.
 
 use bumbledb::schema::spec::{
-    FieldSpec, LiteralSetSpec, LiteralSpec, RelationSpec, RowSpec, SideSpec, StatementSpec,
-    WindowSpec,
+    ClosedSpec, FieldSpec, LiteralSetSpec, LiteralSpec, RelationSpec, RowSpec, SideSpec,
+    StatementSpec, WindowSpec,
 };
 use bumbledb::schema::{IntervalElement, StatementDescriptor, ValueType};
 use bumbledb::{
@@ -570,31 +570,39 @@ pub(crate) fn schema_spec(obj: &Object) -> napi::Result<SchemaSpec> {
                 fresh: req::<bool>(&field, "fresh", "field spec")?,
             });
         }
-        let extension = match relation.get::<Array>("extension")? {
+        // Closedness as one sum, mirroring the fused `RelationSpec`
+        // (ruled 2026-07-23, R7): an absent `closed` key is an ordinary
+        // relation; a present one carries handle newtype + ground axioms
+        // together — the two illegal states are unspellable on the wire
+        // exactly as they are unrepresentable in the spec.
+        let closed = match relation.get::<Object>("closed")? {
             None => None,
-            Some(rows) => {
+            Some(closed) => {
+                let rows: Array = req(&closed, "rows", "closed relation")?;
                 let mut row_specs = Vec::with_capacity(rows.len() as usize);
                 for row_index in 0..rows.len() {
-                    let row = req_at::<Object>(&rows, row_index, "relation extension")?;
-                    let values: Array = req(&row, "values", "extension row")?;
+                    let row = req_at::<Object>(&rows, row_index, "closed relation rows")?;
+                    let values: Array = req(&row, "values", "closed row")?;
                     let mut literals = Vec::with_capacity(values.len() as usize);
                     for value_index in 0..values.len() {
-                        let literal = req_at::<Object>(&values, value_index, "extension row")?;
+                        let literal = req_at::<Object>(&values, value_index, "closed row")?;
                         literals.push(literal_in(&literal)?);
                     }
                     row_specs.push(RowSpec {
-                        handle: req::<String>(&row, "handle", "extension row")?.into(),
+                        handle: req::<String>(&row, "handle", "closed row")?.into(),
                         values: literals,
                     });
                 }
-                Some(row_specs)
+                Some(ClosedSpec {
+                    newtype: req::<String>(&closed, "newtype", "closed relation")?.into(),
+                    rows: row_specs,
+                })
             }
         };
         relation_specs.push(RelationSpec {
             name: req::<String>(&relation, "name", "relation spec")?.into(),
-            newtype: relation.get::<String>("newtype")?.map(Into::into),
             fields: field_specs,
-            extension,
+            closed,
         });
     }
     let statements: Array = req(obj, "statements", "schema spec")?;
