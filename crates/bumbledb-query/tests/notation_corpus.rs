@@ -216,9 +216,19 @@ fn agg_op_json(op: AggOp) -> String {
         AggOp::Max => "{\"kind\":\"max\"}".to_string(),
         AggOp::Count => "{\"kind\":\"count\"}".to_string(),
         AggOp::CountDistinct => "{\"kind\":\"countDistinct\"}".to_string(),
-        AggOp::ArgMax { key } => format!("{{\"kind\":\"argMax\",\"key\":{}}}", key.0),
-        AggOp::ArgMin { key } => format!("{{\"kind\":\"argMin\",\"key\":{}}}", key.0),
+        AggOp::ArgMax { key } => format!("{{\"kind\":\"argMax\",\"key\":{}}}", arg_key_json(key)),
+        AggOp::ArgMin { key } => format!("{{\"kind\":\"argMin\",\"key\":{}}}", arg_key_json(key)),
         AggOp::Pack => "{\"kind\":\"pack\"}".to_string(),
+    }
+}
+
+/// The Arg key's two spellings (R5): a variable key keeps its bare id
+/// (the pre-R5 canonical form, corpus-stable), a measure key nests the
+/// interval variable under `duration`.
+fn arg_key_json(key: bumbledb::ArgKey) -> String {
+    match key {
+        bumbledb::ArgKey::Var(v) => v.0.to_string(),
+        bumbledb::ArgKey::Measure(v) => format!("{{\"duration\":{}}}", v.0),
     }
 }
 

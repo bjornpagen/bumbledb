@@ -620,7 +620,7 @@ fn output_vars(finds: &[FindTerm]) -> BTreeSet<VarId> {
                     vars.insert(*var);
                 }
                 if let AggOp::ArgMax { key } | AggOp::ArgMin { key } = op {
-                    vars.insert(*key);
+                    vars.insert(key.var());
                 }
             }
         }

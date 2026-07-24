@@ -194,13 +194,13 @@ pub enum AggOp {
     /// Arg-restriction: the group's binding set is first restricted to the
     /// bindings attaining the **maximum** of `key`, and the group's output
     /// rows are projected from that restricted set — a tie yields every
-    /// attaining row. `over` is the carried variable; `key` must be
-    /// orderable (U64/I64, and bool per R3), and all Arg terms in one
+    /// attaining row. `over` is the carried variable; the key positions
+    /// are [`ArgKey`]'s two, exhaustively, and all Arg terms in one
     /// query share one key and one direction.
-    ArgMax { key: VarId },
+    ArgMax { key: ArgKey },
     /// Arg-restriction toward the **minimum** of `key`; rules as
     /// [`AggOp::ArgMax`].
-    ArgMin { key: VarId },
+    ArgMin { key: ArgKey },
     /// The coalescing fold (Snodgrass coalesce) over an interval-typed
     /// variable: per group, the result is the set of **maximal disjoint
     /// half-open segments** of the union of the group's interval point
@@ -213,6 +213,31 @@ pub enum AggOp {
     /// variables are the only companions (validation, each refusal
     /// typed).
     Pack,
+}
+
+/// An Arg-restriction key position — the two, exhaustively (ruled
+/// 2026-07-23, R5): a bound variable of orderable type (U64/I64, and
+/// bool per R3 — closed references refused per R4), or the **interval
+/// measure** of a bound interval-typed variable — `ArgMax(w,
+/// Duration(w))` is "the longest interval per group"; the restriction
+/// sweeps the derived measure word with the measure's ray poisoning
+/// (`docs/architecture/20-query-ir.md` § the measure). A variable key
+/// may itself be projected.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ArgKey {
+    Var(VarId),
+    Measure(VarId),
+}
+
+impl ArgKey {
+    /// The key's rule variable — the bound var itself, or the interval
+    /// variable the measure reads (Datalog safety walks read this).
+    #[must_use]
+    pub fn var(self) -> VarId {
+        match self {
+            Self::Var(var) | Self::Measure(var) => var,
+        }
+    }
 }
 
 /// One find term: a projected variable or an aggregate. `over` is `None`

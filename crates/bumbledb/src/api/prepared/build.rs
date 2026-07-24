@@ -132,11 +132,18 @@ fn prepare_witnessed<'s, S>(
     // (R2): the head projection for a hand-written rule set, the shared
     // slot arrays for a DNF-derived one.
     let output_hint = output_hint(&rules);
+    if rules.len() > 1 && dnf_derived(&written) {
+        seal_dnf_spans(&mut rules);
+    }
     let sink = rules.first().map_or_else(
         || make_sink(&[], 0, SinkProgram::SingleRule(None), 0),
         |first| {
             let program = if rules.len() > 1 {
-                union_regime(&written, first)
+                if dnf_derived(&written) {
+                    SinkProgram::DnfUnion(first.dedup_spans())
+                } else {
+                    SinkProgram::Union
+                }
             } else {
                 SinkProgram::SingleRule(first.distinct_witness())
             };
@@ -407,13 +414,20 @@ pub(crate) fn prepare_program<'s, S>(
     let out_wq = witness.output_witness();
     let predicate = out_wq.predicate().clone();
     let params = param_specs(out_wq);
+    if predicates[usize::from(output.0)].rules.len() > 1 && dnf_derived(&output_written) {
+        seal_dnf_spans(&mut predicates[usize::from(output.0)].rules);
+    }
     let output_rules = &predicates[usize::from(output.0)].rules;
     let output_hint_rows = output_hint(output_rules);
     let sink = output_rules.first().map_or_else(
         || make_sink(&[], 0, SinkProgram::SingleRule(None), 0),
         |first| {
             let regime = if output_rules.len() > 1 {
-                union_regime(&output_written, first)
+                if dnf_derived(&output_written) {
+                    SinkProgram::DnfUnion(first.dedup_spans())
+                } else {
+                    SinkProgram::Union
+                }
             } else {
                 SinkProgram::SingleRule(first.distinct_witness())
             };
@@ -689,12 +703,13 @@ fn prepare_rule_variant(
     if let Some(plan) = classified {
         let finds = find_specs(rule, &plan);
         let key_probe_finds = key_probe_find_table(&plan, &finds, columns);
-        let dedup_spans = shared_slot_spans(rule, &plan);
         return Ok(PreparedRule::KeyProbe(KeyProbeRule {
             plan,
             distinct_witness,
             finds,
-            dedup_spans,
+            // Written by `seal_dnf_spans` iff the program is a
+            // DNF-derived union; empty (and never read) otherwise.
+            dedup_spans: Box::default(),
             key_probe_finds,
         }));
     }
@@ -795,7 +810,6 @@ fn prepare_rule_variant(
     lower_span.end();
 
     let finds = find_specs(rule, &plan);
-    let dedup_spans = shared_slot_spans(rule, &plan);
     let executor = Executor::new(&plan);
     let occurrence_count = plan.occurrences().len();
 
@@ -810,7 +824,9 @@ fn prepare_rule_variant(
         plan,
         executor,
         finds,
-        dedup_spans,
+        // Written by `seal_dnf_spans` iff the program is a DNF-derived
+        // union; empty (and never read) otherwise.
+        dedup_spans: Box::default(),
         resolved_filters: vec![Vec::new(); occurrence_count],
         resolved_selections: vec![Vec::new(); occurrence_count],
         resolution: super::ResolutionState::Pending,
@@ -920,28 +936,68 @@ impl SlotLayout for crate::exec::dispatch::KeyProbePlan {
     }
 }
 
-/// The rule's full slot array as `VarId`-ordered spans — the DNF-derived
-/// union regime's shared dedup key (ruled 2026-07-23, R2): the disjuncts
-/// of one written rule share one variable scope, so the `VarId` order
-/// reads the same binding tuple through every clone's own layout, and
-/// the re-keyed union folds the written rule's distinct full bindings
-/// (`lean/Bumbledb/Exec/Dedup.lean: dnf_rekey_transparent`).
-/// Aggregate-bearing heads only — every rule variable is sink-relevant
-/// there, so the plan binds each one; a projection head's union key is
-/// head-shaped already and never reads these spans.
-fn shared_slot_spans(rule: &RuleWitness<'_>, layout: &impl SlotLayout) -> Box<[(usize, usize)]> {
-    let aggregate_head = rule.rule().finds.iter().any(|term| {
-        matches!(
-            term,
-            FindTerm::Aggregate { .. } | FindTerm::AggregateMeasure { .. }
-        )
-    });
-    if !aggregate_head {
-        return Box::default();
+/// Seals the DNF-derived union regime's shared-slot dedup keys (ruled
+/// 2026-07-23, R2): per rule, the `VarId`-ordered spans of the vars
+/// EVERY clone's plan binds — the disjuncts of one written rule share
+/// one variable scope, so the `VarId` order reads the same binding
+/// tuple through every clone's own layout, and the re-keyed union folds
+/// the written rule's distinct full bindings
+/// (`lean/Bumbledb/Exec/Dedup.lean: dnf_rekey_transparent`). Grounding
+/// may eliminate a **functionally determined** variable from one
+/// clone's plan and not another's — its value is 1:1 with the surviving
+/// binding either way (`plan/ground.rs`, aggregate safety), so keying
+/// the intersection never merges two distinct full bindings and every
+/// rule's key reads one shared vocabulary at one shared arity.
+fn seal_dnf_spans(rules: &mut [PreparedRule]) {
+    let inventory = |rule: &PreparedRule| -> Vec<(crate::ir::VarId, usize, usize)> {
+        match rule {
+            PreparedRule::FreeJoin(rule) => rule.plan.slot_spans(),
+            PreparedRule::KeyProbe(rule) => {
+                let mut spans: Vec<(crate::ir::VarId, usize, usize)> = rule
+                    .plan
+                    .vars
+                    .iter()
+                    .map(|binding| (binding.var, binding.slot, binding.width))
+                    .collect();
+                spans.sort_unstable_by_key(|(var, ..)| *var);
+                spans
+            }
+            // A recursive rule's head is projection-shaped (folds are
+            // refused through cycles) — no union key to seal.
+            PreparedRule::Recursive(_) => Vec::new(),
+        }
+    };
+    let inventories: Vec<Vec<(crate::ir::VarId, usize, usize)>> =
+        rules.iter().map(inventory).collect();
+    let shared: Vec<crate::ir::VarId> = inventories
+        .first()
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+        .iter()
+        .map(|(var, ..)| *var)
+        .filter(|var| {
+            inventories
+                .iter()
+                .all(|inv| inv.iter().any(|(bound, ..)| bound == var))
+        })
+        .collect();
+    for (rule, inv) in rules.iter_mut().zip(&inventories) {
+        let spans: Box<[(usize, usize)]> = shared
+            .iter()
+            .map(|var| {
+                let (_, slot, width) = inv
+                    .iter()
+                    .find(|(bound, ..)| bound == var)
+                    .expect("the shared vocabulary is each inventory's subset");
+                (*slot, *width)
+            })
+            .collect();
+        match rule {
+            PreparedRule::FreeJoin(rule) => rule.dedup_spans = spans,
+            PreparedRule::KeyProbe(rule) => rule.dedup_spans = spans,
+            PreparedRule::Recursive(_) => {}
+        }
     }
-    rule.var_types()
-        .map(|(var, _)| (layout.slot_of(var), layout.width_of(var)))
-        .collect()
 }
 
 fn find_specs(rule: &RuleWitness<'_>, layout: &impl SlotLayout) -> Vec<FindSpec> {
@@ -976,13 +1032,24 @@ fn find_specs(rule: &RuleWitness<'_>, layout: &impl SlotLayout) -> Vec<FindSpec>
             },
             FindTerm::Aggregate { op, over } => match op {
                 // Arg-restriction: the carry's span plus the shared key
-                // slot (orderable — validated U64/I64, one word).
+                // — a key variable's slot, or the interval measure's
+                // two-slot span (the sink parses it onto a derived word
+                // with ray poisoning — R5).
                 AggOp::ArgMax { key } | AggOp::ArgMin { key } => {
                     let carry = over.expect("validated: Arg carries a variable");
                     FindSpec::Arg {
                         slot: layout.slot_of(carry),
                         width: layout.width_of(carry),
-                        key_slot: layout.slot_of(*key),
+                        key: match key {
+                            crate::ir::ArgKey::Var(var) => {
+                                crate::exec::sink::ProjSource::Slot(layout.slot_of(*var))
+                            }
+                            crate::ir::ArgKey::Measure(var) => {
+                                crate::exec::sink::ProjSource::Measure {
+                                    start: layout.slot_of(*var),
+                                }
+                            }
+                        },
                         max: matches!(op, AggOp::ArgMax { .. }),
                     }
                 }
@@ -1076,22 +1143,17 @@ fn disjointness(
         .flatten()
 }
 
-/// The multi-rule sink regime by provenance (ruled 2026-07-23, R2): a
+/// The multi-rule provenance judgment (ruled 2026-07-23, R2): a
 /// surviving rule set minted wholly by ONE written rule is DNF-derived
-/// — the union dedup re-keys on the shared slot arrays (rule 0 supplies
-/// the spans here; the rule loop re-aims per rule) — and any other set
-/// is hand-written, keying the head projection.
-fn union_regime<'r>(written: &[Option<u16>], first: &'r PreparedRule) -> SinkProgram<'r> {
-    let dnf_derived = written
+/// — [`seal_dnf_spans`] writes its shared-slot dedup keys and the union
+/// re-keys on them; any other set is hand-written, keying the head
+/// projection.
+fn dnf_derived(written: &[Option<u16>]) -> bool {
+    written
         .first()
         .copied()
         .flatten()
-        .is_some_and(|minting| written.iter().all(|rule| *rule == Some(minting)));
-    if dnf_derived {
-        SinkProgram::DnfUnion(first.dedup_spans())
-    } else {
-        SinkProgram::Union
-    }
+        .is_some_and(|minting| written.iter().all(|rule| *rule == Some(minting)))
 }
 
 /// Builds the sink matching the head shape (the variant is fixed per

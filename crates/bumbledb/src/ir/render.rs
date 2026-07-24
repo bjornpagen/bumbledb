@@ -257,7 +257,16 @@ fn aggregate(out: &mut String, op: AggOp, over: Option<VarId>, measure: bool) {
         if over.is_some() {
             out.push_str(", ");
         }
-        var_name(out, key);
+        // The key's two spellings (R5): the variable, or its measure —
+        // `ArgMax(w, Duration(w))`.
+        match key {
+            crate::ir::ArgKey::Var(var) => var_name(out, var),
+            crate::ir::ArgKey::Measure(var) => {
+                out.push_str("Duration(");
+                var_name(out, var);
+                out.push(')');
+            }
+        }
     }
     out.push(')');
 }

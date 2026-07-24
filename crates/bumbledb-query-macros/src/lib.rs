@@ -1705,7 +1705,7 @@ impl Emitter<'_> {
             } => {
                 let op_expr = match op {
                     AggOp::ArgMax | AggOp::ArgMin => format!(
-                        "::bumbledb::AggOp::{} {{ key: ::bumbledb::VarId({}) }}",
+                        "::bumbledb::AggOp::{} {{ key: ::bumbledb::ArgKey::Var(::bumbledb::VarId({})) }}",
                         op.ir_name(),
                         scope.head_var(key.as_ref().expect("Arg parser seals a key"))?
                     ),

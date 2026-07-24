@@ -569,7 +569,7 @@ fn arg_restriction_across_rules_is_the_typed_validation_refusal() {
 
     let arg_rule = |account: u64| Rule {
         finds: vec![FindTerm::Aggregate {
-            op: AggOp::ArgMax { key: VarId(1) },
+            op: AggOp::ArgMax { key: crate::ir::ArgKey::Var(VarId(1)) },
             over: Some(VarId(0)),
         }],
         atoms: vec![Atom {

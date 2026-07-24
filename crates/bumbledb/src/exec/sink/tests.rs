@@ -77,7 +77,7 @@ fn every_find_spec_parses_to_its_sink_spec() {
             FindSpec::Arg {
                 slot: 6,
                 width: 2,
-                key_slot: 8,
+                key: ProjSource::Slot(8),
                 max: true,
             },
             SinkSpec::Arg {
@@ -442,7 +442,7 @@ fn arg_spec(plan: &ValidatedPlan, over: u16, key: u16, max: bool) -> FindSpec {
     FindSpec::Arg {
         slot: plan.slot_of(VarId(over)),
         width: plan.width_of(VarId(over)),
-        key_slot: plan.slot_of(VarId(key)),
+        key: ProjSource::Slot(plan.slot_of(VarId(key))),
         max,
     }
 }

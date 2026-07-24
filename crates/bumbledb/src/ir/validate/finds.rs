@@ -92,7 +92,7 @@ impl Context {
         // companions but the group variables, and at most one Pack per
         // head (the multi-Pack product is refused with its trigger on the
         // error).
-        let mut arg_spec: Option<(VarId, bool)> = None; // (key, is_max)
+        let mut arg_spec: Option<(crate::ir::ArgKey, bool)> = None; // (key, is_max)
         let mut arg_seen = false;
         let mut fold_seen = false;
         let mut pack_seen = false;
@@ -231,33 +231,61 @@ impl Context {
                             }
                         }
                         // Arg-restriction: `over` is the carried variable
-                        // (it may equal the key); the key rides in the op,
-                        // must be orderable, and may itself be projected.
+                        // (it may equal the key); the key rides in the op
+                        // — a bound orderable variable, or the interval
+                        // measure (`ArgMax(w, Duration(w))`, "the longest
+                        // interval per group" — ruled 2026-07-23, R5) —
+                        // and a variable key may itself be projected.
                         (AggOp::ArgMax { key } | AggOp::ArgMin { key }, Some(carry)) => {
                             arg_seen = true;
                             if !self.atom_vars.contains(carry) {
                                 return Err(ValidationError::UnboundFindVariable { var: *carry });
                             }
-                            if !self.atom_vars.contains(key) {
-                                return Err(ValidationError::UnboundFindVariable { var: *key });
+                            if !self.atom_vars.contains(&key.var()) {
+                                return Err(ValidationError::UnboundFindVariable {
+                                    var: key.var(),
+                                });
                             }
                             if group_key.contains(carry) {
                                 return Err(ValidationError::AggregateOverGroupKey {
                                     find: find_idx,
                                 });
                             }
-                            if !matches!(
-                                self.resolved_var_type(*key),
-                                ValueType::U64 | ValueType::I64 | ValueType::Bool
-                            ) {
-                                return Err(ValidationError::NonOrderableArgKey { find: find_idx });
-                            }
-                            // The closed-reference wall (R4): an Arg
-                            // restriction sweeps the key's order.
-                            if self.closed_vars.contains(key) {
-                                return Err(ValidationError::AggregateOverClosedReference {
-                                    find: find_idx,
-                                });
+                            match key {
+                                crate::ir::ArgKey::Var(var) => {
+                                    if !matches!(
+                                        self.resolved_var_type(*var),
+                                        ValueType::U64 | ValueType::I64 | ValueType::Bool
+                                    ) {
+                                        return Err(ValidationError::NonOrderableArgKey {
+                                            find: find_idx,
+                                        });
+                                    }
+                                    // The closed-reference wall (R4): an
+                                    // Arg restriction sweeps the key's
+                                    // order.
+                                    if self.closed_vars.contains(var) {
+                                        return Err(
+                                            ValidationError::AggregateOverClosedReference {
+                                                find: find_idx,
+                                            },
+                                        );
+                                    }
+                                }
+                                // The measure key reads an interval (u64
+                                // by definition — always orderable; the
+                                // ray poisons at evaluation, § the
+                                // measure).
+                                crate::ir::ArgKey::Measure(var) => {
+                                    if !matches!(
+                                        self.resolved_var_type(*var),
+                                        ValueType::Interval { .. }
+                                    ) {
+                                        return Err(ValidationError::DurationOverNonInterval {
+                                            var: *var,
+                                        });
+                                    }
+                                }
                             }
                             let is_max = matches!(op, AggOp::ArgMax { .. });
                             match arg_spec {

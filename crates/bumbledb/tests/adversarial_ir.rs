@@ -21,9 +21,9 @@
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use bumbledb::{
-    AggOp, AllenMask, Atom, AtomSource, CmpOp, Comparison, ConditionTree, Db, FieldId, FindTerm,
-    MAX_CONDITION_DEPTH, MAX_RULES, MaskTerm, ParamId, PredId, PredicateDef, Program, Query,
-    RelationId, Rule, Term, Value, VarId,
+    AggOp, AllenMask, ArgKey, Atom, AtomSource, CmpOp, Comparison, ConditionTree, Db, FieldId,
+    FindTerm, MAX_CONDITION_DEPTH, MAX_RULES, MaskTerm, ParamId, PredId, PredicateDef, Program,
+    Query, RelationId, Rule, Term, Value, VarId,
 };
 
 mod common;
@@ -244,8 +244,8 @@ fn find_term(rng: &mut Rng) -> FindTerm {
         3 => AggOp::Count,
         4 => AggOp::CountDistinct,
         5 => AggOp::Pack,
-        6 => AggOp::ArgMax { key: VarId(1) },
-        _ => AggOp::ArgMin { key: VarId(999) },
+        6 => AggOp::ArgMax { key: ArgKey::Var(VarId(1)) },
+        _ => AggOp::ArgMin { key: ArgKey::Var(VarId(999)) },
     };
     match rng.below(6) {
         0..=2 => FindTerm::Var(var(rng)),

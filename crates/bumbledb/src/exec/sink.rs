@@ -88,12 +88,16 @@ pub enum FindSpec {
     /// An Arg-restriction carry (`ArgMax`/`ArgMin` — 20-query-ir
     /// § aggregation): the carried variable's slot span, plus the shared
     /// key. Validation guarantees every Arg term of a query names one key
-    /// variable and one direction, so the per-find copies agree.
+    /// and one direction, so the per-find copies agree.
     Arg {
         slot: usize,
         width: usize,
-        /// The key variable's slot (orderable — U64/I64 — so width 1).
-        key_slot: usize,
+        /// The shared key's one word (ruled 2026-07-23, R5): a key
+        /// variable's slot (orderable — width 1), or the measure of an
+        /// interval variable's two-slot span — construction parses the
+        /// measure onto a derived scratch word, ray poisoning included,
+        /// exactly as the measure finds.
+        key: ProjSource,
         /// `true` for `ArgMax`, `false` for `ArgMin`.
         max: bool,
     },

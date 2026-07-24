@@ -60,17 +60,31 @@ pub(in crate::exec::sink) fn parse_finds_into(
                 over_width,
                 signed,
             },
+            // The Arg key's measure form (R5) parses exactly as the
+            // measure finds: one derived scratch word past the real
+            // slots, computed (and ray-checked) per row — the
+            // restriction sweep reads a plain word either way.
             FindSpec::Arg {
                 slot,
                 width,
-                key_slot,
+                key,
                 max,
-            } => SinkSpec::Arg {
-                slot,
-                width,
-                key_slot,
-                max,
-            },
+            } => {
+                let key_slot = match key {
+                    crate::exec::sink::ProjSource::Slot(slot) => slot,
+                    crate::exec::sink::ProjSource::Measure { start } => {
+                        let derived = slot_count + measures.len();
+                        measures.push((derived, start));
+                        derived
+                    }
+                };
+                SinkSpec::Arg {
+                    slot,
+                    width,
+                    key_slot,
+                    max,
+                }
+            }
             FindSpec::Pack { slot } => SinkSpec::Pack { slot },
         };
         parsed.push(spec);

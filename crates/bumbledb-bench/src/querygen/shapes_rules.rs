@@ -176,24 +176,21 @@ fn union_fold(rng: &mut Rng, domains: &Domains) -> Query {
             op: AggOp::Sum,
             over: Some(VarId(1)),
         },
-        // The nullary Count across rules: the constant-filler head
-        // position (the union fold's stable-arity rule).
+        // Min keeps the union fold's stable arity where the nullary
+        // Count once sat: the fold-free Count across written rules is
+        // the typed `CountAcrossRules` refusal now (ruled 2026-07-23,
+        // R1 — one Count per disjunct, host-merged), so the generator
+        // draws the third input-carrying fold instead.
         1 => FindTerm::Aggregate {
-            op: AggOp::Count,
-            over: None,
+            op: AggOp::Min,
+            over: Some(VarId(1)),
         },
         _ => FindTerm::Aggregate {
             op: AggOp::CountDistinct,
             over: Some(VarId(1)),
         },
     };
-    let over_amount = !matches!(
-        aggregate,
-        FindTerm::Aggregate {
-            op: AggOp::Count,
-            ..
-        }
-    );
+    let over_amount = true;
     let rules = (0..arms)
         .map(|arm| {
             let floor = target::AT_BASE + i64::try_from(arm).expect("small") * (span / 6);

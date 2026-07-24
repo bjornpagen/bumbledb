@@ -188,11 +188,14 @@ fn introspection_names_the_disjointness_witness() {
     assert!(report.contains("disjoint_rules: unproven"), "{report}");
 }
 
-/// `Count` over a proven-disjoint union retains the spanning seen-set,
-/// which absorbs zero answers because the theorem is true, and matches the
-/// naive model: one `(id)` per item of the selected kinds.
+/// A fold over a proven-disjoint union retains the spanning seen-set,
+/// which absorbs zero answers because the theorem is true, and matches
+/// the naive model: per id, the sum of its head-projected payloads. The
+/// fold-free nullary `Count` on this shape is refused instead (R1,
+/// pinned below) — the disjointness proof cannot make a constant
+/// informative.
 #[test]
-fn count_over_a_proven_disjoint_union_absorbs_nothing() {
+fn a_fold_over_a_proven_disjoint_union_absorbs_nothing() {
     let dir = TempDir::new("prepared-disjoint-count");
     let schema = du_schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
@@ -200,15 +203,15 @@ fn count_over_a_proven_disjoint_union_absorbs_nothing() {
     let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
 
-    // Q(id, Count) :- one rule per kind; the rule binds ONLY the key
-    // variable (kind is pinned), so bindings are key-covered and the
-    // head reads every slot.
+    // Q(id, Sum(payload)) :- one rule per kind; the rules bind the key
+    // variable (kind is pinned) plus the fold input, so bindings are
+    // key-covered and the head reads every slot.
     let rule = |kind: u8| Rule {
         finds: vec![
             FindTerm::Var(VarId(0)),
             FindTerm::Aggregate {
-                op: AggOp::Count,
-                over: None,
+                op: AggOp::Sum,
+                over: Some(VarId(1)),
             },
         ],
         atoms: vec![Atom {
@@ -216,20 +219,21 @@ fn count_over_a_proven_disjoint_union_absorbs_nothing() {
             bindings: vec![
                 (FieldId(0), Term::Var(VarId(0))),
                 (FieldId(1), Term::Literal(Value::U64(u64::from(kind)))),
+                (FieldId(2), Term::Var(VarId(1))),
             ],
         }],
         negated: vec![],
         conditions: vec![],
     };
     let query = Query {
-        head: vec![HeadTerm::Var, HeadTerm::Aggregate(HeadOp::Count)],
+        head: vec![HeadTerm::Var, HeadTerm::Aggregate(HeadOp::Sum)],
         rules: vec![rule(0), rule(1)],
     };
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
     assert!(prepared.disjoint_rules(), "the arms prove disjoint");
     assert!(!prepared.distinct_bindings(), "unions always retain dedup");
     let EitherSink::Aggregate(sink) = &prepared.sink else {
-        panic!("Count builds the aggregate sink");
+        panic!("Sum builds the aggregate sink");
     };
     assert!(!sink.seen_elided(), "the spanning seen-set exists");
 
@@ -241,20 +245,46 @@ fn count_over_a_proven_disjoint_union_absorbs_nothing() {
     );
     assert!(stats.rules.iter().all(|rule| rule.absorbed == 0));
     // The naive model: fold domain = ∪ head-projected bindings; per
-    // group (id) the projection is the singleton (id), so Count = 1 for
-    // each note/event item and the task never appears.
+    // group (id) the projection is the singleton (id, payload), so the
+    // Sum is the payload and the kind-2 item never appears.
     let mut answers: Vec<(u64, u64)> = (0..out.len())
         .map(|answer| {
-            let (AnswerValue::U64(id), AnswerValue::U64(count)) =
+            let (AnswerValue::U64(id), AnswerValue::U64(sum)) =
                 (out.get(answer, 0), out.get(answer, 1))
             else {
                 panic!("U64 columns");
             };
-            (id, count)
+            (id, sum)
         })
         .collect();
     answers.sort_unstable();
-    assert_eq!(answers, vec![(1, 1), (2, 1), (3, 1), (4, 1)]);
+    assert_eq!(answers, vec![(1, 10), (2, 20), (3, 20), (4, 40)]);
+
+    // The R1 corollary: the same proven-disjoint shape under a
+    // fold-free nullary Count refuses — provable disjointness is
+    // diagnostic knowledge, never a semantics.
+    let count_rule = |kind: u8| {
+        let mut rule = rule(kind);
+        rule.finds[1] = FindTerm::Aggregate {
+            op: AggOp::Count,
+            over: None,
+        };
+        rule
+    };
+    let refused = Query {
+        head: vec![HeadTerm::Var, HeadTerm::Aggregate(HeadOp::Count)],
+        rules: vec![count_rule(0), count_rule(1)],
+    };
+    let Err(err) = prepare(&txn, &cache, &schema, &refused) else {
+        panic!("fold-free nullary Count across written rules refuses");
+    };
+    assert!(
+        matches!(
+            err,
+            Error::Validation(crate::error::ValidationError::CountAcrossRules { rules: 2 })
+        ),
+        "typed, named, counted: {err:?}"
+    );
 }
 
 /// The projection sink under the proof: a three-arm union returns every

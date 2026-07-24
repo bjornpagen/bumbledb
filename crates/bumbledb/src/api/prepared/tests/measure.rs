@@ -669,3 +669,123 @@ fn a_same_atom_eq_protects_the_measure_from_the_ray() {
     });
     assert_eq!(run(&query), vec![vec![10]]);
 }
+
+/// The measure-keyed Arg restriction (ruled 2026-07-23, R5):
+/// Q(tag, ArgMax(span, Duration(span))) :- Session(tag, span) — "the
+/// longest interval per group", end to end. The restriction sweeps the
+/// derived measure word, a tie yields every attaining row, and the
+/// group's other spans are restricted away.
+#[test]
+fn arg_max_keys_on_the_measure_longest_interval_per_group() {
+    let dir = TempDir::new("measure-arg-key");
+    let schema = measure_schema();
+    let env = Environment::create(dir.path(), &schema).expect("create");
+    insert_sessions(
+        &env,
+        &schema,
+        &[
+            (1, 10, 0, (0, 10)), // tag 10: measure 10 — the longest
+            (2, 10, 0, (0, 5)),  // tag 10: measure 5 — restricted away
+            (3, 20, 0, (3, 4)),  // tag 20: measure 1 — restricted away
+            (4, 20, 0, (7, 20)), // tag 20: measure 13 — the longest
+            (5, 30, 0, (0, 5)),  // tag 30: measure 5 — the tie...
+            (6, 30, 0, (10, 15)), // tag 30: measure 5 — ...keeps both
+        ],
+    );
+    let cache = ImageCache::new(&schema);
+    let txn = env.read_txn().expect("txn");
+    let query = Query::single(Rule {
+        finds: vec![
+            FindTerm::Var(VarId(0)),
+            FindTerm::Aggregate {
+                op: AggOp::ArgMax {
+                    key: crate::ir::ArgKey::Measure(VarId(1)),
+                },
+                over: Some(VarId(1)),
+            },
+        ],
+        atoms: vec![Atom {
+            source: crate::ir::AtomSource::Edb(SESSION),
+            bindings: vec![
+                (FieldId(1), Term::Var(VarId(0))),
+                (FieldId(3), Term::Var(VarId(1))),
+            ],
+        }],
+        negated: vec![],
+        conditions: vec![],
+    });
+    let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
+    let out = prepared
+        .execute_collect(&txn, &cache, &[])
+        .expect("execute");
+    let mut answers: Vec<(u64, u64, u64)> = (0..out.len())
+        .map(|answer| {
+            let AnswerValue::U64(tag) = out.get(answer, 0) else {
+                panic!("column 0 is u64");
+            };
+            let AnswerValue::IntervalU64(interval) = out.get(answer, 1) else {
+                panic!("column 1 is an interval");
+            };
+            (tag, interval.start(), interval.end())
+        })
+        .collect();
+    answers.sort_unstable();
+    assert_eq!(
+        answers,
+        vec![
+            (10, 0, 10),
+            (20, 7, 20),
+            // The tie is set-honest: both attaining spans survive.
+            (30, 0, 5),
+            (30, 10, 15),
+        ]
+    );
+}
+
+/// A ray reaching the measure-keyed restriction poisons: the key is a
+/// demanded measure position, so `[s, ∞)` in any group raises the typed
+/// `MeasureOfRay` (the ray-error law, 20-query-ir § the measure).
+#[test]
+fn a_ray_reaching_the_arg_measure_key_raises() {
+    let dir = TempDir::new("measure-arg-key-ray");
+    let schema = measure_schema();
+    let env = Environment::create(dir.path(), &schema).expect("create");
+    insert_sessions(
+        &env,
+        &schema,
+        &[
+            (1, 10, 0, (0, 10)),
+            (2, 20, 0, (5, u64::MAX)), // the ray [5, ∞)
+        ],
+    );
+    let cache = ImageCache::new(&schema);
+    let txn = env.read_txn().expect("txn");
+    let query = Query::single(Rule {
+        finds: vec![
+            FindTerm::Var(VarId(0)),
+            FindTerm::Aggregate {
+                op: AggOp::ArgMax {
+                    key: crate::ir::ArgKey::Measure(VarId(1)),
+                },
+                over: Some(VarId(1)),
+            },
+        ],
+        atoms: vec![Atom {
+            source: crate::ir::AtomSource::Edb(SESSION),
+            bindings: vec![
+                (FieldId(1), Term::Var(VarId(0))),
+                (FieldId(3), Term::Var(VarId(1))),
+            ],
+        }],
+        negated: vec![],
+        conditions: vec![],
+    });
+    let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
+    let err = prepared
+        .execute_collect(&txn, &cache, &[])
+        .expect_err("the ray has no finite measure");
+    assert!(
+        matches!(err, Error::MeasureOfRay { .. }),
+        "typed ray error: {err:?}"
+    );
+}

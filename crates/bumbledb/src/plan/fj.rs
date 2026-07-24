@@ -413,6 +413,23 @@ impl ValidatedPlan {
             .expect("validated plan binds every variable")
     }
 
+    /// Every variable the plan binds with its (first slot, width), in
+    /// `VarId` order — the DNF-derived union regime's key inventory
+    /// (ruled 2026-07-23, R2). Total by construction: grounding may have
+    /// eliminated a functionally determined variable from the plan, so
+    /// consumers read what the plan BINDS, never the rule's full scope.
+    #[must_use]
+    pub fn slot_spans(&self) -> Vec<(VarId, usize, usize)> {
+        let mut spans = Vec::with_capacity(self.slots.len());
+        let mut slot = 0;
+        for (var, width) in &self.slots {
+            spans.push((*var, slot, width.slots()));
+            slot += width.slots();
+        }
+        spans.sort_unstable_by_key(|(var, ..)| *var);
+        spans
+    }
+
     /// # Panics
     ///
     /// On a programmer-invariant violation: an occurrence outside the plan.

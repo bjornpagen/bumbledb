@@ -229,7 +229,7 @@ fn arg_keys_honor_logical_i64_order_across_the_sign_boundary() {
     let finds = vec![FindSpec::Arg {
         slot: 1,
         width: 1,
-        key_slot: 0,
+        key: crate::exec::sink::ProjSource::Slot(0),
         max: true,
     }];
     let mut sink = AggregateSink::new(finds, 2);

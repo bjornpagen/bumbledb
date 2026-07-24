@@ -238,7 +238,7 @@ fn cases() -> Vec<Case> {
         cases.push(case(
             format!("argmax carrying {ty:?}"),
             vec![FindTerm::Aggregate {
-                op: AggOp::ArgMax { key: VarId(1) },
+                op: AggOp::ArgMax { key: crate::ir::ArgKey::Var(VarId(1)) },
                 over: Some(VarId(0)),
             }],
             vec![(field, 0), (KU, 1)],
@@ -247,7 +247,7 @@ fn cases() -> Vec<Case> {
         cases.push(case(
             format!("argmin carrying {ty:?}"),
             vec![FindTerm::Aggregate {
-                op: AggOp::ArgMin { key: VarId(1) },
+                op: AggOp::ArgMin { key: crate::ir::ArgKey::Var(VarId(1)) },
                 over: Some(VarId(0)),
             }],
             vec![(field, 0), (KI, 1)],
@@ -258,7 +258,7 @@ fn cases() -> Vec<Case> {
     cases.push(case(
         "argmax carrying its own key",
         vec![FindTerm::Aggregate {
-            op: AggOp::ArgMax { key: VarId(0) },
+            op: AggOp::ArgMax { key: crate::ir::ArgKey::Var(VarId(0)) },
             over: Some(VarId(0)),
         }],
         vec![(U, 0)],
@@ -310,11 +310,11 @@ fn cases() -> Vec<Case> {
         vec![
             FindTerm::Var(VarId(0)),
             FindTerm::Aggregate {
-                op: AggOp::ArgMax { key: VarId(3) },
+                op: AggOp::ArgMax { key: crate::ir::ArgKey::Var(VarId(3)) },
                 over: Some(VarId(1)),
             },
             FindTerm::Aggregate {
-                op: AggOp::ArgMax { key: VarId(3) },
+                op: AggOp::ArgMax { key: crate::ir::ArgKey::Var(VarId(3)) },
                 over: Some(VarId(2)),
             },
         ],
@@ -451,7 +451,7 @@ fn the_fold_kind_rides_each_column() {
     let arg = case(
         "arg",
         vec![FindTerm::Aggregate {
-            op: AggOp::ArgMax { key: VarId(1) },
+            op: AggOp::ArgMax { key: crate::ir::ArgKey::Var(VarId(1)) },
             over: Some(VarId(0)),
         }],
         vec![(S, 0), (KU, 1)],
@@ -462,7 +462,7 @@ fn the_fold_kind_rides_each_column() {
     let arg_min = case(
         "argmin",
         vec![FindTerm::Aggregate {
-            op: AggOp::ArgMin { key: VarId(1) },
+            op: AggOp::ArgMin { key: crate::ir::ArgKey::Var(VarId(1)) },
             over: Some(VarId(0)),
         }],
         vec![(S, 0), (KI, 1)],

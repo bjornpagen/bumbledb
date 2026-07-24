@@ -10,14 +10,14 @@ query:
 predicate: (u64, i64)
 access path: free join (1 nodes)
   occurrence 0: relation 0 trie schema [[0, 1, 2]] (0 filters)
-    estimated from (pinned rows at prepare): 5, filtered-view survivors 5
+    estimated from (pinned rows at prepare): 5, filtered-view survivors 2
   occurrence 1: relation 1 trie schema [] (1 filters)
   folded: Kind{rank == 20} → {B, C}
   node 0:
     subatom 0: occ 0 vars [0, 1, 2] cover(true) chosen exact=0 estimate=1 probes hit=0 miss=0
     residuals: 0 placed, pass=0 fail=0
     anti-probes: 0 placed, probed=0 rejected=0
-    estimated=5 actual=3 entries=1 skips=0
+    estimated=2 actual=3 entries=1 skips=0
   distinct_bindings: proven
   emitted bindings: 3, absorbed by the union seen-set: 0
 ";
@@ -51,22 +51,32 @@ query:
 (v0, Sum(v1)) | Posting(account == 7, memo: v0, amount: v1);
 predicate: (string, Sum i64)
 rule 0:
-access path: free join (1 nodes)
-  occurrence 0: relation 0 trie schema [[0, 1]] (0 filters)
+access path: free join (2 nodes)
+  occurrence 0: relation 0 trie schema [[0], [1]] (0 filters)
     estimated from (pinned rows at prepare): 3, filtered-view survivors 1
   node 0:
-    subatom 0: occ 0 vars [0, 1] cover(true) chosen exact=0 estimate=1 probes hit=0 miss=0
+    subatom 0: occ 0 vars [0] cover(true) chosen exact=1 estimate=0 probes hit=0 miss=0
     residuals: 0 placed, pass=0 fail=0
     anti-probes: 0 placed, probed=0 rejected=0
     estimated=1 actual=2 entries=1 skips=0
+  node 1:
+    subatom 0: occ 0 vars [1] cover(true) chosen exact=0 estimate=2 probes hit=0 miss=0
+    residuals: 0 placed, pass=0 fail=0
+    anti-probes: 0 placed, probed=0 rejected=0
+    estimated=1 actual=2 entries=2 skips=0
   distinct_bindings: unproven
   emitted bindings: 2, absorbed by the union seen-set: 0
 rule 1:
-access path: free join (1 nodes)
-  occurrence 0: relation 0 trie schema [[0, 1]] (0 filters)
+access path: free join (2 nodes)
+  occurrence 0: relation 0 trie schema [[0], [1]] (0 filters)
     estimated from (pinned rows at prepare): 3, filtered-view survivors 1
   node 0:
-    subatom 0: occ 0 vars [0, 1] cover(true) chosen exact=0 estimate=1 probes hit=0 miss=0
+    subatom 0: occ 0 vars [0] cover(true) chosen exact=0 estimate=1 probes hit=0 miss=0
+    residuals: 0 placed, pass=0 fail=0
+    anti-probes: 0 placed, probed=0 rejected=0
+    estimated=1 actual=1 entries=1 skips=0
+  node 1:
+    subatom 0: occ 0 vars [1] cover(true) chosen exact=0 estimate=1 probes hit=0 miss=0
     residuals: 0 placed, pass=0 fail=0
     anti-probes: 0 placed, probed=0 rejected=0
     estimated=1 actual=1 entries=1 skips=0

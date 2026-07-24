@@ -291,7 +291,7 @@ fn rejects_an_arg_key_on_a_closed_reference() {
     // ArgMax(id, priority) sweeps the key's order — the same wall (R4).
     let query = Query::single(Rule {
         finds: vec![FindTerm::Aggregate {
-            op: AggOp::ArgMax { key: VarId(1) },
+            op: AggOp::ArgMax { key: crate::ir::ArgKey::Var(VarId(1)) },
             over: Some(VarId(0)),
         }],
         atoms: vec![atom(RelationId(0), vec![(0, var(0)), (1, var(1))])],
@@ -813,7 +813,7 @@ fn rejects_mixed_arg_and_fold_aggregates() {
     let query = simple(
         vec![
             FindTerm::Aggregate {
-                op: AggOp::ArgMax { key: VarId(0) },
+                op: AggOp::ArgMax { key: crate::ir::ArgKey::Var(VarId(0)) },
                 over: Some(VarId(1)),
             },
             FindTerm::Aggregate {
@@ -834,11 +834,11 @@ fn rejects_arg_terms_with_differing_keys() {
     let query = simple(
         vec![
             FindTerm::Aggregate {
-                op: AggOp::ArgMax { key: VarId(0) },
+                op: AggOp::ArgMax { key: crate::ir::ArgKey::Var(VarId(0)) },
                 over: Some(VarId(1)),
             },
             FindTerm::Aggregate {
-                op: AggOp::ArgMax { key: VarId(2) },
+                op: AggOp::ArgMax { key: crate::ir::ArgKey::Var(VarId(2)) },
                 over: Some(VarId(3)),
             },
         ],
@@ -859,11 +859,11 @@ fn rejects_arg_terms_with_differing_directions() {
     let query = simple(
         vec![
             FindTerm::Aggregate {
-                op: AggOp::ArgMax { key: VarId(0) },
+                op: AggOp::ArgMax { key: crate::ir::ArgKey::Var(VarId(0)) },
                 over: Some(VarId(1)),
             },
             FindTerm::Aggregate {
-                op: AggOp::ArgMin { key: VarId(0) },
+                op: AggOp::ArgMin { key: crate::ir::ArgKey::Var(VarId(0)) },
                 over: Some(VarId(2)),
             },
         ],
@@ -880,7 +880,7 @@ fn rejects_a_non_orderable_arg_key() {
     // Holder.name (String) as the Arg key: no extreme to attain.
     let query = simple(
         vec![FindTerm::Aggregate {
-            op: AggOp::ArgMax { key: VarId(0) },
+            op: AggOp::ArgMax { key: crate::ir::ArgKey::Var(VarId(0)) },
             over: Some(VarId(1)),
         }],
         vec![atom(HOLDER, vec![(1, var(0)), (0, var(1))])],
@@ -1350,7 +1350,7 @@ fn rejects_pack_beside_arg_terms() {
                 over: Some(VarId(1)),
             },
             FindTerm::Aggregate {
-                op: AggOp::ArgMax { key: VarId(2) },
+                op: AggOp::ArgMax { key: crate::ir::ArgKey::Var(VarId(2)) },
                 over: Some(VarId(2)),
             },
         ],
@@ -1541,4 +1541,25 @@ fn rejects_a_width_matched_ray_literal_at_a_fixed_width_field() {
         validate(&cross_domain_schema(), &query).expect_err("the width-matched ray must reject"),
         ValidationError::LiteralTypeMismatch { atom: 0, .. }
     ));
+}
+
+#[test]
+fn rejects_a_measure_arg_key_over_a_non_interval() {
+    // ArgMax(memo, Duration(amount)): the measure key reads intervals
+    // only (R5) — the scalar gets the measure's own diagnostic.
+    let query = Query::single(Rule {
+        finds: vec![FindTerm::Aggregate {
+            op: AggOp::ArgMax {
+                key: crate::ir::ArgKey::Measure(VarId(1)),
+            },
+            over: Some(VarId(0)),
+        }],
+        atoms: vec![atom(POSTING, vec![(4, var(0)), (2, var(1))])],
+        negated: vec![],
+        conditions: vec![],
+    });
+    assert_eq!(
+        expect_err(&query),
+        ValidationError::DurationOverNonInterval { var: VarId(1) }
+    );
 }
