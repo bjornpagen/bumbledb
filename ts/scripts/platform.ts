@@ -51,34 +51,45 @@ function deriveDevTwinManifest(
 }
 
 /**
+ * The compile allowlist, one table: the key set is the set of platforms
+ * the native build compiles on, and the value is cargo's cdylib artifact
+ * name there (darwin `.dylib`, linux `.so`). Adding a compile platform is
+ * one entry here (the deliberate publish-set edits stay separate, above);
+ * the refusal is written once.
+ */
+const NATIVE_ARTIFACT: Record<"darwin" | "linux", string> = {
+	darwin: "libbumbledb_node.dylib",
+	linux: "libbumbledb_node.so"
+}
+
+function assertSupported(platform: string): asserts platform is keyof typeof NATIVE_ARTIFACT {
+	if (!Object.hasOwn(NATIVE_ARTIFACT, platform)) {
+		throw errors.new(`unsupported platform for the bumbledb native build: ${platform}`)
+	}
+}
+
+/**
  * The per-platform package dir/suffix for a build host: `<platform>-<arch>`
  * exactly as the binary packages spell it (`darwin`/`arm64` → `darwin-arm64`,
  * `linux`/`x64` → `linux-x64`) — the same string the runtime loader
  * (`src/native.ts`) assembles when it resolves
- * `@bjornpagen/bumbledb-<platform>-<arch>` by name. Only the platforms the
- * native build compiles on are accepted; anything else fails loudly here
+ * `@bjornpagen/bumbledb-<platform>-<arch>` by name. Only the platforms in
+ * {@link NATIVE_ARTIFACT} are accepted; anything else fails loudly here
  * rather than placing an artifact under a name no loader will ever ask for.
  */
 function localPlatformTarget(platform: string, arch: string): string {
-	if (platform !== "darwin" && platform !== "linux") {
-		throw errors.new(`unsupported platform for the bumbledb native build: ${platform}`)
-	}
+	assertSupported(platform)
 	return `${platform}-${arch}`
 }
 
 /**
- * Cargo's cdylib artifact name on a build host: darwin `.dylib`, linux
- * `.so`. The build copies this file to `bumbledb.node` inside the local
- * platform package dir — the name the loader resolves at runtime.
+ * Cargo's cdylib artifact name on a build host, from {@link NATIVE_ARTIFACT}.
+ * The build copies this file to `bumbledb.node` inside the local platform
+ * package dir — the name the loader resolves at runtime.
  */
 function nativeArtifactName(platform: string): string {
-	if (platform === "darwin") {
-		return "libbumbledb_node.dylib"
-	}
-	if (platform === "linux") {
-		return "libbumbledb_node.so"
-	}
-	throw errors.new(`unsupported platform for the bumbledb native build: ${platform}`)
+	assertSupported(platform)
+	return NATIVE_ARTIFACT[platform]
 }
 
 export { deriveDevTwinManifest, localPlatformTarget, nativeArtifactName, PUBLISH_PLATFORM }
