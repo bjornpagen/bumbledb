@@ -100,8 +100,7 @@ struct TempDir(std::path::PathBuf);
 
 impl TempDir {
     fn new(tag: &str) -> Self {
-        let path =
-            std::env::temp_dir().join(format!("bumbledb-node-{tag}-{}", std::process::id()));
+        let path = std::env::temp_dir().join(format!("bumbledb-node-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&path);
         std::fs::create_dir_all(&path).expect("create test dir");
         Self(path)

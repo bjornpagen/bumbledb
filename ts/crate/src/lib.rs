@@ -1051,10 +1051,7 @@ fn violations_wire(sealed: &Sealed, violations: &Violations) -> Vec<ViolationWir
         .collect()
 }
 
-fn spawn_tx(
-    inner: &DbInner,
-    witness: Option<Witness<SchemaDescriptor>>,
-) -> napi::Result<TxWorker> {
+fn spawn_tx(inner: &DbInner, witness: Option<Witness<SchemaDescriptor>>) -> napi::Result<TxWorker> {
     if inner.tx_open.swap(true, Ordering::AcqRel) {
         return Err(marshal::err(
             "bumbledb: a write transaction is already open on this db handle \

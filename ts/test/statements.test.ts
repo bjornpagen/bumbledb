@@ -115,25 +115,25 @@ describe("the Ledger example", function describeLedger() {
 			relations: [
 				{
 					name: "Kind",
-					newtype: "Kind.id",
 					fields: [],
-					extension: [
-						{ handle: "Checking", values: [] },
-						{ handle: "Savings", values: [] }
-					]
+					closed: {
+						newtype: "Kind.id",
+						rows: [
+							{ handle: "Checking", values: [] },
+							{ handle: "Savings", values: [] }
+						]
+					}
 				},
 				{
 					name: "Holder",
-					newtype: undefined,
 					fields: [
 						{ name: "id", valueType: { kind: "u64" }, newtype: "Holder.id", fresh: true },
 						{ name: "name", valueType: { kind: "string" }, newtype: undefined, fresh: false }
 					],
-					extension: undefined
+					closed: undefined
 				},
 				{
 					name: "Account",
-					newtype: undefined,
 					fields: [
 						{ name: "id", valueType: { kind: "u64" }, newtype: "Account.id", fresh: true },
 						{ name: "holder", valueType: { kind: "u64" }, newtype: "Holder.id", fresh: false },
@@ -145,13 +145,12 @@ describe("the Ledger example", function describeLedger() {
 							fresh: false
 						}
 					],
-					extension: undefined
+					closed: undefined
 				},
 				{
 					name: "SavingsTerms",
-					newtype: undefined,
 					fields: [{ name: "account", valueType: { kind: "u64" }, newtype: "Account.id", fresh: false }],
-					extension: undefined
+					closed: undefined
 				}
 			],
 			statements: [
@@ -207,21 +206,22 @@ describe("the Ledger example", function describeLedger() {
 			relations: [
 				{
 					name: "Sev",
-					newtype: "Sev.id",
 					fields: [{ name: "level", valueType: { kind: "u64" }, newtype: "Sev.level", fresh: false }],
-					extension: [
-						{ handle: "Info", values: [{ kind: "value", value: { kind: "u64", value: 1n } }] },
-						{ handle: "Critical", values: [{ kind: "value", value: { kind: "u64", value: 5n } }] }
-					]
+					closed: {
+						newtype: "Sev.id",
+						rows: [
+							{ handle: "Info", values: [{ kind: "value", value: { kind: "u64", value: 1n } }] },
+							{ handle: "Critical", values: [{ kind: "value", value: { kind: "u64", value: 5n } }] }
+						]
+					}
 				},
 				{
 					name: "Limit",
-					newtype: undefined,
 					fields: [
 						{ name: "level", valueType: { kind: "u64" }, newtype: "Sev.level", fresh: false },
 						{ name: "cap", valueType: { kind: "u64" }, newtype: undefined, fresh: false }
 					],
-					extension: undefined
+					closed: undefined
 				}
 			],
 			statements: [

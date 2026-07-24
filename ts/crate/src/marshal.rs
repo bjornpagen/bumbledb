@@ -25,10 +25,10 @@ use bumbledb::schema::spec::{
 };
 use bumbledb::schema::{IntervalElement, StatementDescriptor, ValueType};
 use bumbledb::{
-    AggOp, AllenMask, AnswerValue, Answers, Atom, AtomSource, CmpOp, Comparison, ConditionTree,
-    ExecutionStats, FieldId, FindTerm, HeadOp, HeadTerm, Interval, Manifest, MaskTerm, ParamId,
-    PredId, PredicateDef, Program, RelationId, RenderedViolation, Rule, SchemaDescriptor,
-    SchemaSpec, StatementId, StatementKind, Term, Value, VarId,
+    AggOp, AllenMask, AnswerValue, Answers, ArgKey, Atom, AtomSource, CmpOp, Comparison,
+    ConditionTree, ExecutionStats, FieldId, FindTerm, HeadOp, HeadTerm, Interval, Manifest,
+    MaskTerm, ParamId, PredId, PredicateDef, Program, RelationId, RenderedViolation, Rule,
+    SchemaDescriptor, SchemaSpec, StatementId, StatementKind, Term, Value, VarId,
 };
 use napi::bindgen_prelude::{
     Array, BigInt, Env, FromNapiValue, Object, ToNapiValue, Uint8Array, i64n,
@@ -661,11 +661,15 @@ fn agg_op_in(obj: &Object) -> napi::Result<AggOp> {
         HeadOp::Max => AggOp::Max,
         HeadOp::Count => AggOp::Count,
         HeadOp::CountDistinct => AggOp::CountDistinct,
+        // The wire spells only the variable key today: the SDK's Arg
+        // surface takes a bound var (`query/find.ts`), and the
+        // measure-keyed spelling (`Duration(v)`, ruled 2026-07-23, R5)
+        // lands with the surface that can utter it.
         HeadOp::ArgMax => AggOp::ArgMax {
-            key: var_in(obj, "key", "argMax op")?,
+            key: ArgKey::Var(var_in(obj, "key", "argMax op")?),
         },
         HeadOp::ArgMin => AggOp::ArgMin {
-            key: var_in(obj, "key", "argMin op")?,
+            key: ArgKey::Var(var_in(obj, "key", "argMin op")?),
         },
         HeadOp::Pack => AggOp::Pack,
     })
@@ -947,9 +951,11 @@ impl ValueOut {
             Value::Bool(v) => Self::Bool(v),
             Value::U64(v) => Self::U64(v),
             Value::I64(v) => Self::I64(v),
-            Value::String(bytes) => Self::Text(String::from_utf8(bytes.into_vec()).map_err(
-                |_| err("bumbledb: non-UTF-8 stored string bytes (corruption at rest)".into()),
-            )?),
+            Value::String(bytes) => {
+                Self::Text(String::from_utf8(bytes.into_vec()).map_err(|_| {
+                    err("bumbledb: non-UTF-8 stored string bytes (corruption at rest)".into())
+                })?)
+            }
             Value::FixedBytes(bytes) => Self::Bytes(bytes.into_vec()),
             Value::IntervalU64(interval) => Self::IntervalU64 {
                 start: interval.start(),
