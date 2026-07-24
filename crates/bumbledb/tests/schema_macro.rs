@@ -329,6 +329,31 @@ fn fact_structs_carry_host_types() {
 }
 
 #[test]
+fn fact_and_key_structs_are_value_types() {
+    // Every field kind the macro can emit is `Copy + Eq + Hash` by
+    // construction (borrows for `str`, owned `[u8; N]`, `Interval<T>`,
+    // newtypes), so the generated fact and key structs carry the free
+    // derives their newtype and host-enum siblings already have — a
+    // decoded fact is a value: reusable after insertion, set-member,
+    // totally comparable.
+    let holder = Holder {
+        id: HolderId(2),
+        name: "alice",
+    };
+    let copied = holder; // Copy, not Clone — `holder` stays usable.
+    assert_eq!(holder, copied);
+    let key = SavingsTermsByAccount {
+        account: AccountId(1),
+    };
+    let mut facts = std::collections::HashSet::new();
+    assert!(facts.insert(holder));
+    assert!(!facts.insert(copied));
+    let mut keys = std::collections::HashSet::new();
+    assert!(keys.insert(key));
+    assert!(!keys.insert(key));
+}
+
+#[test]
 fn typed_round_trip_through_fact_bytes() {
     let dir = common::TempDir::new("macro-round-trip");
     let db = Db::create(dir.path(), Ledger).expect("create");

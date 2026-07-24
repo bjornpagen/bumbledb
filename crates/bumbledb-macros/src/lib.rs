@@ -2438,7 +2438,7 @@ fn emit_fact_struct(
 
     let _ = write!(
         out,
-        "#[derive(Debug, Clone, PartialEq)]\n\
+        "#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]\n\
          pub struct {name}{struct_params} {{ {struct_fields} }}\n\
          impl<'a> ::bumbledb::Fact<'a> for {self_ty} {{\n\
              type Schema = {schema_name};\n\
@@ -2682,7 +2682,7 @@ fn emit_key_struct(
         out,
         "/// The typed key of `{spelling}` — `snap.get(..)` / `tx.get(..)`\n\
          /// return `Option<{rel_name}>`.\n\
-         #[derive(Debug, Clone, Copy, PartialEq)]\n\
+         #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]\n\
          pub struct {key_name}{struct_params} {{ {struct_fields} }}\n\
          impl{impl_params} ::bumbledb::Key<'a> for {impl_ty} {{\n\
              type Schema = {schema_name};\n\
