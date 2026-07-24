@@ -71,7 +71,11 @@ pub fn render_rejection(
     violations: &Violations,
 ) -> Vec<RenderedViolation> {
     let names = DeclaredNames(descriptor);
+    // Materialized once, mirrors once — every violation's spelling reads
+    // the same list (the per-violation re-materialization died with the
+    // manifest's).
     let materialized = descriptor.materialized_statements();
+    let mirrors = super::validate::mirror_links(&materialized);
     violations
         .citations()
         .map(|(violation, cited)| {
@@ -93,7 +97,7 @@ pub fn render_rejection(
                 // descriptor) renders as a placeholder — the declared
                 // renderer's own convention, kept total.
                 spelling: if usize::from(statement.0) < materialized.len() {
-                    render_declared(descriptor, statement)
+                    render_materialized(descriptor, &materialized, &mirrors, statement)
                 } else {
                     format!("statement#{}", statement.0)
                 },
@@ -174,7 +178,10 @@ pub fn render(schema: &Schema, id: StatementId) -> String {
 /// [`SchemaDescriptor::materialized_statements`] — exactly what
 /// [`crate::error::SchemaError`] payloads carry. Names a rejected
 /// statement may fail to resolve (that can be the error) render as
-/// `relation#N`/`field#N` placeholders.
+/// `relation#N`/`field#N` placeholders. The one-statement convenience:
+/// materializes and pairs, then delegates to [`render_materialized`] —
+/// batch renderers (the manifest, [`render_rejection`]) hold the list
+/// already and call the threaded form directly.
 ///
 /// # Panics
 ///
@@ -183,6 +190,24 @@ pub fn render(schema: &Schema, id: StatementId) -> String {
 #[must_use]
 pub fn render_declared(descriptor: &SchemaDescriptor, id: StatementId) -> String {
     let materialized = descriptor.materialized_statements();
+    let mirrors = super::validate::mirror_links(&materialized);
+    render_materialized(descriptor, &materialized, &mirrors, id)
+}
+
+/// The declared renderer over an already-materialized statement list and
+/// its pre-computed `==` link table — the batch form: one materialization
+/// and one pairing pass serve every statement of a manifest or rejection
+/// render, where per-statement re-derivation was quadratic in clones.
+///
+/// # Panics
+///
+/// On an out-of-range id — callers hold the list the id indexes.
+pub(super) fn render_materialized(
+    descriptor: &SchemaDescriptor,
+    materialized: &[StatementDescriptor],
+    mirrors: &[Option<StatementId>],
+    id: StatementId,
+) -> String {
     let index = usize::from(id.0);
     let statement = match &materialized[index] {
         StatementDescriptor::Functionality {
@@ -197,8 +222,9 @@ pub fn render_declared(descriptor: &SchemaDescriptor, id: StatementId) -> String
                 source,
                 target,
                 // A rejected declaration seals no `mirror` field to read,
-                // so the pairing comes from sealing's one computation site.
-                mirror: super::validate::mirror_of(&materialized, index),
+                // so the pairing comes from sealing's one identity
+                // ([`super::validate::mirror_links`]), pre-computed.
+                mirror: mirrors[index],
             }
         }
         StatementDescriptor::Cardinality {

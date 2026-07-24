@@ -87,9 +87,14 @@ impl ManifestDescriptor for SchemaDescriptor {
     /// When a relation or field ordinal exceeds the id space (`u32`/`u16`)
     /// — impossible for a descriptor the declaration boundary admits.
     fn manifest(&self) -> Manifest {
+        // Materialized once, `==` links once — every statement's spelling
+        // reads the same list through the threaded renderer (per-entry
+        // `render_declared` re-materialized the whole roster per
+        // statement: O(n²) clones).
+        let materialized = self.materialized_statements();
+        let mirrors = super::validate::mirror_links(&materialized);
         Manifest {
-            statements: self
-                .materialized_statements()
+            statements: materialized
                 .iter()
                 .enumerate()
                 .map(|(idx, statement)| {
@@ -97,7 +102,12 @@ impl ManifestDescriptor for SchemaDescriptor {
                     StatementManifest {
                         id,
                         kind: statement.kind(),
-                        spelling: super::render::render_declared(self, id),
+                        spelling: super::render::render_materialized(
+                            self,
+                            &materialized,
+                            &mirrors,
+                            id,
+                        ),
                     }
                 })
                 .collect(),

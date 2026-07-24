@@ -204,6 +204,78 @@ fn a_non_adjacent_mirrored_pair_renders_as_double_equals() {
 }
 
 #[test]
+fn a_respelled_literal_set_still_seals_the_mirror_pair() {
+    // Mirror pairing compares the NORMALIZED statement identity, never
+    // the raw spelling: the two halves spell one literal set in opposite
+    // orders, and the sides seal canonical — exact swapped mirrors — so
+    // the links must seal (raw side equality rendered this pair as two
+    // `<=` lines while a canonically-spelled twin with the SAME
+    // fingerprint rendered `==`).
+    use crate::schema::tests::side_where_sets;
+    let declaration = SchemaDescriptor {
+        relations: vec![
+            RelationDescriptor {
+                extension: None,
+                name: "A".into(),
+                fields: vec![field("x", ValueType::U64)],
+            },
+            RelationDescriptor {
+                extension: None,
+                name: "B".into(),
+                fields: vec![field("y", ValueType::U64), field("f", ValueType::U64)],
+            },
+        ],
+        statements: vec![
+            // id 0: A(x) -> A; id 1: B(y) -> B — both targets probe-able.
+            fd(RelationId(0), &[FieldId(0)]),
+            fd(RelationId(1), &[FieldId(0)]),
+            // id 2: A(x) <= B(y | f == {1, 2}).
+            containment(
+                side(RelationId(0), &[FieldId(0)]),
+                side_where_sets(
+                    RelationId(1),
+                    &[FieldId(0)],
+                    vec![(
+                        FieldId(1),
+                        LiteralSet::Many(Box::new([Value::U64(1), Value::U64(2)])),
+                    )],
+                ),
+            ),
+            // id 3: B(y | f == {2, 1}) <= A(x) — id 2's mirror, the set
+            // respelled.
+            containment(
+                side_where_sets(
+                    RelationId(1),
+                    &[FieldId(0)],
+                    vec![(
+                        FieldId(1),
+                        LiteralSet::Many(Box::new([Value::U64(2), Value::U64(1)])),
+                    )],
+                ),
+                side(RelationId(0), &[FieldId(0)]),
+            ),
+        ],
+    };
+    let schema = declaration.clone().validate().expect("valid");
+    assert_eq!(
+        schema.containment(ContainmentId(0)).mirror,
+        Some(StatementId(3))
+    );
+    assert_eq!(
+        schema.containment(ContainmentId(1)).mirror,
+        Some(StatementId(2))
+    );
+    // Both halves render the pair once, in the lower id's orientation —
+    // the sealed sides carry the canonical set.
+    let expected = "A(x) == B(y | f == {1, 2})";
+    assert_eq!(render(&schema, StatementId(2)), expected);
+    assert_eq!(render(&schema, StatementId(3)), expected);
+    // The declared (diagnostic) path pairs over the same identity.
+    assert!(render_declared(&declaration, StatementId(2)).contains(" == "));
+    assert!(render_declared(&declaration, StatementId(3)).contains(" == "));
+}
+
+#[test]
 fn declared_rendering_matches_sealed_rendering() {
     let declaration = example();
     let schema = declaration.clone().validate().expect("valid");
