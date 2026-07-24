@@ -26,12 +26,12 @@ fn golden_sets(family: &Family) -> Vec<(ParamId, Vec<Value>)> {
 }
 
 #[test]
-fn all_fifteen_validate_and_prepare() {
+fn all_sixteen_validate_and_prepare() {
     let dir = std::env::temp_dir().join("bumbledb-bench-families");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("scratch dir");
     let db = bumbledb::Db::create(&dir, crate::schema::Ledger).expect("create");
-    assert_eq!(all().len(), 15);
+    assert_eq!(all().len(), 16);
     for family in all() {
         db.prepare(&(family.query)())
             .unwrap_or_else(|e| panic!("{} fails validation: {e:?}", family.name));
@@ -293,6 +293,88 @@ fn s(text: &str) -> Value {
     Value::String(text.as_bytes().into())
 }
 
+/// The depth lane's identity (R22, finding 088): four atoms — one plan
+/// node each (`binary2fj` mints one node per occurrence; `factor` never
+/// changes node count) — report-kind, on chain's draws. Every other
+/// read family is ≤ 3 atoms, so shrinking this shape un-measures the
+/// mid-stream pump regime.
+#[test]
+fn deep_chain_is_the_four_atom_report_lane() {
+    let family = all()
+        .iter()
+        .find(|f| f.name == "deep_chain")
+        .expect("registered");
+    assert_eq!(family.kind, Kind::Report, "measurement, not a gate claim");
+    let query = (family.query)();
+    assert_eq!(query.rules[0].atoms.len(), 4, "the ≥ 4-node shape");
+    for other in all().iter().filter(|f| f.name != "deep_chain") {
+        assert!(
+            (other.query)().rules.iter().all(|r| r.atoms.len() <= 3),
+            "{} would shadow the depth lane",
+            other.name
+        );
+    }
+    let chain = all()
+        .iter()
+        .find(|f| f.name == "chain")
+        .expect("registered");
+    assert_eq!(
+        (family.params)(&CFG),
+        (chain.params)(&CFG),
+        "the draws are chain's, shared"
+    );
+}
+
+/// The depth lane executes its deepest node: a warm S-scale trace holds
+/// node-3 join phases — the plan really is 4 nodes at runtime, so the
+/// mid-stream pump regime (the tail-drain placement, R22/088) is on the
+/// measured path, not just in the IR.
+#[cfg(feature = "obs")]
+#[test]
+fn deep_chain_reaches_node_three_at_runtime() {
+    use crate::corpus_gen::{GenConfig, Scale};
+    use crate::harness::Rotation;
+
+    let dir = std::env::temp_dir().join("bumbledb-bench-deep-chain");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("scratch dir");
+    let cfg = GenConfig {
+        seed: 1,
+        scale: Scale::S,
+    };
+    let db = bumbledb::Db::create(&dir.join("db"), crate::schema::Ledger).expect("create");
+    crate::corpus::load_bumbledb(&db, cfg).expect("load");
+
+    let family = all()
+        .iter()
+        .find(|f| f.name == "deep_chain")
+        .expect("registered");
+    let mut prepared = db.prepare(&(family.query)()).expect("prepare");
+    let mut rotation = Rotation::new((family.params)(&cfg));
+    let mut buffer = bumbledb::Answers::new();
+    let mut run = || {
+        let args = crate::families::param_args(rotation.next_set());
+        db.read(|snap| snap.execute_args(&mut prepared, &args, &mut buffer))
+            .map_err(|e| format!("{e:?}"))?;
+        Ok(buffer.len() as u64)
+    };
+    for _ in 0..4 {
+        run().expect("warm");
+    }
+    let (rows, events) = crate::harness::traced_sample(&mut run).expect("traced");
+    assert!(rows > 0, "the suffix edge selects rows");
+    assert!(
+        events.iter().any(|event| event.name.ends_with("_n3")),
+        "no node-3 phase fired: {:?}",
+        events
+            .iter()
+            .map(|event| event.name)
+            .collect::<std::collections::BTreeSet<_>>()
+    );
+    drop(db);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn the_query_list_renders_every_section_of_both_theories() {
     let md = render_queries_md();
@@ -317,7 +399,7 @@ fn the_query_list_renders_every_section_of_both_theories() {
         assert!(md.contains(family.param_policy), "{} policy", family.name);
     }
     assert_eq!(md.matches("Family-list digest: `").count(), 2);
-    // 15 ledger + 7 calendar sections, one ```sql block each.
+    // 16 ledger + 7 calendar sections, one ```sql block each.
     assert_eq!(
         md.matches("```sql").count(),
         all().len() + crate::calendar::families::all().len()

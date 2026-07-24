@@ -191,7 +191,7 @@ fn unit_draw(name: &str, seed: u64, sizes: &Sizes) -> Draw {
     match name {
         "point" => scalar_draw(vec![Value::U64(3)]),
         "containment_walk" | "postings_without_tag" | "skew" => scalar_draw(vec![Value::U64(0)]),
-        "chain" => scalar_draw(vec![Value::I64(corpus_gen::AT_BASE)]),
+        "chain" | "deep_chain" => scalar_draw(vec![Value::I64(corpus_gen::AT_BASE)]),
         "range" => scalar_draw(vec![
             Value::I64(corpus_gen::AT_BASE + span / 4),
             Value::I64(corpus_gen::AT_BASE + span / 2),

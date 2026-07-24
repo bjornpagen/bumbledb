@@ -90,7 +90,7 @@ mid-run; the report records the night's only `LOSS` verdict); it stays
 committed with its `CONTAMINATED.md` marker and is excluded from every
 number here — merged pools are min-over-clean (durable r1+r3, all three
 ephemeral runs). Every query is oracle-gated before it is ever timed:
-value-identical multisets against SQLite (2,876 differential cases for the
+value-identical multisets against SQLite (2,889 differential cases for the
 suite; per-draw gates in the lanes), and every write verdict matches an
 independent naive model. SQLite is measured warm, prepared, and
 well-indexed on identical data, under the parity configs in
@@ -552,7 +552,7 @@ denotation — with any disagreement a failed gate.
 The part of this repo most worth stealing. Performance claims here are gated
 by machinery, not judgment:
 
-- **Two differential oracles before every timing run**: 2,876 cases —
+- **Two differential oracles before every timing run**: 2,889 cases —
   family queries and randomized queries against SQLite, plus a randomized
   write stream whose every commit verdict (accept or abort, and the
   violated statement) must match an independent brute-force naive model;

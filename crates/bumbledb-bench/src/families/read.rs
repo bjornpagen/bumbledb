@@ -139,6 +139,59 @@ fn chain_params(cfg: &GenConfig) -> Vec<Draw> {
         .collect()
 }
 
+/// `deep_chain` — `Q(name, src, amount, at) :- Posting(entry = e,
+/// account = a, amount, at), JournalEntry(id = e, source = src),
+/// Account(id = a, holder = h), Holder(id = h, name)` with `at >= ?0`
+/// — chain's walk extended one hop through the account into its holder:
+/// four atoms, four plan nodes (`binary2fj` mints one node per
+/// occurrence), the only family whose pipeline reaches node 3. That
+/// depth is the mid-stream pump regime (ruled 2026-07-23, R22, finding
+/// 088): every ≤ 3-node plan leaves the tail-drain placement
+/// unmeasurable, so this shape exists to keep it measured. Params are
+/// chain's suffix edges — the two families differ by exactly the hop.
+fn deep_chain_query() -> Query {
+    Query::single(Rule {
+        finds: vec![
+            FindTerm::Var(VarId(0)),
+            FindTerm::Var(VarId(1)),
+            FindTerm::Var(VarId(2)),
+            FindTerm::Var(VarId(3)),
+        ],
+        atoms: vec![
+            Atom {
+                source: bumbledb::AtomSource::Edb(ids::POSTING),
+                bindings: vec![
+                    (ids::posting::ENTRY, var(4)),
+                    (ids::posting::ACCOUNT, var(5)),
+                    (ids::posting::AMOUNT, var(2)),
+                    (ids::posting::AT, var(3)),
+                ],
+            },
+            Atom {
+                source: bumbledb::AtomSource::Edb(ids::JOURNAL_ENTRY),
+                bindings: vec![
+                    (ids::journal_entry::ID, var(4)),
+                    (ids::journal_entry::SOURCE, var(1)),
+                ],
+            },
+            Atom {
+                source: bumbledb::AtomSource::Edb(ids::ACCOUNT),
+                bindings: vec![(ids::account::ID, var(5)), (ids::account::HOLDER, var(6))],
+            },
+            Atom {
+                source: bumbledb::AtomSource::Edb(ids::HOLDER),
+                bindings: vec![(ids::holder::ID, var(6)), (ids::holder::NAME, var(0))],
+            },
+        ],
+        negated: vec![],
+        conditions: vec![ConditionTree::Leaf(Comparison {
+            op: CmpOp::Ge,
+            lhs: var(3),
+            rhs: param(0),
+        })],
+    })
+}
+
 /// range — `Q(id, amount) :- Posting(id, amount, at)`, `at >= ?0`,
 /// `at < ?1` — the pure scan family.
 fn range_query() -> Query {
@@ -687,9 +740,10 @@ fn mandate_overlap_params(cfg: &GenConfig) -> Vec<Draw> {
         .collect()
 }
 
-/// The registry: the fifteen, in the suite's canonical order — the
-/// ported ten, then the redesign's five (param set, negation,
-/// Arg-restriction, membership, overlap).
+/// The registry: the fifteen gated, in the suite's canonical order —
+/// the ported ten, then the redesign's five (param set, negation,
+/// Arg-restriction, membership, overlap) — then the report tail: the
+/// depth lane (`deep_chain`, the ≥ 4-node pump regime).
 #[must_use]
 #[expect(
     clippy::too_many_lines,
@@ -843,6 +897,15 @@ pub fn all() -> &'static [Family] {
                 "Mandate",
                 &["org", "active_start", "active_end"],
             )],
+        },
+        Family {
+            name: "deep_chain",
+            kind: Kind::Report,
+            query: deep_chain_query,
+            params: chain_params,
+            golden_sql: goldens::DEEP_CHAIN,
+            param_policy: "4 suffix edges near the corpus end (at >= edge selects ~2/4/6/8%) — chain's draws, shared.",
+            indexes: &[("idx_posting_at", "Posting", &["at"])],
         },
     ]
 }

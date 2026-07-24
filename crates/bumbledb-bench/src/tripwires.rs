@@ -290,6 +290,10 @@ mod tests {
                 // mandate segments; generous margin for the cover's
                 // account-postings walk.
                 "mandate_at_instant" => 16 * (sizes.postings / sizes.accounts + 64),
+                // Chain's ~2% suffix walked through four nodes (no
+                // currency pin; entry/account/holder key probes per
+                // surviving posting) — bounded by 4x the window.
+                "deep_chain" => 4 * (sizes.postings * 8 / 100),
                 // One org's ~mandates/orgs segments squared (the
                 // overlap join), plus probes.
                 "mandate_overlap" => {

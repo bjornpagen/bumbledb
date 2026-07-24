@@ -102,6 +102,13 @@ pub const ARG_MAX: &str = "WITH d AS (SELECT DISTINCT t0.\"account\" AS v0, t0.\
 /// account side.
 pub const CHAIN: &str = "SELECT DISTINCT t1.\"source\", t0.\"amount\", t0.\"at\" FROM \"Posting\" AS t0, \"JournalEntry\" AS t1, \"Account\" AS t2 WHERE t0.\"entry\" = t1.\"id\" AND t0.\"account\" = t2.\"id\" AND t2.\"currency\" = 0 AND t0.\"at\" >= ?1";
 
+/// `deep_chain` — `Q(name, src, amount, at) :- Posting(entry = e,
+/// account = a, amount, at), JournalEntry(id = e, source = src),
+/// Account(id = a, holder = h), Holder(id = h, name)` with `at >= ?0`:
+/// chain's walk extended one hop into the holder — the four-atom shape
+/// whose plan reaches node 3 (the mid-stream pump regime, R22/088).
+pub const DEEP_CHAIN: &str = "SELECT DISTINCT t3.\"name\", t1.\"source\", t0.\"amount\", t0.\"at\" FROM \"Posting\" AS t0, \"JournalEntry\" AS t1, \"Account\" AS t2, \"Holder\" AS t3 WHERE t0.\"entry\" = t1.\"id\" AND t0.\"account\" = t2.\"id\" AND t2.\"holder\" = t3.\"id\" AND t0.\"at\" >= ?1";
+
 /// range — `Q(id, amount) :- Posting(id, amount, at)` with
 /// `at >= ?0, at < ?1`: the pure scan family.
 pub const RANGE: &str = "SELECT DISTINCT t0.\"id\", t0.\"amount\" FROM \"Posting\" AS t0 WHERE t0.\"at\" >= ?1 AND t0.\"at\" < ?2";

@@ -22,8 +22,9 @@ pub use render_queries_md::render_queries_md;
 pub use write::write_families;
 
 /// Whether a family gates the suite (loses ⇒ the run fails) or merely
-/// reports. Every read family gates (`60-validation.md`: every family
-/// must win).
+/// reports. The fifteen ledger families gate (`60-validation.md`: every
+/// family must win); the depth lane (`deep_chain`, the ≥ 4-node pump
+/// regime — R22, finding 088) reports.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
     Gate,

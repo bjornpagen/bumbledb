@@ -157,7 +157,7 @@ fn a_full_verify_at_s_succeeds() {
     // change fails HERE until README.md is trued with it.
     assert_eq!(
         report.cases + u64::from(DEFAULT_RANDOM_CASES - config.random_cases) * 4,
-        2_876,
+        2_889,
         "README.md's oracle case count must equal the default run's completed count"
     );
     let stamp_path = config.out_dir.join("verify.stamp");
