@@ -476,10 +476,10 @@ fn pending_interns_flush_at_commit_and_advance_the_counter() {
         crate::storage::dict::resolve(&rtxn, id).expect("resolve"),
         b"holder-name"
     );
-    drop(rtxn);
-    // A later direct intern continues past the flushed counter.
-    let mut wtxn = env.write_txn().expect("txn");
-    let next = crate::storage::dict::intern_str(&mut wtxn, "other").expect("intern");
+    // A later transaction's provisional mint continues past the flushed
+    // counter (the production writer — no direct-write path exists).
+    let mut later = WriteDelta::new(&schema);
+    let next = later.intern_str(&rtxn, "other").expect("intern");
     assert_eq!(next, id + 1);
 }
 

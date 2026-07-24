@@ -19,10 +19,14 @@
 //!                   containment and window edges alike
 //! marks             the closed-parent window roster
 //! S  counters       row count and high-water against the F tallies
+//! Q  fresh sequences the never-reissue ratchet against the F fresh
+//!                   tallies (finding 033)
 //! _meta descriptor  blake3 of the persisted schema descriptor against the
 //!                   stored fingerprint (the self-description bond; absence
 //!                   = not yet adopted, never a finding)
-//! _dict             dangling-id statistic (the accepted leak)
+//! _dict             forward/reverse coherence, referenced-id liveness,
+//!                   the next-id bound (findings 004/078) — plus the
+//!                   dangling-id statistic (the accepted leak)
 //! ```
 //!
 //! Beyond namespace coherence, every judgment form
@@ -63,12 +67,13 @@ use crate::schema::Schema;
 use crate::storage::commit::judgment::Selections;
 use crate::storage::env::ReadTxn;
 use crate::storage::keys;
-use bumbledb_theory::schema::{RelationId, StatementId};
+use bumbledb_theory::schema::{FieldId, RelationId, StatementId};
 
 mod counters;
 mod determinants;
 mod dict_stat;
 mod facts;
+mod fresh;
 mod marks;
 mod membership;
 mod reverse;
@@ -197,6 +202,40 @@ pub enum StoreFinding {
         row_id: u64,
         fresh: u64,
     },
+    /// The stored `Q` next-value fails the ratchet law (finding 033): a
+    /// committed fresh value sits at or beyond it, so `alloc` would
+    /// re-issue an id the host already holds — the Lean-pinned
+    /// never-reissue law (`lean/Bumbledb/Txn/Fresh.lean:
+    /// never_reissue_observable`) violated at rest. An absent entry for
+    /// a tallied fresh field reads as zero; the legal exhausted sequence
+    /// (`max_fresh == u64::MAX`) is exempt.
+    FreshNextValueLow {
+        relation: RelationId,
+        field: FieldId,
+        stored: u64,
+        max_fresh: u64,
+    },
+    /// A live fact references an intern id with no `_dict` reverse entry
+    /// — the offline twin of the runtime `Corruption(DanglingInternId)`
+    /// (finding 004).
+    DanglingInternId { intern_id: u64 },
+    /// A `_dict` reverse entry whose forward twin is absent, or maps the
+    /// hashed bytes to a DIFFERENT id — the desync that silently rebinds
+    /// every selection literal on the string (finding 004).
+    DictForwardDesync {
+        intern_id: u64,
+        /// What the forward map holds for the reverse entry's bytes.
+        forward: Option<u64>,
+    },
+    /// A `_dict` reverse id at or beyond the `_meta` next-id counter —
+    /// the regressed counter that arms silent reverse-map reuse:
+    /// `RowIdHighWaterLow`'s dictionary sibling (finding 078).
+    DictNextIdLow {
+        /// The stored `_meta` next-id.
+        stored: u64,
+        /// The offending reverse-map id.
+        reverse_id: u64,
+    },
     /// A `U` entry under a fresh-row auto-key. The one id allocator
     /// (R16) erased that key's `U` tree — its entry would transcribe
     /// `F` — so the entry's very existence is the finding.
@@ -272,6 +311,7 @@ impl<S> Db<S> {
             dict_next_id: txn.dict_next_id()?,
             findings: Vec::new(),
             tallies: BTreeMap::new(),
+            max_fresh: BTreeMap::new(),
             referenced_interns: BTreeSet::new(),
         };
         facts::sweep(&mut sweep)?;
@@ -280,6 +320,7 @@ impl<S> Db<S> {
         reverse::sweep(&mut sweep)?;
         marks::sweep(&mut sweep)?;
         counters::sweep(&mut sweep)?;
+        fresh::sweep(&mut sweep)?;
         // The descriptor pass: a persisted schema descriptor must hash to
         // the stored fingerprint — they are one value twice
         // (`docs/architecture/50-storage.md` § the `_meta` block). An
@@ -328,6 +369,9 @@ struct Sweep<'a, 'env> {
     findings: Vec<StoreFinding>,
     /// Per-relation `F`-scan tallies, filled by the `F` pass.
     tallies: BTreeMap<RelationId, Tally>,
+    /// Per fresh field, the largest committed value the `F` scan saw —
+    /// the `Q` pass's ratchet-law input (finding 033).
+    max_fresh: BTreeMap<(RelationId, FieldId), u64>,
     /// Every intern id referenced by a live fact's String/Bytes fields —
     /// the dictionary pass's liveness set.
     referenced_interns: BTreeSet<u64>,

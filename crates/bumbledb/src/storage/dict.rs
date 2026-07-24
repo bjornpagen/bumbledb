@@ -38,39 +38,6 @@ fn reverse_key(id: u64) -> [u8; 9] {
     key
 }
 
-/// Interns a UTF-8 string, returning its id. The `&str` boundary *is* the
-/// UTF-8 validation (parse, don't validate): a `&[u8]` string entry point
-/// must not exist.
-///
-/// # Errors
-///
-/// `Lmdb` on storage failure, `Corruption` on a malformed id counter.
-#[cfg(test)]
-pub fn intern_str(txn: &mut WriteTxn<'_>, value: &str) -> Result<u64> {
-    let raw = value.as_bytes();
-    let dict = txn.env().dict();
-    let fwd = forward_key(raw);
-    // Collision axiom (10-data-model): a forward hit returns the existing id
-    // with no byte verification — hash equality is identity, 2⁻¹²⁸-scale
-    // collisions are accepted, not checked for.
-    if let Some(existing) = dict.get(txn.raw(), &fwd)? {
-        let id: [u8; 8] = existing
-            .try_into()
-            .map_err(|_| Error::Corruption(CorruptionError::MalformedValue("dict forward id")))?;
-        return Ok(u64::from_be_bytes(id));
-    }
-    // Mint the next id. This read-modify-writes the `_meta` counter directly;
-    // the 50-storage doc re-homes it into the delta's in-memory-then-flush counter set.
-    // A stored u64::MAX counter is typed Corruption at the read above
-    // (the sentinel is never mintable), so `id` here is always valid.
-    let id = txn.dict_next_id()?;
-    txn.put_dict_next_id(id + 1)?;
-
-    dict.put(txn.raw_mut(), &fwd, id.to_be_bytes().as_slice())?;
-    dict.put(txn.raw_mut(), &reverse_key(id), raw)?;
-    Ok(id)
-}
-
 /// The never-minted intern id: dictionary ids allocate from 0 upward and
 /// the mint paths assert this value is never issued, so read paths may
 /// resolve a dictionary *miss* to it. An `Eq` filter against the sentinel
@@ -109,7 +76,11 @@ pub(crate) fn lookup(txn: &ReadTxn<'_>, raw: &[u8]) -> Result<Option<u64>> {
 
 /// Writes one pending intern entry minted by the delta (reader: the 50-storage doc's
 /// commit counter flush). The provisional id was assigned from the same
-/// counter this commit flushes, under the single-writer discipline.
+/// counter this commit flushes, under the single-writer discipline. The
+/// reverse put refuses overwrite (finding 078): ids are monotonic and
+/// never reused, so a reverse entry already holding the id is the
+/// never-reissue law broken — a loud typed corruption at the write
+/// itself, never a silent clobber arming a stale forward entry.
 pub(crate) fn put_pending(txn: &mut WriteTxn<'_>, raw: &[u8], id: u64) -> Result<()> {
     let dict = txn.env().dict();
     dict.put(
@@ -117,35 +88,57 @@ pub(crate) fn put_pending(txn: &mut WriteTxn<'_>, raw: &[u8], id: u64) -> Result
         &forward_key(raw),
         id.to_be_bytes().as_slice(),
     )?;
-    dict.put(txn.raw_mut(), &reverse_key(id), raw)?;
-    Ok(())
+    match dict.put_with_flags(
+        txn.raw_mut(),
+        heed::PutFlags::NO_OVERWRITE,
+        &reverse_key(id),
+        raw,
+    ) {
+        Ok(()) => Ok(()),
+        Err(heed::Error::Mdb(heed::MdbError::KeyExist)) => Err(Error::Corruption(
+            CorruptionError::MalformedValue("dict reverse id reuse"),
+        )),
+        Err(other) => Err(other.into()),
+    }
 }
 
-/// One `_dict` reverse-map entry as the sweeper sees it: the minted id, or
-/// the raw key bytes when the key is not the codec's 9-byte shape.
-pub(crate) enum ReverseId<'k> {
-    Id(u64),
-    Malformed(&'k [u8]),
+/// One `_dict` reverse-map entry as the sweeper sees it: the minted id
+/// with its raw bytes, or the raw key bytes when the key is not the
+/// codec's 9-byte shape.
+pub(crate) enum ReverseEntry<'t> {
+    Id(u64, &'t [u8]),
+    Malformed(&'t [u8]),
 }
 
 /// One cursor over the reverse map, in id order (reader: `Db::verify_store`'s
-/// dangling-entry statistic — ids referenced by no live fact are the
-/// accepted leak, counted, never findings).
+/// `_dict` pass — the dangling statistic plus the forward/reverse and
+/// counter-bound convictions, findings 004/078).
 ///
 /// # Errors
 ///
 /// `Lmdb` on cursor open; per-item `Lmdb` on iteration failure.
-pub(crate) fn reverse_ids<'txn>(
+pub(crate) fn reverse_entries<'txn>(
     txn: &'txn ReadTxn<'_>,
-) -> Result<impl Iterator<Item = Result<ReverseId<'txn>>>> {
+) -> Result<impl Iterator<Item = Result<ReverseEntry<'txn>>>> {
     let iter = txn.env().dict().prefix_iter(txn.raw(), &[REVERSE])?;
     Ok(iter.map(|entry| {
-        let (key, _) = entry?;
+        let (key, raw) = entry?;
         Ok(match key[1..].try_into() {
-            Ok(id) => ReverseId::Id(u64::from_be_bytes(id)),
-            Err(_) => ReverseId::Malformed(key),
+            Ok(id) => ReverseEntry::Id(u64::from_be_bytes(id), raw),
+            Err(_) => ReverseEntry::Malformed(key),
         })
     }))
+}
+
+/// Whether an id has a reverse entry — the sweeper's liveness probe
+/// (finding 004: a referenced id without one is the offline twin of the
+/// runtime `Corruption(DanglingInternId)`).
+pub(crate) fn has_reverse(txn: &ReadTxn<'_>, id: u64) -> Result<bool> {
+    Ok(txn
+        .env()
+        .dict()
+        .get(txn.raw(), &reverse_key(id))?
+        .is_some())
 }
 
 /// Resolves an id to its raw bytes, borrowed from the LMDB page for the
@@ -166,6 +159,7 @@ mod tests {
     use super::*;
     use crate::schema::Schema;
     use crate::schema::ValidateDescriptor as _;
+    use crate::storage::delta::WriteDelta;
     use crate::storage::env::Environment;
     use crate::testutil::TempDir;
     use bumbledb_theory::schema::SchemaDescriptor;
@@ -183,19 +177,50 @@ mod tests {
         Environment::create(dir.path(), &empty_schema()).expect("create")
     }
 
+    /// Seeds committed dictionary entries through the PRODUCTION writer —
+    /// the delta's provisional mint flushed by [`put_pending`] plus one
+    /// advanced next-id, exactly the commit's phase-4 discipline
+    /// (`storage/commit/write.rs::flush_counters`). No second mint
+    /// implementation exists to drift (finding 096; the retired
+    /// direct-write `intern_str` was the one this suite pinned).
+    fn seed(env: &Environment, schema: &Schema, values: &[&str]) -> Vec<u64> {
+        let view = env.read_txn().expect("txn");
+        let mut delta = WriteDelta::new(schema);
+        let ids: Vec<u64> = values
+            .iter()
+            .map(|value| delta.intern_str(&view, value).expect("intern"))
+            .collect();
+        drop(view);
+        let mut wtxn = env.write_txn().expect("txn");
+        for (raw, id) in delta.pending_interns() {
+            put_pending(&mut wtxn, raw, id).expect("flush pending intern");
+        }
+        if let Some(next) = delta.dict_next() {
+            wtxn.put_dict_next_id(next).expect("advance next-id");
+        }
+        wtxn.commit().expect("commit");
+        ids
+    }
+
     #[test]
     fn interning_twice_returns_the_same_id() {
         let dir = TempDir::new("dict-idempotent");
+        let schema = empty_schema();
         let env = env(&dir);
-        let mut wtxn = env.write_txn().expect("txn");
-        let first = intern_str(&mut wtxn, "hello").expect("intern");
-        let second = intern_str(&mut wtxn, "hello").expect("intern");
-        assert_eq!(first, second);
-        wtxn.commit().expect("commit");
-
-        // And across transactions.
-        let mut wtxn = env.write_txn().expect("txn");
-        assert_eq!(intern_str(&mut wtxn, "hello").expect("intern"), first);
+        // Within one delta: the pending map dedups.
+        let view = env.read_txn().expect("txn");
+        let mut delta = WriteDelta::new(&schema);
+        let first = delta.intern_str(&view, "hello").expect("intern");
+        assert_eq!(delta.intern_str(&view, "hello").expect("intern"), first);
+        drop(view);
+        drop(delta);
+        // Across commits: the committed forward map answers before any mint.
+        let ids = seed(&env, &schema, &["hello"]);
+        assert_eq!(ids, vec![first]);
+        let view = env.read_txn().expect("txn");
+        let mut later = WriteDelta::new(&schema);
+        assert_eq!(later.intern_str(&view, "hello").expect("intern"), first);
+        assert_eq!(later.dict_next(), None, "a committed hit mints nothing");
     }
 
     #[test]
@@ -209,10 +234,9 @@ mod tests {
     #[test]
     fn resolve_round_trips_interned_values() {
         let dir = TempDir::new("dict-resolve");
+        let schema = empty_schema();
         let env = env(&dir);
-        let mut wtxn = env.write_txn().expect("txn");
-        let s = intern_str(&mut wtxn, "posting").expect("intern");
-        wtxn.commit().expect("commit");
+        let s = seed(&env, &schema, &["posting"])[0];
 
         let rtxn = env.read_txn().expect("txn");
         assert_eq!(lookup_str(&rtxn, "posting").expect("lookup"), Some(s));
@@ -225,10 +249,9 @@ mod tests {
         // reverse value IS the raw bytes — no tag byte survives anywhere
         // in the codec (docs/architecture/50-storage.md).
         let dir = TempDir::new("dict-untagged");
+        let schema = empty_schema();
         let env = env(&dir);
-        let mut wtxn = env.write_txn().expect("txn");
-        let id = intern_str(&mut wtxn, "A").expect("intern");
-        wtxn.commit().expect("commit");
+        let id = seed(&env, &schema, &["A"])[0];
         let rtxn = env.read_txn().expect("txn");
         assert_eq!(resolve(&rtxn, id).expect("resolve"), b"A");
         assert_eq!(resolve(&rtxn, id).expect("resolve").len(), 1);
@@ -252,16 +275,10 @@ mod tests {
     #[test]
     fn ids_strictly_increase_across_interns() {
         let dir = TempDir::new("dict-monotonic");
+        let schema = empty_schema();
         let env = env(&dir);
-        let mut wtxn = env.write_txn().expect("txn");
-        let ids: Vec<u64> = ["a", "b", "c", "d"]
-            .iter()
-            .map(|s| intern_str(&mut wtxn, s).expect("intern"))
-            .collect();
-        wtxn.commit().expect("commit");
-        let mut wtxn = env.write_txn().expect("txn");
-        let e = intern_str(&mut wtxn, "e").expect("intern");
-        wtxn.commit().expect("commit");
+        let ids = seed(&env, &schema, &["a", "b", "c", "d"]);
+        let e = seed(&env, &schema, &["e"])[0];
         for pair in ids.windows(2) {
             assert!(pair[0] < pair[1]);
         }
@@ -269,21 +286,25 @@ mod tests {
     }
 
     #[test]
-    fn aborted_transaction_leaves_no_dictionary_entries() {
+    fn a_dropped_delta_leaves_no_dictionary_entries() {
+        // The production abort path: the delta drops, its pending interns
+        // with it — LMDB never saw them, and the counter never advanced,
+        // so the next transaction re-issues the provisional id (intern
+        // ids never escape; recycling an unflushed one is invisible).
         let dir = TempDir::new("dict-abort");
+        let schema = empty_schema();
         let env = env(&dir);
-        let mut wtxn = env.write_txn().expect("txn");
-        let id = intern_str(&mut wtxn, "phantom").expect("intern");
-        wtxn.abort();
+        let id = {
+            let view = env.read_txn().expect("txn");
+            let mut delta = WriteDelta::new(&schema);
+            delta.intern_str(&view, "phantom").expect("intern")
+        };
 
         let rtxn = env.read_txn().expect("txn");
         assert_eq!(lookup_str(&rtxn, "phantom").expect("lookup"), None);
         assert!(resolve(&rtxn, id).is_err());
         drop(rtxn);
 
-        // The counter did not advance either: the next intern re-issues the
-        // aborted id (aborted values never existed in any committed state).
-        let mut wtxn = env.write_txn().expect("txn");
-        assert_eq!(intern_str(&mut wtxn, "real").expect("intern"), id);
+        assert_eq!(seed(&env, &schema, &["real"]), vec![id]);
     }
 }

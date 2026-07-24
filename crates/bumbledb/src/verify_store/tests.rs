@@ -432,6 +432,7 @@ fn malformed_keys_in_every_swept_namespace_are_contextual_findings() {
         vec![keys::NS_DETERMINANT],
         vec![keys::NS_REVERSE],
         vec![keys::NS_STAT],
+        vec![keys::NS_FRESH],
     ];
     raw_write(&db, |txn| {
         let data = txn.env().data();
@@ -462,6 +463,11 @@ fn malformed_keys_in_every_swept_namespace_are_contextual_findings() {
             StoreFinding::Malformed {
                 key: keys[4].clone().into(),
                 what: "S key length",
+            },
+            // The Q pass runs after the counters (pass order).
+            StoreFinding::Malformed {
+                key: keys[5].clone().into(),
+                what: "Q key length",
             },
         ]
     );
@@ -658,12 +664,17 @@ fn intern_id_at_or_beyond_the_counter_is_found_with_fact_context() {
     });
     assert_eq!(
         db.verify_store().expect("verify").findings,
-        vec![StoreFinding::InternBeyondNextId {
-            relation: HOLDER,
-            row_id: 1,
-            intern_id: 99,
-            next_id: 2,
-        }]
+        vec![
+            StoreFinding::InternBeyondNextId {
+                relation: HOLDER,
+                row_id: 1,
+                intern_id: 99,
+                next_id: 2,
+            },
+            // The forged id has no reverse entry either — the dict
+            // pass's liveness direction convicts it independently (004).
+            StoreFinding::DanglingInternId { intern_id: 99 },
+        ]
     );
 }
 
@@ -682,6 +693,139 @@ fn malformed_dictionary_reverse_key_is_a_finding() {
         vec![StoreFinding::Malformed {
             key: malformed.into(),
             what: "dict reverse id",
+        }]
+    );
+}
+
+/// The `_dict` reverse key for an intern id — the codec's 9-byte shape,
+/// rebuilt raw here exactly as the fixture surgery plants every other
+/// namespace (the codec itself stays private to `storage::dict`).
+fn dict_reverse_key(id: u64) -> Vec<u8> {
+    let mut key = vec![1u8];
+    key.extend_from_slice(&id.to_be_bytes());
+    key
+}
+
+/// The `_dict` forward key for raw bytes — tag 0 ‖ blake3.
+fn dict_forward_key(raw: &[u8]) -> Vec<u8> {
+    let mut key = vec![0u8];
+    key.extend_from_slice(blake3::hash(raw).as_bytes());
+    key
+}
+
+/// Finding 004, the liveness direction: a referenced id whose reverse
+/// entry is gone — the exact corruption the runtime types as
+/// `Corruption(DanglingInternId)` — convicts offline instead of at the
+/// next export. ("alice" interned first: id 0, referenced by the live
+/// holder row.)
+#[test]
+fn a_referenced_id_without_a_reverse_entry_is_the_finding() {
+    let (_dir, db) = fixture_with_healthy_sibling("verify-dict-liveness");
+    raw_write(&db, |txn| {
+        assert!(
+            txn.env()
+                .dict()
+                .delete(txn.raw_mut(), &dict_reverse_key(0))
+                .expect("delete reverse entry"),
+            "the fixture interned alice at id 0"
+        );
+    });
+    let report = db.verify_store().expect("verify");
+    assert_eq!(
+        report.findings,
+        vec![StoreFinding::DanglingInternId { intern_id: 0 }]
+    );
+}
+
+/// Finding 004, forward/reverse coherence: a rebound forward entry —
+/// `blake3("alice") → bob's id` — would silently redirect every
+/// selection literal on "alice"; the reverse cursor convicts it.
+#[test]
+fn a_rebound_forward_entry_is_the_finding() {
+    let (_dir, db) = fixture_with_healthy_sibling("verify-dict-rebound");
+    raw_write(&db, |txn| {
+        txn.env()
+            .dict()
+            .put(
+                txn.raw_mut(),
+                &dict_forward_key(b"alice"),
+                1u64.to_be_bytes().as_slice(),
+            )
+            .expect("rebind forward entry");
+    });
+    let report = db.verify_store().expect("verify");
+    assert_eq!(
+        report.findings,
+        vec![StoreFinding::DictForwardDesync {
+            intern_id: 0,
+            forward: Some(1),
+        }]
+    );
+}
+
+/// Finding 078: a regressed `_meta` next-id below existing reverse ids —
+/// the state that arms silent reverse-map reuse — convicts even when the
+/// high ids are dangling (`RowIdHighWaterLow`'s dictionary sibling).
+#[test]
+fn a_reverse_id_at_or_beyond_the_counter_is_the_finding() {
+    let (_dir, db) = fixture_with_healthy_sibling("verify-dict-next-id");
+    raw_write(&db, |txn| {
+        txn.put_dict_next_id(1).expect("regress the counter");
+    });
+    let report = db.verify_store().expect("verify");
+    assert_eq!(
+        report.findings,
+        vec![StoreFinding::DictNextIdLow {
+            stored: 1,
+            reverse_id: 1,
+        }]
+    );
+}
+
+/// Finding 033, the ratchet law: a `Q` next-value at or below a
+/// committed fresh value re-issues an id the host already holds — the
+/// Lean-pinned never-reissue law convicted at rest.
+#[test]
+fn a_regressed_fresh_next_value_is_the_finding() {
+    let (_dir, db) = fixture_with_healthy_sibling("verify-q-low");
+    let q = key(|b| keys::fresh_key(b, HOLDER, FieldId(0)));
+    raw_write(&db, |txn| {
+        txn.env()
+            .data()
+            .put(txn.raw_mut(), &q, 1u64.to_le_bytes().as_slice())
+            .expect("regress Q");
+    });
+    assert_eq!(
+        db.verify_store().expect("verify").findings,
+        vec![StoreFinding::FreshNextValueLow {
+            relation: HOLDER,
+            field: FieldId(0),
+            stored: 1,
+            max_fresh: 1,
+        }]
+    );
+}
+
+/// Finding 033, the absent arm: a tallied fresh field with no stored
+/// sequence reads as zero — rows on disk convict the absent entry,
+/// exactly as absent `S` counters are convicted.
+#[test]
+fn an_absent_fresh_sequence_is_found_against_the_tally() {
+    let (_dir, db) = fixture_with_healthy_sibling("verify-q-absent");
+    let q = key(|b| keys::fresh_key(b, HOLDER, FieldId(0)));
+    raw_write(&db, |txn| {
+        assert!(
+            txn.env().data().delete(txn.raw_mut(), &q).expect("delete"),
+            "the fixture committed fresh values"
+        );
+    });
+    assert_eq!(
+        db.verify_store().expect("verify").findings,
+        vec![StoreFinding::FreshNextValueLow {
+            relation: HOLDER,
+            field: FieldId(0),
+            stored: 0,
+            max_fresh: 1,
         }]
     );
 }

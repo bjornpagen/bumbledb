@@ -241,11 +241,21 @@ fn resolve_never_mints_and_sees_both_id_sources() {
         Some(pending)
     );
 
-    // A committed hit returns the committed id.
+    // A committed hit returns the committed id — seeded through the
+    // production writer (a delta's pending mint flushed exactly as the
+    // commit's counter flush does; no direct-write path exists).
     drop(view);
     {
+        let view = env.read_txn().expect("txn");
+        let mut seeder = WriteDelta::new(&schema);
+        seeder.intern_str(&view, "committed").expect("intern");
+        drop(view);
         let mut wtxn = env.write_txn().expect("txn");
-        crate::storage::dict::intern_str(&mut wtxn, "committed").expect("intern");
+        for (raw, id) in seeder.pending_interns() {
+            crate::storage::dict::put_pending(&mut wtxn, raw, id).expect("flush");
+        }
+        wtxn.put_dict_next_id(seeder.dict_next().expect("minted"))
+            .expect("advance");
         wtxn.commit().expect("commit");
     }
     let view = env.read_txn().expect("txn");

@@ -80,6 +80,19 @@ pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
             }
         }
 
+        // Fresh tallies (finding 033): the largest committed value per
+        // fresh field — the Q pass's ratchet-law input. Rides this same
+        // decode walk, never a second scan.
+        for (idx, field) in relation.fields().iter().enumerate() {
+            if field.generation == bumbledb_theory::schema::Generation::Fresh {
+                let value = u64::from_be_bytes(field_word_bytes(fact, layout, idx));
+                let field_id =
+                    bumbledb_theory::schema::FieldId(u16::try_from(idx).expect("field count u16"));
+                let max = s.max_fresh.entry((rel, field_id)).or_insert(0);
+                *max = (*max).max(value);
+            }
+        }
+
         // Referenced intern ids, bounded by the dictionary next-id
         // (String only — bytes<N> values are inline, never interned).
         for idx in 0..layout.field_count() {
