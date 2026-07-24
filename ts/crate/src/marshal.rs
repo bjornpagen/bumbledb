@@ -25,10 +25,10 @@ use bumbledb::schema::spec::{
 };
 use bumbledb::schema::{IntervalElement, StatementDescriptor, ValueType};
 use bumbledb::{
-    AggOp, AllenMask, Atom, AtomSource, CmpOp, Comparison, ConditionTree, FieldId, FindTerm,
-    HeadOp, HeadTerm, Interval, Manifest, MaskTerm, ParamId, PredId, PredicateDef, Program,
-    RelationId, RenderedViolation, Rule, SchemaDescriptor, SchemaSpec, StatementId, StatementKind,
-    Term, Value, VarId,
+    AggOp, AllenMask, AnswerValue, Answers, Atom, AtomSource, CmpOp, Comparison, ConditionTree,
+    FieldId, FindTerm, HeadOp, HeadTerm, Interval, Manifest, MaskTerm, ParamId, PredId,
+    PredicateDef, Program, RelationId, RenderedViolation, Rule, SchemaDescriptor, SchemaSpec,
+    StatementId, StatementKind, Term, Value, VarId,
 };
 use napi::bindgen_prelude::{
     Array, BigInt, Env, FromNapiValue, Object, ToNapiValue, Uint8Array, i64n,
@@ -935,13 +935,22 @@ pub enum ValueOut {
 }
 
 impl ValueOut {
-    pub(crate) fn from_value(value: &Value) -> Self {
-        match value {
-            Value::Bool(v) => Self::Bool(*v),
-            Value::U64(v) => Self::U64(*v),
-            Value::I64(v) => Self::I64(*v),
-            Value::String(bytes) => Self::Text(String::from_utf8_lossy(bytes).into_owned()),
-            Value::FixedBytes(bytes) => Self::Bytes(bytes.to_vec()),
+    /// Consumes the engine value — string and bytes payloads MOVE (the
+    /// one-copy crossing: every call site owns its `Value`, so a borrowing
+    /// twin would only re-copy what is about to drop). Non-UTF-8 string
+    /// bytes are refused typed, the outbound twin of `param_args`'s
+    /// inbound refusal — the store's decode lanes can surface at-rest
+    /// damage, and a repair (`from_utf8_lossy`) would silently corrupt
+    /// what the engine's own corruption taxonomy convicts.
+    pub(crate) fn from_value(value: Value) -> napi::Result<Self> {
+        Ok(match value {
+            Value::Bool(v) => Self::Bool(v),
+            Value::U64(v) => Self::U64(v),
+            Value::I64(v) => Self::I64(v),
+            Value::String(bytes) => Self::Text(String::from_utf8(bytes.into_vec()).map_err(
+                |_| err("bumbledb: non-UTF-8 stored string bytes (corruption at rest)".into()),
+            )?),
+            Value::FixedBytes(bytes) => Self::Bytes(bytes.into_vec()),
             Value::IntervalU64(interval) => Self::IntervalU64 {
                 start: interval.start(),
                 end: interval.end(),
@@ -951,7 +960,7 @@ impl ValueOut {
                 end: interval.end(),
             },
             Value::AllenMask(mask) => Self::U64(u64::from(mask.bits())),
-        }
+        })
     }
 }
 
@@ -989,10 +998,40 @@ impl ToNapiValue for ValueOut {
     }
 }
 
-/// Owned rows to their outward form.
-pub(crate) fn rows_out(rows: Vec<Vec<Value>>) -> Vec<Vec<ValueOut>> {
+/// Owned rows to their outward form, cells moved.
+pub(crate) fn rows_out(rows: Vec<Vec<Value>>) -> napi::Result<Vec<Vec<ValueOut>>> {
     rows.into_iter()
-        .map(|row| row.iter().map(ValueOut::from_value).collect())
+        .map(|row| row.into_iter().map(ValueOut::from_value).collect())
+        .collect()
+}
+
+/// An executed [`Answers`] carrier to its outward form — the flat buffer
+/// crossed the reply channel whole (the engine's own one-allocation
+/// carrier; rebuilding it as per-row `Vec<Value>` on the worker was a full
+/// intermediate copy), so each cell decodes straight to its JS-bound value
+/// here. Infallible: answer strings are UTF-8-validated at materialization
+/// (`bumbledb::Answers`).
+pub(crate) fn answers_out(answers: &Answers) -> Vec<Vec<ValueOut>> {
+    (0..answers.len())
+        .map(|row| {
+            (0..answers.arity())
+                .map(|column| match answers.get(row, column) {
+                    AnswerValue::Bool(v) => ValueOut::Bool(v),
+                    AnswerValue::U64(v) => ValueOut::U64(v),
+                    AnswerValue::I64(v) => ValueOut::I64(v),
+                    AnswerValue::String(v) => ValueOut::Text(v.to_owned()),
+                    AnswerValue::FixedBytes(v) => ValueOut::Bytes(v.to_vec()),
+                    AnswerValue::IntervalU64(v) => ValueOut::IntervalU64 {
+                        start: v.start(),
+                        end: v.end(),
+                    },
+                    AnswerValue::IntervalI64(v) => ValueOut::IntervalI64 {
+                        start: v.start(),
+                        end: v.end(),
+                    },
+                })
+                .collect()
+        })
         .collect()
 }
 
@@ -1072,7 +1111,7 @@ impl ToNapiValue for ManifestWire {
                     for (name, value) in row.values {
                         let mut value_obj = Object::new(&env_handle)?;
                         value_obj.set("name", name.as_ref())?;
-                        value_obj.set("value", ValueOut::from_value(&value))?;
+                        value_obj.set("value", ValueOut::from_value(value)?)?;
                         values.push(value_obj);
                     }
                     row_obj.set("values", values)?;
@@ -1164,7 +1203,7 @@ impl ToNapiValue for ViolationWire {
             for (name, value) in fields {
                 let mut field_obj = Object::new(&env_handle)?;
                 field_obj.set("name", name)?;
-                field_obj.set("value", ValueOut::from_value(&value))?;
+                field_obj.set("value", ValueOut::from_value(value)?)?;
                 field_objs.push(field_obj);
             }
             fact_obj.set("fields", field_objs)?;

@@ -490,7 +490,7 @@ pub fn exhume_scan(
         Ok(rows)
     });
     match rows {
-        Ok(rows) => Ok(marshal::rows_out(rows)),
+        Ok(rows) => marshal::rows_out(rows),
         Err(error) => Err(throw_engine(&error)),
     }
 }
@@ -524,6 +524,11 @@ enum SnapReq {
 enum SnapReply {
     Ready(Result<(), WireError>),
     Rows(Result<Vec<Vec<Value>>, WireError>),
+    /// The executed [`Answers`] carrier, crossed WHOLE (owned, `Send`) —
+    /// the engine's flat one-allocation buffer is already the right
+    /// representation, so the worker ships it instead of rebuilding it
+    /// as per-row value vectors (a full intermediate copy).
+    Answers(Result<Answers, WireError>),
     Flag(Result<bool, WireError>),
     Row(Result<Option<Vec<Value>>, WireError>),
     Staleness(Result<StalenessWire, WireError>),
@@ -559,31 +564,6 @@ impl SnapWorker {
             .map_err(|_| worker_died("snapshot"))?;
         self.replies.recv().map_err(|_| worker_died("snapshot"))
     }
-}
-
-/// Decodes an executed `Answers` buffer into owned value rows (the one-copy
-/// crossing: decoded cells to owned values on the worker, natural JS values
-/// on the main thread).
-fn answers_rows(answers: &Answers) -> Vec<Vec<Value>> {
-    (0..answers.len())
-        .map(|row| {
-            (0..answers.arity())
-                .map(|column| match answers.get(row, column) {
-                    bumbledb::AnswerValue::Bool(v) => Value::Bool(v),
-                    bumbledb::AnswerValue::U64(v) => Value::U64(v),
-                    bumbledb::AnswerValue::I64(v) => Value::I64(v),
-                    bumbledb::AnswerValue::String(v) => {
-                        Value::String(v.as_bytes().to_vec().into_boxed_slice())
-                    }
-                    bumbledb::AnswerValue::FixedBytes(v) => {
-                        Value::FixedBytes(v.to_vec().into_boxed_slice())
-                    }
-                    bumbledb::AnswerValue::IntervalU64(v) => Value::IntervalU64(v),
-                    bumbledb::AnswerValue::IntervalI64(v) => Value::IntervalI64(v),
-                })
-                .collect()
-        })
-        .collect()
 }
 
 /// Owned params to the engine's positional bind arguments. String payloads
@@ -652,7 +632,7 @@ fn run_snapshot(db: Arc<Engine>, requests: Receiver<SnapReq>, replies: Sender<Sn
                     let prepared = unsafe {
                         &mut *(prepared as *mut PreparedQuery<'static, SchemaDescriptor>)
                     };
-                    SnapReply::Rows(execute_rows(snap, prepared, &params))
+                    SnapReply::Answers(execute_answers(snap, prepared, &params))
                 }
                 SnapReq::Staleness { prepared } => {
                     // SAFETY: `preparedStaleness`'s live shared borrow of
@@ -695,16 +675,14 @@ fn scan_rows(
     Ok(rows)
 }
 
-fn execute_rows(
+fn execute_answers(
     snap: &Snapshot<'_, SchemaDescriptor>,
     prepared: &mut PreparedQuery<'static, SchemaDescriptor>,
     params: &[OwnedParam],
-) -> Result<Vec<Vec<Value>>, WireError> {
+) -> Result<Answers, WireError> {
     let args = param_args(params)?;
-    let answers = snap
-        .execute_collect_args(prepared, &args)
-        .map_err(|e| wire(&e))?;
-    Ok(answers_rows(&answers))
+    snap.execute_collect_args(prepared, &args)
+        .map_err(|e| wire(&e))
 }
 
 fn staleness_wire(
@@ -770,7 +748,7 @@ pub fn snapshot_scan(
         SnapReply::Rows,
         "snapshot"
     )?;
-    Ok(marshal::rows_out(rows))
+    marshal::rows_out(rows)
 }
 
 /// Committed-state membership of one dynamic fact (sealed field order).
@@ -811,7 +789,9 @@ pub fn snapshot_get(
         SnapReply::Row,
         "snapshot"
     )?;
-    Ok(found.map(|values| values.iter().map(ValueOut::from_value).collect()))
+    found
+        .map(|values| values.into_iter().map(ValueOut::from_value).collect())
+        .transpose()
 }
 
 // ---------------------------------------------------------------------------
@@ -1152,7 +1132,9 @@ pub fn tx_get(
         TxReply::Row,
         "transaction"
     )?;
-    Ok(found.map(|values| values.iter().map(ValueOut::from_value).collect()))
+    found
+        .map(|values| values.into_iter().map(ValueOut::from_value).collect())
+        .transpose()
 }
 
 /// Mints the next fresh value for `(relation, field)` — the engine's
@@ -1283,9 +1265,10 @@ pub fn db_prepare(db: &External<DbHandle>, program: Object) -> napi::Result<Prep
 }
 
 /// Executes against a snapshot with positional params (tagged values;
-/// `{ kind: "set", values }` binds a param set). One-copy owned rows out,
-/// column order = the program's head order; answers are a set — the host
-/// sorts.
+/// `{ kind: "set", values }` binds a param set). The engine's flat
+/// `Answers` carrier crosses the worker channel whole and each cell
+/// decodes ONCE here (the one-copy crossing); column order = the
+/// program's head order; answers are a set — the host sorts.
 #[napi]
 pub fn prepared_execute(
     prepared: &External<PreparedHandle>,
@@ -1296,15 +1279,15 @@ pub fn prepared_execute(
     let mut prepared_inner = live_mut(&prepared.inner, "prepared query")?;
     let worker = live(&snap.inner, "snapshot")?;
     let address = std::ptr::from_mut(&mut prepared_inner.prepared) as usize;
-    let rows = reply!(
+    let answers = reply!(
         worker.call(SnapReq::Execute {
             prepared: address,
             params,
         })?,
-        SnapReply::Rows,
+        SnapReply::Answers,
         "snapshot"
     )?;
-    Ok(marshal::rows_out(rows))
+    Ok(marshal::answers_out(&answers))
 }
 
 /// The pull-based plan-drift signal against a snapshot — engine-policy-free;
