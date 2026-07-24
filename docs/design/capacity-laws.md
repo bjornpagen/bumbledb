@@ -51,7 +51,10 @@ AGG      := Count                      -- the unit weight
           | Sum(field)                 -- u64-encoded source field
           | Sum(Duration(field))       -- interval measure weight (via R5 measures)
 SOURCE   := Relation(proj... | φ)      -- the counted/weighed side
-WINDOW   := {n} | {lo..hi} | {lo..*} | {0..hi}     -- the surviving range-literal forms
+WINDOW   := { BOUND } | { BOUND .. BOUND } | { BOUND .. * }
+BOUND    := int-literal                -- the fixed capacity
+          | field                      -- DEPENDENT BOUND: a u64 field of TARGET's row
+          | Duration(field)           -- dependent interval-measure bound of TARGET
 TARGET   := Relation(proj... | ψ)      -- the grouping side; proj resolves a key of TARGET
 ```
 
@@ -265,27 +268,24 @@ into `exact 0` — the wire vocabulary stops encoding one thing two ways; and fi
 already-unified side-pair gate serves both remaining statement families with no
 copy-paste left.
 
-## 8. Open rulings (owner)
+## 8. Rulings — RESOLVED (owner, 2026-07-24: "aggressively churning, zero backwards
+compat, hard deletion of all of the cardinality logic")
 
-1. **The spelling.** Recommended: `AGG of SOURCE in WINDOW per TARGET` (reads as the law;
-   source-first matches the aggregate's operand). Alternative: keep target-left B-family
-   order for materialized-order continuity. Also: TS builder names (`capacity/of/within/per`
-   proposed). Sacred-grammar call.
-2. **Weight residency.** Recommended: reverse-index value slot carries the weight for
-   capacity-weighted relations (pay one u64 per write; the judge's walk stays one range
-   scan). Alternative: per-child fact fetch (no format change; k descents per group walk).
-3. **Dependent bounds.** `Sum(watts) of Device(pool) in {0..supply} per Pool(id, supply)` —
-   the window's bound read from the *target row* rather than a literal. This is the true
-   capacity-vs-supply form (per-pool supplies differ); judge-side it is one field read per
-   parent, already in hand when the holder is fetched. Recommended: in scope now — it is
-   the actual use-case the feature exists for. Alternative: literal-only v1, dependent
-   bounds as a recorded trigger.
-4. **Aggregate roster in law position.** Recommended: `Count` and `Sum` (field/Duration)
-   only — the polarity-clean, monotone-analyzable folds. `Min/Max` windows have a coherent
-   but different polarity story and no motivating case; refuse with a recorded trigger.
-5. **The name.** Recommended: **capacity statement** (`Statement.capacity`,
-   `Violation::Capacity`, `Capacity.lean`) — "cardinality" was the unit-weight instance
-   naming the whole mechanism.
+1. **The spelling IS `AGG of SOURCE in WINDOW per TARGET`.** Source-first — the law reads
+   as the fold it is. The target-left B-family order dies with the operator that needed
+   it. TS builders: `capacity(agg, of(...), within(...), per(...))`.
+2. **The weight lives in the reverse-index value slot.** One u64 paid at write time; the
+   judge's walk stays exactly one range scan. The index gains the capacity-weighted arm;
+   the format version bumps. Per-child fact fetches are not a fallback — they don't exist.
+3. **Dependent bounds are in.** `{0..supply}` reads the bound from the target row —
+   per-group capacity is the point of the feature, not an extension to it. Literal bounds
+   are the degenerate constant case of the same BOUND production.
+4. **Law-position roster: `Count` and `Sum` (field / Duration).** The polarity-clean folds.
+   `Min/Max` windows: typed refusal with the recorded trigger in the feature register.
+5. **The name is capacity.** `Statement.capacity`, `Violation::Capacity`, `Capacity.lean`.
+   The word "cardinality" survives nowhere in the mechanism — it was the unit-weight
+   instance naming the whole, and the audit's own doctrine applies: the special case does
+   not get to keep the family name.
 
 ## 9. Sequencing
 
