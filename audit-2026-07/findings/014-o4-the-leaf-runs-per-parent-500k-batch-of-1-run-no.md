@@ -1,7 +1,7 @@
 ## o4: the leaf runs per parent — 500k batch-of-1 run_node calls for a fanout-1 determinant lookup
 
 category: perf | severity: high | verdict: CONFIRMED | finder: perf:olap-temporal
-outcome: deferred: no commit landed the batched leaf; the leaf still runs per parent — o4 moved only 0.96x vs the night (scenarios/delta.md)
+outcome: deferred: no commit landed the batched leaf; the leaf still runs per parent — o4 moved only 0.95x vs the night in the wall-power rerun (campaign-2026-07-23/scenarios/scenarios.md, the DELTA table)
 
 ### Summary
 

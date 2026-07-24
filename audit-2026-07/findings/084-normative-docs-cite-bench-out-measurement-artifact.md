@@ -1,7 +1,7 @@
 ## Normative docs cite bench-out measurement artifacts deleted by the 2026-07-20 pin swap
 
 category: incoherence | severity: medium | verdict: CONFIRMED | finder: r2:docs-vs-code-drift
-outcome: fixed 4de40efd (R21)
+outcome: fixed 4de40efd (R21; re-trued whole against the wall-power estate at campaign close after the battery-era retirement f474202a)
 
 ### Summary
 

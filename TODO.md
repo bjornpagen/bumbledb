@@ -17,13 +17,15 @@
   dormant instruments or delete — an owner ruling, not yet made; until
   it is, they stay.
 - **The campaign's owed bench lanes** (`bench-out/campaign-2026-07-23/
-  MANIFEST.txt` records the run PARTIAL): the repeat durable suite runs
-  (r2/r3), the three ephemeral reps (the first like-for-like durability
-  twins post-R20 — never min-merge them with the night's ephemeral rows;
-  the merge refuses), sweep-commit (needs the obs build), and the
-  unlanded `adversarial` subcommand (the chart derives from scenarios'
-  capped lanes meanwhile). Landing the reps restores min-over-N suite
-  sampling and re-arms the README's ephemeral read claim.
+  MANIFEST.txt`, 11 of 14 landable lanes COMPLETE): the wall-power
+  reruns of **writes** and **churn** (their battery-era RUN 1 outputs
+  retired whole at `f474202a`; the README's ladder and churn sections
+  ride the committed night pins and say so), **sweep-commit** (needs the
+  obs build), and the unlanded `adversarial` subcommand (the chart
+  derives from scenarios' capped lanes meanwhile). All six suite reps
+  are landed — min-of-3 per store kind, the like-for-like NOSYNC
+  ephemeral pairing (never min-merge them with the night's ephemeral
+  rows; the merge refuses).
 - **The audit's three deferred findings** (stamps in
   `audit-2026-07/findings/`): 014 (the leaf still runs per parent —
   batch-of-1 `run_node` on fanout-1 lookups), 044 (the forced-map
@@ -41,11 +43,14 @@ ruling (089 → R19); every finding carries an `outcome:` stamp and the
 tally rides `audit-2026-07/README.md`. The 22 rulings are statused in
 `audit-2026-07/RULINGS.md` (21 IMPLEMENTED, R5 PARTIAL with its owed TS
 + Lean tail). The R20 corpus regeneration re-ran every published number
-(`bench-out/campaign-2026-07-23/`, SUMMARY.md: scenarios geomean
-0.08 → 0.056, churn 0.81 vs-night, crud loss narrowed to 0.60×,
-`closure_fanout`'s 30× honestly down to 6.7×), and R21 re-pinned every
-doc citation + regenerated every README graph from the campaign
-artifacts (`4de40efd`).
+on wall power (the battery-era RUN 1 retired whole at `f474202a`;
+`bench-out/campaign-2026-07-23/SUMMARY.md`: scenarios geomean
+0.0835 → 0.0554, reads 21.2× gated / 24.8× all-33 durable min-of-3,
+crud loss at 0.59×, `closure_fanout`'s 30× honestly down to 13.3× —
+the SQLite twin is that family's volatile side), and R21 re-pinned
+every doc citation + regenerated every README graph from the campaign
+artifacts (`4de40efd`, re-trued whole against the wall-power estate at
+campaign close).
 
 **The primer 0.6.0 cutover landed with the destructure run (2026-07-20):**
 paradigm C is live in both repos, the primer estate is cleaned, and the

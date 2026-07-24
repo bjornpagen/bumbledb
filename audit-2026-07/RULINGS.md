@@ -165,13 +165,13 @@ that trigger is recorded here.
   "WCOJ bounds the damage" claim — true only near the GJ end, which 009 now makes real).
 
 ### R20 — RNG fixed, corpora regenerate, numbers re-run (073)
-**Status: IMPLEMENTED — `c815308a` (splitmix64), `5b2958e6` (the corpus regenerated), the campaign rerun (`1e9d39ad`/`8065d38c`/`c74242c5`) re-earned every published number.**
+**Status: IMPLEMENTED — `c815308a` (splitmix64), `5b2958e6` (the corpus regenerated); the battery-era rerun retired whole at `f474202a`, and the wall-power campaign rerun (`1cd8e978`/`7cef4e13`/`687f0201`/`af9e0f0f`) re-earned every published number (writes + churn reruns still owed, MANIFEST PENDING — their sections ride the night pins).**
 The seeded arm emits true 64-bit output. Every pinned corpus digest regenerates; all
 published numbers re-run in the end-of-campaign bench night.
 - **Flush:** `corpus_gen/rng.rs`; corpus fixtures; README graphs at campaign close.
 
 ### R21 — Docs re-pin against the post-campaign bench run (084)
-**Status: IMPLEMENTED — `4de40efd` (every doc citation re-pinned to campaign-2026-07-23; retired paths named as git-history records; README graphs + headlines regenerated).**
+**Status: IMPLEMENTED — `4de40efd` (every doc citation re-pinned to campaign-2026-07-23; retired paths named as git-history records; README graphs + headlines regenerated), re-trued whole at campaign close against the wall-power estate after the battery-era numbers retired at `f474202a`.**
 Citations to deleted bench-out artifacts are not resurrected; normative docs re-pin
 against the fresh run once the campaign lands.
 - **Flush:** every `docs/architecture/*` measurement citation, at campaign close.
