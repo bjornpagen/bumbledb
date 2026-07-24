@@ -1186,13 +1186,15 @@ impl Context {
             // variable must have resolved to an interval, and the value
             // side checks against u64 exactly as a u64 variable side
             // would (the measure itself is u64 by definition and never
-            // screens).
+            // screens) — the closed wall included: the scalar side is an
+            // order position (R4).
             Shaped::OrdMeasureVar {
                 op,
                 interval,
                 scalar,
             } => {
                 screen_order_operand(index, Some(self.resolved_var_type(*scalar)))?;
+                self.screen_order_closed(index, *scalar)?;
                 if !matches!(
                     self.resolved_var_type(*interval),
                     ValueType::Interval { .. }
@@ -1293,8 +1295,11 @@ impl Context {
             // of the membership binding rule, for terms already bound
             // elsewhere). The interval⊇interval form is gone: that
             // predicate is `Allen(COVERS)`, and an interval-typed point
-            // side is an illegal comparison.
+            // side is an illegal comparison. The point side is an order
+            // position — membership sweeps the interval's order — so
+            // the closed wall screens it (R4).
             Shaped::PointInVarVar { lhs, rhs } => {
+                self.screen_order_closed(index, *rhs)?;
                 let ValueType::Interval { element, .. } = *self.resolved_var_type(*lhs) else {
                     return Err(ValidationError::IllegalComparison { index });
                 };

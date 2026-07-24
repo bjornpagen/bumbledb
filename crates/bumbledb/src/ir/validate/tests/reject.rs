@@ -171,7 +171,8 @@ fn accepts_order_comparison_on_bool_in_both_written_orders() {
 
 /// The closed-relation fixture for the R4 order wall: `Priority` is
 /// closed (two rows), `Ticket.priority` is a declared containment into
-/// its id — both positions are closed references.
+/// its id — both positions are closed references. `Ticket.span` gives
+/// the wall's measure and point-membership spellings an interval side.
 fn closed_schema() -> Schema {
     use bumbledb_theory::schema::{Row, Side, StatementDescriptor};
     let field = |name: &str, ty: ValueType| FieldDescriptor {
@@ -187,6 +188,13 @@ fn closed_schema() -> Schema {
                 fields: vec![
                     field("id", ValueType::U64),
                     field("priority", ValueType::U64),
+                    field(
+                        "span",
+                        ValueType::Interval {
+                            element: IntervalElement::U64,
+                            width: None,
+                        },
+                    ),
                 ],
             },
             RelationDescriptor {
@@ -240,6 +248,53 @@ fn rejects_order_comparison_on_a_closed_reference() {
             op: CmpOp::Lt,
             lhs: var(1),
             rhs: Term::Literal(Value::U64(1)),
+        })],
+    });
+    assert_eq!(
+        closed_expect_err(&query),
+        ValidationError::OrderComparisonOnClosedReference { index: 0 }
+    );
+}
+
+#[test]
+fn rejects_a_measure_comparison_against_a_closed_reference() {
+    // Lt(Duration(w), priority): the measure's scalar side is an order
+    // position — the closed wall screens it exactly as a plain `Lt`
+    // side (R4).
+    let query = Query::single(Rule {
+        finds: vec![FindTerm::Var(VarId(0))],
+        atoms: vec![atom(
+            RelationId(0),
+            vec![(0, var(0)), (1, var(1)), (2, var(2))],
+        )],
+        negated: vec![],
+        conditions: vec![ConditionTree::Leaf(Comparison {
+            op: CmpOp::Lt,
+            lhs: Term::Measure(VarId(2)),
+            rhs: var(1),
+        })],
+    });
+    assert_eq!(
+        closed_expect_err(&query),
+        ValidationError::OrderComparisonOnClosedReference { index: 0 }
+    );
+}
+
+#[test]
+fn rejects_point_membership_of_a_closed_reference() {
+    // span ∋ priority: point membership sweeps the interval's order —
+    // a closed-bound point side is refused (R4).
+    let query = Query::single(Rule {
+        finds: vec![FindTerm::Var(VarId(0))],
+        atoms: vec![atom(
+            RelationId(0),
+            vec![(0, var(0)), (1, var(1)), (2, var(2))],
+        )],
+        negated: vec![],
+        conditions: vec![ConditionTree::Leaf(Comparison {
+            op: CmpOp::PointIn,
+            lhs: var(2),
+            rhs: var(1),
         })],
     });
     assert_eq!(
