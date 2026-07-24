@@ -169,11 +169,31 @@ impl Context {
                                     find: find_idx,
                                 });
                             }
-                            if !matches!(
-                                self.resolved_var_type(*var),
-                                ValueType::U64 | ValueType::I64
-                            ) {
+                            // The orderable roster (R3): Min/Max admit
+                            // bool — false < true, so `Max` is Any and
+                            // `Min` is All, the two quantifiers as the
+                            // 0/1 encoding's extremes. Sum over bool
+                            // stays refused: a quantifier is not an
+                            // addition.
+                            let admitted = match op {
+                                AggOp::Sum => matches!(
+                                    self.resolved_var_type(*var),
+                                    ValueType::U64 | ValueType::I64
+                                ),
+                                _ => matches!(
+                                    self.resolved_var_type(*var),
+                                    ValueType::U64 | ValueType::I64 | ValueType::Bool
+                                ),
+                            };
+                            if !admitted {
                                 return Err(ValidationError::AggregateInputType { find: find_idx });
+                            }
+                            // The closed-reference wall (R4): folding a
+                            // declaration-order accident is ordering it.
+                            if self.closed_vars.contains(var) {
+                                return Err(ValidationError::AggregateOverClosedReference {
+                                    find: find_idx,
+                                });
                             }
                         }
                         // CountDistinct is legal over every type — equality
@@ -228,9 +248,16 @@ impl Context {
                             }
                             if !matches!(
                                 self.resolved_var_type(*key),
-                                ValueType::U64 | ValueType::I64
+                                ValueType::U64 | ValueType::I64 | ValueType::Bool
                             ) {
                                 return Err(ValidationError::NonOrderableArgKey { find: find_idx });
+                            }
+                            // The closed-reference wall (R4): an Arg
+                            // restriction sweeps the key's order.
+                            if self.closed_vars.contains(key) {
+                                return Err(ValidationError::AggregateOverClosedReference {
+                                    find: find_idx,
+                                });
                             }
                             let is_max = matches!(op, AggOp::ArgMax { .. });
                             match arg_spec {

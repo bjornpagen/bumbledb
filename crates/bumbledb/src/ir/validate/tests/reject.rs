@@ -144,9 +144,10 @@ fn rejects_self_comparison() {
 }
 
 #[test]
-fn rejects_order_comparison_on_bool_in_both_written_orders() {
-    // Posting.flag is Bool (field 5): both written orders get the dedicated
-    // equality-only refusal before generic classification.
+fn accepts_order_comparison_on_bool_in_both_written_orders() {
+    // Posting.flag is Bool (field 5): bool is orderable, false < true —
+    // the strict 0/1 encoding IS the order (ruled 2026-07-23, R3), so
+    // both written orders validate.
     for literal_on_left in [false, true] {
         let literal = Term::Literal(Value::Bool(true));
         let (lhs, rhs) = if literal_on_left {
@@ -164,11 +165,143 @@ fn rejects_order_comparison_on_bool_in_both_written_orders() {
                 rhs,
             })],
         });
+        crate::ir::validate::validate(&schema(), &query).expect("bool orders: false < true");
+    }
+}
+
+/// The closed-relation fixture for the R4 order wall: `Priority` is
+/// closed (two rows), `Ticket.priority` is a declared containment into
+/// its id — both positions are closed references.
+fn closed_schema() -> Schema {
+    use bumbledb_theory::schema::{Row, Side, StatementDescriptor};
+    let field = |name: &str, ty: ValueType| FieldDescriptor {
+        name: name.into(),
+        value_type: ty,
+        generation: Generation::None,
+    };
+    SchemaDescriptor {
+        relations: vec![
+            RelationDescriptor {
+                extension: None,
+                name: "Ticket".into(),
+                fields: vec![
+                    field("id", ValueType::U64),
+                    field("priority", ValueType::U64),
+                ],
+            },
+            RelationDescriptor {
+                extension: Some(Box::new([
+                    Row {
+                        handle: "Low".into(),
+                        values: Box::new([]),
+                    },
+                    Row {
+                        handle: "High".into(),
+                        values: Box::new([]),
+                    },
+                ])),
+                name: "Priority".into(),
+                fields: vec![],
+            },
+        ],
+        statements: vec![StatementDescriptor::Containment {
+            source: Side {
+                relation: RelationId(0),
+                projection: Box::new([FieldId(1)]),
+                selection: Box::new([]),
+            },
+            target: Side {
+                relation: RelationId(1),
+                projection: Box::new([FieldId(0)]),
+                selection: Box::new([]),
+            },
+        }],
+    }
+    .validate()
+    .expect("valid fixture")
+}
+
+fn closed_expect_err(query: &Query) -> ValidationError {
+    crate::ir::validate::validate(&closed_schema(), query)
+        .expect_err("the closed order wall refuses")
+}
+
+#[test]
+fn rejects_order_comparison_on_a_closed_reference() {
+    // Ticket.priority contains into the closed Priority(id): its var's
+    // words are declaration indices, so `Lt` on it is refused — the
+    // engine-judged wall, identical on every surface (ruled 2026-07-23,
+    // R4).
+    let query = Query::single(Rule {
+        finds: vec![FindTerm::Var(VarId(0))],
+        atoms: vec![atom(RelationId(0), vec![(0, var(0)), (1, var(1))])],
+        negated: vec![],
+        conditions: vec![ConditionTree::Leaf(Comparison {
+            op: CmpOp::Lt,
+            lhs: var(1),
+            rhs: Term::Literal(Value::U64(1)),
+        })],
+    });
+    assert_eq!(
+        closed_expect_err(&query),
+        ValidationError::OrderComparisonOnClosedReference { index: 0 }
+    );
+}
+
+#[test]
+fn rejects_min_max_folds_over_a_closed_reference() {
+    // Max(priority) ranks by declaration order — refused for every
+    // ordering fold (R4); CountDistinct stays legal (equality-only).
+    for op in [AggOp::Min, AggOp::Max, AggOp::Sum] {
+        let query = Query::single(Rule {
+            finds: vec![
+                FindTerm::Var(VarId(0)),
+                FindTerm::Aggregate {
+                    op,
+                    over: Some(VarId(1)),
+                },
+            ],
+            atoms: vec![atom(RelationId(0), vec![(0, var(0)), (1, var(1))])],
+            negated: vec![],
+            conditions: vec![],
+        });
         assert_eq!(
-            expect_err(&query),
-            ValidationError::OrderComparisonOnBool { index: 0 }
+            closed_expect_err(&query),
+            ValidationError::AggregateOverClosedReference { find: 1 }
         );
     }
+    let count_distinct = Query::single(Rule {
+        finds: vec![
+            FindTerm::Var(VarId(0)),
+            FindTerm::Aggregate {
+                op: AggOp::CountDistinct,
+                over: Some(VarId(1)),
+            },
+        ],
+        atoms: vec![atom(RelationId(0), vec![(0, var(0)), (1, var(1))])],
+        negated: vec![],
+        conditions: vec![],
+    });
+    crate::ir::validate::validate(&closed_schema(), &count_distinct)
+        .expect("CountDistinct needs equality only");
+}
+
+#[test]
+fn rejects_an_arg_key_on_a_closed_reference() {
+    // ArgMax(id, priority) sweeps the key's order — the same wall (R4).
+    let query = Query::single(Rule {
+        finds: vec![FindTerm::Aggregate {
+            op: AggOp::ArgMax { key: VarId(1) },
+            over: Some(VarId(0)),
+        }],
+        atoms: vec![atom(RelationId(0), vec![(0, var(0)), (1, var(1))])],
+        negated: vec![],
+        conditions: vec![],
+    });
+    assert_eq!(
+        closed_expect_err(&query),
+        ValidationError::AggregateOverClosedReference { find: 0 }
+    );
 }
 
 #[test]

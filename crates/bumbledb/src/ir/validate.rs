@@ -673,6 +673,13 @@ struct Context {
     param_kinds: BTreeMap<ParamId, ParamKind>,
     /// Variables bound by at least one positive atom (any field kind).
     atom_vars: BTreeSet<VarId>,
+    /// Variables bound at a closed-reference position (a field whose
+    /// declared containment targets a closed relation's id, or the
+    /// closed relation's own id field — `ir/render`'s `ClosedRefs`
+    /// table). Their words are declaration-order accidents, so order
+    /// positions — `Lt`-family comparisons, `Sum`/`Min`/`Max` folds,
+    /// and Arg keys — refuse them (ruled 2026-07-23, R4).
+    closed_vars: BTreeSet<VarId>,
     /// Variables with at least one positive *scalar*-field binding — the
     /// enumerable-domain witnesses for the membership-only rule.
     scalar_bound_vars: BTreeSet<VarId>,

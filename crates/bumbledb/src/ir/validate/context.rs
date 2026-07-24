@@ -297,7 +297,9 @@ fn sealed_mask(mask: MaskTerm, mirrored: bool) -> MaskConst {
 }
 
 /// The order operators' operand screen: every equality-only type gets its
-/// dedicated diagnostic before accepted comparison classification.
+/// dedicated diagnostic before accepted comparison classification. Bool
+/// is orderable — `false < true`, the strict 0/1 encoding IS the order
+/// (ruled 2026-07-23, R3) — so it passes with U64 and I64.
 fn screen_order_operand(index: usize, operand: Option<&ValueType>) -> Result<(), ValidationError> {
     match operand {
         Some(ValueType::Interval { .. }) => {
@@ -307,12 +309,22 @@ fn screen_order_operand(index: usize, operand: Option<&ValueType>) -> Result<(),
             Err(ValidationError::OrderComparisonOnFixedBytes { index })
         }
         Some(ValueType::String) => Err(ValidationError::OrderComparisonOnString { index }),
-        Some(ValueType::Bool) => Err(ValidationError::OrderComparisonOnBool { index }),
         _ => Ok(()),
     }
 }
 
 impl Context {
+    /// The closed-reference order wall (ruled 2026-07-23, R4): a
+    /// closed-bound variable's words are declaration indices — ordering
+    /// them is refused exactly as the enum's ordinal order was, judged
+    /// once here in the engine and therefore identical on every surface.
+    fn screen_order_closed(&self, index: usize, var: VarId) -> Result<(), ValidationError> {
+        if self.closed_vars.contains(&var) {
+            return Err(ValidationError::OrderComparisonOnClosedReference { index });
+        }
+        Ok(())
+    }
+
     // --- anchoring -------------------------------------------------------
 
     fn bind_var_mono(&mut self, var: VarId, value_type: &ValueType) -> Result<(), ValidationError> {
@@ -474,6 +486,10 @@ impl Context {
         idb: &super::IdbSignatures<'_>,
         rule: &LoweredRule,
     ) -> Result<(), ValidationError> {
+        // The closed-reference position table (`ir/render::ClosedRefs` —
+        // one owner of the resolution): vars bound at closed positions
+        // are recorded for the R4 order wall.
+        let closed_refs = crate::ir::render::ClosedRefs::build(schema);
         let occurrences = rule
             .atoms
             .iter()
@@ -524,6 +540,16 @@ impl Context {
                     self.check_interval_binding(occ_idx, negated, *field, *element, *width, term)?;
                 } else {
                     self.check_scalar_binding(occ_idx, negated, *field, field_type, term)?;
+                    // A closed-reference position marks its variable for
+                    // the order wall (R4): the words are declaration
+                    // indices, not semantics. `Idb` columns carry plain
+                    // types — closedness is a stored-relation fact.
+                    if let crate::ir::AtomSource::Edb(relation_id) = atom.source
+                        && let Term::Var(var) = term
+                        && closed_refs.is_closed(relation_id, *field)
+                    {
+                        self.closed_vars.insert(*var);
+                    }
                 }
             }
         }
@@ -1102,14 +1128,20 @@ impl Context {
                     set: *set,
                 })
             }
-            // `Lt`/`Le`/`Gt`/`Ge`: U64/U64 and I64/I64 only — the operand
-            // screen first, in written order.
+            // `Lt`/`Le`/`Gt`/`Ge`: same-typed orderable sides — U64,
+            // I64, and Bool (false < true, R3) — the operand screen
+            // first, in written order, then the closed-reference wall
+            // (ordering a declaration-order accident, refused — R4).
             Shaped::OrdVarVar { op, lhs, rhs } => {
                 for var in [lhs, rhs] {
                     screen_order_operand(index, Some(self.resolved_var_type(*var)))?;
+                    self.screen_order_closed(index, *var)?;
                 }
                 let lhs_type = self.resolved_var_type(*lhs).clone();
-                if !matches!(lhs_type, ValueType::U64 | ValueType::I64) {
+                if !matches!(
+                    lhs_type,
+                    ValueType::U64 | ValueType::I64 | ValueType::Bool
+                ) {
                     return Err(ValidationError::IllegalComparison { index });
                 }
                 if *self.resolved_var_type(*rhs) != lhs_type {
@@ -1137,8 +1169,12 @@ impl Context {
                 for operand in &screens {
                     screen_order_operand(index, operand.as_ref())?;
                 }
+                self.screen_order_closed(index, *var)?;
                 let var_type = self.resolved_var_type(*var).clone();
-                if !matches!(var_type, ValueType::U64 | ValueType::I64) {
+                if !matches!(
+                    var_type,
+                    ValueType::U64 | ValueType::I64 | ValueType::Bool
+                ) {
                     return Err(ValidationError::IllegalComparison { index });
                 }
                 let value = self.check_const(index, constant, &var_type)?;

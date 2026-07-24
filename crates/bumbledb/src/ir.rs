@@ -179,9 +179,12 @@ pub enum AggOp {
     /// Accumulates in i128 and range-checks the final value once:
     /// Sum(I64)→I64, Sum(U64)→U64; out-of-range is a runtime query error.
     Sum,
-    /// U64 and I64 only (the orderable types — intervals excluded).
+    /// The orderable types — U64, I64, and bool, ordered `false < true`
+    /// (ruled 2026-07-23, R3: `Min` over bool is **All**); intervals and
+    /// closed references stay excluded (R4).
     Min,
-    /// U64 and I64 only, as [`AggOp::Min`].
+    /// The orderable types, as [`AggOp::Min`] — `Max` over bool is
+    /// **Any**, the other extreme of the 0/1 encoding.
     Max,
     /// Nullary (`over: None`): |the group's binding set|, result type U64.
     Count,
@@ -192,8 +195,8 @@ pub enum AggOp {
     /// bindings attaining the **maximum** of `key`, and the group's output
     /// rows are projected from that restricted set — a tie yields every
     /// attaining row. `over` is the carried variable; `key` must be
-    /// orderable (U64/I64), and all Arg terms in one query share one key
-    /// and one direction.
+    /// orderable (U64/I64, and bool per R3), and all Arg terms in one
+    /// query share one key and one direction.
     ArgMax { key: VarId },
     /// Arg-restriction toward the **minimum** of `key`; rules as
     /// [`AggOp::ArgMax`].

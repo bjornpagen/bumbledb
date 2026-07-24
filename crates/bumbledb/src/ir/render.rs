@@ -65,11 +65,13 @@ use bumbledb_theory::schema::{FieldDescriptor, FieldId, RelationId};
 /// target is a closed relation's id and whose source projection is that
 /// single field — the same inference the grounding's complement fold runs
 /// (`plan/ground/evaluate.rs::containment_into_id`) — plus each closed
-/// relation's own id field, which maps to itself.
-struct ClosedRefs(BTreeMap<(RelationId, FieldId), RelationId>);
+/// relation's own id field, which maps to itself. Shared with validation:
+/// the closed-reference order refusal (ruled 2026-07-23, R4) resolves
+/// its positions through this one table, never a second walk.
+pub(crate) struct ClosedRefs(BTreeMap<(RelationId, FieldId), RelationId>);
 
 impl ClosedRefs {
-    fn build(schema: &Schema) -> Self {
+    pub(crate) fn build(schema: &Schema) -> Self {
         let mut map = BTreeMap::new();
         for statement in schema.containments() {
             if !matches!(statement.enforcement, Enforcement::Closed { .. }) {
@@ -94,6 +96,12 @@ impl ClosedRefs {
             }
         }
         Self(map)
+    }
+
+    /// Whether `(relation, field)` is a closed-reference position — the
+    /// R4 refusal's one resolution question.
+    pub(crate) fn is_closed(&self, relation: RelationId, field: FieldId) -> bool {
+        self.0.contains_key(&(relation, field))
     }
 
     /// The handle spelling for a literal at `(relation, field)`: `Some`
