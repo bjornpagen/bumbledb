@@ -1,6 +1,7 @@
 ## t2/r2: per-key Allen self-join enumerates Σ n_k² pairs; ~2.7% survive — the order-based overlap join is absent
 
 category: perf | severity: high | verdict: CONFIRMED | finder: perf:olap-temporal
+outcome: fixed be405715
 
 ### Summary
 

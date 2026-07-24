@@ -1,6 +1,7 @@
 ## Closed-relation column values are expansion-time constants but only readable through runtime queries
 
 category: missing-free-feature | severity: low | verdict: CONFIRMED | finder: macros:core
+outcome: fixed f7c6bf4c (R14)
 
 ### Summary
 

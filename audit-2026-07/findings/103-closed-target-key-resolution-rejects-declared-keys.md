@@ -1,6 +1,7 @@
 ## Closed-target key resolution rejects declared keys while citing them as available candidates
 
 category: incoherence | severity: low | verdict: CONFIRMED | finder: engine:schema-api
+outcome: fixed b7ddb7e0
 
 ### Summary
 

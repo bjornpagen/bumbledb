@@ -1,6 +1,7 @@
 ## Manifest rendering re-materializes the whole statement list per statement — O(N^2) clones
 
 category: perf | severity: low | verdict: CONFIRMED | finder: engine:schema-api
+outcome: fixed 7bea2d96
 
 ### Summary
 

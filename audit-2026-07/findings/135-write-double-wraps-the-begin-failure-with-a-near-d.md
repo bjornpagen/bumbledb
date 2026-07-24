@@ -1,6 +1,7 @@
 ## write() double-wraps the begin failure with a near-duplicate context
 
 category: inelegance | severity: low | verdict: CONFIRMED | finder: ts:core
+outcome: fixed c31416e1
 
 ### Summary
 

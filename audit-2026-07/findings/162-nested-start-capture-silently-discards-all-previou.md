@@ -1,6 +1,7 @@
 ## Nested start_capture is only debug-guarded: a latent silent-event-loss hazard, not an active bug
 
 category: design-robustness | severity: low | verdict: PLAUSIBLE | finder: engine:interval-allen
+outcome: fixed f15a40c9
 
 ### Summary
 

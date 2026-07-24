@@ -1,6 +1,7 @@
 ## Root README undercounts the cookbook: "twenty-nine worked schemas" vs the pinned 30
 
 category: incoherence | severity: low | verdict: CONFIRMED | finder: r2:docs-vs-code-drift
+outcome: fixed a3a81a1f
 
 ### Summary
 

@@ -1,6 +1,7 @@
 ## Arg-restriction cannot key on the measure: "longest interval per group" is unspellable though every ingredient is paid for
 
 category: missing-free-feature | severity: low | verdict: CONFIRMED | finder: cross:free-features
+outcome: fixed 113d5f1e + db1d8f74 (R5)
 
 ### Summary
 

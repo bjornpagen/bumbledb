@@ -1,6 +1,7 @@
 ## Mirror pairing uses raw side equality while sealed sides and statement identity are canonicalized
 
 category: bug | severity: medium | verdict: CONFIRMED | finder: lean:schema-values
+outcome: fixed 7bea2d96
 
 ### Summary
 

@@ -1,6 +1,7 @@
 ## Query results crossing outward copy every string/bytes payload twice — `rows_out` clones cells it already owns
 
 category: perf | severity: medium | verdict: CONFIRMED | finder: r2:concurrency-unsafe-ffi
+outcome: fixed b3e355eb
 
 ### Summary
 

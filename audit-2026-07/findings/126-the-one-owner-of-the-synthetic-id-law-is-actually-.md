@@ -1,6 +1,7 @@
 ## "THE one owner of the synthetic-id law" has five owners; Resolver re-derives it in three near-identical scans
 
 category: unification | severity: low | verdict: CONFIRMED | finder: theory
+outcome: fixed d7061f31
 
 ### Summary
 

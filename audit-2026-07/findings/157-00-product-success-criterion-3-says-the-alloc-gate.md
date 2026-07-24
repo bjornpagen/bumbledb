@@ -1,6 +1,7 @@
 ## 00-product success criterion 3 still says the alloc gate becomes a CI gate "when CI exists" — CI exists and runs it
 
 category: incoherence | severity: low | verdict: CONFIRMED | finder: r2:docs-vs-code-drift
+outcome: fixed 5e3a68ee
 
 ### Summary
 

@@ -1,6 +1,7 @@
 ## The FilterPredicate interpreter exists twice: view `row_matches` vs key-probe `fact_matches`
 
 category: unification | severity: medium | verdict: CONFIRMED | finder: cross:branching
+outcome: deferred: both FilterPredicate interpreters still stand (view row_matches / key-probe fact_matches); no campaign commit unified them
 
 ### Summary
 

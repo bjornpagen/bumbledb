@@ -1,6 +1,7 @@
 ## Bridge binary self-reports 0.1.0 while the shipped package is 0.6.0 — the one runtime-readable version string is exempt from the lockstep gate
 
 category: incoherence | severity: low | verdict: CONFIRMED | finder: ts:bridge
+outcome: fixed 232dbfb6 + 6abd046d
 
 ### Summary
 

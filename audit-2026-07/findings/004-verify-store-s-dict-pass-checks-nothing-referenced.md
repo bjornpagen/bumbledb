@@ -1,6 +1,7 @@
 ## verify_store's `_dict` pass checks nothing: referenced-id-without-reverse, forward/reverse desync, and out-of-bounds dict ids all pass a clean sweep
 
 category: missing-free-feature | severity: high | verdict: CONFIRMED | finder: engine:storage
+outcome: fixed db9b934d
 
 ### Summary
 

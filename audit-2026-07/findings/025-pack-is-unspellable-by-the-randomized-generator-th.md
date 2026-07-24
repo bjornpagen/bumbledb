@@ -1,6 +1,7 @@
 ## The random verify lane's type caps the grammar at SQL-expressible; Pack query shapes are structurally unreachable by any randomized lane
 
 category: missing-free-feature | severity: medium | verdict: CONFIRMED | finder: r2:differential-apparatus-soundness
+outcome: fixed 6fef9ee6
 
 ### Summary
 

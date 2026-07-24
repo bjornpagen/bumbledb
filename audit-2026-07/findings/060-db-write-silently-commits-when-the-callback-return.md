@@ -1,6 +1,7 @@
 ## db.write silently commits when the callback returns abandon(payload)
 
 category: bug | severity: medium | verdict: CONFIRMED | finder: ts:core
+outcome: fixed 58e63af9 (R10)
 
 ### Summary
 

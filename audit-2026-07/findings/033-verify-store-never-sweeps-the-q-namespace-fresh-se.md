@@ -1,6 +1,7 @@
 ## verify_store never sweeps the Q fresh-sequence namespace: the never-reissue high-water is unverified offline
 
 category: missing-free-feature | severity: medium | verdict: CONFIRMED | finder: engine:storage
+outcome: fixed db9b934d
 
 ### Summary
 

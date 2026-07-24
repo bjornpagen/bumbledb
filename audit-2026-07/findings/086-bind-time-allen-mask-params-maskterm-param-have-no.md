@@ -1,6 +1,7 @@
 ## Bind-time Allen mask params (MaskTerm::Param) have no randomized or parity coverage in the differential apparatus
 
 category: missing-free-feature | severity: low | verdict: CONFIRMED | finder: r2:differential-apparatus-soundness
+outcome: fixed 6fef9ee6
 
 ### Summary
 

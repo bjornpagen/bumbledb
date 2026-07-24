@@ -1,6 +1,7 @@
 ## Version lockstep gate blind spots: the bridge crate version is ungated and the smoke assertion that could witness it checks only non-emptiness
 
 category: unification | severity: medium | verdict: CONFIRMED | finder: r2:scripts-ci-packaging
+outcome: fixed 88f3cf93
 
 ### Summary
 

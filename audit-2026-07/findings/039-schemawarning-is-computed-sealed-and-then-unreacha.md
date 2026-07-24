@@ -1,6 +1,7 @@
 ## SchemaWarning is computed, sealed, and then unreachable through the Db lifecycle
 
 category: incoherence | severity: medium | verdict: CONFIRMED | finder: engine:schema-api
+outcome: fixed 8ed75056
 
 ### Summary
 

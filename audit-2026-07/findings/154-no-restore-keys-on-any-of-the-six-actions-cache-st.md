@@ -1,6 +1,7 @@
 ## No restore-keys on any of the six cache steps — every lockfile or toolchain repin forces fully cold CI builds
 
 category: perf | severity: low | verdict: CONFIRMED | finder: r2:scripts-ci-packaging
+outcome: fixed e5a9ef39
 
 ### Summary
 

@@ -1,6 +1,7 @@
 ## Meta readers conflate present-but-mis-sized values with absent keys as MetaMissing, contradicting the taxonomy read_store_kind pins in the same file
 
 category: incoherence | severity: low | verdict: CONFIRMED | finder: r2:crash-recovery-lifecycle
+outcome: fixed 9836d1ee
 
 ### Summary
 

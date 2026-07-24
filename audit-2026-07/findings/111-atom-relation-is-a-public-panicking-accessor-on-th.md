@@ -1,6 +1,7 @@
 ## Atom::relation() is a public panicking accessor on the pure-data IR; the Option form sits directly below it
 
 category: inappropriate-branching | severity: low | verdict: CONFIRMED | finder: lean:query
+outcome: fixed fd1c3676 + 6aecf449
 
 ### Summary
 

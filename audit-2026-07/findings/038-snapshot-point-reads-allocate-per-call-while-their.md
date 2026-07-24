@@ -1,6 +1,7 @@
 ## Snapshot point reads allocate per call while their WriteTx twins are pooled under an explicit allocation-free contract
 
 category: perf | severity: medium | verdict: CONFIRMED | finder: engine:schema-api
+outcome: fixed d890f2aa
 
 ### Summary
 

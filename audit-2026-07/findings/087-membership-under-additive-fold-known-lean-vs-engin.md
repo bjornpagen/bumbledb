@@ -1,6 +1,7 @@
 ## Membership under an additive fold: the fold-domain divergence is fenced out of the conformance corpus instead of pinned
 
 category: lean-rust-drift | severity: medium | verdict: CONFIRMED | finder: r2:lean-unswept-modules
+outcome: fixed 5a8f89c0 + bf3558ef + 5b2958e6
 
 ### Summary
 

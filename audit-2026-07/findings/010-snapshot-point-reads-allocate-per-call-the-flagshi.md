@@ -1,6 +1,7 @@
 ## Snapshot point reads allocate per call — the flagship keyed-get lane violates the allocation-free point-read contract
 
 category: perf | severity: high | verdict: CONFIRMED | finder: perf:points
+outcome: fixed d890f2aa
 
 ### Summary
 

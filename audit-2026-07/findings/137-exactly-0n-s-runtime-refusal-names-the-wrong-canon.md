@@ -1,6 +1,7 @@
 ## exactly(0n)'s runtime refusal names the wrong canonical shape (`{0..0}` instead of `{0}`)
 
 category: incoherence | severity: low | verdict: CONFIRMED | finder: ts:types
+outcome: fixed c31416e1
 
 ### Summary
 

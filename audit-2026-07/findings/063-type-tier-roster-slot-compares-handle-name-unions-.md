@@ -1,6 +1,7 @@
 ## Type-tier roster slot compares handle-name unions; runtime compares roster identity — well-typed statements throw at construction
 
 category: incoherence | severity: medium | verdict: CONFIRMED | finder: ts:types
+outcome: fixed fb7e5073
 
 ### Summary
 

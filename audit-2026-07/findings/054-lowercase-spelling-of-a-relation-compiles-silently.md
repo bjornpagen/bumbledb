@@ -1,6 +1,7 @@
 ## Lowercase spelling of a relation compiles silently — the UpperCamel/lowercase partition is enforced on heads only
 
 category: incoherence | severity: medium | verdict: CONFIRMED | finder: query:crates
+outcome: fixed 7bcf5dd2
 
 ### Summary
 

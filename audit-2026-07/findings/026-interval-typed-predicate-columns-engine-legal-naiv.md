@@ -1,6 +1,7 @@
 ## Interval-typed predicate columns: bench apparatus never constructs one; naive derived-typing code is dead weight; membership-through-Idb has no oracle
 
 category: missing-free-feature | severity: medium | verdict: CONFIRMED | finder: r2:differential-apparatus-soundness
+outcome: fixed bc9c698e
 
 ### Summary
 

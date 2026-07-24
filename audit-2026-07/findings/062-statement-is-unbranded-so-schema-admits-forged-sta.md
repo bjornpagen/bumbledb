@@ -1,6 +1,7 @@
 ## Statement is unbranded, so schema() admits forged statements that bypass the roster wall the engine cannot backstop
 
 category: bug | severity: medium | verdict: CONFIRMED | finder: ts:types
+outcome: fixed f1fd0b72
 
 ### Summary
 

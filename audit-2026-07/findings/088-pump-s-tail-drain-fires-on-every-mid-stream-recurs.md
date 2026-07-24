@@ -1,6 +1,7 @@
 ## pump's tail drain fires on every mid-stream recursion, collapsing batch means at depth ≥ 2 in ≥ 4-node plans — but no bench lane ever builds one
 
 category: perf | severity: low | verdict: PLAUSIBLE | finder: engine:run
+outcome: fixed 0f13feff + 2f326193 (R22: the >=4-atom bench shape landed)
 
 ### Summary
 

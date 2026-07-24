@@ -1,6 +1,7 @@
 ## The root README's Rust quickstart is the one unpinned code surface in a doc estate built on fence pins
 
 category: missing-free-feature | severity: low | verdict: CONFIRMED | finder: r2:docs-vs-code-drift
+outcome: fixed a3a81a1f
 
 ### Summary
 

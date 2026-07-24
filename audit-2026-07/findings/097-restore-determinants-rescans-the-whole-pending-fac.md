@@ -1,6 +1,7 @@
 ## restore_determinants rescans the relation's whole pending-fact set per key statement, making cancel-heavy transactions quadratic
 
 category: perf | severity: low | verdict: CONFIRMED | finder: engine:storage
+outcome: fixed 8289d532
 
 ### Summary
 

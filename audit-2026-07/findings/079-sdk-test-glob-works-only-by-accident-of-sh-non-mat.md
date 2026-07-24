@@ -1,6 +1,7 @@
 ## SDK test glob survives only by sh non-match; one subdir .test.ts silently shadows all 36 suites
 
 category: bug | severity: medium | verdict: CONFIRMED | finder: r2:scripts-ci-packaging
+outcome: fixed f163e579
 
 ### Summary
 

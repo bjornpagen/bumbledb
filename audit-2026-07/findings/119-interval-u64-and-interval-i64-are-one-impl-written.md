@@ -1,6 +1,7 @@
 ## Interval&lt;u64&gt; and Interval&lt;i64&gt; are one impl written twice; the Lean spec already has the unifying representation
 
 category: unification | severity: low | verdict: CONFIRMED | finder: engine:interval-allen
+outcome: fixed f6d1719d
 
 ### Summary
 

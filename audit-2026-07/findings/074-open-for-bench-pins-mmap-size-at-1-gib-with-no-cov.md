@@ -1,6 +1,7 @@
 ## open_for_bench pins mmap_size at a constant 1 GiB — the memory-residency parity claim silently breaks at L, the gating scale, and no fairness rule checks it
 
 category: bench-honesty | severity: medium | verdict: CONFIRMED | finder: bench:honesty
+outcome: fixed e5f35cb2
 
 ### Summary
 

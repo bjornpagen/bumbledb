@@ -1,6 +1,7 @@
 ## Rng::u64() seeded arm emits only 31 bits — 'random 32-byte payload' corpora are half zeros, arms diverge, range(n>2^31) is a loaded trap
 
 category: bug | severity: medium | verdict: CONFIRMED | finder: bench:honesty
+outcome: fixed c815308a (R20; every published number re-ran at campaign close)
 
 ### Summary
 

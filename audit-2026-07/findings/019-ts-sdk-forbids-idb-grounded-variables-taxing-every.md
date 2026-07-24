@@ -1,6 +1,7 @@
 ## TS SDK forbids idb-grounded variables, taxing every recursive query with a spurious re-grounding join the engine never asked for
 
 category: missing-free-feature | severity: high | verdict: CONFIRMED | finder: cross:free-features
+outcome: fixed 6e88d33c
 
 ### Summary
 

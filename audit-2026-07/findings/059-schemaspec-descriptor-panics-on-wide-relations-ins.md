@@ -1,6 +1,7 @@
 ## SchemaSpec::descriptor panics on wide relations instead of issuing a typed SpecIssue
 
 category: bug | severity: medium | verdict: CONFIRMED | finder: theory
+outcome: fixed ec859d81
 
 ### Summary
 

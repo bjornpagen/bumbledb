@@ -1,6 +1,7 @@
 ## Naive oracle's MeasureOfRay verdict is evaluation-order-dependent; diverges from the engine's DNF lowering
 
 category: bug | severity: high | verdict: CONFIRMED | finder: r2:differential-apparatus-soundness
+outcome: fixed 6353e6fc (R6)
 
 ### Summary
 

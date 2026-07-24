@@ -1,6 +1,7 @@
 ## Trace spans pay two runtime u128 divisions per stamp; TraceEvent should carry raw ticks and convert once at drain
 
 category: perf | severity: medium | verdict: CONFIRMED | finder: engine:interval-allen
+outcome: fixed f15a40c9
 
 ### Summary
 

@@ -1,6 +1,7 @@
 ## Filtered test gates can pass vacuously on rename — the guard lean.sh invented is not unified
 
 category: incoherence | severity: medium | verdict: CONFIRMED | finder: r2:scripts-ci-packaging
+outcome: fixed c90cdc81 + 41ec17ca
 
 ### Summary
 

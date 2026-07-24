@@ -1,6 +1,7 @@
 ## The "local twin" copies: facts_per_sec twice, GhzStamp→GhzReport three times, Rotation hand-rolled at three SQLite sites
 
 category: unification | severity: low | verdict: CONFIRMED | finder: bench:honesty
+outcome: fixed 714a8222 + c55168e2
 
 ### Summary
 

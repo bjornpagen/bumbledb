@@ -1,6 +1,7 @@
 ## Exhume scan's row/descriptor pairing throws on short rows but silently drops extra cells
 
 category: incoherence | severity: low | verdict: CONFIRMED | finder: ts:core
+outcome: fixed c31416e1
 
 ### Summary
 

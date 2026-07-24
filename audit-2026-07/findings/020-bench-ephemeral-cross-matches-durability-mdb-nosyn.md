@@ -1,6 +1,7 @@
 ## bench --ephemeral cross-matches durability: MDB_NOSYNC engine vs fullfsync SQLite in the write families
 
 category: bench-honesty | severity: high | verdict: CONFIRMED | finder: bench:honesty
+outcome: fixed e5f35cb2 + 60d11a4d
 
 ### Summary
 

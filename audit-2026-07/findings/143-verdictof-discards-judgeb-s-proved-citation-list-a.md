@@ -1,6 +1,7 @@
 ## verdictOf discards judgeB's proved citation payload and re-derives it with duplicated filter predicates
 
 category: unification | severity: low | verdict: CONFIRMED | finder: lean:txn-oracle
+outcome: fixed b57aad4c
 
 ### Summary
 

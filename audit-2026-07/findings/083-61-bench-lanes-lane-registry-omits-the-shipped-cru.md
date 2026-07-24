@@ -1,6 +1,7 @@
 ## 61-bench-lanes lane registry omits the shipped crud and lawful lanes it exists to register
 
 category: incoherence | severity: medium | verdict: CONFIRMED | finder: r2:docs-vs-code-drift
+outcome: fixed 5fb96177
 
 ### Summary
 

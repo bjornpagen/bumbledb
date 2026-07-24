@@ -1,6 +1,7 @@
 ## colt gather_segment's get_unchecked invariant has no optimized-build or UB-detection referee left
 
 category: bug | severity: medium | verdict: CONFIRMED | finder: r2:concurrency-unsafe-ffi
+outcome: fixed 88f81492
 
 ### Summary
 

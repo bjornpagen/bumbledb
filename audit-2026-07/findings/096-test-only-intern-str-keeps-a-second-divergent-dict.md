@@ -1,6 +1,7 @@
 ## Test-only `dict::intern_str` keeps a second, divergent dictionary-write implementation alive
 
 category: unification | severity: low | verdict: CONFIRMED | finder: engine:storage
+outcome: fixed db9b934d
 
 ### Summary
 

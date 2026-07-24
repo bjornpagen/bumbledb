@@ -1,6 +1,7 @@
 ## Coordinate encoding `${relation}.${field}` is not injective — dotted names corrupt the class map at both tiers
 
 category: bug | severity: high | verdict: CONFIRMED | finder: ts:types
+outcome: fixed 4d30dbda
 
 ### Summary
 

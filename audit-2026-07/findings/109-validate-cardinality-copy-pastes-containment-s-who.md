@@ -1,6 +1,7 @@
 ## validate_cardinality copy-pastes containment's whole side-pair gate
 
 category: unification | severity: low | verdict: CONFIRMED | finder: lean:schema-values
+outcome: fixed 4d19deb8 (validate_side_pair extracted with the R16 validate rework)
 
 ### Summary
 

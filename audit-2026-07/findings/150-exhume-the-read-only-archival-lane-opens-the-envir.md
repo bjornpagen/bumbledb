@@ -1,6 +1,7 @@
 ## exhume — the spec'd read-only archival lane — opens the env read-write and demands a writable lock file, so it cannot read a store on read-only media
 
 category: missing-free-feature | severity: low | verdict: CONFIRMED | finder: r2:crash-recovery-lifecycle
+outcome: fixed ef5b9a42 (R17)
 
 ### Summary
 

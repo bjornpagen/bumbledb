@@ -1,6 +1,7 @@
 ## check-asm's flag-free gate enumerates a spelling subset — subs/tst/cmn/ccmn/ands/fcmp and b.cond slip through
 
 category: bug | severity: low | verdict: CONFIRMED | finder: r2:scripts-ci-packaging
+outcome: fixed fca9e72a
 
 ### Summary
 

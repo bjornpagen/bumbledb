@@ -1,6 +1,7 @@
 ## Two DurabilityLane enums encode the same axis — duralane.rs vs lanes/writes.rs
 
 category: unification | severity: medium | verdict: CONFIRMED | finder: bench:honesty
+outcome: fixed e5f35cb2 (R22)
 
 ### Summary
 

@@ -1,6 +1,7 @@
 ## refine_measure reconstructs the erased View variant from an emptiness sentinel
 
 category: inelegance | severity: low | verdict: CONFIRMED | finder: cross:branching
+outcome: fixed e76f0926
 
 ### Summary
 

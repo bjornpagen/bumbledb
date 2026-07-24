@@ -1,6 +1,7 @@
 ## fingerprint_lock TempDir uses a fixed path — concurrent test runs race remove_dir_all against a live locked store
 
 category: bug | severity: low | verdict: CONFIRMED | finder: r2:concurrency-unsafe-ffi
+outcome: fixed df3f8f68
 
 ### Summary
 

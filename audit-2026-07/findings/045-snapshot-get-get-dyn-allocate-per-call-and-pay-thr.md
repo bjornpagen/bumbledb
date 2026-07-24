@@ -1,6 +1,7 @@
 ## Snapshot point reads allocate per call — the flagship keyed-get lane (p5) is the only bench lane not beating SQLite
 
 category: lean-rust-drift | severity: medium | verdict: CONFIRMED | finder: perf:rings
+outcome: fixed d890f2aa
 
 ### Summary
 

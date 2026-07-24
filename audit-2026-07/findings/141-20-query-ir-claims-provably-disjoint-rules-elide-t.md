@@ -1,6 +1,7 @@
 ## 20-query-ir claims provably disjoint rules elide the spanning seen-set; every other authority records the opposite
 
 category: incoherence | severity: low | verdict: CONFIRMED | finder: lean:query
+outcome: fixed 5fd11030 (the ruling flush trued the doc)
 
 ### Summary
 

@@ -1,6 +1,7 @@
 ## Platform allowlist spelled twice as branches — one table would erase both
 
 category: inappropriate-branching | severity: low | verdict: CONFIRMED | finder: ts:bridge
+outcome: fixed c690e924
 
 ### Summary
 

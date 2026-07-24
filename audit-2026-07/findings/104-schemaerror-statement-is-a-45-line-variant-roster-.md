@@ -1,6 +1,7 @@
 ## SchemaError::statement() is a 44-line variant roster that a two-level representation would erase
 
 category: inappropriate-branching | severity: low | verdict: CONFIRMED | finder: engine:interval-allen
+outcome: fixed 99f157dd
 
 ### Summary
 

@@ -1,6 +1,7 @@
 ## Duplicate field in a declared FD projection dies as rustc E0124 in generated code instead of a spanned macro diagnostic
 
 category: bug | severity: medium | verdict: CONFIRMED | finder: macros:core
+outcome: fixed 8d05568e
 
 ### Summary
 

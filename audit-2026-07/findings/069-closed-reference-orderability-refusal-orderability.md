@@ -1,6 +1,7 @@
 ## Closed-reference order refusal exists only in the TS SDK — engine validation orders vocabularies silently, against the doctrine's "refused" ruling
 
 category: incoherence | severity: medium | verdict: CONFIRMED | finder: cross:free-features
+outcome: fixed 592a5ffc + 0e918f29 (R4)
 
 ### Summary
 

@@ -1,6 +1,7 @@
 ## The bytes<N> zero-pad law is implemented three independent times
 
 category: unification | severity: low | verdict: CONFIRMED | finder: engine:encoding
+outcome: fixed 7406bd74
 
 ### Summary
 

@@ -1,6 +1,7 @@
 ## Fact structs miss free Copy/Eq derives their generated key-struct siblings already have
 
 category: missing-free-feature | severity: low | verdict: CONFIRMED | finder: macros:core
+outcome: fixed 01b8df8c
 
 ### Summary
 

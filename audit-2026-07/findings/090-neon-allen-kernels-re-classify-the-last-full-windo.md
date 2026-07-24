@@ -1,6 +1,7 @@
 ## NEON Allen kernels re-classify the last full window when len is lane-aligned — always, on the chunked path
 
 category: perf | severity: low | verdict: CONFIRMED | finder: engine:kernel
+outcome: fixed 26f44a97
 
 ### Summary
 

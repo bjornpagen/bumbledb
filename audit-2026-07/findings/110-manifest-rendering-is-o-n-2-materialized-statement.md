@@ -1,6 +1,7 @@
 ## Manifest rendering is O(n^2): materialized statements re-cloned per statement
 
 category: perf | severity: low | verdict: CONFIRMED | finder: lean:schema-values
+outcome: fixed 7bea2d96
 
 ### Summary
 

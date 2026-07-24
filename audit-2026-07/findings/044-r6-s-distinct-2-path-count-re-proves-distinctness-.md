@@ -1,6 +1,7 @@
 ## r6's distinct 2-path count re-proves distinctness per row in a seen-set that COLT forced maps already hold
 
 category: perf | severity: medium | verdict: CONFIRMED | finder: perf:rings
+outcome: deferred: the forced-map telescoped Count never landed; r6 honestly flat in the campaign rerun (scenarios/delta.md)
 
 ### Summary
 

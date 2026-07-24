@@ -1,6 +1,7 @@
 ## dbWriteFrom witness SAFETY comment argues from a borrow that is never held; the raw `&Snapshot` outlives its argued window by the whole transaction
 
 category: bug | severity: high | verdict: CONFIRMED | finder: r2:concurrency-unsafe-ffi
+outcome: fixed 05d34c51 + 5b1c87eb
 
 ### Summary
 

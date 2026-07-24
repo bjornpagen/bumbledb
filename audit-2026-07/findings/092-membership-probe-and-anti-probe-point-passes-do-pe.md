@@ -1,6 +1,7 @@
 ## Membership-probe and anti-probe point passes re-derive loop-invariant sources per element, against the executor's own instruction diet
 
 category: inelegance | severity: low | verdict: CONFIRMED | finder: engine:run
+outcome: fixed 0f13feff
 
 ### Summary
 

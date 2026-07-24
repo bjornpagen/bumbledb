@@ -1,6 +1,7 @@
 ## The Rust text notation cannot spell the or()/and() condition trees the IR accepts and the TS SDK ships
 
 category: unification | severity: low | verdict: CONFIRMED | finder: cross:free-features
+outcome: fixed 727c3b1d (R9)
 
 ### Summary
 

@@ -1,6 +1,7 @@
 ## Fixed 264-byte chunks make small-fanout keys cost up to ~33x their payload in the COLT chunk pool
 
 category: perf | severity: low | verdict: CONFIRMED | finder: engine:colt
+outcome: fixed 8fddbae6 (R22 measured-choice: 0.72-0.86x time, 0.16x footprint at the pinned fanouts)
 
 ### Summary
 

@@ -1,6 +1,7 @@
 ## Program conformance arm never runs the engine's fixpoint driver, despite four docs claiming it does
 
 category: missing-free-feature | severity: medium | verdict: CONFIRMED | finder: lean:txn-oracle
+outcome: fixed f644f150
 
 ### Summary
 

@@ -1,6 +1,7 @@
 ## filter_chunked hand-rolls survivor compaction with the exact branches the module's own kernels erased
 
 category: inappropriate-branching | severity: medium | verdict: CONFIRMED | finder: engine:kernel
+outcome: fixed 26f44a97
 
 ### Summary
 

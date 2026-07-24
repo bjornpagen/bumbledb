@@ -1,6 +1,7 @@
 ## Answers::FixpointBudget is unreachable, and the doc's promised "readable divergence" on a budget trip is a panic in the only lane that can trip it
 
 category: incoherence | severity: low | verdict: CONFIRMED | finder: r2:differential-apparatus-soundness
+outcome: fixed f644f150 (R22)
 
 ### Summary
 

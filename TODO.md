@@ -16,17 +16,40 @@
   `--all-features` co-compile lane) but no lane executes them. Keep as
   dormant instruments or delete — an owner ruling, not yet made; until
   it is, they stay.
-- **Primer 0.6.0 cutover — unblocked by the publish:** the adoption is
-  staged at the primer `bumbledb-060` worktree; now that both packages
-  are in the registry the lockfile can move (install → typecheck →
-  commit → merge — the steps live there and in `ts/PUBLISHING.md`
-  § post-publish, step two).
-- **Optional, unscheduled:** a fresh one-rev seven-run bench session would
-  restore min-of-3 durable sampling and re-clean `mandate_overlap` (excluded
-  from the current pin as contaminated-in-both). The current README numbers
-  are fully derivable from the committed artifacts and need nothing.
+- **The campaign's owed bench lanes** (`bench-out/campaign-2026-07-23/
+  MANIFEST.txt` records the run PARTIAL): the repeat durable suite runs
+  (r2/r3), the three ephemeral reps (the first like-for-like durability
+  twins post-R20 — never min-merge them with the night's ephemeral rows;
+  the merge refuses), sweep-commit (needs the obs build), and the
+  unlanded `adversarial` subcommand (the chart derives from scenarios'
+  capped lanes meanwhile). Landing the reps restores min-over-N suite
+  sampling and re-arms the README's ephemeral read claim.
+- **The audit's three deferred findings** (stamps in
+  `audit-2026-07/findings/`): 014 (the leaf still runs per parent —
+  batch-of-1 `run_node` on fanout-1 lookups), 044 (the forced-map
+  telescoped distinct Count; r6 honestly flat), 053 (the two
+  FilterPredicate interpreters, view vs key-probe). Plus the 009 step-2
+  per-forced-map min/max key fence (COLT force time) and the R5 tail:
+  the TS surface cannot yet utter the measure-keyed Arg and the Lean
+  denotation keeps the conformance fence (RULINGS.md § R5).
 
 ## Everything else: shipped
+
+**The 2026-07 deep audit closed at campaign end (2026-07-24):** 162
+findings — 158 fixed, 3 deferred with stamped reasons, 1 superseded by
+ruling (089 → R19); every finding carries an `outcome:` stamp and the
+tally rides `audit-2026-07/README.md`. The 22 rulings are statused in
+`audit-2026-07/RULINGS.md` (21 IMPLEMENTED, R5 PARTIAL with its owed TS
++ Lean tail). The R20 corpus regeneration re-ran every published number
+(`bench-out/campaign-2026-07-23/`, SUMMARY.md: scenarios geomean
+0.08 → 0.056, churn 0.81 vs-night, crud loss narrowed to 0.60×,
+`closure_fanout`'s 30× honestly down to 6.7×), and R21 re-pinned every
+doc citation + regenerated every README graph from the campaign
+artifacts (`4de40efd`).
+
+**The primer 0.6.0 cutover landed with the destructure run (2026-07-20):**
+paradigm C is live in both repos, the primer estate is cleaned, and the
+worktrees are gone (the 0.6.0 run record; primer #94 merged).
 
 **The 0.6.0 destructure release is published and tagged `v0.6.0`
 (2026-07-20):** vars become values (`v(relation)` mints class-typed variable

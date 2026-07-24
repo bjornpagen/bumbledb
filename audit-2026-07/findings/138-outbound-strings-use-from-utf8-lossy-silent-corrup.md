@@ -1,6 +1,7 @@
 ## Outbound strings use from_utf8_lossy — silent corruption where the inbound twin refuses typed
 
 category: incoherence | severity: low | verdict: CONFIRMED | finder: ts:bridge
+outcome: fixed b3e355eb
 
 ### Summary
 

@@ -1,6 +1,7 @@
 ## Parent-constant Allen operand re-materialized per element in the leaf residual pass though the const-operand kernel already exists
 
 category: unification | severity: medium | verdict: CONFIRMED | finder: perf:olap-temporal
+outcome: fixed be405715
 
 ### Summary
 

@@ -1,6 +1,7 @@
 ## run_node re-memsets scratch per batch — the pattern its own twin (probe_pass) documents as pure loss
 
 category: incoherence | severity: low | verdict: CONFIRMED | finder: perf:olap-temporal
+outcome: fixed 0f13feff
 
 ### Summary
 

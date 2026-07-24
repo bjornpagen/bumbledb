@@ -1,6 +1,7 @@
 ## KeyStatement seals a bool where validation already holds the IntervalTail; the commit path re-derives it per fact and per probe
 
 category: inappropriate-branching | severity: low | verdict: CONFIRMED | finder: lean:schema-values
+outcome: fixed 4d19deb8 + f9ca914f + 6aecf449
 
 ### Summary
 

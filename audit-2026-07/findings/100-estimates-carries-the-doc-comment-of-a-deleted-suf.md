@@ -1,6 +1,7 @@
 ## estimates() carries the doc comment of the deleted skip_free() eligibility method
 
 category: incoherence | severity: low | verdict: CONFIRMED | finder: engine:plan-ir
+outcome: fixed 73215a30
 
 ### Summary
 

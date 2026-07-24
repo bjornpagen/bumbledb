@@ -1,6 +1,7 @@
 ## permuted_determinant_image pays an O(k²) inverse-permutation search per fact on the commit hot path and the verify_store sweep — the repo's own measured law already named the fix
 
 category: perf | severity: medium | verdict: CONFIRMED | finder: engine:storage
+outcome: fixed 4d19deb8
 
 ### Summary
 

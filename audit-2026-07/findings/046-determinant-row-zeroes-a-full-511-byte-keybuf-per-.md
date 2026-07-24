@@ -1,6 +1,7 @@
 ## determinant_row zeroes a full 511-byte KeyBuf per probe on the point-read hot lanes
 
 category: perf | severity: medium | verdict: CONFIRMED | finder: perf:points
+outcome: fixed d890f2aa
 
 ### Summary
 

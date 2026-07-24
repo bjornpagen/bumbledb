@@ -1,6 +1,7 @@
 ## Fold extent asserts — the documented safety guard for get_unchecked — wrap in release
 
 category: bug | severity: low | verdict: CONFIRMED | finder: engine:kernel
+outcome: fixed 26f44a97
 
 ### Summary
 

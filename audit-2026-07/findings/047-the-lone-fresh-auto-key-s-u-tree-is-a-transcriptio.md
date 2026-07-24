@@ -1,6 +1,7 @@
 ## The lone-fresh auto-key's U tree is a transcription of F: fresh ids and row ids are two monotone u64 allocators that are secretly one
 
 category: unification | severity: medium | verdict: CONFIRMED | finder: perf:points
+outcome: fixed 4d19deb8 (R16)
 
 ### Summary
 

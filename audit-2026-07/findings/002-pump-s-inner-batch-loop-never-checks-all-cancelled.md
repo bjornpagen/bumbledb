@@ -1,6 +1,7 @@
 ## pump's inner batch loop never checks all_cancelled — a whole-execution D2 skip still iterates and probes the entire remaining node-0 cover
 
 category: perf | severity: high | verdict: CONFIRMED | finder: engine:run
+outcome: fixed 0f13feff
 
 ### Summary
 

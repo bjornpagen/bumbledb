@@ -1,6 +1,7 @@
 ## The generic-join half of Free Join is unreachable: no plan constructor ever splits a probe subatom, so cyclic queries always execute the binary-join closing probe
 
 category: missing-free-feature | severity: high | verdict: CONFIRMED | finder: perf:rings
+outcome: fixed 73215a30 (gj_split + second covers; the step-2 per-forced-map key fence never landed — recorded in TODO)
 
 ### Summary
 

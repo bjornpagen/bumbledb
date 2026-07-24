@@ -1,6 +1,7 @@
 ## RelationSpec splits closedness across two parallel Options, admitting two states the macro grammar makes unrepresentable
 
 category: incoherence | severity: low | verdict: CONFIRMED | finder: theory
+outcome: fixed 816a352d (R7)
 
 ### Summary
 

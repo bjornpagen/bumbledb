@@ -1,6 +1,7 @@
 ## verify_store never bounds `_dict` reverse ids by META_DICT_NEXT_ID — a regressed counter is certified clean, then armed for silent reverse-map reuse
 
 category: missing-free-feature | severity: medium | verdict: CONFIRMED | finder: r2:crash-recovery-lifecycle
+outcome: fixed db9b934d
 
 ### Summary
 

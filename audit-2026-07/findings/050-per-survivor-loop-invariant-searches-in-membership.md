@@ -1,6 +1,7 @@
 ## Per-survivor loop-invariant searches in membership/anti-probe and routing passes
 
 category: inappropriate-branching | severity: medium | verdict: CONFIRMED | finder: cross:branching
+outcome: fixed 0f13feff
 
 ### Summary
 

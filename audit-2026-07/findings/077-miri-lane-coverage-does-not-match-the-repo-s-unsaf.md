@@ -1,6 +1,7 @@
 ## Miri lane exclusion ledger: arena (and digest) mis-filed as FFI; ts crate's unsafe surface silently out of scope
 
 category: incoherence | severity: medium | verdict: CONFIRMED | finder: r2:concurrency-unsafe-ffi
+outcome: fixed e8ab0a14
 
 ### Summary
 

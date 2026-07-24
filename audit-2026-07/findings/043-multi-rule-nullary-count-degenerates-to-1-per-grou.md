@@ -1,6 +1,7 @@
 ## Multi-rule nullary Count degenerates to Count = 1 per group; ir.rs contract and the docs' own worked example contradict the shipped union-regime semantics
 
 category: incoherence | severity: medium | verdict: CONFIRMED | finder: lean:query
+outcome: fixed 34f96cd8
 
 ### Summary
 

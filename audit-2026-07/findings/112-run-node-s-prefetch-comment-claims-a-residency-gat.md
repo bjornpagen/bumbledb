@@ -1,6 +1,7 @@
 ## run_node's prefetch comment claims a residency gate the re-simplify ablation deleted — the code is width-only
 
 category: incoherence | severity: low | verdict: CONFIRMED | finder: perf:rings
+outcome: fixed 0f13feff
 
 ### Summary
 

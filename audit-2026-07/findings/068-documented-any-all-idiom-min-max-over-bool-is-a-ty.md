@@ -1,6 +1,7 @@
 ## Documented Any/All idiom (Min/Max over bool) is a typed rejection in the engine — and 10-data-model.md contradicts itself about it
 
 category: incoherence | severity: medium | verdict: CONFIRMED | finder: cross:free-features
+outcome: fixed 592a5ffc (R3)
 
 ### Summary
 

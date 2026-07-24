@@ -1,6 +1,7 @@
 ## probe_pass never ensure_forces batch-constant first-appearance sibling cursors: dead prefetch sweep and force time misbooked as Probe
 
 category: perf | severity: low | verdict: CONFIRMED | finder: engine:run
+outcome: fixed 0f13feff
 
 ### Summary
 

@@ -1,6 +1,7 @@
 ## Witnessed-write `&Snapshot` dangles for the whole transaction if the snapshot closes before commit
 
 category: bug | severity: high | verdict: CONFIRMED | finder: ts:bridge
+outcome: fixed 5b1c87eb + 05d34c51 + a0365a14
 
 ### Summary
 

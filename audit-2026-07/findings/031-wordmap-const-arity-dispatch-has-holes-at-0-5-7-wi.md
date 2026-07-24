@@ -1,6 +1,7 @@
 ## WordMap const-arity dispatch has holes at 0, 5, 7 — widths its own comment declares common take the #[cold] path per row
 
 category: incoherence | severity: medium | verdict: CONFIRMED | finder: engine:colt
+outcome: fixed a4176257
 
 ### Summary
 

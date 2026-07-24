@@ -1,6 +1,7 @@
 ## Arena oversized spill strands the open chunk's free tail because only `chunks.last()` is consulted
 
 category: perf | severity: low | verdict: CONFIRMED | finder: engine:interval-allen
+outcome: fixed 537064d8
 
 ### Summary
 

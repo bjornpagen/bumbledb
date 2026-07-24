@@ -1,6 +1,7 @@
 ## SchemaMismatch and DescriptorFingerprintDesync carry both fingerprints but Display renders neither
 
 category: incoherence | severity: low | verdict: CONFIRMED | finder: engine:interval-allen
+outcome: fixed b7ddb7e0
 
 ### Summary
 

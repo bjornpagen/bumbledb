@@ -1,6 +1,7 @@
 ## Program-form named params get dense ids by group-emission order, not source order — silent wrong bindings
 
 category: bug | severity: high | verdict: CONFIRMED | finder: query:crates
+outcome: fixed 95b73b26
 
 ### Summary
 

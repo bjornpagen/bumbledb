@@ -1,6 +1,7 @@
 ## An ephemeral store that crossed a machine crash reopens as "verified" — the kind's own loss claim is undetectable on disk
 
 category: incoherence | severity: low | verdict: CONFIRMED | finder: r2:crash-recovery-lifecycle
+outcome: fixed ef5b9a42 + 70fb5f5d (R18)
 
 ### Summary
 

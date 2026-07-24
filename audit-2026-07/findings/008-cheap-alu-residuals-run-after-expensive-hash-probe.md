@@ -1,6 +1,7 @@
 ## Cheap ALU residuals run after expensive hash probes in every join node — the temporal filters on the ring lanes buy nothing
 
 category: perf | severity: high | verdict: CONFIRMED | finder: perf:rings
+outcome: fixed 0f13feff
 
 ### Summary
 

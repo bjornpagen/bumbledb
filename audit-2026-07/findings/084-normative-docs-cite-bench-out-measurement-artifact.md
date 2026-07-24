@@ -1,6 +1,7 @@
 ## Normative docs cite bench-out measurement artifacts deleted by the 2026-07-20 pin swap
 
 category: incoherence | severity: medium | verdict: CONFIRMED | finder: r2:docs-vs-code-drift
+outcome: fixed 4de40efd (R21)
 
 ### Summary
 

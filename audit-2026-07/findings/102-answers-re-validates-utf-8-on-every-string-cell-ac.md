@@ -1,6 +1,7 @@
 ## Answers re-validates UTF-8 on every string-cell access despite validate-at-materialization
 
 category: inelegance | severity: low | verdict: CONFIRMED | finder: engine:schema-api
+outcome: fixed 7406bd74
 
 ### Summary
 

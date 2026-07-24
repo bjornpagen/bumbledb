@@ -1,6 +1,7 @@
 ## CountingAllocator does not forward alloc_zeroed, replacing calloc with malloc+memset under the obs build
 
 category: bench-honesty | severity: low | verdict: CONFIRMED | finder: engine:interval-allen
+outcome: fixed 537064d8
 
 ### Summary
 

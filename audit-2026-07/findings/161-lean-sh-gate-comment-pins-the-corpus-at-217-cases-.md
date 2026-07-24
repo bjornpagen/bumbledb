@@ -1,6 +1,7 @@
 ## lean.sh gate comment pins the corpus at 217 cases; 272 are on disk
 
 category: bench-honesty | severity: low | verdict: CONFIRMED | finder: r2:lean-unswept-modules
+outcome: fixed f2b0ae4f
 
 ### Summary
 The Battery 4 note in the lean.sh gate script records a per-push cost measurement against a "217-case corpus" (dated 2026-07-14), but the checked-in conformance corpus has since grown to 272 case files. Nothing functional depends on the number — the Lean driver enumerates the directory, so every case on disk is replayed — but the recorded evidence line no longer describes the corpus the battery actually runs, and a reader trusting it under-counts coverage by ~20%.

@@ -1,6 +1,7 @@
 ## Db::create never fsyncs the store directory's dirent chain — create-time power loss can lose the whole store
 
 category: bug | severity: medium | verdict: CONFIRMED | finder: r2:crash-recovery-lifecycle
+outcome: fixed ef5b9a42
 
 ### Summary
 

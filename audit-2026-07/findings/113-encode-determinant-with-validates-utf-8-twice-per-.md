@@ -1,6 +1,7 @@
 ## encode_determinant_with validates UTF-8 twice per string key value on the dynamic point-read path
 
 category: inelegance | severity: low | verdict: CONFIRMED | finder: perf:points
+outcome: fixed 7406bd74
 
 ### Summary
 

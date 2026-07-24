@@ -1,6 +1,7 @@
 ## Architecture README still lists shipped 70-api ledger rows as OPEN sub-items
 
 category: incoherence | severity: low | verdict: CONFIRMED | finder: r2:docs-vs-code-drift
+outcome: fixed 710900ef
 
 ### Summary
 

@@ -1,6 +1,7 @@
 ## Db::open convicts a half-created store as Corruption(MetaMissing) — the state Db::create names, tolerates, and the ephemeral probe classifies correctly
 
 category: incoherence | severity: low | verdict: CONFIRMED | finder: r2:crash-recovery-lifecycle
+outcome: fixed 9836d1ee (R18)
 
 ### Summary
 

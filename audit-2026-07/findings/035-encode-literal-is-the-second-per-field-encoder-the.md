@@ -1,6 +1,7 @@
 ## encode_literal is the second per-field encoder the module's own doc says cannot exist
 
 category: unification | severity: medium | verdict: CONFIRMED | finder: engine:encoding
+outcome: fixed 7406bd74
 
 ### Summary
 

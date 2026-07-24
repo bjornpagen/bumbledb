@@ -1,6 +1,7 @@
 ## Executor poison state is three flags with a hand-ordered precedence branch instead of one sum
 
 category: inelegance | severity: low | verdict: CONFIRMED | finder: cross:branching
+outcome: fixed 0f13feff
 
 ### Summary
 

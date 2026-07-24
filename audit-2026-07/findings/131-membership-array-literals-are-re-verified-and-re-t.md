@@ -1,6 +1,7 @@
 ## Membership-array literals are re-verified and re-translated through the roster on every execute
 
 category: perf | severity: low | verdict: CONFIRMED | finder: ts:core
+outcome: fixed 3ba803f4
 
 ### Summary
 

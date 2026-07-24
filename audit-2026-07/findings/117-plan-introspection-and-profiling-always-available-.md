@@ -1,6 +1,7 @@
 ## Plan introspection and profiling (EXPLAIN/ANALYZE) have no TypeScript surface
 
 category: missing-free-feature | severity: low | verdict: CONFIRMED | finder: cross:free-features
+outcome: fixed d9cfd6ef + fd49327f (R13)
 
 ### Summary
 

@@ -1,6 +1,7 @@
 ## Selectivity ladder reads the LMDB row counter for closed containment targets, which is always 0
 
 category: bug | severity: high | verdict: CONFIRMED | finder: engine:plan-ir
+outcome: fixed 73215a30 + 8dd9775d
 
 ### Summary
 

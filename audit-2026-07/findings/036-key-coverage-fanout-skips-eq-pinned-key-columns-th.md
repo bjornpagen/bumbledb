@@ -1,6 +1,7 @@
 ## Key-coverage fanout skips Eq-pinned key columns that provably_distinct already counts
 
 category: unification | severity: medium | verdict: CONFIRMED | finder: engine:plan-ir
+outcome: fixed 73215a30
 
 ### Summary
 

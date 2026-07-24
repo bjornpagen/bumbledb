@@ -1,6 +1,7 @@
 ## Every filter kernel pays a redundant full-width memset of the output before the cursor-write
 
 category: perf | severity: medium | verdict: CONFIRMED | finder: engine:kernel
+outcome: fixed 26f44a97
 
 ### Summary
 

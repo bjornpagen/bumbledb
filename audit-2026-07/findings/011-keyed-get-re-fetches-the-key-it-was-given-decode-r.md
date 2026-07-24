@@ -1,6 +1,7 @@
 ## Keyed get re-fetches the key it was given: decode resolves determinant string fields through the reverse dictionary
 
 category: missing-free-feature | severity: high | verdict: CONFIRMED | finder: perf:points
+outcome: fixed d890f2aa
 
 ### Summary
 

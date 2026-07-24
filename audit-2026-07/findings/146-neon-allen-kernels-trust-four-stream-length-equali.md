@@ -1,6 +1,7 @@
 ## NEON Allen kernels hold their memory-safety length invariant at debug strength, unlike every sibling unsafe kernel's release asserts
 
 category: incoherence | severity: low | verdict: CONFIRMED | finder: r2:concurrency-unsafe-ffi
+outcome: fixed 26f44a97
 
 ### Summary
 

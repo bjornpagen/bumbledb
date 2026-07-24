@@ -1,6 +1,7 @@
 ## OR-tree grammar meets the engine only in one degenerate corner: single atom, scalar leaves, projection head
 
 category: missing-free-feature | severity: medium | verdict: CONFIRMED | finder: r2:differential-apparatus-soundness
+outcome: fixed a3e09fe6
 
 ### Summary
 

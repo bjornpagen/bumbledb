@@ -1,6 +1,7 @@
 ## ExhumeHandle has no close — the store's exclusive lock is held hostage to GC
 
 category: missing-free-feature | severity: medium | verdict: CONFIRMED | finder: ts:bridge
+outcome: fixed fd49327f (R12)
 
 ### Summary
 

@@ -1,6 +1,7 @@
 ## wire_tags! could emit the parse direction for unit variants, closing its own admitted drift gap
 
 category: unification | severity: medium | verdict: CONFIRMED | finder: ts:bridge
+outcome: fixed 9cbfa59c
 
 ### Summary
 

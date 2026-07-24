@@ -1,6 +1,7 @@
 ## Union-regime aggregate fold domain has no Lean law; docs and Bridge cite `union_regime_head_projection` beyond its statement; OR+aggregate coarsening is unpinned and the oracles disagree
 
 category: incoherence | severity: high | verdict: CONFIRMED | finder: r2:lean-unswept-modules
+outcome: fixed 5a8f89c0 + 9c2aeca7 (R2 made it mandatory)
 
 ### Summary
 

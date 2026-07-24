@@ -1,6 +1,7 @@
 ## Integer-suffix policing is a string suffix check: bare hex refused, suffixed hex accepted — and the schema macro's grammar is exactly inverted
 
 category: incoherence | severity: low | verdict: CONFIRMED | finder: query:crates
+outcome: fixed d0afe2ef (R8)
 
 ### Summary
 

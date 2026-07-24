@@ -1,6 +1,7 @@
 ## Cross-rule nullary Count is definitionally constant 1 — deliberate and pinned, but silently admitted by validation, undocumented as a footgun, and outside every theorem's vocabulary
 
 category: design-doctrine / theorem-coverage | severity: medium | verdict: PLAUSIBLE | finder: r2:lean-unswept-modules
+outcome: fixed 34f96cd8
 
 ### Summary
 

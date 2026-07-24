@@ -1,6 +1,7 @@
 ## Ring-closing joins price the closing atom by its single best column, ignoring the conjunction of join variables
 
 category: perf | severity: medium | verdict: PLAUSIBLE | finder: engine:plan-ir
+outcome: superseded-by-ruling R19
 
 ### Summary
 

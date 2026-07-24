@@ -1,6 +1,7 @@
 ## Param::Index drops its span, so the param-mixing diagnostic lands at call_site
 
 category: inelegance | severity: low | verdict: CONFIRMED | finder: query:crates
+outcome: fixed a270d093
 
 ### Summary
 

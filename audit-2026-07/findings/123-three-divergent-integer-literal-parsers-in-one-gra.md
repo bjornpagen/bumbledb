@@ -1,6 +1,7 @@
 ## Three divergent integer-literal parsers in one grammar: radix/underscores position-dependent
 
 category: unification | severity: low | verdict: CONFIRMED | finder: macros:core
+outcome: fixed 22b89f3f (R8)
 
 ### Summary
 

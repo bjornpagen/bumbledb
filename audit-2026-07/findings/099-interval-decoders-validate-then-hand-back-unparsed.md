@@ -1,6 +1,7 @@
 ## Interval decoders validate then hand back unparsed tuples, forcing re-parse-with-expect
 
 category: inelegance | severity: low | verdict: CONFIRMED | finder: engine:encoding
+outcome: fixed 7406bd74
 
 ### Summary
 

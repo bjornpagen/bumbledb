@@ -1,6 +1,7 @@
 ## Commas between body items and head terms are silently optional — the parser accepts a superset of the sacred grammar
 
 category: incoherence | severity: medium | verdict: CONFIRMED | finder: query:crates
+outcome: fixed 7bcf5dd2
 
 ### Summary
 

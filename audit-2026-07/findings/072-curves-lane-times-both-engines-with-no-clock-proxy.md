@@ -1,6 +1,7 @@
 ## Curves lane publishes README multipliers with no clock-proxy bracket, no DVFS warm-up, and no field where contamination could be recorded
 
 category: bench-honesty | severity: medium | verdict: CONFIRMED | finder: bench:honesty
+outcome: fixed c55168e2
 
 ### Summary
 

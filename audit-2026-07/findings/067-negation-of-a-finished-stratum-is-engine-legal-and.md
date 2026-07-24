@@ -1,6 +1,7 @@
 ## Negation of a finished stratum is engine-legal and Rust-spellable but unwritable in the TS SDK
 
 category: missing-free-feature | severity: medium | verdict: CONFIRMED | finder: cross:free-features
+outcome: fixed 6e88d33c
 
 ### Summary
 

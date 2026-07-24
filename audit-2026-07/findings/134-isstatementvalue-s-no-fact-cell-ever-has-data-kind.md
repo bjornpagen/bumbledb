@@ -1,6 +1,7 @@
 ## isStatementValue's "no fact cell ever has data.kind" claim breaks on structurally-open interval values
 
 category: bug | severity: low | verdict: CONFIRMED | finder: ts:core
+outcome: fixed f1fd0b72
 
 ### Summary
 

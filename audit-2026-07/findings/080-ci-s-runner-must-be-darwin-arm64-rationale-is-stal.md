@@ -1,6 +1,7 @@
 ## CI's "runner must BE darwin-arm64" rationale is stale — build.ts stopped hardcoding darwin a day after the comment was written
 
 category: incoherence | severity: medium | verdict: CONFIRMED | finder: r2:scripts-ci-packaging
+outcome: fixed 075a3b03 (R22)
 
 ### Summary
 

@@ -1,6 +1,7 @@
 ## Compile-fail roster covers 9 of the query! macro's spanned refusals, leaving eight semantic-law diagnostics unpinned
 
 category: missing-free-feature | severity: low | verdict: CONFIRMED | finder: query:crates
+outcome: fixed a270d093
 
 ### Summary
 

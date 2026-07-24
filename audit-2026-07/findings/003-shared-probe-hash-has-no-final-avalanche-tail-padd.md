@@ -1,6 +1,7 @@
 ## Shared probe hash lacks a final avalanche: tail-padded bytes<N> keys collapse into one home bucket
 
 category: perf | severity: high | verdict: CONFIRMED | finder: engine:colt
+outcome: fixed e27f137e
 
 ### Summary
 

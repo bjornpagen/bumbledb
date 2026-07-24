@@ -1,6 +1,7 @@
 ## Closed-relation group keys hash through WordMap per row; the dense ≤256 domain the schema already proves is unused
 
 category: missing-free-feature | severity: medium | verdict: CONFIRMED | finder: perf:olap-temporal
+outcome: fixed aace5aaf
 
 ### Summary
 

@@ -1,6 +1,7 @@
 ## Lean lane runs the three-way comparator twice, and lean.sh's in-script run defeats the cargo cache
 
 category: unification | severity: high | verdict: CONFIRMED | finder: r2:scripts-ci-packaging
+outcome: fixed 41ec17ca
 
 ### Summary
 

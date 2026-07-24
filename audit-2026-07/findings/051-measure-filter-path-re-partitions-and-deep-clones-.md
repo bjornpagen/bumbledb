@@ -1,6 +1,7 @@
 ## Measure-filter path re-partitions and deep-clones the filter list per view build, leaking the pooled survivor buffer
 
 category: perf | severity: medium | verdict: CONFIRMED | finder: cross:branching
+outcome: fixed e76f0926
 
 ### Summary
 

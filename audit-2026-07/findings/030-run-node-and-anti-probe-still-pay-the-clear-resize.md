@@ -1,6 +1,7 @@
 ## run_node and anti_probe still pay the clear+resize re-memset whose removal probe_pass's grow_scratch already recorded as an owed followup
 
 category: incoherence | severity: medium | verdict: CONFIRMED | finder: engine:run
+outcome: fixed 0f13feff
 
 ### Summary
 

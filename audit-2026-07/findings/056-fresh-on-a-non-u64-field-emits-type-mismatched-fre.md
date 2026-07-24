@@ -1,6 +1,7 @@
 ## `fresh` on a non-u64 field emits type-mismatched Fresh/Key impls — raw rustc errors bury the typed teaching path
 
 category: bug | severity: medium | verdict: CONFIRMED | finder: macros:core
+outcome: fixed 8d05568e
 
 ### Summary
 

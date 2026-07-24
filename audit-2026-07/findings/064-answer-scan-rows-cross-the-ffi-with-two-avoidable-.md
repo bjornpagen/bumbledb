@@ -1,6 +1,7 @@
 ## Answer/scan rows cross the FFI with two avoidable copies per string/bytes cell
 
 category: perf | severity: medium | verdict: CONFIRMED | finder: ts:bridge
+outcome: fixed b3e355eb
 
 ### Summary
 

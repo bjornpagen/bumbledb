@@ -1,6 +1,7 @@
 ## BatchToken catches force-staleness by representation but reset-staleness only by luck
 
 category: missing-free-feature | severity: low | verdict: CONFIRMED | finder: r2:concurrency-unsafe-ffi
+outcome: fixed b5e130d6
 
 ### Summary
 

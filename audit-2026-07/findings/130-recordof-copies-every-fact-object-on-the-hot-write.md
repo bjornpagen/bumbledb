@@ -1,6 +1,7 @@
 ## recordOf copies every fact object on the SDK verb paths; the copy is dead weight on 5 of 6 sites and load-bearing only in insert
 
 category: perf | severity: low | verdict: CONFIRMED | finder: ts:core
+outcome: fixed 3ba803f4
 
 ### Summary
 

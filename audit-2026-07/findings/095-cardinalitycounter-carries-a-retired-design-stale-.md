@@ -1,6 +1,7 @@
 ## CardinalityCounter carries a retired design: stale shared-counter doc, dead memset, two-array set representation
 
 category: incoherence | severity: low | verdict: CONFIRMED | finder: engine:storage
+outcome: fixed 537064d8
 
 ### Summary
 

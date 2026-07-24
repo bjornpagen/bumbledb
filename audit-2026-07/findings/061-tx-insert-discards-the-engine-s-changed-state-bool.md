@@ -1,6 +1,7 @@
 ## Tx.insert discards the engine's changed-state boolean that already crosses the FFI
 
 category: missing-free-feature | severity: medium | verdict: CONFIRMED | finder: ts:core
+outcome: fixed 58e63af9 (R11)
 
 ### Summary
 

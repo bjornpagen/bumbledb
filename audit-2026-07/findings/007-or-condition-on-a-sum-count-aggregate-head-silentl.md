@@ -1,6 +1,7 @@
 ## OR condition on a Sum/Count aggregate head silently coarsens the fold domain; engine and naive oracle diverge
 
 category: bug | severity: high | verdict: CONFIRMED | finder: lean:query
+outcome: fixed 34f96cd8
 
 ### Summary
 

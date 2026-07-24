@@ -1,6 +1,7 @@
 ## COLT force pass re-resolves the column view per (position, column) — the exact cost the read path hoisted away
 
 category: perf | severity: medium | verdict: CONFIRMED | finder: engine:colt
+outcome: fixed b5e130d6
 
 ### Summary
 

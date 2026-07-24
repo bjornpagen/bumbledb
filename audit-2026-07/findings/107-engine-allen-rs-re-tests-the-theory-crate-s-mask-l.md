@@ -1,6 +1,7 @@
 ## Engine allen.rs re-tests the theory crate's mask laws verbatim while its own module doc says they live theory-side
 
 category: incoherence | severity: low | verdict: CONFIRMED | finder: theory
+outcome: fixed ef9efbaa
 
 ### Summary
 

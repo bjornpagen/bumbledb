@@ -1,6 +1,7 @@
 ## Stale Lean theorem citation `Txn.judgeB_agrees_of_declared` in the conformance README — outside every census battery
 
 category: incoherence | severity: low | verdict: CONFIRMED | finder: lean:txn-oracle
+outcome: fixed 9bcbe8fd
 
 ### Summary
 

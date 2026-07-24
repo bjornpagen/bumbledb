@@ -1,6 +1,7 @@
 ## OLAP folds: trie factorization is fold-blind, so the scan-fold pushdown never fires for single-atom GROUP BYs (o3/o5 run 16-18x behind o1)
 
 category: missing-free-feature | severity: high | verdict: CONFIRMED | finder: perf:olap-temporal
+outcome: fixed 73215a30 + 99fa5015
 
 ### Summary
 

@@ -1,6 +1,7 @@
 ## run_node kept the memset scratch-sizing its line-parallel twin measured out of probe_pass
 
 category: incoherence | severity: medium | verdict: CONFIRMED | finder: cross:branching
+outcome: fixed 0f13feff
 
 ### Summary
 

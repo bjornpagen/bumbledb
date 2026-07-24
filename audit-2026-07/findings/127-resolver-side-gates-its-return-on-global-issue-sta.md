@@ -1,6 +1,7 @@
 ## Resolver::side gates its return on global issue state — an inert branch the crate's own placeholder law erases
 
 category: inappropriate-branching | severity: low | verdict: CONFIRMED | finder: theory
+outcome: fixed 0a86b73d
 
 ### Summary
 

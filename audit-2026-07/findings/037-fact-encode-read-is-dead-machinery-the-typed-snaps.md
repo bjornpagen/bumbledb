@@ -1,6 +1,7 @@
 ## Fact::encode_read is dead machinery: the typed Snapshot::contains it exists for is missing
 
 category: missing-free-feature | severity: medium | verdict: CONFIRMED | finder: engine:schema-api
+outcome: fixed d890f2aa
 
 ### Summary
 

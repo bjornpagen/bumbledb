@@ -1,6 +1,7 @@
 ## DP cost model never consults cross-atom residual selectivity — Allen-joined atom pairs price as pure Cartesian products
 
 category: perf | severity: high | verdict: CONFIRMED | finder: engine:plan-ir
+outcome: fixed 73215a30 (R19 scope: the Allen JEPD keep is priced; every other residual class stays unpriced by doctrine)
 
 ### Summary
 

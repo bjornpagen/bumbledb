@@ -1,6 +1,7 @@
 ## Corpus README pins 24 hand judgment cases; the roster and checked-in corpus carry 26
 
 category: incoherence | severity: low | verdict: CONFIRMED | finder: lean:txn-oracle
+outcome: fixed 9bcbe8fd
 
 ### Summary
 

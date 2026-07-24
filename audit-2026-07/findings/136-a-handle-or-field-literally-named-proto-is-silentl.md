@@ -1,6 +1,7 @@
 ## A handle or field literally named `__proto__` is silently dropped by the input object literal while the type tier admits it
 
 category: bug | severity: low | verdict: CONFIRMED | finder: ts:types
+outcome: fixed 4d30dbda
 
 ### Summary
 

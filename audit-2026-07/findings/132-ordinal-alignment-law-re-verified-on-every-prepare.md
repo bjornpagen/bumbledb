@@ -1,6 +1,7 @@
 ## Ordinal-alignment law re-verified on every prepare instead of once at open
 
 category: unification | severity: low | verdict: CONFIRMED | finder: ts:core
+outcome: fixed c31416e1
 
 ### Summary
 

@@ -1,6 +1,7 @@
 ## emit_newtypes erases the interval width — one newtype silently spans two encodings
 
 category: bug | severity: medium | verdict: CONFIRMED | finder: macros:core
+outcome: fixed 8d05568e
 
 ### Summary
 

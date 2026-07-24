@@ -1,6 +1,7 @@
 ## Every TS scoped read pays a second dbGeneration FFI call (and its fault-pairing branch) that the snapshot's Ready reply could carry for free
 
 category: perf | severity: medium | verdict: CONFIRMED | finder: ts:core
+outcome: fixed 3b8fc0c8 + fd49327f + 8ed75056
 
 ### Summary
 

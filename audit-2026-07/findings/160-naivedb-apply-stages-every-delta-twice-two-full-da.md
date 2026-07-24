@@ -1,6 +1,7 @@
 ## NaiveDb::apply stages every accepted delta twice — two full-database deep clones per write op
 
 category: perf | severity: low | verdict: CONFIRMED | finder: r2:differential-apparatus-soundness
+outcome: fixed 6353e6fc
 
 ### Summary
 
