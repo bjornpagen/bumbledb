@@ -253,11 +253,7 @@ impl NaiveDb {
     /// derivation, the same total object the engine's `CommitRejected`
     /// carries. Nonempty by construction.
     pub fn apply(&mut self, delta: &Delta) -> Result<(), Vec<Violation>> {
-        let violations = self.violations(delta);
-        if !violations.is_empty() {
-            return Err(violations);
-        }
-        let (next, _) = self.staged(delta);
+        let next = self.judged(delta)?;
         // State-changing commits only advance the generation — a no-op
         // delta (deletes of absent facts, re-inserts of present ones)
         // leaves it alone, exactly as the engine's tx id does.
@@ -285,15 +281,29 @@ impl NaiveDb {
     /// EQUALITY, order included.
     #[must_use]
     pub fn violations(&self, delta: &Delta) -> Vec<Violation> {
+        self.judged(delta).err().unwrap_or_default()
+    }
+
+    /// The candidate final state, judged: `Ok` carries the staged state
+    /// a clean delta commits; `Err` is the complete violation set. One
+    /// staging, one judgment — the one-derivation doctrine extended to
+    /// the staging computation itself, so [`NaiveDb::apply`] never
+    /// re-derives the state it already judged.
+    fn judged(&self, delta: &Delta) -> Result<Vec<BTreeSet<Tuple>>, Vec<Violation>> {
         for (relation, _) in delta.deletes.iter().chain(&delta.inserts) {
             if self.extensions[relation.0 as usize].is_some() {
-                return vec![Violation::ClosedRelationWrite {
+                return Err(vec![Violation::ClosedRelationWrite {
                     relation: *relation,
-                }];
+                }]);
             }
         }
         let (next, inserted) = self.staged(delta);
-        self.judge(&next, &inserted)
+        let violations = self.judge(&next, &inserted);
+        if violations.is_empty() {
+            Ok(next)
+        } else {
+            Err(violations)
+        }
     }
 
     /// The delta's candidate final state beside the facts it genuinely

@@ -20,8 +20,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use bumbledb::schema::ValueType;
 use bumbledb::{
-    AggOp, Atom, AtomSource, Basic, CmpOp, Comparison, ConditionTree, FindTerm, HeadTerm, MaskTerm,
-    Program, Query, Rule, Term, Value, VarId,
+    AggOp, ArgKey, Atom, AtomSource, Basic, CmpOp, Comparison, ConditionTree, FindTerm, HeadTerm,
+    MaskTerm, Program, Query, Rule, Term, Value, VarId,
 };
 
 use super::tuple::{cmp_value, endpoints, point, point_in};
@@ -221,10 +221,6 @@ struct Env<'a> {
     /// and interval occurrences are value equality).
     scalar_anchored: Vec<bool>,
     var_count: usize,
-    /// The measure poison: a predicate's `Duration` reached a ray — the
-    /// rule's answer is [`QueryError::MeasureOfRay`], checked after
-    /// enumeration (the model's twin of the engine's poison flag).
-    ray: std::cell::Cell<bool>,
 }
 
 impl Env<'_> {
@@ -390,7 +386,7 @@ impl NaiveDb {
                     continue;
                 };
                 let col_is_interval = |atom: &Atom, field: bumbledb::FieldId| match atom.source {
-                    AtomSource::Edb(_) => self.atom_field_is_interval(atom, field),
+                    AtomSource::Edb(relation) => self.edb_field_is_interval(relation, field),
                     AtomSource::Idb(pred) => interval[usize::from(pred.0)]
                         .get(usize::from(field.0))
                         .copied()
@@ -476,13 +472,13 @@ impl NaiveDb {
                 .collect(),
             scalar_anchored,
             var_count,
-            ray: std::cell::Cell::new(false),
         };
         let mut bindings = BTreeSet::new();
         let mut assignment = vec![None; var_count];
         let mut pending = Vec::new();
-        enumerate(&env, 0, &mut assignment, &mut pending, &mut bindings);
-        if env.ray.get() {
+        let mut ray = false;
+        enumerate(&env, 0, &mut assignment, &mut pending, &mut bindings, &mut ray);
+        if ray {
             return Err(QueryError::MeasureOfRay);
         }
         Ok(bindings)
@@ -616,9 +612,9 @@ impl NaiveDb {
         }
     }
 
-    fn atom_field_is_interval(&self, atom: &Atom, field: bumbledb::FieldId) -> bool {
+    fn edb_field_is_interval(&self, relation: bumbledb::RelationId, field: bumbledb::FieldId) -> bool {
         matches!(
-            self.field_type(atom.relation().0 as usize, usize::from(field.0)),
+            self.field_type(relation.0 as usize, usize::from(field.0)),
             ValueType::Interval { .. }
         )
     }
@@ -632,7 +628,7 @@ impl NaiveDb {
         preds: &PredWorld<'_>,
     ) -> bool {
         match atom.source {
-            AtomSource::Edb(_) => self.atom_field_is_interval(atom, field),
+            AtomSource::Edb(relation) => self.edb_field_is_interval(relation, field),
             AtomSource::Idb(pred) => preds.interval[usize::from(pred.0)]
                 .get(usize::from(field.0))
                 .copied()
@@ -742,7 +738,7 @@ fn count_vars(rule: &Rule) -> usize {
                     see(&mut count, *var);
                 }
                 if let AggOp::ArgMax { key } | AggOp::ArgMin { key } = op {
-                    see(&mut count, *key);
+                    see(&mut count, key.var());
                 }
             }
         }
@@ -804,29 +800,35 @@ fn substitute(term: &Term, params: &[ParamValue]) -> Substituted {
 }
 
 /// Nested loops over the positive atoms: place a fact for the atom at
-/// `index`, extend the assignment, recurse; at the leaf check the deferred
-/// membership tests, the predicates, and the negated atoms, then record
-/// the full binding.
+/// `index`, extend the assignment, recurse; at the leaf judge the deferred
+/// membership tests, the predicates, and the negated atoms in the Kleene
+/// lattice — `Holds` records the full binding, `Ray` poisons the rule
+/// (`ray` is the OR over bindings, itself commutative), `Fails` drops.
 fn enumerate(
     env: &Env<'_>,
     index: usize,
     assignment: &mut Vec<Option<Value>>,
     pending: &mut Vec<(usize, Value)>,
     out: &mut BTreeSet<Tuple>,
+    ray: &mut bool,
 ) {
     if index == env.atoms.len() {
-        if leaf_admits(env, assignment, pending) {
-            out.insert(Tuple(
-                (0..env.var_count)
-                    .map(|var| match &assignment[var] {
-                        Some(value) => value.clone(),
-                        // An id below the maximum that no term uses: a
-                        // constant filler keeps positions stable and is
-                        // never projected (an unused id occurs nowhere).
-                        None => Value::Bool(false),
-                    })
-                    .collect(),
-            ));
+        match leaf_verdict(env, assignment, pending) {
+            Verdict3::Holds => {
+                out.insert(Tuple(
+                    (0..env.var_count)
+                        .map(|var| match &assignment[var] {
+                            Some(value) => value.clone(),
+                            // An id below the maximum that no term uses: a
+                            // constant filler keeps positions stable and is
+                            // never projected (an unused id occurs nowhere).
+                            None => Value::Bool(false),
+                        })
+                        .collect(),
+                ));
+            }
+            Verdict3::Ray => *ray = true,
+            Verdict3::Fails => {}
         }
         return;
     }
@@ -850,7 +852,7 @@ fn enumerate(
             }
         }
         if admitted {
-            enumerate(env, index + 1, assignment, pending, out);
+            enumerate(env, index + 1, assignment, pending, out, ray);
         }
         for var in bound_here {
             assignment[var] = None;
@@ -910,11 +912,16 @@ fn constrains(fact_value: &Value, field_is_interval: bool, term_value: &Value) -
     term_value == fact_value
 }
 
-fn leaf_admits(
+/// One complete binding's verdict: the deferred membership tests, the
+/// predicate trees, and the negated atoms conjoined in the Kleene
+/// lattice. Memberships and negations are two-valued (no measure can
+/// reach them), so their `Fails` absorbs any `Ray` a condition tree
+/// renders — exactly `andFold`'s law.
+fn leaf_verdict(
     env: &Env<'_>,
     assignment: &mut [Option<Value>],
     pending: &[(usize, Value)],
-) -> bool {
+) -> Verdict3 {
     for (var, interval) in pending {
         let bound = assignment[*var]
             .as_ref()
@@ -923,12 +930,7 @@ fn leaf_admits(
             endpoints(interval),
             point(bound).expect("a scalar-anchored variable holds a scalar"),
         ) {
-            return false;
-        }
-    }
-    for tree in &env.conditions {
-        if !tree_holds(tree, assignment, &env.ray) {
-            return false;
+            return Verdict3::Fails;
         }
     }
     for atom in &env.negated {
@@ -937,10 +939,14 @@ fn leaf_admits(
             .iter()
             .any(|fact| negated_matches(env, atom, fact, assignment));
         if matched {
-            return false;
+            return Verdict3::Fails;
         }
     }
-    true
+    env.conditions
+        .iter()
+        .fold(Verdict3::Holds, |verdict, tree| {
+            verdict.and(tree_verdict(tree, assignment))
+        })
 }
 
 /// Does a fact match a negated atom under a complete assignment? One
@@ -976,34 +982,68 @@ fn negated_matches(
     matched
 }
 
-/// One predicate tree under a complete assignment, from the definition:
-/// a leaf is its comparison, `And` holds iff every child holds (the
-/// empty conjunction is true), `Or` iff any child holds (the empty
-/// disjunction is false). No DNF, no distribution — the tree is the
-/// semantics.
-fn tree_holds(
-    tree: &SubstitutedTree,
-    assignment: &[Option<Value>],
-    ray: &std::cell::Cell<bool>,
-) -> bool {
-    match tree {
-        SubstitutedTree::Leaf(op, lhs, rhs) => predicate_holds(*op, lhs, rhs, assignment, ray),
-        SubstitutedTree::And(children) => children
-            .iter()
-            .all(|child| tree_holds(child, assignment, ray)),
-        SubstitutedTree::Or(children) => children
-            .iter()
-            .any(|child| tree_holds(child, assignment, ray)),
+/// The three-valued verdict of one condition evaluation — the strong
+/// Kleene lattice (`lean/Bumbledb/Query/Aggregates.lean: Verdict3`;
+/// ruled 2026-07-23, R6): `Fails` absorbs `and`, `Holds` absorbs `or`,
+/// `Ray` propagates otherwise. Both connectives are commutative and
+/// associative and conjunction distributes over disjunction, so a
+/// tree's verdict is a function of its leaf multiset — evaluation
+/// order is unobservable — and agrees with DNF lowering by
+/// construction. A binding raises `MeasureOfRay` iff its folded
+/// verdict is `Ray`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Verdict3 {
+    Holds,
+    Fails,
+    Ray,
+}
+
+impl Verdict3 {
+    fn of(holds: bool) -> Self {
+        if holds { Self::Holds } else { Self::Fails }
+    }
+
+    fn and(self, other: Self) -> Self {
+        match (self, other) {
+            (Self::Fails, _) | (_, Self::Fails) => Self::Fails,
+            (Self::Ray, _) | (_, Self::Ray) => Self::Ray,
+            (Self::Holds, Self::Holds) => Self::Holds,
+        }
+    }
+
+    fn or(self, other: Self) -> Self {
+        match (self, other) {
+            (Self::Holds, _) | (_, Self::Holds) => Self::Holds,
+            (Self::Ray, _) | (_, Self::Ray) => Self::Ray,
+            (Self::Fails, Self::Fails) => Self::Fails,
+        }
     }
 }
 
-fn predicate_holds(
+/// One predicate tree under a complete assignment, from the definition:
+/// a leaf is its comparison's verdict, `And` folds children with
+/// `Verdict3::and` (the empty conjunction holds), `Or` with
+/// `Verdict3::or` (the empty disjunction fails). No DNF, no
+/// distribution, no short circuit — the tree is the semantics and the
+/// lattice makes child order unobservable.
+fn tree_verdict(tree: &SubstitutedTree, assignment: &[Option<Value>]) -> Verdict3 {
+    match tree {
+        SubstitutedTree::Leaf(op, lhs, rhs) => leaf_comparison(*op, lhs, rhs, assignment),
+        SubstitutedTree::And(children) => children.iter().fold(Verdict3::Holds, |verdict, child| {
+            verdict.and(tree_verdict(child, assignment))
+        }),
+        SubstitutedTree::Or(children) => children.iter().fold(Verdict3::Fails, |verdict, child| {
+            verdict.or(tree_verdict(child, assignment))
+        }),
+    }
+}
+
+fn leaf_comparison(
     op: CmpOp,
     lhs: &Substituted,
     rhs: &Substituted,
     assignment: &[Option<Value>],
-    ray: &std::cell::Cell<bool>,
-) -> bool {
+) -> Verdict3 {
     let resolve = |term: &Substituted| -> Option<Value> {
         match term {
             Substituted::Var(var) => Some(
@@ -1013,50 +1053,46 @@ fn predicate_holds(
             ),
             Substituted::Lit(value) => Some(value.clone()),
             Substituted::Set(_) => None,
-            // The measure, from the definition — a ray poisons the rule
-            // (the enumeration's caller raises `MeasureOfRay`) and the
-            // binding is dropped.
+            // The measure, from the definition — `None` is the ray,
+            // exactly `Value.measure?`'s refusal arm.
             Substituted::Measure(var) => {
                 let interval = assignment[*var]
                     .clone()
                     .expect("validated: predicate variables are bound");
                 match measure_value(&interval) {
                     Ok(duration) => Some(Value::U64(duration)),
-                    Err(QueryError::MeasureOfRay) => {
-                        ray.set(true);
-                        None
-                    }
+                    Err(QueryError::MeasureOfRay) => None,
                     Err(other) => panic!("measure raises only MeasureOfRay: {other:?}"),
                 }
             }
         }
     };
-    // A poisoned measure side: reject the binding — the rule's answer is
-    // the error, checked after enumeration.
+    // A measure side: the one partial leaf — a ray renders `Ray`, the
+    // lattice decides whether the surrounding tree demands it.
     if matches!(lhs, Substituted::Measure(_)) || matches!(rhs, Substituted::Measure(_)) {
         let (Some(left), Some(right)) = (resolve(lhs), resolve(rhs)) else {
-            return false;
+            return Verdict3::Ray;
         };
         let a = point(&left).expect("the measure and its bound are integers");
         let b = point(&right).expect("the measure and its bound are integers");
-        return match op {
+        return Verdict3::of(match op {
             CmpOp::Lt => a < b,
             CmpOp::Le => a <= b,
             CmpOp::Gt => a > b,
             CmpOp::Ge => a >= b,
             _ => unreachable!("validated: measures compare under order operators"),
-        };
+        });
     }
     // A set is legal on one side of Eq only: "any element" — value in set.
     if let (CmpOp::Eq, Substituted::Set(values), other)
     | (CmpOp::Eq, other, Substituted::Set(values)) = (op, lhs, rhs)
     {
         let value = resolve(other).expect("validated: one side of a set Eq is scalar");
-        return values.contains(&value);
+        return Verdict3::of(values.contains(&value));
     }
     let left = resolve(lhs).expect("validated: sets appear only under Eq");
     let right = resolve(rhs).expect("validated: sets appear only under Eq");
-    match op {
+    Verdict3::of(match op {
         CmpOp::Eq => left == right,
         CmpOp::Ne => left != right,
         CmpOp::Lt | CmpOp::Le | CmpOp::Gt | CmpOp::Ge => {
@@ -1083,7 +1119,7 @@ fn predicate_holds(
             let t = point(&right).expect("validated: PointIn's right side is a point");
             point_in(endpoints(&left), t)
         }
-    }
+    })
 }
 
 /// One Allen basic's point-set definition over half-open intervals,
@@ -1170,11 +1206,11 @@ fn project(finds: &[FindTerm], bindings: &BTreeSet<Tuple>) -> Result<BTreeSet<Tu
         FindTerm::Aggregate {
             op: AggOp::ArgMax { key },
             ..
-        } => Some((usize::from(key.0), true)),
+        } => Some((*key, true)),
         FindTerm::Aggregate {
             op: AggOp::ArgMin { key },
             ..
-        } => Some((usize::from(key.0), false)),
+        } => Some((*key, false)),
         _ => None,
     });
     let pack = pack_position(finds);
@@ -1182,20 +1218,38 @@ fn project(finds: &[FindTerm], bindings: &BTreeSet<Tuple>) -> Result<BTreeSet<Tu
     for group in groups.values() {
         if let Some((position, over)) = pack {
             pack_group_rows(finds, position, over, group, &mut rows)?;
-        } else if let Some((key_var, is_max)) = arg {
+        } else if let Some((key, is_max)) = arg {
             // Arg-restriction: restrict the group to the bindings
             // attaining the key's extreme, then project every survivor —
-            // a tie yields every attaining row.
-            let extreme = group
-                .iter()
-                .map(|binding| &binding.0[key_var])
-                .max_by(|a, b| {
-                    let ordering = cmp_value(a, b);
-                    if is_max { ordering } else { ordering.reverse() }
-                })
-                .expect("groups are nonempty by construction");
+            // a tie yields every attaining row. The key value per
+            // binding is the variable's value, or its measure (R5:
+            // `ArgMax(w, Duration(w))` — a ray raises, the demanded-
+            // position law).
+            let key_value = |binding: &Tuple| -> Result<Value, QueryError> {
+                let value = &binding.0[usize::from(key.var().0)];
+                match key {
+                    ArgKey::Var(_) => Ok(value.clone()),
+                    ArgKey::Measure(_) => measure_value(value).map(Value::U64),
+                }
+            };
+            let mut extreme: Option<Value> = None;
+            for binding in group.iter() {
+                let candidate = key_value(binding)?;
+                let better = extreme.as_ref().is_none_or(|best| {
+                    let ordering = cmp_value(&candidate, best);
+                    if is_max {
+                        ordering == std::cmp::Ordering::Greater
+                    } else {
+                        ordering == std::cmp::Ordering::Less
+                    }
+                });
+                if better {
+                    extreme = Some(candidate);
+                }
+            }
+            let extreme = extreme.expect("groups are nonempty by construction");
             for binding in group {
-                if binding.0[key_var] != *extreme {
+                if key_value(binding)? != extreme {
                     continue;
                 }
                 let row: Result<Vec<Value>, QueryError> = finds
