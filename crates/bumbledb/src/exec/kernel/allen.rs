@@ -102,9 +102,13 @@ pub fn allen_code_batch(
     codes: &mut Vec<u8>,
 ) {
     let n = a_starts.len();
-    debug_assert_eq!(a_ends.len(), n, "four equal-length endpoint streams");
-    debug_assert_eq!(b_starts.len(), n, "four equal-length endpoint streams");
-    debug_assert_eq!(b_ends.len(), n, "four equal-length endpoint streams");
+    // Release-strength: the NEON core reads 8-word windows through raw
+    // pointers from all four streams, so the equality is the memory-
+    // safety invariant — asserted here, outside the flag-free gated
+    // symbols, like every sibling unsafe kernel's extent guard.
+    assert_eq!(a_ends.len(), n, "four equal-length endpoint streams");
+    assert_eq!(b_starts.len(), n, "four equal-length endpoint streams");
+    assert_eq!(b_ends.len(), n, "four equal-length endpoint streams");
     codes.resize(n, 0);
     codes_into(a_starts, a_ends, b_starts, b_ends, codes);
 }
@@ -123,7 +127,9 @@ pub fn allen_code_batch_const(
     codes: &mut Vec<u8>,
 ) {
     let n = a_starts.len();
-    debug_assert_eq!(a_ends.len(), n, "two equal-length endpoint streams");
+    // Release-strength, as `allen_code_batch`: the NEON windows read
+    // both streams unchecked.
+    assert_eq!(a_ends.len(), n, "two equal-length endpoint streams");
     codes.resize(n, 0);
     codes_into_const(a_starts, a_ends, b_start, b_end, codes);
 }
@@ -196,7 +202,15 @@ const SCAN_CHUNK: usize = 256;
 
 /// The shared chunk walk of the two dense scans: `fill(base, len,
 /// codes)` computes the chunk's codes and returns the (batch-constant)
-/// mask; positions compact through the branchless cursor-write.
+/// mask; positions compact through the branchless cursor-write
+/// ([`super::filter::write_survivor_keeps`] — one hoisted position
+/// guard, unchecked cursor stores into reserved spare capacity, the
+/// `keep & 1` advance off the flag triad), one `set_len` over the
+/// written prefix at the end of the walk.
+#[expect(
+    unsafe_code,
+    reason = "the localized unsafe operation has a documented safety invariant"
+)]
 fn filter_chunked(
     n: usize,
     out: &mut Vec<u32>,
@@ -204,21 +218,22 @@ fn filter_chunked(
 ) {
     let mut codes = [0u8; SCAN_CHUNK];
     let mut keep = [0u8; SCAN_CHUNK];
+    let start = out.len();
+    out.reserve(n);
+    let mut write = start;
+    let mut pos = super::filter::positions_fit_u32(n);
     let mut base = 0usize;
     while base < n {
         let len = SCAN_CHUNK.min(n - base);
         let mask = fill(base, len, &mut codes[..len]);
         keep_into(&codes[..len], mask, &mut keep[..len]);
-        let start = out.len();
-        out.resize(start + len, 0);
-        let mut write = start;
-        for (i, &keep) in keep[..len].iter().enumerate() {
-            out[write] = u32::try_from(base + i).expect("positions fit u32");
-            write += usize::from(keep != 0);
-        }
-        out.truncate(write);
+        (write, pos) = super::filter::write_survivor_keeps(out, write, pos, &keep[..len]);
         base += len;
     }
+    // SAFETY: every slot in `[start, write)` was cursor-written by the
+    // keep-byte survivor writes above and `write <= start + n <=
+    // capacity` (`u32` carries no drop obligation).
+    unsafe { out.set_len(write) };
 }
 
 /// [`allen_code_batch`]'s core over pre-sized slices (the dense scans'

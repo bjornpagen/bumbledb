@@ -2,6 +2,20 @@ use std::simd::prelude::*;
 
 use super::gather::biased_to_i64;
 
+/// The strided extent guard the fold kernels' `get_unchecked` bodies
+/// cite: `(count − 1) · stride + offset < len`, computed checked so the
+/// guard is total over the input type — a wrapping product cannot
+/// forge an in-bounds extent in release (overflow-checks default off
+/// there; the guard IS the safety invariant, so it must not wrap).
+fn strided_extent_in(len: usize, stride: usize, offset: usize, count: usize) -> bool {
+    stride > 0
+        && count.checked_sub(1).is_none_or(|c| {
+            c.checked_mul(stride)
+                .and_then(|span| span.checked_add(offset))
+                .is_some_and(|last| last < len)
+        })
+}
+
 /// Contiguous strided sum of biased-i64 words over
 /// `values[offset], values[offset + stride], ..` for `count` elements —
 /// the dense-survivor fast form (no index loads). Stride 1 takes the
@@ -19,7 +33,7 @@ use super::gather::biased_to_i64;
     reason = "the localized unsafe operation has a documented safety invariant"
 )]
 pub fn fold_sum_biased_i64(values: &[u64], stride: usize, offset: usize, count: usize) -> i128 {
-    assert!(stride > 0 && (count == 0 || (count - 1) * stride + offset < values.len()));
+    assert!(strided_extent_in(values.len(), stride, offset, count));
     if stride == 1 {
         let total = fold_sum_u64_dense(&values[offset..offset + count]);
         let bias = u128::from(count as u64) << 63;
@@ -58,7 +72,7 @@ pub fn fold_sum_biased_i64(values: &[u64], stride: usize, offset: usize, count: 
     reason = "the localized unsafe operation has a documented safety invariant"
 )]
 pub fn fold_sum_u64(values: &[u64], stride: usize, offset: usize, count: usize) -> u128 {
-    assert!(stride > 0 && (count == 0 || (count - 1) * stride + offset < values.len()));
+    assert!(strided_extent_in(values.len(), stride, offset, count));
     if stride == 1 {
         return fold_sum_u64_dense(&values[offset..offset + count]);
     }
@@ -90,7 +104,7 @@ pub fn fold_sum_u64(values: &[u64], stride: usize, offset: usize, count: usize) 
 /// extent exceeding `values`.
 #[must_use]
 pub fn fold_min_max_u64(values: &[u64], stride: usize, offset: usize, count: usize) -> (u64, u64) {
-    assert!(count > 0 && stride > 0 && (count - 1) * stride + offset < values.len());
+    assert!(count > 0 && strided_extent_in(values.len(), stride, offset, count));
     if stride == 1 {
         return fold_min_max_u64_dense(&values[offset..offset + count]);
     }

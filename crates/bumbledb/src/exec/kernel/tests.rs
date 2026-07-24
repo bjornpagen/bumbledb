@@ -295,6 +295,29 @@ fn fold_kernels_match_the_naive_folds_bit_for_bit() {
     }
 }
 
+/// The strided extent guard is total over the input type: an extent
+/// whose `(count − 1) · stride` wraps usize is refused by the assert in
+/// every profile — the checked guard, not release-wrapping arithmetic,
+/// is what stands between the caller and the `get_unchecked` body.
+#[test]
+#[should_panic(expected = "assertion failed")]
+fn fold_extent_guard_refuses_wrapping_extents() {
+    let _ = fold_sum_u64(&[0u64; 1], 1usize << 63, 0, 3);
+}
+
+/// The wrapping-extent refusal's twins on the other two fold kernels.
+#[test]
+#[should_panic(expected = "assertion failed")]
+fn fold_biased_extent_guard_refuses_wrapping_extents() {
+    let _ = fold_sum_biased_i64(&[0u64; 1], 1usize << 63, 0, 3);
+}
+
+#[test]
+#[should_panic(expected = "assertion failed")]
+fn fold_min_max_extent_guard_refuses_wrapping_extents() {
+    let _ = fold_min_max_u64(&[0u64; 1], 1usize << 63, 0, 3);
+}
+
 /// The gather folds' overflow and sign edges, pinned closed-form:
 /// carry saturation (every lane wave overflows every step), duplicate
 /// indices on extreme words, and the biased extremes (`i64::MIN`
@@ -1232,6 +1255,20 @@ fn allen_filter_columns_match_the_scalar_survivors_bit_for_bit() {
             );
         }
     }
+}
+
+/// The four-stream length equality is release-strength at the dispatch
+/// (the NEON core reads 8-word windows through raw pointers from every
+/// stream, so the equality is the memory-safety invariant — asserted
+/// like the fold kernels' extent guard, not debug-only).
+#[test]
+#[should_panic(expected = "four equal-length endpoint streams")]
+fn allen_code_batch_refuses_unequal_streams() {
+    let long = vec![1u64; 32];
+    let short = vec![2u64; 24];
+    let ends: Vec<u64> = long.iter().map(|&s| s + 4).collect();
+    let mut codes = Vec::new();
+    allen_code_batch(&long, &ends, &short, &ends, &mut codes);
 }
 
 /// All ordered pairs of nonempty intervals over an endpoint set: the

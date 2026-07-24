@@ -125,8 +125,10 @@ unsafe fn allen_table() -> std::arch::aarch64::uint8x16x4_t {
 /// allen_code_batch`'s NEON core; the dispatch guarantees `len ≥ 8`).
 /// The tail is the overlapped last window — codes are idempotent per
 /// position, so re-classifying up to 7 pairs is free of both branches
-/// and a scalar tail — and the loops are countdown-shaped so no `cmp`
-/// reaches the back edge: this symbol is the asm gate's flag-free
+/// and a scalar tail; `(n − 1) / 8` full windows (`sub`+`lsr`, no flag
+/// writer) make the overlap zero when `n` is lane-aligned instead of a
+/// whole duplicated window — and the loops are countdown-shaped so no
+/// `cmp` reaches the back edge: this symbol is the asm gate's flag-free
 /// subject (`scripts/check-asm.sh`), never inlined away.
 #[inline(never)]
 pub(super) fn allen_code_batch_neon(
@@ -142,17 +144,26 @@ pub(super) fn allen_code_batch_neon(
         a_starts.len() == n && a_ends.len() == n && b_starts.len() == n && b_ends.len() == n
     );
     // SAFETY: every window reads 8 words from within the four n-length
-    // streams and writes 8 bytes into `codes` — full windows at k*8 with
-    // k*8+8 <= n, plus one overlapped window at n-8 (n >= 8).
+    // streams and writes 8 bytes into `codes` — (n-1)/8 full windows at
+    // k*8 with k*8+8 <= n, plus one overlapped window at n-8 (n >= 8;
+    // the overlap is empty exactly when n is lane-aligned).
     unsafe {
         let (a_s, a_e) = (a_starts.as_ptr(), a_ends.as_ptr());
         let (b_s, b_e) = (b_starts.as_ptr(), b_ends.as_ptr());
         let out = codes.as_mut_ptr();
         let table = allen_table();
-        let mut left = n / 8;
+        let mut left = (n - 1) / 8;
         let mut base = 0usize;
         while left != 0 {
             left -= 1;
+            // The opaque back edge (as `allen_filter_batch_neon`): the
+            // empty register-pinned asm identity keeps LLVM from fusing
+            // the countdown into a flag-writing `subs` trip count.
+            std::arch::asm!(
+                "/* {c} */",
+                c = inout(reg) left,
+                options(nomem, nostack, preserves_flags)
+            );
             allen_code_window(
                 table,
                 |lane| {
@@ -204,10 +215,16 @@ pub(super) fn allen_code_batch_const_neon(
         let out = codes.as_mut_ptr();
         let table = allen_table();
         let (b_s, b_e) = (vdupq_n_u64(b_start), vdupq_n_u64(b_end));
-        let mut left = n / 8;
+        let mut left = (n - 1) / 8;
         let mut base = 0usize;
         while left != 0 {
             left -= 1;
+            // The opaque back edge, as the four-stream form above.
+            std::arch::asm!(
+                "/* {c} */",
+                c = inout(reg) left,
+                options(nomem, nostack, preserves_flags)
+            );
             allen_code_window(
                 table,
                 |_| (b_s, b_e),
@@ -250,8 +267,9 @@ pub(super) fn allen_filter_batch_neon(codes: &[u8], mask_bits: u16, keep: &mut [
         code += 1;
     }
     // SAFETY: every window reads 16 bytes from within `codes` and
-    // writes 16 within `keep` — full windows plus one overlapped window
-    // at n-16 (n >= 16); keep bytes are idempotent per position. The
+    // writes 16 within `keep` — (n-1)/16 full windows plus one
+    // overlapped window at n-16 (n >= 16; the overlap is empty exactly
+    // when n is lane-aligned); keep bytes are idempotent per position. The
     // countdown passes through an empty register-pinned `asm!` identity
     // so LLVM keeps the flag-free `sub`+`cbnz` back edge instead of
     // re-deriving a `cmp`-shaped trip count while unrolling (the gate
@@ -266,7 +284,7 @@ pub(super) fn allen_filter_batch_neon(codes: &[u8], mask_bits: u16, keep: &mut [
         let mask_table = vld1q_u8(table.as_ptr());
         let src = codes.as_ptr();
         let dst = keep.as_mut_ptr();
-        let mut left = n / 16;
+        let mut left = (n - 1) / 16;
         let mut base = 0usize;
         while left != 0 {
             left -= 1;
@@ -317,7 +335,7 @@ pub(super) fn allen_filter_batch_neon_spill_arm(codes: &[u8], mask_bits: u16, ke
         let mask_table = vld1q_u8(table.as_ptr());
         let src = codes.as_ptr();
         let dst = keep.as_mut_ptr();
-        let mut left = n / 16;
+        let mut left = (n - 1) / 16;
         let mut base = 0usize;
         while left != 0 {
             left = std::hint::black_box(left - 1);

@@ -111,6 +111,10 @@ pub fn filter_any_point_in_u64(starts: &[u64], ends: &[u64], points: &[u64], out
 /// element encodings): a ray has no finite measure, and the caller
 /// raises the typed [`crate::Error::MeasureOfRay`]. `out`'s contents are
 /// unspecified after an error.
+#[expect(
+    unsafe_code,
+    reason = "the localized unsafe operation has a documented safety invariant"
+)]
 pub fn filter_duration_range_u64(
     starts: &[u64],
     ends: &[u64],
@@ -120,7 +124,7 @@ pub fn filter_duration_range_u64(
 ) -> Result<(), usize> {
     debug_assert_eq!(starts.len(), ends.len(), "an interval span's column pair");
     let start = out.len();
-    out.resize(start + starts.len(), 0);
+    out.reserve(starts.len());
     let mut write = start;
     let mut pos = positions_fit_u32(starts.len());
     let lo_v = Simd::<u64, U64_LANES>::splat(lo);
@@ -146,16 +150,31 @@ pub fn filter_duration_range_u64(
             return Err(i);
         }
         let duration = ends[i] - starts[i];
-        out[write] = u32::try_from(i).expect("positions fit u32");
+        // SAFETY: the reserve above owns one slot per visited position
+        // and the cursor advances at most once each, so the store lands
+        // in owned capacity; `set_len` exposes only cursor-written slots.
+        unsafe { out.as_mut_ptr().add(write).write(pos) };
         write += usize::from((lo..=hi).contains(&duration));
+        pos = pos.wrapping_add(1);
     }
-    out.truncate(write);
+    // SAFETY: every slot in `[start, write)` was cursor-written above
+    // and `write <= start + starts.len() <= capacity` (`u32` carries no
+    // drop obligation).
+    unsafe { out.set_len(write) };
     Ok(())
 }
 
 /// Branchless cursor-write over the whole column: lane chunks through
 /// the `keep` mask's bitmask, the remainder through its scalar twin
-/// `keep1`.
+/// `keep1`. The output grows through reserved spare capacity — one
+/// `reserve` up front, cursor writes, one `set_len` over the written
+/// prefix — never a zero-fill of slots the cursor overwrites or the
+/// survivor count discards (the `_platform_memset` disease, cured the
+/// same way as the codes/keep buffers).
+#[expect(
+    unsafe_code,
+    reason = "the localized unsafe operation has a documented safety invariant"
+)]
 fn push_matching<T, const N: usize>(
     col: &[T],
     out: &mut Vec<u32>,
@@ -165,23 +184,32 @@ fn push_matching<T, const N: usize>(
     T: SimdElement,
 {
     let start = out.len();
-    out.resize(start + col.len(), 0);
+    out.reserve(col.len());
     let mut write = start;
     let mut pos = positions_fit_u32(col.len());
     let (chunks, tail) = col.as_chunks::<N>();
-    let tail_start = col.len() - tail.len();
     for chunk in chunks {
         let bits = keep(Simd::from_array(*chunk)).to_bitmask();
         (write, pos) = write_survivor_bits::<N>(out, write, pos, bits);
     }
-    for (i, &item) in tail.iter().enumerate() {
-        out[write] = u32::try_from(tail_start + i).expect("positions fit u32");
+    for &item in tail {
+        // SAFETY: the reserve above owns one slot per visited position
+        // and the cursor advances at most once each.
+        unsafe { out.as_mut_ptr().add(write).write(pos) };
         write += usize::from(keep1(item));
+        pos = pos.wrapping_add(1);
     }
-    out.truncate(write);
+    // SAFETY: every slot in `[start, write)` was cursor-written above
+    // and `write <= start + col.len() <= capacity` (`u32` carries no
+    // drop obligation).
+    unsafe { out.set_len(write) };
 }
 
 /// [`push_matching`] over an interval span's (starts, ends) column pair.
+#[expect(
+    unsafe_code,
+    reason = "the localized unsafe operation has a documented safety invariant"
+)]
 fn push_matching_pair(
     starts: &[u64],
     ends: &[u64],
@@ -190,7 +218,7 @@ fn push_matching_pair(
     keep1: impl Fn(u64, u64) -> bool,
 ) {
     let start = out.len();
-    out.resize(start + starts.len(), 0);
+    out.reserve(starts.len());
     let mut write = start;
     let mut pos = positions_fit_u32(starts.len());
     let (chunks, tail) = starts.as_chunks::<U64_LANES>();
@@ -203,10 +231,16 @@ fn push_matching_pair(
         (write, pos) = write_survivor_bits::<U64_LANES>(out, write, pos, bits);
     }
     for i in tail_start..starts.len() {
-        out[write] = u32::try_from(i).expect("positions fit u32");
+        // SAFETY: the reserve above owns one slot per visited position
+        // and the cursor advances at most once each.
+        unsafe { out.as_mut_ptr().add(write).write(pos) };
         write += usize::from(keep1(starts[i], ends[i]));
+        pos = pos.wrapping_add(1);
     }
-    out.truncate(write);
+    // SAFETY: every slot in `[start, write)` was cursor-written above
+    // and `write <= start + starts.len() <= capacity` (`u32` carries no
+    // drop obligation).
+    unsafe { out.set_len(write) };
 }
 
 /// The one hoisted position guard (the per-lane `u32::try_from` was a
@@ -214,7 +248,7 @@ fn push_matching_pair(
 /// `0..len`, so `len − 1` must fit u32 — the same programmer invariant
 /// the per-lane guard asserted, checked once. Returns the first
 /// position's cursor.
-fn positions_fit_u32(len: usize) -> u32 {
+pub(super) fn positions_fit_u32(len: usize) -> u32 {
     let _ = u32::try_from(len.saturating_sub(1)).expect("positions fit u32");
     0
 }
@@ -226,30 +260,72 @@ fn positions_fit_u32(len: usize) -> u32 {
 /// (`m2max.predict.branchless-flat`'s 1.00 cy/item cursor-write shape).
 /// Returns the advanced (cursor, position) pair.
 ///
-/// The callers owe the capacity invariant asserted below: `out` is
-/// pre-sized to `start + col.len()` and the cursor advances at most
-/// once per visited position, so on entry `write + N <= out.len()`
-/// whenever a full chunk remains — every lane's write is in bounds.
+/// The callers owe the capacity invariant asserted below: `out` has one
+/// reserved slot per visited position past the initialized prefix and
+/// the cursor advances at most once per position, so on entry
+/// `write + N <= out.capacity()` whenever a full chunk remains — every
+/// lane's store lands in owned capacity, and the caller's final
+/// `set_len(write)` exposes only cursor-written slots.
 #[expect(
     unsafe_code,
     reason = "the localized unsafe operation has a documented safety invariant"
 )]
 fn write_survivor_bits<const N: usize>(
-    out: &mut [u32],
+    out: &mut Vec<u32>,
     mut write: usize,
     mut pos: u32,
     bits: u64,
 ) -> (usize, u32) {
-    debug_assert!(write + N <= out.len(), "the callers' pre-size invariant");
+    debug_assert!(write + N <= out.capacity(), "the callers' reserve invariant");
+    let ptr = out.as_mut_ptr();
     for lane in 0..N {
-        // SAFETY: `write + N <= out.len()` on entry (asserted above,
-        // guaranteed by the callers' pre-size discipline) and `write`
-        // advances at most once per lane, so `write + lane < out.len()`
-        // bounds every iteration's cursor.
+        // SAFETY: `write + N <= out.capacity()` on entry (asserted
+        // above, guaranteed by the callers' reserve discipline) and
+        // `write` advances at most once per lane, so every store lands
+        // inside the Vec's owned allocation.
         unsafe {
-            *out.get_unchecked_mut(write) = pos;
+            ptr.add(write).write(pos);
         }
         write += usize::from((bits >> lane) & 1 != 0);
+        pos = pos.wrapping_add(1);
+    }
+    (write, pos)
+}
+
+/// [`write_survivor_bits`]'s keep-byte twin — the Allen dense scans'
+/// compaction tail ([`super::allen`]'s chunk walk): one cursor store
+/// per keep byte, the advance `keep & 1` (`and`+`add` on any of the
+/// 6 ALUs, off the flag triad — [`super::compact_u32_by_mask`]'s
+/// contract; the membership kernels write 0/1 bytes by construction).
+/// Same reserve invariant, same hoisted position guard.
+#[expect(
+    unsafe_code,
+    reason = "the localized unsafe operation has a documented safety invariant"
+)]
+pub(super) fn write_survivor_keeps(
+    out: &mut Vec<u32>,
+    mut write: usize,
+    mut pos: u32,
+    keep: &[u8],
+) -> (usize, u32) {
+    debug_assert!(
+        write + keep.len() <= out.capacity(),
+        "the callers' reserve invariant"
+    );
+    debug_assert!(
+        keep.iter().all(|&k| k <= 1),
+        "keep bytes are 0/1 by contract"
+    );
+    let ptr = out.as_mut_ptr();
+    for &k in keep {
+        // SAFETY: `write + keep.len() <= out.capacity()` on entry
+        // (asserted above, guaranteed by the callers' reserve
+        // discipline) and `write` advances at most once per byte, so
+        // every store lands inside the Vec's owned allocation.
+        unsafe {
+            ptr.add(write).write(pos);
+        }
+        write += usize::from(k & 1);
         pos = pos.wrapping_add(1);
     }
     (write, pos)
