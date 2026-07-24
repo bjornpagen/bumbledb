@@ -10,6 +10,23 @@
 //! `scripts/check-asm.sh`, not trusted to the attribute.
 #![allow(clippy::inline_always)]
 
+/// The final avalanche both hash forms share. Load-bearing, not
+/// belt-and-braces: multiplication mod 2^64 propagates bits upward
+/// only, and the fold round's `>> 29` reaches down 29 bits — so
+/// without this down-mix, keys differing only in bits ≥ p agree in
+/// the low p−29 hash bits, and home indices derive from the LOW bits
+/// (`colt/probe.rs`, `wordmap/probe.rs`). Tail-zero big-endian
+/// `bytes<N>` code words (encoding.rs pads at the tail;
+/// `fact_word.rs` reads big-endian) put ALL their entropy up there —
+/// whole code families collapsed into one home bucket before this.
+/// One multiply lifts the low bits into the top half, one `>> 32`
+/// xor carries the mixed top half down over the index bits.
+#[inline(always)]
+fn avalanche(h: u64) -> u64 {
+    let h = h.wrapping_mul(0x94D0_49BB_1331_11EB);
+    h ^ (h >> 32)
+}
+
 /// The word-tuple probe hash (runtime length). `pub(crate)`: the image
 /// cardinality counter's distinct-word set probes with the same hash —
 /// its former private copy was exactly the drift this module exists to
@@ -22,7 +39,7 @@ pub(crate) fn hash_words(words: &[u64]) -> u64 {
         h = h.wrapping_mul(0x9E37_79B9_7F4A_7C15);
         h ^= h >> 29;
     }
-    h
+    avalanche(h)
 }
 
 /// [`hash_words`] with the word count fixed at compile time — same
@@ -41,7 +58,7 @@ pub(super) fn hash_core<const K: usize>(words: &[u64]) -> u64 {
         h = h.wrapping_mul(0x9E37_79B9_7F4A_7C15);
         h ^= h >> 29;
     }
-    h
+    avalanche(h)
 }
 
 /// The 7-bit hash tag a ctrl byte carries (bit 7 marks occupancy).

@@ -147,6 +147,77 @@ fn adversarial_false_tag_rates(hash: fn(&[u64]) -> u64) -> Vec<(&'static str, f6
         .collect()
 }
 
+/// The index-end contract, the false-tag gate's complement: home
+/// buckets derive from the LOW hash bits (the colt bucket map and the
+/// window probe alike), while a tail-padded `bytes<N>` code word
+/// carries all its entropy in the TOP bytes (encoding.rs zero-pads at
+/// the tail, `fact_word.rs` reads big-endian). This gates WHATEVER
+/// hash the module ships, by property: across the short-code
+/// families, distinct home buckets must reach at least half the
+/// table — the collapse mode is one home for the whole family, so
+/// the margin is enormous in both directions.
+#[test]
+fn tail_padded_code_families_spread_across_home_buckets() {
+    for (name, buckets, homes) in tail_padded_home_spreads(super::hash_words) {
+        println!("distinct homes [{name}]: {homes}/{buckets}");
+        assert!(
+            homes >= buckets / 2,
+            "family {name}: {homes} distinct homes of {buckets} buckets"
+        );
+    }
+}
+
+/// The red case: the bare fold — no final avalanche — leaves the low
+/// index bits of high-entropy-only keys frozen (multiplication
+/// propagates upward, the round's `>> 29` reaches down 29 bits), and
+/// every 2-byte code lands in ONE home bucket. If a future
+/// "simplification" drops the finalizer and this stops panicking,
+/// the gate above will say so.
+#[test]
+#[should_panic(expected = "distinct homes")]
+fn the_unfinalized_fold_fails_the_home_spread_gate() {
+    fn bare_fold(words: &[u64]) -> u64 {
+        let mut h = 0x517C_C1B7_2722_0A95_u64;
+        for w in words {
+            h ^= *w;
+            h = h.wrapping_mul(0x9E37_79B9_7F4A_7C15);
+            h ^= h >> 29;
+        }
+        h
+    }
+    for (name, buckets, homes) in tail_padded_home_spreads(bare_fold) {
+        assert!(
+            homes >= buckets / 2,
+            "family {name}: {homes} distinct homes of {buckets} buckets"
+        );
+    }
+}
+
+/// Distinct low-bit home buckets of `hash` over 8,192-key short-code
+/// families at colt-realistic table sizes: `bytes<2>`/`bytes<3>`/
+/// `bytes<4>` canonical encodings vary bits 48–63 / 40–63 / 32–63 of
+/// one big-endian tail-padded word. Key counts saturate every table
+/// (8192 ≥ 2× buckets), so a healthy hash reaches well past half the
+/// buckets while the frozen-low-bit collapse caps at `buckets >> 3`
+/// or worse.
+fn tail_padded_home_spreads(hash: fn(&[u64]) -> u64) -> Vec<(&'static str, usize, usize)> {
+    [
+        ("bytes<2>", 48, 512),
+        ("bytes<3>", 40, 512),
+        ("bytes<4>", 32, 4096),
+    ]
+    .into_iter()
+    .map(|(name, shift, buckets)| {
+        let mut seen = vec![false; buckets];
+        for i in 0..8_192u64 {
+            let home = usize::try_from(hash(&[i << shift])).expect("64-bit") & (buckets - 1);
+            seen[home] = true;
+        }
+        (name, buckets, seen.iter().filter(|&&s| s).count())
+    })
+    .collect()
+}
+
 /// The const-arity contract: `hash_core::<K>` is
 /// hash-IDENTICAL to `hash_words` — same seed, fold order, constants
 /// — so the monomorph and dyn arms land keys in the same slots and
