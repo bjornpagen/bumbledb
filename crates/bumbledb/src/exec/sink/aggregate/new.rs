@@ -1,4 +1,6 @@
-use crate::exec::sink::{AggregateSink, ArgSpec, FindSpec, FoldOp, SinkSpec};
+use crate::exec::sink::{
+    AggregateSink, ArgSpec, DENSE_GROUPS_CAP, FindSpec, FoldOp, GroupTable, SinkSpec,
+};
 use crate::exec::wordmap::WordMap;
 
 /// Parses prepare's find vocabulary into the measure-free execution
@@ -110,7 +112,25 @@ impl AggregateSink {
     #[cfg(test)]
     #[must_use]
     pub fn new(finds: impl AsRef<[FindSpec]>, slot_count: usize) -> Self {
-        Self::build(finds.as_ref(), slot_count, DedupRegime::Bindings, 0)
+        Self::build(finds.as_ref(), slot_count, DedupRegime::Bindings, 0, &[])
+    }
+
+    /// Unhinted dense-group construction (tests): the radixes are the
+    /// schema-proven per-word domains (finding 049).
+    #[cfg(test)]
+    #[must_use]
+    pub fn new_dense(
+        finds: impl AsRef<[FindSpec]>,
+        slot_count: usize,
+        dense_groups: &[u16],
+    ) -> Self {
+        Self::build(
+            finds.as_ref(),
+            slot_count,
+            DedupRegime::Bindings,
+            0,
+            dense_groups,
+        )
     }
 
     /// Unhinted elided construction (tests): the proof is mandatory.
@@ -121,7 +141,13 @@ impl AggregateSink {
         slot_count: usize,
         witness: crate::plan::fj::DistinctWitness,
     ) -> Self {
-        Self::build(finds.as_ref(), slot_count, DedupRegime::Elided(witness), 0)
+        Self::build(
+            finds.as_ref(),
+            slot_count,
+            DedupRegime::Elided(witness),
+            0,
+            &[],
+        )
     }
 
     /// Presized construction: the dedup seen-set
@@ -136,9 +162,17 @@ impl AggregateSink {
     /// [`Self::without_seen_set`] alone accepts the proof and
     /// omits the map. Multi-rule sinks always retain the spanning union
     /// representation, even when the rules are provably disjoint.
+    /// `dense_groups` is the single-rule dense-domain proof (finding
+    /// 049): per group-key word, the schema-proven radix — empty keeps
+    /// the open-domain map.
     #[must_use]
-    pub fn with_capacity_hint(finds: &[FindSpec], slot_count: usize, hint: usize) -> Self {
-        Self::build(finds, slot_count, DedupRegime::Bindings, hint)
+    pub fn with_capacity_hint(
+        finds: &[FindSpec],
+        slot_count: usize,
+        hint: usize,
+        dense_groups: &[u16],
+    ) -> Self {
+        Self::build(finds, slot_count, DedupRegime::Bindings, hint, dense_groups)
     }
 
     /// Presized multi-rule construction, hand-written provenance: the
@@ -146,7 +180,7 @@ impl AggregateSink {
     /// the union representation.
     #[must_use]
     pub fn for_union(finds: &[FindSpec], slot_count: usize, hint: usize) -> Self {
-        Self::build(finds, slot_count, DedupRegime::Union, hint)
+        Self::build(finds, slot_count, DedupRegime::Union, hint, &[])
     }
 
     /// Presized multi-rule construction, DNF-derived provenance (ruled
@@ -162,22 +196,36 @@ impl AggregateSink {
         spans: &[(usize, usize)],
         hint: usize,
     ) -> Self {
-        Self::build(finds, slot_count, DedupRegime::DnfUnion(spans), hint)
+        Self::build(finds, slot_count, DedupRegime::DnfUnion(spans), hint, &[])
     }
 
     /// Presized single-rule construction without a binding seen-set. The
-    /// only entry requires the plan proof by value.
+    /// only entry requires the plan proof by value; `dense_groups` as
+    /// [`Self::with_capacity_hint`].
     #[must_use]
     pub fn without_seen_set(
         finds: &[FindSpec],
         slot_count: usize,
         witness: crate::plan::fj::DistinctWitness,
         hint: usize,
+        dense_groups: &[u16],
     ) -> Self {
-        Self::build(finds, slot_count, DedupRegime::Elided(witness), hint)
+        Self::build(
+            finds,
+            slot_count,
+            DedupRegime::Elided(witness),
+            hint,
+            dense_groups,
+        )
     }
 
-    fn build(finds: &[FindSpec], slot_count: usize, regime: DedupRegime<'_>, hint: usize) -> Self {
+    fn build(
+        finds: &[FindSpec],
+        slot_count: usize,
+        regime: DedupRegime<'_>,
+        hint: usize,
+        dense_groups: &[u16],
+    ) -> Self {
         let union = matches!(regime, DedupRegime::Union | DedupRegime::DnfUnion(_));
         let distinct_witness = match regime {
             DedupRegime::Elided(witness) => Some(witness),
@@ -256,10 +304,36 @@ impl AggregateSink {
             !(union && arg.is_some()),
             "validated: Arg-restriction never crosses rules"
         );
+        // The group representation (finding 049): dense when the caller
+        // proved every key word a small domain — the product is capped
+        // at construction, so the table is at most `DENSE_GROUPS_CAP`
+        // words and the untouched-slot scan at finalize stays trivial.
+        let groups = if dense_groups.is_empty() {
+            GroupTable::Hashed(WordMap::with_capacity_hint(key_words, hint.min(4096)))
+        } else {
+            debug_assert_eq!(
+                dense_groups.len(),
+                key_words,
+                "one radix per group-key word"
+            );
+            let product: u32 = dense_groups
+                .iter()
+                .map(|radix| u32::from(*radix))
+                .product();
+            debug_assert!(
+                0 < product && product <= DENSE_GROUPS_CAP,
+                "the caller caps the dense product"
+            );
+            GroupTable::Dense {
+                radixes: dense_groups.into(),
+                table: vec![0; usize::try_from(product).expect("capped")].into_boxed_slice(),
+                ordinals: Vec::new(),
+            }
+        };
         Self {
             distinct_witness,
             dnf_rekey: matches!(regime, DedupRegime::DnfUnion(_)),
-            groups: WordMap::with_capacity_hint(key_words, hint.min(4096)),
+            groups,
             key_scratch: vec![0; key_words],
             binding_scratch: vec![0; scratch_words],
             // Single-rule: whole-binding key, elided when its own plan
@@ -369,6 +443,14 @@ impl AggregateSink {
     #[must_use]
     pub fn seen_elided(&self) -> bool {
         self.distinct_witness.is_some()
+    }
+
+    /// Whether the group table took the dense representation (finding
+    /// 049) — the construction observable.
+    #[cfg(test)]
+    #[must_use]
+    pub fn dense_group_table(&self) -> bool {
+        matches!(self.groups, GroupTable::Dense { .. })
     }
 
     /// Distinct values held across every live `CountDistinct` set — the

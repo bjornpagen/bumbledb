@@ -554,11 +554,13 @@ fn validate_rule(
     // consumed the inference slots into `var_types` during
     // `check_comparisons`): the typing takes them verbatim.
     let var_types = ctx.var_types.clone();
+    let closed_vars = ctx.closed_vars.clone();
     Ok((
         RuleTyping {
             var_types,
             group_key,
             classified,
+            closed_vars,
         },
         ctx,
     ))

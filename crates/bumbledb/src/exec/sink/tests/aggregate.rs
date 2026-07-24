@@ -844,3 +844,75 @@ fn the_dnf_union_seen_set_keys_shared_slot_arrays_across_clone_layouts() {
         "Sum folds the written rule's distinct full bindings: 100 + 100"
     );
 }
+
+/// The dense group table (finding 049) is answer-identical to the
+/// open-domain map over the same emissions: two schema-proven radixes
+/// (2 × 3 ordinals), every group inhabited out of order, ties of the
+/// mixed-radix arithmetic to the map's hash keys checked value by
+/// value.
+#[test]
+fn dense_group_tables_match_the_hashed_map_word_for_word() {
+    use crate::exec::run::{Bindings, Sink};
+
+    // Head: (a, b, Sum(x), Count) — a ∈ 0..2, b ∈ 0..3, x open.
+    let spec = vec![
+        FindSpec::Var { slot: 0, width: 1 },
+        FindSpec::Var { slot: 1, width: 1 },
+        FindSpec::Agg {
+            op: FoldOp::Sum,
+            over_slot: Some(2),
+            over_width: 1,
+            signed: false,
+        },
+        FindSpec::Agg {
+            op: FoldOp::Count,
+            over_slot: None,
+            over_width: 1,
+            signed: false,
+        },
+    ];
+    let mut dense = AggregateSink::new_dense(&spec, 3, &[2, 3]);
+    let mut hashed = AggregateSink::new(&spec, 3);
+    assert!(dense.dense_group_table(), "two proven radixes go dense");
+    assert!(!hashed.dense_group_table(), "no proof keeps the map");
+    dense.reset();
+    hashed.reset();
+
+    // Every (a, b) group, emitted out of ordinal order with duplicates
+    // (the seen-set absorbs the repeat identically in both regimes).
+    let mut bindings = Bindings::new(3);
+    for (a, b, x) in [
+        (1u64, 2u64, 10u64),
+        (0, 0, 1),
+        (1, 0, 5),
+        (0, 2, 7),
+        (1, 2, 30),
+        (0, 1, 2),
+        (1, 1, 4),
+        (1, 2, 10), // the duplicate full binding
+    ] {
+        bindings.reset();
+        bindings.set(0, a);
+        bindings.set(1, b);
+        bindings.set(2, x);
+        dense.emit(&bindings);
+        hashed.emit(&bindings);
+    }
+    let mut dense_rows = dense.into_answers().expect("in range");
+    let mut hashed_rows = hashed.into_answers().expect("in range");
+    dense_rows.sort_unstable();
+    hashed_rows.sort_unstable();
+    assert_eq!(dense_rows, hashed_rows, "one denotation, two tables");
+    assert_eq!(
+        dense_rows,
+        vec![
+            vec![0, 0, 1, 1],
+            vec![0, 1, 2, 1],
+            vec![0, 2, 7, 1],
+            vec![1, 0, 5, 1],
+            vec![1, 1, 4, 1],
+            vec![1, 2, 40, 2],
+        ],
+        "mixed-radix ordinals reconstruct every key word"
+    );
+}

@@ -190,7 +190,7 @@ impl Context {
                             }
                             // The closed-reference wall (R4): folding a
                             // declaration-order accident is ordering it.
-                            if self.closed_vars.contains(var) {
+                            if self.closed_vars.contains_key(var) {
                                 return Err(ValidationError::AggregateOverClosedReference {
                                     find: find_idx,
                                 });
@@ -264,7 +264,7 @@ impl Context {
                                     // The closed-reference wall (R4): an
                                     // Arg restriction sweeps the key's
                                     // order.
-                                    if self.closed_vars.contains(var) {
+                                    if self.closed_vars.contains_key(var) {
                                         return Err(
                                             ValidationError::AggregateOverClosedReference {
                                                 find: find_idx,

@@ -543,3 +543,95 @@ fn count_distinct_over_intervals_uses_value_identity() {
     answers.sort_unstable();
     assert_eq!(answers, vec![(10, 2), (11, 1)]);
 }
+
+/// The dense group table (finding 049), end to end: grouping by a
+/// closed reference — `Reading.kind` contains into the closed `Kind`,
+/// whose row ids are declaration indices `0..4` — builds the
+/// mixed-radix table instead of the hash map, and the answers are the
+/// per-kind folds.
+#[test]
+fn a_closed_group_key_takes_the_dense_table() {
+    let dir = TempDir::new("agg-dense-groups");
+    let schema = super::folded::closed_schema();
+    let env = Environment::create(dir.path(), &schema).expect("create");
+    super::folded::insert_readings(&env, &schema, super::folded::READINGS);
+    let cache = ImageCache::new(&schema);
+    let txn = env.read_txn().expect("txn");
+
+    // Q(kind, Sum(value), Count) :- Reading(kind, value).
+    let query = Query::single(Rule {
+        finds: vec![
+            FindTerm::Var(VarId(0)),
+            FindTerm::Aggregate {
+                op: AggOp::Sum,
+                over: Some(VarId(1)),
+            },
+            FindTerm::Aggregate {
+                op: AggOp::Count,
+                over: None,
+            },
+        ],
+        atoms: vec![Atom {
+            source: crate::ir::AtomSource::Edb(RelationId(0)),
+            bindings: vec![
+                (FieldId(1), Term::Var(VarId(0))),
+                (FieldId(2), Term::Var(VarId(1))),
+            ],
+        }],
+        negated: vec![],
+        conditions: vec![],
+    });
+    let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
+    let EitherSink::Aggregate(sink) = &prepared.sink else {
+        panic!("folds build the aggregate sink");
+    };
+    assert!(
+        sink.dense_group_table(),
+        "the closed domain (4 rows) proves the dense table"
+    );
+    let out = prepared
+        .execute_collect(&txn, &cache, &[])
+        .expect("execute");
+    let mut answers: Vec<(u64, i64, u64)> = (0..out.len())
+        .map(|answer| {
+            let (AnswerValue::U64(kind), AnswerValue::I64(sum), AnswerValue::U64(count)) =
+                (out.get(answer, 0), out.get(answer, 1), out.get(answer, 2))
+            else {
+                panic!("(u64, i64, u64) rows");
+            };
+            (kind, sum, count)
+        })
+        .collect();
+    answers.sort_unstable();
+    assert_eq!(
+        answers,
+        vec![(0, 100, 1), (1, 421, 2), (2, 220, 1), (3, 300, 1)],
+        "per-kind folds over the dense ordinals"
+    );
+
+    // The open-domain twin: grouping by the fresh id proves nothing —
+    // the map stays.
+    let open = Query::single(Rule {
+        finds: vec![
+            FindTerm::Var(VarId(0)),
+            FindTerm::Aggregate {
+                op: AggOp::Sum,
+                over: Some(VarId(1)),
+            },
+        ],
+        atoms: vec![Atom {
+            source: crate::ir::AtomSource::Edb(RelationId(0)),
+            bindings: vec![
+                (FieldId(0), Term::Var(VarId(0))),
+                (FieldId(2), Term::Var(VarId(1))),
+            ],
+        }],
+        negated: vec![],
+        conditions: vec![],
+    });
+    let prepared = prepare(&txn, &cache, &schema, &open).expect("prepare");
+    let EitherSink::Aggregate(sink) = &prepared.sink else {
+        panic!("folds build the aggregate sink");
+    };
+    assert!(!sink.dense_group_table(), "open domains keep the map");
+}

@@ -453,6 +453,9 @@ struct RuleTyping {
     /// The rule's comparisons, classified — one sealed proof per
     /// condition, in condition order ([`ClassifiedComparison`]).
     classified: Vec<ClassifiedComparison>,
+    /// Closed-bound variables with their sealed extensions' row counts —
+    /// the R4 order wall's roster and the dense group domains (049).
+    closed_vars: BTreeMap<VarId, u16>,
 }
 
 impl ValidatedQuery {
@@ -626,6 +629,19 @@ impl<'a> RuleWitness<'a> {
     pub fn group_key(&self) -> &BTreeSet<VarId> {
         &self.typing.group_key
     }
+
+    /// A variable's schema-proven dense domain (finding 049): the
+    /// sealed extension's row count for a closed-bound variable (its
+    /// words are the declaration indices `0..N`,
+    /// containment-enforced in-domain), 2 for bool (the strict 0/1
+    /// encoding), `None` for every open domain.
+    #[must_use]
+    pub fn dense_domain(&self, var: VarId) -> Option<u16> {
+        if let Some(rows) = self.typing.closed_vars.get(&var) {
+            return Some(*rows);
+        }
+        matches!(self.var_type(var), ValueType::Bool).then_some(2)
+    }
 }
 
 /// One inference slot: collapsed to a single structural type, or still
@@ -676,10 +692,13 @@ struct Context {
     /// Variables bound at a closed-reference position (a field whose
     /// declared containment targets a closed relation's id, or the
     /// closed relation's own id field — `ir/render`'s `ClosedRefs`
-    /// table). Their words are declaration-order accidents, so order
-    /// positions — `Lt`-family comparisons, `Sum`/`Min`/`Max` folds,
-    /// and Arg keys — refuse them (ruled 2026-07-23, R4).
-    closed_vars: BTreeSet<VarId>,
+    /// table), each with the sealed extension's row count. Their words
+    /// are declaration-order accidents, so order positions —
+    /// `Lt`-family comparisons, `Sum`/`Min`/`Max` folds, and Arg keys —
+    /// refuse them (ruled 2026-07-23, R4); the row count is the proven
+    /// dense group domain (finding 049: closed ids are declaration
+    /// indices `0..N`, containment-enforced in-domain).
+    closed_vars: BTreeMap<VarId, u16>,
     /// Variables with at least one positive *scalar*-field binding — the
     /// enumerable-domain witnesses for the membership-only rule.
     scalar_bound_vars: BTreeSet<VarId>,

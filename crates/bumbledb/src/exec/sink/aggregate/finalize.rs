@@ -35,41 +35,73 @@ impl AggregateSink {
         // words stays unearned until PRD 16's bench shows this pass on a
         // profile (the measured-choice record).
         if self.pack.is_some() {
-            for claims in &mut self.pack_claims[..self.groups.len()] {
+            let live = self.group_count();
+            for claims in &mut self.pack_claims[..live] {
                 claims.sort_unstable();
             }
         }
-        for (key, group_idx) in self.groups.iter() {
-            if self.pack.is_some() {
-                self.emit_pack_group(key, *group_idx, answer_scratch, &mut emit)?;
-                continue;
-            }
-            if self.arg.is_some() {
-                self.emit_arg_group(key, *group_idx, answer_scratch, &mut emit)?;
-                continue;
-            }
-            let accs = &self.accs[group_idx * self.n_aggs..(group_idx + 1) * self.n_aggs];
-            answer_scratch.clear();
-            let mut key_cursor = 0;
-            let mut acc_cursor = 0;
-            for (find_idx, find) in self.finds.iter().enumerate() {
-                match find {
-                    SinkSpec::Var { width, .. } => {
-                        answer_scratch.extend_from_slice(&key[key_cursor..key_cursor + width]);
-                        key_cursor += width;
-                    }
-                    SinkSpec::Agg { .. } => {
-                        answer_scratch.push(self.finalize_acc(accs[acc_cursor], find_idx)?);
-                        acc_cursor += 1;
-                    }
-                    SinkSpec::Arg { .. } | SinkSpec::Pack { .. } => {
-                        unreachable!("validated: relation-shaped terms and folds never mix")
-                    }
+        // The two group representations walk in mint order either way
+        // (the map preserves insertion order; the dense ordinals ARE the
+        // mint record) — the dense walk reconstructs each key's words
+        // from its mixed-radix ordinal (finding 049).
+        match &self.groups {
+            crate::exec::sink::GroupTable::Hashed(map) => {
+                for (key, group_idx) in map.iter() {
+                    self.emit_group(key, *group_idx, answer_scratch, &mut emit)?;
                 }
             }
-            emit(answer_scratch)?;
+            crate::exec::sink::GroupTable::Dense {
+                radixes, ordinals, ..
+            } => {
+                let mut key = vec![0u64; radixes.len()];
+                for (group_idx, ordinal) in ordinals.iter().enumerate() {
+                    let mut rest = usize::try_from(*ordinal).expect("capped product");
+                    for (word, radix) in key.iter_mut().zip(radixes.iter()).rev() {
+                        *word = (rest % usize::from(*radix)) as u64;
+                        rest /= usize::from(*radix);
+                    }
+                    self.emit_group(&key, group_idx, answer_scratch, &mut emit)?;
+                }
+            }
         }
         Ok(())
+    }
+
+    /// One group's emission by head shape — the finalize walk's body,
+    /// shared by both group representations.
+    fn emit_group(
+        &self,
+        key: &[u64],
+        group_idx: usize,
+        answer_scratch: &mut Vec<u64>,
+        emit: &mut impl FnMut(&[u64]) -> Result<()>,
+    ) -> Result<()> {
+        if self.pack.is_some() {
+            return self.emit_pack_group(key, group_idx, answer_scratch, emit);
+        }
+        if self.arg.is_some() {
+            return self.emit_arg_group(key, group_idx, answer_scratch, emit);
+        }
+        let accs = &self.accs[group_idx * self.n_aggs..(group_idx + 1) * self.n_aggs];
+        answer_scratch.clear();
+        let mut key_cursor = 0;
+        let mut acc_cursor = 0;
+        for (find_idx, find) in self.finds.iter().enumerate() {
+            match find {
+                SinkSpec::Var { width, .. } => {
+                    answer_scratch.extend_from_slice(&key[key_cursor..key_cursor + width]);
+                    key_cursor += width;
+                }
+                SinkSpec::Agg { .. } => {
+                    answer_scratch.push(self.finalize_acc(accs[acc_cursor], find_idx)?);
+                    acc_cursor += 1;
+                }
+                SinkSpec::Arg { .. } | SinkSpec::Pack { .. } => {
+                    unreachable!("validated: relation-shaped terms and folds never mix")
+                }
+            }
+        }
+        emit(answer_scratch)
     }
 
     /// One Pack group's emission: the sweep's maximal-run continuation

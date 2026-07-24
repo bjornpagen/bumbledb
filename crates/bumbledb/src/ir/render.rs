@@ -98,10 +98,12 @@ impl ClosedRefs {
         Self(map)
     }
 
-    /// Whether `(relation, field)` is a closed-reference position — the
-    /// R4 refusal's one resolution question.
-    pub(crate) fn is_closed(&self, relation: RelationId, field: FieldId) -> bool {
-        self.0.contains_key(&(relation, field))
+    /// The closed relation a `(relation, field)` position references,
+    /// if any — the R4 refusal's resolution question, and the dense
+    /// group domain's source (finding 049: the sealed extension's row
+    /// count is the radix).
+    pub(crate) fn target(&self, relation: RelationId, field: FieldId) -> Option<RelationId> {
+        self.0.get(&(relation, field)).copied()
     }
 
     /// The handle spelling for a literal at `(relation, field)`: `Some`

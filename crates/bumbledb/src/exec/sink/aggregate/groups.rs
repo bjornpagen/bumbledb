@@ -1,5 +1,5 @@
 use crate::exec::run::{LeafBatch, LeafSource};
-use crate::exec::sink::{Acc, AggregateSink, FoldOp, SinkSpec};
+use crate::exec::sink::{Acc, AggregateSink, FoldOp, GroupTable, SinkSpec};
 use crate::exec::wordmap::WordMap;
 
 /// Loads a group key, span-wise (the `SlotWidth` layout): each group
@@ -51,9 +51,41 @@ impl AggregateSink {
         {
             self.group_probes += 1;
         }
-        let next = self.groups.len();
-        let (idx, inserted) = self.groups.get_or_insert_with(&self.key_scratch, || next);
-        let group_idx = *idx;
+        let (group_idx, inserted) = match &mut self.groups {
+            GroupTable::Hashed(map) => {
+                let next = map.len();
+                let (idx, inserted) = map.get_or_insert_with(&self.key_scratch, || next);
+                (*idx, inserted)
+            }
+            // The dense regime (finding 049): mixed-radix arithmetic —
+            // no hash, no ctrl-line probe. The schema proves every
+            // committed key word below its radix (closed containment;
+            // the strict 0/1 bool encoding), so the index is total over
+            // committed data.
+            GroupTable::Dense {
+                radixes,
+                table,
+                ordinals,
+            } => {
+                let mut ordinal = 0usize;
+                for (word, radix) in self.key_scratch.iter().zip(radixes.iter()) {
+                    debug_assert!(
+                        *word < u64::from(*radix),
+                        "containment keeps dense words in-domain"
+                    );
+                    ordinal = ordinal * usize::from(*radix)
+                        + usize::try_from(*word).expect("dense words are small");
+                }
+                let entry = &mut table[ordinal];
+                if *entry == 0 {
+                    ordinals.push(u32::try_from(ordinal).expect("capped product"));
+                    *entry = u32::try_from(ordinals.len()).expect("capped product");
+                    (ordinals.len() - 1, true)
+                } else {
+                    (usize::try_from(*entry - 1).expect("capped product"), false)
+                }
+            }
+        };
         if inserted {
             // Fresh accumulator row, seeded per op (finds copied out —
             // the value-set allocation below takes `&mut self`).

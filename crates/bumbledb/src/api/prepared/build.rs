@@ -90,8 +90,10 @@ fn prepare_witnessed<'s, S>(
     let predicate = witness.predicate().clone();
     let mut rules = Vec::with_capacity(survivors.len());
     // Written-rule provenance per surviving rule (R2): the sink regime
-    // splits on it below.
+    // splits on it below. The first survivor's witness index feeds the
+    // dense group domains (049).
     let mut written = Vec::with_capacity(survivors.len());
+    let mut first_rule_idx = None;
     let mut dead = Vec::new();
     for (rule_idx, normalized_rule) in survivors {
         // Rule death (ir/normalize/fold.rs): a statically-empty rule is
@@ -107,6 +109,7 @@ fn prepare_witnessed<'s, S>(
         }
         let rule = witness.rule(rule_idx);
         written.push(rule.written());
+        first_rule_idx.get_or_insert(rule_idx);
         rules.push(prepare_rule(
             txn,
             cache,
@@ -135,8 +138,16 @@ fn prepare_witnessed<'s, S>(
     if rules.len() > 1 && dnf_derived(&written) {
         seal_dnf_spans(&mut rules);
     }
+    // The dense group domains (finding 049), single-rule sinks only: a
+    // hand-written sibling need not share the domain proof, and the
+    // re-aim path never reshapes the table.
+    let dense_groups = if rules.len() == 1 {
+        first_rule_idx.map_or_else(Vec::new, |idx| group_radixes(&witness.rule(idx)))
+    } else {
+        Vec::new()
+    };
     let sink = rules.first().map_or_else(
-        || make_sink(&[], 0, SinkProgram::SingleRule(None), 0),
+        || make_sink(&[], 0, SinkProgram::SingleRule(None), 0, &[]),
         |first| {
             let program = if rules.len() > 1 {
                 if dnf_derived(&written) {
@@ -147,7 +158,13 @@ fn prepare_witnessed<'s, S>(
             } else {
                 SinkProgram::SingleRule(first.distinct_witness())
             };
-            make_sink(first.finds(), first.slot_count(), program, output_hint)
+            make_sink(
+                first.finds(),
+                first.slot_count(),
+                program,
+                output_hint,
+                &dense_groups,
+            )
         },
     );
     // The rule-shared binding-slot scratch, sized at the rules'
@@ -420,7 +437,7 @@ pub(crate) fn prepare_program<'s, S>(
     let output_rules = &predicates[usize::from(output.0)].rules;
     let output_hint_rows = output_hint(output_rules);
     let sink = output_rules.first().map_or_else(
-        || make_sink(&[], 0, SinkProgram::SingleRule(None), 0),
+        || make_sink(&[], 0, SinkProgram::SingleRule(None), 0, &[]),
         |first| {
             let regime = if output_rules.len() > 1 {
                 if dnf_derived(&output_written) {
@@ -431,7 +448,16 @@ pub(crate) fn prepare_program<'s, S>(
             } else {
                 SinkProgram::SingleRule(first.distinct_witness())
             };
-            make_sink(first.finds(), first.slot_count(), regime, output_hint_rows)
+            // Program sinks keep the open-domain group map: the output
+            // predicate may be recursive and the dense proof is the
+            // single-rule QUERY path's optimization (finding 049).
+            make_sink(
+                first.finds(),
+                first.slot_count(),
+                regime,
+                output_hint_rows,
+                &[],
+            )
         },
     );
     let disjoint_rules = (output_rules.len() > 1).then_some(disjoint_rules).flatten();
@@ -1156,16 +1182,49 @@ fn dnf_derived(written: &[Option<u16>]) -> bool {
         .is_some_and(|minting| written.iter().all(|rule| *rule == Some(minting)))
 }
 
+/// The dense group domains (finding 049): per group position in find
+/// order, the schema-proven radix — every group word must prove one (a
+/// closed reference or bool; single-word by construction, so interval
+/// and measure group keys stay open) and the product must fit the dense
+/// cap, or the sink keeps the open-domain map. Empty = open.
+fn group_radixes(rule: &RuleWitness<'_>) -> Vec<u16> {
+    let mut radixes = Vec::new();
+    for term in &rule.rule().finds {
+        match term {
+            FindTerm::Var(var) => match rule.dense_domain(*var) {
+                Some(radix) if radix > 0 => radixes.push(radix),
+                _ => return Vec::new(),
+            },
+            FindTerm::Measure(_) => return Vec::new(),
+            FindTerm::Aggregate { .. } | FindTerm::AggregateMeasure { .. } => {}
+        }
+    }
+    if radixes.is_empty() {
+        return Vec::new();
+    }
+    let capped = radixes.iter().try_fold(1u32, |product, radix| {
+        product
+            .checked_mul(u32::from(*radix))
+            .filter(|product| *product <= crate::exec::sink::DENSE_GROUPS_CAP)
+    });
+    if capped.is_none() {
+        return Vec::new();
+    }
+    radixes
+}
+
 /// Builds the sink matching the head shape (the variant is fixed per
 /// prepared query — an enum, not `dyn`), aimed at rule 0's binding
 /// layout. The program regime structurally selects single-rule binding
 /// dedup, witnessed elision, or the mandatory union seen-set — keyed by
-/// provenance (R2).
+/// provenance (R2). `dense_groups` is the single-rule dense group
+/// domain proof (049); empty keeps the open-domain map.
 fn make_sink(
     finds: &[FindSpec],
     slot_count: usize,
     program: SinkProgram<'_>,
     hint: usize,
+    dense_groups: &[u16],
 ) -> EitherSink {
     let all_plain = finds
         .iter()
@@ -1179,10 +1238,10 @@ fn make_sink(
     } else {
         let sink = match program {
             SinkProgram::SingleRule(Some(witness)) => {
-                AggregateSink::without_seen_set(finds, slot_count, witness, hint)
+                AggregateSink::without_seen_set(finds, slot_count, witness, hint, dense_groups)
             }
             SinkProgram::SingleRule(None) => {
-                AggregateSink::with_capacity_hint(finds, slot_count, hint)
+                AggregateSink::with_capacity_hint(finds, slot_count, hint, dense_groups)
             }
             SinkProgram::Union => AggregateSink::for_union(finds, slot_count, hint),
             SinkProgram::DnfUnion(spans) => {

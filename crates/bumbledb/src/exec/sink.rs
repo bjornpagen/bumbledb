@@ -278,6 +278,56 @@ pub struct ProjectionSink {
     scan_count: u64,
 }
 
+/// The group map's representation, structural at construction (finding
+/// 049): GROUP BY over enum-like closed dimensions — the dominant OLAP
+/// grouping shape — takes pure arithmetic instead of a hash.
+#[derive(Debug)]
+enum GroupTable {
+    /// Open-domain group keys: the SWAR map.
+    Hashed(WordMap<usize>),
+    /// Every group-key word ranges over a schema-proven dense domain —
+    /// a closed extension's row ids are its declaration indices `0..N`
+    /// (containment keeps every committed referencing word in-domain)
+    /// and bool's strict 0/1 encoding is `0..2` — so the group index is
+    /// mixed-radix arithmetic into a flat table: no hash, no ctrl-line
+    /// probe, no insert branch on the hit path.
+    Dense {
+        /// Per key word, in key order: the domain size.
+        radixes: Box<[u16]>,
+        /// ordinal → group index + 1 (`0` = untouched). `Π radix` words,
+        /// capped at construction ([`DENSE_GROUPS_CAP`]).
+        table: Box<[u32]>,
+        /// group index → ordinal, in mint order — finalize reconstructs
+        /// the key words from it (the map regime's insertion order).
+        ordinals: Vec<u32>,
+    },
+}
+
+/// The dense table's size ceiling — the group-map capacity hint's
+/// existing clamp: past it the open-domain map wins on memory.
+pub(crate) const DENSE_GROUPS_CAP: u32 = 4096;
+
+impl GroupTable {
+    fn len(&self) -> usize {
+        match self {
+            Self::Hashed(map) => map.len(),
+            Self::Dense { ordinals, .. } => ordinals.len(),
+        }
+    }
+
+    fn clear(&mut self) {
+        match self {
+            Self::Hashed(map) => map.clear(),
+            Self::Dense {
+                table, ordinals, ..
+            } => {
+                table.fill(0);
+                ordinals.clear();
+            }
+        }
+    }
+}
+
 /// One accumulator cell.
 #[derive(Debug, Clone, Copy)]
 enum Acc {
@@ -342,8 +392,11 @@ pub struct AggregateSink {
     /// slot, width in words) — the `SlotWidth` layout, never assumed 1.
     group_spans: Vec<(usize, usize)>,
     /// Group key words -> accumulator row index. Key arity = the spans'
-    /// total width.
-    groups: WordMap<usize>,
+    /// total width. Representation is bind-time data ([`GroupTable`]):
+    /// dense arithmetic when the schema proves every key word a small
+    /// domain, the SWAR map otherwise — never a hot-loop branch beyond
+    /// the enum's own dispatch (finding 049).
+    groups: GroupTable,
     /// Flat accumulator rows: `accs[group * n_aggs ..][..n_aggs]`.
     accs: Vec<Acc>,
     n_aggs: usize,

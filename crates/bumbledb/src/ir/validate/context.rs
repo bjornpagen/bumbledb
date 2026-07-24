@@ -319,7 +319,7 @@ impl Context {
     /// them is refused exactly as the enum's ordinal order was, judged
     /// once here in the engine and therefore identical on every surface.
     fn screen_order_closed(&self, index: usize, var: VarId) -> Result<(), ValidationError> {
-        if self.closed_vars.contains(&var) {
+        if self.closed_vars.contains_key(&var) {
             return Err(ValidationError::OrderComparisonOnClosedReference { index });
         }
         Ok(())
@@ -541,14 +541,21 @@ impl Context {
                 } else {
                     self.check_scalar_binding(occ_idx, negated, *field, field_type, term)?;
                     // A closed-reference position marks its variable for
-                    // the order wall (R4): the words are declaration
-                    // indices, not semantics. `Idb` columns carry plain
-                    // types — closedness is a stored-relation fact.
+                    // the order wall (R4) with the sealed extension's
+                    // row count — the proven dense group domain (049).
+                    // The words are declaration indices, not semantics.
+                    // `Idb` columns carry plain types — closedness is a
+                    // stored-relation fact.
                     if let crate::ir::AtomSource::Edb(relation_id) = atom.source
                         && let Term::Var(var) = term
-                        && closed_refs.is_closed(relation_id, *field)
+                        && let Some(closed) = closed_refs.target(relation_id, *field)
                     {
-                        self.closed_vars.insert(*var);
+                        let rows = schema
+                            .relation(closed)
+                            .extension()
+                            .map_or(0, <[_]>::len);
+                        self.closed_vars
+                            .insert(*var, u16::try_from(rows).expect("extensions seal at ≤256"));
                     }
                 }
             }
