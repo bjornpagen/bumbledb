@@ -473,12 +473,15 @@ describe("ffi round trip against a real store", function suite() {
 		assert.equal(refused.kind, "generationMoved")
 		assert.ok(refused.current > refused.witnessed)
 
-		const fresh = snapshot()
+		// The convicted 018 sequence: the witness is data, so the snapshot may
+		// close mid-transaction — dbWriteFrom → snapshotClose → txInsert/txCommit.
+		const fresh = native.dbSnapshot(db).snapshot
 		const witnessed = native.dbWriteFrom(db, fresh)
 		assert.ok(witnessed.ok, "a fresh witness admits the write")
+		native.snapshotClose(fresh)
 		assert.equal(native.txInsert(witnessed.tx, EDGE, [p2, p1, 3n]), true)
 		const landed = native.txCommit(witnessed.tx)
-		assert.ok(landed.ok, "the witnessed commit lands")
+		assert.ok(landed.ok, "the witnessed commit survives its snapshot's mid-transaction close")
 	})
 
 	test("open outcomes: schemaError and fingerprintMismatch as data", function openOutcomes() {
