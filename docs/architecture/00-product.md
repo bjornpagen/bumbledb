@@ -408,8 +408,9 @@ recursion).
    excluding a caller-provided result buffer — scratch is a monotone high-water,
    allocating only on strictly larger intermediates — asserted by a counting
    allocator under the protocol defined in `40-execution.md`. Enforcement
-   today is `scripts/check.sh` (the checked-in gate suite, run before every commit);
-   it becomes a CI gate verbatim when CI exists.
+   is `scripts/check.sh` (the checked-in gate suite, run before every commit),
+   executed verbatim by CI's check lane (`.github/workflows/ci.yml`) on
+   macos-arm64 and x86_64-linux.
 4. **Docs stay true** (stated intent, mechanized as rules 3/5 in
    `docs/architecture/README.md`: mechanisms name readers; code that contradicts a doc
    amends the doc in the same change).
