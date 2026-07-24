@@ -1,0 +1,297 @@
+# Capacity laws: the cardinality window dies into the aggregate containment
+
+Status: DESIGN — owner review pending. Drafted 2026-07-24 from the weighted-capacity
+discussion. This document specifies a deletion and a generalization: the `<={lo..hi}`
+cardinality-window mechanism is removed root and branch, and schema capacity laws are
+restated as **aggregate containments** — the query aggregate vocabulary appearing in law
+position, folded per target group, bounded by a window. Counting becomes the unit-weight
+corollary it always was: `length = sum ∘ map(const 1)`.
+
+Owner's framing, recorded: the window operator is "the arbitrary cardinality hack in our
+macro language" — the notation is precisely the thing being replaced. No desugaring, no
+grandfathering, no preserved twin. Per the standing maximal-churn/maximal-elegance
+policy, every spelling migrates and the old mechanism leaves no residue.
+
+## 1. Why this is a theorem, not a refactor
+
+The repo has already half-proved the unification ladder, one rung at a time:
+
+- keyed `==` is exactly the `{1}` window — `keyed_eq_unit_window`, `unit_window_containsEq`
+  (30-dependencies.md § cardinality window).
+- a floored window implies the reverse containment — `window_floor_containment`, which is
+  why `{1..*}` is banned today as a respelling of `<=`.
+- the count window bounds `|group|` — and `|group| = Σ 1` over the group.
+
+So the ladder reads: keyed-eq ⊂ containment ⊂ count window ⊂ **weighted window**. Each
+rung was discovered separately and got its own mechanism; the top rung subsumes the count
+mechanism entirely. **Where the unification stops, and why:** existence obligations remain
+containment's alone. The current doctrine "windows never manufacture parents" survives
+verbatim — a capacity law is satisfaction-only over selected targets, never an existence
+claim. Containment and functionality statements are untouched by this design.
+
+The judgment-theory grounding (owner's preservation-under-extension analysis, 2026-07-24):
+a capacity law is not preserved under extension — it is the class of law that *cannot* be
+checked once. The industry answers are an incrementally-maintained ledger (drifts: only
+the operations you wrote maintenance rules for are sound) or a full re-derivation (can't
+drift, can't scale). bumbledb's commit judgment already sits at the third point:
+**delta-scoped re-derivation** — no stored ledger (no second copy of the truth, deletes
+need no special rule), no full rescan (only touched groups re-derive). The weighted
+generalization inherits this judgment shape unchanged, because non-negative weights keep
+the polarity argument intact: an upper bound is newly violable only by inserts into the
+counted side, a floor only by deletes. The preservation analysis is the scheduler.
+
+## 2. The statement
+
+One schema statement — the **capacity statement** — replacing `CardinalityStatement`:
+
+```
+capacity := AGG 'of' SOURCE 'in' WINDOW 'per' TARGET
+
+AGG      := Count                      -- the unit weight
+          | Sum(field)                 -- u64-encoded source field
+          | Sum(Duration(field))       -- interval measure weight (via R5 measures)
+SOURCE   := Relation(proj... | φ)      -- the counted/weighed side
+WINDOW   := {n} | {lo..hi} | {lo..*} | {0..hi}     -- the surviving range-literal forms
+TARGET   := Relation(proj... | ψ)      -- the grouping side; proj resolves a key of TARGET
+```
+
+Rust text notation (spelling subject to owner ruling, § 8.1):
+
+```
+Count           of Account(holder | φ) in {0..3}   per Holder(id | ψ)
+Sum(watts)      of Device(pool)        in {0..200} per Pool(id)
+Sum(Duration(booked)) of Booking(room) in {0..*}   per Room(id)     -- floor-free running total
+```
+
+TS surface mirrors with the query aggregate builders in law position:
+
+```ts
+capacity(count(),                 of(Account, "holder"), within(0n, 3n),  per(on(Holder, "id")))
+capacity(sum(f(Device, "watts")), of(Device, "pool"),    within(0n, 200n), per(on(Pool, "id")))
+```
+
+The aggregate tokens are the **query vocabulary reused**, not new grammar: `query!` already
+spells `Count` (nullary, bare) and `Sum(t)` / `Sum(Duration(t))`; the TS surface already
+exports `count()` / `sum(x)`. One aggregate vocabulary, system-wide, in both find position
+and law position. The grammar's net size *shrinks*: the entire `<={..}` operator family —
+`parse_window` and its arms (bumbledb-macros lib.rs:868–994), the window ban-table
+diagnostics (lib.rs:1764–1786), the `window(target, count, source)` TS constructor and all
+five `count.ts` constructors with their two-tier ban machinery — is deleted, and the
+replacement productions are references to vocabulary both grammars already carry.
+
+History note the grammar must record: an `in lo..hi per` spelling existed once and was
+deleted as a duplicate of `<=` (the `window_in_per_is_deleted.rs` compile-fail pins its
+tombstone). The capacity form is not that respelling returning: the old form was a second
+spelling of the *same count law*; this form is the *general law*, of which the count was
+one instance. The tombstone test is deleted with the operator it guarded.
+
+## 3. Semantics
+
+Per ψ-selected target fact `g`, over the group of φ-selected source facts whose projected
+tuple equals `g`'s key tuple (exactly today's `ChildGroup`):
+
+```
+measure(group) ∈ window        where measure = Σ weight(row) over the group
+                                     weight  = 1 (Count) | row.field (Sum)
+```
+
+- **Set semantics**: the group is the deduplicated fact set (today's `dedupFacts`
+  enumeration, `Decide.childGroup_enum`); weights are summed over distinct facts.
+- **Both window ends inclusive**; `*` remains the only spelling of "no upper bound".
+- **The `{0}` exclusion keeps its footnote** — denial-flavored but satisfaction-only, same
+  touched-parent plan. For `Sum`, `{0}` means "the group's total is zero", which admits
+  zero-weight rows: a *different, weaker* law than `Count in {0}`. Stated loudly (§ 6).
+- **Acceptance gate unchanged**: TARGET's projection resolves a declared key (ScalarProbe)
+  or the closed member-set (Closed) — `resolve_target_key` survives as-is, as does the
+  both-sides-closed decidable refutation (validate.rs:822, generalized from count to sum).
+- **Windows never manufacture parents** — no holder / ψ-miss ⇒ satisfied, verbatim today's
+  check_window behavior (judgment.rs:1000–1060).
+
+### Weight typing (representation does the enforcement)
+
+- `Sum(field)`: the field must be a **u64-encoded** position of SOURCE. Signed encodings
+  are a typed refusal — a negative weight would break the polarity scheduler (an insert
+  could lower a sum), so the illegal weight is unrepresentable, not checked.
+- `Sum(Duration(field))`: the interval measure as weight, u64 by construction (R5
+  machinery). This is the free feature: **calendar capacity** — "total booked time per
+  room within the window" — as one schema statement.
+- The v0 interval-position refusal (`CardinalityIntervalPosition`) survives *for
+  projections*: intervals enter through the measure argument, never the group key.
+
+### Overflow
+
+The engine accumulates in **u128**: `2^64` max weight × any realistic group cardinality
+cannot approach `2^128`, so overflow is unrepresentable in practice and no refusal
+variant is needed. The Lean denotation states the sum in unbounded ℕ (`natSum`), with
+`natSum_le_length_mul` as the bound lemma tying the u128 claim down. (The query-side
+`checkedSum`/`Overflow(Aggregate)` machinery is for query folds with u64 answer cells;
+the judge's verdict is a comparison, not an answer cell, so the wide accumulator is the
+simpler sound choice.)
+
+## 4. Judgment: what generalizes, what it costs
+
+**Plan phase — unchanged.** `touched_parents` superset narrowing (plan.rs:401 `mark_ops`,
+φ-blind source half, ψ-gated target half) is already weight-agnostic: it marks *groups*,
+not counts. `WindowCheck { window, parent }` renames to the capacity check; the flattening
+and the delta-restriction theorem shape survive.
+
+**Verdict phase — the fold generalizes, and the clipped walk survives.** Today's
+`count_children` (judgment.rs:1082) has two arms:
+
+- **Closed source**: the honest ≤256-row extension scan — becomes `Σ weight(row)` over
+  φ-survivors. Trivial.
+- **Keyed source**: the ordered R-bucket prefix walk, clipped at `decided_at` — today it
+  counts *keys without reading values*. A weighted walk must see each child's weight.
+  Two options (§ 8.2 ruling): **(a)** fetch each child fact (one descent per child — turns
+  the cheap walk into k probes); **(b)** the reverse-index entry for capacity-source
+  relations carries the weight in its value slot — pay one u64 at write time, judge reads
+  the walk it already does. (b) is the representation-first move and the recommendation;
+  it implies an index-format arm for capacity-weighted relations and a format-version bump.
+  The clip generalizes cleanly under non-negative weights: the running sum is monotone, so
+  an upper-bound walk exits the moment `sum > hi`, and a floor walk exits at `sum ≥ lo` —
+  same early-exit soundness the count walk has today, same worst case (the whole bucket)
+  only when the verdict is genuinely close.
+
+**Polarity refinement (optional, recorded not required):** today both delta halves mark
+touched parents regardless of window shape. Upper-bound-only windows are insert-violable
+and floor-only windows delete-violable, so `mark_ops` could skip half the marks by window
+polarity. The superset is sound; the refinement is a measured-choice follow-up, not part
+of this design's correctness story.
+
+**Violation shape:** `Violation::Cardinality { statement, fact, count }` becomes
+`Violation::Capacity { statement, fact, measure }` — the witnessed group total, which for
+Count *is* the count. One violation, one display arm.
+
+## 5. The Lean restatement
+
+The current model is deliberately count-shaped at the denotation layer:
+`Cardinality.lean` states windows over list-witnessed set bounds (`Set.AtLeast/AtMost`) —
+no number is ever materialized; `Decide.childCountB`/`Oracle.window_admits_iff_enum` are
+where sets meet lengths. **A weighted law is irreducibly numeric, so the layering
+inverts:**
+
+- The denotation becomes a fold: `groupMeasure (w : Weight) (s) : ℕ` defined over any
+  Nodup enumeration of the group, with the permutation-invariance lemma (sums commute)
+  playing the role `window_admits_iff_enum` plays today — "one walk decides a window"
+  survives with `sum` in place of `length`.
+- `Statement.cardinality (source, window, target)` → `Statement.capacity (agg, source,
+  window, target)`; `CapacityLaw` replaces `CardinalityWindow` with
+  `window.admitsMeasure (groupMeasure w (ChildGroup A φ X (g.project Y)))`.
+- **The count theorems restate as unit-weight corollaries, no preserved twin**:
+  `cardinality_zero_star` → `capacity_zero_star` (vacuity is weight-independent);
+  `cardinality_of_empty_parent`, `cardinality_window_mono` (widening) generalize verbatim;
+  `window_point_admits_iff`'s exact-count reading becomes the `weight = 1` instance.
+  The witness-style `Set.AtLeast/AtMost` primitives survive only as the lemmas backing
+  the unit case.
+- `Decide.cardinalityB` → `capacityB` (the fold over `dedupFacts`, `natSum` of weights),
+  with `capacityB_iff` re-proved; `Oracle.cardinality_plan_decides` → the key new proof
+  obligation, `capacity_plan_decides`: the touched-parent probe + weighted group walk
+  decides the delta restriction. Existing machinery reused: `checkedSum`/`natSum` lemmas,
+  the `dedupFacts` Nodup enumeration, `childGroup_enum`.
+- Ladder theorems recast: `keyed_eq_unit_window` and `window_floor_containment` restate
+  against `Count`-instance capacity laws — they are the rungs that justify the bans
+  (§ 6) and they keep their names in the doc trail.
+
+Corpus: the 9 dedicated `judgment-window-*` cases + 4 mixed cases re-baseline under the
+new statement encoding, and the corpus gains the weighted rows: sum-pass, sum-exceed,
+zero-weight-under-floor, duration-weight, dependent-bound (if § 8.3 rules it in),
+closed-extension-sum-refuted.
+
+## 6. The canonical-utterance law, generalized (and where it becomes weight-sensitive)
+
+The window vocabulary and its ban table (70-api.md:141–169) survive — but three rows of
+the table were secretly *count* facts, not *window* facts, and the general law must split
+them by aggregate:
+
+| spelling | Count | Sum |
+|---|---|---|
+| `{1..*}` | **banned** — containment respelled (`window_floor_containment`) | **legal** — "the group's total is positive" is not an existence claim over rows |
+| `{0..*}` | banned — vacuous | banned — vacuous (sums are ≥ 0; weight-independent) |
+| `{0}` | the exclusion: no φ-child exists | legal, *weaker*: total is zero — zero-weight rows may exist. The doc states this beside the exclusion footnote. |
+| `{n..n}`, `{0..0}`, inverted, open shorthands | banned → canonical form | banned → canonical form (weight-independent) |
+
+The general statement of the law: **a ban is canonical-utterance policing when it is
+weight-independent, and semantic deduplication when it is not; the second kind applies
+per-aggregate.** `SpecIssue::WindowContainmentRespelled` therefore fires only on the
+Count instance; everything else in the ban table survives unchanged.
+
+Lower-bound footgun, stated loudly (the doc owes this the way 20-query-ir owes the
+join-multiplicity warning): `Count in {1..*}`-shaped intent ("at least one child") is
+containment; `Sum(w) in {1..*}` ("positive total") admits any number of zero-weight rows
+and is satisfied by one row of weight 1. They are different laws. Choose by what you mean.
+
+## 7. The deletion inventory (exact, from the 2026-07-24 estate maps)
+
+**Grammar/surface:**
+- bumbledb-macros lib.rs: the `<`/`=`/brace-group dispatch (:868), `parse_window` + arms
+  (:968–994), `parse_window_bound` (:954), `Statement::Cardinality` (:297), lowering
+  (:1529), descriptor codegen (:1987–1999), ban Display (:1764–1786), the in-per tombstone.
+- ts: `count.ts` whole file (five constructors, `BannedWindow` type tier, runtime tier,
+  `admitted` brand); `statements.ts` `window()` (:278–293) + renderer arm (:314); the
+  `WindowSpec` union in `spec.ts` (:93–96).
+- Renderer: `${target} <=${window} ${source}` form (schema/render.rs) → the capacity form.
+
+**IR/engine:**
+- `CardinalityStatement` (schema.rs:471), `WindowId`, `StatementRef/View::Cardinality`,
+  `Schema.windows`, `Relation.window_sources/targets` → capacity equivalents.
+- theory: `WindowSpec` 3-kind enum (spec.rs:151), `StatementSpec::Cardinality` (:183),
+  `StatementDescriptor::Cardinality` (schema.rs:327), the five window `SpecIssue`s (:335).
+- validate: `validate_cardinality` (validate.rs:766) → `validate_capacity` (weight typing
+  + generalized ban table + same acceptance/closed-refutation arms); sealing loop
+  (:197–237).
+- judge: `check_window`/`count_children` (judgment.rs:993/:1082) → capacity verdict +
+  weighted fold; `window_child_image` survives renamed (group keying is weight-blind).
+- errors: 4 window `StatementErrorKind`s + `Violation::Cardinality` → capacity set.
+- FFI: tags `EXACT/RANGE/FLOOR` + `CARDINALITY` arm (tags.rs:179–201, marshal.rs:504–547)
+  → capacity statement shape (window kinds survive; the statement gains the agg field).
+- fingerprint: statement-form tag `cardinality window = 2` (10-data-model.md:588) — the
+  encoding changes, so **schema fingerprints move**; this rides a format-version bump with
+  the § 4 index arm. (The 0.6.0 "fingerprints unmoved" note was that release's fact, not
+  a standing law.)
+
+**Docs (census-tracked):** 30-dependencies.md:196–222 + :323/:387–402/:645 rewritten;
+70-api.md:119–169 + :298 (the law's home moves to the aggregate form); 50-storage.md:367;
+10-data-model.md:588; architecture README table row. ~14 Lean citation strings re-pin to
+the new symbols.
+
+**Migrations:** ~40 Rust spelling sites (tests + bench: schema_macro 6, schema_spec 5,
+render 6, translate/builder 6, windowed 4, judgment tests 6, lawful 3, misc); 10
+compile-fail files re-derived against the new grammar's refusals; ~84 TS test usage lines
+across 8 files; 13 conformance corpus cases re-baselined; `lawful` bench lane re-pins
+(its law mix includes windows).
+
+**Free wins riding the deletion:** `atMost` no longer folds into `range{lo:0}` and `none`
+into `exact 0` — the wire vocabulary stops encoding one thing two ways; and finding 109's
+already-unified side-pair gate serves both remaining statement families with no
+copy-paste left.
+
+## 8. Open rulings (owner)
+
+1. **The spelling.** Recommended: `AGG of SOURCE in WINDOW per TARGET` (reads as the law;
+   source-first matches the aggregate's operand). Alternative: keep target-left B-family
+   order for materialized-order continuity. Also: TS builder names (`capacity/of/within/per`
+   proposed). Sacred-grammar call.
+2. **Weight residency.** Recommended: reverse-index value slot carries the weight for
+   capacity-weighted relations (pay one u64 per write; the judge's walk stays one range
+   scan). Alternative: per-child fact fetch (no format change; k descents per group walk).
+3. **Dependent bounds.** `Sum(watts) of Device(pool) in {0..supply} per Pool(id, supply)` —
+   the window's bound read from the *target row* rather than a literal. This is the true
+   capacity-vs-supply form (per-pool supplies differ); judge-side it is one field read per
+   parent, already in hand when the holder is fetched. Recommended: in scope now — it is
+   the actual use-case the feature exists for. Alternative: literal-only v1, dependent
+   bounds as a recorded trigger.
+4. **Aggregate roster in law position.** Recommended: `Count` and `Sum` (field/Duration)
+   only — the polarity-clean, monotone-analyzable folds. `Min/Max` windows have a coherent
+   but different polarity story and no motivating case; refuse with a recorded trigger.
+5. **The name.** Recommended: **capacity statement** (`Statement.capacity`,
+   `Violation::Capacity`, `Capacity.lean`) — "cardinality" was the unit-weight instance
+   naming the whole mechanism.
+
+## 9. Sequencing
+
+Same shape as the audit campaign, deliberately smaller: **(1)** rulings § 8 → **(2)** spec
+flush (30-dependencies + 70-api rewritten around the aggregate form, 10-data-model tag,
+Capacity.lean stated with obligations named) → **(3)** one code+proofs campaign (grammar,
+TS, engine, FFI, Lean discharge, corpus re-baseline, spelling migrations, format bump) →
+**(4)** bench: `windowed.rs`/`lawful` re-pins plus a new weighted lane (the calendar-
+capacity shape), then the ledger entry and the 0.8.0 release ride the normal process.
