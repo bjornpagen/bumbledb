@@ -93,12 +93,15 @@ bumbledb::schema! {
 const PIN: &str = "b330d46f8cf6c91d8e24a6d2c3f9cbde65c2c37f1b90eaffdc3e49a8ae346b0c";
 
 /// A self-cleaning per-test store directory (the engine's integration
-/// `TempDir` twin — this crate deliberately has no dev-dependencies).
+/// `TempDir` twin — this crate deliberately has no dev-dependencies). The
+/// pid suffix keeps concurrent suite runs (other checkouts, co-tenant
+/// agents) from wiping each other's live stores.
 struct TempDir(std::path::PathBuf);
 
 impl TempDir {
     fn new(tag: &str) -> Self {
-        let path = std::env::temp_dir().join(format!("bumbledb-node-{tag}"));
+        let path =
+            std::env::temp_dir().join(format!("bumbledb-node-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&path);
         std::fs::create_dir_all(&path).expect("create test dir");
         Self(path)
