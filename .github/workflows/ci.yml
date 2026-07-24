@@ -113,12 +113,20 @@ jobs:
   # `lake build` (the conformance exe is a default target), the
   # placeholder battery, scripts/spec-census.sh (the Bridge ledger's
   # mechanism/instrument tokens against crates/, the docs'
-  # lean/ citations against the tree), and the conformance corpus run
+  # lean/ citations against the tree), the conformance corpus run
   # (`lake exe conformance` over lean/conformance/cases — the
-  # executable denotation vs the recorded engine answers).
-  # Per push — the build is seconds at this size; if it exceeds
-  # 2 minutes by campaign end, PRD 14 moves it to the Miri cron and
-  # records the number.
+  # executable denotation vs the recorded engine answers), and
+  # battery 5 — the three-way comparator (engine fresh + naive fresh,
+  # byte-held to the corpus files, vs the Lean denotation; a
+  # disagreement names the case file and demands triage before anything
+  # else merges), guarded against the zero-tests vacuous pass.
+  # lean.sh is the ONE spelling of the whole lane; the Rust toolchain
+  # and cargo cache steps precede it so battery 5's bench-crate build
+  # is the one the cache absorbs (measured 2026-07-14, pinned M2 Max,
+  # debug build: 12.4 s engine+naive replay + 1.2 s Lean corpus run —
+  # the per-push budget holds).
+  # Per push — if the lane exceeds 2 minutes by campaign end, PRD 14
+  # moves it to the Miri cron and records the number.
   lean:
     if: github.event_name != 'schedule'
     runs-on: macos-latest
@@ -141,18 +149,7 @@ jobs:
             curl https://elan.lean-lang.org/elan-init.sh -sSf | sh -s -- -y --default-toolchain none
           fi
           echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
-      - run: scripts/lean.sh
-      # The three-way conformance comparator (PRD 13): per checked-in
-      # case, replayed from its recorded provenance, the engine fresh +
-      # the naive model fresh, byte-held to the corpus file, then
-      # `lake exe conformance` — engine vs naive vs the Lean
-      # denotation; a disagreement names the case file and demands
-      # triage before anything else merges. Placed HERE per the measured
-      # numbers (2026-07-14, pinned M2 Max, debug build): 12.4 s
-      # engine+naive replay + 1.2 s Lean corpus run — the per-push
-      # budget holds; the cost is the bench-crate build, which the
-      # cargo cache absorbs.
-      - name: install the pinned Rust toolchain (for the comparator)
+      - name: install the pinned Rust toolchain (for battery 5, the comparator)
         run: rustup show
       - uses: actions/cache@v5
         with:
@@ -161,8 +158,7 @@ jobs:
             ~/.cargo/git
             target
           key: lean-conformance-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
-      - name: the three-way conformance comparator
-        run: cargo test -p bumbledb-bench three_way_conformance -- --ignored --nocapture
+      - run: scripts/lean.sh
 
   # Lane 4 — the SDK lane (the hardening-0.3.0 packet, PRD T6): both
   # halves of the cross-host fingerprint lock, per push. The TS half is
