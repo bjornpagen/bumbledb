@@ -74,9 +74,33 @@ interface WindowData<Tgt extends FaceData = FaceData, Src extends FaceData = Fac
 /** One statement's runtime description, tagged by form. */
 type StatementData = KeyData<AnyRelation, readonly string[]> | ContainmentData | WindowData
 
-/** An opaque statement value — what `schema()` assembles into a theory. */
+/**
+ * The admission brand — a module-private symbol, deliberately unexported
+ * (the `count.ts` pattern): `Statement` is a public structural type, so
+ * without this brand a forged plain object of the right shape would walk
+ * past the construction-time arity and roster walls into `schema()` — and
+ * the roster wall is the one the engine cannot backstop (the wire carries
+ * plain u64s, no rosters). The symbol makes the four constructors the ONLY
+ * mints, so a statement that skipped the walls is unspellable.
+ */
+const admitted: unique symbol = Symbol("bumbledb.statement.admitted")
+
+/** An opaque statement value — what `schema()` assembles into a theory. Only the four constructors produce one. */
 interface Statement {
 	readonly data: StatementData
+	readonly [admitted]: true
+}
+
+/**
+ * Narrows any value to an admitted statement — the probe is the
+ * module-private {@link admitted} brand only the four constructors set, so
+ * no host-built value (fact cells are structurally OPEN — an interval with
+ * an excess `kind` property is a legal cell) can ever be misread as one.
+ * The keyed-get selector dispatch and `schema()`'s admission both judge
+ * through here.
+ */
+function isStatement(value: unknown): value is Statement {
+	return typeof value === "object" && value !== null && admitted in value
 }
 
 /**
@@ -188,7 +212,7 @@ function key<
 		owner: relation,
 		projection: Object.freeze(fields)
 	})
-	return Object.freeze({ data })
+	return Object.freeze({ data, [admitted]: true as const })
 }
 
 /**
@@ -210,7 +234,7 @@ function contained<A extends AnyFace, B extends AnyFace>(
 		target: target.data,
 		bidirectional: false
 	})
-	const statement = Object.freeze({ data })
+	const statement = Object.freeze({ data, [admitted]: true as const })
 	assertArityAgreement(data.source, data.target, statement)
 	assertRosterAgreement(data.source, data.target, statement)
 	return statement
@@ -235,7 +259,7 @@ function mirrors<A extends AnyFace, B extends AnyFace>(
 		target: target.data,
 		bidirectional: true
 	})
-	const statement = Object.freeze({ data })
+	const statement = Object.freeze({ data, [admitted]: true as const })
 	assertArityAgreement(data.source, data.target, statement)
 	assertRosterAgreement(data.source, data.target, statement)
 	return statement
@@ -262,7 +286,7 @@ function window<B extends AnyFace, A extends AnyFace>(
 		window: count.window,
 		source: source.data
 	})
-	const statement = Object.freeze({ data })
+	const statement = Object.freeze({ data, [admitted]: true as const })
 	assertArityAgreement(data.source, data.target, statement)
 	assertRosterAgreement(data.source, data.target, statement)
 	return statement
@@ -302,4 +326,4 @@ export type {
 	WindowData,
 	WindowStatement
 }
-export { contained, key, mirrors, renderStatement, window }
+export { contained, isStatement, key, mirrors, renderStatement, window }

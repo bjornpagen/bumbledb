@@ -17,7 +17,7 @@ import { assertDeclarationOrderKey, assertDeclarationRecord, rosterOf } from "#f
 import { type ClassesOf, classesComplete, computeClasses, type LawfulStatements, type SchemaClasses } from "#law.ts"
 import type { AnyRelation } from "#relation.ts"
 import type { LiteralSetSpec, LiteralSpec } from "#spec.ts"
-import { renderStatement, type Statement } from "#statements.ts"
+import { isStatement, renderStatement, type Statement } from "#statements.ts"
 
 /**
  * Validates the relation record and collects the implied keys: the
@@ -298,6 +298,17 @@ function schema<const Rels extends SchemaRelations, const Stmts extends readonly
 	const implied = collectImplied(name, relations)
 	const seen = new Set<string>()
 	for (const statement of statements) {
+		/**
+		 * The untyped caller's half of the admission brand: the type tier
+		 * already refuses an unbranded structural literal, and this probe
+		 * refuses the same forgery at runtime — a statement that skipped the
+		 * construction-time arity and roster walls never enters the theory.
+		 */
+		if (!isStatement(statement)) {
+			throw errors.new(
+				`schema ${name}: a statement is minted only by key/contained/mirrors/window — a structural literal skips the construction-time arity and roster walls`
+			)
+		}
 		const rendered = renderStatement(statement)
 		verifyMembership(name, relations, statement, rendered)
 		if (implied.has(rendered)) {

@@ -69,7 +69,7 @@ import { decodeAnswers, wireParams } from "#query/run.ts"
 import type { ParamEntry, ParamsRecord } from "#query/scope.ts"
 import type { AnyRelation, Fact, InsertFact } from "#relation.ts"
 import type { AnySchema, Schema, SchemaRelation, SchemaRelations } from "#schema.ts"
-import type { KeyStatement, Statement } from "#statements.ts"
+import { isStatement, type KeyStatement, type Statement } from "#statements.ts"
 
 /**
  * The ordinary (writable, scannable) relations of a schema's record — the
@@ -507,18 +507,16 @@ function isThenable(value: unknown): boolean {
 
 /**
  * Narrows a keyed-get middle argument to a statement value (vs a key
- * object): only statement values carry `data.kind` — no fact cell shape
- * (bool, bigint, string, bytes, `{ start, end }`) ever does, so the probe
- * never misreads a key object whose relation declares a field named `data`.
+ * object) through the statement module's admission brand — a
+ * REPRESENTATION, never a shape probe: fact cell shapes are structurally
+ * OPEN (an interval value carrying an excess `kind` property is a legal
+ * cell), so no property probe could ever be sound here, but no host-built
+ * key object can spell the module-private brand symbol.
  */
 function isStatementValue<R extends AnyRelation, P extends readonly string[]>(
 	value: KeyFact<R> | KeyStatement<R, P>
 ): value is KeyStatement<R, P> {
-	if (typeof value !== "object" || !("data" in value)) {
-		return false
-	}
-	const data: unknown = value.data
-	return typeof data === "object" && data !== null && "kind" in data
+	return isStatement(value)
 }
 
 /**

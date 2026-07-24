@@ -486,6 +486,24 @@ describe("schema() construction boundary", function describeSchemaBoundary() {
 			])
 		}, /no declared containment resolves the closed reference/)
 	})
+
+	test("a forged structural statement is refused at BOTH tiers — the admission brand (062)", function probeForgery() {
+		const { Kind, Holder, Account, SavingsTerms } = buildLedger()
+		// A statement pairing a bare u64 with the closed id — the exact shape the
+		// roster wall exists to refuse, spelled structurally to skip the constructors.
+		const forgedData = {
+			kind: "containment" as const,
+			source: on(Account, "holder").data,
+			target: on(Kind, "id").data,
+			bidirectional: false
+		}
+		assert.throws(function forgedIntoSchema() {
+			schema("Forge", { Kind, Holder, Account, SavingsTerms }, [
+				// @ts-expect-error — 062: Statement carries the module-private admission brand, so a structural literal is not a Statement
+				{ data: forgedData }
+			])
+		}, /a statement is minted only by key\/contained\/mirrors\/window/)
+	})
 })
 
 describe("ψ statements over closed relations — closed().where() as a face source", function describePsi() {

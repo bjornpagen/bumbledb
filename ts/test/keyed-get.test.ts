@@ -22,7 +22,7 @@ import * as path from "node:path"
 import { after, describe, test } from "node:test"
 
 import type { Fact } from "#index.ts"
-import { Db, key, relation, schema, str, u64 } from "#index.ts"
+import { Db, interval, key, relation, schema, str, u64 } from "#index.ts"
 import { lower } from "#lower.ts"
 import { native } from "#native.ts"
 
@@ -223,5 +223,29 @@ describe("keyed get: typed point reads through a declared key statement", async 
 			[p, g, "linear equations"],
 			"the engine answers the same secondary-key point read the typed surface expresses"
 		)
+	})
+})
+
+describe("keyed get: the statement-vs-key dispatch is a brand, never a shape probe (134)", async function brandSuite() {
+	/**
+	 * The conjunction the old `data.kind` shape probe misread: an
+	 * interval-typed PRIMARY-KEY field literally named `data`, keyed with a
+	 * structurally-open interval value carrying an excess `kind` property —
+	 * a legal cell everywhere else in the SDK (cellOf strips extras). The
+	 * admission brand makes the misdispatch unrepresentable.
+	 */
+	const Cfg = relation("Cfg", { data: interval(u64), value: u64 })
+	const BrandTheory = schema("KeyedGetBrand", { Cfg }, [key(Cfg, ["data"])])
+	const db = await Db.create(path.join(tmpRoot, "brand-store"), BrandTheory)
+	const committed = db.write(function seed(tx) {
+		tx.insert(Cfg, { data: { start: 1n, end: 2n }, value: 7n })
+	})
+	assert.ok(committed.ok, "seed commit lands")
+
+	test("an interval key cell with an excess kind property dispatches as a key object", function excessKind() {
+		const withKind: { start: bigint; end: bigint; kind: string } = { start: 1n, end: 2n, kind: "window" }
+		const row = db.get(Cfg, { data: withKind })
+		assert.ok(row, "the keyed read lands — no statement-selector misdispatch")
+		assert.equal(row.value, 7n)
 	})
 })
