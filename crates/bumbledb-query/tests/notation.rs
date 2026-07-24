@@ -720,3 +720,92 @@ fn mask_union_and_set_param_round_trip() {
         "(v0) | Account(id: v0, currency in ?0);"
     );
 }
+
+/// The condition-tree grammar (ruled 2026-07-23, R9): `and(..)`/`or(..)`
+/// are notation, one item per tree, comparison leaves exactly as the IR's
+/// `ConditionTree` — and the renderer's functional forms reparse, closing
+/// the round trip over the full input grammar.
+const AMOUNT_BAND_NORMALIZED: &str = "(v0) | Posting(id: v0, amount: v1), \
+     or(v1 == -100, and(v1 > -50, v1 < -10));";
+
+#[test]
+fn condition_tree_golden() {
+    let banded = query!(Ledger {
+        (id) | Posting(id, amount), or(amount == -100, and(amount > -50, amount < -10));
+    });
+    assert_eq!(pin("amount-band", Ledger, &banded), AMOUNT_BAND_NORMALIZED);
+}
+
+#[test]
+fn condition_tree_normalized_text_is_a_fixed_point() {
+    let reparsed = query!(Ledger {
+        (v0) | Posting(id: v0, amount: v1), or(v1 == -100, and(v1 > -50, v1 < -10));
+    });
+    assert_eq!(
+        pin("amount-band-fixed-point", Ledger, &reparsed),
+        AMOUNT_BAND_NORMALIZED
+    );
+}
+
+/// The tree's leaf vocabulary is every comparison — `Allen`, point
+/// membership, and the measure nest under `or`/`and` exactly as the TS
+/// condition grammar admits them (one condition language, two identical
+/// surfaces).
+const MANDATE_TOUCH_NORMALIZED: &str = "(v0) | Mandate(org: v0, active: v1), \
+     or(Allen(v1, INTERSECTS, ?0), and(?1 in v1, Duration(v1) >= 3600));";
+
+#[test]
+fn condition_tree_comparison_leaves_round_trip() {
+    let touching = query!(Ledger {
+        (org) | Mandate(org, active),
+                or(Allen(active, INTERSECTS, ?window), and(?p in active, Duration(active) >= 3600));
+    });
+    assert_eq!(
+        pin("mandate-touch", Ledger, &touching),
+        MANDATE_TOUCH_NORMALIZED
+    );
+    let reparsed = query!(Ledger {
+        (v0) | Mandate(org: v0, active: v1),
+               or(Allen(v1, INTERSECTS, ?0), and(?1 in v1, Duration(v1) >= 3600));
+    });
+    assert_eq!(
+        pin("mandate-touch-fixed-point", Ledger, &reparsed),
+        MANDATE_TOUCH_NORMALIZED
+    );
+}
+
+/// The tree lowering pinned as data: nested `and`/`or` construct the
+/// IR's `ConditionTree` verbatim — validation distributes to DNF
+/// engine-side, so the macro never hand-lowers a disjunction.
+#[test]
+fn condition_tree_lowers_to_the_exact_ir() {
+    use bumbledb::{
+        Atom, CmpOp, Comparison, ConditionTree, FindTerm, Rule, Term, Value, VarId,
+    };
+    let banded = query!(Ledger {
+        (id) | Posting(id, amount), or(amount == -100, and(amount > -50, amount < -10));
+    });
+    let leaf = |op: CmpOp, value: i64| {
+        ConditionTree::Leaf(Comparison {
+            op,
+            lhs: Term::Var(VarId(1)),
+            rhs: Term::Literal(Value::I64(value)),
+        })
+    };
+    let rule = Rule {
+        finds: vec![FindTerm::Var(VarId(0))],
+        atoms: vec![Atom {
+            source: bumbledb::AtomSource::Edb(Ledger::POSTING),
+            bindings: vec![
+                (Ledger::POSTING_ID, Term::Var(VarId(0))),
+                (Ledger::POSTING_AMOUNT, Term::Var(VarId(1))),
+            ],
+        }],
+        negated: vec![],
+        conditions: vec![ConditionTree::Or(vec![
+            leaf(CmpOp::Eq, -100),
+            ConditionTree::And(vec![leaf(CmpOp::Gt, -50), leaf(CmpOp::Lt, -10)]),
+        ])],
+    };
+    assert_eq!(banded, bumbledb::Query::single(rule));
+}

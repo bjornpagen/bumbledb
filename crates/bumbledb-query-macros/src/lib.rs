@@ -24,9 +24,12 @@
 //! body    := item (',' item)*
 //! item    := atom                        // positive occurrence
 //!          | '!' atom                    // negation (anti-probe; safety per roster)
-//!          | term 'in' term              // membership: point ∈ interval
+//!          | cond                        // a condition tree; the list is a conjunction
+//! cond    := term 'in' term              // membership: point ∈ interval
 //!          | Allen '(' term ',' mask ',' term ')'
 //!          | term cmp term               // ==  !=  <  <=  >  >=
+//!          | 'and' '(' cond (',' cond)* ')'  // ConditionTree::And — comparison
+//!          | 'or'  '(' cond (',' cond)* ')'  //   leaves only (ruled 2026-07-23, R9)
 //! atom    := Relation '(' binding (',' binding)* ')'
 //!          | pred '(' var (',' var)* ')'
 //!                                        // ordered dense: a body atom may name a
@@ -52,8 +55,18 @@
 //! pred    := lowercase ident             // macro-LOCAL: resolved at expansion, never
 //!                                        //   in the IR or the fingerprint; relations
 //!                                        //   are UpperCamel, so a predicate spelled
-//!                                        //   like a relation is unwritable
+//!                                        //   like a relation is unwritable; `and` and
+//!                                        //   `or` are the condition grammar's reserved
+//!                                        //   words
 //! ```
+//!
+//! **Condition trees are notation (ruled 2026-07-23, R9):** `and(...)`/
+//! `or(...)` admit any boolean combination of comparisons as one item —
+//! comparison leaves only, exactly the IR's `ConditionTree` (atoms,
+//! negation, and the binding membership stay items) and an exact mirror
+//! of the TS condition grammar. Validation distributes the trees to DNF
+//! engine-side; the renderer's functional forms are grammar, so the
+//! render→parse round trip closes over the full input grammar.
 //!
 //! Surface `Duration(iv)` lowers to IR `Measure(iv)`: it denotes the
 //! point-set cardinality `end − start`, and a ray has no measure.
@@ -242,10 +255,9 @@ enum Mask {
     Param(Param),
 }
 
-/// One body item, in source order.
-enum Item {
-    Atom(Atom),
-    Negated(Atom),
+/// One comparison — the condition grammar's leaf vocabulary (every
+/// `CmpOp`, the TS mirror's own leaf set).
+enum Leaf {
     Allen {
         lhs: Term,
         mask: Mask,
@@ -261,6 +273,23 @@ enum Item {
         lhs: Term,
         rhs: Term,
     },
+}
+
+/// One condition tree (ruled 2026-07-23, R9): `and`/`or` over comparison
+/// leaves — the IR's `ConditionTree`, spelled. Atoms, negation, and the
+/// binding membership stay items; validation distributes any nested `Or`
+/// to DNF engine-side.
+enum Cond {
+    Leaf(Leaf),
+    And(Vec<Cond>),
+    Or(Vec<Cond>),
+}
+
+/// One body item, in source order.
+enum Item {
+    Atom(Atom),
+    Negated(Atom),
+    Cond(Cond),
 }
 
 /// The aggregate ops admitted by both the head grammar and the IR renderer.
@@ -836,20 +865,114 @@ fn parse_cmp_op(tokens: &mut Tokens) -> Parse<&'static str> {
     Ok(op)
 }
 
-/// Continues an item whose left term is already parsed: membership or a
+/// Continues a leaf whose left term is already parsed: membership or a
 /// comparison.
-fn finish_term_item(tokens: &mut Tokens, lhs: Term) -> Parse<Item> {
+fn finish_term_leaf(tokens: &mut Tokens, lhs: Term) -> Parse<Leaf> {
     if peek_ident_text(tokens).as_deref() == Some("in") {
         tokens.next();
         let container = parse_term(tokens)?;
-        return Ok(Item::Membership {
+        return Ok(Leaf::Membership {
             element: lhs,
             container,
         });
     }
     let op = parse_cmp_op(tokens)?;
     let rhs = parse_term(tokens)?;
-    Ok(Item::Cmp { op, lhs, rhs })
+    Ok(Leaf::Cmp { op, lhs, rhs })
+}
+
+/// Parses `Allen`'s three positions (the name already consumed).
+fn parse_allen_leaf(tokens: &mut Tokens) -> Parse<Leaf> {
+    let (mut group, _) = take_paren_group(tokens, "Allen's three positions")?;
+    let lhs = parse_term(&mut group)?;
+    expect_punct(&mut group, ',', "`,`")?;
+    let mask = parse_mask(&mut group)?;
+    expect_punct(&mut group, ',', "`,`")?;
+    let rhs = parse_term(&mut group)?;
+    if let Some(extra) = group.next() {
+        return fail(extra.span(), "query!: Allen takes exactly three positions");
+    }
+    Ok(Leaf::Allen { lhs, mask, rhs })
+}
+
+/// Parses `Duration(v)` compared or contained (the name already
+/// consumed) — the one parenthesized term.
+fn parse_measure_leaf(tokens: &mut Tokens) -> Parse<Leaf> {
+    let (mut inner, _) = take_paren_group(tokens, "the measured variable")?;
+    let var = expect_ident(&mut inner, "a variable")?;
+    if let Some(extra) = inner.next() {
+        return fail(extra.span(), "query!: Duration takes one variable");
+    }
+    finish_term_leaf(tokens, Term::Measure(var))
+}
+
+/// The condition-tree refusal, one message for every non-comparison
+/// shape under `and`/`or`.
+fn tree_refusal<T>(span: Span) -> Parse<T> {
+    fail(
+        span,
+        "query!: a condition tree takes comparisons only — atoms, negation, \
+         and the binding membership stay body items \
+         (docs/architecture/20-query-ir.md § the query notation)",
+    )
+}
+
+/// Parses one `and(…)`/`or(…)` node's children (the name already
+/// consumed): one condition at least, comma-separated.
+fn parse_tree_children(tokens: &mut Tokens, name: &Name) -> Parse<Vec<Cond>> {
+    let (mut group, span) = take_paren_group(tokens, "the condition tree's conditions")?;
+    if group.peek().is_none() {
+        return fail(
+            span,
+            format!(
+                "query!: `{}(…)` takes at least one condition — the empty \
+                 combinations are not notation",
+                name.text
+            ),
+        );
+    }
+    let mut children = Vec::new();
+    while group.peek().is_some() {
+        children.push(parse_cond(&mut group)?);
+        if peek_punct(&mut group, ',') {
+            group.next();
+        } else if let Some(extra) = group.next() {
+            return fail(
+                extra.span(),
+                format!("query!: expected `,`, found `{extra}`"),
+            );
+        }
+    }
+    Ok(children)
+}
+
+/// Parses one condition of a tree: a comparison leaf or a nested
+/// `and`/`or` node — never an atom, a negation, or a binding.
+fn parse_cond(tokens: &mut Tokens) -> Parse<Cond> {
+    if peek_punct(tokens, '!') {
+        // `!=` never begins a leaf; a lone `!` is negation, an item shape.
+        return tree_refusal(peek_span(tokens));
+    }
+    let call_shaped = match tokens.peek() {
+        Some(TokenTree::Ident(_)) => {
+            let mut ahead = tokens.clone();
+            ahead.next();
+            matches!(ahead.peek(), Some(TokenTree::Group(g)) if g.delimiter() == Delimiter::Parenthesis)
+        }
+        _ => false,
+    };
+    if call_shaped {
+        let name = expect_ident(tokens, "a condition")?;
+        return match name.text.as_str() {
+            "and" => Ok(Cond::And(parse_tree_children(tokens, &name)?)),
+            "or" => Ok(Cond::Or(parse_tree_children(tokens, &name)?)),
+            "Allen" => Ok(Cond::Leaf(parse_allen_leaf(tokens)?)),
+            "Duration" => Ok(Cond::Leaf(parse_measure_leaf(tokens)?)),
+            _ => tree_refusal(name.span),
+        };
+    }
+    let lhs = parse_term(tokens)?;
+    Ok(Cond::Leaf(finish_term_leaf(tokens, lhs)?))
 }
 
 /// Whether the token after a `Name (…)` shape continues a term item —
@@ -887,18 +1010,14 @@ fn parse_item(tokens: &mut Tokens) -> Parse<Item> {
         _ => false,
     };
     if call_shaped {
-        let name = expect_ident(tokens, "an atom or Allen")?;
-        if name.text == "Allen" {
-            let (mut group, _) = take_paren_group(tokens, "Allen's three positions")?;
-            let lhs = parse_term(&mut group)?;
-            expect_punct(&mut group, ',', "`,`")?;
-            let mask = parse_mask(&mut group)?;
-            expect_punct(&mut group, ',', "`,`")?;
-            let rhs = parse_term(&mut group)?;
-            if let Some(extra) = group.next() {
-                return fail(extra.span(), "query!: Allen takes exactly three positions");
-            }
-            return Ok(Item::Allen { lhs, mask, rhs });
+        let name = expect_ident(tokens, "an atom or a condition")?;
+        match name.text.as_str() {
+            "Allen" => return Ok(Item::Cond(Cond::Leaf(parse_allen_leaf(tokens)?))),
+            // The condition grammar's reserved words: a body-position
+            // `and(…)`/`or(…)` is always a tree (ruled 2026-07-23, R9).
+            "and" => return Ok(Item::Cond(Cond::And(parse_tree_children(tokens, &name)?))),
+            "or" => return Ok(Item::Cond(Cond::Or(parse_tree_children(tokens, &name)?))),
+            _ => {}
         }
         // `Duration(v) >= …` is a term; everything else call-shaped is an
         // atom.
@@ -915,17 +1034,12 @@ fn parse_item(tokens: &mut Tokens) -> Parse<Item> {
                     ),
                 );
             }
-            let (mut inner, _) = take_paren_group(tokens, "the measured variable")?;
-            let var = expect_ident(&mut inner, "a variable")?;
-            if let Some(extra) = inner.next() {
-                return fail(extra.span(), "query!: Duration takes one variable");
-            }
-            return finish_term_item(tokens, Term::Measure(var));
+            return Ok(Item::Cond(Cond::Leaf(parse_measure_leaf(tokens)?)));
         }
         return Ok(Item::Atom(parse_atom(tokens, name)?));
     }
     let lhs = parse_term(tokens)?;
-    finish_term_item(tokens, lhs)
+    Ok(Item::Cond(Cond::Leaf(finish_term_leaf(tokens, lhs)?)))
 }
 
 /// Parses one rule: `[pred] (head) | body ;` — a leading lowercase
@@ -958,6 +1072,17 @@ fn parse_rule(tokens: &mut Tokens) -> Parse<ParsedRule> {
                          names are relations, so a predicate spelled like a relation \
                          is unwritable (docs/architecture/20-query-ir.md § the query \
                          notation)",
+                        name.text
+                    ),
+                );
+            }
+            if name.text == "and" || name.text == "or" {
+                return fail(
+                    name.span,
+                    format!(
+                        "query!: `{}` is the condition grammar's reserved word — \
+                         a predicate cannot take either tree name \
+                         (docs/architecture/20-query-ir.md § the query notation)",
                         name.text
                     ),
                 );
@@ -1470,6 +1595,45 @@ impl Emitter<'_> {
         )
     }
 
+    /// One condition tree as a `ConditionTree` expression — nested
+    /// `And`/`Or` verbatim (validation distributes to DNF engine-side).
+    fn cond(&mut self, scope: &mut Scope, cond: &Cond) -> Parse<String> {
+        Ok(match cond {
+            Cond::Leaf(Leaf::Allen { lhs, mask, rhs }) => {
+                let lhs = self.term(scope, lhs)?;
+                let rhs = self.term(scope, rhs)?;
+                let mask = self.mask(mask)?;
+                let op = format!("::bumbledb::CmpOp::Allen {{ mask: {mask} }}");
+                Self::leaf(&op, &lhs, &rhs)
+            }
+            // `PointIn` is stored interval-first; the notation reads
+            // point-first.
+            Cond::Leaf(Leaf::Membership { element, container }) => {
+                let element = self.term(scope, element)?;
+                let container = self.term(scope, container)?;
+                Self::leaf("::bumbledb::CmpOp::PointIn", &container, &element)
+            }
+            Cond::Leaf(Leaf::Cmp { op, lhs, rhs }) => {
+                let lhs = self.term(scope, lhs)?;
+                let rhs = self.term(scope, rhs)?;
+                let op = format!("::bumbledb::CmpOp::{op}");
+                Self::leaf(&op, &lhs, &rhs)
+            }
+            Cond::And(children) | Cond::Or(children) => {
+                let variant = if matches!(cond, Cond::And(_)) {
+                    "And"
+                } else {
+                    "Or"
+                };
+                let mut inner = String::new();
+                for child in children {
+                    let _ = write!(inner, "{},", self.cond(scope, child)?);
+                }
+                format!("::bumbledb::ConditionTree::{variant}(::std::vec![{inner}])")
+            }
+        })
+    }
+
     /// One head position as a `FindTerm` expression; every variable must
     /// already be body-bound.
     fn find(scope: &Scope, term: &HeadTerm) -> Parse<String> {
@@ -1532,29 +1696,8 @@ impl Emitter<'_> {
                 Item::Negated(atom) => {
                     let _ = write!(negated, "{},", self.atom(&mut scope, atom)?);
                 }
-                Item::Allen { lhs, mask, rhs } => {
-                    let lhs = self.term(&mut scope, lhs)?;
-                    let rhs = self.term(&mut scope, rhs)?;
-                    let mask = self.mask(mask)?;
-                    let op = format!("::bumbledb::CmpOp::Allen {{ mask: {mask} }}");
-                    let _ = write!(conditions, "{},", Self::leaf(&op, &lhs, &rhs));
-                }
-                Item::Membership { element, container } => {
-                    // `PointIn` is stored interval-first; the notation reads
-                    // point-first.
-                    let element = self.term(&mut scope, element)?;
-                    let container = self.term(&mut scope, container)?;
-                    let _ = write!(
-                        conditions,
-                        "{},",
-                        Self::leaf("::bumbledb::CmpOp::PointIn", &container, &element)
-                    );
-                }
-                Item::Cmp { op, lhs, rhs } => {
-                    let lhs = self.term(&mut scope, lhs)?;
-                    let rhs = self.term(&mut scope, rhs)?;
-                    let op = format!("::bumbledb::CmpOp::{op}");
-                    let _ = write!(conditions, "{},", Self::leaf(&op, &lhs, &rhs));
+                Item::Cond(cond) => {
+                    let _ = write!(conditions, "{},", self.cond(&mut scope, cond)?);
                 }
             }
         }

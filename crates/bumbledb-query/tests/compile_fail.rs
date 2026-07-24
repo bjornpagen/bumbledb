@@ -158,9 +158,11 @@ fn compile_fail_fixtures() {
         seen += 1;
     }
     let _ = std::fs::remove_dir_all(&out_dir);
-    // The suite's nine cases: typo'd relation, typo'd field, ambiguous
+    // The suite's twelve cases: typo'd relation, typo'd field, ambiguous
     // punning, ?param in a head, `:-` anywhere, a program without bare
     // output rules, an explicitly indexed dense predicate list, mixed
-    // bare + indexed predicate bindings, an UpperCamel predicate name.
-    assert_eq!(seen, 9, "the compile-fail roster has nine fixtures");
+    // bare + indexed predicate bindings, an UpperCamel predicate name,
+    // an atom under a condition tree, an empty tree node, a predicate
+    // taking a reserved tree name.
+    assert_eq!(seen, 12, "the compile-fail roster has twelve fixtures");
 }

@@ -38,10 +38,12 @@
 //! - the Arg terms, absent from the notation grammar (Arg is single-rule
 //!   only and its key is rule-internal), render as `ArgMax(carried,
 //!   key)` — an honest extension, not grammar;
-//! - a nested condition tree renders functionally (`and(..)` / `or(..)`)
-//!   — validated queries are Or-free downstream, so grammar-pure output
-//!   holds for every query written in the notation; the functional forms
-//!   appear only when diagnostics picture an input tree.
+//! - a nested condition tree renders in the notation's own `and(..)` /
+//!   `or(..)` forms — grammar, not merely diagnostics (ruled 2026-07-23,
+//!   R9): `query!` parses them back, so the render→parse round trip
+//!   closes over the full input grammar. Depth past
+//!   [`crate::ir::MAX_CONDITION_DEPTH`] elides to `...` — the hostile
+//!   nesting validation rejects must still render.
 //!
 //! Rendering allocates; it runs only in diagnostic contexts (roster
 //! errors, introspection, arbitration bundles), never on a warm path.
@@ -326,8 +328,8 @@ fn atom_item(schema: &Schema, refs: &ClosedRefs, atom: &Atom, negated: bool) -> 
 }
 
 /// One condition tree: a leaf is a comparison item; `And`/`Or` render
-/// functionally (module doc — the input grammar's trees are pictures,
-/// not notation). Depth-budgeted at [`crate::ir::MAX_CONDITION_DEPTH`]:
+/// in the notation's own functional forms (grammar — ruled 2026-07-23,
+/// R9). Depth-budgeted at [`crate::ir::MAX_CONDITION_DEPTH`]:
 /// the renderer recurses by depth and must stay total on the hostile
 /// nesting validation rejects, so anything past the boundary check's own
 /// cap elides to `...` instead of exhausting the stack.
