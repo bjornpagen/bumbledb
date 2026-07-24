@@ -341,6 +341,17 @@ impl<S> Db<S> {
         &self.schema
     }
 
+    /// The non-fatal declaration diagnostics validation sealed into this
+    /// handle's schema witness ([`crate::schema::SchemaWarning`],
+    /// `docs/architecture/70-api.md` § schema warnings): construction
+    /// validates the descriptor and owns the witness, so the handle is
+    /// where the sealed diagnostics surface — a borrow, zero recompute.
+    /// Warnings are never errors and never alter the fingerprint.
+    #[must_use]
+    pub fn schema_warnings(&self) -> &[crate::schema::SchemaWarning] {
+        self.schema.warnings()
+    }
+
     /// Renders a query in the rule notation ([`crate::ir::render`]) —
     /// the roster-error diagnostic surface: when [`Db::prepare`] rejects
     /// a query there is no prepared handle to ask, so the host renders
@@ -443,6 +454,20 @@ impl<'db, S> Snapshot<'db, S> {
     /// rather than routing through a `Snapshot` wrapper method).
     pub(crate) fn txn(&self) -> &ReadTxn<'db> {
         &self.txn
+    }
+
+    /// The snapshot's witnessed generation: the storage tx id read from
+    /// `_meta` **inside this snapshot** — the race-closing rule of
+    /// `docs/architecture/50-storage.md` — memoized on the read
+    /// transaction. A scoped read that wants its generation reads it
+    /// here, never through a second transaction (the FFI bridge rides it
+    /// on the snapshot-open reply).
+    ///
+    /// # Errors
+    ///
+    /// `Corruption` on a missing or malformed tx id.
+    pub fn generation(&self) -> Result<crate::GenerationId> {
+        self.txn.generation()
     }
 
     /// Runs `body` with a pooled point-read scratch set, restoring it

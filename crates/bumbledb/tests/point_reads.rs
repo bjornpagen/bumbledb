@@ -404,3 +404,74 @@ fn snapshot_contains_answers_typed_membership_against_committed_state() {
     })
     .expect("read");
 }
+
+/// The snapshot's witnessed generation is the storage tx id read INSIDE
+/// the snapshot (the race-closing rule of
+/// `docs/architecture/50-storage.md`): it equals the handle's, and a
+/// commit advances what the next snapshot witnesses.
+#[test]
+fn snapshot_generation_is_the_tx_id_witnessed_inside_the_snapshot() {
+    let dir = common::TempDir::new("points-snap-generation");
+    let db = Db::create(dir.path(), Ledger).expect("create");
+    let before = db.generation().expect("generation");
+    assert_eq!(db.read(|snap| snap.generation()).expect("read"), before);
+    db.write(|tx| {
+        let id = tx.alloc::<AccountId>()?;
+        tx.insert(&Account {
+            id,
+            holder: "ada",
+            balance: 1,
+        })?;
+        Ok(())
+    })
+    .expect("write");
+    let after = db.read(|snap| snap.generation()).expect("read");
+    assert_eq!(after, db.generation().expect("generation"));
+    assert_ne!(before, after);
+}
+
+/// The sealed declaration diagnostics reach the handle
+/// (`Db::schema_warnings`): a redundant superkey warns at validation and
+/// the handle exposes the sealed slice — no revalidation, no second
+/// object to hold.
+#[test]
+fn schema_warnings_surface_on_the_handle() {
+    use bumbledb::schema::{
+        FieldDescriptor, Generation, RelationDescriptor, SchemaDescriptor, SchemaWarning,
+        StatementDescriptor, ValueType,
+    };
+    use bumbledb::{FieldId, RelationId};
+    let field = |name: &str| FieldDescriptor {
+        name: name.into(),
+        value_type: ValueType::U64,
+        generation: Generation::None,
+    };
+    let descriptor = SchemaDescriptor {
+        relations: vec![RelationDescriptor {
+            extension: None,
+            name: "Account".into(),
+            fields: vec![field("id"), field("holder")],
+        }],
+        statements: vec![
+            StatementDescriptor::Functionality {
+                relation: RelationId(0),
+                projection: Box::new([FieldId(0)]),
+            },
+            StatementDescriptor::Functionality {
+                relation: RelationId(0),
+                projection: Box::new([FieldId(0), FieldId(1)]),
+            },
+        ],
+    };
+    let dir = common::TempDir::new("points-schema-warnings");
+    let db = Db::create(dir.path(), descriptor).expect("create");
+    let warnings = db.schema_warnings();
+    assert_eq!(warnings.len(), 1);
+    let SchemaWarning::RedundantSuperkey {
+        relation,
+        key,
+        implied_by,
+    } = warnings[0];
+    assert_eq!(relation, RelationId(0));
+    assert_ne!(key, implied_by, "the superkey cites its implier");
+}

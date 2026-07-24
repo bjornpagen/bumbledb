@@ -158,7 +158,7 @@ pub use storage::env::StoreKind;
 // appear in `Db`'s own signatures — importable from the root, no
 // module-path scavenger hunt.
 pub use ir::{
-    AggOp, Atom, AtomSource, CmpOp, Comparison, ConditionTree, FindTerm, HeadOp, HeadTerm,
+    AggOp, ArgKey, Atom, AtomSource, CmpOp, Comparison, ConditionTree, FindTerm, HeadOp, HeadTerm,
     MAX_CONDITION_DEPTH, MAX_PREDICATES, MAX_RULES, MaskTerm, ParamId, PredId, PredicateDef,
     Program, ProgramRef, Query, Rule, Term, Value, VarId,
 };

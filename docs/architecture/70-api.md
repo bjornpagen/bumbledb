@@ -772,7 +772,11 @@ proposition the commit checks in one integer compare.
 - **Schema errors** (declaration boundary, `30-dependencies.md` roster included):
   typed, enumerated, returned from `Db::create`/`Db::open` — where the definition's
   descriptor is validated — before any environment exists.
-- **Schema warnings:** an accepted sealed schema exposes `Schema::warnings()`.
+- **Schema warnings:** an accepted sealed schema exposes `Schema::warnings()`,
+  and the handle exposes the same sealed slice as `Db::schema_warnings()` —
+  construction validates and owns the witness, so the diagnostics are
+  reachable without revalidating (`SchemaWarning` sits on the root bindings
+  roster beside `SchemaError`).
   `RedundantSuperkey { relation, key, implied_by }` reports determinant write
   amplification without weakening or disabling either key; warnings are never
   errors and never alter the fingerprint.
