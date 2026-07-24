@@ -15,13 +15,15 @@
 //!   sites).
 //! - one named `const` per tag — the `*_in` parsers match against these
 //!   (const str patterns), so the IN direction reads the same SPELLINGS.
-//!   The compile tripwire does NOT cover that direction: the parsers keep
-//!   a catch-all `other =>` refusal arm (napi `Object`s cannot be built in
-//!   a plain `cargo test`, so no in-crate round-trip pins them), meaning a
-//!   new variant that satisfies this table still needs its parser arm by
-//!   hand — a miss surfaces at runtime as an "unknown … kind" refusal,
-//!   caught only by the TS-side integration suite, never by this crate's
-//!   compile.
+//!   For UNIT-ONLY enums (`for unit E` tables) the pattern column is a
+//!   constructor path, so the table ALSO emits `parse(tag) -> Option<E>`
+//!   and the compile tripwire covers both directions — a new unit variant
+//!   breaks compile in exactly one place, the table. Payload-carrying
+//!   enums keep their hand parser arms with a catch-all `other =>`
+//!   refusal (a `pat` fragment is unspellable in expression position, and
+//!   the payload doctrine below keeps their marshaling by hand), so THEIR
+//!   in-direction misses still surface only at runtime, caught by the
+//!   TS-side integration suite.
 //! - `TAGS` — every tag in core declaration order; the `tags.json` golden
 //!   (`ts/test/fixtures/tags.json`, verified by `golden::tags_json_matches`
 //!   below) is rendered from these, and a TS test
@@ -44,7 +46,52 @@ use crate::marshal::OwnedParam;
 /// One wire-tag table: named tag consts (the parsers' patterns), the
 /// exhaustive `tag()` map (the compile tripwire + the OUT direction), and
 /// the declaration-order `TAGS` roster (the golden's source).
+///
+/// A UNIT-ONLY enum spells its table `for unit E` — the pattern column is
+/// then a constructor path, so the table also emits `parse()` and the
+/// compile tripwire covers BOTH wire directions (a payload-carrying enum
+/// cannot: a `pat` fragment is unspellable in expression position, so its
+/// IN direction stays a hand arm per the payload doctrine below).
 macro_rules! wire_tags {
+    ($(#[$doc:meta])* mod $mod_name:ident for unit $enum_ty:ty {
+        $($const_name:ident : $variant:path => $tag:literal),+ $(,)?
+    }) => {
+        $(#[$doc])*
+        pub(crate) mod $mod_name {
+            #[allow(unused_imports)]
+            use super::*;
+
+            $(pub(crate) const $const_name: &str = $tag;)+
+
+            /// The EXHAUSTIVE variant → wire-tag map. Deliberately no
+            /// wildcard: a new core variant fails compile HERE, forcing
+            /// the wire decision to land with the variant.
+            #[allow(dead_code)]
+            pub(crate) fn tag(value: &$enum_ty) -> &'static str {
+                match value {
+                    $($variant => $const_name,)+
+                }
+            }
+
+            /// The IN direction, generated from the same rows — a unit
+            /// variant's pattern IS its constructor, so the parsers stop
+            /// hand-mirroring this table (the old admitted drift gap:
+            /// a new variant satisfied `tag()` and still refused at
+            /// runtime as an "unknown … kind").
+            #[allow(dead_code)]
+            pub(crate) fn parse(tag: &str) -> Option<$enum_ty> {
+                match tag {
+                    $($tag => Some($variant),)+
+                    _ => None,
+                }
+            }
+
+            /// Every wire tag, core declaration order — the `tags.json`
+            /// golden reads this (test-only consumption, hence the allow).
+            #[allow(dead_code)]
+            pub(crate) const TAGS: &[&str] = &[$($const_name),+];
+        }
+    };
     ($(#[$doc:meta])* mod $mod_name:ident for $enum_ty:ty {
         $($const_name:ident : $pat:pat => $tag:literal),+ $(,)?
     }) => {
@@ -103,8 +150,9 @@ wire_tags! {
 
 wire_tags! {
     /// `bumbledb::schema::IntervalElement` — the interval family's element
-    /// domain (nested in `value_type` both directions).
-    mod interval_element for IntervalElement {
+    /// domain (nested in `value_type` both directions; `parse` is the IN
+    /// direction).
+    mod interval_element for unit IntervalElement {
         U64: IntervalElement::U64 => "u64",
         I64: IntervalElement::I64 => "i64",
     }
@@ -145,8 +193,9 @@ wire_tags! {
 }
 
 wire_tags! {
-    /// `bumbledb::StatementKind` — the manifest/violation form tag (OUT).
-    mod statement_kind for StatementKind {
+    /// `bumbledb::StatementKind` — the manifest/violation form tag (OUT
+    /// today; `parse` generated so an IN lane never re-opens the gap).
+    mod statement_kind for unit StatementKind {
         FUNCTIONALITY: StatementKind::Functionality => "functionality",
         CONTAINMENT: StatementKind::Containment => "containment",
         CARDINALITY: StatementKind::Cardinality => "cardinality",
@@ -166,11 +215,13 @@ wire_tags! {
 
 wire_tags! {
     /// `bumbledb::HeadOp` — the var-free aggregate-op vocabulary. ONE
-    /// table serves both op parsers: `agg_op_in` matches these consts and
-    /// attaches the Arg keys, `head_term_in` matches them bare — the old
-    /// verbatim-duplicate table is dead. `AggOp::head_op` is the engine's
-    /// own exhaustive `AggOp` ↔ `HeadOp` twin, so this table covers both enums.
-    mod head_op for HeadOp {
+    /// table serves both op parsers: `agg_op_in` lifts `parse`'s `HeadOp`
+    /// into `AggOp` (attaching the Arg keys through an exhaustive match —
+    /// the second tripwire), `head_term_in` takes `parse` bare — the old
+    /// hand-mirrored string matches are dead. `AggOp::head_op` is the
+    /// engine's own exhaustive `AggOp` ↔ `HeadOp` twin, so this table
+    /// covers both enums.
+    mod head_op for unit HeadOp {
         SUM: HeadOp::Sum => "sum",
         MIN: HeadOp::Min => "min",
         MAX: HeadOp::Max => "max",
@@ -249,8 +300,9 @@ wire_tags! {
 }
 
 wire_tags! {
-    /// `bumbledb::Direction` — the containment violation's direction (OUT).
-    mod direction for Direction {
+    /// `bumbledb::Direction` — the containment violation's direction (OUT
+    /// today; `parse` generated so an IN lane never re-opens the gap).
+    mod direction for unit Direction {
         SOURCE_UNSATISFIED: Direction::SourceUnsatisfied => "sourceUnsatisfied",
         TARGET_REQUIRED: Direction::TargetRequired => "targetRequired",
     }

@@ -425,15 +425,11 @@ fn value_type_in(obj: &Object) -> napi::Result<ValueType> {
         }
         tags::value_type::INTERVAL => {
             let element: String = req(obj, "element", "interval type")?;
-            let element = match element.as_str() {
-                tags::interval_element::U64 => IntervalElement::U64,
-                tags::interval_element::I64 => IntervalElement::I64,
-                other => {
-                    return Err(err(format!(
-                        "bumbledb marshal: unknown interval element `{other}`"
-                    )));
-                }
-            };
+            let element = tags::interval_element::parse(&element).ok_or_else(|| {
+                err(format!(
+                    "bumbledb marshal: unknown interval element `{element}`"
+                ))
+            })?;
             let width = obj
                 .get::<BigInt>("width")?
                 .map(|w| u64_in(&w, "interval width"))
@@ -644,25 +640,27 @@ fn term_in(obj: &Object) -> napi::Result<Term> {
     }
 }
 
+/// The tag parses through THE one table (`tags::head_op::parse`); the
+/// exhaustive `HeadOp` → `AggOp` lift below attaches the Arg keys — a new
+/// `HeadOp` variant breaks THIS match at compile, never a runtime refusal.
 fn agg_op_in(obj: &Object) -> napi::Result<AggOp> {
     let kind: String = req(obj, "kind", "aggregate op")?;
-    match kind.as_str() {
-        tags::head_op::SUM => Ok(AggOp::Sum),
-        tags::head_op::MIN => Ok(AggOp::Min),
-        tags::head_op::MAX => Ok(AggOp::Max),
-        tags::head_op::COUNT => Ok(AggOp::Count),
-        tags::head_op::COUNT_DISTINCT => Ok(AggOp::CountDistinct),
-        tags::head_op::ARG_MAX => Ok(AggOp::ArgMax {
+    let op = tags::head_op::parse(&kind)
+        .ok_or_else(|| err(format!("bumbledb marshal: unknown aggregate op `{kind}`")))?;
+    Ok(match op {
+        HeadOp::Sum => AggOp::Sum,
+        HeadOp::Min => AggOp::Min,
+        HeadOp::Max => AggOp::Max,
+        HeadOp::Count => AggOp::Count,
+        HeadOp::CountDistinct => AggOp::CountDistinct,
+        HeadOp::ArgMax => AggOp::ArgMax {
             key: var_in(obj, "key", "argMax op")?,
-        }),
-        tags::head_op::ARG_MIN => Ok(AggOp::ArgMin {
+        },
+        HeadOp::ArgMin => AggOp::ArgMin {
             key: var_in(obj, "key", "argMin op")?,
-        }),
-        tags::head_op::PACK => Ok(AggOp::Pack),
-        other => Err(err(format!(
-            "bumbledb marshal: unknown aggregate op `{other}`"
-        ))),
-    }
+        },
+        HeadOp::Pack => AggOp::Pack,
+    })
 }
 
 fn head_term_in(obj: &Object) -> napi::Result<HeadTerm> {
@@ -671,19 +669,8 @@ fn head_term_in(obj: &Object) -> napi::Result<HeadTerm> {
         tags::head_term::VAR => Ok(HeadTerm::Var),
         tags::head_term::AGGREGATE => {
             let op: String = req(obj, "op", "head aggregate")?;
-            let op = match op.as_str() {
-                tags::head_op::SUM => HeadOp::Sum,
-                tags::head_op::MIN => HeadOp::Min,
-                tags::head_op::MAX => HeadOp::Max,
-                tags::head_op::COUNT => HeadOp::Count,
-                tags::head_op::COUNT_DISTINCT => HeadOp::CountDistinct,
-                tags::head_op::ARG_MAX => HeadOp::ArgMax,
-                tags::head_op::ARG_MIN => HeadOp::ArgMin,
-                tags::head_op::PACK => HeadOp::Pack,
-                other => {
-                    return Err(err(format!("bumbledb marshal: unknown head op `{other}`")));
-                }
-            };
+            let op = tags::head_op::parse(&op)
+                .ok_or_else(|| err(format!("bumbledb marshal: unknown head op `{op}`")))?;
             Ok(HeadTerm::Aggregate(op))
         }
         other => Err(err(format!(
