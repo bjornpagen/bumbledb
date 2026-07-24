@@ -74,6 +74,8 @@ here, never restated.
 | `curves` | existing families at parameterized scale + the closure world | warm p50 vs corpus size (the fitted exponent is the story); the warmth panel: cold → warm → memoized p50, both engines | `curves --warmth --out` | `curves-report.json` / `.md` (auto-ingested by night discovery; the `curves` lane-payload contract is retired — §contracts) | Report | durable config, prepared statements reused, `ANALYZE`; inline per-draw multiset gate dominates every timer; canonical translation always reported, hand-tuned twin beside it where canonical inflates (`busy_scan`); SQLite points run under the DNF cap |
 | `cold-warm-memo` | warmth-carrying families | p50 per phase — ours cold/warm/memo, theirs cold/warm (memo has no SQLite twin, stated) | landed folded into `curves --warmth` (no separate subcommand) | the `warmth` blocks of `curves-report.json` (the separate `cold_warm_memo` payload and chart are retired — §contracts) | Report | as the curves row; cold = process-fresh reopen (OS-page-cache-warm, the honesty bound stated in the report), prepared statements fresh for the cold phase by definition |
 | `write-throughput` | commit/delete ladders + bulk | facts/sec per commit batch size, per durability lane | landed as `writes --out` | `writes-report.json` / `.md` (auto-ingested by night discovery); the `write_throughput` chart input derives from its batch ladders per §contracts | Report | matched durability pairs only, by type (`DurabilityLane`): durable = WAL `synchronous=FULL` `fullfsync=ON` vs `Db::create`; nosync = WAL `synchronous=OFF` vs `Db::ephemeral`; hand-authored native SQL write twins; post-state value-verified |
+| `crud` | the OLTP home turf | round-trip warm p50 per family (the eleven `crud::families`, registry order = run order), per durability lane | `crud --out` | `crud.json` — world-keyed: top-level `"world": "crud"`, no `"lane"` key (§contracts) | Report — the home-turf loss lane, by design | matched durability pairs only, by type (`DurabilityLane`); hand-authored native SQL write twins; every query oracle-gated, every write family verified by full-scan post-state body-multiset comparison (`60-validation.md` § the home-turf worlds) |
+| `lawful` | the integrity home turf | judged commit throughput + rejection-latency round-trips, both engines | `lawful --out` | `lawful.json` — world-keyed: top-level `"world": "lawful"` plus its `enforcement` block, no `"lane"` key (§contracts) | Report — the home-turf loss lane, by design | SQLite carries EQUIVALENT enforcement — FKs, UNIQUE, CHECK, the two triggers — derived as data from the enforcement map (`lawful/enforcement.rs: MAP`, totality asserted); verdicts gated against the naive model through the differential runner (`60-validation.md` § the home-turf worlds) |
 | `adversarial` | worst-case query shapes (the rings/temporal bomb precedent) | p50 both engines under the per-sample cap; capped twins reported as DNF | contract spelling `adversarial --out` — the subcommand has not landed; the night probe reports it SKIP-UNAVAILABLE until it does | `report.json` carrying `"lane": "adversarial"` per §contracts | Report | scenarios parity + the DNF cap below; canonical translation the default lane, hand-tuned twin lanes alongside where canonical inflates — both reported |
 | `churn` | steady-state posting working set | per-cycle probe warm p50, store bytes, write facts/sec, engine counters | `churn --out` | `churn-report.json` (`churn_schema: 1`, auto-ingested and charted directly by the viz) + `churn.md`; the one-run condensation is retired — §contracts | Report | per-lane sessions per `60-validation.md` § the churn lanes: `sqlite-bare`/`sqlite-maint` durable, `sqlite-nosync` ephemeral-matched; probes prepared fresh per sample point on both engines; `maint`'s VACUUM/ANALYZE charged into its own throughput window |
 
@@ -117,7 +119,12 @@ there are no stats to draw, only the cap.
 **The discriminant law.** Every expansion-lane artifact is a `report.json`
 whose top level carries `"lane": "<id>"`; the suite RunReport carries **no
 `"lane"` key** and is classified by `config.store` into the durable/ephemeral
-pools (`bench_viz.py: ingest_report` is the executable form). A duplicate
+pools (`bench_viz.py: ingest_report` is the executable form). The two
+home-turf artifacts are world-keyed, not lane-keyed: `crud.json` and
+`lawful.json` carry top-level `"world": "crud"` / `"world": "lawful"` and no
+`"lane"` key (`bench_viz.py: load_world_report` is the executable form), and
+night discovery ingests them from their canonical paths below, never through
+the discriminant scan. A duplicate
 lane in one night keeps the first occurrence and prints a note. Each surviving
 lane contract below is fixed as a committed synthetic fixture under
 `scripts/viz-fixtures/` — `fixture-write-throughput.report.json`,
@@ -133,8 +140,11 @@ The live emitters ship *flag-fed* shapes, and night discovery ingests them
 from their canonical paths (`bench_viz.py: NIGHT_LANE_REPORTS`; the flags
 override): `storage/storage-report.json` (scales → worlds), `writes/
 writes-report.json` (lanes → rows), `curves/curves-report.json` (families →
-rows + `warmth` blocks), and `churn/churn-report.json` (`churn_schema: 1`,
-runs → lanes → samples, validated by `load_churn_report`). Beyond those,
+rows + `warmth` blocks), `crud/crud.json` (rows nested under durability-lane
+objects), `lawful/lawful.json` (its `lanes` entries ARE the rows, each
+carrying its own lane label), and `churn/churn-report.json`
+(`churn_schema: 1`, runs → lanes → samples, validated by
+`load_churn_report`). Beyond those,
 discovery scans `<child>/report.json` through the discriminant (plus the
 first `scenarios.json`, the md rendering as fallback). **The contamination
 marker:** a run dir carrying `CONTAMINATED.md` (the recorded ruling, prose
@@ -249,7 +259,9 @@ per svg → source lane → what it shows):
 | `bench-tails.svg` | RunReport pool (reads) | p50 → p95 → p99 per family, both engines |
 | `bench-writes.svg` | RunReport pool (writes) | writes + cold — fsync physics, published anyway |
 | `bench-scenarios.svg` | `scenarios.json` preferred, `scenarios.md` fallback | the non-ledger worlds per (query, lane); a DNF lane draws no bar, only the annotation |
-| `world-<world>.svg` | `scenarios.json` preferred, `scenarios.md` fallback | one file per scenario world, paired p50 bars per (query, lane); DNF lanes annotated, excluded and counted |
+| `world-<world>.svg` (scenario worlds) | `scenarios.json` preferred, `scenarios.md` fallback | one file per scenario world, paired p50 bars per (query, lane); DNF lanes annotated, excluded and counted |
+| `world-crud.svg` | `crud/crud.json` (night path, flag override) | the OLTP home turf: paired p50 bars per (family, durability lane), published as the losses they are |
+| `world-lawful.svg` | `lawful/lawful.json` (night path, flag override) | the integrity home turf: the same treatment over the judged-commit and rejection-latency lanes |
 | `ratio-waterfall.svg` | reads (+ `scenarios.json`/`.md`) | every family + (query, lane) as one sorted ratio bar from raw p50s; below-parity draws red; DNF lanes excluded and counted |
 | `tails-fan.svg` | reads | the p50 → p90 → p99 fan per family, both engines |
 | `bench-storage.svg` | `storage-report.json` (night path, flag override) | bytes per fact per scale/world + churn checkpoints |
