@@ -265,7 +265,7 @@ describe("the runtime/type agreement and the wire", function agreement() {
 			return candidate.name === "Vocab"
 		})
 		assert.ok(vocab)
-		assert.equal(vocab.newtype, "Vocab.id", "a closed relation's handle newtype IS its id's generator class")
+		assert.equal(vocab.closed?.newtype, "Vocab.id", "a closed relation's handle newtype IS its id's generator class")
 	})
 
 	test("integer-index names are refused at construction — the declaration-order law's enumeration hazard", function integerNames() {

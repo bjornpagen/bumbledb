@@ -214,7 +214,7 @@ describe("keyed get: typed point reads through a declared key statement", async 
 		const outcome = native.txCommit(tx)
 		assert.ok(outcome.ok, "native seed commits")
 
-		const snap = native.dbSnapshot(handle)
+		const snap = native.dbSnapshot(handle).snapshot
 		const byGrp = native.snapshotGet(snap, programRel.id, declaredKey.id, [g])
 		native.snapshotClose(snap)
 		native.dbClose(handle)

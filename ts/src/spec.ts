@@ -118,19 +118,30 @@ interface RowSpec {
 }
 
 /**
- * One relation. `extension: rows` declares it closed (the option is the
- * kind); a closed relation's `fields` are its declared intrinsic columns
- * only — the synthetic (`id`, u64) handle field is materialized by the
- * engine's schema validation. `newtype` is the handle newtype of a closed
- * relation (the SDK emits the id's law-computed generator class,
- * `` `${name}.id` `` — the same label every referencing field carries by
- * law), undefined on an ordinary one.
+ * A relation's closedness as ONE sum (ruled 2026-07-23, R7): the handle
+ * newtype and the ground axioms travel together — the two illegal states
+ * (a roster without its newtype, a newtype without its roster) are
+ * unspellable on the wire exactly as they are unrepresentable in the
+ * fused Rust `RelationSpec`. `newtype` is the id's law-computed generator
+ * class (`` `${name}.id` `` — the same label every referencing field
+ * carries by law), which is how the engine resolves a handle literal back
+ * to its roster.
+ */
+interface ClosedSpec {
+	readonly newtype: string
+	readonly rows: readonly RowSpec[]
+}
+
+/**
+ * One relation. A present `closed` declares it closed (the option is the
+ * kind, one sum — R7); a closed relation's `fields` are its declared
+ * intrinsic columns only — the synthetic (`id`, u64) handle field is
+ * materialized by the engine's schema validation.
  */
 interface RelationSpec {
 	readonly name: string
-	readonly newtype: string | undefined
 	readonly fields: readonly FieldSpec[]
-	readonly extension: readonly RowSpec[] | undefined
+	readonly closed: ClosedSpec | undefined
 }
 
 /**
@@ -313,6 +324,7 @@ function renderWindow(window: WindowSpec): string {
 }
 
 export type {
+	ClosedSpec,
 	FieldSpec,
 	LiteralSetSpec,
 	LiteralSpec,

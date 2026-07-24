@@ -17,11 +17,20 @@
  * reconstructs a `Schema` value from the descriptor — that inverse mapping
  * is deliberately out of scope; the rebirth tool keys by name.
  *
- * ZERO CLOSABLES: no value here carries a close, dispose, or release
- * spelling. The engine-side handle (and the store's exclusive advisory
- * lock) is reclaimed when the `Exhumed` value is garbage-collected —
- * reclamation only, never correctness: the store is never written through
- * this surface, so there is nothing to flush.
+ * LIFETIMES ARE DISPOSABLES, never `close()` (ruled 2026-07-23, R12): the
+ * `Exhumed` value implements `Symbol.dispose` — teardown is synchronous
+ * (one environment close) — and `using` is the documented idiom:
+ *
+ *   using exhumed = await Db.exhume(path)
+ *
+ * Disposal releases the engine handle AND the store's exclusive advisory
+ * lock deterministically, scope-shaped in the language's own syntax, so a
+ * same-path reopen (retry after a half-failed migration, a second forensic
+ * read) never waits on an unforceable GC finalizer. Every verb after
+ * disposal is a typed used-after-dispose refusal. The engine-side drop
+ * remains the reclamation-only backstop for a collected-but-undisposed
+ * value; the store is never written through this surface, so there is
+ * nothing to flush.
  */
 
 import * as errors from "@superbuilders/errors"
@@ -116,9 +125,11 @@ interface ExhumedDescriptor {
 /**
  * One exhumed store: the self-described relation shapes and the raw facts
  * by relation name. Read-only by construction — no write verb, no prepare
- * verb, no close (zero closables; the engine handle is GC-reclaimed).
+ * verb. A DISPOSABLE lifetime (R12): `Symbol.dispose` releases the engine
+ * handle and the store's exclusive lock deterministically; `using` is the
+ * idiom, and a disposed value's verbs are typed refusals.
  */
-interface Exhumed {
+interface Exhumed extends Disposable {
 	/** The store's own persisted schema, as its creator declared it. */
 	readonly descriptor: ExhumedDescriptor
 	/**
@@ -167,9 +178,10 @@ function descriptorOf(manifest: Manifest): ExhumedDescriptor {
  * The bridge's three domain refusals become the typed error constants
  * ({@link ErrExhumeNoDescriptor}, {@link ErrExhumeFormatMismatch},
  * {@link ErrExhumeCorruption}), each carrying the engine's message in its
- * wrap. The returned value is NOT cached: exhume is a forensic read, and
- * caching would pin the store's exclusive lock for the process's life —
- * GC reclamation is the whole lifecycle.
+ * wrap. The returned value is NOT cached: exhume is a forensic read whose
+ * lifetime is the caller's `using` scope — disposal releases the store's
+ * exclusive lock deterministically (R12), so the path is reusable the
+ * moment the scope exits.
  */
 function exhumeStore(canonical: string): Exhumed {
 	const outcome = bridged(`exhume bumbledb store at ${canonical}`, function callExhume() {
@@ -199,7 +211,27 @@ function exhumeStore(canonical: string): Exhumed {
 			})
 		)
 	}
+	/** The lifetime record: flipped once by {@link dispose}, judged by every verb. */
+	const lifetime = { live: true }
+	/**
+	 * The `Symbol.dispose` teardown (R12): idempotent — a manual call inside
+	 * a `using` scope must not double-close — and deterministic: the engine
+	 * handle and the store's exclusive lock release HERE, never on a GC
+	 * schedule.
+	 */
+	function dispose(): void {
+		if (!lifetime.live) {
+			return
+		}
+		lifetime.live = false
+		bridged(`close bumbledb exhumed store at ${canonical}`, function close() {
+			native.exhumeClose(handle)
+		})
+	}
 	function scan(relation: string): readonly ExhumedFact[] {
+		if (!lifetime.live) {
+			throw errors.new("bumbledb exhumed store is disposed — its using scope already exited")
+		}
 		const names = fieldNames.get(relation)
 		if (names === undefined) {
 			throw errors.new(`bumbledb exhume: the store's descriptor declares no relation ${relation}`)
@@ -228,7 +260,7 @@ function exhumeStore(canonical: string): Exhumed {
 			})
 		)
 	}
-	return Object.freeze({ descriptor, scan })
+	return Object.freeze({ descriptor, scan, [Symbol.dispose]: dispose })
 }
 
 export type { Exhumed, ExhumedAxiom, ExhumedDescriptor, ExhumedFact, ExhumedField, ExhumedRelation }

@@ -27,9 +27,11 @@ type SnapshotHandle = { readonly __brand: "bumbledb.snapshot" }
 
 /**
  * One exhumed store — the read-only, theory-less open (engine 70-api.md
- * § exhume). No close function exists for this handle anywhere on the
- * bridge (the zero-closables law): the engine side is dropped when the
- * handle is garbage-collected — reclamation only, never correctness.
+ * § exhume). Lifetimes are disposables (ruled 2026-07-23, R12):
+ * `exhumeClose` is the deterministic teardown the SDK's `Symbol.dispose`
+ * rides — releasing the environment (and the store's exclusive lock)
+ * scope-shaped, never a GC race; the engine-side drop remains the
+ * reclamation-only backstop for a collected-but-undisposed handle.
  */
 type ExhumeHandle = { readonly __brand: "bumbledb.exhume" }
 
@@ -320,6 +322,33 @@ interface Staleness {
 	readonly maxRatio: number
 }
 
+/**
+ * `dbSnapshot`'s reply: the live handle WITH its witnessed generation —
+ * one crossing carries both (read inside the snapshot's own transaction,
+ * the race-closing rule of 50-storage.md), so no second `dbGeneration`
+ * call exists to pay or defend (finding 016's bridge shape).
+ */
+type SnapshotOpened = { readonly ok: true; readonly snapshot: SnapshotHandle; readonly generation: bigint }
+
+/**
+ * The plan-as-data report (ruled 2026-07-23, R13): the engine's
+ * `ExecutionStats` rendered to plain objects — camelCase keys, u64
+ * counters as `bigint`. A diagnostic surface, EXPLICITLY UNFROZEN: the
+ * shape follows the plan representation wherever it goes and no
+ * compatibility claim attaches, so this typing names the stable spine
+ * (version, emits, the plan sections) and leaves each section's leaves
+ * open for the host to introspect.
+ */
+interface Explain {
+	readonly introspectionVersion: number
+	readonly emits: bigint
+	readonly disjointRules?: Readonly<Record<string, unknown>>
+	readonly subsumed: ReadonlyArray<Readonly<Record<string, unknown>>>
+	readonly dead: ReadonlyArray<Readonly<Record<string, unknown>>>
+	readonly rules: ReadonlyArray<Readonly<Record<string, unknown>>>
+	readonly strata: ReadonlyArray<Readonly<Record<string, unknown>>>
+}
+
 interface Native {
 	/**
 	 * Proof-of-life export (PRD-03): a non-empty string naming the bridge
@@ -367,11 +396,17 @@ interface Native {
 	 * Opens a store FROM ITS OWN PERSISTED DESCRIPTOR (the read-only,
 	 * theory-less open; engine 70-api.md § exhume) — no schema crosses in.
 	 * The three adoption-era refusals return as data ({@link ExhumeResult});
-	 * genuine failures throw. The handle has no close anywhere on this
-	 * bridge (zero closables): GC reclaims the engine side and releases the
-	 * store's exclusive lock — reclamation only, never correctness.
+	 * genuine failures throw. The handle's deterministic teardown is
+	 * `exhumeClose` (R12); GC reclamation remains the backstop only.
 	 */
 	dbExhume(path: string): ExhumeResult
+	/**
+	 * Closes the exhume handle, releasing its environment (and the store's
+	 * exclusive lock) deterministically — the native teardown under the
+	 * SDK's `Symbol.dispose` (ruled 2026-07-23, R12: lifetimes are
+	 * disposables, never `close()` methods to remember).
+	 */
+	exhumeClose(exhume: ExhumeHandle): void
 	/**
 	 * The exhumed store's persisted schema as manifest-shaped data — the
 	 * engine's own manifest rendering of the STORED descriptor: relations
@@ -388,8 +423,13 @@ interface Native {
 	 */
 	exhumeScan(exhume: ExhumeHandle, relationName: string): FactValue[][]
 
-	/** Opens one MVCC read snapshot as a live handle. */
-	dbSnapshot(db: DbHandle): SnapshotHandle
+	/**
+	 * Opens one MVCC read snapshot as a live handle, returned WITH its
+	 * witnessed generation — one crossing carries both (finding 016), so
+	 * no separate `dbGeneration` call (with its own transient read
+	 * transaction and fault-pairing close branch) exists on this path.
+	 */
+	dbSnapshot(db: DbHandle): SnapshotOpened
 	/** Closes the snapshot, releasing its LMDB reader slot. */
 	snapshotClose(snap: SnapshotHandle): void
 	/** Full-relation export in row-id order (one row per fact). */
@@ -461,6 +501,15 @@ interface Native {
 	 * — the host sorts.
 	 */
 	preparedExecute(prepared: PreparedHandle, snap: SnapshotHandle, params: readonly QueryParam[]): FactValue[][]
+	/**
+	 * Plan introspection as data (ruled 2026-07-23, R13): runs the prepared
+	 * query against the snapshot with counting instrumentation (the
+	 * engine's `Snapshot::profile`, ANALYZE semantics) and returns the
+	 * structured stats — plan sections and counters as plain values.
+	 * Scalar params only (the engine's profile entry has no param-set
+	 * spelling).
+	 */
+	preparedExplain(prepared: PreparedHandle, snap: SnapshotHandle, params: readonly QueryParam[]): Explain
 	/** The pull-based plan-drift signal against a snapshot. */
 	preparedStaleness(prepared: PreparedHandle, snap: SnapshotHandle): Staleness
 	/** Releases the prepared query. */
@@ -566,6 +615,7 @@ export type {
 	DbOpenResult,
 	ExhumeHandle,
 	ExhumeResult,
+	Explain,
 	FactValue,
 	FindTermIr,
 	HeadOpIr,
@@ -586,6 +636,7 @@ export type {
 	QueryParam,
 	RuleIr,
 	SnapshotHandle,
+	SnapshotOpened,
 	Staleness,
 	StatementKindTag,
 	TaggedValue,

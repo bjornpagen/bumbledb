@@ -38,15 +38,13 @@ function paired(source: string | undefined, target: string | undefined): SchemaS
 		relations: [
 			{
 				name: "Src",
-				newtype: undefined,
 				fields: [{ name: "key", valueType: { kind: "u64" }, newtype: source, fresh: false }],
-				extension: undefined
+				closed: undefined
 			},
 			{
 				name: "Tgt",
-				newtype: undefined,
 				fields: [{ name: "key", valueType: { kind: "u64" }, newtype: target, fresh: false }],
-				extension: undefined
+				closed: undefined
 			}
 		],
 		statements: [

@@ -8,6 +8,7 @@
  * fixed key order, so serialization is deterministic (byte-stable).
  */
 
+import * as errors from "@superbuilders/errors"
 import type { AnyClosed } from "#closed.ts"
 import { isClosedMember } from "#closed.ts"
 import type { FaceData } from "#face.ts"
@@ -111,34 +112,38 @@ function lowerStatement(statement: Statement): StatementSpec {
  * Lowers one ordinary relation to its `RelationSpec` fragment: fields in
  * declaration order, each carrying its law-computed class name as the
  * `newtype` (`classes` — the schema's class record for this relation;
- * bare fields carry `undefined`), `extension: undefined` (the option is
- * the kind).
+ * bare fields carry `undefined`), `closed: undefined` (the option is the
+ * kind — one sum, R7).
  */
 function lowerRelation(relation: AnyRelation, classes: RelationClasses): RelationSpec {
 	const fields: FieldSpec[] = relation.data.fields.map(function lowerDeclared(declared) {
 		return lowerField(declared.name, declared.field, classes[declared.name])
 	})
-	return { name: relation.name, newtype: undefined, fields, extension: undefined }
+	return { name: relation.name, fields, closed: undefined }
 }
 
 /**
  * Lowers one closed relation to its `RelationSpec` fragment: declared
- * intrinsic columns only (the engine materializes the synthetic `id`),
- * the handle newtype — the COMPUTED class name of the id's generator
- * class (`"Kind.id"`, always present: a closed id is a generator), which
- * every referencing field shares by law (how the engine resolves a handle
- * literal back to its roster) — and the ground axioms in declaration
- * order (row id = index); the literals were already lowered at `closed()`
- * construction.
+ * intrinsic columns only (the engine materializes the synthetic `id`) and
+ * the fused closedness sum (R7) — the handle newtype (the COMPUTED class
+ * name of the id's generator class, `"Kind.id"`, always present: a closed
+ * id is a generator; every referencing field shares it by law, which is
+ * how the engine resolves a handle literal back to its roster) together
+ * with the ground axioms in declaration order (row id = index); the
+ * literals were already lowered at `closed()` construction.
  */
 function lowerClosed(member: AnyClosed, classes: RelationClasses): RelationSpec {
 	const fields: FieldSpec[] = member.data.columns.map(function lowerColumn(column) {
 		return lowerField(column.name, column.field, classes[column.name])
 	})
-	const extension = member.data.rows.map(function lowerRow(row) {
+	const rows = member.data.rows.map(function lowerRow(row) {
 		return { handle: row.handle, values: row.values }
 	})
-	return { name: member.name, newtype: classes.id, fields, extension }
+	const newtype = classes.id
+	if (newtype === undefined) {
+		throw errors.new(`closed relation ${member.name}: the id's generator class is missing from the class map`)
+	}
+	return { name: member.name, fields, closed: { newtype, rows } }
 }
 
 /** The frozen empty class record a relation outside the schema's map lowers under (nothing classed). */

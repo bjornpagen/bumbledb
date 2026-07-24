@@ -40,12 +40,14 @@ import {
 	key,
 	mirrors,
 	on,
+	query,
 	relation,
 	renderStatement,
 	schema,
 	span,
 	str,
 	u64,
+	v,
 	WITNESSED_ATTEMPT_CAP,
 	window
 } from "#index.ts"
@@ -148,19 +150,19 @@ describe("the Db runtime against a real store", function suite() {
 		}, /already open in this process/)
 	})
 
-	test("no closable spelling exists anywhere on the surface", function zeroClosables() {
+	test("no close verb exists anywhere — lifetimes are disposables (R12)", function zeroClosables() {
 		assert.equal("close" in db, false)
-		assert.equal(Symbol.dispose in db, false)
+		assert.equal(Symbol.dispose in db, false, "the Db value is process-cached — it has no lifetime to dispose")
 		assert.equal(Symbol.asyncDispose in db, false)
 		assert.equal("snapshot" in db, false)
 		assert.deepEqual(
 			Reflect.ownKeys(db).toSorted(),
-			["contains", "execute", "get", "prepare", "read", "scan", "schema", "write", "writeWitnessed"],
+			["contains", "execute", "explain", "get", "prepare", "read", "scan", "schema", "write", "writeWitnessed"],
 			"the surface is exactly the pinned verbs — no retired write form survives"
 		)
 		db.read(function probeScope(snap) {
-			assert.equal("close" in snap, false)
-			assert.equal(Symbol.dispose in snap, false)
+			assert.equal("close" in snap, false, "release is Symbol.dispose, never a close verb to remember")
+			assert.equal(Symbol.dispose in snap, true, "a read scope is a disposable lifetime (R12)")
 		})
 	})
 
@@ -522,6 +524,53 @@ describe("the Db runtime against a real store", function suite() {
 			return abandon("probe only")
 		})
 		assert.ok(!committed.ok, "the probe delta abandons — the store is untouched")
+	})
+
+	test("using snap = db.read() — the R12 acquisition: dispose releases the snapshot deterministically", function usingRead() {
+		let leaked: ReadScope<(typeof Ledger)["relations"]> | undefined
+		{
+			using snap = db.read()
+			assert.equal(typeof snap.generation, "bigint")
+			assert.ok(snap.scan(Holder).length > 0, "the scope reads while its using block is live")
+			leaked = snap
+		}
+		assert.ok(leaked)
+		assert.throws(function usedAfterScope() {
+			leaked.scan(Holder)
+		}, /read scope is invalidated/)
+		// An early in-callback disposal is idempotent with the owner's close:
+		// the snapshot closes exactly once, and the write path stays healthy.
+		db.read(function earlyDispose(snap) {
+			snap[Symbol.dispose]()
+			assert.throws(function afterDispose() {
+				snap.generation < 0n || snap.scan(Holder)
+			}, /read scope is invalidated/)
+		})
+		const landed = db.write(function probe(tx) {
+			tx.insert(Holder, { name: "post-dispose-write" })
+		})
+		assert.ok(landed.ok, "no reader slot leaked — the write begins cleanly")
+	})
+
+	test("explain() returns the plan as data — the R13 diagnostic surface", function explainPlan() {
+		const q = query(Ledger).rule(function rule(r) {
+			const { id, name } = v(Holder)
+			return r.match(Holder, { id, name }).find({ id, name })
+		})
+		const prepared = db.prepare(q)
+		const report = db.explain(prepared, {})
+		assert.equal(typeof report.introspectionVersion, "number")
+		assert.equal(typeof report.emits, "bigint")
+		assert.ok(report.emits > 0n, "the ANALYZE run really executed (Holder rows emitted)")
+		assert.ok(Array.isArray(report.rules) && report.rules.length === 1, "one rule, one stats section")
+		assert.ok(Array.isArray(report.strata), "the strata sections ride along")
+		assert.deepEqual(
+			db.read(function inScope(snap) {
+				return snap.explain(prepared, {})
+			}).emits,
+			report.emits,
+			"the scoped spelling agrees (the symmetry rule)"
+		)
 	})
 
 	test("resume = reopen: the cached open reads every committed fact back", async function reopen() {

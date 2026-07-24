@@ -41,25 +41,28 @@ const spec: SchemaSpec = {
 	relations: [
 		{
 			name: "Status",
-			newtype: "Status",
 			fields: [],
-			extension: [
-				{ handle: "Open", values: [] },
-				{ handle: "Frozen", values: [] }
-			]
+			closed: {
+				newtype: "Status",
+				rows: [
+					{ handle: "Open", values: [] },
+					{ handle: "Frozen", values: [] }
+				]
+			}
 		},
 		{
 			name: "Kind",
-			newtype: "Kind",
 			fields: [{ name: "mastered", valueType: { kind: "bool" }, newtype: undefined, fresh: false }],
-			extension: [
-				{ handle: "DirectPass", values: [{ kind: "value", value: { kind: "bool", value: true } }] },
-				{ handle: "Failed", values: [{ kind: "value", value: { kind: "bool", value: false } }] }
-			]
+			closed: {
+				newtype: "Kind",
+				rows: [
+					{ handle: "DirectPass", values: [{ kind: "value", value: { kind: "bool", value: true } }] },
+					{ handle: "Failed", values: [{ kind: "value", value: { kind: "bool", value: false } }] }
+				]
+			}
 		},
 		{
 			name: "Person",
-			newtype: undefined,
 			fields: [
 				{ name: "id", valueType: { kind: "u64" }, newtype: "PersonId", fresh: true },
 				{ name: "name", valueType: { kind: "string" }, newtype: undefined, fresh: false },
@@ -79,11 +82,10 @@ const spec: SchemaSpec = {
 				},
 				{ name: "flag", valueType: { kind: "bool" }, newtype: undefined, fresh: false }
 			],
-			extension: undefined
+			closed: undefined
 		},
 		{
 			name: "Edge",
-			newtype: undefined,
 			fields: [
 				// `from` pairs `Person.id` in the containment and the window
 				// below, so the coherence wall requires the shared label
@@ -94,7 +96,7 @@ const spec: SchemaSpec = {
 				{ name: "to", valueType: { kind: "u64" }, newtype: undefined, fresh: false },
 				{ name: "weight", valueType: { kind: "u64" }, newtype: undefined, fresh: false }
 			],
-			extension: undefined
+			closed: undefined
 		}
 	],
 	statements: [
@@ -170,7 +172,7 @@ describe("ffi round trip against a real store", function suite() {
 	let p4 = 0n
 
 	function snapshot(): SnapshotHandle {
-		const snap = native.dbSnapshot(db)
+		const snap = native.dbSnapshot(db).snapshot
 		openSnapshots.push(snap)
 		return snap
 	}

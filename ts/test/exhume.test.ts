@@ -18,8 +18,11 @@
  *   the creating schema (run in a child process, since an open in this
  *   process would hold the exclusive lock forever) back-fills the
  *   descriptor, and the same path then exhumes successfully;
- * - zero closables: no close/dispose spelling exists on the exhumed value,
- *   and an unknown relation name is a typed refusal.
+ * - lifetimes are disposables (R12): `Symbol.dispose` releases the engine
+ *   handle and the store's exclusive lock deterministically (the same path
+ *   re-exhumes in-process after disposal), no `close` verb exists, a
+ *   disposed value's verbs are typed refusals, disposal is idempotent, and
+ *   an unknown relation name is a typed refusal.
  */
 
 import assert from "node:assert/strict"
@@ -242,26 +245,48 @@ describe("the exhume surface against real stores", function suite() {
 		)
 	})
 
-	test("zero closables and the typed unknown-relation refusal", async function surfaceShape() {
-		/**
-		 * A fresh copy: the previous test's exhumed value may not be
-		 * collected yet, and a live handle holds its path's exclusive lock
-		 * (reclamation is GC's, never a close verb's).
-		 */
+	test("lifetimes are disposables (R12): Symbol.dispose releases the lock, and no close verb exists", async function surfaceShape() {
 		const surfaceCopy = path.join(tmpRoot, "store-copy-surface")
 		copyStore(storeDir, surfaceCopy)
-		const exhumed = await Db.exhume(surfaceCopy)
-		assert.equal("close" in exhumed, false)
-		assert.equal(Symbol.dispose in exhumed, false)
-		assert.equal(Symbol.asyncDispose in exhumed, false)
-		assert.deepEqual(
-			Reflect.ownKeys(exhumed).toSorted(),
-			["descriptor", "scan"],
-			"the surface is exactly descriptor + scan"
-		)
-		assert.throws(function ghost() {
-			exhumed.scan("Ghost")
-		}, /declares no relation Ghost/)
+		{
+			/**
+			 * The `using` idiom: disposal at scope exit releases the engine
+			 * handle AND the store's exclusive lock deterministically — the
+			 * exact lifetime GC reclamation could never promise (066: retry
+			 * after a half-failed migration, a second forensic read).
+			 */
+			using exhumed = await Db.exhume(surfaceCopy)
+			assert.equal("close" in exhumed, false, "no close verb exists — lifetimes are disposables, never close()")
+			assert.equal(Symbol.asyncDispose in exhumed, false, "teardown is synchronous: Symbol.dispose is the protocol")
+			assert.deepEqual(
+				Reflect.ownKeys(exhumed).toSorted(function bySpelling(a, b) {
+					return String(a) < String(b) ? -1 : 1
+				}),
+				[Symbol.dispose, "descriptor", "scan"].toSorted(function bySpelling(a, b) {
+					return String(a) < String(b) ? -1 : 1
+				}),
+				"the surface is exactly descriptor + scan + the dispose protocol"
+			)
+			assert.throws(function ghost() {
+				exhumed.scan("Ghost")
+			}, /declares no relation Ghost/)
+		}
+		// The lock released at scope exit: the SAME path exhumes again
+		// in-process — deterministic, never a GC race.
+		using again = await Db.exhume(surfaceCopy)
+		assert.ok(again.descriptor.relations.length > 0, "the same-path re-exhume lands after disposal")
+	})
+
+	test("a disposed exhumed value's verbs are typed refusals, and disposal is idempotent", async function disposedRefusal() {
+		const disposedCopy = path.join(tmpRoot, "store-copy-disposed")
+		copyStore(storeDir, disposedCopy)
+		const exhumed = await Db.exhume(disposedCopy)
+		assert.ok(exhumed.scan("Specimen").length > 0)
+		exhumed[Symbol.dispose]()
+		exhumed[Symbol.dispose]()
+		assert.throws(function scanAfterDispose() {
+			exhumed.scan("Specimen")
+		}, /disposed — its using scope already exited/)
 	})
 
 	test("the adoption loop: a legacy store refuses exhume, one open under the creating schema adopts it", async function adoption() {

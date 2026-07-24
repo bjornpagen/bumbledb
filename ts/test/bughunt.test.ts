@@ -506,7 +506,7 @@ describe("native handle lifecycle probes", function nativeSuite() {
 		const opened = native.dbCreate(path.join(tmpRoot, "native-snap"), lower(NativeTheory))
 		assert.ok(opened.ok)
 		const handle = opened.db
-		const snap = native.dbSnapshot(handle)
+		const snap = native.dbSnapshot(handle).snapshot
 		assert.deepEqual(native.snapshotScan(snap, 0), [])
 		native.snapshotClose(snap)
 		assert.throws(function scanAfterClose() {

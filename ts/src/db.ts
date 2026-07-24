@@ -5,16 +5,19 @@
  * keyed to statements, read through scoped snapshots, and run the witnessed
  * read-compute-write loop — all typed by the schema's relations record.
  *
- * ZERO CLOSABLES: no value this module returns carries a close, dispose, or
- * release spelling. `Db` values are CACHED per canonical path for the life
- * of the process (a best-effort exit hook closes the cached environments;
- * correctness never depends on it — the engine fsyncs every commit, so a
- * process that dies without the hook loses nothing that was committed).
- * Snapshots are internal: `read(fn)` opens one before `fn` and closes it
- * after unconditionally, and the {@link ReadScope} handed to `fn` is
- * invalidated the moment `fn` returns. Prepared plans are plain values whose
- * engine-side half is reclaimed by a GC finalizer — reclamation only, never
- * correctness.
+ * LIFETIMES ARE DISPOSABLES, never `close()` (ruled 2026-07-23, R12): no
+ * value this module returns carries a close spelling — release is
+ * deterministic and scope-shaped in the language's own syntax. `Db` values
+ * are CACHED per canonical path for the life of the process (a best-effort
+ * exit hook closes the cached environments; correctness never depends on it
+ * — the engine fsyncs every commit, so a process that dies without the hook
+ * loses nothing that was committed). Snapshots are scope-shaped both ways:
+ * `read(fn)` opens one before `fn` and closes it after unconditionally
+ * (the {@link ReadScope} handed to `fn` is invalidated the moment `fn`
+ * returns), and `using snap = db.read()` hands the caller the lifetime,
+ * released by the scope's own `Symbol.dispose` at scope exit. Prepared
+ * plans are plain values whose engine-side half is reclaimed by a GC
+ * finalizer — reclamation only, never correctness.
  *
  * PROCESS MODEL: one process, one exclusive-lock handle per store. The
  * cached `Db` value owns the LMDB environment's exclusive lock until
@@ -51,6 +54,7 @@ import {
 
 import type {
 	DbHandle,
+	Explain,
 	FactValue,
 	Manifest,
 	PreparedHandle,
@@ -277,19 +281,20 @@ interface Tx<Rels extends SchemaRelations> {
 }
 
 /**
- * The read view one `db.read(fn)` call scopes: an MVCC snapshot pinned at
- * its generation, valid EXACTLY for the synchronous extent of `fn`. The
- * value is invalidated when `fn` returns — every later verb call throws a
- * typed used-after-scope error; the underlying snapshot (and its LMDB
- * reader slot) is already closed. No close spelling exists here because
- * there is nothing the host could ever need to close.
+ * The read view one `db.read(fn)` call scopes — or one `using snap =
+ * db.read()` acquisition owns (ruled 2026-07-23, R12: lifetimes are
+ * disposables, never `close()`). The callback form invalidates the value
+ * when `fn` returns; the `using` form releases it at scope exit through
+ * `Symbol.dispose` — either way the release is deterministic and
+ * scope-shaped, every later verb call throws a typed used-after-scope
+ * error, and the underlying snapshot (with its LMDB reader slot) is
+ * already closed.
  */
-interface ReadScope<Rels extends SchemaRelations> {
+interface ReadScope<Rels extends SchemaRelations> extends Disposable {
 	/**
-	 * The committed generation this scope witnessed — captured atomically
-	 * with the snapshot: writes are synchronous and this process holds the
-	 * store's only write handle, so nothing can commit between the snapshot
-	 * open and the generation read.
+	 * The committed generation this scope witnessed — carried by the
+	 * snapshot open itself (one crossing, inside the snapshot's own
+	 * transaction), so it is atomic with the snapshot by construction.
 	 */
 	readonly generation: bigint
 	/** Full-relation export in row-id order, decoded to bare structural facts. */
@@ -318,6 +323,16 @@ interface ReadScope<Rels extends SchemaRelations> {
 	 * execution spelling ({@link Prepared} carries no `execute`).
 	 */
 	execute<Row, Params extends ParamsRecord>(prepared: Prepared<Rels, Row, Params>, params: Params): Row[]
+	/**
+	 * Plan introspection as data (ruled 2026-07-23, R13): runs the prepared
+	 * query against this scope's snapshot with counting instrumentation
+	 * (the engine's ANALYZE semantics) and returns the structured
+	 * {@link Explain} report — plan sections and counters as plain values,
+	 * so the host reads what the engine did with its query without a
+	 * second toolchain. A diagnostic surface, EXPLICITLY UNFROZEN: the
+	 * shape follows the plan representation wherever it goes.
+	 */
+	explain<Row, Params extends ParamsRecord>(prepared: Prepared<Rels, Row, Params>, params: Params): Explain
 }
 
 /**
@@ -367,6 +382,14 @@ interface Db<Rels extends SchemaRelations> {
 	 * when `fn` returns — a used-after-scope call throws a typed error.
 	 */
 	read<T>(fn: (snap: ReadScope<Rels>) => T): T
+	/**
+	 * The `using` acquisition (ruled 2026-07-23, R12): `using snap =
+	 * db.read()` — the caller owns the scope's lifetime, and the scope's
+	 * `Symbol.dispose` releases the snapshot deterministically at scope
+	 * exit, in the language's own syntax. Lifetimes are disposables, never
+	 * `close()`.
+	 */
+	read(): ReadScope<Rels>
 	/** `db.scan(r)` === `db.read(snap => snap.scan(r))` — the symmetry rule. */
 	scan<R extends MemberRelation<Rels>>(relation: R): Fact<R>[]
 	/** `db.get(r, k)` === `db.read(snap => snap.get(r, k))` — the symmetry rule. */
@@ -381,6 +404,8 @@ interface Db<Rels extends SchemaRelations> {
 	contains<R extends MemberRelation<Rels>>(relation: R, fact: Fact<R>): boolean
 	/** `db.execute(p, params)` === `db.read(snap => snap.execute(p, params))` — the symmetry rule. */
 	execute<Row, Params extends ParamsRecord>(prepared: Prepared<Rels, Row, Params>, params: Params): Row[]
+	/** `db.explain(p, params)` === `db.read(snap => snap.explain(p, params))` — the symmetry rule (R13). */
+	explain<Row, Params extends ParamsRecord>(prepared: Prepared<Rels, Row, Params>, params: Params): Explain
 	/**
 	 * One delta transaction: builds the delta synchronously through `fn`,
 	 * commits, and returns the domain outcome. A throw from `fn` aborts
@@ -679,14 +704,20 @@ interface PointReads {
 }
 
 /**
- * One read scope's PRIVATE lifetime record: its live snapshot handle, its
- * liveness flag (flipped exactly when the owning `read`/`writeWitnessed`
- * callback returns), and its owning store's identity token. Held in
- * {@link scopeStates} — the snapshot handle is never a public value.
+ * One read scope's PRIVATE lifetime record: its live snapshot handle, the
+ * generation it witnessed (carried by the snapshot open itself — one
+ * crossing, finding 016), its liveness flag (flipped when the owning
+ * `read`/`writeWitnessed` callback returns, or by the scope's own
+ * `Symbol.dispose`), its close latch (`closed` — the snapshot closes
+ * exactly once, whichever of the owner and the dispose gets there first),
+ * and its owning store's identity token. Held in {@link scopeStates} —
+ * the snapshot handle is never a public value.
  */
 interface ScopeState {
 	readonly handle: SnapshotHandle
+	readonly generation: bigint
 	live: boolean
+	closed: boolean
 	readonly owner: object
 }
 
@@ -960,10 +991,11 @@ function openDb<Rels extends SchemaRelations>(handle: DbHandle, theory: Schema<R
 	/**
 	 * Builds one {@link ReadScope} over a live scope state. Every verb
 	 * asserts liveness first: the owning call flips `state.live` the moment
-	 * its callback returns, so a leaked scope is a typed refusal forever
+	 * its callback returns (or the scope's own `Symbol.dispose` does, for a
+	 * `using`-acquired scope), so a leaked scope is a typed refusal forever
 	 * after.
 	 */
-	function makeScope(state: ScopeState, generation: bigint): ReadScope<Rels> {
+	function makeScope(state: ScopeState): ReadScope<Rels> {
 		function assertLive(): void {
 			if (!state.live) {
 				throw errors.new("bumbledb read scope is invalidated — its owning read callback already returned")
@@ -1000,12 +1032,27 @@ function openDb<Rels extends SchemaRelations>(handle: DbHandle, theory: Schema<R
 			})
 			return decodeAnswers<Row>(plan.finds, rows)
 		}
+		function explain<Row, Params extends ParamsRecord>(prepared: Prepared<Rels, Row, Params>, params: Params): Explain {
+			assertLive()
+			const plan = planOf(prepared)
+			const wire = wireParams(plan.params, recordOf(params))
+			return bridged("explain bumbledb prepared query", function callExplain() {
+				return native.preparedExplain(plan.handle, state.handle, wire)
+			})
+		}
+		/** The R12 teardown: invalidate, then close — idempotent through the state's close latch. */
+		function dispose(): void {
+			state.live = false
+			closeScopeState(state)
+		}
 		const scope: ReadScope<Rels> = Object.freeze({
-			generation,
+			generation: state.generation,
 			scan,
 			get: reads.get,
 			contains: reads.contains,
-			execute
+			execute,
+			explain,
+			[Symbol.dispose]: dispose
 		})
 		scopeStates.set(scope, state)
 		return scope
@@ -1019,50 +1066,52 @@ function openDb<Rels extends SchemaRelations>(handle: DbHandle, theory: Schema<R
 	 */
 	let liveSnapshots = 0
 
-	/** Opens one snapshot and its scope state (live until the owner flips it). */
+	/**
+	 * Opens one snapshot and its scope state (live until the owner flips
+	 * it). The witnessed generation rides the snapshot open itself — one
+	 * crossing carries both (finding 016), so the fault-pairing close
+	 * branch a second `dbGeneration` call needed is structurally gone.
+	 */
 	function openScopeState(): ScopeState {
-		const snapHandle = bridged("open bumbledb snapshot", function openSnapshot() {
+		const opened = bridged("open bumbledb snapshot", function openSnapshot() {
 			return native.dbSnapshot(handle)
 		})
 		liveSnapshots += 1
-		return { handle: snapHandle, live: true, owner }
+		return { handle: opened.snapshot, generation: opened.generation, live: true, closed: false, owner }
 	}
 
-	/** Closes a scope's snapshot after the owner invalidated it. */
+	/**
+	 * Closes a scope's snapshot after the owner invalidated it — a LATCH:
+	 * the snapshot closes exactly once, whichever of the owning call and
+	 * the scope's own `Symbol.dispose` gets there first, so an early
+	 * in-callback disposal never double-closes (and never double-counts
+	 * the census).
+	 */
 	function closeScopeState(state: ScopeState): void {
+		if (state.closed) {
+			return
+		}
+		state.closed = true
 		bridged("close bumbledb snapshot", function closeSnapshot() {
 			native.snapshotClose(state.handle)
 		})
 		liveSnapshots -= 1
 	}
 
-	/**
-	 * Reads the committed generation for a just-opened scope, closing the
-	 * scope's snapshot when the read faults: `dbGeneration` opens a transient
-	 * engine read txn, so reader-table exhaustion is precisely the state in
-	 * which it throws — with one snapshot already open. An unpaired fault
-	 * here would park a snapshot worker and consume one of the engine's
-	 * reader slots FOREVER (and undercount the liveSnapshots census), each
-	 * fault ratcheting toward ReadersFull-for-the-process's-lifetime.
-	 */
-	function generationForScope(state: ScopeState): bigint {
-		const generation = errors.trySync(function readGeneration() {
-			return bridged("read bumbledb generation", function callGeneration() {
-				return native.dbGeneration(handle)
-			})
-		})
-		if (generation.error) {
-			state.live = false
-			closeScopeState(state)
-			throw generation.error
-		}
-		return generation.data
-	}
-
-	function read<T>(fn: (snap: ReadScope<Rels>) => T): T {
+	function read<T>(fn: (snap: ReadScope<Rels>) => T): T
+	function read(): ReadScope<Rels>
+	function read<T>(fn?: (snap: ReadScope<Rels>) => T): T | ReadScope<Rels> {
 		const state = openScopeState()
-		const generation = generationForScope(state)
-		const scope = makeScope(state, generation)
+		const scope = makeScope(state)
+		if (fn === undefined) {
+			/**
+			 * The `using` acquisition (R12): the caller owns the lifetime —
+			 * `using snap = db.read()` — and the scope's `Symbol.dispose`
+			 * is the deterministic release, scope-shaped in the language's
+			 * own syntax.
+			 */
+			return scope
+		}
 		const result = errors.trySync(function runRead() {
 			return fn(scope)
 		})
@@ -1114,6 +1163,12 @@ function openDb<Rels extends SchemaRelations>(handle: DbHandle, theory: Schema<R
 	function execute<Row, Params extends ParamsRecord>(prepared: Prepared<Rels, Row, Params>, params: Params): Row[] {
 		return read(function executeInScope(snap) {
 			return snap.execute(prepared, params)
+		})
+	}
+
+	function explain<Row, Params extends ParamsRecord>(prepared: Prepared<Rels, Row, Params>, params: Params): Explain {
+		return read(function explainInScope(snap) {
+			return snap.explain(prepared, params)
 		})
 	}
 
@@ -1308,8 +1363,7 @@ function openDb<Rels extends SchemaRelations>(handle: DbHandle, theory: Schema<R
 	 */
 	function witnessedAttempt<R>(fn: (snap: ReadScope<Rels>, tx: Tx<Rels>) => R): WriteResult<Rels, R> | undefined {
 		const state = openScopeState()
-		const generation = generationForScope(state)
-		const scope = makeScope(state, generation)
+		const scope = makeScope(state)
 		const pending: { tx: TxHandle | undefined } = { tx: undefined }
 		function beginWitnessed(): TxHandle | undefined {
 			const witnessed = bridged("begin witnessed bumbledb write transaction", function begin() {
@@ -1474,6 +1528,7 @@ function openDb<Rels extends SchemaRelations>(handle: DbHandle, theory: Schema<R
 		get,
 		contains,
 		execute,
+		explain,
 		write,
 		writeWitnessed,
 		prepare
@@ -1630,12 +1685,12 @@ const Db = Object.freeze({
 	 * one schema-independent read path (no theory, no fingerprint check; the
 	 * store rebirth tool's entry). Lives beside `open`/`create` so the path
 	 * law stays in one place: the same `node:path.resolve` canonicalization,
-	 * applied here. The value is NOT cached and carries no close: the
-	 * engine-side handle (and the store's exclusive lock) is reclaimed by GC
-	 * — reclamation only, never correctness. A store not yet adopted rejects
-	 * with the typed `ErrExhumeNoDescriptor` (the remedy: one
-	 * fingerprint-matching `Db.open` under the creating schema back-fills
-	 * the descriptor).
+	 * applied here. The value is NOT cached and is a DISPOSABLE lifetime
+	 * (R12) — `using exhumed = await Db.exhume(path)` releases the engine
+	 * handle and the store's exclusive lock at scope exit, so a same-path
+	 * reopen never waits on GC. A store not yet adopted rejects with the
+	 * typed `ErrExhumeNoDescriptor` (the remedy: one fingerprint-matching
+	 * `Db.open` under the creating schema back-fills the descriptor).
 	 */
 	async exhume(storePath: string): Promise<Exhumed> {
 		return exhumeStore(path.resolve(storePath))

@@ -111,7 +111,7 @@ describe("query literals, params & membership arrays over closed references", fu
 		if (!prepared.ok) {
 			assert.fail(`engine prepare refused: ${prepared.message}`)
 		}
-		const snap = native.dbSnapshot(db)
+		const snap = native.dbSnapshot(db).snapshot
 		const rows = native.preparedExecute(prepared.prepared, snap, wireParams(q.data.params, params))
 		native.snapshotClose(snap)
 		native.preparedClose(prepared.prepared)
