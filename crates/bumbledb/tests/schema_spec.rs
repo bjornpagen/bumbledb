@@ -15,8 +15,8 @@
 
 use bumbledb::schema::ValidateDescriptor as _;
 use bumbledb::schema::spec::{
-    FaceNewtype, FieldSpec, LiteralAt, LiteralSetSpec, LiteralSpec, RelationSpec, RowSpec,
-    SideSpec, SpecIssue, StatementSide, StatementSpec, WindowSpec,
+    ClosedSpec, FaceNewtype, FieldSpec, LiteralAt, LiteralSetSpec, LiteralSpec, RelationSpec,
+    RowSpec, SideSpec, SpecIssue, StatementSide, StatementSpec, WindowSpec,
 };
 use bumbledb::schema::{IntervalElement, ValueType, fingerprint::fingerprint};
 use bumbledb::{Interval, SchemaSpec, Theory, Value};
@@ -106,50 +106,53 @@ fn everything_spec() -> SchemaSpec {
         relations: vec![
             RelationSpec {
                 name: "Status".into(),
-                newtype: Some("StatusId".into()),
                 fields: Vec::new(),
-                extension: Some(vec![
-                    RowSpec {
-                        handle: "Open".into(),
-                        values: Vec::new(),
-                    },
-                    RowSpec {
-                        handle: "Frozen".into(),
-                        values: Vec::new(),
-                    },
-                ]),
+                closed: Some(ClosedSpec {
+                    newtype: "StatusId".into(),
+                    rows: vec![
+                        RowSpec {
+                            handle: "Open".into(),
+                            values: Vec::new(),
+                        },
+                        RowSpec {
+                            handle: "Frozen".into(),
+                            values: Vec::new(),
+                        },
+                    ],
+                }),
             },
             RelationSpec {
                 name: "Kind".into(),
-                newtype: Some("KindId".into()),
                 fields: vec![
                     field("mastered", ValueType::Bool),
                     field("span", interval_u64.clone()),
                 ],
-                extension: Some(vec![
-                    RowSpec {
-                        handle: "DirectPass".into(),
-                        values: vec![
-                            LiteralSpec::Value(Value::Bool(true)),
-                            LiteralSpec::Value(Value::IntervalU64(
-                                Interval::<u64>::new(1, 3).expect("nonempty"),
-                            )),
-                        ],
-                    },
-                    RowSpec {
-                        handle: "Failed".into(),
-                        values: vec![
-                            LiteralSpec::Value(Value::Bool(false)),
-                            LiteralSpec::Value(Value::IntervalU64(
-                                Interval::<u64>::new(3, 5).expect("nonempty"),
-                            )),
-                        ],
-                    },
-                ]),
+                closed: Some(ClosedSpec {
+                    newtype: "KindId".into(),
+                    rows: vec![
+                        RowSpec {
+                            handle: "DirectPass".into(),
+                            values: vec![
+                                LiteralSpec::Value(Value::Bool(true)),
+                                LiteralSpec::Value(Value::IntervalU64(
+                                    Interval::<u64>::new(1, 3).expect("nonempty"),
+                                )),
+                            ],
+                        },
+                        RowSpec {
+                            handle: "Failed".into(),
+                            values: vec![
+                                LiteralSpec::Value(Value::Bool(false)),
+                                LiteralSpec::Value(Value::IntervalU64(
+                                    Interval::<u64>::new(3, 5).expect("nonempty"),
+                                )),
+                            ],
+                        },
+                    ],
+                }),
             },
             RelationSpec {
                 name: "Holder".into(),
-                newtype: None,
                 fields: vec![
                     FieldSpec {
                         name: "id".into(),
@@ -160,11 +163,10 @@ fn everything_spec() -> SchemaSpec {
                     field("name", ValueType::String),
                     field("digest", ValueType::FixedBytes { len: 16 }),
                 ],
-                extension: None,
+                closed: None,
             },
             RelationSpec {
                 name: "Account".into(),
-                newtype: None,
                 fields: vec![
                     FieldSpec {
                         name: "id".into(),
@@ -205,11 +207,10 @@ fn everything_spec() -> SchemaSpec {
                         )
                     },
                 ],
-                extension: None,
+                closed: None,
             },
             RelationSpec {
                 name: "SavingsTerms".into(),
-                newtype: None,
                 fields: vec![
                     FieldSpec {
                         newtype: Some("AccountId".into()),
@@ -217,7 +218,7 @@ fn everything_spec() -> SchemaSpec {
                     },
                     field("rate_bps", ValueType::I64),
                 ],
-                extension: None,
+                closed: None,
             },
         ],
         statements: vec![
@@ -363,7 +364,6 @@ fn seam_spec() -> SchemaSpec {
         relations: vec![
             RelationSpec {
                 name: "Grade".into(),
-                newtype: Some("GradeId".into()),
                 fields: vec![
                     field("points", ValueType::I64),
                     field(
@@ -376,34 +376,36 @@ fn seam_spec() -> SchemaSpec {
                     field("tag", ValueType::FixedBytes { len: 2 }),
                     field("code", ValueType::U64),
                 ],
-                extension: Some(vec![
-                    RowSpec {
-                        handle: "Low".into(),
-                        values: vec![
-                            LiteralSpec::Value(Value::I64(-3)),
-                            LiteralSpec::Value(Value::IntervalI64(
-                                Interval::<i64>::new(-5, -2).expect("nonempty"),
-                            )),
-                            LiteralSpec::Value(Value::FixedBytes(Box::from(&b"lo"[..]))),
-                            LiteralSpec::Value(Value::U64(7)),
-                        ],
-                    },
-                    RowSpec {
-                        handle: "High".into(),
-                        values: vec![
-                            LiteralSpec::Value(Value::I64(9)),
-                            LiteralSpec::Value(Value::IntervalI64(
-                                Interval::<i64>::new(2, 4).expect("nonempty"),
-                            )),
-                            LiteralSpec::Value(Value::FixedBytes(Box::from(&b"hi"[..]))),
-                            LiteralSpec::Value(Value::U64(8)),
-                        ],
-                    },
-                ]),
+                closed: Some(ClosedSpec {
+                    newtype: "GradeId".into(),
+                    rows: vec![
+                        RowSpec {
+                            handle: "Low".into(),
+                            values: vec![
+                                LiteralSpec::Value(Value::I64(-3)),
+                                LiteralSpec::Value(Value::IntervalI64(
+                                    Interval::<i64>::new(-5, -2).expect("nonempty"),
+                                )),
+                                LiteralSpec::Value(Value::FixedBytes(Box::from(&b"lo"[..]))),
+                                LiteralSpec::Value(Value::U64(7)),
+                            ],
+                        },
+                        RowSpec {
+                            handle: "High".into(),
+                            values: vec![
+                                LiteralSpec::Value(Value::I64(9)),
+                                LiteralSpec::Value(Value::IntervalI64(
+                                    Interval::<i64>::new(2, 4).expect("nonempty"),
+                                )),
+                                LiteralSpec::Value(Value::FixedBytes(Box::from(&b"hi"[..]))),
+                                LiteralSpec::Value(Value::U64(8)),
+                            ],
+                        },
+                    ],
+                }),
             },
             RelationSpec {
                 name: "Item".into(),
-                newtype: None,
                 fields: vec![
                     FieldSpec {
                         name: "id".into(),
@@ -445,7 +447,7 @@ fn seam_spec() -> SchemaSpec {
                         ..field("grade", ValueType::U64)
                     },
                 ],
-                extension: None,
+                closed: None,
             },
         ],
         statements: vec![
@@ -561,16 +563,16 @@ fn the_extension_row_cap_is_the_validators_not_the_lowerings() {
     let closed = |rows: usize| SchemaSpec {
         relations: vec![RelationSpec {
             name: "Status".into(),
-            newtype: Some("StatusId".into()),
             fields: Vec::new(),
-            extension: Some(
-                (0..rows)
+            closed: Some(ClosedSpec {
+                newtype: "StatusId".into(),
+                rows: (0..rows)
                     .map(|idx| RowSpec {
                         handle: format!("H{idx}").into(),
                         values: Vec::new(),
                     })
                     .collect(),
-            ),
+            }),
         }],
         statements: Vec::new(),
     };
@@ -591,10 +593,11 @@ fn the_extension_row_cap_is_the_validators_not_the_lowerings() {
 #[test]
 fn a_row_with_extra_values_is_rejected_not_silently_truncated() {
     let mut spec = everything_spec();
-    let rows = spec.relations[1]
-        .extension
+    let rows = &mut spec.relations[1]
+        .closed
         .as_mut()
-        .expect("Kind is closed");
+        .expect("Kind is closed")
+        .rows;
     // Kind declares two columns; this row now supplies three literals.
     rows[0].values.push(LiteralSpec::Value(Value::Bool(false)));
     // The lowering must not silently drop the third literal: the column
