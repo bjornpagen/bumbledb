@@ -645,6 +645,81 @@ fn named_head_program_lowers_to_the_exact_ir() {
     assert_eq!(lowered, expected);
 }
 
+/// Named params get dense ids by first occurrence in SOURCE order,
+/// query-global — never by group-emission order (finding 015): rules of
+/// one predicate may interleave around another group, the host binds
+/// positionally against the text it wrote, and a permutation between
+/// same-typed params is silent wrong bindings no roster can catch.
+/// `?root` (source-first, in the output rule) must take id 0 even though
+/// the `reach` group emits first.
+#[test]
+fn interleaved_groups_mint_param_ids_in_source_order() {
+    use bumbledb::ir::HeadTerm;
+    use bumbledb::{
+        Atom, AtomSource, CmpOp, Comparison, ConditionTree, FieldId, FindTerm, ParamId, PredId,
+        Rule, Term, VarId,
+    };
+    let lowered = query!(Ledger {
+        reach(c, a) | OrgParent(child: c, parent: a);
+        (c, a) | reach(c, a), c == ?root;
+        reach(c, a) | OrgParent(child: c, parent: m), reach(m, a), a != ?skip;
+    });
+    let parent_atom = |child: u16, parent: u16| Atom {
+        source: AtomSource::Edb(Ledger::ORG_PARENT),
+        bindings: vec![
+            (Ledger::ORG_PARENT_CHILD, Term::Var(VarId(child))),
+            (Ledger::ORG_PARENT_PARENT, Term::Var(VarId(parent))),
+        ],
+    };
+    let reach_atom = |a: u16, b: u16| Atom {
+        source: AtomSource::Idb(PredId(0)),
+        bindings: vec![
+            (FieldId(0), Term::Var(VarId(a))),
+            (FieldId(1), Term::Var(VarId(b))),
+        ],
+    };
+    let cond = |op: CmpOp, var: u16, param: u16| {
+        ConditionTree::Leaf(Comparison {
+            op,
+            lhs: Term::Var(VarId(var)),
+            rhs: Term::Param(ParamId(param)),
+        })
+    };
+    let rule = |finds: [u16; 2], atoms: Vec<Atom>, conditions: Vec<ConditionTree>| Rule {
+        finds: finds.map(|v| FindTerm::Var(VarId(v))).to_vec(),
+        atoms,
+        negated: vec![],
+        conditions,
+    };
+    let expected = bumbledb::Program {
+        predicates: vec![
+            bumbledb::PredicateDef {
+                head: vec![HeadTerm::Var, HeadTerm::Var],
+                rules: vec![
+                    rule([0, 1], vec![parent_atom(0, 1)], vec![]),
+                    rule(
+                        [0, 2],
+                        vec![parent_atom(0, 1), reach_atom(1, 2)],
+                        // `?skip` is second in source order: ParamId(1).
+                        vec![cond(CmpOp::Ne, 2, 1)],
+                    ),
+                ],
+            },
+            bumbledb::PredicateDef {
+                head: vec![HeadTerm::Var, HeadTerm::Var],
+                rules: vec![rule(
+                    [0, 1],
+                    vec![reach_atom(0, 1)],
+                    // `?root` is first in source order: ParamId(0).
+                    vec![cond(CmpOp::Eq, 0, 0)],
+                )],
+            },
+        ],
+        output: PredId(1),
+    };
+    assert_eq!(lowered, expected);
+}
+
 /// The indexed spellings survive for what the ordered form cannot say —
 /// sparse positions (`2: x`), position selections (`1 == …`), and
 /// position set membership (`0 in ?p`) — and render as `i:`/selection

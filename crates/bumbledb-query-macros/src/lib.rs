@@ -1796,12 +1796,11 @@ fn expand(input: TokenStream) -> Parse<String> {
     }
     // Predicate groups in first-appearance order — the `PredId`
     // assignment (bare rules are one group: the output predicate).
-    let mut groups: Vec<(Option<String>, Vec<usize>)> = Vec::new();
-    for (index, rule) in parsed.iter().enumerate() {
+    let mut groups: Vec<Option<String>> = Vec::new();
+    for rule in &parsed {
         let key = rule.name.as_ref().map(|name| name.text.clone());
-        match groups.iter_mut().find(|(existing, _)| *existing == key) {
-            Some((_, members)) => members.push(index),
-            None => groups.push((key, vec![index])),
+        if !groups.contains(&key) {
+            groups.push(key);
         }
     }
     let mut emitter = Emitter {
@@ -1810,7 +1809,7 @@ fn expand(input: TokenStream) -> Parse<String> {
         predicates: groups
             .iter()
             .enumerate()
-            .filter_map(|(index, (name, _))| {
+            .filter_map(|(index, name)| {
                 name.clone()
                     .map(|name| (name, u16::try_from(index).expect("MAX_RULES bounds groups")))
             })
@@ -1832,7 +1831,7 @@ fn expand(input: TokenStream) -> Parse<String> {
     }
     // Named heads present: the program form. Bare rules ARE the output
     // predicate; a program of only named rules has no output to answer.
-    let Some(output) = groups.iter().position(|(name, _)| name.is_none()) else {
+    let Some(output) = groups.iter().position(Option::is_none) else {
         return fail(
             group.span(),
             "query!: a program's output rules are written bare — name the \
@@ -1840,13 +1839,22 @@ fn expand(input: TokenStream) -> Parse<String> {
              (docs/architecture/20-query-ir.md § the query notation)",
         );
     };
+    // Rules emit in SOURCE order — named `?param` ids are dense by first
+    // occurrence in the text, the one order both `PredId`s (group first
+    // appearance) and `ParamId`s derive from; grouping is pure bucketing
+    // of already-emitted strings.
+    let mut group_rules: Vec<String> = vec![String::new(); groups.len()];
+    for rule in &parsed {
+        let key = rule.name.as_ref().map(|name| name.text.clone());
+        let bucket = groups
+            .iter()
+            .position(|existing| *existing == key)
+            .expect("every rule was bucketed");
+        let _ = write!(group_rules[bucket], "{},", emitter.rule(rule)?);
+    }
     let mut lets = String::new();
     let mut defs = String::new();
-    for (index, (_, members)) in groups.iter().enumerate() {
-        let mut rules = String::new();
-        for &member in members {
-            let _ = write!(rules, "{},", emitter.rule(&parsed[member])?);
-        }
+    for (index, rules) in group_rules.iter().enumerate() {
         let _ = write!(
             lets,
             "let p{index}_rules = ::std::vec![{rules}]; \
