@@ -14,8 +14,8 @@
 # clockproxy's plausibility band read 0.18 GHz on the shared ubuntu
 # runner — and the probe joined the host-pinned set (arch-conditioned
 # ignore: the band is aarch64 physics). The lean lane could run anywhere but stays
-# put; the sdk lane REQUIRES darwin-arm64 (below); the miri lane's
-# native pass is the reference host's.
+# put; the sdk lane matrixes macos + ubuntu like the check lane (below);
+# the miri lane's native pass is the reference host's.
 #
 # Wall-time record (measured locally on the pinned M2 Max, 2026-07-13):
 #   * Miri lane: 752 s ≈ 12.5 min — OVER the 10-minute per-push budget,
@@ -186,10 +186,12 @@ jobs:
   # reaches it; this step is what executes
   # ts/crate/src/fingerprint_lock.rs. The T5 per-recipe goldens run
   # inside the two suites by construction.
-  # Runner: macos-latest (M-series arm64) is REQUIRED, not just house
-  # style — ts/scripts/build.ts hardcodes the darwin-arm64 platform
-  # package and smoke-loads the .node it just built, so the runner arch
-  # must BE darwin-arm64.
+  # Runner: an os matrix, exactly as the check lane — ts/scripts/build.ts
+  # derives the LOCAL platform from its host (platform.ts), so the
+  # ubuntu leg is what executes the dev-twin manifest synthesis, the
+  # `.so` artifact naming, and the loader's linux branch — and the
+  # cross-host fingerprint lock genuinely crosses hosts: both halves
+  # run on two architectures per push (ruled 2026-07-23, R22).
   # Runtime budget (measured locally on the pinned M2 Max, 2026-07-18,
   # warm caches): pnpm run build 15.6 s (the bridge release compile
   # dominates) + tsc 1.4 s + biome 1.3 s + node --test 0.9 s + ts/crate
@@ -198,7 +200,11 @@ jobs:
   # parallel with the engine lanes, never gated behind them.
   sdk:
     if: github.event_name != 'schedule'
-    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v5
