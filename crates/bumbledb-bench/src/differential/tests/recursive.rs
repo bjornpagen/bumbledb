@@ -354,6 +354,196 @@ fn stratified_negation_matches_the_hand_answers_on_every_oracle() {
     }
 }
 
+/// Interval-typed predicate columns, engine vs naive (finding 026 —
+/// the first differential exercise of the shape anywhere): a first
+/// predicate projects a bound interval variable through its head, and
+/// consumers read the interval-typed Idb column both ways the
+/// validation doc defines — a scalar variable bound there is POINT
+/// MEMBERSHIP ("an interval-typed predicate column participates in
+/// point membership exactly as an interval field does",
+/// `ir/validate/context.rs`), and an interval variable there is value
+/// equality. Engine-vs-naive only: the `SQLite` program translator
+/// refuses interval predicate columns as typed data, exactly the
+/// routing the gate doctrine demands. This is the first case where the
+/// naive model's `predicate_intervals` Idb branch derives `true` under
+/// test — ray claims included, so the membership reads a ray's
+/// unbounded tail.
+#[test]
+fn interval_typed_predicate_columns_agree_engine_vs_naive() {
+    let v = |id: u16| Term::Var(VarId(id));
+    let descriptor = SchemaDescriptor {
+        relations: vec![
+            RelationDescriptor {
+                extension: None,
+                name: "Claim".into(),
+                fields: vec![
+                    field("account", ValueType::U64),
+                    field(
+                        "span",
+                        ValueType::Interval {
+                            element: bumbledb::schema::IntervalElement::U64,
+                            width: None,
+                        },
+                    ),
+                ],
+            },
+            RelationDescriptor {
+                extension: None,
+                name: "Probe".into(),
+                fields: vec![field("at", ValueType::U64)],
+            },
+        ],
+        statements: vec![],
+    };
+    const CLAIM: bumbledb::RelationId = bumbledb::RelationId(0);
+    const PROBE: bumbledb::RelationId = bumbledb::RelationId(1);
+    let claims = [
+        (1u64, (1u64, 10u64)),
+        (1, (3, 12)),
+        (2, (3, 12)),
+        (2, (20, 30)),
+        (3, (40, u64::MAX)), // the ray `[40, ∞)`
+    ];
+    let probes = [5u64, 25, 45, 100];
+
+    // p0(account, span) :- Claim(account, span) — the interval-carrying
+    // predicate every consumer reads through Idb.
+    let carrier = PredicateDef {
+        head: vec![HeadTerm::Var, HeadTerm::Var],
+        rules: vec![Rule {
+            finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
+            atoms: vec![Atom {
+                source: AtomSource::Edb(CLAIM),
+                bindings: vec![(FieldId(0), v(0)), (FieldId(1), v(1))],
+            }],
+            negated: vec![],
+            conditions: vec![],
+        }],
+    };
+    // Membership: p1(x, t) :- Probe(t), p0(x, t) — `t` is
+    // scalar-anchored, so its occurrence at the interval-typed head
+    // column is point membership.
+    let membership = Program {
+        predicates: vec![
+            carrier.clone(),
+            PredicateDef {
+                head: vec![HeadTerm::Var, HeadTerm::Var],
+                rules: vec![Rule {
+                    finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
+                    atoms: vec![
+                        Atom {
+                            source: AtomSource::Edb(PROBE),
+                            bindings: vec![(FieldId(0), v(1))],
+                        },
+                        Atom {
+                            source: AtomSource::Idb(PredId(0)),
+                            bindings: vec![(FieldId(0), v(0)), (FieldId(1), v(1))],
+                        },
+                    ],
+                    negated: vec![],
+                    conditions: vec![],
+                }],
+            },
+        ],
+        output: PredId(1),
+    };
+    // Equality: p1(x, y) :- p0(x, w), p0(y, w) — `w` has no scalar
+    // anchor, so both interval-column occurrences are value equality.
+    let equality = Program {
+        predicates: vec![
+            carrier,
+            PredicateDef {
+                head: vec![HeadTerm::Var, HeadTerm::Var],
+                rules: vec![Rule {
+                    finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
+                    atoms: vec![
+                        Atom {
+                            source: AtomSource::Idb(PredId(0)),
+                            bindings: vec![(FieldId(0), v(0)), (FieldId(1), v(2))],
+                        },
+                        Atom {
+                            source: AtomSource::Idb(PredId(0)),
+                            bindings: vec![(FieldId(0), v(1)), (FieldId(1), v(2))],
+                        },
+                    ],
+                    negated: vec![],
+                    conditions: vec![],
+                }],
+            },
+        ],
+        output: PredId(1),
+    };
+
+    let mut naive = NaiveDb::new(&descriptor);
+    naive
+        .apply(&Delta {
+            deletes: vec![],
+            inserts: claims
+                .iter()
+                .map(|(account, (start, end))| {
+                    (
+                        CLAIM,
+                        vec![
+                            Value::U64(*account),
+                            Value::IntervalU64(
+                                bumbledb::Interval::<u64>::new(*start, *end)
+                                    .expect("nonempty fixture interval"),
+                            ),
+                        ],
+                    )
+                })
+                .chain(probes.iter().map(|at| (PROBE, vec![Value::U64(*at)])))
+                .collect(),
+        })
+        .expect("no statements: the fixture commits");
+
+    let dir = crate::fixture::TempDir::new("recursive-interval-idb");
+    let db = bumbledb::Db::create(dir.path(), descriptor.clone()).expect("create engine store");
+    db.write(|tx| {
+        for (account, (start, end)) in &claims {
+            tx.insert_dyn(
+                CLAIM,
+                &[
+                    Value::U64(*account),
+                    Value::IntervalU64(
+                        bumbledb::Interval::<u64>::new(*start, *end)
+                            .expect("nonempty fixture interval"),
+                    ),
+                ],
+            )?;
+        }
+        for at in &probes {
+            tx.insert_dyn(PROBE, &[Value::U64(*at)])?;
+        }
+        Ok(())
+    })
+    .expect("no statements: every write lands");
+
+    for (name, program, expected) in [
+        (
+            "membership",
+            &membership,
+            pairs(&[(1, 5), (2, 5), (2, 25), (3, 45), (3, 100)]),
+        ),
+        (
+            "equality",
+            &equality,
+            pairs(&[(1, 1), (2, 2), (3, 3), (1, 2), (2, 1)]),
+        ),
+    ] {
+        let model = naive
+            .program(program, &[])
+            .expect("the fixture raises no runtime error");
+        assert_eq!(model, expected, "naive {name} disagrees with the hand answer");
+        let engine = crate::differential::engine_program(&db, program, &[]);
+        assert_eq!(
+            engine,
+            crate::differential::Answers::Ok(expected),
+            "TROPHY (engine vs naive) on the interval-Idb {name} face"
+        );
+    }
+}
+
 /// The strata-refusal parity family (the `DnfExceedsRules` precedent
 /// generalized to the recursion roster,
 /// docs/architecture/60-validation.md § error parity): the naive side
