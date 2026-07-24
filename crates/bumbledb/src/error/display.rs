@@ -13,8 +13,8 @@ use crate::schema::{Schema, render};
 use bumbledb_theory::schema::{SchemaDescriptor, StatementId};
 
 use super::{
-    CorruptionError, Direction, Error, FactShapeError, SchemaError, TargetKeyCandidate,
-    ValidationError, Violation,
+    CorruptionError, Direction, Error, FactShapeError, SchemaError, StatementErrorKind,
+    TargetKeyCandidate, ValidationError, Violation,
 };
 
 fn field_set(
@@ -35,17 +35,12 @@ fn field_set(
 
 fn target_key_rejection(
     f: &mut fmt::Formatter<'_>,
-    statement: bumbledb_theory::schema::StatementId,
     target: bumbledb_theory::schema::RelationId,
     projection: &[bumbledb_theory::schema::FieldId],
     available: &[TargetKeyCandidate],
     pointwise: bool,
 ) -> fmt::Result {
-    write!(
-        f,
-        "statement {}: target relation {} projection ",
-        statement.0, target.0
-    )?;
+    write!(f, "target relation {} projection ", target.0)?;
     field_set(f, projection)?;
     write!(f, " matches no declared key; available keys: ")?;
     if available.is_empty() {
@@ -361,227 +356,175 @@ impl fmt::Display for SchemaError {
                 "relation {}, field {}: fresh on a closed relation — identity is the handle",
                 r.0, fd.0
             ),
-            Self::StatementUnknownRelation {
-                statement: s,
-                relation: r,
-            } => write!(f, "statement {}: unknown relation {}", s.0, r.0),
-            Self::StatementUnknownField {
-                statement: s,
+            Self::Statement { statement, kind } => {
+                write!(f, "statement {}: {kind}", statement.0)
+            }
+        }
+    }
+}
+
+impl fmt::Display for StatementErrorKind {
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the linear table or protocol is clearer kept together"
+    )] // a rendering table: one arm per roster line
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // Short bindings: r = relation, fd = field. The carrier
+        // (`SchemaError::Statement`) prints the `statement N:` prefix.
+        match self {
+            Self::UnknownRelation { relation: r } => write!(f, "unknown relation {}", r.0),
+            Self::UnknownField {
                 relation: r,
                 field: fd,
-            } => write!(
-                f,
-                "statement {}: relation {} has no field {}",
-                s.0, r.0, fd.0
-            ),
-            Self::EmptyProjection {
-                statement: s,
-                relation: r,
-            } => write!(f, "statement {}: empty projection on relation {}", s.0, r.0),
+            } => write!(f, "relation {} has no field {}", r.0, fd.0),
+            Self::EmptyProjection { relation: r } => {
+                write!(f, "empty projection on relation {}", r.0)
+            }
             Self::DuplicateProjectionField {
-                statement: s,
                 relation: r,
                 field: fd,
-            } => write!(
-                f,
-                "statement {}: field {} projected twice on relation {}",
-                s.0, fd.0, r.0
-            ),
+            } => write!(f, "field {} projected twice on relation {}", fd.0, r.0),
             Self::DuplicateSelectionField {
-                statement: s,
                 relation: r,
                 field: fd,
-            } => write!(
-                f,
-                "statement {}: field {} selected twice on relation {}",
-                s.0, fd.0, r.0
-            ),
+            } => write!(f, "field {} selected twice on relation {}", fd.0, r.0),
             Self::FunctionalityMultipleIntervals {
-                statement: s,
                 relation: r,
                 field: fd,
             } => write!(
                 f,
-                "statement {}: second interval field {} on relation {} — the ordered determinant answers one dimension",
-                s.0, fd.0, r.0
+                "second interval field {} on relation {} — the ordered determinant answers one dimension",
+                fd.0, r.0
             ),
             Self::FunctionalityIntervalNotLast {
-                statement: s,
                 relation: r,
                 field: fd,
             } => write!(
                 f,
-                "statement {}: interval field {} on relation {} must be the final projection position",
-                s.0, fd.0, r.0
+                "interval field {} on relation {} must be the final projection position",
+                fd.0, r.0
             ),
-            Self::DuplicateFunctionality {
-                statement: s,
-                earlier,
-            } => write!(
+            Self::DuplicateFunctionality { earlier } => {
+                write!(f, "statement {} already keys this field set", earlier.0)
+            }
+            Self::DeterminantKeyTooWide { width } => write!(
                 f,
-                "statement {}: statement {} already keys this field set",
-                s.0, earlier.0
+                "{width}-byte determinant key exceeds the key-size ceiling"
             ),
-            Self::DeterminantKeyTooWide {
-                statement: s,
-                width,
-            } => write!(
+            Self::ContainmentArityMismatch { source, target } => write!(
                 f,
-                "statement {}: {width}-byte determinant key exceeds the key-size ceiling",
-                s.0
+                "{source} source positions against {target} target positions"
             ),
-            Self::ContainmentArityMismatch {
-                statement: s,
-                source,
-                target,
-            } => write!(
-                f,
-                "statement {}: {source} source positions against {target} target positions",
-                s.0
-            ),
-            Self::ContainmentTypeMismatch {
-                statement: s,
-                position,
-            } => write!(
-                f,
-                "statement {}: structural type mismatch at position {position}",
-                s.0
-            ),
+            Self::ContainmentTypeMismatch { position } => {
+                write!(f, "structural type mismatch at position {position}")
+            }
             Self::SelectedFieldProjected {
-                statement: s,
                 relation: r,
                 field: fd,
             } => write!(
                 f,
-                "statement {}: field {} on relation {} is both selected and projected",
-                s.0, fd.0, r.0
+                "field {} on relation {} is both selected and projected",
+                fd.0, r.0
             ),
             Self::SelectionLiteralTypeMismatch {
-                statement: s,
                 relation: r,
                 field: fd,
             } => write!(
                 f,
-                "statement {}: selection literal type mismatch at relation {}, field {}",
-                s.0, r.0, fd.0
+                "selection literal type mismatch at relation {}, field {}",
+                r.0, fd.0
             ),
             Self::SelectionLiteralNotUtf8 {
-                statement: s,
                 relation: r,
                 field: fd,
             } => write!(
                 f,
-                "statement {}: string literal is not UTF-8 at relation {}, field {}",
-                s.0, r.0, fd.0
+                "string literal is not UTF-8 at relation {}, field {}",
+                r.0, fd.0
             ),
             Self::NoMatchingTargetKey {
-                statement: s,
                 target,
                 projection,
                 available,
-            } => target_key_rejection(f, *s, *target, projection, available, false),
+            } => target_key_rejection(f, *target, projection, available, false),
             Self::NoPointwiseTargetKey {
-                statement: s,
                 target,
                 projection,
                 available,
-            } => target_key_rejection(f, *s, *target, projection, available, true),
-            Self::ClosedContainmentInterval {
-                statement: s,
-                relation: r,
-            } => write!(
+            } => target_key_rejection(f, *target, projection, available, true),
+            Self::ClosedContainmentInterval { relation: r } => write!(
                 f,
-                "statement {}: interval position on a containment with closed relation {} — \
+                "interval position on a containment with closed relation {} — \
                  pointwise judgments against a virtual extension are refused",
-                s.0, r.0
+                r.0
             ),
-            Self::ClosedTargetNotHandle {
-                statement: s,
-                target,
-                projection,
-            } => {
+            Self::ClosedTargetNotHandle { target, projection } => {
                 write!(
                     f,
-                    "statement {}: closed target relation {} is addressed by its synthetic id \
+                    "closed target relation {} is addressed by its synthetic id \
                      only — projection ",
-                    s.0, target.0
+                    target.0
                 )?;
                 field_set(f, projection)?;
-                write!(f, " must be exactly {{0}} (rewrite the target side as `R(id)`)")
+                write!(
+                    f,
+                    " must be exactly {{0}} (rewrite the target side as `R(id)`)"
+                )
             }
-            Self::ClosedStatementRefuted {
-                statement: s,
-                relation: r,
-                row,
-            } => write!(
+            Self::ClosedStatementRefuted { relation: r, row } => write!(
                 f,
-                "statement {}: refuted by ground axiom {} of closed relation {} — \
+                "refuted by ground axiom {} of closed relation {} — \
                  a theory whose axioms refute its own statement has no model",
-                s.0, row, r.0
+                row, r.0
             ),
-            Self::DuplicateStatement {
-                statement: s,
-                earlier,
-            } => write!(
-                f,
-                "statement {}: duplicates statement {} — write it once",
-                s.0, earlier.0
-            ),
+            Self::DuplicateStatement { earlier } => {
+                write!(f, "duplicates statement {} — write it once", earlier.0)
+            }
             Self::DegenerateSelectionSet {
-                statement: s,
                 relation: r,
                 field: fd,
                 len,
             } => write!(
                 f,
-                "statement {}: literal set of {len} on relation {}, field {} — a set binding \
+                "literal set of {len} on relation {}, field {} — a set binding \
                  carries at least two literals (one literal is the equality spelling)",
-                s.0, r.0, fd.0
+                r.0, fd.0
             ),
             Self::DuplicateSelectionLiteral {
-                statement: s,
                 relation: r,
                 field: fd,
             } => write!(
                 f,
-                "statement {}: duplicate literal in the set binding on relation {}, field {} — \
+                "duplicate literal in the set binding on relation {}, field {} — \
                  write it once",
-                s.0, r.0, fd.0
+                r.0, fd.0
             ),
-            Self::CardinalityInvertedWindow {
-                statement: s,
-                lo,
-                hi,
-            } => write!(
+            Self::CardinalityInvertedWindow { lo, hi } => write!(
                 f,
-                "statement {}: the window {lo}..{hi} is inverted — no count satisfies \
+                "the window {lo}..{hi} is inverted — no count satisfies \
                  hi < lo; the canonical bounds are lo < hi ({{lo..hi}}), an exact count \
-                 lo = hi (the {{n}} spelling)",
-                s.0
+                 lo = hi (the {{n}} spelling)"
             ),
-            Self::CardinalityVacuousWindow { statement: s } => write!(
+            Self::CardinalityVacuousWindow => write!(
                 f,
-                "statement {}: the 0..* window admits every count — it provably says \
+                "the 0..* window admits every count — it provably says \
                  nothing (lean/Bumbledb/Cardinality.lean: cardinality_zero_star); delete \
-                 the statement",
-                s.0
+                 the statement"
             ),
-            Self::CardinalityContainmentWindow { statement: s } => write!(
+            Self::CardinalityContainmentWindow => write!(
                 f,
-                "statement {}: the 1..* window says only what the bare containment says — \
-                 drop the annotation and declare `target <= source`",
-                s.0
+                "the 1..* window says only what the bare containment says — \
+                 drop the annotation and declare `target <= source`"
             ),
             Self::CardinalityIntervalPosition {
-                statement: s,
                 relation: r,
                 field: fd,
             } => write!(
                 f,
-                "statement {}: interval field {} on relation {} in a cardinality window — \
+                "interval field {} on relation {} in a cardinality window — \
                  a window counts facts per parent, and an interval position would make the \
                  count ambiguous between facts and points",
-                s.0, fd.0, r.0
+                fd.0, r.0
             ),
         }
     }
@@ -693,9 +636,10 @@ impl fmt::Display for ValidationError {
                 f,
                 "comparison {index}: order operator on String — strings are equality-only"
             ),
-            Self::OrderComparisonOnBool { index } => write!(
+            Self::OrderComparisonOnClosedReference { index } => write!(
                 f,
-                "comparison {index}: order operator on Bool — booleans are equality-only"
+                "comparison {index}: order operator on a closed reference — \
+                 declaration-id order is an accident, not semantics"
             ),
             Self::ConstantComparison { index } => {
                 write!(f, "comparison {index}: neither side is a variable")
@@ -738,8 +682,13 @@ impl fmt::Display for ValidationError {
             Self::DuplicateFindTerm { index } => write!(f, "find term {index} is a duplicate"),
             Self::NoPositiveAtoms => write!(f, "the query has no positive atoms"),
             Self::AggregateInputType { find } => {
-                write!(f, "find {find}: aggregate over a non-integer variable")
+                write!(f, "find {find}: aggregate input outside the fold's type roster")
             }
+            Self::AggregateOverClosedReference { find } => write!(
+                f,
+                "find {find}: ordering fold or Arg key over a closed reference — \
+                 declaration-id order is an accident, not semantics"
+            ),
             Self::CountWithVariable { find } => {
                 write!(f, "find {find}: Count is nullary")
             }
@@ -1095,50 +1044,13 @@ impl fmt::Display for DisplayWith<'_> {
 }
 
 impl SchemaError {
-    /// The offending statement, for the variants that carry one.
+    /// The offending statement, for the roster arm that carries one —
+    /// a field read off the typed partition, not a hand-sorted variant
+    /// roster: a statement-scoped kind cannot exist without its id.
     fn statement(&self) -> Option<StatementId> {
         match self {
-            Self::DuplicateRelationName { .. }
-            | Self::DuplicateFieldName { .. }
-            | Self::FixedBytesWidthOutOfRange { .. }
-            | Self::IntervalWidthOutOfRange { .. }
-            | Self::FreshOnNonU64 { .. }
-            | Self::RelationTooManyColumns { .. }
-            | Self::TooManyStatements { .. }
-            | Self::EmptyExtension { .. }
-            | Self::ExtensionTooManyRows { .. }
-            | Self::DuplicateExtensionHandle { .. }
-            | Self::ExtensionArityMismatch { .. }
-            | Self::ExtensionValueTypeMismatch { .. }
-            | Self::ExtensionIntervalRay { .. }
-            | Self::StrOnClosedRelation { .. }
-            | Self::FreshOnClosedRelation { .. } => None,
-            Self::StatementUnknownRelation { statement, .. }
-            | Self::StatementUnknownField { statement, .. }
-            | Self::EmptyProjection { statement, .. }
-            | Self::DuplicateProjectionField { statement, .. }
-            | Self::DuplicateSelectionField { statement, .. }
-            | Self::FunctionalityMultipleIntervals { statement, .. }
-            | Self::FunctionalityIntervalNotLast { statement, .. }
-            | Self::DuplicateFunctionality { statement, .. }
-            | Self::DeterminantKeyTooWide { statement, .. }
-            | Self::ContainmentArityMismatch { statement, .. }
-            | Self::ContainmentTypeMismatch { statement, .. }
-            | Self::SelectedFieldProjected { statement, .. }
-            | Self::SelectionLiteralTypeMismatch { statement, .. }
-            | Self::SelectionLiteralNotUtf8 { statement, .. }
-            | Self::NoMatchingTargetKey { statement, .. }
-            | Self::NoPointwiseTargetKey { statement, .. }
-            | Self::ClosedContainmentInterval { statement, .. }
-            | Self::ClosedTargetNotHandle { statement, .. }
-            | Self::ClosedStatementRefuted { statement, .. }
-            | Self::DuplicateStatement { statement, .. }
-            | Self::DegenerateSelectionSet { statement, .. }
-            | Self::DuplicateSelectionLiteral { statement, .. }
-            | Self::CardinalityInvertedWindow { statement, .. }
-            | Self::CardinalityVacuousWindow { statement, .. }
-            | Self::CardinalityContainmentWindow { statement, .. }
-            | Self::CardinalityIntervalPosition { statement, .. } => Some(*statement),
+            Self::Statement { statement, .. } => Some(*statement),
+            _ => None,
         }
     }
 

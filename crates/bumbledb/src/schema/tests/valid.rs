@@ -1,5 +1,5 @@
 use super::*;
-use crate::error::SchemaError;
+use crate::error::StatementErrorKind;
 
 fn member_set(indices: &[u16]) -> MemberSet {
     let mut members = MemberSet::empty();
@@ -790,10 +790,10 @@ fn a_reordered_literal_set_is_a_duplicate_statement() {
         .push(selected(vec![Value::U64(2), Value::U64(1)]));
     assert_eq!(
         decl.validate().unwrap_err(),
-        SchemaError::DuplicateStatement {
-            statement: StatementId(2),
-            earlier: StatementId(1),
+        StatementErrorKind::DuplicateStatement {
+            earlier: StatementId(1)
         }
+        .at(StatementId(2))
     );
 }
 

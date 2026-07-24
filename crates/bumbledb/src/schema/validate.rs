@@ -3,9 +3,10 @@
 //!
 //! Field checks first, then the statement roster and acceptance gate of
 //! `docs/architecture/30-dependencies.md` — exhaustive, one distinct
-//! [`SchemaError`] per roster line (the variant doc comments carry the
-//! citations). Every accepted statement leaves as a typed arena witness;
-//! downstream trusts its shape without re-checking.
+//! [`StatementErrorKind`] per roster line at its [`StatementId`]
+//! (the variant doc comments carry the citations). Every accepted
+//! statement leaves as a typed arena witness; downstream trusts its
+//! shape without re-checking.
 //!
 //! The roster's "FD with selection" and "non-key FD form" lines have no
 //! checks here: [`StatementDescriptor::Functionality`] carries neither a
@@ -21,7 +22,7 @@ use super::{
     value_matches,
 };
 use crate::encoding::{field_bytes, field_word_bytes};
-use crate::error::{SchemaError, TargetKeyCandidate};
+use crate::error::{SchemaError, StatementErrorKind, TargetKeyCandidate};
 use crate::storage::keys::MAX_DETERMINANT_WIDTH;
 use bumbledb_theory::Value;
 
@@ -235,14 +236,11 @@ impl ValidateDescriptor for SchemaDescriptor {
             // normalization (selections sorted by FieldId). Identical FDs
             // never reach this — `DuplicateFunctionality` (a set rule, so
             // a superset of this equality) fired above.
-            if let Some(earlier) = normalized[..idx]
-                .iter()
-                .position(|n| *n == normalized[idx])
-            {
-                return Err(SchemaError::DuplicateStatement {
-                    statement: id,
+            if let Some(earlier) = normalized[..idx].iter().position(|n| *n == normalized[idx]) {
+                return Err(StatementErrorKind::DuplicateStatement {
                     earlier: statement_id(earlier),
-                });
+                }
+                .at(id));
             }
             order.push(sealed);
         }
@@ -285,7 +283,7 @@ impl ValidateDescriptor for SchemaDescriptor {
 /// too, because a rejected declaration never seals a field to read. On a
 /// *sealed* list the partner is unique and the links symmetric: a second
 /// candidate mirror would be normalized-equal to the first, and
-/// [`SchemaError::DuplicateStatement`] rejects identical normalized
+/// [`StatementErrorKind::DuplicateStatement`] rejects identical normalized
 /// statements. On a rejected declaration first-match is best-effort
 /// diagnostics.
 pub(super) fn mirror_of(normalized: &[StatementDescriptor], index: usize) -> Option<StatementId> {
@@ -560,21 +558,21 @@ fn validate_functionality(
     // answer.
     let positions = interval_positions(&relation.fields, projection.ordered());
     if positions.len() > 1 {
-        return Err(SchemaError::FunctionalityMultipleIntervals {
-            statement: id,
+        return Err(StatementErrorKind::FunctionalityMultipleIntervals {
             relation: relation_id,
             field: projection.ordered()[positions[1]],
-        });
+        }
+        .at(id));
     }
     let interval_position = positions.first().copied();
     if let Some(pos) = interval_position
         && pos != projection.ordered().len() - 1
     {
-        return Err(SchemaError::FunctionalityIntervalNotLast {
-            statement: id,
+        return Err(StatementErrorKind::FunctionalityIntervalNotLast {
             relation: relation_id,
             field: projection.ordered()[pos],
-        });
+        }
+        .at(id));
     }
     // The trailing interval encoding, derived HERE once — the closed-arm
     // collision probe below and the sealed witness both consume it.
@@ -601,10 +599,10 @@ fn validate_functionality(
             && *r == relation_id
             && FieldSet::new(p).is_ok_and(|set| &set == this_set)
         {
-            return Err(SchemaError::DuplicateFunctionality {
-                statement: id,
+            return Err(StatementErrorKind::DuplicateFunctionality {
                 earlier: statement_id(idx),
-            });
+            }
+            .at(id));
         }
     }
 
@@ -622,10 +620,7 @@ fn validate_functionality(
         })
         .sum();
     if width > MAX_DETERMINANT_WIDTH {
-        return Err(SchemaError::DeterminantKeyTooWide {
-            statement: id,
-            width,
-        });
+        return Err(StatementErrorKind::DeterminantKeyTooWide { width }.at(id));
     }
 
     // A key on a closed relation is judged here, once: the axioms ARE the
@@ -665,11 +660,11 @@ fn validate_functionality(
                     }
                 };
                 if collide {
-                    return Err(SchemaError::ClosedStatementRefuted {
-                        statement: id,
+                    return Err(StatementErrorKind::ClosedStatementRefuted {
                         relation: relation_id,
                         row: row_idx,
-                    });
+                    }
+                    .at(id));
                 }
             }
         }
@@ -706,14 +701,14 @@ fn validate_containment(
     if (source_closed || target_closed)
         && !interval_positions(target_fields, &target.projection).is_empty()
     {
-        return Err(SchemaError::ClosedContainmentInterval {
-            statement: id,
+        return Err(StatementErrorKind::ClosedContainmentInterval {
             relation: if target_closed {
                 target.relation
             } else {
                 source.relation
             },
-        });
+        }
+        .at(id));
     }
 
     let resolved = resolve_target_key(id, target, &target_projection, relations, descriptors)?;
@@ -743,11 +738,11 @@ fn validate_containment(
             // absent") applied at validate: the row escapes the member
             // set, so the statement is refuted, never a panic.
             if !AxiomIndex::try_from(word).is_ok_and(|index| members.contains(index)) {
-                return Err(SchemaError::ClosedStatementRefuted {
-                    statement: id,
+                return Err(StatementErrorKind::ClosedStatementRefuted {
                     relation: source.relation,
                     row: row_idx,
-                });
+                }
+                .at(id));
             }
         }
     }
@@ -788,17 +783,13 @@ fn validate_cardinality(
     // banned spelling.
     match hi {
         Some(hi) if hi < lo => {
-            return Err(SchemaError::CardinalityInvertedWindow {
-                statement: id,
-                lo,
-                hi,
-            });
+            return Err(StatementErrorKind::CardinalityInvertedWindow { lo, hi }.at(id));
         }
         None if lo == 0 => {
-            return Err(SchemaError::CardinalityVacuousWindow { statement: id });
+            return Err(StatementErrorKind::CardinalityVacuousWindow.at(id));
         }
         None if lo == 1 => {
-            return Err(SchemaError::CardinalityContainmentWindow { statement: id });
+            return Err(StatementErrorKind::CardinalityContainmentWindow.at(id));
         }
         _ => {}
     }
@@ -811,11 +802,11 @@ fn validate_cardinality(
     let source_fields = &relations[source.relation.0 as usize].fields;
     let positions = interval_positions(source_fields, &source.projection);
     if let Some(pos) = positions.first() {
-        return Err(SchemaError::CardinalityIntervalPosition {
-            statement: id,
+        return Err(StatementErrorKind::CardinalityIntervalPosition {
             relation: source.relation,
             field: source.projection[*pos],
-        });
+        }
+        .at(id));
     }
 
     // Probe-ability, the containment rule reused: Y resolves a declared
@@ -863,11 +854,11 @@ fn validate_cardinality(
                     .count();
             let count = u64::try_from(count).expect("extension row count fits u64");
             if count < lo || hi.is_some_and(|hi| count > hi) {
-                return Err(SchemaError::ClosedStatementRefuted {
-                    statement: id,
+                return Err(StatementErrorKind::ClosedStatementRefuted {
                     relation: target.relation,
                     row: row_idx,
-                });
+                }
+                .at(id));
             }
         }
     }
@@ -976,10 +967,7 @@ fn known_relation(
 ) -> Result<&Relation, SchemaError> {
     relations
         .get(relation.0 as usize)
-        .ok_or(SchemaError::StatementUnknownRelation {
-            statement: id,
-            relation,
-        })
+        .ok_or(StatementErrorKind::UnknownRelation { relation }.at(id))
 }
 
 /// Roster "unknown … field ids" and "empty or duplicate-carrying
@@ -991,26 +979,27 @@ fn validate_projection<'p>(
     relation: &Relation,
 ) -> Result<Projection<'p>, SchemaError> {
     if projection.is_empty() {
-        return Err(SchemaError::EmptyProjection {
-            statement: id,
+        return Err(StatementErrorKind::EmptyProjection {
             relation: relation_id,
-        });
+        }
+        .at(id));
     }
     for field in projection {
         if usize::from(field.0) >= relation.fields.len() {
-            return Err(SchemaError::StatementUnknownField {
-                statement: id,
+            return Err(StatementErrorKind::UnknownField {
                 relation: relation_id,
                 field: *field,
-            });
+            }
+            .at(id));
         }
     }
-    let fields =
-        FieldSet::new(projection).map_err(|field| SchemaError::DuplicateProjectionField {
-            statement: id,
+    let fields = FieldSet::new(projection).map_err(|field| {
+        StatementErrorKind::DuplicateProjectionField {
             relation: relation_id,
             field,
-        })?;
+        }
+        .at(id)
+    })?;
     Ok(Projection {
         ordered: projection,
         fields,
@@ -1040,11 +1029,11 @@ fn validate_side_pair<'t>(
     // Roster "arity mismatch between sides": |X| = |Y| — the judgment
     // compares whole projected tuples.
     if source.projection.len() != target.projection.len() {
-        return Err(SchemaError::ContainmentArityMismatch {
-            statement: id,
+        return Err(StatementErrorKind::ContainmentArityMismatch {
             source: source.projection.len(),
             target: target.projection.len(),
-        });
+        }
+        .at(id));
     }
 
     // Roster "positional structural-type mismatch" — including its
@@ -1061,10 +1050,7 @@ fn validate_side_pair<'t>(
             &source_fields[usize::from(s.0)].value_type,
             &target_fields[usize::from(t.0)].value_type,
         ) {
-            return Err(SchemaError::ContainmentTypeMismatch {
-                statement: id,
-                position,
-            });
+            return Err(StatementErrorKind::ContainmentTypeMismatch { position }.at(id));
         }
     }
 
@@ -1089,38 +1075,38 @@ fn validate_side_shape<'s>(
     let projection = validate_projection(id, side.relation, &side.projection, relation)?;
     for (idx, (field, literals)) in side.selection.iter().enumerate() {
         if usize::from(field.0) >= relation.fields.len() {
-            return Err(SchemaError::StatementUnknownField {
-                statement: id,
+            return Err(StatementErrorKind::UnknownField {
                 relation: side.relation,
                 field: *field,
-            });
+            }
+            .at(id));
         }
         if side.selection[..idx].iter().any(|(f, _)| f == field) {
-            return Err(SchemaError::DuplicateSelectionField {
-                statement: id,
+            return Err(StatementErrorKind::DuplicateSelectionField {
                 relation: side.relation,
                 field: *field,
-            });
+            }
+            .at(id));
         }
         if let LiteralSet::Many(values) = literals {
             if values.len() < 2 {
-                return Err(SchemaError::DegenerateSelectionSet {
-                    statement: id,
+                return Err(StatementErrorKind::DegenerateSelectionSet {
                     relation: side.relation,
                     field: *field,
                     len: values.len(),
-                });
+                }
+                .at(id));
             }
             for (value_idx, value) in values.iter().enumerate() {
                 if values[..value_idx]
                     .iter()
                     .any(|earlier| literal_cmp(earlier, value) == std::cmp::Ordering::Equal)
                 {
-                    return Err(SchemaError::DuplicateSelectionLiteral {
-                        statement: id,
+                    return Err(StatementErrorKind::DuplicateSelectionLiteral {
                         relation: side.relation,
                         field: *field,
-                    });
+                    }
+                    .at(id));
                 }
             }
         }
@@ -1139,11 +1125,11 @@ fn validate_side_selection(
     let relation = &relations[side.relation.0 as usize];
     for (field, _) in &side.selection {
         if side.projection.contains(field) {
-            return Err(SchemaError::SelectedFieldProjected {
-                statement: id,
+            return Err(StatementErrorKind::SelectedFieldProjected {
                 relation: side.relation,
                 field: *field,
-            });
+            }
+            .at(id));
         }
     }
     for (field, literals) in &side.selection {
@@ -1173,16 +1159,12 @@ fn validate_selection_literal(
     literal: &Value,
 ) -> Result<(), SchemaError> {
     value_matches(literal, value_type).map_err(|mismatch| match mismatch {
-        ValueMismatch::Type => SchemaError::SelectionLiteralTypeMismatch {
-            statement: id,
-            relation,
-            field,
-        },
-        ValueMismatch::Utf8 => SchemaError::SelectionLiteralNotUtf8 {
-            statement: id,
-            relation,
-            field,
-        },
+        ValueMismatch::Type => {
+            StatementErrorKind::SelectionLiteralTypeMismatch { relation, field }.at(id)
+        }
+        ValueMismatch::Utf8 => {
+            StatementErrorKind::SelectionLiteralNotUtf8 { relation, field }.at(id)
+        }
     })
 }
 
@@ -1191,7 +1173,7 @@ fn validate_selection_literal(
 /// target projection, as a set, must equal the field set of some
 /// `Functionality` statement on the target relation — probe-ability, one
 /// determinant get answers "is this tuple present". Unambiguous because duplicate
-/// field sets are rejected by [`SchemaError::DuplicateFunctionality`].
+/// field sets are rejected by [`StatementErrorKind::DuplicateFunctionality`].
 fn resolve_target_key(
     id: StatementId,
     target: &Side,
@@ -1213,11 +1195,11 @@ fn resolve_target_key(
     // exists at commit.
     if let Some(rows) = target_relation.extension.as_deref() {
         if target.projection.len() != 1 || target.projection[0] != FieldId(0) {
-            return Err(SchemaError::ClosedTargetNotHandle {
-                statement: id,
+            return Err(StatementErrorKind::ClosedTargetNotHandle {
                 target: target.relation,
                 projection: target.projection.clone(),
-            });
+            }
+            .at(id));
         }
         return Ok(Enforcement::Closed {
             members: compile_member_set(target_relation, target, rows),
@@ -1357,19 +1339,19 @@ fn missing_target_key(
     let projection = side.projection.clone();
     let available = target_key_candidates(target, descriptors);
     if pointwise {
-        SchemaError::NoPointwiseTargetKey {
-            statement,
+        StatementErrorKind::NoPointwiseTargetKey {
             target,
             projection,
             available,
         }
+        .at(statement)
     } else {
-        SchemaError::NoMatchingTargetKey {
-            statement,
+        StatementErrorKind::NoMatchingTargetKey {
             target,
             projection,
             available,
         }
+        .at(statement)
     }
 }
 

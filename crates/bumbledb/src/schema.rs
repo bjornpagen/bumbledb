@@ -445,12 +445,12 @@ pub struct ContainmentStatement {
     /// (`docs/architecture/30-dependencies.md`). Normalized, not raw:
     /// statement identity ignores spelling, so a respelled literal set
     /// cannot fork the links of two fingerprint-equal schemas. At most
-    /// one partner can exist because [`SchemaError::DuplicateStatement`]
+    /// one partner can exist because [`StatementErrorKind::DuplicateStatement`]
     /// rejects identical normalized statements (two candidate mirrors
     /// would be identical to each other), which makes the links
     /// symmetric. `None` for every FD and one-way containment.
     ///
-    /// [`SchemaError::DuplicateStatement`]: crate::error::SchemaError::DuplicateStatement
+    /// [`StatementErrorKind::DuplicateStatement`]: crate::error::StatementErrorKind::DuplicateStatement
     pub mirror: Option<StatementId>,
 }
 

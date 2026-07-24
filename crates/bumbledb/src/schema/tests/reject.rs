@@ -1,5 +1,5 @@
 use super::*;
-use crate::error::{SchemaError, TargetKeyCandidate};
+use crate::error::{SchemaError, StatementErrorKind, TargetKeyCandidate};
 
 fn target_key(key: u16, projection: &[FieldId]) -> TargetKeyCandidate {
     TargetKeyCandidate {
@@ -292,12 +292,12 @@ fn equality_rejects_a_singleton_reverse_projection_without_a_left_key() {
     assert_eq!(&*target.projection, &[FieldId(0)]);
     assert_eq!(
         decl.validate().unwrap_err(),
-        SchemaError::NoMatchingTargetKey {
-            statement: StatementId(2),
+        StatementErrorKind::NoMatchingTargetKey {
             target: RelationId(0),
             projection: Box::new([FieldId(0)]),
-            available: Box::new([]),
+            available: Box::new([])
         }
+        .at(StatementId(2))
     );
 }
 
@@ -328,12 +328,12 @@ fn equality_rejects_a_composite_reverse_projection_without_a_left_key() {
     assert_eq!(&*target.projection, &[FieldId(0), FieldId(1)]);
     assert_eq!(
         decl.validate().unwrap_err(),
-        SchemaError::NoMatchingTargetKey {
-            statement: StatementId(2),
+        StatementErrorKind::NoMatchingTargetKey {
             target: RelationId(0),
             projection: Box::new([FieldId(0), FieldId(1)]),
-            available: Box::new([]),
+            available: Box::new([])
         }
+        .at(StatementId(2))
     );
 }
 
@@ -344,10 +344,10 @@ fn rejects_statement_unknown_relation() {
     decl.statements.push(fd(RelationId(7), &[FieldId(0)]));
     assert_eq!(
         decl.validate().unwrap_err(),
-        SchemaError::StatementUnknownRelation {
-            statement: StatementId(0),
+        StatementErrorKind::UnknownRelation {
             relation: RelationId(7)
         }
+        .at(StatementId(0))
     );
 }
 
@@ -358,11 +358,11 @@ fn rejects_statement_unknown_field() {
     decl.statements.push(fd(RelationId(0), &[FieldId(9)]));
     assert_eq!(
         decl.validate().unwrap_err(),
-        SchemaError::StatementUnknownField {
-            statement: StatementId(0),
+        StatementErrorKind::UnknownField {
             relation: RelationId(0),
             field: FieldId(9)
         }
+        .at(StatementId(0))
     );
 }
 
@@ -373,10 +373,10 @@ fn rejects_empty_projection() {
     decl.statements.push(fd(RelationId(0), &[]));
     assert_eq!(
         decl.validate().unwrap_err(),
-        SchemaError::EmptyProjection {
-            statement: StatementId(0),
+        StatementErrorKind::EmptyProjection {
             relation: RelationId(0)
         }
+        .at(StatementId(0))
     );
 }
 
@@ -388,11 +388,11 @@ fn rejects_duplicate_projection_field() {
         .push(fd(RelationId(0), &[FieldId(0), FieldId(0)]));
     assert_eq!(
         decl.validate().unwrap_err(),
-        SchemaError::DuplicateProjectionField {
-            statement: StatementId(0),
+        StatementErrorKind::DuplicateProjectionField {
             relation: RelationId(0),
             field: FieldId(0)
         }
+        .at(StatementId(0))
     );
 }
 
@@ -416,11 +416,11 @@ fn rejects_duplicate_selection_field() {
     );
     assert_eq!(
         decl.validate().unwrap_err(),
-        SchemaError::DuplicateSelectionField {
-            statement: StatementId(0),
+        StatementErrorKind::DuplicateSelectionField {
             relation: RelationId(0),
             field: FieldId(1)
         }
+        .at(StatementId(0))
     );
 }
 
@@ -437,11 +437,11 @@ fn rejects_functionality_with_two_intervals() {
         .push(fd(RelationId(0), &[FieldId(0), FieldId(1)]));
     assert_eq!(
         decl.validate().unwrap_err(),
-        SchemaError::FunctionalityMultipleIntervals {
-            statement: StatementId(0),
+        StatementErrorKind::FunctionalityMultipleIntervals {
             relation: RelationId(0),
             field: FieldId(1)
         }
+        .at(StatementId(0))
     );
 }
 
@@ -463,11 +463,11 @@ fn rejects_functionality_interval_not_last() {
         .push(fd(RelationId(0), &[FieldId(0), FieldId(1)]));
     assert_eq!(
         decl.validate().unwrap_err(),
-        SchemaError::FunctionalityIntervalNotLast {
-            statement: StatementId(0),
+        StatementErrorKind::FunctionalityIntervalNotLast {
             relation: RelationId(0),
             field: FieldId(0)
         }
+        .at(StatementId(0))
     );
 }
 
@@ -479,10 +479,10 @@ fn rejects_duplicate_functionality() {
     decl.statements.push(fd(RelationId(0), &[FieldId(0)]));
     assert_eq!(
         decl.validate().unwrap_err(),
-        SchemaError::DuplicateFunctionality {
-            statement: StatementId(1),
+        StatementErrorKind::DuplicateFunctionality {
             earlier: StatementId(0)
         }
+        .at(StatementId(1))
     );
 }
 
@@ -498,10 +498,10 @@ fn rejects_permuted_duplicate_functionality() {
         .push(fd(RelationId(0), &[FieldId(1), FieldId(0)]));
     assert_eq!(
         decl.validate().unwrap_err(),
-        SchemaError::DuplicateFunctionality {
-            statement: StatementId(1),
+        StatementErrorKind::DuplicateFunctionality {
             earlier: StatementId(0)
         }
+        .at(StatementId(1))
     );
 }
 
@@ -521,10 +521,7 @@ fn rejects_determinant_overflow() {
     decl.statements.push(fd(RelationId(0), &projection));
     assert_eq!(
         decl.validate().unwrap_err(),
-        SchemaError::DeterminantKeyTooWide {
-            statement: StatementId(0),
-            width: count * 8
-        }
+        StatementErrorKind::DeterminantKeyTooWide { width: count * 8 }.at(StatementId(0))
     );
 }
 
@@ -541,11 +538,11 @@ fn rejects_containment_arity_mismatch() {
     );
     assert_eq!(
         decl.validate().unwrap_err(),
-        SchemaError::ContainmentArityMismatch {
-            statement: StatementId(0),
+        StatementErrorKind::ContainmentArityMismatch {
             source: 2,
             target: 1
         }
+        .at(StatementId(0))
     );
 }
 
@@ -562,10 +559,7 @@ fn rejects_containment_positional_type_mismatch() {
     );
     assert_eq!(
         decl.validate().unwrap_err(),
-        SchemaError::ContainmentTypeMismatch {
-            statement: StatementId(0),
-            position: 0
-        }
+        StatementErrorKind::ContainmentTypeMismatch { position: 0 }.at(StatementId(0))
     );
 }
 
@@ -590,10 +584,7 @@ fn rejects_interval_position_against_scalar() {
     );
     assert_eq!(
         decl.validate().unwrap_err(),
-        SchemaError::ContainmentTypeMismatch {
-            statement: StatementId(0),
-            position: 0
-        }
+        StatementErrorKind::ContainmentTypeMismatch { position: 0 }.at(StatementId(0))
     );
 }
 
@@ -615,11 +606,11 @@ fn rejects_selected_field_also_projected() {
     );
     assert_eq!(
         decl.validate().unwrap_err(),
-        SchemaError::SelectedFieldProjected {
-            statement: StatementId(0),
+        StatementErrorKind::SelectedFieldProjected {
             relation: RelationId(0),
             field: FieldId(0)
         }
+        .at(StatementId(0))
     );
 }
 
@@ -640,11 +631,11 @@ fn rejects_selection_literal_type_mismatch() {
     );
     assert_eq!(
         decl.validate().unwrap_err(),
-        SchemaError::SelectionLiteralTypeMismatch {
-            statement: StatementId(0),
+        StatementErrorKind::SelectionLiteralTypeMismatch {
             relation: RelationId(0),
             field: FieldId(1)
         }
+        .at(StatementId(0))
     );
 }
 
@@ -665,11 +656,11 @@ fn rejects_non_utf8_string_selection_literal() {
     );
     assert_eq!(
         decl.validate().unwrap_err(),
-        SchemaError::SelectionLiteralNotUtf8 {
-            statement: StatementId(0),
+        StatementErrorKind::SelectionLiteralNotUtf8 {
             relation: RelationId(0),
             field: FieldId(1)
         }
+        .at(StatementId(0))
     );
 }
 
@@ -688,12 +679,12 @@ fn rejects_no_matching_target_key() {
     );
     assert_eq!(
         decl.validate().unwrap_err(),
-        SchemaError::NoMatchingTargetKey {
-            statement: StatementId(0),
+        StatementErrorKind::NoMatchingTargetKey {
             target: RelationId(1),
             projection: Box::new([FieldId(0)]),
-            available: Box::new([]),
+            available: Box::new([])
         }
+        .at(StatementId(0))
     );
 }
 
@@ -745,12 +736,12 @@ fn rejects_interval_containment_without_pointwise_key() {
     let error = decl.validate().unwrap_err();
     assert_eq!(
         error,
-        SchemaError::NoPointwiseTargetKey {
-            statement: StatementId(1),
+        StatementErrorKind::NoPointwiseTargetKey {
             target: RelationId(1),
             projection: Box::new([FieldId(0), FieldId(1)]),
-            available: Box::new([target_key(0, &[FieldId(0)])]),
+            available: Box::new([target_key(0, &[FieldId(0)])])
         }
+        .at(StatementId(1))
     );
     assert_eq!(
         error.to_string(),
@@ -774,10 +765,10 @@ fn rejects_duplicate_statement() {
     );
     assert_eq!(
         decl.validate().unwrap_err(),
-        SchemaError::DuplicateStatement {
-            statement: StatementId(2),
+        StatementErrorKind::DuplicateStatement {
             earlier: StatementId(1)
         }
+        .at(StatementId(2))
     );
 }
 
@@ -817,10 +808,10 @@ fn rejects_duplicate_statement_up_to_selection_order() {
     );
     assert_eq!(
         decl.validate().unwrap_err(),
-        SchemaError::DuplicateStatement {
-            statement: StatementId(2),
+        StatementErrorKind::DuplicateStatement {
             earlier: StatementId(1)
         }
+        .at(StatementId(2))
     );
 }
 
@@ -1080,10 +1071,10 @@ fn rejects_an_interval_position_into_a_closed_target() {
     };
     assert_eq!(
         decl.validate().unwrap_err(),
-        SchemaError::ClosedContainmentInterval {
-            statement: StatementId(1),
+        StatementErrorKind::ClosedContainmentInterval {
             relation: RelationId(0)
         }
+        .at(StatementId(1))
     );
 }
 
@@ -1116,10 +1107,10 @@ fn rejects_an_interval_position_from_a_closed_source() {
     };
     assert_eq!(
         decl.validate().unwrap_err(),
-        SchemaError::ClosedContainmentInterval {
-            statement: StatementId(2),
+        StatementErrorKind::ClosedContainmentInterval {
             relation: RelationId(0)
         }
+        .at(StatementId(2))
     );
 }
 
@@ -1149,11 +1140,11 @@ fn rejects_a_closed_target_projection_that_is_not_the_id() {
     };
     assert_eq!(
         decl.validate().unwrap_err(),
-        SchemaError::ClosedTargetNotHandle {
-            statement: StatementId(1),
+        StatementErrorKind::ClosedTargetNotHandle {
             target: RelationId(0),
-            projection: Box::new([FieldId(1)]),
+            projection: Box::new([FieldId(1)])
         }
+        .at(StatementId(1))
     );
 }
 
@@ -1169,7 +1160,10 @@ fn a_declared_key_on_the_closed_target_does_not_soften_the_handle_rule() {
             closed(
                 "Kind",
                 vec![field("weight", ValueType::U64)],
-                vec![row("Light", vec![Value::U64(1)]), row("Heavy", vec![Value::U64(2)])],
+                vec![
+                    row("Light", vec![Value::U64(1)]),
+                    row("Heavy", vec![Value::U64(2)]),
+                ],
             ),
             RelationDescriptor {
                 extension: None,
@@ -1191,11 +1185,11 @@ fn a_declared_key_on_the_closed_target_does_not_soften_the_handle_rule() {
     };
     assert_eq!(
         decl.validate().unwrap_err(),
-        SchemaError::ClosedTargetNotHandle {
-            statement: StatementId(2),
+        StatementErrorKind::ClosedTargetNotHandle {
             target: RelationId(0),
-            projection: Box::new([FieldId(1)]),
+            projection: Box::new([FieldId(1)])
         }
+        .at(StatementId(2))
     );
 }
 
@@ -1227,11 +1221,11 @@ fn rejects_a_closed_to_closed_containment_the_axioms_refute() {
     };
     assert_eq!(
         decl.validate().unwrap_err(),
-        SchemaError::ClosedStatementRefuted {
-            statement: StatementId(2),
+        StatementErrorKind::ClosedStatementRefuted {
             relation: RelationId(0),
             row: 1
         }
+        .at(StatementId(2))
     );
 }
 
@@ -1264,11 +1258,11 @@ fn rejects_a_closed_to_closed_containment_whose_value_exceeds_the_index_range() 
     };
     assert_eq!(
         decl.validate().unwrap_err(),
-        SchemaError::ClosedStatementRefuted {
-            statement: StatementId(2),
+        StatementErrorKind::ClosedStatementRefuted {
             relation: RelationId(0),
             row: 1
         }
+        .at(StatementId(2))
     );
 }
 
@@ -1289,11 +1283,11 @@ fn rejects_a_declared_key_the_axioms_refute() {
     };
     assert_eq!(
         decl.validate().unwrap_err(),
-        SchemaError::ClosedStatementRefuted {
-            statement: StatementId(1),
+        StatementErrorKind::ClosedStatementRefuted {
             relation: RelationId(0),
             row: 1
         }
+        .at(StatementId(1))
     );
 }
 
@@ -1330,11 +1324,11 @@ fn rejects_a_declared_pointwise_key_the_axioms_refute() {
     };
     assert_eq!(
         decl.validate().unwrap_err(),
-        SchemaError::ClosedStatementRefuted {
-            statement: StatementId(1),
+        StatementErrorKind::ClosedStatementRefuted {
             relation: RelationId(0),
             row: 1
         }
+        .at(StatementId(1))
     );
 }
 
@@ -1388,12 +1382,12 @@ fn rejects_an_empty_literal_set() {
     ));
     assert_eq!(
         decl.validate().unwrap_err(),
-        SchemaError::DegenerateSelectionSet {
-            statement: StatementId(1),
+        StatementErrorKind::DegenerateSelectionSet {
             relation: RelationId(1),
             field: FieldId(2),
-            len: 0,
+            len: 0
         }
+        .at(StatementId(1))
     );
 }
 
@@ -1413,12 +1407,12 @@ fn rejects_a_singleton_spelled_as_a_set() {
     ));
     assert_eq!(
         decl.validate().unwrap_err(),
-        SchemaError::DegenerateSelectionSet {
-            statement: StatementId(1),
+        StatementErrorKind::DegenerateSelectionSet {
             relation: RelationId(1),
             field: FieldId(2),
-            len: 1,
+            len: 1
         }
+        .at(StatementId(1))
     );
 }
 
@@ -1440,11 +1434,11 @@ fn rejects_a_duplicate_literal_within_a_set() {
     ));
     assert_eq!(
         decl.validate().unwrap_err(),
-        SchemaError::DuplicateSelectionLiteral {
-            statement: StatementId(1),
+        StatementErrorKind::DuplicateSelectionLiteral {
             relation: RelationId(1),
-            field: FieldId(2),
+            field: FieldId(2)
         }
+        .at(StatementId(1))
     );
 }
 
@@ -1466,11 +1460,11 @@ fn rejects_a_set_literal_of_the_wrong_type() {
     ));
     assert_eq!(
         decl.validate().unwrap_err(),
-        SchemaError::SelectionLiteralTypeMismatch {
-            statement: StatementId(1),
+        StatementErrorKind::SelectionLiteralTypeMismatch {
             relation: RelationId(1),
-            field: FieldId(2),
+            field: FieldId(2)
         }
+        .at(StatementId(1))
     );
 }
 
@@ -1500,11 +1494,11 @@ fn rejects_a_window_with_an_interval_position() {
     ];
     assert_eq!(
         decl.validate().unwrap_err(),
-        SchemaError::CardinalityIntervalPosition {
-            statement: StatementId(1),
+        StatementErrorKind::CardinalityIntervalPosition {
             relation: RelationId(1),
-            field: FieldId(4),
+            field: FieldId(4)
         }
+        .at(StatementId(1))
     );
 }
 
@@ -1521,11 +1515,7 @@ fn rejects_an_inverted_window() {
     ));
     assert_eq!(
         decl.validate().unwrap_err(),
-        SchemaError::CardinalityInvertedWindow {
-            statement: StatementId(1),
-            lo: 3,
-            hi: 1,
-        }
+        StatementErrorKind::CardinalityInvertedWindow { lo: 3, hi: 1 }.at(StatementId(1))
     );
 }
 
@@ -1542,9 +1532,7 @@ fn rejects_the_vacuous_window() {
     ));
     assert_eq!(
         decl.validate().unwrap_err(),
-        SchemaError::CardinalityVacuousWindow {
-            statement: StatementId(1),
-        }
+        StatementErrorKind::CardinalityVacuousWindow.at(StatementId(1))
     );
 }
 
@@ -1562,9 +1550,7 @@ fn rejects_the_containment_respelled_as_a_window() {
     ));
     assert_eq!(
         decl.validate().unwrap_err(),
-        SchemaError::CardinalityContainmentWindow {
-            statement: StatementId(1),
-        }
+        StatementErrorKind::CardinalityContainmentWindow.at(StatementId(1))
     );
 }
 
@@ -1581,10 +1567,12 @@ fn rejects_a_window_whose_target_is_no_key() {
     )];
     assert!(matches!(
         decl.validate().unwrap_err(),
-        SchemaError::NoMatchingTargetKey {
+        SchemaError::Statement {
             statement: StatementId(0),
-            target: RelationId(0),
-            ..
+            kind: StatementErrorKind::NoMatchingTargetKey {
+                target: RelationId(0),
+                ..
+            },
         }
     ));
 }
@@ -1600,11 +1588,11 @@ fn rejects_a_window_arity_mismatch() {
     ));
     assert_eq!(
         decl.validate().unwrap_err(),
-        SchemaError::ContainmentArityMismatch {
-            statement: StatementId(1),
+        StatementErrorKind::ContainmentArityMismatch {
             source: 2,
-            target: 1,
+            target: 1
         }
+        .at(StatementId(1))
     );
 }
 
@@ -1639,11 +1627,11 @@ fn rejects_a_closed_to_closed_window_the_axioms_refute() {
     };
     assert_eq!(
         decl.validate().unwrap_err(),
-        SchemaError::ClosedStatementRefuted {
-            statement: StatementId(2),
+        StatementErrorKind::ClosedStatementRefuted {
             relation: RelationId(1),
-            row: 0,
+            row: 0
         }
+        .at(StatementId(2))
     );
 }
 
@@ -1675,10 +1663,7 @@ fn rejects_interval_positions_across_element_domains_whatever_the_widths() {
     );
     assert_eq!(
         decl.validate().unwrap_err(),
-        SchemaError::ContainmentTypeMismatch {
-            statement: StatementId(0),
-            position: 0
-        }
+        StatementErrorKind::ContainmentTypeMismatch { position: 0 }.at(StatementId(0))
     );
 }
 

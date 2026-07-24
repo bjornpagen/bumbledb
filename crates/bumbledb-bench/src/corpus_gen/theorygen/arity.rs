@@ -413,7 +413,7 @@ fn field_id(index: usize) -> FieldId {
 
 #[cfg(test)]
 mod tests {
-    use bumbledb::error::SchemaError;
+    use bumbledb::error::{SchemaError, StatementErrorKind};
     use bumbledb::schema::ValidateDescriptor as _;
 
     use super::{
@@ -454,7 +454,10 @@ mod tests {
                         .validate();
                     assert!(matches!(
                         rejected,
-                        Err(SchemaError::NoMatchingTargetKey { .. })
+                        Err(SchemaError::Statement {
+                            kind: StatementErrorKind::NoMatchingTargetKey { .. },
+                            ..
+                        })
                     ));
                 }
                 descriptors += 3;
@@ -485,7 +488,10 @@ mod tests {
                     hostile_classes[1] = true;
                     assert!(matches!(
                         verdict,
-                        Err(SchemaError::DeterminantKeyTooWide { width: actual, .. })
+                        Err(SchemaError::Statement {
+                            kind: StatementErrorKind::DeterminantKeyTooWide { width: actual },
+                            ..
+                        })
                             if actual == width
                     ));
                 }
@@ -493,16 +499,20 @@ mod tests {
                     hostile_classes[2] = true;
                     assert!(matches!(
                         verdict,
-                        Err(SchemaError::NoMatchingTargetKey { target, .. })
-                            if target == super::SOURCE
+                        Err(SchemaError::Statement {
+                            kind: StatementErrorKind::NoMatchingTargetKey { target, .. },
+                            ..
+                        }) if target == super::SOURCE
                     ));
                 }
                 ArityExpectation::MissingTargetKey => {
                     hostile_classes[3] = true;
                     assert!(matches!(
                         verdict,
-                        Err(SchemaError::NoMatchingTargetKey { target, .. })
-                            if target == super::TARGET
+                        Err(SchemaError::Statement {
+                            kind: StatementErrorKind::NoMatchingTargetKey { target, .. },
+                            ..
+                        }) if target == super::TARGET
                     ));
                 }
             }
@@ -526,7 +536,10 @@ mod tests {
         );
         assert!(matches!(
             over.descriptor.validate(),
-            Err(SchemaError::DeterminantKeyTooWide { width, .. }) if width == over_width
+            Err(SchemaError::Statement {
+                kind: StatementErrorKind::DeterminantKeyTooWide { width },
+                ..
+            }) if width == over_width
         ));
     }
 }

@@ -986,7 +986,7 @@ mod invalid_declaration {
     //! refuses surfaces as the typed `SchemaError` — no panic path.
 
     use bumbledb::Db;
-    use bumbledb::error::SchemaError;
+    use bumbledb::error::{SchemaError, StatementErrorKind};
 
     bumbledb::schema! {
         pub Duplicated;
@@ -1005,7 +1005,10 @@ mod invalid_declaration {
         assert!(
             matches!(
                 err,
-                bumbledb::Error::Schema(SchemaError::DuplicateStatement { .. })
+                bumbledb::Error::Schema(SchemaError::Statement {
+                    kind: StatementErrorKind::DuplicateStatement { .. },
+                    ..
+                })
             ),
             "{err:?}"
         );
@@ -1013,7 +1016,7 @@ mod invalid_declaration {
 }
 
 mod equality_reverse_key {
-    use bumbledb::error::SchemaError;
+    use bumbledb::error::{SchemaError, StatementErrorKind};
     use bumbledb::schema::{FieldId, StatementDescriptor, StatementId};
     use bumbledb::{Db, Fact as _, Theory as _};
 
@@ -1042,11 +1045,13 @@ mod equality_reverse_key {
         };
         assert!(matches!(
             error,
-            bumbledb::Error::Schema(SchemaError::NoMatchingTargetKey {
+            bumbledb::Error::Schema(SchemaError::Statement {
                 statement: StatementId(2),
-                target,
-                projection,
-                available,
+                kind: StatementErrorKind::NoMatchingTargetKey {
+                    target,
+                    projection,
+                    available,
+                },
             }) if target == Source::RELATION
                 && *projection == [FieldId(0)]
                 && available.is_empty()

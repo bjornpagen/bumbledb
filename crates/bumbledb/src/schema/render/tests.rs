@@ -292,6 +292,9 @@ fn declared_rendering_matches_sealed_rendering() {
 fn schema_error_diagnostics_render_the_offending_statement() {
     // Reject: the containment's target projection matches no key of
     // Roster (no FD declared) — the diagnostic renders the statement.
+    // The citation is total by representation: every statement-roster
+    // rejection is the one `SchemaError::Statement` arm, so no variant
+    // can ship outside the rendered-citation path.
     let mut declaration = example();
     declaration.statements.remove(4); // drop `Roster(worker) -> Roster`
     let err = declaration
@@ -303,6 +306,35 @@ fn schema_error_diagnostics_render_the_offending_statement() {
         rendered.contains("Shift(worker | span == 0..86400) <= Roster(worker)"),
         "{rendered}"
     );
+    assert!(rendered.starts_with("statement "), "{rendered}");
+}
+
+#[test]
+fn declaration_scoped_errors_render_without_a_statement_citation() {
+    // The other half of the typed partition: a declaration-scoped error
+    // carries no statement id, so `display_with` has nothing to cite —
+    // by representation, not by a hand-sorted match arm.
+    let declaration = SchemaDescriptor {
+        relations: vec![
+            RelationDescriptor {
+                extension: None,
+                name: "R".into(),
+                fields: vec![field("x", ValueType::U64)],
+            },
+            RelationDescriptor {
+                extension: None,
+                name: "R".into(),
+                fields: vec![field("y", ValueType::U64)],
+            },
+        ],
+        statements: vec![],
+    };
+    let err = declaration
+        .clone()
+        .validate()
+        .expect_err("duplicate relation name");
+    let rendered = format!("{}", err.display_with(&declaration));
+    assert!(!rendered.contains(" — in `"), "{rendered}");
 }
 
 /// A selection word at a closed-reference position renders its handle —

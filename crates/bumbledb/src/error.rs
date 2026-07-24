@@ -121,10 +121,12 @@ pub enum CorruptionError {
 /// `docs/architecture/10-data-model.md`). Every illegal schema shape has a
 /// distinct variant; an invalid schema is unconstructible, not flagged.
 ///
-/// Statement variants implement the validation roster of
-/// `docs/architecture/30-dependencies.md` — one variant per roster line,
-/// no catch-all. Each doc comment cites its line. The roster's "FD with
-/// selection" and "non-key FD form" lines have no variants:
+/// Two levels, and the partition is typed: declaration-scoped variants
+/// live here and carry no statement id; every statement-roster rejection
+/// is the one [`SchemaError::Statement`] arm — id beside its
+/// [`StatementErrorKind`], one kind variant per roster line of
+/// `docs/architecture/30-dependencies.md`, no catch-all. The roster's
+/// "FD with selection" and "non-key FD form" lines have no variants:
 /// [`crate::schema::StatementDescriptor::Functionality`] carries neither a
 /// selection nor a Y side, so both shapes are unrepresentable rather than
 /// rejected.
@@ -165,7 +167,7 @@ pub enum SchemaError {
     /// spans two word columns, a `bytes<N>` field its ⌈N/8⌉, every
     /// other field one — the declaration is rejected here, never
     /// discovered at image-build time (the same declaration-boundary
-    /// discipline as [`SchemaError::DeterminantKeyTooWide`]). The gate
+    /// discipline as [`StatementErrorKind::DeterminantKeyTooWide`]). The gate
     /// also keeps every `FieldId` within u16: a field occupies at
     /// least one column.
     RelationTooManyColumns {
@@ -241,35 +243,47 @@ pub enum SchemaError {
     },
 
     // --- Statement roster (30-dependencies § validation roster) ---
+    /// A statement-roster rejection: the offending statement's
+    /// materialized-order id beside the roster line it violated
+    /// ([`StatementErrorKind`]). The declaration/statement partition is
+    /// the representation, not a comment banner: a statement-scoped kind
+    /// cannot ship without its id, so `display_with`'s rendered citation
+    /// is total by construction — misplacing a future variant is
+    /// unrepresentable rather than untested.
+    Statement {
+        statement: StatementId,
+        kind: StatementErrorKind,
+    },
+}
+
+/// One violated line of the statement-validation roster
+/// (`docs/architecture/30-dependencies.md` § validation roster) — the
+/// kind half of [`SchemaError::Statement`]: one variant per roster line,
+/// no catch-all; each doc comment cites its line. Payloads carry ids and
+/// owned evidence; the statement id lives on the carrier, so no variant
+/// can forget it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StatementErrorKind {
     /// Roster "unknown relation … ids": a statement names a relation
     /// outside the schema.
-    StatementUnknownRelation {
-        statement: StatementId,
-        relation: RelationId,
-    },
+    UnknownRelation { relation: RelationId },
     /// Roster "unknown … field ids": a projection or selection names a
     /// field outside its relation.
-    StatementUnknownField {
-        statement: StatementId,
+    UnknownField {
         relation: RelationId,
         field: FieldId,
     },
     /// Roster "empty … projections": a projection with no fields.
-    EmptyProjection {
-        statement: StatementId,
-        relation: RelationId,
-    },
+    EmptyProjection { relation: RelationId },
     /// Roster "duplicate-carrying projections": a field twice in one
     /// projection.
     DuplicateProjectionField {
-        statement: StatementId,
         relation: RelationId,
         field: FieldId,
     },
     /// Roster "duplicate-carrying projections", the selection sibling: a
     /// field bound twice in one selection σ (a set of bindings).
     DuplicateSelectionField {
-        statement: StatementId,
         relation: RelationId,
         field: FieldId,
     },
@@ -280,7 +294,6 @@ pub enum SchemaError {
     /// (`lean/Bumbledb/Schema.lean: Selection.singleton_satisfies_iff` —
     /// a singleton set is exactly today's equality).
     DegenerateSelectionSet {
-        statement: StatementId,
         relation: RelationId,
         field: FieldId,
         len: usize,
@@ -289,34 +302,25 @@ pub enum SchemaError {
     /// canonical — sorted, duplicate-free — so a repeated literal is
     /// rejected, not silently collapsed (write it once).
     DuplicateSelectionLiteral {
-        statement: StatementId,
         relation: RelationId,
         field: FieldId,
     },
     /// Roster "an inverted window": `hi < lo` is satisfied by no count —
     /// the statement is unsatisfiable as declared. The canonical bounds
     /// are `lo < hi` (an exact count is `lo = hi`, the `{n}` spelling).
-    CardinalityInvertedWindow {
-        statement: StatementId,
-        lo: u64,
-        hi: u64,
-    },
+    CardinalityInvertedWindow { lo: u64, hi: u64 },
     /// Roster "the vacuous window": `0..*` admits every count — the
     /// statement provably says nothing
     /// (`lean/Bumbledb/Cardinality.lean: cardinality_zero_star`), and a
     /// statement that says nothing is not a statement (the
     /// canonical-utterance law, `docs/architecture/70-api.md`).
-    CardinalityVacuousWindow {
-        statement: StatementId,
-    },
+    CardinalityVacuousWindow,
     /// Roster "the containment respelled": `1..*` says exactly what the
     /// bare containment `target <= source` says
     /// (`lean/Bumbledb/Subsumption.lean: window_floor_containment`) — one
     /// meaning, one spelling: drop the window and declare the
     /// containment.
-    CardinalityContainmentWindow {
-        statement: StatementId,
-    },
+    CardinalityContainmentWindow,
     /// Roster "an interval position in a window projection" — refused v0:
     /// a window counts FACTS per parent, and an interval position would
     /// make the count ambiguous between facts and points
@@ -324,7 +328,6 @@ pub enum SchemaError {
     /// lifting: a sighted counting-over-denotation workload — counting
     /// points, not rows).
     CardinalityIntervalPosition {
-        statement: StatementId,
         relation: RelationId,
         field: FieldId,
     },
@@ -332,14 +335,12 @@ pub enum SchemaError {
     /// projection would be 2-D exclusion, which the ordered determinant cannot
     /// answer. Carries the second interval field.
     FunctionalityMultipleIntervals {
-        statement: StatementId,
         relation: RelationId,
         field: FieldId,
     },
     /// Roster "interval not in final position": the neighbor probe needs
     /// the scalar prefix as its group.
     FunctionalityIntervalNotLast {
-        statement: StatementId,
         relation: RelationId,
         field: FieldId,
     },
@@ -347,54 +348,37 @@ pub enum SchemaError {
     /// FDs over one field set on one relation assert one judgment — the
     /// second determinant is pure write amplification, and rejecting it makes
     /// containment target-key resolution unambiguous.
-    DuplicateFunctionality {
-        statement: StatementId,
-        earlier: StatementId,
-    },
+    DuplicateFunctionality { earlier: StatementId },
     /// Roster "determinant width overflow": Σ projected field widths exceeds
     /// [`crate::storage::keys::MAX_DETERMINANT_WIDTH`] — rejected at declaration,
     /// never discovered at write time.
-    DeterminantKeyTooWide {
-        statement: StatementId,
-        width: usize,
-    },
+    DeterminantKeyTooWide { width: usize },
     /// Roster "arity mismatch between sides": |X| ≠ |Y|.
-    ContainmentArityMismatch {
-        statement: StatementId,
-        source: usize,
-        target: usize,
-    },
+    ContainmentArityMismatch { source: usize, target: usize },
     /// Roster "positional structural-type mismatch" — including its
     /// called-out instance, an interval position against a scalar one.
-    ContainmentTypeMismatch {
-        statement: StatementId,
-        position: usize,
-    },
+    ContainmentTypeMismatch { position: usize },
     /// Roster "a selected field also projected": a constant column — write
     /// the statement you mean.
     SelectedFieldProjected {
-        statement: StatementId,
         relation: RelationId,
         field: FieldId,
     },
     /// Roster "selection literal type mismatch": the literal's variant is
     /// not the field's structural type.
     SelectionLiteralTypeMismatch {
-        statement: StatementId,
         relation: RelationId,
         field: FieldId,
     },
     /// Roster "selection literal type mismatch (… non-UTF-8 string
     /// literals)".
     SelectionLiteralNotUtf8 {
-        statement: StatementId,
         relation: RelationId,
         field: FieldId,
     },
     /// Roster "IND whose target projection matches no key of the target":
     /// probe-ability requires Y to be a permutation of a declared key.
     NoMatchingTargetKey {
-        statement: StatementId,
         target: RelationId,
         projection: Box<[FieldId]>,
         available: Box<[TargetKeyCandidate]>,
@@ -403,7 +387,6 @@ pub enum SchemaError {
     /// carrying it)": the coverage walk needs the target's own key to keep
     /// its intervals disjoint and ordered.
     NoPointwiseTargetKey {
-        statement: StatementId,
         target: RelationId,
         projection: Box<[FieldId]>,
         available: Box<[TargetKeyCandidate]>,
@@ -415,21 +398,17 @@ pub enum SchemaError {
     /// (`docs/architecture/30-dependencies.md`, the refusal —
     /// *trigger* for lifting it: a census sighting). Carries the closed
     /// relation.
-    ClosedContainmentInterval {
-        statement: StatementId,
-        relation: RelationId,
-    },
+    ClosedContainmentInterval { relation: RelationId },
     /// Roster "a closed-target projection that is not the synthetic id":
     /// the handle id is the ONE probe-able identity of a closed target
     /// (the auto-key `R(id) -> R`), so the projection must be exactly
     /// `{id}`. Its own variant, not a reused
-    /// [`SchemaError::NoMatchingTargetKey`]: declared payload keys on a
+    /// [`StatementErrorKind::NoMatchingTargetKey`]: declared payload keys on a
     /// closed relation are legal, point-read-served objects whose field
     /// set may equal the refused projection — the refusal reason is
     /// closedness, a different fact than key absence, and the two carry
     /// different encodings.
     ClosedTargetNotHandle {
-        statement: StatementId,
         target: RelationId,
         projection: Box<[FieldId]>,
     },
@@ -440,17 +419,22 @@ pub enum SchemaError {
     /// "a committed database is a model of its theory, always"). For a
     /// containment, `row` is the source axiom outside the compiled member
     /// set; for a functionality, the second axiom of the colliding pair.
-    ClosedStatementRefuted {
-        statement: StatementId,
-        relation: RelationId,
-        row: usize,
-    },
+    ClosedStatementRefuted { relation: RelationId, row: usize },
     /// Roster "duplicate statements (identical normalized sides and form —
     /// write it once)": selections compare sorted by field id.
-    DuplicateStatement {
-        statement: StatementId,
-        earlier: StatementId,
-    },
+    DuplicateStatement { earlier: StatementId },
+}
+
+impl StatementErrorKind {
+    /// The kind at its statement — the one construction site of
+    /// [`SchemaError::Statement`].
+    #[must_use]
+    pub fn at(self, statement: StatementId) -> SchemaError {
+        SchemaError::Statement {
+            statement,
+            kind: self,
+        }
+    }
 }
 
 /// A mis-shaped dynamic fact on the untyped write surface
@@ -666,9 +650,13 @@ pub enum ValidationError {
     OrderComparisonOnString {
         index: usize,
     },
-    /// An order operator with a Bool operand. Boolean ordering is noise;
-    /// Bool is equality-only.
-    OrderComparisonOnBool {
+    /// An order operator over a closed-bound variable (ruled 2026-07-23,
+    /// R4): a closed reference's declaration-id order is a
+    /// declaration-order accident, not semantics — refused exactly as
+    /// the enum's ordinal order was, judged once in the engine so the
+    /// wall is identical on every surface. Bool is the one orderability
+    /// carve-out (R3) and cannot be closed-bound.
+    OrderComparisonOnClosedReference {
         index: usize,
     },
     /// Neither side is a variable — write the query you mean.
@@ -728,9 +716,20 @@ pub enum ValidationError {
     /// A query with no positive atoms is invalid — negated atoms alone
     /// bind nothing.
     NoPositiveAtoms,
-    /// Sum/Min/Max over a non-integer variable (`CountDistinct` is legal
-    /// over every type — equality is all it needs).
+    /// Sum/Min/Max over a variable outside the fold's roster — Sum takes
+    /// U64/I64; Min/Max take the orderable types, bool included (`Max`
+    /// over bool is Any, `Min` is All — ruled 2026-07-23, R3).
+    /// `CountDistinct` is legal over every type: equality is all it
+    /// needs.
     AggregateInputType {
+        find: usize,
+    },
+    /// A `Sum`/`Min`/`Max` fold or an Arg key over a closed-bound
+    /// variable (ruled 2026-07-23, R4): its words are declaration
+    /// indices, so folding or sweeping their order is ordering an
+    /// accident — refused exactly as the order comparison is
+    /// ([`Self::OrderComparisonOnClosedReference`]).
+    AggregateOverClosedReference {
         find: usize,
     },
     /// Count is nullary; it carries no variable.

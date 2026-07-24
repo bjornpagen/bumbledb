@@ -169,12 +169,12 @@ pub use ir::{
 // vocabulary. `Db`, transactions, prepared queries, `Value`, the IR
 // vocabulary, and the rejection types (`Violation`/`Violations`) are
 // re-exported above.
-pub use error::{CitedFact, FactShapeError, SchemaError, ValidationError};
+pub use error::{CitedFact, FactShapeError, SchemaError, StatementErrorKind, ValidationError};
 pub use schema::fingerprint::SchemaFingerprint;
 pub use schema::{
     FieldId, FreshField, Manifest, RelationId, RenderedFact, RenderedViolation, Schema,
-    SchemaDescriptor, SchemaSpec, SchemaSpecError, StatementId, StatementKind, Theory,
-    render_rejection,
+    SchemaDescriptor, SchemaSpec, SchemaSpecError, SchemaWarning, StatementId, StatementKind,
+    Theory, render_rejection,
 };
 pub use verify_store::{StoreFinding, StoreReport};
 

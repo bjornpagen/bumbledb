@@ -200,7 +200,7 @@ const R_OVERHEAD: usize = 1 + 2 + 4 + 8;
 /// `R` embedding is therefore the binding bound:
 /// `MAX_DETERMINANT_WIDTH = MAX_KEY − R_OVERHEAD = 511 − 15 = 496`.
 ///
-/// Schema-construction hook; rejection is `SchemaError::DeterminantKeyTooWide`
+/// Schema-construction hook; rejection is `StatementErrorKind::DeterminantKeyTooWide`
 /// (the validator imports this constant — the bound has one owner).
 pub const MAX_DETERMINANT_WIDTH: usize = MAX_KEY - R_OVERHEAD;
 
@@ -428,6 +428,19 @@ pub fn parse_determinant_key(key: &[u8]) -> Option<(RelationId, StatementId, &[u
         RelationId(u32::from_be_bytes(relation)),
         StatementId(u16::from_be_bytes(statement)),
         determinant,
+    ))
+}
+
+/// Splits a full `Q` key into `(relation, field)`. `None` on anything
+/// not exactly the codec's fixed 7-byte fresh-key shape.
+#[must_use]
+pub fn parse_fresh_key(key: &[u8]) -> Option<(RelationId, FieldId)> {
+    let (_, rest) = key.split_first()?;
+    let (&relation, rest) = rest.split_first_chunk()?;
+    let &field = <&[u8; 2]>::try_from(rest).ok()?;
+    Some((
+        RelationId(u32::from_be_bytes(relation)),
+        FieldId(u16::from_be_bytes(field)),
     ))
 }
 
