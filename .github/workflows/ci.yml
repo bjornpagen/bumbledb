@@ -178,9 +178,10 @@ jobs:
   # halves of the cross-host fingerprint lock, per push. The TS half is
   # the full SDK gate exactly as run locally — build the napi bridge +
   # package from source, then tsc, biome, and `pnpm test` (the ONE
-  # test-glob spelling — package.json's `test` script; the rebuild it
-  # fronts is incremental after the named build step; test/fixtures/*.ts
-  # are spawned-child helpers, never tests). The Rust half is `cargo test` against ts/crate — the crate
+  # test-glob spelling — package.json's `test` script, its pattern
+  # quoted so node's own glob engine always expands it, never the
+  # shell; the rebuild it fronts is incremental after the named build
+  # step). The Rust half is `cargo test` against ts/crate — the crate
   # is workspace-excluded, so the root workspace gate (lane 1) never
   # reaches it; this step is what executes
   # ts/crate/src/fingerprint_lock.rs. The T5 per-recipe goldens run
