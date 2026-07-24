@@ -41,8 +41,8 @@ function build(): void {
 	const publishPackageDir = path.join(packageRoot, "npm", PUBLISH_PLATFORM)
 	const localPackageDir = path.join(packageRoot, "npm", LOCAL_PLATFORM)
 
-	const version = assertVersionLockstep(packageRoot, publishPackageDir)
-	console.log(`bumbledb build: version ${version} (main == platform == optionalDependencies pin)`)
+	const version = assertVersionLockstep(packageRoot, publishPackageDir, crateManifest)
+	console.log(`bumbledb build: version ${version} (main == platform == optionalDependencies pin == crate manifest)`)
 
 	fs.rmSync(distDir, { recursive: true, force: true })
 
@@ -62,7 +62,7 @@ function build(): void {
 	fs.copyFileSync(artifact, nodeBinary)
 
 	linkPlatformPackage(packageRoot, localPackageDir)
-	smokeLoad(packageRoot)
+	smokeLoad(packageRoot, version)
 
 	const tsc = spawnSync("tsc", ["-p", "tsconfig.build.json"], {
 		stdio: "inherit",
@@ -80,15 +80,17 @@ function build(): void {
 
 /**
  * The version-lockstep gate (PRD-03 item 5): the main manifest's `version` is
- * the single source; the PUBLISH platform manifest's `version` and the main's
- * `optionalDependencies` pin for that package must equal it EXACTLY
- * (the FFI ABI is not semver-stable — a main package may only ever resolve
- * its own-version binary). A divergence fails the build before anything is
- * produced, so a release bump is one edit that this gate then enforces. Pure
- * manifest reads, so the gate holds on EVERY build host, not just the
- * publishing one.
+ * the single source; the PUBLISH platform manifest's `version`, the main's
+ * `optionalDependencies` pin for that package, and the bridge crate's
+ * `Cargo.toml` version must equal it EXACTLY (the FFI ABI is not
+ * semver-stable — a main package may only ever resolve its own-version
+ * binary; and `engineVersion()` bakes CARGO_PKG_VERSION into the shipped
+ * binary, so the crate manifest is the fourth spelling of the release). A
+ * divergence fails the build before anything is produced, so a release bump
+ * is one conceptual edit that this gate then enforces. Pure manifest reads,
+ * so the gate holds on EVERY build host, not just the publishing one.
  */
-function assertVersionLockstep(packageRoot: string, publishPackageDir: string): string {
+function assertVersionLockstep(packageRoot: string, publishPackageDir: string, crateManifest: string): string {
 	const main = readJson(path.join(packageRoot, "package.json"))
 	const platform = readJson(path.join(publishPackageDir, "package.json"))
 	const platformName = `@bjornpagen/bumbledb-${PUBLISH_PLATFORM}`
@@ -112,6 +114,16 @@ function assertVersionLockstep(packageRoot: string, publishPackageDir: string): 
 	}
 	if (platform.name !== platformName) {
 		throw errors.new(`platform package.json name is ${String(platform.name)}, expected ${platformName}`)
+	}
+	const crate = errors.trySync(() => fs.readFileSync(crateManifest, "utf8"))
+	if (crate.error) {
+		throw errors.wrap(crate.error, `read ${crateManifest}`)
+	}
+	const crateVersion = /^version = "([^"]+)"$/m.exec(crate.data)?.[1]
+	if (crateVersion !== version) {
+		throw errors.new(
+			`version lockstep broken: main is ${version} but ts/crate/Cargo.toml is ${String(crateVersion)} (engineVersion() bakes CARGO_PKG_VERSION into the shipped binary — a release bump edits all four spellings)`
+		)
 	}
 	return version
 }
@@ -181,12 +193,13 @@ function linkPlatformPackage(packageRoot: string, localPackageDir: string): void
 /**
  * The build's self-assertion (PRD-03 item 4): resolve the LOCAL platform
  * package BY NAME through the same `createRequire` path the loader uses,
- * require its `bumbledb.node`, and assert `engineVersion()` returns a
- * non-empty string — so a build whose artifact cannot load, whose path
- * dependency did not link, or whose platform package is not resolvable fails
- * here instead of at first runtime use.
+ * require its `bumbledb.node`, and assert `engineVersion()` carries the
+ * release version — so a build whose artifact cannot load, whose path
+ * dependency did not link, whose platform package is not resolvable, or
+ * whose binary self-reports a foreign version fails here instead of at
+ * first runtime use. The smoke check witnesses identity, not mere life.
  */
-function smokeLoad(packageRoot: string): void {
+function smokeLoad(packageRoot: string, release: string): void {
 	// createRequire anchored inside the package so its node_modules (with the
 	// just-linked platform package) is on the resolution path.
 	const requireNative = createRequire(path.join(packageRoot, "scripts", "build.ts"))
@@ -200,8 +213,10 @@ function smokeLoad(packageRoot: string): void {
 	if (version.error) {
 		throw errors.wrap(version.error, "smoke call engineVersion()")
 	}
-	if (typeof version.data !== "string" || version.data === "") {
-		throw errors.new("smoke assertion failed: engineVersion() must return a non-empty string")
+	if (typeof version.data !== "string" || !version.data.includes(release)) {
+		throw errors.new(
+			`smoke assertion failed: engineVersion() must carry the release version ${release}, got ${String(version.data)}`
+		)
 	}
 }
 
