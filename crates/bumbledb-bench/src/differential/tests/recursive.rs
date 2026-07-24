@@ -236,7 +236,10 @@ fn engine_answers(nodes: u64, edges: &[(u64, u64)], program: &Program) -> BTreeS
         Ok(())
     })
     .expect("no statements: every write lands");
-    crate::differential::engine_program(&db, program, &[])
+    match crate::differential::engine_program(&db, program, &[]) {
+        crate::differential::Answers::Ok(rows) => rows,
+        other => panic!("closure goldens execute clean: {other:?}"),
+    }
 }
 
 /// Every oracle that can answer a program, by name — the goldens below

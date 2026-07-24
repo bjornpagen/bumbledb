@@ -299,6 +299,16 @@ fn one_program_case(
         report.excluded_wide += 1;
         return None;
     }
+    // The engine leg, mirroring the query and judgment arms: the landed
+    // fixpoint driver is held to every corpus case on build AND replay
+    // (finding 070 — the lane names itself three-way; now it is).
+    let engine = crate::differential::engine_program(&world.db, program, &[]);
+    assert_eq!(
+        engine,
+        crate::differential::Answers::Ok(answers.clone()),
+        "TROPHY (engine vs naive) on program case {name}: triage per the fuzzing \
+         charter\n{program:#?}"
+    );
     match sqlite_program_expressible(program) {
         Ok(()) => {
             let sqlite = sqlite_answers(world, program);

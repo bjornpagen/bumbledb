@@ -25,12 +25,18 @@ use crate::naive::{Delta, NaiveDb, Tuple, Violation};
 #[cfg(test)]
 mod tests;
 
-/// One operation of a differential stream.
+/// One operation of a differential stream — recursion is a first-class
+/// op, not a bespoke side loop (ruled 2026-07-23, R22/159): the runner's
+/// representation can spell every case the lattice compares.
 #[derive(Debug, Clone)]
 pub enum Op {
     Write(Delta),
     Query {
         query: Query,
+        params: Vec<ParamValue>,
+    },
+    Program {
+        program: bumbledb::Program,
         params: Vec<ParamValue>,
     },
 }
@@ -55,12 +61,14 @@ pub enum ConditionalVerdict {
     Moved { witnessed: u64, current: u64 },
 }
 
-/// One query's outcome, on either side: the answer set, or one of the
-/// defined typed runtime errors (aggregate overflow; the measure of a
-/// ray — the engine's one runtime type error; and the fixpoint budget
-/// trip — engine-only by design: the naive fixpoint is deliberately
-/// unbudgeted, so a trip surfaces as a readable divergence, never a
-/// harness crash).
+/// One query's or program's outcome, on either side: the answer set, or
+/// one of the defined typed runtime errors (aggregate overflow; the
+/// measure of a ray — the engine's one runtime type error; and the
+/// fixpoint budget trip, reachable only through the program leg — a
+/// `Query` is non-recursive by validation, so [`engine_query`] can
+/// never render it. The naive fixpoint is deliberately unbudgeted, so
+/// an engine trip surfaces as a readable divergence, never a harness
+/// crash).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Answers {
     Ok(BTreeSet<Tuple>),
@@ -84,6 +92,11 @@ pub enum Divergence {
         engine: Answers,
         naive: Answers,
     },
+    Program {
+        op: usize,
+        engine: Answers,
+        naive: Answers,
+    },
 }
 
 /// What a clean run exercised — callers assert the stream actually
@@ -93,6 +106,7 @@ pub struct Summary {
     pub commits: u64,
     pub aborts: u64,
     pub queries: u64,
+    pub programs: u64,
 }
 
 /// Replays the ops in order against both sides.
@@ -142,6 +156,22 @@ pub fn run<S>(db: &Db<S>, naive: &mut NaiveDb, ops: &[Op]) -> Result<Summary, Di
                     });
                 }
                 summary.queries += 1;
+            }
+            Op::Program { program, params } => {
+                let engine = engine_program(db, program, params);
+                let model = match naive.program(program, params) {
+                    Ok(answers) => Answers::Ok(answers),
+                    Err(QueryError::Overflow { .. }) => Answers::Overflow,
+                    Err(QueryError::MeasureOfRay) => Answers::MeasureOfRay,
+                };
+                if engine != model {
+                    return Err(Divergence::Program {
+                        op: index,
+                        engine,
+                        naive: model,
+                    });
+                }
+                summary.programs += 1;
             }
         }
     }
@@ -277,39 +307,48 @@ pub(crate) fn engine_query<S>(db: &Db<S>, query: &Query, params: &[ParamValue]) 
         ),
         Err(Error::Overflow { .. }) => Answers::Overflow,
         Err(Error::MeasureOfRay { .. }) => Answers::MeasureOfRay,
-        Err(Error::FixpointBudgetExceeded { .. }) => Answers::FixpointBudget,
+        // A `Query` is non-recursive by validation (`Idb` atoms refuse at
+        // the query boundary), so the budget trip is unreachable here —
+        // it belongs to the program leg below.
         Err(other) => panic!("engine refused a differential query: {other:?}"),
     }
 }
 
-/// One program through the engine's fixpoint driver, as the model's
-/// tuple set (test-side: the recursive differential and the closure
-/// goldens are test suites) — the recursive differential's engine leg
-/// (the shipping law closed: the engine joins naive and `SQLite` on
-/// every generated program and every closure golden). Panics on any engine
-/// refusal: a generated recursive program validates and executes by
-/// construction, and the differential's job is answer equality.
-#[cfg(test)]
+/// One program through the engine's fixpoint driver, as an [`Answers`]
+/// verdict — the recursive differential's engine leg (the shipping law
+/// closed: the engine joins naive and `SQLite` on every generated
+/// program, every closure golden, and the checked-in conformance
+/// corpus). Typed execution errors — the budget trip included — are
+/// verdicts, so a trip is a readable divergence against the deliberately
+/// unbudgeted naive fixpoint, never a harness crash. Panics only on a
+/// refusal outside the defined roster: a generated recursive program
+/// validates by construction.
 pub(crate) fn engine_program<S>(
     db: &Db<S>,
     program: &bumbledb::Program,
     params: &[ParamValue],
-) -> BTreeSet<Tuple> {
+) -> Answers {
     let mut prepared = db.prepare(program).expect("differential programs validate");
     let args = crate::families::param_args(params);
-    let buffer = db
-        .read(|snap| snap.execute_collect_args(&mut prepared, &args))
-        .expect("differential programs execute under the driver");
-    buffer
-        .answers()
-        .map(|answer| {
-            Tuple(
-                (0..buffer.arity())
-                    .map(|column| owned_value(answer.get(column)))
-                    .collect(),
-            )
-        })
-        .collect()
+    let outcome = db.read(|snap| snap.execute_collect_args(&mut prepared, &args));
+    match outcome {
+        Ok(buffer) => Answers::Ok(
+            buffer
+                .answers()
+                .map(|answer| {
+                    Tuple(
+                        (0..buffer.arity())
+                            .map(|column| owned_value(answer.get(column)))
+                            .collect(),
+                    )
+                })
+                .collect(),
+        ),
+        Err(Error::Overflow { .. }) => Answers::Overflow,
+        Err(Error::MeasureOfRay { .. }) => Answers::MeasureOfRay,
+        Err(Error::FixpointBudgetExceeded { .. }) => Answers::FixpointBudget,
+        Err(other) => panic!("engine refused a differential program: {other:?}"),
+    }
 }
 
 fn owned_value(value: AnswerValue<'_>) -> Value {
