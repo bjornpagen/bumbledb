@@ -168,6 +168,49 @@ fn a_token_that_outlives_a_force_is_refused() {
     assert_eq!(values, (0..200).collect::<Vec<u64>>());
 }
 
+/// A resume token minted in one generation is refused after a reset —
+/// the epoch field (bits 56–62) closes the second staleness axis the
+/// bit-63 tag left open: silent truncation (Root arm) or cross-node
+/// position yields (Chunks/dense arms) against the re-minted pools.
+#[test]
+fn a_token_that_outlives_a_reset_is_refused() {
+    let dir = TempDir::new("colt-reset-token");
+    let schema = schema();
+    let rows: Vec<(u64, u64)> = (0..200).map(|i| (7, i)).collect();
+    let view = view_of(&dir, &schema, &rows);
+    let mut colt = Colt::new(all(&view), &[], vec![vec![0], vec![1]]);
+    let child = colt.get(Colt::root(), 0, &[7]).expect("key 7 exists");
+    let mut keys = vec![0u64; 8];
+    let mut children = vec![Cursor::Row(0); 8];
+    let (n, stale) = colt.iter_batch(child, 1, BatchToken::default(), &mut keys, &mut children, 8);
+    assert_eq!(n, 8);
+
+    // The reset re-mints every pool index; a same-shaped view makes the
+    // stale token indistinguishable from a live one by payload alone —
+    // only the epoch field can tell them apart.
+    let _ = colt.reset(all(&view));
+    let child = colt.get(Colt::root(), 0, &[7]).expect("key 7 exists again");
+    let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let mut keys = vec![0u64; 8];
+        let mut children = vec![Cursor::Row(0); 8];
+        colt.iter_batch(child, 1, stale, &mut keys, &mut children, 8)
+    }))
+    .expect_err("the stale token must be refused");
+    let message = panic
+        .downcast_ref::<String>()
+        .map(String::as_str)
+        .or_else(|| panic.downcast_ref::<&str>().copied())
+        .expect("string panic payload");
+    assert!(message.contains("outlived a reset"), "{message}");
+
+    // Recovery: a fresh default token drains the new generation whole.
+    let entries = drain(&mut colt, child, 1);
+    assert_eq!(entries.len(), 200);
+    let mut values: Vec<u64> = entries.iter().map(|(k, _)| k[0]).collect();
+    values.sort_unstable();
+    assert_eq!(values, (0..200).collect::<Vec<u64>>());
+}
+
 /// `Cursor::Row` iteration honors `max` — `max = 0` yields
 /// nothing into zero-sized buffers (no panic, no over-yield).
 #[test]

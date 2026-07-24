@@ -30,6 +30,9 @@ impl Colt {
             buckets: Vec::new(),
             dense: Vec::new(),
             scratch: Vec::new(),
+            stage_keys: Vec::new(),
+            stage_positions: Vec::new(),
+            epoch: 0,
         }
     }
 
@@ -55,6 +58,9 @@ impl Colt {
             buckets: Vec::new(),
             dense: Vec::new(),
             scratch: Vec::new(),
+            stage_keys: Vec::new(),
+            stage_positions: Vec::new(),
+            epoch: 0,
         }
     }
 
@@ -74,6 +80,10 @@ impl Colt {
         self.union_mark = None;
         self.start = Cursor::Node(NodeRef(0));
         self.selected = self.selection_levels == 0;
+        // The epoch advance is what refuses cross-reset resume tokens
+        // (the mint sites stamp it into bits 56-62; presentation
+        // asserts equality). 7 bits, wrapping.
+        self.epoch = (self.epoch + 1) % 128;
         old
     }
 }

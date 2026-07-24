@@ -103,24 +103,38 @@ pub struct NodeRef(u32);
 /// Opaque resume token for [`Colt::iter_batch`]; start at `default()`.
 ///
 /// Bit 63 tags every nonzero token with the node state that minted it
-/// (clear = positions iteration, set = forced-map iteration), so a token
-/// that outlives a force of its node is caught by a release assert
-/// instead of being silently reinterpreted as a dense index — the
-/// silent-omission wrong-results class.
+/// (clear = positions iteration, set = forced-map iteration), and bits
+/// 56–62 carry the minting [`Colt::reset`] epoch — so a token that
+/// outlives a force of its node OR a reset of its trie is caught by a
+/// release assert instead of being silently reinterpreted against
+/// changed state — the silent-omission wrong-results class, closed on
+/// both staleness axes.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct BatchToken(u64);
 
 /// The [`BatchToken`] state tag: set on forced-map (dense-index) tokens,
-/// clear on positions tokens. Positions tokens cannot collide with it:
-/// the root form is a view index (≤ u32 space) and the chunked form
-/// packs `(chunk + 2) << 32 | offset`, which reaches bit 63 only past
-/// 2³⁰ chunks (≈2³⁶ positions) — beyond the u32 position space itself;
+/// clear on positions tokens. Positions tokens cannot collide with it
+/// or with the epoch field below: the root form is a view index (≤ u32
+/// space) and the chunked form packs `(chunk + 2) << 32 | offset`,
+/// which reaches bit 56 only past 2²³ chunks (≈2²⁹ positions at full
+/// chunks) — at the map's physical row bound (~5×10⁸ at 32 GiB);
 /// debug-checked at the mint site.
 const DENSE_TOKEN_TAG: u64 = 1 << 63;
+
+/// The [`BatchToken`] reset-epoch field, bits 56–62: every nonzero
+/// token carries the [`Colt`] epoch that minted it.
+const TOKEN_EPOCH_MASK: u64 = 0x7F << 56;
+
+/// The token payload below the epoch and tag fields.
+const TOKEN_PAYLOAD_MASK: u64 = !(DENSE_TOKEN_TAG | TOKEN_EPOCH_MASK);
 
 /// The token-kind mismatch message: fired when a resume token minted
 /// under one node state is presented after that state changed.
 const STALE_TOKEN: &str = "iteration token outlived a force — drain before probing this cursor";
+
+/// The token-epoch mismatch message: fired when a resume token minted
+/// in one generation is presented after a reset re-minted the pools.
+const STALE_EPOCH: &str = "iteration token outlived a reset — drain before the next execution";
 
 /// Where an unforced node's positions come from.
 #[derive(Debug, Clone, Copy)]
@@ -319,6 +333,18 @@ pub struct Colt {
     dense: Vec<u32>,
     /// Reused key-decoding scratch.
     scratch: Vec<u64>,
+    /// The force pass's staged key words (capacity retained — one
+    /// `FORCE_BATCH × arity` high-water).
+    stage_keys: Vec<u64>,
+    /// The force pass's staged positions (capacity retained).
+    stage_positions: Vec<u32>,
+    /// The reset epoch, minted into every nonzero [`BatchToken`]'s bits
+    /// 56–62: a token that crosses a [`Colt::reset`] is refused loudly
+    /// instead of being silently reinterpreted against the new
+    /// generation's pools — the same class the bit-63 tag closes on the
+    /// force axis. Wraps at 128 (7 bits); a wrap-collision needs a
+    /// token held across exactly 128 resets, far past any driver shape.
+    epoch: u8,
 }
 
 mod append_child;

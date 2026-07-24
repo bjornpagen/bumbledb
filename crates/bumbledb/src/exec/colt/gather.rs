@@ -156,16 +156,32 @@ impl Colt {
 
     /// Column-hoisted gather of one position segment into
     /// `keys_out[out_base..]` + pinned-row children (the unchecked-gather interior).
-    #[expect(
-        unsafe_code,
-        reason = "the localized unsafe operation has a documented safety invariant"
-    )]
     pub(super) fn gather_segment(
         &self,
         level: usize,
         segment: &[u32],
         keys_out: &mut [u64],
         children_out: &mut [Cursor],
+        out_base: usize,
+    ) {
+        self.gather_keys(level, segment, keys_out, out_base);
+        for (k, &position) in segment.iter().enumerate() {
+            children_out[out_base + k] = Cursor::Row(position);
+        }
+    }
+
+    /// [`Colt::gather_segment`]'s key half — shared with the force
+    /// pass's staging phase, which needs the key words but mints its
+    /// own children.
+    #[expect(
+        unsafe_code,
+        reason = "the localized unsafe operation has a documented safety invariant"
+    )]
+    pub(super) fn gather_keys(
+        &self,
+        level: usize,
+        segment: &[u32],
+        keys_out: &mut [u64],
         out_base: usize,
     ) {
         let arity = self.arity_at(level);
@@ -207,9 +223,6 @@ impl Colt {
                     }
                 }
             }
-        }
-        for (k, &position) in segment.iter().enumerate() {
-            children_out[out_base + k] = Cursor::Row(position);
         }
     }
 

@@ -1,6 +1,6 @@
 use super::{
-    BatchToken, Colt, Cursor, DENSE_TOKEN_TAG, NodeRef, NodeState, Positions, STALE_TOKEN, Slot,
-    View, unpack_child,
+    BatchToken, Colt, Cursor, DENSE_TOKEN_TAG, NodeRef, NodeState, Positions, STALE_EPOCH,
+    STALE_TOKEN, Slot, TOKEN_EPOCH_MASK, TOKEN_PAYLOAD_MASK, View, unpack_child,
 };
 
 impl Colt {
@@ -33,6 +33,23 @@ impl Colt {
         )
     }
 
+    /// The current epoch's token field (bits 56–62): minted into every
+    /// nonzero token, asserted on presentation — a token crossing a
+    /// [`Colt::reset`] is refused loudly on every arm.
+    fn epoch_bits(&self) -> u64 {
+        u64::from(self.epoch) << 56
+    }
+
+    /// The presentation-side epoch check plus payload strip: every
+    /// nonzero token must carry the current epoch.
+    fn token_payload(&self, token: BatchToken) -> u64 {
+        assert!(
+            token.0 == 0 || token.0 & TOKEN_EPOCH_MASK == self.epoch_bits(),
+            "{STALE_EPOCH}"
+        );
+        token.0 & !TOKEN_EPOCH_MASK
+    }
+
     /// [`Colt::iter_batch`] over an internal (selection-inclusive) level.
     fn iter_batch_at(
         &mut self,
@@ -51,17 +68,18 @@ impl Colt {
         assert!(keys_out.len() >= max * arity && children_out.len() >= max);
         match cursor {
             Cursor::Row(position) => {
+                let payload = self.token_payload(token);
                 // `max == 0` yields nothing — the same contract every
                 // other arm honors (an over-yield here both violated the
                 // contract and wrote past a zero-sized buffer).
-                if token.0 > 0 || max == 0 {
+                if payload > 0 || max == 0 {
                     return (0, token);
                 }
                 for (i, col) in self.schema_columns[level].iter().enumerate() {
                     keys_out[i] = self.word_at(*col, position);
                 }
                 children_out[0] = Cursor::Row(position);
-                (1, BatchToken(1))
+                (1, BatchToken(1 | self.epoch_bits()))
             }
             Cursor::Node(node) => {
                 let is_suffix = level + 1 == self.schema_columns.len();
@@ -103,14 +121,16 @@ impl Colt {
         children_out: &mut [Cursor],
         max: usize,
     ) -> (usize, BatchToken) {
+        let payload = self.token_payload(token);
         // A dense-tagged token here means the node was un-forced under an
-        // outstanding iteration — impossible within a generation; a stale
-        // token from before a reset lands here too.
-        assert!(token.0 & DENSE_TOKEN_TAG == 0, "{STALE_TOKEN}");
+        // outstanding iteration — impossible within a generation (and a
+        // pre-reset token already failed the epoch check above).
+        assert!(payload & DENSE_TOKEN_TAG == 0, "{STALE_TOKEN}");
+        let epoch_bits = self.epoch_bits();
         match self.nodes[node.0 as usize] {
             NodeState::Forced { .. } => unreachable!("caller checked unforced"),
             NodeState::Unforced(Positions::Root) => {
-                let index = usize::try_from(token.0).expect("64-bit usize");
+                let index = usize::try_from(payload).expect("64-bit usize");
                 let take = max.min(self.view.len().saturating_sub(index));
                 if take == 0 {
                     return (0, token);
@@ -124,11 +144,11 @@ impl Colt {
                     // fully contiguous gather, no position loads at all.
                     _ => self.gather_identity(level, index, take, keys_out, children_out),
                 }
-                (take, BatchToken((index + take) as u64))
+                (take, BatchToken((index + take) as u64 | epoch_bits))
             }
             NodeState::Unforced(Positions::Chunks { first, .. }) => {
                 const EXHAUSTED: u64 = 1 << 32;
-                let (mut chunk, mut offset) = match token.0 {
+                let (mut chunk, mut offset) = match payload {
                     0 => (first, 0usize),
                     EXHAUSTED => return (0, token),
                     packed => (
@@ -145,7 +165,7 @@ impl Colt {
                     let len = usize::from(c.len);
                     if offset >= len {
                         if c.next == u32::MAX {
-                            return (yielded, BatchToken(EXHAUSTED));
+                            return (yielded, BatchToken(EXHAUSTED | epoch_bits));
                         }
                         chunk = c.next;
                         offset = 0;
@@ -163,12 +183,12 @@ impl Colt {
                     offset += take;
                 }
                 let packed = (u64::from(chunk) + 2) << 32 | offset as u64;
-                // Bit 63 (the dense tag) is unreachable below 2³⁰ chunks
-                // — the map's physical row bound (~5×10⁸ at 32 GiB) sits
-                // orders of magnitude under it, and the u32 chunk space
-                // itself wraps first.
-                debug_assert_eq!(packed & DENSE_TOKEN_TAG, 0);
-                (yielded, BatchToken(packed))
+                // The epoch field (bit 56) and dense tag (bit 63) are
+                // unreachable below 2²³ chunks — the map's physical row
+                // bound (~5×10⁸ at 32 GiB) sits under it, and the u32
+                // position space itself wraps first.
+                debug_assert_eq!(packed & !TOKEN_PAYLOAD_MASK, 0);
+                (yielded, BatchToken(packed | epoch_bits))
             }
         }
     }
@@ -187,6 +207,7 @@ impl Colt {
         let m = self.maps[map as usize];
         let arity = self.arity_at(level);
         debug_assert_eq!(arity, m.arity);
+        let payload = self.token_payload(token);
         // Walk the dense occupied list — O(keys), never O(capacity)
         // (docs/architecture/40-execution.md). The token is a tagged
         // dense index: an untagged nonzero token was minted by positions
@@ -194,10 +215,10 @@ impl Colt {
         // dense index would silently omit entries (the audit's
         // wrong-results scenario). Once per batch: noise.
         assert!(
-            token.0 == 0 || token.0 & DENSE_TOKEN_TAG != 0,
+            payload == 0 || payload & DENSE_TOKEN_TAG != 0,
             "{STALE_TOKEN}"
         );
-        let start = usize::try_from(token.0 & !DENSE_TOKEN_TAG).expect("64-bit usize");
+        let start = usize::try_from(payload & !DENSE_TOKEN_TAG).expect("64-bit usize");
         let len = usize::try_from(m.len).expect("64-bit usize");
         let take = max.min(len.saturating_sub(start));
         // Hoisted slices: the dense walk touches the
@@ -220,6 +241,9 @@ impl Colt {
                 Slot::Node(child) => Cursor::Node(child),
             };
         }
-        (take, BatchToken((start + take) as u64 | DENSE_TOKEN_TAG))
+        (
+            take,
+            BatchToken((start + take) as u64 | DENSE_TOKEN_TAG | self.epoch_bits()),
+        )
     }
 }
