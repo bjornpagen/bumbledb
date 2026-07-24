@@ -17,6 +17,12 @@
 #       final `::`-segment word-bounded. (Line-number citations inside
 #       lean doc comments are NOT checked — they drift silently; prefer
 #       the symbol form, which this check keeps honest.)
+#   (e) every backticked Lean declaration name in lean/ markdown
+#       (`Txn.judgeB`, …) resolves: its final dot-segment greps
+#       word-bounded somewhere in the Lean sources — the same rule (c)
+#       applies to the docs' `lean/….lean: name` citations, applied
+#       where lean-side prose cites declarations directly (so a
+#       renamed theorem cannot live on in a README).
 #
 # Parse contract (recorded in Bridge.lean's module doc): mechanism and
 # instrument strings are semicolon-joined tokens, each either
@@ -154,8 +160,34 @@ if [ "$lean_cites" -eq 0 ]; then
   fail=1
 fi
 
+# ---- (e): lean-side Lean declaration citations -------------------------
+# Backticked dotted declaration names in lean/ markdown. The case filter
+# drops file and path spellings (`Bridge.lean`, `cases/foo.json`) — they
+# carry no checkable declaration and (c)'s existence check owns paths.
+
+lean_decl_cites=0
+while IFS= read -r cite; do
+  [ -n "$cite" ] || continue
+  case "$cite" in
+    */* | *.lean | *.md | *.json | *.rs | *.toml) continue ;;
+  esac
+  lean_decl_cites=$((lean_decl_cites + 1))
+  final="${cite##*.}"
+  if ! grep -rqw --include='*.lean' --exclude-dir=.lake -- "$final" lean/; then
+    echo "spec-census: FAIL — lean markdown cites '$cite' but '$final' resolves in no Lean source" >&2
+    fail=1
+  fi
+done < <(grep -rhoIE --include='*.md' --exclude-dir=.lake \
+           '`[A-Z][A-Za-z0-9_]*(\.[A-Za-z0-9_'\''!?]+)+`' lean/ \
+         | sed 's/^`//; s/`$//' | sort -u)
+
+if [ "$lean_decl_cites" -eq 0 ]; then
+  echo "spec-census: FAIL — no lean-side declaration citations found (convention drifted?)" >&2
+  fail=1
+fi
+
 if [ "$fail" -ne 0 ]; then
   exit 1
 fi
 
-echo "spec-census: OK — $rows ledger rows, $scanned tokens resolved, docs citations intact, $lean_cites lean symbol citations resolved"
+echo "spec-census: OK — $rows ledger rows, $scanned tokens resolved, docs citations intact, $lean_cites lean symbol citations resolved, $lean_decl_cites lean declaration citations resolved"

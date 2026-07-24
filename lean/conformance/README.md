@@ -119,8 +119,11 @@ checks.
 The query corpus is Tiny-scale, valid-arm only. Per-build coverage is
 logged by the builder and the comparator (`Report::coverage_line`);
 the checked-in corpus was built at **219/325 expressible** (200 seeded
-+ 19 hand cases), plus the 24 hand judgment cases outside the report
-(they have no expressibility gate):
++ 19 hand cases), plus the hand judgment cases outside the report
+(they have no expressibility gate; their roster is
+`judgment.rs::fixtures`, held byte-identical to the checked-in files by
+`conformance.rs::the_corpus_replays_byte_identical_from_its_provenance`,
+so no count is pinned here):
 
 * **hostile arm** — not drawn at all: structurally-free IR types
   nothing and belonged to the validation-totality fuzz lane (deleted
@@ -159,7 +162,7 @@ row-set arithmetic (deletes removed, inserts added, no-ops cancelling
 — `NaiveDb::staged`'s arithmetic), and runs the PROVED executable
 judge `Txn.judgeB` (`Bumbledb/Decide.lean`), which agrees with the
 model's `Txn.judge` verdict and violation sets phase for phase
-(`Txn.judgeB_agrees_of_declared`). The Rust serializer
+(`Txn.judgeB_agrees`). The Rust serializer
 (`crates/bumbledb-bench/src/conformance/judgment.rs`) writes each
 document only after the ENGINE and the NAIVE MODEL agreed on the
 verdict, so the corpus run is the full three-way comparison. Every
