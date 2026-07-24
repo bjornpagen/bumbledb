@@ -273,4 +273,28 @@ describe("the runtime/type agreement and the wire", function agreement() {
 			relation("R", { "0": u64 })
 		}, /integer index — JavaScript object keys re-order integer indices/)
 	})
+
+	test("dotted names are refused at construction — the coordinate encoding stays injective at both tiers", function dottedNames() {
+		assert.throws(function dottedRelation() {
+			relation("A.B", { x: u64 })
+		}, /contains a dot — the law classes key on the `relation\.field` coordinate/)
+		assert.throws(function dottedField() {
+			relation("A", { "B.x": u64 })
+		}, /contains a dot/)
+		assert.throws(function dottedClosed() {
+			closed("A.B", ["Yes", "No"])
+		}, /contains a dot/)
+	})
+
+	test("a plain __proto__ declaration entry is refused — the Annex B setter would silently drop the key", function protoEntries() {
+		const litHandles = { __proto__: { pages: 1n }, Warn: { pages: 2n } }
+		assert.throws(function protoLiteralHandle() {
+			closed("Sev", { pages: u64 }, litHandles)
+		}, /prototype was replaced/)
+		// The computed spelling creates an own data property and is admitted: no name is reserved.
+		const Sev = closed("Sev", { pages: u64 }, { ["__proto__"]: { pages: 1n }, Warn: { pages: 2n } })
+		assert.deepStrictEqual([...Sev.data.handles], ["__proto__", "Warn"])
+		assert.ok(Object.hasOwn(Sev.axioms, "__proto__"))
+		assert.deepStrictEqual(Object.getOwnPropertyDescriptor(Sev.axioms, "__proto__")?.value, { pages: 1n })
+	})
 })

@@ -34,6 +34,7 @@ import * as errors from "@superbuilders/errors"
 import {
 	type AnyField,
 	assertDeclarationOrderKey,
+	assertDeclarationRecord,
 	type ClosedIdField,
 	type ClosedRoster,
 	type Infer,
@@ -384,9 +385,11 @@ function closedPayload<Name extends string, Handles extends string, Cols extends
 	columns: Cols,
 	axioms: Axioms<Handles, Cols>
 ): Closed<Name, Handles, Cols> {
+	assertDeclarationRecord(`closed relation ${name} columns`, columns)
 	for (const columnName of Object.keys(columns)) {
 		assertDeclarationOrderKey(`closed relation ${name} column`, columnName)
 	}
+	assertDeclarationRecord(`closed relation ${name} axioms`, axioms)
 	const handles = Object.keys(axioms)
 	for (const handle of handles) {
 		assertDeclarationOrderKey(`closed relation ${name} handle`, handle)
@@ -426,6 +429,7 @@ function mintClosed<Name extends string, Handles extends string, Cols extends Re
 	columns: Cols,
 	axioms: Axioms<Handles, Cols>
 ): Closed<Name, Handles, Cols> {
+	assertDeclarationOrderKey("closed relation", name)
 	if (handles.length === 0) {
 		throw errors.new(`closed relation ${name}: at least one handle is required (an empty vocabulary declares nothing)`)
 	}

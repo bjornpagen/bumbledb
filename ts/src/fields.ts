@@ -238,19 +238,49 @@ function intervalLiteral(element: "u64" | "i64", value: unknown): LiteralSpec {
 }
 
 /**
- * Rejects a declaration name that JavaScript would re-order. Declaration
- * order = ordinal ids is the law relations, columns, and schemas all lean
- * on, and it is carried by object-literal key order — which ECMA-262's
+ * Rejects a declaration name that JavaScript would re-order, and a name
+ * that would break the class map's coordinate encoding. Declaration order =
+ * ordinal ids is the law relations, columns, and schemas all lean on, and
+ * it is carried by object-literal key order — which ECMA-262's
  * OrdinaryOwnPropertyKeys breaks for integer-index keys (they enumerate
- * first, ascending, regardless of where they were written). An
- * integer-index name would silently reorder its declaration, so it is a
- * construction error, exactly as an unparseable name is a macro expansion
- * error.
+ * first, ascending, regardless of where they were written). A `.` in a name
+ * would make the law engine's `${relation}.${field}` coordinate template
+ * non-injective at BOTH tiers (relation `"A.B"` field `"x"` and relation
+ * `"A"` field `"B.x"` are one coordinate), silently merging unrelated law
+ * classes — banned here, which is exact macro parity: Rust identifiers
+ * cannot contain dots. Both are construction errors, exactly as an
+ * unparseable name is a macro expansion error.
  */
 function assertDeclarationOrderKey(where: string, name: string): void {
 	if (/^(?:0|[1-9][0-9]*)$/.test(name)) {
 		throw errors.new(
 			`${where}: name ${name} is an integer index — JavaScript object keys re-order integer indices, breaking the declaration-order law; use a non-numeric name`
+		)
+	}
+	if (name.includes(".")) {
+		throw errors.new(
+			`${where}: name ${name} contains a dot — the law classes key on the \`relation.field\` coordinate, so a dotted name would alias unrelated slots (macro parity: Rust identifiers cannot contain dots); use a dot-free name`
+		)
+	}
+}
+
+/**
+ * Rejects a declaration record whose prototype was replaced. A plain
+ * `__proto__: {...}` property in an object literal is ECMA-262 Annex B's
+ * prototype SETTER, not a data property — the entry never becomes an own
+ * enumerable key, so the declared handle/field/relation would silently
+ * vanish from every `Object.keys`/`Object.entries` walk while the type
+ * tier still admits its name. A non-default prototype on a declaration
+ * literal proves exactly that spelling, so it is a construction error; the
+ * computed spelling `["__proto__"]: {...}` creates an own data property
+ * and is admitted (no name is reserved). `Object.create(null)` records
+ * stay admissible.
+ */
+function assertDeclarationRecord(where: string, record: object): void {
+	const proto = Object.getPrototypeOf(record)
+	if (proto !== Object.prototype && proto !== null) {
+		throw errors.new(
+			`${where}: the declaration record's prototype was replaced — a plain \`__proto__: {...}\` entry is the prototype setter, so its key silently vanishes from the declaration; spell it computed (["__proto__"]: {...}) to declare it as data`
 		)
 	}
 }
@@ -390,6 +420,7 @@ export type {
 }
 export {
 	assertDeclarationOrderKey,
+	assertDeclarationRecord,
 	bool,
 	bytes,
 	i64,

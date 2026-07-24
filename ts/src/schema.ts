@@ -13,7 +13,7 @@ import * as errors from "@superbuilders/errors"
 import type { AnyClosed } from "#closed.ts"
 import { isClosedMember, sealedFieldOf } from "#closed.ts"
 import type { FaceData } from "#face.ts"
-import { assertDeclarationOrderKey, rosterOf } from "#fields.ts"
+import { assertDeclarationOrderKey, assertDeclarationRecord, rosterOf } from "#fields.ts"
 import { type ClassesOf, classesComplete, computeClasses, type LawfulStatements, type SchemaClasses } from "#law.ts"
 import type { AnyRelation } from "#relation.ts"
 import type { LiteralSetSpec, LiteralSpec } from "#spec.ts"
@@ -27,6 +27,7 @@ import { renderStatement, type Statement } from "#statements.ts"
  * single spelling authority.
  */
 function collectImplied(name: string, relations: SchemaRelations): Set<string> {
+	assertDeclarationRecord(`schema ${name} relations`, relations)
 	const implied = new Set<string>()
 	for (const [recordKey, member] of Object.entries(relations)) {
 		assertDeclarationOrderKey(`schema ${name} relation`, recordKey)

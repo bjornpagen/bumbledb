@@ -14,7 +14,7 @@
  */
 
 import * as errors from "@superbuilders/errors"
-import { type AnyField, assertDeclarationOrderKey, type Infer, literalOf } from "#fields.ts"
+import { type AnyField, assertDeclarationOrderKey, assertDeclarationRecord, type Infer, literalOf } from "#fields.ts"
 import { type LiteralSetSpec, type LiteralSpec, renderLiteral } from "#spec.ts"
 
 /** Flattens an intersection into one displayed object type (hover legibility). */
@@ -198,6 +198,8 @@ function relation<const Name extends string, Fields extends FieldsShape>(
 	name: Name,
 	fields: Fields
 ): Relation<Name, Fields> {
+	assertDeclarationOrderKey("relation", name)
+	assertDeclarationRecord(`relation ${name} fields`, fields)
 	const ordered: RelationField[] = []
 	for (const [fieldName, field] of Object.entries(fields)) {
 		assertDeclarationOrderKey(`relation ${name} field`, fieldName)
