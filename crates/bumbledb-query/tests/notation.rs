@@ -505,7 +505,11 @@ fn measure_keyed_arg_round_trips() {
         (v1, ArgMin(v0, Duration(v2))) | Claim(source: v0, person: v1, span: v2);
     });
     assert_eq!(
-        pin("shortest-claim-source-fixed-point", Scheduling, &carried_reparsed),
+        pin(
+            "shortest-claim-source-fixed-point",
+            Scheduling,
+            &carried_reparsed
+        ),
         carried_normalized
     );
 }
