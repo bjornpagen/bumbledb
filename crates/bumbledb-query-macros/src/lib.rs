@@ -688,15 +688,32 @@ fn parse_head_term(tokens: &mut Tokens) -> Parse<HeadTerm> {
     Ok(HeadTerm::Var(name))
 }
 
-fn parse_head(mut tokens: Tokens) -> Parse<Vec<HeadTerm>> {
-    let mut head = Vec::new();
+/// One comma-separated group list — head terms, atom bindings, tree
+/// conditions. The separator is MANDATORY between items (the grammar's
+/// `x (',' x)*`, exactly): one strictness regime, one loop, so the
+/// parsed language cannot drift into a superset of the notation
+/// (finding 055).
+fn parse_separated<T>(
+    mut tokens: Tokens,
+    mut item: impl FnMut(&mut Tokens) -> Parse<T>,
+) -> Parse<Vec<T>> {
+    let mut items = Vec::new();
     while tokens.peek().is_some() {
-        head.push(parse_head_term(&mut tokens)?);
+        items.push(item(&mut tokens)?);
         if peek_punct(&mut tokens, ',') {
             tokens.next();
+        } else if let Some(extra) = tokens.next() {
+            return fail(
+                extra.span(),
+                format!("query!: expected `,`, found `{extra}`"),
+            );
         }
     }
-    Ok(head)
+    Ok(items)
+}
+
+fn parse_head(tokens: Tokens) -> Parse<Vec<HeadTerm>> {
+    parse_separated(tokens, parse_head_term)
 }
 
 /// Parses one selection value (after a binding's `==`).
@@ -755,52 +772,40 @@ fn expect_field_label(tokens: &mut Tokens) -> Parse<Name> {
     }
 }
 
-/// Parses one atom's bindings out of its paren group.
-fn parse_bindings(mut tokens: Tokens) -> Parse<Vec<Binding>> {
-    let mut bindings = Vec::new();
-    while tokens.peek().is_some() {
-        let field = expect_field_label(&mut tokens)?;
-        if peek_punct(&mut tokens, ':') {
-            expect_colon(&mut tokens, "the binding's `:`")?;
-            let var = expect_ident(&mut tokens, "a variable")?;
-            bindings.push(Binding::Var { field, var });
-        } else if peek_punct(&mut tokens, '=') {
-            expect_punct(&mut tokens, '=', "`==`")?;
-            expect_punct(&mut tokens, '=', "`==`")?;
-            let value = parse_sel_value(&mut tokens)?;
-            bindings.push(Binding::Value { field, value });
-        } else if peek_ident_text(&mut tokens).as_deref() == Some("in") {
-            let in_kw = expect_ident(&mut tokens, "`in`")?;
-            if !peek_punct(&mut tokens, '?') {
-                return fail(
-                    in_kw.span,
-                    "query!: a binding's `in` takes a ?param bound to a set — \
-                     interval membership is the `==` typing rule or a body item",
-                );
-            }
-            let question = expect_punct(&mut tokens, '?', "`?`")?;
-            let param = parse_param(&mut tokens, question)?;
-            bindings.push(Binding::SetParam { field, param });
-        } else {
-            bindings.push(Binding::Pun(field));
-        }
-        if peek_punct(&mut tokens, ',') {
-            tokens.next();
-        } else if let Some(extra) = tokens.next() {
+/// Parses one atom binding, per the grammar's four spellings.
+fn parse_binding(tokens: &mut Tokens) -> Parse<Binding> {
+    let field = expect_field_label(tokens)?;
+    if peek_punct(tokens, ':') {
+        expect_colon(tokens, "the binding's `:`")?;
+        let var = expect_ident(tokens, "a variable")?;
+        Ok(Binding::Var { field, var })
+    } else if peek_punct(tokens, '=') {
+        expect_punct(tokens, '=', "`==`")?;
+        expect_punct(tokens, '=', "`==`")?;
+        let value = parse_sel_value(tokens)?;
+        Ok(Binding::Value { field, value })
+    } else if peek_ident_text(tokens).as_deref() == Some("in") {
+        let in_kw = expect_ident(tokens, "`in`")?;
+        if !peek_punct(tokens, '?') {
             return fail(
-                extra.span(),
-                format!("query!: expected `,`, found `{extra}`"),
+                in_kw.span,
+                "query!: a binding's `in` takes a ?param bound to a set — \
+                 interval membership is the `==` typing rule or a body item",
             );
         }
+        let question = expect_punct(tokens, '?', "`?`")?;
+        let param = parse_param(tokens, question)?;
+        Ok(Binding::SetParam { field, param })
+    } else {
+        Ok(Binding::Pun(field))
     }
-    Ok(bindings)
 }
 
 fn parse_atom(tokens: &mut Tokens, relation: Name) -> Parse<Atom> {
     let (group, _) = take_paren_group(tokens, "the atom's bindings")?;
     Ok(Atom {
         relation,
-        bindings: parse_bindings(group)?,
+        bindings: parse_separated(group, parse_binding)?,
     })
 }
 
@@ -956,19 +961,7 @@ fn parse_tree_children(tokens: &mut Tokens, name: &Name) -> Parse<Vec<Cond>> {
             ),
         );
     }
-    let mut children = Vec::new();
-    while group.peek().is_some() {
-        children.push(parse_cond(&mut group)?);
-        if peek_punct(&mut group, ',') {
-            group.next();
-        } else if let Some(extra) = group.next() {
-            return fail(
-                extra.span(),
-                format!("query!: expected `,`, found `{extra}`"),
-            );
-        }
-    }
-    Ok(children)
+    parse_separated(group, parse_cond)
 }
 
 /// Parses one condition of a tree: a comparison leaf or a nested
@@ -1153,8 +1146,19 @@ fn parse_rule(tokens: &mut Tokens) -> Parse<ParsedRule> {
             return fail(Span::call_site(), "query!: a rule ends with `;`");
         }
         items.push(parse_item(tokens)?);
+        // The separator is mandatory between items (finding 055): `,`
+        // continues the body, `;` ends the rule, anything else is the
+        // grammar-superset this parser refuses.
         if peek_punct(tokens, ',') {
             tokens.next();
+        } else if !peek_punct(tokens, ';') {
+            return match tokens.next() {
+                Some(extra) => fail(
+                    extra.span(),
+                    format!("query!: expected `,` or `;`, found `{extra}`"),
+                ),
+                None => fail(Span::call_site(), "query!: a rule ends with `;`"),
+            };
         }
     }
     Ok(ParsedRule { name, head, items })
@@ -1537,7 +1541,10 @@ impl Emitter<'_> {
 
     /// One atom as an `Atom` expression — a predicate of this program by
     /// macro-local name, else the relation and every field through the
-    /// theory's id constants.
+    /// theory's id constants. The case partition is total (finding 054):
+    /// a lowercase name IS a predicate, so one absent from the table is
+    /// an unknown predicate, never a relation respelled — `parent(…)`
+    /// must not resolve to `Parent`'s constants.
     fn atom(&mut self, scope: &mut Scope, atom: &Atom) -> Parse<String> {
         if let Some(pred) = self
             .predicates
@@ -1546,6 +1553,24 @@ impl Emitter<'_> {
             .map(|(_, pred)| *pred)
         {
             return self.idb_atom(scope, atom, pred);
+        }
+        if atom
+            .relation
+            .text
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_lowercase())
+        {
+            return fail(
+                atom.relation.span,
+                format!(
+                    "query!: unknown predicate `{}` — lowercase names are \
+                     predicates and resolve macro-locally; relations are \
+                     UpperCamel (docs/architecture/20-query-ir.md § the \
+                     query notation)",
+                    atom.relation.text
+                ),
+            );
         }
         let relation = format!("{}::{}", self.theory, screaming_snake(&atom.relation.text));
         let theory = self.theory.to_owned();
