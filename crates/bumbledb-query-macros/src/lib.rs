@@ -101,7 +101,11 @@
 //! - **Integer literals** type by their own spelling: a bare unsigned
 //!   integer is `u64`, a negative one `i64`, and Rust's `u64`/`i64`
 //!   suffixes force the choice (`5i64` against an `i64` field). Interval
-//!   literals `start..end` follow the same rule over both bounds.
+//!   literals `start..end` follow the same rule over both bounds. The
+//!   magnitude is rustc's (ruled 2026-07-23, R8): an optional
+//!   `0x`/`0o`/`0b` radix prefix and `_` separators, uniformly here and
+//!   in the schema grammar; the renderer normalizes to canonical decimal,
+//!   so the round-trip law is canonical-form, not verbatim.
 //! - **Handle selection values**: a bare handle name (`kind == Focus`)
 //!   resolves through the field-named host enum's welded row id
 //!   (`Kind::Focus.id()`) — exact when the closed relation is named
@@ -419,10 +423,29 @@ fn is_int_text(text: &str) -> bool {
     text.chars().next().is_some_and(|c| c.is_ascii_digit()) && !text.contains('.')
 }
 
+/// The radix law (ruled 2026-07-23, R8): an integer magnitude is what
+/// rustc lexes — an optional `0x`/`0o`/`0b` prefix and `_` separators —
+/// uniformly at every integer position of both macro grammars
+/// (`bumbledb-macros`' `int_magnitude` is the schema twin). The type
+/// suffix is stripped before this check, so no branch order can invert
+/// the grammar.
+fn is_int_magnitude(text: &str) -> bool {
+    let (radix, digits) = match text.as_bytes() {
+        [b'0', b'x', ..] => (16, &text[2..]),
+        [b'0', b'o', ..] => (8, &text[2..]),
+        [b'0', b'b', ..] => (2, &text[2..]),
+        _ => (10, text),
+    };
+    digits.chars().any(|c| c != '_')
+        && digits.chars().all(|c| c == '_' || c.is_digit(radix))
+}
+
 /// Parses one `[-] int`, classifying by spelling: negative or
-/// `i64`-suffixed is signed; a `u64` suffix (or none) is unsigned. Any
-/// other suffix is rejected — the value sum holds exactly two integer
-/// types.
+/// `i64`-suffixed is signed; a `u64` suffix (or none) is unsigned. The
+/// suffix is stripped first, then one magnitude rule judges the rest —
+/// the value sum holds exactly two integer types, and every radix
+/// spelling rustc lexes is notation (the renderer normalizes to
+/// canonical decimal; the round-trip law is canonical-form).
 fn parse_int(tokens: &mut Tokens, what: &str) -> Parse<Int> {
     let negative = peek_punct(tokens, '-');
     if negative {
@@ -437,28 +460,30 @@ fn parse_int(tokens: &mut Tokens, what: &str) -> Parse<Int> {
                     format!("query!: expected {what}, found `{text}`"),
                 );
             }
-            let signed = if text.ends_with("i64") {
-                true
-            } else if text.ends_with("u64") {
-                if negative {
-                    return fail(lit.span(), "query!: a negative literal cannot carry `u64`");
-                }
-                false
-            } else if text.chars().all(|c| c.is_ascii_digit() || c == '_') {
-                negative
+            let (magnitude, suffix_signed) = if let Some(stripped) = text.strip_suffix("i64") {
+                (stripped, Some(true))
+            } else if let Some(stripped) = text.strip_suffix("u64") {
+                (stripped, Some(false))
             } else {
+                (text.as_str(), None)
+            };
+            if suffix_signed == Some(false) && negative {
+                return fail(lit.span(), "query!: a negative literal cannot carry `u64`");
+            }
+            if !is_int_magnitude(magnitude) {
                 return fail(
                     lit.span(),
                     format!(
-                        "query!: unsupported integer suffix on `{text}` — the value \
-                         types are u64 and i64"
+                        "query!: `{text}` is not an integer literal — the value types \
+                         are u64 and i64, spelled with an optional 0x/0o/0b radix, \
+                         `_` separators, and the u64/i64 suffixes"
                     ),
                 );
-            };
+            }
             Ok(Int {
                 negative,
                 text,
-                signed,
+                signed: suffix_signed.unwrap_or(negative),
             })
         }
         Some(other) => fail(

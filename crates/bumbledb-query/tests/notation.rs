@@ -721,6 +721,28 @@ fn mask_union_and_set_param_round_trip() {
     );
 }
 
+/// Integer literals are rustc's (ruled 2026-07-23, R8): radix prefixes
+/// and `_` separators are notation at every integer position — suffixed
+/// or bare — and the renderer normalizes to canonical decimal, so the
+/// round-trip law is canonical-form, not verbatim.
+#[test]
+fn radix_literals_normalize_to_canonical_decimal() {
+    let banded = query!(Ledger {
+        (id) | Posting(id, entry == 0x10, amount),
+               amount > -0b101, amount != -1_000, id < 0o17u64;
+    });
+    let normalized = "(v0) | Posting(id: v0, entry == 16, amount: v1), \
+         v1 > -5, v1 != -1000, v0 < 15;";
+    assert_eq!(pin("radix-literals", Ledger, &banded), normalized);
+    let reparsed = query!(Ledger {
+        (v0) | Posting(id: v0, entry == 16, amount: v1), v1 > -5, v1 != -1000, v0 < 15;
+    });
+    assert_eq!(
+        pin("radix-literals-fixed-point", Ledger, &reparsed),
+        normalized
+    );
+}
+
 /// The condition-tree grammar (ruled 2026-07-23, R9): `and(..)`/`or(..)`
 /// are notation, one item per tree, comparison leaves exactly as the IR's
 /// `ConditionTree` — and the renderer's functional forms reparse, closing
