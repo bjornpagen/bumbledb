@@ -21,6 +21,11 @@
 #                           leaf primitives (exec/swar.rs, pure u64
 #                           arithmetic, exercised through these probes)
 #   ir::normalize::fold::tests    condition folding over encoded words
+#   arena                   the bump arena (no unsafe today; interpreted
+#                           here so any future unsafe growth in exactly
+#                           the module shape that grows one is covered)
+#   digest                  the streaming digest (blake3's portable
+#                           body, same footing as encoding::tests)
 #
 # Exclusions, each with its reason:
 #   * every Db/Environment/TempDir-touching test module (api::,
@@ -28,11 +33,16 @@
 #     exec::dispatch, exec::colt, exec::introspection, ir::normalize::tests,
 #     ir::validate/render (schema fixtures only, but they sit beside
 #     Db-touching siblings and add no pure kernel coverage), plan::,
-#     digest, arena, the tests/ integration binaries) — FFI: they open
+#     the tests/ integration binaries) — FFI: they open
 #     LMDB environments through heed/lmdb-sys, and Miri cannot
 #     interpret the mdb_* foreign calls. colt's probe logic is pure,
 #     but its test fixtures build real stores, so it is out with the
 #     rest; its shared SWAR primitives are covered via exec::wordmap.
+#   * the ts bridge crate (ts/crate) runs on NO Miri lane — its unsafe
+#     is napi-boundary pointer laundering (lib.rs, marshal.rs), the
+#     same foreign wall as mdb_*, and its Rust tests open real LMDB
+#     stores. Refereed instead by the CI sdk lane: ts/crate's own
+#     `cargo test` (fingerprint_lock.rs) and the SDK node-test suite.
 #   * --skip exec::kernel::tests::allen on the NATIVE pass only —
 #     non-interpretable intrinsics, the same wall as FFI: on aarch64
 #     the Allen configuration kernel dispatches to the hand-NEON
@@ -64,7 +74,7 @@ cd "$(dirname "$0")/.."
 
 FILTERS="allen::tests:: interval::tests:: interval::sweep:: \
 encoding::tests:: schema::tests::member_set exec::kernel::tests:: \
-exec::wordmap:: ir::normalize::fold::tests::"
+exec::wordmap:: ir::normalize::fold::tests:: arena:: digest::"
 
 SKIPS="--skip exhaustive_ \
 --skip false_tag_rate_stays --skip a_single_multiply_hash \
