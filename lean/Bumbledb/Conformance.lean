@@ -549,6 +549,24 @@ def dnfBindings (W : Query.ListInstance) (ρ : Query.ParamEnv)
   dedupRows (rules.flatMap fun r =>
     (ruleStates W ρ r.body).map (fullRow n))
 
+/-! The fold-domain keys, decode-pinned: the derivation mark and the
+surface width read when present and default when absent — a corpus
+file built before the keys existed decodes unchanged. -/
+
+#guard ((decodeQuery (Json.mkObj [
+    ("rules", Json.arr #[Json.mkObj [
+      ("finds", Json.arr #[]), ("atoms", Json.arr #[]),
+      ("negated", Json.arr #[]), ("conditions", Json.arr #[]),
+      ("width", Json.num 3)]]),
+    ("dnf", Json.bool true)])).toOption.map
+  fun q => (q.dnf, q.rules.map ruleWidth)) == some (true, [3])
+
+#guard ((decodeQuery (Json.mkObj [
+    ("rules", Json.arr #[Json.mkObj [
+      ("finds", Json.arr #[]), ("atoms", Json.arr #[]),
+      ("negated", Json.arr #[]), ("conditions", Json.arr #[])]])])).toOption.map
+  fun q => (q.dnf, q.rules.map ruleWidth)) == some (false, [0])
+
 /-- A row's value at a variable position. -/
 def rowGet (row : List Value) (v : Query.VarId) : Value :=
   row.getD v.id ⟨.bool, false⟩
