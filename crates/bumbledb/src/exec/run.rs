@@ -595,6 +595,16 @@ pub struct Executor {
     /// type error (the poison-flag shape `origin_overflow` established:
     /// no `Result` on the per-tuple path).
     measure_of_ray: Option<[u64; 2]>,
+    /// The leaf overlap enumeration's per-execution index cache
+    /// (`overlap_leaf.rs`; reset per `execute` — group positions are
+    /// only stable within one execution).
+    overlap: crate::interval::overlap::OverlapCache,
+    /// The current leaf call's matched cover positions, start-ordered
+    /// (pooled — capacity retained).
+    overlap_hits: Vec<u32>,
+    /// The overlap cache-key scratch: cover occurrence + bound prefix
+    /// words (pooled).
+    overlap_key: Vec<u64>,
 }
 
 /// The pipelined executor's static shape tables:
@@ -668,6 +678,7 @@ mod cover;
 mod execute;
 mod leaf;
 mod leaf_precompute;
+mod overlap_leaf;
 mod pipe_tables;
 mod probe_pass;
 mod pump;

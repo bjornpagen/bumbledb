@@ -78,7 +78,8 @@ pub mod reference;
 mod neon;
 
 pub use allen::{
-    allen_code_batch, allen_filter_batch, allen_filter_columns, allen_filter_columns_const,
+    allen_code_batch, allen_code_batch_const, allen_filter_batch, allen_filter_columns,
+    allen_filter_columns_const,
 };
 pub use compact::compact_u32_by_mask;
 pub use filter::{

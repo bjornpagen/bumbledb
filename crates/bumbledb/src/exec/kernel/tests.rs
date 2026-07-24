@@ -1102,6 +1102,32 @@ fn allen_code_batch_matches_reference_and_classify_bit_for_bit() {
     }
 }
 
+/// The gathered const-operand wrapper (`allen_code_batch_const`, the
+/// leaf residual's parent-constant dispatch target) is bit-identical to
+/// the four-stream kernel over broadcast b-streams AND to per-pair
+/// classify — both orientations of the residual reach it (the swapped
+/// one through the converse mask, tested at the executor), so the codes
+/// themselves are pinned here across the window-width lengths.
+#[test]
+fn allen_code_batch_const_matches_the_broadcast_four_stream_kernel() {
+    let mut rng = Lcg(0xC0DE);
+    for &len in ALLEN_LENGTHS {
+        let (a_s, a_e, _, _) = allen_corpus(len, &mut rng);
+        for &(c_s, c_e) in &[(3u64, 9u64), (0, u64::MAX), (5, 6)] {
+            let mut kernel_const = Vec::new();
+            allen_code_batch_const(&a_s, &a_e, c_s, c_e, &mut kernel_const);
+            let mut broadcast = Vec::new();
+            allen_code_batch(&a_s, &a_e, &vec![c_s; len], &vec![c_e; len], &mut broadcast);
+            assert_eq!(kernel_const, broadcast, "const codes len {len}");
+            let c = bumbledb_theory::Interval::<u64>::new(c_s, c_e).expect("nonempty");
+            for i in 0..len {
+                let a = bumbledb_theory::Interval::<u64>::new(a_s[i], a_e[i]).expect("nonempty");
+                assert_eq!(kernel_const[i], crate::allen::classify(a, c) as u8);
+            }
+        }
+    }
+}
+
 /// `allen_filter_batch` (codes + broadcast mask → keep bytes) is
 /// bit-identical to the scalar reference across the 13 singletons, the
 /// workload composites, and randomized masks — and its keep byte equals

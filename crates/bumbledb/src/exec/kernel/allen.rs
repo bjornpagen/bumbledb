@@ -109,6 +109,25 @@ pub fn allen_code_batch(
     codes_into(a_starts, a_ends, b_starts, b_ends, codes);
 }
 
+/// [`allen_code_batch`] with a constant right operand — the leaf
+/// residual's parent-constant side (`run_node`'s Allen pass: a
+/// `Source::Slot` side reads the outer bindings, constant for the
+/// whole call): the constant's two words broadcast into the b-side
+/// predicate lanes, so the kernel streams two gathered arrays instead
+/// of four (two of which would repeat one value per lane).
+pub fn allen_code_batch_const(
+    a_starts: &[u64],
+    a_ends: &[u64],
+    b_start: u64,
+    b_end: u64,
+    codes: &mut Vec<u8>,
+) {
+    let n = a_starts.len();
+    debug_assert_eq!(a_ends.len(), n, "two equal-length endpoint streams");
+    codes.resize(n, 0);
+    codes_into_const(a_starts, a_ends, b_start, b_end, codes);
+}
+
 /// Configuration codes + the broadcast mask to keep bytes:
 /// `keep[i] = 1` iff `(1 << codes[i]) & mask != 0` — the membership
 /// test as a 16-byte `tbl` over the mask's per-code bit, broadcast once

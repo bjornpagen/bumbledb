@@ -137,19 +137,58 @@ impl Executor {
             ));
         }
 
+        // The overlap enumeration (finding 012; overlap_leaf.rs): a
+        // connected-mask Allen residual against an outer constant
+        // enumerates only the cover positions overlapping it — the
+        // start-sorted max-end index replaces the per-key all-pairs
+        // walk. Only the enumeration changes: the yielded batch runs
+        // the same probes and residuals below (the driving mask stays
+        // data — its kernel still filters the candidates), so a
+        // position the index withholds is exactly one that residual
+        // would have discarded.
+        let overlap = self.overlap_enumerate(
+            plan,
+            node_idx,
+            cover_occ,
+            cover_cursor,
+            cover_level,
+            &colts[cover_occ],
+            bindings,
+            &scratch.allen_sources,
+        );
+        let mut overlap_drained = 0usize;
+
         let mut token = BatchToken::default();
         let mut flow = Flow::Continue;
 
         'outer: loop {
             counters.phase_start(node_idx, JoinPhase::Iter);
-            let (yielded, next_token) = colts[cover_occ].iter_batch(
-                cover_cursor,
-                cover_level,
-                token,
-                &mut scratch.entry_keys,
-                &mut scratch.children,
-                if gate_cover { 1 } else { self.batch },
-            );
+            let (yielded, next_token) = if overlap {
+                // Drain the matched positions in batch-sized bites,
+                // materialized in the exact iter_batch shape (key
+                // words + pinned-row children). `gate_cover` cannot
+                // hold here — an interval cover word means arity ≥ 2.
+                let take = (self.overlap_hits.len() - overlap_drained).min(self.batch);
+                super::overlap_leaf::overlap_gather(
+                    &colts[cover_occ],
+                    cover_level,
+                    arity,
+                    &self.overlap_hits[overlap_drained..overlap_drained + take],
+                    &mut scratch.entry_keys,
+                    &mut scratch.children,
+                );
+                overlap_drained += take;
+                (take, token)
+            } else {
+                colts[cover_occ].iter_batch(
+                    cover_cursor,
+                    cover_level,
+                    token,
+                    &mut scratch.entry_keys,
+                    &mut scratch.children,
+                    if gate_cover { 1 } else { self.batch },
+                )
+            };
             counters.phase_end(node_idx, JoinPhase::Iter);
             if yielded == 0 {
                 break;
@@ -321,48 +360,98 @@ impl Executor {
                 }
                 crate::exec::kernel::compact_u32_by_mask(&mut scratch.survivors, &scratch.mask);
             }
-            // Allen residuals: gather the four endpoint streams per
-            // survivor (the gathered shape — batch key words or binding
-            // slots), classify the whole batch through the configuration
-            // kernel (8 predicate lanes, the 64-byte `tbl` nibble table,
-            // the broadcast mask), and compact on the branchless
-            // cursor-write like every residual — no per-element
-            // classify, no scalar flag chain
+            // Allen residuals: classify the survivor batch through the
+            // configuration kernel (8 predicate lanes, the 64-byte
+            // `tbl` nibble table, the broadcast mask) and compact on
+            // the branchless cursor-write like every residual — no
+            // per-element classify, no scalar flag chain
             // (docs/architecture/40-execution.md, § vectorized
-            // execution).
+            // execution). Operand streams dispatch on the resolved
+            // source shapes: at the leaf (the entry assert) a Slot side
+            // reads the outer bindings — constant for the whole call —
+            // so only Batch sides gather; a constant side hoists once
+            // and broadcasts through the const-operand kernel, with the
+            // (Slot, Batch) orientation classifying the swapped pair
+            // under the converse mask (`Allen(a, b, m) ≡ Allen(b, a,
+            // converse(m))`, the theory crate's reversal law). The
+            // mixed shapes are structural: a cross-atom residual's two
+            // vars belong to different atoms, so at most one is a cover
+            // var. `probe_pass`'s twin keeps the four-stream gather on
+            // purpose — its Slot operands are per-parent, never
+            // batch-constant.
             for (r_idx, (lhs_src, rhs_src)) in scratch.allen_sources.iter().enumerate() {
                 let mask = self.allen_masks[node_idx][r_idx];
                 let n = scratch.survivors.len();
-                scratch.allen_gather.clear();
-                scratch.allen_gather.resize(4 * n, 0);
-                let (a_starts, rest) = scratch.allen_gather.split_at_mut(n);
-                let (a_ends, rest) = rest.split_at_mut(n);
-                let (b_starts, b_ends) = rest.split_at_mut(n);
-                for k in 0..n {
-                    let e = scratch.survivors[k];
-                    let entry = usize::try_from(e).expect("batch fits usize");
-                    let value = |src: &Source, offset: usize| match *src {
-                        Source::Batch(word) => scratch.entry_keys[entry * arity + word + offset],
-                        Source::Slot(slot) => bindings.get(slot + offset),
-                    };
-                    a_starts[k] = value(lhs_src, 0);
-                    a_ends[k] = value(lhs_src, 1);
-                    b_starts[k] = value(rhs_src, 0);
-                    b_ends[k] = value(rhs_src, 1);
+                let filter_mask = match (*lhs_src, *rhs_src) {
+                    (Source::Batch(lw), Source::Batch(rw)) => {
+                        scratch.allen_gather.clear();
+                        scratch.allen_gather.resize(4 * n, 0);
+                        let (a_starts, rest) = scratch.allen_gather.split_at_mut(n);
+                        let (a_ends, rest) = rest.split_at_mut(n);
+                        let (b_starts, b_ends) = rest.split_at_mut(n);
+                        for (k, &e) in scratch.survivors[..n].iter().enumerate() {
+                            let entry = usize::try_from(e).expect("batch fits usize");
+                            a_starts[k] = scratch.entry_keys[entry * arity + lw];
+                            a_ends[k] = scratch.entry_keys[entry * arity + lw + 1];
+                            b_starts[k] = scratch.entry_keys[entry * arity + rw];
+                            b_ends[k] = scratch.entry_keys[entry * arity + rw + 1];
+                        }
+                        crate::exec::kernel::allen_code_batch(
+                            a_starts,
+                            a_ends,
+                            b_starts,
+                            b_ends,
+                            &mut scratch.allen_codes,
+                        );
+                        Some(mask)
+                    }
+                    (Source::Batch(word), Source::Slot(slot)) => {
+                        allen_classify_const(
+                            &scratch.survivors[..n],
+                            &scratch.entry_keys,
+                            arity,
+                            word,
+                            (bindings.get(slot), bindings.get(slot + 1)),
+                            &mut scratch.allen_gather,
+                            &mut scratch.allen_codes,
+                        );
+                        Some(mask)
+                    }
+                    (Source::Slot(slot), Source::Batch(word)) => {
+                        allen_classify_const(
+                            &scratch.survivors[..n],
+                            &scratch.entry_keys,
+                            arity,
+                            word,
+                            (bindings.get(slot), bindings.get(slot + 1)),
+                            &mut scratch.allen_gather,
+                            &mut scratch.allen_codes,
+                        );
+                        Some(mask.converse())
+                    }
+                    (Source::Slot(ls), Source::Slot(rs)) => {
+                        // Both sides batch-constant: one scalar classify
+                        // decides the whole batch — the mask byte is
+                        // uniform, no kernel runs.
+                        let code = crate::allen::classify_bounds(
+                            &bindings.get(ls),
+                            &bindings.get(ls + 1),
+                            &bindings.get(rs),
+                            &bindings.get(rs + 1),
+                        );
+                        scratch.mask.clear();
+                        scratch.mask.resize(n, u8::from(mask.contains(code)));
+                        None
+                    }
+                };
+                if let Some(filter_mask) = filter_mask {
+                    crate::exec::kernel::allen_filter_batch(
+                        &scratch.allen_codes,
+                        filter_mask,
+                        &mut scratch.mask,
+                    );
                 }
-                crate::exec::kernel::allen_code_batch(
-                    a_starts,
-                    a_ends,
-                    b_starts,
-                    b_ends,
-                    &mut scratch.allen_codes,
-                );
-                crate::exec::kernel::allen_filter_batch(
-                    &scratch.allen_codes,
-                    mask,
-                    &mut scratch.mask,
-                );
-                for &keep in &scratch.mask {
+                for &keep in &scratch.mask[..n] {
                     counters.residual(node_idx, keep != 0);
                 }
                 crate::exec::kernel::compact_u32_by_mask(&mut scratch.survivors, &scratch.mask);
@@ -542,4 +631,30 @@ impl Executor {
         }
         best.expect("validated plans have non-empty cover sets").0
     }
+}
+
+/// The const-operand classify of the leaf Allen pass: gathers only the
+/// batch side's endpoint pair streams (the constant side would repeat
+/// one hoisted pair per lane) and classifies through the broadcast
+/// kernel. The batch side is always the a operand — the caller supplies
+/// the converse mask when the residual's orientation is swapped.
+fn allen_classify_const(
+    survivors: &[u32],
+    entry_keys: &[u64],
+    arity: usize,
+    word: usize,
+    (b_start, b_end): (u64, u64),
+    gather: &mut Vec<u64>,
+    codes: &mut Vec<u8>,
+) {
+    let n = survivors.len();
+    gather.clear();
+    gather.resize(2 * n, 0);
+    let (starts, ends) = gather.split_at_mut(n);
+    for (k, &e) in survivors.iter().enumerate() {
+        let entry = usize::try_from(e).expect("batch fits usize");
+        starts[k] = entry_keys[entry * arity + word];
+        ends[k] = entry_keys[entry * arity + word + 1];
+    }
+    crate::exec::kernel::allen_code_batch_const(starts, ends, b_start, b_end, codes);
 }

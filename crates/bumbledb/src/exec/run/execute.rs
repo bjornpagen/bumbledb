@@ -316,6 +316,9 @@ impl Executor {
             all_cancelled: false,
             origin_overflow: false,
             measure_of_ray: None,
+            overlap: crate::interval::overlap::OverlapCache::default(),
+            overlap_hits: Vec::new(),
+            overlap_key: Vec::new(),
         }
     }
 
@@ -381,6 +384,9 @@ impl Executor {
         debug_assert_eq!(plan.nodes().len(), self.scratch.len(), "same plan shape");
         bindings.reset();
         self.measure_of_ray = None;
+        // Overlap indexes key trie paths that this execution's forces
+        // will mint afresh (the per-execution boundary, overlap_leaf.rs).
+        self.overlap.reset();
         self.cursors.clear();
         // Each occurrence starts below its selection levels — the root
         // when it has none, the post-`select` cursor otherwise

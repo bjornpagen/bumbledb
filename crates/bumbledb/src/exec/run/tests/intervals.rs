@@ -823,6 +823,301 @@ fn allen_masks_agree_with_the_naive_model_on_a_randomized_corpus() {
     }
 }
 
+// ---------- the overlap enumeration (finding 012, overlap_leaf.rs) ----------
+
+/// R(id u64, key u64, during Interval<u64>) — the t2 shape.
+fn keyed_span_schema() -> Schema {
+    SchemaDescriptor {
+        relations: vec![RelationDescriptor {
+            extension: None,
+            name: "R0".into(),
+            fields: vec![
+                FieldDescriptor {
+                    name: "id".into(),
+                    value_type: ValueType::U64,
+                    generation: Generation::None,
+                },
+                FieldDescriptor {
+                    name: "key".into(),
+                    value_type: ValueType::U64,
+                    generation: Generation::None,
+                },
+                FieldDescriptor {
+                    name: "during".into(),
+                    value_type: ValueType::Interval {
+                        element: bumbledb_theory::schema::IntervalElement::U64,
+                        width: None,
+                    },
+                    generation: Generation::None,
+                },
+            ],
+        }],
+        statements: vec![],
+    }
+    .validate()
+    .expect("valid fixture")
+}
+
+/// Commits `(id, key, [start, end))` rows and builds the one image.
+fn keyed_span_views(
+    dir: &TempDir,
+    schema: &Schema,
+    rows: &[(u64, u64, u64, u64)],
+) -> Vec<Arc<crate::image::RelationImage>> {
+    let env = Environment::create(dir.path(), schema).expect("create");
+    let view = env.read_txn().expect("txn");
+    let mut delta = WriteDelta::new(schema);
+    for (id, key, start, end) in rows {
+        let mut bytes = Vec::new();
+        encode_fact(
+            &[
+                ValueRef::U64(*id),
+                ValueRef::U64(*key),
+                ValueRef::IntervalU64(
+                    bumbledb_theory::Interval::<u64>::new(*start, *end).expect("nonempty"),
+                ),
+            ],
+            schema.relation(RelationId(0)).layout(),
+            &mut bytes,
+        );
+        delta.insert(&view, RelationId(0), &bytes).expect("insert");
+    }
+    drop(view);
+    commit(delta, &env).expect("commit");
+    let txn = env.read_txn().expect("txn");
+    vec![crate::image::build(&txn, schema, RelationId(0)).expect("build")]
+}
+
+/// The t2 query: `R(a, k, u), R(b, k, v), a < b, Allen(u, v, mask)` —
+/// the per-key pairwise self-join, exactly the bench lane's shape.
+fn keyed_span_query(mask: AllenMask) -> NormalizedQuery {
+    let occurrences = vec![
+        Occurrence {
+            occ_id: OccId(0),
+            source: crate::ir::AtomSource::Edb(RelationId(0)),
+            role: Role::Positive,
+            vars: vec![
+                (FieldId(0), VarId(0)),
+                (FieldId(1), VarId(1)),
+                (FieldId(2), VarId(2)),
+            ],
+            filters: vec![],
+        },
+        Occurrence {
+            occ_id: OccId(1),
+            source: crate::ir::AtomSource::Edb(RelationId(0)),
+            role: Role::Positive,
+            vars: vec![
+                (FieldId(0), VarId(3)),
+                (FieldId(1), VarId(1)),
+                (FieldId(2), VarId(4)),
+            ],
+            filters: vec![],
+        },
+    ];
+    NormalizedQuery {
+        dead: None,
+        occurrences,
+        residuals: vec![PlacedComparison {
+            op: CmpOp::Lt,
+            lhs: VarId(0),
+            rhs: VarId(3),
+        }],
+        word_residuals: vec![],
+        allen_residuals: vec![PlacedAllen {
+            lhs: VarId(2),
+            rhs: VarId(4),
+            mask: MaskTerm::Literal(mask),
+        }],
+        duration_residuals: Vec::new(),
+        anti_probes: vec![],
+        slot_widths: [
+            (VarId(0), SlotWidth::ONE),
+            (VarId(1), SlotWidth::ONE),
+            (VarId(2), SlotWidth::TWO),
+            (VarId(3), SlotWidth::ONE),
+            (VarId(4), SlotWidth::TWO),
+        ]
+        .into_iter()
+        .collect(),
+    }
+}
+
+/// Group sizes straddling the crossover (`OVERLAP_CROSSOVER` = 16):
+/// singletons and tiny groups keep the generic path, the 40/200 groups
+/// take the index. Random spans over a dense domain (adjacency and
+/// nesting constant), every 13th a ray.
+fn keyed_span_corpus(state: &mut u64) -> Vec<(u64, u64, u64, u64)> {
+    let mut rows = Vec::new();
+    let mut id = 0u64;
+    for (key, size) in [
+        (0u64, 1usize),
+        (1, 2),
+        (2, 3),
+        (3, 15),
+        (4, 40),
+        (5, 200),
+        (6, 25),
+    ] {
+        for _ in 0..size {
+            let start = splitmix(state) % 500;
+            let end = if id % 13 == 5 {
+                u64::MAX
+            } else {
+                start + 1 + splitmix(state) % 15
+            };
+            rows.push((id, key, start, end));
+            id += 1;
+        }
+    }
+    rows
+}
+
+/// The naive t2 model: per key, nested-loop classify-and-test with the
+/// strict id order.
+fn naive_keyed_pairs(mask: AllenMask, rows: &[(u64, u64, u64, u64)]) -> BTreeSet<(u64, u64)> {
+    rows.iter()
+        .flat_map(|&(a_id, a_key, a_s, a_e)| {
+            rows.iter().filter_map(move |&(b_id, b_key, b_s, b_e)| {
+                let u = bumbledb_theory::Interval::<u64>::new(a_s, a_e).expect("nonempty");
+                let v = bumbledb_theory::Interval::<u64>::new(b_s, b_e).expect("nonempty");
+                (a_key == b_key && a_id < b_id && mask.contains(crate::allen::classify(u, v)))
+                    .then_some((a_id, b_id))
+            })
+        })
+        .collect()
+}
+
+/// Per-node batched-entry tallies — the enumeration's observable.
+#[derive(Default)]
+struct BatchTally {
+    per_node: Vec<u64>,
+}
+
+impl Counters for BatchTally {
+    fn node_entry(&mut self, _: usize) {}
+    fn batch(&mut self, node: usize, len: usize) {
+        if self.per_node.len() <= node {
+            self.per_node.resize(node + 1, 0);
+        }
+        self.per_node[node] += len as u64;
+    }
+    fn cover_choice(&mut self, _: usize, _: usize, _: bool) {}
+    fn probe_hash(&mut self, _: usize, _: usize) {}
+    fn probe(&mut self, _: usize, _: usize, _: bool) {}
+    fn residual(&mut self, _: usize, _: bool) {}
+    fn anti_probe(&mut self, _: usize, _: bool) {}
+    fn emit(&mut self) {}
+    fn skip(&mut self, _: usize) {}
+}
+
+fn run_tallied(
+    plan: &ValidatedPlan,
+    views: &[Arc<crate::image::RelationImage>],
+    batch: usize,
+) -> (BTreeSet<Vec<u64>>, Vec<u64>) {
+    let mut colts = colts_for(plan, views);
+    let mut bindings = Bindings::new(plan.slot_count());
+    let mut sink = CollectSink::default();
+    let mut executor = Executor::with_batch_size(plan, batch);
+    let mut tally = BatchTally::default();
+    executor
+        .execute(plan, &mut colts, &mut bindings, &mut sink, &mut tally)
+        .expect("execute");
+    (sink.rows, tally.per_node)
+}
+
+/// The t2-shaped correctness gate: across connected masks (the index
+/// path), a disconnected composite (the generic path), both join
+/// orders (both residual orientations), and batch sizes 1/7/default,
+/// the per-key overlap self-join answers exactly the naive model —
+/// groups straddle the crossover so one run exercises index, fallback,
+/// and their seam.
+#[test]
+fn keyed_overlap_self_join_agrees_with_the_naive_model() {
+    use bumbledb_theory::allen::Basic;
+    let dir = TempDir::new("run-overlap-keyed");
+    let schema = keyed_span_schema();
+    let mut state = 0x07E2_u64;
+    let rows = keyed_span_corpus(&mut state);
+    let views = keyed_span_views(&dir, &schema, &rows);
+    let masks = [
+        AllenMask::INTERSECTS,
+        AllenMask::new(Basic::During.bit()).expect("singleton"),
+        AllenMask::OVERLAPS | AllenMask::DURING,
+        AllenMask::DURING | AllenMask::MEETS, // disconnected: generic path
+    ];
+    for mask in masks {
+        let expected = naive_keyed_pairs(mask, &rows);
+        for order in [[0u16, 1u16], [1, 0]] {
+            let query = keyed_span_query(mask);
+            let plan = planned_with_sinks(&query, &schema, &order, &all_vars(&query));
+            for batch in [1usize, 7, BATCH] {
+                let got: BTreeSet<(u64, u64)> = run_at(&plan, &views, batch)
+                    .iter()
+                    .map(|row| (row[plan.slot_of(VarId(0))], row[plan.slot_of(VarId(3))]))
+                    .collect();
+                assert_eq!(
+                    got,
+                    expected,
+                    "mask {:#06x} order {order:?} batch {batch}",
+                    mask.bits()
+                );
+            }
+        }
+    }
+}
+
+/// The enumeration's teeth: under `INTERSECTS` the leaf batches exactly
+/// the true overlap candidates for crossover-sized groups (plus the
+/// full sub-crossover groups the fallback enumerates); the disconnected
+/// `DURING ∪ MEETS` composite must decline the index and enumerate
+/// every group whole. Candidate counts are computed from the raw rows —
+/// the assertion fails both ways: an incomplete index loses answers in
+/// the model test above, a silent fall-through to all-pairs shows up
+/// here as the n² tally.
+#[test]
+fn the_overlap_enumeration_prunes_the_leaf_batch_to_true_candidates() {
+    let dir = TempDir::new("run-overlap-tally");
+    let schema = keyed_span_schema();
+    let mut state = 0x7A11_u64;
+    let rows = keyed_span_corpus(&mut state);
+    let views = keyed_span_views(&dir, &schema, &rows);
+    let group_size = |key: u64| rows.iter().filter(|r| r.1 == key).count() as u64;
+    let overlaps = |a: &(u64, u64, u64, u64), b: &(u64, u64, u64, u64)| {
+        a.2 < b.3 && b.2 < a.3 // half-open shared point over raw words
+    };
+    // Per outer row: the index yields its true candidates; a
+    // sub-crossover group falls back to the whole group.
+    let candidates: u64 = rows
+        .iter()
+        .map(|a| {
+            if group_size(a.1) >= crate::exec::run::overlap_leaf::OVERLAP_CROSSOVER {
+                rows.iter().filter(|b| b.1 == a.1 && overlaps(a, b)).count() as u64
+            } else {
+                group_size(a.1)
+            }
+        })
+        .sum();
+    let full: u64 = rows.iter().map(|a| group_size(a.1)).sum();
+    assert!(candidates * 4 < full, "the corpus makes pruning visible");
+    let query = keyed_span_query(AllenMask::INTERSECTS);
+    let plan = planned_with_sinks(&query, &schema, &[0, 1], &all_vars(&query));
+    let leaf = plan.nodes().len() - 1;
+    let (_, tally) = run_tallied(&plan, &views, BATCH);
+    assert_eq!(
+        tally[leaf], candidates,
+        "the index enumerates candidates only"
+    );
+    let generic = keyed_span_query(AllenMask::DURING | AllenMask::MEETS);
+    let plan = planned_with_sinks(&generic, &schema, &[0, 1], &all_vars(&generic));
+    let (_, tally) = run_tallied(&plan, &views, BATCH);
+    assert_eq!(
+        tally[leaf], full,
+        "a disconnected mask keeps the generic enumeration"
+    );
+}
+
 /// The pipelined twin: a third occurrence joined after the pair puts
 /// the Allen residual on a **middle** node, so it evaluates through
 /// `probe_pass`'s configuration-kernel pass (gather → codes → broadcast
@@ -889,5 +1184,181 @@ fn allen_masks_agree_with_the_naive_model_through_the_pipelined_pass() {
             "mask {:#06x}",
             mask.bits()
         );
+    }
+}
+
+// ---------- the overlap measurement rig (manual, release) ----------
+
+/// Per-(node, phase) wall accumulation through the always-present
+/// `Counters` phase hooks — the rig behind `OVERLAP_CROSSOVER` and the
+/// finding-048 phase-fraction question. Batch-granular events, so the
+/// clock overhead stays a small, phase-uniform additive.
+#[derive(Default)]
+struct PhaseProfile {
+    acc: [[u64; 6]; 8],
+    open: [[u64; 6]; 8],
+    epoch: Option<std::time::Instant>,
+}
+
+fn phase_slot(phase: JoinPhase) -> usize {
+    match phase {
+        JoinPhase::Iter => 0,
+        JoinPhase::Hash => 1,
+        JoinPhase::Probe => 2,
+        JoinPhase::Residual => 3,
+        JoinPhase::Descend => 4,
+        JoinPhase::Force => 5,
+    }
+}
+
+impl PhaseProfile {
+    fn now(&mut self) -> u64 {
+        let epoch = *self.epoch.get_or_insert_with(std::time::Instant::now);
+        u64::try_from(epoch.elapsed().as_nanos()).expect("short run")
+    }
+}
+
+impl Counters for PhaseProfile {
+    fn node_entry(&mut self, _: usize) {}
+    fn batch(&mut self, _: usize, _: usize) {}
+    fn cover_choice(&mut self, _: usize, _: usize, _: bool) {}
+    fn probe_hash(&mut self, _: usize, _: usize) {}
+    fn probe(&mut self, _: usize, _: usize, _: bool) {}
+    fn residual(&mut self, _: usize, _: bool) {}
+    fn anti_probe(&mut self, _: usize, _: bool) {}
+    fn emit(&mut self) {}
+    fn skip(&mut self, _: usize) {}
+    fn phase_start(&mut self, node: usize, phase: JoinPhase) {
+        let stamp = self.now();
+        self.open[node.min(7)][phase_slot(phase)] = stamp;
+    }
+    fn phase_end(&mut self, node: usize, phase: JoinPhase) {
+        let stamp = self.now();
+        let cell = &mut self.acc[node.min(7)][phase_slot(phase)];
+        *cell += stamp - self.open[node.min(7)][phase_slot(phase)];
+    }
+}
+
+/// Uniform per-key groups: `keys × per_key` rows, spans of width 1..=15
+/// over the horizon (short spans over a long horizon — the t2 span
+/// geometry), every 13th a ray.
+fn uniform_keyed_corpus(
+    keys: u64,
+    per_key: u64,
+    horizon: u64,
+    state: &mut u64,
+) -> Vec<(u64, u64, u64, u64)> {
+    let mut rows = Vec::new();
+    let mut id = 0u64;
+    for key in 0..keys {
+        for _ in 0..per_key {
+            let start = splitmix(state) % horizon;
+            let end = if id % 13 == 5 {
+                u64::MAX
+            } else {
+                start + 1 + splitmix(state) % 15
+            };
+            rows.push((id, key, start, end));
+            id += 1;
+        }
+    }
+    rows
+}
+
+fn timed_run(
+    plan: &ValidatedPlan,
+    views: &[Arc<crate::image::RelationImage>],
+    reps: usize,
+) -> (std::time::Duration, usize) {
+    let mut samples = Vec::with_capacity(reps);
+    let mut answers = 0usize;
+    for _ in 0..reps {
+        let mut colts = colts_for(plan, views);
+        let mut bindings = Bindings::new(plan.slot_count());
+        let mut sink = CollectSink::default();
+        let mut executor = Executor::new(plan);
+        let t0 = std::time::Instant::now();
+        executor
+            .execute(plan, &mut colts, &mut bindings, &mut sink, &mut NoopCounters)
+            .expect("execute");
+        samples.push(t0.elapsed());
+        answers = sink.rows.len();
+    }
+    samples.sort_unstable();
+    (samples[samples.len() / 2], answers)
+}
+
+/// The measurement rig (manual, quiet machine):
+/// `cargo test -p bumbledb --release --lib overlap_profile -- --ignored --nocapture`
+///
+/// Prints (1) the crossover sweep — index (`INTERSECTS`, connected) vs
+/// generic (`INTERSECTS ∪ MEETS`, disconnected but ~identically
+/// selective) p50 per uniform group size — and (2) the t2-scale phase
+/// fractions of the generic shape (the finding-048 question: how much
+/// of the leaf the Allen residual pass owns).
+#[test]
+#[ignore = "manual profiling rig — run release with --nocapture"]
+fn overlap_profile() {
+    let generic_mask = AllenMask::INTERSECTS | AllenMask::MEETS;
+    // (1) crossover sweep: constant total rows, group size swept.
+    for per_key in [4u64, 8, 16, 32, 64, 128] {
+        let keys = 4096 / per_key;
+        let mut state = 0x0C10_55E0_u64 ^ per_key;
+        // Horizon scaled to the group so per-query hits stay a small
+        // fraction (the t2 selectivity class).
+        let rows = uniform_keyed_corpus(keys, per_key, per_key * 40, &mut state);
+        let dir = TempDir::new(&format!("run-overlap-prof-{per_key}"));
+        let schema = keyed_span_schema();
+        let views = keyed_span_views(&dir, &schema, &rows);
+        let query = keyed_span_query(AllenMask::INTERSECTS);
+        let plan = planned_with_sinks(&query, &schema, &[0, 1], &all_vars(&query));
+        let (index_p50, index_answers) = timed_run(&plan, &views, 7);
+        let query = keyed_span_query(generic_mask);
+        let plan = planned_with_sinks(&query, &schema, &[0, 1], &all_vars(&query));
+        let (generic_p50, _) = timed_run(&plan, &views, 7);
+        println!(
+            "crossover n={per_key:>3}: index {index_p50:>10.1?}  generic {generic_p50:>10.1?}  \
+             ratio {:.2}  answers {index_answers}",
+            generic_p50.as_secs_f64() / index_p50.as_secs_f64(),
+        );
+    }
+    // (2) t2-scale phase fractions of the generic (all-pairs) shape.
+    let mut state = 0x07E2_5CA1_u64;
+    let rows = uniform_keyed_corpus(400, 75, 3000, &mut state);
+    let dir = TempDir::new("run-overlap-prof-t2");
+    let schema = keyed_span_schema();
+    let views = keyed_span_views(&dir, &schema, &rows);
+    for (name, mask) in [("generic", generic_mask), ("index", AllenMask::INTERSECTS)] {
+        let query = keyed_span_query(mask);
+        let plan = planned_with_sinks(&query, &schema, &[0, 1], &all_vars(&query));
+        let mut colts = colts_for(&plan, &views);
+        let mut bindings = Bindings::new(plan.slot_count());
+        let mut sink = CollectSink::default();
+        let mut executor = Executor::new(&plan);
+        let mut profile = PhaseProfile::default();
+        let t0 = std::time::Instant::now();
+        executor
+            .execute(&plan, &mut colts, &mut bindings, &mut sink, &mut profile)
+            .expect("execute");
+        let total = t0.elapsed();
+        println!("t2-scale [{name}] total {total:?} answers {}", sink.rows.len());
+        let names = ["iter", "hash", "probe", "residual", "descend", "force"];
+        for (node, phases) in profile.acc.iter().enumerate() {
+            if phases.iter().all(|&nanos| nanos == 0) {
+                continue;
+            }
+            let line: Vec<String> = names
+                .iter()
+                .zip(phases)
+                .map(|(phase, &nanos)| {
+                    format!(
+                        "{phase} {:.1}ms ({:.0}%)",
+                        nanos as f64 / 1e6,
+                        nanos as f64 / total.as_nanos() as f64 * 100.0
+                    )
+                })
+                .collect();
+            println!("  node {node}: {}", line.join("  "));
+        }
     }
 }
