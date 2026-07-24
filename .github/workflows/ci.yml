@@ -82,7 +82,15 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
+          # restore-keys (every cache step here): an exact-key miss —
+          # any lockfile or toolchain repin — restores the nearest
+          # previous cache and rebuilds only the delta instead of going
+          # fully cold. Prefix-restored target/ dirs accumulate stale
+          # artifacts across saves; if cache size ever matters, rotate
+          # the key — a maintenance nuance, not a reason to stay cold.
           key: check-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
+          restore-keys: |
+            check-${{ runner.os }}-
       - run: scripts/check.sh
 
   # Lane 2 — Miri, both interpretation targets (native arm64 + the
@@ -105,6 +113,8 @@ jobs:
             ~/.cargo/git
             target
           key: miri-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
+          restore-keys: |
+            miri-${{ runner.os }}-
       - run: scripts/miri.sh
 
   # Lane 3 — the Lean gate (the covenant campaign, PRD 01; census
@@ -139,6 +149,8 @@ jobs:
             ~/.elan
             lean/.lake
           key: lean-${{ runner.os }}-${{ hashFiles('lean/lean-toolchain') }}
+          restore-keys: |
+            lean-${{ runner.os }}-
       - name: install elan (the pinned Lean toolchain)
         # lean/lean-toolchain owns the exact version; elan resolves and
         # installs it on first `lake` invocation inside lean/. On a
@@ -158,6 +170,8 @@ jobs:
             ~/.cargo/git
             target
           key: lean-conformance-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
+          restore-keys: |
+            lean-conformance-${{ runner.os }}-
       - run: scripts/lean.sh
 
   # Lane 4 — the SDK lane (the hardening-0.3.0 packet, PRD T6): both
@@ -209,6 +223,8 @@ jobs:
             ~/.cargo/git
             ts/crate/target
           key: sdk-cargo-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'ts/crate/Cargo.lock') }}
+          restore-keys: |
+            sdk-cargo-${{ runner.os }}-
       - name: resolve the pnpm store path
         id: pnpm-store
         run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
@@ -217,6 +233,8 @@ jobs:
         with:
           path: ${{ steps.pnpm-store.outputs.path }}
           key: sdk-pnpm-${{ runner.os }}-${{ hashFiles('ts/pnpm-lock.yaml') }}
+          restore-keys: |
+            sdk-pnpm-${{ runner.os }}-
       - run: pnpm install --frozen-lockfile
         working-directory: ts
       - name: build the napi bridge + SDK from source
