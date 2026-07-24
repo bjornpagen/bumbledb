@@ -37,17 +37,28 @@ disagreement, never a silent drop). Order keys compare as encoded
 words (`Value.orderWord` — the order embeddings make word order value
 order). The multi-rule aggregate head folds the union of the rules'
 head-projected binding sets — the HAND-WRITTEN multi-rule law the
-executor's spanning seen-set realizes. Surface `or` is
-fold-transparent (ruled 2026-07-23, R2): a DNF-derived rule set
-re-keys the union dedup on the shared slot array, and
-`dnf_rekey_transparent` (`Exec/Dedup.lean`) is the proved law — the
-re-keyed union fold of a lowering equals the written rule's aggregate
-denotation. PROOF OBLIGATION (R2), recorded here and at the law:
-`evalUnion` below keys the head projection for EVERY rule list,
-because the interchange format carries lowered rules with no
-derivation mark; the serializer marks DNF-derived sets, `evalUnion`
-re-keys them, and the OR+aggregate case class enters the corpus so
-the third oracle adjudicates the regime — all with the lowering fix.
+executor's spanning seen-set realizes (`union_regime_agg_heads`,
+`Exec/Dedup.lean` — the aggregate-head coverage; `evalUnion` below is
+its executable composition). Surface `or` is fold-transparent (ruled
+2026-07-23, R2): a DNF-derived rule set re-keys the union dedup on
+the shared slot array, and `dnf_rekey_transparent`
+(`Exec/Dedup.lean`) is the proved law — the re-keyed union fold of a
+lowering equals the written rule's aggregate denotation, with
+`dnf_rekey_stream` the stream-level spec the executable dedup meets.
+The interchange format carries the serializer's DERIVATION MARK
+(`"dnf": true` on the query — the rule list is one written rule's DNF
+lowering); `dnfBindings` below re-keys marked sets on the shared
+width, so the OR+aggregate case class evaluates the written rule's
+own fold domain (R2, discharged). The serializer also carries each
+rule's SURFACE WIDTH (`"width"` — the written rule's variable count,
+below the membership lowering's fresh mints): the fold domain reads
+`fullRow` at that width, so a minted interval variable is
+fold-invisible exactly as it is answer-invisible
+(`membership_lowering_preserves_fold`, `Exec/Dedup.lean` — the
+2026-07-23 audit's finding 087, discharged; the corpus fence
+`AggregateMembership` lifts with it). Both keys are optional in the
+format: absent, the mark is false and the width is the decoded rule's
+own variable ceiling.
 
 ## Law-4 record: `Lean.Data.Json`
 
@@ -158,10 +169,23 @@ because PRD 04's rule head is the plain-variable narrowing). -/
 structure CRule where
   finds : List CFind
   body : Query.Rule
+  /-- The written rule's SURFACE variable width (the serializer's
+  `"width"` key): every serializer mint — the membership lowering's
+  fresh interval variables — sits at or above it, and the fold domain
+  reads `fullRow` at exactly this width, so a mint is fold-invisible
+  precisely as it is answer-invisible
+  (`membership_lowering_preserves_fold`, `Exec/Dedup.lean` — finding
+  087). Absent in a case file: the decoded rule's own ceiling. -/
+  width : Option Nat
 
 /-- One decoded query. -/
 structure CQuery where
   rules : List CRule
+  /-- The serializer's derivation mark (`"dnf": true`): the rule list
+  is ONE written rule's DNF lowering, and the union dedup re-keys on
+  the shared width (ruled 2026-07-23, R2 — `dnf_rekey_transparent`).
+  Absent: hand-written rules, the head-projection law. -/
+  dnf : Bool
 
 /-- One positional parameter. -/
 inductive PVal where
@@ -385,7 +409,8 @@ def decodeFind (j : Json) : Except String CFind := do
     | other => .error s!"unknown measure fold {other}"
   .error "unknown find tag"
 
-/-- One rule (head positions + the body as `Query.Rule`). -/
+/-- One rule (head positions + the body as `Query.Rule` + the
+optional surface width). -/
 def decodeRule (j : Json) : Except String CRule := do
   let finds ← (← (← j.getObjVal? "finds").getArr?).toList.mapM decodeFind
   let atoms ← (← (← j.getObjVal? "atoms").getArr?).toList.mapM decodeAtom
@@ -393,10 +418,16 @@ def decodeRule (j : Json) : Except String CRule := do
     (← (← j.getObjVal? "negated").getArr?).toList.mapM decodeAtom
   let conditions ← (← (← j.getObjVal? "conditions").getArr?).toList.mapM
     (decodeCondition 64)
-  return { finds, body := { finds := [], atoms, negated, conditions } }
+  return { finds, body := { finds := [], atoms, negated, conditions },
+           width := (natKey j "width").toOption }
 
 def decodeQuery (j : Json) : Except String CQuery := do
-  return { rules := ← (← (← j.getObjVal? "rules").getArr?).toList.mapM decodeRule }
+  let rules ← (← (← j.getObjVal? "rules").getArr?).toList.mapM decodeRule
+  let dnf :=
+    match objKey? j "dnf" with
+    | some b => b.getBool?.toOption.getD false
+    | none => false
+  return { rules, dnf }
 
 /-- One positional parameter. -/
 def decodeParam (j : Json) : Except String PVal := do
@@ -491,11 +522,32 @@ carry the naive model's filler, never read by an accepted query). -/
 def fullRow (n : Nat) (σp : Query.PartialAssign) : List Value :=
   (List.range n).map fun i => Query.totalize σp ⟨i⟩
 
+/-- One rule's fold-row width: the serializer's surface width, else
+the decoded rule's own ceiling. Reading `fullRow` at the SURFACE
+width projects every serializer mint away before the dedup, so the
+membership lowering's fresh interval variable is fold-invisible
+(`membership_lowering_preserves_fold` — finding 087). -/
+def ruleWidth (r : CRule) : Nat :=
+  r.width.getD (varCount r)
+
 /-- The distinct full binding set of one rule — the fold domain
-(`agg_over_distinct_bindings`: no fold observes a duplicate). -/
+(`agg_over_distinct_bindings`: no fold observes a duplicate), read at
+the surface width. -/
 def ruleBindings (W : Query.ListInstance) (ρ : Query.ParamEnv)
     (r : CRule) : List (List Value) :=
-  dedupRows ((ruleStates W ρ r.body).map (fullRow (varCount r)))
+  dedupRows ((ruleStates W ρ r.body).map (fullRow (ruleWidth r)))
+
+/-- The re-keyed fold domain of a DNF-derived rule set (ruled
+2026-07-23, R2): the disjuncts share one variable vocabulary and one
+layout, so the fold domain is the deduplicated union of their full
+binding rows over the shared width — the WRITTEN rule's own domain
+(`dnf_rekey_transparent`; `dnf_rekey_stream` is the stream this dedup
+realizes). -/
+def dnfBindings (W : Query.ListInstance) (ρ : Query.ParamEnv)
+    (rules : List CRule) : List (List Value) :=
+  let n := rules.foldl (fun m r => max m (ruleWidth r)) 0
+  dedupRows (rules.flatMap fun r =>
+    (ruleStates W ρ r.body).map (fullRow n))
 
 /-- A row's value at a variable position. -/
 def rowGet (row : List Value) (v : Query.VarId) : Value :=
@@ -703,14 +755,20 @@ def projectGroup (finds : List CFind) (group : List (List Value)) :
           | .agg op => foldAgg op group
         pure [row]
 
-/-- The single-rule aggregate/measure path: distinct full bindings,
-fibered by the key positions, one output batch per inhabited fiber —
-no binding, no group, no row (`empty_global_no_answer`). -/
-def evalSingle (W : Query.ListInstance) (ρ : Query.ParamEnv)
-    (r : CRule) : Except String (List (List Value)) := do
-  let groups ← groupBy (keyOf r.finds) (ruleBindings W ρ r)
-  let batches ← groups.mapM (projectGroup r.finds)
+/-- The grouped aggregate path over an explicit fold domain: fibered
+by the key positions, one output batch per inhabited fiber — no
+binding, no group, no row (`empty_global_no_answer`). -/
+def evalGrouped (finds : List CFind) (domain : List (List Value)) :
+    Except String (List (List Value)) := do
+  let groups ← groupBy (keyOf finds) domain
+  let batches ← groups.mapM (projectGroup finds)
   return batches.flatten
+
+/-- The single-rule aggregate/measure path: the rule's distinct full
+bindings, grouped. -/
+def evalSingle (W : Query.ListInstance) (ρ : Query.ParamEnv)
+    (r : CRule) : Except String (List (List Value)) :=
+  evalGrouped r.finds (ruleBindings W ρ r)
 
 /-- One rule's head-projected input row (the multi-rule union fold's
 domain element): var and measure positions project, fold positions
@@ -839,6 +897,12 @@ def evalQuery (W : Query.ListInstance) (ρ : Query.ParamEnv)
     if q.rules.all fun r =>
         r.finds.all fun f => (CFind.plainVar? f).isSome then
       .ok (Query.evalList theClassify W ρ (plainQuery q))
+    else if q.dnf then
+      -- The re-keyed regime (ruled 2026-07-23, R2): a DNF-derived
+      -- rule set evaluates the WRITTEN rule's own denotation — the
+      -- disjuncts' binding rows unioned over the shared width,
+      -- grouped once.
+      evalGrouped r0.finds (dnfBindings W ρ q.rules)
     else if r0.finds.any CFind.isAgg then
       evalUnion W ρ q
     else

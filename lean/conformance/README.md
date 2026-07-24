@@ -114,6 +114,29 @@ the typing rule licenses. The engine executes the original query; Lean
 evaluates the lowered one; their agreement is part of what the lane
 checks.
 
+## The fold-domain keys: `width` and `dnf`
+
+Two optional query-side keys carry what the aggregate fold domains
+need (absent, each defaults to the reading a file without it always
+had):
+
+* Each rule may carry `"width"`: the WRITTEN rule's variable count.
+  The serializer's membership lowering mints its fresh interval
+  variables at ids ≥ width, and the Lean fold domain reads its
+  binding rows at exactly this width — a mint is fold-invisible
+  precisely as it is answer-invisible
+  (`lean/Bumbledb/Exec/Dedup.lean: membership_lowering_preserves_fold`,
+  the 2026-07-23 audit's finding 087). Absent: the decoded rule's own
+  variable ceiling, correct whenever no lowering fired.
+* The query may carry `"dnf": true`: the rule list is ONE written
+  rule's DNF lowering (the serializer's derivation mark). Aggregate
+  and measure heads then fold the deduplicated union of the
+  disjuncts' binding rows over the shared width — the written rule's
+  own fold domain (ruled 2026-07-23, R2: surface `or` is
+  fold-transparent; `lean/Bumbledb/Exec/Dedup.lean:
+  dnf_rekey_transparent`) — never the hand-written multi-rule
+  head-projection fold.
+
 ## Scope fences (recorded exclusions — counted, never silent)
 
 The query corpus is Tiny-scale, valid-arm only. Per-build coverage is
@@ -137,15 +160,14 @@ so no count is pinned here):
 * **element-typed param-set membership** (0 this build) — the lowered
   `PointIn`-with-set shape would violate the `WellTyped` premise
   `eval_sound` names.
-* **membership under an additive fold** (0 this build) — a fired
-  lowering under a `Count`/`Sum` head (scalar or measure): the fresh
-  interval variable enters the Lean fold domain (`Conformance.lean`'s
-  `ruleBindings` spans `body.allVars`) that neither the engine
-  (membership is a filter, never a binding) nor the naive model has —
-  `membership_lowering_preserves` licenses set-semantics answers only,
-  so the combination is refused representation rather than left to
-  querygen's accidental non-overlap (today's corpus has zero
-  aggregate-plus-membership cases by generator shape alone).
+* **membership under an additive fold** — LIFTED (2026-07-23 audit,
+  finding 087; 0 in this build's corpus): the fold domain now reads
+  the surface width (the `width` key, above), so the fresh interval
+  variable is projected away before the dedup — exactly what
+  `lean/Bumbledb/Exec/Dedup.lean: membership_lowering_preserves_fold`
+  licenses. The `AggregateMembership` exclusion dies bench-side and
+  the class enters the corpus at the next regeneration, so the third
+  oracle adjudicates it instead of excluding it.
 * **engine runtime errors** (0 this build) — `Overflow` /
   `MeasureOfRay`: the lane compares answer sets on error-free
   executions only (the model reads a ray's measure as `none`; the
