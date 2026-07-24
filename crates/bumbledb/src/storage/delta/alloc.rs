@@ -69,8 +69,11 @@ impl WriteDelta<'_> {
 }
 
 /// Reads the committed `Q` next-value for `(relation, field)`; a missing
-/// entry means the sequence has never issued a value.
-fn read_fresh_next(view: &ReadTxn<'_>, rel: RelationId, field: FieldId) -> Result<u64> {
+/// entry means the sequence has never issued a value. Beside the mint,
+/// the image cache reads it as a fresh-keyed relation's append boundary
+/// (the one id allocator, R16: every committed row id sits strictly
+/// below it).
+pub(crate) fn read_fresh_next(view: &ReadTxn<'_>, rel: RelationId, field: FieldId) -> Result<u64> {
     let mut buf = [0u8; keys::FRESH_KEY_LEN];
     let len = keys::fresh_key(&mut buf, rel, field);
     debug_assert_eq!(len, buf.len());

@@ -163,16 +163,16 @@ facts, never interned, so the key hash carries no type tag: forward
   The determinant is re-derived per fact by slicing projected fields out of
   `fact_bytes` — two encoders, `determinant_image` (statement projection
   order, the `U` key's segment) and `permuted_determinant_image` (target-key
-  order for `R` keys). **The direct arm is measured law** (cleanup-0.5.0
-  ruling 8, the Measure phase, 2026-07-19, `bench-out/measure-twins/`):
-  `determinant_image` is the permuted encoder under the identity
-  permutation, and the identity-permuted route measured **1.23–1.25×
-  slower per fact** (13 vs 17 ns/fact, commit-shaped 3-field interval
-  projection, warm DRAM, interleaved min-of-7 × 200k facts, two process
-  runs; pre-stated bar 1.09) — the permuted arm's per-fact inverse search
-  is real cost on the hot commit path, so the pair stays split.
-  **Reverses if:** the permuted arm precomputes its inverse and re-measures
-  within the house bar.
+  order for `R` keys). **The permutation is stored in inverse form**
+  (determinant position → projection index), minted once at validation, so
+  the permuted encoder is a straight indexed gather per position. This
+  cashes the recorded reversal clause of cleanup-0.5.0 ruling 8 (the
+  Measure phase, 2026-07-19, `bench-out/measure-twins/`): the split's
+  measured 1.23–1.25× per-fact cost (13 vs 17 ns/fact, commit-shaped
+  3-field interval projection, warm DRAM, interleaved min-of-7 × 200k
+  facts, two process runs; pre-stated bar 1.09) was entirely the permuted
+  arm's per-fact O(k²) inverse search, now hoisted to the seal; the
+  re-measure rides the end-of-campaign bench night (R20/R21).
 - **`R` keys are statement-scoped**, not relation-scoped: `statement` is the
   schema-global materialized statement id (`10-data-model.md` fingerprint), and
   `key` is the *target-side* projection value the source fact requires. One source
@@ -214,7 +214,12 @@ facts, never interned, so the key hash carries no type tag: forward
   `_meta` kind byte (§ the ephemeral store kind) that open consults — a new meta
   key read at open is an encoding change, so it bumps (nothing deployed carries a
   v4 store; a v4 store would otherwise open with the kind key absent, which is
-  exactly the silent-default class the bump law exists to refuse).
+  exactly the silent-default class the bump law exists to refuse). Version 6 is
+  the one id allocator (ruled 2026-07-23, R16, § key layout above): on a
+  fresh-keyed relation the first fresh field's value IS the `F` row id, the
+  auto-key's `U` tree is gone, and the `S` row-id high-water exists only where
+  no fresh field does — a v5 store's `F` row ids, auto-key `U` entries, and
+  `S` counters all decode wrong under the merged mint.
 - **A half-created store is not corruption** (ruled 2026-07-23, R18). Before
   those checks can run, open classifies the meta block itself — one
   classification, shared by every constructor, never the same branch

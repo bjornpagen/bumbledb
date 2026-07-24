@@ -145,12 +145,13 @@ fn schema() -> SchemaDescriptor {
     }
 }
 
-/// A committed store: holders 1 "alice" (row 0) and 2 "bob" (row 1, then
+/// A committed store: holders 1 "alice" (row 1 — Holder is fresh-keyed,
+/// so its row id IS the fresh value, R16) and 2 "bob" (row 2, then
 /// deleted — "bob" is the dangling dictionary entry), bookings (7, [0,10))
 /// and (7, [20,30)) at rows 0 and 1, accounts (1, checking) at row 0
 /// (inside σ — one `R` edge) and (2, savings) at row 1 (outside σ — no
 /// edge), and claim (7, [2,8)) at row 0 (covered by booking (7, [0,10))).
-/// One insert per commit pins the row ids.
+/// One insert per commit pins the fresh-less row ids.
 fn fixture(tag: &str) -> (TempDir, Db<SchemaDescriptor>) {
     let dir = TempDir::new(tag);
     let db = Db::create(dir.path(), schema()).expect("create");
@@ -532,7 +533,9 @@ fn namespace_schema_ownership_is_rechecked() {
 fn namespace_row_images_are_width_checked() {
     let (_dir, db) = fixture_with_healthy_sibling("verify-namespace-values");
     let m = key(|b| keys::membership_key(b, BOOKING, &[0x22; 32]));
-    let u = key(|b| keys::determinant_key(b, HOLDER, HOLDER_KEY, &encode_u64(99)));
+    let u = key(|b| {
+        keys::determinant_key(b, BOOKING, BOOKING_KEY, &booking_determinant(99, 0, 10))
+    });
     raw_write(&db, |txn| {
         let data = txn.env().data();
         data.put(txn.raw_mut(), &m, &[])
@@ -650,14 +653,14 @@ fn noncanonical_field_encodings_are_each_found() {
 #[test]
 fn intern_id_at_or_beyond_the_counter_is_found_with_fact_context() {
     let (_dir, db) = fixture_with_healthy_sibling("verify-intern-bound");
-    replace_fact_bytes(&db, HOLDER, 0, |fact| {
+    replace_fact_bytes(&db, HOLDER, 1, |fact| {
         fact[8..16].copy_from_slice(&99u64.to_be_bytes());
     });
     assert_eq!(
         db.verify_store().expect("verify").findings,
         vec![StoreFinding::InternBeyondNextId {
             relation: HOLDER,
-            row_id: 0,
+            row_id: 1,
             intern_id: 99,
             next_id: 2,
         }]
@@ -779,11 +782,11 @@ fn orphan_determinant_is_found_from_the_entry_side() {
 #[test]
 fn determinant_key_byte_flip_is_found_against_the_live_fact() {
     let (_dir, db) = fixture_with_healthy_sibling("verify-u-key-image");
-    // Holder row 0 re-derives determinant 1. Keep its correct U entry and
-    // plant a one-byte-perturbed determinant 3 pointing at the same live row.
-    let mut determinant = encode_u64(1).to_vec();
-    *determinant.last_mut().expect("word") ^= 2;
-    let u = key(|b| keys::determinant_key(b, HOLDER, HOLDER_KEY, &determinant));
+    // Booking row 0 re-derives determinant (7, [0,10)). Keep its correct
+    // U entry and plant a room-perturbed determinant pointing at the same
+    // live row (room 5 opens its own prefix group, so no overlap rides
+    // along).
+    let u = key(|b| keys::determinant_key(b, BOOKING, BOOKING_KEY, &booking_determinant(5, 0, 10)));
     raw_write(&db, |txn| {
         txn.env()
             .data()
@@ -793,9 +796,71 @@ fn determinant_key_byte_flip_is_found_against_the_live_fact() {
     assert_eq!(
         db.verify_store().expect("verify").findings,
         vec![StoreFinding::DeterminantWithoutFact {
+            relation: BOOKING,
+            statement: BOOKING_KEY,
+            determinant_key: u.into(),
+        }]
+    );
+}
+
+#[test]
+fn a_u_entry_under_a_fresh_row_key_is_the_finding() {
+    // The one id allocator (R16): the fresh-row auto-key maintains no U
+    // tree — its entry would transcribe F — so a planted entry convicts
+    // by existence, even one whose bytes and row id would be "coherent".
+    let (_dir, db) = fixture_with_healthy_sibling("verify-fresh-row-u");
+    let u = key(|b| keys::determinant_key(b, HOLDER, HOLDER_KEY, &encode_u64(1)));
+    raw_write(&db, |txn| {
+        txn.env()
+            .data()
+            .put(txn.raw_mut(), &u, 1u64.to_le_bytes().as_slice())
+            .expect("plant fresh-row U entry");
+    });
+    assert_eq!(
+        db.verify_store().expect("verify").findings,
+        vec![StoreFinding::FreshRowDeterminantEntry {
             relation: HOLDER,
             statement: HOLDER_KEY,
             determinant_key: u.into(),
+        }]
+    );
+}
+
+#[test]
+fn a_fresh_row_id_disagreeing_with_the_fresh_field_is_the_finding() {
+    // The merged mint's own desync class (R16): the F row id and the
+    // first fresh field are one u64 — a disagreement is corruption.
+    let (_dir, db) = fixture_with_healthy_sibling("verify-fresh-row-desync");
+    replace_fact_bytes(&db, HOLDER, 1, |fact| {
+        fact[..8].copy_from_slice(&0u64.to_be_bytes());
+    });
+    assert_eq!(
+        db.verify_store().expect("verify").findings,
+        vec![StoreFinding::FreshRowDesync {
+            relation: HOLDER,
+            row_id: 1,
+            fresh: 0,
+        }]
+    );
+}
+
+#[test]
+fn a_stored_high_water_on_a_fresh_keyed_relation_is_the_finding() {
+    // The S high-water exists only where no fresh field does (R16): a
+    // fresh-keyed relation's mint is Q, so the entry itself convicts.
+    let (_dir, db) = fixture_with_healthy_sibling("verify-fresh-row-high-water");
+    let water = key(|b| keys::stat_key(b, HOLDER, StatKind::RowIdHighWater));
+    raw_write(&db, |txn| {
+        txn.env()
+            .data()
+            .put(txn.raw_mut(), &water, 9u64.to_le_bytes().as_slice())
+            .expect("plant fresh-keyed high-water");
+    });
+    assert_eq!(
+        db.verify_store().expect("verify").findings,
+        vec![StoreFinding::Malformed {
+            key: water.into(),
+            what: "S high-water on a fresh-keyed relation",
         }]
     );
 }
@@ -847,10 +912,12 @@ fn pointwise_overlap_is_found_by_the_ordered_walk() {
 #[test]
 fn a_coherently_deleted_scalar_target_is_a_judgment_violation() {
     let (_dir, db) = fixture("verify-judgment-scalar");
-    // Holder 1 removed from every namespace at once — no namespace sweep
-    // sees it, but account (1, checking) is a live source inside σ still
-    // requiring it: the scalar determinant probe misses.
-    delete_target_rows(&db, HOLDER, 0, &[(HOLDER_KEY, encode_u64(1).to_vec())], 0);
+    // Holder 1 removed from every namespace at once (row id 1 = its
+    // fresh value, and its fresh-row key holds no U entry to remove —
+    // R16) — no namespace sweep sees it, but account (1, checking) is a
+    // live source inside σ still requiring it: the fresh-row F probe
+    // misses.
+    delete_target_rows(&db, HOLDER, 1, &[], 0);
     let report = db.verify_store().expect("verify");
     assert_eq!(
         report.findings,

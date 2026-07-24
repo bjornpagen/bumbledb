@@ -181,11 +181,29 @@ pub enum StoreFinding {
         counted: u64,
     },
     /// The stored `S` row-id high-water (the next id to assign) does not
-    /// exceed an observed row id.
+    /// exceed an observed row id. Fresh-less relations only — a
+    /// fresh-keyed relation's mint is `Q` (the one id allocator, R16),
+    /// and its stored high-water's very existence is a finding.
     RowIdHighWaterLow {
         relation: RelationId,
         stored: u64,
         max_row_id: u64,
+    },
+    /// A fresh-keyed relation's `F` row id disagrees with its first
+    /// fresh field's value — the one id allocator (R16) makes them one
+    /// u64, so the disagreement is corruption.
+    FreshRowDesync {
+        relation: RelationId,
+        row_id: u64,
+        fresh: u64,
+    },
+    /// A `U` entry under a fresh-row auto-key. The one id allocator
+    /// (R16) erased that key's `U` tree — its entry would transcribe
+    /// `F` — so the entry's very existence is the finding.
+    FreshRowDeterminantEntry {
+        relation: RelationId,
+        statement: StatementId,
+        determinant_key: Box<[u8]>,
     },
     /// A fact references an intern id at or beyond the `_meta` dictionary
     /// next-id counter.

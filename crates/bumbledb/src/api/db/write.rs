@@ -296,15 +296,18 @@ impl<S> Db<S> {
         // below needs it — a deleted-from relation's ordinals shifted;
         // a delete-free relation's image survives as an append base.
         let dirty = delta.dirty_relations();
+        let floors = delta.inserted_floors();
         let report = commit(delta, &self.env)?;
         txn_span.set_args(1, 0);
         txn_span.end();
         if report.changed {
             // The one commit → cache wiring point (`50-storage.md`):
-            // entries of relations this commit deleted from are stale
-            // the moment the new generation exists; every other entry
-            // is retained as an append base (`ImageCache::advance`).
-            self.cache.advance(report.new_generation, &dirty);
+            // entries of relations this commit deleted from — or
+            // inserted into below a retained base's boundary (the one
+            // id allocator's non-tail arm, R16) — are stale the moment
+            // the new generation exists; every other entry is retained
+            // as an append base (`ImageCache::advance`).
+            self.cache.advance(report.new_generation, &dirty, &floors);
             // Invalidate any snapshot parked mid-write by a concurrent
             // reader: the next read must begin fresh.
             CommitSeq::advance(&self.commit_seq, Ordering::Release);

@@ -238,18 +238,21 @@ pub fn build(txn: &ReadTxn<'_>, schema: &Schema, rel: RelationId) -> Result<Arc<
 
 /// [`build`]'s copy-on-append sibling (`docs/architecture/50-storage.md`
 /// § the image cache): extends a base image to this snapshot's row count
-/// without re-decoding the base's rows. Sound because a delete-free
-/// lineage makes the base a **logical prefix** of the new image — row ids
-/// are the monotone `S | rel | RowIdHighWater` allocator's, so every row
-/// committed after the base sorts strictly after every base row, same
+/// without re-decoding the base's rows. Sound because a delete-free,
+/// tail-only lineage makes the base a **logical prefix** of the new
+/// image — every row committed after the base has id at or above the
+/// base's boundary (the one id allocator, R16: `ImageCache::advance`
+/// evicts a base whose relation took a below-boundary insert, so
+/// tail-only is ENFORCED, never assumed from counter shape), same
 /// ordinals, same column words (fact bytes are immutable). The layout is
 /// NOT a physical prefix (column starts and strides are address-dependent,
 /// [`StridePadder`]), so the copy unit is the **column**: a fresh frame at
 /// the new row count, one `copy_from_slice` per column — the image layer
 /// has exactly two column kinds, so the copy is total and safe — then a
 /// tail decode of only the new rows through the identical per-fact kernel,
-/// scanning from `from_row_id` (the base's build-time high-water,
-/// [`read::row_id_high_water`], read in the base's own transaction). The
+/// scanning from `from_row_id` (the base's build-time boundary — the
+/// `Q` next value on a fresh-keyed relation, the `S` high-water
+/// otherwise — read in the base's own transaction). The
 /// sealed image mints fresh lazy distinct locks — tail rows change exact
 /// counts, so distincts re-force on demand (the `TransientImage::refill`
 /// precedent), never copy.

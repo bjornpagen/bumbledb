@@ -314,9 +314,10 @@ fn commit_and_advance(
     delta: WriteDelta<'_>,
 ) -> GenerationId {
     let dirty = delta.dirty_relations();
+    let floors = delta.inserted_floors();
     let report = commit(delta, env).expect("commit");
     assert!(report.changed, "the fixture commits are state-changing");
-    cache.advance(report.new_generation, &dirty);
+    cache.advance(report.new_generation, &dirty, &floors);
     report.new_generation
 }
 
@@ -333,6 +334,85 @@ fn assert_images_identical(a: &RelationImage, b: &RelationImage, columns: usize)
             "distinct {column}"
         );
     }
+}
+
+/// The one id allocator's non-tail arm (R16): an explicit fresh
+/// re-supply BELOW a retained base's boundary breaks the prefix
+/// property, so `advance` evicts the base — the next reader full-builds
+/// — while a tail insert keeps the append lineage alive.
+#[test]
+fn a_below_boundary_insert_evicts_the_append_base() {
+    let dir = TempDir::new("cache-non-tail-evict");
+    let schema = schema();
+    let env = Environment::create(dir.path(), &schema).expect("create");
+    let cache = ImageCache::new(&schema);
+
+    // Generation 1: row id 5 (the fresh value), boundary Q = 6.
+    {
+        let view = env.read_txn().expect("txn");
+        let mut delta = WriteDelta::new(&schema);
+        delta.insert(&view, R, &fact(&schema, 5)).expect("insert");
+        drop(view);
+        commit_and_advance_one(&env, &cache, delta);
+    }
+    {
+        let txn = env.read_txn().expect("txn");
+        cache.get_or_build(&txn, &schema, R).expect("base build");
+    }
+    assert_eq!(cache.keys(), vec![(R, gid(1))]);
+
+    // Generation 2 inserts row id 2 — under the base's boundary (6), a
+    // delete-free commit: the base evicts anyway (a tail decode from 6
+    // would silently miss row 2).
+    {
+        let view = env.read_txn().expect("txn");
+        let mut delta = WriteDelta::new(&schema);
+        delta.insert(&view, R, &fact(&schema, 2)).expect("insert");
+        drop(view);
+        commit_and_advance_one(&env, &cache, delta);
+    }
+    assert_eq!(cache.keys(), vec![], "the non-tail insert evicted the base");
+    {
+        let txn = env.read_txn().expect("txn");
+        let image = cache.get_or_build(&txn, &schema, R).expect("full build");
+        assert_eq!(image.row_count(), 2);
+        assert_eq!(
+            image.column(0),
+            crate::image::ColumnView::Words(&[2, 5]),
+            "scan order is fresh order"
+        );
+    }
+    assert_eq!(cache.keys(), vec![(R, gid(2))]);
+
+    // Generation 3 inserts row id 7 — at or past the rebuilt base's
+    // boundary (Q stayed 6 after the below-boundary insert): the base
+    // survives, and the reader appends exactly the tail row.
+    {
+        let view = env.read_txn().expect("txn");
+        let mut delta = WriteDelta::new(&schema);
+        delta.insert(&view, R, &fact(&schema, 7)).expect("insert");
+        drop(view);
+        commit_and_advance_one(&env, &cache, delta);
+    }
+    assert_eq!(
+        cache.keys(),
+        vec![(R, gid(2))],
+        "the tail insert retained the base"
+    );
+    let txn = env.read_txn().expect("txn");
+    let image = cache.get_or_build(&txn, &schema, R).expect("append");
+    assert_eq!(image.row_count(), 3);
+    assert_eq!(image.column(0), crate::image::ColumnView::Words(&[2, 5, 7]));
+}
+
+/// The one-relation sibling of [`commit_and_advance`] (that helper's
+/// schema fixture differs).
+fn commit_and_advance_one(env: &Environment, cache: &ImageCache, delta: WriteDelta<'_>) {
+    let dirty = delta.dirty_relations();
+    let floors = delta.inserted_floors();
+    let report = commit(delta, env).expect("commit");
+    assert!(report.changed);
+    cache.advance(report.new_generation, &dirty, &floors);
 }
 
 /// `advance` drops the entries of relations the commit deleted from
@@ -498,7 +578,7 @@ fn an_epilogue_racing_full_build_supersedes_the_surviving_base() {
         let txn = env.read_txn().expect("txn");
         cache.get_or_build(&txn, &schema, R).expect("base build");
     }
-    cache.advance(gid(1), &[]);
+    cache.advance(gid(1), &[], &[]);
     assert_eq!(cache.keys(), vec![(R, gid(1))]);
 
     // Generation 2 commits, and the reader wins the race: its snapshot
@@ -515,7 +595,7 @@ fn an_epilogue_racing_full_build_supersedes_the_surviving_base() {
     );
 
     // The late epilogue arrives and changes nothing.
-    cache.advance(gid(2), &[]);
+    cache.advance(gid(2), &[], &[]);
     assert_eq!(cache.keys(), vec![(R, gid(2))]);
 }
 
@@ -544,7 +624,7 @@ fn a_count_below_the_base_is_typed_corruption_never_a_skip() {
     drop(view);
     let report = commit(delta, &env).expect("commit");
     assert!(report.changed);
-    cache.advance(report.new_generation, &[]);
+    cache.advance(report.new_generation, &[], &[]);
 
     let txn = env.read_txn().expect("txn");
     let err = cache

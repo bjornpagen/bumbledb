@@ -5,13 +5,14 @@
 //! *snapshot-sourced* storage tx id — never an in-process counter
 //! (`docs/architecture/50-storage.md`'s race-closing rule). At each
 //! state-changing commit the writer [`ImageCache::advance`]s the cache:
-//! entries of relations the commit **deleted from** drop (their ordinals
-//! shifted — evict-and-rebuild, exactly as before); delete-free
-//! relations' images are retained as **append bases** — the next reader
-//! at the new generation copies columns and decodes only the tail
-//! ([`crate::image::append`]; row-id high-water monotonicity is the
-//! prefix property), or carries the same `Arc` forward when the relation
-//! is untouched. Readers pinned at older generations keep their `Arc`s
+//! entries of relations the commit **deleted from** — or **inserted into
+//! below the retained base's boundary** (the one id allocator's non-tail
+//! arm, R16) — drop (their ordinals shifted or their prefix broke —
+//! evict-and-rebuild); every other image is retained as an **append
+//! base** — the next reader at the new generation copies columns and
+//! decodes only the tail ([`crate::image::append`]; tail-only insertion
+//! is the prefix property, enforced by that eviction), or carries the
+//! same `Arc` forward when the relation is untouched. Readers pinned at older generations keep their `Arc`s
 //! alive until their transactions end. There is no memory-pressure
 //! eviction, ever — the scale axiom.
 
@@ -47,11 +48,14 @@ mod keys;
 mod tests;
 
 /// One cached image plus the append boundary it was built against: the
-/// relation's row-id high-water, read in the image's own build
-/// transaction — snapshot-consistent by construction. Every row in the
-/// image has id strictly below it; every row a later commit adds has id
-/// at or above it, so a tail scan from here decodes exactly the rows the
-/// image is missing ([`crate::image::append`]).
+/// relation's next row id — the `Q` next value on a fresh-keyed
+/// relation, the `S` high-water otherwise (the one id allocator, R16) —
+/// read in the image's own build transaction, snapshot-consistent by
+/// construction. Every row in the image has id strictly below it; a
+/// later commit landing UNDER it (explicit fresh re-supply) evicts this
+/// entry in `advance`, so a surviving entry's tail scan from here
+/// decodes exactly the rows the image is missing
+/// ([`crate::image::append`]).
 struct Cached {
     image: Arc<RelationImage>,
     row_id_next: u64,

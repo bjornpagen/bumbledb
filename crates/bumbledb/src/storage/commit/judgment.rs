@@ -673,7 +673,8 @@ pub(crate) fn window_child_image<'a>(
 /// The fact that re-established a key determinant in phase 2, reached through
 /// the determinant's own `U` entry — the ψ-qualification subject. Both gets
 /// hit state this commit just wrote (write txns read their own writes),
-/// so a miss is corruption, never a race.
+/// so a miss is corruption, never a race. A fresh-row key's determinant
+/// IS the `F` row id (R16, no `U` tree): one `F` get instead of two.
 fn establishing_fact<'t>(
     data: heed::Database<heed::types::Bytes, heed::types::Bytes>,
     txn: &'t WriteTxn<'_>,
@@ -682,6 +683,12 @@ fn establishing_fact<'t>(
     determinant: &[u8],
 ) -> Result<&'t [u8]> {
     let statement = schema.key(key);
+    if statement.fresh_row {
+        let word: [u8; 8] = determinant.try_into().map_err(|_| {
+            Error::Corruption(CorruptionError::MalformedValue("fresh-row key width"))
+        })?;
+        return fact_by_row(data, txn.raw(), statement.relation, u64::from_be_bytes(word));
+    }
     let mut buf: KeyBuf = [0; MAX_KEY];
     let u_len = keys::determinant_key(&mut buf, statement.relation, statement.id, determinant);
     let value = data
@@ -806,9 +813,27 @@ impl<'a> Checker<'a> {
 
     /// Scalar target probe: one `U` get on the target key's determinant. A miss
     /// is the violation; a hit with a nonempty target selection
-    /// additionally checks the found fact against σ (one `F` get).
+    /// additionally checks the found fact against σ (one `F` get). A
+    /// fresh-row target key has no `U` tree (the one id allocator, R16):
+    /// its determinant IS the `F` row id, so the probe is one `F` get and
+    /// the value found is the target fact itself — one descent, σ check
+    /// included.
     pub(crate) fn check_scalar(&mut self, probe: &Probe<'_>) -> Result<()> {
         let target_key = self.schema.key(probe.target_key);
+        if target_key.fresh_row {
+            let word: [u8; 8] = probe.key_bytes.try_into().map_err(|_| {
+                Error::Corruption(CorruptionError::MalformedValue("fresh-row key width"))
+            })?;
+            let f_len = keys::fact_key(
+                &mut self.key,
+                probe.target_relation,
+                u64::from_be_bytes(word),
+            );
+            let Some(fact) = self.data.get(self.txn, &self.key[..f_len])? else {
+                return Err(probe.unsatisfied());
+            };
+            return self.check_fact(probe, fact);
+        }
         let u_len = keys::determinant_key(
             &mut self.key,
             probe.target_relation,
@@ -969,17 +994,35 @@ impl<'a> Checker<'a> {
         let parent_fact: &[u8] = match &statement.enforcement {
             Enforcement::ScalarProbe { target_key, .. } => {
                 let key_statement = self.schema.key(*target_key);
-                let u_len = keys::determinant_key(
-                    &mut self.key,
-                    statement.target.relation,
-                    key_statement.id,
-                    parent_key,
-                );
-                let Some(value) = self.data.get(self.txn, &self.key[..u_len])? else {
-                    return Ok(());
+                // A fresh-row parent key has no `U` tree (R16): the
+                // parent tuple IS the `F` row id, one get, the value the
+                // holder itself.
+                let fact = if key_statement.fresh_row {
+                    let word: [u8; 8] = parent_key.try_into().map_err(|_| {
+                        Error::Corruption(CorruptionError::MalformedValue("fresh-row key width"))
+                    })?;
+                    let f_len = keys::fact_key(
+                        &mut self.key,
+                        statement.target.relation,
+                        u64::from_be_bytes(word),
+                    );
+                    let Some(fact) = self.data.get(self.txn, &self.key[..f_len])? else {
+                        return Ok(());
+                    };
+                    fact
+                } else {
+                    let u_len = keys::determinant_key(
+                        &mut self.key,
+                        statement.target.relation,
+                        key_statement.id,
+                        parent_key,
+                    );
+                    let Some(value) = self.data.get(self.txn, &self.key[..u_len])? else {
+                        return Ok(());
+                    };
+                    let row_id = decode_row_id(value)?;
+                    fact_by_row(self.data, self.txn, statement.target.relation, row_id)?
                 };
-                let row_id = decode_row_id(value)?;
-                let fact = fact_by_row(self.data, self.txn, statement.target.relation, row_id)?;
                 let layout = self.schema.relation(statement.target.relation).layout();
                 if !satisfies(&checks.target, layout, fact) {
                     return Ok(());
@@ -1086,6 +1129,16 @@ impl<'a> Checker<'a> {
         }
         let row_id = decode_row_id(value)?;
         let target_fact = fact_by_row(self.data, self.txn, probe.target_relation, row_id)?;
+        self.check_fact(probe, target_fact)
+    }
+
+    /// The σ half of a probe over a target fact already in hand — the
+    /// fresh-row probe's tail (the `F` value IS the fact) and
+    /// [`Checker::check_segment`]'s.
+    fn check_fact(&self, probe: &Probe<'_>, target_fact: &[u8]) -> Result<()> {
+        if matches!(probe.target_check, SelectionCheck::Empty) {
+            return Ok(());
+        }
         let layout = self.schema.relation(probe.target_relation).layout();
         if satisfies(probe.target_check, layout, target_fact) {
             Ok(())

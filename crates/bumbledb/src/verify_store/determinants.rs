@@ -53,6 +53,18 @@ pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
             prev_pointwise = None;
             continue;
         }
+        // The one id allocator (R16): a fresh-row auto-key maintains no
+        // `U` tree — its entry would transcribe `F` — so the entry's
+        // very existence is the finding.
+        if statement.fresh_row {
+            s.push(StoreFinding::FreshRowDeterminantEntry {
+                relation: rel,
+                statement: sid,
+                determinant_key: key.into(),
+            });
+            prev_pointwise = None;
+            continue;
+        }
         let Ok(row_bytes) = <[u8; 8]>::try_from(value) else {
             s.malformed(key, "U row id");
             prev_pointwise = None;
@@ -92,12 +104,7 @@ pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
         // Half-open `[ps, pe)` and `[ns, ne)` with `ps <= ns` by cursor
         // order overlap iff `pe > ns`; equality is adjacency, legal by
         // construction.
-        let tail = if statement.pointwise {
-            schema.key_tail(statement)
-        } else {
-            None
-        };
-        let Some(tail) = tail else {
+        let Some(tail) = schema.key_tail(statement) else {
             prev_pointwise = None;
             continue;
         };

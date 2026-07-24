@@ -51,6 +51,38 @@ impl WriteDelta<'_> {
         dirty
     }
 
+    /// Per fresh-keyed relation this commit inserts into, the SMALLEST
+    /// inserted row id — the first fresh field's value under the one id
+    /// allocator (R16). Reader: `write_witnessed`'s commit epilogue,
+    /// which hands it to `ImageCache::advance` so an insert below a
+    /// retained append base's boundary (explicit fresh re-supply — the
+    /// non-tail arm) evicts the base: the prefix property is enforced,
+    /// never assumed from counter shape. Ascending by relation (one
+    /// ordered pass over the fact map); fresh-less relations never
+    /// appear — their mints are tail by construction.
+    pub(crate) fn inserted_floors(&self) -> Vec<(RelationId, u64)> {
+        let mut floors: Vec<(RelationId, u64)> = Vec::new();
+        for ((rel, _), (slice, disposition)) in &self.facts {
+            if *disposition != Disposition::Insert {
+                continue;
+            }
+            let relation = self.schema.relation(*rel);
+            let Some(field) = relation.fresh_row_field() else {
+                continue;
+            };
+            let row_id = u64::from_be_bytes(crate::encoding::field_word_bytes(
+                self.arena.get(*slice),
+                relation.layout(),
+                usize::from(field.0),
+            ));
+            match floors.last_mut() {
+                Some((last, min)) if *last == *rel => *min = (*min).min(row_id),
+                _ => floors.push((*rel, row_id)),
+            }
+        }
+        floors
+    }
+
     fn dispositions(&self, wanted: Disposition) -> impl Iterator<Item = (RelationId, &[u8])> {
         self.facts
             .iter()

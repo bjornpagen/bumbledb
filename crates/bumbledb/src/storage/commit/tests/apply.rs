@@ -27,10 +27,12 @@ fn insert_lands_exactly_the_expected_key_set() {
 
         let t_hash = crate::encoding::fact_hash(&t);
         let k_hash = crate::encoding::fact_hash(&k);
+        // Target is fresh-keyed: its row id IS the fresh value (the one
+        // id allocator, R16), and its auto-key writes no U entry — the
+        // F put-conflict is that key's judgment.
         let expected: BTreeSet<Vec<u8>> = [
-            key(|b| keys::fact_key(b, TARGET, 0)),
+            key(|b| keys::fact_key(b, TARGET, 5)),
             key(|b| keys::membership_key(b, TARGET, &t_hash)),
-            key(|b| keys::determinant_key(b, TARGET, TARGET_KEY, &encode_u64(5))),
             key(|b| keys::fact_key(b, KEYED, 0)),
             key(|b| keys::membership_key(b, KEYED, &k_hash)),
             key(|b| keys::determinant_key(b, KEYED, KEYED_KEY, &encode_u64(9))),
@@ -70,11 +72,12 @@ fn deleting_a_fact_with_a_scrubbed_f_row_is_corruption() {
             .commit()
             .expect("commit");
     }
-    // Scrub the F row (row id 0) directly.
+    // Scrub the F row (row id 5 — the fresh value IS the row id, R16)
+    // directly.
     {
         let mut wtxn = env.write_txn().expect("wtxn");
         let mut key: KeyBuf = [0; MAX_KEY];
-        let f_len = keys::fact_key(&mut key, TARGET, 0);
+        let f_len = keys::fact_key(&mut key, TARGET, 5);
         assert!(
             env.data()
                 .delete(wtxn.raw_mut(), &key[..f_len])
@@ -94,7 +97,7 @@ fn deleting_a_fact_with_a_scrubbed_f_row_is_corruption() {
         err,
         Error::Corruption(CorruptionError::MembershipDesync {
             relation: TARGET,
-            row_id: 0
+            row_id: 5
         })
     ));
 }

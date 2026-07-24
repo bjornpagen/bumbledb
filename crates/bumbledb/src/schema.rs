@@ -230,17 +230,19 @@ impl IntervalTail {
 
 impl Schema {
     /// The interval-tail descriptor of a pointwise key's determinant;
-    /// `None` for scalar keys.
+    /// `None` for scalar keys. A read of the sealed witness — validation
+    /// minted the tail once, so no commit or sweep re-walks the
+    /// projection.
     pub(crate) fn key_tail(&self, key: &KeyStatement) -> Option<IntervalTail> {
-        self.relation(key.relation).interval_tail(&key.projection)
+        key.tail
     }
 
     /// The interval-tail descriptor of a containment's SOURCE projection
     /// — the shape of the reverse-edge key-bytes tail (the source fact's
-    /// interval encodes at its own field's width).
+    /// interval encodes at its own field's width). A read of the sealed
+    /// witness, as [`Schema::key_tail`].
     pub(crate) fn source_tail(&self, statement: &ContainmentStatement) -> Option<IntervalTail> {
-        self.relation(statement.source.relation)
-            .interval_tail(&statement.source.projection)
+        statement.source_tail
     }
 }
 
@@ -265,12 +267,17 @@ impl DisjointDeterminantProof {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Enforcement {
     /// Probe an ordinary target key for one scalar tuple.
+    /// `key_permutation[d]` is the statement-projection index whose field
+    /// lands at determinant position `d` (the INVERSE form, minted once at
+    /// validate so the per-fact encoder is a straight indexed gather —
+    /// `keys::permuted_determinant_image`).
     ScalarProbe {
         target_key: KeyId,
         key_permutation: Box<[u16]>,
     },
     /// Sweep the target's pointwise interval segments. `disjoint` proves the
     /// resolved target key enforces disjoint, start-ordered prefix groups.
+    /// `key_permutation` as in [`Enforcement::ScalarProbe`].
     IntervalCoverage {
         target_key: KeyId,
         key_permutation: Box<[u16]>,
@@ -386,9 +393,29 @@ pub struct KeyStatement {
     pub id: StatementId,
     pub relation: RelationId,
     pub projection: Box<[FieldId]>,
-    /// The key carries an interval (necessarily in final position), so its
-    /// enforcement uses an ordered-neighbor probe.
-    pub pointwise: bool,
+    /// The trailing interval encoding of a pointwise key's determinant,
+    /// sealed from the validator's own derivation (`Some` = the key
+    /// carries an interval, necessarily final, so its enforcement uses
+    /// an ordered-neighbor probe; `None` = scalar). The staging law
+    /// applied to the checker: no consumer re-walks the projection, and
+    /// no boolean licenses the sweep — the tail IS the evidence.
+    pub(crate) tail: Option<IntervalTail>,
+    /// The relation's FIRST fresh field's auto-key (the one id allocator,
+    /// `docs/architecture/50-storage.md` § key layout; ruled 2026-07-23,
+    /// R16): its determinant IS the `F` row id, it maintains no `U` tree,
+    /// and its functionality judgment is the `F` put-conflict itself.
+    /// Probes against it read `F` directly — one B-tree descent.
+    pub fresh_row: bool,
+}
+
+impl KeyStatement {
+    /// Whether the key carries an interval position — the public face of
+    /// the sealed tail (`tail.is_some()`; the tail itself is the
+    /// crate-internal enforcement shape).
+    #[must_use]
+    pub fn pointwise(&self) -> bool {
+        self.tail.is_some()
+    }
 }
 
 /// One sealed containment: its declaration, enforcement proof, compiled
@@ -403,12 +430,22 @@ pub struct ContainmentStatement {
     /// Both sides' σ literals, compiled once at validate. This is total:
     /// keys cannot reach a containment value.
     pub(crate) checks: CompiledSides,
-    /// The `==` partner: the containment whose sides are exactly this
-    /// statement's sides swapped, anywhere in the materialized list —
-    /// `==` lowers to two containments and the pairing is a fact of the
-    /// declaration, sealed here rather than re-discovered by render-time
-    /// search (`docs/architecture/30-dependencies.md`). At most one
-    /// partner can exist because [`SchemaError::DuplicateStatement`]
+    /// The SOURCE projection's trailing interval encoding — the shape of
+    /// the reverse-edge key-bytes tail (the source fact's interval
+    /// encodes at its own field's width); `None` = scalar sides. Sealed
+    /// from the validator's derivation, as [`KeyStatement`]'s tail, so
+    /// the per-probe judgment walks no projection.
+    pub(crate) source_tail: Option<IntervalTail>,
+    /// The `==` partner: the containment whose NORMALIZED sides (the one
+    /// statement identity — selections sorted, literal sets canonical)
+    /// are exactly this statement's normalized sides swapped, anywhere in
+    /// the materialized list — `==` lowers to two containments and the
+    /// pairing is a fact of the declaration, sealed here rather than
+    /// re-discovered by render-time search
+    /// (`docs/architecture/30-dependencies.md`). Normalized, not raw:
+    /// statement identity ignores spelling, so a respelled literal set
+    /// cannot fork the links of two fingerprint-equal schemas. At most
+    /// one partner can exist because [`SchemaError::DuplicateStatement`]
     /// rejects identical normalized statements (two candidate mirrors
     /// would be identical to each other), which makes the links
     /// symmetric. `None` for every FD and one-way containment.
@@ -510,6 +547,12 @@ pub struct Relation {
     /// a delta parent touches its own key tuple
     /// (`lean/Bumbledb/Txn/DeltaRestriction.lean: touchedParents`).
     window_targets: Box<[WindowId]>,
+    /// The FIRST `Fresh`-generation field, if any — the one id allocator's
+    /// mint field (R16, `docs/architecture/50-storage.md` § key layout): on
+    /// a fresh-keyed relation this field's value IS the `F` row id, `Q` is
+    /// the one mint, and no `S` row-id high-water exists. Its auto-key is
+    /// the [`KeyStatement`] carrying `fresh_row`.
+    fresh_row_field: Option<FieldId>,
 }
 
 /// The sealed schema witness. Unconstructible except through

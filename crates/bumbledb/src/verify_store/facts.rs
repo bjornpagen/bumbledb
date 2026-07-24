@@ -111,10 +111,29 @@ pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
             });
         }
 
+        // The one id allocator (R16): on a fresh-keyed relation the F row
+        // id IS the first fresh field's value — a disagreement is the
+        // merged mint's own desync class.
+        if let Some(field) = relation.fresh_row_field() {
+            let fresh = u64::from_be_bytes(field_word_bytes(fact, layout, usize::from(field.0)));
+            if fresh != row_id {
+                s.push(StoreFinding::FreshRowDesync {
+                    relation: rel,
+                    row_id,
+                    fresh,
+                });
+            }
+        }
+
         // F→U: every key statement's determinant must hold this row id
-        // (determinants re-derived by slicing, exactly as the commit path).
+        // (determinants re-derived by slicing, exactly as the commit path)
+        // — the fresh-row auto-key excepted: it maintains no `U` tree
+        // (R16; the U pass convicts any entry that exists under it).
         for &key_id in relation.keys() {
             let statement = schema.key(key_id);
+            if statement.fresh_row {
+                continue;
+            }
             keys::determinant_image(layout, &statement.projection, fact, &mut determinant);
             let u_len =
                 keys::determinant_key(&mut scratch, rel, statement.id, determinant.as_bytes());

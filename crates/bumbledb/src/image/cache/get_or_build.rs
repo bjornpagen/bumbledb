@@ -131,8 +131,16 @@ impl ImageCache {
         }
 
         // The append boundary the NEXT reader would extend from, read in
-        // this same snapshot — one `S` get, paid only on the insert path.
-        let row_id_next = read::row_id_high_water(txn, rel)?;
+        // this same snapshot — one counter get, paid only on the insert
+        // path. Under the one id allocator (R16) the counter is the
+        // relation's: a fresh-keyed relation's boundary is its `Q` next
+        // value (every committed row id sits strictly below it; a later
+        // commit landing UNDER it is the non-tail insert `advance`
+        // evicts on), a fresh-less relation's the `S` high-water.
+        let row_id_next = match schema.relation(rel).fresh_row_field() {
+            Some(field) => crate::storage::delta::read_fresh_next(txn, rel, field)?,
+            None => read::row_id_high_water(txn, rel)?,
+        };
 
         let mut inner = self.inner.lock().expect("cache mutex");
         // Re-check under the insert lock: a commit may have advanced past

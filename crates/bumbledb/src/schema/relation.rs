@@ -69,6 +69,15 @@ impl Relation {
         &self.window_targets
     }
 
+    /// The first `Fresh`-generation field — the one id allocator's mint
+    /// field (R16, `docs/architecture/50-storage.md` § key layout): on a
+    /// fresh-keyed relation this field's value IS the `F` row id; `None`
+    /// means row ids mint from the `S` high-water.
+    #[must_use]
+    pub(crate) fn fresh_row_field(&self) -> Option<FieldId> {
+        self.fresh_row_field
+    }
+
     /// The interval-tail descriptor of a projection over this relation:
     /// `Some` when the projection carries an interval-typed field (the
     /// acceptance gate makes it unique and final for keys, so the tail is

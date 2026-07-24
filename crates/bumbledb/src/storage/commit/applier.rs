@@ -71,15 +71,21 @@ impl Applier<'_> {
 
     /// Phase-2 step: lands one fact's F/M/U/R entries, enforcing every key
     /// statement — scalar by put-conflict, pointwise by the
-    /// ordered-neighbor probe the plan marked. A conflict RECORDS into the
+    /// ordered-neighbor probe the plan marked, and the fresh-row auto-key
+    /// by the `F` put-conflict itself (the one id allocator, R16: the
+    /// first fresh field's value IS the row id, so an occupied `F` key is
+    /// exactly that key's functionality violation — the identical
+    /// conflict mechanism the `U` phase uses). A conflict RECORDS into the
     /// collector and the step continues (scan-complete: every determinant of
     /// every fact is judged, so the rejection carries the complete set of
     /// violated key statements; the transaction aborts after phase 2
-    /// either way, so the skipped put persists nothing). The fact is
-    /// absent from base state by the delta's net-disposition invariant
-    /// the plan was derived from — a live `M` entry means storage
-    /// disagrees with what the plan *proved*, unambiguously corruption
-    /// (docs/architecture/50-storage.md).
+    /// either way, so the skipped put persists nothing — an `F`-conflicted
+    /// fact skips its remaining puts whole: its row id has no free slot to
+    /// land in, and the recorded conviction already names the statement).
+    /// The fact is absent from base state by the delta's net-disposition
+    /// invariant the plan was derived from — a live `M` entry means
+    /// storage disagrees with what the plan *proved*, unambiguously
+    /// corruption (docs/architecture/50-storage.md).
     pub(super) fn insert_fact(&mut self, op: &FactOp<'_>) -> Result<()> {
         let rel = op.relation;
         let hash = crate::encoding::fact_hash(op.fact);
@@ -89,7 +95,24 @@ impl Applier<'_> {
                 relation: rel,
             }));
         }
-        let row_id = self.next_row_id(rel)?;
+        let row_id = match &op.fresh_row {
+            Some(fresh) => {
+                // Own scratch: `self.key` still holds the pending
+                // membership key.
+                let mut key: KeyBuf = [0; MAX_KEY];
+                let f_len = keys::fact_key(&mut key, rel, fresh.row_id);
+                if self.data.get(self.txn.raw(), &key[..f_len])?.is_some() {
+                    self.violations.push(Violation::Functionality {
+                        statement: fresh.statement,
+                        fact: op.fact.into(),
+                        incumbent: None,
+                    });
+                    return Ok(());
+                }
+                fresh.row_id
+            }
+            None => self.next_row_id(rel)?,
+        };
         self.put_data(m_len, row_id.to_le_bytes().as_slice())?;
         crashpoint!("mid-write-m");
         let f_len = keys::fact_key(&mut self.key, rel, row_id);

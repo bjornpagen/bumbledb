@@ -50,8 +50,8 @@ fn a_redundant_pointwise_superkey_seals_with_a_warning() {
         .expect("a redundant superkey remains accepted");
 
     assert_eq!(schema.keys().len(), 2, "both keys remain sealed");
-    assert!(!schema.key(KeyId(0)).pointwise);
-    assert!(schema.key(KeyId(1)).pointwise);
+    assert!(!schema.key(KeyId(0)).pointwise());
+    assert!(schema.key(KeyId(1)).pointwise());
     assert_eq!(
         schema.warnings(),
         &[SchemaWarning::RedundantSuperkey {
@@ -243,7 +243,7 @@ fn example_schema_resolves_exactly() {
     .validate()
     .expect("the 30-dependencies example schema is valid");
 
-    assert!(schema.keys().iter().all(|key| !key.pointwise));
+    assert!(schema.keys().iter().all(|key| !key.pointwise()));
     let probe = |target_key: u16| Enforcement::ScalarProbe {
         target_key: KeyId(target_key),
         key_permutation: Box::new([0]),
@@ -313,7 +313,7 @@ fn pointwise_key_and_containment_resolve() {
     .validate()
     .expect("pointwise key and coverage containment are valid");
 
-    assert!(schema.key(KeyId(0)).pointwise);
+    assert!(schema.key(KeyId(0)).pointwise());
     assert!(matches!(
         schema.containment(ContainmentId(0)).enforcement,
         Enforcement::IntervalCoverage {
@@ -326,7 +326,9 @@ fn pointwise_key_and_containment_resolve() {
 }
 
 /// The target projection may be any permutation of the key: the recorded
-/// permutation maps statement projection order to the key's determinant order.
+/// permutation is the INVERSE form — determinant position → statement
+/// projection index — so the per-fact encoder is a straight indexed
+/// gather (`keys::permuted_determinant_image`).
 #[test]
 fn permuted_target_projection_resolves_with_permutation() {
     let schema = SchemaDescriptor {
@@ -359,6 +361,54 @@ fn permuted_target_projection_resolves_with_permutation() {
         Enforcement::ScalarProbe {
             target_key: KeyId(0),
             key_permutation: Box::new([1, 0]),
+        }
+    );
+}
+
+/// The inverse direction pinned by a 3-cycle (a 2-field permutation is an
+/// involution — identical under either convention): determinant order
+/// (a, b, c) against projection order (c, a, b) stores `[1, 2, 0]`, the
+/// projection index per determinant position.
+#[test]
+fn permutation_is_stored_inverse_determinant_position_to_projection_index() {
+    let schema = SchemaDescriptor {
+        relations: vec![
+            RelationDescriptor {
+                extension: None,
+                name: "T".into(),
+                fields: vec![
+                    field("a", ValueType::U64),
+                    field("b", ValueType::I64),
+                    field("c", ValueType::U64),
+                ],
+            },
+            RelationDescriptor {
+                extension: None,
+                name: "S".into(),
+                fields: vec![
+                    field("x", ValueType::U64),
+                    field("y", ValueType::U64),
+                    field("z", ValueType::I64),
+                ],
+            },
+        ],
+        statements: vec![
+            fd(RelationId(0), &[FieldId(0), FieldId(1), FieldId(2)]), // (a, b, c)
+            // S(x, y, z) <= T(c, a, b): a 3-cycle against the key.
+            containment(
+                side(RelationId(1), &[FieldId(0), FieldId(1), FieldId(2)]),
+                side(RelationId(0), &[FieldId(2), FieldId(0), FieldId(1)]),
+            ),
+        ],
+    }
+    .validate()
+    .expect("a 3-cycle target projection resolves");
+
+    assert_eq!(
+        schema.containment(ContainmentId(0)).enforcement,
+        Enforcement::ScalarProbe {
+            target_key: KeyId(0),
+            key_permutation: Box::new([1, 2, 0]),
         }
     );
 }
@@ -804,8 +854,8 @@ fn mixed_width_interval_positions_of_one_element_domain_resolve() {
     }
     .validate()
     .expect("mixed widths of one element domain validate (Q1)");
-    assert!(schema.key(KeyId(0)).pointwise);
-    assert!(schema.key(KeyId(1)).pointwise);
+    assert!(schema.key(KeyId(0)).pointwise());
+    assert!(schema.key(KeyId(1)).pointwise());
     assert!(matches!(
         schema.containment(ContainmentId(0)).enforcement,
         Enforcement::IntervalCoverage { .. }

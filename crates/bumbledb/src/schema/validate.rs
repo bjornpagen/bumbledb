@@ -99,7 +99,14 @@ impl ValidateDescriptor for SchemaDescriptor {
         // StatementId spine selecting between them. Duplicate checks look
         // backward; containment target-key resolution sees the immutable
         // descriptor list, so a key may still be declared after its probe.
-        let mut normalized: Vec<StatementDescriptor> = Vec::with_capacity(descriptors.len());
+        //
+        // The ONE statement identity: the normalized form (selections
+        // sorted by FieldId, literal sets canonical). Duplicate rejection
+        // and `==` mirror pairing both read this list — never the raw
+        // spelling — so two spellings of one statement cannot fork the
+        // sealed links (two fingerprint-equal schemas seal the same
+        // mirrors).
+        let normalized: Vec<StatementDescriptor> = descriptors.iter().map(normalize).collect();
         let key_count = descriptors
             .iter()
             .filter(|descriptor| matches!(descriptor, StatementDescriptor::Functionality { .. }))
@@ -135,7 +142,18 @@ impl ValidateDescriptor for SchemaDescriptor {
                         id,
                         relation: *relation,
                         projection: projection.clone(),
-                        pointwise: matches!(evidence, FunctionalityEvidence::Pointwise(_)),
+                        // The tail the gate derived, sealed — never
+                        // re-walked by a consumer.
+                        tail: match evidence {
+                            FunctionalityEvidence::Pointwise(_, tail) => Some(tail),
+                            FunctionalityEvidence::Scalar => None,
+                        },
+                        // The first fresh field's auto-key (unique per
+                        // relation — DuplicateStatement refuses a second
+                        // spelling): the one id allocator's key form, R16.
+                        fresh_row: projection.len() == 1
+                            && relations[relation.0 as usize].fresh_row_field()
+                                == Some(projection[0]),
                     });
                     StatementRef::Key(key_id)
                 }
@@ -164,7 +182,12 @@ impl ValidateDescriptor for SchemaDescriptor {
                                 &relations[target.relation.0 as usize].fields,
                             ),
                         },
-                        mirror: mirror_of(&descriptors, idx),
+                        // The source side's trailing interval shape,
+                        // derived here once (the positional type match
+                        // makes the sides' interval positions identical).
+                        source_tail: relations[source.relation.0 as usize]
+                            .interval_tail(&source.projection),
+                        mirror: mirror_of(&normalized, idx),
                     });
                     StatementRef::Containment(containment_id)
                 }
@@ -212,14 +235,15 @@ impl ValidateDescriptor for SchemaDescriptor {
             // normalization (selections sorted by FieldId). Identical FDs
             // never reach this — `DuplicateFunctionality` (a set rule, so
             // a superset of this equality) fired above.
-            let norm = normalize(descriptor);
-            if let Some(earlier) = normalized.iter().position(|n| *n == norm) {
+            if let Some(earlier) = normalized[..idx]
+                .iter()
+                .position(|n| *n == normalized[idx])
+            {
                 return Err(SchemaError::DuplicateStatement {
                     statement: id,
                     earlier: statement_id(earlier),
                 });
             }
-            normalized.push(norm);
             order.push(sealed);
         }
 
@@ -252,21 +276,23 @@ impl ValidateDescriptor for SchemaDescriptor {
 }
 
 /// The `==` partner of the statement at `index`: the first *other*
-/// containment in the materialized list whose sides are exactly the swapped
-/// sides — the one swapped-sides comparison site. Sealing calls it over
-/// **all** statements (the lowered pair need not be adjacent — legal for
+/// containment in the NORMALIZED materialized list whose normalized sides
+/// are exactly the swapped sides — the one swapped-sides comparison site,
+/// over the one statement identity ([`normalize`]), so a respelled literal
+/// set or binding order cannot hide a pair. Sealing calls it over **all**
+/// statements (the lowered pair need not be adjacent — legal for
 /// hand-built descriptors); the declared-side diagnostic renderer calls it
 /// too, because a rejected declaration never seals a field to read. On a
 /// *sealed* list the partner is unique and the links symmetric: a second
-/// candidate mirror would equal the first, and
+/// candidate mirror would be normalized-equal to the first, and
 /// [`SchemaError::DuplicateStatement`] rejects identical normalized
 /// statements. On a rejected declaration first-match is best-effort
 /// diagnostics.
-pub(super) fn mirror_of(descriptors: &[StatementDescriptor], index: usize) -> Option<StatementId> {
-    let StatementDescriptor::Containment { source, target } = &descriptors[index] else {
+pub(super) fn mirror_of(normalized: &[StatementDescriptor], index: usize) -> Option<StatementId> {
+    let StatementDescriptor::Containment { source, target } = &normalized[index] else {
         return None;
     };
-    descriptors
+    normalized
         .iter()
         .enumerate()
         .find(|(other, descriptor)| {
@@ -280,6 +306,17 @@ pub(super) fn mirror_of(descriptors: &[StatementDescriptor], index: usize) -> Op
                 )
         })
         .map(|(other, _)| statement_id(other))
+}
+
+/// Every statement's `==` partner over the one normalized identity — the
+/// render-side pre-pass: ONE normalization of the whole materialized list
+/// and one link table, so a manifest or rejection render never
+/// re-materializes, re-normalizes, or re-searches per statement.
+pub(super) fn mirror_links(descriptors: &[StatementDescriptor]) -> Vec<Option<StatementId>> {
+    let normalized: Vec<StatementDescriptor> = descriptors.iter().map(normalize).collect();
+    (0..normalized.len())
+        .map(|index| mirror_of(&normalized, index))
+        .collect()
 }
 
 /// The materialized-order [`StatementId`] for a list index (the typed
@@ -363,7 +400,10 @@ impl Projection<'_> {
 #[derive(Clone, Copy)]
 enum FunctionalityEvidence {
     Scalar,
-    Pointwise(DisjointDeterminantProof),
+    /// The disjointness proof WITH the tail the gate derived it from —
+    /// what validation learned survives to sealing (parse, don't
+    /// validate), so no consumer re-derives the trailing encoding.
+    Pointwise(DisjointDeterminantProof, IntervalTail),
 }
 
 /// The projection positions holding interval-typed fields — the one scan
@@ -469,8 +509,9 @@ fn canonical_side(side: &Side) -> Side {
 /// The descriptor with each selection sorted by [`FieldId`] and each
 /// binding's literal set canonicalized — σ is a set of bindings over sets
 /// of literals, so neither written order is identity (roster "duplicate
-/// statements (identical normalized sides and form)").
-fn normalize(descriptor: &StatementDescriptor) -> StatementDescriptor {
+/// statements (identical normalized sides and form)"). THE statement
+/// identity: duplicate rejection and [`mirror_of`] both compare this form.
+pub(super) fn normalize(descriptor: &StatementDescriptor) -> StatementDescriptor {
     fn side(side: &Side) -> Side {
         let canonical = canonical_side(side);
         let mut selection = canonical.selection.to_vec();
@@ -535,6 +576,17 @@ fn validate_functionality(
             field: projection.ordered()[pos],
         });
     }
+    // The trailing interval encoding, derived HERE once — the closed-arm
+    // collision probe below and the sealed witness both consume it.
+    let tail = interval_position.map(|pos| {
+        let idx = usize::from(projection.ordered()[pos].0);
+        IntervalTail {
+            width: match relation.fields[idx].value_type {
+                ValueType::Interval { width, .. } => width,
+                _ => unreachable!("interval_positions found an interval field"),
+            },
+        }
+    });
 
     // Roster "duplicate statements", FD form: one field *set* per relation
     // — a second FD over the same set (any order) asserts the same
@@ -594,17 +646,10 @@ fn validate_functionality(
                 if !scalars_agree {
                     continue;
                 }
-                let collide = match interval_position {
+                let collide = match interval_position.zip(tail) {
                     None => true,
-                    Some(pos) => {
-                        let field = projection.ordered()[pos];
-                        let idx = usize::from(field.0);
-                        let tail = IntervalTail {
-                            width: match relation.fields[idx].value_type {
-                                ValueType::Interval { width, .. } => width,
-                                _ => unreachable!("interval_positions found an interval field"),
-                            },
-                        };
+                    Some((pos, tail)) => {
+                        let idx = usize::from(projection.ordered()[pos].0);
                         // Half-open `[s, e)` intersection on the
                         // order-preserving words (a fixed-width field's
                         // end derives from the type's width). Sealed rows
@@ -630,8 +675,8 @@ fn validate_functionality(
         }
     }
 
-    Ok(match interval_position {
-        Some(_) => FunctionalityEvidence::Pointwise(DisjointDeterminantProof(())),
+    Ok(match tail {
+        Some(tail) => FunctionalityEvidence::Pointwise(DisjointDeterminantProof(()), tail),
         None => FunctionalityEvidence::Scalar,
     })
 }
@@ -646,52 +691,16 @@ fn validate_containment(
     relations: &[Relation],
     descriptors: &[StatementDescriptor],
 ) -> Result<Enforcement, SchemaError> {
-    validate_side_shape(id, source, relations)?;
-    let target_projection = validate_side_shape(id, target, relations)?;
-
-    // Roster "arity mismatch between sides": |X| = |Y|.
-    if source.projection.len() != target.projection.len() {
-        return Err(SchemaError::ContainmentArityMismatch {
-            statement: id,
-            source: source.projection.len(),
-            target: target.projection.len(),
-        });
-    }
-
-    // Roster "positional structural-type mismatch" — element-domain at
-    // interval positions (Q1: widths free, elements bound), exact
-    // structural equality everywhere else, which also covers the
-    // called-out interval-against-scalar case
-    // (`docs/architecture/10-data-model.md` structural equality).
-    let source_fields = &relations[source.relation.0 as usize].fields;
-    let target_fields = &relations[target.relation.0 as usize].fields;
-    for (position, (s, t)) in source
-        .projection
-        .iter()
-        .zip(target.projection.iter())
-        .enumerate()
-    {
-        if !positional_types_match(
-            &source_fields[usize::from(s.0)].value_type,
-            &target_fields[usize::from(t.0)].value_type,
-        ) {
-            return Err(SchemaError::ContainmentTypeMismatch {
-                statement: id,
-                position,
-            });
-        }
-    }
-
-    validate_side_selection(id, source, relations)?;
-    validate_side_selection(id, target, relations)?;
+    let target_projection = validate_side_pair(id, source, target, relations)?;
 
     // Interval positions on closed containments: refused v0. A pointwise
     // judgment against a closed target would mix the coverage walk with
     // virtual storage, and a constant source's coverage demand has no
     // delete-time re-judgment path — either closed side refuses
     // (`docs/architecture/30-dependencies.md`; trigger: a census
-    // sighting). One check covers both sides: the positional type match
-    // above makes the sides' interval positions identical.
+    // sighting). One check covers both sides: the pair gate's positional
+    // type match makes the sides' interval positions identical.
+    let target_fields = &relations[target.relation.0 as usize].fields;
     let source_closed = relations[source.relation.0 as usize].extension.is_some();
     let target_closed = relations[target.relation.0 as usize].extension.is_some();
     if (source_closed || target_closed)
@@ -794,47 +803,12 @@ fn validate_cardinality(
         _ => {}
     }
 
-    validate_side_shape(id, source, relations)?;
-    let target_projection = validate_side_shape(id, target, relations)?;
-
-    // Roster "arity mismatch between sides": |X| = |Y| — the child group
-    // compares whole projected tuples.
-    if source.projection.len() != target.projection.len() {
-        return Err(SchemaError::ContainmentArityMismatch {
-            statement: id,
-            source: source.projection.len(),
-            target: target.projection.len(),
-        });
-    }
-
-    // Roster "positional structural-type mismatch" — as for containment
-    // (Q1 element-domain at interval positions; moot for acceptance here,
-    // since any interval position hits the window refusal just below).
-    let source_fields = &relations[source.relation.0 as usize].fields;
-    let target_fields = &relations[target.relation.0 as usize].fields;
-    for (position, (s, t)) in source
-        .projection
-        .iter()
-        .zip(target.projection.iter())
-        .enumerate()
-    {
-        if !positional_types_match(
-            &source_fields[usize::from(s.0)].value_type,
-            &target_fields[usize::from(t.0)].value_type,
-        ) {
-            return Err(SchemaError::ContainmentTypeMismatch {
-                statement: id,
-                position,
-            });
-        }
-    }
-
-    validate_side_selection(id, source, relations)?;
-    validate_side_selection(id, target, relations)?;
+    let target_projection = validate_side_pair(id, source, target, relations)?;
 
     // The v0 interval refusal: window projections carry no interval
-    // position, either side (the positional type match above makes the
-    // sides' interval positions identical, so one scan suffices).
+    // position, either side (the pair gate's positional type match makes
+    // the sides' interval positions identical, so one scan suffices).
+    let source_fields = &relations[source.relation.0 as usize].fields;
     let positions = interval_positions(source_fields, &source.projection);
     if let Some(pos) = positions.first() {
         return Err(SchemaError::CardinalityIntervalPosition {
@@ -865,7 +839,7 @@ fn validate_cardinality(
             .expect("the Closed enforcement arm resolves only against a closed target");
         let source_layout = &relations[source.relation.0 as usize].layout;
         let phi = compiled_checks(&source.selection, source_fields);
-        let psi = compiled_checks(&target.selection, target_fields);
+        let psi = compiled_checks(&target.selection, &target_relation.fields);
         for (row_idx, parent) in target_rows.iter().enumerate() {
             if !sealed_satisfies(&psi, &target_relation.layout, &parent.fact) {
                 continue;
@@ -1043,6 +1017,63 @@ fn validate_projection<'p>(
     })
 }
 
+/// The shared side-pair gate of the two two-sided forms — ONE definition
+/// site, exactly as `resolve_target_key` is shared (the Lean model states
+/// one acceptance rule: `lean/Bumbledb/Admission.lean: containmentForm` /
+/// `cardinalityForm` take their sides through one structure). Both side
+/// shapes, the |X| = |Y| arity check, the Q1 positional-type loop
+/// (element-domain at interval positions, exact structural equality
+/// elsewhere — `docs/architecture/10-data-model.md` structural equality;
+/// widths free, elements bound), and both σ checks. Returns the validated
+/// target projection — what both callers hand to `resolve_target_key`.
+/// Form-specific refusals (the closed-interval refusal, the window
+/// vocabulary and interval bans) stay with their callers.
+fn validate_side_pair<'t>(
+    id: StatementId,
+    source: &Side,
+    target: &'t Side,
+    relations: &[Relation],
+) -> Result<Projection<'t>, SchemaError> {
+    validate_side_shape(id, source, relations)?;
+    let target_projection = validate_side_shape(id, target, relations)?;
+
+    // Roster "arity mismatch between sides": |X| = |Y| — the judgment
+    // compares whole projected tuples.
+    if source.projection.len() != target.projection.len() {
+        return Err(SchemaError::ContainmentArityMismatch {
+            statement: id,
+            source: source.projection.len(),
+            target: target.projection.len(),
+        });
+    }
+
+    // Roster "positional structural-type mismatch" — including its
+    // called-out interval-against-scalar case.
+    let source_fields = &relations[source.relation.0 as usize].fields;
+    let target_fields = &relations[target.relation.0 as usize].fields;
+    for (position, (s, t)) in source
+        .projection
+        .iter()
+        .zip(target.projection.iter())
+        .enumerate()
+    {
+        if !positional_types_match(
+            &source_fields[usize::from(s.0)].value_type,
+            &target_fields[usize::from(t.0)].value_type,
+        ) {
+            return Err(SchemaError::ContainmentTypeMismatch {
+                statement: id,
+                position,
+            });
+        }
+    }
+
+    validate_side_selection(id, source, relations)?;
+    validate_side_selection(id, target, relations)?;
+
+    Ok(target_projection)
+}
+
 /// One side's id and duplication shape: unknown relation/field ids, empty
 /// or duplicate projection, duplicate selection binding (σ is a set), and
 /// the literal-set canon — a `Many` binding carries at least two distinct
@@ -1175,11 +1206,18 @@ fn resolve_target_key(
     // permutation, and no determinant-width concern — the enforcement plan is
     // the answer set itself. The handle id is the one probe-able identity
     // of a closed relation (the auto-key `R(id) -> R`), so the target
-    // projection must be exactly the synthetic id; ψ folds against the
-    // sealed extension here and never exists at commit.
+    // projection must be exactly the synthetic id — its OWN refusal, not
+    // the no-matching-key one: a declared payload key may carry exactly
+    // the refused field set, and the rule here is closedness, not key
+    // absence. ψ folds against the sealed extension here and never
+    // exists at commit.
     if let Some(rows) = target_relation.extension.as_deref() {
         if target.projection.len() != 1 || target.projection[0] != FieldId(0) {
-            return Err(missing_target_key(id, target, descriptors, false));
+            return Err(SchemaError::ClosedTargetNotHandle {
+                statement: id,
+                target: target.relation,
+                projection: target.projection.clone(),
+            });
         }
         return Ok(Enforcement::Closed {
             members: compile_member_set(target_relation, target, rows),
@@ -1230,15 +1268,19 @@ fn resolve_target_key(
     // gate's "key carries its interval" demand is discharged by
     // construction, not re-checked.
 
-    let key_permutation = target_projection
-        .ordered()
+    // Stored INVERSE (determinant position → projection index), minted
+    // once here so the per-fact encoder is a straight indexed gather —
+    // the measured-law reversal condition cashed
+    // (`keys::permuted_determinant_image`; cleanup-0.5.0 ruling 8).
+    let key_permutation = key_projection
         .iter()
-        .map(|field| {
-            let determinant_pos = key_projection
+        .map(|key_field| {
+            let source_pos = target_projection
+                .ordered()
                 .iter()
-                .position(|k| k == field)
-                .expect("set-equal key contains every projected field");
-            u16::try_from(determinant_pos).expect("field count fits u16")
+                .position(|field| field == key_field)
+                .expect("set-equal projection contains every key field");
+            u16::try_from(source_pos).expect("field count fits u16")
         })
         .collect();
 
@@ -1255,7 +1297,7 @@ fn resolve_target_key(
     );
 
     if interval_position.is_some() {
-        let FunctionalityEvidence::Pointwise(disjoint) = validate_functionality(
+        let FunctionalityEvidence::Pointwise(disjoint, _) = validate_functionality(
             statement_id(key_idx),
             target.relation,
             key_projection,
@@ -1481,6 +1523,13 @@ fn validate_relation(
         Some(rows) => Some(validate_extension(rel_id, &fields, &layout, &rows)?),
     };
 
+    // The one id allocator's mint field (R16): the FIRST fresh field's
+    // value IS the `F` row id; its auto-key seals `fresh_row` below.
+    let fresh_row_field = fields
+        .iter()
+        .position(|f| f.generation == Generation::Fresh)
+        .map(|idx| FieldId(u16::try_from(idx).expect("field count fits u16")));
+
     Ok(Relation {
         name,
         fields: fields.into_boxed_slice(),
@@ -1490,6 +1539,7 @@ fn validate_relation(
         outgoing: Box::new([]),
         window_sources: Box::new([]),
         window_targets: Box::new([]),
+        fresh_row_field,
     })
 }
 

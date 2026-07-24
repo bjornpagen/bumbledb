@@ -454,18 +454,19 @@ pub fn parse_stat_key(key: &[u8]) -> Option<(RelationId, u8)> {
 /// ordered by interval start within one scalar-prefix group (the fixed
 /// family's one word is the start itself).
 ///
-/// MEASURED LAW (cleanup-0.5.0 ruling 8, the Measure phase, 2026-07-19,
-/// `bench-out/measure-twins/`): this direct arm is
-/// [`permuted_determinant_image`] under the identity permutation, and
-/// the identity-permuted route measured **1.23–1.25× slower per fact**
-/// (13 vs 17 ns/fact, commit-shaped 3-field interval projection, warm
-/// DRAM, interleaved min-of-7 × 200k facts, two process runs) — the
-/// permuted arm's O(n²) inverse search is real cost on the hot commit
-/// path, so the pair stays split; pre-stated bar 1.09
-/// (`docs/architecture/50-storage.md` § key encoding).
-/// **Reverses if:** the permuted arm ever precomputes its inverse (the
-/// search hoisted out of the per-fact loop) and re-measures within the
-/// house bar.
+/// MEASURED-LAW GRAVESTONE (cleanup-0.5.0 ruling 8, reversed by its own
+/// clause 2026-07-24, finding 034): the split's recorded cost — the
+/// identity-permuted route 1.23–1.25× slower per fact (13 vs 17
+/// ns/fact, commit-shaped 3-field interval projection, warm DRAM,
+/// interleaved min-of-7 × 200k facts, two process runs; pre-stated bar
+/// 1.09) — was entirely the permuted arm's per-fact O(k²) inverse
+/// search. The reversal condition ("precomputes its inverse, the search
+/// hoisted out of the per-fact loop") is now the representation:
+/// validation mints the permutation in inverse form and
+/// [`permuted_determinant_image`] is a straight indexed gather — this
+/// direct arm IS that gather under the identity, so the pair stays
+/// split only for the identity case's spelled clarity. Re-measure rides
+/// the end-of-campaign bench night (R20/R21).
 pub fn determinant_image<'a>(
     layout: &FactLayout,
     projection: &[FieldId],
@@ -480,12 +481,13 @@ pub fn determinant_image<'a>(
 }
 
 /// Like [`determinant_image`], but lays the sliced fields down in the *target
-/// key's* determinant order: `key_permutation[i]` is the determinant position of
-/// projection element `i` (statement projection order → target key order,
+/// key's* determinant order: `key_permutation[d]` is the projection index
+/// whose field lands at determinant position `d` (the INVERSE form,
+/// minted at validate —
 /// `Enforcement::{ScalarProbe, IntervalCoverage}::key_permutation`) — the
-/// key-bytes segment of an `R` key. Interval fields copy their whole encoded
-/// tail (16 bytes general, the 8-byte fixed start), exactly as in
-/// [`determinant_image`].
+/// key-bytes segment of an `R` key, one indexed gather per position.
+/// Interval fields copy their whole encoded tail (16 bytes general, the
+/// 8-byte fixed start), exactly as in [`determinant_image`].
 pub fn permuted_determinant_image<'a>(
     layout: &FactLayout,
     projection: &[FieldId],
@@ -495,15 +497,11 @@ pub fn permuted_determinant_image<'a>(
 ) -> &'a DeterminantImage {
     debug_assert_eq!(projection.len(), key_permutation.len());
     out.clear();
-    for determinant_pos in 0..key_permutation.len() {
-        let source_pos = key_permutation
-            .iter()
-            .position(|&p| usize::from(p) == determinant_pos)
-            .expect("key permutation contains every determinant position");
+    for &source_pos in key_permutation {
         out.extend(field_bytes(
             fact_bytes,
             layout,
-            usize::from(projection[source_pos].0),
+            usize::from(projection[usize::from(source_pos)].0),
         ));
     }
     out
@@ -661,11 +659,12 @@ mod tests {
     fn permuted_determinant_image_lay_fields_in_target_key_order() {
         let layout = interval_layout();
         let fact = interval_fact();
-        // Source projection order (f2, f0, f1); the target key's determinant
-        // order is (f0, f2, interval): permutation maps projection
-        // position -> determinant position.
-        let projection = [FieldId(2), FieldId(0), FieldId(1)];
-        let key_permutation = [1u16, 0, 2];
+        // Source projection order (f2, f1, f0); the target key's determinant
+        // order is (f0, f2, interval f1): the stored permutation is the
+        // INVERSE — determinant position -> projection index — and the
+        // 3-cycle pins the direction (an involution would pass either way).
+        let projection = [FieldId(2), FieldId(1), FieldId(0)];
+        let key_permutation = [2u16, 0, 1];
         let mut key_bytes = DeterminantImage::scratch();
         permuted_determinant_image(
             &layout,

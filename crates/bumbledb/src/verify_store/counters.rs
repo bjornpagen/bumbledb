@@ -47,7 +47,13 @@ pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
                 }
             }
             HIGH_WATER => {
-                if let Some(tally) = s.tallies.get(&rel)
+                // The one id allocator (R16): the S high-water exists
+                // only where no fresh field does — a fresh-keyed
+                // relation's mint is Q, so a stored high-water is a
+                // namespace violation whatever its value.
+                if s.schema.relation(rel).fresh_row_field().is_some() {
+                    s.malformed(key, "S high-water on a fresh-keyed relation");
+                } else if let Some(tally) = s.tallies.get(&rel)
                     && stored <= tally.max_row_id
                 {
                     s.push(StoreFinding::RowIdHighWaterLow {
@@ -70,12 +76,16 @@ pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
                     stored: 0,
                     counted: tally.rows,
                 });
-            let water =
-                (!seen.contains(&(rel, HIGH_WATER))).then_some(StoreFinding::RowIdHighWaterLow {
-                    relation: rel,
-                    stored: 0,
-                    max_row_id: tally.max_row_id,
-                });
+            // Fresh-less relations only: a fresh-keyed relation OWES no
+            // S high-water (the one id allocator, R16 — its mint is Q,
+            // judged by the Q pass's ratchet law).
+            let water = (!seen.contains(&(rel, HIGH_WATER))
+                && s.schema.relation(rel).fresh_row_field().is_none())
+            .then_some(StoreFinding::RowIdHighWaterLow {
+                relation: rel,
+                stored: 0,
+                max_row_id: tally.max_row_id,
+            });
             count.into_iter().chain(water)
         })
         .collect();

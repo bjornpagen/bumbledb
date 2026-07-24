@@ -8,6 +8,7 @@
 use super::*;
 
 use crate::error::{Error, Violation};
+use crate::schema::ValidateDescriptor as _;
 use crate::storage::commit::commit;
 use crate::storage::delta::WriteDelta;
 use crate::storage::env::Environment;
@@ -288,4 +289,163 @@ fn bounded_interval_adjacent_to_ray_passes() {
     let a = booking_fact(&schema, 1, 5, 9, 0);
     let b = booking_fact(&schema, 1, 9, u64::MAX, 1);
     cross_delta("fd-ray-adjacent", &a, &b).expect("adjacency at the ray's start is legal");
+}
+
+// ---------- the fresh-row auto-key: the F put-conflict (R16) ----------
+//
+// Doc(id fresh, body u64): the payload distinguishes facts sharing an
+// explicit fresh id, so the auto-key's judgment — the `F` put-conflict
+// itself, no `U` tree — is reachable.
+
+fn doc_schema() -> Schema {
+    SchemaDescriptor {
+        relations: vec![RelationDescriptor {
+            extension: None,
+            name: "Doc".into(),
+            fields: vec![
+                FieldDescriptor {
+                    name: "id".into(),
+                    value_type: ValueType::U64,
+                    generation: Generation::Fresh,
+                },
+                field("body", ValueType::U64),
+            ],
+        }],
+        statements: vec![],
+    }
+    .validate()
+    .expect("valid fixture")
+}
+
+const DOC: RelationId = RelationId(0);
+/// Materialized order: the fresh auto-key alone.
+const DOC_KEY: StatementId = StatementId(0);
+
+fn doc_fact(schema: &Schema, id: u64, body: u64) -> Vec<u8> {
+    fact(schema, DOC, &[ValueRef::U64(id), ValueRef::U64(body)])
+}
+
+/// One recorded Functionality citing the fresh auto-key, incumbent
+/// unnamed (the scalar-arm convention), the offending fact one of the
+/// pair.
+fn assert_fresh_row_violation(err: &crate::error::Error, facts: &[&[u8]]) {
+    let crate::error::Error::CommitRejected { violations } = err else {
+        panic!("expected a rejected commit, got {err:?}");
+    };
+    let [
+        Violation::Functionality {
+            statement,
+            fact,
+            incumbent: None,
+        },
+    ] = violations.as_slice()
+    else {
+        panic!("expected one fresh-row key citation, got {violations:?}");
+    };
+    assert_eq!(*statement, DOC_KEY);
+    assert!(facts.iter().any(|candidate| **fact == **candidate));
+}
+
+#[test]
+fn duplicate_fresh_id_in_one_delta_aborts_with_the_auto_key() {
+    let dir = TempDir::new("fresh-row-conflict-in-delta");
+    let schema = doc_schema();
+    let env = Environment::create(dir.path(), &schema).expect("create");
+    let a = doc_fact(&schema, 7, 1);
+    let b = doc_fact(&schema, 7, 2);
+    let view = env.read_txn().expect("txn");
+    let mut delta = WriteDelta::new(&schema);
+    delta.insert(&view, DOC, &a).expect("insert");
+    delta.insert(&view, DOC, &b).expect("insert");
+    drop(view);
+    let err = commit(delta, &env).unwrap_err();
+    assert_fresh_row_violation(&err, &[&a, &b]);
+    // The abort left no data — only the burned Q high-water (the
+    // never-reissue law persists escaped fresh marks on every abort).
+    assert!(
+        committed_data(&env)
+            .iter()
+            .all(|(k, _)| k[0] == crate::storage::keys::NS_FRESH),
+        "the abort left nothing but the burned Q mark"
+    );
+}
+
+#[test]
+fn duplicate_fresh_id_across_deltas_aborts_with_the_auto_key() {
+    let dir = TempDir::new("fresh-row-conflict-cross-delta");
+    let schema = doc_schema();
+    let env = Environment::create(dir.path(), &schema).expect("create");
+    let incumbent = doc_fact(&schema, 7, 1);
+    {
+        let view = env.read_txn().expect("txn");
+        let mut delta = WriteDelta::new(&schema);
+        delta.insert(&view, DOC, &incumbent).expect("insert");
+        drop(view);
+        commit(delta, &env).expect("base commit");
+    }
+    let before = committed_data(&env);
+    let contender = doc_fact(&schema, 7, 2);
+    let view = env.read_txn().expect("txn");
+    let mut delta = WriteDelta::new(&schema);
+    delta.insert(&view, DOC, &contender).expect("insert");
+    drop(view);
+    let err = commit(delta, &env).unwrap_err();
+    assert_fresh_row_violation(&err, &[&contender]);
+    assert_eq!(committed_data(&env), before, "the abort left the base");
+}
+
+#[test]
+fn delete_then_reinsert_of_a_fresh_id_in_one_delta_passes() {
+    // Final-state judgment: the delete frees the row id, so the explicit
+    // re-supply lands — the documented correction idiom
+    // (`10-data-model.md`).
+    let dir = TempDir::new("fresh-row-reinsert");
+    let schema = doc_schema();
+    let env = Environment::create(dir.path(), &schema).expect("create");
+    let old = doc_fact(&schema, 7, 1);
+    {
+        let view = env.read_txn().expect("txn");
+        let mut delta = WriteDelta::new(&schema);
+        delta.insert(&view, DOC, &old).expect("insert");
+        drop(view);
+        commit(delta, &env).expect("base commit");
+    }
+    let view = env.read_txn().expect("txn");
+    let mut delta = WriteDelta::new(&schema);
+    delta.delete(&view, DOC, &old).expect("delete");
+    delta
+        .insert(&view, DOC, &doc_fact(&schema, 7, 2))
+        .expect("insert");
+    drop(view);
+    commit(delta, &env).expect("the freed row id admits the replacement");
+}
+
+#[test]
+fn scan_order_is_fresh_order_not_insertion_order() {
+    // The one id allocator (R16): the F key embeds the fresh value, so
+    // the sequential scan yields fresh order whatever the commit order.
+    let dir = TempDir::new("fresh-row-scan-order");
+    let schema = doc_schema();
+    let env = Environment::create(dir.path(), &schema).expect("create");
+    for (id, body) in [(9u64, 0u64), (3, 1), (6, 2)] {
+        let view = env.read_txn().expect("txn");
+        let mut delta = WriteDelta::new(&schema);
+        delta
+            .insert(&view, DOC, &doc_fact(&schema, id, body))
+            .expect("insert");
+        drop(view);
+        commit(delta, &env).expect("commit");
+    }
+    let rtxn = env.read_txn().expect("txn");
+    let prefix = key(|b| crate::storage::keys::fact_prefix(b, DOC));
+    let scanned: Vec<u64> = env
+        .data()
+        .prefix_iter(rtxn.raw(), &prefix)
+        .expect("iter")
+        .map(|kv| {
+            let (k, _) = kv.expect("kv");
+            crate::storage::keys::parse_fact_key(k).expect("fact key").1
+        })
+        .collect();
+    assert_eq!(scanned, vec![3, 6, 9], "scan order is fresh order");
 }

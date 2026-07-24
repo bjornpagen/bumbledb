@@ -31,6 +31,8 @@ mod insert;
 mod intern;
 mod new;
 
+pub(crate) use alloc::read_fresh_next;
+
 #[cfg(test)]
 mod tests;
 

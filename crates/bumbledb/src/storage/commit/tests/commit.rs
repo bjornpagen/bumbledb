@@ -210,18 +210,25 @@ fn counters_after_reopen_match_a_recount_of_f_entries() {
     assert_eq!(count, scanned);
     assert_eq!(count, 3); // 3 inserted + 1 inserted - 1 deleted
 
-    // The high-water also survived: row ids 0..=3 were assigned, so the
-    // stored next id is 4.
+    // Target is fresh-keyed, so no S high-water exists (the one id
+    // allocator, R16): the mint is Q, ratcheted past the explicit fresh
+    // values 1..=4 — the stored next value is 5.
     let hw_len = keys::stat_key(&mut key, TARGET, StatKind::RowIdHighWater);
-    let high_water = u64::from_le_bytes(
+    assert_eq!(
+        env.data().get(rtxn.raw(), &key[..hw_len]).expect("get"),
+        None,
+        "a fresh-keyed relation owns no S high-water"
+    );
+    let q_len = keys::fresh_key(&mut key, TARGET, FieldId(0));
+    let q_next = u64::from_le_bytes(
         env.data()
-            .get(rtxn.raw(), &key[..hw_len])
+            .get(rtxn.raw(), &key[..q_len])
             .expect("get")
-            .expect("high water present")
+            .expect("Q next present")
             .try_into()
             .expect("u64"),
     );
-    assert_eq!(high_water, 4);
+    assert_eq!(q_next, 5);
 }
 
 #[test]

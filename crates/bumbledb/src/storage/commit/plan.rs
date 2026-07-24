@@ -11,11 +11,15 @@
 //! phase). Selection literals arrive pre-encoded ([`Selections`]) and the
 //! plan owns them for the rest of the commit.
 //!
-//! The honest boundary, stated up front: row ids are **not** derivable
-//! (deletes need the `M` lookup; inserts mint from the high-water) and
-//! judgment probe *results* need final-state reads. The plan owns key
-//! material and check sets; the applier keeps the id plumbing and the
-//! desync probes; the judgment keeps the final-state probes.
+//! The honest boundary, stated up front: delete row ids are **not**
+//! derivable (they need the `M` lookup), fresh-less insert row ids mint
+//! from the high-water, and judgment probe *results* need final-state
+//! reads. On a **fresh-keyed** relation the insert row id IS derivable —
+//! the first fresh field's value is the `F` row id (the one id
+//! allocator, `docs/architecture/50-storage.md` § key layout; R16) — so
+//! the plan carries it ([`FactOp::fresh_row`]). The plan owns key
+//! material and check sets; the applier keeps the remaining id plumbing
+//! and the desync probes; the judgment keeps the final-state probes.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -80,7 +84,14 @@ pub(crate) struct FactOp<'d> {
     pub(crate) relation: RelationId,
     /// The canonical fact bytes (identity = bytes, `10-data-model.md`).
     pub(crate) fact: &'d [u8],
-    /// One per key statement of the relation, materialized order.
+    /// The one id allocator's derivation on a fresh-keyed relation (R16):
+    /// the first fresh field's value IS the `F` row id, and the named
+    /// statement's functionality judgment is the `F` put-conflict.
+    /// `None` = fresh-less; the applier mints from the `S` high-water.
+    pub(crate) fresh_row: Option<FreshRowOp>,
+    /// One per key statement of the relation, materialized order — the
+    /// fresh-row auto-key excepted: it maintains no `U` tree (its entry
+    /// would transcribe `F`), so no determinant op exists for it.
     pub(crate) determinants: Box<[DeterminantOp]>,
     /// One per outgoing containment whose source selection the fact
     /// satisfies — a fact outside σ has no edge, by design.
@@ -109,6 +120,16 @@ pub(crate) struct MarkEdgeOp {
     /// The edge's key-bytes segment: the window's child projection in
     /// target-key determinant order.
     pub(crate) key_bytes: DeterminantImage,
+}
+
+/// The fresh-row derivation of one fact op (R16): the row id sliced from
+/// the fact's first fresh field, and the auto-key statement the `F`
+/// put-conflict convicts.
+pub(crate) struct FreshRowOp {
+    /// The fresh auto-key's fingerprint-pinned identity.
+    pub(crate) statement: StatementId,
+    /// The first fresh field's value — the `F` row id.
+    pub(crate) row_id: u64,
 }
 
 /// One key statement's determinant material for one fact.
@@ -281,30 +302,41 @@ fn fact_op<'d>(
     keys::debug_assert_ordinary(schema, rel);
     let relation = schema.relation(rel);
     let layout = relation.layout();
-    let determinants = relation
-        .keys()
-        .iter()
-        .map(|&key_id| {
-            let statement = schema.key(key_id);
-            // Determinant keys derived by slicing projected fields out of
-            // fact_bytes — never a scan; interval fields slice as their
-            // whole 16 bytes.
-            keys::determinant_image(layout, &statement.projection, fact, &mut scratch.image);
-            let determinant = scratch.image.clone();
-            if !schema.dependents(key_id).is_empty() {
-                dependent_determinants.insert((key_id, determinant.clone()));
-            }
-            DeterminantOp {
+    let mut fresh_row = None;
+    let mut determinants = Vec::with_capacity(relation.keys().len());
+    for &key_id in relation.keys() {
+        let statement = schema.key(key_id);
+        // Determinant keys derived by slicing projected fields out of
+        // fact_bytes — never a scan; interval fields slice as their
+        // whole 16 bytes.
+        keys::determinant_image(layout, &statement.projection, fact, &mut scratch.image);
+        if !schema.dependents(key_id).is_empty() {
+            dependent_determinants.insert((key_id, scratch.image.clone()));
+        }
+        // The fresh-row auto-key maintains no `U` tree (the one id
+        // allocator, R16): its determinant IS the `F` row id, and the
+        // `F` put-conflict is its functionality judgment — the applier
+        // takes the derived id and the statement to convict.
+        if statement.fresh_row {
+            let word = crate::encoding::field_word_bytes(
+                fact,
+                layout,
+                usize::from(statement.projection[0].0),
+            );
+            fresh_row = Some(FreshRowOp {
                 statement: statement.id,
-                determinant,
-                pointwise: statement.pointwise.then(|| {
-                    schema
-                        .key_tail(statement)
-                        .expect("a pointwise key has a tail")
-                }),
-            }
-        })
-        .collect();
+                row_id: u64::from_be_bytes(word),
+            });
+            continue;
+        }
+        determinants.push(DeterminantOp {
+            statement: statement.id,
+            determinant: scratch.image.clone(),
+            // The sealed tail, copied — validation minted it once.
+            pointwise: statement.tail,
+        });
+    }
+    let determinants = determinants.into_boxed_slice();
     // One edge per outgoing containment statement whose source selection
     // the fact satisfies — conditional containments get reverse edges
     // only for facts inside their σ (docs/architecture/50-storage.md
@@ -355,6 +387,7 @@ fn fact_op<'d>(
     FactOp {
         relation: rel,
         fact,
+        fresh_row,
         determinants,
         edges: scratch.edges.drain(..).collect(),
         memberships: scratch.memberships.drain(..).collect(),
