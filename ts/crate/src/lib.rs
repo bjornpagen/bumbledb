@@ -70,7 +70,9 @@ use marshal::{ManifestWire, OwnedParam, StalenessWire, ValueOut, ViolationWire};
 /// through Node-API. The engine crate exposes no runtime crate-version
 /// accessor, so this reports the bridge crate's own version alongside the
 /// engine's `STORAGE_FORMAT_VERSION` — a genuine engine export, which is what
-/// makes the string proof rather than decoration.
+/// makes the string proof rather than decoration. The crate version rides
+/// the release lockstep (Cargo.toml == npm manifests, finding 139), so the
+/// string identifies the SHIPPED release, not a scaffold-frozen number.
 #[napi]
 #[must_use]
 pub fn engine_version() -> String {
