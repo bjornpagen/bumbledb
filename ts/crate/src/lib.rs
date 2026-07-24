@@ -528,7 +528,12 @@ enum SnapReq {
 }
 
 enum SnapReply {
-    Ready(Result<(), WireError>),
+    /// Open verdict, carrying the snapshot's witnessed generation — read
+    /// inside the snapshot's own transaction on the open round trip
+    /// (finding 016: the host's second `dbGeneration` crossing and its
+    /// fault-pairing close dance die; the race-closing rule of
+    /// `50-storage.md` holds by construction).
+    Ready(Result<u64, WireError>),
     Rows(Result<Vec<Vec<Value>>, WireError>),
     /// The executed [`Answers`] carrier, crossed WHOLE (owned, `Send`) —
     /// the engine's flat one-allocation buffer is already the right
@@ -627,7 +632,11 @@ fn bind_scalars(params: &[OwnedParam]) -> Result<Vec<BindValue<'_>>, WireError> 
 )]
 fn run_snapshot(db: Arc<Engine>, requests: Receiver<SnapReq>, replies: Sender<SnapReply>) {
     let outcome = db.read(|snap| {
-        if replies.send(SnapReply::Ready(Ok(()))).is_err() {
+        let generation = snap.generation()?;
+        if replies
+            .send(SnapReply::Ready(Ok(generation.value())))
+            .is_err()
+        {
             return Ok(());
         }
         while let Ok(req) = requests.recv() {
@@ -753,23 +762,43 @@ fn staleness_wire(
     })
 }
 
-/// Opens one MVCC read snapshot as a live handle.
+/// `dbSnapshot`'s reply: the live handle plus the snapshot's witnessed
+/// generation — one crossing carries both, so no second `dbGeneration`
+/// call (with its own transient read transaction and fault-pairing close
+/// branch) exists to pay or defend (finding 016).
+pub enum SnapshotOpened {
+    Ok {
+        handle: External<SnapshotHandle>,
+        generation: u64,
+    },
+}
+
+outcome_to_napi!(SnapshotOpened {
+    Ok { handle, generation } => { "ok": true, "snapshot": handle, "generation": generation },
+});
+
+/// Opens one MVCC read snapshot as a live handle, returning it WITH its
+/// witnessed generation (read inside the snapshot's own transaction —
+/// the race-closing rule of `50-storage.md` holds by construction).
 #[napi]
-pub fn db_snapshot(db: &External<DbHandle>) -> napi::Result<External<SnapshotHandle>> {
+pub fn db_snapshot(db: &External<DbHandle>) -> napi::Result<SnapshotOpened> {
     let inner = live(&db.inner, "db")?;
     let (req_tx, req_rx) = channel::<SnapReq>();
     let (rep_tx, rep_rx) = channel::<SnapReply>();
     let engine = Arc::clone(&inner.db);
     let thread = std::thread::spawn(move || run_snapshot(engine, req_rx, rep_tx));
     match rep_rx.recv() {
-        Ok(SnapReply::Ready(Ok(()))) => Ok(External::new(SnapshotHandle {
-            inner: RefCell::new(Some(SnapWorker {
-                requests: req_tx,
-                replies: rep_rx,
-                thread: Some(thread),
-                sealed: Arc::clone(&inner.sealed),
-            })),
-        })),
+        Ok(SnapReply::Ready(Ok(generation))) => Ok(SnapshotOpened::Ok {
+            handle: External::new(SnapshotHandle {
+                inner: RefCell::new(Some(SnapWorker {
+                    requests: req_tx,
+                    replies: rep_rx,
+                    thread: Some(thread),
+                    sealed: Arc::clone(&inner.sealed),
+                })),
+            }),
+            generation,
+        }),
         Ok(SnapReply::Ready(Err(error))) => {
             let _ = thread.join();
             Err(thrown(error))
