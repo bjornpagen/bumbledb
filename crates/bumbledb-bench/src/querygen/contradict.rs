@@ -75,20 +75,19 @@ fn plant(rule: &mut Rule, rng: &mut Rng) -> bool {
 
 /// The target theory's scalar integer bindings — `Some(signed)`.
 /// Interval, `str`, `bytes<N>`, and `bool` positions never host the
-/// plant (order literals would be type errors there).
+/// plant (order literals would be type errors there), and neither does
+/// any closed-reference position — the sealed ids (`Currency`/`Source`/
+/// `Tag` at `FieldId(0)`) and the fields referencing them
+/// (`Account.currency`, `JournalEntry.source`, `PostingTag.tag`): the
+/// plant's arms order, and the order wall refuses closed words
+/// (`OrderComparisonOnClosedReference`, ruled 2026-07-23, R4).
 fn int_field(relation: RelationId, field: FieldId) -> Option<bool> {
     let unsigned = matches!(
         (relation, field),
         (ids::HOLDER, ids::holder::ID)
-            | (
-                ids::ACCOUNT,
-                ids::account::ID | ids::account::HOLDER | ids::account::CURRENCY,
-            )
+            | (ids::ACCOUNT, ids::account::ID | ids::account::HOLDER)
             | (ids::INSTRUMENT, ids::instrument::ID)
-            | (
-                ids::JOURNAL_ENTRY,
-                ids::journal_entry::ID | ids::journal_entry::SOURCE,
-            )
+            | (ids::JOURNAL_ENTRY, ids::journal_entry::ID)
             | (
                 ids::POSTING,
                 ids::posting::ID
@@ -96,10 +95,7 @@ fn int_field(relation: RelationId, field: FieldId) -> Option<bool> {
                     | ids::posting::ACCOUNT
                     | ids::posting::INSTRUMENT,
             )
-            | (
-                ids::POSTING_TAG,
-                ids::posting_tag::POSTING | ids::posting_tag::TAG,
-            )
+            | (ids::POSTING_TAG, ids::posting_tag::POSTING)
             | (ids::ORG, ids::org::ID)
             | (
                 ids::ORG_PARENT,
@@ -111,7 +107,6 @@ fn int_field(relation: RelationId, field: FieldId) -> Option<bool> {
                 ids::IMPORT_BATCH,
                 ids::import_batch::ENTRY | ids::import_batch::BATCH,
             )
-            | (ids::CURRENCY | ids::SOURCE | ids::TAG, FieldId(0))
     );
     if unsigned {
         return Some(false);
