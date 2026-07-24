@@ -580,16 +580,24 @@ fn pointwise_key_probe_hit_is_byte_exact() {
     let fact = key_probe_fact(&plan, &txn, &schema, &[], &mut key)
         .expect("probe")
         .expect("hit");
-    // The probe key equals the shared slicer's determinant bytes for the fact.
-    let mut expected = crate::storage::keys::DeterminantImage::scratch();
+    // The probe scratch holds the whole composed `U` key (post-mortem
+    // §25): the header, then the shared slicer's determinant bytes.
+    let mut expected = Vec::new();
+    crate::storage::read::begin_determinant_key(&mut expected, REL, StatementId(0));
+    let mut image = crate::storage::keys::DeterminantImage::scratch();
     crate::storage::keys::determinant_image(
         schema.relation(REL).layout(),
         &[FieldId(0), FieldId(1)],
         fact,
-        &mut expected,
+        &mut image,
     );
-    assert_eq!(key, expected.as_bytes());
-    assert_eq!(key.len(), 8 + 16, "scalar word + whole 16-byte interval");
+    expected.extend_from_slice(image.as_bytes());
+    assert_eq!(key, expected);
+    assert_eq!(
+        key.len(),
+        crate::storage::read::DETERMINANT_KEY_HEADER + 8 + 16,
+        "header + scalar word + whole 16-byte interval"
+    );
     assert_eq!(run_key_probe(&plan, &env, &schema, &[]), vec![vec![100]]);
 
     // The 16 bytes are exact: a one-off end misses.

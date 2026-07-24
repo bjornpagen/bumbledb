@@ -97,6 +97,15 @@ pub(super) fn open_env(path: &Path, lane: OpenLane) -> Result<heed::Env<WithoutT
     // SAFETY: bumbledb opens each environment through exactly this function,
     // and heed itself refuses (Error::EnvAlreadyOpened) to open a path that
     // is already open in this process, upholding LMDB's single-open rule.
-    let env = unsafe { options.open(path)? };
+    //
+    // An OS-level failure here is the `Io` refusal, never an `Lmdb`
+    // diagnosis: this open is the read-only lane's first contact with
+    // the path (the writing lanes meet it at the lock file, which maps
+    // its failures the same way), so a nonexistent path surfaces as
+    // `Io` from every constructor (R17 — exhume's contract).
+    let env = unsafe { options.open(path) }.map_err(|err| match err {
+        heed::Error::Io(io) => crate::error::Error::Io(io),
+        other => other.into(),
+    })?;
     Ok(env)
 }
