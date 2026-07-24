@@ -78,25 +78,6 @@ pub enum AtomSource {
     Idb(PredId),
 }
 
-impl Atom {
-    /// The stored relation an `Edb` atom reads — the convenience
-    /// accessor for consumers whose atoms are stored-relation-only by
-    /// construction (the bench harness's generators and oracles;
-    /// key-probe classification, which refuses `Idb` rules first).
-    /// Consumers that handle both arms match on [`Atom::source`].
-    ///
-    /// # Panics
-    ///
-    /// On an `Idb` atom — the caller asserted a stored-relation atom.
-    #[must_use]
-    pub fn relation(&self) -> RelationId {
-        match self.source {
-            AtomSource::Edb(relation) => relation,
-            AtomSource::Idb(_) => unreachable!("caller asserted a stored-relation (Edb) atom"),
-        }
-    }
-}
-
 impl AtomSource {
     /// The stored relation this source reads, if any.
     #[must_use]
