@@ -9,14 +9,16 @@
 //!
 //! - `disp_probe*` — the join fold `Q(t, Sum(v)) :- Spoke(id, hub = h,
 //!   val = v), Hub(id = h, tag = t)`: the executor iterates the HUB
-//!   side (2^19 rows) and probes the forced SPOKE map keyed by hub
+//!   side (2^19 rows, through the fold split's tag-prefix map — 1,024
+//!   group keys ≈ 4 MiB, forced beside the spoke map and pinned by the
+//!   same obs test) and probes the forced SPOKE map keyed by hub
 //!   value — ~2^19 scattered probes per pass. Working set, traced from
 //!   the engine itself (the obs test in [`tests`] pins the engine's own
-//!   `colt_force` event, not just the arithmetic): the forced map
-//!   ingests all 2^20 spoke positions, lands
+//!   `colt_force` events, not just the arithmetic): the spoke map
+//!   ingests all 2^20 positions, lands
 //!   [`FORCED_MAP_DISTINCT`] = 453,241 distinct hub keys, and sizes to
 //!   2^18 buckets = 32 MiB bucket words + 2 MiB ctrl bytes ≈ **34 MiB**
-//!   ([`forced_spoke_map_bytes`]). The force runs ONCE per prepared
+//!   ([`forced_spoke_map_bytes`]). Each force runs ONCE per prepared
 //!   query (the view memo — every execute after the first shows
 //!   `view_memo_hit` and zero `colt_force`/`image_build`, also pinned),
 //!   so every timed pass is steady state: the 34 MiB map re-walked by
@@ -281,9 +283,10 @@ fn var(id: u16) -> Term {
 }
 
 /// probe — `Q(t, Sum(v)) :- Spoke(id, hub = h, val = v),
-/// Hub(id = h, tag = t)`: the hub side iterates, probing the forced
-/// spoke map keyed by hub value (the direction the engine actually
-/// plans — pinned by the obs test in [`tests`]), folded by tag. The
+/// Hub(id = h, tag = t)`: the hub side iterates through the fold
+/// split's tag-prefix map, probing the forced spoke map keyed by hub
+/// value (the direction the engine actually plans — pinned by the obs
+/// test in [`tests`]), folded by tag. The
 /// fresh spoke id binding makes every binding distinct, so the
 /// distinct-bindings elision engages (the balance-family precedent) and
 /// no seen-set competes with the probed map.

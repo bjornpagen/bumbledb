@@ -77,13 +77,15 @@ fn the_bench_shape_exceeds_the_l2_by_layout_arithmetic() {
 
 /// The regime label observed on the ENGINE, not derived beside it (the
 /// arithmetic test above cannot catch plan drift — this one can): at
-/// the real bench shape, the first probe execute forces exactly one
-/// COLT map, ingesting all 2^20 SPOKE positions keyed by hub value with
-/// the pinned distinct count — the executor iterates the hub side and
-/// probes the ≈ 34 MiB spoke map. And the force is once per prepare:
-/// the second execute memo-hits, forcing nothing and rebuilding no
-/// image, so every timed pass after warmup 1 is the steady-state shape
-/// the module doc claims.
+/// the real bench shape, the first probe execute forces exactly two
+/// COLT maps — the fold split's HUB group-prefix level (all 2^19 hub
+/// positions keyed by tag, the group count distinct) and the probed
+/// SPOKE map ingesting all 2^20 positions keyed by hub value with the
+/// pinned distinct count — the executor iterates the hub side through
+/// its tag prefix and probes the ≈ 34 MiB spoke map. And each force is
+/// once per prepare: the second execute memo-hits, forcing nothing and
+/// rebuilding no image, so every timed pass after warmup 1 is the
+/// steady-state shape the module doc claims.
 #[cfg(feature = "obs")]
 #[test]
 fn the_engine_trace_pins_the_forced_map_and_its_memoization() {
@@ -120,8 +122,11 @@ fn the_engine_trace_pins_the_forced_map_and_its_memoization() {
         .collect();
     assert_eq!(
         forces,
-        vec![(FORCED_MAP_POSITIONS, FORCED_MAP_DISTINCT)],
-        "one force: all spoke positions, the pinned distinct hub keys"
+        vec![
+            (sizes.hubs, sizes.tags),
+            (FORCED_MAP_POSITIONS, FORCED_MAP_DISTINCT),
+        ],
+        "two forces: the hub tag prefix, then all spoke positions at the pinned distinct hub keys"
     );
     assert!(
         first.iter().any(|e| e.name == obs::names::IMAGE_BUILD),
