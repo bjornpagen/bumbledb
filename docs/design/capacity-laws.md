@@ -45,48 +45,62 @@ counted side, a floor only by deletes. The preservation analysis is the schedule
 One schema statement — the **capacity statement** — replacing `CardinalityStatement`:
 
 ```
-capacity := AGG 'of' SOURCE 'in' WINDOW 'per' TARGET
+capacity := TARGET '<=' WEIGHT? WINDOW SOURCE          -- target-left, the B-family order
 
-AGG      := Count                      -- the unit weight
-          | Sum(field)                 -- u64-encoded source field
-          | Sum(Duration(field))       -- interval measure weight (via R5 measures)
-SOURCE   := Relation(proj... | φ)      -- the counted/weighed side
+WEIGHT   := '[' field ']'              -- u64-encoded field of SOURCE — the measure
+          | '[' Duration(field) ']'    -- interval-measure weight (R5)
+          |                            -- absent: unit weight — the count instance
 WINDOW   := { BOUND } | { BOUND .. BOUND } | { BOUND .. * }
 BOUND    := int-literal                -- the fixed capacity
           | field                      -- DEPENDENT BOUND: a u64 field of TARGET's row
           | Duration(field)           -- dependent interval-measure bound of TARGET
 TARGET   := Relation(proj... | ψ)      -- the grouping side; proj resolves a key of TARGET
+SOURCE   := Relation(proj... | φ)      -- the weighed side, partitioned by TARGET's keys
 ```
 
-Rust text notation (spelling subject to owner ruling, § 8.1):
+The operator algebra, completed (owner correction 2026-07-24: the dependency-theoretic
+operator style is the notation — no `of`/`in`/`per` keyword prose; the windowed
+containment is a numerical dependency and the weighted form completes the family):
 
 ```
-Count           of Account(holder | φ) in {0..3}   per Holder(id | ψ)
-Sum(watts)      of Device(pool)        in {0..200} per Pool(id)
-Sum(Duration(booked)) of Booking(room) in {0..*}   per Room(id)     -- floor-free running total
+B(Y | ψ) ==            A(X | φ)     -- the {1} window            keyed_eq_unit_window
+B(Y | ψ) <=            A(X | φ)     -- existence                 window_floor_containment
+B(Y | ψ) <={lo..hi}    A(X | φ)     -- unit weight (count) — utterance UNCHANGED
+B(Y | ψ) <=[w]{lo..hi} A(X | φ)     -- weighted capacity
 ```
 
-TS surface mirrors with the query aggregate builders in law position:
+Every rung is the same partition law — the target's keys partition the source, and the
+operator bounds each class's measure. No aggregate name appears in the notation: with the
+law-position roster fixed at Count/Sum, the fold is always Σweight and Count is the
+unweighted operator. The `{lo..hi}` count spelling survives character-for-character — not
+as a grandfathered form, but because it was always the unit-weight utterance of the
+general operator; everything count-only *beneath* it (the five TS constructors, the
+count-only IR/judge/Lean) still dies per § 7.
+```
+
+Rust text notation — the ruled spellings:
+
+```
+Holder(id)       <={0..3}                                Account(holder)   -- count, unchanged
+Cabinet(id)      <={0..4}                                Drive(cabinet)    -- drives in a container
+Pool(id, supply) <=[watts]{0..supply}                    Device(pool)      -- power budget, dependent bound
+Room(id, span)   <=[Duration(booked)]{0..Duration(span)} Booking(room)     -- calendar capacity
+```
+
+TS surface mirrors the operator positionally (target, weight?, window, source):
 
 ```ts
-capacity(count(),                 of(Account, "holder"), within(0n, 3n),  per(on(Holder, "id")))
-capacity(sum(f(Device, "watts")), of(Device, "pool"),    within(0n, 200n), per(on(Pool, "id")))
+capacity(on(Holder, "id"),            within(0n, 3n),          on(Account, "holder"))
+capacity(on(Pool, "id", "supply"),    weigh(f(Device, "watts")), within(0n, ref("supply")), on(Device, "pool"))
 ```
 
-The aggregate tokens are the **query vocabulary reused**, not new grammar: `query!` already
-spells `Count` (nullary, bare) and `Sum(t)` / `Sum(Duration(t))`; the TS surface already
-exports `count()` / `sum(x)`. One aggregate vocabulary, system-wide, in both find position
-and law position. The grammar's net size *shrinks*: the entire `<={..}` operator family —
-`parse_window` and its arms (bumbledb-macros lib.rs:868–994), the window ban-table
-diagnostics (lib.rs:1764–1786), the `window(target, count, source)` TS constructor and all
-five `count.ts` constructors with their two-tier ban machinery — is deleted, and the
-replacement productions are references to vocabulary both grammars already carry.
-
-History note the grammar must record: an `in lo..hi per` spelling existed once and was
-deleted as a duplicate of `<=` (the `window_in_per_is_deleted.rs` compile-fail pins its
-tombstone). The capacity form is not that respelling returning: the old form was a second
-spelling of the *same count law*; this form is the *general law*, of which the count was
-one instance. The tombstone test is deleted with the operator it guarded.
+The grammar's net delta is small and *negative in count-specific surface*: `parse_window`
+generalizes (an optional `[weight]` between `<=` and the brace; bounds admit target-
+projection idents), while the count-only estate — the `window(target, count, source)` TS
+constructor and all five `count.ts` constructors with their two-tier ban machinery
+(bans move into the one capacity builder) — is deleted. The `in lo..hi per` tombstone
+(`window_in_per_is_deleted.rs`) stays exactly as it is: keyword prose stays dead; the
+operator was always the notation.
 
 ## 3. Semantics
 
@@ -271,9 +285,12 @@ copy-paste left.
 ## 8. Rulings — RESOLVED (owner, 2026-07-24: "aggressively churning, zero backwards
 compat, hard deletion of all of the cardinality logic")
 
-1. **The spelling IS `AGG of SOURCE in WINDOW per TARGET`.** Source-first — the law reads
-   as the fold it is. The target-left B-family order dies with the operator that needed
-   it. TS builders: `capacity(agg, of(...), within(...), per(...))`.
+1. **The spelling IS the operator, completed** (owner re-ruled 2026-07-24: the first
+   resolution's `of/in/per` keyword form was a dependency-theoretic style regression and
+   is dead). `Target <=[weight]{window} Source`, target-left B-family preserved; absent
+   weight = unit = count, so the existing `<={lo..hi}` utterance survives unchanged as
+   the unit instance. No aggregate names in law position — the fold is always Σweight.
+   TS: one positional `capacity(...)` builder mirroring the operator.
 2. **The weight lives in the reverse-index value slot.** One u64 paid at write time; the
    judge's walk stays exactly one range scan. The index gains the capacity-weighted arm;
    the format version bumps. Per-child fact fetches are not a fallback — they don't exist.
