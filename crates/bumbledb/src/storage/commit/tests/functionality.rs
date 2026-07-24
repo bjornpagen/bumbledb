@@ -8,7 +8,6 @@
 use super::*;
 
 use crate::error::{Error, Violation};
-use crate::schema::ValidateDescriptor as _;
 use crate::storage::commit::commit;
 use crate::storage::delta::WriteDelta;
 use crate::storage::env::Environment;
