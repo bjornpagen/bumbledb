@@ -21,6 +21,11 @@ pub struct ArenaSlice {
 #[derive(Debug, Default)]
 pub struct Arena {
     chunks: Vec<Vec<u8>>,
+    /// The open chunk ordinary allocations bump into — an explicit
+    /// index, not "the last chunk": an oversized spill pushes its own
+    /// exactly-sized chunk past it without advancing it, so the open
+    /// chunk's free tail stays live instead of stranding.
+    active: usize,
 }
 
 impl Arena {
@@ -37,15 +42,23 @@ impl Arena {
     /// chunk offset exceeding `u32::MAX` (the scale axiom keeps every
     /// allocation orders of magnitude below that).
     pub fn alloc(&mut self, bytes: &[u8]) -> ArenaSlice {
-        let needs_new_chunk = match self.chunks.last() {
-            Some(chunk) => chunk.len() + bytes.len() > chunk.capacity(),
-            None => true,
+        let chunk_idx = if bytes.len() > CHUNK_CAPACITY {
+            // A dedicated exactly-sized chunk, pushed past the active
+            // one — which keeps its free tail for the next ordinary
+            // allocation.
+            self.chunks.push(Vec::with_capacity(bytes.len()));
+            self.chunks.len() - 1
+        } else {
+            let needs_new_chunk = match self.chunks.get(self.active) {
+                Some(chunk) => chunk.len() + bytes.len() > chunk.capacity(),
+                None => true,
+            };
+            if needs_new_chunk {
+                self.chunks.push(Vec::with_capacity(CHUNK_CAPACITY));
+                self.active = self.chunks.len() - 1;
+            }
+            self.active
         };
-        if needs_new_chunk {
-            self.chunks
-                .push(Vec::with_capacity(CHUNK_CAPACITY.max(bytes.len())));
-        }
-        let chunk_idx = self.chunks.len() - 1;
         let chunk = &mut self.chunks[chunk_idx];
         let start = chunk.len();
         chunk.extend_from_slice(bytes);
@@ -98,5 +111,22 @@ mod tests {
         assert_eq!(arena.get(first), a);
         assert_eq!(arena.get(second), b);
         assert_eq!(arena.get(oversized), c);
+    }
+
+    #[test]
+    fn oversized_spills_keep_the_open_chunk_active() {
+        let mut arena = Arena::new();
+        let before = arena.alloc(b"narrow");
+        let big = vec![9u8; 200 * 1024];
+        let oversized = arena.alloc(&big);
+        let after = arena.alloc(b"narrow again");
+        assert_eq!(
+            before.chunk, after.chunk,
+            "the open chunk's free tail survives an oversized spill"
+        );
+        assert_ne!(oversized.chunk, before.chunk);
+        assert_eq!(arena.get(before), b"narrow");
+        assert_eq!(arena.get(oversized), big.as_slice());
+        assert_eq!(arena.get(after), b"narrow again");
     }
 }

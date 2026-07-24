@@ -69,6 +69,19 @@ unsafe impl GlobalAlloc for CountingAllocator {
         unsafe { System.alloc(layout) }
     }
 
+    unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
+        // Forwarded, not defaulted: the trait's default is alloc +
+        // write_bytes, which would replace `System`'s calloc (lazily
+        // zeroed pages) with an eager memset under measurement — the
+        // counter adds counting and nothing else.
+        ALLOCATIONS.fetch_add(1, Ordering::Relaxed);
+        let bytes = layout.size() as u64;
+        ALLOC_BYTES.fetch_add(bytes, Ordering::Relaxed);
+        LIVE_BYTES.fetch_add(bytes, Ordering::Relaxed);
+        // SAFETY: forwarded contract.
+        unsafe { System.alloc_zeroed(layout) }
+    }
+
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
         DEALLOCATIONS.fetch_add(1, Ordering::Relaxed);
         let bytes = layout.size() as u64;
@@ -204,6 +217,25 @@ mod tests {
             "live is absolute and survives reset"
         );
         drop(keep);
+    }
+
+    #[test]
+    fn zeroed_allocations_count_once_like_plain_ones() {
+        let _exclusive_lock = EXCLUSIVE.lock().expect("exclusive");
+        let before = snapshot();
+        let v = vec![0u8; 8 * MIB_USIZE];
+        let mid = snapshot();
+        assert!(
+            mid.alloc_bytes - before.alloc_bytes >= 8 * MIB,
+            "a zeroed 8 MiB allocation moves alloc_bytes by at least that"
+        );
+        assert!(
+            mid.live_bytes >= before.live_bytes + 4 * MIB,
+            "live rises by roughly the probe"
+        );
+        drop(v);
+        let after = snapshot();
+        assert!(after.dealloc_bytes.saturating_sub(mid.dealloc_bytes) >= 8 * MIB);
     }
 
     #[test]
