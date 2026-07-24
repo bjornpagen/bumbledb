@@ -81,6 +81,26 @@ of the two it spends.
   absence) — a keyless head
   position is unrepresentable in the theorem's `VarId` finds; sound,
   since omitting a constant column never changes key equality.
+* **The DNF re-key law (ruled 2026-07-23, R2).** Surface `or` is
+  fold-transparent: a DNF-DERIVED rule set re-keys the union dedup on
+  the SHARED SLOT ARRAY — the disjuncts of one written rule share one
+  variable vocabulary and one binding layout (`Rule.lower` splits
+  condition trees only), so the rule-scoped-`VarId` objection above
+  dissolves and the fold domain never moves. `dnf_rekey_transparent`
+  (the closing section) is the law, PROVED: the re-keyed union
+  denotation of a lowering equals the written rule's own aggregate
+  denotation. The head-projection key governs HAND-WRITTEN multi-rule
+  programs only. PROOF OBLIGATION (R2), recorded at the section: the
+  engine's union sink and the conformance glue's `evalUnion`
+  (`Conformance.lean`) re-key DNF-derived rule sets to meet this
+  denotation — the agreement theorems land with the lowering fix.
+* **The R1 refusal (ruled 2026-07-23, R1), stated not proved** — a
+  validation-model refusal, and validation-model refusals are stated,
+  never proved: a nullary `Count` in a fold-free head of a 2+-rule
+  program is a typed validation error beside `ArgAcrossRules`. Under
+  the head-projection law its answer is definitionally the constant 1
+  per group — an uninformative query; the modeling answer is one
+  Count per disjunct, host-merged.
 
 ## The `provably_distinct` reading (recorded; theorem 2's model)
 
@@ -575,8 +595,11 @@ is rule-scoped (two rules' slot arrays are incomparable), and
 Bridge: `union_spans` (`exec/sink.rs::union_spans`) — per head position,
 the slot span the position reads from THIS rule's binding layout; the
 extracted words are the head projection, rule-independent by
-construction ("aggregates read the head: the fold domain is the union
-of the rules' binding sets projected to the head"). -/
+construction. The aggregate reading of this key law — "aggregates
+read the head" — governs HAND-WRITTEN multi-rule programs only: a
+DNF-derived rule set re-keys on the shared slot array instead (ruled
+2026-07-23, R2 — the closing section carries the aggregate-object
+form this projection-head statement deliberately does not). -/
 theorem union_regime_head_projection {C : Classify} {q : Query}
     {I : Instance} {ρ : ParamEnv} {ε : Type} (events : List ε)
     (rule : ε → Rule) (bind : ε → Assignment)
@@ -1190,5 +1213,149 @@ theorem elimination_agg_sound {C : Classify} {I : Instance}
     have hkeq : keyTuple keys σ' = keyTuple keys σ :=
       keyTuple_congr fun k hk' => hag _ (hkeys k hk')
     rw [hkeq, hfiber]
+
+/-! ## The DNF re-key law — disjunction is fold-transparent (R2)
+
+Surface `or` is fold-transparent (ruled 2026-07-23, R2): a
+DNF-DERIVED rule set re-keys the union dedup on the SHARED SLOT
+ARRAY — the slot list over the variables every disjunct binds — never
+the head projection. The head-projection key exists because a `VarId`
+is rule-scoped (the `union_spans` bullet, module doc); DNF
+distribution mints no variable and touches no atom (`Rule.lower`
+clones finds, atoms, and negated atoms — only the condition trees
+split), so the disjuncts of ONE written rule share one variable
+vocabulary and one binding layout, and the objection dissolves.
+Disjunction then widens MEMBERSHIP without changing the FOLD DOMAIN:
+`lower_preserves_derivations` is the widening (a binding derives the
+written rule iff it derives some disjunct), the `Set` carrier is the
+collapse (a binding derived by two disjuncts is one shared-slot row —
+multiplicity, and with it any cross-disjunct double count, is
+unrepresentable), and `dnf_rekey_transparent` — THE law, proved — is
+the composition: the re-keyed union denotation of a lowering equals
+the written rule's own aggregate denotation (`aggAnswersOn`), fiber
+for fiber, key for key, uniformly in the fold. Hand-written
+multi-rule programs keep the head-projection law
+(`union_regime_head_projection`), with R1 policing its degenerate
+corner (module doc).
+
+PROOF OBLIGATION (R2): the two implementations meet this denotation —
+the engine's union sink re-keys DNF-minted rule sets on the shared
+slot array (today it keys every multi-rule program's head projection),
+and the conformance glue's `evalUnion` (`Conformance.lean`) follows;
+the agreement theorems land with the lowering fix, and the OR+aggregate
+case class enters the differential generator and the conformance
+corpus so the law is gated, not merely stated. -/
+
+/-- The shared-slot dedup key (ruled 2026-07-23, R2): the slot array
+read over the disjuncts' ONE shared variable vocabulary — the union
+key of the DNF regime, where hand-written rule sets key
+`union_spans`' head projection. -/
+def sharedSlotRow (slots : List VarId) (σ : Assignment) : List Value :=
+  slots.map σ
+
+/-- The fold domain the re-key induces: the disjuncts' binding sets
+union-widened and read as distinct shared-slot rows. A `Set` —
+multiplicity is unrepresentable, so a cross-disjunct re-derivation
+cannot double-count by construction. -/
+def dnfFoldDomain (C : Classify) (rules : List Rule) (I : Instance)
+    (ρ : ParamEnv) (slots : List VarId) : Set (List Value) :=
+  fun t => ∃ r, r ∈ rules ∧ ∃ σ, derives C r I ρ σ ∧
+    t = sharedSlotRow slots σ
+
+/-- One re-keyed group: `GroupSlots`, union-widened — the fiber of
+the re-keyed domain over an evaluated group-key tuple. -/
+def dnfGroupSlots (C : Classify) (rules : List Rule) (I : Instance)
+    (ρ : ParamEnv) (keys : List KeyTerm) (gk : List (Option Value))
+    (slots : List VarId) : Set (List Value) :=
+  fun t => ∃ r, r ∈ rules ∧ ∃ σ, σ ∈ Group C r I ρ keys gk ∧
+    t = sharedSlotRow slots σ
+
+/-- **The normative union-regime aggregate denotation for a
+DNF-derived rule set (ruled 2026-07-23, R2)**: `aggAnswersOn` with
+the fiber union-widened over the disjuncts — one row per inhabited
+re-keyed fiber. The recorded R2 proof obligation (section doc) is
+that `evalUnion` and the engine's union sink agree with THIS on
+DNF-derived rule sets. -/
+def aggAnswersDNF (C : Classify) (rules : List Rule) (I : Instance)
+    (ρ : ParamEnv) (keys : List KeyTerm) (slots : List VarId)
+    (fold : List (Option Value) → Set (List Value) → AnswerTuple) :
+    Set AnswerTuple :=
+  fun t => ∃ r, r ∈ rules ∧ ∃ σ, derives C r I ρ σ ∧
+    t = fold (keyTuple keys σ)
+      (dnfGroupSlots C rules I ρ keys (keyTuple keys σ) slots)
+
+/-- The re-key never splits a fiber: a group key reads shared slots
+only, so slot-equal bindings carry equal evaluated key tuples — the
+key is a function of the domain element, which is what makes fibering
+the re-keyed domain well-defined. -/
+theorem dnf_key_of_slot_row {keys : List KeyTerm} {slots : List VarId}
+    (hcover : ∀ k, k ∈ keys → k.varOf ∈ slots) {σ σ' : Assignment}
+    (hrow : sharedSlotRow slots σ = sharedSlotRow slots σ') :
+    keyTuple keys σ = keyTuple keys σ' :=
+  keyTuple_congr fun k hk => map_eq_agree hrow _ (hcover k hk)
+
+/-- DNF lowering preserves DERIVATIONS, not just answers: a binding
+derives the written rule iff it derives some disjunct —
+`dnf_preserves_denotation` caught before the head projection eats the
+binding; the membership-widening half of fold-transparency. -/
+theorem lower_preserves_derivations {C : Classify} {r : Rule}
+    {I : Instance} {ρ : ParamEnv} {σ : Assignment} :
+    derives C r I ρ σ ↔ ∃ r', r' ∈ r.lower ∧ derives C r' I ρ σ := by
+  constructor
+  · rintro ⟨hatoms, hneg, hconds⟩
+    obtain ⟨d, hd, hdis⟩ :=
+      (Condition.lowerAll_holds C ρ σ r.conditions).mp
+        ((Condition.allHold_iff r.conditions).mpr hconds)
+    exact ⟨_, List.mem_map.mpr ⟨d, hd, rfl⟩,
+      ⟨hatoms, hneg, holds_map_leaf.mpr hdis⟩⟩
+  · rintro ⟨r', hr', hd'⟩
+    obtain ⟨d, hd, rfl⟩ := List.mem_map.mp hr'
+    obtain ⟨hatoms, hneg, hconds⟩ := hd'
+    exact ⟨hatoms, hneg, (Condition.allHold_iff r.conditions).mp
+      ((Condition.lowerAll_holds C ρ σ r.conditions).mpr
+        ⟨d, hd, holds_map_leaf.mp hconds⟩)⟩
+
+/-- The re-keyed fiber of a lowering IS the written rule's fiber:
+disjunction widened membership per disjunct
+(`lower_preserves_derivations`) and the shared-slot key collapsed it
+back — same slot rows, same group. -/
+theorem dnf_fibers_eq (C : Classify) (r : Rule) (I : Instance)
+    (ρ : ParamEnv) (keys : List KeyTerm) (gk : List (Option Value))
+    (slots : List VarId) :
+    dnfGroupSlots C r.lower I ρ keys gk slots =
+      GroupSlots C r I ρ keys gk slots := by
+  funext t
+  refine propext ?_
+  constructor
+  · rintro ⟨r', hr', σ, ⟨hd, hk⟩, rfl⟩
+    exact ⟨σ, ⟨lower_preserves_derivations.mpr ⟨r', hr', hd⟩, hk⟩, rfl⟩
+  · rintro ⟨σ, ⟨hd, hk⟩, rfl⟩
+    obtain ⟨r', hr', hd'⟩ := lower_preserves_derivations.mp hd
+    exact ⟨r', hr', σ, ⟨hd', hk⟩, rfl⟩
+
+/-- **THE re-key law (ruled 2026-07-23, R2).** Surface `or` is
+fold-transparent: the re-keyed union denotation of a rule's DNF
+lowering equals the written rule's own aggregate denotation — every
+fiber, every key tuple, every fold. Disjunction widened membership
+and the shared-slot key collapsed it back; the fold domain never
+moved. This is the aggregate-object law `union_regime_head_projection`
+deliberately does not carry (its statement quantifies projection
+heads), and the denotation the engine's re-keyed union sink and the
+conformance glue's `evalUnion` are measured against (the recorded R2
+proof obligation, section doc). -/
+theorem dnf_rekey_transparent (C : Classify) (r : Rule) (I : Instance)
+    (ρ : ParamEnv) (keys : List KeyTerm) (slots : List VarId)
+    (fold : List (Option Value) → Set (List Value) → AnswerTuple) :
+    aggAnswersDNF C r.lower I ρ keys slots fold =
+      aggAnswersOn C r I ρ keys slots fold := by
+  funext t
+  refine propext ?_
+  constructor
+  · rintro ⟨r', hr', σ, hd, rfl⟩
+    refine ⟨σ, lower_preserves_derivations.mpr ⟨r', hr', hd⟩, ?_⟩
+    rw [dnf_fibers_eq]
+  · rintro ⟨σ, hd, rfl⟩
+    obtain ⟨r', hr', hd'⟩ := lower_preserves_derivations.mp hd
+    exact ⟨r', hr', σ, hd', by rw [dnf_fibers_eq]⟩
 
 end Bumbledb.Query

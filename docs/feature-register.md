@@ -7,7 +7,9 @@ concrete, observable condition under which the question reopens — so nothing
 is relitigated from vibes and nothing worthy is forgotten. Investigated
 2026-07-19 against primer's real workload (50 prepared queries, the store
 schema, the host-gate census); the notation verdicts (5–6) recorded
-2026-07-20 from the destructure-060 owner ruling.
+2026-07-20 from the destructure-060 owner ruling; verdicts 7–14 recorded
+2026-07-23 from the audit rulings (`audit-2026-07/RULINGS.md`, findings in
+`audit-2026-07/findings/`).
 
 ## Verdicts
 
@@ -64,14 +66,19 @@ schema, the host-gate census); the notation verdicts (5–6) recorded
 - The exhibit (`course-closure.ts`) is the SOLVED state: closure recomputes
   in the same postgres transaction as edge writes — staleness is
   unrepresentable; it is primer's only recursion-shaped postgres workload.
-  The real readers are serverless; the SDK ships darwin-only; no read-only
-  open exists; multi-process is a recorded v0 non-goal; `00-product.md` cuts
-  against the shape. A pipeline would trade an ACID invariant for seven new
-  failure modes.
+  The real readers are serverless; `00-product.md` cuts against the shape.
+  A pipeline would trade an ACID invariant for seven new failure modes.
+  (Three 2026-07-19 rationale legs — darwin-only shipping, no read-only
+  open, the multi-process non-goal — are dead by ruling: the lock law is a
+  writer law and readers open lockless and genuinely read-only (ruled
+  2026-07-23, R17), and a linux SDK CI lane is law (ruled 2026-07-23, R22).
+  The verdict now rests on the serverless topology and the product shape.)
 - **TRIGGERS (all must hold)**: a long-lived linux worker in primer's
-  topology; a shipped, tested linux platform package; a genuine
-  read-only/multi-process open (owner decisions); a graph workload too big
-  or write-hot to materialize.
+  topology; a shipped, tested linux platform package (the CI half is law —
+  the linux SDK lane, ruled 2026-07-23, R22); a graph workload too big
+  or write-hot to materialize. The fourth 2026-07-19 leg — a genuine
+  read-only/multi-process open — FIRED by ruling (R17 above); the verdict
+  stands until the remaining legs hold.
 
 ### 5. Tagged-template query notation — REJECT (owner ruling 2026-07-20)
 - **The tagged-template notation — a template-literal query string parsed at
@@ -118,6 +125,85 @@ schema, the host-gate census); the notation verdicts (5–6) recorded
   the break.
 - **Status**: ships as 0.6.0, a deliberate hard break; version staged in
   lockstep, NO tag, NO publish (owner ceremony).
+
+### 7. Measure-keyed Arg restriction — RULED IN (ruled 2026-07-23, R5)
+- **The law.** The `ArgMax`/`ArgMin` key position admits the interval
+  measure: "the longest interval per group, with its carried payload" is
+  spellable on every surface — IR, validation, sink, both macro grammars,
+  and TS (`argMax`/`argMin` gain the `Duration` key arm). Lands inside the
+  same aggregate-law revision as R1–R3 — the aggregate spec reopens exactly
+  once, and `docs/architecture/20-query-ir.md`'s "exhaustively" pinned
+  position roster becomes true again.
+- **Why it was the gap.** Every ingredient was already paid for — the
+  measure folds under `Sum`/`Min`/`Max`, projects as a find, compares on one
+  side of an order, and the aggregate sink already mints per-binding derived
+  measure words and keys the Arg sweep on a scratch-row slot word. The key
+  position was the one hole, and it was pinned by omission (no trigger, no
+  decision) — the only Arg-family unspellable with neither a spelling nor a
+  citation. Full census in finding 118.
+
+### 8. Condition trees in the Rust text notation — RULED IN (ruled 2026-07-23, R9)
+- **The law.** `or()` and `and()` condition trees enter the sacred `query!`
+  grammar as an exact mirror of the TS grammar — one condition language, two
+  identical surfaces, one renderer. The renderer's functional `and(..)` /
+  `or(..)` spelling becomes real notation, and the render→parse round trip
+  closes over the full input grammar (today it holds only because the
+  notation refuses to spell what the IR accepts — finding 129).
+- **Sequencing.** Lands with/after R2 (the or-transparency lowering fix) so
+  the Rust surface never ships the leaky lowering.
+
+### 9. abandon() honored in db.write — RULED IN (ruled 2026-07-23, R10)
+- **The law.** Returning `abandon(payload)` from a `db.write` callback rolls
+  the transaction back; `WriteResult` widens to a sum carrying
+  commit-vs-abandon — the outcome is in the type, and commit is unreachable
+  for a sentinel result. The silent-commit path (the callback's explicit
+  decline typechecks under the void-return rule and commits anyway —
+  finding 060) is unrepresentable.
+
+### 10. Tx.insert returns the changed bit — RULED IN (ruled 2026-07-23, R11)
+- **The law.** `Tx.insert` returns `{ changed, ...fresh }` — the engine's
+  changed-state boolean already crosses the FFI on every call; the SDK stops
+  discarding it. Restores the Rust-surface bijection that `delete` already
+  honors and kills the contains-before-insert double FFI crossing in the
+  idempotent-replay lane (finding 061).
+
+### 11. Resource lifetimes are disposables — RULED IN (ruled 2026-07-23, R12)
+- **The law.** The SDK assumes the latest Node 26 runtime and its explicit
+  resource management. `ExhumeHandle` implements
+  `Symbol.dispose`/`Symbol.asyncDispose` (whichever matches teardown
+  reality); `using` / `await using` is the documented idiom; the congruence
+  audit extends the protocol to every SDK object holding a native lifetime
+  (exhume, snapshots/scoped reads). The zero-closables doctrine restates as:
+  lifetimes are disposables, never `close()`. Kills the GC-held exclusive
+  lock — same-path reuse hostage to an unforceable finalizer (finding 066).
+
+### 12. TS explain() — RULED IN (ruled 2026-07-23, R13)
+- **The law.** Read-only plan introspection crosses the FFI: prepared query
+  → plan-as-data (FjPlan + counters). A diagnostic surface, explicitly
+  unfrozen. ANALYZE/profiling stays engine-side. Closes the asymmetry where
+  "the debugging story" existed only on the Rust surface while the primary
+  consumer had no way to see the plan (finding 117).
+
+### 13. Closed-column const accessors — RULED IN (ruled 2026-07-23, R14)
+- **The law.** Closed-relation column values are expansion-time constants;
+  the `schema!` macro emits `const` accessors on the host enums, rendered
+  from the same parsed literals that seed the engine's extension — host and
+  engine cannot drift by construction, and the emitted weld stays db-free.
+  The runtime-query workaround (and its silently-drifting hand-written twin)
+  dies (finding 125).
+
+### 14. Estimator precision (histograms/statistics) — DEFER re-affirmed (ruled 2026-07-23, R19)
+- **The doctrine.** Estimates stay crude; adaptivity is the doctrine. The P3
+  "no histograms" ruling stands on new grounds: the Free Join thesis places
+  precision at execution time — 009's GJ-shaped plans plus dynamic cover
+  choice bound skew at runtime. (The overstated "WCOJ bounds the damage"
+  claim in `docs/architecture/40-execution.md` is corrected in the same
+  flush — true only near the GJ end, which 009 makes real.)
+- **TRIGGER**: post-009 benches showing plan-choice misses the dynamic cover
+  choice can't absorb — a measured mis-chosen order whose damage survives
+  execution-time adaptivity. Finding 089 (the ring-closing min-fanout
+  composition) is the recorded exhibit; it reopens only through this
+  trigger.
 
 ## The host-fold register (the census's residual unspellables)
 

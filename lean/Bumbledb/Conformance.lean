@@ -36,8 +36,18 @@ corpus excludes engine-error executions, so a `none` here is a
 disagreement, never a silent drop). Order keys compare as encoded
 words (`Value.orderWord` — the order embeddings make word order value
 order). The multi-rule aggregate head folds the union of the rules'
-head-projected binding sets — the rules-IR definition the executor's
-spanning seen-set realizes.
+head-projected binding sets — the HAND-WRITTEN multi-rule law the
+executor's spanning seen-set realizes. Surface `or` is
+fold-transparent (ruled 2026-07-23, R2): a DNF-derived rule set
+re-keys the union dedup on the shared slot array, and
+`dnf_rekey_transparent` (`Exec/Dedup.lean`) is the proved law — the
+re-keyed union fold of a lowering equals the written rule's aggregate
+denotation. PROOF OBLIGATION (R2), recorded here and at the law:
+`evalUnion` below keys the head projection for EVERY rule list,
+because the interchange format carries lowered rules with no
+derivation mark; the serializer marks DNF-derived sets, `evalUnion`
+re-keys them, and the OR+aggregate case class enters the corpus so
+the third oracle adjudicates the regime — all with the lowering fix.
 
 ## Law-4 record: `Lean.Data.Json`
 

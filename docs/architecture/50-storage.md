@@ -10,6 +10,19 @@ writer, many reader threads, one process (`00-product.md`).
 maintained thin binding; raw FFI buys nothing at this layer. **Reverses if:** heed
 becomes a correctness or maintenance liability.
 
+**The lock law is a writer law** (ruled 2026-07-23, R17). One handle per path
+governs the write surface: the exclusive advisory lock
+(`storage/env/acquire_lock.rs`) belongs to the writing constructors — `Db`
+handles, durable or ephemeral — and to nothing else. A read-only open takes no
+lock and opens the environment `MDB_RDONLY` (its own arm of the one raw-open
+chokepoint, `storage/env/open_env.rs`), registering dbis through a read
+transaction: a read-only environment can corrupt nothing, so there is nothing
+for a lock to protect. `exhume` (`storage/env/exhume.rs`) is thereby genuinely
+read-only down to the storage layer — the archival lane works on read-only
+media, restored snapshots, and mounted backups, with no carve-outs — and its
+read-only-ness is representation, not API-surface omission: from a read-only
+environment the write path is unrepresentable.
+
 Environment constants are decisions, not knobs: `map_size` is fixed at 32 GiB
 (comfortably above the 1 GB scale axiom — the map is the hard capacity ceiling,
 headroom, never the design point), and
@@ -53,7 +66,9 @@ U | relation_id | statement | key   -> row_id         FD determinants         (r
                                                       key-probe lookups, WriteTx key reads, coverage walks)
 R | statement | key | source_rel | source_row -> ()   statement-scoped edges  (readers: target-side containment checks on delete/shrink;
                                                       the window judgment's child-group count walk)
-Q | relation_id | field_id          -> next_u64       fresh sequences  (reader: alloc; the ratchet law:
+Q | relation_id | field_id          -> next_u64       fresh sequences  (readers: alloc, and commit's row-id
+                                                      assignment on a fresh-keyed relation — the one id
+                                                      allocator, ruled 2026-07-23, R16, § below; the ratchet law:
                                                       an EXPLICIT fresh-field value advances the
                                                       high-water past itself — at op time in memory,
                                                       flushed at commit — so a copied id can never
@@ -61,7 +76,9 @@ Q | relation_id | field_id          -> next_u64       fresh sequences  (reader: 
                                                       fresh semantics, not an import special case)
 S | relation_id | stat              -> u64            counters: stat 0 = row count (readers: the planner,
                                                       and image build's cross-check against the F scan);
-                                                      stat 1 = row_id high-water (reader: commit's row-id assignment)
+                                                      stat 1 = row_id high-water (reader: commit's row-id assignment —
+                                                      fresh-less relations only: a fresh-keyed relation's row id
+                                                      IS its fresh id, minted from Q; ruled 2026-07-23, R16)
 ```
 
 Plus `_meta` (format version, store kind, schema fingerprint, storage tx id, the
@@ -97,6 +114,26 @@ facts, never interned, so the key hash carries no type tag: forward
   fact-op derivation (`keys::debug_assert_ordinary`), and `Db::verify_store`
   convicts any stored entry (`ClosedRelationEntry` — the entry's existence is the
   finding).
+- **One id allocator** (ruled 2026-07-23, R16). A fresh id and a row id are the
+  same monotone u64, minted once. On a **fresh-keyed relation** — one whose
+  statements include the fresh auto-key the schema mints per `fresh` field —
+  the first fresh field's value IS the `F` row id: **scan order is fresh
+  order**, and that field's auto-key maintains no `U` tree, because the entry
+  it would write is a pure transcription (`be(fresh) → le(row_id)`, one
+  monotone counter re-keying another). The auto-key's functionality judgment is
+  the `F` put-conflict itself — the identical conflict mechanism the `U` phase
+  uses — so a fresh-keyed point read (WriteTx, snapshot, the query key probe)
+  pays one B-tree descent, not two, and every insert drops the transcription's
+  put and its conflict get. Later fresh fields and every secondary key
+  statement keep their `U` entries. `Q` is the one mint for such relations; the
+  `S` row-id high-water exists only where no fresh field does. Two consumers
+  re-derive under the merged mint: the image append base's prefix boundary —
+  explicit fresh re-supply (the documented correction idiom, `10-data-model.md`)
+  can land an `F` key BELOW a retained base, so a non-tail insert evicts the
+  base on the writer's eviction path (§ the columnar image cache) — and
+  `Db::verify_store`'s counter pass, which judges the one mark where it judged
+  two. The unification changes stored bytes, so the version-bump law below
+  applies.
 - `fact_bytes` = the canonical encoding owned by `10-data-model.md`; identity =
   bytes — the encoding is injective, so byte equality IS value equality
   (`lean/Bumbledb/Values.lean: value_eq_iff_encode_eq`).
@@ -178,6 +215,24 @@ facts, never interned, so the key hash carries no type tag: forward
   key read at open is an encoding change, so it bumps (nothing deployed carries a
   v4 store; a v4 store would otherwise open with the kind key absent, which is
   exactly the silent-default class the bump law exists to refuse).
+- **A half-created store is not corruption** (ruled 2026-07-23, R18). Before
+  those checks can run, open classifies the meta block itself — one
+  classification, shared by every constructor, never the same branch
+  hand-written three ways. No `_meta` over an empty root is the half-created
+  store (the crash window between environment creation and the meta commit): a
+  never-born store holding zero data. `Db::create` proceeds — creation heals
+  it; the ephemeral open treats it as fresh; `Db::open` refuses it with a typed
+  not-initialized error naming `Db::create` as the remedy — never `Corruption`.
+  No `_meta` over a non-empty root is the foreign-environment refusal,
+  `AlreadyInitialized`. `MetaMissing` convicts only a genuinely absent key
+  inside an initialized store.
+- **Malformed and missing are distinct meta states** (ruled 2026-07-23, R18).
+  One decode discipline for every `_meta` value — the split the store-kind
+  reader pins: an absent key is `MetaMissing`; a present value that fails to
+  decode (wrong width, unknown byte) is the malformed-value corruption naming
+  the key, never `MetaMissing`. The two states point at opposite remedies
+  (initialize vs. investigate a torn write), so one error value never encodes
+  both.
 
 **Decision: one `_data` database with first-byte namespaces.** **Alternative:** one
 LMDB database per namespace (enables per-namespace append mode and integer-key layouts).
@@ -237,7 +292,10 @@ variant agreement.
    (determinant keys re-derived by slicing projected fields out of `fact_bytes` — never a
    scan), and its outgoing `R` entries. Deleted `U` keys are recorded per statement
    (the target-side check set for step 3).
-2. **Inserts**: per inserted fact — `F` put (row_id from the in-memory high-water),
+2. **Inserts**: per inserted fact — `F` put (row_id from the one id allocator,
+   § key layout: the first fresh field's value on a fresh-keyed relation — where
+   the `F` put-conflict IS that auto-key's functionality violation, recorded
+   into the same collector — and the in-memory high-water otherwise),
    `M` put, `U` puts, `R` puts (per containment statement whose selection the fact
    satisfies). Because every delete has already landed and the insert-set is
    deduplicated, a scalar `U` put conflict here **is** a functionality violation —
@@ -382,9 +440,12 @@ including the delete-asymmetry fixture in the verifier suite
 corruption fixtures). **Counter overflow
 checks** — the fresh ceiling is checked
 (`FreshExhausted` at `u64::MAX`, because hosts can supply explicit fresh values),
-while the storage tx id and row-id high-waters are not: they advance by at most one
-per commit/insert, so wrapping needs ~2⁶⁴ commits — twelve orders beyond the scale
-axiom, and no host input can jump them. The asymmetry is chosen, not overlooked.
+while the storage tx id and the fresh-less row-id high-waters are not: they advance
+by at most one per commit/insert, so wrapping needs ~2⁶⁴ commits — twelve orders
+beyond the scale axiom, and no host input can jump them. A fresh-keyed relation's
+row-id mint IS its fresh mark (the one id allocator, § key layout; ruled
+2026-07-23, R16) — host-jumpable by explicit re-supply, and therefore exactly the
+counter `FreshExhausted` already guards. The asymmetry is chosen, not overlooked.
 
 **Storage tx id:** advances **once per commit that changed logical state**; a commit
 whose delta is empty (all no-ops) does not advance it and does not invalidate any
@@ -440,14 +501,17 @@ typed `StoreKindMismatch` naming found and expected kinds. Parse, don't validate
 holding a `Db` handle proves the store's kind, so the durable surface can never
 quietly read a store that skipped its fsyncs.
 
-An ephemeral environment differs from a durable one in exactly one thing: the
-LMDB flag `MDB_NOSYNC` (set inside `storage/env/open_env.rs`, the
-one raw-open chokepoint, where the flags are DERIVED from the kind — no flag
+An ephemeral environment differs from a durable one in exactly one flag: the
+LMDB `MDB_NOSYNC` (set inside `storage/env/open_env.rs`, the
+one raw-open chokepoint, where the flags are DERIVED from the kind and the open
+lane — `MDB_RDONLY` belongs to the read-only lane, R17 above — no flag
 parameter exists, so the durable paths structurally cannot reach them; the unsafe
 policy allowance and safety comments live there). `NOTLS`, the advisory lock, the
 map size, the reader table, fingerprint verification, the whole write path, the
 dependency judgment, and WriteTx point-read semantics are identical — proven by
-the durable/ephemeral differential oracle (`60-validation.md`).
+the durable/ephemeral differential oracle (`60-validation.md`). The kind's one
+other distinction is lifecycle, not environment: the dirty marker of the crash
+contract below.
 
 What the kind renounces is machine-crash (power-loss) durability and nothing
 else. **The crash-sweep evidence** (banked; the sweep died with the fuzzing
@@ -469,6 +533,26 @@ could pay. The deterministic sweep and the kill smoke re-ran green under
 NOSYNC-only; the ≥2,000-round statistical kill lane's recorded sessions
 predate the flip, and a NOSYNC-only session is owed with the Measure phase.
 Nothing was weakened.)
+
+**The crash contract** (ruled 2026-07-23, R18): contents survive process
+restarts, never machine crashes — and reopening after a crash yields a valid
+empty store, always. Every ephemeral open sets a synced dirty marker before
+trusting anything else, and a clean close clears it in a small synced commit —
+the kind's only fsyncs, bracketing its lifetime. A reopen that finds the marker
+set — power loss, or a process death that never reached clean close — wipes the
+store and re-initializes it; the verified reopen (version, kind, fingerprint,
+the same checks as `open`) is reserved for the marker-proven clean lineage.
+What the marker refuses to open is the state `NOSYNC` makes possible and
+`_meta` cannot see: a meta page flushed by incidental writeback over data pages
+that never landed — fingerprint-valid over trees no committed transaction ever
+contained. That state is unrepresentable, not detected: the possibly-torn store
+is never opened at all. The kind's law is thereby exact — **an ephemeral store
+never destroys data it promised to keep** — and the marker-clean lineage is the
+promise's whole extent: a store that crossed a machine crash was already lost
+by the store's own definition (below). The banked sweep evidence above keeps
+its meaning — it proved `NOSYNC` never broke the meta-page commit protocol
+under process kill — but reopen-after-unclean-death no longer stands on it: the
+wipe happens before any data page is trusted.
 
 The kind is **device-independent**: ephemeral-on-SSD is legitimate, and
 ephemeral-on-ramdisk buys the flag's latency on top of the device's — the
@@ -586,7 +670,9 @@ The bridge to paper-faithful execution (`40-execution.md` D1):
   open-snapshot/read-counter race that could poison the shared cache.
 - The cache is a field of the `Db` handle, shared by reader threads through `&Db`
   (the handle is `Send + Sync`; no `Arc` of the cache itself is needed since one
-  handle exists per path). Two readers at the same T racing to build the same image:
+  writing handle exists per path — the lock law is a writer law, top of this
+  doc, and read-only opens never touch the cache). Two readers at the same T
+  racing to build the same image:
   both may build; insert-if-absent, the loser adopts the winner's `Arc` and drops its
   own (accepted waste, no latch — priced at the validated ≤1 GB scale, where a
   duplicate build is milliseconds and megabytes; at a ceiling-scale relation the
@@ -595,11 +681,17 @@ The bridge to paper-faithful execution (`40-execution.md` D1):
   The insert re-checks the newest generation under
   the lock, so a reader racing a commit cannot re-insert an evicted generation.
 - **Eviction:** at each state-changing commit the writer drops the entries of
-  relations the commit **deleted from**; delete-free relations' images are
-  retained as append bases — the next reader at the new generation copies
-  columns and decodes only the tail (row-id high-water monotonicity is the
-  prefix property), or carries the same `Arc` forward re-keyed when the
-  relation is untouched. Readers still pinned at older generations keep their
+  relations the commit **deleted from** — or inserted into below the retained
+  base's boundary: under the one id allocator (§ key layout; ruled 2026-07-23,
+  R16) an explicit fresh re-supply can land an `F` key under an append base,
+  and a tail decode would silently miss it, so the non-tail check is one
+  comparison per insert on the eviction path where the delete branch already
+  lives. Delete-free, tail-only relations' images are retained as append
+  bases — the next reader at the new generation copies columns and decodes
+  only the tail (tail-only insertion is the prefix property, enforced by that
+  eviction rather than assumed from counter shape), or carries the same `Arc`
+  forward re-keyed when the relation is untouched. Readers still pinned at
+  older generations keep their
   `Arc`s alive until their transactions end; a long-lived old-generation reader
   that needs an *unbuilt* image builds it query-locally without caching
   (accepted — the cost lands on the stale pinned reader alone and poisons

@@ -604,4 +604,56 @@ theorem value_eq_iff_encode_eq (t : ValueType) (a b : t.carrier) :
     simp only [encodeAt, List.cons.injEq, and_true] at heq
     exact Subtype.ext ((encodeI64_eq_iff _ _).mp heq)
 
+/-! ## Bool order — false < true, the 0/1 encoding's two extremes
+
+Bool is ORDERABLE (ruled 2026-07-23, R3): it enters the orderable
+vocabulary with `false < true` — the order its 0/1 encoding already
+has, so admission changes no encoding and mints no IR. The order
+itself is core Lean's `Bool` order (`false < true` holds by `decide`;
+nothing to define — the law is cited, not minted), and the encoding
+is an order embedding on the same theorem shape as the two scalar
+domains (`encode_u64_order_embedding` / `encode_i64_order_embedding`).
+The payoff is the quantifier pair for free: over the 0/1 encoding the
+two order extremes ARE the two quantifiers — `Max` over a bool column
+is Any (the `||`-fold, `encode_bool_max_any`), `Min` is All (the
+`&&`-fold, `encode_bool_min_all`) — the documented idiom, true with
+no dedicated operators. OBLIGATION (R3): the denotation's order
+vocabulary (`Value.orderWord` and the comparison deciders, PRD 04)
+and both implementations' validation rosters widen to the bool arm;
+the theorems below are the value-level law that widening realizes. -/
+
+/-- The bool encoding, named: the 0/1 word `encodeAt`'s bool arm
+already writes. -/
+def encodeBool (b : Bool) : Word := cond b 1 0
+
+/-- The named form changes no encoding — it IS the canonical bool
+word (the admission rule's degenerate case: no new parameter, no new
+bytes). -/
+theorem encodeAt_bool (b : Bool) : encodeAt .bool b = [encodeBool b] :=
+  rfl
+
+/-- **Bool order embedding (ruled 2026-07-23, R3).** `false < true`
+IS the 0/1 encoding order: bool joins the orderable vocabulary on the
+scalar domains' theorem shape. -/
+theorem encode_bool_order_embedding (a b : Bool) :
+    a ≤ b ↔ encodeBool a ≤ encodeBool b := by
+  cases a <;> cases b <;> decide
+
+/-- The strict face of the embedding. -/
+theorem encode_bool_lt_iff (a b : Bool) :
+    a < b ↔ encodeBool a < encodeBool b := by
+  cases a <;> cases b <;> decide
+
+/-- **Any for free**: the upper extreme of the 0/1 encoding is
+disjunction — `Max` over bool is the existential quantifier. -/
+theorem encode_bool_max_any (a b : Bool) :
+    max (encodeBool a) (encodeBool b) = encodeBool (a || b) := by
+  cases a <;> cases b <;> decide
+
+/-- **All for free**: the lower extreme is conjunction — `Min` over
+bool is the universal quantifier. -/
+theorem encode_bool_min_all (a b : Bool) :
+    min (encodeBool a) (encodeBool b) = encodeBool (a && b) := by
+  cases a <;> cases b <;> decide
+
 end Bumbledb

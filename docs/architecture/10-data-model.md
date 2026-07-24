@@ -100,8 +100,13 @@ columns, be queried as a relation, select sub-vocabularies (ψ) — the closed
 relation does natively. The rewritten theory is a **different theory** (the
 fingerprint moves); no store compatibility, no migration, per policy.
 
-**Orderability, complete:** U64 and I64 support ordering (`Lt/Le/Gt/Ge`, `Min`, `Max`,
-range conditions). Interval supports **equality, the `Allen` mask (the whole
+**Orderability, complete:** U64, I64, and Bool support ordering (`Lt/Le/Gt/Ge`,
+`Min`, `Max`, range conditions). Bool orders `false < true` — the strict 0/1
+encoding *is* the order — and the quantifiers fall out free: `Max` over a bool
+column is Any, `Min` is All, the two extremes of the smallest orderable type;
+that is the law on every surface, not an idiom compensating for a missing
+operator, and no dedicated Any/All operators exist (ruled 2026-07-23, R3).
+Interval supports **equality, the `Allen` mask (the whole
 interval-pair algebra as one comparison — `20-query-ir.md` § the Allen
 operator), and point membership** (below) — never `Lt`-family order or
 `Min`/`Max`: the value order that
@@ -109,12 +114,20 @@ exists (lexicographic by start) is an encoding accident, and offering it would i
 queries that mean intersection and say "less than". Everything else is equality-only:
 a closed reference's declaration-id order is a declaration-order accident, not semantics
 (order on it is refused exactly as the enum's ordinal order was); String intern ids
-are meaningless to order; Bool ordering is noise. **`bytes<N>` is identity-only by
+are meaningless to order. **`bytes<N>` is identity-only by
 refusal** (`Eq`/`Ne` and membership; order comparisons and `Min`/`Max` are typed
 validation errors): a digest's lexicographic order is an encoding artifact, and
 admitting it would make hash-function choice semantically visible. The determinant B-tree
 still sorts the padded encodings — sortedness is the index's need, not a query
 semantics (the padded bytes memcmp in value-byte order, which is all the determinant asks).
+**This roster is an engine law** (ruled 2026-07-23, R4): every refusal in it —
+ordering a closed reference, a String, an Interval, a `bytes<N>` — is a typed
+IR-validation error at prepare, judged once in the engine and therefore
+identical on every surface (Rust text, TS, raw IR), with Bool the one explicit
+carve-out (per R3). A host-side type wall is ergonomics layered over that
+judgment, never the judgment's home; in particular the closed-reference
+refusal lives in engine validation, where the schema's closedness already
+resolves, not in any one SDK's type tier.
 
 **The mask value shape:** the interval-pair relation itself is a value —
 `AllenMask`, a 13-bit word, bit *i* = Allen basic *i* in the palindromic order
@@ -620,8 +633,9 @@ save a modeling shortcut).
 - **Order** — explicit position columns, never successor pointers: a linked list
   inside a relation is control flow smuggled into data, and every reorder becomes
   a dependent chain of writes.
-- **Any/All** — `Max`/`Min` over a bool column: the 0/1 encoding makes the two
-  quantifiers the two extremes; no dedicated operators.
+- **Any/All** — `Max`/`Min` over a bool column: bool is orderable, `false < true`
+  (§ Orderability; ruled 2026-07-23, R3), so the 0/1 encoding makes the two
+  quantifiers the two extremes on every surface; no dedicated operators.
 - **Large content** — facts stay fixed-width; big payloads live in external
   storage referenced by identity, with content churn recorded on the
   dictionary-GC OPEN item as its trigger profile.

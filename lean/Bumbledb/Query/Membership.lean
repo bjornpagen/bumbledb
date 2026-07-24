@@ -79,6 +79,20 @@ nothing (`normalize.rs` pass 1) — is answer-invisible, and
   typing witness and the mint are too; `queryAnswers` is the rules'
   union (`mem_queryAnswers`), and the query-level statement is the
   pointwise lift of the rule-level theorem.
+* **The fold-level companion is owed (2026-07-23 audit, finding 087;
+  the R2 fold-domain docket).** A membership term SELECTS, it never
+  binds: the aggregate fold domain of a lowered membership rule is
+  the SURFACE rule's distinct binding set — the minted interval
+  variable is no fold slot (the aggregation contract,
+  `20-query-ir.md`: every aggregate folds the query's distinct full
+  bindings; the mint is answer-invisible, and it must be
+  fold-invisible on the same ground). PROOF OBLIGATION: the
+  fold-level `membership_lowering_preserves` companion — aggregates
+  over the lowered rule with the mint projected away equal aggregates
+  over the surface reading — plus the conformance glue folding the
+  surface width and the corpus fence
+  (`Exclusion::AggregateMembership`) lifted, so the third oracle
+  adjudicates membership-under-additive-fold instead of excluding it.
 -/
 
 namespace Bumbledb

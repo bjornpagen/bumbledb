@@ -51,8 +51,13 @@ once.
 
 **Key-probe point lookups.** A single-atom query whose bindings cover a key of the
 relation (an FD statement, including the auto-key on fresh fields —
-`30-dependencies.md`) or the full fact executes as: one `U` determinant (or `M`-membership)
-LMDB get → one `F` fetch → decode → the residual per-field filters applied to the
+`30-dependencies.md`) or the full fact executes as one point read: the first
+fresh field's auto-key resolves as **one direct `F` get** — the fresh value IS
+the `F` row id and that auto-key maintains no `U` tree, so the probe pays one
+B-tree descent, not two (`50-storage.md` § key layout; ruled 2026-07-23, R16);
+every other declared key (later fresh fields' auto-keys included) pays one `U`
+determinant LMDB get → one `F` fetch, and the full fact one `M`-membership
+get → one `F` fetch — then decode → the residual per-field filters applied to the
 one hit. No images, no COLT, no plan search — and for the statement-key
 (`U`-determinant) arm the one get computes exactly the rule's join denotation,
 residual filters included
@@ -273,8 +278,9 @@ stream computes exactly the answer set
   `provably_distinct` is the only mint for
   `DistinctWitness`; `AggregateSink::without_seen_set` requires that witness by
   value, and the ordinary/union constructors cannot omit the set. Single-rule
-  only: the multi-rule union keeps its spanning head-projection
-  seen-set even when every rule has its own witness — deliberately distinct
+  only: the multi-rule union keeps its spanning seen-set (keyed by
+  provenance, § the rule loop; ruled 2026-07-23, R2) even when every rule
+  has its own witness — deliberately distinct
   from the measured cross-rule elision refutation below.
 - **Rule-disjointness knowledge:** `plan/fj/provably_disjoint.rs` recognizes a
   multi-rule program whose heads are provably pairwise disjoint — the witness
@@ -283,8 +289,9 @@ stream computes exactly the answer set
   and pairwise by design: params, sets, and mixed constant forms pin nothing;
   the elision the witness could license is `disjoint_witness_licence`). The
   DU-arm union is exactly this shape. Plan introspection retains the knowledge
-  as `disjoint_rules: proven (R.f)`, but execution always keeps one head-projection
-  seen-set spanning a multi-rule program.
+  as `disjoint_rules: proven (R.f)`, but execution always keeps one seen-set
+  spanning a multi-rule program, keyed by provenance (§ the rule loop; ruled
+  2026-07-23, R2).
 
   **Refutation — cross-rule dedup removal.** Three pre-isolation scale-S runs
   measured the proof-driven per-rule-drain representation 32.1%, 32.6%, and 32.4%
@@ -329,20 +336,33 @@ pipeline runs for each non-key-probe rule at prepare). Execution runs the
 rules **sequentially** into **one sink**: the sink resets once per execution, never
 per rule, and its dedup machinery spanning rules is the *entire* implementation of set
 union — one sink hearing several rules computes exactly the query union
-(`lean/Bumbledb/Exec/Dedup.lean: union_regime_head_projection`). **Union is not an
+(`lean/Bumbledb/Exec/Dedup.lean: union_regime_head_projection` for hand-written
+programs, `dnf_rekey_transparent` for DNF-derived rule sets — the provenance
+split below). **Union is not an
 operator** — no merge node, no concat-then-dedup pass exists
 anywhere in the executor; disjunction at the top is the rule list. Inter-rule parallelism
 is not attempted: it is inter-query parallelism's job (the concurrency contract below)
 and stays a non-goal.
 
-- **Dedup keys are head-shaped, never rule-slot-shaped** — the representation that
-  makes cross-rule dedup work at all, since binding-slot layouts are per-rule (a
-  `VarId` is rule-scoped, so a full-binding key has no cross-rule meaning); the
-  key law is `lean/Bumbledb/Exec/Dedup.lean: union_regime_head_projection`. The
-  projection sink keys the projected find tuple (head-shaped already); the multi-rule
-  aggregate sink keys the **head projection** — per head position, the words the
-  position reads from the rule's binding (group variables and fold inputs; the nullary
-  `Count` contributes nothing).
+- **Dedup keys split by provenance (ruled 2026-07-23, R2).** A **hand-written
+  multi-rule program** keys the **head projection**, never the rule's slot
+  array — its binding-slot layouts are per-rule (a `VarId` is rule-scoped
+  across written rules, so a full-binding key has no cross-rule meaning) and
+  the head is the only shared vocabulary; the key law is
+  `lean/Bumbledb/Exec/Dedup.lean: union_regime_head_projection`. A
+  **DNF-derived rule set** — the rules validation mints from one written
+  rule's condition trees (`20-query-ir.md` § the input condition grammar) —
+  **re-keys the union dedup on the shared slot arrays**: the disjuncts are
+  clones of one rule sharing one variable scope and one binding layout, so
+  the full binding set is shared vocabulary, disjunction widens membership
+  without moving the fold domain (the or-transparency law,
+  `lean/Bumbledb/Exec/Dedup.lean: dnf_rekey_transparent`), and the witness's
+  written-rule provenance (`20-query-ir.md` § the input condition grammar)
+  is what the re-keyed dedup reads. The projection sink keys the projected
+  find tuple (head-shaped already); the multi-rule aggregate sink keys per
+  its provenance — for a hand-written program the **head projection**: per
+  head position, the words the position reads from the rule's binding (group
+  variables and fold inputs; the nullary `Count` contributes nothing).
   The single-rule aggregate keys the full slot array (its fold domain is the rule's
   distinct full bindings —
   `lean/Bumbledb/Query/Aggregates.lean: agg_over_distinct_bindings`).
@@ -418,7 +438,9 @@ the driver: it prepares as its output predicate's query, byte for byte
   and a cold suffix walk (`WordMap::iter_since`,
   `ProjectionSink::answers_since`); no flag, no branch, no state on the emit
   path, and a non-recursive program cannot observe the hook. Dedup keys stay
-  head-shaped (the rule loop's representation law), which is precisely what
+  rule-independent per the rule loop's provenance split (head-shaped across
+  hand-written rules, shared-slot across a DNF-derived rule set — ruled
+  2026-07-23, R2), which is precisely what
   makes the frontier readable at all. Interior predicates own
   projection-shaped seen-sets of bound variables (the validation roster
   refuses folds in interior heads — `AggregateInteriorPredicate` — and
@@ -661,6 +683,15 @@ and each is documented at its definition.
 no estimate — they only shrink results, and the planner treats them as free filters
 (pessimistic in the right direction).
 
+**The estimate doctrine** (ruled 2026-07-23, R19): estimates stay crude by
+design — the ladder and the three arms above are the whole model, and no
+histograms, NDV fields, or compound-distinct statistics exist. Precision lives
+at execution time, not in the estimator: GJ-shaped plans (the GJ split, below)
+plus per-entry dynamic cover choice bound skew where the data is actually in
+hand — the Free Join thesis. Estimates order the DP; covers absorb what the
+ordering misses. Revisit only if post-009 benches show plan-choice misses
+covers can't absorb.
+
 **Search:** exhaustive DP over positive atom occurrences, **left-deep only**,
 minimizing the sum of prefix estimates *including the base relation's facts* (counting
 the root iteration breaks ties toward iterating the small side). The cap is 20
@@ -668,7 +699,17 @@ occurrences (a 2²⁰-state table, ~32 MB transient plus a 16 MB per-mask
 prefix-variables memo; the cap is enforced at the validation boundary as a roster
 item, alongside the 128-distinct-variable bitset cap — negated occurrences count
 against the roster cap but not the DP state, since they never join). Then
-`binary2fj`, then `factor()`, then plan validation into the witness.
+`binary2fj`, then `factor()`, then the **GJ split** (ruled 2026-07-23, R19): a
+probe subatom carrying two or more variables first bound at different earlier
+nodes splits into per-variable lookup subatoms, each placed at the node where
+its variable is first bound — the lowering that produces plans at the GJ end
+of the Free Join spectrum for cyclic rules, and the step that gives a
+production node its second cover (under `binary2fj` + `factor()` alone every
+node has exactly one, so dynamic cover choice never has a choice). The split
+mints no machinery: trie schemas derive from the split subatoms per §3.3, the
+partition check already admits one occurrence's variables spread across nodes,
+and carried cursors route a multi-node occurrence forward. Then plan
+validation into the witness.
 **Decision: left-deep-only.** **Alternative:** bushy plans + materialized intermediates
 (the paper decomposes bushy input into several left-deep plans and names
 materialization its main bottleneck, §5/§6). **Why it lost:** materialized intermediates
@@ -1052,7 +1093,13 @@ cycle's full-head estimates/actuals are `24/24, 192/192, 576/192` (P3's closing
 two-variable independence error); its narrow projected head executes
 `24/24, 192/24, 576/24`, with 21 emissions absorbed, because D2 stops existential
 work. The closed-domain rung is applied correctly (P1), and no range exists in
-the fixture (P2). Cyclic estimates are not governed by a fixed factor: they
-order the exhaustive DP while the WCOJ execution bounds the chosen plan's
-damage, and neither estimates nor their error affect correctness. No histograms
-or new tuning rung are earned by this diagnosis.
+the fixture (P2). Cyclic estimates are not governed by a fixed factor: they order
+the exhaustive DP, and neither estimates nor their error affect correctness.
+The damage bound is a plan-shape property, stated exactly (ruled 2026-07-23,
+R19, correcting this record's earlier claim): a binary-shaped FJ plan carries
+no AGM bound — its closing probe is a binary hash join and bounds nothing —
+and the worst-case-optimal guarantee holds at and near the GJ end of the plan
+spectrum, which the GJ split (§ planner) produces for cyclic rules. No
+histograms or new tuning rung are earned by this diagnosis — the P3 ruling
+re-affirmed on the estimate doctrine's grounds (§ planner): precision lives at
+execution time, in GJ-shaped plans and dynamic cover choice.

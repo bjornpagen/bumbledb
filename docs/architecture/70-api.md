@@ -97,7 +97,15 @@ bumbledb::schema! {
   from_id(StatusId) -> Option<Status>` (explicit matches, usable in const
   contexts), and a **weld test is emitted per closed relation** under
   `#[cfg(test)]` (`from_id(h.id()) == Some(h)` for every handle, plus the
-  beyond-roster miss), so the weld cannot be forgotten for a new theory. The
+  beyond-roster miss), so the weld cannot be forgotten for a new theory.
+  **Declared columns project too** (ruled 2026-07-23, R14): per declared
+  column the host enum carries a `const` accessor in the `id()` style —
+  `const fn mastered(self) -> bool`, an explicit match per handle, rendered
+  from the same typed ground-axiom literals that seed the engine's extension
+  (newtyped columns return the newtype), so host and engine cannot drift by
+  construction and no query-backed weld is needed. A ground-axiom value is an
+  expansion-time constant; reading one through a runtime query is the
+  workaround the accessors delete. The
   handle newtype (`StatusId(pub u64)`) comes through the ordinary newtype
   machinery; the id constants address the sealed shape (the synthetic `id`
   field at `FieldId(0)`, declared columns shifted). The host enum is the
@@ -273,9 +281,15 @@ admission boundary) and `schema::ManifestDescriptor` (`.manifest()`), both
 re-exported from `schema`.
 
 - **Relations** (`RelationSpec`): name, fields (`FieldSpec`: name, structural
-  `ValueType`, optional host-newtype name, `fresh` mark), and an optional
-  extension (`RowSpec` ground axioms — the option is the closedness, both
-  tiers through one shape). Newtype names are host-side nominal vocabulary
+  `ValueType`, optional host-newtype name, `fresh` mark), and **closedness as
+  one sum** — `Open | Closed { roster }` (ruled 2026-07-23, R7): the closed
+  arm carries the handle newtype and the `RowSpec` ground axioms together, so
+  the two states the grammar forbids — an ordinary relation carrying a handle
+  newtype, a closed relation without one — are unrepresentable on the spec
+  path exactly as the macro's mandatory `as NewType` makes them unspellable.
+  The option IS the kind, both tiers through one shape; no silent skip in the
+  lowering ever stands in for a typed `SpecIssue`. Newtype names are
+  host-side nominal vocabulary
   carried only for handle resolution; they are dropped at lowering and are
   not fingerprint inputs, exactly as the macro's `as` names are emission.
 - **Statements** (`StatementSpec`), tagged by form: `Fd` (no selection — the
@@ -344,10 +358,19 @@ module, `PreparedQuery`/`Answers`, `SchemaError`, `FactShapeError`,
 - `Db::ephemeral(path, Ledger)` — the ephemeral store KIND's one constructor
   (`50-storage.md` § the ephemeral store kind; never a flag on `create`/`open`).
   A missing or empty directory initializes a fresh ephemeral store — the kind
-  marked in `_meta` at birth — and an existing ephemeral store reopens under the
-  same version/kind/fingerprint checks as `open` (create-or-open: a scratch store
-  earns the convenience because a mistaken fresh store at a typo'd path destroys
-  nothing durable; the dogfooding doctrine, `00-product.md`). The environment
+  marked in `_meta` at birth — and a cleanly handed-off ephemeral store reopens
+  under the same version/kind/fingerprint checks as `open` (create-or-open: a
+  scratch store earns the convenience because a mistaken fresh store at a
+  typo'd path destroys
+  nothing durable; the dogfooding doctrine, `00-product.md`). **The ephemeral
+  contract** (ruled 2026-07-23, R18): contents survive process restarts, not
+  machine crashes — and the kind's own loss claim is representable on disk. A
+  dirty marker, set fsynced at open and cleared by a small synced commit at
+  clean close, records the lineage; a store that crossed a machine crash is
+  detected at reopen and wipes-and-reinits, so post-crash reopen yields a
+  valid empty store, always — the fingerprint-valid-but-torn state is
+  unrepresentable, and verified-reopen vouches only for marker-proven clean
+  handoffs. The environment
   carries `NOSYNC` (`50-storage.md` § the ephemeral store kind carries the
   ruling-1 retraction of the old `WRITEMAP|NOSYNC` set); every semantic —
   judgment, point reads, queries,
@@ -369,14 +392,22 @@ module, `PreparedQuery`/`Answers`, `SchemaError`, `FactShapeError`,
   1.1–1.6x, the R6 lane of `crates/bumbledb/tests/ramdisk_phase_r.rs`, the
   Measure phase 2026-07-19, `bench-out/measure-ephemeral-r6/`); the durable side's
   guarantees never dilute because the kinds cannot cross-open.
-- One process, one handle (`00-product.md`): every open holds an exclusive advisory
-  lock on `<dir>/bumbledb.lock`; a second live handle on the same path — in this
-  process or another — is `EnvironmentLocked` at open time. The handle is shareable
-  across threads; drop closes and releases the lock. Ephemeral stores included —
-  the lock, like every other mechanism, does not vary by kind.
+- **The lock law is a writer law** (ruled 2026-07-23, R17): one handle per path
+  (`00-product.md`) governs writers. Every writing constructor —
+  `create`/`open`/`ephemeral`, each of which hands out `db.write` — holds an
+  exclusive advisory lock on `<dir>/bumbledb.lock`; a second live writer handle
+  on the same path — in this process or another — is `EnvironmentLocked` at open
+  time. The handle is shareable across threads; drop closes and releases the
+  lock. Ephemeral stores included — among writers the lock does not vary by
+  kind. Readers open `MDB_RDONLY`, lockless: archival reads work on read-only
+  media, restored snapshots, and mounted backups with no carve-outs (§ exhume,
+  the reader constructor).
 - Dev-reset conveniences (delete + recreate) are host-side; production open never
-  destroys data. `Db::ephemeral` never destroys data either — it opens or
-  initializes, and deletion of a spent staging store is the host's explicit act.
+  destroys data. `Db::ephemeral` **never destroys data it promised to keep**
+  (the law as reworded by R18, ruled 2026-07-23) — it opens or initializes,
+  deletion of a spent staging store is the host's explicit act, and the one
+  thing it wipes — an ephemeral store that crossed a machine crash — is
+  exactly the data the kind renounced on-disk at birth.
   Nor does it MUTATE on refusal: an existing data file is probed through a plain
   durable-flagged open before the
   ephemeral flags are ever applied — and since ruling 1 no open of ANY kind
@@ -424,11 +455,15 @@ The handle exposes exactly:
 
 No write surface exists on the type, no prepare entry, and no statement is
 ever judged — the record is read verbatim. An exhumed handle never takes the
-writer path (readers-don't-block, `50-storage.md`); it does hold the same
-exclusive advisory lock as every constructor (one handle per path — the record
-being read stays still).
+writer path (readers-don't-block, `50-storage.md`) — and it holds no lock
+either: the lock law is a writer law (ruled 2026-07-23, R17), so exhume opens
+the environment `MDB_RDONLY`, never touches the lock file, and is genuinely
+read-only down to the storage layer. The archival sighting reads exactly the
+media it names — a read-only bind mount, a restored snapshot, a mounted
+backup — with no carve-outs.
 
-**Refusals, all typed:** `Io` on a nonexistent path; `EnvironmentLocked`;
+**Refusals, all typed:** `Io` on a nonexistent path (never `EnvironmentLocked`
+— readers are lockless, R17);
 `FormatMismatch` on any other version (no migration path, as everywhere);
 `DescriptorMissing` on a store not yet adopted — the remedy in the error: open
 it once under its creating schema and the back-fill (`50-storage.md`) makes it
@@ -535,7 +570,12 @@ is the consumer that names its shape.)
 
   **Full queries inside write transactions remain forbidden** — point reads are
   determinant gets (allocation-free, no images, no plans); dragging the image cache and
-  executor into the write path is the refused half. **Alternative:** keep the pure
+  executor into the write path is the refused half. The allocation contract is
+  symmetric across transaction kinds (ruled 2026-07-23, R15): snapshot point
+  reads (`snap.get`, `snap.get_dyn`) draw their determinant scratch from a
+  Db-owned pool exactly as the WriteTx twins take-and-restore theirs — the
+  point path allocates nothing per call on either side, and callers see no
+  signature change. **Alternative:** keep the pure
   two-transaction idiom. **Why it lost:** the surveyed workloads' upserts and
   check-then-act conditions are exactly the shape that needs a read of the state being
   written, and the two-txn idiom reintroduces the TOCTOU the single-writer design
@@ -722,7 +762,8 @@ proposition the commit checks in one integer compare.
 - **Open errors:** `FormatMismatch`, `StoreKindMismatch { found, expected }` (the
   kind marker read after the version, before the fingerprint — the cross-open
   matrix, § environment lifecycle), `SchemaMismatch`, `AlreadyInitialized`,
-  `EnvironmentLocked`, `DescriptorMissing` (exhume only, § exhume — the
+  `EnvironmentLocked` (writers only — the lock law is a writer law, R17;
+  § environment lifecycle), `DescriptorMissing` (exhume only, § exhume — the
   not-yet-adopted store, remedy in the error), `Io`, `Lmdb`.
 - **Schema errors** (declaration boundary, `30-dependencies.md` roster included):
   typed, enumerated, returned from `Db::create`/`Db::open` — where the definition's
@@ -861,7 +902,9 @@ the benchmark's memory truth), and the `trace` feature enables `bumbledb::obs` �
 explicit per-thread capture of nanosecond spans and point events over every prepare/
 execute/commit phase, drained by tooling into Chrome-trace artifacts. Plan
 introspection — EXPLAIN, colloquially — is always available through
-`snap.introspect(..)`. It returns an ANALYZE-semantics rendered artifact beginning
+`snap.introspect(..)` — and on the TS surface through `explain()`, plan-as-data
+(ruled 2026-07-23, R13; § the TypeScript SDK). `snap.introspect(..)`
+returns an ANALYZE-semantics rendered artifact beginning
 with `introspection v3`, then the query in rule notation (`20-query-ir.md` § the
 renderer; `PreparedQuery::rendered_query` exposes the same query string), predicate,
 plan sections, and diagnostics. `Snapshot::profile` returns the same execution as
@@ -986,7 +1029,12 @@ knows the encoding. Closed fields sit OUTSIDE the orderable/foldable set
 on this surface, type-tier and lowering-tier both: a closed reference's
 declaration-id order is a declaration-order accident, not semantics
 (`10-data-model.md` § orderability), so `lt`/`sum`-family admissions over
-a handle are unspellable and refused.
+a handle are unspellable and refused — and the refusal is engine law
+underneath (ruled 2026-07-23, R4): ordering a closed reference is a typed
+IR-validation error at prepare, so every surface — the TS type tier, the
+Rust `query!` macro, raw IR — inherits the same wall, and the TS layer is
+the ergonomic tier over an engine-owned judgment, never the judgment
+itself.
 
 One spelling holds the whole texture up: at the TS surface a
 closed-referencing column is declared with the vocabulary's OWN descriptor
@@ -997,8 +1045,12 @@ positionwise (identity — part of the face SHAPE, type tier and
 construction tier both), so a bare u64 column can never alias a vocabulary
 through a declared law, and every roster-keyed judgment above — the
 orderable ban, the name↔id marshal, answer decode, query joins — is sound
-against the descriptor alone. The engine cannot backstop this wall: the
-wire carries plain u64s, no rosters.
+against the descriptor alone. The engine backstops the ORDER half of this
+wall (ruled 2026-07-23, R4) — the sealed descriptor knows every closed
+roster, and ordering a closed-bound var is a typed validation error for
+every host alike; the NAME half it cannot: the wire carries plain u64s, no
+names, so the marshal's bijection and the descriptor-identity check stay
+the SDK's own.
 
 ### Vars are values (recorded ruling, destructure-0.6.0)
 
@@ -1037,6 +1089,42 @@ order, so the Rust `query!` macro, the wire, the manifest, and the
 fingerprints are all untouched — zero fingerprint pins move. The cookbook's
 cross-host goldens staying byte-identical is the proof, not the hope: this is
 a new spelling of the same sentences the engine already judged.
+
+### The write-path contract (ruled 2026-07-23, R10, R11)
+
+**Returning `abandon(payload)` from a `db.write` callback rolls the
+transaction back** (R10). The sentinel's own contract is unconditional —
+nothing commits, not even an empty commit, from whichever write verb received
+it — and `WriteResult` is a sum carrying commit-vs-abandon, so the outcome is
+in the type. A caller's explicit decline to commit can never be silently
+discarded: the hole where an abandon-returning callback typechecked under
+TypeScript's void-return rule and committed anyway is unrepresentable.
+
+**`Tx.insert` returns `{ changed, ...fresh }`** (R11). The engine computes a
+changed-state boolean on every insert and the bridge already carries it
+across the FFI; the SDK surfaces it beside the minted fresh cells, restoring
+the bijection with the Rust surface (`insert(&fact) -> bool`, § Transactions)
+that `delete` always honored. The idempotent-replay lane reads the bit from
+the insert itself; the extra `contains` round trip per fact dies.
+
+### Resource lifetimes are disposables (ruled 2026-07-23, R12)
+
+The SDK assumes the latest Node 26 runtime. Every SDK object holding a
+native lifetime — exhume the first citizen, snapshots and scoped reads
+alike — implements `Symbol.dispose` / `Symbol.asyncDispose` (whichever
+matches its teardown reality), and `using` / `await using` is the documented
+idiom. The zero-closables doctrine restates as: **lifetimes are disposables,
+never `close()`** — release is deterministic and scope-shaped in the
+language's own syntax, never a method to remember and never a GC race.
+
+### explain() — the diagnostic surface (ruled 2026-07-23, R13)
+
+`explain()` takes a prepared query to its plan as data — the `FjPlan` shape
+plus counters, crossing the bridge as plain values — so a TS host reads what
+the engine did with its query without a second toolchain. A diagnostic
+surface, EXPLICITLY UNFROZEN: its shape follows the plan representation
+wherever that goes, and no compatibility claim ever attaches to it.
+ANALYZE-grade profiling stays engine-side (§ observability).
 
 ## The freeze, and the OPEN ledger
 

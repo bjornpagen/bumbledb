@@ -280,14 +280,38 @@ join costume.
   intervals are one group
   (`lean/Bumbledb/Query/Aggregates.lean: agg_over_distinct_bindings`,
   `group_fibers_disjoint`, `group_fibers_exhaust`,
-  `equal_key_values_share_fiber`). **Across rules**, aggregates
-  read the head: the fold domain is the union of the rules' binding sets
-  projected to the head (`lean/Bumbledb/Exec/Dedup.lean:
-  union_regime_head_projection`; the executor's spanning seen-set keys exactly
-  that head projection — `40-execution.md` § the rule loop; provably disjoint
-  rules elide it, § set semantics). Two postings of amount 100 to one account
+  `equal_key_values_share_fiber`). Two postings of amount 100 to one account
   are two distinct bindings (their fresh ids differ): `Sum(amount) by account`
   = 200.
+- **The or-transparency law (ruled 2026-07-23, R2) — the across-rules fold
+  domain, split by provenance.** Surface `or` is fold-transparent: a
+  DNF-derived rule set — the rules validation mints from one written rule's
+  condition trees (§ the input condition grammar) — re-keys the union dedup
+  on the **shared slot arrays** (the disjuncts are clones of one rule: one
+  variable scope, one layout, so the full binding set is shared vocabulary),
+  and disjunction widens membership without ever changing a fold domain —
+  the `Sum` above answers 200 under any spelling of its conditions, `or`
+  included. **Hand-written multi-rule programs keep the head-projection
+  law**: variables are rule-scoped and layouts differ, so the head is the
+  only shared vocabulary — the fold domain is the union of the rules'
+  binding sets projected to the head, and distinct bindings projecting to
+  one head tuple fold once (the postings above, split across two written
+  rules, sum to 100: multiplicity across written rules is a per-disjunct
+  query, host-merged). The executor's spanning seen-set keys exactly that
+  head projection (`40-execution.md` § the rule loop; the dedup-key law is
+  `lean/Bumbledb/Exec/Dedup.lean: union_regime_head_projection`). Provable
+  rule-disjointness is recorded **diagnostically only** (plan
+  introspection's `disjoint_rules: proven` line); execution always keeps the
+  spanning seen-set — the measured cross-rule elision refutation,
+  `40-execution.md` § set semantics.
+- **Cross-rule fold-free nullary `Count` is refused (ruled 2026-07-23,
+  R1).** Under the head-projection law a fold-free head admits one
+  projection per group, so a nullary `Count` there is definitionally the
+  constant 1 — an uninformative query, made unrepresentable: the typed
+  validation refusal beside `ArgAcrossRules`, with the same modeling answer
+  — one `Count` per disjunct, host-merged. DNF-derived rule sets are
+  untouched: or-transparency keeps their fold domain the written rule's full
+  binding set, so their `Count` counts.
 - **The footgun, stated loudly:** joining a multiplicity-adding relation into an
   aggregate multiplies the binding set — `Posting ⋈ PostingTag` with 3 tags per posting
   triples the sum, exactly as in SQL. Don't write that query; aggregate first (in v0:
@@ -300,8 +324,11 @@ join costume.
   folds have none).
 - `Count` is **nullary**: |the group's binding set|, result type U64.
   `CountDistinct(x)`: |the distinct values of x across the group|, U64, legal
-  over every type. `Min`/`Max` accept U64 and I64 only (the orderable types —
-  `10-data-model.md`); result type = input type; deterministic (a set has one
+  over every type. `Min`/`Max` accept the orderable types
+  (`10-data-model.md`): U64, I64, and bool, ordered false < true (ruled
+  2026-07-23, R3) — `Max` over bool is **Any** and `Min` is **All**, the two
+  quantifiers as the two extremes of the 0/1 encoding, no dedicated
+  operators; result type = input type; deterministic (a set has one
   minimum).
 - **Arg-restriction (`ArgMax`/`ArgMin`):** the group's binding set is first
   **restricted to the bindings attaining the extreme of the key variable**, and
@@ -309,14 +336,18 @@ join costume.
   coherent by construction, and **a tie yields every attaining answer**
   (`lean/Bumbledb/Query/Aggregates.lean: argmax_ties_all_kept`); with fresh
   keys ties cannot occur. Validation: all Arg terms
-  in one query share one key variable and one direction; the key must be orderable
-  (U64/I64); the key variable may itself be projected. Arg terms and fold aggregates
+  in one query share one key and one direction; **the key positions,
+  exhaustively:** a bound variable of orderable type (U64/I64, and bool per
+  R3), or the interval measure — `ArgMax(w, Duration(w))` is "the longest
+  interval per group" (ruled 2026-07-23, R5), the restriction sweeping the
+  derived measure word with the measure's ray poisoning (§ the measure); a
+  variable key may itself be projected. Arg terms and fold aggregates
   (Sum/Min/Max/Count/CountDistinct) may not mix in one query in v0 — "sum of the
   latest" is two queries, and the composed form waits for a real need.
   **Arg-restriction is single-rule only** (a typed validation error on 2+-rule
-  programs, DNF-lowered rules included): the restriction key is a rule-scoped
-  variable outside the head's vocabulary — rules need not even agree on its type —
-  so "the extreme over the union" is undefined. Modeling answer: one Arg query per
+  programs, DNF-lowered rules included): the restriction key is rule-scoped
+  and outside the head's vocabulary — hand-written rules need not even agree
+  on its type — so "the extreme over the union" is undefined. Modeling answer: one Arg query per
   disjunct, host-merged. The notation writes these forms directly as
   `ArgMax(value, key)` / `ArgMin(value, key)`; the renderer emits the same forms,
   including self-carry (`ArgMax(x, x)`). *Trigger* for defining a cross-rule restriction: a real
@@ -417,9 +448,13 @@ FindTerm   = Var(VarId)
                                                             //   three; typed rejection
                                                             //   otherwise)
 AggOp      = Sum | Min | Max | Count | CountDistinct
-           | ArgMax { key: VarId } | ArgMin { key: VarId }  // over = the carried var
+           | ArgMax { key: ArgKey } | ArgMin { key: ArgKey } // over = the carried var
            | Pack                                           // over = the packed interval var;
                                                             //   relation-shaped (§ aggregation)
+ArgKey     = Var(VarId) | Measure(VarId)                    // the restriction key: an
+                                                            //   orderable variable or the
+                                                            //   interval measure (ruled
+                                                            //   2026-07-23, R5)
 Comparison { op: CmpOp, lhs: Term, rhs: Term }
 CmpOp      = Eq | Ne | Lt | Le | Gt | Ge
            | Allen { mask: MaskTerm }  // THE interval-pair comparison (below)
@@ -469,8 +504,9 @@ comparison needs no shared point variable: that is the `Allen` predicate.
 
 **Comparison rules, complete:** both sides must have the same structural type except
 where stated (no U64-vs-I64, no silent coercion). `Eq`/`Ne` are legal for all six
-types; `Lt/Le/Gt/Ge` only for U64/U64 and I64/I64 — **never intervals,
-`bytes<N>`, String, or Bool** (`10-data-model.md` orderability; all four
+types; `Lt/Le/Gt/Ge` for U64/U64, I64/I64, and Bool/Bool — bool is orderable,
+false < true (ruled 2026-07-23, R3) — **never intervals, `bytes<N>`, or
+String** (`10-data-model.md` orderability; all three
 refusals have dedicated typed diagnostics). `Allen { mask }` requires two interval terms of
 one element type — widths free (Q1 element-domain typing, `30-dependencies.md`:
 `interval<u64, 5>` classifies against `interval<u64>` or `interval<u64, 3>`
@@ -567,7 +603,10 @@ under aggregation, exactly like a plain variable find; in a `Program`,
 legal at the OUTPUT predicate's head only — `MeasureInteriorPredicate` /
 `MeasureInRecursiveHead`, § engine recursion); the aggregated
 input of `Sum`/`Min`/`Max` (`FindTerm::AggregateMeasure` — `Sum` in the
-wide accumulator with the single finalize range check, like every Sum); and
+wide accumulator with the single finalize range check, like every Sum); the
+**Arg-restriction key** (`ArgKey::Measure` — `ArgMax(w, Duration(w))`, "the
+longest interval per group"; the restriction sweeps the derived measure
+word, ray poisoning included — ruled 2026-07-23, R5); and
 one side of an **order comparison** (`Lt`/`Le`/`Gt`/`Ge`) against a
 u64-typed term or literal — "meetings longer than an hour". Every other
 position is a typed validation rejection: a binding position (the measure
@@ -583,7 +622,8 @@ of one comparison, a non-interval variable, and any fold but the three.
   below 2⁶⁴. No overflow, no decode.
 - **The ray error:** a ray has no finite measure, and boundedness is not
   provable at validation, so the
-  subtraction path tests `end == MAX` and raises the typed execution error
+  subtraction path tests `end == MAX` and yields the **Ray verdict**, raised
+  as the typed execution error
   `MeasureOfRay`, carrying the offending interval's two encoded words —
   **the engine's one runtime type error**; one ray in a group poisons the
   whole group's measure column, never yielding a value
@@ -592,13 +632,26 @@ of one comparison, a non-interval variable, and any fold but the three.
   `Allen(DISJOINT)` predicate against the ray probe `[MAX−1, MAX)` (only the
   rays intersect it), or a bounded-end
   filter (`Allen(COVERED_BY)` a bounded window) on the measured atom.
-- **The filter-order law:** a measure comparison lowered to an atom's
-  filter list evaluates only on facts surviving the atom's *other* filters
-  — a same-atom predicate always runs before the subtraction, so a filtered
-  fact never reaches it. Cross-atom measure comparisons are residuals
+- **The verdict algebra (ruled 2026-07-23, R6):** measure-bearing conditions
+  evaluate **three-valued** — a binding's condition verdict is Holds, Fails,
+  or Ray — and `And`/`Or` fold verdicts in the Kleene lattice: Fails absorbs
+  `And`, Holds absorbs `Or`, Ray propagates otherwise. A binding raises
+  `MeasureOfRay` iff its folded verdict is Ray. The fold is commutative and
+  associative, so the error verdict is **order-independent** — evaluation
+  order is unobservable — and agrees with DNF lowering by construction (a
+  disjunct that Holds saves the binding whether or not a sibling disjunct
+  measures a ray). The fold is normative for every evaluator: the engine,
+  the naive model, and the Lean denotation state the same lattice.
+- **The filter-order law, a corollary:** a measure comparison lowered to an
+  atom's filter list evaluates only on facts surviving the atom's *other*
+  filters — sound because Fails absorbs the conjunction, so running a
+  same-atom predicate before the subtraction never changes the verdict, only
+  the work. Cross-atom measure comparisons are residuals
   (evaluated where whole-value residuals attach), and the measure in finds
-  and folds evaluates at emit — after every condition — so predicates protect
-  those positions unconditionally.
+  and folds evaluates at emit — after every condition — a **demanded**
+  position: a ray reaching it is Ray unconditionally, so predicates protect
+  those positions and one ray in a group poisons the group's measure column
+  (the ray-error bullet above).
 - **Lowering:** normalization lowers the measure to a two-slot read +
   subtraction feeding the existing word machinery — a constant or same-atom
   comparison becomes an occurrence filter, a cross-atom comparison a
@@ -686,12 +739,17 @@ typed positions, boundary-only, each a recorded decision.
 
 The rule's condition list admits trees: `ConditionTree = Leaf(Comparison) |
 And(Vec) | Or(Vec)`, the list itself conjunctive — the one place the surface
-accepts a nested OR. The engine never sees it: **DNF of a query is a set of
+accepts a nested OR (both text surfaces spell it: the notation's
+`and()`/`or()` trees — ruled 2026-07-23, R9 — and the TS builders, one
+grammar). The engine never sees it: **DNF of a query is a set of
 rules**, so validation distributes every rule's trees to disjunctive normal
 form and **each disjunct becomes a rule** — atoms and finds cloned, the
 rule's conditions that disjunct's leaves — before any per-rule check runs,
 answer-preservingly (`lean/Bumbledb/Query/Denotation.lean:
-dnf_preserves_denotation`).
+dnf_preserves_denotation`) and **fold-preservingly**: the disjunct rules
+share the written rule's variable scope and slot layout, and the union dedup
+re-keys on those shared slot arrays, so distribution never changes a fold
+domain (the or-transparency law, § aggregation; ruled 2026-07-23, R2).
 This is the outer-join precedent applied to disjunction: a documented
 decomposition, never a node. The refusal it recovers (README refusals, "OR
 tangled mid-rule across atoms"): a cross-atom disjunction poisons filter
@@ -730,7 +788,9 @@ disjoin by writing rules, which is what rules are for.
 - **The validated artifact contains no `Or`** — grep-provable: everything
   downstream of validation carries flat comparison lists (`LoweredRule`),
   and the planner and executor never learn disjunction existed. Rule
-  indices in diagnostics and in the witness are lowered-rule indices.
+  indices in diagnostics and in the witness are lowered-rule indices; the
+  witness records each lowered rule's written-rule provenance — the
+  or-transparency law's re-keyed dedup reads it (§ aggregation, R2).
 
 ## Normalization (owned here; runs inside validation)
 
@@ -954,8 +1014,9 @@ Deterministic, golden-pinned (the calendar union query, the Pack/Duration heads,
 and the closed-reference handles, byte-exact), and **total on plain data**:
 variables render as `v{id}` and params as
 `?{id}` (ids are all the IR carries), unresolvable ids as `relation#N`/`field#N`
-placeholders, and a nested condition tree functionally (`and(..)`/`or(..)`, depth-
-budgeted at `MAX_CONDITION_DEPTH`) — malformed queries must render, because the
+placeholders, and a nested condition tree in the notation's own
+`and(..)`/`or(..)` forms (grammar, not merely diagnostics — ruled 2026-07-23,
+R9; depth-budgeted at `MAX_CONDITION_DEPTH`) — malformed queries must render, because the
 renderer's consumers are diagnostics: roster errors print the offending query
 (`Db::render_query` — prepare rejected it, so no prepared handle exists), plan introspection's
 report opens with the query it explains (`PreparedQuery::rendered_query` is the
@@ -981,13 +1042,16 @@ head    := headterm (',' headterm)*
 headterm:= var | [name ':'] agg        // named positions become result columns
 agg     := Sum(t) | Min(t) | Max(t) | Count | CountDistinct(v) | Pack(v)
           | ArgMax(v, key) | ArgMin(v, key)
-           where t := v | Duration(v)
+           where t := v | Duration(v)  and  key := v | Duration(v)
 body    := item (',' item)*
 item    := atom                        // positive occurrence
          | '!' atom                    // negation (anti-probe; safety per roster)
          | term 'in' term              // membership: point ∈ interval, value ∈ ?set
          | Allen '(' term ',' mask ',' term ')'
-         | term cmp term               // ==  !=  <  <=  >  >=
+         | cond                        // a condition tree; the list is a conjunction
+cond    := term cmp term               // ==  !=  <  <=  >  >=
+         | 'and' '(' cond (',' cond)* ')'   // ConditionTree::And — comparison
+         | 'or'  '(' cond (',' cond)* ')'   //   leaves only (ruled 2026-07-23, R9)
 atom    := Relation '(' binding (',' binding)* ')'
          | pred '(' var (',' var)* ')'  // ordered dense: head positions left to
                                         //   right from 0 — positional, never nominal
@@ -1021,6 +1085,23 @@ named otherwise reparses through the qualified spelling). The
 two bars are the two the audit already upheld: rule-level `|` is *such that*;
 mask-level `|` is set union over the 13 basics — set-builder and set-union,
 context-separated exactly as the two levels of `==` are.
+
+**Condition trees are notation (ruled 2026-07-23, R9):** `and(...)`/`or(...)`
+admit any boolean combination of comparisons as one item — comparison leaves
+only, exactly the IR's `ConditionTree` (negated atoms and membership stay
+leaf-level, § the input condition grammar) and an exact mirror of the TS
+condition grammar: one condition language, two identical surfaces, one
+renderer. `and` and `or` are reserved — a predicate cannot take either name —
+and the renderer's functional forms are grammar, closing the render→parse
+round trip over the full input grammar.
+
+**Integer literals are rustc's (ruled 2026-07-23, R8):** an optional
+`0x`/`0o`/`0b` radix prefix and `_` separators, accepted uniformly at every
+integer position of both macro grammars — selection and comparison literals
+here; widths and window bounds in the schema grammar — one shared literal
+parser owning the law, so no position has a private dialect. The renderer
+normalizes to **canonical decimal**: the round-trip law is canonical-form,
+not verbatim — `0x64` lowers, renders, and reparses as `100`.
 
 **Named heads are the notation's recursion form — bare rules ARE the
 output predicate.** `path(x, z) | edge(x, y), path(y, z);` declares the

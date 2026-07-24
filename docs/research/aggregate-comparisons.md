@@ -8,8 +8,10 @@ The candidate: let a rule's judgment consume aggregate outputs — compare an
 aggregate to a literal/param/another aggregate inside the engine — instead of the
 host folding after execution.
 
-STATUS: docs/goal-alignment layer complete; Lean-model, engine, and workload
-sections pending subagent reports (placeholders marked TBD).
+STATUS: complete — the workload (§ 5), Lean-model (§ 6), and engine (§ 7)
+reports landed. Updated 2026-07-23: the audit's aggregate-law rulings (R1, R2,
+R3, R5, R6 — `audit-2026-07/RULINGS.md`) are flushed into the statements below.
+`docs/architecture/20-query-ir.md` owns the laws; this doc compares and cites.
 
 ---
 
@@ -42,7 +44,9 @@ them completely differently:
   positions exhaustively and is explicitly the template for admitting any new
   computation ("individual named computations may be admitted one at a time on
   the measure's precedent — typed positions, boundary-only, each a recorded
-  decision", 20-query-ir.md:679-683).
+  decision", 20-query-ir.md:679-683). The roster has since widened exactly once,
+  under that clause: the Arg restriction key admits the interval measure —
+  "longest interval per group" is spellable (ruled 2026-07-23, R5).
 - In a `Program`, folds and measures are legal ONLY at the output predicate's
   head: typed refusals `AggregateInteriorPredicate` / `MeasureInteriorPredicate`
   ("interior heads, recursive or not, project bound variables, the Lean cut's
@@ -61,13 +65,22 @@ them completely differently:
 - IR: a new comparison position over output-head aggregate positions — most
   naturally a per-QUERY (not per-rule) condition list whose terms may reference
   head positions by index, or a `Term::AggOut(HeadPos)` legal on comparison
-  sides only, exactly the measure's pattern. Aggregates fold across rules (the
-  fold domain is the union of the rules' binding sets projected to the head,
-  20-query-ir.md:283-288), so the filter is semantically per-GROUP after the
-  union fold — it cannot live in any single rule's `conditions`, which is a
+  sides only, exactly the measure's pattern. Aggregates fold across rules:
+  hand-written multi-rule programs fold the union of the rules' binding sets
+  projected to the head (the head-projection law, 20-query-ir.md:283-288),
+  while the DNF-derived rule set of a surface `or` re-keys the union dedup on
+  the shared slot arrays — the variables all disjuncts bind — so `or` is
+  fold-transparent: disjunction widens membership without changing the fold
+  domain (ruled 2026-07-23, R2). A fold-free nullary `Count` in a 2+-rule head
+  is a typed refusal beside `ArgAcrossRules` — definitionally constant 1 under
+  head projection; the modeling answer is one Count per disjunct, host-merged
+  (ruled 2026-07-23, R1). Either way the filter is semantically per-GROUP after
+  the union fold — it cannot live in any single rule's `conditions`, which is a
   genuinely new slot in `Query`, not a new leaf in an existing list.
 - Validation: type the comparison against the aggregate's result type
-  (Count/CountDistinct → U64; Sum/Min/Max → input type; Pack/Arg produce
+  (Count/CountDistinct → U64; Sum/Min/Max → input type, and bool is in the
+  input vocabulary for Min/Max — bool is orderable with false < true, so `Max`
+  over bool is Any and `Min` is All (ruled 2026-07-23, R3); Pack/Arg produce
   relation-shaped/selected values — comparisons over Pack segments or Arg
   carries would need their own rulings or refusals). Aggregate-vs-aggregate
   comparison (same head, e.g. `Min(x) < Max(x)` per group... or two different
@@ -114,7 +127,7 @@ AggregationThroughCycle generalized from body-position to head-position).
 
 ## 2. DECIDABILITY
 
-Docs-layer analysis (Lean agent findings TBD):
+Docs-layer analysis (the Lean agent's findings are § 6):
 
 - Totality/decidability posture today: validation is a total boundary judgment
   (the trust-boundary law, 20-query-ir.md:814-828, adversarially swept);
@@ -128,6 +141,12 @@ Docs-layer analysis (Lean agent findings TBD):
   stay total. No new axiom class is plausible; the proof obligation is a
   filtered-denotation lemma over the existing aggregate denotation
   (`Query/Aggregates.lean`), not a new termination story.
+- Error semantics compose as cleanly: a rule's verdict when a measure meets a
+  ray is the Kleene three-valued fold of its condition tree — AND/OR fold
+  Holds/Fails/Ray commutatively, order-independent, agreeing with the DNF
+  lowering by construction (ruled 2026-07-23, R6). A boundary HAVING never
+  meets a ray at all — it compares finalized scalars after every fold — so it
+  inherits totality with no error-propagation story of its own.
 - Shape B also does NOT threaten termination in the Datalog-theoretic sense —
   stratified aggregation (fold at stratum boundaries only) is the classical
   decidable regime, and `AggregationThroughCycle` already fences the one
@@ -192,8 +211,8 @@ Philosophy anchors, verbatim sources:
   scalar comparisons; the OPEN-items posture says post-processing moves
   engine-side only on a MEASURED budget violation, and none exists (workload
   agent: confirm at the 2-3 primer sites). The pruning win (fewer rows copied
-  out) only matters when groups are numerous and survivors few — TBD whether
-  any real site has that shape.
+  out) only matters when groups are numerous and survivors few — § 5.2 finds
+  no site with that shape.
 - The composition asymmetry cuts the other way too: Shape A's HAVING output
   still can't feed a join (creation quarantine), so "counts ≥ k, joined to
   their accounts" remains a host composition anyway — HAVING alone doesn't
@@ -210,7 +229,7 @@ Philosophy anchors, verbatim sources:
 
 ## 4. COST
 
-(Effort estimates to be reconciled with engine-agent findings — TBD.)
+(Effort estimates reconciled with the engine agent's findings in § 7.5.)
 
 Maintenance surface for Shape A, enumerated:
 new IR slot in `Query` (+ fingerprint, + serialization in the conformance
@@ -225,7 +244,7 @@ updates. Two hosts' surfaces by standing law (Rust `bumbledb-query`, TS
 `@bjornpagen/bumbledb`).
 
 Do-nothing cost: the documented idiom (host fold) at the known sites —
-detailed per-site in § workload (TBD).
+detailed per-site in § 5.
 
 ## 5. Workload evidence (primer) — subagent findings
 
@@ -388,12 +407,16 @@ recorded statements of WHY aggregates are terminal are the creation quarantine
   `check_comparisons()` `ir/validate/context.rs:645-662`,
   `comparison_shape()` context.rs:690+.
 - A HAVING slot must be **head-level, not rule-level** (aggregates fold across
-  rules — the union regime — so a per-rule HAVING is semantically incoherent);
-  natural home beside `head` on `Query`/`PredicateDef`. LHS restricted to fold
-  outputs (Sum/Min/Max/Count/CountDistinct/AggregateMeasure; Pack and Arg
-  positions excluded — no single per-group scalar without a further ruling);
-  RHS literal/param/another fold position, type-equal; all fold outputs are
-  U64/I64 so order operators apply cleanly; the usual self/constant refusals.
+  rules — the head-projected union for hand-written rule sets, the shared-slot
+  re-keyed union for DNF-derived ones (R2) — so a per-rule HAVING is
+  semantically incoherent either way); natural home beside `head` on
+  `Query`/`PredicateDef`. LHS restricted to fold outputs
+  (Sum/Min/Max/Count/CountDistinct/AggregateMeasure; Pack and Arg positions
+  excluded — no single per-group scalar without a further ruling);
+  RHS literal/param/another fold position, type-equal; fold outputs are
+  orderable scalars — U64/I64, and bool where Min/Max fold a bool column
+  (false < true; ruled 2026-07-23, R3) — so order operators apply cleanly;
+  the usual self/constant refusals.
 
 ### 7.3 Exec — the insertion point is nearly free
 

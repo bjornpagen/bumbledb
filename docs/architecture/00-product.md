@@ -115,13 +115,18 @@ language. **Reverses if:** never — owner axiom.
 
 ## Concurrency, process, and durability model
 
-- **One process.** Multi-process access to one database is out of the envelope in v0
-  (LMDB would permit it, but the environment-scope image cache and counter batching are
-  process-local). Protected: every open takes an exclusive advisory lock on
-  `<dir>/bumbledb.lock` for the handle's lifetime, so a second handle — another process,
-  or a second `Db` on the same path in this one — fails loudly at open time
-  (`EnvironmentLocked`) instead of corrupting derived state silently. Recorded as
-  closed.
+- **One writing process.** The lock law is a writer law (ruled 2026-07-23, R17):
+  one WRITING handle per path. Multi-process write access to one database is out
+  of the envelope (LMDB would permit it, but the environment-scope image cache and
+  counter batching are process-local). Protected: every writing constructor takes
+  an exclusive advisory lock on `<dir>/bumbledb.lock` for the handle's lifetime,
+  so a second writer — another process, or a second `Db` on the same path in this
+  one — fails loudly at open time (`EnvironmentLocked`, a writer-vs-writer
+  refusal) instead of corrupting derived state silently. Readers hold no lock and
+  open `MDB_RDONLY`: a read-only environment can corrupt nothing, so archival
+  reads work on read-only media, restored snapshots, and mounted backups, with no
+  carve-outs (`50-storage.md`, `70-api.md` § exhume). The multi-process closure
+  is exactly the write surface — recorded as closed there.
 - **Threading doctrine: bumbledb owns zero threads.** The engine never spawns one — no
   background writers, compactors, or build pools; all threads belong to the
   application, extending the host-owns-composition principle to scheduling. Parallelism
@@ -338,7 +343,8 @@ IR permanently; sugar is downstream-package territory in any language, lowering 
 IR — `20-query-ir.md`). Nulls. Floats in
 persistent data. Bag semantics. Nominal typing. Runtime DDL. Migrations (ETL into a
 new database is the schema-change story; export surface in `70-api.md`). Async API.
-Multiple writers. Multi-process access. Data beyond RAM. Intra-query parallelism.
+Multiple writers. Multi-process write access (the lock law is a writer law,
+R17 — readers are lockless). Data beyond RAM. Intra-query parallelism.
 Encryption/access control. Compatibility with any prior on-disk format. A deductive
 database / logic-programming runtime: queries are query-sized programs against a
 theory-governed store, never the unit of an application — Turing-completeness lives

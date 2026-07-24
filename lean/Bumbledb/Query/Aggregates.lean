@@ -1675,6 +1675,168 @@ theorem measure?_ray_none_i64 {iv : Interval I64} (hray : iv.isRay) :
   rw [measure_ray_none iv hray]
   rfl
 
+/-! ## The ray verdict — the Kleene three-valued fold (R6)
+
+Error propagation through condition trees is STRONG KLEENE
+three-valued logic (ruled 2026-07-23, R6): one condition evaluation
+renders one of three verdicts — `holds`, `fails`, or `ray`, the third
+being the measure-of-a-ray refusal (`Value.measure?` reads `none`
+exactly on rays — `measure?_ray_none`) — and `and`/`or` nodes fold
+verdicts in the Kleene lattice. Both connectives are commutative and
+associative (`Verdict3.and_comm` and kin), and conjunction distributes
+over disjunction (`Verdict3.and_or_distrib`), so a tree's verdict is a
+function of its leaf multiset and agrees with DNF lowering by
+construction — evaluation order is UNOBSERVABLE, which is what makes
+an error semantics well-defined over an IR whose condition lists
+compare as sets (`ruleAnswers_conditions_congr` is the
+order-blindness the verdict must respect; a reach-dependent poison
+flag contradicts it). A binding raises iff its folded verdict is
+`ray`; `orFold_eq_ray` is the disjunct-set reading — raise iff some
+disjunct is poisoned and none holds — and `andFold_eq_ray` its
+conjunctive face. The effect-free boolean model (PRD 04's recorded
+narrowing: a ray's measure comparison is FALSE at that level) is the
+`holds`-PROJECTION of this fold — `Verdict3.toBool` is a homomorphism
+for both connectives (`toBool_and` / `toBool_or`) — so the
+three-valued refinement never disturbs the proved denotation.
+Bridge: the engine's typed `crate::Error::MeasureOfRay` raise; the
+naive oracle folds verdicts commutatively in this lattice — the
+order-insensitive verdict IS its spec. -/
+
+/-- The three-valued verdict of one condition evaluation: the two
+boolean outcomes plus the ray poison (ruled 2026-07-23, R6). -/
+inductive Verdict3 where
+  | holds
+  | fails
+  | ray
+deriving DecidableEq
+
+namespace Verdict3
+
+/-- A leaf's verdict from its `Option`-poisoned boolean reading:
+`none` is the ray, exactly `Value.measure?`'s refusal arm. -/
+def ofOption : Option Bool → Verdict3
+  | some true => .holds
+  | some false => .fails
+  | none => .ray
+
+/-- Strong Kleene conjunction: `fails` dominates, `ray` survives
+everything but a `fails`. -/
+def and : Verdict3 → Verdict3 → Verdict3
+  | .fails, _ => .fails
+  | _, .fails => .fails
+  | .ray, _ => .ray
+  | _, b => b
+
+/-- Strong Kleene disjunction: `holds` dominates, `ray` survives
+everything but a `holds`. -/
+def or : Verdict3 → Verdict3 → Verdict3
+  | .holds, _ => .holds
+  | _, .holds => .holds
+  | .ray, _ => .ray
+  | _, b => b
+
+/-- Conjunction is commutative — half of order-unobservability. -/
+theorem and_comm (a b : Verdict3) : a.and b = b.and a := by
+  cases a <;> cases b <;> rfl
+
+/-- Conjunction is associative — the other half. -/
+theorem and_assoc (a b c : Verdict3) :
+    (a.and b).and c = a.and (b.and c) := by
+  cases a <;> cases b <;> cases c <;> rfl
+
+/-- Disjunction is commutative. -/
+theorem or_comm (a b : Verdict3) : a.or b = b.or a := by
+  cases a <;> cases b <;> rfl
+
+/-- Disjunction is associative. -/
+theorem or_assoc (a b c : Verdict3) :
+    (a.or b).or c = a.or (b.or c) := by
+  cases a <;> cases b <;> cases c <;> rfl
+
+/-- Conjunction distributes over disjunction — the DNF-agreement law:
+distributing a condition tree moves no verdict, so the Kleene fold
+and the lowered disjunct-set reading are one semantics by
+construction. -/
+theorem and_or_distrib (a b c : Verdict3) :
+    a.and (b.or c) = (a.and b).or (a.and c) := by
+  cases a <;> cases b <;> cases c <;> rfl
+
+/-- The `holds`-projection: the boolean reading the effect-free
+denotation takes — a `ray` reads `false` (PRD 04's recorded
+narrowing). -/
+def toBool : Verdict3 → Bool
+  | .holds => true
+  | _ => false
+
+/-- The projection is a homomorphism for conjunction: refining the
+booleans to three values never disturbs the proved denotation. -/
+theorem toBool_and (a b : Verdict3) :
+    (a.and b).toBool = (a.toBool && b.toBool) := by
+  cases a <;> cases b <;> rfl
+
+/-- The homomorphism, disjunctive face. -/
+theorem toBool_or (a b : Verdict3) :
+    (a.or b).toBool = (a.toBool || b.toBool) := by
+  cases a <;> cases b <;> rfl
+
+/-- An `and` node's verdict: the Kleene fold of its children
+(`holds` is the unit). -/
+def andFold (l : List Verdict3) : Verdict3 := l.foldr and .holds
+
+/-- An `or` node's verdict (`fails` is the unit). -/
+def orFold (l : List Verdict3) : Verdict3 := l.foldr or .fails
+
+/-- A conjunction fails iff SOME child fails — membership, not
+position: the fold cannot observe child order. -/
+theorem andFold_eq_fails : ∀ {l : List Verdict3},
+    andFold l = .fails ↔ .fails ∈ l
+  | [] => by simp [andFold]
+  | x :: l => by
+    have ih := andFold_eq_fails (l := l)
+    show (x.and (andFold l)) = .fails ↔ .fails ∈ x :: l
+    cases x <;> cases h : andFold l <;>
+      simp_all [Verdict3.and, List.mem_cons]
+
+/-- **The conjunctive raise law, order-free**: a conjunction is
+poisoned iff some child is a ray and NO child fails — never "the
+first reached"; the reach-dependent reading is unrepresentable. -/
+theorem andFold_eq_ray : ∀ {l : List Verdict3},
+    andFold l = .ray ↔ .ray ∈ l ∧ .fails ∉ l
+  | [] => by simp [andFold]
+  | x :: l => by
+    have ihr := andFold_eq_ray (l := l)
+    have ihf := andFold_eq_fails (l := l)
+    show (x.and (andFold l)) = .ray ↔ _
+    cases x <;> cases h : andFold l <;>
+      simp_all [Verdict3.and, List.mem_cons]
+
+/-- A disjunction holds iff SOME child holds — the dual membership
+law. -/
+theorem orFold_eq_holds : ∀ {l : List Verdict3},
+    orFold l = .holds ↔ .holds ∈ l
+  | [] => by simp [orFold]
+  | x :: l => by
+    have ih := orFold_eq_holds (l := l)
+    show (x.or (orFold l)) = .holds ↔ .holds ∈ x :: l
+    cases x <;> cases h : orFold l <;>
+      simp_all [Verdict3.or, List.mem_cons]
+
+/-- **The raise law (the disjunct-set reading, ruled 2026-07-23,
+R6)**: a disjunction is poisoned iff some disjunct is a ray and NONE
+holds — a binding raises exactly when the order-insensitive
+denotation NEEDS the measure of a ray to decide. -/
+theorem orFold_eq_ray : ∀ {l : List Verdict3},
+    orFold l = .ray ↔ .ray ∈ l ∧ .holds ∉ l
+  | [] => by simp [orFold]
+  | x :: l => by
+    have ihr := orFold_eq_ray (l := l)
+    have ihh := orFold_eq_holds (l := l)
+    show (x.or (orFold l)) = .ray ↔ _
+    cases x <;> cases h : orFold l <;>
+      simp_all [Verdict3.or, List.mem_cons]
+
+end Verdict3
+
 /-! ## Arg-restriction — restrict-then-project -/
 
 /-- The Arg restriction of a binding set: the fiber attaining the
