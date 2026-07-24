@@ -102,7 +102,20 @@ fn a_marker_set_reopen_wipes_and_reinitializes_the_ephemeral_store() {
     // Plant the crash state: the marker a dead session leaves behind
     // (drop never ran, or its sync was never proven).
     std::fs::File::create(dirty_marker_path(dir.path())).expect("plant marker");
+    // The wipe covers `lock.mdb` too (directory mode — the lockfile a
+    // NOSUBDIR env would call `data.mdb-lock`): a torn lockfile that
+    // survived the wipe would fail every reopen with `MDB_INVALID`
+    // under a live reader's shared lock, permanently. Removal is
+    // observable as a fresh inode — LMDB recreates the file on open.
+    use std::os::unix::fs::MetadataExt;
+    let lockfile = dir.path().join("lock.mdb");
+    let torn_ino = std::fs::metadata(&lockfile).expect("stat lock.mdb").ino();
     let env = Environment::ephemeral(dir.path(), &schema).expect("crash reopen");
+    assert_ne!(
+        std::fs::metadata(&lockfile).expect("stat lock.mdb").ino(),
+        torn_ino,
+        "the wipe removed the possibly-torn lock.mdb — the reopen minted a fresh one"
+    );
     let rtxn = env.read_txn().expect("txn");
     assert_eq!(
         env.data().get(rtxn.raw(), b"Zprobe").expect("get"),

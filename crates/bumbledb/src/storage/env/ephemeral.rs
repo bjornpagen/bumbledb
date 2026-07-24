@@ -64,7 +64,7 @@ impl Environment {
         let marker = super::dirty_marker_path(path);
         let crashed = marker.try_exists()?;
         if crashed {
-            for file in ["data.mdb", "data.mdb-lock"] {
+            for file in ["data.mdb", "lock.mdb"] {
                 match std::fs::remove_file(path.join(file)) {
                     Ok(()) => {}
                     Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
