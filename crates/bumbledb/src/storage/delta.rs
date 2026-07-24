@@ -46,22 +46,6 @@ pub enum Disposition {
     Delete,
 }
 
-/// The net effect recorded for one key statement's determinant tuple — the
-/// point-read index (`docs/architecture/50-storage.md` § `WriteTx`
-/// point reads): inserts record the establishing fact, deletes record absence;
-/// last disposition wins, mirroring the fact map — except that a delete
-/// never erases a record established by a *different* pending fact under
-/// the same key bytes (the `delete(old); insert(new)`-in-either-order
-/// idiom), and a delete that *cancels* a pending insert restores the
-/// tuple's pre-insert overlay instead of recording absence
-/// (`restore_determinants` — the net effect of a cancelled pair is
-/// nothing, so the committed owner must keep answering).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum DeterminantDisposition {
-    Present(ArenaSlice),
-    Absent,
-}
-
 /// A determinant-map hit, resolved for point readers: the pending fact that
 /// establishes the key tuple in the final state, or its recorded absence.
 /// A map miss (no overlay at all) means the committed state answers.
@@ -70,6 +54,18 @@ pub enum DeterminantOverlay<'a> {
     Present(&'a [u8]),
     Absent,
 }
+
+/// The pending facts touching one key statement's determinant tuple —
+/// each by its arena slice and net disposition: the revert target held
+/// as DATA rather than rediscovered by scanning the pending set (finding
+/// 097). Recording pushes; a cancelled op removes exactly its own entry;
+/// resolution is the insert-wins rule — a pending `Insert` owns the
+/// tuple in the final state (committed state satisfies the key, so any
+/// same-tuple `Delete` names the committed owner leaving), a remaining
+/// `Delete` records absence, and the emptied set is removed whole (the
+/// committed state answers unshadowed). Every operation is
+/// O(log |delta|), like the rest of the delta.
+type TupleOwners = Vec<(ArenaSlice, Disposition)>;
 
 /// One fresh sequence's transaction-local state
 /// ([`WriteDelta::marks`]): initialized in one piece from the lazy `Q`
@@ -100,7 +96,7 @@ pub struct WriteDelta<'s> {
     /// cancels a pending opposite instead of overwriting it. Judging a
     /// no-op insert is unrepresentable.
     facts: BTreeMap<(RelationId, [u8; 32]), (ArenaSlice, Disposition)>,
-    /// `key statement → (determinant bytes → net disposition)` — the point-read
+    /// `key statement → (determinant bytes → pending owners)` — the point-read
     /// index maintained beside the fact map by `insert`/`delete`
     /// (`docs/architecture/50-storage.md` § `WriteTx` point reads). Determinant
     /// bytes are derived by the one shared slicer
@@ -110,7 +106,7 @@ pub struct WriteDelta<'s> {
     /// the probe borrows: `determinant_overlay` looks determinant bytes up as
     /// `&[u8]`, never boxing a key copy (the typed point read is
     /// host-allocation-free — PRD 22's gate).
-    determinants: BTreeMap<KeyId, BTreeMap<DeterminantImage, DeterminantDisposition>>,
+    determinants: BTreeMap<KeyId, BTreeMap<DeterminantImage, TupleOwners>>,
     /// Scratch for determinant derivation, reused across `insert`/`delete` calls
     /// (the write path may allocate, but not per key statement per fact):
     /// cloned into the determinant map only the first time a tuple is

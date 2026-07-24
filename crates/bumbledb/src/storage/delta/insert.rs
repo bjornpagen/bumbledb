@@ -47,8 +47,11 @@ impl WriteDelta<'_> {
             Some((_, Disposition::Insert)) => Ok(false),
             Some((slice, Disposition::Delete)) => {
                 // The pending Delete proves the fact committed: cancel it.
+                // Its overlay entries leave by slice — the committed
+                // owner (this very fact) answers unshadowed
+                // (`cancel_determinants`, finding 097).
                 self.facts.remove(&(rel, hash));
-                self.record_determinants(rel, fact_bytes, Some(slice));
+                self.cancel_determinants(rel, fact_bytes, slice);
                 *self.row_count_delta.entry(rel).or_insert(0) += 1;
                 Ok(true)
             }
@@ -58,7 +61,7 @@ impl WriteDelta<'_> {
                 }
                 let slice = self.arena.alloc(fact_bytes);
                 self.facts.insert((rel, hash), (slice, Disposition::Insert));
-                self.record_determinants(rel, fact_bytes, Some(slice));
+                self.record_determinants(rel, fact_bytes, slice, Disposition::Insert);
                 *self.row_count_delta.entry(rel).or_insert(0) += 1;
                 Ok(true)
             }

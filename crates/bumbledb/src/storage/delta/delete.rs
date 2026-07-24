@@ -23,20 +23,16 @@ impl WriteDelta<'_> {
         fact_bytes: &[u8],
     ) -> Result<bool> {
         let hash = fact_hash(fact_bytes);
-        match self
-            .facts
-            .get(&(rel, hash))
-            .map(|(_, disposition)| *disposition)
-        {
-            Some(Disposition::Delete) => Ok(false),
-            Some(Disposition::Insert) => {
+        match self.facts.get(&(rel, hash)).copied() {
+            Some((_, Disposition::Delete)) => Ok(false),
+            Some((slice, Disposition::Insert)) => {
                 // The pending Insert proves the fact committed-absent:
                 // cancel it. The cancelled fact's key tuples revert to
-                // whatever still owns them — recording `Absent` here would
-                // shadow a committed owner of the same tuple
-                // (`restore_determinants`).
+                // whatever still owns them — its own overlay entries are
+                // removed by slice, held as data, never rediscovered by
+                // scan (`cancel_determinants`, finding 097).
                 self.facts.remove(&(rel, hash));
-                self.restore_determinants(rel, fact_bytes);
+                self.cancel_determinants(rel, fact_bytes, slice);
                 *self.row_count_delta.entry(rel).or_insert(0) -= 1;
                 Ok(true)
             }
@@ -46,7 +42,7 @@ impl WriteDelta<'_> {
                 }
                 let slice = self.arena.alloc(fact_bytes);
                 self.facts.insert((rel, hash), (slice, Disposition::Delete));
-                self.record_determinants(rel, fact_bytes, None);
+                self.record_determinants(rel, fact_bytes, slice, Disposition::Delete);
                 *self.row_count_delta.entry(rel).or_insert(0) -= 1;
                 Ok(true)
             }

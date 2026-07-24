@@ -3,17 +3,16 @@ use crate::schema::KeyId;
 use crate::storage::keys;
 use bumbledb_theory::schema::RelationId;
 
-use super::{DeterminantDisposition, DeterminantOverlay, Disposition, WriteDelta};
+use super::{DeterminantOverlay, Disposition, WriteDelta};
 
 impl WriteDelta<'_> {
-    /// Records the determinant disposition of one changed fact under every key
-    /// statement of its relation — `Some(slice)` for an insert (the fact
-    /// establishes each of its key tuples), `None` for a delete. Called by
-    /// `insert`/`delete` exactly when the final-state view changes —
-    /// including an insert-cancels-delete, whose fact is committed-present
-    /// and re-establishes its tuples (a delete-cancels-insert instead
-    /// routes through [`Self::restore_determinants`]) — so point reads
-    /// compose delta-over-committed correctly; last disposition wins.
+    /// Records one changed fact into the point-read overlay under every
+    /// key statement of its relation — one `(slice, disposition)` entry
+    /// pushed per tuple (`TupleOwners`; the revert target held as data,
+    /// finding 097). No same-tuple special case exists anymore: a delete
+    /// carries its own slice, so the `delete(old); insert(new)`-in-
+    /// either-order idiom resolves at read time by the insert-wins rule,
+    /// never by erasing another pending fact's record.
     ///
     /// Determinant bytes come from the one shared slicer ([`keys::determinant_image`])
     /// — the same derivation commit applies, so a point read and the
@@ -22,7 +21,8 @@ impl WriteDelta<'_> {
         &mut self,
         rel: RelationId,
         fact_bytes: &[u8],
-        establishes: Option<ArenaSlice>,
+        slice: ArenaSlice,
+        disposition: Disposition,
     ) {
         let relation = self.schema.relation(rel);
         for &key_id in relation.keys() {
@@ -34,54 +34,43 @@ impl WriteDelta<'_> {
                 &mut self.determinant_scratch,
             );
             let per_key = self.determinants.entry(key_id).or_default();
-            let disposition = if let Some(slice) = establishes {
-                DeterminantDisposition::Present(slice)
-            } else {
-                // A delete disestablishes its *own* tuple only: it must
-                // not erase a record established by a different pending
-                // fact under the same key bytes — `delete(old);
-                // insert(new)` is blessed in either order
-                // (`docs/architecture/70-api.md`), and the final state
-                // keeps `new` whichever ran last.
-                if let Some(DeterminantDisposition::Present(existing)) =
-                    per_key.get(self.determinant_scratch.as_bytes())
-                    && self.arena.get(*existing) != fact_bytes
-                {
-                    continue;
-                }
-                DeterminantDisposition::Absent
-            };
-            // Probe before inserting: an overwrite (the tuple was already
-            // recorded this transaction) updates the resident entry in
-            // place; the scratch is cloned only the first time a tuple is
-            // recorded — the scratch field's no-per-key-statement
-            // allocation contract.
-            if let Some(recorded) = per_key.get_mut(self.determinant_scratch.as_bytes()) {
-                *recorded = disposition;
+            // Probe before inserting: the scratch is cloned only the
+            // first time a tuple is recorded — the scratch field's
+            // no-per-key-statement allocation contract.
+            if let Some(owners) = per_key.get_mut(self.determinant_scratch.as_bytes()) {
+                owners.push((slice, disposition));
             } else {
                 #[cfg(test)]
                 {
                     self.determinant_scratch_clones += 1;
                 }
-                per_key.insert(self.determinant_scratch.clone(), disposition);
+                per_key.insert(
+                    self.determinant_scratch.clone(),
+                    vec![(slice, disposition)],
+                );
             }
         }
     }
 
-    /// Restores the point-read overlay after a delete *cancels* a pending
-    /// insert (`delete.rs`): the cancelled fact's net effect is nothing, so
-    /// each of its key tuples reverts to whatever still owns it in the
-    /// final state — a remaining pending `Insert` re-establishes it, a
-    /// remaining pending `Delete` records its absence, and a tuple no
-    /// pending fact touches loses its overlay entirely, exactly as if the
-    /// cancelled pair never happened. Recording `Absent` here would shadow
-    /// a committed owner of the same tuple, breaking the point-read
-    /// contract (`docs/architecture/70-api.md` § `WriteTx` point reads:
-    /// before commit a point read answers exactly what a post-commit read
-    /// transaction would).
-    pub(super) fn restore_determinants(&mut self, rel: RelationId, fact_bytes: &[u8]) {
+    /// Removes one CANCELLED op's own overlay entries (delete-cancels-
+    /// insert and insert-cancels-delete alike, `delete.rs`/`insert.rs`):
+    /// each of the cancelled fact's tuples drops exactly the cancelled
+    /// slice and reverts to what remains — the owners still pending, or
+    /// no overlay at all (the committed state answers unshadowed),
+    /// exactly as if the cancelled pair never happened. Recording
+    /// `Absent` instead would shadow a committed owner of the same
+    /// tuple, breaking the point-read contract
+    /// (`docs/architecture/70-api.md` § `WriteTx` point reads: before
+    /// commit a point read answers exactly what a post-commit read
+    /// transaction would). O(log |delta|) — the revert target is data,
+    /// never a rescan of the pending set (finding 097).
+    pub(super) fn cancel_determinants(
+        &mut self,
+        rel: RelationId,
+        fact_bytes: &[u8],
+        slice: ArenaSlice,
+    ) {
         let relation = self.schema.relation(rel);
-        let mut candidate = keys::DeterminantImage::scratch();
         for &key_id in relation.keys() {
             let statement = self.schema.key(key_id);
             keys::determinant_image(
@@ -90,44 +79,15 @@ impl WriteDelta<'_> {
                 fact_bytes,
                 &mut self.determinant_scratch,
             );
-            // Resolve the tuple among the relation's remaining pending
-            // facts: an `Insert` owns it in the final state (committed
-            // state satisfies the key, so any same-tuple `Delete` names
-            // the committed owner leaving — the insert wins); no match
-            // means the committed state answers unshadowed.
-            let mut resolved = None;
-            for (slice, disposition) in self
-                .facts
-                .range((rel, [0u8; 32])..=(rel, [0xFF; 32]))
-                .map(|(_, entry)| entry)
-            {
-                keys::determinant_image(
-                    relation.layout(),
-                    &statement.projection,
-                    self.arena.get(*slice),
-                    &mut candidate,
-                );
-                if candidate.as_bytes() != self.determinant_scratch.as_bytes() {
-                    continue;
-                }
-                match disposition {
-                    Disposition::Insert => {
-                        resolved = Some(DeterminantDisposition::Present(*slice));
-                        break;
-                    }
-                    Disposition::Delete => resolved = Some(DeterminantDisposition::Absent),
-                }
-            }
             let Some(per_key) = self.determinants.get_mut(&key_id) else {
                 continue;
             };
-            match resolved {
-                Some(disposition) => {
-                    per_key.insert(self.determinant_scratch.clone(), disposition);
-                }
-                None => {
-                    per_key.remove(self.determinant_scratch.as_bytes());
-                }
+            let Some(owners) = per_key.get_mut(self.determinant_scratch.as_bytes()) else {
+                continue;
+            };
+            owners.retain(|(owner, _)| *owner != slice);
+            if owners.is_empty() {
+                per_key.remove(self.determinant_scratch.as_bytes());
             }
         }
     }
@@ -135,7 +95,12 @@ impl WriteDelta<'_> {
     /// The delta's net overlay for one key statement's determinant tuple, if any
     /// — the delta-first leg of a point read (`docs/architecture/50-storage.md`
     /// § `WriteTx` point reads). `None` = the tuple is untouched by this
-    /// transaction and the committed state answers.
+    /// transaction and the committed state answers. A hit resolves by the
+    /// insert-wins rule: the LAST-recorded pending `Insert` owns the tuple
+    /// in the final state (two pending inserts of one tuple are
+    /// commit-doomed but representable — the later one answers, exactly
+    /// the fact map's last-disposition order); owners that are all
+    /// deletes record its absence.
     ///
     /// The probe borrows: determinant bytes look up as `&[u8]` through the
     /// nested map, so a typed point read touches no allocator (the
@@ -146,14 +111,15 @@ impl WriteDelta<'_> {
         key: KeyId,
         determinant: &[u8],
     ) -> Option<DeterminantOverlay<'_>> {
-        self.determinants
-            .get(&key)?
-            .get(determinant)
-            .map(|disposition| match disposition {
-                DeterminantDisposition::Present(slice) => {
-                    DeterminantOverlay::Present(self.arena.get(*slice))
-                }
-                DeterminantDisposition::Absent => DeterminantOverlay::Absent,
-            })
+        self.determinants.get(&key)?.get(determinant).map(|owners| {
+            owners
+                .iter()
+                .rev()
+                .find_map(|(slice, disposition)| {
+                    (*disposition == Disposition::Insert)
+                        .then(|| DeterminantOverlay::Present(self.arena.get(*slice)))
+                })
+                .unwrap_or(DeterminantOverlay::Absent)
+        })
     }
 }
