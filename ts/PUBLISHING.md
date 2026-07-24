@@ -11,25 +11,29 @@ open. The main publish runs `prepublishOnly` → the full build (lockstep
 assertion, cargo release build, smoke-load through the by-name loader path,
 tarball-manifest verification) before anything uploads.
 
-`0.6.0` is a deliberate backwards-incompatible hard break over `0.5.0` —
-VARS BECOME VALUES: `v(relation)` mints a record of fresh, class-typed query
-variables (one per column; each `v()` call a fresh batch), built for ES
-destructuring (`const { id, toGrp } = v(candidateEdge)`). Variable identity
-moves from name to OBJECT REFERENCE — reusing the same var value across
-binding positions IS the join, and name-collision joins are now
-unrepresentable. `select(strings)` is REMOVED in favor of
-`find({ key: varOrAgg })`, whose keys name the fully-typed result row so
-renames are real. `r.var` is REMOVED with no shim and no deprecation alias.
-Params remain string-named (`r.param`/`r.inSet`/mask params — their names are
-the `execute()` params object's runtime keys, an honest load-bearing channel).
-The fingerprint statement: zero fingerprint pins moved and zero added — the
-wire, the manifest, and the Rust macro are untouched;
-`ts/test/fixtures/cookbook-fingerprints.txt` is byte-identical across the
-break (semantic parity: VarIds are assigned from reference identity in
-deterministic first-use order, so lowered programs are identical).
+`0.7.0` is the audit-campaign release, a deliberate backwards-incompatible
+hard break over `0.6.0` — the 2026-07 deep audit's 22 rulings (R1-R22,
+`audit-2026-07/RULINGS.md`) and 158 fixed findings land as one version:
+`WriteResult` becomes a sum so `abandon()` is honored (R10), `Tx.insert`
+returns `{changed, ...fresh}` (R11), resources adopt Node explicit resource
+management (R12), TS `explain()` lands (R13), closed-column const accessors
+are emitted (R14), ray errors fold Kleene three-valued (R6), the
+orderability wall moves into engine validation (R4), and the OR+aggregate
+lowering is fixed (R2). The storage format crosses to v6 (R16: fresh ids and
+row ids merge into one allocator; R18: ephemeral stores wipe after a machine
+crash) — old stores are refused, not migrated. The fingerprint statement:
+zero cookbook fingerprint pins moved
+(`ts/test/fixtures/cookbook-fingerprints.txt` is byte-identical to the
+0.6.0 tree).
 
-Lineage: `0.5.0` was the previous hard break, over `0.4.0` — it removed the
-plural variable mint (`r.var` became the sole variable constructor) and landed
+Lineage: `0.6.0` was the previous hard break, over `0.5.0` — VARS BECOME
+VALUES: `v(relation)` mints a record of fresh, class-typed query variables
+built for ES destructuring, variable identity moves from name to OBJECT
+REFERENCE (reusing the same var value across binding positions IS the join),
+and `select(strings)` dies into `find({ key: varOrAgg })`; `r.var` removed,
+no shim, zero fingerprint pins moved. Before it, `0.5.0` broke `0.4.0` — it
+removed the plural variable mint (`r.var` became the sole variable
+constructor) and landed
 the pre-1.0.0 surface pair: the keyed point read `get()` and host-side answer
 ordering (`by()`/`desc()`; the engine still never orders), adding exactly one
 fingerprint pin (`r30`, the keyed-read recipe). Before it, `0.4.0` was a hard
@@ -56,30 +60,34 @@ name at runtime and throws a typed unsupported-platform error everywhere else.
 
 ## Version lockstep
 
-The version lives in ONE place: `ts/package.json` `version`. Three values must
+The version lives in ONE place: `ts/package.json` `version`. Four values must
 match exactly, and the build (`assertVersionLockstep` in `scripts/build.ts`)
 fails if they diverge:
 
 1. `ts/package.json` `version`
 2. `ts/package.json` `optionalDependencies["@bjornpagen/bumbledb-darwin-arm64"]`
 3. `ts/npm/darwin-arm64/package.json` `version`
+4. `ts/crate/Cargo.toml` `version` (finding 139: `engine_version()` bakes
+   `CARGO_PKG_VERSION` into the shipped binary — the one version string
+   readable at runtime)
 
-A release bump edits all three, then the build enforces the match. All three
-are set to `0.6.0` in this tree; `pnpm run build` asserts the lockstep on
-every run (`bumbledb build: version 0.6.0 (main == platform ==
-optionalDependencies pin)`).
+A release bump edits all four, then the build enforces the match. All four
+are set to `0.7.0` in this tree; `pnpm run build` asserts the lockstep on
+every run (`bumbledb build: version 0.7.0 (main == platform ==
+optionalDependencies pin == crate manifest)`).
 
-## Runbook (0.6.0, darwin-arm64 host, owner — executed 2026-07-20; recurs as the template for the next version)
+## Runbook (0.7.0, darwin-arm64 host, owner — staged 2026-07-24; recurs as the template for the next version)
 
 ```sh
 # 0. From the ts/ package root, on a macOS Apple Silicon machine.
 cd ts
 
-# 1. The lockstep is already set to 0.6.0 in all THREE places (done in this
+# 1. The lockstep is already set to 0.7.0 in all FOUR places (done in this
 #    tree; the build asserts it):
-#    - ts/package.json                    "version": "0.6.0"
-#    - ts/package.json                    optionalDependencies pin -> "0.6.0"
-#    - ts/npm/darwin-arm64/package.json   "version": "0.6.0"
+#    - ts/package.json                    "version": "0.7.0"
+#    - ts/package.json                    optionalDependencies pin -> "0.7.0"
+#    - ts/npm/darwin-arm64/package.json   "version": "0.7.0"
+#    - ts/crate/Cargo.toml                version = "0.7.0"
 
 # 2. Build + verify both trees (fails on version drift, unloadable artifact,
 #    or a mispacked tarball). Produces dist/ and npm/darwin-arm64/bumbledb.node.
@@ -99,12 +107,12 @@ pnpm publish --no-git-checks ./npm/darwin-arm64
 pnpm publish --no-git-checks
 
 # 5. Verify both versions landed in the registry.
-pnpm view @bjornpagen/bumbledb-darwin-arm64@0.6.0 version
-pnpm view @bjornpagen/bumbledb@0.6.0 version
+pnpm view @bjornpagen/bumbledb-darwin-arm64@0.7.0 version
+pnpm view @bjornpagen/bumbledb@0.7.0 version
 
-# 6. Tag v0.6.0 (owner ceremony; the release-staged commit is already pushed).
-#    The tag AND both publishes are owner ceremony, pinged separately — the
-#    agent side stages the release commit only, and never publishes or tags.
+# 6. The v0.7.0 tag is already pushed with the release commit (the 0.7.0
+#    campaign close staged commit + tag together); both publishes remain
+#    owner ceremony — the agent side never publishes.
 ```
 
 Public access is mandatory (scoped packages publish restricted by default,
