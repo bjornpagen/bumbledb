@@ -1,0 +1,11 @@
+campaign churn fixtures — regenerated at load under the fixed RNG (R20)
+rev: 1e9d39adff5fd82f1ea7bdad0c53238608eb240d
+seed: 1
+scale: S
+dir: <out>/scratch/<run>/<lane> (twin stores built fresh at load per registry run from GenConfig{scale:S, seed:1}, churned for 10000 cycles, oracle-gated per sample; corpus identity is the R20 stream digest)
+corpus identity digest (corpus_gen::corpus_digest, scale S seed 1): 6518394f080c2273299b55e00a8b022f88505650932a4d57fba40bd0bdf9a86b
+verify stamp (bench-data/6518394f080c2273, 500 cases): 10d54cc7ec36a6b740c47fe99a94d126469bcc31791d47a5170c0eeb9708e51b
+sha256 over the stamped reference stores of the same identity (bench-data/6518394f080c2273; the churn load draws the identical stream):
+
+99f6203a8e547e5268a0751704053262dda73d3e643a31a607d200adb6d37544  db/data.mdb
+e71bfb9a91736a3a0377a2577c7d664fa11486871358f53a355c1c235b3eea1a  oracle.sqlite
