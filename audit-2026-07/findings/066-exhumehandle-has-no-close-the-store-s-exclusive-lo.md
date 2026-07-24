@@ -1,0 +1,26 @@
+## ExhumeHandle has no close — the store's exclusive lock is held hostage to GC
+
+category: missing-free-feature | severity: medium | verdict: CONFIRMED | finder: ts:bridge
+
+### Summary
+
+Every other bridge handle is `RefCell<Option<T>>` with an explicit close export through the shared `take_handle` seam; `ExhumeHandle` is the lone bridge-level outlier — a bare `Exhumed` whose only release path is V8 garbage-collecting the `External`. Because the engine's exhume takes the same exclusive per-path advisory lock as every other constructor (enforced in-process as well as cross-process), a successful exhume pins the path against any subsequent `dbOpen`/`dbCreate`/`dbExhume` in the same process until an unforceable, nondeterministic GC finalizes the handle. The "ZERO CLOSABLES" doctrine is deliberate and documented, but its stated justification — "reclamation only, never correctness (nothing to flush)" — argues only the flush half; lock release IS correctness for same-path reuse, and the SDK's own source concedes it.
+
+### Evidence (all verified against the code)
+
+- `ts/crate/src/lib.rs:377-379` — `pub struct ExhumeHandle { exhumed: Exhumed }`: no `RefCell<Option<…>>`, unlike `DbHandle` (:199-201), `SnapshotHandle` (:515-517), `TxHandle` (:833-835), `PreparedHandle` (:1208-1210).
+- No exhume close export exists: `take_handle` is called only at lib.rs:306 (db_close), :736 (snapshot), :1177/:1192 (tx commit/abort), :1316 (prepared). The only exhume exports are `db_exhume` (:414), `exhume_descriptor` (:440), `exhume_scan` (:456).
+- `ts/crate/src/lib.rs:369-373` — the doctrine: "ZERO CLOSABLES … the `External` drops the value (closing the environment and releasing the store's exclusive lock) when the JS handle is collected — reclamation only, never correctness (the store is never written through this type, so there is nothing to flush)."
+- `crates/bumbledb/src/storage/env/exhume.rs:40-43,54` — "Holds the same exclusive advisory lock as every other constructor (one handle per path)"; `acquire_lock(path)?` on line 54. `acquire_lock.rs:11-22` — exclusive `try_lock` on `bumbledb.lock`; its doc states a held lock includes "another live `Environment` on the same path in this process", yielding `Error::EnvironmentLocked`.
+- `ts/crate/src/lib.rs:383-384` — a held exclusive lock from `db_exhume` **throws** (it is not a data refusal), so there is no typed recovery path either.
+- `ts/src/exhume.ts:170-172` — the SDK's own comment concedes the lock half the bridge doc omits: "The returned value is NOT cached: … caching would pin the store's exclusive lock for the process's life — GC reclamation is the whole lifecycle." I.e., the design *depends* on GC releasing the lock so the path can be reused — GC timing is a correctness dependency, which contradicts "reclamation only, never correctness."
+- The test suite works around exactly this constraint rather than exercising it: `ts/test/exhume.test.ts:8` copies the store to a "process-fresh path (never opened, never cached, never locked in this process)", and the adoption test runs `Db.open` in a spawned child process (`ts/test/fixtures/adopt-child.ts`) because an in-process open would hold the lock. The same test also *pins the absence* of a close spelling ("zero closables" assertion), so the shape is a ruling, not an oversight — the finding is that the ruling's justification is unsound.
+- `docs/architecture/70-api.md` § "Exhume — the read-only, theory-less open" (lines 390-426): the documented rebirth pattern (exhume old store → create successor → copy → re-derive) happens to need no same-path reopen, which is why the gap does not show in the happy path — but nothing confines exhume to that one pattern.
+
+### Failure scenario
+
+In one process: `const ex = await Db.exhume(path)` succeeds; later the same process calls `Db.exhume(path)` again (retry after a half-failed migration, a second forensic read, or a server request) or `Db.open/create(path)` — the engine throws `EnvironmentLocked`. The only remedies are dropping every reference and hoping GC runs a finalizer on the `External` (unforceable from the SDK; may never happen without memory pressure), or exiting the process. Retry-after-failure is the sharpest case: a migration that throws midway leaves the path locked in-process with no recovery API. Long-lived servers doing exhume-based inspection or migration hit this deterministically while the handle is referenced, and nondeterministically forever after it is dropped.
+
+### Suggested fix
+
+Unify the representation with the rest of the handle family: `ExhumeHandle { inner: RefCell<Option<Exhumed>> }`, add `exhume_close` through the existing `take_handle` seam, and route `exhume_descriptor`/`exhume_scan` through `live()`. The bridge export is free given the existing machinery. Note the SDK layer has a test pinning "no close/dispose spelling exists on the exhumed value" and a documented SDK-wide zero-closables doctrine (`ts/src/db.ts:8-24`), so surfacing the close in the SDK is a doctrine change — options that preserve the doctrine's spirit are a scoped `Db.exhume(path, fn)` that closes on return (matching the SDK's own `read(fn)` snapshot pattern, which already reifies open/close as scope), or `Symbol.dispose`. Either way the bridge-level export is the prerequisite and makes the one-off handle shape disappear.

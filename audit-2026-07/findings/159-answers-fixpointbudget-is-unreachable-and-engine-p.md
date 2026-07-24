@@ -1,0 +1,30 @@
+## Answers::FixpointBudget is unreachable, and the doc's promised "readable divergence" on a budget trip is a panic in the only lane that can trip it
+
+category: incoherence | severity: low | verdict: CONFIRMED | finder: r2:differential-apparatus-soundness
+
+### Summary
+
+The differential runner's `Answers` verdict enum carries a `FixpointBudget` arm whose doc promises that a fixpoint budget trip "surfaces as a readable divergence, never a harness crash" (`crates/bumbledb-bench/src/differential.rs:58-72`). Both halves of that promise are false in the code:
+
+1. **The arm is dead by representation.** Its only construction site is `engine_query` (differential.rs:280), which takes `&Query` — and a `Query` is validation-guaranteed non-recursive, so the engine can never return `Error::FixpointBudgetExceeded` from it.
+2. **The one lane that can trip the budget panics.** `engine_program` (differential.rs:293-313), the recursive differential's engine leg, unwraps execution with `.expect("differential programs execute under the driver")` (differential.rs:300-302) — a budget trip there is exactly the harness crash the enum doc says never happens. Worse, `engine_program`'s own doc (differential.rs:285-291) declares this panic intentional, so the module contradicts itself within 30 lines.
+
+The structural root cause the finder identified is real: `Op` (differential.rs:30-36) can spell only `Write(Delta)` and `Query { .. }` — no `Program` arm — so the verify naive slice's op-stream representation cannot carry a recursive case, and the runner's program story lives in a bespoke test loop (`querygen/tests.rs:564-641`) outside its own representation.
+
+### Evidence (all verified against the code)
+
+- `crates/bumbledb-bench/src/differential.rs:58-72` — the `Answers` doc: "the fixpoint budget trip — engine-only by design: the naive fixpoint is deliberately unbudgeted, so a trip surfaces as a readable divergence, never a harness crash"; the `FixpointBudget` variant at line 71.
+- `crates/bumbledb-bench/src/differential.rs:261-283` — `engine_query<S>(db, query: &Query, ...)`; line 280 is the sole construction site of `Answers::FixpointBudget` (repo-wide grep: the only other mention, `conformance.rs:1218`, is a consuming match arm fed by the same `engine_query` on `&Query`, so it too can never receive the variant).
+- `crates/bumbledb/src/ir/validate/validate.rs:42-45` and `validate.rs:296-297` — "An `Idb` atom at the QUERY boundary refuses inside the per-rule roster ... The query path passes `IdbSignatures::EMPTY`: a plain query's rules carry no `Idb` occurrence"; `context.rs:495-498` agrees. A `Query` therefore cannot be recursive (recursion requires an `Idb` atom; cf. `ir.rs:452` "A query: a non-recursive Datalog program" and `ir.rs:505-510`).
+- `crates/bumbledb/src/api/prepared/fixpoint.rs:387-421` — `Error::FixpointBudgetExceeded` is raised only inside the round loop (line 415-420), which is entered only for strata with a recursive predicate (`if !recursive { continue; }` at 387-389). Per `docs/architecture/40-execution.md`'s fixpoint-driver section as restated in the module header (fixpoint.rs:37-47), the budget bounds the *round loop*, so a non-recursive program cannot trip it. `set_fixpoint_budget` is itself documented "A no-op on non-recursive programs" (fixpoint.rs:234).
+- `crates/bumbledb-bench/src/differential.rs:293-313` — `engine_program` (`#[cfg(test)]`): `.expect("differential programs execute under the driver")` at 300-302; its doc at 285-291 says "Panics on any engine refusal: a generated recursive program validates and executes by construction."
+- `crates/bumbledb-bench/src/differential.rs:30-36` — `Op` has no `Program` arm; the recursive three-way differential runs through the bespoke loop at `querygen/tests.rs:564-641` (line 581 calls `engine_program` directly), not through `run()`.
+- Checked against the spec: `docs/architecture/60-validation.md:825-828` promises only the *constructed* budget-trip row (`set_fixpoint_budget(0)` raises the typed error, then a widened budget executes clean) — which the code honors at `querygen/tests.rs:647-668`. The architecture doc makes no divergence-on-trip promise; the incoherence is local to differential.rs's own enum doc.
+
+### Failure scenario
+
+Today: none observable — generated recursive programs are budget-safe by construction (`querygen/shapes_recursive.rs:5-12`: the org corpus is a binary tree, every closure bounded by `orgs × log₂ orgs` tuples, orders of magnitude under the defaults `DEFAULT_FIXPOINT_ROUNDS = 1 << 16` / `DEFAULT_FIXPOINT_TUPLES = 10_000_000`, fixpoint.rs:70-76). The latent hazard: a denser future corpus or a widened generator that legally demands a quadratic closure trips the default tuple budget inside `engine_program`, and the whole differential test run aborts with an expect-panic instead of the documented readable divergence. Meanwhile the `FixpointBudget` verdict arm silently asserts a comparison path that does not exist — a reader of the `Answers` doc believes budget parity is exercised by the differential when it is exercised nowhere.
+
+### Suggested fix
+
+Smallest honest fix: delete the `Answers::FixpointBudget` arm and the `Err(Error::FixpointBudgetExceeded { .. })` mapping from `engine_query` (making an unexpected trip fall into the existing loud `panic!("engine refused a differential query: ...")`), and rewrite the `Answers` doc to say what the code does: budget trips are impossible in the query lane (queries are non-recursive by validation) and are a deliberate panic in the program lane, with the typed error covered by the constructed budget-trip row (`querygen/tests.rs:647-668`). Representation-first fix, per the finder's suggestion: give `Op` a `Program` arm (or make it carry `ProgramRef`-shaped data) so the runner's op-stream can spell recursive cases, move the `FixpointBudgetExceeded → Answers::FixpointBudget` mapping into that leg, and let the verify naive slice carry recursive programs — then the enum doc's divergence promise becomes true instead of aspirational. Either direction erases the dead arm; only the second earns the doc.

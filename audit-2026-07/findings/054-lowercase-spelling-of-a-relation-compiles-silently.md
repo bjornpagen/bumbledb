@@ -1,0 +1,25 @@
+## Lowercase spelling of a relation compiles silently — the UpperCamel/lowercase partition is enforced on heads only
+
+category: incoherence | severity: medium | verdict: CONFIRMED | finder: query:crates
+
+### Summary
+
+The query notation disambiguates predicates from relations by a case partition the documentation declares total: `pred := lowercase ident … relations are UpperCamel, so a predicate spelled like a relation is unwritable` (module doc, `crates/bumbledb-query-macros/src/lib.rs:52-55`; normatively restated at `docs/architecture/20-query-ir.md:1005` and `:1035-1036` as "the punning law's discipline applied to names"). The macro enforces this partition only on rule **head** names. Body-atom resolution falls through to the EDB path with no case check, and `screaming_snake` collapses case, so a lowercase (or camelCase) spelling of any relation resolves to the exact same `schema!` id constants and compiles — the partition is one-directional, contradicting both the doc and the `uppercase_predicate_name` compile-fail fixture's stated rationale.
+
+### Evidence (all verified against the code, plus a probe compile)
+
+- **The doctrine.** `crates/bumbledb-query-macros/src/lib.rs:52-55` (grammar comment) and `docs/architecture/20-query-ir.md § the query notation` (line 1005 grammar; lines 1035-1036: "Predicate names begin lowercase, so a predicate spelled like a relation is unwritable"). The fixture `crates/bumbledb-query/tests/compile-fail/uppercase_predicate_name.rs:1-3` says "the case split is what makes a predicate spelled like a relation unwritable."
+- **Enforcement is heads-only.** `parse_rule`, `crates/bumbledb-query-macros/src/lib.rs:948-964`: the lowercase check runs on the leading rule-name ident only.
+- **The fallthrough.** `Emitter::atom`, `crates/bumbledb-query-macros/src/lib.rs:1391-1400`: the atom name is looked up in the macro-local predicate table; on miss it unconditionally emits the EDB path `{theory}::{screaming_snake(name)}` with no case check on the atom name.
+- **Case collapse.** `screaming_snake`, `lib.rs:1036-1053`: `"parent"` → `"PARENT"`, `"Parent"` → `"PARENT"`, `"orgParent"` and `"OrgParent"` → `"ORG_PARENT"` — non-canonical spellings land on the canonical constants.
+- **Probe compile (run, then removed).** With `relation Parent { child, parent }` and no predicates, `query!(Org { (child) | parent(child, parent: p); })` compiled under `cargo test -p bumbledb-query`, and its lowered `Program` was byte-identical (Debug `assert_eq!`) to the canonical `Parent(child, parent: p)` spelling.
+- **Diagnostic-quality corollary.** `query()` at `lib.rs:1729-1734` materializes generated code via `code.parse()` (string → TokenStream), so emitted constant paths carry call_site spans: a typo'd predicate like `raech(m, a)` surfaces as an unresolved `Org::RAECH`/`Org::RAECH_M` constant error on the whole macro invocation instead of a spanned "unknown predicate" — the id-constants trick is documented for *relation* typos (`typo_relation.rs`), but the grammar promises a lowercase name is a predicate.
+- **Untested direction.** The compile-fail suite (`crates/bumbledb-query/tests/compile-fail/`: ambiguous_punning, datalog, explicit_dense_positions, mixed_predicate_bindings, param_in_head, program_without_bare_output, typo_field, typo_relation, uppercase_predicate_name) covers only the UpperCamel-predicate direction, not the lowercase-relation one.
+
+### Failure scenario
+
+A user writing a recursive program defines predicate `reach` but in one body atom types `orgParent(...)`, believing it a predicate (lowercase-first, hence predicate-shaped per the grammar). No such predicate exists; the atom silently resolves to relation `OrgParent` with pun (nominal, order-independent) semantics instead of erroring. Pun semantics and the intended positional predicate semantics coincide only when the ident names happen to match the relation's field names in order — otherwise the query means something the author did not write, or dies on a confusing unresolved-constant error at the macro invocation rather than a spanned diagnostic. Separately, `parent(...)` and `Parent(...)` are two writable spellings of one meaning — exactly the respelling class this emitter refuses elsewhere (the explicit-dense refusal at `lib.rs:1330-1345`).
+
+### Suggested fix
+
+Represent the partition in resolution rather than half-guarding it: in `Emitter::atom`, branch on the atom name's first character's case — UpperCamel resolves through the EDB constants, lowercase resolves through the predicate table, and a lowercase name absent from the table is a spanned `query!: unknown predicate \`{name}\`` error at the atom ident. This makes the documented "unwritable" claim true in both directions, restores one-spelling-per-meaning for relations, and upgrades the typo'd-predicate diagnostic from an unresolved call_site constant to a properly spanned macro error. Add the mirror compile-fail fixture (`lowercase_relation_name.rs`) alongside `uppercase_predicate_name.rs`.

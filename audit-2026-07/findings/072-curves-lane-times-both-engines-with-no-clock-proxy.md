@@ -1,0 +1,29 @@
+## Curves lane publishes README multipliers with no clock-proxy bracket, no DVFS warm-up, and no field where contamination could be recorded
+
+category: bench-honesty | severity: medium | verdict: CONFIRMED | finder: bench:honesty
+
+### Summary
+
+Every other timed lane in the bench crate carries the co-tenant contamination discriminator built on `clockproxy` (an effective-GHz proxy: the reference host's P-cores sit at 3.3–3.5 GHz warm, and contamination arrives as seconds-long 2.0–2.4 GHz spans — `clockproxy.rs:18-19`, `harness.rs:86-91`). The curves lane — whose numbers the README quotes directly ("busy_scan at S scale is **477×** … **168×** against the hand-tuned twin; closure_fanout is **30×**", plus the warmth panel's 379 µs/16 µs cold numbers, README.md:271-287, rendered into `assets/bench-curves.svg` and `assets/bench-warmth.svg` from `curves-report.json`) — uses no clockproxy at all: no warm-up after its fsync-heavy world loads, no GHz stamp on any timed block, and no field in `CurvePoint` or its JSON where a contamination verdict could even be written. The report-merge exclusion machinery (`report/merge.rs`) is therefore structurally inapplicable to this lane, and the chart pipeline's manual run-level exclusion marker is never checked on the curves path either.
+
+### Evidence (all verified against the working tree)
+
+- `crates/bumbledb-bench/src/lanes/curves.rs:69-86` — the import list has no `clockproxy`; a grep over the whole crate shows clockproxy in `closure.rs`, `displaced.rs`, `driver/read_family.rs:144` (`frequency_checked`), `driver/write_families.rs:82/97/126`, `lanes/writes.rs:761/785/822` (`stamped`), `crud/run.rs`, `lawful/run.rs:184`, `windowed.rs:282` — and zero hits in `lanes/curves.rs`.
+- `curves.rs:620-625` — the ours block is a bare `harness::measure(proto, …)`; `curves.rs:550` — the SQLite twin inside `time_lane` is the same bare call. `harness/measure.rs:16-21` shows `measure` uses `Modes::default()`, and `harness.rs:82-92` defaults `proxy_per_rep: false`, so not even the per-sample GHz fallback records anything.
+- `curves.rs:110-118` (`CurvePoint`) and `curves.rs:138-157` (`push_point`) — no `ghz` or `contaminated` field exists in the struct or the emitted JSON; `lanes.rs:47-59` already provides the shared `push_ghz` emitter that `writes.rs` and `storage` use, which curves never calls.
+- No `warm_up` call exists anywhere in `curves.rs`. `run_scale` loads the closure world at `curves.rs:944-959` through `closure::load_stores_sized` with `StoreMode::default()` — which is `Durable` (`storemode.rs:18-31`), i.e. fsync-committing `bulk_load_dyn` loads — immediately before `curve_point` gates and times. The lane protocol is `warmups: 8` (`curves.rs:1130-1132`). (The gate pass and ours-answers computation, `curves.rs:583-604`, do interpose some unmeasured warm work — but it is neither a guaranteed ≥200 ms spin nor observed by any proxy.)
+- The contrast the finding draws is real in the driver: `driver/bench.rs:192-195` — "The DVFS ramp eater (measured): ≥ 200 ms of warm work before the first family" → `clockproxy::warm_up(200ms)`; `driver/bench.rs:263-267` — "an fsync drops the core to its DVFS floor with demand-driven recovery, so any read family measured in that shadow reads slow-clock time" is the stated reason write families run last. The curves lane recreates exactly that shadow (durable world load → timing) with no equivalent defense.
+- Exclusion is impossible downstream: `report/merge.rs:83,105` excludes contaminated blocks from the min-of-N merge keyed on the per-family `ghz.contaminated` field — a field the curves JSON does not have.
+- Aggravator found during verification: `scripts/bench_viz.py` honors the manual `CONTAMINATED.md` run marker only in the `*/report.json` discovery loop (`bench_viz.py:388-415`); the `NIGHT_LANE_REPORTS` loop that loads `curves/curves-report.json` (`bench_viz.py:381, 421-431`) performs no contamination check at all. So even the human-ruling escape hatch documented as "it can never leak into a chart by someone forgetting a footnote" does not cover the curves chart.
+
+### Bench impact
+
+A co-tenant build lands during a curves run (the repo's own measured 2.0–2.4 GHz contamination band): one engine's 64-sample block at one (family, scale) point absorbs slow-clock samples. The published multipliers (477×, 168×, 30×) and the warmth panel's cold/warm numbers inherit the skew, `curves-report.json` carries no field where the dirty clock could be flagged, `report/merge.rs`-style exclusion cannot apply, and `bench_viz.py` renders the point into `bench-curves.svg`/`bench-warmth.svg` indistinguishably from a clean one. This is precisely the failure mode the rest of the suite spent machinery (frequency_checked retry-then-mark, stamped, GhzReport, merge exclusion, CONTAMINATED.md) making representable — the curves lane makes the illegal state (an unwitnessed clock) unrepresentable in the wrong direction: not impossible, just invisible.
+
+### Suggested fix
+
+All machinery already exists in sibling lanes:
+1. Call `clockproxy::warm_up(Duration::from_millis(200))` in `run_scale` after each world open/load, before the first `curve_point` (mirrors `driver/bench.rs:195`).
+2. Wrap the ours block (`curves.rs:620`) in `clockproxy::frequency_checked` and each `time_lane` protocol block in `clockproxy::stamped` (fsync-free read timing qualifies for the retry-capable `frequency_checked`; the doc on `clockproxy.rs:151-160` draws exactly this line).
+3. Add `ghz: Option<GhzReport>` to `CurvePoint` (and the warmth panel), emit it via the shared `crate::lanes::push_ghz` (`lanes.rs:47`), and pin the field in `report_json_shape_is_pinned`.
+4. Separately, have `bench_viz.py`'s `NIGHT_LANE_REPORTS` loop honor the `CONTAMINATED.md` marker (or the new per-point `ghz.contaminated` field) so a marked curves run is excluded-and-counted like every other lane.

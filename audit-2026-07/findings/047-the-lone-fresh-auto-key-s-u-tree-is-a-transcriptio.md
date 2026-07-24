@@ -1,0 +1,29 @@
+## The lone-fresh auto-key's U tree is a transcription of F: fresh ids and row ids are two monotone u64 allocators that are secretly one
+
+category: unification | severity: medium | verdict: CONFIRMED | finder: perf:points
+
+### Summary
+
+For any relation whose only key statement is the fresh auto-key `R(id) -> R` (every `fresh` relation, including the bench's `Doc`), storage maintains two parallel B-tree structures that encode the same bijection: `F | rel | be(row_id) -> fact` and `U | rel | stmt | be(fresh_id) -> le(row_id)`. Both `row_id` and `fresh_id` are monotone u64 counters minted in the same commit pipeline (`S RowIdHighWater` and the `Q` fresh marks respectively). The U entry is a pure transcription — an 8-byte big-endian monotone key mapping to another 8-byte monotone key. Every fresh-id point read therefore pays two B-tree descents (U get, then F fetch) where the bench's own canonical SQLite rendering pays one (the auto-key is the table's rowid-alias PRIMARY KEY), and every insert pays one extra conflict get plus one extra put. Making the fresh value BE the row id for such relations erases the auto-key's entire U tree; the FD judgment becomes the F put-conflict — the identical put-conflict mechanism U uses today.
+
+### Evidence (all verified against the code)
+
+- **The two allocators.** `crates/bumbledb/src/storage/commit/applier.rs:92` — `let row_id = self.next_row_id(rel)?` (lazily loaded from `S RowIdHighWater`, applier.rs:276-294); the `Q` fresh sequences are a separate per-(relation, field) counter (`storage/keys.rs:352-358`, `commit/write.rs:302-320`). Two monotone u64 mints in one pipeline.
+- **The transcription.** applier.rs:99-129: the U put stores `row_id.to_le_bytes()` under `U | rel | stmt | determinant`, preceded by an explicit conflict get (applier.rs:115). For the auto-key, the determinant is exactly `encode_u64(fresh_id)` = `to_be_bytes` (`encoding/encode.rs:14-16`), while the F key embeds `row_id.to_be_bytes()` (`keys.rs:285-290`). So the entry is `be(id) -> le(row_id)`, nothing else.
+- **The auto-key exists for every fresh field.** `crates/bumbledb-theory/src/schema.rs:411-431`: `materialized_statements` mints one `Functionality` statement per `Fresh` field, projection = that field alone.
+- **Two descents on every point-read surface.** `api/db/get.rs:334-335` (`determinant_row` then `read::fetch`); `api/db/snapshot.rs:194,243`; and the query engine's key probe `exec/dispatch/key_probe_fact.rs:260-268` — `classify.rs:137` explicitly prefers the key-statement U probe. The bench's p1 lane (`bumbledb-bench/src/scenarios/points.rs:106-121`) binds Doc's fresh `FieldId(0)` to a param, so it classifies through the auto-key and pays U + F per probe.
+- **The SQLite twin pays one descent.** `bumbledb-bench/src/sqlmap.rs:49-58` (the first `Fresh` field is the rowid alias), :91-94 (the auto-key draws no separate index — "covered by rowid"), :191-196 (`PRIMARY KEY ("{alias}")` on a STRICT rowid table).
+- **The proposal's precondition holds.** The never-reissue law is Lean-pinned (`docs/architecture/10-data-model.md:268`, `never_reissue_observable`); explicit fresh re-supply is a documented idiom (:290, :442 — "correcting a fresh-keyed fact is delete(old); insert(new with explicit fresh re-supply)") and the committed `Q` mark advances past every explicit value (`commit/write.rs`, `commit/tests/commit.rs:264-266`), so a merged counter stays a valid high-water and `verify_store`'s `RowIdHighWaterLow` check (`verify_store/counters.rs:51`) maps cleanly onto Q.
+
+### Bench impact
+
+- **Reads:** p1_by_id and every fresh-keyed point get (WriteTx, Snapshot, query key probe) drop from two warm B-tree descents to one.
+- **Writes:** every insert into a fresh-keyed relation drops one LMDB put (the U put) and can drop the separate conflict get (the F put-conflict, e.g. `NOOVERWRITE`, subsumes the FD judgment for the auto-key — the same mechanism applier.rs:115-128 implements for U today). The auto-key U tree's node splits and space vanish entirely.
+
+### Cost the finder did not list (verified, does not refute)
+
+The image cache's copy-on-append maintenance depends on tail-only F inserts: "row-id high-water monotonicity is the prefix property" (`docs/architecture/50-storage.md` § image cache; `image/build.rs:239-343` — `append` scans `F` only from the base's build-time high-water; `image/cache/get_or_build.rs:32-41`). Under row_id == fresh value, the documented explicit-re-supply idiom (alloc an id in one transaction, insert its fact in a later one — the doc example at `api/db/get.rs:197-203` does exactly this) can land an F key **below** an append base's boundary in a delete-free commit, and the tail decode would silently miss the row. The unification therefore also requires invalidating (or fully rebuilding) append bases on non-tail inserts, and restating the counter-overflow asymmetry doctrine ("no host input can jump [row-id high-waters]", 50-storage.md — the merged counter IS host-jumpable, though `FreshExhausted` already guards it). The finder's honest-cost list (M values, R edge keys, exhume, verify_store, scan order becoming fresh order) is otherwise accurate.
+
+### Suggested fix
+
+For relations whose key statements include the lone-fresh auto-key, mint `row_id` from the fresh sequence (row_id == fresh value; host-supplied fresh values pass through). The F put-conflict becomes the functionality judgment for that statement; secondary key statements keep their U entries. `Q` and `S RowIdHighWater` collapse to one counter for such relations. Handle the image append-base prefix property explicitly: either evict the relation's append base whenever a commit inserts below its boundary (one comparison per insert against the base boundary, on the writer's eviction path where a branch already exists for deletes), or key the append boundary off the merged counter and fall back to a full rebuild on non-tail inserts.

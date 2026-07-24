@@ -1,0 +1,26 @@
+## WordMap const-arity dispatch has holes at 0, 5, 7 — widths its own comment declares common take the #[cold] path per row
+
+category: incoherence | severity: medium | verdict: CONFIRMED | finder: engine:colt
+
+### Summary
+
+`WordMap::get_or_insert_with` monomorphizes the hot insert for arities {1, 2, 3, 4, 6, 8} and sends everything else to `entry_dyn_hashing`, an outlined `#[cold] #[inline(never)]` fallback. The comment justifying the ladder says the covered set is "the widths in use: group keys are 1-4, full bindings 2-6, 8 is headroom" — but arity 5 sits inside the declared 2-6 full-binding range and has no arm, arity 7 is one word short of the 8 "headroom" arm, and arity 0 is documented two files over as a first-class legal case ("zero arity is legal: every key is the empty tuple — the global-aggregate group"). The dyn fallback's own doc comment then calls 0, 5, 7 "exotic widths" — a direct internal contradiction. Workloads hitting these widths pay, per row, exactly the runtime-arity tax the repo's own perf envelope quantifies as the dispatch's reason to exist.
+
+### Evidence (all verified against the working tree)
+
+- `crates/bumbledb/src/exec/wordmap/entry.rs:21-29` — the dispatch: `match self.arity { 1 => ..., 2 => ..., 3 => ..., 4 => ..., 6 => ..., 8 => ..., _ => self.entry_dyn_hashing(key, make) }`, with the comment at lines 14-20 declaring "group keys are 1-4, full bindings 2-6, 8 is headroom. Exotic widths keep the dyn path."
+- `crates/bumbledb/src/exec/wordmap/entry.rs:36-38` — `#[cold] #[inline(never)] fn entry_dyn_hashing`; line 82's doc on `entry_dyn` explicitly lists "exotic widths (0, 5, 7, > 8)" — contradicting the "full bindings 2-6" coverage claim one screen up.
+- `crates/bumbledb/src/exec/wordmap/new.rs:6-8` — "zero arity is legal: every key is the empty tuple — the global-aggregate group."
+- Arity-0 probe is per-row in the row-fold-only regimes: `sink/aggregate/new.rs:199-210` sets `row_fold_only` for Arg, Pack, measures, and CountDistinct; `sink/aggregate/sink.rs:200-202` routes those to `fold_batch_rows`; `fold_batch.rs:11-21` calls `fold_scratch_row` per survivor; `fold_row.rs:47-50` calls `probe_group` per row; `groups.rs:55` probes `self.groups`, built with `key_words` arity (`new.rs:164, 221`) — 0 for a global aggregate. No zero-arity special case exists in `probe_group` or anywhere on the path.
+- Seen-set arity is the whole slot array: `new.rs:156` (`scratch_words = slot_count + measures.len()`) and `new.rs:227-229`; the dedup insert runs per row in both batch arms (`fold_batch.rs:59`, `fold_row.rs:36-45`). Three scalar variables plus one interval variable (two words, the SlotWidth layout) is an ordinary 5-word binding; 7 is equally reachable.
+- The grow-path rehash mirrors the holes: `crates/bumbledb/src/exec/wordmap/grow.rs:27-35`.
+- The tax mechanism is the repo's own primary measurement, not speculation: `docs/reference/apple-silicon-performance.md:311` (`m2max.probe.const-arity-tax`: dyn/const 1.18-1.60x, "monomorphize hot-map arity — LLVM performs prefix-hash hoisting and gather-hash fusion for free under const arity") and line 388 (dedup floor +4.5 ns/row arity tax). The dispatch's originating commit `0be64870` ("S2-PRD 03: const-arity wordmap internals — stats −23%, range −25%") confirms the arm set was hand-picked; its design record (docs/silicon2/03) has since been deleted, so the in-tree comment is now the only spec — and it disagrees with the code.
+- Feasibility of the fix: `hash_core::<0>` (`crates/bumbledb/src/exec/swar.rs:36-45`) loops zero times and returns the seed constant, so an `entry_core::<0>` arm constant-folds the hash entirely.
+
+### Failure scenario / Bench impact
+
+Not a correctness failure — `entry_dyn` is correct for all arities and the wordmap contract tests cover hash equality across widths. The cost is per-row: (a) any global aggregate under a row-fold-only regime (CountDistinct, Arg-restriction, Pack, or any measure) probes the arity-0 group map through a cold outlined `bl` on every emitted row, in the exact regimes where sink.rs's own "the probe IS the fast path now" comment (sink.rs / fold_batch.rs:73-75) assumes the const-arity map; (b) any dedup-retaining rule whose slot array is 5 or 7 words (or a 5/7-word union head projection) pays the general-length compare/copy ladder, the `slot*arity` multiplies, and the blocked hash hoisting per row — the documented +4.3-4.9 ns/row. Whether the current bench roster contains such a lane was not verified; user programs hitting these widths are entirely ordinary.
+
+### Suggested fix
+
+Add arms 0, 5, 7 to the dispatch in `get_or_insert_with` and mirror them in `grow()`'s rehash ladder (`entry_core::<0>`'s hash constant-folds to the seed). For arity 0 the representation-level fix is smaller still and truer to the project's representation-first doctrine: a zero-key map IS a single cell — `probe_group` (groups.rs:49) can skip the map entirely when `key_words == 0`, erasing the probe rather than speeding it up. At minimum, reconcile the comment with the arm set: either 5 is a width in use (add the arm) or full bindings are not 2-6 (fix the comment).
