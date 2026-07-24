@@ -43,27 +43,38 @@ pub struct SchemaSpec {
     pub statements: Vec<StatementSpec>,
 }
 
-/// One relation. `extension: Some(rows)` declares it **closed** (the
-/// option is the kind, mirroring [`RelationDescriptor::extension`]); a
-/// closed relation's `fields` are its declared intrinsic columns only —
-/// the synthetic (`id`, `u64`) handle field is materialized by schema
+/// One relation. `closed: Some(spec)` declares it **closed** (the option
+/// is the kind, mirroring [`RelationDescriptor::extension`]); a closed
+/// relation's `fields` are its declared intrinsic columns only — the
+/// synthetic (`id`, `u64`) handle field is materialized by schema
 /// validation, and statement field names address the sealed shape (`id`
 /// resolves to [`FieldId`] 0, declared columns shift by one), exactly as
 /// the macro resolves them.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RelationSpec {
     pub name: Box<str>,
-    /// The handle newtype name of a closed relation (the macro's
-    /// mandatory `as NewType`) — host-side nominal vocabulary, never a
-    /// fingerprint input: it exists so [`LiteralSpec::Handle`] literals
-    /// can resolve through a referencing field's [`FieldSpec::newtype`],
-    /// and it is dropped at lowering (the descriptor never carries
-    /// names of host types). Meaningless on an ordinary relation.
-    pub newtype: Option<Box<str>>,
     pub fields: Vec<FieldSpec>,
-    /// A closed relation's ground axioms in declaration order (row id =
-    /// index); `None` = ordinary.
-    pub extension: Option<Vec<RowSpec>>,
+    /// Closedness as one sum: `Some` = closed, `None` = ordinary
+    /// (ruled 2026-07-23, R7).
+    pub closed: Option<ClosedSpec>,
+}
+
+/// A closed relation's closed half, fused: the handle newtype and the
+/// ground axioms travel together, so the two states the grammar forbids
+/// — an ordinary relation carrying a handle newtype, a closed relation
+/// without one — are unrepresentable (`docs/architecture/70-api.md`
+/// § the `SchemaSpec` bindings contract; ruled 2026-07-23, R7), exactly
+/// as the macro's mandatory `as NewType` makes them unspellable.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClosedSpec {
+    /// The handle newtype name (the macro's mandatory `as NewType`) —
+    /// host-side nominal vocabulary, never a fingerprint input: it
+    /// exists so [`LiteralSpec::Handle`] literals can resolve through a
+    /// referencing field's [`FieldSpec::newtype`], and it is dropped at
+    /// lowering (the descriptor never carries names of host types).
+    pub newtype: Box<str>,
+    /// The ground axioms in declaration order (row id = index).
+    pub rows: Vec<RowSpec>,
 }
 
 /// One field: name, structural type, host newtype name, and the `fresh`
@@ -202,7 +213,7 @@ pub enum LiteralAt {
         binding: usize,
         literal: usize,
     },
-    /// `relations[relation].extension[row].values[column]` — the column
+    /// `relations[relation].closed.rows[row].values[column]` — the column
     /// in declared-intrinsic order (the synthetic `id` is no column).
     Row {
         relation: usize,
@@ -513,7 +524,7 @@ impl<'spec> Resolver<'spec> {
     /// addresses (the macro materializes the same shape at parse).
     fn field(&mut self, statement: usize, rel_idx: usize, name: &str) -> Option<FieldId> {
         let relation = &self.spec.relations[rel_idx];
-        let closed = relation.extension.is_some();
+        let closed = relation.closed.is_some();
         if closed && name == "id" {
             return Some(FieldId(0));
         }
@@ -536,8 +547,8 @@ impl<'spec> Resolver<'spec> {
     /// of a closed relation carries the relation's handle newtype.
     fn field_newtype(&self, rel_idx: usize, name: &str) -> Option<&'spec str> {
         let relation = &self.spec.relations[rel_idx];
-        if relation.extension.is_some() && name == "id" {
-            return relation.newtype.as_deref();
+        if let (Some(closed), "id") = (&relation.closed, name) {
+            return Some(&closed.newtype);
         }
         relation
             .fields
@@ -551,7 +562,7 @@ impl<'spec> Resolver<'spec> {
     /// where resolution already reports the unknown name.
     fn declares(&self, rel_idx: usize, name: &str) -> bool {
         let relation = &self.spec.relations[rel_idx];
-        (relation.extension.is_some() && name == "id")
+        (relation.closed.is_some() && name == "id")
             || relation.fields.iter().any(|f| &*f.name == name)
     }
 
@@ -633,10 +644,11 @@ impl<'spec> Resolver<'spec> {
                     });
                     return Value::U64(0);
                 };
-                let rows = self.spec.relations[owner]
-                    .extension
+                let rows = &self.spec.relations[owner]
+                    .closed
                     .as_ref()
-                    .expect("the handle namespace holds closed relations only");
+                    .expect("the handle namespace holds closed relations only")
+                    .rows;
                 let Some(row) = rows.iter().position(|row| row.handle == *handle) else {
                     self.issues.push(SpecIssue::UnknownHandle {
                         at,
@@ -779,15 +791,16 @@ impl SchemaSpec {
             issues: Vec::new(),
         };
         for (idx, relation) in self.relations.iter().enumerate() {
-            if relation.extension.is_none() {
-                continue;
-            }
-            let Some(newtype) = relation.newtype.as_deref() else {
+            // The option is the kind: a closed relation carries its
+            // handle newtype by construction (R7), so entering the
+            // namespace is plain iteration — no silent skip stands in
+            // for a typed issue.
+            let Some(closed) = &relation.closed else {
                 continue;
             };
-            if let Some(first) = resolver.handles.insert(newtype, idx) {
+            if let Some(first) = resolver.handles.insert(&closed.newtype, idx) {
                 resolver.issues.push(SpecIssue::DuplicateHandleNewtype {
-                    newtype: newtype.into(),
+                    newtype: closed.newtype.clone(),
                     first_relation: first,
                     second_relation: idx,
                     first: self.relations[first].name.clone(),
@@ -815,8 +828,10 @@ impl SchemaSpec {
                         },
                     })
                     .collect(),
-                extension: relation.extension.as_ref().map(|rows| {
-                    rows.iter()
+                extension: relation.closed.as_ref().map(|closed| {
+                    closed
+                        .rows
+                        .iter()
                         .enumerate()
                         .map(|(row_idx, row)| {
                             // The zip below drops any literal past the

@@ -1,0 +1,98 @@
+//! The spec-lowering contract, exercised as a foreign host would:
+//! plain data in, a descriptor or the COMPLETE typed issue list out
+//! (`docs/architecture/70-api.md` § the `SchemaSpec` bindings contract).
+//! The macro/spec fingerprint parity pin lives engine-side
+//! (`crates/bumbledb/tests/schema_spec.rs`); this file pins the
+//! theory-crate laws alone.
+
+use bumbledb_theory::Value;
+use bumbledb_theory::schema::spec::{
+    ClosedSpec, FieldSpec, LiteralSetSpec, LiteralSpec, RelationSpec, RowSpec, SchemaSpec,
+    SideSpec, StatementSpec,
+};
+use bumbledb_theory::schema::{
+    FieldId, LiteralSet, RelationId, StatementDescriptor, ValueType,
+};
+
+fn field(name: &str, newtype: Option<&str>) -> FieldSpec {
+    FieldSpec {
+        name: name.into(),
+        value_type: ValueType::U64,
+        newtype: newtype.map(Into::into),
+        fresh: false,
+    }
+}
+
+/// The fused closedness sum (ruled 2026-07-23, R7): a closed relation
+/// carries its handle newtype by construction, so the handle namespace
+/// is entered by plain iteration — a `Handle` literal resolves through
+/// the referencing field's newtype to the declaration-order row id, and
+/// the synthetic `id` addresses `FieldId(0)`.
+#[test]
+fn closed_spec_carries_the_handle_newtype_by_construction() {
+    let spec = SchemaSpec {
+        relations: vec![
+            RelationSpec {
+                name: "Status".into(),
+                fields: vec![],
+                closed: Some(ClosedSpec {
+                    newtype: "StatusId".into(),
+                    rows: vec![
+                        RowSpec {
+                            handle: "Active".into(),
+                            values: vec![],
+                        },
+                        RowSpec {
+                            handle: "Frozen".into(),
+                            values: vec![],
+                        },
+                    ],
+                }),
+            },
+            RelationSpec {
+                name: "Account".into(),
+                fields: vec![field("owner", None), field("status", Some("StatusId"))],
+                closed: None,
+            },
+        ],
+        statements: vec![StatementSpec::Containment {
+            source: SideSpec {
+                relation: "Account".into(),
+                projection: vec!["status".into()],
+                selection: vec![(
+                    "status".into(),
+                    LiteralSetSpec::One(LiteralSpec::Handle("Frozen".into())),
+                )],
+            },
+            target: SideSpec {
+                relation: "Status".into(),
+                projection: vec!["id".into()],
+                selection: vec![],
+            },
+            bidirectional: false,
+        }],
+    };
+    let descriptor = spec.descriptor().expect("the spec lowers clean");
+
+    // The closed arm lowers to the descriptor's extension rows.
+    let rows = descriptor.relations[0]
+        .extension
+        .as_deref()
+        .expect("closed lowers closed");
+    assert_eq!(rows.len(), 2);
+    assert_eq!(&*rows[1].handle, "Frozen");
+
+    // The handle literal resolved to its declaration-order row id, and
+    // the target's `id` addressed the synthetic FieldId(0).
+    let StatementDescriptor::Containment { source, target } = &descriptor.statements[0] else {
+        panic!("one containment lowered");
+    };
+    assert_eq!(source.relation, RelationId(1));
+    assert_eq!(&*source.projection, [FieldId(1)]);
+    assert_eq!(
+        &*source.selection,
+        [(FieldId(1), LiteralSet::One(Value::U64(1)))]
+    );
+    assert_eq!(target.relation, RelationId(0));
+    assert_eq!(&*target.projection, [FieldId(0)]);
+}
