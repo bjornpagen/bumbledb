@@ -911,9 +911,9 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 			return r.match(Parent, { child: c, parent: r.inSet("frontier") }).find({ c })
 		})
 		// The same closure, one stratified program under the fixpoint driver
-		// (?root seeds the predicate; the output joins the finished set back
-		// through the theory's own domain relation — an idb atom is a join
-		// position, so the head rides the Node atom):
+		// (?root seeds the predicate; the output is the finished set's own
+		// identity projection — an idb atom is a positive occurrence, so it
+		// grounds its variables and no re-grounding join exists):
 		const reach = program(Closure, (p) => {
 			const rec = p.rec("reach")
 			const seeded = rec
@@ -930,13 +930,35 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 				})
 			return p.output((r) => {
 				const { id: c } = v(Node)
-				return r.match(Node, { id: c }).idb(seeded, { c }).find({ c })
+				return r.idb(seeded, { c }).find({ c })
+			})
+		})
+		// The complement — negation OF the finished stratum is engine-legal
+		// (the strata judge refuses only negation *through* a cycle):
+		const unreached = program(Closure, (p) => {
+			const rec = p.rec("reach")
+			const seeded = rec
+				.rule((r) => {
+					const { id: c } = v(Node)
+					return r
+						.match(Node, { id: c })
+						.where(eq(c, r.param("root")))
+						.find({ c })
+				})
+				.rule((r) => {
+					const { child: c, parent } = v(Parent)
+					return r.match(Parent, { child: c, parent }).idb(rec, { c: parent }).find({ c })
+				})
+			return p.output((r) => {
+				const { id: c } = v(Node)
+				return r.match(Node, { id: c }).where(r.not(seeded, { c })).find({ c })
 			})
 		})
 
 		const { db } = await admit("r24-closure", Closure)
 		const stepPrepared = db.prepare(step)
 		const reachPrepared = db.prepare(reach)
+		const unreachedPrepared = db.prepare(unreached)
 
 		const minted: { root?: bigint; mid?: bigint; leaf?: bigint } = {}
 		const seededForest = db.write(function seed(tx) {
@@ -972,6 +994,15 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 		const engineNative = db.execute(reachPrepared, { root }).map((row) => row.c)
 		assert.deepEqual(sorted([...seen]), sorted(engineNative), "the two dialects agree, root for root")
 		assert.deepEqual(sorted([...seen]), sorted([root, must(minted.mid), must(minted.leaf)]))
+
+		// The complement lands in-plan: every node the closure never reached.
+		const complement = db.execute(unreachedPrepared, { root }).map((row) => row.c)
+		const everyNode = db.scan(Node).map((node) => node.id)
+		assert.deepEqual(
+			sorted(complement),
+			sorted(everyNode.filter((id) => !seen.has(id))),
+			"negation of the finished stratum answers the complement"
+		)
 	})
 
 	test("25. the chart of accounts", async function r25() {

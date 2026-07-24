@@ -252,6 +252,16 @@ interface OutputRuleScope<Rels extends SchemaRelations, Classes extends SchemaCl
 		relation: R,
 		bindings: B & CheckBindings<Classes, MatchFields<R>, ClassRecordOf<Classes, R["name"]>, B>
 	): OutputRuleChain<Rels, BindParamsShape<MatchFields<R>, B>, Classes>
+	/**
+	 * A rule may START with the finished stratum: an idb atom is a positive
+	 * occurrence exactly as the engine represents it, so its variables ground
+	 * — the identity projection `(c) | reach(c);` is spellable with no
+	 * re-grounding join over a domain relation.
+	 */
+	idb<Target extends RecRef<string, ParamsRecord>, const B extends Readonly<Record<string, AnyVar>>>(
+		target: Target,
+		bindings: B & CheckIdbBindings<Classes, HeadOf<Target>, B>
+	): OutputRuleChain<Rels, ParamsOf<Target>, Classes>
 }
 
 /** The chain of an output rule: atoms, predicates, `idb` joins over the program's recs, then the head. */
@@ -688,6 +698,14 @@ function advanceWhere(context: ChainContext, state: RuleBuildState, cond: AnyCon
 	if (typeof cond !== "object" || cond === null || !("cond" in cond)) {
 		throw errors.new("where() takes a comparison, an and()/or() tree, or a negated atom")
 	}
+	if (cond.cond === "notIdb") {
+		const bindings: Readonly<Record<string, unknown>> = Object.fromEntries(
+			Object.entries(cond.bindings ?? {}).filter(function defined([, value]) {
+				return value !== undefined
+			})
+		)
+		return notIdbAdvance(context, state, cond.target, bindings)
+	}
 	if (cond.cond === "not") {
 		const relation: MatchOwner = cond.relation
 		const bindings: Readonly<Record<string, unknown>> = Object.fromEntries(
@@ -711,8 +729,21 @@ function advanceWhere(context: ChainContext, state: RuleBuildState, cond: AnyCon
 	})
 }
 
-/** Extends a rule state with one `idb` atom (a named record over head keys; vars validated at completion). */
-function advanceIdb(state: RuleBuildState, rec: RecData, bindings: Readonly<Record<string, unknown>>): RuleBuildState {
+/**
+ * Extends a rule state with one `idb` atom (a named record over head keys;
+ * vars validated at completion). A POSITIVE idb atom is a positive
+ * occurrence exactly as the engine represents it (`check_atoms` walks Idb
+ * and Edb in one loop), so its variables GROUND: they enter the rule's
+ * boundness set, may ride the head, and satisfy negation safety — the
+ * idb-only identity projection of a finished stratum is spellable with no
+ * re-grounding join. A NEGATED one binds nothing, only rejects.
+ */
+function advanceIdb(
+	state: RuleBuildState,
+	rec: RecData,
+	bindings: Readonly<Record<string, unknown>>,
+	negated: boolean
+): RuleBuildState {
 	const resolved: Array<{ readonly key: string; readonly ref: AnyVar }> = []
 	for (const [key, value] of Object.entries(bindings)) {
 		if (value === undefined) {
@@ -725,12 +756,18 @@ function advanceIdb(state: RuleBuildState, rec: RecData, bindings: Readonly<Reco
 		}
 		resolved.push(Object.freeze({ key, ref: value }))
 	}
+	const bound = new Set(state.bound)
+	if (!negated) {
+		for (const binding of resolved) {
+			bound.add(binding.ref)
+		}
+	}
 	return Object.freeze({
 		items: Object.freeze([
 			...state.items,
-			Object.freeze({ kind: "idb" as const, rec, bindings: Object.freeze(resolved) })
+			Object.freeze({ kind: "idb" as const, rec, bindings: Object.freeze(resolved), negated })
 		]),
-		bound: state.bound,
+		bound,
 		paramUses: state.paramUses
 	})
 }
@@ -964,16 +1001,23 @@ function validateCond(context: ChainContext, bound: ReadonlySet<AnyVar>, cond: C
 
 /**
  * Validates one `idb` item: every head column of the rec is bound exactly
- * once (a missing or extra key is a pointed error), every bound variable is
- * positively bound by a relation atom of the rule, and each variable joins
- * its head column's classed slot. When the rec's own rule 0 is in flight
+ * once (a missing or extra key is a pointed error) and each variable joins
+ * its head column's classed slot. A POSITIVE idb atom GROUNDS its
+ * variables (a positive occurrence, exactly the engine's representation),
+ * so no boundness precondition exists; a NEGATED one binds nothing — its
+ * variables must be positively bound elsewhere in the rule, the same
+ * safety rule as EDB negation. When the rec's own rule 0 is in flight
  * (`rec.rules[0]` absent), the completing rule's OWN find columns ARE the
  * head.
  */
 function validateIdb(
 	context: ChainContext,
 	bound: ReadonlySet<AnyVar>,
-	item: { readonly rec: RecData; readonly bindings: ReadonlyArray<{ readonly key: string; readonly ref: AnyVar }> },
+	item: {
+		readonly rec: RecData
+		readonly bindings: ReadonlyArray<{ readonly key: string; readonly ref: AnyVar }>
+		readonly negated: boolean
+	},
 	columns: readonly FindColumn[]
 ): void {
 	const label = contextLabel(context)
@@ -1000,9 +1044,9 @@ function validateIdb(
 		}
 	}
 	for (const binding of item.bindings) {
-		if (!bound.has(binding.ref)) {
+		if (item.negated && !bound.has(binding.ref)) {
 			throw errors.new(
-				`${label}: idb ${item.rec.name} names the variable ${binding.ref.label}, but no relation atom of the rule binds it — an idb atom is a join position; bind the variable through the theory's own relation first`
+				`${label}: negated idb ${item.rec.name} names the variable ${binding.ref.label}, but no positive atom of the rule binds it — a negated atom binds nothing, only rejects (the safety rule)`
 			)
 		}
 		const headColumn = headColumns.find(function byName(column) {
@@ -1076,6 +1120,7 @@ interface RawChain {
 /** The runtime rule-builder shape beneath every typed scope. */
 interface RawScope extends TermOps {
 	match(relation: MatchOwner, bindings: Readonly<Record<string, unknown>>): RawChain
+	idb(target: RecRef<string, ParamsRecord>, bindings: Readonly<Record<string, unknown>>): RawChain
 }
 
 /** Which rule family a chain builds — plus the schema's runtime class map and theory value (the join judge's authority). */
@@ -1113,14 +1158,43 @@ function idbAdvance(
 				`rec ${context.self.name}: a recursive rule's idb target must be the rec itself — the self-recursion-only cut (mutual recursion is unwritable; fold a finished stratum in the output rules)`
 			)
 		}
-		return advanceIdb(state, context.self, bindings)
+		return advanceIdb(state, context.self, bindings, false)
 	}
 	if (!context.program.recs.includes(target.data)) {
 		throw errors.new(
 			`idb ${target.name}: the rec was declared by a different program — rec identity is the membership rule`
 		)
 	}
-	return advanceIdb(state, target.data, bindings)
+	return advanceIdb(state, target.data, bindings, false)
+}
+
+/**
+ * Validates and records one NEGATED finished-stratum atom — output rules
+ * only: there every rec is a finished set before the output's operator
+ * runs (negation OF lower strata is engine-legal; the strata judge refuses
+ * only negation *through* a cycle, which the rec-context refusal here
+ * makes unwritable).
+ */
+function notIdbAdvance(
+	context: ChainContext,
+	state: RuleBuildState,
+	target: { readonly name: string; readonly data: RecData },
+	bindings: Readonly<Record<string, unknown>>
+): RuleBuildState {
+	if (context.kind === "query") {
+		throw errors.new("idb is a program construct — declare recs and outputs through program(), never a plain query()")
+	}
+	if (context.kind === "rec") {
+		throw errors.new(
+			`rec ${context.self.name}: a recursive rule negates no stratum — self-negation is negation through the cycle (a finished set is what keeps the operator monotone), and a finished stratum's fold belongs in the output rules`
+		)
+	}
+	if (!context.program.recs.includes(target.data)) {
+		throw errors.new(
+			`idb ${target.name}: the rec was declared by a different program — rec identity is the membership rule`
+		)
+	}
+	return advanceIdb(state, target.data, bindings, true)
 }
 
 /** Classifies one find record per the context (a recursive head projects bound variables only). */
@@ -1166,6 +1240,9 @@ function makeRawScope(context: ChainContext): RawScope {
 		...termOps,
 		match(relation, bindings) {
 			return makeRawChain(context, advanceMatch(context, EMPTY_RULE, relation, bindings))
+		},
+		idb(target, bindings) {
+			return makeRawChain(context, idbAdvance(context, EMPTY_RULE, target, bindings))
 		}
 	}
 	Object.freeze(scope)
@@ -1852,7 +1929,8 @@ function lowerRule(ctx: LowerContext, rule: RuleData): RuleIr {
 				break
 			}
 			case "idb": {
-				atoms.push(lowerIdbAtom(ctx, item.rec, item.bindings, ids))
+				const bucket = item.negated ? negated : atoms
+				bucket.push(lowerIdbAtom(ctx, item.rec, item.bindings, ids))
 				break
 			}
 			case "cond": {

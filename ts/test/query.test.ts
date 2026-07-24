@@ -1223,23 +1223,74 @@ describe("the query surface against a real store", function suite() {
 			})
 		}, /projects bound variables only/)
 
-		// An idb variable no relation atom binds — an idb atom is a join position.
-		// BOUNDNESS is invisible to the type tier (scope.ts THE DESIGN THEOREM),
-		// so this is a construction-time wall, not a compile error.
-		assert.throws(function unboundIdbVar() {
+		// An idb atom GROUNDS its variables (019: a positive occurrence, the
+		// engine's own representation) — the idb-only identity projection of a
+		// finished stratum builds with no re-grounding join. The class wall
+		// stands: an idb binding still joins only class-equal slots.
+		const identityProjection = program(Ledger, (p) => {
+			const reach = p.rec("reach")
+			const seeded = reach.rule((r) => {
+				const { id: h } = v(Holder)
+				return r.match(Holder, { id: h }).find({ h })
+			})
+			return p.output((r) => {
+				const { id: h } = v(Holder)
+				return r.idb(seeded, { h }).find({ h })
+			})
+		})
+		assert.ok(identityProjection, "the idb-only output rule is spellable — no re-grounding join exists")
+		assert.throws(function classUnequalIdbVar() {
 			program(Ledger, (p) => {
 				const reach = p.rec("reach")
-				reach.rule((r) => {
+				const seeded = reach.rule((r) => {
+					const { id: h } = v(Holder)
+					return r.match(Holder, { id: h }).find({ h })
+				})
+				return p.output((r) => {
+					const { id: acct } = v(Account)
+					return (
+						r
+							// @ts-expect-error — Account.id is class-unequal to reach's Holder.id head column
+							.idb(seeded, { h: acct })
+							.find({ h: acct })
+					)
+				})
+			})
+		}, /joins the variable/)
+
+		// Negation of a finished stratum binds nothing — its variables must be
+		// positively bound (the same safety rule as EDB negation)...
+		assert.throws(function unboundNegatedIdbVar() {
+			program(Ledger, (p) => {
+				const reach = p.rec("reach")
+				const seeded = reach.rule((r) => {
 					const { id: h } = v(Holder)
 					return r.match(Holder, { id: h }).find({ h })
 				})
 				return p.output((r) => {
 					const { id: h } = v(Holder)
-					const { child: ghost } = v(Parent)
-					return r.match(Holder, { id: h }).idb(reach, { h: ghost }).find({ h })
+					const { id: ghost } = v(Holder)
+					return r
+						.match(Holder, { id: h })
+						.where(r.not(seeded, { h: ghost }))
+						.find({ h })
 				})
 			})
-		}, /Parent\.child/)
+		}, /negated idb reach names the variable/)
+		// ...and inside a recursive rule it is negation through the cycle, refused.
+		assert.throws(function negationThroughCycle() {
+			program(Ledger, (p) => {
+				const reach = p.rec("reach")
+				reach.rule((r) => {
+					const { id: h } = v(Holder)
+					return r.match(Holder, { id: h }).where(r.not(reach, { h })).find({ h })
+				})
+				return p.output((r) => {
+					const { id: h } = v(Holder)
+					return r.idb(reach, { h }).find({ h })
+				})
+			})
+		}, /negation through the cycle/)
 
 		// idb in a plain query is a construction error (and the scope carries no idb to spell).
 		const plain = query(Ledger).rule((r) => {

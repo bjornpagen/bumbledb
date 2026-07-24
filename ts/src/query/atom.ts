@@ -41,11 +41,12 @@ import type {
 	MatchOwner,
 	MintSlotOf,
 	Param,
+	ParamsRecord,
 	ParamValueAt,
 	SetParam,
 	ShapeOf
 } from "#query/scope.ts"
-import { isTerm } from "#query/scope.ts"
+import { inferred, isTerm } from "#query/scope.ts"
 import type { FieldsShape } from "#relation.ts"
 
 /**
@@ -154,6 +155,8 @@ type RuleItem =
 			readonly kind: "idb"
 			readonly rec: RecData
 			readonly bindings: ReadonlyArray<{ readonly key: string; readonly ref: AnyVar }>
+			/** `true` on a negated finished-stratum atom (`r.not(rec, {...})`): probed through its anti-probe, binds nothing. */
+			readonly negated: boolean
 	  }
 	| { readonly kind: "cond"; readonly cond: CondData }
 
@@ -282,6 +285,35 @@ interface NotAtom<R extends MatchOwner, B> {
 	readonly bindings: B
 }
 
+/**
+ * A recursive predicate as a NEGATION target — the structural half of the
+ * rec reference (`data` carries rules, never fields, so an EDB or closed
+ * owner can never match it and the `not()` overloads stay disjoint).
+ */
+interface RecTarget {
+	readonly name: string
+	readonly data: RecData
+	readonly [inferred]?: { readonly params: ParamsRecord; readonly head: HeadShapeOf }
+}
+
+/** The head signature a threaded rec target carries (`undefined` before its first rule seals one). */
+type HeadShapeOf = Readonly<Record<string, ClassedField>> | undefined
+
+/**
+ * One negated FINISHED-STRATUM atom — negation OF a lower stratum is
+ * engine-legal (the strata judge refuses only negation *through* a cycle:
+ * a finished set is what keeps the operator monotone), and this value is
+ * its one spelling: `r.not(reach, { c })` in an output rule rejects every
+ * binding the finished stratum extends, through the engine's anti-probe.
+ * Binds nothing, only rejects — every variable it names must be positively
+ * bound in the rule (the same safety rule as EDB negation).
+ */
+interface NotIdbAtom<Target extends RecTarget, B> {
+	readonly cond: "notIdb"
+	readonly target: Target
+	readonly bindings: B
+}
+
 /** Any comparison value. */
 type AnyCmp = Cmp<CmpKind, unknown, unknown, unknown>
 
@@ -291,8 +323,11 @@ type AnyTreeChild = AnyCmp | Tree<readonly AnyTreeChild[]>
 /** Any negated-atom value. */
 type AnyNotAtom = NotAtom<MatchOwner, unknown>
 
-/** Any `.where` input: a comparison, a condition tree, or a negated atom. */
-type AnyCond = AnyCmp | Tree<readonly AnyTreeChild[]> | AnyNotAtom
+/** Any negated finished-stratum value. */
+type AnyNotIdbAtom = NotIdbAtom<RecTarget, unknown>
+
+/** Any `.where` input: a comparison, a condition tree, or a negated atom (EDB, closed, or finished stratum). */
+type AnyCond = AnyCmp | Tree<readonly AnyTreeChild[]> | AnyNotAtom | AnyNotIdbAtom
 
 /** What `eq`'s right side accepts (`ParamSet` is `Eq`-only — the IR's rule). */
 type EqRight = AnyVar | Param<string> | SetParam<string> | bigint | string | boolean | Uint8Array | IntervalValue
@@ -465,14 +500,34 @@ function or<const C extends readonly AnyTreeChild[]>(...children: C): Tree<C> {
  * rejects every binding some matching fact extends. A negated atom binds
  * nothing, only rejects: every variable it names must be positively bound
  * in the rule, a construction-time wall (the engine's safety refusal stands
- * behind it). A CLOSED owner is legal here too.
+ * behind it). A CLOSED owner is legal here too — and so is a FINISHED
+ * STRATUM: `not(reach, { c })` in an output rule negates the rec's
+ * finished set (a named record over its head keys, variables only — the
+ * same wall `idb()` holds), the one spelling of the engine-legal
+ * complement query (`(n) | Node(id: n), !reach(n);` on the Rust surface).
  */
-function not<R extends MatchOwner, const B extends MatchShape<MatchFields<R>>>(
-	relation: R,
+function not<R extends MatchOwner, const B extends MatchShape<MatchFields<R>>>(relation: R, bindings: B): NotAtom<R, B>
+function not<Target extends RecTarget, const B extends Readonly<Record<string, AnyVar>>>(
+	target: Target,
 	bindings: B
-): NotAtom<R, B> {
-	const value: NotAtom<R, B> = { cond: "not", relation, bindings }
-	return Object.freeze(value)
+): NotIdbAtom<Target, B>
+function not(
+	relation: MatchOwner | RecTarget,
+	bindings: Readonly<Record<string, unknown>>
+): NotAtom<MatchOwner, unknown> | NotIdbAtom<RecTarget, unknown> {
+	if (isRecTarget(relation)) {
+		return Object.freeze({ cond: "notIdb" as const, target: relation, bindings })
+	}
+	return Object.freeze({ cond: "not" as const, relation, bindings })
+}
+
+/**
+ * THE negation-target discriminant: a rec's runtime data carries its rules,
+ * a relation's its fields (and a closed relation's its handle roster) — the
+ * shapes are disjoint by construction, so the dispatch is total.
+ */
+function isRecTarget(value: MatchOwner | RecTarget): value is RecTarget {
+	return "rules" in value.data
 }
 
 /**
@@ -532,6 +587,49 @@ type NotOk<Classes extends SchemaClasses, F extends FieldsShape, CR, B> = false 
 	? false
 	: true
 
+/** Reads a rec target's sealed head signature off its inference slot (`undefined` on an unthreaded handle). */
+type RecHeadOf<T> = T extends { readonly [inferred]?: infer S }
+	? Exclude<S, undefined> extends { readonly head: infer H }
+		? H
+		: undefined
+	: undefined
+
+/** Reads a rec target's params record off its inference slot. */
+type RecParamsOf<T> = T extends { readonly [inferred]?: infer S }
+	? Exclude<S, undefined> extends { readonly params: infer P }
+		? P
+		: never
+	: never
+
+/** One negated finished-stratum position's judgment: a variable, class-equal to its head slot when the head is carried. */
+type NotIdbBindingOk<Classes extends SchemaClasses, HeadSlot, V> = V extends AnyVar
+	? HeadSlot extends ClassedField
+		? JoinOk<HeadSlot, MintSlotOf<Classes, V>> extends true
+			? true
+			: false
+		: true
+	: false
+
+/**
+ * The whole negated finished-stratum atom's judgment — the negation twin of
+ * the `idb()` chain's `CheckIdbBindings`: when the target carries its head
+ * (a threaded rec handle), the bindings record's key set must EXACTLY equal
+ * the head's and each variable must be class-equal to its head slot; an
+ * unthreaded handle still takes variables only.
+ */
+type NotIdbOk<Classes extends SchemaClasses, Head, B> =
+	Head extends Readonly<Record<string, ClassedField>>
+		? [keyof B] extends [keyof Head]
+			? [keyof Head] extends [keyof B]
+				? false extends { [K in keyof B]: NotIdbBindingOk<Classes, Head[K & keyof Head], B[K]> }[keyof B]
+					? false
+					: true
+				: false
+			: false
+		: false extends { [K in keyof B]: B[K] extends AnyVar ? true : false }[keyof B]
+			? false
+			: true
+
 /**
  * One condition's judgment — the type-level twin of the engine's comparison
  * roster: class-equal joins (off the mint slots), orderable order sides (an
@@ -561,9 +659,11 @@ type CondOkBool<Classes extends SchemaClasses, C> = [AnyTreeChild] extends [C]
 			? false extends CondOkBool<Classes, Ch[number]>
 				? false
 				: true
-			: C extends NotAtom<infer R extends MatchOwner, infer B>
-				? NotOk<Classes, MatchFields<R>, ClassRecordOf<Classes, R["name"]>, B>
-				: false
+			: C extends NotIdbAtom<infer T extends RecTarget, infer B>
+				? NotIdbOk<Classes, RecHeadOf<T>, B>
+				: C extends NotAtom<infer R extends MatchOwner, infer B>
+					? NotOk<Classes, MatchFields<R>, ClassRecordOf<Classes, R["name"]>, B>
+					: false
 
 /** The validated `.where` argument (intersect with the inferred condition type). */
 type CheckCond<Classes extends SchemaClasses, C> = CondOkBool<Classes, C> extends true ? C : never
@@ -605,9 +705,11 @@ type CondParams<C> = [AnyTreeChild] extends [C]
 						: never
 		: C extends Tree<infer Ch extends readonly AnyTreeChild[]>
 			? CondParams<Ch[number]>
-			: C extends NotAtom<infer R extends MatchOwner, infer B>
-				? BindParams<MatchFields<R>, B>
-				: never
+			: C extends NotIdbAtom<infer T extends RecTarget, unknown>
+				? RecParamsOf<T>
+				: C extends NotAtom<infer R extends MatchOwner, infer B>
+					? BindParams<MatchFields<R>, B>
+					: never
 
 /** The flattened params record one bindings record contributes. */
 type BindParamsShape<F extends FieldsShape, B> = ShapeOf<BindParams<F, B>>
@@ -646,11 +748,13 @@ export type {
 	MatchOwner,
 	MatchShape,
 	NotAtom,
+	NotIdbAtom,
 	OrderSide,
 	OrderVarOk,
 	ParamUse,
 	PointSide,
 	RecData,
+	RecTarget,
 	RuleData,
 	RuleItem,
 	SlotAt,

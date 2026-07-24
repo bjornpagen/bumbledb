@@ -1207,9 +1207,9 @@ for (;;) {
 Termination is the host's theorem: `seen` grows strictly or the loop breaks,
 inside a finite node set. When the idiom's costs bite — **unbounded or large
 depth**, or **closure composed into a larger plan** — write the engine-native
-form instead: `?root` seeds the predicate, and the output joins the finished
-set back through the theory's own domain relation (an `idb` atom is a join
-position, so the head rides the `Node` atom):
+form instead: `?root` seeds the predicate, and the output is the finished
+set's own identity projection (an `idb` atom is a positive occurrence, so it
+grounds its variables — no re-grounding join over a domain relation exists):
 
 ```ts
 const reach = program(Closure, (p) => {
@@ -1231,10 +1231,44 @@ const reach = program(Closure, (p) => {
 		})
 	return p.output((r) => {
 		const { id: c } = v(Node)
-		return r.match(Node, { id: c }).idb(seeded, { c }).find({ c })
+		return r.idb(seeded, { c }).find({ c })
 	})
 })
 const reachPrepared = db.prepare(reach)
+```
+
+The complement is one `r.not` away — negation **of** a finished stratum is
+engine-legal (the strata judge refuses only negation *through* a cycle), so
+"every node the closure never reached" runs in-plan through the engine's
+anti-probe, never as a host-side set difference — the same program with the
+output rule:
+
+```ts
+const unreached = program(Closure, (p) => {
+	const rec = p.rec("reach")
+	const seeded = rec
+		.rule((r) => {
+			const { id: c } = v(Node)
+			return r
+				.match(Node, { id: c })
+				.where(eq(c, r.param("root")))
+				.find({ c })
+		})
+		.rule((r) => {
+			const { child: c, parent } = v(Parent)
+			return r
+				.match(Parent, { child: c, parent })
+				.idb(rec, { c: parent })
+				.find({ c })
+		})
+	return p.output((r) => {
+		const { id: c } = v(Node)
+		return r
+			.match(Node, { id: c })
+			.where(r.not(seeded, { c }))
+			.find({ c })
+	})
+})
 ```
 
 (the test drives both dialects and asserts the same reachable sets, root for
