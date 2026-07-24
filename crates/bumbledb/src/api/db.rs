@@ -66,6 +66,7 @@ mod snapshot;
 mod write;
 
 pub use exhume::{Exhumed, exhume};
+pub use write::Witness;
 
 /// Facts per write transaction in [`Db::bulk_load`] /
 /// [`Db::bulk_load_dyn`] — the documented chunking convenience

@@ -84,6 +84,45 @@ impl<S> Drop for EscapedIdBurn<'_, S> {
     }
 }
 
+/// The generation witness, reified (`docs/architecture/70-api.md`
+/// § conditional writes): the environment identity and generation one
+/// [`Snapshot`] observed, as a plain value. Fields are private and the one
+/// construction site is [`Snapshot::witness`], so a witness stays evidence
+/// — never an integer a caller could fabricate (the recorded refusal); a
+/// stale-cached witness is exactly what the commit-time compare convicts
+/// as `GenerationMoved`. The value carries the snapshot's schema typestate
+/// (the binding-proof discipline every witness follows) and crosses
+/// threads by MOVE, so no `&Snapshot` ever outlives its snapshot to reach
+/// the writer — the dangling witness of a closed snapshot is
+/// unrepresentable, not defended (findings 018/021).
+#[derive(Clone, Copy)]
+#[must_use]
+pub struct Witness<S> {
+    instance: u64,
+    generation: crate::GenerationId,
+    marker: std::marker::PhantomData<fn() -> S>,
+}
+
+impl<S> Snapshot<'_, S> {
+    /// Mints this snapshot's [`Witness`]: the generation is read inside
+    /// the snapshot's own transaction (snapshot-constant; the existing
+    /// race-closer of `50-storage.md`), never through a separate read.
+    /// The generation itself stays unreadable — the witness consumes it
+    /// internally; the diagnostics surface remains [`Db::generation`].
+    ///
+    /// # Errors
+    ///
+    /// `Corruption(MetaMissing)` if the tx-id meta key is absent or
+    /// malformed.
+    pub fn witness(&self) -> Result<Witness<S>> {
+        Ok(Witness {
+            instance: self.txn().env_instance(),
+            generation: self.txn().generation()?,
+            marker: std::marker::PhantomData,
+        })
+    }
+}
+
 impl<S> Db<S> {
     /// Runs `f` as the single writer: takes the writer mutex, hands `f` a
     /// delta transaction, and commits on `Ok`. `Err` or panic drops the
@@ -134,9 +173,9 @@ impl<S> Db<S> {
     /// The engine ships the error, never a loop — retry is host policy:
     /// re-run the query, re-compute, `write_from` again. `Snapshot`
     /// exposes no `generation()` accessor: the witness consumes the
-    /// generation internally, and the diagnostics surface is
-    /// [`Db::generation`] (decided — nothing new ships until the stats
-    /// surface wants it).
+    /// generation internally (its fields are private), and the
+    /// diagnostics surface is [`Db::generation`] (decided — nothing new
+    /// ships until the stats surface wants it).
     ///
     /// # Errors
     ///
@@ -153,14 +192,31 @@ impl<S> Db<S> {
         witness: &Snapshot<'_, S>,
         f: impl FnOnce(&mut WriteTx<'_, S>) -> Result<R>,
     ) -> Result<R> {
-        if witness.txn().env_instance() != self.env.instance() {
+        self.write_from_witness(witness.witness()?, f)
+    }
+
+    /// [`Db::write_from`] over the reified [`Witness`] — the lane for a
+    /// caller that cannot hold `&Snapshot` across its own boundary (the
+    /// FFI bridge parks each snapshot on a worker thread): the snapshot
+    /// mints the value where it lives and the value moves here. Same
+    /// checks in the same order, same errors, same one-compare cost.
+    ///
+    /// # Errors
+    ///
+    /// As [`Db::write_from`].
+    ///
+    /// # Panics
+    ///
+    /// As [`Db::write`] (non-reentrant).
+    pub fn write_from_witness<R>(
+        &self,
+        witness: Witness<S>,
+        f: impl FnOnce(&mut WriteTx<'_, S>) -> Result<R>,
+    ) -> Result<R> {
+        if witness.instance != self.env.instance() {
             return Err(Error::ForeignSnapshot);
         }
-        // Read inside the witness's own transaction (snapshot-constant;
-        // the existing race-closer) — holding no lock across any read
-        // phase: the writer mutex is taken only below.
-        let witnessed = witness.txn().generation()?;
-        self.write_witnessed(Some(witnessed), f)
+        self.write_witnessed(Some(witness.generation), f)
     }
 
     /// The one write body. `witnessed` is the only difference between

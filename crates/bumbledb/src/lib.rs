@@ -120,7 +120,9 @@ pub use allen::{AllenMask, Basic, classify};
 /// ruling, docs/architecture/60-validation.md § the deletion record).
 #[cfg(feature = "image-oracle")]
 pub use api::db::image_oracle::ImageDivergence;
-pub use api::db::{BulkLoadError, Db, Exhumed, Fact, Fresh, Key, Snapshot, WriteTx, exhume};
+pub use api::db::{
+    BulkLoadError, Db, Exhumed, Fact, Fresh, Key, Snapshot, Witness, WriteTx, exhume,
+};
 pub use api::prepared::{
     Answer, AnswerValue, Answers, BindValue, OccurrenceDrift, ParamArg, PreparedQuery, Staleness,
 };
