@@ -35,9 +35,12 @@
 #     Db-touching siblings and add no pure kernel coverage), plan::,
 #     the tests/ integration binaries) — FFI: they open
 #     LMDB environments through heed/lmdb-sys, and Miri cannot
-#     interpret the mdb_* foreign calls. colt's probe logic is pure,
-#     but its test fixtures build real stores, so it is out with the
-#     rest; its shared SWAR primitives are covered via exec::wordmap.
+#     interpret the mdb_* foreign calls. colt's LMDB-backed fixtures
+#     are out with the rest, but its probe/gather logic is pure — the
+#     store-free exec::colt::tests::synthetic module (a
+#     TransientImage-built image, zero storage) is IN, the standing
+#     referee for gather_segment's get_unchecked interior; the shared
+#     SWAR primitives are covered via exec::wordmap.
 #   * the ts bridge crate (ts/crate) runs on NO Miri lane — its unsafe
 #     is napi-boundary pointer laundering (lib.rs, marshal.rs), the
 #     same foreign wall as mdb_*, and its Rust tests open real LMDB
@@ -74,7 +77,8 @@ cd "$(dirname "$0")/.."
 
 FILTERS="allen::tests:: interval::tests:: interval::sweep:: \
 encoding::tests:: schema::tests::member_set exec::kernel::tests:: \
-exec::wordmap:: ir::normalize::fold::tests:: arena:: digest::"
+exec::wordmap:: exec::colt::tests::synthetic:: \
+ir::normalize::fold::tests:: arena:: digest::"
 
 SKIPS="--skip exhaustive_ \
 --skip false_tag_rate_stays --skip a_single_multiply_hash \
