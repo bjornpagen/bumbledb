@@ -484,6 +484,46 @@ describe("the Db runtime against a real store", function suite() {
 		)
 	})
 
+	test("db.write honors abandon — the transaction rolls back, the payload is the outcome (R10)", function writeAbandon() {
+		const before = db.read(function generationOf(snap) {
+			return snap.generation
+		})
+		const outcome = db.write(function bail(tx) {
+			tx.insert(Holder, { name: "write-abandon-never-lands" })
+			return abandon({ reason: "declined" })
+		})
+		assert.ok(!outcome.ok)
+		assert.ok("abandoned" in outcome, "the abandon payload is the outcome — never a silent commit")
+		assert.deepEqual(outcome.abandoned, { reason: "declined" })
+		assert.equal(
+			db.read(function generationOf(snap) {
+				return snap.generation
+			}),
+			before,
+			"no commit was issued, not even an empty one"
+		)
+		const ghosts = db.scan(Holder).filter(function abandonedRows(holder) {
+			return holder.name === "write-abandon-never-lands"
+		})
+		assert.equal(ghosts.length, 0, "the recorded delta was aborted")
+	})
+
+	test("tx.insert returns { changed, ...fresh } — the Rust-surface bijection (R11)", function insertChanged() {
+		const committed = db.write(function replay(tx) {
+			const first = tx.insert(Holder, { name: "changed-bit" })
+			assert.equal(first.changed, true, "a fresh insert changes the final state")
+			assert.equal(typeof first.id, "bigint", "the minted cell rides beside the bit")
+			const replayed = tx.insert(Holder, { id: first.id, name: "changed-bit" })
+			assert.equal(replayed.changed, false, "the resupplied replay reports no state change — no contains round trip")
+			assert.equal(replayed.id, first.id, "resupply preserves identity")
+			const noFresh = tx.insert(SavingsTerms, { account: must(ids.graceAccount), rate: 777n })
+			assert.equal(noFresh.changed, true, "a fresh-field-less relation's insert carries the bit too")
+			assert.equal(tx.insert(SavingsTerms, { account: must(ids.graceAccount), rate: 777n }).changed, false)
+			return abandon("probe only")
+		})
+		assert.ok(!committed.ok, "the probe delta abandons — the store is untouched")
+	})
+
 	test("resume = reopen: the cached open reads every committed fact back", async function reopen() {
 		const again = await Db.open(storeDir, Ledger)
 		assert.strictEqual(again, db, "in-process resume is the cached value itself")

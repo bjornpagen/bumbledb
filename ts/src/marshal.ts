@@ -261,18 +261,22 @@ function isCompleteFact<R extends AnyRelation>(
 }
 
 /**
- * The insert-return trusted seam: the collected fresh cells of one insert
- * (minted by the engine or resupplied by the caller) are the relation's
- * fresh ids as bare bigints — same presence-only direction as
+ * The insert-return trusted seam (R11): one insert's return carries the
+ * engine's changed-state report beside the collected fresh cells (minted by
+ * the engine or resupplied by the caller) — the bit is verified boolean and
+ * the fresh ids present, same presence-only direction as
  * {@link isCompleteFact}.
  */
-function isMintedFresh<R extends AnyRelation>(
+function isInserted<R extends AnyRelation>(
 	relation: R,
-	minted: Readonly<Record<string, FactValue>>
-): minted is Readonly<Record<string, FactValue>> & Minted<R> {
-	return relation.data.fields.every(function presentWhenFresh(declared) {
-		return !isFreshField(declared.field) || minted[declared.name] !== undefined
-	})
+	value: Readonly<Record<string, FactValue | boolean>>
+): value is Readonly<Record<string, FactValue | boolean>> & { readonly changed: boolean } & Minted<R> {
+	return (
+		typeof value.changed === "boolean" &&
+		relation.data.fields.every(function presentWhenFresh(declared) {
+			return !isFreshField(declared.field) || value[declared.name] !== undefined
+		})
+	)
 }
 
 /**
@@ -307,4 +311,4 @@ function factOf<R extends AnyRelation>(relation: R, row: readonly FactValue[]): 
 }
 
 export type { KeyFact, Minted }
-export { cellOf, factOf, handleOf, isFreshField, isMintedFresh, keyRowOf, recordOf, rowOf }
+export { cellOf, factOf, handleOf, isFreshField, isInserted, keyRowOf, recordOf, rowOf }

@@ -41,7 +41,7 @@ import {
 	factOf,
 	handleOf,
 	isFreshField,
-	isMintedFresh,
+	isInserted,
 	type KeyFact,
 	keyRowOf,
 	type Minted,
@@ -132,16 +132,35 @@ interface Violation<Rels extends SchemaRelations> {
 }
 
 /**
- * A commit's domain outcome: the committed generation, or the COMPLETE
- * violation set (every violated statement cited once, per direction for a
- * containment, in materialized statement order). Narrows on `.ok`.
+ * The abandoned arm of a write result (ruled 2026-07-23, R10): present in
+ * the type EXACTLY when the callback can abandon — the conditional
+ * distributes over `R`, so a callback with no `Abandon` arm contributes
+ * `never` and the arm vanishes from the sum. The outcome is in the type;
+ * a dead arm is never handled.
  */
-type WriteResult<Rels extends SchemaRelations> =
+type AbandonedArm<R> = R extends Abandon<infer P> ? { readonly ok: false; readonly abandoned: P } : never
+
+/**
+ * A write's domain outcome, one sum for BOTH verbs (ruled 2026-07-23,
+ * R10): the committed generation; the COMPLETE violation set (every
+ * violated statement cited once, per direction for a containment, in
+ * materialized statement order); or the callback's own abandon payload —
+ * commit-vs-abandon is in the type, so a caller's explicit decline to
+ * commit can never be silently discarded. Narrows on `.ok`, then (when the
+ * callback can abandon) on `"violations" in result`.
+ */
+type WriteResult<Rels extends SchemaRelations, R = void> =
 	| { readonly ok: true; readonly generation: bigint }
 	| { readonly ok: false; readonly violations: readonly Violation<Rels>[] }
+	| AbandonedArm<R>
 
-/** The delta-building callback of a write: runs synchronously against the live transaction. */
-type DeltaBuild<Rels extends SchemaRelations> = (tx: Tx<Rels>) => void
+/**
+ * The delta-building callback of a write: runs synchronously against the
+ * live transaction. Returning {@link abandon}`(payload)` rolls the
+ * transaction back (R10) — the result type carries the payload arm exactly
+ * then.
+ */
+type DeltaBuild<Rels extends SchemaRelations, R = void> = (tx: Tx<Rels>) => R
 
 /**
  * The runtime discriminant of {@link Abandon} values — a property probe is
@@ -151,10 +170,11 @@ type DeltaBuild<Rels extends SchemaRelations> = (tx: Tx<Rels>) => void
 const abandonMark: unique symbol = Symbol("bumbledb.abandon")
 
 /**
- * The abandon sentinel {@link abandon} builds: returning one from a
- * `writeWitnessed` callback aborts the attempt WITHOUT committing (no empty
- * commit is ever issued) and surfaces the payload as
- * `{ ok: false, abandoned: payload }`.
+ * The abandon sentinel {@link abandon} builds: returning one from a `write`
+ * or `writeWitnessed` callback rolls the transaction back WITHOUT
+ * committing (no empty commit is ever issued) and surfaces the payload as
+ * `{ ok: false, abandoned: payload }` (ruled 2026-07-23, R10 — the
+ * sentinel's contract is unconditional, whichever write verb received it).
  */
 interface Abandon<P> {
 	readonly [abandonMark]: true
@@ -162,26 +182,28 @@ interface Abandon<P> {
 }
 
 /**
- * Wraps a payload in the {@link Abandon} sentinel — the one way a
- * `writeWitnessed` callback declines to commit: `return abandon(payload)`
- * aborts the delta (nothing is committed, not even an empty commit) and the
- * write resolves to `{ ok: false, abandoned: payload }`.
+ * Wraps a payload in the {@link Abandon} sentinel — the one way a write
+ * callback declines to commit: `return abandon(payload)` aborts the delta
+ * (nothing is committed, not even an empty commit) and the write resolves
+ * to `{ ok: false, abandoned: payload }`, from `write` and `writeWitnessed`
+ * alike (R10).
  */
 function abandon<P>(payload: P): Abandon<P> {
 	return Object.freeze({ [abandonMark]: true as const, payload })
 }
 
 /**
- * The abandon payload type a `writeWitnessed` callback's return type
- * implies: the payload of its `Abandon` arm, `never` when the callback can
- * never abandon (the `abandoned` outcome is then statically unreachable).
+ * The abandon payload type a write callback's return type implies: the
+ * payload of its `Abandon` arm, `never` when the callback can never
+ * abandon (the `abandoned` outcome is then statically unreachable and
+ * {@link AbandonedArm} erases it from the sum).
  */
 type AbandonedPayload<R> = R extends Abandon<infer P> ? P : never
 
 /**
- * Narrows a `writeWitnessed` callback result to the abandon sentinel. The
- * probe is the private {@link abandonMark} symbol only {@link abandon} sets,
- * and `R`'s `Abandon` arm is the only way a sentinel can flow out of the
+ * Narrows a write callback result to the abandon sentinel. The probe is
+ * the private {@link abandonMark} symbol only {@link abandon} sets, and
+ * `R`'s `Abandon` arm is the only way a sentinel can flow out of the
  * callback — so the narrowed payload type is sound by construction.
  */
 function isAbandon<R>(value: R): value is R & Abandon<AbandonedPayload<R>> {
@@ -189,15 +211,30 @@ function isAbandon<R>(value: R): value is R & Abandon<AbandonedPayload<R>> {
 }
 
 /**
- * `writeWitnessed`'s domain outcome: the committed generation, the COMPLETE
- * engine violation set (rejection-as-data, exactly {@link WriteResult}'s
- * false arm), or the callback's own abandon payload. Narrows on `.ok`, then
- * on `"violations" in result`.
+ * The abandon outcome's trusted admission seam: the value's shape is the
+ * checkable half (the sentinel mark only {@link abandon} mints, and the
+ * outcome carrying that sentinel's own payload), and the sentinel's
+ * existence IS the proof `R` carries an `Abandon` arm — so the outcome is
+ * admitted at the conditional {@link AbandonedArm} face the type tier
+ * cannot resolve over an open `R`.
  */
-type WitnessedWriteResult<Rels extends SchemaRelations, R> =
-	| { readonly ok: true; readonly generation: bigint }
-	| { readonly ok: false; readonly violations: readonly Violation<Rels>[] }
-	| { readonly ok: false; readonly abandoned: AbandonedPayload<R> }
+function isAbandonedOutcome<Rels extends SchemaRelations, R>(
+	outcome: { readonly ok: false; readonly abandoned: AbandonedPayload<R> },
+	sentinel: Abandon<AbandonedPayload<R>>
+): outcome is { readonly ok: false; readonly abandoned: AbandonedPayload<R> } & WriteResult<Rels, R> {
+	return isAbandon(sentinel) && outcome.abandoned === sentinel.payload
+}
+
+/** Builds the abandoned write outcome from the callback's own sentinel (the R10 arm's one mint). */
+function abandonedOutcome<Rels extends SchemaRelations, R>(
+	sentinel: Abandon<AbandonedPayload<R>>
+): WriteResult<Rels, R> {
+	const outcome = Object.freeze({ ok: false as const, abandoned: sentinel.payload })
+	if (!isAbandonedOutcome<Rels, R>(outcome, sentinel)) {
+		throw errors.new("bumbledb abandon outcome construction incomplete")
+	}
+	return outcome
+}
 
 /**
  * One live write transaction: the submitted delta with the engine's
@@ -210,10 +247,14 @@ interface Tx<Rels extends SchemaRelations> {
 	/**
 	 * Records one insert. Omitted fresh fields are MINTED through the
 	 * engine's alloc lane and returned as bare bigints; supplying them instead
-	 * preserves identity (the resupply idiom). Returns the relation's
-	 * fresh cells, minted or resupplied.
+	 * preserves identity (the resupply idiom). Returns `{ changed, ...fresh }`
+	 * (ruled 2026-07-23, R11): the engine's changed-state report — the Rust
+	 * surface's `insert(&fact) -> bool` bijection `delete` always honored —
+	 * beside the relation's fresh cells, minted or resupplied. The
+	 * idempotent-replay lane reads the bit from the insert itself; no extra
+	 * `contains` round trip exists.
 	 */
-	insert<R extends MemberRelation<Rels>>(relation: R, fact: InsertFact<R>): Minted<R>
+	insert<R extends MemberRelation<Rels>>(relation: R, fact: InsertFact<R>): { readonly changed: boolean } & Minted<R>
 	/** Records one delete; `true` iff the final state changed. */
 	delete<R extends MemberRelation<Rels>>(relation: R, fact: Fact<R>): boolean
 	/** Final-state membership of one complete fact. */
@@ -343,9 +384,13 @@ interface Db<Rels extends SchemaRelations> {
 	/**
 	 * One delta transaction: builds the delta synchronously through `fn`,
 	 * commits, and returns the domain outcome. A throw from `fn` aborts
-	 * the delta (LMDB untouched) and rethrows wrapped.
+	 * the delta (LMDB untouched) and rethrows wrapped. `fn` may decline to
+	 * commit by returning {@link abandon}`(payload)` (ruled 2026-07-23,
+	 * R10): the transaction rolls back — nothing is committed, not even an
+	 * empty commit — and the outcome is `{ ok: false, abandoned: payload }`,
+	 * an arm the result type carries exactly when the callback can abandon.
 	 */
-	write(fn: DeltaBuild<Rels>): WriteResult<Rels>
+	write<R = void>(fn: DeltaBuild<Rels, R>): WriteResult<Rels, R>
 	/**
 	 * The ONE witnessed-write form: snapshot → `fn` (premise reads via
 	 * `snap`, delta via `tx`) → witnessed commit, which lands only if no
@@ -364,7 +409,7 @@ interface Db<Rels extends SchemaRelations> {
 	 * `{ ok: false, abandoned: payload }` and NO commit (not even an empty
 	 * one) is issued.
 	 */
-	writeWitnessed<R>(fn: (snap: ReadScope<Rels>, tx: Tx<Rels>) => R): WitnessedWriteResult<Rels, R>
+	writeWitnessed<R>(fn: (snap: ReadScope<Rels>, tx: Tx<Rels>) => R): WriteResult<Rels, R>
 	/**
 	 * Prepares a query value built against THIS schema (identity is the
 	 * membership rule): lowers it to the engine IR, pins the plan, and
@@ -1100,7 +1145,10 @@ function openDb<Rels extends SchemaRelations>(handle: DbHandle, theory: Schema<R
 				})
 			}
 		})
-		function insert<R extends MemberRelation<Rels>>(relation: R, fact: InsertFact<R>): Minted<R> {
+		function insert<R extends MemberRelation<Rels>>(
+			relation: R,
+			fact: InsertFact<R>
+		): { readonly changed: boolean } & Minted<R> {
 			assertLive()
 			const entry = resolveOrdinary(relation)
 			const txHandle = resolveTx()
@@ -1108,14 +1156,14 @@ function openDb<Rels extends SchemaRelations>(handle: DbHandle, theory: Schema<R
 			const values: Record<string, unknown> = { ...recordOf(fact) }
 			const fresh = mintFreshCells(txHandle, entry, relation, values)
 			const row = rowOf(relation.data, values)
-			bridged("bumbledb tx insert", function record() {
-				native.txInsert(txHandle, entry.id, row)
+			const changed = bridged("bumbledb tx insert", function record() {
+				return native.txInsert(txHandle, entry.id, row)
 			})
-			Object.freeze(fresh)
-			if (!isMintedFresh(relation, fresh)) {
-				throw errors.new(`relation ${relation.name}: minted fresh record is incomplete`)
+			const inserted: Readonly<Record<string, FactValue | boolean>> = Object.freeze({ changed, ...fresh })
+			if (!isInserted(relation, inserted)) {
+				throw errors.new(`relation ${relation.name}: insert return record is incomplete`)
 			}
-			return fresh
+			return inserted
 		}
 		function remove<R extends MemberRelation<Rels>>(relation: R, fact: Fact<R>): boolean {
 			assertLive()
@@ -1138,7 +1186,7 @@ function openDb<Rels extends SchemaRelations>(handle: DbHandle, theory: Schema<R
 		return { tx, spend }
 	}
 
-	function runDelta(txHandle: TxHandle, fn: DeltaBuild<Rels>): WriteResult<Rels> {
+	function runDelta<R>(txHandle: TxHandle, fn: DeltaBuild<Rels, R>): WriteResult<Rels, R> {
 		const made = makeTx(function resolveTx() {
 			return txHandle
 		})
@@ -1167,6 +1215,18 @@ function openDb<Rels extends SchemaRelations>(handle: DbHandle, theory: Schema<R
 			throw errors.new(
 				"bumbledb write callback returned a thenable — the delta build is synchronous; an async callback is refused, nothing was committed"
 			)
+		}
+		if (isAbandon(built.data)) {
+			/**
+			 * The caller's explicit decline to commit (R10): the sentinel's
+			 * contract is unconditional — roll back, nothing committed, not
+			 * even an empty commit; commit is unreachable for a sentinel
+			 * result.
+			 */
+			bridged("abort bumbledb write transaction", function abort() {
+				native.txAbort(txHandle)
+			})
+			return abandonedOutcome<Rels, R>(built.data)
 		}
 		const committed = errors.trySync(function commitDelta() {
 			return bridged("commit bumbledb write transaction", function commit() {
@@ -1198,7 +1258,7 @@ function openDb<Rels extends SchemaRelations>(handle: DbHandle, theory: Schema<R
 		})
 	}
 
-	function write(fn: DeltaBuild<Rels>): WriteResult<Rels> {
+	function write<R = void>(fn: DeltaBuild<Rels, R>): WriteResult<Rels, R> {
 		const txHandle = bridged(`begin bumbledb write transaction (live snapshots: ${liveSnapshots})`, function begin() {
 			return native.dbWriteBegin(handle)
 		})
@@ -1210,7 +1270,7 @@ function openDb<Rels extends SchemaRelations>(handle: DbHandle, theory: Schema<R
 	 * attempt's snapshot: the committed generation, or the engine's
 	 * complete violation set as data.
 	 */
-	function commitWitnessed<R>(state: ScopeState, txHandle: TxHandle): WitnessedWriteResult<Rels, R> {
+	function commitWitnessed<R>(state: ScopeState, txHandle: TxHandle): WriteResult<Rels, R> {
 		const committed = errors.trySync(function commitWitnessedDelta() {
 			return bridged("commit bumbledb witnessed write transaction", function commit() {
 				return native.txCommit(txHandle)
@@ -1246,9 +1306,7 @@ function openDb<Rels extends SchemaRelations>(handle: DbHandle, theory: Schema<R
 	 * `undefined` exactly when the generation moved and the whole callback
 	 * must rerun on a fresh snapshot.
 	 */
-	function witnessedAttempt<R>(
-		fn: (snap: ReadScope<Rels>, tx: Tx<Rels>) => R
-	): WitnessedWriteResult<Rels, R> | undefined {
+	function witnessedAttempt<R>(fn: (snap: ReadScope<Rels>, tx: Tx<Rels>) => R): WriteResult<Rels, R> | undefined {
 		const state = openScopeState()
 		const generation = generationForScope(state)
 		const scope = makeScope(state, generation)
@@ -1315,7 +1373,7 @@ function openDb<Rels extends SchemaRelations>(handle: DbHandle, theory: Schema<R
 		if (isAbandon(built.data)) {
 			abortPending()
 			closeScopeState(state)
-			return Object.freeze({ ok: false, abandoned: built.data.payload })
+			return abandonedOutcome<Rels, R>(built.data)
 		}
 		const late = errors.trySync(function resolveCommitTx() {
 			if (pending.tx === undefined) {
@@ -1351,7 +1409,7 @@ function openDb<Rels extends SchemaRelations>(handle: DbHandle, theory: Schema<R
 	 * error, never a loop — retry is host policy, and this is the host
 	 * policy's own honesty bound).
 	 */
-	function writeWitnessed<R>(fn: (snap: ReadScope<Rels>, tx: Tx<Rels>) => R): WitnessedWriteResult<Rels, R> {
+	function writeWitnessed<R>(fn: (snap: ReadScope<Rels>, tx: Tx<Rels>) => R): WriteResult<Rels, R> {
 		for (let attempts = 0; attempts < WITNESSED_ATTEMPT_CAP; attempts += 1) {
 			const attempt = witnessedAttempt(fn)
 			if (attempt !== undefined) {
@@ -1586,6 +1644,7 @@ const Db = Object.freeze({
 
 export type {
 	Abandon,
+	AbandonedArm,
 	DeclaredKeyFact,
 	DeltaBuild,
 	MemberRelation,
@@ -1594,7 +1653,6 @@ export type {
 	ReadScope,
 	Tx,
 	Violation,
-	WitnessedWriteResult,
 	WriteResult
 }
 export { abandon, Db, ErrNewtypeMismatch, ErrWitnessedLivelock, WITNESSED_ATTEMPT_CAP }

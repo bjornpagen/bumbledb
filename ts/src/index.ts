@@ -44,6 +44,7 @@ export type { Count } from "#count.ts"
 export { atLeast, atMost, between, exactly, none } from "#count.ts"
 export type {
 	Abandon,
+	AbandonedArm,
 	DeclaredKeyFact,
 	DeltaBuild,
 	MemberRelation,
@@ -52,7 +53,6 @@ export type {
 	ReadScope,
 	Tx,
 	Violation,
-	WitnessedWriteResult,
 	WriteResult
 } from "#db.ts"
 export { abandon, Db, ErrNewtypeMismatch, ErrWitnessedLivelock, WITNESSED_ATTEMPT_CAP } from "#db.ts"
