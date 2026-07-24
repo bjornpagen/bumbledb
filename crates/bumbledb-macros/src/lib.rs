@@ -124,8 +124,8 @@
 //! from `Db::create`/`Db::open`, where the descriptor is validated.
 
 use bumbledb_theory::schema::spec::{
-    FieldSpec, LiteralAt, LiteralSetSpec, LiteralSpec, RelationSpec, RowSpec, SchemaSpec, SideSpec,
-    SpecIssue, StatementSide, StatementSpec, WindowSpec,
+    ClosedSpec, FieldSpec, LiteralAt, LiteralSetSpec, LiteralSpec, RelationSpec, RowSpec,
+    SchemaSpec, SideSpec, SpecIssue, StatementSide, StatementSpec, WindowSpec,
 };
 use bumbledb_theory::schema::{
     Generation, IntervalElement, LiteralSet, SchemaDescriptor, Side as SideDescriptor,
@@ -1368,13 +1368,20 @@ fn lower_input(schema: &SchemaAst) -> (SchemaSpec, SpanTable) {
 fn lower_relations(schema: &SchemaAst, spans: &mut SpanTable) -> Vec<RelationSpec> {
     let mut relations = Vec::with_capacity(schema.relations.len());
     for (rel_idx, relation) in schema.relations.iter().enumerate() {
-        let closed = relation.closed.is_some();
         if let Some(span) = relation.newtype_span {
             spans.newtypes.insert(rel_idx, span);
         }
-        let declared = &relation.fields[usize::from(closed)..];
-        let extension = relation.closed.as_ref().map(|extension| {
-            extension
+        let declared = &relation.fields[usize::from(relation.closed.is_some())..];
+        // The fused closed half (ruled 2026-07-23, R7): the handle
+        // newtype and the ground axioms travel together — the AST's
+        // synthetic id field at index 0 carries the newtype.
+        let closed = relation.closed.as_ref().map(|extension| ClosedSpec {
+            newtype: relation.fields[0]
+                .newtype
+                .as_deref()
+                .expect("closed relations carry the handle newtype")
+                .into(),
+            rows: extension
                 .rows
                 .iter()
                 .enumerate()
@@ -1402,14 +1409,10 @@ fn lower_relations(schema: &SchemaAst, spans: &mut SpanTable) -> Vec<RelationSpe
                         })
                         .collect(),
                 })
-                .collect()
+                .collect(),
         });
         relations.push(RelationSpec {
             name: relation.name.as_str().into(),
-            newtype: closed
-                .then(|| relation.fields[0].newtype.as_deref())
-                .flatten()
-                .map(Into::into),
             fields: declared
                 .iter()
                 .map(|field| FieldSpec {
@@ -1419,7 +1422,7 @@ fn lower_relations(schema: &SchemaAst, spans: &mut SpanTable) -> Vec<RelationSpe
                     fresh: field.fresh,
                 })
                 .collect(),
-            extension,
+            closed,
         });
     }
     relations
@@ -1610,6 +1613,10 @@ fn issue_spans(issue: &SpecIssue, spans: &SpanTable) -> Vec<Span> {
         // over-wide row never reaches lowering from the macro — the
         // `SchemaSpec` bindings surface is this issue's only producer.
         SpecIssue::RowArityExcess { .. } => vec![Span::call_site()],
+        // A declaration-shaped issue: the parse records no span for a
+        // relation's own name (only statement occurrences), so the cap
+        // marks the invocation.
+        SpecIssue::RelationTooManyFields { .. } => vec![Span::call_site()],
         SpecIssue::DuplicateHandleNewtype {
             second_relation, ..
         } => one(spans.newtypes.get(second_relation)),
@@ -1688,6 +1695,11 @@ fn issue_message(issue: &SpecIssue, spec: &SchemaSpec) -> String {
         } => format!(
             "schema!: closed relation `{name}`, row {row}: {supplied} values for \
              {declared} declared columns"
+        ),
+        SpecIssue::RelationTooManyFields { name, fields, .. } => format!(
+            "schema!: relation `{name}` seals {fields} fields — the u16 field-id \
+             space caps a relation at 65,535 sealed fields (a closed relation's \
+             synthetic `id` included)"
         ),
         SpecIssue::DuplicateHandleNewtype {
             newtype,
