@@ -49,6 +49,10 @@ impl Category {
 
 /// One recorded span or point event (`dur_ns == 0` ⇒ point event). The
 /// two payload args' meanings are defined per name in [`names`].
+/// The time fields are nanoseconds in every drained event; inside a
+/// live capture buffer they hold raw anchor-relative ticks until
+/// [`finish_capture`] converts once per event, off the measured
+/// windows (the `PhaseTimers` discipline).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TraceEvent {
     pub name: &'static str,
@@ -342,21 +346,26 @@ mod imp {
         *ANCHOR.get_or_init(fastclock::ticks)
     }
 
-    /// The opening stamp: raw ticks (0.30 ns; an early-read slide on an
-    /// opening stamp only lengthens the span, bounded by ~50 ns). The
-    /// anchor resolves FIRST — on the very first stamp the anchor would
-    /// otherwise be read after the stamp and sit ahead of it.
-    pub(super) fn now_ns() -> u64 {
+    /// The opening stamp: raw anchor-relative ticks (0.30 ns; an
+    /// early-read slide on an opening stamp only lengthens the span,
+    /// bounded by ~50 ns). The anchor resolves FIRST — on the very
+    /// first stamp the anchor would otherwise be read after the stamp
+    /// and sit ahead of it. Ticks, not ns: `ticks_to_ns`'s u128 divide
+    /// by the runtime `cntfrq` is a `__udivti3` libcall that would land
+    /// inside every enclosing span's measured window — events carry raw
+    /// ticks and convert once at drain, the `PhaseTimers` discipline.
+    pub(super) fn now_ticks() -> u64 {
         let anchor = anchor_ticks();
-        fastclock::ticks_to_ns(fastclock::ticks().wrapping_sub(anchor))
+        fastclock::ticks().wrapping_sub(anchor)
     }
 
     /// The closing stamp: self-synchronized — a raw
     /// closing stamp can read up to ~50 ns early, which is −83% on a
-    /// 28 ns span; `CNTVCTSS` cannot slide.
-    pub(super) fn now_ns_ss() -> u64 {
+    /// 28 ns span; `CNTVCTSS` cannot slide. Raw anchor-relative ticks,
+    /// as [`now_ticks`].
+    pub(super) fn now_ticks_ss() -> u64 {
         let anchor = anchor_ticks();
-        fastclock::ticks_to_ns(fastclock::ticks_ss().wrapping_sub(anchor))
+        fastclock::ticks_ss().wrapping_sub(anchor)
     }
 
     pub(super) fn capturing() -> bool {
@@ -365,14 +374,24 @@ mod imp {
 
     pub(super) fn start_capture() {
         BUFFER.with(|b| {
-            let mut slot = b.borrow_mut();
-            debug_assert!(slot.is_none(), "nested start_capture");
-            *slot = Some(Vec::with_capacity(4096));
+            // Idempotent by representation: a nested (or unwound-over)
+            // start extends the live capture, never destroys it — the
+            // silent mid-run timeline reset was the one way this seam
+            // could lie by omission.
+            b.borrow_mut().get_or_insert_with(|| Vec::with_capacity(4096));
         });
     }
 
     pub(super) fn finish_capture() -> Vec<TraceEvent> {
-        BUFFER.with(|b| b.borrow_mut().take().unwrap_or_default())
+        let mut events = BUFFER.with(|b| b.borrow_mut().take().unwrap_or_default());
+        // The one tick→ns conversion site, off every measured window:
+        // in-buffer events carry raw anchor-relative ticks in the two
+        // time fields until the capture ends.
+        for event in &mut events {
+            event.start_ns = fastclock::ticks_to_ns(event.start_ns);
+            event.dur_ns = fastclock::ticks_to_ns(event.dur_ns);
+        }
+        events
     }
 
     pub(super) fn record(event: TraceEvent) {
@@ -391,7 +410,7 @@ mod imp {
     pub(super) struct Live {
         pub name: &'static str,
         pub cat: Category,
-        pub start_ns: u64,
+        pub start_ticks: u64,
         pub a0: u64,
         pub a1: u64,
     }
@@ -414,11 +433,12 @@ mod imp {
     impl Drop for SpanGuard {
         fn drop(&mut self) {
             if let Some(live) = self.live.take() {
+                // Tick-valued time fields until the drain converts.
                 record(TraceEvent {
                     name: live.name,
                     cat: live.cat,
-                    start_ns: live.start_ns,
-                    dur_ns: now_ns_ss().saturating_sub(live.start_ns),
+                    start_ns: live.start_ticks,
+                    dur_ns: now_ticks_ss().saturating_sub(live.start_ticks),
                     a0: live.a0,
                     a1: live.a1,
                 });
@@ -437,8 +457,9 @@ pub fn capturing() -> bool {
     imp::capturing()
 }
 
-/// Begins capturing on this thread. Nested capture is a programmer error
-/// (debug-asserted).
+/// Begins capturing on this thread. Idempotent: a nested start extends
+/// the live capture (it never resets the timeline mid-run — recorded
+/// events are destroyed by nothing but [`finish_capture`]'s drain).
 #[cfg(feature = "trace")]
 pub fn start_capture() {
     imp::start_capture();
@@ -467,7 +488,7 @@ pub fn span_args(name: &'static str, cat: Category, a0: u64, a1: u64) -> SpanGua
             live: Some(imp::Live {
                 name,
                 cat,
-                start_ns: imp::now_ns(),
+                start_ticks: imp::now_ticks(),
                 a0,
                 a1,
             }),
@@ -481,7 +502,8 @@ pub fn span_args(name: &'static str, cat: Category, a0: u64, a1: u64) -> SpanGua
 #[cfg(feature = "trace")]
 pub fn event(name: &'static str, cat: Category, a0: u64, a1: u64) {
     if imp::capturing() {
-        let now = imp::now_ns();
+        // Tick-valued time fields until the drain converts.
+        let now = imp::now_ticks();
         imp::record(TraceEvent {
             name,
             cat,
