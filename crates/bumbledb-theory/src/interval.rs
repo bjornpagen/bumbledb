@@ -94,6 +94,20 @@ impl<T: Element> Interval<T> {
         Self::new(start, end)
     }
 
+    /// The schema macro's ground-axiom seam (ruled 2026-07-23, R14):
+    /// the emitted closed-column `const` accessors construct interval
+    /// constants here. `start < end` was already judged at expansion by
+    /// the macro's literal seam, and a generic `const new` cannot
+    /// restate the comparison (trait calls are not const) — so this
+    /// constructor carries the caller's proof instead of re-checking.
+    /// Hidden: hosts construct through [`Interval::new`], the
+    /// validation boundary.
+    #[doc(hidden)]
+    #[must_use]
+    pub const fn __ground_axiom(start: T, end: T) -> Self {
+        Self { start, end }
+    }
+
     /// Whether this interval is the unbounded ray `[start, ∞)`.
     #[must_use]
     pub fn is_ray(&self) -> bool {

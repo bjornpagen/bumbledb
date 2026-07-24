@@ -858,6 +858,58 @@ mod closed_relations {
     }
 }
 
+mod closed_column_accessors {
+    //! Declared columns project too (ruled 2026-07-23, R14 —
+    //! `docs/architecture/70-api.md` § the emission per closed
+    //! relation): per declared column the host enum carries a `const`
+    //! accessor in the `id()` style, rendered from the same typed
+    //! ground-axiom literals that seed the engine's extension — host and
+    //! engine cannot drift by construction, and reading an
+    //! expansion-time constant through a runtime query is the workaround
+    //! the accessors delete.
+
+    use bumbledb::Theory as _;
+    use bumbledb::schema::ValidateDescriptor as _;
+
+    bumbledb::schema! {
+        pub Fleet;
+
+        closed relation Tier as TierId = { Free, Paid };
+        closed relation Plan as PlanId {
+            active: bool,
+            rank:   u64,
+            drift:  i64,
+            tag:    bytes<2>,
+            window: interval<u64, 7> as PlanWindow,
+            tier:   u64 as TierId,
+        } = {
+            Basic { active: true,  rank: 1, drift: -3, tag: b"ba", window: 0..7,  tier: Free },
+            Pro   { active: false, rank: 2, drift: 4,  tag: b"pr", window: 7..14, tier: Paid },
+        };
+    }
+
+    /// Every legal column kind projects as a const accessor; newtyped
+    /// columns return the newtype (a handle-typed column returns the
+    /// referenced handle newtype — the row id, exactly as the extension
+    /// stores it); and the declaring schema stays engine-valid.
+    #[test]
+    fn every_column_projects_as_a_const_accessor() {
+        Fleet
+            .descriptor()
+            .validate()
+            .expect("the declared schema is valid");
+        const RANK: u64 = Plan::Pro.rank();
+        assert_eq!(RANK, 2);
+        assert!(Plan::Basic.active());
+        assert!(!Plan::Pro.active());
+        assert_eq!(Plan::Basic.drift(), -3);
+        assert_eq!(Plan::Pro.tag(), *b"pr");
+        const WINDOW: PlanWindow = Plan::Basic.window();
+        assert_eq!(WINDOW.0.bounds(), (0, 7));
+        assert_eq!(Plan::Pro.tier(), Tier::Paid.id());
+    }
+}
+
 mod discriminated_union {
     //! PRD 05's survival criterion: the discriminated-union pattern
     //! (docs/cookbook.md recipe 2) with its arms discriminated by a

@@ -100,8 +100,11 @@
 //! enum** (an emission, not a type — the engine's vocabulary is
 //! relational; the macro projects it into a Rust enum so rustc's pattern
 //! checking keeps working, welded to the row ids by const `id`/`from_id`
-//! and pinned by an emitted weld test), the handle newtype through the
-//! ordinary newtype machinery, and the descriptor's extension. **No fact
+//! and pinned by an emitted weld test), per declared column a **const
+//! accessor** on the host enum (ruled 2026-07-23, R14 — rendered from
+//! the lowered extension, so host and engine cannot drift), the handle
+//! newtype through the ordinary newtype machinery, and the descriptor's
+//! extension. **No fact
 //! struct and no `Fact` impl** — closed relations are unwritable. A bare
 //! handle in a statement selection (`| status == Frozen`) resolves through
 //! the selected field's newtype to its owning closed relation's row id.
@@ -1086,7 +1089,7 @@ pub fn schema(input: TokenStream) -> TokenStream {
     emit_schema_def(&mut out, &schema.name, &descriptor);
     emit_id_constants(&mut out, &schema);
     emit_newtypes(&mut out, &schema.relations);
-    emit_closed(&mut out, &schema.relations);
+    emit_closed(&mut out, &schema.relations, &descriptor);
     // The running fresh-field ordinal across ALL relations in declaration
     // order (field order within) — exactly the first block of
     // `SchemaDescriptor::materialized_statements`, so each fresh field's
@@ -2259,6 +2262,50 @@ fn emit_closed(out: &mut String, relations: &[Relation], descriptor: &SchemaDesc
                             Some(super::{name}::{handle}));"
             );
         }
+        // The column accessors (ruled 2026-07-23, R14): one const fn per
+        // declared column, arms rendered from the lowered extension —
+        // handles already resolved to row ids, every value typed by the
+        // literal seam. Ground-axiom values are expansion-time
+        // constants; a runtime query for one is the workaround these
+        // delete.
+        let lowered = descriptor.relations[rel_idx]
+            .extension
+            .as_deref()
+            .expect("the lowering carries every closed extension");
+        let mut accessors = String::new();
+        for (column, field) in relation.fields[1..].iter().enumerate() {
+            assert_ne!(
+                field.name, "from_id",
+                "schema!: closed relation `{name}` declares a column `from_id` — \
+                 the emitted handle weld owns that name"
+            );
+            // `str` columns are refused on closed relations at
+            // validation (the handle IS the label) — the accessor type
+            // exists only so the expansion stays total on the way to
+            // that typed error.
+            let ty = if matches!(field.ty, FieldTy::Str) {
+                "&'static str".to_owned()
+            } else {
+                rust_field_ty(field)
+            };
+            let mut arms = String::new();
+            for (row, handle) in lowered.iter().zip(&handles) {
+                let _ = write!(
+                    arms,
+                    "Self::{handle} => {},",
+                    const_value_tokens(&row.values[column], field)
+                );
+            }
+            let _ = write!(
+                accessors,
+                "/// The `{column}` ground-axiom column — an expansion-time \
+                 constant per handle.\n\
+                 #[must_use] pub const fn {column}(self) -> {ty} {{\n\
+                     match self {{ {arms} }}\n\
+                 }}\n",
+                column = field.name,
+            );
+        }
         let _ = write!(
             out,
             "/// The host enum of the closed relation `{name}` — an emission, not a\n\
@@ -2275,6 +2322,7 @@ fn emit_closed(out: &mut String, relations: &[Relation], descriptor: &SchemaDesc
                  #[must_use] pub const fn from_id(id: {newtype}) -> Option<Self> {{\n\
                      match id.0 {{ {from_arms} _ => None }}\n\
                  }}\n\
+                 {accessors}\
              }}\n",
         );
         let beyond = handles.len();
@@ -2293,6 +2341,37 @@ fn emit_closed(out: &mut String, relations: &[Relation], descriptor: &SchemaDesc
              }}\n",
             module = snake(name),
         );
+    }
+}
+
+/// One lowered ground-axiom value as the HOST-TYPED const expression its
+/// column accessor returns (newtyped columns wrap — the newtype, exactly
+/// as `rust_field_ty` decides the host face). Intervals construct
+/// through the theory's ground-axiom seam: nonemptiness was judged at
+/// the literal seam, and the generic checked `new` is not const.
+fn const_value_tokens(value: &Value, field: &Field) -> String {
+    let raw = match value {
+        Value::Bool(v) => format!("{v}"),
+        Value::U64(v) => format!("{v}u64"),
+        Value::I64(v) => format!("{v}i64"),
+        Value::String(bytes) => {
+            let text = std::str::from_utf8(bytes).expect("schema! string literals are UTF-8");
+            format!("\"{}\"", text.escape_default())
+        }
+        Value::FixedBytes(bytes) => format!("*b\"{}\"", bytes.escape_ascii()),
+        Value::IntervalU64(interval) => {
+            let (start, end) = interval.bounds();
+            format!("::bumbledb::Interval::<u64>::__ground_axiom({start}, {end})")
+        }
+        Value::IntervalI64(interval) => {
+            let (start, end) = interval.bounds();
+            format!("::bumbledb::Interval::<i64>::__ground_axiom({start}, {end})")
+        }
+        Value::AllenMask(_) => unreachable!("schema! literals never carry an Allen mask"),
+    };
+    match &field.newtype {
+        Some(newtype) => format!("{newtype}({raw})"),
+        None => raw,
     }
 }
 
