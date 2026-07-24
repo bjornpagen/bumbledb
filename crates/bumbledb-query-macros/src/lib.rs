@@ -189,10 +189,11 @@ struct Name {
 }
 
 /// One `?param`: named (dense ids by first occurrence) or positional
-/// (the id verbatim — the renderer's spelling).
+/// (the id verbatim — the renderer's spelling). Both spellings carry
+/// their token's span: every refusal points at the offending param.
 enum Param {
     Named(Name),
-    Index(u16),
+    Index { index: u16, span: Span },
 }
 
 /// A signed-integer literal's raw token text (suffix included; spliced
@@ -557,7 +558,7 @@ fn parse_param(tokens: &mut Tokens, question: Span) -> Parse<Param> {
                 );
             };
             tokens.next();
-            Ok(Param::Index(index))
+            Ok(Param::Index { index, span })
         }
         _ => fail(question, "query!: `?` starts a param — `?name` or `?N`"),
     }
@@ -1239,10 +1240,10 @@ impl Params {
                 u16::try_from(position)
                     .map_or_else(|_| fail(name.span, "query!: too many params"), Ok)
             }
-            Param::Index(index) => {
+            Param::Index { index, span } => {
                 if self.saw_named {
                     return fail(
-                        Span::call_site(),
+                        *span,
                         "query!: named and positional ?params cannot mix — \
                          pick one spelling per query",
                     );

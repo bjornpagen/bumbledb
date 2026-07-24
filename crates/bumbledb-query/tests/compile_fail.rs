@@ -158,12 +158,16 @@ fn compile_fail_fixtures() {
         seen += 1;
     }
     let _ = std::fs::remove_dir_all(&out_dir);
-    // The suite's fourteen cases: typo'd relation, typo'd field,
-    // ambiguous punning, ?param in a head, `:-` anywhere, a program
-    // without bare output rules, an explicitly indexed dense predicate
-    // list, mixed bare + indexed predicate bindings, an UpperCamel
-    // predicate name, a lowercase relation respelling, an atom under a
-    // condition tree, an empty tree node, a predicate taking a reserved
-    // tree name, a dropped body comma.
-    assert_eq!(seen, 14, "the compile-fail roster has fourteen fixtures");
+    // The roster covers every deliberate spanned refusal: typo'd
+    // relation, typo'd field, ambiguous punning, ?param in a head, `:-`
+    // anywhere, a program without bare output rules, an explicitly
+    // indexed dense predicate list, mixed bare + indexed predicate
+    // bindings, an UpperCamel predicate name, a lowercase relation
+    // respelling, an atom under a condition tree, an empty tree node, a
+    // predicate taking a reserved tree name, a dropped body comma, param
+    // mixing in both directions, a bare handle at a predicate position,
+    // the measure under a non-fold op, an unbound head variable, a
+    // negative `u64`, a foreign integer suffix, a binding's `in` without
+    // its ?param, a numeric label on a relation atom.
+    assert_eq!(seen, 23, "the compile-fail roster has twenty-three fixtures");
 }
