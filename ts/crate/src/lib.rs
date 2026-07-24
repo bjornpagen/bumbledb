@@ -63,7 +63,7 @@ mod fingerprint_lock;
 mod marshal;
 mod tags;
 
-use marshal::{ManifestWire, OwnedParam, StalenessWire, ValueOut, ViolationWire};
+use marshal::{ExplainWire, ManifestWire, OwnedParam, StalenessWire, ValueOut, ViolationWire};
 
 /// Proof-of-life export for the package scaffold (PRD-03): evidence that the
 /// path dependency on the sibling bumbledb engine compiles, links, and loads
@@ -510,6 +510,12 @@ enum SnapReq {
         prepared: usize,
         params: Vec<OwnedParam>,
     },
+    Explain {
+        /// `*mut PreparedQuery<'static, SchemaDescriptor>` as an address —
+        /// the same discipline as `Execute`.
+        prepared: usize,
+        params: Vec<OwnedParam>,
+    },
     Staleness {
         /// `*const PreparedQuery<'static, SchemaDescriptor>` as an address.
         prepared: usize,
@@ -531,6 +537,7 @@ enum SnapReply {
     Answers(Result<Answers, WireError>),
     Flag(Result<bool, WireError>),
     Row(Result<Option<Vec<Value>>, WireError>),
+    Explain(Result<bumbledb::ExecutionStats, WireError>),
     Staleness(Result<StalenessWire, WireError>),
     Witness(Result<Witness<SchemaDescriptor>, WireError>),
 }
@@ -566,34 +573,49 @@ impl SnapWorker {
     }
 }
 
-/// Owned params to the engine's positional bind arguments. String payloads
-/// re-borrow as `&str` (marshaling admitted only JS strings, so UTF-8 holds;
-/// a corrupt payload is refused typed rather than unwrapped).
+/// One owned scalar to the engine's bind value. String payloads re-borrow
+/// as `&str` (marshaling admitted only JS strings, so UTF-8 holds; a
+/// corrupt payload is refused typed rather than unwrapped).
+fn bind_value(value: &Value) -> Result<BindValue<'_>, WireError> {
+    Ok(match value {
+        Value::Bool(v) => BindValue::Bool(*v),
+        Value::U64(v) => BindValue::U64(*v),
+        Value::I64(v) => BindValue::I64(*v),
+        Value::String(bytes) => BindValue::Str(
+            std::str::from_utf8(bytes)
+                .map_err(|_| WireError("bumbledb: non-UTF-8 string param".into()))?,
+        ),
+        Value::FixedBytes(bytes) => BindValue::FixedBytes(bytes),
+        Value::IntervalU64(interval) => BindValue::IntervalU64(interval.start(), interval.end()),
+        Value::IntervalI64(interval) => BindValue::IntervalI64(interval.start(), interval.end()),
+        Value::AllenMask(mask) => BindValue::AllenMask(*mask),
+    })
+}
+
+/// Owned params to the engine's positional bind arguments.
 fn param_args(params: &[OwnedParam]) -> Result<Vec<ParamArg<'_>>, WireError> {
     params
         .iter()
         .map(|param| match param {
             OwnedParam::Set(values) => Ok(ParamArg::Set(values)),
-            OwnedParam::Scalar(value) => {
-                let bound = match value {
-                    Value::Bool(v) => BindValue::Bool(*v),
-                    Value::U64(v) => BindValue::U64(*v),
-                    Value::I64(v) => BindValue::I64(*v),
-                    Value::String(bytes) => BindValue::Str(
-                        std::str::from_utf8(bytes)
-                            .map_err(|_| WireError("bumbledb: non-UTF-8 string param".into()))?,
-                    ),
-                    Value::FixedBytes(bytes) => BindValue::FixedBytes(bytes),
-                    Value::IntervalU64(interval) => {
-                        BindValue::IntervalU64(interval.start(), interval.end())
-                    }
-                    Value::IntervalI64(interval) => {
-                        BindValue::IntervalI64(interval.start(), interval.end())
-                    }
-                    Value::AllenMask(mask) => BindValue::AllenMask(*mask),
-                };
-                Ok(ParamArg::Scalar(bound))
-            }
+            OwnedParam::Scalar(value) => Ok(ParamArg::Scalar(bind_value(value)?)),
+        })
+        .collect()
+}
+
+/// Explain's positional binds, scalar-only: the engine's profile entry
+/// (`Snapshot::profile`) takes `BindValue`s, which have no set spelling —
+/// a set param is a typed marshaling refusal, never a guess.
+fn bind_scalars(params: &[OwnedParam]) -> Result<Vec<BindValue<'_>>, WireError> {
+    params
+        .iter()
+        .map(|param| match param {
+            OwnedParam::Scalar(value) => bind_value(value),
+            OwnedParam::Set(_) => Err(WireError(
+                "bumbledb: preparedExplain binds scalar params only \
+                 (the engine's profile entry has no param-set spelling)"
+                    .into(),
+            )),
         })
         .collect()
 }
@@ -633,6 +655,24 @@ fn run_snapshot(db: Arc<Engine>, requests: Receiver<SnapReq>, replies: Sender<Sn
                         &mut *(prepared as *mut PreparedQuery<'static, SchemaDescriptor>)
                     };
                     SnapReply::Answers(execute_answers(snap, prepared, &params))
+                }
+                SnapReq::Explain { prepared, params } => {
+                    // SAFETY: `preparedExplain`'s live `&mut
+                    // PreparedInner::prepared`, taken under `live_mut`'s
+                    // exclusive borrow; the JS thread blocks on this
+                    // request's reply for the whole dereference (module
+                    // doc, threading model), so no second reference
+                    // exists anywhere.
+                    #[expect(
+                        unsafe_code,
+                        reason = "a prepared query cannot cross the FFI as a closure \
+                                  capture; its address rides the request while the JS \
+                                  thread blocks on the reply"
+                    )]
+                    let prepared = unsafe {
+                        &mut *(prepared as *mut PreparedQuery<'static, SchemaDescriptor>)
+                    };
+                    SnapReply::Explain(explain_stats(snap, prepared, &params))
                 }
                 SnapReq::Staleness { prepared } => {
                     // SAFETY: `preparedStaleness`'s live shared borrow of
@@ -683,6 +723,19 @@ fn execute_answers(
     let args = param_args(params)?;
     snap.execute_collect_args(prepared, &args)
         .map_err(|e| wire(&e))
+}
+
+/// The plan-as-data half of `Snapshot::profile` (ANALYZE semantics: the
+/// query really executes, with counting instrumentation); the answers are
+/// discarded — execute is the answer surface.
+fn explain_stats(
+    snap: &Snapshot<'_, SchemaDescriptor>,
+    prepared: &mut PreparedQuery<'static, SchemaDescriptor>,
+    params: &[OwnedParam],
+) -> Result<bumbledb::ExecutionStats, WireError> {
+    let binds = bind_scalars(params)?;
+    let (_, stats) = snap.profile(prepared, &binds).map_err(|e| wire(&e))?;
+    Ok(stats)
 }
 
 fn staleness_wire(
@@ -1288,6 +1341,34 @@ pub fn prepared_execute(
         "snapshot"
     )?;
     Ok(marshal::answers_out(&answers))
+}
+
+/// Plan introspection as data (ruled 2026-07-23, R13): runs the prepared
+/// query against the snapshot with counting instrumentation (the engine's
+/// `Snapshot::profile`, ANALYZE semantics) and returns the structured
+/// stats — plan sections and counters as plain values, the `FjPlan` shape
+/// with its numbers. Diagnostic surface, EXPLICITLY UNFROZEN: the shape
+/// follows the plan representation wherever it goes. Scalar params only
+/// (the engine's profile entry has no param-set spelling).
+#[napi]
+pub fn prepared_explain(
+    prepared: &External<PreparedHandle>,
+    snap: &External<SnapshotHandle>,
+    params: Array,
+) -> napi::Result<ExplainWire> {
+    let params = marshal::params_in(&params)?;
+    let mut prepared_inner = live_mut(&prepared.inner, "prepared query")?;
+    let worker = live(&snap.inner, "snapshot")?;
+    let address = std::ptr::from_mut(&mut prepared_inner.prepared) as usize;
+    let stats = reply!(
+        worker.call(SnapReq::Explain {
+            prepared: address,
+            params,
+        })?,
+        SnapReply::Explain,
+        "snapshot"
+    )?;
+    Ok(ExplainWire(stats))
 }
 
 /// The pull-based plan-drift signal against a snapshot — engine-policy-free;
