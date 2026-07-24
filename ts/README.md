@@ -93,6 +93,19 @@ const prepared = db.prepare(certifiedAbove)
 const rows = db.execute(prepared, { floor: 15n }) // rows: { a: bigint; rank: bigint }[]
 console.log(rows)
 
+// Lifetimes are disposables, never close() (Node 26 explicit resource
+// management): a read scope acquired without a callback is released by its
+// `using` declaration at scope exit — deterministic, in the language's own
+// syntax. `db.read(fn)` remains the callback spelling of the same scope.
+{
+	using snap = db.read()
+	console.log(snap.generation, snap.execute(prepared, { floor: 15n }))
+}
+
+// explain(): the plan as data — what the engine did with the query, plan
+// sections and counters as plain values (a diagnostic surface, unfrozen).
+console.log(db.explain(prepared, { floor: 15n }).emits)
+
 // Host dispatch over the sealed roster is native `switch` narrowing over
 // the handle union ("DirectPass" | "JudgedPass" | "Failed") — exhaustive
 // via `satisfies never`; the sealed axioms read back typed.
@@ -119,9 +132,9 @@ The drizzle law governs this surface: the SDK's job at the host boundary is tran
 
 - The structural type kernel — fields as pure structure (`bool`, `bytes`, `i64`, `u64`, `str`, `interval`, `span`), `relation()`, and `closed()` sealed rosters with typed axiom payloads. A closed reference's value type IS the handle union (`Infer` speaks it); dispatch is native `switch` narrowing with `satisfies never` exhaustiveness. Domains are never declared: `schema()` computes every field's class from the statement list.
 - The statement algebra — `schema()`, `key`, `contained`, `mirrors`, `window`; faces via `on` (set membership is a plain array in `.where`); counts via `exactly`, `atLeast`, `atMost`, `between`, `none`; ψ-selection via `.where` on relations and closed rosters.
-- The `Db` runtime — `Db.create`/`Db.open`, path-cached stores, transactions, typed violations, scoped snapshot reads, the witnessed write loop with `abandon`.
+- The `Db` runtime — `Db.create`/`Db.open`, path-cached stores, transactions, typed violations, scoped snapshot reads (`db.read(fn)`, or `using snap = db.read()` — lifetimes are disposables, never `close()`), the write verbs with `abandon` (returning `abandon(payload)` from `write` or `writeWitnessed` rolls the transaction back; the outcome arm is in the result type), and `db.explain` — the prepared plan as data.
 - The query surface — Datalog as values, `query(S).rule(r => ...)`: `v(R)`-minted vars (identity is the object reference — reusing one across binding positions IS the join), `find({...})` named result heads (renames are real), params typed by use unchanged, negation, aggregates, and the free comparison/connective exports (`eq`, `ne`, `lt`, `le`, `gt`, `ge`, `and`, `or`, `not`, `allen`/`ALLEN`, `pointIn`); set membership at a closed field is a plain array in the match record (`r.match(Ticket, { priority: ["Normal", "Urgent"] })` — closed-only there: an ordinary field's membership is a bound `r.inSet` param); stratified recursion via `program()`; `db.prepare` as a plain value.
-- The exhume surface — `Db.exhume`, the schema-independent read path: a store's self-described shapes and raw facts by name, with typed refusals (`ErrExhumeNoDescriptor`, `ErrExhumeFormatMismatch`, `ErrExhumeCorruption`).
+- The exhume surface — `Db.exhume`, the schema-independent read path: a store's self-described shapes and raw facts by name, with typed refusals (`ErrExhumeNoDescriptor`, `ErrExhumeFormatMismatch`, `ErrExhumeCorruption`). A disposable lifetime: `using exhumed = await Db.exhume(path)` releases the store's exclusive lock at scope exit.
 
 ## Cookbook
 

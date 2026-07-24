@@ -1478,7 +1478,9 @@ the fingerprint refusal, load order, identity, mint catch-up, judgment); the
 SDK pin asserts the two theories carry two distinct fingerprints — the
 refusal's premise. For stores whose creating schema is gone, `Db.exhume`
 reads the store's own persisted descriptor — the one schema-independent read
-path, the E half of ETL.
+path, the E half of ETL. Its lifetime is a `using` scope (`using exhumed =
+await Db.exhume(oldPath)`): disposal releases the store's exclusive lock at
+scope exit, so the rebirth loop's same-path retry never waits on GC.
 
 ## Composition
 
