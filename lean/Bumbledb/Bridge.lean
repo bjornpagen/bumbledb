@@ -347,7 +347,7 @@ def ledger : List Obligation := [
   .row @Query.classify_swap `Bumbledb.Query.classify_swap
     "Classification dualizes under operand swap — what frees the executor to orient its Allen filters."
     "crate::allen::classify (crates/bumbledb/src/allen.rs)"
-    "converse_is_an_involution_and_dualizes_classification (crates/bumbledb/src/allen.rs)",
+    "converse_dualizes_classification (crates/bumbledb/src/allen.rs)",
 
   .row @Query.agg_over_distinct_bindings `Bumbledb.Query.agg_over_distinct_bindings
     "Every aggregate folds the distinct binding set of its group — no fold can observe a duplicate, set semantics through aggregation."
@@ -419,9 +419,19 @@ def ledger : List Obligation := [
     "the_du_arm_union_proves_and_an_unselected_arm_unproves (crates/bumbledb/src/api/prepared/tests/disjoint.rs)",
 
   .row @Query.union_regime_head_projection `Bumbledb.Query.union_regime_head_projection
-    "The multi-rule union regime keys the head projection, never a rule's full slot array — dedup keys must be rule-independent, and the head tuple is a complete key."
+    "The multi-rule union regime keys the head projection, never a rule's full slot array — dedup keys must be rule-independent, and the head tuple is a complete key. Projection heads only; the aggregate object is the next row's."
     "exec/sink.rs::union_spans (crates/bumbledb/src/exec/sink.rs)"
-    "the_union_seen_set_keys_head_projections_across_rule_layouts (crates/bumbledb/src/exec/sink/tests/aggregate.rs); aggregates_fold_the_union_of_head_projected_bindings (crates/bumbledb/src/api/prepared/tests/rules.rs)",
+    "the_union_seen_set_keys_head_projections_across_rule_layouts (crates/bumbledb/src/exec/sink/tests/aggregate.rs)",
+
+  .row @Query.union_regime_agg_heads `Bumbledb.Query.union_regime_agg_heads
+    "The aggregate-head coverage of the union key law: seen-filtering the head-row stream of a complete enumeration computes exactly the union of the rules' head-projected binding sets — the normative fold domain of the hand-written multi-rule aggregate."
+    "exec/sink.rs::union_spans (crates/bumbledb/src/exec/sink.rs); exec/sink.rs::AggregateSink (crates/bumbledb/src/exec/sink.rs)"
+    "aggregates_fold_the_union_of_head_projected_bindings (crates/bumbledb/src/api/prepared/tests/rules.rs)",
+
+  .row @Query.membership_lowering_preserves_fold `Bumbledb.Query.membership_lowering_preserves_fold
+    "The membership mint is fold-invisible: aggregates over the lowered rule with the minted interval variable projected away equal aggregates over the surface reading — the fold-level companion of the membership lowering."
+    "normalize.rs::is_membership (crates/bumbledb/src/ir/normalize/normalize.rs); crates/bumbledb/src/exec/sink.rs"
+    "crates/bumbledb-bench/src/conformance.rs",
 
   .row @Query.syntactic_disjointness_sound `Bumbledb.Query.syntactic_disjointness_sound
     "The syntactic disjointness check is sound — and conservatively incomplete by design: any pin it cannot compare refuses the witness."
@@ -598,7 +608,7 @@ def ledger : List Obligation := [
 /-- The ledger count, asserted: a dropped or added row moves this
 number, so the census (which re-derives the count by grep) and the
 build (which checks this literal) both notice. -/
-theorem ledger_count : ledger.length = 94 := rfl
+theorem ledger_count : ledger.length = 96 := rfl
 
 end Bridge
 end Bumbledb
