@@ -692,8 +692,19 @@ impl<'spec> Resolver<'spec> {
     /// degenerate-set ban (the canonical-utterance law — `{L}` is the
     /// bare literal, `{}` is no binding), handles through the namespace.
     /// `which` tags the side for the handle-shaped issues' addresses.
-    fn side(&mut self, statement: usize, which: StatementSide, side: &SideSpec) -> Option<Side> {
-        let rel_idx = self.relation(statement, &side.relation)?;
+    /// Total, per the `literal` law: whatever resolved lowers, an
+    /// unresolvable relation yields the empty placeholder side, and
+    /// placeholders never escape (a nonempty issue list fails the whole
+    /// construction) — the one final gate owns validity, so no per-side
+    /// branch re-judges it.
+    fn side(&mut self, statement: usize, which: StatementSide, side: &SideSpec) -> Side {
+        let Some(rel_idx) = self.relation(statement, &side.relation) else {
+            return Side {
+                relation: RelationId(0),
+                projection: Box::new([]),
+                selection: Box::new([]),
+            };
+        };
         let mut projection = Vec::with_capacity(side.projection.len());
         for field in &side.projection {
             if let Some(slot) = self.field(statement, rel_idx, field) {
@@ -734,11 +745,11 @@ impl<'spec> Resolver<'spec> {
             };
             selection.push((slot.field, set));
         }
-        (self.issues.is_empty()).then(|| Side {
+        Side {
             relation: RelationId(u32::try_from(rel_idx).expect("relation count fits u32")),
             projection: projection.into_boxed_slice(),
             selection: selection.into_boxed_slice(),
-        })
+        }
     }
 
     /// The canonical-utterance ban table over window spellings — the
@@ -925,19 +936,22 @@ impl SchemaSpec {
                     relation,
                     projection,
                 } => {
-                    let Some(rel_idx) = resolver.relation(index, relation) else {
-                        continue;
-                    };
                     let mut fields = Vec::with_capacity(projection.len());
-                    for field in projection {
-                        if let Some(slot) = resolver.field(index, rel_idx, field) {
-                            fields.push(slot.field);
+                    let relation = match resolver.relation(index, relation) {
+                        Some(rel_idx) => {
+                            for field in projection {
+                                if let Some(slot) = resolver.field(index, rel_idx, field) {
+                                    fields.push(slot.field);
+                                }
+                            }
+                            RelationId(u32::try_from(rel_idx).expect("relation count fits u32"))
                         }
-                    }
+                        // The placeholder relation — never escapes (the
+                        // final gate), the same totality as `side`.
+                        None => RelationId(0),
+                    };
                     statements.push(StatementDescriptor::Functionality {
-                        relation: RelationId(
-                            u32::try_from(rel_idx).expect("relation count fits u32"),
-                        ),
+                        relation,
                         projection: fields.into_boxed_slice(),
                     });
                 }
@@ -947,11 +961,8 @@ impl SchemaSpec {
                     bidirectional,
                 } => {
                     resolver.coherent(index, source, target);
-                    let source_side = resolver.side(index, StatementSide::Source, source);
-                    let target_side = resolver.side(index, StatementSide::Target, target);
-                    let (Some(source), Some(target)) = (source_side, target_side) else {
-                        continue;
-                    };
+                    let source = resolver.side(index, StatementSide::Source, source);
+                    let target = resolver.side(index, StatementSide::Target, target);
                     if *bidirectional {
                         statements.push(StatementDescriptor::Containment {
                             source: source.clone(),
@@ -972,11 +983,8 @@ impl SchemaSpec {
                 } => {
                     resolver.coherent(index, source, target);
                     let (lo, hi) = resolver.window(index, *window);
-                    let source_side = resolver.side(index, StatementSide::Source, source);
-                    let target_side = resolver.side(index, StatementSide::Target, target);
-                    let (Some(source), Some(target)) = (source_side, target_side) else {
-                        continue;
-                    };
+                    let source = resolver.side(index, StatementSide::Source, source);
+                    let target = resolver.side(index, StatementSide::Target, target);
                     statements.push(StatementDescriptor::Cardinality {
                         source,
                         lo,

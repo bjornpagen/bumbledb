@@ -7,8 +7,8 @@
 
 use bumbledb_theory::Value;
 use bumbledb_theory::schema::spec::{
-    ClosedSpec, FieldSpec, LiteralSetSpec, LiteralSpec, RelationSpec, RowSpec, SchemaSpec,
-    SideSpec, SpecIssue, StatementSpec,
+    ClosedSpec, FieldSpec, LiteralAt, LiteralSetSpec, LiteralSpec, RelationSpec, RowSpec,
+    SchemaSpec, SideSpec, SpecIssue, StatementSpec,
 };
 use bumbledb_theory::schema::{
     FieldId, LiteralSet, RelationId, StatementDescriptor, ValueType,
@@ -148,6 +148,73 @@ fn synthetic_id_newtype_rides_the_sealed_slot() {
     };
     assert_eq!(source.newtype, None);
     assert_eq!(target.newtype.as_deref(), Some("StatusId"));
+}
+
+/// One round trip (finding 127): the issue list is COMPLETE in one pass
+/// — an earlier broken row or statement never suppresses a later one's
+/// diagnosis. Side lowering is total (placeholder-bearing, per the
+/// `literal` law); the one final gate alone judges validity.
+#[test]
+fn the_issue_list_is_complete_in_one_pass() {
+    let spec = SchemaSpec {
+        relations: vec![
+            RelationSpec {
+                name: "Status".into(),
+                fields: vec![],
+                closed: Some(ClosedSpec {
+                    newtype: "StatusId".into(),
+                    rows: vec![RowSpec {
+                        handle: "Active".into(),
+                        // One value for zero declared columns: excess.
+                        values: vec![LiteralSpec::Value(Value::U64(9))],
+                    }],
+                }),
+            },
+            RelationSpec {
+                name: "Account".into(),
+                fields: vec![field("status", Some("StatusId"))],
+                closed: None,
+            },
+        ],
+        statements: vec![
+            StatementSpec::Fd {
+                relation: "Ghost".into(),
+                projection: vec!["x".into()],
+            },
+            StatementSpec::Containment {
+                source: SideSpec {
+                    relation: "Account".into(),
+                    projection: vec!["status".into()],
+                    selection: vec![(
+                        "status".into(),
+                        LiteralSetSpec::One(LiteralSpec::Handle("Missing".into())),
+                    )],
+                },
+                target: SideSpec {
+                    relation: "Status".into(),
+                    projection: vec!["id".into()],
+                    selection: vec![],
+                },
+                bidirectional: false,
+            },
+        ],
+    };
+    let err = spec.descriptor().expect_err("three independent issues");
+    let [
+        SpecIssue::RowArityExcess {
+            relation: 0,
+            row: 0,
+            ..
+        },
+        SpecIssue::UnknownRelation { statement: 0, .. },
+        SpecIssue::UnknownHandle {
+            at: LiteralAt::Selection { statement: 1, .. },
+            ..
+        },
+    ] = err.issues()
+    else {
+        panic!("the complete list in spec order, not {:?}", err.issues());
+    };
 }
 
 /// The sealed-field cap (finding 059): a relation past the u16 field-id
