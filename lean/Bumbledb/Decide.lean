@@ -82,10 +82,18 @@ format lives in `lean/conformance/README.md` § judgment cases.
 ## Narrowings recorded (law 5: narrow and record)
 
 * The row carrier and the merge premise — above.
-* `Txn.judgeB` returns `Option (List Statement)`: `none` accepts; a
-  rejection's LIST may repeat a statement the theory declares twice.
-  Agreement with `Txn.judge` is stated as membership equality with
-  the violation SETS — `Txn.lean`'s own recorded narrowing (a set
+* `Txn.judgeB` returns `Option (Bool × List (Statement × Nat))`:
+  `none` accepts; a rejection carries its phase (`true` = key) and the
+  violated statements POSITION-TAGGED from birth — positions in the
+  materialized statement list are the engine's statement ids (the
+  corpus contract, `lean/conformance/README.md` § judgment cases), so
+  the citation indices the conformance lane compares ARE the proved
+  payload's `.2` projection, re-derived nowhere (2026-07-23 audit,
+  finding 143 — the duplicated filter predicates died with the
+  re-derivation). A rejection's list may repeat a statement the theory
+  declares twice, at distinct positions. Agreement with `Txn.judge` is
+  stated as membership equality of the payload's STATEMENT projection
+  with the violation SETS — `Txn.lean`'s own recorded narrowing (a set
   carries no duplicates or order by construction) applied to the
   executable face.
 * Decidability lands as premise-carrying named `def`s
@@ -1012,35 +1020,71 @@ def decideHolds {T : Theory} {W : RowInstance}
 
 namespace Txn
 
-/-- The key phase's citations, executable: the declared functionality
-statements the checker refutes. -/
-def keyViolationsB (T : Theory) (W : RowInstance) : List Statement :=
-  T.statements.filter fun st => st.isKey && !st.checkB T W
+/-- Filtering an index-paired list on the element alone and projecting
+the elements back IS the plain filter — the lemma that keeps the
+position-tagged citations and the statement-set theorems one
+artifact. -/
+theorem zipIdx_filter_fst {α : Type} (q : α → Bool) :
+    ∀ (l : List α) (n : Nat),
+      (((l.zipIdx n).filter fun p => q p.1).map (·.1)) = l.filter q
+  | [], _ => rfl
+  | x :: xs, n => by
+    rw [List.zipIdx_cons, List.filter_cons, List.filter_cons]
+    by_cases h : q x
+    · simp only [h, if_pos, List.map_cons, zipIdx_filter_fst q xs]
+    · simp only [h, Bool.false_eq_true, if_false,
+        zipIdx_filter_fst q xs]
+
+/-- An index-paired member's element is a member. -/
+theorem fst_mem_of_mem_zipIdx {α : Type} :
+    ∀ {l : List α} {n : Nat} {p : α × Nat}, p ∈ l.zipIdx n → p.1 ∈ l
+  | x :: xs, n, p, h => by
+    rw [List.zipIdx_cons] at h
+    rcases List.mem_cons.mp h with rfl | h'
+    · exact List.mem_cons_self ..
+    · exact List.mem_cons_of_mem _ (fst_mem_of_mem_zipIdx h')
+
+/-- The key phase's citations, executable and POSITION-TAGGED from
+birth: the declared functionality statements the checker refutes, each
+with its position in the materialized statement list — the engine's
+statement id (the corpus contract). -/
+def keyViolationsB (T : Theory) (W : RowInstance) :
+    List (Statement × Nat) :=
+  T.statements.zipIdx.filter fun p => p.1.isKey && !p.1.checkB T W
 
 /-- The statement phase's citations, executable: the declared non-key
-statements the checker refutes. -/
-def statementViolationsB (T : Theory) (W : RowInstance) : List Statement :=
-  T.statements.filter fun st => !st.isKey && !st.checkB T W
+statements the checker refutes, position-tagged. -/
+def statementViolationsB (T : Theory) (W : RowInstance) :
+    List (Statement × Nat) :=
+  T.statements.zipIdx.filter fun p => !p.1.isKey && !p.1.checkB T W
 
 /-- **`judgeB` — the executable two-phase judge**, mirroring
 `Txn.judge`: any key violation rejects with the complete violated-key
 list and the statement phase never runs; else any statement violation
-rejects with the complete non-key list; else accept (`none`). -/
-def judgeB (T : Theory) (W : RowInstance) : Option (List Statement) :=
+rejects with the complete non-key list; else accept (`none`). A
+rejection carries its phase (`true` = key) and the position-tagged
+citations — the payload the conformance lane compares whole, one
+`checkB` evaluation per statement per phase. -/
+def judgeB (T : Theory) (W : RowInstance) :
+    Option (Bool × List (Statement × Nat)) :=
   match keyViolationsB T W with
   | [] =>
     match statementViolationsB T W with
     | [] => none
-    | v => some v
-  | v => some v
+    | v => some (false, v)
+  | v => some (true, v)
 
 /-- The executable key citations are exactly `Txn.keyViolationSet`,
-membership for membership: a key statement is a functionality
-statement, whose checker consumes the merge premise only. -/
+membership for membership (the statement projection of the tagged
+payload): a key statement is a functionality statement, whose checker
+consumes the merge premise only. -/
 theorem mem_keyViolationsB {T : Theory} {W : RowInstance}
     (hclosed : WorldCarriesClosed T W) {st : Statement} :
-    st ∈ keyViolationsB T W ↔ st ∈ Txn.keyViolationSet T W.den := by
+    st ∈ (keyViolationsB T W).map (·.1) ↔
+      st ∈ Txn.keyViolationSet T W.den := by
   unfold keyViolationsB
+  rw [zipIdx_filter_fst
+    (fun st : Statement => st.isKey && !st.checkB T W)]
   constructor
   · intro h
     obtain ⟨hmem, hcond⟩ := List.mem_filter.mp h
@@ -1059,9 +1103,11 @@ theorem mem_keyViolationsB {T : Theory} {W : RowInstance}
 `Txn.statementViolationSet`, membership for membership. -/
 theorem mem_statementViolationsB {T : Theory} {W : RowInstance}
     (hclosed : WorldCarriesClosed T W) {st : Statement} :
-    st ∈ statementViolationsB T W ↔
+    st ∈ (statementViolationsB T W).map (·.1) ↔
       st ∈ Txn.statementViolationSet T W.den := by
   unfold statementViolationsB
+  rw [zipIdx_filter_fst
+    (fun st : Statement => !st.isKey && !st.checkB T W)]
   constructor
   · intro h
     obtain ⟨hmem, hcond⟩ := List.mem_filter.mp h
@@ -1086,39 +1132,43 @@ theorem mem_statementViolationsB {T : Theory} {W : RowInstance}
 /-- **The two-phase agreement**: `judgeB` and `Txn.judge` render one
 verdict on EVERY row instance — accept together (and the accepted
 state is the judged instance), or reject in the SAME phase, the
-executable citation list and the model's violation set agreeing
-member for member (`mem_keyViolationsB` /
+executable payload's statement projection and the model's violation
+set agreeing member for member (`mem_keyViolationsB` /
 `mem_statementViolationsB`). No premise beyond the merge. -/
 theorem judgeB_agrees {T : Theory} {W : RowInstance}
     (hclosed : WorldCarriesClosed T W) :
     (judgeB T W = none ∧
       ∃ h, Txn.judge T W.den = .ok ⟨W.den, h⟩) ∨
-    (judgeB T W = some (keyViolationsB T W) ∧
+    (judgeB T W = some (true, keyViolationsB T W) ∧
       Txn.judge T W.den = .reject (Txn.keyViolationSet T W.den)) ∨
-    (judgeB T W = some (statementViolationsB T W) ∧
+    (judgeB T W = some (false, statementViolationsB T W) ∧
       Txn.judge T W.den =
         .reject (Txn.statementViolationSet T W.den)) := by
   by_cases hh : holds T W.den
   · refine Or.inl ⟨?_, hh, Txn.judge_holds hh⟩
     have hkey : keyViolationsB T W = [] := by
-      refine List.filter_eq_nil_iff.mpr fun st hst => ?_
+      refine List.filter_eq_nil_iff.mpr fun p hp => ?_
       intro hcond
       obtain ⟨-, h2⟩ := andB_iff.mp hcond
-      rw [(Statement.checkB_iff hclosed).mpr (hh st hst)] at h2
+      rw [(Statement.checkB_iff hclosed).mpr
+        (hh p.1 (fst_mem_of_mem_zipIdx hp))] at h2
       exact nomatch h2
     have hstmt : statementViolationsB T W = [] := by
-      refine List.filter_eq_nil_iff.mpr fun st hst => ?_
+      refine List.filter_eq_nil_iff.mpr fun p hp => ?_
       intro hcond
       obtain ⟨-, h2⟩ := andB_iff.mp hcond
-      rw [(Statement.checkB_iff hclosed).mpr (hh st hst)] at h2
+      rw [(Statement.checkB_iff hclosed).mpr
+        (hh p.1 (fst_mem_of_mem_zipIdx hp))] at h2
       exact nomatch h2
     unfold judgeB
     rw [hkey, hstmt]
   · by_cases hk : (Txn.keyViolationSet T W.den).Nonempty
     · refine Or.inr (Or.inl ⟨?_, Txn.judge_key_preempts hh hk⟩)
       obtain ⟨st, hstv⟩ := hk
-      have hne : keyViolationsB T W ≠ [] :=
-        List.ne_nil_of_mem ((mem_keyViolationsB hclosed).mpr hstv)
+      have hne : keyViolationsB T W ≠ [] := fun h0 => by
+        have hm := (mem_keyViolationsB hclosed).mpr hstv
+        rw [h0] at hm
+        exact nomatch hm
       unfold judgeB
       cases hkv : keyViolationsB T W with
       | nil => exact absurd hkv hne
@@ -1127,17 +1177,18 @@ theorem judgeB_agrees {T : Theory} {W : RowInstance}
       have hkey : keyViolationsB T W = [] := by
         rcases hkv : keyViolationsB T W with _ | ⟨a, l⟩
         · rfl
-        · exact absurd ⟨a, (mem_keyViolationsB hclosed).mp
-            (hkv ▸ List.mem_cons_self ..)⟩ hk
+        · exact absurd ⟨a.1, (mem_keyViolationsB hclosed).mp
+            (List.mem_map.mpr ⟨a, hkv ▸ List.mem_cons_self .., rfl⟩)⟩ hk
       have hex : ∃ st, st ∈ Txn.violationSet T W.den :=
         Classical.byContradiction fun hne =>
           hh fun st hst => Classical.byContradiction fun hj =>
             hne ⟨st, hst, hj⟩
       obtain ⟨st, hv⟩ := hex
-      have hne : statementViolationsB T W ≠ [] :=
-        List.ne_nil_of_mem
-          ((mem_statementViolationsB hclosed).mpr
-            (Txn.statement_phase_all hk hv))
+      have hne : statementViolationsB T W ≠ [] := fun h0 => by
+        have hm := (mem_statementViolationsB hclosed).mpr
+          (Txn.statement_phase_all hk hv)
+        rw [h0] at hm
+        exact nomatch hm
       unfold judgeB
       rw [hkey]
       cases hsv : statementViolationsB T W with

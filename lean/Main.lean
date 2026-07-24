@@ -25,10 +25,11 @@ Three arms, dispatched by file name (`lean/conformance/README.md`):
   accept, or the rejecting phase plus the per-phase violation set as
   statement indices, in the contracted citation order — ascending
   statement indices, a both-directions containment cited once
-  (`RVerdict`'s doc carries the contract and its engine anchors). The decode + index glue below is IO-shell
-  material (this file), never spec: `verdictOf` spends `judgeB` for
-  the verdict and re-derives the citation indices with `judgeB`'s own
-  filter predicates (`isKey && !checkB`), position-tagged.
+  (`RVerdict`'s doc carries the contract and its engine anchors). The
+  decode glue below is IO-shell material (this file), never spec:
+  `verdictOf` is one pattern match on `judgeB`'s position-tagged
+  payload — the compared citation list IS the proved artifact's index
+  projection (2026-07-23 audit, finding 143).
 * **program cases** (`program-*.json`, the RECURSIVE arm — the
   shipping law: the oracles landed before the evaluator,
   `docs/architecture/60-validation.md` § the two oracles): decode the
@@ -277,27 +278,19 @@ def finalWorld (c : JCase) : RowInstance :=
     (R, addAll (removeAll (rowsAt c.world R) (rowsAt c.deletes R))
       (rowsAt c.inserts R))⟩
 
-/-! ## The verdict — `judgeB`, index-tagged -/
+/-! ## The verdict — `judgeB`'s payload, projected -/
 
-/-- The executable judge's verdict with citation indices: `judgeB`
-renders accept/reject (the PROVED artifact — `judgeB_agrees`);
-the indices re-run `judgeB`'s own phase filters (`isKey && !checkB`)
-over the position-tagged statement list, so the cited set is
-`keyViolationsB`/`statementViolationsB` by position. The `filterMap`
-over `indexed` ascends and cites each statement at most once, so this
-side meets the citation-order contract (`RVerdict`'s doc) by
-construction. -/
+/-- The executable judge's verdict with citation indices: ONE pattern
+match on the PROVED artifact — `judgeB` (`judgeB_agrees`) carries the
+phase and the position-tagged citations from birth, and the compared
+index list is its payload's position projection, re-derived nowhere.
+The filter over the index-paired statement list ascends and cites
+each statement at most once, so this side meets the citation-order
+contract (`RVerdict`'s doc) by construction. -/
 def verdictOf (T : Theory) (W : RowInstance) : RVerdict :=
   match Txn.judgeB T W with
   | none => .accept
-  | some _ =>
-    let keyIdx := (indexed 0 T.statements).filterMap fun (i, st) =>
-      if st.isKey && !st.checkB T W then some i else none
-    if keyIdx.isEmpty then
-      .reject false ((indexed 0 T.statements).filterMap fun (i, st) =>
-        if !st.isKey && !st.checkB T W then some i else none)
-    else
-      .reject true keyIdx
+  | some (keyPhase, cited) => .reject keyPhase (cited.map (·.2))
 
 /-- A verdict, rendered for the mismatch report. -/
 def renderVerdict : RVerdict → String
