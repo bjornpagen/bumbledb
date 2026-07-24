@@ -8,7 +8,7 @@
 use bumbledb_theory::Value;
 use bumbledb_theory::schema::spec::{
     ClosedSpec, FieldSpec, LiteralSetSpec, LiteralSpec, RelationSpec, RowSpec, SchemaSpec,
-    SideSpec, StatementSpec,
+    SideSpec, SpecIssue, StatementSpec,
 };
 use bumbledb_theory::schema::{
     FieldId, LiteralSet, RelationId, StatementDescriptor, ValueType,
@@ -95,4 +95,32 @@ fn closed_spec_carries_the_handle_newtype_by_construction() {
     );
     assert_eq!(target.relation, RelationId(0));
     assert_eq!(&*target.projection, [FieldId(0)]);
+}
+
+/// The sealed-field cap (finding 059): a relation past the u16 field-id
+/// space is a typed issue at lowering — never a panic on the wire-facing
+/// path, even when a statement addresses a field past the id space.
+#[test]
+fn wide_relation_is_a_typed_issue_not_a_panic() {
+    let count = usize::from(u16::MAX) + 2;
+    let spec = SchemaSpec {
+        relations: vec![RelationSpec {
+            name: "Wide".into(),
+            fields: (0..count).map(|i| field(&format!("f{i}"), None)).collect(),
+            closed: None,
+        }],
+        statements: vec![StatementSpec::Fd {
+            relation: "Wide".into(),
+            projection: vec![format!("f{}", count - 1).into()],
+        }],
+    };
+    let err = spec.descriptor().expect_err("the cap refuses typed");
+    assert!(err.issues().iter().any(|issue| matches!(
+        issue,
+        SpecIssue::RelationTooManyFields {
+            relation: 0,
+            fields: 65_537,
+            ..
+        }
+    )));
 }

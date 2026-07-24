@@ -288,6 +288,22 @@ pub enum SpecIssue {
         closed: Box<str>,
         handle: Box<str>,
     },
+    /// A relation whose SEALED field roster (a closed relation's
+    /// synthetic `id` included) exceeds the u16 field-id space — no
+    /// [`FieldId`] past it can be minted, so the cap runs before any
+    /// statement resolves a name (the engine's check-before-mint
+    /// ordering; its declaration-boundary twin is the engine's
+    /// `SchemaError::RelationTooManyColumns`, whose derived-column cap
+    /// is strictly tighter — every field spans at least one column —
+    /// so nothing this pass admits panics there).
+    RelationTooManyFields {
+        /// The relation's declaration index into
+        /// [`SchemaSpec::relations`].
+        relation: usize,
+        name: Box<str>,
+        /// The sealed field count.
+        fields: usize,
+    },
     /// An extension row supplies more values than its relation declares
     /// columns — the excess is unrepresentable in the descriptor (the
     /// column zip has nowhere to put it), so the lowering rejects here
@@ -388,6 +404,12 @@ impl std::fmt::Display for SpecIssue {
             Self::UnknownHandle { closed, handle, .. } => {
                 write!(f, "closed relation `{closed}` has no handle `{handle}`")
             }
+            Self::RelationTooManyFields { name, fields, .. } => write!(
+                f,
+                "relation `{name}` seals {fields} fields — the u16 field-id space \
+                 caps a relation at 65,535 sealed fields (a closed relation's \
+                 synthetic `id` included)"
+            ),
             Self::RowArityExcess {
                 row,
                 name,
@@ -538,9 +560,11 @@ impl<'spec> Resolver<'spec> {
             return None;
         };
         let sealed = index + usize::from(closed);
-        Some(FieldId(
-            u16::try_from(sealed).expect("field count fits u16"),
-        ))
+        // A past-u16 sealed index exists only on a relation the
+        // sealed-field cap already issued (`RelationTooManyFields`), so
+        // the placeholder never escapes (a nonempty issue list fails
+        // the whole construction — the `literal` law).
+        Some(FieldId(u16::try_from(sealed).unwrap_or(0)))
     }
 
     /// The newtype of a sealed field position: the synthetic `id` field
@@ -767,18 +791,17 @@ impl SchemaSpec {
     /// # Errors
     ///
     /// [`SchemaSpecError`] carrying EVERY unresolvable name, banned
-    /// spelling, and over-wide extension row (the one shape lowering
-    /// cannot represent — see [`SpecIssue::RowArityExcess`]), in spec
-    /// order — never just the first.
+    /// spelling, over-wide extension row (the one shape lowering cannot
+    /// represent — see [`SpecIssue::RowArityExcess`]), and past-u16
+    /// field roster ([`SpecIssue::RelationTooManyFields`] — no id could
+    /// be minted, so the cap runs here, never as a panic on the
+    /// wire-facing path), in spec order — never just the first.
     ///
     /// # Panics
     ///
-    /// When a relation or field ordinal exceeds the id space
-    /// (`u32`/`u16`) — the [`SchemaDescriptor::materialized_statements`]
-    /// precedent; the declaration boundary (the engine's
-    /// `SchemaError::RelationTooManyColumns` /
-    /// `SchemaError::TooManyStatements`) is where such counts are
-    /// rejected typed.
+    /// Only on one programmer-invariant violation: more than 2³²
+    /// relations — unreachable (the spec's own relations vector exceeds
+    /// memory first; the engine's `validate` states the same bound).
     #[expect(
         clippy::too_many_lines,
         reason = "the one lowering pass — one arm per statement form, \
@@ -790,6 +813,20 @@ impl SchemaSpec {
             handles: BTreeMap::new(),
             issues: Vec::new(),
         };
+        // The sealed-field cap runs FIRST — before any statement
+        // resolves a name and mints a u16 [`FieldId`] (the engine
+        // validator's check-before-mint ordering): past the cap the
+        // id mint placeholders, and the placeholder never escapes.
+        for (idx, relation) in self.relations.iter().enumerate() {
+            let sealed = relation.fields.len() + usize::from(relation.closed.is_some());
+            if sealed > usize::from(u16::MAX) {
+                resolver.issues.push(SpecIssue::RelationTooManyFields {
+                    relation: idx,
+                    name: relation.name.clone(),
+                    fields: sealed,
+                });
+            }
+        }
         for (idx, relation) in self.relations.iter().enumerate() {
             // The option is the kind: a closed relation carries its
             // handle newtype by construction (R7), so entering the
