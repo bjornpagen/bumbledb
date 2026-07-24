@@ -1,0 +1,23 @@
+bumbledb bench campaign (full-suite rerun — RUN 2, wall power)
+date: 2026-07-24 (lanes landed across 2026-07-24; battery-era estate retired whole at f474202a)
+revs: 7cef4e13 (scenarios, bench-durable-r1..r3, bench-ephemeral-r1..r3)
+out: /Users/bjorn/Documents/bumbledb/bench-out/campaign-2026-07-23
+power: wall (AC verified via pmset before launch and at close; every rep ran between)
+mode: shared-machine (boosted; standing owner greenlight 2026-07-20 — every lane BUMBLEDB_BENCH_BOOST=1, shared_machine provenance with 1/5/15 load averages stamped into every report; measurement mutex held per lane via scripts/measure.sh; no builds during timing — the release binary built before the first rep)
+protocol: identical to bench-out/night-2026-07-20 — seed 1, scale S, 256 samples per read family, oracle-gated everywhere the night run gated (fresh verify stamp required by the bench gate; value-identical multisets before any timed window)
+corpora: regenerated under the fixed RNG (R20); identity digest (corpus_gen::corpus_digest, scale S seed 1): 6518394f080c2273299b55e00a8b022f88505650932a4d57fba40bd0bdf9a86b; verify stamp (bench-data/6518394f080c2273, families + 500 randomized cases): f1af7aff7b1dac94d67278ef6f82469fc7b7daf04d6c87aa5539fb8ab8a2511b; per-lane store hashes in <lane>/digests.txt (identical across all six reps)
+ephemeral pairing: like-for-like this run (finding 020, fixed e5f35cb2 + 60d11a4d) — bench --ephemeral times the MDB_NOSYNC engine against SQLite WAL synchronous=OFF fullfsync=OFF checkpoint_fullfsync=OFF via the lane-typed write-family seam, parity read back before timing; config.store labels the run and merge refuses mixed labels
+clock proxy: bounded-retry brackets on every block; contaminated finals reported never hidden — reads r1 8/33, r2 9/33, r3 2/33, e1 6/33, e2 4/33, e3 4/33 (night: 0); durable writes 7/9 per rep (night: 8-9/9, fsync-DVFS physics); ephemeral writes 1-3/9
+roster: 33 read families (the night's 32 + deep_chain, R22-088)
+
+bench-durable-r1	COMPLETE	/Users/bjorn/Documents/bumbledb/bench-out/campaign-2026-07-23/bench-durable-r1/report.json
+bench-durable-r2	COMPLETE	/Users/bjorn/Documents/bumbledb/bench-out/campaign-2026-07-23/bench-durable-r2/report.json
+bench-durable-r3	COMPLETE	/Users/bjorn/Documents/bumbledb/bench-out/campaign-2026-07-23/bench-durable-r3/report.json
+bench-ephemeral-r1	COMPLETE	/Users/bjorn/Documents/bumbledb/bench-out/campaign-2026-07-23/bench-ephemeral-r1/report.json
+bench-ephemeral-r2	COMPLETE	/Users/bjorn/Documents/bumbledb/bench-out/campaign-2026-07-23/bench-ephemeral-r2/report.json
+bench-ephemeral-r3	COMPLETE	/Users/bjorn/Documents/bumbledb/bench-out/campaign-2026-07-23/bench-ephemeral-r3/report.json
+scenarios	COMPLETE (landed 7cef4e13)	/Users/bjorn/Documents/bumbledb/bench-out/campaign-2026-07-23/scenarios/scenarios.md
+
+oracle mismatches: 0 (all six reps re-gated clean before timing; run logs grep clean)
+report-class reps: every rep all_win=true, partial=false, 33/33 read families WIN, read geomean(ratio_p50) 0.041-0.046 (night: 0.045-0.046); ephemeral write rows now honest under the 020 pairing (commit_single 1.35x, commit_batch 0.87x vs the nosync twin)
+DNF/caps: none in the report-class reps; four engine-only write families carry no SQLite twin by design (commit_witnessed, commit_window_*), same as the night
