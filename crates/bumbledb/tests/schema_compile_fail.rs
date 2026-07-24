@@ -129,7 +129,7 @@ fn schema_compile_fail_fixtures() {
         seen += 1;
     }
     let _ = std::fs::remove_dir_all(&out_dir);
-    // The suite's twenty-seven cases (docs/architecture/70-api.md — the
+    // The suite's thirty cases (docs/architecture/70-api.md — the
     // emission's roster, the funerals, the width grammar, the
     // canonical-utterance law's ban table, the key arrow's closure, and
     // the schema-bound witness): duplicate handle; missing column; extra column;
@@ -141,7 +141,13 @@ fn schema_compile_fail_fixtures() {
     // `order` statement form diagnosing its derivations (the grammar
     // lock of `docs/architecture/30-dependencies.md` § refused: order
     // marks); `interval<E, 0>` (denotes nothing) and the widthless
-    // `interval<E, >` (names no width), each naming the field; and the
+    // `interval<E, >` (names no width), each naming the field; the
+    // fresh mint on a non-u64 field (fresh is legal on u64 only —
+    // judged at expansion naming the field, never deferred to the
+    // u64-shaped generated impls); one newtype name spanning two
+    // encodings (the dedup keys on the declared encoding — the rendered
+    // Rust type is lossy exactly where the interval width is the type);
+    // and the
     // window/selection ban table, each error naming the canonical form —
     // the deleted `in lo..hi per` spelling, `{1..*}` (the containment
     // respelled), `{n..n}` (write `{n}`), `{0..0}` (write `{0}`),
@@ -152,7 +158,10 @@ fn schema_compile_fail_fixtures() {
     // nothing — write no binding); the key arrow whose right side names
     // a foreign relation (the FD reading ratified — the arrow closes
     // over its own relation, and the teaching error is spanned at the
-    // offending name); the coherence check's two failing arms — a
+    // offending name); the determinant field spelled twice (a
+    // determinant is a field set — the teaching error is spanned at the
+    // second occurrence, never rustc's E0124 on the generated key
+    // struct); the coherence check's two failing arms — a
     // containment pairing two DISAGREEING newtypes and a labeled face
     // against a bare one (the faces of a dependency agree on their
     // newtype, or neither carries one; bare↔bare passes and is pinned
@@ -162,7 +171,7 @@ fn schema_compile_fail_fixtures() {
     // witness (the schema-bound witness law — the binding typestate
     // makes a foreign witness a type mismatch).
     assert_eq!(
-        seen, 27,
-        "the schema compile-fail roster has twenty-seven fixtures"
+        seen, 30,
+        "the schema compile-fail roster has thirty fixtures"
     );
 }

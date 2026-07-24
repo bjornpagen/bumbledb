@@ -459,6 +459,17 @@ fn parse_field(name: String, tokens: &mut Tokens) -> Field {
                     word, "fresh",
                     "schema!: unknown field modifier `{word}` (the only modifier is `fresh`)"
                 );
+                // Judged here, not deferred: the emitted `Fresh`/`Key`
+                // impls are u64-shaped, so a deferral to `Db::create`
+                // could never arrive — the generated code would die as
+                // rustc type errors in invisible code first.
+                assert!(
+                    matches!(field.ty, FieldTy::U64),
+                    "schema!: fresh field `{}` must be u64 — fresh is the mint \
+                     mark, and minted generations are u64 \
+                     (docs/architecture/70-api.md)",
+                    field.name
+                );
                 assert!(
                     field.newtype.is_some(),
                     "schema!: fresh field `{}` needs `as NewType` — without it \
@@ -783,8 +794,8 @@ fn parse_statement_side(tokens: &mut Tokens) -> Side {
 /// message. `schema()` lands it as a `compile_error!` at the token —
 /// the same landing the lowering's `SpecIssue`s take — for the grammar
 /// mistakes that carry MEANING worth teaching (today: the key arrow's
-/// right side), where an expansion panic at the invocation would bury
-/// the lesson.
+/// right side, the duplicated determinant field), where an expansion
+/// panic at the invocation would bury the lesson.
 struct ParseError {
     span: Span,
     message: String,
@@ -818,6 +829,9 @@ fn parse_statement(
                 "schema!: an FD takes no selection — the FD form is `R(X) -> R` \
                  (docs/architecture/30-dependencies.md)"
             );
+            if let Some(error) = duplicate_determinant_field(&left) {
+                return Err(error);
+            }
             if right != left.relation {
                 let fields: Vec<&str> = left
                     .projection
@@ -899,6 +913,35 @@ fn parse_statement(
     Ok(())
 }
 
+/// The FD determinant's duplicate check — a determinant is a field SET,
+/// duplicate-free (docs/architecture/30-dependencies.md). Judged at the
+/// parse, where the second occurrence's span is in hand: the projection
+/// is reified into the generated key struct, so a duplicate deferred to
+/// the engine would die first as rustc's E0124 on a field the author
+/// never wrote.
+fn duplicate_determinant_field(side: &Side) -> Option<ParseError> {
+    for (idx, (field, span)) in side.projection.iter().enumerate() {
+        if side.projection[..idx].iter().any(|(prior, _)| prior == field) {
+            let fields: Vec<&str> = side
+                .projection
+                .iter()
+                .map(|(name, _)| name.as_str())
+                .collect();
+            return Some(ParseError {
+                span: *span,
+                message: format!(
+                    "schema!: `{field}` appears twice in the determinant of \
+                     `{rel}({proj}) -> {rel}` — a determinant is a field set, \
+                     duplicate-free (docs/architecture/30-dependencies.md)",
+                    rel = side.relation,
+                    proj = fields.join(", "),
+                ),
+            });
+        }
+    }
+    None
+}
+
 /// One window bound out of the brace group: a non-negative integer,
 /// parsed here (not spliced) because the canonical-utterance law compares
 /// bounds at expansion.
@@ -955,9 +998,9 @@ fn parse_window(body: TokenStream) -> WindowSpec {
 }
 
 /// Parses the whole `schema!` body: the `pub Name;` header first, then
-/// relation blocks and dependency statements in any order. `Err` is the
-/// parse's one teaching error (the key arrow's foreign right side),
-/// spanned at the offending token.
+/// relation blocks and dependency statements in any order. `Err` is a
+/// parse teaching error (the key arrow's foreign right side, the
+/// duplicated determinant field), spanned at the offending token.
 fn parse_schema(input: TokenStream) -> Result<SchemaAst, ParseError> {
     let mut tokens = input.into_iter().peekable();
     match tokens.next() {
@@ -1024,9 +1067,10 @@ fn parse_schema(input: TokenStream) -> Result<SchemaAst, ParseError> {
 /// On malformed `schema!` grammar or a literal that does not fit its
 /// field's declared type — a compile error at the macro call site.
 /// Lowering issues (unresolvable names, banned spellings) are not panics:
-/// each becomes a `compile_error!` at the offending token — as does the
-/// parse's teaching error (a key arrow whose right side names a foreign
-/// relation), spanned at the offending name.
+/// each becomes a `compile_error!` at the offending token — as do the
+/// parse's teaching errors (a key arrow whose right side names a foreign
+/// relation, a determinant field spelled twice), each spanned at the
+/// offending token.
 #[proc_macro]
 pub fn schema(input: TokenStream) -> TokenStream {
     let schema = match parse_schema(input) {
@@ -1609,14 +1653,15 @@ fn issue_spans(issue: &SpecIssue, spans: &SpanTable) -> Vec<Span> {
         SpecIssue::NotAHandleField { at, .. } | SpecIssue::UnknownHandle { at, .. } => {
             one(spans.literals.get(at))
         }
-        // `parse_extension` enforces exact column coverage, so an
-        // over-wide row never reaches lowering from the macro — the
-        // `SchemaSpec` bindings surface is this issue's only producer.
-        SpecIssue::RowArityExcess { .. } => vec![Span::call_site()],
-        // A declaration-shaped issue: the parse records no span for a
-        // relation's own name (only statement occurrences), so the cap
-        // marks the invocation.
-        SpecIssue::RelationTooManyFields { .. } => vec![Span::call_site()],
+        // Two invocation-marked issues: `parse_extension` enforces exact
+        // column coverage, so an over-wide row never reaches lowering
+        // from the macro (the `SchemaSpec` bindings surface is that
+        // issue's only producer); and the parse records no span for a
+        // relation's own declared name (only statement occurrences), so
+        // the sealed-roster cap has no token to mark.
+        SpecIssue::RowArityExcess { .. } | SpecIssue::RelationTooManyFields { .. } => {
+            vec![Span::call_site()]
+        }
         SpecIssue::DuplicateHandleNewtype {
             second_relation, ..
         } => one(spans.newtypes.get(second_relation)),
@@ -2114,10 +2159,11 @@ fn emit_id_constants(out: &mut String, schema: &SchemaAst) {
 }
 
 fn emit_newtypes(out: &mut String, relations: &[Relation]) {
-    // name -> (inner Rust type, wraps an Interval). Intervals deliberately
-    // carry no order (an encoding accident, not semantics — the `Interval`
-    // doc), so their newtypes derive none either.
-    let mut newtypes: BTreeMap<String, (String, bool)> = BTreeMap::new();
+    // name -> (declared encoding, inner Rust type, wraps an Interval).
+    // Intervals deliberately carry no order (an encoding accident, not
+    // semantics — the `Interval` doc), so their newtypes derive none
+    // either.
+    let mut newtypes: BTreeMap<String, (String, String, bool)> = BTreeMap::new();
     for relation in relations {
         for field in &relation.fields {
             let Some(name) = &field.newtype else {
@@ -2127,27 +2173,39 @@ fn emit_newtypes(out: &mut String, relations: &[Relation]) {
             // order (an encoding accident, not semantics) and bytes<N>
             // deliberately none either — a digest's lexicographic order
             // is an encoding artifact (the order-on-bytes refusal).
+            // The first string is the declared ENCODING — the duplicate
+            // check's key, because the rendered Rust type is lossy
+            // exactly where the width is the type: `interval<u64, 7>`
+            // and `interval<u64>` share one host `Interval<u64>`.
             let inner = match field.ty {
-                FieldTy::U64 => ("u64".to_owned(), false),
-                FieldTy::I64 => ("i64".to_owned(), false),
-                FieldTy::FixedBytes(len) => (format!("[u8; {len}]"), true),
-                FieldTy::Interval(element, _) => (
+                FieldTy::U64 => ("u64".to_owned(), "u64".to_owned(), false),
+                FieldTy::I64 => ("i64".to_owned(), "i64".to_owned(), false),
+                FieldTy::FixedBytes(len) => {
+                    (format!("bytes<{len}>"), format!("[u8; {len}]"), true)
+                }
+                FieldTy::Interval(element, width) => (
+                    match width {
+                        None => format!("interval<{}>", element_rust(element)),
+                        Some(w) => format!("interval<{}, {w}>", element_rust(element)),
+                    },
                     format!("::bumbledb::Interval<{}>", element_rust(element)),
                     true,
                 ),
                 _ => unreachable!("parser restricts `as` to u64/i64/bytes<N>/interval"),
             };
-            if let Some(existing) = newtypes.get(name) {
-                assert_eq!(
-                    existing, &inner,
-                    "schema!: newtype `{name}` declared twice with different inner types"
+            if let Some((existing, ..)) = newtypes.get(name) {
+                assert!(
+                    *existing == inner.0,
+                    "schema!: newtype `{name}` declared twice with different \
+                     encodings: {existing} vs {}",
+                    inner.0
                 );
                 continue;
             }
             newtypes.insert(name.clone(), inner);
         }
     }
-    for (name, (inner, order_free)) in newtypes {
+    for (name, (_, inner, order_free)) in newtypes {
         let order = if order_free { "" } else { ", PartialOrd, Ord" };
         let _ = write!(
             out,
@@ -2165,10 +2223,15 @@ fn emit_newtypes(out: &mut String, relations: &[Relation]) {
 /// const `id`/`from_id` (explicit matches, no `as` casts — the mapping is
 /// the declaration order stated, not a repr accident) and pinned by an
 /// EMITTED weld test per closed relation, so the weld cannot be forgotten
-/// for a new theory. The host enum is the constant namespace: no separate
-/// per-handle constants exist.
-fn emit_closed(out: &mut String, relations: &[Relation]) {
-    for relation in relations {
+/// for a new theory. Declared columns project too (ruled 2026-07-23,
+/// R14): per column, a `const` accessor in the `id()` style — an
+/// explicit match per handle, rendered from the LOWERED extension (the
+/// same typed ground-axiom literals that seed the engine's, handles
+/// resolved to row ids), so host and engine cannot drift by construction
+/// and no query-backed weld is needed. The host enum is the constant
+/// namespace: no separate per-handle constants exist.
+fn emit_closed(out: &mut String, relations: &[Relation], descriptor: &SchemaDescriptor) {
+    for (rel_idx, relation) in relations.iter().enumerate() {
         let Some(extension) = &relation.closed else {
             continue;
         };

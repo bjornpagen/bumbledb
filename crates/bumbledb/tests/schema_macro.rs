@@ -1646,7 +1646,12 @@ mod element_domain_typing {
     //! element domain and never a width (`lean/Bumbledb/Schema.lean:
     //! Value.points_one_tag_u64`). Locks: the recipe validates, a tiling
     //! commits, a gap delta aborts, an overlap delta aborts, and a
-    //! mixed-width Allen query classifies with hand answers.
+    //! mixed-width Allen query classifies with hand answers. The
+    //! interval faces are BARE, as the cookbook spells them: one newtype
+    //! names one encoding (the width is the type), so a label spanning
+    //! both faces is an expansion error, and the coherence law refuses a
+    //! labeled face against a bare one — cross-width statement pairs are
+    //! structural.
 
     use bumbledb::error::Direction;
     use bumbledb::ir::{
@@ -1660,12 +1665,12 @@ mod element_domain_typing {
 
         relation Playlist {
             id: u64 as PlaylistId, fresh,
-            span: interval<u64> as PlaylistSpan,
+            span: interval<u64>,
         }
 
         relation Slot {
             playlist: u64 as PlaylistId,
-            slot: interval<u64, 1> as PlaylistSpan,
+            slot: interval<u64, 1>,
             track: u64,
         }
 
@@ -1674,8 +1679,8 @@ mod element_domain_typing {
         Slot(playlist, slot) == Playlist(id, span);
     }
 
-    fn unit(at: u64) -> PlaylistSpan {
-        PlaylistSpan(Interval::<u64>::fixed(at, 1).expect("in-domain unit slot"))
+    fn unit(at: u64) -> Interval<u64> {
+        Interval::<u64>::fixed(at, 1).expect("in-domain unit slot")
     }
 
     /// The tiling delta: one playlist over `[0, 3)` and the three unit
@@ -1685,7 +1690,7 @@ mod element_domain_typing {
             let id = tx.alloc::<PlaylistId>()?;
             tx.insert(&Playlist {
                 id,
-                span: PlaylistSpan(Interval::<u64>::new(0, 3).expect("nonempty")),
+                span: Interval::<u64>::new(0, 3).expect("nonempty"),
             })?;
             for (at, track) in [(0, 100), (1, 200), (2, 300)] {
                 tx.insert(&Slot {
@@ -1727,7 +1732,7 @@ mod element_domain_typing {
                 let id = tx.alloc::<PlaylistId>()?;
                 tx.insert(&Playlist {
                     id,
-                    span: PlaylistSpan(Interval::<u64>::new(0, 3).expect("nonempty")),
+                    span: Interval::<u64>::new(0, 3).expect("nonempty"),
                 })?;
                 for (at, track) in [(0, 100), (2, 300)] {
                     tx.insert(&Slot {
