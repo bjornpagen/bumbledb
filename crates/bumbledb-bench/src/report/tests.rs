@@ -291,6 +291,36 @@ fn ghz_stamps_render_in_markdown_json_and_the_merge_excludes_dirt() {
     );
 }
 
+/// The merge's durability gate (finding 020, merge half): runs whose
+/// `config.store` labels differ refuse to merge — a min column across
+/// sync levels labels nothing — and a run carrying no label at all is
+/// named in its own error.
+#[test]
+fn the_merge_refuses_mixed_durability_labels() {
+    let mut ephemeral = fixture();
+    ephemeral.config.store = "ephemeral";
+    let runs = vec![
+        (
+            "run1".to_owned(),
+            json::parse(&to_json(&fixture())).expect("parses"),
+        ),
+        (
+            "run2".to_owned(),
+            json::parse(&to_json(&ephemeral)).expect("parses"),
+        ),
+    ];
+    let err = merge_markdown(&runs).expect_err("mixed durability refuses");
+    assert!(err.contains("merge refuses mixed durability"), "{err}");
+    assert!(
+        err.contains("run1 is `durable` but run2 is `ephemeral`"),
+        "{err}"
+    );
+
+    let unlabeled = json::parse(r#"{"config":{"scale":"S"}}"#).expect("parses");
+    let err = merge_markdown(&[("bare".to_owned(), unlabeled)]).expect_err("no label refuses");
+    assert_eq!(err, "bare: report.json carries no config.store label");
+}
+
 #[test]
 fn verdict_and_budget_logic_is_table_tested() {
     assert_eq!(verdict(Kind::Gate, 10, 11), Verdict::Win);
