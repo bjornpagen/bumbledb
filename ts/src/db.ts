@@ -256,7 +256,10 @@ interface Tx<Rels extends SchemaRelations> {
 	 * surface's `insert(&fact) -> bool` bijection `delete` always honored —
 	 * beside the relation's fresh cells, minted or resupplied. The
 	 * idempotent-replay lane reads the bit from the insert itself; no extra
-	 * `contains` round trip exists.
+	 * `contains` round trip exists. The flattened shape cannot carry a FRESH
+	 * cell literally named `changed` beside the report, so admission refuses
+	 * that one spelling ({@link refuseShadowedChanged}) — never a silent
+	 * shadow here.
 	 */
 	insert<R extends MemberRelation<Rels>>(relation: R, fact: InsertFact<R>): { readonly changed: boolean } & Minted<R>
 	/** Records one delete; `true` iff the final state changed. */
@@ -1600,6 +1603,27 @@ const ErrNewtypeMismatch = errors.new(
 )
 
 /**
+ * `Tx.insert` returns the flattened `{ changed, ...fresh }` record (R11),
+ * where the spread wins: a FRESH field literally named `changed` would
+ * shadow the engine's changed-state report on every insert of its
+ * relation. No field name is reserved SILENTLY — the one unspeakable
+ * spelling is refused here at admission, before any store is touched.
+ * Supplied (non-fresh) fields named `changed` never enter the return
+ * record and stay legal.
+ */
+function refuseShadowedChanged(theory: AnySchema): void {
+	for (const [name, member] of Object.entries(theory.relations)) {
+		for (const declared of sealedFieldsOf(member)) {
+			if (declared.name === "changed" && isFreshField(declared.field)) {
+				throw errors.new(
+					`relation ${name}: a fresh field named "changed" would shadow tx.insert's changed-state report in its { changed, ...fresh } return (R11) — rename the fresh field; a supplied field named "changed" stays legal (only fresh cells ride the return)`
+				)
+			}
+		}
+	}
+}
+
+/**
  * The one admission path both verbs share: canonical-path cache lookup
  * first (a hit returns the SAME `Db` value for the identical theory, a
  * typed fingerprint error for a different one, and a typed refusal for
@@ -1616,6 +1640,7 @@ function admit<Rels extends SchemaRelations>(
 	storePath: string,
 	theory: Schema<Rels>
 ): Db<Rels> {
+	refuseShadowedChanged(theory)
 	const canonical = path.resolve(storePath)
 	const cached = openStores.get(canonical)
 	if (cached !== undefined) {

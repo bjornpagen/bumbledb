@@ -526,6 +526,35 @@ describe("the Db runtime against a real store", function suite() {
 		assert.ok(!committed.ok, "the probe delta abandons — the store is untouched")
 	})
 
+	test("a fresh field named `changed` is an admission refusal — the flattened return never shadows the report (R11)", async function freshChangedRefused() {
+		const Shadow = relation("Shadow", { changed: u64.fresh, note: str })
+		const Shadowed = schema("Shadowed", { Shadow }, [])
+		await assert.rejects(async function shadowCreate() {
+			await Db.create(path.join(tmpRoot, "shadow"), Shadowed)
+		}, /fresh field named "changed" would shadow/)
+		assert.ok(
+			!fs.existsSync(path.join(tmpRoot, "shadow")),
+			"the refusal precedes the bridge — no store is ever created"
+		)
+		// A SUPPLIED field named `changed` never rides the return record — the name stays legal.
+		const Legal = relation("Legal", { id: u64.fresh, changed: bool })
+		const Kept = schema("Kept", { Legal }, [])
+		const legalDb = await Db.create(path.join(tmpRoot, "legal-changed"), Kept)
+		const outcome = legalDb.write(function insertLegal(tx) {
+			const first = tx.insert(Legal, { changed: true })
+			assert.equal(first.changed, true, "a fresh insert changes the final state")
+			assert.equal(typeof first.id, "bigint", "the minted cell rides beside the bit")
+			const replay = tx.insert(Legal, { id: first.id, changed: true })
+			assert.equal(
+				replay.changed,
+				false,
+				"the report is the engine's boolean — the supplied `changed` cell (true) never shadows it"
+			)
+			return abandon("probe only")
+		})
+		assert.ok(!outcome.ok)
+	})
+
 	test("using snap = db.read() — the R12 acquisition: dispose releases the snapshot deterministically", function usingRead() {
 		let leaked: ReadScope<(typeof Ledger)["relations"]> | undefined
 		{
