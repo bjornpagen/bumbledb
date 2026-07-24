@@ -13,11 +13,11 @@ use crate::ir::validate::{RuleWitness, validate};
 use crate::ir::{AggOp, FindTerm, Query};
 use crate::obs;
 use crate::plan::fj::{
-    DisjointWitness, DistinctWitness, binary2fj, factor, provably_disjoint_rules, provably_distinct,
+    DisjointWitness, DistinctWitness, binary2fj, factor, fold_split, gj_split,
+    provably_disjoint_rules, provably_distinct,
 };
 use crate::plan::planner::plan as plan_order;
 use crate::storage::env::ReadTxn;
-use crate::storage::read;
 
 /// Prepares a query: the one-time pipeline, allocation-sanctioned.
 /// Validation and normalization see the whole program; everything after —
@@ -32,8 +32,8 @@ use crate::storage::read;
 ///
 /// # Panics
 ///
-/// Only on programmer-invariant violations (`binary2fj` + `factor`
-/// construct valid plans by construction).
+/// Only on programmer-invariant violations (`binary2fj` + `factor` +
+/// `fold_split` + `gj_split` construct valid plans by construction).
 pub(crate) fn prepare<'s, S>(
     txn: &ReadTxn<'_>,
     cache: &ImageCache,
@@ -722,7 +722,7 @@ fn prepare_rule_variant(
             )?);
             continue;
         };
-        let rows = read::row_count(txn, relation)?;
+        let rows = crate::plan::selectivity::relation_rows(txn, schema, relation)?;
         let occ_stats =
             crate::plan::selectivity::occurrence_stats(txn, cache, schema, occurrence, rows)?;
         pins.push(OccurrencePin {
@@ -742,6 +742,29 @@ fn prepare_rule_variant(
     let lower_span = obs::span(obs::names::LOWER, obs::Category::Prepare);
     let mut fj = binary2fj(normalized, &order);
     factor(&mut fj);
+    let mut estimates = order.estimates.clone();
+    // The fold-aware level split, aggregate heads only (a projection
+    // has no fold to push down): group variables form their own prefix
+    // levels so leaf scan runs are group-constant and the aggregate
+    // sink's scan-fold pushdown can fire (`plan/fj/fold_split.rs`).
+    if rule
+        .rule()
+        .finds
+        .iter()
+        .any(|term| matches!(term, FindTerm::Aggregate { .. } | FindTerm::AggregateMeasure { .. }))
+    {
+        let group_key: std::collections::BTreeSet<crate::ir::VarId> = rule
+            .rule()
+            .finds
+            .iter()
+            .filter_map(|term| match term {
+                FindTerm::Var(var) | FindTerm::Measure(var) => Some(*var),
+                FindTerm::Aggregate { .. } | FindTerm::AggregateMeasure { .. } => None,
+            })
+            .collect();
+        fold_split(&mut fj, &group_key, &mut estimates);
+    }
+    gj_split(&mut fj);
     // Group key for projections; every variable for aggregates —
     // skip-illegality under a fold is encoded in the bits themselves
     // (`RuleWitness::sink_vars`).
@@ -751,10 +774,10 @@ fn prepare_rule_variant(
         normalized,
         schema,
         signatures,
-        order.estimates.clone(),
+        estimates,
         &sink_vars,
     )
-    .expect("binary2fj + factor construct valid plans");
+    .expect("binary2fj + factor + fold_split + gj_split construct valid plans");
     lower_span.end();
 
     let finds = find_specs(rule, &plan);

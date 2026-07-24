@@ -77,13 +77,31 @@ struct OccInfo {
     /// join-step fanout inputs (docs/architecture/40-execution.md).
     var_distincts: Vec<(u128, u64)>,
     /// Var bitsets of `Functionality` statements whose every projection
-    /// field is var-bound in this occurrence (statements with any
-    /// literal-bound or unbound field are skipped — simple and faithful
-    /// to the doc's estimator). The pointwise-key determinant lives in the
+    /// field is var-bound or Eq-pinned in this occurrence (a pinned
+    /// field is covered with no variable bit — the shared pinned-field
+    /// vocabulary, [`crate::plan::pinned_fields`]; statements with any
+    /// unbound, un-pinned field are skipped). The pointwise-key
+    /// determinant lives in the
     /// translation ([`densify`]): a pointwise key's set exists only when
     /// its interval field is bound **by value**, so a join binding just
     /// the scalar prefix never certifies fanout 1.
     key_var_sets: Vec<u128>,
+}
+
+/// One cross-atom `Allen` residual as the DP reads it — the single
+/// residual class the estimator prices (the R19 scope: a literal mask
+/// carries a workload-free measure, popcount/13 over the JEPD basics —
+/// the same fraction the ladder's `allen_keep` charges in filter
+/// position; a param mask takes the range class). Applied at the join
+/// step whose occurrence completes the variable bitset — the
+/// earliest-bound-node rule (`fj/validate.rs`) fires the residual at
+/// exactly that node at runtime.
+struct AllenKeep {
+    /// Both interval variables as a dense bitset.
+    vars: u128,
+    /// keep = num/den, clamped to at least one row at application.
+    keep_num: u64,
+    keep_den: u64,
 }
 
 #[cfg(test)]

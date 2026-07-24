@@ -1,7 +1,9 @@
 //! Free Join plan lowering (docs/architecture/40-execution.md): `binary2fj` (paper Fig. 7), the
-//! conservative `factor()` hoist (Fig. 8), cover enumeration (§4.4),
-//! residual and anti-probe placement, trie schemas (§3.3), and the sealed
-//! [`ValidatedPlan`] witness (`docs/architecture/40-execution.md`).
+//! conservative `factor()` hoist (Fig. 8), the `gj_split` lowering to
+//! the GJ end of the spectrum (ruled 2026-07-23, R19), cover
+//! enumeration (§4.4), residual and anti-probe placement, trie schemas
+//! (§3.3), and the sealed [`ValidatedPlan`] witness
+//! (`docs/architecture/40-execution.md`).
 //!
 //! Plain `Vec`s everywhere — no fixed-capacity silent-drop containers
 //! (post-mortem §35: capacity bugs must be impossible, not silent).
@@ -20,6 +22,8 @@ mod check_occurrence_coverage;
 mod check_selections;
 mod derive_nodes;
 mod factor;
+mod fold_split;
+mod gj_split;
 mod provably_disjoint;
 mod provably_distinct;
 mod split_filters;
@@ -28,6 +32,8 @@ mod validate;
 pub use binary2fj::binary2fj;
 pub(crate) use check_selections::check_selections;
 pub use factor::factor;
+pub use fold_split::fold_split;
+pub use gj_split::gj_split;
 pub use provably_disjoint::{DisjointWitness, provably_disjoint_rules};
 pub(crate) use provably_distinct::{DistinctWitness, provably_distinct};
 pub(crate) use split_filters::split_filters;
@@ -365,8 +371,8 @@ impl ValidatedPlan {
         self.distinct_witness
     }
 
-    /// Whether a suffix skip can never cross a node — the pipelined
-    /// executor's eligibility.
+    /// The planner's per-step estimates — introspection's reader and
+    /// the sink-presizing hint (the 40-execution doc).
     #[must_use]
     pub fn estimates(&self) -> &[u64] {
         &self.estimates

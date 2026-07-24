@@ -1,5 +1,5 @@
-use crate::image::view::{Const, FilterPredicate};
 use crate::ir::normalize::NormalizedQuery;
+use crate::plan::pinned_fields;
 use crate::schema::Schema;
 use std::collections::BTreeSet;
 
@@ -28,7 +28,8 @@ pub struct DistinctWitness(());
 /// - **Set-bound fields pin nothing**: an Eq against a `ParamSet`/
 ///   `WordSet` matches any element, so two distinct facts can differ on
 ///   that field while producing one binding — sets are excluded from the
-///   pinned-constant field set.
+///   pinned-constant field set (the shared vocabulary,
+///   [`pinned_fields`]).
 pub(crate) fn provably_distinct(
     normalized: &NormalizedQuery,
     schema: &Schema,
@@ -51,19 +52,7 @@ pub(crate) fn provably_distinct(
                 .vars
                 .iter()
                 .map(|(f, _)| *f)
-                .chain(occurrence.filters.iter().filter_map(|f| match f {
-                    FilterPredicate::Compare {
-                        field,
-                        op: crate::ir::CmpOp::Eq,
-                        value:
-                            Const::Word(_)
-                            | Const::Byte(_)
-                            | Const::Interval { .. }
-                            | Const::Param(_)
-                            | Const::PendingIntern { .. },
-                    } => Some(*field),
-                    _ => None,
-                }))
+                .chain(pinned_fields(occurrence))
                 .collect();
             relation.keys().iter().any(|id| {
                 schema

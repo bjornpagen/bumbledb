@@ -19,6 +19,27 @@ use crate::storage::env::ReadTxn;
 use crate::storage::read;
 use bumbledb_theory::schema::FieldId;
 
+/// A relation's row count for planning. A closed relation's rows ARE
+/// its sealed extension — the option is the kind (`schema/relation.rs`)
+/// — and its stored `S` counter never exists (closed relations are
+/// storage-virtual and write-refused), so a raw counter read prices it
+/// at 0. Every planner row-count read routes here, never
+/// `read::row_count` directly.
+///
+/// # Errors
+///
+/// `Lmdb` from the counter read (ordinary relations only).
+pub(crate) fn relation_rows(
+    txn: &ReadTxn<'_>,
+    schema: &Schema,
+    relation: bumbledb_theory::schema::RelationId,
+) -> crate::error::Result<u64> {
+    match schema.relation(relation).extension() {
+        Some(rows) => Ok(u64::try_from(rows.len()).expect("bounded extension")),
+        None => read::row_count(txn, relation),
+    }
+}
+
 /// The distinct-count floor for an Eq selection on a field nothing else
 /// describes (a plain string/int column with no resident image): keep
 /// `rows / 64`. Chosen small enough that a selection always looks
@@ -313,7 +334,7 @@ fn distinct_of(
         let statement = schema.containment(*id);
         if statement.source.projection.as_ref() == [field] && statement.source.selection.is_empty()
         {
-            let target_rows = read::row_count(txn, statement.target.relation)?;
+            let target_rows = relation_rows(txn, schema, statement.target.relation)?;
             containment_bound =
                 Some(containment_bound.map_or(target_rows, |bound| bound.min(target_rows)));
         }
@@ -692,6 +713,27 @@ mod tests {
             1600 / 16,
             "the min target bound (Small, 16 rows) wins over the first (Big, 64)"
         );
+    }
+
+    /// The containment rung with a CLOSED target, cold cache: a closed
+    /// relation's rows ARE its sealed extension (`relation_rows`) — the
+    /// stored `S` counter never exists for it, and the raw read priced
+    /// the vocabulary bound at 0 → distinct 1, zero selectivity credit.
+    /// The bound must be the variant-list length.
+    #[test]
+    fn the_containment_rung_reads_a_closed_targets_sealed_extension() {
+        let dir = TempDir::new("selectivity-closed-target");
+        let schema = cyclic_schema();
+        let env = Environment::create(dir.path(), &schema).expect("create");
+        let txn = env.read_txn().expect("txn");
+        let cache = ImageCache::new(&schema);
+
+        // Cold (no images, no rows anywhere): A.x <= X.id with X closed
+        // at 3 handles bounds the distinct at 3 — estimate = rows / 3.
+        let est = occurrence_stats(&txn, &cache, &schema, &eq_on(0, CYCLE_A), 1500)
+            .expect("estimate")
+            .rows;
+        assert_eq!(est, 500, "the sealed extension is the containment bound");
     }
 
     /// A set-bound position plans as `PARAM_SET_PLANNING_CARDINALITY`

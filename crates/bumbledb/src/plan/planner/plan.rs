@@ -26,7 +26,7 @@ pub fn plan(normalized: &NormalizedQuery, schema: &Schema, stats: &[OccStats]) -
         n <= MAX_OCCURRENCES,
         "validation rejects over-cap queries at the boundary"
     );
-    let occs = densify(&participating, schema, stats);
+    let (occs, allen) = densify(normalized, &participating, schema, stats);
 
     // Exhaustive left-deep DP; the cost is the sum of every prefix estimate
     // including the base relation's rows (the root iteration is real work,
@@ -60,7 +60,7 @@ pub fn plan(normalized: &NormalizedQuery, schema: &Schema, stats: &[OccStats]) -
             }
             let prev_mask = mask & !(1 << last);
             let prev = best[prev_mask as usize].expect("smaller masks filled first");
-            let est = estimate(prev.est, mask_vars[prev_mask as usize], &occs, last);
+            let est = estimate(prev.est, mask_vars[prev_mask as usize], &occs, &allen, last);
             let cost = prev.cost.saturating_add(est);
             let better = match candidate {
                 None => true,

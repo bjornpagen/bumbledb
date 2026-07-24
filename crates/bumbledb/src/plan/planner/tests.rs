@@ -286,8 +286,8 @@ fn pointwise_prefix_join_takes_the_general_fanout() {
         occurrence(1, 1, vec![(0, 0), (1, 1)]),
     ]);
     let positive: Vec<&Occurrence> = query.occurrences.iter().collect();
-    let occs = densify(&positive, &schema, &pointwise_stats());
-    let est = estimate(5, occs[0].vars, &occs, 1);
+    let (occs, _) = densify(&query, &positive, &schema, &pointwise_stats());
+    let est = estimate(5, occs[0].vars, &occs, &[], 1);
     assert_eq!(est, 50, "the general case: 5 x fanout(1000/100) = 50");
     assert_ne!(est, 5, "the scalar prefix must not certify fanout 1");
 }
@@ -303,8 +303,8 @@ fn full_pointwise_projection_bound_by_value_pins_fanout_one() {
         occurrence(1, 1, vec![(0, 0), (1, 1)]),
     ]);
     let positive: Vec<&Occurrence> = query.occurrences.iter().collect();
-    let occs = densify(&positive, &schema, &pointwise_stats());
-    let est = estimate(5, occs[0].vars, &occs, 1);
+    let (occs, _) = densify(&query, &positive, &schema, &pointwise_stats());
+    let est = estimate(5, occs[0].vars, &occs, &[], 1);
     assert_eq!(est, 5, "full key coverage: the reference-walk bound");
     // Control: without the key the same join would price at the general
     // fanout min(1000/100, 1000/250) = 4 per binding.
@@ -323,7 +323,7 @@ fn full_pointwise_projection_bound_by_value_pins_fanout_one() {
         },
         no_key,
     ];
-    assert_eq!(estimate(5, occs_no_key[0].vars, &occs_no_key, 1), 20);
+    assert_eq!(estimate(5, occs_no_key[0].vars, &occs_no_key, &[], 1), 20);
 }
 
 /// A membership-bound interval field never enters `vars` (normalization
@@ -340,9 +340,127 @@ fn membership_bound_interval_disables_key_coverage() {
     let positive: Vec<&Occurrence> = query.occurrences.iter().collect();
     let mut occ_stats = pointwise_stats();
     occ_stats[1].var_distincts = vec![(VarId(0), 100)];
-    let occs = densify(&positive, &schema, &occ_stats);
+    let (occs, _) = densify(&query, &positive, &schema, &occ_stats);
     assert!(occs[1].key_var_sets.is_empty());
-    assert_eq!(estimate(5, occs[0].vars, &occs, 1), 50);
+    assert_eq!(estimate(5, occs[0].vars, &occs, &[], 1), 50);
+}
+
+/// An Allen-connected pair never prices as a bare Cartesian product
+/// (the R19 scope: the one residual class with a workload-free
+/// measure): a literal mask credits popcount/13 at the step completing
+/// the pair; a param mask takes the range class.
+#[test]
+fn allen_connected_pairs_price_the_mask_measure() {
+    use crate::ir::MaskTerm;
+    use crate::ir::normalize::PlacedAllen;
+    use bumbledb_theory::allen::AllenMask;
+
+    let schema = schema(2, 2);
+    // Two occurrences sharing no variable, related only by the mask.
+    let mut query = normalized(vec![
+        occurrence(0, 0, vec![(1, 0)]),
+        occurrence(1, 1, vec![(1, 1)]),
+    ]);
+    query.allen_residuals = vec![PlacedAllen {
+        lhs: VarId(0),
+        rhs: VarId(1),
+        mask: MaskTerm::Literal(AllenMask::DURING | AllenMask::MEETS),
+    }];
+    let positive: Vec<&Occurrence> = query.occurrences.iter().collect();
+    let (occs, allen) = densify(&query, &positive, &schema, &stats(&[100, 130]));
+    let est = estimate(100, occs[0].vars, &occs, &allen, 1);
+    assert_eq!(est, 2000, "13000 x 2/13, never the bare product");
+
+    // A param mask is unmeasurable at prepare: the range class.
+    query.allen_residuals[0].mask = MaskTerm::Param(crate::ir::ParamId(0));
+    let (occs, allen) = densify(&query, &positive, &schema, &stats(&[100, 130]));
+    assert_eq!(estimate(100, occs[0].vars, &occs, &allen, 1), 13000 / 4);
+
+    // Already-covered residuals never re-price: with both vars in the
+    // prefix the fraction was charged at an earlier step.
+    let (occs, allen) = densify(&query, &positive, &schema, &stats(&[100, 130]));
+    assert_eq!(
+        estimate(100, occs[0].vars | occs[1].vars, &occs, &allen, 1),
+        100 * 130,
+        "a prefix-covered residual charges nothing again"
+    );
+}
+
+/// A compound key with one field Eq-pinned certifies fanout 1 when the
+/// join covers the var-bound remainder — the pinned field is covered
+/// with no variable bit (the shared pinned-field vocabulary that
+/// `provably_distinct` and the key-probe classifier already count).
+#[test]
+fn eq_pinned_key_fields_count_toward_key_coverage() {
+    // Posting keyed (acct, day): the key is the compound projection.
+    let schema = SchemaDescriptor {
+        relations: vec![
+            RelationDescriptor {
+                extension: None,
+                name: "D".into(),
+                fields: vec![FieldDescriptor {
+                    name: "acct".into(),
+                    value_type: ValueType::U64,
+                    generation: Generation::None,
+                }],
+            },
+            RelationDescriptor {
+                extension: None,
+                name: "Posting".into(),
+                fields: vec![
+                    FieldDescriptor {
+                        name: "acct".into(),
+                        value_type: ValueType::U64,
+                        generation: Generation::None,
+                    },
+                    FieldDescriptor {
+                        name: "day".into(),
+                        value_type: ValueType::U64,
+                        generation: Generation::None,
+                    },
+                ],
+            },
+        ],
+        statements: vec![StatementDescriptor::Functionality {
+            relation: RelationId(1),
+            projection: Box::new([FieldId(0), FieldId(1)]),
+        }],
+    }
+    .validate()
+    .expect("valid fixture");
+
+    let mut posting = occurrence(1, 1, vec![(0, 0)]);
+    posting.filters.push(FilterPredicate::Compare {
+        field: FieldId(1),
+        op: ViewCmp::Eq,
+        value: Const::Param(crate::ir::ParamId(0)),
+    });
+    let query = normalized(vec![occurrence(0, 0, vec![(0, 0)]), posting]);
+    let positive: Vec<&Occurrence> = query.occurrences.iter().collect();
+    let mut occ_stats = stats(&[5, 15625]);
+    occ_stats[1].var_distincts = vec![(VarId(0), 64)];
+    let (occs, _) = densify(&query, &positive, &schema, &occ_stats);
+    assert_eq!(
+        estimate(5, occs[0].vars, &occs, &[], 1),
+        5,
+        "pinned day + joined acct exhaust the key: fanout 1, not rows/64"
+    );
+
+    // Control: a set pin covers nothing — the general fanout returns.
+    let mut set_pinned = query.occurrences[1].clone();
+    set_pinned.filters = vec![FilterPredicate::Compare {
+        field: FieldId(1),
+        op: ViewCmp::Eq,
+        value: Const::ParamSet(crate::ir::ParamId(0)),
+    }];
+    let set_query = normalized(vec![query.occurrences[0].clone(), set_pinned]);
+    let positive: Vec<&Occurrence> = set_query.occurrences.iter().collect();
+    let (occs, _) = densify(&set_query, &positive, &schema, &occ_stats);
+    assert_eq!(
+        estimate(5, occs[0].vars, &occs, &[], 1),
+        5 * (15625 / 64),
+        "a set-bound field pins nothing"
+    );
 }
 
 /// Negated occurrences are excluded from the DP state entirely: the
