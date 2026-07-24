@@ -473,6 +473,43 @@ fn arg_heads_round_trip_singleton_composite_and_self_carry() {
     );
 }
 
+/// The measure-keyed Arg restriction (ruled 2026-07-23, R5): the key
+/// position admits `Duration(v)` — "the longest claim per person, with
+/// its window" — in both the self-keyed and carried-payload shapes, and
+/// the renderer's spelling reparses to the same bytes.
+#[test]
+fn measure_keyed_arg_round_trips() {
+    let longest = query!(Scheduling {
+        (person, ArgMax(span, Duration(span))) | Claim(person, span);
+    });
+    let normalized = "(v0, ArgMax(v1, Duration(v1))) | Claim(person: v0, span: v1);";
+    assert_eq!(pin("longest-claim", Scheduling, &longest), normalized);
+    let reparsed = query!(Scheduling {
+        (v0, ArgMax(v1, Duration(v1))) | Claim(person: v0, span: v1);
+    });
+    assert_eq!(
+        pin("longest-claim-fixed-point", Scheduling, &reparsed),
+        normalized
+    );
+
+    let carried = query!(Scheduling {
+        (person, ArgMin(source, Duration(span))) | Claim(source, person, span);
+    });
+    let carried_normalized =
+        "(v1, ArgMin(v0, Duration(v2))) | Claim(source: v0, person: v1, span: v2);";
+    assert_eq!(
+        pin("shortest-claim-source", Scheduling, &carried),
+        carried_normalized
+    );
+    let carried_reparsed = query!(Scheduling {
+        (v1, ArgMin(v0, Duration(v2))) | Claim(source: v0, person: v1, span: v2);
+    });
+    assert_eq!(
+        pin("shortest-claim-source-fixed-point", Scheduling, &carried_reparsed),
+        carried_normalized
+    );
+}
+
 /// Grammar exposure does not weaken the semantic boundary: Arg restriction
 /// remains single-rule because its key is rule-scoped outside the head.
 #[test]

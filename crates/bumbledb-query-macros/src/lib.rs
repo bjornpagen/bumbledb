@@ -20,7 +20,7 @@
 //! headterm:= var | [name ':'] agg        // named positions become result columns
 //! agg     := Sum(t) | Min(t) | Max(t) | Count | CountDistinct(v) | Pack(v)
 //!          | ArgMax(v, key) | ArgMin(v, key)
-//!            where t := v | Duration(v)
+//!            where t := v | Duration(v)  and  key := v | Duration(v)
 //! body    := item (',' item)*
 //! item    := atom                        // positive occurrence
 //!          | '!' atom                    // negation (anti-probe; safety per roster)
@@ -336,9 +336,17 @@ enum HeadTerm {
         over: Option<Name>,
         /// The aggregated term is `Duration(v)` (Sum/Min/Max only).
         measure: bool,
-        /// Arg-restriction's extremized variable; absent for folds.
-        key: Option<Name>,
+        /// Arg-restriction's key; absent for folds.
+        key: Option<ArgKeyTerm>,
     },
+}
+
+/// Arg-restriction's key spelling — the IR `ArgKey`'s two, at the text
+/// layer (ruled 2026-07-23, R5): a variable, or the interval measure
+/// `Duration(v)` ("the longest interval per group").
+enum ArgKeyTerm {
+    Var(Name),
+    Measure(Name),
 }
 
 struct ParsedRule {
@@ -587,7 +595,9 @@ fn agg_op(name: &str) -> Option<AggOp> {
 
 /// Parses one aggregate's argument group: `(v)` for every unary op,
 /// `(Duration(v))` admitted under `Sum`/`Min`/`Max` only (the measure's
-/// three folds — the grammar's `t := v | Duration(v)`).
+/// three folds — the grammar's `t := v | Duration(v)`), and `(v, key)`
+/// for the Arg ops with `key := v | Duration(v)` (the measure-keyed
+/// restriction, ruled 2026-07-23, R5).
 fn parse_agg(tokens: &mut Tokens, op: AggOp) -> Parse<HeadTerm> {
     if op == AggOp::Count {
         return Ok(HeadTerm::Agg {
@@ -601,11 +611,22 @@ fn parse_agg(tokens: &mut Tokens, op: AggOp) -> Parse<HeadTerm> {
     let first = expect_ident(&mut arg, "a variable")?;
     if matches!(op, AggOp::ArgMax | AggOp::ArgMin) {
         expect_punct(&mut arg, ',', "`,` between the Arg value and key")?;
-        let key = expect_ident(&mut arg, "the Arg key variable")?;
+        let name = expect_ident(&mut arg, "the Arg key")?;
+        let key = if name.text == "Duration" && matches!(arg.peek(), Some(TokenTree::Group(_))) {
+            let (mut inner, _) = take_paren_group(&mut arg, "the measured variable")?;
+            let var = expect_ident(&mut inner, "a variable")?;
+            if let Some(extra) = inner.next() {
+                return fail(extra.span(), "query!: Duration takes one variable");
+            }
+            ArgKeyTerm::Measure(var)
+        } else {
+            ArgKeyTerm::Var(name)
+        };
         if let Some(extra) = arg.next() {
             return fail(
                 extra.span(),
-                "query!: ArgMax/ArgMin take value and key variables",
+                "query!: ArgMax/ArgMin take a carried variable and a key — \
+                 `v` or `Duration(v)`",
             );
         }
         return Ok(HeadTerm::Agg {
@@ -1703,11 +1724,17 @@ impl Emitter<'_> {
                 key,
             } => {
                 let op_expr = match op {
-                    AggOp::ArgMax | AggOp::ArgMin => format!(
-                        "::bumbledb::AggOp::{} {{ key: ::bumbledb::ArgKey::Var(::bumbledb::VarId({})) }}",
-                        op.ir_name(),
-                        scope.head_var(key.as_ref().expect("Arg parser seals a key"))?
-                    ),
+                    AggOp::ArgMax | AggOp::ArgMin => {
+                        let (variant, var) = match key.as_ref().expect("Arg parser seals a key") {
+                            ArgKeyTerm::Var(name) => ("Var", name),
+                            ArgKeyTerm::Measure(name) => ("Measure", name),
+                        };
+                        format!(
+                            "::bumbledb::AggOp::{} {{ key: ::bumbledb::ArgKey::{variant}(::bumbledb::VarId({})) }}",
+                            op.ir_name(),
+                            scope.head_var(var)?
+                        )
+                    }
                     _ => format!("::bumbledb::AggOp::{}", op.ir_name()),
                 };
                 match over {
