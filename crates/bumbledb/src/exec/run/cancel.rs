@@ -1,8 +1,18 @@
-//! D2 origin cancellation bookkeeping.
+//! D2 origin cancellation bookkeeping and the typed execution poison.
 
-use super::Executor;
+use super::{Executor, Poison};
 
 impl Executor {
+    /// Poisons the execution with a typed early-stop: set-once (first
+    /// poison wins — behaviorally moot, since the stop condition breaks
+    /// every loop before a second site can fire) and always paired with
+    /// the stop, so no site can set an error without stopping or stop
+    /// on an error `execute` never drains.
+    pub(super) fn poison(&mut self, poison: Poison) {
+        self.poison.get_or_insert(poison);
+        self.all_cancelled = true; // stops the pump loops upstream
+    }
+
     /// Advances the per-execution cancellation epoch. On wrap-around
     /// the high-water table is cleared — one cold `O(len)` pass every
     /// 2³² executions — because a stamp from the previous epoch cycle

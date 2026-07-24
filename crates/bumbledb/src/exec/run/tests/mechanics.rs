@@ -345,3 +345,142 @@ fn cover_choice_is_magnitude_first() {
     assert!(!better_cover(Exact(9), Exact(9)));
     assert!(!better_cover(Estimate(9), Estimate(9)));
 }
+
+/// The cost-class ordering (finding 008; docs/architecture/
+/// 40-execution.md, § inputs from normalization): a node's ALU
+/// residuals compact the survivor set BEFORE its sibling hash probes,
+/// so every residual-killed element is a bucket load never issued.
+/// Pinned on both twins: node 0 of a two-node pipeline (`probe_pass`)
+/// and the single-node leaf pass (`run_node`).
+#[test]
+fn residuals_compact_survivors_before_the_sibling_probes() {
+    #[derive(Default)]
+    struct Order {
+        events: Vec<(&'static str, usize)>,
+    }
+    impl Counters for Order {
+        fn node_entry(&mut self, _: usize) {}
+        fn batch(&mut self, _: usize, _: usize) {}
+        fn cover_choice(&mut self, _: usize, _: usize, _: bool) {}
+        fn probe_hash(&mut self, _: usize, _: usize) {}
+        fn probe(&mut self, node: usize, _: usize, _: bool) {
+            self.events.push(("probe", node));
+        }
+        fn residual(&mut self, node: usize, _: bool) {
+            self.events.push(("residual", node));
+        }
+        fn anti_probe(&mut self, _: usize, _: bool) {}
+        fn emit(&mut self) {}
+        fn skip(&mut self, _: usize) {}
+    }
+    // probe_pass: node 0 = [R(x, y) cover, S(x) probe] with the
+    // residual Ne(x, y) placed at node 0 — half the batch dies before
+    // the probe loop runs.
+    let dir = TempDir::new("run-residual-order-pipe");
+    let schema = schema(2);
+    let r: Vec<(u64, u64)> = (0..10)
+        .map(|i| if i < 5 { (i, i) } else { (i, i + 1) })
+        .collect();
+    let s: Vec<(u64, u64)> = (0..10).map(|i| (i, i * 2)).collect();
+    let views = views_of(&dir, &schema, &[r, s]);
+    let query = normalized(
+        vec![
+            occurrence(0, 0, &[(0, 0), (1, 1)]),
+            occurrence(1, 1, &[(0, 0), (1, 2)]),
+        ],
+        vec![PlacedComparison {
+            op: CmpOp::Ne,
+            lhs: VarId(0),
+            rhs: VarId(1),
+        }],
+    );
+    let plan = planned(&query, &schema, &[0, 1]);
+    let mut colts = colts_for(&plan, &views);
+    let mut bindings = Bindings::new(plan.slot_count());
+    let mut sink = CollectSink::default();
+    let mut counters = Order::default();
+    let mut executor = Executor::with_batch_size(&plan, 128);
+    assert!(executor.pipe.is_some(), "two nodes pipeline");
+    executor
+        .execute(&plan, &mut colts, &mut bindings, &mut sink, &mut counters)
+        .expect("execute");
+    assert_eq!(sink.rows.len(), 5, "the Ne survivors join");
+    let node0: Vec<&'static str> = counters
+        .events
+        .iter()
+        .filter(|(_, node)| *node == 0)
+        .map(|(kind, _)| *kind)
+        .collect();
+    assert_eq!(
+        node0,
+        ["residual"; 10]
+            .iter()
+            .chain(["probe"; 5].iter())
+            .copied()
+            .collect::<Vec<_>>(),
+        "10 residuals compact to 5 before the first bucket load"
+    );
+
+    // run_node: the hand-built single-node plan [[R(x, y), S(x, y)]] —
+    // the leaf pass with a sibling — and the same law holds.
+    let dir = TempDir::new("run-residual-order-leaf");
+    let r2: Vec<(u64, u64)> = (0..10)
+        .map(|i| if i < 5 { (i, i) } else { (i, i + 1) })
+        .collect();
+    let s2: Vec<(u64, u64)> = r2.clone();
+    let views = views_of(&dir, &schema, &[r2, s2]);
+    let query = normalized(
+        vec![
+            occurrence(0, 0, &[(0, 0), (1, 1)]),
+            occurrence(1, 1, &[(0, 0), (1, 1)]),
+        ],
+        vec![PlacedComparison {
+            op: CmpOp::Ne,
+            lhs: VarId(0),
+            rhs: VarId(1),
+        }],
+    );
+    let plan = crate::plan::fj::FjPlan {
+        nodes: vec![crate::plan::fj::Node {
+            subatoms: vec![
+                crate::plan::fj::Subatom {
+                    occ: OccId(0),
+                    vars: vec![VarId(0), VarId(1)],
+                },
+                crate::plan::fj::Subatom {
+                    occ: OccId(1),
+                    vars: vec![VarId(0), VarId(1)],
+                },
+            ],
+        }],
+    };
+    let plan = validate(&plan, &query, &schema, vec![0; 1], &BTreeSet::new()).expect("valid plan");
+    let mut colts = colts_for(&plan, &views);
+    let mut bindings = Bindings::new(plan.slot_count());
+    let mut sink = CollectSink::default();
+    let mut counters = Order::default();
+    let mut executor = Executor::with_batch_size(&plan, 128);
+    assert!(
+        executor.pipe.is_none(),
+        "one factored node runs the leaf pass"
+    );
+    executor
+        .execute(&plan, &mut colts, &mut bindings, &mut sink, &mut counters)
+        .expect("execute");
+    assert_eq!(sink.rows.len(), 5);
+    let node0: Vec<&'static str> = counters
+        .events
+        .iter()
+        .filter(|(_, node)| *node == 0)
+        .map(|(kind, _)| *kind)
+        .collect();
+    assert_eq!(
+        node0,
+        ["residual"; 10]
+            .iter()
+            .chain(["probe"; 5].iter())
+            .copied()
+            .collect::<Vec<_>>(),
+        "the leaf twin keeps the same order"
+    );
+}

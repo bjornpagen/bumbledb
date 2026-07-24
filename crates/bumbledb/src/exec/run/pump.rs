@@ -127,6 +127,14 @@ impl Executor {
             let gate_cover = cur_arity == 0 && !self.point_probed[cover_occ];
             let mut token = BatchToken::default();
             loop {
+                // The whole-execution poison lands mid-batch (a leaf skip
+                // under absorb=None, or a typed poison): node 0 holds ONE
+                // entry — the virtual root — so the per-entry check above
+                // can never re-fire for it; this is the granularity that
+                // actually stops the top-level cover draw.
+                if self.all_cancelled {
+                    break;
+                }
                 let want = if gate_cover { 1 } else { self.batch - fill };
                 let (yielded, next) = colts[cover_occ].iter_batch(
                     cover_cursor,
@@ -193,10 +201,9 @@ impl Executor {
         scratch.parents.clear();
         scratch.element_origins.clear();
         self.scratch[node_idx] = scratch;
-        // Drain the child's sub-batch remainder (full batches already flushed downstream
-        // inside probe_pass's flush check — see its tail).
-        if node_idx + 2 < n_nodes && self.scratch[node_idx + 1].pending_len > 0 {
-            self.pump(tables, plan, node_idx + 1, colts, bindings, sink, counters);
-        }
+        // No tail drain here: sub-batch remainders are a property of the
+        // execution's END, not of every pump return — a mid-stream
+        // recursion draining its child would collapse batch means at
+        // depth ≥ 2 (`run_pipeline` owns the one final drain).
     }
 }

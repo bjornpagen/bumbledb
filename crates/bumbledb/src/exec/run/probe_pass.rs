@@ -3,7 +3,7 @@
 use super::anti_probe::anti_probe_pass;
 use super::{
     Bindings, Colt, Counters, Cursor, Executor, Flow, JoinPhase, NodeScratch, PREFETCH_WIDTH_FLOOR,
-    PipeTables, Sink, Source, ValidatedPlan,
+    PipeTables, Sink, Source, ValidatedPlan, grow_scratch,
 };
 
 impl Executor {
@@ -34,6 +34,14 @@ impl Executor {
         sink: &mut S,
         counters: &mut C,
     ) {
+        // A poisoned execution's tail flushes (pump's remainder, deeper
+        // recursion unwinds) skip the whole pipeline — every survivor
+        // would be discarded at the routing loop's own check anyway.
+        if self.all_cancelled {
+            scratch.parents.clear();
+            scratch.element_origins.clear();
+            return;
+        }
         let n_nodes = plan.nodes().len();
         let slot_count = bindings.slot_count();
         let carried_w = tables.carried[node_idx].len();
@@ -43,6 +51,157 @@ impl Executor {
         scratch
             .survivors
             .extend(0..u32::try_from(fill).expect("batch fits u32"));
+
+        // Residuals run BEFORE the sibling probes — the cost-class
+        // ordering (docs/architecture/40-execution.md, § inputs from
+        // normalization): residual operands read only cover batch words
+        // and outer bindings, and sibling probes bind no variables, so
+        // the pure-ALU rejection legally precedes the memory-bound
+        // hash probes and every probe it kills is a bucket load never
+        // issued. Per-parent Slot reads, word offsets via the cover's
+        // word bases (width 2 = the pairwise interval compare).
+        counters.phase_start(node_idx, JoinPhase::Residual);
+        for (residual, lhs_slot, rhs_slot, width) in &self.residual_slots[node_idx] {
+            let cover_vars = &node.subatoms[cover_sub].vars;
+            let lhs_word = super::word_base(cover_vars, residual.lhs, |v| self.width_of(v));
+            let rhs_word = super::word_base(cover_vars, residual.rhs, |v| self.width_of(v));
+            let n = scratch.survivors.len();
+            grow_scratch(&mut scratch.mask, n);
+            for k in 0..n {
+                let element = usize::try_from(scratch.survivors[k]).expect("batch fits usize");
+                let parent = scratch.parents[element] as usize;
+                let value = |word: Option<usize>, slot: usize, offset: usize| match word {
+                    Some(word) => scratch.entry_keys[element * arity + word + offset],
+                    None => scratch.pending_bindings[parent * slot_count + slot + offset],
+                };
+                let pass = super::compare_wide(
+                    residual.op,
+                    *width,
+                    |offset| value(lhs_word, *lhs_slot, offset),
+                    |offset| value(rhs_word, *rhs_slot, offset),
+                );
+                counters.residual(node_idx, pass);
+                scratch.mask[k] = u8::from(pass);
+            }
+            crate::exec::kernel::compact_u32_by_mask(&mut scratch.survivors, &scratch.mask);
+        }
+        // Word residuals: the decomposed interval compositions over
+        // pre-offset slot pairs — same placement, same compaction
+        // (docs/architecture/20-query-ir.md, § normalization).
+        for (residual, lhs_slot, rhs_slot) in &self.word_residual_slots[node_idx] {
+            let cover_vars = &node.subatoms[cover_sub].vars;
+            let side = |var_word: crate::ir::normalize::VarWord| {
+                super::word_base(cover_vars, var_word.var, |v| self.width_of(v))
+                    .map(|base| base + var_word.word.offset())
+            };
+            let (lhs_word, rhs_word) = (side(residual.lhs), side(residual.rhs));
+            let n = scratch.survivors.len();
+            grow_scratch(&mut scratch.mask, n);
+            for k in 0..n {
+                let element = usize::try_from(scratch.survivors[k]).expect("batch fits usize");
+                let parent = scratch.parents[element] as usize;
+                let value = |word: Option<usize>, slot: usize| match word {
+                    Some(word) => scratch.entry_keys[element * arity + word],
+                    None => scratch.pending_bindings[parent * slot_count + slot],
+                };
+                let pass = residual
+                    .op
+                    .compare(&value(lhs_word, *lhs_slot), &value(rhs_word, *rhs_slot));
+                counters.residual(node_idx, pass);
+                scratch.mask[k] = u8::from(pass);
+            }
+            crate::exec::kernel::compact_u32_by_mask(&mut scratch.survivors, &scratch.mask);
+        }
+        // Allen residuals: gather the four endpoint streams per
+        // survivor — read at word-base offsets 0/1, batch key words or
+        // the element's parent row — classify the whole batch through
+        // the configuration kernel, test the resolved broadcast mask,
+        // and compact on the branchless cursor-write (the line-parallel
+        // twin of `run_node`'s pass; docs/architecture/40-execution.md,
+        // § vectorized execution).
+        for (r_idx, (residual, lhs_slot, rhs_slot)) in
+            self.allen_residual_slots[node_idx].iter().enumerate()
+        {
+            let mask = self.allen_masks[node_idx][r_idx];
+            let cover_vars = &node.subatoms[cover_sub].vars;
+            let lhs_word = super::word_base(cover_vars, residual.lhs, |v| self.width_of(v));
+            let rhs_word = super::word_base(cover_vars, residual.rhs, |v| self.width_of(v));
+            let n = scratch.survivors.len();
+            grow_scratch(&mut scratch.allen_gather, 4 * n);
+            let (a_starts, rest) = scratch.allen_gather[..4 * n].split_at_mut(n);
+            let (a_ends, rest) = rest.split_at_mut(n);
+            let (b_starts, b_ends) = rest.split_at_mut(n);
+            for k in 0..n {
+                let element = usize::try_from(scratch.survivors[k]).expect("batch fits usize");
+                let parent = scratch.parents[element] as usize;
+                let value = |word: Option<usize>, slot: usize, offset: usize| match word {
+                    Some(word) => scratch.entry_keys[element * arity + word + offset],
+                    None => scratch.pending_bindings[parent * slot_count + slot + offset],
+                };
+                a_starts[k] = value(lhs_word, *lhs_slot, 0);
+                a_ends[k] = value(lhs_word, *lhs_slot, 1);
+                b_starts[k] = value(rhs_word, *rhs_slot, 0);
+                b_ends[k] = value(rhs_word, *rhs_slot, 1);
+            }
+            crate::exec::kernel::allen_code_batch(
+                a_starts,
+                a_ends,
+                b_starts,
+                b_ends,
+                &mut scratch.allen_codes,
+            );
+            crate::exec::kernel::allen_filter_batch(&scratch.allen_codes, mask, &mut scratch.mask);
+            for &keep in &scratch.mask[..n] {
+                counters.residual(node_idx, keep != 0);
+            }
+            crate::exec::kernel::compact_u32_by_mask(&mut scratch.survivors, &scratch.mask);
+        }
+        // Measure residuals: the line-parallel twin of `run_node`'s pass
+        // — per-parent Slot reads, ray poison (`execute` raises the typed
+        // `MeasureOfRay`), subtraction feeding the ordinary word compare.
+        // Indexed (`PlacedDuration` is `Copy`): the poison call needs
+        // `&mut self` inside the loop.
+        for r_idx in 0..self.duration_residual_slots[node_idx].len() {
+            let (residual, interval_slot, scalar_slot) =
+                self.duration_residual_slots[node_idx][r_idx];
+            let cover_vars = &node.subatoms[cover_sub].vars;
+            let interval_word =
+                super::word_base(cover_vars, residual.interval, |v| self.width_of(v));
+            let scalar_word = super::word_base(cover_vars, residual.scalar, |v| self.width_of(v));
+            let n = scratch.survivors.len();
+            // The ray-poison break below leaves a mask tail unwritten —
+            // legal only because that path returns before the mask is
+            // read (the compaction is skipped); grow-only sizing keeps
+            // exactly that write-before-read truth.
+            grow_scratch(&mut scratch.mask, n);
+            for k in 0..n {
+                let element = usize::try_from(scratch.survivors[k]).expect("batch fits usize");
+                let parent = scratch.parents[element] as usize;
+                let value = |word: Option<usize>, slot: usize, offset: usize| match word {
+                    Some(word) => scratch.entry_keys[element * arity + word + offset],
+                    None => scratch.pending_bindings[parent * slot_count + slot + offset],
+                };
+                let start = value(interval_word, interval_slot, 0);
+                let end = value(interval_word, interval_slot, 1);
+                if end == u64::MAX {
+                    self.poison(super::Poison::MeasureOfRay([start, end]));
+                    break;
+                }
+                let pass = residual
+                    .op
+                    .compare(&(end - start), &value(scalar_word, scalar_slot, 0));
+                counters.residual(node_idx, pass);
+                scratch.mask[k] = u8::from(pass);
+            }
+            if self.all_cancelled {
+                counters.phase_end(node_idx, JoinPhase::Residual);
+                scratch.parents.clear();
+                scratch.element_origins.clear();
+                return;
+            }
+            crate::exec::kernel::compact_u32_by_mask(&mut scratch.survivors, &scratch.mask);
+        }
+        counters.phase_end(node_idx, JoinPhase::Residual);
 
         // Sibling passes: per-parent Slot reads and per-parent cursors —
         // the pipelined twin of run_node's sibling loop, kept
@@ -182,6 +341,17 @@ impl Executor {
             counters.phase_end(node_idx, JoinPhase::Hash);
             let carried = tables.carried_col[node_idx][occ];
             let start_cursor = colts[occ].start();
+            // A first-appearance sibling probes the batch-constant start
+            // cursor: force its map here, under the Force phase, like
+            // the twin — otherwise the prefetch sweep below no-ops on
+            // the unforced node and the O(positions) ingest lands inside
+            // phase 2's first probe, booked as Probe. Carried cursors
+            // stay lazy (per-element; a pinned row never needs a map).
+            if carried.is_none() {
+                counters.phase_start(node_idx, JoinPhase::Force);
+                colts[occ].ensure_forced(start_cursor, s_level);
+                counters.phase_end(node_idx, JoinPhase::Force);
+            }
             // Phase 1.5, width-floor gated — see run_node.
             if scratch.survivors.len() >= PREFETCH_WIDTH_FLOOR {
                 crate::obs::event(
@@ -234,179 +404,73 @@ impl Executor {
             counters.phase_end(node_idx, JoinPhase::Probe);
         }
 
-        // Residuals: per-parent Slot reads, word offsets via the cover's
-        // word bases (width 2 = the pairwise interval compare).
-        counters.phase_start(node_idx, JoinPhase::Residual);
-        for (residual, lhs_slot, rhs_slot, width) in &self.residual_slots[node_idx] {
-            let cover_vars = &node.subatoms[cover_sub].vars;
-            let lhs_word = super::word_base(cover_vars, residual.lhs, |v| self.width_of(v));
-            let rhs_word = super::word_base(cover_vars, residual.rhs, |v| self.width_of(v));
-            let n = scratch.survivors.len();
-            grow_scratch(&mut scratch.mask, n);
-            for k in 0..n {
-                let element = usize::try_from(scratch.survivors[k]).expect("batch fits usize");
-                let parent = scratch.parents[element] as usize;
-                let value = |word: Option<usize>, slot: usize, offset: usize| match word {
-                    Some(word) => scratch.entry_keys[element * arity + word + offset],
-                    None => scratch.pending_bindings[parent * slot_count + slot + offset],
-                };
-                let pass = super::compare_wide(
-                    residual.op,
-                    *width,
-                    |offset| value(lhs_word, *lhs_slot, offset),
-                    |offset| value(rhs_word, *rhs_slot, offset),
-                );
-                counters.residual(node_idx, pass);
-                scratch.mask[k] = u8::from(pass);
-            }
-            crate::exec::kernel::compact_u32_by_mask(&mut scratch.survivors, &scratch.mask);
-        }
-        // Word residuals: the decomposed interval compositions over
-        // pre-offset slot pairs — same placement, same compaction
-        // (docs/architecture/20-query-ir.md, § normalization).
-        for (residual, lhs_slot, rhs_slot) in &self.word_residual_slots[node_idx] {
-            let cover_vars = &node.subatoms[cover_sub].vars;
-            let side = |var_word: crate::ir::normalize::VarWord| {
-                super::word_base(cover_vars, var_word.var, |v| self.width_of(v))
-                    .map(|base| base + var_word.word.offset())
-            };
-            let (lhs_word, rhs_word) = (side(residual.lhs), side(residual.rhs));
-            let n = scratch.survivors.len();
-            grow_scratch(&mut scratch.mask, n);
-            for k in 0..n {
-                let element = usize::try_from(scratch.survivors[k]).expect("batch fits usize");
-                let parent = scratch.parents[element] as usize;
-                let value = |word: Option<usize>, slot: usize| match word {
-                    Some(word) => scratch.entry_keys[element * arity + word],
-                    None => scratch.pending_bindings[parent * slot_count + slot],
-                };
-                let pass = residual
-                    .op
-                    .compare(&value(lhs_word, *lhs_slot), &value(rhs_word, *rhs_slot));
-                counters.residual(node_idx, pass);
-                scratch.mask[k] = u8::from(pass);
-            }
-            crate::exec::kernel::compact_u32_by_mask(&mut scratch.survivors, &scratch.mask);
-        }
-        // Allen residuals: gather the four endpoint streams per
-        // survivor — read at word-base offsets 0/1, batch key words or
-        // the element's parent row — classify the whole batch through
-        // the configuration kernel, test the resolved broadcast mask,
-        // and compact on the branchless cursor-write (the line-parallel
-        // twin of `run_node`'s pass; docs/architecture/40-execution.md,
-        // § vectorized execution).
-        for (r_idx, (residual, lhs_slot, rhs_slot)) in
-            self.allen_residual_slots[node_idx].iter().enumerate()
-        {
-            let mask = self.allen_masks[node_idx][r_idx];
-            let cover_vars = &node.subatoms[cover_sub].vars;
-            let lhs_word = super::word_base(cover_vars, residual.lhs, |v| self.width_of(v));
-            let rhs_word = super::word_base(cover_vars, residual.rhs, |v| self.width_of(v));
-            let n = scratch.survivors.len();
-            grow_scratch(&mut scratch.allen_gather, 4 * n);
-            let (a_starts, rest) = scratch.allen_gather[..4 * n].split_at_mut(n);
-            let (a_ends, rest) = rest.split_at_mut(n);
-            let (b_starts, b_ends) = rest.split_at_mut(n);
-            for k in 0..n {
-                let element = usize::try_from(scratch.survivors[k]).expect("batch fits usize");
-                let parent = scratch.parents[element] as usize;
-                let value = |word: Option<usize>, slot: usize, offset: usize| match word {
-                    Some(word) => scratch.entry_keys[element * arity + word + offset],
-                    None => scratch.pending_bindings[parent * slot_count + slot + offset],
-                };
-                a_starts[k] = value(lhs_word, *lhs_slot, 0);
-                a_ends[k] = value(lhs_word, *lhs_slot, 1);
-                b_starts[k] = value(rhs_word, *rhs_slot, 0);
-                b_ends[k] = value(rhs_word, *rhs_slot, 1);
-            }
-            crate::exec::kernel::allen_code_batch(
-                a_starts,
-                a_ends,
-                b_starts,
-                b_ends,
-                &mut scratch.allen_codes,
-            );
-            crate::exec::kernel::allen_filter_batch(&scratch.allen_codes, mask, &mut scratch.mask);
-            for &keep in &scratch.mask[..n] {
-                counters.residual(node_idx, keep != 0);
-            }
-            crate::exec::kernel::compact_u32_by_mask(&mut scratch.survivors, &scratch.mask);
-        }
-        // Measure residuals: the line-parallel twin of `run_node`'s pass
-        // — per-parent Slot reads, ray poison (`execute` raises the typed
-        // `MeasureOfRay`), subtraction feeding the ordinary word compare.
-        for (residual, interval_slot, scalar_slot) in &self.duration_residual_slots[node_idx] {
-            let cover_vars = &node.subatoms[cover_sub].vars;
-            let interval_word =
-                super::word_base(cover_vars, residual.interval, |v| self.width_of(v));
-            let scalar_word = super::word_base(cover_vars, residual.scalar, |v| self.width_of(v));
-            let n = scratch.survivors.len();
-            // The ray-poison break below leaves a mask tail unwritten —
-            // legal only because that path returns before the mask is
-            // read (the compaction is skipped); grow-only sizing keeps
-            // exactly that write-before-read truth.
-            grow_scratch(&mut scratch.mask, n);
-            for k in 0..n {
-                let element = usize::try_from(scratch.survivors[k]).expect("batch fits usize");
-                let parent = scratch.parents[element] as usize;
-                let value = |word: Option<usize>, slot: usize, offset: usize| match word {
-                    Some(word) => scratch.entry_keys[element * arity + word + offset],
-                    None => scratch.pending_bindings[parent * slot_count + slot + offset],
-                };
-                let start = value(interval_word, *interval_slot, 0);
-                let end = value(interval_word, *interval_slot, 1);
-                if end == u64::MAX {
-                    self.measure_of_ray = Some([start, end]);
-                    self.all_cancelled = true; // stops the pump loops upstream
-                    break;
+        // The pass's cursor-source table, occ-indexed: advanced at this
+        // node (the cover's child or a probed sibling's), inherited from
+        // the parent (carried column), or the colt's start when never
+        // advanced. Resolved once per pass — the membership loops and
+        // the routing arm below index it instead of re-searching the
+        // subatom list per element (the instruction diet).
+        scratch.cursor_srcs.clear();
+        for (occ, colt) in colts.iter().enumerate() {
+            scratch.cursor_srcs.push(if occ == cover_occ {
+                super::CursorSrc::Cover
+            } else if let Some(sub_idx) = node
+                .subatoms
+                .iter()
+                .position(|sub| usize::from(sub.occ.0) == occ)
+            {
+                debug_assert_ne!(sub_idx, cover_sub, "distinct occs per node");
+                super::CursorSrc::Sibling(sub_idx)
+            } else {
+                match tables.carried_col[node_idx][occ] {
+                    Some(col) => super::CursorSrc::Carried(col),
+                    None => super::CursorSrc::Const(colt.start()),
                 }
-                let pass = residual
-                    .op
-                    .compare(&(end - start), &value(scalar_word, *scalar_slot, 0));
-                counters.residual(node_idx, pass);
-                scratch.mask[k] = u8::from(pass);
-            }
-            if self.measure_of_ray.is_some() {
-                counters.phase_end(node_idx, JoinPhase::Residual);
-                scratch.parents.clear();
-                scratch.element_origins.clear();
-                return;
-            }
-            crate::exec::kernel::compact_u32_by_mask(&mut scratch.survivors, &scratch.mask);
+            });
         }
+
         // Membership probes (docs/architecture/40-execution.md, the
         // point-membership scan): scan the occurrence's remaining
-        // positions per surviving binding — cursors assembled exactly as
-        // the routing arm below assembles them.
+        // positions per surviving binding — cursors read through the
+        // pass's source table, point words through per-spec resolved
+        // sources. They stay AFTER the sibling probes (unlike the ALU
+        // residuals above): a probed occurrence's cursor may be this
+        // pass's own sibling child, and the position scan is
+        // probe-class work.
+        if !self.point_probe_slots[node_idx].is_empty() {
+            counters.phase_start(node_idx, JoinPhase::Residual);
+        }
         for spec in &self.point_probe_slots[node_idx] {
             let cover_vars = &node.subatoms[cover_sub].vars;
+            scratch.point_sources.clear();
+            for (start_col, end_col, var, slot) in &spec.parts {
+                let src = super::word_base(cover_vars, *var, |v| self.width_of(v))
+                    .map_or(Source::Slot(*slot), Source::Batch);
+                scratch.point_sources.push((*start_col, *end_col, src));
+            }
+            let cursor_src = scratch.cursor_srcs[spec.occ];
             let n = scratch.survivors.len();
             grow_scratch(&mut scratch.mask, n);
             for k in 0..n {
                 let element = usize::try_from(scratch.survivors[k]).expect("batch fits usize");
                 let parent = scratch.parents[element] as usize;
                 scratch.point_checks.clear();
-                for (start_col, end_col, var, slot) in &spec.parts {
-                    let point = super::word_base(cover_vars, *var, |v| self.width_of(v))
-                        .map_or_else(
-                            || scratch.pending_bindings[parent * slot_count + slot],
-                            |base| scratch.entry_keys[element * arity + base],
-                        );
-                    scratch.point_checks.push((*start_col, *end_col, point));
+                for &(start_col, end_col, src) in &scratch.point_sources {
+                    let point = match src {
+                        Source::Batch(base) => scratch.entry_keys[element * arity + base],
+                        Source::Slot(slot) => scratch.pending_bindings[parent * slot_count + slot],
+                    };
+                    scratch.point_checks.push((start_col, end_col, point));
                 }
-                let cursor = if spec.occ == cover_occ {
-                    scratch.children[element]
-                } else if let Some(sub_idx) = node
-                    .subatoms
-                    .iter()
-                    .position(|sub| usize::from(sub.occ.0) == spec.occ)
-                {
-                    scratch.sibling_children[sub_idx][element]
-                } else {
-                    match tables.carried_col[node_idx][spec.occ] {
-                        Some(col) => scratch.pending_cursors[parent * carried_w + col],
-                        None => colts[spec.occ].start(),
+                let cursor = match cursor_src {
+                    super::CursorSrc::Cover => scratch.children[element],
+                    super::CursorSrc::Sibling(sub_idx) => {
+                        scratch.sibling_children[sub_idx][element]
                     }
+                    super::CursorSrc::Carried(col) => {
+                        scratch.pending_cursors[parent * carried_w + col]
+                    }
+                    super::CursorSrc::Const(start) => start,
                 };
                 let pass = colts[spec.occ].any_position_matches(cursor, &scratch.point_checks);
                 counters.residual(node_idx, pass);
@@ -414,7 +478,9 @@ impl Executor {
             }
             crate::exec::kernel::compact_u32_by_mask(&mut scratch.survivors, &scratch.mask);
         }
-        counters.phase_end(node_idx, JoinPhase::Residual);
+        if !self.point_probe_slots[node_idx].is_empty() {
+            counters.phase_end(node_idx, JoinPhase::Residual);
+        }
 
         // Anti-probes: the residual step's sibling (docs/architecture/
         // 40-execution.md, § anti-probe filters) — hits are compacted
@@ -434,6 +500,7 @@ impl Executor {
             &mut scratch.mask,
             &mut scratch.anti_sources,
             &mut scratch.point_checks,
+            &mut scratch.point_sources,
             |element, slot| {
                 let parent = scratch.parents[element] as usize;
                 scratch.pending_bindings[parent * slot_count + slot]
@@ -482,8 +549,7 @@ impl Executor {
                 .checked_add(u32::try_from(scratch.survivors.len()).expect("batch fits u32"))
                 .is_none()
         {
-            self.origin_overflow = true;
-            self.all_cancelled = true; // stops the pump loops upstream
+            self.poison(super::Poison::OriginOverflow);
             scratch.parents.clear();
             scratch.element_origins.clear();
             return;
@@ -506,24 +572,18 @@ impl Executor {
             if tables.absorb.is_some_and(|a| node_idx > a) && self.origin_cancelled(origin) {
                 continue;
             }
+            // The pass's cursor-source table, indexed — resolved once
+            // per pass above, never a per-survivor subatom search.
             let assemble = |occ: usize| -> Cursor {
-                // Advanced at this node: the cover's child or a probed
-                // sibling's; otherwise inherited from the parent (or the
-                // colt's start when never advanced).
-                if occ == cover_occ {
-                    return scratch.children[element];
-                }
-                if let Some(sub_idx) = node
-                    .subatoms
-                    .iter()
-                    .position(|sub| usize::from(sub.occ.0) == occ)
-                {
-                    debug_assert_ne!(sub_idx, cover_sub, "distinct occs per node");
-                    return scratch.sibling_children[sub_idx][element];
-                }
-                match tables.carried_col[node_idx][occ] {
-                    Some(col) => scratch.pending_cursors[parent * carried_w + col],
-                    None => colts[occ].start(),
+                match scratch.cursor_srcs[occ] {
+                    super::CursorSrc::Cover => scratch.children[element],
+                    super::CursorSrc::Sibling(sub_idx) => {
+                        scratch.sibling_children[sub_idx][element]
+                    }
+                    super::CursorSrc::Carried(col) => {
+                        scratch.pending_cursors[parent * carried_w + col]
+                    }
+                    super::CursorSrc::Const(start) => start,
                 }
             };
             if leaf {
@@ -589,19 +649,6 @@ impl Executor {
         if !leaf && self.scratch[node_idx + 1].pending_len >= self.batch {
             self.pump(tables, plan, node_idx + 1, colts, bindings, sink, counters);
         }
-    }
-}
-
-/// Grow-only scratch sizing (the pooled high-water contract): the
-/// buffer zero-fills only above its high-water mark, never per pass —
-/// `clear` + `resize(n, 0)` re-memset the full window every pass
-/// (`_platform_memset`, 3.7% of `meets_chain`) though every element of
-/// `[..n]` is written before it is read. Callers confine reads to
-/// `[..n]` (the compaction kernel slices internally); the tail above
-/// `n` is stale by contract.
-fn grow_scratch<T: Copy + Default>(v: &mut Vec<T>, n: usize) {
-    if v.len() < n {
-        v.resize(n, T::default());
     }
 }
 

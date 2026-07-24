@@ -278,6 +278,8 @@ impl Executor {
                     allen_codes: Vec::new(),
                     anti_sources: anti_specs.iter().map(|_| Vec::new()).collect(),
                     point_checks: Vec::new(),
+                    point_sources: Vec::new(),
+                    cursor_srcs: Vec::new(),
                     mask: Vec::with_capacity(batch),
                     parents: Vec::with_capacity(batch),
                     pending_bindings: Vec::new(),
@@ -314,8 +316,7 @@ impl Executor {
             cancel_epoch: 0,
             next_origin: 0,
             all_cancelled: false,
-            origin_overflow: false,
-            measure_of_ray: None,
+            poison: None,
             overlap: crate::interval::overlap::OverlapCache::default(),
             overlap_hits: Vec::new(),
             overlap_key: Vec::new(),
@@ -383,7 +384,7 @@ impl Executor {
         assert_eq!(colts.len(), plan.occurrences().len());
         debug_assert_eq!(plan.nodes().len(), self.scratch.len(), "same plan shape");
         bindings.reset();
-        self.measure_of_ray = None;
+        self.poison = None;
         // Overlap indexes key trie paths that this execution's forces
         // will mint afresh (the per-execution boundary, overlap_leaf.rs).
         self.overlap.reset();
@@ -402,18 +403,17 @@ impl Executor {
         } else {
             self.run_node(plan, 0, colts, bindings, sink, counters);
         }
-        // The measure's ray poison outranks the origin overflow: a ray
-        // reached `Duration`, so the execution's one honest answer is the
-        // engine's one runtime type error, whatever else stopped early.
-        if let Some([start, end]) = self.measure_of_ray {
-            return Err(crate::error::Error::MeasureOfRay { start, end });
-        }
-        if self.origin_overflow {
-            return Err(crate::error::Error::Overflow(
+        // The poison drain: set-once, so the first typed stop IS the
+        // execution's one honest answer — no precedence to adjudicate.
+        match self.poison.take() {
+            Some(super::Poison::MeasureOfRay([start, end])) => {
+                Err(crate::error::Error::MeasureOfRay { start, end })
+            }
+            Some(super::Poison::OriginOverflow) => Err(crate::error::Error::Overflow(
                 crate::error::OverflowKind::OriginCapacity,
-            ));
+            )),
+            None => Ok(()),
         }
-        Ok(())
     }
 
     /// The pipelined executor: pending binding rows
@@ -447,12 +447,21 @@ impl Executor {
         self.advance_cancel_epoch();
         self.next_origin = 0;
         self.all_cancelled = false;
-        self.origin_overflow = false;
         // The virtual root entry: no bindings, no carried cursors.
         self.scratch[0].pending_bindings.resize(slot_count, 0);
         self.scratch[0].pending_len = 1;
         self.scratch[0].pending_origins.push(0);
         self.pump(&tables, plan, 0, colts, bindings, sink, counters);
+        // The one tail drain, in increasing node order (draining node i
+        // appends node i+1's remainder): sub-batch remainders below the
+        // full-batch flush threshold survive every pump return — deep
+        // nodes see full batches mid-stream — and flush exactly once,
+        // here, at the execution's end.
+        for i in 1..plan.nodes().len() - 1 {
+            if self.scratch[i].pending_len > 0 {
+                self.pump(&tables, plan, i, colts, bindings, sink, counters);
+            }
+        }
         self.pipe = Some(tables);
     }
 }

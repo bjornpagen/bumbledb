@@ -348,6 +348,23 @@ enum Source {
     Slot(usize),
 }
 
+/// Where a probed occurrence's cursor comes from within one pass —
+/// resolved once per (pass, occurrence), never a per-element subatom
+/// search (the instruction diet). The membership-probe loops and the
+/// routing arm consult the same resolution.
+#[derive(Debug, Clone, Copy)]
+enum CursorSrc {
+    /// The cover subatom's child (per element).
+    Cover,
+    /// A sibling probe's child at this subatom index (per element).
+    Sibling(usize),
+    /// The element's parent entry's carried column (pipeline only).
+    Carried(usize),
+    /// A batch-constant cursor, hoisted (a never-advanced start, or the
+    /// leaf pass's outer cursor).
+    Const(Cursor),
+}
+
 /// One whole-value residual compare over a variable's slot words: width
 /// 1 is the scalar compare; any wider span — an interval pair or a
 /// `bytes<N>` block — compares **word-wise** under `Eq`/`Ne` only
@@ -368,6 +385,21 @@ fn compare_wide(
         crate::ir::CmpOp::Eq => (0..width).all(|i| lhs(i) == rhs(i)),
         crate::ir::CmpOp::Ne => (0..width).any(|i| lhs(i) != rhs(i)),
         _ => unreachable!("validated: multi-word values admit Eq/Ne only as whole values"),
+    }
+}
+
+/// Grow-only scratch sizing (the pooled high-water contract): the
+/// buffer zero-fills only above its high-water mark, never per pass —
+/// `clear` + `resize(n, 0)` re-memset the full window every pass
+/// (`_platform_memset`, 3.7% of `meets_chain`) though every element of
+/// `[..n]` is written before it is read. Callers confine reads to
+/// `[..n]` (the compaction kernel slices internally); the tail above
+/// `n` is stale by contract. Shared by both line-parallel passes and
+/// the anti-probe — the contract is behavior, not the refused pass
+/// extraction.
+fn grow_scratch<T: Copy + Default>(v: &mut Vec<T>, n: usize) {
+    if v.len() < n {
+        v.resize(n, T::default());
     }
 }
 
@@ -480,6 +512,14 @@ struct NodeScratch {
     /// word) triple per point filter of the spec under evaluation,
     /// rebuilt per element (capacity retained).
     point_checks: Vec<(usize, usize, u64)>,
+    /// Membership point-word sources, resolved once per (pass, spec)
+    /// against the runtime cover choice — the per-element half above
+    /// reads through these (capacity retained).
+    point_sources: Vec<(usize, usize, Source)>,
+    /// Occ-indexed cursor sources for this pass, resolved once per pass
+    /// — the membership loops and the routing arm read cursors through
+    /// this table instead of re-searching subatoms per element.
+    cursor_srcs: Vec<CursorSrc>,
     /// Per-entry survivor mask for the compaction kernel.
     mask: Vec<u8>,
     // — Probe-batch identity (pipeline): per element of the CURRENT
@@ -583,18 +623,17 @@ pub struct Executor {
     cancel_epoch: u32,
     next_origin: u32,
     /// A skip crossed the virtual root: the whole execution is done.
+    /// The ONE stop condition every loop granularity checks — set
+    /// directly by the root-skip site (a skip is an answer, not an
+    /// error) and by [`Executor::poison`] for the typed errors.
     all_cancelled: bool,
-    /// The origin mint space would cross u32 (checked at batch
-    /// granularity in `probe_pass`): the pipeline stopped early and
-    /// `execute` reports [`crate::error::Error::Overflow`].
-    origin_overflow: bool,
-    /// A measure residual reached a ray (`end == MAX`): the offending
-    /// interval's two encoded words. The pipeline stops early and
-    /// `execute` raises the typed
-    /// [`crate::error::Error::MeasureOfRay`] — the engine's one runtime
-    /// type error (the poison-flag shape `origin_overflow` established:
-    /// no `Result` on the per-tuple path).
-    measure_of_ray: Option<[u64; 2]>,
+    /// The typed early-stop, set-once ([`Executor::poison`]: first
+    /// poison wins; two can never coexist because the first breaks
+    /// every loop upstream) and drained by `execute` into the typed
+    /// error. One sum, not parallel flags: a site cannot set an error
+    /// without stopping, and `execute` cannot miss a kind — no `Result`
+    /// on the per-tuple path.
+    poison: Option<Poison>,
     /// The leaf overlap enumeration's per-execution index cache
     /// (`overlap_leaf.rs`; reset per `execute` — group positions are
     /// only stable within one execution).
@@ -605,6 +644,21 @@ pub struct Executor {
     /// The overlap cache-key scratch: cover occurrence + bound prefix
     /// words (pooled).
     overlap_key: Vec<u64>,
+}
+
+/// A typed condition that stops the whole execution early — the poison
+/// shape: one flag write on the cold path, no `Result` on the per-tuple
+/// path. `execute` drains it into the typed error; adding a kind here
+/// forces the drain's `match` to answer for it.
+enum Poison {
+    /// A measure residual reached a ray (`end == MAX`): the offending
+    /// interval's two encoded words — the engine's one runtime type
+    /// error ([`crate::error::Error::MeasureOfRay`]).
+    MeasureOfRay([u64; 2]),
+    /// The origin mint space would cross u32 (checked at mint
+    /// granularity in `probe_pass`):
+    /// [`crate::error::Error::Overflow`].
+    OriginOverflow,
 }
 
 /// The pipelined executor's static shape tables:

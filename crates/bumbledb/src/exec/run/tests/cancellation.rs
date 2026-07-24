@@ -229,3 +229,68 @@ fn epoch_wrap_never_aliases_a_stale_cancellation() {
     executor.cancel_origin(3);
     assert!(executor.origin_cancelled(3));
 }
+
+/// The whole-execution D2 skip (absorb = None: a boolean/existential
+/// head licenses every node) stops the top-level cover draw MID-ENTRY:
+/// node 0 holds exactly one pending entry — the virtual root — so only
+/// pump's inner batch loop can see the poison. Before the check landed
+/// there, a first-batch witness still iterated and probed the entire
+/// remaining node-0 cover, batch by fully-priced batch.
+#[test]
+fn whole_execution_skip_stops_the_cover_draw_mid_entry() {
+    /// Counts cover batches drawn at node 0.
+    #[derive(Default)]
+    struct RootBatches {
+        batches: usize,
+    }
+    impl Counters for RootBatches {
+        fn node_entry(&mut self, _: usize) {}
+        fn batch(&mut self, node: usize, _: usize) {
+            if node == 0 {
+                self.batches += 1;
+            }
+        }
+        fn cover_choice(&mut self, _: usize, _: usize, _: bool) {}
+        fn probe_hash(&mut self, _: usize, _: usize) {}
+        fn probe(&mut self, _: usize, _: usize, _: bool) {}
+        fn residual(&mut self, _: usize, _: bool) {}
+        fn anti_probe(&mut self, _: usize, _: bool) {}
+        fn emit(&mut self) {}
+        fn skip(&mut self, _: usize) {}
+    }
+
+    let dir = TempDir::new("run-whole-skip");
+    let schema = schema(2);
+    // R fans 600 rows (>> one 128 batch); S matches every y, so the
+    // very first leaf emit witnesses the empty projection.
+    let r: Vec<(u64, u64)> = (0..600).map(|i| (i, i % 7)).collect();
+    let s: Vec<(u64, u64)> = (0..7).map(|y| (y, 900 + y)).collect();
+    let views = views_of(&dir, &schema, &[r, s]);
+    let normalized = normalized(
+        vec![
+            occurrence(0, 0, &[(0, 0), (1, 1)]),
+            occurrence(1, 1, &[(0, 1), (1, 2)]),
+        ],
+        vec![],
+    );
+    // Zero sink vars: every node is skip-licensed, absorb is None — the
+    // first witness fixes the whole execution's answer.
+    let plan = planned_with_sinks(&normalized, &schema, &[0, 1], &BTreeSet::new());
+    let mut executor = Executor::new(&plan);
+    let mut colts = colts_for(&plan, &views);
+    let mut bindings = Bindings::new(plan.slot_count());
+    let mut sink = ProjectionSinkForTest::new(vec![]);
+    let mut counters = RootBatches::default();
+    executor
+        .execute(&plan, &mut colts, &mut bindings, &mut sink, &mut counters)
+        .expect("execute");
+    assert_eq!(
+        sink.answers().count(),
+        1,
+        "the boolean head has its one witness"
+    );
+    assert_eq!(
+        counters.batches, 1,
+        "the poison stopped node 0's cover draw after the witnessing batch"
+    );
+}

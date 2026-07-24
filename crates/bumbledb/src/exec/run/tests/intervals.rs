@@ -1279,7 +1279,13 @@ fn timed_run(
         let mut executor = Executor::new(plan);
         let t0 = std::time::Instant::now();
         executor
-            .execute(plan, &mut colts, &mut bindings, &mut sink, &mut NoopCounters)
+            .execute(
+                plan,
+                &mut colts,
+                &mut bindings,
+                &mut sink,
+                &mut NoopCounters,
+            )
             .expect("execute");
         samples.push(t0.elapsed());
         answers = sink.rows.len();
@@ -1341,7 +1347,10 @@ fn overlap_profile() {
             .execute(&plan, &mut colts, &mut bindings, &mut sink, &mut profile)
             .expect("execute");
         let total = t0.elapsed();
-        println!("t2-scale [{name}] total {total:?} answers {}", sink.rows.len());
+        println!(
+            "t2-scale [{name}] total {total:?} answers {}",
+            sink.rows.len()
+        );
         let names = ["iter", "hash", "probe", "residual", "descend", "force"];
         for (node, phases) in profile.acc.iter().enumerate() {
             if phases.iter().all(|&nanos| nanos == 0) {

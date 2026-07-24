@@ -266,3 +266,93 @@ fn zero_binding_gate_yields_one_entry_not_the_relation() {
         }
     }
 }
+
+/// Deep accumulation (≥ 4 nodes): sub-batch remainders below node 2
+/// survive every mid-stream `pump` return and flush exactly once at the
+/// execution's end — the tail drain is `run_pipeline`'s, not every pump
+/// return's. Selectivity ½ at each of the first two probes hands node 2
+/// its pending 64 rows at a time; the counter proves those accumulate
+/// into full 128-element probe passes instead of draining prematurely
+/// per recursion (the shape no ≤ 3-atom bench lane can reach).
+#[test]
+fn deep_nodes_accumulate_full_batches_across_pump_returns() {
+    /// Max probes in a single node-2 Probe phase segment.
+    #[derive(Default)]
+    struct MaxPass {
+        current: usize,
+        max: usize,
+    }
+    impl Counters for MaxPass {
+        fn node_entry(&mut self, _: usize) {}
+        fn batch(&mut self, _: usize, _: usize) {}
+        fn cover_choice(&mut self, _: usize, _: usize, _: bool) {}
+        fn probe_hash(&mut self, _: usize, _: usize) {}
+        fn probe(&mut self, node: usize, _: usize, _: bool) {
+            if node == 2 {
+                self.current += 1;
+            }
+        }
+        fn residual(&mut self, _: usize, _: bool) {}
+        fn anti_probe(&mut self, _: usize, _: bool) {}
+        fn emit(&mut self) {}
+        fn skip(&mut self, _: usize) {}
+        fn phase_start(&mut self, node: usize, phase: JoinPhase) {
+            if node == 2 && phase == JoinPhase::Probe {
+                self.current = 0;
+            }
+        }
+        fn phase_end(&mut self, node: usize, phase: JoinPhase) {
+            if node == 2 && phase == JoinPhase::Probe {
+                self.max = self.max.max(self.current);
+            }
+        }
+    }
+
+    let dir = TempDir::new("run-deep-accumulation");
+    let schema = schema(4);
+    // Diagonal chain: R0 full, R1 keeps every 2nd key, R2 every 4th,
+    // R3 full — each pump(1) hands node 2 exactly 64 pending rows.
+    let r0: Vec<(u64, u64)> = (0..2048).map(|i| (i, i)).collect();
+    let r1: Vec<(u64, u64)> = (0..2048).filter(|i| i % 2 == 0).map(|i| (i, i)).collect();
+    let r2: Vec<(u64, u64)> = (0..2048).filter(|i| i % 4 == 0).map(|i| (i, i)).collect();
+    let r3: Vec<(u64, u64)> = (0..2048).map(|i| (i, i % 5)).collect();
+    let views = views_of(&dir, &schema, &[r0, r1, r2, r3]);
+    let normalized = normalized(
+        vec![
+            occurrence(0, 0, &[(0, 0), (1, 1)]),
+            occurrence(1, 1, &[(0, 1), (1, 2)]),
+            occurrence(2, 2, &[(0, 2), (1, 3)]),
+            occurrence(3, 3, &[(0, 3), (1, 4)]),
+        ],
+        vec![],
+    );
+    let sinks = all_vars(&normalized);
+    let plan = planned_with_sinks(&normalized, &schema, &[0, 1, 2, 3], &sinks);
+    assert_eq!(plan.nodes().len(), 4, "one node per occurrence");
+    let expected: BTreeSet<Vec<u64>> = (0..2048u64)
+        .filter(|i| i % 4 == 0)
+        .map(|i| vec![i, i, i, i, i % 5])
+        .collect();
+    let mut executor = Executor::new(&plan);
+    let mut colts = colts_for(&plan, &views);
+    let mut bindings = Bindings::new(plan.slot_count());
+    let mut sink = CollectSink::default();
+    let mut counters = MaxPass::default();
+    executor
+        .execute(&plan, &mut colts, &mut bindings, &mut sink, &mut counters)
+        .expect("execute");
+    let got: BTreeSet<Vec<u64>> = sink
+        .rows
+        .iter()
+        .map(|row| {
+            (0..5u16)
+                .map(|v| row[plan.slot_of(VarId(v))])
+                .collect::<Vec<u64>>()
+        })
+        .collect();
+    assert_eq!(got, expected, "the 4-chain joins correctly");
+    assert_eq!(
+        counters.max, BATCH,
+        "node 2 accumulated a full cross-pump batch (premature drains cap it at 64)"
+    );
+}

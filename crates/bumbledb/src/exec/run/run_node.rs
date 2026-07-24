@@ -3,7 +3,7 @@
 use super::anti_probe::anti_probe_pass;
 use super::{
     BatchToken, Bindings, Colt, Counters, Cursor, Executor, Flow, JoinPhase, KeyCount, LeafBatch,
-    PREFETCH_WIDTH_FLOOR, Sink, Source, ValidatedPlan, better_cover,
+    PREFETCH_WIDTH_FLOOR, Sink, Source, ValidatedPlan, better_cover, grow_scratch,
 };
 
 impl Executor {
@@ -200,126 +200,18 @@ impl Executor {
                 .survivors
                 .extend(0..u32::try_from(yielded).expect("batch fits u32"));
 
-            // Per sibling: the two-phase probe, then branchless
-            // compaction. `probe_pass.rs` hosts this pass's pipelined
-            // twin, kept line-parallel — a change here needs its mirror
-            // there. Extracting the shared pass was refused: the bodies
-            // differ in more than parameters (this pass probes one
-            // batch-constant cursor per sibling and elides hashing for
-            // pinned rows; the twin sources a carried cursor PER ELEMENT
-            // and re-resolves value sources per pass), so the honest
-            // shape is two commented copies, not one function whose
-            // closure parameters reintroduce the difference.
-            let value_of = |sources: &[Source],
-                            entry_keys: &[u64],
-                            bindings: &Bindings,
-                            entry: usize,
-                            i: usize| match sources[i] {
-                Source::Batch(word) => entry_keys[entry * arity + word],
-                Source::Slot(slot) => bindings.get(slot),
-            };
-            for sub_idx in 0..plan.nodes()[node_idx].subatoms.len() {
-                if sub_idx == cover_sub || scratch.survivors.is_empty() {
-                    continue;
-                }
-                let subatom = &plan.nodes()[node_idx].subatoms[sub_idx];
-                let sub_arity = self.slot_map[node_idx][sub_idx].len();
-                let occ = usize::from(subatom.occ.0);
-                let (s_cursor, s_level) = self.cursors[occ];
-                counters.phase_start(node_idx, JoinPhase::Force);
-                colts[occ].ensure_forced(s_cursor, s_level);
-                counters.phase_end(node_idx, JoinPhase::Force);
-
-                // Phase 1: gather every probe key and compute every hash —
-                // pure ALU, no bucket loads. A pinned sibling
-                // (`Cursor::Row`) probes by field equality, never by
-                // hash: skip the hash work and its counter, so introspection's
-                // `hashes` counts hashes actually computed for map
-                // probes (one branch per sibling per batch).
-                let pinned = matches!(s_cursor, Cursor::Row(_));
-                counters.phase_start(node_idx, JoinPhase::Hash);
-                let n = scratch.survivors.len();
-                scratch.hashes.clear();
-                scratch.hashes.resize(n, 0);
-                // One gather loop for every source shape (the
-                // single-batch-word twin measured < 2% and died).
-                {
-                    let survivors = &scratch.survivors[..n];
-                    let entry_keys = &scratch.entry_keys[..];
-                    let sources = &scratch.sources[sub_idx];
-                    let probe_keys = &mut scratch.probe_keys[..n * sub_arity.max(1)];
-                    let hashes = &mut scratch.hashes[..n];
-                    for (k, &e) in survivors.iter().enumerate() {
-                        let entry = usize::try_from(e).expect("batch fits usize");
-                        for i in 0..sub_arity {
-                            probe_keys[k * sub_arity + i] =
-                                value_of(sources, entry_keys, bindings, entry, i);
-                        }
-                        if !pinned {
-                            counters.probe_hash(node_idx, sub_idx);
-                            hashes[k] = crate::exec::colt::hash_key(
-                                &probe_keys[k * sub_arity..(k + 1) * sub_arity],
-                            );
-                        }
-                    }
-                }
-                counters.phase_end(node_idx, JoinPhase::Hash);
-
-                // Phase 1.5: the prefetch pass — every bucket the batch will
-                // probe gets its ctrl and bucket lines hinted. Gated on
-                // RESIDENCY first (an L2-resident map's prefetch is pure
-                // loss) and batch width second (tiny batches never
-                // amortize the pass).
-                if !pinned && scratch.survivors.len() >= PREFETCH_WIDTH_FLOOR {
-                    crate::obs::event(
-                        crate::obs::names::PREFETCH_PASS,
-                        crate::obs::Category::Execute,
-                        scratch.survivors.len() as u64,
-                        colts[occ].probe_footprint_bytes() as u64,
-                    );
-                    for &hash in &scratch.hashes {
-                        colts[occ].prefetch_bucket(s_cursor, hash);
-                    }
-                }
-
-                // Phase 2: all bucket loads — independent chains the
-                // out-of-order window overlaps — then kernel compaction.
-                // Alias-hoisted locals.
-                counters.phase_start(node_idx, JoinPhase::Probe);
-                scratch.mask.clear();
-                scratch.mask.resize(n, 0);
-                {
-                    let survivors = &scratch.survivors[..n];
-                    let probe_keys = &scratch.probe_keys[..n * sub_arity.max(1)];
-                    let hashes = &scratch.hashes[..n];
-                    let sibling_children = &mut scratch.sibling_children[sub_idx][..];
-                    let mask = &mut scratch.mask[..n];
-                    let colt = &mut colts[occ];
-                    for k in 0..n {
-                        let entry = usize::try_from(survivors[k]).expect("batch fits usize");
-                        let hit = colt.get_prehashed(
-                            s_cursor,
-                            s_level,
-                            &probe_keys[k * sub_arity..(k + 1) * sub_arity],
-                            hashes[k],
-                        );
-                        counters.probe(node_idx, sub_idx, hit.is_some());
-                        sibling_children[entry] = hit.unwrap_or(Cursor::Row(0));
-                        mask[k] = u8::from(hit.is_some());
-                    }
-                }
-                crate::exec::kernel::compact_u32_by_mask(&mut scratch.survivors, &scratch.mask);
-                counters.phase_end(node_idx, JoinPhase::Probe);
-            }
-
-            // Residuals run as batch survivor compaction after the probes.
+            // Residuals run BEFORE the sibling probes — the cost-class
+            // ordering (docs/architecture/40-execution.md, § inputs
+            // from normalization): residual operands read only cover
+            // batch words and outer bindings, and sibling probes bind
+            // no variables, so the pure-ALU rejection legally precedes
+            // the memory-bound hash probes.
             counters.phase_start(node_idx, JoinPhase::Residual);
             for (r_idx, (lhs_src, rhs_src)) in scratch.residual_sources.iter().enumerate() {
                 let (residual, _, _, width) = &self.residual_slots[node_idx][r_idx];
                 let op = residual.op;
                 let n = scratch.survivors.len();
-                scratch.mask.clear();
-                scratch.mask.resize(n, 0);
+                grow_scratch(&mut scratch.mask, n);
                 for k in 0..n {
                     let e = scratch.survivors[k];
                     let entry = usize::try_from(e).expect("batch fits usize");
@@ -345,8 +237,7 @@ impl Executor {
             for (r_idx, (lhs_src, rhs_src)) in scratch.word_residual_sources.iter().enumerate() {
                 let op = self.word_residual_slots[node_idx][r_idx].0.op;
                 let n = scratch.survivors.len();
-                scratch.mask.clear();
-                scratch.mask.resize(n, 0);
+                grow_scratch(&mut scratch.mask, n);
                 for k in 0..n {
                     let e = scratch.survivors[k];
                     let entry = usize::try_from(e).expect("batch fits usize");
@@ -384,9 +275,8 @@ impl Executor {
                 let n = scratch.survivors.len();
                 let filter_mask = match (*lhs_src, *rhs_src) {
                     (Source::Batch(lw), Source::Batch(rw)) => {
-                        scratch.allen_gather.clear();
-                        scratch.allen_gather.resize(4 * n, 0);
-                        let (a_starts, rest) = scratch.allen_gather.split_at_mut(n);
+                        grow_scratch(&mut scratch.allen_gather, 4 * n);
+                        let (a_starts, rest) = scratch.allen_gather[..4 * n].split_at_mut(n);
                         let (a_ends, rest) = rest.split_at_mut(n);
                         let (b_starts, b_ends) = rest.split_at_mut(n);
                         for (k, &e) in scratch.survivors[..n].iter().enumerate() {
@@ -467,8 +357,12 @@ impl Executor {
             for (r_idx, (interval_src, scalar_src)) in scratch.duration_sources.iter().enumerate() {
                 let op = self.duration_residual_slots[node_idx][r_idx].0.op;
                 let n = scratch.survivors.len();
-                scratch.mask.clear();
-                scratch.mask.resize(n, 0);
+                // The ray-poison break leaves a mask tail unwritten —
+                // legal only because that path `break 'outer`s before
+                // the mask is read (the compaction is skipped);
+                // grow-only sizing keeps exactly that write-before-read
+                // truth.
+                grow_scratch(&mut scratch.mask, n);
                 for k in 0..n {
                     let e = scratch.survivors[k];
                     let entry = usize::try_from(e).expect("batch fits usize");
@@ -478,50 +372,193 @@ impl Executor {
                     };
                     let (start, end) = (value(interval_src, 0), value(interval_src, 1));
                     if end == u64::MAX {
-                        self.measure_of_ray = Some([start, end]);
-                        self.all_cancelled = true;
+                        self.poison(super::Poison::MeasureOfRay([start, end]));
                         break;
                     }
                     let pass = op.compare(&(end - start), &value(scalar_src, 0));
                     counters.residual(node_idx, pass);
                     scratch.mask[k] = u8::from(pass);
                 }
-                if self.measure_of_ray.is_some() {
+                if self.poison.is_some() {
                     counters.phase_end(node_idx, JoinPhase::Residual);
                     break 'outer;
                 }
                 crate::exec::kernel::compact_u32_by_mask(&mut scratch.survivors, &scratch.mask);
             }
+            counters.phase_end(node_idx, JoinPhase::Residual);
+
+            // Per sibling: the two-phase probe, then branchless
+            // compaction. `probe_pass.rs` hosts this pass's pipelined
+            // twin, kept line-parallel — a change here needs its mirror
+            // there. Extracting the shared pass was refused: the bodies
+            // differ in more than parameters (this pass probes one
+            // batch-constant cursor per sibling and elides hashing for
+            // pinned rows; the twin sources a carried cursor PER ELEMENT
+            // and re-resolves value sources per pass), so the honest
+            // shape is two commented copies, not one function whose
+            // closure parameters reintroduce the difference.
+            let value_of = |sources: &[Source],
+                            entry_keys: &[u64],
+                            bindings: &Bindings,
+                            entry: usize,
+                            i: usize| match sources[i] {
+                Source::Batch(word) => entry_keys[entry * arity + word],
+                Source::Slot(slot) => bindings.get(slot),
+            };
+            for sub_idx in 0..plan.nodes()[node_idx].subatoms.len() {
+                if sub_idx == cover_sub || scratch.survivors.is_empty() {
+                    continue;
+                }
+                let subatom = &plan.nodes()[node_idx].subatoms[sub_idx];
+                let sub_arity = self.slot_map[node_idx][sub_idx].len();
+                let occ = usize::from(subatom.occ.0);
+                let (s_cursor, s_level) = self.cursors[occ];
+                counters.phase_start(node_idx, JoinPhase::Force);
+                colts[occ].ensure_forced(s_cursor, s_level);
+                counters.phase_end(node_idx, JoinPhase::Force);
+
+                // Phase 1: gather every probe key and compute every hash —
+                // pure ALU, no bucket loads. A pinned sibling
+                // (`Cursor::Row`) probes by field equality, never by
+                // hash: skip the hash work and its counter, so introspection's
+                // `hashes` counts hashes actually computed for map
+                // probes (one branch per sibling per batch).
+                let pinned = matches!(s_cursor, Cursor::Row(_));
+                counters.phase_start(node_idx, JoinPhase::Hash);
+                let n = scratch.survivors.len();
+                // Grow-only: the pinned arm leaves `hashes[..n]` stale,
+                // but a `Cursor::Row` probe resolves by field equality
+                // and never reads the hash (`colt/probe.rs`).
+                grow_scratch(&mut scratch.hashes, n);
+                // One gather loop for every source shape (the
+                // single-batch-word twin measured < 2% and died).
+                {
+                    let survivors = &scratch.survivors[..n];
+                    let entry_keys = &scratch.entry_keys[..];
+                    let sources = &scratch.sources[sub_idx];
+                    let probe_keys = &mut scratch.probe_keys[..n * sub_arity.max(1)];
+                    let hashes = &mut scratch.hashes[..n];
+                    for (k, &e) in survivors.iter().enumerate() {
+                        let entry = usize::try_from(e).expect("batch fits usize");
+                        for i in 0..sub_arity {
+                            probe_keys[k * sub_arity + i] =
+                                value_of(sources, entry_keys, bindings, entry, i);
+                        }
+                        if !pinned {
+                            counters.probe_hash(node_idx, sub_idx);
+                            hashes[k] = crate::exec::colt::hash_key(
+                                &probe_keys[k * sub_arity..(k + 1) * sub_arity],
+                            );
+                        }
+                    }
+                }
+                counters.phase_end(node_idx, JoinPhase::Hash);
+
+                // Phase 1.5: the prefetch pass — every bucket the batch
+                // will probe gets its ctrl and bucket lines hinted.
+                // Width-floor gated, and that is the ONLY gate — the
+                // residency/footprint tier was ablated twice and
+                // measured NEUTRAL (the `PREFETCH_WIDTH_FLOOR` doc
+                // block is the record). `!pinned` is applicability, not
+                // a gate: a pinned row probes by field equality and has
+                // no bucket to hint.
+                if !pinned && scratch.survivors.len() >= PREFETCH_WIDTH_FLOOR {
+                    crate::obs::event(
+                        crate::obs::names::PREFETCH_PASS,
+                        crate::obs::Category::Execute,
+                        scratch.survivors.len() as u64,
+                        colts[occ].probe_footprint_bytes() as u64,
+                    );
+                    for &hash in &scratch.hashes[..n] {
+                        colts[occ].prefetch_bucket(s_cursor, hash);
+                    }
+                }
+
+                // Phase 2: all bucket loads — independent chains the
+                // out-of-order window overlaps — then kernel compaction.
+                // Alias-hoisted locals.
+                counters.phase_start(node_idx, JoinPhase::Probe);
+                grow_scratch(&mut scratch.mask, n);
+                {
+                    let survivors = &scratch.survivors[..n];
+                    let probe_keys = &scratch.probe_keys[..n * sub_arity.max(1)];
+                    let hashes = &scratch.hashes[..n];
+                    let sibling_children = &mut scratch.sibling_children[sub_idx][..];
+                    let mask = &mut scratch.mask[..n];
+                    let colt = &mut colts[occ];
+                    for k in 0..n {
+                        let entry = usize::try_from(survivors[k]).expect("batch fits usize");
+                        let hit = colt.get_prehashed(
+                            s_cursor,
+                            s_level,
+                            &probe_keys[k * sub_arity..(k + 1) * sub_arity],
+                            hashes[k],
+                        );
+                        counters.probe(node_idx, sub_idx, hit.is_some());
+                        sibling_children[entry] = hit.unwrap_or(Cursor::Row(0));
+                        mask[k] = u8::from(hit.is_some());
+                    }
+                }
+                crate::exec::kernel::compact_u32_by_mask(&mut scratch.survivors, &scratch.mask);
+                counters.phase_end(node_idx, JoinPhase::Probe);
+            }
+
             // Membership probes (docs/architecture/40-execution.md, the
             // point-membership scan): per surviving binding, scan the
             // occurrence's remaining positions for one fact satisfying
-            // every var-sourced membership; misses compact away.
+            // every var-sourced membership; misses compact away. They
+            // stay AFTER the sibling probes (unlike the ALU residuals
+            // above): a probed occurrence's cursor may be this batch's
+            // own sibling child, and the position scan is probe-class
+            // work. Point words read per-spec resolved sources, cursors
+            // a per-spec resolved source (the instruction diet — never
+            // a per-element variable or subatom search); the leaf's
+            // fallback cursor is the batch-constant outer cursor, so
+            // `Carried` never arises here (`probe_pass`'s twin carries
+            // per-parent columns instead).
+            if !self.point_probe_slots[node_idx].is_empty() {
+                counters.phase_start(node_idx, JoinPhase::Residual);
+            }
             for spec in &self.point_probe_slots[node_idx] {
+                scratch.point_sources.clear();
+                for (start_col, end_col, var, slot) in &spec.parts {
+                    let src = super::word_base(cover_vars, *var, |v| self.width_of(v))
+                        .map_or(Source::Slot(*slot), Source::Batch);
+                    scratch.point_sources.push((*start_col, *end_col, src));
+                }
+                let cursor_src = if spec.occ == cover_occ {
+                    super::CursorSrc::Cover
+                } else if let Some(sub_idx) = plan.nodes()[node_idx]
+                    .subatoms
+                    .iter()
+                    .position(|sub| usize::from(sub.occ.0) == spec.occ)
+                {
+                    super::CursorSrc::Sibling(sub_idx)
+                } else {
+                    super::CursorSrc::Const(self.cursors[spec.occ].0)
+                };
                 let n = scratch.survivors.len();
-                scratch.mask.clear();
-                scratch.mask.resize(n, 0);
+                grow_scratch(&mut scratch.mask, n);
                 for k in 0..n {
                     let e = scratch.survivors[k];
                     let entry = usize::try_from(e).expect("batch fits usize");
                     scratch.point_checks.clear();
-                    for (start_col, end_col, var, slot) in &spec.parts {
-                        let point = super::word_base(cover_vars, *var, |v| self.width_of(v))
-                            .map_or_else(
-                                || bindings.get(*slot),
-                                |base| scratch.entry_keys[entry * arity + base],
-                            );
-                        scratch.point_checks.push((*start_col, *end_col, point));
+                    for &(start_col, end_col, src) in &scratch.point_sources {
+                        let point = match src {
+                            Source::Batch(base) => scratch.entry_keys[entry * arity + base],
+                            Source::Slot(slot) => bindings.get(slot),
+                        };
+                        scratch.point_checks.push((start_col, end_col, point));
                     }
-                    let cursor = if spec.occ == cover_occ {
-                        scratch.children[entry]
-                    } else if let Some(sub_idx) = plan.nodes()[node_idx]
-                        .subatoms
-                        .iter()
-                        .position(|sub| usize::from(sub.occ.0) == spec.occ)
-                    {
-                        scratch.sibling_children[sub_idx][entry]
-                    } else {
-                        self.cursors[spec.occ].0
+                    let cursor = match cursor_src {
+                        super::CursorSrc::Cover => scratch.children[entry],
+                        super::CursorSrc::Sibling(sub_idx) => {
+                            scratch.sibling_children[sub_idx][entry]
+                        }
+                        super::CursorSrc::Carried(_) => {
+                            unreachable!("the leaf pass carries no pending cursors")
+                        }
+                        super::CursorSrc::Const(outer) => outer,
                     };
                     let pass = colts[spec.occ].any_position_matches(cursor, &scratch.point_checks);
                     counters.residual(node_idx, pass);
@@ -529,7 +566,9 @@ impl Executor {
                 }
                 crate::exec::kernel::compact_u32_by_mask(&mut scratch.survivors, &scratch.mask);
             }
-            counters.phase_end(node_idx, JoinPhase::Residual);
+            if !self.point_probe_slots[node_idx].is_empty() {
+                counters.phase_end(node_idx, JoinPhase::Residual);
+            }
 
             // Anti-probes: the residual step's sibling (docs/architecture/
             // 40-execution.md, § anti-probe filters) — this node's lowered
@@ -550,6 +589,7 @@ impl Executor {
                 &mut scratch.mask,
                 &mut scratch.anti_sources,
                 &mut scratch.point_checks,
+                &mut scratch.point_sources,
                 |_, slot| bindings.get(slot),
                 counters,
             );
@@ -648,9 +688,8 @@ fn allen_classify_const(
     codes: &mut Vec<u8>,
 ) {
     let n = survivors.len();
-    gather.clear();
-    gather.resize(2 * n, 0);
-    let (starts, ends) = gather.split_at_mut(n);
+    grow_scratch(gather, 2 * n);
+    let (starts, ends) = gather[..2 * n].split_at_mut(n);
     for (k, &e) in survivors.iter().enumerate() {
         let entry = usize::try_from(e).expect("batch fits usize");
         starts[k] = entry_keys[entry * arity + word];

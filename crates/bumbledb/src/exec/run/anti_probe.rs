@@ -16,7 +16,9 @@
 //! (`docs/architecture/50-storage.md` § commit step 3). The sharing is
 //! the semantic and the compaction machinery, not a common function.
 
-use super::{AntiProbeSpec, Colt, Counters, JoinPhase, PREFETCH_WIDTH_FLOOR, Source, word_base};
+use super::{
+    AntiProbeSpec, Colt, Counters, JoinPhase, PREFETCH_WIDTH_FLOOR, Source, grow_scratch, word_base,
+};
 
 /// Evaluates one node's anti-probes over the current survivor set,
 /// compacting rejected bindings away. Batched exactly like the sibling
@@ -53,6 +55,7 @@ pub(super) fn anti_probe_pass<C: Counters>(
     mask: &mut Vec<u8>,
     anti_sources: &mut [Vec<Source>],
     point_checks: &mut Vec<(usize, usize, u64)>,
+    point_sources: &mut Vec<(usize, usize, Source)>,
     read_slot: impl Fn(usize, usize) -> u64,
     counters: &mut C,
 ) {
@@ -63,22 +66,22 @@ pub(super) fn anti_probe_pass<C: Counters>(
             .expect("plans bind every variable")
             .1
     };
-    // A point variable is scalar (one word); its per-element word source.
-    let point_word = |element: usize,
-                      var: crate::ir::VarId,
-                      slot: usize,
-                      entry_keys: &[u64],
-                      read_slot: &dyn Fn(usize, usize) -> u64| {
-        word_base(cover_vars, var, width_of).map_or_else(
-            || read_slot(element, slot),
-            |base| entry_keys[element * arity + base],
-        )
-    };
     for (a_idx, spec) in specs.iter().enumerate() {
         if survivors.is_empty() {
             return;
         }
         let n = survivors.len();
+        // Point-word sources resolve once per (pass, spec) — a point
+        // variable is scalar (one word), read from its batch word base
+        // or its outer slot (the instruction diet: never a per-element
+        // variable search, and `read_slot` stays generic — no `dyn` on
+        // the hot path).
+        point_sources.clear();
+        for (start_col, end_col, var, slot) in &spec.point_parts {
+            let src =
+                word_base(cover_vars, *var, width_of).map_or(Source::Slot(*slot), Source::Batch);
+            point_sources.push((*start_col, *end_col, src));
+        }
 
         // The zero-variable emptiness gate: with no key words the probe
         // asks only whether the (filtered) negated occurrence holds any
@@ -103,17 +106,16 @@ pub(super) fn anti_probe_pass<C: Counters>(
             // 20-query-ir.md: a binding position matches iff the value
             // satisfies it for SOME fact / ANY element).
             let start = colts[spec.occ].start();
-            mask.clear();
-            mask.resize(n, 0);
+            grow_scratch(mask, n);
             for k in 0..n {
                 let element = usize::try_from(survivors[k]).expect("batch fits usize");
                 point_checks.clear();
-                for (start_col, end_col, var, slot) in &spec.point_parts {
-                    point_checks.push((
-                        *start_col,
-                        *end_col,
-                        point_word(element, *var, *slot, entry_keys, &read_slot),
-                    ));
+                for &(start_col, end_col, src) in point_sources.iter() {
+                    let point = match src {
+                        Source::Batch(base) => entry_keys[element * arity + base],
+                        Source::Slot(slot) => read_slot(element, slot),
+                    };
+                    point_checks.push((start_col, end_col, point));
                 }
                 let hit = colts[spec.occ].any_position_matches(start, point_checks);
                 counters.anti_probe(node_idx, hit);
@@ -154,8 +156,7 @@ pub(super) fn anti_probe_pass<C: Counters>(
         // ALU, no bucket loads.
         counters.phase_start(node_idx, JoinPhase::Hash);
         let kw = spec.key_words;
-        hashes.clear();
-        hashes.resize(n, 0);
+        grow_scratch(hashes, n);
         {
             let probe_keys = &mut probe_keys[..n * kw];
             let hashes = &mut hashes[..n];
@@ -180,7 +181,7 @@ pub(super) fn anti_probe_pass<C: Counters>(
                 n as u64,
                 colts[spec.occ].probe_footprint_bytes() as u64,
             );
-            for &hash in hashes.iter() {
+            for &hash in &hashes[..n] {
                 colts[spec.occ].prefetch_bucket(start, hash);
             }
         }
@@ -194,8 +195,7 @@ pub(super) fn anti_probe_pass<C: Counters>(
         // (docs/architecture/20-query-ir.md: the term matches iff SOME
         // fact / ANY element satisfies it).
         counters.phase_start(node_idx, JoinPhase::Probe);
-        mask.clear();
-        mask.resize(n, 0);
+        grow_scratch(mask, n);
         {
             let probe_keys = &probe_keys[..n * kw];
             let hashes = &hashes[..n];
@@ -213,12 +213,12 @@ pub(super) fn anti_probe_pass<C: Counters>(
                     Some(_) if spec.point_parts.is_empty() => true,
                     Some(child) => {
                         point_checks.clear();
-                        for (start_col, end_col, var, slot) in &spec.point_parts {
-                            point_checks.push((
-                                *start_col,
-                                *end_col,
-                                point_word(element, *var, *slot, entry_keys, &read_slot),
-                            ));
+                        for &(start_col, end_col, src) in point_sources.iter() {
+                            let point = match src {
+                                Source::Batch(base) => entry_keys[element * arity + base],
+                                Source::Slot(slot) => read_slot(element, slot),
+                            };
+                            point_checks.push((start_col, end_col, point));
                         }
                         colts[spec.occ].any_position_matches(child, point_checks)
                     }
@@ -229,6 +229,8 @@ pub(super) fn anti_probe_pass<C: Counters>(
         }
         crate::exec::kernel::compact_u32_by_mask(survivors, mask);
         counters.phase_end(node_idx, JoinPhase::Probe);
-        hashes.clear();
+        // No trailing `hashes.clear()`: the length IS the high-water
+        // mark — clearing it here would make the caller's next
+        // `grow_scratch` re-memset from zero, defeating the contract.
     }
 }

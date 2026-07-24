@@ -127,9 +127,17 @@ filters** (lowered negated atoms).
   two-word range filters.
 - **Residual comparisons** attach to the earliest plan node at which both sides are
   bound (computed at plan time, stored in the plan). The executor's node loop gains one
-  step: iterate cover → probe siblings → **evaluate the node's residuals** → enqueue
+  step: iterate cover → **evaluate the node's residuals** → probe siblings → enqueue
   survivors for the next node.
-  In vectorized execution, residuals run as batch survivor compaction after the probes.
+  In vectorized execution, residuals run as batch survivor compaction **before** the
+  sibling probes — the cost-class ordering: residual operands read only cover batch
+  words and already-bound outer slots, and sibling probes bind no variables, so the
+  pure-ALU rejection legally precedes the memory-bound hash probes and every probe a
+  residual kills is a bucket load never issued (finding 008: the ring lanes' ~0.6%-
+  selective temporal filters bought nothing behind the probes; re-pin the ring A/B
+  under the night-run protocol to record the recovered share). Point-membership scans
+  and anti-probes stay after the probes — they are probe-class work and may read the
+  pass's own sibling children.
 - **Anti-probe filters** attach exactly as residuals do — to the earliest node at
   which every variable of the negated atom is bound — and evaluate as: probe the
   negated occurrence for any matching fact; a hit **rejects** the binding. The
