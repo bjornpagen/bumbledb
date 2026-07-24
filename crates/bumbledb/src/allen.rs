@@ -167,26 +167,17 @@ mod tests {
         }
     }
 
-    /// Converse involution, and classification duality:
-    /// `classify(a, b).converse() == classify(b, a)`.
+    /// Classification duality: `classify(a, b).converse() == classify(b, a)`
+    /// — the classification half of the converse law; the mask half (the
+    /// exhaustive involution, basic-converse agreement) is pinned in
+    /// `bumbledb-theory`, next to the definitions.
     #[test]
-    fn converse_is_an_involution_and_dualizes_classification() {
+    fn converse_dualizes_classification() {
         for (a, b) in pair_corpus() {
             let ab = classify(iv(a), iv(b));
             let ba = classify(iv(b), iv(a));
             assert_eq!(ab.converse(), ba, "{a:?} vs {b:?}");
             assert_eq!(ab.converse().converse(), ab);
-        }
-        for bits in 0..=0x1FFF_u16 {
-            let mask = AllenMask::new(bits).expect("13-bit range");
-            assert_eq!(mask.converse().converse(), mask);
-            // Mask converse agrees with per-basic converse.
-            for basic in Basic::ALL {
-                assert_eq!(
-                    mask.contains(basic),
-                    mask.converse().contains(basic.converse())
-                );
-            }
         }
     }
 
