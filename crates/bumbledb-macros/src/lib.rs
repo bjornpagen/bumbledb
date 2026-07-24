@@ -409,9 +409,8 @@ fn parse_field(name: String, tokens: &mut Tokens) -> Field {
             let (negative, text) = parse_int(tokens, "the bytes<N> width");
             assert!(!negative, "schema!: bytes<N> width must be positive");
             expect_punct(tokens, '>');
-            let width: u64 = text
-                .parse()
-                .unwrap_or_else(|_| panic!("schema!: malformed bytes<N> width `{text}`"));
+            let width = u64_text(&text)
+                .unwrap_or_else(|| panic!("schema!: malformed bytes<N> width `{text}`"));
             FieldTy::FixedBytes(width)
         }
         "interval" => {
@@ -494,9 +493,8 @@ fn parse_interval_width(name: &str, tokens: &mut Tokens) -> Option<u64> {
         !negative,
         "schema!: field `{name}`: an interval width is a point count — non-negative"
     );
-    let width: u64 = text
-        .parse()
-        .unwrap_or_else(|_| panic!("schema!: field `{name}`: malformed interval width `{text}`"));
+    let width = u64_text(&text)
+        .unwrap_or_else(|| panic!("schema!: field `{name}`: malformed interval width `{text}`"));
     assert!(
         width >= 1,
         "schema!: field `{name}`: interval<E, 0> denotes nothing — the width must be >= 1"
@@ -910,9 +908,7 @@ fn parse_window_bound(tokens: &mut Tokens, what: &str) -> u64 {
         !negative,
         "schema!: a window bound is a count — non-negative"
     );
-    text.replace('_', "")
-        .parse()
-        .unwrap_or_else(|_| panic!("schema!: malformed window bound `{text}`"))
+    u64_text(&text).unwrap_or_else(|| panic!("schema!: malformed window bound `{text}`"))
 }
 
 /// Parses the `<={…}` brace group into the spelling as written — the
@@ -1225,6 +1221,10 @@ fn nonempty_interval<T>(relation: &str, field: &str, interval: Option<T>) -> T {
 /// An integer literal's magnitude out of its token text: underscores
 /// dropped, the `0x`/`0o`/`0b` radix prefixes honored (the seam parses
 /// what rustc would have; type suffixes are not part of the grammar).
+/// THE literal parser — every integer position (selection and row
+/// literals, `bytes<N>` and interval widths, window bounds) judges its
+/// text here, no position with a private dialect (ruled 2026-07-23, R8;
+/// `docs/architecture/20-query-ir.md` § integer literals).
 fn int_magnitude(text: &str) -> Option<u128> {
     let text = text.replace('_', "");
     let (digits, radix) = match text.as_bytes() {

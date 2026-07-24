@@ -1268,6 +1268,57 @@ mod extension_forms {
     }
 }
 
+mod radix_literals {
+    //! Integer literals are rustc's (ruled 2026-07-23, R8): the
+    //! `0x`/`0o`/`0b` radix prefixes and `_` separators are accepted
+    //! uniformly at every integer position — `bytes<N>` and interval
+    //! widths and window bounds judge their text at the same seam as
+    //! selection literals, no position with a private dialect
+    //! (`docs/architecture/20-query-ir.md` § integer literals).
+
+    use bumbledb::schema::ValidateDescriptor as _;
+    use bumbledb::schema::{IntervalElement, LiteralSet, ValueType};
+    use bumbledb::{Theory as _, Value};
+
+    bumbledb::schema! {
+        pub Radix;
+
+        relation Chunk {
+            digest: bytes<0x20>,
+            span:   interval<u64, 1_0>,
+        }
+        relation Parent { id: u64 as ParentId, fresh }
+        relation Task { parent: u64 as ParentId, state: u64 }
+
+        Parent(id) <={0x2..0b100} Task(parent | state == 0o17);
+    }
+
+    /// Widths, window bounds, and selection literals all lower through
+    /// the one radix-aware seam, normalized to their numeric values.
+    #[test]
+    fn every_integer_position_reads_rustc_literals() {
+        let descriptor = Radix.descriptor();
+        assert_eq!(
+            descriptor.relations[0].fields[0].value_type,
+            ValueType::FixedBytes { len: 32 }
+        );
+        assert_eq!(
+            descriptor.relations[0].fields[1].value_type,
+            ValueType::Interval {
+                element: IntervalElement::U64,
+                width: Some(10),
+            }
+        );
+        let schema = descriptor.validate().expect("the declared schema is valid");
+        let window = &schema.windows()[0];
+        assert_eq!((window.lo, window.hi), (2, Some(4)));
+        assert_eq!(
+            window.source.selection[..],
+            [(Radix::TASK_STATE, LiteralSet::One(Value::U64(15)))]
+        );
+    }
+}
+
 mod fixed_width_intervals {
     //! The Tier-2 literal type end to end: `interval<u64, w>` — the
     //! width is the type, the encoding is the start
