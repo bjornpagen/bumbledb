@@ -50,14 +50,19 @@ function span(start: bigint, end: bigint): IntervalValue {
  * A closed relation's roster as seen from a referencing field: the handle
  * namespace `where()` selections and ground axioms resolve bare handle ids
  * through (the macro's own rule: a handle is legal exactly on a field that
- * references a closed relation). The handle union is PRECISE — `H` carries
- * the literal handle names in declaration order (the unbound `string`
- * default exists only as the fallback where no roster is in scope); the
- * runtime twin is the same frozen declaration-order array that was always
+ * references a closed relation). The roster is PRECISE in BOTH slots —
+ * `Name` carries the vocabulary's literal name and `H` the literal handle
+ * names in declaration order (the unbound `string` defaults exist only as
+ * the fallback where no roster is in scope). The name literal is
+ * load-bearing: the runtime twins judge roster VALUE IDENTITY, so two
+ * same-shaped vocabularies (`Yes/No` twice) are distinct — carrying the
+ * name makes the type the faithful encoding of that judgment, and a
+ * cross-vocabulary pairing fails at compile time, not construction. The
+ * runtime twin is the same frozen declaration-order value that was always
  * there.
  */
-interface ClosedRoster<H extends string = string> {
-	readonly name: string
+interface ClosedRoster<Name extends string = string, H extends string = string> {
+	readonly name: Name
 	readonly handles: readonly H[]
 }
 
@@ -136,9 +141,9 @@ interface IntervalField<
  * map and JoinOk, which compare kind/class/width/element. Terminal: no
  * `.fresh` — a vocabulary's rows are ground axioms, never minted.
  */
-interface ClosedIdField<H extends string = string> {
+interface ClosedIdField<Name extends string = string, H extends string = string> {
 	readonly kind: "u64"
-	readonly closed: ClosedRoster<H>
+	readonly closed: ClosedRoster<Name, H>
 }
 
 /** Any field descriptor, whatever its kind or marks. */

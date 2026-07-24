@@ -121,18 +121,25 @@ type FaceFields<S extends FaceSource> = S extends AnySelected
  * mirrors, recipe 29's mixed-width zones) and the width slot reads
  * `undefined` for every interval. Elements stay bound: u64-vs-i64 interval
  * pairs still mismatch. The ROSTER slot is SDK-only structure (the engine's
- * wire carries plain u64s): a closed reference contributes its handle
- * union, every other kind `undefined`, so a plain u64 face cannot pair with
- * a closed `[id]` face — the vocabulary's own descriptor (`Kind.id`) is the
- * ONE spelling of a closed reference at this surface, and a bare column
- * cannot alias a vocabulary through a declared law. The runtime twin is the
+ * wire carries plain u64s): a closed reference contributes its vocabulary
+ * NAME literal paired with its handle union — the faithful encoding of the
+ * runtime's roster VALUE-IDENTITY judgment, so two same-shaped vocabularies
+ * mismatch at compile time exactly as they throw at construction — every
+ * other kind `undefined`, so a plain u64 face cannot pair with a closed
+ * `[id]` face — the vocabulary's own descriptor (`Kind.id`) is the ONE
+ * spelling of a closed reference at this surface, and a bare column cannot
+ * alias a vocabulary through a declared law. The runtime twin is the
  * statement constructors' roster-identity walk (`statements.ts`).
  */
 type ShapeOf<F extends AnyField> = readonly [
 	F["kind"],
 	F extends { readonly element: unknown } ? undefined : F extends { readonly width: infer W } ? W : undefined,
 	F extends { readonly element: infer E } ? E : undefined,
-	F extends { readonly closed: { readonly handles: readonly (infer H extends string)[] } } ? H : undefined
+	F extends {
+		readonly closed: { readonly name: infer N extends string; readonly handles: readonly (infer H extends string)[] }
+	}
+		? readonly [N, H]
+		: undefined
 ]
 
 /** One field's structural shape within a declared field block (`undefined` when the name is foreign). */

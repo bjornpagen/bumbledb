@@ -1,7 +1,9 @@
 /**
  * H1 pins — the precise roster type. A closed reference descriptor carries
- * its handle union in the TYPE (`ClosedIdField<"DirectPass" | "JudgedPass"
- * | "Failed">`), `Infer` yields that union as the column's VALUE TYPE, and
+ * its vocabulary name AND handle union in the TYPE (`ClosedIdField<"Kind",
+ * "DirectPass" | "JudgedPass" | "Failed">` — the name literal keeps two
+ * same-shaped vocabularies distinct, 063), `Infer` yields the union as the
+ * column's VALUE TYPE, and
  * every `Infer`-reading surface (`Fact`, `InsertFact`) sees it. A wrong
  * string is a COMPILE error (real `@ts-expect-error` fail-probes), and a
  * bigint is no longer assignable to a closed-referencing column. The
@@ -14,8 +16,10 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 
 import { closed } from "#closed.ts"
+import { on } from "#face.ts"
 import { type ClosedIdField, type ClosedRoster, type Infer, u64 } from "#fields.ts"
 import { type Fact, type InsertFact, relation } from "#relation.ts"
+import { contained } from "#statements.ts"
 
 /** The identity-strength equality probe (the standard dual-function trick). */
 type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false
@@ -60,8 +64,8 @@ type Cases = [
 	>,
 	// ——— hover legibility: the descriptor IS the evaluated named generic,
 	// not conditional soup — the Equal probe fails on anything weaker ———
-	Expect<Equal<typeof Kind.id, ClosedIdField<"DirectPass" | "JudgedPass" | "Failed">>>,
-	Expect<Equal<(typeof Kind.id)["closed"], ClosedRoster<"DirectPass" | "JudgedPass" | "Failed">>>,
+	Expect<Equal<typeof Kind.id, ClosedIdField<"Kind", "DirectPass" | "JudgedPass" | "Failed">>>,
+	Expect<Equal<(typeof Kind.id)["closed"], ClosedRoster<"Kind", "DirectPass" | "JudgedPass" | "Failed">>>,
 	// ——— the unbound generic default remains the wide fallback, so the
 	// precise descriptor is admitted everywhere the wide shape was ———
 	Expect<Equal<typeof Kind.id extends ClosedIdField ? true : false, true>>
@@ -99,6 +103,16 @@ function insertRefusals(): unknown[] {
 	const forgedId: InsertFact<typeof Certificate> = { student: 7n, kind: 0n }
 	return [typo, forgedId]
 }
+
+test("two same-shaped vocabularies are distinct at BOTH tiers — the roster slot carries the name literal", function probeSameShapedVocabularies() {
+	/** A vocabulary sharing Kind's exact handle set — only the name differs. */
+	const Answer = closed("Answer", ["DirectPass", "JudgedPass", "Failed"])
+	const Cert = relation("Cert", { k: Kind.id })
+	assert.throws(function crossVocabularyPairing() {
+		// @ts-expect-error — 063: a Kind reference cannot pair with Answer's id — the type-tier roster slot compares [name, handles], matching the runtime's roster-identity judgment
+		contained(on(Cert, "k"), on(Answer, "id"))
+	}, /is a Kind reference but Answer\.id is a Answer reference/)
+})
 
 test("the precise type's runtime twin is the same frozen declaration-order roster", function probeRuntimeTwin() {
 	// the descriptor is a frozen plain object with own properties end to end

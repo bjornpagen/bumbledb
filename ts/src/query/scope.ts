@@ -280,12 +280,17 @@ type WidthOf<F extends AnyField> = F extends { readonly width: infer W } ? W : u
 type ElementOf<F extends AnyField> = F extends { readonly element: infer E } ? E : undefined
 
 /**
- * Reads a closed reference's handle union; `undefined` on every non-closed kind (the roster IS descriptor structure).
+ * Reads a closed reference's vocabulary name literal paired with its handle
+ * union; `undefined` on every non-closed kind (the roster IS descriptor
+ * structure). The name literal is the type-tier encoding of the runtime's
+ * roster VALUE-IDENTITY judgment ({@link fieldJoins}): two same-shaped
+ * vocabularies are distinct rosters, so they mismatch here exactly as they
+ * refuse at runtime.
  */
 type RosterOf<F extends AnyField> = F extends {
-	readonly closed: { readonly handles: readonly (infer H extends string)[] }
+	readonly closed: { readonly name: infer N extends string; readonly handles: readonly (infer H extends string)[] }
 }
-	? H
+	? readonly [N, H]
 	: undefined
 
 /**
