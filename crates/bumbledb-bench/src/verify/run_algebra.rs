@@ -361,6 +361,13 @@ enum Expected {
     EmptyMask,
     /// The vacuous "always" (the naive twin: `mask.is_full()`).
     FullMask,
+    /// The bind-time "never": prepare accepts the param mask, execution
+    /// with an EMPTY binding raises the typed sibling (finding 086 —
+    /// the bind-time rejection roster, previously unpinned by any
+    /// parity row).
+    EmptyMaskParam,
+    /// The bind-time "always", `FULL` at execute.
+    FullMaskParam,
 }
 
 /// The parity cases: the invalid shapes the roster owns, each paired
@@ -430,7 +437,44 @@ fn parity_cases() -> Vec<(&'static str, Query, Expected)> {
             mask_query(AllenMask::FULL),
             Expected::FullMask,
         ),
+        (
+            "vacuous mask param (EMPTY)",
+            mask_param_query(),
+            Expected::EmptyMaskParam,
+        ),
+        (
+            "vacuous mask param (FULL)",
+            mask_param_query(),
+            Expected::FullMaskParam,
+        ),
     ]
+}
+
+/// The [`parity_cases`] mask query with the mask as a bind-time param
+/// (`MaskTerm::Param(0)`): validation accepts — vacuity is decided per
+/// execution.
+fn mask_param_query() -> Query {
+    Query::single(Rule {
+        finds: vec![FindTerm::Var(VarId(0))],
+        atoms: vec![
+            mandate_atom(),
+            Atom {
+                source: bumbledb::AtomSource::Edb(ids::MANDATE),
+                bindings: vec![
+                    (ids::mandate::ACCOUNT, var(0)),
+                    (ids::mandate::ACTIVE, var(2)),
+                ],
+            },
+        ],
+        negated: vec![],
+        conditions: vec![leaf(
+            CmpOp::Allen {
+                mask: MaskTerm::Param(bumbledb::ParamId(0)),
+            },
+            var(1),
+            var(2),
+        )],
+    })
 }
 
 /// Cap-exceeding DNF, the vanished program, and the vacuous masks:
@@ -442,6 +486,55 @@ fn parity_cases() -> Vec<(&'static str, Query, Expected)> {
 pub(super) fn error_parity<S, T>(db: &Db<S>, run: &mut Run<'_, T>) {
     for (label, q, expected) in parity_cases() {
         run.cases += 1;
+        // The bind-time rows: prepare ACCEPTS the param mask; the
+        // vacuous binding is a typed execution refusal carrying the
+        // param id.
+        if matches!(
+            expected,
+            Expected::EmptyMaskParam | Expected::FullMaskParam
+        ) {
+            let (mask, empty) = match expected {
+                Expected::EmptyMaskParam => (bumbledb::AllenMask::EMPTY, true),
+                _ => (bumbledb::AllenMask::FULL, false),
+            };
+            match db.prepare(&q) {
+                Ok(mut prepared) => {
+                    let params = [crate::naive::ParamValue::Scalar(Value::AllenMask(mask))];
+                    let args = crate::families::param_args(&params);
+                    let outcome =
+                        db.read(|snap| snap.execute_collect_args(&mut prepared, &args));
+                    let agree = match outcome {
+                        Err(Error::EmptyAllenMaskParam { param }) => {
+                            empty && param == bumbledb::ParamId(0)
+                        }
+                        Err(Error::FullAllenMaskParam { param }) => {
+                            !empty && param == bumbledb::ParamId(0)
+                        }
+                        _ => false,
+                    };
+                    if !agree {
+                        parity_bundle(
+                            run,
+                            label,
+                            &q,
+                            "the vacuous mask binding must raise its typed bind-time error",
+                        );
+                    }
+                }
+                Err(e) => {
+                    parity_bundle(
+                        run,
+                        label,
+                        &q,
+                        &format!("prepare refused the bind-time shape: {e:?}"),
+                    );
+                }
+            }
+            if run.bundles.len() >= super::MAX_BUNDLES {
+                return;
+            }
+            continue;
+        }
         let verdict = match db.prepare(&q) {
             Err(Error::Validation(error)) => error,
             Ok(_) => {
@@ -475,6 +568,9 @@ pub(super) fn error_parity<S, T>(db: &Db<S>, run: &mut Run<'_, T>) {
                     verdict,
                     bumbledb::error::ValidationError::FullAllenMask { .. }
                 )
+            }
+            Expected::EmptyMaskParam | Expected::FullMaskParam => {
+                unreachable!("the bind-time rows are handled above")
             }
         };
         if !agree {

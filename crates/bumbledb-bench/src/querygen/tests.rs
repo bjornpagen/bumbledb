@@ -1,4 +1,4 @@
-use super::oracle::{LARGE_BOUNDARY, param_anchors, u64_domain};
+use super::oracle::{LARGE_BOUNDARY, ParamAnchor, param_anchors, u64_domain};
 use super::target::{self, Domains};
 use super::*;
 use bumbledb::Value;
@@ -6,7 +6,7 @@ use bumbledb::Value;
 use crate::corpus_gen::{GenConfig, Rng, Scale};
 use crate::translate::translate;
 
-const SEED: u64 = 11;
+const SEED: u64 = 12;
 const N: u64 = 1000;
 
 const CFG: GenConfig = GenConfig {
@@ -25,17 +25,36 @@ fn a_thousand_queries_validate_and_translate() {
     std::fs::create_dir_all(&dir).expect("scratch dir");
     let db = bumbledb::Db::create(&dir, target::Target).expect("create");
     let mut rng = Rng::new(SEED);
+    let mut naive_routed = 0u64;
     for i in 0..N {
         let query = random_query(&mut rng, CFG);
         if let Err(error) = db.prepare(&query) {
             panic!("query {i} fails validation: {error:?}\n{query:#?}");
         }
+        // Inexpressibility is routing data, never a panic (finding
+        // 025): the SQL-expressible draws translate, the rest are the
+        // enumerated naive-leg set.
+        let expressible =
+            crate::translate::sqlite_expressible(&crate::translate::LaneCase::Query(&query));
         for draw in params_for(&query, &mut rng, CFG) {
-            if let Err(error) = translate(&query, target::schema(), &draw.sets) {
-                panic!("query {i} fails translation: {error}\n{query:#?}");
+            match expressible {
+                Ok(()) => {
+                    if let Err(error) = translate(&query, target::schema(), &draw.sets) {
+                        panic!("query {i} fails translation: {error}\n{query:#?}");
+                    }
+                }
+                Err(
+                    crate::translate::Inexpressible::PackAggregate
+                    | crate::translate::Inexpressible::AllenMaskParam,
+                ) => naive_routed += 1,
+                Err(other) => panic!("query {i}: unroutable class {other:?}\n{query:#?}"),
             }
         }
     }
+    assert!(
+        naive_routed > 0,
+        "the Pack and mask-param shapes reach the naive route"
+    );
     drop(db);
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -80,6 +99,7 @@ fn the_coverage_contract_holds_at_a_thousand() {
     band("measure", cov.measure, 8);
     band("closed_join", cov.closed_join, 8);
     band("ground_fold", cov.ground_fold, 7);
+    band("pack", cov.pack, 7);
     for (name, count) in [
         ("gates", cov.gates),
         ("misses", cov.misses),
@@ -98,6 +118,7 @@ fn the_coverage_contract_holds_at_a_thousand() {
         ("arg_global", cov.arg_global),
         ("arg_tie_key", cov.arg_tie_key),
         ("arg_tie_free_key", cov.arg_tie_free_key),
+        ("arg_measure_key", cov.arg_measure_key),
         ("membership_literal", cov.membership_literal),
         ("membership_param", cov.membership_param),
         ("membership_var", cov.membership_var),
@@ -108,6 +129,7 @@ fn the_coverage_contract_holds_at_a_thousand() {
         ("allen_composite", cov.allen_composite),
         ("allen_singleton", cov.allen_singleton),
         ("allen_random_mask", cov.allen_random_mask),
+        ("allen_mask_param", cov.allen_mask_param),
         ("point_in_u64", cov.point_in_u64),
         ("point_in_i64", cov.point_in_i64),
         ("adjacent_left", cov.adjacent_left),
@@ -409,7 +431,12 @@ fn params_for_produces_the_documented_draws() {
         }
         let miss = &draws[3];
         for (param, value) in &miss.scalars {
-            let anchor = anchors[usize::from(param.0)];
+            let ParamAnchor::Field(anchor) = anchors[usize::from(param.0)] else {
+                // A bind-time mask has no miss policy: the draw is a
+                // non-vacuous mask whatever the kind.
+                assert!(matches!(value, Value::AllenMask(_)));
+                continue;
+            };
             check_miss(
                 value,
                 anchor.relation,
@@ -421,7 +448,9 @@ fn params_for_produces_the_documented_draws() {
             );
         }
         for (param, elements) in &miss.sets {
-            let anchor = anchors[usize::from(param.0)];
+            let ParamAnchor::Field(anchor) = anchors[usize::from(param.0)] else {
+                unreachable!("mask params are scalars")
+            };
             for value in elements {
                 check_miss(
                     value,
@@ -580,7 +609,8 @@ fn the_recursive_arm_covers_its_contract_and_agrees_across_oracles() {
         // generated program (the recursion differential's third oracle).
         let engine_rows = crate::differential::engine_program(&engine, &program, &[]);
         assert_eq!(
-            engine_rows, answers,
+            engine_rows,
+            crate::differential::Answers::Ok(answers.clone()),
             "program {i} ({variant:?}): engine and naive disagree\n{program:#?}"
         );
 

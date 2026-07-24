@@ -10,6 +10,7 @@ use bumbledb::{AggOp, Atom, Basic, CmpOp, FindTerm, MaskTerm, Query, Term, VarId
 use std::collections::{HashMap, HashSet};
 
 use crate::corpus_gen::{GenConfig, Rng};
+use crate::edb::EdbAtom;
 use crate::querygen::construct::random_query_tagged;
 use crate::querygen::target::{self, ids};
 use crate::querygen::{ClosedVariant, Coverage, GenTags, GroundVariant, RulesVariant, Shape};
@@ -255,6 +256,7 @@ impl Coverage {
             Shape::Measure => self.measure += 1,
             Shape::ClosedJoin => self.closed_join += 1,
             Shape::GroundFold => self.ground_fold += 1,
+            Shape::Pack => self.pack += 1,
         }
     }
 
@@ -359,8 +361,13 @@ impl Coverage {
                         Some(IntervalElement::I64) => self.allen_i64 += 1,
                         None => unreachable!("Allen is interval-typed by construction"),
                     }
+                    // A bind-time mask param has no literal to tally:
+                    // its non-vacuous value is a per-draw oracle draw
+                    // (finding 086), counted by the `allen_mask_param`
+                    // tag; the composite/singleton and per-basic cells
+                    // are the literal grammar's.
                     let MaskTerm::Literal(mask) = mask else {
-                        unreachable!("the generator emits literal masks")
+                        continue;
                     };
                     if mask.popcount() > 1 {
                         self.allen_composite += 1;
@@ -478,18 +485,21 @@ impl Coverage {
                         }
                         AggOp::ArgMax { key } => {
                             self.arg_max += 1;
-                            arg_key = Some(*key);
-                            arg_key_projected |= *over == Some(*key);
+                            self.arg_measure_key +=
+                                u64::from(matches!(key, bumbledb::ArgKey::Measure(_)));
+                            arg_key = Some(key.var());
+                            arg_key_projected |= *over == Some(key.var());
                         }
                         AggOp::ArgMin { key } => {
                             self.arg_min += 1;
-                            arg_key = Some(*key);
-                            arg_key_projected |= *over == Some(*key);
+                            self.arg_measure_key +=
+                                u64::from(matches!(key, bumbledb::ArgKey::Measure(_)));
+                            arg_key = Some(key.var());
+                            arg_key_projected |= *over == Some(key.var());
                         }
-                        // Pack heads are naive-only by the
-                        // expressibility gate; their oracle rows live in
-                        // the verify naive lane's own generator, never
-                        // in the SQL-paired grammar here.
+                        // Pack rides its own shape row; the verify lane
+                        // routes its draws to the naive leg by the typed
+                        // expressibility gate (finding 025).
                         AggOp::Pack => {}
                     }
                     if let Some(var) = over
@@ -567,6 +577,7 @@ impl Coverage {
             self.ladder[index] += u64::from(*drawn);
         }
         self.allen_random_mask += u64::from(tags.random_mask);
+        self.allen_mask_param += u64::from(tags.mask_param);
         // Per-query composition flags, accumulated across rules
         // (variables are rule-scoped, so the typing walk runs per rule).
         let (mut has_membership, mut has_allen, mut has_negation, mut has_aggregate) =

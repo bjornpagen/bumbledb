@@ -6,9 +6,10 @@
 //! applies the per-type miss policies to every element.
 
 use bumbledb::schema::{IntervalElement, ValueType};
-use bumbledb::{FieldId, ParamId, Query, RelationId, Term, Value};
+use bumbledb::{CmpOp, FieldId, MaskTerm, ParamId, Query, RelationId, Term, Value};
 
 use crate::corpus_gen::{GenConfig, Rng};
+use crate::edb::EdbAtom;
 use crate::querygen::target::{self, AMOUNT_LEVELS, AMOUNT_STEP, Domains, ids};
 use crate::querygen::{DrawKind, PARAM_DRAWS, dress, interval_data};
 
@@ -37,6 +38,15 @@ pub(super) struct Anchor {
     scalar_anchored: bool,
 }
 
+/// A param's role: field-anchored (typed by its (relation, field)
+/// position), or a bind-time Allen mask (`MaskTerm::Param` — no field
+/// types it; the draw is a non-vacuous mask, finding 086).
+#[derive(Clone, Copy)]
+pub(super) enum ParamAnchor {
+    Field(Anchor),
+    Mask,
+}
+
 /// Resolves every param's anchor: the (relation, field) that types it —
 /// directly for atom bindings (positive and negated), through the
 /// variable side for predicates. Prefers a scalar-field position: a
@@ -44,7 +54,7 @@ pub(super) struct Anchor {
 /// anchor the generator constructs. Params are query-global; variables
 /// are rule-scoped, so the walk runs per rule with its own variable
 /// anchors, placing into one dense param table.
-pub(super) fn param_anchors(query: &Query) -> Vec<Anchor> {
+pub(super) fn param_anchors(query: &Query) -> Vec<ParamAnchor> {
     let schema = target::schema();
     let is_interval = |rel: RelationId, field: FieldId| {
         matches!(
@@ -67,10 +77,16 @@ pub(super) fn param_anchors(query: &Query) -> Vec<Anchor> {
                     count = count.max(p.0 + 1);
                 }
             }
+            if let CmpOp::Allen {
+                mask: MaskTerm::Param(p),
+            } = comparison.op
+            {
+                count = count.max(p.0 + 1);
+            }
         }
     }
-    let mut anchors: Vec<Option<Anchor>> = vec![None; usize::from(count)];
-    let place = |anchors: &mut Vec<Option<Anchor>>,
+    let mut anchors: Vec<Option<ParamAnchor>> = vec![None; usize::from(count)];
+    let place = |anchors: &mut Vec<Option<ParamAnchor>>,
                  param: ParamId,
                  relation: RelationId,
                  field: FieldId,
@@ -79,15 +95,16 @@ pub(super) fn param_anchors(query: &Query) -> Vec<Anchor> {
         let scalar = !is_interval(relation, field);
         match slot {
             // A scalar-field position wins over an interval-field one.
-            Some(anchor) if anchor.scalar_anchored => {}
-            Some(_) if !scalar => {}
+            Some(ParamAnchor::Field(anchor)) if anchor.scalar_anchored => {}
+            Some(ParamAnchor::Field(_)) if !scalar => {}
+            Some(ParamAnchor::Mask) => unreachable!("a param is a mask or a value, never both"),
             _ => {
-                *slot = Some(Anchor {
+                *slot = Some(ParamAnchor::Field(Anchor {
                     relation,
                     field,
                     set,
                     scalar_anchored: scalar,
-                });
+                }));
             }
         }
     };
@@ -112,6 +129,12 @@ pub(super) fn param_anchors(query: &Query) -> Vec<Anchor> {
             }
         }
         for comparison in rule.conditions.iter().map(super::leaf) {
+            if let CmpOp::Allen {
+                mask: MaskTerm::Param(p),
+            } = comparison.op
+            {
+                anchors[usize::from(p.0)] = Some(ParamAnchor::Mask);
+            }
             let (param, set, var) = match (&comparison.lhs, &comparison.rhs) {
                 (Term::Param(p), Term::Var(v)) | (Term::Var(v), Term::Param(p)) => (*p, false, *v),
                 (Term::ParamSet(p), Term::Var(v)) | (Term::Var(v), Term::ParamSet(p)) => {
@@ -323,10 +346,21 @@ pub fn params_for(query: &Query, rng: &mut Rng, cfg: GenConfig) -> Vec<ParamDraw
             let mut sets = Vec::new();
             for (index, anchor) in anchors.iter().enumerate() {
                 let param = ParamId(u16::try_from(index).expect("dense params fit"));
-                if anchor.set {
-                    sets.push((param, set_elements(*anchor, kind, rng, cfg, &domains)));
-                } else {
-                    scalars.push((param, param_value(*anchor, kind, rng, cfg, &domains)));
+                match anchor {
+                    // The bind-time mask: a non-vacuous draw whatever
+                    // the kind (hit-vs-miss is a value-domain question;
+                    // the mask space has no misses, only the vacuous
+                    // roster rejections the generator never emits).
+                    ParamAnchor::Mask => scalars.push((
+                        param,
+                        Value::AllenMask(super::shapes_interval::random_mask(rng)),
+                    )),
+                    ParamAnchor::Field(anchor) if anchor.set => {
+                        sets.push((param, set_elements(*anchor, kind, rng, cfg, &domains)));
+                    }
+                    ParamAnchor::Field(anchor) => {
+                        scalars.push((param, param_value(*anchor, kind, rng, cfg, &domains)));
+                    }
                 }
             }
             ParamDraw { scalars, sets }

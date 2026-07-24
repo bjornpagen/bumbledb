@@ -209,6 +209,12 @@ pub enum Inexpressible {
     /// emulation, not the engine. Naive-only by decision; the verify
     /// harness consumes this enumeration to route and report it.
     PackAggregate,
+    /// A bind-time Allen mask (`MaskTerm::Param`): the rendered SQL
+    /// embeds the mask's basic disjunction as text, so a per-execution
+    /// mask has no prepared-statement slot to ride — re-rendering per
+    /// draw would test the renderer, not the binding. Naive-only; the
+    /// verify harness routes it exactly like `Pack` (finding 086).
+    AllenMaskParam,
     /// A cardinality-window verdict: SQL has no per-parent count-window
     /// judgment with a pinned statement id — the same class as the other
     /// two judgment kinds.
@@ -239,9 +245,9 @@ pub enum Inexpressible {
 
 /// The `SQLite` lane's expressibility gate. Every other query construct
 /// translates — negation, membership, param sets, `CountDistinct`,
-/// Arg-restriction included — so a `Pack`-free `Query` arm is
-/// unconditionally expressible; `Pack` heads and the dependency
-/// judgments are the naive lane's alone.
+/// Arg-restriction included — so a `Query` arm without a `Pack` head
+/// or a bind-time mask param is unconditionally expressible; those two
+/// and the dependency judgments are the naive lane's alone.
 ///
 /// # Errors
 ///
@@ -256,6 +262,17 @@ pub fn sqlite_expressible(case: &LaneCase<'_>) -> Result<(), Inexpressible> {
                 .any(|term| matches!(term, bumbledb::HeadTerm::Aggregate(bumbledb::HeadOp::Pack)))
             {
                 Err(Inexpressible::PackAggregate)
+            } else if query.rules.iter().any(|rule| {
+                rule.conditions.iter().map(leaf).any(|comparison| {
+                    matches!(
+                        comparison.op,
+                        bumbledb::CmpOp::Allen {
+                            mask: bumbledb::MaskTerm::Param(_)
+                        }
+                    )
+                })
+            }) {
+                Err(Inexpressible::AllenMaskParam)
             } else {
                 Ok(())
             }

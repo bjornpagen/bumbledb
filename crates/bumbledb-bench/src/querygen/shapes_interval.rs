@@ -47,7 +47,7 @@ fn singleton_mask(rng: &mut Rng) -> AllenMask {
 /// loop on a rejected draw spins forever (the ops target's second
 /// finding — a generator hang, not an engine one). EMPTY gains the
 /// lowest bit, FULL drops one drawn bit; every other draw is itself.
-fn random_mask(rng: &mut Rng) -> AllenMask {
+pub(super) fn random_mask(rng: &mut Rng) -> AllenMask {
     let bits = match u16::try_from(rng.range(1 << 13)).expect("13 bits") {
         0 => 1,
         0x1FFF => 0x1FFF & !(1 << rng.range(13)),
@@ -290,7 +290,7 @@ enum Right {
 /// second occurrence at all; their literals draw from the
 /// boundary-shape ladder.
 pub(super) fn interval_join(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, domains: &Domains) {
-    let draw = rng.range(14);
+    let draw = rng.range(16);
     let (op, right) = match draw {
         0 | 1 => (allen(AllenMask::INTERSECTS), Right::Var),
         2 => (allen(AllenMask::INTERSECTS), Right::Literal),
@@ -309,9 +309,31 @@ pub(super) fn interval_join(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, doma
             b.random_mask = true;
             (allen(random_mask(rng)), Right::Var)
         }
-        _ => {
+        13 => {
             b.random_mask = true;
             (allen(random_mask(rng)), Right::Literal)
+        }
+        // Bind-time mask params, both operand shapes (finding 086): the
+        // temporal relation as an argument — the oracle draws the
+        // non-vacuous mask value per draw, and the executor resolves
+        // `MaskTerm::Param` per execution.
+        14 => {
+            b.mask_param = true;
+            (
+                CmpOp::Allen {
+                    mask: MaskTerm::Param(b.fresh_param()),
+                },
+                Right::Var,
+            )
+        }
+        _ => {
+            b.mask_param = true;
+            (
+                CmpOp::Allen {
+                    mask: MaskTerm::Param(b.fresh_param()),
+                },
+                Right::Literal,
+            )
         }
     };
     let (lhs, rhs) = if rng.chance(1, 2) {
@@ -518,6 +540,35 @@ pub(super) fn measure(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, domains: &
                 .push(bumbledb::FindTerm::AggregateMeasure { op, over: window });
         }
     }
+}
+
+/// The Pack shape (finding 025): the coalescing fold over the Mandate
+/// claims, grouped by the account key, the closed org reference, or
+/// global — composed with the grammar's shared dressing, params, and
+/// negation like every other shape. `SQLite`-inexpressible by the
+/// typed gate; the verify lane routes the draw to the naive leg
+/// instead of panicking on translation.
+pub(super) fn pack(b: &mut Builder, rng: &mut Rng) {
+    let mandate = b.add_atom(ids::MANDATE);
+    let active = b.bind_var(mandate, ids::mandate::ACTIVE);
+    match rng.range(3) {
+        // Grouped by the account key.
+        0 => {
+            let account = b.bind_var(mandate, ids::mandate::ACCOUNT);
+            b.find_var(account);
+        }
+        // Grouped by the closed org reference.
+        1 => {
+            let org = b.bind_var(mandate, ids::mandate::ORG);
+            b.find_var(org);
+        }
+        // Global: one coalesced answer relation over every claim.
+        _ => {}
+    }
+    b.finds.push(bumbledb::FindTerm::Aggregate {
+        op: bumbledb::AggOp::Pack,
+        over: Some(active),
+    });
 }
 
 fn push_boundary_cmp(b: &mut Builder, rng: &mut Rng, var: VarId, literal: Value, point: Value) {

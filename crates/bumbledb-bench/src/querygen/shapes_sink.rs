@@ -118,6 +118,26 @@ pub(super) fn count_distinct(b: &mut Builder, rng: &mut Rng) {
 /// queries project the key itself (a second Arg term carrying the key);
 /// a quarter carry a second variable (multi-carry coherence).
 pub(super) fn arg(b: &mut Builder, rng: &mut Rng) {
+    // The measure-keyed form (ruled 2026-07-23, R5): the longest or
+    // shortest window, keyed on the interval's derived duration word —
+    // the U64 window lane is ray-free by its sentinel, so the key never
+    // poisons (ray-bearing measure parity is the naive lane's).
+    if rng.chance(1, 5) {
+        let transfer = b.add_atom(ids::TRANSFER);
+        let carried = b.bind_var(transfer, ids::transfer::ID);
+        let window = b.bind_var(transfer, ids::transfer::WINDOW);
+        let key = bumbledb::ArgKey::Measure(window);
+        let op = if rng.chance(1, 2) {
+            AggOp::ArgMax { key }
+        } else {
+            AggOp::ArgMin { key }
+        };
+        b.finds.push(FindTerm::Aggregate {
+            op,
+            over: Some(carried),
+        });
+        return;
+    }
     let posting = b.add_atom(ids::POSTING);
     let carried = b.bind_var(posting, ids::posting::ID);
     let key = if rng.chance(1, 2) {
@@ -131,9 +151,13 @@ pub(super) fn arg(b: &mut Builder, rng: &mut Rng) {
         b.find_var(account);
     }
     let op = if rng.chance(1, 2) {
-        AggOp::ArgMax { key }
+        AggOp::ArgMax {
+            key: bumbledb::ArgKey::Var(key),
+        }
     } else {
-        AggOp::ArgMin { key }
+        AggOp::ArgMin {
+            key: bumbledb::ArgKey::Var(key),
+        }
     };
     b.finds.push(FindTerm::Aggregate {
         op,

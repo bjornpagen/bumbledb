@@ -7,11 +7,11 @@ use bumbledb::Value;
 
 use crate::corpus_gen::Rng;
 use crate::families::set_bindings;
-use crate::naive::ParamValue;
+use crate::naive::{NaiveDb, ParamValue};
 use crate::querygen::{self, ParamDraw, target};
 use crate::schema::{Ledger, schema};
-use crate::translate::translate;
-use crate::{corpus, families, sqlmap};
+use crate::translate::{Inexpressible, LaneCase, sqlite_expressible, translate};
+use crate::{corpus, differential, families, sqlmap};
 
 use super::run_empty_store::run_empty_store;
 use super::run_naive::run_naive_slice;
@@ -138,23 +138,74 @@ pub(super) fn random_lane<S>(
     seed_salt: u64,
     label: &str,
     mut on_query: impl FnMut(&bumbledb::Query),
+    naive_routed: &mut Vec<differential::Op>,
 ) {
     let mut rng = Rng::new(cfg.corpus_gen.seed ^ seed_salt);
     'random: for index in 0..cases {
         let query = querygen::random_query(&mut rng, cfg.corpus_gen);
         on_query(&query);
+        // Inexpressibility is routing data, never a panic (findings
+        // 025/086; the `Inexpressible` enum exists so nothing is ever
+        // silently skipped): expressible draws run the SQLite
+        // differential, Pack and mask-param draws collect for the
+        // naive leg.
+        let expressible = sqlite_expressible(&LaneCase::Query(&query));
         for draw in querygen::params_for(&query, &mut rng, cfg.corpus_gen) {
-            let translated = translate(&query, target::schema(), &draw.sets)
-                .expect("generated queries translate");
-            let case = Case {
-                label: format!("{label} {index}"),
-                query: &query,
-                sql: &translated.sql,
-                golden_sql: None,
-            };
-            if !run.check(&case, &translated.params, &positional(&draw)) {
-                break 'random;
+            match expressible {
+                Ok(()) => {
+                    let translated = translate(&query, target::schema(), &draw.sets)
+                        .expect("expressible queries translate");
+                    let case = Case {
+                        label: format!("{label} {index}"),
+                        query: &query,
+                        sql: &translated.sql,
+                        golden_sql: None,
+                    };
+                    if !run.check(&case, &translated.params, &positional(&draw)) {
+                        break 'random;
+                    }
+                }
+                Err(Inexpressible::PackAggregate | Inexpressible::AllenMaskParam) => {
+                    naive_routed.push(differential::Op::Query {
+                        query: query.clone(),
+                        params: positional(&draw),
+                    });
+                }
+                Err(other) => unreachable!("query grammar routing hit {other:?}"),
             }
+        }
+    }
+}
+
+/// The `SQLite`-inexpressible slice of the randomized grammar (the
+/// Pack draws [`random_lane`] routed by the typed gate — finding 025):
+/// engine-vs-naive through the differential runner, counted and
+/// reported beside the algebra rows — enumerated, never silently
+/// skipped.
+pub(super) fn naive_routed_lane<S>(
+    run: &mut Run<'_, S>,
+    label: &str,
+    db: &Db<target::Target>,
+    naive: &mut NaiveDb,
+    ops: &[differential::Op],
+) {
+    eprintln!(
+        "verify: {} naive-routed {label} cases (Pack + mask params — \
+         SQLite-inexpressible by the typed gate, enumerated, never silently skipped)",
+        ops.len()
+    );
+    match differential::run(db, naive, ops) {
+        Ok(summary) => run.cases += summary.queries,
+        Err(divergence) => {
+            let bundle = run.out_dir.join(format!("mismatch-{}", run.bundles.len()));
+            std::fs::create_dir_all(&bundle).expect("bundle dir");
+            std::fs::write(
+                bundle.join("mismatch.txt"),
+                format!("naive-routed {label} slice diverged:\n{divergence:#?}\n"),
+            )
+            .expect("bundle");
+            eprintln!("verify: NAIVE MISMATCH -> {}", bundle.display());
+            run.bundles.push(bundle);
         }
     }
 }
@@ -358,13 +409,29 @@ pub fn run_prepared(
         eprintln!("verify: loading the randomized lane's target corpus");
         let (target_db, target_conn) =
             load_target_stores(&cfg.out_dir.join("target-db"), cfg.corpus_gen);
+        let mut naive_routed = Vec::new();
         run.lane(&target_db, &target_conn, |lane| {
-            random_lane(lane, cfg, cfg.random_cases, 0x0112_0001, "random", |_| {});
+            random_lane(
+                lane,
+                cfg,
+                cfg.random_cases,
+                0x0112_0001,
+                "random",
+                |_| {},
+                &mut naive_routed,
+            );
             if lane.bundles.len() < MAX_BUNDLES {
                 eprintln!("verify: converse-property lane");
                 super::run_converse::converse_lane(lane, cfg);
             }
         });
+        // The routed Pack draws, engine-vs-naive over a Tiny world (the
+        // conformance world builder — the naive model at randomized-lane
+        // scale would be the harness's own DNF).
+        if run.bundles.len() < MAX_BUNDLES && !naive_routed.is_empty() {
+            let mut world = crate::conformance::build_world(cfg.corpus_gen.seed);
+            naive_routed_lane(&mut run, "random", &world.db, &mut world.naive, &naive_routed);
+        }
     }
 
     if run.bundles.len() < MAX_BUNDLES {

@@ -72,6 +72,7 @@ pub(super) fn run_empty_store<S>(cfg: &VerifyConfig, run: &mut Run<'_, S>) {
             .expect("empty target extension");
     }
     let mut gate_bearing = 0u32;
+    let mut naive_routed = Vec::new();
     run.lane(&empty_target, &target_conn, |lane| {
         random_lane(
             lane,
@@ -83,8 +84,16 @@ pub(super) fn run_empty_store<S>(cfg: &VerifyConfig, run: &mut Run<'_, S>) {
                 gate_bearing +=
                     u32::from(query.rules[0].atoms.iter().any(|a| a.bindings.is_empty()));
             },
+            &mut naive_routed,
         );
     });
+    // The routed Pack draws over the SAME empty store: the empty-fold
+    // face of the naive leg (an empty group folds to no answer row on
+    // both sides, or the divergence says otherwise).
+    if !naive_routed.is_empty() {
+        let mut naive = crate::naive::NaiveDb::new(&target::descriptor());
+        super::run::naive_routed_lane(run, "empty random", &empty_target, &mut naive, &naive_routed);
+    }
     // The structural check holds only for a full slice — a bundle-budget
     // cutoff already fails the run.
     assert!(

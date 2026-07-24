@@ -82,6 +82,7 @@ const SHAPE_WEIGHTS: &[(Shape, u64)] = &[
     (Shape::Measure, 8),
     (Shape::ClosedJoin, 8),
     (Shape::GroundFold, 7),
+    (Shape::Pack, 7),
 ];
 
 /// Filter dressing applies to every shape with this percent chance…
@@ -136,6 +137,13 @@ enum Shape {
     /// The fold-shaped pattern PRD 07 targets, under its own family
     /// knob: a closed atom whose only escaping variable is the join id.
     GroundFold,
+    /// The coalescing fold over the Mandate claims (`AggOp::Pack`):
+    /// grouped (account or closed-org key) and global, composed with
+    /// the shared dressing/param/negation machinery. `SQLite` cannot
+    /// spell it — the verify lane routes Pack draws to the naive leg by
+    /// the typed expressibility gate (finding 025: the grammar escapes
+    /// the ⊆ SQL-expressible cap).
+    Pack,
 }
 
 /// Which closed-relation class a query is ([`Shape::ClosedJoin`] /
@@ -223,6 +231,9 @@ struct Builder {
     ladder: [bool; 4],
     /// Whether an `Allen` predicate carries a random (unnamed) mask.
     random_mask: bool,
+    /// Whether an `Allen` predicate carries a bind-time mask param
+    /// (`MaskTerm::Param` — finding 086).
+    mask_param: bool,
     /// Which grounding-shape variant this query is, when the shape is one.
     ground: Option<GroundVariant>,
     /// Which closed-relation class this query is, when the shape is one.
@@ -257,6 +268,7 @@ struct GenTags {
     adjacent_right: bool,
     ladder: [bool; 4],
     random_mask: bool,
+    mask_param: bool,
     ground: Option<GroundVariant>,
     rules: Option<RulesVariant>,
     closed: Option<ClosedVariant>,
@@ -318,6 +330,7 @@ pub struct Coverage {
     pub measure: u64,
     pub closed_join: u64,
     pub ground_fold: u64,
+    pub pack: u64,
     /// The closed-relation pattern classes (`shapes_closed.rs`): the
     /// plain join, the payload-column selection, the handle literal,
     /// and the handle param set — all four counted by the closed-class
@@ -362,6 +375,9 @@ pub struct Coverage {
     /// strictly monotone by construction).
     pub arg_tie_key: u64,
     pub arg_tie_free_key: u64,
+    /// Arg restrictions keyed on an interval measure
+    /// (`ArgKey::Measure` — ruled 2026-07-23, R5).
+    pub arg_measure_key: u64,
     /// Membership bindings by point-term kind and by element type.
     pub membership_literal: u64,
     pub membership_param: u64,
@@ -377,6 +393,10 @@ pub struct Coverage {
     pub allen_composite: u64,
     pub allen_singleton: u64,
     pub allen_random_mask: u64,
+    /// `Allen` predicates whose mask is a bind-time param
+    /// (`MaskTerm::Param` — finding 086: the temporal relation as an
+    /// argument, its own bind-time vacuous-mask rejection).
+    pub allen_mask_param: u64,
     pub allen_basics: [u64; 13],
     pub point_in_u64: u64,
     pub point_in_i64: u64,

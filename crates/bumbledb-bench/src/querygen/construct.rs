@@ -6,7 +6,7 @@ use crate::querygen::negate::negate;
 use crate::querygen::shapes::{aggregate, chain, key_probe, self_join, star};
 use crate::querygen::shapes_closed::{closed_join, ground_fold};
 use crate::querygen::shapes_ground::{du_walk, existence_walk};
-use crate::querygen::shapes_interval::{boundary, interval_join, measure, membership};
+use crate::querygen::shapes_interval::{boundary, interval_join, measure, membership, pack};
 use crate::querygen::shapes_rules::rules;
 use crate::querygen::shapes_sink::{arg, count_distinct};
 use crate::querygen::target::{Domains, ids};
@@ -60,6 +60,7 @@ fn build(rng: &mut Rng, shape: Shape, cfg: GenConfig, domains: &Domains) -> Buil
         Shape::Measure => measure(&mut b, rng, cfg, domains),
         Shape::ClosedJoin => closed_join(&mut b, rng),
         Shape::GroundFold => ground_fold(&mut b, rng),
+        Shape::Pack => pack(&mut b, rng),
         Shape::Rules => unreachable!("multi-rule programs assemble their own query"),
     }
     // The grounding and closed shapes are their own deliberate dressing: a
@@ -104,6 +105,7 @@ pub(super) fn random_query_tagged(rng: &mut Rng, cfg: GenConfig) -> (Query, Shap
         adjacent_right: b.adjacent_right,
         ladder: b.ladder,
         random_mask: b.random_mask,
+        mask_param: b.mask_param,
         ground: b.ground,
         rules: None,
         closed: b.closed,
