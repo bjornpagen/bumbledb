@@ -6,14 +6,51 @@
 //! coalescing segment sweep is not theory and stays engine-side
 //! (`bumbledb::interval::sweep`).
 
+mod sealed {
+    pub trait Sealed {}
+    impl Sealed for u64 {}
+    impl Sealed for i64 {}
+}
+
+/// The interval element domain — the Rust face of the spec's
+/// `PointDomain` class (`lean/Bumbledb/Values.lean: PointDomain`): the
+/// domain ceiling plus the width step, so the point-domain law is stated
+/// once and [`Interval`]'s one impl serves every element. Sealed to the
+/// two orderable scalars: no third element type is constructible.
+pub trait Element: sealed::Sealed + Copy + Ord {
+    /// The domain ceiling: `end == MAX_END` denotes the unbounded ray.
+    const MAX_END: Self;
+
+    /// `self + width`, `None` on overflow — `width` is a point count,
+    /// so it is unsigned in both element domains (the dual of the
+    /// spec's `gap`).
+    fn add_width(self, width: u64) -> Option<Self>;
+}
+
+impl Element for u64 {
+    const MAX_END: Self = u64::MAX;
+
+    fn add_width(self, width: u64) -> Option<Self> {
+        self.checked_add(width)
+    }
+}
+
+impl Element for i64 {
+    const MAX_END: Self = i64::MAX;
+
+    fn add_width(self, width: u64) -> Option<Self> {
+        self.checked_add_unsigned(width)
+    }
+}
+
 /// A half-open interval `[start, end)`: a set of points, written as its
 /// bounds, strictly `start < end` — the empty interval is unrepresentable,
 /// because a fact never denotes nothing. Half-open and nonempty are
 /// Allen's algebra's preconditions, not conventions
 /// (docs/architecture/10-data-model.md, the point-domain law).
 ///
-/// The element domain is closed to the two orderable scalars; the two
-/// inherent impls below are the whole surface — no other constructors, no
+/// The element domain is closed by the sealed [`Element`] trait — the
+/// generic impl below is the whole surface: no other constructors, no
 /// `Default`, no arithmetic. Deliberately **not** `Ord`/`PartialOrd`: the
 /// value order the encoding has (lexicographic by start) is an encoding
 /// accident, not semantics, and must not leak into host code.
@@ -23,15 +60,15 @@ pub struct Interval<T> {
     end: T,
 }
 
-impl Interval<u64> {
+impl<T: Element> Interval<T> {
     /// The point-domain law: points are `MIN ..= MAX_END − 1`, and
     /// `end == MAX_END` denotes the unbounded ray `[start, ∞)` — ∞ is a
     /// value of the representation, not a sentinel.
-    pub const MAX_END: u64 = u64::MAX;
+    pub const MAX_END: T = T::MAX_END;
 
     /// Parses the bounds; `None` on `start >= end`.
     #[must_use]
-    pub fn new(start: u64, end: u64) -> Option<Self> {
+    pub fn new(start: T, end: T) -> Option<Self> {
         (start < end).then_some(Self { start, end })
     }
 
@@ -39,12 +76,12 @@ impl Interval<u64> {
     /// itself (outside the point domain — the ray would begin past every
     /// point).
     #[must_use]
-    pub fn ray(start: u64) -> Option<Self> {
+    pub fn ray(start: T) -> Option<Self> {
         Self::new(start, Self::MAX_END)
     }
 
     /// The fixed-width value `[start, start + width)` — the
-    /// `interval<u64, w>` constructor, discharging the Q2 bound by
+    /// `interval<T, w>` constructor, discharging the Q2 bound by
     /// parsing: `None` unless `width ≥ 1` and `start + width < MAX_END`
     /// (strictly — the ceiling end denotes the unbounded ray, so a
     /// fixed-width value is NEVER a ray, by construction;
@@ -52,78 +89,26 @@ impl Interval<u64> {
     /// `lean/Bumbledb/Countermodels.lean:
     /// unit_slot_at_ceiling_unconstructible`).
     #[must_use]
-    pub fn fixed(start: u64, width: u64) -> Option<Self> {
-        let end = start
-            .checked_add(width)
-            .filter(|end| *end < Self::MAX_END)?;
+    pub fn fixed(start: T, width: u64) -> Option<Self> {
+        let end = start.add_width(width).filter(|end| *end < Self::MAX_END)?;
         Self::new(start, end)
     }
 
     /// Whether this interval is the unbounded ray `[start, ∞)`.
     #[must_use]
-    pub const fn is_ray(&self) -> bool {
+    pub fn is_ray(&self) -> bool {
         self.end == Self::MAX_END
     }
 
     /// The inclusive lower bound.
     #[must_use]
-    pub const fn start(&self) -> u64 {
+    pub const fn start(&self) -> T {
         self.start
     }
 
     /// The exclusive upper bound.
     #[must_use]
-    pub const fn end(&self) -> u64 {
-        self.end
-    }
-}
-
-impl Interval<i64> {
-    /// The point-domain law: points are `MIN ..= MAX_END − 1`, and
-    /// `end == MAX_END` denotes the unbounded ray `[start, ∞)` — ∞ is a
-    /// value of the representation, not a sentinel.
-    pub const MAX_END: i64 = i64::MAX;
-
-    /// Parses the bounds; `None` on `start >= end`.
-    #[must_use]
-    pub fn new(start: i64, end: i64) -> Option<Self> {
-        (start < end).then_some(Self { start, end })
-    }
-
-    /// The unbounded ray `[start, ∞)`; `None` when `start` is `MAX_END`
-    /// itself (outside the point domain — the ray would begin past every
-    /// point).
-    #[must_use]
-    pub fn ray(start: i64) -> Option<Self> {
-        Self::new(start, Self::MAX_END)
-    }
-
-    /// The fixed-width value `[start, start + width)` — the Q2
-    /// discharge, as [`Interval::<u64>::fixed`] (`width` is a point
-    /// count, so it is unsigned in both element domains).
-    #[must_use]
-    pub fn fixed(start: i64, width: u64) -> Option<Self> {
-        let end = start
-            .checked_add_unsigned(width)
-            .filter(|end| *end < Self::MAX_END)?;
-        Self::new(start, end)
-    }
-
-    /// Whether this interval is the unbounded ray `[start, ∞)`.
-    #[must_use]
-    pub const fn is_ray(&self) -> bool {
-        self.end == Self::MAX_END
-    }
-
-    /// The inclusive lower bound.
-    #[must_use]
-    pub const fn start(&self) -> i64 {
-        self.start
-    }
-
-    /// The exclusive upper bound.
-    #[must_use]
-    pub const fn end(&self) -> i64 {
+    pub const fn end(&self) -> T {
         self.end
     }
 }
@@ -159,7 +144,7 @@ impl From<Interval<i64>> for crate::value::Value {
 
 #[cfg(test)]
 mod tests {
-    use super::Interval;
+    use super::{Element, Interval};
 
     #[test]
     fn new_parses_strict_start_before_end() {
@@ -224,6 +209,18 @@ mod tests {
         assert!(Interval::<i64>::fixed(i64::MIN, u64::MAX).is_none());
         assert!(Interval::<u64>::fixed(0, u64::MAX - 1).is_some());
         assert!(Interval::<u64>::fixed(0, u64::MAX).is_none());
+    }
+
+    #[test]
+    fn one_impl_serves_both_elements() {
+        // The law is stated once: element-generic code reaches every
+        // constructor through the sealed trait, and the per-element
+        // spellings above are instantiations, not twins.
+        fn probe<T: Element>(start: T, width: u64) -> Option<Interval<T>> {
+            Interval::fixed(start, width)
+        }
+        assert_eq!(probe(3u64, 5), Interval::<u64>::fixed(3, 5));
+        assert_eq!(probe(-4i64, 7), Interval::<i64>::fixed(-4, 7));
     }
 
     #[test]
