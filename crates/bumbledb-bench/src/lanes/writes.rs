@@ -355,7 +355,7 @@ fn seed_delete_rows(
             for posting in &recorded {
                 let twin = Posting {
                     id: PostingId(next),
-                    ..posting.clone()
+                    ..*posting
                 };
                 stmt.execute(posting_params(&twin))?;
                 mirrored.push_back(next);
@@ -629,6 +629,10 @@ fn verify_post_state(
 /// LAST, always (seconds of fsync leave the deepest clock shadow;
 /// nothing measures after it — the `write_families` order pin, carried
 /// here by the same `debug_assert!`).
+#[expect(
+    clippy::too_many_lines,
+    reason = "one durability lane, whole — the measured order is the content"
+)]
 fn run_lane(
     lane: DurabilityLane,
     cfg: GenConfig,
@@ -1126,7 +1130,7 @@ mod tests {
                 Ok(posting)
             })
             .expect("seed posting");
-        let mut recorded = VecDeque::from([posting.clone(), posting]);
+        let mut recorded = VecDeque::from([posting, posting]);
         assert_eq!(
             delete_recorded(&db, &mut recorded, 1).expect("live delete"),
             1

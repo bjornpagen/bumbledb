@@ -369,7 +369,13 @@ fn stratified_negation_matches_the_hand_answers_on_every_oracle() {
 /// test — ray claims included, so the membership reads a ray's
 /// unbounded tail.
 #[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one differential scenario, schema to verdict — clearer kept together"
+)]
 fn interval_typed_predicate_columns_agree_engine_vs_naive() {
+    const CLAIM: bumbledb::RelationId = bumbledb::RelationId(0);
+    const PROBE: bumbledb::RelationId = bumbledb::RelationId(1);
     let v = |id: u16| Term::Var(VarId(id));
     let descriptor = SchemaDescriptor {
         relations: vec![
@@ -395,8 +401,6 @@ fn interval_typed_predicate_columns_agree_engine_vs_naive() {
         ],
         statements: vec![],
     };
-    const CLAIM: bumbledb::RelationId = bumbledb::RelationId(0);
-    const PROBE: bumbledb::RelationId = bumbledb::RelationId(1);
     let claims = [
         (1u64, (1u64, 10u64)),
         (1, (3, 12)),

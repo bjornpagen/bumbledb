@@ -208,6 +208,10 @@ impl<S> Db<S> {
     /// # Panics
     ///
     /// As [`Db::write`] (non-reentrant).
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "a witness is spent by the write it justifies — the move is the API"
+    )]
     pub fn write_from_witness<R>(
         &self,
         witness: Witness<S>,

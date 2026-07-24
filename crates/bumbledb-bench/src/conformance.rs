@@ -884,6 +884,10 @@ fn closed_facts(relation: RelationId) -> Vec<Vec<Value>> {
 /// out of the corpus. The answers are canonically sorted: each row
 /// rendered in the tagged compact form, rows in lexicographic byte
 /// order of that rendering (the README's canonical-order rule).
+#[expect(
+    clippy::too_many_lines,
+    reason = "one case document, header to answers — clearer kept together"
+)]
 fn render_case(
     world: &World,
     name: &str,

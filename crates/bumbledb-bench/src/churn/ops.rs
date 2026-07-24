@@ -308,7 +308,7 @@ impl LiveSet {
         plan.updates
             .iter()
             .chain(plan.deletes.iter())
-            .map(|&index| self.rows[index].clone())
+            .map(|&index| self.rows[index])
             .collect()
     }
 

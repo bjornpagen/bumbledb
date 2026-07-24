@@ -233,6 +233,10 @@ impl Schema {
     /// `None` for scalar keys. A read of the sealed witness — validation
     /// minted the tail once, so no commit or sweep re-walks the
     /// projection.
+    #[expect(
+        clippy::unused_self,
+        reason = "the schema is the witness's minting authority — readers go through it"
+    )]
     pub(crate) fn key_tail(&self, key: &KeyStatement) -> Option<IntervalTail> {
         key.tail
     }
@@ -241,6 +245,10 @@ impl Schema {
     /// — the shape of the reverse-edge key-bytes tail (the source fact's
     /// interval encodes at its own field's width). A read of the sealed
     /// witness, as [`Schema::key_tail`].
+    #[expect(
+        clippy::unused_self,
+        reason = "the schema is the witness's minting authority — readers go through it"
+    )]
     pub(crate) fn source_tail(&self, statement: &ContainmentStatement) -> Option<IntervalTail> {
         statement.source_tail
     }

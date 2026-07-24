@@ -630,7 +630,9 @@ fn measure_filters_keep_the_pooled_buffer_and_refine_in_order() {
         scalar: P_ID,
     };
     assert_eq!(
-        sorted_ids(&apply(&image, &[fields_lt.clone()], &[], Vec::new()).expect("no rays")),
+        sorted_ids(
+            &apply(&image, std::slice::from_ref(&fields_lt), &[], Vec::new()).expect("no rays")
+        ),
         [5]
     );
     let mixed = vec![

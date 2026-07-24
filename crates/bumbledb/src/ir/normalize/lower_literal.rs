@@ -57,8 +57,8 @@ pub(crate) fn fixed_bytes_word_buf(raw: &[u8]) -> ([u64; 8], usize) {
     let value = crate::encoding::FixedBytesValue::new(raw);
     let mut words = [0u64; 8];
     let mut count = 0;
-    for (word, chunk) in words.iter_mut().zip(value.padded().chunks_exact(8)) {
-        *word = u64::from_be_bytes(chunk.try_into().expect("chunks_exact yields 8-byte chunks"));
+    for (word, chunk) in words.iter_mut().zip(value.padded().as_chunks::<8>().0) {
+        *word = u64::from_be_bytes(*chunk);
         count += 1;
     }
     (words, count)

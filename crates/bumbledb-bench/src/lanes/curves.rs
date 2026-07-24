@@ -1275,6 +1275,10 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the whole report shape pinned verbatim — clearer kept together"
+    )]
     fn report_json_shape_is_pinned() {
         let report = CurvesReport {
             provenance: provenance(),

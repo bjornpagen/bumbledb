@@ -170,9 +170,10 @@ const KEYED: RelationId = RelationId(1);
 const BOOKING: RelationId = RelationId(2);
 const CLAIM: RelationId = RelationId(3);
 
-/// Materialized statement order: Target's fresh auto-key first, then the
-/// declared statements in declaration order.
-const TARGET_KEY: StatementId = StatementId(0);
+/// Materialized statement order: Target's fresh auto-key first (statement
+/// 0, unaddressed here — the one id allocator makes the fresh id the row
+/// id, no `U` tree to probe, R16), then the declared statements in
+/// declaration order.
 const KEYED_KEY: StatementId = StatementId(1);
 const BOOKING_KEY: StatementId = StatementId(2);
 const CLAIM_TARGET: StatementId = StatementId(3);

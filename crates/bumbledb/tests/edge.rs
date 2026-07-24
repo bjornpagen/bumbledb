@@ -105,7 +105,7 @@ fn empty_strings_and_bytes_round_trip() {
     // inside the read closure.
     db.read(|snap| {
         let back: Vec<Blob> = snap.scan_facts()?.collect::<Result<_, _>>()?;
-        assert_eq!(back, vec![original.clone()]);
+        assert_eq!(back, vec![original]);
         Ok(())
     })
     .expect("scan");

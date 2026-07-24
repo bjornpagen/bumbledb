@@ -258,6 +258,10 @@ fn residuals_filter_across_atoms() {
 /// the harness that catches plan/executor bugs hand-picked fixtures
 /// miss — the cover-rebind bug needed only mild skew.
 #[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one differential harness, generator to oracle — clearer kept together"
+)]
 fn randomized_differential_against_the_nested_loop_oracle() {
     // Deterministic LCG (no rand dependency; reproducible failures).
     let mut state = 0x1234_5678_9ABC_DEF0_u64;

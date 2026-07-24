@@ -139,7 +139,7 @@ fn a_durable_store_never_mints_a_dirty_marker() {
 /// lock file and drops the write bits a lock-taking open would need
 /// (LMDB's own reader table stays writable — a chmod fixture cannot
 /// spell EROFS; on a genuinely read-only FILESYSTEM mdb.c omits the
-/// lockfile under `MDB_RDONLY`, mdb_env_setup_locks).
+/// lockfile under `MDB_RDONLY`, `mdb_env_setup_locks`).
 #[test]
 fn exhume_takes_no_lock_and_reads_without_write_permission() {
     use std::os::unix::fs::PermissionsExt;

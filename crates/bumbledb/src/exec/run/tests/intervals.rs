@@ -1304,6 +1304,10 @@ fn timed_run(
 /// of the leaf the Allen residual pass owns).
 #[test]
 #[ignore = "manual profiling rig — run release with --nocapture"]
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "profile display arithmetic — nanoseconds beyond f64's mantissa are immaterial"
+)]
 fn overlap_profile() {
     let generic_mask = AllenMask::INTERSECTS | AllenMask::MEETS;
     // (1) crossover sweep: constant total rows, group size swept.

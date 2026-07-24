@@ -34,17 +34,15 @@ pub(super) fn classify_meta_block(
     env: &heed::Env<WithoutTls>,
     rtxn: &RoTxn<'_, AnyTls>,
 ) -> Result<MetaBlock> {
-    match env.open_database::<Bytes, Bytes>(rtxn, Some("_meta"))? {
-        Some(meta) => Ok(MetaBlock::Present(meta)),
-        None => {
-            if let Some(root) = env.open_database::<Bytes, Bytes>(rtxn, None)?
-                && !root.is_empty(rtxn)?
-            {
-                return Err(Error::AlreadyInitialized);
-            }
-            Ok(MetaBlock::HalfCreated)
-        }
+    if let Some(meta) = env.open_database::<Bytes, Bytes>(rtxn, Some("_meta"))? {
+        return Ok(MetaBlock::Present(meta));
     }
+    if let Some(root) = env.open_database::<Bytes, Bytes>(rtxn, None)?
+        && !root.is_empty(rtxn)?
+    {
+        return Err(Error::AlreadyInitialized);
+    }
+    Ok(MetaBlock::HalfCreated)
 }
 
 // One decode discipline for every `_meta` value

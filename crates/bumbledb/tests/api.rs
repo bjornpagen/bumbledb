@@ -195,12 +195,9 @@ fn usage_shapes_end_to_end() {
 
     // Mutate: delete(old) + insert(new) — here in the *other* order, which
     // is equally blessed (the delta is set arithmetic).
-    let old = accounts[0].clone();
+    let old = accounts[0];
     db.write(|tx| {
-        tx.insert(&Account {
-            balance: 90,
-            ..old.clone()
-        })?;
+        tx.insert(&Account { balance: 90, ..old })?;
         tx.delete(&old)?;
         Ok(())
     })

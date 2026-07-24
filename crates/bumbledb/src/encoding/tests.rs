@@ -415,7 +415,7 @@ fn interval_round_trip_edges_and_random_pairs() {
             decode_interval_i64(encode_interval_i64(
                 bumbledb_theory::Interval::<i64>::new(start, end).expect("nonempty interval")
             ))
-            .map(|interval| interval.bounds()),
+            .map(bumbledb_theory::Interval::bounds),
             Ok((start, end))
         );
     }
@@ -424,7 +424,7 @@ fn interval_round_trip_edges_and_random_pairs() {
             decode_interval_u64(encode_interval_u64(
                 bumbledb_theory::Interval::<u64>::new(start, end).expect("nonempty interval")
             ))
-            .map(|interval| interval.bounds()),
+            .map(bumbledb_theory::Interval::bounds),
             Ok((start, end))
         );
     }
@@ -436,7 +436,7 @@ fn interval_round_trip_edges_and_random_pairs() {
             decode_interval_u64(encode_interval_u64(
                 bumbledb_theory::Interval::<u64>::new(start, end).expect("nonempty interval")
             ))
-            .map(|interval| interval.bounds()),
+            .map(bumbledb_theory::Interval::bounds),
             Ok((start, end))
         );
         let (start, end) = (
@@ -447,7 +447,7 @@ fn interval_round_trip_edges_and_random_pairs() {
             decode_interval_i64(encode_interval_i64(
                 bumbledb_theory::Interval::<i64>::new(start, end).expect("nonempty interval")
             ))
-            .map(|interval| interval.bounds()),
+            .map(bumbledb_theory::Interval::bounds),
             Ok((start, end))
         );
     }

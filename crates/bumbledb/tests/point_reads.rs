@@ -40,7 +40,7 @@ fn point_reads_observe_the_final_state_before_commit() {
             // holder string exists only as a provisional intern id here.
             assert!(tx.insert(&acct)?);
             assert!(tx.contains(&acct)?);
-            assert_eq!(tx.get(id)?, Some(acct.clone()));
+            assert_eq!(tx.get(id)?, Some(acct));
             // Delete: the final state no longer holds the fact.
             assert!(tx.delete(&acct)?);
             assert!(!tx.contains(&acct)?);
@@ -49,7 +49,7 @@ fn point_reads_observe_the_final_state_before_commit() {
             // the modified fact.
             let modified = Account {
                 balance: 42,
-                ..acct.clone()
+                ..acct
             };
             assert!(tx.insert(&modified)?);
             assert!(tx.contains(&modified)?);
@@ -69,9 +69,9 @@ fn point_reads_observe_the_final_state_before_commit() {
         assert!(tx.contains(&survivor)?);
         assert!(!tx.contains(&Account {
             balance: 10,
-            ..survivor.clone()
+            ..survivor
         })?);
-        assert_eq!(tx.get(id)?, Some(survivor.clone()));
+        assert_eq!(tx.get(id)?, Some(survivor));
         Ok(())
     })
     .expect("post-commit point reads");
@@ -79,7 +79,7 @@ fn point_reads_observe_the_final_state_before_commit() {
     // And the read-transaction view agrees fact-for-fact.
     db.read(|snap| {
         let facts: Vec<Account> = snap.scan_facts()?.collect::<bumbledb::Result<_>>()?;
-        assert_eq!(facts, vec![survivor.clone()]);
+        assert_eq!(facts, vec![survivor]);
         Ok(())
     })
     .expect("read");
@@ -394,7 +394,7 @@ fn snapshot_contains_answers_typed_membership_against_committed_state() {
         assert!(snap.contains(&committed)?);
         assert!(!snap.contains(&Account {
             balance: 11,
-            ..committed.clone()
+            ..committed
         })?);
         assert!(!snap.contains(&Account {
             holder: "ghost",
@@ -410,6 +410,10 @@ fn snapshot_contains_answers_typed_membership_against_committed_state() {
 /// `docs/architecture/50-storage.md`): it equals the handle's, and a
 /// commit advances what the next snapshot witnesses.
 #[test]
+#[expect(
+    clippy::redundant_closure_for_method_calls,
+    reason = "the method-path form is not general enough over the snapshot lifetime (HRTB)"
+)]
 fn snapshot_generation_is_the_tx_id_witnessed_inside_the_snapshot() {
     let dir = common::TempDir::new("points-snap-generation");
     let db = Db::create(dir.path(), Ledger).expect("create");

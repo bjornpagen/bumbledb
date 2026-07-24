@@ -353,6 +353,10 @@ fn cover_choice_is_magnitude_first() {
 /// Pinned on both twins: node 0 of a two-node pipeline (`probe_pass`)
 /// and the single-node leaf pass (`run_node`).
 #[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "both twins pinned in one scenario — clearer kept together"
+)]
 fn residuals_compact_survivors_before_the_sibling_probes() {
     #[derive(Default)]
     struct Order {

@@ -219,6 +219,10 @@ impl AggregateSink {
         )
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one sink constructor, every regime's wiring in one place — clearer kept together"
+    )]
     fn build(
         finds: &[FindSpec],
         slot_count: usize,

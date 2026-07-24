@@ -107,7 +107,7 @@ impl Colt {
     /// One staged run of a [`Colt::force`] pass: gather the run's key
     /// words column-hoisted, then dispatch the ingest loop once on the
     /// level's arity.
-    fn force_run(&mut self, m: &mut Map, level: usize, positions: &[u32], keys: &mut Vec<u64>) {
+    fn force_run(&mut self, m: &mut Map, level: usize, positions: &[u32], keys: &mut [u64]) {
         self.gather_keys(level, positions, keys, 0);
         match m.arity {
             1 => self.ingest_run::<1>(m, positions, keys),

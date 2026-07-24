@@ -24,6 +24,7 @@ use super::{MAP_SIZE, MAX_READERS, StoreKind};
 /// from this one value, so no caller can pass a flag
 /// (`docs/architecture/50-storage.md`; the lock law is a writer law,
 /// R17).
+#[derive(Clone, Copy)]
 pub(super) enum OpenLane {
     /// The writing constructors (`Db` handles, durable or ephemeral):
     /// plain LMDB flags, `NO_SYNC` for the ephemeral kind.

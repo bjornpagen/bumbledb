@@ -1246,7 +1246,7 @@ fn project(finds: &[FindTerm], bindings: &BTreeSet<Tuple>) -> Result<BTreeSet<Tu
                 }
             };
             let mut extreme: Option<Value> = None;
-            for binding in group.iter() {
+            for binding in group {
                 let candidate = key_value(binding)?;
                 let better = extreme.as_ref().is_none_or(|best| {
                     let ordering = cmp_value(&candidate, best);

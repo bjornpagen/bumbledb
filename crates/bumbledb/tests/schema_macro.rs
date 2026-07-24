@@ -612,7 +612,7 @@ mod fixed_bytes_host_type {
         db.write(|tx| tx.insert(&original)).expect("write");
         db.read(|snap| {
             let back: Vec<Object> = snap.scan_facts()?.collect::<Result<_, _>>()?;
-            assert_eq!(back, vec![original.clone()]);
+            assert_eq!(back, vec![original]);
             Ok(())
         })
         .expect("scan");
@@ -894,17 +894,19 @@ mod closed_column_accessors {
     /// stores it); and the declaring schema stays engine-valid.
     #[test]
     fn every_column_projects_as_a_const_accessor() {
+        // Const-evaluable by construction (R14): both bindings prove the
+        // accessors are `const fn`, so they lead the scope.
+        const RANK: u64 = Plan::Pro.rank();
+        const WINDOW: PlanWindow = Plan::Basic.window();
         Fleet
             .descriptor()
             .validate()
             .expect("the declared schema is valid");
-        const RANK: u64 = Plan::Pro.rank();
         assert_eq!(RANK, 2);
         assert!(Plan::Basic.active());
         assert!(!Plan::Pro.active());
         assert_eq!(Plan::Basic.drift(), -3);
         assert_eq!(Plan::Pro.tag(), *b"pr");
-        const WINDOW: PlanWindow = Plan::Basic.window();
         assert_eq!(WINDOW.0.bounds(), (0, 7));
         assert_eq!(Plan::Pro.tier(), Tier::Paid.id());
     }
@@ -1433,7 +1435,7 @@ mod fixed_width_intervals {
         db.write(|tx| tx.insert(&slot)).expect("write");
         db.read(|snap| {
             let back: Vec<Slot> = snap.scan_facts()?.collect::<Result<_, _>>()?;
-            assert_eq!(back, vec![slot.clone()]);
+            assert_eq!(back, vec![slot]);
             Ok(())
         })
         .expect("scan");

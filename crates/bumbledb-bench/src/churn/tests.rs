@@ -195,7 +195,7 @@ fn churn_stale_removal_refuses_the_whole_cycle() {
     let mut lane =
         engines::create_ours(&dir.join("ours"), cfg.r#gen, StoreMode::Durable).expect("ours lane");
     let live = ops::LiveSet::from_corpus(cfg.r#gen);
-    let victim = live.rows()[0].clone();
+    let victim = live.rows()[0];
     engines::apply_ours(&mut lane, std::slice::from_ref(&victim), &[])
         .expect("the live removal commits");
     let generation = lane.db.generation().expect("generation");
