@@ -37,10 +37,28 @@ impl Colt {
     pub fn watermark(&self) -> usize {
         self.nodes.len()
             + self.chunks.len()
+            + self.chunk_positions.len()
             + self.maps.len()
             + self.ctrl.len()
             + self.buckets.len()
             + self.dense.len()
+    }
+
+    /// The chunk pool's live byte footprint — metadata frames plus the
+    /// position slab — the geometry pin's observability (finding 094).
+    #[cfg(test)]
+    #[must_use]
+    pub fn chunk_footprint_bytes(&self) -> usize {
+        self.chunks.len() * std::mem::size_of::<super::Chunk>() + self.chunk_positions.len() * 4
+    }
+
+    /// Overrides the first-chunk capacity — the geometry pin's A/B
+    /// knob: 64 emulates the retired fixed-frame geometry inside the
+    /// same slab layout, so the pin isolates the geometry itself.
+    #[cfg(test)]
+    pub fn set_first_chunk_cap(&mut self, cap: u8) {
+        assert!(cap >= 2, "the second position allocates the first chunk");
+        self.first_chunk_cap = cap;
     }
 
     /// Bytes a probe of this trie's forced maps can touch — the

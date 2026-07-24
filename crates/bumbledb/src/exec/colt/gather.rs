@@ -47,7 +47,7 @@ impl Colt {
                 let mut chunk = first;
                 while chunk != u32::MAX {
                     let c = &self.chunks[chunk as usize];
-                    if c.positions[..usize::from(c.len)]
+                    if self.chunk_positions[c.start as usize..][..usize::from(c.len)]
                         .iter()
                         .any(|position| check(*position))
                     {
@@ -146,7 +146,9 @@ impl Colt {
                     if c.next != u32::MAX {
                         crate::exec::kernel::prefetch_read(&raw const self.chunks[c.next as usize]);
                     }
-                    f(SuffixRun::Positions(&c.positions[..usize::from(c.len)]));
+                    f(SuffixRun::Positions(
+                        &self.chunk_positions[c.start as usize..][..usize::from(c.len)],
+                    ));
                     chunk = c.next;
                 }
                 true

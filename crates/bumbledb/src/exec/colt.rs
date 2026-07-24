@@ -27,9 +27,18 @@
 
 use crate::image::view::View;
 
-/// Positions per chunk: bounded pointer traversal, independent loads within a
-/// chunk (the deviation from the paper's growable per-key vectors).
+/// Positions per full chunk: bounded pointer traversal, independent loads
+/// within a chunk (the deviation from the paper's growable per-key vectors).
 const CHUNK_LEN: usize = 64;
+
+/// Positions in a chain's FIRST chunk — the graded geometry (finding
+/// 094, measured per the R22 microbench doctrine: the force+iterate
+/// pin at fanouts {2, 4, 8, 64}, `tests/pins.rs`): the common
+/// foreign-key-join fanouts (2–8 duplicates per key) fit their whole
+/// chain in one small span instead of paying a 64-position reservation
+/// per key — 8× less slab at fanout 2 — while chains that outgrow it
+/// step to full [`CHUNK_LEN`] chunks and lose nothing.
+const FIRST_CHUNK_CAP: usize = 8;
 
 /// Labeled key count. The label records *what kind* of number this is —
 /// `Exact` counts a forced map's distinct keys; `Estimate` counts an
@@ -151,9 +160,19 @@ enum NodeState {
     Forced { map: u32 },
 }
 
+/// One chunk of a child list: a `(start, cap, len, next)` frame over
+/// the shared position slab (`Colt::chunk_positions`) — 12 bytes of
+/// metadata, positions sized to the geometry instead of a fixed
+/// 64-position array per chunk. The graded capacities
+/// ([`FIRST_CHUNK_CAP`] first, [`CHUNK_LEN`] after) live entirely in
+/// `cap`; every walker reads `positions[start..start + len]`.
 #[derive(Debug, Clone, Copy)]
 struct Chunk {
-    positions: [u32; CHUNK_LEN],
+    /// Start of this chunk's reserved span in the position slab.
+    start: u32,
+    /// The reserved span's length.
+    cap: u8,
+    /// The occupied prefix.
     len: u8,
     /// Next chunk index, or `u32::MAX`.
     next: u32,
@@ -283,6 +302,7 @@ pub struct SelectionLevel {
 struct PoolMark {
     nodes: usize,
     chunks: usize,
+    chunk_positions: usize,
     maps: usize,
     ctrl: usize,
     buckets: usize,
@@ -321,6 +341,13 @@ pub struct Colt {
     schema_columns: Vec<Vec<usize>>,
     nodes: Vec<NodeState>,
     chunks: Vec<Chunk>,
+    /// The chunk position slab: every chunk's reserved span, one
+    /// contiguous pool ([`Chunk`]).
+    chunk_positions: Vec<u32>,
+    /// The first-chunk capacity — [`FIRST_CHUNK_CAP`] everywhere but
+    /// the geometry pin, which A/Bs the graded and flat geometries in
+    /// one process (`tests/pins.rs`).
+    first_chunk_cap: u8,
     maps: Vec<Map>,
     /// Ctrl bytes for every forced map, range per map.
     ctrl: Vec<u8>,

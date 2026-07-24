@@ -842,13 +842,18 @@ measured 0.996–1.005 on both sinks against the same bar, so the duplicate
 `AnswerHeap::Words` route and its seal were merged into the one resolving
 finalize (the gravestone lives at `api/prepared/finalize.rs`).
 
-**COLT force is single-pass with chunked child lists:** forcing pushes each offset into
-its key's child list, chunked (64 offsets per arena chunk, chained by chunk — bounded
-pointer traversal, independent loads within a chunk), rather than the paper's growable
-per-key vectors or a two-pass contiguous layout (which decodes and hashes every row
-twice). **Deviation:** the paper's leaves are plain vectors; ours are
-chunked. **Reverses if:** a force+iterate microbenchmark shows two-pass-contiguous
-winning end-to-end.
+**COLT force is single-pass with chunked child lists, graded geometry:** forcing pushes
+each offset into its key's child list, chunked over one shared position slab — a chunk
+is a `(start, cap, len, next)` frame; the FIRST chunk of a chain reserves 8 positions,
+later chunks 64 (chained by chunk — bounded pointer traversal, independent loads within
+a chunk) — rather than the paper's growable per-key vectors or a two-pass contiguous
+layout (which decodes and hashes every row twice). **Deviation:** the paper's leaves are
+plain vectors; ours are chunked. **Measured (the 094 geometry pin, `exec/colt/tests/
+pins.rs::chunk_geometry_force_iterate_ab`, 2026-07-24):** the graded first chunk beats
+the flat 64-position geometry 0.72×/0.77×/0.86× force+iterate time at fanouts 2/4/8 and
+ties (1.01×) at 64, at 0.16× chunk-pool footprint for every small fanout — the common
+FK-join fanouts no longer pay a 64-position reservation per key. **Reverses if:** a
+force+iterate microbenchmark shows two-pass-contiguous winning end-to-end.
 
 ## The allocation contract
 

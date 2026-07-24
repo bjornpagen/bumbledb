@@ -48,6 +48,39 @@ fn singleton_keys_allocate_no_chunks() {
     assert_eq!(colt.chunks.len(), 0);
 }
 
+/// The graded chunk geometry's law (the 094 microbench's winner): a
+/// small-fanout force reserves the small first frame per key — never
+/// the retired 64-position fixed frame — and a chain that outgrows it
+/// steps to full chunks.
+#[test]
+fn small_fanouts_reserve_small_first_chunks() {
+    let dir = TempDir::new("colt-graded-chunks");
+    let schema = schema();
+    // 500 keys of fanout 2.
+    let rows: Vec<(u64, u64)> = (0..1000).map(|i| (i / 2, i)).collect();
+    let view = view_of(&dir, &schema, &rows);
+    let mut colt = Colt::new(all(&view), &[], vec![vec![0], vec![1]]);
+    colt.ensure_forced(Colt::root(), 0);
+    assert_eq!(colt.chunks.len(), 500, "one small frame per fanout-2 key");
+    assert_eq!(
+        colt.chunk_positions.len(),
+        500 * 8,
+        "the first frame is FIRST_CHUNK_CAP positions, not 64"
+    );
+
+    // A chain past the first frame grows by full chunks: fanout 100 =
+    // 8 + 64 + 28-of-64 reserved.
+    let rows: Vec<(u64, u64)> = (0..100).map(|i| (0, i)).collect();
+    let dir2 = TempDir::new("colt-graded-chain");
+    let view = view_of(&dir2, &schema, &rows);
+    let mut colt = Colt::new(all(&view), &[], vec![vec![0], vec![1]]);
+    colt.ensure_forced(Colt::root(), 0);
+    assert_eq!(colt.chunks.len(), 3);
+    assert_eq!(colt.chunk_positions.len(), 8 + 64 + 64);
+    let child = colt.get(Colt::root(), 0, &[0]).expect("hit");
+    assert_eq!(drain(&mut colt, child, 1).len(), 100);
+}
+
 #[test]
 fn key_count_labels_are_honest_in_both_states() {
     let dir = TempDir::new("colt-key-count");

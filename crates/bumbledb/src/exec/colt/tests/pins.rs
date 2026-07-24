@@ -439,3 +439,117 @@ fn bucketized_force_stays_at_parity_with_the_linear_build() {
         "bucketized build must stay within 1.11× of the linear reference: {bucket_ns} vs {linear_ns} ns"
     );
 }
+
+/// One full force+iterate over a two-level trie: force the root, drain
+/// its keys, then drain every child's positions — the two phases the
+/// chunk geometry prices (chunk writes in the force, chain walks in
+/// the iterate). Fixed stack buffers; the checksum keeps LLVM honest.
+fn force_and_iterate(colt: &mut Colt) -> u64 {
+    let root = Colt::root();
+    colt.ensure_forced(root, 0);
+    let mut keys = [0u64; 64];
+    let mut children = [Cursor::Row(0); 64];
+    let mut kids: Vec<Cursor> = Vec::new();
+    let mut token = BatchToken::default();
+    loop {
+        let (n, next) = colt.iter_batch(root, 0, token, &mut keys, &mut children, 64);
+        if n == 0 {
+            break;
+        }
+        kids.extend_from_slice(&children[..n]);
+        token = next;
+    }
+    let mut sum = 0u64;
+    for &child in &kids {
+        let mut token = BatchToken::default();
+        loop {
+            let (n, next) = colt.iter_batch(child, 1, token, &mut keys, &mut children, 64);
+            if n == 0 {
+                break;
+            }
+            for &w in &keys[..n] {
+                sum = sum.wrapping_add(w);
+            }
+            token = next;
+        }
+    }
+    sum
+}
+
+/// The chunk-geometry pin (finding 094; the R22 measured-choice
+/// doctrine: microbench at fanouts {2, 4, 8, 64}, land the winner):
+/// force+iterate with the graded first chunk (8) against the flat
+/// geometry (first chunk 64 — the retired fixed-frame sizes inside
+/// the same slab layout, so the pin isolates the geometry itself),
+/// interleaved in one process, store-free images. Prints per-fanout
+/// times and chunk-pool footprints; asserts only arm agreement — the
+/// verdict is read from the run.
+///
+/// Run:
+/// `scripts/measure.sh cargo test --release -p bumbledb chunk_geometry -- --ignored --nocapture`
+///
+/// Recorded (reference host, 2026-07-24, release, 2^18 positions,
+/// co-tenant campaign run — re-pin at the bench night per R21):
+/// fanout 2 — graded 0.72× time, 0.16× footprint (35.1 MB → 5.8 MB);
+/// fanout 4 — 0.77× time, 0.16×; fanout 8 — 0.86× time, 0.16×;
+/// fanout 64 — 1.01× time (noise-band tie), 1.16× footprint (the one
+/// regression: a 64-fanout chain reserves 8 + 64 where flat fit 64 —
+/// bounded by the extra first frame, bought back many times over by
+/// every smaller fanout). The graded geometry wins every timed
+/// fanout; `FIRST_CHUNK_CAP = 8` ships.
+#[test]
+#[ignore = "timing evidence, run by hand on the reference host"]
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "reporting accepts lossy integer-to-float conversion"
+)]
+fn chunk_geometry_force_iterate_ab() {
+    use crate::image::TransientImage;
+    use bumbledb_theory::TypeDesc;
+    let n: u64 = 1 << 18;
+    for &fanout in &[2u64, 4, 8, 64] {
+        let words: Vec<[u64; 2]> = (0..n).map(|i| [i / fanout, i]).collect();
+        let mut slot = TransientImage::default();
+        let image = slot.refill(
+            &[TypeDesc::U64, TypeDesc::U64],
+            words.len(),
+            words.iter().map(|row| &row[..]),
+        );
+        let mut graded_best = std::time::Duration::MAX;
+        let mut flat_best = std::time::Duration::MAX;
+        let mut footprints = (0usize, 0usize);
+        let mut sums = (0u64, 0u64);
+        for _ in 0..5 {
+            for (arm, cap) in [(0usize, 8u8), (1, 64)] {
+                let mut colt = Colt::new(all(&image), &[], vec![vec![0], vec![1]]);
+                colt.set_first_chunk_cap(cap);
+                let start = std::time::Instant::now();
+                let sum = force_and_iterate(&mut colt);
+                let elapsed = start.elapsed();
+                std::hint::black_box(sum);
+                if arm == 0 {
+                    graded_best = graded_best.min(elapsed);
+                    footprints.0 = colt.chunk_footprint_bytes();
+                    sums.0 = sum;
+                } else {
+                    flat_best = flat_best.min(elapsed);
+                    footprints.1 = colt.chunk_footprint_bytes();
+                    sums.1 = sum;
+                }
+            }
+        }
+        assert_eq!(sums.0, sums.1, "the geometries agree bit for bit");
+        let (g_ns, f_ns) = (
+            graded_best.as_nanos() as f64,
+            flat_best.as_nanos() as f64,
+        );
+        println!(
+            "fanout {fanout}: graded {g_ns:.0} ns / flat {f_ns:.0} ns (ratio {:.2}), \
+             footprint graded {} B / flat {} B (ratio {:.2})",
+            g_ns / f_ns,
+            footprints.0,
+            footprints.1,
+            footprints.0 as f64 / footprints.1 as f64,
+        );
+    }
+}

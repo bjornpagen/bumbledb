@@ -81,7 +81,9 @@ impl Colt {
                 while chunk != u32::MAX {
                     let c = self.chunks[chunk as usize];
                     positions.clear();
-                    positions.extend_from_slice(&c.positions[..usize::from(c.len)]);
+                    positions.extend_from_slice(
+                        &self.chunk_positions[c.start as usize..][..usize::from(c.len)],
+                    );
                     self.force_run(&mut m, level, &positions, &mut keys);
                     chunk = c.next;
                 }

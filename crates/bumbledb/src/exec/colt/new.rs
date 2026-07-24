@@ -25,6 +25,8 @@ impl Colt {
             schema_columns,
             nodes: vec![NodeState::Unforced(Positions::Root)],
             chunks: Vec::new(),
+            chunk_positions: Vec::new(),
+            first_chunk_cap: u8::try_from(super::FIRST_CHUNK_CAP).expect("fits u8"),
             maps: Vec::new(),
             ctrl: Vec::new(),
             buckets: Vec::new(),
@@ -53,6 +55,8 @@ impl Colt {
             schema_columns: self.schema_columns.clone(),
             nodes: vec![NodeState::Unforced(Positions::Root)],
             chunks: Vec::new(),
+            chunk_positions: Vec::new(),
+            first_chunk_cap: u8::try_from(super::FIRST_CHUNK_CAP).expect("fits u8"),
             maps: Vec::new(),
             ctrl: Vec::new(),
             buckets: Vec::new(),
@@ -73,6 +77,7 @@ impl Colt {
         self.nodes.clear();
         self.nodes.push(NodeState::Unforced(Positions::Root));
         self.chunks.clear();
+        self.chunk_positions.clear();
         self.maps.clear();
         self.ctrl.clear();
         self.buckets.clear();

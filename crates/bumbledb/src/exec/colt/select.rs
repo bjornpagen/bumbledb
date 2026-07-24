@@ -107,18 +107,24 @@ impl Colt {
                 );
                 let first = u32::try_from(self.chunks.len()).expect("chunk count fits u32");
                 for (idx, segment) in all.chunks(CHUNK_LEN).enumerate() {
-                    let mut chunk = Chunk {
-                        positions: [0; CHUNK_LEN],
-                        len: u8::try_from(segment.len()).expect("CHUNK_LEN fits u8"),
-                        next: u32::MAX,
-                    };
-                    chunk.positions[..segment.len()].copy_from_slice(segment);
+                    // Exact-capacity frames: union chunks are copies
+                    // sized to their content (transient — reclaimed at
+                    // the next `select` by the watermark truncate).
+                    let start =
+                        u32::try_from(self.chunk_positions.len()).expect("position slab fits u32");
+                    self.chunk_positions.extend_from_slice(segment);
+                    let len = u8::try_from(segment.len()).expect("CHUNK_LEN fits u8");
                     if idx > 0 {
                         let previous = self.chunks.len() - 1;
                         self.chunks[previous].next =
                             u32::try_from(self.chunks.len()).expect("fits u32");
                     }
-                    self.chunks.push(chunk);
+                    self.chunks.push(Chunk {
+                        start,
+                        cap: len,
+                        len,
+                        next: u32::MAX,
+                    });
                 }
                 let last = u32::try_from(self.chunks.len() - 1).expect("fits u32");
                 let node = NodeRef(u32::try_from(self.nodes.len()).expect("fits u32"));
@@ -144,8 +150,10 @@ impl Colt {
                     let mut chunk = first;
                     while chunk != u32::MAX {
                         let c = &self.chunks[chunk as usize];
-                        for i in 0..usize::from(c.len) {
-                            f(c.positions[i]);
+                        for &position in
+                            &self.chunk_positions[c.start as usize..][..usize::from(c.len)]
+                        {
+                            f(position);
                         }
                         chunk = c.next;
                     }
@@ -162,6 +170,7 @@ impl Colt {
         PoolMark {
             nodes: self.nodes.len(),
             chunks: self.chunks.len(),
+            chunk_positions: self.chunk_positions.len(),
             maps: self.maps.len(),
             ctrl: self.ctrl.len(),
             buckets: self.buckets.len(),
@@ -177,6 +186,7 @@ impl Colt {
     fn truncate_to(&mut self, mark: PoolMark) {
         self.nodes.truncate(mark.nodes);
         self.chunks.truncate(mark.chunks);
+        self.chunk_positions.truncate(mark.chunk_positions);
         self.maps.truncate(mark.maps);
         self.ctrl.truncate(mark.ctrl);
         self.buckets.truncate(mark.buckets);

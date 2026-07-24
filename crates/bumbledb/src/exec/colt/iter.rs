@@ -177,7 +177,8 @@ impl Colt {
                         crate::exec::kernel::prefetch_read(&raw const self.chunks[c.next as usize]);
                     }
                     let take = (len - offset).min(max - yielded);
-                    let segment = &c.positions[offset..offset + take];
+                    let segment =
+                        &self.chunk_positions[c.start as usize + offset..][..take];
                     self.gather_segment(level, segment, keys_out, children_out, yielded);
                     yielded += take;
                     offset += take;
