@@ -366,16 +366,17 @@ pub fn db_generation(db: &External<DbHandle>) -> napi::Result<u64> {
 // ---------------------------------------------------------------------------
 
 /// The opaque exhume handle: the engine's [`Exhumed`] — a store opened FROM
-/// ITS OWN PERSISTED DESCRIPTOR, no caller schema anywhere. ZERO CLOSABLES:
-/// no close export exists for this handle; the `External` drops the value
-/// (closing the environment and releasing the store's exclusive lock) when
-/// the JS handle is collected — reclamation only, never correctness (the
-/// store is never written through this type, so there is nothing to flush).
-/// No worker thread parks here: every read is one self-contained
-/// `Exhumed::read` round trip on the calling JS thread, so no snapshot ever
-/// lives across the FFI boundary.
+/// ITS OWN PERSISTED DESCRIPTOR, no caller schema anywhere. Lifetimes are
+/// disposables (ruled 2026-07-23, R12): `exhumeClose` is the deterministic
+/// teardown the SDK's `Symbol.dispose` rides — releasing the environment
+/// scope-shaped, never a GC race; the `External`'s drop remains the
+/// reclamation-only backstop for a collected-but-undisposed handle (the
+/// store is never written through this type, so there is nothing to
+/// flush). No worker thread parks here: every read is one self-contained
+/// `Exhumed::read` round trip on the calling JS thread, so no snapshot
+/// ever lives across the FFI boundary.
 pub struct ExhumeHandle {
-    exhumed: Exhumed,
+    inner: RefCell<Option<Exhumed>>,
 }
 
 /// `dbExhume`'s domain outcome: the live handle, or one of the three
@@ -413,7 +414,9 @@ outcome_to_napi!(ExhumeOutcome {
 )]
 pub fn db_exhume(path: String) -> napi::Result<ExhumeOutcome> {
     match exhume(std::path::Path::new(&path)) {
-        Ok(exhumed) => Ok(ExhumeOutcome::Ok(External::new(ExhumeHandle { exhumed }))),
+        Ok(exhumed) => Ok(ExhumeOutcome::Ok(External::new(ExhumeHandle {
+            inner: RefCell::new(Some(exhumed)),
+        }))),
         Err(error @ Error::DescriptorMissing) => Ok(ExhumeOutcome::Refused {
             kind: "descriptorMissing",
             message: marshal::engine_err(&error),
@@ -438,7 +441,18 @@ pub fn db_exhume(path: String) -> napi::Result<ExhumeOutcome> {
 /// closed-relation rosters.
 #[napi]
 pub fn exhume_descriptor(exhume: &External<ExhumeHandle>) -> napi::Result<ManifestWire> {
-    Ok(ManifestWire(exhume.exhumed.descriptor().clone().manifest()))
+    let exhumed = live(&exhume.inner, "exhume")?;
+    Ok(ManifestWire(exhumed.descriptor().clone().manifest()))
+}
+
+/// Closes the exhume handle, releasing its environment (and the store's
+/// exclusive lock) deterministically — the native teardown under the
+/// SDK's `Symbol.dispose` (ruled 2026-07-23, R12: lifetimes are
+/// disposables, never `close()` methods to remember).
+#[napi]
+pub fn exhume_close(exhume: &External<ExhumeHandle>) -> napi::Result<()> {
+    take_handle(&exhume.inner, "exhume")?;
+    Ok(())
 }
 
 /// Full-relation export by NAME in row-id order, values decoded per the
@@ -457,12 +471,13 @@ pub fn exhume_scan(
     exhume: &External<ExhumeHandle>,
     relation_name: String,
 ) -> napi::Result<Vec<Vec<ValueOut>>> {
-    let Some(relation) = exhume.exhumed.relation(&relation_name) else {
+    let exhumed = live(&exhume.inner, "exhume")?;
+    let Some(relation) = exhumed.relation(&relation_name) else {
         return Err(marshal::err(format!(
             "bumbledb: the exhumed store's descriptor declares no relation `{relation_name}`"
         )));
     };
-    let rows = exhume.exhumed.read(|snap| {
+    let rows = exhumed.read(|snap| {
         let iter = snap.scan(relation)?;
         let mut rows = Vec::new();
         for row in iter {
