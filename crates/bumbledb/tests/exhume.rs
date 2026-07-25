@@ -2,7 +2,7 @@
 //! (`docs/architecture/70-api.md` § exhume): a store created from a
 //! `schema!`-declared theory — closed relations with columns, `fresh`,
 //! `str`, `bytes<N>`, general and fixed-width intervals, containments
-//! with selections and literal sets, a cardinality window — is read back
+//! with selections and literal sets, a capacity statement — is read back
 //! by [`bumbledb::exhume`] with NO theory in scope: every relation name,
 //! field name, closed roster, and committed row arrives from the store's
 //! own persisted descriptor. The fixture-surgery lanes (pre-descriptor

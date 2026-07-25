@@ -26,7 +26,7 @@
 //!   (`judgment.rs :: check_source`, licensed by the commit-size
 //!   sweep's measured curve), target-KEY order on all three sides: the
 //!   source side sorts its probe worklist by (containment, key bytes,
-//!   fact bytes); the window and target check lists were B-tree-sorted
+//!   fact bytes); the capacity and target check lists were B-tree-sorted
 //!   already. The source-side pin below is the licensed flip this
 //!   header used to promise — hash-least became key-least with the
 //!   sort, as a deliberate commit. Any further re-order must again flip
@@ -176,7 +176,7 @@ fn the_sealed_citation_list_is_call_order_invariant() {
     assert_eq!(forward, shuffled, "call order never reaches the verdict");
 
     // The complete set: the containment cited once per direction, the
-    // window cited once — whatever the count of convicting facts.
+    // capacity law cited once — whatever the count of convicting facts.
     let [
         Violation::Containment {
             statement: src_stmt,
@@ -188,9 +188,9 @@ fn the_sealed_citation_list_is_call_order_invariant() {
             direction: Direction::TargetRequired,
             ..
         },
-        Violation::Cardinality {
-            statement: win_stmt,
-            count: 3,
+        Violation::Capacity {
+            statement: cap_stmt,
+            measure: 3,
             ..
         },
     ] = forward.as_slice()
@@ -199,7 +199,7 @@ fn the_sealed_citation_list_is_call_order_invariant() {
     };
     assert_eq!(src_stmt, tgt_stmt, "one containment, both directions");
     assert!(
-        win_stmt.0 > src_stmt.0,
+        cap_stmt.0 > src_stmt.0,
         "citation order is materialized statement order"
     );
 }
@@ -292,13 +292,13 @@ fn the_source_witness_is_the_key_least_violator() {
     );
 }
 
-/// NON-NORMATIVE PIN, window side: the window check list is a B-tree of
-/// touched parents, so a multi-parent window rejection's witness is the
-/// KEY-LEAST violating parent — already what a sorted source side would
-/// produce; the W8 sort must not change this one.
+/// NON-NORMATIVE PIN, capacity side: the capacity check list is a B-tree
+/// of touched parents, so a multi-parent capacity rejection's witness is
+/// the KEY-LEAST violating parent — already what a sorted source side
+/// would produce; the W8 sort must not change this one.
 #[test]
-fn the_window_witness_is_the_key_least_violating_parent() {
-    let dir = common::TempDir::new("witness-window");
+fn the_capacity_witness_is_the_key_least_violating_parent() {
+    let dir = common::TempDir::new("witness-capacity");
     let db = Db::ephemeral(dir.path(), WitnessWorld).expect("create");
     insert_parent(&db, 10);
     insert_parent(&db, 20);
@@ -319,8 +319,13 @@ fn the_window_witness_is_the_key_least_violating_parent() {
         }
         Ok(())
     }));
-    let [Violation::Cardinality { fact, count: 3, .. }] = violations.as_slice() else {
-        panic!("expected one window citation, got {violations:?}");
+    let [
+        Violation::Capacity {
+            fact, measure: 3, ..
+        },
+    ] = violations.as_slice()
+    else {
+        panic!("expected one capacity citation, got {violations:?}");
     };
     assert_eq!(
         fact.as_ref(),

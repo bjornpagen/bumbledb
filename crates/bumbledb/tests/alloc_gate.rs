@@ -24,8 +24,8 @@ use bumbledb::ir::{
     AggOp, Atom, CmpOp, Comparison, FindTerm, ParamId, Query, Rule, Term, Value, VarId,
 };
 use bumbledb::schema::{
-    FieldDescriptor, FieldId, Generation, RelationDescriptor, RelationId, SchemaDescriptor, Side,
-    StatementDescriptor, ValueType,
+    Bound, FieldDescriptor, FieldId, Generation, RelationDescriptor, RelationId, SchemaDescriptor,
+    Side, StatementDescriptor, ValueType, Weight,
 };
 use bumbledb::{Answers, BindValue, ConditionTree, Db, ParamArg, PreparedQuery, Snapshot};
 
@@ -36,9 +36,9 @@ mod common;
 /// Busy(id fresh, person u64, slot interval<u64>) +
 /// Item(doc u64, pos u64, note u64), with
 /// `Posting(account) <= Account(id)` and
-/// `Account(id) <={1..4096} Item(doc)` (the cardinality window) — the
-/// marks machinery lives in the store the read windows measure, and the
-/// window-heavy write family churns it between them. Blob(id fresh,
+/// `Account(id) <={1..4096} Item(doc)` (the capacity statement, unit
+/// weight) — the marks machinery lives in the store the read windows
+/// measure, and the capacity-heavy write family churns it between them. Blob(id fresh,
 /// digest bytes<16>) carries the fixed-width inline family.
 #[expect(
     clippy::too_many_lines,
@@ -170,17 +170,18 @@ fn schema() -> SchemaDescriptor {
             },
             // `Account(id) <={1..4096} Item(doc)`: every account
             // parents a chain, so each marks-family commit walks live
-            // window counts.
-            StatementDescriptor::Cardinality {
-                source: Side {
-                    relation: RelationId(3),
+            // group measures.
+            StatementDescriptor::Capacity {
+                target: Side {
+                    relation: RelationId(1),
                     projection: Box::new([FieldId(0)]),
                     selection: Box::new([]),
                 },
+                weight: Weight::Unit,
                 lo: 1,
-                hi: Some(4096),
-                target: Side {
-                    relation: RelationId(1),
+                hi: Some(Bound::Lit(4096)),
+                source: Side {
+                    relation: RelationId(3),
                     projection: Box::new([FieldId(0)]),
                     selection: Box::new([]),
                 },
@@ -298,7 +299,7 @@ fn populate(db: &Db<SchemaDescriptor>) {
             )?;
         }
         // The marks chains: every account parents an Item chain (the
-        // window floor is 1), positions kept 1..k by the writer.
+        // capacity floor is 1), positions kept 1..k by the writer.
         // Steady-state docs 0..20 share one length; ladder docs 20..25
         // escalate per ITEM_LADDER.
         for doc in 0..20u64 {
@@ -853,7 +854,7 @@ fn blob_set_query() -> Query {
 }
 
 /// Q(pos, note) :- Item(doc = ?0, pos, note) — the marks family's read
-/// shape: one ordered, window-parented group per parameter. The
+/// shape: one ordered, capacity-parented group per parameter. The
 /// steady-state rotation binds the fixed-length docs; the escalation
 /// walks the `ITEM_LADDER` docs, each group strictly longer than the last.
 fn marks_query() -> Query {
@@ -872,17 +873,17 @@ fn marks_query() -> Query {
     })
 }
 
-/// The window-heavy write family (docs/architecture/60-validation.md
+/// The capacity-heavy write family (docs/architecture/60-validation.md
 /// § the allocation gate): warm commits that churn the marks machinery —
-/// per round, five window parents each take a tail append (window count
-/// +1), a net-nothing delete-reinsert of
-/// the head (the touched-parent re-judge — the count walk runs on a
+/// per round, five capacity parents each take a tail append (group
+/// measure +1), a net-nothing delete-reinsert of
+/// the head (the touched-parent re-judge — the measure walk runs on a
 /// delta that nets to nothing,
 /// `lean/Bumbledb/Txn/DeltaRestriction.lean: delta_restricted_commit_sound`),
 /// and then a restoring commit removes the tails. The write delta's arena
 /// is per-commit by design (`docs/architecture/50-storage.md` § memory
 /// discipline) — the family's assertions are the judgment's (every round
-/// commits green through live windows) and the read
+/// commits green through live capacity laws) and the read
 /// windows' (the caller re-runs the steady-state gate after the churn:
 /// post-commit rebuild is sanctioned in warmup, then the pools must
 /// re-converge to zero).
@@ -906,7 +907,7 @@ fn marks_write_family(db: &Db<SchemaDescriptor>) {
             }
             Ok(())
         })
-        .expect("marks write round commits through live windows");
+        .expect("marks write round commits through live capacity laws");
         db.write(|tx| {
             for doc in 0..5u64 {
                 // The restoring removal: chains return to 1..=ITEM_CHAIN.
@@ -1297,8 +1298,8 @@ fn zero_warm_allocation_gate() {
         let mut blob_set = db.prepare(&blob_set_query())?;
         gate_args("bytes-set", &mut blob_set, snap, &blob_set_args);
 
-        // The marks family, steady state: rotating window-parented
-        // groups — the store's window counts are
+        // The marks family, steady state: rotating capacity-parented
+        // groups — the store's group measures are
         // rent paid at commit time, and the read pools over the marked
         // relation converge like any other scan.
         let marks_params: Vec<Vec<BindValue<'_>>> =
@@ -1407,8 +1408,8 @@ fn zero_warm_allocation_gate() {
     })
     .expect("gate");
 
-    // The window-heavy write family, then both marks windows over
-    // the churned store: the writes ran the count walk
+    // The capacity-heavy write family, then both marks windows over
+    // the churned store: the writes ran the measure walk
     // sixteen commits deep; the steady-state window must re-converge
     // to zero after the sanctioned post-commit rebuild (warmup), and the
     // escalation window walks the ITEM_LADDER groups — strictly longer

@@ -1,9 +1,11 @@
-//! The window form's commit-time judgment: the cardinality window's
-//! touched-parent count walk
-//! (`docs/architecture/30-dependencies.md` § enforcement) — the
-//! window boundary family (floor / ceiling / exact / star), σ
-//! set-membership counting, and the phase laws (key preemption; a mixed
-//! statement-phase citation set in materialized order).
+//! The capacity statement's commit-time judgment: the touched-parent
+//! measure walk (`docs/architecture/30-dependencies.md` § enforcement)
+//! — the window boundary family (floor / ceiling / exact / star), σ
+//! set-membership measuring, the weighted family (sum ceiling/floor,
+//! the zero-weight footgun, dependent bounds resolved from the
+//! final-state holder, Duration weights), and the phase laws (key
+//! preemption; a mixed statement-phase citation set in materialized
+//! order).
 
 use crate::encoding::ValueRef;
 use crate::error::{Direction, Error, Result, Violation};
@@ -13,13 +15,13 @@ use crate::storage::env::Environment;
 use crate::testutil::TempDir;
 use bumbledb_theory::Value;
 use bumbledb_theory::schema::{
-    FieldId, LiteralSet, RelationDescriptor, RelationId, SchemaDescriptor, Side,
-    StatementDescriptor, StatementId, ValueType,
+    Bound, FieldId, LiteralSet, RelationDescriptor, RelationId, SchemaDescriptor, Side,
+    StatementDescriptor, StatementId, ValueType, Weight,
 };
 
-use super::{apply_delta, committed_data, fact, field, side};
+use super::{apply_delta, committed_data, fact, field, interval, side};
 
-// ---------- the window fixture ----------
+// ---------- the unit-instance fixture (the count spelling survives) ----------
 
 const HOLDER: RelationId = RelationId(0);
 const ACCOUNT: RelationId = RelationId(1);
@@ -27,11 +29,12 @@ const ACCOUNT: RelationId = RelationId(1);
 /// Declared statement order.
 const HOLDER_KEY: StatementId = StatementId(0);
 const ACCOUNT_HOLDER: StatementId = StatementId(1);
-/// `Holder(id) <={1..2} Account(holder | kind == 1)`.
-const SAVINGS_WINDOW: StatementId = StatementId(2);
+/// `Holder(id) <={1..2} Account(holder | kind == 1)` — unit weight, the
+/// count instance.
+const SAVINGS_CAPACITY: StatementId = StatementId(2);
 /// `Holder(id) <={0..3} Account(holder | kind == {1, 2})` — the
-/// set-selection window (counts over a union do not decompose).
-const ANY_KIND_WINDOW: StatementId = StatementId(3);
+/// set-selection capacity law (measures over a union do not decompose).
+const ANY_KIND_CAPACITY: StatementId = StatementId(3);
 
 /// A side selected by one literal-SET binding.
 fn set_selected(relation: RelationId, projection: &[u16], field: u16, set: &[u64]) -> Side {
@@ -45,7 +48,7 @@ fn set_selected(relation: RelationId, projection: &[u16], field: u16, set: &[u64
     }
 }
 
-fn window_schema() -> Schema {
+fn capacity_schema() -> Schema {
     SchemaDescriptor {
         relations: vec![
             RelationDescriptor {
@@ -73,21 +76,23 @@ fn window_schema() -> Schema {
                 source: side(ACCOUNT, &[0]),
                 target: side(HOLDER, &[0]),
             },
-            StatementDescriptor::Cardinality {
+            StatementDescriptor::Capacity {
+                target: side(HOLDER, &[0]),
+                weight: Weight::Unit,
+                lo: 1,
+                hi: Some(Bound::Lit(2)),
                 source: Side {
                     relation: ACCOUNT,
                     projection: Box::new([FieldId(0)]),
                     selection: Box::new([(FieldId(1), LiteralSet::One(Value::U64(1)))]),
                 },
-                lo: 1,
-                hi: Some(2),
-                target: side(HOLDER, &[0]),
             },
-            StatementDescriptor::Cardinality {
-                source: set_selected(ACCOUNT, &[0], 1, &[1, 2]),
-                lo: 0,
-                hi: Some(3),
+            StatementDescriptor::Capacity {
                 target: side(HOLDER, &[0]),
+                weight: Weight::Unit,
+                lo: 0,
+                hi: Some(Bound::Lit(3)),
+                source: set_selected(ACCOUNT, &[0], 1, &[1, 2]),
             },
         ],
     }
@@ -135,50 +140,50 @@ fn base_then_delta(
     result
 }
 
-fn assert_window_violation(
+fn assert_capacity_violation(
     result: Result<()>,
     statement: StatementId,
     parent_fact: &[u8],
-    count: u64,
+    measure: u128,
 ) {
     let err = result.unwrap_err();
     let Error::CommitRejected { violations } = &err else {
         panic!("expected a rejected commit, got {err:?}");
     };
     let [
-        Violation::Cardinality {
+        Violation::Capacity {
             statement: named,
             fact,
-            count: observed,
+            measure: observed,
         },
     ] = violations.as_slice()
     else {
-        panic!("expected one cardinality citation, got {violations:?}");
+        panic!("expected one capacity citation, got {violations:?}");
     };
     assert_eq!(*named, statement);
     assert_eq!(**fact, *parent_fact, "the violation names the parent fact");
-    assert_eq!(*observed, count);
+    assert_eq!(*observed, measure);
 }
 
-// ---------- the window boundary family ----------
+// ---------- the window boundary family (unit instance) ----------
 
-/// Floor: a parent with no φ-children convicts at count 0, named by the
-/// parent's bytes.
+/// Floor: a parent with no φ-children convicts at measure 0, named by
+/// the parent's bytes.
 #[test]
-fn window_floor_convicts_a_childless_parent() {
-    let schema = window_schema();
+fn capacity_floor_convicts_a_childless_parent() {
+    let schema = capacity_schema();
     let h = holder(&schema, 7);
-    let result = base_then_delta("win-floor", &schema, &[], &[], &[(HOLDER, h.clone())]);
-    assert_window_violation(result, SAVINGS_WINDOW, &h, 0);
+    let result = base_then_delta("cap-floor", &schema, &[], &[], &[(HOLDER, h.clone())]);
+    assert_capacity_violation(result, SAVINGS_CAPACITY, &h, 0);
 }
 
 /// Within bounds: one and two φ-children commit — both window ends are
 /// inclusive.
 #[test]
-fn window_within_bounds_commits() {
-    let schema = window_schema();
+fn capacity_within_the_window_commits() {
+    let schema = capacity_schema();
     let result = base_then_delta(
-        "win-within",
+        "cap-within",
         &schema,
         &[
             (HOLDER, holder(&schema, 7)),
@@ -190,14 +195,15 @@ fn window_within_bounds_commits() {
     result.expect("two selected children sit inside 1..2 and 0..3");
 }
 
-/// Ceiling: the third φ-child pushes the count past `hi = 2`; the walk
-/// reports the first count past the ceiling.
+/// Ceiling: the third φ-child pushes the unit measure past `hi = 2`; the
+/// witnessed measure is the group's total (the clip serves the verdict,
+/// the full sum serves the witness — ruled 2026-07-24, C14).
 #[test]
-fn window_ceiling_convicts_the_overflowing_group() {
-    let schema = window_schema();
+fn capacity_ceiling_convicts_the_overflowing_group() {
+    let schema = capacity_schema();
     let h = holder(&schema, 7);
     let result = base_then_delta(
-        "win-ceiling",
+        "cap-ceiling",
         &schema,
         &[
             (HOLDER, h.clone()),
@@ -207,19 +213,19 @@ fn window_ceiling_convicts_the_overflowing_group() {
         &[],
         &[(ACCOUNT, account(&schema, 7, 1, 2))],
     );
-    assert_window_violation(result, SAVINGS_WINDOW, &h, 3);
+    assert_capacity_violation(result, SAVINGS_CAPACITY, &h, 3);
 }
 
-/// The set binding counts the UNION of its alternatives — a member of
+/// The set binding measures the UNION of its alternatives — a member of
 /// either kind counts once, and no conjunction of per-literal windows
 /// says this (`lean/Bumbledb/Countermodels.lean:
 /// disjunctive_window_not_literal_conjunction`).
 #[test]
-fn window_set_selection_counts_the_union() {
-    let schema = window_schema();
+fn capacity_set_selection_measures_the_union() {
+    let schema = capacity_schema();
     let h = holder(&schema, 7);
     let result = base_then_delta(
-        "win-set-ceiling",
+        "cap-set-ceiling",
         &schema,
         &[
             (HOLDER, h.clone()),
@@ -228,21 +234,21 @@ fn window_set_selection_counts_the_union() {
             (ACCOUNT, account(&schema, 7, 2, 1)),
         ],
         &[],
-        // kinds 1 and 2 both count toward the set window: this fourth
-        // union member overflows its `0..3` ceiling; the savings window
-        // (kind 1 alone, count 1) stays green.
+        // kinds 1 and 2 both count toward the set law: this fourth
+        // union member overflows its `0..3` ceiling; the savings law
+        // (kind 1 alone, measure 1) stays green.
         &[(ACCOUNT, account(&schema, 7, 2, 2))],
     );
-    assert_window_violation(result, ANY_KIND_WINDOW, &h, 4);
+    assert_capacity_violation(result, ANY_KIND_CAPACITY, &h, 4);
 }
 
 /// A set miss: kinds outside the spelled set never count — toward
-/// either window.
+/// either capacity law.
 #[test]
-fn window_set_selection_misses_do_not_count() {
-    let schema = window_schema();
+fn capacity_set_selection_misses_do_not_count() {
+    let schema = capacity_schema();
     let result = base_then_delta(
-        "win-set-miss",
+        "cap-set-miss",
         &schema,
         &[
             (HOLDER, holder(&schema, 7)),
@@ -251,20 +257,20 @@ fn window_set_selection_misses_do_not_count() {
             (ACCOUNT, account(&schema, 7, 2, 1)),
         ],
         &[],
-        // kind 9 sits outside {1, 2} and outside kind == 1: no count
-        // moves, both windows hold.
+        // kind 9 sits outside {1, 2} and outside kind == 1: no measure
+        // moves, both laws hold.
         &[(ACCOUNT, account(&schema, 7, 9, 0))],
     );
     result.expect("an out-of-set child is not a member of any group");
 }
 
-/// Removal: deleting a φ-child re-counts the touched parent — dropping
-/// to the floor commits, dropping below it aborts.
+/// Removal: deleting a φ-child re-measures the touched parent —
+/// dropping to the floor commits, dropping below it aborts.
 #[test]
-fn window_removal_recounts_the_touched_parent() {
-    let schema = window_schema();
+fn capacity_removal_remeasures_the_touched_parent() {
+    let schema = capacity_schema();
     let h = holder(&schema, 7);
-    let dir = TempDir::new("win-removal");
+    let dir = TempDir::new("cap-removal");
     let env = Environment::create(dir.path(), &schema).expect("create");
     apply_delta(
         &env,
@@ -277,13 +283,13 @@ fn window_removal_recounts_the_touched_parent() {
         ],
     )
     .expect("base");
-    // One kind-1 child leaves: the savings window still counts 1.
+    // One kind-1 child leaves: the savings law still measures 1.
     apply_delta(&env, &schema, &[(ACCOUNT, account(&schema, 7, 1, 1))], &[])
-        .expect("the floor still holds at count 1");
-    // The last kind-1 child leaves: count 0 < lo 1.
+        .expect("the floor still holds at measure 1");
+    // The last kind-1 child leaves: measure 0 < lo 1.
     let before = committed_data(&env);
     let result = apply_delta(&env, &schema, &[(ACCOUNT, account(&schema, 7, 1, 0))], &[]);
-    assert_window_violation(result, SAVINGS_WINDOW, &h, 0);
+    assert_capacity_violation(result, SAVINGS_CAPACITY, &h, 0);
     assert_eq!(committed_data(&env), before);
 }
 
@@ -292,10 +298,10 @@ fn window_removal_recounts_the_touched_parent() {
 /// whole-cluster atomic demolition, the extension form's face of the
 /// no-modes law.
 #[test]
-fn window_parent_deletion_releases_the_group() {
-    let schema = window_schema();
+fn capacity_parent_deletion_releases_the_group() {
+    let schema = capacity_schema();
     let result = base_then_delta(
-        "win-release",
+        "cap-release",
         &schema,
         &[
             (HOLDER, holder(&schema, 7)),
@@ -307,17 +313,17 @@ fn window_parent_deletion_releases_the_group() {
         ],
         &[],
     );
-    result.expect("no parent, no window obligation");
+    result.expect("no parent, no capacity obligation");
 }
 
 /// Groups are judged per parent: a new childless parent convicts its own
 /// group while an untouched neighbor stays green.
 #[test]
-fn window_judges_each_parent_group_independently() {
-    let schema = window_schema();
+fn capacity_judges_each_parent_group_independently() {
+    let schema = capacity_schema();
     let h8 = holder(&schema, 8);
     let result = base_then_delta(
-        "win-per-parent",
+        "cap-per-parent",
         &schema,
         &[
             (HOLDER, holder(&schema, 7)),
@@ -326,13 +332,13 @@ fn window_judges_each_parent_group_independently() {
         &[],
         &[(HOLDER, h8.clone())],
     );
-    assert_window_violation(result, SAVINGS_WINDOW, &h8, 0);
+    assert_capacity_violation(result, SAVINGS_CAPACITY, &h8, 0);
 }
 
 // ---------- the exclusion window ----------
 
 /// Declared statement order in [`exclusion_schema`].
-const FORBIDDEN_WINDOW: StatementId = StatementId(1);
+const FORBIDDEN_CAPACITY: StatementId = StatementId(1);
 
 /// `Holder(id) <={0} Account(holder | kind == 9)` — the `{0}` exclusion:
 /// no holder may have a kind-9 account. Its own fixture (the boundary
@@ -360,46 +366,47 @@ fn exclusion_schema() -> Schema {
                 relation: HOLDER,
                 projection: Box::new([FieldId(0)]),
             },
-            StatementDescriptor::Cardinality {
+            StatementDescriptor::Capacity {
+                target: side(HOLDER, &[0]),
+                weight: Weight::Unit,
+                lo: 0,
+                hi: Some(Bound::Lit(0)),
                 source: Side {
                     relation: ACCOUNT,
                     projection: Box::new([FieldId(0)]),
                     selection: Box::new([(FieldId(1), LiteralSet::One(Value::U64(9)))]),
                 },
-                lo: 0,
-                hi: Some(0),
-                target: side(HOLDER, &[0]),
             },
         ],
     }
     .validate()
-    .expect("the exclusion window seals")
+    .expect("the exclusion law seals")
 }
 
 /// `{0}` convicts at the first member: a kind-9 child under an existing
-/// holder counts 1 > 0, named by the parent's bytes.
+/// holder measures 1 > 0, named by the parent's bytes.
 #[test]
 fn exclusion_window_convicts_the_first_member() {
     let schema = exclusion_schema();
     let h = holder(&schema, 7);
     let result = base_then_delta(
-        "win-exclusion-member",
+        "cap-exclusion-member",
         &schema,
         &[(HOLDER, h.clone())],
         &[],
         &[(ACCOUNT, account(&schema, 7, 9, 0))],
     );
-    assert_window_violation(result, FORBIDDEN_WINDOW, &h, 1);
+    assert_capacity_violation(result, FORBIDDEN_CAPACITY, &h, 1);
 }
 
 /// `{0}` admits everything outside σ: non-selected kinds commit freely,
-/// and so does the childless parent (count 0 sits inside the window —
+/// and so does the childless parent (measure 0 sits inside the window —
 /// both ends inclusive, `0..0`).
 #[test]
 fn exclusion_window_admits_non_members() {
     let schema = exclusion_schema();
     let result = base_then_delta(
-        "win-exclusion-clean",
+        "cap-exclusion-clean",
         &schema,
         &[],
         &[],
@@ -414,14 +421,14 @@ fn exclusion_window_admits_non_members() {
 
 /// Deleting the parent releases the exclusion: the member lands in the
 /// same delta that removes its parent — the final state has no parent to
-/// constrain (windows never manufacture parents,
-/// `lean/Bumbledb/Cardinality.lean: cardinality_of_empty_parent`).
+/// constrain (capacity statements never manufacture parents,
+/// `lean/Bumbledb/Capacity.lean: capacity_of_empty_parent`).
 #[test]
 fn exclusion_window_releases_with_the_parent() {
     let schema = exclusion_schema();
     let h = holder(&schema, 7);
     let result = base_then_delta(
-        "win-exclusion-release",
+        "cap-exclusion-release",
         &schema,
         &[(HOLDER, h.clone())],
         &[(HOLDER, h)],
@@ -430,22 +437,395 @@ fn exclusion_window_releases_with_the_parent() {
     result.expect("no parent, no exclusion obligation");
 }
 
+// ---------- the weighted family ----------
+
+const POOL: RelationId = RelationId(0);
+const DEVICE: RelationId = RelationId(1);
+
+/// Declared statement order in [`weighted_schema`].
+const WATTS_CAPACITY: StatementId = StatementId(1);
+
+/// `Pool(id) <=[watts]{5..100} Device(pool)` — a column weight under
+/// literal bounds: the measure is Σ watts over the pool's devices.
+fn weighted_schema() -> Schema {
+    SchemaDescriptor {
+        relations: vec![
+            RelationDescriptor {
+                extension: None,
+                name: "Pool".into(),
+                fields: vec![field("id", ValueType::U64), field("supply", ValueType::U64)],
+            },
+            RelationDescriptor {
+                extension: None,
+                name: "Device".into(),
+                fields: vec![
+                    field("pool", ValueType::U64),
+                    field("watts", ValueType::U64),
+                    // Distinguishes same-weight devices (identity = bytes).
+                    field("num", ValueType::U64),
+                ],
+            },
+        ],
+        statements: vec![
+            StatementDescriptor::Functionality {
+                relation: POOL,
+                projection: Box::new([FieldId(0)]),
+            },
+            StatementDescriptor::Capacity {
+                target: side(POOL, &[0]),
+                weight: Weight::Field(FieldId(1)),
+                lo: 5,
+                hi: Some(Bound::Lit(100)),
+                source: side(DEVICE, &[0]),
+            },
+        ],
+    }
+    .validate()
+    .expect("the weighted fixture seals")
+}
+
+fn pool(schema: &Schema, id: u64, supply: u64) -> Vec<u8> {
+    fact(schema, POOL, &[ValueRef::U64(id), ValueRef::U64(supply)])
+}
+
+fn device(schema: &Schema, pool: u64, watts: u64, num: u64) -> Vec<u8> {
+    fact(
+        schema,
+        DEVICE,
+        &[
+            ValueRef::U64(pool),
+            ValueRef::U64(watts),
+            ValueRef::U64(num),
+        ],
+    )
+}
+
+/// Sum within bounds: weights sum, not count — three devices measuring
+/// 60 + 30 + 10 = 100 sit exactly on the inclusive ceiling.
+#[test]
+fn capacity_sum_within_bounds_commits() {
+    let schema = weighted_schema();
+    let result = base_then_delta(
+        "cap-sum-within",
+        &schema,
+        &[
+            (POOL, pool(&schema, 1, 0)),
+            (DEVICE, device(&schema, 1, 60, 0)),
+            (DEVICE, device(&schema, 1, 30, 1)),
+        ],
+        &[],
+        &[(DEVICE, device(&schema, 1, 10, 2))],
+    );
+    result.expect("Σ watts = 100 sits on the inclusive ceiling");
+}
+
+/// Sum ceiling: the third device pushes Σ watts to 180 > 100. The
+/// witnessed measure is the group's FULL total — on conviction the judge
+/// completes the walk so the report is walk-order-independent (ruled
+/// 2026-07-24, C14: the clip serves the verdict, the full sum serves the
+/// witness).
+#[test]
+fn capacity_sum_ceiling_convicts_with_the_full_measure() {
+    let schema = weighted_schema();
+    let p = pool(&schema, 1, 0);
+    let result = base_then_delta(
+        "cap-sum-ceiling",
+        &schema,
+        &[
+            (POOL, p.clone()),
+            (DEVICE, device(&schema, 1, 60, 0)),
+            (DEVICE, device(&schema, 1, 60, 1)),
+        ],
+        &[],
+        &[(DEVICE, device(&schema, 1, 60, 2))],
+    );
+    assert_capacity_violation(result, WATTS_CAPACITY, &p, 180);
+}
+
+/// Sum floor: a group whose total sits under `lo = 5` convicts with the
+/// full measure (a floor conviction always walks the whole group).
+#[test]
+fn capacity_sum_floor_convicts_the_light_group() {
+    let schema = weighted_schema();
+    let p = pool(&schema, 1, 0);
+    let result = base_then_delta(
+        "cap-sum-floor",
+        &schema,
+        &[],
+        &[],
+        &[(POOL, p.clone()), (DEVICE, device(&schema, 1, 3, 0))],
+    );
+    assert_capacity_violation(result, WATTS_CAPACITY, &p, 3);
+}
+
+/// The § 6 footgun as commit-path data: zero-weight children EXIST but
+/// measure 0 — `Sum in {5..100}` is not an existence claim over rows.
+/// Two zero-watt devices convict the floor at measure 0; adding one
+/// five-watt device satisfies it (zero-weight rows ride along freely).
+#[test]
+fn capacity_zero_weight_children_do_not_lift_the_floor() {
+    let schema = weighted_schema();
+    let p = pool(&schema, 1, 0);
+    let result = base_then_delta(
+        "cap-zero-weight-floor",
+        &schema,
+        &[],
+        &[],
+        &[
+            (POOL, p.clone()),
+            (DEVICE, device(&schema, 1, 0, 0)),
+            (DEVICE, device(&schema, 1, 0, 1)),
+        ],
+    );
+    assert_capacity_violation(result, WATTS_CAPACITY, &p, 0);
+    let result = base_then_delta(
+        "cap-zero-weight-pass",
+        &schema,
+        &[],
+        &[],
+        &[
+            (POOL, pool(&schema, 1, 0)),
+            (DEVICE, device(&schema, 1, 0, 0)),
+            (DEVICE, device(&schema, 1, 0, 1)),
+            (DEVICE, device(&schema, 1, 5, 2)),
+        ],
+    );
+    result.expect("one weighted row lifts the floor; zero-weight rows ride along");
+}
+
+/// Declared statement order in [`dependent_bound_schema`].
+const SUPPLY_CAPACITY: StatementId = StatementId(1);
+
+/// `Pool(id) <=[watts]{0..supply} Device(pool)` — the dependent bound:
+/// the ceiling is read from the TARGET row (by name against its full
+/// roster, ruled 2026-07-24, C1; hi slot only, C6).
+fn dependent_bound_schema() -> Schema {
+    SchemaDescriptor {
+        relations: vec![
+            RelationDescriptor {
+                extension: None,
+                name: "Pool".into(),
+                fields: vec![field("id", ValueType::U64), field("supply", ValueType::U64)],
+            },
+            RelationDescriptor {
+                extension: None,
+                name: "Device".into(),
+                fields: vec![
+                    field("pool", ValueType::U64),
+                    field("watts", ValueType::U64),
+                    field("num", ValueType::U64),
+                ],
+            },
+        ],
+        statements: vec![
+            StatementDescriptor::Functionality {
+                relation: POOL,
+                projection: Box::new([FieldId(0)]),
+            },
+            StatementDescriptor::Capacity {
+                target: side(POOL, &[0]),
+                weight: Weight::Field(FieldId(1)),
+                lo: 0,
+                hi: Some(Bound::TargetField(FieldId(1))),
+                source: side(DEVICE, &[0]),
+            },
+        ],
+    }
+    .validate()
+    .expect("the dependent-bound fixture seals")
+}
+
+/// The per-group ceiling: two pools, two supplies — each group is judged
+/// against ITS parent's resolved bound.
+#[test]
+fn capacity_dependent_bound_resolves_per_parent() {
+    let schema = dependent_bound_schema();
+    let small = pool(&schema, 2, 50);
+    // Pool 1 (supply 100) absorbs 90 watts; pool 2 (supply 50) convicts
+    // at the same load.
+    let result = base_then_delta(
+        "cap-dep-bound-per-parent",
+        &schema,
+        &[
+            (POOL, pool(&schema, 1, 100)),
+            (POOL, small.clone()),
+            (DEVICE, device(&schema, 1, 90, 0)),
+        ],
+        &[],
+        &[(DEVICE, device(&schema, 2, 90, 1))],
+    );
+    assert_capacity_violation(result, SUPPLY_CAPACITY, &small, 90);
+}
+
+/// The bound resolves from the FINAL-state holder: replacing the parent
+/// with a lower supply re-judges its (untouched-children) group through
+/// the remove+add path — the delete side's key marks the group, the new
+/// row's bound convicts it.
+#[test]
+fn capacity_dependent_bound_reads_the_final_state_holder() {
+    let schema = dependent_bound_schema();
+    let dir = TempDir::new("cap-dep-bound-final-state");
+    let env = Environment::create(dir.path(), &schema).expect("create");
+    apply_delta(
+        &env,
+        &schema,
+        &[],
+        &[
+            (POOL, pool(&schema, 1, 100)),
+            (DEVICE, device(&schema, 1, 90, 0)),
+        ],
+    )
+    .expect("90 watts under supply 100");
+    // The identity rewrite lowers the supply under the standing load.
+    let lowered = pool(&schema, 1, 50);
+    let before = committed_data(&env);
+    let result = apply_delta(
+        &env,
+        &schema,
+        &[(POOL, pool(&schema, 1, 100))],
+        &[(POOL, lowered.clone())],
+    );
+    assert_capacity_violation(result, SUPPLY_CAPACITY, &lowered, 90);
+    assert_eq!(committed_data(&env), before, "an abort persists nothing");
+    // Raising the supply instead commits: same group, new bound.
+    apply_delta(
+        &env,
+        &schema,
+        &[(POOL, pool(&schema, 1, 100))],
+        &[(POOL, pool(&schema, 1, 200))],
+    )
+    .expect("the raised bound admits the standing load");
+}
+
+// ---------- the Duration weight (the calendar shape) ----------
+
+const ROOM: RelationId = RelationId(0);
+const BOOKING: RelationId = RelationId(1);
+const BOOKED_CAPACITY: StatementId = StatementId(1);
+
+fn duration_schema(hi: Bound) -> Schema {
+    SchemaDescriptor {
+        relations: vec![
+            RelationDescriptor {
+                extension: None,
+                name: "Room".into(),
+                fields: vec![field("id", ValueType::U64), field("span", interval())],
+            },
+            RelationDescriptor {
+                extension: None,
+                name: "Booking".into(),
+                fields: vec![
+                    field("room", ValueType::U64),
+                    field("booked", interval()),
+                    field("num", ValueType::U64),
+                ],
+            },
+        ],
+        statements: vec![
+            StatementDescriptor::Functionality {
+                relation: ROOM,
+                projection: Box::new([FieldId(0)]),
+            },
+            StatementDescriptor::Capacity {
+                target: side(ROOM, &[0]),
+                weight: Weight::DurationOf(FieldId(1)),
+                lo: 0,
+                hi: Some(hi),
+                source: side(BOOKING, &[0]),
+            },
+        ],
+    }
+    .validate()
+    .expect("the Duration-weight fixture seals")
+}
+
+fn room(schema: &Schema, id: u64, span: (u64, u64)) -> Vec<u8> {
+    fact(
+        schema,
+        ROOM,
+        &[
+            ValueRef::U64(id),
+            ValueRef::IntervalU64(crate::Interval::<u64>::new(span.0, span.1).expect("nonempty")),
+        ],
+    )
+}
+
+fn booking(schema: &Schema, room: u64, booked: (u64, u64), num: u64) -> Vec<u8> {
+    fact(
+        schema,
+        BOOKING,
+        &[
+            ValueRef::U64(room),
+            ValueRef::IntervalU64(
+                crate::Interval::<u64>::new(booked.0, booked.1).expect("nonempty"),
+            ),
+            ValueRef::U64(num),
+        ],
+    )
+}
+
+/// `Room(id) <=[Duration(booked)]{0..10} Booking(room)` — the interval
+/// measure as weight, under a literal ceiling (C18 refuses only the
+/// count-window-vs-Duration-BOUND direction): total booked time sums
+/// end − start per booking.
+#[test]
+fn capacity_duration_weight_sums_the_measures() {
+    let schema = duration_schema(Bound::Lit(10));
+    let r = room(&schema, 1, (0, 24));
+    let result = base_then_delta(
+        "cap-duration-weight",
+        &schema,
+        &[
+            (ROOM, r.clone()),
+            (BOOKING, booking(&schema, 1, (0, 4), 0)),
+            (BOOKING, booking(&schema, 1, (10, 14), 1)),
+        ],
+        &[],
+        // 4 + 4 + 4 = 12 > 10: the calendar overbooks.
+        &[(BOOKING, booking(&schema, 1, (20, 24), 2))],
+    );
+    assert_capacity_violation(result, BOOKED_CAPACITY, &r, 12);
+}
+
+/// `Room(id) <=[Duration(booked)]{0..Duration(span)} Booking(room)` —
+/// calendar capacity whole: the ceiling is the TARGET row's own
+/// interval measure (the dependent Duration bound).
+#[test]
+fn capacity_duration_bound_reads_the_target_span() {
+    let schema = duration_schema(Bound::TargetDuration(FieldId(1)));
+    // Room 1 spans [0, 8): 8 hours of capacity.
+    let r = room(&schema, 1, (0, 8));
+    let result = base_then_delta(
+        "cap-duration-bound",
+        &schema,
+        &[
+            (ROOM, r.clone()),
+            (BOOKING, booking(&schema, 1, (0, 4), 0)),
+            (BOOKING, booking(&schema, 1, (4, 8), 1)),
+        ],
+        &[],
+        // 4 + 4 + 4 = 12 > Duration([0, 8)) = 8.
+        &[(BOOKING, booking(&schema, 1, (8, 12), 2))],
+    );
+    assert_capacity_violation(result, BOOKED_CAPACITY, &r, 12);
+}
+
 // ---------- the phase laws ----------
 
 /// Key violations preempt the statement phase: a delta violating both
-/// the holder key and the savings window cites ONLY the key statement
+/// the holder key and the savings law cites ONLY the key statement
 /// (`lean/Bumbledb/Txn.lean: judge_key_preempts`).
 #[test]
-fn key_violation_preempts_the_window_judgment() {
-    let schema = window_schema();
+fn key_violation_preempts_the_capacity_judgment() {
+    let schema = capacity_schema();
     let result = base_then_delta(
-        "win-preempt",
+        "cap-preempt",
         &schema,
         &[],
         &[],
         &[
             // Two distinct facts, one key tuple — and no kind-1 children
-            // anywhere, so the window is violated too.
+            // anywhere, so the capacity law is violated too.
             (
                 HOLDER,
                 fact(&schema, HOLDER, &[ValueRef::U64(7), ValueRef::U64(0)]),
@@ -466,22 +846,22 @@ fn key_violation_preempts_the_window_judgment() {
     assert_eq!(*statement, HOLDER_KEY);
 }
 
-/// A mixed statement-phase rejection carries containment AND window
+/// A mixed statement-phase rejection carries containment AND capacity
 /// citations, complete, in materialized statement order — never a mix
 /// with the key phase (`lean/Bumbledb/Txn.lean: rejection_is_complete`,
 /// `rejection_never_mixes`).
 #[test]
-fn statement_phase_cites_containments_and_windows_together() {
-    let schema = window_schema();
+fn statement_phase_cites_containments_and_capacities_together() {
+    let schema = capacity_schema();
     let h8 = holder(&schema, 8);
     let orphan = account(&schema, 9, 2, 0);
     let result = base_then_delta(
-        "win-mixed-phase",
+        "cap-mixed-phase",
         &schema,
         &[],
         &[],
         &[
-            // Holder 8 lands childless (window floor) and account 9→
+            // Holder 8 lands childless (capacity floor) and account 9→
             // lands parentless (containment) in one delta.
             (HOLDER, h8.clone()),
             (ACCOUNT, orphan.clone()),
@@ -497,20 +877,20 @@ fn statement_phase_cites_containments_and_windows_together() {
             direction,
             fact: c_fact,
         },
-        Violation::Cardinality {
+        Violation::Capacity {
             statement: w_stmt,
             fact: w_fact,
-            count,
+            measure,
         },
     ] = violations.as_slice()
     else {
-        panic!("expected containment then window citations, got {violations:?}");
+        panic!("expected containment then capacity citations, got {violations:?}");
     };
     assert_eq!(
         (*c_stmt, *direction),
         (ACCOUNT_HOLDER, Direction::SourceUnsatisfied)
     );
     assert_eq!(**c_fact, *orphan);
-    assert_eq!((*w_stmt, *count), (SAVINGS_WINDOW, 0));
+    assert_eq!((*w_stmt, *measure), (SAVINGS_CAPACITY, 0));
     assert_eq!(**w_fact, *h8);
 }

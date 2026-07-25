@@ -4,19 +4,21 @@
 //! - **Fingerprint parity** — one theory exercising every descriptor
 //!   construct (both closed tiers, `fresh`, `str`, `bytes<N>`, general
 //!   and fixed-width intervals, all three statement forms, `==`, a
-//!   literal-set selection, every legal window spelling), built through
+//!   literal-set selection, every legal capacity spelling — unit,
+//!   weighted, Duration-weighted, dependent-bound), built through
 //!   the `schema!` macro and through [`bumbledb::SchemaSpec`], yields
 //!   IDENTICAL fingerprints: macro and spec produce indistinguishable
 //!   descriptors.
 //! - **The spec-path ban table** — name-resolution failures are typed
-//!   and COMPLETE (every unresolvable name enumerated), and window
+//!   and COMPLETE (every unresolvable name enumerated), and capacity
 //!   canonicity errors name the canonical spelling verbatim, mirroring
-//!   the macro's expansion errors.
+//!   the macro's expansion errors (per-aggregate where weight-sensitive).
 
 use bumbledb::schema::ValidateDescriptor as _;
 use bumbledb::schema::spec::{
-    ClosedSpec, FaceNewtype, FieldSpec, LiteralAt, LiteralSetSpec, LiteralSpec, RelationSpec,
-    RowSpec, SideSpec, SpecIssue, StatementSide, StatementSpec, WindowSpec,
+    BoundSpec, CapacityWindowSpec, ClosedSpec, FaceNewtype, FieldSpec, LiteralAt, LiteralSetSpec,
+    LiteralSpec, RelationSpec, RowSpec, SideSpec, SpecIssue, StatementSide, StatementSpec,
+    WeightSpec,
 };
 use bumbledb::schema::{IntervalElement, ValueType, fingerprint::fingerprint};
 use bumbledb::{Interval, SchemaSpec, Theory, Value};
@@ -34,7 +36,7 @@ bumbledb::schema! {
         Failed     { mastered: false, span: 3..5 },
     };
 
-    relation Holder { id: u64 as HolderId, fresh, name: str, digest: bytes<16> }
+    relation Holder { id: u64 as HolderId, fresh, name: str, digest: bytes<16>, cap: u64 }
 
     relation Account {
         id: u64 as AccountId, fresh,
@@ -43,6 +45,7 @@ bumbledb::schema! {
         status: u64 as StatusId,
         active: interval<i64> as ActiveDuring,
         lease: interval<u64, 7> as Lease,
+        balance: u64,
     }
 
     relation SavingsTerms { account: u64 as AccountId, rate_bps: i64 }
@@ -58,6 +61,9 @@ bumbledb::schema! {
     Holder(id) <={1} Account(holder | status == Open);
     Holder(id) <={0} Account(holder | kind == Failed);
     Holder(id) <={1..4} Account(holder | kind == DirectPass);
+    Holder(id) <=[balance]{0..cap} Account(holder);
+    Holder(id) <=[Duration(active)]{0..720} Account(holder);
+    Holder(id) <=[balance]{1..*} Account(holder | status == Open);
 }
 
 /// A field spec with no newtype and no fresh mark.
@@ -92,7 +98,8 @@ fn side_selected(relation: &str, projection: &[&str], field: &str, handle: &str)
 
 /// The spec twin of the `Everything` schema above, statement for
 /// statement — names where the macro wrote names, `bidirectional: true`
-/// where it wrote `==`, one `WindowSpec` per legal window spelling.
+/// where it wrote `==`, one `CapacityWindowSpec` per legal capacity
+/// spelling (unit, weighted, Duration-weighted, dependent-bound).
 #[expect(
     clippy::too_many_lines,
     reason = "one construct-complete theory, clearer kept together"
@@ -162,6 +169,7 @@ fn everything_spec() -> SchemaSpec {
                     },
                     field("name", ValueType::String),
                     field("digest", ValueType::FixedBytes { len: 16 }),
+                    field("cap", ValueType::U64),
                 ],
                 closed: None,
             },
@@ -206,6 +214,7 @@ fn everything_spec() -> SchemaSpec {
                             },
                         )
                     },
+                    field("balance", ValueType::U64),
                 ],
                 closed: None,
             },
@@ -260,30 +269,65 @@ fn everything_spec() -> SchemaSpec {
                 target: side("Holder", &["id"]),
                 bidirectional: false,
             },
-            StatementSpec::Cardinality {
+            StatementSpec::Capacity {
                 target: side("Holder", &["id"]),
-                window: WindowSpec::Range { lo: 0, hi: 3 },
+                weight: WeightSpec::Unit,
+                window: CapacityWindowSpec::Range {
+                    lo: BoundSpec::Lit(0),
+                    hi: BoundSpec::Lit(3),
+                },
                 source: side("Account", &["holder"]),
             },
-            StatementSpec::Cardinality {
+            StatementSpec::Capacity {
                 target: side("Holder", &["id"]),
-                window: WindowSpec::Floor(2),
+                weight: WeightSpec::Unit,
+                window: CapacityWindowSpec::Floor(BoundSpec::Lit(2)),
                 source: side_selected("Account", &["holder"], "status", "Frozen"),
             },
-            StatementSpec::Cardinality {
+            StatementSpec::Capacity {
                 target: side("Holder", &["id"]),
-                window: WindowSpec::Exact(1),
+                weight: WeightSpec::Unit,
+                window: CapacityWindowSpec::Exact(BoundSpec::Lit(1)),
                 source: side_selected("Account", &["holder"], "status", "Open"),
             },
-            StatementSpec::Cardinality {
+            StatementSpec::Capacity {
                 target: side("Holder", &["id"]),
-                window: WindowSpec::Exact(0),
+                weight: WeightSpec::Unit,
+                window: CapacityWindowSpec::Exact(BoundSpec::Lit(0)),
                 source: side_selected("Account", &["holder"], "kind", "Failed"),
             },
-            StatementSpec::Cardinality {
+            StatementSpec::Capacity {
                 target: side("Holder", &["id"]),
-                window: WindowSpec::Range { lo: 1, hi: 4 },
+                weight: WeightSpec::Unit,
+                window: CapacityWindowSpec::Range {
+                    lo: BoundSpec::Lit(1),
+                    hi: BoundSpec::Lit(4),
+                },
                 source: side_selected("Account", &["holder"], "kind", "DirectPass"),
+            },
+            StatementSpec::Capacity {
+                target: side("Holder", &["id"]),
+                weight: WeightSpec::Field("balance".into()),
+                window: CapacityWindowSpec::Range {
+                    lo: BoundSpec::Lit(0),
+                    hi: BoundSpec::Field("cap".into()),
+                },
+                source: side("Account", &["holder"]),
+            },
+            StatementSpec::Capacity {
+                target: side("Holder", &["id"]),
+                weight: WeightSpec::Duration("active".into()),
+                window: CapacityWindowSpec::Range {
+                    lo: BoundSpec::Lit(0),
+                    hi: BoundSpec::Lit(720),
+                },
+                source: side("Account", &["holder"]),
+            },
+            StatementSpec::Capacity {
+                target: side("Holder", &["id"]),
+                weight: WeightSpec::Field("balance".into()),
+                window: CapacityWindowSpec::Floor(BoundSpec::Lit(1)),
+                source: side_selected("Account", &["holder"], "status", "Open"),
             },
         ],
     }
@@ -661,14 +705,14 @@ fn unresolvable_names_are_enumerated_completely_never_first_only() {
     let issues = error.issues();
     assert!(
         issues.contains(&SpecIssue::UnknownRelation {
-            statement: 11,
+            statement: 14,
             relation: "Nowhere".into()
         }),
         "the unknown relation is cited: {issues:?}"
     );
     assert!(
         issues.contains(&SpecIssue::UnknownField {
-            statement: 12,
+            statement: 15,
             relation: "Account".into(),
             field: "nope".into()
         }),
@@ -679,7 +723,7 @@ fn unresolvable_names_are_enumerated_completely_never_first_only() {
             closed: "Status".into(),
             handle: "Thawed".into(),
             at: LiteralAt::Selection {
-                statement: 13,
+                statement: 16,
                 side: StatementSide::Source,
                 binding: 0,
                 literal: 0
@@ -708,7 +752,7 @@ fn a_handle_on_a_non_reference_field_is_typed() {
             field: "holder".into(),
             handle: "Frozen".into(),
             at: LiteralAt::Selection {
-                statement: 11,
+                statement: 14,
                 side: StatementSide::Source,
                 binding: 0,
                 literal: 0
@@ -735,7 +779,7 @@ fn paired_faces_with_disagreeing_newtypes_are_rejected_typed() {
     assert_eq!(
         error.issues(),
         [SpecIssue::StatementNewtypeMismatch {
-            statement: 11,
+            statement: 14,
             position: 0,
             source: FaceNewtype {
                 relation: "Account".into(),
@@ -773,7 +817,7 @@ fn a_labeled_face_never_pairs_with_a_bare_one() {
     assert_eq!(
         error.issues(),
         [SpecIssue::StatementNewtypeMismatch {
-            statement: 11,
+            statement: 14,
             position: 0,
             source: FaceNewtype {
                 relation: "SavingsTerms".into(),
@@ -811,9 +855,9 @@ fn bare_faces_pair_with_bare_faces() {
 #[test]
 fn a_psi_selected_target_never_bypasses_the_coherence_check() {
     let mut spec = everything_spec();
-    // The ψ-selected window target: selection never changes the field
+    // The ψ-selected capacity target: selection never changes the field
     // pairing — Holder.id (HolderId) still pairs Kind's id (KindId).
-    spec.statements.push(StatementSpec::Cardinality {
+    spec.statements.push(StatementSpec::Capacity {
         target: SideSpec {
             selection: vec![(
                 "mastered".into(),
@@ -821,7 +865,8 @@ fn a_psi_selected_target_never_bypasses_the_coherence_check() {
             )],
             ..side("Kind", &["id"])
         },
-        window: WindowSpec::Exact(1),
+        weight: WeightSpec::Unit,
+        window: CapacityWindowSpec::Exact(BoundSpec::Lit(1)),
         source: side("Account", &["holder"]),
     });
     let error = spec
@@ -830,7 +875,7 @@ fn a_psi_selected_target_never_bypasses_the_coherence_check() {
     assert_eq!(
         error.issues(),
         [SpecIssue::StatementNewtypeMismatch {
-            statement: 11,
+            statement: 14,
             position: 0,
             source: FaceNewtype {
                 relation: "Account".into(),
@@ -846,50 +891,63 @@ fn a_psi_selected_target_never_bypasses_the_coherence_check() {
     );
 }
 
-/// One banned window spelling per row of the ban table
+/// One banned capacity spelling per row of the ban table
 /// (`docs/architecture/70-api.md` § the canonical-utterance law), each
 /// error's `Display` naming the canonical form the author pastes back.
+/// A ban is canonical-utterance policing when weight-independent and
+/// semantic deduplication when not — the weight-independent rows fire
+/// identically on the unit instance here and the weighted probes below.
 #[test]
-fn the_window_ban_table_rejects_at_spec_construction_naming_the_canonical_form() {
-    let banned: [(WindowSpec, SpecIssue, &str); 5] = [
+fn the_capacity_ban_table_rejects_at_spec_construction_naming_the_canonical_form() {
+    let banned: [(CapacityWindowSpec, SpecIssue, &str); 5] = [
         (
-            WindowSpec::Range { lo: 4, hi: 2 },
-            SpecIssue::WindowInverted {
-                statement: 11,
+            CapacityWindowSpec::Range {
+                lo: BoundSpec::Lit(4),
+                hi: BoundSpec::Lit(2),
+            },
+            SpecIssue::CapacityInverted {
+                statement: 14,
                 lo: 4,
                 hi: 2,
             },
-            "an exact count is `{n}`",
+            "an exact measure is `{n}`",
         ),
         (
-            WindowSpec::Range { lo: 2, hi: 2 },
-            SpecIssue::WindowExactRespelled {
-                statement: 11,
+            CapacityWindowSpec::Range {
+                lo: BoundSpec::Lit(2),
+                hi: BoundSpec::Lit(2),
+            },
+            SpecIssue::CapacityExactRespelled {
+                statement: 14,
                 count: 2,
             },
-            "an exact count is written `{2}`",
+            "an exact measure is written `{2}`",
         ),
         (
-            WindowSpec::Range { lo: 0, hi: 0 },
-            SpecIssue::WindowExclusionRespelled { statement: 11 },
+            CapacityWindowSpec::Range {
+                lo: BoundSpec::Lit(0),
+                hi: BoundSpec::Lit(0),
+            },
+            SpecIssue::CapacityExclusionRespelled { statement: 14 },
             "the exclusion is written `{0}`",
         ),
         (
-            WindowSpec::Floor(0),
-            SpecIssue::WindowVacuous { statement: 11 },
+            CapacityWindowSpec::Floor(BoundSpec::Lit(0)),
+            SpecIssue::CapacityVacuous { statement: 14 },
             "delete the statement",
         ),
         (
-            WindowSpec::Floor(1),
-            SpecIssue::WindowContainmentRespelled { statement: 11 },
+            CapacityWindowSpec::Floor(BoundSpec::Lit(1)),
+            SpecIssue::CapacityContainmentRespelled { statement: 14 },
             "drop the annotation and write the containment",
         ),
     ];
     for (window, expected, canonical) in banned {
         let mut spec = everything_spec();
-        spec.statements.push(StatementSpec::Cardinality {
+        spec.statements.push(StatementSpec::Capacity {
             target: side("Holder", &["id"]),
-            window,
+            weight: WeightSpec::Unit,
+            window: window.clone(),
             source: side("Account", &["holder"]),
         });
         let error = spec.descriptor().expect_err("a banned spelling");
@@ -904,6 +962,74 @@ fn the_window_ban_table_rejects_at_spec_construction_naming_the_canonical_form()
             "{window:?} names its canonical form: {rendered}"
         );
     }
+}
+
+/// The weight-SENSITIVE row of the ban law: `{1..*}` is banned on the
+/// unit instance only (above) — the weighted floor is legal, because
+/// "positive total" is not an existence claim over rows (a zero-weight
+/// row satisfies containment but not the sum floor).
+#[test]
+fn the_weighted_floor_is_legal_where_the_unit_floor_is_banned() {
+    let mut spec = everything_spec();
+    spec.statements.push(StatementSpec::Capacity {
+        target: side("Holder", &["id"]),
+        weight: WeightSpec::Field("balance".into()),
+        window: CapacityWindowSpec::Floor(BoundSpec::Lit(1)),
+        source: side("Account", &["holder"]),
+    });
+    spec.descriptor()
+        .expect("`<=[w]{1..*}` is the legal weighted floor");
+}
+
+/// The path weight refuses at the spec surface (ruling 6: the weight
+/// vocabulary is closed at the row), its diagnostic naming the
+/// pinned-column composition idiom verbatim.
+#[test]
+fn a_path_weight_is_refused_naming_the_pinned_column_idiom() {
+    let mut spec = everything_spec();
+    spec.statements.push(StatementSpec::Capacity {
+        target: side("Holder", &["id"]),
+        weight: WeightSpec::Field("kind.mastered".into()),
+        window: CapacityWindowSpec::Range {
+            lo: BoundSpec::Lit(0),
+            hi: BoundSpec::Lit(3),
+        },
+        source: side("Account", &["holder"]),
+    });
+    let error = spec.descriptor().expect_err("a path weight");
+    assert_eq!(
+        error.issues(),
+        [SpecIssue::WeightPathRefused {
+            statement: 14,
+            path: "kind.mastered".into(),
+        }],
+    );
+    let rendered = error.to_string();
+    assert!(
+        rendered.contains("pinned-column idiom"),
+        "the refusal names the composition idiom: {rendered}"
+    );
+}
+
+/// Dependent bounds are hi-slot only (ruled 2026-07-24, C6): a
+/// dependent floor is a typed refusal naming the ruling.
+#[test]
+fn a_dependent_floor_is_refused_hi_slot_only() {
+    let mut spec = everything_spec();
+    spec.statements.push(StatementSpec::Capacity {
+        target: side("Holder", &["id"]),
+        weight: WeightSpec::Field("balance".into()),
+        window: CapacityWindowSpec::Range {
+            lo: BoundSpec::Field("cap".into()),
+            hi: BoundSpec::Lit(9),
+        },
+        source: side("Account", &["holder"]),
+    });
+    let error = spec.descriptor().expect_err("a dependent floor");
+    assert_eq!(
+        error.issues(),
+        [SpecIssue::CapacityDependentFloor { statement: 14 }],
+    );
 }
 
 #[test]

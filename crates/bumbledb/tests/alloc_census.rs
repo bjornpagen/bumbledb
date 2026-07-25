@@ -33,8 +33,8 @@ use bumbledb::ir::{
     Term, Value, VarId,
 };
 use bumbledb::schema::{
-    FieldDescriptor, FieldId, Generation, RelationDescriptor, RelationId, SchemaDescriptor, Side,
-    StatementDescriptor, ValueType,
+    Bound, FieldDescriptor, FieldId, Generation, RelationDescriptor, RelationId, SchemaDescriptor,
+    Side, StatementDescriptor, ValueType, Weight,
 };
 use bumbledb::{AllenMask, Answers, BindValue, ConditionTree, Db};
 
@@ -383,17 +383,18 @@ fn schema() -> SchemaDescriptor {
                     selection: Box::new([]),
                 },
             },
-            // The cardinality window: Account(id) <={1..4096} Item(doc).
-            StatementDescriptor::Cardinality {
-                source: Side {
-                    relation: ITEM,
+            // The capacity statement: Account(id) <={1..4096} Item(doc).
+            StatementDescriptor::Capacity {
+                target: Side {
+                    relation: ACCOUNT,
                     projection: Box::new([FieldId(0)]),
                     selection: Box::new([]),
                 },
+                weight: Weight::Unit,
                 lo: 1,
-                hi: Some(4096),
-                target: Side {
-                    relation: ACCOUNT,
+                hi: Some(Bound::Lit(4096)),
+                source: Side {
+                    relation: ITEM,
                     projection: Box::new([FieldId(0)]),
                     selection: Box::new([]),
                 },
@@ -469,7 +470,7 @@ fn populate(db: &Db<SchemaDescriptor>) {
                 ],
             )?;
         }
-        // The cardinality floor: every account parents an Item chain.
+        // The capacity floor: every account parents an Item chain.
         for doc in (0..20u64).chain(100..100 + CHAIN) {
             for pos in 1..=8u64 {
                 tx.insert_dyn(

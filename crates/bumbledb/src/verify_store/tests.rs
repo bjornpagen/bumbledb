@@ -376,7 +376,7 @@ fn claim_bytes(db: &Db<SchemaDescriptor>, room: u64, start: u64, end: u64) -> Ve
 
 /// Deletes one fact's `F`/`M`/`U` rows *coherently* — every namespace
 /// pairing stays consistent, and the `S` row count is re-pinned to the
-/// surviving cardinality — so every namespace sweep passes. This is
+/// surviving population — so every namespace sweep passes. This is
 /// exactly the corruption class only the global judgment re-verification
 /// can convict: a target gone from every namespace while a source fact
 /// still requires it. (`R` rows: neither fixture target relation has
@@ -1535,15 +1535,16 @@ fn an_uncovered_domain_quantification_is_a_judgment_violation() {
     assert_eq!(db.verify_store().expect("verify").findings, vec![]);
 }
 
-// ---------- the extension form (windows) ----------
+// ---------- the extension form (capacity) ----------
 
 const M_HOLDER: RelationId = RelationId(0);
 const M_ACCOUNT: RelationId = RelationId(1);
-/// Materialized: Holder key (0), the window (1).
-const M_WINDOW: StatementId = StatementId(1);
+/// Materialized: Holder key (0), the capacity statement (1).
+const M_CAPACITY: StatementId = StatementId(1);
 
 /// Holder(id, tag; key id), Account(holder, kind, num) with
-/// `Holder(id) <={1..2} Account(holder | kind == 1)`.
+/// `Holder(id) <={1..2} Account(holder | kind == 1)` — unit weight, the
+/// count instance.
 fn marks_schema() -> SchemaDescriptor {
     let plain = |name: &str| FieldDescriptor {
         name: name.into(),
@@ -1568,7 +1569,15 @@ fn marks_schema() -> SchemaDescriptor {
                 relation: M_HOLDER,
                 projection: Box::new([FieldId(0)]),
             },
-            StatementDescriptor::Cardinality {
+            StatementDescriptor::Capacity {
+                target: Side {
+                    relation: M_HOLDER,
+                    projection: Box::new([FieldId(0)]),
+                    selection: Box::new([]),
+                },
+                weight: bumbledb_theory::schema::Weight::Unit,
+                lo: 1,
+                hi: Some(bumbledb_theory::schema::Bound::Lit(2)),
                 source: Side {
                     relation: M_ACCOUNT,
                     projection: Box::new([FieldId(0)]),
@@ -1576,13 +1585,6 @@ fn marks_schema() -> SchemaDescriptor {
                         FieldId(1),
                         bumbledb_theory::schema::LiteralSet::One(Value::U64(1)),
                     )]),
-                },
-                lo: 1,
-                hi: Some(2),
-                target: Side {
-                    relation: M_HOLDER,
-                    projection: Box::new([FieldId(0)]),
-                    selection: Box::new([]),
                 },
             },
         ],
@@ -1608,19 +1610,19 @@ fn a_marked_store_verifies_clean() {
     assert_eq!(db.verify_store().expect("verify").findings, vec![]);
 }
 
-/// The R-delete-blind class, window form: a raw-deleted window edge is
-/// both the missing-edge finding AND a global window recount below the
+/// The R-delete-blind class, capacity form: a raw-deleted capacity edge
+/// is both the missing-edge finding AND a global re-measure below the
 /// floor — the sweeper owns exactly what incremental checking cannot see.
 #[test]
-fn a_missing_window_edge_is_found_and_the_group_recounted() {
-    let (_dir, db) = marks_fixture("verify-marks-window-edge");
+fn a_missing_capacity_edge_is_found_and_the_group_remeasured() {
+    let (_dir, db) = marks_fixture("verify-marks-capacity-edge");
     let child_key = encode_u64(1);
-    let r = key(|b| keys::reverse_key(b, M_WINDOW, &child_key, M_ACCOUNT, 0));
+    let r = key(|b| keys::reverse_key(b, M_CAPACITY, &child_key, M_ACCOUNT, 0));
     raw_write(&db, |txn| {
         let data = txn.env().data();
         assert!(
             data.delete(txn.raw_mut(), &r).expect("raw delete"),
-            "the fixture wrote this window edge"
+            "the fixture wrote this capacity edge"
         );
     });
     let holder_fact = {
@@ -1635,13 +1637,13 @@ fn a_missing_window_edge_is_found_and_the_group_recounted() {
     assert_eq!(
         db.verify_store().expect("verify").findings,
         vec![
-            StoreFinding::WindowViolation {
-                statement: M_WINDOW,
+            StoreFinding::CapacityViolation {
+                statement: M_CAPACITY,
                 fact: holder_fact.into(),
-                count: 0,
+                measure: 0,
             },
             StoreFinding::FactWithoutReverseEdge {
-                statement: M_WINDOW,
+                statement: M_CAPACITY,
                 relation: M_ACCOUNT,
                 row_id: 0,
                 reverse_key: r.into(),
@@ -1650,13 +1652,13 @@ fn a_missing_window_edge_is_found_and_the_group_recounted() {
     );
 }
 
-/// A stray window edge (no live fact re-derives it) is the R pass's
+/// A stray capacity edge (no live fact re-derives it) is the R pass's
 /// finding, exactly as a containment's.
 #[test]
-fn a_stray_window_edge_is_convicted() {
-    let (_dir, db) = marks_fixture("verify-marks-stray-window");
+fn a_stray_capacity_edge_is_convicted() {
+    let (_dir, db) = marks_fixture("verify-marks-stray-capacity");
     let child_key = encode_u64(9);
-    let r = key(|b| keys::reverse_key(b, M_WINDOW, &child_key, M_ACCOUNT, 77));
+    let r = key(|b| keys::reverse_key(b, M_CAPACITY, &child_key, M_ACCOUNT, 77));
     raw_write(&db, |txn| {
         let data = txn.env().data();
         data.put(txn.raw_mut(), &r, &[]).expect("plant stray edge");
@@ -1664,10 +1666,119 @@ fn a_stray_window_edge_is_convicted() {
     assert_eq!(
         db.verify_store().expect("verify").findings,
         vec![StoreFinding::ReverseEdgeWithoutFact {
-            statement: M_WINDOW,
+            statement: M_CAPACITY,
             reverse_key: r.into(),
         }]
     );
+}
+
+// ---------- the weighted value slot (the desync sweep) ----------
+
+const W_POOL: RelationId = RelationId(0);
+const W_DEVICE: RelationId = RelationId(1);
+/// Materialized: Pool key (0), the weighted capacity statement (1).
+const W_CAPACITY: StatementId = StatementId(1);
+
+/// Pool(id, supply; key id), Device(pool, watts, num) with
+/// `Pool(id) <=[watts]{5..100} Device(pool)` — the weighted statement
+/// whose `R` edges carry the child's u64 weight in the value slot
+/// (ruled 2026-07-24, C17: statement-scoped).
+fn weighted_fixture(tag: &str) -> (TempDir, Db<SchemaDescriptor>) {
+    let plain = |name: &str| FieldDescriptor {
+        name: name.into(),
+        value_type: ValueType::U64,
+        generation: Generation::None,
+    };
+    let schema = SchemaDescriptor {
+        relations: vec![
+            RelationDescriptor {
+                extension: None,
+                name: "Pool".into(),
+                fields: vec![plain("id"), plain("supply")],
+            },
+            RelationDescriptor {
+                extension: None,
+                name: "Device".into(),
+                fields: vec![plain("pool"), plain("watts"), plain("num")],
+            },
+        ],
+        statements: vec![
+            StatementDescriptor::Functionality {
+                relation: W_POOL,
+                projection: Box::new([FieldId(0)]),
+            },
+            StatementDescriptor::Capacity {
+                target: Side {
+                    relation: W_POOL,
+                    projection: Box::new([FieldId(0)]),
+                    selection: Box::new([]),
+                },
+                weight: bumbledb_theory::schema::Weight::Field(FieldId(1)),
+                lo: 5,
+                hi: Some(bumbledb_theory::schema::Bound::Lit(100)),
+                source: Side {
+                    relation: W_DEVICE,
+                    projection: Box::new([FieldId(0)]),
+                    selection: Box::new([]),
+                },
+            },
+        ],
+    };
+    let dir = TempDir::new(tag);
+    let db = Db::create(dir.path(), schema).expect("create");
+    db.write(|tx| {
+        tx.insert_dyn(W_POOL, &[Value::U64(1), Value::U64(100)])?;
+        tx.insert_dyn(W_DEVICE, &[Value::U64(1), Value::U64(60), Value::U64(0)])
+            .map(|_| ())
+    })
+    .expect("green weighted base commit");
+    (dir, db)
+}
+
+#[test]
+fn a_weighted_store_verifies_clean() {
+    let (_dir, db) = weighted_fixture("verify-weight-clean");
+    assert_eq!(db.verify_store().expect("verify").findings, vec![]);
+}
+
+/// The weight-desync sweep (ruled 2026-07-24; `60-validation.md` § the
+/// sweeps): the `R` value slot is a maintained copy of one row-local
+/// field, and the sweeper is the offline authority that convicts a
+/// diverged copy — never repairs it silently. A hand-corrupted slot
+/// (61 stored, 60 derived from the live fact) keeps the group inside
+/// its window on both readings, so the ONLY findings are the desync
+/// convictions — both sweep directions (F→R: the existence get's value
+/// must equal the fact's weight-field encoding; R→F: the entry's value
+/// must back to the live fact) report the same diverged edge.
+#[test]
+fn a_desynced_weight_slot_is_convicted_never_repaired() {
+    let (_dir, db) = weighted_fixture("verify-weight-desync");
+    let child_key = encode_u64(1);
+    let r = key(|b| keys::reverse_key(b, W_CAPACITY, &child_key, W_DEVICE, 0));
+    raw_write(&db, |txn| {
+        let data = txn.env().data();
+        data.put(txn.raw_mut(), &r, &61u64.to_le_bytes())
+            .expect("corrupt the weight slot");
+    });
+    let findings = db.verify_store().expect("verify").findings;
+    assert!(
+        !findings.is_empty(),
+        "a diverged weight slot must be convicted"
+    );
+    for finding in &findings {
+        assert!(
+            matches!(
+                finding,
+                StoreFinding::ReverseEdgeWeightDesync {
+                    statement: W_CAPACITY,
+                    reverse_key,
+                    stored: 61,
+                    derived: 60,
+                } if **reverse_key == *r
+            ),
+            "every finding names the diverged edge with stored vs derived, got {finding:?}"
+        );
+    }
 }
 
 // ---------- interval<E, w> at rest: the Q2 bound is F coherence ----------

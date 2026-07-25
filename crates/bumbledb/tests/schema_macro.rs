@@ -194,7 +194,7 @@ fn statements_land_in_source_order_with_equality_lowered() {
                 source: statement.source.clone(),
                 target: statement.target.clone(),
             },
-            StatementView::Cardinality(..) => {
+            StatementView::Capacity(..) => {
                 unreachable!("this fixture declares keys and containments only")
             }
         })
@@ -285,7 +285,7 @@ fn the_equality_pair_seals_mirror_links() {
     let schema = declared();
     let mirrors: Vec<Option<StatementId>> = (0..8)
         .map(|id| match schema.statement(StatementId(id)) {
-            StatementView::Key(_, _) | StatementView::Cardinality(..) => None,
+            StatementView::Key(_, _) | StatementView::Capacity(..) => None,
             StatementView::Containment(_, statement) => statement.mirror,
         })
         .collect();
@@ -1242,13 +1242,13 @@ mod redundant_superkey_warning {
 
 mod extension_forms {
     //! The dependency-vocabulary extension's grammar: literal-set
-    //! selections and the cardinality window — B-family, target-left
+    //! selections and the capacity statement — B-family, target-left
     //! (`Parent(key) <={lo..hi} Child(field)`, `{lo..*}` the no-ceiling
-    //! floor, `{n}` the exact count)
-    //! (`docs/architecture/30-dependencies.md`).
+    //! floor, `{n}` the exact measure; absent bracket = unit weight,
+    //! the count instance) (`docs/architecture/30-dependencies.md`).
 
     use bumbledb::schema::ValidateDescriptor as _;
-    use bumbledb::schema::{LiteralSet, StatementDescriptor, StatementView};
+    use bumbledb::schema::{Bound, LiteralSet, StatementDescriptor, StatementView, Weight};
     use bumbledb::{StatementId, Theory as _, Value};
 
     bumbledb::schema! {
@@ -1279,7 +1279,8 @@ mod extension_forms {
     /// lands as the descriptor's `target`, the set selection as
     /// `LiteralSet::Many`, and each canonical window spelling as its one
     /// `(lo, hi)` — `{lo..*}` = no ceiling, `{n}` = `lo = hi = n`,
-    /// `{0}` = the exclusion.
+    /// `{0}` = the exclusion. The bare `<={lo..hi}` spelling is the unit
+    /// weight — the count instance, pinned explicitly.
     #[test]
     fn the_extension_forms_lower_and_validate() {
         let schema = Tracker
@@ -1290,40 +1291,154 @@ mod extension_forms {
         // closed auto-key, then the four declared statements.
         assert!(matches!(
             schema.statement(StatementId(2)),
-            StatementView::Cardinality(_, _)
+            StatementView::Capacity(_, _)
         ));
-        let window = &schema.windows()[0];
-        assert_eq!((window.lo, window.hi), (1, Some(3)));
-        assert_eq!(window.target.relation, Tracker::PARENT);
-        assert_eq!(window.source.relation, Tracker::TASK);
+        let cap = &schema.capacities()[0];
+        assert_eq!((cap.lo, cap.hi), (1, Some(Bound::Lit(3))));
+        assert_eq!(cap.weight, Weight::Unit);
+        assert_eq!(cap.target.relation, Tracker::PARENT);
+        assert_eq!(cap.source.relation, Tracker::TASK);
         assert_eq!(
-            window.source.selection[..],
+            cap.source.selection[..],
             [(
                 Tracker::TASK_STATE,
                 LiteralSet::Many(Box::new([Value::U64(1), Value::U64(2)]))
             )]
         );
-        let star = &schema.windows()[1];
+        let star = &schema.capacities()[1];
         assert_eq!((star.lo, star.hi), (2, None));
-        let exact = &schema.windows()[2];
-        assert_eq!((exact.lo, exact.hi), (4, Some(4)));
-        let exclusion = &schema.windows()[3];
-        assert_eq!((exclusion.lo, exclusion.hi), (0, Some(0)));
+        assert_eq!(star.weight, Weight::Unit);
+        let exact = &schema.capacities()[2];
+        assert_eq!((exact.lo, exact.hi), (4, Some(Bound::Lit(4))));
+        let exclusion = &schema.capacities()[3];
+        assert_eq!((exclusion.lo, exclusion.hi), (0, Some(Bound::Lit(0))));
     }
 
-    /// The window's descriptor is target-left as declared: the first
-    /// declared statement's `target` is the written left side.
+    /// The capacity statement's descriptor is target-left as declared:
+    /// the first declared statement's `target` is the written left side,
+    /// and the absent bracket lowers to `Weight::Unit` — a case, not an
+    /// absence (ruled 2026-07-24, C4).
     #[test]
-    fn the_window_descriptor_is_target_left() {
+    fn the_capacity_descriptor_is_target_left() {
         let descriptor = Tracker.descriptor();
-        let Some(StatementDescriptor::Cardinality { source, target, .. }) =
-            descriptor.statements.first()
+        let Some(StatementDescriptor::Capacity {
+            source,
+            weight,
+            target,
+            ..
+        }) = descriptor.statements.first()
         else {
-            panic!("the first declared statement is the window");
+            panic!("the first declared statement is the capacity statement");
         };
+        assert_eq!(*weight, Weight::Unit);
         assert_eq!(target.relation, Tracker::PARENT);
         assert_eq!(source.relation, Tracker::TASK);
         assert!(matches!(source.selection[0].1, LiteralSet::Many(_)));
+    }
+}
+
+mod capacity_forms {
+    //! The weighted grammar accepts (`docs/architecture/30-dependencies.md`
+    //! § the capacity statement; the cutover's new productions): a column
+    //! weight under a dependent hi bound (`<=[watts]{0..supply}` — C1:
+    //! the bound ident resolves by name against TARGET's whole roster,
+    //! C6: hi slot only), a Duration weight under a literal ceiling
+    //! (C18 refuses only the count-window-vs-Duration-BOUND direction),
+    //! and the weighted floor `<=[w]{1..*}` — legal exactly where the
+    //! unit instance is banned (the per-aggregate ban law).
+
+    use bumbledb::Theory as _;
+    use bumbledb::schema::ValidateDescriptor as _;
+    use bumbledb::schema::{Bound, FieldId, StatementDescriptor, Weight};
+
+    bumbledb::schema! {
+        pub Grid;
+
+        relation Pool {
+            id: u64 as PoolId, fresh,
+            supply: u64,
+        }
+        relation Device {
+            id: u64 as DeviceId, fresh,
+            pool: u64 as PoolId,
+            watts: u64,
+            booked: interval<u64>,
+        }
+
+        Pool(id) <=[watts]{0..supply} Device(pool);
+        Pool(id) <=[Duration(booked)]{0..720} Device(pool);
+        Pool(id) <=[watts]{1..*} Device(pool);
+    }
+
+    /// Every weighted production lowers to its descriptor shape and the
+    /// theory seals: the weight bracket to its `Weight` case, the bound
+    /// ident to `Bound::TargetField` by name against the target's whole
+    /// roster, `Duration(...)` to the interval-measure cases.
+    #[test]
+    fn the_weighted_forms_lower_and_validate() {
+        let descriptor = Grid.descriptor();
+        assert_eq!(
+            descriptor.statements[..],
+            [
+                StatementDescriptor::Capacity {
+                    target: bumbledb::schema::Side {
+                        relation: Grid::POOL,
+                        projection: Box::new([FieldId(0)]),
+                        selection: Box::new([]),
+                    },
+                    weight: Weight::Field(Grid::DEVICE_WATTS),
+                    lo: 0,
+                    hi: Some(Bound::TargetField(Grid::POOL_SUPPLY)),
+                    source: bumbledb::schema::Side {
+                        relation: Grid::DEVICE,
+                        projection: Box::new([Grid::DEVICE_POOL]),
+                        selection: Box::new([]),
+                    },
+                },
+                StatementDescriptor::Capacity {
+                    target: bumbledb::schema::Side {
+                        relation: Grid::POOL,
+                        projection: Box::new([FieldId(0)]),
+                        selection: Box::new([]),
+                    },
+                    weight: Weight::DurationOf(Grid::DEVICE_BOOKED),
+                    lo: 0,
+                    hi: Some(Bound::Lit(720)),
+                    source: bumbledb::schema::Side {
+                        relation: Grid::DEVICE,
+                        projection: Box::new([Grid::DEVICE_POOL]),
+                        selection: Box::new([]),
+                    },
+                },
+                StatementDescriptor::Capacity {
+                    target: bumbledb::schema::Side {
+                        relation: Grid::POOL,
+                        projection: Box::new([FieldId(0)]),
+                        selection: Box::new([]),
+                    },
+                    weight: Weight::Field(Grid::DEVICE_WATTS),
+                    lo: 1,
+                    hi: None,
+                    source: bumbledb::schema::Side {
+                        relation: Grid::DEVICE,
+                        projection: Box::new([Grid::DEVICE_POOL]),
+                        selection: Box::new([]),
+                    },
+                },
+            ]
+        );
+        let schema = descriptor.validate().expect("the weighted theory seals");
+        // Sealed arena, declaration order: the dependent bound, the
+        // Duration weight, the weighted floor.
+        let caps = schema.capacities();
+        assert_eq!(caps.len(), 3);
+        assert_eq!(caps[0].hi, Some(Bound::TargetField(Grid::POOL_SUPPLY)));
+        assert_eq!(caps[1].weight, Weight::DurationOf(Grid::DEVICE_BOOKED));
+        assert_eq!((caps[2].lo, caps[2].hi), (1, None));
+        // And through the real boundary: `Db::create` validates the same
+        // descriptor.
+        let dir = crate::common::TempDir::new("macro-capacity-forms");
+        bumbledb::Db::create(dir.path(), Grid).expect("create");
     }
 }
 
@@ -1331,12 +1446,12 @@ mod radix_literals {
     //! Integer literals are rustc's (ruled 2026-07-23, R8): the
     //! `0x`/`0o`/`0b` radix prefixes and `_` separators are accepted
     //! uniformly at every integer position — `bytes<N>` and interval
-    //! widths and window bounds judge their text at the same seam as
+    //! widths and capacity bounds judge their text at the same seam as
     //! selection literals, no position with a private dialect
     //! (`docs/architecture/20-query-ir.md` § integer literals).
 
     use bumbledb::schema::ValidateDescriptor as _;
-    use bumbledb::schema::{IntervalElement, LiteralSet, ValueType};
+    use bumbledb::schema::{Bound, IntervalElement, LiteralSet, ValueType};
     use bumbledb::{Theory as _, Value};
 
     bumbledb::schema! {
@@ -1352,7 +1467,7 @@ mod radix_literals {
         Parent(id) <={0x2..0b100} Task(parent | state == 0o17);
     }
 
-    /// Widths, window bounds, and selection literals all lower through
+    /// Widths, capacity bounds, and selection literals all lower through
     /// the one radix-aware seam, normalized to their numeric values.
     #[test]
     fn every_integer_position_reads_rustc_literals() {
@@ -1369,10 +1484,10 @@ mod radix_literals {
             }
         );
         let schema = descriptor.validate().expect("the declared schema is valid");
-        let window = &schema.windows()[0];
-        assert_eq!((window.lo, window.hi), (2, Some(4)));
+        let cap = &schema.capacities()[0];
+        assert_eq!((cap.lo, cap.hi), (2, Some(Bound::Lit(4))));
         assert_eq!(
-            window.source.selection[..],
+            cap.source.selection[..],
             [(Radix::TASK_STATE, LiteralSet::One(Value::U64(15)))]
         );
     }

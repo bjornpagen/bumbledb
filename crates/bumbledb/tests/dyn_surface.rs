@@ -14,7 +14,7 @@
 //!   facts (str fields minted by the REJECTED transaction included) and
 //!   renders, via public API only, into
 //!   `[{statement id, canonical spelling, kind, offending facts as named
-//!   decoded values}]` — one commit violating a containment and a window
+//!   decoded values}]` — one commit violating a containment and a capacity law
 //!   (one rejection, both cited), one violating an FD (keys preempt the
 //!   statement phase, so an FD violation is always its own rejection).
 
@@ -52,7 +52,7 @@ bumbledb::schema! {
 const NODE_KEY: StatementId = StatementId(0);
 const KIND_KEY: StatementId = StatementId(1);
 const EDGE_DST_CONTAINMENT: StatementId = StatementId(3);
-const OUTDEGREE_WINDOW: StatementId = StatementId(5);
+const OUTDEGREE_CAPACITY: StatementId = StatementId(5);
 
 fn node_row(id: u64, title: &str, kind: KindId) -> Vec<Value> {
     vec![
@@ -278,7 +278,7 @@ fn dyn_point_reads_refuse_malformed_input_and_miss_honestly() {
     .expect("snapshot sweep");
 }
 
-/// One commit violating a containment AND a window: ONE rejection, both
+/// One commit violating a containment AND a capacity law: ONE rejection, both
 /// cited (the statement phase is scan-complete), every offending fact
 /// decoded — including the parent node whose `title` was interned BY the
 /// rejected transaction (the provisional-id case that forces decode at
@@ -316,9 +316,9 @@ fn a_rejection_renders_statement_spelling_kind_and_decoded_facts() {
                     statement: EDGE_DST_CONTAINMENT,
                     ..
                 },
-                Violation::Cardinality {
-                    statement: OUTDEGREE_WINDOW,
-                    count: 3,
+                Violation::Capacity {
+                    statement: OUTDEGREE_CAPACITY,
+                    measure: 3,
                     ..
                 }
             ]
@@ -348,10 +348,10 @@ fn a_rejection_renders_statement_spelling_kind_and_decoded_facts() {
         rendered[0].facts[0].fields[1],
         ("dst".into(), Value::U64(9999))
     );
-    assert_eq!(rendered[1].statement, OUTDEGREE_WINDOW);
-    assert_eq!(rendered[1].kind, StatementKind::Cardinality);
+    assert_eq!(rendered[1].statement, OUTDEGREE_CAPACITY);
+    assert_eq!(rendered[1].kind, StatementKind::Capacity);
     assert_eq!(rendered[1].spelling, "Node(id) <={0..2} Edge(src)");
-    assert_eq!(rendered[1].count, Some(3));
+    assert_eq!(rendered[1].measure, Some(3));
     assert_eq!(rendered[1].facts[0].relation.as_ref(), "Node");
     assert_eq!(
         rendered[1].facts[0].fields[1],
@@ -423,7 +423,7 @@ fn the_manifest_names_every_statement_in_canonical_spelling() {
         (StatementKind::Containment, "Edge(src) <= Node(id)"),
         (StatementKind::Containment, "Edge(dst) <= Node(id)"),
         (StatementKind::Containment, "Node(kind) <= Kind(id)"),
-        (StatementKind::Cardinality, "Node(id) <={0..2} Edge(src)"),
+        (StatementKind::Capacity, "Node(id) <={0..2} Edge(src)"),
     ];
     for (idx, (kind, spelling)) in expect.into_iter().enumerate() {
         assert_eq!(
