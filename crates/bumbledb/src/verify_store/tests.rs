@@ -1785,6 +1785,75 @@ fn a_desynced_weight_slot_is_convicted_never_repaired() {
     }
 }
 
+/// A hostile `R` edge under the weighted statement embedding a FOREIGN
+/// source relation (Pool, not Device): the fetch-baseline measure walk
+/// must refuse it as typed corruption — never slice the fetched fact
+/// with the DECLARED source layout (the panic class this guards) — so
+/// the sweep's verdict is the R pass's own conviction, and the F pass's
+/// capacity judgment swallows the `Corruption` (convict-never-panic:
+/// the R pass owns the edge).
+#[test]
+fn a_foreign_relation_capacity_edge_is_convicted_never_a_panic() {
+    let (_dir, db) = weighted_fixture("verify-weight-foreign-edge");
+    let child_key = encode_u64(1);
+    let r = key(|b| keys::reverse_key(b, W_CAPACITY, &child_key, W_POOL, 0));
+    raw_write(&db, |txn| {
+        let data = txn.env().data();
+        data.put(txn.raw_mut(), &r, &[])
+            .expect("plant foreign-relation edge");
+    });
+    assert_eq!(
+        db.verify_store().expect("verify").findings,
+        vec![StoreFinding::Malformed {
+            key: r.into(),
+            what: "R key source relation",
+        }]
+    );
+}
+
+/// A capacity edge naming a WRONG-WIDTH source fact (16 raw bytes
+/// planted under Device's 24-byte layout): the fetch-baseline walk must
+/// refuse it as typed corruption before slicing the weight field. The F
+/// pass convicts the planted width itself, the counters convict the raw
+/// row's tallies, and the R pass stays silent — a wrong-width fact is
+/// already F-convicted (`reverse.rs`'s own discipline) — so no capacity
+/// finding and, above all, no panic.
+#[test]
+fn a_wrong_width_capacity_child_is_convicted_never_a_panic() {
+    let (_dir, db) = weighted_fixture("verify-weight-wrong-width-child");
+    let child_key = encode_u64(1);
+    let f = key(|b| keys::fact_key(b, W_DEVICE, 77));
+    let r = key(|b| keys::reverse_key(b, W_CAPACITY, &child_key, W_DEVICE, 77));
+    // Pool-shaped bytes (16) where Device's layout says 24.
+    let planted: Vec<u8> = [encode_u64(1), encode_u64(60)].concat();
+    raw_write(&db, |txn| {
+        let data = txn.env().data();
+        data.put(txn.raw_mut(), &f, &planted)
+            .expect("plant wrong-width fact");
+        data.put(txn.raw_mut(), &r, &[])
+            .expect("plant its capacity edge");
+    });
+    assert_eq!(
+        db.verify_store().expect("verify").findings,
+        vec![
+            StoreFinding::Malformed {
+                key: f.into(),
+                what: "F fact width",
+            },
+            StoreFinding::RowCountDesync {
+                relation: W_DEVICE,
+                stored: 1,
+                counted: 2,
+            },
+            StoreFinding::RowIdHighWaterLow {
+                relation: W_DEVICE,
+                stored: 1,
+                max_row_id: 77,
+            },
+        ]
+    );
+}
+
 // ---------- interval<E, w> at rest: the Q2 bound is F coherence ----------
 
 /// FixedLane(kind bool, lane interval<u64, 5>) — keyless, so the F value

@@ -1292,12 +1292,32 @@ impl<'a> Checker<'a> {
                 }
                 // The fetch-per-child baseline: one `F` get per walked
                 // edge — the R key names the child (source_rel, row).
+                // The embedded relation and the fetched width are trust
+                // checks, not redundancy: the walk is about to slice the
+                // child with the DECLARED source layout, so a hostile
+                // edge embedding a foreign relation — or naming a
+                // wrong-width fact — is typed corruption here, never a
+                // panic (the sweeper's R pass convicts the same shapes
+                // offline; the F pass swallows the Corruption).
                 let Some((_, _, source_rel, source_row)) = keys::parse_reverse_key(k) else {
                     return Err(Error::Corruption(CorruptionError::MalformedValue(
                         "R capacity key shape",
                     )));
                 };
+                if source_rel != statement.source.relation {
+                    return Err(Error::Corruption(CorruptionError::MalformedValue(
+                        "R capacity key source relation",
+                    )));
+                }
                 let child = fact_by_row(self.data, self.txn, source_rel, source_row)?;
+                if child.len() != layout.fact_width() {
+                    return Err(Error::Corruption(CorruptionError::WrongFactWidth {
+                        relation: source_rel,
+                        row_id: source_row,
+                        expected: layout.fact_width(),
+                        actual: child.len(),
+                    }));
+                }
                 child_weight(statement, layout, child)?
             };
             measure += u128::from(weight);
