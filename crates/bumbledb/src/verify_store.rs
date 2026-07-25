@@ -336,13 +336,17 @@ impl<S> Db<S> {
             max_fresh: BTreeMap::new(),
             referenced_interns: BTreeSet::new(),
         };
-        facts::sweep(&mut sweep)?;
-        membership::sweep(&mut sweep)?;
-        determinants::sweep(&mut sweep)?;
-        reverse::sweep(&mut sweep)?;
-        marks::sweep(&mut sweep)?;
-        counters::sweep(&mut sweep)?;
-        fresh::sweep(&mut sweep)?;
+        let mut store_span =
+            crate::obs::span(crate::obs::names::VERIFY_STORE, crate::obs::Category::Storage);
+        // One span per namespace pass, each timed and charged the findings
+        // it raised — pass granularity, the per-entry cursor stays unspanned.
+        sweep.pass(crate::obs::names::VERIFY_FACTS, facts::sweep)?;
+        sweep.pass(crate::obs::names::VERIFY_MEMBERSHIP, membership::sweep)?;
+        sweep.pass(crate::obs::names::VERIFY_DETERMINANTS, determinants::sweep)?;
+        sweep.pass(crate::obs::names::VERIFY_REVERSE, reverse::sweep)?;
+        sweep.pass(crate::obs::names::VERIFY_MARKS, marks::sweep)?;
+        sweep.pass(crate::obs::names::VERIFY_COUNTERS, counters::sweep)?;
+        sweep.pass(crate::obs::names::VERIFY_FRESH, fresh::sweep)?;
         // The descriptor pass: a persisted schema descriptor must hash to
         // the stored fingerprint — they are one value twice
         // (`docs/architecture/50-storage.md` § the `_meta` block). An
@@ -359,7 +363,16 @@ impl<S> Db<S> {
                 });
             }
         }
-        let dangling_intern_ids = dict_stat::dangling(&mut sweep)?;
+        let dangling_intern_ids = {
+            let mut span =
+                crate::obs::span(crate::obs::names::VERIFY_DICT, crate::obs::Category::Storage);
+            let before = sweep.findings.len();
+            let dangling = dict_stat::dangling(&mut sweep)?;
+            span.set_args((sweep.findings.len() - before) as u64, 0);
+            dangling
+        };
+        store_span.set_args(sweep.findings.len() as u64, 0);
+        store_span.end();
         Ok(StoreReport {
             findings: sweep.findings,
             dangling_intern_ids,
@@ -414,6 +427,22 @@ fn namespace<'txn>(
 impl<'a> Sweep<'a, '_> {
     fn push(&mut self, finding: StoreFinding) {
         self.findings.push(finding);
+    }
+
+    /// Runs one namespace sweep inside its own `obs` span, charging the
+    /// span `a0` the findings the pass raised (pass granularity — the
+    /// per-entry cursor inside `f` is never spanned). Inert when the
+    /// `trace` feature is off.
+    fn pass(
+        &mut self,
+        name: &'static str,
+        f: impl FnOnce(&mut Self) -> Result<()>,
+    ) -> Result<()> {
+        let before = self.findings.len();
+        let mut span = crate::obs::span(name, crate::obs::Category::Storage);
+        f(self)?;
+        span.set_args((self.findings.len() - before) as u64, 0);
+        Ok(())
     }
 
     fn malformed(&mut self, key: &[u8], what: &'static str) {

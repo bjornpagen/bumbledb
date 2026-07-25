@@ -255,6 +255,32 @@ pub mod names {
     /// One `Db::write`, closure plus commit. (1 committed / 0 aborted, -)
     pub const WRITE_TXN: &str = "write_txn";
 
+    // Verification path (`verify_store.rs`): the O(store) integrity sweep,
+    // formerly wholly dark. One outer span and one span per namespace
+    // pass — pass granularity, never a span per swept entry — each
+    // carrying the findings it raised, so a desync localizes to its pass.
+
+    /// The whole `Db::verify_store` sweep. (findings raised, -)
+    pub const VERIFY_STORE: &str = "verify_store";
+    /// The `F` (fact) namespace pass, plus the `S`-counter reconciliation
+    /// inputs it tallies. (findings raised, -)
+    pub const VERIFY_FACTS: &str = "verify_facts";
+    /// The `M` (membership/idempotence) namespace pass. (findings, -)
+    pub const VERIFY_MEMBERSHIP: &str = "verify_membership";
+    /// The `U` (determinant) namespace pass, incl. pointwise
+    /// disjointness. (findings, -)
+    pub const VERIFY_DETERMINANTS: &str = "verify_determinants";
+    /// The `R` (reverse-edge) namespace pass. (findings, -)
+    pub const VERIFY_REVERSE: &str = "verify_reverse";
+    /// The `Q` (fresh marks) namespace pass. (findings, -)
+    pub const VERIFY_MARKS: &str = "verify_marks";
+    /// The `S`-counter-vs-`F`-scan reconciliation pass. (findings, -)
+    pub const VERIFY_COUNTERS: &str = "verify_counters";
+    /// The fresh-field ratchet-law pass. (findings, -)
+    pub const VERIFY_FRESH: &str = "verify_fresh";
+    /// The dictionary liveness / dangling-id statistic pass. (findings, -)
+    pub const VERIFY_DICT: &str = "verify_dict";
+
     // Harness (docs/architecture/60-validation.md, 17): tool overhead, honestly visible
     // inside the same trace, separated by tid at export.
 
