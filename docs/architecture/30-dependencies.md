@@ -310,8 +310,9 @@ seals the statement's plan handle (the statement's resolved target key), and
 the commit pipeline runs exactly the plan the calculus prices
 (`lean/Bumbledb/Oracle.lean: capacity_plan_decides`):
 per touched parent one keyed parent probe and one child-group measure walk —
-the weight read from the reverse-index value slot, early exit sound under
-monotone non-negative sums. The touched set is the delta-restriction
+the weight read per the C17 measured choice (the shipping baseline fetches
+each walked child's fact; the armed alternative reads the reverse-index value
+slot), early exit sound under monotone non-negative sums. The touched set is the delta-restriction
 theorem's (`lean/Bumbledb/Txn/DeltaRestriction.lean: touchedParents` — which
 already covers dependent bounds: a bound-field update is remove+add of the
 target row, and each ψ-satisfying half marks the same touched key),
@@ -735,8 +736,9 @@ untouched by it. The phases:
   holder, no obligation: capacity statements never manufacture parents),
   any dependent bound resolves from the parent's row already in hand, then
   one ordered walk of the statement's `R` bucket SUMS the child group's
-  weights from the entries' value slots (u128 accumulator; unit statements
-  sum 1s — `lean/Bumbledb/Oracle.lean: capacity_plan_decides` — the walk's
+  weights (u128 accumulator; unit statements sum 1s; weights read per the
+  C17 arm — fetch-per-child the shipping baseline, the value slot armed —
+  `lean/Bumbledb/Oracle.lean: capacity_plan_decides` — the walk's
   measure verdict IS the delta-restricted check, early exit sound under
   non-negative weights: a ceiling walk exits at sum > hi, a floor walk at
   sum ≥ lo; a closed child set sums its ≤256 axioms instead, exactly the

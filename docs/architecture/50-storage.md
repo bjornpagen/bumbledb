@@ -65,9 +65,10 @@ M | relation_id | fact_hash         -> row_id         membership        (reader:
 U | relation_id | statement | key   -> row_id         FD determinants         (reader: functionality checks — put-conflict and neighbor probes —
                                                       key-probe lookups, WriteTx key reads, coverage walks)
 R | statement | key | source_rel | source_row -> () | weight_u64   statement-scoped edges  (readers: target-side containment checks on delete/shrink;
-                                                      the capacity judgment's child-group measure walk — a
-                                                      WEIGHTED capacity statement's edges carry the child's
-                                                      u64 weight in the value slot, statement-scoped)
+                                                      the capacity judgment's child-group measure walk — the
+                                                      weighted value-slot arm is statement-scoped and armed
+                                                      behind the C17 measured choice; the shipping baseline
+                                                      writes empty values and fetches each child's weight)
 Q | relation_id | field_id          -> next_u64       fresh sequences  (readers: alloc, and commit's row-id
                                                       assignment on a fresh-keyed relation — the one id
                                                       allocator, ruled 2026-07-23, R16, § below; the ratchet law:
@@ -192,14 +193,19 @@ facts, never interned, so the key hash carries no type tag: forward
   (reader: `check_capacities`; the edges exist for closed TARGETS too,
   where they are the measure's only index — unlike a closed-target containment,
   whose member test needs none). Containment and unit-weight capacity edges
-  keep the empty value; a WEIGHTED capacity statement's edges carry the
-  child's u64 weight (LE) in the value slot — **statement-scoped** (ruled
-  2026-07-24, C17), paid once at write time so the judge reads the walk it
-  already does. Readers dispatch on the statement's declared weight, never on
-  value length — a width disagreeing with the declaration is corruption, not
-  a fallback (per the measured-choice half of C17, the slot arm lands benched
-  against fetch-per-child on the power-budget lane, the winner's number
-  recorded in the code).
+  keep the empty value; under the value-slot arm a WEIGHTED capacity
+  statement's edges carry the child's u64 weight (LE) in the value slot —
+  **statement-scoped** (ruled 2026-07-24, C17), paid once at write time so
+  the judge reads the walk it already does. Both C17 arms live behind the one
+  `CAPACITY_WEIGHT_SLOT` constant (`storage/commit/judgment.rs`), and the
+  SHIPPING baseline is fetch-per-child: weighted edges keep the empty value
+  and the measure walk fetches each walked child's fact for its weight. The
+  deciding bench (the power-budget lane) is deferred by owner directive
+  (2026-07-24); when it runs, the winner lands with its number beside the
+  constant and the loser + flag are deleted — the owed C17 measurement
+  (`TODO.md`). Readers dispatch on the statement's declared weight plus the
+  arm, never on value length — a width disagreeing with the declaration is
+  corruption, not a fallback.
 - The `statement` component of every `U` and `R` key is always the
   fingerprint-pinned `StatementId`. Validation-minted `KeyId` and
   `ContainmentId` witnesses exist only in the sealed in-memory schema and never
@@ -235,9 +241,11 @@ facts, never interned, so the key hash carries no type tag: forward
   `S` counters all decode wrong under the merged mint. Version 7 is the
   capacity cutover (ruled 2026-07-24): the canonical schema encoding moved
   (the weight descriptor, dependent bounds, the re-minted statement-form tag)
-  and the `R` namespace gained the weighted value-slot arm, so every v6
-  fingerprint and every weighted-statement `R` entry decodes wrong — one bump
-  covers both, and every pre-cutover store refuses to open on every lane.
+  and the `R` namespace gained the weighted value-slot arm (armed behind the
+  C17 measured choice; the shipping baseline writes empty values), so every
+  v6 fingerprint decodes wrong and a weighted-statement `R` entry has no v6
+  reading at all — one bump covers both, and every pre-cutover store refuses
+  to open on every lane.
 - **A half-created store is not corruption** (ruled 2026-07-23, R18). Before
   those checks can run, open classifies the meta block itself — one
   classification, shared by every constructor, never the same branch
@@ -379,8 +387,10 @@ variant agreement.
      is nonempty; a closed parent answers from the compiled member set),
      resolves any dependent bound from the parent's row already in hand, then
      MEASURES the child group by one ordered walk of the statement's `R`
-     bucket summing value-slot weights in u128 (unit statements sum 1s),
-     stopped as soon as the verdict is decided — sound early exit because
+     bucket summing child weights in u128 (unit statements sum 1s; weights
+     read per the C17 arm — the shipping fetch-per-child baseline fetches
+     each walked child's fact, the armed value-slot alternative reads the
+     entries' value slots), stopped as soon as the verdict is decided — sound early exit because
      non-negative weights make the running sum monotone: a ceiling walk exits
      at sum > hi, a floor walk at sum ≥ lo
      (`lean/Bumbledb/Oracle.lean: capacity_plan_decides`,
@@ -849,8 +859,9 @@ design — recorded so nobody re-derives it:
 - **Several `_data` entries per fact by design**: fact (`F`) + membership hash
   (`M`) + one FD determinant (`U`) per key + one reverse edge (`R`) per satisfied
   containment direction and per capacity statement whose φ the fact satisfies
-  (a weighted statement's edge additionally carries one u64 in the value slot
-  — the write-time rent for the measure walk). This is
+  (under the armed C17 value-slot arm a weighted statement's edge additionally
+  carries one u64 in the value slot — the write-time rent for the measure
+  walk; the shipping fetch-per-child baseline writes empty values). This is
   deliberate rent for O(log n) commit-time judgment checks and stays.
 - **16 KB pages** on Apple Silicon (LMDB uses the OS page size) — chunkier
   B-tree overhead than SQLite's 4 KB pages with varint-packed rows.

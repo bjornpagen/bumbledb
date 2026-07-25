@@ -10,7 +10,8 @@ schema, the host-gate census); the notation verdicts (5–6) recorded
 2026-07-20 from the destructure-060 owner ruling; verdicts 7–14 recorded
 2026-07-23 from the audit rulings (`audit-2026-07/RULINGS.md`, findings in
 `audit-2026-07/findings/`); verdicts 15–16 recorded 2026-07-24 from the
-capacity rulings (`docs/design/capacity-laws.md` §8 ruling 4 and §8b C19).
+capacity rulings (`docs/design/capacity-laws.md` §8 ruling 4 and §8b C19);
+verdict 17 recorded 2026-07-25 at the capacity campaign close.
 
 ## Verdicts
 
@@ -226,6 +227,39 @@ capacity rulings (`docs/design/capacity-laws.md` §8 ruling 4 and §8b C19).
   aggregate rather than a window. Deliberately unbuilt: no shape ships
   before a host demands it.
 - **TRIGGER**: a real host asking for a balance constraint.
+
+### 17. Capacity laws (the weighted aggregate containment) — RULED AND ADOPTED, ships as 0.8.0 (ruled 2026-07-24, landed 2026-07-25)
+- **The statement.** `Target <=[w]{lo..hi} Source` — the cardinality window
+  died into the aggregate containment: per ψ-selected target fact the
+  group's measure (Σ weight over deduplicated φ-selected source facts) lies
+  in the window; absent bracket = unit weight, so the `<={lo..hi}` count
+  utterance survived character-for-character as the unit instance. Weights
+  are `[field]` / `[Duration(field)]` — calendar capacity rides the R5
+  machinery free; dependent bounds read the hi slot from the target row
+  (C1/C6); path weights refuse typed naming the pinned-column composition
+  idiom (§8 ruling 6). The design is `docs/design/capacity-laws.md`
+  (§8 rulings 1–6, §8b C1–C19); the impact dossier is
+  `docs/design/capacity-cutover.md` — both stamped LANDED at close.
+- **The hard cutover, executed:** FORMAT_VERSION 7 refuses every pre-cutover
+  store on every open lane; the fingerprint mints statement-form tag 4 under
+  the v5 encoding label (C5 — tag 3 never reissues) so every schema
+  fingerprint moved; the conformance corpus re-baselined whole
+  (`judgment-capacity-*`, C8) and the generators mint the surface day one
+  (C13); the word "cardinality" survives nowhere in the mechanism (§8
+  ruling 5) — the zero-trace gate ran green at campaign close.
+- **The owed C17 measurement (bench deferred by owner directive,
+  2026-07-24):** slot-vs-fetch is a measured choice, undecided. Both
+  `measure_children` arms live behind the one `CAPACITY_WEIGHT_SLOT`
+  constant (`crates/bumbledb/src/storage/commit/judgment.rs`);
+  fetch-per-child is the shipping baseline. On bench resume the
+  power-budget lane decides: the winner lands with its number beside the
+  constant, the loser and the flag are deleted (C17's own law). The slot
+  arm carries one recorded corner needing a ruling only if it wins: a ray
+  Duration weight refuses at WRITE time — strictly stronger than C10's
+  judge-time refusal, visible only for a ray child under an absent parent
+  (documented at the constant).
+- **Reopen triggers:** none here — verdicts 15 (Min/Max in law position)
+  and 16 (balance laws) carry the family's recorded triggers.
 
 ## The host-fold register (the census's residual unspellables)
 

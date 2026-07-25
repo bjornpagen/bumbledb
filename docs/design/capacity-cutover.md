@@ -1,7 +1,38 @@
 # Capacity cutover — the impact dossier
 
-Status: IMPACT MAP — companion to `capacity-laws.md` (the settled design; its six rulings
-are assumed, not re-argued). This is the exhaustive change map the spec flush and the code
+STATUS: LANDED (2026-07-25) — executed whole by the capacity campaign
+(code + proofs + gate `b2584bcb..df7c25e2`; ships as 0.8.0). Ground-truth
+deltas recorded at close, each per the design's intent:
+
+- **§ 2.3's weighted roster landed as SEVEN corpus cases + two recorded
+  out-of-lane homes** (the dossier's ~9): `capacity-closed-extension-sum-refuted`
+  resolved per its own caveat — the both-sides-closed weighted refutation is a
+  VALIDATION refusal (a refused schema never reaches a commit verdict), covered by
+  `rejects_a_weighted_closed_pair_the_axioms_refute_under_a_dependent_bound`
+  (`crates/bumbledb/src/schema/tests/reject.rs`); and
+  `capacity-weight-on-fresh-keyed-relation` cannot spell a three-way case (the
+  naive lane cannot utter `Generation::Fresh`), covered engine-side by the
+  marks.rs "R16 interplay" unit family. Both are recorded in the conformance
+  README and the roster doc comment.
+- **§ 7 item 17** resolved: theorygen draws weight and hi-slot bound free and
+  the querygen ledger gained the capacity tag-budget entry (C13) — the
+  hand-fixture + conformance + generator-censused coverage is the recorded
+  answer; **§ 7 item 18** resolved by widening: both differential twins carry
+  the witnessed measure whole (C14).
+- **C17 slot-vs-fetch is DEFERRED with the bench phase** (owner directive,
+  2026-07-24): both arms stand behind `CAPACITY_WEIGHT_SLOT`
+  (`storage/commit/judgment.rs`), fetch-per-child the shipping baseline; the
+  measurement, the loser's deletion, and the slot arm's write-time ray-corner
+  ruling (strictly stronger than C10's judge-time refusal — documented at the
+  constant) are owed on bench resume, with the § 5 lane numbers and the
+  windowed/lawful perf re-pins (`TODO.md`).
+- **C10 ray-Duration refusal parity engine-vs-naive is designed but
+  untested** — the naive twin panics fixture-bug-loud on a ray reaching a
+  Duration law and no lane seeds rays; one differential fixture is owed once
+  the engine's refusal shape is pinned stable.
+
+Original dossier text follows. IMPACT MAP — companion to `capacity-laws.md`
+(the settled design; its six rulings are assumed, not re-argued). This is the exhaustive change map the spec flush and the code
 campaign execute from: every site that moves, stated as the before/after pair with its
 file:line or doc §, plus the seams the design left underdetermined (§ 7). The mentality is
 the owner's standing policy verbatim: **hard cutover, zero backwards compat** — nothing is

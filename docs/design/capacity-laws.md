@@ -1,6 +1,18 @@
 # Capacity laws: the cardinality window dies into the aggregate containment
 
-Status: DESIGN — owner review pending. Drafted 2026-07-24 from the weighted-capacity
+STATUS: LANDED (2026-07-25) — the campaign executed whole and ships as 0.8.0:
+design + rulings `4edd773a..355a2ed2`, spec flush `dc272208..caefe16c`, code +
+proofs + gate `b2584bcb..df7c25e2` (2026-07-24/25). §8 rulings 1–6 and §8b
+C1–C19 landed as ruled, with ONE open tail: C17's slot-vs-fetch measured
+choice rides the bench phase, which the owner deferred at close (2026-07-24)
+— both `measure_children` arms stand behind the one `CAPACITY_WEIGHT_SLOT`
+constant (`crates/bumbledb/src/storage/commit/judgment.rs`), fetch-per-child
+ships as the baseline, and the winner-lands/loser-deletes measurement is owed
+on bench resume (`TODO.md`; the §9 step-4 bench re-pins and the two weighted
+lanes' numbers are owed with it — no capacity perf number is claimed
+anywhere). The §8b zero-trace gate ran GREEN at close over the full scope.
+Ground-truth deltas from execution are stamped on the companion dossier
+(`capacity-cutover.md`). Drafted 2026-07-24 from the weighted-capacity
 discussion. This document specifies a deletion and a generalization: the `<={lo..hi}`
 cardinality-window mechanism is removed root and branch, and schema capacity laws are
 restated as **aggregate containments** — the query aggregate vocabulary appearing in law

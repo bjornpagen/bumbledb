@@ -26,6 +26,26 @@
   are landed — min-of-3 per store kind, the like-for-like NOSYNC
   ephemeral pairing (never min-merge them with the night's ephemeral
   rows; the merge refuses).
+- **The capacity bench phase (deferred whole by owner directive, 2026-07-24,
+  recorded at the 0.8.0 close):** nothing is claimed before the measured run
+  (the lawful measurement stance). Owed on resume: (a) the **C17
+  slot-vs-fetch measurement** on the power-budget lane — both
+  `measure_children` arms stand behind the one `CAPACITY_WEIGHT_SLOT`
+  constant (`crates/bumbledb/src/storage/commit/judgment.rs`),
+  fetch-per-child the shipping baseline; the winner lands with its number
+  beside the constant and the loser + flag are DELETED (C17's own law), and
+  IF the slot arm wins, its write-time ray-Duration corner needs one ruling
+  (strictly stronger than C10's judge-time refusal; documented at the
+  constant); (b) the **power-budget and calendar lanes' numbers** — both
+  lanes landed oracle-gated and unrun; (c) the **windowed/lawful perf
+  re-pins under format v7** — old pins delete, ALL graphs re-key (design §9
+  step 4 / dossier §8); (d) the 61-bench-lanes rows for the two capacity
+  lanes ride the same run. No doc cites a capacity bench number until then.
+- **C10 ray-Duration verdict parity, engine vs naive (flagged at the 0.8.0
+  close):** the naive twin panics loudly on a ray reaching a Duration law
+  (the fixture-bug posture) and no lane seeds rays, so the typed-refusal
+  parity is designed but untested — one differential fixture owed once the
+  engine's refusal shape is pinned stable.
 - **The audit's three deferred findings** (stamps in
   `audit-2026-07/findings/`): 014 (the leaf still runs per parent —
   batch-of-1 `run_node` on fanout-1 lookups), 044 (the forced-map
@@ -36,6 +56,20 @@
   denotation keeps the conformance fence (RULINGS.md § R5).
 
 ## Everything else: shipped
+
+**The capacity 0.8.0 campaign closed (2026-07-25):** the cardinality window
+died into the capacity statement (`Target <=[w]{lo..hi} Source` — absent
+bracket = unit weight, the count utterance surviving character-for-character;
+design `docs/design/capacity-laws.md` §8 + §8b, both design docs stamped
+LANDED with the ground-truth deltas). The hard cutover executed whole: format
+v7 refuses every pre-cutover store, the fingerprint mints statement-form tag
+4 under the v5 label (every schema fingerprint moved), the corpus
+re-baselined to `judgment-capacity-*` with 7 weighted cases + 2 recorded
+out-of-lane homes, count.ts died into the one `capacity()` builder, and the
+zero-trace gate ran green over crates/, ts/, lean/, docs/architecture,
+docs/research, scripts/. Staged as `v0.8.0` (tag + release commit; both
+publishes remain owner ceremony, `ts/PUBLISHING.md`). The bench phase is the
+Open item above.
 
 **The 2026-07 deep audit closed at campaign end (2026-07-24):** 162
 findings — 158 fixed, 3 deferred with stamped reasons, 1 superseded by
