@@ -2,7 +2,7 @@
 
 This chapter owns every invariant the engine enforces on committed states. There are
 exactly **three statement forms** — the two original judgments (functionality,
-containment) and the one extension form (the cardinality window) — all
+containment) and the one extension form (the capacity statement) — all
 statements *about queries*, and nothing else:
 no constraint kinds, no modes, no triggers, no deferral. The words *unique key*,
 *referential constraint*, *primary key*, *check constraint*, *exclusion constraint*, *cascade*,
@@ -57,7 +57,7 @@ were all rejected); what changed is that the hand taxonomy stopped being an
 unchecked claim. The ONE shared lowering (`SchemaSpec::descriptor`, the
 macro's own expansion path) verifies newtype coherence across every
 statement's paired faces, positionwise over the two projections —
-containment, `==`, and cardinality-window target pairs alike, ψ-selected
+containment, `==`, and capacity target pairs alike, ψ-selected
 faces included (selection never changes the pairing). The rule's three
 cases: labeled pairs only with the SAME label; bare pairs only with bare
 (so a deliberately-bare pointer in no paired-face statement stays legal);
@@ -173,11 +173,11 @@ prompt. Two mechanisms, both public:
   nothing, so a post-hoc decode would misread a genuine rejection as a dangling
   id. The cited relation is derived from the violated statement: a key's own
   relation, a containment's SOURCE (the judgment speaks about sources), a
-  window's TARGET (the convicted parent). The allocation is acceptable at
+  capacity statement's TARGET (the convicted parent). The allocation is acceptable at
   rejection time; the accept path allocates nothing new.
 - **`render_rejection(descriptor, violations)`** (`schema::render`) lowers the
   whole set to `[{statement id, kind tag, canonical spelling, direction?,
-  count?, offending facts as (relation name, [(field name, value)])}]` — pure
+  measure?, offending facts as (relation name, [(field name, value)])}]` — pure
   over the descriptor (a foreign host renders with its cached manifest-side
   descriptor, no database handle), spelling through the ONE canonical renderer
   (`render_declared`; the renderer is a bijection on legal statements, so every
@@ -186,49 +186,119 @@ prompt. Two mechanisms, both public:
   the violations value in hand.
 
 Pinned by `crates/bumbledb/tests/dyn_surface.rs`: one commit violating a
-containment and a window renders both citations (the statement phase is
+containment and a capacity statement renders both citations (the statement phase is
 scan-complete), a second violating an FD renders the key form (key violations
 preempt the statement phase — `rejection_never_mixes` — so no single commit can
 exhibit all three), and the provisional-intern case decodes.
 
 ## The extension form
 
-**Cardinality window.** `B(Y | ψ) <={lo..hi} A(X | φ)` — B-family, target-left
-(the left side is the window's target): per selected target fact, the count of
-selected source facts sharing its projected tuple lies in the
-window (`lean/Bumbledb/Cardinality.lean: CardinalityWindow`;
-`lean/Bumbledb/Schema.lean: Statement.cardinality`). The window vocabulary is
-closed under the **canonical-utterance law** (`70-api.md` records the law): the
-legal spellings are `{n}` — THE exact-count spelling, `{0}` the exclusion —
-`{lo..hi}` with lo < hi, `{lo..*}` floors (lo ≥ 2), and `{0..hi}` ceilings;
+**Capacity statement.** `B(Y | ψ) <=[w]{lo..hi} A(X | φ)` — B-family,
+target-left (the left side is the statement's target): per selected target
+fact, the **measure** of the selected source facts sharing its projected tuple
+— Σ weight over the deduplicated group — lies in the window
+(`lean/Bumbledb/Capacity.lean: CapacityLaw`;
+`lean/Bumbledb/Schema.lean: Statement.capacity`). The statement is written
+aggregate-first and counting is derived: an absent weight bracket is the unit
+weight (`length = sum ∘ map(const 1)`), so the count utterance `<={lo..hi}`
+survives character-for-character as the unit instance of the general operator
+(ruled 2026-07-24, C1). No aggregate name appears in the notation — the fold
+is always Σweight. The operator family is one completed ladder, each rung the
+same partition law (the target's keys partition the source; the operator
+bounds each class's measure):
+
+```
+B(Y | ψ) ==            A(X | φ)     -- the {1} window
+B(Y | ψ) <=            A(X | φ)     -- existence
+B(Y | ψ) <={lo..hi}    A(X | φ)     -- unit weight: the count instance
+B(Y | ψ) <=[w]{lo..hi} A(X | φ)     -- weighted capacity
+```
+
+Keyed `==` is exactly the `{1}` window (`lean/Bumbledb/Subsumption.lean:
+keyed_eq_unit_window`, `unit_window_containsEq` — the reconstruction returns
+bare mutual inclusion, the key premises staying acceptance's), and a floored
+unit window implies the reverse containment
+(`lean/Bumbledb/Subsumption.lean: window_floor_containment` — which is why
+unit `{1..*}` is banned as a duplicate spelling of `<=`). The upper bound is
+load-bearing, not decorative
+(`lean/Bumbledb/Countermodels.lean: unit_window_two_children`). Where the
+unification stops: existence obligations remain containment's alone —
+capacity statements never manufacture parents
+(`lean/Bumbledb/Capacity.lean: capacity_of_empty_parent`).
+
+**The window vocabulary** is closed under the **canonical-utterance law**
+(`70-api.md` records the law, now per-aggregate where weight-sensitive): the
+legal spellings are `{n}` — THE exact-measure spelling, `{0}` the exclusion —
+`{lo..hi}` with lo < hi, `{lo..*}` floors (unit instance: lo ≥ 2, since unit
+`{1..*}` is the containment respelled — the weighted `<=[w]{1..*}` is legal,
+"positive total" being no existence claim over rows), and `{0..hi}` ceilings;
 each survivor is otherwise unrepresentable. `*` is the only spelling of "no
 upper bound". Every other spelling is an error naming the canonical form —
 grammar-side at expansion, descriptor-side at validation (`{n..n}`/`{0..0}`
-are the exact count respelled; `{hi..lo}` inverted is unsatisfiable,
-`CardinalityInvertedWindow`; `{0..*}` says nothing,
-`lean/Bumbledb/Cardinality.lean: cardinality_zero_star`,
-`CardinalityVacuousWindow` — the default posture is unspelled, so a spelled
-statement always strengthens it; `{1..*}` is the bare containment respelled,
-`CardinalityContainmentWindow`). Windows never manufacture parents —
-existence obligations are containments' alone
-(`lean/Bumbledb/Cardinality.lean: cardinality_of_empty_parent`). The form
-extends, never contradicts, the original vocabulary: a floored window implies the
-reverse containment (`lean/Bumbledb/Subsumption.lean: window_floor_containment` —
-which is why `{1..*}` is banned as a duplicate spelling of `<=`),
-and keyed `==` is exactly the `{1}` window
-(`lean/Bumbledb/Subsumption.lean: keyed_eq_unit_window`,
-`unit_window_containsEq` — the reconstruction returns bare mutual inclusion, the
-key premises staying acceptance's). The upper bound is load-bearing, not
-decorative (`lean/Bumbledb/Countermodels.lean: unit_window_two_children`).
+are the exact measure respelled; `{hi..lo}` inverted is unsatisfiable,
+`CapacityInvertedWindow`; `{0..*}` says nothing,
+`lean/Bumbledb/Capacity.lean: capacity_zero_star`,
+`CapacityVacuousWindow` — the default posture is unspelled, so a spelled
+statement always strengthens it; unit `{1..*}`,
+`CapacityContainmentWindow`). The law's general statement: **a ban is
+canonical-utterance policing when it is weight-independent, and semantic
+deduplication when it is not — the second kind applies per-aggregate** (ruled
+2026-07-24; the containment-respelled ban fires on the unit instance only).
+
+**Weight typing — representation does the enforcement.** `[field]` names a
+u64-encoded position of SOURCE, the measure; a signed encoding is a typed
+refusal — a negative weight would break the polarity scheduler (an insert
+could lower a sum), so the illegal weight is unrepresentable, not checked.
+`[Duration(field)]` is the interval-measure weight (u64 by construction, the
+R5 machinery) — calendar capacity as one schema statement. The weight
+vocabulary is closed at the row: `[field]`, `[Duration(field)]`, absent —
+and the engine's `Weight` is a total sum with an explicit `Unit` member: unit
+is a case, not an absence (ruled 2026-07-24, C4). A ray-valued Duration
+weight or bound at judge time is a typed commit refusal naming the row — a
+ray has no finite measure (ruled 2026-07-24, C10).
+
+**Dependent bounds.** A bound is a non-negative integer literal, `*` (hi
+only), or a field of TARGET's row — **hi slot only** (ruled 2026-07-24, C6:
+inversion with idents becomes unrepresentable at parse; a dependent floor
+has no use case, and the refusal names the ruling). `Pool(id)
+<=[watts]{0..supply} Device(pool)` reads each pool's capacity from its own
+`supply` column; `Duration(field)` bounds by a TARGET interval's measure.
+Bound idents resolve by NAME against the target's full field roster — the
+written projection tuple stays the pure grouping key (ruled 2026-07-24, C1).
+Duration weights pair with Duration-capable bounds; a unit (count) window
+against a Duration bound is a typed validation refusal (ruled 2026-07-24,
+C18).
+
+**Where the weight ladder tops out: composition, not paths** (ruled
+2026-07-24, ruling 6). A weight that lives on a catalog relation
+(`Device.model → Model.watts`) is supported by the algebra composing, never
+by a path in the bracket:
+
+```
+Device(model, watts) <=                   Model(id, watts)   -- watts pinned to the catalog
+Pool(id)             <=[watts]{0..supply} Device(pool)       -- capacity reads the local column
+```
+
+The two-column containment IS the join, stated as a law: a device's watts
+provably equals its model's, at every commit, through the judge that already
+exists. The path spelling `[a.b]` is a typed refusal whose diagnostic names
+this idiom (cookbook recipe 31 works it) — admitting terms into the bracket
+would grow a query evaluator inside the judge and reopen the cached-truth
+drift class. A boundary, not a deferral: no recorded trigger.
 
 The `{0}` exclusion deserves its footnote: it is **denial-flavored but
 satisfaction-only** — "no ψ-selected parent has a φ-selected child" reads like
-a negative constraint, but the judgment is the same count-in-window
-satisfaction check as every window (count = 0, both ends inclusive), over the
-final state, through the same touched-parent plan. No negation enters the
-statement language, no denial constraint class opens, and the decidability
-firewall below is untouched: `{0}` is a window that happens to be small, not a
-new kind of statement.
+a negative constraint, but the judgment is the same measure-in-window
+satisfaction check as every capacity statement (measure = 0, both ends
+inclusive), over the final state, through the same touched-parent plan. No
+negation enters the statement language, no denial constraint class opens, and
+the decidability firewall below is untouched: `{0}` is a window that happens
+to be small, not a new kind of statement. On a WEIGHTED statement `{0}` is a
+*different, weaker* law: "the group's total is zero" admits zero-weight rows.
+The lower-bound footgun, stated loudly: unit-`{1..*}`-shaped intent ("at
+least one child") is containment; `<=[w]{1..*}` ("positive total") admits any
+number of zero-weight rows and is satisfied by one row of weight 1. They are
+different laws — choose by what you mean.
 
 The form's sides are **single atoms, permanently** (the E1 refusal: a join
 inside the judge breaks the linear per-statement cost model — the shape is
@@ -236,14 +306,18 @@ proved uninhabitable at the gate type,
 `lean/Bumbledb/Countermodels.lean: joined_window_form_uninhabitable`).
 
 **The form is accepted at declaration and judged per commit.** Acceptance
-seals the statement's plan handle (the window's resolved target key), and the
-commit pipeline runs exactly the plan the calculus prices
-(`lean/Bumbledb/Oracle.lean: cardinality_plan_decides`):
-per touched parent one keyed parent probe and one child-group walk. The
-touched set is the delta-restriction theorem's
-(`lean/Bumbledb/Txn/DeltaRestriction.lean: touchedParents`),
+seals the statement's plan handle (the statement's resolved target key), and
+the commit pipeline runs exactly the plan the calculus prices
+(`lean/Bumbledb/Oracle.lean: capacity_plan_decides`):
+per touched parent one keyed parent probe and one child-group measure walk —
+the weight read from the reverse-index value slot, early exit sound under
+monotone non-negative sums. The touched set is the delta-restriction
+theorem's (`lean/Bumbledb/Txn/DeltaRestriction.lean: touchedParents` — which
+already covers dependent bounds: a bound-field update is remove+add of the
+target row, and each ψ-satisfying half marks the same touched key),
 and the form's violations join the statement phase's complete citation set
-(§ judged on final states). `Db::verify_store` re-verifies the form
+(§ judged on final states), carrying the witnessed measure.
+`Db::verify_store` re-verifies the form
 globally — the sweeper's half of the division of authority.
 
 **Refused: order marks (plain and ranked).** The `order R(pos) per R(grp)
@@ -269,8 +343,10 @@ type, never as a statement form.
 Dependencies are declared as standalone statements between relation blocks — the
 macro surface is the algebra with ASCII operator images (`⊆` is not a Rust token):
 `->` for FD, `<=` for ⊆ (the subset order *is* an order), `==` for set equality,
-`<={lo..hi}` for the cardinality window (B-family, target-left; `{n}` the
-exact-count spelling, `{lo..*}` the no-ceiling floor),
+`<=[w]{lo..hi}` for the capacity statement (B-family, target-left; absent
+`[w]` = unit weight, the count instance; `[field]` / `[Duration(field)]` the
+measure; `{n}` the exact-measure spelling, `{lo..*}` the no-ceiling floor;
+hi bounds admit TARGET-row fields — the dependent bound),
 `(fields)` for projection, `| field == literal` for selection
 with `| field == {A, B}` the literal-set binding (two or more literals — a
 one-element set is the bare literal, by the canonical-utterance law).
@@ -293,6 +369,7 @@ bumbledb::schema! {
     SavingsTerms(account) -> SavingsTerms;
     Account(holder, active) <= Employment(holder, during);
     Holder(id) <={1..4} Account(holder | kind == {Checking, Savings});
+    Holder(id) <=[Duration(active)]{0..720} Account(holder);
 }
 ```
 
@@ -318,9 +395,9 @@ to statements (`key`, `in`, `union`). **Why it lost:** owner ruling —
 the surface must *be* the mental model; three keywords re-import three SQL concepts
 and hide that they were one. The derivations below are documentation, not syntax.
 **Reverses if:** never — and a future text frontend would lower to statements, not
-around them. (The window's `<={lo..hi}` annotation is not that rejected sugar: it
-is a first-class judgment form with its own denotation
-(`lean/Bumbledb/Cardinality.lean: CardinalityWindow`), not a keyword lowering to
+around them. (The capacity statement's `<=[w]{lo..hi}` annotation is not that
+rejected sugar: it is a first-class judgment form with its own denotation
+(`lean/Bumbledb/Capacity.lean: CapacityLaw`), not a keyword lowering to
 other statements — and its keyword-led ancestor spelling, `in lo..hi per`, is
 deleted vocabulary: the grammar rejects it at expansion naming the canonical
 form, the same funeral the `order` keyword received.)
@@ -329,14 +406,15 @@ form, the same funeral the `order` keyword received.)
 
 **The representation is general; the accepted vocabulary is closed.** A statement is
 accepted only if the checker has an enforcement plan costing **O(log n) per
-delta-touched fact** (amortized; coverage walks below add the touched-window term).
+delta-touched fact** (amortized; coverage walks below add the touched-window
+term, the capacity walk its touched-group term).
 Each accepted form's plan — and its consultation count — is a theorem of the
 order-oracle plan calculus (`lean/Bumbledb/Oracle.lean: acceptance_gate`), and the
 gate itself is one inhabited type: each single-key statement form's case for
 acceptance is its `lean/Bumbledb/Admission.lean: AdmissibleForm` term — denotation,
 executable judge, delta restriction, oracle plan, and creation-quarantine
 compliance, the checklist as a type. Five forms inhabit it (scalar and pointwise
-FD, scalar and coverage IND, the window — every one
+FD, scalar and coverage IND, the capacity statement — every one
 accepted at declaration and judged per commit); a future form enters the vocabulary by
 inhabiting it first, and the E1 joined-window shape is proved uninhabitable on
 the plan field (`lean/Bumbledb/Countermodels.lean: joined_window_form_uninhabitable`).
@@ -382,31 +460,45 @@ Concretely, validation demands:
   **refused v0**: a pointwise judgment against a virtual extension would mix the
   coverage walk with virtual storage, and a constant source's coverage demand has
   no delete-time re-judgment path (*trigger* for lifting: a census sighting).
-- **Cardinality window:** first the **canonical window vocabulary** (the
-  canonical-utterance law's descriptor face — an inverted window is
-  unsatisfiable, `CardinalityInvertedWindow`; `0..*` says nothing,
-  `CardinalityVacuousWindow`; `1..*` is the containment respelled,
-  `CardinalityContainmentWindow` — so a sealed schema holds canonical windows
-  only and the renderer never faces a banned spelling), then the shared side
-  shapes (arity, positional structural
+- **Capacity:** first the **canonical window vocabulary** with its
+  weight-sensitivity law (a ban is canonical-utterance policing when
+  weight-independent, semantic deduplication when not — an inverted literal
+  window is unsatisfiable, `CapacityInvertedWindow`; `0..*` says nothing,
+  `CapacityVacuousWindow`; unit `1..*` is the containment respelled,
+  `CapacityContainmentWindow`, firing on the unit instance ONLY — so a
+  sealed schema holds canonical windows only and the renderer never faces a
+  banned spelling), then **weight typing** (a `[field]` weight must be a
+  u64-encoded SOURCE position — a signed encoding is the typed polarity
+  refusal, `CapacityWeightNotU64`; `[Duration(field)]` requires an interval
+  position, `CapacityWeightNotDuration`; the path spelling `[a.b]` refuses
+  at the spec surface, `WeightPathRefused`, its diagnostic naming the
+  pinned-column idiom), then **dependent-bound typing** (a bound ident must
+  resolve by name to a u64 field of TARGET's row, `CapacityBoundNotU64`; a
+  `Duration(field)` bound to an interval field, `CapacityBoundNotDuration`;
+  hi slot only, ruled 2026-07-24, C6; dimension mixing — a unit window
+  against a Duration bound — refused, ruled 2026-07-24, C18), then the
+  shared side shapes (arity, positional structural
   type equality, the σ rules), then the containment target-key rule **reused
   verbatim** — Y must resolve a declared key of B (`resolve_target_key`, the
   same probe-ability demand; the promised plan is per touched parent one keyed
-  point probe plus one child-group walk,
-  `lean/Bumbledb/Oracle.lean: cardinality_plan_decides`,
-  `window_plan_consultations`) — and the **v0 interval refusal**: window
-  projections carry no interval-typed position, either side
-  (`CardinalityIntervalPosition` — a window counts FACTS per parent, and an
-  interval position would make the count ambiguous between facts and points;
+  point probe plus one child-group measure walk,
+  `lean/Bumbledb/Oracle.lean: capacity_plan_decides`,
+  `capacity_plan_consultations`) — and the **v0 interval refusal, narrowed
+  to projections**: capacity projections carry no interval-typed position,
+  either side (`CapacityIntervalPosition` — intervals enter through the
+  measure argument, never the group key;
   *trigger* for lifting: a sighted counting-over-denotation workload —
-  `lean/Bumbledb/Cardinality.lean` § v0 refusals). Closed-side rules mirror
+  `lean/Bumbledb/Capacity.lean` § v0 refusals). Closed-side rules mirror
   containment's: a closed target compiles the member-set plan through the same
-  key rule (projection = the synthetic id), and a window between constants is
-  decided at validate outright.
+  key rule (projection = the synthetic id; dependent bounds resolve per
+  ground-axiom row at seal time), and a capacity statement between constants
+  is decided at validate outright.
 - **Statements between constants** (both sides closed) are decided at validate
   outright: a declaration the ground axioms refute — a source axiom outside the
   member set, a declared key two axioms collide under, or a parent axiom whose
-  child count falls outside its window — is a schema error, not
+  child-group MEASURE falls outside its window (the refutation sums
+  φ-surviving axiom weights; a dependent bound resolves per parent axiom
+  from the sealed row) — is a schema error, not
   a latent judgment, because a theory whose axioms refute its own statement has no
   model to commit (`lean/Bumbledb/Schema.lean: den_closed_constant` — a closed
   relation denotes the same sealed fact set at every instance).
@@ -424,14 +516,14 @@ discipline of acceptance — an accepted statement is a *measured promise*, exac
 like an accepted optimization (`00-product.md`).
 
 The sealed representation is a sum with homogeneous typed arenas — keys,
-containments, windows.
+containments, capacities.
 `FieldSet` gives each projection canonical set identity (sorted and
 duplicate-free), while `Projection` retains statement order beside that set so
 validation compares identity and execution derives the target-key permutation.
-Validation is the only mint for `KeyId`, `ContainmentId`, and `WindowId`:
+Validation is the only mint for `KeyId`, `ContainmentId`, and `CapacityId`:
 a key witness resolves
 totally through `Schema::key`, a containment witness resolves totally through
-`Schema::containment` (windows through `Schema::window`), and
+`Schema::containment` (capacities through `Schema::capacity`), and
 `Schema::dependents` carries containment witnesses indexed
 by a key witness. The global `StatementId` order survives as a separate sum-typed
 spine; `Schema::statement` parses it into the corresponding borrowed typed arm for
@@ -634,19 +726,23 @@ untouched by it. The phases:
   extension's selected ground axioms — an honest ≤256-element scan on the delete path replaces the
   `R`-prefix probe, since a constant source stored no edges.
 - `==`: both directions, symmetric machinery.
-- Cardinality window: per **touched parent** — every parent key tuple any
+- Capacity: per **touched parent** — every parent key tuple any
   delta child fact projects to (φ-blind, the recorded superset: a non-φ
   fact never changes a group, and wider touched only re-checks more), plus
   the delta's ψ-selected parents themselves
   (`lean/Bumbledb/Txn/DeltaRestriction.lean: touchedParents`) — one keyed
   probe resolves the parent's ψ-selected holder in the final state (no
-  holder, no obligation: windows never manufacture parents), then one
-  ordered walk of the statement's `R` bucket counts the child group
-  (`lean/Bumbledb/Oracle.lean: cardinality_plan_decides` — the walk's
-  length verdict IS the delta-restricted check; a closed child set scans
-  its ≤256 axioms instead, exactly the domain-quantification move). A
-  count outside the window convicts with the statement id and the parent
-  fact's bytes. A floored window may share the containment's probe
+  holder, no obligation: capacity statements never manufacture parents),
+  any dependent bound resolves from the parent's row already in hand, then
+  one ordered walk of the statement's `R` bucket SUMS the child group's
+  weights from the entries' value slots (u128 accumulator; unit statements
+  sum 1s — `lean/Bumbledb/Oracle.lean: capacity_plan_decides` — the walk's
+  measure verdict IS the delta-restricted check, early exit sound under
+  non-negative weights: a ceiling walk exits at sum > hi, a floor walk at
+  sum ≥ lo; a closed child set sums its ≤256 axioms instead, exactly the
+  domain-quantification move). A measure outside the window convicts with
+  the statement id, the parent fact's bytes, and the witnessed measure. A
+  floored unit instance may share the containment's probe
   machinery (`lean/Bumbledb/Subsumption.lean: window_floor_containment`)
   but never skips its own check.
 
@@ -702,8 +798,17 @@ duplicate literal within one binding's set (the set is canonical — sorted,
 duplicate-free); FD with >1 interval position, interval not in
 final position, or determinant width overflow; IND whose target projection matches no key
 of the target (or, with an interval position, no pointwise key carrying it) —
-the same line covering a window's target projection, the rule being one;
-an interval-typed position in a window projection (the v0 refusal above);
+the same line covering a capacity statement's target projection, the rule being one;
+an interval-typed position in a capacity projection (the v0 refusal above —
+intervals enter through the weight bracket, never the group key);
+a signed or otherwise non-u64 weight field (the polarity refusal);
+a path weight `[a.b]` (refused naming the pinned-column composition idiom);
+a `Duration` weight over a non-interval field;
+a bound ident resolving to no field of the TARGET's row, or to a non-u64 one;
+a `Duration` bound over a non-interval field;
+a dependent bound in the lo slot (hi-slot only, ruled 2026-07-24, C6);
+dimension mixing — a unit (count) window bounded by `Duration(field)`
+(ruled 2026-07-24, C18);
 duplicate statements (identical normalized sides and form — write it once), where
 two FDs over one field *set* are duplicates regardless of projection order (the
 order shapes only the determinant, and key resolution is by set) and two
@@ -713,7 +818,7 @@ type-mismatch case, called out because it is the one migration authors will hit)
 an interval position on a containment with a closed side (the v0 refusal above);
 a closed-target projection that is not the synthetic id (no key matches — the
 handle is the one probe-able identity); a statement between constants that the
-ground axioms refute (containment and window forms alike).
+ground axioms refute (containment and capacity forms alike).
 FD-with-selection and non-key FD forms are not rejected here — they are
 **unrepresentable**: the descriptor cannot carry them, and the macro grammar
 rejects the utterance (`70-api.md`).
