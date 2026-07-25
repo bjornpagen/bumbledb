@@ -116,11 +116,16 @@ bumbledb::schema! {
 - **Dependency statements:** `Rel(fields...) -> Rel;` (FD, key form only),
   `A(fields... | field == Literal, ...) <= B(fields...);` (containment),
   `==` for bidirectional,
-  and `B(fields... | ...) <={lo..hi} A(fields... | ...);` (the cardinality
-  window — B-family, target-left: the LEFT side is the window's target, the
-  per-group parent; the right side is counted. Bounds are non-negative
-  integers, `*` for no ceiling; `{n}` is THE exact-count spelling and `{0}`
-  the exclusion — the full spelling law is below).
+  and `B(fields... | ...) <=[weight]{lo..hi} A(fields... | ...);` (the
+  capacity statement — B-family, target-left: the LEFT side is the
+  statement's target, the per-group parent; the right side is weighed. The
+  optional `[field]` / `[Duration(field)]` weight sits between `<=` and the
+  brace; absent = unit weight, the count instance spelled exactly as before.
+  Bounds are non-negative integer literals, `*` for no ceiling, or — hi slot
+  only (ruled 2026-07-24, C6) — u64/Duration fields of the TARGET row,
+  resolved by name against its full roster; `{n}` is THE exact-measure
+  spelling and `{0}` the exclusion — the full spelling law is below,
+  per-aggregate where weight-sensitive).
   Projection lists are positional between the two sides;
   selections follow `|` as comma-separated `field == literal` pairs, or
   `field == {A, B}` for a literal-set binding (read disjunctively; a
@@ -141,28 +146,41 @@ bumbledb::schema! {
 **The canonical-utterance law** (owner-ruled 2026-07-15, the freeze's statement
 surface): **any single statement with two grammatical spellings is an expansion
 error naming the canonical form** — one meaning, one spelling. The rationale is
-operational, not aesthetic: greps are total (every window is `<={`, every
-exclusion is `{0}` — no disguise survives to be missed), the renderer is a
+operational, not aesthetic: greps are total (every capacity statement is
+`<=` followed by `[` or `{` — two keys, no disguise survives to be missed —
+and every exclusion is `{0}`), the renderer is a
 bijection on legal statements (errors cite statements in exactly the spelling
 the author can paste back), and the duplicate-statement machinery never faces
-two spellings of one judgment. The window ban table, each error naming the
-canonical form:
+two spellings of one judgment. The law's general statement, now that weights
+exist (ruled 2026-07-24): **a ban is canonical-utterance policing when it is
+weight-independent, and semantic deduplication when it is not; the second
+kind applies per-aggregate.** The capacity ban table, restated per-instance,
+each error naming the canonical form:
 
-| banned                    | error names                                                       |
-| ------------------------- | ----------------------------------------------------------------- |
-| `X <={1..*} Y`            | drop the annotation — write `X <= Y`                              |
-| `X <={n..n} Y`            | an exact count is written `{n}`                                   |
-| `X <={0..0} Y`            | the exclusion is written `{0}`                                    |
-| `X <={0..*} Y`            | vacuous — provably says nothing (`cardinality_zero_star`); delete |
-| `X <={hi..lo} Y`, hi > lo | inverted, unsatisfiable                                           |
-| `f == {A}`                | a one-element set is the bare literal `f == A`                    |
-| `{..hi}` / `{lo..}`       | never admitted — bounds are always explicit                       |
+| spelling                  | unit (count) instance                                             | weighted instance |
+| ------------------------- | ----------------------------------------------------------------- | ----------------- |
+| `{1..*}`                  | **banned** — the containment respelled (`window_floor_containment`); drop the annotation, write `X <= Y` | **legal** — "the group's total is positive" is not an existence claim over rows |
+| `{0..*}`                  | banned — vacuous, provably says nothing (`capacity_zero_star`); delete | banned — vacuous (sums are ≥ 0; weight-independent) |
+| `{0}`                     | legal: the exclusion — no φ-child exists                          | legal, *weaker*: the total is zero — zero-weight rows may exist |
+| `{n..n}` / `{0..0}`       | banned — an exact measure is written `{n}`, the exclusion `{0}`   | same (weight-independent) |
+| `{hi..lo}`, hi > lo       | banned — inverted, unsatisfiable                                  | same (literal bounds; a dependent inversion is unspellable — hi slot only, C6) |
+| `{..hi}` / `{lo..}`       | never admitted — bounds are always explicit                       | same |
+
+(`f == {A}` — a one-element literal set is the bare literal `f == A` — stays
+the selection-side row of the same law, weight-blind.)
 
 The legal survivors, each otherwise unrepresentable: `{n}` exact, `{lo..hi}`
-with lo < hi, `{lo..*}` floors (lo ≥ 2), `{0..hi}` ceilings, `{0}` exclusion.
+with lo < hi, `{lo..*}` floors (unit instance: lo ≥ 2; weighted: lo ≥ 1),
+`{0..hi}` ceilings, `{0}` exclusion — bounds literal, with the hi slot alone
+admitting a TARGET-row field or `Duration(field)` (ruled 2026-07-24, C6).
 The same law binds the descriptor API at validation
-(`CardinalityInvertedWindow` / `CardinalityVacuousWindow` /
-`CardinalityContainmentWindow`, `DegenerateSelectionSet` — a sealed schema
+(`CapacityInvertedWindow` / `CapacityVacuousWindow` /
+`CapacityContainmentWindow` — the containment-respelled ban firing on the
+unit instance only —, `DegenerateSelectionSet`, and the weight/bound typing
+refusals `CapacityWeightNotU64` / `CapacityWeightNotDuration` /
+`CapacityBoundNotU64` / `CapacityBoundNotDuration`; the path weight `[a.b]`
+refuses at the spec surface, `WeightPathRefused`, its diagnostic naming the
+pinned-column idiom — a sealed schema
 holds canonical statements only, so the renderer emits canonical spellings
 only). **`==` survives** as a definitional abbreviation (the `fresh`
 precedent: an abbreviation whose expansion IS its definition lives; a synonym
@@ -295,9 +313,14 @@ re-exported from `schema`.
 - **Statements** (`StatementSpec`), tagged by form: `Fd` (no selection — the
   FD-with-selection shape is unrepresentable), `Containment { bidirectional }`
   (`bidirectional: true` IS the `==` spelling, lowered to the two adjacent
-  containments, `source <= target` first), and `Cardinality { window }` with
-  `WindowSpec` spelling the window exactly as written (`Exact(n)`,
-  `Range { lo, hi }`, `Floor(lo)`). Projections are field-name vectors;
+  containments, `source <= target` first), and `Capacity { target, weight,
+  window, source }` — the positional mirror of the operator (ruled
+  2026-07-24, C2) — with `WeightSpec` a total sum (`Unit` / `Field(name)` /
+  `Duration(name)`: unit is a case, not an absence, ruled 2026-07-24, C4)
+  and `CapacityWindowSpec` spelling the window exactly as written
+  (`Exact`, `Range { lo, hi }`, `Floor` over `BoundSpec` — `Lit(n)` /
+  `Field(name)` / `Duration(name)`, names not ids: the spec is the
+  name-level wire; dependent bounds hi-slot only). Projections are field-name vectors;
   selections are (field, literal-or-set) pairs over `LiteralSpec` — plain
   `Value`s or closed-relation handles by name, resolved through the selected
   field's newtype exactly as the macro resolves bare handles.
@@ -306,11 +329,11 @@ re-exported from `schema`.
 EXPANSION runs — the `schema!` macro parses tokens into a `SchemaSpec` plus a
 span table and calls this one lowering, so the two surfaces cannot drift —
 name→id resolution (declaration order mints every id) and the
-canonical-utterance ban table over window spellings and literal sets —
+canonical-utterance ban table over capacity spellings and literal sets —
 returning the typed `SchemaSpecError`, which enumerates EVERY unresolvable
 name (relation, field, handle) and banned spelling in one pass (a foreign
 host repairs its whole spec in one round trip; the macro renders the same
-issues as `compile_error!`s, each at the offending token), each window error
+issues as `compile_error!`s, each at the offending token), each capacity error
 naming the canonical form verbatim as the ban table does. For that span
 mapping every `SpecIssue` carries structural indices: statement-indexed
 variants directly, and the literal-shaped variants (`NotAHandleField`,
@@ -329,8 +352,9 @@ width) is a compile error there, never degraded to a `Db::create` error.
 built through either surface validates to the same sealed schema and carries
 the same fingerprint (pinned by `tests/schema_spec.rs`, which builds a theory
 using every construct — both closed tiers, `fresh`, fixed-width intervals,
-all three statement forms, `==`, literal-set selections, every legal window
-spelling — both ways and asserts fingerprint equality). The bindings roster
+all three statement forms, `==`, literal-set selections, every legal capacity
+spelling — unit, weighted, Duration-weighted, dependent-bound — both ways and
+asserts fingerprint equality). The bindings roster
 is reachable from the crate root: `Db`, `Snapshot`/`WriteTx`, `Theory`,
 `SchemaDescriptor`, `SchemaSpec` + `SchemaSpecError`, `Value`, the `ir`
 module, `PreparedQuery`/`Answers`, `SchemaError`, `FactShapeError`,
@@ -994,7 +1018,7 @@ tags, no minting casts. Domains are law-born, never declared: relation
 declarations are pure structure, `schema()` computes every field's
 equivalence class FROM the statement list — the containments and mirrors the
 host already writes ARE the typing, the mirror of the macro's declared
-sorts — and the relational builders (`contained`, `mirrors`, `window`,
+sorts — and the relational builders (`contained`, `mirrors`, `capacity`,
 query joins) check those classes structurally at compile time, never by a
 value brand. The two-boundary
 split is unchanged: what the type layer cannot state (target-resolves-a-key
