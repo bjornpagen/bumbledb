@@ -9,9 +9,11 @@ wants statement-vocabulary standing — enters the vocabulary by
 inhabiting `AdmissibleForm`. The type IS the acceptance gate's
 checklist (`docs/architecture/30-dependencies.md` § the acceptance
 gate), and an inhabitant is the whole mathematical case for
-acceptance: reason about exact operators before writing Rust. Five
-forms inhabit it below — the three fact-level forms
-(`functionalityForm`, `containmentForm`, `cardinalityForm`) and the
+acceptance: reason about exact operators before writing Rust. Six
+forms inhabit it below through the capacity cutover's flush window —
+the fact-level forms (`functionalityForm`, `containmentForm`,
+`capacityForm`, and the count instance `cardinalityForm`, retiring
+with the count path's deletion) and the
 two pointwise forms (`pointwiseForm`, `coverageForm`); each
 instantiation pulls the campaign's waves together — the Level-0
 denotation (`Dependencies.lean` / `Cardinality.lean`), the
@@ -559,6 +561,146 @@ theorem cardinalityForm_denotes {T : Theory} {I : Instance}
     {src : Atom} {w : Window} {tgt : Atom} :
     cardinalityForm.Judgment (src, w, tgt) T I ↔
       (Statement.cardinality src w tgt).judgment T I :=
+  Iff.rfl
+
+/-! ## Inhabitant 3b — the capacity statement (ruling C11)
+
+Denotation `CapacityLaw` (`Capacity.lean`); checker `capacityB`
+(`capacityB_iff`); restriction `capacity_delta_restriction`; plan
+`capacity_plan_decides` — per touched parent one target-key point
+probe and one prefix walk of the child group
+(`capacity_plan_consultations`, the equation: EXACTLY the count
+walk's price). The count-window inhabitant above retires into this
+form's unit instance with the count path's deletion.
+
+**The C11 architecture ruling, discharged as stated.** The `Verdict`
+field has no witnessed parent in scope — the count form never needed
+one, but a dependent bound resolves against the parent's own row. The
+BOUNDED-QUANTIFICATION form suffices: the verdict quantifies over the
+false-surface answers — the probed parent bucket, a walked list, so
+the quantifier is bounded by one consultation — and resolves each
+answer's window at that answer (`∀ g ∈ ans false, ψ g →
+measureVerdict (w.resolve g) …`). `AdmissibleForm`'s `Verdict` type
+generalizes for no one; the structure is untouched. -/
+
+/-- The capacity form: `B(Y | ψ) <=[wt]{w} A(X | φ)`, parameters in
+the operator's own order (ruling C2 — target, weight, window,
+source). `Ix = Bool`: `true` the σ-selected child surface, `false`
+the parent surface. -/
+def capacityForm :
+    AdmissibleForm (Atom × Weight × CapWindow × Atom) Bool where
+  Judgment := fun p T I =>
+    CapacityLaw (T.den I p.2.2.2.relation) p.2.2.2.selection
+      p.2.2.2.projection p.2.1 p.2.2.1 (T.den I p.1.relation)
+      p.1.selection p.1.projection
+  surface := fun p ix T I =>
+    match ix with
+    | true => Selected (T.den I p.2.2.2.relation) p.2.2.2.selection
+    | false => T.den I p.1.relation
+  surfaceProj := fun p ix =>
+    match ix with
+    | true => p.2.2.2.projection
+    | false => p.1.projection
+  quarantined := by
+    intro p T I J h
+    have hsel : Selected (T.den I p.2.2.2.relation)
+        p.2.2.2.selection =
+        Selected (T.den J p.2.2.2.relation) p.2.2.2.selection :=
+      h true
+    have ht : T.den I p.1.relation = T.den J p.1.relation := h false
+    have hgrp : ∀ t, ChildGroup (T.den I p.2.2.2.relation)
+        p.2.2.2.selection p.2.2.2.projection t =
+          ChildGroup (T.den J p.2.2.2.relation) p.2.2.2.selection
+            p.2.2.2.projection t := by
+      intro t
+      funext f
+      apply propext
+      constructor
+      · rintro ⟨h1, h2, h3⟩
+        have hf : f ∈ Selected (T.den J p.2.2.2.relation)
+            p.2.2.2.selection := by
+          rw [← hsel]
+          exact ⟨h1, h2⟩
+        exact ⟨hf.1, hf.2, h3⟩
+      · rintro ⟨h1, h2, h3⟩
+        have hf : f ∈ Selected (T.den I p.2.2.2.relation)
+            p.2.2.2.selection := by
+          rw [hsel]
+          exact ⟨h1, h2⟩
+        exact ⟨hf.1, hf.2, h3⟩
+    show CapacityLaw (T.den I p.2.2.2.relation) p.2.2.2.selection
+        p.2.2.2.projection p.2.1 p.2.2.1 (T.den I p.1.relation)
+        p.1.selection p.1.projection ↔
+      CapacityLaw (T.den J p.2.2.2.relation) p.2.2.2.selection
+        p.2.2.2.projection p.2.1 p.2.2.1 (T.den J p.1.relation)
+        p.1.selection p.1.projection
+    constructor
+    · intro hcw g hg hψ
+      rw [← hgrp (g.project p.1.projection)]
+      refine hcw g ?_ hψ
+      rw [ht]
+      exact hg
+    · intro hcw g hg hψ
+      rw [hgrp (g.project p.1.projection)]
+      refine hcw g ?_ hψ
+      rw [← ht]
+      exact hg
+  check := fun p T W =>
+    capacityB (W.rows p.2.2.2.relation) p.2.2.2.selection
+      p.2.2.2.projection p.2.1 p.2.2.1 (W.rows p.1.relation)
+      p.1.selection p.1.projection
+  checkPremise := fun _ _ _ => True
+  check_decides := fun p T W hclosed _ =>
+    capacityB_iff (theoryDen_denotes hclosed p.2.2.2.relation)
+      (theoryDen_denotes hclosed p.1.relation) p.2.2.2.selection
+      p.2.2.2.projection p.2.1 p.2.2.1 p.1.selection p.1.projection
+  DeltaCheck := fun p T I d =>
+    Txn.capacityDeltaCheck T I d p.1 p.2.1 p.2.2.1 p.2.2.2
+  delta_restricts := fun p T I d hpre =>
+    Txn.capacity_delta_restriction hpre
+  Touched := fun p d => Txn.touchedParents d p.2.2.2 p.1
+  touched_delta_bounded := by
+    rintro p d t (⟨f, hf, hproj⟩ | ⟨g, hg, _, hproj⟩)
+    · exact ⟨true, p.2.2.2.relation, f, hf, hproj⟩
+    · exact ⟨false, p.1.relation, g, hg, hproj⟩
+  probe := fun _ ix =>
+    match ix with
+    | true => .walk
+    | false => .point
+  Verdict := fun p _ _ ans =>
+    ∀ g, g ∈ ans false → p.1.selection.satisfies g →
+      Oracle.measureVerdict (p.2.2.1.resolve g) p.2.1.apply
+        (ans true)
+  plan_decides := by
+    intro p T I d P ple o hfacts hkeys
+    have hplan := Oracle.capacity_plan_decides T I d p.1 p.2.1
+      p.2.2.1 p.2.2.2 P ple (o true) (hfacts true)
+      (fun f => hkeys true f)
+    have hconT : ∀ (t : List Value) (g : Fact),
+        g ∈ (o false).consult t ↔
+          g ∈ T.den (d.applyTo I) p.1.relation ∧
+            g.project p.1.projection = t := by
+      intro t g
+      rw [(o false).consult_mem t g, hfacts false, hkeys false g]
+    refine Iff.trans ?_ hplan
+    constructor
+    · intro hv g hg hψ ht
+      exact hv (g.project p.1.projection) ht g
+        ((hconT _ g).mpr ⟨hg, rfl⟩) hψ
+    · intro hw t ht g hgans hψ
+      obtain ⟨hgf, hgp⟩ := (hconT t g).mp hgans
+      have hv := hw g hgf hψ (by rw [hgp]; exact ht)
+      rw [hgp] at hv
+      exact hv
+
+/-- The capacity form's judgment IS the statement dispatcher's arm —
+no split scope: capacity projections refuse interval positions at the
+gate (intervals enter through the measure argument, never the group
+key). -/
+theorem capacityForm_denotes {T : Theory} {I : Instance}
+    {tgt : Atom} {wt : Weight} {w : CapWindow} {src : Atom} :
+    capacityForm.Judgment (tgt, wt, w, src) T I ↔
+      (Statement.capacity tgt wt w src).judgment T I :=
   Iff.rfl
 
 /-! ## Inhabitant 4 — functionality, pointwise (the interval FD)

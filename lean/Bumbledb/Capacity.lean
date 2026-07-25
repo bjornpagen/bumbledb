@@ -114,17 +114,17 @@ Discharged by the build lane since: **the C12 clip lemma**
 running sums — spent by `Oracle.capacity_ceiling_exit_sound` /
 `Oracle.capacity_floor_exit_sound`, the named soundness of the
 engine's early-exit walk: ceiling exits at `sum > hi`, floor at
-`sum ≥ lo`).
+`sum ≥ lo`); **the C11 Admission form** (`Admission.capacityForm` —
+the bounded-quantification verdict proved sufficient: it quantifies
+over the probed false-surface parent bucket and resolves each
+answer's window at that answer, so `AdmissibleForm`'s Verdict type
+generalizes for no one).
 
 OWED to the build lane, recorded by name:
 
 * **The C12 Bridge row**: the clip theorems' ledger row, the analog
   of `Exec.sweep_early_exit_sound`'s — it re-pins with the capacity
   engine anchors, so it rides the count-path deletion.
-* **The C11 Admission form**: `capacityForm` with the verdict
-  quantifying over the witnessed false-surface parents (bounded
-  quantification; `AdmissibleForm`'s Verdict generalizes only if the
-  bounded form proves unprovable — report, don't improvise).
 * **The count path's deletion**: `Cardinality.lean`,
   `Statement.cardinality`, `Decide.cardinalityB`,
   `Oracle.WindowPlanned`, `Txn.cardinalityDeltaCheck`, and
