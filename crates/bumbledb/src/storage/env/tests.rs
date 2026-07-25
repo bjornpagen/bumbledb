@@ -356,6 +356,40 @@ fn a_v4_store_without_a_kind_key_is_a_format_mismatch_on_both_constructors() {
     }
 }
 
+/// The capacity-cutover refusal (format v7, ruled 2026-07-24): a
+/// pre-cutover v6 store — fully well-formed under the old format,
+/// kind key and roster intact — refuses on BOTH constructors with the
+/// typed `FormatMismatch { found: 6 }`. There is NO migration read
+/// arm: the canonical schema encoding moved (weight descriptor,
+/// dependent bounds, the re-minted statement-form tag) and the `R`
+/// namespace gained the weighted value-slot arm, so a v6 store's
+/// fingerprint and weighted `R` entries would decode wrong — ETL
+/// through the SDK is the story.
+#[test]
+fn a_pre_cutover_v6_store_is_a_format_mismatch_on_both_constructors() {
+    let dir = TempDir::new("env-marker-v6-pre-cutover");
+    forge_meta(&dir, |env, wtxn| {
+        env.meta
+            .put(wtxn, META_FORMAT_VERSION, &6u32.to_le_bytes())
+            .expect("backdate version to the pre-cutover format");
+    });
+    for err in [
+        Environment::open(dir.path(), &schema()).unwrap_err(),
+        Environment::ephemeral(dir.path(), &schema()).unwrap_err(),
+    ] {
+        assert!(
+            matches!(
+                err,
+                Error::FormatMismatch {
+                    found: 6,
+                    expected: FORMAT_VERSION
+                }
+            ),
+            "{err:?}"
+        );
+    }
+}
+
 /// Marker matrix row 2 — a v5 store with the kind key DELETED: the key
 /// is absent, so BOTH constructors refuse `Corruption(MetaMissing)` —
 /// never silent adoption of either kind.

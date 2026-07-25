@@ -39,7 +39,7 @@ static NEXT_INSTANCE: AtomicU64 = AtomicU64::new(1);
 /// caught a v1 store silently mis-decoding; a format change without a
 /// version bump is that bug's whole class). Version 3: the
 /// dependency-vocabulary extension — the canonical schema encoding
-/// changed (literal-set selections, the cardinality-window and
+/// changed (literal-set selections, the count-window and
 /// order-mark statement forms), so every stored fingerprint of a v2
 /// store is computed under a retired encoding (every encoding change
 /// bumps — `docs/architecture/50-storage.md` § open-time checks).
@@ -57,9 +57,14 @@ static NEXT_INSTANCE: AtomicU64 = AtomicU64::new(1);
 /// field's value IS the `F` row id, that auto-key's `U` tree is gone,
 /// and the `S` row-id high-water exists only where no fresh field
 /// does, so a v5 store's `F` row ids, auto-key `U` entries, and `S`
-/// counters all decode wrong under the merged mint. No other version
+/// counters all decode wrong under the merged mint. Version 7 is the
+/// capacity cutover (ruled 2026-07-24): the canonical schema encoding
+/// moved (the weight descriptor, dependent bounds, the re-minted
+/// statement-form tag) and the `R` namespace gained the weighted
+/// value-slot arm, so every v6 fingerprint and every weighted-statement
+/// `R` entry decodes wrong — one bump covers both. No other version
 /// opens and no migration path exists — ETL is the story.
-pub const FORMAT_VERSION: u32 = 6;
+pub const FORMAT_VERSION: u32 = 7;
 
 /// The store KIND, marked on disk in `_meta` beside the format version
 /// and fingerprint (`docs/architecture/50-storage.md`). A kind is a

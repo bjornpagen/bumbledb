@@ -825,7 +825,8 @@ impl fmt::Display for Error {
             Self::FormatMismatch { found, expected } => {
                 write!(
                     f,
-                    "storage format version {found}, this build expects {expected}"
+                    "storage format version {found}, this build expects {expected}; \
+                     no migration read arm exists — ETL through the SDK is the story"
                 )
             }
             Self::SchemaMismatch { found, expected } => {
