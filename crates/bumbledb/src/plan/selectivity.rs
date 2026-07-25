@@ -1,4 +1,4 @@
-//! Prepare-time cardinality estimation (docs/architecture/40-execution.md): per-occurrence
+//! Prepare-time row-count estimation (docs/architecture/40-execution.md): per-occurrence
 //! input estimates for the join-order DP and the introspection/report
 //! honesty numbers. Three sources, strongest first — schema structure
 //! (free and exact), resident-image exact distinct counts, documented
@@ -43,7 +43,7 @@ pub(crate) fn relation_rows(
 /// The distinct-count floor for an Eq selection on a field nothing else
 /// describes (a plain string/int column with no resident image): keep
 /// `rows / 64`. Chosen small enough that a selection always looks
-/// selective to the DP, large enough that a genuinely low-cardinality
+/// selective to the DP, large enough that a genuinely low-distinct
 /// column (resident images tell the truth) still dominates it.
 pub(crate) const DEFAULT_EQ_DISTINCT: u64 = 64;
 
@@ -83,29 +83,29 @@ pub(crate) const FIELDS_EQ_KEEP_DEN: u64 = 64;
 /// floor-style constant like the ladder's: small enough that a set-bound
 /// selection still reads selective to the DP, large enough to price it
 /// above a scalar equality.
-pub(crate) const PARAM_SET_PLANNING_CARDINALITY: u64 = 16;
+pub(crate) const PARAM_SET_PLANNING_ROWS: u64 = 16;
 
-/// The delta occurrence's planning cardinality (40-execution.md § the fixpoint driver):
+/// The delta occurrence's planning row count (40-execution.md § the fixpoint driver):
 /// a delta-variant plan's marked occurrence binds to one round's
 /// frontier, which the semi-naive rewrite exists to keep small — the
 /// floor prices it as the most selective thing in the rule, so the DP
 /// orders delta-first. Prepare-unknowable like param survivorship (the
 /// param-plan precedent); pinned at prepare, never re-planned.
-pub(crate) const DELTA_PLANNING_CARDINALITY: u64 = 1;
+pub(crate) const DELTA_PLANNING_ROWS: u64 = 1;
 
-/// The accumulated/finished predicate occurrence's planning cardinality
+/// The accumulated/finished predicate occurrence's planning row count
 /// (40-execution.md § the fixpoint driver): a same-stratum non-delta occurrence binds to
 /// the predicate's whole accumulated set, and a lower-stratum
 /// occurrence to its finished set — larger than a frontier, still
 /// prepare-unknowable. A floor-style constant like
-/// [`PARAM_SET_PLANNING_CARDINALITY`]: big enough to price the
+/// [`PARAM_SET_PLANNING_ROWS`]: big enough to price the
 /// accumulated read above the delta, small enough that a recursive rule
 /// still plans join-order around its stored atoms' real statistics.
-pub(crate) const ACCUMULATED_PLANNING_CARDINALITY: u64 = 16;
+pub(crate) const ACCUMULATED_PLANNING_ROWS: u64 = 16;
 
-/// One occurrence's planner statistics: the cardinality estimate —
+/// One occurrence's planner statistics: the row-count estimate —
 /// `rows` divided by each Eq selection's distinct count (times the
-/// set-cardinality assumption for set-bound positions) and each
+/// set-size assumption for set-bound positions) and each
 /// residual's keep fraction, clamped to `[1, rows]` (`Ne` keeps
 /// everything) — plus every bound variable's base-relation distinct
 /// count for the join-step fanout model.
@@ -122,11 +122,11 @@ pub(crate) fn occurrence_stats(
     rows: u64,
 ) -> crate::error::Result<OccStats> {
     // THE GUARD (20-query-ir.md § engine recursion's consumer guards): an `Idb`
-    // occurrence's cardinality is prepare-unknowable — exactly like
+    // occurrence's row count is prepare-unknowable — exactly like
     // param-bound filter survivorship — so it pins no row counts and
     // costs on the ladder's floors. The caller supplies the floor
-    // through `rows` ([`DELTA_PLANNING_CARDINALITY`] for a variant's
-    // delta occurrence, [`ACCUMULATED_PLANNING_CARDINALITY`] otherwise
+    // through `rows` ([`DELTA_PLANNING_ROWS`] for a variant's
+    // delta occurrence, [`ACCUMULATED_PLANNING_ROWS`] otherwise
     // — `api/prepared/build.rs`); each bound variable's distinct count
     // is the floor itself (a table of N rows has at most N distinct
     // words per column).
@@ -161,7 +161,7 @@ pub(crate) fn occurrence_stats(
 /// position (a bound `WordSet` carries its real, deduplicated size).
 fn selection_matches(value: &Const) -> u64 {
     match value {
-        Const::ParamSet(_) => PARAM_SET_PLANNING_CARDINALITY,
+        Const::ParamSet(_) => PARAM_SET_PLANNING_ROWS,
         Const::WordSet(words) => u64::try_from(words.len()).expect("bounded set").max(1),
         _ => 1,
     }
@@ -273,7 +273,7 @@ fn occurrence_estimate(
         // the range fraction per element, the documented small-set
         // count of elements (unmeasurable at prepare, like every param).
         if matches!(residual, FilterPredicate::AnyPointIn { .. }) {
-            estimate = estimate.saturating_mul(PARAM_SET_PLANNING_CARDINALITY);
+            estimate = estimate.saturating_mul(PARAM_SET_PLANNING_ROWS);
         }
     }
     Ok(estimate.clamp(1, rows.max(1)))
@@ -313,14 +313,14 @@ fn distinct_of(
         let span = image.span(field);
         let first = usize::from(span.first_column);
         let distinct = match span.width {
-            ColumnWidth::Byte | ColumnWidth::Word => image.cardinality(first),
+            ColumnWidth::Byte | ColumnWidth::Word => image.distinct_count(first),
             // Multi-word fields: each column's distinct count lower-
             // bounds the tuple's, so the max is the tightest sound
             // estimate one-column counters give (exact tuple distincts
             // stay the sinks' k-word map job, not the planner's).
             ColumnWidth::WordPair | ColumnWidth::Words { .. } => (first
                 ..first + usize::from(span.width.column_count()))
-                .map(|column| image.cardinality(column))
+                .map(|column| image.distinct_count(column))
                 .max()
                 .expect("at least one column"),
         };
@@ -736,7 +736,7 @@ mod tests {
         assert_eq!(est, 500, "the sealed extension is the containment bound");
     }
 
-    /// A set-bound position plans as `PARAM_SET_PLANNING_CARDINALITY`
+    /// A set-bound position plans as `PARAM_SET_PLANNING_ROWS`
     /// distinct matches instead of one — the small-set assumption
     /// (`docs/architecture/20-query-ir.md`, § prepared queries): a set-Eq
     /// on a keyed field prices at the assumed element count, not 1.
@@ -759,7 +759,7 @@ mod tests {
             .expect("estimate")
             .rows;
         assert_eq!(
-            est, PARAM_SET_PLANNING_CARDINALITY,
+            est, PARAM_SET_PLANNING_ROWS,
             "keyed set-Eq: one row per assumed element"
         );
 
@@ -968,7 +968,7 @@ mod tests {
         assert_eq!(
             narrow_pairs,
             vec![(24, 24), (192, 24), (576, 24)],
-            "P3 report population: D2 emits one set witness per root origin, so final est/actual is not a cardinality-accuracy bound"
+            "P3 report population: D2 emits one set witness per root origin, so final est/actual is not a count-accuracy bound"
         );
         assert_eq!(
             narrow_stats.rules[0].absorbed, 21,

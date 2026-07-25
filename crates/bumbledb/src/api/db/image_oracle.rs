@@ -30,7 +30,7 @@ pub enum ImageDivergence {
     /// A column's full slice differs — kind or bytes.
     Column { column: usize },
     /// A column's forced exact distinct count differs.
-    Cardinality {
+    DistinctCount {
         column: usize,
         served: u64,
         rebuilt: u64,
@@ -92,9 +92,9 @@ impl<S> Db<S> {
                 return Ok(Some(ImageDivergence::Column { column }));
             }
             let (served_count, rebuilt_count) =
-                (served.cardinality(column), rebuilt.cardinality(column));
+                (served.distinct_count(column), rebuilt.distinct_count(column));
             if served_count != rebuilt_count {
-                return Ok(Some(ImageDivergence::Cardinality {
+                return Ok(Some(ImageDivergence::DistinctCount {
                     column,
                     served: served_count,
                     rebuilt: rebuilt_count,

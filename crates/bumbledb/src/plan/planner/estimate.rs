@@ -1,6 +1,6 @@
 use super::{AllenKeep, OccInfo};
 
-/// One join step's cardinality: the prefix estimate times the new
+/// One join step's size: the prefix estimate times the new
 /// occurrence's per-binding **fanout** (docs/architecture/40-execution.md). A disconnected
 /// occurrence is a cross product. A connected one contributes
 /// `rows / distinct(field of v)` for its most selective join variable —

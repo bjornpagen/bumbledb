@@ -14,7 +14,7 @@ impl RelationImage {
     /// Computed on first demand and memoized on the image; a plan that
     /// never asks — every key probe — never pays the walk.
     #[must_use]
-    pub fn cardinality(&self, column: usize) -> u64 {
+    pub fn distinct_count(&self, column: usize) -> u64 {
         *self.distincts[column].get_or_init(|| match self.column(column) {
             ColumnView::Words(words) => count_words(words),
             ColumnView::Bytes(bytes) => count_bytes(bytes),

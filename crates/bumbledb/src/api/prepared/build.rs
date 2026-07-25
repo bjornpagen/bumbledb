@@ -796,7 +796,7 @@ fn prepare_rule_variant(
         .filter(|o| o.role.participates())
     {
         // An `Idb` occurrence pins nothing (20-query-ir.md § engine recursion's
-        // consumer table): its cardinality is prepare-unknowable, so it
+        // consumer table): its row count is prepare-unknowable, so it
         // reads no row counter and costs on the selectivity ladder's
         // floors — the delta floor for the variant's marked occurrence,
         // the accumulated floor for every other predicate read — the
@@ -804,9 +804,9 @@ fn prepare_rule_variant(
         // grounding-discharged occurrences carry no pin today).
         let Some(relation) = occurrence.source.edb() else {
             let floor = if delta == Some(occurrence.occ_id) {
-                crate::plan::selectivity::DELTA_PLANNING_CARDINALITY
+                crate::plan::selectivity::DELTA_PLANNING_ROWS
             } else {
-                crate::plan::selectivity::ACCUMULATED_PLANNING_CARDINALITY
+                crate::plan::selectivity::ACCUMULATED_PLANNING_ROWS
             };
             stats.push(crate::plan::selectivity::occurrence_stats(
                 txn, cache, schema, occurrence, floor,

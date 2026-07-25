@@ -54,7 +54,7 @@ impl CountingCounters {
         (b, e)
     }
 
-    /// Bindings emitted to the sink (the measured cardinality after the
+    /// Bindings emitted to the sink (the measured row count after the
     /// last node).
     #[cfg(test)]
     #[must_use]
@@ -62,7 +62,7 @@ impl CountingCounters {
         self.emits
     }
 
-    /// The measured cardinality *after* node `k`: how many complete
+    /// The measured row count *after* node `k`: how many complete
     /// extensions survived it — entries of the next node, or sink emits
     /// for the last.
     #[must_use]

@@ -128,8 +128,8 @@ fn assert_matches_rebuild(db: &Db<SchemaDescriptor>, rel: RelationId) -> Arc<Rel
             "column {column} slice"
         );
         assert_eq!(
-            engine.cardinality(column),
-            rebuilt.cardinality(column),
+            engine.distinct_count(column),
+            rebuilt.distinct_count(column),
             "column {column} forced distinct"
         );
     }

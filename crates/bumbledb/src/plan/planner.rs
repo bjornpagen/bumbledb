@@ -33,14 +33,14 @@ pub const MAX_OCCURRENCES: usize = 20;
 pub(crate) const MAX_DISTINCT_VARS: usize = 128;
 
 /// The planner's per-occurrence statistics (docs/architecture/40-execution.md): the
-/// selectivity-shaped cardinality estimate, plus the base-relation
+/// selectivity-shaped row-count estimate, plus the base-relation
 /// distinct count of every bound variable's field (from the same
 /// ladder — key-exact, image-exact, schema bounds, floor). The
 /// distincts drive the join-step fanout model.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OccStats {
     pub occ_id: OccId,
-    /// Estimated cardinality after this occurrence's own conditions.
+    /// Estimated row count after this occurrence's own conditions.
     pub rows: u64,
     /// `(var, distinct count of its field over the base relation)`.
     pub var_distincts: Vec<(VarId, u64)>,
@@ -55,7 +55,7 @@ pub struct OccStats {
 pub struct JoinOrder {
     /// Occurrences in join order (first = the iterated relation).
     pub order: Vec<OccId>,
-    /// The estimator's cardinality after each step; `estimates[0]` is the
+    /// The estimator's row count after each step; `estimates[0]` is the
     /// first occurrence's row count.
     pub estimates: Vec<u64>,
 }

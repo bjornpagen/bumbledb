@@ -9,7 +9,7 @@ pub mod cache;
 pub mod view;
 
 mod build;
-mod cardinality;
+mod distinct;
 mod decode;
 mod stride;
 

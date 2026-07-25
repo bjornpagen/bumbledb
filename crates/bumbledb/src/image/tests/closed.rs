@@ -179,8 +179,8 @@ fn synthesis_lays_the_id_column_then_every_canonical_encoding() {
     );
 
     // Distinct counters are exact over the synthesized columns.
-    assert_eq!(image.cardinality(usize::from(id_span.first_column)), 3);
-    assert_eq!(image.cardinality(usize::from(sunny.first_column)), 2);
+    assert_eq!(image.distinct_count(usize::from(id_span.first_column)), 3);
+    assert_eq!(image.distinct_count(usize::from(sunny.first_column)), 2);
 }
 
 #[test]

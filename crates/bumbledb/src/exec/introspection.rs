@@ -67,7 +67,7 @@ pub struct CountingCounters {
 /// reports through the `Counters` seam's fixpoint hooks. Node-level
 /// methods are deliberate no-ops — the driver runs many differently
 /// shaped plan units under one counter, so the counted surface here is
-/// the round structure, not per-node cardinalities.
+/// the round structure, not per-node row counts.
 #[derive(Debug, Default)]
 pub struct FixpointCounters {
     emits: u64,

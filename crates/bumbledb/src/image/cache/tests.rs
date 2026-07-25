@@ -329,8 +329,8 @@ fn assert_images_identical(a: &RelationImage, b: &RelationImage, columns: usize)
     for column in 0..columns {
         assert_eq!(a.column(column), b.column(column), "column {column}");
         assert_eq!(
-            a.cardinality(column),
-            b.cardinality(column),
+            a.distinct_count(column),
+            b.distinct_count(column),
             "distinct {column}"
         );
     }

@@ -15,7 +15,7 @@ impl ProjectionSink {
     }
 
     /// Presized construction: `hint` is the plan's
-    /// output-cardinality estimate — the seen-set allocates once instead
+    /// output-size estimate — the seen-set allocates once instead
     /// of rehash-doubling through the first measured execution.
     #[must_use]
     fn with_capacity_hint_sources(sources: ProjectionSources, hint: usize) -> Self {

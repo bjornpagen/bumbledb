@@ -69,7 +69,7 @@
 //! render→parse round trip closes over the full input grammar.
 //!
 //! Surface `Duration(iv)` lowers to IR `Measure(iv)`: it denotes the
-//! point-set cardinality `end − start`, and a ray has no measure.
+//! point-set size `end − start`, and a ray has no measure.
 //!
 //! **Punning law (B, decided; the alternative is ledgered in
 //! docs/architecture/70-api.md):** a bare field name binds a **rule-local variable

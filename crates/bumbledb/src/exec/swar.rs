@@ -28,7 +28,7 @@ fn avalanche(h: u64) -> u64 {
 }
 
 /// The word-tuple probe hash (runtime length). `pub(crate)`: the image
-/// cardinality counter's distinct-word set probes with the same hash —
+/// distinct counter's distinct-word set probes with the same hash —
 /// its former private copy was exactly the drift this module exists to
 /// prevent.
 #[inline(always)]
