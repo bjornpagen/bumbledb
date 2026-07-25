@@ -30,6 +30,7 @@ import * as path from "node:path"
 import { after, before, describe, test } from "node:test"
 import { closed } from "#closed.ts"
 import { on } from "#face.ts"
+import { by } from "#order.ts"
 import { bool, u64 } from "#fields.ts"
 import { lower } from "#lower.ts"
 import type { DbHandle } from "#native.ts"
@@ -317,9 +318,7 @@ describe("ψ query atoms over closed relations", function suite() {
 			return row.i
 		})
 		assert.deepEqual(
-			[...answers].sort(function compare(a, b) {
-				return a < b ? -1 : 1
-			}),
+			[...answers].sort(by()),
 			[3n, 5n]
 		)
 	})

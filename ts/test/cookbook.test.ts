@@ -32,6 +32,7 @@ import process from "node:process"
 import { after, describe, test } from "node:test"
 
 import type { Infer, Schema, SchemaRelations } from "#index.ts"
+import { by } from "#order.ts"
 import {
 	ALLEN,
 	abandon,
@@ -214,17 +215,9 @@ function must<T>(value: T | undefined): T {
 	return value
 }
 
-/** Sorts a bigint array ascending (answers are sets; the host sorts). */
+/** Sorts a bigint array ascending (answers are sets; the host sorts via the one comparator owner). */
 function sorted(values: readonly bigint[]): bigint[] {
-	return [...values].sort(function compare(a, b) {
-		if (a < b) {
-			return -1
-		}
-		if (a > b) {
-			return 1
-		}
-		return 0
-	})
+	return [...values].sort(by())
 }
 
 describe("the SDK cookbook — every recipe compiles, admits, and lowers", function suite() {

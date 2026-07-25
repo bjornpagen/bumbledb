@@ -17,6 +17,7 @@ import { after, before, test } from "node:test"
 import { closed } from "#closed.ts"
 import { Db } from "#db.ts"
 import { on } from "#face.ts"
+import { by } from "#order.ts"
 import { interval, str, u64 } from "#fields.ts"
 import type { QueryParams, QueryRow, QueryRuleScope } from "#query/lower.ts"
 import { lowerQuery, query } from "#query/lower.ts"
@@ -65,17 +66,9 @@ type Rels = (typeof Theory)["relations"]
 const HOLDER_ID = 1
 const ACCOUNT_ID = 2
 
-/** Sorts a bigint array ascending (answers are sets; the host sorts). */
+/** Sorts a bigint array ascending (answers are sets; the host sorts via the one comparator owner). */
 function sorted(values: readonly bigint[]): bigint[] {
-	return [...values].sort(function compare(a, b) {
-		if (a < b) {
-			return -1
-		}
-		if (a > b) {
-			return 1
-		}
-		return 0
-	})
+	return [...values].sort(by())
 }
 
 let db: Db<Rels>

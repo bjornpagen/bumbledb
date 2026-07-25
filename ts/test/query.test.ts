@@ -37,6 +37,7 @@ import * as path from "node:path"
 import { after, before, describe, test } from "node:test"
 import { closed } from "#closed.ts"
 import { on } from "#face.ts"
+import { by } from "#order.ts"
 import { bool, bytes, i64, interval, span, str, u64 } from "#fields.ts"
 import { lower } from "#lower.ts"
 import type { DbHandle } from "#native.ts"
@@ -115,17 +116,9 @@ const ids = {
 	kurtChecking: 13n
 }
 
-/** Sorts a bigint array ascending (answers are sets; the host sorts). */
+/** Sorts a bigint array ascending (answers are sets; the host sorts via the one comparator owner). */
 function sorted(values: readonly bigint[]): bigint[] {
-	return [...values].sort(function compare(a, b) {
-		if (a < b) {
-			return -1
-		}
-		if (a > b) {
-			return 1
-		}
-		return 0
-	})
+	return [...values].sort(by())
 }
 
 describe("the query surface against a real store", function suite() {

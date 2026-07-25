@@ -29,6 +29,7 @@ import * as path from "node:path"
 import { after, before, describe, test } from "node:test"
 import { closed } from "#closed.ts"
 import { on } from "#face.ts"
+import { by } from "#order.ts"
 import { bool, u64 } from "#fields.ts"
 import { lower } from "#lower.ts"
 import type { DbHandle } from "#native.ts"
@@ -80,9 +81,7 @@ const INCIDENT_ID = 2
 
 /** Sorts one bigint column for a set-equality comparison (answers are sets; the host sorts). */
 function sorted(values: readonly bigint[]): bigint[] {
-	return [...values].sort(function compare(a, b) {
-		return a < b ? -1 : 1
-	})
+	return [...values].sort(by())
 }
 
 describe("query literals, params & membership arrays over closed references", function suite() {
