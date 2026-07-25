@@ -24,10 +24,10 @@
  * suite at the bottom is the one-owner pin: over one set of i64 values in
  * a REAL store, the host-sorted order and the engine's `Lt` judgment agree
  * at every cut — for every pivot, the engine's below-pivot answer set IS
- * the host-sorted prefix. (A bool order comparison is not yet spellable on
- * the TS query tier — `OrderVarOk` admits u64/i64 only — so bool's engine
- * arm is pinned by the engine's own R3 tests; the host arm's false < true
- * is pinned here.)
+ * the host-sorted prefix. The BOOL arm sweeps the same agreement over a
+ * bool column (`OrderVarOk` admits u64/i64/bool — the R3 roster exactly),
+ * with the boolean literal on the order side and with a boolean-typed
+ * param: false < true is one law, held by both owners.
  */
 
 import assert from "node:assert/strict"
@@ -263,5 +263,67 @@ describe("the one-owner agreement: host sort and engine order judgments over the
 		const ascending = [...values].sort(by())
 		const descending = [...values].sort(desc())
 		assert.deepEqual(descending, [...ascending].reverse())
+	})
+
+	test("the bool arm: lt with a boolean literal on the order side agrees with the host's false < true", function boolLiteralCut() {
+		/**
+		 * The R3 tail closed: a bool order comparison is spellable on the TS
+		 * query tier exactly as the engine admits it — here the literal
+		 * spelling `lt(flag, true)`, which the engine answers with exactly
+		 * the false-flagged rows, the host-sorted strict prefix below `true`.
+		 */
+		const belowTrue = query(Theory).rule((r) => {
+			const { n, flag } = v(Score)
+			return r.match(Score, { n, flag }).where(lt(flag, true)).find({ n, flag })
+		})
+		const engine = db
+			.execute(db.prepare(belowTrue), {})
+			.map(function project(row) {
+				return row.n
+			})
+			.sort(by())
+		const host = [...values]
+			.filter(function falseFlagged(n) {
+				return !(n < 0n)
+			})
+			.sort(by())
+		assert.deepEqual(engine, host, "lt(flag, true) is exactly the false-flagged rows")
+		for (const row of db.execute(db.prepare(belowTrue), {})) {
+			assert.equal(row.flag, false, "every answer's flag orders strictly below true")
+		}
+	})
+
+	test("the bool arm: at both cuts, the engine's Lt over a bool param IS the host-sorted prefix", function boolParamCut() {
+		/**
+		 * The param spelling: `lt(flag, r.param("cut"))` types `cut` as
+		 * `boolean` off the sibling variable's own field (the runtime anchors
+		 * the param the same way), and at every cut the engine's below-cut
+		 * answer multiset of flags equals the host-sorted prefix `by()` puts
+		 * strictly before the cut.
+		 */
+		const belowCut = query(Theory).rule((r) => {
+			const { n, flag } = v(Score)
+			return r
+				.match(Score, { n, flag })
+				.where(lt(flag, r.param("cut")))
+				.find({ n, flag })
+		})
+		const prepared = db.prepare(belowCut)
+		const flags = values.map(function flagOf(n) {
+			return n < 0n
+		})
+		const sortedFlags = [...flags].sort(by())
+		for (const cut of [false, true]) {
+			const engine = db
+				.execute(prepared, { cut })
+				.map(function project(row) {
+					return row.flag
+				})
+				.sort(by())
+			const host = sortedFlags.filter(function strictlyBelow(value) {
+				return by()(value, cut) < 0
+			})
+			assert.deepEqual(engine, host, `the cut at ${cut} agrees`)
+		}
 	})
 })

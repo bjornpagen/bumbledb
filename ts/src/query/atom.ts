@@ -335,8 +335,8 @@ type EqRight = AnyVar | Param<string> | SetParam<string> | bigint | string | boo
 /** What `ne`'s right side accepts. */
 type NeRight = AnyVar | Param<string> | bigint | string | boolean | Uint8Array | IntervalValue
 
-/** One side of an order comparison: orderable terms only (the IR's comparison rules). */
-type OrderSide = AnyVar | Param<string> | Duration | bigint
+/** One side of an order comparison: orderable terms only (the IR's comparison rules — bool orders, `false < true`, R3). */
+type OrderSide = AnyVar | Param<string> | Duration | bigint | boolean
 
 /** The point side of `pointIn`. */
 type PointSide = AnyVar | Param<string> | bigint
@@ -388,7 +388,7 @@ function order<Op extends "lt" | "le" | "gt" | "ge", const L extends OrderSide, 
 	return comparison(op, left, right, undefined)
 }
 
-/** Strict less-than (`ir::CmpOp::Lt`) — orderable sides only, never intervals/bytes/strings/bools. */
+/** Strict less-than (`ir::CmpOp::Lt`) — orderable sides only (bool included: `false < true`, R3), never intervals/bytes/strings. */
 function lt<const L extends OrderSide, const R extends OrderSide>(left: L, right: R): Cmp<"lt", L, R> {
 	return order("lt", left, right)
 }
@@ -531,18 +531,31 @@ function isRecTarget(value: MatchOwner | RecTarget): value is RecTarget {
 }
 
 /**
- * Whether a variable's OWN field is orderable (u64/i64). A CLOSED reference
+ * Whether a variable's OWN field is NUMERIC (u64/i64) — the judgment the
+ * point side of `pointIn` and the `sum` input read: a point lives in the
+ * interval's element domain, and a quantifier is not an addition, so bool
+ * (orderable, never numeric) is exactly here refused. A CLOSED reference
  * is excluded even though its kind is `u64`: a vocabulary's declaration-id
  * order is an accident, not semantics (`docs/architecture/10-data-model.md`
  * § orderability), so every order-comparison and fold position refuses
- * closed-bound terms — this judgment is the one gate they all read, and the
- * construction-time validations in `#query/lower.ts` are its runtime twin.
+ * closed-bound terms — the construction-time validations in
+ * `#query/lower.ts` are that ban's runtime twin.
  */
-type OrderVarOk<V extends AnyVar> = V["field"] extends { readonly closed: ClosedRoster }
+type NumericVarOk<V extends AnyVar> = V["field"] extends { readonly closed: ClosedRoster }
 	? false
 	: V["field"]["kind"] extends "u64" | "i64"
 		? true
 		: false
+
+/**
+ * Whether a variable's OWN field is ORDERABLE (u64/i64/bool) — the one gate
+ * every order-comparison side, `min`/`max` input, and Arg key reads. Bool
+ * orders: `false < true`, the strict 0/1 encoding IS the order (ruled R3),
+ * exactly the engine's operand screen
+ * (`bumbledb/crates/bumbledb/src/ir/validate/context.rs`); bool has no
+ * closed variant, so the closed exclusion rides in {@link NumericVarOk}.
+ */
+type OrderVarOk<V extends AnyVar> = V["field"]["kind"] extends "bool" ? true : NumericVarOk<V>
 
 /** Whether a variable's OWN field is interval-typed. */
 type IntervalVarOk<V extends AnyVar> = V["field"]["kind"] extends "interval" ? true : false
@@ -554,8 +567,8 @@ type OrderSideOk<T> = T extends AnyVar
 		? IntervalVarOk<V>
 		: true
 
-/** One point side's judgment. */
-type PointSideOk<T> = T extends AnyVar ? OrderVarOk<T> : true
+/** One point side's judgment (numeric only — a point lives in the interval's element domain, never bool). */
+type PointSideOk<T> = T extends AnyVar ? NumericVarOk<T> : true
 
 /** One interval side's judgment. */
 type IntervalSideOk<T> = T extends AnyVar ? IntervalVarOk<T> : true
@@ -677,8 +690,18 @@ type EqParams<L, R> = L extends AnyVar
 			: never
 	: never
 
-/** An order side's params contribution (order params are always `bigint`). */
-type OrderSideParams<T> = T extends Param<infer P extends string> ? { readonly [Q in P]: bigint } : never
+/**
+ * An order side's params contribution, typed by the SIBLING side — the
+ * runtime anchors a param to its sibling variable's field, so a bool var
+ * orders against a `boolean` param; every var-less pairing stays `bigint`.
+ */
+type OrderSideParams<T, Sib> =
+	T extends Param<infer P extends string>
+		? { readonly [Q in P]: Sib extends AnyVar ? Infer<Sib["field"]> : bigint }
+		: never
+
+/** The point side's params contribution (a point is always `bigint`). */
+type PointParams<T> = T extends Param<infer P extends string> ? { readonly [Q in P]: bigint } : never
 
 /** An interval side's params contribution. */
 type IntervalSideParams<T> = T extends Param<infer P extends string> ? { readonly [Q in P]: IntervalValue } : never
@@ -697,9 +720,9 @@ type CondParams<C> = [AnyTreeChild] extends [C]
 		? Op extends "eq" | "ne"
 			? EqParams<L, R>
 			: Op extends "lt" | "le" | "gt" | "ge"
-				? OrderSideParams<L> | OrderSideParams<R>
+				? OrderSideParams<L, R> | OrderSideParams<R, L>
 				: Op extends "pointIn"
-					? IntervalSideParams<L> | OrderSideParams<R>
+					? IntervalSideParams<L> | PointParams<R>
 					: Op extends "allen"
 						? IntervalSideParams<L> | IntervalSideParams<R> | MaskParams<M>
 						: never
@@ -749,6 +772,7 @@ export type {
 	MatchShape,
 	NotAtom,
 	NotIdbAtom,
+	NumericVarOk,
 	OrderSide,
 	OrderVarOk,
 	ParamUse,

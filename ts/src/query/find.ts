@@ -21,7 +21,7 @@
 
 import type { Infer } from "#fields.ts"
 import type { SchemaClasses } from "#law.ts"
-import type { IntervalVarOk, OrderVarOk } from "#query/atom.ts"
+import type { IntervalVarOk, NumericVarOk, OrderVarOk } from "#query/atom.ts"
 import type { AnyVar, Duration, MintSlotOf } from "#query/scope.ts"
 
 /** One aggregate operator name of the find vocabulary. */
@@ -71,20 +71,21 @@ function countDistinct<const V extends AnyVar>(over: V): Agg<"countDistinct", V>
 }
 
 /**
- * Exact checked sum over an orderable (u64/i64) variable — wide
- * accumulator, one finalize range check; overflow is the engine's typed
- * runtime error — or over the measure (`r.sum(r.duration(w))`).
+ * Exact checked sum over a NUMERIC (u64/i64) variable — wide accumulator,
+ * one finalize range check; overflow is the engine's typed runtime error —
+ * or over the measure (`r.sum(r.duration(w))`). Bool stays refused: a
+ * quantifier is not an addition (R3).
  */
 function sum<const O extends AnyVar | Duration>(over: O): Agg<"sum", O> {
 	return aggregate("sum", over, undefined)
 }
 
-/** Minimum over an orderable variable or the measure (orderable types only). */
+/** Minimum over an orderable variable (u64/i64/bool — over bool, `Min` is the ALL quantifier; R3) or the measure. */
 function min<const O extends AnyVar | Duration>(over: O): Agg<"min", O> {
 	return aggregate("min", over, undefined)
 }
 
-/** Maximum over an orderable variable or the measure (orderable types only). */
+/** Maximum over an orderable variable (u64/i64/bool — over bool, `Max` is the ANY quantifier; R3) or the measure. */
 function max<const O extends AnyVar | Duration>(over: O): Agg<"max", O> {
 	return aggregate("max", over, undefined)
 }
@@ -116,7 +117,22 @@ function pack<const V extends AnyVar>(over: V): Agg<"pack", V> {
 	return aggregate("pack", over, undefined)
 }
 
-/** A fold input's judgment: an orderable variable, or the measure of an interval variable. */
+/**
+ * A `sum` input's judgment: a NUMERIC variable — Sum over bool stays
+ * refused, a quantifier is not an addition (R3) — or the measure of an
+ * interval variable.
+ */
+type SumOverOk<O> = O extends AnyVar
+	? NumericVarOk<O>
+	: O extends Duration<infer V extends AnyVar>
+		? IntervalVarOk<V>
+		: false
+
+/**
+ * A `min`/`max` input's judgment: an ORDERABLE variable — bool folds:
+ * `Max` is Any and `Min` is All, the two quantifiers as the 0/1 encoding's
+ * extremes (R3) — or the measure of an interval variable.
+ */
 type FoldOverOk<O> = O extends AnyVar
 	? OrderVarOk<O>
 	: O extends Duration<infer V extends AnyVar>
@@ -136,15 +152,17 @@ type FindEntryOk<E> = E extends AnyVar
 			? true
 			: E extends Agg<"countDistinct", AnyVar>
 				? true
-				: E extends Agg<"sum" | "min" | "max", infer O>
-					? FoldOverOk<O>
-					: E extends Agg<"argMax" | "argMin", AnyVar, infer K extends AnyVar>
-						? OrderVarOk<K> extends true
-							? true
-							: false
-						: E extends Agg<"pack", infer V extends AnyVar>
-							? IntervalVarOk<V>
-							: false
+				: E extends Agg<"sum", infer O>
+					? SumOverOk<O>
+					: E extends Agg<"min" | "max", infer O>
+						? FoldOverOk<O>
+						: E extends Agg<"argMax" | "argMin", AnyVar, infer K extends AnyVar>
+							? OrderVarOk<K> extends true
+								? true
+								: false
+							: E extends Agg<"pack", infer V extends AnyVar>
+								? IntervalVarOk<V>
+								: false
 
 /** The validated find record (intersect with the inferred entries — errors land on the offending key). */
 type CheckFind<F extends FindShape> = {
