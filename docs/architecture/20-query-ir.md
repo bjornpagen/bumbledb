@@ -591,7 +591,7 @@ vocabulary, both sides of the engine.
 ## The measure (the denotation's one arithmetic)
 
 **Vocabulary is pinned:** surface `Duration`, IR `Measure`; the denotation is
-point-set cardinality (`lean/Bumbledb/Values.lean: measure_finite` — u64 for
+point-set size (`lean/Bumbledb/Values.lean: measure_finite` — u64 for
 both element types),
 and rays are refused at evaluation
 (`lean/Bumbledb/Values.lean: measure_ray_none`; `MeasureOfRay`). It is the one
@@ -1183,7 +1183,7 @@ query, hence of the prepared plan; queries meant for reuse across values use Par
 set-bound position like a selective equality; the documented assumption is |set| ≤
 a few hundred). A host that binds pathological set sizes owns the consequences the
 same way it owns stale plans — re-prepare, or restructure the query. **Decision:**
-pin-at-prepare, extended to set cardinality. **Alternative:** re-plan on bind-size
+pin-at-prepare, extended to literal-set size. **Alternative:** re-plan on bind-size
 drift. **Why it lost:** same reason as stats-driven invalidation — an honest trigger
 re-plans constantly and allocates on the hot path. **Reverses if:** the benchmark
 shows a stale-plan regression a re-prepare wouldn't have.

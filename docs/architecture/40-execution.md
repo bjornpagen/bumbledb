@@ -98,7 +98,7 @@ structure could do better. Real interval workloads carry their group key
 (per-account, per-room); the randomized generator bounds itself to that shape
 (`60-validation.md`). Candidate mechanism recorded for trigger day: **determinant skip
 scan** — `U` determinants are already ordered composite keys of fixed per-statement
-width, so a non-prefix determinant lookup or a range scan under a low-cardinality
+width, so a non-prefix determinant lookup or a range scan under a low-distinct
 leading field (closed-reference discriminators) is servable with zero new structures by
 cursor `set_range` prefix-hopping (O(distinct-leading-prefixes × log n)); not
 applicable to interval stabbing, whose pointwise layout needs the coverage-walk
@@ -454,9 +454,9 @@ the driver: it prepares as its output predicate's query, byte for byte
   one prepare-time parse and consumed totally by the driver —
   `ResolvableFilter`'s discipline. Delta and accumulated occurrences pin no
   statistics and cost on the selectivity ladder's floors
-  (`DELTA_PLANNING_CARDINALITY` / `ACCUMULATED_PLANNING_CARDINALITY`,
+  (`DELTA_PLANNING_ROWS` / `ACCUMULATED_PLANNING_ROWS`,
   `plan/selectivity.rs` — the param-plan precedent: prepare-unknowable
-  cardinalities plan on documented constants).
+  row counts plan on documented constants).
 - **The frontier IS the sink's seen-set with a per-round watermark**: `WordMap`
   preserves insertion order with dense O(len) iteration, so round r's frontier
   is exactly the dense suffix `[watermark, len)` — one `usize` read per round
@@ -697,7 +697,7 @@ as a selective equality under the documented small-set assumption
 (`20-query-ir.md`). No NDV fields, no histograms; the floors are the only constants
 and each is documented at its definition.
 
-**Join cardinality estimator, written down:** for `L ⋈ R` on join variables J —
+**Join size estimator, written down:** for `L ⋈ R` on join variables J —
 - J covers a key of R (incl. fresh auto-keys): estimate = |L| (reference walk; exact
   upper bound).
 - J covers a key of L: estimate = min(est(P), |R|) — each R fact matches at most one
@@ -988,7 +988,7 @@ representation, not a mode: the executor is generic over a `Counters` trait;
 the normal path instantiates `NoopCounters` (zero-sized, compiled to nothing — no
 runtime branch, no hot-loop cost), and the plan introspection entry point instantiates the
 counting implementation and **executes the query** (ANALYZE semantics), reporting **per
-rule** the plan, per-node estimated vs actual cardinalities, residual and anti-probe
+rule** the plan, per-node estimated vs actual row counts, residual and anti-probe
 selectivity, cover-choice histograms (choices aggregated per node, not per entry),
 and the grounding's eliminated occurrences — read straight off the plan's
 `Role::Eliminated` marks, each rendered with its licensing statement through
@@ -1117,7 +1117,7 @@ calendar families the worst was 691.2× (`conflict_free`); the cyclic class was
 scale-S reports at the repository's 2026-07-12 family roster. These numbers are
 execution-work ratios: a node's `actual` is the next executed-node entry count,
 or final sink emissions, after legal D2 cancellation. They are therefore not
-pure denotation-cardinality error. The fixture
+pure denotation-count error. The fixture
 `cyclic_estimate_diagnosis_is_p3_not_a_domain_or_range_defect` separates the
 premises: with exact resident distincts and a three-axiom closed domain, a toy
 cycle's full-head estimates/actuals are `24/24, 192/192, 576/192` (P3's closing

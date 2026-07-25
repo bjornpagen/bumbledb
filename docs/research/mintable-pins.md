@@ -237,11 +237,11 @@ fingerprint + fresh store. That's auditable law, not policy smuggling.
 
 **Counter-arguments examined:**
 
-1. *"Mintability is policy, not meaning — a window/cardinality law instead?"* The
+1. *"Mintability is policy, not meaning — a capacity law instead?"* The
    dependency calculus offers exactly one rival spelling: the exclusion window
-   `window(on(Pin.where({ mintable: false }), "id"), none, on(attempt, "pin"))`
-   (`none` = the {0} exact window, `ts/src/count.ts:27-28`; closed-parent window path
-   exists, judgment.rs:989-1006). It is strictly weaker: it bans frozen pins without
+   `capacity(on(Pin.where({ mintable: false }), "id"), within(0n), on(attempt, "pin"))`
+   (`within(0n)` = the {0} exact window; the closed-parent capacity path
+   exists, judgment.rs). It is strictly weaker: it bans frozen pins without
    REQUIRING roster membership (the bare containment must stay alongside — two
    statements for one meaning), and costs a per-parent child-group walk vs the
    containment's O(1) membership test. The vocabulary's own `{1..*}` ban ("the

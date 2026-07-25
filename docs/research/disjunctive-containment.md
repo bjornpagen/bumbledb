@@ -59,7 +59,7 @@ Today: `StatementDescriptor::Containment { source: Side, target: Side }`
 (`lean/Bumbledb/Schema.lean:428-455`, Atom = relation + projection + selection). The union
 form is `source: Side, targets: Vec<Side>` (nonempty; N=1 degenerates to today's form —
 by the canonical-utterance law the N=1 spelling should be BANNED as the plain containment
-respelled, mirroring `{1..*}`/`CardinalityContainmentWindow`). Sealed representation:
+respelled, mirroring unit `{1..*}`/`CapacityContainmentWindow`). Sealed representation:
 the typed containment arena (`Schema::containment` witnesses) would carry the target list;
 `Schema::dependents` (containment witnesses indexed by target-key witness) becomes
 one-to-many: each of the N faces' keys indexes the same statement.

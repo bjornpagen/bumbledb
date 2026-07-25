@@ -45,7 +45,7 @@ laws).
 | `00-product.md` | Thesis, workload census, hardware, durability, deleted vocabulary, success criteria |
 | `10-data-model.md` | Reading guide over `lean/Bumbledb/Values.lean`+`Schema.lean`: the six structural types, interval/ray intuition, identity, schema, modeling discipline — decisions whole, semantics by citation |
 | `20-query-ir.md` | Reading guide over `lean/Bumbledb/Query/`: the pure-data IR shape and notation grammar, validation roster, the recursion cut and its fence — decisions whole, semantics by citation |
-| `30-dependencies.md` | Reading guide over `lean/Bumbledb/Dependencies.lean`+`Cardinality.lean`+`Txn.lean`: the three statement forms by citation, statement grammar, the acceptance gate, enforcement mechanism, the decidability firewall |
+| `30-dependencies.md` | Reading guide over `lean/Bumbledb/Dependencies.lean`+`Capacity.lean`+`Txn.lean`: the three statement forms by citation, statement grammar, the acceptance gate, enforcement mechanism, the decidability firewall |
 | `40-execution.md` | Mechanism only: access paths, Free Join over COLT, anti-probes, planner, vectorization, allocation — every semantic sentence cites its `lean/Bumbledb/Exec/` theorem |
 | `50-storage.md` | Mechanism only: LMDB layout, determinant namespaces as judgment accelerators, the delta write path, images — encoding laws by citation |
 | `60-validation.md` | The three oracles (SQLite + naive model + the Lean denotation, `lean/conformance/`), ledger benchmark protocol, test families |
@@ -85,7 +85,7 @@ laws).
   overlap scans are O(n) by decision; accelerators return only with a benchmark that
   demands them. Candidate mechanism on trigger: determinant skip scan (cursor `set_range`
   prefix-hopping over existing `U` namespaces, O(distinct-prefix × log n)) — for
-  non-prefix determinant lookups and low-cardinality-leading range scans; interval
+  non-prefix determinant lookups and low-distinct-leading range scans; interval
   stabbing needs the coverage-walk shape instead (`40-execution.md`). *Trigger:
   latency budget violation on a range/interval family.*
 - **Grounding interval-pair elimination**: pointwise coverage proves that covering facts
@@ -146,7 +146,7 @@ Each recorded with its rationale in the owning doc; listed here so nothing is
 re-litigated by accident:
 
 - **Invariants are statements about queries** (functionality, containment, the
-  cardinality window);
+  capacity statement);
   *unique / referential / primary key / check / exclusion / cascade / restrict /
   trigger / deferrable* are deleted vocabulary (`30-dependencies.md`, `00-product.md`).
 - **No sugar** — the schema surface is raw statements (`->`, `<=`, `==`); no

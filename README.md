@@ -240,7 +240,7 @@ the chart says so in red:
 
 `lawful` — the integrity turf: a primer-shaped schema (identity keys,
 relation containments, a ψ-selected containment, closed vocabularies, an
-attempt-count window) with the full law roster judged on every commit,
+attempt-count capacity law) with the full law roster judged on every commit,
 against SQLite carrying equivalent UNIQUE / FK / CHECK / trigger
 enforcement. Geomean **0.31×**, SQLite winning **10 of 12 rows**. Judged
 admission itself is competitive — `law_commit_attempt` durable is a dead

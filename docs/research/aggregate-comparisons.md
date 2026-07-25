@@ -195,7 +195,7 @@ Philosophy anchors, verbatim sources:
   oracle!), and every Datalog-with-aggregates dialect can. The engine's thesis
   is "invariants are judgments about queries"; a threshold over a fold is the
   most judgment-shaped query feature imaginable, and the dependency language
-  already has the cardinality-window form (00-product.md:9-11) — the WINDOW
+  already has the capacity form (00-product.md:9-11) — the windowed-measure
   judgment exists on the write side but is unstatable on the read side.
 - Shape A fits the recorded admission path exactly: typed position,
   boundary-only, one named computation (a comparison over a fold output),
@@ -262,7 +262,7 @@ the entire repo live in two files**: `store/gates.ts` (5 queries) and
 | 1 | `positionGapGate` — gates.ts:663 + 681 | `select("program", r.max("maxPos"), r.count())` then `.filter(row => row.maxPos !== row.count)` | **agg vs agg, Ne** (same group) |
 | 2 | `riUnderCoveredGate` — gates.ts:598 + 624 | `select("holder", r.count())` then `.filter(row => row.count < 2n)` | **agg vs literal, Lt** (floor is doctrinal `2`, gates.ts:612-613; a param would serve if configurable) |
 | 3 | `terminalFormGate` — gates.ts:693,701 + 724,737 | `argMax(terminalToi, pos)` per program then `row.terminalToi !== "FactSystem"` / `!== "CognitiveRoutine"` | **argMax-carried payload vs literal, Ne** — a distinct shape (filter on the value the Arg restriction carries, not a fold result) |
-| 4 | `courseMetaCardinalityGate` — gates.ts:1375 + 1390-1398 | whole-relation `count()` then host maps the absent row to `{count: 0n}` and passes iff `count === 1n` | **agg vs literal, Ne**, plus irreducible host handling of the empty-input no-row case |
+| 4 | the course-meta singleton gate — gates.ts:1375 + 1390-1398 | whole-relation `count()` then host maps the absent row to `{count: 0n}` and passes iff `count === 1n` | **agg vs literal, Ne**, plus irreducible host handling of the empty-input no-row case |
 
 The three `derive.ts` aggregate sites are NOT host folds (derive.ts:139, 292:
 Arg outputs feed set-diff derivations with no comparison; derive.ts:785 +
