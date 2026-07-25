@@ -16,8 +16,8 @@
 //! (`docs/architecture/10-data-model.md`).
 
 use super::{
-    FieldId, Generation, IntervalElement, LiteralSet, RelationId, Schema, Side, StatementId,
-    StatementView, ValueType,
+    Bound, FieldId, Generation, IntervalElement, LiteralSet, RelationId, Schema, Side,
+    StatementId, StatementView, ValueType, Weight,
 };
 use crate::encoding::encode_literal;
 use bumbledb_theory::Value;
@@ -28,11 +28,16 @@ use bumbledb_theory::Value;
 /// one byte stream), and a closed relation's ground axioms hash after its
 /// fields. `v3`: the dependency-vocabulary extension — every selection
 /// binding hashes a literal COUNT before its literals (the disjunctive
-/// set form), and the two new statement forms took tags 2 (cardinality
-/// window) and 3 (order mark). `v4`: the order purge — the statement
-/// spine sum shrank (tag 3 no longer exists), so the label bumps
-/// (the version-bump law; nothing deployed carries an order statement).
-pub(super) const FORMAT_VERSION_LABEL: &[u8] = b"bumbledb-schema-v4";
+/// set form), and the two extension statement forms took tags 2 (the
+/// count-only window) and 3 (order mark). `v4`: the order purge — the
+/// statement spine sum shrank (tag 3 no longer exists), so the label
+/// bumps (the version-bump law; nothing deployed carries an order
+/// statement). `v5`: the capacity cutover — the count-only encoding
+/// retired with tag 2 and the capacity statement minted tag 4 (never 3:
+/// a retired tag is never reissued — ruled 2026-07-24, C5), encoding
+/// weight descriptor and kind-tagged bounds in the operator's read
+/// order (C2), so every fingerprint moves with the label.
+pub(super) const FORMAT_VERSION_LABEL: &[u8] = b"bumbledb-schema-v5";
 
 /// Deterministic schema identity: blake3 of the canonical bytes. Stored at
 /// database creation; open compares fingerprints and mismatches are hard
@@ -67,12 +72,17 @@ impl std::fmt::Display for SchemaFingerprint {
 ///   each: handle bytes, then the row's canonical fact bytes, each
 ///   length-prefixed like everything else);
 /// - the dependency statements in **materialized order** — for each: the
-///   judgment form (Functionality = 0, Containment = 1, Cardinality = 2)
+///   judgment form (Functionality = 0, Containment = 1, Capacity = 4 —
+///   tags 2 and 3 are retired and never reissued, C5)
 ///   and its body — sides as (relation id, projection field-id
 ///   list in statement order, selection list as (field id, literal count,
 ///   literal values in canonical set order) bindings in statement order);
-///   a cardinality window adds `lo` and the `hi` presence tag + bound
-///   between its sides.
+///   a capacity statement encodes in the operator's read order (C2):
+///   target side, the weight descriptor (kind tag 0 = unit / 1 = field ‖
+///   field id / 2 = Duration ‖ field id), the window (`lo`'s literal
+///   value, then the `hi` presence tag followed, when present, by its
+///   kind tag 0 = literal ‖ u64 / 1 = target field ‖ field id /
+///   2 = Duration(target field) ‖ field id), then the source side.
 fn canonical_bytes(schema: &Schema, out: &mut Vec<u8>) {
     put_bytes(out, FORMAT_VERSION_LABEL);
     put_len(out, schema.relations().len());
@@ -104,7 +114,7 @@ fn canonical_bytes(schema: &Schema, out: &mut Vec<u8>) {
         }
     }
     let statement_count =
-        schema.keys().len() + schema.containments().len() + schema.windows().len();
+        schema.keys().len() + schema.containments().len() + schema.capacities().len();
     put_len(out, statement_count);
     for index in 0..statement_count {
         let id = StatementId(u16::try_from(index).expect("statement count fits u16"));
@@ -122,18 +132,42 @@ fn canonical_bytes(schema: &Schema, out: &mut Vec<u8>) {
                 put_side(out, schema, &statement.source);
                 put_side(out, schema, &statement.target);
             }
-            StatementView::Cardinality(_, statement) => {
-                out.push(2);
-                put_side(out, schema, &statement.source);
+            StatementView::Capacity(_, statement) => {
+                out.push(4);
+                put_side(out, schema, &statement.target);
+                match statement.weight {
+                    Weight::Unit => out.push(0),
+                    Weight::Field(field) => {
+                        out.push(1);
+                        put_field_id(out, field);
+                    }
+                    Weight::DurationOf(field) => {
+                        out.push(2);
+                        put_field_id(out, field);
+                    }
+                }
                 out.extend_from_slice(&statement.lo.to_le_bytes());
                 match statement.hi {
                     None => out.push(0),
                     Some(hi) => {
                         out.push(1);
-                        out.extend_from_slice(&hi.to_le_bytes());
+                        match hi {
+                            Bound::Lit(value) => {
+                                out.push(0);
+                                out.extend_from_slice(&value.to_le_bytes());
+                            }
+                            Bound::TargetField(field) => {
+                                out.push(1);
+                                put_field_id(out, field);
+                            }
+                            Bound::TargetDuration(field) => {
+                                out.push(2);
+                                put_field_id(out, field);
+                            }
+                        }
                     }
                 }
-                put_side(out, schema, &statement.target);
+                put_side(out, schema, &statement.source);
             }
         }
     }
@@ -338,14 +372,14 @@ mod tests {
     #[test]
     fn golden_fingerprint_pins_the_hash() {
         // Pinned: the canonical encoding (and therefore blake3 of it)
-        // must not drift while the format label stays `v4`. `base()` covers
+        // must not drift while the format label stays `v5`. `base()` covers
         // every literal-adjacent input: fresh auto-keys, a declared key,
         // and a containment with a selection literal. Pinned through
         // `Display` — the fingerprint's one rendering, hex of all 32
         // bytes, the same string the mismatch diagnostics print.
         assert_eq!(
             base_fingerprint().to_string(),
-            "1e5963bb9a5f3165c1aa3738791cf5b426cf5b2c8196aaef4e606811dd9aedcf"
+            "1959c7ceac2e7e8214b382db0bfafb17a2510d1713a441ef1b1df763b1973ced"
         );
     }
 
@@ -373,7 +407,7 @@ mod tests {
         );
         assert_eq!(
             fingerprint(&schema).to_string(),
-            "9e2cf875bbedd38baada9bc454b3a445a1a331b0d62c1d92d22d2de05170d33f"
+            "ee5bd9b1673ddac9c8aa32e6136901258c47ba9aa0e9d4f6dce98a5eda5c23d8"
         );
     }
 
@@ -555,7 +589,7 @@ mod tests {
 
         let mut expected: Vec<u8> = Vec::new();
         expected.extend_from_slice(&18u32.to_le_bytes());
-        expected.extend_from_slice(b"bumbledb-schema-v4");
+        expected.extend_from_slice(b"bumbledb-schema-v5");
         expected.extend_from_slice(&1u32.to_le_bytes()); // relation count
         expected.extend_from_slice(&1u32.to_le_bytes()); // name len
         expected.extend_from_slice(b"R");
@@ -611,7 +645,7 @@ mod tests {
 
         let mut expected: Vec<u8> = Vec::new();
         expected.extend_from_slice(&18u32.to_le_bytes());
-        expected.extend_from_slice(b"bumbledb-schema-v4");
+        expected.extend_from_slice(b"bumbledb-schema-v5");
         expected.extend_from_slice(&2u32.to_le_bytes()); // relation count
         expected.extend_from_slice(&6u32.to_le_bytes());
         expected.extend_from_slice(b"Holder");
@@ -650,6 +684,154 @@ mod tests {
         expected.extend_from_slice(&1u32.to_le_bytes()); // projection len
         expected.extend_from_slice(&0u16.to_le_bytes()); // field id
         expected.extend_from_slice(&0u32.to_le_bytes()); // selection len
+        assert_eq!(bytes, expected);
+    }
+
+    /// The tag-4 body golden — the capacity statement's byte-level pin,
+    /// covering every weight kind (unit / field / Duration) and every
+    /// bound kind (`*`, literal, target field, Duration(target field))
+    /// in the operator's read order (C2): target ‖ weight ‖ lo ‖ hi ‖
+    /// source. The count-only tag 2 never had a byte golden; the
+    /// most-changed encoding does not land without one — a codec drift
+    /// here would otherwise surface first as a field exhume failure.
+    #[test]
+    fn golden_bytes_pin_the_capacity_encoding() {
+        use crate::schema::tests::{capacity, capacity_weighted};
+        let interval = ValueType::Interval {
+            element: IntervalElement::U64,
+            width: None,
+        };
+        let schema = schema_of(SchemaDescriptor {
+            relations: vec![
+                RelationDescriptor {
+                    extension: None,
+                    name: "Pool".into(),
+                    fields: vec![
+                        field("id", ValueType::U64),
+                        field("supply", ValueType::U64),
+                        field("span", interval.clone()),
+                    ],
+                },
+                RelationDescriptor {
+                    extension: None,
+                    name: "Dev".into(),
+                    fields: vec![
+                        field("pool", ValueType::U64),
+                        field("watts", ValueType::U64),
+                        field("busy", interval),
+                    ],
+                },
+            ],
+            statements: vec![
+                fd(RelationId(0), &[FieldId(0)]),
+                // Unit floor `{2..*}` and unit range `{0..3}`.
+                capacity(
+                    side(RelationId(1), &[FieldId(0)]),
+                    2,
+                    None,
+                    side(RelationId(0), &[FieldId(0)]),
+                ),
+                capacity(
+                    side(RelationId(1), &[FieldId(0)]),
+                    0,
+                    Some(3),
+                    side(RelationId(0), &[FieldId(0)]),
+                ),
+                // `Pool(id) <=[watts]{0..supply} Dev(pool)`.
+                capacity_weighted(
+                    side(RelationId(0), &[FieldId(0)]),
+                    Weight::Field(FieldId(1)),
+                    0,
+                    Some(Bound::TargetField(FieldId(1))),
+                    side(RelationId(1), &[FieldId(0)]),
+                ),
+                // `Pool(id) <=[Duration(busy)]{0..Duration(span)} Dev(pool)`.
+                capacity_weighted(
+                    side(RelationId(0), &[FieldId(0)]),
+                    Weight::DurationOf(FieldId(2)),
+                    0,
+                    Some(Bound::TargetDuration(FieldId(2))),
+                    side(RelationId(1), &[FieldId(0)]),
+                ),
+            ],
+        });
+        let mut bytes = Vec::new();
+        canonical_bytes(&schema, &mut bytes);
+
+        let mut expected: Vec<u8> = Vec::new();
+        expected.extend_from_slice(&18u32.to_le_bytes());
+        expected.extend_from_slice(b"bumbledb-schema-v5");
+        expected.extend_from_slice(&2u32.to_le_bytes()); // relation count
+        let put_relation = |expected: &mut Vec<u8>, name: &str, fields: [&str; 3]| {
+            expected.extend_from_slice(&u32::try_from(name.len()).expect("len").to_le_bytes());
+            expected.extend_from_slice(name.as_bytes());
+            expected.extend_from_slice(&3u32.to_le_bytes()); // field count
+            for (idx, field_name) in fields.iter().enumerate() {
+                expected.extend_from_slice(
+                    &u32::try_from(field_name.len()).expect("len").to_le_bytes(),
+                );
+                expected.extend_from_slice(field_name.as_bytes());
+                if idx == 2 {
+                    expected.push(6); // ValueType::Interval (general) tag
+                    expected.push(0); // IntervalElement::U64
+                } else {
+                    expected.push(2); // ValueType::U64 tag
+                }
+                expected.push(0); // Generation::None tag
+            }
+            expected.push(0); // ordinary: no extension
+        };
+        put_relation(&mut expected, "Pool", ["id", "supply", "span"]);
+        put_relation(&mut expected, "Dev", ["pool", "watts", "busy"]);
+        expected.extend_from_slice(&5u32.to_le_bytes()); // statement count
+        expected.push(0); // Functionality form tag
+        expected.extend_from_slice(&0u32.to_le_bytes()); // relation id
+        expected.extend_from_slice(&1u32.to_le_bytes()); // projection len
+        expected.extend_from_slice(&0u16.to_le_bytes()); // field id
+        // One unselected side, `Rel(field 0)` — all four statements use it.
+        let put_bare_side = |expected: &mut Vec<u8>, relation: u32| {
+            expected.extend_from_slice(&relation.to_le_bytes());
+            expected.extend_from_slice(&1u32.to_le_bytes()); // projection len
+            expected.extend_from_slice(&0u16.to_le_bytes()); // field id
+            expected.extend_from_slice(&0u32.to_le_bytes()); // selection len
+        };
+        // `Pool(id) <={2..*} Dev(pool)` — unit weight, star ceiling.
+        expected.push(4); // Capacity form tag
+        put_bare_side(&mut expected, 0); // target: Pool(id)
+        expected.push(0); // Weight::Unit kind tag
+        expected.extend_from_slice(&2u64.to_le_bytes()); // lo
+        expected.push(0); // hi absent (`*`)
+        put_bare_side(&mut expected, 1); // source: Dev(pool)
+        // `Pool(id) <={0..3} Dev(pool)` — literal ceiling.
+        expected.push(4);
+        put_bare_side(&mut expected, 0);
+        expected.push(0); // Weight::Unit
+        expected.extend_from_slice(&0u64.to_le_bytes()); // lo
+        expected.push(1); // hi present
+        expected.push(0); // Bound::Lit kind tag
+        expected.extend_from_slice(&3u64.to_le_bytes()); // literal value
+        put_bare_side(&mut expected, 1);
+        // `Pool(id) <=[watts]{0..supply} Dev(pool)` — field weight,
+        // dependent ceiling.
+        expected.push(4);
+        put_bare_side(&mut expected, 0);
+        expected.push(1); // Weight::Field kind tag
+        expected.extend_from_slice(&1u16.to_le_bytes()); // watts
+        expected.extend_from_slice(&0u64.to_le_bytes()); // lo
+        expected.push(1); // hi present
+        expected.push(1); // Bound::TargetField kind tag
+        expected.extend_from_slice(&1u16.to_le_bytes()); // supply
+        put_bare_side(&mut expected, 1);
+        // `Pool(id) <=[Duration(busy)]{0..Duration(span)} Dev(pool)`.
+        expected.push(4);
+        put_bare_side(&mut expected, 0);
+        expected.push(2); // Weight::DurationOf kind tag
+        expected.extend_from_slice(&2u16.to_le_bytes()); // busy
+        expected.extend_from_slice(&0u64.to_le_bytes()); // lo
+        expected.push(1); // hi present
+        expected.push(2); // Bound::TargetDuration kind tag
+        expected.extend_from_slice(&2u16.to_le_bytes()); // span
+        put_bare_side(&mut expected, 1);
         assert_eq!(bytes, expected);
     }
 
@@ -728,7 +910,7 @@ mod tests {
 
         let mut expected: Vec<u8> = Vec::new();
         expected.extend_from_slice(&18u32.to_le_bytes());
-        expected.extend_from_slice(b"bumbledb-schema-v4");
+        expected.extend_from_slice(b"bumbledb-schema-v5");
         expected.extend_from_slice(&1u32.to_le_bytes()); // relation count
         expected.extend_from_slice(&8u32.to_le_bytes());
         expected.extend_from_slice(b"Currency");

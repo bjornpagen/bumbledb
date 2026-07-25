@@ -96,18 +96,39 @@ pub(crate) fn side_where_sets(
     }
 }
 
-/// `source in lo..hi per target`.
-pub(crate) fn cardinality(
+/// `target <={lo..hi} source` — the unit-weight, literal-bound capacity
+/// statement (the count instance; the argument order keeps the historic
+/// source-first fixture call sites one-line diffs).
+pub(crate) fn capacity(
     source: Side,
     lo: u64,
     hi: Option<u64>,
     target: Side,
 ) -> StatementDescriptor {
-    StatementDescriptor::Cardinality {
+    StatementDescriptor::Capacity {
+        target,
+        weight: Weight::Unit,
+        lo,
+        hi: hi.map(Bound::Lit),
         source,
+    }
+}
+
+/// `target <=[weight]{lo..hi} source` — the full capacity constructor,
+/// operator order (C2).
+pub(crate) fn capacity_weighted(
+    target: Side,
+    weight: Weight,
+    lo: u64,
+    hi: Option<Bound>,
+    source: Side,
+) -> StatementDescriptor {
+    StatementDescriptor::Capacity {
+        target,
+        weight,
         lo,
         hi,
-        target,
+        source,
     }
 }
 

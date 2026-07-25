@@ -313,32 +313,75 @@ pub enum StatementErrorKind {
         relation: RelationId,
         field: FieldId,
     },
-    /// Roster "an inverted window": `hi < lo` is satisfied by no count —
-    /// the statement is unsatisfiable as declared. The canonical bounds
-    /// are `lo < hi` (an exact count is `lo = hi`, the `{n}` spelling).
-    CardinalityInvertedWindow { lo: u64, hi: u64 },
-    /// Roster "the vacuous window": `0..*` admits every count — the
-    /// statement provably says nothing
-    /// (`lean/Bumbledb/Cardinality.lean: cardinality_zero_star`), and a
+    /// Roster "an inverted window": literal `hi < lo` is satisfied by no
+    /// measure — the statement is unsatisfiable as declared. The
+    /// canonical bounds are `lo < hi` (an exact measure is `lo = hi`,
+    /// the `{n}` spelling). Literal-gated: a dependent ceiling resolves
+    /// per row and is not statically invertible.
+    CapacityInvertedWindow { lo: u64, hi: u64 },
+    /// Roster "the vacuous window": `0..*` admits every measure at any
+    /// weight — the statement provably says nothing
+    /// (`lean/Bumbledb/Capacity.lean: capacity_zero_star`), and a
     /// statement that says nothing is not a statement (the
     /// canonical-utterance law, `docs/architecture/70-api.md`).
-    CardinalityVacuousWindow,
-    /// Roster "the containment respelled": `1..*` says exactly what the
-    /// bare containment `target <= source` says
+    CapacityVacuousWindow,
+    /// Roster "the containment respelled": unit `1..*` says exactly what
+    /// the bare containment `target <= source` says
     /// (`lean/Bumbledb/Subsumption.lean: window_floor_containment`) — one
     /// meaning, one spelling: drop the window and declare the
-    /// containment.
-    CardinalityContainmentWindow,
-    /// Roster "an interval position in a window projection" — refused v0:
-    /// a window counts FACTS per parent, and an interval position would
-    /// make the count ambiguous between facts and points
-    /// (`lean/Bumbledb/Cardinality.lean` § v0 refusals; *trigger* for
+    /// containment. Fires on the count instance ONLY (the per-aggregate
+    /// ban law): `<=[w]{1..*}` — "positive total" — is no existence
+    /// claim over rows and stays legal.
+    CapacityContainmentWindow,
+    /// Roster "an interval position in a capacity projection" — refused
+    /// v0: the group key identifies FACTS per parent, and an interval
+    /// position would make the group ambiguous between facts and points;
+    /// intervals enter through the MEASURE argument
+    /// (`[Duration(field)]`), never the group key
+    /// (`lean/Bumbledb/Capacity.lean` § v0 refusals; *trigger* for
     /// lifting: a sighted counting-over-denotation workload — counting
     /// points, not rows).
-    CardinalityIntervalPosition {
+    CapacityIntervalPosition {
         relation: RelationId,
         field: FieldId,
     },
+    /// Roster "a signed or non-u64 weight field": a `[field]` weight
+    /// must name a u64-encoded SOURCE position — a signed encoding is
+    /// the typed polarity refusal (a negative weight would let an insert
+    /// lower a sum, breaking the delta scheduler), and every other
+    /// encoding equally fails to measure.
+    CapacityWeightNotU64 {
+        relation: RelationId,
+        field: FieldId,
+    },
+    /// Roster "a Duration weight over a non-interval field":
+    /// `[Duration(field)]` reads an interval position's measure — the
+    /// named SOURCE field must be interval-typed.
+    CapacityWeightNotDuration {
+        relation: RelationId,
+        field: FieldId,
+    },
+    /// Roster "a dependent bound not a u64 field of TARGET's row": a
+    /// bound ident resolves by name against the target's whole field
+    /// roster (ruled 2026-07-24, C1) and must be u64-encoded — signed
+    /// and non-scalar encodings are refused.
+    CapacityBoundNotU64 {
+        relation: RelationId,
+        field: FieldId,
+    },
+    /// Roster "a Duration bound over a non-interval field":
+    /// `{..Duration(field)}` bounds by a TARGET interval's measure — the
+    /// named field must be interval-typed.
+    CapacityBoundNotDuration {
+        relation: RelationId,
+        field: FieldId,
+    },
+    /// Roster "dimension mixing": a unit (count) window against a
+    /// `Duration` bound — a count of facts bounded by a span of time is
+    /// a dimension error (ruled 2026-07-24, C18; the legal pairings:
+    /// Duration weights under Duration or literal bounds, u64 weights
+    /// under u64-field or literal bounds — u64 is u64).
+    CapacityDimensionMixing { field: FieldId },
     /// Roster ">1 interval position": two interval fields in one FD
     /// projection would be 2-D exclusion, which the ordered determinant cannot
     /// answer. Carries the second interval field.
@@ -990,19 +1033,23 @@ pub enum Violation {
         /// deleted target key (`TargetRequired`).
         fact: Box<[u8]>,
     },
-    /// A `Cardinality` statement violated by the final state: a selected
-    /// parent fact whose child-group count falls outside the window —
-    /// below the floor or above the ceiling
-    /// (`lean/Bumbledb/Cardinality.lean: CardinalityWindow`).
-    Cardinality {
+    /// A `Capacity` statement violated by the final state: a selected
+    /// parent fact whose child-group MEASURE (Σ weight over the
+    /// deduplicated group; unit weight = count) falls outside the
+    /// window — below the floor or above the resolved ceiling
+    /// (`lean/Bumbledb/Capacity.lean: CapacityLaw`).
+    Capacity {
         statement: StatementId,
         /// The convicting parent fact: the ψ-selected holder of the
-        /// touched key tuple whose group count is out of window.
+        /// touched key tuple whose group measure is out of window.
         fact: Box<[u8]>,
-        /// The observed child-group count (the walk stops as soon as the
-        /// verdict is decided, so a ceiling conviction reports the first
-        /// count past the ceiling).
-        count: u64,
+        /// The witnessed group measure, u128 whole — the accumulator's
+        /// width crosses untruncated (ruled 2026-07-24, C3). On
+        /// conviction the judge completes the full walk, so the reported
+        /// measure is the group's total, walk-order-independent (ruled
+        /// 2026-07-24, C14: the clip serves the verdict, the full sum
+        /// serves the witness).
+        measure: u128,
     },
 }
 
@@ -1013,19 +1060,19 @@ impl Violation {
         match self {
             Self::Functionality { statement, .. }
             | Self::Containment { statement, .. }
-            | Self::Cardinality { statement, .. } => *statement,
+            | Self::Capacity { statement, .. } => *statement,
         }
     }
 
     /// The citation identity — [`Violations`]' sort and dedup key:
     /// statement id (materialized order), then direction (source before
-    /// target; key and window statements have none). Witness
-    /// facts, counts, and defect kinds are deliberately outside the
+    /// target; key and capacity statements have none). Witness
+    /// facts, measures, and defect kinds are deliberately outside the
     /// identity: a statement is cited once per direction, whatever the
     /// count of facts convicting it.
     fn citation(&self) -> (StatementId, Option<Direction>) {
         match self {
-            Self::Functionality { statement, .. } | Self::Cardinality { statement, .. } => {
+            Self::Functionality { statement, .. } | Self::Capacity { statement, .. } => {
                 (*statement, None)
             }
             Self::Containment {
@@ -1053,7 +1100,8 @@ impl Violation {
 pub struct CitedFact {
     /// The cited fact's relation: the statement's own relation for a
     /// key, the SOURCE relation for a containment (the judgment speaks
-    /// about sources), the TARGET (parent) relation for a window.
+    /// about sources), the TARGET (parent) relation for a capacity
+    /// statement.
     pub relation: RelationId,
     /// One decoded [`Value`] per sealed field, in declaration order.
     pub values: Box<[bumbledb_theory::Value]>,
@@ -1436,6 +1484,22 @@ pub enum Error {
         /// The offending interval's encoded end word (`u64::MAX` — the
         /// ray's ∞ in both element encodings).
         end: u64,
+    },
+    /// A capacity statement's Duration weight or dependent Duration bound
+    /// reached a ray at judge time: an interval with `end == MAX` denotes
+    /// `[s, ∞)`, and a ray has no finite measure — the typed COMMIT
+    /// refusal naming the row (ruled 2026-07-24, C10; the
+    /// [`Error::MeasureOfRay`] precedent enforced at the law site).
+    /// Boundedness is not provable at validation, so the measure path
+    /// tests `end == MAX` and refuses the commit whole — never a
+    /// violation (the law is not judged false; its measure is undefined)
+    /// and never a silent `MAX` (fabricated arithmetic).
+    CapacityRayMeasure {
+        /// The capacity statement whose measure met the ray.
+        statement: StatementId,
+        /// The offending row — the weighed SOURCE fact or the
+        /// bound-carrying TARGET fact, canonical bytes.
+        fact: Box<[u8]>,
     },
     /// A stratum's fixpoint crossed the driver's iteration/tuple budget
     /// — the one new trust boundary the recursion campaign added

@@ -10,8 +10,8 @@
 use std::fmt;
 
 use super::{
-    FieldDescriptor, FieldId, LiteralSet, RelationId, Schema, SchemaDescriptor, Side,
-    StatementDescriptor, StatementId, StatementKind, StatementView, Value, ValueType,
+    Bound, FieldDescriptor, FieldId, LiteralSet, RelationId, Schema, SchemaDescriptor, Side,
+    StatementDescriptor, StatementId, StatementKind, StatementView, Value, ValueType, Weight,
 };
 use crate::error::{Direction, Violation, Violations};
 
@@ -30,10 +30,11 @@ pub struct RenderedViolation {
     /// single renderer, never a second stringifier).
     pub spelling: String,
     /// A containment citation's violated side; `None` for keys and
-    /// windows.
+    /// capacity statements.
     pub direction: Option<Direction>,
-    /// A window citation's observed child-group count; `None` otherwise.
-    pub count: Option<u64>,
+    /// A capacity citation's witnessed child-group measure (u128 whole —
+    /// ruled 2026-07-24, C3); `None` otherwise.
+    pub measure: Option<u128>,
     /// The offending facts — the violation's fact, then its incumbent
     /// where one exists — as named decoded values.
     pub facts: Vec<RenderedFact>,
@@ -80,13 +81,13 @@ pub fn render_rejection(
         .citations()
         .map(|(violation, cited)| {
             let statement = violation.statement();
-            let (kind, direction, count) = match violation {
+            let (kind, direction, measure) = match violation {
                 Violation::Functionality { .. } => (StatementKind::Functionality, None, None),
                 Violation::Containment { direction, .. } => {
                     (StatementKind::Containment, Some(*direction), None)
                 }
-                Violation::Cardinality { count, .. } => {
-                    (StatementKind::Cardinality, None, Some(*count))
+                Violation::Capacity { measure, .. } => {
+                    (StatementKind::Capacity, None, Some(*measure))
                 }
             };
             RenderedViolation {
@@ -102,7 +103,7 @@ pub fn render_rejection(
                     format!("statement#{}", statement.0)
                 },
                 direction,
-                count,
+                measure,
                 facts: cited
                     .iter()
                     .map(|fact| RenderedFact {
@@ -137,10 +138,15 @@ pub fn render_rejection(
 /// (`Account(id | kind == Savings)`), and a bidirectional pair — read off
 /// the sealed [`super::ContainmentStatement::mirror`] link — as
 /// `==` once, in the pair's written orientation (both ids render the same
-/// string), and a cardinality window B-family, target-left, in its one
-/// canonical spelling (`Parent(id) <={1..3} Task(parent)`; `lo = hi`
-/// prints `{n}`). Selection literals render through one value formatter;
-/// intervals render as `start..end`.
+/// string), and a capacity statement B-family, target-left, in its one
+/// canonical spelling (`Parent(id) <={1..3} Task(parent)`;
+/// `Pool(id) <=[watts]{0..supply} Device(pool)` — the weight bracket
+/// prints between `<=` and the window, nothing for the unit instance,
+/// and bounds print their target-field idents; literal `lo = hi` prints
+/// `{n}`). Selection literals render through one value formatter;
+/// intervals render as `start..end`. The rendered string re-parses under
+/// the `schema!` grammar — the renderer is a bijection on legal
+/// statements.
 ///
 /// # Panics
 ///
@@ -157,11 +163,12 @@ pub fn render(schema: &Schema, id: StatementId) -> String {
             target: &statement.target,
             mirror: statement.mirror,
         },
-        StatementView::Cardinality(_, statement) => RenderedStatement::Cardinality {
-            source: &statement.source,
+        StatementView::Capacity(_, statement) => RenderedStatement::Capacity {
+            target: &statement.target,
+            weight: statement.weight,
             lo: statement.lo,
             hi: statement.hi,
-            target: &statement.target,
+            source: &statement.source,
         },
     };
     Rendered {
@@ -227,16 +234,18 @@ pub(super) fn render_materialized(
                 mirror: mirrors[index],
             }
         }
-        StatementDescriptor::Cardinality {
-            source,
+        StatementDescriptor::Capacity {
+            target,
+            weight,
             lo,
             hi,
-            target,
-        } => RenderedStatement::Cardinality {
             source,
+        } => RenderedStatement::Capacity {
+            target,
+            weight: *weight,
             lo: *lo,
             hi: *hi,
-            target,
+            source,
         },
     };
     Rendered {
@@ -364,7 +373,7 @@ impl Names for DeclaredNames<'_> {
                 .filter_map(|statement| match statement {
                     StatementDescriptor::Containment { source, target } => Some((source, target)),
                     StatementDescriptor::Functionality { .. }
-                    | StatementDescriptor::Cardinality { .. } => None,
+                    | StatementDescriptor::Capacity { .. } => None,
                 }),
             |id| {
                 self.0
@@ -409,11 +418,12 @@ enum RenderedStatement<'a> {
         /// The `==` partner, if any — the sealed fact, never re-detected.
         mirror: Option<StatementId>,
     },
-    Cardinality {
-        source: &'a Side,
-        lo: u64,
-        hi: Option<u64>,
+    Capacity {
         target: &'a Side,
+        weight: Weight,
+        lo: u64,
+        hi: Option<Bound>,
+        source: &'a Side,
     },
 }
 
@@ -455,28 +465,72 @@ impl fmt::Display for Rendered<'_> {
             },
             // B-family, target-left, CANONICAL spellings only (the
             // canonical-utterance law, `docs/architecture/70-api.md`):
-            // `lo = hi` is the `{n}` exact spelling (`{0}` the
-            // exclusion), no ceiling is `{lo..*}`, else `{lo..hi}`.
-            // Validation rejects the banned bound shapes (`{0..*}`,
-            // `{1..*}`, inverted), so a sealed statement never renders
-            // one; a rejected declaration renders its banned bounds as
-            // written — the diagnostic must show the offense.
-            RenderedStatement::Cardinality {
-                source,
+            // the weight bracket between `<=` and the brace (nothing for
+            // the unit instance — the count utterance falls out, no
+            // second printer), literal `lo = hi` is the `{n}` exact
+            // spelling (`{0}` the exclusion; exact prints on STRUCTURAL
+            // equality — a dependent ceiling always prints the range),
+            // no ceiling is `{lo..*}`, else `{lo..hi}` with dependent
+            // bounds printing their target-field idents. Validation
+            // rejects the banned bound shapes (`{0..*}`, unit `{1..*}`,
+            // inverted), so a sealed statement never renders one; a
+            // rejected declaration renders its banned bounds as written
+            // — the diagnostic must show the offense.
+            RenderedStatement::Capacity {
+                target,
+                weight,
                 lo,
                 hi,
-                target,
+                source,
             } => {
                 side(f, self.names, target)?;
-                write!(f, " <={{")?;
+                write!(f, " <=")?;
+                match weight {
+                    Weight::Unit => {}
+                    Weight::Field(field) => {
+                        write!(f, "[")?;
+                        field_name(f, self.names, source.relation, field)?;
+                        write!(f, "]")?;
+                    }
+                    Weight::DurationOf(field) => {
+                        write!(f, "[Duration(")?;
+                        field_name(f, self.names, source.relation, field)?;
+                        write!(f, ")]")?;
+                    }
+                }
+                write!(f, "{{")?;
                 match hi {
-                    Some(hi) if hi == lo => write!(f, "{lo}")?,
-                    Some(hi) => write!(f, "{lo}..{hi}")?,
+                    Some(Bound::Lit(hi)) if hi == lo => write!(f, "{lo}")?,
+                    Some(hi) => {
+                        write!(f, "{lo}..")?;
+                        bound(f, self.names, target.relation, &hi)?;
+                    }
                     None => write!(f, "{lo}..*")?,
                 }
                 write!(f, "}} ")?;
                 side(f, self.names, source)
             }
+        }
+    }
+}
+
+/// One capacity bound in macro notation: a literal integer, a
+/// target-row field ident, or `Duration(field)` — the bound formatter
+/// behind the capacity window (idents resolve through the same
+/// [`Names`] the sides use; unknown ids take the `field#N` fallback).
+fn bound(
+    f: &mut fmt::Formatter<'_>,
+    names: &dyn Names,
+    target: RelationId,
+    bound: &Bound,
+) -> fmt::Result {
+    match bound {
+        Bound::Lit(n) => write!(f, "{n}"),
+        Bound::TargetField(field) => field_name(f, names, target, *field),
+        Bound::TargetDuration(field) => {
+            write!(f, "Duration(")?;
+            field_name(f, names, target, *field)?;
+            write!(f, ")")
         }
     }
 }

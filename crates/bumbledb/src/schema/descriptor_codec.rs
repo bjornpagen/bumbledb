@@ -26,8 +26,9 @@ use bumbledb_theory::{Interval, Value};
 
 use super::fingerprint::FORMAT_VERSION_LABEL;
 use super::{
-    FieldDescriptor, FieldId, Generation, IntervalElement, LiteralSet, RelationDescriptor,
-    RelationId, Row, SchemaDescriptor, Side, StatementDescriptor, ValueType,
+    Bound, FieldDescriptor, FieldId, Generation, IntervalElement, LiteralSet,
+    RelationDescriptor, RelationId, Row, SchemaDescriptor, Side, StatementDescriptor, ValueType,
+    Weight,
 };
 
 /// One decoded relation, both shapes: the declared descriptor (synthetic
@@ -256,20 +257,39 @@ fn statement(
             source: side(cur, relations)?,
             target: side(cur, relations)?,
         },
-        2 => {
-            let source = side(cur, relations)?;
+        // Tag 4 — the capacity statement, in the operator's read order
+        // (C2): target, weight descriptor, window (lo literal, hi
+        // presence + kind), source. Tags 2 (the retired count-only
+        // encoding) and 3 (the retired order mark) never decode — a
+        // retired tag is never reissued (C5), and a pre-cutover stream
+        // never reaches this decoder (the storage format gate runs
+        // first).
+        4 => {
+            let target = side(cur, relations)?;
+            let weight = match cur.byte()? {
+                0 => Weight::Unit,
+                1 => Weight::Field(FieldId(cur.u16()?)),
+                2 => Weight::DurationOf(FieldId(cur.u16()?)),
+                _ => return Err("descriptor capacity weight tag"),
+            };
             let lo = cur.u64()?;
             let hi = match cur.byte()? {
                 0 => None,
-                1 => Some(cur.u64()?),
-                _ => return Err("descriptor window hi tag"),
+                1 => Some(match cur.byte()? {
+                    0 => Bound::Lit(cur.u64()?),
+                    1 => Bound::TargetField(FieldId(cur.u16()?)),
+                    2 => Bound::TargetDuration(FieldId(cur.u16()?)),
+                    _ => return Err("descriptor capacity bound tag"),
+                }),
+                _ => return Err("descriptor capacity hi tag"),
             };
-            let target = side(cur, relations)?;
-            StatementDescriptor::Cardinality {
-                source,
+            let source = side(cur, relations)?;
+            StatementDescriptor::Capacity {
+                target,
+                weight,
                 lo,
                 hi,
-                target,
+                source,
             }
         }
         _ => return Err("descriptor statement form tag"),
@@ -459,8 +479,8 @@ mod tests {
     use super::super::ValidateDescriptor as _;
     use super::super::fingerprint::{canonical_descriptor, fingerprint};
     use super::super::tests::{
-        cardinality, closed, containment, fd, field, fresh_field, row, side, side_where,
-        side_where_sets,
+        capacity, capacity_weighted, closed, containment, fd, field, fresh_field, row, side,
+        side_where, side_where_sets,
     };
     use super::*;
 
@@ -539,6 +559,13 @@ mod tests {
                         fresh_field("id"),
                         field("holder", ValueType::U64),
                         field("kind", ValueType::U64),
+                        field(
+                            "busy",
+                            ValueType::Interval {
+                                element: IntervalElement::U64,
+                                width: None,
+                            },
+                        ),
                     ],
                 },
             ],
@@ -589,13 +616,13 @@ mod tests {
                     ),
                     side(RelationId(1), &[FieldId(0)]),
                 ),
-                cardinality(
+                capacity(
                     side(RelationId(2), &[FieldId(1)]),
                     0,
                     Some(3),
                     side(RelationId(1), &[FieldId(0)]),
                 ),
-                cardinality(
+                capacity(
                     side_where(
                         RelationId(2),
                         &[FieldId(1)],
@@ -604,6 +631,24 @@ mod tests {
                     2,
                     None,
                     side(RelationId(1), &[FieldId(0)]),
+                ),
+                // The weighted family — every capacity encoding the
+                // stream can carry: a u64-field weight under a dependent
+                // ceiling, and a Duration weight under a Duration
+                // ceiling (the calendar shape).
+                capacity_weighted(
+                    side(RelationId(1), &[FieldId(0)]),
+                    Weight::Field(FieldId(2)),
+                    0,
+                    Some(Bound::TargetField(FieldId(0))),
+                    side(RelationId(2), &[FieldId(1)]),
+                ),
+                capacity_weighted(
+                    side(RelationId(1), &[FieldId(0)]),
+                    Weight::DurationOf(FieldId(3)),
+                    0,
+                    Some(Bound::TargetDuration(FieldId(3))),
+                    side(RelationId(2), &[FieldId(1)]),
                 ),
             ],
         }

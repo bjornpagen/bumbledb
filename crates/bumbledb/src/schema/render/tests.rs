@@ -441,8 +441,8 @@ fn unresolvable_names_fall_back_to_id_placeholders() {
 /// no sealed statement can render a banned spelling.
 #[test]
 fn extension_forms_render_in_the_grammar() {
-    use crate::schema::tests::{cardinality, side_where_sets};
-    use crate::schema::{StatementView, WindowId};
+    use crate::schema::tests::{capacity, side_where_sets};
+    use crate::schema::{StatementView, CapacityId};
 
     let decl = SchemaDescriptor {
         relations: vec![
@@ -471,7 +471,7 @@ fn extension_forms_render_in_the_grammar() {
             fd(RelationId(0), &[FieldId(0)]),
             fd(RelationId(2), &[FieldId(0)]),
             // `{1..3}` — the two-bound range, over a set selection.
-            cardinality(
+            capacity(
                 side_where_sets(
                     RelationId(1),
                     &[FieldId(0)],
@@ -486,28 +486,28 @@ fn extension_forms_render_in_the_grammar() {
             ),
             // `{2..*}` — the floor (lo ≥ 2; `{1..*}` is the banned
             // containment respelling).
-            cardinality(
+            capacity(
                 side(RelationId(1), &[FieldId(0)]),
                 2,
                 None,
                 side(RelationId(0), &[FieldId(0)]),
             ),
             // `{0..4}` — the ceiling.
-            cardinality(
+            capacity(
                 side(RelationId(1), &[FieldId(0)]),
                 0,
                 Some(4),
                 side(RelationId(0), &[FieldId(0)]),
             ),
             // `{3}` — the exact count (`lo = hi`).
-            cardinality(
+            capacity(
                 side(RelationId(1), &[FieldId(0)]),
                 3,
                 Some(3),
                 side(RelationId(0), &[FieldId(0)]),
             ),
             // `{0}` — the exclusion.
-            cardinality(
+            capacity(
                 side_where_sets(
                     RelationId(1),
                     &[FieldId(0)],
@@ -553,7 +553,112 @@ fn extension_forms_render_in_the_grammar() {
         // The spine agrees with the arenas.
         assert!(matches!(
             schema.statement(id),
-            StatementView::Cardinality(WindowId(w), _) if usize::from(w) == offset
+            StatementView::Capacity(CapacityId(w), _) if usize::from(w) == offset
         ));
+    }
+}
+
+/// The weighted capacity spellings render in the exact grammar: the
+/// weight bracket between `<=` and the window (nothing for the unit
+/// instance — the count utterance IS the unit rendering above), ident
+/// bounds through the target's field names, `Duration(field)` on both
+/// sides of the operator, the weighted `{1..*}` floor (legal — the
+/// per-aggregate ban law), and the literal exact on STRUCTURAL
+/// equality only (a dependent ceiling always renders the range). Every
+/// rendered string re-parses under the `schema!` grammar — the
+/// round-trip law (`tests/schema_macro.rs` pins the parse side).
+#[test]
+fn weighted_capacity_forms_render_in_the_grammar() {
+    use crate::schema::tests::capacity_weighted;
+    use crate::schema::{Bound, Weight};
+
+    let interval = ValueType::Interval {
+        element: IntervalElement::U64,
+        width: None,
+    };
+    let decl = SchemaDescriptor {
+        relations: vec![
+            RelationDescriptor {
+                extension: None,
+                name: "Pool".into(),
+                fields: vec![
+                    field("id", ValueType::U64),
+                    field("supply", ValueType::U64),
+                    field("span", interval.clone()),
+                ],
+            },
+            RelationDescriptor {
+                extension: None,
+                name: "Device".into(),
+                fields: vec![
+                    field("pool", ValueType::U64),
+                    field("watts", ValueType::U64),
+                    field("busy", interval),
+                ],
+            },
+        ],
+        statements: vec![
+            fd(RelationId(0), &[FieldId(0)]),
+            // The power budget: dependent ceiling from the target row.
+            capacity_weighted(
+                side(RelationId(0), &[FieldId(0)]),
+                Weight::Field(FieldId(1)),
+                0,
+                Some(Bound::TargetField(FieldId(1))),
+                side(RelationId(1), &[FieldId(0)]),
+            ),
+            // Calendar capacity: Duration weight under a Duration bound.
+            capacity_weighted(
+                side(RelationId(0), &[FieldId(0)]),
+                Weight::DurationOf(FieldId(2)),
+                0,
+                Some(Bound::TargetDuration(FieldId(2))),
+                side(RelationId(1), &[FieldId(0)]),
+            ),
+            // The weighted floor of 1 — "positive total", legal (the
+            // containment-respelled ban is unit-only).
+            capacity_weighted(
+                side(RelationId(0), &[FieldId(0)]),
+                Weight::Field(FieldId(1)),
+                1,
+                None,
+                side(RelationId(1), &[FieldId(0)]),
+            ),
+            // A Duration weight under a literal ceiling (C18 refuses
+            // only the unit-window-vs-Duration-BOUND direction).
+            capacity_weighted(
+                side(RelationId(0), &[FieldId(0)]),
+                Weight::DurationOf(FieldId(2)),
+                0,
+                Some(Bound::Lit(720)),
+                side(RelationId(1), &[FieldId(0)]),
+            ),
+            // The literal exact under a weight — structural equality.
+            capacity_weighted(
+                side(RelationId(0), &[FieldId(0)]),
+                Weight::Field(FieldId(1)),
+                3,
+                Some(Bound::Lit(3)),
+                side(RelationId(1), &[FieldId(0)]),
+            ),
+        ],
+    };
+
+    let expected = [
+        "Pool(id) <=[watts]{0..supply} Device(pool)",
+        "Pool(id) <=[Duration(busy)]{0..Duration(span)} Device(pool)",
+        "Pool(id) <=[watts]{1..*} Device(pool)",
+        "Pool(id) <=[Duration(busy)]{0..720} Device(pool)",
+        "Pool(id) <=[watts]{3} Device(pool)",
+    ];
+
+    for (offset, want) in expected.iter().enumerate() {
+        let id = StatementId(u16::try_from(1 + offset).expect("small"));
+        assert_eq!(render_declared(&decl, id), *want);
+    }
+    let schema = decl.validate().expect("the weighted forms validate");
+    for (offset, want) in expected.iter().enumerate() {
+        let id = StatementId(u16::try_from(1 + offset).expect("small"));
+        assert_eq!(render(&schema, id), *want);
     }
 }

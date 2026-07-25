@@ -1,8 +1,8 @@
 //! Field, layout, and statement-index accessors on a validated relation.
 
 use super::{
-    ContainmentId, FactLayout, FieldDescriptor, FieldId, IntervalTail, KeyId, Relation, SealedRow,
-    ValueType, WindowId,
+    CapacityId, ContainmentId, FactLayout, FieldDescriptor, FieldId, IntervalTail, KeyId, Relation,
+    SealedRow, ValueType,
 };
 
 impl Relation {
@@ -56,17 +56,17 @@ impl Relation {
         &self.outgoing
     }
 
-    /// `Cardinality` statements whose source (counted child) is this
+    /// `Capacity` statements whose source (weighed child) is this
     /// relation.
     #[must_use]
-    pub fn window_sources(&self) -> &[WindowId] {
-        &self.window_sources
+    pub fn capacity_sources(&self) -> &[CapacityId] {
+        &self.capacity_sources
     }
 
-    /// `Cardinality` statements whose target (parent) is this relation.
+    /// `Capacity` statements whose target (parent) is this relation.
     #[must_use]
-    pub fn window_targets(&self) -> &[WindowId] {
-        &self.window_targets
+    pub fn capacity_targets(&self) -> &[CapacityId] {
+        &self.capacity_targets
     }
 
     /// The first `Fresh`-generation field — the one id allocator's mint

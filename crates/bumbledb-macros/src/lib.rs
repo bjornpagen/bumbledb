@@ -62,15 +62,27 @@
 //! spanned teaching error, not a key statement),
 //! `A(X | σ) <= B(Y | ψ)` (containment), `==` lowered here to the two
 //! adjacent containments, `A <= B` first;
-//! `B(Y | ψ) <={lo..hi} A(X | σ)` (the cardinality window — B-family,
-//! target-left: per selected B fact, the count of selected A facts
-//! sharing its projected tuple lies in the window). The window
+//! `B(Y | ψ) <=[w]{lo..hi} A(X | σ)` (the capacity statement —
+//! B-family, target-left: per selected B fact, the MEASURE of selected
+//! A facts sharing its projected tuple — Σ weight over the group — lies
+//! in the window; an absent bracket is the unit weight, so the count
+//! utterance `<={lo..hi}` survives character for character). The weight
+//! bracket names a u64 SOURCE field (`[watts]`) or an interval
+//! position's measure (`[Duration(booked)]`); bounds are non-negative
+//! integer literals, `*` (hi only), or TARGET-row fields — hi slot only
+//! (ruled 2026-07-24, C6), with `Duration(field)` bounding by a target
+//! interval's measure. The window
 //! vocabulary is closed under the canonical-utterance law
-//! (docs/architecture/70-api.md): `{n}` is THE exact-count spelling
+//! (docs/architecture/70-api.md, per-aggregate where weight-sensitive):
+//! `{n}` is THE exact-measure spelling
 //! (`{0}` the exclusion), `{lo..hi}` with lo < hi, `{lo..*}` floors
-//! (lo ≥ 2), `{0..hi}` ceilings — every other spelling (`{n..n}`,
-//! `{0..0}`, `{1..*}`, `{0..*}`, inverted bounds, open shorthands) is
-//! an expansion error naming the canonical form. Selection literals are typed
+//! (unit instance: lo ≥ 2 — the weighted `{1..*}` is legal), `{0..hi}`
+//! ceilings — every other spelling (`{n..n}`,
+//! `{0..0}`, unit `{1..*}`, `{0..*}`, inverted literal bounds, open
+//! shorthands) is an expansion error naming the canonical form. Weight
+//! and dependent-bound TYPING is judged at expansion too (the
+//! `fresh`-typing precedent): a signed weight names the polarity rule,
+//! a path weight (`[a.b]`) names the pinned-column composition idiom. Selection literals are typed
 //! against the selected field in the macro (a bare handle resolves through
 //! the selected field's newtype to its closed relation's row id); interval
 //! literals are written `start..end`, half-open; a binding may carry a
@@ -127,12 +139,13 @@
 //! from `Db::create`/`Db::open`, where the descriptor is validated.
 
 use bumbledb_theory::schema::spec::{
-    ClosedSpec, FieldSpec, LiteralAt, LiteralSetSpec, LiteralSpec, RelationSpec, RowSpec,
-    SchemaSpec, SideSpec, SpecIssue, StatementSide, StatementSpec, WindowSpec,
+    BoundSpec, CapacityWindowSpec, ClosedSpec, FieldSpec, LiteralAt, LiteralSetSpec, LiteralSpec,
+    RelationSpec, RowSpec, SchemaSpec, SideSpec, SpecIssue, StatementSide, StatementSpec,
+    WeightSpec,
 };
 use bumbledb_theory::schema::{
     Generation, IntervalElement, LiteralSet, SchemaDescriptor, Side as SideDescriptor,
-    StatementDescriptor, ValueType,
+    StatementDescriptor, ValueType, Weight,
 };
 use bumbledb_theory::{Interval, Value};
 use proc_macro::{Delimiter, Group, Ident, Punct, Spacing, Span, TokenStream, TokenTree};
@@ -289,14 +302,18 @@ enum Statement {
         target: Side,
         bidirectional: bool,
     },
-    /// `B(Y | ψ) <={window} A(X | σ);` — B-family, target-left: the
-    /// LEFT side is the window's target (the per-group parent), the
-    /// right side the counted source. The spelling survives as written —
-    /// the shared lowering owns the ban table — and the brace group's
-    /// span is where a banned spelling's error points.
-    Cardinality {
+    /// `B(Y | ψ) <=[weight]{window} A(X | σ);` — B-family, target-left:
+    /// the LEFT side is the statement's target (the per-group parent),
+    /// the right side the weighed source. The spelling survives as
+    /// written — the shared lowering owns the ban table — the brace
+    /// group's span is where a banned spelling's error points, and the
+    /// bracket group's span (`None` for the unit instance) is where a
+    /// weight issue points.
+    Capacity {
         source: Side,
-        window: WindowSpec,
+        weight: WeightSpec,
+        weight_span: Option<Span>,
+        window: CapacityWindowSpec,
         window_span: Span,
         target: Side,
     },
@@ -519,6 +536,11 @@ fn parse_interval_width(name: &str, tokens: &mut Tokens) -> Option<u64> {
 /// Whether the next token is a brace-delimited group.
 fn peek_brace(tokens: &mut Tokens) -> bool {
     matches!(tokens.peek(), Some(TokenTree::Group(g)) if g.delimiter() == Delimiter::Brace)
+}
+
+/// A `[...]` group next — the capacity weight bracket riding `<=`.
+fn peek_bracket(tokens: &mut Tokens) -> bool {
+    matches!(tokens.peek(), Some(TokenTree::Group(g)) if g.delimiter() == Delimiter::Bracket)
 }
 
 /// Parses one closed relation, `closed relation` already consumed:
@@ -809,6 +831,11 @@ struct ParseError {
 /// `bidirectional` containment spelling — the shared lowering lowers it
 /// to two adjacent `Containment`s, `A <= B` first
 /// (docs/architecture/30-dependencies.md).
+#[expect(
+    clippy::too_many_lines,
+    reason = "one arm per operator spelling — clearer kept together \
+              (the `descriptor` precedent)"
+)]
 fn parse_statement(
     relation: String,
     relation_span: Span,
@@ -862,11 +889,30 @@ fn parse_statement(
             });
         }
         // `<=`: containment — or, with a brace group riding the operator
-        // (`<={lo..hi}`), the cardinality window: B-family, target-left —
-        // the LEFT side is the window's target (the per-group parent),
-        // the right side the counted source.
+        // (`<={lo..hi}`, optionally weighted `<=[w]{lo..hi}`), the
+        // capacity statement: B-family, target-left — the LEFT side is
+        // the statement's target (the per-group parent), the right side
+        // the weighed source. ONE parse arm with an optional bracket:
+        // the count spelling and the weighted spelling are the same
+        // statement, never an old-arm/new-arm pair.
         Some(TokenTree::Punct(p)) if p.as_char() == '<' => {
             expect_punct(tokens, '=');
+            let (weight, weight_span) = if peek_bracket(tokens) {
+                let Some(TokenTree::Group(group)) = tokens.next() else {
+                    unreachable!("peeked a bracket group");
+                };
+                let weight_span = group.span();
+                let weight = parse_weight(group.stream());
+                assert!(
+                    peek_brace(tokens),
+                    "schema!: `<=[w]` names a weight but no window — the capacity \
+                     statement is `Parent(key) <=[w]{{lo..hi}} Child(field)` \
+                     (docs/architecture/30-dependencies.md § the extension form)"
+                );
+                (weight, Some(weight_span))
+            } else {
+                (WeightSpec::Unit, None)
+            };
             if peek_brace(tokens) {
                 let Some(TokenTree::Group(group)) = tokens.next() else {
                     unreachable!("peeked a brace group");
@@ -874,8 +920,10 @@ fn parse_statement(
                 let window_span = group.span();
                 let spelling = parse_window(group.stream());
                 let right = parse_statement_side(tokens);
-                statements.push(Statement::Cardinality {
+                statements.push(Statement::Capacity {
                     source: right,
+                    weight,
+                    weight_span,
                     window: spelling,
                     window_span,
                     target: left,
@@ -910,7 +958,9 @@ fn parse_statement(
                  (docs/architecture/30-dependencies.md § the extension form)"
             );
         }
-        other => panic!("schema!: expected `->`, `<=`, `<={{lo..hi}}`, or `==`, found {other:?}"),
+        other => panic!(
+            "schema!: expected `->`, `<=`, `<=[w]{{lo..hi}}`, or `==`, found {other:?}"
+        ),
     }
     expect_punct(tokens, ';');
     Ok(())
@@ -948,24 +998,91 @@ fn duplicate_determinant_field(side: &Side) -> Option<ParseError> {
     None
 }
 
-/// One window bound out of the brace group: a non-negative integer,
-/// parsed here (not spliced) because the canonical-utterance law compares
-/// bounds at expansion.
-fn parse_window_bound(tokens: &mut Tokens, what: &str) -> u64 {
+/// One capacity bound out of the brace group: a non-negative integer
+/// literal (parsed here, not spliced — the canonical-utterance law
+/// compares bounds at expansion), a bare ident (the dependent bound: a
+/// field of TARGET's row, resolved by the shared lowering), or
+/// `Duration(field)` (a target interval's measure).
+fn parse_bound(tokens: &mut Tokens, what: &str) -> BoundSpec {
+    if matches!(tokens.peek(), Some(TokenTree::Ident(_))) {
+        let (name, _) = spanned_ident(tokens, what);
+        if name == "Duration" {
+            let group = take_group(tokens, Delimiter::Parenthesis, "the Duration bound's field");
+            let mut inner = group.into_iter().peekable();
+            let field = expect_ident(&mut inner, "the Duration bound's field name");
+            assert!(
+                inner.peek().is_none(),
+                "schema!: trailing tokens in `Duration({field})`"
+            );
+            return BoundSpec::Duration(field.into());
+        }
+        return BoundSpec::Field(name.into());
+    }
     let (negative, text) = parse_int(tokens, what);
     assert!(
         !negative,
-        "schema!: a window bound is a count — non-negative"
+        "schema!: a window bound is a measure — non-negative"
     );
-    u64_text(&text).unwrap_or_else(|| panic!("schema!: malformed window bound `{text}`"))
+    BoundSpec::Lit(
+        u64_text(&text).unwrap_or_else(|| panic!("schema!: malformed window bound `{text}`")),
+    )
+}
+
+/// Parses the `<=[…]` bracket group into the weight as written — the
+/// measure of one source fact: `[field]` a u64 SOURCE field,
+/// `[Duration(field)]` an interval position's measure. The path
+/// spelling `[a.b]` is an expansion panic spelling the pinned-column
+/// composition idiom (ruled 2026-07-24, ruling 6: the weight vocabulary
+/// is closed at the row — the runtime spec surface refuses the same
+/// shape as `SpecIssue::WeightPathRefused`).
+fn parse_weight(body: TokenStream) -> WeightSpec {
+    let mut tokens = body.into_iter().peekable();
+    assert!(
+        tokens.peek().is_some(),
+        "schema!: the weight bracket `[]` names no measure — write `[field]` or \
+         `[Duration(field)]` (an absent bracket is the unit weight: the count)"
+    );
+    let (name, _) = spanned_ident(&mut tokens, "the weight field");
+    let weight = if name == "Duration" && matches!(tokens.peek(), Some(TokenTree::Group(_))) {
+        let group = take_group(&mut tokens, Delimiter::Parenthesis, "the Duration weight's field");
+        let mut inner = group.into_iter().peekable();
+        let field = expect_ident(&mut inner, "the Duration weight's field name");
+        assert!(
+            inner.peek().is_none(),
+            "schema!: trailing tokens in `Duration({field})`"
+        );
+        WeightSpec::Duration(field.into())
+    } else {
+        WeightSpec::Field(name.as_str().into())
+    };
+    if peek_punct(&mut tokens, '.') {
+        let field = match &weight {
+            WeightSpec::Field(name) | WeightSpec::Duration(name) => name.clone(),
+            WeightSpec::Unit => unreachable!("a parsed weight names a field"),
+        };
+        panic!(
+            "schema!: the weight path `[{field}.…]` is refused — the weight vocabulary \
+             is closed at the row (ruled 2026-07-24, ruling 6); state the join as a \
+             law and read the local column (the pinned-column idiom): \
+             `Device(model, watts) <= Model(id, watts); \
+             Pool(id) <=[watts]{{0..supply}} Device(pool);`"
+        );
+    }
+    assert!(
+        tokens.peek().is_none(),
+        "schema!: trailing tokens after the weight"
+    );
+    weight
 }
 
 /// Parses the `<={…}` brace group into the spelling as written — the
-/// shared lowering's [`WindowSpec`], judged by its ban table, never
-/// here. The open shorthands are not spellable in the spec vocabulary,
-/// so the grammar itself refuses them: `{..hi}` and `{lo..}` are
-/// expansion panics naming the explicit form.
-fn parse_window(body: TokenStream) -> WindowSpec {
+/// shared lowering's [`CapacityWindowSpec`], judged by its ban table,
+/// never here (dependent bounds included: the hi-only rule, C6, is the
+/// lowering's `CapacityDependentFloor`). The open shorthands are not
+/// spellable in the spec vocabulary, so the grammar itself refuses
+/// them: `{..hi}` and `{lo..}` are expansion panics naming the explicit
+/// form.
+fn parse_window(body: TokenStream) -> CapacityWindowSpec {
     let mut tokens = body.into_iter().peekable();
     assert!(
         tokens.peek().is_some(),
@@ -976,9 +1093,9 @@ fn parse_window(body: TokenStream) -> WindowSpec {
         "schema!: `{{..hi}}` never parses — bounds are always explicit: a ceiling is \
          written `{{0..hi}}`"
     );
-    let lo = parse_window_bound(&mut tokens, "the window's lower bound");
+    let lo = parse_bound(&mut tokens, "the window's lower bound");
     if tokens.peek().is_none() {
-        return WindowSpec::Exact(lo);
+        return CapacityWindowSpec::Exact(lo);
     }
     expect_punct(&mut tokens, '.');
     expect_punct(&mut tokens, '.');
@@ -989,11 +1106,11 @@ fn parse_window(body: TokenStream) -> WindowSpec {
     );
     let spelling = if peek_punct(&mut tokens, '*') {
         tokens.next();
-        WindowSpec::Floor(lo)
+        CapacityWindowSpec::Floor(lo)
     } else {
-        WindowSpec::Range {
+        CapacityWindowSpec::Range {
             lo,
-            hi: parse_window_bound(&mut tokens, "the window's upper bound"),
+            hi: parse_bound(&mut tokens, "the window's upper bound"),
         }
     };
     assert!(
@@ -1131,8 +1248,10 @@ struct SpanTable {
     /// (statement, relation name, field name) → the field idents' spans,
     /// projection and selection occurrences alike.
     fields: BTreeMap<(usize, String, String), Vec<Span>>,
-    /// statement → its window brace group's span.
-    windows: BTreeMap<usize, Span>,
+    /// statement → its capacity window brace group's span.
+    capacities: BTreeMap<usize, Span>,
+    /// statement → its capacity weight bracket group's span.
+    weights: BTreeMap<usize, Span>,
     /// (statement, field name, set len) → literal-set brace spans.
     sets: BTreeMap<(usize, String, usize), Vec<Span>>,
     /// A handle literal's structural address → its ident's span.
@@ -1519,22 +1638,171 @@ fn lower_statements(schema: &SchemaAst, spans: &mut SpanTable) -> Vec<StatementS
                     bidirectional: *bidirectional,
                 });
             }
-            Statement::Cardinality {
+            Statement::Capacity {
                 source,
+                weight,
+                weight_span,
                 window,
                 window_span,
                 target,
             } => {
-                spans.windows.insert(index, *window_span);
-                statements.push(StatementSpec::Cardinality {
+                spans.capacities.insert(index, *window_span);
+                if let Some(span) = weight_span {
+                    spans.weights.insert(index, *span);
+                }
+                // Weight and dependent-bound TYPING, judged at expansion
+                // (the `fresh`-typing precedent: the macro holds the
+                // declared types, so the mistake dies at the invocation,
+                // never deferred to `Db::create`). Name RESOLUTION stays
+                // the shared lowering's — an unknown weight or bound
+                // ident lands as its `UnknownField` compile error
+                // through the span table.
+                check_weight_typing(schema, &source.relation, weight);
+                check_bound_typing(schema, &target.relation, weight, window);
+                // Weight and bound idents are field occurrences: record
+                // their spans under the fields multimap so the lowering's
+                // `UnknownField` marks the offending token itself.
+                if let (Some(span), WeightSpec::Field(name) | WeightSpec::Duration(name)) =
+                    (weight_span, weight)
+                {
+                    spans
+                        .fields
+                        .entry((index, source.relation.clone(), name.to_string()))
+                        .or_default()
+                        .push(*span);
+                }
+                for bound in
+                    std::iter::once(window_bound_lo(window)).chain(window_bound_hi(window))
+                {
+                    if let BoundSpec::Field(name) | BoundSpec::Duration(name) = bound {
+                        spans
+                            .fields
+                            .entry((index, target.relation.clone(), name.to_string()))
+                            .or_default()
+                            .push(*window_span);
+                    }
+                }
+                statements.push(StatementSpec::Capacity {
                     target: lower_side(schema, index, StatementSide::Target, target, spans),
-                    window: *window,
+                    weight: weight.clone(),
+                    window: window.clone(),
                     source: lower_side(schema, index, StatementSide::Source, source, spans),
                 });
             }
         }
     }
     statements
+}
+
+/// A capacity window's floor-slot bound (`Exact` and `Floor` occupy
+/// the floor slot; `Range` reads its `lo`).
+fn window_bound_lo(window: &CapacityWindowSpec) -> &BoundSpec {
+    match window {
+        CapacityWindowSpec::Exact(bound) | CapacityWindowSpec::Floor(bound) => bound,
+        CapacityWindowSpec::Range { lo, .. } => lo,
+    }
+}
+
+/// A capacity window's ceiling-slot bound, if one is spelled.
+fn window_bound_hi(window: &CapacityWindowSpec) -> Option<&BoundSpec> {
+    match window {
+        CapacityWindowSpec::Range { hi, .. } => Some(hi),
+        CapacityWindowSpec::Exact(_) | CapacityWindowSpec::Floor(_) => None,
+    }
+}
+
+/// Weight TYPING at expansion — the `fresh`-typing precedent: `[field]`
+/// measures a u64-encoded SOURCE position (a signed encoding is the
+/// polarity refusal: a negative weight would let an insert lower a
+/// sum), `[Duration(field)]` an interval one. Unknown names fall
+/// through silently — the shared lowering reports them as
+/// `UnknownField` at the recorded span. The engine's
+/// `validate_capacity` judges the same rules for runtime descriptors;
+/// the messages mirror its `Display` arms.
+fn check_weight_typing(schema: &SchemaAst, source_relation: &str, weight: &WeightSpec) {
+    match weight {
+        WeightSpec::Unit => {}
+        WeightSpec::Field(name) => {
+            match declared_type(schema, source_relation, name) {
+                None | Some(FieldTy::U64) => {}
+                Some(FieldTy::I64) => panic!(
+                    "schema!: weight field `{name}` on `{source_relation}` is signed — a \
+                     `[field]` weight measures a u64 position, and a signed encoding is \
+                     refused by polarity: a negative weight would let an insert lower a \
+                     sum (docs/architecture/30-dependencies.md § weight typing)"
+                ),
+                Some(_) => panic!(
+                    "schema!: weight field `{name}` on `{source_relation}` is not \
+                     u64-encoded — a `[field]` weight measures a u64 SOURCE position \
+                     (docs/architecture/30-dependencies.md § weight typing)"
+                ),
+            }
+        }
+        WeightSpec::Duration(name) => {
+            match declared_type(schema, source_relation, name) {
+                None | Some(FieldTy::Interval(..)) => {}
+                Some(_) => panic!(
+                    "schema!: weight field `{name}` on `{source_relation}` is not \
+                     interval-typed — `[Duration(field)]` reads an interval position's \
+                     measure (docs/architecture/30-dependencies.md § weight typing)"
+                ),
+            }
+        }
+    }
+}
+
+/// Dependent-bound TYPING at expansion, plus the C18 dimension gate: a
+/// bound ident is a u64 or interval position of TARGET's row (by name
+/// against the whole roster — C1), and a unit (count) window against a
+/// `Duration(field)` bound mixes dimensions (ruled 2026-07-24, C18).
+/// Unknown names fall through to the lowering's `UnknownField`.
+fn check_bound_typing(
+    schema: &SchemaAst,
+    target_relation: &str,
+    weight: &WeightSpec,
+    window: &CapacityWindowSpec,
+) {
+    for bound in std::iter::once(window_bound_lo(window)).chain(window_bound_hi(window)) {
+        match bound {
+            BoundSpec::Lit(_) => {}
+            BoundSpec::Field(name) => match declared_type(schema, target_relation, name) {
+                None | Some(FieldTy::U64) => {}
+                Some(FieldTy::I64) => panic!(
+                    "schema!: bound field `{name}` on `{target_relation}` is signed — a \
+                     dependent bound reads a u64 field of the TARGET's row (a signed \
+                     encoding cannot bound a non-negative measure) \
+                     (docs/architecture/30-dependencies.md § dependent bounds)"
+                ),
+                Some(_) => panic!(
+                    "schema!: bound field `{name}` on `{target_relation}` is not \
+                     u64-encoded — a dependent bound reads a u64 field of the TARGET's \
+                     row (docs/architecture/30-dependencies.md § dependent bounds)"
+                ),
+            },
+            BoundSpec::Duration(name) => {
+                if !matches!(
+                    declared_type(schema, target_relation, name),
+                    None | Some(FieldTy::Interval(..))
+                ) {
+                    panic!(
+                        "schema!: bound field `{name}` on `{target_relation}` is not \
+                         interval-typed — `{{..Duration(field)}}` bounds by a TARGET \
+                         interval's measure \
+                         (docs/architecture/30-dependencies.md § dependent bounds)"
+                    );
+                }
+                if matches!(weight, WeightSpec::Unit) {
+                    panic!(
+                        "schema!: a unit (count) window against the Duration bound \
+                         `Duration({name})` — a count of facts bounded by a span of \
+                         time is a dimension error (ruled 2026-07-24, C18): weigh the \
+                         source with `[Duration(field)]`, or bound by a u64 field or \
+                         literal"
+                    );
+                }
+            }
+        }
+    }
 }
 
 /// One parsed side into its [`SideSpec`], every name's span recorded
@@ -1671,11 +1939,15 @@ fn issue_spans(issue: &SpecIssue, spans: &SpanTable) -> Vec<Span> {
         SpecIssue::DuplicateHandleNewtype {
             second_relation, ..
         } => one(spans.newtypes.get(second_relation)),
-        SpecIssue::WindowInverted { statement, .. }
-        | SpecIssue::WindowExactRespelled { statement, .. }
-        | SpecIssue::WindowExclusionRespelled { statement }
-        | SpecIssue::WindowVacuous { statement }
-        | SpecIssue::WindowContainmentRespelled { statement } => one(spans.windows.get(statement)),
+        SpecIssue::CapacityInverted { statement, .. }
+        | SpecIssue::CapacityExactRespelled { statement, .. }
+        | SpecIssue::CapacityExclusionRespelled { statement }
+        | SpecIssue::CapacityVacuous { statement }
+        | SpecIssue::CapacityContainmentRespelled { statement }
+        | SpecIssue::CapacityDependentFloor { statement } => {
+            one(spans.capacities.get(statement))
+        }
+        SpecIssue::WeightPathRefused { statement, .. } => one(spans.weights.get(statement)),
         SpecIssue::DegenerateLiteralSet {
             statement,
             field,
@@ -1761,24 +2033,24 @@ fn issue_message(issue: &SpecIssue, spec: &SchemaSpec) -> String {
             "schema!: handle newtype `{newtype}` is declared by two closed relations \
              (`{first}` and `{second}`) — a handle newtype names exactly one closed relation"
         ),
-        SpecIssue::WindowInverted { lo, hi, .. } => format!(
-            "schema!: the window `{{{lo}..{hi}}}` is inverted — no count satisfies it; \
-             bounds are `{{lo..hi}}` with lo < hi (an exact count is `{{n}}`)"
+        SpecIssue::CapacityInverted { lo, hi, .. } => format!(
+            "schema!: the window `{{{lo}..{hi}}}` is inverted — no measure satisfies it; \
+             bounds are `{{lo..hi}}` with lo < hi (an exact measure is `{{n}}`)"
         ),
-        SpecIssue::WindowExactRespelled { count, .. } => {
-            format!("schema!: `{{{count}..{count}}}` — an exact count is written `{{{count}}}`")
+        SpecIssue::CapacityExactRespelled { count, .. } => {
+            format!("schema!: `{{{count}..{count}}}` — an exact measure is written `{{{count}}}`")
         }
-        SpecIssue::WindowExclusionRespelled { .. } => {
+        SpecIssue::CapacityExclusionRespelled { .. } => {
             "schema!: `{0..0}` — the exclusion is written `{0}`".to_owned()
         }
-        SpecIssue::WindowVacuous { .. } => "schema!: the `{0..*}` window is vacuous — it \
-             provably says nothing (`lean/Bumbledb/Cardinality.lean: cardinality_zero_star`); \
+        SpecIssue::CapacityVacuous { .. } => "schema!: the `{0..*}` window is vacuous — it \
+             provably says nothing (`lean/Bumbledb/Capacity.lean: capacity_zero_star`); \
              delete the statement"
             .to_owned(),
-        SpecIssue::WindowContainmentRespelled { statement } => {
-            let StatementSpec::Cardinality { target, source, .. } = &spec.statements[*statement]
+        SpecIssue::CapacityContainmentRespelled { statement } => {
+            let StatementSpec::Capacity { target, source, .. } = &spec.statements[*statement]
             else {
-                unreachable!("the containment-respelled window rides a cardinality statement");
+                unreachable!("the containment-respelled window rides a capacity statement");
             };
             format!(
                 "schema!: `{{1..*}}` says only what the bare containment says — drop the \
@@ -1786,6 +2058,19 @@ fn issue_message(issue: &SpecIssue, spec: &SchemaSpec) -> String {
                 target.relation, source.relation
             )
         }
+        SpecIssue::CapacityDependentFloor { .. } => {
+            "schema!: a dependent bound in the floor slot — dependent bounds are hi-slot \
+             only (ruled 2026-07-24, C6): a dependent floor has no use case; write a \
+             literal floor"
+                .to_owned()
+        }
+        SpecIssue::WeightPathRefused { path, .. } => format!(
+            "schema!: the weight path `[{path}]` is refused — the weight vocabulary is \
+             closed at the row (ruled 2026-07-24, ruling 6); state the join as a law and \
+             read the local column (the pinned-column idiom): \
+             `Device(model, watts) <= Model(id, watts); \
+             Pool(id) <=[watts]{{0..supply}} Device(pool);`"
+        ),
         SpecIssue::DegenerateLiteralSet { field, len: 0, .. } => format!(
             "schema!: the literal set for `{field}` is empty — an empty set selects \
              nothing; write no binding"
@@ -1809,7 +2094,7 @@ fn issue_message(issue: &SpecIssue, spec: &SchemaSpec) -> String {
                     bidirectional: true,
                     ..
                 } => "set equality",
-                StatementSpec::Cardinality { .. } => "window",
+                StatementSpec::Capacity { .. } => "capacity",
                 StatementSpec::Fd { .. } => {
                     unreachable!(
                         "an FD has no paired faces — the arrow closes over its own relation"
@@ -1984,23 +2269,51 @@ fn statement_tokens(statement: &StatementDescriptor) -> String {
             side_tokens(source),
             side_tokens(target),
         ),
-        StatementDescriptor::Cardinality {
-            source,
+        StatementDescriptor::Capacity {
+            target,
+            weight,
             lo,
             hi,
-            target,
+            source,
         } => {
+            let weight = match weight {
+                Weight::Unit => "::bumbledb::schema::Weight::Unit".to_owned(),
+                Weight::Field(field) => format!(
+                    "::bumbledb::schema::Weight::Field(::bumbledb::schema::FieldId({}))",
+                    field.0
+                ),
+                Weight::DurationOf(field) => format!(
+                    "::bumbledb::schema::Weight::DurationOf(::bumbledb::schema::FieldId({}))",
+                    field.0
+                ),
+            };
             let hi = match hi {
                 None => "::std::option::Option::None".to_owned(),
-                Some(hi) => format!("::std::option::Option::Some({hi}u64)"),
+                Some(bound) => format!("::std::option::Option::Some({})", bound_tokens(*bound)),
             };
             format!(
-                "::bumbledb::schema::StatementDescriptor::Cardinality {{ \
-                     source: {}, lo: {lo}u64, hi: {hi}, target: {} }},",
-                side_tokens(source),
+                "::bumbledb::schema::StatementDescriptor::Capacity {{ \
+                     target: {}, weight: {weight}, lo: {lo}u64, hi: {hi}, source: {} }},",
                 side_tokens(target),
+                side_tokens(source),
             )
         }
+    }
+}
+
+/// Renders one lowered capacity bound as its `Bound` expression.
+fn bound_tokens(bound: bumbledb_theory::schema::Bound) -> String {
+    let path = "::bumbledb::schema::Bound";
+    match bound {
+        bumbledb_theory::schema::Bound::Lit(n) => format!("{path}::Lit({n}u64)"),
+        bumbledb_theory::schema::Bound::TargetField(field) => format!(
+            "{path}::TargetField(::bumbledb::schema::FieldId({}))",
+            field.0
+        ),
+        bumbledb_theory::schema::Bound::TargetDuration(field) => format!(
+            "{path}::TargetDuration(::bumbledb::schema::FieldId({}))",
+            field.0
+        ),
     }
 }
 

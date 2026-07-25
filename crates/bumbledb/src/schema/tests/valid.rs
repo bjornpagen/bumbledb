@@ -615,26 +615,26 @@ fn task_tree() -> SchemaDescriptor {
 
 /// `Parent(id) <={1..3} Task(parent)` seals into the window arena with
 /// the containment target-key rule reused — the acceptance premise of
-/// `lean/Bumbledb/Admission.lean: cardinalityForm`, and the plan the gate
-/// promises is `lean/Bumbledb/Oracle.lean: cardinality_plan_decides`.
+/// `lean/Bumbledb/Admission.lean: capacityForm`, and the plan the gate
+/// promises is `lean/Bumbledb/Oracle.lean: capacity_plan_decides`.
 #[test]
-fn a_cardinality_window_over_a_declared_key_validates() {
+fn a_capacity_statement_over_a_declared_key_validates() {
     let mut decl = task_tree();
-    decl.statements.push(cardinality(
+    decl.statements.push(capacity(
         side(RelationId(1), &[FieldId(0)]),
         1,
         Some(3),
         side(RelationId(0), &[FieldId(0)]),
     ));
     let schema = decl.validate().expect("the window passes the gate");
-    assert_eq!(schema.windows().len(), 1);
-    let window = schema.window(WindowId(0));
+    assert_eq!(schema.capacities().len(), 1);
+    let window = schema.capacity(CapacityId(0));
     assert_eq!(window.id, StatementId(1));
-    assert_eq!((window.lo, window.hi), (1, Some(3)));
+    assert_eq!((window.lo, window.hi), (1, Some(Bound::Lit(3))));
     // The spine resolves the materialized id to the typed arena arm.
     assert!(matches!(
         schema.statement(StatementId(1)),
-        StatementView::Cardinality(WindowId(0), _)
+        StatementView::Capacity(CapacityId(0), _)
     ));
 }
 
@@ -646,14 +646,14 @@ fn a_cardinality_window_over_a_declared_key_validates() {
 #[test]
 fn a_star_window_validates_with_no_ceiling() {
     let mut decl = task_tree();
-    decl.statements.push(cardinality(
+    decl.statements.push(capacity(
         side(RelationId(1), &[FieldId(0)]),
         2,
         None,
         side(RelationId(0), &[FieldId(0)]),
     ));
     let schema = decl.validate().expect("the floored window validates");
-    assert_eq!(schema.window(WindowId(0)).hi, None);
+    assert_eq!(schema.capacity(CapacityId(0)).hi, None);
 }
 
 /// `{0}` — the exclusion window: lo = hi = 0 is a legal exact count
@@ -661,7 +661,7 @@ fn a_star_window_validates_with_no_ceiling() {
 #[test]
 fn an_exclusion_window_validates() {
     let mut decl = task_tree();
-    decl.statements.push(cardinality(
+    decl.statements.push(capacity(
         side(RelationId(1), &[FieldId(0)]),
         0,
         Some(0),
@@ -669,8 +669,8 @@ fn an_exclusion_window_validates() {
     ));
     let schema = decl.validate().expect("the exclusion passes the gate");
     assert_eq!(
-        (schema.window(WindowId(0)).lo, schema.window(WindowId(0)).hi),
-        (0, Some(0))
+        (schema.capacity(CapacityId(0)).lo, schema.capacity(CapacityId(0)).hi),
+        (0, Some(Bound::Lit(0)))
     );
 }
 
@@ -691,7 +691,7 @@ fn a_window_into_a_closed_target_validates() {
                 fields: vec![field("severity", ValueType::U64)],
             },
         ],
-        statements: vec![cardinality(
+        statements: vec![capacity(
             side(RelationId(1), &[FieldId(0)]),
             2,
             None,
@@ -723,7 +723,7 @@ fn a_satisfied_closed_to_closed_window_validates() {
                 vec![row("Low", vec![]), row("High", vec![])],
             ),
         ],
-        statements: vec![cardinality(
+        statements: vec![capacity(
             side(RelationId(0), &[FieldId(1)]),
             1,
             Some(1),
@@ -732,6 +732,153 @@ fn a_satisfied_closed_to_closed_window_validates() {
     };
     decl.validate()
         .expect("each severity counts exactly one kind axiom");
+}
+
+/// The power-budget fixture: Pool(id key, supply, span-interval) /
+/// Device(pool, watts, busy-interval) — the weighted acceptance suite's
+/// shared shape (`docs/architecture/30-dependencies.md` § the extension
+/// form).
+fn power_tree() -> SchemaDescriptor {
+    let interval = ValueType::Interval {
+        element: IntervalElement::U64,
+        width: None,
+    };
+    SchemaDescriptor {
+        relations: vec![
+            RelationDescriptor {
+                extension: None,
+                name: "Pool".into(),
+                fields: vec![
+                    field("id", ValueType::U64),
+                    field("supply", ValueType::U64),
+                    field("span", interval.clone()),
+                ],
+            },
+            RelationDescriptor {
+                extension: None,
+                name: "Device".into(),
+                fields: vec![
+                    field("pool", ValueType::U64),
+                    field("watts", ValueType::U64),
+                    field("busy", interval),
+                ],
+            },
+        ],
+        statements: vec![fd(RelationId(0), &[FieldId(0)])],
+    }
+}
+
+/// `Pool(id) <=[watts]{0..supply} Device(pool)` — a u64-field weight
+/// under a dependent ceiling seals whole: the weight, the resolved-name
+/// bound (C1), and NO interval tails (both positions are scalar).
+#[test]
+fn a_weighted_capacity_with_a_dependent_bound_validates() {
+    let mut decl = power_tree();
+    decl.statements.push(capacity_weighted(
+        side(RelationId(0), &[FieldId(0)]),
+        Weight::Field(FieldId(1)),
+        0,
+        Some(Bound::TargetField(FieldId(1))),
+        side(RelationId(1), &[FieldId(0)]),
+    ));
+    let schema = decl.validate().expect("the power budget passes the gate");
+    let statement = schema.capacity(CapacityId(0));
+    assert_eq!(statement.weight, Weight::Field(FieldId(1)));
+    assert_eq!(statement.hi, Some(Bound::TargetField(FieldId(1))));
+    assert_eq!(statement.weight_tail, None);
+    assert_eq!(statement.bound_tail, None);
+}
+
+/// `Pool(id) <=[Duration(busy)]{0..Duration(span)} Device(pool)` — the
+/// calendar shape: both Duration positions seal their interval tails,
+/// so the judge reads measures off canonical bytes with no roster walk.
+#[test]
+fn a_calendar_capacity_validates_and_seals_its_tails() {
+    let mut decl = power_tree();
+    decl.statements.push(capacity_weighted(
+        side(RelationId(0), &[FieldId(0)]),
+        Weight::DurationOf(FieldId(2)),
+        0,
+        Some(Bound::TargetDuration(FieldId(2))),
+        side(RelationId(1), &[FieldId(0)]),
+    ));
+    let schema = decl.validate().expect("the calendar law passes the gate");
+    let statement = schema.capacity(CapacityId(0));
+    assert!(statement.weight_tail.is_some());
+    assert!(statement.bound_tail.is_some());
+}
+
+/// `<=[w]{1..*}` — the weighted floor of 1 is LEGAL: "positive total"
+/// is no existence claim over rows (zero-weight rows satisfy nothing),
+/// so the containment-respelled ban fires on the unit instance only
+/// (the per-aggregate ban law, ruled 2026-07-24; the unit refusal is
+/// the reject suite's `rejects_the_containment_respelled_as_a_window`).
+#[test]
+fn a_weighted_floor_of_one_validates() {
+    let mut decl = power_tree();
+    decl.statements.push(capacity_weighted(
+        side(RelationId(0), &[FieldId(0)]),
+        Weight::Field(FieldId(1)),
+        1,
+        None,
+        side(RelationId(1), &[FieldId(0)]),
+    ));
+    let schema = decl.validate().expect("a positive total is a law of its own");
+    assert_eq!(schema.capacity(CapacityId(0)).lo, 1);
+}
+
+/// `Holder(id) <=[Duration(active)]{0..720} Account(holder)` — a
+/// Duration weight under a LITERAL ceiling: C18 refuses only the
+/// unit-window-vs-Duration-BOUND direction (u64 is u64), so the
+/// 30-dependencies schema block's weighted line is accepted verbatim.
+#[test]
+fn a_duration_weight_under_a_literal_ceiling_validates() {
+    let mut decl = power_tree();
+    decl.statements.push(capacity_weighted(
+        side(RelationId(0), &[FieldId(0)]),
+        Weight::DurationOf(FieldId(2)),
+        0,
+        Some(Bound::Lit(720)),
+        side(RelationId(1), &[FieldId(0)]),
+    ));
+    let schema = decl.validate().expect("hours under a literal budget");
+    let statement = schema.capacity(CapacityId(0));
+    assert!(statement.weight_tail.is_some());
+    assert_eq!(statement.bound_tail, None);
+}
+
+/// Both sides constant under a weight and a dependent ceiling, the
+/// measures inside every per-axiom resolved window: decided at
+/// validate, satisfied, sealed — the weighted twin of the count case
+/// above.
+#[test]
+fn a_satisfied_weighted_closed_pair_validates() {
+    let decl = SchemaDescriptor {
+        relations: vec![
+            closed(
+                "Pool",
+                vec![field("cap", ValueType::U64)],
+                vec![row("P0", vec![Value::U64(9)])],
+            ),
+            closed(
+                "Dev",
+                vec![field("pool", ValueType::U64), field("watts", ValueType::U64)],
+                vec![
+                    row("D0", vec![Value::U64(0), Value::U64(3)]),
+                    row("D1", vec![Value::U64(0), Value::U64(4)]),
+                ],
+            ),
+        ],
+        statements: vec![capacity_weighted(
+            side(RelationId(0), &[FieldId(0)]),
+            Weight::Field(FieldId(2)),
+            0,
+            Some(Bound::TargetField(FieldId(1))),
+            side(RelationId(1), &[FieldId(1)]),
+        )],
+    };
+    decl.validate()
+        .expect("7 watts inside a 9-watt budget, per the sealed axiom");
 }
 
 /// A literal-set σ seals — and seals CANONICALLY: the sealed side sorts

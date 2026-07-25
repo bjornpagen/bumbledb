@@ -14,11 +14,11 @@
 //! rejected.
 
 use super::{
-    AxiomIndex, CardinalityStatement, CompiledCheck, CompiledSides, ContainmentId,
+    AxiomIndex, Bound, CapacityId, CapacityStatement, CompiledCheck, CompiledSides, ContainmentId,
     ContainmentStatement, DisjointDeterminantProof, Enforcement, FactLayout, FieldDescriptor,
     FieldId, Generation, IntervalTail, KeyId, KeyStatement, LiteralSet, MemberSet, Relation,
     RelationDescriptor, RelationId, Schema, SchemaDescriptor, SchemaWarning, Side,
-    StatementDescriptor, StatementId, StatementRef, ValueMismatch, ValueType, WindowId,
+    StatementDescriptor, StatementId, StatementRef, ValueMismatch, ValueType, Weight,
     value_matches,
 };
 use crate::encoding::{field_bytes, field_word_bytes};
@@ -71,7 +71,7 @@ impl ValidateDescriptor for SchemaDescriptor {
 
         let descriptors = self.materialized_statements();
         // The statement-id space is u16 (`StatementId`, and the
-        // per-kind Key/Containment/Window ids it bounds): a
+        // per-kind Key/Containment/Capacity ids it bounds): a
         // materialized roster past it is a typed rejection before any
         // per-statement validation walks it — never the id-mint expect.
         if descriptors.len() > 1 << 16 {
@@ -114,12 +114,14 @@ impl ValidateDescriptor for SchemaDescriptor {
             .count();
         let mut keys = Vec::with_capacity(key_count);
         let mut containments = Vec::new();
-        let mut windows = Vec::new();
+        let mut capacities = Vec::new();
         let mut order = Vec::with_capacity(descriptors.len());
         let mut relation_keys: Vec<Vec<KeyId>> = vec![Vec::new(); relations.len()];
         let mut relation_outgoing: Vec<Vec<ContainmentId>> = vec![Vec::new(); relations.len()];
-        let mut relation_window_sources: Vec<Vec<WindowId>> = vec![Vec::new(); relations.len()];
-        let mut relation_window_targets: Vec<Vec<WindowId>> = vec![Vec::new(); relations.len()];
+        let mut relation_capacity_sources: Vec<Vec<CapacityId>> =
+            vec![Vec::new(); relations.len()];
+        let mut relation_capacity_targets: Vec<Vec<CapacityId>> =
+            vec![Vec::new(); relations.len()];
         let mut dependents: Vec<Vec<ContainmentId>> = vec![Vec::new(); key_count];
 
         for (idx, descriptor) in descriptors.iter().enumerate() {
@@ -192,32 +194,36 @@ impl ValidateDescriptor for SchemaDescriptor {
                     });
                     StatementRef::Containment(containment_id)
                 }
-                StatementDescriptor::Cardinality {
-                    source,
+                StatementDescriptor::Capacity {
+                    target,
+                    weight,
                     lo,
                     hi,
-                    target,
+                    source,
                 } => {
-                    let enforcement = validate_cardinality(
+                    let sealed = validate_capacity(
                         id,
-                        source,
+                        target,
+                        *weight,
                         *lo,
                         *hi,
-                        target,
+                        source,
                         &relations,
                         &descriptors,
                     )?;
-                    let window_id =
-                        WindowId(u16::try_from(windows.len()).expect("statement count fits u16"));
-                    relation_window_sources[source.relation.0 as usize].push(window_id);
-                    relation_window_targets[target.relation.0 as usize].push(window_id);
-                    windows.push(CardinalityStatement {
+                    let capacity_id = CapacityId(
+                        u16::try_from(capacities.len()).expect("statement count fits u16"),
+                    );
+                    relation_capacity_sources[source.relation.0 as usize].push(capacity_id);
+                    relation_capacity_targets[target.relation.0 as usize].push(capacity_id);
+                    capacities.push(CapacityStatement {
                         id,
-                        source: canonical_side(source),
+                        target: canonical_side(target),
+                        weight: *weight,
                         lo: *lo,
                         hi: *hi,
-                        target: canonical_side(target),
-                        enforcement,
+                        source: canonical_side(source),
+                        enforcement: sealed.enforcement,
                         checks: CompiledSides {
                             source: compiled_checks(
                                 &source.selection,
@@ -228,8 +234,10 @@ impl ValidateDescriptor for SchemaDescriptor {
                                 &relations[target.relation.0 as usize].fields,
                             ),
                         },
+                        weight_tail: sealed.weight_tail,
+                        bound_tail: sealed.bound_tail,
                     });
-                    StatementRef::Cardinality(window_id)
+                    StatementRef::Capacity(capacity_id)
                 }
             };
             // Roster "duplicate statements": identical descriptors after
@@ -245,20 +253,20 @@ impl ValidateDescriptor for SchemaDescriptor {
             order.push(sealed);
         }
 
-        for (((relation, keys), outgoing), (window_sources, window_targets)) in relations
+        for (((relation, keys), outgoing), (capacity_sources, capacity_targets)) in relations
             .iter_mut()
             .zip(relation_keys)
             .zip(relation_outgoing)
             .zip(
-                relation_window_sources
+                relation_capacity_sources
                     .into_iter()
-                    .zip(relation_window_targets),
+                    .zip(relation_capacity_targets),
             )
         {
             relation.keys = keys.into_boxed_slice();
             relation.outgoing = outgoing.into_boxed_slice();
-            relation.window_sources = window_sources.into_boxed_slice();
-            relation.window_targets = window_targets.into_boxed_slice();
+            relation.capacity_sources = capacity_sources.into_boxed_slice();
+            relation.capacity_targets = capacity_targets.into_boxed_slice();
         }
 
         Ok(Schema {
@@ -266,7 +274,7 @@ impl ValidateDescriptor for SchemaDescriptor {
             relations: relations.into_boxed_slice(),
             keys: keys.into_boxed_slice(),
             containments: containments.into_boxed_slice(),
-            windows: windows.into_boxed_slice(),
+            capacities: capacities.into_boxed_slice(),
             order: order.into_boxed_slice(),
             dependents: dependents.into_iter().map(Vec::into_boxed_slice).collect(),
         })
@@ -526,16 +534,18 @@ pub(super) fn normalize(descriptor: &StatementDescriptor) -> StatementDescriptor
             source: side(source),
             target: side(target),
         },
-        StatementDescriptor::Cardinality {
-            source,
+        StatementDescriptor::Capacity {
+            target,
+            weight,
             lo,
             hi,
-            target,
-        } => StatementDescriptor::Cardinality {
-            source: side(source),
+            source,
+        } => StatementDescriptor::Capacity {
+            target: side(target),
+            weight: *weight,
             lo: *lo,
             hi: *hi,
-            target: side(target),
+            source: side(source),
         },
     }
 }
@@ -750,77 +760,175 @@ fn validate_containment(
     Ok(resolved)
 }
 
-/// Roster "cardinality …" lines: `B(Y | ψ) <={lo..hi} A(X | φ)` under
+/// What the capacity gate learned, sealed — the enforcement plan plus
+/// the interval tails a Duration weight or bound reads through (parse,
+/// don't validate: no judge re-walks the field rosters).
+struct SealedCapacity {
+    enforcement: Enforcement,
+    weight_tail: Option<IntervalTail>,
+    bound_tail: Option<IntervalTail>,
+}
+
+/// Roster "capacity …" lines: `B(Y | ψ) <=[w]{lo..hi} A(X | φ)` under
 /// the acceptance gate (`docs/architecture/30-dependencies.md`). The
 /// premises are exactly the model's
-/// (`lean/Bumbledb/Admission.lean: cardinalityForm`;
-/// `lean/Bumbledb/Oracle.lean: cardinality_plan_decides` is the promised
-/// plan): the shared side shapes, the containment target-key rule reused
-/// verbatim, and the v0 interval refusal — a window counts FACTS per
-/// parent, and an interval position would make the count ambiguous
-/// between facts and points (`lean/Bumbledb/Cardinality.lean` § v0
-/// refusals; *trigger* for lifting: a sighted counting-over-denotation
-/// workload). Closed-side rules mirror containment's: a closed target
-/// compiles the member-set plan through the same key rule, and a
-/// statement between constants is decided here outright.
-fn validate_cardinality(
+/// (`lean/Bumbledb/Admission.lean: capacityForm`;
+/// `lean/Bumbledb/Oracle.lean: capacity_plan_decides` is the promised
+/// plan): the canonical window vocabulary with its weight-sensitivity
+/// law, WEIGHT typing (a `[field]` weight is a u64 SOURCE position, a
+/// `[Duration(field)]` weight an interval one), DEPENDENT-BOUND typing
+/// (a bound ident is a u64 or interval position of TARGET's row, by
+/// name against the whole roster — C1; dimension mixing refused — C18),
+/// the shared side shapes, the containment target-key rule reused
+/// verbatim, and the v0 interval refusal narrowed to PROJECTIONS — the
+/// group key identifies facts, and intervals enter through the measure
+/// argument (`lean/Bumbledb/Capacity.lean` § v0 refusals; *trigger* for
+/// lifting: a sighted counting-over-denotation workload). Closed-side
+/// rules mirror containment's: a closed target compiles the member-set
+/// plan through the same key rule (dependent bounds resolve per
+/// ground-axiom row), and a statement between constants is decided here
+/// outright.
+#[expect(
+    clippy::too_many_arguments,
+    clippy::too_many_lines,
+    reason = "the descriptor's own field roster, threaded once — the one \
+              acceptance arm per statement form (the `validate` precedent)"
+)]
+fn validate_capacity(
     id: StatementId,
-    source: &Side,
-    lo: u64,
-    hi: Option<u64>,
     target: &Side,
+    weight: Weight,
+    lo: u64,
+    hi: Option<Bound>,
+    source: &Side,
     relations: &[Relation],
     descriptors: &[StatementDescriptor],
-) -> Result<Enforcement, SchemaError> {
+) -> Result<SealedCapacity, SchemaError> {
     // The window vocabulary is closed (the canonical-utterance law,
     // `docs/architecture/70-api.md` — the descriptor face of the macro's
-    // ban table): an inverted window is satisfied by no count, `0..*`
-    // provably says nothing (`lean/Bumbledb/Cardinality.lean:
-    // cardinality_zero_star`), and `1..*` is the bare containment's
+    // ban table, per-aggregate where weight-sensitive): an inverted
+    // literal window is satisfied by no measure, `0..*` provably says
+    // nothing at any weight (`lean/Bumbledb/Capacity.lean:
+    // capacity_zero_star`), and unit `1..*` is the bare containment's
     // duplicate spelling (`lean/Bumbledb/Subsumption.lean:
-    // window_floor_containment`). Rejecting all three here means a sealed
-    // schema holds canonical windows only — the renderer never faces a
-    // banned spelling.
+    // window_floor_containment` — the ban fires on the count instance
+    // ONLY: a weighted floor of 1 says "positive total", a different
+    // law). Rejecting all three here means a sealed schema holds
+    // canonical windows only — the renderer never faces a banned
+    // spelling.
     match hi {
-        Some(hi) if hi < lo => {
-            return Err(StatementErrorKind::CardinalityInvertedWindow { lo, hi }.at(id));
+        Some(Bound::Lit(hi)) if hi < lo => {
+            return Err(StatementErrorKind::CapacityInvertedWindow { lo, hi }.at(id));
         }
         None if lo == 0 => {
-            return Err(StatementErrorKind::CardinalityVacuousWindow.at(id));
+            return Err(StatementErrorKind::CapacityVacuousWindow.at(id));
         }
-        None if lo == 1 => {
-            return Err(StatementErrorKind::CardinalityContainmentWindow.at(id));
+        None if lo == 1 && weight == Weight::Unit => {
+            return Err(StatementErrorKind::CapacityContainmentWindow.at(id));
         }
         _ => {}
     }
 
     let target_projection = validate_side_pair(id, source, target, relations)?;
 
-    // The v0 interval refusal: window projections carry no interval
-    // position, either side (the pair gate's positional type match makes
-    // the sides' interval positions identical, so one scan suffices).
+    // The v0 interval refusal, narrowed to projections: capacity
+    // projections carry no interval position, either side (the pair
+    // gate's positional type match makes the sides' interval positions
+    // identical, so one scan suffices). Intervals enter through the
+    // measure argument, never the group key.
     let source_fields = &relations[source.relation.0 as usize].fields;
     let positions = interval_positions(source_fields, &source.projection);
     if let Some(pos) = positions.first() {
-        return Err(StatementErrorKind::CardinalityIntervalPosition {
+        return Err(StatementErrorKind::CapacityIntervalPosition {
             relation: source.relation,
             field: source.projection[*pos],
         }
         .at(id));
     }
 
+    // Weight typing — representation does the enforcement: the measure
+    // reads a SOURCE position whose encoding IS the measure's domain. A
+    // signed field under `[field]` is the typed polarity refusal (an
+    // insert could lower a sum); a scalar under `[Duration(field)]`
+    // has no interval measure to read. The accepted Duration weight
+    // seals its interval tail — how `end − start` reads off canonical
+    // fact bytes — so no judge re-walks the roster.
+    let weight_tail = match weight {
+        Weight::Unit => None,
+        Weight::Field(field) => {
+            let descriptor = known_field(id, source.relation, field, relations)?;
+            if descriptor.value_type != ValueType::U64 {
+                return Err(StatementErrorKind::CapacityWeightNotU64 {
+                    relation: source.relation,
+                    field,
+                }
+                .at(id));
+            }
+            None
+        }
+        Weight::DurationOf(field) => {
+            let descriptor = known_field(id, source.relation, field, relations)?;
+            let ValueType::Interval { width, .. } = descriptor.value_type else {
+                return Err(StatementErrorKind::CapacityWeightNotDuration {
+                    relation: source.relation,
+                    field,
+                }
+                .at(id));
+            };
+            Some(IntervalTail { width })
+        }
+    };
+
+    // Dependent-bound typing: the ident resolved by NAME against
+    // TARGET's whole field roster (C1 — the projection tuple stays the
+    // pure grouping key), u64 or interval per its spelling; and the C18
+    // dimension gate — a unit (count) window against a Duration bound
+    // mixes dimensions and is refused (Duration weights pair with
+    // Duration-capable bounds; u64 is u64, so a u64-field weight under
+    // a literal or u64-field bound stands).
+    let bound_tail = match hi {
+        None | Some(Bound::Lit(_)) => None,
+        Some(Bound::TargetField(field)) => {
+            let descriptor = known_field(id, target.relation, field, relations)?;
+            if descriptor.value_type != ValueType::U64 {
+                return Err(StatementErrorKind::CapacityBoundNotU64 {
+                    relation: target.relation,
+                    field,
+                }
+                .at(id));
+            }
+            None
+        }
+        Some(Bound::TargetDuration(field)) => {
+            let descriptor = known_field(id, target.relation, field, relations)?;
+            let ValueType::Interval { width, .. } = descriptor.value_type else {
+                return Err(StatementErrorKind::CapacityBoundNotDuration {
+                    relation: target.relation,
+                    field,
+                }
+                .at(id));
+            };
+            if weight == Weight::Unit {
+                return Err(StatementErrorKind::CapacityDimensionMixing { field }.at(id));
+            }
+            Some(IntervalTail { width })
+        }
+    };
+
     // Probe-ability, the containment rule reused: Y resolves a declared
     // key of B (a closed target takes the member-set arm through the same
     // call — the closed-side mirror).
-    let resolved = resolve_target_key(id, target, &target_projection, relations, descriptors)?;
+    let enforcement = resolve_target_key(id, target, &target_projection, relations, descriptors)?;
 
-    // Both sides constant: the count judgment is decidable here — per
+    // Both sides constant: the measure judgment is decidable here — per
     // ψ-selected parent axiom, the φ-selected child axioms sharing its
-    // projected tuple must count inside the window
-    // (`lean/Bumbledb/Schema.lean: den_closed_constant`). The cited row
-    // is the parent axiom whose group fails.
+    // projected tuple must MEASURE inside the window, the bound resolved
+    // per axiom from the sealed parent row already in hand
+    // (`lean/Bumbledb/Schema.lean: den_closed_constant`; a per-row
+    // inverted resolved window refutes outright — no measure passes both
+    // ends). The cited row is the parent axiom whose group fails.
     if let (Enforcement::Closed { .. }, Some(source_rows)) = (
-        &resolved,
+        &enforcement,
         relations[source.relation.0 as usize].extension.as_deref(),
     ) {
         let target_relation = &relations[target.relation.0 as usize];
@@ -835,25 +943,56 @@ fn validate_cardinality(
             if !sealed_satisfies(&psi, &target_relation.layout, &parent.fact) {
                 continue;
             }
-            let count =
-                source_rows
-                    .iter()
-                    .filter(|child| {
-                        sealed_satisfies(&phi, source_layout, &child.fact)
-                            && source.projection.iter().zip(target.projection.iter()).all(
-                                |(s, t)| {
-                                    field_bytes(&child.fact, source_layout, usize::from(s.0))
-                                        == field_bytes(
-                                            &parent.fact,
-                                            &target_relation.layout,
-                                            usize::from(t.0),
-                                        )
-                                },
-                            )
-                    })
-                    .count();
-            let count = u64::try_from(count).expect("extension row count fits u64");
-            if count < lo || hi.is_some_and(|hi| count > hi) {
+            // The resolved ceiling for THIS parent axiom: sealed rows
+            // hold canonical bytes, so both dependent reads are total.
+            let resolved_hi: Option<u128> = hi.map(|bound| match bound {
+                Bound::Lit(n) => u128::from(n),
+                Bound::TargetField(field) => {
+                    u128::from(decoded_word(&target_relation.layout, field, &parent.fact))
+                }
+                Bound::TargetDuration(field) => {
+                    let tail = bound_tail.expect("an accepted Duration bound sealed its tail");
+                    let (start, end) = tail
+                        .words(field_bytes(
+                            &parent.fact,
+                            &target_relation.layout,
+                            usize::from(field.0),
+                        ))
+                        .expect("sealed rows hold canonical interval bytes");
+                    u128::from(end - start)
+                }
+            });
+            let measure: u128 = source_rows
+                .iter()
+                .filter(|child| {
+                    sealed_satisfies(&phi, source_layout, &child.fact)
+                        && source.projection.iter().zip(target.projection.iter()).all(
+                            |(s, t)| {
+                                field_bytes(&child.fact, source_layout, usize::from(s.0))
+                                    == field_bytes(
+                                        &parent.fact,
+                                        &target_relation.layout,
+                                        usize::from(t.0),
+                                    )
+                            },
+                        )
+                })
+                .map(|child| match weight {
+                    Weight::Unit => 1u128,
+                    Weight::Field(field) => {
+                        u128::from(decoded_word(source_layout, field, &child.fact))
+                    }
+                    Weight::DurationOf(field) => {
+                        let tail =
+                            weight_tail.expect("an accepted Duration weight sealed its tail");
+                        let (start, end) = tail
+                            .words(field_bytes(&child.fact, source_layout, usize::from(field.0)))
+                            .expect("sealed rows hold canonical interval bytes");
+                        u128::from(end - start)
+                    }
+                })
+                .sum();
+            if measure < u128::from(lo) || resolved_hi.is_some_and(|hi| measure > hi) {
                 return Err(StatementErrorKind::ClosedStatementRefuted {
                     relation: target.relation,
                     row: row_idx,
@@ -863,7 +1002,26 @@ fn validate_cardinality(
         }
     }
 
-    Ok(resolved)
+    Ok(SealedCapacity {
+        enforcement,
+        weight_tail,
+        bound_tail,
+    })
+}
+
+/// The field descriptor a weight or bound names, or the roster's
+/// "unknown … field ids" rejection — the weight/bound twin of the
+/// projection checks (a hand-built descriptor may carry any id).
+fn known_field(
+    id: StatementId,
+    relation: RelationId,
+    field: FieldId,
+    relations: &[Relation],
+) -> Result<&FieldDescriptor, SchemaError> {
+    relations[relation.0 as usize]
+        .fields
+        .get(usize::from(field.0))
+        .ok_or(StatementErrorKind::UnknownField { relation, field }.at(id))
 }
 
 /// One encodable literal's sealed canonical bytes, at its field's
@@ -1009,13 +1167,13 @@ fn validate_projection<'p>(
 /// The shared side-pair gate of the two two-sided forms — ONE definition
 /// site, exactly as `resolve_target_key` is shared (the Lean model states
 /// one acceptance rule: `lean/Bumbledb/Admission.lean: containmentForm` /
-/// `cardinalityForm` take their sides through one structure). Both side
+/// `capacityForm` take their sides through one structure). Both side
 /// shapes, the |X| = |Y| arity check, the Q1 positional-type loop
 /// (element-domain at interval positions, exact structural equality
 /// elsewhere — `docs/architecture/10-data-model.md` structural equality;
 /// widths free, elements bound), and both σ checks. Returns the validated
 /// target projection — what both callers hand to `resolve_target_key`.
-/// Form-specific refusals (the closed-interval refusal, the window
+/// Form-specific refusals (the closed-interval refusal, the capacity window
 /// vocabulary and interval bans) stay with their callers.
 fn validate_side_pair<'t>(
     id: StatementId,
@@ -1232,7 +1390,7 @@ fn resolve_target_key(
             }
             StatementDescriptor::Functionality { .. }
             | StatementDescriptor::Containment { .. }
-            | StatementDescriptor::Cardinality { .. } => None,
+            | StatementDescriptor::Capacity { .. } => None,
         });
 
     // Roster "IND whose target projection matches no key of the target
@@ -1519,8 +1677,8 @@ fn validate_relation(
         extension,
         keys: Box::new([]),
         outgoing: Box::new([]),
-        window_sources: Box::new([]),
-        window_targets: Box::new([]),
+        capacity_sources: Box::new([]),
+        capacity_targets: Box::new([]),
         fresh_row_field,
     })
 }

@@ -1469,10 +1469,10 @@ fn rejects_a_set_literal_of_the_wrong_type() {
 }
 
 #[test]
-fn rejects_a_window_with_an_interval_position() {
+fn rejects_a_capacity_with_an_interval_position() {
     // The v0 refusal: a window counts FACTS per parent; an interval
     // position would make the count ambiguous between facts and points
-    // (`lean/Bumbledb/Cardinality.lean` § v0 refusals; trigger: a sighted
+    // (`lean/Bumbledb/Capacity.lean` § v0 refusals; trigger: a sighted
     // counting-over-denotation workload).
     let mut decl = extension_tree();
     // A pointwise key on Task(span) so only the interval refusal fires.
@@ -1485,7 +1485,7 @@ fn rejects_a_window_with_an_interval_position() {
     ));
     decl.statements = vec![
         fd(RelationId(0), &[FieldId(0), FieldId(1)]),
-        cardinality(
+        capacity(
             side(RelationId(1), &[FieldId(0), FieldId(4)]),
             1,
             Some(3),
@@ -1494,7 +1494,7 @@ fn rejects_a_window_with_an_interval_position() {
     ];
     assert_eq!(
         decl.validate().unwrap_err(),
-        StatementErrorKind::CardinalityIntervalPosition {
+        StatementErrorKind::CapacityIntervalPosition {
             relation: RelationId(1),
             field: FieldId(4)
         }
@@ -1503,11 +1503,221 @@ fn rejects_a_window_with_an_interval_position() {
 }
 
 #[test]
+fn rejects_a_signed_weight() {
+    // Polarity: a negative weight would let an insert lower a sum, so
+    // the illegal weight is a typed refusal, never a checked runtime
+    // case (`docs/architecture/30-dependencies.md` § weight typing).
+    let mut decl = extension_tree();
+    decl.relations[1].fields.push(field("delta", ValueType::I64));
+    decl.statements.push(capacity_weighted(
+        side(RelationId(0), &[FieldId(0)]),
+        Weight::Field(FieldId(5)),
+        0,
+        Some(Bound::Lit(3)),
+        side(RelationId(1), &[FieldId(0)]),
+    ));
+    assert_eq!(
+        decl.validate().unwrap_err(),
+        StatementErrorKind::CapacityWeightNotU64 {
+            relation: RelationId(1),
+            field: FieldId(5)
+        }
+        .at(StatementId(1))
+    );
+}
+
+#[test]
+fn rejects_a_non_u64_weight() {
+    // `[flag]` over a bool — nothing to measure; only u64 encodings
+    // weigh.
+    let mut decl = extension_tree();
+    decl.statements.push(capacity_weighted(
+        side(RelationId(0), &[FieldId(0)]),
+        Weight::Field(FieldId(3)),
+        0,
+        Some(Bound::Lit(3)),
+        side(RelationId(1), &[FieldId(0)]),
+    ));
+    assert_eq!(
+        decl.validate().unwrap_err(),
+        StatementErrorKind::CapacityWeightNotU64 {
+            relation: RelationId(1),
+            field: FieldId(3)
+        }
+        .at(StatementId(1))
+    );
+}
+
+#[test]
+fn rejects_a_duration_weight_over_a_scalar() {
+    // `[Duration(pos)]` where pos is u64 — the interval measure needs
+    // an interval position.
+    let mut decl = extension_tree();
+    decl.statements.push(capacity_weighted(
+        side(RelationId(0), &[FieldId(0)]),
+        Weight::DurationOf(FieldId(1)),
+        0,
+        Some(Bound::Lit(3)),
+        side(RelationId(1), &[FieldId(0)]),
+    ));
+    assert_eq!(
+        decl.validate().unwrap_err(),
+        StatementErrorKind::CapacityWeightNotDuration {
+            relation: RelationId(1),
+            field: FieldId(1)
+        }
+        .at(StatementId(1))
+    );
+}
+
+#[test]
+fn rejects_an_unknown_weight_field() {
+    // The weight/bound twin of the projection id checks — a hand-built
+    // descriptor may carry any id.
+    let mut decl = extension_tree();
+    decl.statements.push(capacity_weighted(
+        side(RelationId(0), &[FieldId(0)]),
+        Weight::Field(FieldId(9)),
+        0,
+        Some(Bound::Lit(3)),
+        side(RelationId(1), &[FieldId(0)]),
+    ));
+    assert_eq!(
+        decl.validate().unwrap_err(),
+        StatementErrorKind::UnknownField {
+            relation: RelationId(1),
+            field: FieldId(9)
+        }
+        .at(StatementId(1))
+    );
+}
+
+#[test]
+fn rejects_a_signed_dependent_bound() {
+    // A dependent bound reads a u64 field of the TARGET's row (C1); a
+    // signed encoding cannot bound a non-negative measure.
+    let mut decl = extension_tree();
+    decl.relations[0].fields.push(field("cap", ValueType::I64));
+    decl.statements.push(capacity_weighted(
+        side(RelationId(0), &[FieldId(0)]),
+        Weight::Field(FieldId(1)),
+        0,
+        Some(Bound::TargetField(FieldId(1))),
+        side(RelationId(1), &[FieldId(0)]),
+    ));
+    assert_eq!(
+        decl.validate().unwrap_err(),
+        StatementErrorKind::CapacityBoundNotU64 {
+            relation: RelationId(0),
+            field: FieldId(1)
+        }
+        .at(StatementId(1))
+    );
+}
+
+#[test]
+fn rejects_a_duration_bound_over_a_scalar() {
+    // `{0..Duration(id)}` where id is u64 — the bound's interval
+    // measure needs an interval position of the TARGET's row.
+    let mut decl = extension_tree();
+    decl.statements.push(capacity_weighted(
+        side(RelationId(0), &[FieldId(0)]),
+        Weight::Field(FieldId(1)),
+        0,
+        Some(Bound::TargetDuration(FieldId(0))),
+        side(RelationId(1), &[FieldId(0)]),
+    ));
+    assert_eq!(
+        decl.validate().unwrap_err(),
+        StatementErrorKind::CapacityBoundNotDuration {
+            relation: RelationId(0),
+            field: FieldId(0)
+        }
+        .at(StatementId(1))
+    );
+}
+
+#[test]
+fn rejects_a_unit_window_against_a_duration_bound() {
+    // Dimension mixing (ruled 2026-07-24, C18): a count of facts
+    // bounded by a span of time. The legal direction — a Duration
+    // weight under a literal ceiling — is the valid suite's
+    // `a_duration_weight_under_a_literal_ceiling_validates`.
+    let mut decl = extension_tree();
+    decl.relations[0].fields.push(field(
+        "span",
+        ValueType::Interval {
+            element: IntervalElement::U64,
+            width: None,
+        },
+    ));
+    decl.statements.push(capacity(
+        side(RelationId(1), &[FieldId(0)]),
+        0,
+        None,
+        side(RelationId(0), &[FieldId(0)]),
+    ));
+    // The unit fixture helper spells literal bounds only; restate the
+    // hi as the Duration bound under the unit weight.
+    let Some(StatementDescriptor::Capacity { hi, lo, .. }) = decl.statements.last_mut() else {
+        unreachable!("just pushed a capacity statement");
+    };
+    *lo = 0;
+    *hi = Some(Bound::TargetDuration(FieldId(1)));
+    assert_eq!(
+        decl.validate().unwrap_err(),
+        StatementErrorKind::CapacityDimensionMixing { field: FieldId(1) }.at(StatementId(1))
+    );
+}
+
+#[test]
+fn rejects_a_weighted_closed_pair_the_axioms_refute_under_a_dependent_bound() {
+    // Both sides closed with a dependent ceiling: the bound resolves
+    // PER PARENT AXIOM from the sealed row, and the group's measure —
+    // Σ weight over the φ-surviving child axioms — must sit inside each
+    // resolved window (`lean/Bumbledb/Schema.lean: den_closed_constant`).
+    // Pool P0 has cap 5 against devices weighing 3 + 4 = 7: refuted at
+    // the parent axiom.
+    let decl = SchemaDescriptor {
+        relations: vec![
+            closed(
+                "Pool",
+                vec![field("cap", ValueType::U64)],
+                vec![row("P0", vec![Value::U64(5)])],
+            ),
+            closed(
+                "Dev",
+                vec![field("pool", ValueType::U64), field("watts", ValueType::U64)],
+                vec![
+                    row("D0", vec![Value::U64(0), Value::U64(3)]),
+                    row("D1", vec![Value::U64(0), Value::U64(4)]),
+                ],
+            ),
+        ],
+        statements: vec![capacity_weighted(
+            side(RelationId(0), &[FieldId(0)]),
+            Weight::Field(FieldId(2)),
+            0,
+            Some(Bound::TargetField(FieldId(1))),
+            side(RelationId(1), &[FieldId(1)]),
+        )],
+    };
+    assert_eq!(
+        decl.validate().unwrap_err(),
+        StatementErrorKind::ClosedStatementRefuted {
+            relation: RelationId(0),
+            row: 0
+        }
+        .at(StatementId(2))
+    );
+}
+
+#[test]
 fn rejects_an_inverted_window() {
     // The canonical-utterance law's descriptor face: `hi < lo` is
     // satisfied by no count — unsatisfiable as declared.
     let mut decl = extension_tree();
-    decl.statements.push(cardinality(
+    decl.statements.push(capacity(
         side(RelationId(1), &[FieldId(0)]),
         3,
         Some(1),
@@ -1515,16 +1725,16 @@ fn rejects_an_inverted_window() {
     ));
     assert_eq!(
         decl.validate().unwrap_err(),
-        StatementErrorKind::CardinalityInvertedWindow { lo: 3, hi: 1 }.at(StatementId(1))
+        StatementErrorKind::CapacityInvertedWindow { lo: 3, hi: 1 }.at(StatementId(1))
     );
 }
 
 #[test]
 fn rejects_the_vacuous_window() {
     // `0..*` admits every count — the statement provably says nothing
-    // (`lean/Bumbledb/Cardinality.lean: cardinality_zero_star`).
+    // (`lean/Bumbledb/Capacity.lean: capacity_zero_star`).
     let mut decl = extension_tree();
-    decl.statements.push(cardinality(
+    decl.statements.push(capacity(
         side(RelationId(1), &[FieldId(0)]),
         0,
         None,
@@ -1532,7 +1742,7 @@ fn rejects_the_vacuous_window() {
     ));
     assert_eq!(
         decl.validate().unwrap_err(),
-        StatementErrorKind::CardinalityVacuousWindow.at(StatementId(1))
+        StatementErrorKind::CapacityVacuousWindow.at(StatementId(1))
     );
 }
 
@@ -1542,7 +1752,7 @@ fn rejects_the_containment_respelled_as_a_window() {
     // (`lean/Bumbledb/Subsumption.lean: window_floor_containment`) — one
     // meaning, one spelling.
     let mut decl = extension_tree();
-    decl.statements.push(cardinality(
+    decl.statements.push(capacity(
         side(RelationId(1), &[FieldId(0)]),
         1,
         None,
@@ -1550,16 +1760,16 @@ fn rejects_the_containment_respelled_as_a_window() {
     ));
     assert_eq!(
         decl.validate().unwrap_err(),
-        StatementErrorKind::CardinalityContainmentWindow.at(StatementId(1))
+        StatementErrorKind::CapacityContainmentWindow.at(StatementId(1))
     );
 }
 
 #[test]
-fn rejects_a_window_whose_target_is_no_key() {
+fn rejects_a_capacity_whose_target_is_no_key() {
     // Probe-ability, the containment rule reused verbatim: Y must resolve
     // a declared key of B.
     let mut decl = extension_tree();
-    decl.statements = vec![cardinality(
+    decl.statements = vec![capacity(
         side(RelationId(1), &[FieldId(0)]),
         1,
         Some(3),
@@ -1580,7 +1790,7 @@ fn rejects_a_window_whose_target_is_no_key() {
 #[test]
 fn rejects_a_window_arity_mismatch() {
     let mut decl = extension_tree();
-    decl.statements.push(cardinality(
+    decl.statements.push(capacity(
         side(RelationId(1), &[FieldId(0), FieldId(2)]),
         1,
         Some(3),
@@ -1618,7 +1828,7 @@ fn rejects_a_closed_to_closed_window_the_axioms_refute() {
                 vec![row("Low", vec![]), row("High", vec![])],
             ),
         ],
-        statements: vec![cardinality(
+        statements: vec![capacity(
             side(RelationId(0), &[FieldId(1)]),
             1,
             Some(1),

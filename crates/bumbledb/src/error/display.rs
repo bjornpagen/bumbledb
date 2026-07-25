@@ -74,7 +74,7 @@ impl Violation {
         match self {
             Self::Functionality { .. } => "functionality",
             Self::Containment { .. } => "containment",
-            Self::Cardinality { .. } => "cardinality",
+            Self::Capacity { .. } => "capacity",
         }
     }
 
@@ -91,7 +91,7 @@ impl Violation {
                 direction: Direction::TargetRequired,
                 ..
             } => " (target side)",
-            Self::Functionality { .. } | Self::Cardinality { .. } => "",
+            Self::Functionality { .. } | Self::Capacity { .. } => "",
         }
     }
 
@@ -107,9 +107,9 @@ impl Violation {
                 direction: Direction::TargetRequired,
                 ..
             } => write!(f, "a deleted target key is still required"),
-            Self::Cardinality { count, .. } => write!(
+            Self::Capacity { measure, .. } => write!(
                 f,
-                "a parent's child-group count ({count}) falls outside the window"
+                "a parent's child-group measure ({measure}) falls outside the window"
             ),
         }
     }
@@ -499,32 +499,80 @@ impl fmt::Display for StatementErrorKind {
                  write it once",
                 r.0, fd.0
             ),
-            Self::CardinalityInvertedWindow { lo, hi } => write!(
+            Self::CapacityInvertedWindow { lo, hi } => write!(
                 f,
-                "the window {lo}..{hi} is inverted — no count satisfies \
-                 hi < lo; the canonical bounds are lo < hi ({{lo..hi}}), an exact count \
+                "the window {lo}..{hi} is inverted — no measure satisfies \
+                 hi < lo; the canonical bounds are lo < hi ({{lo..hi}}), an exact measure \
                  lo = hi (the {{n}} spelling)"
             ),
-            Self::CardinalityVacuousWindow => write!(
+            Self::CapacityVacuousWindow => write!(
                 f,
-                "the 0..* window admits every count — it provably says \
-                 nothing (lean/Bumbledb/Cardinality.lean: cardinality_zero_star); delete \
+                "the 0..* window admits every measure — it provably says \
+                 nothing (lean/Bumbledb/Capacity.lean: capacity_zero_star); delete \
                  the statement"
             ),
-            Self::CardinalityContainmentWindow => write!(
+            Self::CapacityContainmentWindow => write!(
                 f,
-                "the 1..* window says only what the bare containment says — \
-                 drop the annotation and declare `target <= source`"
+                "the unit 1..* window says only what the bare containment says — \
+                 drop the annotation and declare `target <= source` (a WEIGHTED \
+                 {{1..*}} — a positive total — is a different law and stays legal)"
             ),
-            Self::CardinalityIntervalPosition {
+            Self::CapacityIntervalPosition {
                 relation: r,
                 field: fd,
             } => write!(
                 f,
-                "interval field {} on relation {} in a cardinality window — \
-                 a window counts facts per parent, and an interval position would make the \
-                 count ambiguous between facts and points",
+                "interval field {} on relation {} in a capacity projection — \
+                 the group key identifies facts per parent, and an interval position \
+                 would make the group ambiguous between facts and points; the interval \
+                 measure enters through the weight bracket (`[Duration(field)]`)",
                 fd.0, r.0
+            ),
+            Self::CapacityWeightNotU64 {
+                relation: r,
+                field: fd,
+            } => write!(
+                f,
+                "weight field {} on relation {} is not u64-encoded — a `[field]` \
+                 weight measures a u64 SOURCE position; a signed encoding is refused \
+                 by polarity (a negative weight would let an insert lower a sum)",
+                fd.0, r.0
+            ),
+            Self::CapacityWeightNotDuration {
+                relation: r,
+                field: fd,
+            } => write!(
+                f,
+                "weight field {} on relation {} is not interval-typed — \
+                 `[Duration(field)]` reads an interval position's measure",
+                fd.0, r.0
+            ),
+            Self::CapacityBoundNotU64 {
+                relation: r,
+                field: fd,
+            } => write!(
+                f,
+                "bound field {} on relation {} is not u64-encoded — a dependent \
+                 bound reads a u64 field of the TARGET's row (a signed encoding \
+                 cannot bound a non-negative measure)",
+                fd.0, r.0
+            ),
+            Self::CapacityBoundNotDuration {
+                relation: r,
+                field: fd,
+            } => write!(
+                f,
+                "bound field {} on relation {} is not interval-typed — \
+                 `{{..Duration(field)}}` bounds by a TARGET interval's measure",
+                fd.0, r.0
+            ),
+            Self::CapacityDimensionMixing { field: fd } => write!(
+                f,
+                "a unit (count) window against the Duration bound on field {} — \
+                 a count of facts bounded by a span of time is a dimension error \
+                 (ruled 2026-07-24, C18): weigh the source with `[Duration(field)]`, \
+                 or bound by a u64 field or literal",
+                fd.0
             ),
         }
     }
@@ -972,6 +1020,14 @@ impl fmt::Display for Error {
                 f,
                 "Duration of a ray: encoded interval [{start}, {end}) has no finite \
                  measure — exclude rays with an Allen predicate or a bounded-end filter"
+            ),
+            Self::CapacityRayMeasure { statement, fact } => write!(
+                f,
+                "statement {}: capacity measure of a ray — a row's Duration weight or \
+                 bound is [s, ∞), which has no finite measure; the commit refuses whole \
+                 (offending row: {} bytes)",
+                statement.0,
+                fact.len()
             ),
             Self::FixpointBudgetExceeded {
                 stratum,

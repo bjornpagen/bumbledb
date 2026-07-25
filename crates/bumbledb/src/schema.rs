@@ -37,9 +37,9 @@ use bumbledb_theory::Value;
 // directly (zero internal shim usage, grep-enforced).
 pub use bumbledb_theory::schema::spec;
 pub use bumbledb_theory::schema::{
-    Extension, FieldDescriptor, FieldId, Generation, IntervalElement, LiteralSet,
+    Bound, Extension, FieldDescriptor, FieldId, Generation, IntervalElement, LiteralSet,
     MAX_EXTENSION_ROWS, RelationDescriptor, RelationId, Row, SchemaDescriptor, SealedField, Side,
-    StatementDescriptor, StatementId, StatementKind, ValueType,
+    StatementDescriptor, StatementId, StatementKind, ValueType, Weight,
 };
 // The shared Value ↔ ValueType check — crate-internal here exactly as it
 // was when it lived in this module (public in the theory crate).
@@ -50,8 +50,9 @@ pub use manifest::{
 };
 pub use render::{RenderedFact, RenderedViolation, render_rejection};
 pub use spec::{
-    FaceNewtype, FieldSpec, LiteralSetSpec, LiteralSpec, RelationSpec, RowSpec, SchemaSpec,
-    SchemaSpecError, SideSpec, SpecIssue, StatementSpec, WindowSpec,
+    BoundSpec, CapacityWindowSpec, FaceNewtype, FieldSpec, LiteralSetSpec, LiteralSpec,
+    RelationSpec, RowSpec, SchemaSpec, SchemaSpecError, SideSpec, SpecIssue, StatementSpec,
+    WeightSpec,
 };
 pub use validate::ValidateDescriptor;
 
@@ -63,9 +64,9 @@ pub struct KeyId(pub(crate) u16);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ContainmentId(pub(crate) u16);
 
-/// Witness index into [`Schema::windows`] — minted only by validation.
+/// Witness index into [`Schema::capacities`] — minted only by validation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct WindowId(pub(crate) u16);
+pub struct CapacityId(pub(crate) u16);
 
 /// A witness that `(relation, field)` names a `Fresh`-generation field of
 /// schema `S` — the handle of the untyped mint path
@@ -462,31 +463,48 @@ pub struct ContainmentStatement {
     pub mirror: Option<StatementId>,
 }
 
-/// One sealed cardinality window: `B(Y | ψ) <={lo..hi} A(X | φ)`.
+/// One sealed capacity statement: `B(Y | ψ) <=[w]{lo..hi} A(X | φ)`.
 /// Accepted at declaration with its sealed target-key plan handle
 /// (the same probe-ability rule containments resolve —
-/// `lean/Bumbledb/Oracle.lean: cardinality_plan_decides` is the promised
-/// plan); commit-time judging is the enforcement stage's work.
+/// `lean/Bumbledb/Oracle.lean: capacity_plan_decides` is the promised
+/// plan); commit-time judging is the enforcement stage's work. Fields
+/// sit in the operator's read order — target, weight, window, source
+/// (ruled 2026-07-24, C2).
 #[derive(Debug)]
-pub struct CardinalityStatement {
+pub struct CapacityStatement {
     /// Materialized-order identity. It is not an arena index.
     pub id: StatementId,
-    pub source: Side,
-    /// The inclusive lower count bound.
-    pub lo: u64,
-    /// The inclusive upper count bound; `None` is `*`.
-    pub hi: Option<u64>,
     pub target: Side,
-    /// The target-key plan handle (`ScalarProbe` or `Closed`; windows
-    /// refuse interval positions, so `IntervalCoverage` is unreachable).
-    /// Consumed by the commit judge's touched-parent probe and the
-    /// sweeper's global re-verification
-    /// (`storage/commit/judgment.rs::check_windows`).
+    /// The measure of one source fact; [`Weight::Unit`] is the count
+    /// instance (the surviving `<={lo..hi}` utterance).
+    pub weight: Weight,
+    /// The inclusive lower measure bound — a literal by representation
+    /// (C6: dependent floors are unrepresentable).
+    pub lo: u64,
+    /// The inclusive upper measure bound; `None` is `*`. A dependent
+    /// bound resolves by name against TARGET's whole field roster (C1),
+    /// per touched parent at judge time.
+    pub hi: Option<Bound>,
+    pub source: Side,
+    /// The target-key plan handle (`ScalarProbe` or `Closed`; capacity
+    /// projections refuse interval positions, so `IntervalCoverage` is
+    /// unreachable). Consumed by the commit judge's touched-parent probe
+    /// and the sweeper's global re-verification
+    /// (`storage/commit/judgment.rs::check_capacities`).
     pub(crate) enforcement: Enforcement,
     /// Both sides' σ bindings, compiled once at validate — resolved per
     /// commit into [`crate::storage::commit::judgment::Selections`]
     /// exactly as containments' are.
     pub(crate) checks: CompiledSides,
+    /// A `DurationOf` weight's sealed interval encoding (the SOURCE
+    /// field's trailing shape — how the measure `end − start` reads off
+    /// canonical fact bytes); `None` for unit and u64-field weights.
+    /// Sealed from the validator's derivation (the `source_tail`
+    /// precedent), so no judge re-walks the field roster.
+    pub(crate) weight_tail: Option<IntervalTail>,
+    /// A `TargetDuration` bound's sealed interval encoding (the TARGET
+    /// field's trailing shape); `None` for literal and u64-field bounds.
+    pub(crate) bound_tail: Option<IntervalTail>,
 }
 
 /// The global materialized-order spine: a [`StatementId`] selects one typed
@@ -495,7 +513,7 @@ pub struct CardinalityStatement {
 pub enum StatementRef {
     Key(KeyId),
     Containment(ContainmentId),
-    Cardinality(WindowId),
+    Capacity(CapacityId),
 }
 
 /// A borrowed sealed statement for display and other order-preserving walks.
@@ -504,7 +522,7 @@ pub enum StatementRef {
 pub enum StatementView<'schema> {
     Key(KeyId, &'schema KeyStatement),
     Containment(ContainmentId, &'schema ContainmentStatement),
-    Cardinality(WindowId, &'schema CardinalityStatement),
+    Capacity(CapacityId, &'schema CapacityStatement),
 }
 
 impl StatementView<'_> {
@@ -514,7 +532,7 @@ impl StatementView<'_> {
         match self {
             Self::Key(_, statement) => statement.id,
             Self::Containment(_, statement) => statement.id,
-            Self::Cardinality(_, statement) => statement.id,
+            Self::Capacity(_, statement) => statement.id,
         }
     }
 }
@@ -547,14 +565,14 @@ pub struct Relation {
     keys: Box<[KeyId]>,
     /// `Containment` statements whose source is this relation.
     outgoing: Box<[ContainmentId]>,
-    /// `Cardinality` statements whose SOURCE (counted child) is this
+    /// `Capacity` statements whose SOURCE (weighed child) is this
     /// relation — the plan derivation walks it per fact op, exactly as
     /// `outgoing`.
-    window_sources: Box<[WindowId]>,
-    /// `Cardinality` statements whose TARGET (parent) is this relation —
+    capacity_sources: Box<[CapacityId]>,
+    /// `Capacity` statements whose TARGET (parent) is this relation —
     /// a delta parent touches its own key tuple
     /// (`lean/Bumbledb/Txn/DeltaRestriction.lean: touchedParents`).
-    window_targets: Box<[WindowId]>,
+    capacity_targets: Box<[CapacityId]>,
     /// The FIRST `Fresh`-generation field, if any — the one id allocator's
     /// mint field (R16, `docs/architecture/50-storage.md` § key layout): on
     /// a fresh-keyed relation this field's value IS the `F` row id, `Q` is
@@ -571,7 +589,7 @@ pub struct Schema {
     /// Homogeneous typed arenas. Only validation mints their witness ids.
     keys: Box<[KeyStatement]>,
     containments: Box<[ContainmentStatement]>,
-    windows: Box<[CardinalityStatement]>,
+    capacities: Box<[CapacityStatement]>,
     /// The materialized statement list; [`StatementId`] indexes this spine.
     order: Box<[StatementRef]>,
     /// `target_key -> dependents`, indexed by [`KeyId`].
@@ -661,23 +679,23 @@ impl Schema {
         &self.containments
     }
 
-    /// All sealed cardinality windows, in typed-arena order.
+    /// All sealed capacity statements, in typed-arena order.
     #[must_use]
-    pub fn windows(&self) -> &[CardinalityStatement] {
-        &self.windows
+    pub fn capacities(&self) -> &[CapacityStatement] {
+        &self.capacities
     }
 
-    /// A cardinality window selected by its validation-minted witness.
+    /// A capacity statement selected by its validation-minted witness.
     #[must_use]
-    pub fn window(&self, id: WindowId) -> &CardinalityStatement {
-        &self.windows[usize::from(id.0)]
+    pub fn capacity(&self, id: CapacityId) -> &CapacityStatement {
+        &self.capacities[usize::from(id.0)]
     }
 
-    /// The bounds-checked sibling of [`Schema::window`] for ids arriving
-    /// as dynamic data.
+    /// The bounds-checked sibling of [`Schema::capacity`] for ids
+    /// arriving as dynamic data.
     #[must_use]
-    pub fn window_checked(&self, id: WindowId) -> Option<&CardinalityStatement> {
-        self.windows.get(usize::from(id.0))
+    pub fn capacity_checked(&self, id: CapacityId) -> Option<&CapacityStatement> {
+        self.capacities.get(usize::from(id.0))
     }
 
     /// Non-fatal diagnostics recorded while sealing this schema.
@@ -734,8 +752,8 @@ impl Schema {
             StatementRef::Containment(containment) => {
                 StatementView::Containment(containment, self.containment(containment))
             }
-            StatementRef::Cardinality(window) => {
-                StatementView::Cardinality(window, self.window(window))
+            StatementRef::Capacity(capacity) => {
+                StatementView::Capacity(capacity, self.capacity(capacity))
             }
         }
     }
