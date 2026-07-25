@@ -156,6 +156,12 @@ pub fn filter_duration_range_u64(
     // and `write <= start + starts.len() <= capacity` (`u32` carries no
     // drop obligation).
     unsafe { out.set_len(write) };
+    crate::obs::event(
+        crate::obs::names::KERNEL_FILTER,
+        crate::obs::Category::Execute,
+        starts.len() as u64,
+        (write - start) as u64,
+    );
 }
 
 /// Branchless cursor-write over the whole column: lane chunks through
@@ -197,6 +203,12 @@ fn push_matching<T, const N: usize>(
     // and `write <= start + col.len() <= capacity` (`u32` carries no
     // drop obligation).
     unsafe { out.set_len(write) };
+    crate::obs::event(
+        crate::obs::names::KERNEL_FILTER,
+        crate::obs::Category::Execute,
+        col.len() as u64,
+        (write - start) as u64,
+    );
 }
 
 /// [`push_matching`] over an interval span's (starts, ends) column pair.
@@ -235,6 +247,12 @@ fn push_matching_pair(
     // and `write <= start + starts.len() <= capacity` (`u32` carries no
     // drop obligation).
     unsafe { out.set_len(write) };
+    crate::obs::event(
+        crate::obs::names::KERNEL_FILTER,
+        crate::obs::Category::Execute,
+        starts.len() as u64,
+        (write - start) as u64,
+    );
 }
 
 /// The one hoisted position guard (the per-lane `u32::try_from` was a

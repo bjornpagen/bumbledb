@@ -216,6 +216,12 @@ pub fn build(txn: &ReadTxn<'_>, schema: &Schema, rel: RelationId) -> Result<Arc<
     // One sequential scan fills every column (positions = scan ordinals),
     // through the hoisted decode plan.
     let plan = decode_plan(&field_types, &frame.spans, &frame.columns, layout);
+    let decode_span = crate::obs::span_args(
+        crate::obs::names::DECODE_BATCH,
+        crate::obs::Category::Image,
+        row_count as u64,
+        layout.fact_width() as u64,
+    );
     let position = fill_columns(
         rel,
         read::scan(txn, schema, rel)?,
@@ -226,6 +232,7 @@ pub fn build(txn: &ReadTxn<'_>, schema: &Schema, rel: RelationId) -> Result<Arc<
         &mut frame.words,
         &mut frame.bytes,
     )?;
+    decode_span.end();
     if position != row_count {
         return Err(Error::Corruption(CorruptionError::RowCountMismatch {
             relation: rel,
@@ -341,6 +348,12 @@ pub fn append(
     // The tail decode: the identical kernel over the suffix scan, filling
     // positions `base_rows..row_count` — the only rows that decode.
     let plan = decode_plan(&field_types, &frame.spans, &frame.columns, layout);
+    let decode_span = crate::obs::span_args(
+        crate::obs::names::DECODE_BATCH,
+        crate::obs::Category::Image,
+        (row_count - base_rows) as u64,
+        layout.fact_width() as u64,
+    );
     let position = fill_columns(
         rel,
         read::scan_from(txn, schema, rel, from_row_id)?,
@@ -351,6 +364,7 @@ pub fn append(
         &mut frame.words,
         &mut frame.bytes,
     )?;
+    decode_span.end();
     if position != row_count {
         return Err(Error::Corruption(CorruptionError::RowCountMismatch {
             relation: rel,
@@ -573,6 +587,12 @@ pub fn synthesize_closed(rel: RelationId, relation: &Relation) -> Arc<RelationIm
     let mut frame = allocate(&field_types, row_count)
         .expect("the extension-row cap keeps every slab size computation in range");
     let plan = decode_plan(&field_types, &frame.spans, &frame.columns, layout);
+    let decode_span = crate::obs::span_args(
+        crate::obs::names::DECODE_BATCH,
+        crate::obs::Category::Image,
+        row_count as u64,
+        layout.fact_width() as u64,
+    );
     for (position, row) in extension.iter().enumerate() {
         decode_fact(
             rel,
@@ -585,5 +605,6 @@ pub fn synthesize_closed(rel: RelationId, relation: &Relation) -> Arc<RelationIm
         )
         .expect("sealed rows hold canonical fact bytes, encoded at validate");
     }
+    decode_span.end();
     seal(row_count, frame)
 }

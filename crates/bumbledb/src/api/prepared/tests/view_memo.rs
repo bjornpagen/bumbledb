@@ -515,3 +515,57 @@ fn prepare_lights_the_planner_dp_and_selectivity_ladder() {
         within(e, prepare_span);
     }
 }
+
+/// Lane I2 — the columnar batch decode (formerly invisible inside
+/// `IMAGE_BUILD`) and the predicate-scan filter kernels (attributable
+/// only as a phase bucket before). The first execution builds Posting's
+/// image: one `DECODE_BATCH` over all four rows, nested inside
+/// `IMAGE_BUILD`; the view build then runs the fixed-width scan kernel
+/// over the whole `account` column — one `KERNEL_FILTER` at batch
+/// granularity, its lane count the row count, never a per-lane event.
+#[test]
+fn execute_lights_the_batch_decode_and_filter_kernel() {
+    use crate::obs;
+
+    let dir = TempDir::new("prepared-trace-kernel");
+    let schema = schema();
+    let env = Environment::create(dir.path(), &schema).expect("create");
+    insert_postings(
+        &env,
+        &schema,
+        &[(1, 7, "a", 100), (2, 7, "b", -50), (3, 9, "c", 200), (4, 7, "d", 50)],
+    );
+    let cache = ImageCache::new(&schema);
+    let txn = env.read_txn().expect("txn");
+    let mut prepared = prepare(&txn, &cache, &schema, &by_account_query()).expect("prepare");
+
+    obs::start_capture();
+    let out = prepared
+        .execute_collect(&txn, &cache, &[BindValue::U64(7), BindValue::I64(0)])
+        .expect("execute");
+    let events = obs::finish_capture();
+    // account 7 AND amount >= 0: rows a(100) and d(50).
+    assert_eq!(out.len(), 2);
+
+    let image_build = events
+        .iter()
+        .find(|e| e.name == obs::names::IMAGE_BUILD)
+        .expect("the cold build");
+    let decode = events
+        .iter()
+        .find(|e| e.name == obs::names::DECODE_BATCH)
+        .expect("the batch decode");
+    assert_eq!(decode.a0, 4, "every stored row decoded");
+    assert!(
+        decode.start_ns >= image_build.start_ns
+            && decode.start_ns + decode.dur_ns <= image_build.start_ns + image_build.dur_ns,
+        "the batch decode nests inside IMAGE_BUILD",
+    );
+
+    // At least one kernel scan swept the whole column — lanes = rows.
+    let full_sweep = events
+        .iter()
+        .filter(|e| e.name == obs::names::KERNEL_FILTER)
+        .any(|e| e.a0 == 4);
+    assert!(full_sweep, "a fixed-width kernel scanned all four lanes");
+}
