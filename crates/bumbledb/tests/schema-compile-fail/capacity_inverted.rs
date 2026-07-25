@@ -1,6 +1,6 @@
-//! `{hi..lo}` with hi > lo is inverted — no count satisfies it; the
-//! grammar rejects the unsatisfiable spelling at expansion, naming the
-//! canonical bounds.
+//! `{hi..lo}` with hi > lo (literals) is inverted — no measure
+//! satisfies it; the grammar rejects the unsatisfiable spelling at
+//! expansion, naming the canonical bounds.
 //@ error: the window `{4..2}` is inverted
 //@ error: bounds are `{lo..hi}` with lo < hi
 

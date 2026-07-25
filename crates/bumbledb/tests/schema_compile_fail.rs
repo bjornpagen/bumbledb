@@ -129,7 +129,7 @@ fn schema_compile_fail_fixtures() {
         seen += 1;
     }
     let _ = std::fs::remove_dir_all(&out_dir);
-    // The suite's thirty cases (docs/architecture/70-api.md — the
+    // The suite's thirty-nine cases (docs/architecture/70-api.md — the
     // emission's roster, the funerals, the width grammar, the
     // canonical-utterance law's ban table, the key arrow's closure, and
     // the schema-bound witness): duplicate handle; missing column; extra column;
@@ -148,14 +148,24 @@ fn schema_compile_fail_fixtures() {
     // encodings (the dedup keys on the declared encoding — the rendered
     // Rust type is lossy exactly where the interval width is the type);
     // and the
-    // window/selection ban table, each error naming the canonical form —
-    // the deleted `in lo..hi per` spelling, `{1..*}` (the containment
-    // respelled), `{n..n}` (write `{n}`), `{0..0}` (write `{0}`),
-    // `{0..*}` (vacuous — `cardinality_zero_star`), inverted bounds, the
+    // capacity/selection ban table, each error naming the canonical
+    // form — the deleted `in lo..hi per` spelling (the standing
+    // tombstone: keyword prose stays dead), unit `{1..*}` (the
+    // containment respelled — the ban is unit-only; the weighted floor
+    // is the positive probe in `schema_macro.rs`), `{n..n}` (write
+    // `{n}`), `{0..0}` (write `{0}`),
+    // `{0..*}` (vacuous — `capacity_zero_star`), inverted literal
+    // bounds, the
     // open shorthands `{..hi}` / `{lo..}`, the empty window `<={}`
     // (names no bounds), the singleton literal set (the bare literal's
     // second spelling), and the empty literal set `{}` (selects
-    // nothing — write no binding); the key arrow whose right side names
+    // nothing — write no binding); the capacity typing refusals —
+    // the weight path `[a.b]` (naming the pinned-column composition
+    // idiom, ruling 6), the signed weight (polarity), the non-u64
+    // weight, `[Duration(field)]` over a scalar, the bound ident off
+    // TARGET's roster (C1), the signed bound, `{..Duration(field)}`
+    // over a scalar, the dependent floor (hi-slot only, C6), and the
+    // unit window against a Duration bound (dimension mixing, C18); the key arrow whose right side names
     // a foreign relation (the FD reading ratified — the arrow closes
     // over its own relation, and the teaching error is spanned at the
     // offending name); the determinant field spelled twice (a
@@ -171,7 +181,7 @@ fn schema_compile_fail_fixtures() {
     // witness (the schema-bound witness law — the binding typestate
     // makes a foreign witness a type mismatch).
     assert_eq!(
-        seen, 30,
-        "the schema compile-fail roster has thirty fixtures"
+        seen, 39,
+        "the schema compile-fail roster has thirty-nine fixtures"
     );
 }
