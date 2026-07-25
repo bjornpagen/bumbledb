@@ -12,7 +12,13 @@ fn us(ns: u64) -> f64 {
 /// Renders the scenario report as markdown: one row per `SQLite` lane
 /// (the query name, rows, and ours p50 repeat on each), DNF lanes named
 /// as such with no percentiles, geomeans over the timed primaries only.
+/// Trailing alloc (`--alloc`) and flame (`--trace`) sections appear only
+/// when those passes ran.
 #[must_use]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one linear report: the lane table then the optional alloc/flame sections"
+)]
 pub fn render(reports: &[QueryReport], proto: Protocol) -> String {
     use std::fmt::Write as _;
     let mut out = String::new();
@@ -109,6 +115,34 @@ pub fn render(reports: &[QueryReport], proto: Protocol) -> String {
             every.len(),
             geomean(&every)
         );
+    }
+
+    // The alloc pass (--alloc): one line per query with a reading.
+    if reports.iter().any(|r| r.alloc.is_some()) {
+        let _ = writeln!(out, "\n## Allocations (per query, --alloc)\n");
+        let _ = writeln!(out, "| query | allocs | alloc bytes | deallocs | dealloc bytes |");
+        let _ = writeln!(out, "|---|---:|---:|---:|---:|");
+        for r in reports {
+            if let Some(a) = &r.alloc {
+                let _ = writeln!(
+                    out,
+                    "| {} | {} | {} | {} | {} |",
+                    r.name, a.allocs, a.alloc_bytes, a.deallocs, a.dealloc_bytes,
+                );
+            }
+        }
+    }
+
+    // The trace pass (--trace): the warm flame top-10 per query, exactly
+    // as the ledger read families embed it.
+    if reports.iter().any(|r| r.flame.is_some()) {
+        let _ = writeln!(out, "\n## Flame summaries (per query, --trace)\n");
+        for r in reports {
+            if let Some(flame) = &r.flame {
+                let _ = writeln!(out, "### {} / {}\n", r.scenario, r.name);
+                let _ = writeln!(out, "```text\n{flame}```\n");
+            }
+        }
     }
     out
 }

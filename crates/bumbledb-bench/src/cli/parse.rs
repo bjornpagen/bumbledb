@@ -183,9 +183,16 @@ fn parse_world(cmd: &str, tokens: &mut Tokens<'_>) -> Result<ScenarioArgs, Strin
                 args.only = Some(tokens.value(&flag)?.split(',').map(str::to_owned).collect());
             }
             "--samples" => args.samples = Some(parse_u32(&flag, tokens.value(&flag)?)?),
+            "--trace" => args.trace = true,
+            "--alloc" => args.alloc = true,
             "--out" => args.out = Some(PathBuf::from(tokens.value(&flag)?)),
             _ => return Err(unknown(cmd, &flag)),
         }
+    }
+    if args.trace && args.alloc {
+        return Err(format!(
+            "`{cmd}` rejects `--trace` with `--alloc` — they are mutually exclusive passes (the obs doctrine)"
+        ));
     }
     Ok(args)
 }

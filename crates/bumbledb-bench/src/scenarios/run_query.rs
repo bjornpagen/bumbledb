@@ -3,10 +3,13 @@ use std::cell::Cell;
 use bumbledb::schema::{SchemaDescriptor, StatementView, ValueType};
 use bumbledb::{Answers, RelationId, StatementId, Value};
 
-use super::{LaneOutcome, LaneReport, QueryReport, Scenario, ScenarioQuery, Stores, Surface, Twin};
+use super::{
+    LaneOutcome, LaneReport, QueryModes, QueryReport, Scenario, ScenarioQuery, Stores, Surface,
+    Twin,
+};
 use crate::compare;
 use crate::families::bind_values;
-use crate::harness::{self, Protocol, Rotation};
+use crate::harness::{self, Modes, Protocol, Rotation};
 use crate::sqlite_run::{CapOutcome, PreparedFamily, sample_capped};
 use crate::translate::{Translated, translate};
 
@@ -194,13 +197,19 @@ pub(super) fn gate<'d>(
 /// protocol, then every `SQLite` lane — uncapped lanes exactly as
 /// before; capped lanes pre-flight one untimed sample per param set and
 /// report [`LaneOutcome::ExceededCap`] the moment any sample trips (no
-/// censored percentiles can exist).
+/// censored percentiles can exist). The optional alloc and trace passes
+/// ([`QueryModes`]) run after timing, each a separate scoped window.
+#[expect(
+    clippy::too_many_lines,
+    reason = "one query's full protocol: gate, time, the optional alloc/trace passes, the lanes"
+)]
 pub(super) fn run_query(
     stores: &Stores,
     scenario: &Scenario,
     sq: &ScenarioQuery,
     seed: u64,
     proto: Protocol,
+    modes: &QueryModes,
 ) -> Result<QueryReport, String> {
     let Gated {
         mut engine,
@@ -233,6 +242,41 @@ pub(super) fn run_query(
             // values are never dead code; count mirrors the row contract.
             Ok(std::hint::black_box(fact).map_or(0, |_| 1))
         })?,
+    };
+
+    // The alloc pass — a SEPARATE mode from --trace (mutually exclusive,
+    // the obs doctrine; enforced at parse): one per-query engine-side
+    // alloc window over the same protocol, so `scenarios --alloc` scopes
+    // allocations per query exactly as the ledger `bench --alloc` does.
+    let alloc = if modes.alloc {
+        let mut rotation = Rotation::new(sets.clone());
+        let alloc_modes = Modes {
+            alloc_window: true,
+            ..Modes::default()
+        };
+        let measured = match &mut engine {
+            Engine::Prepared(prepared) => {
+                let mut buffer = Answers::new();
+                harness::measure_batched(proto, alloc_modes, 1, || {
+                    let params = bind_values(rotation.next_set());
+                    db.read(|snap| snap.execute(prepared, &params, &mut buffer))
+                        .map_err(|e| format!("execute: {e:?}"))?;
+                    Ok(buffer.len() as u64)
+                })?
+            }
+            Engine::KeyedGet {
+                relation,
+                statement,
+            } => harness::measure_batched(proto, alloc_modes, 1, || {
+                let fact = db
+                    .read(|snap| snap.get_dyn(*relation, *statement, rotation.next_set()))
+                    .map_err(|e| format!("get_dyn: {e:?}"))?;
+                Ok(std::hint::black_box(fact).map_or(0, |_| 1))
+            })?,
+        };
+        measured.alloc.map(crate::report::AllocReport::from)
+    } else {
+        None
     };
 
     #[expect(
@@ -298,6 +342,13 @@ pub(super) fn run_query(
         lane_reports.push(LaneReport { lane, outcome });
     }
 
+    // The trace pass: per-query warm+cold artifacts under <out>/trace/,
+    // plus the warm flame table the report embeds (like read_family).
+    let flame = match &modes.trace_root {
+        Some(root) => Some(super::trace::capture_query(stores, scenario, sq, seed, root)?),
+        None => None,
+    };
+
     Ok(QueryReport {
         scenario: scenario.name,
         name: sq.name,
@@ -305,5 +356,7 @@ pub(super) fn run_query(
         answers: ours.work / u64::from(proto.samples.max(1)),
         ours: ours.stats,
         lanes: lane_reports,
+        flame,
+        alloc,
     })
 }

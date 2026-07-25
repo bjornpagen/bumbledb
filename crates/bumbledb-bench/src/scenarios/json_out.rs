@@ -56,7 +56,19 @@ fn push_query(out: &mut String, r: &QueryReport) {
         }
         push_lane(out, lane);
     }
-    out.push_str("]}");
+    out.push(']');
+    if let Some(alloc) = &r.alloc {
+        let _ = write!(
+            out,
+            ",\"alloc\":{{\"allocs\":{},\"deallocs\":{},\"alloc_bytes\":{},\"dealloc_bytes\":{}}}",
+            alloc.allocs, alloc.deallocs, alloc.alloc_bytes, alloc.dealloc_bytes
+        );
+    }
+    if let Some(flame) = &r.flame {
+        out.push_str(",\"flame\":");
+        json::push_str_lit(out, flame);
+    }
+    out.push('}');
 }
 
 /// Renders the scenario run as JSON — every field, hand-rolled;

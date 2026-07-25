@@ -16,8 +16,9 @@ pub fn cmd_scenarios(args: &crate::cli::ScenarioArgs) -> Result<i32, String> {
         warmups: 8,
         samples: args.samples.unwrap_or(64),
     };
-    let (markdown, reports) =
-        crate::scenarios::run(&args.dir, args.seed, proto, args.only.as_deref())?;
+    // The out dir resolves FIRST: per-query traces land under
+    // <out>/trace/scenarios/<scenario>/, so the run needs the root before
+    // it times anything.
     let out_dir = args.out.clone().unwrap_or_else(|| {
         PathBuf::from("bench-out").join(format!(
             "{}-scenarios",
@@ -25,6 +26,12 @@ pub fn cmd_scenarios(args: &crate::cli::ScenarioArgs) -> Result<i32, String> {
         ))
     });
     std::fs::create_dir_all(&out_dir).map_err(|e| format!("out dir: {e}"))?;
+    let modes = crate::scenarios::QueryModes {
+        trace_root: args.trace.then(|| out_dir.clone()),
+        alloc: args.alloc,
+    };
+    let (markdown, reports) =
+        crate::scenarios::run(&args.dir, args.seed, proto, args.only.as_deref(), &modes)?;
     std::fs::write(out_dir.join("scenarios.md"), &markdown)
         .map_err(|e| format!("artifact: {e}"))?;
     std::fs::write(
@@ -34,5 +41,8 @@ pub fn cmd_scenarios(args: &crate::cli::ScenarioArgs) -> Result<i32, String> {
     .map_err(|e| format!("artifact: {e}"))?;
     print!("{markdown}");
     println!("artifacts: {}", out_dir.display());
+    if args.trace {
+        println!("traces: {}", out_dir.join("trace").join("scenarios").display());
+    }
     Ok(0)
 }

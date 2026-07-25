@@ -2,11 +2,13 @@ use std::path::Path;
 
 use super::load::load;
 use super::run_query::{gate, run_query};
-use super::{QueryReport, Scenario, all, render};
+use super::{QueryModes, QueryReport, Scenario, all, render};
 use crate::harness::Protocol;
 
 /// Runs every scenario (or the selected subset): load, gate, time,
-/// report. Returns the rendered markdown; the caller writes artifacts.
+/// report — under the per-query capture [`QueryModes`] (`--trace` /
+/// `--alloc`, a separate pass each). Returns the rendered markdown; the
+/// caller writes artifacts.
 ///
 /// # Errors
 ///
@@ -17,6 +19,7 @@ pub fn run(
     seed: u64,
     proto: Protocol,
     only: Option<&[String]>,
+    modes: &QueryModes,
 ) -> Result<(String, Vec<QueryReport>), String> {
     let mut reports = Vec::new();
     for scenario in all() {
@@ -28,7 +31,7 @@ pub fn run(
         let stores = load(dir, &scenario, seed)?;
         for sq in (scenario.queries)() {
             eprintln!("scenario {}: {}", scenario.name, sq.name);
-            reports.push(run_query(&stores, &scenario, &sq, seed, proto)?);
+            reports.push(run_query(&stores, &scenario, &sq, seed, proto, modes)?);
         }
     }
     if reports.is_empty() {

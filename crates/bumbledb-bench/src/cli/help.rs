@@ -31,6 +31,10 @@ const COMMANDS: &str = "COMMANDS:\n\
 
 /// The usage text.
 #[must_use]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one linear usage block — splitting the flag sections would scatter the help"
+)]
 pub fn help() -> String {
     format!(
         "bumbledb-bench {}\n\
@@ -73,6 +77,10 @@ pub fn help() -> String {
          \x20 --only a,b      run only these scenarios/families\n\
          \x20 --samples N     measured samples/query   (default 64; crud and\n\
          \x20                 lawful fall back to their registered protocols)\n\
+         \x20 --trace         per-query warm+cold traces (.json + .folded)\n\
+         \x20                 under <out>/trace/; embeds the warm flame top-10\n\
+         \x20 --alloc         per-query alloc windows (needs the obs feature;\n\
+         \x20                 a separate pass — mutually exclusive with --trace)\n\
          \x20 --out PATH      artifact dir (default bench-out/<timestamp>-<command>)\n\
          \n\
          SWEEP-COMMIT:\n\

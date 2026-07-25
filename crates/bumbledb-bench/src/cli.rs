@@ -177,6 +177,11 @@ pub struct ScenarioArgs {
     pub only: Option<Vec<String>>,
     /// Measured samples per query per engine.
     pub samples: Option<u32>,
+    /// Per-query warm+cold Chrome+folded traces under `<out>/trace/`.
+    pub trace: bool,
+    /// Per-query alloc windows (needs the obs build) — a separate pass
+    /// from `--trace`, mutually exclusive with it (the obs doctrine).
+    pub alloc: bool,
     pub out: Option<PathBuf>,
 }
 
@@ -187,6 +192,8 @@ impl Default for ScenarioArgs {
             dir: PathBuf::from("bench-data"),
             only: None,
             samples: None,
+            trace: false,
+            alloc: false,
             out: None,
         }
     }

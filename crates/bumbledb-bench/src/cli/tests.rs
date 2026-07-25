@@ -365,6 +365,8 @@ fn crud_parses_its_flags() {
             dir: PathBuf::from("x"),
             only: Some(vec!["crud_insert".to_owned(), "crud_rmw".to_owned()]),
             samples: Some(9),
+            trace: false,
+            alloc: false,
             out: Some(PathBuf::from("y")),
         })
     );
@@ -396,6 +398,8 @@ fn lawful_parses_its_flags() {
                 "law_reject_window".to_owned()
             ]),
             samples: Some(9),
+            trace: false,
+            alloc: false,
             out: Some(PathBuf::from("y")),
         })
     );
@@ -408,6 +412,27 @@ fn crud_refuses_an_unknown_flag() {
     let err = parse(&argv(&["crud", "--scale", "S"])).unwrap_err();
     assert!(err.contains("--scale"), "{err}");
     assert!(err.contains("crud"), "{err}");
+}
+
+#[test]
+fn scenarios_parses_the_trace_and_alloc_flags() {
+    let Cmd::Scenarios(args) = parse(&argv(&["scenarios", "--trace"])).expect("parses") else {
+        panic!("scenarios");
+    };
+    assert!(args.trace && !args.alloc);
+    let Cmd::Scenarios(args) = parse(&argv(&["scenarios", "--alloc"])).expect("parses") else {
+        panic!("scenarios");
+    };
+    assert!(args.alloc && !args.trace);
+}
+
+#[test]
+fn the_world_commands_refuse_trace_with_alloc() {
+    for cmd in ["scenarios", "crud", "lawful"] {
+        let err = parse(&argv(&[cmd, "--trace", "--alloc"])).unwrap_err();
+        assert!(err.contains("mutually exclusive"), "{cmd}: {err}");
+        assert!(err.contains(cmd), "{cmd}: {err}");
+    }
 }
 
 #[test]
