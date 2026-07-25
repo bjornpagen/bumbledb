@@ -109,12 +109,18 @@ obligations the dossier § 2 names land with the statement):
 `Txn.capacity_delta_restriction`, and the Lean-side Duration
 extractor (`Value.durationNat`).
 
+Discharged by the build lane since: **the C12 clip lemma**
+(`natSum_prefix_le` below — prefix monotonicity of non-negative
+running sums — spent by `Oracle.capacity_ceiling_exit_sound` /
+`Oracle.capacity_floor_exit_sound`, the named soundness of the
+engine's early-exit walk: ceiling exits at `sum > hi`, floor at
+`sum ≥ lo`).
+
 OWED to the build lane, recorded by name:
 
-* **The C12 clip lemma**: prefix monotonicity of non-negative running
-  sums — the named soundness of the engine's early-exit walk (ceiling
-  exits at `sum > hi`, floor at `sum ≥ lo`) — plus its Bridge row,
-  the analog of `Exec.sweep_early_exit_sound`.
+* **The C12 Bridge row**: the clip theorems' ledger row, the analog
+  of `Exec.sweep_early_exit_sound`'s — it re-pins with the capacity
+  engine anchors, so it rides the count-path deletion.
 * **The C11 Admission form**: `capacityForm` with the verdict
   quantifying over the witnessed false-surface parents (bounded
   quantification; `AdmissibleForm`'s Verdict generalizes only if the
@@ -167,6 +173,19 @@ theorem natSum_append : ∀ l₁ l₂ : List Nat,
     show x + natSum (l₁ ++ l₂) = x + natSum l₁ + natSum l₂
     rw [natSum_append l₁ l₂]
     omega
+
+/-- **Prefix monotonicity of non-negative running sums** — the C12
+clip lemma: a walk's running sum never exceeds the whole walk's sum,
+so the engine's early exit is sound in both polarities — a ceiling
+walk may convict the moment the running sum passes `hi` (the suffix
+can only raise it: `capacity_ceiling_exit_sound`, `Oracle.lean`), and
+a floor-only walk may accept the moment it reaches `lo`
+(`capacity_floor_exit_sound`). The design's § 4 early-exit claim is
+cited here, not asserted. -/
+theorem natSum_prefix_le (l₁ l₂ : List Nat) :
+    natSum l₁ ≤ natSum (l₁ ++ l₂) := by
+  rw [natSum_append]
+  exact Nat.le_add_right _ _
 
 /-- Unit weights sum to the length — `length = sum ∘ map(const 1)`,
 the design's one-line reason counting is the unit-weight corollary. -/

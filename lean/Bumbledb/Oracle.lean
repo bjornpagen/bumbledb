@@ -485,6 +485,35 @@ theorem measure_admits_iff_enum {s : Set β} {l : List β}
     exact ⟨h1, fun m hm =>
       (measureAtMost_iff_enum hmem hnd wt m).mpr (h2 m hm)⟩
 
+/-- **The clipped ceiling walk is sound** (ruling C12): the moment a
+walk's running sum passes a spelled ceiling, the whole walk's verdict
+is already refusal — non-negative weights make the running sum
+monotone (`natSum_prefix_le`, `Capacity.lean`), so the suffix can
+only raise it and the engine's `sum > hi` early exit loses nothing.
+The analog of `Exec.sweep_early_exit_sound` at the measure
+altitude. -/
+theorem capacity_ceiling_exit_sound {w : Window} {wt : β → Nat}
+    {pre : List β} {m : Nat} (hhi : w.hi = some m)
+    (hpast : m < natSum (pre.map wt)) (suf : List β) :
+    ¬ measureVerdict w wt (pre ++ suf) := by
+  rintro ⟨_, h2⟩
+  have hle := h2 m hhi
+  rw [List.map_append] at hle
+  exact Nat.not_le.mpr hpast
+    (Nat.le_trans (natSum_prefix_le (pre.map wt) (suf.map wt)) hle)
+
+/-- **The clipped floor walk is sound** (ruling C12): a floor-only
+window (`hi = none` — the `*` spelling) is admitted the moment the
+running sum reaches the floor; the suffix only raises the sum, so
+the engine's `sum ≥ lo` early exit answers for the whole walk. -/
+theorem capacity_floor_exit_sound {w : Window} {wt : β → Nat}
+    {pre : List β} (hhi : w.hi = none)
+    (hfloor : w.lo ≤ natSum (pre.map wt)) (suf : List β) :
+    measureVerdict w wt (pre ++ suf) := by
+  refine ⟨?_, fun m hm => by rw [hhi] at hm; cases hm⟩
+  rw [List.map_append]
+  exact Nat.le_trans hfloor (natSum_prefix_le (pre.map wt) (suf.map wt))
+
 /-- A duplicate-free list's mere-membership pairwise property — the
 bridge from set-level pairwise facts to `List.Pairwise`. -/
 theorem pairwise_of_nodup {l : List β} {D : β → β → Prop}
