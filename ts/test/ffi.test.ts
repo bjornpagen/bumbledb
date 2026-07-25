@@ -5,7 +5,8 @@
  * fresh-mint return and live final-state point reads; one violation of each
  * statement form arriving with canonical spellings and decoded facts; a
  * recursive closure query; the generation witness; manifest and open-error
- * outcomes.
+ * outcomes; hostile-caller capacity shapes at the raw wire (the marshal's
+ * refusals as thrown bridge errors, dossier § 4.4).
  */
 
 import assert from "node:assert/strict"
@@ -256,6 +257,88 @@ describe("ffi round trip against a real store", function suite() {
 		})
 		assert.ok(edgeKey, "the declared Edge fd is in the manifest")
 		edgeKeyId = edgeKey.id
+	})
+
+	test("hostile capacity shapes refuse typed at the raw wire, before any store touch", function hostileCapacity() {
+		const hostileDir = path.join(tmpRoot, "hostile")
+		const target = { relation: "Person", projection: ["id"], selection: [] } as const
+		const source = { relation: "Edge", projection: ["from"], selection: [] } as const
+
+		/**
+		 * The dossier's explicitly forbidden implicit-lit compat: the old wire
+		 * spelled a bound as a bare BigInt; the capacity wire spells bounds
+		 * ONLY as tagged objects ({kind:"lit"|"field"|"durationField"}). A
+		 * bare BigInt must refuse at the marshal — a future lenient arm
+		 * re-admitting the positional shape would land here.
+		 */
+		const bareBigintBound: SchemaSpec = {
+			relations: spec.relations,
+			statements: [
+				{
+					kind: "capacity",
+					target,
+					weight: { kind: "unit" },
+					// @ts-expect-error — a bare BigInt bound is dead wire: bounds are tagged objects only
+					window: { kind: "exact", n: 0n },
+					source
+				}
+			]
+		}
+		assert.throws(function bareBound() {
+			native.dbCreate(hostileDir, bareBigintBound)
+		}, /missing `kind` in capacity bound/)
+
+		const weightless: SchemaSpec = {
+			relations: spec.relations,
+			statements: [
+				// @ts-expect-error — C4: the wire ALWAYS carries `weight`; omission is not the unit weight
+				{
+					kind: "capacity",
+					target,
+					window: { kind: "range", lo: { kind: "lit", value: 0n }, hi: { kind: "lit", value: 1000n } },
+					source
+				}
+			]
+		}
+		assert.throws(function omittedWeight() {
+			native.dbCreate(hostileDir, weightless)
+		}, /missing `weight` in capacity/)
+
+		const countAlias: SchemaSpec = {
+			relations: spec.relations,
+			statements: [
+				{
+					kind: "capacity",
+					target,
+					// @ts-expect-error — the count instance has ONE spelling ({kind:"unit"}); an alias kind is unknown
+					weight: { kind: "count" },
+					window: { kind: "exact", n: { kind: "lit", value: 0n } },
+					source
+				}
+			]
+		}
+		assert.throws(function unknownWeightKind() {
+			native.dbCreate(hostileDir, countAlias)
+		}, /unknown weight kind `count`/)
+
+		const boundAlias: SchemaSpec = {
+			relations: spec.relations,
+			statements: [
+				{
+					kind: "capacity",
+					target,
+					weight: { kind: "unit" },
+					// @ts-expect-error — bound kinds are lit/field/durationField; anything else is unknown
+					window: { kind: "exact", n: { kind: "value", value: 3n } },
+					source
+				}
+			]
+		}
+		assert.throws(function unknownBoundKind() {
+			native.dbCreate(hostileDir, boundAlias)
+		}, /unknown capacity bound kind `value`/)
+
+		assert.equal(fs.existsSync(hostileDir), false, "marshal refusals precede every environment touch")
 	})
 
 	test("delta writes: fresh mint, final-state point reads, commit", function writes() {
