@@ -26,12 +26,21 @@ before touching anything.
 
 ## THE PAUSED CAMPAIGN: instrument-first bug bash + perf fanout
 
-Run id `wf_260adbe6-ad4`; script archived at
-`~/.claude/projects/-Users-bjorn-Documents-bumbledb/88c4a64e-bc42-45de-813f-9def272bda73/workflows/scripts/bugbash-perf-campaign-wf_260adbe6-ad4.js`.
-NOTE: workflow run caches are session-local — a NEW session cannot resume the
-run; it re-authors from this section (the script file is readable and is the
-authoritative phase spec). Instrument is committed, so a re-launch starts at
-Gate.
+Run id `wf_260adbe6-ad4`. **The COMPLETE workflow script is committed in this
+repo: `docs/handoffs/2026-07-25-bugbash-perf-workflow.js`** — the authoritative
+orchestration spec (every phase, agent prompt, schema, gate loop, and the
+tryAgent retry discipline, verbatim as it ran). NOTE: workflow run caches are
+session-local — a NEW session cannot resume the original run; re-launch by
+passing that script's contents to a fresh Workflow call (Instrument is
+committed, so on re-launch its lanes should be marked done/no-op'd or the
+prompts will find their work already landed and verify instead of redo —
+either is safe; the real start is Gate). The prose spec below mirrors the
+script for readers.
+
+**Baseline verified at pause (2026-07-25):** `cargo check --workspace
+--all-targets` clean, `cargo check -p bumbledb --features trace` clean,
+`tsc --noEmit` clean — the paused tree typechecks and is committable as-is.
+(Full test batteries + check-asm/alloc-gate remain the Gate's job.)
 
 **Intent (owner's charter):** be excruciatingly data-driven — evaluate all
 benchmarks, run a full baseline WITH trace attribution before any perf work,
