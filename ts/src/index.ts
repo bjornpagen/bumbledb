@@ -119,7 +119,7 @@ export type {
 	Staleness,
 	StatementKindTag
 } from "#native.ts"
-export type { Desc, SortKey } from "#order.ts"
+export type { Desc, EngineOrderable, SortKey } from "#order.ts"
 export { by, desc } from "#order.ts"
 
 export type {
