@@ -1511,3 +1511,105 @@ exists — `snap.scan_facts::<Program>()` folded host-side, hunting for a
 `grp` — re-derives in the host what the store already enforces. The
 uniqueness the fold quietly assumes IS the declared FD; spell the law and
 the point read comes with it.
+
+## Capacity laws
+
+## 31. The power budget
+
+Guarantee: Lean theorem + validator/runtime premises — the capacity law
+bounds each pool's summed draw by the pool's own row
+(`lean/Bumbledb/Capacity.lean: CapacityLaw`; per touched parent, one keyed
+probe plus one measure walk, `lean/Bumbledb/Oracle.lean:
+capacity_plan_decides`); the pinned-column containment proves a device's
+watts equals its model's at every commit.
+
+Per-group capacity is one statement: the weight bracket names the measure
+on the SOURCE row, and the dependent bound reads each group's ceiling from
+the TARGET row (hi slot only — ruled 2026-07-24, C6; bound idents resolve
+by name against the target's full roster, ruled 2026-07-24, C1).
+
+```rust
+bumbledb::schema! {
+    pub Racks;
+
+    relation Pool  { id: u64 as PoolId, fresh, supply: u64 }
+    relation Model { id: u64 as ModelId, fresh, watts: u64 }
+    relation Device {
+        id: u64 as DeviceId, fresh,
+        pool: u64 as PoolId,
+        model: u64 as ModelId,
+        watts: u64,
+    }
+
+    Device(pool) <= Pool(id);
+    // The pinned column: a device's watts provably equals its model's — the
+    // two-column containment IS the join, stated as a law. The superkey it
+    // targets is deliberate write-amplification rent (RedundantSuperkey is
+    // the recorded diagnostic, never an error).
+    Model(id, watts) -> Model;
+    Device(model, watts) <= Model(id, watts);
+    // Σ watts over a pool's devices stays within the pool's own supply.
+    Pool(id) <=[watts]{0..supply} Device(pool);
+}
+```
+
+The path spelling `[model.watts]` is a typed refusal whose diagnostic names
+exactly this pair (`30-dependencies.md` § the extension form — the weight
+vocabulary is closed at the row, ruled 2026-07-24, ruling 6): a weight read
+through a reference would be a maintained copy of another relation's field,
+and a catalog edit would silently re-weigh deployed fleets. Pinned, the
+inconsistent commit refuses at the device site and the migration is
+explicit.
+
+Utilization is a query, never a column (the ledger's law, recipe 19):
+
+```rust
+let draw = query!(Racks {
+    (pool, total: Sum(watts)) | Device(id, pool, watts);
+});
+```
+
+## 32. Calendar capacity
+
+Guarantee: Lean theorem + validator/runtime premises — the Duration weight
+sums each booking's interval measure against the room's own span measure
+(`lean/Bumbledb/Capacity.lean: CapacityLaw`; Duration weights pair with
+Duration-capable bounds, ruled 2026-07-24, C18; a ray-valued weight or
+bound refuses typed at the law site, ruled 2026-07-24, C10).
+
+"Total booked time per room stays within the room's span" — one statement.
+The interval enters through the measure argument, never the group key (the
+v0 projection refusal survives narrowed).
+
+```rust
+bumbledb::schema! {
+    pub Rooms;
+
+    relation Room { id: u64 as RoomId, fresh, span: interval<i64> }
+    relation Booking {
+        id: u64 as BookingId, fresh,
+        room: u64 as RoomId,
+        booked: interval<i64>,
+    }
+
+    Booking(room) <= Room(id);
+    // The pointwise key forbids double-booking (recipe 1); the capacity law
+    // bounds the TOTAL. Different laws — a schema usually wants both.
+    Booking(room, booked) -> Booking;
+    Room(id) <=[Duration(booked)]{0..Duration(span)} Booking(room);
+}
+```
+
+Mind the weighted `{0}` and the weighted floor: on a weighted statement
+`{0}` says "the group's total is zero" (zero-measure rows may exist — the
+weaker law than the unit exclusion), and `<=[w]{1..*}` ("positive total")
+is not "at least one booking" — that intent is the bare containment. Choose
+by what you mean (`70-api.md` § the ban table, per-aggregate).
+
+The booked time per room, read back:
+
+```rust
+let booked = query!(Rooms {
+    (room, total: Sum(Duration(booked))) | Booking(id, room, booked);
+});
+```

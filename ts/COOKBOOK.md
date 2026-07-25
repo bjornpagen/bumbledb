@@ -66,7 +66,7 @@ import {
 Relation declarations are pure structure — `kind`, `width`, `element`,
 `fresh`, nothing else. Domains are never declared: `schema()` computes every
 field's equivalence class FROM the statement list, by union-find across every
-paired face (containment, `mirrors`, window targets, ψ-selected faces
+paired face (containment, `mirrors`, capacity targets, ψ-selected faces
 included). Three laws govern the classes:
 
 1. **A fresh field is a generator** and names its class by its declaration
@@ -1606,3 +1606,100 @@ exists — `snap.scan(Program).find((row) => row.grp === grp)` — re-derives
 in the host what the store already enforces. The uniqueness the fold
 quietly assumes IS the declared key statement; spell the law and the point
 read comes with it.
+
+## Capacity laws
+
+## 31. The power budget
+
+Guarantee: Lean theorem + validator/runtime premises — the capacity law
+bounds each pool's summed draw by the pool's own row
+(`lean/Bumbledb/Capacity.lean: CapacityLaw`; per touched parent, one keyed
+probe plus one measure walk, `lean/Bumbledb/Oracle.lean:
+capacity_plan_decides`); the pinned-column containment proves a device's
+watts equals its model's at every commit.
+
+Per-group capacity is one statement — the `capacity` builder mirrors the
+operator positionally (target, weight, window, source): `weigh` names the
+measure on the SOURCE row, and `ref` reads each group's ceiling from the
+TARGET row (hi slot only — ruled 2026-07-24, C6; bound names resolve
+against the target's full roster, ruled 2026-07-24, C1).
+
+```ts
+const Pool = relation("Pool", { id: u64.fresh, supply: u64 })
+const Model = relation("Model", { id: u64.fresh, watts: u64 })
+const Device = relation("Device", {
+	id: u64.fresh,
+	pool: u64,
+	model: u64,
+	watts: u64
+})
+
+const Racks = schema("Racks", { Pool, Model, Device }, [
+	contained(on(Device, "pool"), on(Pool, "id")),
+	// The pinned column: a device's watts provably equals its model's — the
+	// two-column containment IS the join, stated as a law. The superkey it
+	// targets is deliberate write-amplification rent.
+	key(Model, ["id", "watts"]),
+	contained(on(Device, ["model", "watts"]), on(Model, ["id", "watts"])),
+	// Σ watts over a pool's devices stays within the pool's own supply:
+	capacity(on(Pool, "id"), weigh("watts"), within(0n, ref("supply")), on(Device, "pool"))
+])
+
+// utilization is a query, never a column (the ledger's law, recipe 19):
+const draw = query(Racks).rule((r) => {
+	const { id, pool, watts } = v(Device)
+	return r.match(Device, { id, pool, watts }).find({ pool, total: r.sum(watts) })
+})
+```
+
+A path weight (`weigh("model.watts")`) is a typed refusal whose diagnostic
+names exactly this pair — the weight vocabulary is closed at the row (ruled
+2026-07-24, ruling 6): a weight read through a reference would be a
+maintained copy of another relation's field, and a catalog edit would
+silently re-weigh deployed fleets. Pinned, the inconsistent commit refuses
+at the device site and the migration is explicit.
+
+## 32. Calendar capacity
+
+Guarantee: Lean theorem + validator/runtime premises — the Duration weight
+sums each booking's interval measure against the room's own span measure
+(`lean/Bumbledb/Capacity.lean: CapacityLaw`; Duration weights pair with
+Duration-capable bounds, ruled 2026-07-24, C18; a ray-valued weight or
+bound refuses typed at the law site, ruled 2026-07-24, C10).
+
+"Total booked time per room stays within the room's span" — one statement.
+The interval enters through the measure argument, never the group key.
+
+```ts
+const Room = relation("Room", { id: u64.fresh, span: interval(i64) })
+const Booking = relation("Booking", {
+	id: u64.fresh,
+	room: u64,
+	booked: interval(i64)
+})
+
+const Rooms = schema("Rooms", { Room, Booking }, [
+	contained(on(Booking, "room"), on(Room, "id")),
+	// The pointwise key forbids double-booking (recipe 1); the capacity law
+	// bounds the TOTAL. Different laws — a schema usually wants both.
+	key(Booking, ["room", "booked"]),
+	capacity(
+		on(Room, "id"),
+		weigh(duration("booked")),
+		within(0n, duration("span")),
+		on(Booking, "room")
+	)
+])
+
+// the booked time per room, read back:
+const booked = query(Rooms).rule((r) => {
+	const { id, room, booked } = v(Booking)
+	return r.match(Booking, { id, room, booked }).find({ room, total: r.sum(r.duration(booked)) })
+})
+```
+
+Mind the weighted `{0}` and the weighted floor: on a weighted statement
+`within(0n)` says "the group's total is zero" (zero-measure rows may exist
+— the weaker law than the unit exclusion), and `within(1n, "*")` under a
+weight ("positive total") is not "at least one booking" — that intent is
+the bare `contained`. Choose by what you mean.
