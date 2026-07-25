@@ -106,6 +106,15 @@ form's delta-restricted check (`planObligation`, `acceptance_gate`).
   (`cardinality_plan_decides`); total consultations = touched parents
   + total touched-group sizes, as an equation
   (`window_plan_consultations`).
+* **Capacity** — the SAME prefix walk, weighed (`capacityPlan`): the
+  measure verdict over one duplicate-free enumeration IS the
+  capacity judgment at the parent-resolved window
+  (`measure_admits_iff_enum` via the consolidated weighted pigeonhole
+  `nodup_subset_natSum_le`, `Capacity.lean`), deciding
+  `capacityDeltaCheck` (`capacity_plan_decides`); the consultation
+  equation is the count walk's, name for name
+  (`capacity_plan_consultations`) — the weighted verdict reads no
+  extra entries.
 
 ## The acceptance premises, spent
 
@@ -434,6 +443,48 @@ theorem window_admits_iff_enum {s : Set β} {l : List β}
   · rintro ⟨h1, h2⟩
     exact ⟨h1, fun m hm => (atMost_iff_enum hmem hnd m).mpr (h2 m hm)⟩
 
+/-! ## Measure lemmas — capacity over one enumeration
+
+The capacity judgment (`Capacity.lean`) is stated as the two
+witness-style MEASURE bounds; over one duplicate-free enumeration
+both collapse to the enumeration's weighted SUM — the weighted
+pigeonhole is `nodup_subset_natSum_le`, proved ONCE upstream in
+`Capacity.lean` (the consolidation ruling: this module's count
+pigeonhole `nodup_subset_length_le` and `Decide.lean`'s erase-style
+twin were owed a weighted successor EACH; one home serves both). -/
+
+/-- The measure-window verdict a walk's answers decide: the weighted
+fold over the answers against RESOLVED bounds (resolution happens at
+the parent row, before the walk's verdict). The weight is read off
+the answers themselves — the oracle answers whole facts, and whether
+the engine materializes each weight from the reverse-index value
+slot or by a per-child fetch is representation below this altitude
+(the C17 measured choice), priced identically here either way
+(`capacity_plan_consultations`). -/
+def measureVerdict (w : Window) (wt : β → Nat) (ans : List β) :
+    Prop :=
+  w.lo ≤ natSum (ans.map wt) ∧
+    ∀ m, w.hi = some m → natSum (ans.map wt) ≤ m
+
+/-- **One walk decides a measure window.** The measure-admission
+judgment over a set equals the measure verdict over any
+duplicate-free enumeration of it — `window_admits_iff_enum` with sum
+in place of length: the whole weighing question is one prefix walk's
+answer fold. -/
+theorem measure_admits_iff_enum {s : Set β} {l : List β}
+    (hmem : ∀ a, a ∈ l ↔ a ∈ s) (hnd : l.Nodup) (w : Window)
+    (wt : β → Nat) :
+    w.admitsMeasure wt s ↔ measureVerdict w wt l := by
+  unfold Window.admitsMeasure measureVerdict
+  rw [measureAtLeast_iff_enum hmem hnd wt w.lo]
+  constructor
+  · rintro ⟨h1, h2⟩
+    exact ⟨h1, fun m hm =>
+      (measureAtMost_iff_enum hmem hnd wt m).mp (h2 m hm)⟩
+  · rintro ⟨h1, h2⟩
+    exact ⟨h1, fun m hm =>
+      (measureAtMost_iff_enum hmem hnd wt m).mpr (h2 m hm)⟩
+
 /-- A duplicate-free list's mere-membership pairwise property — the
 bridge from set-level pairwise facts to `List.Pairwise`. -/
 theorem pairwise_of_nodup {l : List β} {D : β → β → Prop}
@@ -492,6 +543,13 @@ def indReverseWalk (t : List Value) : EnforcementPlan (List Value) P :=
 
 /-- Window: one prefix walk of a touched parent's child group. -/
 def windowPlan (t : List Value) : EnforcementPlan (List Value) P :=
+  .prefixWalk t
+
+/-- Capacity: one prefix walk of a touched parent's child group —
+the SAME plan term as the count window's: the weighted verdict reads
+no extra entries (the weight rides each answer; module note at
+`measureVerdict`). -/
+def capacityPlan (t : List Value) : EnforcementPlan (List Value) P :=
   .prefixWalk t
 
 /-- Pointwise FD: the neighbor probe at the inserted interval's
@@ -562,6 +620,25 @@ theorem window_plan_consultations
   | nil => rfl
   | cons t ps ih =>
     simp only [costs, windowPlan, EnforcementPlan.consultations,
+      List.map_cons, List.foldr_cons, List.length_cons] at ih ⊢
+    omega
+
+/-- **The capacity bound, as an equation** —
+`window_plan_consultations`' successor name (ruling C16): over any
+touched-parent list, total consultations = touched parents + total
+touched-group sizes — one seek per parent, one read per group
+member, EXACTLY the count walk's price: the theorem-level witness
+that the weighted verdict costs nothing extra at judge time. -/
+theorem capacity_plan_consultations
+    (o : OrderedOracle (List Value) P Fact ple)
+    (parents : List (List Value)) :
+    costs o (parents.map (capacityPlan (P := P))) =
+      parents.length +
+        (parents.map fun t => (o.consult t).length).foldr (· + ·) 0 := by
+  induction parents with
+  | nil => rfl
+  | cons t ps ih =>
+    simp only [costs, capacityPlan, EnforcementPlan.consultations,
       List.map_cons, List.foldr_cons, List.length_cons] at ih ⊢
     omega
 
@@ -779,6 +856,64 @@ theorem cardinality_plan_decides (T : Theory) (I : Instance)
   exact ⟨fun h g hg hψ ht => (hadm _).mp (h g hg hψ ht),
     fun h g hg hψ ht => (hadm _).mpr (h g hg hψ ht)⟩
 
+/-! ## Form 6 — the capacity statement -/
+
+/-- The capacity plan obligation: against every conforming oracle
+over the σ-selected source's parent-key index, the per-touched-parent
+MEASURE verdict — bounds resolved from each parent fact before the
+walk's verdict — decides `capacityDeltaCheck`. -/
+def CapacityPlanned (T : Theory) (I : Instance) (d : Txn.Delta)
+    (tgt : Atom) (wt : Weight) (w : CapWindow) (src : Atom) : Prop :=
+  ∀ (P : Type) (ple : P → P → Prop)
+    (o : OrderedOracle (List Value) P Fact ple),
+    o.facts = Selected (T.den (d.applyTo I) src.relation)
+      src.selection →
+    (∀ f, o.groupOf f = f.project src.projection) →
+    ((∀ g, g ∈ T.den (d.applyTo I) tgt.relation →
+        tgt.selection.satisfies g →
+        g.project tgt.projection ∈ Txn.touchedParents d src tgt →
+        measureVerdict (w.resolve g) wt.apply
+          ((capacityPlan (P := P)
+            (g.project tgt.projection)).answers o)) ↔
+      Txn.capacityDeltaCheck T I d tgt wt w src)
+
+/-- **The capacity plan theorem** (a prefix walk of each touched
+parent's child group; the bound is `capacity_plan_consultations` —
+consultations = touched parents + total touched-group sizes): the
+measure verdict over each walked group IS the delta-restricted
+capacity check. `hgrp` is the count form's argument VERBATIM
+(group keying is weight-blind); `hadm` is per-parent because the
+resolved bounds vary with `g` — the dependent-bound read slots into
+the quantifier already binding it, with no new structure. The
+engine's CLIPPED walk (early exit under monotone non-negative
+running sums) is the build lane's named C12 obligation; this theorem
+prices the whole walk. -/
+theorem capacity_plan_decides (T : Theory) (I : Instance)
+    (d : Txn.Delta) (tgt : Atom) (wt : Weight) (w : CapWindow)
+    (src : Atom) : CapacityPlanned T I d tgt wt w src := by
+  intro P ple o hfacts hkey
+  have hgrp : ∀ (t : List Value) (a : Fact),
+      a ∈ (capacityPlan (P := P) t).answers o ↔
+        a ∈ ChildGroup (T.den (d.applyTo I) src.relation)
+          src.selection src.projection t := by
+    intro t a
+    show a ∈ o.consult t ↔ _
+    rw [o.consult_mem t a, hfacts, hkey a]
+    exact ⟨fun ⟨⟨h1, h2⟩, h3⟩ => ⟨h1, h2, h3⟩,
+      fun ⟨h1, h2, h3⟩ => ⟨⟨h1, h2⟩, h3⟩⟩
+  have hadm : ∀ g : Fact,
+      measureVerdict (w.resolve g) wt.apply
+        ((capacityPlan (P := P)
+          (g.project tgt.projection)).answers o) ↔
+        (w.resolve g).admitsMeasure wt.apply
+          (ChildGroup (T.den (d.applyTo I) src.relation)
+            src.selection src.projection (g.project tgt.projection)) :=
+    fun g => (measure_admits_iff_enum (hgrp (g.project tgt.projection))
+      (o.consult_nodup (g.project tgt.projection)) (w.resolve g)
+      wt.apply).symm
+  exact ⟨fun h g hg hψ ht => (hadm g).mp (h g hg hψ ht),
+    fun h g hg hψ ht => (hadm g).mpr (h g hg hψ ht)⟩
+
 /-! ## Form 2 — the pointwise FD (the sweep's altitude) -/
 
 /-- The pointwise-FD plan obligation, at the interval altitude: for
@@ -943,6 +1078,7 @@ def planObligation (T : Theory) (I : Instance) (d : Txn.Delta) :
     | some _, some _ => CoveragePlanned
     | _, _ => ContainmentPlanned T I d src tgt
   | .cardinality src w tgt => WindowPlanned T I d src w tgt
+  | .capacity tgt wt w src => CapacityPlanned T I d tgt wt w src
 
 /-- **The acceptance-gate theorem.** Every `Statement` constructor
 HAS its plan term: each accepted form's delta-restricted check is
@@ -988,6 +1124,8 @@ theorem acceptance_gate (T : Theory) (I : Instance) (d : Txn.Delta) :
         exact containment_plan_decides T I d src tgt
   | cardinality src w tgt =>
     exact cardinality_plan_decides T I d src w tgt
+  | capacity tgt wt w src =>
+    exact capacity_plan_decides T I d tgt wt w src
 
 end Oracle
 end Bumbledb

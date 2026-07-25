@@ -10,7 +10,8 @@ sets; on finite, row-listed instances it is DECIDABLE, and this
 module is that fact made executable: one Boolean checker per
 statement form, each proved sound AND complete against its
 `Statement.judgment` denotation (`funcB_iff`, `pointwiseKeyB_iff`,
-`containB_iff`, `coverageB_iff`, `cardinalityB_iff`), composed into
+`containB_iff`, `coverageB_iff`, `cardinalityB_iff`,
+`capacityB_iff`), composed into
 the per-statement dispatcher (`Statement.checkB`,
 `Statement.checkB_iff`), the whole-theory executable judge
 (`holdsB`, `holdsB_iff_holds`, the derived
@@ -912,6 +913,96 @@ theorem cardinalityB_iff {LA LB : List Row} {A B : Set Fact}
     rw [List.length_map] at h1
     exact h1
 
+/-! ## Capacity statements — the weighted measure
+
+The capacity checker is the count checker's fold with the weight in
+place of the constant 1 (`length = sum ∘ map(const 1)`): the SAME
+deduplicated enumeration (`dedupFacts`, `childGroup_enum` — group
+keying is weight-blind), summed under `Weight.apply` instead of
+measured by length, judged against the window RESOLVED at each
+parent row. `childMeasureB` at unit weight equals `childCountB`'s
+old value — a lemma downstream of `natSum_map_const_one`, never a
+retained definition. -/
+
+/-- The child measure of one parent tuple: Σ weight over one
+representative fact per denoted row — `childCountB`'s fold,
+weighted. -/
+def childMeasureB (LA : List Row) (φ : Selection) (X : List FieldId)
+    (wt : Weight) (t : List Value) : Nat :=
+  natSum (((dedupFacts (LA.filter fun a => satisfiesB φ a &&
+    decide ((Query.tupleFact a).project X = t))).map
+      Query.tupleFact).map wt.apply)
+
+/-- The capacity checker: every ψ-selected parent row's child-group
+measure sits in the window resolved against that parent's own row —
+the dependent-bound read happens before the verdict, from the fact
+already in hand. -/
+def capacityB (LA : List Row) (φ : Selection) (X : List FieldId)
+    (wt : Weight) (w : CapWindow) (LB : List Row) (ψ : Selection)
+    (Y : List FieldId) : Bool :=
+  LB.all fun b => !satisfiesB ψ b ||
+    windowB (w.resolve (Query.tupleFact b))
+      (childMeasureB LA φ X wt ((Query.tupleFact b).project Y))
+
+/-- The window verdict at an enumerated group's MEASURE is the
+measure-admission judgment — `windowB_iff` with the weighted fold in
+place of the length, the two measure bounds collapsed to compares
+through the consolidated pigeonhole (`measureAtLeast_iff_enum` /
+`measureAtMost_iff_enum`, `Capacity.lean`). -/
+theorem measureWindowB_iff {s : Set Fact} {enum : List Fact}
+    (hnd : enum.Nodup) (hmem : ∀ f, f ∈ s ↔ f ∈ enum) (w : Window)
+    (wt : Fact → Nat) :
+    windowB w (natSum (enum.map wt)) = true ↔
+      w.admitsMeasure wt s := by
+  unfold windowB Window.admitsMeasure
+  rw [andB_iff, decide_eq_true_iff]
+  have hmem' : ∀ f, f ∈ enum ↔ f ∈ s := fun f => (hmem f).symm
+  constructor
+  · rintro ⟨h1, h2⟩
+    refine ⟨(measureAtLeast_iff_enum hmem' hnd wt w.lo).mpr h1,
+      fun m hm => ?_⟩
+    rw [hm] at h2
+    exact (measureAtMost_iff_enum hmem' hnd wt m).mpr
+      (of_decide_eq_true h2)
+  · rintro ⟨h1, h2⟩
+    refine ⟨(measureAtLeast_iff_enum hmem' hnd wt w.lo).mp h1, ?_⟩
+    cases hhi : w.hi with
+    | none => rfl
+    | some m =>
+      exact decide_eq_true
+        ((measureAtMost_iff_enum hmem' hnd wt m).mp (h2 m hhi))
+
+/-- `capacityB` decides `CapacityLaw` on the listed denotations —
+the dossier § 2 obligation, discharged with the statement: the
+enumeration is `childGroup_enum`'s verbatim, and the per-parent
+resolved bound threads through with no new quantifier structure
+(the parent is already bound where the verdict reads it). -/
+theorem capacityB_iff {LA LB : List Row} {A B : Set Fact}
+    (hA : Denotes LA A) (hB : Denotes LB B) (φ : Selection)
+    (X : List FieldId) (wt : Weight) (w : CapWindow) (ψ : Selection)
+    (Y : List FieldId) :
+    capacityB LA φ X wt w LB ψ Y = true ↔
+      CapacityLaw A φ X wt w B ψ Y := by
+  unfold capacityB CapacityLaw
+  rw [List.all_eq_true]
+  constructor
+  · intro h g hg hψ
+    obtain ⟨b, hb, rfl⟩ := (hB g).mp hg
+    have h1 := h b hb
+    rw [impB_iff] at h1
+    exact (measureWindowB_iff (nodup_map_dedupFacts _)
+      (childGroup_enum hA φ X ((Query.tupleFact b).project Y))
+      (w.resolve (Query.tupleFact b)) wt.apply).mp
+      (h1 (satisfiesB_iff.mpr hψ))
+  · intro h b hb
+    rw [impB_iff]
+    intro hψ
+    exact (measureWindowB_iff (nodup_map_dedupFacts _)
+      (childGroup_enum hA φ X ((Query.tupleFact b).project Y))
+      (w.resolve (Query.tupleFact b)) wt.apply).mpr
+      (h (Query.tupleFact b) ((hB _).mpr ⟨b, hb, rfl⟩)
+        (satisfiesB_iff.mp hψ))
+
 /-! ## The per-statement dispatcher -/
 
 /-- One statement's checker — `Statement.judgment`'s dispatch,
@@ -932,6 +1023,9 @@ def Statement.checkB (T : Theory) (W : RowInstance) : Statement → Bool
         (W.rows tgt.relation) tgt.selection tgt.projection
   | .cardinality src w tgt =>
     cardinalityB (W.rows src.relation) src.selection src.projection w
+      (W.rows tgt.relation) tgt.selection tgt.projection
+  | .capacity tgt wt w src =>
+    capacityB (W.rows src.relation) src.selection src.projection wt w
       (W.rows tgt.relation) tgt.selection tgt.projection
 
 /-- `checkB` decides `Statement.judgment` on the row-denoted
@@ -982,6 +1076,11 @@ theorem Statement.checkB_iff {T : Theory} {W : RowInstance}
     exact cardinalityB_iff (theoryDen_denotes hclosed src.relation)
       (theoryDen_denotes hclosed tgt.relation) src.selection
       src.projection w tgt.selection tgt.projection
+  | capacity tgt wt w src =>
+    simp only [Statement.checkB, Statement.judgment]
+    exact capacityB_iff (theoryDen_denotes hclosed src.relation)
+      (theoryDen_denotes hclosed tgt.relation) src.selection
+      src.projection wt w tgt.selection tgt.projection
 
 /-! ## The whole-theory executable judge -/
 

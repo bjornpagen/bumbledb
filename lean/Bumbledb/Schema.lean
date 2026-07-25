@@ -28,10 +28,13 @@ relations as instance-independent sealed constants.
   decidability-firewall tripwire's recorded edge
   (`docs/architecture/30-dependencies.md` § the decidability
   firewall) is the same decision docs-side, executed 2026-07-14.
-* **Statements are the three judgment forms**: functionality and
-  containment exactly as `StatementDescriptor`, plus the cardinality
-  window extension form with its denotation in `Cardinality.lean`.
-  No constraint kinds, no modes, no triggers.
+* **Statements are the declared judgment forms**: functionality and
+  containment exactly as `StatementDescriptor`, plus the one
+  extension form — the capacity statement (`Capacity.lean`), whose
+  unit instance is the cardinality window (`Cardinality.lean`; the
+  count constructor rides through the cutover's flush phase and dies
+  with the corpus re-baseline). No constraint kinds, no modes, no
+  triggers.
 * **Ground axioms are constants of the THEORY.** A closed relation's
   extension is sealed at declaration and `Instance`-independent by
   type (`Theory.den` never consults the instance for it) —
@@ -405,23 +408,78 @@ theorem Header.intervalSplit_some {h : Header} {R : RelId}
   · simp only [Header.intervalSplit, hfil] at hs
     exact nomatch hs
 
-/-! ## Extension syntax — windows
+/-! ## Extension syntax — windows and capacity
 
-The statement form the dependency-vocabulary extension adds carries
-syntax of its own: the count window of `A(X | φ) in n..m per
-B(Y | ψ)`. Syntax only — the denotation lives in
-`Cardinality.lean`. -/
+The statement forms the dependency-vocabulary extension adds carry
+syntax of their own: the literal window `{lo..hi}` and, over it, the
+capacity statement `B(Y | ψ) <=[w]{lo..hi} A(X | φ)` (the
+`capacity-laws.md` design: the aggregate containment whose unit
+instance is the count window). Syntax only — the denotations live in
+`Cardinality.lean` (the count instance, retiring with the cutover's
+build lane) and `Capacity.lean` (the weighted general form). -/
 
-/-- A cardinality window `n..m`. `hi = none` is the `*` spelling —
+/-- A literal window `lo..hi`. `hi = none` is the `*` spelling —
 the ONLY spelling of "no upper bound", and the DEFAULT posture: the
 `0..*` window is provably vacuous and universal (`zero_star_admits`,
 `star_subsumes` in `Cardinality.lean`), so a spelled statement is
-always a strengthening of the default, never a repair of it. -/
+always a strengthening of the default, never a repair of it. This is
+the `{lo..hi}` object that SURVIVES the capacity cutover (ruling C16):
+a capacity statement's window resolves per target row to exactly this
+shape (`CapWindow.resolve`), and every admission judgment reads the
+resolved form. -/
 structure Window where
   /-- The inclusive lower count bound. -/
   lo : Nat
   /-- The inclusive upper count bound; `none` is `*`. -/
   hi : Option Nat
+
+/-- The measure of one source fact — the capacity statement's weight,
+the TOTAL three-case sum (ruling C4: `unit` is a case, not an
+absence, so the wire, the descriptor encoding, and this constructor
+agree that unit weight crosses explicitly). `unit` is the count
+instance (`<={lo..hi}` — the utterance survives character for
+character); `field` reads a u64-encoded SOURCE position (signed
+encodings are gate-refused — polarity: a negative weight would let an
+insert lower a sum); `durationOf` reads a SOURCE interval position's
+measure (the R5 machinery — calendar capacity). The readings live in
+`Capacity.lean` (`Weight.apply`). -/
+inductive Weight where
+  /-- Absent bracket: unit weight — the count instance. -/
+  | unit
+  /-- `[field]`: a u64-encoded field of the SOURCE row. -/
+  | field (i : FieldId)
+  /-- `[Duration(field)]`: the interval measure of a SOURCE
+  interval position. -/
+  | durationOf (i : FieldId)
+
+/-- A capacity bound: a literal, or a DEPENDENT bound read from the
+TARGET's row (per-group capacity — `{0..supply}`; ruling C1: the
+ident resolves by NAME against the target's whole field roster, never
+through the projection tuple). `targetDuration` is the interval
+measure of a target interval position — the calendar law's
+`{0..Duration(span)}` ceiling. Resolution lives in `Capacity.lean`
+(`Bound.resolve`). -/
+inductive Bound where
+  /-- An integer literal — the degenerate constant case. -/
+  | lit (n : Nat)
+  /-- A u64-encoded field of the TARGET's row. -/
+  | targetField (i : FieldId)
+  /-- `Duration(field)`: the interval measure of a TARGET interval
+  position. -/
+  | targetDuration (i : FieldId)
+
+/-- The capacity statement's window: the floor is a LITERAL and only
+the ceiling admits a dependent bound — ruling C6 as representation
+(a dependent floor has no use case, and inversion with idents is
+statically undecidable, so the shape is unrepresentable here rather
+than gate-refused). `hi = none` stays the one `*` spelling.
+Resolution against a target row lands in the literal `Window`
+(`CapWindow.resolve`, `Capacity.lean`). -/
+structure CapWindow where
+  /-- The inclusive lower measure bound — literal only (C6). -/
+  lo : Nat
+  /-- The inclusive upper measure bound; `none` is `*`. -/
+  hi : Option Bound
 
 /-! ## Statements — the declared forms -/
 
@@ -434,11 +492,11 @@ structure Atom where
   selection : Selection
 
 /-- A declared dependency statement — the two original judgment forms
-(`crate::schema::StatementDescriptor`) plus the cardinality-window
-extension form, judged in the STATEMENT phase like every other
-statement. `==` is not a form: the macro lowers it to two adjacent
-containments, each judged independently. Readings live in
-`Statement.judgment`. -/
+(`crate::schema::StatementDescriptor`) plus the capacity extension
+form (and its retiring unit-instance spelling), judged in the
+STATEMENT phase like every other statement. `==` is not a form: the
+macro lowers it to two adjacent containments, each judged
+independently. Readings live in `Statement.judgment`. -/
 inductive Statement where
   /-- `R(X) -> R`: functionality, key form only (the acceptance
   gate refuses non-key and selected FDs — they are relation splits
@@ -451,8 +509,24 @@ inductive Statement where
   sharing its projected tuple lies in the window
   (`CardinalityWindow`, `Cardinality.lean`). Acceptance gate as for
   `<=`: `Y` must be a key of `B` — an ACCEPTANCE premise, never a
-  conjunct of the denotation. -/
+  conjunct of the denotation. RETIRING: this is the unit instance of
+  `capacity` (`cardinality_is_unit_capacity`, `Capacity.lean`); it
+  stays alive through the capacity cutover's flush phase only so the
+  conformance corpus replays unchanged, and the build lane deletes it
+  when the corpus re-baselines (the L4 handoff). -/
   | cardinality (source : Atom) (window : Window) (target : Atom)
+  /-- `B(Y | ψ) <=[w]{lo..hi} A(X | φ)`: the capacity statement —
+  per ψ-selected target fact, the MEASURE of the φ-selected source
+  facts sharing its projected key tuple (Σ weight over the
+  deduplicated group; absent bracket = unit weight = count) lies in
+  the window, whose bounds resolve against the target's own row
+  (`CapacityLaw`, `Capacity.lean`). Field order is the operator's —
+  target, weight, window, source — ruling C2: the corpus JSON, the
+  FFI marshal, the descriptor codec, and the fingerprint encoding pin
+  this same order. Acceptance gate as for `<=`: `Y` must be a key of
+  `B` — an ACCEPTANCE premise, never a conjunct of the denotation. -/
+  | capacity (target : Atom) (weight : Weight) (window : CapWindow)
+      (source : Atom)
 
 /-! ## Theories, instances, ground axioms -/
 

@@ -203,10 +203,10 @@ def checkedSum (limit : Nat) : List Nat → Option Nat
     | none => none
     | some s => checkedAdd limit x s
 
-/-- The mathematical sum the checked forms are measured against. -/
-def natSum : List Nat → Nat
-  | [] => 0
-  | x :: xs => x + natSum xs
+-- `natSum`, the mathematical sum the checked forms are measured
+-- against, moved UPSTREAM to `Capacity.lean` (the capacity cutover):
+-- the weighted-measure denotation states its folds in unbounded ℕ
+-- over the same sum, and one definition serves both altitudes.
 
 /-- Port of the artifact's `checkedAdd_sound`: success is the exact
 sum, within the limit. -/

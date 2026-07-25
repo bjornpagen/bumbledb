@@ -502,6 +502,57 @@ theorem cardinality_delta_restriction {T : Theory} {I : Instance}
       rw [cardinality_untouched_group_eq ht]
       exact hpre g hg₀ hψ
 
+/-! ## Form 6 — the capacity statement -/
+
+/-- The delta-restricted capacity check: the law judged only at
+TOUCHED parent keys — `touchedParents` REUSED VERBATIM, because
+group keying and parent marking are weight-blind, and dependent
+bounds are ALREADY covered: a target-row bound-field update is
+remove+add of the target relation, so the new row is ψ-selected in
+`d.adds` and its key is touched — the non-obvious reason "plan phase
+unchanged" survives dependent bounds. The window resolves per parent
+row, against the FINAL state's parent (the fact the judge holds). -/
+def capacityDeltaCheck (T : Theory) (I : Instance) (d : Delta)
+    (tgt : Atom) (wt : Weight) (w : CapWindow) (src : Atom) : Prop :=
+  ∀ g, g ∈ T.den (d.applyTo I) tgt.relation →
+    tgt.selection.satisfies g →
+    g.project tgt.projection ∈ touchedParents d src tgt →
+    (w.resolve g).admitsMeasure wt.apply
+      (ChildGroup (T.den (d.applyTo I) src.relation) src.selection
+        src.projection (g.project tgt.projection))
+
+/-- **The capacity restriction theorem.** Over a pre-state holding
+the capacity law, the final state holds it IFF the touched-parents
+check passes. The untouched arm TRANSFERS from the count form's
+argument whole: an untouched parent is a pre-state parent (`hg₀`
+exhibits the SAME fact, so the dependent bound resolves to the SAME
+window — resolution reads `g` itself, never the state), the weight
+function is state-independent, and the group equality is
+`cardinality_untouched_group_eq`, weight-blind and reused (the build
+lane renames it with the count path's deletion). -/
+theorem capacity_delta_restriction {T : Theory} {I : Instance}
+    {d : Delta} {tgt : Atom} {wt : Weight} {w : CapWindow}
+    {src : Atom}
+    (hpre : CapacityLaw (T.den I src.relation) src.selection
+      src.projection wt w (T.den I tgt.relation) tgt.selection
+      tgt.projection) :
+    CapacityLaw (T.den (d.applyTo I) src.relation) src.selection
+      src.projection wt w (T.den (d.applyTo I) tgt.relation)
+      tgt.selection tgt.projection ↔
+      capacityDeltaCheck T I d tgt wt w src := by
+  constructor
+  · intro h g hg hψ _
+    exact h g hg hψ
+  · intro hc g hg hψ
+    by_cases ht : g.project tgt.projection ∈ touchedParents d src tgt
+    · exact hc g hg hψ ht
+    · have hg₀ : g ∈ T.den I tgt.relation := by
+        rcases den_final_pre_or_added hg with h' | h'
+        · exact h'
+        · exact absurd (Or.inr ⟨g, Or.inl h', hψ, rfl⟩) ht
+      rw [cardinality_untouched_group_eq ht]
+      exact hpre g hg₀ hψ
+
 /-! ## The per-statement dispatch and the composition theorem -/
 /-- One statement's delta-restricted check — `Statement.judgment`'s
 dispatch, arm for arm, each form replaced by its restricted check.
@@ -521,6 +572,7 @@ def deltaCheck (T : Theory) (I : Instance) (d : Delta) :
         tgt.relation tgt.selection U j
     | _, _ => containmentDeltaCheck T I d src tgt
   | .cardinality src w tgt => cardinalityDeltaCheck T I d src w tgt
+  | .capacity tgt wt w src => capacityDeltaCheck T I d tgt wt w src
 
 /-- **The per-statement restriction theorem.** Over a pre-state
 holding one statement, the final state satisfies the statement IFF
@@ -564,6 +616,9 @@ theorem statement_delta_restriction (T : Theory) (I : Instance)
   | cardinality src w tgt =>
     simp only [Statement.judgment, deltaCheck] at hpre ⊢
     exact cardinality_delta_restriction hpre
+  | capacity tgt wt w src =>
+    simp only [Statement.judgment, deltaCheck] at hpre ⊢
+    exact capacity_delta_restriction hpre
 
 /-- The exact form over the lifecycle: a committed state's final
 state models the theory IFF every declared statement's
