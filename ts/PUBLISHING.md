@@ -11,22 +11,30 @@ open. The main publish runs `prepublishOnly` → the full build (lockstep
 assertion, cargo release build, smoke-load through the by-name loader path,
 tarball-manifest verification) before anything uploads.
 
-`0.7.0` is the audit-campaign release, a deliberate backwards-incompatible
-hard break over `0.6.0` — the 2026-07 deep audit's 22 rulings (R1-R22,
-`audit-2026-07/RULINGS.md`) and 158 fixed findings land as one version:
-`WriteResult` becomes a sum so `abandon()` is honored (R10), `Tx.insert`
-returns `{changed, ...fresh}` (R11), resources adopt Node explicit resource
-management (R12), TS `explain()` lands (R13), closed-column const accessors
-are emitted (R14), ray errors fold Kleene three-valued (R6), the
-orderability wall moves into engine validation (R4), and the OR+aggregate
-lowering is fixed (R2). The storage format crosses to v6 (R16: fresh ids and
-row ids merge into one allocator; R18: ephemeral stores wipe after a machine
-crash) — old stores are refused, not migrated. The fingerprint statement:
-zero cookbook fingerprint pins moved
-(`ts/test/fixtures/cookbook-fingerprints.txt` is byte-identical to the
-0.6.0 tree).
+`0.8.0` is the capacity release, a deliberate backwards-incompatible hard
+break over `0.7.0` — the count window dies into the CAPACITY statement
+(`Target <=[w]{lo..hi} Source`, the aggregate containment;
+`docs/design/capacity-laws.md` §8 rulings 1-6 + §8b C1-C19, both design docs
+stamped LANDED). The count spelling `<={lo..hi}` survives
+character-for-character as the unit-weight instance; weighted measures land
+(`weigh(f(...))`, Duration weights — calendar capacity as one statement);
+dependent hi-bounds read the target row (`ref("supply")` — the power-budget
+shape); path weights refuse typed naming the pinned-column composition
+idiom. `count.ts` dies whole: the five count constructors become the one
+positional `capacity()` builder with `within()`/`weigh()`/`ref()`/
+`duration()`, the ban table reborn per-aggregate. The violation payload
+becomes `measure` (bigint, whole). The storage format crosses to v7 (the
+capacity cutover: the schema encoding moved — statement-form tag 4 under the
+v5 label — and the `R` namespace gained the weighted value-slot arm) — old
+stores are refused, not migrated. The fingerprint statement: EVERY schema
+fingerprint moves (the v4→v5 encoding label is the hash stream's first
+bytes) — the cross-host lock and every cookbook golden re-derived in-tree.
 
-Lineage: `0.6.0` was the previous hard break, over `0.5.0` — VARS BECOME
+Lineage: `0.7.0` was the previous hard break, over `0.6.0` — the audit
+campaign (22 rulings R1-R22 + 158 findings: the `WriteResult` sum honoring
+`abandon()`, `Tx.insert`'s changed bit, disposable lifetimes, `explain()`,
+closed-column const accessors; storage v6 merged the id allocators). Before
+it, `0.6.0` broke `0.5.0` — VARS BECOME
 VALUES: `v(relation)` mints a record of fresh, class-typed query variables
 built for ES destructuring, variable identity moves from name to OBJECT
 REFERENCE (reusing the same var value across binding positions IS the join),
@@ -72,22 +80,22 @@ fails if they diverge:
    readable at runtime)
 
 A release bump edits all four, then the build enforces the match. All four
-are set to `0.7.0` in this tree; `pnpm run build` asserts the lockstep on
-every run (`bumbledb build: version 0.7.0 (main == platform ==
+are set to `0.8.0` in this tree; `pnpm run build` asserts the lockstep on
+every run (`bumbledb build: version 0.8.0 (main == platform ==
 optionalDependencies pin == crate manifest)`).
 
-## Runbook (0.7.0, darwin-arm64 host, owner — staged 2026-07-24; recurs as the template for the next version)
+## Runbook (0.8.0, darwin-arm64 host, owner — staged 2026-07-25; recurs as the template for the next version)
 
 ```sh
 # 0. From the ts/ package root, on a macOS Apple Silicon machine.
 cd ts
 
-# 1. The lockstep is already set to 0.7.0 in all FOUR places (done in this
+# 1. The lockstep is already set to 0.8.0 in all FOUR places (done in this
 #    tree; the build asserts it):
-#    - ts/package.json                    "version": "0.7.0"
-#    - ts/package.json                    optionalDependencies pin -> "0.7.0"
-#    - ts/npm/darwin-arm64/package.json   "version": "0.7.0"
-#    - ts/crate/Cargo.toml                version = "0.7.0"
+#    - ts/package.json                    "version": "0.8.0"
+#    - ts/package.json                    optionalDependencies pin -> "0.8.0"
+#    - ts/npm/darwin-arm64/package.json   "version": "0.8.0"
+#    - ts/crate/Cargo.toml                version = "0.8.0"
 
 # 2. Build + verify both trees (fails on version drift, unloadable artifact,
 #    or a mispacked tarball). Produces dist/ and npm/darwin-arm64/bumbledb.node.
@@ -107,10 +115,10 @@ pnpm publish --no-git-checks ./npm/darwin-arm64
 pnpm publish --no-git-checks
 
 # 5. Verify both versions landed in the registry.
-pnpm view @bjornpagen/bumbledb-darwin-arm64@0.7.0 version
-pnpm view @bjornpagen/bumbledb@0.7.0 version
+pnpm view @bjornpagen/bumbledb-darwin-arm64@0.8.0 version
+pnpm view @bjornpagen/bumbledb@0.8.0 version
 
-# 6. The v0.7.0 tag is already pushed with the release commit (the 0.7.0
+# 6. The v0.8.0 tag is already pushed with the release commit (the 0.8.0
 #    campaign close staged commit + tag together); both publishes remain
 #    owner ceremony — the agent side never publishes.
 ```
@@ -133,7 +141,11 @@ cd ts && pnpm install --no-frozen-lockfile
 # commit the regenerated pnpm-lock.yaml (one commit, the known bootstrap gap)
 ```
 
-For 0.6.0 this landed (4b2b3a0c, 2026-07-20). One sharp edge learned there:
+For 0.6.0 this landed (4b2b3a0c, 2026-07-20). For 0.7.0 the regeneration
+never landed — the lockfile simply carried no platform entry from the 0.7.0
+release commit onward (pnpm drops an unresolvable optional dep), and the
+0.8.0 release commit re-derives the same shape; the debt clears when this
+step runs after the 0.8.0 publish. One sharp edge learned at 0.6.0:
 with a warm `node_modules`, `pnpm install` may answer "Already up to date"
 without re-resolving — remove `node_modules` first if the lockfile refuses
 to move.
