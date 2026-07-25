@@ -213,9 +213,9 @@ fn the_front_page_cookbook_count_is_the_cookbook() {
                 .is_some_and(|rest| rest.starts_with(|c: char| c.is_ascii_digit()))
         })
         .count();
-    assert_eq!(recipes, 30, "the cookbook's numbered recipe census");
+    assert_eq!(recipes, 32, "the cookbook's numbered recipe census");
     assert!(
-        README.contains("thirty worked schemas"),
+        README.contains("thirty-two worked schemas"),
         "the README's spelled-out cookbook count must match the {recipes}-recipe cookbook"
     );
 }

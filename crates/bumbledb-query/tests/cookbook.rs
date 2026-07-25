@@ -714,6 +714,45 @@ recipe!(r30, KeyedRead, {
     Program(grp) -> Program;
 });
 
+recipe!(r31, Racks, {
+    pub Racks;
+
+    relation Pool  { id: u64 as PoolId, fresh, supply: u64 }
+    relation Model { id: u64 as ModelId, fresh, watts: u64 }
+    relation Device {
+        id: u64 as DeviceId, fresh,
+        pool: u64 as PoolId,
+        model: u64 as ModelId,
+        watts: u64,
+    }
+
+    Device(pool) <= Pool(id);
+    Model(id, watts) -> Model;
+    Device(model, watts) <= Model(id, watts);
+    Pool(id) <=[watts]{0..supply} Device(pool);
+}, queries {
+    draw: { (pool, total: Sum(watts)) | Device(id, pool, watts); }
+        => "(v1, Sum(v2)) | Device(id: v0, pool: v1, watts: v2);";
+});
+
+recipe!(r32, Rooms, {
+    pub Rooms;
+
+    relation Room { id: u64 as RoomId, fresh, span: interval<i64> }
+    relation Booking {
+        id: u64 as BookingId, fresh,
+        room: u64 as RoomId,
+        booked: interval<i64>,
+    }
+
+    Booking(room) <= Room(id);
+    Booking(room, booked) -> Booking;
+    Room(id) <=[Duration(booked)]{0..Duration(span)} Booking(room);
+}, queries {
+    booked: { (room, total: Sum(Duration(booked))) | Booking(id, room, booked); }
+        => "(v1, Sum(Duration(v2))) | Booking(id: v0, room: v1, booked: v2);";
+});
+
 /// The roster, exhaustively — one entry per doc recipe, in doc order: the
 /// schema pin, the validation entry, and the query-fence pins (doc-fence
 /// sources, render goldens, and the prepare-and-render `pin`).
@@ -740,7 +779,7 @@ macro_rules! entry {
     };
 }
 
-const ROSTER: [Recipe; 30] = [
+const ROSTER: [Recipe; 32] = [
     entry!(r01, "The minimal interval schema"),
     entry!(r02, "Discriminated unions"),
     entry!(r03, "0..1 optional attributes"),
@@ -771,6 +810,8 @@ const ROSTER: [Recipe; 30] = [
     entry!(r28, "Migration is ETL"),
     entry!(r29, "The zone ledger"),
     entry!(r30, "The keyed read"),
+    entry!(r31, "The power budget"),
+    entry!(r32, "Calendar capacity"),
 ];
 
 /// Comments and whitespace out; what remains is exactly what the token
@@ -906,7 +947,7 @@ fn the_doc_roster_is_exactly_this_roster() {
         "doc recipes and test entries must correspond one-to-one"
     );
     for (i, ((n, title), recipe)) in headings.iter().zip(ROSTER.iter()).enumerate() {
-        assert_eq!(*n, i + 1, "recipe numbering is 1..=30 in order");
+        assert_eq!(*n, i + 1, "recipe numbering is 1..=32 in order");
         assert_eq!(title, recipe.title, "recipe {} title", i + 1);
     }
 }
@@ -972,7 +1013,7 @@ fn doc_blocks_match_the_compiled_copies() {
         query_fences += doc.queries.len();
     }
     assert_eq!(
-        query_fences, 34,
+        query_fences, 36,
         "the doc's compiled query fences, exhaustively"
     );
 }
@@ -2237,4 +2278,160 @@ fn r30_keyed_read_reads_through_the_law_on_both_scopes() {
         Ok(())
     })
     .expect("write-scope keyed reads");
+}
+
+/// One commit refusal names one capacity conviction: the witnessed measure
+/// is the group's full-walk total (the clip serves the verdict, the full
+/// sum serves the witness), and the cited statement is a capacity law.
+fn assert_capacity_measure(
+    error: bumbledb::Error,
+    schema: &Schema,
+    expected: u128,
+) -> bumbledb::schema::StatementId {
+    use bumbledb::schema::StatementView;
+    let bumbledb::Error::CommitRejected { violations } = error else {
+        panic!("expected a capacity rejection, got {error}");
+    };
+    let [
+        bumbledb::Violation::Capacity {
+            statement, measure, ..
+        },
+    ] = violations.as_slice()
+    else {
+        panic!("expected one capacity citation, got {violations:?}");
+    };
+    assert_eq!(*measure, expected, "the witnessed group measure");
+    assert!(matches!(
+        schema.statement(*statement),
+        StatementView::Capacity(..)
+    ));
+    *statement
+}
+
+/// Recipe 31's commit matrix (the power budget): a fleet within the pool's
+/// own supply commits; the device pushing Σ watts past the dependent bound
+/// refuses with the witnessed total; a device whose watts diverge from its
+/// model's dies on the pinned-column containment — the composition idiom
+/// the path-refusal diagnostic names, judged for real.
+#[test]
+fn r31_power_budget_commit_matrix() {
+    use r31::{Device, Model, ModelId, Pool, PoolId, Racks};
+
+    let schema = r31::validate().expect("the power-budget schema validates");
+    let dir = TempDir::new("r31-power-budget");
+    let db = Db::create(dir.path(), Racks).expect("create the Racks store");
+
+    // Within budget: 40 + 40 = 80 ≤ supply 100 — the weighted walk admits.
+    let (pool, model) = db
+        .write(|tx| {
+            let pool: PoolId = tx.alloc()?;
+            tx.insert(&Pool {
+                id: pool,
+                supply: 100,
+            })?;
+            let model: ModelId = tx.alloc()?;
+            tx.insert(&Model {
+                id: model,
+                watts: 40,
+            })?;
+            for _ in 0..2 {
+                let id = tx.alloc()?;
+                tx.insert(&Device {
+                    id,
+                    pool,
+                    model,
+                    watts: 40,
+                })?;
+            }
+            Ok((pool, model))
+        })
+        .expect("a fleet within the pool's supply commits");
+
+    // Over budget: the third device makes Σ watts = 120 > 100; the refusal
+    // reports the full group total, not the clipped prefix.
+    let error = db
+        .write(|tx| {
+            let id = tx.alloc()?;
+            tx.insert(&Device {
+                id,
+                pool,
+                model,
+                watts: 40,
+            })?;
+            Ok(())
+        })
+        .expect_err("the pool's dependent bound rejects the over-draw");
+    assert_capacity_measure(error, &schema, 120);
+
+    // The pinned column: a device claiming watts its model does not have
+    // dies on the two-column containment — the join stated as a law.
+    let error = db
+        .write(|tx| {
+            let id = tx.alloc()?;
+            tx.insert(&Device {
+                id,
+                pool,
+                model,
+                watts: 10,
+            })?;
+            Ok(())
+        })
+        .expect_err("a desynced watts column dies on the pinned-column law");
+    let bumbledb::Error::CommitRejected { violations } = error else {
+        panic!("expected a containment rejection");
+    };
+    assert!(
+        matches!(
+            violations.as_slice(),
+            [bumbledb::Violation::Containment { .. }]
+        ),
+        "the pinned column convicts as a containment: {violations:?}"
+    );
+}
+
+/// Recipe 32's commit matrix (calendar capacity): total booked time within
+/// the room's own span measure commits (bounds inclusive); the booking
+/// pushing the Duration sum past it refuses with the witnessed total. The
+/// pointwise key and the capacity law are different laws — the convicting
+/// booking here overlaps nothing.
+#[test]
+fn r32_calendar_capacity_commit_matrix() {
+    use r32::{Booking, Room, RoomId, Rooms};
+
+    let schema = r32::validate().expect("the calendar-capacity schema validates");
+    let dir = TempDir::new("r32-calendar-capacity");
+    let db = Db::create(dir.path(), Rooms).expect("create the Rooms store");
+
+    // Exactly full: Duration([0,50)) + Duration([50,100)) = 100 = the
+    // room's own Duration([0,100)) — both window ends inclusive.
+    let room = db
+        .write(|tx| {
+            let room: RoomId = tx.alloc()?;
+            tx.insert(&Room {
+                id: room,
+                span: span(0, 100),
+            })?;
+            for booked in [span(0, 50), span(50, 100)] {
+                let id = tx.alloc()?;
+                tx.insert(&Booking { id, room, booked })?;
+            }
+            Ok(room)
+        })
+        .expect("bookings summing exactly to the span measure commit");
+
+    // Over capacity: a disjoint booking (no key conflict) lifts the total
+    // to 160 > 100 — the capacity law convicts where the pointwise key
+    // cannot, with the full weighted total as the witness.
+    let error = db
+        .write(|tx| {
+            let id = tx.alloc()?;
+            tx.insert(&Booking {
+                id,
+                room,
+                booked: span(200, 260),
+            })?;
+            Ok(())
+        })
+        .expect_err("the Duration bound rejects the over-booked room");
+    assert_capacity_measure(error, &schema, 160);
 }
