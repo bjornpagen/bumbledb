@@ -9,7 +9,8 @@ is relitigated from vibes and nothing worthy is forgotten. Investigated
 schema, the host-gate census); the notation verdicts (5–6) recorded
 2026-07-20 from the destructure-060 owner ruling; verdicts 7–14 recorded
 2026-07-23 from the audit rulings (`audit-2026-07/RULINGS.md`, findings in
-`audit-2026-07/findings/`).
+`audit-2026-07/findings/`); verdicts 15–16 recorded 2026-07-24 from the
+capacity rulings (`docs/design/capacity-laws.md` §8 ruling 4 and §8b C19).
 
 ## Verdicts
 
@@ -204,6 +205,27 @@ schema, the host-gate census); the notation verdicts (5–6) recorded
   execution-time adaptivity. Finding 089 (the ring-closing min-fanout
   composition) is the recorded exhibit; it reopens only through this
   trigger.
+
+### 15. Min/Max in capacity law position — REFUSED (ruled 2026-07-24, §8 ruling 4)
+- The capacity statement's law-position roster is `Count` and `Sum`
+  (field / Duration) — the polarity-clean folds: an upper bound is newly
+  violable only by inserts into the weighed side, a floor only by deletes,
+  which is what keeps the delta-scoped judgment sound. `Min`/`Max` windows
+  break that polarity (a delete can move the extremum either way — the
+  whole group re-derives), so the spelling is a typed refusal, not a gap.
+- Path weights (`[a.b]`) carry NO register entry — that refusal is a
+  boundary, not a deferral (§8 ruling 6: the composition idiom is the
+  answer; recording a trigger would re-open the cached-truth drift class
+  by appointment).
+- **TRIGGER**: a censused workload demanding an extremal per-group law —
+  and then it enters by inhabiting `AdmissibleForm` first, like every form.
+
+### 16. Balance laws (aggregate-vs-aggregate windows) — RECORDED, deliberately unbuilt (ruled 2026-07-24, C19)
+- The known next rung of the capacity generalization:
+  `Sum(debits) == Sum(credits)` per transaction — an aggregate bounded by an
+  aggregate rather than a window. Deliberately unbuilt: no shape ships
+  before a host demands it.
+- **TRIGGER**: a real host asking for a balance constraint.
 
 ## The host-fold register (the census's residual unspellables)
 
