@@ -516,6 +516,47 @@ fn prepare_lights_the_planner_dp_and_selectivity_ladder() {
     }
 }
 
+/// Lane I2 — the normalization sub-passes, formerly dark under the single
+/// `NORMALIZE` span: comparison placement and the statically-empty
+/// constant fold each record their own span, nested inside `NORMALIZE`.
+#[test]
+fn prepare_lights_the_normalization_sub_passes() {
+    use crate::obs;
+
+    let dir = TempDir::new("prepared-trace-normalize");
+    let schema = schema();
+    let env = Environment::create(dir.path(), &schema).expect("create");
+    insert_postings(&env, &schema, &[(1, 7, "a", 100)]);
+    let cache = ImageCache::new(&schema);
+    let txn = env.read_txn().expect("txn");
+
+    obs::start_capture();
+    let _prepared = prepare(&txn, &cache, &schema, &by_account_query()).expect("prepare");
+    let events = obs::finish_capture();
+
+    let outer = events
+        .iter()
+        .find(|e| e.name == obs::names::NORMALIZE)
+        .expect("the NORMALIZE span");
+    for name in [obs::names::PLACE_COMPARISONS, obs::names::NORMALIZE_FOLD] {
+        let sub = events
+            .iter()
+            .find(|e| e.name == name)
+            .unwrap_or_else(|| panic!("missing {name}"));
+        assert!(
+            sub.start_ns >= outer.start_ns
+                && sub.start_ns + sub.dur_ns <= outer.start_ns + outer.dur_ns,
+            "{name} nests inside NORMALIZE",
+        );
+    }
+    // A live single-atom rule folds to nothing dead.
+    let fold = events
+        .iter()
+        .find(|e| e.name == obs::names::NORMALIZE_FOLD)
+        .expect("fold span");
+    assert_eq!(fold.a0, 0, "the rule is not statically empty");
+}
+
 /// Lane I2 — the columnar batch decode (formerly invisible inside
 /// `IMAGE_BUILD`) and the predicate-scan filter kernels (attributable
 /// only as a phase bucket before). The first execution builds Posting's

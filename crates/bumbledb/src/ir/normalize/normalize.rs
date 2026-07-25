@@ -139,8 +139,18 @@ fn normalize_rule_with(
         })
         .collect();
 
-    let (residuals, word_residuals, allen_residuals, duration_residuals) =
-        place_comparisons(comparisons, &mut occurrences);
+    let (residuals, word_residuals, allen_residuals, duration_residuals) = {
+        let mut span = crate::obs::span(
+            crate::obs::names::PLACE_COMPARISONS,
+            crate::obs::Category::Prepare,
+        );
+        let placed = place_comparisons(comparisons, &mut occurrences);
+        span.set_args(
+            (placed.0.len() + placed.1.len() + placed.2.len() + placed.3.len()) as u64,
+            0,
+        );
+        placed
+    };
 
     // The binding-slot widths — the two-slot interval layout, decided at
     // [`SlotWidth`] and exported here to the plan witness.
@@ -176,7 +186,15 @@ fn normalize_rule_with(
     // slot and the contradiction rules judge the rule on constants —
     // stage-2-known emptiness becomes the rule's verdict
     // (docs/architecture/20-query-ir.md, § normalization).
-    let dead = super::fold::fold(schema, &mut occurrences);
+    let dead = {
+        let mut span = crate::obs::span(
+            crate::obs::names::NORMALIZE_FOLD,
+            crate::obs::Category::Prepare,
+        );
+        let dead = super::fold::fold(schema, &mut occurrences);
+        span.set_args(u64::from(dead.is_some()), 0);
+        dead
+    };
 
     NormalizedQuery {
         occurrences,

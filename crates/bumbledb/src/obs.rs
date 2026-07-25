@@ -75,6 +75,15 @@ pub mod names {
     pub const VALIDATE: &str = "validate";
     /// Normalization. (-, -)
     pub const NORMALIZE: &str = "normalize";
+    /// One rule's comparison placement (`ir/normalize/place_comparisons.rs`)
+    /// — the cross-atom residual routing, under [`NORMALIZE`], one per
+    /// normalized rule (ray probes included). (cross-atom residuals placed,
+    /// -)
+    pub const PLACE_COMPARISONS: &str = "place_comparisons";
+    /// One rule's statically-empty constant fold (`ir/normalize/fold.rs`),
+    /// under [`NORMALIZE`], one per normalized rule. (1 rule dead on
+    /// constants / 0 live, -)
+    pub const NORMALIZE_FOLD: &str = "normalize_fold";
     /// Key-probe-vs-join classification. (-, -)
     pub const CLASSIFY: &str = "classify";
     /// Statistics reads. (occurrences measured concretely, -)
