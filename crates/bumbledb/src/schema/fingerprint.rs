@@ -694,6 +694,10 @@ mod tests {
     /// source. The count-only tag 2 never had a byte golden; the
     /// most-changed encoding does not land without one — a codec drift
     /// here would otherwise surface first as a field exhume failure.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one byte-golden, every weight/bound kind pinned in read order — clearer kept together"
+    )]
     #[test]
     fn golden_bytes_pin_the_capacity_encoding() {
         use crate::schema::tests::{capacity, capacity_weighted};

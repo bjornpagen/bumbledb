@@ -420,7 +420,7 @@ fn fact_op<'d>(
 /// to the TOUCHED notion (`lean/Bumbledb/Txn/DeltaRestriction.lean`).
 /// Dependent bounds need no marking of their own: a target-row
 /// bound-field update is remove+add, both halves derive the SAME key
-/// tuple through the ψ-gated target half below, and the BTreeSet
+/// tuple through the ψ-gated target half below, and the `BTreeSet`
 /// dedupes — `touchedParents` already covers them (the non-obvious
 /// reason "plan phase unchanged" survives dependent bounds).
 fn mark_ops(

@@ -13,6 +13,10 @@ use crate::storage::keys;
 
 use super::{StoreFinding, Sweep, namespace};
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "one cursor, one arm per statement form — the sweep is clearer kept together"
+)]
 pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
     let txn = s.txn;
     let schema = s.schema;
