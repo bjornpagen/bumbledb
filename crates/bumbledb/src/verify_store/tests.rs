@@ -1745,19 +1745,23 @@ fn a_weighted_store_verifies_clean() {
 /// sweeps): the `R` value slot is a maintained copy of one row-local
 /// field, and the sweeper is the offline authority that convicts a
 /// diverged copy — never repairs it silently. A hand-corrupted slot
-/// (61 stored, 60 derived from the live fact) keeps the group inside
-/// its window on both readings, so the ONLY findings are the desync
-/// convictions — both sweep directions (F→R: the existence get's value
-/// must equal the fact's weight-field encoding; R→F: the entry's value
-/// must back to the live fact) report the same diverged edge.
+/// (8 stray bytes planted where the store wrote its own encoding)
+/// leaves every verdict inside its window on both readings, so the
+/// ONLY findings are the desync convictions — both sweep directions
+/// (F→R: the existence get's value must equal the fact's weight-field
+/// encoding; R→F: the entry's value must back to the live fact) report
+/// the same diverged edge, `stored` carrying the planted bytes and
+/// `derived` the live fact's expected encoding (whichever C17 arm —
+/// value slot or fetch baseline — is the one in force).
 #[test]
 fn a_desynced_weight_slot_is_convicted_never_repaired() {
     let (_dir, db) = weighted_fixture("verify-weight-desync");
     let child_key = encode_u64(1);
     let r = key(|b| keys::reverse_key(b, W_CAPACITY, &child_key, W_DEVICE, 0));
+    let planted = 61u64.to_le_bytes();
     raw_write(&db, |txn| {
         let data = txn.env().data();
-        data.put(txn.raw_mut(), &r, &61u64.to_le_bytes())
+        data.put(txn.raw_mut(), &r, &planted)
             .expect("corrupt the weight slot");
     });
     let findings = db.verify_store().expect("verify").findings;
@@ -1772,9 +1776,9 @@ fn a_desynced_weight_slot_is_convicted_never_repaired() {
                 StoreFinding::ReverseEdgeWeightDesync {
                     statement: W_CAPACITY,
                     reverse_key,
-                    stored: 61,
-                    derived: 60,
-                } if **reverse_key == *r
+                    stored,
+                    derived,
+                } if **reverse_key == *r && **stored == planted[..] && **derived != planted[..]
             ),
             "every finding names the diverged edge with stored vs derived, got {finding:?}"
         );
