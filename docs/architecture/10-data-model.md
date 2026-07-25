@@ -73,10 +73,10 @@ family, so `intervalSplit` and both pointwise judgments engage with zero
 changes to any dependency judgment).
 
 **The decision rule for byte-shaped data: intern what repeats; inline what
-identifies.** `str` is the reuse-shaped population (names, labels: low cardinality,
-high reuse) — content-addressing is compression and id-equality is the win. `bytes<N>`
+identifies.** `str` is the reuse-shaped population (names, labels: few distinct
+values, high reuse) — content-addressing is compression and id-equality is the win. `bytes<N>`
 is the identity-shaped population (content hashes, external opaque ids: maximal
-cardinality, near-zero reuse) — the value lives *in the fact*, exactly as the engine's
+distinctness, near-zero reuse) — the value lives *in the fact*, exactly as the engine's
 own `M` namespace stores its 32 inline blake3 bytes, uninterned. One law, uniform
 across engine and schema; the two byte-shaped types share no axis (variable/fixed,
 interned/inline, text/raw, reuse/identity). Variable-width *binary* with genuine reuse
@@ -585,18 +585,24 @@ flag; the enum's retired type tag is never reissued), then the closedness tag (o
 closed = 1 followed by the ground axioms in declaration order — handle, then the
 fact's canonical bytes); then the **dependency statements in
 materialized order** — for each: the statement-form tag (functionality = 0,
-containment = 1, cardinality window = 2) and its body — sides as
+containment = 1, capacity = 4 — tag 2 retired with the count-only encoding
+and tag 3 with the order marks; a retired tag is never reissued, ruled
+2026-07-24, C5) and its body — sides as
 (relation id, projection field-id list in statement order, selection list as
 (field id, literal count, literal values in canonical set order) bindings in
-statement order); a window adds its lower bound and the upper bound's presence
-tag — followed, when present, by the bound itself — between its sides. Materialized order = the fresh auto-keys first (one per fresh field, in
+statement order); a capacity statement encodes in the operator's read order
+(ruled 2026-07-24, C2) — target side, then the weight descriptor (a kind
+tag: unit / field id / Duration field id — the total sum, ruled C4), then
+the window (the lower bound's literal value, then the upper bound's presence
+tag followed, when present, by its kind tag — literal / target field /
+Duration(target field) — and payload), then source side. Materialized order = the fresh auto-keys first (one per fresh field, in
 relation-then-field declaration order), then the closed auto-keys (one per closed
 relation, in declaration order), then the declared statements in declaration
 order — a deterministic function of the declaration, so statement ids remain pinned
 by the fingerprint without being hashed separately. Relation and field ids are plain
 declaration order; statement ids are materialized order, schema-global.
 `StatementId` remains that fingerprint identity after validation. `KeyId`,
-`ContainmentId`, `WindowId`, and `OrderId` are different, validation-minted
+`ContainmentId`, and `CapacityId` are different, validation-minted
 witnesses into the sealed schema's
 homogeneous arenas; they are derived from the accepted declaration, never enter the
 canonical bytes, and are never substituted for `StatementId` in storage or errors.

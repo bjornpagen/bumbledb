@@ -74,8 +74,11 @@ order with a both-directions containment cited once at the index surface —
 the citation-order contract (`30-dependencies.md` § judged on final states;
 `lean/Main.lean: RVerdict` carries it spec-side).
 `crates/bumbledb-bench/src/conformance/judgment.rs` serializes hand-authored
-`(theory, instance, delta)` fixtures — both classical forms, the window
-form at its boundaries, the two-phase preemption mix,
+`(theory, instance, delta)` fixtures — both classical forms, the capacity
+form at its boundaries (the `judgment-capacity-*` cases, ruled 2026-07-24,
+C8: unit windows and the weighted subfamilies — sum pass/exceed,
+zero-weight-under-floor, Duration weight, dependent bounds — beside the
+mixed rows), the two-phase preemption mix,
 set-selections, the delete-then-reinsert touched-group seam, and the
 permuted-interval lock (a containment written interval-first against a
 pointwise key declared scalar-first, accepted set-canonically —
@@ -117,9 +120,15 @@ O(store): every namespace pairing re-verified against the schema (F↔M↔U↔R 
 the `S` counters against the `F` scan — including the `R`-delete class the
 commit path defers, `50-storage.md`), and **every judgment form re-verified
 globally** over the full committed state through the commit path's own probes —
-the scalar probe and coverage walk per source fact, the child-group count per
-ψ-selected window parent — the class no incremental check can see: an incremental form
-wrong once, long ago, preserved by every commit since. Findings are report
+the scalar probe and coverage walk per source fact, the child-group measure per
+ψ-selected capacity parent — the class no incremental check can see: an incremental form
+wrong once, long ago, preserved by every commit since. The weighted value
+slot adds the **weight-desync sweep, both directions** (ruled 2026-07-24, the
+value-slot ruling makes the `R` slot a maintained copy of one row-local
+field, and the sweeper is the offline authority that convicts a diverged
+copy): F→R, the existence get's value must equal the fact's weight-field
+encoding (unit: empty); R→F, the entry's value must back to the live fact —
+a divergence is the weight-desync finding, never repaired silently. Findings are report
 data, never errors; CLI-wrapped as `bumbledb-bench verify-store` (nonzero exit
 on non-empty findings, zero otherwise).
 
@@ -197,7 +206,7 @@ runner, and the roster rejections against the naive model's own
 from-the-definition computation: a cap-exceeding condition tree must be
 `DnfExceedsRules` with `produced` equal to the naive DNF width (leaf = 1, `And` =
 product, `Or` = sum), a program whose every disjunct vanishes is the empty union,
-and the vacuous masks (EMPTY and FULL) are the mask-cardinality rejections. A
+and the vacuous masks (EMPTY and FULL) are the mask-population rejections. A
 case where both sides error *unexpectedly* stays a bundle — agreement-in-error
 must not impersonate verification.
 
@@ -737,10 +746,10 @@ the schema block is the authority) is primer-shaped, and its statement
 families are the point: identity keys, the containment chain, the
 ψ-selected `SteerScope(steer) <= Steer(id | kind == Repartition)`, the
 payload-bearing closed `Outcome`, and the
-`Task(id) <={0..8} Attempt(task)` window. The question the world prices:
+`Task(id) <={0..8} Attempt(task)` attempt-count capacity law. The question the world prices:
 judged commit throughput against SQLite carrying EQUIVALENT enforcement —
 FKs, UNIQUE, CHECK, and the two triggers (the ψ containment and the
-attempt window) — assembled from the enforcement map as data
+attempt-count capacity law) — assembled from the enforcement map as data
 (`lawful/enforcement.rs: MAP`, one row per materialized engine statement,
 the twin DDL derived FROM the table), whose totality over the materialized
 statements is a test: an engine law without a SQLite enforcement row is a

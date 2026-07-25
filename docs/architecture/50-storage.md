@@ -64,8 +64,10 @@ F | relation_id | row_id            -> fact_bytes     row-major facts   (reader:
 M | relation_id | fact_hash         -> row_id         membership        (reader: insert/delete idempotence, point lookups, WriteTx point reads)
 U | relation_id | statement | key   -> row_id         FD determinants         (reader: functionality checks — put-conflict and neighbor probes —
                                                       key-probe lookups, WriteTx key reads, coverage walks)
-R | statement | key | source_rel | source_row -> ()   statement-scoped edges  (readers: target-side containment checks on delete/shrink;
-                                                      the window judgment's child-group count walk)
+R | statement | key | source_rel | source_row -> () | weight_u64   statement-scoped edges  (readers: target-side containment checks on delete/shrink;
+                                                      the capacity judgment's child-group measure walk — a
+                                                      WEIGHTED capacity statement's edges carry the child's
+                                                      u64 weight in the value slot, statement-scoped)
 Q | relation_id | field_id          -> next_u64       fresh sequences  (readers: alloc, and commit's row-id
                                                       assignment on a fresh-keyed relation — the one id
                                                       allocator, ruled 2026-07-23, R16, § below; the ratchet law:
@@ -184,12 +186,20 @@ facts, never interned, so the key hash carries no type tag: forward
   their σ, so the arm-validity and totality directions of a `==` each get exactly
   the edges they need. Bidirectional statements are two statement ids, symmetric
   entries. The extension form writes the same machinery under its own
-  statement id: a **cardinality window** writes one edge per φ-satisfying
+  statement id: a **capacity statement** writes one edge per φ-satisfying
   child fact, `key` = the child's projection in target-key determinant order —
-  the window judgment's child-group count is one prefix walk of that bucket
-  (reader: `check_windows`; the window's edges exist for closed TARGETS too,
-  where they are the count's only index — unlike a closed-target containment,
-  whose member test needs none).
+  the capacity judgment's child-group measure is one prefix walk of that bucket
+  (reader: `check_capacities`; the edges exist for closed TARGETS too,
+  where they are the measure's only index — unlike a closed-target containment,
+  whose member test needs none). Containment and unit-weight capacity edges
+  keep the empty value; a WEIGHTED capacity statement's edges carry the
+  child's u64 weight (LE) in the value slot — **statement-scoped** (ruled
+  2026-07-24, C17), paid once at write time so the judge reads the walk it
+  already does. Readers dispatch on the statement's declared weight, never on
+  value length — a width disagreeing with the declaration is corruption, not
+  a fallback (per the measured-choice half of C17, the slot arm lands benched
+  against fetch-per-child on the power-budget lane, the winner's number
+  recorded in the code).
 - The `statement` component of every `U` and `R` key is always the
   fingerprint-pinned `StatementId`. Validation-minted `KeyId` and
   `ContainmentId` witnesses exist only in the sealed in-memory schema and never
@@ -222,7 +232,12 @@ facts, never interned, so the key hash carries no type tag: forward
   fresh-keyed relation the first fresh field's value IS the `F` row id, the
   auto-key's `U` tree is gone, and the `S` row-id high-water exists only where
   no fresh field does — a v5 store's `F` row ids, auto-key `U` entries, and
-  `S` counters all decode wrong under the merged mint.
+  `S` counters all decode wrong under the merged mint. Version 7 is the
+  capacity cutover (ruled 2026-07-24): the canonical schema encoding moved
+  (the weight descriptor, dependent bounds, the re-minted statement-form tag)
+  and the `R` namespace gained the weighted value-slot arm, so every v6
+  fingerprint and every weighted-statement `R` entry decodes wrong — one bump
+  covers both, and every pre-cutover store refuses to open on every lane.
 - **A half-created store is not corruption** (ruled 2026-07-23, R18). Before
   those checks can run, open classifies the meta block itself — one
   classification, shared by every constructor, never the same branch
@@ -356,19 +371,23 @@ variant agreement.
      under selections.
    - Bidirectional statements run both bullets with the sides swapped — the same
      two code paths, no third.
-   - **Cardinality windows:** every TOUCHED parent key tuple — derived by the
+   - **Capacity:** every TOUCHED parent key tuple — derived by the
      plan from the delta's child facts (both dispositions, φ-blind) and its
      ψ-selected parent facts (`lean/Bumbledb/Txn/DeltaRestriction.lean:
      touchedParents`) — probes the target key's `U` determinant for its
      ψ-selected holder in the final state (one get, plus one `F` get where ψ
-     is nonempty; a closed parent answers from the compiled member set), then
-     counts the child group by one ordered walk of the window statement's `R`
-     bucket, stopped as soon as the verdict is decided
-     (`lean/Bumbledb/Oracle.lean: cardinality_plan_decides`,
-     `window_plan_consultations`). A closed CHILD set stored no edges: the
-     φ-selected axioms are counted by an honest ≤256-row extension scan. A
-     count under the floor or over the ceiling records a violation carrying
-     the statement id, the parent fact's bytes, and the observed count.
+     is nonempty; a closed parent answers from the compiled member set),
+     resolves any dependent bound from the parent's row already in hand, then
+     MEASURES the child group by one ordered walk of the statement's `R`
+     bucket summing value-slot weights in u128 (unit statements sum 1s),
+     stopped as soon as the verdict is decided — sound early exit because
+     non-negative weights make the running sum monotone: a ceiling walk exits
+     at sum > hi, a floor walk at sum ≥ lo
+     (`lean/Bumbledb/Oracle.lean: capacity_plan_decides`,
+     `capacity_plan_consultations`). A closed CHILD set stored no edges: the
+     φ-selected axioms are summed by an honest ≤256-row extension scan. A
+     measure under the floor or over the ceiling records a violation carrying
+     the statement id, the parent fact's bytes, and the witnessed measure.
    Any failure → typed error carrying the statement id, abort. The probe primitive
    ("does any fact match / does no fact match") is shared with the query executor's
    anti-probe (`40-execution.md`) — one mechanism, two callers.
@@ -731,7 +750,7 @@ The bridge to paper-faithful execution (`40-execution.md` D1):
 A closed relation's image is **synthesized, not built**: the sealed extension —
 values canonically encoded ONCE, at validate — decodes through the ordinary
 decode plan into the ordinary SoA layout (implicit `id` column `0..rows` first,
-interval = two word columns, stride padding, lazy exact cardinality counters), with
+interval = two word columns, stride padding, lazy exact distinct counters), with
 **no LMDB transaction anywhere** (`image::synthesize_closed` takes none;
 synthesis is pure). The fingerprint's preimage IS the storage: vocabulary can
 never desync, never bloat, and never needs the sweeper — its "generation" is
@@ -829,7 +848,9 @@ design — recorded so nobody re-derives it:
   LMDB never shrinks its file; length reflects peak usage.
 - **Several `_data` entries per fact by design**: fact (`F`) + membership hash
   (`M`) + one FD determinant (`U`) per key + one reverse edge (`R`) per satisfied
-  containment direction and per window whose φ the fact satisfies. This is
+  containment direction and per capacity statement whose φ the fact satisfies
+  (a weighted statement's edge additionally carries one u64 in the value slot
+  — the write-time rent for the measure walk). This is
   deliberate rent for O(log n) commit-time judgment checks and stays.
 - **16 KB pages** on Apple Silicon (LMDB uses the OS page size) — chunkier
   B-tree overhead than SQLite's 4 KB pages with varint-packed rows.
