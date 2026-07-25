@@ -11,7 +11,9 @@ schema, the host-gate census); the notation verdicts (5–6) recorded
 2026-07-23 from the audit rulings (`audit-2026-07/RULINGS.md`, findings in
 `audit-2026-07/findings/`); verdicts 15–16 recorded 2026-07-24 from the
 capacity rulings (`docs/design/capacity-laws.md` §8 ruling 4 and §8b C19);
-verdict 17 recorded 2026-07-25 at the capacity campaign close.
+verdict 17 recorded 2026-07-25 at the capacity campaign close; verdict 18
+recorded 2026-07-25 (the temporal-capacity trigger, the family's known
+next-but-one rung).
 
 ## Verdicts
 
@@ -258,8 +260,23 @@ verdict 17 recorded 2026-07-25 at the capacity campaign close.
   Duration weight refuses at WRITE time — strictly stronger than C10's
   judge-time refusal, visible only for a ray child under an absent parent
   (documented at the constant).
-- **Reopen triggers:** none here — verdicts 15 (Min/Max in law position)
-  and 16 (balance laws) carry the family's recorded triggers.
+- **Reopen triggers:** none here — verdicts 15 (Min/Max in law position),
+  16 (balance laws), and 18 (temporal capacity) carry the family's recorded
+  triggers.
+
+### 18. Temporal capacity laws (capacity at every instant) — RECORDED, deliberately unbuilt (recorded 2026-07-25)
+- Capacity at every instant — the window bounds the stabbing-set measure
+  per instant of the source's span field (k-concurrency, time-varying
+  weighted capacity, coverage floors). Mechanism already understood:
+  half-open discipline collapses ∀instant to a finite boundary sweep; 1-D
+  Helly makes ≤k-concurrent ⟺ no (k+1)-clique under INTERSECTS; the
+  order-based per-key overlap index (finding 012) is the delta-scoped
+  judge's walk (an insert first violates only inside its own span);
+  polarity survives (concurrency ceilings insert-violated, coverage floors
+  delete/shrink-violated).
+- **TRIGGER**: a real host asking for a concurrency or coverage law.
+- Notation reserved: the stabbing dimension marks the source's span field,
+  operator-style.
 
 ## The host-fold register (the census's residual unspellables)
 
@@ -313,7 +330,18 @@ under the tag) — both rows shipped 2026-07-19:
   value_cmp}` (direction as the `SortKey` variant, `by` folds for
   `Vec::sort_by`). Limit REFUSED, recorded: the language owns it —
   `.slice(0, n)` / `truncate`/`take` — no operator invented where one
-  already exists.
+  already exists. The four-hand-rolled-bigint-comparators finding is
+  **CLOSED — SHIPPED (2026-07-25, primer C33)**: the residue was BARE
+  scalar arrays (`bigint[]` of ids, map keys) the row-typed keys could
+  never reach — no column to name — so the identity key landed as the same
+  two spellings at zero arity: TS `by()`/`desc()` ARE the
+  ascending/descending comparators over the value itself (nothing to fold;
+  the comparator is the result), typed to EXACTLY the engine-orderable
+  roster (`EngineOrderable = bigint | boolean`, false < true per R3) with
+  `string`/`number` compile-refused citing `10-data-model.md`
+  § "Orderability, complete" — one vocabulary, no sibling names, one owner
+  for the cell order (the agreement pin in `ts/test/order.test.ts` sweeps
+  every `Lt` cut against a real store).
 
 ## Also parked elsewhere (cross-references)
 

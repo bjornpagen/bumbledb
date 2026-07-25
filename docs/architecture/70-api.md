@@ -1046,6 +1046,22 @@ native control-flow form is a defect — the SDK's `Kind.match` operator was
 exactly that, an imitation of Rust's `match` built because handles were
 opaque bigints, and it died with its cause (0.4.0).
 
+Ordering has ONE vocabulary, both arities (ruled 2026-07-25): `by(...keys)`
+folds row sort keys into the comparator the language's own `.sort` wants,
+and `by()`/`desc()` with ZERO keys are the ascending/descending comparators
+over bare engine-orderable scalars themselves (`bigint[]` of ids, map keys)
+— the identity key: with no column to name, the value is the key, nothing
+folds, the comparator is the result. The identity arms are typed to EXACTLY
+the engine-orderable roster (`EngineOrderable = bigint | boolean`, a
+root export) — `string` and `number` are compile errors at the `.sort` site
+citing the orderability law (`10-data-model.md` § "Orderability, complete"),
+because a bare scalar carries no law-typed column proof, so the type wall
+must carry the law itself. One owner for scalar ordering semantics: both
+arms route through the same cell order, whose bigint/boolean arms mirror
+the engine's U64/I64/Bool order (false < true, R3) — a host sort can never
+disagree with an engine order judgment over the same values
+(`ts/test/order.test.ts` pins the agreement at every `Lt` cut).
+
 The handle-union texture, concretely: a closed-referencing column TYPES and
 HOLDS the roster's string-literal handle union (`"DirectPass" |
 "JudgedPass" | "Failed"`) at every SDK surface — facts, inserts, query
@@ -1235,7 +1251,12 @@ engine-first change, and nothing re-enters without a new ruling.
   bare = ascending, `desc("rank")` descending) folded by `by(...)` into a
   row-typed comparator for the language's own `Array.prototype.sort`; a key
   the row lacks or a non-FactValue column is a compile error at the sort
-  site. Rust — `bumbledb_query::order` (`SortKey::{Asc, Desc}` as data,
+  site. The SCALAR arm followed (ruled 2026-07-25, primer's second census —
+  the same bigint comparator hand-rolled 3+ times over bare id arrays):
+  `by()`/`desc()` with zero keys are the identity-key comparators over
+  engine-orderable scalars exactly (`bigint | boolean`; string/number are
+  typed refusals citing the orderability law) — one vocabulary, no sibling
+  names, one owner for the cell order. Rust — `bumbledb_query::order` (`SortKey::{Asc, Desc}` as data,
   `by(&keys)` for `Vec::sort_by`, `value_cmp` the total cell order), in the
   quarantine crate, whose proc-macro mechanics now live in
   `bumbledb-query-macros` (packaging, not surface — hosts still spell
