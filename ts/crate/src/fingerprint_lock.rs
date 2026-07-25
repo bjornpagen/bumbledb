@@ -5,7 +5,8 @@
 //! target (`Kind(id | mastered == true)` — the member set folds at
 //! validate), `==` mirrors including a generator-less pair (`SavingsTerms ==
 //! AuditTrail` over columns no mint touches — the TS side's law-computed
-//! class names never leak into the hash), and every legal window spelling —
+//! class names never leak into the hash), and every legal capacity
+//! spelling — unit, weighted, Duration-weighted, dependent-bound —
 //! declared here through the engine's `schema!` macro and, in
 //! `test/fingerprint.test.ts`, through the SDK's constructors. Each side independently asserts its engine-computed
 //! fingerprint equals the ONE pinned constant [`PIN`], so `cargo test` and
@@ -60,6 +61,23 @@ bumbledb::schema! {
     relation SavingsTerms { account: u64 as AccountId, rate_bps: i64 }
     relation AuditTrail { account: u64 as AccountId, rate_bps: i64 }
 
+    // The weighted-capacity extension (capacity cutover, dossier § 4.2):
+    // the weight descriptor, the dependent bound, and the Duration pair
+    // all enter the lock's encoding surface — statement for statement the
+    // SDK twin's tail.
+    relation Pool {
+        id: u64 as PoolId, fresh,
+        supply: u64,
+        open: interval<u64>,
+    }
+
+    relation Device {
+        id: u64 as DeviceId, fresh,
+        pool: u64 as PoolId,
+        watts: u64,
+        ran: interval<u64>,
+    }
+
     SavingsTerms(account) -> SavingsTerms;
     Account(holder) <= Holder(id);
     Account(kind) <= Kind(id);
@@ -73,6 +91,11 @@ bumbledb::schema! {
     Holder(id) <={1} Account(holder | status == Open);
     Holder(id) <={0} Account(holder | kind == Failed);
     Holder(id) <={1..4} Account(holder | kind == DirectPass);
+    Device(pool) <= Pool(id);
+    Pool(id) <=[watts]{0..supply} Device(pool);
+    Pool(id) <=[watts]{0..100} Device(pool);
+    Pool(id) <=[watts]{1..*} Device(pool);
+    Pool(id) <=[Duration(ran)]{0..Duration(open)} Device(pool);
     // PRD-K7's lock extension, statement for statement the SDK twin's tail:
     // the ψ-on-closed containment (the member set {DirectPass} folds at
     // validate) and the generator-less `==` pair — no fresh field touches
@@ -90,7 +113,7 @@ bumbledb::schema! {
 /// exists to catch. `18446744073709551615` above is `u64::MAX` — the `at`
 /// selection literal is the unbounded ray `[5, ∞)`
 /// (`docs/architecture/10-data-model.md`).
-const PIN: &str = "b330d46f8cf6c91d8e24a6d2c3f9cbde65c2c37f1b90eaffdc3e49a8ae346b0c";
+const PIN: &str = "5bc4676ce7c714f313060b86a8af8b7d794275a48853672120ee7e07fde7e8cc";
 
 /// A self-cleaning per-test store directory (the engine's integration
 /// `TempDir` twin — this crate deliberately has no dev-dependencies). The

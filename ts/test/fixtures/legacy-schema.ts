@@ -4,15 +4,14 @@
  * was created under, mirrored exactly so a fingerprint-matching `Db.open`
  * adopts it (back-fills the descriptor).
  *
- * Fixture provenance: regenerated 2026-07-24 at storage format v6 (the
- * R16 format bump orphaned the original v5 store, which was created by
- * the last pre-descriptor engine at commit 2ac52712) — a throwaway
- * generator created the store through this SDK under this identical
- * theory, committed one `Doc` row plus one `Tagged` row, and a raw-LMDB
- * step then deleted the persisted `_meta` descriptor key (the same
- * surgery as the engine's test-only `strip_schema_descriptor_for_tests`),
- * reproducing the exact on-disk shape of a pre-descriptor store at the
- * current format:
+ * Fixture provenance: regenerated 2026-07-24 at storage format v7 (the
+ * capacity-cutover format bump orphaned the v6 store, exactly as the R16
+ * bump orphaned the v5 one before it) — a throwaway generator created the
+ * store through this SDK under this identical theory, committed one `Doc`
+ * row plus one `Tagged` row, and a raw-LMDB step then deleted the
+ * persisted `_meta` descriptor key (the same surgery as the engine's
+ * test-only `strip_schema_descriptor_for_tests`), reproducing the exact
+ * on-disk shape of a pre-descriptor store at the current format:
  *
  *   relation Doc    { id: u64 as DocId, fresh, title: str }
  *   relation Tagged { doc: u64 as DocId, tag: str }

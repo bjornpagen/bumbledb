@@ -50,7 +50,7 @@ after(function cleanup() {
  * without the twin change there (or vice versa) is exactly the drift this
  * lock exists to catch.
  */
-const PIN = "b330d46f8cf6c91d8e24a6d2c3f9cbde65c2c37f1b90eaffdc3e49a8ae346b0c"
+const PIN = "5bc4676ce7c714f313060b86a8af8b7d794275a48853672120ee7e07fde7e8cc"
 
 /** `u64::MAX` — an interval ending here is the unbounded ray `[start, ∞)`. */
 const RAY_END = 18446744073709551615n

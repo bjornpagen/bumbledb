@@ -34,7 +34,9 @@
 //! u64-as-bigint law rejects a full serde-JSON crossing); only the TAG
 //! vocabulary is generated.
 
-use bumbledb::schema::spec::{LiteralSetSpec, LiteralSpec, StatementSpec, WindowSpec};
+use bumbledb::schema::spec::{
+    BoundSpec, CapacityWindowSpec, LiteralSetSpec, LiteralSpec, StatementSpec, WeightSpec,
+};
 use bumbledb::schema::{IntervalElement, ValueType};
 use bumbledb::{
     AggOp, AtomSource, CmpOp, ConditionTree, Direction, FindTerm, HeadOp, HeadTerm, MaskTerm,
@@ -175,11 +177,33 @@ wire_tags! {
 }
 
 wire_tags! {
-    /// `bumbledb::schema::spec::WindowSpec` (`window_in`).
-    mod window for WindowSpec {
-        EXACT: WindowSpec::Exact(_) => "exact",
-        RANGE: WindowSpec::Range { .. } => "range",
-        FLOOR: WindowSpec::Floor(_) => "floor",
+    /// `bumbledb::schema::spec::CapacityWindowSpec` (`capacity_window_in`).
+    mod capacity_window for CapacityWindowSpec {
+        EXACT: CapacityWindowSpec::Exact(_) => "exact",
+        RANGE: CapacityWindowSpec::Range { .. } => "range",
+        FLOOR: CapacityWindowSpec::Floor(_) => "floor",
+    }
+}
+
+wire_tags! {
+    /// `bumbledb::schema::spec::BoundSpec` (`capacity_bound_in`) — the
+    /// capacity window's bound vocabulary: a literal, a TARGET-row field
+    /// by name (the dependent bound), or a TARGET interval's measure.
+    mod capacity_bound for BoundSpec {
+        LIT: BoundSpec::Lit(_) => "lit",
+        FIELD: BoundSpec::Field(_) => "field",
+        DURATION_FIELD: BoundSpec::Duration(_) => "durationField",
+    }
+}
+
+wire_tags! {
+    /// `bumbledb::schema::spec::WeightSpec` (`weight_in`) — the total
+    /// weight sum (C4: `unit` is a case, not an absence; the wire always
+    /// carries it).
+    mod weight for WeightSpec {
+        UNIT: WeightSpec::Unit => "unit",
+        FIELD: WeightSpec::Field(_) => "field",
+        DURATION_FIELD: WeightSpec::Duration(_) => "durationField",
     }
 }
 
@@ -188,7 +212,7 @@ wire_tags! {
     mod statement for StatementSpec {
         FD: StatementSpec::Fd { .. } => "fd",
         CONTAINMENT: StatementSpec::Containment { .. } => "containment",
-        CARDINALITY: StatementSpec::Cardinality { .. } => "cardinality",
+        CAPACITY: StatementSpec::Capacity { .. } => "capacity",
     }
 }
 
@@ -198,7 +222,7 @@ wire_tags! {
     mod statement_kind for unit StatementKind {
         FUNCTIONALITY: StatementKind::Functionality => "functionality",
         CONTAINMENT: StatementKind::Containment => "containment",
-        CARDINALITY: StatementKind::Cardinality => "cardinality",
+        CAPACITY: StatementKind::Capacity => "capacity",
     }
 }
 
@@ -342,7 +366,9 @@ mod golden {
             ("intervalElement", super::interval_element::TAGS.to_vec()),
             ("literal", super::literal::TAGS.to_vec()),
             ("literalSet", super::literal_set::TAGS.to_vec()),
-            ("window", super::window::TAGS.to_vec()),
+            ("capacityWindow", super::capacity_window::TAGS.to_vec()),
+            ("capacityBound", super::capacity_bound::TAGS.to_vec()),
+            ("weight", super::weight::TAGS.to_vec()),
             ("statement", super::statement::TAGS.to_vec()),
             ("statementKind", super::statement_kind::TAGS.to_vec()),
             ("term", super::term::TAGS.to_vec()),

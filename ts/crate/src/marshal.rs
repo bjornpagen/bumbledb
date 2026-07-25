@@ -20,8 +20,8 @@
 //! to the engine's own typed boundaries.
 
 use bumbledb::schema::spec::{
-    ClosedSpec, FieldSpec, LiteralSetSpec, LiteralSpec, RelationSpec, RowSpec, SideSpec,
-    StatementSpec, WindowSpec,
+    BoundSpec, CapacityWindowSpec, ClosedSpec, FieldSpec, LiteralSetSpec, LiteralSpec,
+    RelationSpec, RowSpec, SideSpec, StatementSpec, WeightSpec,
 };
 use bumbledb::schema::{IntervalElement, StatementDescriptor, ValueType};
 use bumbledb::{
@@ -501,23 +501,64 @@ fn side_in(obj: &Object) -> napi::Result<SideSpec> {
     })
 }
 
-fn window_in(obj: &Object) -> napi::Result<WindowSpec> {
-    let kind: String = req(obj, "kind", "window")?;
+/// One capacity bound: `{ kind: "lit", value }` a non-negative literal
+/// (BigInt), `{ kind: "field", field }` a TARGET-row field by name (the
+/// dependent bound), `{ kind: "durationField", field }` a TARGET
+/// interval's measure. A bare BigInt accepted as an implicit lit is
+/// forbidden — the old positional shape is dead wire.
+fn capacity_bound_in(obj: &Object) -> napi::Result<BoundSpec> {
+    let kind: String = req(obj, "kind", "capacity bound")?;
     match kind.as_str() {
-        tags::window::EXACT => Ok(WindowSpec::Exact(u64_in(
-            &req::<BigInt>(obj, "n", "exact window")?,
-            "window count",
+        tags::capacity_bound::LIT => Ok(BoundSpec::Lit(u64_in(
+            &req::<BigInt>(obj, "value", "lit bound")?,
+            "capacity bound",
         )?)),
-        tags::window::RANGE => Ok(WindowSpec::Range {
-            lo: u64_in(&req::<BigInt>(obj, "lo", "range window")?, "window lo")?,
-            hi: u64_in(&req::<BigInt>(obj, "hi", "range window")?, "window hi")?,
+        tags::capacity_bound::FIELD => Ok(BoundSpec::Field(
+            req::<String>(obj, "field", "field bound")?.into(),
+        )),
+        tags::capacity_bound::DURATION_FIELD => Ok(BoundSpec::Duration(
+            req::<String>(obj, "field", "durationField bound")?.into(),
+        )),
+        other => Err(err(format!(
+            "bumbledb marshal: unknown capacity bound kind `{other}`"
+        ))),
+    }
+}
+
+fn capacity_window_in(obj: &Object) -> napi::Result<CapacityWindowSpec> {
+    let kind: String = req(obj, "kind", "capacity window")?;
+    match kind.as_str() {
+        tags::capacity_window::EXACT => Ok(CapacityWindowSpec::Exact(capacity_bound_in(
+            &req::<Object>(obj, "n", "exact window")?,
+        )?)),
+        tags::capacity_window::RANGE => Ok(CapacityWindowSpec::Range {
+            lo: capacity_bound_in(&req::<Object>(obj, "lo", "range window")?)?,
+            hi: capacity_bound_in(&req::<Object>(obj, "hi", "range window")?)?,
         }),
-        tags::window::FLOOR => Ok(WindowSpec::Floor(u64_in(
-            &req::<BigInt>(obj, "lo", "floor window")?,
-            "window lo",
+        tags::capacity_window::FLOOR => Ok(CapacityWindowSpec::Floor(capacity_bound_in(
+            &req::<Object>(obj, "lo", "floor window")?,
         )?)),
         other => Err(err(format!(
-            "bumbledb marshal: unknown window kind `{other}`"
+            "bumbledb marshal: unknown capacity window kind `{other}`"
+        ))),
+    }
+}
+
+/// The capacity weight — a REQUIRED key on the statement (C4: the wire
+/// always carries it; `{ kind: "unit" }` is the count instance's one
+/// spelling, never an omission).
+fn weight_in(obj: &Object) -> napi::Result<WeightSpec> {
+    let kind: String = req(obj, "kind", "weight")?;
+    match kind.as_str() {
+        tags::weight::UNIT => Ok(WeightSpec::Unit),
+        tags::weight::FIELD => Ok(WeightSpec::Field(
+            req::<String>(obj, "field", "field weight")?.into(),
+        )),
+        tags::weight::DURATION_FIELD => Ok(WeightSpec::Duration(
+            req::<String>(obj, "field", "durationField weight")?.into(),
+        )),
+        other => Err(err(format!(
+            "bumbledb marshal: unknown weight kind `{other}`"
         ))),
     }
 }
@@ -541,10 +582,11 @@ fn statement_in(obj: &Object) -> napi::Result<StatementSpec> {
             target: side_in(&req::<Object>(obj, "target", "containment")?)?,
             bidirectional: req::<bool>(obj, "bidirectional", "containment")?,
         }),
-        tags::statement::CARDINALITY => Ok(StatementSpec::Cardinality {
-            target: side_in(&req::<Object>(obj, "target", "cardinality")?)?,
-            window: window_in(&req::<Object>(obj, "window", "cardinality")?)?,
-            source: side_in(&req::<Object>(obj, "source", "cardinality")?)?,
+        tags::statement::CAPACITY => Ok(StatementSpec::Capacity {
+            target: side_in(&req::<Object>(obj, "target", "capacity")?)?,
+            weight: weight_in(&req::<Object>(obj, "weight", "capacity")?)?,
+            window: capacity_window_in(&req::<Object>(obj, "window", "capacity")?)?,
+            source: side_in(&req::<Object>(obj, "source", "capacity")?)?,
         }),
         other => Err(err(format!(
             "bumbledb marshal: unknown statement kind `{other}`"
@@ -1145,14 +1187,16 @@ impl ToNapiValue for ManifestWire {
 
 /// One rendered violation as wire data — PRD-02's rejection rendering,
 /// carried whole: statement id, form tag, canonical spelling, the
-/// direction/count payloads where the form has them, and the offending facts
-/// as named decoded values.
+/// direction/measure payloads where the form has them (the capacity
+/// measure is the witnessed group total, u128 whole — C3: it crosses as
+/// BigInt, truncation unrepresentable), and the offending facts as named
+/// decoded values.
 pub struct ViolationWire {
     pub(crate) statement: u16,
     pub(crate) kind: StatementKind,
     pub(crate) canonical: String,
     pub(crate) direction: Option<&'static str>,
-    pub(crate) count: Option<u64>,
+    pub(crate) measure: Option<u128>,
     pub(crate) facts: Vec<(String, Vec<(String, Value)>)>,
 }
 
@@ -1165,7 +1209,7 @@ impl ViolationWire {
             direction: rendered
                 .direction
                 .map(|direction| tags::direction::tag(&direction)),
-            count: rendered.count,
+            measure: rendered.measure,
             facts: rendered
                 .facts
                 .into_iter()
@@ -1198,8 +1242,9 @@ impl ToNapiValue for ViolationWire {
         if let Some(direction) = val.direction {
             obj.set("direction", direction)?;
         }
-        if let Some(count) = val.count {
-            obj.set("count", count)?;
+        if let Some(measure) = val.measure {
+            // u128 → BigInt, whole (C3): two little-endian u64 words.
+            obj.set("measure", BigInt::from(measure))?;
         }
         let mut facts = Vec::with_capacity(val.facts.len());
         for (relation, fields) in val.facts {
