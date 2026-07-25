@@ -288,7 +288,7 @@ mod tests {
                 "involution at {bits:#06x}"
             );
             // The 13-bit reversal stays inside the mask space and
-            // preserves cardinality (a permutation of the bits).
+            // preserves the population count (a permutation of the bits).
             assert_eq!(mask.converse().popcount(), mask.popcount());
             visited += 1;
         }

@@ -35,8 +35,10 @@
 //!   `Functionality` (the FD key form `R(X) -> R` — no selection, by
 //!   representation), `Containment` (`A(X | φ) <= B(Y | ψ)`; `==` is the
 //!   two adjacent containments, `A <= B` first — no bidirectional
-//!   variant exists), and `Cardinality` (the window
-//!   `B(Y | ψ) <={lo..hi} A(X | φ)`, `hi: None` the `*` spelling).
+//!   variant exists), and `Capacity` (the capacity statement
+//!   `B(Y | ψ) <=[w]{lo..hi} A(X | φ)` — [`Weight`] the measure, an
+//!   absent bracket the unit (count) instance, [`Bound`] the ceiling's
+//!   vocabulary, `hi: None` the `*` spelling).
 //!   [`Side`] selections σ bind fields to literals or literal SETS
 //!   ([`LiteralSet`], read disjunctively) over the one [`Value`] sum —
 //!   scalar literals, interval literals, and closed-relation handles
@@ -301,6 +303,53 @@ pub struct Side {
     pub selection: Box<[(FieldId, LiteralSet)]>,
 }
 
+/// The measure of one source fact — a capacity statement's weight, the
+/// TOTAL three-case sum (ruled 2026-07-24, C4: `Unit` is a case, not an
+/// absence, so the wire, the descriptor encoding, and this type agree
+/// that unit weight crosses explicitly;
+/// `lean/Bumbledb/Schema.lean: Weight`). `Unit` is the count instance
+/// (`<={lo..hi}` — the utterance survives character for character);
+/// `Field` reads a u64-encoded SOURCE position (signed encodings are
+/// gate-refused — polarity: a negative weight would let an insert lower
+/// a sum); `DurationOf` reads a SOURCE interval position's measure (the
+/// R5 machinery — calendar capacity). The vocabulary is closed at the
+/// row (ruled 2026-07-24, ruling 6): joined weights are supported by
+/// statement composition — the pinned-column idiom — never by a path in
+/// the bracket, so a path is unrepresentable here (the spec surface
+/// refuses the spelling as `SpecIssue::WeightPathRefused`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Weight {
+    /// Absent bracket: unit weight — the count instance.
+    Unit,
+    /// `[field]`: a u64-encoded field of the SOURCE row.
+    Field(FieldId),
+    /// `[Duration(field)]`: the interval measure of a SOURCE interval
+    /// position.
+    DurationOf(FieldId),
+}
+
+/// A capacity ceiling: a literal, or a DEPENDENT bound read from the
+/// TARGET's row (per-group capacity — `{0..supply}`; ruled 2026-07-24,
+/// C1: the ident resolves by NAME against the target's whole field
+/// roster, never through the projection tuple;
+/// `lean/Bumbledb/Schema.lean: Bound`). `TargetDuration` is the
+/// interval measure of a target interval position — the calendar law's
+/// `{0..Duration(span)}` ceiling. The floor is not a `Bound`: dependent
+/// bounds are hi-slot only (ruled 2026-07-24, C6 — a dependent floor
+/// has no use case, and inversion with idents is statically
+/// undecidable), so the shape is unrepresentable rather than
+/// gate-refused.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Bound {
+    /// An integer literal — the degenerate constant case.
+    Lit(u64),
+    /// A u64-encoded field of the TARGET's row.
+    TargetField(FieldId),
+    /// `Duration(field)`: the interval measure of a TARGET interval
+    /// position.
+    TargetDuration(FieldId),
+}
+
 /// One dependency statement: a judgment about queries
 /// (`docs/architecture/30-dependencies.md`). Statements are anonymous —
 /// their identity is their materialized-order [`StatementId`]. There is no
@@ -316,21 +365,31 @@ pub enum StatementDescriptor {
     },
     /// `A(X | φ) <= B(Y | ψ)`: πX(σφ(A)) ⊆ πY(σψ(B)) as sets of tuples.
     Containment { source: Side, target: Side },
-    /// `B(Y | ψ) <={lo..hi} A(X | φ)` (B-family, target-left — the left
-    /// side is `target`): the cardinality window — per selected target
-    /// fact, the count of selected source facts sharing its projected
-    /// tuple lies in the window
-    /// (`lean/Bumbledb/Cardinality.lean: CardinalityWindow`;
-    /// `lean/Bumbledb/Schema.lean: Statement.cardinality`). `hi = None`
-    /// is the `*` spelling — the only spelling of "no upper bound";
-    /// `lo = hi` is the `{n}` exact-count spelling (`{0}` the exclusion).
-    Cardinality {
-        source: Side,
-        /// The inclusive lower count bound.
-        lo: u64,
-        /// The inclusive upper count bound; `None` is `*`.
-        hi: Option<u64>,
+    /// `B(Y | ψ) <=[w]{lo..hi} A(X | φ)` (B-family, target-left — the
+    /// left side is `target`): the capacity statement — per selected
+    /// target fact, the MEASURE of the selected source facts sharing its
+    /// projected tuple (Σ [`Weight`] over the deduplicated group; absent
+    /// bracket = unit weight = count) lies in the window, whose ceiling
+    /// resolves against the target's own row
+    /// (`lean/Bumbledb/Capacity.lean: CapacityLaw`;
+    /// `lean/Bumbledb/Schema.lean: Statement.capacity`). Field order is
+    /// the operator's — target, weight, window, source — ruled
+    /// 2026-07-24, C2: the corpus JSON, the FFI marshal, the descriptor
+    /// codec, and the fingerprint encoding pin this same order.
+    /// `hi = None` is the `*` spelling — the only spelling of "no upper
+    /// bound"; `lo = hi` (literal) is the `{n}` exact-measure spelling
+    /// (`{0}` the exclusion).
+    Capacity {
         target: Side,
+        /// The measure of one source fact; [`Weight::Unit`] is the count
+        /// instance.
+        weight: Weight,
+        /// The inclusive lower measure bound — a literal by
+        /// representation (C6: dependent floors are unrepresentable).
+        lo: u64,
+        /// The inclusive upper measure bound; `None` is `*`.
+        hi: Option<Bound>,
+        source: Side,
     },
 }
 
@@ -487,8 +546,8 @@ pub enum StatementKind {
     Functionality,
     /// `A(X | φ) <= B(Y | ψ)`.
     Containment,
-    /// `B(Y | ψ) <={lo..hi} A(X | φ)` — the cardinality window.
-    Cardinality,
+    /// `B(Y | ψ) <=[w]{lo..hi} A(X | φ)` — the capacity statement.
+    Capacity,
 }
 
 impl StatementDescriptor {
@@ -498,7 +557,7 @@ impl StatementDescriptor {
         match self {
             Self::Functionality { .. } => StatementKind::Functionality,
             Self::Containment { .. } => StatementKind::Containment,
-            Self::Cardinality { .. } => StatementKind::Cardinality,
+            Self::Capacity { .. } => StatementKind::Capacity,
         }
     }
 }

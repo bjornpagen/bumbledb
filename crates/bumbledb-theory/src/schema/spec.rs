@@ -10,8 +10,9 @@
 //! The division of labor mirrors the macro's exactly:
 //!
 //! - [`SchemaSpec::descriptor`] does what macro EXPANSION does — name→id
-//!   resolution (relations, fields, closed-relation handles), the
-//!   canonical-utterance ban table over window spellings and literal
+//!   resolution (relations, fields, closed-relation handles, capacity
+//!   weights and bounds), the
+//!   canonical-utterance ban table over capacity spellings and literal
 //!   sets, and the newtype-coherence check over every statement's paired
 //!   faces (`docs/architecture/30-dependencies.md` § the taxonomy is
 //!   checked; authoring-time only — newtypes never reach the descriptor)
@@ -29,8 +30,8 @@
 use std::collections::BTreeMap;
 
 use super::{
-    FieldDescriptor, FieldId, Generation, LiteralSet, RelationDescriptor, RelationId, Row,
-    SchemaDescriptor, Side, StatementDescriptor, ValueType,
+    Bound, FieldDescriptor, FieldId, Generation, LiteralSet, RelationDescriptor, RelationId, Row,
+    SchemaDescriptor, Side, StatementDescriptor, ValueType, Weight,
 };
 use crate::value::Value;
 
@@ -129,8 +130,8 @@ pub enum LiteralSetSpec {
     Many(Vec<LiteralSpec>),
 }
 
-/// One side of a containment or window: `R(fields… | field == literal…)`,
-/// all names.
+/// One side of a containment or capacity statement:
+/// `R(fields… | field == literal…)`, all names.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SideSpec {
     pub relation: Box<str>,
@@ -140,22 +141,62 @@ pub struct SideSpec {
     pub selection: Vec<(Box<str>, LiteralSetSpec)>,
 }
 
-/// A cardinality window's bounds as spelled — the macro's surviving
+/// A capacity statement's weight as spelled: the measure of one source
+/// fact — `Unit` the absent bracket (the count instance), `Field` a
+/// u64-encoded SOURCE field by name, `Duration` a SOURCE interval
+/// position's measure (`[Duration(field)]`). A dotted `Field` name is
+/// the path spelling — representable here (a wire crossing carries what
+/// it carries) and refused by [`SchemaSpec::descriptor`] as
+/// [`SpecIssue::WeightPathRefused`], whose `Display` names the
+/// pinned-column composition idiom (ruled 2026-07-24, ruling 6).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WeightSpec {
+    /// Absent bracket: unit weight — the count instance.
+    Unit,
+    /// `[field]`: a u64-encoded field of the SOURCE row, by name.
+    Field(Box<str>),
+    /// `[Duration(field)]`: a SOURCE interval position's measure.
+    Duration(Box<str>),
+}
+
+/// One capacity bound as spelled: an integer literal, a field of
+/// TARGET's row by name (the dependent bound — resolved against the
+/// target's WHOLE field roster, ruled 2026-07-24, C1), or a TARGET
+/// interval position's measure (`Duration(field)`). Dependent bounds
+/// are hi-slot only (ruled 2026-07-24, C6): a dependent floor or exact
+/// is representable here and refused by [`SchemaSpec::descriptor`] as
+/// [`SpecIssue::CapacityDependentFloor`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BoundSpec {
+    /// A non-negative integer literal.
+    Lit(u64),
+    /// A u64-encoded field of TARGET's row, by name.
+    Field(Box<str>),
+    /// `Duration(field)`: a TARGET interval position's measure.
+    Duration(Box<str>),
+}
+
+/// A capacity statement's window as spelled — the macro's surviving
 /// spellings, each otherwise unrepresentable: `{n}` exact (`{0}` the
-/// exclusion), `{lo..hi}` with lo < hi, `{lo..*}` floors (lo ≥ 2),
-/// `{0..hi}` ceilings. The banned spellings are representable here (a
-/// wire crossing carries what it carries) and rejected by
+/// exclusion), `{lo..hi}` with lo < hi (hi may be a dependent
+/// [`BoundSpec`]), `{lo..*}` floors (unit instance: lo ≥ 2), `{0..hi}`
+/// ceilings. The banned spellings are representable here (a wire
+/// crossing carries what it carries) and rejected by
 /// [`SchemaSpec::descriptor`] with the canonical form named — the same
-/// ban table the macro enforces at expansion.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum WindowSpec {
-    /// `{n}` — THE exact-count spelling; `{0}` is the exclusion.
-    Exact(u64),
-    /// `{lo..hi}` — both bounds explicit, lo < hi.
-    Range { lo: u64, hi: u64 },
-    /// `{lo..*}` — a floor, no ceiling (lo ≥ 2; `{1..*}` is the bare
-    /// containment respelled and `{0..*}` says nothing).
-    Floor(u64),
+/// per-aggregate ban table the macro enforces at expansion (a ban is
+/// canonical-utterance policing when weight-independent, semantic
+/// deduplication when not — the containment-respelled ban fires on the
+/// unit instance only).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CapacityWindowSpec {
+    /// `{n}` — THE exact-measure spelling; `{0}` is the exclusion.
+    Exact(BoundSpec),
+    /// `{lo..hi}` — both bounds explicit, lo < hi on literals.
+    Range { lo: BoundSpec, hi: BoundSpec },
+    /// `{lo..*}` — a floor, no ceiling (unit instance: lo ≥ 2, since
+    /// unit `{1..*}` is the bare containment respelled — the weighted
+    /// `<=[w]{1..*}` is legal; `{0..*}` says nothing at any weight).
+    Floor(BoundSpec),
 }
 
 /// One dependency statement, tagged by form. `==` is not a variant:
@@ -178,11 +219,14 @@ pub enum StatementSpec {
         target: SideSpec,
         bidirectional: bool,
     },
-    /// `target(Y | ψ) <={window} source(X | φ)` — B-family, target-left:
-    /// the target is the per-group parent, the source is counted.
-    Cardinality {
+    /// `target(Y | ψ) <=[weight]{window} source(X | φ)` — B-family,
+    /// target-left: the target is the per-group parent, the source is
+    /// weighed. Fields sit in the operator's read order — target,
+    /// weight, window, source (ruled 2026-07-24, C2).
+    Capacity {
         target: SideSpec,
-        window: WindowSpec,
+        weight: WeightSpec,
+        window: CapacityWindowSpec,
         source: SideSpec,
     },
 }
@@ -253,10 +297,10 @@ impl FaceNewtype {
 /// lowering); handle-shaped payloads carry [`LiteralAt`], the literal's
 /// structural address, alongside the names `Display` speaks.
 ///
-/// Every window and literal-set variant's `Display` names the canonical
-/// form verbatim as the ban table does (`docs/architecture/70-api.md`
-/// § the canonical-utterance law) — an error is a paste-back instruction,
-/// not a shrug.
+/// Every capacity-window and literal-set variant's `Display` names the
+/// canonical form verbatim as the ban table does
+/// (`docs/architecture/70-api.md` § the canonical-utterance law) — an
+/// error is a paste-back instruction, not a shrug.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SpecIssue {
     /// A statement names a relation the spec never declares.
@@ -331,16 +375,33 @@ pub enum SpecIssue {
         first: Box<str>,
         second: Box<str>,
     },
-    /// `{hi..lo}` with hi > lo — inverted, unsatisfiable.
-    WindowInverted { statement: usize, lo: u64, hi: u64 },
-    /// `{n..n}` — an exact count is written `{n}`.
-    WindowExactRespelled { statement: usize, count: u64 },
+    /// `{hi..lo}` with hi > lo (literals) — inverted, unsatisfiable.
+    /// Literal-gated: a dependent ceiling resolves per row and is not
+    /// statically invertible.
+    CapacityInverted { statement: usize, lo: u64, hi: u64 },
+    /// `{n..n}` — an exact measure is written `{n}`.
+    CapacityExactRespelled { statement: usize, count: u64 },
     /// `{0..0}` — the exclusion is written `{0}`.
-    WindowExclusionRespelled { statement: usize },
-    /// `{0..*}` — vacuous; provably says nothing.
-    WindowVacuous { statement: usize },
-    /// `{1..*}` — says only what the bare containment says.
-    WindowContainmentRespelled { statement: usize },
+    CapacityExclusionRespelled { statement: usize },
+    /// `{0..*}` — vacuous; provably says nothing, at any weight
+    /// (`lean/Bumbledb/Capacity.lean: capacity_zero_star`).
+    CapacityVacuous { statement: usize },
+    /// Unit `{1..*}` — says only what the bare containment says. Fires
+    /// on the count instance ONLY (the per-aggregate ban law, ruled
+    /// 2026-07-24): `<=[w]{1..*}` — "positive total" — is a different,
+    /// legal law.
+    CapacityContainmentRespelled { statement: usize },
+    /// A dependent bound in the floor (or exact) slot — dependent bounds
+    /// are hi-slot only (ruled 2026-07-24, C6): a dependent floor has no
+    /// use case, and inversion with idents is statically undecidable, so
+    /// the descriptor cannot carry the shape.
+    CapacityDependentFloor { statement: usize },
+    /// The path spelling `[a.b]` in the weight bracket — the weight
+    /// vocabulary is closed at the row (ruled 2026-07-24, ruling 6):
+    /// joined weights are supported by statement composition (the
+    /// pinned-column idiom `Display` spells out), never by admitting
+    /// terms into the bracket.
+    WeightPathRefused { statement: usize, path: Box<str> },
     /// A `Many` literal set with fewer than two literals — `{L}` is the
     /// bare literal and `{}` selects nothing.
     DegenerateLiteralSet {
@@ -348,8 +409,8 @@ pub enum SpecIssue {
         field: Box<str>,
         len: usize,
     },
-    /// A paired-face statement (containment, `==`, or a cardinality
-    /// window) puts two columns whose newtype labels disagree at one
+    /// A paired-face statement (containment, `==`, or a capacity
+    /// statement) puts two columns whose newtype labels disagree at one
     /// projection position — the coherence check
     /// (`docs/architecture/30-dependencies.md` § the taxonomy is
     /// checked): the faces of a dependency agree on their newtype, or
@@ -432,30 +493,44 @@ impl std::fmt::Display for SpecIssue {
                  (`{first}` and `{second}`) — a handle newtype names exactly one \
                  closed relation"
             ),
-            Self::WindowInverted { statement, lo, hi } => write!(
+            Self::CapacityInverted { statement, lo, hi } => write!(
                 f,
                 "statement {statement}: the window `{{{lo}..{hi}}}` is inverted — no \
-                 count satisfies it; bounds are `{{lo..hi}}` with lo < hi (an exact \
-                 count is `{{n}}`)"
+                 measure satisfies it; bounds are `{{lo..hi}}` with lo < hi (an exact \
+                 measure is `{{n}}`)"
             ),
-            Self::WindowExactRespelled { statement, count } => write!(
+            Self::CapacityExactRespelled { statement, count } => write!(
                 f,
-                "statement {statement}: `{{{count}..{count}}}` — an exact count is \
+                "statement {statement}: `{{{count}..{count}}}` — an exact measure is \
                  written `{{{count}}}`"
             ),
-            Self::WindowExclusionRespelled { statement } => write!(
+            Self::CapacityExclusionRespelled { statement } => write!(
                 f,
                 "statement {statement}: `{{0..0}}` — the exclusion is written `{{0}}`"
             ),
-            Self::WindowVacuous { statement } => write!(
+            Self::CapacityVacuous { statement } => write!(
                 f,
                 "statement {statement}: the `{{0..*}}` window is vacuous — it provably \
                  says nothing; delete the statement"
             ),
-            Self::WindowContainmentRespelled { statement } => write!(
+            Self::CapacityContainmentRespelled { statement } => write!(
                 f,
-                "statement {statement}: `{{1..*}}` says only what the bare containment \
-                 says — drop the annotation and write the containment"
+                "statement {statement}: unit `{{1..*}}` says only what the bare \
+                 containment says — drop the annotation and write the containment"
+            ),
+            Self::CapacityDependentFloor { statement } => write!(
+                f,
+                "statement {statement}: a dependent bound in the floor slot — \
+                 dependent bounds are hi-slot only (ruled 2026-07-24, C6): a \
+                 dependent floor has no use case; write a literal floor"
+            ),
+            Self::WeightPathRefused { statement, path } => write!(
+                f,
+                "statement {statement}: the weight path `[{path}]` is refused — the \
+                 weight vocabulary is closed at the row; state the join as a law and \
+                 read the local column (the pinned-column idiom): \
+                 `Device(model, watts) <= Model(id, watts); \
+                 Pool(id) <=[watts]{{0..supply}} Device(pool);`"
             ),
             Self::DegenerateLiteralSet {
                 statement,
@@ -752,41 +827,142 @@ impl<'spec> Resolver<'spec> {
         }
     }
 
-    /// The canonical-utterance ban table over window spellings — the
-    /// macro's `admit_window`, as data: survivors lower to the
-    /// descriptor's `(lo, hi)`; every banned spelling is an issue whose
-    /// `Display` names the canonical form.
-    fn window(&mut self, statement: usize, window: WindowSpec) -> (u64, Option<u64>) {
+    /// A capacity weight resolved against the SOURCE relation's sealed
+    /// roster: `Unit` passes through, names resolve by field
+    /// ([`Resolver::field`] reports the unknowns), and a dotted name
+    /// short-circuits to [`SpecIssue::WeightPathRefused`] — the weight
+    /// vocabulary is closed at the row (ruling 6), and the refusal is
+    /// typed at this surface because the descriptor's [`Weight`] carries
+    /// a [`FieldId`]: a path is unrepresentable one layer down.
+    /// `source_rel` is `None` when the source relation itself is
+    /// unresolvable (the side resolution reports that); the placeholder
+    /// never escapes (a nonempty issue list fails the construction).
+    fn weight(
+        &mut self,
+        statement: usize,
+        source_rel: Option<usize>,
+        weight: &WeightSpec,
+    ) -> Weight {
+        let name = match weight {
+            WeightSpec::Unit => return Weight::Unit,
+            WeightSpec::Field(name) | WeightSpec::Duration(name) => name,
+        };
+        if name.contains('.') {
+            self.issues.push(SpecIssue::WeightPathRefused {
+                statement,
+                path: name.clone(),
+            });
+            return Weight::Unit;
+        }
+        let Some(rel_idx) = source_rel else {
+            return Weight::Unit;
+        };
+        let Some(slot) = self.field(statement, rel_idx, name) else {
+            return Weight::Unit;
+        };
+        match weight {
+            WeightSpec::Unit => unreachable!("Unit returned above"),
+            WeightSpec::Field(_) => Weight::Field(slot.field),
+            WeightSpec::Duration(_) => Weight::DurationOf(slot.field),
+        }
+    }
+
+    /// One capacity bound resolved against the TARGET relation's sealed
+    /// roster — by NAME against the whole field roster, never through
+    /// the projection tuple (ruled 2026-07-24, C1). Name resolution
+    /// only: the u64/interval typing of the named field is the engine
+    /// validator's (`validate_capacity`), the same two-boundary split
+    /// every selection literal observes.
+    fn bound(&mut self, statement: usize, target_rel: Option<usize>, bound: &BoundSpec) -> Bound {
+        let name = match bound {
+            BoundSpec::Lit(n) => return Bound::Lit(*n),
+            BoundSpec::Field(name) | BoundSpec::Duration(name) => name,
+        };
+        let Some(rel_idx) = target_rel else {
+            return Bound::Lit(0);
+        };
+        let Some(slot) = self.field(statement, rel_idx, name) else {
+            return Bound::Lit(0);
+        };
+        match bound {
+            BoundSpec::Lit(_) => unreachable!("Lit returned above"),
+            BoundSpec::Field(_) => Bound::TargetField(slot.field),
+            BoundSpec::Duration(_) => Bound::TargetDuration(slot.field),
+        }
+    }
+
+    /// The canonical-utterance ban table over capacity spellings — the
+    /// macro's ban table, as data: survivors lower to the descriptor's
+    /// `(lo, hi)`; every banned spelling is an issue whose `Display`
+    /// names the canonical form. Per-aggregate where weight-sensitive
+    /// (ruled 2026-07-24): the containment-respelled ban fires on the
+    /// unit instance ONLY; the literal bans (inverted, vacuous,
+    /// respelled exacts) are weight-independent. Dependent bounds are
+    /// hi-slot only (C6): a dependent floor or exact is the typed
+    /// [`SpecIssue::CapacityDependentFloor`]; a dependent ceiling
+    /// carries no static ban (it resolves per row).
+    fn capacity_window(
+        &mut self,
+        statement: usize,
+        unit: bool,
+        target_rel: Option<usize>,
+        window: &CapacityWindowSpec,
+    ) -> (u64, Option<Bound>) {
+        let lit = |resolver: &mut Self, bound: &BoundSpec, floor_slot: bool| match bound {
+            BoundSpec::Lit(n) => Some(*n),
+            BoundSpec::Field(_) | BoundSpec::Duration(_) => {
+                if floor_slot {
+                    resolver
+                        .issues
+                        .push(SpecIssue::CapacityDependentFloor { statement });
+                }
+                None
+            }
+        };
         match window {
-            WindowSpec::Exact(n) => (n, Some(n)),
-            WindowSpec::Range { lo, hi } if hi < lo => {
-                self.issues
-                    .push(SpecIssue::WindowInverted { statement, lo, hi });
-                (lo, None)
+            CapacityWindowSpec::Exact(bound) => {
+                let n = lit(self, bound, true).unwrap_or(0);
+                (n, Some(Bound::Lit(n)))
             }
-            WindowSpec::Range { lo: 0, hi: 0 } => {
-                self.issues
-                    .push(SpecIssue::WindowExclusionRespelled { statement });
-                (0, Some(0))
+            CapacityWindowSpec::Range { lo, hi } => {
+                let lo = lit(self, lo, true).unwrap_or(0);
+                match lit(self, hi, false) {
+                    Some(hi) if hi < lo => {
+                        self.issues
+                            .push(SpecIssue::CapacityInverted { statement, lo, hi });
+                        (lo, None)
+                    }
+                    Some(0) if lo == 0 => {
+                        self.issues
+                            .push(SpecIssue::CapacityExclusionRespelled { statement });
+                        (0, Some(Bound::Lit(0)))
+                    }
+                    Some(hi) if lo == hi => {
+                        self.issues.push(SpecIssue::CapacityExactRespelled {
+                            statement,
+                            count: lo,
+                        });
+                        (lo, Some(Bound::Lit(hi)))
+                    }
+                    Some(hi) => (lo, Some(Bound::Lit(hi))),
+                    // A dependent ceiling: resolve the name; no static
+                    // ban is decidable on a per-row bound.
+                    None => (lo, Some(self.bound(statement, target_rel, hi))),
+                }
             }
-            WindowSpec::Range { lo, hi } if lo == hi => {
-                self.issues.push(SpecIssue::WindowExactRespelled {
-                    statement,
-                    count: lo,
-                });
-                (lo, Some(hi))
-            }
-            WindowSpec::Range { lo, hi } => (lo, Some(hi)),
-            WindowSpec::Floor(0) => {
-                self.issues.push(SpecIssue::WindowVacuous { statement });
-                (0, None)
-            }
-            WindowSpec::Floor(1) => {
-                self.issues
-                    .push(SpecIssue::WindowContainmentRespelled { statement });
-                (1, None)
-            }
-            WindowSpec::Floor(lo) => (lo, None),
+            CapacityWindowSpec::Floor(bound) => match lit(self, bound, true) {
+                Some(0) => {
+                    self.issues.push(SpecIssue::CapacityVacuous { statement });
+                    (0, None)
+                }
+                Some(1) if unit => {
+                    self.issues
+                        .push(SpecIssue::CapacityContainmentRespelled { statement });
+                    (1, None)
+                }
+                Some(lo) => (lo, None),
+                None => (0, None),
+            },
         }
     }
 }
@@ -976,20 +1152,34 @@ impl SchemaSpec {
                         statements.push(StatementDescriptor::Containment { source, target });
                     }
                 }
-                StatementSpec::Cardinality {
+                StatementSpec::Capacity {
                     target,
+                    weight,
                     window,
                     source,
                 } => {
                     resolver.coherent(index, source, target);
-                    let (lo, hi) = resolver.window(index, *window);
+                    // Silent index lookups for the weight/bound rosters —
+                    // the side resolutions below report an unresolvable
+                    // relation exactly once.
+                    let position_of =
+                        |name: &str| self.relations.iter().position(|r| &*r.name == name);
+                    let source_rel = position_of(&source.relation);
+                    let target_rel = position_of(&target.relation);
+                    // The per-aggregate gate reads the SPELLING (a failed
+                    // weight resolution lowers a placeholder `Unit`, and a
+                    // placeholder must not widen the ban table).
+                    let unit = matches!(weight, WeightSpec::Unit);
+                    let weight = resolver.weight(index, source_rel, weight);
+                    let (lo, hi) = resolver.capacity_window(index, unit, target_rel, window);
                     let source = resolver.side(index, StatementSide::Source, source);
                     let target = resolver.side(index, StatementSide::Target, target);
-                    statements.push(StatementDescriptor::Cardinality {
-                        source,
+                    statements.push(StatementDescriptor::Capacity {
+                        target,
+                        weight,
                         lo,
                         hi,
-                        target,
+                        source,
                     });
                 }
             }
