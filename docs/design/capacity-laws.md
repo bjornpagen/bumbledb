@@ -334,6 +334,70 @@ compat, hard deletion of all of the cardinality logic")
    trigger — this is a boundary, not a deferral: admitting terms into the bracket grows a
    query evaluator inside the judge and reopens the cached-truth drift class.
 
+## 8b. Cutover rulings C1–C19 — RESOLVED by doctrine (owner approved the whole hard
+cutover 2026-07-24; each blocker below resolves from rulings already made)
+
+- **C1 (bound spelling):** bound idents resolve by NAME against the target's full roster;
+  the written projection tuple stays the pure grouping key: `Pool(id) <=[watts]{0..supply}
+  Device(pool)`. The design §2 examples are errata'd to this form.
+- **C2 (field order):** the statement reads as the operator does — target, weight, window,
+  source — in the Lean constructor, corpus JSON, FFI marshal, descriptor codec, and
+  fingerprint encoding alike.
+- **C3 (measure width):** the accumulator is u128 and the witnessed measure crosses whole:
+  `Violation::Capacity { measure: u128 }`, BigInt on the TS wire, ℕ in Lean. Truncation is
+  unrepresentable.
+- **C4 (weight shape):** `Weight` is a total sum — `Unit | Field(FieldId) |
+  DurationOf(FieldId)`. No Option; Unit is a case, not an absence.
+- **C5 (fingerprint tag):** capacity mints tag **4**. Tag 2 retires with the mechanism;
+  tag 3 stays retired (order marks) — the never-reissue law governs.
+- **C6 (dependent-bound slot):** dependent bounds are **hi-slot only** — inversion with
+  idents becomes unrepresentable at parse. A dependent floor has no use case; refusal
+  names the ruling.
+- **C7 (Lean totality):** Capacity.lean states the witness-style pair
+  (`MeasureAtLeast`/`MeasureAtMost`) — the no-finiteness-token law stands; the numeric
+  fold lives at the Decide/Oracle enumeration boundary, as today.
+- **C8 (corpus names):** zero traces — `judgment-window-*` re-keys to
+  `judgment-capacity-*`; Bridge instrument tokens, corpus README, and 60-validation move
+  in the same commit.
+- **C9 (validation roster):** the exhaustive roster gains named rows: signed/non-u64
+  weight field; path weight (names the composition idiom); bound ident not on target;
+  bound field not u64/Duration-capable; Duration weight/bound over a non-interval field;
+  dimension mixing (count vs Duration bound — C18). Closed target × dependent bound:
+  bounds resolve per ground-axiom row at seal time; the closed-refutation arm judges each
+  axiom row against its own resolved bound.
+- **C10 (rays):** a ray-valued Duration weight or bound at judge time is a typed commit
+  refusal naming the row — the R6 precedent (a ray has no finite measure), enforced at
+  the law site.
+- **C11 (Admission):** the capacity verdict quantifies over the witnessed false-surface
+  parents (bounded quantification); `AdmissibleForm` generalizes only if the Lean lane
+  finds the bounded form unprovable — report, don't improvise.
+- **C12 (clip soundness):** the clipped walk gets its named lemma (prefix monotonicity of
+  non-negative sums) and a Bridge row; the §4 claim will be cited, not asserted.
+- **C13 (generator coverage):** capacity enters the querygen/theorygen ledger day one;
+  every corpus digest moves — a deliberate act under the hard cutover. Finding-025's law:
+  nothing ships unspellable by the generator.
+- **C14 (measure parity):** both differential twins widen to carry the witnessed measure;
+  on conviction the judge completes the full walk so the reported measure is
+  walk-order-independent (the clip serves the verdict, the full sum serves the witness).
+- **C15 (calendar lane):** fresh twin world; the existing calendar corpus digests stand.
+- **C16 (names):** `capacity_plan_decides`, `capacity_plan_consultations`. The word
+  "window" survives exactly where it names the `{lo..hi}` object (which survives);
+  Countermodels/Subsumption symbols keep their names.
+- **C17 (slot scope + the measured choice):** the R value-slot is **statement-scoped**,
+  and per the global-maximum review, slot-vs-fetch-per-child is a **measured choice**:
+  the campaign implements fetch-per-child as the baseline, benches both on the
+  power-budget lane, and lands the winner with the number recorded in the code.
+- **C18 (dimensions):** Duration weights pair with Duration-capable bounds; a count
+  window with a Duration bound is a typed validation refusal.
+- **C19 (the next rung, recorded):** the balance-law trigger enters the feature register:
+  aggregate-vs-aggregate windows (`Sum(debits) == Sum(credits) per Transaction`) are the
+  known next generalization, deliberately unbuilt; the trigger is a real host asking for
+  a balance constraint.
+
+**The zero-trace gate:** at campaign close, `rg -i cardinal` over crates/, ts/src, ts/crate,
+ts/test, lean/, docs/architecture/, docs/research/, scripts/ returns zero hits. Historical
+records (docs/design/, audit-2026-07/, bench-out/, git history) are exempt as records.
+
 ## 9. Sequencing
 
 Same shape as the audit campaign, deliberately smaller: **(1)** rulings § 8 → **(2)** spec
