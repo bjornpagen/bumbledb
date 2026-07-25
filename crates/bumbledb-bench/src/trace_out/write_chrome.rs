@@ -81,3 +81,28 @@ pub fn write_trace_file(
     file.flush()?;
     Ok(path)
 }
+
+/// Writes one capture as BOTH artifacts beside each other: the Chrome
+/// `<stem>.json` (for Perfetto / `chrome://tracing`) and the collapsed
+/// `<stem>.folded` (the engine span tree, for `flamegraph.pl` / inferno —
+/// [`super::fold_stacks`]). Every traced path lands the pair; the
+/// returned path is the `.json` (the `.folded` sits beside it). The fold
+/// charges the ENGINE tree only, matching the embedded flame summary
+/// (harness spans stay a separate tid in the `.json`, out of the fold).
+///
+/// # Errors
+///
+/// I/O errors verbatim.
+pub fn write_trace_pair(
+    trace_dir: &Path,
+    stem: &str,
+    events: &[TraceEvent],
+    harness: &[TraceEvent],
+) -> std::io::Result<PathBuf> {
+    let json = write_trace_file(trace_dir, stem, events, harness)?;
+    std::fs::write(
+        trace_dir.join(format!("{stem}.folded")),
+        super::fold_stacks(events),
+    )?;
+    Ok(json)
+}

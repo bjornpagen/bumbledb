@@ -28,15 +28,17 @@ pub struct FlameSummary {
 const RENDER_ROWS: usize = 24;
 
 mod flame_summary;
+mod fold;
 mod phase_table;
 mod split_harness;
 #[cfg(test)]
 mod tests;
 mod write_chrome;
 
+pub use fold::fold_stacks;
 pub use phase_table::render_phase_table;
 pub use split_harness::split_harness;
-pub use write_chrome::{write_chrome, write_trace_file};
+pub use write_chrome::{write_chrome, write_trace_file, write_trace_pair};
 
 #[cfg(test)]
 use bumbledb::obs::{Category, TraceEvent};

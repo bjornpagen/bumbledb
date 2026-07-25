@@ -54,7 +54,7 @@ pub fn cmd_trace(corpus: &CorpusArgs, family_name: &str) -> Result<(), String> {
     let trace_dir = paths.root.join("trace");
     let (_, events) = harness::traced_sample(&mut run)?;
     let (engine, harness_events) = trace_out::split_harness(events);
-    let warm = trace_out::write_trace_file(
+    let warm = trace_out::write_trace_pair(
         &trace_dir,
         &format!("{family_name}.warm"),
         &engine,
@@ -68,7 +68,7 @@ pub fn cmd_trace(corpus: &CorpusArgs, family_name: &str) -> Result<(), String> {
 
     let (_, events) = harness::traced_cold_sample(&mut harness::org_touch(&db), &mut run)?;
     let (engine, harness_events) = trace_out::split_harness(events);
-    let cold = trace_out::write_trace_file(
+    let cold = trace_out::write_trace_pair(
         &trace_dir,
         &format!("{family_name}.cold"),
         &engine,

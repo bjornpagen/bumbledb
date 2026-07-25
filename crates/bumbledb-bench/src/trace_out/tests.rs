@@ -128,6 +128,48 @@ fn the_table_render_is_golden() {
     assert_eq!(summary.render(), expected);
 }
 
+#[test]
+fn fold_stacks_charges_self_time_by_enclosure_path() {
+    // outer(100) ⊃ middle(60) ⊃ leaf(30): each frame's self time is its
+    // duration minus its direct child, and the stack path names the chain.
+    let nested = vec![
+        span("outer", Category::Execute, 0, 100_000, 0),
+        span("middle", Category::Execute, 10_000, 60_000, 0),
+        span("leaf", Category::Execute, 20_000, 30_000, 0),
+    ];
+    let folded = fold_stacks(&nested);
+    // BTreeMap order: a prefix sorts before its extension.
+    let expected = "outer 40000\n\
+                    outer;middle 30000\n\
+                    outer;middle;leaf 30000\n";
+    assert_eq!(folded, expected);
+}
+
+#[test]
+fn fold_stacks_collapses_identical_sibling_stacks() {
+    // Two same-named children of one parent land on ONE folded line,
+    // their self times summed (the collapsed-stack contract). Phase
+    // accumulators and point events carry no charge and never appear.
+    let events = vec![
+        span("execute", Category::Execute, 0, 100_000, 0),
+        span("join", Category::Execute, 10_000, 20_000, 0),
+        span("join", Category::Execute, 40_000, 30_000, 0),
+        span("cache_hit", Category::Cache, 50_000, 0, 3),
+        span("jp_iter_n0", Category::Phase, 0, 5_000, 0),
+    ];
+    let folded = fold_stacks(&events);
+    let expected = "execute 50000\n\
+                    execute;join 50000\n";
+    assert_eq!(folded, expected);
+    assert!(!folded.contains("cache_hit"), "point events carry no self time");
+    assert!(!folded.contains("jp_iter"), "phase accumulators are excluded");
+}
+
+#[test]
+fn fold_stacks_empty_capture_is_empty() {
+    assert_eq!(fold_stacks(&[]), "");
+}
+
 /// A real captured S-scale `containment_walk` trace: the expected spans appear
 /// and the summary wall tracks the execute span within 5%.
 #[cfg(feature = "obs")]
@@ -187,16 +229,26 @@ fn a_real_containment_walk_capture_summarizes_to_the_execute_span() {
         execute.total_ns
     );
 
-    // And it exports.
-    let path = write_trace_file(
+    // And it exports the pair: the Chrome json AND the collapsed fold.
+    let path = write_trace_pair(
         &dir.join("trace"),
         "containment_walk.warm",
         &engine,
         &harness,
     )
     .expect("export");
-    let text = std::fs::read_to_string(path).expect("read back");
+    let text = std::fs::read_to_string(&path).expect("read back");
     assert!(text.starts_with("[\n") && text.ends_with("\n]\n"));
+    let folded_path = path.with_extension("folded");
+    let folded = std::fs::read_to_string(&folded_path).expect("folded beside json");
+    // The root of every fold line is the execute span, and each line ends
+    // in a nanosecond self-time count.
+    assert!(!folded.is_empty(), "the fold is non-empty");
+    for line in folded.lines() {
+        assert!(line.starts_with("execute"), "root frame: {line}");
+        let count = line.rsplit(' ').next().expect("a count");
+        assert!(count.parse::<u64>().is_ok(), "self-ns tail: {line}");
+    }
     drop(db);
     let _ = std::fs::remove_dir_all(&dir);
 }

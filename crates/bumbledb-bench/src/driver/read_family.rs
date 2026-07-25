@@ -166,7 +166,7 @@ impl BenchRun<'_> {
         if self.trace {
             let (_, events) = harness::traced_sample(&mut || run_ours(&mut prepared))?;
             let (engine, harness_events) = trace_out::split_harness(events);
-            trace_out::write_trace_file(
+            trace_out::write_trace_pair(
                 &self.trace_dir,
                 &format!("{}.warm", spec.name),
                 &engine,
