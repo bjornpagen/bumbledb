@@ -11,8 +11,25 @@ open. The main publish runs `prepublishOnly` → the full build (lockstep
 assertion, cargo release build, smoke-load through the by-name loader path,
 tarball-manifest verification) before anything uploads.
 
-`0.8.0` is the capacity release, a deliberate backwards-incompatible hard
-break over `0.7.0` — the count window dies into the CAPACITY statement
+`0.9.0` is a MINOR release over `0.8.0` — the first release since `0.1.0`
+that breaks nothing: the surface only widens. Two additions: the zero-key
+IDENTITY COMPARATORS (`by()` / `desc()` with no keys order BARE
+engine-orderable scalars — `bigint[]` of ids, map keys, `boolean` false <
+true — typed to EXACTLY the orderable roster, ruled 2026-07-25), and the R3
+BOOL-ORDER tail closed on the TS query tier (`OrderVarOk` admits
+u64/i64/bool exactly as the engine's operand screen does; a bool order
+comparison is spellable with boolean literals and boolean-typed params;
+`sum` and the `pointIn` point stay numeric — a quantifier is not an
+addition). The primer expressibility pins ride along (the 8-way rule, the
+kind-arm pair idiom, the four commit-judged totality laws). Wire, manifest,
+storage format (v7), and every schema fingerprint are UNTOUCHED — zero pins
+moved. The release flow itself also sheds its one recurring defect: the
+platform pin leaves the repo manifest for pack-time injection (below), so
+the sdk lane's bootstrap circle — red CI between bump and publish, cleared
+by a post-publish lockfile regeneration — dies at this release.
+
+Lineage: `0.8.0` was the capacity release, a deliberate backwards-incompatible
+hard break over `0.7.0` — the count window dies into the CAPACITY statement
 (`Target <=[w]{lo..hi} Source`, the aggregate containment;
 `docs/design/capacity-laws.md` §8 rulings 1-6 + §8b C1-C19, both design docs
 stamped LANDED). The count spelling `<={lo..hi}` survives
@@ -30,7 +47,7 @@ stores are refused, not migrated. The fingerprint statement: EVERY schema
 fingerprint moves (the v4→v5 encoding label is the hash stream's first
 bytes) — the cross-host lock and every cookbook golden re-derived in-tree.
 
-Lineage: `0.7.0` was the previous hard break, over `0.6.0` — the audit
+Before it, `0.7.0` was the previous hard break, over `0.6.0` — the audit
 campaign (22 rulings R1-R22 + 158 findings: the `WriteResult` sum honoring
 `abandon()`, `Tx.insert`'s changed bit, disposable lifetimes, `explain()`,
 closed-column const accessors; storage v6 merged the id allocators). Before
@@ -61,41 +78,56 @@ stayed byte-identical to the 0.3.0 tree).
 | `@bjornpagen/bumbledb` | pure JS + `.d.ts` (no binary) | none (installs everywhere) |
 | `@bjornpagen/bumbledb-darwin-arm64` | only `bumbledb.node` | `darwin` / `arm64` |
 
-The main package declares the platform package as an `optionalDependency`
-pinned EXACT to its own version. npm/pnpm install the platform package only on
-a matching host; the main package's loader (`src/native.ts`) resolves it by
-name at runtime and throws a typed unsupported-platform error everywhere else.
+The PUBLISHED main manifest declares the platform package as an
+`optionalDependency` pinned EXACT to its own version — but the REPO manifest
+carries NO pin: `scripts/pin.ts` injects it at `prepack` and removes it at
+`postpack` (the napi prepublish pattern), so every tarball `pnpm pack` /
+`pnpm publish` produces carries the pin while the committed tree stays
+registry-independent. This kills the sdk lane's bootstrap circle
+permanently: a lockfile can never pin the CURRENT unpublished version, so a
+committed pin put every release in a red-CI window (`--frozen-lockfile`
+refused the unresolvable exact pin) until a post-publish lockfile
+regeneration — now impossible to need. npm/pnpm install the platform
+package only on a matching host; the main package's loader
+(`src/native.ts`) resolves it by name at runtime and throws a typed
+unsupported-platform error everywhere else.
 
 ## Version lockstep
 
-The version lives in ONE place: `ts/package.json` `version`. Four values must
-match exactly, and the build (`assertVersionLockstep` in `scripts/build.ts`)
-fails if they diverge:
+The version lives in ONE place: `ts/package.json` `version`. Three repo
+values must match exactly, and the build (`assertVersionLockstep` in
+`scripts/build.ts`) fails if they diverge:
 
 1. `ts/package.json` `version`
-2. `ts/package.json` `optionalDependencies["@bjornpagen/bumbledb-darwin-arm64"]`
-3. `ts/npm/darwin-arm64/package.json` `version`
-4. `ts/crate/Cargo.toml` `version` (finding 139: `engine_version()` bakes
+2. `ts/npm/darwin-arm64/package.json` `version`
+3. `ts/crate/Cargo.toml` `version` (finding 139: `engine_version()` bakes
    `CARGO_PKG_VERSION` into the shipped binary — the one version string
    readable at runtime)
 
-A release bump edits all four, then the build enforces the match. All four
-are set to `0.8.0` in this tree; `pnpm run build` asserts the lockstep on
-every run (`bumbledb build: version 0.8.0 (main == platform ==
-optionalDependencies pin == crate manifest)`).
+The platform PIN is not a repo value: `scripts/pin.ts` derives it from the
+manifest's own `version` at pack time (exact by construction), the gate
+REFUSES a committed `optionalDependencies` field outright, and the build's
+tarball proof packs the main package for real and asserts the packed
+manifest carries the exact-version pin — with the repo manifest restored
+pin-free after.
 
-## Runbook (0.8.0, darwin-arm64 host, owner — staged 2026-07-25; recurs as the template for the next version)
+A release bump edits all three, then the build enforces the match. All
+three are set to `0.9.0` in this tree; `pnpm run build` asserts the
+lockstep on every run (`bumbledb build: version 0.9.0 (main == platform ==
+crate manifest; the platform pin injects at pack)`).
+
+## Runbook (0.9.0, darwin-arm64 host, owner — staged 2026-07-25; recurs as the template for the next version)
 
 ```sh
 # 0. From the ts/ package root, on a macOS Apple Silicon machine.
 cd ts
 
-# 1. The lockstep is already set to 0.8.0 in all FOUR places (done in this
-#    tree; the build asserts it):
-#    - ts/package.json                    "version": "0.8.0"
-#    - ts/package.json                    optionalDependencies pin -> "0.8.0"
-#    - ts/npm/darwin-arm64/package.json   "version": "0.8.0"
-#    - ts/crate/Cargo.toml                version = "0.8.0"
+# 1. The lockstep is already set to 0.9.0 in all THREE repo places (done in
+#    this tree; the build asserts it — the platform pin is NOT a repo field,
+#    it injects at pack time):
+#    - ts/package.json                    "version": "0.9.0"
+#    - ts/npm/darwin-arm64/package.json   "version": "0.9.0"
+#    - ts/crate/Cargo.toml                version = "0.9.0"
 
 # 2. Build + verify both trees (fails on version drift, unloadable artifact,
 #    or a mispacked tarball). Produces dist/ and npm/darwin-arm64/bumbledb.node.
@@ -110,17 +142,19 @@ pnpm exec biome check .
 pnpm publish --no-git-checks ./npm/darwin-arm64
 
 # 4. Publish the MAIN package SECOND. (`prepublishOnly` reruns the build;
-#    another OTP prompt.) `ts/package.json` already carries "private": false —
-#    there is no toggle to flip since 0.1.0 shipped.
+#    another OTP prompt. The prepack hook injects the exact-version platform
+#    pin into the published manifest; postpack restores the repo file.)
+#    `ts/package.json` already carries "private": false — there is no toggle
+#    to flip since 0.1.0 shipped.
 pnpm publish --no-git-checks
 
 # 5. Verify both versions landed in the registry.
-pnpm view @bjornpagen/bumbledb-darwin-arm64@0.8.0 version
-pnpm view @bjornpagen/bumbledb@0.8.0 version
+pnpm view @bjornpagen/bumbledb-darwin-arm64@0.9.0 version
+pnpm view @bjornpagen/bumbledb@0.9.0 version
 
-# 6. The v0.8.0 tag is already pushed with the release commit (the 0.8.0
-#    campaign close staged commit + tag together); both publishes remain
-#    owner ceremony — the agent side never publishes.
+# 6. The v0.9.0 tag is already pushed with the release commit (staged
+#    commit + tag together); both publishes remain owner ceremony — the
+#    agent side never publishes.
 ```
 
 Public access is mandatory (scoped packages publish restricted by default,
@@ -129,33 +163,20 @@ carry `publishConfig.access: "public"` — the redundant `--access public` flag
 is deleted from the commands. `--no-git-checks` is needed whenever publishing
 from a branch other than main (true in a release worktree).
 
-## Post-publish, step one: the bumbledb lockfile regeneration
-
-The standing release-flow gap (recurs every version): the version-bump
-commit pins the exact platform optional-dep BEFORE that package exists in the
-registry, so the CI sdk lane's `--frozen-lockfile` install fails between bump
-and publish. Immediately after both packages verify in the registry:
-
-```sh
-cd ts && pnpm install --no-frozen-lockfile
-# commit the regenerated pnpm-lock.yaml (one commit, the known bootstrap gap)
-```
-
-For 0.6.0 this landed (4b2b3a0c, 2026-07-20). For 0.7.0 the regeneration
-never landed — the lockfile simply carried no platform entry from the 0.7.0
-release commit onward (pnpm drops an unresolvable optional dep), and the
-0.8.0 release commit re-derives the same shape; the debt clears when this
-step runs after the 0.8.0 publish. One sharp edge learned at 0.6.0:
-with a warm `node_modules`, `pnpm install` may answer "Already up to date"
-without re-resolving — remove `node_modules` first if the lockfile refuses
-to move.
+There is NO post-publish lockfile step. The old ritual — regenerate
+`ts/pnpm-lock.yaml` after both packages verify in the registry, because the
+release commit's manifest pinned a version the registry did not yet carry —
+died at 0.9.0 with the pin's move out of the repo manifest: the committed
+manifest and lockfile never mention the platform package, so there is
+nothing to regenerate and no red-CI window between bump and publish, for
+this release and every future one.
 
 Note the release-age lag: pnpm 11's default `minimumReleaseAge` (1440
 minutes) refuses any just-published package for ~24h, so consumers who do not
 exclude `@bjornpagen/*` (this repo does, in `ts/pnpm-workspace.yaml`) cannot
 install a fresh release until a day after publish.
 
-## Post-publish, step two: the primer cutover lands
+## Post-publish: the primer cutover lands
 
 Primer main is already cut over to `^0.5.0` (the 0.5.0 cutover merged). The
 0.6.0 adoption is staged at the primer `bumbledb-060` worktree (branch

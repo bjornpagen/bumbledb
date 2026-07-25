@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process"
 import * as fs from "node:fs"
 import { createRequire } from "node:module"
+import * as os from "node:os"
 import * as path from "node:path"
 import { fileURLToPath } from "node:url"
 import * as errors from "@superbuilders/errors"
@@ -27,8 +28,10 @@ import { deriveDevTwinManifest, localPlatformTarget, nativeArtifactName, PUBLISH
  * optional dep would → smoke-load THROUGH the loader's by-name resolution
  * path (a build whose artifact cannot load or link fails here) → emit JS +
  * declarations with tsc → prove both tarballs carry exactly the intended
- * files. All spawns are raw argv arrays — no shell strings, no shell-in-JS
- * libraries.
+ * files and the packed main manifest carries the exact-version platform pin
+ * (injected at prepack by `scripts/pin.ts`; the repo manifest stays
+ * pin-free). All spawns are raw argv arrays — no shell strings, no
+ * shell-in-JS libraries.
  */
 
 /** This host's platform target — where placement, link, and smoke-load go. */
@@ -42,7 +45,9 @@ function build(): void {
 	const localPackageDir = path.join(packageRoot, "npm", LOCAL_PLATFORM)
 
 	const version = assertVersionLockstep(packageRoot, publishPackageDir, crateManifest)
-	console.log(`bumbledb build: version ${version} (main == platform == optionalDependencies pin == crate manifest)`)
+	console.log(
+		`bumbledb build: version ${version} (main == platform == crate manifest; the platform pin injects at pack)`
+	)
 
 	fs.rmSync(distDir, { recursive: true, force: true })
 
@@ -75,20 +80,25 @@ function build(): void {
 		throw errors.new(`tsc exited with status ${tsc.status}`)
 	}
 
-	verifyPack(packageRoot, localPackageDir)
+	verifyPack(packageRoot, localPackageDir, version)
 }
 
 /**
  * The version-lockstep gate (PRD-03 item 5): the main manifest's `version` is
- * the single source; the PUBLISH platform manifest's `version`, the main's
- * `optionalDependencies` pin for that package, and the bridge crate's
- * `Cargo.toml` version must equal it EXACTLY (the FFI ABI is not
- * semver-stable — a main package may only ever resolve its own-version
+ * the single source; the PUBLISH platform manifest's `version` and the
+ * bridge crate's `Cargo.toml` version must equal it EXACTLY (the FFI ABI is
+ * not semver-stable — a main package may only ever resolve its own-version
  * binary; and `engineVersion()` bakes CARGO_PKG_VERSION into the shipped
- * binary, so the crate manifest is the fourth spelling of the release). A
- * divergence fails the build before anything is produced, so a release bump
- * is one conceptual edit that this gate then enforces. Pure manifest reads,
- * so the gate holds on EVERY build host, not just the publishing one.
+ * binary, so the crate manifest is the third spelling of the release). The
+ * platform PIN is not a repo field: the repo manifest must carry NO
+ * `optionalDependencies` (a committed exact pin of the current unpublished
+ * version made every release a red-CI window — the frozen lockfile can
+ * never resolve it); `scripts/pin.ts` injects the pin into the PACKED
+ * manifest at prepack, exact-version by construction from the one source,
+ * and `verifyPack` proves the injected pin on a real tarball. A divergence
+ * fails the build before anything is produced, so a release bump is one
+ * conceptual edit that this gate then enforces. Pure manifest reads, so
+ * the gate holds on EVERY build host, not just the publishing one.
  */
 function assertVersionLockstep(packageRoot: string, publishPackageDir: string, crateManifest: string): string {
 	const main = readJson(path.join(packageRoot, "package.json"))
@@ -99,12 +109,9 @@ function assertVersionLockstep(packageRoot: string, publishPackageDir: string, c
 	if (typeof version !== "string" || version === "") {
 		throw errors.new("main package.json is missing a string version")
 	}
-	const optional = main.optionalDependencies
-	const pin =
-		typeof optional === "object" && optional !== null ? (optional as Record<string, unknown>)[platformName] : undefined
-	if (pin !== version) {
+	if ("optionalDependencies" in main) {
 		throw errors.new(
-			`version lockstep broken: main is ${version} but optionalDependencies["${platformName}"] is ${String(pin)} (must be an EXACT match)`
+			"the repo package.json carries optionalDependencies — the platform pin lives only in the PACKED manifest (scripts/pin.ts injects it at prepack; a committed pin recreates the sdk lane's frozen-lockfile bootstrap window)"
 		)
 	}
 	if (platform.version !== version) {
@@ -122,7 +129,7 @@ function assertVersionLockstep(packageRoot: string, publishPackageDir: string, c
 	const crateVersion = /^version = "([^"]+)"$/m.exec(crate.data)?.[1]
 	if (crateVersion !== version) {
 		throw errors.new(
-			`version lockstep broken: main is ${version} but ts/crate/Cargo.toml is ${String(crateVersion)} (engineVersion() bakes CARGO_PKG_VERSION into the shipped binary — a release bump edits all four spellings)`
+			`version lockstep broken: main is ${version} but ts/crate/Cargo.toml is ${String(crateVersion)} (engineVersion() bakes CARGO_PKG_VERSION into the shipped binary — a release bump edits all three spellings)`
 		)
 	}
 	return version
@@ -228,9 +235,16 @@ function smokeLoad(packageRoot: string, release: string): void {
  * must carry NO `.node` (the binary lives only in the platform package); the
  * LOCAL platform tarball (identical to the publish tarball on the publish
  * host, the synthesized dev twin elsewhere) must carry EXACTLY
- * `bumbledb.node` + `package.json` + `LICENSE` and nothing else.
+ * `bumbledb.node` + `package.json` + `LICENSE` and nothing else. The PIN
+ * proof then packs the main package FOR REAL (the prepack/postpack pair
+ * runs, exactly as `pnpm publish` runs it), extracts the tarball's
+ * `package.json`, and asserts the injected pin equals the release version
+ * exactly — and that the repo manifest came back PIN-FREE (the restore
+ * held). A tarball without the pin would install with no platform binary
+ * anywhere; a repo manifest left with the pin would re-open the sdk lane's
+ * frozen-lockfile window.
  */
-function verifyPack(packageRoot: string, localPackageDir: string): void {
+function verifyPack(packageRoot: string, localPackageDir: string, version: string): void {
 	const mainFiles = packDryRun(packageRoot)
 	const binary = mainFiles.find((file) => file.endsWith(".node"))
 	if (binary !== undefined) {
@@ -251,7 +265,62 @@ function verifyPack(packageRoot: string, localPackageDir: string): void {
 		)
 	}
 
-	console.log("bumbledb build: tarball manifests verified (main has no binary; platform has only the binary)")
+	verifyInjectedPin(packageRoot, version)
+
+	console.log(
+		"bumbledb build: tarball manifests verified (main has no binary; platform has only the binary; the packed pin is exact)"
+	)
+}
+
+/**
+ * The injected-pin proof: a REAL `pnpm pack` of the main package (into a
+ * scratch dir, so the lifecycle pair runs as publish would run it), the
+ * packed `package.json` read straight out of the tarball, the
+ * `optionalDependencies` pin asserted EXACTLY the release version — then
+ * the repo manifest asserted pin-free (postpack restored it).
+ */
+function verifyInjectedPin(packageRoot: string, version: string): void {
+	const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "bumbledb-pack-"))
+	try {
+		const tarball = path.join(scratch, "main.tgz")
+		const pack = spawnSync("pnpm", ["pack", "--out", tarball], { cwd: packageRoot })
+		if (pack.error) {
+			throw errors.wrap(pack.error, "spawn pnpm pack")
+		}
+		if (pack.status !== 0) {
+			throw errors.new(`pnpm pack exited with status ${pack.status}: ${pack.stderr.toString()}`)
+		}
+		const extract = spawnSync("tar", ["-xzOf", tarball, "package/package.json"], { cwd: scratch })
+		if (extract.error) {
+			throw errors.wrap(extract.error, "spawn tar")
+		}
+		if (extract.status !== 0) {
+			throw errors.new(`tar exited with status ${extract.status}: ${extract.stderr.toString()}`)
+		}
+		const packed = errors.trySync(() => JSON.parse(extract.stdout.toString()) as Record<string, unknown>)
+		if (packed.error) {
+			throw errors.wrap(packed.error, "parse the packed package.json")
+		}
+		const platformName = `@bjornpagen/bumbledb-${PUBLISH_PLATFORM}`
+		const optional = packed.data.optionalDependencies
+		const pin =
+			typeof optional === "object" && optional !== null
+				? (optional as Record<string, unknown>)[platformName]
+				: undefined
+		if (pin !== version) {
+			throw errors.new(
+				`the packed manifest's optionalDependencies["${platformName}"] is ${String(pin)}, expected the exact release version ${version} (scripts/pin.ts injects it at prepack)`
+			)
+		}
+	} finally {
+		fs.rmSync(scratch, { recursive: true, force: true })
+	}
+	const repo = readJson(path.join(packageRoot, "package.json"))
+	if ("optionalDependencies" in repo) {
+		throw errors.new(
+			"the repo package.json still carries optionalDependencies after pack — postpack's restore failed (the committed manifest must stay pin-free)"
+		)
+	}
 }
 
 /** Runs `pnpm pack --dry-run --json` in `dir` and returns its packed file paths. */
