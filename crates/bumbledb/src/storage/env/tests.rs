@@ -90,7 +90,6 @@ fn a_clean_ephemeral_close_clears_the_marker_and_contents_survive() {
 /// store, always.
 #[test]
 fn a_marker_set_reopen_wipes_and_reinitializes_the_ephemeral_store() {
-    use std::os::unix::fs::MetadataExt;
     let dir = TempDir::new("env-ephemeral-crash-reopen");
     let schema = schema();
     {
@@ -106,14 +105,18 @@ fn a_marker_set_reopen_wipes_and_reinitializes_the_ephemeral_store() {
     // The wipe covers `lock.mdb` too (directory mode — the lockfile a
     // NOSUBDIR env would call `data.mdb-lock`): a torn lockfile that
     // survived the wipe would fail every reopen with `MDB_INVALID`
-    // under a live reader's shared lock, permanently. Removal is
-    // observable as a fresh inode — LMDB recreates the file on open.
+    // under a live reader's shared lock, permanently. Inode identity is
+    // filesystem-dependent (ext4 recycles inodes immediately, so a
+    // fresh file can honestly wear the torn file's number) — the proof
+    // is content: tear the lockfile with sentinel bytes and assert the
+    // reopen minted one without them.
     let lockfile = dir.path().join("lock.mdb");
-    let torn_ino = std::fs::metadata(&lockfile).expect("stat lock.mdb").ino();
+    std::fs::write(&lockfile, b"TORN-LOCKFILE-SENTINEL").expect("tear lock.mdb");
     let env = Environment::ephemeral(dir.path(), &schema).expect("crash reopen");
+    let reborn = std::fs::read(&lockfile).expect("read lock.mdb");
     assert_ne!(
-        std::fs::metadata(&lockfile).expect("stat lock.mdb").ino(),
-        torn_ino,
+        reborn.as_slice(),
+        b"TORN-LOCKFILE-SENTINEL".as_slice(),
         "the wipe removed the possibly-torn lock.mdb — the reopen minted a fresh one"
     );
     let rtxn = env.read_txn().expect("txn");
