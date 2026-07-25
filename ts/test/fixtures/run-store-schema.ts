@@ -11,7 +11,7 @@
  */
 
 import type { Statement } from "#index.ts"
-import { bytes, closed, contained, exactly, key, none, on, relation, schema, str, u64, window } from "#index.ts"
+import { bytes, capacity, closed, contained, key, on, relation, schema, str, u64, within } from "#index.ts"
 
 const toiTypeHandles = [
 	"NonComparative",
@@ -109,7 +109,7 @@ const diagKindHandles = [
 	"GroupWithoutProgram",
 	"CapsuleUnscheduled",
 	"StrandEdgeUnrealized",
-	"CourseMetaCardinality",
+	"CourseMetaCapacity",
 	"source_parse_error",
 	"decode_error",
 	"program_unit_program_count",
@@ -328,17 +328,17 @@ const laws = Object.freeze({
 	diagnosticKindVocab: contained(on(diagnostic, "kind"), on(DiagKind, "id")),
 	steerKindVocab: contained(on(steer, "kind"), on(SteerKind, "id")),
 
-	partitionTotality: window(on(objective, "id"), exactly(1n), on(grpMember, "objective")),
-	capsuleTotality: window(on(capsule, "id"), exactly(1n), on(member, "capsule")),
+	partitionTotality: capacity(on(objective, "id"), within(1n), on(grpMember, "objective")),
+	capsuleTotality: capacity(on(capsule, "id"), within(1n), on(member, "capsule")),
 
-	hierarchyParentCount: window(
+	hierarchyParentCount: capacity(
 		on(program.where({ kind: "hierarchy_program" }), "id"),
-		exactly(1n),
+		within(1n),
 		on(member.where({ toi: "HigherOrderNoun" }), "program")
 	),
-	routineIntegratorCount: window(
+	routineIntegratorCount: capacity(
 		on(program.where({ kind: "cognitive_routine_program" }), "id"),
-		exactly(1n),
+		within(1n),
 		on(member.where({ toi: "CognitiveRoutine" }), "program")
 	),
 
@@ -359,7 +359,11 @@ function misplacedFormBan(programKind: ProgramKindName, toi: ToiTypeName): Mispl
 	return Object.freeze({
 		programKind,
 		toi,
-		statement: window(on(program.where({ kind: programKind }), "id"), none, on(member.where({ toi }), "program"))
+		statement: capacity(
+			on(program.where({ kind: programKind }), "id"),
+			within(0n),
+			on(member.where({ toi }), "program")
+		)
 	})
 }
 
@@ -399,9 +403,9 @@ const entryFormBans: readonly EntryFormBan[] = Object.freeze(
 		.map(function banAtEntry(toi): EntryFormBan {
 			return Object.freeze({
 				toi,
-				statement: window(
+				statement: capacity(
 					on(program.where({ kind: "hierarchy_program" }), "id"),
-					none,
+					within(0n),
 					on(member.where({ pos: 1n, toi }), "program")
 				)
 			})

@@ -1,6 +1,6 @@
 # The cookbook — modeling intuition as schemas, in TypeScript
 
-The bumbledb engine's 30 cookbook recipes (`bumbledb/docs/cookbook.md`),
+The bumbledb engine's 32 cookbook recipes (`bumbledb/docs/cookbook.md`),
 translated to this SDK's structural API. **This document is illustrative,
 never normative**: where a recipe and an engine architecture chapter disagree,
 the chapter wins (`docs/architecture/README.md` rule 5) — the SDK is the same
@@ -39,9 +39,11 @@ import {
 	bool,
 	by,
 	bytes,
+	capacity,
 	closed,
 	contained,
 	desc,
+	duration,
 	eq,
 	i64,
 	interval,
@@ -53,11 +55,14 @@ import {
 	pointIn,
 	program,
 	query,
+	ref,
 	relation,
 	schema,
 	str,
 	u64,
-	v
+	v,
+	weigh,
+	within
 } from "@bjornpagen/bumbledb"
 ```
 

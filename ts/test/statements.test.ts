@@ -1,16 +1,20 @@
 /**
  * Statement-algebra pins on the MINIMAL kernel (K3) under the LAW-TYPING
- * (K4): the full Ledger example (key, containment, selected `==`, window)
- * lowers to its `SchemaSpec` shape — every `newtype` slot carrying the
- * class name `schema()` COMPUTED from the statement list (the laws type
- * the columns; bare fields lower `undefined`); the canonical-utterance ban
- * table is enumerated one row at a time (each banned LITERAL spelling a
- * REAL `@ts-expect-error` — unwritable — and each computed-bound escape a
- * construction error naming the canonical form); field references are
- * checked in the type — existence AND structural shape (positionwise
- * kind/width/element, read off the schema type; the DOMAIN wall lives at
- * `schema()` — the one-generator-per-class law, pinned in
+ * (K4): the full Ledger example (key, containment, selected `==`,
+ * capacity) lowers to its `SchemaSpec` shape — every `newtype` slot
+ * carrying the class name `schema()` COMPUTED from the statement list (the
+ * laws type the columns; bare fields lower `undefined`); the
+ * canonical-utterance ban table is enumerated one row at a time (each
+ * banned LITERAL spelling a REAL `@ts-expect-error` — unwritable — each
+ * computed-bound escape a construction error naming the canonical form,
+ * and the weight-SENSITIVE `{1..*}` row split per-aggregate: banned on the
+ * unit overload, a POSITIVE compile probe on the weighted one); field
+ * references are checked in the type — existence AND structural shape
+ * (positionwise kind/width/element, read off the schema type; the DOMAIN
+ * wall lives at `schema()` — the one-generator-per-class law, pinned in
  * `law-typing.test.ts` — and at query joins, never at face construction);
+ * the capacity form's OWN walls (weight on the SOURCE row, u64/interval
+ * kinds; dependent bounds on the TARGET's full roster) hold at both tiers;
  * `schema()` enforces its expansion-boundary checks including the
  * handle-selection paste-back law; ψ-selection over closed relations
  * (`Grade.where({ mastered: true })` as a face source) is typed, rendered,
@@ -21,15 +25,15 @@
 import assert from "node:assert/strict"
 import { describe, test } from "node:test"
 
+import * as capacityModule from "#capacity.ts"
+import { duration, ref, weigh, within } from "#capacity.ts"
 import { closed } from "#closed.ts"
-import * as countModule from "#count.ts"
-import { atLeast, atMost, between, exactly, none } from "#count.ts"
 import { on } from "#face.ts"
 import { bool, bytes, i64, interval, span, str, u64 } from "#fields.ts"
 import { lower } from "#lower.ts"
 import { relation } from "#relation.ts"
 import { schema } from "#schema.ts"
-import { contained, key, mirrors, renderStatement, window } from "#statements.ts"
+import { capacity, contained, key, mirrors, renderStatement } from "#statements.ts"
 
 function buildLedger() {
 	const Kind = closed("Kind", ["Checking", "Savings"])
@@ -46,7 +50,7 @@ function buildLedger() {
 		contained(on(Account, "holder"), on(Holder, "id")),
 		contained(on(Account, "kind"), on(Kind, "id")),
 		mirrors(on(Account.where({ kind: "Savings" }), "id"), on(SavingsTerms, "account")),
-		window(on(Holder, "id"), atMost(3n), on(Account, "holder"))
+		capacity(on(Holder, "id"), within(0n, 3n), on(Account, "holder"))
 	]
 	const Ledger = schema("Ledger", { Kind, Holder, Account, SavingsTerms }, statements)
 	return { Kind, Holder, Account, SavingsTerms, statements, Ledger }
@@ -83,9 +87,22 @@ function buildMastery() {
 	)
 	const Certificate = relation("Certificate", { id: u64.fresh, grade: Grade.id })
 	const psiContainment = contained(on(Certificate, "grade"), on(Grade.where({ mastered: true }), "id"))
-	const psiWindow = window(on(Grade.where({ mastered: true }), "id"), atMost(1n), on(Certificate, "grade"))
-	const Mastery = schema("Mastery", { Grade, Certificate }, [psiContainment, psiWindow])
-	return { Grade, Certificate, psiContainment, psiWindow, Mastery }
+	const psiCapacity = capacity(on(Grade.where({ mastered: true }), "id"), within(0n, 1n), on(Certificate, "grade"))
+	const Mastery = schema("Mastery", { Grade, Certificate }, [psiContainment, psiCapacity])
+	return { Grade, Certificate, psiContainment, psiCapacity, Mastery }
+}
+
+/**
+ * The weighted fixtures — the dossier's two ruled shapes: the power budget
+ * (u64 weight, dependent u64 bound) and calendar capacity (Duration weight,
+ * Duration bound). `Model` carries the pinned-column pair's catalog side.
+ */
+function buildRacks() {
+	const Pool = relation("Pool", { id: u64.fresh, supply: u64 })
+	const Device = relation("Device", { id: u64.fresh, pool: u64, watts: u64 })
+	const Room = relation("Room", { id: u64.fresh, span: interval(i64) })
+	const Booking = relation("Booking", { id: u64.fresh, room: u64, booked: interval(i64) })
+	return { Pool, Device, Room, Booking }
 }
 
 /**
@@ -178,9 +195,14 @@ describe("the Ledger example", function describeLedger() {
 					bidirectional: true
 				},
 				{
-					kind: "cardinality",
+					kind: "capacity",
 					target: { relation: "Holder", projection: ["id"], selection: [] },
-					window: { kind: "range", lo: 0n, hi: 3n },
+					weight: { kind: "unit" },
+					window: {
+						kind: "range",
+						lo: { kind: "lit", value: 0n },
+						hi: { kind: "lit", value: 3n }
+					},
 					source: { relation: "Account", projection: ["holder"], selection: [] }
 				}
 			]
@@ -266,15 +288,35 @@ describe("renderStatement", function describeRender() {
 		])
 	})
 
-	test("every legal window spelling renders canonically", function probeWindowSpellings() {
+	test("every legal capacity spelling renders canonically — unit strings byte-for-byte, the weighted rows beside them", function probeCapacitySpellings() {
 		const { Holder, Account } = buildLedger()
 		const target = on(Holder, "id")
 		const source = on(Account, "holder")
-		assert.equal(renderStatement(window(target, exactly(1n), source)), "Holder(id) <={1} Account(holder)")
-		assert.equal(renderStatement(window(target, none, source)), "Holder(id) <={0} Account(holder)")
-		assert.equal(renderStatement(window(target, between(1n, 3n), source)), "Holder(id) <={1..3} Account(holder)")
-		assert.equal(renderStatement(window(target, atLeast(2n), source)), "Holder(id) <={2..*} Account(holder)")
-		assert.equal(renderStatement(window(target, atMost(4n), source)), "Holder(id) <={0..4} Account(holder)")
+		assert.equal(renderStatement(capacity(target, within(1n), source)), "Holder(id) <={1} Account(holder)")
+		assert.equal(renderStatement(capacity(target, within(0n), source)), "Holder(id) <={0} Account(holder)")
+		assert.equal(renderStatement(capacity(target, within(1n, 3n), source)), "Holder(id) <={1..3} Account(holder)")
+		assert.equal(renderStatement(capacity(target, within(2n, "*"), source)), "Holder(id) <={2..*} Account(holder)")
+		assert.equal(renderStatement(capacity(target, within(0n, 4n), source)), "Holder(id) <={0..4} Account(holder)")
+		// The weighted rows: the bracket, the dependent bound, the Duration pair.
+		const { Pool, Device, Room, Booking } = buildRacks()
+		assert.equal(
+			renderStatement(capacity(on(Pool, "id"), weigh("watts"), within(0n, 20n), on(Device, "pool"))),
+			"Pool(id) <=[watts]{0..20} Device(pool)"
+		)
+		assert.equal(
+			renderStatement(capacity(on(Pool, "id"), weigh("watts"), within(0n, ref("supply")), on(Device, "pool"))),
+			"Pool(id) <=[watts]{0..supply} Device(pool)"
+		)
+		assert.equal(
+			renderStatement(capacity(on(Pool, "id"), weigh("watts"), within(1n, "*"), on(Device, "pool"))),
+			"Pool(id) <=[watts]{1..*} Device(pool)"
+		)
+		assert.equal(
+			renderStatement(
+				capacity(on(Room, "id"), weigh(duration("booked")), within(0n, duration("span")), on(Booking, "room"))
+			),
+			"Room(id) <=[Duration(booked)]{0..Duration(span)} Booking(room)"
+		)
 	})
 
 	test("literal sets and interval literals render in macro notation", function probeSelectionRendering() {
@@ -291,8 +333,16 @@ describe("renderStatement", function describeRender() {
 })
 
 describe("the ban table, one row at a time — literal spellings are UNWRITABLE", function describeBanTable() {
-	test("no sixth constructor exists — the count vocabulary is exactly the five", function probeVocabulary() {
-		assert.deepStrictEqual(Object.keys(countModule).sort(), ["atLeast", "atMost", "between", "exactly", "none"])
+	test("the capacity mint vocabulary is exactly the roster — no sixth mint exists", function probeVocabulary() {
+		assert.deepStrictEqual(Object.keys(capacityModule).sort(), [
+			"duration",
+			"isCapacityWeight",
+			"isCapacityWindow",
+			"ref",
+			"unitWeight",
+			"weigh",
+			"within"
+		])
 	})
 
 	test("degenerate literal sets refuse — a membership array needs two DISTINCT members, and the refusal locates itself", function probeDegenerateSet() {
@@ -334,9 +384,9 @@ describe("the ban table, one row at a time — literal spellings are UNWRITABLE"
 			// @ts-expect-error — the reverse orientation is the same wall (pairing is symmetric)
 			mirrors(on(Sev, "id"), on(Limit, "cap"))
 		}, /Sev\.id is a Sev reference but Limit\.cap is a bare column/)
-		assert.throws(function aliasWindow() {
-			// @ts-expect-error — a window's grouping join holds the roster wall exactly as containment
-			window(on(Sev, "id"), atMost(1n), on(Limit, "cap"))
+		assert.throws(function aliasCapacity() {
+			// @ts-expect-error — a capacity statement's grouping join holds the roster wall exactly as containment
+			capacity(on(Sev, "id"), within(0n, 1n), on(Limit, "cap"))
 		}, /Limit\.cap is a bare column but Sev\.id is a Sev reference/)
 		// The one spelling still constructs and renders canonically.
 		const Alert = relation("Alert", { sev: Sev.id })
@@ -360,9 +410,9 @@ describe("the ban table, one row at a time — literal spellings are UNWRITABLE"
 			// @ts-expect-error — the == abbreviation holds the same arity wall
 			mirrors(on(Slot, "room"), on(Booking, ["room", "during"]))
 		}, /Slot\(room\) and Booking\(room, during\) project 1 vs 2 fields/)
-		assert.throws(function truncatedWindow() {
-			// @ts-expect-error — a window's grouping join holds the arity wall exactly as containment
-			window(on(Slot, "room"), atMost(1n), on(Booking, ["room", "during"]))
+		assert.throws(function truncatedCapacity() {
+			// @ts-expect-error — a capacity statement's grouping join holds the arity wall exactly as containment
+			capacity(on(Slot, "room"), within(0n, 1n), on(Booking, ["room", "during"]))
 		}, /Booking\(room, during\) and Slot\(room\) project 2 vs 1 fields/)
 		// The paired spelling still constructs.
 		assert.equal(
@@ -375,29 +425,72 @@ describe("the ban table, one row at a time — literal spellings are UNWRITABLE"
 /**
  * The ban table's compile tier: every banned LITERAL spelling is a type
  * error naming the canonical form — there is no argument shape that
- * produces `{0}`-as-exactly, `{n..n}`, `{0..0}`, `{0..*}`, `{1..*}`, or a
- * negative bound. Each directive is REAL: removing it breaks compilation.
+ * produces `{n..n}`, `{0..0}`, `{0..*}`, a unit-instance `{1..*}`, a
+ * negative bound, or a path weight/bound. Each directive is REAL: removing
+ * it breaks compilation. The weight-SENSITIVE row is split per-aggregate
+ * (design § 6): the unit `{1..*}` ban lives on the `capacity()` unit
+ * overload, and {@link weightedFloorOneCompiles} is its POSITIVE twin.
  */
 function banTableIsUnwritable(): unknown[] {
+	const { Pool, Device } = buildRacks()
 	return [
-		// @ts-expect-error — `{0}` is the exclusion: the spelling is `none`, exactly(0n) does not exist
-		exactly(0n),
-		// @ts-expect-error — window counts are u64: a negative exact count is out of domain
-		exactly(-1n),
-		// @ts-expect-error — `{0..0}` is the exclusion respelled: write none
-		between(0n, 0n),
-		// @ts-expect-error — `{n..n}` is the exact count respelled: write exactly(n)
-		between(2n, 2n),
-		// @ts-expect-error — window bounds are u64: a negative bound is out of domain
-		between(-1n, 3n),
+		// @ts-expect-error — capacity bounds are u64: a negative exact measure is out of domain
+		within(-1n),
+		// @ts-expect-error — `{0..0}` — the point window is written `{0}`: use within(0n)
+		within(0n, 0n),
+		// @ts-expect-error — `{n..n}` is the exact measure respelled: write within(n)
+		within(2n, 2n),
+		// @ts-expect-error — capacity bounds are u64: a negative bound is out of domain
+		within(-1n, 3n),
+		// @ts-expect-error — capacity bounds are u64: a negative ceiling is out of domain
+		within(1n, -3n),
 		// @ts-expect-error — `{0..*}` is vacuous: it provably says nothing, delete the statement
-		atLeast(0n),
-		// @ts-expect-error — `{1..*}` says only what the bare containment says: write contained(source, target)
-		atLeast(1n),
-		// @ts-expect-error — `{0..0}` is the exclusion respelled: write none
-		atMost(0n),
-		// @ts-expect-error — window counts are u64: a negative ceiling is out of domain
-		atMost(-2n)
+		within(0n, "*"),
+		// @ts-expect-error — `{1..*}` on the UNIT instance says only what the bare containment says: write contained(source, target)
+		capacity(on(Pool, "id"), within(1n, "*"), on(Device, "pool")),
+		// @ts-expect-error — a path weight is refused: the vocabulary is closed at the row — pin the column
+		weigh("model.watts"),
+		// @ts-expect-error — a path bound is refused the same way: bounds name the target's own row
+		ref("model.supply"),
+		// @ts-expect-error — a Duration path is refused the same way
+		duration("model.span")
+	]
+}
+
+/**
+ * The weight-sensitive split's POSITIVE probe (design § 6): `<=[w]{1..*}`
+ * COMPILES — on a weighted statement "positive total" admits zero-weight
+ * rows and is a different, weaker law than containment, so the unit-only
+ * ban must not fire here. Exported-but-uncalled; its compiling IS the pin.
+ */
+function weightedFloorOneCompiles(): unknown {
+	const { Pool, Device } = buildRacks()
+	return capacity(on(Pool, "id"), weigh("watts"), within(1n, "*"), on(Device, "pool"))
+}
+
+/**
+ * The capacity form's own type walls: the weight names a u64/interval
+ * field of the SOURCE's row, dependent bounds a u64/interval field of the
+ * TARGET's full roster. Each directive is REAL.
+ */
+function capacityWallsAreTyped(): unknown[] {
+	const { Pool, Device, Room, Booking } = buildRacks()
+	return [
+		// the legal spellings compile — the walls admit exactly the ruled shapes
+		capacity(on(Pool, "id"), weigh("watts"), within(0n, ref("supply")), on(Device, "pool")),
+		capacity(on(Room, "id"), weigh(duration("booked")), within(0n, duration("span")), on(Booking, "room")),
+		// @ts-expect-error — the weight names a field of the SOURCE's own row: Device has no field `nope`
+		capacity(on(Pool, "id"), weigh("nope"), within(0n, 3n), on(Device, "pool")),
+		// @ts-expect-error — a weight is u64-encoded: an interval field needs the Duration(...) spelling
+		capacity(on(Room, "id"), weigh("span"), within(0n, 3n), on(Room, "id")),
+		// @ts-expect-error — weigh(duration(...)) weighs an interval field: pool is a u64
+		capacity(on(Pool, "id"), weigh(duration("pool")), within(0n, 3n), on(Device, "pool")),
+		// @ts-expect-error — a dependent bound names a field of the TARGET's own row: Pool has no field `nope`
+		capacity(on(Pool, "id"), weigh("watts"), within(0n, ref("nope")), on(Device, "pool")),
+		// @ts-expect-error — ref() reads a u64 field of the TARGET row: span is an interval (write duration("span"))
+		capacity(on(Room, "id"), weigh(duration("booked")), within(0n, ref("span")), on(Booking, "room")),
+		// @ts-expect-error — duration() bounds by an interval field's measure: supply is a u64 (write ref("supply"))
+		capacity(on(Pool, "id"), weigh("watts"), within(0n, duration("supply")), on(Device, "pool"))
 	]
 }
 
@@ -407,34 +500,85 @@ describe("the ban table's construction tier — computed bounds the type cannot 
 		return n
 	}
 
+	/** A field name whose literal identity the type level has already lost. */
+	const computedName: (name: string) => string = function widenName(name) {
+		return name
+	}
+
 	test("a computed banned bound is a construction error naming the canonical form", function probeComputedBans() {
-		assert.throws(function computedExactZero() {
-			exactly(computed(0n))
-		}, /`\{0\}` is the exclusion — write none/)
-		assert.throws(function computedFloorOne() {
-			atLeast(computed(1n))
-		}, /says only what the bare containment says/)
 		assert.throws(function computedVacuous() {
-			atLeast(computed(0n))
+			within(computed(0n), "*")
 		}, /vacuous — it provably says nothing/)
-		assert.throws(function computedCeilingZero() {
-			atMost(computed(0n))
-		}, /use none/)
 		assert.throws(function computedExactRange() {
-			between(computed(2n), computed(2n))
-		}, /an exact count is written `\{2\}`: use exactly\(2\)/)
+			within(computed(2n), computed(2n))
+		}, /an exact measure is written `\{2\}`: use within\(2n\)/)
 		assert.throws(function computedZeroRange() {
-			between(computed(0n), computed(0n))
-		}, /the exclusion is written `\{0\}`: use none/)
+			within(computed(0n), computed(0n))
+		}, /the point window is written `\{0\}`: use within\(0n\)/)
 		assert.throws(function computedNegative() {
-			exactly(computed(-1n))
-		}, /window counts are u64/)
+			within(computed(-1n))
+		}, /capacity bounds are u64/)
 	})
 
 	test("an inverted window is unsatisfiable — bigint literals carry no type-level order", function probeInverted() {
 		assert.throws(function bannedInverted() {
-			between(3n, 1n)
-		}, /inverted — no count satisfies it/)
+			within(3n, 1n)
+		}, /inverted — no measure satisfies it/)
+	})
+
+	test("the unit `{1..*}` ban fires at the capacity() call when the floor was computed", function probeComputedFloorOne() {
+		const { Pool, Device } = buildRacks()
+		assert.throws(function computedUnitFloorOne() {
+			capacity(on(Pool, "id"), within(computed(1n), "*"), on(Device, "pool"))
+		}, /says only what the bare containment says/)
+		// The weighted twin CONSTRUCTS — the ban is Count-instance-only.
+		const weighted = capacity(on(Pool, "id"), weigh("watts"), within(computed(1n), "*"), on(Device, "pool"))
+		assert.equal(renderStatement(weighted), "Pool(id) <=[watts]{1..*} Device(pool)")
+	})
+
+	test("a computed path weight or bound is a construction refusal naming the pinned-column idiom", function probeComputedPaths() {
+		assert.throws(function computedPathWeight() {
+			weigh(computedName("model.watts"))
+		}, /closed at the row .* pin the column/)
+		assert.throws(function computedPathBound() {
+			ref(computedName("model.supply"))
+		}, /closed at the row .* pin the column/)
+	})
+
+	test("the weight and dependent-bound walls hold at construction for untyped callers", function probeCapacityRuntimeTwins() {
+		const { Pool, Device, Room, Booking } = buildRacks()
+		assert.throws(function weightOffRoster() {
+			capacity(on(Pool, "id"), weigh(computedName("nope")), within(0n, 3n), on(Device, "pool"))
+		}, /Device has no field nope — a weight names a field of the SOURCE's own row/)
+		assert.throws(function weightNotU64() {
+			capacity(on(Room, "id"), weigh(computedName("span")), within(0n, 3n), on(Room, "id"))
+		}, /Room\.span is interval, not u64 — a weight is u64-encoded/)
+		assert.throws(function durationWeightNotInterval() {
+			capacity(on(Pool, "id"), weigh(duration(computedName("pool"))), within(0n, 3n), on(Device, "pool"))
+		}, /Device\.pool is u64, not an interval — Duration\(\.\.\.\) weighs/)
+		assert.throws(function boundOffRoster() {
+			capacity(on(Pool, "id"), weigh("watts"), within(0n, ref(computedName("nope"))), on(Device, "pool"))
+		}, /Pool has no field nope — a dependent bound names a field of the TARGET's own row/)
+		assert.throws(function boundNotU64() {
+			capacity(on(Room, "id"), weigh(duration("booked")), within(0n, ref(computedName("span"))), on(Booking, "room"))
+		}, /Room\.span is interval, not u64 — a dependent bound reads a u64 field/)
+		assert.throws(function durationBoundNotInterval() {
+			capacity(on(Pool, "id"), weigh("watts"), within(0n, duration(computedName("supply"))), on(Device, "pool"))
+		}, /Pool\.supply is u64, not an interval — Duration\(\.\.\.\) bounds/)
+	})
+
+	test("a forged un-branded window or weight is refused — the mints are the only producers", function probeForgedMints() {
+		const { Pool, Device } = buildRacks()
+		const forgedWindow = { window: { kind: "range", lo: { kind: "lit", value: 0n }, hi: { kind: "lit", value: 3n } } }
+		assert.throws(function forgedWindowRefused() {
+			// @ts-expect-error — a structural window literal is not an admitted CapacityWindow (the brand forecloses it)
+			capacity(on(Pool, "id"), forgedWindow, on(Device, "pool"))
+		}, /a capacity window is minted only by within\(\)/)
+		const forgedWeight = { weight: { kind: "field", field: "watts" } }
+		assert.throws(function forgedWeightRefused() {
+			// @ts-expect-error — a structural weight literal is not an admitted CapacityWeight (the brand forecloses it)
+			capacity(on(Pool, "id"), forgedWeight, within(0n, 3n), on(Device, "pool"))
+		}, /a capacity weight is minted only by weigh\(\)/)
 	})
 })
 
@@ -502,15 +646,15 @@ describe("schema() construction boundary", function describeSchemaBoundary() {
 				// @ts-expect-error — 062: Statement carries the module-private admission brand, so a structural literal is not a Statement
 				{ data: forgedData }
 			])
-		}, /a statement is minted only by key\/contained\/mirrors\/window/)
+		}, /a statement is minted only by key\/contained\/mirrors\/capacity/)
 	})
 })
 
 describe("ψ statements over closed relations — closed().where() as a face source", function describePsi() {
 	test("a ψ-selected closed face renders canonically and schema() admits both forms", function probePsiCanonical() {
-		const { psiContainment, psiWindow, Mastery } = buildMastery()
+		const { psiContainment, psiCapacity, Mastery } = buildMastery()
 		assert.equal(renderStatement(psiContainment), "Certificate(grade) <= Grade(id | mastered == true)")
-		assert.equal(renderStatement(psiWindow), "Grade(id | mastered == true) <={0..1} Certificate(grade)")
+		assert.equal(renderStatement(psiCapacity), "Grade(id | mastered == true) <={0..1} Certificate(grade)")
 		assert.equal(Mastery.statements.length, 2)
 	})
 
@@ -529,9 +673,14 @@ describe("ψ statements over closed relations — closed().where() as a face sou
 				bidirectional: false
 			},
 			{
-				kind: "cardinality",
+				kind: "capacity",
 				target: psiTarget,
-				window: { kind: "range", lo: 0n, hi: 1n },
+				weight: { kind: "unit" },
+				window: {
+					kind: "range",
+					lo: { kind: "lit", value: 0n },
+					hi: { kind: "lit", value: 1n }
+				},
 				source: { relation: "Certificate", projection: ["grade"], selection: [] }
 			}
 		])
@@ -640,8 +789,8 @@ function facesArePairedStructurally(): unknown[] {
 		contained(on(Slot, ["room", "during"]), on(Booking, ["during", "room"])),
 		// @ts-expect-error — a mirrors bijection pairs structure exactly as containment (u64 vs interval)
 		mirrors(on(Account, "id"), on(Account, "active")),
-		// @ts-expect-error — a window's grouping join pairs structure exactly as containment (u64 vs interval)
-		window(on(Holder, "id"), atMost(3n), on(Account, "active")),
+		// @ts-expect-error — a capacity statement's grouping join pairs structure exactly as containment (u64 vs interval)
+		capacity(on(Holder, "id"), within(0n, 3n), on(Account, "active")),
 		// @ts-expect-error — arity mismatch: positional pairing requires equally many fields
 		contained(on(Slot, ["room", "during"]), on(Booking, "room"))
 	]
@@ -723,9 +872,9 @@ function closedSelectionsAreTyped(): unknown[] {
 function psiFacesArePairedStructurally(): unknown[] {
 	const { Grade, Certificate } = buildMastery()
 	return [
-		// the legal pairs compile — same-label ψ pairing and the ψ window target
+		// the legal pairs compile — same-label ψ pairing and the ψ capacity target
 		contained(on(Certificate, "grade"), on(Grade.where({ mastered: true }), "id")),
-		window(on(Grade.where({ mastered: true }), "id"), atMost(1n), on(Certificate, "grade")),
+		capacity(on(Grade.where({ mastered: true }), "id"), within(0n, 1n), on(Certificate, "grade")),
 		contained(on(Grade.where({ mastered: true }), "score"), on(Certificate, "id")),
 		// @ts-expect-error — a ψ face's projected shapes still hold the wall: bool never pairs u64
 		contained(on(Grade.where({ score: 2n }), "mastered"), on(Certificate, "grade")),
@@ -736,10 +885,12 @@ function psiFacesArePairedStructurally(): unknown[] {
 
 export {
 	banTableIsUnwritable,
+	capacityWallsAreTyped,
 	closedPayloadColumnsPairStructurally,
 	closedSelectionsAreTyped,
 	facesArePairedStructurally,
 	fieldReferencesAreTypeChecked,
 	psiFacesArePairedStructurally,
-	selectionsAreTyped
+	selectionsAreTyped,
+	weightedFloorOneCompiles
 }

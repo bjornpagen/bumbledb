@@ -221,9 +221,14 @@ interface BoundKindMismatch<K, Want> {
 	]
 }
 
-/** One dependent-bound slot judged against the target face's roster and kinds. */
-type BoundOnTarget<K extends string, Want extends "u64" | "interval", B extends AnyFace> =
-	K extends FaceFields<B["source"]>
+/**
+ * One dependent-bound slot judged against the target face's roster and
+ * kinds. A WIDE field name (the untyped-caller path — literal identity
+ * already lost) passes the type tier and is judged at construction.
+ */
+type BoundOnTarget<K extends string, Want extends "u64" | "interval", B extends AnyFace> = string extends K
+	? unknown
+	: K extends FaceFields<B["source"]>
 		? KindAt<B["source"], K> extends Want
 			? unknown
 			: BoundKindMismatch<K, Want>
@@ -275,17 +280,21 @@ type WeightOnSource<M extends CapacityWeight, A extends AnyFace> = M["weight"] e
 	readonly kind: "field"
 	readonly field: infer K extends string
 }
-	? K extends FaceFields<A["source"]>
-		? KindAt<A["source"], K> extends "u64"
-			? unknown
-			: WeightKindMismatch<K, "u64">
-		: WeightOffSourceRoster<K, FaceFields<A["source"]>>
-	: M["weight"] extends { readonly kind: "durationField"; readonly field: infer K extends string }
-		? K extends FaceFields<A["source"]>
-			? KindAt<A["source"], K> extends "interval"
+	? string extends K
+		? unknown
+		: K extends FaceFields<A["source"]>
+			? KindAt<A["source"], K> extends "u64"
 				? unknown
-				: WeightKindMismatch<K, "interval">
+				: WeightKindMismatch<K, "u64">
 			: WeightOffSourceRoster<K, FaceFields<A["source"]>>
+	: M["weight"] extends { readonly kind: "durationField"; readonly field: infer K extends string }
+		? string extends K
+			? unknown
+			: K extends FaceFields<A["source"]>
+				? KindAt<A["source"], K> extends "interval"
+					? unknown
+					: WeightKindMismatch<K, "interval">
+				: WeightOffSourceRoster<K, FaceFields<A["source"]>>
 		: unknown
 
 /** The unit weight — a case, not an absence (C4): the count instance's one wire spelling. */

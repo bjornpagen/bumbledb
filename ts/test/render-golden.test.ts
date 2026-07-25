@@ -3,8 +3,9 @@
  * statement construct the schema surface can utter — the FD key form
  * (scalar, composite pointwise-interval), containment (plain, σ-selected,
  * ψ-selected, closed-target, multi-field pointwise), the `==` bijection,
- * every legal window spelling (`{n}`, `{0}`, `{lo..hi}`, `{lo..*}`,
- * `{0..hi}`), and the sub-vocabulary handle-set selection — the SDK's
+ * every legal capacity spelling (`{n}`, `{0}`, `{lo..hi}`, `{lo..*}`,
+ * `{0..hi}`, the weighted bracket, the dependent bound, the Duration
+ * pair), and the sub-vocabulary handle-set selection — the SDK's
  * `renderStatement` output equals, byte for byte, the engine-rendered
  * spelling the manifest ships for the same store
  * (`schema/render.rs::render_declared` via `dbManifest`). The engine's
@@ -26,8 +27,8 @@ import * as os from "node:os"
 import * as path from "node:path"
 import { after, describe, test } from "node:test"
 
+import { duration, ref, weigh, within } from "#capacity.ts"
 import { closed } from "#closed.ts"
-import { atLeast, atMost, between, exactly, none } from "#count.ts"
 import { Db } from "#db.ts"
 import { on } from "#face.ts"
 import { bool, bytes, i64, interval, span, str, u64 } from "#fields.ts"
@@ -36,7 +37,7 @@ import type { DbHandle, Manifest, StatementKindTag } from "#native.ts"
 import { native } from "#native.ts"
 import { relation } from "#relation.ts"
 import { type AnySchema, schema } from "#schema.ts"
-import { contained, key, mirrors, renderStatement, type Statement, window } from "#statements.ts"
+import { capacity, contained, key, mirrors, renderStatement, type Statement } from "#statements.ts"
 
 const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bumbledb-render-golden-"))
 const storeDir = path.join(tmpRoot, "store")
@@ -87,20 +88,35 @@ const pointwiseContainment = contained(on(Slot, ["room", "during"]), on(Booking,
 const sigmaContainment = contained(on(Account.where({ kind: "Savings" }), "holder"), on(Holder, "id"))
 const psiContainment = contained(on(SavingsTerms, "account"), on(Account.where({ status: "Active" }), "id"))
 const bijection = mirrors(on(Account.where({ kind: "Savings" }), "id"), on(SavingsTerms, "account"))
-const ceilingWindow = window(on(Holder, "id"), atMost(3n), on(Account, "holder"))
-const exclusionWindow = window(on(Holder, "id"), none, on(Account.where({ flag: false }), "holder"))
-const exactWindow = window(on(Holder, "id"), exactly(2n), on(Account.where({ label: gauntletLabel }), "holder"))
-const rangeWindow = window(on(Holder, "id"), between(1n, 4n), on(Account.where({ score: -42n }), "holder"))
-const floorWindow = window(
+const ceilingCapacity = capacity(on(Holder, "id"), within(0n, 3n), on(Account, "holder"))
+const exclusionCapacity = capacity(on(Holder, "id"), within(0n), on(Account.where({ flag: false }), "holder"))
+const exactCapacity = capacity(on(Holder, "id"), within(2n), on(Account.where({ label: gauntletLabel }), "holder"))
+const rangeCapacity = capacity(on(Holder, "id"), within(1n, 4n), on(Account.where({ score: -42n }), "holder"))
+const floorCapacity = capacity(
 	on(Holder, "id"),
-	atLeast(2n),
+	within(2n, "*"),
 	on(Account.where({ kind: ["Checking", "Savings"] }), "holder")
 )
-const psiTargetWindow = window(on(Account.where({ flag: true }), "id"), atMost(1n), on(SavingsTerms, "account"))
-const literalGauntletWindow = window(
+const psiTargetCapacity = capacity(on(Account.where({ flag: true }), "id"), within(0n, 1n), on(SavingsTerms, "account"))
+const literalGauntletCapacity = capacity(
 	on(Holder, "id"),
-	atMost(5n),
+	within(0n, 5n),
 	on(Account.where({ weight: 7n, tag: gauntletTag, active: span(-3n, 9n) }), "holder")
+)
+/** The weighted rows (dossier § 4.4): the dependent bound and the calendar shape against the engine arm. */
+const Pool = relation("Pool", { id: u64.fresh, supply: u64 })
+const Device = relation("Device", { id: u64.fresh, pool: u64, watts: u64 })
+const Hall = relation("Hall", { id: u64.fresh, span: interval(i64) })
+const Session = relation("Session", { id: u64.fresh, hall: u64, booked: interval(i64) })
+const devicePoolContainment = contained(on(Device, "pool"), on(Pool, "id"))
+const sessionHallContainment = contained(on(Session, "hall"), on(Hall, "id"))
+const powerBudget = capacity(on(Pool, "id"), weigh("watts"), within(0n, ref("supply")), on(Device, "pool"))
+const weightedFloor = capacity(on(Pool, "id"), weigh("watts"), within(1n, "*"), on(Device, "pool"))
+const calendarCapacity = capacity(
+	on(Hall, "id"),
+	weigh(duration("booked")),
+	within(0n, duration("span")),
+	on(Session, "hall")
 )
 
 const statements = [
@@ -113,21 +129,30 @@ const statements = [
 	sigmaContainment,
 	psiContainment,
 	bijection,
-	ceilingWindow,
-	exclusionWindow,
-	exactWindow,
-	rangeWindow,
-	floorWindow,
-	psiTargetWindow,
-	literalGauntletWindow
+	ceilingCapacity,
+	exclusionCapacity,
+	exactCapacity,
+	rangeCapacity,
+	floorCapacity,
+	psiTargetCapacity,
+	literalGauntletCapacity,
+	devicePoolContainment,
+	sessionHallContainment,
+	powerBudget,
+	weightedFloor,
+	calendarCapacity
 ]
 
-const Golden = schema("Golden", { Status, Kind, Holder, Account, Booking, Slot, SavingsTerms }, statements)
+const Golden = schema(
+	"Golden",
+	{ Status, Kind, Holder, Account, Booking, Slot, SavingsTerms, Pool, Device, Hall, Session },
+	statements
+)
 
 /**
  * The ψ-on-closed fixtures (PRD-K1): a payload-tier closed vocabulary
  * ψ-selected by its own column as a statement face — one containment and
- * one window over `Grade(id | mastered == true)`, and NO handle literal
+ * one capacity law over `Grade(id | mastered == true)`, and NO handle literal
  * anywhere (a handle literal resolves through the law-computed newtype,
  * which lands in K4; the ψ selection itself is a plain bool literal and
  * resolves against the sealed columns today).
@@ -142,8 +167,8 @@ const Grade = closed(
 )
 const Certificate = relation("Certificate", { id: u64.fresh, grade: Grade.id })
 const closedPsiContainment = contained(on(Certificate, "grade"), on(Grade.where({ mastered: true }), "id"))
-const closedPsiWindow = window(on(Grade.where({ mastered: true }), "id"), atMost(1n), on(Certificate, "grade"))
-const Mastery = schema("Mastery", { Grade, Certificate }, [closedPsiContainment, closedPsiWindow])
+const closedPsiCapacity = capacity(on(Grade.where({ mastered: true }), "id"), within(0n, 1n), on(Certificate, "grade"))
+const Mastery = schema("Mastery", { Grade, Certificate }, [closedPsiContainment, closedPsiCapacity])
 
 /** One expected materialized slot: the form tag and the canonical spelling. */
 interface Slot {
@@ -158,8 +183,8 @@ function kindTag(statement: Statement): StatementKindTag {
 			return "functionality"
 		case "containment":
 			return "containment"
-		case "window":
-			return "cardinality"
+		case "capacity":
+			return "capacity"
 	}
 }
 
@@ -223,19 +248,22 @@ describe("the TS-render ⇄ manifest-render golden", function suite() {
 		assert.equal(renderStatement(pointwiseContainment), "Slot(room, during) <= Booking(room, during)")
 		assert.equal(renderStatement(psiContainment), "SavingsTerms(account) <= Account(id | status == Active)")
 		assert.equal(renderStatement(bijection), "Account(id | kind == Savings) == SavingsTerms(account)")
-		assert.equal(renderStatement(ceilingWindow), "Holder(id) <={0..3} Account(holder)")
-		assert.equal(renderStatement(exclusionWindow), "Holder(id) <={0} Account(holder | flag == false)")
+		assert.equal(renderStatement(ceilingCapacity), "Holder(id) <={0..3} Account(holder)")
+		assert.equal(renderStatement(exclusionCapacity), "Holder(id) <={0} Account(holder | flag == false)")
 		assert.equal(
-			renderStatement(exactWindow),
+			renderStatement(exactCapacity),
 			'Holder(id) <={2} Account(holder | label == "it\\\'s \\"w\\teird\\"\\n\\\\e\\u{301}")'
 		)
-		assert.equal(renderStatement(rangeWindow), "Holder(id) <={1..4} Account(holder | score == -42)")
-		assert.equal(renderStatement(floorWindow), "Holder(id) <={2..*} Account(holder | kind == {Checking, Savings})")
-		assert.equal(renderStatement(psiTargetWindow), "Account(id | flag == true) <={0..1} SavingsTerms(account)")
+		assert.equal(renderStatement(rangeCapacity), "Holder(id) <={1..4} Account(holder | score == -42)")
+		assert.equal(renderStatement(floorCapacity), "Holder(id) <={2..*} Account(holder | kind == {Checking, Savings})")
+		assert.equal(renderStatement(psiTargetCapacity), "Account(id | flag == true) <={0..1} SavingsTerms(account)")
 		assert.equal(
-			renderStatement(literalGauntletWindow),
+			renderStatement(literalGauntletCapacity),
 			'Holder(id) <={0..5} Account(holder | weight == 7, tag == b"b\\x00\\xff\\"", active == -3..9)'
 		)
+		assert.equal(renderStatement(powerBudget), "Pool(id) <=[watts]{0..supply} Device(pool)")
+		assert.equal(renderStatement(weightedFloor), "Pool(id) <=[watts]{1..*} Device(pool)")
+		assert.equal(renderStatement(calendarCapacity), "Hall(id) <=[Duration(booked)]{0..Duration(span)} Session(hall)")
 	})
 
 	test("every materialized slot's manifest spelling equals the SDK render", function golden() {

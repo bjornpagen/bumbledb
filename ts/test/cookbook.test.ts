@@ -3,7 +3,7 @@
  * idioms by PRD-K7, swept to the 0.4.0 host idiom — handle names as string
  * literals, native `switch` dispatch, the record-table idiom — by PRD-H6;
  * the fingerprints never moved: spellings are not the theory).
- * `ts/COOKBOOK.md` carries the engine cookbook's 30
+ * `ts/COOKBOOK.md` carries the engine cookbook's 32
  * recipes (`bumbledb/docs/cookbook.md`) translated to the structural API,
  * and THIS file is what keeps them true: every recipe's schema is
  * constructed here through the public surface (so it compiles, cast-free),
@@ -38,9 +38,11 @@ import {
 	allen,
 	bool,
 	bytes,
+	capacity,
 	closed,
 	contained,
 	Db,
+	duration,
 	eq,
 	i64,
 	interval,
@@ -53,12 +55,15 @@ import {
 	pointIn,
 	program,
 	query,
+	ref,
 	relation,
 	renderStatement,
 	schema,
 	str,
 	u64,
-	v
+	v,
+	weigh,
+	within
 } from "#index.ts"
 import { native } from "#native.ts"
 
@@ -94,7 +99,7 @@ const GOLDENS_HEADER = `# ts/test/fixtures/cookbook-fingerprints.txt — the per
 # sorted by recipe number.
 #
 # Each value is the recipe theory's engine-computed schema fingerprint —
-# blake3 over the canonical descriptor bytes (label \`bumbledb-schema-v4\`),
+# blake3 over the canonical descriptor bytes (label \`bumbledb-schema-v5\`),
 # never syntax, never spellings. BOTH cookbook suites read this ONE file:
 #   ts/test/cookbook.test.ts                 (SDK constructions, hashed across the FFI)
 #   crates/bumbledb-query/tests/cookbook.rs  (schema! constructions, hashed in-process)
@@ -1204,9 +1209,73 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 		assert.ok(mutated.ok, "the keyed read-modify-write commits")
 	})
 
-	test("the goldens fixture pins exactly the 30 recipes, one line each", function goldensShape() {
+	test("31. the power budget — the weighted capacity law with the pinned-column idiom", async function r31() {
+		const Pool = relation("Pool", { id: u64.fresh, supply: u64 })
+		const Model = relation("Model", { id: u64.fresh, watts: u64 })
+		const Device = relation("Device", {
+			id: u64.fresh,
+			pool: u64,
+			model: u64,
+			watts: u64
+		})
+
+		const Racks = schema("Racks", { Pool, Model, Device }, [
+			contained(on(Device, "pool"), on(Pool, "id")),
+			// The pinned column: a device's watts provably equals its model's —
+			// the two-column containment IS the join, stated as a law (ruling 6:
+			// path weights refuse naming exactly this pair).
+			key(Model, ["id", "watts"]),
+			contained(on(Device, ["model", "watts"]), on(Model, ["id", "watts"])),
+			// Σ watts over a pool's devices stays within the pool's own supply:
+			capacity(on(Pool, "id"), weigh("watts"), within(0n, ref("supply")), on(Device, "pool"))
+		])
+
+		// The capacity operator renders positionally — the dossier's ruled spelling:
+		assert.equal(
+			renderStatement(capacity(on(Pool, "id"), weigh("watts"), within(0n, ref("supply")), on(Device, "pool"))),
+			"Pool(id) <=[watts]{0..supply} Device(pool)",
+			"the weighted dependent-bound law renders the operator form"
+		)
+
+		const { db } = await admit("r31-power-budget", Racks)
+
+		// utilization is a query, never a column (the ledger's law, recipe 19):
+		const draw = query(Racks).rule((r) => {
+			const { id, pool, watts } = v(Device)
+			return r.match(Device, { id, pool, watts }).find({ pool, total: r.sum(watts) })
+		})
+		assert.ok(db.prepare(draw))
+	})
+
+	test("32. calendar capacity — the Duration weight against the Duration bound", async function r32() {
+		const Room = relation("Room", { id: u64.fresh, span: interval(i64) })
+		const Booking = relation("Booking", {
+			id: u64.fresh,
+			room: u64,
+			booked: interval(i64)
+		})
+
+		const Rooms = schema("Rooms", { Room, Booking }, [
+			contained(on(Booking, "room"), on(Room, "id")),
+			// The pointwise key forbids double-booking (recipe 1); the capacity
+			// law bounds the TOTAL. Different laws — a schema usually wants both.
+			key(Booking, ["room", "booked"]),
+			capacity(on(Room, "id"), weigh(duration("booked")), within(0n, duration("span")), on(Booking, "room"))
+		])
+
+		const { db } = await admit("r32-calendar-capacity", Rooms)
+
+		// the booked time per room, read back:
+		const booked = query(Rooms).rule((r) => {
+			const { id, room, booked } = v(Booking)
+			return r.match(Booking, { id, room, booked }).find({ room, total: r.sum(r.duration(booked)) })
+		})
+		assert.ok(db.prepare(booked))
+	})
+
+	test("the goldens fixture pins exactly the 32 recipes, one line each", function goldensShape() {
 		const expected: string[] = []
-		for (let recipe = 1; recipe <= 30; recipe += 1) {
+		for (let recipe = 1; recipe <= 32; recipe += 1) {
 			expected.push(`r${String(recipe).padStart(2, "0")}`)
 		}
 		assert.deepEqual([...witnessed.keys()].sort(), expected, "every recipe admitted exactly one pinned theory")

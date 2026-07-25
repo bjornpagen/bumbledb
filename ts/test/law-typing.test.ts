@@ -14,7 +14,7 @@
  * one-generator wall at BOTH tiers (the named, self-locating `ClassWall`
  * compile verdict — generators and the offending paired slots pinned by
  * `Equal` — and the construction throw naming the statement), with the
- * re-homed cross-domain construction probes (contained/mirrors/window
+ * re-homed cross-domain construction probes (contained/mirrors/capacity
  * unifying two mints, the closed-id generator included); the runtime/type
  * agreement diff (a GENERATED golden the compiler pins against the schema
  * type's `classes` while `deepStrictEqual` pins it against the runtime
@@ -31,15 +31,15 @@
 import assert from "node:assert/strict"
 import { describe, test } from "node:test"
 
+import { within } from "#capacity.ts"
 import { closed } from "#closed.ts"
-import { atMost } from "#count.ts"
 import { on } from "#face.ts"
 import { str, u64 } from "#fields.ts"
 import type { ClassWall, LawfulStatements } from "#law.ts"
 import { lower } from "#lower.ts"
 import { relation } from "#relation.ts"
 import { schema } from "#schema.ts"
-import { contained, mirrors, renderStatement, window } from "#statements.ts"
+import { capacity, contained, mirrors, renderStatement } from "#statements.ts"
 
 /** The identity-strength equality probe (the standard dual-function trick). */
 type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false
@@ -160,10 +160,10 @@ describe("the one-generator wall — two mints cannot share a carrier (the re-ho
 		}, /two mints cannot share a carrier.*Left\(id\) == Right\(id\)/)
 	})
 
-	test("a window's grouping join unifying two fresh coordinates refuses at both tiers", function windowWall() {
+	test("a capacity statement's grouping join unifying two fresh coordinates refuses at both tiers", function capacityWall() {
 		assert.throws(function runtimeTwin() {
-			// @ts-expect-error — the ClassWall verdict through the window's positionwise pairing
-			schema("Broken", { Left, Right }, [window(on(Left, "id"), atMost(3n), on(Right, "id"))])
+			// @ts-expect-error — the ClassWall verdict through the capacity statement's positionwise pairing
+			schema("Broken", { Left, Right }, [capacity(on(Left, "id"), within(0n, 3n), on(Right, "id"))])
 		}, /two mints cannot share a carrier.*Left\(id\) <=\{0\.\.3\} Right\(id\)/)
 	})
 
@@ -202,7 +202,7 @@ describe("the runtime/type agreement and the wire", function agreement() {
 			contained(on(Account, "holder"), on(Holder, "id")),
 			contained(on(Account, "kind"), on(Vocab, "id")),
 			mirrors(on(Account, "id"), on(Terms, "account")),
-			window(on(Holder, "id"), atMost(3n), on(Account, "holder"))
+			capacity(on(Holder, "id"), within(0n, 3n), on(Account, "holder"))
 		])
 	}
 

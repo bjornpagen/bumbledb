@@ -9,7 +9,7 @@
  * returns; the `db.X` sugar obeying the symmetry rule; violations arriving
  * as typed VALUES `===`-matched to their SDK statement constants with
  * canonical spellings equal to `renderStatement` output (containment +
- * window together in one commit; the FD alone in another — the engine's
+ * capacity together in one commit; the FD alone in another — the engine's
  * key phase preempts the statement phase, so no single commit can cite all
  * three forms); `writeWitnessed` retrying self-inflicted contention,
  * surfacing rejections as data, and aborting without any commit on
@@ -28,9 +28,9 @@ import * as errors from "@superbuilders/errors"
 import type { Db as DbValue, InsertFact, ReadScope, Tx } from "#index.ts"
 import {
 	abandon,
-	atMost,
 	bool,
 	bytes,
+	capacity,
 	closed,
 	contained,
 	Db,
@@ -49,7 +49,7 @@ import {
 	u64,
 	v,
 	WITNESSED_ATTEMPT_CAP,
-	window
+	within
 } from "#index.ts"
 
 const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bumbledb-db-"))
@@ -82,14 +82,14 @@ const holderContainment = contained(on(Account, "holder"), on(Holder, "id"))
 /** The closed-reference companion the `kind == Savings` handle spelling resolves through. */
 const kindContainment = contained(on(Account, "kind"), on(Kind, "id"))
 const savingsMirror = mirrors(on(Account.where({ kind: "Savings" }), "id"), on(SavingsTerms, "account"))
-const holderWindow = window(on(Holder, "id"), atMost(3n), on(Account, "holder"))
+const holderCapacity = capacity(on(Holder, "id"), within(0n, 3n), on(Account, "holder"))
 
 const Ledger = schema("Ledger", { Kind, Holder, Account, SavingsTerms, Audit }, [
 	savingsKey,
 	holderContainment,
 	kindContainment,
 	savingsMirror,
-	holderWindow
+	holderCapacity
 ])
 
 /** Unwraps a value the surrounding test just proved present. */
@@ -279,7 +279,7 @@ describe("the Db runtime against a real store", function suite() {
 		}, /missing field account/)
 	})
 
-	test("containment + window violations arrive together as ===-matched statement values", function statementViolations() {
+	test("containment + capacity violations arrive together as ===-matched statement values", function statementViolations() {
 		const ada = must(ids.ada)
 		const kurt = must(ids.kurt)
 		const rejected = db.write(function violate(tx) {
@@ -303,15 +303,15 @@ describe("the Db runtime against a real store", function suite() {
 		assert.equal(orphan.relation, "Account")
 		assert.equal(orphan.fact.holder, kurt)
 
-		const windowViolation = must(
+		const capacityViolation = must(
 			rejected.violations.find(function byKind(violation) {
-				return violation.kind === "cardinality"
+				return violation.kind === "capacity"
 			})
 		)
-		assert.strictEqual(windowViolation.statement, holderWindow)
-		assert.equal(windowViolation.canonical, renderStatement(holderWindow))
-		assert.equal(windowViolation.count, 4n)
-		const parent = must(windowViolation.facts[0])
+		assert.strictEqual(capacityViolation.statement, holderCapacity)
+		assert.equal(capacityViolation.canonical, renderStatement(holderCapacity))
+		assert.equal(capacityViolation.measure, 4n)
+		const parent = must(capacityViolation.facts[0])
 		assert.equal(parent.relation, "Holder")
 		assert.equal(parent.fact.id, ada)
 	})

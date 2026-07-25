@@ -9,7 +9,7 @@
  *
  * The shape mirrors the audited primer schema's proportions: generator
  * chains (`ref` containments walking the relation roster), closed-vocab
- * references (`kind` containments), cardinality windows over classed
+ * references (`kind` containments), capacity laws over classed
  * slots, generator-less interval bijections (`at` mirrors — the
  * least-member/set-tier classes at scale), pointwise composite
  * containments, and σ-selected self-containments.
@@ -34,13 +34,13 @@ function generate(): string {
 	lines.push(" * at the bottom prove the map COMPUTED (never silently widened).")
 	lines.push(" */")
 	lines.push("")
+	lines.push('import { within } from "#capacity.ts"')
 	lines.push('import { closed } from "#closed.ts"')
-	lines.push('import { atMost } from "#count.ts"')
 	lines.push('import { on } from "#face.ts"')
 	lines.push('import { i64, interval, str, u64 } from "#fields.ts"')
 	lines.push('import { relation } from "#relation.ts"')
 	lines.push('import { schema } from "#schema.ts"')
-	lines.push('import { contained, mirrors, window } from "#statements.ts"')
+	lines.push('import { capacity, contained, mirrors } from "#statements.ts"')
 	lines.push("")
 	lines.push("/** The identity-strength equality probe (the standard dual-function trick). */")
 	lines.push("type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false")
@@ -74,9 +74,9 @@ function generate(): string {
 	for (let i = 0; i < RELATIONS; i += 1) {
 		statements.push(`contained(on(R${i}, "kind"), on(Vocab${i % VOCABS}, "id"))`)
 	}
-	// 20 windows over classed slots: R{i}.id groups at most 3 R{i+1}.ref
+	// 20 capacity laws over classed slots: R{i}.id groups at most 3 R{i+1}.ref
 	for (let i = 0; i < 20; i += 1) {
-		statements.push(`window(on(R${i}, "id"), atMost(3n), on(R${i + 1}, "ref"))`)
+		statements.push(`capacity(on(R${i}, "id"), within(0n, 3n), on(R${i + 1}, "ref"))`)
 	}
 	// 20 generator-less interval bijections: R{i}.at == R{i+1}.at
 	for (let i = 0; i < 20; i += 1) {

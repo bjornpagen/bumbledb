@@ -275,7 +275,7 @@ describe("the repair loop against the real theory", function repairLoop() {
 				tx.delete(grp, row)
 			}
 			const only = tx.insert(grp, { sheet: must(ids.sheet), label: "g-one", context: "c" })
-			/** Only one of the two objectives is re-covered: the other's exactly(1) window drops to 0. */
+			/** Only one of the two objectives is re-covered: the other's within(1n) capacity law drops to 0. */
 			tx.insert(grpMember, { grp: only.id, objective: must(ids.objectives[0]) })
 		})
 		const violations = rejected(written)
@@ -286,7 +286,7 @@ describe("the repair loop against the real theory", function repairLoop() {
 			laws.partitionTotality,
 			"the violation carries the IDENTICAL statement value the diag-map ===-matches"
 		)
-		assert.equal(violation.kind, "cardinality")
+		assert.equal(violation.kind, "capacity")
 		assert.ok(violation.facts.length > 0, "the uncovered parent is cited")
 		/** Rejection is data and the store is untouched — the repair loop's premise. */
 		assert.deepEqual(db.scan(grp), grpsBefore)
@@ -318,7 +318,7 @@ describe("the repair loop against the real theory", function repairLoop() {
 		assert.equal(db.scan(grpMember).length, 2)
 	})
 
-	test("a misauthored hierarchy program is rejected citing BOTH the parent-count window and the entry-form ban by identity", function rejectedAuthor() {
+	test("a misauthored hierarchy program is rejected citing BOTH the parent-count capacity law and the entry-form ban by identity", function rejectedAuthor() {
 		const written = db.write(function badAuthor(tx) {
 			const programRow = tx.insert(program, {
 				grp: must(ids.planGrps[0]),
@@ -347,7 +347,10 @@ describe("the repair loop against the real theory", function repairLoop() {
 				return violation.statement
 			})
 		)
-		assert.ok(statements.has(laws.hierarchyParentCount), "the exactly-one HigherOrderNoun window is cited by identity")
+		assert.ok(
+			statements.has(laws.hierarchyParentCount),
+			"the exactly-one HigherOrderNoun capacity law is cited by identity"
+		)
 		const regularNounEntryBan = must(
 			entryFormBans.find(function byToi(ban) {
 				return ban.toi === "RegularNoun"

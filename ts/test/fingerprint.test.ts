@@ -7,7 +7,8 @@
  * set folds at validate), `==` mirrors including a generator-less pair
  * (`SavingsTerms == AuditTrail` over columns no mint touches — the class
  * laws name that class by least coordinate and NEVER leak into the hash),
- * and every legal window spelling — built here through the SDK's
+ * and every legal capacity spelling — unit, weighted, Duration-weighted,
+ * dependent-bound — built here through the SDK's
  * constructors and, in `crate/src/fingerprint_lock.rs`, through the
  * engine's `schema!` macro. Each side independently asserts its
  * engine-computed fingerprint equals the ONE pinned constant, so
@@ -26,15 +27,15 @@ import * as os from "node:os"
 import * as path from "node:path"
 import { after, describe, test } from "node:test"
 
+import { duration, ref, weigh, within } from "#capacity.ts"
 import { closed } from "#closed.ts"
-import { atLeast, atMost, between, exactly, none } from "#count.ts"
 import { on } from "#face.ts"
 import { bool, bytes, i64, interval, span, str, u64 } from "#fields.ts"
 import { lower } from "#lower.ts"
 import { native } from "#native.ts"
 import { relation } from "#relation.ts"
 import { schema } from "#schema.ts"
-import { contained, key, mirrors, window } from "#statements.ts"
+import { capacity, contained, key, mirrors } from "#statements.ts"
 
 const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bumbledb-fingerprint-"))
 const storeDir = path.join(tmpRoot, "store")
@@ -72,7 +73,7 @@ const Kind = closed(
  * `as HolderId`/`as AccountId` sorts have no SDK spelling: here the classes
  * are LAW-COMPUTED from the statement list, and the fingerprint agrees
  * because newtypes are dropped before hashing on both hosts
- * (`bumbledb-schema-v4` hashes canonical descriptor bytes, never labels) —
+ * (`bumbledb-schema-v5` hashes canonical descriptor bytes, never labels) —
  * the neutrality law this lock re-pins under class names.
  */
 const Holder = relation("Holder", {
@@ -90,6 +91,9 @@ const Account = relation("Account", {
 	lease: interval(u64, 7n)
 })
 const SavingsTerms = relation("SavingsTerms", { account: u64, rate_bps: i64 })
+/** The weighted-capacity extension (dossier § 4.2): the dependent-bound and Duration encodings enter the lock's surface. */
+const Pool = relation("Pool", { id: u64.fresh, supply: u64, open: interval(u64) })
+const Device = relation("Device", { id: u64.fresh, pool: u64, watts: u64, ran: interval(u64) })
 const AuditTrail = relation("AuditTrail", { account: u64, rate_bps: i64 })
 
 /**
@@ -102,7 +106,7 @@ const AuditTrail = relation("AuditTrail", { account: u64, rate_bps: i64 })
  * ("SavingsTerms.rate_bps"); the pinned hex proving the class laws hash
  * NOTHING (classes are law-born names, never descriptor bytes).
  */
-const CrossHost = schema("CrossHost", { Status, Kind, Holder, Account, SavingsTerms, AuditTrail }, [
+const CrossHost = schema("CrossHost", { Status, Kind, Holder, Account, SavingsTerms, AuditTrail, Pool, Device }, [
 	key(SavingsTerms, ["account"]),
 	contained(on(Account, "holder"), on(Holder, "id")),
 	contained(on(Account, "kind"), on(Kind, "id")),
@@ -111,11 +115,16 @@ const CrossHost = schema("CrossHost", { Status, Kind, Holder, Account, SavingsTe
 	contained(on(Holder.where({ name: ["alpha", "beta"] }), "id"), on(Holder, "id")),
 	contained(on(Holder.where({ at: span(5n, RAY_END), digest: DIGEST }), "id"), on(Holder, "id")),
 	contained(on(SavingsTerms.where({ rate_bps: -3n }), "account"), on(SavingsTerms, "account")),
-	window(on(Holder, "id"), atMost(3n), on(Account, "holder")),
-	window(on(Holder, "id"), atLeast(2n), on(Account.where({ status: "Frozen" }), "holder")),
-	window(on(Holder, "id"), exactly(1n), on(Account.where({ status: "Open" }), "holder")),
-	window(on(Holder, "id"), none, on(Account.where({ kind: "Failed" }), "holder")),
-	window(on(Holder, "id"), between(1n, 4n), on(Account.where({ kind: "DirectPass" }), "holder")),
+	capacity(on(Holder, "id"), within(0n, 3n), on(Account, "holder")),
+	capacity(on(Holder, "id"), within(2n, "*"), on(Account.where({ status: "Frozen" }), "holder")),
+	capacity(on(Holder, "id"), within(1n), on(Account.where({ status: "Open" }), "holder")),
+	capacity(on(Holder, "id"), within(0n), on(Account.where({ kind: "Failed" }), "holder")),
+	capacity(on(Holder, "id"), within(1n, 4n), on(Account.where({ kind: "DirectPass" }), "holder")),
+	contained(on(Device, "pool"), on(Pool, "id")),
+	capacity(on(Pool, "id"), weigh("watts"), within(0n, ref("supply")), on(Device, "pool")),
+	capacity(on(Pool, "id"), weigh("watts"), within(0n, 100n), on(Device, "pool")),
+	capacity(on(Pool, "id"), weigh("watts"), within(1n, "*"), on(Device, "pool")),
+	capacity(on(Pool, "id"), weigh(duration("ran")), within(0n, duration("open")), on(Device, "pool")),
 	contained(on(Account, "kind"), on(Kind.where({ mastered: true }), "id")),
 	key(SavingsTerms, ["account", "rate_bps"]),
 	key(AuditTrail, ["account", "rate_bps"]),

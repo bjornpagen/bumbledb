@@ -29,7 +29,16 @@ import type {
 	TermIr,
 	Violation
 } from "#native.ts"
-import type { LiteralSetSpec, LiteralSpec, StatementSpec, ValueSpec, ValueTypeSpec, WindowSpec } from "#spec.ts"
+import type {
+	CapacityBoundSpec,
+	CapacityWindowSpec,
+	LiteralSetSpec,
+	LiteralSpec,
+	StatementSpec,
+	ValueSpec,
+	ValueTypeSpec,
+	WeightSpec
+} from "#spec.ts"
 
 /** Identity-strength type equality (the house probe). */
 type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false
@@ -41,9 +50,11 @@ const ROSTERS = {
 	intervalElement: ["u64", "i64"],
 	literal: ["handle", "value"],
 	literalSet: ["one", "many"],
-	window: ["exact", "range", "floor"],
-	statement: ["fd", "containment", "cardinality"],
-	statementKind: ["functionality", "containment", "cardinality"],
+	capacityWindow: ["exact", "range", "floor"],
+	capacityBound: ["lit", "field", "durationField"],
+	weight: ["unit", "field", "durationField"],
+	statement: ["fd", "containment", "capacity"],
+	statementKind: ["functionality", "containment", "capacity"],
 	term: ["var", "param", "paramSet", "literal", "measure"],
 	aggregateOp: ["sum", "min", "max", "count", "countDistinct", "argMax", "argMin", "pack"],
 	headTerm: ["var", "aggregate"],
@@ -63,7 +74,9 @@ type Pins = [
 	Expect<Equal<(typeof ROSTERS.intervalElement)[number], Extract<ValueTypeSpec, { element: unknown }>["element"]>>,
 	Expect<Equal<(typeof ROSTERS.literal)[number], LiteralSpec["kind"]>>,
 	Expect<Equal<(typeof ROSTERS.literalSet)[number], LiteralSetSpec["kind"]>>,
-	Expect<Equal<(typeof ROSTERS.window)[number], WindowSpec["kind"]>>,
+	Expect<Equal<(typeof ROSTERS.capacityWindow)[number], CapacityWindowSpec["kind"]>>,
+	Expect<Equal<(typeof ROSTERS.capacityBound)[number], CapacityBoundSpec["kind"]>>,
+	Expect<Equal<(typeof ROSTERS.weight)[number], WeightSpec["kind"]>>,
 	Expect<Equal<(typeof ROSTERS.statement)[number], StatementSpec["kind"]>>,
 	Expect<Equal<(typeof ROSTERS.statementKind)[number], StatementKindTag>>,
 	Expect<Equal<(typeof ROSTERS.term)[number], TermIr["kind"]>>,

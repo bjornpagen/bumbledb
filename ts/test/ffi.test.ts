@@ -34,7 +34,7 @@ const EDGE = 3
 /**
  * The test theory: every field type (bool, u64 incl. fresh, i64, str,
  * bytes<4>, interval<i64>), both closed tiers (bare Status, columned Kind),
- * and all three statement forms (fd, containment, cardinality window with a
+ * and all three statement forms (fd, containment, capacity with a
  * handle-literal selection).
  */
 const spec: SchemaSpec = {
@@ -114,13 +114,21 @@ const spec: SchemaSpec = {
 			bidirectional: false
 		},
 		{
-			kind: "cardinality",
+			kind: "capacity",
 			target: {
 				relation: "Person",
 				projection: ["id"],
 				selection: [["status", { kind: "one", literal: { kind: "handle", handle: "Frozen" } }]]
 			},
-			window: { kind: "exact", n: 0n },
+			weight: { kind: "unit" },
+			window: { kind: "exact", n: { kind: "lit", value: 0n } },
+			source: { relation: "Edge", projection: ["from"], selection: [] }
+		},
+		{
+			kind: "capacity",
+			target: { relation: "Person", projection: ["id"], selection: [] },
+			weight: { kind: "field", field: "weight" },
+			window: { kind: "range", lo: { kind: "lit", value: 0n }, hi: { kind: "lit", value: 1000n } },
 			source: { relation: "Edge", projection: ["from"], selection: [] }
 		}
 	]
@@ -350,14 +358,14 @@ describe("ffi round trip against a real store", function suite() {
 		})
 		assert.deepEqual(ghostFrom, { name: "from", value: ghost })
 
-		const window = outcome.violations.find(function byKind(violation) {
-			return violation.kind === "cardinality"
+		const capacityViolation = outcome.violations.find(function byKind(violation) {
+			return violation.kind === "capacity"
 		})
-		assert.ok(window, "the window citation is present")
-		assert.equal(window.count, 1n)
-		assert.equal(window.canonical, spellingOf(manifest, window.statementId))
-		assert.equal(window.facts[0]?.relation, "Person", "the convicted parent is the cited fact")
-		const parentId = window.facts[0]?.fields.find(function field(entry) {
+		assert.ok(capacityViolation, "the capacity citation is present")
+		assert.equal(capacityViolation.measure, 1n)
+		assert.equal(capacityViolation.canonical, spellingOf(manifest, capacityViolation.statementId))
+		assert.equal(capacityViolation.facts[0]?.relation, "Person", "the convicted parent is the cited fact")
+		const parentId = capacityViolation.facts[0]?.fields.find(function field(entry) {
 			return entry.name === "id"
 		})
 		assert.deepEqual(parentId, { name: "id", value: p4 })

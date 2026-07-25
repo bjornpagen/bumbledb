@@ -8,13 +8,13 @@
  * at the bottom prove the map COMPUTED (never silently widened).
  */
 
+import { within } from "#capacity.ts"
 import { closed } from "#closed.ts"
-import { atMost } from "#count.ts"
 import { on } from "#face.ts"
 import { i64, interval, str, u64 } from "#fields.ts"
 import { relation } from "#relation.ts"
 import { schema } from "#schema.ts"
-import { contained, mirrors, window } from "#statements.ts"
+import { capacity, contained, mirrors } from "#statements.ts"
 
 /** The identity-strength equality probe (the standard dual-function trick). */
 type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false
@@ -169,26 +169,26 @@ const LawScale = schema(
 		contained(on(R29, "kind"), on(Vocab5, "id")),
 		contained(on(R30, "kind"), on(Vocab6, "id")),
 		contained(on(R31, "kind"), on(Vocab7, "id")),
-		window(on(R0, "id"), atMost(3n), on(R1, "ref")),
-		window(on(R1, "id"), atMost(3n), on(R2, "ref")),
-		window(on(R2, "id"), atMost(3n), on(R3, "ref")),
-		window(on(R3, "id"), atMost(3n), on(R4, "ref")),
-		window(on(R4, "id"), atMost(3n), on(R5, "ref")),
-		window(on(R5, "id"), atMost(3n), on(R6, "ref")),
-		window(on(R6, "id"), atMost(3n), on(R7, "ref")),
-		window(on(R7, "id"), atMost(3n), on(R8, "ref")),
-		window(on(R8, "id"), atMost(3n), on(R9, "ref")),
-		window(on(R9, "id"), atMost(3n), on(R10, "ref")),
-		window(on(R10, "id"), atMost(3n), on(R11, "ref")),
-		window(on(R11, "id"), atMost(3n), on(R12, "ref")),
-		window(on(R12, "id"), atMost(3n), on(R13, "ref")),
-		window(on(R13, "id"), atMost(3n), on(R14, "ref")),
-		window(on(R14, "id"), atMost(3n), on(R15, "ref")),
-		window(on(R15, "id"), atMost(3n), on(R16, "ref")),
-		window(on(R16, "id"), atMost(3n), on(R17, "ref")),
-		window(on(R17, "id"), atMost(3n), on(R18, "ref")),
-		window(on(R18, "id"), atMost(3n), on(R19, "ref")),
-		window(on(R19, "id"), atMost(3n), on(R20, "ref")),
+		capacity(on(R0, "id"), within(0n, 3n), on(R1, "ref")),
+		capacity(on(R1, "id"), within(0n, 3n), on(R2, "ref")),
+		capacity(on(R2, "id"), within(0n, 3n), on(R3, "ref")),
+		capacity(on(R3, "id"), within(0n, 3n), on(R4, "ref")),
+		capacity(on(R4, "id"), within(0n, 3n), on(R5, "ref")),
+		capacity(on(R5, "id"), within(0n, 3n), on(R6, "ref")),
+		capacity(on(R6, "id"), within(0n, 3n), on(R7, "ref")),
+		capacity(on(R7, "id"), within(0n, 3n), on(R8, "ref")),
+		capacity(on(R8, "id"), within(0n, 3n), on(R9, "ref")),
+		capacity(on(R9, "id"), within(0n, 3n), on(R10, "ref")),
+		capacity(on(R10, "id"), within(0n, 3n), on(R11, "ref")),
+		capacity(on(R11, "id"), within(0n, 3n), on(R12, "ref")),
+		capacity(on(R12, "id"), within(0n, 3n), on(R13, "ref")),
+		capacity(on(R13, "id"), within(0n, 3n), on(R14, "ref")),
+		capacity(on(R14, "id"), within(0n, 3n), on(R15, "ref")),
+		capacity(on(R15, "id"), within(0n, 3n), on(R16, "ref")),
+		capacity(on(R16, "id"), within(0n, 3n), on(R17, "ref")),
+		capacity(on(R17, "id"), within(0n, 3n), on(R18, "ref")),
+		capacity(on(R18, "id"), within(0n, 3n), on(R19, "ref")),
+		capacity(on(R19, "id"), within(0n, 3n), on(R20, "ref")),
 		mirrors(on(R0, "at"), on(R1, "at")),
 		mirrors(on(R1, "at"), on(R2, "at")),
 		mirrors(on(R2, "at"), on(R3, "at")),
