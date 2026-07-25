@@ -437,3 +437,81 @@ fn closed_relation_views_stay_warm_across_generations() {
     let (builds, hits, image_builds, rows) = run(&txn);
     assert_eq!((builds, hits, image_builds, rows), (0, 1, 0, 2));
 }
+
+/// Lane I2 — the planner and its selectivity ladder, formerly dark under
+/// the single `PLAN_DP`/`STATS` spans: the DP interior records one
+/// densify span and one table-fill span carrying the counted candidate
+/// work (never a span per candidate), and every planner row-count read
+/// and distinct-ladder resolution surfaces as a point event. Presence
+/// AND containment: the DP spans nest inside `PLAN_DP`, the ladder events
+/// inside `STATS`, all inside the outer `PREPARE`.
+#[test]
+fn prepare_lights_the_planner_dp_and_selectivity_ladder() {
+    use crate::obs;
+
+    let dir = TempDir::new("prepared-trace-planner");
+    let schema = schema();
+    let env = Environment::create(dir.path(), &schema).expect("create");
+    // Four rows, three under account 7 — the row count the reads pin.
+    insert_postings(
+        &env,
+        &schema,
+        &[(1, 7, "a", 100), (2, 7, "b", -50), (3, 9, "c", 200), (4, 7, "d", 50)],
+    );
+    let cache = ImageCache::new(&schema);
+    let txn = env.read_txn().expect("txn");
+
+    obs::start_capture();
+    let _prepared = prepare(&txn, &cache, &schema, &by_account_query()).expect("prepare");
+    let events = obs::finish_capture();
+
+    let one = |name: &'static str| -> &obs::TraceEvent {
+        let hits: Vec<&obs::TraceEvent> = events.iter().filter(|e| e.name == name).collect();
+        assert_eq!(hits.len(), 1, "exactly one {name}");
+        hits[0]
+    };
+    let within = |inner: &obs::TraceEvent, outer: &obs::TraceEvent| {
+        assert!(
+            inner.start_ns >= outer.start_ns
+                && inner.start_ns + inner.dur_ns <= outer.start_ns + outer.dur_ns,
+            "{} nests inside {}",
+            inner.name,
+            outer.name,
+        );
+    };
+
+    // The DP interior, under PLAN_DP. A single-atom query has one
+    // participating occurrence and a trivial DP — no popcount-≥2
+    // subproblem, so the fill pass honestly counts zero candidate work.
+    let plan_dp = one(obs::names::PLAN_DP);
+    let densify = one(obs::names::PLAN_DENSIFY);
+    let fill = one(obs::names::PLAN_FILL);
+    assert_eq!(densify.a0, 1, "one participating occurrence densified");
+    assert_eq!((fill.a0, fill.a1), (0, 0), "trivial DP evaluates no candidate");
+    within(densify, plan_dp);
+    within(fill, plan_dp);
+
+    // The selectivity reads, under STATS. One planner row-count read of
+    // Posting pins the four stored rows; the distinct ladder resolves the
+    // floor rung (no key, no resident image at prepare, no containment)
+    // for every field it touches.
+    let stats = one(obs::names::STATS);
+    let rows = one(obs::names::RELATION_ROWS);
+    assert_eq!((rows.a0, rows.a1), (u64::from(POSTING.0), 4), "Posting's stored rows");
+    within(rows, stats);
+    let ladder: Vec<&obs::TraceEvent> = events
+        .iter()
+        .filter(|e| e.name == obs::names::DISTINCT_LADDER)
+        .collect();
+    assert!(!ladder.is_empty(), "the distinct ladder resolved at least once");
+    for rung in &ladder {
+        assert_eq!(rung.a0, 3, "the floor rung — cold prepare, no key/image/containment");
+        within(rung, stats);
+    }
+
+    // Everything under the outer PREPARE span.
+    let prepare_span = one(obs::names::PREPARE);
+    for e in &events {
+        within(e, prepare_span);
+    }
+}

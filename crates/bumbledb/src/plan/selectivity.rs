@@ -34,10 +34,17 @@ pub(crate) fn relation_rows(
     schema: &Schema,
     relation: bumbledb_theory::schema::RelationId,
 ) -> crate::error::Result<u64> {
-    match schema.relation(relation).extension() {
-        Some(rows) => Ok(u64::try_from(rows.len()).expect("bounded extension")),
-        None => read::row_count(txn, relation),
-    }
+    let rows = match schema.relation(relation).extension() {
+        Some(rows) => u64::try_from(rows.len()).expect("bounded extension"),
+        None => read::row_count(txn, relation)?,
+    };
+    crate::obs::event(
+        crate::obs::names::RELATION_ROWS,
+        crate::obs::Category::Storage,
+        u64::from(relation.0),
+        rows,
+    );
+    Ok(rows)
 }
 
 /// The distinct-count floor for an Eq selection on a field nothing else
@@ -307,7 +314,9 @@ fn distinct_of(
         .iter()
         .any(|id| schema.key(*id).projection.as_ref() == [field]);
     if keyed {
-        return Ok(rows.max(1));
+        let distinct = rows.max(1);
+        ladder_event(0, distinct);
+        return Ok(distinct);
     }
     if let Some(image) = image {
         let span = image.span(field);
@@ -324,7 +333,9 @@ fn distinct_of(
                 .max()
                 .expect("at least one column"),
         };
-        return Ok(distinct.max(1));
+        let distinct = distinct.max(1);
+        ladder_event(1, distinct);
+        return Ok(distinct);
     }
     // A field under several unconditional containments is bounded by
     // each target's row count — fold to the tightest (the min), never
@@ -340,12 +351,30 @@ fn distinct_of(
         }
     }
     if let Some(bound) = containment_bound {
-        return Ok(bound.min(rows).max(1));
+        let distinct = bound.min(rows).max(1);
+        ladder_event(2, distinct);
+        return Ok(distinct);
     }
-    Ok(match &descriptor.field(field).value_type {
+    let distinct = match &descriptor.field(field).value_type {
         bumbledb_theory::schema::ValueType::Bool => 2,
         _ => DEFAULT_EQ_DISTINCT,
-    })
+    };
+    ladder_event(3, distinct);
+    Ok(distinct)
+}
+
+/// Records one [`DISTINCT_LADDER`](crate::obs::names::DISTINCT_LADDER)
+/// point event: `a0` the rung that fired (0 key, 1 image, 2 containment,
+/// 3 floor), `a1` the distinct count it resolved. Inert when the `trace`
+/// feature is off (the ZST-off obs seam).
+#[inline]
+fn ladder_event(rung: u64, distinct: u64) {
+    crate::obs::event(
+        crate::obs::names::DISTINCT_LADDER,
+        crate::obs::Category::Prepare,
+        rung,
+        distinct,
+    );
 }
 
 #[cfg(test)]

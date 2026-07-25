@@ -26,7 +26,12 @@ pub fn plan(normalized: &NormalizedQuery, schema: &Schema, stats: &[OccStats]) -
         n <= MAX_OCCURRENCES,
         "validation rejects over-cap queries at the boundary"
     );
-    let (occs, allen) = densify(normalized, &participating, schema, stats);
+    let (occs, allen) = {
+        let mut span = crate::obs::span(crate::obs::names::PLAN_DENSIFY, crate::obs::Category::Prepare);
+        let densified = densify(normalized, &participating, schema, stats);
+        span.set_args(n as u64, densified.1.len() as u64);
+        densified
+    };
 
     // Exhaustive left-deep DP; the cost is the sum of every prefix estimate
     // including the base relation's rows (the root iteration is real work,
@@ -49,15 +54,23 @@ pub fn plan(normalized: &NormalizedQuery, schema: &Schema, stats: &[OccStats]) -
         let low = usize::try_from(mask.trailing_zeros()).expect("small");
         mask_vars[mask as usize] = mask_vars[(mask & (mask - 1)) as usize] | occs[low].vars;
     }
+    let mut fill_span = crate::obs::span(crate::obs::names::PLAN_FILL, crate::obs::Category::Prepare);
+    // Counted, never per-candidate spanned: the DP's inner work is one
+    // point-event pair (`a0` subproblems, `a1` candidate evaluations), the
+    // doctrine's pruned-candidate COUNT (docs/architecture/40-execution.md).
+    let mut subproblems = 0u64;
+    let mut candidates = 0u64;
     for mask in 1..=full {
         if mask.count_ones() < 2 {
             continue;
         }
+        subproblems += 1;
         let mut candidate: Option<State> = None;
         for last in 0..n {
             if mask & (1 << last) == 0 {
                 continue;
             }
+            candidates += 1;
             let prev_mask = mask & !(1 << last);
             let prev = best[prev_mask as usize].expect("smaller masks filled first");
             let est = estimate(prev.est, mask_vars[prev_mask as usize], &occs, &allen, last);
@@ -77,6 +90,8 @@ pub fn plan(normalized: &NormalizedQuery, schema: &Schema, stats: &[OccStats]) -
         }
         best[mask as usize] = candidate;
     }
+    fill_span.set_args(subproblems, candidates);
+    fill_span.end();
 
     // Reconstruct the order back-to-front.
     let mut order = vec![OccId(0); n];

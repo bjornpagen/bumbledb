@@ -86,6 +86,34 @@ pub mod names {
     /// COLT construction at prepare. (-, -)
     pub const BUILD_COLTS: &str = "build_colts";
 
+    // The DP planner's interior (docs/architecture/40-execution.md, § the
+    // planner), lit under [`PLAN_DP`]. Pass granularity — never a span per
+    // subset-DP candidate (the mask loop is O(2ⁿ·n), the doctrine's
+    // per-tuple line); the candidate work is a single counted point event.
+
+    /// Densifying participating occurrences + Allen residuals into the
+    /// DP's bitset form. (participating occurrences, cross-atom Allen
+    /// residuals densified)
+    pub const PLAN_DENSIFY: &str = "plan_densify";
+    /// The exhaustive left-deep subset DP's table-fill pass, over every
+    /// mask of popcount ≥ 2. (subproblems filled, `(last, prev)` candidate
+    /// pairs evaluated) — the second arg is the pruned-candidate COUNT the
+    /// doctrine allows in place of a per-candidate event.
+    pub const PLAN_FILL: &str = "plan_fill";
+    /// One planner row-count read (docs/architecture/50-storage.md § the
+    /// planner's `S` read) — an ordinary relation's stored `S` counter, a
+    /// closed relation's sealed-extension length. Fires on the plan path
+    /// (per participating EDB occurrence, and per unconditional-containment
+    /// target inside the distinct ladder) and the staleness path (per
+    /// pin). (relation id, rows) — a storage read, not a per-tuple label.
+    pub const RELATION_ROWS: &str = "relation_rows";
+    /// One resolution of the per-field distinct-count ladder
+    /// (`plan/selectivity.rs`), one per (occurrence, field) at prepare —
+    /// the rung that fired rides `a0`: `0` a single-field key (⇒ rows),
+    /// `1` a resident image's exact count, `2` a containment target bound,
+    /// `3` the documented floor. (rung, distinct count)
+    pub const DISTINCT_LADDER: &str = "distinct_ladder";
+
     /// One prepared execution. (answers, -)
     pub const EXECUTE: &str = "execute";
     /// One rule of the loop, under the execute span — the index rides in
@@ -160,6 +188,13 @@ pub mod names {
     /// the tail rows decoded (docs/architecture/50-storage.md § the
     /// image cache). (relation id, slab bytes)
     pub const IMAGE_APPEND: &str = "image_append";
+    /// The columnar fact decode inside an image build/append/synthesis —
+    /// the batch decode that hid inside [`IMAGE_BUILD`] / [`IMAGE_APPEND`]:
+    /// one sequential scan's worth of per-fact decode into the column slabs,
+    /// one span per build (append decodes only the tail rows). Batch
+    /// granularity — the per-fact kernel underneath is never spanned.
+    /// (rows decoded, fact width in bytes)
+    pub const DECODE_BATCH: &str = "decode_batch";
     /// An untouched relation's image carried forward to the reader's
     /// generation — the same Arc, re-keyed. (relation id, -)
     pub const CACHE_CARRY: &str = "cache_carry";
@@ -310,6 +345,12 @@ pub mod names {
     /// One residency-gated phase-1.5 prefetch pass ran.
     /// (survivors hinted, probed colt's forced footprint in bytes)
     pub const PREFETCH_PASS: &str = "prefetch_pass";
+
+    /// One predicate-scan kernel invocation over a whole image column
+    /// (`exec/kernel/filter.rs`) — the `std::simd` survivor scans, lit at
+    /// the batch entry, never per lane. Fires once per kernel-shaped
+    /// filter the view-build path dispatches. (lanes scanned, survivors)
+    pub const KERNEL_FILTER: &str = "kernel_filter";
 }
 
 /// The trace-mode fast clock, under the measured cost model: a raw
