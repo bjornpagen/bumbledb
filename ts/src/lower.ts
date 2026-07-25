@@ -98,10 +98,11 @@ function lowerStatement(statement: Statement): StatementSpec {
 				target: lowerFace(data.target),
 				bidirectional: data.bidirectional
 			}
-		case "window":
+		case "capacity":
 			return {
-				kind: "cardinality",
+				kind: "capacity",
 				target: lowerFace(data.target),
+				weight: data.weight,
 				window: data.window,
 				source: lowerFace(data.source)
 			}

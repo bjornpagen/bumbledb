@@ -306,7 +306,7 @@ function schema<const Rels extends SchemaRelations, const Stmts extends readonly
 		 */
 		if (!isStatement(statement)) {
 			throw errors.new(
-				`schema ${name}: a statement is minted only by key/contained/mirrors/window — a structural literal skips the construction-time arity and roster walls`
+				`schema ${name}: a statement is minted only by key/contained/mirrors/capacity — a structural literal skips the construction-time arity and roster walls`
 			)
 		}
 		const rendered = renderStatement(statement)

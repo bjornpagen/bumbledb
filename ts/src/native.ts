@@ -175,7 +175,7 @@ type ConditionTreeIr =
 	| { readonly kind: "or"; readonly children: readonly ConditionTreeIr[] }
 
 /** A statement's form tag. */
-type StatementKindTag = "functionality" | "containment" | "cardinality"
+type StatementKindTag = "functionality" | "containment" | "capacity"
 
 /** One field's name, dense id, and structural type. */
 interface ManifestField {
@@ -231,14 +231,17 @@ interface ViolationFact {
  * One violated statement of a rejected commit, rendered to plain data: the
  * statement id (materialized order), form tag, CANONICAL spelling (the
  * engine's one renderer — a bijection on legal statements, paste-back-able),
- * the form's direction/count payloads, and the decoded offending facts.
+ * the form's direction/measure payloads, and the decoded offending facts.
+ * `measure` is the capacity form's witnessed group total — the engine
+ * accumulates in u128 and the value crosses WHOLE as bigint (C3:
+ * truncation is unrepresentable).
  */
 interface Violation {
 	readonly statementId: number
 	readonly kind: StatementKindTag
 	readonly canonical: string
 	readonly direction?: "sourceUnsatisfied" | "targetRequired"
-	readonly count?: bigint
+	readonly measure?: bigint
 	readonly facts: readonly ViolationFact[]
 }
 

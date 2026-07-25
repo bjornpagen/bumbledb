@@ -2,7 +2,7 @@
  * Dependency statements as typed values (`docs/architecture/30-dependencies.md`
  * owns the semantics; `docs/architecture/70-api.md` the surface): the FD key
  * form, conditional containment, the bidirectional `==` abbreviation, and
- * the cardinality window. A statement value is opaque and inert — no
+ * the capacity statement. A statement value is opaque and inert — no
  * methods, no fluent continuation: a fact about the theory, not a builder.
  *
  * Every field reference is checked against the relation it names in the
@@ -35,12 +35,21 @@
  */
 
 import * as errors from "@superbuilders/errors"
+import {
+	type BoundsOnTarget,
+	type CapacityWeight,
+	type CapacityWindow,
+	isCapacityWeight,
+	isCapacityWindow,
+	type UnitWindowBan,
+	unitWeight,
+	type WeightOnSource
+} from "#capacity.ts"
 import { isClosedMember, sealedFieldOf } from "#closed.ts"
-import type { Count } from "#count.ts"
 import { type AnyFace, type FaceData, renderFace, type SameArity, type SameShapes } from "#face.ts"
 import { type ClosedRoster, rosterOf } from "#fields.ts"
 import type { AnyRelation, RelationFields } from "#relation.ts"
-import { renderWindow, type WindowSpec } from "#spec.ts"
+import { type CapacityWindowSpec, renderCapacityWindow, renderWeight, type WeightSpec } from "#spec.ts"
 
 /** A `key()` statement's runtime description — owner and projection carried at exact types. */
 interface KeyData<R extends AnyRelation, Projection extends readonly string[]> {
@@ -63,20 +72,26 @@ interface ContainmentData<Src extends FaceData = FaceData, Tgt extends FaceData 
 	readonly bidirectional: boolean
 }
 
-/** A window statement's runtime description — target-left, faces at exact types like {@link ContainmentData}. */
-interface WindowData<Tgt extends FaceData = FaceData, Src extends FaceData = FaceData> {
-	readonly kind: "window"
+/**
+ * A capacity statement's runtime description — target-left, in the
+ * operator's own order (C2: target, weight, window, source), faces at
+ * exact types like {@link ContainmentData}. The weight is ALWAYS present
+ * (C4 — `unit` is a case, not an absence).
+ */
+interface CapacityData<Tgt extends FaceData = FaceData, Src extends FaceData = FaceData> {
+	readonly kind: "capacity"
 	readonly target: Tgt
-	readonly window: WindowSpec
+	readonly weight: WeightSpec
+	readonly window: CapacityWindowSpec
 	readonly source: Src
 }
 
 /** One statement's runtime description, tagged by form. */
-type StatementData = KeyData<AnyRelation, readonly string[]> | ContainmentData | WindowData
+type StatementData = KeyData<AnyRelation, readonly string[]> | ContainmentData | CapacityData
 
 /**
  * The admission brand — a module-private symbol, deliberately unexported
- * (the `count.ts` pattern): `Statement` is a public structural type, so
+ * (the `capacity.ts` pattern): `Statement` is a public structural type, so
  * without this brand a forged plain object of the right shape would walk
  * past the construction-time arity and roster walls into `schema()` — and
  * the roster wall is the one the engine cannot backstop (the wire carries
@@ -115,9 +130,9 @@ interface ContainedStatement<Src extends FaceData, Tgt extends FaceData> extends
 	readonly data: ContainmentData<Src, Tgt>
 }
 
-/** A window statement as a TYPED value — the {@link ContainedStatement} of the window form. */
-interface WindowStatement<Tgt extends FaceData, Src extends FaceData> extends Statement {
-	readonly data: WindowData<Tgt, Src>
+/** A capacity statement as a TYPED value — the {@link ContainedStatement} of the capacity form. */
+interface CapacityStatement<Tgt extends FaceData, Src extends FaceData> extends Statement {
+	readonly data: CapacityData<Tgt, Src>
 }
 
 /**
@@ -266,29 +281,138 @@ function mirrors<A extends AnyFace, B extends AnyFace>(
 }
 
 /**
- * `B(Y|ψ) <={window} A(X|φ)` — the cardinality window. READ CAREFULLY: the
- * LEFT face is the window's TARGET, the per-group parent (B-family,
- * target-left — macro parity), and the RIGHT face is the counted source.
- * `window(on(Holder, "id"), atMost(3n), on(Account, "holder"))` says: each
- * Holder id groups at most three Account rows by holder. The two faces
- * pair by arity AND structural shape ({@link SameShapes}), exactly as
- * containment — the grouping join reads the same positionwise field
- * pairing.
+ * The runtime twin of the weight source wall ({@link WeightOnSource}): the
+ * weighed field must be a u64-encoded position of the SOURCE's own row
+ * (a signed weight would break the polarity scheduler — the illegal weight
+ * is unrepresentable, not checked), an interval position for the
+ * `Duration(...)` form. Judged at CONSTRUCTION for untyped callers; the
+ * engine's `validate_capacity` stays the final authority.
  */
-function window<B extends AnyFace, A extends AnyFace>(
+function assertWeightOnSource(weight: WeightSpec, source: FaceData, statement: Statement): void {
+	if (weight.kind === "unit") {
+		return
+	}
+	const field = sealedFieldOf(source.owner, weight.field)
+	if (field === undefined) {
+		throw errors.new(
+			`${source.owner.name} has no field ${weight.field} — a weight names a field of the SOURCE's own row (the weight vocabulary is closed at the row) — ${renderStatement(statement)}`
+		)
+	}
+	if (weight.kind === "field" && field.kind !== "u64") {
+		throw errors.new(
+			`${source.owner.name}.${weight.field} is ${field.kind}, not u64 — a weight is u64-encoded (a signed weight would break the polarity scheduler: an insert could lower a sum) — ${renderStatement(statement)}`
+		)
+	}
+	if (weight.kind === "durationField" && field.kind !== "interval") {
+		throw errors.new(
+			`${source.owner.name}.${weight.field} is ${field.kind}, not an interval — Duration(...) weighs an interval field's measure — ${renderStatement(statement)}`
+		)
+	}
+}
+
+/**
+ * The runtime twin of the dependent-bound target wall
+ * ({@link BoundsOnTarget}): a `ref()` bound must name a u64 field of the
+ * TARGET's own row, a `duration()` bound an interval field — bound names
+ * resolve against the target's FULL roster (C1), never the projection.
+ * `within()` mints dependent bounds in the hi slot only (C6), but the walk
+ * here is total over the window's bound slots.
+ */
+function assertBoundsOnTarget(window: CapacityWindowSpec, target: FaceData, statement: Statement): void {
+	const bounds = window.kind === "range" ? [window.lo, window.hi] : [window.kind === "exact" ? window.n : window.lo]
+	for (const bound of bounds) {
+		if (bound.kind === "lit") {
+			continue
+		}
+		const field = sealedFieldOf(target.owner, bound.field)
+		if (field === undefined) {
+			throw errors.new(
+				`${target.owner.name} has no field ${bound.field} — a dependent bound names a field of the TARGET's own row (bound names resolve against the target's full roster) — ${renderStatement(statement)}`
+			)
+		}
+		if (bound.kind === "field" && field.kind !== "u64") {
+			throw errors.new(
+				`${target.owner.name}.${bound.field} is ${field.kind}, not u64 — a dependent bound reads a u64 field of the TARGET row (Duration(...) is the interval-measure spelling) — ${renderStatement(statement)}`
+			)
+		}
+		if (bound.kind === "durationField" && field.kind !== "interval") {
+			throw errors.new(
+				`${target.owner.name}.${bound.field} is ${field.kind}, not an interval — Duration(...) bounds by an interval field's measure — ${renderStatement(statement)}`
+			)
+		}
+	}
+}
+
+/**
+ * `B(Y|ψ) <=[w]{window} A(X|φ)` — the capacity statement, the one
+ * extension form: per ψ-selected target fact, the group of φ-selected
+ * source facts sharing its key tuple must have its MEASURE (Σ weight; the
+ * unit weight IS the count instance) inside the window. READ CAREFULLY:
+ * the LEFT face is the TARGET, the per-group parent (B-family, target-left
+ * — macro parity), and the RIGHT face is the weighed source. Two
+ * overloads mirror the operator positionally (target, weight?, window,
+ * source): `capacity(on(Holder, "id"), within(0n, 3n), on(Account,
+ * "holder"))` says each Holder id groups at most three Account rows;
+ * `capacity(on(Pool, "id"), weigh("watts"), within(0n, ref("supply")),
+ * on(Device, "pool"))` bounds each pool's summed draw by the pool's own
+ * row. The two faces pair by arity AND structural shape
+ * ({@link SameShapes}), exactly as containment — the grouping join reads
+ * the same positionwise field pairing. The weight-sensitive `{1..*}` ban
+ * rides the UNIT overload only ({@link UnitWindowBan} — on a weighted
+ * statement "positive total" is a different, weaker law than containment).
+ */
+function capacity<B extends AnyFace, W extends CapacityWindow, A extends AnyFace>(
 	target: B,
-	count: Count,
+	window: W & UnitWindowBan<W> & BoundsOnTarget<W, B>,
 	source: A & SameArity<B, A> & SameShapes<B, A>
-): WindowStatement<B["data"], A["data"]> {
-	const data: WindowData<B["data"], A["data"]> = Object.freeze({
-		kind: "window",
+): CapacityStatement<B["data"], A["data"]>
+function capacity<B extends AnyFace, M extends CapacityWeight, W extends CapacityWindow, A extends AnyFace>(
+	target: B,
+	weight: M & WeightOnSource<M, A>,
+	window: W & BoundsOnTarget<W, B>,
+	source: A & SameArity<B, A> & SameShapes<B, A>
+): CapacityStatement<B["data"], A["data"]>
+function capacity(
+	target: AnyFace,
+	second: unknown,
+	third: unknown,
+	fourth?: AnyFace
+): CapacityStatement<FaceData, FaceData> {
+	const weighted = fourth !== undefined
+	const windowValue = weighted ? third : second
+	const source = weighted ? fourth : (third as AnyFace)
+	if (!isCapacityWindow(windowValue)) {
+		throw errors.new(
+			"a capacity window is minted only by within() — a structural literal skips the ban table (the canonical-utterance law)"
+		)
+	}
+	let weight: WeightSpec = unitWeight
+	if (weighted) {
+		if (!isCapacityWeight(second)) {
+			throw errors.new(
+				"a capacity weight is minted only by weigh() — a structural literal skips the row-local weight wall"
+			)
+		}
+		weight = second.weight
+	}
+	const window = windowValue.window
+	if (weight.kind === "unit" && window.kind === "floor" && window.lo.kind === "lit" && window.lo.value === 1n) {
+		throw errors.new(
+			"`{1..*}` on the unit instance says only what the bare containment says — drop the annotation and write the containment: contained(source, target)"
+		)
+	}
+	const data: CapacityData = Object.freeze({
+		kind: "capacity",
 		target: target.data,
-		window: count.window,
+		weight,
+		window,
 		source: source.data
 	})
 	const statement = Object.freeze({ data, [admitted]: true as const })
 	assertArityAgreement(data.source, data.target, statement)
 	assertRosterAgreement(data.source, data.target, statement)
+	assertWeightOnSource(weight, data.source, statement)
+	assertBoundsOnTarget(window, data.target, statement)
 	return statement
 }
 
@@ -298,9 +422,11 @@ function window<B extends AnyFace, A extends AnyFace>(
  * same shapes for violations) — `Account(id) -> Account`,
  * `Account(holder) <= Holder(id)`,
  * `Account(id | kind == Savings) == SavingsTerms(account)`,
- * `Holder(id) <={0..3} Account(holder)` — so TS-side errors and
+ * `Holder(id) <={0..3} Account(holder)`,
+ * `Pool(id) <=[watts]{0..supply} Device(pool)` — so TS-side errors and
  * engine-side diagnostics read identically. A renderer, never a parser:
- * strings are output-only.
+ * strings are output-only. The unit weight renders nothing — the count
+ * utterance falls out of the one printer.
  */
 function renderStatement(statement: Statement): string {
 	const data = statement.data
@@ -311,19 +437,19 @@ function renderStatement(statement: Statement): string {
 			const operator = data.bidirectional ? "==" : "<="
 			return `${renderFace(data.source)} ${operator} ${renderFace(data.target)}`
 		}
-		case "window":
-			return `${renderFace(data.target)} <=${renderWindow(data.window)} ${renderFace(data.source)}`
+		case "capacity":
+			return `${renderFace(data.target)} <=${renderWeight(data.weight)}${renderCapacityWindow(data.window)} ${renderFace(data.source)}`
 	}
 }
 
 export type {
+	CapacityData,
+	CapacityStatement,
 	ContainedStatement,
 	ContainmentData,
 	KeyData,
 	KeyStatement,
 	Statement,
-	StatementData,
-	WindowData,
-	WindowStatement
+	StatementData
 }
-export { contained, isStatement, key, mirrors, renderStatement, window }
+export { capacity, contained, isStatement, key, mirrors, renderStatement }

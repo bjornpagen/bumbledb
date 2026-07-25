@@ -33,7 +33,7 @@
  *
  * Every paired face of the statement tuple unions its positionwise field
  * slots: containment (ψ-selected targets included — a selection changes
- * pairing not at all), the `==` bijection, and window source/target pairs.
+ * pairing not at all), the `==` bijection, and capacity source/target pairs.
  * `key()` statements pair nothing (an FD constrains one relation's own
  * rows; it identifies no carriers).
  *
@@ -141,7 +141,8 @@ type ZipCoords<
 
 /**
  * One statement's slot pairs: containments (bidirectional included — pair
- * unions are symmetric) and windows pair their two faces positionwise;
+ * unions are symmetric) and capacity statements pair their two faces
+ * positionwise;
  * `key()` pairs nothing. A widened face (owner name or projection no
  * longer literal) contributes nothing — the runtime map stays complete.
  */

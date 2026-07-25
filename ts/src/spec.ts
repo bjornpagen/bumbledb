@@ -72,10 +72,10 @@ type LiteralSetSpec =
 	| { readonly kind: "many"; readonly literals: readonly LiteralSpec[] }
 
 /**
- * One side of a containment or window: `R(fields… | field == literal…)`,
- * all names. `projection` is π in the statement's written order (positional
- * pairing with the other side); `selection` is σ as (field, literal-or-set)
- * pairs, read conjunctively.
+ * One side of a containment or capacity statement:
+ * `R(fields… | field == literal…)`, all names. `projection` is π in the
+ * statement's written order (positional pairing with the other side);
+ * `selection` is σ as (field, literal-or-set) pairs, read conjunctively.
  */
 interface SideSpec {
 	readonly relation: string
@@ -84,16 +84,43 @@ interface SideSpec {
 }
 
 /**
- * A cardinality window's bounds — the canonical-utterance law's surviving
- * spellings only, since the SDK's `Count` constructors make every banned
- * spelling unwritable or a construction error: `exact` is `{n}` (`{0}` the
- * exclusion), `range` is `{lo..hi}` with lo < hi, `floor` is `{lo..*}` with
- * lo ≥ 2.
+ * One capacity bound: a non-negative literal, a u64 field of the TARGET
+ * row (the dependent bound — per-group capacity read at judge time), or
+ * the interval-measure of a TARGET-row field (`Duration(span)`). Names,
+ * not ids — the spec is the name-level wire; the engine resolves bound
+ * names against the target's FULL roster (C1), never the projection.
  */
-type WindowSpec =
-	| { readonly kind: "exact"; readonly n: bigint }
-	| { readonly kind: "range"; readonly lo: bigint; readonly hi: bigint }
-	| { readonly kind: "floor"; readonly lo: bigint }
+type CapacityBoundSpec =
+	| { readonly kind: "lit"; readonly value: bigint }
+	| { readonly kind: "field"; readonly field: string }
+	| { readonly kind: "durationField"; readonly field: string }
+
+/**
+ * A capacity statement's weight — a TOTAL sum (C4: `unit` is a case, not
+ * an absence): the count instance (`unit`), a u64 field of the SOURCE row
+ * (`field`), or a SOURCE-row interval's measure (`durationField`). The
+ * wire always carries it — a unit statement crosses as `{ kind: "unit" }`,
+ * never by omission.
+ */
+type WeightSpec =
+	| { readonly kind: "unit" }
+	| { readonly kind: "field"; readonly field: string }
+	| { readonly kind: "durationField"; readonly field: string }
+
+/**
+ * A capacity statement's window — the canonical-utterance law's surviving
+ * spellings, per-aggregate where weight-sensitive (design § 6), since the
+ * SDK's `within()` mint makes every banned spelling unwritable or a
+ * construction error: `exact` is `{n}` (`{0}` the exclusion on the unit
+ * instance, "total is zero" on a weighted one), `range` is `{lo..hi}` with
+ * lo < hi (`{0..hi}` the canonical ceiling; the hi slot admits a dependent
+ * bound — C6: hi only), `floor` is `{lo..*}` (`{1..*}` legal on weighted
+ * statements only).
+ */
+type CapacityWindowSpec =
+	| { readonly kind: "exact"; readonly n: CapacityBoundSpec }
+	| { readonly kind: "range"; readonly lo: CapacityBoundSpec; readonly hi: CapacityBoundSpec }
+	| { readonly kind: "floor"; readonly lo: CapacityBoundSpec }
 
 /**
  * One field: name, structural type, host newtype name — the field's
@@ -148,8 +175,10 @@ interface RelationSpec {
  * One dependency statement, tagged by form. `==` is not a variant: a
  * bidirectional containment is `containment` with `bidirectional: true`,
  * lowered by the engine to the two adjacent containments (`source <=
- * target` first). `cardinality` is B-family, target-left: the target is the
- * per-group parent, the source is counted.
+ * target` first). `capacity` reads as the operator does (C2 — target,
+ * weight, window, source): the target is the per-group parent, the source
+ * is the weighed side, and the weight is ALWAYS present (`unit` the count
+ * instance).
  */
 type StatementSpec =
 	| { readonly kind: "fd"; readonly relation: string; readonly projection: readonly string[] }
@@ -160,9 +189,10 @@ type StatementSpec =
 			readonly bidirectional: boolean
 	  }
 	| {
-			readonly kind: "cardinality"
+			readonly kind: "capacity"
 			readonly target: SideSpec
-			readonly window: WindowSpec
+			readonly weight: WeightSpec
+			readonly window: CapacityWindowSpec
 			readonly source: SideSpec
 	  }
 
@@ -308,22 +338,58 @@ function renderLiteralSet(set: LiteralSetSpec): string {
 }
 
 /**
- * Renders window bounds in their one canonical spelling: `{n}` exact
- * (`{0}` the exclusion), `{lo..hi}`, `{lo..*}` — the spelling set the
- * engine's renderer emits for sealed statements.
+ * Renders one capacity bound in its one canonical spelling: a literal as
+ * digits, a dependent bound bare by field name, an interval-measure bound
+ * as `Duration(field)` — the spellings the engine's renderer emits.
  */
-function renderWindow(window: WindowSpec): string {
+function renderCapacityBound(bound: CapacityBoundSpec): string {
+	switch (bound.kind) {
+		case "lit":
+			return bound.value.toString()
+		case "field":
+			return bound.field
+		case "durationField":
+			return `Duration(${bound.field})`
+	}
+}
+
+/**
+ * Renders a capacity window in its one canonical spelling: `{n}` exact
+ * (`{0}` the exclusion), `{lo..hi}`, `{lo..*}` — the spelling set the
+ * engine's renderer emits for sealed statements, bounds through
+ * {@link renderCapacityBound}.
+ */
+function renderCapacityWindow(window: CapacityWindowSpec): string {
 	switch (window.kind) {
 		case "exact":
-			return `{${window.n}}`
+			return `{${renderCapacityBound(window.n)}}`
 		case "range":
-			return `{${window.lo}..${window.hi}}`
+			return `{${renderCapacityBound(window.lo)}..${renderCapacityBound(window.hi)}}`
 		case "floor":
-			return `{${window.lo}..*}`
+			return `{${renderCapacityBound(window.lo)}..*}`
+	}
+}
+
+/**
+ * Renders a capacity weight as the operator's bracket: the unit weight
+ * renders NOTHING — the count utterance `<={lo..hi}` falls out of the one
+ * printer, never a second "legacy" arm — a field weight as `[field]`, an
+ * interval measure as `[Duration(field)]`.
+ */
+function renderWeight(weight: WeightSpec): string {
+	switch (weight.kind) {
+		case "unit":
+			return ""
+		case "field":
+			return `[${weight.field}]`
+		case "durationField":
+			return `[Duration(${weight.field})]`
 	}
 }
 
 export type {
+	CapacityBoundSpec,
+	CapacityWindowSpec,
 	ClosedSpec,
 	FieldSpec,
 	LiteralSetSpec,
@@ -335,6 +401,6 @@ export type {
 	StatementSpec,
 	ValueSpec,
 	ValueTypeSpec,
-	WindowSpec
+	WeightSpec
 }
-export { renderLiteral, renderLiteralSet, renderWindow }
+export { renderCapacityBound, renderCapacityWindow, renderLiteral, renderLiteralSet, renderWeight }

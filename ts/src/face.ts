@@ -322,6 +322,7 @@ export type {
 	FaceShapes,
 	FaceSource,
 	OwnerOf,
+	ProjectedShape,
 	SameArity,
 	SameShapes
 }

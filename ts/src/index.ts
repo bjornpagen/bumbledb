@@ -26,6 +26,16 @@
  */
 
 export type {
+	BoundsOnTarget,
+	CapacityWeight,
+	CapacityWindow,
+	DurationRef,
+	FieldRef,
+	UnitWindowBan,
+	WeightOnSource
+} from "#capacity.ts"
+export { duration, ref, weigh, within } from "#capacity.ts"
+export type {
 	AnyClosed,
 	AnySelectedClosed,
 	AxiomRow,
@@ -40,8 +50,6 @@ export type {
 	SelectedClosed
 } from "#closed.ts"
 export { closed } from "#closed.ts"
-export type { Count } from "#count.ts"
-export { atLeast, atMost, between, exactly, none } from "#count.ts"
 export type {
 	Abandon,
 	AbandonedArm,
@@ -81,6 +89,7 @@ export type {
 	FaceShapes,
 	FaceSource,
 	OwnerOf,
+	ProjectedShape,
 	SameArity,
 	SameShapes
 } from "#face.ts"
@@ -181,6 +190,8 @@ export { relation } from "#relation.ts"
 export type { AnySchema, Schema, SchemaRelation, SchemaRelations } from "#schema.ts"
 export { schema } from "#schema.ts"
 export type {
+	CapacityBoundSpec,
+	CapacityWindowSpec,
 	FieldSpec,
 	LiteralSetSpec,
 	LiteralSpec,
@@ -191,17 +202,17 @@ export type {
 	StatementSpec,
 	ValueSpec,
 	ValueTypeSpec,
-	WindowSpec
+	WeightSpec
 } from "#spec.ts"
-export { renderLiteral, renderLiteralSet, renderWindow } from "#spec.ts"
+export { renderCapacityBound, renderCapacityWindow, renderLiteral, renderLiteralSet, renderWeight } from "#spec.ts"
 export type {
+	CapacityData,
+	CapacityStatement,
 	ContainedStatement,
 	ContainmentData,
 	KeyData,
 	KeyStatement,
 	Statement,
-	StatementData,
-	WindowData,
-	WindowStatement
+	StatementData
 } from "#statements.ts"
-export { contained, key, mirrors, renderStatement, window } from "#statements.ts"
+export { capacity, contained, key, mirrors, renderStatement } from "#statements.ts"

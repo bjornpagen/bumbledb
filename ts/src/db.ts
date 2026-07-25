@@ -117,8 +117,10 @@ interface OffendingFact<Rels extends SchemaRelations> {
  * orientation (identical strings; the engine's `render.rs` renders each
  * partner of a mirrored pair as the `==` spelling, never a bare `<=`
  * direction). `direction` (`sourceUnsatisfied` | `targetRequired`) and
- * `count` are the containment/window form payloads, passed through from
- * the engine VERBATIM — `direction` is relative to the violated SLOT's
+ * `measure` are the containment/capacity form payloads, passed through
+ * from the engine VERBATIM (`measure` the capacity form's witnessed group
+ * total — u128-wide, crossing whole as bigint, C3) — `direction` is
+ * relative to the violated SLOT's
  * own orientation, so for a `mirrors` statement it alone cannot say which
  * side of the `==` was violated: the slot identity is carried by
  * `orientation`, present exactly for `mirrors` slots — `written` is the
@@ -131,7 +133,7 @@ interface Violation<Rels extends SchemaRelations> {
 	readonly canonical: string
 	readonly direction?: "sourceUnsatisfied" | "targetRequired"
 	readonly orientation?: "written" | "mirrored"
-	readonly count?: bigint
+	readonly measure?: bigint
 	readonly facts: readonly OffendingFact<Rels>[]
 }
 
@@ -536,10 +538,10 @@ function impliedKeyEntries(theory: AnySchema): StatementEntry[] {
 }
 
 /**
- * One declared statement's materialized slots: a key or window occupies
- * one, a `mirrors` occupies two adjacent slots (the engine lowers `==` to
- * two containments, `source <= target` first), both owned by the one SDK
- * value.
+ * One declared statement's materialized slots: a key or capacity statement
+ * occupies one, a `mirrors` occupies two adjacent slots (the engine lowers
+ * `==` to two containments, `source <= target` first), both owned by the
+ * one SDK value.
  */
 function declaredEntries(statement: Statement): StatementEntry[] {
 	const data = statement.data
@@ -562,8 +564,8 @@ function declaredEntries(statement: Statement): StatementEntry[] {
 			}
 			return [{ kind: "containment", statement, key: undefined }]
 		}
-		case "window": {
-			return [{ kind: "cardinality", statement, key: undefined }]
+		case "capacity": {
+			return [{ kind: "capacity", statement, key: undefined }]
 		}
 	}
 }
@@ -889,7 +891,7 @@ function openDb<Rels extends SchemaRelations>(handle: DbHandle, theory: Schema<R
 			canonical: wire.canonical,
 			direction: wire.direction,
 			orientation: orientationOf(entry.reversed),
-			count: wire.count,
+			measure: wire.measure,
 			facts: Object.freeze(wire.facts.map(offendingFactOf))
 		})
 	}
@@ -912,7 +914,7 @@ function openDb<Rels extends SchemaRelations>(handle: DbHandle, theory: Schema<R
 			)
 		}
 		if (entry.kind !== "functionality" || entry.key === undefined) {
-			throw errors.new("keyed get takes a key() statement — containments and windows key nothing")
+			throw errors.new("keyed get takes a key() statement — containments and capacity statements key nothing")
 		}
 		if (entry.key.owner !== relation.name) {
 			throw errors.new(
