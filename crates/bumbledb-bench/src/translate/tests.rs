@@ -1064,6 +1064,29 @@ fn the_inexpressible_set_is_exactly_the_dependency_judgments() {
         sqlite_expressible(&LaneCase::Judgment(&containment)),
         Err(Inexpressible::ContainmentJudgment)
     );
+
+    // The capacity statement — weighted or unit, the pinned verdict is
+    // equally inexpressible (the SUM is a query, not a typed refusal);
+    // the ledger's own tag-budget entry routes naive-side.
+    let capacity = StatementDescriptor::Capacity {
+        target: Side {
+            relation: ids::POSTING,
+            projection: Box::new([ids::posting::ID]),
+            selection: Box::new([]),
+        },
+        weight: bumbledb::schema::Weight::Field(ids::posting_tag::TAG),
+        lo: 0,
+        hi: Some(bumbledb::schema::Bound::Lit(3)),
+        source: Side {
+            relation: ids::POSTING_TAG,
+            projection: Box::new([ids::posting_tag::POSTING]),
+            selection: Box::new([]),
+        },
+    };
+    assert_eq!(
+        sqlite_expressible(&LaneCase::Judgment(&capacity)),
+        Err(Inexpressible::CapacityJudgment)
+    );
 }
 
 #[test]

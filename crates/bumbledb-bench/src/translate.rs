@@ -217,10 +217,18 @@ pub enum Inexpressible {
     /// draw would test the renderer, not the binding. Naive-only; the
     /// verify harness routes it exactly like `Pack` (finding 086).
     AllenMaskParam,
-    /// A cardinality-window verdict: SQL has no per-parent count-window
-    /// judgment with a pinned statement id — the same class as the other
-    /// two judgment kinds.
-    CardinalityJudgment,
+    /// A capacity verdict: SQL has no per-parent measure-window
+    /// judgment with a pinned statement id — the same class as the
+    /// other two judgment kinds, and the weighted form is exactly as
+    /// inexpressible-as-a-pinned-verdict as the count instance was
+    /// (a `SUM` is a query, not a typed refusal citing a statement).
+    /// The naive model remains the sole capacity oracle in the
+    /// differential and conformance lanes; the one place `SQLite` DOES
+    /// speak the law is a lawful-style enforcement trigger
+    /// (`crate::lawful::enforcement`, `crate::capacity::sqlite` — the
+    /// SUM + correlated-subselect pattern), which prices enforcement,
+    /// never renders the pinned verdict.
+    CapacityJudgment,
     /// A program rule reading its own predicate through two or more
     /// atoms — the non-linear form. `SQLite`'s recursive CTE admits
     /// exactly one reference to the recursive table per arm, and an
@@ -285,8 +293,8 @@ pub fn sqlite_expressible(case: &LaneCase<'_>) -> Result<(), Inexpressible> {
         LaneCase::Judgment(StatementDescriptor::Containment { .. }) => {
             Err(Inexpressible::ContainmentJudgment)
         }
-        LaneCase::Judgment(StatementDescriptor::Cardinality { .. }) => {
-            Err(Inexpressible::CardinalityJudgment)
+        LaneCase::Judgment(StatementDescriptor::Capacity { .. }) => {
+            Err(Inexpressible::CapacityJudgment)
         }
     }
 }

@@ -1174,19 +1174,22 @@ mod citation_set {
     }
 }
 
-// ---------- the extension form (windows) ----------
+// ---------- the extension form (capacity) ----------
 
 mod marks {
     use super::*;
 
     const HOLDER: RelationId = RelationId(0);
     const ACCOUNT: RelationId = RelationId(1);
-    /// Materialized: the `Holder` key (0), the window (1).
+    /// Materialized: the `Holder` key (0), the capacity statement (1).
     const WINDOW: u16 = 1;
 
-    fn window(statement: u16) -> Violation {
-        Violation::Cardinality {
+    /// One expected capacity citation with its witnessed measure — the
+    /// C14 payload every case pins as data.
+    fn capacity(statement: u16, measure: u128) -> Violation {
+        Violation::Capacity {
             statement: StatementId(statement),
+            measure,
         }
     }
 
@@ -1215,7 +1218,11 @@ mod marks {
                     relation: HOLDER,
                     projection: Box::new([FieldId(0)]),
                 },
-                StatementDescriptor::Cardinality {
+                StatementDescriptor::Capacity {
+                    target: side(HOLDER, &[0], &[]),
+                    weight: bumbledb::schema::Weight::Unit,
+                    lo: 1,
+                    hi: Some(bumbledb::schema::Bound::Lit(2)),
                     source: Side {
                         relation: ACCOUNT,
                         projection: Box::new([FieldId(0)]),
@@ -1224,9 +1231,6 @@ mod marks {
                             bumbledb::schema::LiteralSet::One(Value::U64(1)),
                         )]),
                     },
-                    lo: 1,
-                    hi: Some(2),
-                    target: side(HOLDER, &[0], &[]),
                 },
             ],
         }
@@ -1244,7 +1248,7 @@ mod marks {
     }
 
     #[test]
-    fn window_boundaries() {
+    fn capacity_boundaries() {
         run(
             &schema(),
             vec![
@@ -1253,7 +1257,7 @@ mod marks {
                     base: vec![],
                     deletes: vec![],
                     inserts: vec![holder(7)],
-                    verdict: Err(window(WINDOW)),
+                    verdict: Err(capacity(WINDOW, 0)),
                 },
                 Case {
                     name: "one selected child satisfies 1..2",
@@ -1267,7 +1271,7 @@ mod marks {
                     base: vec![holder(7), account(7, 1, 0), account(7, 1, 1)],
                     deletes: vec![],
                     inserts: vec![account(7, 1, 2)],
-                    verdict: Err(window(WINDOW)),
+                    verdict: Err(capacity(WINDOW, 3)),
                 },
                 Case {
                     name: "out-of-sigma children never count",
@@ -1281,7 +1285,7 @@ mod marks {
                     base: vec![holder(7), account(7, 1, 0)],
                     deletes: vec![account(7, 1, 0)],
                     inserts: vec![],
-                    verdict: Err(window(WINDOW)),
+                    verdict: Err(capacity(WINDOW, 0)),
                 },
                 Case {
                     name: "demolishing the whole group releases it",
@@ -1294,14 +1298,14 @@ mod marks {
         );
     }
 
-    /// The window-boundary schema: Holder(id; key) with
+    /// The capacity-boundary schema: Holder(id; key) with
     /// `Holder(id) <={2} Account(holder | kind == 1)` (exactness) and
     /// `Holder(id) <={0} Account(holder | kind == 9)` (the exclusion —
     /// the `{0}` window's naive-parity coverage; the vacuous `0..*`
     /// posture is unrepresentable, rejected at validation as
-    /// `CardinalityVacuousWindow`).
-    /// Materialized: the `Holder` key (0), the `{2}` window (1), the
-    /// `{0}` window (2).
+    /// `CapacityVacuousWindow`).
+    /// Materialized: the `Holder` key (0), the `{2}` statement (1), the
+    /// `{0}` statement (2).
     fn exact_schema() -> SchemaDescriptor {
         SchemaDescriptor {
             relations: vec![
@@ -1325,7 +1329,11 @@ mod marks {
                     relation: HOLDER,
                     projection: Box::new([FieldId(0)]),
                 },
-                StatementDescriptor::Cardinality {
+                StatementDescriptor::Capacity {
+                    target: side(HOLDER, &[0], &[]),
+                    weight: bumbledb::schema::Weight::Unit,
+                    lo: 2,
+                    hi: Some(bumbledb::schema::Bound::Lit(2)),
                     source: Side {
                         relation: ACCOUNT,
                         projection: Box::new([FieldId(0)]),
@@ -1334,11 +1342,12 @@ mod marks {
                             bumbledb::schema::LiteralSet::One(Value::U64(1)),
                         )]),
                     },
-                    lo: 2,
-                    hi: Some(2),
-                    target: side(HOLDER, &[0], &[]),
                 },
-                StatementDescriptor::Cardinality {
+                StatementDescriptor::Capacity {
+                    target: side(HOLDER, &[0], &[]),
+                    weight: bumbledb::schema::Weight::Unit,
+                    lo: 0,
+                    hi: Some(bumbledb::schema::Bound::Lit(0)),
                     source: Side {
                         relation: ACCOUNT,
                         projection: Box::new([FieldId(0)]),
@@ -1347,9 +1356,6 @@ mod marks {
                             bumbledb::schema::LiteralSet::One(Value::U64(9)),
                         )]),
                     },
-                    lo: 0,
-                    hi: Some(0),
-                    target: side(HOLDER, &[0], &[]),
                 },
             ],
         }
@@ -1358,13 +1364,13 @@ mod marks {
     /// The `{n}` exactness window, the `{0}` exclusion, the
     /// empty-parent vacuity, and the delete-then-reinsert seams —
     /// the targeted subfamilies pinning
-    /// `lean/Bumbledb/Cardinality.lean: CardinalityWindow` at its
+    /// `lean/Bumbledb/Capacity.lean: CapacityLaw` at its
     /// boundaries and the delta-restriction seam
     /// (`lean/Bumbledb/Txn/DeltaRestriction.lean:
     /// delta_restricted_commit_sound` — a touched group is re-judged
     /// even when the delta nets to nothing).
     #[test]
-    fn window_exactness_exclusion_and_reinsert_seams() {
+    fn capacity_exactness_exclusion_and_reinsert_seams() {
         run(
             &exact_schema(),
             vec![
@@ -1380,21 +1386,21 @@ mod marks {
                     base: vec![holder(1), account(1, 1, 0), account(1, 1, 1)],
                     deletes: vec![account(1, 1, 1)],
                     inserts: vec![],
-                    verdict: Err(window(1)),
+                    verdict: Err(capacity(1, 1)),
                 },
                 Case {
                     name: "n..n breaks one over (insertion hits the ceiling)",
                     base: vec![holder(1), account(1, 1, 0), account(1, 1, 1)],
                     deletes: vec![],
                     inserts: vec![account(1, 1, 2)],
-                    verdict: Err(window(1)),
+                    verdict: Err(capacity(1, 3)),
                 },
                 Case {
                     name: "the {0} exclusion convicts its first member",
                     base: vec![holder(1), account(1, 1, 0), account(1, 1, 1)],
                     deletes: vec![],
                     inserts: vec![account(1, 9, 0)],
-                    verdict: Err(window(2)),
+                    verdict: Err(capacity(2, 1)),
                 },
                 Case {
                     name: "the {0} exclusion admits everything outside sigma",
@@ -1404,7 +1410,7 @@ mod marks {
                     verdict: Ok(()),
                 },
                 Case {
-                    name: "a window over an absent parent is vacuous",
+                    name: "a capacity law over an absent parent is vacuous",
                     base: vec![],
                     deletes: vec![],
                     inserts: vec![account(3, 1, 0)],
@@ -1422,7 +1428,235 @@ mod marks {
                     base: vec![holder(1), account(1, 1, 0), account(1, 1, 1)],
                     deletes: vec![account(1, 1, 0), account(1, 1, 1)],
                     inserts: vec![account(1, 1, 0)],
-                    verdict: Err(window(1)),
+                    verdict: Err(capacity(1, 1)),
+                },
+            ],
+        );
+    }
+}
+
+// ---------- the weighted capacity subfamilies ----------
+//
+// The § 6 Count/Sum split pinned as DATA (docs/architecture/
+// 30-dependencies.md § capacity statement): zero-weight rows are the
+// semantic point — `Sum` laws are not "count tests plus a multiplier".
+// Every conviction pins its witnessed measure (C14).
+
+mod capacity_measures {
+    use super::*;
+
+    const POOL: RelationId = RelationId(0);
+    const DEVICE: RelationId = RelationId(1);
+
+    fn capacity(statement: u16, measure: u128) -> Violation {
+        Violation::Capacity {
+            statement: StatementId(statement),
+            measure,
+        }
+    }
+
+    /// Pool(id, supply; key id) with the power-budget law
+    /// `Pool(id) <=[watts]{lo..supply} Device(pool)` — the weighted
+    /// fold under a DEPENDENT ceiling read from the parent's own row.
+    /// Materialized: the `Pool` key (0), the capacity statement (1).
+    fn budget_schema(lo: u64) -> SchemaDescriptor {
+        SchemaDescriptor {
+            relations: vec![
+                RelationDescriptor {
+                    extension: None,
+                    name: "Pool".into(),
+                    fields: vec![field("id", ValueType::U64), field("supply", ValueType::U64)],
+                },
+                RelationDescriptor {
+                    extension: None,
+                    name: "Device".into(),
+                    fields: vec![
+                        field("pool", ValueType::U64),
+                        field("watts", ValueType::U64),
+                    ],
+                },
+            ],
+            statements: vec![
+                StatementDescriptor::Functionality {
+                    relation: POOL,
+                    projection: Box::new([FieldId(0)]),
+                },
+                StatementDescriptor::Capacity {
+                    target: side(POOL, &[0], &[]),
+                    weight: bumbledb::schema::Weight::Field(FieldId(1)),
+                    lo,
+                    hi: Some(bumbledb::schema::Bound::TargetField(FieldId(1))),
+                    source: side(DEVICE, &[0], &[]),
+                },
+            ],
+        }
+    }
+
+    fn pool(id: u64, supply: u64) -> (RelationId, Vec<Value>) {
+        (POOL, vec![Value::U64(id), Value::U64(supply)])
+    }
+
+    fn device(pool: u64, watts: u64) -> (RelationId, Vec<Value>) {
+        (DEVICE, vec![Value::U64(pool), Value::U64(watts)])
+    }
+
+    /// The weighted fold against the dependent ceiling: the total is the
+    /// SUM of the weight column, resolved per parent row — pass at the
+    /// exact budget, convict one watt over with the full-walk total as
+    /// the witnessed measure.
+    #[test]
+    fn sum_measures_against_the_dependent_bound() {
+        run(
+            &budget_schema(0),
+            vec![
+                Case {
+                    name: "the exact budget passes (sum == supply)",
+                    base: vec![],
+                    deletes: vec![],
+                    inserts: vec![pool(1, 100), device(1, 60), device(1, 40)],
+                    verdict: Ok(()),
+                },
+                Case {
+                    name: "one watt over the budget convicts with the full sum witnessed",
+                    base: vec![pool(1, 100), device(1, 60), device(1, 40)],
+                    deletes: vec![],
+                    inserts: vec![device(1, 1)],
+                    verdict: Err(capacity(1, 101)),
+                },
+                Case {
+                    name: "lowering the supply on the parent's own row re-judges the group",
+                    base: vec![pool(1, 100), device(1, 60), device(1, 40)],
+                    deletes: vec![pool(1, 100)],
+                    inserts: vec![pool(1, 99)],
+                    verdict: Err(capacity(1, 100)),
+                },
+                Case {
+                    name: "distinct pools budget independently",
+                    base: vec![pool(1, 100), pool(2, 10), device(1, 100)],
+                    deletes: vec![],
+                    inserts: vec![device(2, 10)],
+                    verdict: Ok(()),
+                },
+            ],
+        );
+    }
+
+    /// The § 6 lower-bound footgun as data: `Sum(w) in {1..*}`-shaped
+    /// intent is a POSITIVE-TOTAL law, not an existence claim — a
+    /// zero-weight row exists and the group still convicts at measure
+    /// 0, where the Count instance would have counted it.
+    #[test]
+    fn a_zero_weight_row_does_not_satisfy_a_sum_floor() {
+        run(
+            &budget_schema(1),
+            vec![
+                Case {
+                    name: "a zero-weight device leaves the sum floor broken",
+                    base: vec![],
+                    deletes: vec![],
+                    inserts: vec![pool(1, 100), device(1, 0)],
+                    verdict: Err(capacity(1, 0)),
+                },
+                Case {
+                    name: "one weight-1 device satisfies the positive-total law",
+                    base: vec![],
+                    deletes: vec![],
+                    inserts: vec![pool(1, 100), device(1, 1), device(1, 0)],
+                    verdict: Ok(()),
+                },
+            ],
+        );
+    }
+
+    /// Room(id, span; key id) under the calendar law
+    /// `Room(id) <=[Duration(booked)]{0..Duration(span)} Booking(room)`
+    /// — the interval measure as weight AND as dependent ceiling
+    /// (the R5 machinery spent twice).
+    /// Materialized: the `Room` key (0), the capacity statement (1).
+    fn calendar_schema() -> SchemaDescriptor {
+        SchemaDescriptor {
+            relations: vec![
+                RelationDescriptor {
+                    extension: None,
+                    name: "Room".into(),
+                    fields: vec![field("id", ValueType::U64), field("span", interval())],
+                },
+                RelationDescriptor {
+                    extension: None,
+                    name: "Booking".into(),
+                    fields: vec![field("room", ValueType::U64), field("booked", interval())],
+                },
+            ],
+            statements: vec![
+                StatementDescriptor::Functionality {
+                    relation: POOL,
+                    projection: Box::new([FieldId(0)]),
+                },
+                StatementDescriptor::Capacity {
+                    target: side(POOL, &[0], &[]),
+                    weight: bumbledb::schema::Weight::DurationOf(FieldId(1)),
+                    lo: 0,
+                    hi: Some(bumbledb::schema::Bound::TargetDuration(FieldId(1))),
+                    source: side(DEVICE, &[0], &[]),
+                },
+            ],
+        }
+    }
+
+    fn room(id: u64, start: u64, end: u64) -> (RelationId, Vec<Value>) {
+        (
+            POOL,
+            vec![
+                Value::U64(id),
+                Value::IntervalU64(
+                    bumbledb::Interval::<u64>::new(start, end).expect("nonempty interval"),
+                ),
+            ],
+        )
+    }
+
+    fn booking(room: u64, start: u64, end: u64) -> (RelationId, Vec<Value>) {
+        (
+            DEVICE,
+            vec![
+                Value::U64(room),
+                Value::IntervalU64(
+                    bumbledb::Interval::<u64>::new(start, end).expect("nonempty interval"),
+                ),
+            ],
+        )
+    }
+
+    /// Total booked time per room within the room's own span measure:
+    /// the Duration weight sums `end − start` per booking, the ceiling
+    /// is the span's measure — overlap is NOT the law (two bookings of
+    /// the same hour spend two hours of budget; coverage laws are the
+    /// containment's).
+    #[test]
+    fn duration_weights_measure_total_booked_time() {
+        run(
+            &calendar_schema(),
+            vec![
+                Case {
+                    name: "bookings inside the span's measure commit",
+                    base: vec![],
+                    deletes: vec![],
+                    inserts: vec![room(1, 0, 100), booking(1, 0, 60), booking(1, 60, 100)],
+                    verdict: Ok(()),
+                },
+                Case {
+                    name: "the overspent room convicts with the summed measure witnessed",
+                    base: vec![room(1, 0, 100), booking(1, 0, 60), booking(1, 60, 100)],
+                    deletes: vec![],
+                    inserts: vec![booking(1, 0, 1)],
+                    verdict: Err(capacity(1, 101)),
+                },
+                Case {
+                    name: "duplicate bookings are one fact — the group is a SET",
+                    base: vec![room(1, 0, 100), booking(1, 0, 100)],
+                    deletes: vec![],
+                    inserts: vec![booking(1, 0, 100)],
+                    verdict: Ok(()),
                 },
             ],
         );

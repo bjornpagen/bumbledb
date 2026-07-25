@@ -61,7 +61,7 @@ pub(super) fn count_distinct(b: &mut Builder, rng: &mut Rng) {
             b.bind_var(holder, ids::holder::NAME)
         }
         // bytes<N>: distinct digests — the 32-byte extref (maximal
-        // cardinality), or a pad-boundary tag (widths 8/16/64 rotate:
+        // distinct count), or a pad-boundary tag (widths 8/16/64 rotate:
         // small vocabularies, so distinctness folds real duplicates),
         // optionally per window-group id.
         5 => {

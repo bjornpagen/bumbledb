@@ -14,7 +14,7 @@
 //!   in this world), their membership inlined into the referencing
 //!   CHECK constraints.
 //! - `CREATE ` — a standalone statement (the two triggers: the
-//!   ψ-selected containment and the attempt window — SQL's spelling
+//!   ψ-selected containment and the attempt-count capacity law — SQL's spelling
 //!   where no declarative constraint form exists), appended after the
 //!   tables.
 //! - anything else — a table constraint, inlined into the CREATE TABLE
@@ -33,7 +33,7 @@ use super::{ids, schema};
 pub struct Enforcement {
     /// The statement family, as prose (fresh auto-key, declared key,
     /// closed-vocabulary containment, foreign key, ψ-selected
-    /// containment, cardinality window).
+    /// containment, attempt-count capacity law).
     pub law: &'static str,
     /// The engine statement in schema notation — unique across the map
     /// (the totality test's key).
@@ -138,7 +138,7 @@ pub const MAP: &[Enforcement] = &[
                  1) BEGIN SELECT RAISE(ABORT, 'steer scope requires a Repartition steer'); END",
     },
     Enforcement {
-        law: "cardinality window",
+        law: "attempt-count capacity law",
         notation: "Task(id) <={0..8} Attempt(task)",
         sqlite: "CREATE TRIGGER \"lawful_attempt_window\" BEFORE INSERT ON \"Attempt\" WHEN \
                  (SELECT COUNT(*) FROM \"Attempt\" WHERE \"task\" = NEW.\"task\") >= 8 BEGIN \

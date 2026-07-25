@@ -12,8 +12,8 @@
 
 use bumbledb::Value;
 use bumbledb::schema::{
-    FieldDescriptor, FieldId, Generation, IntervalElement, RelationDescriptor, RelationId, Row,
-    SchemaDescriptor, Side, StatementDescriptor, ValueType,
+    Bound, FieldDescriptor, FieldId, Generation, IntervalElement, RelationDescriptor, RelationId,
+    Row, SchemaDescriptor, Side, StatementDescriptor, ValueType, Weight,
 };
 
 use super::Rng;
@@ -262,20 +262,61 @@ fn random_statement(rng: &mut Rng, relations: &[RelationDescriptor]) -> Statemen
             source: random_side(rng, relations),
             target: random_side(rng, relations),
         },
-        // The cardinality window, bounds structurally free: inverted
-        // windows (`lo > hi`), the `0..*` vacuity, the `1..1` keyed-`==`
-        // shape, and interval-projected sides
-        // (`CardinalityIntervalPosition`) are all a draw away.
-        _ => StatementDescriptor::Cardinality {
-            source: random_side(rng, relations),
-            lo: rng.range(4),
-            hi: if rng.chance(1, 3) {
+        // The capacity statement, weight and bounds structurally free
+        // (C13 — the generator mints the whole surface day one):
+        // inverted literal windows (`lo > hi`), the `0..*` vacuity, the
+        // `1..1` keyed-`==` shape, interval-projected sides
+        // (`CapacityIntervalPosition`), signed/dangling/non-u64 weight
+        // fields (`CapacityWeightNotU64`), Duration weights over scalar
+        // positions (`CapacityWeightNotDuration`), dependent hi-slot
+        // bounds off the target's roster or mis-typed
+        // (`CapacityBoundNotU64` / `CapacityBoundNotDuration`), and the
+        // count-window-vs-Duration-bound dimension mix (C18) are all a
+        // draw away; the engine judges.
+        _ => {
+            let target = random_side(rng, relations);
+            let source = random_side(rng, relations);
+            let weight = random_weight(rng, relations, source.relation);
+            let hi = if rng.chance(1, 3) {
                 None // the `*` spelling
             } else {
-                Some(rng.range(5))
-            },
-            target: random_side(rng, relations),
-        },
+                Some(random_bound(rng, relations, target.relation))
+            };
+            StatementDescriptor::Capacity {
+                target,
+                weight,
+                lo: rng.range(4),
+                hi,
+                source,
+            }
+        }
+    }
+}
+
+/// A structurally-free capacity weight: the unit (count) instance, a
+/// `[field]` measure, or a `[Duration(field)]` measure — the field id
+/// drawn one PAST the source's span so u64, signed, interval, and
+/// dangling positions all reach the typed refusals.
+fn random_weight(rng: &mut Rng, relations: &[RelationDescriptor], source: RelationId) -> Weight {
+    let span = field_span(relations, source) + 1;
+    match rng.range(3) {
+        0 => Weight::Unit,
+        1 => Weight::Field(random_field_id(rng, span)),
+        _ => Weight::DurationOf(random_field_id(rng, span)),
+    }
+}
+
+/// A structurally-free ceiling: literal, dependent u64 field, or
+/// dependent Duration off the TARGET's row — dependent bounds are
+/// hi-slot only by representation (C6: the descriptor's `lo` is a bare
+/// literal), so only the ceiling draws the ident forms; the span is one
+/// past the target's so the dangling-field refusal stays reachable.
+fn random_bound(rng: &mut Rng, relations: &[RelationDescriptor], target: RelationId) -> Bound {
+    let span = field_span(relations, target) + 1;
+    match rng.range(4) {
+        0 | 1 => Bound::Lit(rng.range(5)),
+        2 => Bound::TargetField(random_field_id(rng, span)),
+        _ => Bound::TargetDuration(random_field_id(rng, span)),
     }
 }
 
@@ -421,9 +462,11 @@ mod tests {
     /// structurally-free descriptors through the acceptance gate —
     /// every outcome `Ok` or a typed error, any panic a red run with
     /// its seed named — with the generated surface itself asserted:
-    /// both verdict classes, both classical forms, the cardinality
-    /// window at both spellings (a ceiling and the `*`), and the
-    /// literal-set selections, each reached.
+    /// both verdict classes, both classical forms, the capacity
+    /// statement across its whole minted surface — unit, `[field]`, and
+    /// `[Duration(field)]` weights; a literal ceiling, the `*`, and the
+    /// dependent hi-slot bounds (C13: nothing ships unspellable by the
+    /// generator) — and the literal-set selections, each reached.
     #[test]
     fn the_descriptor_sweep_reaches_every_statement_form_without_panicking() {
         use bumbledb::schema::{LiteralSet, StatementDescriptor};
@@ -434,8 +477,12 @@ mod tests {
         let mut rejected = 0u64;
         let mut functionality = 0u64;
         let mut containment = 0u64;
-        let mut window_bounded = 0u64;
-        let mut window_star = 0u64;
+        let mut capacity_bounded = 0u64;
+        let mut capacity_star = 0u64;
+        let mut weight_unit = 0u64;
+        let mut weight_field = 0u64;
+        let mut weight_duration = 0u64;
+        let mut dependent_bound = 0u64;
         let mut set_selection = 0u64;
         for seed in 0..SWEEP {
             let descriptor = random_descriptor(&mut Rng::new(seed));
@@ -452,11 +499,20 @@ mod tests {
                                 .count() as u64;
                         }
                     }
-                    StatementDescriptor::Cardinality { hi, .. } => {
-                        if hi.is_some() {
-                            window_bounded += 1;
-                        } else {
-                            window_star += 1;
+                    StatementDescriptor::Capacity { weight, hi, .. } => {
+                        match hi {
+                            Some(bound) => {
+                                capacity_bounded += 1;
+                                if !matches!(bound, bumbledb::schema::Bound::Lit(_)) {
+                                    dependent_bound += 1;
+                                }
+                            }
+                            None => capacity_star += 1,
+                        }
+                        match weight {
+                            bumbledb::schema::Weight::Unit => weight_unit += 1,
+                            bumbledb::schema::Weight::Field(_) => weight_field += 1,
+                            bumbledb::schema::Weight::DurationOf(_) => weight_duration += 1,
                         }
                     }
                 }
@@ -478,15 +534,20 @@ mod tests {
             ("rejected", rejected),
             ("functionality", functionality),
             ("containment", containment),
-            ("bounded window", window_bounded),
-            ("star window", window_star),
+            ("bounded capacity", capacity_bounded),
+            ("star capacity", capacity_star),
+            ("unit weight", weight_unit),
+            ("field weight", weight_field),
+            ("duration weight", weight_duration),
+            ("dependent bound", dependent_bound),
             ("set-selection", set_selection),
         ] {
             assert!(count > 0, "the sweep never reached: {label}");
         }
         eprintln!(
             "sweep: {accepted} accepted / {rejected} rejected; forms: fd {functionality}, \
-             ind {containment}, window {window_bounded}+{window_star}*, \
+             ind {containment}, capacity {capacity_bounded}+{capacity_star}* \
+             (w {weight_unit}/{weight_field}/{weight_duration}, dep {dependent_bound}), \
              sets {set_selection}"
         );
     }

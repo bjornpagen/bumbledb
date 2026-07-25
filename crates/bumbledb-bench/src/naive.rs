@@ -30,7 +30,7 @@ pub use tuple::Tuple;
 
 use std::collections::BTreeSet;
 
-use bumbledb::schema::{SchemaDescriptor, Side, StatementDescriptor, ValueType};
+use bumbledb::schema::{Bound, SchemaDescriptor, Side, StatementDescriptor, ValueType, Weight};
 use bumbledb::{Direction, RelationId, StatementId, Value};
 
 use tuple::{endpoints, overlaps};
@@ -86,7 +86,7 @@ pub struct Delta {
 /// ascending, source before target within one statement) — the same
 /// total object as the engine's sealed `Violations`.
 ///
-/// The statement phase can mix containment and cardinality
+/// The statement phase can mix containment and capacity
 /// citations in one rejection, so [`sealed`] sorts by the explicit
 /// citation key ([`Violation::citation`]) — the engine's own sort key —
 /// never the derived variant order.
@@ -99,11 +99,18 @@ pub enum Violation {
         statement: StatementId,
         direction: Direction,
     },
-    /// A cardinality window failed: some ψ-selected parent's child-group
-    /// count falls outside the window
-    /// (`lean/Bumbledb/Cardinality.lean: CardinalityWindow`).
-    Cardinality {
+    /// A capacity statement failed: some ψ-selected parent's child-group
+    /// measure falls outside the window
+    /// (`lean/Bumbledb/Capacity.lean: CapacityLaw`). The twin carries
+    /// the WITNESSED measure (ruled 2026-07-24, C14 — measure parity in
+    /// the differential): the model's full fold over the first violating
+    /// parent in ascending key-tuple order, the same parent the engine's
+    /// plan order discovers first.
+    Capacity {
         statement: StatementId,
+        /// The witnessed group total — u128 end to end (C3: truncation
+        /// is unrepresentable; for the unit weight this IS the count).
+        measure: u128,
     },
     /// A delete or insert named a closed relation — refused before the
     /// delta, exactly the engine's `Error::ClosedRelationWrite`.
@@ -120,7 +127,7 @@ impl Violation {
     /// citations; its key only has to be total.
     fn citation(self) -> (u16, u8, u32) {
         match self {
-            Self::Functionality { statement } | Self::Cardinality { statement } => {
+            Self::Functionality { statement } | Self::Capacity { statement, .. } => {
                 (statement.0, 0, 0)
             }
             Self::Containment {
@@ -424,9 +431,9 @@ impl NaiveDb {
                 }
             }
         }
-        // The window form joins the statement phase whole
+        // The capacity form joins the statement phase whole
         // (`lean/Bumbledb/Txn.lean` — the statement-phase violation set
-        // carries containment and cardinality citations): the
+        // carries containment and capacity citations): the
         // model judges every parent of the FINAL state —
         // the full judgment the engine's delta-restricted checks are
         // provably equal to over a clean pre-state
@@ -434,15 +441,19 @@ impl NaiveDb {
         // delta_restricted_commit_sound`).
         for (sid, statement) in self.statements.iter().enumerate() {
             match statement {
-                StatementDescriptor::Cardinality {
-                    source,
+                StatementDescriptor::Capacity {
+                    target,
+                    weight,
                     lo,
                     hi,
-                    target,
+                    source,
                 } => {
-                    if self.window_violated(state, source, *lo, *hi, target) {
-                        found.push(Violation::Cardinality {
+                    if let Some(measure) =
+                        self.capacity_violated(state, target, *weight, *lo, *hi, source)
+                    {
+                        found.push(Violation::Capacity {
                             statement: statement_id(sid),
+                            measure,
                         });
                     }
                 }
@@ -453,24 +464,35 @@ impl NaiveDb {
         sealed(found)
     }
 
-    /// Does some ψ-selected parent's child-group count fall outside the
-    /// window? Per parent, the children are the φ-selected source facts
-    /// whose projected tuple equals the parent's — O(parents × children)
-    /// value comparison is the point
-    /// (`lean/Bumbledb/Cardinality.lean: CardinalityWindow`).
-    fn window_violated(
+    /// Does some ψ-selected parent's child-group MEASURE fall outside
+    /// its resolved window? Per parent, the children are the φ-selected
+    /// source facts whose projected tuple equals the parent's; the
+    /// measure is Σ weight over the deduplicated group (the `BTreeSet`
+    /// state IS `dedupFacts`), the ceiling resolves against the parent's
+    /// own row (dependent bounds), and O(parents × children) value
+    /// comparison is the point
+    /// (`lean/Bumbledb/Capacity.lean: CapacityLaw`). Returns the
+    /// witnessed measure of the violating parent with the least
+    /// projected key tuple — the engine's plan iterates touched parents
+    /// in ascending key order and the sealed set keeps the
+    /// first-discovered witness, so the twins agree on WHICH parent's
+    /// total is reported (C14: the engine completes the full walk on
+    /// conviction, so both sides fold the whole group).
+    fn capacity_violated(
         &self,
         state: &[BTreeSet<Tuple>],
-        source: &Side,
-        lo: u64,
-        hi: Option<u64>,
         target: &Side,
-    ) -> bool {
-        self.target_facts(state, target).any(|parent| {
+        weight: Weight,
+        lo: u64,
+        hi: Option<Bound>,
+        source: &Side,
+    ) -> Option<u128> {
+        let mut witnessed: Option<(Vec<Value>, u128)> = None;
+        for parent in self.target_facts(state, target) {
             if !satisfies_selection(parent, &target.selection) {
-                return false;
+                continue;
             }
-            let count = self
+            let measure: u128 = self
                 .target_facts(state, source)
                 .filter(|child| {
                     satisfies_selection(child, &source.selection)
@@ -480,10 +502,24 @@ impl NaiveDb {
                             .zip(target.projection.iter())
                             .all(|(s, t)| child.0[s.0 as usize] == parent.0[t.0 as usize])
                 })
-                .count();
-            let count = u64::try_from(count).expect("fact count fits u64");
-            count < lo || hi.is_some_and(|hi| count > hi)
-        })
+                .map(|child| child_weight(weight, child))
+                .sum();
+            let ceiling = hi.map(|bound| resolve_bound(bound, parent));
+            if measure < u128::from(lo) || ceiling.is_some_and(|hi| measure > hi) {
+                let key: Vec<Value> = target
+                    .projection
+                    .iter()
+                    .map(|field| parent.0[field.0 as usize].clone())
+                    .collect();
+                if witnessed
+                    .as_ref()
+                    .is_none_or(|(least, _)| Tuple(key.clone()) < Tuple(least.clone()))
+                {
+                    witnessed = Some((key, measure));
+                }
+            }
+        }
+        witnessed.map(|(_, measure)| measure)
     }
 
     /// Does inserting `fact` leave two distinct facts agreeing on the
@@ -640,6 +676,54 @@ fn satisfies_selection(
             .iter()
             .any(|literal| fact.0[field.0 as usize] == *literal)
     })
+}
+
+/// One source fact's measure under a capacity weight: 1 for the unit
+/// (count) instance, the u64 field value for `[field]`, and the interval
+/// measure `end − start` for `[Duration(field)]` — validation guarantees
+/// the encodings (a signed weight field is gate-refused; polarity), so a
+/// mismatch is a fixture bug, panicked not tolerated. A ray has no
+/// finite measure (C10 — the R6 precedent): the model refuses it the way
+/// the engine's typed commit refusal does, loudly.
+fn child_weight(weight: Weight, child: &Tuple) -> u128 {
+    match weight {
+        Weight::Unit => 1,
+        Weight::Field(field) => match &child.0[field.0 as usize] {
+            Value::U64(w) => u128::from(*w),
+            other => panic!("a capacity weight field must be u64-encoded, got {other:?}"),
+        },
+        Weight::DurationOf(field) => duration_measure(&child.0[field.0 as usize]),
+    }
+}
+
+/// A capacity ceiling resolved against the parent's own row: literal,
+/// dependent u64 field, or dependent interval measure (the calendar
+/// law's `{0..Duration(span)}`).
+fn resolve_bound(bound: Bound, parent: &Tuple) -> u128 {
+    match bound {
+        Bound::Lit(n) => u128::from(n),
+        Bound::TargetField(field) => match &parent.0[field.0 as usize] {
+            Value::U64(n) => u128::from(*n),
+            other => panic!("a dependent capacity bound must be u64-encoded, got {other:?}"),
+        },
+        Bound::TargetDuration(field) => duration_measure(&parent.0[field.0 as usize]),
+    }
+}
+
+/// The interval measure `end − start`, non-negative by the interval
+/// encoding's order. A ray (`end == MAX`) has no finite measure — the
+/// typed judge-time refusal (C10) is the engine's; the model panics so a
+/// generated ray reaching a Duration law is a fixture bug, never a
+/// silent wrong sum.
+fn duration_measure(value: &Value) -> u128 {
+    let is_ray = match value {
+        Value::IntervalU64(interval) => interval.is_ray(),
+        Value::IntervalI64(interval) => interval.is_ray(),
+        other => panic!("a Duration weight/bound must be interval-encoded, got {other:?}"),
+    };
+    assert!(!is_ray, "a ray has no finite measure (C10)");
+    let (start, end) = endpoints(value);
+    u128::try_from(end - start).expect("interval measure is non-negative")
 }
 
 fn statement_id(index: usize) -> StatementId {

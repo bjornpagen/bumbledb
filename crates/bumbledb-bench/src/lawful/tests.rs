@@ -1,5 +1,5 @@
 use bumbledb::Theory as _;
-use bumbledb::schema::{Generation, StatementDescriptor, ValueType};
+use bumbledb::schema::{Bound, Generation, StatementDescriptor, ValueType, Weight};
 use bumbledb::{Db, RelationId, Value};
 
 use crate::corpus_gen::Scale;
@@ -26,7 +26,8 @@ fn scratch(tag: &str) -> std::path::PathBuf {
 /// The declared world seals with every statement family the mandate
 /// names, by count: 4 declared keys + 3 fresh auto-keys (+ 3 closed
 /// auto-keys), 7 containments exactly one of which selects its target
-/// (the ψ-selected steer-scope law), 1 cardinality window ({0..8}),
+/// (the ψ-selected steer-scope law), 1 capacity law (the `{0..8}`
+/// attempt count — the unit-weight instance, asserted explicitly),
 /// and a payload-bearing closed vocabulary (`Outcome.terminal`). The id
 /// constants pin declaration order.
 #[test]
@@ -79,9 +80,18 @@ fn the_lawful_schema_validates_and_carries_every_statement_family() {
         .count();
     assert_eq!(selected, 1, "exactly one ψ-selected containment");
 
-    assert_eq!(schema.windows().len(), 1, "the one cardinality window");
-    let window = &schema.windows()[0];
-    assert_eq!((window.lo, window.hi), (0, Some(8)), "the {{0..8}} window");
+    assert_eq!(schema.capacities().len(), 1, "the one capacity law");
+    let statement = &schema.capacities()[0];
+    assert_eq!(
+        statement.weight,
+        Weight::Unit,
+        "the count instance, explicitly"
+    );
+    assert_eq!(
+        (statement.lo, statement.hi),
+        (0, Some(Bound::Lit(8))),
+        "the {{0..8}} window"
+    );
 
     assert!(
         schema
@@ -242,7 +252,7 @@ fn the_lawful_verdicts_agree_with_the_naive_model() {
     assert_eq!(summary.commits, 2, "the single insert and the cluster");
     assert_eq!(
         summary.aborts, 4,
-        "the key, the containment, the window, and the ψ selection"
+        "the key, the containment, the capacity law, and the ψ selection"
     );
     drop(db);
     let _ = std::fs::remove_dir_all(&dir);
@@ -397,8 +407,8 @@ fn every_rejection_lane_refuses_on_both_engines_and_commits_nothing() {
 /// The four rejection shapes cite the expected violation kinds — one
 /// direct `db.write` per shape, the sealed sets normalized through
 /// [`differential::cited`]: Functionality for the duplicate key,
-/// Containment for the absent task, Cardinality for the over-cap
-/// window, and Containment ON THE ψ STATEMENT for the Observe-steer
+/// Containment for the absent task, Capacity for the over-cap
+/// attempt group, and Containment ON THE ψ STATEMENT for the Observe-steer
 /// scope.
 #[test]
 fn the_rejection_shapes_cite_the_expected_violation_kinds() {
@@ -462,8 +472,8 @@ fn the_rejection_shapes_cite_the_expected_violation_kinds() {
         .map(|_| ())
     });
     assert!(
-        cited.iter().any(|v| matches!(v, Cited::Cardinality { .. })),
-        "expected a Cardinality citation: {cited:?}"
+        cited.iter().any(|v| matches!(v, Cited::Capacity { .. })),
+        "expected a Capacity citation: {cited:?}"
     );
 
     let cited = rejected("scope under an Observe steer", &|tx| {

@@ -20,6 +20,10 @@ use crate::{clockproxy, corpus, families, harness, report, sqlite_run, writebenc
 ///
 /// `pub(crate)` (not `pub(super)`) so the device-honesty lock test can
 /// point it at a live ram disk and assert the refusal.
+#[expect(
+    clippy::too_many_lines,
+    reason = "one lane list, ordered by the fsync-shadow rule — splitting would hide the order"
+)]
 pub(crate) fn write_families(
     cfg: GenConfig,
     scratch: &Path,
@@ -110,6 +114,14 @@ pub(crate) fn write_families(
     out.extend(crate::windowed::write_families(
         cfg,
         &scratch.join("windowed"),
+        selected,
+        lane.store_mode(),
+    )?);
+    // The weighted-capacity lanes (the power budget and the calendar
+    // shape): same class, same placement rule.
+    out.extend(crate::capacity::write_families(
+        cfg,
+        &scratch.join("capacity"),
         selected,
         lane.store_mode(),
     )?);

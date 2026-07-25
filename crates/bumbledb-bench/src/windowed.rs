@@ -1,8 +1,10 @@
-//! The window-judgment write lane — the roster extension's measurement
-//! infrastructure for the cardinality window
-//! (`docs/architecture/30-dependencies.md` § cardinality window): what
-//! does ADMISSION cost when the schema carries window statements and
-//! every commit's touched parents must be counted?
+//! The window-judgment write lane — the measurement infrastructure for
+//! the capacity statement's UNIT (count) instance
+//! (`docs/architecture/30-dependencies.md` § capacity statement): what
+//! does ADMISSION cost when the schema carries count-window laws and
+//! every commit's touched parents must be measured? The row names keep
+//! the word "window" deliberately (C16: it names the `{lo..hi}` object,
+//! which survives); the weighted rows live in [`crate::capacity`].
 //!
 //! Three engine-only report rows over two twin worlds:
 //! - `commit_window_baseline` — the twin theory WITHOUT window

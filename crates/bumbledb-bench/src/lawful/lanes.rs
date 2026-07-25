@@ -479,11 +479,11 @@ fn cites_containment(violations: &bumbledb::Violations) -> bool {
         .any(|violation| matches!(violation, bumbledb::Violation::Containment { .. }))
 }
 
-/// Whether the sealed violation set carries a Cardinality citation.
-fn cites_cardinality(violations: &bumbledb::Violations) -> bool {
+/// Whether the sealed violation set carries a Capacity citation.
+fn cites_capacity(violations: &bumbledb::Violations) -> bool {
     violations
         .iter()
-        .any(|violation| matches!(violation, bumbledb::Violation::Cardinality { .. }))
+        .any(|violation| matches!(violation, bumbledb::Violation::Capacity { .. }))
 }
 
 /// Whether the sealed violation set cites the ψ statement itself — a
@@ -673,7 +673,7 @@ pub fn reject_containment_sqlite(
 
 /// `law_reject_window` on bumbledb (after the untimed setup filled task
 /// 0 to the cap): every sample offers a 9th attempt on task 0 —
-/// `Error::CommitRejected` with a Cardinality citation, or the run
+/// `Error::CommitRejected` with a Capacity citation, or the run
 /// aborts.
 ///
 /// # Errors
@@ -685,20 +685,14 @@ pub fn reject_window_engine(db: &Db<LawfulWorld>, proto: Protocol) -> Result<Mea
     harness::measure(proto, || {
         let id = LawAttemptId(REJECT_ID_BASE + sample);
         sample += 1;
-        refused_commit(
-            db,
-            "law_reject_window",
-            "Cardinality",
-            cites_cardinality,
-            |tx| {
-                tx.insert(&Attempt {
-                    id,
-                    task: LawTaskId(0),
-                    n: WINDOW_CAP,
-                })
-                .map(|_| ())
-            },
-        )
+        refused_commit(db, "law_reject_window", "Capacity", cites_capacity, |tx| {
+            tx.insert(&Attempt {
+                id,
+                task: LawTaskId(0),
+                n: WINDOW_CAP,
+            })
+            .map(|_| ())
+        })
     })
 }
 

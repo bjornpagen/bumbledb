@@ -416,6 +416,10 @@ pub fn descriptor() -> SchemaDescriptor {
 /// `Transfer(extref) -> Transfer`: every corpus load writes an
 /// adversarial-digest determinant per transfer, and an `Eq` extref binding is
 /// key-covering (the key-probe fast path over a multi-word key).
+#[expect(
+    clippy::too_many_lines,
+    reason = "the declared ledger is one list — 60-validation.md's block in its source order"
+)]
 fn statements() -> Vec<bumbledb::schema::StatementDescriptor> {
     use bumbledb::schema::{Side, StatementDescriptor};
     let side = |relation: bumbledb::RelationId,
@@ -525,6 +529,22 @@ fn statements() -> Vec<bumbledb::schema::StatementDescriptor> {
                 &[(ids::currency::MINOR_UNITS, Value::U64(0))],
             ),
         ),
+        // The capacity ledger entry (C13: the randomized lane's world
+        // carries the extension form from day one) — appended last, so
+        // no earlier statement id shifts. The weighted law holds by
+        // construction: [`posting_tag`] gives an even posting `p`
+        // exactly the tag pair `(p % 3, (p + 1) % 3)` — the tag-ordinal
+        // sum is 1, 2, or 3 — and odd postings none, so the `{0..3}`
+        // ceiling is exact-at-the-edge data and the zero-weight rows
+        // (tag ordinal 0) keep the Sum-vs-Count split live in every
+        // generated corpus.
+        StatementDescriptor::Capacity {
+            target: side(ids::POSTING, ids::posting::ID, &[]),
+            weight: bumbledb::schema::Weight::Field(ids::posting_tag::TAG),
+            lo: 0,
+            hi: Some(bumbledb::schema::Bound::Lit(3)),
+            source: side(ids::POSTING_TAG, ids::posting_tag::POSTING, &[]),
+        },
     ]
 }
 
@@ -543,6 +563,10 @@ pub const CURRENCY_BACKED: bumbledb::StatementId = bumbledb::StatementId(28);
 /// `CashRounding(currency) <= Currency(id | minor_units == 0)` — the
 /// ψ-sub-vocabulary.
 pub const CASH_ROUNDING_SUBSET: bumbledb::StatementId = bumbledb::StatementId(29);
+/// `Posting(id) <=[tag]{0..3} PostingTag(posting)` — the capacity
+/// ledger entry (C13), the weighted tag budget the corpus satisfies by
+/// construction.
+pub const TAG_BUDGET: bumbledb::StatementId = bumbledb::StatementId(30);
 
 /// The one ψ-member of the cash-rounding sub-vocabulary (`Gbp`, the
 /// zero-decimal row).
@@ -913,6 +937,64 @@ mod tests {
         scale: Scale::S,
     };
 
+    /// The generated corpus satisfies the tag-budget capacity law end
+    /// to end (C13: the randomized lane's world carries the law from
+    /// day one, so this is the seam that proves it loads): the full
+    /// Tiny corpus bulk-loads under the live schema — the weighted `R`
+    /// edges written at load — and the offline sweeper, the
+    /// weight-desync sweep included, finds nothing.
+    #[test]
+    fn the_tiny_corpus_loads_under_the_tag_budget_and_sweeps_clean() {
+        let cfg = GenConfig {
+            seed: 7,
+            scale: Scale::Tiny,
+        };
+        let domains = Domains::of(cfg.scale);
+        let dir = std::env::temp_dir().join("bumbledb-target-tag-budget");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("scratch");
+        let db = bumbledb::Db::create(&dir, descriptor()).expect("create");
+        for rel in 0..TARGET_RELATIONS {
+            let rel = bumbledb::RelationId(rel);
+            match rel {
+                // The DU cluster commits together (either side alone
+                // violates one `==` direction) — the verify loader's
+                // rule, replicated lean.
+                ids::JOURNAL_ENTRY => {
+                    let entries = corpus_rows(&domains, ids::JOURNAL_ENTRY);
+                    let batches = corpus_rows(&domains, ids::IMPORT_BATCH);
+                    let mut next_batch = 0u64;
+                    db.write(|tx| {
+                        for i in 0..entries {
+                            let row = corpus_row(cfg, &domains, ids::JOURNAL_ENTRY, i);
+                            tx.insert_dyn(ids::JOURNAL_ENTRY, &row)?;
+                        }
+                        while next_batch < batches {
+                            let row = corpus_row(cfg, &domains, ids::IMPORT_BATCH, next_batch);
+                            tx.insert_dyn(ids::IMPORT_BATCH, &row)?;
+                            next_batch += 1;
+                        }
+                        Ok(())
+                    })
+                    .expect("the DU cluster commits");
+                }
+                ids::IMPORT_BATCH => {} // loaded with its entries
+                _ => {
+                    db.bulk_load_dyn(rel, corpus_relation_rows(cfg, rel))
+                        .expect("target bulk load");
+                }
+            }
+        }
+        let report = db.verify_store().expect("verify_store");
+        assert!(
+            report.findings.is_empty(),
+            "the swept corpus convicts nothing: {:?}",
+            report.findings
+        );
+        drop(db);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// The closed-relation statement pins: materialized order is seven
     /// fresh auto-keys, the three closed auto-keys, then the declared
     /// list — re-derived here so the differential's typed verdicts name
@@ -927,7 +1009,7 @@ mod tests {
             StatementView::Key(_, statement) => {
                 panic!("statement {} is a key: {statement:?}", id.0)
             }
-            StatementView::Cardinality(..) => {
+            StatementView::Capacity(..) => {
                 panic!("statement {} is an extension form", id.0)
             }
         };
@@ -948,6 +1030,19 @@ mod tests {
         assert_eq!(
             containment(CASH_ROUNDING_SUBSET),
             (ids::CASH_ROUNDING, ids::CURRENCY)
+        );
+        // The capacity ledger entry (C13): the weighted tag budget sits
+        // at the appended-last id, weight and ceiling asserted so a
+        // silent unit downgrade cannot pass as the same statement.
+        assert!(
+            matches!(
+                schema.statement(TAG_BUDGET),
+                StatementView::Capacity(_, statement)
+                    if statement.weight == bumbledb::schema::Weight::Field(ids::posting_tag::TAG)
+                        && statement.source.relation == ids::POSTING_TAG
+                        && statement.target.relation == ids::POSTING
+            ),
+            "the tag-budget capacity pin"
         );
         // The ψ-member is the zero-decimal row, by the extension itself.
         let descriptor = descriptor();

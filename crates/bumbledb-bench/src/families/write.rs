@@ -68,6 +68,35 @@ pub fn write_families() -> &'static [WriteFamily] {
                 samples: 64,
             },
         },
+        // The weighted-capacity rows (`crate::capacity`): the power
+        // budget's statement-free control, the dependent-bound weighted
+        // walk, and the calendar Duration shape. Engine-only by the
+        // same decision; the SQLite SUM-trigger twin gates verdicts in
+        // tests, never clocks.
+        WriteFamily {
+            name: "commit_capacity_baseline",
+            kind: Kind::Report,
+            protocol: Protocol {
+                warmups: 8,
+                samples: 64,
+            },
+        },
+        WriteFamily {
+            name: "commit_capacity_sum",
+            kind: Kind::Report,
+            protocol: Protocol {
+                warmups: 8,
+                samples: 64,
+            },
+        },
+        WriteFamily {
+            name: "commit_capacity_duration",
+            kind: Kind::Report,
+            protocol: Protocol {
+                warmups: 8,
+                samples: 64,
+            },
+        },
         WriteFamily {
             name: "bulk",
             kind: Kind::Report,

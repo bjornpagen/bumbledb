@@ -24,7 +24,7 @@ fn child(id: u64, parent: u64, flag: u64) -> (bumbledb::RelationId, Vec<Value>) 
 /// the two window statements — the {0} exclusion among them
 /// (`lo = hi = 0`).
 #[test]
-fn the_twin_theories_validate_and_differ_only_in_windows() {
+fn the_twin_theories_validate_and_differ_only_in_capacity_laws() {
     let windowed = world::WindowedWorld
         .descriptor()
         .validate()
@@ -33,16 +33,25 @@ fn the_twin_theories_validate_and_differ_only_in_windows() {
         .descriptor()
         .validate()
         .expect("the baseline twin validates");
-    assert_eq!(windowed.windows().len(), 2, "the fan-cap and the exclusion");
-    assert_eq!(unwindowed.windows().len(), 0, "the control carries none");
+    assert_eq!(
+        windowed.capacities().len(),
+        2,
+        "the fan-cap and the exclusion"
+    );
+    assert_eq!(unwindowed.capacities().len(), 0, "the control carries none");
     assert_eq!(
         windowed.containments().len(),
         unwindowed.containments().len()
     );
-    let exclusion = &windowed.windows()[1];
+    let exclusion = &windowed.capacities()[1];
+    assert_eq!(
+        exclusion.weight,
+        bumbledb::schema::Weight::Unit,
+        "the count instance, explicitly"
+    );
     assert_eq!(
         (exclusion.lo, exclusion.hi),
-        (0, Some(0)),
+        (0, Some(bumbledb::schema::Bound::Lit(0))),
         "the {{0}} window"
     );
 }

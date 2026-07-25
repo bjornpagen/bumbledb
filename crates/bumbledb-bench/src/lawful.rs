@@ -24,7 +24,8 @@
 //! the relation-to-relation containments, CHECK for the closed
 //! vocabularies (their rosters are static schema data — no mirror
 //! tables exist, and no reads exist in this world), and a trigger where
-//! SQL needs one (the ψ-selected containment and the attempt window).
+//! SQL needs one (the ψ-selected containment and the attempt-count
+//! capacity law).
 //! One honesty note, recorded once: with `PRAGMA foreign_keys=ON`,
 //! `SQLite` checks FKs per statement (immediate), while the engine
 //! judges FINAL states — for the single-insert and insert-ordered
@@ -200,7 +201,7 @@ pub fn families() -> &'static [LawFamily] {
         LawFamily {
             name: "law_commit_attempt",
             about: "one judged Attempt insert per commit under the full law roster \
-                    (key + containment + window)",
+                    (key + containment + capacity)",
             protocol: Protocol {
                 warmups: 8,
                 samples: 64,
@@ -234,7 +235,7 @@ pub fn families() -> &'static [LawFamily] {
         LawFamily {
             name: "law_reject_window",
             about: "one REFUSED 9th-attempt commit on the saturated task 0 per sample \
-                    (Cardinality cited)",
+                    (Capacity cited)",
             protocol: Protocol {
                 warmups: 8,
                 samples: 64,

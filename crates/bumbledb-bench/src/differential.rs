@@ -180,7 +180,10 @@ pub fn run<S>(db: &Db<S>, naive: &mut NaiveDb, ops: &[Op]) -> Result<Summary, Di
 
 /// The engine's sealed violation set as the model's citation values —
 /// the typed identities every oracle compares (witness fact bytes are
-/// engine-side detail the model never derives). The engine's set is
+/// engine-side detail the model never derives; the capacity MEASURE is
+/// not: both twins carry the witnessed group total — ruled 2026-07-24,
+/// C14 — so the differential cross-checks the reported measure
+/// engine-vs-naive, not just the citation). The engine's set is
 /// sorted and deduplicated by construction, so the mapped list is
 /// directly comparable to [`NaiveDb::violations`]' — same sort key,
 /// same total object.
@@ -201,8 +204,11 @@ pub fn cited(violations: &bumbledb::Violations) -> Vec<Violation> {
                 statement: *statement,
                 direction: *direction,
             },
-            bumbledb::Violation::Cardinality { statement, .. } => Violation::Cardinality {
+            bumbledb::Violation::Capacity {
+                statement, measure, ..
+            } => Violation::Capacity {
                 statement: *statement,
+                measure: *measure,
             },
         })
         .collect()

@@ -15,7 +15,7 @@
 //! **The verdict is compared per phase.** A key (functionality)
 //! violation preempts the statement phase on all three oracles
 //! (`lean/Bumbledb/Txn.lean: judge_key_preempts`); the statement phase
-//! cites containment and cardinality violations together. The
+//! cites containment and capacity violations together. The
 //! containment `Direction` is a Rust-side refinement below the Lean
 //! altitude (`Txn.lean`'s violation sets are per-statement), so the
 //! serialized set deduplicates a statement cited in both directions —
@@ -49,8 +49,8 @@ use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
 use bumbledb::schema::{
-    FieldDescriptor, FieldId, Generation, LiteralSet, RelationDescriptor, RelationId, Row,
-    SchemaDescriptor, Side, StatementDescriptor, ValueType,
+    Bound, FieldDescriptor, FieldId, Generation, LiteralSet, RelationDescriptor, RelationId, Row,
+    SchemaDescriptor, Side, StatementDescriptor, ValueType, Weight,
 };
 use bumbledb::{Db, Interval, Value};
 
@@ -142,7 +142,11 @@ fn marks_schema() -> SchemaDescriptor {
                 relation: HOLDER,
                 projection: Box::new([FieldId(0)]),
             },
-            StatementDescriptor::Cardinality {
+            StatementDescriptor::Capacity {
+                target: side(HOLDER, &[0]),
+                weight: Weight::Unit,
+                lo: 1,
+                hi: Some(Bound::Lit(2)),
                 source: side_where(
                     ACCOUNT,
                     &[0],
@@ -151,9 +155,6 @@ fn marks_schema() -> SchemaDescriptor {
                         LiteralSet::Many(Box::new([Value::U64(1), Value::U64(2)])),
                     )],
                 ),
-                lo: 1,
-                hi: Some(2),
-                target: side(HOLDER, &[0]),
             },
         ],
     }
@@ -181,14 +182,14 @@ fn item(doc: u64, pos: u64, note: u64) -> (RelationId, Vec<Value>) {
     )
 }
 
-// ---------- the ledger world: containment and cardinality together ----------
+// ---------- the ledger world: containment and capacity together ----------
 
 /// Holder(id, tag; key id); Account(holder, kind, num) under BOTH
 /// statement forms at once: the reference containment
 /// `Account(holder) <= Holder(id)` (statement 1) and the window
 /// `Holder(id) <={1..2} Account(holder | kind == 1)` (statement 2)
 /// — the one roster schema whose statement phase can cite containment
-/// and cardinality TOGETHER, so the ordered multi-citation verdict
+/// and capacity TOGETHER, so the ordered multi-citation verdict
 /// surface (`lean/Main.lean: RVerdict`'s list `BEq`, ascending indices
 /// via `verdictOf`) is actually exercised.
 fn ledger_schema() -> SchemaDescriptor {
@@ -206,11 +207,12 @@ fn ledger_schema() -> SchemaDescriptor {
                 source: side(ACCOUNT, &[0]),
                 target: side(HOLDER, &[0]),
             },
-            StatementDescriptor::Cardinality {
-                source: side_where(ACCOUNT, &[0], &[(1, LiteralSet::One(Value::U64(1)))]),
-                lo: 1,
-                hi: Some(2),
+            StatementDescriptor::Capacity {
                 target: side(HOLDER, &[0]),
+                weight: Weight::Unit,
+                lo: 1,
+                hi: Some(Bound::Lit(2)),
+                source: side_where(ACCOUNT, &[0], &[(1, LiteralSet::One(Value::U64(1)))]),
             },
         ],
     }
@@ -221,9 +223,9 @@ fn ledger_schema() -> SchemaDescriptor {
 /// Holder + Account under `Holder(id) <={2} Account(holder | kind == 1)`
 /// (exactness) and a second `{0}` window on kind 9 (the exclusion —
 /// the vacuous `0..*` posture is unrepresentable, rejected at
-/// validation as `CardinalityVacuousWindow`; the default says nothing
-/// by not being spelled, `lean/Bumbledb/Cardinality.lean:
-/// zero_star_admits`).
+/// validation as `CapacityVacuousWindow`; the default says nothing
+/// by not being spelled, `lean/Bumbledb/Capacity.lean:
+/// capacity_zero_star`).
 fn exact_schema() -> SchemaDescriptor {
     SchemaDescriptor {
         relations: vec![
@@ -235,20 +237,173 @@ fn exact_schema() -> SchemaDescriptor {
                 relation: HOLDER,
                 projection: Box::new([FieldId(0)]),
             },
-            StatementDescriptor::Cardinality {
-                source: side_where(ACCOUNT, &[0], &[(1, LiteralSet::One(Value::U64(1)))]),
+            StatementDescriptor::Capacity {
+                target: side(HOLDER, &[0]),
+                weight: Weight::Unit,
                 lo: 2,
-                hi: Some(2),
-                target: side(HOLDER, &[0]),
+                hi: Some(Bound::Lit(2)),
+                source: side_where(ACCOUNT, &[0], &[(1, LiteralSet::One(Value::U64(1)))]),
             },
-            StatementDescriptor::Cardinality {
-                source: side_where(ACCOUNT, &[0], &[(1, LiteralSet::One(Value::U64(9)))]),
-                lo: 0,
-                hi: Some(0),
+            StatementDescriptor::Capacity {
                 target: side(HOLDER, &[0]),
+                weight: Weight::Unit,
+                lo: 0,
+                hi: Some(Bound::Lit(0)),
+                source: side_where(ACCOUNT, &[0], &[(1, LiteralSet::One(Value::U64(9)))]),
             },
         ],
     }
+}
+
+// ---------- the weighted world: the power budget over column weights ----------
+
+/// Pool(id, note; key id); Device(pool, watts, num) under BOTH
+/// weighted polarities of one budget: the ceiling
+/// `Pool(id) <=[watts]{0..10} Device(pool)` (statement 1) and the
+/// positive-total floor `Pool(id) <=[watts]{1..*} Device(pool)`
+/// (statement 2 — LEGAL on the Sum instance: the `{1..*}` ban is
+/// canonical-utterance policing on Count only, and a zero-weight row
+/// satisfies containment but not this floor — the design § 6 footgun
+/// the zero-weight fixture pins as data).
+fn weighted_schema() -> SchemaDescriptor {
+    SchemaDescriptor {
+        relations: vec![
+            u64_relation("Pool", &["id", "note"]),
+            u64_relation("Device", &["pool", "watts", "num"]),
+        ],
+        statements: vec![
+            StatementDescriptor::Functionality {
+                relation: RelationId(0),
+                projection: Box::new([FieldId(0)]),
+            },
+            StatementDescriptor::Capacity {
+                target: side(RelationId(0), &[0]),
+                weight: Weight::Field(FieldId(1)),
+                lo: 0,
+                hi: Some(Bound::Lit(10)),
+                source: side(RelationId(1), &[0]),
+            },
+            StatementDescriptor::Capacity {
+                target: side(RelationId(0), &[0]),
+                weight: Weight::Field(FieldId(1)),
+                lo: 1,
+                hi: None,
+                source: side(RelationId(1), &[0]),
+            },
+        ],
+    }
+}
+
+fn pool(id: u64) -> (RelationId, Vec<Value>) {
+    (RelationId(0), vec![Value::U64(id), Value::U64(0)])
+}
+
+fn device(pool: u64, watts: u64, num: u64) -> (RelationId, Vec<Value>) {
+    (
+        RelationId(1),
+        vec![Value::U64(pool), Value::U64(watts), Value::U64(num)],
+    )
+}
+
+// ---------- the dependent-bound world: per-group capacity as data ----------
+
+/// SupplyPool(id, supply; key id); Device(pool, watts, num) under the
+/// dependent ceiling `SupplyPool(id) <=[watts]{0..supply} Device(pool)`
+/// — the bound reads the TARGET's own row (C1/C6, hi-slot only), so
+/// per-group capacity is data, and a bound-field update alone (the
+/// pool row's remove+add through `touchedParents`) re-judges the
+/// standing group.
+fn dependent_schema() -> SchemaDescriptor {
+    SchemaDescriptor {
+        relations: vec![
+            u64_relation("SupplyPool", &["id", "supply"]),
+            u64_relation("Device", &["pool", "watts", "num"]),
+        ],
+        statements: vec![
+            StatementDescriptor::Functionality {
+                relation: RelationId(0),
+                projection: Box::new([FieldId(0)]),
+            },
+            StatementDescriptor::Capacity {
+                target: side(RelationId(0), &[0]),
+                weight: Weight::Field(FieldId(1)),
+                lo: 0,
+                hi: Some(Bound::TargetField(FieldId(1))),
+                source: side(RelationId(1), &[0]),
+            },
+        ],
+    }
+}
+
+fn supply_pool(id: u64, supply: u64) -> (RelationId, Vec<Value>) {
+    (RelationId(0), vec![Value::U64(id), Value::U64(supply)])
+}
+
+// ---------- the calendar world: Duration weights under Duration bounds ----------
+
+/// Room(id, span interval; key id); Booking(room, slot interval, num)
+/// under the calendar law
+/// `Room(id) <=[Duration(slot)]{0..Duration(span)} Booking(room)` —
+/// the interval-measure weight against the interval-measure dependent
+/// bound (R5 machinery on both slots; C18: the dimensions pair).
+fn calendar_schema() -> SchemaDescriptor {
+    SchemaDescriptor {
+        relations: vec![
+            RelationDescriptor {
+                extension: None,
+                name: "Room".into(),
+                fields: vec![
+                    field("id", ValueType::U64),
+                    field(
+                        "span",
+                        ValueType::Interval {
+                            element: bumbledb::schema::IntervalElement::U64,
+                            width: None,
+                        },
+                    ),
+                ],
+            },
+            RelationDescriptor {
+                extension: None,
+                name: "Booking".into(),
+                fields: vec![
+                    field("room", ValueType::U64),
+                    field(
+                        "slot",
+                        ValueType::Interval {
+                            element: bumbledb::schema::IntervalElement::U64,
+                            width: None,
+                        },
+                    ),
+                    field("num", ValueType::U64),
+                ],
+            },
+        ],
+        statements: vec![
+            StatementDescriptor::Functionality {
+                relation: RelationId(0),
+                projection: Box::new([FieldId(0)]),
+            },
+            StatementDescriptor::Capacity {
+                target: side(RelationId(0), &[0]),
+                weight: Weight::DurationOf(FieldId(1)),
+                lo: 0,
+                hi: Some(Bound::TargetDuration(FieldId(1))),
+                source: side(RelationId(1), &[0]),
+            },
+        ],
+    }
+}
+
+fn room(id: u64, start: u64, end: u64) -> (RelationId, Vec<Value>) {
+    (RelationId(0), vec![Value::U64(id), iv(start, end)])
+}
+
+fn booking(room: u64, start: u64, end: u64, num: u64) -> (RelationId, Vec<Value>) {
+    (
+        RelationId(1),
+        vec![Value::U64(room), iv(start, end), Value::U64(num)],
+    )
 }
 
 // ---------- the permuted-interval world (the docketed lock) ----------
@@ -519,11 +674,20 @@ fn closed_psi_schema() -> SchemaDescriptor {
 
 /// The starter roster: both classical forms (scalar key, containment —
 /// pointwise key and coverage through the permuted world, the closed
-/// member set plain and ψ-narrowed), the window
+/// member set plain and ψ-narrowed), the capacity
 /// form, the two-phase preemption
-/// mix, set-selections, the exactness/vacuity/empty-parent window
-/// boundaries, the delete-then-reinsert touched-group seam, and the
-/// permuted-interval docketed lock.
+/// mix, set-selections, the exactness/vacuity/empty-parent capacity
+/// boundaries, the delete-then-reinsert touched-group seam, the
+/// permuted-interval docketed lock, and the weighted roster (column
+/// weights under both polarities, the zero-weight floor footgun,
+/// dependent bounds through the target-update seam, and the calendar
+/// Duration pair). Two dossier rows live OUTSIDE this lane by its own
+/// fences: the closed-pair sum refutation is a VALIDATION refusal
+/// (`rejects_a_weighted_closed_pair_the_axioms_refute_under_a_dependent_bound`,
+/// `schema/tests/reject.rs` — a refused schema never reaches a
+/// commit verdict), and the R16 fresh-keyed weight interplay needs the
+/// engine's mint (`storage/commit/tests/marks.rs` § R16 interplay —
+/// the naive twin spells no fresh generation).
 #[expect(
     clippy::too_many_lines,
     reason = "one flat fixture roster, data not logic"
@@ -538,21 +702,21 @@ fn fixtures() -> Vec<JudgmentFixture> {
             inserts: vec![holder(7), account(7, 1, 0), item(1, 1, 10), item(1, 2, 11)],
         },
         JudgmentFixture {
-            name: "judgment-window-floor-childless",
+            name: "judgment-capacity-floor-childless",
             schema: marks_schema(),
             base: vec![holder(7), account(7, 1, 0)],
             deletes: vec![],
             inserts: vec![holder(8)],
         },
         JudgmentFixture {
-            name: "judgment-window-floor-by-deletion",
+            name: "judgment-capacity-floor-by-deletion",
             schema: marks_schema(),
             base: vec![holder(7), account(7, 1, 0)],
             deletes: vec![account(7, 1, 0)],
             inserts: vec![],
         },
         JudgmentFixture {
-            name: "judgment-window-set-selection-ceiling",
+            name: "judgment-capacity-set-selection-ceiling",
             schema: marks_schema(),
             base: vec![holder(7), account(7, 1, 0), account(7, 2, 1)],
             deletes: vec![],
@@ -580,39 +744,104 @@ fn fixtures() -> Vec<JudgmentFixture> {
             inserts: vec![item(1, 2, 11), account(7, 1, 0)],
         },
         JudgmentFixture {
-            name: "judgment-window-exact-pass",
+            name: "judgment-capacity-exact-pass",
             schema: exact_schema(),
             base: vec![],
             deletes: vec![],
             inserts: vec![holder(1), account(1, 1, 0), account(1, 1, 1)],
         },
         JudgmentFixture {
-            name: "judgment-window-exact-under",
+            name: "judgment-capacity-exact-under",
             schema: exact_schema(),
             base: vec![],
             deletes: vec![],
             inserts: vec![holder(2), account(2, 1, 0)],
         },
         JudgmentFixture {
-            name: "judgment-window-exclusion-member",
+            name: "judgment-capacity-exclusion-member",
             schema: exact_schema(),
             base: vec![holder(1), account(1, 1, 0), account(1, 1, 1)],
             deletes: vec![],
             inserts: vec![account(1, 9, 0)],
         },
         JudgmentFixture {
-            name: "judgment-window-exclusion-clean",
+            name: "judgment-capacity-exclusion-clean",
             schema: exact_schema(),
             base: vec![holder(1), account(1, 1, 0), account(1, 1, 1)],
             deletes: vec![],
             inserts: vec![account(1, 5, 0), account(1, 6, 1)],
         },
         JudgmentFixture {
-            name: "judgment-window-empty-parent",
+            name: "judgment-capacity-empty-parent",
             schema: exact_schema(),
             base: vec![],
             deletes: vec![],
             inserts: vec![account(3, 1, 0)],
+        },
+        // The weighted roster (the capacity cutover's new rows): the
+        // budget's sum passes under the ceiling and the positive floor…
+        JudgmentFixture {
+            name: "judgment-capacity-sum-pass",
+            schema: weighted_schema(),
+            base: vec![],
+            deletes: vec![],
+            inserts: vec![pool(1), device(1, 4, 0), device(1, 5, 1)],
+        },
+        // …one more device pushes the sum past the literal ceiling…
+        JudgmentFixture {
+            name: "judgment-capacity-sum-exceed-refuse",
+            schema: weighted_schema(),
+            base: vec![pool(1), device(1, 4, 0), device(1, 5, 1)],
+            deletes: vec![],
+            inserts: vec![device(1, 3, 2)],
+        },
+        // …and zero-weight rows EXIST without lifting the sum floor —
+        // the § 6 lower-bound footgun as corpus data (two devices, total
+        // zero: containment-shaped intent and the Sum floor are
+        // different laws).
+        JudgmentFixture {
+            name: "judgment-capacity-zero-weight-under-floor",
+            schema: weighted_schema(),
+            base: vec![],
+            deletes: vec![],
+            inserts: vec![pool(2), device(2, 0, 0), device(2, 0, 1)],
+        },
+        // The dependent bound reads the target's own row: supply 10
+        // admits exactly 10…
+        JudgmentFixture {
+            name: "judgment-capacity-dependent-bound-pass",
+            schema: dependent_schema(),
+            base: vec![],
+            deletes: vec![],
+            inserts: vec![supply_pool(1, 10), device(1, 6, 0), device(1, 4, 1)],
+        },
+        // …an eleventh watt exceeds it…
+        JudgmentFixture {
+            name: "judgment-capacity-dependent-bound-exceed",
+            schema: dependent_schema(),
+            base: vec![supply_pool(1, 10), device(1, 6, 0)],
+            deletes: vec![],
+            inserts: vec![device(1, 5, 1)],
+        },
+        // …and a bound-field update ALONE re-judges the standing group:
+        // the pool row's remove+add marks the touched parent
+        // (`lean/Bumbledb/Txn/DeltaRestriction.lean: touchedParents`),
+        // so lowering supply under the group's unchanged sum convicts.
+        JudgmentFixture {
+            name: "judgment-capacity-dependent-bound-lowered-by-target-update",
+            schema: dependent_schema(),
+            base: vec![supply_pool(1, 10), device(1, 6, 0), device(1, 4, 1)],
+            deletes: vec![supply_pool(1, 10)],
+            inserts: vec![supply_pool(1, 5)],
+        },
+        // Calendar capacity: interval-measure weights sum against the
+        // interval-measure dependent bound — a tight exact fill accepts.
+        JudgmentFixture {
+            name: "judgment-capacity-duration-weight",
+            schema: calendar_schema(),
+            base: vec![],
+            deletes: vec![],
+            inserts: vec![room(1, 0, 10), booking(1, 0, 6, 0), booking(1, 6, 10, 1)],
         },
         JudgmentFixture {
             name: "judgment-permuted-interval-covered",
@@ -923,6 +1152,38 @@ fn push_relations(out: &mut String, schema: &SchemaDescriptor) {
     out.push(']');
 }
 
+/// The weight descriptor's corpus spelling — unit crosses EXPLICITLY
+/// (C4: `Unit` is a case, not an absence, so a missing key is a
+/// malformed document, never a default).
+fn push_weight(out: &mut String, weight: Weight) {
+    match weight {
+        Weight::Unit => out.push_str("\"unit\""),
+        Weight::Field(field) => {
+            let _ = write!(out, "{{\"field\":{}}}", field.0);
+        }
+        Weight::DurationOf(field) => {
+            let _ = write!(out, "{{\"duration\":{}}}", field.0);
+        }
+    }
+}
+
+/// A capacity ceiling's corpus spelling: a bare integer for the
+/// literal, tagged objects for the dependent forms (C2's read order
+/// puts this inside the `window` key).
+fn push_bound(out: &mut String, bound: Bound) {
+    match bound {
+        Bound::Lit(n) => {
+            let _ = write!(out, "{n}");
+        }
+        Bound::TargetField(field) => {
+            let _ = write!(out, "{{\"field\":{}}}", field.0);
+        }
+        Bound::TargetDuration(field) => {
+            let _ = write!(out, "{{\"duration\":{}}}", field.0);
+        }
+    }
+}
+
 fn push_field_ids(out: &mut String, fields: &[FieldId]) {
     out.push('[');
     for (index, field) in fields.iter().enumerate() {
@@ -985,20 +1246,27 @@ fn push_statements(out: &mut String, schema: &SchemaDescriptor) {
                 push_side(out, target);
                 out.push_str("}}");
             }
-            StatementDescriptor::Cardinality {
-                source,
+            StatementDescriptor::Capacity {
+                target,
+                weight,
                 lo,
                 hi,
-                target,
+                source,
             } => {
-                out.push_str("{\"cardinality\":{\"source\":");
-                push_side(out, source);
+                // The C2 read order — target, weight, window, source —
+                // exactly as the operator reads; the weight crosses
+                // EXPLICITLY (C4: `Unit` is a case, not an absence).
+                out.push_str("{\"capacity\":{\"target\":");
+                push_side(out, target);
+                out.push_str(",\"weight\":");
+                push_weight(out, *weight);
                 let _ = write!(out, ",\"window\":{{\"lo\":{lo}");
                 if let Some(hi) = hi {
-                    let _ = write!(out, ",\"hi\":{hi}");
+                    out.push_str(",\"hi\":");
+                    push_bound(out, *hi);
                 }
-                out.push_str("},\"target\":");
-                push_side(out, target);
+                out.push_str("},\"source\":");
+                push_side(out, source);
                 out.push_str("}}");
             }
         }
@@ -1057,7 +1325,7 @@ fn lane_verdict(name: &str, verdict: &Verdict) -> JVerdict {
                 .map(|violation| match violation {
                     Violation::Functionality { statement }
                     | Violation::Containment { statement, .. }
-                    | Violation::Cardinality { statement } => statement.0,
+                    | Violation::Capacity { statement, .. } => statement.0,
                     Violation::ClosedRelationWrite { .. } => {
                         panic!("judgment fixture {name} wrote a closed relation")
                     }
@@ -1280,8 +1548,9 @@ mod tests {
                 statement: StatementId(1),
                 direction: Direction::SourceUnsatisfied,
             },
-            Violation::Cardinality {
+            Violation::Capacity {
                 statement: StatementId(2),
+                measure: 3,
             },
         ]);
         match lane_verdict("pin-mixed-kinds", &mixed) {

@@ -2,7 +2,7 @@
 //! owes its curve. `storage/commit/judgment.rs :: check_source`
 //! iterates `plan.inserts` in the delta's `(relation, fact_hash)`
 //! `BTreeMap` order, so the source-side target probes land in effectively
-//! random U-key order; the target and window check lists are already
+//! random U-key order; the target and capacity check lists are already
 //! BTree-sorted. T8 found the orders indistinguishable at bench commit
 //! sizes but never swept commit size to find where sorting starts
 //! paying. This lane sweeps the touched-parent count over ephemeral
@@ -285,7 +285,7 @@ pub fn pin_hash_model(db: &Db<world::WindowedWorld>) -> Result<(), String> {
 /// One commit's judgment spans, summed by name out of a trace capture.
 struct JudgmentSpans {
     source: u64,
-    windows: u64,
+    capacities: u64,
 }
 
 fn judgment_spans(events: &[obs::TraceEvent]) -> JudgmentSpans {
@@ -298,7 +298,7 @@ fn judgment_spans(events: &[obs::TraceEvent]) -> JudgmentSpans {
     };
     JudgmentSpans {
         source: sum(obs::names::JUDGMENT_SOURCE),
-        windows: sum(obs::names::JUDGMENT_WINDOWS),
+        capacities: sum(obs::names::JUDGMENT_CAPACITIES),
     }
 }
 
@@ -353,7 +353,7 @@ fn run_cell(
         outcome.map_err(|e| format!("sweep commit (size {k}, {}): {e:?}", order.label()))?;
         let spans = judgment_spans(&events);
         src.push(spans.source);
-        win.push(spans.windows);
+        win.push(spans.capacities);
     }
     Ok(Cell {
         src: stats(&mut src),
@@ -364,7 +364,7 @@ fn run_cell(
 /// The sweep: for each commit size, both probe-order arms over fresh
 /// ephemeral twins of identical ambient mass, rendered as one
 /// per-commit-size table (nanoseconds; `src` is the sortable
-/// `judgment_source` span, `win` the already-sorted `judgment_windows`
+/// `judgment_source` span, `win` the already-sorted `judgment_capacities`
 /// control — target side idles, these commits delete nothing).
 ///
 /// # Errors
@@ -433,7 +433,7 @@ fn run_with_floor(
     let _ = writeln!(
         out,
         "arms: delta = today's hash-order source probes; sorted = key-sorted probe order \
-         (hash-graded child ids); win = the already-sorted window walk, both arms"
+         (hash-graded child ids); win = the already-sorted capacity walk, both arms"
     );
     let _ = writeln!(out);
     let _ = writeln!(
