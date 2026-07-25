@@ -30,11 +30,11 @@ import * as path from "node:path"
 import { after, before, describe, test } from "node:test"
 import { closed } from "#closed.ts"
 import { on } from "#face.ts"
-import { by } from "#order.ts"
 import { bool, u64 } from "#fields.ts"
 import { lower } from "#lower.ts"
 import type { DbHandle } from "#native.ts"
 import { native } from "#native.ts"
+import { by } from "#order.ts"
 import type { Query, QueryRow } from "#query/lower.ts"
 import { lowerQuery, query } from "#query/lower.ts"
 import { decodeAnswers, wireParams } from "#query/run.ts"
@@ -317,10 +317,7 @@ describe("ψ query atoms over closed relations", function suite() {
 		const answers = run(golden, {}).map(function id(row) {
 			return row.i
 		})
-		assert.deepEqual(
-			[...answers].sort(by()),
-			[3n, 5n]
-		)
+		assert.deepEqual([...answers].sort(by()), [3n, 5n])
 	})
 
 	test("the join walls hold over closed atoms at both tiers (each @ts-expect-error real; the runtime twin throws the same verdict)", function joinWalls() {

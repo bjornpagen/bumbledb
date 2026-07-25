@@ -32,7 +32,6 @@ import process from "node:process"
 import { after, describe, test } from "node:test"
 
 import type { Infer, Schema, SchemaRelations } from "#index.ts"
-import { by } from "#order.ts"
 import {
 	ALLEN,
 	abandon,
@@ -67,6 +66,7 @@ import {
 	within
 } from "#index.ts"
 import { native } from "#native.ts"
+import { by } from "#order.ts"
 
 const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bumbledb-cookbook-"))
 
