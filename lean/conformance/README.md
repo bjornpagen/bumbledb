@@ -263,7 +263,13 @@ The starter roster covers: both classical forms (scalar key;
 containment — scalar, coverage, and the closed member set, plain and
 ψ-narrowed), the
 extension form (unit-weight capacity at
-floor/ceiling/`n..n`/`0..*`/empty-parent),
+floor/ceiling/`n..n`/`0..*`/empty-parent, and the weighted roster:
+column weights under both polarities with the zero-weight floor
+footgun as data, dependent bounds through the target-update seam,
+and the calendar Duration pair — the closed-pair sum refutation and
+the R16 fresh-keyed interplay live outside the lane by its own
+fences, as validation-refusal and engine-side unit coverage
+respectively),
 the two-phase preemption mix,
 set-selections deciding a verdict, the delete-then-reinsert
 touched-group seam, and the permuted-interval lock — a statement
