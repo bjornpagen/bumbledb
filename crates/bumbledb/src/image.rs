@@ -9,8 +9,8 @@ pub mod cache;
 pub mod view;
 
 mod build;
-mod distinct;
 mod decode;
+mod distinct;
 mod stride;
 
 pub use build::{TransientImage, append, build, synthesize_closed};

@@ -91,8 +91,10 @@ impl<S> Db<S> {
             if served.column(column) != rebuilt.column(column) {
                 return Ok(Some(ImageDivergence::Column { column }));
             }
-            let (served_count, rebuilt_count) =
-                (served.distinct_count(column), rebuilt.distinct_count(column));
+            let (served_count, rebuilt_count) = (
+                served.distinct_count(column),
+                rebuilt.distinct_count(column),
+            );
             if served_count != rebuilt_count {
                 return Ok(Some(ImageDivergence::DistinctCount {
                     column,
