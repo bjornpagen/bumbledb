@@ -24,13 +24,17 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::schema::{
-    AxiomIndex, ContainmentId, Enforcement, IntervalTail, KeyId, Schema, WindowId,
+    AxiomIndex, CapacityId, ContainmentId, Enforcement, IntervalTail, KeyId, Schema, Weight,
 };
 use crate::storage::delta::WriteDelta;
 use crate::storage::keys::{self, DeterminantImage};
 use bumbledb_theory::schema::{RelationId, StatementId};
 
-use super::judgment::{SelectionCheck, Selections, satisfies, window_child_image};
+use super::judgment::{
+    CAPACITY_WEIGHT_SLOT, SelectionCheck, Selections, capacity_child_image, child_weight,
+    satisfies,
+};
+use crate::error::Result;
 
 /// One commit's derivable bookkeeping, borrowed from the delta's arena.
 pub(crate) struct CommitPlan<'d> {
@@ -51,11 +55,11 @@ pub(crate) struct CommitPlan<'d> {
     /// Phase-3 target-side check set: one entry per key tuple this commit
     /// disestablishes for at least one dependent statement.
     pub(crate) target_checks: Box<[DeterminantCheck]>,
-    /// Phase-3 window check set: the TOUCHED PARENTS
+    /// Phase-3 capacity check set: the TOUCHED PARENTS
     /// (`lean/Bumbledb/Txn/DeltaRestriction.lean: touchedParents`) — one
-    /// entry per (window, parent key tuple) this delta may have moved,
-    /// deduplicated, in scan order.
-    pub(crate) window_checks: Box<[WindowCheck]>,
+    /// entry per (capacity statement, parent key tuple) this delta may
+    /// have moved, deduplicated, in scan order.
+    pub(crate) capacity_checks: Box<[CapacityCheck]>,
 }
 
 impl CommitPlan<'_> {
@@ -70,11 +74,12 @@ impl CommitPlan<'_> {
     }
 }
 
-/// One touched parent of one window statement — the judgment phase probes
-/// the parent's ψ-selected holder and walks its child group.
-pub(crate) struct WindowCheck {
-    /// The validation-minted window witness.
-    pub(crate) window: WindowId,
+/// One touched parent of one capacity statement — the judgment phase
+/// probes the parent's ψ-selected holder, resolves its dependent bound,
+/// and walks its child group's measure.
+pub(crate) struct CapacityCheck {
+    /// The validation-minted capacity witness.
+    pub(crate) capacity: CapacityId,
     /// The parent key tuple, in target-key determinant order.
     pub(crate) parent: DeterminantImage,
 }
@@ -104,22 +109,30 @@ pub(crate) struct FactOp<'d> {
     /// delete op (removing a reference cannot violate an inclusion);
     /// only the insert-side judgment consumes it.
     pub(crate) memberships: Box<[MembershipOp]>,
-    /// One per window statement whose source (child) is this relation and
-    /// whose φ the fact satisfies — the window's `R` edge, written exactly
-    /// as a containment edge (`docs/architecture/50-storage.md` § key
-    /// layout: the child-group walk's reader).
-    pub(crate) window_edges: Box<[MarkEdgeOp]>,
+    /// One per capacity statement whose source (child) is this relation
+    /// and whose φ the fact satisfies — the capacity `R` edge, written
+    /// exactly as a containment edge (`docs/architecture/50-storage.md`
+    /// § key layout: the child-group measure walk's reader).
+    pub(crate) capacity_edges: Box<[MarkEdgeOp]>,
 }
 
-/// One window `R` edge of one fact: the statement-scoped key
-/// material, byte-symmetric between the insert put and the delete removal
-/// (the applier consumes it exactly as a containment [`EdgeOp`]).
+/// One capacity `R` edge of one fact: the statement-scoped key material,
+/// KEY-symmetric between the insert put and the delete removal (the
+/// applier consumes it exactly as a containment [`EdgeOp`]; the delete
+/// removal is key-only, so the delete side's `weight` is derived and
+/// unread — the uniform derivation is cheaper than a disposition split).
 pub(crate) struct MarkEdgeOp {
     /// Prederived statement identity for the schema-free byte applier.
     pub(crate) statement: StatementId,
-    /// The edge's key-bytes segment: the window's child projection in
-    /// target-key determinant order.
+    /// The edge's key-bytes segment: the capacity statement's child
+    /// projection in target-key determinant order.
     pub(crate) key_bytes: DeterminantImage,
+    /// The insert put's value slot: the child's weight under the C17
+    /// slot arm ([`CAPACITY_WEIGHT_SLOT`], weighted statements only),
+    /// sliced from the source fact at plan time — the plan stays pure,
+    /// zero LMDB reads. `None` = the empty value (every edge under the
+    /// fetch baseline; unit edges always).
+    pub(crate) weight: Option<u64>,
 }
 
 /// The fresh-row derivation of one fact op (R16): the row id sliced from
@@ -202,28 +215,36 @@ pub(crate) struct DependentCheck {
 /// Derives one commit's plan — pure over `(delta, schema, selections)`:
 /// no LMDB, no transactions, only byte slicing through the canonical key
 /// derivations and set arithmetic over the delta's net dispositions.
+///
+/// # Errors
+///
+/// The one fallible slice is the C17 slot arm's weight derivation
+/// ([`MarkEdgeOp::weight`]): a ray-valued Duration weight has no finite
+/// u64 for the value slot, so it refuses typed at plan time — under the
+/// landed fetch baseline the derivation never runs and this function
+/// never errors.
 pub(crate) fn plan_commit<'d>(
     delta: &'d WriteDelta<'_>,
     schema: &Schema,
     selections: Selections,
-) -> CommitPlan<'d> {
+) -> Result<CommitPlan<'d>> {
     // Determinant tuples of key statements some containment depends on — the
     // inputs of the target-side check set (`deleted − inserted`).
     let mut deleted_determinants: BTreeSet<(KeyId, DeterminantImage)> = BTreeSet::new();
     let mut inserted_determinants: BTreeSet<(KeyId, DeterminantImage)> = BTreeSet::new();
-    // The touched notion of the window form
+    // The touched notion of the capacity form
     // (`lean/Bumbledb/Txn/DeltaRestriction.lean`): every parent key tuple
     // any delta child fact projects to plus the delta's ψ-selected
     // parents (`touchedParents`) — a set by construction, deduplicated
     // here.
-    let mut touched_parents: BTreeMap<WindowId, BTreeSet<DeterminantImage>> = BTreeMap::new();
+    let mut touched_parents: BTreeMap<CapacityId, BTreeSet<DeterminantImage>> = BTreeMap::new();
     let mut scratch = FactScratch::default();
     // The delta's disposition iterators filter, so their size hints are
     // inexact: each op list is counted first and collected at exact
-    // capacity (`into_boxed_slice` at len == capacity never reallocates).
+    // capacity (pushing into a `with_capacity` Vec never reallocates).
     let mut deletes = Vec::with_capacity(delta.deletes().count());
-    deletes.extend(delta.deletes().map(|(rel, fact)| {
-        fact_op(
+    for (rel, fact) in delta.deletes() {
+        deletes.push(fact_op(
             schema,
             &selections,
             rel,
@@ -231,12 +252,12 @@ pub(crate) fn plan_commit<'d>(
             &mut deleted_determinants,
             &mut touched_parents,
             &mut scratch,
-        )
-    }));
+        )?);
+    }
     let deletes = deletes.into_boxed_slice();
     let mut inserts = Vec::with_capacity(delta.inserts().count());
-    inserts.extend(delta.inserts().map(|(rel, fact)| {
-        fact_op(
+    for (rel, fact) in delta.inserts() {
+        inserts.push(fact_op(
             schema,
             &selections,
             rel,
@@ -244,8 +265,8 @@ pub(crate) fn plan_commit<'d>(
             &mut inserted_determinants,
             &mut touched_parents,
             &mut scratch,
-        )
-    }));
+        )?);
+    }
     let inserts = inserts.into_boxed_slice();
     let mut inserted: Vec<(RelationId, &[u8])> = Vec::with_capacity(inserts.len());
     inserted.extend(inserts.iter().map(|op| (op.relation, op.fact)));
@@ -256,21 +277,21 @@ pub(crate) fn plan_commit<'d>(
         deleted_determinants,
         &inserted_determinants,
     );
-    let mut window_checks =
+    let mut capacity_checks =
         Vec::with_capacity(touched_parents.values().map(BTreeSet::len).sum::<usize>());
-    window_checks.extend(touched_parents.into_iter().flat_map(|(window, parents)| {
+    capacity_checks.extend(touched_parents.into_iter().flat_map(|(capacity, parents)| {
         parents
             .into_iter()
-            .map(move |parent| WindowCheck { window, parent })
+            .map(move |parent| CapacityCheck { capacity, parent })
     }));
-    CommitPlan {
+    Ok(CommitPlan {
         selections,
         deletes,
         inserts,
         inserted: inserted.into_boxed_slice(),
         target_checks,
-        window_checks: window_checks.into_boxed_slice(),
-    }
+        capacity_checks: capacity_checks.into_boxed_slice(),
+    })
 }
 
 /// Per-fact derivation scratch, hoisted to the commit ([`plan_commit`]):
@@ -281,7 +302,7 @@ struct FactScratch {
     image: DeterminantImage,
     edges: Vec<EdgeOp>,
     memberships: Vec<MembershipOp>,
-    window_edges: Vec<MarkEdgeOp>,
+    capacity_edges: Vec<MarkEdgeOp>,
 }
 
 /// Derives one fact's op: determinant bytes per key statement, reverse-edge key
@@ -294,9 +315,9 @@ fn fact_op<'d>(
     rel: RelationId,
     fact: &'d [u8],
     dependent_determinants: &mut BTreeSet<(KeyId, DeterminantImage)>,
-    touched_parents: &mut BTreeMap<WindowId, BTreeSet<DeterminantImage>>,
+    touched_parents: &mut BTreeMap<CapacityId, BTreeSet<DeterminantImage>>,
     scratch: &mut FactScratch,
-) -> FactOp<'d> {
+) -> Result<FactOp<'d>> {
     // Every F/M/U/R key byte originates from this derivation — the
     // refusal-hardening chokepoint (`keys::debug_assert_ordinary`).
     keys::debug_assert_ordinary(schema, rel);
@@ -383,67 +404,79 @@ fn fact_op<'d>(
             }
         }
     }
-    let window_edges = mark_ops(schema, selections, relation, fact, touched_parents, scratch);
-    FactOp {
+    let capacity_edges = mark_ops(schema, selections, relation, fact, touched_parents, scratch)?;
+    Ok(FactOp {
         relation: rel,
         fact,
         fresh_row,
         determinants,
         edges: scratch.edges.drain(..).collect(),
         memberships: scratch.memberships.drain(..).collect(),
-        window_edges,
-    }
+        capacity_edges,
+    })
 }
 
-/// One fact's window-form derivations: the window `R` edges, plus the
-/// fact's contributions to the TOUCHED notion
-/// (`lean/Bumbledb/Txn/DeltaRestriction.lean`).
+/// One fact's capacity-form derivations: the capacity `R` edges (with
+/// the C17 slot arm's weight, when armed), plus the fact's contributions
+/// to the TOUCHED notion (`lean/Bumbledb/Txn/DeltaRestriction.lean`).
+/// Dependent bounds need no marking of their own: a target-row
+/// bound-field update is remove+add, both halves derive the SAME key
+/// tuple through the ψ-gated target half below, and the BTreeSet
+/// dedupes — `touchedParents` already covers them (the non-obvious
+/// reason "plan phase unchanged" survives dependent bounds).
 fn mark_ops(
     schema: &Schema,
     selections: &Selections,
     relation: &crate::schema::Relation,
     fact: &[u8],
-    touched_parents: &mut BTreeMap<WindowId, BTreeSet<DeterminantImage>>,
+    touched_parents: &mut BTreeMap<CapacityId, BTreeSet<DeterminantImage>>,
     scratch: &mut FactScratch,
-) -> Box<[MarkEdgeOp]> {
+) -> Result<Box<[MarkEdgeOp]>> {
     let layout = relation.layout();
-    // Window edges and touched parents (`touchedParents`' two halves).
+    // Capacity edges and touched parents (`touchedParents`' two halves).
     // The source half is φ-BLIND: every delta child touches its parent
     // tuple, φ-satisfying or not — the model's superset narrowing (a
     // non-φ fact never changes a child group; wider touched only
     // re-checks more). The edge itself is φ-gated exactly as a
-    // containment's, so the child-group walk counts σφ members only.
-    for &window_id in relation.window_sources() {
-        let statement = schema.window(window_id);
-        window_child_image(statement, layout, fact, &mut scratch.image);
+    // containment's, so the child-group measure walk sums σφ members only.
+    for &capacity_id in relation.capacity_sources() {
+        let statement = schema.capacity(capacity_id);
+        capacity_child_image(statement, layout, fact, &mut scratch.image);
         touched_parents
-            .entry(window_id)
+            .entry(capacity_id)
             .or_default()
             .insert(scratch.image.clone());
-        if satisfies(&selections.window(window_id).source, layout, fact) {
-            scratch.window_edges.push(MarkEdgeOp {
+        if satisfies(&selections.capacity(capacity_id).source, layout, fact) {
+            let weight = if CAPACITY_WEIGHT_SLOT && !matches!(statement.weight, Weight::Unit) {
+                Some(child_weight(statement, layout, fact)?)
+            } else {
+                None
+            };
+            scratch.capacity_edges.push(MarkEdgeOp {
                 statement: statement.id,
                 key_bytes: scratch.image.clone(),
+                weight,
             });
         }
     }
     // The target half: a delta parent inside ψ touches its own key tuple
-    // (a group newly constrained or released). Closed parents never reach
-    // a fact op (writes refused), so only the keyed arm exists here.
-    for &window_id in relation.window_targets() {
-        let statement = schema.window(window_id);
+    // (a group newly constrained or released — a dependent-bound field
+    // update rides this same half as remove+add). Closed parents never
+    // reach a fact op (writes refused), so only the keyed arm exists here.
+    for &capacity_id in relation.capacity_targets() {
+        let statement = schema.capacity(capacity_id);
         if let Enforcement::ScalarProbe { target_key, .. } = &statement.enforcement
-            && satisfies(&selections.window(window_id).target, layout, fact)
+            && satisfies(&selections.capacity(capacity_id).target, layout, fact)
         {
             let key_statement = schema.key(*target_key);
             keys::determinant_image(layout, &key_statement.projection, fact, &mut scratch.image);
             touched_parents
-                .entry(window_id)
+                .entry(capacity_id)
                 .or_default()
                 .insert(scratch.image.clone());
         }
     }
-    scratch.window_edges.drain(..).collect()
+    Ok(scratch.capacity_edges.drain(..).collect())
 }
 
 /// The target-side check set: every deleted determinant tuple, expanded per

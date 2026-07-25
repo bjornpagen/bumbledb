@@ -18,12 +18,12 @@ pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
     let schema = s.schema;
     let mut derived = keys::DeterminantImage::scratch();
     for entry in namespace(s.data, txn, keys::NS_REVERSE)? {
-        let (key, _) = entry?;
+        let (key, value) = entry?;
         let Some((sid, key_bytes, source_rel, source_row)) = keys::parse_reverse_key(key) else {
             s.malformed(key, "R key shape");
             continue;
         };
-        // The statement id must name a containment or window
+        // The statement id must name a containment or capacity
         // statement whose source is the embedded relation — anything else
         // is not an R key the schema could ever have written.
         let (expected_relation, closed_target) = match schema.statement_checked(sid) {
@@ -32,7 +32,7 @@ pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
                 matches!(statement.enforcement, Enforcement::Closed { .. })
                     .then_some(statement.target.relation),
             ),
-            Some(StatementView::Cardinality(_, statement)) => (statement.source.relation, None),
+            Some(StatementView::Capacity(_, statement)) => (statement.source.relation, None),
             _ => {
                 s.malformed(key, "R key statement");
                 continue;
@@ -46,8 +46,8 @@ pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
         // target side is vacuous by construction (axioms don't delete),
         // so a stored edge's very existence is the finding
         // (`docs/architecture/30-dependencies.md`, the shape criterion).
-        // (A closed-target WINDOW does store edges: they are its child
-        // count's index.)
+        // (A closed-target CAPACITY statement does store edges: they are
+        // its child-group measure's index.)
         if let Some(target) = closed_target {
             s.push(StoreFinding::ClosedRelationEntry {
                 relation: target,
@@ -101,11 +101,45 @@ pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
                         derived.as_bytes() == key_bytes
                     }
                 }
-                Some(StatementView::Cardinality(window_id, statement)) => {
-                    judgment::satisfies(&s.selections.window(window_id).source, layout, fact) && {
-                        judgment::window_child_image(statement, layout, fact, &mut derived);
+                Some(StatementView::Capacity(capacity_id, statement)) => {
+                    let inside = judgment::satisfies(
+                        &s.selections.capacity(capacity_id).source,
+                        layout,
+                        fact,
+                    ) && {
+                        judgment::capacity_child_image(statement, layout, fact, &mut derived);
                         derived.as_bytes() == key_bytes
+                    };
+                    // R→F weight desync, the third conjunct: a live,
+                    // φ-satisfying, key-backing edge must also carry the
+                    // fact's weight-field encoding in its value slot
+                    // (unit and fetch-baseline edges: empty). A ray in
+                    // the weighed field is content — the malformed
+                    // finding, never an error.
+                    if inside {
+                        match judgment::expected_slot_weight(statement, layout, fact) {
+                            Ok(expected) => {
+                                let derived_word;
+                                let expected_bytes: &[u8] = match expected {
+                                    Some(weight) => {
+                                        derived_word = weight.to_le_bytes();
+                                        &derived_word
+                                    }
+                                    None => &[],
+                                };
+                                if value != expected_bytes {
+                                    s.push(StoreFinding::ReverseEdgeWeightDesync {
+                                        statement: sid,
+                                        reverse_key: key.into(),
+                                        stored: value.into(),
+                                        derived: expected_bytes.into(),
+                                    });
+                                }
+                            }
+                            Err(_) => s.malformed(key, "R capacity weight of a ray"),
+                        }
                     }
+                    inside
                 }
                 _ => unreachable!("the statement arm was classified above"),
             },

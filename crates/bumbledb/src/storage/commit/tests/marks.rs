@@ -15,8 +15,8 @@ use crate::storage::env::Environment;
 use crate::testutil::TempDir;
 use bumbledb_theory::Value;
 use bumbledb_theory::schema::{
-    Bound, FieldId, LiteralSet, RelationDescriptor, RelationId, SchemaDescriptor, Side,
-    StatementDescriptor, StatementId, ValueType, Weight,
+    Bound, FieldDescriptor, FieldId, Generation, LiteralSet, RelationDescriptor, RelationId,
+    SchemaDescriptor, Side, StatementDescriptor, StatementId, ValueType, Weight,
 };
 
 use super::{apply_delta, committed_data, fact, field, interval, side};
@@ -531,13 +531,15 @@ fn capacity_sum_ceiling_convicts_with_the_full_measure() {
     let result = base_then_delta(
         "cap-sum-ceiling",
         &schema,
+        // The base sits AT the ceiling (50 + 50 = 100 ≤ hi) — the probe
+        // delta alone pushes it over.
         &[
             (POOL, p.clone()),
-            (DEVICE, device(&schema, 1, 60, 0)),
-            (DEVICE, device(&schema, 1, 60, 1)),
+            (DEVICE, device(&schema, 1, 50, 0)),
+            (DEVICE, device(&schema, 1, 50, 1)),
         ],
         &[],
-        &[(DEVICE, device(&schema, 1, 60, 2))],
+        &[(DEVICE, device(&schema, 1, 80, 2))],
     );
     assert_capacity_violation(result, WATTS_CAPACITY, &p, 180);
 }
@@ -808,6 +810,185 @@ fn capacity_duration_bound_reads_the_target_span() {
         &[(BOOKING, booking(&schema, 1, (8, 12), 2))],
     );
     assert_capacity_violation(result, BOOKED_CAPACITY, &r, 12);
+}
+
+/// A ray booking — `[s, ∞)` in the weighed field. Bypasses the
+/// nonempty-interval helper deliberately: rays are legal interval VALUES
+/// (the engine's own representation, end = MAX), it is their MEASURE
+/// that is undefined.
+fn ray_booking(schema: &Schema, room: u64, start: u64, num: u64) -> Vec<u8> {
+    fact(
+        schema,
+        BOOKING,
+        &[
+            ValueRef::U64(room),
+            ValueRef::IntervalU64(crate::Interval::<u64>::ray(start).expect("ray")),
+            ValueRef::U64(num),
+        ],
+    )
+}
+
+/// C10: a ray-valued Duration WEIGHT met at measure time is the typed
+/// commit refusal naming the row — never a violation (the law is not
+/// judged false; its measure is undefined), never a silent `MAX`
+/// (ruled 2026-07-24; the R6 `MeasureOfRay` precedent at the law site).
+#[test]
+fn capacity_duration_weight_of_a_ray_refuses_typed() {
+    let schema = duration_schema(Bound::Lit(10));
+    let b = ray_booking(&schema, 1, 5, 0);
+    let result = base_then_delta(
+        "cap-ray-weight",
+        &schema,
+        &[],
+        &[],
+        &[(ROOM, room(&schema, 1, (0, 24))), (BOOKING, b.clone())],
+    );
+    let err = result.unwrap_err();
+    let Error::CapacityRayMeasure { statement, fact } = &err else {
+        panic!("expected the typed ray refusal, got {err:?}");
+    };
+    assert_eq!(*statement, BOOKED_CAPACITY);
+    assert_eq!(**fact, *b, "the refusal names the weighed row");
+}
+
+/// C10, the BOUND direction: a parent whose dependent Duration bound is
+/// a ray refuses any commit touching its group — the refusal names the
+/// bound-carrying TARGET row.
+#[test]
+fn capacity_duration_bound_of_a_ray_refuses_typed() {
+    let schema = duration_schema(Bound::TargetDuration(FieldId(1)));
+    let r = fact(
+        &schema,
+        ROOM,
+        &[
+            ValueRef::U64(1),
+            ValueRef::IntervalU64(crate::Interval::<u64>::ray(0).expect("ray")),
+        ],
+    );
+    let result = base_then_delta(
+        "cap-ray-bound",
+        &schema,
+        &[],
+        &[],
+        &[(ROOM, r.clone()), (BOOKING, booking(&schema, 1, (0, 4), 0))],
+    );
+    let err = result.unwrap_err();
+    let Error::CapacityRayMeasure { statement, fact } = &err else {
+        panic!("expected the typed ray refusal, got {err:?}");
+    };
+    assert_eq!(*statement, BOOKED_CAPACITY);
+    assert_eq!(**fact, *r, "the refusal names the bound-carrying row");
+}
+
+// ---------- R16 interplay: fresh-keyed relations under a weighted law ----------
+
+/// A fresh u64 field (the one id allocator's mint, R16).
+fn fresh(name: &str) -> FieldDescriptor {
+    FieldDescriptor {
+        name: name.into(),
+        value_type: ValueType::U64,
+        generation: Generation::Fresh,
+    }
+}
+
+/// `FreshPool(id fresh, supply)` / `FreshDevice(id fresh, pool, watts)`
+/// with `FreshPool(id) <=[watts]{0..supply} FreshDevice(pool)` — both
+/// sides fresh-keyed, so the fresh auto-keys are the target key AND the
+/// child rows' `F` identities.
+fn fresh_schema() -> Schema {
+    SchemaDescriptor {
+        relations: vec![
+            RelationDescriptor {
+                extension: None,
+                name: "FreshPool".into(),
+                fields: vec![fresh("id"), field("supply", ValueType::U64)],
+            },
+            RelationDescriptor {
+                extension: None,
+                name: "FreshDevice".into(),
+                fields: vec![
+                    fresh("id"),
+                    field("pool", ValueType::U64),
+                    field("watts", ValueType::U64),
+                ],
+            },
+        ],
+        statements: vec![StatementDescriptor::Capacity {
+            target: side(FRESH_POOL, &[0]),
+            weight: Weight::Field(FieldId(2)),
+            lo: 0,
+            hi: Some(Bound::TargetField(FieldId(1))),
+            source: side(FRESH_DEVICE, &[1]),
+        }],
+    }
+    .validate()
+    .expect("the fresh-keyed weighted fixture seals")
+}
+
+const FRESH_POOL: RelationId = RelationId(0);
+const FRESH_DEVICE: RelationId = RelationId(1);
+
+fn fresh_pool(schema: &Schema, id: u64, supply: u64) -> Vec<u8> {
+    fact(schema, FRESH_POOL, &[ValueRef::U64(id), ValueRef::U64(supply)])
+}
+
+fn fresh_device(schema: &Schema, id: u64, pool: u64, watts: u64) -> Vec<u8> {
+    fact(
+        schema,
+        FRESH_DEVICE,
+        &[
+            ValueRef::U64(id),
+            ValueRef::U64(pool),
+            ValueRef::U64(watts),
+        ],
+    )
+}
+
+/// The R16 interplay (`docs/architecture/50-storage.md` § key layout):
+/// on a fresh-keyed relation the fresh field's value IS the `F` row id,
+/// so the capacity edges minted in THIS commit name rows the same
+/// commit's measure walk must resolve — the weight written at mint time
+/// is seen by the same commit's walk (fetch baseline: one own-writes `F`
+/// get per walked edge; slot arm: the value slot itself), and the parent
+/// probe resolves the fresh-row holder through `F` directly (no `U`
+/// tree), its dependent bound read from that same row.
+#[test]
+fn capacity_weight_on_fresh_keyed_relations_is_seen_by_the_same_commits_walk() {
+    let schema = fresh_schema();
+    let capacity = schema.capacities()[0].id;
+    // Not `base_then_delta`: an aborted commit on a fresh-keyed relation
+    // legitimately persists its escaped `Q` marks (the never-reissue
+    // ratchet, `lean/Bumbledb/Txn/Fresh.lean: never_reissue_observable`),
+    // so the byte-identity assert does not apply here — the abort
+    // semantics themselves are the functionality estate's pins.
+    let dir = TempDir::new("cap-fresh-r16");
+    let env = Environment::create(dir.path(), &schema).expect("create");
+    // Everything mints in ONE commit, over budget: supply 100 < 60 + 60.
+    let p = fresh_pool(&schema, 7, 100);
+    let result = apply_delta(
+        &env,
+        &schema,
+        &[],
+        &[
+            (FRESH_POOL, p.clone()),
+            (FRESH_DEVICE, fresh_device(&schema, 1, 7, 60)),
+            (FRESH_DEVICE, fresh_device(&schema, 2, 7, 60)),
+        ],
+    );
+    assert_capacity_violation(result, capacity, &p, 120);
+    // Exactly at the dependent ceiling: commits whole (fresh ids past
+    // the burned ones — escaped mints never reissue).
+    apply_delta(
+        &env,
+        &schema,
+        &[],
+        &[
+            (FRESH_POOL, fresh_pool(&schema, 7, 100)),
+            (FRESH_DEVICE, fresh_device(&schema, 11, 7, 60)),
+            (FRESH_DEVICE, fresh_device(&schema, 12, 7, 40)),
+        ],
+    )
+    .expect("Σ watts = 100 sits on the fresh pool's supply ceiling");
 }
 
 // ---------- the phase laws ----------

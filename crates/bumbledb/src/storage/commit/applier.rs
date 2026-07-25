@@ -58,10 +58,11 @@ impl Applier<'_> {
                 keys::reverse_key(&mut self.key, edge.statement, &edge.key_bytes, rel, row_id);
             self.data.delete(self.txn.raw_mut(), &self.key[..r_len])?;
         }
-        // Window edges delete byte-symmetrically with their
-        // puts, exactly as containment edges do (and share the same
-        // blind-delete asymmetry the sweeper compensates for).
-        for edge in &op.window_edges {
+        // Capacity edges delete KEY-symmetrically with their puts,
+        // exactly as containment edges do (and share the same
+        // blind-delete asymmetry the sweeper compensates for) — the
+        // removal is key-only, so the plan's delete-side weight is unread.
+        for edge in &op.capacity_edges {
             let r_len =
                 keys::reverse_key(&mut self.key, edge.statement, &edge.key_bytes, rel, row_id);
             self.data.delete(self.txn.raw_mut(), &self.key[..r_len])?;
@@ -164,15 +165,23 @@ impl Applier<'_> {
             self.put_data(r_len, &[])?;
             crashpoint!("mid-write-r");
         }
-        // Window edges (per φ-satisfying child): the same `R` machinery,
-        // statement-scoped — the child-group walk's index
-        // (`docs/architecture/50-storage.md` § key layout). Covered by
-        // the `mid-write-r` crashpoint above: an R put boundary is one
-        // named point, whichever statement kind wrote the edge.
-        for edge in &op.window_edges {
+        // Capacity edges (per φ-satisfying child): the same `R` machinery,
+        // statement-scoped — the child-group measure walk's index
+        // (`docs/architecture/50-storage.md` § key layout). Under the C17
+        // slot arm a WEIGHTED statement's edge carries the child's u64
+        // weight (LE) in the value slot, paid once here so the judge
+        // reads the walk it already does; the plan derived it
+        // ([`super::plan::MarkEdgeOp::weight`]), this put spends it.
+        // Covered by the `mid-write-r` crashpoint above: an R put
+        // boundary is one named point, whichever statement kind wrote
+        // the edge.
+        for edge in &op.capacity_edges {
             let r_len =
                 keys::reverse_key(&mut self.key, edge.statement, &edge.key_bytes, rel, row_id);
-            self.put_data(r_len, &[])?;
+            match edge.weight {
+                Some(weight) => self.put_data(r_len, weight.to_le_bytes().as_slice())?,
+                None => self.put_data(r_len, &[])?,
+            }
         }
         Ok(())
     }

@@ -40,13 +40,14 @@ use heed::{AnyTls, RoTxn};
 
 use super::plan::{CommitPlan, EdgeOp};
 use super::{decode_row_id, fact_by_row};
-use crate::encoding::{FactLayout, encode_u64, field_bytes};
+use crate::encoding::{FactLayout, encode_u64, field_bytes, field_word_bytes};
 use crate::error::{CorruptionError, Direction, Error, Result, Violation, Violations};
 use crate::interval::sweep::{Continuation, sweep};
 use crate::obs;
 use crate::schema::{
-    AxiomIndex, CardinalityStatement, CompiledCheck, ContainmentId, DisjointDeterminantProof,
-    Enforcement, IntervalTail, KeyId, Schema, StatementView, WindowId,
+    AxiomIndex, Bound as CapacityBound, CapacityId, CapacityStatement, CompiledCheck,
+    ContainmentId, DisjointDeterminantProof, Enforcement, IntervalTail, KeyId, Schema,
+    StatementView, Weight,
 };
 use crate::storage::delta::WriteDelta;
 use crate::storage::env::{ReadTxn, WriteTxn};
@@ -74,15 +75,113 @@ impl<'state, 'env, 'delta> FinalStateView<'state, 'env, 'delta> {
 }
 
 /// Judges the whole statement phase against one named final state —
-/// containments (both directions) and cardinality windows (per touched
+/// containments (both directions) and capacity statements (per touched
 /// parent) — and seals the complete violation set of the phase
 /// (`lean/Bumbledb/Txn.lean: rejection_is_complete`, the statement arm).
 pub(super) fn judge(view: &FinalStateView<'_, '_, '_>) -> Result<Option<Violations>> {
     let mut violations = Vec::new();
     check_source(view, &mut violations)?;
     check_target(view, &mut violations)?;
-    check_windows(view, &mut violations)?;
+    check_capacities(view, &mut violations)?;
     Ok(Violations::seal(violations))
+}
+
+/// C17's measured choice, structured so flipping is ONE constant.
+/// `false` — the landed baseline: capacity `R` edges carry empty values
+/// and the weighted measure walk fetches each child fact (one `F` get
+/// per walked edge) to read its weight. `true` — the statement-scoped
+/// value-slot arm (ruled 2026-07-24, C17): a WEIGHTED capacity
+/// statement's `R` edges carry the child's u64 weight (LE) in the value
+/// slot, paid once at write time, and the walk reads the entries it
+/// already visits. The constant flips the writer ([`super::Applier`]'s
+/// edge puts via [`super::plan::MarkEdgeOp::weight`]), the walk
+/// ([`Checker::measure_children`]), and the sweeper's weight-desync
+/// checks together; readers dispatch on the statement's DECLARED weight
+/// plus this arm, never on value length — a width disagreeing with the
+/// declaration is corruption, not a fallback. The bench (the
+/// power-budget lane) decides the winner; the number lands here with it.
+/// Semantic corner, recorded: under the slot arm a ray-valued Duration
+/// weight refuses at write time (the slot needs a finite u64), which is
+/// strictly stronger than C10's judge-time refusal — visible only for a
+/// ray child under an absent parent; rule the corner before landing the
+/// slot arm as the default.
+pub(crate) const CAPACITY_WEIGHT_SLOT: bool = false;
+
+/// One source fact's weight under a capacity statement's measure
+/// (`lean/Bumbledb/Capacity.lean: Weight.apply`): `Unit` is 1 — the
+/// count instance; `Field` reads the u64-encoded SOURCE position;
+/// `DurationOf` reads the SOURCE interval position's measure in encoded
+/// word space (`end − start` — both element encodings preserve
+/// differences, the R5 machinery). A ray-valued Duration weight is the
+/// typed C10 refusal naming the row — a ray has no finite measure
+/// (`docs/architecture/30-dependencies.md` § weight typing).
+pub(crate) fn child_weight(
+    statement: &CapacityStatement,
+    layout: &FactLayout,
+    fact: &[u8],
+) -> Result<u64> {
+    match statement.weight {
+        Weight::Unit => Ok(1),
+        Weight::Field(field) => Ok(u64::from_be_bytes(field_word_bytes(
+            fact,
+            layout,
+            usize::from(field.0),
+        ))),
+        Weight::DurationOf(field) => {
+            let tail = statement
+                .weight_tail
+                .expect("validate seals a tail for every Duration weight");
+            interval_measure(
+                tail,
+                field_bytes(fact, layout, usize::from(field.0)),
+                statement.id,
+                fact,
+            )
+        }
+    }
+}
+
+/// The expected `R` value-slot payload for one capacity edge of one
+/// source fact — the ONE definition the applier writes and both
+/// weight-desync sweep directions compare against
+/// (`docs/architecture/60-validation.md` § the weight-desync sweep).
+/// `None` = the empty value: every edge under the fetch baseline, and
+/// unit edges under the slot arm.
+pub(crate) fn expected_slot_weight(
+    statement: &CapacityStatement,
+    layout: &FactLayout,
+    fact: &[u8],
+) -> Result<Option<u64>> {
+    if CAPACITY_WEIGHT_SLOT && !matches!(statement.weight, Weight::Unit) {
+        return Ok(Some(child_weight(statement, layout, fact)?));
+    }
+    Ok(None)
+}
+
+/// The interval measure in encoded word space: `end − start` over the
+/// order-preserving column words (I64 endpoints are the sign-flipped
+/// biased words, so differences are value differences). A ray
+/// (`end == u64::MAX` in both element encodings) has no finite measure —
+/// the typed commit refusal naming the row (ruled 2026-07-24, C10; the
+/// R6 precedent, `crate::error::Error::MeasureOfRay`'s judge-side twin).
+fn interval_measure(
+    tail: IntervalTail,
+    bytes: &[u8],
+    statement: bumbledb_theory::schema::StatementId,
+    fact: &[u8],
+) -> Result<u64> {
+    let (start, end) = tail
+        .words(bytes)
+        .ok_or(Error::Corruption(CorruptionError::MalformedValue(
+            "capacity interval field",
+        )))?;
+    if end == u64::MAX {
+        return Err(Error::CapacityRayMeasure {
+            statement,
+            fact: fact.into(),
+        });
+    }
+    Ok(end - start)
 }
 
 /// One binding's pre-encoded comparison: the singleton compare (today's
@@ -132,14 +231,14 @@ pub(crate) struct SideChecks {
 /// (committed dictionary only).
 type InternResolver<'a> = dyn FnMut(&[u8]) -> Result<Option<u64>> + 'a;
 
-/// Pre-encoded selections for every `Containment` and `Cardinality`
+/// Pre-encoded selections for every `Containment` and `Capacity`
 /// statement, built once per commit — the commit-local scratch that keeps
 /// literal encoding out of the per-fact loops.
 pub(crate) struct Selections {
     /// Dense by [`ContainmentId`]; every slot is a containment by type.
     checks: Box<[SideChecks]>,
-    /// Dense by [`WindowId`]; every slot is a cardinality window by type.
-    windows: Box<[SideChecks]>,
+    /// Dense by [`CapacityId`]; every slot is a capacity statement by type.
+    capacities: Box<[SideChecks]>,
 }
 
 impl Selections {
@@ -174,8 +273,8 @@ impl Selections {
                 })
             })
             .collect::<Result<Box<[_]>>>()?;
-        let windows = schema
-            .windows()
+        let capacities = schema
+            .capacities()
             .iter()
             .map(|statement| {
                 Ok(SideChecks {
@@ -184,7 +283,7 @@ impl Selections {
                 })
             })
             .collect::<Result<Box<[_]>>>()?;
-        Ok(Self { checks, windows })
+        Ok(Self { checks, capacities })
     }
 
     /// The checks of a validation-minted containment witness.
@@ -192,9 +291,9 @@ impl Selections {
         &self.checks[usize::from(id.0)]
     }
 
-    /// The checks of a validation-minted window witness.
-    pub(crate) fn window(&self, id: WindowId) -> &SideChecks {
-        &self.windows[usize::from(id.0)]
+    /// The checks of a validation-minted capacity witness.
+    pub(crate) fn capacity(&self, id: CapacityId) -> &SideChecks {
+        &self.capacities[usize::from(id.0)]
     }
 }
 
@@ -602,34 +701,34 @@ pub(super) fn check_target(
     Ok(())
 }
 
-/// The cardinality-window judgment (`docs/architecture/30-dependencies.md`
+/// The capacity judgment (`docs/architecture/30-dependencies.md`
 /// § enforcement): every TOUCHED parent key tuple — every tuple any delta
 /// child fact projects to, plus the delta's ψ-selected parents themselves
 /// (`lean/Bumbledb/Txn/DeltaRestriction.lean: touchedParents`) — resolves
-/// its ψ-selected holder in the final state and counts its child group
-/// against the window (`lean/Bumbledb/Oracle.lean:
-/// cardinality_plan_decides` — the walk's length verdict IS the
-/// delta-restricted check). A floor or ceiling miss records into the
-/// collector, scan-complete like the containment sides. The
-/// floored-window/containment sharing
+/// its ψ-selected holder in the final state, resolves any dependent bound
+/// from the holder's own row, and measures its child group against the
+/// window (`lean/Bumbledb/Oracle.lean: capacity_plan_decides` — the
+/// walk's measure verdict IS the delta-restricted check). A floor or
+/// ceiling miss records into the collector, scan-complete like the
+/// containment sides. The floored-Count/containment sharing
 /// (`lean/Bumbledb/Subsumption.lean: window_floor_containment`) shares
-/// the `R` machinery — a window edge is written exactly as a containment
-/// edge is — but never skips a check: a declared window is judged whether
-/// or not a containment subsumes its floor.
-pub(super) fn check_windows(
+/// the `R` machinery — a capacity edge is written exactly as a
+/// containment edge is — but never skips a check: a declared capacity
+/// statement is judged whether or not a containment subsumes its floor.
+pub(super) fn check_capacities(
     view: &FinalStateView<'_, '_, '_>,
     violations: &mut Vec<Violation>,
 ) -> Result<()> {
     let FinalStateView { txn, schema, plan } = view;
     let mut checker = Checker::new(txn.raw(), txn.env().data(), schema);
-    let mut span = obs::span(obs::names::JUDGMENT_WINDOWS, obs::Category::Commit);
+    let mut span = obs::span(obs::names::JUDGMENT_CAPACITIES, obs::Category::Commit);
     let mut judged = 0u64;
-    for check in &plan.window_checks {
+    for check in &plan.capacity_checks {
         judged += 1;
-        let statement = schema.window(check.window);
-        let checks = plan.selections.window(check.window);
+        let statement = schema.capacity(check.capacity);
+        let checks = plan.selections.capacity(check.capacity);
         collect(
-            checker.check_window(statement, checks, check.parent.as_bytes()),
+            checker.check_capacity(statement, checks, check.parent.as_bytes()),
             violations,
         )?;
     }
@@ -638,12 +737,13 @@ pub(super) fn check_windows(
     Ok(())
 }
 
-/// Lays one child fact's parent-tuple bytes down in the window's
-/// target-key determinant order — the `R` key-bytes segment of a window
-/// edge, the child-group walk's prefix, and the source half of the
-/// touched-parent set (`docs/architecture/50-storage.md` § key layout).
-pub(crate) fn window_child_image<'a>(
-    statement: &CardinalityStatement,
+/// Lays one child fact's parent-tuple bytes down in the capacity
+/// statement's target-key determinant order — the `R` key-bytes segment
+/// of a capacity edge, the child-group walk's prefix, and the source half
+/// of the touched-parent set (`docs/architecture/50-storage.md` § key
+/// layout). Group keying is weight-blind.
+pub(crate) fn capacity_child_image<'a>(
+    statement: &CapacityStatement,
     layout: &FactLayout,
     fact: &[u8],
     out: &'a mut DeterminantImage,
@@ -665,7 +765,7 @@ pub(crate) fn window_child_image<'a>(
             keys::determinant_image(layout, &statement.source.projection, fact, out)
         }
         Enforcement::IntervalCoverage { .. } => {
-            unreachable!("windows refuse interval positions at the gate")
+            unreachable!("capacity statements refuse interval positions in projections at the gate")
         }
     }
 }
@@ -751,7 +851,7 @@ fn closed_source_survivor(
 /// One (source fact, containment statement) judgment pair: everything a
 /// target probe needs, borrowed from the driving loop. Both commit-time
 /// sides build these — the source side for each inserted fact inside σ,
-/// the target side for each surviving source whose required window a
+/// the target side for each surviving source whose required tuple a
 /// delete touched — and `Db::verify_store` builds one per committed
 /// source fact inside σ, re-running the same judgment globally.
 pub(crate) struct Probe<'a> {
@@ -978,21 +1078,25 @@ impl<'a> Checker<'a> {
         )
     }
 
-    /// One touched parent's window judgment: resolve the ψ-selected holder
-    /// of the parent tuple in this checker's state (one keyed `U` probe —
-    /// `lean/Bumbledb/Oracle.lean: accepted_target_key_prices_the_probe`
-    /// is the unit price's license — or the compiled member set for a
-    /// closed parent), then count its child group and compare against the
-    /// window. No holder, nothing to judge — windows never manufacture
-    /// parents (`lean/Bumbledb/Cardinality.lean:
-    /// cardinality_of_empty_parent`).
+    /// One touched parent's capacity judgment: resolve the ψ-selected
+    /// holder of the parent tuple in this checker's state (one keyed `U`
+    /// probe — `lean/Bumbledb/Oracle.lean:
+    /// accepted_target_key_prices_the_probe` is the unit price's license
+    /// — or the compiled member set for a closed parent), resolve any
+    /// dependent bound from the holder fact already in hand (ZERO extra
+    /// descents: both arms bind the full target fact before the verdict —
+    /// the ψ check and the violation's fact bytes require it anyway),
+    /// then measure its child group and compare against the resolved
+    /// window. No holder, nothing to judge — capacity statements never
+    /// manufacture parents (`lean/Bumbledb/Capacity.lean:
+    /// capacity_of_empty_parent`).
     ///
     /// Shared verbatim by the commit path (over the write transaction's
     /// own-writes view) and `Db::verify_store` (over a read snapshot) —
     /// one definition, never a sweeper copy.
-    pub(crate) fn check_window(
+    pub(crate) fn check_capacity(
         &mut self,
-        statement: &CardinalityStatement,
+        statement: &CapacityStatement,
         checks: &SideChecks,
         parent_key: &[u8],
     ) -> Result<()> {
@@ -1039,7 +1143,7 @@ impl<'a> Checker<'a> {
             Enforcement::Closed { members } => {
                 let Ok(word) = <[u8; 8]>::try_from(parent_key) else {
                     return Err(Error::Corruption(CorruptionError::MalformedValue(
-                        "window parent key width",
+                        "capacity parent key width",
                     )));
                 };
                 let id = u64::from_be_bytes(word);
@@ -1055,74 +1159,156 @@ impl<'a> Checker<'a> {
                 &rows[index].fact
             }
             Enforcement::IntervalCoverage { .. } => {
-                unreachable!("windows refuse interval positions at the gate")
+                unreachable!(
+                    "capacity statements refuse interval positions in projections at the gate"
+                )
             }
         };
-        let count = self.count_children(statement, &checks.source, parent_key)?;
-        if count < statement.lo || statement.hi.is_some_and(|hi| count > hi) {
+        // Dependent bounds resolve from the holder fact already in hand
+        // (C1: by name against TARGET's whole roster; C6: hi slot only) —
+        // zero extra descents. A ray-valued Duration bound is the typed
+        // C10 refusal naming the parent row.
+        let hi = self.resolve_hi(statement, parent_fact)?;
+        let measure = self.measure_children(statement, &checks.source, parent_key, hi)?;
+        if measure < u128::from(statement.lo) || hi.is_some_and(|hi| measure > u128::from(hi)) {
             return Err(Error::CommitRejected {
-                violations: Violations::one(Violation::Cardinality {
+                violations: Violations::one(Violation::Capacity {
                     statement: statement.id,
                     fact: parent_fact.into(),
-                    count,
+                    measure,
                 }),
             });
         }
         Ok(())
     }
 
-    /// One parent's child-group count: the ordered walk of the window
-    /// statement's `R` bucket at the parent tuple — one entry seek plus
-    /// one read per walked edge (`lean/Bumbledb/Oracle.lean:
-    /// window_plan_consultations`), stopped as soon as the verdict is
-    /// decided (a shorter read only reads less — the clipping license).
-    /// A CLOSED source stored no edges: the φ-selected axioms sharing the
-    /// tuple are counted by an honest ≤256-row extension scan (domain
-    /// quantification, `docs/architecture/30-dependencies.md`).
-    fn count_children(
+    /// The capacity ceiling, resolved per touched parent against the
+    /// holder fact (`lean/Bumbledb/Capacity.lean: CapWindow.resolve`):
+    /// a literal passes through; a dependent bound reads the named
+    /// TARGET-row field — u64 word or interval measure — off the fact
+    /// bytes already fetched for the ψ check.
+    fn resolve_hi(
+        &self,
+        statement: &CapacityStatement,
+        parent_fact: &[u8],
+    ) -> Result<Option<u64>> {
+        let Some(bound) = &statement.hi else {
+            return Ok(None);
+        };
+        let layout = self.schema.relation(statement.target.relation).layout();
+        match bound {
+            CapacityBound::Lit(n) => Ok(Some(*n)),
+            CapacityBound::TargetField(field) => Ok(Some(u64::from_be_bytes(field_word_bytes(
+                parent_fact,
+                layout,
+                usize::from(field.0),
+            )))),
+            CapacityBound::TargetDuration(field) => {
+                let tail = statement
+                    .bound_tail
+                    .expect("validate seals a tail for every Duration bound");
+                interval_measure(
+                    tail,
+                    field_bytes(parent_fact, layout, usize::from(field.0)),
+                    statement.id,
+                    parent_fact,
+                )
+                .map(Some)
+            }
+        }
+    }
+
+    /// One parent's child-group measure: the ordered walk of the capacity
+    /// statement's `R` bucket at the parent tuple, summing weights in
+    /// u128 (`lean/Bumbledb/Oracle.lean: capacity_plan_consultations`;
+    /// overflow is unrepresentable — 2^64 max weight × any real group
+    /// stays far under 2^128, so no checked arithmetic). The clip and the
+    /// witness, per C12/C14: non-negative weights make the running sum
+    /// monotone, so a FLOOR-only walk exits the moment `sum ≥ lo` (the
+    /// verdict is final and no witness is owed — satisfaction records
+    /// nothing); a CEILING walk always completes — deciding `sum ≤ hi`
+    /// needs the whole group anyway, and on conviction the full sum IS
+    /// the witness, so the reported measure is walk-order-independent
+    /// (ruled 2026-07-24, C14: the clip serves the verdict, the full sum
+    /// serves the witness). Weights read per the C17 arm
+    /// ([`CAPACITY_WEIGHT_SLOT`]): the value slot, or one child `F` fetch
+    /// per walked edge. A CLOSED source stored no edges: the φ-selected
+    /// axioms sharing the tuple are summed by an honest ≤256-row
+    /// extension scan (domain quantification,
+    /// `docs/architecture/30-dependencies.md`).
+    fn measure_children(
         &mut self,
-        statement: &CardinalityStatement,
+        statement: &CapacityStatement,
         phi: &SelectionCheck,
         parent_key: &[u8],
-    ) -> Result<u64> {
+        hi: Option<u64>,
+    ) -> Result<u128> {
         let source = self.schema.relation(statement.source.relation);
+        let layout = source.layout();
         if let Some(rows) = source.extension() {
-            let layout = source.layout();
             let mut derived = DeterminantImage::scratch_with_capacity(parent_key.len());
-            let mut count = 0u64;
+            let mut measure = 0u128;
             for row in rows {
                 if !satisfies(phi, layout, &row.fact) {
                     continue;
                 }
-                window_child_image(statement, layout, &row.fact, &mut derived);
+                capacity_child_image(statement, layout, &row.fact, &mut derived);
                 if derived.as_bytes() == parent_key {
-                    count += 1;
+                    measure += u128::from(child_weight(statement, layout, &row.fact)?);
                 }
             }
-            return Ok(count);
+            return Ok(measure);
         }
-        // The walk decides at `max(lo, hi + 1)` entries: past the ceiling
-        // the count convicts whatever follows, and at the floor with no
-        // ceiling nothing further can change the verdict.
-        let decided_at = match statement.hi {
-            Some(hi) => statement.lo.max(hi.saturating_add(1)),
-            None => statement.lo,
-        };
+        // Floor-only clip: with no ceiling, `sum ≥ lo` is final — the
+        // running sum is monotone under non-negative weights (C12).
+        let floor_only_decided = |measure: u128| hi.is_none() && measure >= u128::from(statement.lo);
+        let unit = matches!(statement.weight, Weight::Unit);
         let p_len = keys::reverse_prefix(&mut self.key, statement.id, parent_key);
         let bounds: (Bound<&[u8]>, Bound<&[u8]>) =
             (Bound::Included(&self.key[..p_len]), Bound::Unbounded);
-        let mut count = 0u64;
+        let mut measure = 0u128;
         for entry in self.data.range(self.txn, &bounds)? {
-            let (k, _) = entry?;
+            let (k, v) = entry?;
             if !k.starts_with(&self.key[..p_len]) {
                 break;
             }
-            count += 1;
-            if count >= decided_at {
+            // Value discipline per the declared weight and the C17 arm —
+            // a width disagreeing with the declaration is corruption,
+            // never a fallback (the format gate proved no old data).
+            let weight = if unit {
+                if !v.is_empty() {
+                    return Err(Error::Corruption(CorruptionError::MalformedValue(
+                        "R capacity value width",
+                    )));
+                }
+                1
+            } else if CAPACITY_WEIGHT_SLOT {
+                let word: [u8; 8] = v.try_into().map_err(|_| {
+                    Error::Corruption(CorruptionError::MalformedValue("R capacity value width"))
+                })?;
+                u64::from_le_bytes(word)
+            } else {
+                if !v.is_empty() {
+                    return Err(Error::Corruption(CorruptionError::MalformedValue(
+                        "R capacity value width",
+                    )));
+                }
+                // The fetch-per-child baseline: one `F` get per walked
+                // edge — the R key names the child (source_rel, row).
+                let Some((_, _, source_rel, source_row)) = keys::parse_reverse_key(k) else {
+                    return Err(Error::Corruption(CorruptionError::MalformedValue(
+                        "R capacity key shape",
+                    )));
+                };
+                let child = fact_by_row(self.data, self.txn, source_rel, source_row)?;
+                child_weight(statement, layout, child)?
+            };
+            measure += u128::from(weight);
+            if floor_only_decided(measure) {
                 break;
             }
         }
-        Ok(count)
+        Ok(measure)
     }
 
     /// The per-segment target-selection check: with an empty σ the determinant

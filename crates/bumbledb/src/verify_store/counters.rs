@@ -1,6 +1,6 @@
 //! The `S` pass: one cursor over `S | relation | stat`, reconciled against
 //! the `F`-scan tallies — the stored row count must equal the scanned
-//! cardinality, and the row-id high-water (the next id to assign) must
+//! count, and the row-id high-water (the next id to assign) must
 //! exceed every observed row id. A tallied relation with no stored counter
 //! reads as zero (the commit path initializes lazily): rows on disk
 //! convict the absent entry.

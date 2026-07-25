@@ -186,13 +186,15 @@ pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
     check_extension_sources(s, &mut checker)
 }
 
-/// F→R for the window form, plus the global window judgment. Per
-/// window whose source is this relation and whose φ the fact satisfies,
-/// the window edge must exist. Per window whose
-/// TARGET is this relation and whose ψ the fact satisfies, the child
-/// group is counted through the commit path's own walk
-/// ([`judgment::Checker::check_window`]) — a count outside the window is
-/// [`StoreFinding::WindowViolation`].
+/// F→R for the capacity form, plus the global capacity judgment. Per
+/// capacity statement whose source is this relation and whose φ the fact
+/// satisfies, the capacity edge must exist AND its value slot must equal
+/// the fact's weight-field encoding — the F→R half of the weight-desync
+/// sweep, zero extra reads: the value came back with the existence get.
+/// Per capacity statement whose TARGET is this relation and whose ψ the
+/// fact satisfies, the child group is measured through the commit path's
+/// own walk ([`judgment::Checker::check_capacity`]) — a measure outside
+/// the resolved window is [`StoreFinding::CapacityViolation`].
 fn check_marks(
     s: &mut Sweep<'_, '_>,
     checker: &mut judgment::Checker<'_>,
@@ -206,53 +208,89 @@ fn check_marks(
     let schema = s.schema;
     let relation = schema.relation(rel);
     let layout = relation.layout();
-    for &window_id in relation.window_sources() {
-        let statement = schema.window(window_id);
-        if !judgment::satisfies(&s.selections.window(window_id).source, layout, fact) {
+    for &capacity_id in relation.capacity_sources() {
+        let statement = schema.capacity(capacity_id);
+        if !judgment::satisfies(&s.selections.capacity(capacity_id).source, layout, fact) {
             continue;
         }
-        judgment::window_child_image(statement, layout, fact, determinant);
+        judgment::capacity_child_image(statement, layout, fact, determinant);
         let r_len = keys::reverse_key(scratch, statement.id, determinant.as_bytes(), rel, row_id);
-        if s.data.get(txn.raw(), &scratch[..r_len])?.is_none() {
-            s.push(StoreFinding::FactWithoutReverseEdge {
-                statement: statement.id,
-                relation: rel,
-                row_id,
-                reverse_key: scratch[..r_len].into(),
-            });
+        match s.data.get(txn.raw(), &scratch[..r_len])? {
+            None => {
+                s.push(StoreFinding::FactWithoutReverseEdge {
+                    statement: statement.id,
+                    relation: rel,
+                    row_id,
+                    reverse_key: scratch[..r_len].into(),
+                });
+            }
+            Some(stored) => {
+                let derived_word;
+                let derived: &[u8] =
+                    match judgment::expected_slot_weight(statement, layout, fact) {
+                        Ok(Some(weight)) => {
+                            derived_word = weight.to_le_bytes();
+                            &derived_word
+                        }
+                        Ok(None) => &[],
+                        // A ray in the weighed field under the slot arm:
+                        // no finite expected encoding exists — the write
+                        // path refuses such rows, so a stored one is a
+                        // malformed-content finding, never an error.
+                        Err(_) => {
+                            s.malformed(&scratch[..r_len], "R capacity weight of a ray");
+                            continue;
+                        }
+                    };
+                if stored != derived {
+                    s.push(StoreFinding::ReverseEdgeWeightDesync {
+                        statement: statement.id,
+                        reverse_key: scratch[..r_len].into(),
+                        stored: stored.into(),
+                        derived: derived.into(),
+                    });
+                }
+            }
         }
     }
-    for &window_id in relation.window_targets() {
-        let statement = schema.window(window_id);
+    for &capacity_id in relation.capacity_targets() {
+        let statement = schema.capacity(capacity_id);
         let Enforcement::ScalarProbe { target_key, .. } = &statement.enforcement else {
             continue; // closed parents re-check in the marks pass
         };
         {
-            let checks = s.selections.window(window_id);
+            let checks = s.selections.capacity(capacity_id);
             if !judgment::satisfies(&checks.target, layout, fact) {
                 continue;
             }
         }
         let key_statement = schema.key(*target_key);
         keys::determinant_image(layout, &key_statement.projection, fact, determinant);
-        let checks = s.selections.window(window_id);
-        match checker.check_window(statement, checks, determinant.as_bytes()) {
+        let checks = s.selections.capacity(capacity_id);
+        match checker.check_capacity(statement, checks, determinant.as_bytes()) {
             Err(Error::CommitRejected { violations }) => {
                 for violation in violations {
-                    let Violation::Cardinality {
+                    let Violation::Capacity {
                         statement,
                         fact,
-                        count,
+                        measure,
                     } = violation
                     else {
-                        unreachable!("the window check cites cardinality statements only");
+                        unreachable!("the capacity check cites capacity statements only");
                     };
-                    s.push(StoreFinding::WindowViolation {
+                    s.push(StoreFinding::CapacityViolation {
                         statement,
                         fact,
-                        count,
+                        measure,
                     });
                 }
+            }
+            // A ray met at measure time (C10's judge-side refusal) is
+            // CONTENT under the sweeper's discipline: report, never
+            // error — the commit path refuses such rows, so a committed
+            // one is a standing finding.
+            Err(Error::CapacityRayMeasure { .. }) => {
+                s.malformed(determinant.as_bytes(), "capacity measure of a ray");
             }
             Ok(()) | Err(Error::Corruption(_)) => {}
             Err(other) => return Err(other),

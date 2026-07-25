@@ -11,13 +11,14 @@
 //! F  facts          key/schema/width/canonical-field decode, forward checks
 //!                   into M/U/R, tallies, intern references, the global
 //!                   containment judgment per outgoing statement, and the
-//!                   global window judgment per ψ-selected parent
+//!                   global capacity judgment per ψ-selected parent
 //! M  membership     resolves back to its fact, hash-verified
 //! U  FD determinants      resolves back + per-group pointwise disjointness
 //! R  reverse edges  resolves back to a live source inside φ (the heart:
 //!                   the one namespace with no online verification) —
-//!                   containment and window edges alike
-//! marks             the closed-parent window roster
+//!                   containment and capacity edges alike, weight slots
+//!                   backed to the live fact
+//! marks             the closed-parent capacity roster
 //! S  counters       row count and high-water against the F tallies
 //! Q  fresh sequences the never-reissue ratchet against the F fresh
 //!                   tallies (finding 033)
@@ -47,11 +48,18 @@
 //! sweeper copy). The U pass independently re-derives pointwise
 //! disjointness from stored bytes, while the shared coverage call still
 //! consumes the schema's validator-minted `DisjointDeterminantProof`; a miss is
-//! [`StoreFinding::JudgmentViolation`]. **Cardinality windows** ride the
-//! F scan on their parent side (every ψ-selected parent counts its child
-//! group through the commit path's own walk —
-//! [`StoreFinding::WindowViolation`]); closed parents re-check in the
-//! marks pass.
+//! [`StoreFinding::JudgmentViolation`]. **Capacity statements** ride the
+//! F scan on their parent side (every ψ-selected parent measures its
+//! child group through the commit path's own walk —
+//! [`StoreFinding::CapacityViolation`]); closed parents re-check in the
+//! marks pass. The weighted value slot adds the weight-desync sweep,
+//! both directions (ruled 2026-07-24, C17's slot arm makes the `R` slot
+//! a maintained copy of one row-local field, and this sweeper is the
+//! offline authority that convicts a diverged copy): F→R, the existence
+//! get's value must equal the fact's weight-field encoding (unit:
+//! empty); R→F, the entry's value must back to the live fact —
+//! [`StoreFinding::ReverseEdgeWeightDesync`], convict-only, never
+//! repaired silently.
 //!
 //! Findings are data, not errors: a desynced store returns `Ok` with a
 //! populated report and the *caller* decides fatality. `Err` is
@@ -168,18 +176,32 @@ pub enum StoreFinding {
         /// The source fact — canonical bytes, never a row id.
         fact: Box<[u8]>,
     },
-    /// A cardinality statement globally violated by the committed state:
-    /// a ψ-selected parent whose child-group count falls outside the
-    /// window (`lean/Bumbledb/Cardinality.lean: CardinalityWindow`) —
-    /// the commit path's own window check, re-run per committed parent.
-    WindowViolation {
+    /// A capacity statement globally violated by the committed state:
+    /// a ψ-selected parent whose child-group MEASURE falls outside its
+    /// resolved window (`lean/Bumbledb/Capacity.lean: CapacityLaw`) —
+    /// the commit path's own capacity check, re-run per committed parent.
+    CapacityViolation {
         statement: StatementId,
         /// The convicting parent fact — canonical bytes.
         fact: Box<[u8]>,
-        /// The observed child-group count.
-        count: u64,
+        /// The witnessed child-group measure (u128 whole, C3).
+        measure: u128,
     },
-    /// The stored `S` row count disagrees with the `F`-scan cardinality.
+    /// A capacity `R` edge whose value slot disagrees with the live
+    /// source fact's weight-field encoding — the weight-desync finding,
+    /// both directions of the sweep push it (ruled 2026-07-24: the C17
+    /// slot arm makes the value slot a maintained copy of one row-local
+    /// field; convict-only, the sweeper never repairs silently).
+    ReverseEdgeWeightDesync {
+        statement: StatementId,
+        reverse_key: Box<[u8]>,
+        /// The stored value-slot bytes.
+        stored: Box<[u8]>,
+        /// The expected encoding derived from the live fact (empty for
+        /// unit edges and every edge under the fetch baseline).
+        derived: Box<[u8]>,
+    },
+    /// The stored `S` row count disagrees with the `F`-scan count.
     RowCountDesync {
         relation: RelationId,
         stored: u64,

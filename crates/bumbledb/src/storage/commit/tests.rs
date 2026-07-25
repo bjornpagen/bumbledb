@@ -107,7 +107,7 @@ fn apply_delta(
 fn plan_for<'d>(delta: &'d WriteDelta<'_>, env: &Environment) -> CommitPlan<'d> {
     let view = env.read_txn().expect("txn");
     let selections = super::judgment::Selections::encode(delta, &view).expect("encode selections");
-    super::plan::plan_commit(delta, delta.schema(), selections)
+    super::plan::plan_commit(delta, delta.schema(), selections).expect("derive plan")
 }
 
 /// Target(id fresh) + Keyed(x u64, y i64; key x) +

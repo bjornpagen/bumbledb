@@ -133,7 +133,7 @@ pub fn commit(delta: WriteDelta<'_>, env: &Environment) -> Result<CommitReport> 
         let plan = {
             let view = env.read_txn()?;
             let selections = judgment::Selections::encode(&delta, &view)?;
-            plan_commit(&delta, schema, selections)
+            plan_commit(&delta, schema, selections)?
         };
         commit_bounded(|| {
             let Applied {
@@ -194,7 +194,7 @@ pub fn commit(delta: WriteDelta<'_>, env: &Environment) -> Result<CommitReport> 
         let _ = flush_escaped_fresh_ids(env, &delta);
     }
     // The one rejection exit: every `CommitRejected` — phase 2's key
-    // set, phase 3's containment/window set — passes here, so the cited
+    // set, phase 3's containment/capacity set — passes here, so the cited
     // facts decode here, ONCE, while the delta's provisional intern ids
     // are still resolvable: the abort burned its escaped *fresh* ids but
     // never its interns (intern ids never escape — hosts see values, not
@@ -217,7 +217,7 @@ pub fn commit(delta: WriteDelta<'_>, env: &Environment) -> Result<CommitReport> 
 /// Decodes every citation's offending fact bytes into owned
 /// [`CitedFact`] values — relation resolved through the violated
 /// statement (a key's own relation; a containment's SOURCE, because the
-/// judgment speaks about sources; a window's TARGET, the convicted
+/// judgment speaks about sources; a capacity statement's TARGET, the convicted
 /// parent), `str` fields resolved pending-first through the rejecting
 /// delta, then the committed dictionary.
 ///
@@ -260,13 +260,13 @@ fn decode_cited_facts(
                 };
                 (containment.source.relation, vec![fact.as_ref()])
             }
-            Violation::Cardinality {
+            Violation::Capacity {
                 statement, fact, ..
             } => {
-                let StatementView::Cardinality(_, window) = schema.statement(*statement) else {
-                    unreachable!("a Cardinality citation names a window statement");
+                let StatementView::Capacity(_, capacity) = schema.statement(*statement) else {
+                    unreachable!("a Capacity citation names a capacity statement");
                 };
-                (window.target.relation, vec![fact.as_ref()])
+                (capacity.target.relation, vec![fact.as_ref()])
             }
         };
         let layout = schema.relation(relation).layout();
