@@ -442,7 +442,7 @@ fn unresolvable_names_fall_back_to_id_placeholders() {
 #[test]
 fn extension_forms_render_in_the_grammar() {
     use crate::schema::tests::{capacity, side_where_sets};
-    use crate::schema::{StatementView, CapacityId};
+    use crate::schema::{CapacityId, StatementView};
 
     let decl = SchemaDescriptor {
         relations: vec![

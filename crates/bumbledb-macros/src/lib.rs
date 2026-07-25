@@ -958,9 +958,9 @@ fn parse_statement(
                  (docs/architecture/30-dependencies.md § the extension form)"
             );
         }
-        other => panic!(
-            "schema!: expected `->`, `<=`, `<=[w]{{lo..hi}}`, or `==`, found {other:?}"
-        ),
+        other => {
+            panic!("schema!: expected `->`, `<=`, `<=[w]{{lo..hi}}`, or `==`, found {other:?}")
+        }
     }
     expect_punct(tokens, ';');
     Ok(())
@@ -1044,7 +1044,11 @@ fn parse_weight(body: TokenStream) -> WeightSpec {
     );
     let (name, _) = spanned_ident(&mut tokens, "the weight field");
     let weight = if name == "Duration" && matches!(tokens.peek(), Some(TokenTree::Group(_))) {
-        let group = take_group(&mut tokens, Delimiter::Parenthesis, "the Duration weight's field");
+        let group = take_group(
+            &mut tokens,
+            Delimiter::Parenthesis,
+            "the Duration weight's field",
+        );
         let mut inner = group.into_iter().peekable();
         let field = expect_ident(&mut inner, "the Duration weight's field name");
         assert!(
@@ -1671,8 +1675,7 @@ fn lower_statements(schema: &SchemaAst, spans: &mut SpanTable) -> Vec<StatementS
                         .or_default()
                         .push(*span);
                 }
-                for bound in
-                    std::iter::once(window_bound_lo(window)).chain(window_bound_hi(window))
+                for bound in std::iter::once(window_bound_lo(window)).chain(window_bound_hi(window))
                 {
                     if let BoundSpec::Field(name) | BoundSpec::Duration(name) = bound {
                         spans
@@ -1722,32 +1725,28 @@ fn window_bound_hi(window: &CapacityWindowSpec) -> Option<&BoundSpec> {
 fn check_weight_typing(schema: &SchemaAst, source_relation: &str, weight: &WeightSpec) {
     match weight {
         WeightSpec::Unit => {}
-        WeightSpec::Field(name) => {
-            match declared_type(schema, source_relation, name) {
-                None | Some(FieldTy::U64) => {}
-                Some(FieldTy::I64) => panic!(
-                    "schema!: weight field `{name}` on `{source_relation}` is signed — a \
+        WeightSpec::Field(name) => match declared_type(schema, source_relation, name) {
+            None | Some(FieldTy::U64) => {}
+            Some(FieldTy::I64) => panic!(
+                "schema!: weight field `{name}` on `{source_relation}` is signed — a \
                      `[field]` weight measures a u64 position, and a signed encoding is \
                      refused by polarity: a negative weight would let an insert lower a \
                      sum (docs/architecture/30-dependencies.md § weight typing)"
-                ),
-                Some(_) => panic!(
-                    "schema!: weight field `{name}` on `{source_relation}` is not \
+            ),
+            Some(_) => panic!(
+                "schema!: weight field `{name}` on `{source_relation}` is not \
                      u64-encoded — a `[field]` weight measures a u64 SOURCE position \
                      (docs/architecture/30-dependencies.md § weight typing)"
-                ),
-            }
-        }
-        WeightSpec::Duration(name) => {
-            match declared_type(schema, source_relation, name) {
-                None | Some(FieldTy::Interval(..)) => {}
-                Some(_) => panic!(
-                    "schema!: weight field `{name}` on `{source_relation}` is not \
+            ),
+        },
+        WeightSpec::Duration(name) => match declared_type(schema, source_relation, name) {
+            None | Some(FieldTy::Interval(..)) => {}
+            Some(_) => panic!(
+                "schema!: weight field `{name}` on `{source_relation}` is not \
                      interval-typed — `[Duration(field)]` reads an interval position's \
                      measure (docs/architecture/30-dependencies.md § weight typing)"
-                ),
-            }
-        }
+            ),
+        },
     }
 }
 
@@ -1944,9 +1943,7 @@ fn issue_spans(issue: &SpecIssue, spans: &SpanTable) -> Vec<Span> {
         | SpecIssue::CapacityExclusionRespelled { statement }
         | SpecIssue::CapacityVacuous { statement }
         | SpecIssue::CapacityContainmentRespelled { statement }
-        | SpecIssue::CapacityDependentFloor { statement } => {
-            one(spans.capacities.get(statement))
-        }
+        | SpecIssue::CapacityDependentFloor { statement } => one(spans.capacities.get(statement)),
         SpecIssue::WeightPathRefused { statement, .. } => one(spans.weights.get(statement)),
         SpecIssue::DegenerateLiteralSet {
             statement,

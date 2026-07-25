@@ -118,10 +118,8 @@ impl ValidateDescriptor for SchemaDescriptor {
         let mut order = Vec::with_capacity(descriptors.len());
         let mut relation_keys: Vec<Vec<KeyId>> = vec![Vec::new(); relations.len()];
         let mut relation_outgoing: Vec<Vec<ContainmentId>> = vec![Vec::new(); relations.len()];
-        let mut relation_capacity_sources: Vec<Vec<CapacityId>> =
-            vec![Vec::new(); relations.len()];
-        let mut relation_capacity_targets: Vec<Vec<CapacityId>> =
-            vec![Vec::new(); relations.len()];
+        let mut relation_capacity_sources: Vec<Vec<CapacityId>> = vec![Vec::new(); relations.len()];
+        let mut relation_capacity_targets: Vec<Vec<CapacityId>> = vec![Vec::new(); relations.len()];
         let mut dependents: Vec<Vec<ContainmentId>> = vec![Vec::new(); key_count];
 
         for (idx, descriptor) in descriptors.iter().enumerate() {
@@ -962,36 +960,41 @@ fn validate_capacity(
                     u128::from(end - start)
                 }
             });
-            let measure: u128 = source_rows
-                .iter()
-                .filter(|child| {
-                    sealed_satisfies(&phi, source_layout, &child.fact)
-                        && source.projection.iter().zip(target.projection.iter()).all(
-                            |(s, t)| {
-                                field_bytes(&child.fact, source_layout, usize::from(s.0))
-                                    == field_bytes(
-                                        &parent.fact,
-                                        &target_relation.layout,
-                                        usize::from(t.0),
-                                    )
-                            },
-                        )
-                })
-                .map(|child| match weight {
-                    Weight::Unit => 1u128,
-                    Weight::Field(field) => {
-                        u128::from(decoded_word(source_layout, field, &child.fact))
-                    }
-                    Weight::DurationOf(field) => {
-                        let tail =
-                            weight_tail.expect("an accepted Duration weight sealed its tail");
-                        let (start, end) = tail
-                            .words(field_bytes(&child.fact, source_layout, usize::from(field.0)))
-                            .expect("sealed rows hold canonical interval bytes");
-                        u128::from(end - start)
-                    }
-                })
-                .sum();
+            let measure: u128 =
+                source_rows
+                    .iter()
+                    .filter(|child| {
+                        sealed_satisfies(&phi, source_layout, &child.fact)
+                            && source.projection.iter().zip(target.projection.iter()).all(
+                                |(s, t)| {
+                                    field_bytes(&child.fact, source_layout, usize::from(s.0))
+                                        == field_bytes(
+                                            &parent.fact,
+                                            &target_relation.layout,
+                                            usize::from(t.0),
+                                        )
+                                },
+                            )
+                    })
+                    .map(|child| match weight {
+                        Weight::Unit => 1u128,
+                        Weight::Field(field) => {
+                            u128::from(decoded_word(source_layout, field, &child.fact))
+                        }
+                        Weight::DurationOf(field) => {
+                            let tail =
+                                weight_tail.expect("an accepted Duration weight sealed its tail");
+                            let (start, end) = tail
+                                .words(field_bytes(
+                                    &child.fact,
+                                    source_layout,
+                                    usize::from(field.0),
+                                ))
+                                .expect("sealed rows hold canonical interval bytes");
+                            u128::from(end - start)
+                        }
+                    })
+                    .sum();
             if measure < u128::from(lo) || resolved_hi.is_some_and(|hi| measure > hi) {
                 return Err(StatementErrorKind::ClosedStatementRefuted {
                     relation: target.relation,

@@ -669,7 +669,10 @@ fn an_exclusion_window_validates() {
     ));
     let schema = decl.validate().expect("the exclusion passes the gate");
     assert_eq!(
-        (schema.capacity(CapacityId(0)).lo, schema.capacity(CapacityId(0)).hi),
+        (
+            schema.capacity(CapacityId(0)).lo,
+            schema.capacity(CapacityId(0)).hi
+        ),
         (0, Some(Bound::Lit(0)))
     );
 }
@@ -823,7 +826,9 @@ fn a_weighted_floor_of_one_validates() {
         None,
         side(RelationId(1), &[FieldId(0)]),
     ));
-    let schema = decl.validate().expect("a positive total is a law of its own");
+    let schema = decl
+        .validate()
+        .expect("a positive total is a law of its own");
     assert_eq!(schema.capacity(CapacityId(0)).lo, 1);
 }
 
@@ -862,7 +867,10 @@ fn a_satisfied_weighted_closed_pair_validates() {
             ),
             closed(
                 "Dev",
-                vec![field("pool", ValueType::U64), field("watts", ValueType::U64)],
+                vec![
+                    field("pool", ValueType::U64),
+                    field("watts", ValueType::U64),
+                ],
                 vec![
                     row("D0", vec![Value::U64(0), Value::U64(3)]),
                     row("D1", vec![Value::U64(0), Value::U64(4)]),

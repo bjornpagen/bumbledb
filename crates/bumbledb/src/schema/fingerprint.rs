@@ -16,8 +16,8 @@
 //! (`docs/architecture/10-data-model.md`).
 
 use super::{
-    Bound, FieldId, Generation, IntervalElement, LiteralSet, RelationId, Schema, Side,
-    StatementId, StatementView, ValueType, Weight,
+    Bound, FieldId, Generation, IntervalElement, LiteralSet, RelationId, Schema, Side, StatementId,
+    StatementView, ValueType, Weight,
 };
 use crate::encoding::encode_literal;
 use bumbledb_theory::Value;

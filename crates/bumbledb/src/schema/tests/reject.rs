@@ -1508,7 +1508,9 @@ fn rejects_a_signed_weight() {
     // the illegal weight is a typed refusal, never a checked runtime
     // case (`docs/architecture/30-dependencies.md` § weight typing).
     let mut decl = extension_tree();
-    decl.relations[1].fields.push(field("delta", ValueType::I64));
+    decl.relations[1]
+        .fields
+        .push(field("delta", ValueType::I64));
     decl.statements.push(capacity_weighted(
         side(RelationId(0), &[FieldId(0)]),
         Weight::Field(FieldId(5)),
@@ -1687,7 +1689,10 @@ fn rejects_a_weighted_closed_pair_the_axioms_refute_under_a_dependent_bound() {
             ),
             closed(
                 "Dev",
-                vec![field("pool", ValueType::U64), field("watts", ValueType::U64)],
+                vec![
+                    field("pool", ValueType::U64),
+                    field("watts", ValueType::U64),
+                ],
                 vec![
                     row("D0", vec![Value::U64(0), Value::U64(3)]),
                     row("D1", vec![Value::U64(0), Value::U64(4)]),

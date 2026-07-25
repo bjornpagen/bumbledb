@@ -929,18 +929,18 @@ const FRESH_POOL: RelationId = RelationId(0);
 const FRESH_DEVICE: RelationId = RelationId(1);
 
 fn fresh_pool(schema: &Schema, id: u64, supply: u64) -> Vec<u8> {
-    fact(schema, FRESH_POOL, &[ValueRef::U64(id), ValueRef::U64(supply)])
+    fact(
+        schema,
+        FRESH_POOL,
+        &[ValueRef::U64(id), ValueRef::U64(supply)],
+    )
 }
 
 fn fresh_device(schema: &Schema, id: u64, pool: u64, watts: u64) -> Vec<u8> {
     fact(
         schema,
         FRESH_DEVICE,
-        &[
-            ValueRef::U64(id),
-            ValueRef::U64(pool),
-            ValueRef::U64(watts),
-        ],
+        &[ValueRef::U64(id), ValueRef::U64(pool), ValueRef::U64(watts)],
     )
 }
 

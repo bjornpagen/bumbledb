@@ -26,9 +26,8 @@ use bumbledb_theory::{Interval, Value};
 
 use super::fingerprint::FORMAT_VERSION_LABEL;
 use super::{
-    Bound, FieldDescriptor, FieldId, Generation, IntervalElement, LiteralSet,
-    RelationDescriptor, RelationId, Row, SchemaDescriptor, Side, StatementDescriptor, ValueType,
-    Weight,
+    Bound, FieldDescriptor, FieldId, Generation, IntervalElement, LiteralSet, RelationDescriptor,
+    RelationId, Row, SchemaDescriptor, Side, StatementDescriptor, ValueType, Weight,
 };
 
 /// One decoded relation, both shapes: the declared descriptor (synthetic

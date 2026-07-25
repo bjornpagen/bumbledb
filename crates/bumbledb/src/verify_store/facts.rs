@@ -226,22 +226,21 @@ fn check_marks(
             }
             Some(stored) => {
                 let derived_word;
-                let derived: &[u8] =
-                    match judgment::expected_slot_weight(statement, layout, fact) {
-                        Ok(Some(weight)) => {
-                            derived_word = weight.to_le_bytes();
-                            &derived_word
-                        }
-                        Ok(None) => &[],
-                        // A ray in the weighed field under the slot arm:
-                        // no finite expected encoding exists — the write
-                        // path refuses such rows, so a stored one is a
-                        // malformed-content finding, never an error.
-                        Err(_) => {
-                            s.malformed(&scratch[..r_len], "R capacity weight of a ray");
-                            continue;
-                        }
-                    };
+                let derived: &[u8] = match judgment::expected_slot_weight(statement, layout, fact) {
+                    Ok(Some(weight)) => {
+                        derived_word = weight.to_le_bytes();
+                        &derived_word
+                    }
+                    Ok(None) => &[],
+                    // A ray in the weighed field under the slot arm:
+                    // no finite expected encoding exists — the write
+                    // path refuses such rows, so a stored one is a
+                    // malformed-content finding, never an error.
+                    Err(_) => {
+                        s.malformed(&scratch[..r_len], "R capacity weight of a ray");
+                        continue;
+                    }
+                };
                 if stored != derived {
                     s.push(StoreFinding::ReverseEdgeWeightDesync {
                         statement: statement.id,

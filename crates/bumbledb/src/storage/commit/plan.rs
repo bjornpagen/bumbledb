@@ -31,8 +31,7 @@ use crate::storage::keys::{self, DeterminantImage};
 use bumbledb_theory::schema::{RelationId, StatementId};
 
 use super::judgment::{
-    CAPACITY_WEIGHT_SLOT, SelectionCheck, Selections, capacity_child_image, child_weight,
-    satisfies,
+    CAPACITY_WEIGHT_SLOT, SelectionCheck, Selections, capacity_child_image, child_weight, satisfies,
 };
 use crate::error::Result;
 

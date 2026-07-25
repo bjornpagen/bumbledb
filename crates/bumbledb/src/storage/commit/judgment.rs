@@ -170,11 +170,11 @@ fn interval_measure(
     statement: bumbledb_theory::schema::StatementId,
     fact: &[u8],
 ) -> Result<u64> {
-    let (start, end) = tail
-        .words(bytes)
-        .ok_or(Error::Corruption(CorruptionError::MalformedValue(
-            "capacity interval field",
-        )))?;
+    let (start, end) =
+        tail.words(bytes)
+            .ok_or(Error::Corruption(CorruptionError::MalformedValue(
+                "capacity interval field",
+            )))?;
     if end == u64::MAX {
         return Err(Error::CapacityRayMeasure {
             statement,
@@ -1187,11 +1187,7 @@ impl<'a> Checker<'a> {
     /// a literal passes through; a dependent bound reads the named
     /// TARGET-row field — u64 word or interval measure — off the fact
     /// bytes already fetched for the ψ check.
-    fn resolve_hi(
-        &self,
-        statement: &CapacityStatement,
-        parent_fact: &[u8],
-    ) -> Result<Option<u64>> {
+    fn resolve_hi(&self, statement: &CapacityStatement, parent_fact: &[u8]) -> Result<Option<u64>> {
         let Some(bound) = &statement.hi else {
             return Ok(None);
         };
@@ -1261,7 +1257,8 @@ impl<'a> Checker<'a> {
         }
         // Floor-only clip: with no ceiling, `sum ≥ lo` is final — the
         // running sum is monotone under non-negative weights (C12).
-        let floor_only_decided = |measure: u128| hi.is_none() && measure >= u128::from(statement.lo);
+        let floor_only_decided =
+            |measure: u128| hi.is_none() && measure >= u128::from(statement.lo);
         let unit = matches!(statement.weight, Weight::Unit);
         let p_len = keys::reverse_prefix(&mut self.key, statement.id, parent_key);
         let bounds: (Bound<&[u8]>, Bound<&[u8]>) =
