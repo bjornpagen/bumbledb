@@ -1,0 +1,4 @@
+outer 30000 30000
+outer;inner 40000 60000
+outer;inner;leaf 30000 10000
+outer;other 0 20000
