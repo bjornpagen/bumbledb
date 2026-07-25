@@ -502,9 +502,9 @@ fn side_in(obj: &Object) -> napi::Result<SideSpec> {
 }
 
 /// One capacity bound: `{ kind: "lit", value }` a non-negative literal
-/// (BigInt), `{ kind: "field", field }` a TARGET-row field by name (the
+/// (`BigInt`), `{ kind: "field", field }` a TARGET-row field by name (the
 /// dependent bound), `{ kind: "durationField", field }` a TARGET
-/// interval's measure. A bare BigInt accepted as an implicit lit is
+/// interval's measure. A bare `BigInt` accepted as an implicit lit is
 /// forbidden — the old positional shape is dead wire.
 fn capacity_bound_in(obj: &Object) -> napi::Result<BoundSpec> {
     let kind: String = req(obj, "kind", "capacity bound")?;
@@ -1189,7 +1189,7 @@ impl ToNapiValue for ManifestWire {
 /// carried whole: statement id, form tag, canonical spelling, the
 /// direction/measure payloads where the form has them (the capacity
 /// measure is the witnessed group total, u128 whole — C3: it crosses as
-/// BigInt, truncation unrepresentable), and the offending facts as named
+/// `BigInt`, truncation unrepresentable), and the offending facts as named
 /// decoded values.
 pub struct ViolationWire {
     pub(crate) statement: u16,
