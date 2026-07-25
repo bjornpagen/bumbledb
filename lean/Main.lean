@@ -140,15 +140,46 @@ def decodeSide (j : Json) : Except String Bumbledb.Atom := do
            projection := ← decodeFieldIds (← j.getObjVal? "projection"),
            selection := ← decodeSelection (← j.getObjVal? "selection") }
 
-/-- A window: `hi` absent is the `*` spelling. -/
-def decodeWindow (j : Json) : Except String Window := do
+/-- A capacity weight: `"unit"` explicit (C4 — a missing key is a
+malformed document, never a default), `{"field":N}` a u64 SOURCE
+position, `{"duration":N}` an interval SOURCE position's measure. -/
+def decodeWeight (j : Json) : Except String Weight := do
+  if let .ok s := j.getStr? then
+    if s == "unit" then return .unit
+    .error s!"unknown weight {s}"
+  if let some f := objKey? j "field" then
+    return .field ⟨← f.getNat?⟩
+  if let some f := objKey? j "duration" then
+    return .durationOf ⟨← f.getNat?⟩
+  .error "weight expects \"unit\", {field}, or {duration}"
+
+/-- A capacity bound: a bare integer literal, `{"field":N}` a u64
+TARGET position, `{"duration":N}` an interval TARGET position's
+measure (ruling C1: resolution is by name against the target's whole
+roster — here, by sealed field id). -/
+def decodeBound (j : Json) : Except String Bound := do
+  if let .ok n := j.getNat? then
+    return .lit n
+  if let some f := objKey? j "field" then
+    return .targetField ⟨← f.getNat?⟩
+  if let some f := objKey? j "duration" then
+    return .targetDuration ⟨← f.getNat?⟩
+  .error "bound expects an integer, {field}, or {duration}"
+
+/-- A capacity window: the floor is a literal (ruling C6 — dependent
+floors are unrepresentable), `hi` absent is the `*` spelling, and a
+spelled `hi` is a `Bound`. -/
+def decodeCapWindow (j : Json) : Except String CapWindow := do
   let lo ← natKey j "lo"
   match objKey? j "hi" with
-  | some h => return ⟨lo, some (← h.getNat?)⟩
+  | some h => return ⟨lo, some (← decodeBound h)⟩
   | none => return ⟨lo, none⟩
 
 /-- One declared statement, in the materialized order the file pins
-(indices ARE the engine's statement ids). -/
+(indices ARE the engine's statement ids). The capacity key reads in
+the C2 operator order — target, weight, window, source; unknown keys
+(a retired count-statement key among them — a missed re-baseline)
+error loudly. -/
 def decodeStatement (j : Json) : Except String Statement := do
   if let some f := objKey? j "functionality" then
     return .functionality ⟨← natKey f "relation"⟩
@@ -156,10 +187,11 @@ def decodeStatement (j : Json) : Except String Statement := do
   if let some c := objKey? j "containment" then
     return .containment (← decodeSide (← c.getObjVal? "source"))
       (← decodeSide (← c.getObjVal? "target"))
-  if let some c := objKey? j "cardinality" then
-    return .cardinality (← decodeSide (← c.getObjVal? "source"))
-      (← decodeWindow (← c.getObjVal? "window"))
-      (← decodeSide (← c.getObjVal? "target"))
+  if let some c := objKey? j "capacity" then
+    return .capacity (← decodeSide (← c.getObjVal? "target"))
+      (← decodeWeight (← c.getObjVal? "weight"))
+      (← decodeCapWindow (← c.getObjVal? "window"))
+      (← decodeSide (← c.getObjVal? "source"))
   .error "unknown statement form"
 
 /-- The recorded engine verdict: accept, or the rejecting phase with

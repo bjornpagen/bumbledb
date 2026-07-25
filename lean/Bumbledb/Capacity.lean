@@ -1,4 +1,4 @@
-import Bumbledb.Cardinality
+import Bumbledb.Schema
 
 /-!
 # Capacity — the aggregate containment (the capacity cutover, spec statement)
@@ -9,10 +9,12 @@ the MEASURE of its child group — Σ weight over the deduplicated
 φ-selected source facts sharing its projected key tuple — lies in the
 window, whose bounds resolve against the target's own row. Counting
 is the unit-weight corollary it always was
-(`length = sum ∘ map(const 1)` — `natSum_map_const_one`,
-`cardinality_is_unit_capacity`), so the `<={lo..hi}` count utterance
-survives character for character as the unit instance while
-everything count-only beneath it retires.
+(`length = sum ∘ map(const 1)` — `natSum_map_const_one`), so the
+`<={lo..hi}` count utterance survives character for character as the
+unit instance while everything count-only beneath it is DELETED —
+the count module, its statement constructor, its checkers, plans,
+and restrictions are gone, and this module is the extension form's
+one denotation home.
 
 The completed operator family, every rung the same partition law:
 
@@ -46,16 +48,15 @@ unrepresentable end to end (ruling C3).
 
 ## The pigeonhole, consolidated (dossier § 7 item 14)
 
-The count pigeonhole is proved twice downstream in local styles
-(`Decide.length_le_of_nodup_of_subset`, classical erase;
-`Oracle.nodup_subset_length_le`, split-at-occurrence). Its weighted
-successor is owed to BOTH consumers; this module rules the budgeting
-question by consolidation: `nodup_subset_natSum_le` is proved ONCE
-here, upstream of both, in the split-at-occurrence style (no
-decidable equality — `Fact` has none), on the owed helper
-`natSum_append`. `Decide.capacityB_iff` and
-`Oracle.capacity_plan_decides` both spend it through the enumeration
-collapse.
+The count pigeonhole was proved twice downstream in local styles (a
+classical-erase proof in `Decide`, a split-at-occurrence proof in
+`Oracle` — both deleted with the count path). Its weighted successor
+was owed to BOTH consumers; this module rules the budgeting question
+by consolidation: `nodup_subset_natSum_le` is proved ONCE here,
+upstream of both, in the split-at-occurrence style (no decidable
+equality — `Fact` has none), on the helper `natSum_append`.
+`Decide.capacityB_iff` and `Oracle.capacity_plan_decides` both spend
+it through the enumeration collapse.
 
 ## Syntax resolved against rows (rulings C1, C4, C6)
 
@@ -120,34 +121,23 @@ over the probed false-surface parent bucket and resolves each
 answer's window at that answer, so `AdmissibleForm`'s Verdict type
 generalizes for no one).
 
-OWED to the build lane, recorded by name:
-
-* **The C12 Bridge row**: the clip theorems' ledger row, the analog
-  of `Exec.sweep_early_exit_sound`'s — it re-pins with the capacity
-  engine anchors, so it rides the count-path deletion.
-* **The count path's deletion**: `Cardinality.lean`,
-  `Statement.cardinality`, `Decide.cardinalityB`,
-  `Oracle.WindowPlanned`, `Txn.cardinalityDeltaCheck`, and
-  `Admission.cardinalityForm` retire into unit-instance corollaries —
-  `cardinality_is_unit_capacity` is the license that the deletion
-  loses nothing. `ChildGroup` and the `Set.AtLeast`/`Set.AtMost`
-  unit lemmas move into this module when their home dies.
-* **The corpus re-baseline (C8)**: `judgment-window-*` re-keys to
-  `judgment-capacity-*`; `Main.lean`'s decoder gains the `"capacity"`
-  key and the `"cardinality"` key dies, in ONE commit with the Rust
-  serializer and the corpus files (this flush leaves the old decode
-  path alive and UNREACHABLE from the new statement, so the corpus
-  replays byte-identically).
-* **Bridge rows** for the capacity theorems, with engine anchors
-  re-pinned to the capacity-side symbols (`validate_capacity`,
-  `check_capacity`, `CapacityStatement`) once they exist — a row now
-  would dangle the census.
-* **The Subsumption restatement**: `window_floor_containment`'s floor
-  half generalizes to ANY weight (a positive measure floor inhabits
-  the group), but the `{1..*}` BAN fires on the Count instance only —
-  a weight-0 row satisfies containment but not the sum floor; the
-  `Countermodels.lean` residents re-derive over Count-instance
-  capacity laws.
+The ledger CLOSED with the count path's deletion: the count module,
+its statement constructor, checkers, plans, restrictions, and
+Admission inhabitant are deleted (the unit-instance equivalence that
+licensed the deletion — a literal-bound capacity statement at unit
+weight says exactly what the count window said — was proved, spent,
+and retired with the path it licensed); `ChildGroup` and the
+`Set.AtLeast`/`Set.AtMost` unit lemmas moved into this module; the
+corpus re-keyed to `judgment-capacity-*` (C8) with `Main.lean`'s
+decoder speaking the one `"capacity"` key; the `Subsumption.lean`
+ladder restates over Count-instance capacity laws
+(`window_floor_containment`'s floor half generalized to ANY weight —
+a positive measure floor inhabits the group — while the `{1..*}` BAN
+fires on the Count instance only: a weight-0 row satisfies
+containment but not the sum floor); the `Countermodels.lean`
+residents re-derive over Count-instance capacity laws; and the
+`Bridge.lean` rows re-pin to the capacity theorems and their engine
+anchors.
 -/
 
 namespace Bumbledb
@@ -224,6 +214,74 @@ theorem nodup_subset_natSum_le (w : α → Nat) :
     show w a + natSum (rest.map w) ≤
       natSum (s.map w) + (w a + natSum (t.map w))
     omega
+
+/-! ## List-witnessed count bounds — the unit instance's primitives
+
+The count spellings survive as the lemmas backing the unit case
+(module doc): the countermodels and the subsumption ladder read the
+Count instance through `measureAtLeast_unit_iff` /
+`measureAtMost_unit_iff`, and these are the witness-style primitives
+they collapse to. Moved here from the count module at its
+deletion. -/
+
+/-- `s` has at least `n` members: some duplicate-free list of members
+reaches length `n`. The lower bound is an EXISTENCE claim, so it is a
+witness — no finiteness token is spent. -/
+def Set.AtLeast (s : Set α) (n : Nat) : Prop :=
+  ∃ l : List α, l.Nodup ∧ (∀ a, a ∈ l → a ∈ s) ∧ n ≤ l.length
+
+/-- `s` has at most `m` members: every duplicate-free list of members
+stays within length `m`. The upper bound is UNIVERSAL, so an infinite
+group fails every finite bound — exactly as it should. -/
+def Set.AtMost (s : Set α) (m : Nat) : Prop :=
+  ∀ l : List α, l.Nodup → (∀ a, a ∈ l → a ∈ s) → l.length ≤ m
+
+/-- Exactly `n` members: both bounds at `n`. -/
+def Set.ExactCount (s : Set α) (n : Nat) : Prop :=
+  s.AtLeast n ∧ s.AtMost n
+
+/-- Every set has at least zero members — the empty witness. -/
+theorem Set.atLeast_zero (s : Set α) : s.AtLeast 0 := by
+  refine ⟨[], List.Pairwise.nil, ?_, Nat.le_refl 0⟩
+  intro a ha
+  cases ha
+
+/-- A subsingleton counts at most one — the ceiling's elementary
+builder, spent by the countermodels and the unit-window arguments. -/
+theorem Set.atMost_one_of_subsingleton {s : Set α}
+    (h : ∀ a b, a ∈ s → b ∈ s → a = b) : s.AtMost 1 := by
+  intro l hnd hmem
+  cases l with
+  | nil => exact Nat.zero_le 1
+  | cons a l' =>
+    cases l' with
+    | nil => exact Nat.le_refl 1
+    | cons b l'' =>
+      have hab : a = b := h a b (hmem a (List.mem_cons_self))
+        (hmem b (List.mem_cons_of_mem a (List.mem_cons_self)))
+      cases hnd with
+      | cons hne _ => exact absurd hab (hne b (List.mem_cons_self))
+
+/-- Two distinct members refute the unit ceiling — the two-element
+duplicate-free list is the refutation witness. -/
+theorem Set.not_atMost_one_of_two {s : Set α} {a b : α}
+    (ha : a ∈ s) (hb : b ∈ s) (hne : a ≠ b) : ¬ s.AtMost 1 := by
+  intro h
+  have hnd : [a, b].Nodup :=
+    List.Pairwise.cons
+      (fun x hx => by
+        cases hx with
+        | head => exact hne
+        | tail _ h' => cases h')
+      (List.Pairwise.cons (fun x hx => by cases hx) List.Pairwise.nil)
+  have hlen := h [a, b] hnd (fun x hx => by
+    cases hx with
+    | head => exact ha
+    | tail _ hx' =>
+      cases hx' with
+      | head => exact hb
+      | tail _ h'' => cases h'')
+  exact Nat.not_succ_le_self 1 hlen
 
 /-! ## List-witnessed measure bounds (ruling C7) -/
 
@@ -309,6 +367,25 @@ theorem measureAtMost_iff_enum {s : Set α} {l : List α}
   · intro h l' hnd' hsub
     exact Nat.le_trans (nodup_subset_natSum_le w l' l hnd'
       fun a ha => (hmem a).mpr (hsub a ha)) h
+
+/-! ## Subsumption over the resolved window -/
+
+/-- `w'` subsumes `w`: `w'` is at least as permissive — its floor is
+no higher, and any ceiling it spells sits at or above one `w` already
+spells. Stated over the LITERAL `Window` (the resolved `{lo..hi}`
+object); `CapWindow.Subsumes` below reads it pointwise per target
+row. -/
+def Window.Subsumes (w' w : Window) : Prop :=
+  w'.lo ≤ w.lo ∧ ∀ m', w'.hi = some m' → ∃ m, w.hi = some m ∧ m ≤ m'
+
+/-- **The default posture is universal.** `0..*` subsumes every
+window: any spelled statement is a strengthening of the default,
+never a repair of it. -/
+theorem star_subsumes (w : Window) :
+    Window.Subsumes (Window.mk 0 none) w := by
+  refine ⟨Nat.zero_le w.lo, ?_⟩
+  intro m' hm'
+  cases hm'
 
 /-! ## Measure admission over the resolved window -/
 
@@ -416,10 +493,27 @@ theorem capWindow_star_subsumes (w : CapWindow) :
 
 /-! ## The capacity judgment -/
 
+/-- The child group of one parent tuple: the selected source facts
+whose projection `X` equals the parent's projected key tuple `t`.
+Group keying is weight-blind — every consumer (`Decide`, `Txn`,
+`Oracle`, `Admission`) spends this one definition. -/
+def ChildGroup (A : Set Fact) (φ : Selection) (X : List FieldId)
+    (t : List Value) : Set Fact :=
+  fun f => f ∈ A ∧ φ.satisfies f ∧ f.project X = t
+
+/-- Membership in a child group, unfolded — the definitional
+reading. -/
+theorem mem_childGroup {A : Set Fact} {φ : Selection}
+    {X : List FieldId} {t : List Value} {f : Fact} :
+    f ∈ ChildGroup A φ X t ↔
+      f ∈ A ∧ φ.satisfies f ∧ f.project X = t :=
+  Iff.rfl
+
 /-- The capacity judgment `B(Y | ψ) <=[wt]{w} A(X | φ)`: for every
 selected target fact, the child group's measure under the weight lies
 in the window resolved against that target's own row. The ONE
-structural novelty over `CardinalityWindow` is `w.resolve g` — the
+structural novelty over the retired count judgment is
+`w.resolve g` — the
 dependent-bound read at the quantified parent. ACCEPTANCE IS NOT
 HERE: `Y` a key of `B` and the whole weight/bound typing roster are
 acceptance premises, carried as hypotheses where a theorem spends
@@ -477,35 +571,5 @@ theorem capacity_point_exact {A : Set Fact} {φ : Selection}
     exact (measure_point_admits_iff wt.apply n _).mp (h g hg hψ)
   · intro h g hg hψ
     exact (measure_point_admits_iff wt.apply n _).mpr (h g hg hψ)
-
-/-- **The count window IS the unit-weight capacity law** — the
-ladder's top rung closing over its bottom: a literal-bound capacity
-statement at unit weight says exactly what the cardinality window
-said, so the build lane's deletion of the count path loses nothing
-and the corpus's count cases re-encode with every verdict
-unchanged. -/
-theorem cardinality_is_unit_capacity {A : Set Fact} {φ : Selection}
-    {X : List FieldId} {w : Window} {B : Set Fact} {ψ : Selection}
-    {Y : List FieldId} :
-    CapacityLaw A φ X .unit ⟨w.lo, w.hi.map .lit⟩ B ψ Y ↔
-      CardinalityWindow A φ X w B ψ Y := by
-  unfold CapacityLaw CardinalityWindow
-  refine forall_congr' fun g => forall_congr' fun _ =>
-    forall_congr' fun _ => ?_
-  have hres : (CapWindow.mk w.lo (w.hi.map Bound.lit)).resolve g = w := by
-    cases w with
-    | mk lo hi =>
-      cases hi with
-      | none => rfl
-      | some m => rfl
-  rw [hres]
-  unfold Window.admitsMeasure Window.admits
-  constructor
-  · rintro ⟨h1, h2⟩
-    exact ⟨(Set.measureAtLeast_unit_iff _ _).mp h1,
-      fun m hm => (Set.measureAtMost_unit_iff _ _).mp (h2 m hm)⟩
-  · rintro ⟨h1, h2⟩
-    exact ⟨(Set.measureAtLeast_unit_iff _ _).mpr h1,
-      fun m hm => (Set.measureAtMost_unit_iff _ _).mpr (h2 m hm)⟩
 
 end Bumbledb

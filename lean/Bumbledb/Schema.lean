@@ -31,9 +31,8 @@ relations as instance-independent sealed constants.
 * **Statements are the declared judgment forms**: functionality and
   containment exactly as `StatementDescriptor`, plus the one
   extension form — the capacity statement (`Capacity.lean`), whose
-  unit instance is the cardinality window (`Cardinality.lean`; the
-  count constructor rides through the cutover's flush phase and dies
-  with the corpus re-baseline). No constraint kinds, no modes, no
+  unit instance is the count window (the retired count constructor's
+  whole meaning, absorbed). No constraint kinds, no modes, no
   triggers.
 * **Ground axioms are constants of the THEORY.** A closed relation's
   extension is sealed at declaration and `Instance`-independent by
@@ -414,14 +413,14 @@ The statement forms the dependency-vocabulary extension adds carry
 syntax of their own: the literal window `{lo..hi}` and, over it, the
 capacity statement `B(Y | ψ) <=[w]{lo..hi} A(X | φ)` (the
 `capacity-laws.md` design: the aggregate containment whose unit
-instance is the count window). Syntax only — the denotations live in
-`Cardinality.lean` (the count instance, retiring with the cutover's
-build lane) and `Capacity.lean` (the weighted general form). -/
+instance is the count window). Syntax only — the denotation lives in
+`Capacity.lean`. -/
 
 /-- A literal window `lo..hi`. `hi = none` is the `*` spelling —
 the ONLY spelling of "no upper bound", and the DEFAULT posture: the
-`0..*` window is provably vacuous and universal (`zero_star_admits`,
-`star_subsumes` in `Cardinality.lean`), so a spelled statement is
+`0..*` window is provably vacuous and universal
+(`measure_zero_star_admits`, `star_subsumes` in `Capacity.lean`), so
+a spelled statement is
 always a strengthening of the default, never a repair of it. This is
 the `{lo..hi}` object that SURVIVES the capacity cutover (ruling C16):
 a capacity statement's window resolves per target row to exactly this
@@ -493,7 +492,7 @@ structure Atom where
 
 /-- A declared dependency statement — the two original judgment forms
 (`crate::schema::StatementDescriptor`) plus the capacity extension
-form (and its retiring unit-instance spelling), judged in the
+form, judged in the
 STATEMENT phase like every other statement. `==` is not a form: the
 macro lowers it to two adjacent containments, each judged
 independently. Readings live in `Statement.judgment`. -/
@@ -504,17 +503,6 @@ inductive Statement where
   | functionality (relation : RelId) (projection : List FieldId)
   /-- `A(X | φ) <= B(Y | ψ)`: containment. -/
   | containment (source target : Atom)
-  /-- `A(X | φ) in n..m per B(Y | ψ)`: the cardinality window —
-  per selected target fact, the count of selected source facts
-  sharing its projected tuple lies in the window
-  (`CardinalityWindow`, `Cardinality.lean`). Acceptance gate as for
-  `<=`: `Y` must be a key of `B` — an ACCEPTANCE premise, never a
-  conjunct of the denotation. RETIRING: this is the unit instance of
-  `capacity` (`cardinality_is_unit_capacity`, `Capacity.lean`); it
-  stays alive through the capacity cutover's flush phase only so the
-  conformance corpus replays unchanged, and the build lane deletes it
-  when the corpus re-baselines (the L4 handoff). -/
-  | cardinality (source : Atom) (window : Window) (target : Atom)
   /-- `B(Y | ψ) <=[w]{lo..hi} A(X | φ)`: the capacity statement —
   per ψ-selected target fact, the MEASURE of the φ-selected source
   facts sharing its projected key tuple (Σ weight over the

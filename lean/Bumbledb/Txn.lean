@@ -48,8 +48,8 @@ critical section (the `api/db/write.rs::GenerationMoved` return) is
   judgment phase runs), else the statement phase's violated
   statements. The engine's statement phase judges both non-key
   forms (`storage/commit/judgment.rs::judge`: the containment sides,
-  the window checks — each scan-complete), so one sealed rejection
-  can mix containment and cardinality citations in materialized
+  the capacity checks — each scan-complete), so one sealed rejection
+  can mix containment and capacity citations in materialized
   statement order — the 2026-07-14 vocabulary campaign's enforcement
   stage, discharged (the delta-restriction ledger rows,
   `Bridge.lean`).
@@ -68,7 +68,7 @@ critical section (the `api/db/write.rs::GenerationMoved` return) is
 functionality statement rejects with exactly the complete set of
 violated KEY statements, and the statement phase never runs
 (`judge_key_preempts`); only a keyed final state is judged for
-containment and cardinality (`judge_statement_phase`). This
+containment and capacity (`judge_statement_phase`). This
 preemption is not a shortcut but a definedness fact: the containment
 probes are DEFINED over the keyed final state — a probe asks "is this
 determinant tuple present", and the coverage walk's
@@ -127,7 +127,7 @@ namespace Bumbledb
 /-- Whether a statement is a KEY statement — the first phase of the
 two-phase judge: functionality statements (scalar or pointwise; the
 field-set shape is read at judgment, not here) key the final state,
-and containment and cardinality statements are judged only over a
+and containment and capacity statements are judged only over a
 keyed final state (the module doc's preemption). -/
 def Statement.isKey : Statement → Bool
   | .functionality _ _ => true
@@ -214,7 +214,7 @@ def keyViolationSet (T : Theory) (I : Instance) : Set Statement :=
   fun st => st ∈ violationSet T I ∧ st.isKey = true
 
 /-- The statement-phase violations: the violated non-key statements
-(containment, cardinality) of one final state — the set the
+(containment, capacity) of one final state — the set the
 judge cites when every key statement holds. -/
 def statementViolationSet (T : Theory) (I : Instance) : Set Statement :=
   fun st => st ∈ violationSet T I ∧ st.isKey = false

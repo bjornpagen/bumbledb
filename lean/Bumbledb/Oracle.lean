@@ -98,23 +98,18 @@ form's delta-restricted check (`planObligation`, `acceptance_gate`).
   under the target-key disjointness premise the sweep verdict IS the
   point-subset denotation (`coverage_walk_decides`, spending
   `sweep_covered_sound_complete`).
-* **Window** — a prefix walk of each touched parent's child group
-  (`windowPlan`): the length-window verdict over one duplicate-free
-  enumeration IS the count-window judgment
-  (`window_admits_iff_enum` via the pigeonhole lemma
-  `nodup_subset_length_le`), deciding `cardinalityDeltaCheck`
-  (`cardinality_plan_decides`); total consultations = touched parents
-  + total touched-group sizes, as an equation
-  (`window_plan_consultations`).
-* **Capacity** — the SAME prefix walk, weighed (`capacityPlan`): the
-  measure verdict over one duplicate-free enumeration IS the
-  capacity judgment at the parent-resolved window
-  (`measure_admits_iff_enum` via the consolidated weighted pigeonhole
-  `nodup_subset_natSum_le`, `Capacity.lean`), deciding
-  `capacityDeltaCheck` (`capacity_plan_decides`); the consultation
-  equation is the count walk's, name for name
+* **Capacity** — a prefix walk of each touched parent's child group,
+  weighed (`capacityPlan`): the measure verdict over one
+  duplicate-free enumeration IS the capacity judgment at the
+  parent-resolved window (`measure_admits_iff_enum` via the
+  consolidated weighted pigeonhole `nodup_subset_natSum_le`,
+  `Capacity.lean`), deciding `capacityDeltaCheck`
+  (`capacity_plan_decides`); total consultations = touched parents +
+  total touched-group sizes, as an equation
   (`capacity_plan_consultations`) — the weighted verdict reads no
-  extra entries.
+  extra entries beyond what the count walk read, and the engine's
+  clipped walk is priced sound by the C12 exit theorems
+  (`capacity_ceiling_exit_sound` / `capacity_floor_exit_sound`).
 
 ## The acceptance premises, spent
 
@@ -175,16 +170,16 @@ fact-level fidelity to its delta-restricted check.
   demand spent. On an unkeyed group the abstract count would
   understate, which is exactly why the gate refuses unkeyed targets.
 
-## The window plan: acceptance and checker discharged
+## The capacity plan: acceptance and checker discharged
 
-The engine ACCEPTS the window form at declaration (2026-07-14:
-`StatementDescriptor::Cardinality`; the gate arm
-`validate_cardinality` in `schema/validate.rs` resolves exactly the
-key this plan prices — the window's target key — so "the plan is
+The engine ACCEPTS the capacity form at declaration
+(`StatementDescriptor::Capacity`; the gate arm
+`validate_capacity` in `schema/validate.rs` resolves exactly the
+key this plan prices — the statement's target key — so "the plan is
 sealable" is what acceptance checks, and the `Bridge.lean`
 acceptance row cites the plan theorem). The Rust CHECKER runs the
-plan as stated: `windowPlan`'s per-touched-parent child-group walk
-is `storage/commit/judgment.rs::Checker::check_window` — the
+plan as stated: `capacityPlan`'s per-touched-parent child-group walk
+is `storage/commit/judgment.rs::Checker::check_capacity` — the
 enforcement discharge row cites the delta-restriction theorem this
 plan decides. The FD, containment, and coverage plans price
 mechanisms the ledger already carries (`Applier`, `judgment.rs`, the
@@ -372,77 +367,6 @@ theorem accepted_target_key_prices_the_probe {T : Theory}
   rw [hkey a, hkey b] at hg
   exact hfun a b ha hb hg
 
-/-! ## Counting lemmas — windows over one enumeration
-
-The count-window judgment (`Cardinality.lean`) is stated as the two
-list-witnessed bounds; over one duplicate-free enumeration of the set
-both bounds collapse to the enumeration's LENGTH — the pigeonhole
-lemma below is the whole argument, and no finiteness token is spent
-anywhere else. -/
-
-/-- The pigeonhole lemma: a duplicate-free list of members of another
-list is no longer than it. Elementary — no decidable equality, no
-erasure: split the host at the head's occurrence. -/
-theorem nodup_subset_length_le :
-    ∀ (l l' : List β), l.Nodup → (∀ a, a ∈ l → a ∈ l') →
-      l.length ≤ l'.length
-  | [], _, _, _ => Nat.zero_le _
-  | a :: rest, l', hnd, hsub => by
-    obtain ⟨s, t, rfl⟩ := List.append_of_mem (hsub a List.mem_cons_self)
-    obtain ⟨hne, hnd'⟩ := List.pairwise_cons.mp hnd
-    have hsub' : ∀ x, x ∈ rest → x ∈ s ++ t := by
-      intro x hx
-      rcases List.mem_append.mp (hsub x (List.mem_cons_of_mem a hx))
-        with h | h
-      · exact List.mem_append.mpr (.inl h)
-      · rcases List.mem_cons.mp h with rfl | h'
-        · exact absurd rfl (hne x hx)
-        · exact List.mem_append.mpr (.inr h')
-    have hlen := nodup_subset_length_le rest (s ++ t) hnd' hsub'
-    simp only [List.length_append, List.length_cons] at hlen ⊢
-    omega
-
-/-- The floor over one enumeration: `AtLeast n` is `n ≤ length`. -/
-theorem atLeast_iff_enum {s : Set β} {l : List β}
-    (hmem : ∀ a, a ∈ l ↔ a ∈ s) (hnd : l.Nodup) (n : Nat) :
-    s.AtLeast n ↔ n ≤ l.length := by
-  constructor
-  · rintro ⟨w, hwnd, hwmem, hwlen⟩
-    exact Nat.le_trans hwlen (nodup_subset_length_le w l hwnd
-      fun a ha => (hmem a).mpr (hwmem a ha))
-  · intro h
-    exact ⟨l, hnd, fun a ha => (hmem a).mp ha, h⟩
-
-/-- The ceiling over one enumeration: `AtMost m` is `length ≤ m`. -/
-theorem atMost_iff_enum {s : Set β} {l : List β}
-    (hmem : ∀ a, a ∈ l ↔ a ∈ s) (hnd : l.Nodup) (m : Nat) :
-    s.AtMost m ↔ l.length ≤ m := by
-  constructor
-  · intro h
-    exact h l hnd fun a ha => (hmem a).mp ha
-  · intro h w hwnd hwmem
-    exact Nat.le_trans (nodup_subset_length_le w l hwnd
-      fun a ha => (hmem a).mpr (hwmem a ha)) h
-
-/-- The length-window verdict a walk's answers decide. -/
-def windowVerdict (w : Window) (ans : List β) : Prop :=
-  w.lo ≤ ans.length ∧ ∀ m, w.hi = some m → ans.length ≤ m
-
-/-- **One walk decides a window.** The count-window judgment over a
-set equals the length-window verdict over any duplicate-free
-enumeration of it — the whole counting question is one prefix walk's
-answer length. -/
-theorem window_admits_iff_enum {s : Set β} {l : List β}
-    (hmem : ∀ a, a ∈ l ↔ a ∈ s) (hnd : l.Nodup) (w : Window) :
-    w.admits s ↔ windowVerdict w l := by
-  unfold Window.admits windowVerdict
-  rw [atLeast_iff_enum hmem hnd]
-  constructor
-  · rintro ⟨h1, h2⟩
-    exact ⟨h1, fun m hm => (atMost_iff_enum hmem hnd m).mp (h2 m hm)⟩
-  · rintro ⟨h1, h2⟩
-    exact ⟨h1, fun m hm => (atMost_iff_enum hmem hnd m).mpr (h2 m hm)⟩
-
 /-! ## Measure lemmas — capacity over one enumeration
 
 The capacity judgment (`Capacity.lean`) is stated as the two
@@ -450,8 +374,9 @@ witness-style MEASURE bounds; over one duplicate-free enumeration
 both collapse to the enumeration's weighted SUM — the weighted
 pigeonhole is `nodup_subset_natSum_le`, proved ONCE upstream in
 `Capacity.lean` (the consolidation ruling: this module's count
-pigeonhole `nodup_subset_length_le` and `Decide.lean`'s erase-style
-twin were owed a weighted successor EACH; one home serves both). -/
+pigeonhole and `Decide.lean`'s erase-style twin were owed a weighted
+successor EACH; one home serves both, and the two count pigeonholes
+died with the count path). -/
 
 /-- The measure-window verdict a walk's answers decide: the weighted
 fold over the answers against RESOLVED bounds (resolution happens at
@@ -570,14 +495,9 @@ would understate; the walk is priced at what it reads. -/
 def indReverseWalk (t : List Value) : EnforcementPlan (List Value) P :=
   .prefixWalk t
 
-/-- Window: one prefix walk of a touched parent's child group. -/
-def windowPlan (t : List Value) : EnforcementPlan (List Value) P :=
-  .prefixWalk t
-
 /-- Capacity: one prefix walk of a touched parent's child group —
-the SAME plan term as the count window's: the weighted verdict reads
-no extra entries (the weight rides each answer; module note at
-`measureVerdict`). -/
+the weighted verdict reads no extra entries beyond the walk itself
+(the weight rides each answer; module note at `measureVerdict`). -/
 def capacityPlan (t : List Value) : EnforcementPlan (List Value) P :=
   .prefixWalk t
 
@@ -636,26 +556,9 @@ theorem member_test_consultations (o : OrderedOracle K P β ple) :
     (EnforcementPlan.memberTest : EnforcementPlan K P).consultations o
       = 0 := rfl
 
-/-- **The window bound, as an equation**: over any touched-parent
-list, total consultations = touched parents + total touched-group
-sizes — one seek per parent, one read per group member. -/
-theorem window_plan_consultations
-    (o : OrderedOracle (List Value) P Fact ple)
-    (parents : List (List Value)) :
-    costs o (parents.map (windowPlan (P := P))) =
-      parents.length +
-        (parents.map fun t => (o.consult t).length).foldr (· + ·) 0 := by
-  induction parents with
-  | nil => rfl
-  | cons t ps ih =>
-    simp only [costs, windowPlan, EnforcementPlan.consultations,
-      List.map_cons, List.foldr_cons, List.length_cons] at ih ⊢
-    omega
-
-/-- **The capacity bound, as an equation** —
-`window_plan_consultations`' successor name (ruling C16): over any
-touched-parent list, total consultations = touched parents + total
-touched-group sizes — one seek per parent, one read per group
+/-- **The capacity bound, as an equation** (ruling C16's name): over
+any touched-parent list, total consultations = touched parents +
+total touched-group sizes — one seek per parent, one read per group
 member, EXACTLY the count walk's price: the theorem-level witness
 that the weighted verdict costs nothing extra at judge time. -/
 theorem capacity_plan_consultations
@@ -840,52 +743,7 @@ theorem member_test_decides {T : Theory} {I : Instance}
     rw [hden] at hgf
     exact ⟨g, hgf, hψ, hp⟩
 
-/-! ## Form 5 — the cardinality window -/
-
-/-- The window plan obligation: against every conforming oracle over
-the σ-selected source's parent-key index, the per-touched-parent walk
-verdict decides `cardinalityDeltaCheck`. -/
-def WindowPlanned (T : Theory) (I : Instance) (d : Txn.Delta)
-    (src : Atom) (w : Window) (tgt : Atom) : Prop :=
-  ∀ (P : Type) (ple : P → P → Prop)
-    (o : OrderedOracle (List Value) P Fact ple),
-    o.facts = Selected (T.den (d.applyTo I) src.relation)
-      src.selection →
-    (∀ f, o.groupOf f = f.project src.projection) →
-    ((∀ g, g ∈ T.den (d.applyTo I) tgt.relation →
-        tgt.selection.satisfies g →
-        g.project tgt.projection ∈ Txn.touchedParents d src tgt →
-        windowVerdict w
-          ((windowPlan (P := P) (g.project tgt.projection)).answers o)) ↔
-      Txn.cardinalityDeltaCheck T I d src w tgt)
-
-/-- **The window plan theorem** (a prefix walk of each touched
-parent's child group; the bound is `window_plan_consultations` —
-consultations = touched parents + total touched-group sizes): the
-length-window verdict over each walked group IS the delta-restricted
-window check. -/
-theorem cardinality_plan_decides (T : Theory) (I : Instance)
-    (d : Txn.Delta) (src : Atom) (w : Window) (tgt : Atom) :
-    WindowPlanned T I d src w tgt := by
-  intro P ple o hfacts hkey
-  have hgrp : ∀ (t : List Value) (a : Fact),
-      a ∈ (windowPlan (P := P) t).answers o ↔
-        a ∈ ChildGroup (T.den (d.applyTo I) src.relation)
-          src.selection src.projection t := by
-    intro t a
-    show a ∈ o.consult t ↔ _
-    rw [o.consult_mem t a, hfacts, hkey a]
-    exact ⟨fun ⟨⟨h1, h2⟩, h3⟩ => ⟨h1, h2, h3⟩,
-      fun ⟨h1, h2, h3⟩ => ⟨⟨h1, h2⟩, h3⟩⟩
-  have hadm : ∀ t : List Value,
-      windowVerdict w ((windowPlan (P := P) t).answers o) ↔
-        w.admits (ChildGroup (T.den (d.applyTo I) src.relation)
-          src.selection src.projection t) :=
-    fun t => (window_admits_iff_enum (hgrp t) (o.consult_nodup t) w).symm
-  exact ⟨fun h g hg hψ ht => (hadm _).mp (h g hg hψ ht),
-    fun h g hg hψ ht => (hadm _).mpr (h g hg hψ ht)⟩
-
-/-! ## Form 6 — the capacity statement -/
+/-! ## Form 5 — the capacity statement -/
 
 /-- The capacity plan obligation: against every conforming oracle
 over the σ-selected source's parent-key index, the per-touched-parent
@@ -1106,7 +964,6 @@ def planObligation (T : Theory) (I : Instance) (d : Txn.Delta) :
           T.header.intervalSplit tgt.relation tgt.projection with
     | some _, some _ => CoveragePlanned
     | _, _ => ContainmentPlanned T I d src tgt
-  | .cardinality src w tgt => WindowPlanned T I d src w tgt
   | .capacity tgt wt w src => CapacityPlanned T I d tgt wt w src
 
 /-- **The acceptance-gate theorem.** Every `Statement` constructor
@@ -1151,8 +1008,6 @@ theorem acceptance_gate (T : Theory) (I : Instance) (d : Txn.Delta) :
       | none =>
         simp only [planObligation, hs, ht]
         exact containment_plan_decides T I d src tgt
-  | cardinality src w tgt =>
-    exact cardinality_plan_decides T I d src w tgt
   | capacity tgt wt w src =>
     exact capacity_plan_decides T I d tgt wt w src
 

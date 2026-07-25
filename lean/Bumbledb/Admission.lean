@@ -9,14 +9,12 @@ wants statement-vocabulary standing — enters the vocabulary by
 inhabiting `AdmissibleForm`. The type IS the acceptance gate's
 checklist (`docs/architecture/30-dependencies.md` § the acceptance
 gate), and an inhabitant is the whole mathematical case for
-acceptance: reason about exact operators before writing Rust. Six
-forms inhabit it below through the capacity cutover's flush window —
-the fact-level forms (`functionalityForm`, `containmentForm`,
-`capacityForm`, and the count instance `cardinalityForm`, retiring
-with the count path's deletion) and the
+acceptance: reason about exact operators before writing Rust. Five
+forms inhabit it below — the three fact-level forms
+(`functionalityForm`, `containmentForm`, `capacityForm`) and the
 two pointwise forms (`pointwiseForm`, `coverageForm`); each
 instantiation pulls the campaign's waves together — the Level-0
-denotation (`Dependencies.lean` / `Cardinality.lean`), the
+denotation (`Dependencies.lean` / `Capacity.lean`), the
 executable judge (`Decide.lean`), the delta restriction
 (`Txn/DeltaRestriction.lean`), and the order-oracle plan
 (`Oracle.lean`) — so "this form is accepted" is the existence of ONE
@@ -132,14 +130,15 @@ pattern, per form, as one theorem of the structure.
   (`Exec/Sweep.lean: sweep_ignores_spent_segments`, the recorded
   license in `Oracle.lean`).
 
-## The window inhabitant: acceptance and enforcement discharged
+## The capacity inhabitant: acceptance and enforcement discharged
 
-The engine ACCEPTS the form at declaration (2026-07-14:
-`StatementDescriptor::Cardinality`; the gate arm in
+The engine ACCEPTS the form at declaration
+(`StatementDescriptor::Capacity`; the gate arm in
 `schema/validate.rs` checks exactly this inhabitant's acceptance
-premises — the window's target key and interval refusal) and JUDGES
-it per commit: the checker and delta machinery this term describes
-are `storage/commit/judgment.rs::check_windows` over
+premises — the statement's target key, the weight/bound typing
+roster, and the interval-projection refusal) and JUDGES it per
+commit: the checker and delta machinery this term describes
+are `storage/commit/judgment.rs::check_capacity` over
 `storage/commit/plan.rs`'s touched sets. No
 `Bridge.lean` row cites this module directly: the acceptance row
 cites the plan theorem (`Oracle.lean`), the enforcement row cites
@@ -441,137 +440,15 @@ theorem containmentForm_denotes {T : Theory} {I : Instance}
   | none => simp only [Statement.judgment, hs, ht]
   | some q => simp only [Statement.judgment, hs, ht]
 
-/-! ## Inhabitant 3 — the cardinality window (accepted and enforced)
-
-Denotation `CardinalityWindow` (`Cardinality.lean`); checker
-`cardinalityB` (`cardinalityB_iff`); restriction
-`cardinality_delta_restriction`; plan `cardinality_plan_decides` —
-per touched parent one target-key point probe and one prefix walk of
-the child group (`window_plan_consultations`, the equation). -/
-
-/-- The cardinality-window form: `A(X | φ) in w per B(Y | ψ)`.
-`Ix = Bool`: `true` the σ-selected child surface, `false` the parent
-surface. -/
-def cardinalityForm : AdmissibleForm (Atom × Window × Atom) Bool where
-  Judgment := fun p T I =>
-    CardinalityWindow (T.den I p.1.relation) p.1.selection
-      p.1.projection p.2.1 (T.den I p.2.2.relation) p.2.2.selection
-      p.2.2.projection
-  surface := fun p ix T I =>
-    match ix with
-    | true => Selected (T.den I p.1.relation) p.1.selection
-    | false => T.den I p.2.2.relation
-  surfaceProj := fun p ix =>
-    match ix with
-    | true => p.1.projection
-    | false => p.2.2.projection
-  quarantined := by
-    intro p T I J h
-    have hsel : Selected (T.den I p.1.relation) p.1.selection =
-        Selected (T.den J p.1.relation) p.1.selection := h true
-    have ht : T.den I p.2.2.relation = T.den J p.2.2.relation :=
-      h false
-    have hgrp : ∀ t, ChildGroup (T.den I p.1.relation) p.1.selection
-        p.1.projection t =
-          ChildGroup (T.den J p.1.relation) p.1.selection
-            p.1.projection t := by
-      intro t
-      funext f
-      apply propext
-      constructor
-      · rintro ⟨h1, h2, h3⟩
-        have hf : f ∈ Selected (T.den J p.1.relation)
-            p.1.selection := by
-          rw [← hsel]
-          exact ⟨h1, h2⟩
-        exact ⟨hf.1, hf.2, h3⟩
-      · rintro ⟨h1, h2, h3⟩
-        have hf : f ∈ Selected (T.den I p.1.relation)
-            p.1.selection := by
-          rw [hsel]
-          exact ⟨h1, h2⟩
-        exact ⟨hf.1, hf.2, h3⟩
-    show CardinalityWindow (T.den I p.1.relation) p.1.selection
-        p.1.projection p.2.1 (T.den I p.2.2.relation)
-        p.2.2.selection p.2.2.projection ↔
-      CardinalityWindow (T.den J p.1.relation) p.1.selection
-        p.1.projection p.2.1 (T.den J p.2.2.relation)
-        p.2.2.selection p.2.2.projection
-    constructor
-    · intro hcw g hg hψ
-      rw [← hgrp (g.project p.2.2.projection)]
-      refine hcw g ?_ hψ
-      rw [ht]
-      exact hg
-    · intro hcw g hg hψ
-      rw [hgrp (g.project p.2.2.projection)]
-      refine hcw g ?_ hψ
-      rw [← ht]
-      exact hg
-  check := fun p T W =>
-    cardinalityB (W.rows p.1.relation) p.1.selection p.1.projection
-      p.2.1 (W.rows p.2.2.relation) p.2.2.selection p.2.2.projection
-  checkPremise := fun _ _ _ => True
-  check_decides := fun p T W hclosed _ =>
-    cardinalityB_iff (theoryDen_denotes hclosed p.1.relation)
-      (theoryDen_denotes hclosed p.2.2.relation) p.1.selection
-      p.1.projection p.2.1 p.2.2.selection p.2.2.projection
-  DeltaCheck := fun p T I d =>
-    Txn.cardinalityDeltaCheck T I d p.1 p.2.1 p.2.2
-  delta_restricts := fun p T I d hpre =>
-    Txn.cardinality_delta_restriction hpre
-  Touched := fun p d => Txn.touchedParents d p.1 p.2.2
-  touched_delta_bounded := by
-    rintro p d t (⟨f, hf, hproj⟩ | ⟨g, hg, _, hproj⟩)
-    · exact ⟨true, p.1.relation, f, hf, hproj⟩
-    · exact ⟨false, p.2.2.relation, g, hg, hproj⟩
-  probe := fun _ ix =>
-    match ix with
-    | true => .walk
-    | false => .point
-  Verdict := fun p _ _ ans =>
-    Oracle.witnessed p.2.2.selection (ans false) →
-      Oracle.windowVerdict p.2.1 (ans true)
-  plan_decides := by
-    intro p T I d P ple o hfacts hkeys
-    have hplan := Oracle.cardinality_plan_decides T I d p.1 p.2.1
-      p.2.2 P ple (o true) (hfacts true) (fun f => hkeys true f)
-    have hconT : ∀ (t : List Value) (g : Fact),
-        g ∈ (o false).consult t ↔
-          g ∈ T.den (d.applyTo I) p.2.2.relation ∧
-            g.project p.2.2.projection = t := by
-      intro t g
-      rw [(o false).consult_mem t g, hfacts false, hkeys false g]
-    refine Iff.trans ?_ hplan
-    constructor
-    · intro hv g hg hψ ht
-      exact hv (g.project p.2.2.projection) ht
-        ⟨g, (hconT _ g).mpr ⟨hg, rfl⟩, hψ⟩
-    · intro hw t ht hwit
-      obtain ⟨g, hgc, hψ⟩ := hwit
-      obtain ⟨hgf, hgp⟩ := (hconT t g).mp hgc
-      have hv := hw g hgf hψ (by rw [hgp]; exact ht)
-      rw [hgp] at hv
-      exact hv
-
-/-- The window form's judgment IS the statement dispatcher's arm —
-no split scope: window projections refuse interval positions at the
-gate. -/
-theorem cardinalityForm_denotes {T : Theory} {I : Instance}
-    {src : Atom} {w : Window} {tgt : Atom} :
-    cardinalityForm.Judgment (src, w, tgt) T I ↔
-      (Statement.cardinality src w tgt).judgment T I :=
-  Iff.rfl
-
-/-! ## Inhabitant 3b — the capacity statement (ruling C11)
+/-! ## Inhabitant 3 — the capacity statement (ruling C11)
 
 Denotation `CapacityLaw` (`Capacity.lean`); checker `capacityB`
 (`capacityB_iff`); restriction `capacity_delta_restriction`; plan
 `capacity_plan_decides` — per touched parent one target-key point
 probe and one prefix walk of the child group
 (`capacity_plan_consultations`, the equation: EXACTLY the count
-walk's price). The count-window inhabitant above retires into this
-form's unit instance with the count path's deletion.
+walk's price — the retired count inhabitant survives as this form's
+unit instance).
 
 **The C11 architecture ruling, discharged as stated.** The `Verdict`
 field has no witnessed parent in scope — the count form never needed

@@ -41,7 +41,7 @@ soundness, whole.
   contributes to the group. Bridge: `check_target`'s affected-source
   coverage walk re-runs only across disestablished segments;
   `Checker::check_coverage` walks only the demanded source interval.
-* **Cardinality window** — the touched parent keys
+* **Capacity statement** — the touched parent keys
   (`touchedParents`): every parent key tuple any delta source fact
   projects to, plus the delta's ψ-selected parents themselves.
 
@@ -60,17 +60,17 @@ store sweeper). The checks here quantify over RAW instances, not
 `State`, precisely so the countermodel can exhibit the missing
 premise.
 
-## Discharged (2026-07-14): the window CHECK
+## Discharged: the capacity CHECK
 
-The engine both ACCEPTS the window form at declaration
-(`StatementDescriptor::Cardinality`, the gate arm in
+The engine both ACCEPTS the capacity form at declaration
+(`StatementDescriptor::Capacity`, the gate arm in
 `schema/validate.rs`) and ENFORCES it per commit: the
 delta-restricted check this module states is the Rust checker's
 consultation plan, implemented as stated — the touched-parent set is
-`storage/commit/plan.rs`'s window derivation
-(`cardinality_delta_restriction`'s ledger row), and
-`storage/commit/judgment.rs::check_windows` judges exactly that set
-against the final state.
+`storage/commit/plan.rs`'s capacity derivation
+(`capacity_delta_restriction`'s ledger row), and
+`storage/commit/judgment.rs::check_capacity` judges exactly that
+set against the final state.
 
 ## Narrowings recorded (law 5: narrow and record)
 
@@ -427,10 +427,10 @@ theorem coverage_delta_restriction {T : Theory} {I : Instance}
       · exact coverage_untouched_point hpre hf₀ hφ hx ht
       · exact absurd (Or.inl ⟨f, Or.inl hadd, rfl, hx⟩) ht
 
-/-! ## Form 5 — the cardinality window -/
+/-! ## Form 5 — the capacity statement -/
 
-/-- The touched parent keys of one window statement: every parent key
-tuple any delta source fact projects to (a count that may have
+/-- The touched parent keys of one capacity statement: every parent
+key tuple any delta source fact projects to (a measure that may have
 moved), plus the delta's ψ-selected parents themselves (a group newly
 constrained or released). -/
 def touchedParents (d : Delta) (src tgt : Atom) : Set (List Value) :=
@@ -439,20 +439,10 @@ def touchedParents (d : Delta) (src tgt : Atom) : Set (List Value) :=
     ∃ g, (g ∈ d.adds tgt.relation ∨ g ∈ d.removes tgt.relation) ∧
       tgt.selection.satisfies g ∧ g.project tgt.projection = t
 
-/-- The delta-restricted window check: the window judged only at
-TOUCHED parent keys, against the final state's child groups. -/
-def cardinalityDeltaCheck (T : Theory) (I : Instance) (d : Delta)
-    (src : Atom) (w : Window) (tgt : Atom) : Prop :=
-  ∀ g, g ∈ T.den (d.applyTo I) tgt.relation →
-    tgt.selection.satisfies g →
-    g.project tgt.projection ∈ touchedParents d src tgt →
-    w.admits (ChildGroup (T.den (d.applyTo I) src.relation)
-      src.selection src.projection (g.project tgt.projection))
-
-/-- **Untouched implies unchanged, window form.** An untouched parent
-key's child group is the SAME fact set in the final state: a delta
-source fact projecting to it would have touched it. -/
-theorem cardinality_untouched_group_eq {T : Theory} {I : Instance}
+/-- **Untouched implies unchanged, capacity form.** An untouched
+parent key's child group is the SAME fact set in the final state: a
+delta source fact projecting to it would have touched it. -/
+theorem capacity_untouched_group_eq {T : Theory} {I : Instance}
     {d : Delta} {src tgt : Atom} {t : List Value}
     (hun : t ∉ touchedParents d src tgt) :
     ChildGroup (T.den (d.applyTo I) src.relation) src.selection
@@ -473,36 +463,6 @@ theorem cardinality_untouched_group_eq {T : Theory} {I : Instance}
     rcases den_pre_final_or_removed hf with h' | h'
     · exact h'
     · exact absurd (Or.inl ⟨f, Or.inr h', hproj⟩) hun
-
-/-- **The window restriction theorem.** Over a pre-state
-holding the window, the final state holds it IFF the touched-parents
-check passes: an untouched parent is a pre-state parent whose child
-group is unchanged (`cardinality_untouched_group_eq`), so its window
-verdict is the pre-state's. -/
-theorem cardinality_delta_restriction {T : Theory} {I : Instance}
-    {d : Delta} {src : Atom} {w : Window} {tgt : Atom}
-    (hpre : CardinalityWindow (T.den I src.relation) src.selection
-      src.projection w (T.den I tgt.relation) tgt.selection
-      tgt.projection) :
-    CardinalityWindow (T.den (d.applyTo I) src.relation)
-      src.selection src.projection w
-      (T.den (d.applyTo I) tgt.relation) tgt.selection
-      tgt.projection ↔
-      cardinalityDeltaCheck T I d src w tgt := by
-  constructor
-  · intro h g hg hψ _
-    exact h g hg hψ
-  · intro hc g hg hψ
-    by_cases ht : g.project tgt.projection ∈ touchedParents d src tgt
-    · exact hc g hg hψ ht
-    · have hg₀ : g ∈ T.den I tgt.relation := by
-        rcases den_final_pre_or_added hg with h' | h'
-        · exact h'
-        · exact absurd (Or.inr ⟨g, Or.inl h', hψ, rfl⟩) ht
-      rw [cardinality_untouched_group_eq ht]
-      exact hpre g hg₀ hψ
-
-/-! ## Form 6 — the capacity statement -/
 
 /-- The delta-restricted capacity check: the law judged only at
 TOUCHED parent keys — `touchedParents` REUSED VERBATIM, because
@@ -528,8 +488,7 @@ argument whole: an untouched parent is a pre-state parent (`hg₀`
 exhibits the SAME fact, so the dependent bound resolves to the SAME
 window — resolution reads `g` itself, never the state), the weight
 function is state-independent, and the group equality is
-`cardinality_untouched_group_eq`, weight-blind and reused (the build
-lane renames it with the count path's deletion). -/
+`capacity_untouched_group_eq`, weight-blind. -/
 theorem capacity_delta_restriction {T : Theory} {I : Instance}
     {d : Delta} {tgt : Atom} {wt : Weight} {w : CapWindow}
     {src : Atom}
@@ -550,7 +509,7 @@ theorem capacity_delta_restriction {T : Theory} {I : Instance}
         rcases den_final_pre_or_added hg with h' | h'
         · exact h'
         · exact absurd (Or.inr ⟨g, Or.inl h', hψ, rfl⟩) ht
-      rw [cardinality_untouched_group_eq ht]
+      rw [capacity_untouched_group_eq ht]
       exact hpre g hg₀ hψ
 
 /-! ## The per-statement dispatch and the composition theorem -/
@@ -571,7 +530,6 @@ def deltaCheck (T : Theory) (I : Instance) (d : Delta) :
       coverageDeltaCheck T I d src.relation src.selection S i
         tgt.relation tgt.selection U j
     | _, _ => containmentDeltaCheck T I d src tgt
-  | .cardinality src w tgt => cardinalityDeltaCheck T I d src w tgt
   | .capacity tgt wt w src => capacityDeltaCheck T I d tgt wt w src
 
 /-- **The per-statement restriction theorem.** Over a pre-state
@@ -613,9 +571,6 @@ theorem statement_delta_restriction (T : Theory) (I : Instance)
       | none =>
         simp only [Statement.judgment, deltaCheck, hs, ht] at hpre ⊢
         exact containment_delta_restriction hpre
-  | cardinality src w tgt =>
-    simp only [Statement.judgment, deltaCheck] at hpre ⊢
-    exact cardinality_delta_restriction hpre
   | capacity tgt wt w src =>
     simp only [Statement.judgment, deltaCheck] at hpre ⊢
     exact capacity_delta_restriction hpre

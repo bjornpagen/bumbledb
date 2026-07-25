@@ -173,17 +173,23 @@ def ledger : List Obligation := [
     "LiteralSet (crates/bumbledb-theory/src/schema.rs); schema/validate.rs::validate_side_shape (crates/bumbledb/src/schema/validate.rs); judgment.rs::FieldCheck (crates/bumbledb/src/storage/commit/judgment.rs)"
     "a_literal_set_selection_seals_sorted (crates/bumbledb/src/schema/tests/valid.rs); a_literal_set_sigma_seals_and_judges_membership (crates/bumbledb/src/storage/commit/tests/sealed_checks.rs); rejects_a_singleton_spelled_as_a_set (crates/bumbledb/src/schema/tests/reject.rs)",
 
-  .row @Oracle.cardinality_plan_decides
-    `Bumbledb.Oracle.cardinality_plan_decides
-    "The cardinality window has a sealed enforcement plan — per touched parent one keyed point probe and one child-group walk — so the gate accepts the form at declaration once the target projection resolves a declared key and no projection position is interval-typed."
-    "schema/validate.rs::validate_cardinality (crates/bumbledb/src/schema/validate.rs); CardinalityStatement (crates/bumbledb/src/schema.rs)"
-    "a_cardinality_window_over_a_declared_key_validates (crates/bumbledb/src/schema/tests/valid.rs); rejects_a_window_with_an_interval_position (crates/bumbledb/src/schema/tests/reject.rs); rejects_a_window_whose_target_is_no_key (crates/bumbledb/src/schema/tests/reject.rs)",
+  .row @Oracle.capacity_plan_decides
+    `Bumbledb.Oracle.capacity_plan_decides
+    "The capacity statement has a sealed enforcement plan — per touched parent one keyed point probe and one child-group measure walk, the weight paid once at write time so the walk reads no extra entries — so the gate accepts the form at declaration once the target projection resolves a declared key, the weight and bounds type, and no projection position is interval-typed."
+    "schema/validate.rs::validate_capacity (crates/bumbledb/src/schema/validate.rs); CapacityStatement (crates/bumbledb/src/schema.rs)"
+    "a_capacity_statement_over_a_declared_key_validates (crates/bumbledb/src/schema/tests/valid.rs); rejects_a_capacity_with_an_interval_position (crates/bumbledb/src/schema/tests/reject.rs); rejects_a_capacity_whose_target_is_no_key (crates/bumbledb/src/schema/tests/reject.rs)",
 
-  .row @Txn.cardinality_delta_restriction
-    `Bumbledb.Txn.cardinality_delta_restriction
-    "Over a clean pre-state the window holds of the final state iff the touched-parents check passes — every parent key any delta child projects to, plus the delta's ψ-selected parents, each judged by one keyed parent probe and one child-group walk against the final state."
-    "judgment.rs::check_windows (crates/bumbledb/src/storage/commit/judgment.rs); Checker::check_window (crates/bumbledb/src/storage/commit/judgment.rs); plan.rs::mark_ops (crates/bumbledb/src/storage/commit/plan.rs)"
-    "window_floor_convicts_a_childless_parent (crates/bumbledb/src/storage/commit/tests/marks.rs); window_removal_recounts_the_touched_parent (crates/bumbledb/src/storage/commit/tests/marks.rs); window_verdicts_agree_with_the_model (crates/bumbledb-bench/src/differential/tests/marks.rs)",
+  .row @Txn.capacity_delta_restriction
+    `Bumbledb.Txn.capacity_delta_restriction
+    "Over a clean pre-state the capacity law holds of the final state iff the touched-parents check passes — every parent key any delta child projects to, plus the delta's ψ-selected parents, each judged by one keyed parent probe and one child-group measure walk against the final state, the bound resolved from the parent's own row."
+    "Checker::check_capacity (crates/bumbledb/src/storage/commit/judgment.rs); plan.rs::mark_ops (crates/bumbledb/src/storage/commit/plan.rs)"
+    "capacity_floor_convicts_a_childless_parent (crates/bumbledb/src/storage/commit/tests/marks.rs); capacity_removal_remeasures_the_touched_parent (crates/bumbledb/src/storage/commit/tests/marks.rs); capacity_verdicts_agree_with_the_model (crates/bumbledb-bench/src/differential/tests/marks.rs)",
+
+  .row @Oracle.capacity_ceiling_exit_sound
+    `Bumbledb.Oracle.capacity_ceiling_exit_sound
+    "The clipped measure walk is sound (C12): non-negative weights make the running sum monotone, so a ceiling walk's verdict is decided the moment the sum passes hi and a floor-only walk's the moment it reaches lo — the clip serves the verdict, while on conviction the full walk serves the walk-order-independent witnessed measure (C14)."
+    "Checker::measure_children (crates/bumbledb/src/storage/commit/judgment.rs)"
+    "capacity_sum_ceiling_convicts_with_the_full_measure (crates/bumbledb/src/storage/commit/tests/marks.rs)",
 
   .row @functionality_unique_witness `Bumbledb.functionality_unique_witness
     "Under a functionality statement there is at most one fact per determinant tuple — a key proves uniqueness, never existence."
@@ -500,7 +506,7 @@ def ledger : List Obligation := [
   .row @Txn.rejection_is_complete `Bumbledb.Txn.rejection_is_complete
     "A rejection carries the failing phase's complete violation set — the violated key statements when any key fails (the preemption: the statement phase's probes are defined over the keyed final state), else the violated non-key statements — sound, nonempty, never a mix."
     "crate::error::Violations (crates/bumbledb/src/error.rs); apply.rs::apply (crates/bumbledb/src/storage/commit/apply.rs); judgment.rs::judge (crates/bumbledb/src/storage/commit/judgment.rs)"
-    "statement_phase_cites_containments_and_windows_together (crates/bumbledb/src/storage/commit/tests/marks.rs); key_violation_preempts_the_window_judgment (crates/bumbledb/src/storage/commit/tests/marks.rs)",
+    "statement_phase_cites_containments_and_capacities_together (crates/bumbledb/src/storage/commit/tests/marks.rs); key_violation_preempts_the_capacity_judgment (crates/bumbledb/src/storage/commit/tests/marks.rs)",
 
   .row @Txn.witness_conflict_distinct `Bumbledb.Txn.witness_conflict_distinct
     "Witness conflicts are not dependency violations: the two failure kinds are distinct constructors, and the one generation compare aborts before anything is judged."
@@ -608,7 +614,7 @@ def ledger : List Obligation := [
 /-- The ledger count, asserted: a dropped or added row moves this
 number, so the census (which re-derives the count by grep) and the
 build (which checks this literal) both notice. -/
-theorem ledger_count : ledger.length = 96 := rfl
+theorem ledger_count : ledger.length = 97 := rfl
 
 end Bridge
 end Bumbledb

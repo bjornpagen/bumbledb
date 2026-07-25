@@ -198,9 +198,9 @@ position 0):
 
 ```jsonc
 {
-"case":"judgment-window-floor-childless",
+"case":"judgment-capacity-floor-childless",
 "kind":"judgment",
-"provenance":{"hand":"judgment-window-floor-childless"},
+"provenance":{"hand":"judgment-capacity-floor-childless"},
 "theory":{
   "relations":[…],                          // as in query cases
   "ground_axioms":[…],                      // as in query cases
@@ -209,9 +209,19 @@ position 0):
                                             // statement ids
     {"functionality":{"relation":0,"projection":[0]}},
     {"containment":{"source":SIDE,"target":SIDE}},
-    {"cardinality":{"source":SIDE,
-                    "window":{"lo":1,"hi":2},   // "hi" absent = *
-                    "target":SIDE}}]},
+    {"capacity":{"target":SIDE,             // the C2 operator order:
+                 "weight":"unit",           //   target, weight,
+                                            //   window, source.
+                                            // weight = "unit" |
+                                            //   {"field":N} |
+                                            //   {"duration":N} —
+                                            //   unit crosses EXPLICITLY
+                 "window":{"lo":1,"hi":2},  // "hi" absent = *;
+                                            // hi = int | {"field":N} |
+                                            //   {"duration":N} — the
+                                            //   dependent-bound forms
+                                            //   read the TARGET row
+                 "source":SIDE}}]},
                                             // SIDE = {"relation","projection",
                                             //   "selection":[[field,[lit…]]…]}
                                             // — a literal SET reads
@@ -252,7 +262,8 @@ half is pinned by
 The starter roster covers: both classical forms (scalar key;
 containment — scalar, coverage, and the closed member set, plain and
 ψ-narrowed), the
-extension form (windows at floor/ceiling/`n..n`/`0..*`/empty-parent),
+extension form (unit-weight capacity at
+floor/ceiling/`n..n`/`0..*`/empty-parent),
 the two-phase preemption mix,
 set-selections deciding a verdict, the delete-then-reinsert
 touched-group seam, and the permuted-interval lock — a statement
@@ -261,7 +272,7 @@ DECLARED `(id, span)`: accepted through the set-canonical key
 resolution (`Bumbledb/Schema.lean: Header.intervalSplit`), judged as
 coverage, three-way agreed. The whole-list comparison surface is
 exercised beyond singletons: a statement phase citing containment AND
-cardinality as the ascending pair (`judgment-statement-mixed-citations`,
+capacity as the ascending pair (`judgment-statement-mixed-citations`,
 `[1,2]`), one containment cited in both directions and collapsed to one
 id (`judgment-containment-both-directions` — the dedup rule above,
 pinned pre-dedup by a unit test), and a two-key rejection

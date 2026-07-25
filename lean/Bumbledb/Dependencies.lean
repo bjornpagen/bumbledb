@@ -10,8 +10,7 @@ theory. Statements ported from the audited inventory
 (`docs/formal/GPT55DependencyTheory.lean`) onto the in-tree base.
 The extension form seats its reading here too:
 `Statement.judgment` dispatches the capacity form to its denotation
-(`Capacity.lean` — and, through the cutover's flush phase, the
-retiring unit-instance spelling to `Cardinality.lean`), and the
+(`Capacity.lean`), and the
 extension-vs-original subsumption theorems live downstream in
 `Subsumption.lean`.
 
@@ -269,11 +268,10 @@ Gate-refused shapes default to the scalar reading (recorded
 narrowing — `holds` is consumed on accepted theories only). The
 extension form reads its own denotation: a capacity statement is the
 per-parent measure judgment over the window resolved at each parent
-row (`Capacity.lean`; the retiring count spelling reads
-`Cardinality.lean` — projections refuse interval positions at the
+row (`Capacity.lean` — projections refuse interval positions at the
 gate, the recorded v0 trigger narrowed to PROJECTIONS since
 intervals now enter through the measure argument, so no split is
-consulted for either). -/
+consulted). -/
 def Statement.judgment (T : Theory) (I : Instance) :
     Statement → Prop
   | .functionality R X =>
@@ -289,10 +287,6 @@ def Statement.judgment (T : Theory) (I : Instance) :
     | _, _ =>
       Containment (T.den I src.relation) src.selection src.projection
         (T.den I tgt.relation) tgt.selection tgt.projection
-  | .cardinality src w tgt =>
-    CardinalityWindow (T.den I src.relation) src.selection
-      src.projection w (T.den I tgt.relation) tgt.selection
-      tgt.projection
   | .capacity tgt wt w src =>
     CapacityLaw (T.den I src.relation) src.selection src.projection
       wt w (T.den I tgt.relation) tgt.selection tgt.projection

@@ -176,15 +176,16 @@ part of the spec.
   field splits to `some` at ANY written position, two intervals and
   all-scalar split to `none`.
 
-## Extension residents (cardinality windows, E3)
+## Extension residents (the capacity statement, E3)
 
-* `unit_window_two_children` — the `1..1` window refuted by one
-  parent with two distinct children (the bare-`==` rows, reread):
+* `unit_window_two_children` — the unit-weight `{1}` window refuted
+  by one parent with two distinct children (the bare-`==` rows,
+  reread):
   the upper bound is load-bearing, not decorative — a window is never
   just its floor (`window_floor_containment` is the floor's half).
 
 * `disjunctive_window_not_literal_conjunction` — why E3's literal
-  sets are FIRST-CLASS, not per-literal sugar: the `1..1` window over
+  sets are FIRST-CLASS, not per-literal sugar: the `{1}` window over
   `payload ∈ {true, false}` accepts each one-child relation and
   rejects their union, while ANY conjunction of per-literal windows
   accepting both one-child relations accepts the union too
@@ -1166,7 +1167,8 @@ theorem split_two_intervals_none :
 theorem split_all_scalar_none :
     pcHeader.intervalSplit ⟨0⟩ [⟨0⟩] = none := rfl
 
-/-! ## The violated unit window (extension 1, `Cardinality.lean`)
+/-! ## The violated unit window (the capacity statement's Count
+instance, `Capacity.lean`)
 
 One parent, two distinct children sharing its key — the bare-`==`
 model's rows, reread as a parent/child pair. -/
@@ -1177,17 +1179,19 @@ def winParent : Fact := fun _ => keyVal
 /-- The one-fact parent relation. -/
 def winParents : Set Fact := fun f => f = winParent
 
-/-- **The countermodel (port).** The `1..1` window FAILS on one
-parent with two distinct children: the two-element duplicate-free
-member list breaks the ceiling. The upper bound is load-bearing — a
-window is never just its floor, which is why `1..1` says strictly
-more than the reverse containment (`window_floor_containment`). -/
+/-- **The countermodel (port).** The unit-weight `{1}` window FAILS
+on one parent with two distinct children: the two-element
+duplicate-free member list breaks the ceiling. The upper bound is
+load-bearing — a window is never just its floor, which is why `{1}`
+says strictly more than the reverse containment
+(`window_floor_containment`). -/
 theorem unit_window_two_children :
-    ¬ CardinalityWindow twoTarget Selection.empty keyProj
-        (Window.mk 1 (some 1)) winParents Selection.empty keyProj := by
+    ¬ CapacityLaw twoTarget Selection.empty keyProj .unit
+        ⟨1, some (.lit 1)⟩ winParents Selection.empty keyProj := by
   intro h
   have hmost := (h winParent rfl (Selection.empty_satisfies _)).2 1 rfl
-  refine Set.not_atMost_one_of_two ?_ ?_ rowTrue_ne_rowFalse hmost
+  refine Set.not_atMost_one_of_two ?_ ?_ rowTrue_ne_rowFalse
+    ((Set.measureAtMost_unit_iff _ _).mp hmost)
   · exact ⟨Or.inl rfl, Selection.empty_satisfies _, rfl⟩
   · exact ⟨Or.inr rfl, Selection.empty_satisfies _, rfl⟩
 
@@ -1270,24 +1274,24 @@ count-vectors of a union window are not a product set. This is what
 makes the literal set a first-class selection form rather than
 lowering sugar. -/
 theorem disjunctive_window_not_literal_conjunction :
-    (CardinalityWindow oneSource orSel keyProj (Window.mk 1 (some 1))
+    (CapacityLaw oneSource orSel keyProj .unit ⟨1, some (.lit 1)⟩
         winParents Selection.empty keyProj ∧
-      CardinalityWindow oneFalse orSel keyProj (Window.mk 1 (some 1))
+      CapacityLaw oneFalse orSel keyProj .unit ⟨1, some (.lit 1)⟩
         winParents Selection.empty keyProj ∧
-      ¬ CardinalityWindow twoTarget orSel keyProj (Window.mk 1 (some 1))
+      ¬ CapacityLaw twoTarget orSel keyProj .unit ⟨1, some (.lit 1)⟩
         winParents Selection.empty keyProj) ∧
-    (∀ wt wf : Window,
-      (CardinalityWindow oneSource selTrue keyProj wt winParents
+    (∀ wt wf : CapWindow,
+      (CapacityLaw oneSource selTrue keyProj .unit wt winParents
           Selection.empty keyProj ∧
-        CardinalityWindow oneSource selFalse keyProj wf winParents
+        CapacityLaw oneSource selFalse keyProj .unit wf winParents
           Selection.empty keyProj) →
-      (CardinalityWindow oneFalse selTrue keyProj wt winParents
+      (CapacityLaw oneFalse selTrue keyProj .unit wt winParents
           Selection.empty keyProj ∧
-        CardinalityWindow oneFalse selFalse keyProj wf winParents
+        CapacityLaw oneFalse selFalse keyProj .unit wf winParents
           Selection.empty keyProj) →
-      (CardinalityWindow twoTarget selTrue keyProj wt winParents
+      (CapacityLaw twoTarget selTrue keyProj .unit wt winParents
           Selection.empty keyProj ∧
-        CardinalityWindow twoTarget selFalse keyProj wf winParents
+        CapacityLaw twoTarget selFalse keyProj .unit wf winParents
           Selection.empty keyProj)) := by
   refine ⟨⟨?_, ?_, ?_⟩, ?_⟩
   · -- the true child alone: the union count is one
@@ -1306,9 +1310,10 @@ theorem disjunctive_window_not_literal_conjunction :
     · intro m hm
       injection hm with hm
       subst hm
-      exact Set.atMost_one_of_subsingleton fun a b ha hb =>
-        (show a = rowTrue from ha.1).trans
-          (show b = rowTrue from hb.1).symm
+      exact (Set.measureAtMost_unit_iff _ _).mpr
+        (Set.atMost_one_of_subsingleton fun a b ha hb =>
+          (show a = rowTrue from ha.1).trans
+            (show b = rowTrue from hb.1).symm)
   · -- the false child alone: the union count is one
     intro g hg hψ
     have hg' : g = winParent := hg
@@ -1325,14 +1330,16 @@ theorem disjunctive_window_not_literal_conjunction :
     · intro m hm
       injection hm with hm
       subst hm
-      exact Set.atMost_one_of_subsingleton fun a b ha hb =>
-        (show a = rowFalse from ha.1).trans
-          (show b = rowFalse from hb.1).symm
+      exact (Set.measureAtMost_unit_iff _ _).mpr
+        (Set.atMost_one_of_subsingleton fun a b ha hb =>
+          (show a = rowFalse from ha.1).trans
+            (show b = rowFalse from hb.1).symm)
   · -- the union: the disjunctive count is two — the ceiling breaks
     intro h
     have hmost :=
       (h winParent rfl (Selection.empty_satisfies _)).2 1 rfl
-    refine Set.not_atMost_one_of_two ?_ ?_ rowTrue_ne_rowFalse hmost
+    refine Set.not_atMost_one_of_two ?_ ?_ rowTrue_ne_rowFalse
+      ((Set.measureAtMost_unit_iff _ _).mp hmost)
     · refine ⟨Or.inl rfl, ?_, rfl⟩
       intro bd hbd
       rcases List.mem_singleton.mp hbd with rfl
@@ -1554,7 +1561,7 @@ not the evaluation lemma alone, are what keep a join surface out
 below). This countermodel is the refusal's mathematical face: the
 touched-group license every sanctioned plan spends — the
 untouched-implies-unchanged lemmas of `Txn/DeltaRestriction.lean`
-(`cardinality_untouched_group_eq` for the single-atom window) — is
+(`capacity_untouched_group_eq` for the single-atom statement) — is
 FALSE for the joined shape. One inserted fact on one join side
 changes the joined child set at parent groups NEITHER relation's
 delta projects to at the grouping, one group per matching join
@@ -2017,7 +2024,7 @@ families `blastOracle1`/`blastOracle2`.
 
 The pins are the E1 shape's own declaration, not a loophole: a window
 form groups parents by its grouping projection, and those are the
-surfaces its plan may key — the same discipline `cardinalityForm`
+surfaces its plan may key — the same discipline `capacityForm`
 (`Admission.lean`) inhabits successfully at one atom. Degenerate
 groupings that scan a whole relation are refused by the gate's
 acceptance rules on the docs side (`Admission.lean`'s recorded
@@ -2131,18 +2138,24 @@ def listOracle (A : Set Fact) (L : List Fact)
 declaration under refutation. -/
 def joinedWindow : Window := ⟨0, some 0⟩
 
-/-- The empty window holds of an empty set. -/
-theorem window_admits_empty {α : Type} {s : Set α}
-    (hempty : ∀ a, a ∉ s) : joinedWindow.admits s := by
-  refine ⟨Set.atLeast_zero s, ?_⟩
+/-- The empty window holds of an empty set, UNDER EVERY WEIGHT —
+the floor is the empty witness and the empty enumeration's sum is
+zero. -/
+theorem window_admits_empty {α : Type} {s : Set α} {wt : α → Nat}
+    (hempty : ∀ a, a ∉ s) : joinedWindow.admitsMeasure wt s := by
+  refine ⟨Set.measureAtLeast_zero wt s, ?_⟩
   intro m _ l _ hmem
   cases l with
   | nil => exact Nat.zero_le m
   | cons a l' => exact absurd (hmem a (List.mem_cons_self ..)) (hempty a)
 
-/-- The empty window refuses any inhabited set. -/
+/-- The empty window refuses any inhabited set at UNIT weight — the
+Count instance the E1 declaration pins (a zero-weight row could
+satisfy a `{0}` total under a field weight: the per-aggregate § 6
+footnote, which is why the refutation names its weight). -/
 theorem window_refuses_inhabited {α : Type} {s : Set α} {a : α}
-    (ha : a ∈ s) : ¬ joinedWindow.admits s := by
+    (ha : a ∈ s) :
+    ¬ joinedWindow.admitsMeasure (fun _ => 1) s := by
   rintro ⟨-, hup⟩
   have hle := hup 0 rfl [a]
     (List.Pairwise.cons (fun b hb => nomatch hb) List.Pairwise.nil)
@@ -2151,10 +2164,10 @@ theorem window_refuses_inhabited {α : Type} {s : Set α} {a : α}
   omega
 
 /-- The E1 judgment under refutation: at every parent tag, no joined
-child pair — `joinedWindow` over `JoinedChildren`, the joined shape's
-would-be denotation. -/
+child pair — `joinedWindow` at unit weight over `JoinedChildren`,
+the joined shape's would-be denotation. -/
 def joinedWindowJudgment (T : Theory) (I : Instance) : Prop :=
-  ∀ t, joinedWindow.admits
+  ∀ t, joinedWindow.admitsMeasure (fun _ => 1)
     (JoinedChildren (T.den I parentRel) (T.den I childRel) t)
 
 /-- The open theory of the refutation: every relation open, so the

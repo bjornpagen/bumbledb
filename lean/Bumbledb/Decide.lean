@@ -10,8 +10,7 @@ sets; on finite, row-listed instances it is DECIDABLE, and this
 module is that fact made executable: one Boolean checker per
 statement form, each proved sound AND complete against its
 `Statement.judgment` denotation (`funcB_iff`, `pointwiseKeyB_iff`,
-`containB_iff`, `coverageB_iff`, `cardinalityB_iff`,
-`capacityB_iff`), composed into
+`containB_iff`, `coverageB_iff`, `capacityB_iff`), composed into
 the per-statement dispatcher (`Statement.checkB`,
 `Statement.checkB_iff`), the whole-theory executable judge
 (`holdsB`, `holdsB_iff_holds`, the derived
@@ -257,54 +256,11 @@ theorem satisfiesB_iff {φ : Selection} {r : Row} :
 
 /-! ## Counting — distinct facts of a row list
 
-`Set.AtLeast`/`Set.AtMost` (`Cardinality.lean`) are list-witnessed
-bounds; on a row-listed set both collapse to one number: the length
-of a duplicate-free enumeration. -/
-
-/-- A duplicate-free list confined to another list is no longer —
-the pigeonhole the count bounds ride (classical erase; the proof is
-a `Prop`, so decidable equality is summoned, never demanded). -/
-theorem length_le_of_nodup_of_subset {α : Type u} :
-    ∀ {l enum : List α}, l.Nodup → (∀ a, a ∈ l → a ∈ enum) →
-      l.length ≤ enum.length
-  | [], _, _, _ => Nat.zero_le _
-  | a :: l, enum, hnd, hsub => by
-    haveI : DecidableEq α := fun x y => Classical.propDecidable _
-    have hmem : a ∈ enum := hsub a (List.mem_cons_self ..)
-    have hnd' := List.nodup_cons.mp hnd
-    have hsub' : ∀ x, x ∈ l → x ∈ enum.erase a := fun x hx =>
-      (List.mem_erase_of_ne fun heq => hnd'.1 (by rw [← heq]; exact hx)).mpr
-        (hsub x (List.mem_cons_of_mem a hx))
-    have hlen := length_le_of_nodup_of_subset hnd'.2 hsub'
-    have herase : (enum.erase a).length = enum.length - 1 :=
-      List.length_erase_of_mem hmem
-    have hpos : 0 < enum.length := List.length_pos_of_mem hmem
-    show l.length + 1 ≤ enum.length
-    omega
-
-/-- On an enumerated set, the floor bound is a length compare. -/
-theorem atLeast_iff_enum_length {α : Type u} {s : Set α}
-    {enum : List α} (hnd : enum.Nodup)
-    (hmem : ∀ a, a ∈ s ↔ a ∈ enum) (n : Nat) :
-    s.AtLeast n ↔ n ≤ enum.length := by
-  constructor
-  · rintro ⟨l, hnd', hsub, hlen⟩
-    exact Nat.le_trans hlen (length_le_of_nodup_of_subset hnd'
-      fun a ha => (hmem a).mp (hsub a ha))
-  · intro h
-    exact ⟨enum, hnd, fun a ha => (hmem a).mpr ha, h⟩
-
-/-- On an enumerated set, the ceiling bound is a length compare. -/
-theorem atMost_iff_enum_length {α : Type u} {s : Set α}
-    {enum : List α} (hnd : enum.Nodup)
-    (hmem : ∀ a, a ∈ s ↔ a ∈ enum) (m : Nat) :
-    s.AtMost m ↔ enum.length ≤ m := by
-  constructor
-  · intro h
-    exact h enum hnd fun a ha => (hmem a).mpr ha
-  · intro h l hnd' hsub
-    exact Nat.le_trans (length_le_of_nodup_of_subset hnd'
-      fun a ha => (hmem a).mp (hsub a ha)) h
+The measure bounds (`Set.MeasureAtLeast`/`Set.MeasureAtMost`,
+`Capacity.lean`) are list-witnessed; on a row-listed set both
+collapse to one number: the weighted sum of a duplicate-free
+enumeration (the enumeration collapse, riding the consolidated
+pigeonhole `nodup_subset_natSum_le`). -/
 
 /-- One representative row per denoted fact (keep-last under
 `rowEqB`) — the duplicate-free enumeration the count bounds read. -/
@@ -814,29 +770,21 @@ theorem coverageB_iff {LA LB : List Row} {A B : Set Fact}
           ⟨hb, andB_iff.mpr
             ⟨satisfiesB_iff.mpr hgψ, decide_eq_true hgU⟩⟩, hjv⟩, hyj⟩
 
-/-! ## Cardinality windows -/
+/-! ## Capacity statements — the weighted measure
 
-/-- The distinct child count of one parent tuple: qualifying rows,
-one representative per denoted fact. -/
-def childCountB (LA : List Row) (φ : Selection) (X : List FieldId)
-    (t : List Value) : Nat :=
-  (dedupFacts (LA.filter fun a => satisfiesB φ a &&
-    decide ((Query.tupleFact a).project X = t))).length
+The capacity checker folds the weight over the SAME deduplicated
+enumeration the count checker read (`dedupFacts`,
+`childGroup_enum` — group keying is weight-blind), judged against
+the window RESOLVED at each parent row. Counting is the unit
+instance (`length = sum ∘ map(const 1)`, `natSum_map_const_one`) —
+no count checker survives beside the general fold. -/
 
-/-- The window verdict at one count. -/
+/-- The window verdict at one measure. -/
 def windowB (w : Window) (n : Nat) : Bool :=
   decide (w.lo ≤ n) &&
     match w.hi with
     | none => true
     | some m => decide (n ≤ m)
-
-/-- The cardinality-window checker: every selected parent row's child
-count sits in the window. -/
-def cardinalityB (LA : List Row) (φ : Selection) (X : List FieldId)
-    (w : Window) (LB : List Row) (ψ : Selection) (Y : List FieldId) :
-    Bool :=
-  LB.all fun b => !satisfiesB ψ b ||
-    windowB w (childCountB LA φ X ((Query.tupleFact b).project Y))
 
 /-- The child group of a parent tuple is enumerated by the
 deduplicated qualifying rows. -/
@@ -861,71 +809,8 @@ theorem childGroup_enum {L : List Row} {A : Set Fact} (hA : Denotes L A)
     exact ⟨(hA _).mpr ⟨r, hrL, rfl⟩, satisfiesB_iff.mp h1,
       of_decide_eq_true h2⟩
 
-/-- The window verdict at an enumerated group's length is the
-window's judgment — the two count bounds collapsed to compares. -/
-theorem windowB_iff {s : Set Fact} {enum : List Fact}
-    (hnd : enum.Nodup) (hmem : ∀ f, f ∈ s ↔ f ∈ enum) (w : Window) :
-    windowB w enum.length = true ↔ w.admits s := by
-  unfold windowB Window.admits
-  rw [andB_iff, decide_eq_true_iff]
-  constructor
-  · rintro ⟨h1, h2⟩
-    refine ⟨(atLeast_iff_enum_length hnd hmem w.lo).mpr h1,
-      fun m hm => ?_⟩
-    rw [hm] at h2
-    exact (atMost_iff_enum_length hnd hmem m).mpr
-      (of_decide_eq_true h2)
-  · rintro ⟨h1, h2⟩
-    refine ⟨(atLeast_iff_enum_length hnd hmem w.lo).mp h1, ?_⟩
-    cases hhi : w.hi with
-    | none => rfl
-    | some m =>
-      exact decide_eq_true
-        ((atMost_iff_enum_length hnd hmem m).mp (h2 m hhi))
-
-/-- `cardinalityB` decides `CardinalityWindow` on the listed
-denotations. -/
-theorem cardinalityB_iff {LA LB : List Row} {A B : Set Fact}
-    (hA : Denotes LA A) (hB : Denotes LB B) (φ : Selection)
-    (X : List FieldId) (w : Window) (ψ : Selection)
-    (Y : List FieldId) :
-    cardinalityB LA φ X w LB ψ Y = true ↔
-      CardinalityWindow A φ X w B ψ Y := by
-  unfold cardinalityB CardinalityWindow
-  rw [List.all_eq_true]
-  constructor
-  · intro h g hg hψ
-    obtain ⟨b, hb, rfl⟩ := (hB g).mp hg
-    have h1 := h b hb
-    rw [impB_iff] at h1
-    have h2 := h1 (satisfiesB_iff.mpr hψ)
-    refine (windowB_iff (nodup_map_dedupFacts _)
-      (childGroup_enum hA φ X ((Query.tupleFact b).project Y)) w).mp ?_
-    rw [List.length_map]
-    exact h2
-  · intro h b hb
-    rw [impB_iff]
-    intro hψ
-    have h1 := (windowB_iff (nodup_map_dedupFacts _)
-      (childGroup_enum hA φ X ((Query.tupleFact b).project Y)) w).mpr
-      (h (Query.tupleFact b) ((hB _).mpr ⟨b, hb, rfl⟩)
-        (satisfiesB_iff.mp hψ))
-    rw [List.length_map] at h1
-    exact h1
-
-/-! ## Capacity statements — the weighted measure
-
-The capacity checker is the count checker's fold with the weight in
-place of the constant 1 (`length = sum ∘ map(const 1)`): the SAME
-deduplicated enumeration (`dedupFacts`, `childGroup_enum` — group
-keying is weight-blind), summed under `Weight.apply` instead of
-measured by length, judged against the window RESOLVED at each
-parent row. `childMeasureB` at unit weight equals `childCountB`'s
-old value — a lemma downstream of `natSum_map_const_one`, never a
-retained definition. -/
-
 /-- The child measure of one parent tuple: Σ weight over one
-representative fact per denoted row — `childCountB`'s fold,
+representative fact per denoted row — the count fold,
 weighted. -/
 def childMeasureB (LA : List Row) (φ : Selection) (X : List FieldId)
     (wt : Weight) (t : List Value) : Nat :=
@@ -945,8 +830,8 @@ def capacityB (LA : List Row) (φ : Selection) (X : List FieldId)
       (childMeasureB LA φ X wt ((Query.tupleFact b).project Y))
 
 /-- The window verdict at an enumerated group's MEASURE is the
-measure-admission judgment — `windowB_iff` with the weighted fold in
-place of the length, the two measure bounds collapsed to compares
+measure-admission judgment — the count collapse with the weighted
+fold in place of the length, the two measure bounds become compares
 through the consolidated pigeonhole (`measureAtLeast_iff_enum` /
 `measureAtMost_iff_enum`, `Capacity.lean`). -/
 theorem measureWindowB_iff {s : Set Fact} {enum : List Fact}
@@ -1021,9 +906,6 @@ def Statement.checkB (T : Theory) (W : RowInstance) : Statement → Bool
     | _, _ =>
       containB (W.rows src.relation) src.selection src.projection
         (W.rows tgt.relation) tgt.selection tgt.projection
-  | .cardinality src w tgt =>
-    cardinalityB (W.rows src.relation) src.selection src.projection w
-      (W.rows tgt.relation) tgt.selection tgt.projection
   | .capacity tgt wt w src =>
     capacityB (W.rows src.relation) src.selection src.projection wt w
       (W.rows tgt.relation) tgt.selection tgt.projection
@@ -1071,11 +953,6 @@ theorem Statement.checkB_iff {T : Theory} {W : RowInstance}
         exact containB_iff (theoryDen_denotes hclosed src.relation)
           (theoryDen_denotes hclosed tgt.relation) src.selection
           src.projection tgt.selection tgt.projection
-  | cardinality src w tgt =>
-    simp only [Statement.checkB, Statement.judgment]
-    exact cardinalityB_iff (theoryDen_denotes hclosed src.relation)
-      (theoryDen_denotes hclosed tgt.relation) src.selection
-      src.projection w tgt.selection tgt.projection
   | capacity tgt wt w src =>
     simp only [Statement.checkB, Statement.judgment]
     exact capacityB_iff (theoryDen_denotes hclosed src.relation)

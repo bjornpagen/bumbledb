@@ -27,7 +27,7 @@ project needs no build programmability.
 ## The refinement chain
 
 - **Level 0 — denotations**: what every construct means
-  (`Values`, `Schema`, `Cardinality`, `Capacity`, `Dependencies`,
+  (`Values`, `Schema`, `Capacity`, `Dependencies`,
   `Subsumption`, `Query/Syntax`, `Query/Denotation`,
   `Query/Membership`, `Query/Aggregates`).
 - **Level 1 — abstract algorithms**: each semantics-bearing algorithm
