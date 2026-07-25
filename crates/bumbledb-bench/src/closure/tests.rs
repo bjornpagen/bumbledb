@@ -116,7 +116,7 @@ fn the_recursive_cte_mirror_is_row_identical() {
 /// promise: closure from the chain head is the whole chain; closure
 /// from the tree root is every tree node but the root.
 #[test]
-fn closure_cardinalities_match_the_shapes() {
+fn closure_counts_match_the_shapes() {
     let dir = scratch("counts");
     let sizes = ClosSizes::of(CFG.scale);
     let (db, _conn) = load_stores(&dir, CFG, crate::storemode::StoreMode::Durable).expect("stores");

@@ -699,7 +699,7 @@ fn mask_param_query() -> Query {
 /// both sides must reject, verdict identity included
 /// (`docs/architecture/60-validation.md` § error parity). The engine's
 /// verdict is its typed `ValidationError`; the naive side computes the
-/// width / the mask cardinality from the definition and must agree on
+/// width / the mask population from the definition and must agree on
 /// the payload, not just the kind.
 pub(super) fn error_parity<S, T>(db: &Db<S>, run: &mut Run<'_, T>) {
     for (label, q, expected) in parity_cases() {

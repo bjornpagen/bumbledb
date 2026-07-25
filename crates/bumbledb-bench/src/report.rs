@@ -120,7 +120,7 @@ impl From<crate::clockproxy::GhzStamp> for GhzReport {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ExecDigest {
     /// The worst per-node estimate-vs-executed-work factor. D2 may stop
-    /// existential work early, so this is not a pure cardinality-error bound.
+    /// existential work early, so this is not a pure row-count-error bound.
     pub worst_estimate_factor: f64,
     /// Condensed cover histogram (e.g. `n0:t0x256 n1:t1x255/t2x1`).
     pub covers: String,
