@@ -161,8 +161,14 @@ fn fold_stacks_collapses_identical_sibling_stacks() {
     let expected = "execute 50000\n\
                     execute;join 50000\n";
     assert_eq!(folded, expected);
-    assert!(!folded.contains("cache_hit"), "point events carry no self time");
-    assert!(!folded.contains("jp_iter"), "phase accumulators are excluded");
+    assert!(
+        !folded.contains("cache_hit"),
+        "point events carry no self time"
+    );
+    assert!(
+        !folded.contains("jp_iter"),
+        "phase accumulators are excluded"
+    );
 }
 
 #[test]
