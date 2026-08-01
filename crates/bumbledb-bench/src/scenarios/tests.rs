@@ -125,8 +125,8 @@ fn traced_scenarios_land_the_warm_cold_pair_and_flame() {
         warmups: 1,
         samples: 2,
     };
-    let (_markdown, reports) = super::run(&root, 7, proto, Some(only.as_slice()), &modes)
-        .expect("traced scenario run");
+    let (_markdown, reports) =
+        super::run(&root, 7, proto, Some(only.as_slice()), &modes).expect("traced scenario run");
     assert!(!reports.is_empty(), "points scenario has queries");
     for r in &reports {
         assert!(r.flame.is_some(), "{}/{}: warm flame", r.scenario, r.name);
@@ -171,11 +171,16 @@ fn the_alloc_pass_scopes_a_reading_per_query() {
         warmups: 1,
         samples: 2,
     };
-    let (_markdown, reports) = super::run(&root, 7, proto, Some(only.as_slice()), &modes)
-        .expect("alloc scenario run");
+    let (_markdown, reports) =
+        super::run(&root, 7, proto, Some(only.as_slice()), &modes).expect("alloc scenario run");
     assert!(!reports.is_empty());
     for r in &reports {
-        assert!(r.alloc.is_some(), "{}/{}: per-query alloc", r.scenario, r.name);
+        assert!(
+            r.alloc.is_some(),
+            "{}/{}: per-query alloc",
+            r.scenario,
+            r.name
+        );
         assert!(r.flame.is_none(), "the alloc pass writes no traces");
     }
     assert!(

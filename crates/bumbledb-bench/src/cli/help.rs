@@ -77,10 +77,12 @@ pub fn help() -> String {
          \x20 --only a,b      run only these scenarios/families\n\
          \x20 --samples N     measured samples/query   (default 64; crud and\n\
          \x20                 lawful fall back to their registered protocols)\n\
-         \x20 --trace         per-query warm+cold traces (.json + .folded)\n\
-         \x20                 under <out>/trace/; embeds the warm flame top-10\n\
-         \x20 --alloc         per-query alloc windows (needs the obs feature;\n\
-         \x20                 a separate pass — mutually exclusive with --trace)\n\
+         \x20 --trace         traced artifacts (.json + .folded) under\n\
+         \x20                 <out>/trace/ + the flame top-10 embeds: per-query\n\
+         \x20                 warm+cold pairs (scenarios), per-family traced\n\
+         \x20                 twin samples (crud/lawful); needs the obs build\n\
+         \x20 --alloc         per-query alloc windows (scenarios ONLY; needs\n\
+         \x20                 obs; a separate pass — exclusive with --trace)\n\
          \x20 --out PATH      artifact dir (default bench-out/<timestamp>-<command>)\n\
          \n\
          SWEEP-COMMIT:\n\

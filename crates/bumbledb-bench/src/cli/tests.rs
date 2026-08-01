@@ -428,9 +428,24 @@ fn scenarios_parses_the_trace_and_alloc_flags() {
 
 #[test]
 fn the_world_commands_refuse_trace_with_alloc() {
-    for cmd in ["scenarios", "crud", "lawful"] {
-        let err = parse(&argv(&[cmd, "--trace", "--alloc"])).unwrap_err();
-        assert!(err.contains("mutually exclusive"), "{cmd}: {err}");
+    let err = parse(&argv(&["scenarios", "--trace", "--alloc"])).unwrap_err();
+    assert!(err.contains("mutually exclusive"), "{err}");
+    assert!(err.contains("scenarios"), "{err}");
+}
+
+/// The write worlds take `--trace` but have no alloc pass — `--alloc`
+/// refuses by name instead of parsing into a flag nothing reads.
+#[test]
+fn the_write_worlds_take_trace_and_refuse_alloc() {
+    for cmd in ["crud", "lawful"] {
+        let parsed = parse(&argv(&[cmd, "--trace"])).expect("parses");
+        let args = match parsed {
+            Cmd::Crud(args) | Cmd::Lawful(args) => args,
+            other => panic!("{cmd}: {other:?}"),
+        };
+        assert!(args.trace && !args.alloc, "{cmd}");
+        let err = parse(&argv(&[cmd, "--alloc"])).unwrap_err();
+        assert!(err.contains("no alloc pass"), "{cmd}: {err}");
         assert!(err.contains(cmd), "{cmd}: {err}");
     }
 }

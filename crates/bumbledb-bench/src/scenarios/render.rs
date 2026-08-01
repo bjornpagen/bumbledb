@@ -120,7 +120,10 @@ pub fn render(reports: &[QueryReport], proto: Protocol) -> String {
     // The alloc pass (--alloc): one line per query with a reading.
     if reports.iter().any(|r| r.alloc.is_some()) {
         let _ = writeln!(out, "\n## Allocations (per query, --alloc)\n");
-        let _ = writeln!(out, "| query | allocs | alloc bytes | deallocs | dealloc bytes |");
+        let _ = writeln!(
+            out,
+            "| query | allocs | alloc bytes | deallocs | dealloc bytes |"
+        );
         let _ = writeln!(out, "|---|---:|---:|---:|---:|");
         for r in reports {
             if let Some(a) = &r.alloc {

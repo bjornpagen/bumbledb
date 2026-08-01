@@ -345,7 +345,9 @@ pub(super) fn run_query(
     // The trace pass: per-query warm+cold artifacts under <out>/trace/,
     // plus the warm flame table the report embeds (like read_family).
     let flame = match &modes.trace_root {
-        Some(root) => Some(super::trace::capture_query(stores, scenario, sq, seed, root)?),
+        Some(root) => Some(super::trace::capture_query(
+            stores, scenario, sq, seed, root,
+        )?),
         None => None,
     };
 

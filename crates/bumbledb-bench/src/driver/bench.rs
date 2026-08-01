@@ -54,6 +54,11 @@ fn bench_preflight(args: &BenchArgs, cfg: GenConfig) -> Result<(CorpusPaths, boo
     if args.alloc && !cfg!(feature = "obs") {
         return Err(obs_missing("--alloc"));
     }
+    // Same rule for the trace pass: without the obs build a capture is
+    // empty, and a span-free artifact wearing a real name is a lie.
+    if args.trace && !cfg!(feature = "obs") {
+        return Err(obs_missing("--trace"));
+    }
     if args.alloc && args.trace {
         return Err("--alloc and --trace are mutually exclusive modes".to_owned());
     }

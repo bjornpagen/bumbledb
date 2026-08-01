@@ -66,6 +66,19 @@ pub fn markdown(rows: &[CrudRow], seed: u64) -> String {
          Every row above is report-class, never gated — no budget gate reads a \
          crud number."
     );
+
+    // The trace pass (--trace): the traced twin sample's flame top-10
+    // per family, exactly as the ledger read families embed it; the
+    // artifacts sit under <out>/trace/crud/<lane>/.
+    if rows.iter().any(|row| row.flame.is_some()) {
+        let _ = writeln!(out, "\n## Flame summaries (per family, --trace)\n");
+        for row in rows {
+            if let Some(flame) = &row.flame {
+                let _ = writeln!(out, "### {} / {}\n", row.lane, row.family);
+                let _ = writeln!(out, "```text\n{flame}```\n");
+            }
+        }
+    }
     out
 }
 
@@ -138,6 +151,10 @@ fn push_row(out: &mut String, row: &CrudRow) {
             );
         }
         None => out.push_str("null"),
+    }
+    if let Some(flame) = &row.flame {
+        out.push_str(",\"flame\":");
+        push_str_lit(out, flame);
     }
     out.push('}');
 }

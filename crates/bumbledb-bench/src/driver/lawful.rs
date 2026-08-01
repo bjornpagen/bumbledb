@@ -15,6 +15,9 @@ use crate::report;
 /// Everything [`crate::lawful::run`] refuses, plus artifact I/O, as
 /// messages.
 pub fn cmd_lawful(args: &crate::cli::ScenarioArgs) -> Result<i32, String> {
+    if args.trace && !cfg!(feature = "obs") {
+        return Err(super::bench::obs_missing("--trace"));
+    }
     let (markdown, json) =
         crate::lawful::run(&args.dir, args.seed, args.samples, args.only.as_deref())?;
     let out_dir = args.out.clone().unwrap_or_else(|| {

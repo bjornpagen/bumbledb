@@ -484,30 +484,27 @@ pub fn rmw_sqlite(conn: &Connection, proto: Protocol, keys: &[u64]) -> Result<Me
     })
 }
 
-/// `crud_delete` on bumbledb: sample `i` deletes pool row `docs + i` —
-/// the full fact re-derived through the one corpus row function
-/// ([`ops::delete_rows`], which asserts the pool-size ≥
-/// warmups+samples invariant at derivation). Delete-bearing by
-/// contract: an absent pool row refuses inside the closure.
+/// `crud_delete` on bumbledb: one pool-row delete per commit, folding a
+/// precomputed row stream ([`ops::delete_rows`] — the fold derives it,
+/// so the traced twin sample can continue the SAME stream past the
+/// timed window). Delete-bearing by contract: an absent pool row
+/// refuses inside the closure.
 ///
 /// # Errors
 ///
-/// Engine errors, stringified; a non-delete-bearing sample, named.
-///
-/// # Panics
-///
-/// When the protocol outruns the delete pool (the [`ops::delete_rows`]
-/// invariant — a misregistered protocol, loud at entry).
+/// Engine errors, stringified; a stream/protocol length mismatch or a
+/// non-delete-bearing sample, named.
 pub fn delete_bumbledb(
     db: &Db<CrudWorld>,
     proto: Protocol,
-    seed: u64,
-    sizes: CrudSizes,
+    rows: &[Vec<bumbledb::Value>],
 ) -> Result<Measurement, String> {
-    let rows = ops::delete_rows(seed, sizes, invocations(proto));
+    check_stream("crud_delete", rows.len(), proto)?;
     let mut iter = rows.iter();
     harness::measure(proto, || {
-        let row = iter.next().expect("delete_rows covers the protocol");
+        let row = iter
+            .next()
+            .ok_or("the stream ended before the protocol did")?;
         db.write(|tx| {
             if !tx.delete_dyn(ids::DOC, row)? {
                 return Err(refuse(
@@ -521,33 +518,27 @@ pub fn delete_bumbledb(
     })
 }
 
-/// `crud_delete` on `SQLite`: the native `DELETE … WHERE "id" = ?` on
-/// the same pool id sequence (`docs + i`, in order), `changes() == 1`
-/// asserted inside the closure.
+/// `crud_delete` on `SQLite`: the native `DELETE … WHERE "id" = ?` over
+/// the same pool id sequence (the stream's ids, in order),
+/// `changes() == 1` asserted inside the closure.
 ///
 /// # Errors
 ///
-/// `SQLite` errors, stringified; a delete that changed anything but
-/// exactly one row, named.
-///
-/// # Panics
-///
-/// When the protocol outruns the delete pool (the shared invariant,
-/// asserted at entry).
+/// `SQLite` errors, stringified; a stream/protocol length mismatch or a
+/// delete that changed anything but exactly one row, named.
 pub fn delete_sqlite(
     conn: &Connection,
     proto: Protocol,
-    sizes: CrudSizes,
+    pool_ids: &[u64],
 ) -> Result<Measurement, String> {
-    let count = u64::try_from(invocations(proto)).expect("protocol counts are small");
-    assert!(
-        count <= sizes.delete_pool,
-        "the delete pool ({}) must cover every invocation ({count})",
-        sizes.delete_pool
-    );
-    let mut next = sizes.docs;
+    check_stream("crud_delete", pool_ids.len(), proto)?;
+    let mut iter = pool_ids.iter();
     harness::measure(proto, || {
-        let id = sql_u64(next);
+        let id = sql_u64(
+            *iter
+                .next()
+                .ok_or("the stream ended before the protocol did")?,
+        );
         conn.execute_batch("BEGIN IMMEDIATE")
             .map_err(|e| format!("begin: {e}"))?;
         let step = || -> Result<(), String> {
@@ -565,12 +556,10 @@ pub fn delete_sqlite(
             }
         };
         match step() {
-            Ok(()) => {
-                conn.execute_batch("COMMIT")
-                    .map_err(|e| format!("commit: {e}"))?;
-                next += 1;
-                Ok(1)
-            }
+            Ok(()) => conn
+                .execute_batch("COMMIT")
+                .map(|()| 1)
+                .map_err(|e| format!("commit: {e}")),
             Err(e) => {
                 let _ = conn.execute_batch("ROLLBACK");
                 Err(format!("crud_delete sqlite: {e}"))

@@ -12,6 +12,12 @@ use crate::report;
 ///
 /// Setup failures and oracle disagreements, as messages.
 pub fn cmd_scenarios(args: &crate::cli::ScenarioArgs) -> Result<i32, String> {
+    // Without the obs build a capture is empty — the trace pass would
+    // write span-free artifacts wearing real names, so it refuses like
+    // --alloc always has (the alloc pass refuses inside the harness).
+    if args.trace && !cfg!(feature = "obs") {
+        return Err(super::bench::obs_missing("--trace"));
+    }
     let proto = Protocol {
         warmups: 8,
         samples: args.samples.unwrap_or(64),
@@ -42,7 +48,10 @@ pub fn cmd_scenarios(args: &crate::cli::ScenarioArgs) -> Result<i32, String> {
     print!("{markdown}");
     println!("artifacts: {}", out_dir.display());
     if args.trace {
-        println!("traces: {}", out_dir.join("trace").join("scenarios").display());
+        println!(
+            "traces: {}",
+            out_dir.join("trace").join("scenarios").display()
+        );
     }
     Ok(0)
 }

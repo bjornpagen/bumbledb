@@ -1,11 +1,11 @@
 use std::path::Path;
 
-use bumbledb::obs::{self, Category, TraceEvent};
 use bumbledb::Answers;
+use bumbledb::obs::{self, Category, TraceEvent};
 
 use super::{Scenario, ScenarioQuery, Stores, Surface};
 use crate::families::bind_values;
-use crate::trace_out::{self, FlameSummary};
+use crate::trace_out;
 
 /// The warmups a scenario query gets before its warm traced sample —
 /// enough to seat the image cache and the resolved-filter views without
@@ -63,7 +63,12 @@ pub(super) fn capture_query(
             db.read(|snap| snap.execute(&mut prepared, &bind_values(&sets[0]), &mut buffer))
                 .map_err(|e| format!("{}/{}: cold execute: {e:?}", scenario.name, sq.name))?;
             cold_span.end();
-            emit(&dir, &format!("{}.cold", sq.name), obs::finish_capture(), false)?;
+            emit(
+                &dir,
+                &format!("{}.cold", sq.name),
+                obs::finish_capture(),
+                false,
+            )?;
 
             // WARM: seat the caches on the prepared query, then trace one
             // steady-state execute.
@@ -89,7 +94,12 @@ pub(super) fn capture_query(
             db.read(|snap| snap.get_dyn(*relation, statement, &sets[0]))
                 .map_err(|e| format!("{}/{}: cold get_dyn: {e:?}", scenario.name, sq.name))?;
             cold_span.end();
-            emit(&dir, &format!("{}.cold", sq.name), obs::finish_capture(), false)?;
+            emit(
+                &dir,
+                &format!("{}.cold", sq.name),
+                obs::finish_capture(),
+                false,
+            )?;
 
             // WARM: seat, then trace one steady-state get.
             let mut cursor = 0usize;
@@ -110,25 +120,15 @@ pub(super) fn capture_query(
     }
 }
 
-/// Splits one capture, writes the `.json`/`.folded` pair, and — when
-/// asked — renders the engine flame top-10 (plus the phase table if the
-/// plan produced one) for the report embed.
+/// Writes one capture's `.json`/`.folded` pair through the shared fold
+/// ([`trace_out::emit_pair`]); the flame table is kept only where the
+/// report embeds it (the warm half).
 fn emit(
     dir: &Path,
     stem: &str,
     events: Vec<TraceEvent>,
     want_table: bool,
 ) -> Result<Option<String>, String> {
-    let (engine, harness_events) = trace_out::split_harness(events);
-    trace_out::write_trace_pair(dir, stem, &engine, &harness_events)
-        .map_err(|e| format!("trace: {e}"))?;
-    let table = want_table.then(|| {
-        let mut table = FlameSummary::compute(&engine).render_top(10);
-        if let Some(phases) = trace_out::render_phase_table(&engine) {
-            table.push('\n');
-            table.push_str(&phases);
-        }
-        table
-    });
-    Ok(table)
+    let table = trace_out::emit_pair(dir, stem, events)?;
+    Ok(want_table.then_some(table))
 }

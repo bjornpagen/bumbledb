@@ -177,10 +177,14 @@ pub struct ScenarioArgs {
     pub only: Option<Vec<String>>,
     /// Measured samples per query per engine.
     pub samples: Option<u32>,
-    /// Per-query warm+cold Chrome+folded traces under `<out>/trace/`.
+    /// Traced Chrome+folded artifacts under `<out>/trace/` — per-query
+    /// warm+cold pairs for `scenarios`, per-family traced twin samples
+    /// for the write worlds (`crud`/`lawful`).
     pub trace: bool,
-    /// Per-query alloc windows (needs the obs build) — a separate pass
-    /// from `--trace`, mutually exclusive with it (the obs doctrine).
+    /// Per-query alloc windows (needs the obs build) — a `scenarios`
+    /// pass only, a separate pass from `--trace` and mutually exclusive
+    /// with it (the obs doctrine); the write worlds refuse the flag at
+    /// parse.
     pub alloc: bool,
     pub out: Option<PathBuf>,
 }

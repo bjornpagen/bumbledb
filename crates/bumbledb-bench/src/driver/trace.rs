@@ -15,6 +15,11 @@ use super::ensure_corpus;
 ///
 /// Unknown family; setup errors.
 pub fn cmd_trace(corpus: &CorpusArgs, family_name: &str) -> Result<(), String> {
+    // An obs-less capture is empty — refuse before writing span-free
+    // artifacts (the shared --trace honesty rule).
+    if !cfg!(feature = "obs") {
+        return Err(super::bench::obs_missing("trace"));
+    }
     let cfg = gen_config(corpus);
     let family = families::all()
         .iter()
