@@ -26,16 +26,16 @@ before touching anything.
 
 ## THE PAUSED CAMPAIGN: instrument-first bug bash + perf fanout
 
-Run id `wf_260adbe6-ad4`. **The COMPLETE workflow script is committed in this
-repo: `docs/handoffs/2026-07-25-bugbash-perf-workflow.js`** — the authoritative
-orchestration spec (every phase, agent prompt, schema, gate loop, and the
-tryAgent retry discipline, verbatim as it ran). NOTE: workflow run caches are
-session-local — a NEW session cannot resume the original run; re-launch by
-passing that script's contents to a fresh Workflow call (Instrument is
-committed, so on re-launch its lanes should be marked done/no-op'd or the
-prompts will find their work already landed and verify instead of redo —
-either is safe; the real start is Gate). The prose spec below mirrors the
-script for readers.
+Run id `wf_260adbe6-ad4`. The script as it originally ran is
+`docs/handoffs/2026-07-25-bugbash-perf-workflow.js` (historical record).
+**SUPERSEDED 2026-08-01 by `docs/handoffs/2026-08-01-bugbash-perf-workflow-v2.js`**
+— the owner ruled the opus-authored completed work untrusted: v2 replaces the
+Instrument phase with a from-scratch Review of the landed estate
+(`d7c111a8..ccd0de8d` re-reviewed as an untrusted submission against the
+original lane specs, fixed where short), re-pins every agent to fable (see
+constraints below), and corrects the push target to the bugbash-perf branch.
+The prose spec below mirrors the original phases for readers; Review precedes
+Gate on resume.
 
 **Baseline verified at pause (2026-07-25):** `cargo check --workspace
 --all-targets` clean, `cargo check -p bumbledb --features trace` clean,
@@ -49,7 +49,11 @@ on perf targets ranked by measured attribution, not intuition.
 
 **Standing constraints for any resumer:**
 - ALL leaf agents (coders, verifiers, finders — every workflow agent) pin
-  `model: "opus"` (owner ruling 2026-07-25, supersedes the fable pin).
+  `model: "fable"` at `effort: "low"`; the orchestrating session is fable on
+  high (owner ruling 2026-08-01: opus is no longer trusted with difficult
+  work — supersedes the 2026-07-25 opus ruling, which superseded the original
+  fable pin). Opus-authored work already landed is treated as untrusted until
+  reviewed.
 - Maximal churn, maximal elegance, zero backwards compat — including
   consumers (primer breaks and upgrades; they have no persistent data).
 - Benches: strictly sequential, `scripts/measure.sh` mutex, wall-power
