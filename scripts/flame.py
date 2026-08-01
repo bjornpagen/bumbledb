@@ -197,8 +197,11 @@ def render_svg(folded_text, title):
         return b
 
     def tip_of(name, node, base):
+        # Percent of the PROFILE total, not of the enclosing frame — the
+        # same denominator the top table uses, so one frame never reads
+        # two different percentages from the same tool.
         b, _, _ = totals(node)
-        return "%s  %.3f us  %.1f%%" % (name, b / 1000.0, 100.0 * b / base)
+        return "%s  %.3f us  %.1f%%" % (name, b / 1000.0, 100.0 * b / total)
 
     _layout(root, MARGIN, avail, total, 0, max_depth, rects,
             weight_of, lambda node: _hot_color(node.name), tip_of)
