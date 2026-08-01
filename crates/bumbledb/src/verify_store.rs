@@ -336,8 +336,10 @@ impl<S> Db<S> {
             max_fresh: BTreeMap::new(),
             referenced_interns: BTreeSet::new(),
         };
-        let mut store_span =
-            crate::obs::span(crate::obs::names::VERIFY_STORE, crate::obs::Category::Storage);
+        let mut store_span = crate::obs::span(
+            crate::obs::names::VERIFY_STORE,
+            crate::obs::Category::Storage,
+        );
         // One span per namespace pass, each timed and charged the findings
         // it raised — pass granularity, the per-entry cursor stays unspanned.
         sweep.pass(crate::obs::names::VERIFY_FACTS, facts::sweep)?;
@@ -364,8 +366,10 @@ impl<S> Db<S> {
             }
         }
         let dangling_intern_ids = {
-            let mut span =
-                crate::obs::span(crate::obs::names::VERIFY_DICT, crate::obs::Category::Storage);
+            let mut span = crate::obs::span(
+                crate::obs::names::VERIFY_DICT,
+                crate::obs::Category::Storage,
+            );
             let before = sweep.findings.len();
             let dangling = dict_stat::dangling(&mut sweep)?;
             span.set_args((sweep.findings.len() - before) as u64, 0);
@@ -433,11 +437,7 @@ impl<'a> Sweep<'a, '_> {
     /// span `a0` the findings the pass raised (pass granularity — the
     /// per-entry cursor inside `f` is never spanned). Inert when the
     /// `trace` feature is off.
-    fn pass(
-        &mut self,
-        name: &'static str,
-        f: impl FnOnce(&mut Self) -> Result<()>,
-    ) -> Result<()> {
+    fn pass(&mut self, name: &'static str, f: impl FnOnce(&mut Self) -> Result<()>) -> Result<()> {
         let before = self.findings.len();
         let mut span = crate::obs::span(name, crate::obs::Category::Storage);
         f(self)?;

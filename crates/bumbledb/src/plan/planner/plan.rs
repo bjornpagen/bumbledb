@@ -27,7 +27,10 @@ pub fn plan(normalized: &NormalizedQuery, schema: &Schema, stats: &[OccStats]) -
         "validation rejects over-cap queries at the boundary"
     );
     let (occs, allen) = {
-        let mut span = crate::obs::span(crate::obs::names::PLAN_DENSIFY, crate::obs::Category::Prepare);
+        let mut span = crate::obs::span(
+            crate::obs::names::PLAN_DENSIFY,
+            crate::obs::Category::Prepare,
+        );
         let densified = densify(normalized, &participating, schema, stats);
         span.set_args(n as u64, densified.1.len() as u64);
         densified
@@ -54,7 +57,8 @@ pub fn plan(normalized: &NormalizedQuery, schema: &Schema, stats: &[OccStats]) -
         let low = usize::try_from(mask.trailing_zeros()).expect("small");
         mask_vars[mask as usize] = mask_vars[(mask & (mask - 1)) as usize] | occs[low].vars;
     }
-    let mut fill_span = crate::obs::span(crate::obs::names::PLAN_FILL, crate::obs::Category::Prepare);
+    let mut fill_span =
+        crate::obs::span(crate::obs::names::PLAN_FILL, crate::obs::Category::Prepare);
     // Counted, never per-candidate spanned: the DP's inner work is one
     // point-event pair (`a0` subproblems, `a1` candidate evaluations), the
     // doctrine's pruned-candidate COUNT (docs/architecture/40-execution.md).
