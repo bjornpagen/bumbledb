@@ -106,6 +106,9 @@ pub fn help() -> String {
          \x20                 (default nosync,durable — fsync shadows last)\n\
          \x20 --batches a,b   rows per commit          (default 1,10,100,1000)\n\
          \x20 --samples N     measured samples per cell\n\
+         \x20 --trace         per-cell traced twin samples (.json + .folded)\n\
+         \x20                 under <out>/trace/writes/<lane>/ (needs obs;\n\
+         \x20                 bulk stays untraced — the ladder covers commits)\n\
          \x20 --out PATH      artifact dir (default bench-out/<timestamp>-writes)\n\
          \n\
          CURVES:\n\

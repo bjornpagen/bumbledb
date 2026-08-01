@@ -204,6 +204,7 @@ fn writes_parses_the_lane_flags() {
         "1,10,100,1000",
         "--samples",
         "4",
+        "--trace",
         "--out",
         "artifacts",
     ]))
@@ -217,6 +218,7 @@ fn writes_parses_the_lane_flags() {
             lanes: vec![DurabilityLane::Durable, DurabilityLane::Nosync],
             batches: vec![1, 10, 100, 1000],
             samples: Some(4),
+            trace: true,
             out: Some(PathBuf::from("artifacts")),
         })
     );

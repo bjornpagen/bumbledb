@@ -242,6 +242,10 @@ pub struct WritesArgs {
     pub batches: Vec<u32>,
     /// Measured samples per cell; `None` = the lane default.
     pub samples: Option<u32>,
+    /// Per-cell traced twin samples under `<out>/trace/writes/<lane>/`
+    /// — the commit/delete ladder's `LMDB_COMMIT`-bearing artifacts
+    /// (needs the obs build; bulk stays untraced by decision).
+    pub trace: bool,
     pub out: Option<PathBuf>,
 }
 
@@ -254,6 +258,7 @@ impl Default for WritesArgs {
             lanes: vec![DurabilityLane::Nosync, DurabilityLane::Durable],
             batches: vec![1, 10, 100, 1000],
             samples: None,
+            trace: false,
             out: None,
         }
     }

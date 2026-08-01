@@ -26,7 +26,7 @@ pub(super) fn stamp_refusal(corpus: &CorpusArgs) -> String {
 }
 
 /// The feature-missing message: the exact cargo invocation to use.
-pub(super) fn obs_missing(what: &str) -> String {
+pub(crate) fn obs_missing(what: &str) -> String {
     format!(
         "{what} needs an obs build; run:\n\
          cargo run -p bumbledb-bench --features obs --release -- …"

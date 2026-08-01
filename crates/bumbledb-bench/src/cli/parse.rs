@@ -304,6 +304,7 @@ fn parse_writes(tokens: &mut Tokens<'_>) -> Result<Cmd, String> {
             "--lanes" => args.lanes = parse_lane_list(&flag, tokens.value(&flag)?)?,
             "--batches" => args.batches = parse_batch_list(&flag, tokens.value(&flag)?)?,
             "--samples" => args.samples = Some(parse_u32(&flag, tokens.value(&flag)?)?),
+            "--trace" => args.trace = true,
             "--out" => args.out = Some(PathBuf::from(tokens.value(&flag)?)),
             _ => return Err(unknown("writes", &flag)),
         }
