@@ -1238,6 +1238,44 @@ fn allen_filter_columns_match_the_scalar_survivors_bit_for_bit() {
     }
 }
 
+/// Lane I2 — the Allen dense scans record ONE `KERNEL_ALLEN` event per
+/// batch invocation at the shared chunk walk, `a0` the lanes swept and
+/// `a1` the survivors — batch granularity like the sibling
+/// `KERNEL_FILTER` scans, never an event per lane or per chunk (the
+/// 300-lane column walks two 256-wide chunks and still records once).
+#[cfg(feature = "trace")]
+#[test]
+fn allen_dense_scans_record_one_batch_event() {
+    use bumbledb_theory::allen::AllenMask;
+    let mut rng = Lcg(0xA11E);
+    let len = 300usize; // past SCAN_CHUNK: two chunks, one event.
+    let (a_s, a_e, b_s, b_e) = allen_corpus(len, &mut rng);
+
+    crate::obs::start_capture();
+    let mut out = Vec::new();
+    allen_filter_columns(&a_s, &a_e, &b_s, &b_e, AllenMask::INTERSECTS, &mut out);
+    let mut out_const = Vec::new();
+    allen_filter_columns_const(&a_s, &a_e, 3, 9, AllenMask::DISJOINT, &mut out_const);
+    let events = crate::obs::finish_capture();
+
+    let hits: Vec<&crate::obs::TraceEvent> = events
+        .iter()
+        .filter(|e| e.name == crate::obs::names::KERNEL_ALLEN)
+        .collect();
+    assert_eq!(
+        hits.len(),
+        2,
+        "one event per batch invocation, never per lane"
+    );
+    for (event, survivors) in hits.iter().zip([out.len(), out_const.len()]) {
+        assert_eq!(
+            (event.a0, event.a1),
+            (len as u64, survivors as u64),
+            "lanes swept and survivors kept",
+        );
+    }
+}
+
 /// The four-stream length equality is release-strength at the dispatch
 /// (the NEON core reads 8-word windows through raw pointers from every
 /// stream, so the equality is the memory-safety invariant — asserted

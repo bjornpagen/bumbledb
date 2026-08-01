@@ -408,6 +408,16 @@ pub mod names {
     /// the batch entry, never per lane. Fires once per kernel-shaped
     /// filter the view-build path dispatches. (lanes scanned, survivors)
     pub const KERNEL_FILTER: &str = "kernel_filter";
+
+    /// One Allen configuration-kernel dense scan over a whole interval
+    /// column pair (`exec/kernel/allen.rs` — the filter-position
+    /// compositions the view-build path dispatches), lit at the batch
+    /// entry like [`KERNEL_FILTER`], never per lane. The join loop's
+    /// code/membership batches (`allen_code_batch` /
+    /// `allen_filter_batch`) stay dark deliberately: they run inside
+    /// the probe loop, whose attribution is the per-(node, phase)
+    /// residual accumulator. (lanes scanned, survivors)
+    pub const KERNEL_ALLEN: &str = "kernel_allen";
 }
 
 /// The trace-mode fast clock, under the measured cost model: a raw
