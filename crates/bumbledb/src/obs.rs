@@ -73,6 +73,28 @@ pub mod names {
     pub const PREPARE: &str = "prepare";
     /// IR validation. (-, -)
     pub const VALIDATE: &str = "validate";
+
+    // Validation's interior (`ir/validate/validate.rs`), lit under
+    // [`VALIDATE`]. Pass granularity — one span per roster pass, never
+    // per rule or per candidate; rule work rides the pass span's args.
+
+    /// One rule-set lowering — shape roster, DNF distribution, collapse
+    /// (`lower_rules`): once on the query path, once per predicate on
+    /// the program path (the predicate cap bounds it). (lowered rules
+    /// produced, -)
+    pub const VALIDATE_LOWER: &str = "validate_lower";
+    /// The program strata judge (`ir/validate/strata.rs`) — the SCC
+    /// condensation and its safety roster, program path only.
+    /// (predicates judged, strata assigned)
+    pub const VALIDATE_STRATIFY: &str = "validate_stratify";
+    /// The program signature-sealing loop — chaotic iteration, bounded
+    /// by the predicate cap, program path only. (sealing passes run —
+    /// the final no-progress pass included, a1 predicates sealed)
+    pub const VALIDATE_SEAL: &str = "validate_seal";
+    /// The strict per-rule roster pass — every lowered rule through the
+    /// typing fixpoint with all signatures anchored: one span per
+    /// validation, never per rule. (rules validated, -)
+    pub const VALIDATE_RULES: &str = "validate_rules";
     /// Normalization. (-, -)
     pub const NORMALIZE: &str = "normalize";
     /// One rule's comparison placement (`ir/normalize/place_comparisons.rs`)

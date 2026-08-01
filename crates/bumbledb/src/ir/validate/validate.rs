@@ -54,6 +54,10 @@ pub fn validate(schema: &Schema, query: &Query) -> Result<ValidatedQuery, Valida
     let mut pinned_row: Vec<ValueType> = Vec::new();
     let mut rules = Vec::with_capacity(lowered.len());
     let mut params = ParamTables::default();
+    let mut rules_span = crate::obs::span(
+        crate::obs::names::VALIDATE_RULES,
+        crate::obs::Category::Prepare,
+    );
     for (rule_idx, rule) in lowered.iter().enumerate() {
         check_head_alignment(&query.head, rule, rule_idx)?;
         let (typing, ctx) = validate_rule(schema, &IdbSignatures::EMPTY, rule)?;
@@ -74,6 +78,8 @@ pub fn validate(schema: &Schema, query: &Query) -> Result<ValidatedQuery, Valida
         params.unify(ctx)?;
         rules.push(typing);
     }
+    rules_span.set_args(rules.len() as u64, 0);
+    rules_span.end();
     params.check_masks_and_density()?;
 
     // The predicate, derived ONCE — rule 0 speaks for every rule (the
@@ -165,7 +171,16 @@ pub fn validate_program(
         .iter()
         .map(|def| def.head.len())
         .collect();
-    let strata = super::strata::stratify(&arities, &lowered)?;
+    let strata = {
+        let mut span = crate::obs::span(
+            crate::obs::names::VALIDATE_STRATIFY,
+            crate::obs::Category::Prepare,
+        );
+        let strata = super::strata::stratify(&arities, &lowered)?;
+        let count = strata.iter().copied().max().map_or(0, |s| u64::from(s) + 1);
+        span.set_args(arities.len() as u64, count);
+        strata
+    };
 
     // The executable-class roster item beside the strata judge: a fold-
     // headed predicate is legal only AT the output — a fold's answers
@@ -205,34 +220,7 @@ pub fn validate_program(
     }
 
     let (sealed, pinned_rows) = seal_signatures(schema, &arities, &lowered)?;
-
-    // The strict pass: the full per-rule roster with every signature
-    // sealed, the head-type alignment against the sealing rule's row,
-    // and program-global param unification.
-    let count = program.predicates.len();
-    let mut params = ParamTables::default();
-    let mut typings: Vec<Vec<RuleTyping>> = Vec::with_capacity(count);
-    for index in 0..count {
-        let sigs = IdbSignatures {
-            arities: &arities,
-            sealed: &sealed,
-        };
-        let mut rules = Vec::with_capacity(lowered[index].len());
-        for (rule_idx, rule) in lowered[index].iter().enumerate() {
-            let (typing, ctx) = validate_rule(schema, &sigs, rule)?;
-            let row = input_row(rule, &typing);
-            if let Some(position) = (0..row.len()).find(|i| row[*i] != pinned_rows[index][*i]) {
-                return Err(ValidationError::HeadTypeMismatch {
-                    rule: rule_idx,
-                    position,
-                });
-            }
-            params.unify(ctx)?;
-            rules.push(typing);
-        }
-        typings.push(rules);
-    }
-    params.check_masks_and_density()?;
+    let (typings, params) = strict_pass(schema, &arities, &sealed, &lowered, &pinned_rows)?;
 
     let predicates = lowered
         .into_iter()
@@ -252,6 +240,51 @@ pub fn validate_program(
         output: program.output,
         strata,
     })
+}
+
+/// The strict pass: the full per-rule roster with every signature
+/// sealed, the head-type alignment against the sealing rule's row, and
+/// program-global param unification — one
+/// [`VALIDATE_RULES`](crate::obs::names::VALIDATE_RULES) span carrying
+/// the counted rule total (the DP fill pass's discipline: counted,
+/// never per-rule spanned). Returns each predicate's rule typings and
+/// the unified param tables, density-checked.
+fn strict_pass(
+    schema: &Schema,
+    arities: &[usize],
+    sealed: &[Option<Predicate>],
+    lowered: &[Vec<LoweredRule>],
+    pinned_rows: &[Vec<ValueType>],
+) -> Result<(Vec<Vec<RuleTyping>>, ParamTables), ValidationError> {
+    let mut params = ParamTables::default();
+    let mut typings: Vec<Vec<RuleTyping>> = Vec::with_capacity(lowered.len());
+    let mut rules_span = crate::obs::span(
+        crate::obs::names::VALIDATE_RULES,
+        crate::obs::Category::Prepare,
+    );
+    let mut rule_count = 0u64;
+    for (index, rule_set) in lowered.iter().enumerate() {
+        let sigs = IdbSignatures { arities, sealed };
+        let mut rules = Vec::with_capacity(rule_set.len());
+        for (rule_idx, rule) in rule_set.iter().enumerate() {
+            let (typing, ctx) = validate_rule(schema, &sigs, rule)?;
+            let row = input_row(rule, &typing);
+            if let Some(position) = (0..row.len()).find(|i| row[*i] != pinned_rows[index][*i]) {
+                return Err(ValidationError::HeadTypeMismatch {
+                    rule: rule_idx,
+                    position,
+                });
+            }
+            params.unify(ctx)?;
+            rules.push(typing);
+            rule_count += 1;
+        }
+        typings.push(rules);
+    }
+    rules_span.set_args(rule_count, 0);
+    rules_span.end();
+    params.check_masks_and_density()?;
+    Ok((typings, params))
 }
 
 /// The sealing loop — the one signature derivation, quantified over
@@ -277,7 +310,13 @@ fn seal_signatures(
     let count = lowered.len();
     let mut sealed: Vec<Option<Predicate>> = vec![None; count];
     let mut pinned_rows: Vec<Vec<ValueType>> = vec![Vec::new(); count];
+    let mut seal_span = crate::obs::span(
+        crate::obs::names::VALIDATE_SEAL,
+        crate::obs::Category::Prepare,
+    );
+    let mut passes = 0u64;
     loop {
+        passes += 1;
         let mut progress = false;
         for index in 0..count {
             if sealed[index].is_some() {
@@ -301,6 +340,8 @@ fn seal_signatures(
             break;
         }
     }
+    seal_span.set_args(passes, sealed.iter().filter(|s| s.is_some()).count() as u64);
+    seal_span.end();
     if let Some(index) = sealed.iter().position(Option::is_none) {
         return Err(ValidationError::UnresolvedPredicateSignature {
             pred: PredId(u16::try_from(index).expect("predicate count capped at 16")),
@@ -351,6 +392,10 @@ fn lower_rules(
     head: &[crate::ir::HeadTerm],
     rules: &[crate::ir::Rule],
 ) -> Result<Vec<LoweredRule>, ValidationError> {
+    let mut span = crate::obs::span(
+        crate::obs::names::VALIDATE_LOWER,
+        crate::obs::Category::Prepare,
+    );
     if rules.is_empty() {
         return Err(ValidationError::EmptyRuleSet);
     }
@@ -458,6 +503,8 @@ fn lower_rules(
             rules: lowered.len(),
         });
     }
+    span.set_args(lowered.len() as u64, 0);
+    span.end();
     Ok(lowered)
 }
 

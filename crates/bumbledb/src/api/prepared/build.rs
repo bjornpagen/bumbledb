@@ -276,7 +276,10 @@ pub(crate) fn prepare_program<'s, S>(
     program: &crate::ir::Program,
 ) -> Result<PreparedQuery<'s, S>> {
     let _prepare = obs::span(obs::names::PREPARE, obs::Category::Prepare);
-    let witness = crate::ir::validate::validate_program(schema, program)?;
+    let witness = {
+        let _s = obs::span(obs::names::VALIDATE, obs::Category::Prepare);
+        crate::ir::validate::validate_program(schema, program)?
+    };
     let has_idb = program
         .predicates
         .iter()

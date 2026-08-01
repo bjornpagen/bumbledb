@@ -456,7 +456,12 @@ fn prepare_lights_the_planner_dp_and_selectivity_ladder() {
     insert_postings(
         &env,
         &schema,
-        &[(1, 7, "a", 100), (2, 7, "b", -50), (3, 9, "c", 200), (4, 7, "d", 50)],
+        &[
+            (1, 7, "a", 100),
+            (2, 7, "b", -50),
+            (3, 9, "c", 200),
+            (4, 7, "d", 50),
+        ],
     );
     let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
@@ -487,7 +492,11 @@ fn prepare_lights_the_planner_dp_and_selectivity_ladder() {
     let densify = one(obs::names::PLAN_DENSIFY);
     let fill = one(obs::names::PLAN_FILL);
     assert_eq!(densify.a0, 1, "one participating occurrence densified");
-    assert_eq!((fill.a0, fill.a1), (0, 0), "trivial DP evaluates no candidate");
+    assert_eq!(
+        (fill.a0, fill.a1),
+        (0, 0),
+        "trivial DP evaluates no candidate"
+    );
     within(densify, plan_dp);
     within(fill, plan_dp);
 
@@ -497,15 +506,25 @@ fn prepare_lights_the_planner_dp_and_selectivity_ladder() {
     // for every field it touches.
     let stats = one(obs::names::STATS);
     let rows = one(obs::names::RELATION_ROWS);
-    assert_eq!((rows.a0, rows.a1), (u64::from(POSTING.0), 4), "Posting's stored rows");
+    assert_eq!(
+        (rows.a0, rows.a1),
+        (u64::from(POSTING.0), 4),
+        "Posting's stored rows"
+    );
     within(rows, stats);
     let ladder: Vec<&obs::TraceEvent> = events
         .iter()
         .filter(|e| e.name == obs::names::DISTINCT_LADDER)
         .collect();
-    assert!(!ladder.is_empty(), "the distinct ladder resolved at least once");
+    assert!(
+        !ladder.is_empty(),
+        "the distinct ladder resolved at least once"
+    );
     for rung in &ladder {
-        assert_eq!(rung.a0, 3, "the floor rung — cold prepare, no key/image/containment");
+        assert_eq!(
+            rung.a0, 3,
+            "the floor rung — cold prepare, no key/image/containment"
+        );
         within(rung, stats);
     }
 
@@ -557,6 +576,147 @@ fn prepare_lights_the_normalization_sub_passes() {
     assert_eq!(fold.a0, 0, "the rule is not statically empty");
 }
 
+/// Lane I2 — validation's interior, formerly dark under the single
+/// `VALIDATE` span: the query path records one rule-set lowering span
+/// and one strict per-rule pass span, both nested inside `VALIDATE`,
+/// each charged its rule work; the program-only passes never fire here.
+#[test]
+fn prepare_lights_the_validation_interior() {
+    use crate::obs;
+
+    let dir = TempDir::new("prepared-trace-validate");
+    let schema = schema();
+    let env = Environment::create(dir.path(), &schema).expect("create");
+    insert_postings(&env, &schema, &[(1, 7, "a", 100)]);
+    let cache = ImageCache::new(&schema);
+    let txn = env.read_txn().expect("txn");
+
+    obs::start_capture();
+    let _prepared = prepare(&txn, &cache, &schema, &by_account_query()).expect("prepare");
+    let events = obs::finish_capture();
+
+    let outer = events
+        .iter()
+        .find(|e| e.name == obs::names::VALIDATE)
+        .expect("the VALIDATE span");
+    let one = |name: &'static str| -> &obs::TraceEvent {
+        let hits: Vec<&obs::TraceEvent> = events.iter().filter(|e| e.name == name).collect();
+        assert_eq!(hits.len(), 1, "exactly one {name}");
+        hits[0]
+    };
+    for name in [obs::names::VALIDATE_LOWER, obs::names::VALIDATE_RULES] {
+        let sub = one(name);
+        assert_eq!(sub.a0, 1, "{name}: the one-rule query's rule work");
+        assert!(
+            sub.start_ns >= outer.start_ns
+                && sub.start_ns + sub.dur_ns <= outer.start_ns + outer.dur_ns,
+            "{name} nests inside VALIDATE",
+        );
+    }
+    // The program-only passes have no query-path site.
+    for name in [obs::names::VALIDATE_STRATIFY, obs::names::VALIDATE_SEAL] {
+        assert!(
+            events.iter().all(|e| e.name != name),
+            "{name} is program-path-only",
+        );
+    }
+}
+
+/// Lane I2 — the program path's validation interior: `prepare` of a
+/// recursive one-predicate program records the strata judge and the
+/// signature-sealing loop beside the lowering and strict-rule passes,
+/// all nested inside a `VALIDATE` span (formerly the program path had
+/// no `VALIDATE` span at all).
+#[test]
+fn program_prepare_lights_the_strata_judge_and_sealing_loop() {
+    use crate::ir::{Atom, AtomSource, HeadTerm, PredId, PredicateDef, Program};
+    use crate::obs;
+
+    let dir = TempDir::new("prepared-trace-validate-program");
+    let schema = schema();
+    let env = Environment::create(dir.path(), &schema).expect("create");
+    insert_postings(&env, &schema, &[(1, 7, "a", 100)]);
+    let cache = ImageCache::new(&schema);
+    let txn = env.read_txn().expect("txn");
+
+    // The linear closure shape: `p0(x) | Posting(account: x)` and
+    // `p0(x) | p0(x)` — one predicate, one stratum, two rules.
+    let program = Program {
+        predicates: vec![PredicateDef {
+            head: vec![HeadTerm::Var],
+            rules: vec![
+                Rule {
+                    finds: vec![FindTerm::Var(VarId(0))],
+                    atoms: vec![Atom {
+                        source: AtomSource::Edb(POSTING),
+                        bindings: vec![(FieldId(1), Term::Var(VarId(0)))],
+                    }],
+                    negated: vec![],
+                    conditions: vec![],
+                },
+                Rule {
+                    finds: vec![FindTerm::Var(VarId(0))],
+                    atoms: vec![Atom {
+                        source: AtomSource::Idb(PredId(0)),
+                        bindings: vec![(FieldId(0), Term::Var(VarId(0)))],
+                    }],
+                    negated: vec![],
+                    conditions: vec![],
+                },
+            ],
+        }],
+        output: PredId(0),
+    };
+
+    obs::start_capture();
+    let _prepared: PreparedQuery<'_, ()> =
+        super::super::prepare_program(&txn, &cache, &schema, &program).expect("prepare");
+    let events = obs::finish_capture();
+
+    let outer = events
+        .iter()
+        .find(|e| e.name == obs::names::VALIDATE)
+        .expect("the program path's VALIDATE span");
+    let one = |name: &'static str| -> &obs::TraceEvent {
+        let hits: Vec<&obs::TraceEvent> = events.iter().filter(|e| e.name == name).collect();
+        assert_eq!(hits.len(), 1, "exactly one {name}");
+        hits[0]
+    };
+    let within = |inner: &obs::TraceEvent| {
+        assert!(
+            inner.start_ns >= outer.start_ns
+                && inner.start_ns + inner.dur_ns <= outer.start_ns + outer.dur_ns,
+            "{} nests inside VALIDATE",
+            inner.name,
+        );
+    };
+
+    // One predicate lowers once: two written rules, two lowered rules.
+    let lower = one(obs::names::VALIDATE_LOWER);
+    assert_eq!(lower.a0, 2, "both rules lower");
+    within(lower);
+    // One predicate, one stratum.
+    let stratify = one(obs::names::VALIDATE_STRATIFY);
+    assert_eq!(
+        (stratify.a0, stratify.a1),
+        (1, 1),
+        "one predicate, one stratum"
+    );
+    within(stratify);
+    // Pass 1 seals p0 from its all-`Edb` rule; pass 2 finds no progress.
+    let seal = one(obs::names::VALIDATE_SEAL);
+    assert_eq!(
+        (seal.a0, seal.a1),
+        (2, 1),
+        "two passes, one predicate sealed"
+    );
+    within(seal);
+    // The strict pass validates both rules under the sealed signature.
+    let rules = one(obs::names::VALIDATE_RULES);
+    assert_eq!(rules.a0, 2, "both rules through the strict pass");
+    within(rules);
+}
+
 /// Lane I2 — the columnar batch decode (formerly invisible inside
 /// `IMAGE_BUILD`) and the predicate-scan filter kernels (attributable
 /// only as a phase bucket before). The first execution builds Posting's
@@ -574,7 +734,12 @@ fn execute_lights_the_batch_decode_and_filter_kernel() {
     insert_postings(
         &env,
         &schema,
-        &[(1, 7, "a", 100), (2, 7, "b", -50), (3, 9, "c", 200), (4, 7, "d", 50)],
+        &[
+            (1, 7, "a", 100),
+            (2, 7, "b", -50),
+            (3, 9, "c", 200),
+            (4, 7, "d", 50),
+        ],
     );
     let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
