@@ -501,8 +501,9 @@ fn the_rejection_shapes_cite_the_expected_violation_kinds() {
 #[test]
 fn the_full_lawful_run_renders_the_enforcement_map_and_both_lanes() {
     let dir = scratch("full-run");
-    let (markdown, json) = super::run::run_with(&dir, 7, LawSizes::of(Scale::Tiny), Some(2), None)
-        .expect("the tiny lawful run");
+    let (markdown, json) =
+        super::run::run_with(&dir, 7, LawSizes::of(Scale::Tiny), Some(2), None, None)
+            .expect("the tiny lawful run");
     assert!(markdown.contains("enforcement map"), "{markdown}");
     for lane in duralane::ALL {
         assert!(
@@ -539,5 +540,71 @@ fn the_full_lawful_run_renders_the_enforcement_map_and_both_lanes() {
             .is_some_and(|p| p.get("host").is_some()),
         "the provenance stamp rides the artifact (the one shared emitter)"
     );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The traced lawful path (`--trace`): the legal commit family AND a
+/// rejection family land their traced twin samples as parseable
+/// Chrome+folded pairs under `<out>/trace/lawful/<lane>/`, and the
+/// JUDGMENT spans reach the artifacts — the legal commit's judgment
+/// phases plus the commit itself, and the containment rejection's
+/// judgment-then-abort (a KEY rejection aborts earlier, at the
+/// apply-phase functionality check, before any judgment span opens —
+/// the containment refusal is the one whose refusal IS judgment work).
+/// The work-parity and post-state folds still pass: the traced twin
+/// sample ran on BOTH engines, in stream lockstep. One sample per
+/// family: a smoke test, not a measurement.
+#[cfg(feature = "obs")]
+#[test]
+fn traced_lawful_lands_the_judgment_spans() {
+    let dir = scratch("run-traced");
+    let only = vec![
+        "law_commit_attempt".to_owned(),
+        "law_reject_containment".to_owned(),
+    ];
+    let (markdown, json) = super::run::run_with(
+        &dir,
+        7,
+        LawSizes::of(Scale::Tiny),
+        Some(1),
+        Some(&only),
+        Some(&dir),
+    )
+    .expect("the traced lawful run (work parity + post-state included)");
+    assert!(markdown.contains("Flame summaries"), "{markdown}");
+    assert!(json.contains("\"flame\":"), "{json}");
+    for lane in duralane::ALL {
+        let lane_dir = dir.join("trace").join("lawful").join(lane.label());
+        for family in ["law_commit_attempt", "law_reject_containment"] {
+            let json_path = lane_dir.join(format!("{family}.json"));
+            let text = std::fs::read_to_string(&json_path)
+                .unwrap_or_else(|e| panic!("{}: {e}", json_path.display()));
+            assert!(
+                text.starts_with("[\n") && text.ends_with("\n]\n"),
+                "{} parses as a Chrome array",
+                json_path.display()
+            );
+            assert!(
+                text.contains("judgment"),
+                "{}: the judgment spans reach the artifact",
+                json_path.display()
+            );
+            let folded = std::fs::read_to_string(lane_dir.join(format!("{family}.folded")))
+                .expect("the folded twin lands beside the json");
+            assert!(!folded.is_empty(), "a non-degenerate fold: {family}");
+            for line in folded.lines() {
+                let count = line.rsplit(' ').next().expect("a self-ns tail");
+                assert!(count.parse::<u64>().is_ok(), "folded self-ns: {line}");
+            }
+        }
+        // The legal commit's artifact additionally carries the LMDB
+        // commit phase — the fsync-bound span, readable from disk.
+        let commit = std::fs::read_to_string(lane_dir.join("law_commit_attempt.json"))
+            .expect("the legal commit trace");
+        assert!(
+            commit.contains(bumbledb::obs::names::LMDB_COMMIT),
+            "the LMDB commit span reaches the legal commit artifact"
+        );
+    }
     let _ = std::fs::remove_dir_all(&dir);
 }
