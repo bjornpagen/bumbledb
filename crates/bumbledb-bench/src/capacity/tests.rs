@@ -3,6 +3,7 @@ use bumbledb::{Db, FieldId, Theory as _, Value};
 
 use crate::differential::{self, Op, Verdict};
 use crate::naive::{Delta, NaiveDb};
+use crate::writebench::write_protocol;
 
 use super::{Mass, PARENTS, calendar, calendar_rows, ids, power, power_baseline, power_rows};
 
@@ -318,16 +319,70 @@ fn the_capacity_rows_run_their_protocols() {
         .expect("create calendar");
     super::load(&rooms, Mass::BENCH, calendar_rows).expect("load calendar");
 
-    let sum = super::commit_capacity_sum(&budgeted).expect("sum");
+    let sum =
+        super::commit_capacity_sum(&budgeted, write_protocol("commit_capacity_sum")).expect("sum");
     assert_eq!(sum.work, 64, "one row per sample");
     assert!(sum.stats.min > 0);
-    let baseline = super::commit_capacity_baseline(&control).expect("baseline");
+    let baseline =
+        super::commit_capacity_baseline(&control, write_protocol("commit_capacity_baseline"))
+            .expect("baseline");
     assert_eq!(baseline.work, 64);
-    let duration = super::commit_capacity_duration(&rooms).expect("duration");
+    let duration =
+        super::commit_capacity_duration(&rooms, write_protocol("commit_capacity_duration"))
+            .expect("duration");
     assert_eq!(duration.work, 64);
     let _ = PARENTS;
     drop(budgeted);
     drop(control);
     drop(rooms);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The traced capacity path (`bench --trace`): the weighted-capacity
+/// judgment lane lands its traced solo sample as a parseable
+/// Chrome+folded pair beside the read-family traces, the judgment and
+/// commit spans reach the artifact, and the flame embed rides the same
+/// report list the read families fill. Ephemeral twin, one selected
+/// family: a smoke test, not a measurement.
+#[cfg(feature = "obs")]
+#[test]
+fn traced_capacity_lands_the_judgment_spans() {
+    let dir = scratch("traced");
+    let trace_dir = dir.join("trace");
+    let mut flames = Vec::new();
+    let rows = super::write_families(
+        crate::corpus_gen::GenConfig {
+            seed: 1,
+            scale: crate::corpus_gen::Scale::Tiny,
+        },
+        &dir.join("scratch"),
+        &|name| name == "commit_capacity_sum",
+        crate::storemode::StoreMode::Ephemeral,
+        Some(&trace_dir),
+        &mut flames,
+    )
+    .expect("the traced capacity lane");
+    assert_eq!(rows.len(), 1, "one selected row");
+    assert_eq!(flames.len(), 1, "one flame embed per traced family");
+    assert_eq!(flames[0].name, "commit_capacity_sum");
+    let json_path = trace_dir.join("commit_capacity_sum.json");
+    let text = std::fs::read_to_string(&json_path)
+        .unwrap_or_else(|e| panic!("{}: {e}", json_path.display()));
+    assert!(
+        text.starts_with("[\n") && text.ends_with("\n]\n"),
+        "{} parses as a Chrome array",
+        json_path.display()
+    );
+    assert!(
+        text.contains("judgment"),
+        "the capacity judgment spans reach the artifact"
+    );
+    assert!(
+        text.contains(bumbledb::obs::names::LMDB_COMMIT),
+        "the LMDB commit span reaches the artifact"
+    );
+    let folded = std::fs::read_to_string(trace_dir.join("commit_capacity_sum.folded"))
+        .expect("the folded twin lands beside the json");
+    assert!(!folded.is_empty(), "a non-degenerate fold");
     let _ = std::fs::remove_dir_all(&dir);
 }

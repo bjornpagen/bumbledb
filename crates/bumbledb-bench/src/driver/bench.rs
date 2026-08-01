@@ -231,7 +231,7 @@ pub fn cmd_bench(args: &BenchArgs) -> Result<i32, String> {
             reads.push(run.read_cal_family(family)?);
         }
     }
-    let flames = std::mem::take(&mut run.flames);
+    let mut flames = std::mem::take(&mut run.flames);
     drop(run);
 
     // The closure lane (the roster extension): its own scratch world,
@@ -269,8 +269,18 @@ pub fn cmd_bench(args: &BenchArgs) -> Result<i32, String> {
     // fsync drops the core to its DVFS floor with
     // demand-driven recovery, so any read family measured in that
     // shadow reads slow-clock time. `bulk` (seconds of fsync) is last
-    // of all — asserted inside write_families.
-    let writes = write_families(cfg, &out_dir.join("scratch"), &selected, lane)?;
+    // of all — asserted inside write_families. Under --trace the
+    // windowed/capacity judgment lanes land their traced solo samples
+    // beside the read-family pairs and embed into the same flame list.
+    let trace_dir = args.trace.then(|| out_dir.join("trace"));
+    let writes = write_families(
+        cfg,
+        &out_dir.join("scratch"),
+        &selected,
+        lane,
+        trace_dir.as_deref(),
+        &mut flames,
+    )?;
 
     let (cache_images, cache_bytes) = cache_residency(&db);
     let store = report::StoreNumbers {

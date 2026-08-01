@@ -75,14 +75,33 @@ pub const TRACED_ONE: crate::harness::Protocol = crate::harness::Protocol {
     samples: 1,
 };
 
-/// The traced twin sample (the `measure.rs` discipline lifted to a
-/// world with a mirror): AFTER a family's timed pair, ONE more engine
-/// invocation runs inside a capture (under the harness `sample` span)
-/// and the mirror runs the SAME extra op untraced — the twins stay in
-/// lockstep, so a post-state fold never sees a one-sided commit, and
-/// the timed windows stay untraced. Writes the `.json`/`.folded` pair
-/// under `dir` and returns the flame embed; a `None` dir is the
-/// untraced run, where neither closure is ever called.
+/// The traced solo sample (the `measure.rs` discipline as a stage):
+/// AFTER a family's timed window, ONE more engine invocation runs
+/// inside a capture (under the harness `sample` span) — the timed
+/// windows stay untraced. Writes the `.json`/`.folded` pair under
+/// `dir` and returns the flame embed; a `None` dir is the untraced
+/// run, where the closure is never called. The engine-only lanes'
+/// stage; mirrored worlds use [`traced_twin`].
+///
+/// # Errors
+///
+/// The runner's error and trace I/O, as messages.
+pub fn traced_solo(
+    dir: Option<&std::path::Path>,
+    family: &str,
+    ours: &mut dyn FnMut(crate::harness::Protocol) -> Result<crate::harness::Measurement, String>,
+) -> Result<Option<String>, String> {
+    let Some(dir) = dir else { return Ok(None) };
+    let (_, events) = crate::harness::traced_sample(&mut || ours(TRACED_ONE).map(|m| m.work))?;
+    emit_pair(dir, family, events).map(Some)
+}
+
+/// The traced twin sample ([`traced_solo`] lifted to a world with a
+/// mirror): the engine invocation runs inside the capture and the
+/// mirror runs the SAME extra op untraced — the twins stay in
+/// lockstep, so a post-state fold never sees a one-sided commit. A
+/// `None` dir is the untraced run, where neither closure is ever
+/// called.
 ///
 /// # Errors
 ///
@@ -94,7 +113,7 @@ pub fn traced_twin(
     theirs: &mut dyn FnMut(crate::harness::Protocol) -> Result<crate::harness::Measurement, String>,
 ) -> Result<Option<String>, String> {
     let Some(dir) = dir else { return Ok(None) };
-    let (_, events) = crate::harness::traced_sample(&mut || ours(TRACED_ONE).map(|m| m.work))?;
+    let table = traced_solo(Some(dir), family, ours)?;
     theirs(TRACED_ONE)?;
-    emit_pair(dir, family, events).map(Some)
+    Ok(table)
 }

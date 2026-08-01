@@ -32,7 +32,7 @@ use std::path::Path;
 use bumbledb::{Db, RelationId, Value};
 
 use crate::corpus_gen::{GenConfig, Rng};
-use crate::harness::{self, Measurement};
+use crate::harness::{self, Measurement, Protocol};
 use crate::writebench::write_protocol;
 
 #[cfg(test)]
@@ -180,9 +180,12 @@ fn unselected_parent(rng: &mut Rng) -> u64 {
 /// # Errors
 ///
 /// Engine errors, stringified.
-pub fn commit_window_admission(db: &Db<world::WindowedWorld>) -> Result<Measurement, String> {
+pub fn commit_window_admission(
+    db: &Db<world::WindowedWorld>,
+    proto: Protocol,
+) -> Result<Measurement, String> {
     let mut rng = Rng::new(0x0117_0001);
-    harness::measure(write_protocol("commit_window_admission"), || {
+    harness::measure(proto, || {
         let parent = world::WParentId(rng.range(PARENTS));
         db.write(|tx| {
             let id: world::WChildId = tx.alloc()?;
@@ -203,9 +206,12 @@ pub fn commit_window_admission(db: &Db<world::WindowedWorld>) -> Result<Measurem
 /// # Errors
 ///
 /// Engine errors, stringified.
-pub fn commit_window_baseline(db: &Db<baseline::UnwindowedWorld>) -> Result<Measurement, String> {
+pub fn commit_window_baseline(
+    db: &Db<baseline::UnwindowedWorld>,
+    proto: Protocol,
+) -> Result<Measurement, String> {
     let mut rng = Rng::new(0x0117_0001);
-    harness::measure(write_protocol("commit_window_baseline"), || {
+    harness::measure(proto, || {
         let parent = baseline::WParentId(rng.range(PARENTS));
         db.write(|tx| {
             let id: baseline::WChildId = tx.alloc()?;
@@ -227,9 +233,12 @@ pub fn commit_window_baseline(db: &Db<baseline::UnwindowedWorld>) -> Result<Meas
 /// # Errors
 ///
 /// Engine errors, stringified.
-pub fn commit_window_exclusion(db: &Db<world::WindowedWorld>) -> Result<Measurement, String> {
+pub fn commit_window_exclusion(
+    db: &Db<world::WindowedWorld>,
+    proto: Protocol,
+) -> Result<Measurement, String> {
     let mut rng = Rng::new(0x0117_0002);
-    harness::measure(write_protocol("commit_window_exclusion"), || {
+    harness::measure(proto, || {
         let parent = world::WParentId(unselected_parent(&mut rng));
         db.write(|tx| {
             let id: world::WChildId = tx.alloc()?;
@@ -256,6 +265,8 @@ pub fn write_families(
     scratch: &Path,
     selected: &dyn Fn(&str) -> bool,
     mode: crate::storemode::StoreMode,
+    trace_dir: Option<&Path>,
+    flames: &mut Vec<crate::report::FlameEmbed>,
 ) -> Result<Vec<crate::report::WriteFamilyReport>, String> {
     let names = [
         "commit_window_admission",
@@ -275,33 +286,43 @@ pub fn write_families(
     load(&unwindowed, Mass::BENCH)?;
 
     let mut out = Vec::new();
-    let mut push =
-        |name: &str, run: &mut dyn FnMut() -> Result<Measurement, String>| -> Result<(), String> {
-            if !selected(name) {
-                return Ok(());
-            }
-            eprintln!("bench: {name}");
-            let (ours, ghz) = crate::clockproxy::stamped(run)?;
-            out.push(crate::report::WriteFamilyReport {
+    let mut push = |name: &str,
+                    run: &mut dyn FnMut(Protocol) -> Result<Measurement, String>|
+     -> Result<(), String> {
+        if !selected(name) {
+            return Ok(());
+        }
+        eprintln!("bench: {name}");
+        let (ours, ghz) = crate::clockproxy::stamped(|| run(write_protocol(name)))?;
+        // The traced solo sample (--trace): one captured commit after
+        // the timed window — the window-judgment spans, readable from
+        // disk (engine-only lane, no mirror to keep in lockstep).
+        if let Some(table) = crate::trace_out::traced_solo(trace_dir, name, run)? {
+            flames.push(crate::report::FlameEmbed {
                 name: name.to_owned(),
-                ours: ours.stats,
-                theirs: None,
-                facts_per_sec: None,
-                ghz: Some(ghz.into()),
+                table,
             });
-            Ok(())
-        };
+        }
+        out.push(crate::report::WriteFamilyReport {
+            name: name.to_owned(),
+            ours: ours.stats,
+            theirs: None,
+            facts_per_sec: None,
+            ghz: Some(ghz.into()),
+        });
+        Ok(())
+    };
     // Baseline first: the control's clock shadow must not carry the
     // windowed rows' fsyncs (symmetry — every row is fsync-bound and
     // equally shadowed by its predecessor).
-    push("commit_window_baseline", &mut || {
-        commit_window_baseline(&unwindowed)
+    push("commit_window_baseline", &mut |proto| {
+        commit_window_baseline(&unwindowed, proto)
     })?;
-    push("commit_window_admission", &mut || {
-        commit_window_admission(&windowed)
+    push("commit_window_admission", &mut |proto| {
+        commit_window_admission(&windowed, proto)
     })?;
-    push("commit_window_exclusion", &mut || {
-        commit_window_exclusion(&windowed)
+    push("commit_window_exclusion", &mut |proto| {
+        commit_window_exclusion(&windowed, proto)
     })?;
     Ok(out)
 }
