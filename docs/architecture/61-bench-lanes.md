@@ -325,4 +325,6 @@ color mapping is a deterministic hash of the frame name, so the SVG is a
 byte-stable artifact. `python3 scripts/flame.py selftest` is the golden
 snapshot — a committed folded profile → SVG and a folded pair → diff folded →
 diff SVG, checked byte-for-byte against `scripts/flame-fixtures/` so a
-renderer drift is caught without a capture.
+renderer drift is caught without a capture. `scripts/check.sh` runs the
+selftest as a gate, so the snapshot executes on every check lane (both CI
+architectures), never only when someone remembers it.

@@ -97,6 +97,14 @@ filtered_test -p bumbledb-bench --features obs -- trace_out
 filtered_test -p bumbledb-bench --features obs -- tripwires
 filtered_test -p bumbledb-bench --features obs -- the_engine_trace_pins
 
+# The flame renderer golden (docs/architecture/61-bench-lanes.md
+# § Flamegraph tooling): a committed folded profile -> SVG and a folded
+# pair -> diff folded -> diff SVG, byte-for-byte against
+# scripts/flame-fixtures/. Without this line the snapshot exists but
+# nothing executes it — renderer drift would land unseen.
+echo "==> flame renderer golden selftest"
+python3 scripts/flame.py selftest
+
 # The x86-64 scalar-fallback promise (docs/architecture/00-product.md)
 # is EXECUTED, not cross-checked: CI's check lane runs this whole script
 # natively on an x86_64-linux runner (.github/workflows/ci.yml), which
