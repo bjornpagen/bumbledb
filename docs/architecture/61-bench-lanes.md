@@ -303,15 +303,19 @@ the folded profile. No network, no `flamegraph.pl`: the whole renderer is
 `scripts/flame.py` (stdlib only, the dependency quarantine), and the folded
 file feeds `flamegraph.pl` / inferno directly for anyone who prefers them.
 
-- **`scripts/flame.sh <family> [extra trace flags…]`** — build the bench
-  binary with the `obs` feature, capture ONE traced warm sample of a read
-  family under the measurement mutex (`scripts/measure.sh` — a flame capture
-  IS a measurement), then render the folded twin into
-  `<base>/flame/<family>.svg` (self-contained flamegraph) beside its
-  `<family>.folded`, and print the top-10 self-time table. Trailing flags
-  pass straight to `trace` (`--scale M`, `--seed 7`), so the traced corpus
-  is yours to pick. `BUMBLEDB_FLAME_OUT` overrides the output base
-  (default `bench-out`). One command, one SVG on disk.
+- **`scripts/flame.sh <family>`** or **`scripts/flame.sh <scenario>
+  <query>`** — build the bench binary with the `obs` feature, capture ONE
+  traced warm sample under the measurement mutex (`scripts/measure.sh` — a
+  flame capture IS a measurement), then render the folded twin into
+  `<base>/flame/<name>.svg` (self-contained flamegraph) beside its
+  `<name>.folded`, and print the top-10 self-time table. The family form
+  traces a read family via the `trace` subcommand; the lane form runs
+  `scenarios --trace --only <scenario>` (gated, one vestigial timing
+  sample) and renders the named query's warm capture as
+  `<scenario>.<query>`. Trailing flags pass straight to the underlying
+  subcommand (`--scale M`, `--seed 7`), so the traced corpus is yours to
+  pick. `BUMBLEDB_FLAME_OUT` overrides the output base (default
+  `bench-out`). One command, one SVG on disk.
 - **`scripts/flamediff.sh <before.folded> <after.folded> [name]`** —
   cross-run attribution, no capture and no build: a differential folded file
   (`stack before after`) plus a red/blue diff SVG where each frame is colored
