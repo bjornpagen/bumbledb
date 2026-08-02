@@ -1,0 +1,24 @@
+=== power ok at bench-durable-r1 open: AC
+=== lane bench-durable-r1 start 19:28:24
+=== power ok at bench-durable-r1 close: AC
+=== lane bench-durable-r1 done 19:32:32
+=== power ok at bench-durable-r2 open: AC
+=== lane bench-durable-r2 start 19:32:47
+=== power ok at bench-durable-r2 close: AC
+=== lane bench-durable-r2 done 19:37:26
+=== power ok at bench-durable-r3 open: AC
+=== lane bench-durable-r3 start 19:37:37
+=== power ok at bench-durable-r3 close: AC
+=== lane bench-durable-r3 done 19:41:47
+=== power ok at bench-ephemeral-r1 open: AC
+=== lane bench-ephemeral-r1 start 19:41:53
+=== power ok at bench-ephemeral-r1 close: AC
+=== lane bench-ephemeral-r1 done 19:45:38
+=== power ok at bench-ephemeral-r2 open: AC
+=== lane bench-ephemeral-r2 start 19:45:44
+=== power ok at bench-ephemeral-r2 close: AC
+=== lane bench-ephemeral-r2 done 19:49:34
+=== power ok at bench-ephemeral-r3 open: AC
+=== lane bench-ephemeral-r3 start 19:49:41
+=== power ok at bench-ephemeral-r3 close: AC
+=== lane bench-ephemeral-r3 done 19:53:23
