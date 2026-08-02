@@ -1,0 +1,35 @@
+bumbledb full-suite baseline (bugbash-perf campaign, Phase 3 item 2)
+date: 2026-08-01 (all full-suite lanes landed 19:28-20:44 local, one evening, strictly sequential; the segment-1 bench-debt lanes — capacity-c17, windowed, lawful — landed earlier the same day, commits e1d039fe..e511b540)
+revs: e511b540 (bench-durable-r1..r3, bench-ephemeral-r1..r3) / 3997bb1f (scenarios) / 0aad29bc (storage, curves, crud, writes) / b25c9226 (churn) — bench-out-only commits landed mid-run between lanes; zero code delta across all stamps (the campaign's scenarios lane set the precedent)
+out: /Users/bjorn/Documents/bumbledb/bench-out/baseline-2026-07-25
+power: wall (AC verified via pmset before AND after every lane by run-full-suite.sh's hard assert_ac — a battery drop voids the lane; run-full-suite.log carries every stamp; none failed)
+mode: shared-machine (boosted; standing owner greenlight 2026-07-20 — every lane BUMBLEDB_BENCH_BOOST=1, shared_machine provenance with 1/5/15 load averages stamped into every report; measurement mutex held per lane via scripts/measure.sh; no builds during timing — the release binary confirmed fresh before the first rep)
+protocol: identical to bench-out/campaign-2026-07-23 (seed 1, scale S, registered lane protocols: 256 samples per read family in the report-class reps, 64 per family/point in the suite lanes, curves cap 30000 ms per SQLite region, churn 10000 cycles sample-every-250 vacuum/analyze-every-500), oracle-gated everywhere the campaign gated (fresh verify stamp required by the bench gate; value-identical multisets before any timed window; per-sample gates on churn; post-state folds on crud/lawful), capped or DNF regions excluded-and-counted
+corpora: the capacity-spelling world (0.8.0 cutover, fixed RNG R20); identity digest (corpus_gen::corpus_digest, scale S seed 1): fa73e680324f9b26dd1c8504899c43beec8eef48953ca4bdf4ca432623caaca8; verify stamp (bench-data/fa73e680324f9b26): 5c3b2c1d056c180caa921ba7be8f8eb2a1f3da0d8133532cf045f2f3a429c243; per-lane store hashes in <lane>/digests.txt; the ledger/calendar stores are byte-identical to the campaign corpus per the storage lane (the digest moved on the judgment-capacity corpus tail, not the timed worlds) — the cross-corpus confound on read deltas is zero
+ephemeral pairing: like-for-like both sides (the 020 honest pairing rode the campaign already) — bench --ephemeral times the MDB_NOSYNC engine against SQLite WAL synchronous=OFF via the lane-typed write-family seam
+clock proxy: bounded-retry brackets on every block; contaminated finals reported never hidden — reads r1 2/33, r2 5/33, r3 0/33, e1 3/33, e2 1/33, e3 0/33 (campaign: 8/9/2/6/4/4); report-class durable writes 10-11/12 vs campaign 7/9 (fsync-DVFS physics), ephemeral writes 0-2/12; crud 12/22 (campaign 7/22), lawful 6/12 (campaign 3/12); curves ghz stamped on every point, 0 capped
+roster: 33 read families (unchanged since the campaign); 12 write families (the campaign's 9 minus none, plus commit_window_baseline/admission/exclusion + commit_capacity_baseline/sum/duration landing in the report-class roster under 0.8.0; 5 SQLite-twinned write cells are the cross-run comparand)
+
+bench-durable-r1	COMPLETE	/Users/bjorn/Documents/bumbledb/bench-out/baseline-2026-07-25/bench-durable-r1/report.json
+bench-durable-r2	COMPLETE	/Users/bjorn/Documents/bumbledb/bench-out/baseline-2026-07-25/bench-durable-r2/report.json
+bench-durable-r3	COMPLETE	/Users/bjorn/Documents/bumbledb/bench-out/baseline-2026-07-25/bench-durable-r3/report.json
+bench-ephemeral-r1	COMPLETE	/Users/bjorn/Documents/bumbledb/bench-out/baseline-2026-07-25/bench-ephemeral-r1/report.json
+bench-ephemeral-r2	COMPLETE	/Users/bjorn/Documents/bumbledb/bench-out/baseline-2026-07-25/bench-ephemeral-r2/report.json
+bench-ephemeral-r3	COMPLETE	/Users/bjorn/Documents/bumbledb/bench-out/baseline-2026-07-25/bench-ephemeral-r3/report.json
+scenarios	COMPLETE	/Users/bjorn/Documents/bumbledb/bench-out/baseline-2026-07-25/scenarios/scenarios.md
+storage	COMPLETE	/Users/bjorn/Documents/bumbledb/bench-out/baseline-2026-07-25/storage/storage-report.json
+curves	COMPLETE (0 capped points)	/Users/bjorn/Documents/bumbledb/bench-out/baseline-2026-07-25/curves/curves-report.json
+crud	COMPLETE (post-state ok)	/Users/bjorn/Documents/bumbledb/bench-out/baseline-2026-07-25/crud/crud.json
+lawful	COMPLETE (segment-1 re-pin, e511b540; post-state ok)	/Users/bjorn/Documents/bumbledb/bench-out/baseline-2026-07-25/lawful/lawful.json
+writes	COMPLETE (the wall-power rerun the campaign left owed)	/Users/bjorn/Documents/bumbledb/bench-out/baseline-2026-07-25/writes/writes-report.json
+churn	COMPLETE (all three profiles; first wall-power churn)	/Users/bjorn/Documents/bumbledb/bench-out/baseline-2026-07-25/churn/churn-report.json
+capacity-c17	COMPLETE (segment 1; slot landed, fetch dead)	/Users/bjorn/Documents/bumbledb/bench-out/baseline-2026-07-25/capacity-c17/SUMMARY.md
+windowed	COMPLETE (segment 1 re-pin)	/Users/bjorn/Documents/bumbledb/bench-out/baseline-2026-07-25/windowed
+sweep-commit	PENDING (needs the obs build; the attribution pass's job)	/Users/bjorn/Documents/bumbledb/bench-out/baseline-2026-07-25/sweep-commit/sweep.md
+adversarial	SKIP-UNAVAILABLE (subcommand not landed; probe-parity with the night and campaign)	/Users/bjorn/Documents/bumbledb/bench-out/baseline-2026-07-25/adversarial/report.json
+
+oracle mismatches: 0 (every gated lane re-gated clean before timing; run logs grep clean)
+report-class reps: every rep all_win=true, partial=false, 33/33 read families WIN; read geomean(ratio_p50) 0.040-0.046 (campaign: 0.041-0.046)
+DNF/caps: the same two scenario SQLite DNFs as the night and campaign (r4_bomb_t2, t2_overlap_join at cap 1000 ms), excluded-and-counted; 0 capped curve points; 7 engine-only/unpaired write families carry no SQLite twin by design
+deltas: SUMMARY.md (vs campaign-2026-07-23 recomputed from JSON with identical pairing; writes additionally vs night-2026-07-20; churn vs night only — no campaign churn exists)
+baseline: 13 of 13 owned full-suite lanes COMPLETE
