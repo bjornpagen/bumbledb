@@ -42,3 +42,7 @@
 === lane writes start 20:13:42
 === power ok at writes close: AC
 === lane writes done 20:14:33
+=== power ok at churn open: AC
+=== lane churn start 20:15:05
+=== power ok at churn close: AC
+=== lane churn done 20:43:58
