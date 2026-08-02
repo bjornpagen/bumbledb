@@ -22,3 +22,7 @@
 === lane bench-ephemeral-r3 start 19:49:41
 === power ok at bench-ephemeral-r3 close: AC
 === lane bench-ephemeral-r3 done 19:53:23
+=== power ok at scenarios open: AC
+=== lane scenarios start 19:55:29
+=== power ok at scenarios close: AC
+=== lane scenarios done 20:12:18
