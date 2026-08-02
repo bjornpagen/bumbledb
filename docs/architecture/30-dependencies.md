@@ -736,8 +736,8 @@ untouched by it. The phases:
   holder, no obligation: capacity statements never manufacture parents),
   any dependent bound resolves from the parent's row already in hand, then
   one ordered walk of the statement's `R` bucket SUMS the child group's
-  weights (u128 accumulator; unit statements sum 1s; weights read per the
-  C17 arm — fetch-per-child the shipping baseline, the value slot armed —
+  weights (u128 accumulator; unit statements sum 1s; weighted statements
+  read the `R` value slot — the C17 measured law —
   `lean/Bumbledb/Oracle.lean: capacity_plan_decides` — the walk's
   measure verdict IS the delta-restricted check, early exit sound under
   non-negative weights: a ceiling walk exits at sum > hi, a floor walk at

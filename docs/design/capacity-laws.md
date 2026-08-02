@@ -3,14 +3,18 @@
 STATUS: LANDED (2026-07-25) — the campaign executed whole and ships as 0.8.0:
 design + rulings `4edd773a..355a2ed2`, spec flush `dc272208..caefe16c`, code +
 proofs + gate `b2584bcb..df7c25e2` (2026-07-24/25). §8 rulings 1–6 and §8b
-C1–C19 landed as ruled, with ONE open tail: C17's slot-vs-fetch measured
-choice rides the bench phase, which the owner deferred at close (2026-07-24)
-— both `measure_children` arms stand behind the one `CAPACITY_WEIGHT_SLOT`
-constant (`crates/bumbledb/src/storage/commit/judgment.rs`), fetch-per-child
-ships as the baseline, and the winner-lands/loser-deletes measurement is owed
-on bench resume (`TODO.md`; the §9 step-4 bench re-pins and the two weighted
-lanes' numbers are owed with it — no capacity perf number is claimed
-anywhere). The §8b zero-trace gate ran GREEN at close over the full scope.
+C1–C19 landed as ruled. The ONE open tail closed 2026-08-01: C17's
+slot-vs-fetch measured choice ran on the power-budget lane (both arms, same
+protocol, oracle-gated per arm) and the SLOT arm won on every weighted row —
+min-of-3 ephemeral p50s, µs: `commit_capacity_sum` fetch 35.2 vs slot 32.3,
+`commit_capacity_duration` fetch 34.2 vs slot 30.8, statement-free control
+18.2 under both arms; artifacts `bench-out/baseline-2026-07-25/capacity-c17/`.
+The slot arm landed as the only form, the fetch arm and the
+`CAPACITY_WEIGHT_SLOT` flag are deleted, and the numbers are the CONSTRAINT
+comment at the walk (`crates/bumbledb/src/storage/commit/judgment.rs`). One
+consequence needs an owner ruling (recorded there, not ruled): a ray-valued
+Duration weight now refuses at WRITE time — strictly stronger than C10's
+judge-time refusal. The §8b zero-trace gate ran GREEN at close over the full scope.
 Ground-truth deltas from execution are stamped on the companion dossier
 (`capacity-cutover.md`). Drafted 2026-07-24 from the weighted-capacity
 discussion. This document specifies a deletion and a generalization: the `<={lo..hi}`

@@ -61,7 +61,7 @@ static NEXT_INSTANCE: AtomicU64 = AtomicU64::new(1);
 /// capacity cutover (ruled 2026-07-24): the canonical schema encoding
 /// moved (the weight descriptor, dependent bounds, the re-minted
 /// statement-form tag) and the `R` namespace gained the weighted
-/// value-slot arm, so every v6 fingerprint and every weighted-statement
+/// value slot, so every v6 fingerprint and every weighted-statement
 /// `R` entry decodes wrong — one bump covers both. No other version
 /// opens and no migration path exists — ETL is the story.
 pub const FORMAT_VERSION: u32 = 7;

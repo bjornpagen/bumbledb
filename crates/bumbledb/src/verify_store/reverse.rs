@@ -117,7 +117,7 @@ pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
                     // R→F weight desync, the third conjunct: a live,
                     // φ-satisfying, key-backing edge must also carry the
                     // fact's weight-field encoding in its value slot
-                    // (unit and fetch-baseline edges: empty). A ray in
+                    // (unit edges: empty). A ray in
                     // the weighed field is content — the malformed
                     // finding, never an error.
                     if inside {

@@ -365,7 +365,7 @@ fn a_v4_store_without_a_kind_key_is_a_format_mismatch_on_both_constructors() {
 /// typed `FormatMismatch { found: 6 }`. There is NO migration read
 /// arm: the canonical schema encoding moved (weight descriptor,
 /// dependent bounds, the re-minted statement-form tag) and the `R`
-/// namespace gained the weighted value-slot arm, so a v6 store's
+/// namespace gained the weighted value slot, so a v6 store's
 /// fingerprint and weighted `R` entries would decode wrong — ETL
 /// through the SDK is the story.
 #[test]

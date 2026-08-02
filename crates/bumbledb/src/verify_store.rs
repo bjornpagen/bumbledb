@@ -53,7 +53,7 @@
 //! child group through the commit path's own walk —
 //! [`StoreFinding::CapacityViolation`]); closed parents re-check in the
 //! marks pass. The weighted value slot adds the weight-desync sweep,
-//! both directions (ruled 2026-07-24, C17's slot arm makes the `R` slot
+//! both directions (C17, measured: the slot law makes the `R` slot
 //! a maintained copy of one row-local field, and this sweeper is the
 //! offline authority that convicts a diverged copy): F→R, the existence
 //! get's value must equal the fact's weight-field encoding (unit:
@@ -189,8 +189,8 @@ pub enum StoreFinding {
     },
     /// A capacity `R` edge whose value slot disagrees with the live
     /// source fact's weight-field encoding — the weight-desync finding,
-    /// both directions of the sweep push it (ruled 2026-07-24: the C17
-    /// slot arm makes the value slot a maintained copy of one row-local
+    /// both directions of the sweep push it (C17, measured: the slot
+    /// law makes the value slot a maintained copy of one row-local
     /// field; convict-only, the sweeper never repairs silently).
     ReverseEdgeWeightDesync {
         statement: StatementId,
@@ -198,7 +198,7 @@ pub enum StoreFinding {
         /// The stored value-slot bytes.
         stored: Box<[u8]>,
         /// The expected encoding derived from the live fact (empty for
-        /// unit edges and every edge under the fetch baseline).
+        /// unit edges).
         derived: Box<[u8]>,
     },
     /// The stored `S` row count disagrees with the `F`-scan count.

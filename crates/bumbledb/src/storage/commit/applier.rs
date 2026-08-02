@@ -167,9 +167,9 @@ impl Applier<'_> {
         }
         // Capacity edges (per φ-satisfying child): the same `R` machinery,
         // statement-scoped — the child-group measure walk's index
-        // (`docs/architecture/50-storage.md` § key layout). Under the C17
-        // slot arm a WEIGHTED statement's edge carries the child's u64
-        // weight (LE) in the value slot, paid once here so the judge
+        // (`docs/architecture/50-storage.md` § key layout). A WEIGHTED
+        // statement's edge carries the child's u64 weight (LE) in the
+        // value slot (the C17 slot law), paid once here so the judge
         // reads the walk it already does; the plan derived it
         // ([`super::plan::MarkEdgeOp::weight`]), this put spends it.
         // Covered by the `mid-write-r` crashpoint above: an R put

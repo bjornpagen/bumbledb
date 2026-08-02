@@ -1751,8 +1751,7 @@ fn a_weighted_store_verifies_clean() {
 /// (F→R: the existence get's value must equal the fact's weight-field
 /// encoding; R→F: the entry's value must back to the live fact) report
 /// the same diverged edge, `stored` carrying the planted bytes and
-/// `derived` the live fact's expected encoding (whichever C17 arm —
-/// value slot or fetch baseline — is the one in force).
+/// `derived` the live fact's weight encoding (the C17 slot law).
 #[test]
 fn a_desynced_weight_slot_is_convicted_never_repaired() {
     let (_dir, db) = weighted_fixture("verify-weight-desync");
@@ -1786,10 +1785,10 @@ fn a_desynced_weight_slot_is_convicted_never_repaired() {
 }
 
 /// A hostile `R` edge under the weighted statement embedding a FOREIGN
-/// source relation (Pool, not Device): the fetch-baseline measure walk
-/// must refuse it as typed corruption — never slice the fetched fact
-/// with the DECLARED source layout (the panic class this guards) — so
-/// the sweep's verdict is the R pass's own conviction, and the F pass's
+/// source relation (Pool, not Device), its value slot empty: the
+/// measure walk refuses the empty slot as typed corruption (a weighted
+/// edge owes 8 bytes — width discipline, never a fallback), so the
+/// sweep's verdict is the R pass's own conviction, and the F pass's
 /// capacity judgment swallows the `Corruption` (convict-never-panic:
 /// the R pass owns the edge).
 #[test]
@@ -1812,8 +1811,9 @@ fn a_foreign_relation_capacity_edge_is_convicted_never_a_panic() {
 }
 
 /// A capacity edge naming a WRONG-WIDTH source fact (16 raw bytes
-/// planted under Device's 24-byte layout): the fetch-baseline walk must
-/// refuse it as typed corruption before slicing the weight field. The F
+/// planted under Device's 24-byte layout), its value slot empty: the
+/// walk refuses the empty slot as typed corruption without ever
+/// touching the planted fact (the slot law reads no child). The F
 /// pass convicts the planted width itself, the counters convict the raw
 /// row's tallies, and the R pass stays silent — a wrong-width fact is
 /// already F-convicted (`reverse.rs`'s own discipline) — so no capacity

@@ -30,9 +30,7 @@ use crate::storage::delta::WriteDelta;
 use crate::storage::keys::{self, DeterminantImage};
 use bumbledb_theory::schema::{RelationId, StatementId};
 
-use super::judgment::{
-    CAPACITY_WEIGHT_SLOT, SelectionCheck, Selections, capacity_child_image, child_weight, satisfies,
-};
+use super::judgment::{SelectionCheck, Selections, capacity_child_image, child_weight, satisfies};
 use crate::error::Result;
 
 /// One commit's derivable bookkeeping, borrowed from the delta's arena.
@@ -126,11 +124,10 @@ pub(crate) struct MarkEdgeOp {
     /// The edge's key-bytes segment: the capacity statement's child
     /// projection in target-key determinant order.
     pub(crate) key_bytes: DeterminantImage,
-    /// The insert put's value slot: the child's weight under the C17
-    /// slot arm ([`CAPACITY_WEIGHT_SLOT`], weighted statements only),
-    /// sliced from the source fact at plan time — the plan stays pure,
-    /// zero LMDB reads. `None` = the empty value (every edge under the
-    /// fetch baseline; unit edges always).
+    /// The insert put's value slot: a weighted statement's child weight
+    /// (the C17 slot law), sliced from the source fact at plan time —
+    /// the plan stays pure, zero LMDB reads. `None` = the empty value
+    /// (unit edges).
     pub(crate) weight: Option<u64>,
 }
 
@@ -217,11 +214,11 @@ pub(crate) struct DependentCheck {
 ///
 /// # Errors
 ///
-/// The one fallible slice is the C17 slot arm's weight derivation
-/// ([`MarkEdgeOp::weight`]): a ray-valued Duration weight has no finite
-/// u64 for the value slot, so it refuses typed at plan time — under the
-/// landed fetch baseline the derivation never runs and this function
-/// never errors.
+/// The one fallible slice is the weighted edge's weight derivation
+/// ([`MarkEdgeOp::weight`], the C17 slot law): a ray-valued Duration
+/// weight has no finite u64 for the value slot, so it refuses typed at
+/// plan time (the write-time ray corner recorded at the judgment
+/// constraint comment — owner ruling owed).
 pub(crate) fn plan_commit<'d>(
     delta: &'d WriteDelta<'_>,
     schema: &Schema,
@@ -415,8 +412,8 @@ fn fact_op<'d>(
     })
 }
 
-/// One fact's capacity-form derivations: the capacity `R` edges (with
-/// the C17 slot arm's weight, when armed), plus the fact's contributions
+/// One fact's capacity-form derivations: the capacity `R` edges (a
+/// weighted statement's edge carrying its slot weight), plus the fact's contributions
 /// to the TOUCHED notion (`lean/Bumbledb/Txn/DeltaRestriction.lean`).
 /// Dependent bounds need no marking of their own: a target-row
 /// bound-field update is remove+add, both halves derive the SAME key
@@ -446,10 +443,10 @@ fn mark_ops(
             .or_default()
             .insert(scratch.image.clone());
         if satisfies(&selections.capacity(capacity_id).source, layout, fact) {
-            let weight = if CAPACITY_WEIGHT_SLOT && !matches!(statement.weight, Weight::Unit) {
-                Some(child_weight(statement, layout, fact)?)
-            } else {
+            let weight = if matches!(statement.weight, Weight::Unit) {
                 None
+            } else {
+                Some(child_weight(statement, layout, fact)?)
             };
             scratch.capacity_edges.push(MarkEdgeOp {
                 statement: statement.id,

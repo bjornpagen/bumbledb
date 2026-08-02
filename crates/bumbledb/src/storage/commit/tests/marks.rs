@@ -948,8 +948,8 @@ fn fresh_device(schema: &Schema, id: u64, pool: u64, watts: u64) -> Vec<u8> {
 /// on a fresh-keyed relation the fresh field's value IS the `F` row id,
 /// so the capacity edges minted in THIS commit name rows the same
 /// commit's measure walk must resolve — the weight written at mint time
-/// is seen by the same commit's walk (fetch baseline: one own-writes `F`
-/// get per walked edge; slot arm: the value slot itself), and the parent
+/// is seen by the same commit's walk (the value slot itself, the C17
+/// slot law), and the parent
 /// probe resolves the fresh-row holder through `F` directly (no `U`
 /// tree), its dependent bound read from that same row.
 #[test]

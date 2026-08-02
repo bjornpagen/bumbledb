@@ -86,26 +86,24 @@ pub(super) fn judge(view: &FinalStateView<'_, '_, '_>) -> Result<Option<Violatio
     Ok(Violations::seal(violations))
 }
 
-/// C17's measured choice, structured so flipping is ONE constant.
-/// `false` — the landed baseline: capacity `R` edges carry empty values
-/// and the weighted measure walk fetches each child fact (one `F` get
-/// per walked edge) to read its weight. `true` — the statement-scoped
-/// value-slot arm (ruled 2026-07-24, C17): a WEIGHTED capacity
-/// statement's `R` edges carry the child's u64 weight (LE) in the value
-/// slot, paid once at write time, and the walk reads the entries it
-/// already visits. The constant flips the writer ([`super::Applier`]'s
-/// edge puts via [`super::plan::MarkEdgeOp::weight`]), the walk
-/// ([`Checker::measure_children`]), and the sweeper's weight-desync
-/// checks together; readers dispatch on the statement's DECLARED weight
-/// plus this arm, never on value length — a width disagreeing with the
-/// declaration is corruption, not a fallback. The bench (the
-/// power-budget lane) decides the winner; the number lands here with it.
-/// Semantic corner, recorded: under the slot arm a ray-valued Duration
-/// weight refuses at write time (the slot needs a finite u64), which is
-/// strictly stronger than C10's judge-time refusal — visible only for a
-/// ray child under an absent parent; rule the corner before landing the
-/// slot arm as the default.
-pub(crate) const CAPACITY_WEIGHT_SLOT: bool = false;
+// CONSTRAINT (C17, measured 2026-08-01 — the slot arm IS the law): a
+// WEIGHTED capacity statement's `R` edges carry the child's u64 weight
+// (LE) in the value slot, paid once at write time; the measure walk
+// reads the entries it already visits. Unit edges keep the empty value.
+// The losing fetch-per-child arm (empty values everywhere, one `F` get
+// per walked edge) is DELETED with its `CAPACITY_WEIGHT_SLOT` flag —
+// the power-budget lane decided it (bench-out/baseline-2026-07-25/
+// capacity-c17/, min-of-3 ephemeral p50s, µs; identical statement-free
+// control 18.2 both arms): commit_capacity_sum fetch 35.2 vs slot 32.3
+// (judged surface +17.0 → +14.1, −17%); commit_capacity_duration fetch
+// 34.2 vs slot 30.8 (+16.0 → +12.6, −21%); the fsync-shadowed durable
+// lane agreed in direction (sum p50 5365.1 vs 5093.4). Readers dispatch
+// on the statement's DECLARED weight, never on value length — a width
+// disagreeing with the declaration is corruption, not a fallback.
+// Semantic corner, OWNER RULING OWED (recorded, not ruled here): a
+// ray-valued Duration weight now refuses at WRITE time (the slot needs
+// a finite u64), strictly stronger than C10's judge-time refusal —
+// visible only for a ray child under an absent parent.
 
 /// One source fact's weight under a capacity statement's measure
 /// (`lean/Bumbledb/Capacity.lean: Weight.apply`): `Unit` is 1 — the
@@ -145,17 +143,16 @@ pub(crate) fn child_weight(
 /// source fact — the ONE definition the applier writes and both
 /// weight-desync sweep directions compare against
 /// (`docs/architecture/60-validation.md` § the weight-desync sweep).
-/// `None` = the empty value: every edge under the fetch baseline, and
-/// unit edges under the slot arm.
+/// `None` = the empty value: unit edges carry no weight.
 pub(crate) fn expected_slot_weight(
     statement: &CapacityStatement,
     layout: &FactLayout,
     fact: &[u8],
 ) -> Result<Option<u64>> {
-    if CAPACITY_WEIGHT_SLOT && !matches!(statement.weight, Weight::Unit) {
-        return Ok(Some(child_weight(statement, layout, fact)?));
+    if matches!(statement.weight, Weight::Unit) {
+        return Ok(None);
     }
-    Ok(None)
+    Ok(Some(child_weight(statement, layout, fact)?))
 }
 
 /// The interval measure in encoded word space: `end − start` over the
@@ -1226,9 +1223,9 @@ impl<'a> Checker<'a> {
     /// needs the whole group anyway, and on conviction the full sum IS
     /// the witness, so the reported measure is walk-order-independent
     /// (ruled 2026-07-24, C14: the clip serves the verdict, the full sum
-    /// serves the witness). Weights read per the C17 arm
-    /// ([`CAPACITY_WEIGHT_SLOT`]): the value slot, or one child `F` fetch
-    /// per walked edge. A CLOSED source stored no edges: the φ-selected
+    /// serves the witness). Weights read from the `R` value slot the
+    /// applier maintains (C17, measured — the slot law at the constraint
+    /// comment above). A CLOSED source stored no edges: the φ-selected
     /// axioms sharing the tuple are summed by an honest ≤256-row
     /// extension scan (domain quantification,
     /// `docs/architecture/30-dependencies.md`).
@@ -1269,9 +1266,9 @@ impl<'a> Checker<'a> {
             if !k.starts_with(&self.key[..p_len]) {
                 break;
             }
-            // Value discipline per the declared weight and the C17 arm —
-            // a width disagreeing with the declaration is corruption,
-            // never a fallback (the format gate proved no old data).
+            // Value discipline per the declared weight — a width
+            // disagreeing with the declaration is corruption, never a
+            // fallback (the format gate proved no old data).
             let weight = if unit {
                 if !v.is_empty() {
                     return Err(Error::Corruption(CorruptionError::MalformedValue(
@@ -1279,46 +1276,11 @@ impl<'a> Checker<'a> {
                     )));
                 }
                 1
-            } else if CAPACITY_WEIGHT_SLOT {
+            } else {
                 let word: [u8; 8] = v.try_into().map_err(|_| {
                     Error::Corruption(CorruptionError::MalformedValue("R capacity value width"))
                 })?;
                 u64::from_le_bytes(word)
-            } else {
-                if !v.is_empty() {
-                    return Err(Error::Corruption(CorruptionError::MalformedValue(
-                        "R capacity value width",
-                    )));
-                }
-                // The fetch-per-child baseline: one `F` get per walked
-                // edge — the R key names the child (source_rel, row).
-                // The embedded relation and the fetched width are trust
-                // checks, not redundancy: the walk is about to slice the
-                // child with the DECLARED source layout, so a hostile
-                // edge embedding a foreign relation — or naming a
-                // wrong-width fact — is typed corruption here, never a
-                // panic (the sweeper's R pass convicts the same shapes
-                // offline; the F pass swallows the Corruption).
-                let Some((_, _, source_rel, source_row)) = keys::parse_reverse_key(k) else {
-                    return Err(Error::Corruption(CorruptionError::MalformedValue(
-                        "R capacity key shape",
-                    )));
-                };
-                if source_rel != statement.source.relation {
-                    return Err(Error::Corruption(CorruptionError::MalformedValue(
-                        "R capacity key source relation",
-                    )));
-                }
-                let child = fact_by_row(self.data, self.txn, source_rel, source_row)?;
-                if child.len() != layout.fact_width() {
-                    return Err(Error::Corruption(CorruptionError::WrongFactWidth {
-                        relation: source_rel,
-                        row_id: source_row,
-                        expected: layout.fact_width(),
-                        actual: child.len(),
-                    }));
-                }
-                child_weight(statement, layout, child)?
             };
             measure += u128::from(weight);
             if floor_only_decided(measure) {

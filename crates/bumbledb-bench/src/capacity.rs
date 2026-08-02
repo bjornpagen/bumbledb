@@ -7,9 +7,11 @@
 //!   {0..supply} Device(pool)` — the per-parent bound read plus the
 //!   weighted value-slot walk on the hot path. Rows
 //!   `commit_capacity_baseline` (the statement-free control twin) and
-//!   `commit_capacity_sum`. This lane is also the C17 measuring
-//!   instrument: the slot-vs-fetch-per-child choice lands engine-side
-//!   with this lane's number recorded beside it.
+//!   `commit_capacity_sum`. This lane was also the C17 measuring
+//!   instrument: it decided slot-vs-fetch-per-child (2026-08-01, the
+//!   slot arm landed; numbers at the CONSTRAINT comment in
+//!   `storage/commit/judgment.rs` and the run artifacts in
+//!   `bench-out/baseline-2026-07-25/capacity-c17/`).
 //! - **Calendar capacity** (`Duration` weight): `Room(id) <=
 //!   [Duration(booked)]{0..Duration(span)} Booking(room)` — row
 //!   `commit_capacity_duration`. A FRESH twin world by ruling (C15):
