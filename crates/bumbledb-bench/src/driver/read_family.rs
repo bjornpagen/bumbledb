@@ -165,19 +165,8 @@ impl BenchRun<'_> {
         };
         if self.trace {
             let (_, events) = harness::traced_sample(&mut || run_ours(&mut prepared))?;
-            let (engine, harness_events) = trace_out::split_harness(events);
-            trace_out::write_trace_pair(
-                &self.trace_dir,
-                &format!("{}.warm", spec.name),
-                &engine,
-                &harness_events,
-            )
-            .map_err(|e| format!("trace: {e}"))?;
-            let mut table = trace_out::FlameSummary::compute(&engine).render_top(10);
-            if let Some(phases) = trace_out::render_phase_table(&engine) {
-                table.push('\n');
-                table.push_str(&phases);
-            }
+            let table =
+                trace_out::emit_pair(&self.trace_dir, &format!("{}.warm", spec.name), events)?;
             self.flames.push(report::FlameEmbed {
                 name: spec.name.to_owned(),
                 table,
