@@ -231,6 +231,12 @@ pub mod names {
     /// the tail rows decoded (docs/architecture/50-storage.md § the
     /// image cache). (relation id, slab bytes)
     pub const IMAGE_APPEND: &str = "image_append";
+    /// The exact per-column distinct counting pass inside an image
+    /// build/append/synthesis (`image/distinct.rs`) — batch granularity,
+    /// one span per image; on the append arm the rows counted are the
+    /// tail alone (the persisted state's payoff). (columns counted, rows
+    /// inserted)
+    pub const IMAGE_DISTINCTS: &str = "image_distincts";
     /// The columnar fact decode inside an image build/append/synthesis —
     /// the batch decode that hid inside [`IMAGE_BUILD`] / [`IMAGE_APPEND`]:
     /// one sequential scan's worth of per-fact decode into the column slabs,

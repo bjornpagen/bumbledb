@@ -141,15 +141,18 @@ pub enum ColumnView<'a> {
 #[derive(Debug)]
 pub struct RelationImage {
     row_count: usize,
-    /// Per-column exact distinct-value counts, computed LAZILY on first
-    /// planner demand: the eager per-column pass was
-    /// the cold path's dominant fixed cost (~1.8 ms per 150k rows,
-    /// paid before the first query could run — even a key probe that
-    /// needs no estimates). The image is generation-keyed by the cache,
-    /// so a `OnceLock` per column IS the per-(snapshot, relation,
-    /// column) stats cache; the counts themselves are unchanged (same
-    /// exact algorithm, same values — laziness moves when, never what).
-    distincts: Box<[std::sync::OnceLock<u64>]>,
+    /// Per-column exact distinct-value counting state, persisted WITH
+    /// the image (`distinct.rs`): computed once at build/synthesis while
+    /// the slabs are warm, and — the reason it is state, not a bare
+    /// count — extended incrementally by the append path (O(tail),
+    /// exact). The image is generation-keyed by the cache, so the
+    /// persisted state IS the per-(snapshot, relation, column) stats
+    /// cache, and the former first-planner-demand lazy walk (an O(rows)
+    /// open-addressed pass plus a 2×rows scratch allocation per column,
+    /// paid by every cold prepare and again by every re-prepare after a
+    /// commit) no longer exists. Transient fixpoint images stay
+    /// uncounted — the planner never costs them (the `Idb` floor guard).
+    distincts: Box<[distinct::DistinctState]>,
     /// The field→column map (one span per field, in declaration order).
     spans: Box<[ColumnSpan]>,
     columns: Box<[Column]>,

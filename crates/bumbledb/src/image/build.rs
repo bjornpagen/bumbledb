@@ -123,24 +123,41 @@ fn allocate_with(
     })
 }
 
-/// Seals a filled frame into the shared image. Distinct counts are NOT
-/// computed here: the eager pass was the cold path's fixed cost. Each
-/// column's count materializes on first planner demand
-/// ([`RelationImage::distinct`]).
-fn seal(row_count: usize, frame: Frame) -> Arc<RelationImage> {
-    let distincts: Vec<std::sync::OnceLock<u64>> = frame
-        .columns
-        .iter()
-        .map(|_| std::sync::OnceLock::new())
-        .collect();
+/// Seals a filled frame into the shared image with its distinct
+/// counting state — computed by the caller: the scan paths count while
+/// the slabs are warm ([`super::distinct::count_columns`]), the append
+/// path extends the base's persisted state (O(tail), exact), and the
+/// transient fixpoint slots stay uncounted (the planner never costs
+/// them — the `Idb` floor guard).
+fn seal(
+    row_count: usize,
+    frame: Frame,
+    distincts: Box<[super::distinct::DistinctState]>,
+) -> Arc<RelationImage> {
     Arc::new(RelationImage {
         row_count,
-        distincts: distincts.into_boxed_slice(),
+        distincts,
         spans: frame.spans,
         columns: frame.columns.into_boxed_slice(),
         words: frame.words,
         bytes: frame.bytes,
     })
+}
+
+/// The build-path counting pass over a filled frame, spanned at batch
+/// granularity (`image_distincts`): one pass per column while the just-
+/// decoded slabs are warm, into state sized to the distincts.
+fn count_frame(row_count: usize, frame: &Frame) -> Box<[super::distinct::DistinctState]> {
+    let span = crate::obs::span_args(
+        crate::obs::names::IMAGE_DISTINCTS,
+        crate::obs::Category::Image,
+        frame.columns.len() as u64,
+        row_count as u64,
+    );
+    let states =
+        super::distinct::count_columns(&frame.columns, row_count, &frame.words, &frame.bytes);
+    span.end();
+    states
 }
 
 /// An empty (all-zero) sealed image laid out under an explicit stride
@@ -159,7 +176,8 @@ pub(super) fn image_with_tolerance(
         StridePadder::with_tolerance(tolerance),
     )
     .expect("falsifier row counts sit far below the checked slab ceiling");
-    seal(row_count, frame)
+    let distincts = count_frame(row_count, &frame);
+    seal(row_count, frame, distincts)
 }
 
 /// Builds the full-width image of `rel` from one sequential scan.
@@ -240,7 +258,8 @@ pub fn build(txn: &ReadTxn<'_>, schema: &Schema, rel: RelationId) -> Result<Arc<
         }));
     }
 
-    Ok(seal(row_count, frame))
+    let distincts = count_frame(row_count, &frame);
+    Ok(seal(row_count, frame, distincts))
 }
 
 /// [`build`]'s copy-on-append sibling (`docs/architecture/50-storage.md`
@@ -259,10 +278,11 @@ pub fn build(txn: &ReadTxn<'_>, schema: &Schema, rel: RelationId) -> Result<Arc<
 /// tail decode of only the new rows through the identical per-fact kernel,
 /// scanning from `from_row_id` (the base's build-time boundary — the
 /// `Q` next value on a fresh-keyed relation, the `S` high-water
-/// otherwise — read in the base's own transaction). The
-/// sealed image mints fresh lazy distinct locks — tail rows change exact
-/// counts, so distincts re-force on demand (the `TransientImage::refill`
-/// precedent), never copy.
+/// otherwise — read in the base's own transaction). The distinct
+/// counting state persists with the base exactly for this moment: the
+/// sealed image clones it and inserts ONLY the tail rows — exact by
+/// construction (the image oracle's served-vs-rebuilt equality), at
+/// O(tail) instead of a full re-walk.
 ///
 /// The caller (the cache's append arm) owns the lineage claim; this
 /// function still trusts nothing it can check: the stored row count is
@@ -372,7 +392,25 @@ pub fn append(
         }));
     }
 
-    Ok(seal(row_count, frame))
+    // The persisted counting state's whole payoff: clone the base's
+    // exact state and insert only the tail — never re-walk the prefix.
+    let span = crate::obs::span_args(
+        crate::obs::names::IMAGE_DISTINCTS,
+        crate::obs::Category::Image,
+        frame.columns.len() as u64,
+        (row_count - base_rows) as u64,
+    );
+    let mut distincts = base.distincts.clone();
+    super::distinct::extend_columns(
+        &mut distincts,
+        &frame.columns,
+        base_rows,
+        row_count,
+        &frame.words,
+        &frame.bytes,
+    );
+    span.end();
+    Ok(seal(row_count, frame, distincts))
 }
 
 /// One pooled transient-image slot (40-execution.md § the fixpoint driver): the fixpoint
@@ -495,18 +533,17 @@ impl TransientImage {
             };
             let frame = allocate(field_types, capacity)
                 .expect("seen-set row counts sit far below the checked slab ceiling");
-            self.image = Some(seal(row_count, frame));
+            // Transient images stay UNCOUNTED: the planner never costs
+            // them (an `Idb` occurrence pins no statistics — the
+            // selectivity floor guard), so a per-round counting pass
+            // would be pure waste inside the fixpoint's warm loop.
+            let distincts = super::distinct::uncounted_columns(&frame.columns);
+            self.image = Some(seal(row_count, frame, distincts));
             self.capacity = capacity;
         }
         let image = Arc::get_mut(self.image.as_mut().expect("filled above"))
             .expect("a non-reusable slot was just replaced by a unique Arc");
         image.row_count = row_count;
-        // The lazy distinct counters restart with the rows (no consumer
-        // reads them on the execution path today; staying honest is one
-        // assignment per column, allocation-free).
-        for lock in &mut image.distincts {
-            *lock = std::sync::OnceLock::new();
-        }
         let filled_to = fill_encoded_rows(image, base, rows_since(base));
         debug_assert_eq!(filled_to, row_count, "the caller counted its rows");
         Arc::clone(self.image.as_ref().expect("filled above"))
@@ -564,8 +601,8 @@ fn fill_encoded_rows<'r>(
 /// rows' canonical fact bytes (encoded ONCE, at validate) decode through
 /// exactly the plan a stored fact would, so the column layout, the
 /// implicit `id` column (`0..rows`, first — the synthetic field opens the
-/// sealed field list), stride padding, and the lazy distinct counters are
-/// all the ordinary image machinery, untouched.
+/// sealed field list), stride padding, and the build-time distinct
+/// counting pass are all the ordinary image machinery, untouched.
 ///
 /// # Panics
 ///
@@ -606,5 +643,6 @@ pub fn synthesize_closed(rel: RelationId, relation: &Relation) -> Arc<RelationIm
         .expect("sealed rows hold canonical fact bytes, encoded at validate");
     }
     decode_span.end();
-    seal(row_count, frame)
+    let distincts = count_frame(row_count, &frame);
+    seal(row_count, frame, distincts)
 }
