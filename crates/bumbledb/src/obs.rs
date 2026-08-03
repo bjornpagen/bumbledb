@@ -395,6 +395,15 @@ pub mod names {
             "jp_force_nX",
         ],
     ];
+    // The executor's phase attribution and this table move together, or
+    // `PhaseTimers::flush` would index past a row on a legal plan — the
+    // RULE/MAX_RULES precedent: the enum's declaration order is the row
+    // order, its count the row count, the node cap the column count.
+    #[cfg(feature = "trace")]
+    const _: () = {
+        assert!(JOIN_PHASE.len() == crate::exec::run::JoinPhase::COUNT);
+        assert!(JOIN_PHASE[0].len() == crate::exec::run::PHASE_NODE_CAP + 1);
+    };
 
     /// One sink-map rehash inside a measured execution. (new capacity, arity)
     pub const WORDMAP_GROW: &str = "wordmap_grow";

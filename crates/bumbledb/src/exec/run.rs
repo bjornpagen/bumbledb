@@ -254,9 +254,9 @@ pub const PHASE_NODE_CAP: usize = 8;
 #[cfg(feature = "trace")]
 pub struct PhaseTimers {
     /// `[node][phase] -> (accumulated ticks, calls)`.
-    acc: [[(u64, u64); 6]; PHASE_NODE_CAP + 1],
+    acc: [[(u64, u64); JoinPhase::COUNT]; PHASE_NODE_CAP + 1],
     /// `[node][phase] -> open segment's start tick`.
-    open: [[u64; 6]; PHASE_NODE_CAP + 1],
+    open: [[u64; JoinPhase::COUNT]; PHASE_NODE_CAP + 1],
     /// Bindings emitted (the RULE span's union accounting — trace-mode
     /// only; the release path's [`NoopCounters`] counts nothing).
     emits: u64,

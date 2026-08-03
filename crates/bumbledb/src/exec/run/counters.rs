@@ -7,17 +7,18 @@ use super::{JoinPhase, PHASE_NODE_CAP, PhaseTimers};
 
 #[cfg(feature = "trace")]
 impl JoinPhase {
-    /// Index into per-phase tables (matches `obs::names::JOIN_PHASE`).
+    /// The phase count — every per-phase table's width. Derived from the
+    /// last variant so a new phase moves it automatically; the name
+    /// table's const assert (`obs::names`, under `JOIN_PHASE`) refuses
+    /// to build until the table grows its row.
+    pub const COUNT: usize = Self::Force as usize + 1;
+
+    /// Index into per-phase tables: declaration order IS the table order
+    /// (`obs::names::JOIN_PHASE`), pinned at compile time by the name
+    /// table's const assert.
     #[must_use]
     pub fn index(self) -> usize {
-        match self {
-            Self::Iter => 0,
-            Self::Hash => 1,
-            Self::Probe => 2,
-            Self::Residual => 3,
-            Self::Descend => 4,
-            Self::Force => 5,
-        }
+        self as usize
     }
 }
 
@@ -26,8 +27,8 @@ impl PhaseTimers {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            acc: [[(0, 0); 6]; PHASE_NODE_CAP + 1],
-            open: [[0; 6]; PHASE_NODE_CAP + 1],
+            acc: [[(0, 0); JoinPhase::COUNT]; PHASE_NODE_CAP + 1],
+            open: [[0; JoinPhase::COUNT]; PHASE_NODE_CAP + 1],
             emits: 0,
         }
     }
