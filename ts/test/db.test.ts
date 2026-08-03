@@ -633,17 +633,13 @@ describe("the Db runtime against a real store", function suite() {
 		// A literal membership array is a program constant crossing as a
 		// set param on the wire — explain takes it exactly like execute.
 		const byMembership = query(Ledger).rule(function rule(r) {
-			const { id, kind } = v(Account)
+			const { id } = v(Account)
 			return r.match(Account, { id, kind: ["Checking", "Savings"] }).find({ id })
 		})
 		const preparedMembership = db.prepare(byMembership)
 		const rows = db.execute(preparedMembership, {})
 		const membershipReport = db.explain(preparedMembership, {})
-		assert.equal(
-			membershipReport.emits,
-			BigInt(rows.length),
-			"the membership array explains exactly as it executes"
-		)
+		assert.equal(membershipReport.emits, BigInt(rows.length), "the membership array explains exactly as it executes")
 	})
 
 	test("resume = reopen: the cached open reads every committed fact back", async function reopen() {
