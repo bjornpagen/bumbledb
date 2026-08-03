@@ -15,6 +15,11 @@
 //! (`start == q_end`) is `start < q_end + 1` — so a disconnected
 //! composite like `DURING ∪ MEETS` rides the same one-query index with
 //! a ±1-widened window instead of declining to the all-pairs classify.
+//! Multiple qualifying residuals on the same cover word CONJOIN into
+//! one intersected window (`max` of starts, `min` of ends — window
+//! conjunction is bound intersection), so a multi-leg ring against
+//! several outer constants pays one tighter query, not the loosest
+//! residual's candidate set.
 //! No per-component passes, no candidate dedup: the widening admits
 //! only the boundary stabbing sets, and the kernel filters them. The
 //! word-space ±1 is exact because encoded words are order-faithful
@@ -79,48 +84,58 @@ impl Executor {
         bindings: &Bindings,
         allen_sources: &[(Source, Source)],
     ) -> bool {
-        // The driver: the first Allen residual pairing a cover-word
+        // The driver set: every Allen residual pairing one cover-word
         // interval against an outer-constant side under a touching
         // mask, normalized to `classify(batch, constant)` — a
         // `(Slot, Batch)` residual drives under its converse mask (the
         // reversal law), because the abutment components are oriented
-        // even though overlap itself is symmetric.
-        let driver = allen_sources
-            .iter()
-            .enumerate()
-            .find_map(|(r_idx, (lhs, rhs))| {
-                let ((Source::Batch(word), Source::Slot(slot))
-                | (Source::Slot(slot), Source::Batch(word))) = (*lhs, *rhs)
-                else {
-                    return None;
-                };
-                let mask = self.allen_masks[node_idx][r_idx];
-                let mask = if matches!(lhs, Source::Slot(_)) {
-                    mask.converse()
-                } else {
-                    mask
-                };
-                let touching = mask.bits() & !touches().bits() == 0;
-                touching.then(|| {
-                    // The mask made geometry: base window `start <
-                    // q_end ∧ end > q_start`, each abutment component
-                    // relaxing its one bound by one order-faithful
-                    // word (module docs walk the equivalences).
-                    let meets = mask.bits() & crate::allen::AllenMask::MEETS.bits() != 0;
-                    let met_by = mask.bits() & crate::allen::AllenMask::MET_BY.bits() != 0;
-                    let q_start = bindings.get(slot);
-                    let q_end = bindings.get(slot + 1);
-                    (
-                        word,
-                        if meets {
-                            q_start.saturating_sub(1)
-                        } else {
-                            q_start
-                        },
-                        if met_by { q_end.saturating_add(1) } else { q_end },
-                    )
-                })
-            });
+        // even though overlap itself is symmetric. Qualifying
+        // residuals on the SAME cover word CONJOIN: every residual
+        // must hold, so a candidate lies in every window, and window
+        // conjunction is bound intersection — `start < min(q_end) ∧
+        // end > max(q_start)`, one query however many legs the ring
+        // has. The first qualifying residual anchors the word;
+        // residuals on other cover words stay post-filters (their
+        // window bounds a different column pair).
+        let mut driver: Option<(usize, u64, u64)> = None;
+        for (r_idx, (lhs, rhs)) in allen_sources.iter().enumerate() {
+            let ((Source::Batch(word), Source::Slot(slot))
+            | (Source::Slot(slot), Source::Batch(word))) = (*lhs, *rhs)
+            else {
+                continue;
+            };
+            let mask = self.allen_masks[node_idx][r_idx];
+            let mask = if matches!(lhs, Source::Slot(_)) {
+                mask.converse()
+            } else {
+                mask
+            };
+            if mask.bits() & !touches().bits() != 0 {
+                continue;
+            }
+            // The mask made geometry: base window `start < q_end ∧
+            // end > q_start`, each abutment component relaxing its one
+            // bound by one order-faithful word (module docs walk the
+            // equivalences).
+            let meets = mask.bits() & crate::allen::AllenMask::MEETS.bits() != 0;
+            let met_by = mask.bits() & crate::allen::AllenMask::MET_BY.bits() != 0;
+            let q_start = bindings.get(slot);
+            let q_start = if meets {
+                q_start.saturating_sub(1)
+            } else {
+                q_start
+            };
+            let q_end = bindings.get(slot + 1);
+            let q_end = if met_by { q_end.saturating_add(1) } else { q_end };
+            match &mut driver {
+                None => driver = Some((word, q_start, q_end)),
+                Some((anchor, lo, hi)) if *anchor == word => {
+                    *lo = (*lo).max(q_start);
+                    *hi = (*hi).min(q_end);
+                }
+                Some(_) => {}
+            }
+        }
         let Some((word, q_start, q_end)) = driver else {
             return false;
         };

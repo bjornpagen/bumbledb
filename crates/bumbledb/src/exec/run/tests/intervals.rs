@@ -1148,6 +1148,157 @@ fn the_overlap_enumeration_prunes_the_leaf_batch_to_true_candidates() {
     }
 }
 
+/// The conjunction's teeth (the r2 multi-leg ring shape): two
+/// const-side touching residuals against the SAME leaf interval conjoin
+/// into one intersected window — the leaf tally is the conjoined
+/// window's candidate count per outer pair, strictly tighter than
+/// either residual's window alone, and the answers still match the
+/// naive two-residual classify. The control swaps one residual to an
+/// untouching mask: it stops qualifying, the other drives alone, and
+/// the tally relaxes to that single window.
+#[test]
+fn const_side_touching_residuals_conjoin_into_one_window_query() {
+    let dir = TempDir::new("run-overlap-conjoin");
+    let schema = tagged_interval_schema(3);
+    let mut state = 0x2026_0803_u64;
+    // Wide domain, short spans: selective windows so the conjunction's
+    // tightening is visible in the tally; C is crossover-sized.
+    let spans = |count: usize, tag_base: u64, state: &mut u64| -> Vec<(u64, u64, u64)> {
+        (0..count)
+            .map(|i| {
+                let start = splitmix(state) % 200;
+                let end = match splitmix(state) % 13 {
+                    0 => u64::MAX,
+                    n => start + 1 + n,
+                };
+                (tag_base + i as u64, start, end)
+            })
+            .collect()
+    };
+    let a_rows = spans(4, 1, &mut state);
+    let b_rows = spans(4, 101, &mut state);
+    let c_rows = spans(40, 1001, &mut state);
+    let views = tagged_interval_views(
+        &dir,
+        &schema,
+        &[a_rows.clone(), b_rows.clone(), c_rows.clone()],
+    );
+    assert!(
+        c_rows.len() as u64 >= crate::exec::run::overlap_leaf::OVERLAP_CROSSOVER,
+        "the leaf group takes the index"
+    );
+    let occurrences = (0..3u16)
+        .map(|occ| Occurrence {
+            occ_id: OccId(occ),
+            source: crate::ir::AtomSource::Edb(RelationId(u32::from(occ))),
+            role: Role::Positive,
+            vars: vec![
+                (FieldId(0), VarId(occ * 2)),
+                (FieldId(1), VarId(occ * 2 + 1)),
+            ],
+            filters: vec![],
+        })
+        .collect::<Vec<_>>();
+    let slot_widths: BTreeMap<VarId, SlotWidth> = (0..3u16)
+        .flat_map(|occ| {
+            [
+                (VarId(occ * 2), SlotWidth::ONE),
+                (VarId(occ * 2 + 1), SlotWidth::TWO),
+            ]
+        })
+        .collect();
+    let residual = |lhs: u16, mask: AllenMask| PlacedAllen {
+        lhs: VarId(lhs),
+        rhs: VarId(5),
+        mask: MaskTerm::Literal(mask),
+    };
+    let query_for = |m1: AllenMask, m2: AllenMask| NormalizedQuery {
+        dead: None,
+        occurrences: occurrences.clone(),
+        residuals: vec![],
+        word_residuals: vec![],
+        allen_residuals: vec![residual(1, m1), residual(3, m2)],
+        duration_residuals: Vec::new(),
+        anti_probes: vec![],
+        slot_widths: slot_widths.clone(),
+    };
+    // The engine's windows, mirrored per residual orientation: both
+    // residuals sit (Slot, Batch) at the leaf, so each drives under
+    // its converse mask. INTERSECTS is self-converse and unwidened;
+    // DURING ∪ MEETS converses to CONTAINS ∪ MET_BY, whose MET_BY
+    // component relaxes the end bound by one word.
+    let count_in = |qs: u64, qe: u64| {
+        c_rows
+            .iter()
+            .filter(|c| c.1 < qe && c.2 > qs)
+            .count() as u64
+    };
+    let conjoined: u64 = a_rows
+        .iter()
+        .flat_map(|a| {
+            b_rows.iter().map(|b| {
+                count_in(a.1.max(b.1), a.2.min(b.2.saturating_add(1)))
+            })
+        })
+        .sum();
+    let single: u64 = a_rows
+        .iter()
+        .map(|a| count_in(a.1, a.2))
+        .sum::<u64>()
+        * b_rows.len() as u64;
+    assert!(
+        conjoined < single,
+        "the corpus makes the conjunction's tightening visible"
+    );
+    let m2 = AllenMask::DURING | AllenMask::MEETS;
+    let mut naive: BTreeSet<(u64, u64, u64)> = BTreeSet::new();
+    for &(ta, a_s, a_e) in &a_rows {
+        for &(tb, b_s, b_e) in &b_rows {
+            for &(tc, c_s, c_e) in &c_rows {
+                let classify = |s: u64, e: u64| {
+                    crate::allen::classify(
+                        bumbledb_theory::Interval::<u64>::new(s, e).expect("nonempty"),
+                        bumbledb_theory::Interval::<u64>::new(c_s, c_e).expect("nonempty"),
+                    )
+                };
+                if AllenMask::INTERSECTS.contains(classify(a_s, a_e))
+                    && m2.contains(classify(b_s, b_e))
+                {
+                    naive.insert((ta, tb, tc));
+                }
+            }
+        }
+    }
+    let query = query_for(AllenMask::INTERSECTS, m2);
+    let plan = planned_with_sinks(&query, &schema, &[0, 1, 2], &all_vars(&query));
+    let leaf = plan.nodes().len() - 1;
+    let (rows, tally) = run_tallied(&plan, &views, BATCH);
+    let got: BTreeSet<(u64, u64, u64)> = rows
+        .iter()
+        .map(|row| {
+            (
+                row[plan.slot_of(VarId(0))],
+                row[plan.slot_of(VarId(2))],
+                row[plan.slot_of(VarId(4))],
+            )
+        })
+        .collect();
+    assert_eq!(got, naive, "the conjoined enumeration answers the model");
+    assert_eq!(
+        tally[leaf], conjoined,
+        "two qualifying residuals conjoin into one intersected window"
+    );
+    // The control: an untouching second mask stops qualifying — the
+    // INTERSECTS residual drives alone and the tally relaxes.
+    let query = query_for(AllenMask::INTERSECTS, m2 | AllenMask::BEFORE);
+    let plan = planned_with_sinks(&query, &schema, &[0, 1, 2], &all_vars(&query));
+    let (_, tally) = run_tallied(&plan, &views, BATCH);
+    assert_eq!(
+        tally[leaf], single,
+        "an untouching residual drops out of the conjunction"
+    );
+}
+
 /// The pipelined twin: a third occurrence joined after the pair puts
 /// the Allen residual on a **middle** node, so it evaluates through
 /// `probe_pass`'s configuration-kernel pass (gather → codes → broadcast
