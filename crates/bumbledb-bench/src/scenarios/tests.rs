@@ -234,6 +234,24 @@ fn a_failed_capture_never_leaves_the_thread_local_capture_live() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// The traced warm draw is the MEDIAN-cost param set (min-of-3 ranking),
+/// never whichever draw the cursor landed on — Zipf heads and misses
+/// traced 20-150x off the timed p50 before.
+#[test]
+fn the_traced_warm_draw_is_the_median_cost_one() {
+    // min-of-3 ranking: 10 < 40 < 50 < 900 — the upper median of four
+    // is 50, at index 0.
+    let costs = [50u64, 10, 40, 900];
+    let median = super::trace::median_param(4, &mut |i| Ok(costs[i])).expect("ranked");
+    assert_eq!(median, 0);
+    // An odd count picks the true middle.
+    let costs = [900u64, 10, 40];
+    let median = super::trace::median_param(3, &mut |i| Ok(costs[i])).expect("ranked");
+    assert_eq!(median, 2);
+    // A cost error propagates.
+    assert!(super::trace::median_param(1, &mut |_| Err("boom".into())).is_err());
+}
+
 /// Scenario corpora are pure functions of the seed: the first row of
 /// every relation reproduces.
 #[test]
