@@ -67,8 +67,10 @@ impl Executor {
     /// residual's window around the outer constant (start-ordered).
     /// Declines — `false`, the generic iterator runs — for unqualified
     /// residual shapes, non-touching masks (any BEFORE/AFTER
-    /// component), sub-crossover groups, and non-scannable cursors
-    /// (pinned rows, forced suffixes).
+    /// component), sub-crossover groups, non-scannable cursors
+    /// (pinned rows, forced suffixes), and a group's first probe (the
+    /// amortization gate — the cache builds on the second probe,
+    /// `interval::overlap` module docs).
     #[expect(
         clippy::too_many_arguments,
         reason = "the split borrows and execution context are clearer unpacked"
@@ -167,7 +169,10 @@ impl Executor {
                 }
             }
         }
-        let dir = self.overlap.get_or_build(&self.overlap_key, |triples| {
+        // The amortization gate lives in the cache: the group's first
+        // probe declines (`None` — this parent runs generic, cheaper
+        // than paying the sort for one query), the second builds.
+        let Some(dir) = self.overlap.probe(&self.overlap_key, |triples| {
             let walked = colt.for_each_suffix_run(cover_cursor, |run| match run {
                 SuffixRun::Identity { start, len } => {
                     for position in start..start + len {
@@ -190,7 +195,9 @@ impl Executor {
                 }
             });
             debug_assert!(walked, "suffix_scannable gated the walk");
-        });
+        }) else {
+            return false;
+        };
         // A group grown between build and query would enumerate stale
         // positions — impossible within an execution (a level forces
         // whole), and tripwired here.

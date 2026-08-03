@@ -825,77 +825,90 @@ fn allen_masks_agree_with_the_naive_model_on_a_randomized_corpus() {
 
 // ---------- the overlap enumeration (finding 012, overlap_leaf.rs) ----------
 
-/// R(id u64, key u64, during Interval<u64>) — the t2 shape.
-fn keyed_span_schema() -> Schema {
+/// `relations` copies of R(id u64, key u64, during Interval<u64>) — the
+/// t2 shape (extra relations host the tally tests' outer probers).
+fn keyed_span_schema(relations: usize) -> Schema {
     SchemaDescriptor {
-        relations: vec![RelationDescriptor {
-            extension: None,
-            name: "R0".into(),
-            fields: vec![
-                FieldDescriptor {
-                    name: "id".into(),
-                    value_type: ValueType::U64,
-                    generation: Generation::None,
-                },
-                FieldDescriptor {
-                    name: "key".into(),
-                    value_type: ValueType::U64,
-                    generation: Generation::None,
-                },
-                FieldDescriptor {
-                    name: "during".into(),
-                    value_type: ValueType::Interval {
-                        element: bumbledb_theory::schema::IntervalElement::U64,
-                        width: None,
+        relations: (0..relations)
+            .map(|r| RelationDescriptor {
+                extension: None,
+                name: format!("R{r}").into(),
+                fields: vec![
+                    FieldDescriptor {
+                        name: "id".into(),
+                        value_type: ValueType::U64,
+                        generation: Generation::None,
                     },
-                    generation: Generation::None,
-                },
-            ],
-        }],
+                    FieldDescriptor {
+                        name: "key".into(),
+                        value_type: ValueType::U64,
+                        generation: Generation::None,
+                    },
+                    FieldDescriptor {
+                        name: "during".into(),
+                        value_type: ValueType::Interval {
+                            element: bumbledb_theory::schema::IntervalElement::U64,
+                            width: None,
+                        },
+                        generation: Generation::None,
+                    },
+                ],
+            })
+            .collect(),
         statements: vec![],
     }
     .validate()
     .expect("valid fixture")
 }
 
-/// Commits `(id, key, [start, end))` rows and builds the one image.
+/// Commits `(id, key, [start, end))` rows per relation and builds the
+/// images.
 fn keyed_span_views(
     dir: &TempDir,
     schema: &Schema,
-    rows: &[(u64, u64, u64, u64)],
+    data: &[&[(u64, u64, u64, u64)]],
 ) -> Vec<Arc<crate::image::RelationImage>> {
     let env = Environment::create(dir.path(), schema).expect("create");
     let view = env.read_txn().expect("txn");
     let mut delta = WriteDelta::new(schema);
-    for (id, key, start, end) in rows {
-        let mut bytes = Vec::new();
-        encode_fact(
-            &[
-                ValueRef::U64(*id),
-                ValueRef::U64(*key),
-                ValueRef::IntervalU64(
-                    bumbledb_theory::Interval::<u64>::new(*start, *end).expect("nonempty"),
-                ),
-            ],
-            schema.relation(RelationId(0)).layout(),
-            &mut bytes,
-        );
-        delta.insert(&view, RelationId(0), &bytes).expect("insert");
+    for (rel, rows) in data.iter().enumerate() {
+        let rel_id = RelationId(u32::try_from(rel).expect("small"));
+        for (id, key, start, end) in *rows {
+            let mut bytes = Vec::new();
+            encode_fact(
+                &[
+                    ValueRef::U64(*id),
+                    ValueRef::U64(*key),
+                    ValueRef::IntervalU64(
+                        bumbledb_theory::Interval::<u64>::new(*start, *end).expect("nonempty"),
+                    ),
+                ],
+                schema.relation(rel_id).layout(),
+                &mut bytes,
+            );
+            delta.insert(&view, rel_id, &bytes).expect("insert");
+        }
     }
     drop(view);
     commit(delta, &env).expect("commit");
     let txn = env.read_txn().expect("txn");
-    vec![crate::image::build(&txn, schema, RelationId(0)).expect("build")]
+    (0..data.len())
+        .map(|rel| {
+            let rel_id = RelationId(u32::try_from(rel).expect("small"));
+            crate::image::build(&txn, schema, rel_id).expect("build")
+        })
+        .collect()
 }
 
-/// The t2 query: `R(a, k, u), R(b, k, v), a < b, Allen(u, v, mask)` per
-/// mask — the per-key pairwise self-join, exactly the bench lane's
-/// shape (multiple masks conjoin, the rig's answer-identical lanes).
-fn keyed_span_query(masks: &[AllenMask]) -> NormalizedQuery {
+/// The t2 query between two relations: `Rₒ(a, k, u), Rᵢ(b, k, v),
+/// a < b, Allen(u, v, mask)` per mask — the per-key pairwise join
+/// (multiple masks conjoin, the rig's answer-identical lanes; equal
+/// relation ids give the bench lane's self-join).
+fn keyed_span_query_between(masks: &[AllenMask], outer: u32, inner: u32) -> NormalizedQuery {
     let occurrences = vec![
         Occurrence {
             occ_id: OccId(0),
-            source: crate::ir::AtomSource::Edb(RelationId(0)),
+            source: crate::ir::AtomSource::Edb(RelationId(outer)),
             role: Role::Positive,
             vars: vec![
                 (FieldId(0), VarId(0)),
@@ -906,7 +919,7 @@ fn keyed_span_query(masks: &[AllenMask]) -> NormalizedQuery {
         },
         Occurrence {
             occ_id: OccId(1),
-            source: crate::ir::AtomSource::Edb(RelationId(0)),
+            source: crate::ir::AtomSource::Edb(RelationId(inner)),
             role: Role::Positive,
             vars: vec![
                 (FieldId(0), VarId(3)),
@@ -945,6 +958,11 @@ fn keyed_span_query(masks: &[AllenMask]) -> NormalizedQuery {
         .into_iter()
         .collect(),
     }
+}
+
+/// The bench lane's self-join shape over R0.
+fn keyed_span_query(masks: &[AllenMask]) -> NormalizedQuery {
+    keyed_span_query_between(masks, 0, 0)
 }
 
 /// Group sizes straddling the crossover (`OVERLAP_CROSSOVER` = 16):
@@ -1043,10 +1061,10 @@ fn run_tallied(
 fn keyed_overlap_self_join_agrees_with_the_naive_model() {
     use bumbledb_theory::allen::Basic;
     let dir = TempDir::new("run-overlap-keyed");
-    let schema = keyed_span_schema();
+    let schema = keyed_span_schema(1);
     let mut state = 0x07E2_u64;
     let rows = keyed_span_corpus(&mut state);
-    let views = keyed_span_views(&dir, &schema, &rows);
+    let views = keyed_span_views(&dir, &schema, &[&rows]);
     let masks = [
         AllenMask::INTERSECTS,
         AllenMask::new(Basic::During.bit()).expect("singleton"),
@@ -1079,49 +1097,110 @@ fn keyed_overlap_self_join_agrees_with_the_naive_model() {
 
 /// The enumeration's teeth: under `INTERSECTS` the leaf batches exactly
 /// the true overlap candidates for crossover-sized groups (plus the
-/// full sub-crossover groups the fallback enumerates); the abutment
-/// composite `DURING ∪ MEETS` rides the same index under its
-/// ±1-widened window (the t3 mask — its tally is the widened-window
-/// candidate count, not the n²); the untouching `BEFORE ∪ DURING`
-/// composite must decline the index and enumerate every group whole.
-/// Candidate counts are computed from the raw rows — the assertion
-/// fails both ways: an incomplete index loses answers in the model
-/// test above, a silent fall-through to all-pairs shows up here as the
-/// n² tally.
+/// full sub-crossover groups the fallback enumerates, plus one whole
+/// group for each group's first probe — the amortization gate builds
+/// on the second); the abutment composite `DURING ∪ MEETS` rides the
+/// same index under its ±1-widened window (the t3 mask — its tally is
+/// the widened-window candidate count, not the n²); the untouching
+/// `BEFORE ∪ DURING` composite must decline the index and enumerate
+/// every group whole; and a once-probed corpus never builds at all —
+/// the finding's exact regression case. Candidate counts are computed
+/// from the raw rows — the assertion fails both ways: an incomplete
+/// index loses answers in the model test above, a silent fall-through
+/// to all-pairs shows up here as the n² tally.
+///
+/// Image iteration is hash-ordered, so WHICH outer row probes a group
+/// first is not modelable — the outer relations make the expectation
+/// order-free instead: R0 carries two IDENTICAL prober rows per key
+/// (either may decline, the window is the same), R2 carries one.
 #[test]
 fn the_overlap_enumeration_prunes_the_leaf_batch_to_true_candidates() {
     let dir = TempDir::new("run-overlap-tally");
-    let schema = keyed_span_schema();
+    let schema = keyed_span_schema(3);
     let mut state = 0x7A11_u64;
-    let rows = keyed_span_corpus(&mut state);
-    let views = keyed_span_views(&dir, &schema, &rows);
-    let group_size = |key: u64| rows.iter().filter(|r| r.1 == key).count() as u64;
-    // The expected leaf tally for a per-outer-row window over the
-    // cover group: the window's candidates for crossover-sized groups,
-    // the whole group below the crossover (the fallback enumerates).
-    let tally_for = |window: &dyn Fn(&(u64, u64, u64, u64), &(u64, u64, u64, u64)) -> bool| -> u64 {
-        rows.iter()
-            .map(|a| {
-                if group_size(a.1) >= crate::exec::run::overlap_leaf::OVERLAP_CROSSOVER {
-                    rows.iter().filter(|b| b.1 == a.1 && window(a, b)).count() as u64
-                } else {
-                    group_size(a.1)
+    let inner = keyed_span_corpus(&mut state);
+    let keys: Vec<u64> = (0..7).collect();
+    // One deterministic probe span per key — distinct windows across
+    // keys, a ray on key 6 (the widening's saturation case, on the
+    // small indexed group so the pruning sanity below stays visible).
+    let probe_span = |k: u64| -> (u64, u64) {
+        if k == 6 {
+            (250, u64::MAX)
+        } else {
+            (60 * k + 7, 60 * k + 21)
+        }
+    };
+    let twice: Vec<(u64, u64, u64, u64)> = keys
+        .iter()
+        .flat_map(|&k| {
+            let (s, e) = probe_span(k);
+            [(2 * k, k, s, e), (2 * k + 1, k, s, e)]
+        })
+        .collect();
+    let once: Vec<(u64, u64, u64, u64)> = keys
+        .iter()
+        .map(|&k| {
+            let (s, e) = probe_span(k);
+            (k, k, s, e)
+        })
+        .collect();
+    let views = keyed_span_views(&dir, &schema, &[&twice, &inner, &once]);
+    let group_size = |key: u64| inner.iter().filter(|r| r.1 == key).count() as u64;
+    // The expected leaf tally: per key, `probes` outer rows against
+    // the inner group — every probe of a sub-crossover group and each
+    // group's first probe enumerate the group whole; the rest
+    // enumerate the window's candidates.
+    let tally_for = |probes: u64, window: &dyn Fn((u64, u64), &(u64, u64, u64, u64)) -> bool| -> u64 {
+        keys.iter()
+            .map(|&k| {
+                let n = group_size(k);
+                if n < crate::exec::run::overlap_leaf::OVERLAP_CROSSOVER || probes == 1 {
+                    return probes * n;
                 }
+                let cand = inner
+                    .iter()
+                    .filter(|b| b.1 == k && window(probe_span(k), b))
+                    .count() as u64;
+                n + (probes - 1) * cand
             })
             .sum()
     };
     // Half-open shared point over raw words — the INTERSECTS window.
-    let overlaps = tally_for(&|a, b| b.2 < a.3 && b.3 > a.2);
+    let overlap_window =
+        |q: (u64, u64), b: &(u64, u64, u64, u64)| b.2 < q.1 && b.3 > q.0;
     // The DURING ∪ MEETS window under plan order [0, 1]: the leaf
     // batch is the second occurrence (b), so the driver classifies
     // (batch, constant) under the converse mask CONTAINS ∪ MET_BY —
-    // MET_BY (`b.start == a.end`) relaxes the start bound by one word.
-    let widened = tally_for(&|a, b| b.2 < a.3.saturating_add(1) && b.3 > a.2);
-    let full: u64 = rows.iter().map(|a| group_size(a.1)).sum();
-    assert!(overlaps * 4 < full, "the corpus makes pruning visible");
+    // MET_BY (`b.start == q.end`) relaxes the start bound by one word.
+    let widened_window =
+        |q: (u64, u64), b: &(u64, u64, u64, u64)| b.2 < q.1.saturating_add(1) && b.3 > q.0;
+    let overlaps = tally_for(2, &overlap_window);
+    let widened = tally_for(2, &widened_window);
+    let full: u64 = keys.iter().map(|&k| 2 * group_size(k)).sum();
+    // Pruning sanity over the part the index actually serves — the
+    // indexed groups' second probes (the first is the amortization
+    // gate's unavoidable generic pass).
+    let indexed_part = |window: &dyn Fn((u64, u64), &(u64, u64, u64, u64)) -> bool| -> (u64, u64) {
+        keys.iter()
+            .filter(|&&k| group_size(k) >= crate::exec::run::overlap_leaf::OVERLAP_CROSSOVER)
+            .map(|&k| {
+                let cand = inner
+                    .iter()
+                    .filter(|b| b.1 == k && window(probe_span(k), b))
+                    .count() as u64;
+                (cand, group_size(k))
+            })
+            .fold((0, 0), |(c, n), (ck, nk)| (c + ck, n + nk))
+    };
+    let (pruned, prunable) = indexed_part(&overlap_window);
+    let (pruned_widened, _) = indexed_part(&widened_window);
     assert!(
-        overlaps < widened && widened * 4 < full,
-        "the widened window sits strictly between overlap and all-pairs"
+        pruned * 2 < prunable && pruned_widened * 2 < prunable,
+        "the corpus makes pruning visible where the index runs"
+    );
+    assert!(
+        overlaps <= widened && widened < full,
+        "the widened window sits between overlap and all-pairs"
     );
     for (mask, expected, what) in [
         (
@@ -1233,21 +1312,32 @@ fn const_side_touching_residuals_conjoin_into_one_window_query() {
             .filter(|c| c.1 < qe && c.2 > qs)
             .count() as u64
     };
-    let conjoined: u64 = a_rows
+    // The group's FIRST probe runs generic (the amortization gate);
+    // every later parent queries its window. Image iteration is
+    // hash-ordered, so WHICH parent declines is not modelable — the
+    // expected tally is the full group plus every window but the
+    // declined parent's, one candidate value per possible first.
+    let full_group = c_rows.len() as u64;
+    let conjoined_windows: Vec<u64> = a_rows
         .iter()
         .flat_map(|a| {
-            b_rows.iter().map(|b| {
-                count_in(a.1.max(b.1), a.2.min(b.2.saturating_add(1)))
-            })
+            b_rows
+                .iter()
+                .map(|b| count_in(a.1.max(b.1), a.2.min(b.2.saturating_add(1))))
         })
-        .sum();
-    let single: u64 = a_rows
+        .collect();
+    let single_windows: Vec<u64> = a_rows
         .iter()
-        .map(|a| count_in(a.1, a.2))
-        .sum::<u64>()
-        * b_rows.len() as u64;
+        .flat_map(|a| b_rows.iter().map(|_| count_in(a.1, a.2)))
+        .collect();
+    let tallies_for = |windows: &[u64]| -> Vec<u64> {
+        let sum: u64 = windows.iter().sum();
+        windows.iter().map(|w| full_group + sum - w).collect()
+    };
+    let conjoined = tallies_for(&conjoined_windows);
+    let single = tallies_for(&single_windows);
     assert!(
-        conjoined < single,
+        conjoined.iter().max() < single.iter().min(),
         "the corpus makes the conjunction's tightening visible"
     );
     let m2 = AllenMask::DURING | AllenMask::MEETS;
@@ -1284,18 +1374,22 @@ fn const_side_touching_residuals_conjoin_into_one_window_query() {
         })
         .collect();
     assert_eq!(got, naive, "the conjoined enumeration answers the model");
-    assert_eq!(
-        tally[leaf], conjoined,
-        "two qualifying residuals conjoin into one intersected window"
+    assert!(
+        conjoined.contains(&tally[leaf]),
+        "two qualifying residuals conjoin into one intersected window \
+         (tally {}, candidates {conjoined:?})",
+        tally[leaf]
     );
     // The control: an untouching second mask stops qualifying — the
     // INTERSECTS residual drives alone and the tally relaxes.
     let query = query_for(AllenMask::INTERSECTS, m2 | AllenMask::BEFORE);
     let plan = planned_with_sinks(&query, &schema, &[0, 1, 2], &all_vars(&query));
     let (_, tally) = run_tallied(&plan, &views, BATCH);
-    assert_eq!(
-        tally[leaf], single,
-        "an untouching residual drops out of the conjunction"
+    assert!(
+        single.contains(&tally[leaf]),
+        "an untouching residual drops out of the conjunction \
+         (tally {}, candidates {single:?})",
+        tally[leaf]
     );
 }
 
@@ -1511,8 +1605,8 @@ fn overlap_profile() {
         // fraction (the t2 selectivity class).
         let rows = uniform_keyed_corpus(keys, per_key, per_key * 40, &mut state);
         let dir = TempDir::new(&format!("run-overlap-prof-{per_key}"));
-        let schema = keyed_span_schema();
-        let views = keyed_span_views(&dir, &schema, &rows);
+        let schema = keyed_span_schema(1);
+        let views = keyed_span_views(&dir, &schema, &[&rows]);
         let query = keyed_span_query(&index_masks);
         let plan = planned_with_sinks(&query, &schema, &[0, 1], &all_vars(&query));
         let (index_p50, index_answers) = timed_run(&plan, &views, 7);
@@ -1530,8 +1624,8 @@ fn overlap_profile() {
     let mut state = 0x07E2_5CA1_u64;
     let rows = uniform_keyed_corpus(400, 75, 3000, &mut state);
     let dir = TempDir::new("run-overlap-prof-t2");
-    let schema = keyed_span_schema();
-    let views = keyed_span_views(&dir, &schema, &rows);
+    let schema = keyed_span_schema(1);
+    let views = keyed_span_views(&dir, &schema, &[&rows]);
     for (name, masks) in [("generic", generic_masks), ("index", index_masks)] {
         let query = keyed_span_query(&masks);
         let plan = planned_with_sinks(&query, &schema, &[0, 1], &all_vars(&query));
