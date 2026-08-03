@@ -829,6 +829,45 @@ fn an_absent_fresh_sequence_is_found_against_the_tally() {
     );
 }
 
+/// Finding 033, the exhausted-sequence corner: the exemption keys on
+/// the STORED next-value being exhausted, never on the tally alone — a
+/// row holding an explicit `u64::MAX` must not mask a regressed `Q`
+/// underneath it (`alloc()` would re-issue every id between the
+/// regression and the ceiling).
+#[test]
+fn a_max_row_does_not_mask_a_regressed_fresh_next_value() {
+    let (_dir, db) = fixture_with_healthy_sibling("verify-q-max-masked");
+    db.write(|tx| {
+        tx.insert_dyn(
+            HOLDER,
+            &[
+                Value::U64(u64::MAX),
+                Value::String("mallory".as_bytes().into()),
+            ],
+        )
+        .map(|_| ())
+    })
+    .expect("insert the exhausting row");
+    // The legal exhausted shape first: stored == tally == MAX is exempt.
+    assert_eq!(db.verify_store().expect("verify").findings, vec![]);
+    let q = key(|b| keys::fresh_key(b, HOLDER, FieldId(0)));
+    raw_write(&db, |txn| {
+        txn.env()
+            .data()
+            .put(txn.raw_mut(), &q, 7u64.to_le_bytes().as_slice())
+            .expect("regress Q");
+    });
+    assert_eq!(
+        db.verify_store().expect("verify").findings,
+        vec![StoreFinding::FreshNextValueLow {
+            relation: HOLDER,
+            field: FieldId(0),
+            stored: 7,
+            max_fresh: u64::MAX,
+        }]
+    );
+}
+
 #[test]
 fn missing_membership_is_found_from_the_fact_side() {
     let (_dir, db) = fixture("verify-missing-m");
