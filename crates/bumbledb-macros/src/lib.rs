@@ -1032,16 +1032,15 @@ fn parse_bound(tokens: &mut Tokens, what: &str) -> BoundSpec {
             );
             return BoundSpec::Duration(field.into());
         }
-        if peek_path_dot(tokens) {
-            panic!(
-                "schema!: the bound path `{{..{name}.…}}` is refused — a dependent \
-                 bound names a field of the TARGET's own row, closed at the row \
-                 exactly like the weight (ruled 2026-07-24, ruling 6); state the \
-                 join as a law and read the local column (the pinned-column idiom): \
-                 `Pool(id, supply) <= Grid(pool, supply); \
-                 Pool(id) <=[watts]{{0..supply}} Device(pool);`"
-            );
-        }
+        assert!(
+            !peek_path_dot(tokens),
+            "schema!: the bound path `{{..{name}.…}}` is refused — a dependent \
+             bound names a field of the TARGET's own row, closed at the row \
+             exactly like the weight (ruled 2026-07-24, ruling 6); state the \
+             join as a law and read the local column (the pinned-column idiom): \
+             `Pool(id, supply) <= Grid(pool, supply); \
+             Pool(id) <=[watts]{{0..supply}} Device(pool);`"
+        );
         return BoundSpec::Field(name.into());
     }
     let (negative, text) = parse_int(tokens, what);
