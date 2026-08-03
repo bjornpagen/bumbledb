@@ -73,6 +73,41 @@ impl Colt {
         }
     }
 
+    /// Gathers one interval column pair at pinned positions (the batched
+    /// membership probe's stream fill, `probe_pass`'s point loop): per
+    /// position, `starts`/`ends` receive the pair's column words. Column
+    /// views resolve once per call, never per element (the instruction
+    /// diet); positions are pinned rows minted from this colt's own view
+    /// (the `gather_keys` invariant), bounds-checked here — this gather
+    /// is per probe pass, not the per-tuple interior.
+    pub fn gather_interval_pair(
+        &self,
+        start_col: usize,
+        end_col: usize,
+        positions: &[u32],
+        starts: &mut [u64],
+        ends: &mut [u64],
+    ) {
+        self.gather_column(start_col, positions, starts);
+        self.gather_column(end_col, positions, ends);
+    }
+
+    /// One column's words at pinned positions, view resolved once.
+    fn gather_column(&self, col: usize, positions: &[u32], out: &mut [u64]) {
+        match self.view.image().column(col) {
+            ColumnView::Words(words) => {
+                for (j, &position) in positions.iter().enumerate() {
+                    out[j] = words[position as usize];
+                }
+            }
+            ColumnView::Bytes(bytes) => {
+                for (j, &position) in positions.iter().enumerate() {
+                    out[j] = u64::from(bytes[position as usize]);
+                }
+            }
+        }
+    }
+
     /// Gathers one pinned row's key words at a join level into `out`
     /// (the pinned-leaf elision: the executor skips the
     /// batch machinery for `Cursor::Row` leaves and reads the row

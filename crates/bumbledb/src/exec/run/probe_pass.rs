@@ -444,17 +444,17 @@ impl Executor {
             let cursor_src = scratch.cursor_srcs[spec.occ];
             let n = scratch.survivors.len();
             grow_scratch(&mut scratch.mask, n);
+            // The cursor split: a pinned-row cursor names ONE fact, so
+            // its membership conjunction is a data-parallel compare over
+            // gathered interval columns — batched below, the r2 residual
+            // window's dominant shape. A node cursor keeps the
+            // existential position walk (irregular control flow by
+            // doctrine — `colt/gather.rs`).
+            scratch.point_rows.clear();
+            scratch.point_row_ks.clear();
             for k in 0..n {
                 let element = usize::try_from(scratch.survivors[k]).expect("batch fits usize");
                 let parent = scratch.parents[element] as usize;
-                scratch.point_checks.clear();
-                for &(start_col, end_col, src) in &scratch.point_sources {
-                    let point = match src {
-                        Source::Batch(base) => scratch.entry_keys[element * arity + base],
-                        Source::Slot(slot) => scratch.pending_bindings[parent * slot_count + slot],
-                    };
-                    scratch.point_checks.push((start_col, end_col, point));
-                }
                 let cursor = match cursor_src {
                     super::CursorSrc::Cover => scratch.children[element],
                     super::CursorSrc::Sibling(sub_idx) => {
@@ -465,9 +465,60 @@ impl Executor {
                     }
                     super::CursorSrc::Const(start) => start,
                 };
-                let pass = colts[spec.occ].any_position_matches(cursor, &scratch.point_checks);
-                counters.residual(node_idx, pass);
-                scratch.mask[k] = u8::from(pass);
+                if let Cursor::Row(position) = cursor {
+                    scratch.point_rows.push(position);
+                    scratch
+                        .point_row_ks
+                        .push(u32::try_from(k).expect("batch fits u32"));
+                    scratch.mask[k] = 1;
+                    continue;
+                }
+                scratch.point_checks.clear();
+                for &(start_col, end_col, src) in &scratch.point_sources {
+                    let point = match src {
+                        Source::Batch(base) => scratch.entry_keys[element * arity + base],
+                        Source::Slot(slot) => scratch.pending_bindings[parent * slot_count + slot],
+                    };
+                    scratch.point_checks.push((start_col, end_col, point));
+                }
+                scratch.mask[k] =
+                    u8::from(colts[spec.occ].any_position_matches(cursor, &scratch.point_checks));
+            }
+            // The pinned-row batch, per part: one column-pair gather over
+            // every pinned position (views resolve once per part, never
+            // per element), then the half-open compare folds into the
+            // mask branchlessly — the line-parallel twin of the word
+            // residuals above, not a per-element position walk.
+            let m = scratch.point_rows.len();
+            if m > 0 {
+                grow_scratch(&mut scratch.allen_gather, 2 * m);
+                let (starts, ends) = scratch.allen_gather[..2 * m].split_at_mut(m);
+                for &(start_col, end_col, src) in &scratch.point_sources {
+                    colts[spec.occ].gather_interval_pair(
+                        start_col,
+                        end_col,
+                        &scratch.point_rows,
+                        starts,
+                        ends,
+                    );
+                    for j in 0..m {
+                        let k = scratch.point_row_ks[j] as usize;
+                        let element =
+                            usize::try_from(scratch.survivors[k]).expect("batch fits usize");
+                        let parent = scratch.parents[element] as usize;
+                        let point = match src {
+                            Source::Batch(base) => scratch.entry_keys[element * arity + base],
+                            Source::Slot(slot) => {
+                                scratch.pending_bindings[parent * slot_count + slot]
+                            }
+                        };
+                        scratch.mask[k] &=
+                            u8::from(starts[j] <= point) & u8::from(point < ends[j]);
+                    }
+                }
+            }
+            for &keep in &scratch.mask[..n] {
+                counters.residual(node_idx, keep != 0);
             }
             crate::exec::kernel::compact_u32_by_mask(&mut scratch.survivors, &scratch.mask);
         }

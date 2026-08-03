@@ -279,6 +279,8 @@ impl Executor {
                     anti_sources: anti_specs.iter().map(|_| Vec::new()).collect(),
                     point_checks: Vec::new(),
                     point_sources: Vec::new(),
+                    point_rows: Vec::new(),
+                    point_row_ks: Vec::new(),
                     cursor_srcs: Vec::new(),
                     mask: Vec::with_capacity(batch),
                     parents: Vec::with_capacity(batch),

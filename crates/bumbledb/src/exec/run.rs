@@ -532,6 +532,14 @@ struct NodeScratch {
     /// against the runtime cover choice — the per-element half above
     /// reads through these (capacity retained).
     point_sources: Vec<(usize, usize, Source)>,
+    /// The membership probe's pinned-row split (`probe_pass`'s point
+    /// loop): positions of the survivors whose probed cursor is a
+    /// pinned row — batch-evaluated per part over gathered interval
+    /// columns instead of the per-element position walk (capacity
+    /// retained).
+    point_rows: Vec<u32>,
+    /// Survivor indices aligned with `point_rows` (the mask writeback).
+    point_row_ks: Vec<u32>,
     /// Occ-indexed cursor sources for this pass, resolved once per pass
     /// — the membership loops and the routing arm read cursors through
     /// this table instead of re-searching subatoms per element.
