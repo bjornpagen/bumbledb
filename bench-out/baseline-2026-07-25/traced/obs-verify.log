@@ -1,0 +1,33 @@
+verify: 100/2596 cases
+verify: loading the randomized lane's target corpus
+verify: 200/2596 cases
+verify: 300/2596 cases
+verify: 400/2596 cases
+verify: 500/2596 cases
+verify: 600/2596 cases
+verify: 700/2596 cases
+verify: 800/2596 cases
+verify: 900/2596 cases
+verify: 1000/2596 cases
+verify: 1100/2596 cases
+verify: 1200/2596 cases
+verify: 1300/2596 cases
+verify: 1400/2596 cases
+verify: 1500/2596 cases
+verify: 1600/2596 cases
+verify: 1700/2596 cases
+verify: 1800/2596 cases
+verify: 1900/2596 cases
+verify: converse-property lane
+verify: 120 naive-routed random cases (Pack + mask params — SQLite-inexpressible by the typed gate, enumerated, never silently skipped)
+verify: 2300/2596 cases
+verify: 2400/2596 cases
+verify: 2500/2596 cases
+verify: 2600/2596 cases
+verify: 16 naive-routed empty random cases (Pack + mask params — SQLite-inexpressible by the typed gate, enumerated, never silently skipped)
+verify: 3 naive-only cases (Pack — SQLite-inexpressible by `Inexpressible::PackAggregate`, enumerated, never silently skipped)
+verify: naive differential slice (129 ops)
+verify: calendar translator-unpaired families (hand-SQL + naive-checked, never dropped): free_busy
+verify: calendar naive differential slice (56 ops)
+verify: OK — 2889 cases, stamp 7a1a4951e1d408b0515a1c37f7807a7152707e425d8862522750f576c0f71f38
+verify OK: 2889 cases, stamp 7a1a4951e1d408b0515a1c37f7807a7152707e425d8862522750f576c0f71f38

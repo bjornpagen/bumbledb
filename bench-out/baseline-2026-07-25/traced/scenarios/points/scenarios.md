@@ -1,0 +1,90 @@
+# Scenario benchmarks
+
+Report-class measurements over non-ledger worlds; every query oracle-gated (value-identical results on both engines, every `SQLite` lane, never under a cap) before timing. Adversarial lanes run under a per-sample wall-clock cap (`SQLite`'s progress handler): a lane that trips it reports `DNF>cap` with NO percentiles — excluded from geomeans and counted. Protocol: 8 warmups, 1 samples, medians; `SQLite` file-backed WAL `synchronous=FULL`, fully indexed, prepared statements reused, ANALYZE run. ratio = ours/theirs (lower is better; <1 = bumbledb faster).
+
+
+## points (geomean ratio 0.12 over 5 timed)
+
+| query | lane | rows | ours p50 (us) | sqlite p50 (us) | ratio | regime |
+|---|---|---:|---:|---:|---:|---|
+| p1_by_id | sqlite | 1 | 0.3 | 1.1 | 0.30 | fresh-id point: key probe vs B-tree descent |
+| p2_by_key | sqlite | 1 | 1.0 | 1.5 | 0.69 | keyed string point: dictionary + determinant index |
+| p3_bucket_fetch | sqlite | 1139 | 12.1 | 214.5 | 0.06 | small fan-out through a dimension + id ceiling |
+| p4_size_band | sqlite | 1 | 0.3 | 109.4 | 0.00 | secondary range folded to Count |
+| p5_keyed_get | sqlite | 1 | 1.0 | 1.5 | 0.68 | keyed get (0.5.0): the point read through Doc(key) -> Doc — determinant probe, no query machinery |
+
+Overall geomean ratio across 5 queries: **0.12**.
+
+## Flame summaries (per query, --trace)
+
+### points / p1_by_id
+
+```text
+span                       calls     total_us      self_us       p50_us       max_us
+key_probe                      1        0.250        0.250        0.250        0.250
+execute                        1        0.333        0.042        0.333        0.333
+bind_params                    1        0.041        0.041        0.041        0.041
+total wall 0.333 us
+```
+
+### points / p2_by_key
+
+```text
+span                       calls     total_us      self_us       p50_us       max_us
+key_probe                      1        0.625        0.625        0.625        0.625
+bind_params                    1        0.583        0.583        0.583        0.583
+execute                        1        1.291        0.083        1.291        1.291
+total wall 1.291 us
+```
+
+### points / p3_bucket_fetch
+
+```text
+span                       calls     total_us      self_us       p50_us       max_us
+join                           1       15.000       15.000       15.000       15.000
+finalize                       1        1.750        1.750        1.750        1.750
+execute                        1       17.583        0.376       17.583       17.583
+views                          1        0.208        0.208        0.208        0.208
+rule_0                         1       15.416        0.167       15.416       15.416
+resolve_filters                1        0.041        0.041        0.041        0.041
+bind_params                    1        0.041        0.041        0.041        0.041
+view_memo_hit                  2        0.000        0.000        0.000        0.000
+select_probe                   2        0.000        0.000        0.000        0.000
+prefetch_pass                  1        0.000        0.000        0.000        0.000
+total wall 17.583 us
+
+phase                 calls     total_us     avg_ns      excl_us
+jp_hash_n0                1        0.125        125        0.125
+jp_probe_n0               1        3.500       3500        3.500
+jp_residual_n0            1        0.000          0        0.000
+jp_descend_n0             1       10.291      10291        0.541
+jp_force_n0               1        0.000          0        0.000
+jp_descend_n1            16        9.750        609        9.750
+```
+
+### points / p4_size_band
+
+```text
+span                       calls     total_us      self_us       p50_us       max_us
+rule_0                         1        0.666        0.251        0.666        0.666
+execute                        1        0.958        0.251        0.958        0.958
+join                           1        0.208        0.208        0.208        0.208
+views                          1        0.166        0.166        0.166        0.166
+resolve_filters                1        0.041        0.041        0.041        0.041
+bind_params                    1        0.041        0.041        0.041        0.041
+view_memo_hit                  1        0.000        0.000        0.000        0.000
+select_probe                   1        0.000        0.000        0.000        0.000
+finalize                       1        0.000        0.000        0.000        0.000
+total wall 0.958 us
+
+phase                 calls     total_us     avg_ns      excl_us
+jp_descend_n0             1        0.083         83        0.083
+```
+
+### points / p5_keyed_get
+
+```text
+span                       calls     total_us      self_us       p50_us       max_us
+total wall 0.000 us
+```
+

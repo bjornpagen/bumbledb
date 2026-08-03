@@ -1,0 +1,400 @@
+# crud — the OLTP home turf (report-class; SQLite's strong regime, benched to lose honestly)
+
+Seed 1. One shared op stream per family, folded by both engines; the read query oracle-gated (value-identical multisets) on every lane before any timed window. ratio = ours p50 / sqlite p50 (lower is better; <1 = bumbledb faster).
+
+## lane durable
+
+Db::create (LMDB issues F_FULLFSYNC unconditionally on macOS) vs SQLite WAL synchronous=FULL fullfsync=ON checkpoint_fullfsync=ON, cache_size=-262144, temp_store=MEMORY, whole-file mmap (coverage asserted), wal_autocheckpoint=0 — both engines flush to media on every commit
+
+| family | about | ours p50 (µs) | sqlite p50 (µs) | ratio | ours p99 (µs) | sqlite p99 (µs) |
+|---|---|---:|---:|---:|---:|---:|
+| crud_read_point | keyed point read: (id, val) by key, 3 hits + 1 miss rotation | 0.75 | 1.88 | 0.40 | 0.75 | 1.88 |
+| crud_insert | one fresh Doc row per commit (fsync-bound single-writer floor) | 8085.46 | 5634.88 | 1.43 | 8085.46 | 5634.88 |
+| crud_insert_10 | 10 fresh Doc rows per commit | 5132.46 | 5172.38 | 0.99 | 5132.46 | 5172.38 |
+| crud_insert_100 | 100 fresh Doc rows per commit | 10506.71 | 6759.67 | 1.55 | 10506.71 | 6759.67 |
+| crud_insert_1k | 1000 fresh Doc rows per commit | 28061.29 | 6090.42 | 4.61 | 28061.29 | 6090.42 |
+| crud_update | one keyed Counter value replacement per commit | 5598.33 | 4234.33 | 1.32 | 5598.33 | 4234.33 |
+| crud_update_hot | the same replacement pinned to one hot row (key 0 every sample) | 5028.50 | 5627.17 | 0.89 | 5028.50 | 5627.17 |
+| crud_upsert | keyed upsert over twice the Counter mass (~half miss) | 5007.83 | 4105.96 | 1.22 | 5007.83 | 4105.96 |
+| crud_rmw | read-modify-write round trip: point read, host +1, write back | 5040.67 | 3974.96 | 1.27 | 5040.67 | 3974.96 |
+| crud_delete | one pool-row delete per commit (delete-bearing by contract) | 4992.12 | 5498.21 | 0.91 | 4992.12 | 5498.21 |
+| crud_mixed_90_10 | 9 point reads + 1 single-row insert commit per sample | 3992.75 | 5100.79 | 0.78 | 3992.75 | 5100.79 |
+
+## lane nosync
+
+Db::ephemeral (MDB_NOSYNC: pages and meta pwritten, no sync boundary ever crossed) vs SQLite WAL synchronous=OFF fullfsync=OFF checkpoint_fullfsync=OFF, cache_size=-262144, temp_store=MEMORY, whole-file mmap (coverage asserted), wal_autocheckpoint=0 — WAL frames written, never synced (OFF, not NORMAL: NORMAL still syncs at checkpoints, which would cross-match a store kind that never syncs)
+
+| family | about | ours p50 (µs) | sqlite p50 (µs) | ratio | ours p99 (µs) | sqlite p99 (µs) |
+|---|---|---:|---:|---:|---:|---:|
+| crud_read_point | keyed point read: (id, val) by key, 3 hits + 1 miss rotation | 0.50 | 1.25 | 0.40 | 0.50 | 1.25 |
+| crud_insert | one fresh Doc row per commit (fsync-bound single-writer floor) | 32.54 | 16.04 | 2.03 | 32.54 | 16.04 |
+| crud_insert_10 | 10 fresh Doc rows per commit | 85.00 | 29.67 | 2.87 | 85.00 | 29.67 |
+| crud_insert_100 | 100 fresh Doc rows per commit | 538.21 | 129.29 | 4.16 | 538.21 | 129.29 |
+| crud_insert_1k | 1000 fresh Doc rows per commit | 4608.58 | 714.04 | 6.45 | 4608.58 | 714.04 |
+| crud_update | one keyed Counter value replacement per commit | 33.38 | 10.54 | 3.17 | 33.38 | 10.54 |
+| crud_update_hot | the same replacement pinned to one hot row (key 0 every sample) | 27.83 | 9.71 | 2.87 | 27.83 | 9.71 |
+| crud_upsert | keyed upsert over twice the Counter mass (~half miss) | 27.96 | 28.50 | 0.98 | 27.96 | 28.50 |
+| crud_rmw | read-modify-write round trip: point read, host +1, write back | 34.29 | 11.04 | 3.11 | 34.29 | 11.04 |
+| crud_delete | one pool-row delete per commit (delete-bearing by contract) | 30.88 | 16.58 | 1.86 | 30.88 | 16.58 |
+| crud_mixed_90_10 | 9 point reads + 1 single-row insert commit per sample | 37.67 | 29.04 | 1.30 | 37.67 | 29.04 |
+
+post-state: Doc + Counter value-identical across engines, both lanes. Every row above is report-class, never gated — no budget gate reads a crud number.
+
+## Flame summaries (per family, --trace)
+
+### durable / crud_read_point
+
+```text
+span                       calls     total_us      self_us       p50_us       max_us
+validate_lower                 1       10.166       10.166       10.166       10.166
+prepare                        1       16.666        3.459       16.666       16.666
+validate_rules                 1        1.750        1.750        1.750        1.750
+key_probe                      1        0.958        0.958        0.958        0.958
+validate                       1       12.416        0.500       12.416       12.416
+normalize                      1        0.625        0.500        0.625        0.625
+execute                        1        1.416        0.292        1.416        1.416
+classify                       1        0.166        0.166        0.166        0.166
+bind_params                    1        0.166        0.166        0.166        0.166
+normalize_fold                 1        0.125        0.125        0.125        0.125
+total wall 18.541 us
+```
+
+### durable / crud_insert
+
+```text
+span                       calls     total_us      self_us       p50_us       max_us
+lmdb_commit                    1     4430.041     4430.041     4430.041     4430.041
+apply_inserts                  1       27.541       27.541       27.541       27.541
+write_txn                      1     4497.958       24.542     4497.958     4497.958
+commit                         1     4473.416        9.627     4473.416     4473.416
+counters_flush                 1        5.750        5.750        5.750        5.750
+judgment_source                1        0.208        0.208        0.208        0.208
+apply_deletes                  1        0.125        0.125        0.125        0.125
+judgment_target                1        0.083        0.083        0.083        0.083
+judgment_capacities            1        0.041        0.041        0.041        0.041
+total wall 4497.958 us
+```
+
+### durable / crud_insert_10
+
+```text
+span                       calls     total_us      self_us       p50_us       max_us
+lmdb_commit                    1     6210.291     6210.291     6210.291     6210.291
+write_txn                      1     6621.625      164.667     6621.625     6621.625
+apply_inserts                  1      160.458      160.458      160.458      160.458
+commit                         1     6456.958       71.627     6456.958     6456.958
+counters_flush                 1       11.833       11.833       11.833       11.833
+judgment_source                1        1.583        1.583        1.583        1.583
+judgment_target                1        0.708        0.708        0.708        0.708
+judgment_capacities            1        0.250        0.250        0.250        0.250
+apply_deletes                  1        0.208        0.208        0.208        0.208
+total wall 6621.625 us
+```
+
+### durable / crud_insert_100
+
+```text
+span                       calls     total_us      self_us       p50_us       max_us
+lmdb_commit                    1     8174.416     8174.416     8174.416     8174.416
+write_txn                      1     9703.750      789.500     9703.750     9703.750
+apply_inserts                  1      651.916      651.916      651.916      651.916
+commit                         1     8914.250       79.670     8914.250     8914.250
+counters_flush                 1        5.916        5.916        5.916        5.916
+judgment_source                1        1.291        1.291        1.291        1.291
+judgment_target                1        0.625        0.625        0.625        0.625
+judgment_capacities            1        0.208        0.208        0.208        0.208
+apply_deletes                  1        0.208        0.208        0.208        0.208
+total wall 9703.750 us
+```
+
+### durable / crud_insert_1k
+
+```text
+span                       calls     total_us      self_us       p50_us       max_us
+lmdb_commit                    1    21016.458    21016.458    21016.458    21016.458
+apply_inserts                  1     2833.208     2833.208     2833.208     2833.208
+write_txn                      1    26501.333     2491.875    26501.333    26501.333
+commit                         1    24009.458      154.127    24009.458    24009.458
+counters_flush                 1        3.458        3.458        3.458        3.458
+judgment_source                1        2.083        2.083        2.083        2.083
+judgment_target                1        0.083        0.083        0.083        0.083
+judgment_capacities            1        0.041        0.041        0.041        0.041
+apply_deletes                  1        0.000        0.000        0.000        0.000
+total wall 26501.333 us
+```
+
+### durable / crud_update
+
+```text
+span                       calls     total_us      self_us       p50_us       max_us
+lmdb_commit                    1     4955.708     4955.708     4955.708     4955.708
+apply_deletes                  1       15.666       15.666       15.666       15.666
+write_txn                      1     4996.708       12.083     4996.708     4996.708
+apply_inserts                  1        8.000        8.000        8.000        8.000
+commit                         1     4984.625        3.878     4984.625     4984.625
+counters_flush                 1        1.208        1.208        1.208        1.208
+judgment_source                1        0.083        0.083        0.083        0.083
+judgment_target                1        0.041        0.041        0.041        0.041
+judgment_capacities            1        0.041        0.041        0.041        0.041
+total wall 4996.708 us
+```
+
+### durable / crud_update_hot
+
+```text
+span                       calls     total_us      self_us       p50_us       max_us
+lmdb_commit                    1     4663.416     4663.416     4663.416     4663.416
+apply_deletes                  1       27.208       27.208       27.208       27.208
+write_txn                      1     4732.791       25.875     4732.791     4732.791
+commit                         1     4706.916        7.336     4706.916     4706.916
+apply_inserts                  1        7.291        7.291        7.291        7.291
+counters_flush                 1        1.416        1.416        1.416        1.416
+judgment_source                1        0.125        0.125        0.125        0.125
+judgment_target                1        0.083        0.083        0.083        0.083
+judgment_capacities            1        0.041        0.041        0.041        0.041
+total wall 4732.791 us
+```
+
+### durable / crud_upsert
+
+```text
+span                       calls     total_us      self_us       p50_us       max_us
+lmdb_commit                    1     4584.833     4584.833     4584.833     4584.833
+write_txn                      1     4715.750       53.042     4715.750     4715.750
+apply_inserts                  1       40.833       40.833       40.833       40.833
+commit                         1     4662.708       27.711     4662.708     4662.708
+counters_flush                 1        7.458        7.458        7.458        7.458
+judgment_source                1        1.041        1.041        1.041        1.041
+judgment_target                1        0.541        0.541        0.541        0.541
+apply_deletes                  1        0.166        0.166        0.166        0.166
+judgment_capacities            1        0.125        0.125        0.125        0.125
+total wall 4715.750 us
+```
+
+### durable / crud_rmw
+
+```text
+span                       calls     total_us      self_us       p50_us       max_us
+lmdb_commit                    1     5448.916     5448.916     5448.916     5448.916
+write_txn                      1     5612.583       72.833     5612.583     5612.583
+apply_deletes                  1       42.083       42.083       42.083       42.083
+commit                         1     5539.750       29.128     5539.750     5539.750
+apply_inserts                  1       15.541       15.541       15.541       15.541
+counters_flush                 1        2.625        2.625        2.625        2.625
+judgment_source                1        0.791        0.791        0.791        0.791
+judgment_target                1        0.458        0.458        0.458        0.458
+judgment_capacities            1        0.208        0.208        0.208        0.208
+total wall 5612.583 us
+```
+
+### durable / crud_delete
+
+```text
+span                       calls     total_us      self_us       p50_us       max_us
+lmdb_commit                    1     6134.416     6134.416     6134.416     6134.416
+apply_deletes                  1       49.583       49.583       49.583       49.583
+write_txn                      1     6277.000       45.459     6277.000     6277.000
+commit                         1     6231.541       28.503     6231.541     6231.541
+counters_flush                 1       17.458       17.458       17.458       17.458
+judgment_source                1        0.791        0.791        0.791        0.791
+judgment_target                1        0.541        0.541        0.541        0.541
+judgment_capacities            1        0.166        0.166        0.166        0.166
+apply_inserts                  1        0.083        0.083        0.083        0.083
+total wall 6277.000 us
+```
+
+### durable / crud_mixed_90_10
+
+```text
+span                       calls     total_us      self_us       p50_us       max_us
+lmdb_commit                    1     5244.166     5244.166     5244.166     5244.166
+key_probe                      9       77.081       77.081        2.500       25.000
+prepare                        1      122.250       56.252      122.250      122.250
+apply_inserts                  1       45.000       45.000       45.000       45.000
+write_txn                      1     5366.750       38.250     5366.750     5366.750
+validate_rules                 1       28.666       28.666       28.666       28.666
+commit                         1     5328.500       25.960     5328.500     5328.500
+validate_lower                 1       13.291       13.291       13.291       13.291
+counters_flush                 1       11.250       11.250       11.250       11.250
+normalize                      1       12.916        9.167       12.916       12.916
+total wall 5593.917 us
+```
+
+### nosync / crud_read_point
+
+```text
+span                       calls     total_us      self_us       p50_us       max_us
+prepare                        1        5.500        1.876        5.500        5.500
+validate                       1        3.083        1.750        3.083        3.083
+validate_rules                 1        0.958        0.958        0.958        0.958
+key_probe                      1        0.541        0.541        0.541        0.541
+validate_lower                 1        0.375        0.375        0.375        0.375
+normalize                      1        0.416        0.292        0.416        0.416
+execute                        1        0.833        0.167        0.833        0.833
+classify                       1        0.125        0.125        0.125        0.125
+bind_params                    1        0.125        0.125        0.125        0.125
+normalize_fold                 1        0.083        0.083        0.083        0.083
+total wall 6.667 us
+```
+
+### nosync / crud_insert
+
+```text
+span                       calls     total_us      self_us       p50_us       max_us
+lmdb_commit                    1       21.333       21.333       21.333       21.333
+apply_inserts                  1        4.833        4.833        4.833        4.833
+write_txn                      1       33.708        4.250       33.708       33.708
+commit                         1       29.458        1.877       29.458       29.458
+counters_flush                 1        1.250        1.250        1.250        1.250
+judgment_source                1        0.083        0.083        0.083        0.083
+judgment_target                1        0.041        0.041        0.041        0.041
+apply_deletes                  1        0.041        0.041        0.041        0.041
+judgment_capacities            1        0.000        0.000        0.000        0.000
+total wall 33.708 us
+```
+
+### nosync / crud_insert_10
+
+```text
+span                       calls     total_us      self_us       p50_us       max_us
+lmdb_commit                    1       35.291       35.291       35.291       35.291
+apply_inserts                  1       25.125       25.125       25.125       25.125
+write_txn                      1       82.375       14.542       82.375       82.375
+commit                         1       67.833        6.043       67.833       67.833
+counters_flush                 1        1.250        1.250        1.250        1.250
+judgment_source                1        0.083        0.083        0.083        0.083
+apply_deletes                  1        0.041        0.041        0.041        0.041
+judgment_target                1        0.000        0.000        0.000        0.000
+judgment_capacities            1        0.000        0.000        0.000        0.000
+total wall 82.375 us
+```
+
+### nosync / crud_insert_100
+
+```text
+span                       calls     total_us      self_us       p50_us       max_us
+apply_inserts                  1      235.500      235.500      235.500      235.500
+lmdb_commit                    1      170.791      170.791      170.791      170.791
+write_txn                      1      551.333      131.167      551.333      551.333
+commit                         1      420.166       12.335      420.166      420.166
+counters_flush                 1        1.291        1.291        1.291        1.291
+judgment_source                1        0.208        0.208        0.208        0.208
+judgment_target                1        0.041        0.041        0.041        0.041
+judgment_capacities            1        0.000        0.000        0.000        0.000
+apply_deletes                  1        0.000        0.000        0.000        0.000
+total wall 551.333 us
+```
+
+### nosync / crud_insert_1k
+
+```text
+span                       calls     total_us      self_us       p50_us       max_us
+apply_inserts                  1     2128.208     2128.208     2128.208     2128.208
+write_txn                      1     4492.125     1227.917     4492.125     4492.125
+lmdb_commit                    1     1002.458     1002.458     1002.458     1002.458
+commit                         1     3264.208      130.085     3264.208     3264.208
+counters_flush                 1        1.958        1.958        1.958        1.958
+judgment_source                1        1.458        1.458        1.458        1.458
+judgment_target                1        0.041        0.041        0.041        0.041
+judgment_capacities            1        0.000        0.000        0.000        0.000
+apply_deletes                  1        0.000        0.000        0.000        0.000
+total wall 4492.125 us
+```
+
+### nosync / crud_update
+
+```text
+span                       calls     total_us      self_us       p50_us       max_us
+lmdb_commit                    1       20.458       20.458       20.458       20.458
+apply_deletes                  1        5.666        5.666        5.666        5.666
+write_txn                      1       33.833        2.833       33.833       33.833
+apply_inserts                  1        2.416        2.416        2.416        2.416
+commit                         1       31.000        1.919       31.000       31.000
+counters_flush                 1        0.500        0.500        0.500        0.500
+judgment_source                1        0.041        0.041        0.041        0.041
+judgment_target                1        0.000        0.000        0.000        0.000
+judgment_capacities            1        0.000        0.000        0.000        0.000
+total wall 33.833 us
+```
+
+### nosync / crud_update_hot
+
+```text
+span                       calls     total_us      self_us       p50_us       max_us
+lmdb_commit                    1       16.958       16.958       16.958       16.958
+apply_deletes                  1        3.541        3.541        3.541        3.541
+commit                         1       25.250        2.420       25.250       25.250
+write_txn                      1       27.541        2.291       27.541       27.541
+apply_inserts                  1        1.875        1.875        1.875        1.875
+counters_flush                 1        0.333        0.333        0.333        0.333
+judgment_target                1        0.041        0.041        0.041        0.041
+judgment_source                1        0.041        0.041        0.041        0.041
+judgment_capacities            1        0.041        0.041        0.041        0.041
+total wall 27.541 us
+```
+
+### nosync / crud_upsert
+
+```text
+span                       calls     total_us      self_us       p50_us       max_us
+lmdb_commit                    1       19.166       19.166       19.166       19.166
+apply_inserts                  1        3.666        3.666        3.666        3.666
+write_txn                      1       28.083        2.458       28.083       28.083
+commit                         1       25.625        1.670       25.625       25.625
+counters_flush                 1        1.041        1.041        1.041        1.041
+judgment_target                1        0.041        0.041        0.041        0.041
+judgment_source                1        0.041        0.041        0.041        0.041
+judgment_capacities            1        0.000        0.000        0.000        0.000
+apply_deletes                  1        0.000        0.000        0.000        0.000
+total wall 28.083 us
+```
+
+### nosync / crud_rmw
+
+```text
+span                       calls     total_us      self_us       p50_us       max_us
+lmdb_commit                    1       21.208       21.208       21.208       21.208
+apply_deletes                  1        4.291        4.291        4.291        4.291
+write_txn                      1       34.291        3.625       34.291       34.291
+commit                         1       30.666        2.627       30.666       30.666
+apply_inserts                  1        2.208        2.208        2.208        2.208
+counters_flush                 1        0.250        0.250        0.250        0.250
+judgment_target                1        0.041        0.041        0.041        0.041
+judgment_capacities            1        0.041        0.041        0.041        0.041
+judgment_source                1        0.000        0.000        0.000        0.000
+total wall 34.291 us
+```
+
+### nosync / crud_delete
+
+```text
+span                       calls     total_us      self_us       p50_us       max_us
+lmdb_commit                    1       20.125       20.125       20.125       20.125
+apply_deletes                  1        3.958        3.958        3.958        3.958
+write_txn                      1       28.916        1.958       28.916       28.916
+commit                         1       26.958        1.586       26.958       26.958
+counters_flush                 1        1.166        1.166        1.166        1.166
+judgment_target                1        0.041        0.041        0.041        0.041
+judgment_source                1        0.041        0.041        0.041        0.041
+apply_inserts                  1        0.041        0.041        0.041        0.041
+judgment_capacities            1        0.000        0.000        0.000        0.000
+total wall 28.916 us
+```
+
+### nosync / crud_mixed_90_10
+
+```text
+span                       calls     total_us      self_us       p50_us       max_us
+lmdb_commit                    1       23.750       23.750       23.750       23.750
+key_probe                      9        5.038        5.038        0.500        0.833
+apply_inserts                  1        4.291        4.291        4.291        4.291
+prepare                        1        7.333        3.042        7.333        7.333
+write_txn                      1       33.500        2.459       33.500       33.500
+commit                         1       31.041        1.586       31.041       31.041
+validate_rules                 1        1.458        1.458        1.458        1.458
+counters_flush                 1        1.250        1.250        1.250        1.250
+validate                       1        3.250        1.167        3.250        3.250
+validate_lower                 1        0.625        0.625        0.625        0.625
+total wall 48.875 us
+```
+
