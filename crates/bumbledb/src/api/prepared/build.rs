@@ -222,6 +222,7 @@ fn prepare_witnessed<'s, S>(
         params,
         resolved_params: Vec::new(),
         unresolved_literals,
+        param_word_memo: Vec::new(),
         missed_params: Vec::new(),
         sink,
         ray_probes,
@@ -539,6 +540,7 @@ pub(crate) fn prepare_program<'s, S>(
         params,
         resolved_params: Vec::new(),
         unresolved_literals,
+        param_word_memo: Vec::new(),
         missed_params: Vec::new(),
         sink,
         // Ray probes over a recursive program are DEFERRED: an `Idb`

@@ -348,3 +348,81 @@ fn a_cross_atom_mask_param_resolves_into_the_executors_residual() {
     // Warm rebind: back and forth, same prepared query.
     assert_eq!(run(AllenMask::INTERSECTS), vec![(1, 2)]);
 }
+
+/// The per-slot param-word memo (docs/architecture/40-execution.md):
+/// re-binding the same text serves the word from the slot's memo — a
+/// hit is final, the dictionary being append-only — while a different
+/// text re-probes and a MISS never memoizes: a text interned by a
+/// later commit must be seen by the very next bind.
+#[cfg(feature = "trace")]
+#[test]
+fn param_word_memo_hits_are_final_and_misses_never_memoize() {
+    use crate::obs;
+
+    let dir = TempDir::new("prepared-param-word-memo");
+    let schema = schema();
+    let env = Environment::create(dir.path(), &schema).expect("create");
+    insert_postings(&env, &schema, &[(1, 7, "alpha", 10), (2, 7, "beta", 20)]);
+    let cache = ImageCache::new(&schema);
+
+    let run = |prepared: &mut PreparedQuery<'_, ()>,
+               txn: &crate::storage::env::ReadTxn<'_>,
+               text: &str| {
+        obs::start_capture();
+        let out = prepared
+            .execute_collect(txn, &cache, &memo_param(text))
+            .expect("execute");
+        let events = obs::finish_capture();
+        let hits = events
+            .iter()
+            .filter(|e| e.name == obs::names::PARAM_WORD_MEMO)
+            .count();
+        (amounts_of(&out), hits)
+    };
+
+    let txn = env.read_txn().expect("txn");
+    let mut prepared = prepare(&txn, &cache, &schema, &by_memo_query()).expect("prepare");
+    assert_eq!(
+        run(&mut prepared, &txn, "alpha"),
+        (vec![10], 0),
+        "the cold bind probes the dictionary"
+    );
+    assert_eq!(
+        run(&mut prepared, &txn, "alpha"),
+        (vec![10], 1),
+        "the warm re-bind hits the slot memo"
+    );
+    assert_eq!(
+        run(&mut prepared, &txn, "beta"),
+        (vec![20], 0),
+        "a different text re-probes"
+    );
+    assert_eq!(run(&mut prepared, &txn, "beta"), (vec![20], 1));
+
+    // The miss-finality law: "gamma" is unknown (empty result, sentinel
+    // bind) and must NOT memoize — a commit interns it, and the very
+    // next bind sees the fresh word through the ordinary probe.
+    assert_eq!(
+        run(&mut prepared, &txn, "gamma"),
+        (vec![], 0),
+        "a dictionary miss binds the sentinel"
+    );
+    assert_eq!(
+        run(&mut prepared, &txn, "gamma"),
+        (vec![], 0),
+        "misses never memoize"
+    );
+    drop(txn);
+    insert_postings(&env, &schema, &[(3, 7, "gamma", 30)]);
+    let txn = env.read_txn().expect("txn");
+    assert_eq!(
+        run(&mut prepared, &txn, "gamma"),
+        (vec![30], 0),
+        "the post-intern bind probes and finds the fresh word"
+    );
+    assert_eq!(
+        run(&mut prepared, &txn, "gamma"),
+        (vec![30], 1),
+        "and only then memoizes"
+    );
+}

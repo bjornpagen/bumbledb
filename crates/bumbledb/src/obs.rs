@@ -259,6 +259,12 @@ pub mod names {
     /// the dictionary is append-only
     /// (docs/architecture/40-execution.md). (intern word, byte length)
     pub const DICT_RESOLVE: &str = "dict_resolve";
+    /// One scalar String param bind served from the per-slot word memo
+    /// — the dictionary descent skipped; sound because the append-only
+    /// dictionary makes a resolved (text → word) pair final, and a MISS
+    /// never memoizes (docs/architecture/40-execution.md). (param
+    /// index, word)
+    pub const PARAM_WORD_MEMO: &str = "param_word_memo";
     /// A `str` literal latched: the dictionary is append-only, so its
     /// resolved word rewrites the plan template once, permanently —
     /// fires once per distinct literal over the prepared query's

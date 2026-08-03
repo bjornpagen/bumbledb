@@ -239,6 +239,14 @@ pub struct PreparedQuery<'s, S> {
     /// is the fully-latched fast path: `resolve_filters` is skipped
     /// entirely, the resolved tables having been written once and final.
     unresolved_literals: u32,
+    /// Per param slot: the last successful String resolution — the
+    /// bound text and its dictionary word (`bind.rs`). A HIT is final
+    /// (the dictionary is append-only: a text's word never changes), so
+    /// re-binding the same text skips the LMDB descent entirely; a MISS
+    /// is NOT final (a later write may intern the text) and invalidates
+    /// the slot. Pooled: the text buffer's capacity survives re-binds.
+    /// Non-String slots never touch theirs.
+    param_word_memo: Vec<ParamWordMemo>,
     /// Per param: whether this execution's value missed the dictionary
     /// (String/Bytes only; for a set, whether NO element survived — the
     /// empty set rides the same short-circuit machinery). A missed value
@@ -525,6 +533,16 @@ enum ParamSpec {
     Set { elem: ValueType, point: bool },
     /// An Allen mask: neither a data-model value nor a set/point.
     Mask,
+}
+
+/// One scalar param slot's memoized String resolution
+/// ([`PreparedQuery::param_word_memo`]): the bound text and its word,
+/// `None` after a dictionary miss (misses never memoize — the
+/// append-only dictionary makes only HITS final).
+#[derive(Debug, Default, Clone)]
+struct ParamWordMemo {
+    text: String,
+    word: Option<u64>,
 }
 
 /// Whether every symbolic filter/selection slot was written by a complete
