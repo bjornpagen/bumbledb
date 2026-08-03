@@ -16,7 +16,7 @@
 //! and is correctly excluded. The executor keeps the Allen mask as
 //! data: enumerated candidates still flow through the uniform classify
 //! kernels, so this structure only ever needs to be a *superset* filter
-//! for touching masks (mask ⊆ INTERSECTS ∪ MEETS ∪ MET_BY — the
+//! for touching masks (mask ⊆ INTERSECTS ∪ MEETS ∪ `MET_BY` — the
 //! caller's gate, which widens the query window by one word per
 //! abutment component; `overlap_leaf.rs` walks the equivalences).
 //!

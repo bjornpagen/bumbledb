@@ -1,6 +1,6 @@
 //! The leaf overlap enumeration (ruled 2026-07-23; finding 012 — the
 //! 40-execution range-accelerator OPEN item, discharged): a leaf Allen
-//! residual whose mask is *touching* (⊆ INTERSECTS ∪ MEETS ∪ MET_BY:
+//! residual whose mask is *touching* (⊆ INTERSECTS ∪ MEETS ∪ `MET_BY`:
 //! every admitted configuration shares a point or abuts) and whose one
 //! side is an outer-binding constant licenses enumerating, per key
 //! group, only the cover positions whose interval pair lies in the
@@ -11,7 +11,7 @@
 //! The window is the mask made geometry: the INTERSECTS components are
 //! exactly `start < q_end ∧ end > q_start` (the half-open shared-point
 //! law), and the two abutment components each relax one bound by one
-//! word — MEETS (`end == q_start`) is `end > q_start − 1`, MET_BY
+//! word — MEETS (`end == q_start`) is `end > q_start − 1`, `MET_BY`
 //! (`start == q_end`) is `start < q_end + 1` — so a disconnected
 //! composite like `DURING ∪ MEETS` rides the same one-query index with
 //! a ±1-widened window instead of declining to the all-pairs classify.
@@ -53,7 +53,7 @@ use crate::image::ColumnView;
 pub(super) const OVERLAP_CROSSOVER: u64 = 16;
 
 /// The accelerable mask cover: every configuration that shares a point
-/// (INTERSECTS) or abuts (MEETS/MET_BY) — exactly the codes a one-query
+/// (INTERSECTS) or abuts (MEETS/`MET_BY`) — exactly the codes a one-query
 /// window over the start-sorted max-end index can bound. BEFORE/AFTER
 /// stay out: their windows are unbounded on the axis the index sorts.
 fn touches() -> crate::allen::AllenMask {
