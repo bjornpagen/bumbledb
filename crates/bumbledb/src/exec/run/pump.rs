@@ -152,7 +152,14 @@ impl Executor {
                     &mut scratch.children[fill..],
                     want,
                 );
-                counters.batch(node_idx, yielded);
+                // A zero-yield draw (the exhausted resume of an
+                // exact-fit entry, or an empty gate) is not a batch —
+                // the run_node twin breaks before counting; counting it
+                // here skewed batches/batch_entries low on exact-multiple
+                // fanouts.
+                if yielded > 0 {
+                    counters.batch(node_idx, yielded);
+                }
                 for _ in 0..yielded {
                     scratch
                         .parents
