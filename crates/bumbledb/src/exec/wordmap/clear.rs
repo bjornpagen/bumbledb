@@ -1,20 +1,34 @@
-use super::{WINDOW, WordMap};
+use super::WordMap;
 
 impl<V: Copy> WordMap<V> {
     /// Empties the map, retaining capacity (the zero-alloc reuse path).
-    /// O(occupied): only the dense-listed slots are touched. `V: Copy`
-    /// makes dropped values a non-event.
+    /// The **generation-stamped slot clear**: one counter bump makes
+    /// every occupied slot stale at once — `O(1)`, no ctrl walk — so a
+    /// hot execution's multi-million-entry high-water costs the next
+    /// execution's reset nothing (the former dense walk was 3.4 ms at
+    /// 4.16M entries, every warm execute). Stale slots probe as empties
+    /// and inserts reclaim them (`probe.rs`/`entry.rs`), so the warm
+    /// same-universe workload re-lands on its old slots and the stale
+    /// count drains back toward zero. Two conditions force the one
+    /// physical memset instead: the u8 stamp wrap (a stamp value must
+    /// never be reused while ctrl bytes from its era survive — the
+    /// ghost-key hazard) and stale saturation past half the capacity
+    /// (set-but-dead ctrl bytes thin the empties that terminate miss
+    /// walks). `V: Copy` makes dropped values a non-event either way.
     pub fn clear(&mut self) {
-        let capacity = self.capacity();
-        for i in 0..self.dense.len() {
-            let idx = self.dense[i] as usize;
-            self.ctrl[idx] = 0;
-            if idx < WINDOW - 1 {
-                self.ctrl[capacity + idx] = 0;
-            }
-        }
+        self.stale += self.len;
         self.dense.clear();
         self.len = 0;
+        if self.stale == 0 {
+            return;
+        }
+        if self.generation == u8::MAX || self.stale * 2 > self.capacity() {
+            self.ctrl.fill(0);
+            self.generation = 0;
+            self.stale = 0;
+        } else {
+            self.generation += 1;
+        }
     }
 
     /// Iterates `(key words, value)` in insertion order — O(len) via the

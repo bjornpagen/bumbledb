@@ -6,7 +6,11 @@ use crate::exec::sink::FindSpec;
 impl EitherSink {
     /// Empties the sink, retaining capacity — once per execution, never
     /// per rule (the seen-set spanning rules IS the union,
-    /// docs/architecture/40-execution.md § the rule loop).
+    /// docs/architecture/40-execution.md § the rule loop). `O(1)` in the
+    /// seen-set's high-water: the maps clear by generation stamp
+    /// (`exec/wordmap/clear.rs`), so a hot execution's multi-million-
+    /// entry seen-set no longer taxes every later warm execute with a
+    /// full-table walk.
     pub(super) fn reset(&mut self) {
         match self {
             Self::Projection(sink) => sink.reset(),

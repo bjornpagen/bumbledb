@@ -193,7 +193,87 @@ fn the_ctrl_mirror_tracks_the_head() {
         &map.ctrl[..WINDOW - 1],
         "mirror out of sync after clear"
     );
-    assert!(map.ctrl.iter().all(|&c| c == 0), "clear emptied every byte");
+    // Reclaim writes (inserts landing on stale slots) keep the mirror
+    // in sync too — the generation clear leaves ctrl bytes standing.
+    for i in 0..200u64 {
+        map.insert(&[i.wrapping_mul(0x9E37_79B9_7F4A_7C15)]);
+        let capacity = map.values.len();
+        assert_eq!(
+            &map.ctrl[capacity..capacity + WINDOW - 1],
+            &map.ctrl[..WINDOW - 1],
+            "mirror out of sync after reclaiming insert {i}"
+        );
+    }
+}
+
+/// The generation-stamped slot clear (the seen-set estate):
+/// `clear` bumps a counter instead of walking the table — stale slots
+/// probe as empties, reclaim on reinsert, and can never ghost back as
+/// live: not across a generation bump, and not across the u8 stamp
+/// wrap (whose physical reset this sweep crosses twice).
+#[test]
+fn generational_clear_never_ghosts_and_reclaims_warm_slots() {
+    let mut map: WordMap<()> = WordMap::with_capacity_hint(2, 512);
+    for round in 0..600u64 {
+        // Alternating key universes keep stale slots from the other
+        // universe standing in the table at every generation.
+        let base = (round % 2) * 1_000_000;
+        for i in 0..300u64 {
+            assert!(map.insert(&[base + i, i]), "round {round}: first sight");
+            assert!(!map.insert(&[base + i, i]), "round {round}: duplicate");
+        }
+        assert_eq!(map.len(), 300);
+        map.clear();
+        assert_eq!(map.len(), 0);
+        assert_eq!(map.iter().count(), 0, "cleared maps iterate nothing");
+    }
+}
+
+/// The clear's two regimes, observed structurally: the common clear
+/// touches no ctrl byte (`O(1)` — the 3.4 ms dense walk is gone), the
+/// warm same-universe reinsert drains the stale count back to zero
+/// (slot identity retained), and stale saturation past half the
+/// capacity forces the one physical memset.
+#[test]
+fn clear_retains_ctrl_until_saturation_forces_the_physical_reset() {
+    let mut map: WordMap<()> = WordMap::with_capacity_hint(1, 64);
+    for i in 0..40u64 {
+        map.insert(&[i]);
+    }
+    map.clear();
+    assert!(
+        map.ctrl.iter().any(|&c| c != 0),
+        "the generation clear leaves ctrl bytes standing"
+    );
+    assert_eq!(map.stale, 40, "every cleared entry turned stale");
+    // The warm path: the same universe re-lands on its old slots.
+    for i in 0..40u64 {
+        assert!(map.insert(&[i]), "cleared keys are first sights again");
+    }
+    assert_eq!(map.stale, 0, "same-universe reuse reclaims every slot");
+    // Disjoint universes accumulate stale slots until the threshold
+    // (capacity 256 here: hint 64 × load 3, next power of two) trips
+    // the physical reset on the clear that crosses it.
+    let mut universe = 1u64;
+    loop {
+        map.clear();
+        if map.stale == 0 {
+            break; // the memset fired
+        }
+        for i in 0..40u64 {
+            map.insert(&[universe * 1_000 + i]);
+        }
+        universe += 1;
+        assert!(universe < 20, "saturation must trip within the sweep");
+    }
+    assert!(
+        map.ctrl.iter().all(|&c| c == 0),
+        "the physical reset emptied every ctrl byte"
+    );
+    // Post-reset behavior is fresh.
+    assert!(map.insert(&[7]));
+    assert!(!map.insert(&[7]));
+    assert_eq!(map.len(), 1);
 }
 
 /// The presizing gate: a hint covering the workload means ZERO

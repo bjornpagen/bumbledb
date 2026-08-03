@@ -73,6 +73,17 @@ impl<V: Copy> WordMap<V> {
                 if empties & bit != 0 {
                     return (false, slot);
                 }
+                // A stale tag match — occupied under an older generation
+                // — terminates exactly like an empty: reclaimable slot,
+                // dead key (the generation-stamped clear's probe half).
+                // Sound because staleness is minted only by `clear`,
+                // which starts a new generation: within one generation a
+                // live key's probe walk can never grow a stale terminator
+                // ahead of it — every slot before it was live-occupied or
+                // tag-mismatched at insert time and stays so.
+                if self.stamps[slot] != self.generation {
+                    return (false, slot);
+                }
                 if key_at(slot) {
                     return (true, slot);
                 }

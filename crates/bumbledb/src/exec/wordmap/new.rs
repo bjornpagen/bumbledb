@@ -12,6 +12,9 @@ impl<V: Copy> WordMap<V> {
             ctrl: Vec::new(),
             keys: Vec::new(),
             values: Vec::new(),
+            stamps: Vec::new(),
+            generation: 0,
+            stale: 0,
             dense: Vec::new(),
             len: 0,
         }
@@ -36,6 +39,7 @@ impl<V: Copy> WordMap<V> {
         self.values = std::iter::repeat_with(MaybeUninit::uninit)
             .take(capacity)
             .collect();
+        self.stamps = vec![0; capacity];
     }
 
     /// The slot capacity (`values.len()`; ctrl carries the mirror tail).
@@ -45,10 +49,12 @@ impl<V: Copy> WordMap<V> {
     }
 
     /// Writes one ctrl byte, mirroring the head bytes into the tail so
-    /// window loads never wrap.
+    /// window loads never wrap, and stamping the slot into the live
+    /// generation (callers set ctrl exactly when occupying a slot).
     #[inline(always)]
     pub(super) fn set_ctrl(&mut self, idx: usize, value: u8) {
         self.ctrl[idx] = value;
+        self.stamps[idx] = self.generation;
         if idx < WINDOW - 1 {
             let capacity = self.capacity();
             self.ctrl[capacity + idx] = value;
