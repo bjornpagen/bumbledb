@@ -138,8 +138,9 @@ impl Executor {
         }
 
         // The overlap enumeration (finding 012; overlap_leaf.rs): a
-        // connected-mask Allen residual against an outer constant
-        // enumerates only the cover positions overlapping it — the
+        // touching-mask Allen residual against an outer constant
+        // enumerates only the cover positions inside the residual's
+        // window around it (± one word per abutment component) — the
         // start-sorted max-end index replaces the per-key all-pairs
         // walk. Only the enumeration changes: the yielded batch runs
         // the same probes and residuals below (the driving mask stays

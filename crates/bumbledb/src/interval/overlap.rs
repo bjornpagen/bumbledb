@@ -14,7 +14,9 @@
 //! and is correctly excluded. The executor keeps the Allen mask as
 //! data: enumerated candidates still flow through the uniform classify
 //! kernels, so this structure only ever needs to be a *superset* filter
-//! for connected masks (mask ⊆ INTERSECTS — the caller's gate).
+//! for touching masks (mask ⊆ INTERSECTS ∪ MEETS ∪ MET_BY — the
+//! caller's gate, which widens the query window by one word per
+//! abutment component; `overlap_leaf.rs` walks the equivalences).
 //!
 //! One cache serves one execution (the executor resets it per
 //! `execute`): indexes key on the caller's (occurrence, bound prefix)
