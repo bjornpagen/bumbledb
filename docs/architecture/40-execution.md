@@ -87,16 +87,44 @@ empty buffer. Plan introspection prints `access path: statically empty` plus eac
 rule's killing condition; a dead rule inside a live program was deleted at
 prepare and its record prints the same way.
 
-**Time-range scans, point-membership scans, and interval-overlap joins are O(n)**
-(image scan + filter) in v0 — decided; acceptability is policed by the latency budget
+**Time-range scans and point-membership scans are O(n)** (image scan + filter)
+in v0 — decided; acceptability is policed by the latency budget
 (`00-product.md`), and the range-accelerator OPEN item (which now covers interval
 stabbing — "which intervals contain t" — alongside scalar ranges) triggers on
-violation. One degenerate named honestly: a membership or overlap join whose
+violation. **Interval-overlap joins left that class** (the accelerator's
+interval-join arm DISCHARGED at be405715, finding 012 — armed "on violation"
+by exactly that clause, tripped by `t2_overlap_join` at bench scale): a leaf
+Allen residual whose mask is *touching* (⊆ INTERSECTS ∪ MEETS ∪ MET_BY) and
+whose one side is an outer-binding constant enumerates, per key group, only the
+cover positions inside the residual's window around that constant — a
+per-execution start-sorted max-end index (`interval/overlap.rs`,
+`exec/run/overlap_leaf.rs`) replacing the `Σ n_k²` all-pairs walk with
+`~O(log n_k + out)` per outer row (small groups answer by one fused flat
+sweep of the sorted pairs instead of the tree walk — the t2-class
+constant-factor shape). The mask stays data: the enumeration is only
+a superset filter and the classify kernels still judge every candidate, so the
+mechanism's whole correctness obligation is completeness. Its geometry: the
+INTERSECTS components are exactly the half-open shared-point window
+`start < q_end ∧ end > q_start`; each abutment component relaxes one bound by
+one order-faithful word (MEETS ⇔ `end > q_start − 1`, MET_BY ⇔
+`start < q_end + 1`), so disconnected composites like `DURING ∪ MEETS` ride
+the same one-query index — no per-component passes, no dedup. Multiple
+qualifying residuals on one cover word conjoin (window conjunction is bound
+intersection: max of starts, min of ends). Gating is economic, not just
+size-shaped: below `OVERLAP_CROSSOVER` the group's n² is cheaper than the sort,
+and a group's FIRST probe always declines — the cache tallies it and builds on
+the second, so a once-probed group never pays `n log n` for one query (the
+amortization gate, `interval/overlap.rs` module docs). Masks carrying a
+BEFORE/AFTER component keep the generic enumeration: their windows are
+unbounded on the axis the index sorts. One degenerate named honestly: a
+membership or overlap join whose
 interval occurrence shares **no equality variable** with the rest of the query is a
-Cartesian with a filter — O(bindings × n), like any Cartesian, and only a stabbing
-structure could do better. Real interval workloads carry their group key
-(per-account, per-room); the randomized generator bounds itself to that shape
-(`60-validation.md`). Candidate mechanism recorded for trigger day: **determinant skip
+Cartesian with a filter — O(bindings × n) *generic, O(bindings × (log n + out))
+under the index (the whole relation is one key group)* — and real interval
+workloads carry their group key (per-account, per-room); the randomized
+generator bounds itself to that shape
+(`60-validation.md`). Candidate mechanism recorded for the still-open scalar
+arm: **determinant skip
 scan** — `U` determinants are already ordered composite keys of fixed per-statement
 width, so a non-prefix determinant lookup or a range scan under a low-distinct
 leading field (closed-reference discriminators) is servable with zero new structures by
@@ -725,9 +753,16 @@ prefix-variables memo; the cap is enforced at the validation boundary as a roste
 item, alongside the 128-distinct-variable bitset cap — negated occurrences count
 against the roster cap but not the DP state, since they never join). Then
 `binary2fj`, then `factor()`, then the **GJ split** (ruled 2026-07-23, R19): a
-probe subatom carrying two or more variables first bound at different earlier
-nodes splits into per-variable lookup subatoms, each placed at the node where
-its variable is first bound — the lowering that produces plans at the GJ end
+probe subatom carrying two or more variables first bound at **different
+nodes** splits into per-binding-node lookup subatoms, each placed at the node
+where its variable is first bound — including the probe's own node, when one
+of its variables first binds there (the split's condition is "different", not
+"earlier": a subatom pairing an already-bound variable with one that its own
+node's cover introduces splits exactly the same way, and that lookup lands at
+the node itself; `plan/fj/gj_split.rs`). Two variables bound at one node stay one
+lookup — a node admits one subatom per occurrence, and a two-word probe into
+one submap is the right access for them anyway. This is the lowering that
+produces plans at the GJ end
 of the Free Join spectrum for cyclic rules, and the step that gives a
 production node its second cover (under `binary2fj` + `factor()` alone every
 node has exactly one, so dynamic cover choice never has a choice). The split
