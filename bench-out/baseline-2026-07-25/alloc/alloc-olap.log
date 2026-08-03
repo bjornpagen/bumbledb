@@ -1,0 +1,37 @@
+scheduler boost: user-interactive QoS claimed
+scenario olap: loaded 525200 facts x 2 engines
+scenario olap: o1_revenue_by_region
+scenario olap: o2_category_window
+scenario olap: o3_promo_split
+scenario olap: o4_segment_category
+scenario olap: o5_store_extremes
+scenario olap: o6_brand_drill
+# Scenario benchmarks
+
+Report-class measurements over non-ledger worlds; every query oracle-gated (value-identical results on both engines, every `SQLite` lane, never under a cap) before timing. Adversarial lanes run under a per-sample wall-clock cap (`SQLite`'s progress handler): a lane that trips it reports `DNF>cap` with NO percentiles — excluded from geomeans and counted. Protocol: 8 warmups, 1 samples, medians; `SQLite` file-backed WAL `synchronous=FULL`, fully indexed, prepared statements reused, ANALYZE run. ratio = ours/theirs (lower is better; <1 = bumbledb faster).
+
+
+## olap (geomean ratio 0.01 over 6 timed)
+
+| query | lane | rows | ours p50 (us) | sqlite p50 (us) | ratio | regime |
+|---|---|---:|---:|---:|---:|---|
+| o1_revenue_by_region | sqlite | 6 | 490.5 | 204101.6 | 0.00 | full-fact Sum through one dimension, 6 groups |
+| o2_category_window | sqlite | 16 | 376.7 | 16440.0 | 0.02 | Sum+Count by category inside day windows |
+| o3_promo_split | sqlite | 2 | 314.6 | 89370.4 | 0.00 | bool group key, full-scan fold |
+| o4_segment_category | sqlite | 64 | 25998.9 | 336279.4 | 0.08 | two-dimension rollup, 64 groups, 3-way join |
+| o5_store_extremes | sqlite | 200 | 668.4 | 144773.9 | 0.00 | Min+Max per store, 200 groups |
+| o6_brand_drill | sqlite | 1 | 2.0 | 554.1 | 0.00 | selective brand point + day range, one Sum |
+
+Overall geomean ratio across 6 queries: **0.01**.
+
+## Allocations (per query, --alloc)
+
+| query | allocs | alloc bytes | deallocs | dealloc bytes |
+|---|---:|---:|---:|---:|
+| o1_revenue_by_region | 2 | 16 | 1 | 8 |
+| o2_category_window | 3 | 64 | 2 | 56 |
+| o3_promo_split | 2 | 16 | 1 | 8 |
+| o4_segment_category | 2 | 24 | 1 | 16 |
+| o5_store_extremes | 1 | 8 | 0 | 0 |
+| o6_brand_drill | 2 | 56 | 1 | 48 |
+artifacts: /Users/bjorn/Documents/bumbledb/bench-out/baseline-2026-07-25/alloc/scenarios/olap
