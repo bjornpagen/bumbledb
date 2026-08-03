@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="108" viewBox="0 0 1200 108">
+<rect width="100%" height="100%" fill="rgb(245,245,245)"/>
+<text x="10" y="20" font-family="monospace" font-size="15" font-weight="bold">scenarios.temporal.t4_ray_stab.cold</text>
+<g><title>execute  128.416 us  40.1%</title><rect x="10" y="82" width="473.29" height="16" fill="rgb(234,55,6)" stroke="white" stroke-width="0.5"/><text x="13" y="94" font-family="monospace" font-size="12">execute</text></g>
+<g><title>bind_params  0.166 us  0.1%</title><rect x="10" y="66" width="0.61" height="16" fill="rgb(244,230,40)" stroke="white" stroke-width="0.5"/></g>
+<g><title>finalize  16.125 us  5.0%</title><rect x="10.61" y="66" width="59.43" height="16" fill="rgb(255,138,47)" stroke="white" stroke-width="0.5"/><text x="13.61" y="78" font-family="monospace" font-size="12">final..</text></g>
+<g><title>rule_0  111.708 us  34.9%</title><rect x="70.04" y="66" width="411.71" height="16" fill="rgb(216,21,45)" stroke="white" stroke-width="0.5"/><text x="73.04" y="78" font-family="monospace" font-size="12">rule_0</text></g>
+<g><title>join  50.041 us  15.6%</title><rect x="70.04" y="50" width="184.43" height="16" fill="rgb(228,169,7)" stroke="white" stroke-width="0.5"/><text x="73.04" y="62" font-family="monospace" font-size="12">join</text></g>
+<g><title>resolve_filters  0.125 us  0.0%</title><rect x="254.47" y="50" width="0.46" height="16" fill="rgb(248,202,38)" stroke="white" stroke-width="0.5"/></g>
+<g><title>views  61.250 us  19.1%</title><rect x="254.93" y="50" width="225.74" height="16" fill="rgb(245,221,37)" stroke="white" stroke-width="0.5"/><text x="257.93" y="62" font-family="monospace" font-size="12">views</text></g>
+<g><title>view_build  61.000 us  19.1%</title><rect x="254.93" y="34" width="224.82" height="16" fill="rgb(218,176,30)" stroke="white" stroke-width="0.5"/><text x="257.93" y="46" font-family="monospace" font-size="12">view_build</text></g>
+<g><title>prepare  191.750 us  59.9%</title><rect x="483.29" y="82" width="706.71" height="16" fill="rgb(248,101,43)" stroke="white" stroke-width="0.5"/><text x="486.29" y="94" font-family="monospace" font-size="12">prepare</text></g>
+<g><title>build_colts  1.208 us  0.4%</title><rect x="483.29" y="66" width="4.45" height="16" fill="rgb(229,174,2)" stroke="white" stroke-width="0.5"/></g>
+<g><title>classify  0.666 us  0.2%</title><rect x="487.74" y="66" width="2.45" height="16" fill="rgb(214,41,20)" stroke="white" stroke-width="0.5"/></g>
+<g><title>lower  4.333 us  1.4%</title><rect x="490.2" y="66" width="15.97" height="16" fill="rgb(241,3,6)" stroke="white" stroke-width="0.5"/></g>
+<g><title>normalize  2.000 us  0.6%</title><rect x="506.16" y="66" width="7.37" height="16" fill="rgb(226,36,26)" stroke="white" stroke-width="0.5"/></g>
+<g><title>normalize_fold  0.500 us  0.2%</title><rect x="506.16" y="50" width="1.84" height="16" fill="rgb(235,131,43)" stroke="white" stroke-width="0.5"/></g>
+<g><title>place_comparisons  0.166 us  0.1%</title><rect x="508.01" y="50" width="0.61" height="16" fill="rgb(227,42,22)" stroke="white" stroke-width="0.5"/></g>
+<g><title>plan_dp  1.833 us  0.6%</title><rect x="513.54" y="66" width="6.76" height="16" fill="rgb(235,210,27)" stroke="white" stroke-width="0.5"/></g>
+<g><title>plan_densify  1.250 us  0.4%</title><rect x="513.54" y="50" width="4.61" height="16" fill="rgb(222,193,50)" stroke="white" stroke-width="0.5"/></g>
+<g><title>stats  2.250 us  0.7%</title><rect x="520.29" y="66" width="8.29" height="16" fill="rgb(251,25,10)" stroke="white" stroke-width="0.5"/></g>
+<g><title>validate  9.208 us  2.9%</title><rect x="528.58" y="66" width="33.94" height="16" fill="rgb(219,206,45)" stroke="white" stroke-width="0.5"/><text x="531.58" y="78" font-family="monospace" font-size="12">v..</text></g>
+<g><title>validate_lower  2.166 us  0.7%</title><rect x="528.58" y="50" width="7.98" height="16" fill="rgb(216,126,24)" stroke="white" stroke-width="0.5"/></g>
+<g><title>validate_rules  5.708 us  1.8%</title><rect x="536.57" y="50" width="21.04" height="16" fill="rgb(236,159,40)" stroke="white" stroke-width="0.5"/></g>
+</svg>

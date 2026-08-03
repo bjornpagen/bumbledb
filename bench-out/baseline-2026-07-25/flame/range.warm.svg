@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="92" viewBox="0 0 1200 92">
+<rect width="100%" height="100%" fill="rgb(245,245,245)"/>
+<text x="10" y="20" font-family="monospace" font-size="15" font-weight="bold">range.warm</text>
+<g><title>execute  21.416 us  100.0%</title><rect x="10" y="66" width="1180.0" height="16" fill="rgb(234,55,6)" stroke="white" stroke-width="0.5"/><text x="13" y="78" font-family="monospace" font-size="12">execute</text></g>
+<g><title>bind_params  0.083 us  0.4%</title><rect x="10" y="50" width="4.57" height="16" fill="rgb(244,230,40)" stroke="white" stroke-width="0.5"/></g>
+<g><title>finalize  5.666 us  26.5%</title><rect x="14.57" y="50" width="312.19" height="16" fill="rgb(255,138,47)" stroke="white" stroke-width="0.5"/><text x="17.57" y="62" font-family="monospace" font-size="12">finalize</text></g>
+<g><title>rule_0  13.500 us  63.0%</title><rect x="326.76" y="50" width="743.84" height="16" fill="rgb(216,21,45)" stroke="white" stroke-width="0.5"/><text x="329.76" y="62" font-family="monospace" font-size="12">rule_0</text></g>
+<g><title>join  12.916 us  60.3%</title><rect x="326.76" y="34" width="711.66" height="16" fill="rgb(228,169,7)" stroke="white" stroke-width="0.5"/><text x="329.76" y="46" font-family="monospace" font-size="12">join</text></g>
+<g><title>resolve_filters  0.041 us  0.2%</title><rect x="1038.42" y="34" width="2.26" height="16" fill="rgb(248,202,38)" stroke="white" stroke-width="0.5"/></g>
+<g><title>views  0.250 us  1.2%</title><rect x="1040.68" y="34" width="13.77" height="16" fill="rgb(245,221,37)" stroke="white" stroke-width="0.5"/></g>
+</svg>

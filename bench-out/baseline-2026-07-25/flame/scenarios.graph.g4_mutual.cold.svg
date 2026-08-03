@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="108" viewBox="0 0 1200 108">
+<rect width="100%" height="100%" fill="rgb(245,245,245)"/>
+<text x="10" y="20" font-family="monospace" font-size="15" font-weight="bold">scenarios.graph.g4_mutual.cold</text>
+<g><title>execute  36250.500 us  98.0%</title><rect x="10" y="82" width="1156.4" height="16" fill="rgb(234,55,6)" stroke="white" stroke-width="0.5"/><text x="13" y="94" font-family="monospace" font-size="12">execute</text></g>
+<g><title>rule_0  36243.625 us  98.0%</title><rect x="10.18" y="66" width="1156.18" height="16" fill="rgb(216,21,45)" stroke="white" stroke-width="0.5"/><text x="13.18" y="78" font-family="monospace" font-size="12">rule_0</text></g>
+<g><title>join  35330.791 us  95.5%</title><rect x="10.18" y="50" width="1127.06" height="16" fill="rgb(228,169,7)" stroke="white" stroke-width="0.5"/><text x="13.18" y="62" font-family="monospace" font-size="12">join</text></g>
+<g><title>prepare  739.791 us  2.0%</title><rect x="1166.4" y="82" width="23.6" height="16" fill="rgb(248,101,43)" stroke="white" stroke-width="0.5"/></g>
+<g><title>lower  10.250 us  0.0%</title><rect x="1166.48" y="66" width="0.33" height="16" fill="rgb(241,3,6)" stroke="white" stroke-width="0.5"/></g>
+<g><title>plan_dp  7.791 us  0.0%</title><rect x="1166.92" y="66" width="0.25" height="16" fill="rgb(235,210,27)" stroke="white" stroke-width="0.5"/></g>
+<g><title>stats  391.708 us  1.1%</title><rect x="1167.17" y="66" width="12.5" height="16" fill="rgb(251,25,10)" stroke="white" stroke-width="0.5"/></g>
+<g><title>validate  20.583 us  0.1%</title><rect x="1179.66" y="66" width="0.66" height="16" fill="rgb(219,206,45)" stroke="white" stroke-width="0.5"/></g>
+<g><title>validate_rules  16.416 us  0.0%</title><rect x="1179.74" y="50" width="0.52" height="16" fill="rgb(236,159,40)" stroke="white" stroke-width="0.5"/></g>
+</svg>

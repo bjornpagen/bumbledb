@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="92" viewBox="0 0 1200 92">
+<rect width="100%" height="100%" fill="rgb(245,245,245)"/>
+<text x="10" y="20" font-family="monospace" font-size="15" font-weight="bold">lawful.nosync.law_reject_scope</text>
+<g><title>write_txn  7.708 us  100.0%</title><rect x="10" y="66" width="1180.0" height="16" fill="rgb(244,119,25)" stroke="white" stroke-width="0.5"/><text x="13" y="78" font-family="monospace" font-size="12">write_txn</text></g>
+<g><title>commit  6.666 us  86.5%</title><rect x="10" y="50" width="1020.48" height="16" fill="rgb(254,187,16)" stroke="white" stroke-width="0.5"/><text x="13" y="62" font-family="monospace" font-size="12">commit</text></g>
+<g><title>apply_inserts  2.916 us  37.8%</title><rect x="10" y="34" width="446.4" height="16" fill="rgb(245,71,32)" stroke="white" stroke-width="0.5"/><text x="13" y="46" font-family="monospace" font-size="12">apply_inserts</text></g>
+<g><title>judgment_source  0.333 us  4.3%</title><rect x="456.4" y="34" width="50.98" height="16" fill="rgb(240,12,48)" stroke="white" stroke-width="0.5"/><text x="459.4" y="46" font-family="monospace" font-size="12">judg..</text></g>
+<g><title>judgment_target  0.041 us  0.5%</title><rect x="507.38" y="34" width="6.28" height="16" fill="rgb(213,98,17)" stroke="white" stroke-width="0.5"/></g>
+</svg>

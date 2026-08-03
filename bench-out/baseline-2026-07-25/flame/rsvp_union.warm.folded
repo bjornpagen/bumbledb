@@ -1,0 +1,11 @@
+execute 48668
+execute;finalize 254000
+execute;rule_0 333
+execute;rule_0;join 218000
+execute;rule_0;views 458
+execute;rule_1 167
+execute;rule_1;join 212875
+execute;rule_1;views 83
+execute;rule_2 83
+execute;rule_2;join 211125
+execute;rule_2;views 83

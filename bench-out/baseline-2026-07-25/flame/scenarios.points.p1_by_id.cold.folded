@@ -1,0 +1,10 @@
+execute 167
+execute;bind_params 125
+execute;key_probe 458
+prepare 3459
+prepare;classify 208
+prepare;normalize 500
+prepare;normalize;normalize_fold 166
+prepare;validate 459
+prepare;validate;validate_lower 7500
+prepare;validate;validate_rules 2041
