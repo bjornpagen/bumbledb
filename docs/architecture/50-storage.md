@@ -387,9 +387,12 @@ variant agreement.
      MEASURES the child group by one ordered walk of the statement's `R`
      bucket summing child weights in u128 (unit statements sum 1s; weighted
      statements read the entries' value slots — the C17 measured
-     law), stopped as soon as the verdict is decided — sound early exit because
-     non-negative weights make the running sum monotone: a ceiling walk exits
-     at sum > hi, a floor walk at sum ≥ lo
+     law). The early exit is FLOOR-ONLY (ruled 2026-07-24, C14): non-negative
+     weights make the running sum monotone, so a floor walk exits the moment
+     sum ≥ lo — the verdict is final and no witness is owed. A ceiling walk
+     always completes: deciding sum ≤ hi needs the whole group anyway, and on
+     conviction the full sum IS the witness, so the reported measure is
+     walk-order-independent
      (`lean/Bumbledb/Oracle.lean: capacity_plan_decides`,
      `capacity_plan_consultations`). A closed CHILD set stored no edges: the
      φ-selected axioms are summed by an honest ≤256-row extension scan. A
