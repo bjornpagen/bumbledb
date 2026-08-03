@@ -234,6 +234,13 @@ pub(crate) fn engine_write<S>(db: &Db<S>, delta: &Delta) -> Verdict {
         Err(Error::ClosedRelationWrite { relation }) => {
             Verdict::Aborted(vec![Violation::ClosedRelationWrite { relation }])
         }
+        // The measure of a ray at a capacity statement — a typed
+        // refusal, not a violation set; the witness fact bytes are
+        // engine-side detail (`cited`'s rule), the statement identity is
+        // the comparable citation.
+        Err(Error::CapacityRayMeasure { statement, .. }) => {
+            Verdict::Aborted(vec![Violation::CapacityRayMeasure { statement }])
+        }
         Err(other) => panic!("engine refused a differential write: {other:?}"),
     }
 }
@@ -269,6 +276,9 @@ pub(crate) fn engine_write_from<S>(
         }
         Err(Error::ClosedRelationWrite { relation }) => {
             ConditionalVerdict::Aborted(vec![Violation::ClosedRelationWrite { relation }])
+        }
+        Err(Error::CapacityRayMeasure { statement, .. }) => {
+            ConditionalVerdict::Aborted(vec![Violation::CapacityRayMeasure { statement }])
         }
         Err(other) => panic!("engine refused a differential conditional write: {other:?}"),
     }

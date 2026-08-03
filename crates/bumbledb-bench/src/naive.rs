@@ -126,6 +126,18 @@ pub enum Violation {
     ClosedRelationWrite {
         relation: RelationId,
     },
+    /// A capacity statement's `Duration` weight or dependent `Duration`
+    /// bound met a ray — no finite measure exists (C10; the C17 slot
+    /// law's write-time strengthening). The engine's typed
+    /// `Error::CapacityRayMeasure`, carried as the singleton citation so
+    /// the differential compares a VERDICT (both twins used to panic).
+    /// Weight rays refuse at plan time — any φ-selected INSERTED fact
+    /// (a delete removal is key-only and never derives a slot); bound
+    /// rays refuse during the statement walk, discarding whatever the
+    /// walk had collected.
+    CapacityRayMeasure {
+        statement: StatementId,
+    },
 }
 
 impl Violation {
@@ -151,6 +163,9 @@ impl Violation {
                 0,
             ),
             Self::ClosedRelationWrite { relation } => (u16::MAX, u8::MAX, relation.0),
+            // A refusal, never sorted beside statement citations (the
+            // rejection is always the singleton); total for the sort.
+            Self::CapacityRayMeasure { statement } => (statement.0, 3, 0),
         }
     }
 }
@@ -338,6 +353,9 @@ impl NaiveDb {
                 }]);
             }
         }
+        if let Some(refusal) = self.ray_weight_refusal(delta) {
+            return Err(vec![refusal]);
+        }
         let (next, inserted) = self.staged(delta);
         let minted = self.minted(delta);
         let violations = self.judge(&next, &inserted, &minted);
@@ -346,6 +364,43 @@ impl NaiveDb {
         } else {
             Err(violations)
         }
+    }
+
+    /// The plan-phase ray refusal (C17's write-time strengthening of
+    /// C10): the engine slices every capacity edge's INSERT-side weight
+    /// slot at plan time — a delete removal is key-only and never
+    /// derives, so a delete cannot refuse — and any inserted fact that
+    /// some `Duration`-weighted capacity statement φ-selects and whose
+    /// weight position is a ray refuses the whole commit before a
+    /// single judgment runs, key violations included. The engine's op
+    /// order is `(relation, fact hash)` — the hash is the engine's own
+    /// representation (independence law), so the model walks delta op
+    /// order: the cited statement can differ only when one delta
+    /// carries rays for DISTINCT statements across DISTINCT facts, a
+    /// shape C10 already rules a fixture bug.
+    fn ray_weight_refusal(&self, delta: &Delta) -> Option<Violation> {
+        for (rel, fact) in &delta.inserts {
+            let fact = Tuple(fact.clone());
+            for (sid, statement) in self.statements.iter().enumerate() {
+                let StatementDescriptor::Capacity {
+                    weight: Weight::DurationOf(field),
+                    source,
+                    ..
+                } = statement
+                else {
+                    continue;
+                };
+                if source.relation == *rel
+                    && satisfies_selection(&fact, &source.selection)
+                    && is_ray(&fact.0[field.0 as usize])
+                {
+                    return Some(Violation::CapacityRayMeasure {
+                        statement: statement_id(sid),
+                    });
+                }
+            }
+        }
+        None
     }
 
     /// The delta's provisional `str` mints, in the engine's mint order:
@@ -508,6 +563,26 @@ impl NaiveDb {
                     hi,
                     source,
                 } => {
+                    // The dependent Duration bound resolves against
+                    // every walked parent's own row BEFORE its window
+                    // compares — a ray span has no finite measure, the
+                    // walk errors, and everything the statement phase
+                    // had collected dies with it (the engine's `?`
+                    // through the scan-complete collectors). Every
+                    // final-state parent under such a bound is
+                    // delta-touched (an untouched ray parent could
+                    // never have committed — its own insert was judged),
+                    // so the existence test IS the engine's walk.
+                    if let Some(Bound::TargetDuration(field)) = hi
+                        && self.target_facts(state, target).any(|parent| {
+                            satisfies_selection(parent, &target.selection)
+                                && is_ray(&parent.0[field.0 as usize])
+                        })
+                    {
+                        return vec![Violation::CapacityRayMeasure {
+                            statement: statement_id(sid),
+                        }];
+                    }
                     if let Some(measure) =
                         self.capacity_violated(state, minted, target, *weight, *lo, *hi, source)
                     {
@@ -841,18 +916,23 @@ fn resolve_bound(bound: Bound, parent: &Tuple) -> u128 {
     }
 }
 
-/// The interval measure `end − start`, non-negative by the interval
-/// encoding's order. A ray (`end == MAX`) has no finite measure — the
-/// typed judge-time refusal (C10) is the engine's; the model panics so a
-/// generated ray reaching a Duration law is a fixture bug, never a
-/// silent wrong sum.
-fn duration_measure(value: &Value) -> u128 {
-    let is_ray = match value {
+/// Is an interval value a ray (`end == MAX` — no finite measure)?
+fn is_ray(value: &Value) -> bool {
+    match value {
         Value::IntervalU64(interval) => interval.is_ray(),
         Value::IntervalI64(interval) => interval.is_ray(),
         other => panic!("a Duration weight/bound must be interval-encoded, got {other:?}"),
-    };
-    assert!(!is_ray, "a ray has no finite measure (C10)");
+    }
+}
+
+/// The interval measure `end − start`, non-negative by the interval
+/// encoding's order. A ray has no finite measure — the typed refusal is
+/// [`Violation::CapacityRayMeasure`], raised BEFORE any measure folds
+/// (weight rays at the plan phase, bound rays ahead of the statement's
+/// walk), so a ray reaching this fold is a model bug, panicked not
+/// tolerated.
+fn duration_measure(value: &Value) -> u128 {
+    assert!(!is_ray(value), "a ray has no finite measure (C10)");
     let (start, end) = endpoints(value);
     u128::try_from(end - start).expect("interval measure is non-negative")
 }
