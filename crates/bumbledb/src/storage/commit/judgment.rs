@@ -118,7 +118,23 @@ pub(crate) fn child_weight(
     layout: &FactLayout,
     fact: &[u8],
 ) -> Result<u64> {
-    match statement.weight {
+    measure_weight(statement.weight, statement.weight_tail, layout, fact, statement.id)
+}
+
+/// The ONE weight arithmetic behind [`child_weight`] — spelled over the
+/// raw `(weight, sealed tail)` pair so validate's closed-constant arm
+/// (which measures extension rows before any [`CapacityStatement`]
+/// exists) reads THIS definition too: the measure law has exactly one
+/// engine definition, never an inline re-implementation
+/// (`docs/architecture/60-validation.md` § one mechanism per law).
+pub(crate) fn measure_weight(
+    weight: Weight,
+    weight_tail: Option<IntervalTail>,
+    layout: &FactLayout,
+    fact: &[u8],
+    statement: bumbledb_theory::schema::StatementId,
+) -> Result<u64> {
+    match weight {
         Weight::Unit => Ok(1),
         Weight::Field(field) => Ok(u64::from_be_bytes(field_word_bytes(
             fact,
@@ -126,15 +142,47 @@ pub(crate) fn child_weight(
             usize::from(field.0),
         ))),
         Weight::DurationOf(field) => {
-            let tail = statement
-                .weight_tail
-                .expect("validate seals a tail for every Duration weight");
+            let tail = weight_tail.expect("validate seals a tail for every Duration weight");
             interval_measure(
                 tail,
                 field_bytes(fact, layout, usize::from(field.0)),
-                statement.id,
+                statement,
                 fact,
             )
+        }
+    }
+}
+
+/// The ONE ceiling resolution behind [`Checker::resolve_hi`]
+/// (`lean/Bumbledb/Capacity.lean: CapWindow.resolve`) — spelled over the
+/// raw `(bound, sealed tail)` pair so validate's closed-constant arm
+/// reads THIS definition too, exactly as [`measure_weight`]: a literal
+/// passes through; a dependent bound reads the named TARGET-row field —
+/// u64 word or interval measure — off the holder fact in hand.
+pub(crate) fn resolve_bound(
+    bound: Option<CapacityBound>,
+    bound_tail: Option<IntervalTail>,
+    layout: &FactLayout,
+    parent_fact: &[u8],
+    statement: bumbledb_theory::schema::StatementId,
+) -> Result<Option<u64>> {
+    match bound {
+        None => Ok(None),
+        Some(CapacityBound::Lit(n)) => Ok(Some(n)),
+        Some(CapacityBound::TargetField(field)) => Ok(Some(u64::from_be_bytes(field_word_bytes(
+            parent_fact,
+            layout,
+            usize::from(field.0),
+        )))),
+        Some(CapacityBound::TargetDuration(field)) => {
+            let tail = bound_tail.expect("validate seals a tail for every Duration bound");
+            interval_measure(
+                tail,
+                field_bytes(parent_fact, layout, usize::from(field.0)),
+                statement,
+                parent_fact,
+            )
+            .map(Some)
         }
     }
 }
@@ -1192,32 +1240,17 @@ impl<'a> Checker<'a> {
     /// holder fact (`lean/Bumbledb/Capacity.lean: CapWindow.resolve`):
     /// a literal passes through; a dependent bound reads the named
     /// TARGET-row field — u64 word or interval measure — off the fact
-    /// bytes already fetched for the ψ check.
+    /// bytes already fetched for the ψ check. Delegates to
+    /// [`resolve_bound`], the one engine definition.
     fn resolve_hi(&self, statement: &CapacityStatement, parent_fact: &[u8]) -> Result<Option<u64>> {
-        let Some(bound) = &statement.hi else {
-            return Ok(None);
-        };
         let layout = self.schema.relation(statement.target.relation).layout();
-        match bound {
-            CapacityBound::Lit(n) => Ok(Some(*n)),
-            CapacityBound::TargetField(field) => Ok(Some(u64::from_be_bytes(field_word_bytes(
-                parent_fact,
-                layout,
-                usize::from(field.0),
-            )))),
-            CapacityBound::TargetDuration(field) => {
-                let tail = statement
-                    .bound_tail
-                    .expect("validate seals a tail for every Duration bound");
-                interval_measure(
-                    tail,
-                    field_bytes(parent_fact, layout, usize::from(field.0)),
-                    statement.id,
-                    parent_fact,
-                )
-                .map(Some)
-            }
-        }
+        resolve_bound(
+            statement.hi,
+            statement.bound_tail,
+            layout,
+            parent_fact,
+            statement.id,
+        )
     }
 
     /// One parent's child-group measure: the ordered walk of the capacity

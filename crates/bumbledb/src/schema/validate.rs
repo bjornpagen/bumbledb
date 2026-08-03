@@ -949,25 +949,19 @@ fn validate_capacity(
             if !sealed_satisfies(&psi, &target_relation.layout, &parent.fact) {
                 continue;
             }
-            // The resolved ceiling for THIS parent axiom: sealed rows
-            // hold canonical bytes, so both dependent reads are total.
-            let resolved_hi: Option<u128> = hi.map(|bound| match bound {
-                Bound::Lit(n) => u128::from(n),
-                Bound::TargetField(field) => {
-                    u128::from(decoded_word(&target_relation.layout, field, &parent.fact))
-                }
-                Bound::TargetDuration(field) => {
-                    let tail = bound_tail.expect("an accepted Duration bound sealed its tail");
-                    let (start, end) = tail
-                        .words(field_bytes(
-                            &parent.fact,
-                            &target_relation.layout,
-                            usize::from(field.0),
-                        ))
-                        .expect("sealed rows hold canonical interval bytes");
-                    u128::from(end - start)
-                }
-            });
+            // The resolved ceiling for THIS parent axiom, read through
+            // the ONE engine definition (`commit::judgment`) — never an
+            // inline re-implementation. Sealed rows hold canonical bytes
+            // and the extension gate refuses ray and inverted intervals,
+            // so the engine's measure refusals are unreachable here.
+            let resolved_hi: Option<u64> = crate::storage::commit::judgment::resolve_bound(
+                hi,
+                bound_tail,
+                &target_relation.layout,
+                &parent.fact,
+                id,
+            )
+            .expect("sealed extension rows carry no ray or inverted intervals");
             let measure: u128 =
                 source_rows
                     .iter()
@@ -984,26 +978,20 @@ fn validate_capacity(
                                 },
                             )
                     })
-                    .map(|child| match weight {
-                        Weight::Unit => 1u128,
-                        Weight::Field(field) => {
-                            u128::from(decoded_word(source_layout, field, &child.fact))
-                        }
-                        Weight::DurationOf(field) => {
-                            let tail =
-                                weight_tail.expect("an accepted Duration weight sealed its tail");
-                            let (start, end) = tail
-                                .words(field_bytes(
-                                    &child.fact,
-                                    source_layout,
-                                    usize::from(field.0),
-                                ))
-                                .expect("sealed rows hold canonical interval bytes");
-                            u128::from(end - start)
-                        }
+                    .map(|child| {
+                        u128::from(
+                            crate::storage::commit::judgment::measure_weight(
+                                weight,
+                                weight_tail,
+                                source_layout,
+                                &child.fact,
+                                id,
+                            )
+                            .expect("sealed extension rows carry no ray or inverted intervals"),
+                        )
                     })
                     .sum();
-            if measure < u128::from(lo) || resolved_hi.is_some_and(|hi| measure > hi) {
+            if measure < u128::from(lo) || resolved_hi.is_some_and(|hi| measure > u128::from(hi)) {
                 return Err(StatementErrorKind::ClosedStatementRefuted {
                     relation: target.relation,
                     row: row_idx,
