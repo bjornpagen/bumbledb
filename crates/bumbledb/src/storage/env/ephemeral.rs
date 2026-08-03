@@ -52,18 +52,44 @@ impl Environment {
         std::fs::create_dir_all(path)?;
         let lock = acquire_lock(path)?;
         // The crash contract (ruled 2026-07-23, R18): a set dirty marker
-        // means the last session never reached clean close — power loss,
-        // or a process death — and `NOSYNC` makes the data pages
-        // untrustworthy in exactly the way `_meta` cannot see (a meta
-        // page flushed by incidental writeback over data pages that
-        // never landed). The possibly-torn store is never opened at all:
-        // wipe and re-initialize. The marker carries the claim — only
-        // ephemeral opens mint one, and only a proven-synced close
-        // clears it — so the wipe destroys nothing the kind promised to
-        // keep.
+        // means the last EPHEMERAL session at this path never reached
+        // clean close — power loss, or a process death — and `NOSYNC`
+        // makes the data pages untrustworthy in exactly the way `_meta`
+        // cannot see (a meta page flushed by incidental writeback over
+        // data pages that never landed). The possibly-torn store is
+        // never opened for USE at all: wipe and re-initialize.
+        //
+        // But the marker's claim is about the SESSION, not the file now
+        // at the path: a durable store restored (or created after a
+        // manual cleanup) over a stale marker is committed data the wipe
+        // must never touch — refusal never mutates, and the kind check
+        // outranks the marker. So a marker over an existing data file
+        // classifies the store's kind FIRST, through the read-only lane
+        // (mutation unrepresentable, exactly `exhume`'s opening): a
+        // cleanly-read DURABLE kind refuses typed and wipes nothing;
+        // every other outcome — the ephemeral kind, a torn or
+        // unclassifiable meta block, any read failure — is the crash
+        // victim the marker names, and the wipe proceeds. The wipe
+        // destroys nothing the kind promised to keep.
         let marker = super::dirty_marker_path(path);
         let crashed = marker.try_exists()?;
         if crashed {
+            let has_data = path.join("data.mdb").try_exists()?;
+            if has_data && Self::marker_shields_durable(path) {
+                return Err(Error::StoreKindMismatch {
+                    found: StoreKind::Durable,
+                    expected: StoreKind::Ephemeral,
+                });
+            }
+            crate::obs::event(
+                // The R18 wipe, visible: a reopen found the marker armed
+                // and destroys the possibly-torn store (a0: whether a
+                // data file existed to destroy).
+                "ephemeral_wipe",
+                crate::obs::Category::Storage,
+                u64::from(has_data),
+                0,
+            );
             for file in ["data.mdb", "lock.mdb"] {
                 match std::fs::remove_file(path.join(file)) {
                     Ok(()) => {}
@@ -90,14 +116,57 @@ impl Environment {
         // leave the store byte-identical, marker included.
         std::fs::File::create(&marker)?.sync_all()?;
         super::sync_dirent_chain(path)?;
-        let env = open_env(path, OpenLane::Write(StoreKind::Ephemeral))?;
-        let mut opened = if has_meta {
-            Self::verify_and_open(env, lock, schema, StoreKind::Ephemeral)?
-        } else {
-            Self::initialize(env, lock, schema, StoreKind::Ephemeral)?
+        let opened = open_env(path, OpenLane::Write(StoreKind::Ephemeral)).and_then(|env| {
+            if has_meta {
+                Self::verify_and_open(env, lock, schema, StoreKind::Ephemeral)
+            } else {
+                Self::initialize(env, lock, schema, StoreKind::Ephemeral)
+            }
+        });
+        let mut opened = match opened {
+            Ok(opened) => opened,
+            Err(e) => {
+                // A failed REOPEN of a verified existing store must not
+                // leave the marker armed over its cleanly-synced pages —
+                // the next open would wipe committed data the crash
+                // contract never condemned. Disarming is sound because a
+                // failed open wrote no page (LMDB write transactions
+                // buffer until commit; an abort touches nothing, and a
+                // process-alive commit failure leaves the prior root
+                // intact by copy-on-write). The fresh arm keeps the
+                // marker: a half-initialized store is exactly what the
+                // next open should wipe. Best-effort, like the clean
+                // close: a failed disarm just means one wipe of a store
+                // the kind never promised past this failure.
+                if has_meta {
+                    let _ = std::fs::remove_file(&marker);
+                    let _ = super::sync_dirent_chain(path);
+                }
+                return Err(e);
+            }
         };
         opened.dirty_marker = Some(marker);
         Ok(opened)
+    }
+
+    /// Whether the store under a stale dirty marker cleanly reads as
+    /// DURABLE — the one outcome that shields it from the R18 wipe. Read
+    /// through the read-only lane (`MDB_RDONLY`: mutation
+    /// unrepresentable, safe over possibly-torn pages), best-effort by
+    /// design: the kind byte either reads back `Durable`, or the marker's
+    /// crash claim governs. No version gate — protection wants maximal
+    /// reach, and the kind byte's meaning is stable for every version
+    /// that mints one.
+    fn marker_shields_durable(path: &Path) -> bool {
+        let kind = || -> Result<StoreKind> {
+            let env = open_env(path, OpenLane::ReadOnly)?;
+            let rtxn = env.read_txn()?;
+            let MetaBlock::Present(meta) = classify_meta_block(&env, &rtxn)? else {
+                return Err(Error::NotInitialized);
+            };
+            read_store_kind(&meta, &rtxn)
+        };
+        matches!(kind(), Ok(StoreKind::Durable))
     }
 
     /// The non-mutating probe over an EXISTING data file: a plain

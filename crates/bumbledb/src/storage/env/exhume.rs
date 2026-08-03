@@ -64,6 +64,21 @@ impl Environment {
             .ok_or(Error::Corruption(CorruptionError::MetaMissing))?;
         check_format_version(&meta, &rtxn)?;
         let kind = read_store_kind(&meta, &rtxn)?;
+        // The R18 marker outranks the meta block on an EPHEMERAL store:
+        // armed, the last session never proved its sync, so the pages
+        // this read-only open would serve are exactly the possibly-torn
+        // ones the ephemeral reopen wipes — exhume must refuse them,
+        // never serve them as verified. A durable store beside an
+        // orphaned marker reads normally: its kind carries the sync
+        // claim the marker cannot retract. (The conviction wants a
+        // dedicated typed variant; `MalformedValue` names the marker
+        // until the error vocabulary grows one — error.rs sits outside
+        // the storage estate.)
+        if kind == StoreKind::Ephemeral && super::dirty_marker_path(path).try_exists()? {
+            return Err(Error::Corruption(CorruptionError::MalformedValue(
+                "ephemeral dirty marker armed — the store's last session never proved its sync",
+            )));
+        }
         let data: Database<Bytes, Bytes> = env
             .open_database(&rtxn, Some("_data"))?
             .ok_or(Error::Corruption(CorruptionError::MetaMissing))?;

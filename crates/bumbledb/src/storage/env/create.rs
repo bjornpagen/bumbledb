@@ -31,6 +31,12 @@ impl Environment {
         let lock = acquire_lock(path)?;
         let env = open_env(path, OpenLane::Write(StoreKind::Durable))?;
         let created = Self::initialize(env, lock, schema, StoreKind::Durable)?;
+        // The store just initialized DURABLE, so any dirty marker at the
+        // path is an orphan from a dead ephemeral store whose wipe left
+        // the marker behind — cleared so it can never arm a later
+        // ephemeral open against this store (the R18 lifecycle's durable
+        // half). After initialization only: a refusal mutates nothing.
+        super::clear_orphan_marker(path)?;
         // The birth's dirent chain (finding 022): LMDB fsyncs data.mdb's
         // CONTENTS at the initialize commit but never opens a directory,
         // so the dirents for data.mdb and the store directory itself are

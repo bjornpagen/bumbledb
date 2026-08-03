@@ -284,6 +284,25 @@ pub(crate) fn dirty_marker_path(dir: &std::path::Path) -> std::path::PathBuf {
     dir.join("ephemeral.dirty")
 }
 
+/// Clears an ORPHANED dirty marker from a proven-durable store's
+/// directory — the durable half of the R18 lifecycle. Only ephemeral
+/// opens mint markers, so one lying beside a store that just verified
+/// DURABLE is a stale trap (an earlier ephemeral store at the path died,
+/// then the path was reused): left armed, a later
+/// [`Environment::ephemeral`] call would have to classify around it
+/// forever. Called only AFTER the durable open verified the kind — a
+/// refusal never mutates, marker included.
+pub(super) fn clear_orphan_marker(dir: &std::path::Path) -> crate::error::Result<()> {
+    match std::fs::remove_file(dirty_marker_path(dir)) {
+        Ok(()) => {
+            sync_dirent_chain(dir)?;
+            Ok(())
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(crate::error::Error::Io(e)),
+    }
+}
+
 /// Fsyncs `dir`'s dirent chain: the directory itself, then its parent —
 /// what a power loss must survive for entries inside `dir` to still
 /// exist. LMDB fsyncs file CONTENTS per commit and never opens a
