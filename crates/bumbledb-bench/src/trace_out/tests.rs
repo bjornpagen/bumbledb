@@ -176,6 +176,42 @@ fn fold_stacks_empty_capture_is_empty() {
     assert_eq!(fold_stacks(&[]), "");
 }
 
+#[test]
+fn equal_tick_nests_resolve_parenthood_by_drop_order() {
+    // A sub-tick child inside a sub-tick parent shares BOTH endpoints on
+    // the 41.67 ns counter. Spans record at drop, so the CHILD lands in
+    // the buffer first — the sweep must order the parent first anyway
+    // (a stable (start, -end) sort alone kept the buffer order and
+    // inverted the pair, charging the parent to the child).
+    let events = vec![
+        span("child", Category::Execute, 1_000, 42, 0),
+        span("parent", Category::Execute, 1_000, 42, 0),
+    ];
+
+    let folded = fold_stacks(&events);
+    assert_eq!(folded, "parent 0\nparent;child 42\n");
+
+    let summary = FlameSummary::compute(&events);
+    let self_of = |name: &str| {
+        summary
+            .rows
+            .iter()
+            .find(|row| row.name == name)
+            .expect("row")
+            .self_ns
+    };
+    assert_eq!(self_of("parent"), 0, "the child charge lands on the parent");
+    assert_eq!(self_of("child"), 42);
+
+    // Distinct-tick nests are untouched: the (start, -end) key alone
+    // already orders the parent first, record order notwithstanding.
+    let distinct = vec![
+        span("child", Category::Execute, 1_000, 42, 0),
+        span("parent", Category::Execute, 1_000, 84, 0),
+    ];
+    assert_eq!(fold_stacks(&distinct), "parent 42\nparent;child 42\n");
+}
+
 /// A real captured S-scale `containment_walk` trace: the expected spans appear
 /// and the summary wall tracks the execute span within 5%.
 #[cfg(feature = "obs")]

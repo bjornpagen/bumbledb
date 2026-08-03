@@ -27,6 +27,7 @@ pub struct FlameSummary {
 /// How many rows the render keeps.
 const RENDER_ROWS: usize = 24;
 
+mod containment;
 mod flame_summary;
 mod fold;
 mod phase_table;
