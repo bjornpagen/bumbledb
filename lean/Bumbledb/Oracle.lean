@@ -108,8 +108,12 @@ form's delta-restricted check (`planObligation`, `acceptance_gate`).
   total touched-group sizes, as an equation
   (`capacity_plan_consultations`) — the weighted verdict reads no
   extra entries beyond what the count walk read, and the engine's
-  clipped walk is priced sound by the C12 exit theorems
-  (`capacity_ceiling_exit_sound` / `capacity_floor_exit_sound`).
+  floor-only clip (C14) is priced sound by
+  `capacity_floor_exit_sound`; the ceiling twin
+  (`capacity_ceiling_exit_sound`) records the verdict's early
+  decidability, which the engine deliberately does not spend — a
+  ceiling walk completes, so the witnessed measure is
+  walk-order-independent.
 
 ## The acceptance premises, spent
 
@@ -410,13 +414,16 @@ theorem measure_admits_iff_enum {s : Set β} {l : List β}
     exact ⟨h1, fun m hm =>
       (measureAtMost_iff_enum hmem hnd wt m).mpr (h2 m hm)⟩
 
-/-- **The clipped ceiling walk is sound** (ruling C12): the moment a
-walk's running sum passes a spelled ceiling, the whole walk's verdict
-is already refusal — non-negative weights make the running sum
-monotone (`natSum_prefix_le`, `Capacity.lean`), so the suffix can
-only raise it and the engine's `sum > hi` early exit loses nothing.
-The analog of `Exec.sweep_early_exit_sound` at the measure
-altitude. -/
+/-- **The ceiling verdict is decided at the clip point** (ruling
+C12): the moment a walk's running sum passes a spelled ceiling, the
+whole walk's verdict is already refusal — non-negative weights make
+the running sum monotone (`natSum_prefix_le`, `Capacity.lean`), so
+the suffix can only raise it. The ENGINE deliberately does not spend
+this exit (ruled 2026-07-24, C14): a convicting ceiling walk
+completes, because the full sum IS the witnessed measure — the clip
+serves the verdict, the full sum serves the witness. The analog of
+`Exec.sweep_early_exit_sound` at the measure altitude, verdict
+half only. -/
 theorem capacity_ceiling_exit_sound {w : Window} {wt : β → Nat}
     {pre : List β} {m : Nat} (hhi : w.hi = some m)
     (hpast : m < natSum (pre.map wt)) (suf : List β) :
@@ -772,9 +779,10 @@ capacity check. `hgrp` is the count form's argument VERBATIM
 (group keying is weight-blind); `hadm` is per-parent because the
 resolved bounds vary with `g` — the dependent-bound read slots into
 the quantifier already binding it, with no new structure. The
-engine's CLIPPED walk (early exit under monotone non-negative
-running sums) is the build lane's named C12 obligation; this theorem
-prices the whole walk. -/
+engine's floor-only clip (C14 — the early exit under monotone
+non-negative running sums, spent exactly where no witness is owed)
+is the build lane's named C12 obligation; this theorem prices the
+whole walk. -/
 theorem capacity_plan_decides (T : Theory) (I : Instance)
     (d : Txn.Delta) (tgt : Atom) (wt : Weight) (w : CapWindow)
     (src : Atom) : CapacityPlanned T I d tgt wt w src := by
