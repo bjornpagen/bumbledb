@@ -25,7 +25,7 @@ writes	COMPLETE (the wall-power rerun the campaign left owed)	/Users/bjorn/Docum
 churn	COMPLETE (all three profiles; first wall-power churn)	/Users/bjorn/Documents/bumbledb/bench-out/baseline-2026-07-25/churn/churn-report.json
 capacity-c17	COMPLETE (segment 1; slot landed, fetch dead)	/Users/bjorn/Documents/bumbledb/bench-out/baseline-2026-07-25/capacity-c17/SUMMARY.md
 windowed	COMPLETE (segment 1 re-pin)	/Users/bjorn/Documents/bumbledb/bench-out/baseline-2026-07-25/windowed
-sweep-commit	PENDING (needs the obs build; the attribution pass's job)	/Users/bjorn/Documents/bumbledb/bench-out/baseline-2026-07-25/sweep-commit/sweep.md
+sweep-commit	COMPLETE (obs build; first pin — sorted probes win 0.85x at 1k-4k)	/Users/bjorn/Documents/bumbledb/bench-out/baseline-2026-07-25/sweep-commit/sweep.md
 adversarial	SKIP-UNAVAILABLE (subcommand not landed; probe-parity with the night and campaign)	/Users/bjorn/Documents/bumbledb/bench-out/baseline-2026-07-25/adversarial/report.json
 
 oracle mismatches: 0 (every gated lane re-gated clean before timing; run logs grep clean)
@@ -33,3 +33,10 @@ report-class reps: every rep all_win=true, partial=false, 33/33 read families WI
 DNF/caps: the same two scenario SQLite DNFs as the night and campaign (r4_bomb_t2, t2_overlap_join at cap 1000 ms), excluded-and-counted; 0 capped curve points; 7 engine-only/unpaired write families carry no SQLite twin by design
 deltas: SUMMARY.md (vs campaign-2026-07-23 recomputed from JSON with identical pairing; writes additionally vs night-2026-07-20; churn vs night only — no campaign churn exists)
 baseline: 13 of 13 owned full-suite lanes COMPLETE
+
+ATTRIBUTION PASSES (2026-08-03, code rev 484c3871, obs binary target/bench-obs, oracle re-earned per binary: 2889 cases stamp 7a1a4951, zero mismatches; wall power + mutex + boost per lane):
+traced	COMPLETE	traced/ — 34 scenario queries warm+cold, 25 ledger/calendar read families warm, 22 crud + 12 lawful + 16 writes cells, 6 windowed/capacity judgment lanes; 149 folded (Chrome JSONs on disk beside them, not in git); gaps: p5_keyed_get span-free by design, closure/displaced families have no traced path, bulk_append untraced by decision
+flame	COMPLETE	flame/ — 147 folded+SVG pairs via scripts/flame.py (the I3 renderer)
+alloc	COMPLETE	alloc/ — scenarios --alloc --samples 1 (true per-query windows, all 34) + bench --alloc --samples 8 (all 33 read families); write worlds refuse --alloc by doctrine
+sweep-commit	COMPLETE	sweep-commit/sweep.md
+TALLY	COMPLETE	TALLY.md — every lane's number, delta, top-5 span attribution, alloc footprint, flame path; honest gaps marked. THE document the perf fanout reads.
