@@ -20,7 +20,9 @@
  * each `@ts-expect-error` real, each construction refusal pinned by the
  * data-model ruling's fragment ("declaration order is an accident, not
  * semantics: vocabularies do not order",
- * `docs/architecture/10-data-model.md` § orderability), plus the head
+ * `docs/architecture/10-data-model.md` § orderability; the param tier's
+ * refusal is the registry's one-domain wall — an order use anchors its
+ * sibling's domain, so the closed anchor collides), plus the head
  * agreement wall: one answer column decodes through one roster.
  */
 
@@ -354,16 +356,24 @@ describe("answer rows arrive named + the orderable ban", function suite() {
 				const { id } = v(Incident)
 				return r
 					.match(Incident, { id, sev: r.param("p") })
-					.where(r.lt(r.param("p"), 2n))
+					.where(r.lt(id, r.param("p")))
 					.find({ n: id })
 			})
 		}
 		// The compile-FAIL is the params object itself: the closed anchor
-		// claims the handle union, the order use claims bigint, and the
-		// intersection is never — no value can be supplied for p.
+		// claims the handle union, the order use (against the u64 id
+		// sibling — a param-vs-literal spelling is a constant comparison,
+		// refused at the comparison constructor) claims bigint, and the
+		// intersection is never — no value can be supplied for p. The
+		// runtime refusal is the registry's one-domain wall: an order use
+		// always anchors its sibling's domain, so the closed anchor and
+		// the order anchor collide — the ban needs no order-specific arm.
 		type OrderedParams = QueryParams<ReturnType<typeof buildOrderedParam>>
 		type ParamNeverPin = Expect<Equal<OrderedParams["p"], never>>
-		assert.throws(buildOrderedParam, BAN)
+		assert.throws(
+			buildOrderedParam,
+			/query param p is anchored at a Sev reference and at a non-closed position — a closed-anchored param translates handle names through ONE roster/
+		)
 		const pins: [ParamNeverPin] = [true]
 		assert.equal(pins.length, 1)
 	})
