@@ -108,8 +108,9 @@ fn answer_reuse_retains_capacity_and_answers_stay_identical() {
     assert_eq!(first.len(), 3);
 }
 
-/// Finalize resolves each distinct intern once per finalize and
-/// stores its bytes once per answer carrier (docs/architecture/40-execution.md).
+/// Finalize resolves each distinct intern once per prepared query —
+/// the persistent arena tier — and stores its bytes once per answer
+/// carrier per finalize (docs/architecture/40-execution.md).
 #[cfg(feature = "trace")]
 #[test]
 fn finalize_resolves_each_distinct_intern_once() {
@@ -163,7 +164,25 @@ fn finalize_resolves_each_distinct_intern_once() {
     let (out, count) = resolves(&mut prepared, 2);
     assert_eq!(out.len(), 16);
     assert_eq!(count, 16);
-    // A second execution memoizes per finalize, not across them.
-    let (_, count) = resolves(&mut prepared, 2);
-    assert_eq!(count, 16, "the memo clears per finalize");
+    // A second execution hits the persistent arena tier: the append-only
+    // dictionary makes every resolved pair final, so no descent repeats
+    // — and the answers still materialize whole.
+    let (out, count) = resolves(&mut prepared, 2);
+    assert_eq!(count, 0, "the arena tier survives across finalizes");
+    assert_eq!(out.len(), 16);
+    let mut memos: Vec<String> = (0..out.len())
+        .map(|answer| {
+            let AnswerValue::String(memo) = out.get(answer, 0) else {
+                panic!("column 0 is a string");
+            };
+            memo.to_owned()
+        })
+        .collect();
+    memos.sort();
+    let expected: Vec<String> = {
+        let mut memos: Vec<String> = (0..16).map(|i| format!("m{i}")).collect();
+        memos.sort();
+        memos
+    };
+    assert_eq!(memos, expected, "arena copies materialize the same text");
 }

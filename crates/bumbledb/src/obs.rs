@@ -254,7 +254,10 @@ pub mod names {
     /// One COLT node forced. (positions ingested, distinct keys)
     pub const COLT_FORCE: &str = "colt_force";
     /// One dictionary resolution in finalize — fires per *distinct*
-    /// intern per finalize (docs/architecture/40-execution.md). (intern word, byte length)
+    /// intern per PREPARED QUERY LIFETIME: the resolve memo's persistent
+    /// arena tier caches the (word → text) pair forever, sound because
+    /// the dictionary is append-only
+    /// (docs/architecture/40-execution.md). (intern word, byte length)
     pub const DICT_RESOLVE: &str = "dict_resolve";
     /// A `str` literal latched: the dictionary is append-only, so its
     /// resolved word rewrites the plan template once, permanently —
