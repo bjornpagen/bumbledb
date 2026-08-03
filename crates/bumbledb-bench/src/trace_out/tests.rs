@@ -207,6 +207,25 @@ fn fold_stacks_empty_capture_is_empty() {
 }
 
 #[test]
+fn an_unregistered_phase_event_never_suppresses_the_phase_table() {
+    // An accumulator name the registry table doesn't know (an engine
+    // ahead of the bench's view) drops its own row only — the table
+    // used to vanish whole.
+    let registered = bumbledb::obs::names::JOIN_PHASE[0][0];
+    let events = vec![
+        span(registered, Category::Phase, 0, 0, 10_000),
+        span("jp_unregistered_nX", Category::Phase, 0, 0, 5_000),
+    ];
+    let table = render_phase_table(&events).expect("the registered row still renders");
+    assert!(table.contains(registered), "{table}");
+    assert!(!table.contains("jp_unregistered_nX"), "{table}");
+
+    // Nothing registered at all still means no table.
+    let alien = vec![span("jp_unregistered_nX", Category::Phase, 0, 0, 5_000)];
+    assert!(render_phase_table(&alien).is_none());
+}
+
+#[test]
 fn equal_tick_nests_resolve_parenthood_by_drop_order() {
     // A sub-tick child inside a sub-tick parent shares BOTH endpoints on
     // the 41.67 ns counter. Spans record at drop, so the CHILD lands in
