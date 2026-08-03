@@ -1,0 +1,114 @@
+scheduler boost: user-interactive QoS claimed
+scenario joins: loaded 564559 facts x 2 engines
+scenario joins: j1_filmography
+scenario joins: j2_costars
+scenario joins: j3_keyword_kind
+scenario joins: j4_five_way
+scenario joins: j5_country_rollup
+scenario joins: j6_keyword_neighborhood
+scenario graph: loaded 528675 facts x 2 engines
+scenario graph: g1_neighbors
+scenario graph: g2_two_hop
+scenario graph: g3_three_hop_count
+scenario graph: g4_mutual
+scenario graph: g5_triangles_from
+scenario graph: g6_weighted_hop
+scenario olap: loaded 525200 facts x 2 engines
+scenario olap: o1_revenue_by_region
+scenario olap: o2_category_window
+scenario olap: o3_promo_split
+scenario olap: o4_segment_category
+scenario olap: o5_store_extremes
+scenario olap: o6_brand_drill
+scenario points: loaded 304096 facts x 2 engines
+scenario points: p1_by_id
+scenario points: p2_by_key
+scenario points: p3_bucket_fetch
+scenario points: p4_size_band
+scenario points: p5_keyed_get
+scenario rings: loaded 387054 facts x 2 engines
+scenario rings: r1_wash_ring
+scenario rings: r2_temporal_ring
+scenario rings: r3_bomb_t1
+scenario rings: r4_bomb_t2
+scenario rings: r5_reciprocal
+scenario rings: r6_two_path_count
+scenario temporal: loaded 152034 facts x 2 engines
+scenario temporal: t1_stab
+scenario temporal: t2_overlap_join
+scenario temporal: t3_mixed_mask
+scenario temporal: t4_ray_stab
+scenario temporal: t5_pack_key
+# Scenario benchmarks
+
+Report-class measurements over non-ledger worlds; every query oracle-gated (value-identical results on both engines, every `SQLite` lane, never under a cap) before timing. Adversarial lanes run under a per-sample wall-clock cap (`SQLite`'s progress handler): a lane that trips it reports `DNF>cap` with NO percentiles — excluded from geomeans and counted. Protocol: 8 warmups, 64 samples, medians; `SQLite` file-backed WAL `synchronous=FULL`, fully indexed, prepared statements reused, ANALYZE run. ratio = ours/theirs (lower is better; <1 = bumbledb faster).
+
+
+## joins (geomean ratio 0.08 over 6 timed)
+
+| query | lane | rows | ours p50 (us) | sqlite p50 (us) | ratio | regime |
+|---|---|---:|---:|---:|---:|---|
+| j1_filmography | sqlite | 32 | 0.2 | 7.6 | 0.03 | 2-atom containment walk under 25%-hot fan-in skew |
+| j2_costars | sqlite | 317 | 0.9 | 12.8 | 0.07 | self-join through the fact table, hot vs cold |
+| j3_keyword_kind | sqlite | 53 | 1.6 | 18.2 | 0.09 | 3-way pinched by string point + year range |
+| j4_five_way | sqlite | 10171 | 1674.5 | 5487.8 | 0.31 | JOB-shaped 5-way, dims filter both sides |
+| j5_country_rollup | sqlite | 8 | 5442.5 | 31050.9 | 0.18 | full-join rollup: Min(year)+Count by country |
+| j6_keyword_neighborhood | sqlite | 6807 | 39.8 | 1667.9 | 0.02 | fan-out explosion through shared keywords |
+
+## graph (geomean ratio 0.05 over 6 timed)
+
+| query | lane | rows | ours p50 (us) | sqlite p50 (us) | ratio | regime |
+|---|---|---:|---:|---:|---:|---|
+| g1_neighbors | sqlite | 212 | 0.2 | 3.3 | 0.06 | single hop: hub ~1.5k edges, normal ~4 |
+| g2_two_hop | sqlite | 6199 | 0.8 | 13.8 | 0.05 | two hops, deduplicated destination set |
+| g3_three_hop_count | sqlite | 0 | 1.6 | 37.3 | 0.04 | three-hop reach folded to Count |
+| g4_mutual | sqlite | 15 | 4101.8 | 31293.3 | 0.13 | reciprocal-edge 2-cycle over the full graph |
+| g5_triangles_from | sqlite | 0 | 0.6 | 24.2 | 0.03 | 3-cycle through a start node, counted |
+| g6_weighted_hop | sqlite | 49 | 0.3 | 9.5 | 0.04 | hop + weight range + target-score range |
+
+## olap (geomean ratio 0.01 over 6 timed)
+
+| query | lane | rows | ours p50 (us) | sqlite p50 (us) | ratio | regime |
+|---|---|---:|---:|---:|---:|---|
+| o1_revenue_by_region | sqlite | 6 | 503.5 | 215379.8 | 0.00 | full-fact Sum through one dimension, 6 groups |
+| o2_category_window | sqlite | 12 | 377.5 | 21243.5 | 0.02 | Sum+Count by category inside day windows |
+| o3_promo_split | sqlite | 2 | 342.4 | 89943.4 | 0.00 | bool group key, full-scan fold |
+| o4_segment_category | sqlite | 64 | 25141.5 | 346754.4 | 0.07 | two-dimension rollup, 64 groups, 3-way join |
+| o5_store_extremes | sqlite | 200 | 665.9 | 144758.2 | 0.00 | Min+Max per store, 200 groups |
+| o6_brand_drill | sqlite | 0 | 1.8 | 578.0 | 0.00 | selective brand point + day range, one Sum |
+
+## points (geomean ratio 0.11 over 5 timed)
+
+| query | lane | rows | ours p50 (us) | sqlite p50 (us) | ratio | regime |
+|---|---|---:|---:|---:|---:|---|
+| p1_by_id | sqlite | 0 | 0.3 | 1.1 | 0.27 | fresh-id point: key probe vs B-tree descent |
+| p2_by_key | sqlite | 0 | 1.0 | 1.3 | 0.72 | keyed string point: dictionary + determinant index |
+| p3_bucket_fetch | sqlite | 1744 | 11.7 | 211.6 | 0.06 | small fan-out through a dimension + id ceiling |
+| p4_size_band | sqlite | 0 | 0.2 | 112.5 | 0.00 | secondary range folded to Count |
+| p5_keyed_get | sqlite | 0 | 1.0 | 1.4 | 0.68 | keyed get (0.5.0): the point read through Doc(key) -> Doc — determinant probe, no query machinery |
+
+## rings (geomean ratio 0.16 over 5 timed, 1 DNF > cap — excluded and counted)
+
+| query | lane | rows | ours p50 (us) | sqlite p50 (us) | ratio | regime |
+|---|---|---:|---:|---:|---:|---|
+| r1_wash_ring | sqlite | 0 | 10029.0 | 105583.2 | 0.09 | the equality 3-ring (wash-trade) over power-law hubs — the binary-join exponent, capped |
+| r2_temporal_ring | sqlite | 0 | 28643.5 | 146228.4 | 0.20 | the ring + pairwise Allen INTERSECTS — the temporal-ring shape |
+| r2_temporal_ring | sqlite-tuned | 0 | 28643.5 | 108291.5 | 0.26 | the ring + pairwise Allen INTERSECTS — the temporal-ring shape |
+| r3_bomb_t1 | sqlite | 1 | 3452.6 | 32127.8 | 0.11 | bipartite-bomb tier 1 (m=48): K_{m,m} + one planted triangle — answer 3 by construction; sized to finish within the cap |
+| r4_bomb_t2 | sqlite | 1 | 1598655.5 | DNF>1000ms | — | bipartite-bomb tier 2 (m=384): m^3≈5.7e7 closing probes — the exponent evidence; SQLite predictably exceeds the cap, reported exceeded-cap, excluded and counted |
+| r5_reciprocal | sqlite | 1368 | 507.0 | 3252.3 | 0.16 | the reciprocal-pair 2-cycle, kind-filtered |
+| r6_two_path_count | sqlite | 1 | 196619.4 | 673388.0 | 0.29 | the denominator story: the distinct 2-path count binary joins must materialize |
+
+## temporal (geomean ratio 0.02 over 4 timed, 1 DNF > cap — excluded and counted)
+
+| query | lane | rows | ours p50 (us) | sqlite p50 (us) | ratio | regime |
+|---|---|---:|---:|---:|---:|---|
+| t1_stab | sqlite | 796 | 0.5 | 5.4 | 0.08 | interval stabbing: point-in-span membership probe |
+| t2_overlap_join | sqlite | 1 | 46949.1 | DNF>1000ms | — | pairwise span-overlap self-join per key, counted — the Allen OR-chain's price on SQLite |
+| t2_overlap_join | sqlite-tuned | 1 | 46949.1 | 491433.3 | 0.10 | pairwise span-overlap self-join per key, counted — the Allen OR-chain's price on SQLite |
+| t3_mixed_mask | sqlite | 26543 | 19.0 | 1156.4 | 0.02 | mixed-mask (DURING ∪ MEETS) pair join on one key — the composite-mask disjunction as data |
+| t4_ray_stab | sqlite | 2247 | 45.4 | 4185.3 | 0.01 | open-ended rays: past the horizon only rays answer — the ray case lives in the corpus coordinates, not in a filter |
+| t5_pack_key | sqlite-hand | 7 | 2.1 | 95.0 | 0.02 | Pack/coalesce: Snodgrass coalescing per key — SQLite's lane is the hand-written islands SQL (the free_busy precedent) |
+
+Overall geomean ratio across 34 queries: **0.05**; 2 lane(s) DNF > cap (excluded, counted).
+artifacts: /Users/bjorn/Documents/bumbledb/bench-out/baseline-2026-07-25-post/scenarios
