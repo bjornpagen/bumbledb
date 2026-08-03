@@ -190,6 +190,50 @@ fn the_alloc_pass_scopes_a_reading_per_query() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// A failed traced capture drains the thread-local capture on its way
+/// out: the cold half used to hand-roll `start_capture`/`finish_capture`
+/// around a `?`, leaving the capture LIVE on every prepare/execute error
+/// path — the next capture on the thread silently extended a stale
+/// timeline. Every capture now runs through the drain-either-way
+/// harness sample.
+#[cfg(feature = "obs")]
+#[test]
+fn a_failed_capture_never_leaves_the_thread_local_capture_live() {
+    fn unprepared() -> bumbledb::Query {
+        // Relation 99 exists in no scenario schema: prepare refuses.
+        bumbledb::Query::single(bumbledb::Rule {
+            finds: vec![bumbledb::FindTerm::Var(bumbledb::VarId(0))],
+            atoms: vec![crate::fixture::atom(
+                bumbledb::RelationId(99),
+                &[(0, crate::fixture::var(0))],
+            )],
+            negated: vec![],
+            conditions: vec![],
+        })
+    }
+    let scenario = super::rings::scenario_smoke();
+    let dir = std::env::temp_dir().join("bumbledb-scenario-trace-drain");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("scratch dir");
+    let stores = super::load::load(&dir, &scenario, 7).expect("load smoke stores");
+    let sq = ScenarioQuery {
+        name: "bogus",
+        surface: Surface::Query(unprepared),
+        params: |_| vec![vec![]],
+        about: "a prepare-refused query",
+        twin: Twin::Canonical,
+        cap: None,
+    };
+    let err = super::trace::capture_query(&stores, &scenario, &sq, 7, &dir)
+        .expect_err("relation 99 must refuse to prepare");
+    assert!(err.contains("prepare"), "{err}");
+    assert!(
+        !bumbledb::obs::capturing(),
+        "the failed capture left the thread-local capture live"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Scenario corpora are pure functions of the seed: the first row of
 /// every relation reproduces.
 #[test]

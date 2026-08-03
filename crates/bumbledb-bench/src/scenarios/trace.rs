@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use bumbledb::Answers;
-use bumbledb::obs::{self, Category, TraceEvent};
+use bumbledb::obs::TraceEvent;
 
 use super::{Scenario, ScenarioQuery, Stores, Surface};
 use crate::families::bind_values;
@@ -26,6 +26,11 @@ const WARM_ROUNDS: usize = 8;
 /// so the cold half is a fresh prepare rather than the Ledger-specific
 /// eviction touch the read families use — the honest warm/cold contrast
 /// for a world with no synthetic touch relation.
+///
+/// Every capture runs through [`crate::harness::traced_sample`] — the
+/// drain-either-way sample, so a prepare/execute error can never leave
+/// the thread-local capture live behind the `?` (the next capture on
+/// this thread would silently extend a stale timeline).
 ///
 /// # Errors
 ///
@@ -54,21 +59,19 @@ pub(super) fn capture_query(
         Surface::Query(query) => {
             let q = query();
             // COLD: the fresh prepare + first execute, captured together.
-            obs::start_capture();
-            let cold_span = obs::span(obs::names::SAMPLE, Category::Harness);
-            let mut prepared = db
-                .prepare(&q)
-                .map_err(|e| format!("{}/{}: prepare: {e:?}", scenario.name, sq.name))?;
             let mut buffer = Answers::new();
-            db.read(|snap| snap.execute(&mut prepared, &bind_values(&sets[0]), &mut buffer))
-                .map_err(|e| format!("{}/{}: cold execute: {e:?}", scenario.name, sq.name))?;
-            cold_span.end();
-            emit(
-                &dir,
-                &format!("{}.cold", sq.name),
-                obs::finish_capture(),
-                false,
-            )?;
+            let mut prepared = None;
+            let (_, cold) = crate::harness::traced_sample(&mut || {
+                let mut p = db
+                    .prepare(&q)
+                    .map_err(|e| format!("{}/{}: prepare: {e:?}", scenario.name, sq.name))?;
+                db.read(|snap| snap.execute(&mut p, &bind_values(&sets[0]), &mut buffer))
+                    .map_err(|e| format!("{}/{}: cold execute: {e:?}", scenario.name, sq.name))?;
+                prepared = Some(p);
+                Ok(buffer.len() as u64)
+            })?;
+            emit(&dir, &format!("{}.cold", sq.name), cold, false)?;
+            let mut prepared = prepared.expect("the cold sample prepared the query");
 
             // WARM: seat the caches on the prepared query, then trace one
             // steady-state execute.
@@ -89,17 +92,13 @@ pub(super) fn capture_query(
         Surface::KeyedGet { relation, key } => {
             let statement = key((scenario.schema)());
             // COLD: the first keyed get.
-            obs::start_capture();
-            let cold_span = obs::span(obs::names::SAMPLE, Category::Harness);
-            db.read(|snap| snap.get_dyn(*relation, statement, &sets[0]))
-                .map_err(|e| format!("{}/{}: cold get_dyn: {e:?}", scenario.name, sq.name))?;
-            cold_span.end();
-            emit(
-                &dir,
-                &format!("{}.cold", sq.name),
-                obs::finish_capture(),
-                false,
-            )?;
+            let (_, cold) = crate::harness::traced_sample(&mut || {
+                let fact = db
+                    .read(|snap| snap.get_dyn(*relation, statement, &sets[0]))
+                    .map_err(|e| format!("{}/{}: cold get_dyn: {e:?}", scenario.name, sq.name))?;
+                Ok(std::hint::black_box(fact).map_or(0, |_| 1))
+            })?;
+            emit(&dir, &format!("{}.cold", sq.name), cold, false)?;
 
             // WARM: seat, then trace one steady-state get.
             let mut cursor = 0usize;
