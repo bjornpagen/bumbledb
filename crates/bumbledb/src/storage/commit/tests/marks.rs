@@ -851,6 +851,46 @@ fn capacity_duration_weight_of_a_ray_refuses_typed() {
     assert_eq!(**fact, *b, "the refusal names the weighed row");
 }
 
+/// An INVERTED interval in the weighed field (`end < start`) —
+/// unrepresentable through the value codec, so the raw bytes model
+/// hostile stored data. The measure must convict typed corruption,
+/// never underflow into a garbage weight.
+#[test]
+fn capacity_duration_weight_of_an_inverted_tail_is_corruption() {
+    let schema = duration_schema(Bound::Lit(10));
+    let mut inverted = booking(&schema, 1, (7, 9), 0);
+    // Swap the interval's start/end words in the raw bytes: [7, 9) reads
+    // back as start 9, end 7.
+    let offset = schema.relation(BOOKING).layout().field_offset(1);
+    let (a, b) = {
+        let span = &inverted[offset..offset + 16];
+        let mut a = [0u8; 8];
+        let mut b = [0u8; 8];
+        a.copy_from_slice(&span[..8]);
+        b.copy_from_slice(&span[8..]);
+        (a, b)
+    };
+    inverted[offset..offset + 8].copy_from_slice(&b);
+    inverted[offset + 8..offset + 16].copy_from_slice(&a);
+    let result = base_then_delta(
+        "cap-inverted-weight",
+        &schema,
+        &[],
+        &[],
+        &[(ROOM, room(&schema, 1, (0, 24))), (BOOKING, inverted)],
+    );
+    let err = result.unwrap_err();
+    assert!(
+        matches!(
+            err,
+            Error::Corruption(crate::error::CorruptionError::MalformedValue(
+                "capacity interval inverted"
+            ))
+        ),
+        "expected the inverted-tail corruption conviction, got {err:?}"
+    );
+}
+
 /// C10, the BOUND direction: a parent whose dependent Duration bound is
 /// a ray refuses any commit touching its group — the refusal names the
 /// bound-carrying TARGET row.

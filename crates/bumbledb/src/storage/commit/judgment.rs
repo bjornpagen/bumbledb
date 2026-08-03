@@ -161,6 +161,12 @@ pub(crate) fn expected_slot_weight(
 /// (`end == u64::MAX` in both element encodings) has no finite measure —
 /// the typed commit refusal naming the row (ruled 2026-07-24, C10; the
 /// R6 precedent, `crate::error::Error::MeasureOfRay`'s judge-side twin).
+/// An INVERTED general tail (`end < start`) is unrepresentable by
+/// construction — the value codec only encodes nonempty intervals — so
+/// stored bytes reading back inverted convict corruption, never wrap
+/// into a garbage measure (`checked_sub`, not `-`: the subtraction was
+/// the one arithmetic in the module that could underflow on hostile
+/// bytes).
 fn interval_measure(
     tail: IntervalTail,
     bytes: &[u8],
@@ -178,7 +184,10 @@ fn interval_measure(
             fact: fact.into(),
         });
     }
-    Ok(end - start)
+    end.checked_sub(start)
+        .ok_or(Error::Corruption(CorruptionError::MalformedValue(
+            "capacity interval inverted",
+        )))
 }
 
 /// One binding's pre-encoded comparison: the singleton compare (today's
