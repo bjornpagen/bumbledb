@@ -1,0 +1,329 @@
+# churn — degradation over cycles
+
+- crate version: 0.9.0
+- engine rev: f5a16e59970afd5eec108e00d03c9aee6e1f50a3
+- timestamp: 2026-08-03T22:51:11Z
+- host: Apple M2 Max
+- shared machine: boost qos-user-interactive — load 1/5/15 2.55 3.10 3.28 (start) → 3.73 2.98 2.90 (end)
+- config: scale S, seed 1, 10000 cycles, sample every 250, vacuum every 500, analyze every 500
+
+## run steady (churn=64 updates=32 growth=0, working set 100000)
+
+### ours-durable (bumbledb)
+
+| cycle | probes (p50 ns) | commits/s | maint ns | disk bytes | gen | id-hw | freelist | pages |
+|---|---|---|---|---|---|---|---|---|
+| 250 | churn_point=273 churn_balance=25334 churn_window=21375 | 47.09 | 0 | 80543744 | 294 | 123999 | - | - |
+| 500 | churn_point=270 churn_balance=19750 churn_window=21333 | 48.13 | 0 | 80543744 | 544 | 147999 | - | - |
+| 750 | churn_point=268 churn_balance=15625 churn_window=20708 | 47.87 | 0 | 80543744 | 794 | 171999 | - | - |
+| 1000 | churn_point=260 churn_balance=12500 churn_window=21083 | 47.70 | 0 | 80543744 | 1044 | 195999 | - | - |
+| 1250 | churn_point=260 churn_balance=9709 churn_window=21667 | 47.12 | 0 | 80543744 | 1294 | 219999 | - | - |
+| 1500 | churn_point=286 churn_balance=8000 churn_window=23917 | 46.02 | 0 | 80543744 | 1544 | 243999 | - | - |
+| 1750 | churn_point=299 churn_balance=6875 churn_window=21792 | 45.67 | 0 | 80543744 | 1794 | 267999 | - | - |
+| 2000 | churn_point=281 churn_balance=5250 churn_window=23042 | 45.68 | 0 | 80543744 | 2044 | 291999 | - | - |
+| 2250 | churn_point=281 churn_balance=4208 churn_window=21708 | 46.73 | 0 | 80543744 | 2294 | 315999 | - | - |
+| 2500 | churn_point=257 churn_balance=3292 churn_window=21917 | 47.82 | 0 | 80543744 | 2544 | 339999 | - | - |
+| 2750 | churn_point=276 churn_balance=2541 churn_window=22375 | 47.00 | 0 | 80543744 | 2794 | 363999 | - | - |
+| 3000 | churn_point=263 churn_balance=2042 churn_window=23083 | 47.72 | 0 | 80543744 | 3044 | 387999 | - | - |
+| 3250 | churn_point=270 churn_balance=1667 churn_window=23250 | 47.07 | 0 | 80543744 | 3294 | 411999 | - | - |
+| 3500 | churn_point=281 churn_balance=1375 churn_window=23208 | 47.00 | 0 | 80543744 | 3544 | 435999 | - | - |
+| 3750 | churn_point=283 churn_balance=1167 churn_window=22333 | 47.05 | 0 | 80543744 | 3794 | 459999 | - | - |
+| 4000 | churn_point=255 churn_balance=958 churn_window=22292 | 47.11 | 0 | 80543744 | 4044 | 483999 | - | - |
+| 4250 | churn_point=257 churn_balance=833 churn_window=21959 | 46.96 | 0 | 80543744 | 4294 | 507999 | - | - |
+| 4500 | churn_point=312 churn_balance=708 churn_window=21833 | 47.34 | 0 | 80543744 | 4544 | 531999 | - | - |
+| 4750 | churn_point=263 churn_balance=625 churn_window=23833 | 47.04 | 0 | 80543744 | 4794 | 555999 | - | - |
+| 5000 | churn_point=273 churn_balance=583 churn_window=21792 | 47.06 | 0 | 80543744 | 5044 | 579999 | - | - |
+| 5250 | churn_point=270 churn_balance=541 churn_window=21958 | 47.43 | 0 | 80543744 | 5294 | 603999 | - | - |
+| 5500 | churn_point=263 churn_balance=453 churn_window=22125 | 48.13 | 0 | 80543744 | 5544 | 627999 | - | - |
+| 5750 | churn_point=276 churn_balance=408 churn_window=22458 | 45.17 | 0 | 80543744 | 5794 | 651999 | - | - |
+| 6000 | churn_point=278 churn_balance=406 churn_window=23542 | 44.47 | 0 | 80543744 | 6044 | 675999 | - | - |
+| 6250 | churn_point=625 churn_balance=414 churn_window=24375 | 46.59 | 0 | 80543744 | 6294 | 699999 | - | - |
+| 6500 | churn_point=263 churn_balance=375 churn_window=23708 | 45.92 | 0 | 80543744 | 6544 | 723999 | - | - |
+| 6750 | churn_point=273 churn_balance=367 churn_window=23500 | 45.78 | 0 | 80543744 | 6794 | 747999 | - | - |
+| 7000 | churn_point=281 churn_balance=351 churn_window=23250 | 47.23 | 0 | 80543744 | 7044 | 771999 | - | - |
+| 7250 | churn_point=255 churn_balance=333 churn_window=22834 | 46.97 | 0 | 80543744 | 7294 | 795999 | - | - |
+| 7500 | churn_point=276 churn_balance=346 churn_window=22125 | 46.96 | 0 | 80543744 | 7544 | 819999 | - | - |
+| 7750 | churn_point=307 churn_balance=341 churn_window=22125 | 46.52 | 0 | 80543744 | 7794 | 843999 | - | - |
+| 8000 | churn_point=281 churn_balance=341 churn_window=21875 | 46.01 | 0 | 80543744 | 8044 | 867999 | - | - |
+| 8250 | churn_point=276 churn_balance=320 churn_window=21916 | 46.17 | 0 | 80543744 | 8294 | 891999 | - | - |
+| 8500 | churn_point=296 churn_balance=341 churn_window=22291 | 46.13 | 0 | 80543744 | 8544 | 915999 | - | - |
+| 8750 | churn_point=291 churn_balance=315 churn_window=23417 | 45.89 | 0 | 80543744 | 8794 | 939999 | - | - |
+| 9000 | churn_point=281 churn_balance=317 churn_window=21833 | 48.12 | 0 | 80543744 | 9044 | 963999 | - | - |
+| 9250 | churn_point=281 churn_balance=333 churn_window=21750 | 47.34 | 0 | 80543744 | 9294 | 987999 | - | - |
+| 9500 | churn_point=263 churn_balance=322 churn_window=21917 | 48.42 | 0 | 80543744 | 9544 | 1011999 | - | - |
+| 9750 | churn_point=257 churn_balance=322 churn_window=21416 | 48.40 | 0 | 80543744 | 9794 | 1035999 | - | - |
+| 10000 | churn_point=278 churn_balance=317 churn_window=21209 | 48.03 | 0 | 80543744 | 10044 | 1059999 | - | - |
+
+### sqlite-bare (sqlite)
+
+| cycle | probes (p50 ns) | commits/s | maint ns | disk bytes | gen | id-hw | freelist | pages |
+|---|---|---|---|---|---|---|---|---|
+| 250 | churn_point=1125 churn_balance=5466750 churn_window=293541 | 55.10 | 0 | 14774272 | - | - | 0 | 3607 |
+| 500 | churn_point=1208 churn_balance=4572250 churn_window=377583 | 53.76 | 0 | 15884288 | - | - | 0 | 3878 |
+| 750 | churn_point=1125 churn_balance=3786375 churn_window=409459 | 49.78 | 0 | 16924672 | - | - | 0 | 4132 |
+| 1000 | churn_point=1166 churn_balance=3033167 churn_window=441833 | 47.77 | 0 | 17383424 | - | - | 45 | 4244 |
+| 1250 | churn_point=1125 churn_balance=2490625 churn_window=481625 | 48.57 | 0 | 17383424 | - | - | 193 | 4244 |
+| 1500 | churn_point=1167 churn_balance=2046167 churn_window=502916 | 46.47 | 0 | 17383424 | - | - | 161 | 4244 |
+| 1750 | churn_point=1167 churn_balance=1630250 churn_window=521333 | 46.46 | 0 | 17383424 | - | - | 204 | 4244 |
+| 2000 | churn_point=1167 churn_balance=1329250 churn_window=554583 | 46.76 | 0 | 17383424 | - | - | 205 | 4244 |
+| 2250 | churn_point=1209 churn_balance=1043875 churn_window=530250 | 48.18 | 0 | 17383424 | - | - | 209 | 4244 |
+| 2500 | churn_point=1125 churn_balance=797875 churn_window=529459 | 49.63 | 0 | 17383424 | - | - | 214 | 4244 |
+| 2750 | churn_point=1125 churn_balance=639583 churn_window=545042 | 48.21 | 0 | 17383424 | - | - | 248 | 4244 |
+| 3000 | churn_point=1166 churn_balance=521541 churn_window=551916 | 50.42 | 0 | 17383424 | - | - | 239 | 4244 |
+| 3250 | churn_point=1125 churn_balance=420584 churn_window=566083 | 49.55 | 0 | 17383424 | - | - | 236 | 4244 |
+| 3500 | churn_point=1166 churn_balance=344791 churn_window=561208 | 49.29 | 0 | 17383424 | - | - | 237 | 4244 |
+| 3750 | churn_point=1167 churn_balance=283208 churn_window=554917 | 49.27 | 0 | 17383424 | - | - | 236 | 4244 |
+| 4000 | churn_point=1125 churn_balance=232792 churn_window=550167 | 49.42 | 0 | 17383424 | - | - | 254 | 4244 |
+| 4250 | churn_point=1125 churn_balance=192209 churn_window=546292 | 49.22 | 0 | 17383424 | - | - | 244 | 4244 |
+| 4500 | churn_point=1167 churn_balance=158167 churn_window=552125 | 50.48 | 0 | 17383424 | - | - | 243 | 4244 |
+| 4750 | churn_point=1125 churn_balance=139000 churn_window=540250 | 48.74 | 0 | 17383424 | - | - | 236 | 4244 |
+| 5000 | churn_point=1166 churn_balance=123708 churn_window=544333 | 50.53 | 0 | 17383424 | - | - | 240 | 4244 |
+| 5250 | churn_point=1167 churn_balance=110000 churn_window=570000 | 50.02 | 0 | 17383424 | - | - | 244 | 4244 |
+| 5500 | churn_point=1125 churn_balance=89250 churn_window=555167 | 49.77 | 0 | 17383424 | - | - | 226 | 4244 |
+| 5750 | churn_point=1208 churn_balance=78958 churn_window=562792 | 47.58 | 0 | 17383424 | - | - | 234 | 4244 |
+| 6000 | churn_point=1208 churn_balance=76292 churn_window=593000 | 47.27 | 0 | 17383424 | - | - | 239 | 4244 |
+| 6250 | churn_point=2583 churn_balance=72958 churn_window=588791 | 47.22 | 0 | 17383424 | - | - | 229 | 4244 |
+| 6500 | churn_point=1125 churn_balance=68000 churn_window=580875 | 48.11 | 0 | 17383424 | - | - | 216 | 4244 |
+| 6750 | churn_point=1084 churn_balance=64833 churn_window=585042 | 48.25 | 0 | 17383424 | - | - | 229 | 4244 |
+| 7000 | churn_point=1125 churn_balance=59334 churn_window=582709 | 50.37 | 0 | 17383424 | - | - | 217 | 4244 |
+| 7250 | churn_point=1083 churn_balance=58167 churn_window=579500 | 48.72 | 0 | 17383424 | - | - | 226 | 4244 |
+| 7500 | churn_point=1125 churn_balance=58875 churn_window=564917 | 49.48 | 0 | 17383424 | - | - | 226 | 4244 |
+| 7750 | churn_point=1125 churn_balance=58209 churn_window=595709 | 49.77 | 0 | 17383424 | - | - | 232 | 4244 |
+| 8000 | churn_point=1125 churn_balance=55167 churn_window=551833 | 48.04 | 0 | 17383424 | - | - | 222 | 4244 |
+| 8250 | churn_point=1125 churn_balance=52333 churn_window=548125 | 49.09 | 0 | 17383424 | - | - | 221 | 4244 |
+| 8500 | churn_point=1167 churn_balance=53667 churn_window=545750 | 47.97 | 0 | 17383424 | - | - | 222 | 4244 |
+| 8750 | churn_point=1167 churn_balance=48834 churn_window=549458 | 47.72 | 0 | 17383424 | - | - | 219 | 4244 |
+| 9000 | churn_point=1125 churn_balance=51750 churn_window=557250 | 49.15 | 0 | 17383424 | - | - | 220 | 4244 |
+| 9250 | churn_point=1125 churn_balance=52042 churn_window=543916 | 49.58 | 0 | 17383424 | - | - | 214 | 4244 |
+| 9500 | churn_point=1125 churn_balance=52833 churn_window=542625 | 49.87 | 0 | 17383424 | - | - | 232 | 4244 |
+| 9750 | churn_point=1083 churn_balance=51000 churn_window=545292 | 50.65 | 0 | 17383424 | - | - | 221 | 4244 |
+| 10000 | churn_point=1125 churn_balance=52417 churn_window=527500 | 51.29 | 0 | 17383424 | - | - | 211 | 4244 |
+
+### sqlite-maint (sqlite)
+
+| cycle | probes (p50 ns) | commits/s | maint ns | disk bytes | gen | id-hw | freelist | pages |
+|---|---|---|---|---|---|---|---|---|
+| 250 | churn_point=1125 churn_balance=5899916 churn_window=297250 | 54.93 | 0 | 14774272 | - | - | 0 | 3607 |
+| 500 | churn_point=1167 churn_balance=4596708 churn_window=654042 | 52.47 | 107237875 | 12832768 | - | - | 0 | 3133 |
+| 750 | churn_point=1125 churn_balance=3755041 churn_window=666208 | 53.23 | 0 | 14778368 | - | - | 0 | 3608 |
+| 1000 | churn_point=1125 churn_balance=3064625 churn_window=452541 | 50.31 | 110152459 | 12963840 | - | - | 0 | 3165 |
+| 1250 | churn_point=1125 churn_balance=2502500 churn_window=493875 | 50.78 | 0 | 15093760 | - | - | 0 | 3685 |
+| 1500 | churn_point=1125 churn_balance=2006459 churn_window=757250 | 47.44 | 108894833 | 13049856 | - | - | 0 | 3186 |
+| 1750 | churn_point=1125 churn_balance=1718000 churn_window=904792 | 47.47 | 0 | 15175680 | - | - | 0 | 3705 |
+| 2000 | churn_point=1167 churn_balance=1306084 churn_window=779041 | 47.22 | 113857000 | 13103104 | - | - | 0 | 3199 |
+| 2250 | churn_point=1167 churn_balance=1020875 churn_window=775084 | 48.39 | 0 | 15179776 | - | - | 0 | 3706 |
+| 2500 | churn_point=1125 churn_balance=805000 churn_window=533875 | 48.93 | 111600791 | 13135872 | - | - | 0 | 3207 |
+| 2750 | churn_point=1084 churn_balance=664000 churn_window=550000 | 47.78 | 0 | 15278080 | - | - | 0 | 3730 |
+| 3000 | churn_point=1166 churn_balance=530000 churn_window=785458 | 48.37 | 106044959 | 13152256 | - | - | 0 | 3211 |
+| 3250 | churn_point=1125 churn_balance=423458 churn_window=795334 | 47.57 | 0 | 15241216 | - | - | 0 | 3721 |
+| 3500 | churn_point=1125 churn_balance=345875 churn_window=570708 | 48.92 | 105077251 | 13164544 | - | - | 0 | 3214 |
+| 3750 | churn_point=1166 churn_balance=283833 churn_window=556416 | 46.64 | 0 | 15302656 | - | - | 0 | 3736 |
+| 4000 | churn_point=1125 churn_balance=236541 churn_window=559166 | 47.97 | 107330584 | 13168640 | - | - | 0 | 3215 |
+| 4250 | churn_point=1084 churn_balance=191084 churn_window=551208 | 46.53 | 0 | 15392768 | - | - | 0 | 3758 |
+| 4500 | churn_point=1208 churn_balance=162084 churn_window=775958 | 47.45 | 110070834 | 13176832 | - | - | 0 | 3217 |
+| 4750 | churn_point=1083 churn_balance=137041 churn_window=779041 | 46.49 | 0 | 15376384 | - | - | 0 | 3754 |
+| 5000 | churn_point=1125 churn_balance=114792 churn_window=547125 | 47.14 | 110119500 | 13180928 | - | - | 0 | 3218 |
+| 5250 | churn_point=1167 churn_balance=106125 churn_window=572416 | 47.78 | 0 | 15351808 | - | - | 0 | 3748 |
+| 5500 | churn_point=1166 churn_balance=88667 churn_window=789250 | 48.64 | 107973750 | 13180928 | - | - | 0 | 3218 |
+| 5750 | churn_point=1166 churn_balance=77250 churn_window=825708 | 44.68 | 0 | 15388672 | - | - | 0 | 3757 |
+| 6000 | churn_point=1167 churn_balance=74958 churn_window=588542 | 45.62 | 114389500 | 13180928 | - | - | 0 | 3218 |
+| 6250 | churn_point=2584 churn_balance=76209 churn_window=587542 | 44.68 | 0 | 15376384 | - | - | 0 | 3754 |
+| 6500 | churn_point=1125 churn_balance=67584 churn_window=573834 | 45.94 | 115003542 | 13185024 | - | - | 0 | 3219 |
+| 6750 | churn_point=1083 churn_balance=64417 churn_window=583250 | 45.80 | 0 | 15355904 | - | - | 0 | 3749 |
+| 7000 | churn_point=1166 churn_balance=57750 churn_window=574917 | 48.73 | 105038250 | 13180928 | - | - | 0 | 3218 |
+| 7250 | churn_point=1084 churn_balance=56417 churn_window=571875 | 47.85 | 0 | 15339520 | - | - | 0 | 3745 |
+| 7500 | churn_point=1125 churn_balance=57750 churn_window=790584 | 48.08 | 110004209 | 13185024 | - | - | 0 | 3219 |
+| 7750 | churn_point=1125 churn_balance=57750 churn_window=799958 | 46.77 | 0 | 15400960 | - | - | 0 | 3760 |
+| 8000 | churn_point=1125 churn_balance=61875 churn_window=554000 | 45.93 | 115576124 | 13180928 | - | - | 0 | 3218 |
+| 8250 | churn_point=1125 churn_balance=57625 churn_window=569625 | 46.69 | 0 | 15343616 | - | - | 0 | 3746 |
+| 8500 | churn_point=1167 churn_balance=58541 churn_window=565750 | 46.69 | 112444916 | 13180928 | - | - | 0 | 3218 |
+| 8750 | churn_point=1167 churn_balance=54041 churn_window=551625 | 45.70 | 0 | 15405056 | - | - | 0 | 3761 |
+| 9000 | churn_point=1125 churn_balance=49750 churn_window=547125 | 46.52 | 107304667 | 13180928 | - | - | 0 | 3218 |
+| 9250 | churn_point=1084 churn_balance=53917 churn_window=545041 | 47.92 | 0 | 15339520 | - | - | 0 | 3745 |
+| 9500 | churn_point=1125 churn_balance=57792 churn_window=535208 | 47.61 | 102030250 | 13180928 | - | - | 0 | 3218 |
+| 9750 | churn_point=1083 churn_balance=57667 churn_window=533958 | 47.40 | 0 | 15351808 | - | - | 0 | 3748 |
+| 10000 | churn_point=1125 churn_balance=58083 churn_window=531458 | 48.46 | 104972708 | 13185024 | - | - | 0 | 3219 |
+
+## run nosync (churn=64 updates=32 growth=0, working set 100000)
+
+### ours-ephemeral (bumbledb)
+
+| cycle | probes (p50 ns) | commits/s | maint ns | disk bytes | gen | id-hw | freelist | pages |
+|---|---|---|---|---|---|---|---|---|
+| 250 | churn_point=257 churn_balance=25333 churn_window=21042 | 329.77 | 0 | 80543744 | 294 | 123999 | - | - |
+| 500 | churn_point=260 churn_balance=23375 churn_window=21083 | 342.03 | 0 | 80543744 | 544 | 147999 | - | - |
+| 750 | churn_point=260 churn_balance=16125 churn_window=20750 | 336.68 | 0 | 80543744 | 794 | 171999 | - | - |
+| 1000 | churn_point=260 churn_balance=12625 churn_window=21125 | 333.86 | 0 | 80543744 | 1044 | 195999 | - | - |
+| 1250 | churn_point=260 churn_balance=10083 churn_window=21416 | 322.68 | 0 | 80543744 | 1294 | 219999 | - | - |
+| 1500 | churn_point=270 churn_balance=8042 churn_window=21542 | 286.42 | 0 | 80543744 | 1544 | 243999 | - | - |
+| 1750 | churn_point=268 churn_balance=6500 churn_window=21500 | 285.04 | 0 | 80543744 | 1794 | 267999 | - | - |
+| 2000 | churn_point=270 churn_balance=5125 churn_window=21916 | 286.15 | 0 | 80543744 | 2044 | 291999 | - | - |
+| 2250 | churn_point=260 churn_balance=4167 churn_window=21709 | 279.43 | 0 | 80543744 | 2294 | 315999 | - | - |
+| 2500 | churn_point=247 churn_balance=3250 churn_window=22125 | 284.68 | 0 | 80543744 | 2544 | 339999 | - | - |
+| 2750 | churn_point=263 churn_balance=2541 churn_window=22416 | 288.12 | 0 | 80543744 | 2794 | 363999 | - | - |
+| 3000 | churn_point=268 churn_balance=2042 churn_window=23166 | 288.63 | 0 | 80543744 | 3044 | 387999 | - | - |
+| 3250 | churn_point=268 churn_balance=1667 churn_window=23167 | 281.64 | 0 | 80543744 | 3294 | 411999 | - | - |
+| 3500 | churn_point=270 churn_balance=1375 churn_window=23208 | 285.11 | 0 | 80543744 | 3544 | 435999 | - | - |
+| 3750 | churn_point=276 churn_balance=1167 churn_window=22334 | 286.04 | 0 | 80543744 | 3794 | 459999 | - | - |
+| 4000 | churn_point=257 churn_balance=959 churn_window=22250 | 285.63 | 0 | 80543744 | 4044 | 483999 | - | - |
+| 4250 | churn_point=257 churn_balance=833 churn_window=21917 | 286.79 | 0 | 80543744 | 4294 | 507999 | - | - |
+| 4500 | churn_point=278 churn_balance=709 churn_window=21958 | 283.69 | 0 | 80543744 | 4544 | 531999 | - | - |
+| 4750 | churn_point=273 churn_balance=625 churn_window=21834 | 284.24 | 0 | 80543744 | 4794 | 555999 | - | - |
+| 5000 | churn_point=270 churn_balance=583 churn_window=21750 | 282.76 | 0 | 80543744 | 5044 | 579999 | - | - |
+| 5250 | churn_point=252 churn_balance=500 churn_window=21875 | 285.33 | 0 | 80543744 | 5294 | 603999 | - | - |
+| 5500 | churn_point=260 churn_balance=460 churn_window=22375 | 284.36 | 0 | 80543744 | 5544 | 627999 | - | - |
+| 5750 | churn_point=260 churn_balance=419 churn_window=22417 | 287.50 | 0 | 80543744 | 5794 | 651999 | - | - |
+| 6000 | churn_point=265 churn_balance=398 churn_window=23250 | 286.42 | 0 | 80543744 | 6044 | 675999 | - | - |
+| 6250 | churn_point=289 churn_balance=395 churn_window=22917 | 285.96 | 0 | 80543744 | 6294 | 699999 | - | - |
+| 6500 | churn_point=257 churn_balance=377 churn_window=23333 | 285.89 | 0 | 80543744 | 6544 | 723999 | - | - |
+| 6750 | churn_point=270 churn_balance=359 churn_window=23334 | 288.39 | 0 | 80543744 | 6794 | 747999 | - | - |
+| 7000 | churn_point=281 churn_balance=356 churn_window=23209 | 285.24 | 0 | 80543744 | 7044 | 771999 | - | - |
+| 7250 | churn_point=263 churn_balance=343 churn_window=22750 | 289.08 | 0 | 80543744 | 7294 | 795999 | - | - |
+| 7500 | churn_point=257 churn_balance=346 churn_window=22042 | 282.87 | 0 | 80543744 | 7544 | 819999 | - | - |
+| 7750 | churn_point=273 churn_balance=338 churn_window=21833 | 286.61 | 0 | 80543744 | 7794 | 843999 | - | - |
+| 8000 | churn_point=270 churn_balance=322 churn_window=22167 | 286.63 | 0 | 80543744 | 8044 | 867999 | - | - |
+| 8250 | churn_point=276 churn_balance=330 churn_window=21958 | 286.28 | 0 | 80543744 | 8294 | 891999 | - | - |
+| 8500 | churn_point=273 churn_balance=320 churn_window=22042 | 276.89 | 0 | 80543744 | 8544 | 915999 | - | - |
+| 8750 | churn_point=281 churn_balance=309 churn_window=22167 | 286.84 | 0 | 80543744 | 8794 | 939999 | - | - |
+| 9000 | churn_point=278 churn_balance=317 churn_window=21875 | 281.83 | 0 | 80543744 | 9044 | 963999 | - | - |
+| 9250 | churn_point=281 churn_balance=317 churn_window=21708 | 280.47 | 0 | 80543744 | 9294 | 987999 | - | - |
+| 9500 | churn_point=252 churn_balance=320 churn_window=21541 | 284.97 | 0 | 80543744 | 9544 | 1011999 | - | - |
+| 9750 | churn_point=273 churn_balance=325 churn_window=21334 | 271.18 | 0 | 80543744 | 9794 | 1035999 | - | - |
+| 10000 | churn_point=276 churn_balance=317 churn_window=21250 | 280.04 | 0 | 80543744 | 10044 | 1059999 | - | - |
+
+### sqlite-nosync (sqlite)
+
+| cycle | probes (p50 ns) | commits/s | maint ns | disk bytes | gen | id-hw | freelist | pages |
+|---|---|---|---|---|---|---|---|---|
+| 250 | churn_point=1084 churn_balance=5497667 churn_window=292250 | 236.36 | 0 | 14774272 | - | - | 0 | 3607 |
+| 500 | churn_point=1125 churn_balance=4454875 churn_window=372500 | 237.88 | 0 | 15884288 | - | - | 0 | 3878 |
+| 750 | churn_point=1125 churn_balance=3654083 churn_window=404917 | 231.69 | 0 | 16924672 | - | - | 0 | 4132 |
+| 1000 | churn_point=1125 churn_balance=2972459 churn_window=439875 | 228.02 | 0 | 17383424 | - | - | 45 | 4244 |
+| 1250 | churn_point=1125 churn_balance=2403750 churn_window=467625 | 212.07 | 0 | 17383424 | - | - | 193 | 4244 |
+| 1500 | churn_point=1125 churn_balance=1923541 churn_window=497959 | 209.86 | 0 | 17383424 | - | - | 161 | 4244 |
+| 1750 | churn_point=1125 churn_balance=1549250 churn_window=500458 | 209.58 | 0 | 17383424 | - | - | 204 | 4244 |
+| 2000 | churn_point=1084 churn_balance=1255375 churn_window=523167 | 207.17 | 0 | 17383424 | - | - | 205 | 4244 |
+| 2250 | churn_point=1083 churn_balance=1009708 churn_window=531750 | 209.16 | 0 | 17383424 | - | - | 209 | 4244 |
+| 2500 | churn_point=1125 churn_balance=800500 churn_window=531084 | 211.44 | 0 | 17383424 | - | - | 214 | 4244 |
+| 2750 | churn_point=1125 churn_balance=641208 churn_window=546875 | 211.90 | 0 | 17383424 | - | - | 248 | 4244 |
+| 3000 | churn_point=1125 churn_balance=521209 churn_window=552750 | 214.34 | 0 | 17383424 | - | - | 239 | 4244 |
+| 3250 | churn_point=1125 churn_balance=423417 churn_window=563333 | 211.41 | 0 | 17383424 | - | - | 236 | 4244 |
+| 3500 | churn_point=1125 churn_balance=345250 churn_window=559208 | 212.06 | 0 | 17383424 | - | - | 237 | 4244 |
+| 3750 | churn_point=1125 churn_balance=281083 churn_window=551583 | 214.71 | 0 | 17383424 | - | - | 236 | 4244 |
+| 4000 | churn_point=1125 churn_balance=237250 churn_window=551667 | 213.88 | 0 | 17383424 | - | - | 254 | 4244 |
+| 4250 | churn_point=1125 churn_balance=192750 churn_window=550625 | 214.02 | 0 | 17383424 | - | - | 244 | 4244 |
+| 4500 | churn_point=1125 churn_balance=162750 churn_window=545541 | 213.64 | 0 | 17383424 | - | - | 243 | 4244 |
+| 4750 | churn_point=1125 churn_balance=136166 churn_window=545208 | 211.84 | 0 | 17383424 | - | - | 236 | 4244 |
+| 5000 | churn_point=1125 churn_balance=114792 churn_window=548375 | 161.60 | 0 | 17383424 | - | - | 240 | 4244 |
+| 5250 | churn_point=1125 churn_balance=101917 churn_window=543958 | 186.47 | 0 | 17383424 | - | - | 244 | 4244 |
+| 5500 | churn_point=1125 churn_balance=89667 churn_window=550625 | 212.64 | 0 | 17383424 | - | - | 226 | 4244 |
+| 5750 | churn_point=1125 churn_balance=78291 churn_window=559333 | 215.35 | 0 | 17383424 | - | - | 234 | 4244 |
+| 6000 | churn_point=1125 churn_balance=74583 churn_window=571625 | 214.45 | 0 | 17383424 | - | - | 239 | 4244 |
+| 6250 | churn_point=1125 churn_balance=72958 churn_window=570417 | 214.55 | 0 | 17383424 | - | - | 229 | 4244 |
+| 6500 | churn_point=1125 churn_balance=66834 churn_window=583333 | 215.46 | 0 | 17383424 | - | - | 216 | 4244 |
+| 6750 | churn_point=1084 churn_balance=64875 churn_window=579584 | 213.81 | 0 | 17383424 | - | - | 229 | 4244 |
+| 7000 | churn_point=1084 churn_balance=59166 churn_window=572584 | 215.34 | 0 | 17383424 | - | - | 217 | 4244 |
+| 7250 | churn_point=1125 churn_balance=57000 churn_window=568292 | 215.38 | 0 | 17383424 | - | - | 226 | 4244 |
+| 7500 | churn_point=1125 churn_balance=57959 churn_window=550792 | 213.08 | 0 | 17383424 | - | - | 226 | 4244 |
+| 7750 | churn_point=1125 churn_balance=56500 churn_window=546667 | 215.25 | 0 | 17383424 | - | - | 232 | 4244 |
+| 8000 | churn_point=1125 churn_balance=55625 churn_window=557000 | 213.29 | 0 | 17383424 | - | - | 222 | 4244 |
+| 8250 | churn_point=1125 churn_balance=52834 churn_window=556125 | 215.21 | 0 | 17383424 | - | - | 221 | 4244 |
+| 8500 | churn_point=1125 churn_balance=52208 churn_window=556958 | 168.54 | 0 | 17383424 | - | - | 222 | 4244 |
+| 8750 | churn_point=1125 churn_balance=49375 churn_window=552000 | 214.88 | 0 | 17383424 | - | - | 219 | 4244 |
+| 9000 | churn_point=1125 churn_balance=55208 churn_window=556166 | 211.98 | 0 | 17383424 | - | - | 220 | 4244 |
+| 9250 | churn_point=1125 churn_balance=52250 churn_window=535584 | 212.29 | 0 | 17383424 | - | - | 214 | 4244 |
+| 9500 | churn_point=1084 churn_balance=52417 churn_window=537167 | 213.21 | 0 | 17383424 | - | - | 232 | 4244 |
+| 9750 | churn_point=1083 churn_balance=50792 churn_window=549292 | 208.62 | 0 | 17383424 | - | - | 221 | 4244 |
+| 10000 | churn_point=1125 churn_balance=52125 churn_window=534958 | 213.97 | 0 | 17383424 | - | - | 211 | 4244 |
+
+## run delete-heavy (churn=512 updates=0 growth=0, working set 100000)
+
+### ours-durable (bumbledb)
+
+| cycle | probes (p50 ns) | commits/s | maint ns | disk bytes | gen | id-hw | freelist | pages |
+|---|---|---|---|---|---|---|---|---|
+| 250 | churn_point=263 churn_balance=9583 churn_window=21542 | 23.37 | 0 | 112427008 | 294 | 227999 | - | - |
+| 500 | churn_point=244 churn_balance=2750 churn_window=22500 | 22.85 | 0 | 112607232 | 544 | 355999 | - | - |
+| 750 | churn_point=265 churn_balance=917 churn_window=22708 | 22.62 | 0 | 112607232 | 794 | 483999 | - | - |
+| 1000 | churn_point=263 churn_balance=500 churn_window=21958 | 22.32 | 0 | 112607232 | 1044 | 611999 | - | - |
+| 1250 | churn_point=234 churn_balance=343 churn_window=22125 | 22.48 | 0 | 112607232 | 1294 | 739999 | - | - |
+| 1500 | churn_point=265 churn_balance=304 churn_window=22542 | 22.68 | 0 | 112787456 | 1544 | 867999 | - | - |
+| 1750 | churn_point=265 churn_balance=302 churn_window=21958 | 22.49 | 0 | 112951296 | 1794 | 995999 | - | - |
+| 2000 | churn_point=263 churn_balance=276 churn_window=23041 | 22.73 | 0 | 113295360 | 2044 | 1123999 | - | - |
+| 2250 | churn_point=273 churn_balance=281 churn_window=22208 | 22.50 | 0 | 113426432 | 2294 | 1251999 | - | - |
+| 2500 | churn_point=255 churn_balance=278 churn_window=21791 | 22.34 | 0 | 113541120 | 2544 | 1379999 | - | - |
+| 2750 | churn_point=260 churn_balance=276 churn_window=21542 | 22.49 | 0 | 114163712 | 2794 | 1507999 | - | - |
+| 3000 | churn_point=263 churn_balance=278 churn_window=21125 | 22.27 | 0 | 114163712 | 3044 | 1635999 | - | - |
+| 3250 | churn_point=260 churn_balance=281 churn_window=21042 | 22.32 | 0 | 114196480 | 3294 | 1763999 | - | - |
+| 3500 | churn_point=273 churn_balance=286 churn_window=21416 | 22.24 | 0 | 114278400 | 3544 | 1891999 | - | - |
+| 3750 | churn_point=250 churn_balance=299 churn_window=23125 | 22.01 | 0 | 114278400 | 3794 | 2019999 | - | - |
+| 4000 | churn_point=247 churn_balance=286 churn_window=21375 | 21.89 | 0 | 114278400 | 4044 | 2147999 | - | - |
+| 4250 | churn_point=255 churn_balance=273 churn_window=20542 | 22.19 | 0 | 114278400 | 4294 | 2275999 | - | - |
+| 4500 | churn_point=252 churn_balance=270 churn_window=22250 | 21.94 | 0 | 114278400 | 4544 | 2403999 | - | - |
+| 4750 | churn_point=255 churn_balance=317 churn_window=22083 | 21.50 | 0 | 114671616 | 4794 | 2531999 | - | - |
+| 5000 | churn_point=252 churn_balance=302 churn_window=22459 | 21.83 | 0 | 114671616 | 5044 | 2659999 | - | - |
+| 5250 | churn_point=252 churn_balance=299 churn_window=23083 | 21.64 | 0 | 114671616 | 5294 | 2787999 | - | - |
+| 5500 | churn_point=265 churn_balance=302 churn_window=21375 | 21.97 | 0 | 114671616 | 5544 | 2915999 | - | - |
+| 5750 | churn_point=278 churn_balance=307 churn_window=23667 | 21.79 | 0 | 114671616 | 5794 | 3043999 | - | - |
+| 6000 | churn_point=255 churn_balance=309 churn_window=22708 | 21.69 | 0 | 114704384 | 6044 | 3171999 | - | - |
+| 6250 | churn_point=263 churn_balance=296 churn_window=22250 | 21.79 | 0 | 114753536 | 6294 | 3299999 | - | - |
+| 6500 | churn_point=268 churn_balance=283 churn_window=22333 | 21.91 | 0 | 114868224 | 6544 | 3427999 | - | - |
+| 6750 | churn_point=265 churn_balance=304 churn_window=21708 | 20.88 | 0 | 114900992 | 6794 | 3555999 | - | - |
+| 7000 | churn_point=294 churn_balance=302 churn_window=23000 | 21.41 | 0 | 114900992 | 7044 | 3683999 | - | - |
+| 7250 | churn_point=265 churn_balance=309 churn_window=21708 | 21.77 | 0 | 115015680 | 7294 | 3811999 | - | - |
+| 7500 | churn_point=299 churn_balance=312 churn_window=23250 | 21.55 | 0 | 115015680 | 7544 | 3939999 | - | - |
+| 7750 | churn_point=302 churn_balance=291 churn_window=21791 | 20.55 | 0 | 115343360 | 7794 | 4067999 | - | - |
+| 8000 | churn_point=294 churn_balance=322 churn_window=23500 | 20.95 | 0 | 115343360 | 8044 | 4195999 | - | - |
+| 8250 | churn_point=286 churn_balance=312 churn_window=23834 | 20.23 | 0 | 115343360 | 8294 | 4323999 | - | - |
+| 8500 | churn_point=257 churn_balance=330 churn_window=22542 | 19.98 | 0 | 115343360 | 8544 | 4451999 | - | - |
+| 8750 | churn_point=270 churn_balance=330 churn_window=21291 | 20.91 | 0 | 115343360 | 8794 | 4579999 | - | - |
+| 9000 | churn_point=252 churn_balance=278 churn_window=21500 | 21.57 | 0 | 115343360 | 9044 | 4707999 | - | - |
+| 9250 | churn_point=260 churn_balance=315 churn_window=23125 | 21.15 | 0 | 115343360 | 9294 | 4835999 | - | - |
+| 9500 | churn_point=260 churn_balance=291 churn_window=22083 | 20.37 | 0 | 115343360 | 9544 | 4963999 | - | - |
+| 9750 | churn_point=265 churn_balance=289 churn_window=25333 | 20.09 | 0 | 115343360 | 9794 | 5091999 | - | - |
+| 10000 | churn_point=273 churn_balance=322 churn_window=22292 | 20.12 | 0 | 115343360 | 10044 | 5219999 | - | - |
+
+### sqlite-bare (sqlite)
+
+| cycle | probes (p50 ns) | commits/s | maint ns | disk bytes | gen | id-hw | freelist | pages |
+|---|---|---|---|---|---|---|---|---|
+| 250 | churn_point=1125 churn_balance=2216458 churn_window=480167 | 27.93 | 0 | 17362944 | - | - | 176 | 4239 |
+| 500 | churn_point=1084 churn_balance=695708 churn_window=546625 | 27.30 | 0 | 17362944 | - | - | 209 | 4239 |
+| 750 | churn_point=1083 churn_balance=218291 churn_window=553875 | 27.37 | 0 | 17362944 | - | - | 226 | 4239 |
+| 1000 | churn_point=1166 churn_balance=99875 churn_window=554250 | 26.92 | 0 | 17362944 | - | - | 217 | 4239 |
+| 1250 | churn_point=1125 churn_balance=58292 churn_window=553958 | 27.40 | 0 | 17362944 | - | - | 218 | 4239 |
+| 1500 | churn_point=1084 churn_balance=49625 churn_window=562250 | 27.32 | 0 | 17362944 | - | - | 230 | 4239 |
+| 1750 | churn_point=1084 churn_balance=47292 churn_window=548000 | 27.28 | 0 | 17362944 | - | - | 203 | 4239 |
+| 2000 | churn_point=1125 churn_balance=41875 churn_window=567959 | 27.60 | 0 | 17362944 | - | - | 193 | 4239 |
+| 2250 | churn_point=1125 churn_balance=41459 churn_window=547333 | 27.42 | 0 | 17362944 | - | - | 202 | 4239 |
+| 2500 | churn_point=1084 churn_balance=44583 churn_window=536167 | 27.20 | 0 | 17362944 | - | - | 205 | 4239 |
+| 2750 | churn_point=1166 churn_balance=43167 churn_window=549750 | 27.38 | 0 | 17362944 | - | - | 194 | 4239 |
+| 3000 | churn_point=1125 churn_balance=44792 churn_window=554084 | 27.36 | 0 | 17362944 | - | - | 187 | 4239 |
+| 3250 | churn_point=1125 churn_balance=46875 churn_window=548000 | 27.31 | 0 | 17362944 | - | - | 182 | 4239 |
+| 3500 | churn_point=1125 churn_balance=42250 churn_window=551584 | 27.15 | 0 | 17362944 | - | - | 187 | 4239 |
+| 3750 | churn_point=1125 churn_balance=46750 churn_window=565625 | 27.04 | 0 | 17362944 | - | - | 189 | 4239 |
+| 4000 | churn_point=1084 churn_balance=47084 churn_window=582250 | 27.17 | 0 | 17362944 | - | - | 172 | 4239 |
+| 4250 | churn_point=1125 churn_balance=41375 churn_window=542417 | 27.00 | 0 | 17362944 | - | - | 151 | 4239 |
+| 4500 | churn_point=1125 churn_balance=43625 churn_window=571750 | 26.92 | 0 | 17362944 | - | - | 150 | 4239 |
+| 4750 | churn_point=1125 churn_balance=51792 churn_window=572041 | 26.51 | 0 | 17362944 | - | - | 152 | 4239 |
+| 5000 | churn_point=1125 churn_balance=49709 churn_window=577125 | 27.21 | 0 | 17362944 | - | - | 134 | 4239 |
+| 5250 | churn_point=1166 churn_balance=49167 churn_window=588500 | 27.08 | 0 | 17362944 | - | - | 154 | 4239 |
+| 5500 | churn_point=1125 churn_balance=49666 churn_window=563791 | 27.23 | 0 | 17362944 | - | - | 137 | 4239 |
+| 5750 | churn_point=1125 churn_balance=49625 churn_window=570250 | 27.21 | 0 | 17362944 | - | - | 135 | 4239 |
+| 6000 | churn_point=1083 churn_balance=52000 churn_window=590750 | 27.10 | 0 | 17362944 | - | - | 139 | 4239 |
+| 6250 | churn_point=1125 churn_balance=47875 churn_window=563834 | 27.34 | 0 | 17362944 | - | - | 124 | 4239 |
+| 6500 | churn_point=1125 churn_balance=45375 churn_window=583167 | 27.32 | 0 | 17362944 | - | - | 133 | 4239 |
+| 6750 | churn_point=1125 churn_balance=50708 churn_window=554000 | 26.08 | 0 | 17362944 | - | - | 130 | 4239 |
+| 7000 | churn_point=1125 churn_balance=48000 churn_window=586291 | 27.04 | 0 | 17362944 | - | - | 124 | 4239 |
+| 7250 | churn_point=1084 churn_balance=61083 churn_window=576208 | 26.97 | 0 | 17362944 | - | - | 116 | 4239 |
+| 7500 | churn_point=1208 churn_balance=53792 churn_window=597584 | 26.50 | 0 | 17362944 | - | - | 128 | 4239 |
+| 7750 | churn_point=1125 churn_balance=50667 churn_window=590709 | 25.68 | 0 | 17362944 | - | - | 130 | 4239 |
+| 8000 | churn_point=1208 churn_balance=53791 churn_window=599958 | 25.83 | 0 | 17362944 | - | - | 131 | 4239 |
+| 8250 | churn_point=1125 churn_balance=49792 churn_window=647709 | 24.45 | 0 | 17362944 | - | - | 129 | 4239 |
+| 8500 | churn_point=1416 churn_balance=56000 churn_window=598125 | 24.45 | 0 | 17362944 | - | - | 126 | 4239 |
+| 8750 | churn_point=1166 churn_balance=56667 churn_window=558416 | 25.43 | 0 | 17362944 | - | - | 123 | 4239 |
+| 9000 | churn_point=1125 churn_balance=45375 churn_window=559709 | 26.60 | 0 | 17362944 | - | - | 118 | 4239 |
+| 9250 | churn_point=1125 churn_balance=49375 churn_window=595209 | 26.19 | 0 | 17362944 | - | - | 123 | 4239 |
+| 9500 | churn_point=1125 churn_balance=52833 churn_window=608791 | 25.43 | 0 | 17362944 | - | - | 120 | 4239 |
+| 9750 | churn_point=1167 churn_balance=49250 churn_window=581917 | 24.65 | 0 | 17362944 | - | - | 116 | 4239 |
+| 10000 | churn_point=1209 churn_balance=51708 churn_window=586291 | 25.29 | 0 | 17362944 | - | - | 129 | 4239 |
