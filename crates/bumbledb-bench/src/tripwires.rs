@@ -11,7 +11,7 @@
 mod tests {
     use crate::corpus;
     use crate::corpus_gen::{GenConfig, Scale, Sizes};
-    use crate::families::{self, has_sets, param_args, scalar_values};
+    use crate::families::{self, has_sets, param_args};
     use crate::schema::Ledger;
     use bumbledb::Db;
 
@@ -244,9 +244,7 @@ mod tests {
                     .expect("warm");
             }
             let (out, stats) = db
-                .read(|snap| {
-                    snap.profile(&mut prepared, &scalar_values(&sets[typical(family.name)]))
-                })
+                .read(|snap| snap.profile(&mut prepared, &param_args(&sets[typical(family.name)])))
                 .expect("profile");
             let drawn: u64 = stats.rules[0].nodes.iter().map(|n| n.batch_entries).sum();
             // Derivations over the pinned corpus (postings = 100_000,

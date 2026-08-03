@@ -614,23 +614,6 @@ fn param_args(params: &[OwnedParam]) -> Result<Vec<ParamArg<'_>>, WireError> {
         .collect()
 }
 
-/// Explain's positional binds, scalar-only: the engine's profile entry
-/// (`Snapshot::profile`) takes `BindValue`s, which have no set spelling —
-/// a set param is a typed marshaling refusal, never a guess.
-fn bind_scalars(params: &[OwnedParam]) -> Result<Vec<BindValue<'_>>, WireError> {
-    params
-        .iter()
-        .map(|param| match param {
-            OwnedParam::Scalar(value) => bind_value(value),
-            OwnedParam::Set(_) => Err(WireError(
-                "bumbledb: preparedExplain binds scalar params only \
-                 (the engine's profile entry has no param-set spelling)"
-                    .into(),
-            )),
-        })
-        .collect()
-}
-
 #[expect(
     clippy::needless_pass_by_value,
     reason = "thread entry: the worker must OWN its engine reference and \
@@ -742,14 +725,16 @@ fn execute_answers(
 
 /// The plan-as-data half of `Snapshot::profile` (ANALYZE semantics: the
 /// query really executes, with counting instrumentation); the answers are
-/// discarded — execute is the answer surface.
+/// discarded — execute is the answer surface. Binds through the same
+/// mixed scalar/set `ParamArg` marshaling as execute — the R13 symmetry:
+/// whatever executes, explains.
 fn explain_stats(
     snap: &Snapshot<'_, SchemaDescriptor>,
     prepared: &mut PreparedQuery<'static, SchemaDescriptor>,
     params: &[OwnedParam],
 ) -> Result<bumbledb::ExecutionStats, WireError> {
-    let binds = bind_scalars(params)?;
-    let (_, stats) = snap.profile(prepared, &binds).map_err(|e| wire(&e))?;
+    let args = param_args(params)?;
+    let (_, stats) = snap.profile(prepared, &args).map_err(|e| wire(&e))?;
     Ok(stats)
 }
 

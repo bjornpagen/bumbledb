@@ -10,7 +10,14 @@ fn introspection_reports_the_join_plan_with_actuals() {
     let txn = env.read_txn().expect("txn");
     let mut prepared = prepare(&txn, &cache, &schema, &by_account_query()).expect("prepare");
     let (answers, report) = prepared
-        .introspect(&txn, &cache, &[BindValue::U64(7), BindValue::I64(0)])
+        .introspect(
+            &txn,
+            &cache,
+            &[
+                ParamArg::Scalar(BindValue::U64(7)),
+                ParamArg::Scalar(BindValue::I64(0)),
+            ],
+        )
         .expect("introspect");
     assert_eq!(answers.len(), 2);
     assert!(report.contains("free join"));
@@ -31,7 +38,14 @@ fn the_introspection_header_renders_the_predicate() {
 
     let mut prepared = prepare(&txn, &cache, &schema, &by_account_query()).expect("prepare");
     let (_, report) = prepared
-        .introspect(&txn, &cache, &[BindValue::U64(7), BindValue::I64(0)])
+        .introspect(
+            &txn,
+            &cache,
+            &[
+                ParamArg::Scalar(BindValue::U64(7)),
+                ParamArg::Scalar(BindValue::I64(0)),
+            ],
+        )
         .expect("introspect");
     assert!(report.contains("predicate: (string, i64)"), "{report}");
 
@@ -75,7 +89,14 @@ fn the_stats_surface_carries_the_pinned_rows() {
 
     let mut prepared = prepare(&txn, &cache, &schema, &by_account_query()).expect("prepare");
     let (_, stats) = prepared
-        .profile(&txn, &cache, &[BindValue::U64(7), BindValue::I64(0)])
+        .profile(
+            &txn,
+            &cache,
+            &[
+                ParamArg::Scalar(BindValue::U64(7)),
+                ParamArg::Scalar(BindValue::I64(0)),
+            ],
+        )
         .expect("profile");
     assert_eq!(
         stats.rules[0].pinned.len(),
@@ -92,7 +113,14 @@ fn the_stats_surface_carries_the_pinned_rows() {
     );
 
     let (_, report) = prepared
-        .introspect(&txn, &cache, &[BindValue::U64(7), BindValue::I64(0)])
+        .introspect(
+            &txn,
+            &cache,
+            &[
+                ParamArg::Scalar(BindValue::U64(7)),
+                ParamArg::Scalar(BindValue::I64(0)),
+            ],
+        )
         .expect("introspect");
     assert!(
         report.contains("estimated from (pinned rows at prepare): 3"),
@@ -114,7 +142,7 @@ fn the_stats_surface_carries_the_pinned_rows() {
     });
     let mut key_probe = prepare(&txn, &cache, &schema, &key_probe_query).expect("prepare");
     let (_, stats) = key_probe
-        .profile(&txn, &cache, &[BindValue::U64(1)])
+        .profile(&txn, &cache, &[ParamArg::Scalar(BindValue::U64(1))])
         .expect("profile");
     assert!(
         stats.rules[0].pinned.is_empty(),
@@ -141,7 +169,14 @@ fn profile_returns_structured_stats_matching_the_execution() {
 
     let mut prepared = prepare(&txn, &cache, &schema, &by_account_query()).expect("prepare");
     let (answers, stats) = prepared
-        .profile(&txn, &cache, &[BindValue::U64(7), BindValue::I64(-100_000)])
+        .profile(
+            &txn,
+            &cache,
+            &[
+                ParamArg::Scalar(BindValue::U64(7)),
+                ParamArg::Scalar(BindValue::I64(-100_000)),
+            ],
+        )
         .expect("profile");
     assert_eq!(answers.len(), 2);
     assert_eq!(stats.emits, 2);
@@ -160,7 +195,14 @@ fn profile_returns_structured_stats_matching_the_execution() {
     // The rendered introspect is built from the same struct — spot-pin
     // the format so the golden contract holds.
     let (_, report) = prepared
-        .introspect(&txn, &cache, &[BindValue::U64(7), BindValue::I64(-100_000)])
+        .introspect(
+            &txn,
+            &cache,
+            &[
+                ParamArg::Scalar(BindValue::U64(7)),
+                ParamArg::Scalar(BindValue::I64(-100_000)),
+            ],
+        )
         .expect("introspect");
     assert!(report.contains("access path: free join"), "{report}");
     assert!(report.contains("emitted bindings: 2"), "{report}");
@@ -180,7 +222,7 @@ fn profile_returns_structured_stats_matching_the_execution() {
     });
     let mut key_probe = prepare(&txn, &cache, &schema, &key_probe_query).expect("prepare");
     let (answers, stats) = key_probe
-        .profile(&txn, &cache, &[BindValue::U64(1)])
+        .profile(&txn, &cache, &[ParamArg::Scalar(BindValue::U64(1))])
         .expect("profile");
     assert_eq!(answers.len(), 1);
     assert!(stats.rules[0].nodes.is_empty());
@@ -189,7 +231,7 @@ fn profile_returns_structured_stats_matching_the_execution() {
         Some(crate::api::stats::KeyProbeStats { hit: true })
     );
     let (_, stats) = key_probe
-        .profile(&txn, &cache, &[BindValue::U64(999)])
+        .profile(&txn, &cache, &[ParamArg::Scalar(BindValue::U64(999))])
         .expect("profile");
     assert_eq!(
         stats.rules[0].key_probe,

@@ -123,6 +123,58 @@ fn in_family_equals_the_union_of_per_element_executions() {
     assert!(matches!(err, Error::ParamSetExpected { param } if param.0 == 0));
 }
 
+/// R13 execute-symmetry for the counted entries: whatever `execute_args`
+/// binds, `profile` and `introspect` bind — a set-bound query profiles
+/// through the same mixed [`ParamArg`] entry, its answers value-identical
+/// to execution (ANALYZE semantics: the profile IS an execution). The
+/// scalar-only profile spelling died with this symmetry.
+#[test]
+fn profile_binds_param_sets_exactly_as_execute_args() {
+    let dir = TempDir::new("prepared-profile-sets");
+    let schema = schema();
+    let env = Environment::create(dir.path(), &schema).expect("create");
+    let rows: Vec<(u64, u64, String, i64)> = (0..600u64)
+        .map(|i| {
+            let amount = i64::try_from(i).expect("small") * 3 - 100;
+            (i, i % 250, format!("m{}", i % 5), amount)
+        })
+        .collect();
+    let borrowed: Vec<(u64, u64, &str, i64)> = rows
+        .iter()
+        .map(|(id, account, memo, amount)| (*id, *account, memo.as_str(), *amount))
+        .collect();
+    insert_postings(&env, &schema, &borrowed);
+    let cache = ImageCache::new(&schema);
+    let txn = env.read_txn().expect("txn");
+
+    let mut prepared = prepare(&txn, &cache, &schema, &by_account_set_query()).expect("prepare");
+    let elements = [Value::U64(7), Value::U64(14)];
+    let executed = prepared
+        .execute_collect_args(&txn, &cache, &[ParamArg::Set(&elements)])
+        .expect("execute");
+    assert!(!executed.is_empty(), "the fixture selects rows");
+
+    let (profiled, stats) = prepared
+        .profile(&txn, &cache, &[ParamArg::Set(&elements)])
+        .expect("profile binds the set entry");
+    assert_eq!(
+        id_amount_answers(&profiled),
+        id_amount_answers(&executed),
+        "profiling is an execution: value-identical answers"
+    );
+    assert_eq!(
+        stats.emits as usize,
+        executed.len(),
+        "the counted surface saw exactly the executed bindings"
+    );
+
+    let (rendered, report) = prepared
+        .introspect(&txn, &cache, &[ParamArg::Set(&elements)])
+        .expect("introspect binds the set entry");
+    assert_eq!(id_amount_answers(&rendered), id_amount_answers(&executed));
+    assert!(!report.is_empty(), "the report renders");
+}
+
 /// Out-of-vocabulary string elements resolve to per-element miss
 /// sentinels and contribute nothing; an all-miss set is the empty set.
 #[test]

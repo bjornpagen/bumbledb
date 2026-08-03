@@ -602,6 +602,50 @@ describe("the Db runtime against a real store", function suite() {
 		)
 	})
 
+	test("explain() binds set params and literal membership exactly as execute — R13 execute-symmetry", function explainSets() {
+		// A set param: whatever executes, explains — the profile entry
+		// binds the same mixed scalar/set arguments as execute (the
+		// scalar-only explain spelling died with the symmetry).
+		const bySet = query(Ledger).rule(function rule(r) {
+			const { id, name } = v(Holder)
+			return r
+				.match(Holder, { id: r.inSet("who"), name })
+				.match(Holder, { id })
+				.find({ id, name })
+		})
+		const preparedSet = db.prepare(bySet)
+		const someIds = db.execute(
+			db.prepare(
+				query(Ledger).rule(function all(r) {
+					const { id } = v(Holder)
+					return r.match(Holder, { id }).find({ id })
+				})
+			),
+			{}
+		)
+		assert.ok(someIds.length >= 2, "the fixture holds holders")
+		const who = someIds.slice(0, 2).map(function idOf(row) {
+			return row.id
+		})
+		const executed = db.execute(preparedSet, { who })
+		const report = db.explain(preparedSet, { who })
+		assert.equal(report.emits, BigInt(executed.length), "the ANALYZE run bound the set and executed")
+		// A literal membership array is a program constant crossing as a
+		// set param on the wire — explain takes it exactly like execute.
+		const byMembership = query(Ledger).rule(function rule(r) {
+			const { id, kind } = v(Account)
+			return r.match(Account, { id, kind: ["Checking", "Savings"] }).find({ id })
+		})
+		const preparedMembership = db.prepare(byMembership)
+		const rows = db.execute(preparedMembership, {})
+		const membershipReport = db.explain(preparedMembership, {})
+		assert.equal(
+			membershipReport.emits,
+			BigInt(rows.length),
+			"the membership array explains exactly as it executes"
+		)
+	})
+
 	test("resume = reopen: the cached open reads every committed fact back", async function reopen() {
 		const again = await Db.open(storeDir, Ledger)
 		assert.strictEqual(again, db, "in-process resume is the cached value itself")

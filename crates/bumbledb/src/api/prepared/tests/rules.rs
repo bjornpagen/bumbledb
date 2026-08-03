@@ -480,7 +480,7 @@ fn introspection_reports_per_rule_stats_and_the_union_accounting() {
 
     let mut prepared = prepare(&txn, &cache, &schema, &union_query()).expect("prepare");
     let (out, stats) = prepared
-        .profile(&txn, &cache, &[BindValue::I64(0)])
+        .profile(&txn, &cache, &[ParamArg::Scalar(BindValue::I64(0))])
         .expect("profile");
     assert_eq!(out.len(), 3, "the union");
     assert_eq!(stats.rules.len(), 2, "per-rule stats");
@@ -500,7 +500,7 @@ fn introspection_reports_per_rule_stats_and_the_union_accounting() {
     }
 
     let (_, report) = prepared
-        .introspect(&txn, &cache, &[BindValue::I64(0)])
+        .introspect(&txn, &cache, &[ParamArg::Scalar(BindValue::I64(0))])
         .expect("introspect");
     assert!(report.contains("rule 0:"), "{report}");
     assert!(report.contains("rule 1:"), "{report}");
