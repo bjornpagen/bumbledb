@@ -137,6 +137,49 @@ fn dedup_constant_group_collapses_duplicates_before_folding() {
     }
 }
 
+/// Pack's finalize sort orders claims by the START word alone — the
+/// sweep's one precondition. Equal-start claims coalesce identically
+/// whatever their end order, so adversarial emit orders (longer end
+/// first, dominated claim last, detached segment interleaved, a ray)
+/// pack to the same maximal segments.
+#[test]
+fn pack_finalize_orders_claims_by_start_word_alone() {
+    use crate::exec::run::{Bindings, Sink as _};
+    // Slots: 0 = group, 1..3 = the claim interval's word pair.
+    let mut sink = AggregateSink::new(
+        vec![
+            FindSpec::Var { slot: 0, width: 1 },
+            FindSpec::Pack { slot: 1 },
+        ],
+        3,
+    );
+    let mut bindings = Bindings::new(3);
+    for (group, start, end) in [
+        (1u64, 30u64, 40u64),
+        (1, 10, 20),     // equal start, longer end FIRST
+        (1, 10, 15),     // ... shorter end second
+        (1, 5, 12),      // overlaps [10, 20] from the left
+        (2, 10, u64::MAX), // a packed ray is a ray
+        (2, 1, 2),
+    ] {
+        bindings.set(0, group);
+        bindings.set(1, start);
+        bindings.set(2, end);
+        sink.emit(&bindings);
+    }
+    let mut rows = sink.into_answers().expect("in range");
+    rows.sort_unstable();
+    assert_eq!(
+        rows,
+        vec![
+            vec![1, 5, 20],
+            vec![1, 30, 40],
+            vec![2, 1, 2],
+            vec![2, 10, u64::MAX],
+        ]
+    );
+}
+
 /// The count-only dedup arm — no fold input reads the batch keys, so
 /// the seen-set pass counts first sights instead of collecting a
 /// survivor list — is value-identical to the gather regime: duplicate

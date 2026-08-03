@@ -29,15 +29,20 @@ impl AggregateSink {
     ) -> Result<()> {
         // Pack's sort pass, ahead of the emit loop (which iterates the
         // group map immutably): each live group's claim list orders by
-        // start word — the sweep's precondition. The sort is
-        // `sort_unstable` — the existing in-place machinery, allocation-
-        // free, so the warm gate covers it; a pooled radix over the start
-        // words stays unearned until PRD 16's bench shows this pass on a
-        // profile (the measured-choice record).
+        // start word — the sweep's ONE precondition, so the comparator
+        // is the start word alone (a full `[start, end]` lexicographic
+        // compare paid a second word per decision for a tie order the
+        // sweep cannot observe: overlapping and identical claims
+        // collapse into the same maximal segment whatever their end
+        // order). The sort is `sort_unstable` — the existing in-place
+        // machinery, allocation-free, so the warm gate covers it; a
+        // pooled radix over the start words stays unearned until a
+        // bench shows this pass dominating a profile (t5_pack_key's
+        // 35µs/44% warm-finalize share is the standing candidate).
         if self.pack.is_some() {
             let live = self.group_count();
             for claims in &mut self.pack_claims[..live] {
-                claims.sort_unstable();
+                claims.sort_unstable_by_key(|&[start, _]| start);
             }
         }
         // The two group representations walk in mint order either way
