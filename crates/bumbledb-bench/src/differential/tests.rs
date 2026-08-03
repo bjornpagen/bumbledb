@@ -4,6 +4,7 @@
 //! statement) and on every one of 20 fixed queries — plus the dual-run
 //! grounding differential ([`grounding`]).
 
+mod capacity_witness;
 mod closed;
 mod contradiction;
 mod fixed_width;
