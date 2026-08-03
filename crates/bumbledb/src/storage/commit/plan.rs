@@ -86,6 +86,10 @@ pub(crate) struct FactOp<'d> {
     pub(crate) relation: RelationId,
     /// The canonical fact bytes (identity = bytes, `10-data-model.md`).
     pub(crate) fact: &'d [u8],
+    /// The fact's blake3 hash, borrowed from the delta's map key — the
+    /// delta computed it once to record the disposition, so the `M` key
+    /// derivation at apply is free (the applier never re-hashes).
+    pub(crate) fact_hash: &'d [u8; 32],
     /// The one id allocator's derivation on a fresh-keyed relation (R16):
     /// the first fresh field's value IS the `F` row id, and the named
     /// statement's functionality judgment is the `F` put-conflict.
@@ -239,11 +243,12 @@ pub(crate) fn plan_commit<'d>(
     // inexact: each op list is counted first and collected at exact
     // capacity (pushing into a `with_capacity` Vec never reallocates).
     let mut deletes = Vec::with_capacity(delta.deletes().count());
-    for (rel, fact) in delta.deletes() {
+    for (rel, hash, fact) in delta.deletes() {
         deletes.push(fact_op(
             schema,
             &selections,
             rel,
+            hash,
             fact,
             &mut deleted_determinants,
             &mut touched_parents,
@@ -252,11 +257,12 @@ pub(crate) fn plan_commit<'d>(
     }
     let deletes = deletes.into_boxed_slice();
     let mut inserts = Vec::with_capacity(delta.inserts().count());
-    for (rel, fact) in delta.inserts() {
+    for (rel, hash, fact) in delta.inserts() {
         inserts.push(fact_op(
             schema,
             &selections,
             rel,
+            hash,
             fact,
             &mut inserted_determinants,
             &mut touched_parents,
@@ -305,10 +311,15 @@ struct FactScratch {
 /// bytes per satisfied containment. Determinant tuples of dependent-carrying
 /// key statements are recorded into `dependent_determinants` for the check-set
 /// difference.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the one per-fact derivation chokepoint; every input is load-bearing"
+)]
 fn fact_op<'d>(
     schema: &Schema,
     selections: &Selections,
     rel: RelationId,
+    hash: &'d [u8; 32],
     fact: &'d [u8],
     dependent_determinants: &mut BTreeSet<(KeyId, DeterminantImage)>,
     touched_parents: &mut BTreeMap<CapacityId, BTreeSet<DeterminantImage>>,
@@ -404,6 +415,7 @@ fn fact_op<'d>(
     Ok(FactOp {
         relation: rel,
         fact,
+        fact_hash: hash,
         fresh_row,
         determinants,
         edges: scratch.edges.drain(..).collect(),

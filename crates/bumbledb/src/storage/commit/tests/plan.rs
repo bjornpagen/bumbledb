@@ -335,6 +335,30 @@ fn scalar_and_pointwise_determinants_carry_exact_bytes() {
 }
 
 #[test]
+fn fact_ops_carry_the_delta_computed_hash() {
+    // The plan borrows each op's blake3 hash from the delta's own map
+    // key — the applier's `M` derivations re-hash nothing. Pin: both
+    // dispositions' ops carry exactly `blake3(fact bytes)`.
+    let dir = TempDir::new("plan-fact-hash");
+    let schema = schema();
+    let env = Environment::create(dir.path(), &schema).expect("create");
+    let a = account(&schema, 7, true, 0);
+    let b = account(&schema, 8, true, 0);
+    commit_base(&env, &schema, &[(ACCOUNT, a.clone())]);
+    let mut delta = WriteDelta::new(&schema);
+    let plan = plan_of(
+        &env,
+        &mut delta,
+        &[(ACCOUNT, a.clone())],
+        &[(ACCOUNT, b.clone())],
+    );
+    let deleted = op_for(&plan.deletes, ACCOUNT, &a);
+    assert_eq!(deleted.fact_hash, &crate::encoding::fact_hash(&a));
+    let inserted = op_for(&plan.inserts, ACCOUNT, &b);
+    assert_eq!(inserted.fact_hash, &crate::encoding::fact_hash(&b));
+}
+
+#[test]
 fn source_selection_gates_the_edges() {
     let dir = TempDir::new("plan-sigma");
     let schema = schema();

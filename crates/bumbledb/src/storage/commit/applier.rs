@@ -13,15 +13,40 @@ impl Applier<'_> {
     /// unambiguously corruption (docs/architecture/50-storage.md).
     pub(super) fn delete_fact(&mut self, op: &FactOp<'_>) -> Result<()> {
         let rel = op.relation;
-        let hash = crate::encoding::fact_hash(op.fact);
-        let m_len = keys::membership_key(&mut self.key, rel, &hash);
-        let Some(row_id_bytes) = self.data.get(self.txn.raw(), &self.key[..m_len])? else {
-            return Err(Error::Corruption(CorruptionError::DispositionDesync {
-                relation: rel,
-            }));
+        let m_len = keys::membership_key(&mut self.key, rel, op.fact_hash);
+        // One cursor descent serves the `M` read AND its delete: the
+        // inclusive single-key range positions on exactly the entry (a
+        // greater key falls past the end bound and reads as the same
+        // miss), the row id decodes to an owned word, and the delete
+        // lands at the cursor — never a second root-to-leaf descent.
+        let row_id = {
+            let m_key: &[u8] = &self.key[..m_len];
+            let range = (
+                std::ops::Bound::Included(m_key),
+                std::ops::Bound::Included(m_key),
+            );
+            let mut cursor = self.data.range_mut(self.txn.raw_mut(), &range)?;
+            let Some(entry) = cursor.next() else {
+                return Err(Error::Corruption(CorruptionError::DispositionDesync {
+                    relation: rel,
+                }));
+            };
+            let (_, row_id_bytes) = entry?;
+            let row_id = decode_row_id(row_id_bytes)?;
+            // SAFETY: no reference into the database survives this call —
+            // the row id decoded to an owned word above, and the key
+            // bytes are the applier's own scratch (boundary unsafe, the
+            // 00-product allowlist: heed marks cursor deletion unsafe
+            // because prior borrows from the database would dangle).
+            #[expect(
+                unsafe_code,
+                reason = "heed's cursor delete is the foreign contract; no database borrow survives"
+            )]
+            unsafe {
+                cursor.del_current()?
+            };
+            row_id
         };
-        let row_id = decode_row_id(row_id_bytes)?;
-        self.data.delete(self.txn.raw_mut(), &self.key[..m_len])?;
         let f_len = keys::fact_key(&mut self.key, rel, row_id);
         // A live M entry MUST have its F row (and every U determinant below):
         // a miss is the M/F-disagreement corruption class, a hard error —
@@ -89,20 +114,26 @@ impl Applier<'_> {
     /// corruption (docs/architecture/50-storage.md).
     pub(super) fn insert_fact(&mut self, op: &FactOp<'_>) -> Result<()> {
         let rel = op.relation;
-        let hash = crate::encoding::fact_hash(op.fact);
-        let m_len = keys::membership_key(&mut self.key, rel, &hash);
-        if self.data.get(self.txn.raw(), &self.key[..m_len])?.is_some() {
-            return Err(Error::Corruption(CorruptionError::DispositionDesync {
-                relation: rel,
-            }));
-        }
+        // The row id resolves BEFORE the membership put so the `M`
+        // pre-existence probe and the `M` put fold into one
+        // `NO_OVERWRITE` descent below — `self.key` is free scratch
+        // until the membership derivation.
         let row_id = match &op.fresh_row {
             Some(fresh) => {
-                // Own scratch: `self.key` still holds the pending
-                // membership key.
-                let mut key: KeyBuf = [0; MAX_KEY];
-                let f_len = keys::fact_key(&mut key, rel, fresh.row_id);
-                if self.data.get(self.txn.raw(), &key[..f_len])?.is_some() {
+                let f_len = keys::fact_key(&mut self.key, rel, fresh.row_id);
+                if self.data.get(self.txn.raw(), &self.key[..f_len])?.is_some() {
+                    // Cold aborting path: an occupied `F` slot is
+                    // ambiguous between a genuine fresh-key conflict and
+                    // base state contradicting the plan's proved absence
+                    // (the fact itself already landed). One `M` get
+                    // disambiguates — exactly the probe the hot path
+                    // folded into the `NO_OVERWRITE` put below.
+                    let m_len = keys::membership_key(&mut self.key, rel, op.fact_hash);
+                    if self.data.get(self.txn.raw(), &self.key[..m_len])?.is_some() {
+                        return Err(Error::Corruption(CorruptionError::DispositionDesync {
+                            relation: rel,
+                        }));
+                    }
                     self.violations.push(Violation::Functionality {
                         statement: fresh.statement,
                         fact: op.fact.into(),
@@ -114,7 +145,24 @@ impl Applier<'_> {
             }
             None => self.next_row_id(rel)?,
         };
-        self.put_data(m_len, row_id.to_le_bytes().as_slice())?;
+        let m_len = keys::membership_key(&mut self.key, rel, op.fact_hash);
+        // The pre-existence probe IS the put: `NO_OVERWRITE` surfaces an
+        // occupied `M` key as `KeyExist` in the same descent the put
+        // pays anyway — one root-to-leaf walk, not two.
+        match self.data.put_with_flags(
+            self.txn.raw_mut(),
+            heed::PutFlags::NO_OVERWRITE,
+            &self.key[..m_len],
+            row_id.to_le_bytes().as_slice(),
+        ) {
+            Ok(()) => {}
+            Err(heed::Error::Mdb(heed::MdbError::KeyExist)) => {
+                return Err(Error::Corruption(CorruptionError::DispositionDesync {
+                    relation: rel,
+                }));
+            }
+            Err(other) => return Err(other.into()),
+        }
         crashpoint!("mid-write-m");
         let f_len = keys::fact_key(&mut self.key, rel, row_id);
         self.put_data(f_len, op.fact)?;
@@ -309,8 +357,10 @@ impl Applier<'_> {
         let next = match self.row_id_next.entry(rel) {
             std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
             std::collections::btree_map::Entry::Vacant(entry) => {
-                // Own scratch: `self.key` still holds the caller's pending
-                // membership key.
+                // Own scratch: the caller resolves the row id before any
+                // key derivation, so `self.key` holds nothing pending —
+                // but the entry above already borrows `self`, so the
+                // stack buffer is the cheaper spelling either way.
                 let mut key: KeyBuf = [0; MAX_KEY];
                 let len = keys::stat_key(&mut key, rel, StatKind::RowIdHighWater);
                 let stored = match self.data.get(self.txn.raw(), &key[..len])? {

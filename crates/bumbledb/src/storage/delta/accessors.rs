@@ -20,14 +20,19 @@ impl WriteDelta<'_> {
 
     /// The net insert set in deterministic `(relation, fact_hash)` order —
     /// exactly the facts commit will add (readers: the apply phase and the
-    /// source-side judgment, which iterates it directly).
-    pub(crate) fn inserts(&self) -> impl Iterator<Item = (RelationId, &[u8])> {
+    /// source-side judgment, which iterates it directly). The hash rides
+    /// along borrowed from the map key: the delta already computed and
+    /// keyed by it, so the plan carries it into each
+    /// [`super::super::commit`] fact op for free — the applier never
+    /// re-hashes.
+    pub(crate) fn inserts(&self) -> impl Iterator<Item = (RelationId, &[u8; 32], &[u8])> {
         self.dispositions(Disposition::Insert)
     }
 
     /// The net delete set in deterministic `(relation, fact_hash)` order —
-    /// exactly the facts commit will remove (reader: the apply phase).
-    pub(crate) fn deletes(&self) -> impl Iterator<Item = (RelationId, &[u8])> {
+    /// exactly the facts commit will remove (reader: the apply phase),
+    /// each with its map-key hash exactly as [`Self::inserts`].
+    pub(crate) fn deletes(&self) -> impl Iterator<Item = (RelationId, &[u8; 32], &[u8])> {
         self.dispositions(Disposition::Delete)
     }
 
@@ -83,11 +88,14 @@ impl WriteDelta<'_> {
         floors
     }
 
-    fn dispositions(&self, wanted: Disposition) -> impl Iterator<Item = (RelationId, &[u8])> {
+    fn dispositions(
+        &self,
+        wanted: Disposition,
+    ) -> impl Iterator<Item = (RelationId, &[u8; 32], &[u8])> {
         self.facts
             .iter()
             .filter(move |(_, (_, disposition))| *disposition == wanted)
-            .map(|((rel, _), (slice, _))| (*rel, self.arena.get(*slice)))
+            .map(|((rel, hash), (slice, _))| (*rel, hash, self.arena.get(*slice)))
     }
 
     /// Fresh next-values to flush to `Q` (reader: the 50-storage doc phase 4).
