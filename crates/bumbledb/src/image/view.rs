@@ -287,6 +287,26 @@ impl View {
         }
     }
 
+    /// Clones the view into caller-owned storage: the image `Arc` bumps,
+    /// survivor positions copy into `buffer` (capacity retained — the
+    /// occurrence-dedup path's storage discipline: the prepared query's
+    /// spare buffer circulates through here exactly as through `apply`).
+    #[must_use]
+    pub fn clone_in(&self, mut buffer: Vec<u32>) -> Self {
+        buffer.clear();
+        match self {
+            Self::Unbound => Self::Unbound,
+            Self::All(image) => Self::All(Arc::clone(image)),
+            Self::Survivors { image, positions } => {
+                buffer.extend_from_slice(positions);
+                Self::Survivors {
+                    image: Arc::clone(image),
+                    positions: buffer,
+                }
+            }
+        }
+    }
+
     /// Reclaims the survivor buffer for reuse (the caller-owned storage
     /// discipline: buffers belong to the prepared query, the 40-execution doc).
     #[must_use]

@@ -775,3 +775,98 @@ fn execute_lights_the_batch_decode_and_filter_kernel() {
         .any(|e| e.a0 == 4);
     assert!(full_sweep, "a fixed-width kernel scanned all four lanes");
 }
+
+/// The occurrence dedup (docs/architecture/40-execution.md): a
+/// self-join whose plan orients two same-relation occurrences
+/// identically rebuilds ONE view — every same-shaped sibling clones the
+/// canonical's bound state (view and forced root, `view_dedup`) instead
+/// of re-scanning the image and re-forcing the same trie — and the
+/// star's answers come out exactly right.
+#[test]
+fn same_shaped_occurrences_dedup_the_cold_rebuild() {
+    use crate::obs;
+
+    let dir = TempDir::new("prepared-dedup-trace");
+    let schema = schema();
+    let env = Environment::create(dir.path(), &schema).expect("create");
+    insert_postings(
+        &env,
+        &schema,
+        &[(1, 7, "a", 10), (2, 7, "b", 20), (3, 8, "c", 30)],
+    );
+    let cache = ImageCache::new(&schema);
+    let txn = env.read_txn().expect("txn");
+    let mut prepared = prepare(&txn, &cache, &schema, &memo_star_query()).expect("prepare");
+
+    obs::start_capture();
+    let out = prepared.execute_collect(&txn, &cache, &[]).expect("execute");
+    let events = obs::finish_capture();
+
+    let builds = events
+        .iter()
+        .filter(|e| e.name == obs::names::VIEW_BUILD)
+        .count();
+    let dedups = events
+        .iter()
+        .filter(|e| e.name == obs::names::VIEW_DEDUP)
+        .count();
+    assert!(dedups >= 1, "at least one sibling clones the bound state");
+    assert_eq!(builds + dedups, 3, "every occurrence binds exactly once");
+    let selections = events
+        .iter()
+        .find(|e| e.name == obs::names::SELECTIONS)
+        .expect("the batched selection-probe span");
+    assert_eq!(selections.a1, 1, "no probe short-circuited");
+
+    let mut triples: Vec<(String, String, String)> = (0..out.len())
+        .map(|answer| {
+            let (
+                AnswerValue::String(m1),
+                AnswerValue::String(m2),
+                AnswerValue::String(m3),
+            ) = (out.get(answer, 0), out.get(answer, 1), out.get(answer, 2))
+            else {
+                panic!("star columns are strings");
+            };
+            (m1.to_owned(), m2.to_owned(), m3.to_owned())
+        })
+        .collect();
+    triples.sort();
+    // Account 7 holds memos {a, b} (2³ triples), account 8 holds {c}.
+    let mut expected: Vec<(String, String, String)> = Vec::new();
+    for m1 in ["a", "b"] {
+        for m2 in ["a", "b"] {
+            for m3 in ["a", "b"] {
+                expected.push((m1.to_owned(), m2.to_owned(), m3.to_owned()));
+            }
+        }
+    }
+    expected.push(("c".into(), "c".into(), "c".into()));
+    expected.sort();
+    assert_eq!(triples, expected, "the shared-account memo triples");
+}
+
+/// Q(m1, m2, m3) :- Posting(account = x, memo = m1), Posting(account =
+/// x, memo = m2), Posting(account = x, memo = m3) — the star self-join
+/// the occurrence dedup serves: the plan hangs the second and third
+/// occurrences off the shared `x` node with identical orientation, so
+/// their views AND forced tries coincide.
+fn memo_star_query() -> Query {
+    let posting = |memo: u16| Atom {
+        source: crate::ir::AtomSource::Edb(POSTING),
+        bindings: vec![
+            (FieldId(1), Term::Var(VarId(0))),
+            (FieldId(2), Term::Var(VarId(memo))),
+        ],
+    };
+    Query::single(Rule {
+        finds: vec![
+            FindTerm::Var(VarId(1)),
+            FindTerm::Var(VarId(2)),
+            FindTerm::Var(VarId(3)),
+        ],
+        atoms: vec![posting(1), posting(2), posting(3)],
+        negated: vec![],
+        conditions: vec![],
+    })
+}

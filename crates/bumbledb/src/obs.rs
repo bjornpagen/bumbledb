@@ -201,12 +201,24 @@ pub mod names {
     pub const VIEW_BUILD: &str = "view_build";
     /// The warm memo fast path fired. (occurrence index, -)
     pub const VIEW_MEMO_HIT: &str = "view_memo_hit";
+    /// The occurrence-dedup path fired: this occurrence's rebuild
+    /// cloned a same-shaped sibling occurrence's bound state — view and
+    /// forced root — instead of re-scanning the image and re-forcing
+    /// (docs/architecture/40-execution.md). (occurrence index, canonical
+    /// occurrence index)
+    pub const VIEW_DEDUP: &str = "view_dedup";
     /// The Free Join executor. (-, -)
     pub const JOIN: &str = "join";
     /// Sink finalization into the result buffer. (-, -)
     pub const FINALIZE: &str = "finalize";
     /// The key-probe access path. (1 hit / 0 miss, -)
     pub const KEY_PROBE: &str = "key_probe";
+    /// The whole selection-probe loop, batched over the occurrences —
+    /// the lazy selection forces run inside it, so the span keeps that
+    /// cost from masquerading as rule self-time
+    /// (docs/architecture/40-execution.md § introspection).
+    /// (occurrences probed, 1 all hit / 0 short-circuited empty)
+    pub const SELECTIONS: &str = "selections";
     /// One occurrence's selection-level probe (docs/architecture/40-execution.md).
     /// (occurrence index, 1 hit / 0 miss)
     pub const SELECT_PROBE: &str = "select_probe";
