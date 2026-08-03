@@ -71,30 +71,33 @@ impl<S> Snapshot<'_, S> {
     }
 
     /// Plan introspection with ANALYZE semantics: executes with counting instrumentation
-    /// and returns the answers alongside the rendered report.
+    /// and returns the answers alongside the rendered report. Takes the
+    /// mixed [`ParamArg`] entry — execute-symmetry (R13): whatever
+    /// [`Snapshot::execute_args`] binds, introspection binds.
     ///
     /// # Errors
     ///
-    /// As [`Snapshot::execute`].
+    /// As [`Snapshot::execute_args`].
     pub fn introspect(
         &self,
         prepared: &mut PreparedQuery<'_, S>,
-        params: &[BindValue<'_>],
+        params: &[ParamArg<'_>],
     ) -> Result<(Answers, String)> {
         prepared.introspect(&self.txn, self.cache, params)
     }
 
     /// ANALYZE with structured output: the answers alongside
     /// [`crate::api::stats::ExecutionStats`] — what `introspect` renders,
-    /// as data.
+    /// as data. Takes the mixed [`ParamArg`] entry — execute-symmetry
+    /// (R13): whatever [`Snapshot::execute_args`] binds, profiling binds.
     ///
     /// # Errors
     ///
-    /// As [`Snapshot::execute`].
+    /// As [`Snapshot::execute_args`].
     pub fn profile(
         &self,
         prepared: &mut PreparedQuery<'_, S>,
-        params: &[BindValue<'_>],
+        params: &[ParamArg<'_>],
     ) -> Result<(Answers, crate::api::stats::ExecutionStats)> {
         prepared.profile(&self.txn, self.cache, params)
     }

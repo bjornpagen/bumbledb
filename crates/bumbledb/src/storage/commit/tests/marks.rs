@@ -500,6 +500,48 @@ fn device(schema: &Schema, pool: u64, watts: u64, num: u64) -> Vec<u8> {
     )
 }
 
+/// A delete op never derives its capacity value slot — the removal is
+/// key-only, and the derive is fallible on a weighted statement (a
+/// ray-valued Duration weight refuses): a value the applier never reads
+/// must not be able to refuse a delete. The insert twin still derives.
+#[test]
+fn delete_ops_never_derive_the_capacity_value_slot() {
+    let schema = weighted_schema();
+    let dir = crate::testutil::TempDir::new("cap-delete-weight-none");
+    let env = Environment::create(dir.path(), &schema).expect("create");
+    let d = device(&schema, 1, 60, 0);
+    let mut insert_delta = crate::storage::delta::WriteDelta::new(&schema);
+    {
+        let view = env.read_txn().expect("txn");
+        insert_delta.insert(&view, DEVICE, &d).expect("record");
+    }
+    let plan = super::plan_for(&insert_delta, &env);
+    let [op] = &*plan.inserts else {
+        panic!("one insert op");
+    };
+    let [edge] = &*op.capacity_edges else {
+        panic!("one capacity edge");
+    };
+    assert_eq!(edge.weight, Some(60), "the insert op derives the slot");
+    drop(plan);
+    drop(insert_delta);
+
+    apply_delta(&env, &schema, &[], &[(DEVICE, d.clone())]).expect("base commit");
+    let mut delete_delta = crate::storage::delta::WriteDelta::new(&schema);
+    {
+        let view = env.read_txn().expect("txn");
+        delete_delta.delete(&view, DEVICE, &d).expect("record");
+    }
+    let plan = super::plan_for(&delete_delta, &env);
+    let [op] = &*plan.deletes else {
+        panic!("one delete op");
+    };
+    let [edge] = &*op.capacity_edges else {
+        panic!("one capacity edge");
+    };
+    assert_eq!(edge.weight, None, "the delete op never derives");
+}
+
 /// Sum within bounds: weights sum, not count — three devices measuring
 /// 60 + 30 + 10 = 100 sit exactly on the inclusive ceiling.
 #[test]

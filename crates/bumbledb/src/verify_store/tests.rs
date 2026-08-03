@@ -1649,6 +1649,99 @@ fn a_marked_store_verifies_clean() {
     assert_eq!(db.verify_store().expect("verify").findings, vec![]);
 }
 
+/// The CLOSED-parent arm — `verify_store/marks.rs`'s own pass, distinct
+/// from the ordinary-parent capacity re-check that rides the `F` scan:
+/// closed parents have no `F` rows, so their roster walks per sealed
+/// axiom. A green store sweeps clean; a raw-deleted capacity edge is
+/// both the missing-edge finding and the axiom's group re-measured
+/// below its floor.
+#[test]
+fn a_closed_parent_capacity_group_is_remeasured_by_the_marks_pass() {
+    let pool = RelationId(0);
+    let device = RelationId(1);
+    // Materialized: Pool's closed auto-key (0), then the capacity (1).
+    let capacity = StatementId(1);
+    let plain = |name: &str| FieldDescriptor {
+        name: name.into(),
+        value_type: ValueType::U64,
+        generation: Generation::None,
+    };
+    let decl = SchemaDescriptor {
+        relations: vec![
+            RelationDescriptor {
+                extension: Some(Box::new([bumbledb_theory::schema::Row {
+                    handle: "P0".into(),
+                    values: Box::new([Value::U64(9)]),
+                }])),
+                name: "Pool".into(),
+                fields: vec![plain("cap")],
+            },
+            RelationDescriptor {
+                extension: None,
+                name: "Device".into(),
+                fields: vec![plain("pool"), plain("num")],
+            },
+        ],
+        // `Pool(id) <={1..2} Device(pool)` — the closed parent's window.
+        statements: vec![StatementDescriptor::Capacity {
+            target: Side {
+                relation: pool,
+                projection: Box::new([FieldId(0)]),
+                selection: Box::new([]),
+            },
+            weight: bumbledb_theory::schema::Weight::Unit,
+            lo: 1,
+            hi: Some(bumbledb_theory::schema::Bound::Lit(2)),
+            source: Side {
+                relation: device,
+                projection: Box::new([FieldId(0)]),
+                selection: Box::new([]),
+            },
+        }],
+    };
+    let dir = TempDir::new("verify-marks-closed-parent");
+    let db = Db::create(dir.path(), decl).expect("create");
+    db.write(|tx| {
+        tx.insert_dyn(device, &[Value::U64(0), Value::U64(0)])
+            .map(|_| ())
+    })
+    .expect("one device inside the window");
+    assert_eq!(
+        db.verify_store().expect("verify").findings,
+        vec![],
+        "the green closed-parent store sweeps clean"
+    );
+    // The R-delete-blind class against the closed parent: the axiom's
+    // group drops below its floor, visible only to the marks pass.
+    let r = key(|b| keys::reverse_key(b, capacity, &encode_u64(0), device, 0));
+    raw_write(&db, |txn| {
+        let data = txn.env().data();
+        assert!(
+            data.delete(txn.raw_mut(), &r).expect("raw delete"),
+            "the fixture wrote this capacity edge"
+        );
+    });
+    let parent_fact: Box<[u8]> = db.schema().relation(pool).extension().expect("closed")[0]
+        .fact
+        .clone();
+    let findings = db.verify_store().expect("verify").findings;
+    assert!(
+        findings.contains(&StoreFinding::CapacityViolation {
+            statement: capacity,
+            fact: parent_fact,
+            measure: 0,
+        }),
+        "the marks pass re-measures the sealed axiom's group, got {findings:?}"
+    );
+    assert!(
+        findings
+            .iter()
+            .any(|f| matches!(f, StoreFinding::FactWithoutReverseEdge { .. })),
+        "the missing edge itself is also found, got {findings:?}"
+    );
+    assert_eq!(findings.len(), 2, "exactly the two findings: {findings:?}");
+}
+
 /// The R-delete-blind class, capacity form: a raw-deleted capacity edge
 /// is both the missing-edge finding AND a global re-measure below the
 /// floor — the sweeper owns exactly what incremental checking cannot see.

@@ -26,7 +26,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::schema::{
     AxiomIndex, CapacityId, ContainmentId, Enforcement, IntervalTail, KeyId, Schema, Weight,
 };
-use crate::storage::delta::WriteDelta;
+use crate::storage::delta::{Disposition, WriteDelta};
 use crate::storage::keys::{self, DeterminantImage};
 use bumbledb_theory::schema::{RelationId, StatementId};
 
@@ -120,8 +120,10 @@ pub(crate) struct FactOp<'d> {
 /// One capacity `R` edge of one fact: the statement-scoped key material,
 /// KEY-symmetric between the insert put and the delete removal (the
 /// applier consumes it exactly as a containment [`EdgeOp`]; the delete
-/// removal is key-only, so the delete side's `weight` is derived and
-/// unread — the uniform derivation is cheaper than a disposition split).
+/// removal is key-only, so a delete op's `weight` is `None` by
+/// construction — never derived: the derive is fallible on a weighted
+/// statement, and a value the applier never reads must not be able to
+/// refuse the delete).
 pub(crate) struct MarkEdgeOp {
     /// Prederived statement identity for the schema-free byte applier.
     pub(crate) statement: StatementId,
@@ -219,10 +221,11 @@ pub(crate) struct DependentCheck {
 /// # Errors
 ///
 /// The one fallible slice is the weighted edge's weight derivation
-/// ([`MarkEdgeOp::weight`], the C17 slot law): a ray-valued Duration
-/// weight has no finite u64 for the value slot, so it refuses typed at
-/// plan time (the write-time ray corner recorded at the judgment
-/// constraint comment — owner ruling owed).
+/// ([`MarkEdgeOp::weight`], the C17 slot law), INSERT ops only: a
+/// ray-valued Duration weight has no finite u64 for the value slot, so
+/// it refuses typed at plan time (the write-time ray corner recorded at
+/// the judgment constraint comment — owner ruling owed). Delete ops
+/// never derive — their removal is key-only.
 pub(crate) fn plan_commit<'d>(
     delta: &'d WriteDelta<'_>,
     schema: &Schema,
@@ -255,6 +258,7 @@ pub(crate) fn plan_commit<'d>(
         deletes.push(fact_op(
             schema,
             &selections,
+            Disposition::Delete,
             rel,
             hash,
             fact,
@@ -273,6 +277,7 @@ pub(crate) fn plan_commit<'d>(
         inserts.push(fact_op(
             schema,
             &selections,
+            Disposition::Insert,
             rel,
             hash,
             fact,
@@ -330,6 +335,7 @@ struct FactScratch {
 fn fact_op<'d>(
     schema: &Schema,
     selections: &Selections,
+    disposition: Disposition,
     rel: RelationId,
     hash: &'d [u8; 32],
     fact: &'d [u8],
@@ -423,7 +429,15 @@ fn fact_op<'d>(
             }
         }
     }
-    let capacity_edges = mark_ops(schema, selections, relation, fact, touched_parents, scratch)?;
+    let capacity_edges = mark_ops(
+        schema,
+        selections,
+        disposition,
+        relation,
+        fact,
+        touched_parents,
+        scratch,
+    )?;
     Ok(FactOp {
         relation: rel,
         fact,
@@ -447,6 +461,7 @@ fn fact_op<'d>(
 fn mark_ops(
     schema: &Schema,
     selections: &Selections,
+    disposition: Disposition,
     relation: &crate::schema::Relation,
     fact: &[u8],
     touched_parents: &mut BTreeMap<CapacityId, BTreeSet<DeterminantImage>>,
@@ -467,7 +482,14 @@ fn mark_ops(
             .or_default()
             .insert(scratch.image.clone());
         if satisfies(&selections.capacity(capacity_id).source, layout, fact) {
-            let weight = if matches!(statement.weight, Weight::Unit) {
+            // The value slot is an INSERT-side concern: the delete
+            // removal is key-only, so a delete op never derives —
+            // the derive is fallible on a weighted statement (a
+            // ray-valued Duration weight refuses), and a value the
+            // applier never reads must not be able to refuse a delete.
+            let weight = if matches!(statement.weight, Weight::Unit)
+                || disposition == Disposition::Delete
+            {
                 None
             } else {
                 Some(child_weight(statement, layout, fact)?)

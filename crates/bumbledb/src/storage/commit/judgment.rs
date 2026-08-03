@@ -824,6 +824,19 @@ pub(crate) fn capacity_child_image<'a>(
     }
 }
 
+/// The R16 8-byte-determinant decode, spelled ONCE: a fresh-keyed
+/// statement maintains no `U` tree — its determinant IS the `F` row id,
+/// so every probe of such a key starts by reading the determinant as
+/// the one 8-byte word (a different width is corrupt key material).
+/// The three probe sites ([`establishing_fact`], [`Checker::check_scalar`],
+/// [`Checker::check_capacity`]) differ only in their MISS verdicts.
+fn fresh_row_word(determinant: &[u8]) -> Result<u64> {
+    let word: [u8; 8] = determinant.try_into().map_err(|_| {
+        Error::Corruption(CorruptionError::MalformedValue("fresh-row key width"))
+    })?;
+    Ok(u64::from_be_bytes(word))
+}
+
 /// The fact that re-established a key determinant in phase 2, reached through
 /// the determinant's own `U` entry — the ψ-qualification subject. Both gets
 /// hit state this commit just wrote (write txns read their own writes),
@@ -838,14 +851,11 @@ fn establishing_fact<'t>(
 ) -> Result<&'t [u8]> {
     let statement = schema.key(key);
     if statement.fresh_row {
-        let word: [u8; 8] = determinant.try_into().map_err(|_| {
-            Error::Corruption(CorruptionError::MalformedValue("fresh-row key width"))
-        })?;
         return fact_by_row(
             data,
             txn.raw(),
             statement.relation,
-            u64::from_be_bytes(word),
+            fresh_row_word(determinant)?,
         );
     }
     let mut buf: KeyBuf = [0; MAX_KEY];
@@ -980,15 +990,7 @@ impl<'a> Checker<'a> {
     pub(crate) fn check_scalar(&mut self, probe: &Probe<'_>) -> Result<()> {
         let target_key = self.schema.key(probe.target_key);
         if target_key.fresh_row {
-            let word: [u8; 8] = probe.key_bytes.try_into().map_err(|_| {
-                Error::Corruption(CorruptionError::MalformedValue("fresh-row key width"))
-            })?;
-            let f_len = keys::fact_key(
-                &mut self.key,
-                probe.target_relation,
-                u64::from_be_bytes(word),
-            );
-            let Some(fact) = self.data.get(self.txn, &self.key[..f_len])? else {
+            let Some(fact) = self.fresh_row_fact(probe.target_relation, probe.key_bytes)? else {
                 return Err(probe.unsatisfied());
             };
             return self.check_fact(probe, fact);
@@ -1159,17 +1161,10 @@ impl<'a> Checker<'a> {
                 let key_statement = self.schema.key(*target_key);
                 // A fresh-row parent key has no `U` tree (R16): the
                 // parent tuple IS the `F` row id, one get, the value the
-                // holder itself.
+                // holder itself — nothing to defer.
                 let fact = if key_statement.fresh_row {
-                    let word: [u8; 8] = parent_key.try_into().map_err(|_| {
-                        Error::Corruption(CorruptionError::MalformedValue("fresh-row key width"))
-                    })?;
-                    let f_len = keys::fact_key(
-                        &mut self.key,
-                        statement.target.relation,
-                        u64::from_be_bytes(word),
-                    );
-                    let Some(fact) = self.data.get(self.txn, &self.key[..f_len])? else {
+                    let Some(fact) = self.fresh_row_fact(statement.target.relation, parent_key)?
+                    else {
                         return Ok(());
                     };
                     fact
@@ -1184,6 +1179,51 @@ impl<'a> Checker<'a> {
                         return Ok(());
                     };
                     let row_id = decode_row_id(value)?;
+                    // The holder's fact bytes are needed eagerly only by
+                    // ψ and by a dependent bound. An empty-ψ
+                    // literal-bound statement judges its whole hot path
+                    // from the `U` probe and the `R` walk alone — its
+                    // `F` get defers to the conviction (cold) path,
+                    // where the violation payload requires it anyway.
+                    let needs_fact = !matches!(checks.target, SelectionCheck::Empty)
+                        || matches!(
+                            statement.hi,
+                            Some(
+                                CapacityBound::TargetField(_) | CapacityBound::TargetDuration(_)
+                            )
+                        );
+                    if !needs_fact {
+                        // ψ is Empty by construction, so the determinant
+                        // hit alone proves the holder; the bound is
+                        // literal or absent, resolved fact-free.
+                        let hi = match statement.hi {
+                            None => None,
+                            Some(CapacityBound::Lit(n)) => Some(n),
+                            Some(_) => {
+                                unreachable!("a dependent bound forces the eager holder fetch")
+                            }
+                        };
+                        let measure =
+                            self.measure_children(statement, &checks.source, parent_key, hi)?;
+                        if measure < u128::from(statement.lo)
+                            || hi.is_some_and(|hi| measure > u128::from(hi))
+                        {
+                            let parent_fact = fact_by_row(
+                                self.data,
+                                self.txn,
+                                statement.target.relation,
+                                row_id,
+                            )?;
+                            return Err(Error::CommitRejected {
+                                violations: Violations::one(Violation::Capacity {
+                                    statement: statement.id,
+                                    fact: parent_fact.into(),
+                                    measure,
+                                }),
+                            });
+                        }
+                        return Ok(());
+                    }
                     fact_by_row(self.data, self.txn, statement.target.relation, row_id)?
                 };
                 let layout = self.schema.relation(statement.target.relation).layout();
@@ -1235,6 +1275,7 @@ impl<'a> Checker<'a> {
         }
         Ok(())
     }
+
 
     /// The capacity ceiling, resolved per touched parent against the
     /// holder fact (`lean/Bumbledb/Capacity.lean: CapWindow.resolve`):
@@ -1330,6 +1371,19 @@ impl<'a> Checker<'a> {
             }
         }
         Ok(measure)
+    }
+
+    /// The R16 fresh-row probe: the determinant decodes to the `F` row
+    /// id ([`fresh_row_word`]) and one `F` get answers — the found fact,
+    /// or the miss whose verdict belongs to the caller (a violation at
+    /// the scalar probe, no-holder at the capacity check).
+    fn fresh_row_fact(
+        &mut self,
+        relation: RelationId,
+        determinant: &[u8],
+    ) -> Result<Option<&'a [u8]>> {
+        let f_len = keys::fact_key(&mut self.key, relation, fresh_row_word(determinant)?);
+        Ok(self.data.get(self.txn, &self.key[..f_len])?)
     }
 
     /// The per-segment target-selection check: with an empty σ the determinant
