@@ -1,156 +1,49 @@
-# TODO — the handoff (2026-07-25, owner-directed pause)
+# TODO — trued at the bugbash-perf campaign close (2026-08-03)
 
-The owner paused work mid-campaign. This document is the complete handoff: the
-state of the repo, the paused campaign in enough detail to resume or re-author
-it cold, and everything else owed. A resumer should read this top to bottom
-before touching anything.
+The 2026-07-25 bug-bash + perf campaign is **CLOSED**. Its ledger is
+`audit-2026-07-25/README.md` (44 findings, 44 fixed, the tally
+cross-referenced to its fix commits); its measurement story is
+`bench-out/baseline-2026-07-25-post/DELTA.md` (the rebench deltas, the
+per-fix-lane verdicts, the 22 flamediffs). The campaign lived on branch
+`bugbash-perf` (PR #14); main takes it only as a completed state.
 
-## Where things stand right now
+## Owed — the campaign's own residue (data first, no intuition fixes)
 
-- **v0.9.0 is released, published, and CI-green** (tag `v0.9.0` @ `9ecba41b`;
-  both npm packages live with the pack-time-injected platform pin — the
-  sdk-lane frozen-lockfile bootstrap circle is dead permanently via
-  `ts/scripts/pin.ts`). Contents: the zero-key `by()`/`desc()` identity
-  comparators over the exact engine-orderable roster, the R3 bool-order tail
-  closed on the TS type tier (`NumericVarOk`/`OrderVarOk` split), the primer
-  expressibility pins.
-- **The primer consumer has its reply**:
-  `docs/handoffs/2026-07-25-primer-reply.md` (C33 shipped; C31 ruled with
-  running evidence in `ts/test/expressibility-operand-views.test.ts`; the
-  whole-jump 0.5.x→0.9.0 runbook). `docs/handoffs/` is now the standing
-  convention for consumer asks. Expect primer follow-ups there.
-- **The bug-bash + perf campaign is PAUSED mid-Gate** (details below). Its
-  Instrument phase is fully landed and committed; its Gate verdict is
-  UNRESOLVED — **zero-cost-off is UNPROVEN for the new instrumentation**.
-  Treat the instrumented estate as unvalidated until the Gate passes.
+- **The storage-lane regression cluster** (the rebench called its own lane
+  NOT CASHED): `cold_containment_walk_delete` 3.1–3.4× in all six reps,
+  the NOSYNC commit ladder 1.24–1.44 (b100 traced suspects: apply_deletes
+  self-time 2.1× under the cursor-fold applier, judgment_source +70% under
+  the T8 walk at small batch — the sweep only priced 1k–4k parents),
+  windowed ephemeral 1.07–1.17. Attribution first: the delete lane has no
+  traced twin (the reps' write set is untraced by protocol) — light it,
+  then fix. Flamediffs: `bench-out/baseline-2026-07-25-post/flame/
+  writes.durable.delete_b100.diff.svg`, `writes.nosync.commit_b100.diff.svg`.
+- **r6_two_path_count 1.46** (ours 131→197 ms) on the sink/plan lane's own
+  COUNT-shaped territory — descend now carries essentially the whole query
+  (`flame/scenarios.rings.r6_two_path_count.warm.diff.svg`, jp_descend
+  51%+45%). Same discipline: trace-reader ranking before any change.
+- **Owner ruling owed (surfaced by C17, recorded not ruled)**: the landed
+  slot arm refuses a ray-valued Duration weight at WRITE time — strictly
+  stronger than C10's judge-time refusal, visible only for a ray child
+  under an absent parent (`bench-out/baseline-2026-07-25/capacity-c17/
+  SUMMARY.md`).
+- **Overlap constants re-pin**: `OVERLAP_CROSSOVER = 16`
+  (`exec/run/overlap_leaf.rs`) and `FLAT_SWEEP_CEILING = 128`
+  (`interval/overlap.rs`) are rig-pinned provisional — re-pin both from the
+  `overlap_profile` sweep on a quiet machine, never by inspection (the
+  finding-013 phase attribution now decomposes build vs walk vs residual,
+  so the sweep finally has its signal).
 
-## THE PAUSED CAMPAIGN: instrument-first bug bash + perf fanout
-
-Run id `wf_260adbe6-ad4`. The script as it originally ran is
-`docs/handoffs/2026-07-25-bugbash-perf-workflow.js` (historical record).
-**SUPERSEDED 2026-08-01 by `docs/handoffs/2026-08-01-bugbash-perf-workflow-v2.js`**
-— the owner ruled the opus-authored completed work untrusted: v2 replaces the
-Instrument phase with a from-scratch Review of the landed estate
-(`d7c111a8..ccd0de8d` re-reviewed as an untrusted submission against the
-original lane specs, fixed where short), re-pins every agent to fable (see
-constraints below), and corrects the push target to the bugbash-perf branch.
-The prose spec below mirrors the original phases for readers; Review precedes
-Gate on resume.
-
-**Baseline verified at pause (2026-07-25):** `cargo check --workspace
---all-targets` clean, `cargo check -p bumbledb --features trace` clean,
-`tsc --noEmit` clean — the paused tree typechecks and is committable as-is.
-(Full test batteries + check-asm/alloc-gate remain the Gate's job.)
-
-**Intent (owner's charter):** be excruciatingly data-driven — evaluate all
-benchmarks, run a full baseline WITH trace attribution before any perf work,
-tally everything, investigate flamegraphs trivially, then fan out on bugs and
-on perf targets ranked by measured attribution, not intuition.
-
-**Standing constraints for any resumer:**
-- ALL leaf agents (coders, verifiers, finders — every workflow agent) pin
-  `model: "fable"` at `effort: "low"`; the orchestrating session is fable on
-  high (owner ruling 2026-08-01: opus is no longer trusted with difficult
-  work — supersedes the 2026-07-25 opus ruling, which superseded the original
-  fable pin). Opus-authored work already landed is treated as untrusted until
-  reviewed.
-- Maximal churn, maximal elegance, zero backwards compat — including
-  consumers (primer breaks and upgrades; they have no persistent data).
-- Benches: strictly sequential, `scripts/measure.sh` mutex, wall-power
-  verified (pmset) before/after, nothing else runs during timed windows,
-  oracle-gated, DNFs excluded-and-counted.
-- Observability doctrine: zero-cost-off (trace feature ZSTs), NO per-row
-  spans, no allocation in join loops, alloc×trace are exclusive run modes.
-
-### Phase 1 — Instrument: DONE, committed (7 commits, `d7c111a8..ccd0de8d`)
-
-- **I1 (bench lanes trace)**: scenarios take `--trace` → per-query warm+cold
-  Chrome traces + flame embeds; write/commit lanes trace (JUDGMENT_*/
-  LMDB_COMMIT finally reach artifacts); every traced artifact lands a
-  `.folded` twin. Timed batches stay untraced; the traced sample is separate
-  (the measure.rs discipline).
-- **I2 (dark subsystems lit)**: spans at batch/pass granularity in the DP
-  planner interior + selectivity ladder, columnar batch decode +
-  predicate-scan kernels, verify_store sweep, normalization sub-passes.
-- **I3 (flamegraphs dead simple)**: `scripts/flame.sh <lane> [query]` — one
-  command → `.folded` + self-contained SVG + top-10 table (no external
-  flamegraph.pl); `scripts/flamediff.sh <a> <b>` — differential red/blue SVG.
-
-### Phase 2 — Gate: IN FLIGHT WHEN STOPPED (verdict unresolved)
-
-Must pass before anything downstream: (1) release build WITHOUT the trace
-feature proves zero-cost-off — `scripts/check-asm.sh`, the alloc gate, hot-
-symbol discipline; (2) `cargo test --workspace --all-targets` (default) AND
-`-p bumbledb --features trace`; (3) `scripts/check.sh`; (4) ts suite
-untouched-check; (5) `scripts/lean.sh`; (6) the I1/I3 smoke + golden tests.
-At the stop, both cargo test batteries were mid-run (logs were going to
-`/tmp/gate_test_ws.log` and `/tmp/gate_test_trace.log`; the processes were
-killed at pause). **Resume = run this gate first, fix-loop until green.**
-
-### Phase 3 — Baseline (never ran): strictly sequential, into `bench-out/baseline-2026-07-25/`
-
-1. **Bench debt first** (this retires every owed-bench item below): the C17
-   slot-vs-fetch measurement on the power-budget lane (both
-   `measure_children` arms behind `CAPACITY_WEIGHT_SLOT` in
-   `storage/commit/judgment.rs`; land the winner, DELETE the loser + flag,
-   record numbers at the constant; if slot wins, surface its write-time
-   ray-Duration corner for owner ruling — do not rule it); the calendar
-   capacity lane (fresh twin world); windowed/lawful re-pins under the
-   capacity spelling; the campaign-2026-07-23 stragglers (writes + churn
-   wall-power reruns, sweep-commit — needs the obs build — and the unlanded
-   `adversarial` subcommand).
-2. **Full-suite baseline**: scenarios, report-class durable+ephemeral ×3,
-   writes, churn ×3 profiles, crud, curves, lawful, storage — with delta
-   tables vs `bench-out/campaign-2026-07-23` (and vs night pins where the
-   campaign rode them). MANIFEST with provenance.
-3. **Attribution passes**: traced pass (every scenario query warm+cold +
-   every write/judgment lane; flamegraphs for ALL via I3 into
-   `.../flame/`); separate alloc pass; then **`TALLY.md`** — per lane: the
-   number, delta, top-5 span/phase attribution (absolute µs + share), alloc
-   footprint, flamegraph path. THE document the perf fanout reads.
-
-### Phase 4 — Hunt (never ran): concurrent once the machine is free
-
-- **4 trace readers** (rings+graph / olap+joins / points+temporal /
-  writes+commit lanes): read TALLY + flamegraphs, produce attribution
-  rankings — worst absolute µs per lane, mechanism hypotheses that cite
-  file:line of the span's source, ranked by (absolute µs × fixability).
-- **9 bug-bash finders** over everything written since the 2026-07 audit
-  (do not re-report stamped `audit-2026-07/` items): capacity judge
-  (plan/judgment/verify_store, dependent bounds, clipped walk, u128, rays,
-  R16 interplay); capacity surface (validate/theory/macros/TS builder/FFI/
-  pin.ts); GJ-split in production; overlap join + const-operand routing
-  (the provisional crossover 16); storage v7 (R17 lockless readers, R18
-  wipe, one-allocator); fresh TS surface (by() zero-key, bool tier,
-  capacity builder, dispose, explain); Lean capacity drift (Capacity.lean +
-  Decide/Oracle vs engine, C11 Admission form, C12 clip lemma); a
-  branching/free-feature/unification sweep over all post-audit code; the
-  new I1–I3 instrumentation itself (category: observability).
-
-### Phases 5–8 (never ran)
-
-- **Verify**: one adversarial refuter per finding (REFUTED default for
-  uncertain bug claims), self-contained report_markdown for survivors.
-- **Fix**: a planner turns attribution + verified findings into ≤7
-  file-disjoint lanes; RULE: speculative perf mechanisms are skipped —
-  data-driven or nothing. Post-fix full gates.
-- **Rebench**: exactly the targeted lanes vs the baseline, with
-  `flamediff.sh` SVGs embedded; fixes that didn't move their lane are
-  called out NOT CASHED.
-- **Close**: findings ledger into `audit-2026-07-25/` (reports + README
-  tally with outcome stamps), TODO trued, doc re-pins + README graphs where
-  headline numbers moved, final gates, push.
-
-## Other open items (pre-existing, unchanged by the pause)
+## Open items (pre-existing, unchanged)
 
 - **1.0.0 close** — owner-gated, explicitly deferred 2026-07-18. Owner
   ceremony only.
 - **crashpoint + image-oracle disposition** — consumer-less test-support
   features (fuzzer deletion); keep-dormant vs delete is an owner ruling.
-- **C10 ray-Duration verdict parity** (engine vs naive) — one differential
-  fixture owed once the engine refusal shape is pinned stable.
-- **Audit deferred findings** (stamped in `audit-2026-07/findings/`): 014
-  (per-parent leaf batch-of-1), 044 (forced-map telescoped distinct Count),
+- **Audit-2026-07 deferred findings** (stamped in `audit-2026-07/findings/`):
+  014 (per-parent leaf batch-of-1 — the campaign's pinned-run fold
+  `a75d1e65` lands the adjacent mechanism, but o4's lane was not re-benched;
+  the stamp stands until it is), 044 (forced-map telescoped distinct Count),
   053 (two FilterPredicate interpreters), the 009 step-2 per-forced-map
   min/max fence, and the R5 tail (TS measure-keyed Arg spelling + the Lean
   denotation's conformance fence, RULINGS.md §R5).
@@ -160,11 +53,32 @@ killed at pause). **Resume = run this gate first, fix-loop until green.**
   half-open boundary sweep, 1-D Helly, the overlap index as the judge's
   walk, polarity intact). Min/Max-window refusal trigger likewise.
 - **Primer follow-through**: expect their P2.4 cutover questions via
-  `docs/handoffs/`; the expressibility test is the living evidence to point
-  at.
+  `docs/handoffs/`; the expressibility test
+  (`ts/test/expressibility-operand-views.test.ts`) is the living evidence
+  to point at.
+
+## Retired this campaign (previously owed here)
+
+- C17 slot-vs-fetch: measured, slot landed, fetch arm + flag deleted
+  (`484c3871`; artifacts `bench-out/baseline-2026-07-25/capacity-c17/`).
+- The capacity/windowed/lawful bench lanes + re-pins under the capacity
+  spelling (`e511b540`), the calendar capacity twin world.
+- The writes-ladder and churn wall-power reruns (the campaign manifest's
+  PENDING rows) — landed at the baseline, re-run at the rebench; every
+  README chart now regenerates from `bench-out/baseline-2026-07-25-post/`.
+- C10 ray-Duration verdict parity engine-vs-naive: the refusal is a
+  compared verdict on the differential wall (finding 018, `b0fa69f0`).
+- The sweep-commit T8 lane (`0e7d1d42`) and the T8 mechanism (`128e4504`)
+  — with the b100 caveat recorded under Owed above.
 
 ## Shipped (compressed ledger — detail in git history and the stamped docs)
 
+- **bugbash-perf campaign** (2026-07-25 → 2026-08-03): instrument → gate →
+  baseline (`bench-out/baseline-2026-07-25/`, TALLY attribution, 147
+  flamegraphs) → hunt → 44/44 findings fixed across seven file-disjoint
+  lanes → rebench (`baseline-2026-07-25-post/`: reads 0.87–0.94 on five of
+  six reps, scenarios 0.88 with the Hunt cluster reversed, storage lane
+  honestly NOT CASHED). Ledger: `audit-2026-07-25/README.md`.
 - **0.9.0** (2026-07-25): comparators, bool-order tail, pin injection,
   primer pins. CI green all lanes.
 - **0.8.0** (2026-07-25): the capacity cutover whole — `<=[w]{lo..hi}`,
@@ -173,7 +87,7 @@ killed at pause). **Resume = run this gate first, fix-loop until green.**
   `docs/design/capacity-laws.md` + `capacity-cutover.md`.
 - **0.7.0** (2026-07-24): the audit campaign — 162 findings (158 fixed),
   22 rulings (21 implemented, R5 partial), GJ split, overlap join, point
-  path, R16/R17/R18, wall-power re-bench (`bench-out/campaign-2026-07-23/
-  SUMMARY.md`), R21 re-pins. Ledger: `audit-2026-07/README.md`.
+  path, R16/R17/R18, wall-power re-bench, R21 re-pins. Ledger:
+  `audit-2026-07/README.md`.
 - Earlier: 0.6.0 destructure, 0.5.0 surface pair, cleanup-0.5.0 (PR #11),
   incremental images (PR #10) — see git history.

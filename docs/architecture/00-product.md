@@ -400,11 +400,12 @@ recursion).
    (cold reported, not gated), SQLite fully indexed + prepared + `ANALYZE`d,
    `synchronous=FULL`, `SELECT DISTINCT` included in timed SQL, canonical machine =
    the owner's. **The claim is unearned until the suite runs green on this
-   engine** — earned at scale S by the committed
-   `bench-out/campaign-2026-07-23/` artifacts (report provenance rev
-   `7cef4e13`, 2026-07-24, wall power: verify-stamped, `all_win: true` on
-   every gated family in all six suite reps, corpora regenerated under the
-   fixed RNG per R20), and re-voided
+   engine** — earned at scale S, most recently by the committed
+   `bench-out/baseline-2026-07-25-post/` artifacts (code rev `3b31cd84`,
+   2026-08-03, wall power: verify-stamped per binary, `all_win: true` on
+   every gated family in all six suite reps; the 2026-07-25 baseline and
+   the 2026-07-23 campaign run stand committed beside it under the same
+   protocol and R20 corpora), and re-voided
    by any format or semantics change until re-run. The "ratchet" is a manually
    re-run report per meaningful change — not a CI gate.
 3. **Allocation:** a warm prepared-query execution within a seen (data generation,

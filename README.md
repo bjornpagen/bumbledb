@@ -78,27 +78,28 @@ type discipline is enforced by rustc, not by runtime checks.
 ## The numbers
 
 **The protocol note, once, for every number and chart below.** Everything
-derives from one committed artifact set: the 2026-07-23 campaign rerun
-(`bench-out/campaign-2026-07-23/`, report provenance revs
-`7cef4e13`/`687f0201`, Apple M2 Max, **wall power** — AC verified before
-and after every lane — S-scale corpora regenerated under the fixed RNG:
-the R20 ruling made the seeded arm emit true 64 bits, so every corpus
-digest re-pinned and every published number re-ran). Protocol identical to
-the 2026-07-20 night (which stays committed beside it): a **shared-machine
-run** under the recorded ruling — boosted (user-interactive) QoS, every
-report stamping `shared_machine: true` plus the load averages, one
-`scripts/measure.sh` hold per lane, nothing built during timing. All six
-suite reps landed (three durable, three ephemeral), so suite numbers below
-are min-of-3 merges per store kind — the charts' own rule. Every timed
-block carries the clock-proxy bracket (the night's curves lane lacked it);
-blocks that ran through a DVFS sag are stamped contaminated in the report
-and reported, never hidden — 2–9 of 33 read blocks per rep, and the four
-timed curve blocks are all clean. Two lanes are still owed their wall-power
-rerun and ride the committed night pins below, saying so where they do:
-the writes ladder and churn (`MANIFEST.txt` records them PENDING). Every
-query is oracle-gated before it is ever timed: value-identical multisets
-against SQLite (2,889 differential cases for the suite; per-draw gates in
-the lanes), and every write verdict matches an independent naive model.
+derives from one committed artifact set: the 2026-08-03 post-fix rebench
+of the bugbash-perf campaign (`bench-out/baseline-2026-07-25-post/`, code
+rev `3b31cd84`, Apple M2 Max, **wall power** — AC pmset-asserted before
+and after every lane — the same S-scale corpora as the 2026-07-25 baseline
+and the 2026-07-23 campaign, both committed beside it; the full delta
+story is `bench-out/baseline-2026-07-25-post/DELTA.md`). Protocol
+unchanged down the whole chain: a **shared-machine run** under the
+recorded ruling — boosted (user-interactive) QoS, every report stamping
+`shared_machine: true` plus the load averages, one `scripts/measure.sh`
+hold per lane, nothing built during timing. All six suite reps landed
+(three durable, three ephemeral), so suite numbers below are min-of-3
+merges per store kind — the charts' own rule. Every timed block carries
+the clock-proxy bracket; blocks that ran through a DVFS sag are stamped
+contaminated in the report and reported, never hidden — 1–6 of 33 read
+blocks per rep, 7–10 of 12 durable write blocks (fsync-DVFS physics, the
+known write-lane condition), and the four timed curve blocks are all
+clean. The writes ladder and churn ran wall-powered in this set — the
+night-pin debt the earlier README carried is retired. Every query is
+oracle-gated before it is ever timed: value-identical multisets against
+SQLite (2,889 differential cases for the suite, the oracle stamp re-earned
+per binary; per-draw gates in the lanes), and every write verdict matches
+an independent naive model.
 SQLite is measured warm, prepared, and well-indexed on identical data,
 under the parity configs in
 [61 — Bench lanes](docs/architecture/61-bench-lanes.md). This is an
@@ -115,12 +116,12 @@ report-class families (slots, closures, the displaced-window set, and
 ![read families vs SQLite](assets/bench-vs-sqlite.svg)
 
 The same data as multipliers. Geomean over the 22 gated families:
-**21.2×** SQLite p50 (durable store, min-of-3; the ephemeral triple lands
-at 21.0×). Across all 33 families the durable geomean is **24.8×**
-(ephemeral 23.8×). The spread is honest: the floor is `skew` at **4.9×**,
-with `entries_for_account_set` **5.0×** and `point` lookups **5.3×** (a
-B-tree is good at this), while `balance` is **251×**, `busy_scan`
-**439×**, and the displaced-stream trio runs **256–302×**:
+**21.8×** SQLite p50 (durable store, min-of-3; the ephemeral triple lands
+at 22.1×). Across all 33 families the durable geomean is **27.8×**
+(ephemeral 26.4×). The spread is honest: the floor is
+`entries_for_account_set` at **3.4×**, with `skew` **4.5×** and `point`
+lookups **5.3×** (a B-tree is good at this), while `balance` is **248×**,
+`busy_scan` **413×**, and the displaced-stream trio runs **258–297×**:
 
 ![speedup over SQLite](assets/bench-speedup.svg)
 
@@ -149,12 +150,15 @@ a DNF lane joins no bar (excluded and counted in the title):
 
 Six non-ledger worlds — joins, graph, olap, points, rings, temporal — 36
 (query, SQLite-lane) pairs, each oracle-gated before timing. Geomean across
-the **34 timed lanes: 18.0×** (the night ran 12.0×; the campaign's targeted
-fixes cashed — o3 22×, o5 12×, r1 5.8×, t2 2.5× on our own p50s — and the
-flat/adverse lanes are reported exactly as measured in the DELTA table of
-`bench-out/campaign-2026-07-23/scenarios/scenarios.md`); the 2 lanes where
-SQLite exceeded the per-sample cap are excluded from that geomean and
-counted (they get their own chart below):
+the **34 timed lanes: 19.9×** (the campaign ran 18.0×, the night 12.0×;
+the bugbash fix lanes cashed where their attribution pointed — g6 3.0×,
+t1 2.4×, g3 1.6× better than the baseline on our own p50s — and the
+flat/adverse lanes are reported exactly as measured in
+`bench-out/baseline-2026-07-25-post/DELTA.md`, including the one real
+regression the rebench called on itself: `r6_two_path_count` 1.46× worse,
+a standing Hunt item); the 2 lanes where SQLite exceeded the per-sample
+cap are excluded from that geomean and counted (they get their own chart
+below):
 
 ![scenario worlds](assets/bench-scenarios.svg)
 
@@ -175,20 +179,19 @@ Per world, paired p50 bars (SQLite grey, ours amber):
 `points` — deliberate home turf for SQLite: point reads by id and key,
 bucket fetches, and 0.5.0's keyed GET (`p5_keyed_get` — the typed point
 read through the declared key FD, full fact decoded, no query machinery).
-This is the closest world on the board: `p2_by_key` **1.4×**, and p5 —
-a dead heat on the night — dropped below SQLite parity for the first time
-at **1.3×** (the R15 allocation-free composed-key point read) against
-SQLite's prepared point SELECT through the unique index — a B-tree point
-lookup is the thing SQLite is best at, and we publish the world at full
-prominence:
+This is the closest world on the board: `p2_by_key` **1.4×**, and p5 at
+**1.5×** (the R15 allocation-free composed-key point read, now on the
+pooled decode lane the bugbash lit and fixed) against SQLite's prepared
+point SELECT through the unique index — a B-tree point lookup is the
+thing SQLite is best at, and we publish the world at full prominence:
 
 ![points world](assets/world-points.svg)
 
 `rings` — cyclic joins, where the binary-join exponent used to live;
-`r1_wash_ring` — the night's narrowest win at 1.8× — runs **10.2×** now
+`r1_wash_ring` — the night's narrowest win at 1.8× — runs **10.5×** now
 that the generic-join lowering is reachable (finding 009: cyclic rules get
 their GJ-end plans and second covers), `r3_bomb_t1` (the tier-1 bipartite
-bomb) is **8.5×**, and tier 2 is a DNF (below):
+bomb) is **9.3×**, and tier 2 is a DNF (below):
 
 ![rings world](assets/world-rings.svg)
 
@@ -202,13 +205,14 @@ hand-tuned SQLite twins are reported beside the canonical translation
 
 Adversarial SQLite lanes run under a 1000 ms per-sample wall-clock cap. A
 capped lane has no number — it is drawn as the cap (hatched), never as a
-measurement, and never enters a ratio. The campaign's two DNFs are the
+measurement, and never enters a ratio. The rebench's two DNFs are the
 night's same two: `r4_bomb_t2` (the tier-2 bipartite bomb — ours answers in
-**1.83 s**, +16% on the night's 1.58 s, reported as measured; SQLite's
-canonical plan exceeds the cap both runs) and `t2_overlap_join` (the
-temporal overlap join — ours **64.0 ms**, down from the night's 163 ms via
-the order-based overlap join; canonical SQLite DNF > cap; the hand-tuned
-SQLite twin does finish and loses at 7.8×, on the temporal chart above —
+**1.60 s**, down 6% on the baseline's 1.71 s, reported as measured;
+SQLite's canonical plan exceeds the cap every run) and `t2_overlap_join`
+(the temporal overlap join — ours **46.9 ms**, down from the night's
+163 ms via the order-based overlap join and this campaign's flat-sweep
+reshape; canonical SQLite DNF > cap; the hand-tuned
+SQLite twin does finish and loses at 10.5×, on the temporal chart above —
 the canonical DNF is the binary-join exponent showing up as wall-clock,
 excluded and counted):
 
@@ -224,16 +228,15 @@ per family, with post-state value-verification on every relation.
 
 `crud` — OLTP round-trips: point reads, single/batched inserts, keyed
 updates, upserts, read-modify-write, deletes, a 90/10 mix. SQLite wins
-**19 of 22 rows**; the world's geomean is **0.59×** (durable lane 0.86×,
-NOSYNC 0.41×) — the NOSYNC insert ladder narrowed on every rung versus the
-night (`crud_insert_1k` 8.59× → 7.33× against us, `crud_insert_10`
-4.77× → 3.25×), and it is still a loss. The keyed point read is ours
-(**2.2× durable / 2.4× NOSYNC**), and the durable upsert crossed to a win
-(**1.03×**) — every other write family is SQLite's: near parity where
-fsync physics dominates (durable single-row families land 0.85–0.99×) and
-decisively where it doesn't — batched inserts fall to **0.21× durable /
-0.14× NOSYNC** at 1000 rows per commit, and NOSYNC keyed writes sit at
-0.29–0.56×. A B-tree with a page cache is very good at this workload, and
+**20 of 22 rows**; the world's geomean is **0.60×** (durable lane 0.81×,
+NOSYNC 0.44×). The keyed point read is ours (**2.5× durable / 2.4×
+NOSYNC**) — every write family is SQLite's this run (the campaign's
+durable-upsert win at 1.03× did not hold; it sits at 0.84× now, and the
+number printed is the one measured): near parity where fsync physics
+dominates (durable single-row families land 0.82–0.91×) and decisively
+where it doesn't — batched inserts fall to **0.26× durable / 0.16×
+NOSYNC** at 1000 rows per commit, and NOSYNC keyed writes sit at
+0.32–0.64×. A B-tree with a page cache is very good at this workload, and
 the chart says so in red:
 
 ![crud world](assets/world-crud.svg)
@@ -242,14 +245,16 @@ the chart says so in red:
 relation containments, a ψ-selected containment, closed vocabularies, an
 attempt-count capacity law) with the full law roster judged on every commit,
 against SQLite carrying equivalent UNIQUE / FK / CHECK / trigger
-enforcement. Geomean **0.31×**, SQLite winning **10 of 12 rows**. Judged
+enforcement. Geomean **0.35×**, SQLite winning **11 of 12 rows**. Judged
 admission itself is competitive — `law_commit_attempt` durable is a dead
-heat (**1.00×**, the fsync bounds both engines) and we win
-`law_commit_cluster` NOSYNC (**1.1×**) — but every refusal row is
+heat (**0.99×**, the fsync bounds both engines) and we win
+`law_commit_cluster` NOSYNC (**1.3×**) — but every refusal row is
 SQLite's: a constraint failure refuses in single-digit µs while our
 rejection prices the full dependency judgment plus the decoded violation
-set (0.22–0.62×). The floor row is `law_reject_key` durable at **0.001×**
-(4.2 ms vs 3.3 µs): each sample's sacrificial id advances the fresh
+set (0.22–0.63×). The floor row is `law_reject_key` durable at **0.002×**
+(4.1 ms vs 8.4 µs — SQLite's instant-abort side is the volatile
+comparand; it has swung 3.3–8.4 µs across runs while our side holds):
+each sample's sacrificial id advances the fresh
 high-water mark, and the never-reissue law flushes the burned mark durably
 even on an abort — that refusal pays an fsync by design, and the price is
 printed rather than excused:
@@ -259,22 +264,27 @@ printed rather than excused:
 ### Writes: fsync physics, published anyway
 
 Durable commits are an fsync-latency product on both engines — the durable
-suite families land at parity-shaped numbers (`commit_single` p50 4.19 ms
-ours vs 4.65 ms SQLite, min-of-3; the hair goes to us this run and the
-ephemeral pairing is now like-for-like — NOSYNC twins on both sides, where
-SQLite legitimately wins `commit_single` at 1.35× and loses `commit_batch`
-at 0.89×) — and **bulk load favors SQLite's write path** (durable `bulk`:
-1.22 s ours vs 0.68 s SQLite; we lose ~1.8× and publish it):
+suite families land at parity-shaped numbers (`commit_single` p50 4.57 ms
+ours vs 4.49 ms SQLite, min-of-3; the hair goes to SQLite this run and the
+ephemeral pairing is like-for-like — NOSYNC twins on both sides, where
+SQLite legitimately wins `commit_single` at 1.50× and loses `commit_batch`
+at 0.83×) — and **bulk load favors SQLite's write path** (durable `bulk`:
+1.06 s ours vs 0.68 s SQLite; we lose ~1.6× and publish it):
 
 ![writes and cold](assets/bench-writes.svg)
 
 The writes lane prices the whole ladder — commits and deletes at batch
 1/10/100/1000 plus bulk append, per durability lane, post-state
-value-verified. This lane's wall-power rerun is still owed (the manifest
-says PENDING), so the ladder below is the committed night pin. SQLite wins
-single-fact NOSYNC commits (24.7k vs 18.1k rows/s) and bulk append in both
-lanes (468k vs 253k rows/s NOSYNC); we win the batched middle (79k vs 56k
-rows/s at `commit_b100` NOSYNC, 109k vs 87k at `commit_b1000`):
+value-verified, wall-powered in this set (the night-pin debt is retired).
+SQLite wins single-fact NOSYNC commits (24.7k vs 14.6k rows/s), the
+durable batched rungs (12.6k vs 7.5k rows/s at `commit_b100`, 57.6k vs
+27.3k at `commit_b1000`), and bulk append in both lanes (429k vs 302k
+rows/s NOSYNC); we win the NOSYNC batched middle narrowly (51.8k vs 48.0k
+rows/s at `commit_b100`, 104k vs 95.2k at `commit_b1000`) and the NOSYNC
+delete ladder decisively (65.4k vs 39.0k rows/s at `delete_b100`). The
+honest asterisk: the rebench measured its own storage-lane fixes
+regressing the NOSYNC commit ladder 1.24–1.44× vs the 07-25 baseline —
+called NOT CASHED in `DELTA.md`, a standing attribution-first Hunt item:
 
 ![write rates per family and batch](assets/bench-writes-rates.svg)
 
@@ -299,24 +309,24 @@ every byte is behind a row-count cross-check:
 
 The curves lane re-times four families at the pinned scale under per-draw
 oracle gates (one scale point per family, so the chart shows gated points,
-not fitted exponents), and this run every point carries the clock-proxy
-bracket the night lacked (finding 072: DVFS warm-up, GHz stamped per
-point, 0 contaminated blocks): `busy_scan` at S scale is **424×** against
-canonical SQL and still **151×** against the hand-tuned twin; `triangle`
-is **13.9×** (the night ran 3.7×; the R6 ray-verdict and fold-split work
-landed on the cyclic self-join); `closure_fanout` is **13.3×** — the
-night's 30× (and this README's former headline) did not survive the R20
-corpus regeneration: same fact and answer counts, different fanout
-distribution, SQLite's twin sped up 2.25× (32.5 → 14.5 µs) while ours held
-flat at 1.08 µs, and the number printed is the one measured:
+not fitted exponents), and every point carries the clock-proxy bracket the
+night lacked (finding 072: DVFS warm-up, GHz stamped per point, 0
+contaminated blocks): `busy_scan` at S scale is **408×** against
+canonical SQL and still **147×** against the hand-tuned twin; `triangle`
+is **14.4×** (the night ran 3.7×; the R6 ray-verdict and fold-split work
+landed on the cyclic self-join); `closure_fanout` is **18.4×** — the
+night's 30× did not survive the R20 corpus regeneration (SQLite's twin
+sped up 2.25× on the regenerated fanout distribution, an honest 13.3× at
+the campaign), and the bugbash's COUNT-fold and seen-set work then moved
+our side 1.08 → 0.46 µs; the number printed is the one measured:
 
 ![scale curves](assets/bench-curves.svg)
 
 Warmth is where honesty gets granular: cold (process-fresh reopen, OS-warm
 — the honesty bound stated in the report), warm, then memoized. The memo
 effect is explicit rather than a hidden flatterer — and cold starts are a
-regime we can lose: `closure_fanout` cold is **315 µs ours vs 23 µs
-SQLite** (we win it warm, 0.7 µs vs 12.9 µs):
+regime we can lose: `closure_fanout` cold is **556 µs ours vs 20 µs
+SQLite** (we win it warm, 0.7 µs vs 12.5 µs):
 
 ![warmth](assets/bench-warmth.svg)
 
@@ -326,18 +336,16 @@ The churn lane runs 10,000 delete+insert cycles against a 100k-fact working
 set, three runs (steady 64/32 churn/update mix, the same mix NOSYNC, and
 delete-heavy 512/0), with every lane drawn — including `sqlite-maint`, the
 operator who runs periodic VACUUM+ANALYZE with the wall time charged into
-its own throughput window (marked ▼ from the recorded data). This lane's
-wall-power rerun is still owed (the manifest says PENDING), so everything
-here is the committed night pin — it predates the graded chunk geometry
-(finding 094), so its store sizes are the pre-094 frame. The degradation
-story over 10k cycles, per that pinned series: SQLite's window probe
-drifts 277 → 561 µs bare (and 277 → 791 µs on the maint lane) while ours
-holds 19.0 → 21.5 µs; our store stays byte-near-flat (95.9 → 96.9 MB —
-roughly 5.6× SQLite's on-disk size in the pre-094 frame) while SQLite's
-grows 14.8 → 17.3 MB bare and VACUUM claws it back to 13.2; write
-throughput: SQLite bare slides 55.6 → 47.5 commits/s vs ours 44.4 → 43.1
-(SQLite ahead throughout on the durable steady run — shown), and NOSYNC
-ours 309 → 257 vs SQLite 253 → 221.
+its own throughput window (marked ▼ from the recorded data). This lane ran
+wall-powered in this set (the night-pin debt is retired), under the graded
+chunk geometry (finding 094). The degradation story over 10k cycles:
+SQLite's window probe drifts 293 → 528 µs bare (and 297 → 532 µs on the
+maint lane) while ours holds 21.4 → 21.2 µs; our store stays byte-flat
+(80.5 MB, cycle 250 to cycle 10000 — roughly 4.6× SQLite's on-disk size)
+while SQLite's grows 14.8 → 17.4 MB bare and VACUUM claws it back to 13.2;
+write throughput: SQLite bare slides 55.1 → 51.3 commits/s vs ours
+47.1 → 48.0 (SQLite ahead on the durable steady run — shown), and NOSYNC
+ours 330 → 280 vs SQLite 236 → 214.
 
 Probe latency, every lane, per run:
 
@@ -380,12 +388,9 @@ target/release/bumbledb-bench lawful --out out/lawful
 target/release/bumbledb-bench curves --warmth --out out/curves
 target/release/bumbledb-bench churn --out out/churn
 
-# every chart, from the pinned campaign run (discovery finds every lane
-# report; a run dir carrying CONTAMINATED.md is excluded and counted).
-# The writes ladder rides the committed night pin until its wall-power
-# rerun lands; the churn charts regenerate from the night dir the same way:
-python3 scripts/bench_viz.py --night bench-out/campaign-2026-07-23 \
-    --writes-report bench-out/night-2026-07-20/writes/writes-report.json \
+# every chart, from the pinned post-fix rebench (discovery finds every
+# lane report; a run dir carrying CONTAMINATED.md is excluded and counted):
+python3 scripts/bench_viz.py --night bench-out/baseline-2026-07-25-post \
     --out assets
 ```
 

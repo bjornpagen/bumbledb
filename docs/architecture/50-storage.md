@@ -176,9 +176,10 @@ facts, never interned, so the key hash carries no type tag: forward
   3-field interval projection, warm DRAM, interleaved min-of-7 × 200k
   facts, two process runs; pre-stated bar 1.09) was entirely the permuted
   arm's per-fact O(k²) inverse search, now hoisted to the seal; the
-  committed ladder pin is the night's (`bench-out/night-2026-07-20/writes/`)
-  — the campaign's wall-power writes rerun is owed
-  (`bench-out/campaign-2026-07-23/MANIFEST.txt`, R20/R21).
+  committed ladder pin is the wall-power rebench's
+  (`bench-out/baseline-2026-07-25-post/writes/` — the night-pin debt the
+  campaign manifest recorded is retired; the night ladder stays in git
+  history beside it).
 - **`R` keys are statement-scoped**, not relation-scoped: `statement` is the
   schema-global materialized statement id (`10-data-model.md` fingerprint), and
   `key` is the *target-side* projection value the source fact requires. One source
