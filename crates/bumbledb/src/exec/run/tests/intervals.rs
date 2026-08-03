@@ -1389,6 +1389,7 @@ fn phase_slot(phase: JoinPhase) -> usize {
         JoinPhase::Residual => 3,
         JoinPhase::Descend => 4,
         JoinPhase::Force => 5,
+        JoinPhase::Gather => 6,
     }
 }
 

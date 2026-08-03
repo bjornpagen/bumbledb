@@ -47,10 +47,14 @@ impl Executor {
         let carried_w = tables.carried[node_idx].len();
         let node = &plan.nodes()[node_idx];
         let cover_occ = usize::from(node.subatoms[cover_sub].occ.0);
+        // Batch assembly rides the Gather phase (Gap B) — window
+        // granularity is the pass, never the tuple.
+        counters.phase_start(node_idx, JoinPhase::Gather);
         scratch.survivors.clear();
         scratch
             .survivors
             .extend(0..u32::try_from(fill).expect("batch fits u32"));
+        counters.phase_end(node_idx, JoinPhase::Gather);
 
         // Residuals run BEFORE the sibling probes — the cost-class
         // ordering (docs/architecture/40-execution.md, § inputs from
@@ -397,6 +401,7 @@ impl Executor {
         // advanced. Resolved once per pass — the membership loops and
         // the routing arm below index it instead of re-searching the
         // subatom list per element (the instruction diet).
+        counters.phase_start(node_idx, JoinPhase::Gather);
         scratch.cursor_srcs.clear();
         for (occ, colt) in colts.iter().enumerate() {
             scratch.cursor_srcs.push(if occ == cover_occ {
@@ -415,6 +420,7 @@ impl Executor {
                 }
             });
         }
+        counters.phase_end(node_idx, JoinPhase::Gather);
 
         // Membership probes (docs/architecture/40-execution.md, the
         // point-membership scan): scan the occurrence's remaining

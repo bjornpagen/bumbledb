@@ -326,8 +326,8 @@ pub mod names {
 
     /// Phase-name table: `JOIN_PHASE[phase][min(node, 8)]`. Phase order
     /// matches `exec::run::JoinPhase`: iter, hash, probe, residual,
-    /// descend, force.
-    pub const JOIN_PHASE: [[&str; 9]; 6] = [
+    /// descend, force, gather.
+    pub const JOIN_PHASE: [[&str; 9]; 7] = [
         [
             "jp_iter_n0",
             "jp_iter_n1",
@@ -393,6 +393,17 @@ pub mod names {
             "jp_force_n6",
             "jp_force_n7",
             "jp_force_nX",
+        ],
+        [
+            "jp_gather_n0",
+            "jp_gather_n1",
+            "jp_gather_n2",
+            "jp_gather_n3",
+            "jp_gather_n4",
+            "jp_gather_n5",
+            "jp_gather_n6",
+            "jp_gather_n7",
+            "jp_gather_nX",
         ],
     ];
     // The executor's phase attribution and this table move together, or

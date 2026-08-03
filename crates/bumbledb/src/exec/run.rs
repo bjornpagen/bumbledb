@@ -156,7 +156,7 @@ pub enum SkipCapability {
 }
 
 /// One executor phase, for per-(node, phase) time attribution
-/// (docs/architecture/60-validation.md): the five sequential segments of
+/// (docs/architecture/60-validation.md): the sequential segments of
 /// a node entry's batch loop. `Descend` wraps the per-survivor recursion
 /// loop, so its exclusive time (total minus the next node's phases) is
 /// the per-row bookkeeping — binds, journal restores, and leaf emits.
@@ -177,6 +177,13 @@ pub enum JoinPhase {
     /// sibling's cursor: the single biggest non-amortized cost a node
     /// entry can pay.
     Force,
+    /// The pipeline's gather/assembly segments: `pump`'s per-entry cover
+    /// choice + batch draw + probe-batch identity fill, and
+    /// `probe_pass`'s batch setup between the timed phases — the
+    /// formerly phase-unattributed half of a deep plan's join time
+    /// (Gap B). Windows close around every `probe_pass`/flush, so
+    /// deeper nodes' phases never run inside a Gather window.
+    Gather,
 }
 
 /// Execution observability seam (40-execution): the normal path

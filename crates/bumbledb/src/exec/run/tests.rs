@@ -379,6 +379,7 @@ fn run_at(
     sink.rows
 }
 
+mod batch_accounting;
 mod cancellation;
 mod correctness;
 mod intervals;

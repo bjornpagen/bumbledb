@@ -11,7 +11,7 @@ impl JoinPhase {
     /// last variant so a new phase moves it automatically; the name
     /// table's const assert (`obs::names`, under `JOIN_PHASE`) refuses
     /// to build until the table grows its row.
-    pub const COUNT: usize = Self::Force as usize + 1;
+    pub const COUNT: usize = Self::Gather as usize + 1;
 
     /// Index into per-phase tables: declaration order IS the table order
     /// (`obs::names::JOIN_PHASE`), pinned at compile time by the name

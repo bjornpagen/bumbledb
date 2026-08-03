@@ -1,8 +1,8 @@
 //! The single in-order pass over a middle node's pending entries.
 
 use super::{
-    BatchToken, Bindings, Colt, Counters, Executor, KeyCount, PipeTables, Sink, ValidatedPlan,
-    better_cover,
+    BatchToken, Bindings, Colt, Counters, Executor, JoinPhase, KeyCount, PipeTables, Sink,
+    ValidatedPlan, better_cover,
 };
 
 impl Executor {
@@ -50,6 +50,12 @@ impl Executor {
         let mut fill = 0usize;
         // The open cover run: (cover_sub, arity, occ, level).
         let mut group: Option<(usize, usize, usize, usize)> = None;
+        // The Gather window (Gap B): per-entry cover choice, batch
+        // draws, and the probe-batch identity fill — the pump work
+        // between probe passes, formerly phase-unattributed. Two timer
+        // calls per flush, never per tuple: the window closes around
+        // every `probe_pass` so no deeper phase runs inside it.
+        counters.phase_start(node_idx, JoinPhase::Gather);
         for entry in 0..scratch.pending_len {
             if self.all_cancelled {
                 break;
@@ -94,6 +100,7 @@ impl Executor {
                 && open_sub != cover_sub
                 && fill > 0
             {
+                counters.phase_end(node_idx, JoinPhase::Gather);
                 self.probe_pass(
                     tables,
                     plan,
@@ -107,6 +114,7 @@ impl Executor {
                     sink,
                     counters,
                 );
+                counters.phase_start(node_idx, JoinPhase::Gather);
                 fill = 0;
             }
             group = Some((cover_sub, cur_arity, cover_occ, cover_level));
@@ -154,6 +162,7 @@ impl Executor {
                 fill += yielded;
                 token = next;
                 if fill == self.batch {
+                    counters.phase_end(node_idx, JoinPhase::Gather);
                     self.probe_pass(
                         tables,
                         plan,
@@ -167,6 +176,7 @@ impl Executor {
                         sink,
                         counters,
                     );
+                    counters.phase_start(node_idx, JoinPhase::Gather);
                     fill = 0;
                     if !gate_cover && yielded == want {
                         continue; // the entry may have more; resume its token
@@ -177,6 +187,7 @@ impl Executor {
                 }
             }
         }
+        counters.phase_end(node_idx, JoinPhase::Gather);
         if fill > 0
             && let Some((open_sub, open_arity, _, _)) = group
         {
