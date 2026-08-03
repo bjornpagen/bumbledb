@@ -463,8 +463,22 @@ pub(super) fn check_source(
     worklist.sort_unstable_by(|(a, a_fact), (b, b_fact)| {
         (a.containment, &a.key_bytes, *a_fact).cmp(&(b.containment, &b.key_bytes, *b_fact))
     });
+    // The sort's completion (T8): within one containment group the
+    // derived probe keys ascend (one fixed prefix, ascending key bytes),
+    // so ONE forward cursor answers the group's scalar probes — a
+    // bounded leaf walk between neighbors instead of an independent
+    // root-to-leaf descent per probe ([`SortedGets`]). Reset at each
+    // group boundary: across containments the derived keys may go
+    // backward, and the walker's verdicts are sound only over ascending
+    // probes.
+    let mut sorted_gets = SortedGets::new(txn.raw(), txn.env().data());
+    let mut group: Option<crate::schema::ContainmentId> = None;
     for (edge, fact_bytes) in worklist {
         probes += 1;
+        if group != Some(edge.containment) {
+            sorted_gets.reset();
+            group = Some(edge.containment);
+        }
         let statement = schema.containment(edge.containment);
         let probe = Probe {
             statement: statement.id,
@@ -483,7 +497,7 @@ pub(super) fn check_source(
             source_tail: schema.source_tail(statement),
         };
         let outcome = match &statement.enforcement {
-            Enforcement::ScalarProbe { .. } => checker.check_scalar(&probe),
+            Enforcement::ScalarProbe { .. } => checker.check_scalar_sorted(&probe, &mut sorted_gets),
             Enforcement::IntervalCoverage { disjoint, .. } => {
                 checker.check_coverage(*disjoint, &probe)
             }
@@ -954,6 +968,86 @@ impl Probe<'_> {
     }
 }
 
+/// The T8 walker: exact-key gets over an ASCENDING probe sequence,
+/// answered by one shared forward cursor instead of an independent
+/// root-to-leaf descent per probe. The cursor steps leaf-sequentially
+/// toward each probe under a bounded budget and repositions with one
+/// descent when the gap is wide (or on first use); an entry ABOVE the
+/// probe is the miss verdict and stays PENDING for the next probe, so
+/// duplicate probe keys re-answer from the pending slot. Sound only
+/// over ascending probes — [`check_source`] resets it at every
+/// containment-group boundary, and the unsorted probe sites
+/// ([`Checker::check_scalar`]'s other callers) never touch it.
+struct SortedGets<'a> {
+    txn: &'a RoTxn<'a, AnyTls>,
+    data: heed::Database<heed::types::Bytes, heed::types::Bytes>,
+    range: Option<heed::RoRange<'a, heed::types::Bytes, heed::types::Bytes>>,
+    /// The last cursor entry not yet consumed — at or above every probe
+    /// answered so far.
+    pending: Option<(&'a [u8], &'a [u8])>,
+}
+
+impl<'a> SortedGets<'a> {
+    /// Leaf steps paid toward a probe before falling back to a fresh
+    /// descent: about a fraction of one leaf page of `U` entries, so a
+    /// dense probe group walks and a sparse one descends — the fallback
+    /// costs exactly what the pre-T8 exact get cost.
+    const WALK_BUDGET: usize = 16;
+
+    fn new(
+        txn: &'a RoTxn<'a, AnyTls>,
+        data: heed::Database<heed::types::Bytes, heed::types::Bytes>,
+    ) -> Self {
+        Self {
+            txn,
+            data,
+            range: None,
+            pending: None,
+        }
+    }
+
+    /// Forgets the cursor position — the group boundary (the next probe
+    /// may sort below the last one).
+    fn reset(&mut self) {
+        self.range = None;
+        self.pending = None;
+    }
+
+    /// The exact-key get, assuming `key` is ≥ every key probed since the
+    /// last [`Self::reset`].
+    fn get(&mut self, key: &[u8]) -> Result<Option<&'a [u8]>> {
+        if let Some(range) = self.range.as_mut() {
+            for _ in 0..Self::WALK_BUDGET {
+                match self.pending {
+                    Some((k, v)) => match k.cmp(key) {
+                        std::cmp::Ordering::Less => self.pending = None,
+                        std::cmp::Ordering::Equal => return Ok(Some(v)),
+                        std::cmp::Ordering::Greater => return Ok(None),
+                    },
+                    None => match range.next().transpose()? {
+                        Some(entry) => self.pending = Some(entry),
+                        // The tree holds nothing at or above the cursor,
+                        // and the cursor started at or below this probe:
+                        // a miss, and every later (greater) probe misses
+                        // the same way without re-descending.
+                        None => return Ok(None),
+                    },
+                }
+            }
+        }
+        // First probe of the group, or the gap outran the budget: one
+        // descent repositions the cursor at the probe.
+        let bounds: (Bound<&[u8]>, Bound<&[u8]>) = (Bound::Included(key), Bound::Unbounded);
+        let mut range = self.data.range(self.txn, &bounds)?;
+        self.pending = range.next().transpose()?;
+        self.range = Some(range);
+        match self.pending {
+            Some((k, v)) if k == key => Ok(Some(v)),
+            _ => Ok(None),
+        }
+    }
+}
+
 /// Working state threaded through the judgment probes. The scalar probe
 /// and the coverage walk have exactly this one implementation, consumed
 /// by three callers: the commit path's two sides (over the write
@@ -1002,6 +1096,36 @@ impl<'a> Checker<'a> {
             probe.key_bytes,
         );
         let Some(value) = self.data.get(self.txn, &self.key[..u_len])? else {
+            return Err(probe.unsatisfied());
+        };
+        self.check_segment(probe, value)
+    }
+
+    /// [`Checker::check_scalar`]'s sorted-worklist twin (the T8
+    /// completion): the same key derivations and the same verdicts, the
+    /// one get answered by the caller's [`SortedGets`] walker — legal
+    /// only where probe keys ascend within the walker's current group
+    /// ([`check_source`]'s sort provides exactly that).
+    fn check_scalar_sorted(&mut self, probe: &Probe<'_>, gets: &mut SortedGets<'a>) -> Result<()> {
+        let target_key = self.schema.key(probe.target_key);
+        if target_key.fresh_row {
+            let f_len = keys::fact_key(
+                &mut self.key,
+                probe.target_relation,
+                fresh_row_word(probe.key_bytes)?,
+            );
+            let Some(fact) = gets.get(&self.key[..f_len])? else {
+                return Err(probe.unsatisfied());
+            };
+            return self.check_fact(probe, fact);
+        }
+        let u_len = keys::determinant_key(
+            &mut self.key,
+            probe.target_relation,
+            target_key.id,
+            probe.key_bytes,
+        );
+        let Some(value) = gets.get(&self.key[..u_len])? else {
             return Err(probe.unsatisfied());
         };
         self.check_segment(probe, value)
