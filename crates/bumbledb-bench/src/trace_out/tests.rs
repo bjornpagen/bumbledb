@@ -148,14 +148,13 @@ fn fold_stacks_charges_self_time_by_enclosure_path() {
 #[test]
 fn fold_stacks_collapses_identical_sibling_stacks() {
     // Two same-named children of one parent land on ONE folded line,
-    // their self times summed (the collapsed-stack contract). Phase
-    // accumulators and point events carry no charge and never appear.
+    // their self times summed (the collapsed-stack contract). Ordinary
+    // point events carry no charge and never appear.
     let events = vec![
         span("execute", Category::Execute, 0, 100_000, 0),
         span("join", Category::Execute, 10_000, 20_000, 0),
         span("join", Category::Execute, 40_000, 30_000, 0),
         span("cache_hit", Category::Cache, 50_000, 0, 3),
-        span("jp_iter_n0", Category::Phase, 0, 5_000, 0),
     ];
     let folded = fold_stacks(&events);
     let expected = "execute 50000\n\
@@ -165,10 +164,41 @@ fn fold_stacks_collapses_identical_sibling_stacks() {
         !folded.contains("cache_hit"),
         "point events carry no self time"
     );
-    assert!(
-        !folded.contains("jp_iter"),
-        "phase accumulators are excluded"
-    );
+}
+
+#[test]
+fn fold_stacks_charges_phase_accumulators_under_their_join() {
+    // Phase accumulators flush AFTER the rule loop (their stamps sit
+    // past the join span's end, inside execute), carrying the join
+    // loop's interior time in a0. The fold hangs each under the nearest
+    // preceding join and makes room in that join's self time — a
+    // join-dominated capture stops rendering as one flat bar.
+    let events = vec![
+        span("execute", Category::Execute, 0, 100_000, 0),
+        span("join", Category::Execute, 10_000, 50_000, 0),
+        span("jp_probe_n0", Category::Phase, 70_000, 0, 30_000),
+        span("jp_iter_n0", Category::Phase, 70_001, 0, 10_000),
+    ];
+    let expected = "execute 50000\n\
+                    execute;join 10000\n\
+                    execute;join;jp_iter_n0 10000\n\
+                    execute;join;jp_probe_n0 30000\n";
+    assert_eq!(fold_stacks(&events), expected);
+
+    // No join anywhere: the accumulator charges the deepest span
+    // containing its stamp — attribution, not identification.
+    let joinless = vec![
+        span("execute", Category::Execute, 0, 100_000, 0),
+        span("jp_hash_n1", Category::Phase, 5_000, 0, 20_000),
+    ];
+    let expected = "execute 80000\n\
+                    execute;jp_hash_n1 20000\n";
+    assert_eq!(fold_stacks(&joinless), expected);
+
+    // The flame summary still excludes them — the phase table is their
+    // terminal rendering.
+    let summary = FlameSummary::compute(&events);
+    assert!(summary.rows.iter().all(|row| !row.name.starts_with("jp_")));
 }
 
 #[test]
