@@ -257,6 +257,15 @@ pub struct PhaseTimers {
     acc: [[(u64, u64); JoinPhase::COUNT]; PHASE_NODE_CAP + 1],
     /// `[node][phase] -> open segment's start tick`.
     open: [[u64; JoinPhase::COUNT]; PHASE_NODE_CAP + 1],
+    /// `[node][phase] -> open-window nesting depth`. Only the overflow
+    /// bucket can nest: recursion advances strictly by node index, so an
+    /// in-cap (node, phase) never reopens before it closes — but every
+    /// node past the cap shares one bucket, and their Descend windows
+    /// DO nest. Nested windows merge into the outermost one (a naive
+    /// restamp clobbered the outer open stamp: the inner span counted
+    /// twice and the outer prefix vanished) — coarse attribution, never
+    /// a lie, exactly like the shared `nX` name.
+    depth: [[u32; JoinPhase::COUNT]; PHASE_NODE_CAP + 1],
     /// Bindings emitted (the RULE span's union accounting — trace-mode
     /// only; the release path's [`NoopCounters`] counts nothing).
     emits: u64,

@@ -512,7 +512,6 @@ impl Executor {
         // kept full copies — arm both (and confront the extraction
         // refusal) before judging the descend bucket untouchable. The
         // W2 gravestone commit carries the full protocol.
-        counters.phase_start(node_idx, JoinPhase::Descend);
         let leaf = node_idx + 2 == n_nodes;
         let child_carried = &tables.carried[node_idx + 1];
         let mints_origins = tables.absorb == Some(node_idx);
@@ -541,6 +540,11 @@ impl Executor {
             scratch.element_origins.clear();
             return;
         }
+        // The window opens AFTER the poison return above: every
+        // phase_start has its phase_end (the timer nesting-depth
+        // invariant), so the cold path may not return out of an open
+        // window.
+        counters.phase_start(node_idx, JoinPhase::Descend);
         for k in 0..scratch.survivors.len() {
             if self.all_cancelled {
                 break;
