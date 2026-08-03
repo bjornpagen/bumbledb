@@ -360,6 +360,17 @@ fn peek_punct(tokens: &mut Tokens, ch: char) -> bool {
     matches!(tokens.peek(), Some(TokenTree::Punct(p)) if p.as_char() == ch)
 }
 
+/// Whether the next token is a LONE `.` — the path spelling's dot. The
+/// range operator's first dot tokenizes `Joint` (`..` is two puncts,
+/// joined), so this peek distinguishes `{a.b..}` from `{a..b}` without
+/// consuming anything.
+fn peek_path_dot(tokens: &mut Tokens) -> bool {
+    matches!(
+        tokens.peek(),
+        Some(TokenTree::Punct(p)) if p.as_char() == '.' && p.spacing() == Spacing::Alone
+    )
+}
+
 fn take_group(tokens: &mut Tokens, delimiter: Delimiter, what: &str) -> TokenStream {
     match tokens.next() {
         Some(TokenTree::Group(group)) if group.delimiter() == delimiter => group.stream(),
@@ -1002,11 +1013,16 @@ fn duplicate_determinant_field(side: &Side) -> Option<ParseError> {
 /// literal (parsed here, not spliced — the canonical-utterance law
 /// compares bounds at expansion), a bare ident (the dependent bound: a
 /// field of TARGET's row, resolved by the shared lowering), or
-/// `Duration(field)` (a target interval's measure).
+/// `Duration(field)` (a target interval's measure). `Duration` commits
+/// only when the paren group FOLLOWS — `parse_weight`'s peek, mirrored:
+/// a field literally named `Duration` is an ordinary dependent bound. A
+/// path spelling (`{lo..a.b}` — the LONE dot; the range operator's
+/// first dot is Joint) is the pinned-column refusal, the same verdict
+/// as the weight's, the TS surface's, and the spec resolver's.
 fn parse_bound(tokens: &mut Tokens, what: &str) -> BoundSpec {
     if matches!(tokens.peek(), Some(TokenTree::Ident(_))) {
         let (name, _) = spanned_ident(tokens, what);
-        if name == "Duration" {
+        if name == "Duration" && matches!(tokens.peek(), Some(TokenTree::Group(_))) {
             let group = take_group(tokens, Delimiter::Parenthesis, "the Duration bound's field");
             let mut inner = group.into_iter().peekable();
             let field = expect_ident(&mut inner, "the Duration bound's field name");
@@ -1015,6 +1031,16 @@ fn parse_bound(tokens: &mut Tokens, what: &str) -> BoundSpec {
                 "schema!: trailing tokens in `Duration({field})`"
             );
             return BoundSpec::Duration(field.into());
+        }
+        if peek_path_dot(tokens) {
+            panic!(
+                "schema!: the bound path `{{..{name}.…}}` is refused — a dependent \
+                 bound names a field of the TARGET's own row, closed at the row \
+                 exactly like the weight (ruled 2026-07-24, ruling 6); state the \
+                 join as a law and read the local column (the pinned-column idiom): \
+                 `Pool(id, supply) <= Grid(pool, supply); \
+                 Pool(id) <=[watts]{{0..supply}} Device(pool);`"
+            );
         }
         return BoundSpec::Field(name.into());
     }
@@ -1943,7 +1969,8 @@ fn issue_spans(issue: &SpecIssue, spans: &SpanTable) -> Vec<Span> {
         | SpecIssue::CapacityExclusionRespelled { statement }
         | SpecIssue::CapacityVacuous { statement }
         | SpecIssue::CapacityContainmentRespelled { statement }
-        | SpecIssue::CapacityDependentFloor { statement } => one(spans.capacities.get(statement)),
+        | SpecIssue::CapacityDependentFloor { statement }
+        | SpecIssue::BoundPathRefused { statement, .. } => one(spans.capacities.get(statement)),
         SpecIssue::WeightPathRefused { statement, .. } => one(spans.weights.get(statement)),
         SpecIssue::DegenerateLiteralSet {
             statement,
@@ -2066,6 +2093,14 @@ fn issue_message(issue: &SpecIssue, spec: &SchemaSpec) -> String {
              closed at the row (ruled 2026-07-24, ruling 6); state the join as a law and \
              read the local column (the pinned-column idiom): \
              `Device(model, watts) <= Model(id, watts); \
+             Pool(id) <=[watts]{{0..supply}} Device(pool);`"
+        ),
+        SpecIssue::BoundPathRefused { path, .. } => format!(
+            "schema!: the bound path `{{..{path}}}` is refused — a dependent bound names \
+             a field of the TARGET's own row, closed at the row exactly like the weight \
+             (ruled 2026-07-24, ruling 6); state the join as a law and read the local \
+             column (the pinned-column idiom): \
+             `Pool(id, supply) <= Grid(pool, supply); \
              Pool(id) <=[watts]{{0..supply}} Device(pool);`"
         ),
         SpecIssue::DegenerateLiteralSet { field, len: 0, .. } => format!(

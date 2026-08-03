@@ -402,6 +402,13 @@ pub enum SpecIssue {
     /// pinned-column idiom `Display` spells out), never by admitting
     /// terms into the bracket.
     WeightPathRefused { statement: usize, path: Box<str> },
+    /// The path spelling `{lo..a.b}` in a dependent bound — the bound
+    /// vocabulary is closed at the TARGET row exactly as the weight's is
+    /// at the source's (ruling 6, one law both slots): without this arm
+    /// a dotted bound fell through to [`SpecIssue::UnknownField`], a
+    /// different verdict than the macro's and the TS surface's — one
+    /// spelling, one refusal, every authoring wall.
+    BoundPathRefused { statement: usize, path: Box<str> },
     /// A `Many` literal set with fewer than two literals — `{L}` is the
     /// bare literal and `{}` selects nothing.
     DegenerateLiteralSet {
@@ -530,6 +537,15 @@ impl std::fmt::Display for SpecIssue {
                  weight vocabulary is closed at the row; state the join as a law and \
                  read the local column (the pinned-column idiom): \
                  `Device(model, watts) <= Model(id, watts); \
+                 Pool(id) <=[watts]{{0..supply}} Device(pool);`"
+            ),
+            Self::BoundPathRefused { statement, path } => write!(
+                f,
+                "statement {statement}: the bound path `{{..{path}}}` is refused — a \
+                 dependent bound names a field of the TARGET's own row, closed at the \
+                 row exactly like the weight; state the join as a law and read the \
+                 local column (the pinned-column idiom): \
+                 `Pool(id, supply) <= Grid(pool, supply); \
                  Pool(id) <=[watts]{{0..supply}} Device(pool);`"
             ),
             Self::DegenerateLiteralSet {
@@ -869,15 +885,25 @@ impl<'spec> Resolver<'spec> {
 
     /// One capacity bound resolved against the TARGET relation's sealed
     /// roster — by NAME against the whole field roster, never through
-    /// the projection tuple (ruled 2026-07-24, C1). Name resolution
-    /// only: the u64/interval typing of the named field is the engine
-    /// validator's (`validate_capacity`), the same two-boundary split
-    /// every selection literal observes.
+    /// the projection tuple (ruled 2026-07-24, C1). A dotted name
+    /// short-circuits to [`SpecIssue::BoundPathRefused`] exactly as the
+    /// weight's does (ruling 6, one law both slots — the placeholder
+    /// never escapes: a nonempty issue list fails the construction).
+    /// Name resolution only: the u64/interval typing of the named field
+    /// is the engine validator's (`validate_capacity`), the same
+    /// two-boundary split every selection literal observes.
     fn bound(&mut self, statement: usize, target_rel: Option<usize>, bound: &BoundSpec) -> Bound {
         let name = match bound {
             BoundSpec::Lit(n) => return Bound::Lit(*n),
             BoundSpec::Field(name) | BoundSpec::Duration(name) => name,
         };
+        if name.contains('.') {
+            self.issues.push(SpecIssue::BoundPathRefused {
+                statement,
+                path: name.clone(),
+            });
+            return Bound::Lit(0);
+        }
         let Some(rel_idx) = target_rel else {
             return Bound::Lit(0);
         };
