@@ -206,11 +206,7 @@ fn fold_split_moves_group_only_lookups_to_the_prefix() {
     );
     let mut plan = FjPlan {
         nodes: vec![Node {
-            subatoms: vec![
-                subatom(0, &[A, X]),
-                subatom(1, &[A]),
-                subatom(2, &[A, X]),
-            ],
+            subatoms: vec![subatom(0, &[A, X]), subatom(1, &[A]), subatom(2, &[A, X])],
         }],
     };
     let group: std::collections::BTreeSet<VarId> = [A].into_iter().collect();

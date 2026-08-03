@@ -86,12 +86,8 @@ fn the_witness_walks_the_permuted_key_order() {
     let db = Db::create(dir.path(), descriptor.clone()).expect("create engine store");
     let mut naive = NaiveDb::new(&descriptor);
 
-    let device = |a: u64, b: u64, id: u64| {
-        (
-            DEVICE,
-            vec![Value::U64(a), Value::U64(b), Value::U64(id)],
-        )
-    };
+    let device =
+        |a: u64, b: u64, id: u64| (DEVICE, vec![Value::U64(a), Value::U64(b), Value::U64(id)]);
     let delta = Delta {
         deletes: vec![],
         inserts: vec![

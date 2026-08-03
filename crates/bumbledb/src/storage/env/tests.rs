@@ -145,7 +145,8 @@ fn a_stale_marker_over_a_durable_store_refuses_and_wipes_nothing() {
         let env = Environment::create(dir.path(), &schema).expect("create durable");
         let mut wtxn = env.write_txn().expect("txn");
         let data = env.data();
-        data.put(wtxn.raw_mut(), b"Zprobe", b"committed").expect("put");
+        data.put(wtxn.raw_mut(), b"Zprobe", b"committed")
+            .expect("put");
         wtxn.commit().expect("commit");
     }
     // Plant the orphan: the marker a dead ephemeral store at this path

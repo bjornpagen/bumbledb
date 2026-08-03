@@ -512,8 +512,7 @@ impl Executor {
                                 scratch.pending_bindings[parent * slot_count + slot]
                             }
                         };
-                        scratch.mask[k] &=
-                            u8::from(starts[j] <= point) & u8::from(point < ends[j]);
+                        scratch.mask[k] &= u8::from(starts[j] <= point) & u8::from(point < ends[j]);
                     }
                 }
             }

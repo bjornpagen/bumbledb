@@ -148,11 +148,8 @@ fn pinned_run_partitioning_is_transparent() {
     let positions: Vec<u32> = (0..u32::try_from(rows.len()).expect("small")).collect();
     let outer_keys = outer_words_of(&colts_for(&plan, &views)[0], &positions);
     let mut reference: Option<Vec<Vec<u64>>> = None;
-    let partitionings: [&[std::ops::Range<usize>]; 3] = [
-        &[0..6],
-        &[0..3, 3..4, 4..6],
-        &[0..1, 1..6],
-    ];
+    let partitionings: [&[std::ops::Range<usize>]; 3] =
+        [&[0..6], &[0..3, 3..4, 4..6], &[0..1, 1..6]];
     for splits in partitionings {
         let colts = colts_for(&plan, &views);
         let bindings = Bindings::new(plan.slot_count());

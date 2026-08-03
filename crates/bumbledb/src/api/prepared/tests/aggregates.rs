@@ -691,9 +691,7 @@ fn fold_split_then_gj_split_composes_on_a_grouped_cyclic_body() {
                 edge_schema.relation(RelationId(0)).layout(),
                 &mut bytes,
             );
-            delta
-                .insert(&view, RelationId(0), &bytes)
-                .expect("insert");
+            delta.insert(&view, RelationId(0), &bytes).expect("insert");
         }
         drop(view);
         commit(delta, &env).expect("commit");

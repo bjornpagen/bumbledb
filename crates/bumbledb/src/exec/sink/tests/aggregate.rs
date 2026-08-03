@@ -156,9 +156,9 @@ fn pack_finalize_orders_claims_by_start_word_alone() {
     let mut bindings = Bindings::new(3);
     for (group, start, end) in [
         (1u64, 30u64, 40u64),
-        (1, 10, 20),     // equal start, longer end FIRST
-        (1, 10, 15),     // ... shorter end second
-        (1, 5, 12),      // overlaps [10, 20] from the left
+        (1, 10, 20),       // equal start, longer end FIRST
+        (1, 10, 15),       // ... shorter end second
+        (1, 5, 12),        // overlaps [10, 20] from the left
         (2, 10, u64::MAX), // a packed ray is a ray
         (2, 1, 2),
     ] {

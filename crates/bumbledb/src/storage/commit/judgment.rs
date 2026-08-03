@@ -118,7 +118,13 @@ pub(crate) fn child_weight(
     layout: &FactLayout,
     fact: &[u8],
 ) -> Result<u64> {
-    measure_weight(statement.weight, statement.weight_tail, layout, fact, statement.id)
+    measure_weight(
+        statement.weight,
+        statement.weight_tail,
+        layout,
+        fact,
+        statement.id,
+    )
 }
 
 /// The ONE weight arithmetic behind [`child_weight`] — spelled over the
@@ -497,7 +503,9 @@ pub(super) fn check_source(
             source_tail: schema.source_tail(statement),
         };
         let outcome = match &statement.enforcement {
-            Enforcement::ScalarProbe { .. } => checker.check_scalar_sorted(&probe, &mut sorted_gets),
+            Enforcement::ScalarProbe { .. } => {
+                checker.check_scalar_sorted(&probe, &mut sorted_gets)
+            }
             Enforcement::IntervalCoverage { disjoint, .. } => {
                 checker.check_coverage(*disjoint, &probe)
             }
@@ -845,9 +853,9 @@ pub(crate) fn capacity_child_image<'a>(
 /// The three probe sites ([`establishing_fact`], [`Checker::check_scalar`],
 /// [`Checker::check_capacity`]) differ only in their MISS verdicts.
 fn fresh_row_word(determinant: &[u8]) -> Result<u64> {
-    let word: [u8; 8] = determinant.try_into().map_err(|_| {
-        Error::Corruption(CorruptionError::MalformedValue("fresh-row key width"))
-    })?;
+    let word: [u8; 8] = determinant
+        .try_into()
+        .map_err(|_| Error::Corruption(CorruptionError::MalformedValue("fresh-row key width")))?;
     Ok(u64::from_be_bytes(word))
 }
 
@@ -1312,9 +1320,7 @@ impl<'a> Checker<'a> {
                     let needs_fact = !matches!(checks.target, SelectionCheck::Empty)
                         || matches!(
                             statement.hi,
-                            Some(
-                                CapacityBound::TargetField(_) | CapacityBound::TargetDuration(_)
-                            )
+                            Some(CapacityBound::TargetField(_) | CapacityBound::TargetDuration(_))
                         );
                     if !needs_fact {
                         // ψ is Empty by construction, so the determinant
@@ -1399,7 +1405,6 @@ impl<'a> Checker<'a> {
         }
         Ok(())
     }
-
 
     /// The capacity ceiling, resolved per touched parent against the
     /// holder fact (`lean/Bumbledb/Capacity.lean: CapWindow.resolve`):

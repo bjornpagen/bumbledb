@@ -1150,24 +1150,24 @@ fn the_overlap_enumeration_prunes_the_leaf_batch_to_true_candidates() {
     // the inner group — every probe of a sub-crossover group and each
     // group's first probe enumerate the group whole; the rest
     // enumerate the window's candidates.
-    let tally_for = |probes: u64, window: &dyn Fn((u64, u64), &(u64, u64, u64, u64)) -> bool| -> u64 {
-        keys.iter()
-            .map(|&k| {
-                let n = group_size(k);
-                if n < crate::exec::run::overlap_leaf::OVERLAP_CROSSOVER || probes == 1 {
-                    return probes * n;
-                }
-                let cand = inner
-                    .iter()
-                    .filter(|b| b.1 == k && window(probe_span(k), b))
-                    .count() as u64;
-                n + (probes - 1) * cand
-            })
-            .sum()
-    };
+    let tally_for =
+        |probes: u64, window: &dyn Fn((u64, u64), &(u64, u64, u64, u64)) -> bool| -> u64 {
+            keys.iter()
+                .map(|&k| {
+                    let n = group_size(k);
+                    if n < crate::exec::run::overlap_leaf::OVERLAP_CROSSOVER || probes == 1 {
+                        return probes * n;
+                    }
+                    let cand = inner
+                        .iter()
+                        .filter(|b| b.1 == k && window(probe_span(k), b))
+                        .count() as u64;
+                    n + (probes - 1) * cand
+                })
+                .sum()
+        };
     // Half-open shared point over raw words — the INTERSECTS window.
-    let overlap_window =
-        |q: (u64, u64), b: &(u64, u64, u64, u64)| b.2 < q.1 && b.3 > q.0;
+    let overlap_window = |q: (u64, u64), b: &(u64, u64, u64, u64)| b.2 < q.1 && b.3 > q.0;
     // The DURING ∪ MEETS window under plan order [0, 1]: the leaf
     // batch is the second occurrence (b), so the driver classifies
     // (batch, constant) under the converse mask CONTAINS ∪ MET_BY —
@@ -1391,12 +1391,7 @@ fn const_side_touching_residuals_conjoin_into_one_window_query() {
     // its converse mask. INTERSECTS is self-converse and unwidened;
     // DURING ∪ MEETS converses to CONTAINS ∪ MET_BY, whose MET_BY
     // component relaxes the end bound by one word.
-    let count_in = |qs: u64, qe: u64| {
-        c_rows
-            .iter()
-            .filter(|c| c.1 < qe && c.2 > qs)
-            .count() as u64
-    };
+    let count_in = |qs: u64, qe: u64| c_rows.iter().filter(|c| c.1 < qe && c.2 > qs).count() as u64;
     // The group's FIRST probe runs generic (the amortization gate);
     // every later parent queries its window. Image iteration is
     // hash-ordered, so WHICH parent declines is not modelable — the

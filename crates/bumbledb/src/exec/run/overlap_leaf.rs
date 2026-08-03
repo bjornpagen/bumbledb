@@ -128,7 +128,11 @@ impl Executor {
                 q_start
             };
             let q_end = bindings.get(slot + 1);
-            let q_end = if met_by { q_end.saturating_add(1) } else { q_end };
+            let q_end = if met_by {
+                q_end.saturating_add(1)
+            } else {
+                q_end
+            };
             match &mut driver {
                 None => driver = Some((word, q_start, q_end)),
                 Some((anchor, lo, hi)) if *anchor == word => {

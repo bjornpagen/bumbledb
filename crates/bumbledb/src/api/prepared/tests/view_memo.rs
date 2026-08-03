@@ -799,7 +799,9 @@ fn same_shaped_occurrences_dedup_the_cold_rebuild() {
     let mut prepared = prepare(&txn, &cache, &schema, &memo_star_query()).expect("prepare");
 
     obs::start_capture();
-    let out = prepared.execute_collect(&txn, &cache, &[]).expect("execute");
+    let out = prepared
+        .execute_collect(&txn, &cache, &[])
+        .expect("execute");
     let events = obs::finish_capture();
 
     let builds = events
@@ -820,11 +822,8 @@ fn same_shaped_occurrences_dedup_the_cold_rebuild() {
 
     let mut triples: Vec<(String, String, String)> = (0..out.len())
         .map(|answer| {
-            let (
-                AnswerValue::String(m1),
-                AnswerValue::String(m2),
-                AnswerValue::String(m3),
-            ) = (out.get(answer, 0), out.get(answer, 1), out.get(answer, 2))
+            let (AnswerValue::String(m1), AnswerValue::String(m2), AnswerValue::String(m3)) =
+                (out.get(answer, 0), out.get(answer, 1), out.get(answer, 2))
             else {
                 panic!("star columns are strings");
             };

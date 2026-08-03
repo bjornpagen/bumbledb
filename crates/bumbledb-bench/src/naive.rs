@@ -345,7 +345,10 @@ impl NaiveDb {
         clippy::type_complexity,
         reason = "the pair is this function's two-halves contract: the staged state and its mints"
     )]
-    fn judged(&self, delta: &Delta) -> Result<(Vec<BTreeSet<Tuple>>, Vec<Box<[u8]>>), Vec<Violation>> {
+    fn judged(
+        &self,
+        delta: &Delta,
+    ) -> Result<(Vec<BTreeSet<Tuple>>, Vec<Box<[u8]>>), Vec<Violation>> {
         for (relation, _) in delta.deletes.iter().chain(&delta.inserts) {
             if self.extensions[relation.0 as usize].is_some() {
                 return Err(vec![Violation::ClosedRelationWrite {
@@ -675,7 +678,10 @@ impl NaiveDb {
                     relation,
                     projection,
                 } if *relation == target.relation
-                    && projection.iter().map(|field| field.0).collect::<BTreeSet<u16>>()
+                    && projection
+                        .iter()
+                        .map(|field| field.0)
+                        .collect::<BTreeSet<u16>>()
                         == wanted =>
                 {
                     Some(projection.as_ref())
@@ -697,7 +703,12 @@ impl NaiveDb {
     /// bytes, `bytes<N>` verbatim), and within one statement every
     /// parent shares the key's fixed per-position widths — so the
     /// per-field surrogate compare IS the image byte compare.
-    fn encoded_key(&self, minted: &[Box<[u8]>], parent: &Tuple, order: &[bumbledb::FieldId]) -> Tuple {
+    fn encoded_key(
+        &self,
+        minted: &[Box<[u8]>],
+        parent: &Tuple,
+        order: &[bumbledb::FieldId],
+    ) -> Tuple {
         Tuple(
             order
                 .iter()

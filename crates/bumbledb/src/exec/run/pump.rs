@@ -167,7 +167,9 @@ impl Executor {
                 }
                 // The probe-batch identity fill: one capacity check per
                 // draw, not one grow branch per element.
-                scratch.parents.extend(std::iter::repeat_n(entry_u32, yielded));
+                scratch
+                    .parents
+                    .extend(std::iter::repeat_n(entry_u32, yielded));
                 scratch
                     .element_origins
                     .extend(std::iter::repeat_n(entry_origin, yielded));
