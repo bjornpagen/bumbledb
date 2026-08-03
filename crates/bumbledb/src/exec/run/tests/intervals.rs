@@ -1219,12 +1219,97 @@ fn the_overlap_enumeration_prunes_the_leaf_batch_to_true_candidates() {
             "an untouching mask keeps the generic enumeration",
         ),
     ] {
-        let query = keyed_span_query(&[mask]);
+        let query = keyed_span_query_between(&[mask], 0, 1);
         let plan = planned_with_sinks(&query, &schema, &[0, 1], &all_vars(&query));
         let leaf = plan.nodes().len() - 1;
         let (_, tally) = run_tallied(&plan, &views, BATCH);
         assert_eq!(tally[leaf], expected, "{what}");
     }
+    // The regression the amortization gate closes: groups probed
+    // exactly once never pay the index — the tally is every group
+    // whole, exactly the generic cost, with no build anywhere.
+    let query = keyed_span_query_between(&[AllenMask::INTERSECTS], 2, 1);
+    let plan = planned_with_sinks(&query, &schema, &[0, 1], &all_vars(&query));
+    let leaf = plan.nodes().len() - 1;
+    let (_, tally) = run_tallied(&plan, &views, BATCH);
+    assert_eq!(
+        tally[leaf],
+        tally_for(1, &overlap_window),
+        "once-probed groups stay generic — no index is ever built"
+    );
+}
+
+/// Iter-phase windows at the leaf, balanced and counted — the overlap
+/// enumeration (driver resolution, index build, window query) runs
+/// INSIDE a phase window, so its cost lands in the leaf's Iter bucket
+/// instead of off the books (the finding: the accelerator was
+/// invisible to the entire phase table). Every leaf call records the
+/// enumerate window plus at least one drain window.
+struct PhasePairs {
+    leaf: usize,
+    iter_calls: usize,
+    open: usize,
+    entries: usize,
+}
+
+impl Counters for PhasePairs {
+    fn node_entry(&mut self, node: usize) {
+        if node == self.leaf {
+            self.entries += 1;
+        }
+    }
+    fn batch(&mut self, _: usize, _: usize) {}
+    fn cover_choice(&mut self, _: usize, _: usize, _: bool) {}
+    fn probe_hash(&mut self, _: usize, _: usize) {}
+    fn probe(&mut self, _: usize, _: usize, _: bool) {}
+    fn residual(&mut self, _: usize, _: bool) {}
+    fn anti_probe(&mut self, _: usize, _: bool) {}
+    fn emit(&mut self) {}
+    fn skip(&mut self, _: usize) {}
+    fn phase_start(&mut self, node: usize, phase: JoinPhase) {
+        if node == self.leaf && matches!(phase, JoinPhase::Iter) {
+            self.open += 1;
+        }
+    }
+    fn phase_end(&mut self, node: usize, phase: JoinPhase) {
+        if node == self.leaf && matches!(phase, JoinPhase::Iter) {
+            assert_eq!(self.open, 1, "Iter windows nest never");
+            self.open -= 1;
+            self.iter_calls += 1;
+        }
+    }
+}
+
+#[test]
+fn the_overlap_enumeration_is_attributed_to_the_iter_phase() {
+    let dir = TempDir::new("run-overlap-phase");
+    let schema = keyed_span_schema(1);
+    let mut state = 0x7A11_u64;
+    let rows = keyed_span_corpus(&mut state);
+    let views = keyed_span_views(&dir, &schema, &[&rows]);
+    let query = keyed_span_query(&[AllenMask::INTERSECTS]);
+    let plan = planned_with_sinks(&query, &schema, &[0, 1], &all_vars(&query));
+    let mut colts = colts_for(&plan, &views);
+    let mut bindings = Bindings::new(plan.slot_count());
+    let mut sink = CollectSink::default();
+    let mut executor = Executor::with_batch_size(&plan, BATCH);
+    let mut phases = PhasePairs {
+        leaf: plan.nodes().len() - 1,
+        iter_calls: 0,
+        open: 0,
+        entries: 0,
+    };
+    executor
+        .execute(&plan, &mut colts, &mut bindings, &mut sink, &mut phases)
+        .expect("execute");
+    assert_eq!(phases.open, 0, "every Iter window closed");
+    assert!(
+        phases.iter_calls >= 2 * phases.entries,
+        "each leaf call records the enumerate window plus its drain \
+         windows ({} calls over {} entries)",
+        phases.iter_calls,
+        phases.entries
+    );
 }
 
 /// The conjunction's teeth (the r2 multi-leg ring shape): two

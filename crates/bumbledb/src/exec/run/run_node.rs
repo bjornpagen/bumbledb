@@ -146,7 +146,13 @@ impl Executor {
         // the same probes and residuals below (the driving mask stays
         // data — its kernel still filters the candidates), so a
         // position the index withholds is exactly one that residual
-        // would have discarded.
+        // would have discarded. The call sits under the Iter phase —
+        // it IS this parent's enumeration work (driver resolution,
+        // index build on a group's second probe, the window query),
+        // and unwrapped it was invisible to the whole phase table
+        // (the leaf's Iter bucket showed only the drain below while
+        // the index paid its cost off the books).
+        counters.phase_start(node_idx, JoinPhase::Iter);
         let overlap = self.overlap_enumerate(
             plan,
             node_idx,
@@ -157,6 +163,7 @@ impl Executor {
             bindings,
             &scratch.allen_sources,
         );
+        counters.phase_end(node_idx, JoinPhase::Iter);
         let mut overlap_drained = 0usize;
 
         let mut token = BatchToken::default();
