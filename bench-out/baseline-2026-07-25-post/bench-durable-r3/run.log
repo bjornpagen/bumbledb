@@ -1,0 +1,221 @@
+scheduler boost: user-interactive QoS claimed
+bench: warming clocks (200 ms spin)
+bench: read family point
+bench: point p50 under the 500 ns quantum floor — re-measuring at batch 16
+bench: read family containment_walk
+bench: read family chain
+bench: read family range
+bench: read family balance
+bench: read family stats
+bench: read family string
+bench: read family skew
+bench: read family spread
+bench: read family triangle
+bench: read family entries_for_account_set
+bench: read family postings_without_tag
+bench: read family latest_posting_per_account
+bench: read family mandate_at_instant
+bench: mandate_at_instant p50 under the 500 ns quantum floor — re-measuring at batch 16
+bench: read family mandate_overlap
+bench: read family deep_chain
+bench: read family busy_scan
+bench: read family meets_chain
+bench: read family rsvp_union
+bench: read family conflict_pairs
+bench: read family conflict_free
+bench: read family free_busy
+bench: read family claim_hours
+bench: read family slot_scan
+bench: read family slot_booking_overlap
+bench: loading the closure corpus
+bench: closure family closure_depth
+bench: closure family closure_fanout
+bench: loading the displaced corpus
+bench: displaced family disp_probe (0 MiB between passes)
+bench: displaced family disp_probe_d24 (24 MiB between passes)
+bench: displaced family disp_probe_d96 (96 MiB between passes)
+bench: displaced family disp_stream (0 MiB between passes)
+bench: displaced family disp_stream_d24 (24 MiB between passes)
+bench: displaced family disp_stream_d96 (96 MiB between passes)
+bench: loading the scratch write corpus
+bench: commit_single
+bench: commit_batch
+bench: cold_containment_walk
+bench: cold_containment_walk_delete
+bench: commit_witnessed
+bench: loading the windowed twin worlds
+bench: commit_window_baseline
+bench: commit_window_admission
+bench: commit_window_exclusion
+bench: loading the capacity twin worlds
+bench: commit_capacity_baseline
+bench: commit_capacity_sum
+bench: commit_capacity_duration
+bench: bulk
+# bumbledb bench report
+
+## Provenance
+
+- crate version: 0.9.0
+- engine rev: 3b31cd84ca6093b9feb2c0c72488891fd1cbe4f9
+- timestamp: 2026-08-03T21:59:34Z
+- host: Apple M2 Max
+- shared machine: boost qos-user-interactive — load 1/5/15 3.60 3.21 3.06 (start) → 5.21 3.77 3.32 (end)
+- config: scale S, seed 1, 256 samples, durable stores
+- corpus digest: `fa73e680324f9b26dd1c8504899c43beec8eef48953ca4bdf4ca432623caaca8`
+- verify stamp: `d832a1dc42cda1d5873d538439bc0a55ecfdccb4a1830f92f79cada67c47974a (families + 500 randomized cases)`
+
+## Gate verdict
+
+ALL-WIN — every gated read family beats SQLite on p50.
+p99 budget (<= 10 ms warm): FAIL (informational below scale L).
+clock proxy: 16 block(s) still contaminated after retry — treat their percentiles as dirty: range, string, spread, busy_scan, slot_scan, closure_depth, commit_single, commit_batch, commit_witnessed, commit_window_baseline, commit_window_admission, commit_window_exclusion, commit_capacity_baseline, commit_capacity_sum, commit_capacity_duration, bulk.
+
+## Read families
+
+| family | ours p50/p95/p99 (us) | sqlite p50/p95/p99 (us) | ratio | verdict |
+|---|---|---|---|---|
+| point | 0.3 / 0.3 / 0.3 | 1.4 / 1.6 / 1.8 | 0.19 | WIN |
+| containment_walk | 2.0 / 718.3 / 982.2 | 52.2 / 30247.8 / 30892.8 | 0.04 | WIN |
+| chain | 234.8 / 362.9 / 402.0 | 2016.8 / 3788.0 / 3905.5 | 0.12 | WIN |
+| range | 20.5 / 24.0 / 26.5 | 146.8 / 582.4 / 632.3 | 0.14 | WIN |
+| balance | 1.1 / 33.9 / 41.5 | 282.2 / 33514.8 / 33938.0 | 0.00 | WIN |
+| stats | 1496.6 / 2012.8 / 2192.5 | 76961.5 / 82324.9 / 98642.5 | 0.02 | WIN |
+| string | 2.7 / 3.3 / 6.2 | 59.4 / 73.1 / 83.8 | 0.05 | WIN |
+| skew | 1747.2 / 2438.8 / 2700.3 | 7909.5 / 10641.3 / 10972.7 | 0.22 | WIN |
+| spread | 10799.5 / 13754.7 / 14982.2 | 129270.0 / 137617.5 / 159728.2 | 0.08 | WIN |
+| triangle | 2742.0 / 2963.8 / 3106.8 | 37201.4 / 40496.7 / 41274.0 | 0.07 | WIN |
+| entries_for_account_set | 3.0 / 694.0 / 707.3 | 10.3 / 4108.7 / 4161.1 | 0.29 | WIN |
+| postings_without_tag | 2.5 / 1052.9 / 1065.1 | 44.2 / 13208.0 / 13797.6 | 0.06 | WIN |
+| latest_posting_per_account | 2562.4 / 2678.9 / 2880.5 | 43006.3 / 44945.5 / 54689.4 | 0.06 | WIN |
+| mandate_at_instant | 0.3 / 0.3 / 0.3 | 8.1 / 8.7 / 9.3 | 0.04 | WIN |
+| mandate_overlap | 14.0 / 14.9 / 19.4 | 409.1 / 447.4 / 475.2 | 0.03 | WIN |
+| deep_chain | 372.5 / 621.3 / 657.1 | 4541.5 / 6454.1 / 7606.5 | 0.08 | report |
+| busy_scan | 8.3 / 9.7 / 9.8 | 3416.0 / 3674.1 / 4114.2 | 0.00 | WIN |
+| meets_chain | 3.0 / 130.0 / 146.9 | 17.7 / 134.7 / 172.9 | 0.17 | WIN |
+| rsvp_union | 980.5 / 1130.5 / 1372.9 | 18574.1 / 19306.0 / 21351.8 | 0.05 | WIN |
+| conflict_pairs | 29.1 / 83.8 / 102.0 | 2910.5 / 382717.4 / 402580.6 | 0.01 | WIN |
+| conflict_free | 0.6 / 0.8 / 0.8 | 15.8 / 48.8 / 56.1 | 0.04 | WIN |
+| free_busy | 3.2 / 40.0 / 43.5 | 301.0 / 2339.4 / 2409.1 | 0.01 | WIN |
+| claim_hours | 438.2 / 493.2 / 543.5 | 6517.9 / 7104.2 / 8059.0 | 0.07 | WIN |
+| slot_scan | 32.6 / 43.4 / 69.0 | 2863.5 / 3088.2 / 6695.7 | 0.01 | report |
+| slot_booking_overlap | 12.7 / 63.0 / 67.8 | 775.9 / 15429.4 / 15668.6 | 0.02 | report |
+| closure_depth | 4.2 / 1251.5 / 1337.3 | 38.0 / 1954.2 / 2125.4 | 0.11 | report |
+| closure_fanout | 0.6 / 164.6 / 180.6 | 137.1 / 2092.9 / 5979.8 | 0.00 | report |
+| disp_probe | 84722.9 / 99465.7 / 99465.7 | 658174.2 / 868980.4 / 868980.4 | 0.13 | report |
+| disp_probe_d24 | 87645.9 / 115191.5 / 115191.5 | 640112.0 / 763474.3 / 763474.3 | 0.14 | report |
+| disp_probe_d96 | 91171.4 / 100240.5 / 100240.5 | 634400.7 / 642520.5 / 642520.5 | 0.14 | report |
+| disp_stream | 137.7 / 146.9 / 146.9 | 39609.0 / 42101.8 / 42101.8 | 0.00 | report |
+| disp_stream_d24 | 156.2 / 1475.3 / 1475.3 | 39936.8 / 41148.8 / 41148.8 | 0.00 | report |
+| disp_stream_d96 | 154.8 / 166.3 / 166.3 | 39988.8 / 40249.6 / 40249.6 | 0.00 | report |
+
+## Write families
+
+| family | ours p50 (us) | sqlite p50 (us) | facts/sec |
+|---|---|---|---|
+| commit_single | 4856.7 | 4760.9 | - |
+| commit_batch | 25112.2 | 12007.5 | - |
+| cold_containment_walk | 1142.2 | 83.0 | - |
+| cold_containment_walk_delete | 11461.2 | 87.6 | - |
+| commit_witnessed | 4992.2 | - | - |
+| commit_window_baseline | 4911.5 | - | - |
+| commit_window_admission | 5042.1 | - | - |
+| commit_window_exclusion | 5063.4 | - | - |
+| commit_capacity_baseline | 4772.3 | - | - |
+| commit_capacity_sum | 4782.8 | - | - |
+| commit_capacity_duration | 5083.9 | - | - |
+| bulk | 1059183.4 | 680589.6 | 187838 |
+
+## Allocations
+
+(not captured — run with the alloc window)
+
+## Execution digests
+
+| family | worst est/actual | covers | emitted | absorbed |
+|---|---|---|---|---|
+| point | 1.00 |  | 1 | 0 |
+| containment_walk | 2.08 | n0:s0x1/s1x0/s2x0 n1:s0x1 n2:s0x1 | 96 | 0 |
+| chain | 6.25 | n0:s0x1/s1x0 n1:s0x141/s1x0 n2:s0x1328 | 1328 | 0 |
+| range | 3.12 | n0:s0x1 | 2000 | 0 |
+| balance | 63.80 | n0:s0x1/s1x0 n1:s0x7 | 51042 | 0 |
+| stats | 166.67 | n0:s0x1 n1:s0x3/s1x0 n2:s0x500 | 100000 | 0 |
+| string | 8.00 | n0:s0x1/s1x0 n1:s0x1 | 202 | 0 |
+| skew | 1.20 | n0:s0x1/s1x0 n1:s0x40014 | 40014 | 0 |
+| spread | 2.00 | n0:s0x1/s1x0 n1:s0x100000 | 99944 | 0 |
+| triangle | 4536.86 | n0:s0x1/s1x0/s2x0 n1:s0x529/s1x0 n2:s0x529 | 529 | 524 |
+| postings_without_tag | 4.00 | n0:s0x1 | 50 | 0 |
+| latest_posting_per_account | 200.00 | n0:s0x1 n1:s0x500 | 100000 | 0 |
+| mandate_at_instant | 1.00 | n0:s0x1/s1x0 n1:s0x1 | 1 | 0 |
+| mandate_overlap | 2.97 | n0:s0x1/s1x0 n1:s0x26 | 224 | 1 |
+| deep_chain | 12.50 | n0:s0x1/s1x0 n1:s0x123/s1x0 n2:s0x426/s1x0 n3:s0x2000 | 2000 | 0 |
+| busy_scan | 19.49 | n0:s0x1 | 605 | 0 |
+| meets_chain | 511.00 | n0:s0x1/s1x0 n1:s0x511 | 170 | 0 |
+| rsvp_union | 1.00 | n0:s0x1 n1:s0x1 n2:s0x1 | 82983 | 0 |
+| conflict_pairs | 200.06 | n0:s0x1/s1x0/s2x0 n1:s0x8/s1x0 n2:s0x64 n3:s0x82 | 64 | 0 |
+| conflict_free | 576.00 | n0:s0x1/s1x0 n1:s0x6 | 6 | 0 |
+| free_busy | 18.18 | n0:s0x1/s1x0 n1:s0x8 | 1600 | 0 |
+| claim_hours | 5240.50 | n0:s0x1 n1:s0x2 | 33564 | 0 |
+| slot_scan | 10.42 | n0:s0x1 | 2125 | 0 |
+| slot_booking_overlap | 21.53 | n0:s0x1/s1x0 n1:s0x410 | 214 | 0 |
+
+## Store
+
+- bumbledb file (compacted): 64274432 bytes
+- sqlite file: 18432000 bytes
+- image cache: 0 images, 0 bytes
+
+## Clock proxy
+
+| family | GHz pre | GHz post | status | norm p50 (us) |
+|---|---|---|---|---|
+| point | 3.50 | 3.50 | clean | - |
+| containment_walk | 3.50 | 3.41 | clean | - |
+| chain | 3.21 | 3.21 | retried | - |
+| range | 3.07 | 3.18 | CONTAMINATED | - |
+| balance | 3.29 | 3.41 | clean | - |
+| stats | 3.26 | 3.50 | retried | - |
+| string | 3.17 | 3.41 | CONTAMINATED | - |
+| skew | 3.41 | 3.26 | clean | - |
+| spread | 3.07 | 3.41 | CONTAMINATED | - |
+| triangle | 3.41 | 3.41 | clean | - |
+| entries_for_account_set | 3.41 | 3.36 | clean | - |
+| postings_without_tag | 3.41 | 3.41 | clean | - |
+| latest_posting_per_account | 3.33 | 3.33 | clean | - |
+| mandate_at_instant | 3.41 | 3.26 | clean | - |
+| mandate_overlap | 3.41 | 3.33 | clean | - |
+| deep_chain | 3.41 | 3.41 | clean | - |
+| busy_scan | 2.67 | 3.41 | CONTAMINATED | - |
+| meets_chain | 3.32 | 3.35 | clean | - |
+| rsvp_union | 3.35 | 3.41 | clean | - |
+| conflict_pairs | 3.36 | 3.41 | retried | - |
+| conflict_free | 3.41 | 3.35 | clean | - |
+| free_busy | 3.26 | 3.33 | clean | - |
+| claim_hours | 3.41 | 3.41 | clean | - |
+| slot_scan | 3.27 | 2.94 | CONTAMINATED | - |
+| slot_booking_overlap | 3.36 | 3.23 | retried | - |
+| closure_depth | 3.08 | 3.26 | CONTAMINATED | - |
+| closure_fanout | 3.22 | 3.36 | clean | - |
+| disp_probe | 3.41 | 3.41 | clean | - |
+| disp_probe_d24 | 3.41 | 3.22 | retried | - |
+| disp_probe_d96 | 3.35 | 3.26 | retried | - |
+| disp_stream | 3.20 | 3.36 | clean | - |
+| disp_stream_d24 | 3.34 | 3.35 | retried | - |
+| disp_stream_d96 | 3.41 | 3.41 | clean | - |
+| commit_single | 3.41 | 1.75 | CONTAMINATED | - |
+| commit_batch | 1.75 | 3.50 | CONTAMINATED | - |
+| cold_containment_walk | 3.37 | 3.36 | clean | - |
+| cold_containment_walk_delete | 3.36 | 3.41 | clean | - |
+| commit_witnessed | 3.41 | 0.91 | CONTAMINATED | - |
+| commit_window_baseline | 3.36 | 1.75 | CONTAMINATED | - |
+| commit_window_admission | 1.64 | 1.28 | CONTAMINATED | - |
+| commit_window_exclusion | 1.28 | 1.62 | CONTAMINATED | - |
+| commit_capacity_baseline | 3.32 | 2.42 | CONTAMINATED | - |
+| commit_capacity_sum | 2.37 | 1.91 | CONTAMINATED | - |
+| commit_capacity_duration | 1.65 | 1.28 | CONTAMINATED | - |
+| bulk | 1.28 | 3.51 | CONTAMINATED | - |
+
+## Flame summaries
+
+(none captured — run with --trace)
+artifacts: /Users/bjorn/Documents/bumbledb/bench-out/baseline-2026-07-25-post/bench-durable-r3
