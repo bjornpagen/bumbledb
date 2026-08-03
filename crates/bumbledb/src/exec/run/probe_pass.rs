@@ -551,6 +551,10 @@ impl Executor {
         // invariant), so the cold path may not return out of an open
         // window.
         counters.phase_start(node_idx, JoinPhase::Descend);
+        // Real origins exist strictly below the absorb node; the seed id
+        // above it must never match a minted id. Resolved once per pass,
+        // never per survivor (the instruction diet).
+        let below_absorb = tables.absorb.is_some_and(|a| node_idx > a);
         for k in 0..scratch.survivors.len() {
             if self.all_cancelled {
                 break;
@@ -564,9 +568,7 @@ impl Executor {
             } else {
                 scratch.element_origins[element]
             };
-            // Real origins exist strictly below the absorb node; the
-            // seed id above it must never match a minted id.
-            if tables.absorb.is_some_and(|a| node_idx > a) && self.origin_cancelled(origin) {
+            if below_absorb && self.origin_cancelled(origin) {
                 continue;
             }
             // The pass's cursor-source table, indexed — resolved once
@@ -619,20 +621,25 @@ impl Executor {
                     }
                 }
             } else {
+                // One child borrow for the whole append (the closing-probe
+                // constant diet: the re-indexed `self.scratch[node_idx + 1]`
+                // was three bounds-checked walks per survivor), and the
+                // carried cursors extend through one capacity check
+                // instead of a grow branch per cursor.
+                let cover_slots = &self.slot_map[node_idx][cover_sub];
                 let child = &mut self.scratch[node_idx + 1];
                 let start = child.pending_bindings.len();
                 child.pending_bindings.extend_from_slice(
                     &scratch.pending_bindings[parent * slot_count..(parent + 1) * slot_count],
                 );
-                for (i, slot) in self.slot_map[node_idx][cover_sub].iter().enumerate() {
+                for (i, slot) in cover_slots.iter().enumerate() {
                     child.pending_bindings[start + slot] = scratch.entry_keys[element * arity + i];
                 }
-                for &occ in child_carried {
-                    let cursor = assemble(occ);
-                    self.scratch[node_idx + 1].pending_cursors.push(cursor);
-                }
-                self.scratch[node_idx + 1].pending_origins.push(origin);
-                self.scratch[node_idx + 1].pending_len += 1;
+                child
+                    .pending_cursors
+                    .extend(child_carried.iter().map(|&occ| assemble(occ)));
+                child.pending_origins.push(origin);
+                child.pending_len += 1;
             }
         }
         counters.phase_end(node_idx, JoinPhase::Descend);
