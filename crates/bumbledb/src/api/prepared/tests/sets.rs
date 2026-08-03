@@ -163,7 +163,7 @@ fn profile_binds_param_sets_exactly_as_execute_args() {
         "profiling is an execution: value-identical answers"
     );
     assert_eq!(
-        stats.emits as usize,
+        usize::try_from(stats.emits).expect("emits fit"),
         executed.len(),
         "the counted surface saw exactly the executed bindings"
     );

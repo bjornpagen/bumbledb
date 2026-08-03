@@ -972,11 +972,14 @@ fn decode_values_keyed_never_resolves_a_projected_field() {
     // Projection (u64 field 2, str field 4): the resolver must never see
     // the projected string's id — a call is the failure.
     let supplied = [Value::U64(u64::MAX), Value::String(Box::from(*b"supplied"))];
-    let decoded =
-        super::decode_values_keyed(&fact, &layout, &[FieldId(2), FieldId(4)], &supplied, |id| {
-            panic!("projected field resolved through the dictionary (id {id})")
-        })
-        .expect("decode");
+    let decoded = super::decode::decode_values_keyed(
+        &fact,
+        &layout,
+        &[FieldId(2), FieldId(4)],
+        &supplied,
+        |id| panic!("projected field resolved through the dictionary (id {id})"),
+    )
+    .expect("decode");
     assert_eq!(decoded[2], supplied[0]);
     assert_eq!(decoded[4], supplied[1]);
     // The unkeyed decode of the same fact agrees everywhere else.

@@ -1095,6 +1095,10 @@ fn keyed_overlap_self_join_agrees_with_the_naive_model() {
     }
 }
 
+/// A raw-word Allen window over (probe span, inner row) — the tally
+/// models' shared predicate shape.
+type SpanWindow<'a> = &'a dyn Fn((u64, u64), &(u64, u64, u64, u64)) -> bool;
+
 /// The enumeration's teeth: under `INTERSECTS` the leaf batches exactly
 /// the true overlap candidates for crossover-sized groups (plus the
 /// full sub-crossover groups the fallback enumerates, plus one whole
@@ -1114,6 +1118,7 @@ fn keyed_overlap_self_join_agrees_with_the_naive_model() {
 /// order-free instead: R0 carries two IDENTICAL prober rows per key
 /// (either may decline, the window is the same), R2 carries one.
 #[test]
+#[allow(clippy::too_many_lines)]
 fn the_overlap_enumeration_prunes_the_leaf_batch_to_true_candidates() {
     let dir = TempDir::new("run-overlap-tally");
     let schema = keyed_span_schema(3);
@@ -1150,22 +1155,21 @@ fn the_overlap_enumeration_prunes_the_leaf_batch_to_true_candidates() {
     // the inner group — every probe of a sub-crossover group and each
     // group's first probe enumerate the group whole; the rest
     // enumerate the window's candidates.
-    let tally_for =
-        |probes: u64, window: &dyn Fn((u64, u64), &(u64, u64, u64, u64)) -> bool| -> u64 {
-            keys.iter()
-                .map(|&k| {
-                    let n = group_size(k);
-                    if n < crate::exec::run::overlap_leaf::OVERLAP_CROSSOVER || probes == 1 {
-                        return probes * n;
-                    }
-                    let cand = inner
-                        .iter()
-                        .filter(|b| b.1 == k && window(probe_span(k), b))
-                        .count() as u64;
-                    n + (probes - 1) * cand
-                })
-                .sum()
-        };
+    let tally_for = |probes: u64, window: SpanWindow<'_>| -> u64 {
+        keys.iter()
+            .map(|&k| {
+                let n = group_size(k);
+                if n < crate::exec::run::overlap_leaf::OVERLAP_CROSSOVER || probes == 1 {
+                    return probes * n;
+                }
+                let cand = inner
+                    .iter()
+                    .filter(|b| b.1 == k && window(probe_span(k), b))
+                    .count() as u64;
+                n + (probes - 1) * cand
+            })
+            .sum()
+    };
     // Half-open shared point over raw words — the INTERSECTS window.
     let overlap_window = |q: (u64, u64), b: &(u64, u64, u64, u64)| b.2 < q.1 && b.3 > q.0;
     // The DURING ∪ MEETS window under plan order [0, 1]: the leaf
@@ -1180,7 +1184,7 @@ fn the_overlap_enumeration_prunes_the_leaf_batch_to_true_candidates() {
     // Pruning sanity over the part the index actually serves — the
     // indexed groups' second probes (the first is the amortization
     // gate's unavoidable generic pass).
-    let indexed_part = |window: &dyn Fn((u64, u64), &(u64, u64, u64, u64)) -> bool| -> (u64, u64) {
+    let indexed_part = |window: SpanWindow<'_>| -> (u64, u64) {
         keys.iter()
             .filter(|&&k| group_size(k) >= crate::exec::run::overlap_leaf::OVERLAP_CROSSOVER)
             .map(|&k| {
@@ -1321,6 +1325,7 @@ fn the_overlap_enumeration_is_attributed_to_the_iter_phase() {
 /// untouching mask: it stops qualifying, the other drives alone, and
 /// the tally relaxes to that single window.
 #[test]
+#[allow(clippy::too_many_lines)]
 fn const_side_touching_residuals_conjoin_into_one_window_query() {
     let dir = TempDir::new("run-overlap-conjoin");
     let schema = tagged_interval_schema(3);

@@ -148,6 +148,9 @@ fn pinned_run_partitioning_is_transparent() {
     let positions: Vec<u32> = (0..u32::try_from(rows.len()).expect("small")).collect();
     let outer_keys = outer_words_of(&colts_for(&plan, &views)[0], &positions);
     let mut reference: Option<Vec<Vec<u64>>> = None;
+    // The one-part partitioning IS a single-range slice — the whole
+    // window in one piece, not a six-element collect.
+    #[allow(clippy::single_range_in_vec_init)]
     let partitionings: [&[std::ops::Range<usize>]; 3] =
         [&[0..6], &[0..3, 3..4, 4..6], &[0..1, 1..6]];
     for splits in partitionings {

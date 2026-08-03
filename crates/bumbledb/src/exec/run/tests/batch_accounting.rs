@@ -9,6 +9,7 @@ use bumbledb_theory::schema::ValueType;
 /// run exercises both splits with both half-open boundaries, against
 /// the same query attached at the leaf as the regression twin.
 #[test]
+#[allow(clippy::too_many_lines)]
 fn middle_node_membership_batches_pinned_rows_and_walks_fanouts() {
     let dir = TempDir::new("run-membership-batched");
     let schema = SchemaDescriptor {
@@ -264,7 +265,7 @@ fn pump_gather_windows_are_attributed() {
 /// empty resume draw (the token must be re-presented to learn the entry
 /// is exhausted), and `pump` used to count that empty draw — its
 /// `run_node` twin breaks before counting — skewing the
-/// batches/batch_entries observable ("batching engaged" means
+/// `batches/batch_entries` observable ("batching engaged" means
 /// batches ≪ entries) low on exact-fit fanouts.
 #[test]
 fn zero_yield_draws_are_not_batches() {
