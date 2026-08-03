@@ -1,0 +1,28 @@
+## PhaseTimers overflow bucket clobbers the open Descend stamp when the last two plan nodes both land in slot 8
+
+bug | medium | CONFIRMED | obs-estate
+outcome: fixed 5b0a3a94
+
+### Summary
+
+`PhaseTimers` keeps exactly one open-stamp cell per (capped node slot, phase) — `phase_start` writes `open[node.min(PHASE_NODE_CAP)][phase] = ticks()` and `phase_end` charges `ticks() - open[capped][phase]` with no stack and no stamp invalidation (`crates/bumbledb/src/exec/run/counters.rs:88-97`). Descend segments genuinely nest across node indices at one place in the executor: the second-to-last node's probe pass opens Descend, then runs the leaf node per survivor *inside* that segment, and the leaf opens its own Descend. When a plan has **10 or more nodes**, both the second-to-last node (index n−2 ≥ 8) and the leaf (n−1 ≥ 8) collapse into overflow slot 8, so every survivor's inner `phase_start` overwrites the outer segment's open stamp. The outer close then charges only the tail from the *last* inner open — the outer descend's inclusive time is silently dropped, contradicting the cap's contract "attributed coarsely, never dropped" (`run.rs:243-245`).
+
+### Evidence (verified)
+
+- `crates/bumbledb/src/exec/run/counters.rs:89` — `self.open[node.min(PHASE_NODE_CAP)][phase.index()] = crate::obs::fastclock::ticks();` and `:93-96` — `phase_end` reads the same shared cell; one cell per (slot, phase), no stack, and the stamp is never cleared on close.
+- `crates/bumbledb/src/exec/run.rs:247` — `PHASE_NODE_CAP: usize = 8`; `run.rs:243-245` — "indices past the cap share the overflow bucket (`nX` names) — plans deeper than this are attributed coarsely, never dropped." `crates/bumbledb/src/plan/planner.rs:30` — `MAX_OCCURRENCES: usize = 20`, so node indices 8..19 are representable and all map to slot 8 (`jp_descend_nX`, `obs.rs:376-384`).
+- The nesting site: `crates/bumbledb/src/exec/run/probe_pass.rs:515` opens `Descend` at `node_idx`; when `node_idx + 2 == n_nodes` (`:516`), the per-survivor loop calls `self.run_node(plan, node_idx + 1, ...)` at `:598` — *inside* the open segment — and the outer close is at `:628`. The leaf's `run_node` opens its own `Descend` at `node_idx + 1` on every arm: `run_node.rs:600/623` (generic batch emit), `leaf.rs:74/85/100` (pinned row), `scan_table.rs:62/151` (leaf scan).
+- Nesting depth is exactly two, and only at the last two nodes: middle nodes close their Descend **before** pumping the child (`probe_pass.rs:628` `phase_end` precedes the `pump(node_idx + 1)` call at `:637`), `run_node` asserts it is the leaf pass (`run_node.rs:28-31`), and `pump` debug-asserts `node_idx + 1 < n_nodes` (`pump.rs:30`). So no same-index nesting and no deeper chains exist — but the (n−2, n−1) pair is enough: both ≥ 8 exactly when `n_nodes >= 10`, well inside the 20-occurrence planner cap.
+- Downstream consumer: `crates/bumbledb-bench/src/trace_out/phase_table.rs:50-51` computes descend `excl_us` as `ns.saturating_sub(node_total(node + 1))`; for node 7's descend row, `node_total(8)` is built from the corrupted merged slot-8 bucket.
+
+Mechanics of the loss (n_nodes = 10, both slot 8): outer `phase_start` stamps `open[8][4] = t0`; each survivor's leaf Descend re-stamps `open[8][4] = t_k` and accumulates its own segment correctly into `acc[8][4]`; the outer `phase_end` at `t_end` charges `t_end − t_last_inner_open` instead of `t_end − t0`. The inner leaf segments survive in the merged row, but the outer inclusive wrapper (per-survivor bindings `load_row`, cursor assembly, origin routing, plus the second copy of all leaf time that honest coarse merging would double-count into the same row) vanishes — roughly half or more of what the `jp_descend_nX` row should read under the documented merge semantics.
+
+### Failure scenario / impact
+
+Trace-feature only; release timing paths are untouched (`NoopCounters` / ZST twin). But for any traced query whose FJ plan has 10+ nodes — reachable, e.g. a 10-atom chain rule, versus the 20-occurrence cap — the phase table's `jp_descend_nX` row understates descend, `avg_ns` divides a truncated total by the full call count, and node 7's descend `excl_us` subtracts a corrupted `node_total(8)`. The Hunt reads a false "descend is cheap past node 8" out of the one mechanism built to attribute deep-plan descend, precisely on the graph-world scenario cluster flagged for it (deep chain plans).
+
+Two corrections to the original finding, neither changing the verdict: Descend does **not** nest arbitrarily ("node 8's contains node 9's contains node 10's") — middle nodes pump after closing, so nesting is exactly the (second-to-last, leaf) pair; and `run_node.rs:600/623` is the leaf's no-recursion batch emit, not the recursion wrapper (that is `probe_pass.rs:515/598/628`).
+
+### Suggested fix
+
+Since colliding nesting only ever occurs across *distinct true node indices* (same-index nesting is structurally impossible per the pump/run_node asserts), the minimal representation fix is to index the **open** table by the true node index while `acc` stays capped: `open: [[u64; 6]; MAX_OCCURRENCES]` (≈960 bytes on a trace-only struct), `phase_start` stamps `open[node][phase]`, `phase_end` charges into `acc[node.min(PHASE_NODE_CAP)][phase]` from `open[node][phase]`. Overflow rows then genuinely merge (inner + full outer inclusive time) instead of losing the outer segment. Land with a test: a `PhaseTimers` unit test that interleaves `phase_start(8, Descend); phase_start(9, Descend); phase_end(9, ..); phase_end(8, ..)` and asserts the slot-8 accumulated ticks cover both segments' spans, not just the inner tail.
