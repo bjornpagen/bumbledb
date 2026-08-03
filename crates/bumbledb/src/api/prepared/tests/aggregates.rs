@@ -645,3 +645,94 @@ fn a_closed_group_key_takes_the_dense_table() {
     };
     assert!(!sink.dense_group_table(), "open domains keep the map");
 }
+
+/// The production `fold_split` → `gj_split` composition (`build.rs`:
+/// an aggregate head's group key drives the fold-aware level split,
+/// THEN the GJ lowering splits the cyclic body's multi-variable
+/// levels), previously exercised by zero tests — the plan differential
+/// omits `fold_split`. A grouped count over the triangle runs both
+/// transforms on one plan: the group variable `z` sits DEEP in the
+/// natural elimination order (so the fold split has real reordering
+/// work), the body is cyclic (so the GJ split has real splitting
+/// work), and validation's by-construction expect plus the exact
+/// grouped counts pin the composed plan end to end.
+#[test]
+fn fold_split_then_gj_split_composes_on_a_grouped_cyclic_body() {
+    let dir = TempDir::new("prepared-fold-gj-composition");
+    let edge_schema: Schema = SchemaDescriptor {
+        relations: vec![RelationDescriptor {
+            extension: None,
+            name: "Edge".into(),
+            fields: vec![
+                FieldDescriptor {
+                    name: "src".into(),
+                    value_type: ValueType::U64,
+                    generation: Generation::None,
+                },
+                FieldDescriptor {
+                    name: "dst".into(),
+                    value_type: ValueType::U64,
+                    generation: Generation::None,
+                },
+            ],
+        }],
+        statements: vec![],
+    }
+    .validate()
+    .expect("valid fixture");
+    let env = Environment::create(dir.path(), &edge_schema).expect("create");
+    {
+        let view = env.read_txn().expect("txn");
+        let mut delta = WriteDelta::new(&edge_schema);
+        for (src, dst) in [(1u64, 2u64), (2, 3), (1, 3), (3, 1), (2, 1), (4, 1)] {
+            let mut bytes = Vec::new();
+            encode_fact(
+                &[ValueRef::U64(src), ValueRef::U64(dst)],
+                edge_schema.relation(RelationId(0)).layout(),
+                &mut bytes,
+            );
+            delta
+                .insert(&view, RelationId(0), &bytes)
+                .expect("insert");
+        }
+        drop(view);
+        commit(delta, &env).expect("commit");
+    }
+    let cache = ImageCache::new(&edge_schema);
+    let txn = env.read_txn().expect("txn");
+
+    // Q(z, Count) :- Edge(x, y), Edge(y, z), Edge(x, z).
+    let edge = |a: u16, b: u16| Atom {
+        source: crate::ir::AtomSource::Edb(RelationId(0)),
+        bindings: vec![
+            (FieldId(0), Term::Var(VarId(a))),
+            (FieldId(1), Term::Var(VarId(b))),
+        ],
+    };
+    let query = Query::single(Rule {
+        finds: vec![
+            FindTerm::Var(VarId(2)),
+            FindTerm::Aggregate {
+                op: AggOp::Count,
+                over: None,
+            },
+        ],
+        atoms: vec![edge(0, 1), edge(1, 2), edge(0, 2)],
+        negated: vec![],
+        conditions: vec![],
+    });
+    let mut prepared = prepare(&txn, &cache, &edge_schema, &query).expect("prepare");
+    let out = prepared
+        .execute_collect(&txn, &cache, &[])
+        .expect("execute");
+    let mut answers: Vec<(u64, u64)> = (0..out.len())
+        .map(|answer| match (out.get(answer, 0), out.get(answer, 1)) {
+            (AnswerValue::U64(z), AnswerValue::U64(n)) => (z, n),
+            other => panic!("all-U64 answer: {other:?}"),
+        })
+        .collect();
+    answers.sort_unstable();
+    // The triangles are (x,y,z) ∈ {(1,2,3), (2,1,3), (2,3,1)}: apex 3
+    // closes twice, apex 1 once.
+    assert_eq!(answers, vec![(1, 1), (3, 2)]);
+}
