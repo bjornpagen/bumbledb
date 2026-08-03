@@ -42,8 +42,19 @@ impl AggregateSink {
         for &slot in &self.cached_outer_slots {
             self.binding_scratch[slot] = batch.bindings.get(slot);
         }
-        let mut survivors = std::mem::take(&mut self.dedup_survivors);
-        survivors.clear();
+        // COUNT-shaped heads — no fold input read from the batch keys
+        // (the nullary Count and outer-constant inputs) — need only HOW
+        // MANY bindings were first-seen: the survivor list is dead
+        // weight at one push per fresh binding × millions (the r6
+        // seen-set lane's per-insert constant). The seen-set insert IS
+        // the loop; the fold stays arithmetic (`value × count`).
+        let key_sourced = self.finds.iter().any(|find| match find {
+            SinkSpec::Agg {
+                over_slot: Some(slot),
+                ..
+            } => matches!(batch.source_of(*slot), LeafSource::Key(_)),
+            _ => false,
+        });
         let seen = self.seen.as_mut().expect("dedup regime");
         // Alias-hoisted: `binding_scratch` reborrowed
         // once — the survivor pushes and seen-set writes can no longer
@@ -51,6 +62,22 @@ impl AggregateSink {
         let binding_scratch = &mut self.binding_scratch[..];
         let union_spans = self.union_spans.as_deref();
         let union_scratch = &mut self.union_scratch;
+        if !key_sourced {
+            let mut fresh = 0u64;
+            for &entry in batch.survivors {
+                for (word, slot) in batch.key_slots.iter().enumerate() {
+                    binding_scratch[*slot] = batch.key(entry, word);
+                }
+                let key = super::fold_row::dedup_key(union_spans, union_scratch, binding_scratch);
+                fresh += u64::from(seen.insert(key));
+            }
+            if fresh > 0 {
+                self.fold_constant_group(batch, fresh, &[]);
+            }
+            return;
+        }
+        let mut survivors = std::mem::take(&mut self.dedup_survivors);
+        survivors.clear();
         for &entry in batch.survivors {
             for (word, slot) in batch.key_slots.iter().enumerate() {
                 binding_scratch[*slot] = batch.key(entry, word);
@@ -67,6 +94,14 @@ impl AggregateSink {
     }
 
     pub(super) fn fold_batch_constant_group(&mut self, batch: &LeafBatch<'_>, survivors: &[u32]) {
+        self.fold_constant_group(batch, survivors.len() as u64, survivors);
+    }
+
+    /// The constant-group fold core. `survivors` backs the gather
+    /// kernels only — it is empty exactly when the caller proved no
+    /// fold input reads the batch keys (the count-only dedup arm), so
+    /// every `Key` arm below asserts it non-empty before gathering.
+    fn fold_constant_group(&mut self, batch: &LeafBatch<'_>, count: u64, survivors: &[u32]) {
         super::groups::load_group_key(&mut self.key_scratch, &self.group_spans, |slot| {
             batch.bindings.get(slot)
         });
@@ -79,7 +114,6 @@ impl AggregateSink {
         self.acc_scratch.clear();
         self.acc_scratch
             .extend_from_slice(&self.accs[range.clone()]);
-        let count = survivors.len() as u64;
         let mut cursor = 0;
         for find in &self.finds {
             let SinkSpec::Agg {
@@ -106,6 +140,7 @@ impl AggregateSink {
                             i128::from(word_to_i64(batch.bindings.get(slot))) * i128::from(count)
                         }
                         LeafSource::Key(word) => {
+                            debug_assert!(!survivors.is_empty(), "count-only folds never gather");
                             gather_sum_signed(batch.keys, batch.arity, word, survivors)
                         }
                     };
@@ -117,6 +152,7 @@ impl AggregateSink {
                             u128::from(batch.bindings.get(slot)) * u128::from(count)
                         }
                         LeafSource::Key(word) => {
+                            debug_assert!(!survivors.is_empty(), "count-only folds never gather");
                             gather_sum_unsigned(batch.keys, batch.arity, word, survivors)
                         }
                     };
@@ -126,6 +162,7 @@ impl AggregateSink {
                     let word = match batch.source_of(slot) {
                         LeafSource::Outer => batch.bindings.get(slot),
                         LeafSource::Key(word) => {
+                            debug_assert!(!survivors.is_empty(), "count-only folds never gather");
                             gather_min(batch.keys, batch.arity, word, survivors)
                         }
                     };
@@ -136,6 +173,7 @@ impl AggregateSink {
                     let word = match batch.source_of(slot) {
                         LeafSource::Outer => batch.bindings.get(slot),
                         LeafSource::Key(word) => {
+                            debug_assert!(!survivors.is_empty(), "count-only folds never gather");
                             gather_max(batch.keys, batch.arity, word, survivors)
                         }
                     };

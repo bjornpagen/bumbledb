@@ -137,6 +137,64 @@ fn dedup_constant_group_collapses_duplicates_before_folding() {
     }
 }
 
+/// The count-only dedup arm — no fold input reads the batch keys, so
+/// the seen-set pass counts first sights instead of collecting a
+/// survivor list — is value-identical to the gather regime: duplicate
+/// full bindings collapse, outer-sourced folds stay value × count, at
+/// every batch size (the r6 seen-set lane's per-insert constant).
+#[test]
+fn count_only_dedup_folds_without_survivor_collection() {
+    let dir = TempDir::new("sink-dedup-count-only");
+    let schema = schema();
+    // Fresh ids exist in storage but the query does not bind them:
+    // (account, amount) bindings collapse. Account 1 holds amounts
+    // {5, 5, 7} -> {5, 7}; account 2 holds {5, 5, 5} -> {5}.
+    let postings = vec![
+        (1u64, 1u64, 5i64),
+        (2, 1, 5),
+        (3, 1, 7),
+        (4, 2, 5),
+        (5, 2, 5),
+        (6, 2, 5),
+    ];
+    let views = views_of(&dir, &schema, &postings, &[]);
+    let normalized = normalized(
+        &schema,
+        vec![occurrence(0, POSTING, &[(1, 0), (2, 1)])],
+        vec![],
+    );
+    let plan = two_node_plan(&schema, &normalized, &[0], &[1], &[0, 1]);
+    // Count (nullary) + Sum over the GROUP slot (outer at the leaf):
+    // no fold input is a leaf key word, so the count-only arm fires.
+    let finds = |plan: &ValidatedPlan| {
+        vec![
+            var_spec(plan, 0),
+            agg_spec(plan, FoldOp::Count, None, false),
+            agg_spec(plan, FoldOp::Sum, Some(0), false),
+        ]
+    };
+    for batch in [1usize, 2, 128] {
+        let mut colts = colts_for(&plan, &views);
+        let mut bindings = crate::exec::run::Bindings::new(plan.slot_count());
+        // distinct_bindings = false: the dedup arm is mandatory.
+        let mut sink = AggregateSink::new(finds(&plan), plan.slot_count());
+        Executor::with_batch_size(&plan, batch)
+            .execute(
+                &plan,
+                &mut colts,
+                &mut bindings,
+                &mut sink,
+                &mut crate::exec::run::NoopCounters,
+            )
+            .expect("execute");
+        let mut rows = sink.into_answers().expect("in range");
+        rows.sort_unstable();
+        // Account 1: 2 distinct bindings — Count 2, Sum(account) 1×2.
+        // Account 2: 1 distinct binding — Count 1, Sum(account) 2×1.
+        assert_eq!(rows, vec![vec![1, 2, 2], vec![2, 1, 2]], "batch {batch}");
+    }
+}
+
 /// An aggregate over a slot bound above the leaf folds as
 /// value x count (i128/u128 — identical to count additions),
 /// including the deterministic finalize-time overflow.
