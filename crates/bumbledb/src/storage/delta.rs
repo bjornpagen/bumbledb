@@ -67,6 +67,36 @@ pub enum DeterminantOverlay<'a> {
 /// O(log |delta|), like the rest of the delta.
 type TupleOwners = Vec<(ArenaSlice, Disposition)>;
 
+/// The fact-disposition table's concrete shape ([`WriteDelta::facts`]).
+type FactMap = std::collections::HashMap<
+    (RelationId, [u8; 32]),
+    (ArenaSlice, Disposition),
+    std::hash::BuildHasherDefault<FactKeyHasher>,
+>;
+
+/// The fact map's hasher: the key already CONTAINS a blake3 hash — 32
+/// uniform bytes — so hashing it again (`SipHash` over 40 bytes) is pure
+/// waste. One xor-rotate fold per 8-byte chunk keeps the blake3
+/// uniformity and costs five folds per probe; the rotate keeps the
+/// relation prefix and the slice-length word from cancelling into the
+/// hash bytes.
+#[derive(Default)]
+struct FactKeyHasher(u64);
+
+impl std::hash::Hasher for FactKeyHasher {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        for chunk in bytes.chunks(8) {
+            let mut word = [0u8; 8];
+            word[..chunk.len()].copy_from_slice(chunk);
+            self.0 = self.0.rotate_left(29) ^ u64::from_le_bytes(word);
+        }
+    }
+}
+
 /// One fresh sequence's transaction-local state
 /// ([`WriteDelta::marks`]): initialized in one piece from the lazy `Q`
 /// read, so an entry without its base is unrepresentable.
@@ -85,8 +115,13 @@ pub struct WriteDelta<'s> {
     arena: Arena,
     /// `(relation, fact_hash) → (fact bytes, net disposition)`. Keyed by the
     /// full 32-byte blake3 of `fact_bytes` — hash equality *is* fact equality
-    /// (collision axiom, `10-data-model.md`), and the `BTreeMap` gives the
-    /// deterministic commit order the 50-storage doc requires.
+    /// (collision axiom, `10-data-model.md`). A hash table, not an ordered
+    /// map: accumulation is the write path's hot loop and pays O(1) probes
+    /// against an already-uniform key ([`FactKeyHasher`] folds, never
+    /// re-hashes); the deterministic `(relation, fact_hash)` commit order
+    /// the 50-storage doc requires is restored by ONE exact sort at plan
+    /// derivation (`commit::plan::plan_commit` — the sort-license
+    /// precedent is the T8 probe sort, `commit/judgment.rs`).
     ///
     /// **The net-disposition invariant** (docs/architecture/50-storage.md):
     /// the insert set contains exactly the facts commit will add and the
@@ -95,7 +130,7 @@ pub struct WriteDelta<'s> {
     /// single-writer mutex), redundant ops record nothing, and an op
     /// cancels a pending opposite instead of overwriting it. Judging a
     /// no-op insert is unrepresentable.
-    facts: BTreeMap<(RelationId, [u8; 32]), (ArenaSlice, Disposition)>,
+    facts: FactMap,
     /// `key statement → (determinant bytes → pending owners)` — the point-read
     /// index maintained beside the fact map by `insert`/`delete`
     /// (`docs/architecture/50-storage.md` § `WriteTx` point reads). Determinant

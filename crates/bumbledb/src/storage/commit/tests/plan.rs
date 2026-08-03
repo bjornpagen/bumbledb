@@ -359,6 +359,34 @@ fn fact_ops_carry_the_delta_computed_hash() {
 }
 
 #[test]
+fn plan_ops_land_in_relation_then_hash_order() {
+    // The delta's fact table is a hash map with no iteration order; the
+    // plan's ONE exact sort restores the deterministic
+    // `(relation, fact_hash)` commit order the 50-storage doc requires.
+    // Pinned over enough facts across two relations that an accidental
+    // insertion-order pass cannot succeed by luck.
+    let dir = TempDir::new("plan-op-order");
+    let schema = schema();
+    let env = Environment::create(dir.path(), &schema).expect("create");
+    let base: Vec<(RelationId, Vec<u8>)> = (0..24)
+        .map(|i| (ACCOUNT, account(&schema, i, false, 0)))
+        .chain((0..24).map(|i| (GRANT, u64_fact(&schema, GRANT, i))))
+        .collect();
+    commit_base(&env, &schema, &base);
+    let mut delta = WriteDelta::new(&schema);
+    let plan = plan_of(&env, &mut delta, &base, &[]);
+    let order: Vec<(RelationId, [u8; 32])> = plan
+        .deletes
+        .iter()
+        .map(|op| (op.relation, *op.fact_hash))
+        .collect();
+    let mut sorted = order.clone();
+    sorted.sort_unstable();
+    assert_eq!(order, sorted, "deletes in (relation, fact_hash) order");
+    assert_eq!(order.len(), 48);
+}
+
+#[test]
 fn source_selection_gates_the_edges() {
     let dir = TempDir::new("plan-sigma");
     let schema = schema();

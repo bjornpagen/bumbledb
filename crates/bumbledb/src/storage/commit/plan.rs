@@ -239,11 +239,19 @@ pub(crate) fn plan_commit<'d>(
     // here.
     let mut touched_parents: BTreeMap<CapacityId, BTreeSet<DeterminantImage>> = BTreeMap::new();
     let mut scratch = FactScratch::default();
-    // The delta's disposition iterators filter, so their size hints are
-    // inexact: each op list is counted first and collected at exact
-    // capacity (pushing into a `with_capacity` Vec never reallocates).
-    let mut deletes = Vec::with_capacity(delta.deletes().count());
-    for (rel, hash, fact) in delta.deletes() {
+    // The ONE exact sort per disposition: the delta's hash table has no
+    // iteration order, so the deterministic `(relation, fact_hash)`
+    // commit order the 50-storage doc requires is restored here — the
+    // sort-license precedent is the T8 probe sort (`judgment.rs`,
+    // `check_source`). The key is a total order (hash equality is fact
+    // equality), so the op order is deterministic whatever the sort
+    // algorithm does with equal keys — there are none.
+    let mut delete_facts: Vec<(RelationId, &[u8; 32], &[u8])> = delta.deletes().collect();
+    delete_facts.sort_unstable_by(|(a_rel, a_hash, _), (b_rel, b_hash, _)| {
+        (a_rel, a_hash).cmp(&(b_rel, b_hash))
+    });
+    let mut deletes = Vec::with_capacity(delete_facts.len());
+    for (rel, hash, fact) in delete_facts {
         deletes.push(fact_op(
             schema,
             &selections,
@@ -256,8 +264,12 @@ pub(crate) fn plan_commit<'d>(
         )?);
     }
     let deletes = deletes.into_boxed_slice();
-    let mut inserts = Vec::with_capacity(delta.inserts().count());
-    for (rel, hash, fact) in delta.inserts() {
+    let mut insert_facts: Vec<(RelationId, &[u8; 32], &[u8])> = delta.inserts().collect();
+    insert_facts.sort_unstable_by(|(a_rel, a_hash, _), (b_rel, b_hash, _)| {
+        (a_rel, a_hash).cmp(&(b_rel, b_hash))
+    });
+    let mut inserts = Vec::with_capacity(insert_facts.len());
+    for (rel, hash, fact) in insert_facts {
         inserts.push(fact_op(
             schema,
             &selections,

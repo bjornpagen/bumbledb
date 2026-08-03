@@ -18,20 +18,20 @@ impl WriteDelta<'_> {
         self.present(view, rel, &fact_hash(fact_bytes))
     }
 
-    /// The net insert set in deterministic `(relation, fact_hash)` order —
-    /// exactly the facts commit will add (readers: the apply phase and the
-    /// source-side judgment, which iterates it directly). The hash rides
-    /// along borrowed from the map key: the delta already computed and
-    /// keyed by it, so the plan carries it into each
-    /// [`super::super::commit`] fact op for free — the applier never
-    /// re-hashes.
+    /// The net insert set — exactly the facts commit will add (reader:
+    /// the plan derivation, which collects and sorts into the
+    /// deterministic `(relation, fact_hash)` commit order; the hash-table
+    /// iteration order here is meaningless). The hash rides along
+    /// borrowed from the map key: the delta already computed and keyed
+    /// by it, so the plan carries it into each fact op for free — the
+    /// applier never re-hashes.
     pub(crate) fn inserts(&self) -> impl Iterator<Item = (RelationId, &[u8; 32], &[u8])> {
         self.dispositions(Disposition::Insert)
     }
 
-    /// The net delete set in deterministic `(relation, fact_hash)` order —
-    /// exactly the facts commit will remove (reader: the apply phase),
-    /// each with its map-key hash exactly as [`Self::inserts`].
+    /// The net delete set — exactly the facts commit will remove (reader:
+    /// the plan derivation), each with its map-key hash and the same
+    /// meaningless iteration order as [`Self::inserts`].
     pub(crate) fn deletes(&self) -> impl Iterator<Item = (RelationId, &[u8; 32], &[u8])> {
         self.dispositions(Disposition::Delete)
     }
@@ -43,16 +43,16 @@ impl WriteDelta<'_> {
     /// exact: a delete-then-reinsert of the same fact cancels to no entry,
     /// so "absent here" is precisely "this commit removes no fact from
     /// the relation" — a delete-free relation's image survives as an
-    /// append base. One ordered pass over the `(relation, hash)`-keyed
-    /// map (contiguous per relation, so the last-pushed dedup is total);
-    /// allocation is at most one small `Vec`.
+    /// append base. One pass over the hash-table plus a sort of the tiny
+    /// per-relation result; allocation is at most one small `Vec`.
     pub(crate) fn dirty_relations(&self) -> Vec<RelationId> {
         let mut dirty: Vec<RelationId> = Vec::new();
         for ((rel, _), (_, disposition)) in &self.facts {
-            if *disposition == Disposition::Delete && dirty.last() != Some(rel) {
+            if *disposition == Disposition::Delete && !dirty.contains(rel) {
                 dirty.push(*rel);
             }
         }
+        dirty.sort_unstable();
         dirty
     }
 
@@ -62,8 +62,8 @@ impl WriteDelta<'_> {
     /// which hands it to `ImageCache::advance` so an insert below a
     /// retained append base's boundary (explicit fresh re-supply — the
     /// non-tail arm) evicts the base: the prefix property is enforced,
-    /// never assumed from counter shape. Ascending by relation (one
-    /// ordered pass over the fact map); fresh-less relations never
+    /// never assumed from counter shape. Ascending by relation (the tiny
+    /// per-relation result sorts once); fresh-less relations never
     /// appear — their mints are tail by construction.
     pub(crate) fn inserted_floors(&self) -> Vec<(RelationId, u64)> {
         let mut floors: Vec<(RelationId, u64)> = Vec::new();
@@ -80,11 +80,12 @@ impl WriteDelta<'_> {
                 relation.layout(),
                 usize::from(field.0),
             ));
-            match floors.last_mut() {
-                Some((last, min)) if *last == *rel => *min = (*min).min(row_id),
-                _ => floors.push((*rel, row_id)),
+            match floors.iter_mut().find(|(seen, _)| seen == rel) {
+                Some((_, min)) => *min = (*min).min(row_id),
+                None => floors.push((*rel, row_id)),
             }
         }
+        floors.sort_unstable_by_key(|&(rel, _)| rel);
         floors
     }
 
