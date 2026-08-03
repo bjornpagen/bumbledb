@@ -880,10 +880,15 @@ fn validate_capacity(
     // Dependent-bound typing: the ident resolved by NAME against
     // TARGET's whole field roster (C1 — the projection tuple stays the
     // pure grouping key), u64 or interval per its spelling; and the C18
-    // dimension gate — a unit (count) window against a Duration bound
-    // mixes dimensions and is refused (Duration weights pair with
-    // Duration-capable bounds; u64 is u64, so a u64-field weight under
-    // a literal or u64-field bound stands).
+    // dimension gate, the PAIRING LAW over the dependent sites — the
+    // window compares the weight's sum against the bound's read, so
+    // their dimensions must agree. A Duration bound (a span of time)
+    // pairs only with a Duration weight: a unit (count) or u64-field
+    // window against it mixes dimensions and is refused. A u64-field
+    // bound (a plain quantity) pairs with the unit and u64-field
+    // weights: a Duration weight against it is the same mixing read the
+    // other way. Literal windows stay dimensionless — a Duration weight
+    // under a literal ceiling is the legal calendar shape.
     let bound_tail = match hi {
         None | Some(Bound::Lit(_)) => None,
         Some(Bound::TargetField(field)) => {
@@ -894,6 +899,9 @@ fn validate_capacity(
                     field,
                 }
                 .at(id));
+            }
+            if matches!(weight, Weight::DurationOf(_)) {
+                return Err(StatementErrorKind::CapacityDimensionMixing { field }.at(id));
             }
             None
         }
@@ -906,7 +914,7 @@ fn validate_capacity(
                 }
                 .at(id));
             };
-            if weight == Weight::Unit {
+            if !matches!(weight, Weight::DurationOf(_)) {
                 return Err(StatementErrorKind::CapacityDimensionMixing { field }.at(id));
             }
             Some(IntervalTail { width })
