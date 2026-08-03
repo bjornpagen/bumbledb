@@ -213,6 +213,10 @@ pub mod names {
     pub const FINALIZE: &str = "finalize";
     /// The key-probe access path. (1 hit / 0 miss, -)
     pub const KEY_PROBE: &str = "key_probe";
+    /// One snapshot point read (`Snapshot::get` / `get_dyn` /
+    /// `get_dyn_into`) — the formerly wholly dark keyed-get surface,
+    /// spanned whole at the API boundary. (1 hit / 0 miss, -)
+    pub const POINT_READ: &str = "point_read";
     /// The whole selection-probe loop, batched over the occurrences —
     /// the lazy selection forces run inside it, so the span keeps that
     /// cost from masquerading as rule self-time

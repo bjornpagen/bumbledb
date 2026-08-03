@@ -242,30 +242,51 @@ pub(crate) fn decode_values_keyed(
     layout: &FactLayout,
     projection: &[bumbledb_theory::schema::FieldId],
     key_values: &[bumbledb_theory::Value],
-    mut resolve_str: impl FnMut(u64) -> crate::error::Result<Box<[u8]>>,
+    resolve_str: impl FnMut(u64) -> crate::error::Result<Box<[u8]>>,
 ) -> crate::error::Result<Vec<bumbledb_theory::Value>> {
+    let mut out = Vec::new();
+    decode_values_keyed_into(fact, layout, projection, key_values, resolve_str, &mut out)?;
+    Ok(out)
+}
+
+/// [`decode_values_keyed`] into a caller-provided buffer — the pooled
+/// point-read decode (`Snapshot::get_dyn_into` / `WriteTx::get_dyn_into`):
+/// the values `Vec` is the caller's, its capacity retained across gets,
+/// so a warm keyed get's allocator traffic shrinks to the variable-width
+/// payload boxes alone. Clears `out` first; a decode error leaves the
+/// written prefix (the caller treats `Err` as no result).
+pub(crate) fn decode_values_keyed_into(
+    fact: &[u8],
+    layout: &FactLayout,
+    projection: &[bumbledb_theory::schema::FieldId],
+    key_values: &[bumbledb_theory::Value],
+    mut resolve_str: impl FnMut(u64) -> crate::error::Result<Box<[u8]>>,
+    out: &mut Vec<bumbledb_theory::Value>,
+) -> crate::error::Result<()> {
     use bumbledb_theory::Value;
     debug_assert_eq!(projection.len(), key_values.len());
-    (0..layout.field_count())
-        .map(|idx| {
-            if let Some(pos) = projection.iter().position(|f| usize::from(f.0) == idx) {
-                return Ok(key_values[pos].clone());
+    out.clear();
+    out.reserve(layout.field_count());
+    for idx in 0..layout.field_count() {
+        if let Some(pos) = projection.iter().position(|f| usize::from(f.0) == idx) {
+            out.push(key_values[pos].clone());
+            continue;
+        }
+        out.push(match decode_field(fact, layout, idx)? {
+            ValueRef::Bool(v) => Value::Bool(v),
+            ValueRef::U64(v) => Value::U64(v),
+            ValueRef::I64(v) => Value::I64(v),
+            ValueRef::String(id) => Value::String(resolve_str(id)?),
+            ValueRef::FixedBytes(value) => Value::FixedBytes(value.as_bytes().into()),
+            // A fixed-width field decodes to the same checked host
+            // interval — the end was derived from the type's width.
+            ValueRef::IntervalU64(interval) | ValueRef::FixedIntervalU64(interval) => {
+                Value::IntervalU64(interval)
             }
-            Ok(match decode_field(fact, layout, idx)? {
-                ValueRef::Bool(v) => Value::Bool(v),
-                ValueRef::U64(v) => Value::U64(v),
-                ValueRef::I64(v) => Value::I64(v),
-                ValueRef::String(id) => Value::String(resolve_str(id)?),
-                ValueRef::FixedBytes(value) => Value::FixedBytes(value.as_bytes().into()),
-                // A fixed-width field decodes to the same checked host
-                // interval — the end was derived from the type's width.
-                ValueRef::IntervalU64(interval) | ValueRef::FixedIntervalU64(interval) => {
-                    Value::IntervalU64(interval)
-                }
-                ValueRef::IntervalI64(interval) | ValueRef::FixedIntervalI64(interval) => {
-                    Value::IntervalI64(interval)
-                }
-            })
-        })
-        .collect()
+            ValueRef::IntervalI64(interval) | ValueRef::FixedIntervalI64(interval) => {
+                Value::IntervalI64(interval)
+            }
+        });
+    }
+    Ok(())
 }

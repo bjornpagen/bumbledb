@@ -734,3 +734,76 @@ fn an_explicit_id_insert_ratchets_the_persisted_fresh_high_water() {
         "post-reopen mint {after_reopen} must exceed {minted}"
     );
 }
+
+/// The pooled point-read lane (docs/architecture/70-api.md § point
+/// reads): `get_dyn_into` fills the caller's buffer on a hit — capacity
+/// AND allocation retained across warm gets — clears it on a miss, and
+/// answers byte-identically to the owned `get_dyn` on both the snapshot
+/// and write-transaction surfaces.
+#[test]
+fn get_dyn_into_reuses_the_callers_buffer_on_both_surfaces() {
+    let dir = TempDir::new("db-get-dyn-into");
+    let db = Db::create(dir.path(), entry_schema()).expect("create");
+    db.write(|tx| {
+        tx.insert_dyn(ENTRY, &entry("a", 1))?;
+        tx.insert_dyn(ENTRY, &entry("b", 2)).map(|_| ())
+    })
+    .expect("seed");
+
+    let mut out = Vec::new();
+    db.read(|snap| {
+        assert!(snap.get_dyn_into(
+            ENTRY,
+            ENTRY_KEY,
+            &[Value::String("a".as_bytes().into())],
+            &mut out
+        )?);
+        assert_eq!(out, entry("a", 1));
+        let (capacity, ptr) = (out.capacity(), out.as_ptr());
+        assert!(snap.get_dyn_into(
+            ENTRY,
+            ENTRY_KEY,
+            &[Value::String("b".as_bytes().into())],
+            &mut out
+        )?);
+        assert_eq!(out, entry("b", 2));
+        assert_eq!(
+            (out.capacity(), out.as_ptr()),
+            (capacity, ptr),
+            "the warm get reuses the caller's allocation"
+        );
+        assert!(!snap.get_dyn_into(
+            ENTRY,
+            ENTRY_KEY,
+            &[Value::String("missing".as_bytes().into())],
+            &mut out
+        )?);
+        assert!(out.is_empty(), "a miss leaves the buffer empty");
+        assert_eq!(
+            snap.get_dyn(ENTRY, ENTRY_KEY, &[Value::String("a".as_bytes().into())])?,
+            Some(entry("a", 1)),
+            "the owned convenience is the same read"
+        );
+        Ok(())
+    })
+    .expect("snapshot reads");
+
+    db.write(|tx| {
+        assert!(tx.get_dyn_into(
+            ENTRY,
+            ENTRY_KEY,
+            &[Value::String("a".as_bytes().into())],
+            &mut out
+        )?);
+        assert_eq!(out, entry("a", 1));
+        assert!(!tx.get_dyn_into(
+            ENTRY,
+            ENTRY_KEY,
+            &[Value::String("zzz".as_bytes().into())],
+            &mut out
+        )?);
+        assert!(out.is_empty());
+        Ok(())
+    })
+    .expect("write-surface reads");
+}
