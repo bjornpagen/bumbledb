@@ -185,6 +185,64 @@ fn fold_split_prefixes_group_variables() {
     );
 }
 
+/// The split routes each lookup by fold-domain contact: a group-only
+/// lookup moves to the prefix node — probed once per group, and a
+/// second cover candidate there — while a fold-touching lookup stays
+/// with the suffix. Left in the suffix, the group-only lookup would be
+/// probed once per fold element AND `gj_split` would skip it (its
+/// variables all bind at one node — exactly the shape that split
+/// ignores).
+#[test]
+fn fold_split_moves_group_only_lookups_to_the_prefix() {
+    // R(g, x) covered, S(g) a group-only lookup, T(g, x) fold-touching:
+    // grouped by g (A), folded over x (X).
+    let query = normalized(
+        vec![
+            occurrence(0, 0, &[(1, A), (2, X)]),
+            occurrence(1, 1, &[(1, A)]),
+            occurrence(2, 2, &[(1, A), (2, X)]),
+        ],
+        vec![],
+    );
+    let mut plan = FjPlan {
+        nodes: vec![Node {
+            subatoms: vec![
+                subatom(0, &[A, X]),
+                subatom(1, &[A]),
+                subatom(2, &[A, X]),
+            ],
+        }],
+    };
+    let group: std::collections::BTreeSet<VarId> = [A].into_iter().collect();
+    let mut estimates = vec![9_000];
+    fold_split(&mut plan, &group, &mut estimates);
+    assert_eq!(
+        plan.nodes,
+        vec![
+            Node {
+                subatoms: vec![subatom(0, &[A]), subatom(1, &[A])]
+            },
+            Node {
+                subatoms: vec![subatom(0, &[X]), subatom(2, &[A, X])]
+            },
+        ],
+        "S rides the prefix; T stays with the fold domain"
+    );
+    assert_eq!(estimates, vec![9_000, 9_000]);
+    let validated = validate(
+        &plan,
+        &query,
+        &schema(3, 3),
+        estimates,
+        &std::collections::BTreeSet::new(),
+    )
+    .expect("the split plan validates");
+    assert_eq!(
+        validated.occurrence(OccId(0)).trie_schema,
+        vec![vec![A], vec![X]]
+    );
+}
+
 /// The split's identity cases: an opening level with no group variable
 /// (nothing to prefix) and one that is ALL group variables (already a
 /// prefix) both pass through unchanged.
