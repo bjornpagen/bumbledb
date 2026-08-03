@@ -1,0 +1,16 @@
+execute 1959
+execute;bind_params 125
+execute;finalize 245000
+execute;rule_0 167
+execute;rule_0;join 241708
+execute;rule_0;selections 208
+execute;rule_0;views 250
+execute;rule_1 84
+execute;rule_1;join 240208
+execute;rule_1;selections 83
+execute;rule_1;views 41
+execute;rule_2 43
+execute;rule_2;join 0
+execute;rule_2;join;jp_descend_n0 722583
+execute;rule_2;selections 83
+execute;rule_2;views 41

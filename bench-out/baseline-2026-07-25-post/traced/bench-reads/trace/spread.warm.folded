@@ -1,0 +1,14 @@
+execute 6209
+execute;bind_params 125
+execute;finalize 382541
+execute;rule_0 584
+execute;rule_0;join 0
+execute;rule_0;join;jp_descend_n0 8909708
+execute;rule_0;join;jp_descend_n1 5816041
+execute;rule_0;join;jp_force_n0 1708
+execute;rule_0;join;jp_gather_n0 183750
+execute;rule_0;join;jp_hash_n0 149416
+execute;rule_0;join;jp_probe_n0 852500
+execute;rule_0;join;jp_residual_n0 5041
+execute;rule_0;selections 83
+execute;rule_0;views 916

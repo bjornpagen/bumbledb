@@ -1,0 +1,10 @@
+execute 251
+execute;finalize 541
+execute;rule_0 126
+execute;rule_0;join 293
+execute;rule_0;join;jp_descend_n0 1083
+execute;rule_0;join;jp_iter_n0 83
+execute;rule_0;join;jp_residual_n0 41
+execute;rule_0;resolve_filters 41
+execute;rule_0;selections 41
+execute;rule_0;views 83

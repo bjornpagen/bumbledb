@@ -1,0 +1,9 @@
+write_txn 186250
+write_txn;commit 43544
+write_txn;commit;apply_deletes 166
+write_txn;commit;apply_inserts 764250
+write_txn;commit;counters_flush 4791
+write_txn;commit;judgment_capacities 41
+write_txn;commit;judgment_source 203750
+write_txn;commit;judgment_target 83
+write_txn;commit;lmdb_commit 820458

@@ -1,0 +1,15 @@
+execute 1835
+execute;bind_params 291
+execute;finalize 458
+execute;rule_0 376
+execute;rule_0;join 0
+execute;rule_0;join;jp_descend_n0 2625
+execute;rule_0;join;jp_descend_n1 2083
+execute;rule_0;join;jp_force_n0 125
+execute;rule_0;join;jp_gather_n0 583
+execute;rule_0;join;jp_hash_n0 291
+execute;rule_0;join;jp_probe_n0 333
+execute;rule_0;join;jp_residual_n0 250
+execute;rule_0;resolve_filters 41
+execute;rule_0;selections 125
+execute;rule_0;views 166
