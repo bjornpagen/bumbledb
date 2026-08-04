@@ -151,8 +151,8 @@ a DNF lane joins no bar (excluded and counted in the title):
 Six non-ledger worlds — joins, graph, olap, points, rings, temporal — 36
 (query, SQLite-lane) pairs, each oracle-gated before timing. Geomean across
 the **34 timed lanes: 19.9×** (the campaign ran 18.0×, the night 12.0×;
-the bugbash fix lanes cashed where their attribution pointed — g6 3.0×,
-t1 2.4×, g3 1.6× better than the baseline on our own p50s — and the
+the bugbash fix lanes cashed where their attribution pointed — the
+g6/t1/g3 ratios landed 3.0×/2.4×/1.6× better than the 07-25 baseline — and the
 flat/adverse lanes are reported exactly as measured in
 `bench-out/baseline-2026-07-25-post/DELTA.md`, including the one real
 regression the rebench called on itself: `r6_two_path_count` 1.46× worse,
