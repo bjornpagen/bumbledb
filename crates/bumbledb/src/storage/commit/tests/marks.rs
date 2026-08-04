@@ -893,6 +893,36 @@ fn capacity_duration_weight_of_a_ray_refuses_typed() {
     assert_eq!(**fact, *b, "the refusal names the weighed row");
 }
 
+/// C20 (owner, 2026-08-03): the write-time ray refusal is DOCTRINE, not
+/// a slot-arm accident. A ray child under an ABSENT parent — the one
+/// shape the judge would never measure (a capacity law over an absent
+/// parent constrains nothing) — still refuses at write time: a row
+/// governed by a Duration-weighted capacity law must carry a measurable
+/// weight whether or not anyone is currently counting it. Strictly
+/// stronger than C10's judge-time refusal; this is the exact cell where
+/// the two differ.
+#[test]
+fn capacity_duration_ray_under_an_absent_parent_still_refuses() {
+    let schema = duration_schema(Bound::Lit(10));
+    let b = ray_booking(&schema, 404, 5, 0);
+    let result = base_then_delta(
+        "cap-ray-weight-absent-parent",
+        &schema,
+        &[],
+        &[],
+        &[(BOOKING, b.clone())],
+    );
+    let err = result.unwrap_err();
+    let Error::CapacityRayMeasure { statement, fact } = &err else {
+        panic!("expected the typed ray refusal, got {err:?}");
+    };
+    assert_eq!(*statement, BOOKED_CAPACITY);
+    assert_eq!(
+        **fact, *b,
+        "the refusal names the weighed row, judged group or not"
+    );
+}
+
 /// An INVERTED interval in the weighed field (`end < start`) —
 /// unrepresentable through the value codec, so the raw bytes model
 /// hostile stored data. The measure must convict typed corruption,

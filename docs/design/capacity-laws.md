@@ -11,10 +11,10 @@ min-of-3 ephemeral p50s, µs: `commit_capacity_sum` fetch 35.2 vs slot 32.3,
 18.2 under both arms; artifacts `bench-out/baseline-2026-07-25/capacity-c17/`.
 The slot arm landed as the only form, the fetch arm and the
 `CAPACITY_WEIGHT_SLOT` flag are deleted, and the numbers are the CONSTRAINT
-comment at the walk (`crates/bumbledb/src/storage/commit/judgment.rs`). One
-consequence needs an owner ruling (recorded there, not ruled): a ray-valued
-Duration weight now refuses at WRITE time — strictly stronger than C10's
-judge-time refusal. The §8b zero-trace gate ran GREEN at close over the full scope.
+comment at the walk (`crates/bumbledb/src/storage/commit/judgment.rs`). The
+one consequence it surfaced is RULED: C20 (2026-08-03) blesses the write-time
+ray refusal as doctrine — strictly stronger than C10's judge-time refusal.
+The §8b zero-trace gate ran GREEN at close over the full scope.
 Ground-truth deltas from execution are stamped on the companion dossier
 (`capacity-cutover.md`). Drafted 2026-07-24 from the weighted-capacity
 discussion. This document specifies a deletion and a generalization: the `<={lo..hi}`
@@ -350,8 +350,8 @@ compat, hard deletion of all of the cardinality logic")
    trigger — this is a boundary, not a deferral: admitting terms into the bracket grows a
    query evaluator inside the judge and reopens the cached-truth drift class.
 
-## 8b. Cutover rulings C1–C19 — RESOLVED by doctrine (owner approved the whole hard
-cutover 2026-07-24; each blocker below resolves from rulings already made)
+## 8b. Cutover rulings C1–C20 — RESOLVED (C1–C19 by doctrine, owner approved the whole
+hard cutover 2026-07-24; C20 ruled 2026-08-03 off C17's measured close)
 
 - **C1 (bound spelling):** bound idents resolve by NAME against the target's full roster;
   the written projection tuple stays the pure grouping key: `Pool(id) <=[watts]{0..supply}
@@ -409,6 +409,19 @@ cutover 2026-07-24; each blocker below resolves from rulings already made)
   aggregate-vs-aggregate windows (`Sum(debits) == Sum(credits) per Transaction`) are the
   known next generalization, deliberately unbuilt; the trigger is a real host asking for
   a balance constraint.
+- **C20 (write-time ray refusal — ruled 2026-08-03, surfaced by C17's measured close):**
+  the landed slot arm derives every capacity edge's weight at write time, so a ray-valued
+  Duration weight refuses the commit at PLAN time — strictly stronger than C10, and
+  observably different in exactly one cell: a ray child under an absent parent, which the
+  judge would never measure (a capacity law over an absent parent constrains nothing) but
+  the write now refuses. RULED as doctrine, not accident: a row governed by a
+  Duration-weighted capacity law must carry a measurable weight whether or not any
+  judgment currently demands it — fail-fast by representation, the same wall as the
+  slot's width law (disagreement is corruption, never fallback). The naive twin mirrors
+  the plan-phase refusal (`bumbledb-bench/src/naive.rs: ray_weight_refusal`), the engine
+  pin is `storage/commit/tests/marks.rs:
+  capacity_duration_ray_under_an_absent_parent_still_refuses`, and the C17 record is
+  `bench-out/baseline-2026-07-25/capacity-c17/SUMMARY.md`.
 
 **The zero-trace gate:** at campaign close, `rg -i cardinal` over crates/, ts/src, ts/crate,
 ts/test, lean/, docs/architecture/, docs/research/, scripts/ returns zero hits. Historical

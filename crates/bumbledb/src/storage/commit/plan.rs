@@ -223,9 +223,9 @@ pub(crate) struct DependentCheck {
 /// The one fallible slice is the weighted edge's weight derivation
 /// ([`MarkEdgeOp::weight`], the C17 slot law), INSERT ops only: a
 /// ray-valued Duration weight has no finite u64 for the value slot, so
-/// it refuses typed at plan time (the write-time ray corner recorded at
-/// the judgment constraint comment — owner ruling owed). Delete ops
-/// never derive — their removal is key-only.
+/// it refuses typed at plan time (C20, ruled 2026-08-03: the write-time
+/// refusal is doctrine — see the judgment constraint comment). Delete
+/// ops never derive — their removal is key-only.
 pub(crate) fn plan_commit<'d>(
     delta: &'d WriteDelta<'_>,
     schema: &Schema,

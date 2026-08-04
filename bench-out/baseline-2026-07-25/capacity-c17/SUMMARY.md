@@ -61,6 +61,10 @@ WRITE time (the slot needs a finite u64), strictly stronger than C10's
 judge-time refusal, visible only for a ray child under an absent
 parent.
 
+*Addendum 2026-08-03: RULED — C20 blesses the write-time refusal as
+doctrine (`docs/design/capacity-laws.md` §8b C20; the absent-parent cell
+pinned by `capacity_duration_ray_under_an_absent_parent_still_refuses`).*
+
 Cells: `fetch-durable/`, `slot-durable/`, `fetch-ephemeral[-r2,-r3]/`,
 `slot-ephemeral[-r2,-r3]/` — each with `report.json`/`report.md`/
 `run.log` (+ corpus digests where the driver pinned them).

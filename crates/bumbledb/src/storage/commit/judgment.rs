@@ -100,10 +100,14 @@ pub(super) fn judge(view: &FinalStateView<'_, '_, '_>) -> Result<Option<Violatio
 // lane agreed in direction (sum p50 5365.1 vs 5093.4). Readers dispatch
 // on the statement's DECLARED weight, never on value length — a width
 // disagreeing with the declaration is corruption, not a fallback.
-// Semantic corner, OWNER RULING OWED (recorded, not ruled here): a
-// ray-valued Duration weight now refuses at WRITE time (the slot needs
-// a finite u64), strictly stronger than C10's judge-time refusal —
-// visible only for a ray child under an absent parent.
+// Semantic corner, RULED C20 (owner, 2026-08-03): a ray-valued Duration
+// weight refuses at WRITE time (the slot needs a finite u64), strictly
+// stronger than C10's judge-time refusal — visible only for a ray child
+// under an absent parent, and DOCTRINE there: a row governed by a
+// Duration-weighted capacity law must carry a measurable weight whether
+// or not any judgment currently demands it (fail-fast; never latent).
+// Pinned: tests/marks.rs
+// `capacity_duration_ray_under_an_absent_parent_still_refuses`.
 
 /// One source fact's weight under a capacity statement's measure
 /// (`lean/Bumbledb/Capacity.lean: Weight.apply`): `Unit` is 1 — the

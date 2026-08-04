@@ -22,11 +22,6 @@ per-fix-lane verdicts, the 22 flamediffs). The campaign lived on branch
   COUNT-shaped territory — descend now carries essentially the whole query
   (`flame/scenarios.rings.r6_two_path_count.warm.diff.svg`, jp_descend
   51%+45%). Same discipline: trace-reader ranking before any change.
-- **Owner ruling owed (surfaced by C17, recorded not ruled)**: the landed
-  slot arm refuses a ray-valued Duration weight at WRITE time — strictly
-  stronger than C10's judge-time refusal, visible only for a ray child
-  under an absent parent (`bench-out/baseline-2026-07-25/capacity-c17/
-  SUMMARY.md`).
 - **Overlap constants re-pin**: `OVERLAP_CROSSOVER = 16`
   (`exec/run/overlap_leaf.rs`) and `FLAT_SWEEP_CEILING = 128`
   (`interval/overlap.rs`) are rig-pinned provisional — re-pin both from the
@@ -61,6 +56,9 @@ per-fix-lane verdicts, the 22 flamediffs). The campaign lived on branch
 
 - C17 slot-vs-fetch: measured, slot landed, fetch arm + flag deleted
   (`484c3871`; artifacts `bench-out/baseline-2026-07-25/capacity-c17/`).
+- The C17 write-time ray corner: RULED C20 (owner, 2026-08-03) — the
+  write-time refusal is doctrine (`docs/design/capacity-laws.md` §8b C20),
+  pinned by `capacity_duration_ray_under_an_absent_parent_still_refuses`.
 - The capacity/windowed/lawful bench lanes + re-pins under the capacity
   spelling (`e511b540`), the calendar capacity twin world.
 - The writes-ladder and churn wall-power reruns (the campaign manifest's
