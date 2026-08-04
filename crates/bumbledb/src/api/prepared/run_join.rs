@@ -144,6 +144,34 @@ pub(super) fn run_join<S: crate::exec::run::Sink, C: crate::exec::run::Counters>
             );
             continue;
         }
+        // The occurrence dedup (docs/architecture/40-execution.md):
+        // another occurrence whose ACTIVE binding is this exact
+        // (generation, resolved residual filters) over the same relation
+        // with the same trie orientation holds a byte-identical view and
+        // byte-identical forced state — a cyclic self-join was scanning
+        // and re-forcing the same 428k-row view once per occurrence. The
+        // canonical root forces eagerly first (the one force the join
+        // was about to pay lazily anyway), then the rebuild is a pool
+        // copy instead of an image scan plus a per-occurrence re-force.
+        if let Some(canon) = dedup_source(plan, memo, occ_idx, generation, resolved_filters) {
+            let buffer = std::mem::take(&mut memo.spare_buffers[occ_idx]);
+            let [canon_colt, colt] = memo
+                .colts
+                .get_disjoint_mut([canon, occ_idx])
+                .expect("dedup source is a distinct occurrence");
+            canon_colt.force_root();
+            let old = colt.clone_bound_from(canon_colt, buffer);
+            obs::event(
+                obs::names::VIEW_DEDUP,
+                obs::Category::Execute,
+                occ_idx as u64,
+                canon as u64,
+            );
+            memo.spare_buffers[occ_idx] = old.recycle();
+            memo.generation[occ_idx] = Some(generation);
+            memo.filters[occ_idx].clone_from(&resolved_filters[occ_idx]);
+            continue;
+        }
         let mut build_span = obs::span_args(
             obs::names::VIEW_BUILD,
             obs::Category::Execute,
@@ -166,6 +194,13 @@ pub(super) fn run_join<S: crate::exec::run::Sink, C: crate::exec::run::Counters>
     // miss means no fact matches, so the whole conjunctive query is
     // empty and the join never runs (the sink stays reset: a zero-emit
     // execution).
+    // One batched span over the whole loop (Gap A): the probes force
+    // selection levels lazily, and without this span that dominant cold
+    // cost masqueraded as rule self-time. Zero-cost off, batch
+    // granularity — never a span per occurrence, and the per-occurrence
+    // probe stays the existing point event.
+    let mut selections_span = obs::span(obs::names::SELECTIONS, obs::Category::Execute);
+    let mut probed = 0u64;
     for (occ_idx, keys) in resolved_selections.iter().enumerate() {
         if plan.occurrences()[occ_idx].role.discharged() {
             debug_assert!(
@@ -175,6 +210,7 @@ pub(super) fn run_join<S: crate::exec::run::Sink, C: crate::exec::run::Counters>
             continue;
         }
         let hit = memo.colts[occ_idx].select(keys).is_some();
+        probed += 1;
         obs::event(
             obs::names::SELECT_PROBE,
             obs::Category::Execute,
@@ -182,9 +218,12 @@ pub(super) fn run_join<S: crate::exec::run::Sink, C: crate::exec::run::Counters>
             u64::from(hit),
         );
         if !hit {
+            selections_span.set_args(probed, 0);
             return Ok(());
         }
     }
+    selections_span.set_args(probed, 1);
+    selections_span.end();
     let _join = obs::span(obs::names::JOIN, obs::Category::Execute);
     // The executor monomorphizes per concrete sink type — callers match
     // their sink enum once per execution BEFORE this call (`run_rule`'s
@@ -192,4 +231,31 @@ pub(super) fn run_join<S: crate::exec::run::Sink, C: crate::exec::run::Counters>
     // no per-emit enum branch exists on the hot path.
     executor.execute(plan, &mut memo.colts, bindings, sink, counters)?;
     Ok(())
+}
+
+/// The occurrence-dedup scan: an occurrence other than `occ` whose
+/// *active* binding is exactly (`generation`, occ's resolved residual
+/// filters) over the same relation with the same trie orientation
+/// ([`crate::exec::colt::Colt::same_shape`]). Idb and discharged
+/// occurrences never bind a generation, so the generation check
+/// excludes them for free. O(occurrences) compares, only inside the
+/// sanctioned rebuild window — the warm path never gets here.
+fn dedup_source(
+    plan: &crate::plan::fj::ValidatedPlan,
+    memo: &ViewMemo,
+    occ: usize,
+    generation: ViewGeneration,
+    resolved_filters: &[Vec<FilterPredicate>],
+) -> Option<usize> {
+    let relation = plan.occurrences()[occ].relation();
+    plan.occurrences()
+        .iter()
+        .enumerate()
+        .position(|(other, occurrence)| {
+            other != occ
+                && occurrence.source.edb() == Some(relation)
+                && memo.generation[other] == Some(generation)
+                && memo.filters[other] == resolved_filters[occ]
+                && memo.colts[other].same_shape(&memo.colts[occ])
+        })
 }

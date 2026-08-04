@@ -1,0 +1,34 @@
+scheduler boost: user-interactive QoS claimed
+scenario points: loaded 304096 facts x 2 engines
+scenario points: p1_by_id
+scenario points: p2_by_key
+scenario points: p3_bucket_fetch
+scenario points: p4_size_band
+scenario points: p5_keyed_get
+# Scenario benchmarks
+
+Report-class measurements over non-ledger worlds; every query oracle-gated (value-identical results on both engines, every `SQLite` lane, never under a cap) before timing. Adversarial lanes run under a per-sample wall-clock cap (`SQLite`'s progress handler): a lane that trips it reports `DNF>cap` with NO percentiles — excluded from geomeans and counted. Protocol: 8 warmups, 1 samples, medians; `SQLite` file-backed WAL `synchronous=FULL`, fully indexed, prepared statements reused, ANALYZE run. ratio = ours/theirs (lower is better; <1 = bumbledb faster).
+
+
+## points (geomean ratio 0.12 over 5 timed)
+
+| query | lane | rows | ours p50 (us) | sqlite p50 (us) | ratio | regime |
+|---|---|---:|---:|---:|---:|---|
+| p1_by_id | sqlite | 1 | 0.3 | 1.2 | 0.29 | fresh-id point: key probe vs B-tree descent |
+| p2_by_key | sqlite | 1 | 1.0 | 1.5 | 0.67 | keyed string point: dictionary + determinant index |
+| p3_bucket_fetch | sqlite | 1139 | 11.3 | 198.5 | 0.06 | small fan-out through a dimension + id ceiling |
+| p4_size_band | sqlite | 1 | 0.3 | 109.7 | 0.00 | secondary range folded to Count |
+| p5_keyed_get | sqlite | 1 | 1.0 | 1.5 | 0.71 | keyed get (0.5.0): the point read through Doc(key) -> Doc — determinant probe, no query machinery |
+
+Overall geomean ratio across 5 queries: **0.12**.
+
+## Allocations (per query, --alloc)
+
+| query | allocs | alloc bytes | deallocs | dealloc bytes |
+|---|---:|---:|---:|---:|
+| p1_by_id | 2 | 32 | 1 | 24 |
+| p2_by_key | 2 | 32 | 1 | 24 |
+| p3_bucket_fetch | 2 | 56 | 1 | 48 |
+| p4_size_band | 2 | 56 | 1 | 48 |
+| p5_keyed_get | 5 | 340 | 3 | 332 |
+artifacts: /Users/bjorn/Documents/bumbledb/bench-out/baseline-2026-07-25/alloc/scenarios/points

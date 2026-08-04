@@ -829,6 +829,45 @@ fn an_absent_fresh_sequence_is_found_against_the_tally() {
     );
 }
 
+/// Finding 033, the exhausted-sequence corner: the exemption keys on
+/// the STORED next-value being exhausted, never on the tally alone — a
+/// row holding an explicit `u64::MAX` must not mask a regressed `Q`
+/// underneath it (`alloc()` would re-issue every id between the
+/// regression and the ceiling).
+#[test]
+fn a_max_row_does_not_mask_a_regressed_fresh_next_value() {
+    let (_dir, db) = fixture_with_healthy_sibling("verify-q-max-masked");
+    db.write(|tx| {
+        tx.insert_dyn(
+            HOLDER,
+            &[
+                Value::U64(u64::MAX),
+                Value::String("mallory".as_bytes().into()),
+            ],
+        )
+        .map(|_| ())
+    })
+    .expect("insert the exhausting row");
+    // The legal exhausted shape first: stored == tally == MAX is exempt.
+    assert_eq!(db.verify_store().expect("verify").findings, vec![]);
+    let q = key(|b| keys::fresh_key(b, HOLDER, FieldId(0)));
+    raw_write(&db, |txn| {
+        txn.env()
+            .data()
+            .put(txn.raw_mut(), &q, 7u64.to_le_bytes().as_slice())
+            .expect("regress Q");
+    });
+    assert_eq!(
+        db.verify_store().expect("verify").findings,
+        vec![StoreFinding::FreshNextValueLow {
+            relation: HOLDER,
+            field: FieldId(0),
+            stored: 7,
+            max_fresh: u64::MAX,
+        }]
+    );
+}
+
 #[test]
 fn missing_membership_is_found_from_the_fact_side() {
     let (_dir, db) = fixture("verify-missing-m");
@@ -1610,6 +1649,99 @@ fn a_marked_store_verifies_clean() {
     assert_eq!(db.verify_store().expect("verify").findings, vec![]);
 }
 
+/// The CLOSED-parent arm — `verify_store/marks.rs`'s own pass, distinct
+/// from the ordinary-parent capacity re-check that rides the `F` scan:
+/// closed parents have no `F` rows, so their roster walks per sealed
+/// axiom. A green store sweeps clean; a raw-deleted capacity edge is
+/// both the missing-edge finding and the axiom's group re-measured
+/// below its floor.
+#[test]
+fn a_closed_parent_capacity_group_is_remeasured_by_the_marks_pass() {
+    let pool = RelationId(0);
+    let device = RelationId(1);
+    // Materialized: Pool's closed auto-key (0), then the capacity (1).
+    let capacity = StatementId(1);
+    let plain = |name: &str| FieldDescriptor {
+        name: name.into(),
+        value_type: ValueType::U64,
+        generation: Generation::None,
+    };
+    let decl = SchemaDescriptor {
+        relations: vec![
+            RelationDescriptor {
+                extension: Some(Box::new([bumbledb_theory::schema::Row {
+                    handle: "P0".into(),
+                    values: Box::new([Value::U64(9)]),
+                }])),
+                name: "Pool".into(),
+                fields: vec![plain("cap")],
+            },
+            RelationDescriptor {
+                extension: None,
+                name: "Device".into(),
+                fields: vec![plain("pool"), plain("num")],
+            },
+        ],
+        // `Pool(id) <={1..2} Device(pool)` — the closed parent's window.
+        statements: vec![StatementDescriptor::Capacity {
+            target: Side {
+                relation: pool,
+                projection: Box::new([FieldId(0)]),
+                selection: Box::new([]),
+            },
+            weight: bumbledb_theory::schema::Weight::Unit,
+            lo: 1,
+            hi: Some(bumbledb_theory::schema::Bound::Lit(2)),
+            source: Side {
+                relation: device,
+                projection: Box::new([FieldId(0)]),
+                selection: Box::new([]),
+            },
+        }],
+    };
+    let dir = TempDir::new("verify-marks-closed-parent");
+    let db = Db::create(dir.path(), decl).expect("create");
+    db.write(|tx| {
+        tx.insert_dyn(device, &[Value::U64(0), Value::U64(0)])
+            .map(|_| ())
+    })
+    .expect("one device inside the window");
+    assert_eq!(
+        db.verify_store().expect("verify").findings,
+        vec![],
+        "the green closed-parent store sweeps clean"
+    );
+    // The R-delete-blind class against the closed parent: the axiom's
+    // group drops below its floor, visible only to the marks pass.
+    let r = key(|b| keys::reverse_key(b, capacity, &encode_u64(0), device, 0));
+    raw_write(&db, |txn| {
+        let data = txn.env().data();
+        assert!(
+            data.delete(txn.raw_mut(), &r).expect("raw delete"),
+            "the fixture wrote this capacity edge"
+        );
+    });
+    let parent_fact: Box<[u8]> = db.schema().relation(pool).extension().expect("closed")[0]
+        .fact
+        .clone();
+    let findings = db.verify_store().expect("verify").findings;
+    assert!(
+        findings.contains(&StoreFinding::CapacityViolation {
+            statement: capacity,
+            fact: parent_fact,
+            measure: 0,
+        }),
+        "the marks pass re-measures the sealed axiom's group, got {findings:?}"
+    );
+    assert!(
+        findings
+            .iter()
+            .any(|f| matches!(f, StoreFinding::FactWithoutReverseEdge { .. })),
+        "the missing edge itself is also found, got {findings:?}"
+    );
+    assert_eq!(findings.len(), 2, "exactly the two findings: {findings:?}");
+}
+
 /// The R-delete-blind class, capacity form: a raw-deleted capacity edge
 /// is both the missing-edge finding AND a global re-measure below the
 /// floor — the sweeper owns exactly what incremental checking cannot see.
@@ -1751,8 +1883,7 @@ fn a_weighted_store_verifies_clean() {
 /// (F→R: the existence get's value must equal the fact's weight-field
 /// encoding; R→F: the entry's value must back to the live fact) report
 /// the same diverged edge, `stored` carrying the planted bytes and
-/// `derived` the live fact's expected encoding (whichever C17 arm —
-/// value slot or fetch baseline — is the one in force).
+/// `derived` the live fact's weight encoding (the C17 slot law).
 #[test]
 fn a_desynced_weight_slot_is_convicted_never_repaired() {
     let (_dir, db) = weighted_fixture("verify-weight-desync");
@@ -1786,10 +1917,10 @@ fn a_desynced_weight_slot_is_convicted_never_repaired() {
 }
 
 /// A hostile `R` edge under the weighted statement embedding a FOREIGN
-/// source relation (Pool, not Device): the fetch-baseline measure walk
-/// must refuse it as typed corruption — never slice the fetched fact
-/// with the DECLARED source layout (the panic class this guards) — so
-/// the sweep's verdict is the R pass's own conviction, and the F pass's
+/// source relation (Pool, not Device), its value slot empty: the
+/// measure walk refuses the empty slot as typed corruption (a weighted
+/// edge owes 8 bytes — width discipline, never a fallback), so the
+/// sweep's verdict is the R pass's own conviction, and the F pass's
 /// capacity judgment swallows the `Corruption` (convict-never-panic:
 /// the R pass owns the edge).
 #[test]
@@ -1812,8 +1943,9 @@ fn a_foreign_relation_capacity_edge_is_convicted_never_a_panic() {
 }
 
 /// A capacity edge naming a WRONG-WIDTH source fact (16 raw bytes
-/// planted under Device's 24-byte layout): the fetch-baseline walk must
-/// refuse it as typed corruption before slicing the weight field. The F
+/// planted under Device's 24-byte layout), its value slot empty: the
+/// walk refuses the empty slot as typed corruption without ever
+/// touching the planted fact (the slot law reads no child). The F
 /// pass convicts the planted width itself, the counters convict the raw
 /// row's tallies, and the R pass stays silent — a wrong-width fact is
 /// already F-convicted (`reverse.rs`'s own discipline) — so no capacity

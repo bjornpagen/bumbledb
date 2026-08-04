@@ -432,7 +432,7 @@ describe("the ban table, one row at a time — literal spellings are UNWRITABLE"
  * overload, and {@link weightedFloorOneCompiles} is its POSITIVE twin.
  */
 function banTableIsUnwritable(): unknown[] {
-	const { Pool, Device } = buildRacks()
+	const { Pool, Device, Room, Booking } = buildRacks()
 	return [
 		// @ts-expect-error — capacity bounds are u64: a negative exact measure is out of domain
 		within(-1n),
@@ -448,6 +448,8 @@ function banTableIsUnwritable(): unknown[] {
 		within(0n, "*"),
 		// @ts-expect-error — `{1..*}` on the UNIT instance says only what the bare containment says: write contained(source, target)
 		capacity(on(Pool, "id"), within(1n, "*"), on(Device, "pool")),
+		// @ts-expect-error — a count of facts bounded by a span of time mixes dimensions (C18): the duration() bound is banned on the UNIT instance
+		capacity(on(Room, "id"), within(0n, duration("span")), on(Booking, "room")),
 		// @ts-expect-error — a path weight is refused: the vocabulary is closed at the row — pin the column
 		weigh("model.watts"),
 		// @ts-expect-error — a path bound is refused the same way: bounds name the target's own row
@@ -534,6 +536,23 @@ describe("the ban table's construction tier — computed bounds the type cannot 
 		// The weighted twin CONSTRUCTS — the ban is Count-instance-only.
 		const weighted = capacity(on(Pool, "id"), weigh("watts"), within(computed(1n), "*"), on(Device, "pool"))
 		assert.equal(renderStatement(weighted), "Pool(id) <=[watts]{1..*} Device(pool)")
+	})
+
+	test("the C18 dimension gate fires at the capacity() call — a unit window never takes a duration() bound (both tiers)", function probeUnitDimensionGate() {
+		const { Room, Booking } = buildRacks()
+		assert.throws(function unitDurationBound() {
+			// @ts-expect-error — a count of facts bounded by a span of time mixes dimensions (C18): the type tier's ban row, with the construction wall behind it
+			return capacity(on(Room, "id"), within(0n, duration("span")), on(Booking, "room"))
+		}, /mixes dimensions \(C18\) — weigh the source with weigh\(duration\(field\)\), or bound by a u64 field or literal/)
+		// The Duration-weighted twin CONSTRUCTS — Duration weights pair
+		// with Duration-capable bounds (C18's positive half).
+		const weighted = capacity(
+			on(Room, "id"),
+			weigh(duration("booked")),
+			within(0n, duration("span")),
+			on(Booking, "room")
+		)
+		assert.equal(renderStatement(weighted), "Room(id) <=[Duration(booked)]{0..Duration(span)} Booking(room)")
 	})
 
 	test("a computed path weight or bound is a construction refusal naming the pinned-column idiom", function probeComputedPaths() {

@@ -234,6 +234,12 @@ fn filter_chunked(
     // keep-byte survivor writes above and `write <= start + n <=
     // capacity` (`u32` carries no drop obligation).
     unsafe { out.set_len(write) };
+    crate::obs::event(
+        crate::obs::names::KERNEL_ALLEN,
+        crate::obs::Category::Execute,
+        n as u64,
+        (write - start) as u64,
+    );
 }
 
 /// [`allen_code_batch`]'s core over pre-sized slices (the dense scans'

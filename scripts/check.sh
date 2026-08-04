@@ -96,6 +96,21 @@ filtered_test -p bumbledb-bench --features obs -- harness
 filtered_test -p bumbledb-bench --features obs -- trace_out
 filtered_test -p bumbledb-bench --features obs -- tripwires
 filtered_test -p bumbledb-bench --features obs -- the_engine_trace_pins
+# The traced-path smoke tests (LANE I1): every `--trace`-bearing command
+# lands parseable artifacts — the obs-gated tests are named `traced_*`
+# by discipline so this one filter is their one gate; `the_alloc_pass`
+# covers the separate per-query alloc pass. Both are obs-gated, so this
+# lane is their ONLY execution.
+filtered_test -p bumbledb-bench --features obs -- traced_
+filtered_test -p bumbledb-bench --features obs -- the_alloc_pass
+
+# The flame renderer golden (docs/architecture/61-bench-lanes.md
+# § Flamegraph tooling): a committed folded profile -> SVG and a folded
+# pair -> diff folded -> diff SVG, byte-for-byte against
+# scripts/flame-fixtures/. Without this line the snapshot exists but
+# nothing executes it — renderer drift would land unseen.
+echo "==> flame renderer golden selftest"
+python3 scripts/flame.py selftest
 
 # The x86-64 scalar-fallback promise (docs/architecture/00-product.md)
 # is EXECUTED, not cross-checked: CI's check lane runs this whole script

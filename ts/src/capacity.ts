@@ -196,6 +196,20 @@ type UnitWindowBan<W extends CapacityWindow> = W["window"] extends {
 	? BannedWindow<"`{1..*}` on the unit instance says only what the bare containment says — write contained(source, target)">
 	: unknown
 
+/**
+ * The C18 dimension gate's ban row, unit instance (the engine's
+ * `CapacityDimensionMixing` twin, ruled 2026-07-24): a unit (count)
+ * window against a `duration()` bound counts facts against a span of
+ * time — a dimension error. Judged on the `capacity()` UNIT overload
+ * only: Duration weights pair with Duration-capable bounds, so the
+ * weighted overload takes the same window freely.
+ */
+type UnitDimensionBan<W extends CapacityWindow> = W["window"] extends {
+	readonly hi: { readonly kind: "durationField" }
+}
+	? BannedWindow<"a count of facts bounded by a span of time mixes dimensions (C18) — weigh the source with weigh(duration(field)), or bound by a u64 field or literal">
+	: unknown
+
 /** The projected kind of one field of a face's source, read off the schema type. */
 type KindAt<S extends FaceSource, K extends string> =
 	ProjectedShape<S, K> extends readonly [infer Kind, ...unknown[]] ? Kind : undefined
@@ -450,5 +464,14 @@ function duration<const F extends string>(field: F & PathBan<F>): DurationRef<F>
 	return Object.freeze({ kind: "durationField", field: assertRowLocal(field, "Duration measure") }) as DurationRef<F>
 }
 
-export type { BoundsOnTarget, CapacityWeight, CapacityWindow, DurationRef, FieldRef, UnitWindowBan, WeightOnSource }
+export type {
+	BoundsOnTarget,
+	CapacityWeight,
+	CapacityWindow,
+	DurationRef,
+	FieldRef,
+	UnitDimensionBan,
+	UnitWindowBan,
+	WeightOnSource
+}
 export { duration, isCapacityWeight, isCapacityWindow, ref, unitWeight, weigh, within }

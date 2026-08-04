@@ -1,4 +1,4 @@
-use super::{Answers, BindValue, PreparedQuery, PreparedRule, Program};
+use super::{Answers, ParamArg, PreparedQuery, PreparedRule, Program};
 
 use crate::api::stats::{ExecutionStats, KeyProbeStats, RuleStats};
 use crate::error::Result;
@@ -29,7 +29,7 @@ impl<S> PreparedQuery<'_, S> {
         &mut self,
         txn: &ReadTxn<'_>,
         cache: &ImageCache,
-        params: &[BindValue<'_>],
+        params: &[ParamArg<'_>],
     ) -> Result<(Answers, String)> {
         let (out, stats) = self.profile(txn, cache, params)?;
         let pending = self.pending_literal_note();
@@ -170,11 +170,12 @@ impl<S> PreparedQuery<'_, S> {
     /// ANALYZE with structured output: executes with counting
     /// instrumentation and returns the answers alongside [`ExecutionStats`]
     /// — the data `introspect` renders. Allocation-sanctioned exactly like
-    /// `introspect`.
+    /// `introspect`. Takes the mixed [`ParamArg`] entry — execute-symmetry
+    /// (R13): whatever `execute_args` binds, profiling binds.
     ///
     /// # Errors
     ///
-    /// As [`Self::execute`].
+    /// As [`Self::execute_args`].
     ///
     /// # Panics
     ///
@@ -187,7 +188,7 @@ impl<S> PreparedQuery<'_, S> {
         &mut self,
         txn: &ReadTxn<'_>,
         cache: &ImageCache,
-        params: &[BindValue<'_>],
+        params: &[ParamArg<'_>],
     ) -> Result<(Answers, ExecutionStats)> {
         self.check_snapshot(txn)?;
         let mut out = Answers::new();
@@ -196,13 +197,14 @@ impl<S> PreparedQuery<'_, S> {
         // short-circuit: bind (errors surface), then nothing runs and
         // nothing is counted — the death record is the whole story.
         if matches!(self.program, Program::Empty) {
-            self.bind_params(txn, params)?;
+            self.bind_param_args(txn, params)?;
             return Ok((out, self.empty_stats()));
         }
-        // The single-rule key-probe program keeps its fast lane: `execute`
-        // dispatches it whole, and the stats are the probe's outcome.
+        // The single-rule key-probe program keeps its fast lane:
+        // `execute_args` dispatches it whole, and the stats are the
+        // probe's outcome.
         if matches!(self.program.rules(), [PreparedRule::KeyProbe(_)]) {
-            self.execute(txn, cache, params, &mut out)?;
+            self.execute_args(txn, cache, params, &mut out)?;
             let emitted = out.len() as u64;
             let stats = ExecutionStats {
                 introspection_version: crate::api::stats::INTROSPECTION_VERSION,
@@ -243,7 +245,7 @@ impl<S> PreparedQuery<'_, S> {
         // Per-unit node stats deliberately do not exist: one counter
         // spans many differently shaped plan units.
         if matches!(self.program, Program::Fixpoint(_)) {
-            self.bind_params(txn, params)?;
+            self.bind_param_args(txn, params)?;
             let mut counters = crate::exec::introspection::FixpointCounters::new();
             let ran = self.run_rules(txn, cache, &mut counters)?;
             if let Some([start, end]) = self.sink.measure_of_ray() {
@@ -276,7 +278,7 @@ impl<S> PreparedQuery<'_, S> {
         // counting instrumentation; finalize only if some rule ran (a
         // fully short-circuited program counted nothing and has nothing
         // to drain).
-        self.bind_params(txn, params)?;
+        self.bind_param_args(txn, params)?;
         self.sink.reset();
         let rule_count = self.program.rules().len();
         let mut rule_stats = Vec::with_capacity(rule_count);

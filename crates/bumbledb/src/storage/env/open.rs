@@ -31,7 +31,14 @@ impl Environment {
     pub fn open(path: &Path, schema: &Schema) -> Result<Self> {
         let lock = acquire_lock(path)?;
         let env = open_env(path, OpenLane::Write(StoreKind::Durable))?;
-        Self::verify_and_open(env, lock, schema, StoreKind::Durable)
+        let opened = Self::verify_and_open(env, lock, schema, StoreKind::Durable)?;
+        // The kind just verified DURABLE, so any dirty marker at the
+        // path is an orphan from a dead ephemeral store that once lived
+        // here — cleared so it can never arm a later ephemeral open
+        // against committed durable pages (the R18 lifecycle's durable
+        // half). After verification only: a refusal mutates nothing.
+        super::clear_orphan_marker(path)?;
+        Ok(opened)
     }
 
     /// The shared open body ([`Environment::open`] durable,

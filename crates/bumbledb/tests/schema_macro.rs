@@ -1442,6 +1442,48 @@ mod capacity_forms {
     }
 }
 
+#[allow(non_snake_case)] // the point of the fixture: a FIELD literally named `Duration`
+mod duration_named_field {
+    //! `Duration` commits to the measure spelling only when the paren
+    //! group FOLLOWS (`parse_weight`'s peek, now mirrored at
+    //! `parse_bound`): a field literally named `Duration` is an
+    //! ordinary ident — a u64 dependent bound `{0..Duration}` and a u64
+    //! weight `[Duration]` both parse as field references, never as a
+    //! truncated `Duration(…)` measure.
+
+    use bumbledb::Theory as _;
+    use bumbledb::schema::ValidateDescriptor as _;
+    use bumbledb::schema::{Bound, StatementDescriptor, Weight};
+
+    bumbledb::schema! {
+        pub Quota;
+
+        relation Bucket {
+            id: u64 as BucketId, fresh,
+            Duration: u64,
+        }
+        relation Item {
+            id: u64 as ItemId, fresh,
+            bucket: u64 as BucketId,
+            Duration: u64,
+        }
+
+        Bucket(id) <=[Duration]{0..Duration} Item(bucket);
+    }
+
+    #[test]
+    fn a_field_named_duration_is_an_ordinary_ident_in_both_slots() {
+        let descriptor = Quota.descriptor();
+        let [StatementDescriptor::Capacity { weight, hi, .. }, ..] = &descriptor.statements[..]
+        else {
+            panic!("the declared capacity statement leads");
+        };
+        assert_eq!(*weight, Weight::Field(Quota::ITEM_DURATION));
+        assert_eq!(*hi, Some(Bound::TargetField(Quota::BUCKET_DURATION)));
+        descriptor.validate().expect("the theory seals");
+    }
+}
+
 mod radix_literals {
     //! Integer literals are rustc's (ruled 2026-07-23, R8): the
     //! `0x`/`0o`/`0b` radix prefixes and `_` separators are accepted

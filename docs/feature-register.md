@@ -249,17 +249,19 @@ next-but-one rung).
   (`judgment-capacity-*`, C8) and the generators mint the surface day one
   (C13); the word "cardinality" survives nowhere in the mechanism (§8
   ruling 5) — the zero-trace gate ran green at campaign close.
-- **The owed C17 measurement (bench deferred by owner directive,
-  2026-07-24):** slot-vs-fetch is a measured choice, undecided. Both
-  `measure_children` arms live behind the one `CAPACITY_WEIGHT_SLOT`
-  constant (`crates/bumbledb/src/storage/commit/judgment.rs`);
-  fetch-per-child is the shipping baseline. On bench resume the
-  power-budget lane decides: the winner lands with its number beside the
-  constant, the loser and the flag are deleted (C17's own law). The slot
-  arm carries one recorded corner needing a ruling only if it wins: a ray
-  Duration weight refuses at WRITE time — strictly stronger than C10's
-  judge-time refusal, visible only for a ray child under an absent parent
-  (documented at the constant).
+- **The C17 measurement, DECIDED (2026-08-01):** the power-budget lane ran
+  both `measure_children` arms (same protocol, each arm oracle-verified
+  before timing) and the SLOT arm won every weighted row — the value slot
+  carries the child's u64 weight (LE), paid once at write time
+  (`commit_capacity_sum` 32.3 vs 35.2 µs, `commit_capacity_duration` 30.8
+  vs 34.2 µs, min-of-3 ephemeral p50s; control 18.2 both arms). The fetch
+  arm and the `CAPACITY_WEIGHT_SLOT` flag are deleted per C17's own law;
+  the numbers are the CONSTRAINT comment at the walk
+  (`crates/bumbledb/src/storage/commit/judgment.rs`), artifacts in
+  `bench-out/baseline-2026-07-25/capacity-c17/`. **OWNER RULING OWED:** the
+  slot arm's recorded corner is now live — a ray Duration weight refuses at
+  WRITE time, strictly stronger than C10's judge-time refusal, visible only
+  for a ray child under an absent parent (documented at the constraint).
 - **Reopen triggers:** none here — verdicts 15 (Min/Max in law position),
   16 (balance laws), and 18 (temporal capacity) carry the family's recorded
   triggers.

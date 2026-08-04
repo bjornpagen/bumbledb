@@ -15,6 +15,14 @@ use std::collections::BTreeSet;
 /// shape is exactly the dimension-bound form the pushdown already
 /// serves. `estimates` stays node-aligned: the two nodes cover one DP
 /// step, so its estimate duplicates.
+///
+/// The node's lookups partition by fold-domain contact: a lookup
+/// touching no fold variable moves to the group-prefix node — probed
+/// once per **group**, never once per fold element — where it is also
+/// a second cover candidate for the dynamic cover choice (`gj_split`
+/// cannot rescue it later: a lookup whose variables all bind at one
+/// node is exactly the shape its split skips, so left behind it stays
+/// behind). Lookups touching the fold domain stay with the suffix.
 pub fn fold_split(plan: &mut FjPlan, group: &BTreeSet<VarId>, estimates: &mut Vec<u64>) {
     let mut i = 0;
     while i < plan.nodes.len() {
@@ -30,21 +38,26 @@ pub fn fold_split(plan: &mut FjPlan, group: &BTreeSet<VarId>, estimates: &mut Ve
         }
         let occ = opening.occ;
         let node = plan.nodes.remove(i);
-        let mut suffix = node.subatoms;
-        suffix[0] = Subatom {
+        let mut prefix = vec![Subatom {
+            occ,
+            vars: group_vars,
+        }];
+        let mut suffix = vec![Subatom {
             occ,
             vars: fold_vars,
-        };
+        }];
+        for lookup in node.subatoms.into_iter().skip(1) {
+            // Contact with the suffix opening's variables is the one
+            // legality question: everything else the lookup reads is
+            // bound at or above the prefix node by construction.
+            if lookup.vars.iter().any(|v| suffix[0].vars.contains(v)) {
+                suffix.push(lookup);
+            } else {
+                prefix.push(lookup);
+            }
+        }
         plan.nodes.insert(i, Node { subatoms: suffix });
-        plan.nodes.insert(
-            i,
-            Node {
-                subatoms: vec![Subatom {
-                    occ,
-                    vars: group_vars,
-                }],
-            },
-        );
+        plan.nodes.insert(i, Node { subatoms: prefix });
         if i < estimates.len() {
             let estimate = estimates[i];
             estimates.insert(i, estimate);

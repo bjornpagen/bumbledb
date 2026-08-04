@@ -276,6 +276,31 @@ impl<S> WriteTx<'_, S> {
         key: StatementId,
         key_values: &[Value],
     ) -> Result<Option<Vec<Value>>> {
+        let mut out = Vec::new();
+        Ok(self
+            .get_dyn_into(relation, key, key_values, &mut out)?
+            .then_some(out))
+    }
+
+    /// [`WriteTx::get_dyn`] into a caller-provided buffer — the pooled
+    /// point-read lane, the write-transaction sibling of
+    /// [`super::Snapshot::get_dyn_into`]: the values `Vec` is the
+    /// caller's, its capacity retained across gets, so a warm keyed
+    /// get's allocator traffic shrinks to the variable-width payload
+    /// boxes alone. `Ok(true)` = hit, `out` holds the fact's fields in
+    /// declaration order; `Ok(false)` = no fact, `out` empty.
+    ///
+    /// # Errors
+    ///
+    /// As [`WriteTx::get_dyn`].
+    pub fn get_dyn_into(
+        &mut self,
+        relation: RelationId,
+        key: StatementId,
+        key_values: &[Value],
+        out: &mut Vec<Value>,
+    ) -> Result<bool> {
+        out.clear();
         let (key_id, statement) = key_statement_of(self.schema, relation, key)?;
         let projection = &statement.projection;
         self.with_scratch(|tx, key_bytes| {
@@ -289,11 +314,13 @@ impl<S> WriteTx<'_, S> {
                 key_bytes,
                 |text| delta.resolve_str(view, text),
             )? {
-                return Ok(None);
+                return Ok(false);
             }
-            tx.fact_by_key(relation, key_id, key_bytes)?
-                .map(|bytes| tx.decode_values_keyed(relation, projection, key_values, bytes))
-                .transpose()
+            let Some(bytes) = tx.fact_by_key(relation, key_id, key_bytes)? else {
+                return Ok(false);
+            };
+            tx.decode_values_keyed(relation, projection, key_values, bytes, out)?;
+            Ok(true)
         })
     }
 
@@ -349,20 +376,22 @@ impl<S> WriteTx<'_, S> {
         }
     }
 
-    /// Decodes canonical fact bytes into owned values, resolving intern
-    /// ids pending-first (a fact inserted this transaction carries
-    /// provisional ids) — the dynamic sibling of [`Fact::decode_write`].
-    /// Fields the key statement's projection fixed take the caller's
-    /// supplied values ([`crate::encoding::decode_values_keyed`] — the
-    /// probe already proved them byte-identical to the stored ones).
+    /// Decodes canonical fact bytes into owned values in the caller's
+    /// buffer, resolving intern ids pending-first (a fact inserted this
+    /// transaction carries provisional ids) — the dynamic sibling of
+    /// [`Fact::decode_write`]. Fields the key statement's projection
+    /// fixed take the caller's supplied values
+    /// ([`crate::encoding::decode_values_keyed_into`] — the probe
+    /// already proved them byte-identical to the stored ones).
     fn decode_values_keyed(
         &self,
         relation: RelationId,
         projection: &[FieldId],
         key_values: &[Value],
         fact: &[u8],
-    ) -> Result<Vec<Value>> {
-        crate::encoding::decode_values_keyed(
+        out: &mut Vec<Value>,
+    ) -> Result<()> {
+        crate::encoding::decode_values_keyed_into(
             fact,
             self.schema.relation(relation).layout(),
             projection,
@@ -372,6 +401,7 @@ impl<S> WriteTx<'_, S> {
                     plumbing::resolve_string_write(self, id)?.as_bytes(),
                 ))
             },
+            out,
         )
     }
 }

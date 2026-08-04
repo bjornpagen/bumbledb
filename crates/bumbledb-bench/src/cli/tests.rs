@@ -204,6 +204,7 @@ fn writes_parses_the_lane_flags() {
         "1,10,100,1000",
         "--samples",
         "4",
+        "--trace",
         "--out",
         "artifacts",
     ]))
@@ -217,6 +218,7 @@ fn writes_parses_the_lane_flags() {
             lanes: vec![DurabilityLane::Durable, DurabilityLane::Nosync],
             batches: vec![1, 10, 100, 1000],
             samples: Some(4),
+            trace: true,
             out: Some(PathBuf::from("artifacts")),
         })
     );
@@ -365,6 +367,8 @@ fn crud_parses_its_flags() {
             dir: PathBuf::from("x"),
             only: Some(vec!["crud_insert".to_owned(), "crud_rmw".to_owned()]),
             samples: Some(9),
+            trace: false,
+            alloc: false,
             out: Some(PathBuf::from("y")),
         })
     );
@@ -396,6 +400,8 @@ fn lawful_parses_its_flags() {
                 "law_reject_window".to_owned()
             ]),
             samples: Some(9),
+            trace: false,
+            alloc: false,
             out: Some(PathBuf::from("y")),
         })
     );
@@ -408,6 +414,42 @@ fn crud_refuses_an_unknown_flag() {
     let err = parse(&argv(&["crud", "--scale", "S"])).unwrap_err();
     assert!(err.contains("--scale"), "{err}");
     assert!(err.contains("crud"), "{err}");
+}
+
+#[test]
+fn scenarios_parses_the_trace_and_alloc_flags() {
+    let Cmd::Scenarios(args) = parse(&argv(&["scenarios", "--trace"])).expect("parses") else {
+        panic!("scenarios");
+    };
+    assert!(args.trace && !args.alloc);
+    let Cmd::Scenarios(args) = parse(&argv(&["scenarios", "--alloc"])).expect("parses") else {
+        panic!("scenarios");
+    };
+    assert!(args.alloc && !args.trace);
+}
+
+#[test]
+fn the_world_commands_refuse_trace_with_alloc() {
+    let err = parse(&argv(&["scenarios", "--trace", "--alloc"])).unwrap_err();
+    assert!(err.contains("mutually exclusive"), "{err}");
+    assert!(err.contains("scenarios"), "{err}");
+}
+
+/// The write worlds take `--trace` but have no alloc pass — `--alloc`
+/// refuses by name instead of parsing into a flag nothing reads.
+#[test]
+fn the_write_worlds_take_trace_and_refuse_alloc() {
+    for cmd in ["crud", "lawful"] {
+        let parsed = parse(&argv(&[cmd, "--trace"])).expect("parses");
+        let args = match parsed {
+            Cmd::Crud(args) | Cmd::Lawful(args) => args,
+            other => panic!("{cmd}: {other:?}"),
+        };
+        assert!(args.trace && !args.alloc, "{cmd}");
+        let err = parse(&argv(&[cmd, "--alloc"])).unwrap_err();
+        assert!(err.contains("no alloc pass"), "{cmd}: {err}");
+        assert!(err.contains(cmd), "{cmd}: {err}");
+    }
 }
 
 #[test]

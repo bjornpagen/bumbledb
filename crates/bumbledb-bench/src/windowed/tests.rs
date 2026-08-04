@@ -3,6 +3,7 @@ use bumbledb::{Db, Theory as _, Value};
 
 use crate::differential::{self, Op};
 use crate::naive::{Delta, NaiveDb};
+use crate::writebench::write_protocol;
 
 use super::{Mass, baseline, ids, parent_kind, relation_rows, world};
 
@@ -125,14 +126,61 @@ fn the_window_rows_run_their_protocols() {
         Db::create(&dir.join("baseline"), baseline::UnwindowedWorld).expect("create baseline");
     super::load(&unwindowed, Mass::BENCH).expect("load baseline");
 
-    let admission = super::commit_window_admission(&windowed).expect("admission");
+    let admission =
+        super::commit_window_admission(&windowed, write_protocol("commit_window_admission"))
+            .expect("admission");
     assert_eq!(admission.work, 64, "one row per sample");
     assert!(admission.stats.min > 0);
-    let baseline_row = super::commit_window_baseline(&unwindowed).expect("baseline");
+    let baseline_row =
+        super::commit_window_baseline(&unwindowed, write_protocol("commit_window_baseline"))
+            .expect("baseline");
     assert_eq!(baseline_row.work, 64);
-    let exclusion = super::commit_window_exclusion(&windowed).expect("exclusion");
+    let exclusion =
+        super::commit_window_exclusion(&windowed, write_protocol("commit_window_exclusion"))
+            .expect("exclusion");
     assert_eq!(exclusion.work, 64);
     drop(windowed);
     drop(unwindowed);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The traced windowed path (`bench --trace`): the window-judgment
+/// lane lands its traced solo sample with the judgment spans readable
+/// — the capacity twin's smoke test, on the window roster.
+#[cfg(feature = "obs")]
+#[test]
+fn traced_windowed_lands_the_judgment_spans() {
+    let dir = scratch("traced");
+    let trace_dir = dir.join("trace");
+    let mut flames = Vec::new();
+    let rows = super::write_families(
+        crate::corpus_gen::GenConfig {
+            seed: 1,
+            scale: crate::corpus_gen::Scale::Tiny,
+        },
+        &dir.join("scratch"),
+        &|name| name == "commit_window_admission",
+        crate::storemode::StoreMode::Ephemeral,
+        Some(&trace_dir),
+        &mut flames,
+    )
+    .expect("the traced windowed lane");
+    assert_eq!(rows.len(), 1, "one selected row");
+    assert_eq!(flames.len(), 1, "one flame embed per traced family");
+    let json_path = trace_dir.join("commit_window_admission.json");
+    let text = std::fs::read_to_string(&json_path)
+        .unwrap_or_else(|e| panic!("{}: {e}", json_path.display()));
+    assert!(
+        text.starts_with("[\n") && text.ends_with("\n]\n"),
+        "{} parses as a Chrome array",
+        json_path.display()
+    );
+    assert!(
+        text.contains("judgment"),
+        "the window judgment spans reach the artifact"
+    );
+    let folded = std::fs::read_to_string(trace_dir.join("commit_window_admission.folded"))
+        .expect("the folded twin lands beside the json");
+    assert!(!folded.is_empty(), "a non-degenerate fold");
     let _ = std::fs::remove_dir_all(&dir);
 }

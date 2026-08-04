@@ -1,0 +1,51 @@
+scheduler boost: user-interactive QoS claimed
+bench: writes nosync — loading the scratch corpus
+bench: writes nosync — commit_b1
+bench: writes nosync — commit_b10
+bench: writes nosync — commit_b100
+bench: writes nosync — commit_b1000
+bench: writes nosync — delete_b1
+bench: writes nosync — delete_b10
+bench: writes nosync — delete_b100
+bench: writes nosync — delete_b1000
+bench: writes nosync — bulk_append
+bench: writes durable — loading the scratch corpus
+bench: writes durable — commit_b1
+bench: writes durable — commit_b10
+bench: writes durable — commit_b100
+bench: writes durable — commit_b1000
+bench: writes durable — delete_b1
+bench: writes durable — delete_b10
+bench: writes durable — delete_b100
+bench: writes durable — delete_b1000
+bench: writes durable — bulk_append
+# writes lane — scale S, seed 1, samples 32
+
+## lane `nosync` — sqlite `wal+synchronous=OFF`
+
+| family | batch | ours p50 ns | sqlite p50 ns | ours commits/s | sqlite commits/s | ours rows/s | sqlite rows/s |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| commit_b1 | 1 | 51208 | 34208 | 19299.1 | 26186.2 | 19299.1 | 26186.2 |
+| commit_b10 | 10 | 185959 | 269750 | 5311.5 | 3621.9 | 53115.5 | 36218.8 |
+| commit_b100 | 100 | 1302000 | 1987458 | 756.0 | 492.4 | 75598.8 | 49244.9 |
+| commit_b1000 | 1000 | 9462125 | 10599375 | 106.1 | 95.2 | 106091.3 | 95238.4 |
+| delete_b1 | 1 | 43416 | 40583 | 22253.9 | 23386.3 | 22253.9 | 23386.3 |
+| delete_b10 | 10 | 175833 | 225833 | 5624.5 | 3883.9 | 56244.9 | 38838.9 |
+| delete_b100 | 100 | 1321583 | 2546792 | 752.7 | 407.9 | 75273.0 | 40793.9 |
+| delete_b1000 | 1000 | 10201375 | 14110458 | 88.8 | 68.2 | 88791.7 | 68238.8 |
+| bulk_append | 4096 | 742829833 | 434101583 | 65.9 | 111.4 | 269776.8 | 456332.5 |
+
+## lane `durable` — sqlite `wal+synchronous=FULL+fullfsync=ON`
+
+| family | batch | ours p50 ns | sqlite p50 ns | ours commits/s | sqlite commits/s | ours rows/s | sqlite rows/s |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| commit_b1 | 1 | 4454333 | 4493833 | 214.8 | 216.2 | 214.8 | 216.2 |
+| commit_b10 | 10 | 6478875 | 5089917 | 146.2 | 202.5 | 1462.0 | 2024.8 |
+| commit_b100 | 100 | 12968875 | 7686458 | 77.9 | 121.6 | 7785.6 | 12157.5 |
+| commit_b1000 | 1000 | 32011708 | 16272208 | 31.2 | 62.5 | 31219.3 | 62463.9 |
+| delete_b1 | 1 | 4197542 | 4205208 | 230.2 | 228.5 | 230.2 | 228.5 |
+| delete_b10 | 10 | 5308500 | 5214167 | 170.2 | 186.1 | 1701.7 | 1860.6 |
+| delete_b100 | 100 | 13201292 | 8672833 | 76.5 | 116.4 | 7647.5 | 11637.7 |
+| delete_b1000 | 1000 | 41010375 | 19529958 | 24.4 | 52.6 | 24398.9 | 52631.0 |
+| bulk_append | 4096 | 1180086334 | 686505750 | 41.4 | 70.8 | 169684.8 | 290119.4 |
+artifacts: /Users/bjorn/Documents/bumbledb/bench-out/baseline-2026-07-25/writes

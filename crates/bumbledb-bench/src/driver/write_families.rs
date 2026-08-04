@@ -20,6 +20,15 @@ use crate::{clockproxy, corpus, families, harness, report, sqlite_run, writebenc
 ///
 /// `pub(crate)` (not `pub(super)`) so the device-honesty lock test can
 /// point it at a live ram disk and assert the refusal.
+///
+/// Under `--trace` the windowed and capacity judgment lanes land their
+/// traced solo samples under `trace_dir` (flat, beside the read-family
+/// pairs) and their flame embeds into `flames`. The PAIRED ledger
+/// families stay untraced here by decision: `writes --trace`'s commit
+/// ladder captures the identical Ledger commit shape (`commit_b1` IS
+/// `commit_single`'s span tree), so a second capture would duplicate an
+/// artifact, and the cold walks' eviction protocol is not a steady
+/// state a solo sample can honestly wear.
 #[expect(
     clippy::too_many_lines,
     reason = "one lane list, ordered by the fsync-shadow rule — splitting would hide the order"
@@ -29,6 +38,8 @@ pub(crate) fn write_families(
     scratch: &Path,
     selected: &dyn Fn(&str) -> bool,
     lane: DurabilityLane,
+    trace_dir: Option<&Path>,
+    flames: &mut Vec<report::FlameEmbed>,
 ) -> Result<Vec<report::WriteFamilyReport>, String> {
     // The scratch-corpus write families, table-driven: one entry per
     // family, an engine runner beside its `SQLite` mirror.
@@ -116,6 +127,8 @@ pub(crate) fn write_families(
         &scratch.join("windowed"),
         selected,
         lane.store_mode(),
+        trace_dir,
+        flames,
     )?);
     // The weighted-capacity lanes (the power budget and the calendar
     // shape): same class, same placement rule.
@@ -124,6 +137,8 @@ pub(crate) fn write_families(
         &scratch.join("capacity"),
         selected,
         lane.store_mode(),
+        trace_dir,
+        flames,
     )?);
 
     // bulk stays LAST: seconds of fsync — nothing

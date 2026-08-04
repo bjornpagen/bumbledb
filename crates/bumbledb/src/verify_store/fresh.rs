@@ -20,9 +20,15 @@ use super::{StoreFinding, Sweep, namespace};
 
 /// Whether a stored (or absent-as-zero) next-value fails the ratchet law
 /// against the tallied maximum — the exhausted-sequence exemption
-/// applied in one place.
+/// applied in one place. The exemption keys on the STORED value being
+/// exhausted, never on the tally alone: a row holding an explicit
+/// `u64::MAX` makes the tally `MAX`, but the mark advance that admitted
+/// it saturated the stored next-value to `MAX` too — so any stored
+/// value below `MAX` under a `MAX` tally is a genuine regression
+/// (`alloc()` would re-issue every id between it and the ceiling), not
+/// the legal exhausted shape `next == value == u64::MAX`.
 fn ratchet_broken(stored: u64, max_fresh: u64) -> bool {
-    max_fresh != u64::MAX && stored <= max_fresh
+    stored != u64::MAX && stored <= max_fresh
 }
 
 pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {

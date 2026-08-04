@@ -1,0 +1,65 @@
+scheduler boost: user-interactive QoS claimed
+bench: loading the ephemeral read twins (same corpus, ephemeral kind)
+bench: warming clocks (200 ms spin)
+bench: loading the windowed twin worlds
+bench: commit_window_baseline
+bench: commit_window_admission
+bench: commit_window_exclusion
+# bumbledb bench report
+
+## Provenance
+
+- crate version: 0.9.0
+- engine rev: fa87b4e798d7b43c5aaff319005ecc1067219318
+- timestamp: 2026-08-03T22:23:57Z
+- host: Apple M2 Max
+- shared machine: boost qos-user-interactive — load 1/5/15 3.67 3.34 3.37 (start) → 3.77 3.37 3.38 (end)
+- config: scale S, seed 1, 256 samples, ephemeral stores
+- corpus digest: `fa73e680324f9b26dd1c8504899c43beec8eef48953ca4bdf4ca432623caaca8`
+- verify stamp: `d832a1dc42cda1d5873d538439bc0a55ecfdccb4a1830f92f79cada67c47974a (families + 500 randomized cases)`
+
+## Gate verdict
+
+PARTIAL — filtered run; the ALL-WIN claim needs every family.
+p99 budget (<= 10 ms warm): PASS (informational below scale L).
+
+## Read families
+
+| family | ours p50/p95/p99 (us) | sqlite p50/p95/p99 (us) | ratio | verdict |
+|---|---|---|---|---|
+
+## Write families
+
+| family | ours p50 (us) | sqlite p50 (us) | facts/sec |
+|---|---|---|---|
+| commit_window_baseline | 29.7 | - | - |
+| commit_window_admission | 40.2 | - | - |
+| commit_window_exclusion | 35.6 | - | - |
+
+## Allocations
+
+(not captured — run with the alloc window)
+
+## Execution digests
+
+| family | worst est/actual | covers | emitted | absorbed |
+|---|---|---|---|---|
+
+## Store
+
+- bumbledb file (compacted): 64274432 bytes
+- sqlite file: 18432000 bytes
+- image cache: 0 images, 0 bytes
+
+## Clock proxy
+
+| family | GHz pre | GHz post | status | norm p50 (us) |
+|---|---|---|---|---|
+| commit_window_baseline | 3.35 | 3.27 | clean | - |
+| commit_window_admission | 3.50 | 3.31 | clean | - |
+| commit_window_exclusion | 3.51 | 3.32 | clean | - |
+
+## Flame summaries
+
+(none captured — run with --trace)
+artifacts: /Users/bjorn/Documents/bumbledb/bench-out/baseline-2026-07-25-post/windowed/ephemeral

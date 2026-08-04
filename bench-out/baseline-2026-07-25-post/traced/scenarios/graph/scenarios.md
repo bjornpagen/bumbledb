@@ -1,0 +1,185 @@
+# Scenario benchmarks
+
+Report-class measurements over non-ledger worlds; every query oracle-gated (value-identical results on both engines, every `SQLite` lane, never under a cap) before timing. Adversarial lanes run under a per-sample wall-clock cap (`SQLite`'s progress handler): a lane that trips it reports `DNF>cap` with NO percentiles — excluded from geomeans and counted. Protocol: 8 warmups, 64 samples, medians; `SQLite` file-backed WAL `synchronous=FULL`, fully indexed, prepared statements reused, ANALYZE run. ratio = ours/theirs (lower is better; <1 = bumbledb faster).
+
+
+## graph (geomean ratio 0.06 over 6 timed)
+
+| query | lane | rows | ours p50 (us) | sqlite p50 (us) | ratio | regime |
+|---|---|---:|---:|---:|---:|---|
+| g1_neighbors | sqlite | 212 | 0.2 | 2.9 | 0.09 | single hop: hub ~1.5k edges, normal ~4 |
+| g2_two_hop | sqlite | 6199 | 0.5 | 11.1 | 0.04 | two hops, deduplicated destination set |
+| g3_three_hop_count | sqlite | 0 | 1.4 | 28.6 | 0.05 | three-hop reach folded to Count |
+| g4_mutual | sqlite | 15 | 3873.3 | 29059.5 | 0.13 | reciprocal-edge 2-cycle over the full graph |
+| g5_triangles_from | sqlite | 0 | 0.7 | 15.5 | 0.04 | 3-cycle through a start node, counted |
+| g6_weighted_hop | sqlite | 49 | 0.4 | 9.1 | 0.04 | hop + weight range + target-score range |
+
+Overall geomean ratio across 6 queries: **0.06**.
+
+## Flame summaries (per query, --trace)
+
+### graph / g1_neighbors
+
+```text
+span                       calls     total_us      self_us       p50_us       max_us
+rule_0                         1        0.708        0.210        0.708        0.708
+join                           1        0.208        0.208        0.208        0.208
+views                          1        0.166        0.166        0.166        0.166
+execute                        1        0.916        0.126        0.916        0.916
+selections                     1        0.083        0.083        0.083        0.083
+resolve_filters                1        0.041        0.041        0.041        0.041
+finalize                       1        0.041        0.041        0.041        0.041
+bind_params                    1        0.041        0.041        0.041        0.041
+view_memo_hit                  1        0.000        0.000        0.000        0.000
+select_probe                   1        0.000        0.000        0.000        0.000
+total wall 0.916 us
+
+phase                 calls     total_us     avg_ns      excl_us
+jp_descend_n0             1        0.125        125        0.125
+```
+
+### graph / g2_two_hop
+
+```text
+span                       calls     total_us      self_us       p50_us       max_us
+join                           1        1.666        1.666        1.666        1.666
+execute                        1        2.708        0.418        2.708        2.708
+rule_0                         1        2.208        0.252        2.208        2.208
+views                          1        0.166        0.166        0.166        0.166
+selections                     1        0.083        0.083        0.083        0.083
+resolve_filters                1        0.041        0.041        0.041        0.041
+finalize                       1        0.041        0.041        0.041        0.041
+bind_params                    1        0.041        0.041        0.041        0.041
+view_memo_hit                  2        0.000        0.000        0.000        0.000
+select_probe                   2        0.000        0.000        0.000        0.000
+total wall 2.708 us
+
+phase                 calls     total_us     avg_ns      excl_us
+jp_hash_n0                1        0.083         83        0.083
+jp_probe_n0               1        0.166        166        0.166
+jp_residual_n0            1        0.083         83        0.083
+jp_descend_n0             1        0.375        375        0.167
+jp_force_n0               1        0.041         41        0.041
+jp_gather_n0              3        0.458        152        0.458
+jp_descend_n1             3        0.208         69        0.208
+```
+
+### graph / g3_three_hop_count
+
+```text
+span                       calls     total_us      self_us       p50_us       max_us
+join                           1        3.583        3.583        3.583        3.583
+execute                        1        5.083        0.585        5.083        5.083
+views                          1        0.250        0.250        0.250        0.250
+selections                     1        0.250        0.250        0.250        0.250
+rule_0                         1        4.416        0.250        4.416        4.416
+resolve_filters                1        0.083        0.083        0.083        0.083
+finalize                       1        0.041        0.041        0.041        0.041
+bind_params                    1        0.041        0.041        0.041        0.041
+view_memo_hit                  3        0.000        0.000        0.000        0.000
+select_probe                   3        0.000        0.000        0.000        0.000
+total wall 5.083 us
+
+phase                 calls     total_us     avg_ns      excl_us
+jp_hash_n0                1        0.166        166        0.166
+jp_probe_n0               1        0.208        208        0.208
+jp_residual_n0            1        0.083         83        0.083
+jp_descend_n0             1        0.208        208        0.000
+jp_force_n0               1        0.041         41        0.041
+jp_gather_n0              3        0.375        125        0.375
+jp_hash_n1                1        0.041         41        0.041
+jp_probe_n1               1        0.166        166        0.166
+jp_residual_n1            1        0.000          0        0.000
+jp_descend_n1             1        1.125       1125        0.542
+jp_force_n1               1        0.041         41        0.041
+jp_gather_n1              3        0.250         83        0.250
+jp_descend_n2            12        0.583         48        0.583
+```
+
+### graph / g4_mutual
+
+```text
+span                       calls     total_us      self_us       p50_us       max_us
+join                           1     3920.875     3920.875     3920.875     3920.875
+execute                        1     3929.208        6.668     3929.208     3929.208
+selections                     1        0.500        0.500        0.500        0.500
+rule_0                         1     3922.166        0.417     3922.166     3922.166
+views                          1        0.333        0.333        0.333        0.333
+finalize                       1        0.333        0.333        0.333        0.333
+resolve_filters                1        0.041        0.041        0.041        0.041
+bind_params                    1        0.041        0.041        0.041        0.041
+view_memo_hit                  3        0.000        0.000        0.000        0.000
+select_probe                   3        0.000        0.000        0.000        0.000
+total wall 3929.208 us
+
+phase                 calls     total_us     avg_ns      excl_us
+jp_hash_n0              310       64.166        206       64.166
+jp_probe_n0             310      351.583       1134      351.583
+jp_residual_n0          155        1.625         10        1.625
+jp_descend_n0           155      249.166       1607        0.000
+jp_force_n0             310        0.833          2        0.833
+jp_gather_n0            465       35.166         75       35.166
+jp_hash_n1             9629      145.125         15      145.125
+jp_probe_n1            9629      632.125         65      632.125
+jp_residual_n1         9629      132.333         13      132.333
+jp_descend_n1          9629        8.708          0        7.250
+jp_gather_n1          28887     1433.041         49     1433.041
+jp_descend_n2            11        1.458        132        1.458
+```
+
+### graph / g5_triangles_from
+
+```text
+span                       calls     total_us      self_us       p50_us       max_us
+join                           1        2.625        2.625        2.625        2.625
+execute                        1        3.708        0.375        3.708        3.708
+views                          1        0.291        0.291        0.291        0.291
+selections                     1        0.166        0.166        0.166        0.166
+rule_0                         1        3.250        0.127        3.250        3.250
+bind_params                    1        0.083        0.083        0.083        0.083
+resolve_filters                1        0.041        0.041        0.041        0.041
+view_memo_hit                  3        0.000        0.000        0.000        0.000
+select_probe                   3        0.000        0.000        0.000        0.000
+prefetch_pass                  2        0.000        0.000        0.000        0.000
+total wall 3.708 us
+
+phase                 calls     total_us     avg_ns      excl_us
+jp_hash_n0                1        0.291        291        0.291
+jp_probe_n0               1        0.208        208        0.208
+jp_residual_n0            1        0.041         41        0.041
+jp_descend_n0             1        0.166        166        0.000
+jp_force_n0               1        0.000          0        0.000
+jp_gather_n0              3        0.458        152        0.458
+jp_hash_n1                1        0.041         41        0.041
+jp_probe_n1               1        0.125        125        0.125
+jp_residual_n1            1        0.000          0        0.000
+jp_descend_n1             1        0.041         41        0.041
+jp_gather_n1              3        0.333        111        0.333
+```
+
+### graph / g6_weighted_hop
+
+```text
+span                       calls     total_us      self_us       p50_us       max_us
+join                           1        2.916        2.916        2.916        2.916
+execute                        1        5.500        1.710        5.500        5.500
+rule_0                         1        3.708        0.293        3.708        3.708
+views                          1        0.250        0.250        0.250        0.250
+selections                     1        0.208        0.208        0.208        0.208
+resolve_filters                1        0.041        0.041        0.041        0.041
+finalize                       1        0.041        0.041        0.041        0.041
+bind_params                    1        0.041        0.041        0.041        0.041
+view_memo_hit                  2        0.000        0.000        0.000        0.000
+select_probe                   2        0.000        0.000        0.000        0.000
+total wall 5.500 us
+
+phase                 calls     total_us     avg_ns      excl_us
+jp_hash_n0                1        0.208        208        0.208
+jp_probe_n0               1        0.333        333        0.333
+jp_residual_n0            1        0.375        375        0.375
+jp_descend_n0             1        0.583        583        0.500
+jp_force_n0               1        0.125        125        0.125
+jp_gather_n0              3        0.458        152        0.458
+jp_descend_n1             3        0.083         27        0.083
+```
+

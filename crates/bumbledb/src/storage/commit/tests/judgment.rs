@@ -284,6 +284,50 @@ fn scalar_source_without_target_aborts() {
     );
 }
 
+/// The T8 walker's verdicts over one sorted probe group: an interleaved
+/// batch — every even account exists, every odd one dangles — walks one
+/// shared cursor through hits and misses (a miss leaves the next
+/// stored key PENDING; the following probe answers from that slot).
+/// The sealed rejection cites the statement once with the KEY-LEAST
+/// violator (the licensed witness, `tests/witness_stability.rs`); the
+/// all-present twin walks the same cursor green, and a probe past the
+/// group's last stored key misses off the exhausted cursor.
+#[test]
+fn a_sorted_probe_group_judges_through_the_shared_cursor() {
+    let schema = schema();
+    let base: Vec<(RelationId, Vec<u8>)> = (0..40)
+        .step_by(2)
+        .map(|id| (ACCOUNT, account(&schema, id, true)))
+        .collect();
+    // Interleaved hits and misses: the key-least violator (transfer 1)
+    // is the citation's witness.
+    let mixed: Vec<(RelationId, Vec<u8>)> = (0..40)
+        .map(|id| (TRANSFER, transfer(&schema, id)))
+        .collect();
+    assert_source_violation(
+        base_then_insert("judg-sorted-walker-mixed", &base, &mixed),
+        TRANSFER_ACCOUNT,
+        &transfer(&schema, 1),
+    );
+    // Every probe hits: the same cursor answers 20 ascending probes.
+    let all_present: Vec<(RelationId, Vec<u8>)> = (0..40)
+        .step_by(2)
+        .map(|id| (TRANSFER, transfer(&schema, id)))
+        .collect();
+    base_then_insert("judg-sorted-walker-green", &base, &all_present)
+        .expect("every probe hits through the walker");
+    // Past the end: the probe lands beyond the group's last stored key.
+    assert_source_violation(
+        base_then_insert(
+            "judg-sorted-walker-tail",
+            &base,
+            &[(TRANSFER, transfer(&schema, 999))],
+        ),
+        TRANSFER_ACCOUNT,
+        &transfer(&schema, 999),
+    );
+}
+
 #[test]
 fn scalar_target_and_source_in_one_delta_commit() {
     base_then_insert(

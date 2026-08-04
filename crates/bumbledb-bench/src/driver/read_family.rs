@@ -1,7 +1,7 @@
 use bumbledb::{Answers, Db, Query};
 
 use crate::calendar;
-use crate::families::{Draw, Kind, has_sets, param_args, scalar_values, set_bindings};
+use crate::families::{Draw, Kind, has_sets, param_args, set_bindings};
 use crate::harness::{self, Modes, Rotation};
 use crate::schema::schema;
 use crate::translate::{Translated, translate};
@@ -165,32 +165,22 @@ impl BenchRun<'_> {
         };
         if self.trace {
             let (_, events) = harness::traced_sample(&mut || run_ours(&mut prepared))?;
-            let (engine, harness_events) = trace_out::split_harness(events);
-            trace_out::write_trace_file(
-                &self.trace_dir,
-                &format!("{}.warm", spec.name),
-                &engine,
-                &harness_events,
-            )
-            .map_err(|e| format!("trace: {e}"))?;
-            let mut table = trace_out::FlameSummary::compute(&engine).render_top(10);
-            if let Some(phases) = trace_out::render_phase_table(&engine) {
-                table.push('\n');
-                table.push_str(&phases);
-            }
+            let table =
+                trace_out::emit_pair(&self.trace_dir, &format!("{}.warm", spec.name), events)?;
             self.flames.push(report::FlameEmbed {
                 name: spec.name.to_owned(),
                 table,
             });
         }
-        // Estimate digest: the profile path binds scalar params only —
-        // set-bound families skip it (set selectivity is an execution
-        // fact, not a plan static).
+        // Estimate digest: set-bound families skip it — set selectivity
+        // is an execution fact, not a plan static (the profile entry
+        // itself binds sets since the R13 symmetry; the skip is the
+        // digest's own semantics, and the frozen lanes keep their shape).
         let exec = if has_sets(&sets) {
             None
         } else {
             let (_, stats) = db
-                .read(|snap| snap.profile(&mut prepared, &scalar_values(&sets[0])))
+                .read(|snap| snap.profile(&mut prepared, &param_args(&sets[0])))
                 .map_err(|e| format!("profile: {e:?}"))?;
             Some(exec_digest(&stats))
         };

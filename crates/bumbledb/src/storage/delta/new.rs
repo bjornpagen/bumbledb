@@ -12,7 +12,7 @@ impl<'s> WriteDelta<'s> {
         Self {
             schema,
             arena: Arena::new(),
-            facts: BTreeMap::new(),
+            facts: std::collections::HashMap::default(),
             determinants: BTreeMap::new(),
             determinant_scratch: DeterminantImage::scratch(),
             #[cfg(test)]

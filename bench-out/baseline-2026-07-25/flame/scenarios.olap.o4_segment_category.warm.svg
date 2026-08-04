@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="92" viewBox="0 0 1200 92">
+<rect width="100%" height="100%" fill="rgb(245,245,245)"/>
+<text x="10" y="20" font-family="monospace" font-size="15" font-weight="bold">scenarios.olap.o4_segment_category.warm</text>
+<g><title>execute  26577.083 us  100.0%</title><rect x="10" y="66" width="1180.0" height="16" fill="rgb(234,55,6)" stroke="white" stroke-width="0.5"/><text x="13" y="78" font-family="monospace" font-size="12">execute</text></g>
+<g><title>rule_0  26575.333 us  100.0%</title><rect x="10.05" y="50" width="1179.92" height="16" fill="rgb(216,21,45)" stroke="white" stroke-width="0.5"/><text x="13.05" y="62" font-family="monospace" font-size="12">rule_0</text></g>
+<g><title>join  26574.750 us  100.0%</title><rect x="10.05" y="34" width="1179.9" height="16" fill="rgb(228,169,7)" stroke="white" stroke-width="0.5"/><text x="13.05" y="46" font-family="monospace" font-size="12">join</text></g>
+</svg>

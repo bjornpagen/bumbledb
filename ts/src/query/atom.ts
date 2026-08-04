@@ -46,7 +46,7 @@ import type {
 	SetParam,
 	ShapeOf
 } from "#query/scope.ts"
-import { inferred, isTerm } from "#query/scope.ts"
+import { inferred, isTerm, term } from "#query/scope.ts"
 import type { FieldsShape } from "#relation.ts"
 
 /**
@@ -350,14 +350,28 @@ function comparison<Op extends CmpKind, L, R, M>(op: Op, lhs: L, rhs: R, mask: M
 }
 
 /**
- * Rejects a comparison with no term side: it is constant-valued, the
- * engine's own validation refuses it, and the lowering has no anchored
- * position to type the literals by — fail here with the same verdict.
+ * Whether a comparison side is a VARIABLE side in the engine's sense — a
+ * bound variable or the measure. A param is a constant at execution, so a
+ * comparison whose every side is a param or literal is constant-valued:
+ * the engine's `ConstantComparison` conviction
+ * (`bumbledb/crates/bumbledb/src/ir/validate/context.rs`,
+ * `comparison_shape`'s last arm).
+ */
+function isVariableSide(value: unknown): boolean {
+	return isTerm(value) && (value[term] === "var" || value[term] === "duration")
+}
+
+/**
+ * Rejects a comparison with no variable side: it is constant-valued —
+ * params included, a param is a constant the moment it binds — the
+ * engine's own validation refuses it (`ConstantComparison`), and the
+ * lowering has no anchored position to type the literals by — fail here
+ * with the same verdict.
  */
 function assertTermSide(op: string, lhs: unknown, rhs: unknown): void {
-	if (!isTerm(lhs) && !isTerm(rhs)) {
+	if (!isVariableSide(lhs) && !isVariableSide(rhs)) {
 		throw errors.new(
-			`${op}: a comparison without a variable or parameter side is constant-valued — write the query you mean`
+			`${op}: a comparison without a variable side is constant-valued (a parameter is a constant at execution) — write the query you mean`
 		)
 	}
 }
@@ -560,18 +574,130 @@ type OrderVarOk<V extends AnyVar> = V["field"]["kind"] extends "bool" ? true : N
 /** Whether a variable's OWN field is interval-typed. */
 type IntervalVarOk<V extends AnyVar> = V["field"]["kind"] extends "interval" ? true : false
 
-/** One order-comparison side's judgment (off the term's own field). */
-type OrderSideOk<T> = T extends AnyVar
-	? OrderVarOk<T>
+/**
+ * Whether a comparison has a VARIABLE side (a var or the measure) — the
+ * type-level twin of the engine's `ConstantComparison` rule: a param is a
+ * constant at execution, so param-vs-param and param-vs-literal are
+ * constant-valued whatever their domains ({@link assertTermSide} is the
+ * runtime wall behind this one).
+ */
+type CmpVarSideOk<L, R> = L extends AnyVar | Duration ? true : R extends AnyVar | Duration ? true : false
+
+/**
+ * One order side's DOMAIN — the type-level twin of the engine's resolved
+ * operand type (`ir/validate/context.rs`, `classify`'s `Ord*` arms): a
+ * variable names its own field kind, the measure is u64 by definition (and
+ * never meets another measure — `DurationBothSides`), a bigint literal
+ * spans the integer domains, a param is typed by its sibling (`"open"`).
+ * `never` marks a side that is itself unorderable: interval/bytes/string
+ * vars (the operand screen), closed-bound vars (R4), a measure over a
+ * non-interval var.
+ */
+type OrderDomain<T> = T extends AnyVar
+	? OrderVarOk<T> extends true
+		? T["field"]["kind"]
+		: never
 	: T extends Duration<infer V extends AnyVar>
-		? IntervalVarOk<V>
-		: true
+		? IntervalVarOk<V> extends true
+			? "duration"
+			: never
+		: T extends Param<string>
+			? "open"
+			: T extends bigint
+				? "integer"
+				: T extends boolean
+					? "bool"
+					: never
 
-/** One point side's judgment (numeric only — a point lives in the interval's element domain, never bool). */
-type PointSideOk<T> = T extends AnyVar ? NumericVarOk<T> : true
+/**
+ * Whether two order domains may MEET under one operator — the engine's
+ * same-type rule judged pairwise, not per side: bool meets only bool (a
+ * bigint literal against a bool var is exactly `check_const`'s
+ * conviction; R3 made bool orderable, never cross-orderable), u64 and i64
+ * never meet, the measure's sibling must live in u64 (`OrdMeasureVar`:
+ * scalar ≠ U64 is `IllegalComparison`), two measures never meet, and an
+ * open side (param, integer literal) takes whatever its sibling names.
+ */
+type OrderDomainsOk<A, B> = [A] extends [never]
+	? false
+	: [B] extends [never]
+		? false
+		: A extends "open"
+			? true
+			: B extends "open"
+				? true
+				: A extends "duration"
+					? B extends "u64" | "integer"
+						? true
+						: false
+					: B extends "duration"
+						? A extends "u64" | "integer"
+							? true
+							: false
+						: A extends "bool"
+							? B extends "bool"
+								? true
+								: false
+							: B extends "bool"
+								? false
+								: A extends "integer"
+									? true
+									: B extends "integer"
+										? true
+										: A extends B
+											? true
+											: false
 
-/** One interval side's judgment. */
-type IntervalSideOk<T> = T extends AnyVar ? IntervalVarOk<T> : true
+/** The whole order comparison's judgment: a variable side exists, and the sides' domains meet. */
+type OrderPairOk<L, R> = CmpVarSideOk<L, R> extends true ? OrderDomainsOk<OrderDomain<L>, OrderDomain<R>> : false
+
+/**
+ * An interval side's ELEMENT domain: a variable names its field's element
+ * (`never` on a non-interval var), a param or bare interval literal is
+ * `"open"` — no type exists to name its element at this tier; the engine
+ * anchors it at prepare.
+ */
+type IntervalElementDomain<T> = T extends AnyVar
+	? T["field"] extends { readonly kind: "interval"; readonly element: infer E extends "u64" | "i64" }
+		? E
+		: never
+	: "open"
+
+/**
+ * The point side's domain — a point lives in the interval's element
+ * domain: a numeric var names its kind (never bool, never closed), a
+ * param or bigint literal is open.
+ */
+type PointDomain<T> = T extends AnyVar ? (NumericVarOk<T> extends true ? T["field"]["kind"] : never) : "open"
+
+/** Whether two element domains meet: both legal, and equal unless one is open. */
+type ElementMeets<A, B> = [A] extends [never]
+	? false
+	: [B] extends [never]
+		? false
+		: A extends "open"
+			? true
+			: B extends "open"
+				? true
+				: A extends B
+					? true
+					: false
+
+/**
+ * The whole `pointIn` judgment (operands already sealed interval-left):
+ * the point's domain must BE the interval's element domain — `pointIn(t,
+ * w)` with an i64-typed `t` against `interval(u64)` is the engine's
+ * `IllegalComparison`, judged here first.
+ */
+type PointInPairOk<L, R> =
+	CmpVarSideOk<L, R> extends true ? ElementMeets<IntervalElementDomain<L>, PointDomain<R>> : false
+
+/**
+ * The whole `allen` judgment: two interval sides of ONE element domain
+ * (Q1 — widths meet freely, u64-vs-i64 stays illegal), judged pairwise.
+ */
+type AllenPairOk<L, R> =
+	CmpVarSideOk<L, R> extends true ? ElementMeets<IntervalElementDomain<L>, IntervalElementDomain<R>> : false
 
 /** The `eq`/`ne` judgment: var-var joins by mint slot; var-literal is exact-typed by the var's own field. */
 type EqOk<Classes extends SchemaClasses, L, R> = L extends AnyVar
@@ -645,10 +771,13 @@ type NotIdbOk<Classes extends SchemaClasses, Head, B> =
 
 /**
  * One condition's judgment — the type-level twin of the engine's comparison
- * roster: class-equal joins (off the mint slots), orderable order sides (an
- * interval var under a non-`pointIn` op is exactly here refused),
- * kind-correct `pointIn`/`allen` sides, and negated-atom class safety. The
- * leading `[AnyTreeChild] extends [C]` arm is the recursion's base case.
+ * roster: class-equal joins (off the mint slots), PAIRWISE-judged order
+ * domains (an interval var under a non-`pointIn` op is refused per side;
+ * bool-vs-numeric, u64-vs-i64, and measure-vs-non-u64 are refused as
+ * pairs — the engine's same-type rule), element-matched `pointIn`/`allen`
+ * pairs, the no-variable-side (constant comparison) rule, and
+ * negated-atom class safety. The leading `[AnyTreeChild] extends [C]` arm
+ * is the recursion's base case.
  */
 type CondOkBool<Classes extends SchemaClasses, C> = [AnyTreeChild] extends [C]
 	? true
@@ -656,17 +785,11 @@ type CondOkBool<Classes extends SchemaClasses, C> = [AnyTreeChild] extends [C]
 		? Op extends "eq" | "ne"
 			? EqOk<Classes, L, R>
 			: Op extends "lt" | "le" | "gt" | "ge"
-				? [OrderSideOk<L>, OrderSideOk<R>] extends [true, true]
-					? true
-					: false
+				? OrderPairOk<L, R>
 				: Op extends "pointIn"
-					? [IntervalSideOk<L>, PointSideOk<R>] extends [true, true]
-						? true
-						: false
+					? PointInPairOk<L, R>
 					: Op extends "allen"
-						? [IntervalSideOk<L>, IntervalSideOk<R>] extends [true, true]
-							? true
-							: false
+						? AllenPairOk<L, R>
 						: false
 		: C extends Tree<infer Ch extends readonly AnyTreeChild[]>
 			? false extends CondOkBool<Classes, Ch[number]>

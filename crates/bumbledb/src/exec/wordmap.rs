@@ -23,7 +23,13 @@
 //!   window read never wraps.
 //!
 //! Growth stays rehash-double with insertion order preserved (the dense
-//! rule: iteration *and clearing* walk `O(len)`, never `O(capacity)`).
+//! rule: iteration walks `O(len)`, never `O(capacity)`). Clearing is the
+//! **generation-stamped slot clear**: one counter bump makes every
+//! occupied slot stale at once — `O(1)`, no ctrl walk — so a warm
+//! execution's multi-million-entry seen-set costs the next execution's
+//! reset nothing. Stale slots probe as empties (one stamp compare on a
+//! tag match), reclaim on insert, and die at growth; saturation and the
+//! stamp-width wrap fall back to one physical memset (`clear.rs`).
 //!
 #![allow(unsafe_code)] // 00-product unsafe policy: this module is allowlisted
 #![allow(clippy::inline_always)]
@@ -53,6 +59,20 @@ pub struct WordMap<V> {
     keys: Vec<u64>,
     /// One value per slot, initialized exactly when its ctrl byte is set.
     values: Vec<MaybeUninit<V>>,
+    /// Per-slot generation stamps: a set ctrl byte is **live** only when
+    /// its stamp equals [`WordMap::generation`] — the generation-stamped
+    /// slot clear's representation. Written with the ctrl byte
+    /// (`set_ctrl`), read only on a tag match, meaningless under a zero
+    /// ctrl byte.
+    stamps: Vec<u8>,
+    /// The live generation. [`WordMap::clear`] bumps it; the u8 wrap
+    /// forces the physical reset before a stamp value is ever reused,
+    /// so a slot from 255 clears ago can never ghost back as live.
+    generation: u8,
+    /// Occupied-but-stale slots (ctrl set under an older generation):
+    /// inserts reclaim them one by one; the saturation threshold in
+    /// [`WordMap::clear`] reads this to keep miss walks short.
+    stale: usize,
     /// Occupied slot indices in insertion order — docs/architecture/40-execution.md dense
     /// rule, extended to the sink maps: iteration *and clearing* walk
     /// O(len), never O(capacity), so one hot execution's high-water

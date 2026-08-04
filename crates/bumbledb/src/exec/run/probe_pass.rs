@@ -47,10 +47,14 @@ impl Executor {
         let carried_w = tables.carried[node_idx].len();
         let node = &plan.nodes()[node_idx];
         let cover_occ = usize::from(node.subatoms[cover_sub].occ.0);
+        // Batch assembly rides the Gather phase (Gap B) — window
+        // granularity is the pass, never the tuple.
+        counters.phase_start(node_idx, JoinPhase::Gather);
         scratch.survivors.clear();
         scratch
             .survivors
             .extend(0..u32::try_from(fill).expect("batch fits u32"));
+        counters.phase_end(node_idx, JoinPhase::Gather);
 
         // Residuals run BEFORE the sibling probes — the cost-class
         // ordering (docs/architecture/40-execution.md, § inputs from
@@ -397,6 +401,7 @@ impl Executor {
         // advanced. Resolved once per pass — the membership loops and
         // the routing arm below index it instead of re-searching the
         // subatom list per element (the instruction diet).
+        counters.phase_start(node_idx, JoinPhase::Gather);
         scratch.cursor_srcs.clear();
         for (occ, colt) in colts.iter().enumerate() {
             scratch.cursor_srcs.push(if occ == cover_occ {
@@ -415,6 +420,7 @@ impl Executor {
                 }
             });
         }
+        counters.phase_end(node_idx, JoinPhase::Gather);
 
         // Membership probes (docs/architecture/40-execution.md, the
         // point-membership scan): scan the occurrence's remaining
@@ -438,17 +444,17 @@ impl Executor {
             let cursor_src = scratch.cursor_srcs[spec.occ];
             let n = scratch.survivors.len();
             grow_scratch(&mut scratch.mask, n);
+            // The cursor split: a pinned-row cursor names ONE fact, so
+            // its membership conjunction is a data-parallel compare over
+            // gathered interval columns — batched below, the r2 residual
+            // window's dominant shape. A node cursor keeps the
+            // existential position walk (irregular control flow by
+            // doctrine — `colt/gather.rs`).
+            scratch.point_rows.clear();
+            scratch.point_row_ks.clear();
             for k in 0..n {
                 let element = usize::try_from(scratch.survivors[k]).expect("batch fits usize");
                 let parent = scratch.parents[element] as usize;
-                scratch.point_checks.clear();
-                for &(start_col, end_col, src) in &scratch.point_sources {
-                    let point = match src {
-                        Source::Batch(base) => scratch.entry_keys[element * arity + base],
-                        Source::Slot(slot) => scratch.pending_bindings[parent * slot_count + slot],
-                    };
-                    scratch.point_checks.push((start_col, end_col, point));
-                }
                 let cursor = match cursor_src {
                     super::CursorSrc::Cover => scratch.children[element],
                     super::CursorSrc::Sibling(sub_idx) => {
@@ -459,9 +465,59 @@ impl Executor {
                     }
                     super::CursorSrc::Const(start) => start,
                 };
-                let pass = colts[spec.occ].any_position_matches(cursor, &scratch.point_checks);
-                counters.residual(node_idx, pass);
-                scratch.mask[k] = u8::from(pass);
+                if let Cursor::Row(position) = cursor {
+                    scratch.point_rows.push(position);
+                    scratch
+                        .point_row_ks
+                        .push(u32::try_from(k).expect("batch fits u32"));
+                    scratch.mask[k] = 1;
+                    continue;
+                }
+                scratch.point_checks.clear();
+                for &(start_col, end_col, src) in &scratch.point_sources {
+                    let point = match src {
+                        Source::Batch(base) => scratch.entry_keys[element * arity + base],
+                        Source::Slot(slot) => scratch.pending_bindings[parent * slot_count + slot],
+                    };
+                    scratch.point_checks.push((start_col, end_col, point));
+                }
+                scratch.mask[k] =
+                    u8::from(colts[spec.occ].any_position_matches(cursor, &scratch.point_checks));
+            }
+            // The pinned-row batch, per part: one column-pair gather over
+            // every pinned position (views resolve once per part, never
+            // per element), then the half-open compare folds into the
+            // mask branchlessly — the line-parallel twin of the word
+            // residuals above, not a per-element position walk.
+            let m = scratch.point_rows.len();
+            if m > 0 {
+                grow_scratch(&mut scratch.allen_gather, 2 * m);
+                let (starts, ends) = scratch.allen_gather[..2 * m].split_at_mut(m);
+                for &(start_col, end_col, src) in &scratch.point_sources {
+                    colts[spec.occ].gather_interval_pair(
+                        start_col,
+                        end_col,
+                        &scratch.point_rows,
+                        starts,
+                        ends,
+                    );
+                    for j in 0..m {
+                        let k = scratch.point_row_ks[j] as usize;
+                        let element =
+                            usize::try_from(scratch.survivors[k]).expect("batch fits usize");
+                        let parent = scratch.parents[element] as usize;
+                        let point = match src {
+                            Source::Batch(base) => scratch.entry_keys[element * arity + base],
+                            Source::Slot(slot) => {
+                                scratch.pending_bindings[parent * slot_count + slot]
+                            }
+                        };
+                        scratch.mask[k] &= u8::from(starts[j] <= point) & u8::from(point < ends[j]);
+                    }
+                }
+            }
+            for &keep in &scratch.mask[..n] {
+                counters.residual(node_idx, keep != 0);
             }
             crate::exec::kernel::compact_u32_by_mask(&mut scratch.survivors, &scratch.mask);
         }
@@ -512,7 +568,6 @@ impl Executor {
         // kept full copies — arm both (and confront the extraction
         // refusal) before judging the descend bucket untouchable. The
         // W2 gravestone commit carries the full protocol.
-        counters.phase_start(node_idx, JoinPhase::Descend);
         let leaf = node_idx + 2 == n_nodes;
         let child_carried = &tables.carried[node_idx + 1];
         let mints_origins = tables.absorb == Some(node_idx);
@@ -541,6 +596,15 @@ impl Executor {
             scratch.element_origins.clear();
             return;
         }
+        // The window opens AFTER the poison return above: every
+        // phase_start has its phase_end (the timer nesting-depth
+        // invariant), so the cold path may not return out of an open
+        // window.
+        counters.phase_start(node_idx, JoinPhase::Descend);
+        // Real origins exist strictly below the absorb node; the seed id
+        // above it must never match a minted id. Resolved once per pass,
+        // never per survivor (the instruction diet).
+        let below_absorb = tables.absorb.is_some_and(|a| node_idx > a);
         for k in 0..scratch.survivors.len() {
             if self.all_cancelled {
                 break;
@@ -554,9 +618,7 @@ impl Executor {
             } else {
                 scratch.element_origins[element]
             };
-            // Real origins exist strictly below the absorb node; the
-            // seed id above it must never match a minted id.
-            if tables.absorb.is_some_and(|a| node_idx > a) && self.origin_cancelled(origin) {
+            if below_absorb && self.origin_cancelled(origin) {
                 continue;
             }
             // The pass's cursor-source table, indexed — resolved once
@@ -609,20 +671,25 @@ impl Executor {
                     }
                 }
             } else {
+                // One child borrow for the whole append (the closing-probe
+                // constant diet: the re-indexed `self.scratch[node_idx + 1]`
+                // was three bounds-checked walks per survivor), and the
+                // carried cursors extend through one capacity check
+                // instead of a grow branch per cursor.
+                let cover_slots = &self.slot_map[node_idx][cover_sub];
                 let child = &mut self.scratch[node_idx + 1];
                 let start = child.pending_bindings.len();
                 child.pending_bindings.extend_from_slice(
                     &scratch.pending_bindings[parent * slot_count..(parent + 1) * slot_count],
                 );
-                for (i, slot) in self.slot_map[node_idx][cover_sub].iter().enumerate() {
+                for (i, slot) in cover_slots.iter().enumerate() {
                     child.pending_bindings[start + slot] = scratch.entry_keys[element * arity + i];
                 }
-                for &occ in child_carried {
-                    let cursor = assemble(occ);
-                    self.scratch[node_idx + 1].pending_cursors.push(cursor);
-                }
-                self.scratch[node_idx + 1].pending_origins.push(origin);
-                self.scratch[node_idx + 1].pending_len += 1;
+                child
+                    .pending_cursors
+                    .extend(child_carried.iter().map(|&occ| assemble(occ)));
+                child.pending_origins.push(origin);
+                child.pending_len += 1;
             }
         }
         counters.phase_end(node_idx, JoinPhase::Descend);

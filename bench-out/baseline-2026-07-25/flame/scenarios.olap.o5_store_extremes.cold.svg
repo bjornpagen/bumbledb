@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="108" viewBox="0 0 1200 108">
+<rect width="100%" height="100%" fill="rgb(245,245,245)"/>
+<text x="10" y="20" font-family="monospace" font-size="15" font-weight="bold">scenarios.olap.o5_store_extremes.cold</text>
+<g><title>execute  5962.833 us  98.9%</title><rect x="10" y="82" width="1167.25" height="16" fill="rgb(234,55,6)" stroke="white" stroke-width="0.5"/><text x="13" y="94" font-family="monospace" font-size="12">execute</text></g>
+<g><title>finalize  5.875 us  0.1%</title><rect x="10.03" y="66" width="1.15" height="16" fill="rgb(255,138,47)" stroke="white" stroke-width="0.5"/></g>
+<g><title>rule_0  5955.791 us  98.8%</title><rect x="11.18" y="66" width="1165.87" height="16" fill="rgb(216,21,45)" stroke="white" stroke-width="0.5"/><text x="14.18" y="78" font-family="monospace" font-size="12">rule_0</text></g>
+<g><title>join  5952.416 us  98.7%</title><rect x="11.18" y="50" width="1165.21" height="16" fill="rgb(228,169,7)" stroke="white" stroke-width="0.5"/><text x="14.18" y="62" font-family="monospace" font-size="12">join</text></g>
+<g><title>views  1.958 us  0.0%</title><rect x="1176.47" y="50" width="0.38" height="16" fill="rgb(245,221,37)" stroke="white" stroke-width="0.5"/></g>
+<g><title>view_build  1.250 us  0.0%</title><rect x="1176.47" y="34" width="0.24" height="16" fill="rgb(218,176,30)" stroke="white" stroke-width="0.5"/></g>
+<g><title>prepare  65.125 us  1.1%</title><rect x="1177.25" y="82" width="12.75" height="16" fill="rgb(248,101,43)" stroke="white" stroke-width="0.5"/></g>
+<g><title>build_colts  1.666 us  0.0%</title><rect x="1177.25" y="66" width="0.33" height="16" fill="rgb(229,174,2)" stroke="white" stroke-width="0.5"/></g>
+<g><title>lower  6.500 us  0.1%</title><rect x="1177.7" y="66" width="1.27" height="16" fill="rgb(241,3,6)" stroke="white" stroke-width="0.5"/></g>
+<g><title>normalize  3.041 us  0.1%</title><rect x="1178.97" y="66" width="0.6" height="16" fill="rgb(226,36,26)" stroke="white" stroke-width="0.5"/></g>
+<g><title>plan_dp  2.291 us  0.0%</title><rect x="1179.57" y="66" width="0.45" height="16" fill="rgb(235,210,27)" stroke="white" stroke-width="0.5"/></g>
+<g><title>plan_densify  1.583 us  0.0%</title><rect x="1179.57" y="50" width="0.31" height="16" fill="rgb(222,193,50)" stroke="white" stroke-width="0.5"/></g>
+<g><title>stats  7.000 us  0.1%</title><rect x="1180.02" y="66" width="1.37" height="16" fill="rgb(251,25,10)" stroke="white" stroke-width="0.5"/></g>
+<g><title>validate  12.625 us  0.2%</title><rect x="1181.39" y="66" width="2.47" height="16" fill="rgb(219,206,45)" stroke="white" stroke-width="0.5"/></g>
+<g><title>validate_lower  2.708 us  0.0%</title><rect x="1181.39" y="50" width="0.53" height="16" fill="rgb(216,126,24)" stroke="white" stroke-width="0.5"/></g>
+<g><title>validate_rules  8.125 us  0.1%</title><rect x="1181.92" y="50" width="1.59" height="16" fill="rgb(236,159,40)" stroke="white" stroke-width="0.5"/></g>
+</svg>

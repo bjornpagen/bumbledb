@@ -105,6 +105,153 @@ fn check_query(
     }
 }
 
+/// The traced scenario path (`--trace`): every timed query lands the
+/// warm+cold pair as BOTH a Chrome `.json` and a collapsed `.folded`
+/// beside it, and the report carries the warm flame table. One light
+/// scenario, tiny protocol — a smoke test, not a measurement.
+#[cfg(feature = "obs")]
+#[test]
+fn traced_scenarios_land_the_warm_cold_pair_and_flame() {
+    use crate::harness::Protocol;
+    let root = std::env::temp_dir().join("bumbledb-scenario-trace-smoke");
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("root");
+    let modes = super::QueryModes {
+        trace_root: Some(root.clone()),
+        alloc: false,
+    };
+    let only = vec!["points".to_owned()];
+    let proto = Protocol {
+        warmups: 1,
+        samples: 2,
+    };
+    let (_markdown, reports) =
+        super::run(&root, 7, proto, Some(only.as_slice()), &modes).expect("traced scenario run");
+    assert!(!reports.is_empty(), "points scenario has queries");
+    for r in &reports {
+        assert!(r.flame.is_some(), "{}/{}: warm flame", r.scenario, r.name);
+        let dir = root.join("trace").join("scenarios").join(r.scenario);
+        for half in ["warm", "cold"] {
+            let json = dir.join(format!("{}.{half}.json", r.name));
+            let text = std::fs::read_to_string(&json)
+                .unwrap_or_else(|e| panic!("{}: {e}", json.display()));
+            assert!(
+                text.starts_with("[\n") && text.ends_with("\n]\n"),
+                "{} parses as a Chrome array",
+                json.display()
+            );
+            let folded = dir.join(format!("{}.{half}.folded", r.name));
+            let f = std::fs::read_to_string(&folded)
+                .unwrap_or_else(|e| panic!("{}: {e}", folded.display()));
+            for line in f.lines() {
+                let count = line.rsplit(' ').next().expect("a self-ns tail");
+                assert!(count.parse::<u64>().is_ok(), "folded self-ns: {line}");
+            }
+        }
+    }
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// The alloc pass (`--alloc`): a SEPARATE pass from `--trace`, scoped per
+/// query — every timed query gets its own reading. No trace artifacts
+/// are written in this pass.
+#[cfg(feature = "obs")]
+#[test]
+fn the_alloc_pass_scopes_a_reading_per_query() {
+    use crate::harness::Protocol;
+    let root = std::env::temp_dir().join("bumbledb-scenario-alloc-smoke");
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("root");
+    let modes = super::QueryModes {
+        trace_root: None,
+        alloc: true,
+    };
+    let only = vec!["points".to_owned()];
+    let proto = Protocol {
+        warmups: 1,
+        samples: 2,
+    };
+    let (_markdown, reports) =
+        super::run(&root, 7, proto, Some(only.as_slice()), &modes).expect("alloc scenario run");
+    assert!(!reports.is_empty());
+    for r in &reports {
+        assert!(
+            r.alloc.is_some(),
+            "{}/{}: per-query alloc",
+            r.scenario,
+            r.name
+        );
+        assert!(r.flame.is_none(), "the alloc pass writes no traces");
+    }
+    assert!(
+        !root.join("trace").exists(),
+        "the alloc pass writes no trace tree"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// A failed traced capture drains the thread-local capture on its way
+/// out: the cold half used to hand-roll `start_capture`/`finish_capture`
+/// around a `?`, leaving the capture LIVE on every prepare/execute error
+/// path — the next capture on the thread silently extended a stale
+/// timeline. Every capture now runs through the drain-either-way
+/// harness sample.
+#[cfg(feature = "obs")]
+#[test]
+fn a_failed_capture_never_leaves_the_thread_local_capture_live() {
+    fn unprepared() -> bumbledb::Query {
+        // Relation 99 exists in no scenario schema: prepare refuses.
+        bumbledb::Query::single(bumbledb::Rule {
+            finds: vec![bumbledb::FindTerm::Var(bumbledb::VarId(0))],
+            atoms: vec![crate::fixture::atom(
+                bumbledb::RelationId(99),
+                &[(0, crate::fixture::var(0))],
+            )],
+            negated: vec![],
+            conditions: vec![],
+        })
+    }
+    let scenario = super::rings::scenario_smoke();
+    let dir = std::env::temp_dir().join("bumbledb-scenario-trace-drain");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("scratch dir");
+    let stores = super::load::load(&dir, &scenario, 7).expect("load smoke stores");
+    let sq = ScenarioQuery {
+        name: "bogus",
+        surface: Surface::Query(unprepared),
+        params: |_| vec![vec![]],
+        about: "a prepare-refused query",
+        twin: Twin::Canonical,
+        cap: None,
+    };
+    let err = super::trace::capture_query(&stores, &scenario, &sq, 7, &dir)
+        .expect_err("relation 99 must refuse to prepare");
+    assert!(err.contains("prepare"), "{err}");
+    assert!(
+        !bumbledb::obs::capturing(),
+        "the failed capture left the thread-local capture live"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The traced warm draw is the MEDIAN-cost param set (min-of-3 ranking),
+/// never whichever draw the cursor landed on — Zipf heads and misses
+/// traced 20-150x off the timed p50 before.
+#[test]
+fn the_traced_warm_draw_is_the_median_cost_one() {
+    // min-of-3 ranking: 10 < 40 < 50 < 900 — the upper median of four
+    // is 50, at index 0.
+    let costs = [50u64, 10, 40, 900];
+    let median = super::trace::median_param(4, &mut |i| Ok(costs[i])).expect("ranked");
+    assert_eq!(median, 0);
+    // An odd count picks the true middle.
+    let costs = [900u64, 10, 40];
+    let median = super::trace::median_param(3, &mut |i| Ok(costs[i])).expect("ranked");
+    assert_eq!(median, 2);
+    // A cost error propagates.
+    assert!(super::trace::median_param(1, &mut |_| Err("boom".into())).is_err());
+}
+
 /// Scenario corpora are pure functions of the seed: the first row of
 /// every relation reproduces.
 #[test]

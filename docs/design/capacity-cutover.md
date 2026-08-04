@@ -19,13 +19,17 @@ deltas recorded at close, each per the design's intent:
   hand-fixture + conformance + generator-censused coverage is the recorded
   answer; **§ 7 item 18** resolved by widening: both differential twins carry
   the witnessed measure whole (C14).
-- **C17 slot-vs-fetch is DEFERRED with the bench phase** (owner directive,
-  2026-07-24): both arms stand behind `CAPACITY_WEIGHT_SLOT`
-  (`storage/commit/judgment.rs`), fetch-per-child the shipping baseline; the
-  measurement, the loser's deletion, and the slot arm's write-time ray-corner
-  ruling (strictly stronger than C10's judge-time refusal — documented at the
-  constant) are owed on bench resume, with the § 5 lane numbers and the
-  windowed/lawful perf re-pins (`TODO.md`).
+- **C17 slot-vs-fetch RESOLVED by measurement (2026-08-01)**: the
+  power-budget lane ran both arms (same protocol, each arm oracle-verified
+  over the full corpus before timing) and the SLOT arm won every weighted
+  row — `commit_capacity_sum` 32.3 vs 35.2 µs, `commit_capacity_duration`
+  30.8 vs 34.2 µs (min-of-3 ephemeral p50s; the fsync-shadowed durable lane
+  agreed in direction). The slot arm is the only form, the fetch arm and the
+  `CAPACITY_WEIGHT_SLOT` flag are deleted, the numbers live at the
+  CONSTRAINT comment (`storage/commit/judgment.rs`), artifacts in
+  `bench-out/baseline-2026-07-25/capacity-c17/`. The write-time ray-corner
+  ruling (strictly stronger than C10's judge-time refusal — documented at
+  the constraint) is now LIVE semantics and OWED to the owner.
 - **C10 ray-Duration refusal parity engine-vs-naive is designed but
   untested** — the naive twin panics fixture-bug-loud on a ray reaching a
   Duration law and no lane seeds rays; one differential fixture is owed once

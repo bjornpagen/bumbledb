@@ -86,26 +86,28 @@ pub(super) fn judge(view: &FinalStateView<'_, '_, '_>) -> Result<Option<Violatio
     Ok(Violations::seal(violations))
 }
 
-/// C17's measured choice, structured so flipping is ONE constant.
-/// `false` — the landed baseline: capacity `R` edges carry empty values
-/// and the weighted measure walk fetches each child fact (one `F` get
-/// per walked edge) to read its weight. `true` — the statement-scoped
-/// value-slot arm (ruled 2026-07-24, C17): a WEIGHTED capacity
-/// statement's `R` edges carry the child's u64 weight (LE) in the value
-/// slot, paid once at write time, and the walk reads the entries it
-/// already visits. The constant flips the writer ([`super::Applier`]'s
-/// edge puts via [`super::plan::MarkEdgeOp::weight`]), the walk
-/// ([`Checker::measure_children`]), and the sweeper's weight-desync
-/// checks together; readers dispatch on the statement's DECLARED weight
-/// plus this arm, never on value length — a width disagreeing with the
-/// declaration is corruption, not a fallback. The bench (the
-/// power-budget lane) decides the winner; the number lands here with it.
-/// Semantic corner, recorded: under the slot arm a ray-valued Duration
-/// weight refuses at write time (the slot needs a finite u64), which is
-/// strictly stronger than C10's judge-time refusal — visible only for a
-/// ray child under an absent parent; rule the corner before landing the
-/// slot arm as the default.
-pub(crate) const CAPACITY_WEIGHT_SLOT: bool = false;
+// CONSTRAINT (C17, measured 2026-08-01 — the slot arm IS the law): a
+// WEIGHTED capacity statement's `R` edges carry the child's u64 weight
+// (LE) in the value slot, paid once at write time; the measure walk
+// reads the entries it already visits. Unit edges keep the empty value.
+// The losing fetch-per-child arm (empty values everywhere, one `F` get
+// per walked edge) is DELETED with its `CAPACITY_WEIGHT_SLOT` flag —
+// the power-budget lane decided it (bench-out/baseline-2026-07-25/
+// capacity-c17/, min-of-3 ephemeral p50s, µs; identical statement-free
+// control 18.2 both arms): commit_capacity_sum fetch 35.2 vs slot 32.3
+// (judged surface +17.0 → +14.1, −17%); commit_capacity_duration fetch
+// 34.2 vs slot 30.8 (+16.0 → +12.6, −21%); the fsync-shadowed durable
+// lane agreed in direction (sum p50 5365.1 vs 5093.4). Readers dispatch
+// on the statement's DECLARED weight, never on value length — a width
+// disagreeing with the declaration is corruption, not a fallback.
+// Semantic corner, RULED C20 (owner, 2026-08-03): a ray-valued Duration
+// weight refuses at WRITE time (the slot needs a finite u64), strictly
+// stronger than C10's judge-time refusal — visible only for a ray child
+// under an absent parent, and DOCTRINE there: a row governed by a
+// Duration-weighted capacity law must carry a measurable weight whether
+// or not any judgment currently demands it (fail-fast; never latent).
+// Pinned: tests/marks.rs
+// `capacity_duration_ray_under_an_absent_parent_still_refuses`.
 
 /// One source fact's weight under a capacity statement's measure
 /// (`lean/Bumbledb/Capacity.lean: Weight.apply`): `Unit` is 1 — the
@@ -120,7 +122,29 @@ pub(crate) fn child_weight(
     layout: &FactLayout,
     fact: &[u8],
 ) -> Result<u64> {
-    match statement.weight {
+    measure_weight(
+        statement.weight,
+        statement.weight_tail,
+        layout,
+        fact,
+        statement.id,
+    )
+}
+
+/// The ONE weight arithmetic behind [`child_weight`] — spelled over the
+/// raw `(weight, sealed tail)` pair so validate's closed-constant arm
+/// (which measures extension rows before any [`CapacityStatement`]
+/// exists) reads THIS definition too: the measure law has exactly one
+/// engine definition, never an inline re-implementation
+/// (`docs/architecture/60-validation.md` § one mechanism per law).
+pub(crate) fn measure_weight(
+    weight: Weight,
+    weight_tail: Option<IntervalTail>,
+    layout: &FactLayout,
+    fact: &[u8],
+    statement: bumbledb_theory::schema::StatementId,
+) -> Result<u64> {
+    match weight {
         Weight::Unit => Ok(1),
         Weight::Field(field) => Ok(u64::from_be_bytes(field_word_bytes(
             fact,
@@ -128,15 +152,47 @@ pub(crate) fn child_weight(
             usize::from(field.0),
         ))),
         Weight::DurationOf(field) => {
-            let tail = statement
-                .weight_tail
-                .expect("validate seals a tail for every Duration weight");
+            let tail = weight_tail.expect("validate seals a tail for every Duration weight");
             interval_measure(
                 tail,
                 field_bytes(fact, layout, usize::from(field.0)),
-                statement.id,
+                statement,
                 fact,
             )
+        }
+    }
+}
+
+/// The ONE ceiling resolution behind [`Checker::resolve_hi`]
+/// (`lean/Bumbledb/Capacity.lean: CapWindow.resolve`) — spelled over the
+/// raw `(bound, sealed tail)` pair so validate's closed-constant arm
+/// reads THIS definition too, exactly as [`measure_weight`]: a literal
+/// passes through; a dependent bound reads the named TARGET-row field —
+/// u64 word or interval measure — off the holder fact in hand.
+pub(crate) fn resolve_bound(
+    bound: Option<CapacityBound>,
+    bound_tail: Option<IntervalTail>,
+    layout: &FactLayout,
+    parent_fact: &[u8],
+    statement: bumbledb_theory::schema::StatementId,
+) -> Result<Option<u64>> {
+    match bound {
+        None => Ok(None),
+        Some(CapacityBound::Lit(n)) => Ok(Some(n)),
+        Some(CapacityBound::TargetField(field)) => Ok(Some(u64::from_be_bytes(field_word_bytes(
+            parent_fact,
+            layout,
+            usize::from(field.0),
+        )))),
+        Some(CapacityBound::TargetDuration(field)) => {
+            let tail = bound_tail.expect("validate seals a tail for every Duration bound");
+            interval_measure(
+                tail,
+                field_bytes(parent_fact, layout, usize::from(field.0)),
+                statement,
+                parent_fact,
+            )
+            .map(Some)
         }
     }
 }
@@ -145,17 +201,16 @@ pub(crate) fn child_weight(
 /// source fact — the ONE definition the applier writes and both
 /// weight-desync sweep directions compare against
 /// (`docs/architecture/60-validation.md` § the weight-desync sweep).
-/// `None` = the empty value: every edge under the fetch baseline, and
-/// unit edges under the slot arm.
+/// `None` = the empty value: unit edges carry no weight.
 pub(crate) fn expected_slot_weight(
     statement: &CapacityStatement,
     layout: &FactLayout,
     fact: &[u8],
 ) -> Result<Option<u64>> {
-    if CAPACITY_WEIGHT_SLOT && !matches!(statement.weight, Weight::Unit) {
-        return Ok(Some(child_weight(statement, layout, fact)?));
+    if matches!(statement.weight, Weight::Unit) {
+        return Ok(None);
     }
-    Ok(None)
+    Ok(Some(child_weight(statement, layout, fact)?))
 }
 
 /// The interval measure in encoded word space: `end − start` over the
@@ -164,6 +219,12 @@ pub(crate) fn expected_slot_weight(
 /// (`end == u64::MAX` in both element encodings) has no finite measure —
 /// the typed commit refusal naming the row (ruled 2026-07-24, C10; the
 /// R6 precedent, `crate::error::Error::MeasureOfRay`'s judge-side twin).
+/// An INVERTED general tail (`end < start`) is unrepresentable by
+/// construction — the value codec only encodes nonempty intervals — so
+/// stored bytes reading back inverted convict corruption, never wrap
+/// into a garbage measure (`checked_sub`, not `-`: the subtraction was
+/// the one arithmetic in the module that could underflow on hostile
+/// bytes).
 fn interval_measure(
     tail: IntervalTail,
     bytes: &[u8],
@@ -181,7 +242,10 @@ fn interval_measure(
             fact: fact.into(),
         });
     }
-    Ok(end - start)
+    end.checked_sub(start)
+        .ok_or(Error::Corruption(CorruptionError::MalformedValue(
+            "capacity interval inverted",
+        )))
 }
 
 /// One binding's pre-encoded comparison: the singleton compare (today's
@@ -409,8 +473,22 @@ pub(super) fn check_source(
     worklist.sort_unstable_by(|(a, a_fact), (b, b_fact)| {
         (a.containment, &a.key_bytes, *a_fact).cmp(&(b.containment, &b.key_bytes, *b_fact))
     });
+    // The sort's completion (T8): within one containment group the
+    // derived probe keys ascend (one fixed prefix, ascending key bytes),
+    // so ONE forward cursor answers the group's scalar probes — a
+    // bounded leaf walk between neighbors instead of an independent
+    // root-to-leaf descent per probe ([`SortedGets`]). Reset at each
+    // group boundary: across containments the derived keys may go
+    // backward, and the walker's verdicts are sound only over ascending
+    // probes.
+    let mut sorted_gets = SortedGets::new(txn.raw(), txn.env().data());
+    let mut group: Option<crate::schema::ContainmentId> = None;
     for (edge, fact_bytes) in worklist {
         probes += 1;
+        if group != Some(edge.containment) {
+            sorted_gets.reset();
+            group = Some(edge.containment);
+        }
         let statement = schema.containment(edge.containment);
         let probe = Probe {
             statement: statement.id,
@@ -429,7 +507,9 @@ pub(super) fn check_source(
             source_tail: schema.source_tail(statement),
         };
         let outcome = match &statement.enforcement {
-            Enforcement::ScalarProbe { .. } => checker.check_scalar(&probe),
+            Enforcement::ScalarProbe { .. } => {
+                checker.check_scalar_sorted(&probe, &mut sorted_gets)
+            }
             Enforcement::IntervalCoverage { disjoint, .. } => {
                 checker.check_coverage(*disjoint, &probe)
             }
@@ -770,6 +850,19 @@ pub(crate) fn capacity_child_image<'a>(
     }
 }
 
+/// The R16 8-byte-determinant decode, spelled ONCE: a fresh-keyed
+/// statement maintains no `U` tree — its determinant IS the `F` row id,
+/// so every probe of such a key starts by reading the determinant as
+/// the one 8-byte word (a different width is corrupt key material).
+/// The three probe sites ([`establishing_fact`], [`Checker::check_scalar`],
+/// [`Checker::check_capacity`]) differ only in their MISS verdicts.
+fn fresh_row_word(determinant: &[u8]) -> Result<u64> {
+    let word: [u8; 8] = determinant
+        .try_into()
+        .map_err(|_| Error::Corruption(CorruptionError::MalformedValue("fresh-row key width")))?;
+    Ok(u64::from_be_bytes(word))
+}
+
 /// The fact that re-established a key determinant in phase 2, reached through
 /// the determinant's own `U` entry — the ψ-qualification subject. Both gets
 /// hit state this commit just wrote (write txns read their own writes),
@@ -784,14 +877,11 @@ fn establishing_fact<'t>(
 ) -> Result<&'t [u8]> {
     let statement = schema.key(key);
     if statement.fresh_row {
-        let word: [u8; 8] = determinant.try_into().map_err(|_| {
-            Error::Corruption(CorruptionError::MalformedValue("fresh-row key width"))
-        })?;
         return fact_by_row(
             data,
             txn.raw(),
             statement.relation,
-            u64::from_be_bytes(word),
+            fresh_row_word(determinant)?,
         );
     }
     let mut buf: KeyBuf = [0; MAX_KEY];
@@ -890,6 +980,86 @@ impl Probe<'_> {
     }
 }
 
+/// The T8 walker: exact-key gets over an ASCENDING probe sequence,
+/// answered by one shared forward cursor instead of an independent
+/// root-to-leaf descent per probe. The cursor steps leaf-sequentially
+/// toward each probe under a bounded budget and repositions with one
+/// descent when the gap is wide (or on first use); an entry ABOVE the
+/// probe is the miss verdict and stays PENDING for the next probe, so
+/// duplicate probe keys re-answer from the pending slot. Sound only
+/// over ascending probes — [`check_source`] resets it at every
+/// containment-group boundary, and the unsorted probe sites
+/// ([`Checker::check_scalar`]'s other callers) never touch it.
+struct SortedGets<'a> {
+    txn: &'a RoTxn<'a, AnyTls>,
+    data: heed::Database<heed::types::Bytes, heed::types::Bytes>,
+    range: Option<heed::RoRange<'a, heed::types::Bytes, heed::types::Bytes>>,
+    /// The last cursor entry not yet consumed — at or above every probe
+    /// answered so far.
+    pending: Option<(&'a [u8], &'a [u8])>,
+}
+
+impl<'a> SortedGets<'a> {
+    /// Leaf steps paid toward a probe before falling back to a fresh
+    /// descent: about a fraction of one leaf page of `U` entries, so a
+    /// dense probe group walks and a sparse one descends — the fallback
+    /// costs exactly what the pre-T8 exact get cost.
+    const WALK_BUDGET: usize = 16;
+
+    fn new(
+        txn: &'a RoTxn<'a, AnyTls>,
+        data: heed::Database<heed::types::Bytes, heed::types::Bytes>,
+    ) -> Self {
+        Self {
+            txn,
+            data,
+            range: None,
+            pending: None,
+        }
+    }
+
+    /// Forgets the cursor position — the group boundary (the next probe
+    /// may sort below the last one).
+    fn reset(&mut self) {
+        self.range = None;
+        self.pending = None;
+    }
+
+    /// The exact-key get, assuming `key` is ≥ every key probed since the
+    /// last [`Self::reset`].
+    fn get(&mut self, key: &[u8]) -> Result<Option<&'a [u8]>> {
+        if let Some(range) = self.range.as_mut() {
+            for _ in 0..Self::WALK_BUDGET {
+                match self.pending {
+                    Some((k, v)) => match k.cmp(key) {
+                        std::cmp::Ordering::Less => self.pending = None,
+                        std::cmp::Ordering::Equal => return Ok(Some(v)),
+                        std::cmp::Ordering::Greater => return Ok(None),
+                    },
+                    None => match range.next().transpose()? {
+                        Some(entry) => self.pending = Some(entry),
+                        // The tree holds nothing at or above the cursor,
+                        // and the cursor started at or below this probe:
+                        // a miss, and every later (greater) probe misses
+                        // the same way without re-descending.
+                        None => return Ok(None),
+                    },
+                }
+            }
+        }
+        // First probe of the group, or the gap outran the budget: one
+        // descent repositions the cursor at the probe.
+        let bounds: (Bound<&[u8]>, Bound<&[u8]>) = (Bound::Included(key), Bound::Unbounded);
+        let mut range = self.data.range(self.txn, &bounds)?;
+        self.pending = range.next().transpose()?;
+        self.range = Some(range);
+        match self.pending {
+            Some((k, v)) if k == key => Ok(Some(v)),
+            _ => Ok(None),
+        }
+    }
+}
+
 /// Working state threaded through the judgment probes. The scalar probe
 /// and the coverage walk have exactly this one implementation, consumed
 /// by three callers: the commit path's two sides (over the write
@@ -926,15 +1096,7 @@ impl<'a> Checker<'a> {
     pub(crate) fn check_scalar(&mut self, probe: &Probe<'_>) -> Result<()> {
         let target_key = self.schema.key(probe.target_key);
         if target_key.fresh_row {
-            let word: [u8; 8] = probe.key_bytes.try_into().map_err(|_| {
-                Error::Corruption(CorruptionError::MalformedValue("fresh-row key width"))
-            })?;
-            let f_len = keys::fact_key(
-                &mut self.key,
-                probe.target_relation,
-                u64::from_be_bytes(word),
-            );
-            let Some(fact) = self.data.get(self.txn, &self.key[..f_len])? else {
+            let Some(fact) = self.fresh_row_fact(probe.target_relation, probe.key_bytes)? else {
                 return Err(probe.unsatisfied());
             };
             return self.check_fact(probe, fact);
@@ -946,6 +1108,36 @@ impl<'a> Checker<'a> {
             probe.key_bytes,
         );
         let Some(value) = self.data.get(self.txn, &self.key[..u_len])? else {
+            return Err(probe.unsatisfied());
+        };
+        self.check_segment(probe, value)
+    }
+
+    /// [`Checker::check_scalar`]'s sorted-worklist twin (the T8
+    /// completion): the same key derivations and the same verdicts, the
+    /// one get answered by the caller's [`SortedGets`] walker — legal
+    /// only where probe keys ascend within the walker's current group
+    /// ([`check_source`]'s sort provides exactly that).
+    fn check_scalar_sorted(&mut self, probe: &Probe<'_>, gets: &mut SortedGets<'a>) -> Result<()> {
+        let target_key = self.schema.key(probe.target_key);
+        if target_key.fresh_row {
+            let f_len = keys::fact_key(
+                &mut self.key,
+                probe.target_relation,
+                fresh_row_word(probe.key_bytes)?,
+            );
+            let Some(fact) = gets.get(&self.key[..f_len])? else {
+                return Err(probe.unsatisfied());
+            };
+            return self.check_fact(probe, fact);
+        }
+        let u_len = keys::determinant_key(
+            &mut self.key,
+            probe.target_relation,
+            target_key.id,
+            probe.key_bytes,
+        );
+        let Some(value) = gets.get(&self.key[..u_len])? else {
             return Err(probe.unsatisfied());
         };
         self.check_segment(probe, value)
@@ -1105,17 +1297,10 @@ impl<'a> Checker<'a> {
                 let key_statement = self.schema.key(*target_key);
                 // A fresh-row parent key has no `U` tree (R16): the
                 // parent tuple IS the `F` row id, one get, the value the
-                // holder itself.
+                // holder itself — nothing to defer.
                 let fact = if key_statement.fresh_row {
-                    let word: [u8; 8] = parent_key.try_into().map_err(|_| {
-                        Error::Corruption(CorruptionError::MalformedValue("fresh-row key width"))
-                    })?;
-                    let f_len = keys::fact_key(
-                        &mut self.key,
-                        statement.target.relation,
-                        u64::from_be_bytes(word),
-                    );
-                    let Some(fact) = self.data.get(self.txn, &self.key[..f_len])? else {
+                    let Some(fact) = self.fresh_row_fact(statement.target.relation, parent_key)?
+                    else {
                         return Ok(());
                     };
                     fact
@@ -1130,6 +1315,49 @@ impl<'a> Checker<'a> {
                         return Ok(());
                     };
                     let row_id = decode_row_id(value)?;
+                    // The holder's fact bytes are needed eagerly only by
+                    // ψ and by a dependent bound. An empty-ψ
+                    // literal-bound statement judges its whole hot path
+                    // from the `U` probe and the `R` walk alone — its
+                    // `F` get defers to the conviction (cold) path,
+                    // where the violation payload requires it anyway.
+                    let needs_fact = !matches!(checks.target, SelectionCheck::Empty)
+                        || matches!(
+                            statement.hi,
+                            Some(CapacityBound::TargetField(_) | CapacityBound::TargetDuration(_))
+                        );
+                    if !needs_fact {
+                        // ψ is Empty by construction, so the determinant
+                        // hit alone proves the holder; the bound is
+                        // literal or absent, resolved fact-free.
+                        let hi = match statement.hi {
+                            None => None,
+                            Some(CapacityBound::Lit(n)) => Some(n),
+                            Some(_) => {
+                                unreachable!("a dependent bound forces the eager holder fetch")
+                            }
+                        };
+                        let measure =
+                            self.measure_children(statement, &checks.source, parent_key, hi)?;
+                        if measure < u128::from(statement.lo)
+                            || hi.is_some_and(|hi| measure > u128::from(hi))
+                        {
+                            let parent_fact = fact_by_row(
+                                self.data,
+                                self.txn,
+                                statement.target.relation,
+                                row_id,
+                            )?;
+                            return Err(Error::CommitRejected {
+                                violations: Violations::one(Violation::Capacity {
+                                    statement: statement.id,
+                                    fact: parent_fact.into(),
+                                    measure,
+                                }),
+                            });
+                        }
+                        return Ok(());
+                    }
                     fact_by_row(self.data, self.txn, statement.target.relation, row_id)?
                 };
                 let layout = self.schema.relation(statement.target.relation).layout();
@@ -1186,32 +1414,17 @@ impl<'a> Checker<'a> {
     /// holder fact (`lean/Bumbledb/Capacity.lean: CapWindow.resolve`):
     /// a literal passes through; a dependent bound reads the named
     /// TARGET-row field — u64 word or interval measure — off the fact
-    /// bytes already fetched for the ψ check.
+    /// bytes already fetched for the ψ check. Delegates to
+    /// [`resolve_bound`], the one engine definition.
     fn resolve_hi(&self, statement: &CapacityStatement, parent_fact: &[u8]) -> Result<Option<u64>> {
-        let Some(bound) = &statement.hi else {
-            return Ok(None);
-        };
         let layout = self.schema.relation(statement.target.relation).layout();
-        match bound {
-            CapacityBound::Lit(n) => Ok(Some(*n)),
-            CapacityBound::TargetField(field) => Ok(Some(u64::from_be_bytes(field_word_bytes(
-                parent_fact,
-                layout,
-                usize::from(field.0),
-            )))),
-            CapacityBound::TargetDuration(field) => {
-                let tail = statement
-                    .bound_tail
-                    .expect("validate seals a tail for every Duration bound");
-                interval_measure(
-                    tail,
-                    field_bytes(parent_fact, layout, usize::from(field.0)),
-                    statement.id,
-                    parent_fact,
-                )
-                .map(Some)
-            }
-        }
+        resolve_bound(
+            statement.hi,
+            statement.bound_tail,
+            layout,
+            parent_fact,
+            statement.id,
+        )
     }
 
     /// One parent's child-group measure: the ordered walk of the capacity
@@ -1226,9 +1439,9 @@ impl<'a> Checker<'a> {
     /// needs the whole group anyway, and on conviction the full sum IS
     /// the witness, so the reported measure is walk-order-independent
     /// (ruled 2026-07-24, C14: the clip serves the verdict, the full sum
-    /// serves the witness). Weights read per the C17 arm
-    /// ([`CAPACITY_WEIGHT_SLOT`]): the value slot, or one child `F` fetch
-    /// per walked edge. A CLOSED source stored no edges: the φ-selected
+    /// serves the witness). Weights read from the `R` value slot the
+    /// applier maintains (C17, measured — the slot law at the constraint
+    /// comment above). A CLOSED source stored no edges: the φ-selected
     /// axioms sharing the tuple are summed by an honest ≤256-row
     /// extension scan (domain quantification,
     /// `docs/architecture/30-dependencies.md`).
@@ -1269,9 +1482,9 @@ impl<'a> Checker<'a> {
             if !k.starts_with(&self.key[..p_len]) {
                 break;
             }
-            // Value discipline per the declared weight and the C17 arm —
-            // a width disagreeing with the declaration is corruption,
-            // never a fallback (the format gate proved no old data).
+            // Value discipline per the declared weight — a width
+            // disagreeing with the declaration is corruption, never a
+            // fallback (the format gate proved no old data).
             let weight = if unit {
                 if !v.is_empty() {
                     return Err(Error::Corruption(CorruptionError::MalformedValue(
@@ -1279,46 +1492,11 @@ impl<'a> Checker<'a> {
                     )));
                 }
                 1
-            } else if CAPACITY_WEIGHT_SLOT {
+            } else {
                 let word: [u8; 8] = v.try_into().map_err(|_| {
                     Error::Corruption(CorruptionError::MalformedValue("R capacity value width"))
                 })?;
                 u64::from_le_bytes(word)
-            } else {
-                if !v.is_empty() {
-                    return Err(Error::Corruption(CorruptionError::MalformedValue(
-                        "R capacity value width",
-                    )));
-                }
-                // The fetch-per-child baseline: one `F` get per walked
-                // edge — the R key names the child (source_rel, row).
-                // The embedded relation and the fetched width are trust
-                // checks, not redundancy: the walk is about to slice the
-                // child with the DECLARED source layout, so a hostile
-                // edge embedding a foreign relation — or naming a
-                // wrong-width fact — is typed corruption here, never a
-                // panic (the sweeper's R pass convicts the same shapes
-                // offline; the F pass swallows the Corruption).
-                let Some((_, _, source_rel, source_row)) = keys::parse_reverse_key(k) else {
-                    return Err(Error::Corruption(CorruptionError::MalformedValue(
-                        "R capacity key shape",
-                    )));
-                };
-                if source_rel != statement.source.relation {
-                    return Err(Error::Corruption(CorruptionError::MalformedValue(
-                        "R capacity key source relation",
-                    )));
-                }
-                let child = fact_by_row(self.data, self.txn, source_rel, source_row)?;
-                if child.len() != layout.fact_width() {
-                    return Err(Error::Corruption(CorruptionError::WrongFactWidth {
-                        relation: source_rel,
-                        row_id: source_row,
-                        expected: layout.fact_width(),
-                        actual: child.len(),
-                    }));
-                }
-                child_weight(statement, layout, child)?
             };
             measure += u128::from(weight);
             if floor_only_decided(measure) {
@@ -1326,6 +1504,19 @@ impl<'a> Checker<'a> {
             }
         }
         Ok(measure)
+    }
+
+    /// The R16 fresh-row probe: the determinant decodes to the `F` row
+    /// id ([`fresh_row_word`]) and one `F` get answers — the found fact,
+    /// or the miss whose verdict belongs to the caller (a violation at
+    /// the scalar probe, no-holder at the capacity check).
+    fn fresh_row_fact(
+        &mut self,
+        relation: RelationId,
+        determinant: &[u8],
+    ) -> Result<Option<&'a [u8]>> {
+        let f_len = keys::fact_key(&mut self.key, relation, fresh_row_word(determinant)?);
+        Ok(self.data.get(self.txn, &self.key[..f_len])?)
     }
 
     /// The per-segment target-selection check: with an empty σ the determinant

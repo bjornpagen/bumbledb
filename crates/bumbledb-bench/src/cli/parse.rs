@@ -172,6 +172,10 @@ fn parse_trace(tokens: &mut Tokens<'_>) -> Result<Cmd, String> {
 
 /// The shared world-args walk (`scenarios`, `crud`, `lawful` — one
 /// flag vocabulary, [`ScenarioArgs`]); an unknown flag names `cmd`.
+/// `--alloc` is the one asymmetric flag: the per-query alloc window is
+/// a `scenarios` pass — the write worlds have no alloc mode, and a
+/// flag that parses but does nothing would be a lie, so they refuse it
+/// by name.
 fn parse_world(cmd: &str, tokens: &mut Tokens<'_>) -> Result<ScenarioArgs, String> {
     let mut args = ScenarioArgs::default();
     while let Some(flag) = tokens.next() {
@@ -183,9 +187,22 @@ fn parse_world(cmd: &str, tokens: &mut Tokens<'_>) -> Result<ScenarioArgs, Strin
                 args.only = Some(tokens.value(&flag)?.split(',').map(str::to_owned).collect());
             }
             "--samples" => args.samples = Some(parse_u32(&flag, tokens.value(&flag)?)?),
+            "--trace" => args.trace = true,
+            "--alloc" if cmd == "scenarios" => args.alloc = true,
+            "--alloc" => {
+                return Err(format!(
+                    "`{cmd}` has no alloc pass — `--alloc` is a `scenarios` mode; \
+                     the write worlds take `--trace`"
+                ));
+            }
             "--out" => args.out = Some(PathBuf::from(tokens.value(&flag)?)),
             _ => return Err(unknown(cmd, &flag)),
         }
+    }
+    if args.trace && args.alloc {
+        return Err(format!(
+            "`{cmd}` rejects `--trace` with `--alloc` — they are mutually exclusive passes (the obs doctrine)"
+        ));
     }
     Ok(args)
 }
@@ -287,6 +304,7 @@ fn parse_writes(tokens: &mut Tokens<'_>) -> Result<Cmd, String> {
             "--lanes" => args.lanes = parse_lane_list(&flag, tokens.value(&flag)?)?,
             "--batches" => args.batches = parse_batch_list(&flag, tokens.value(&flag)?)?,
             "--samples" => args.samples = Some(parse_u32(&flag, tokens.value(&flag)?)?),
+            "--trace" => args.trace = true,
             "--out" => args.out = Some(PathBuf::from(tokens.value(&flag)?)),
             _ => return Err(unknown("writes", &flag)),
         }

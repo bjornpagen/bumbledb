@@ -71,30 +71,33 @@ impl<S> Snapshot<'_, S> {
     }
 
     /// Plan introspection with ANALYZE semantics: executes with counting instrumentation
-    /// and returns the answers alongside the rendered report.
+    /// and returns the answers alongside the rendered report. Takes the
+    /// mixed [`ParamArg`] entry — execute-symmetry (R13): whatever
+    /// [`Snapshot::execute_args`] binds, introspection binds.
     ///
     /// # Errors
     ///
-    /// As [`Snapshot::execute`].
+    /// As [`Snapshot::execute_args`].
     pub fn introspect(
         &self,
         prepared: &mut PreparedQuery<'_, S>,
-        params: &[BindValue<'_>],
+        params: &[ParamArg<'_>],
     ) -> Result<(Answers, String)> {
         prepared.introspect(&self.txn, self.cache, params)
     }
 
     /// ANALYZE with structured output: the answers alongside
     /// [`crate::api::stats::ExecutionStats`] — what `introspect` renders,
-    /// as data.
+    /// as data. Takes the mixed [`ParamArg`] entry — execute-symmetry
+    /// (R13): whatever [`Snapshot::execute_args`] binds, profiling binds.
     ///
     /// # Errors
     ///
-    /// As [`Snapshot::execute`].
+    /// As [`Snapshot::execute_args`].
     pub fn profile(
         &self,
         prepared: &mut PreparedQuery<'_, S>,
-        params: &[BindValue<'_>],
+        params: &[ParamArg<'_>],
     ) -> Result<(Answers, crate::api::stats::ExecutionStats)> {
         prepared.profile(&self.txn, self.cache, params)
     }
@@ -207,8 +210,35 @@ impl<S> Snapshot<'_, S> {
         key: bumbledb_theory::schema::StatementId,
         key_values: &[Value],
     ) -> Result<Option<Vec<Value>>> {
+        let mut out = Vec::new();
+        Ok(self
+            .get_dyn_into(relation, key, key_values, &mut out)?
+            .then_some(out))
+    }
+
+    /// [`Snapshot::get_dyn`] into a caller-provided buffer — the pooled
+    /// point-read lane (docs/architecture/70-api.md § point reads): the
+    /// values `Vec` is the caller's, its capacity retained across gets,
+    /// so a warm keyed get's allocator traffic shrinks to the
+    /// variable-width payload boxes alone (the key-encode scratch was
+    /// already pooled, R15). `Ok(true)` = hit, `out` holds the fact's
+    /// fields in declaration order; `Ok(false)` = no fact, `out` empty.
+    ///
+    /// # Errors
+    ///
+    /// As [`Snapshot::get_dyn`].
+    pub fn get_dyn_into(
+        &self,
+        relation: RelationId,
+        key: bumbledb_theory::schema::StatementId,
+        key_values: &[Value],
+        out: &mut Vec<Value>,
+    ) -> Result<bool> {
+        out.clear();
+        let mut span =
+            crate::obs::span(crate::obs::names::POINT_READ, crate::obs::Category::Storage);
         let (_, statement) = super::get::key_statement_of(self.schema, relation, key)?;
-        self.with_scratch(|scratch| {
+        let hit = self.with_scratch(|scratch| {
             let key_bytes = &mut scratch.bytes;
             read::begin_determinant_key(key_bytes, relation, statement.id);
             if !super::get::encode_determinant_with(
@@ -219,7 +249,7 @@ impl<S> Snapshot<'_, S> {
                 key_bytes,
                 |text| dict::lookup_str(&self.txn, text),
             )? {
-                return Ok(None);
+                return Ok(false);
             }
             let rel = self.schema.relation(relation);
             let bytes = if rel.is_closed() {
@@ -240,18 +270,22 @@ impl<S> Snapshot<'_, S> {
             } else {
                 read::fact_for_key(&self.txn, self.schema, relation, key_bytes)?
             };
-            bytes
-                .map(|fact| {
-                    crate::encoding::decode_values_keyed(
-                        fact,
-                        rel.layout(),
-                        &statement.projection,
-                        key_values,
-                        |id| Ok(Box::from(dict::resolve(&self.txn, id)?)),
-                    )
-                })
-                .transpose()
-        })
+            let Some(fact) = bytes else {
+                return Ok(false);
+            };
+            crate::encoding::decode_values_keyed_into(
+                fact,
+                rel.layout(),
+                &statement.projection,
+                key_values,
+                |id| Ok(Box::from(dict::resolve(&self.txn, id)?)),
+                out,
+            )?;
+            Ok(true)
+        })?;
+        span.set_args(u64::from(hit), 0);
+        span.end();
+        Ok(hit)
     }
 
     /// Point lookup of the full fact through a typed key value ([`Key`]),
@@ -280,8 +314,10 @@ impl<S> Snapshot<'_, S> {
     )]
     pub fn get<'snap, K: Key<'snap, Schema = S>>(&'snap self, key: K) -> Result<Option<K::Fact>> {
         let relation = <K::Fact as Fact<'snap>>::RELATION;
+        let mut span =
+            crate::obs::span(crate::obs::names::POINT_READ, crate::obs::Category::Storage);
         let (_, statement) = super::get::key_statement_of(self.schema, relation, K::STATEMENT)?;
-        self.with_scratch(|scratch| {
+        let result = self.with_scratch(|scratch| {
             let key_bytes = &mut scratch.bytes;
             read::begin_determinant_key(key_bytes, relation, statement.id);
             if !key.determinant_read(self, key_bytes)? {
@@ -307,7 +343,12 @@ impl<S> Snapshot<'_, S> {
                 read::fact_for_key(&self.txn, self.schema, relation, key_bytes)?
             };
             bytes.map(|fact| K::Fact::decode(self, fact)).transpose()
-        })
+        });
+        if let Ok(found) = &result {
+            span.set_args(u64::from(found.is_some()), 0);
+        }
+        span.end();
+        result
     }
 
     /// The typed sibling of [`Snapshot::scan`]: decodes each fact into its

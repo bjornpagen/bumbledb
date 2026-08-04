@@ -70,6 +70,9 @@ impl<V: Copy> WordMap<V> {
         }
         let (found, idx) = self.probe_core::<K>(key, hash);
         if !found {
+            // A set ctrl byte here is a stale slot being reclaimed (the
+            // probe returns stale tag matches as insert slots).
+            self.stale -= usize::from(self.ctrl[idx] != 0);
             self.set_ctrl(idx, ctrl_tag(hash));
             self.keys[idx * K..idx * K + K].copy_from_slice(&key[..K]);
             self.values[idx].write(make());
@@ -96,6 +99,8 @@ impl<V: Copy> WordMap<V> {
         }
         let (found, idx) = self.probe(key, hash);
         if !found {
+            // Stale-slot reclaim, exactly as the monomorphic core.
+            self.stale -= usize::from(self.ctrl[idx] != 0);
             self.set_ctrl(idx, ctrl_tag(hash));
             self.keys[idx * self.arity..(idx + 1) * self.arity].copy_from_slice(key);
             self.values[idx].write(make());

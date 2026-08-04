@@ -96,6 +96,8 @@ impl<S> PreparedQuery<'_, S> {
         if self.resolved_params.len() != supplied {
             self.resolved_params.resize(supplied, Const::Word(0));
             self.missed_params.resize(supplied, false);
+            self.param_word_memo
+                .resize(supplied, super::ParamWordMemo::default());
         }
         Ok(())
     }
@@ -163,12 +165,46 @@ impl<S> PreparedQuery<'_, S> {
                     self.missed_params[idx] = false;
                     return Ok(());
                 }
+                // The per-slot param-word memo: re-binding the same
+                // text skips the dictionary descent whole. Sound
+                // because the dictionary is append-only — a text's
+                // resolved word is FINAL — while a prior MISS never
+                // memoizes (a later write may intern the text, so the
+                // miss re-probes every bind until it latches).
+                if matches!(ty, ValueType::String)
+                    && let BindValue::Str(text) = value
+                {
+                    let memo = &self.param_word_memo[idx];
+                    if let Some(word) = memo.word
+                        && memo.text == text
+                    {
+                        obs::event(
+                            obs::names::PARAM_WORD_MEMO,
+                            obs::Category::Execute,
+                            idx as u64,
+                            word,
+                        );
+                        self.resolved_params[idx] = Const::Word(word);
+                        self.missed_params[idx] = false;
+                        return Ok(());
+                    }
+                }
                 let Some((resolved, missed)) = convert_scalar(txn, value, ty)? else {
                     return Err(Error::ParamTypeMismatch {
                         param,
                         expected: ty.clone(),
                     });
                 };
+                if let (BindValue::Str(text), ValueType::String) = (value, ty) {
+                    let memo = &mut self.param_word_memo[idx];
+                    if missed {
+                        memo.word = None;
+                    } else if let Const::Word(word) = &resolved {
+                        memo.text.clear();
+                        memo.text.push_str(text);
+                        memo.word = Some(*word);
+                    }
+                }
                 // The point-domain law: a point-position param bound to
                 // its domain ceiling can be inside no interval. Both
                 // element encodings put the ceiling at the all-ones word.

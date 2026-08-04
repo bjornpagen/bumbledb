@@ -132,6 +132,117 @@ fn a_marker_set_reopen_wipes_and_reinitializes_the_ephemeral_store() {
     );
 }
 
+/// The R18 lifecycle, durable shield: a stale dirty marker over a
+/// committed DURABLE store must never arm the wipe — the kind check
+/// outranks the marker, the ephemeral constructor refuses typed, and
+/// `data.mdb` stays byte-identical (a marker names a dead ephemeral
+/// SESSION, not whatever file now lives at the path).
+#[test]
+fn a_stale_marker_over_a_durable_store_refuses_and_wipes_nothing() {
+    let dir = TempDir::new("env-stale-marker-durable");
+    let schema = schema();
+    {
+        let env = Environment::create(dir.path(), &schema).expect("create durable");
+        let mut wtxn = env.write_txn().expect("txn");
+        let data = env.data();
+        data.put(wtxn.raw_mut(), b"Zprobe", b"committed")
+            .expect("put");
+        wtxn.commit().expect("commit");
+    }
+    // Plant the orphan: the marker a dead ephemeral store at this path
+    // once left behind (its wipe removed data.mdb but a durable store
+    // was created here afterward — or the durable store was restored
+    // over the stale directory).
+    std::fs::File::create(dirty_marker_path(dir.path())).expect("plant marker");
+    let before = std::fs::read(dir.path().join("data.mdb")).expect("read data.mdb");
+    let err = Environment::ephemeral(dir.path(), &schema).expect_err("must refuse");
+    assert!(
+        matches!(
+            err,
+            Error::StoreKindMismatch {
+                found: StoreKind::Durable,
+                expected: StoreKind::Ephemeral,
+            }
+        ),
+        "the durable kind shields the store from the wipe, got {err:?}"
+    );
+    let after = std::fs::read(dir.path().join("data.mdb")).expect("read data.mdb");
+    assert_eq!(before, after, "the refusal left data.mdb byte-identical");
+    // The committed store still opens durable, contents intact (the
+    // durable open also clears the orphaned marker — pinned below).
+    let env = Environment::open(dir.path(), &schema).expect("open durable");
+    let rtxn = env.read_txn().expect("txn");
+    assert_eq!(
+        env.data().get(rtxn.raw(), b"Zprobe").expect("get"),
+        Some(&b"committed"[..])
+    );
+}
+
+/// The R18 lifecycle, durable half: a successful durable open or create
+/// clears an orphaned dirty marker, so the stale trap cannot outlive the
+/// first durable constructor that proves the kind.
+#[test]
+fn durable_constructors_clear_an_orphaned_marker() {
+    let schema = schema();
+    // The open side: a verified durable store sheds a planted marker.
+    let dir = TempDir::new("env-orphan-marker-open");
+    {
+        Environment::create(dir.path(), &schema).expect("create durable");
+    }
+    std::fs::File::create(dirty_marker_path(dir.path())).expect("plant marker");
+    {
+        Environment::open(dir.path(), &schema).expect("open durable");
+    }
+    assert!(
+        !dirty_marker_path(dir.path()).try_exists().expect("probe"),
+        "a successful durable open clears the orphan"
+    );
+    // The create side: a fresh durable store born into a directory
+    // holding only a stale marker (a wiped ephemeral store's residue)
+    // sheds it at birth.
+    let dir = TempDir::new("env-orphan-marker-create");
+    std::fs::create_dir_all(dir.path()).expect("mkdir");
+    std::fs::File::create(dirty_marker_path(dir.path())).expect("plant marker");
+    {
+        Environment::create(dir.path(), &schema).expect("create durable");
+    }
+    assert!(
+        !dirty_marker_path(dir.path()).try_exists().expect("probe"),
+        "a durable birth clears the stale residue"
+    );
+}
+
+/// The R18 lifecycle, archival half: exhume refuses an ephemeral store
+/// whose marker is armed — the pages it would serve are exactly the
+/// possibly-torn ones the ephemeral reopen wipes. A durable store beside
+/// an orphaned marker reads normally: its kind carries the sync claim.
+#[test]
+fn exhume_refuses_an_armed_ephemeral_marker_and_serves_durable() {
+    let schema = schema();
+    let dir = TempDir::new("env-exhume-dirty-marker");
+    {
+        Environment::ephemeral(dir.path(), &schema).expect("create ephemeral");
+        // Clean close clears the marker.
+    }
+    // Re-arm: the state a dead session leaves behind.
+    std::fs::File::create(dirty_marker_path(dir.path())).expect("plant marker");
+    let Err(err) = Environment::exhume(dir.path()).map(|_| ()) else {
+        panic!("exhume must refuse torn pages");
+    };
+    assert!(
+        matches!(err, Error::Corruption(_)),
+        "an armed marker refuses the archival read, got {err:?}"
+    );
+    // The durable twin: same marker, durable kind — served.
+    let dir = TempDir::new("env-exhume-durable-marker");
+    {
+        Environment::create(dir.path(), &schema).expect("create durable");
+    }
+    std::fs::File::create(dirty_marker_path(dir.path())).expect("plant marker");
+    let exhumed = Environment::exhume(dir.path()).expect("durable reads under an orphan marker");
+    assert_eq!(exhumed.kind, StoreKind::Durable);
+}
+
 /// Durable stores never mint a dirty marker — the crash contract is the
 /// ephemeral kind's alone.
 #[test]
@@ -365,7 +476,7 @@ fn a_v4_store_without_a_kind_key_is_a_format_mismatch_on_both_constructors() {
 /// typed `FormatMismatch { found: 6 }`. There is NO migration read
 /// arm: the canonical schema encoding moved (weight descriptor,
 /// dependent bounds, the re-minted statement-form tag) and the `R`
-/// namespace gained the weighted value-slot arm, so a v6 store's
+/// namespace gained the weighted value slot, so a v6 store's
 /// fingerprint and weighted `R` entries would decode wrong — ETL
 /// through the SDK is the story.
 #[test]

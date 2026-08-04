@@ -132,22 +132,38 @@ pub struct Answers {
     blob: Vec<u8>,
 }
 
-/// The per-finalize intern-resolution memo (docs/architecture/40-execution.md): each
-/// distinct string intern word is resolved through LMDB exactly once per
-/// finalize, and its bytes land in the answer carrier exactly once — K
-/// answers sharing one memo string cost one B-tree lookup and one byte
-/// copy, not K. Cleared per finalize (the ranges point into that call's
-/// buffer); capacity is retained, growing to the distinct-string
-/// high-water like every other execution scratch. Keys are bare words:
-/// strings are the one interned type, so the tag byte died with variable
-/// bytes (docs/architecture/50-storage.md).
+/// The intern-resolution memo (docs/architecture/40-execution.md), two
+/// tiers by lifetime:
+///
+/// - **Per prepared query** (never cleared): the text arena and its
+///   word→arena-range map. The dictionary is append-only, so a resolved
+///   (word → text) pair is FINAL — each distinct intern word pays its
+///   LMDB descent and UTF-8 parse exactly once over the prepared
+///   query's lifetime, and every later finalize copies bytes out of the
+///   arena instead of descending. Memory is the distinct-string
+///   high-water — the explicit trade.
+/// - **Per finalize** (cleared at entry): word→range into THAT call's
+///   answer carrier, so K answers sharing one string cost one byte copy,
+///   not K — plus the run-coherence `last` slot.
+///
+/// Keys are bare words: strings are the one interned type, so the tag
+/// byte died with variable bytes (docs/architecture/50-storage.md).
 #[derive(Debug)]
 struct ResolveMemo {
-    /// word → packed `(start, len)` into the buffer's text heap.
+    /// word → packed `(start, len)` into the buffer's text heap
+    /// (per finalize).
     ranges: crate::exec::wordmap::WordMap<(u32, u32)>,
     /// The last resolution: run-coherent columns
     /// (few distinct interns, clustered answers) skip even the map probe.
     last: Option<(u64, (usize, usize))>,
+    /// word → packed `(start, len)` into [`Self::arena`] (per prepared
+    /// query — append-only, like the dictionary it caches).
+    arena_ranges: crate::exec::wordmap::WordMap<(u32, u32)>,
+    /// The persistent text arena: whole UTF-8-validated strings appended
+    /// end-to-end, once per distinct intern, ever — every range is a
+    /// char boundary by construction (the answer heap's proof, one tier
+    /// up).
+    arena: String,
 }
 
 /// One query answer, borrowed from [`Answers`].
@@ -223,6 +239,14 @@ pub struct PreparedQuery<'s, S> {
     /// is the fully-latched fast path: `resolve_filters` is skipped
     /// entirely, the resolved tables having been written once and final.
     unresolved_literals: u32,
+    /// Per param slot: the last successful String resolution — the
+    /// bound text and its dictionary word (`bind.rs`). A HIT is final
+    /// (the dictionary is append-only: a text's word never changes), so
+    /// re-binding the same text skips the LMDB descent entirely; a MISS
+    /// is NOT final (a later write may intern the text) and invalidates
+    /// the slot. Pooled: the text buffer's capacity survives re-binds.
+    /// Non-String slots never touch theirs.
+    param_word_memo: Vec<ParamWordMemo>,
     /// Per param: whether this execution's value missed the dictionary
     /// (String/Bytes only; for a set, whether NO element survived — the
     /// empty set rides the same short-circuit machinery). A missed value
@@ -509,6 +533,16 @@ enum ParamSpec {
     Set { elem: ValueType, point: bool },
     /// An Allen mask: neither a data-model value nor a set/point.
     Mask,
+}
+
+/// One scalar param slot's memoized String resolution
+/// ([`PreparedQuery::param_word_memo`]): the bound text and its word,
+/// `None` after a dictionary miss (misses never memoize — the
+/// append-only dictionary makes only HITS final).
+#[derive(Debug, Default, Clone)]
+struct ParamWordMemo {
+    text: String,
+    word: Option<u64>,
 }
 
 /// Whether every symbolic filter/selection slot was written by a complete

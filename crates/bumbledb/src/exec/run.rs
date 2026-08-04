@@ -156,7 +156,7 @@ pub enum SkipCapability {
 }
 
 /// One executor phase, for per-(node, phase) time attribution
-/// (docs/architecture/60-validation.md): the five sequential segments of
+/// (docs/architecture/60-validation.md): the sequential segments of
 /// a node entry's batch loop. `Descend` wraps the per-survivor recursion
 /// loop, so its exclusive time (total minus the next node's phases) is
 /// the per-row bookkeeping — binds, journal restores, and leaf emits.
@@ -177,6 +177,13 @@ pub enum JoinPhase {
     /// sibling's cursor: the single biggest non-amortized cost a node
     /// entry can pay.
     Force,
+    /// The pipeline's gather/assembly segments: `pump`'s per-entry cover
+    /// choice + batch draw + probe-batch identity fill, and
+    /// `probe_pass`'s batch setup between the timed phases — the
+    /// formerly phase-unattributed half of a deep plan's join time
+    /// (Gap B). Windows close around every `probe_pass`/flush, so
+    /// deeper nodes' phases never run inside a Gather window.
+    Gather,
 }
 
 /// Execution observability seam (40-execution): the normal path
@@ -254,9 +261,18 @@ pub const PHASE_NODE_CAP: usize = 8;
 #[cfg(feature = "trace")]
 pub struct PhaseTimers {
     /// `[node][phase] -> (accumulated ticks, calls)`.
-    acc: [[(u64, u64); 6]; PHASE_NODE_CAP + 1],
+    acc: [[(u64, u64); JoinPhase::COUNT]; PHASE_NODE_CAP + 1],
     /// `[node][phase] -> open segment's start tick`.
-    open: [[u64; 6]; PHASE_NODE_CAP + 1],
+    open: [[u64; JoinPhase::COUNT]; PHASE_NODE_CAP + 1],
+    /// `[node][phase] -> open-window nesting depth`. Only the overflow
+    /// bucket can nest: recursion advances strictly by node index, so an
+    /// in-cap (node, phase) never reopens before it closes — but every
+    /// node past the cap shares one bucket, and their Descend windows
+    /// DO nest. Nested windows merge into the outermost one (a naive
+    /// restamp clobbered the outer open stamp: the inner span counted
+    /// twice and the outer prefix vanished) — coarse attribution, never
+    /// a lie, exactly like the shared `nX` name.
+    depth: [[u32; JoinPhase::COUNT]; PHASE_NODE_CAP + 1],
     /// Bindings emitted (the RULE span's union accounting — trace-mode
     /// only; the release path's [`NoopCounters`] counts nothing).
     emits: u64,
@@ -516,6 +532,14 @@ struct NodeScratch {
     /// against the runtime cover choice — the per-element half above
     /// reads through these (capacity retained).
     point_sources: Vec<(usize, usize, Source)>,
+    /// The membership probe's pinned-row split (`probe_pass`'s point
+    /// loop): positions of the survivors whose probed cursor is a
+    /// pinned row — batch-evaluated per part over gathered interval
+    /// columns instead of the per-element position walk (capacity
+    /// retained).
+    point_rows: Vec<u32>,
+    /// Survivor indices aligned with `point_rows` (the mask writeback).
+    point_row_ks: Vec<u32>,
     /// Occ-indexed cursor sources for this pass, resolved once per pass
     /// — the membership loops and the routing arm read cursors through
     /// this table instead of re-searching subatoms per element.

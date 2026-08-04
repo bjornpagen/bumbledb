@@ -1,8 +1,8 @@
 //! The single in-order pass over a middle node's pending entries.
 
 use super::{
-    BatchToken, Bindings, Colt, Counters, Executor, KeyCount, PipeTables, Sink, ValidatedPlan,
-    better_cover,
+    BatchToken, Bindings, Colt, Counters, Executor, JoinPhase, KeyCount, PipeTables, Sink,
+    ValidatedPlan, better_cover,
 };
 
 impl Executor {
@@ -47,9 +47,18 @@ impl Executor {
         // earlier flush could have flipped an Estimate to Exact) changes
         // nothing semantic.
         let node = &plan.nodes()[node_idx];
+        // Origin ids are meaningful strictly BELOW the absorb node —
+        // resolved once per pump, never per entry (the instruction diet).
+        let below_absorb = tables.absorb.is_some_and(|a| node_idx > a);
         let mut fill = 0usize;
         // The open cover run: (cover_sub, arity, occ, level).
         let mut group: Option<(usize, usize, usize, usize)> = None;
+        // The Gather window (Gap B): per-entry cover choice, batch
+        // draws, and the probe-batch identity fill — the pump work
+        // between probe passes, formerly phase-unattributed. Two timer
+        // calls per flush, never per tuple: the window closes around
+        // every `probe_pass` so no deeper phase runs inside it.
+        counters.phase_start(node_idx, JoinPhase::Gather);
         for entry in 0..scratch.pending_len {
             if self.all_cancelled {
                 break;
@@ -61,9 +70,7 @@ impl Executor {
             // seed and must never be filtered. Cancellation fired during
             // an earlier entry's flush is seen here: the check runs at
             // each entry's turn.
-            if tables.absorb.is_some_and(|a| node_idx > a)
-                && self.origin_cancelled(scratch.pending_origins[entry])
-            {
+            if below_absorb && self.origin_cancelled(scratch.pending_origins[entry]) {
                 continue;
             }
             counters.node_entry(node_idx);
@@ -94,6 +101,7 @@ impl Executor {
                 && open_sub != cover_sub
                 && fill > 0
             {
+                counters.phase_end(node_idx, JoinPhase::Gather);
                 self.probe_pass(
                     tables,
                     plan,
@@ -107,6 +115,7 @@ impl Executor {
                     sink,
                     counters,
                 );
+                counters.phase_start(node_idx, JoinPhase::Gather);
                 fill = 0;
             }
             group = Some((cover_sub, cur_arity, cover_occ, cover_level));
@@ -125,6 +134,10 @@ impl Executor {
             // membership probe reading this occurrence's cursor — those
             // occurrences keep enumerating.
             let gate_cover = cur_arity == 0 && !self.point_probed[cover_occ];
+            // Hoisted per entry, never per element (the closing-probe
+            // constant diet): the identity fill below broadcasts these.
+            let entry_u32 = u32::try_from(entry).expect("pending fits u32");
+            let entry_origin = scratch.pending_origins[entry];
             let mut token = BatchToken::default();
             loop {
                 // The whole-execution poison lands mid-batch (a leaf skip
@@ -144,16 +157,26 @@ impl Executor {
                     &mut scratch.children[fill..],
                     want,
                 );
-                counters.batch(node_idx, yielded);
-                for _ in 0..yielded {
-                    scratch
-                        .parents
-                        .push(u32::try_from(entry).expect("pending fits u32"));
-                    scratch.element_origins.push(scratch.pending_origins[entry]);
+                // A zero-yield draw (the exhausted resume of an
+                // exact-fit entry, or an empty gate) is not a batch —
+                // the run_node twin breaks before counting; counting it
+                // here skewed batches/batch_entries low on exact-multiple
+                // fanouts.
+                if yielded > 0 {
+                    counters.batch(node_idx, yielded);
                 }
+                // The probe-batch identity fill: one capacity check per
+                // draw, not one grow branch per element.
+                scratch
+                    .parents
+                    .extend(std::iter::repeat_n(entry_u32, yielded));
+                scratch
+                    .element_origins
+                    .extend(std::iter::repeat_n(entry_origin, yielded));
                 fill += yielded;
                 token = next;
                 if fill == self.batch {
+                    counters.phase_end(node_idx, JoinPhase::Gather);
                     self.probe_pass(
                         tables,
                         plan,
@@ -167,6 +190,7 @@ impl Executor {
                         sink,
                         counters,
                     );
+                    counters.phase_start(node_idx, JoinPhase::Gather);
                     fill = 0;
                     if !gate_cover && yielded == want {
                         continue; // the entry may have more; resume its token
@@ -177,6 +201,7 @@ impl Executor {
                 }
             }
         }
+        counters.phase_end(node_idx, JoinPhase::Gather);
         if fill > 0
             && let Some((open_sub, open_arity, _, _)) = group
         {

@@ -210,9 +210,12 @@ fn every_crud_write_family_leaves_the_twins_value_identical() {
     assert_eq!(ours.work, 2, "rmw: engine work");
     assert_eq!(theirs.work, 2, "rmw: mirror work");
 
-    // crud_delete.
-    let ours = lanes::delete_bumbledb(&db, TINY_PROTO, SEED, sizes).expect("delete engine");
-    let theirs = lanes::delete_sqlite(&conn, TINY_PROTO, sizes).expect("delete sqlite");
+    // crud_delete (stream-driven: the fold derives the rows/ids — the
+    // traced twin sample continues the same stream).
+    let rows = ops::delete_rows(SEED, sizes, COUNT);
+    let ids: Vec<u64> = (0..COUNT as u64).map(|i| sizes.docs + i).collect();
+    let ours = lanes::delete_bumbledb(&db, TINY_PROTO, &rows).expect("delete engine");
+    let theirs = lanes::delete_sqlite(&conn, TINY_PROTO, &ids).expect("delete sqlite");
     assert_eq!(ours.work, 2, "delete: engine work");
     assert_eq!(theirs.work, 2, "delete: mirror work");
 
@@ -254,8 +257,10 @@ fn the_nosync_lane_runs_the_same_families_identically() {
     lanes::rmw_bumbledb(&db, TINY_PROTO, &keys).expect("rmw engine");
     lanes::rmw_sqlite(&conn, TINY_PROTO, &keys).expect("rmw sqlite");
 
-    lanes::delete_bumbledb(&db, TINY_PROTO, SEED, sizes).expect("delete engine");
-    lanes::delete_sqlite(&conn, TINY_PROTO, sizes).expect("delete sqlite");
+    let rows = ops::delete_rows(SEED, sizes, COUNT);
+    let ids: Vec<u64> = (0..COUNT as u64).map(|i| sizes.docs + i).collect();
+    lanes::delete_bumbledb(&db, TINY_PROTO, &rows).expect("delete engine");
+    lanes::delete_sqlite(&conn, TINY_PROTO, &ids).expect("delete sqlite");
 
     assert_twins_identical(&db, &conn);
     drop((db, conn));
@@ -277,9 +282,10 @@ fn the_delete_lane_refuses_a_missing_row() {
         warmups: 0,
         samples: 1,
     };
-    lanes::delete_bumbledb(&db, one, SEED, sizes).expect("the first delete bears");
+    let rows = ops::delete_rows(SEED, sizes, 1);
+    lanes::delete_bumbledb(&db, one, &rows).expect("the first delete bears");
     let generation = db.generation().expect("generation");
-    let err = lanes::delete_bumbledb(&db, one, SEED, sizes)
+    let err = lanes::delete_bumbledb(&db, one, &rows)
         .expect_err("the second delete of the same pool row must refuse");
     assert!(err.contains("delete-bearing"), "{err}");
     assert_eq!(
@@ -441,9 +447,15 @@ fn load_poisoned(
 fn the_crud_gate_refuses_a_divergent_oracle() {
     let sizes = CrudSizes::of(Scale::Tiny);
     let dir = scratch("run-gate-divergent");
-    let err = super::run::fold(&dir, RUN_SEED, sizes, Some(2), None, &|lane_dir, lane| {
-        load_poisoned(lane_dir, lane, sizes)
-    })
+    let err = super::run::fold(
+        &dir,
+        RUN_SEED,
+        sizes,
+        Some(2),
+        None,
+        None,
+        &|lane_dir, lane| load_poisoned(lane_dir, lane, sizes),
+    )
     .expect_err("a poisoned mirror must not be timed");
     assert!(err.contains("ENGINES DISAGREE"), "{err}");
     let _ = std::fs::remove_dir_all(&dir);
@@ -459,7 +471,7 @@ fn the_full_crud_run_produces_both_lanes_and_parses() {
     let sizes = CrudSizes::of(Scale::Tiny);
     let dir = scratch("run-full");
     let (md, json_text) =
-        super::run_with(&dir, RUN_SEED, sizes, Some(2), None).expect("the full crud run");
+        super::run_with(&dir, RUN_SEED, sizes, Some(2), None, None).expect("the full crud run");
     assert!(md.contains("## lane durable"), "{md}");
     assert!(md.contains("## lane nosync"), "{md}");
     for family in super::families() {
@@ -504,8 +516,15 @@ fn the_full_crud_run_produces_both_lanes_and_parses() {
 fn an_unknown_only_name_is_refused() {
     let sizes = CrudSizes::of(Scale::Tiny);
     let dir = scratch("run-unknown-only");
-    let err = super::run_with(&dir, RUN_SEED, sizes, Some(2), Some(&["nope".to_owned()]))
-        .expect_err("an unknown family name must refuse");
+    let err = super::run_with(
+        &dir,
+        RUN_SEED,
+        sizes,
+        Some(2),
+        Some(&["nope".to_owned()]),
+        None,
+    )
+    .expect_err("an unknown family name must refuse");
     assert!(err.contains("unknown family `nope`"), "{err}");
     assert!(err.contains("crud_read_point"), "{err}");
     assert!(err.contains("crud_mixed_90_10"), "{err}");
@@ -526,10 +545,60 @@ fn a_filtered_run_still_gates_the_read_query() {
         sizes,
         Some(2),
         Some(&only),
+        None,
         &|lane_dir, lane| load_poisoned(lane_dir, lane, sizes),
     )
     .expect_err("the gate must run even when read_point is filtered out");
     assert!(err.contains("ENGINES DISAGREE"), "{err}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The traced crud path (`--trace`): every timed family lands its
+/// traced twin sample as BOTH a Chrome `.json` and a collapsed
+/// `.folded` under `<out>/trace/crud/<lane>/`, the commit spans reach
+/// the artifact (the observability doctrine's whole point: the
+/// `JUDGMENT_*`/`LMDB_COMMIT` phases are readable from disk), the report
+/// embeds the flame table, and the post-state fold still passes — the
+/// traced twin sample ran on BOTH engines. One family, one sample: a
+/// smoke test, not a measurement.
+#[cfg(feature = "obs")]
+#[test]
+fn traced_crud_lands_the_pair_with_judgment_and_commit_spans() {
+    let sizes = CrudSizes::of(Scale::Tiny);
+    let dir = scratch("run-traced");
+    let only = vec!["crud_insert".to_owned()];
+    let (md, json_text) = super::run_with(&dir, RUN_SEED, sizes, Some(1), Some(&only), Some(&dir))
+        .expect("the traced crud run (post-state fold included)");
+    assert!(md.contains("Flame summaries"), "{md}");
+    assert!(json_text.contains("\"flame\":"), "{json_text}");
+    for lane in duralane::ALL {
+        let lane_dir = dir.join("trace").join("crud").join(lane.label());
+        let json_path = lane_dir.join("crud_insert.json");
+        let text = std::fs::read_to_string(&json_path)
+            .unwrap_or_else(|e| panic!("{}: {e}", json_path.display()));
+        assert!(
+            text.starts_with("[\n") && text.ends_with("\n]\n"),
+            "{} parses as a Chrome array",
+            json_path.display()
+        );
+        assert!(
+            text.contains(bumbledb::obs::names::LMDB_COMMIT),
+            "{}: the LMDB commit span reaches the artifact",
+            json_path.display()
+        );
+        assert!(
+            text.contains("judgment"),
+            "{}: the judgment spans reach the artifact",
+            json_path.display()
+        );
+        let folded = std::fs::read_to_string(lane_dir.join("crud_insert.folded"))
+            .expect("the folded twin lands beside the json");
+        assert!(!folded.is_empty(), "a non-degenerate fold");
+        for line in folded.lines() {
+            let count = line.rsplit(' ').next().expect("a self-ns tail");
+            assert!(count.parse::<u64>().is_ok(), "folded self-ns: {line}");
+        }
+    }
     let _ = std::fs::remove_dir_all(&dir);
 }
 

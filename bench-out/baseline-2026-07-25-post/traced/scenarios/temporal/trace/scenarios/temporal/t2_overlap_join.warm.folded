@@ -1,0 +1,15 @@
+execute 1168
+execute;finalize 41
+execute;rule_0 250
+execute;rule_0;join 0
+execute;rule_0;join;jp_descend_n0 45276375
+execute;rule_0;join;jp_descend_n1 1896916
+execute;rule_0;join;jp_force_n0 2833
+execute;rule_0;join;jp_gather_n0 379541
+execute;rule_0;join;jp_hash_n0 223333
+execute;rule_0;join;jp_iter_n1 22932000
+execute;rule_0;join;jp_probe_n0 961125
+execute;rule_0;join;jp_residual_n0 4666
+execute;rule_0;join;jp_residual_n1 5623041
+execute;rule_0;selections 83
+execute;rule_0;views 375

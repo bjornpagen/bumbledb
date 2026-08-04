@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="92" viewBox="0 0 1200 92">
+<rect width="100%" height="100%" fill="rgb(245,245,245)"/>
+<text x="10" y="20" font-family="monospace" font-size="15" font-weight="bold">crud.nosync.crud_insert_10</text>
+<g><title>write_txn  82.375 us  100.0%</title><rect x="10" y="66" width="1180.0" height="16" fill="rgb(244,119,25)" stroke="white" stroke-width="0.5"/><text x="13" y="78" font-family="monospace" font-size="12">write_txn</text></g>
+<g><title>commit  67.833 us  82.3%</title><rect x="10" y="50" width="971.69" height="16" fill="rgb(254,187,16)" stroke="white" stroke-width="0.5"/><text x="13" y="62" font-family="monospace" font-size="12">commit</text></g>
+<g><title>apply_deletes  0.041 us  0.0%</title><rect x="10" y="34" width="0.59" height="16" fill="rgb(210,34,35)" stroke="white" stroke-width="0.5"/></g>
+<g><title>apply_inserts  25.125 us  30.5%</title><rect x="10.59" y="34" width="359.91" height="16" fill="rgb(245,71,32)" stroke="white" stroke-width="0.5"/><text x="13.59" y="46" font-family="monospace" font-size="12">apply_inserts</text></g>
+<g><title>counters_flush  1.250 us  1.5%</title><rect x="370.5" y="34" width="17.91" height="16" fill="rgb(205,150,9)" stroke="white" stroke-width="0.5"/></g>
+<g><title>judgment_source  0.083 us  0.1%</title><rect x="388.4" y="34" width="1.19" height="16" fill="rgb(240,12,48)" stroke="white" stroke-width="0.5"/></g>
+<g><title>lmdb_commit  35.291 us  42.8%</title><rect x="389.59" y="34" width="505.53" height="16" fill="rgb(218,64,2)" stroke="white" stroke-width="0.5"/><text x="392.59" y="46" font-family="monospace" font-size="12">lmdb_commit</text></g>
+</svg>

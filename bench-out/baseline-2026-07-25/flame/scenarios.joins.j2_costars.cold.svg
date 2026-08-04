@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="108" viewBox="0 0 1200 108">
+<rect width="100%" height="100%" fill="rgb(245,245,245)"/>
+<text x="10" y="20" font-family="monospace" font-size="15" font-weight="bold">scenarios.joins.j2_costars.cold</text>
+<g><title>execute  10313.666 us  99.7%</title><rect x="10" y="82" width="1177.04" height="16" fill="rgb(234,55,6)" stroke="white" stroke-width="0.5"/><text x="13" y="94" font-family="monospace" font-size="12">execute</text></g>
+<g><title>finalize  1.833 us  0.0%</title><rect x="10.02" y="66" width="0.21" height="16" fill="rgb(255,138,47)" stroke="white" stroke-width="0.5"/></g>
+<g><title>rule_0  10311.000 us  99.7%</title><rect x="10.23" y="66" width="1176.73" height="16" fill="rgb(216,21,45)" stroke="white" stroke-width="0.5"/><text x="13.23" y="78" font-family="monospace" font-size="12">rule_0</text></g>
+<g><title>join  5248.958 us  50.8%</title><rect x="10.23" y="50" width="599.03" height="16" fill="rgb(228,169,7)" stroke="white" stroke-width="0.5"/><text x="13.23" y="62" font-family="monospace" font-size="12">join</text></g>
+<g><title>prepare  25.958 us  0.3%</title><rect x="1187.04" y="82" width="2.96" height="16" fill="rgb(248,101,43)" stroke="white" stroke-width="0.5"/></g>
+<g><title>lower  3.958 us  0.0%</title><rect x="1187.2" y="66" width="0.45" height="16" fill="rgb(241,3,6)" stroke="white" stroke-width="0.5"/></g>
+<g><title>stats  2.291 us  0.0%</title><rect x="1187.98" y="66" width="0.26" height="16" fill="rgb(251,25,10)" stroke="white" stroke-width="0.5"/></g>
+<g><title>validate  4.708 us  0.0%</title><rect x="1188.24" y="66" width="0.54" height="16" fill="rgb(219,206,45)" stroke="white" stroke-width="0.5"/></g>
+<g><title>validate_rules  2.750 us  0.0%</title><rect x="1188.37" y="50" width="0.31" height="16" fill="rgb(236,159,40)" stroke="white" stroke-width="0.5"/></g>
+</svg>

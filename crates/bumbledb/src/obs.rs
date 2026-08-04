@@ -73,8 +73,39 @@ pub mod names {
     pub const PREPARE: &str = "prepare";
     /// IR validation. (-, -)
     pub const VALIDATE: &str = "validate";
+
+    // Validation's interior (`ir/validate/validate.rs`), lit under
+    // [`VALIDATE`]. Pass granularity — one span per roster pass, never
+    // per rule or per candidate; rule work rides the pass span's args.
+
+    /// One rule-set lowering — shape roster, DNF distribution, collapse
+    /// (`lower_rules`): once on the query path, once per predicate on
+    /// the program path (the predicate cap bounds it). (lowered rules
+    /// produced, -)
+    pub const VALIDATE_LOWER: &str = "validate_lower";
+    /// The program strata judge (`ir/validate/strata.rs`) — the SCC
+    /// condensation and its safety roster, program path only.
+    /// (predicates judged, strata assigned)
+    pub const VALIDATE_STRATIFY: &str = "validate_stratify";
+    /// The program signature-sealing loop — chaotic iteration, bounded
+    /// by the predicate cap, program path only. (sealing passes run —
+    /// the final no-progress pass included, a1 predicates sealed)
+    pub const VALIDATE_SEAL: &str = "validate_seal";
+    /// The strict per-rule roster pass — every lowered rule through the
+    /// typing fixpoint with all signatures anchored: one span per
+    /// validation, never per rule. (rules validated, -)
+    pub const VALIDATE_RULES: &str = "validate_rules";
     /// Normalization. (-, -)
     pub const NORMALIZE: &str = "normalize";
+    /// One rule's comparison placement (`ir/normalize/place_comparisons.rs`)
+    /// — the cross-atom residual routing, under [`NORMALIZE`], one per
+    /// normalized rule (ray probes included). (cross-atom residuals placed,
+    /// -)
+    pub const PLACE_COMPARISONS: &str = "place_comparisons";
+    /// One rule's statically-empty constant fold (`ir/normalize/fold.rs`),
+    /// under [`NORMALIZE`], one per normalized rule. (1 rule dead on
+    /// constants / 0 live, -)
+    pub const NORMALIZE_FOLD: &str = "normalize_fold";
     /// Key-probe-vs-join classification. (-, -)
     pub const CLASSIFY: &str = "classify";
     /// Statistics reads. (occurrences measured concretely, -)
@@ -85,6 +116,34 @@ pub mod names {
     pub const LOWER: &str = "lower";
     /// COLT construction at prepare. (-, -)
     pub const BUILD_COLTS: &str = "build_colts";
+
+    // The DP planner's interior (docs/architecture/40-execution.md, § the
+    // planner), lit under [`PLAN_DP`]. Pass granularity — never a span per
+    // subset-DP candidate (the mask loop is O(2ⁿ·n), the doctrine's
+    // per-tuple line); the candidate work is a single counted point event.
+
+    /// Densifying participating occurrences + Allen residuals into the
+    /// DP's bitset form. (participating occurrences, cross-atom Allen
+    /// residuals densified)
+    pub const PLAN_DENSIFY: &str = "plan_densify";
+    /// The exhaustive left-deep subset DP's table-fill pass, over every
+    /// mask of popcount ≥ 2. (subproblems filled, `(last, prev)` candidate
+    /// pairs evaluated) — the second arg is the pruned-candidate COUNT the
+    /// doctrine allows in place of a per-candidate event.
+    pub const PLAN_FILL: &str = "plan_fill";
+    /// One planner row-count read (docs/architecture/50-storage.md § the
+    /// planner's `S` read) — an ordinary relation's stored `S` counter, a
+    /// closed relation's sealed-extension length. Fires on the plan path
+    /// (per participating EDB occurrence, and per unconditional-containment
+    /// target inside the distinct ladder) and the staleness path (per
+    /// pin). (relation id, rows) — a storage read, not a per-tuple label.
+    pub const RELATION_ROWS: &str = "relation_rows";
+    /// One resolution of the per-field distinct-count ladder
+    /// (`plan/selectivity.rs`), one per (occurrence, field) at prepare —
+    /// the rung that fired rides `a0`: `0` a single-field key (⇒ rows),
+    /// `1` a resident image's exact count, `2` a containment target bound,
+    /// `3` the documented floor. (rung, distinct count)
+    pub const DISTINCT_LADDER: &str = "distinct_ladder";
 
     /// One prepared execution. (answers, -)
     pub const EXECUTE: &str = "execute";
@@ -142,12 +201,28 @@ pub mod names {
     pub const VIEW_BUILD: &str = "view_build";
     /// The warm memo fast path fired. (occurrence index, -)
     pub const VIEW_MEMO_HIT: &str = "view_memo_hit";
+    /// The occurrence-dedup path fired: this occurrence's rebuild
+    /// cloned a same-shaped sibling occurrence's bound state — view and
+    /// forced root — instead of re-scanning the image and re-forcing
+    /// (docs/architecture/40-execution.md). (occurrence index, canonical
+    /// occurrence index)
+    pub const VIEW_DEDUP: &str = "view_dedup";
     /// The Free Join executor. (-, -)
     pub const JOIN: &str = "join";
     /// Sink finalization into the result buffer. (-, -)
     pub const FINALIZE: &str = "finalize";
     /// The key-probe access path. (1 hit / 0 miss, -)
     pub const KEY_PROBE: &str = "key_probe";
+    /// One snapshot point read (`Snapshot::get` / `get_dyn` /
+    /// `get_dyn_into`) — the formerly wholly dark keyed-get surface,
+    /// spanned whole at the API boundary. (1 hit / 0 miss, -)
+    pub const POINT_READ: &str = "point_read";
+    /// The whole selection-probe loop, batched over the occurrences —
+    /// the lazy selection forces run inside it, so the span keeps that
+    /// cost from masquerading as rule self-time
+    /// (docs/architecture/40-execution.md § introspection).
+    /// (occurrences probed, 1 all hit / 0 short-circuited empty)
+    pub const SELECTIONS: &str = "selections";
     /// One occurrence's selection-level probe (docs/architecture/40-execution.md).
     /// (occurrence index, 1 hit / 0 miss)
     pub const SELECT_PROBE: &str = "select_probe";
@@ -160,6 +235,19 @@ pub mod names {
     /// the tail rows decoded (docs/architecture/50-storage.md § the
     /// image cache). (relation id, slab bytes)
     pub const IMAGE_APPEND: &str = "image_append";
+    /// The exact per-column distinct counting pass inside an image
+    /// build/append/synthesis (`image/distinct.rs`) — batch granularity,
+    /// one span per image; on the append arm the rows counted are the
+    /// tail alone (the persisted state's payoff). (columns counted, rows
+    /// inserted)
+    pub const IMAGE_DISTINCTS: &str = "image_distincts";
+    /// The columnar fact decode inside an image build/append/synthesis —
+    /// the batch decode that hid inside [`IMAGE_BUILD`] / [`IMAGE_APPEND`]:
+    /// one sequential scan's worth of per-fact decode into the column slabs,
+    /// one span per build (append decodes only the tail rows). Batch
+    /// granularity — the per-fact kernel underneath is never spanned.
+    /// (rows decoded, fact width in bytes)
+    pub const DECODE_BATCH: &str = "decode_batch";
     /// An untouched relation's image carried forward to the reader's
     /// generation — the same Arc, re-keyed. (relation id, -)
     pub const CACHE_CARRY: &str = "cache_carry";
@@ -170,8 +258,17 @@ pub mod names {
     /// One COLT node forced. (positions ingested, distinct keys)
     pub const COLT_FORCE: &str = "colt_force";
     /// One dictionary resolution in finalize — fires per *distinct*
-    /// intern per finalize (docs/architecture/40-execution.md). (intern word, byte length)
+    /// intern per PREPARED QUERY LIFETIME: the resolve memo's persistent
+    /// arena tier caches the (word → text) pair forever, sound because
+    /// the dictionary is append-only
+    /// (docs/architecture/40-execution.md). (intern word, byte length)
     pub const DICT_RESOLVE: &str = "dict_resolve";
+    /// One scalar String param bind served from the per-slot word memo
+    /// — the dictionary descent skipped; sound because the append-only
+    /// dictionary makes a resolved (text → word) pair final, and a MISS
+    /// never memoizes (docs/architecture/40-execution.md). (param
+    /// index, word)
+    pub const PARAM_WORD_MEMO: &str = "param_word_memo";
     /// A `str` literal latched: the dictionary is append-only, so its
     /// resolved word rewrites the plan template once, permanently —
     /// fires once per distinct literal over the prepared query's
@@ -220,6 +317,32 @@ pub mod names {
     /// One `Db::write`, closure plus commit. (1 committed / 0 aborted, -)
     pub const WRITE_TXN: &str = "write_txn";
 
+    // Verification path (`verify_store.rs`): the O(store) integrity sweep,
+    // formerly wholly dark. One outer span and one span per namespace
+    // pass — pass granularity, never a span per swept entry — each
+    // carrying the findings it raised, so a desync localizes to its pass.
+
+    /// The whole `Db::verify_store` sweep. (findings raised, -)
+    pub const VERIFY_STORE: &str = "verify_store";
+    /// The `F` (fact) namespace pass, plus the `S`-counter reconciliation
+    /// inputs it tallies. (findings raised, -)
+    pub const VERIFY_FACTS: &str = "verify_facts";
+    /// The `M` (membership/idempotence) namespace pass. (findings, -)
+    pub const VERIFY_MEMBERSHIP: &str = "verify_membership";
+    /// The `U` (determinant) namespace pass, incl. pointwise
+    /// disjointness. (findings, -)
+    pub const VERIFY_DETERMINANTS: &str = "verify_determinants";
+    /// The `R` (reverse-edge) namespace pass. (findings, -)
+    pub const VERIFY_REVERSE: &str = "verify_reverse";
+    /// The `Q` (fresh marks) namespace pass. (findings, -)
+    pub const VERIFY_MARKS: &str = "verify_marks";
+    /// The `S`-counter-vs-`F`-scan reconciliation pass. (findings, -)
+    pub const VERIFY_COUNTERS: &str = "verify_counters";
+    /// The fresh-field ratchet-law pass. (findings, -)
+    pub const VERIFY_FRESH: &str = "verify_fresh";
+    /// The dictionary liveness / dangling-id statistic pass. (findings, -)
+    pub const VERIFY_DICT: &str = "verify_dict";
+
     // Harness (docs/architecture/60-validation.md, 17): tool overhead, honestly visible
     // inside the same trace, separated by tid at export.
 
@@ -234,8 +357,8 @@ pub mod names {
 
     /// Phase-name table: `JOIN_PHASE[phase][min(node, 8)]`. Phase order
     /// matches `exec::run::JoinPhase`: iter, hash, probe, residual,
-    /// descend, force.
-    pub const JOIN_PHASE: [[&str; 9]; 6] = [
+    /// descend, force, gather.
+    pub const JOIN_PHASE: [[&str; 9]; 7] = [
         [
             "jp_iter_n0",
             "jp_iter_n1",
@@ -302,7 +425,27 @@ pub mod names {
             "jp_force_n7",
             "jp_force_nX",
         ],
+        [
+            "jp_gather_n0",
+            "jp_gather_n1",
+            "jp_gather_n2",
+            "jp_gather_n3",
+            "jp_gather_n4",
+            "jp_gather_n5",
+            "jp_gather_n6",
+            "jp_gather_n7",
+            "jp_gather_nX",
+        ],
     ];
+    // The executor's phase attribution and this table move together, or
+    // `PhaseTimers::flush` would index past a row on a legal plan — the
+    // RULE/MAX_RULES precedent: the enum's declaration order is the row
+    // order, its count the row count, the node cap the column count.
+    #[cfg(feature = "trace")]
+    const _: () = {
+        assert!(JOIN_PHASE.len() == crate::exec::run::JoinPhase::COUNT);
+        assert!(JOIN_PHASE[0].len() == crate::exec::run::PHASE_NODE_CAP + 1);
+    };
 
     /// One sink-map rehash inside a measured execution. (new capacity, arity)
     pub const WORDMAP_GROW: &str = "wordmap_grow";
@@ -310,6 +453,22 @@ pub mod names {
     /// One residency-gated phase-1.5 prefetch pass ran.
     /// (survivors hinted, probed colt's forced footprint in bytes)
     pub const PREFETCH_PASS: &str = "prefetch_pass";
+
+    /// One predicate-scan kernel invocation over a whole image column
+    /// (`exec/kernel/filter.rs`) — the `std::simd` survivor scans, lit at
+    /// the batch entry, never per lane. Fires once per kernel-shaped
+    /// filter the view-build path dispatches. (lanes scanned, survivors)
+    pub const KERNEL_FILTER: &str = "kernel_filter";
+
+    /// One Allen configuration-kernel dense scan over a whole interval
+    /// column pair (`exec/kernel/allen.rs` — the filter-position
+    /// compositions the view-build path dispatches), lit at the batch
+    /// entry like [`KERNEL_FILTER`], never per lane. The join loop's
+    /// code/membership batches (`allen_code_batch` /
+    /// `allen_filter_batch`) stay dark deliberately: they run inside
+    /// the probe loop, whose attribution is the per-(node, phase)
+    /// residual accumulator. (lanes scanned, survivors)
+    pub const KERNEL_ALLEN: &str = "kernel_allen";
 }
 
 /// The trace-mode fast clock, under the measured cost model: a raw

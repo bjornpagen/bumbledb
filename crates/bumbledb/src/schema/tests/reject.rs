@@ -1673,6 +1673,55 @@ fn rejects_a_unit_window_against_a_duration_bound() {
 }
 
 #[test]
+fn rejects_a_u64_weight_against_a_duration_bound() {
+    // The C18 pairing law's second mixing direction: a u64-field weight
+    // (a plain quantity) bounded by a span of time. Same law as the
+    // unit-window direction — the window compares the two, so the
+    // dimensions must agree.
+    let mut decl = extension_tree();
+    decl.relations[0].fields.push(field(
+        "span",
+        ValueType::Interval {
+            element: IntervalElement::U64,
+            width: None,
+        },
+    ));
+    decl.statements.push(capacity_weighted(
+        side(RelationId(0), &[FieldId(0)]),
+        Weight::Field(FieldId(1)),
+        0,
+        Some(Bound::TargetDuration(FieldId(1))),
+        side(RelationId(1), &[FieldId(0)]),
+    ));
+    assert_eq!(
+        decl.validate().unwrap_err(),
+        StatementErrorKind::CapacityDimensionMixing { field: FieldId(1) }.at(StatementId(1))
+    );
+}
+
+#[test]
+fn rejects_a_duration_weight_against_a_u64_field_bound() {
+    // The C18 pairing law's third mixing direction: a Duration weight (a
+    // span of time) bounded by a stored u64 quantity — the same mixing
+    // read the other way. The legal pairs stay legal: Duration ↔
+    // Duration is the calendar shape, u64 ↔ u64 the power budget, and a
+    // literal ceiling is dimensionless under any weight.
+    let mut decl = extension_tree();
+    decl.relations[0].fields.push(field("cap", ValueType::U64));
+    decl.statements.push(capacity_weighted(
+        side(RelationId(0), &[FieldId(0)]),
+        Weight::DurationOf(FieldId(4)),
+        0,
+        Some(Bound::TargetField(FieldId(1))),
+        side(RelationId(1), &[FieldId(0)]),
+    ));
+    assert_eq!(
+        decl.validate().unwrap_err(),
+        StatementErrorKind::CapacityDimensionMixing { field: FieldId(1) }.at(StatementId(1))
+    );
+}
+
+#[test]
 fn rejects_a_weighted_closed_pair_the_axioms_refute_under_a_dependent_bound() {
     // Both sides closed with a dependent ceiling: the bound resolves
     // PER PARENT AXIOM from the sealed row, and the group's measure —

@@ -232,7 +232,7 @@ fn check_marks(
                         &derived_word
                     }
                     Ok(None) => &[],
-                    // A ray in the weighed field under the slot arm:
+                    // A ray in the weighed field:
                     // no finite expected encoding exists — the write
                     // path refuses such rows, so a stored one is a
                     // malformed-content finding, never an error.

@@ -41,6 +41,7 @@ import {
 	type CapacityWindow,
 	isCapacityWeight,
 	isCapacityWindow,
+	type UnitDimensionBan,
 	type UnitWindowBan,
 	unitWeight,
 	type WeightOnSource
@@ -357,13 +358,15 @@ function assertBoundsOnTarget(window: CapacityWindowSpec, target: FaceData, stat
  * on(Device, "pool"))` bounds each pool's summed draw by the pool's own
  * row. The two faces pair by arity AND structural shape
  * ({@link SameShapes}), exactly as containment — the grouping join reads
- * the same positionwise field pairing. The weight-sensitive `{1..*}` ban
- * rides the UNIT overload only ({@link UnitWindowBan} — on a weighted
- * statement "positive total" is a different, weaker law than containment).
+ * the same positionwise field pairing. The weight-sensitive bans ride the
+ * UNIT overload only: `{1..*}` ({@link UnitWindowBan} — on a weighted
+ * statement "positive total" is a different, weaker law than containment)
+ * and the `duration()` bound ({@link UnitDimensionBan} — a count of facts
+ * bounded by a span of time mixes dimensions, C18).
  */
 function capacity<B extends AnyFace, W extends CapacityWindow, A extends AnyFace>(
 	target: B,
-	window: W & UnitWindowBan<W> & BoundsOnTarget<W, B>,
+	window: W & UnitWindowBan<W> & UnitDimensionBan<W> & BoundsOnTarget<W, B>,
 	source: A & SameArity<B, A> & SameShapes<B, A>
 ): CapacityStatement<B["data"], A["data"]>
 function capacity<B extends AnyFace, M extends CapacityWeight, W extends CapacityWindow, A extends AnyFace>(
@@ -399,6 +402,15 @@ function capacity(
 	if (weight.kind === "unit" && window.kind === "floor" && window.lo.kind === "lit" && window.lo.value === 1n) {
 		throw errors.new(
 			"`{1..*}` on the unit instance says only what the bare containment says — drop the annotation and write the containment: contained(source, target)"
+		)
+	}
+	// The C18 dimension gate, unit instance (the engine's
+	// CapacityDimensionMixing twin — ruled 2026-07-24): a count of facts
+	// bounded by a span of time mixes dimensions. Judged here for untyped
+	// callers; the engine's validate_capacity stays the final authority.
+	if (weight.kind === "unit" && window.kind === "range" && window.hi.kind === "durationField") {
+		throw errors.new(
+			`a unit (count) window against the duration() bound on ${window.hi.field} mixes dimensions (C18) — weigh the source with weigh(duration(field)), or bound by a u64 field or literal`
 		)
 	}
 	const data: CapacityData = Object.freeze({

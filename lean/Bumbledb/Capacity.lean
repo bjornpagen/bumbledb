@@ -113,9 +113,13 @@ extractor (`Value.durationNat`).
 Discharged by the build lane since: **the C12 clip lemma**
 (`natSum_prefix_le` below — prefix monotonicity of non-negative
 running sums — spent by `Oracle.capacity_ceiling_exit_sound` /
-`Oracle.capacity_floor_exit_sound`, the named soundness of the
-engine's early-exit walk: ceiling exits at `sum > hi`, floor at
-`sum ≥ lo`); **the C11 Admission form** (`Admission.capacityForm` —
+`Oracle.capacity_floor_exit_sound`: the verdict is decided at the
+clip point in both polarities. The ENGINE spends the floor half
+only (ruled 2026-07-24, C14): a floor-only walk exits at
+`sum ≥ lo` — no witness is owed on satisfaction — while a ceiling
+walk always completes, because on conviction the full sum IS the
+witness and the reported measure must be walk-order-independent);
+**the C11 Admission form** (`Admission.capacityForm` —
 the bounded-quantification verdict proved sufficient: it quantifies
 over the probed false-surface parent bucket and resolves each
 answer's window at that answer, so `AdmissibleForm`'s Verdict type
@@ -166,12 +170,14 @@ theorem natSum_append : ∀ l₁ l₂ : List Nat,
 
 /-- **Prefix monotonicity of non-negative running sums** — the C12
 clip lemma: a walk's running sum never exceeds the whole walk's sum,
-so the engine's early exit is sound in both polarities — a ceiling
-walk may convict the moment the running sum passes `hi` (the suffix
-can only raise it: `capacity_ceiling_exit_sound`, `Oracle.lean`), and
-a floor-only walk may accept the moment it reaches `lo`
-(`capacity_floor_exit_sound`). The design's § 4 early-exit claim is
-cited here, not asserted. -/
+so an early verdict is sound in both polarities — a ceiling verdict
+is decided the moment the running sum passes `hi` (the suffix can
+only raise it: `capacity_ceiling_exit_sound`, `Oracle.lean`), and a
+floor-only walk may accept the moment it reaches `lo`
+(`capacity_floor_exit_sound`). The ENGINE clips on the floor only
+(ruled 2026-07-24, C14): a convicting ceiling walk completes, because
+the full sum IS the witnessed measure — the clip serves the verdict,
+the full sum serves the witness. -/
 theorem natSum_prefix_le (l₁ l₂ : List Nat) :
     natSum l₁ ≤ natSum (l₁ ++ l₂) := by
   rw [natSum_append]

@@ -289,3 +289,46 @@ smoke tests (tiny corpora, oracle multiset-agreement gates, the fixture
 dry-runs) are not measurement and run anywhere; every number arrives only
 from the owner's night — idle-machine, or a declared `--shared` night
 stamped as such in provenance — under the one lock, published by hand.
+
+## Flamegraph tooling
+
+Where-the-time-goes in one command. A trace is a representation, not a mode
+(40-execution.md § Observability): the same capture the `trace` subcommand
+already writes — the Chrome `<stem>.json` (Perfetto / `chrome://tracing` /
+speedscope, unchanged) and its collapsed-stack twin `<stem>.folded`
+(`crates/bumbledb-bench/src/trace_out/fold.rs` — `frameA;frameB <self_ns>`,
+the engine span tree charged by the flame summary's containment sweep) — is
+all three tools read. Nothing new is captured; the SVG is a second view of
+the folded profile. No network, no `flamegraph.pl`: the whole renderer is
+`scripts/flame.py` (stdlib only, the dependency quarantine), and the folded
+file feeds `flamegraph.pl` / inferno directly for anyone who prefers them.
+
+- **`scripts/flame.sh <family>`** or **`scripts/flame.sh <scenario>
+  <query>`** — build the bench binary with the `obs` feature, capture ONE
+  traced warm sample under the measurement mutex (`scripts/measure.sh` — a
+  flame capture IS a measurement), then render the folded twin into
+  `<base>/flame/<name>.svg` (self-contained flamegraph) beside its
+  `<name>.folded`, and print the top-10 self-time table. The family form
+  traces a read family via the `trace` subcommand; the lane form runs
+  `scenarios --trace --only <scenario>` (gated, one vestigial timing
+  sample) and renders the named query's warm capture as
+  `<scenario>.<query>`. Trailing flags pass straight to the underlying
+  subcommand (`--scale M`, `--seed 7`), so the traced corpus is yours to
+  pick. `BUMBLEDB_FLAME_OUT` overrides the output base (default
+  `bench-out`). One command, one SVG on disk.
+- **`scripts/flamediff.sh <before.folded> <after.folded> [name]`** —
+  cross-run attribution, no capture and no build: a differential folded file
+  (`stack before after`) plus a red/blue diff SVG where each frame is colored
+  by how its self time moved (red grew — a regression; blue shrank), widths
+  drawn on the after-profile. Point it at two `…/flame/<family>.folded` from
+  successive `flame.sh` runs to see exactly which frames a change moved.
+
+`scripts/flame.py` is the shared renderer (`svg`, `top`, `difffolded`,
+`diffsvg`, and the `render` / `diff` file-writers the scripts drive); its
+color mapping is a deterministic hash of the frame name, so the SVG is a
+byte-stable artifact. `python3 scripts/flame.py selftest` is the golden
+snapshot — a committed folded profile → SVG and a folded pair → diff folded →
+diff SVG, checked byte-for-byte against `scripts/flame-fixtures/` so a
+renderer drift is caught without a capture. `scripts/check.sh` runs the
+selftest as a gate, so the snapshot executes on every check lane (both CI
+architectures), never only when someone remembers it.

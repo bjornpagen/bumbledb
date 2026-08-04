@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="108" viewBox="0 0 1200 108">
+<rect width="100%" height="100%" fill="rgb(245,245,245)"/>
+<text x="10" y="20" font-family="monospace" font-size="15" font-weight="bold">scenarios.rings.r6_two_path_count.cold</text>
+<g><title>execute  389399.000 us  100.0%</title><rect x="10" y="82" width="1179.65" height="16" fill="rgb(234,55,6)" stroke="white" stroke-width="0.5"/><text x="13" y="94" font-family="monospace" font-size="12">execute</text></g>
+<g><title>rule_0  389395.458 us  100.0%</title><rect x="10.01" y="66" width="1179.64" height="16" fill="rgb(216,21,45)" stroke="white" stroke-width="0.5"/><text x="13.01" y="78" font-family="monospace" font-size="12">rule_0</text></g>
+<g><title>join  389392.041 us  100.0%</title><rect x="10.01" y="50" width="1179.63" height="16" fill="rgb(228,169,7)" stroke="white" stroke-width="0.5"/><text x="13.01" y="62" font-family="monospace" font-size="12">join</text></g>
+<g><title>prepare  115.208 us  0.0%</title><rect x="1189.65" y="82" width="0.35" height="16" fill="rgb(248,101,43)" stroke="white" stroke-width="0.5"/></g>
+</svg>

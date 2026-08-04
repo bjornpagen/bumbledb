@@ -128,6 +128,139 @@ fn the_table_render_is_golden() {
     assert_eq!(summary.render(), expected);
 }
 
+#[test]
+fn fold_stacks_charges_self_time_by_enclosure_path() {
+    // outer(100) ⊃ middle(60) ⊃ leaf(30): each frame's self time is its
+    // duration minus its direct child, and the stack path names the chain.
+    let nested = vec![
+        span("outer", Category::Execute, 0, 100_000, 0),
+        span("middle", Category::Execute, 10_000, 60_000, 0),
+        span("leaf", Category::Execute, 20_000, 30_000, 0),
+    ];
+    let folded = fold_stacks(&nested);
+    // BTreeMap order: a prefix sorts before its extension.
+    let expected = "outer 40000\n\
+                    outer;middle 30000\n\
+                    outer;middle;leaf 30000\n";
+    assert_eq!(folded, expected);
+}
+
+#[test]
+fn fold_stacks_collapses_identical_sibling_stacks() {
+    // Two same-named children of one parent land on ONE folded line,
+    // their self times summed (the collapsed-stack contract). Ordinary
+    // point events carry no charge and never appear.
+    let events = vec![
+        span("execute", Category::Execute, 0, 100_000, 0),
+        span("join", Category::Execute, 10_000, 20_000, 0),
+        span("join", Category::Execute, 40_000, 30_000, 0),
+        span("cache_hit", Category::Cache, 50_000, 0, 3),
+    ];
+    let folded = fold_stacks(&events);
+    let expected = "execute 50000\n\
+                    execute;join 50000\n";
+    assert_eq!(folded, expected);
+    assert!(
+        !folded.contains("cache_hit"),
+        "point events carry no self time"
+    );
+}
+
+#[test]
+fn fold_stacks_charges_phase_accumulators_under_their_join() {
+    // Phase accumulators flush AFTER the rule loop (their stamps sit
+    // past the join span's end, inside execute), carrying the join
+    // loop's interior time in a0. The fold hangs each under the nearest
+    // preceding join and makes room in that join's self time — a
+    // join-dominated capture stops rendering as one flat bar.
+    let events = vec![
+        span("execute", Category::Execute, 0, 100_000, 0),
+        span("join", Category::Execute, 10_000, 50_000, 0),
+        span("jp_probe_n0", Category::Phase, 70_000, 0, 30_000),
+        span("jp_iter_n0", Category::Phase, 70_001, 0, 10_000),
+    ];
+    let expected = "execute 50000\n\
+                    execute;join 10000\n\
+                    execute;join;jp_iter_n0 10000\n\
+                    execute;join;jp_probe_n0 30000\n";
+    assert_eq!(fold_stacks(&events), expected);
+
+    // No join anywhere: the accumulator charges the deepest span
+    // containing its stamp — attribution, not identification.
+    let joinless = vec![
+        span("execute", Category::Execute, 0, 100_000, 0),
+        span("jp_hash_n1", Category::Phase, 5_000, 0, 20_000),
+    ];
+    let expected = "execute 80000\n\
+                    execute;jp_hash_n1 20000\n";
+    assert_eq!(fold_stacks(&joinless), expected);
+
+    // The flame summary still excludes them — the phase table is their
+    // terminal rendering.
+    let summary = FlameSummary::compute(&events);
+    assert!(summary.rows.iter().all(|row| !row.name.starts_with("jp_")));
+}
+
+#[test]
+fn fold_stacks_empty_capture_is_empty() {
+    assert_eq!(fold_stacks(&[]), "");
+}
+
+#[test]
+fn an_unregistered_phase_event_never_suppresses_the_phase_table() {
+    // An accumulator name the registry table doesn't know (an engine
+    // ahead of the bench's view) drops its own row only — the table
+    // used to vanish whole.
+    let registered = bumbledb::obs::names::JOIN_PHASE[0][0];
+    let events = vec![
+        span(registered, Category::Phase, 0, 0, 10_000),
+        span("jp_unregistered_nX", Category::Phase, 0, 0, 5_000),
+    ];
+    let table = render_phase_table(&events).expect("the registered row still renders");
+    assert!(table.contains(registered), "{table}");
+    assert!(!table.contains("jp_unregistered_nX"), "{table}");
+
+    // Nothing registered at all still means no table.
+    let alien = vec![span("jp_unregistered_nX", Category::Phase, 0, 0, 5_000)];
+    assert!(render_phase_table(&alien).is_none());
+}
+
+#[test]
+fn equal_tick_nests_resolve_parenthood_by_drop_order() {
+    // A sub-tick child inside a sub-tick parent shares BOTH endpoints on
+    // the 41.67 ns counter. Spans record at drop, so the CHILD lands in
+    // the buffer first — the sweep must order the parent first anyway
+    // (a stable (start, -end) sort alone kept the buffer order and
+    // inverted the pair, charging the parent to the child).
+    let events = vec![
+        span("child", Category::Execute, 1_000, 42, 0),
+        span("parent", Category::Execute, 1_000, 42, 0),
+    ];
+
+    let folded = fold_stacks(&events);
+    assert_eq!(folded, "parent 0\nparent;child 42\n");
+
+    let summary = FlameSummary::compute(&events);
+    let self_of = |name: &str| {
+        summary
+            .rows
+            .iter()
+            .find(|row| row.name == name)
+            .expect("row")
+            .self_ns
+    };
+    assert_eq!(self_of("parent"), 0, "the child charge lands on the parent");
+    assert_eq!(self_of("child"), 42);
+
+    // Distinct-tick nests are untouched: the (start, -end) key alone
+    // already orders the parent first, record order notwithstanding.
+    let distinct = vec![
+        span("child", Category::Execute, 1_000, 42, 0),
+        span("parent", Category::Execute, 1_000, 84, 0),
+    ];
+    assert_eq!(fold_stacks(&distinct), "parent 42\nparent;child 42\n");
+}
+
 /// A real captured S-scale `containment_walk` trace: the expected spans appear
 /// and the summary wall tracks the execute span within 5%.
 #[cfg(feature = "obs")]
@@ -187,16 +320,26 @@ fn a_real_containment_walk_capture_summarizes_to_the_execute_span() {
         execute.total_ns
     );
 
-    // And it exports.
-    let path = write_trace_file(
+    // And it exports the pair: the Chrome json AND the collapsed fold.
+    let path = write_trace_pair(
         &dir.join("trace"),
         "containment_walk.warm",
         &engine,
         &harness,
     )
     .expect("export");
-    let text = std::fs::read_to_string(path).expect("read back");
+    let text = std::fs::read_to_string(&path).expect("read back");
     assert!(text.starts_with("[\n") && text.ends_with("\n]\n"));
+    let folded_path = path.with_extension("folded");
+    let folded = std::fs::read_to_string(&folded_path).expect("folded beside json");
+    // The root of every fold line is the execute span, and each line ends
+    // in a nanosecond self-time count.
+    assert!(!folded.is_empty(), "the fold is non-empty");
+    for line in folded.lines() {
+        assert!(line.starts_with("execute"), "root frame: {line}");
+        let count = line.rsplit(' ').next().expect("a count");
+        assert!(count.parse::<u64>().is_ok(), "self-ns tail: {line}");
+    }
     drop(db);
     let _ = std::fs::remove_dir_all(&dir);
 }

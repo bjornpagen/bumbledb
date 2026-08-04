@@ -1,6 +1,7 @@
 use super::{
     Colt, Map, NodeRef, NodeState, Positions, Slot, ctrl_tag, hash_core, hash_words, pack_child,
 };
+use crate::image::view::View;
 
 /// Positions staged per force run — the build side's batch width,
 /// matching the read path's column-hoisted gather discipline.
@@ -102,6 +103,59 @@ impl Colt {
         self.maps.push(m);
         self.nodes[node.0 as usize] = NodeState::Forced { map: map_idx };
         map_idx
+    }
+
+    /// Forces the root level eagerly — the occurrence-dedup path's one
+    /// eager force (docs/architecture/40-execution.md): the canonical
+    /// occurrence pays its root build once, BEFORE its same-shaped
+    /// siblings clone the result ([`Colt::clone_bound_from`]); the join
+    /// was about to pay this exact force lazily anyway. Idempotent, like
+    /// every force; a no-op for a levelless trie.
+    pub fn force_root(&mut self) {
+        if self.schema_columns.is_empty() {
+            return;
+        }
+        self.force(NodeRef(0), 0);
+    }
+
+    /// Whether `other` shares this trie's exact shape — selection
+    /// levels, set-ness, and the per-level image columns (the
+    /// *orientation*). Two same-shaped tries over the same view hold
+    /// interchangeable forced state: the occurrence-dedup precondition.
+    #[must_use]
+    pub fn same_shape(&self, other: &Colt) -> bool {
+        self.selection_levels == other.selection_levels
+            && self.set_levels == other.set_levels
+            && self.schema_columns == other.schema_columns
+    }
+
+    /// Clones `other`'s bound state — view and every pool, forced maps
+    /// included — into this trie: the occurrence-dedup rebuild
+    /// (docs/architecture/40-execution.md). Sound because forced state
+    /// is a pure function of (view, shape), and cursors are pool
+    /// indices, so an index-identical pool copy IS the same trie.
+    /// `buffer` circulates the caller's spare survivor storage in;
+    /// the old view returns for recycling — the `reset` ping-pong,
+    /// verbatim. The epoch advances exactly like a reset's, so resume
+    /// tokens minted against the previous binding stay refused.
+    pub fn clone_bound_from(&mut self, other: &Colt, buffer: Vec<u32>) -> View {
+        debug_assert!(
+            self.same_shape(other),
+            "the occurrence dedup clones between identical trie shapes only"
+        );
+        let old = std::mem::replace(&mut self.view, other.view.clone_in(buffer));
+        self.nodes.clone_from(&other.nodes);
+        self.chunks.clone_from(&other.chunks);
+        self.chunk_positions.clone_from(&other.chunk_positions);
+        self.maps.clone_from(&other.maps);
+        self.ctrl.clone_from(&other.ctrl);
+        self.buckets.clone_from(&other.buckets);
+        self.dense.clone_from(&other.dense);
+        self.union_mark = other.union_mark;
+        self.start = other.start;
+        self.selected = other.selected;
+        self.epoch = (self.epoch + 1) % 128;
+        old
     }
 
     /// One staged run of a [`Colt::force`] pass: gather the run's key

@@ -161,7 +161,8 @@ fn schema_compile_fail_fixtures() {
     // second spelling), and the empty literal set `{}` (selects
     // nothing — write no binding); the capacity typing refusals —
     // the weight path `[a.b]` (naming the pinned-column composition
-    // idiom, ruling 6), the signed weight (polarity), the non-u64
+    // idiom, ruling 6), the bound path `{lo..a.b}` (the same idiom —
+    // one law both slots), the signed weight (polarity), the non-u64
     // weight, `[Duration(field)]` over a scalar, the bound ident off
     // TARGET's roster (C1), the signed bound, `{..Duration(field)}`
     // over a scalar, the dependent floor (hi-slot only, C6), and the
@@ -181,7 +182,7 @@ fn schema_compile_fail_fixtures() {
     // witness (the schema-bound witness law — the binding typestate
     // makes a foreign witness a type mismatch).
     assert_eq!(
-        seen, 39,
-        "the schema compile-fail roster has thirty-nine fixtures"
+        seen, 40,
+        "the schema compile-fail roster has forty fixtures"
     );
 }

@@ -426,6 +426,69 @@ fn an_aborted_write_burns_escaped_ids_exactly_once_panic_included() {
     .expect("mint after both aborts");
 }
 
+/// Lane I2 — the integrity sweep, formerly wholly dark. `verify_store`
+/// records one outer span containing one span per namespace pass, in the
+/// canonical order; a clean store raises no findings, so every pass span
+/// and the outer span charge zero.
+#[test]
+fn verify_store_traces_every_namespace_pass_in_order() {
+    let dir = TempDir::new("db-trace-verify");
+    let db = Db::create(dir.path(), schema()).expect("create");
+    db.write(|tx| {
+        tx.insert_dyn(R, &[Value::U64(1)])?;
+        Ok(())
+    })
+    .expect("seed");
+
+    obs::start_capture();
+    let report = db.verify_store().expect("verify");
+    let events = obs::finish_capture();
+    assert!(report.findings.is_empty(), "a clean store");
+
+    // The pass spans, in the canonical sweep order, each inside the outer.
+    let pass_order: Vec<&str> = events
+        .iter()
+        .filter(|e| {
+            [
+                obs::names::VERIFY_FACTS,
+                obs::names::VERIFY_MEMBERSHIP,
+                obs::names::VERIFY_DETERMINANTS,
+                obs::names::VERIFY_REVERSE,
+                obs::names::VERIFY_MARKS,
+                obs::names::VERIFY_COUNTERS,
+                obs::names::VERIFY_FRESH,
+                obs::names::VERIFY_DICT,
+            ]
+            .contains(&e.name)
+        })
+        .map(|e| e.name)
+        .collect();
+    assert_eq!(
+        pass_order,
+        vec![
+            obs::names::VERIFY_FACTS,
+            obs::names::VERIFY_MEMBERSHIP,
+            obs::names::VERIFY_DETERMINANTS,
+            obs::names::VERIFY_REVERSE,
+            obs::names::VERIFY_MARKS,
+            obs::names::VERIFY_COUNTERS,
+            obs::names::VERIFY_FRESH,
+            obs::names::VERIFY_DICT,
+        ],
+        "the canonical sweep order",
+    );
+    let outer = events
+        .iter()
+        .find(|e| e.name == obs::names::VERIFY_STORE)
+        .expect("the outer sweep span");
+    assert_eq!(outer.a0, 0, "a clean store raises no findings");
+    for e in &events {
+        assert!(e.start_ns >= outer.start_ns);
+        assert!(e.start_ns + e.dur_ns <= outer.start_ns + outer.dur_ns);
+        assert_eq!(e.a0, 0, "every pass raised zero findings on a clean store");
+    }
+}
+
 #[test]
 fn an_aborting_write_records_no_lmdb_commit() {
     let dir = TempDir::new("db-trace-abort");
@@ -446,4 +509,70 @@ fn an_aborting_write_records_no_lmdb_commit() {
         .find(|e| e.name == obs::names::WRITE_TXN)
         .expect("write_txn span");
     assert_eq!(write_txn.a0, 0, "aborted flag");
+}
+
+/// The snapshot point-read surface is lit (the formerly wholly dark
+/// keyed-get lane): one `point_read` span per get, hit/miss riding a0
+/// — the owned and pooled entries alike.
+#[test]
+fn point_reads_trace_hits_and_misses() {
+    let dir = TempDir::new("db-trace-point-read");
+    let keyed = SchemaDescriptor {
+        relations: vec![RelationDescriptor {
+            extension: None,
+            name: "Entry".into(),
+            fields: vec![
+                FieldDescriptor {
+                    name: "k".into(),
+                    value_type: ValueType::U64,
+                    generation: Generation::None,
+                },
+                FieldDescriptor {
+                    name: "v".into(),
+                    value_type: ValueType::U64,
+                    generation: Generation::None,
+                },
+            ],
+        }],
+        statements: vec![StatementDescriptor::Functionality {
+            relation: RelationId(0),
+            projection: Box::new([bumbledb_theory::schema::FieldId(0)]),
+        }],
+    };
+    let db = Db::create(dir.path(), keyed).expect("create");
+    db.write(|tx| {
+        tx.insert_dyn(RelationId(0), &[Value::U64(7), Value::U64(70)])?;
+        Ok(())
+    })
+    .expect("seed");
+
+    obs::start_capture();
+    let mut out = Vec::new();
+    db.read(|snap| {
+        let hit = snap.get_dyn(
+            RelationId(0),
+            bumbledb_theory::schema::StatementId(0),
+            &[Value::U64(7)],
+        )?;
+        assert_eq!(hit, Some(vec![Value::U64(7), Value::U64(70)]));
+        assert!(!snap.get_dyn_into(
+            RelationId(0),
+            bumbledb_theory::schema::StatementId(0),
+            &[Value::U64(9)],
+            &mut out
+        )?);
+        Ok(())
+    })
+    .expect("reads");
+    let events = obs::finish_capture();
+    let point_reads: Vec<u64> = events
+        .iter()
+        .filter(|e| e.name == obs::names::POINT_READ)
+        .map(|e| e.a0)
+        .collect();
+    assert_eq!(
+        point_reads,
+        vec![1, 0],
+        "one span per get, hit then miss in a0"
+    );
 }

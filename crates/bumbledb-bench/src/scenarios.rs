@@ -35,6 +35,7 @@ mod mix;
 mod render;
 mod run;
 mod run_query;
+mod trace;
 
 #[cfg(test)]
 mod tests;
@@ -139,6 +140,20 @@ pub struct Scenario {
     pub queries: fn() -> Vec<ScenarioQuery>,
 }
 
+/// The per-query capture modes of a timed scenario run — `trace` and
+/// `alloc` are separate passes, mutually exclusive (the obs doctrine),
+/// enforced by the driver before [`run`] ever sees them.
+#[derive(Debug, Clone, Default)]
+pub struct QueryModes {
+    /// The run's `<out>` root; when set, each query lands warm+cold
+    /// traces under `<out>/trace/scenarios/<scenario>/<query>.{warm,cold}`
+    /// as both `.json` (Chrome) and `.folded` (collapsed stacks).
+    pub trace_root: Option<std::path::PathBuf>,
+    /// Per-query alloc window over the engine side (needs the obs build;
+    /// off, the harness refuses the mode).
+    pub alloc: bool,
+}
+
 /// One measured query entry of the scenario report.
 pub struct QueryReport {
     pub scenario: &'static str,
@@ -149,6 +164,11 @@ pub struct QueryReport {
     pub ours: harness::Stats,
     /// The `SQLite` lane(s), one entry per [`Twin`] rendering.
     pub lanes: Vec<LaneReport>,
+    /// The warm flame top-10 (+ phase table), when `--trace` ran — the
+    /// report embeds it like the ledger read families do.
+    pub flame: Option<String>,
+    /// The per-query engine-side alloc window, when `--alloc` ran.
+    pub alloc: Option<crate::report::AllocReport>,
 }
 
 impl QueryReport {

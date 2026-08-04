@@ -85,7 +85,7 @@ fn selection_work_is_o_selected() {
     let txn = env.read_txn().expect("txn");
     let mut prepared = prepare(&txn, &cache, &schema, &by_memo_query()).expect("prepare");
     let (out, stats) = prepared
-        .profile(&txn, &cache, &memo_param("hot"))
+        .profile(&txn, &cache, &[ParamArg::Scalar(BindValue::Str("hot"))])
         .expect("profile");
     assert_eq!(out.len(), 4);
     let drawn: u64 = stats.rules[0].nodes.iter().map(|n| n.batch_entries).sum();

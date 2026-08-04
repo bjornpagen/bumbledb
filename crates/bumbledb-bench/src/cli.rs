@@ -177,6 +177,15 @@ pub struct ScenarioArgs {
     pub only: Option<Vec<String>>,
     /// Measured samples per query per engine.
     pub samples: Option<u32>,
+    /// Traced Chrome+folded artifacts under `<out>/trace/` — per-query
+    /// warm+cold pairs for `scenarios`, per-family traced twin samples
+    /// for the write worlds (`crud`/`lawful`).
+    pub trace: bool,
+    /// Per-query alloc windows (needs the obs build) — a `scenarios`
+    /// pass only, a separate pass from `--trace` and mutually exclusive
+    /// with it (the obs doctrine); the write worlds refuse the flag at
+    /// parse.
+    pub alloc: bool,
     pub out: Option<PathBuf>,
 }
 
@@ -187,6 +196,8 @@ impl Default for ScenarioArgs {
             dir: PathBuf::from("bench-data"),
             only: None,
             samples: None,
+            trace: false,
+            alloc: false,
             out: None,
         }
     }
@@ -231,6 +242,10 @@ pub struct WritesArgs {
     pub batches: Vec<u32>,
     /// Measured samples per cell; `None` = the lane default.
     pub samples: Option<u32>,
+    /// Per-cell traced twin samples under `<out>/trace/writes/<lane>/`
+    /// — the commit/delete ladder's `LMDB_COMMIT`-bearing artifacts
+    /// (needs the obs build; bulk stays untraced by decision).
+    pub trace: bool,
     pub out: Option<PathBuf>,
 }
 
@@ -243,6 +258,7 @@ impl Default for WritesArgs {
             lanes: vec![DurabilityLane::Nosync, DurabilityLane::Durable],
             batches: vec![1, 10, 100, 1000],
             samples: None,
+            trace: false,
             out: None,
         }
     }

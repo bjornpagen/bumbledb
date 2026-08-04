@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="92" viewBox="0 0 1200 92">
+<rect width="100%" height="100%" fill="rgb(245,245,245)"/>
+<text x="10" y="20" font-family="monospace" font-size="15" font-weight="bold">latest_posting_per_account.warm</text>
+<g><title>execute  2278.666 us  100.0%</title><rect x="10" y="66" width="1180.0" height="16" fill="rgb(234,55,6)" stroke="white" stroke-width="0.5"/><text x="13" y="78" font-family="monospace" font-size="12">execute</text></g>
+<g><title>finalize  6.750 us  0.3%</title><rect x="10.02" y="50" width="3.5" height="16" fill="rgb(255,138,47)" stroke="white" stroke-width="0.5"/></g>
+<g><title>rule_0  2270.333 us  99.6%</title><rect x="13.52" y="50" width="1175.68" height="16" fill="rgb(216,21,45)" stroke="white" stroke-width="0.5"/><text x="16.52" y="62" font-family="monospace" font-size="12">rule_0</text></g>
+<g><title>join  2269.833 us  99.6%</title><rect x="13.52" y="34" width="1175.43" height="16" fill="rgb(228,169,7)" stroke="white" stroke-width="0.5"/><text x="16.52" y="46" font-family="monospace" font-size="12">join</text></g>
+</svg>

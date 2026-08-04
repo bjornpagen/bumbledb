@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="92" viewBox="0 0 1200 92">
+<rect width="100%" height="100%" fill="rgb(245,245,245)"/>
+<text x="10" y="20" font-family="monospace" font-size="15" font-weight="bold">writes.nosync.delete_b1.diff (red=grew, blue=shrank)</text>
+<g><title>write_txn  47.416 -&gt; 51.958 us  (+4.542 us)</title><rect x="10" y="66" width="1180.0" height="16" fill="rgb(255,45,45)" stroke="white" stroke-width="0.5"/><text x="13" y="78" font-family="monospace" font-size="12">write_txn</text></g>
+<g><title>commit  45.000 -&gt; 48.541 us  (+3.541 us)</title><rect x="10" y="50" width="1102.4" height="16" fill="rgb(255,92,92)" stroke="white" stroke-width="0.5"/><text x="13" y="62" font-family="monospace" font-size="12">commit</text></g>
+<g><title>apply_deletes  8.541 -&gt; 11.541 us  (+3.000 us)</title><rect x="10" y="34" width="262.1" height="16" fill="rgb(255,117,117)" stroke="white" stroke-width="0.5"/><text x="13" y="46" font-family="monospace" font-size="12">apply_deletes</text></g>
+<g><title>apply_inserts  0.000 -&gt; 0.041 us  (+0.041 us)</title><rect x="272.1" y="34" width="0.93" height="16" fill="rgb(255,254,254)" stroke="white" stroke-width="0.5"/></g>
+<g><title>counters_flush  1.083 -&gt; 1.583 us  (+0.500 us)</title><rect x="273.03" y="34" width="35.95" height="16" fill="rgb(255,232,232)" stroke="white" stroke-width="0.5"/><text x="276.03" y="46" font-family="monospace" font-size="12">co..</text></g>
+<g><title>judgment_source  0.083 -&gt; 0.083 us  (+0.000 us)</title><rect x="308.99" y="34" width="1.88" height="16" fill="rgb(238,238,238)" stroke="white" stroke-width="0.5"/></g>
+<g><title>judgment_target  0.875 -&gt; 0.708 us  (-0.167 us)</title><rect x="310.87" y="34" width="16.08" height="16" fill="rgb(248,248,255)" stroke="white" stroke-width="0.5"/></g>
+<g><title>lmdb_commit  29.708 -&gt; 31.791 us  (+2.083 us)</title><rect x="326.95" y="34" width="721.99" height="16" fill="rgb(255,159,159)" stroke="white" stroke-width="0.5"/><text x="329.95" y="46" font-family="monospace" font-size="12">lmdb_commit</text></g>
+</svg>

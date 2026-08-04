@@ -7,9 +7,11 @@
 //!   {0..supply} Device(pool)` — the per-parent bound read plus the
 //!   weighted value-slot walk on the hot path. Rows
 //!   `commit_capacity_baseline` (the statement-free control twin) and
-//!   `commit_capacity_sum`. This lane is also the C17 measuring
-//!   instrument: the slot-vs-fetch-per-child choice lands engine-side
-//!   with this lane's number recorded beside it.
+//!   `commit_capacity_sum`. This lane was also the C17 measuring
+//!   instrument: it decided slot-vs-fetch-per-child (2026-08-01, the
+//!   slot arm landed; numbers at the CONSTRAINT comment in
+//!   `storage/commit/judgment.rs` and the run artifacts in
+//!   `bench-out/baseline-2026-07-25/capacity-c17/`).
 //! - **Calendar capacity** (`Duration` weight): `Room(id) <=
 //!   [Duration(booked)]{0..Duration(span)} Booking(room)` — row
 //!   `commit_capacity_duration`. A FRESH twin world by ruling (C15):
@@ -30,7 +32,7 @@ use std::path::Path;
 use bumbledb::{Db, RelationId, Value};
 
 use crate::corpus_gen::{GenConfig, Rng};
-use crate::harness::{self, Measurement};
+use crate::harness::{self, Measurement, Protocol};
 use crate::writebench::write_protocol;
 
 #[cfg(test)]
@@ -226,14 +228,20 @@ pub fn load<S>(
 
 /// `commit_capacity_sum`: one watts-1 device per commit under the
 /// weighted law — the dependent-bound read plus the value-slot measure
-/// walk on the hot path, every commit legal.
+/// walk on the hot path, every commit legal. The protocol threads in
+/// (the registry's at orchestration, `TRACED_ONE` for the traced solo
+/// sample — a re-seeded rng re-draws pool ids, legal in this
+/// gate-free engine-only world).
 ///
 /// # Errors
 ///
 /// Engine errors, stringified.
-pub fn commit_capacity_sum(db: &Db<power::PowerWorld>) -> Result<Measurement, String> {
+pub fn commit_capacity_sum(
+    db: &Db<power::PowerWorld>,
+    proto: Protocol,
+) -> Result<Measurement, String> {
     let mut rng = Rng::new(0x0CA9_0001);
-    harness::measure(write_protocol("commit_capacity_sum"), || {
+    harness::measure(proto, || {
         let pool = power::PoolId(rng.range(PARENTS));
         db.write(|tx| {
             let id: power::DeviceId = tx.alloc()?;
@@ -252,9 +260,10 @@ pub fn commit_capacity_sum(db: &Db<power::PowerWorld>) -> Result<Measurement, St
 /// Engine errors, stringified.
 pub fn commit_capacity_baseline(
     db: &Db<power_baseline::UnbudgetedWorld>,
+    proto: Protocol,
 ) -> Result<Measurement, String> {
     let mut rng = Rng::new(0x0CA9_0001);
-    harness::measure(write_protocol("commit_capacity_baseline"), || {
+    harness::measure(proto, || {
         let pool = power_baseline::PoolId(rng.range(PARENTS));
         db.write(|tx| {
             let id: power_baseline::DeviceId = tx.alloc()?;
@@ -278,10 +287,11 @@ pub fn commit_capacity_baseline(
 /// Never: every sampled one-unit slice is nonempty.
 pub fn commit_capacity_duration(
     db: &Db<calendar::CalendarCapacityWorld>,
+    proto: Protocol,
 ) -> Result<Measurement, String> {
     let mut rng = Rng::new(0x0CA9_0002);
     let mut sample = 0u64;
-    harness::measure(write_protocol("commit_capacity_duration"), || {
+    harness::measure(proto, || {
         let room = calendar::RoomId(rng.range(PARENTS));
         // Fresh slices high in the span: seeded bookings occupy
         // `[0, children × BOOKED_LEN)`; samples land above them, one
@@ -350,6 +360,8 @@ pub fn write_families(
     scratch: &Path,
     selected: &dyn Fn(&str) -> bool,
     mode: crate::storemode::StoreMode,
+    trace_dir: Option<&Path>,
+    flames: &mut Vec<crate::report::FlameEmbed>,
 ) -> Result<Vec<crate::report::WriteFamilyReport>, String> {
     let names = [
         "commit_capacity_baseline",
@@ -369,32 +381,43 @@ pub fn write_families(
     load(&rooms, Mass::BENCH, calendar_rows)?;
 
     let mut out = Vec::new();
-    let mut push =
-        |name: &str, run: &mut dyn FnMut() -> Result<Measurement, String>| -> Result<(), String> {
-            if !selected(name) {
-                return Ok(());
-            }
-            eprintln!("bench: {name}");
-            let (ours, ghz) = crate::clockproxy::stamped(run)?;
-            out.push(crate::report::WriteFamilyReport {
+    let mut push = |name: &str,
+                    run: &mut dyn FnMut(Protocol) -> Result<Measurement, String>|
+     -> Result<(), String> {
+        if !selected(name) {
+            return Ok(());
+        }
+        eprintln!("bench: {name}");
+        let (ours, ghz) = crate::clockproxy::stamped(|| run(write_protocol(name)))?;
+        // The traced solo sample (--trace): AFTER the timed window,
+        // one captured commit — the weighted-capacity judgment spans,
+        // readable from disk (engine-only lane, no mirror to keep in
+        // lockstep).
+        if let Some(table) = crate::trace_out::traced_solo(trace_dir, name, run)? {
+            flames.push(crate::report::FlameEmbed {
                 name: name.to_owned(),
-                ours: ours.stats,
-                theirs: None,
-                facts_per_sec: None,
-                ghz: Some(ghz.into()),
+                table,
             });
-            Ok(())
-        };
+        }
+        out.push(crate::report::WriteFamilyReport {
+            name: name.to_owned(),
+            ours: ours.stats,
+            theirs: None,
+            facts_per_sec: None,
+            ghz: Some(ghz.into()),
+        });
+        Ok(())
+    };
     // Baseline first (the windowed symmetry rule: the control's clock
     // shadow must not carry the judged rows' fsyncs).
-    push("commit_capacity_baseline", &mut || {
-        commit_capacity_baseline(&unbudgeted)
+    push("commit_capacity_baseline", &mut |proto| {
+        commit_capacity_baseline(&unbudgeted, proto)
     })?;
-    push("commit_capacity_sum", &mut || {
-        commit_capacity_sum(&budgeted)
+    push("commit_capacity_sum", &mut |proto| {
+        commit_capacity_sum(&budgeted, proto)
     })?;
-    push("commit_capacity_duration", &mut || {
-        commit_capacity_duration(&rooms)
+    push("commit_capacity_duration", &mut |proto| {
+        commit_capacity_duration(&rooms, proto)
     })?;
     Ok(out)
 }

@@ -1327,7 +1327,12 @@ function renderParamAnchor(roster: ClosedRoster | undefined): string {
  * Folds every rule's param uses (recs in declaration order first, output
  * rules last — exactly the lowering walk) into the query's registry: first
  * use mints the dense `ParamId`, the first FIELD-ANCHORED use types the
- * wire, and one name keeps one shape AND one closedness.
+ * wire, and one name keeps one shape AND one closedness. The orderable
+ * ban needs no registry arm: an order use always anchors its SIBLING's
+ * domain (the no-variable-side spelling is refused at the comparison
+ * constructor), so a closed-anchored param under an order op dies at the
+ * one-domain wall here — and an order use whose sibling is itself
+ * closed-bound dies at the comparison's own var-side wall first.
  */
 function paramRegistryOf(recs: readonly RecData[], rules: readonly RuleData[]): readonly ParamEntry[] {
 	const order: string[] = []
@@ -1338,7 +1343,6 @@ function paramRegistryOf(recs: readonly RecData[], rules: readonly RuleData[]): 
 			anchor: ParamEntry["anchor"]
 			op: ParamEntry["op"]
 			members: readonly string[] | undefined
-			orderOp: "lt" | "le" | "gt" | "ge" | "pointIn" | undefined
 		}
 	>()
 	function fold(uses: readonly ParamUse[]): void {
@@ -1350,8 +1354,7 @@ function paramRegistryOf(recs: readonly RecData[], rules: readonly RuleData[]): 
 					shape: use.shape,
 					anchor: use.anchor,
 					op: use.op,
-					members: use.members,
-					orderOp: isOrderOp(use.op) ? use.op : undefined
+					members: use.members
 				})
 				continue
 			}
@@ -1378,9 +1381,6 @@ function paramRegistryOf(recs: readonly RecData[], rules: readonly RuleData[]): 
 				existing.anchor = use.anchor
 				existing.op = use.op
 			}
-			if (existing.orderOp === undefined && isOrderOp(use.op)) {
-				existing.orderOp = use.op
-			}
 		}
 	}
 	for (const rec of recs) {
@@ -1396,10 +1396,6 @@ function paramRegistryOf(recs: readonly RecData[], rules: readonly RuleData[]): 
 			const entry = byName.get(name)
 			if (entry === undefined) {
 				throw errors.new(`query param ${name} lost its registry entry`)
-			}
-			const anchorRoster = anchorRosterOf(entry.anchor)
-			if (entry.orderOp !== undefined && anchorRoster !== undefined) {
-				throw closedOrderError(`query param ${name}`, `its ${entry.orderOp} use's anchor`, anchorRoster.name)
 			}
 			/**
 			 * A membership array's handle names are program constants, so the

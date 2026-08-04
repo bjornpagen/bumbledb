@@ -11,24 +11,29 @@ open. The main publish runs `prepublishOnly` → the full build (lockstep
 assertion, cargo release build, smoke-load through the by-name loader path,
 tarball-manifest verification) before anything uploads.
 
-`0.9.0` is a MINOR release over `0.8.0` — the first release since `0.1.0`
-that breaks nothing: the surface only widens. Two additions: the zero-key
-IDENTITY COMPARATORS (`by()` / `desc()` with no keys order BARE
-engine-orderable scalars — `bigint[]` of ids, map keys, `boolean` false <
-true — typed to EXACTLY the orderable roster, ruled 2026-07-25), and the R3
-BOOL-ORDER tail closed on the TS query tier (`OrderVarOk` admits
-u64/i64/bool exactly as the engine's operand screen does; a bool order
-comparison is spellable with boolean literals and boolean-typed params;
-`sum` and the `pointIn` point stay numeric — a quantifier is not an
-addition). The primer expressibility pins ride along (the 8-way rule, the
-kind-arm pair idiom, the four commit-judged totality laws). Wire, manifest,
-storage format (v7), and every schema fingerprint are UNTOUCHED — zero pins
-moved. The release flow itself also sheds its one recurring defect: the
-platform pin leaves the repo manifest for pack-time injection (below), so
-the sdk lane's bootstrap circle — red CI between bump and publish, cleared
-by a post-publish lockfile regeneration — dies at this release.
+`0.10.0` is the bugbash-perf campaign release over `0.9.0` — 44 verified
+findings fixed (12 bugs, 3 high), the read path measurably faster (report
+reps 0.87–0.94 vs the prior estate on five of six, scenarios 0.88 with the
+graph-world regression cluster reversed), and the weighted-capacity judge's
+C17 measured choice landed: the value-slot arm won the power-budget lane
+(−17%/−21% on the judged surface) and ships as the ONLY form, with C20
+(ruled 2026-08-03) blessing its write-time consequence as doctrine — a
+ray-valued Duration weight refuses at WRITE time, strictly stronger than
+C10's judge-time refusal (`docs/design/capacity-laws.md` §8b). On the TS
+tier the type walls tighten to the engine's: cross-domain
+order/`pointIn`/Allen spellings and a unit capacity taking a `duration()`
+bound now die at COMPILE time (both were engine refusals at runtime before —
+code that stops compiling was already broken), and `explain()` gains R13
+execute-symmetry (profile/introspect take the mixed `ParamArg` entry). Wire,
+manifest, storage format (v7), and every schema fingerprint are UNTOUCHED —
+zero pins moved. Campaign ledger: `audit-2026-07-25/README.md`.
 
-Lineage: `0.8.0` was the capacity release, a deliberate backwards-incompatible
+Lineage: `0.9.0` was a minor over `0.8.0` that broke nothing — the zero-key
+identity comparators (`by()`/`desc()` over exactly the engine-orderable
+roster), the R3 bool-order tail closed on the TS query tier, the primer
+expressibility pins, and the platform pin's move out of the repo manifest
+into pack-time injection (the sdk lane's bootstrap circle died there).
+Before it, `0.8.0` was the capacity release, a deliberate backwards-incompatible
 hard break over `0.7.0` — the count window dies into the CAPACITY statement
 (`Target <=[w]{lo..hi} Source`, the aggregate containment;
 `docs/design/capacity-laws.md` §8 rulings 1-6 + §8b C1-C19, both design docs
@@ -112,22 +117,22 @@ manifest carries the exact-version pin — with the repo manifest restored
 pin-free after.
 
 A release bump edits all three, then the build enforces the match. All
-three are set to `0.9.0` in this tree; `pnpm run build` asserts the
-lockstep on every run (`bumbledb build: version 0.9.0 (main == platform ==
+three are set to `0.10.0` in this tree; `pnpm run build` asserts the
+lockstep on every run (`bumbledb build: version 0.10.0 (main == platform ==
 crate manifest; the platform pin injects at pack)`).
 
-## Runbook (0.9.0, darwin-arm64 host, owner — staged 2026-07-25; recurs as the template for the next version)
+## Runbook (0.10.0, darwin-arm64 host, owner — staged 2026-08-03; recurs as the template for the next version)
 
 ```sh
 # 0. From the ts/ package root, on a macOS Apple Silicon machine.
 cd ts
 
-# 1. The lockstep is already set to 0.9.0 in all THREE repo places (done in
+# 1. The lockstep is already set to 0.10.0 in all THREE repo places (done in
 #    this tree; the build asserts it — the platform pin is NOT a repo field,
 #    it injects at pack time):
-#    - ts/package.json                    "version": "0.9.0"
-#    - ts/npm/darwin-arm64/package.json   "version": "0.9.0"
-#    - ts/crate/Cargo.toml                version = "0.9.0"
+#    - ts/package.json                    "version": "0.10.0"
+#    - ts/npm/darwin-arm64/package.json   "version": "0.10.0"
+#    - ts/crate/Cargo.toml                version = "0.10.0"
 
 # 2. Build + verify both trees (fails on version drift, unloadable artifact,
 #    or a mispacked tarball). Produces dist/ and npm/darwin-arm64/bumbledb.node.
@@ -149,12 +154,12 @@ pnpm publish --no-git-checks ./npm/darwin-arm64
 pnpm publish --no-git-checks
 
 # 5. Verify both versions landed in the registry.
-pnpm view @bjornpagen/bumbledb-darwin-arm64@0.9.0 version
-pnpm view @bjornpagen/bumbledb@0.9.0 version
+pnpm view @bjornpagen/bumbledb-darwin-arm64@0.10.0 version
+pnpm view @bjornpagen/bumbledb@0.10.0 version
 
-# 6. The v0.9.0 tag is already pushed with the release commit (staged
-#    commit + tag together); both publishes remain owner ceremony — the
-#    agent side never publishes.
+# 6. Tag the release commit and push the tag (owner ceremony, like the
+#    publishes — the agent side never publishes or tags):
+#    git tag -a v0.10.0 <release-commit> -m "bumbledb 0.10.0" && git push origin v0.10.0
 ```
 
 Public access is mandatory (scoped packages publish restricted by default,

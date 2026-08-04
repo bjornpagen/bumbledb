@@ -1,44 +1,22 @@
 use bumbledb::obs::{Category, TraceEvent};
 
-use super::{FlameRow, FlameSummary, RENDER_ROWS};
+use super::{FlameRow, FlameSummary, RENDER_ROWS, containment};
 
 impl FlameSummary {
-    /// Aggregates a capture by span name. Containment is a stack sweep:
-    /// spans re-sorted by `(start, -end)` and walked, so each span's
-    /// duration is charged to its *direct* parent's child time; point
-    /// events count as calls with zero duration.
+    /// Aggregates a capture by span name through the one containment
+    /// sweep ([`containment::sweep`]): each span's duration is charged
+    /// to its *direct* parent's child time; point events count as calls
+    /// with zero duration (Phase accumulators stay out — the flame rows
+    /// must not see them; `render_phase_table` does).
     #[must_use]
     pub fn compute(events: &[TraceEvent]) -> Self {
-        // Phase accumulators are synthetic point events (their a0 is a
-        // duration total, not a timestamped span) — containment math and
-        // the flame rows must not see them; render_phase_table does.
-        let mut spans: Vec<&TraceEvent> = events
-            .iter()
-            .filter(|e| e.dur_ns > 0 && e.cat != Category::Phase)
-            .collect();
-        spans.sort_by_key(|e| (e.start_ns, std::cmp::Reverse(e.start_ns + e.dur_ns)));
-        let mut child_ns = vec![0u64; spans.len()];
-        let mut stack: Vec<usize> = Vec::new();
-        for (index, event) in spans.iter().enumerate() {
-            while let Some(&top) = stack.last() {
-                if spans[top].start_ns + spans[top].dur_ns <= event.start_ns {
-                    stack.pop();
-                } else {
-                    break;
-                }
-            }
-            if let Some(&parent) = stack.last() {
-                child_ns[parent] += event.dur_ns;
-            }
-            stack.push(index);
-        }
-
+        let sweep = containment::sweep(events);
         let mut by_name: std::collections::BTreeMap<&'static str, (Vec<u64>, u64)> =
             std::collections::BTreeMap::new();
-        for (index, event) in spans.iter().enumerate() {
+        for (index, event) in sweep.spans.iter().enumerate() {
             let entry = by_name.entry(event.name).or_default();
             entry.0.push(event.dur_ns);
-            entry.1 += event.dur_ns - child_ns[index];
+            entry.1 += event.dur_ns - sweep.child_ns[index];
         }
         for event in events
             .iter()

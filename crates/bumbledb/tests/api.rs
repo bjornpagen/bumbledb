@@ -9,7 +9,9 @@
 use bumbledb::ir::{AggOp, Atom, FindTerm, ParamId, Query, Rule, Term, Value, VarId};
 use bumbledb::schema::FieldId;
 use bumbledb::schema::ValidateDescriptor as _;
-use bumbledb::{AnswerValue, Answers, BindValue, Db, Direction, Fact, StatementId, Theory};
+use bumbledb::{
+    AnswerValue, Answers, BindValue, Db, Direction, Fact, ParamArg, StatementId, Theory,
+};
 
 mod common;
 
@@ -842,7 +844,7 @@ fn cover_choice_iterates_the_selected_side() {
         conditions: vec![],
     });
     let mut prepared = db.prepare(&query).expect("prepare");
-    let params = vec![BindValue::Str("target")];
+    let params = vec![ParamArg::Scalar(BindValue::Str("target"))];
     let (out, stats) = db
         .read(|snap| snap.profile(&mut prepared, &params))
         .expect("profile");

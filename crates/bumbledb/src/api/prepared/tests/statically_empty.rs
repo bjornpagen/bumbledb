@@ -261,7 +261,13 @@ fn an_all_dead_program_prepares_to_empty_and_binds_params_first() {
 
     // introspection prints the program kind and both killing conditions.
     let (out, report) = prepared
-        .introspect(&txn, &cache, &[BindValue::AllenMask(AllenMask::INTERSECTS)])
+        .introspect(
+            &txn,
+            &cache,
+            &[ParamArg::Scalar(BindValue::AllenMask(
+                AllenMask::INTERSECTS,
+            ))],
+        )
         .expect("introspect");
     assert_eq!(out.len(), 0);
     assert!(report.contains("access path: statically empty"), "{report}");

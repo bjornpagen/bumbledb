@@ -26,13 +26,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::schema::{
     AxiomIndex, CapacityId, ContainmentId, Enforcement, IntervalTail, KeyId, Schema, Weight,
 };
-use crate::storage::delta::WriteDelta;
+use crate::storage::delta::{Disposition, WriteDelta};
 use crate::storage::keys::{self, DeterminantImage};
 use bumbledb_theory::schema::{RelationId, StatementId};
 
-use super::judgment::{
-    CAPACITY_WEIGHT_SLOT, SelectionCheck, Selections, capacity_child_image, child_weight, satisfies,
-};
+use super::judgment::{SelectionCheck, Selections, capacity_child_image, child_weight, satisfies};
 use crate::error::Result;
 
 /// One commit's derivable bookkeeping, borrowed from the delta's arena.
@@ -88,6 +86,10 @@ pub(crate) struct FactOp<'d> {
     pub(crate) relation: RelationId,
     /// The canonical fact bytes (identity = bytes, `10-data-model.md`).
     pub(crate) fact: &'d [u8],
+    /// The fact's blake3 hash, borrowed from the delta's map key — the
+    /// delta computed it once to record the disposition, so the `M` key
+    /// derivation at apply is free (the applier never re-hashes).
+    pub(crate) fact_hash: &'d [u8; 32],
     /// The one id allocator's derivation on a fresh-keyed relation (R16):
     /// the first fresh field's value IS the `F` row id, and the named
     /// statement's functionality judgment is the `F` put-conflict.
@@ -118,19 +120,20 @@ pub(crate) struct FactOp<'d> {
 /// One capacity `R` edge of one fact: the statement-scoped key material,
 /// KEY-symmetric between the insert put and the delete removal (the
 /// applier consumes it exactly as a containment [`EdgeOp`]; the delete
-/// removal is key-only, so the delete side's `weight` is derived and
-/// unread — the uniform derivation is cheaper than a disposition split).
+/// removal is key-only, so a delete op's `weight` is `None` by
+/// construction — never derived: the derive is fallible on a weighted
+/// statement, and a value the applier never reads must not be able to
+/// refuse the delete).
 pub(crate) struct MarkEdgeOp {
     /// Prederived statement identity for the schema-free byte applier.
     pub(crate) statement: StatementId,
     /// The edge's key-bytes segment: the capacity statement's child
     /// projection in target-key determinant order.
     pub(crate) key_bytes: DeterminantImage,
-    /// The insert put's value slot: the child's weight under the C17
-    /// slot arm ([`CAPACITY_WEIGHT_SLOT`], weighted statements only),
-    /// sliced from the source fact at plan time — the plan stays pure,
-    /// zero LMDB reads. `None` = the empty value (every edge under the
-    /// fetch baseline; unit edges always).
+    /// The insert put's value slot: a weighted statement's child weight
+    /// (the C17 slot law), sliced from the source fact at plan time —
+    /// the plan stays pure, zero LMDB reads. `None` = the empty value
+    /// (unit edges).
     pub(crate) weight: Option<u64>,
 }
 
@@ -217,11 +220,12 @@ pub(crate) struct DependentCheck {
 ///
 /// # Errors
 ///
-/// The one fallible slice is the C17 slot arm's weight derivation
-/// ([`MarkEdgeOp::weight`]): a ray-valued Duration weight has no finite
-/// u64 for the value slot, so it refuses typed at plan time — under the
-/// landed fetch baseline the derivation never runs and this function
-/// never errors.
+/// The one fallible slice is the weighted edge's weight derivation
+/// ([`MarkEdgeOp::weight`], the C17 slot law), INSERT ops only: a
+/// ray-valued Duration weight has no finite u64 for the value slot, so
+/// it refuses typed at plan time (C20, ruled 2026-08-03: the write-time
+/// refusal is doctrine — see the judgment constraint comment). Delete
+/// ops never derive — their removal is key-only.
 pub(crate) fn plan_commit<'d>(
     delta: &'d WriteDelta<'_>,
     schema: &Schema,
@@ -238,15 +242,25 @@ pub(crate) fn plan_commit<'d>(
     // here.
     let mut touched_parents: BTreeMap<CapacityId, BTreeSet<DeterminantImage>> = BTreeMap::new();
     let mut scratch = FactScratch::default();
-    // The delta's disposition iterators filter, so their size hints are
-    // inexact: each op list is counted first and collected at exact
-    // capacity (pushing into a `with_capacity` Vec never reallocates).
-    let mut deletes = Vec::with_capacity(delta.deletes().count());
-    for (rel, fact) in delta.deletes() {
+    // The ONE exact sort per disposition: the delta's hash table has no
+    // iteration order, so the deterministic `(relation, fact_hash)`
+    // commit order the 50-storage doc requires is restored here — the
+    // sort-license precedent is the T8 probe sort (`judgment.rs`,
+    // `check_source`). The key is a total order (hash equality is fact
+    // equality), so the op order is deterministic whatever the sort
+    // algorithm does with equal keys — there are none.
+    let mut delete_facts: Vec<(RelationId, &[u8; 32], &[u8])> = delta.deletes().collect();
+    delete_facts.sort_unstable_by(|(a_rel, a_hash, _), (b_rel, b_hash, _)| {
+        (a_rel, a_hash).cmp(&(b_rel, b_hash))
+    });
+    let mut deletes = Vec::with_capacity(delete_facts.len());
+    for (rel, hash, fact) in delete_facts {
         deletes.push(fact_op(
             schema,
             &selections,
+            Disposition::Delete,
             rel,
+            hash,
             fact,
             &mut deleted_determinants,
             &mut touched_parents,
@@ -254,12 +268,18 @@ pub(crate) fn plan_commit<'d>(
         )?);
     }
     let deletes = deletes.into_boxed_slice();
-    let mut inserts = Vec::with_capacity(delta.inserts().count());
-    for (rel, fact) in delta.inserts() {
+    let mut insert_facts: Vec<(RelationId, &[u8; 32], &[u8])> = delta.inserts().collect();
+    insert_facts.sort_unstable_by(|(a_rel, a_hash, _), (b_rel, b_hash, _)| {
+        (a_rel, a_hash).cmp(&(b_rel, b_hash))
+    });
+    let mut inserts = Vec::with_capacity(insert_facts.len());
+    for (rel, hash, fact) in insert_facts {
         inserts.push(fact_op(
             schema,
             &selections,
+            Disposition::Insert,
             rel,
+            hash,
             fact,
             &mut inserted_determinants,
             &mut touched_parents,
@@ -308,10 +328,16 @@ struct FactScratch {
 /// bytes per satisfied containment. Determinant tuples of dependent-carrying
 /// key statements are recorded into `dependent_determinants` for the check-set
 /// difference.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the one per-fact derivation chokepoint; every input is load-bearing"
+)]
 fn fact_op<'d>(
     schema: &Schema,
     selections: &Selections,
+    disposition: Disposition,
     rel: RelationId,
+    hash: &'d [u8; 32],
     fact: &'d [u8],
     dependent_determinants: &mut BTreeSet<(KeyId, DeterminantImage)>,
     touched_parents: &mut BTreeMap<CapacityId, BTreeSet<DeterminantImage>>,
@@ -403,10 +429,19 @@ fn fact_op<'d>(
             }
         }
     }
-    let capacity_edges = mark_ops(schema, selections, relation, fact, touched_parents, scratch)?;
+    let capacity_edges = mark_ops(
+        schema,
+        selections,
+        disposition,
+        relation,
+        fact,
+        touched_parents,
+        scratch,
+    )?;
     Ok(FactOp {
         relation: rel,
         fact,
+        fact_hash: hash,
         fresh_row,
         determinants,
         edges: scratch.edges.drain(..).collect(),
@@ -415,8 +450,8 @@ fn fact_op<'d>(
     })
 }
 
-/// One fact's capacity-form derivations: the capacity `R` edges (with
-/// the C17 slot arm's weight, when armed), plus the fact's contributions
+/// One fact's capacity-form derivations: the capacity `R` edges (a
+/// weighted statement's edge carrying its slot weight), plus the fact's contributions
 /// to the TOUCHED notion (`lean/Bumbledb/Txn/DeltaRestriction.lean`).
 /// Dependent bounds need no marking of their own: a target-row
 /// bound-field update is remove+add, both halves derive the SAME key
@@ -426,6 +461,7 @@ fn fact_op<'d>(
 fn mark_ops(
     schema: &Schema,
     selections: &Selections,
+    disposition: Disposition,
     relation: &crate::schema::Relation,
     fact: &[u8],
     touched_parents: &mut BTreeMap<CapacityId, BTreeSet<DeterminantImage>>,
@@ -446,11 +482,17 @@ fn mark_ops(
             .or_default()
             .insert(scratch.image.clone());
         if satisfies(&selections.capacity(capacity_id).source, layout, fact) {
-            let weight = if CAPACITY_WEIGHT_SLOT && !matches!(statement.weight, Weight::Unit) {
-                Some(child_weight(statement, layout, fact)?)
-            } else {
-                None
-            };
+            // The value slot is an INSERT-side concern: the delete
+            // removal is key-only, so a delete op never derives —
+            // the derive is fallible on a weighted statement (a
+            // ray-valued Duration weight refuses), and a value the
+            // applier never reads must not be able to refuse a delete.
+            let weight =
+                if matches!(statement.weight, Weight::Unit) || disposition == Disposition::Delete {
+                    None
+                } else {
+                    Some(child_weight(statement, layout, fact)?)
+                };
             scratch.capacity_edges.push(MarkEdgeOp {
                 statement: statement.id,
                 key_bytes: scratch.image.clone(),

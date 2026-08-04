@@ -1,0 +1,10 @@
+execute 210 126
+execute;bind_params 41 41
+execute;finalize 9041 8916
+execute;rule_0 167 126
+execute;rule_0;join 32125 667
+execute;rule_0;join;jp_descend_n0 0 30583
+execute;rule_0;join;jp_iter_n0 0 8625
+execute;rule_0;join;jp_residual_n0 0 125
+execute;rule_0;resolve_filters 41 41
+execute;rule_0;views 125 166

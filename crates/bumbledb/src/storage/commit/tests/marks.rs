@@ -500,6 +500,48 @@ fn device(schema: &Schema, pool: u64, watts: u64, num: u64) -> Vec<u8> {
     )
 }
 
+/// A delete op never derives its capacity value slot — the removal is
+/// key-only, and the derive is fallible on a weighted statement (a
+/// ray-valued Duration weight refuses): a value the applier never reads
+/// must not be able to refuse a delete. The insert twin still derives.
+#[test]
+fn delete_ops_never_derive_the_capacity_value_slot() {
+    let schema = weighted_schema();
+    let dir = crate::testutil::TempDir::new("cap-delete-weight-none");
+    let env = Environment::create(dir.path(), &schema).expect("create");
+    let d = device(&schema, 1, 60, 0);
+    let mut insert_delta = crate::storage::delta::WriteDelta::new(&schema);
+    {
+        let view = env.read_txn().expect("txn");
+        insert_delta.insert(&view, DEVICE, &d).expect("record");
+    }
+    let plan = super::plan_for(&insert_delta, &env);
+    let [op] = &*plan.inserts else {
+        panic!("one insert op");
+    };
+    let [edge] = &*op.capacity_edges else {
+        panic!("one capacity edge");
+    };
+    assert_eq!(edge.weight, Some(60), "the insert op derives the slot");
+    drop(plan);
+    drop(insert_delta);
+
+    apply_delta(&env, &schema, &[], &[(DEVICE, d.clone())]).expect("base commit");
+    let mut delete_delta = crate::storage::delta::WriteDelta::new(&schema);
+    {
+        let view = env.read_txn().expect("txn");
+        delete_delta.delete(&view, DEVICE, &d).expect("record");
+    }
+    let plan = super::plan_for(&delete_delta, &env);
+    let [op] = &*plan.deletes else {
+        panic!("one delete op");
+    };
+    let [edge] = &*op.capacity_edges else {
+        panic!("one capacity edge");
+    };
+    assert_eq!(edge.weight, None, "the delete op never derives");
+}
+
 /// Sum within bounds: weights sum, not count — three devices measuring
 /// 60 + 30 + 10 = 100 sit exactly on the inclusive ceiling.
 #[test]
@@ -851,6 +893,76 @@ fn capacity_duration_weight_of_a_ray_refuses_typed() {
     assert_eq!(**fact, *b, "the refusal names the weighed row");
 }
 
+/// C20 (owner, 2026-08-03): the write-time ray refusal is DOCTRINE, not
+/// a slot-arm accident. A ray child under an ABSENT parent — the one
+/// shape the judge would never measure (a capacity law over an absent
+/// parent constrains nothing) — still refuses at write time: a row
+/// governed by a Duration-weighted capacity law must carry a measurable
+/// weight whether or not anyone is currently counting it. Strictly
+/// stronger than C10's judge-time refusal; this is the exact cell where
+/// the two differ.
+#[test]
+fn capacity_duration_ray_under_an_absent_parent_still_refuses() {
+    let schema = duration_schema(Bound::Lit(10));
+    let b = ray_booking(&schema, 404, 5, 0);
+    let result = base_then_delta(
+        "cap-ray-weight-absent-parent",
+        &schema,
+        &[],
+        &[],
+        &[(BOOKING, b.clone())],
+    );
+    let err = result.unwrap_err();
+    let Error::CapacityRayMeasure { statement, fact } = &err else {
+        panic!("expected the typed ray refusal, got {err:?}");
+    };
+    assert_eq!(*statement, BOOKED_CAPACITY);
+    assert_eq!(
+        **fact, *b,
+        "the refusal names the weighed row, judged group or not"
+    );
+}
+
+/// An INVERTED interval in the weighed field (`end < start`) —
+/// unrepresentable through the value codec, so the raw bytes model
+/// hostile stored data. The measure must convict typed corruption,
+/// never underflow into a garbage weight.
+#[test]
+fn capacity_duration_weight_of_an_inverted_tail_is_corruption() {
+    let schema = duration_schema(Bound::Lit(10));
+    let mut inverted = booking(&schema, 1, (7, 9), 0);
+    // Swap the interval's start/end words in the raw bytes: [7, 9) reads
+    // back as start 9, end 7.
+    let offset = schema.relation(BOOKING).layout().field_offset(1);
+    let (a, b) = {
+        let span = &inverted[offset..offset + 16];
+        let mut a = [0u8; 8];
+        let mut b = [0u8; 8];
+        a.copy_from_slice(&span[..8]);
+        b.copy_from_slice(&span[8..]);
+        (a, b)
+    };
+    inverted[offset..offset + 8].copy_from_slice(&b);
+    inverted[offset + 8..offset + 16].copy_from_slice(&a);
+    let result = base_then_delta(
+        "cap-inverted-weight",
+        &schema,
+        &[],
+        &[],
+        &[(ROOM, room(&schema, 1, (0, 24))), (BOOKING, inverted)],
+    );
+    let err = result.unwrap_err();
+    assert!(
+        matches!(
+            err,
+            Error::Corruption(crate::error::CorruptionError::MalformedValue(
+                "capacity interval inverted"
+            ))
+        ),
+        "expected the inverted-tail corruption conviction, got {err:?}"
+    );
+}
+
 /// C10, the BOUND direction: a parent whose dependent Duration bound is
 /// a ray refuses any commit touching its group — the refusal names the
 /// bound-carrying TARGET row.
@@ -948,8 +1060,8 @@ fn fresh_device(schema: &Schema, id: u64, pool: u64, watts: u64) -> Vec<u8> {
 /// on a fresh-keyed relation the fresh field's value IS the `F` row id,
 /// so the capacity edges minted in THIS commit name rows the same
 /// commit's measure walk must resolve — the weight written at mint time
-/// is seen by the same commit's walk (fetch baseline: one own-writes `F`
-/// get per walked edge; slot arm: the value slot itself), and the parent
+/// is seen by the same commit's walk (the value slot itself, the C17
+/// slot law), and the parent
 /// probe resolves the fresh-row holder through `F` directly (no `U`
 /// tree), its dependent bound read from that same row.
 #[test]

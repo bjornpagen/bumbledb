@@ -26,7 +26,7 @@ pub(super) fn stamp_refusal(corpus: &CorpusArgs) -> String {
 }
 
 /// The feature-missing message: the exact cargo invocation to use.
-pub(super) fn obs_missing(what: &str) -> String {
+pub(crate) fn obs_missing(what: &str) -> String {
     format!(
         "{what} needs an obs build; run:\n\
          cargo run -p bumbledb-bench --features obs --release -- …"
@@ -53,6 +53,11 @@ fn stamp_is_fresh(paths: &CorpusPaths, cfg: GenConfig) -> bool {
 fn bench_preflight(args: &BenchArgs, cfg: GenConfig) -> Result<(CorpusPaths, bool), String> {
     if args.alloc && !cfg!(feature = "obs") {
         return Err(obs_missing("--alloc"));
+    }
+    // Same rule for the trace pass: without the obs build a capture is
+    // empty, and a span-free artifact wearing a real name is a lie.
+    if args.trace && !cfg!(feature = "obs") {
+        return Err(obs_missing("--trace"));
     }
     if args.alloc && args.trace {
         return Err("--alloc and --trace are mutually exclusive modes".to_owned());
@@ -226,7 +231,7 @@ pub fn cmd_bench(args: &BenchArgs) -> Result<i32, String> {
             reads.push(run.read_cal_family(family)?);
         }
     }
-    let flames = std::mem::take(&mut run.flames);
+    let mut flames = std::mem::take(&mut run.flames);
     drop(run);
 
     // The closure lane (the roster extension): its own scratch world,
@@ -264,8 +269,18 @@ pub fn cmd_bench(args: &BenchArgs) -> Result<i32, String> {
     // fsync drops the core to its DVFS floor with
     // demand-driven recovery, so any read family measured in that
     // shadow reads slow-clock time. `bulk` (seconds of fsync) is last
-    // of all — asserted inside write_families.
-    let writes = write_families(cfg, &out_dir.join("scratch"), &selected, lane)?;
+    // of all — asserted inside write_families. Under --trace the
+    // windowed/capacity judgment lanes land their traced solo samples
+    // beside the read-family pairs and embed into the same flame list.
+    let trace_dir = args.trace.then(|| out_dir.join("trace"));
+    let writes = write_families(
+        cfg,
+        &out_dir.join("scratch"),
+        &selected,
+        lane,
+        trace_dir.as_deref(),
+        &mut flames,
+    )?;
 
     let (cache_images, cache_bytes) = cache_residency(&db);
     let store = report::StoreNumbers {

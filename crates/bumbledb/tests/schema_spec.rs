@@ -981,6 +981,37 @@ fn the_weighted_floor_is_legal_where_the_unit_floor_is_banned() {
         .expect("`<=[w]{1..*}` is the legal weighted floor");
 }
 
+/// The path BOUND refuses at the spec surface exactly as the weight
+/// does (ruling 6, one law both slots): the typed `BoundPathRefused`
+/// naming the pinned-column idiom — never the accidental
+/// `UnknownField` a dotted name fell to before the symmetry landed.
+#[test]
+fn a_path_bound_is_refused_naming_the_pinned_column_idiom() {
+    let mut spec = everything_spec();
+    spec.statements.push(StatementSpec::Capacity {
+        target: side("Holder", &["id"]),
+        weight: WeightSpec::Field("balance".into()),
+        window: CapacityWindowSpec::Range {
+            lo: BoundSpec::Lit(0),
+            hi: BoundSpec::Field("grid.supply".into()),
+        },
+        source: side("Account", &["holder"]),
+    });
+    let error = spec.descriptor().expect_err("a path bound");
+    assert_eq!(
+        error.issues(),
+        [SpecIssue::BoundPathRefused {
+            statement: 14,
+            path: "grid.supply".into(),
+        }],
+    );
+    let rendered = error.to_string();
+    assert!(
+        rendered.contains("pinned-column idiom"),
+        "the refusal names the composition idiom: {rendered}"
+    );
+}
+
 /// The path weight refuses at the spec surface (ruling 6: the weight
 /// vocabulary is closed at the row), its diagnostic naming the
 /// pinned-column composition idiom verbatim.

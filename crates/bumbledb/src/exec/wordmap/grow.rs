@@ -22,6 +22,12 @@ impl<V: Copy> WordMap<V> {
                 .collect(),
         );
         self.ctrl = vec![0; new_capacity + WINDOW - 1];
+        // Fresh slabs carry no stale slots: only dense-listed (live)
+        // entries rehash — a growth is also the death of every stale
+        // key. `set_ctrl` re-stamps each rehashed slot into the live
+        // generation, so the stamp fill value is never read.
+        self.stamps = vec![0; new_capacity];
+        self.stale = 0;
         // The rehash re-probes every key, so it rides the same const-
         // arity dispatch as the entry points.
         match self.arity {

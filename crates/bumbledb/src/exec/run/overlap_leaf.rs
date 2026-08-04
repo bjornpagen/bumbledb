@@ -1,19 +1,42 @@
 //! The leaf overlap enumeration (ruled 2026-07-23; finding 012 — the
 //! 40-execution range-accelerator OPEN item, discharged): a leaf Allen
-//! residual whose mask is *connected* (⊆ INTERSECTS: every admitted
-//! configuration shares a point) and whose one side is an
-//! outer-binding constant licenses enumerating, per key group, only
-//! the cover positions whose interval pair overlaps that constant —
-//! the start-sorted max-end index (`interval::overlap`) replaces the
-//! `Σ n_k²` all-pairs walk with `~O(log n_k + out)` per outer row.
+//! residual whose mask is *touching* (⊆ INTERSECTS ∪ MEETS ∪ `MET_BY`:
+//! every admitted configuration shares a point or abuts) and whose one
+//! side is an outer-binding constant licenses enumerating, per key
+//! group, only the cover positions whose interval pair lies in the
+//! residual's window around that constant — the start-sorted max-end
+//! index (`interval::overlap`) replaces the `Σ n_k²` all-pairs walk
+//! with `~O(log n_k + out)` per outer row.
+//!
+//! The window is the mask made geometry: the INTERSECTS components are
+//! exactly `start < q_end ∧ end > q_start` (the half-open shared-point
+//! law), and the two abutment components each relax one bound by one
+//! word — MEETS (`end == q_start`) is `end > q_start − 1`, `MET_BY`
+//! (`start == q_end`) is `start < q_end + 1` — so a disconnected
+//! composite like `DURING ∪ MEETS` rides the same one-query index with
+//! a ±1-widened window instead of declining to the all-pairs classify.
+//! Multiple qualifying residuals on the same cover word CONJOIN into
+//! one intersected window (`max` of starts, `min` of ends — window
+//! conjunction is bound intersection), so a multi-leg ring against
+//! several outer constants pays one tighter query, not the loosest
+//! residual's candidate set.
+//! No per-component passes, no candidate dedup: the widening admits
+//! only the boundary stabbing sets, and the kernel filters them. The
+//! word-space ±1 is exact because encoded words are order-faithful
+//! (`10-data-model.md`): `end > q_start − 1 ⇔ end ≥ q_start`, with
+//! saturation honest at both extremes (`end == 0` and `start == MAX`
+//! are unrepresentable for non-empty half-open intervals).
 //!
 //! Only the *enumeration* changes representation: the yielded batch
 //! flows through the same probes, residuals, and sink as the generic
 //! iterator, and the driving mask stays data — the uniform classify
 //! kernels still filter the candidates, so completeness is the whole
-//! correctness obligation, and it holds exactly because `code ∈ mask ⊆
-//! INTERSECTS` implies a shared point (half-open, non-empty by
-//! construction — the point-domain law).
+//! correctness obligation: `code ∈ mask ⊆ TOUCHES` implies the pair
+//! shares a point (half-open, non-empty by construction — the
+//! point-domain law) or abuts at the exact boundary the widening
+//! admits. Orientation is normalized to `classify(batch, constant)`
+//! via the converse mask (the theory crate's reversal law) — the pure
+//! INTERSECTS gate never needed it, the abutment components do.
 
 use super::{Bindings, Colt, Cursor, Executor, Source, ValidatedPlan};
 use crate::exec::colt::SuffixRun;
@@ -29,13 +52,25 @@ use crate::image::ColumnView;
 /// re-pin this number from that sweep, never by inspection.
 pub(super) const OVERLAP_CROSSOVER: u64 = 16;
 
+/// The accelerable mask cover: every configuration that shares a point
+/// (INTERSECTS) or abuts (MEETS/`MET_BY`) — exactly the codes a one-query
+/// window over the start-sorted max-end index can bound. BEFORE/AFTER
+/// stay out: their windows are unbounded on the axis the index sorts.
+fn touches() -> crate::allen::AllenMask {
+    use crate::allen::AllenMask;
+    AllenMask::INTERSECTS | AllenMask::MEETS | AllenMask::MET_BY
+}
+
 impl Executor {
     /// Resolves the leaf call's overlap driver and, when it fires,
-    /// fills `self.overlap_hits` with the cover positions overlapping
-    /// the outer constant (start-ordered). Declines — `false`, the
-    /// generic iterator runs — for unqualified residual shapes,
-    /// disconnected masks, sub-crossover groups, and non-scannable
-    /// cursors (pinned rows, forced suffixes).
+    /// fills `self.overlap_hits` with the cover positions inside the
+    /// residual's window around the outer constant (start-ordered).
+    /// Declines — `false`, the generic iterator runs — for unqualified
+    /// residual shapes, non-touching masks (any BEFORE/AFTER
+    /// component), sub-crossover groups, non-scannable cursors
+    /// (pinned rows, forced suffixes), and a group's first probe (the
+    /// amortization gate — the cache builds on the second probe,
+    /// `interval::overlap` module docs).
     #[expect(
         clippy::too_many_arguments,
         reason = "the split borrows and execution context are clearer unpacked"
@@ -51,22 +86,62 @@ impl Executor {
         bindings: &Bindings,
         allen_sources: &[(Source, Source)],
     ) -> bool {
-        // The driver: the first Allen residual pairing a cover-word
-        // interval against an outer-constant side under a connected
-        // mask. Orientation is irrelevant — overlap is symmetric.
-        let driver = allen_sources
-            .iter()
-            .enumerate()
-            .find_map(|(r_idx, (lhs, rhs))| {
-                let ((Source::Batch(word), Source::Slot(slot))
-                | (Source::Slot(slot), Source::Batch(word))) = (*lhs, *rhs)
-                else {
-                    return None;
-                };
-                let mask = self.allen_masks[node_idx][r_idx];
-                let connected = mask.bits() & !crate::allen::AllenMask::INTERSECTS.bits() == 0;
-                connected.then(|| (word, bindings.get(slot), bindings.get(slot + 1)))
-            });
+        // The driver set: every Allen residual pairing one cover-word
+        // interval against an outer-constant side under a touching
+        // mask, normalized to `classify(batch, constant)` — a
+        // `(Slot, Batch)` residual drives under its converse mask (the
+        // reversal law), because the abutment components are oriented
+        // even though overlap itself is symmetric. Qualifying
+        // residuals on the SAME cover word CONJOIN: every residual
+        // must hold, so a candidate lies in every window, and window
+        // conjunction is bound intersection — `start < min(q_end) ∧
+        // end > max(q_start)`, one query however many legs the ring
+        // has. The first qualifying residual anchors the word;
+        // residuals on other cover words stay post-filters (their
+        // window bounds a different column pair).
+        let mut driver: Option<(usize, u64, u64)> = None;
+        for (r_idx, (lhs, rhs)) in allen_sources.iter().enumerate() {
+            let ((Source::Batch(word), Source::Slot(slot))
+            | (Source::Slot(slot), Source::Batch(word))) = (*lhs, *rhs)
+            else {
+                continue;
+            };
+            let mask = self.allen_masks[node_idx][r_idx];
+            let mask = if matches!(lhs, Source::Slot(_)) {
+                mask.converse()
+            } else {
+                mask
+            };
+            if mask.bits() & !touches().bits() != 0 {
+                continue;
+            }
+            // The mask made geometry: base window `start < q_end ∧
+            // end > q_start`, each abutment component relaxing its one
+            // bound by one order-faithful word (module docs walk the
+            // equivalences).
+            let meets = mask.bits() & crate::allen::AllenMask::MEETS.bits() != 0;
+            let met_by = mask.bits() & crate::allen::AllenMask::MET_BY.bits() != 0;
+            let q_start = bindings.get(slot);
+            let q_start = if meets {
+                q_start.saturating_sub(1)
+            } else {
+                q_start
+            };
+            let q_end = bindings.get(slot + 1);
+            let q_end = if met_by {
+                q_end.saturating_add(1)
+            } else {
+                q_end
+            };
+            match &mut driver {
+                None => driver = Some((word, q_start, q_end)),
+                Some((anchor, lo, hi)) if *anchor == word => {
+                    *lo = (*lo).max(q_start);
+                    *hi = (*hi).min(q_end);
+                }
+                Some(_) => {}
+            }
+        }
         let Some((word, q_start, q_end)) = driver else {
             return false;
         };
@@ -98,7 +173,10 @@ impl Executor {
                 }
             }
         }
-        let dir = self.overlap.get_or_build(&self.overlap_key, |triples| {
+        // The amortization gate lives in the cache: the group's first
+        // probe declines (`None` — this parent runs generic, cheaper
+        // than paying the sort for one query), the second builds.
+        let Some(dir) = self.overlap.probe(&self.overlap_key, |triples| {
             let walked = colt.for_each_suffix_run(cover_cursor, |run| match run {
                 SuffixRun::Identity { start, len } => {
                     for position in start..start + len {
@@ -121,7 +199,9 @@ impl Executor {
                 }
             });
             debug_assert!(walked, "suffix_scannable gated the walk");
-        });
+        }) else {
+            return false;
+        };
         // A group grown between build and query would enumerate stale
         // positions — impossible within an execution (a level forces
         // whole), and tripwired here.

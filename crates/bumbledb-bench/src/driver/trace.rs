@@ -15,6 +15,11 @@ use super::ensure_corpus;
 ///
 /// Unknown family; setup errors.
 pub fn cmd_trace(corpus: &CorpusArgs, family_name: &str) -> Result<(), String> {
+    // An obs-less capture is empty — refuse before writing span-free
+    // artifacts (the shared --trace honesty rule).
+    if !cfg!(feature = "obs") {
+        return Err(super::bench::obs_missing("trace"));
+    }
     let cfg = gen_config(corpus);
     let family = families::all()
         .iter()
@@ -53,29 +58,16 @@ pub fn cmd_trace(corpus: &CorpusArgs, family_name: &str) -> Result<(), String> {
     }
     let trace_dir = paths.root.join("trace");
     let (_, events) = harness::traced_sample(&mut run)?;
-    let (engine, harness_events) = trace_out::split_harness(events);
-    let warm = trace_out::write_trace_file(
-        &trace_dir,
-        &format!("{family_name}.warm"),
-        &engine,
-        &harness_events,
-    )
-    .map_err(|e| format!("trace: {e}"))?;
-    print!("{}", trace_out::FlameSummary::compute(&engine).render());
-    if let Some(phases) = trace_out::render_phase_table(&engine) {
-        print!("{phases}");
-    }
+    let table = trace_out::emit_pair(&trace_dir, &format!("{family_name}.warm"), events)?;
+    print!("{table}");
 
     let (_, events) = harness::traced_cold_sample(&mut harness::org_touch(&db), &mut run)?;
-    let (engine, harness_events) = trace_out::split_harness(events);
-    let cold = trace_out::write_trace_file(
-        &trace_dir,
-        &format!("{family_name}.cold"),
-        &engine,
-        &harness_events,
-    )
-    .map_err(|e| format!("trace: {e}"))?;
-    println!("traces: {} / {}", warm.display(), cold.display());
+    trace_out::emit_pair(&trace_dir, &format!("{family_name}.cold"), events)?;
+    println!(
+        "traces: {} / {}",
+        trace_dir.join(format!("{family_name}.warm.json")).display(),
+        trace_dir.join(format!("{family_name}.cold.json")).display(),
+    );
     drop(db);
     let _ = std::fs::remove_dir_all(&scratch);
     Ok(())

@@ -114,6 +114,41 @@ fn alloc_without_obs_names_the_cargo_invocation() {
     );
 }
 
+/// Without the obs build a capture is empty — every `--trace`-bearing
+/// command refuses instead of writing span-free artifacts wearing real
+/// names (the shared honesty rule).
+#[cfg(not(feature = "obs"))]
+#[test]
+fn trace_without_obs_refuses_on_every_traced_command() {
+    let bench = BenchArgs {
+        corpus: CorpusArgs::default(),
+        families: None,
+        samples: None,
+        trace: true,
+        alloc: false,
+        ephemeral: false,
+        proxy_per_rep: false,
+        out: None,
+        i_am_lying: false,
+    };
+    let world = crate::cli::ScenarioArgs {
+        trace: true,
+        ..crate::cli::ScenarioArgs::default()
+    };
+    for err in [
+        cmd_bench(&bench).unwrap_err(),
+        cmd_trace(&CorpusArgs::default(), "point").unwrap_err(),
+        cmd_scenarios(&world).unwrap_err(),
+        cmd_crud(&world).unwrap_err(),
+        cmd_lawful(&world).unwrap_err(),
+    ] {
+        assert!(
+            err.contains("cargo run -p bumbledb-bench --features obs --release"),
+            "{err}"
+        );
+    }
+}
+
 /// The sweeper's full CLI pipeline on a clean store: gen, then the
 /// driver fn (no spawned process) — an empty report and exit code 0.
 #[test]

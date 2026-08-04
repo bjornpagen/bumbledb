@@ -1,0 +1,7 @@
+write_txn 12292
+write_txn;commit 22668
+write_txn;commit;apply_deletes 41
+write_txn;commit;apply_inserts 26500
+write_txn;commit;judgment_capacities 1000
+write_txn;commit;judgment_source 2208
+write_txn;commit;judgment_target 291
