@@ -178,9 +178,12 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// Finding 2 (per-row intern resolution), forever: a traced warm
-    /// sample resolves each distinct string once — `containment_walk`'s single
-    /// holder name costs one lookup for its ~200 rows.
+    /// Finding 2 (per-row intern resolution), forever — strengthened by
+    /// the campaign's persistent arena tier (`96c3ee2b`): a distinct
+    /// string costs one dictionary descent per PREPARED LIFETIME, not
+    /// per execute. `containment_walk`'s single holder name descends
+    /// once on the prepared query's first touch and never again — a
+    /// warm re-execute is descent-free.
     #[cfg(feature = "obs")]
     #[test]
     fn finalize_resolution_stays_collapsed() {
@@ -193,23 +196,35 @@ mod tests {
             .expect("registered");
         let mut prepared = db.prepare(&(family.query)()).expect("prepare");
         let sets = (family.params)(&CFG);
-        for params in &sets {
-            let args = param_args(params);
-            db.read(|snap| snap.execute_collect_args(&mut prepared, &args).map(|_| ()))
-                .expect("warm");
-        }
-        obs::start_capture();
         let args = param_args(&sets[0]);
+        obs::start_capture();
         let out = db
             .read(|snap| snap.execute_collect_args(&mut prepared, &args))
-            .expect("execute");
-        let events = obs::finish_capture();
-        let resolves = events
+            .expect("first execute");
+        let cold = obs::finish_capture()
             .iter()
             .filter(|e| e.name == obs::names::DICT_RESOLVE)
             .count();
         assert!(out.len() > 1, "a real result set");
-        assert_eq!(resolves, 1, "one distinct name, one resolution");
+        assert_eq!(cold, 1, "one distinct name, one descent on first touch");
+        for params in &sets {
+            let warm_args = param_args(params);
+            db.read(|snap| {
+                snap.execute_collect_args(&mut prepared, &warm_args)
+                    .map(|_| ())
+            })
+            .expect("warm");
+        }
+        obs::start_capture();
+        let out = db
+            .read(|snap| snap.execute_collect_args(&mut prepared, &args))
+            .expect("re-execute");
+        let warm = obs::finish_capture()
+            .iter()
+            .filter(|e| e.name == obs::names::DICT_RESOLVE)
+            .count();
+        assert!(out.len() > 1, "a real result set");
+        assert_eq!(warm, 0, "the persistent tier holds: zero descents warm");
         drop(db);
         let _ = std::fs::remove_dir_all(&dir);
     }
