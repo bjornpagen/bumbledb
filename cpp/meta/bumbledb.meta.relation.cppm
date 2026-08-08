@@ -57,7 +57,8 @@ fixed_string(char const (&)[M]) -> fixed_string<M - 1>;
 inline constexpr std::size_t max_name_length = 64;
 
 /// Inline compile-time name storage: the structural carrier behind the
-/// coordinate name hooks.
+/// coordinate name hooks (and a coordinate's NTTP identity, so the buffer
+/// is always zero-padded past `length` — equal names are equal values).
 struct name_text {
     std::array<char, max_name_length> chars{};
     std::size_t length{};
@@ -65,6 +66,10 @@ struct name_text {
     [[nodiscard]] constexpr auto view() const -> std::string_view {
         return std::string_view{chars.data(), length};
     }
+
+    // Member (not hidden-friend) comparison: the pinned GCC 16.1 ICEs
+    // streaming a defaulted friend operator== across a module import.
+    constexpr auto operator==(name_text const&) const -> bool = default;
 };
 
 /// The structural ValueType classification of one row field — the C++
@@ -84,22 +89,31 @@ enum class value_kind : std::uint8_t {
 struct field_class {
     value_kind kind;
     std::uint16_t fixed_len;
+
+    constexpr auto operator==(field_class const&) const -> bool = default;
 };
 
 /// One compile-time semantic coordinate (`Service.id`): relation name,
 /// field name, ordinal, structural kind, and fresh mark, synthesized from
-/// the reflected row declaration. Not a runtime field value. A structural
-/// literal type — coordinates are NTTP-friendly by design.
-template<class T>
+/// the reflected row declaration. Not a runtime field value.
+///
+/// The identity lives in the TYPE (every datum is an NTTP): two facade
+/// members are two distinct coordinate types, which is what lets the
+/// statement algebra (bumbledb.meta.schema) carry projections, run the
+/// class laws, and render §34 diagnostics naming semantic coordinates
+/// entirely at compile time. Values of this type are empty structural
+/// literals — coordinates stay NTTP-friendly by design.
+template<class T, name_text RelationName, name_text FieldName,
+    std::size_t Ordinal, field_class Class, bool Fresh>
 struct coord {
     using value_type = T;
 
-    name_text relation_name;
-    name_text field_name;
-    std::size_t ordinal;
-    value_kind kind;
-    std::uint16_t fixed_len;
-    bool fresh;
+    static constexpr name_text relation_name = RelationName;
+    static constexpr name_text field_name = FieldName;
+    static constexpr std::size_t ordinal = Ordinal;
+    static constexpr value_kind kind = Class.kind;
+    static constexpr std::uint16_t fixed_len = Class.fixed_len;
+    static constexpr bool fresh = Fresh;
 
     /// Name hooks (the to-string surface over the inline storage).
     [[nodiscard]] constexpr auto relation() const -> std::string_view {
@@ -282,25 +296,63 @@ consteval auto index_array() -> std::array<std::size_t, Count> {
     return indices;
 }
 
+/// The consteval-failure hook for an over-long reflected name (the
+/// bumbledb.types diagnostic convention: reaching a call to this
+/// never-defined, non-constexpr function makes the evaluation non-constant
+/// and the function's name IS the diagnostic). A contract_assert cannot
+/// serve here: the pinned GCC 16.1 rejects contract conditions inside the
+/// class-scope consteval injection context as non-constant.
+auto reflected_name_must_fit_max_name_length() -> void;
+
 consteval auto to_name_text(std::string_view text) -> name_text {
-    contract_assert(text.size() <= max_name_length);
+    if (text.size() > max_name_length) {
+        reflected_name_must_fit_max_name_length();
+    }
     auto result = name_text{};
     std::ranges::copy(text, result.chars.begin());
     result.length = text.size();
     return result;
 }
 
+/// The data_member_spec name payload that folds under the SANITIZER
+/// graphs (pinned GCC 16.1 quirk): `std::string`'s (pointer, size)
+/// constructor carries a null check that does not constant-fold against
+/// ASan-instrumented storage (template parameter objects, string
+/// literals, define_static_string globals) — but the iterator-pair
+/// constructor folds. Every injected member name computed from a
+/// name_text/derived view routes through THIS; names straight from
+/// `identifier_of` (reflection-internal storage) need no detour.
+consteval auto spec_name(std::string_view text) -> std::string {
+    return std::string(text.begin(), text.end());
+}
+
 } // namespace bdb::detail
 
 namespace bdb::detail {
 
-consteval auto coord_specs(std::meta::info row)
-    -> std::vector<std::meta::info> {
+consteval auto coord_specs(std::string_view relation_name,
+    std::meta::info row) -> std::vector<std::meta::info> {
     auto specs = std::vector<std::meta::info>{};
+    auto ordinal = std::size_t{0};
     for (auto const member : row_members(row)) {
+        // Unsupported field types classify under a total fallback so the
+        // injection succeeds and make_relation's static_asserts stay the
+        // ONE diagnostic a rejected row produces.
+        auto const cls = classify(std::meta::type_of(member))
+            .value_or(field_class{value_kind::u64, 0});
         specs.push_back(std::meta::data_member_spec(
-            std::meta::substitute(^^coord, {std::meta::type_of(member)}),
+            std::meta::substitute(^^coord,
+                {std::meta::type_of(member),
+                    std::meta::reflect_constant(
+                        to_name_text(relation_name)),
+                    std::meta::reflect_constant(to_name_text(
+                        std::meta::identifier_of(member))),
+                    std::meta::reflect_constant(ordinal),
+                    std::meta::reflect_constant(cls),
+                    std::meta::reflect_constant(
+                        is_fresh_marked(member))}),
             {.name = std::meta::identifier_of(member)}));
+        ++ordinal;
     }
     return specs;
 }
@@ -308,12 +360,14 @@ consteval auto coord_specs(std::meta::info row)
 // The proven injection pattern (TODO_CPP §38): define_aggregate may only
 // be evaluated from a consteval block, so the facade type is synthesized
 // at class-template scope. Coords gets one member per row field, named
-// identically, of type coord<FieldType>.
-template<class Row>
+// identically, of coordinate type — the Name NTTP makes the facade TYPE
+// carry the relation identity too (two same-row relations are two types).
+template<fixed_string Name, class Row>
 struct RelationTypes {
     struct Coords;
     consteval {
-        std::meta::define_aggregate(^^Coords, coord_specs(^^Row));
+        std::meta::define_aggregate(
+            ^^Coords, coord_specs(Name.view(), ^^Row));
     }
 };
 
@@ -322,11 +376,11 @@ struct RelationTypes {
 export namespace bdb {
 
 /// Builds the coordinate facade value for one relation. The static_asserts
-/// are the §34 diagnostics; the fill below them stays total (value_or) so
-/// a rejected row produces exactly one error.
+/// are the §34 diagnostics; a rejected row produces exactly one error
+/// (coord_specs classifies totally, so the injection itself never fires).
 template<fixed_string Name, class Row>
 consteval auto make_relation() ->
-    typename detail::RelationTypes<Row>::Coords {
+    typename detail::RelationTypes<Name, Row>::Coords {
     static_assert(
         detail::row_is_supported(^^Row),
         detail::unsupported_field_message(
@@ -336,40 +390,16 @@ consteval auto make_relation() ->
         detail::misplaced_fresh_message(
             detail::relation_subject(Name.view()), ^^Row));
 
-    using Facade = typename detail::RelationTypes<Row>::Coords;
-    constexpr auto ctx = std::meta::access_context::current();
-    constexpr auto members = std::define_static_array(
-        std::meta::nonstatic_data_members_of(^^Row, ctx));
-    constexpr auto facade_members = std::define_static_array(
-        std::meta::nonstatic_data_members_of(^^Facade, ctx));
-
-    auto facade = Facade{};
-    constexpr auto relation_text = detail::to_name_text(Name.view());
-    template for (
-        constexpr auto index :
-        detail::index_array<members.size()>()) {
-        constexpr auto member = members[index];
-        constexpr auto cls = classify(std::meta::type_of(member))
-            .value_or(field_class{value_kind::u64, 0});
-        facade.[:facade_members[index]:] =
-            coord<typename [:std::meta::type_of(member):]>{
-                .relation_name = relation_text,
-                .field_name = detail::to_name_text(
-                    std::meta::identifier_of(member)),
-                .ordinal = index,
-                .kind = cls.kind,
-                .fixed_len = cls.fixed_len,
-                .fresh = detail::is_fresh_marked(member),
-            };
-    }
-    return facade;
+    // Coordinates carry their whole payload in the type; the facade value
+    // is the empty product of them.
+    return typename detail::RelationTypes<Name, Row>::Coords{};
 }
 
 /// The relation reflector (TODO_CPP §6): `bdb::relation<"Service",
 /// ServiceRow>` is a coordinate facade with one member per row field,
 /// named identically — `Service.id`, `Service.name` — each a
-/// `bdb::coord<FieldType>` carrying compile-time semantic data. Member
-/// access is deliberately the only binding style.
+/// `bdb::coord` specialization carrying compile-time semantic data in its
+/// type. Member access is deliberately the only binding style.
 template<fixed_string Name, class Row>
 inline constexpr auto relation = make_relation<Name, Row>();
 

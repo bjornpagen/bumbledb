@@ -25,13 +25,16 @@ inline constexpr auto Outage = bdb::relation<"Outage", OutageRow>;
 
 // The facade is compile-time semantic data; everything below is proven
 // during constant evaluation, then re-reported at runtime so ctest shows
-// the cases.
+// the cases. A coordinate's physical type rides its value_type; its
+// IDENTITY rides the whole coord type (two fields are two types).
 static_assert(std::same_as<
-    decltype(Service.id), bdb::coord<std::uint64_t>>);
-static_assert(std::same_as<decltype(Service.name),
-    bdb::coord<std::string>>);
-static_assert(std::same_as<decltype(Outage.window),
-    bdb::coord<bdb::interval<std::int64_t>>>);
+    decltype(Service.id)::value_type, std::uint64_t>);
+static_assert(std::same_as<
+    decltype(Service.name)::value_type, std::string>);
+static_assert(std::same_as<
+    decltype(Outage.window)::value_type, bdb::interval<std::int64_t>>);
+static_assert(!std::same_as<
+    decltype(Service.id), decltype(Outage.service)>);
 
 static_assert(Service.id.ordinal == 0);
 static_assert(Service.name.ordinal == 1);

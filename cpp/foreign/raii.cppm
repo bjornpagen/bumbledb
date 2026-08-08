@@ -220,6 +220,21 @@ auto value_outcome(bdb_status status, bdb_error* error, T value)
     unreachable_boundary_state();
 }
 
+// The status → done fold for value-less fallible calls (no ABORTED shape).
+auto status_outcome(bdb_status status, bdb_error* error)
+    -> std::expected<void, error_handle> {
+    switch (status) {
+    case bdb_status::BDB_STATUS_OK:
+        return {};
+    case bdb_status::BDB_STATUS_ERROR:
+        return std::unexpected{error_handle{error}};
+    case bdb_status::BDB_STATUS_ABORTED:
+    case bdb_status::BDB_STATUS_MISUSE:
+        break;
+    }
+    unreachable_boundary_state();
+}
+
 } // namespace bdb::foreign
 
 export namespace bdb::foreign {
@@ -299,9 +314,74 @@ public:
     }
 
 private:
+    // The execute lane fills this carrier through the raw handle.
+    friend class prepared_handle;
+
     auto destroy() -> void {
         if (raw_ != nullptr) {
             static_cast<void>(bdb_answers_destroy(raw_));
+            raw_ = nullptr;
+        }
+    }
+};
+
+/// Owning RAII over a prepared query (TODO_CPP §20). Move-only — the
+/// moved-from handle is inert (alive() == false). The prepared value
+/// co-owns its engine below the boundary (the bridge's PreparedHandle),
+/// so the environment outlives every prepared query by construction.
+class prepared_handle {
+    bdb_prepared* raw_{nullptr};
+
+    explicit prepared_handle(bdb_prepared* owned) : raw_{owned} {
+        if (owned == nullptr) {
+            unreachable_boundary_state();
+        }
+    }
+
+    friend class db_handle;
+
+public:
+    prepared_handle(prepared_handle const&) = delete;
+    auto operator=(prepared_handle const&) -> prepared_handle& = delete;
+
+    prepared_handle(prepared_handle&& other) noexcept
+        : raw_{std::exchange(other.raw_, nullptr)} {}
+
+    auto operator=(prepared_handle&& other) noexcept -> prepared_handle& {
+        if (this != &other) {
+            destroy();
+            raw_ = std::exchange(other.raw_, nullptr);
+        }
+        return *this;
+    }
+
+    ~prepared_handle() {
+        destroy();
+    }
+
+    /// Whether this handle still owns a prepared query (false after a
+    /// move-out).
+    [[nodiscard]] auto alive() const -> bool {
+        return raw_ != nullptr;
+    }
+
+    /// Executes against a snapshot with positional params, filling the
+    /// caller's reusable carrier (cleared first, capacity retained — the
+    /// execute_into lane, TODO_CPP §23). Non-const: execution takes the
+    /// prepared query exclusively (&mut engine-side — §20/§22).
+    [[nodiscard]] auto execute(bdb_snapshot_ref const& snapshot,
+        std::span<bdb_param const> params, answers_handle& answers)
+        -> std::expected<void, error_handle> {
+        bdb_error* error = nullptr;
+        auto const status = bdb_snapshot_execute(&snapshot, raw_,
+            params.data(), params.size(), answers.raw_, &error);
+        return status_outcome(status, error);
+    }
+
+private:
+    auto destroy() -> void {
+        if (raw_ != nullptr) {
+            static_cast<void>(bdb_prepared_destroy(raw_));
             raw_ = nullptr;
         }
     }
@@ -513,6 +593,21 @@ public:
         return callback_outcome(status, error);
     }
 
+    /// Prepares a program IR view against the store (TODO_CPP §20): the
+    /// engine validates, normalizes, reads statistics, and plans ONCE;
+    /// the returned handle is reusable across snapshots of this database.
+    /// The view graph is copied by the bridge before this returns.
+    [[nodiscard]] auto prepare(bdb_program const& program) const
+        -> std::expected<prepared_handle, error_handle> {
+        bdb_prepared* prepared = nullptr;
+        bdb_error* error = nullptr;
+        auto const status = bdb_db_prepare(raw_, &program, &prepared, &error);
+        return value_outcome(status, error, prepared)
+            .transform([](bdb_prepared* owned) {
+                return prepared_handle{owned};
+            });
+    }
+
     /// write conditional on a still-live snapshot (TODO_CPP §18). SAFETY:
     /// the snapshot ref is forwarded only from inside the read callback
     /// that owns it — this wrapper never stores it — so the underlying
@@ -606,6 +701,33 @@ auto snapshot_scan(bdb_snapshot_ref const& snapshot, std::uint32_t relation)
         .transform([](bdb_row_set* owned) { return row_set_handle{owned}; });
 }
 
+/// Committed-state point lookup through a key statement (TODO_CPP §26):
+/// key values in the statement's projection order. A miss is the empty
+/// row set (the ABI writes null; row_set_handle owns either way).
+auto snapshot_get(bdb_snapshot_ref const& snapshot, std::uint32_t relation,
+    std::uint16_t key_statement, std::span<bdb_value const> key_values)
+    -> std::expected<row_set_handle, error_handle> {
+    bdb_row_set* row = nullptr;
+    bdb_error* error = nullptr;
+    auto const status = bdb_snapshot_get(&snapshot, relation,
+        key_statement, key_values.data(), key_values.size(), &row, &error);
+    return value_outcome(status, error, row)
+        .transform([](bdb_row_set* owned) { return row_set_handle{owned}; });
+}
+
+/// Final-state point lookup through a key statement (base + pending
+/// delta); miss = the empty row set.
+auto tx_get(bdb_tx_ref const& transaction, std::uint32_t relation,
+    std::uint16_t key_statement, std::span<bdb_value const> key_values)
+    -> std::expected<row_set_handle, error_handle> {
+    bdb_row_set* row = nullptr;
+    bdb_error* error = nullptr;
+    auto const status = bdb_tx_get(&transaction, relation, key_statement,
+        key_values.data(), key_values.size(), &row, &error);
+    return value_outcome(status, error, row)
+        .transform([](bdb_row_set* owned) { return row_set_handle{owned}; });
+}
+
 /// The relation names of a spec view, copied out in declaration order —
 /// declaration index IS the minted RelationId (lowering.md §1.1), which is
 /// how the pre-schema lane resolves coordinates to wire ids.
@@ -694,7 +816,36 @@ struct owned_containment {
     bool bidirectional;
 };
 
-using owned_statement = std::variant<owned_fd, owned_containment>;
+/// A capacity weight; `field` is read for Field/DurationField.
+struct owned_weight {
+    bdb_weight_kind kind;
+    std::string field;
+};
+
+/// One capacity bound; `lit` for Lit, `field` for Field/DurationField.
+struct owned_bound {
+    bdb_bound_kind kind;
+    std::uint64_t lit;
+    std::string field;
+};
+
+/// One capacity window (Exact/Floor read `lo`; Range reads both).
+struct owned_capacity_window {
+    bdb_capacity_window_kind kind;
+    owned_bound lo;
+    owned_bound hi;
+};
+
+/// capacity(target, weight, window, source) — the operator read order.
+struct owned_capacity {
+    owned_side target;
+    owned_weight weight;
+    owned_capacity_window window;
+    owned_side source;
+};
+
+using owned_statement =
+    std::variant<owned_fd, owned_containment, owned_capacity>;
 
 /// Owns every byte of a schema spec and materializes the borrowed ABI
 /// view once at construction. Non-copyable and non-movable so the interior
@@ -731,6 +882,14 @@ class owned_schema_spec {
             .projection_count = projection.size(),
             .selection = nullptr,
             .selection_count = 0,
+        };
+    }
+
+    static auto bound_view(owned_bound const& bound) -> bdb_bound {
+        return bdb_bound{
+            .kind = bound.kind,
+            .lit = bound.lit,
+            .field = view_of_owned(bound.field),
         };
     }
 
@@ -786,22 +945,45 @@ public:
                 view.fd_relation = view_of_owned(fd->relation);
                 view.fd_projection = projection.data();
                 view.fd_projection_count = projection.size();
-            } else {
-                auto const& containment =
-                    std::get<owned_containment>(statement);
+            } else if (auto const* containment =
+                    std::get_if<owned_containment>(&statement)) {
                 auto const& source_projection =
                     projection_views_.emplace_back(
-                        projection_view(containment.source.projection));
+                        projection_view(containment->source.projection));
                 auto const& target_projection =
                     projection_views_.emplace_back(
-                        projection_view(containment.target.projection));
+                        projection_view(containment->target.projection));
                 view.kind = bdb_statement_spec_kind::
                     BDB_STATEMENT_SPEC_KIND_CONTAINMENT;
                 view.source =
-                    side_view(containment.source, source_projection);
+                    side_view(containment->source, source_projection);
                 view.target =
-                    side_view(containment.target, target_projection);
-                view.bidirectional = containment.bidirectional;
+                    side_view(containment->target, target_projection);
+                view.bidirectional = containment->bidirectional;
+            } else {
+                auto const& capacity =
+                    std::get<owned_capacity>(statement);
+                auto const& target_projection =
+                    projection_views_.emplace_back(
+                        projection_view(capacity.target.projection));
+                auto const& source_projection =
+                    projection_views_.emplace_back(
+                        projection_view(capacity.source.projection));
+                view.kind = bdb_statement_spec_kind::
+                    BDB_STATEMENT_SPEC_KIND_CAPACITY;
+                view.target =
+                    side_view(capacity.target, target_projection);
+                view.source =
+                    side_view(capacity.source, source_projection);
+                view.weight = bdb_weight{
+                    .kind = capacity.weight.kind,
+                    .field = view_of_owned(capacity.weight.field),
+                };
+                view.window = bdb_capacity_window{
+                    .kind = capacity.window.kind,
+                    .lo = bound_view(capacity.window.lo),
+                    .hi = bound_view(capacity.window.hi),
+                };
             }
             statement_views_.push_back(view);
         }

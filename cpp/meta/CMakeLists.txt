@@ -26,6 +26,43 @@ target_link_libraries(bumbledb_meta_relation
 
 target_compile_options(bumbledb_meta_relation PRIVATE -Wno-shadow)
 
+add_library(bumbledb_meta_schema)
+
+target_sources(bumbledb_meta_schema
+    PUBLIC
+        FILE_SET CXX_MODULES
+        FILES
+            bumbledb.meta.schema.cppm
+)
+
+target_link_libraries(bumbledb_meta_schema
+    PUBLIC
+        bumbledb_language_profile
+        bumbledb_types
+        bumbledb_meta_relation
+)
+
+target_compile_options(bumbledb_meta_schema PRIVATE -Wno-shadow)
+
+add_library(bumbledb_meta_query)
+
+target_sources(bumbledb_meta_query
+    PUBLIC
+        FILE_SET CXX_MODULES
+        FILES
+            bumbledb.meta.query.cppm
+)
+
+target_link_libraries(bumbledb_meta_query
+    PUBLIC
+        bumbledb_language_profile
+        bumbledb_types
+        bumbledb_meta_relation
+        bumbledb_meta_schema
+)
+
+target_compile_options(bumbledb_meta_query PRIVATE -Wno-shadow)
+
 add_library(bumbledb_meta_row)
 
 target_sources(bumbledb_meta_row

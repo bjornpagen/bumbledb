@@ -8,16 +8,17 @@
 // reflection syntax — everything reflective stays in meta/. The rest of
 // the runtime layer (types, error, answers) remains Clang-visible.
 //
-// The pre-schema lane (pinned): bdb::schema<> arrives next phase. Until
-// then Db::create/open/ephemeral accept the RAW foreign spec view
-// (bdb::foreign::bdb_schema_spec) built through the owned pre-schema
-// builder in bumbledb.foreign.raii, and coordinate → wire-id resolution
-// works by NAME against the manifest captured ONCE at construction from
-// that spec: relation id = the relation's declaration index (the order IS
-// the id mint, lowering.md §1.1), field id = the coordinate's reflected
-// ordinal (ordinary relations: FieldId = declaration index, lowering.md
-// §1.11). The schema phase replaces both with compile-time ids
-// (TODO_CPP §25, §37).
+// Two admission lanes: the SCHEMA lane (Db::create/open/ephemeral over a
+// bdb::schema<> value, TODO_CPP §13) lowers the schema's flattened tables
+// to the owned spec builder — declared statements only, newtype slots fed
+// from the law-computed class map (lowering.md §2/§7) — and captures the
+// manifest (relation ids + materialized statement ids for §26 keyed
+// reads) from the same tables. The PRE-SCHEMA lane (raw
+// bdb::foreign::bdb_schema_spec views) remains for spec-level tests.
+// Coordinate → wire-id resolution works by NAME against the manifest:
+// relation id = declaration index (the order IS the id mint, lowering.md
+// §1.1), field id = the coordinate's reflected ordinal (ordinary
+// relations: FieldId = declaration index, lowering.md §1.11).
 //
 // Failure taxonomy (§19, §27–§28): engine failure is std::unexpected
 // (bdb::Error); domain abandonment is DATA on the success path
@@ -30,8 +31,11 @@ import bumbledb.error;
 import bumbledb.answers;
 import bumbledb.foreign;
 import bumbledb.foreign.raii;
+import bumbledb.foreign.program;
 import bumbledb.meta.relation;
+import bumbledb.meta.schema;
 import bumbledb.meta.row;
+import bumbledb.meta.query;
 
 export namespace bdb {
 
@@ -101,11 +105,25 @@ using WriteOutcome = std::variant<Committed<T>, Abandoned<A>>;
 
 namespace bdb::detail {
 
-/// The pre-schema resolution table (see the module comment): relation
-/// names copied from the admitted spec at construction, declaration order
-/// = wire id.
+/// One materialized statement's structural identity: the keyed-read ABI
+/// addresses statements by their fingerprint-pinned MATERIALIZED index
+/// (fresh-implied keys first — relation order, then field order — then
+/// the declared statements in written order; closed auto-keys arrive with
+/// closed relations). Only keys resolve gets, but every statement holds
+/// its slot so the ids stay aligned.
+struct StatementRow {
+    bool is_key;
+    std::string relation;
+    std::vector<std::string> projection;
+};
+
+/// The resolution table (see the module comment): relation names copied
+/// at construction, declaration order = wire id; statement rows present
+/// on the schema lane only (the pre-schema raw-spec lane resolves no
+/// keyed reads).
 struct Manifest {
     std::vector<std::string> relation_names;
+    std::vector<StatementRow> statement_rows;
 
     [[nodiscard]] auto resolve(std::string_view relation) const
         -> std::optional<std::uint32_t> {
@@ -113,6 +131,38 @@ struct Manifest {
             std::views::enumerate(relation_names)) {
             if (name == relation) {
                 return static_cast<std::uint32_t>(index);
+            }
+        }
+        return std::nullopt;
+    }
+
+    /// The key statement with exactly this structural identity — the §26
+    /// law-value selector, resolved by content, never by a nominal type.
+    [[nodiscard]] auto resolve_key(std::string_view relation,
+        std::span<std::string_view const> projection) const
+        -> std::optional<std::uint16_t> {
+        for (auto const& [index, row] :
+            std::views::enumerate(statement_rows)) {
+            if (!row.is_key || row.relation != relation
+                || row.projection.size() != projection.size()) {
+                continue;
+            }
+            if (std::ranges::equal(row.projection, projection)) {
+                return static_cast<std::uint16_t>(index);
+            }
+        }
+        return std::nullopt;
+    }
+
+    /// The relation's PRIMARY key: its first key statement in
+    /// materialized order (a fresh-bearing relation's fresh field —
+    /// lowering.md §5.3).
+    [[nodiscard]] auto resolve_primary(std::string_view relation) const
+        -> std::optional<std::uint16_t> {
+        for (auto const& [index, row] :
+            std::views::enumerate(statement_rows)) {
+            if (row.is_key && row.relation == relation) {
+                return static_cast<std::uint16_t>(index);
             }
         }
         return std::nullopt;
@@ -148,9 +198,313 @@ auto lift(foreign::error_handle handle) -> Error {
     return Error{std::move(handle)};
 }
 
+/// A keyed read's outcome: a hit is one owned row; a miss is genuine
+/// absence (the ABI wrote no row set).
+auto lift_row(foreign::row_set_handle handle) -> std::optional<RowSet> {
+    auto rows = RowSet{std::move(handle)};
+    if (rows.len() == 0) {
+        return std::nullopt;
+    }
+    return rows;
+}
+
+// --- the schema wire lane (lowering.md §2): flattened schema tables
+// lowered to the foreign owned spec builder --------------------------------
+
+auto wire_type_of(field_data const& field) -> foreign::bdb_value_type {
+    switch (field.kind) {
+    case value_kind::boolean:
+        return foreign::scalar_type(
+            foreign::bdb_value_type_kind::BDB_VALUE_TYPE_KIND_BOOL);
+    case value_kind::u64:
+        return foreign::scalar_type(
+            foreign::bdb_value_type_kind::BDB_VALUE_TYPE_KIND_U64);
+    case value_kind::i64:
+        return foreign::scalar_type(
+            foreign::bdb_value_type_kind::BDB_VALUE_TYPE_KIND_I64);
+    case value_kind::string:
+        return foreign::scalar_type(
+            foreign::bdb_value_type_kind::BDB_VALUE_TYPE_KIND_STRING);
+    case value_kind::fixed_bytes:
+        return foreign::fixed_bytes_type(field.fixed_len);
+    case value_kind::interval_u64:
+        return foreign::interval_type(
+            foreign::bdb_interval_element::BDB_INTERVAL_ELEMENT_U64);
+    case value_kind::interval_i64:
+        break;
+    }
+    return foreign::interval_type(
+        foreign::bdb_interval_element::BDB_INTERVAL_ELEMENT_I64);
+}
+
+/// The coordinate's law-computed class name, rendered "Relation.field"
+/// for the newtype slot (lowering.md §1.10/§7.7); nullopt on bare.
+template<class Classes>
+auto newtype_of(Classes const& classes, name_text relation,
+    name_text field) -> std::optional<std::string> {
+    for (auto const& entry : classes) {
+        if (entry.coordinate.relation == relation
+            && entry.coordinate.field == field) {
+            if (!entry.classed) {
+                return std::nullopt;
+            }
+            return std::string{entry.class_name.relation.view()} + "."
+                + std::string{entry.class_name.field.view()};
+        }
+    }
+    return std::nullopt;
+}
+
+template<Theory S>
+auto owned_relations_of(S const& theory)
+    -> std::vector<foreign::owned_relation> {
+    auto relations = std::vector<foreign::owned_relation>{};
+    relations.reserve(theory.relation_table.size());
+    for (auto const& relation : theory.relation_table) {
+        auto fields = std::vector<foreign::owned_field>{};
+        fields.reserve(relation.field_count);
+        for (auto index = std::size_t{0}; index != relation.field_count;
+            ++index) {
+            auto const& field = relation.fields[index];
+            fields.push_back(foreign::owned_field{
+                .name = std::string{field.name.view()},
+                .value_type = wire_type_of(field),
+                .newtype = newtype_of(
+                    theory.classes, relation.name, field.name),
+                .fresh = field.fresh,
+            });
+        }
+        relations.push_back(foreign::owned_relation{
+            .name = std::string{relation.name.view()},
+            .fields = std::move(fields),
+        });
+    }
+    return relations;
+}
+
+auto owned_side_of(side_data const& side) -> foreign::owned_side {
+    auto projection = std::vector<std::string>{};
+    projection.reserve(side.width);
+    for (auto index = std::size_t{0}; index != side.width; ++index) {
+        projection.emplace_back(side.fields[index].view());
+    }
+    return foreign::owned_side{
+        .relation = std::string{side.relation.view()},
+        .projection = std::move(projection),
+    };
+}
+
+auto owned_bound_of(bound_data const& bound) -> foreign::owned_bound {
+    auto const kind = [&] {
+        switch (bound.form) {
+        case bound_form::lit:
+            return foreign::bdb_bound_kind::BDB_BOUND_KIND_LIT;
+        case bound_form::field:
+            return foreign::bdb_bound_kind::BDB_BOUND_KIND_FIELD;
+        case bound_form::duration_field:
+            break;
+        }
+        return foreign::bdb_bound_kind::BDB_BOUND_KIND_DURATION_FIELD;
+    }();
+    return foreign::owned_bound{
+        .kind = kind,
+        .lit = bound.lit,
+        .field = std::string{bound.field.view()},
+    };
+}
+
+template<Theory S>
+auto owned_statements_of(S const& theory)
+    -> std::vector<foreign::owned_statement> {
+    auto statements = std::vector<foreign::owned_statement>{};
+    statements.reserve(theory.statements.size());
+    for (auto const& statement : theory.statements) {
+        switch (statement.form) {
+        case statement_form::key: {
+            auto side = owned_side_of(statement.source);
+            statements.push_back(foreign::owned_fd{
+                .relation = std::move(side.relation),
+                .projection = std::move(side.projection),
+            });
+            break;
+        }
+        case statement_form::containment:
+            statements.push_back(foreign::owned_containment{
+                .source = owned_side_of(statement.source),
+                .target = owned_side_of(statement.target),
+                .bidirectional = statement.bidirectional,
+            });
+            break;
+        case statement_form::capacity: {
+            auto const weight_kind = [&] {
+                switch (statement.weight) {
+                case weight_form::unit:
+                    return foreign::bdb_weight_kind::BDB_WEIGHT_KIND_UNIT;
+                case weight_form::field:
+                    return foreign::bdb_weight_kind::
+                        BDB_WEIGHT_KIND_FIELD;
+                case weight_form::duration_field:
+                    break;
+                }
+                return foreign::bdb_weight_kind::
+                    BDB_WEIGHT_KIND_DURATION_FIELD;
+            }();
+            auto const window_kind = [&] {
+                switch (statement.window.form) {
+                case window_form::exact:
+                    return foreign::bdb_capacity_window_kind::
+                        BDB_CAPACITY_WINDOW_KIND_EXACT;
+                case window_form::range:
+                    return foreign::bdb_capacity_window_kind::
+                        BDB_CAPACITY_WINDOW_KIND_RANGE;
+                case window_form::floor:
+                    break;
+                }
+                return foreign::bdb_capacity_window_kind::
+                    BDB_CAPACITY_WINDOW_KIND_FLOOR;
+            }();
+            statements.push_back(foreign::owned_capacity{
+                .target = owned_side_of(statement.target),
+                .weight = foreign::owned_weight{
+                    .kind = weight_kind,
+                    .field = std::string{statement.weight_field.view()},
+                },
+                .window = foreign::owned_capacity_window{
+                    .kind = window_kind,
+                    .lo = owned_bound_of(statement.window.lo),
+                    .hi = owned_bound_of(statement.window.hi),
+                },
+                .source = owned_side_of(statement.source),
+            });
+            break;
+        }
+        }
+    }
+    return statements;
+}
+
+/// The schema lane's resolution table: relation names in declaration
+/// order plus the MATERIALIZED statement identities (fresh-implied keys
+/// first, declared statements after — the keyed-read id space).
+template<Theory S>
+auto manifest_of(S const& theory) -> Manifest {
+    auto manifest = Manifest{};
+    manifest.relation_names.reserve(theory.relation_table.size());
+    for (auto const& relation : theory.relation_table) {
+        manifest.relation_names.emplace_back(relation.name.view());
+    }
+    for (auto const& relation : theory.relation_table) {
+        for (auto index = std::size_t{0}; index != relation.field_count;
+            ++index) {
+            auto const& field = relation.fields[index];
+            if (!field.fresh) {
+                continue;
+            }
+            manifest.statement_rows.push_back(StatementRow{
+                .is_key = true,
+                .relation = std::string{relation.name.view()},
+                .projection = {std::string{field.name.view()}},
+            });
+        }
+    }
+    for (auto const& statement : theory.statements) {
+        auto row = StatementRow{
+            .is_key = statement.form == statement_form::key,
+            .relation = std::string{statement.source.relation.view()},
+            .projection = {},
+        };
+        if (row.is_key) {
+            row.projection.reserve(statement.source.width);
+            for (auto index = std::size_t{0};
+                index != statement.source.width; ++index) {
+                row.projection.emplace_back(
+                    statement.source.fields[index].view());
+            }
+        }
+        manifest.statement_rows.push_back(std::move(row));
+    }
+    return manifest;
+}
+
+/// Resolves a stored key law to its materialized statement id, or dies:
+/// passing a law from OUTSIDE the admitted schema (or keyed-reading a
+/// pre-schema-lane store) is an impossible programmer state — the law and
+/// the manifest are both artifacts of the same declaration set.
+template<class First, class... Rest>
+auto resolved_key(Manifest const& manifest,
+    key_law<First, Rest...> const&) -> std::uint16_t {
+    using Law = key_law<First, Rest...>;
+    auto names = std::array<std::string_view, Law::width>{};
+    for (auto index = std::size_t{0}; index != Law::width; ++index) {
+        names[index] = Law::projection[index].view();
+    }
+    auto const id = manifest.resolve_key(Law::relation_name.view(), names);
+    contract_assert(id.has_value());
+    return *id;
+}
+
+/// Resolves a relation's primary key statement, or dies (as above: a
+/// fresh-bearing facade of the admitted schema always has one).
+auto resolved_primary(Manifest const& manifest, std::string_view relation)
+    -> std::uint16_t {
+    auto const id = manifest.resolve_primary(relation);
+    contract_assert(id.has_value());
+    return *id;
+}
+
+/// The §26 facade/law agreement diagnostic.
+template<class Facade, class Law>
+consteval auto keyed_get_mismatch() -> std::string {
+    return std::string{"bumbledb get(): the key law constrains relation \""}
+        + std::string{Law::relation_name.view()}
+        + "\" but the facade names relation \""
+        + std::string{facade_relation_name(Facade{})} + "\"";
+}
+
 } // namespace bdb::detail
 
 export namespace bdb {
+
+/// A reusable prepared query (TODO_CPP §20): move-only RAII over the
+/// bridge's prepared handle. The engine validated, normalized, and
+/// planned ONCE at `Db::prepare<Query>()`; the handle is reusable across
+/// snapshots of the same database. Concurrent execution through one
+/// prepared object is outside the dialect's permitted model — execution
+/// takes it non-const (§22).
+template<auto Query>
+class Prepared {
+    foreign::prepared_handle handle_;
+
+    explicit Prepared(foreign::prepared_handle handle)
+        : handle_{std::move(handle)} {}
+
+    friend class Db;
+
+public:
+    Prepared(Prepared const&) = delete;
+    auto operator=(Prepared const&) -> Prepared& = delete;
+    Prepared(Prepared&&) noexcept = default;
+    auto operator=(Prepared&&) noexcept -> Prepared& = default;
+    ~Prepared() = default;
+
+    /// Whether this handle still owns a prepared query (false after
+    /// move-out — the §36 inert-source witness).
+    [[nodiscard]] auto alive() const -> bool {
+        return handle_.alive();
+    }
+
+    /// The bridge lane (Snapshot::execute drives it).
+    [[nodiscard]] auto native() -> foreign::prepared_handle& {
+        return handle_;
+    }
+};
+
+/// The typed answers carrier of one query (TODO_CPP §12, §22–§23):
+/// `bdb::Answers<DownAt>` decodes rows as the synthesized row product of
+/// DownAt's `.find` head — named members, fixed-width by value,
+/// string_view/span borrowed from the carrier.
+template<auto Query>
+using Answers = RowAnswers<row_of<Query>>;
 
 /// A lexical borrowed read capability (§16): alive exactly for the
 /// Db::read callback. Non-copyable, non-movable, constructible only by
@@ -200,6 +554,80 @@ public:
             .transform_error([](foreign::error_handle handle) {
                 return detail::lift(std::move(handle));
             });
+    }
+
+    /// Committed-state keyed point read (§26): the stored key law value
+    /// IS the selector — resolved against the schema's materialized
+    /// statements by structural identity, never through a generated
+    /// nominal type. Key values arrive as the law's pattern product,
+    /// members in projection order. A miss is genuine absence.
+    template<class Facade, class First, class... Rest>
+    [[nodiscard]] auto get(Facade const& relation,
+        key_law<First, Rest...> const& law,
+        typename key_law<First, Rest...>::pattern const& key) const
+        -> std::expected<std::optional<RowSet>, Error> {
+        static_assert(detail::facade_relation_name(Facade{})
+                == key_law<First, Rest...>::relation_name.view(),
+            detail::keyed_get_mismatch<Facade,
+                key_law<First, Rest...>>());
+        auto const cells = marshal_row(key);
+        return foreign::snapshot_get(raw_,
+            detail::resolved_relation(
+                manifest_, detail::facade_relation_name(relation)),
+            detail::resolved_key(manifest_, law), cells)
+            .transform(detail::lift_row)
+            .transform_error([](foreign::error_handle handle) {
+                return detail::lift(std::move(handle));
+            });
+    }
+
+    /// The fresh-field primary read (§26): `snap.get(Service, {.id = id})`
+    /// reads through the relation's PRIMARY key — the first materialized
+    /// key, i.e. the fresh field's implied key.
+    template<class Facade>
+        requires (fresh_field_count<Facade>() >= 1)
+    [[nodiscard]] auto get(Facade const& relation,
+        fresh_pattern_of<Facade> const& key) const
+        -> std::expected<std::optional<RowSet>, Error> {
+        auto const cells = marshal_row(key);
+        return foreign::snapshot_get(raw_,
+            detail::resolved_relation(
+                manifest_, detail::facade_relation_name(relation)),
+            detail::resolved_primary(
+                manifest_, detail::facade_relation_name(relation)),
+            cells)
+            .transform(detail::lift_row)
+            .transform_error([](foreign::error_handle handle) {
+                return detail::lift(std::move(handle));
+            });
+    }
+
+    /// Executes a prepared query into the caller's reusable carrier
+    /// (§23's zero-alloc lane): the carrier is cleared first, capacity
+    /// retained. Params arrive as the query's synthesized product —
+    /// `{.t = std::int64_t{42}}` — so a wrong name or type is a compile
+    /// error (§21); the engine still validates the payload at bind.
+    template<auto Query>
+    [[nodiscard]] auto execute_into(Prepared<Query>& prepared,
+        params_of<Query> const& params, Answers<Query>& answers) const
+        -> std::expected<void, Error> {
+        auto const wire = foreign::wire_params(params);
+        return prepared.native()
+            .execute(raw_, wire, answers.native().native())
+            .transform_error([](foreign::error_handle handle) {
+                return detail::lift(std::move(handle));
+            });
+    }
+
+    /// The convenience execute (§22's whole-result crossing): one bridge
+    /// transfer, iterated locally through the typed rows() range.
+    template<auto Query>
+    [[nodiscard]] auto execute(Prepared<Query>& prepared,
+        params_of<Query> const& params) const
+        -> std::expected<Answers<Query>, Error> {
+        auto answers = Answers<Query>{};
+        return execute_into<Query>(prepared, params, answers)
+            .transform([&answers] { return std::move(answers); });
     }
 };
 
@@ -267,15 +695,56 @@ public:
             });
     }
 
+    /// Final-state keyed point read (§26, the WriteTx twin): the stored
+    /// key law value is the selector; reads base + pending delta.
+    template<class Facade, class First, class... Rest>
+    [[nodiscard]] auto get(Facade const& relation,
+        key_law<First, Rest...> const& law,
+        typename key_law<First, Rest...>::pattern const& key) const
+        -> std::expected<std::optional<RowSet>, Error> {
+        static_assert(detail::facade_relation_name(Facade{})
+                == key_law<First, Rest...>::relation_name.view(),
+            detail::keyed_get_mismatch<Facade,
+                key_law<First, Rest...>>());
+        auto const cells = marshal_row(key);
+        return foreign::tx_get(raw_,
+            relation_id(detail::facade_relation_name(relation)),
+            detail::resolved_key(manifest_, law), cells)
+            .transform(detail::lift_row)
+            .transform_error([](foreign::error_handle handle) {
+                return detail::lift(std::move(handle));
+            });
+    }
+
+    /// The fresh-field primary read against the final state (§26).
+    template<class Facade>
+        requires (fresh_field_count<Facade>() >= 1)
+    [[nodiscard]] auto get(Facade const& relation,
+        fresh_pattern_of<Facade> const& key) const
+        -> std::expected<std::optional<RowSet>, Error> {
+        auto const cells = marshal_row(key);
+        return foreign::tx_get(raw_,
+            relation_id(detail::facade_relation_name(relation)),
+            detail::resolved_primary(
+                manifest_, detail::facade_relation_name(relation)),
+            cells)
+            .transform(detail::lift_row)
+            .transform_error([](foreign::error_handle handle) {
+                return detail::lift(std::move(handle));
+            });
+    }
+
     /// Mints the next fresh id for the coordinate's field (§25):
     /// `tx.alloc(Service.id)`. The coordinate carries relation name and
-    /// ordinal; resolution is the pre-schema name lane (module comment).
-    /// Fresh fields are u64 by construction, so only u64 coordinates
-    /// allocate.
-    [[nodiscard]] auto alloc(coord<std::uint64_t> const& field)
+    /// ordinal in its type; resolution is the pre-schema name lane (module
+    /// comment). Fresh fields are u64 by construction, so only u64
+    /// coordinates allocate.
+    template<class Field>
+        requires std::same_as<typename Field::value_type, std::uint64_t>
+    [[nodiscard]] auto alloc(Field const& field)
         -> std::expected<std::uint64_t, Error> {
         return foreign::tx_alloc(raw_, relation_id(field.relation()),
-            static_cast<std::uint16_t>(field.ordinal))
+            static_cast<std::uint16_t>(Field::ordinal))
             .transform_error([](foreign::error_handle handle) {
                 return detail::lift(std::move(handle));
             });
@@ -340,7 +809,10 @@ class Db {
         return std::move(opened)
             .transform([&spec](foreign::db_handle handle) {
                 return Db{std::move(handle),
-                    detail::Manifest{foreign::relation_names_of(spec)}};
+                    detail::Manifest{
+                        .relation_names = foreign::relation_names_of(spec),
+                        .statement_rows = {},
+                    }};
             })
             .transform_error([](foreign::error_handle handle) {
                 return detail::lift(std::move(handle));
@@ -394,6 +866,23 @@ class Db {
             std::get<typename Shape::AbandonCase>(**slot).value)}}};
     }
 
+    // The schema lane's admission: the spec views live exactly for the
+    // create/open call (the bridge marshals them before returning); the
+    // manifest is rebuilt from the theory's own tables.
+    template<Theory S>
+    static auto admit_theory(
+        std::expected<foreign::db_handle, foreign::error_handle> opened,
+        S const& theory) -> std::expected<Db, Error> {
+        return std::move(opened)
+            .transform([&theory](foreign::db_handle handle) {
+                return Db{
+                    std::move(handle), detail::manifest_of(theory)};
+            })
+            .transform_error([](foreign::error_handle handle) {
+                return detail::lift(std::move(handle));
+            });
+    }
+
 public:
     /// Creates a fresh DURABLE store (pre-schema lane — module comment).
     static auto create(std::string_view path,
@@ -411,6 +900,44 @@ public:
     static auto ephemeral(std::string_view path,
         foreign::bdb_schema_spec const& spec) -> std::expected<Db, Error> {
         return admit(foreign::db_handle::ephemeral(path, spec), spec);
+    }
+
+    /// Creates a fresh DURABLE store from a bdb::schema<> value (the
+    /// schema lane, TODO_CPP §13): the spec views are built from the
+    /// schema's flattened tables — DECLARED statements only, newtype
+    /// slots fed from the law-computed class map — and handed to the
+    /// engine's SchemaSpec::descriptor(), which stays authoritative.
+    template<Theory S>
+    static auto create(std::string_view path, S const& theory)
+        -> std::expected<Db, Error> {
+        auto const spec = foreign::owned_schema_spec{
+            detail::owned_relations_of(theory),
+            detail::owned_statements_of(theory)};
+        return admit_theory(
+            foreign::db_handle::create(path, spec.view()), theory);
+    }
+
+    /// Opens an existing durable store against a schema value,
+    /// fingerprint-verified by the engine.
+    template<Theory S>
+    static auto open(std::string_view path, S const& theory)
+        -> std::expected<Db, Error> {
+        auto const spec = foreign::owned_schema_spec{
+            detail::owned_relations_of(theory),
+            detail::owned_statements_of(theory)};
+        return admit_theory(
+            foreign::db_handle::open(path, spec.view()), theory);
+    }
+
+    /// Opens or initializes an EPHEMERAL store from a schema value.
+    template<Theory S>
+    static auto ephemeral(std::string_view path, S const& theory)
+        -> std::expected<Db, Error> {
+        auto const spec = foreign::owned_schema_spec{
+            detail::owned_relations_of(theory),
+            detail::owned_statements_of(theory)};
+        return admit_theory(
+            foreign::db_handle::ephemeral(path, spec.view()), theory);
     }
 
     Db(Db const&) = delete;
@@ -480,6 +1007,50 @@ public:
         return write_through(body, [this, &snapshot](auto& shim) {
             return handle_.write_from(snapshot.raw_, shim);
         });
+    }
+
+    /// Committed-state keyed point read (§26), one call: opens a read
+    /// snapshot for exactly this lookup. The stored key law value is the
+    /// selector; the RowSet is owned and outlives the snapshot.
+    template<class Facade, class First, class... Rest>
+    [[nodiscard]] auto get(Facade const& relation,
+        key_law<First, Rest...> const& law,
+        typename key_law<First, Rest...>::pattern const& key) const
+        -> std::expected<std::optional<RowSet>, Error> {
+        return read([&](Snapshot& snapshot)
+                -> std::expected<std::optional<RowSet>, Error> {
+            return snapshot.get(relation, law, key);
+        });
+    }
+
+    /// The fresh-field primary read (§26): `db.get(Service, {.id = id})`.
+    template<class Facade>
+        requires (fresh_field_count<Facade>() >= 1)
+    [[nodiscard]] auto get(Facade const& relation,
+        fresh_pattern_of<Facade> const& key) const
+        -> std::expected<std::optional<RowSet>, Error> {
+        return read([&](Snapshot& snapshot)
+                -> std::expected<std::optional<RowSet>, Error> {
+            return snapshot.get(relation, key);
+        });
+    }
+
+    /// Prepares one compile-time query value against this store
+    /// (TODO_CPP §20, §43: `db.prepare<DownAt>()`). The query already
+    /// lowered to a static program-IR view graph during constant
+    /// evaluation; the engine's IR validator remains the trust boundary
+    /// here — compile-time validation supplements it, never replaces it
+    /// (§11).
+    template<auto Query>
+    [[nodiscard]] auto prepare() const
+        -> std::expected<Prepared<Query>, Error> {
+        return handle_.prepare(foreign::program_of<Query>)
+            .transform([](foreign::prepared_handle handle) {
+                return Prepared<Query>{std::move(handle)};
+            })
+            .transform_error([](foreign::error_handle handle) {
+                return detail::lift(std::move(handle));
+            });
     }
 };
 

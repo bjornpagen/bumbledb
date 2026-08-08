@@ -195,6 +195,12 @@ CheckOptions:
   readability-identifier-naming.StructIgnoredRegexp: '^(interval|allen_mask)$'
   readability-identifier-naming.TypeAliasIgnoredRegexp: '^bytes$'
 
+  # Pinned LLVM 22 quirk: a class TEMPLATE's name is judged under the
+  # Default bucket, never ClassCase (plain classes judge correctly), so a
+  # PascalCase class template in a linted module trips 'lower_case'. Exempt
+  # exactly the linted-graph class templates; re-test on any tidy bump.
+  readability-identifier-naming.DefaultIgnoredRegexp: '^RowAnswers$'
+
   readability-identifier-naming.TypeAliasCase: 'CamelCase'
   readability-identifier-naming.TypedefCase: 'CamelCase'
   readability-identifier-naming.StructCase: 'CamelCase'

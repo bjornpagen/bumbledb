@@ -70,8 +70,11 @@ if(NOT BDB_LINT_GRAPH)
             bumbledb_error
             bumbledb_answers
             bumbledb_foreign_raii
+            bumbledb_foreign_program
             bumbledb_meta_relation
+            bumbledb_meta_schema
             bumbledb_meta_row
+            bumbledb_meta_query
     )
 
     add_library(bumbledb_umbrella)
@@ -91,6 +94,8 @@ if(NOT BDB_LINT_GRAPH)
             bumbledb_answers
             bumbledb_db
             bumbledb_meta_relation
+            bumbledb_meta_schema
+            bumbledb_meta_query
     )
 endif()
 

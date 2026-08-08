@@ -79,6 +79,26 @@ if(NOT BDB_LINT_GRAPH)
     add_test(NAME runtime.meta_relation
         COMMAND bumbledb_relation_facade_tests)
 
+    add_executable(bumbledb_schema_law_tests)
+
+    target_sources(bumbledb_schema_law_tests
+        PRIVATE
+            schema_law.test.cpp
+    )
+
+    target_link_libraries(bumbledb_schema_law_tests
+        PRIVATE
+            bumbledb_types
+            bumbledb_meta_relation
+            bumbledb_meta_schema
+            bumbledb_language_profile
+    )
+
+    target_compile_options(bumbledb_schema_law_tests
+        PRIVATE -Wno-shadow)
+
+    add_test(NAME runtime.meta_schema COMMAND bumbledb_schema_law_tests)
+
     add_executable(bumbledb_row_marshal_tests)
 
     target_sources(bumbledb_row_marshal_tests
@@ -118,4 +138,47 @@ if(NOT BDB_LINT_GRAPH)
         PRIVATE -Wno-shadow)
 
     add_test(NAME runtime.db_lifecycle COMMAND bumbledb_db_lifecycle_tests)
+
+    add_executable(bumbledb_keyed_get_tests)
+
+    target_sources(bumbledb_keyed_get_tests
+        PRIVATE
+            keyed_get.test.cpp
+    )
+
+    target_link_libraries(bumbledb_keyed_get_tests
+        PRIVATE
+            bumbledb_umbrella
+            bumbledb_language_profile
+    )
+
+    target_compile_options(bumbledb_keyed_get_tests
+        PRIVATE -Wno-shadow)
+
+    add_test(NAME runtime.keyed_get COMMAND bumbledb_keyed_get_tests)
+
+    add_executable(bumbledb_query_ir_tests)
+
+    target_sources(bumbledb_query_ir_tests
+        PRIVATE
+            query_ir.test.cpp
+    )
+
+    target_link_libraries(bumbledb_query_ir_tests
+        PRIVATE
+            bumbledb_types
+            bumbledb_meta_relation
+            bumbledb_meta_schema
+            bumbledb_meta_query
+            bumbledb_language_profile
+    )
+
+    # -Wno-missing-field-initializers: a query pattern's UNMENTIONED slot
+    # IS the wildcard (absence of a field binds nothing — lowering.md
+    # §4.1), so query-writing TUs suppress exactly this -Wextra lint, the
+    # scoped way (-Wno-shadow's precedent above).
+    target_compile_options(bumbledb_query_ir_tests
+        PRIVATE -Wno-shadow -Wno-missing-field-initializers)
+
+    add_test(NAME runtime.query_ir COMMAND bumbledb_query_ir_tests)
 endif()

@@ -14,4 +14,8 @@ if(NOT BDB_LINT_GRAPH AND NOT CMAKE_CXX_FLAGS MATCHES "-fsanitize")
     add_subdirectory(compile_fail)
 endif()
 
-# cookbook/ is README-only until its phase lands (TODO_CPP §33).
+# The cookbook parity suite imports the schema elaborator (GCC-only
+# reflective graph), so it exists only in the production graph.
+if(NOT BDB_LINT_GRAPH)
+    add_subdirectory(cookbook)
+endif()

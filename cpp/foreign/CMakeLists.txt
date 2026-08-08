@@ -93,3 +93,33 @@ if(BDB_LINT_GRAPH)
     # like the bridge smoke test and meta/.
     set_source_files_properties(raii.cppm PROPERTIES SKIP_LINTING ON)
 endif()
+
+# ------------------------------------------------------------------------------
+# 4. The program-view module: presents compile-time query IR values as
+#    static bdb_program view graphs and marshals execute-time params
+#    (TODO_CPP §13, §20-§21). Quarantine code by nature (interior view
+#    pointers are its subject) — but it imports the reflective meta layer,
+#    so it is GCC-only, like bumbledb.db.
+# ------------------------------------------------------------------------------
+if(NOT BDB_LINT_GRAPH)
+    add_library(bumbledb_foreign_program)
+
+    target_sources(bumbledb_foreign_program
+        PUBLIC
+            FILE_SET CXX_MODULES
+            FILES
+                program.cppm
+    )
+
+    target_link_libraries(bumbledb_foreign_program
+        PUBLIC
+            bumbledb_language_profile
+            bumbledb_types
+            bumbledb_foreign
+            bumbledb_meta_relation
+            bumbledb_meta_schema
+            bumbledb_meta_query
+    )
+
+    target_compile_options(bumbledb_foreign_program PRIVATE -Wno-shadow)
+endif()
