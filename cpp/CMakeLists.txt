@@ -92,8 +92,10 @@ if(NOT BDB_LINT_GRAPH)
     add_subdirectory(meta)
 endif()
 
-# foreign/ carries only a README until the Rust bridge wrapper module lands
-# (TODO_CPP §31/§32); add_subdirectory(foreign) arrives with bridge.cppm.
+# foreign/ is the quarantine zone: the cargo-built Rust bridge staticlib and
+# the one wrapper module allowed to see the generated C ABI header. It holds
+# no reflection, so it is part of both graphs.
+add_subdirectory(foreign)
 
 enable_testing()
 add_subdirectory(tests)

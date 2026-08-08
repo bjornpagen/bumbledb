@@ -154,6 +154,14 @@ CheckOptions:
     ^::std::srand$,,> global mutable RNG state is forbidden
 
   # -------------------------------------------------------------------------
+  # Adjacent same-type parameters
+  # -------------------------------------------------------------------------
+  # bdb::interval's checked factories are intrinsically an adjacent (lo, hi)
+  # pair of one element type (TODO_CPP §21); the checked construction is the
+  # swap mitigation. This extends the check's documented default list.
+  bugprone-easily-swappable-parameters.IgnoredParameterNames: '"";iterator;begin;end;first;last;lhs;rhs;lo;hi'
+
+  # -------------------------------------------------------------------------
   # Function complexity
   # -------------------------------------------------------------------------
   # Composition is preferred to deeply imperative control flow.
@@ -178,6 +186,14 @@ CheckOptions:
   readability-identifier-naming.DefaultCase: 'lower_case'
   readability-identifier-naming.NamespaceCase: 'lower_case'
   readability-identifier-naming.InlineNamespaceCase: 'lower_case'
+
+  # The SDK's value vocabulary is normatively spelled std-style lowercase by
+  # TODO_CPP.md (§7, §21, §39: `bdb::interval<std::int64_t>` appears in user
+  # row declarations; cookbook parity pins the spelling). Exactly these
+  # names are exempt; everything else keeps PascalCase.
+  readability-identifier-naming.ClassIgnoredRegexp: '^(interval|allen_mask)$'
+  readability-identifier-naming.StructIgnoredRegexp: '^(interval|allen_mask)$'
+  readability-identifier-naming.TypeAliasIgnoredRegexp: '^bytes$'
 
   readability-identifier-naming.TypeAliasCase: 'CamelCase'
   readability-identifier-naming.TypedefCase: 'CamelCase'

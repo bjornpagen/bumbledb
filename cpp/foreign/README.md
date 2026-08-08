@@ -15,5 +15,7 @@ Rules:
 - No dialect module may include a foreign header.
 - Do not move ordinary SDK code here to escape a rule.
 
-Currently README-only: the bridge wrapper module lands in a later phase,
-and `add_subdirectory(foreign)` in the top-level CMakeLists.txt with it.
+Contents: `bumbledb_c.h` (generated, read-only), `bridge.cppm` (the
+`bumbledb.foreign` wrapper module re-exporting the raw ABI surface inside
+`bdb::foreign`), and the CMake wiring that cargo-builds `cpp/bridge` into
+the preset's binary dir and imports the resulting staticlib.
