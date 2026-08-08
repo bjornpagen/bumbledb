@@ -1,0 +1,594 @@
+---
+# This profile defines the Clang-readable portion of the project dialect.
+#
+# IMPORTANT:
+# - The production compiler is GCC 16+ in C++26 mode.
+# - clang-tidy is a separate analysis frontend and cannot parse GCC-only
+#   reflection translation units until Clang implements that syntax.
+# - Run this only through the CMake `lint` preset over the dedicated
+#   Clang-readable module graph.
+# - `meta/` is intentionally absent from that graph until the pinned Clang
+#   frontend can parse the project's C++26 reflection syntax.
+# - Repository-wide rules in AGENTS.md are STRICTER than this file.
+# - Query-based CustomChecks require:
+#       clang-tidy --experimental-custom-checks
+#
+# Pin the clang-tidy version in CI. Do not silently accept a tool upgrade:
+# first compare `clang-tidy -list-checks` and `clang-tidy --dump-config`.
+
+InheritParentConfig: false
+
+Checks: >
+  -*,
+
+  clang-analyzer-*,
+  bugprone-*,
+  concurrency-*,
+  cppcoreguidelines-*,
+  misc-*,
+  modernize-*,
+  performance-*,
+  portability-*,
+  readability-*,
+
+  custom-no-new,
+  custom-no-delete,
+  custom-no-throw,
+  custom-no-try,
+  custom-no-virtual,
+  custom-no-inheritance,
+  custom-no-dynamic-cast,
+  custom-no-reinterpret-cast,
+  custom-no-const-cast,
+  custom-no-union,
+  custom-no-raw-pointer-variable,
+  custom-no-raw-pointer-field,
+  custom-no-raw-pointer-return,
+  custom-no-member-pointer,
+  custom-no-static-local,
+  custom-no-thread-local,
+  custom-no-default-arguments,
+  custom-no-coroutines,
+  custom-no-shared-ownership,
+  custom-no-dynamic-type,
+  custom-no-thread-primitives,
+  custom-no-sync-primitives,
+  custom-no-sfinae-relics,
+  custom-no-std-function-bind,
+  custom-no-using-namespace,
+
+  -bugprone-empty-catch,
+  -bugprone-exception-copy-constructor-throws,
+  -bugprone-exception-escape,
+  -bugprone-switch-missing-default-case,
+  -bugprone-throw-keyword-missing,
+  -bugprone-throwing-static-initialization,
+  -bugprone-unhandled-exception-at-new,
+
+  -cppcoreguidelines-non-private-member-variables-in-classes,
+  -cppcoreguidelines-virtual-class-destructor,
+
+  -misc-anonymous-namespace-in-header,
+  -misc-definitions-in-headers,
+  -misc-header-include-cycle,
+  -misc-include-cleaner,
+  -misc-multiple-inheritance,
+  -misc-no-recursion,
+  -misc-non-private-member-variables-in-classes,
+  -misc-override-with-different-visibility,
+  -misc-throw-by-value-catch-by-reference,
+
+  -modernize-deprecated-headers,
+  -modernize-macro-to-enum,
+  -modernize-make-shared,
+  -modernize-use-override,
+  -modernize-use-uncaught-exceptions,
+
+  -performance-enum-size,
+
+  -portability-avoid-pragma-once,
+  -portability-restrict-system-includes,
+  -portability-template-virtual-member-function,
+
+  -readability-duplicate-include,
+  -readability-identifier-length,
+  -readability-magic-numbers,
+  -readability-redundant-preprocessor,
+  -readability-use-concise-preprocessor-directives
+
+# -performance-enum-size: mandating a smaller enum base is exactly the
+# premature physical-representation choice the dialect rejects (AGENTS.md
+# section 23); representation is the compiler's until an ABI/storage boundary
+# says otherwise.
+
+WarningsAsErrors: '*'
+
+HeaderFilterRegex: '.*'
+# The second alternative excludes the standard-library module sources
+# (share/libc++/v1/...): importing `std` merges their AST into every TU, and
+# they are toolchain code, not project code.
+ExcludeHeaderFilterRegex: '(^|[/\\])(meta|foreign|unsafe|generated|build|out|third_party|vendor)([/\\]|$)|[/\\]share[/\\]libc\+\+[/\\]'
+SystemHeaders: false
+FormatStyle: file
+
+CheckOptions:
+  # -------------------------------------------------------------------------
+  # Preprocessor
+  # -------------------------------------------------------------------------
+  # Normal project code may not use macros at all. The repository policy
+  # checker bans every preprocessing directive; this catches accidental macro
+  # definitions in any Clang-readable source that slips through.
+  cppcoreguidelines-macro-usage.AllowedRegexp: '^$'
+  cppcoreguidelines-macro-usage.CheckCapsOnly: 'false'
+  cppcoreguidelines-macro-usage.IgnoreCommandLineMacros: 'true'
+
+  # -------------------------------------------------------------------------
+  # Unsafe / legacy functions
+  # -------------------------------------------------------------------------
+  bugprone-unsafe-functions.ReportDefaultFunctions: 'true'
+  bugprone-unsafe-functions.ReportMoreUnsafeFunctions: 'true'
+  bugprone-unsafe-functions.CustomFunctions: >
+    ^::malloc$,,> raw allocation is forbidden; use values, containers, arenas, or an approved resource abstraction;
+    ^::calloc$,,> raw allocation is forbidden; use values, containers, arenas, or an approved resource abstraction;
+    ^::realloc$,,> raw allocation is forbidden;
+    ^::free$,,> raw deallocation is forbidden; ownership must be RAII;
+    ^::aligned_alloc$,,> raw allocation is forbidden outside unsafe/foreign code;
+    ^::std::malloc$,,> raw allocation is forbidden;
+    ^::std::calloc$,,> raw allocation is forbidden;
+    ^::std::realloc$,,> raw allocation is forbidden;
+    ^::std::free$,,> raw deallocation is forbidden;
+    ^::std::make_shared$,,> shared ownership is forbidden;
+    ^::std::async$,,> std::async is forbidden; use std::execution senders;
+    ^::std::printf$,,> printf-style output is forbidden; use std::print/std::format;
+    ^::printf$,,> printf-style output is forbidden; use std::print/std::format;
+    ^::fprintf$,,> printf-style output is forbidden; use std::print/std::format;
+    ^::sprintf$,,> printf-style output is forbidden;
+    ^::snprintf$,,> printf-style output is forbidden;
+    ^::setjmp$,,> non-local control flow is forbidden;
+    ^::longjmp$,,> non-local control flow is forbidden;
+    ^::std::setjmp$,,> non-local control flow is forbidden;
+    ^::std::longjmp$,,> non-local control flow is forbidden;
+    ^::rand$,,> global mutable RNG state is forbidden;
+    ^::srand$,,> global mutable RNG state is forbidden;
+    ^::std::rand$,,> global mutable RNG state is forbidden;
+    ^::std::srand$,,> global mutable RNG state is forbidden
+
+  # -------------------------------------------------------------------------
+  # Function complexity
+  # -------------------------------------------------------------------------
+  # Composition is preferred to deeply imperative control flow.
+  readability-function-cognitive-complexity.Threshold: '12'
+  readability-function-cognitive-complexity.DescribeBasicIncrements: 'true'
+  readability-function-cognitive-complexity.IgnoreMacros: 'false'
+
+  readability-function-size.LineThreshold: '80'
+  readability-function-size.StatementThreshold: '40'
+  readability-function-size.BranchThreshold: '8'
+  readability-function-size.ParameterThreshold: '5'
+  readability-function-size.NestingThreshold: '3'
+  readability-function-size.VariableThreshold: '12'
+  readability-function-size.CountMemberInitAsStmt: 'true'
+
+  # -------------------------------------------------------------------------
+  # Naming
+  # -------------------------------------------------------------------------
+  # Values/functions/namespaces: snake_case.
+  # Types/concepts/template parameters: PascalCase.
+  # Enum alternatives: PascalCase.
+  readability-identifier-naming.DefaultCase: 'lower_case'
+  readability-identifier-naming.NamespaceCase: 'lower_case'
+  readability-identifier-naming.InlineNamespaceCase: 'lower_case'
+
+  readability-identifier-naming.TypeAliasCase: 'CamelCase'
+  readability-identifier-naming.TypedefCase: 'CamelCase'
+  readability-identifier-naming.StructCase: 'CamelCase'
+  readability-identifier-naming.ClassCase: 'CamelCase'
+  readability-identifier-naming.EnumCase: 'CamelCase'
+  readability-identifier-naming.ConceptCase: 'CamelCase'
+  readability-identifier-naming.TemplateParameterCase: 'CamelCase'
+
+  readability-identifier-naming.FunctionCase: 'lower_case'
+  readability-identifier-naming.GlobalFunctionCase: 'lower_case'
+  readability-identifier-naming.MethodCase: 'lower_case'
+  readability-identifier-naming.ClassMethodCase: 'lower_case'
+
+  readability-identifier-naming.ParameterCase: 'lower_case'
+  readability-identifier-naming.VariableCase: 'lower_case'
+  readability-identifier-naming.LocalVariableCase: 'lower_case'
+  readability-identifier-naming.GlobalVariableCase: 'lower_case'
+  readability-identifier-naming.MemberCase: 'lower_case'
+  readability-identifier-naming.ClassMemberCase: 'lower_case'
+  readability-identifier-naming.PrivateMemberCase: 'lower_case'
+  readability-identifier-naming.PrivateMemberSuffix: '_'
+
+  readability-identifier-naming.ConstantCase: 'lower_case'
+  readability-identifier-naming.GlobalConstantCase: 'lower_case'
+  readability-identifier-naming.LocalConstantCase: 'lower_case'
+  readability-identifier-naming.ConstexprVariableCase: 'lower_case'
+  readability-identifier-naming.GlobalConstexprVariableCase: 'lower_case'
+  readability-identifier-naming.LocalConstexprVariableCase: 'lower_case'
+
+  readability-identifier-naming.EnumConstantCase: 'CamelCase'
+  readability-identifier-naming.ScopedEnumConstantCase: 'CamelCase'
+
+  # Project macros are forbidden, but retain a deterministic naming rule for
+  # foreign/generated code if this config is accidentally applied there.
+  readability-identifier-naming.MacroDefinitionCase: 'UPPER_CASE'
+
+  # -------------------------------------------------------------------------
+  # Modern syntax: choose one spelling.
+  # -------------------------------------------------------------------------
+  modernize-use-trailing-return-type.TransformFunctions: 'true'
+  modernize-use-trailing-return-type.TransformLambdas: 'all'
+
+  # -------------------------------------------------------------------------
+  # Coroutine checks remain enabled even though direct coroutine syntax is
+  # categorically banned. They provide defense in depth for accidentally
+  # admitted code.
+  # -------------------------------------------------------------------------
+  misc-coroutine-hostile-raii.RAIITypesList: >
+    std::lock_guard;
+    std::scoped_lock;
+    std::unique_lock;
+    std::shared_lock
+
+CustomChecks:
+
+  # -------------------------------------------------------------------------
+  # Allocation / deallocation
+  # -------------------------------------------------------------------------
+  - Name: no-new
+    Query: |
+      match cxxNewExpr(
+        isExpansionInMainFile()
+      ).bind("node")
+    Diagnostic:
+      - BindName: node
+        Message: "direct `new` is forbidden; use a value, standard container, arena, or approved RAII resource"
+        Level: Warning
+
+  - Name: no-delete
+    Query: |
+      match cxxDeleteExpr(
+        isExpansionInMainFile()
+      ).bind("node")
+    Diagnostic:
+      - BindName: node
+        Message: "direct `delete` is forbidden; destruction must follow RAII ownership"
+        Level: Warning
+
+  # -------------------------------------------------------------------------
+  # Exceptions: there is no exception sublanguage.
+  # -------------------------------------------------------------------------
+  - Name: no-throw
+    Query: |
+      match cxxThrowExpr(
+        isExpansionInMainFile()
+      ).bind("node")
+    Diagnostic:
+      - BindName: node
+        Message: "`throw` is forbidden; use std::expected or a sender error completion"
+        Level: Warning
+
+  - Name: no-try
+    Query: |
+      match cxxTryStmt(
+        isExpansionInMainFile()
+      ).bind("node")
+    Diagnostic:
+      - BindName: node
+        Message: "`try`/`catch` is forbidden; exceptions are not part of this dialect"
+        Level: Warning
+
+  # -------------------------------------------------------------------------
+  # Runtime OO / RTTI
+  # -------------------------------------------------------------------------
+  - Name: no-virtual
+    Query: |
+      match cxxMethodDecl(
+        isExpansionInMainFile(),
+        isVirtual()
+      ).bind("node")
+    Diagnostic:
+      - BindName: node
+        Message: "virtual dispatch is forbidden; use concepts/templates, std::variant, or an explicitly approved type-erasure boundary"
+        Level: Warning
+
+  - Name: no-inheritance
+    Query: |
+      match cxxRecordDecl(
+        isExpansionInMainFile(),
+        isDefinition(),
+        hasAnyBase(cxxBaseSpecifier())
+      ).bind("node")
+    Diagnostic:
+      - BindName: node
+        Message: "inheritance is forbidden, including CRTP and marker inheritance; use composition and structural concepts"
+        Level: Warning
+
+  - Name: no-dynamic-cast
+    Query: |
+      match cxxDynamicCastExpr(
+        isExpansionInMainFile()
+      ).bind("node")
+    Diagnostic:
+      - BindName: node
+        Message: "`dynamic_cast` is forbidden; RTTI-based polymorphism is outside this dialect"
+        Level: Warning
+
+  # -------------------------------------------------------------------------
+  # Unsafe casts / C representations
+  # -------------------------------------------------------------------------
+  - Name: no-reinterpret-cast
+    Query: |
+      match cxxReinterpretCastExpr(
+        isExpansionInMainFile()
+      ).bind("node")
+    Diagnostic:
+      - BindName: node
+        Message: "`reinterpret_cast` is forbidden outside unsafe/foreign code"
+        Level: Warning
+
+  - Name: no-const-cast
+    Query: |
+      match cxxConstCastExpr(
+        isExpansionInMainFile()
+      ).bind("node")
+    Diagnostic:
+      - BindName: node
+        Message: "`const_cast` is forbidden; fix the ownership/mutability model instead"
+        Level: Warning
+
+  - Name: no-union
+    Query: |
+      match recordDecl(
+        isExpansionInMainFile(),
+        isUnion()
+      ).bind("node")
+    Diagnostic:
+      - BindName: node
+        Message: "C/C++ unions are forbidden; use std::variant for sum types"
+        Level: Warning
+
+  # -------------------------------------------------------------------------
+  # Raw pointers / member pointers
+  #
+  # Required borrow: T&
+  # Optional borrow: std::optional<std::reference_wrapper<T>>
+  # Sequence borrow: std::span<T>
+  # Text borrow: std::string_view
+  # Dynamic ownership: std::unique_ptr<T>
+  # -------------------------------------------------------------------------
+  # unless(isImplicit()): range-based for over contiguous containers desugars
+  # to compiler-generated __begin/__end pointer variables; only pointers the
+  # programmer wrote are violations.
+  - Name: no-raw-pointer-variable
+    Query: |
+      match varDecl(
+        isExpansionInMainFile(),
+        hasType(qualType(hasCanonicalType(pointerType()))),
+        unless(isImplicit())
+      ).bind("node")
+    Diagnostic:
+      - BindName: node
+        Message: "raw pointer variables/parameters are forbidden; use references, views, spans, optional reference wrappers, or RAII ownership"
+        Level: Warning
+
+  - Name: no-raw-pointer-field
+    Query: |
+      match fieldDecl(
+        isExpansionInMainFile(),
+        hasType(qualType(hasCanonicalType(pointerType())))
+      ).bind("node")
+    Diagnostic:
+      - BindName: node
+        Message: "raw pointer data members are forbidden; express ownership or borrowing explicitly"
+        Level: Warning
+
+  - Name: no-raw-pointer-return
+    Query: |
+      match functionDecl(
+        isExpansionInMainFile(),
+        unless(isImplicit()),
+        returns(qualType(hasCanonicalType(pointerType())))
+      ).bind("node")
+    Diagnostic:
+      - BindName: node
+        Message: "raw pointer return types are forbidden; return a value, reference, view, optional reference wrapper, span, or ownership object"
+        Level: Warning
+
+  - Name: no-member-pointer
+    Query: |
+      match declaratorDecl(
+        isExpansionInMainFile(),
+        hasType(qualType(hasCanonicalType(memberPointerType())))
+      ).bind("node")
+    Diagnostic:
+      - BindName: node
+        Message: "pointer-to-member types are forbidden; use reflection or structural callable/member abstractions"
+        Level: Warning
+
+  # -------------------------------------------------------------------------
+  # Hidden process/thread state
+  # -------------------------------------------------------------------------
+  - Name: no-static-local
+    Query: |
+      match varDecl(
+        isExpansionInMainFile(),
+        isStaticLocal()
+      ).bind("node")
+    Diagnostic:
+      - BindName: node
+        Message: "function-local static state is forbidden; pass state/capabilities explicitly"
+        Level: Warning
+
+  - Name: no-thread-local
+    Query: |
+      match varDecl(
+        isExpansionInMainFile(),
+        hasThreadStorageDuration()
+      ).bind("node")
+    Diagnostic:
+      - BindName: node
+        Message: "thread_local state is forbidden; scheduler/task context must be explicit"
+        Level: Warning
+
+  # -------------------------------------------------------------------------
+  # API shape
+  # -------------------------------------------------------------------------
+  - Name: no-default-arguments
+    Query: |
+      match parmVarDecl(
+        isExpansionInMainFile(),
+        hasDefaultArgument()
+      ).bind("node")
+    Diagnostic:
+      - BindName: node
+        Message: "default arguments are forbidden; use an explicit options value or a distinct overload with one canonical implementation"
+        Level: Warning
+
+  # -------------------------------------------------------------------------
+  # Async: sender/receiver is the one blessed model.
+  # Direct coroutine syntax is forbidden in dialect code.
+  # -------------------------------------------------------------------------
+  - Name: no-coroutines
+    Query: |
+      match coroutineBodyStmt(
+        isExpansionInMainFile()
+      ).bind("node")
+    Diagnostic:
+      - BindName: node
+        Message: "direct coroutine syntax is forbidden; express asynchronous work as std::execution senders"
+        Level: Warning
+
+  # -------------------------------------------------------------------------
+  # Semantic token bans (formerly enforced by the grep policy checker).
+  # Types are matched at their written type locations; functions at their
+  # reference expressions.
+  # -------------------------------------------------------------------------
+  - Name: no-shared-ownership
+    Query: |
+      match typeLoc(
+        isExpansionInMainFile(),
+        loc(qualType(hasDeclaration(namedDecl(hasAnyName(
+          "::std::shared_ptr",
+          "::std::weak_ptr",
+          "::std::enable_shared_from_this"
+        )))))
+      ).bind("node")
+      match declRefExpr(
+        isExpansionInMainFile(),
+        to(namedDecl(hasAnyName("::std::make_shared")))
+      ).bind("node")
+    Diagnostic:
+      - BindName: node
+        Message: "shared ownership is forbidden; redesign the ownership graph (unique owner, arena, value, or handle into an owning store)"
+        Level: Warning
+
+  - Name: no-dynamic-type
+    Query: |
+      match typeLoc(
+        isExpansionInMainFile(),
+        loc(qualType(hasDeclaration(namedDecl(hasAnyName(
+          "::std::any",
+          "::std::type_info",
+          "::std::type_index"
+        )))))
+      ).bind("node")
+    Diagnostic:
+      - BindName: node
+        Message: "dynamic type containers are forbidden; use a structural concept, std::variant, or an approved type-erasure boundary"
+        Level: Warning
+
+  - Name: no-thread-primitives
+    Query: |
+      match typeLoc(
+        isExpansionInMainFile(),
+        loc(qualType(hasDeclaration(namedDecl(hasAnyName(
+          "::std::thread",
+          "::std::jthread",
+          "::std::future",
+          "::std::promise",
+          "::std::packaged_task"
+        )))))
+      ).bind("node")
+      match declRefExpr(
+        isExpansionInMainFile(),
+        to(namedDecl(hasAnyName("::std::async")))
+      ).bind("node")
+    Diagnostic:
+      - BindName: node
+        Message: "raw thread/future primitives are forbidden; async work is std::execution senders"
+        Level: Warning
+
+  - Name: no-sync-primitives
+    Query: |
+      match typeLoc(
+        isExpansionInMainFile(),
+        loc(qualType(hasDeclaration(namedDecl(hasAnyName(
+          "::std::mutex",
+          "::std::recursive_mutex",
+          "::std::shared_mutex",
+          "::std::timed_mutex",
+          "::std::recursive_timed_mutex",
+          "::std::shared_timed_mutex",
+          "::std::condition_variable",
+          "::std::condition_variable_any",
+          "::std::atomic",
+          "::std::atomic_ref"
+        )))))
+      ).bind("node")
+    Diagnostic:
+      - BindName: node
+        Message: "locks and atomics are restricted to unsafe/ concurrency primitives"
+        Level: Warning
+
+  - Name: no-sfinae-relics
+    Query: |
+      match typeLoc(
+        isExpansionInMainFile(),
+        loc(qualType(hasDeclaration(namedDecl(hasAnyName(
+          "::std::enable_if",
+          "::std::enable_if_t",
+          "::std::void_t"
+        )))))
+      ).bind("node")
+    Diagnostic:
+      - BindName: node
+        Message: "SFINAE dispatch is forbidden; express requirements as concepts"
+        Level: Warning
+
+  - Name: no-std-function-bind
+    Query: |
+      match typeLoc(
+        isExpansionInMainFile(),
+        loc(qualType(hasDeclaration(namedDecl(hasAnyName(
+          "::std::function"
+        )))))
+      ).bind("node")
+      match declRefExpr(
+        isExpansionInMainFile(),
+        to(namedDecl(hasAnyName(
+          "::std::bind",
+          "::std::bind_front",
+          "::std::bind_back"
+        )))
+      ).bind("node")
+    Diagnostic:
+      - BindName: node
+        Message: "std::function and bind are forbidden; use std::function_ref for non-owning erased callables and lambdas for binding"
+        Level: Warning
+
+  # unless(isImplicit()): anonymous namespaces desugar to an implicit
+  # using-directive; only directives the programmer wrote are violations.
+  - Name: no-using-namespace
+    Query: |
+      match usingDirectiveDecl(
+        isExpansionInMainFile(),
+        unless(isImplicit())
+      ).bind("node")
+    Diagnostic:
+      - BindName: node
+        Message: "using-directives are forbidden in dialect code; they defeat qualified-name review and tooling"
+        Level: Warning
+...

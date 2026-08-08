@@ -1,0 +1,4 @@
+# The standalone leaf crate's own build tree (the root /target/ ignore
+# does not reach a workspace-excluded crate; the ts precedent pins
+# crate/target/ in ts/.gitignore — this crate owns its pin locally).
+/target/

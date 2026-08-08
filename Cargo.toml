@@ -11,8 +11,11 @@ members = [
 # The napi bridge crate at ts/crate is NOT a member: the engine workspace stays
 # heed+blake3-pure (no napi). ts/crate carries its own empty [workspace] table;
 # this exclude is the explicit belt-and-suspenders pin against auto-discovery.
+# The C-ABI bridge crate at cpp/bridge follows the same law: a standalone
+# staticlib/cdylib leaf with its own empty [workspace] table, excluded here.
 exclude = [
     "ts/crate",
+    "cpp/bridge",
 ]
 
 [workspace.lints.rust]
