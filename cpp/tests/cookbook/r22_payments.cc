@@ -1,16 +1,3 @@
-// Cookbook recipe 22 — Union reads (ts/COOKBOOK.md §22): the whole-DU
-// read is a SET OF RULES — one head, one rule per arm; disjunction is
-// data at the top, never an execution node. The exclusivity theorem
-// (recipe 2) is spent a third time here: rules selecting different `kind`
-// handles are provably disjoint, so the executor elides cross-rule dedup.
-// The shared head column `n` draws from DIFFERENT bare u64 columns per
-// rule — `bdb::as<"n">(...)` decouples the head name from the field.
-//
-// Gates: the engine fingerprint equals the shared golden (fixtures line
-// "r22 <64-hex>"); `wholeDu` (two rules, same head {id, n}, handle
-// literals per rule) prepares through the real engine validator.
-//
-// argv[1] = the fixtures file path (passed by add_test).
 import std;
 import bumbledb;
 
@@ -43,8 +30,6 @@ inline constexpr auto Payments =
                             bdb::mirrors(bdb::on(bdb::where(Payment, {.kind = Kind.Card}), Payment.id), bdb::on(Card.payment)),
                             bdb::mirrors(bdb::on(bdb::where(Payment, {.kind = Kind.Ach}), Payment.id), bdb::on(Ach.payment)));
 
-// One query, two rules (set union): every rule derives the same head
-// {id, n} — `n` is Card.last4 in one arm, Ach.routing in the other.
 inline constexpr auto WholeDu = bdb::query(Payments)
                                     .rule([](auto r) consteval {
 	                                    auto payment = r.vars(Payment);
@@ -94,8 +79,6 @@ struct CaseResult {
 	bool passed;
 };
 
-/// The golden of one recipe: the fixtures file is one `rNN <64-hex>` line
-/// per recipe (ts/test/cookbook.test.ts reads the same file).
 [[nodiscard]] auto golden_of(std::string_view fixtures, std::string_view recipe) -> std::optional<std::string> {
 	for (auto const line_range : std::views::split(fixtures, '\n')) {
 		auto const line = std::string_view{line_range};
@@ -190,7 +173,7 @@ auto run_cases(std::string_view fixtures_path, std::vector<CaseResult>& results)
 	std::filesystem::remove_all(*dir, code);
 }
 
-} // namespace
+}
 
 auto main(int argc, char** argv) -> int {
 	auto const arguments = std::span{argv, static_cast<std::size_t>(argc)};

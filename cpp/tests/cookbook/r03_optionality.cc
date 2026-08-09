@@ -1,17 +1,3 @@
-// Cookbook recipe 3 — 0..1 optional attributes (TODO_CPP §33;
-// ts/COOKBOOK.md §3): optionality is a RELATION, never a nullable column.
-// `MailingAddress` holds at most one row per business (the one-column
-// key) and every address points at a real business (the one-way
-// containment — deliberately NOT mirrored, so address-less businesses are
-// legal). The recipe's query is the anti-join: businesses with NO mailing
-// address, spelled as one negated EDB atom (`.not_match` — the C++ image
-// of TS `not(MailingAddress, { business: b })`).
-//
-// Fingerprint vs the shared golden (fixtures/cookbook-fingerprints.txt,
-// line "r03 <64-hex>"), then the query prepares through the REAL engine
-// validator and answers the recipe's own semantics.
-//
-// argv[1] = the fixtures file path (passed by add_test).
 import std;
 import bumbledb;
 
@@ -32,16 +18,10 @@ inline constexpr auto MailingAddress = bdb::relation<"MailingAddress", MailingAd
 
 inline constexpr auto Optionality = bdb::schema<"Optionality">(Business, MailingAddress,
 
-                                                               // 0..1: at most one address per business.
                                                                bdb::key(MailingAddress.business),
 
-                                                               // Every address points at a real business — one-way on purpose (no
-                                                               // mirror), so a business without an address is a legal state.
                                                                bdb::contained(bdb::on(MailingAddress.business), bdb::on(Business.id)));
 
-// The anti-join: keep every business no MailingAddress fact extends. The
-// negated atom binds nothing — `vars.id` is grounded by the positive
-// Business atom (the safety rule).
 inline constexpr auto Unaddressed = bdb::query(Optionality).rule([](auto r) consteval {
 	auto vars = r.vars(Business);
 	return r
@@ -65,8 +45,6 @@ struct CaseResult {
 	bool passed;
 };
 
-/// The golden of one recipe: the fixtures file is one `rNN <64-hex>` line
-/// per recipe (ts/test/cookbook.test.ts reads the same file).
 [[nodiscard]] auto golden_of(std::string_view fixtures, std::string_view recipe) -> std::optional<std::string> {
 	for (auto const line_range : std::views::split(fixtures, '\n')) {
 		auto const line = std::string_view{line_range};
@@ -129,7 +107,6 @@ struct SeedIds {
 	std::uint64_t shell;
 };
 
-/// Two businesses; only acme carries the optional mailing address.
 [[nodiscard]] auto seed(bdb::Db& db) -> std::optional<SeedIds> {
 	using Decision = bdb::WriteDecision<SeedIds, std::monostate>;
 	using Result = std::expected<Decision, bdb::Error>;
@@ -206,7 +183,6 @@ auto run_cases(std::string_view fixtures_path, std::vector<CaseResult>& results)
 		return;
 	}
 
-	// The anti-join keeps exactly the address-less business.
 	auto answers = db->execute(*unaddressed, {});
 	results.push_back(CaseResult{
 	    .name = "unaddressed answers {shell} (the anti-join)",
@@ -217,7 +193,7 @@ auto run_cases(std::string_view fixtures_path, std::vector<CaseResult>& results)
 	std::filesystem::remove_all(*dir, code);
 }
 
-} // namespace
+}
 
 auto main(int argc, char** argv) -> int {
 	auto const arguments = std::span{argv, static_cast<std::size_t>(argc)};

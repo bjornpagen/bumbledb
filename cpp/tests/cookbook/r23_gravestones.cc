@@ -1,57 +1,28 @@
-// Cookbook recipe 23 — The anti-recipes: five gravestones
-// (ts/COOKBOOK.md §23). What NOT to model — each gravestone names
-// unsupported vocabulary and its representable replacement; the block's
-// relations are the REPLACEMENTS, compiled:
-//
-//   - successor pointers (a `next` column)  -> the ordering triple (Step)
-//   - floats for scores/rates/money         -> fixed-point i64 bps (Score)
-//   - conditional keys ("at most one active
-//     run per student" as an FD)            -> the relation split, whose
-//                                             ordinary key IS the
-//                                             invariant (ActiveRun)
-//   - clip-at-query intervals               -> split at write (Usage)
-//   - uuid keys (identity + clash-avoidance
-//     + clock in one lie)                   -> fresh + an explicit i64
-//                                             time column (Event)
-//
-// The refused spellings are compile-time walls in this dialect (no float
-// field type exists; keys are unconditional projections) — the TS test
-// admits only the replacements, and so does this one. Gate: the engine
-// fingerprint equals the shared golden (fixtures line "r23 <64-hex>").
-//
-// argv[1] = the fixtures file path (passed by add_test).
 import std;
 import bumbledb;
 
-// REPLACEMENT for successor pointers: the ordering triple (recipe 9).
 struct StepRow {
 	std::uint64_t flow;
 	std::uint64_t pos;
 	std::string action;
 };
 
-// REPLACEMENT for floats: fixed-point i64 — basis points (recipe 4).
 struct ScoreRow {
 	std::uint64_t subject;
 	std::int64_t bps;
 };
 
-// REPLACEMENT for conditional keys: the relation split, whose ordinary
-// key IS the invariant (recipe 13's arm shape).
 struct ActiveRunRow {
 	std::uint64_t student;
 	std::uint64_t run;
 };
 
-// REPLACEMENT for clip-at-query intervals: split at write (recipe 17).
 struct UsageRow {
 	std::uint64_t meter;
 	std::uint64_t period;
 	bdb::interval<std::int64_t> used;
 };
 
-// REPLACEMENT for uuid keys: fresh (minted identity) + an explicit i64
-// time column.
 struct EventRow {
 	[[= bdb::fresh]] std::uint64_t id;
 
@@ -71,8 +42,6 @@ inline constexpr auto Gravestones = bdb::schema<"Gravestones">(Step, Score, Acti
 
 namespace {
 
-/// The golden of one recipe: the fixtures file is one `rNN <64-hex>` line
-/// per recipe (ts/test/cookbook.test.ts reads the same file).
 [[nodiscard]] auto golden_of(std::string_view fixtures, std::string_view recipe) -> std::optional<std::string> {
 	for (auto const line_range : std::views::split(fixtures, '\n')) {
 		auto const line = std::string_view{line_range};
@@ -130,7 +99,7 @@ namespace {
 	return dir;
 }
 
-} // namespace
+}
 
 auto main(int argc, char** argv) -> int {
 	auto const arguments = std::span{argv, static_cast<std::size_t>(argc)};

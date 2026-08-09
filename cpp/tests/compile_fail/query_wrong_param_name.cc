@@ -1,7 +1,3 @@
-// §34 / TODO_CPP §21 — a wrong parameter name at execute is a compile
-// error: the params product is synthesized from the query's registry
-// (one member per param, named per param), so a designated initializer
-// naming anything else cannot compile. DownAt registers exactly "t".
 import std;
 import bumbledb;
 
@@ -37,7 +33,6 @@ inline constexpr auto DownAt = bdb::query(Uptime).rule([](auto r) consteval {
 	    });
 });
 
-// What `snap.execute(prepared, {...})` takes — with the wrong name.
 [[nodiscard]] consteval auto misuse() -> bool {
 	auto const params = bdb::params_of<DownAt>{.at = std::int64_t{42}};
 	return sizeof params != 0;

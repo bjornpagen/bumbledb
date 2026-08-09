@@ -1,7 +1,3 @@
-// :predicate — the `.where` vocabulary (TODO_CPP §11; lowering.md §4):
-// point_in, allen_in, and the typed scalar comparisons (eq/ne/lt/le/gt/
-// ge). Each constructor builds a cond_value — the leaf comparison plus
-// the param uses its construction anchored.
 export module bumbledb:predicate;
 
 import std;
@@ -16,15 +12,13 @@ import :pattern;
 
 export namespace bdb {
 
-// ————————————————————————————————————————————————————————————————————
-// Predicates (`.where` vocabulary).
-// ————————————————————————————————————————————————————————————————————
-
-/// Point membership — THE one spelling (ts/src/query/atom.ts:425-435):
-/// `point_in(t, w)` holds iff `w.start ≤ t < w.end`. The point side is a
-/// param, a bound element-typed variable, or an integer literal; the
-/// interval side is a bound interval variable. The stored value is
-/// interval-LEFT whatever the surface order (lowering.md §4.2).
+/**
+ * Point membership: `point_in(t, w)` holds iff `w.start ≤ t < w.end`. The
+ * point side is a param, a bound element-typed variable, or an integer
+ * literal; the interval side is a bound interval variable. The stored
+ * condition is interval-LEFT whatever the surface order (lowering.md
+ * §4.2).
+ */
 template<class Point, class IntervalVar>
 [[nodiscard]] consteval auto point_in(Point point, IntervalVar) -> cond_value {
 	static_assert(detail::is_qvar_v<IntervalVar> &&
@@ -58,14 +52,13 @@ template<class Point, class IntervalVar>
 	return out;
 }
 
-/// THE interval-pair comparison (`ir::CmpOp::Allen`), the TS-shaped
-/// argument order (`allen(window, ALLEN.intersects, incident)`) spelled
-/// `allen_in(window, bdb::allen::intersects, r.param<"incident">())` —
-/// satisfied iff the pair's Allen classification is in the 13-bit mask.
-/// (`bdb::allen` itself is the mask-constant namespace, so the predicate
-/// carries the `_in` suffix, like `point_in`.) Sides are bound interval
-/// variables, params (anchored by the variable sibling), or interval
-/// literals; at least one side is a variable.
+/**
+ * The interval-pair comparison (`ir::CmpOp::Allen`), satisfied iff the
+ * pair's Allen classification is in the 13-bit mask. Sides are bound
+ * interval variables, params (anchored by the variable sibling), or
+ * interval literals. Only the element domain must match — mixed widths
+ * compare freely (widths type storage, not comparison).
+ */
 template<class Left, class Right>
 [[nodiscard]] consteval auto allen_in(Left left, allen_mask mask, Right right) -> cond_value {
 	constexpr auto left_is_var = detail::is_qvar_v<Left>;
@@ -85,8 +78,6 @@ template<class Left, class Right>
 
 	auto const side = [&]<class Side>(Side value) -> term_data {
 		if constexpr (detail::is_qvar_v<Side>) {
-			// Element-domain equality only: mixed WIDTHS compare freely
-			// (the r29 rule — widths type storage, not comparison).
 			static_assert(Side::cls.kind == domain.kind, "bumbledb allen_in(): both interval sides must share one "
 			                                             "element domain");
 			return detail::var_term<Side>();
@@ -124,20 +115,21 @@ template<class Left, class Right>
 	return out;
 }
 
-} // namespace bdb
+}
 
 namespace bdb::detail {
-
-// The comparison constructors' shared anchor machinery.
 
 template<class Side>
 [[nodiscard]] consteval auto side_is_term() -> bool {
 	return is_qvar_v<Side> || is_param_ref_v<Side> || is_set_param_ref_v<Side> || is_measure_ref_v<Side>;
 }
 
-/// The shared scalar-comparison constructor: sides are bound variables,
-/// params (anchored by the variable sibling), measures (order ops), or
-/// integral/bool literals (tagged by the sibling's domain).
+/**
+ * The shared scalar-comparison constructor: sides are bound variables,
+ * params, measures (order ops), or integral/bool literals. The anchoring
+ * domain is a variable side's class, else the measure's u64 — it types
+ * the param uses and tags the literals.
+ */
 template<query_cmp Op, class Left, class Right>
 [[nodiscard]] consteval auto comparison_of(Left left, Right right) -> cond_value {
 	constexpr auto ordered = Op == query_cmp::lt || Op == query_cmp::le || Op == query_cmp::gt || Op == query_cmp::ge;
@@ -150,15 +142,13 @@ template<query_cmp Op, class Left, class Right>
 	              "bumbledb comparison: a set param is legal in atom bindings and "
 	              "one side of eq only (ir::Term::ParamSet)");
 
-	// The anchoring domain: a variable side's class, else the measure
-	// (u64), else the OTHER side anchors.
 	constexpr auto domain = [] {
 		if constexpr (is_qvar_v<Left>) {
 			return Left::cls;
 		} else if constexpr (is_qvar_v<Right>) {
 			return Right::cls;
 		} else {
-			return field_class{value_kind::u64, 0}; // the measure domain
+			return field_class{value_kind::u64, 0};
 		}
 	}();
 
@@ -219,44 +209,38 @@ template<query_cmp Op, class Left, class Right>
 	return out;
 }
 
-} // namespace bdb::detail
+}
 
 export namespace bdb {
 
-/// Typed equality (`ir::CmpOp::Eq`).
 template<class Left, class Right>
 [[nodiscard]] consteval auto eq(Left left, Right right) -> cond_value {
 	return detail::comparison_of<query_cmp::eq>(left, right);
 }
 
-/// Typed disequality (`ir::CmpOp::Ne`).
 template<class Left, class Right>
 [[nodiscard]] consteval auto ne(Left left, Right right) -> cond_value {
 	return detail::comparison_of<query_cmp::ne>(left, right);
 }
 
-/// Strict less-than (`ir::CmpOp::Lt`) — orderable scalar sides only.
 template<class Left, class Right>
 [[nodiscard]] consteval auto lt(Left left, Right right) -> cond_value {
 	return detail::comparison_of<query_cmp::lt>(left, right);
 }
 
-/// Less-or-equal (`ir::CmpOp::Le`).
 template<class Left, class Right>
 [[nodiscard]] consteval auto le(Left left, Right right) -> cond_value {
 	return detail::comparison_of<query_cmp::le>(left, right);
 }
 
-/// Strict greater-than (`ir::CmpOp::Gt`).
 template<class Left, class Right>
 [[nodiscard]] consteval auto gt(Left left, Right right) -> cond_value {
 	return detail::comparison_of<query_cmp::gt>(left, right);
 }
 
-/// Greater-or-equal (`ir::CmpOp::Ge`).
 template<class Left, class Right>
 [[nodiscard]] consteval auto ge(Left left, Right right) -> cond_value {
 	return detail::comparison_of<query_cmp::ge>(left, right);
 }
 
-} // namespace bdb
+}

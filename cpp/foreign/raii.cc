@@ -1,21 +1,17 @@
-// The safe ownership surface over the raw C ABI (TODO_CPP §15–§19, §27,
-// §31): RAII handle owners, std::expected outcomes, span/view parameters,
-// and the lexical callback trampolines. This module lives in foreign/
-// because adapting the ABI REQUIRES raw pointers and void* context
-// smuggling (AGENTS.md §5.3); everything it exports upward is
-// dialect-safe — no raw pointer crosses this boundary as a parameter or
-// return type of the exported surface (the opaque view structs' interior
-// pointers are the one sanctioned exception, TODO_CPP §31's pre-schema
-// lane).
-//
-// Status protocol (bumbledb_c.h module doc): OK / ABORTED are success
-// shapes, ERROR hands over an owned bdb_error, and MISUSE is a contract
-// violation that these wrappers make unreachable by construction —
-// non-null owned handles, live lexical refs, host-side bounds checks. A
-// MISUSE that fires anyway is an impossible programmer state; this module
-// is part of BOTH graphs and the pinned Clang 22 lint frontend has no
-// C++26 contracts, so the one honest spelling left is termination
-// (AGENTS.md §11's failure ladder).
+/**
+ * The safe ownership surface over the raw C ABI: RAII handle owners,
+ * std::expected outcomes, span/view parameters, lexical callback
+ * trampolines. Nothing it exports carries a raw pointer (the opaque view
+ * structs' interior pointers are the one sanctioned exception — the
+ * pre-schema spec lane). Status protocol (bumbledb_c.h): OK / ABORTED
+ * are success shapes, ERROR hands over an owned bdb_error, and MISUSE is
+ * a contract violation these wrappers make unreachable by construction;
+ * a MISUSE that fires anyway is an impossible programmer state, and —
+ * this module is in both graphs and the pinned lint Clang 22 has no
+ * C++26 contracts — the one honest spelling left is termination. The
+ * owned_* spec builders are the pre-schema lane: runtime-test
+ * scaffolding the schema elaborator replaces wholesale.
+ */
 export module bumbledb_foreign:raii;
 
 import std;
@@ -23,8 +19,6 @@ import :abi;
 
 namespace bdb::foreign {
 
-// Termination for boundary states the wrappers prove unreachable (see the
-// module comment).
 [[noreturn]] auto unreachable_boundary_state() -> void {
 	std::abort();
 }
@@ -43,12 +37,14 @@ namespace bdb::foreign {
 	return bdb_string_view{.data = nullptr, .len = 0};
 }
 
-} // namespace bdb::foreign
+}
 
 export namespace bdb::foreign {
 
-/// Borrow-decode of an ABI text view (the ABI speaks uint8_t, the host
-/// speaks char). The result borrows whatever carrier the view borrows.
+/**
+ * Borrow-decode of an ABI text view (the ABI speaks uint8_t, the host
+ * speaks char). The result borrows whatever carrier the view borrows.
+ */
 [[nodiscard]] auto text_of(bdb_string_view view) -> std::string_view {
 	if (view.data == nullptr) {
 		return std::string_view{};
@@ -56,7 +52,9 @@ export namespace bdb::foreign {
 	return std::string_view{std::bit_cast<char const*>(view.data), view.len};
 }
 
-/// Borrow-decode of an ABI byte view; same borrow contract as text_of.
+/**
+ * Borrow-decode of an ABI byte view; same borrow contract as text_of.
+ */
 [[nodiscard]] auto bytes_span_of(bdb_bytes_view view) -> std::span<std::byte const> {
 	if (view.data == nullptr) {
 		return std::span<std::byte const>{};
@@ -64,14 +62,15 @@ export namespace bdb::foreign {
 	return std::span{std::bit_cast<std::byte const*>(view.data), view.len};
 }
 
-/// The GenerationMoved payload (witnessed/current generations).
 struct generation_moved_payload {
 	std::uint64_t witnessed;
 	std::uint64_t current;
 };
 
-/// One rendered violation, copied OUT of the owning error so the value is
-/// ownership-closed (no borrow survives the error's death).
+/**
+ * One rendered violation, copied OUT of the owning error so the value is
+ * ownership-closed (no borrow survives the error's death).
+ */
 struct violation_copy {
 	std::uint16_t statement;
 	bdb_statement_kind kind;
@@ -82,14 +81,18 @@ struct violation_copy {
 	std::uint64_t measure_hi;
 };
 
-/// Owning RAII over bdb_error* (TODO_CPP §27). Move-only; the moved-from
-/// handle is inert (every accessor on it is the unreachable boundary
-/// state — never hand a moved-from error onward).
+/**
+ * Owning RAII over bdb_error*. Move-only; the moved-from handle is inert
+ * — every accessor on it is the unreachable boundary state, so never
+ * hand a moved-from error onward.
+ */
 class error_handle {
 	bdb_error* raw_{nullptr};
 
 public:
-	/// Adopts an owned error written by a BDB_STATUS_ERROR return.
+	/**
+	 * Adopts an owned error written by a BDB_STATUS_ERROR return.
+	 */
 	explicit error_handle(bdb_error* owned) : raw_{owned} {
 		if (owned == nullptr) {
 			unreachable_boundary_state();
@@ -117,8 +120,10 @@ public:
 		return bdb_error_get_kind(raw_);
 	}
 
-	/// The rendered message, copied out (the borrowed view dies with the
-	/// error; the copy does not).
+	/**
+	 * The rendered message, copied out (the borrowed view dies with the
+	 * error; the copy does not).
+	 */
 	[[nodiscard]] auto message() const -> std::string {
 		auto view = absent_view();
 		if (bdb_error_get_message(raw_, &view) != bdb_status::BDB_STATUS_OK) {
@@ -140,7 +145,9 @@ public:
 		return bdb_error_violation_count(raw_);
 	}
 
-	/// One violation, spelling copied out; nullopt past violation_count().
+	/**
+	 * One violation, spelling copied out; nullopt past violation_count().
+	 */
 	[[nodiscard]] auto violation(std::size_t index) const -> std::optional<violation_copy> {
 		if (index >= violation_count()) {
 			return std::nullopt;
@@ -169,19 +176,20 @@ private:
 	}
 };
 
-/// How a lexical callback run ended when it did not fail: the callback
-/// returned OK (completed — a write committed) or ABORT (the write delta
-/// dropped; a read simply ended early).
+/**
+ * How a lexical callback run ended when it did not fail: the callback
+ * returned OK (completed — a write committed) or ABORT (the write delta
+ * dropped; a read simply ended early).
+ */
 enum class callback_done : std::uint8_t {
 	completed,
 	aborted,
 };
 
-} // namespace bdb::foreign
+}
 
 namespace bdb::foreign {
 
-// The status → outcome fold shared by every callback-shaped entry point.
 [[nodiscard]] auto callback_outcome(bdb_status status, bdb_error* error) -> std::expected<callback_done, error_handle> {
 	switch (status) {
 	case bdb_status::BDB_STATUS_OK:
@@ -196,7 +204,6 @@ namespace bdb::foreign {
 	unreachable_boundary_state();
 }
 
-// The status → value fold for plain fallible calls (no ABORTED shape).
 template<class T>
 [[nodiscard]] auto value_outcome(bdb_status status, bdb_error* error, T value) -> std::expected<T, error_handle> {
 	switch (status) {
@@ -211,7 +218,6 @@ template<class T>
 	unreachable_boundary_state();
 }
 
-// The status → done fold for value-less fallible calls (no ABORTED shape).
 [[nodiscard]] auto status_outcome(bdb_status status, bdb_error* error) -> std::expected<void, error_handle> {
 	switch (status) {
 	case bdb_status::BDB_STATUS_OK:
@@ -225,21 +231,25 @@ template<class T>
 	unreachable_boundary_state();
 }
 
-} // namespace bdb::foreign
+}
 
 export namespace bdb::foreign {
 
-/// Owning RAII over an answers carrier (TODO_CPP §22–§23). Move-only;
-/// minted empty; clear() retains capacity. cell() is bounds-checked HERE
-/// so the bridge's MISUSE lane is unreachable (§22).
+/**
+ * Owning RAII over an answers carrier. Move-only; minted empty; clear()
+ * retains capacity. cell() is bounds-checked HERE so the bridge's MISUSE
+ * lane is unreachable.
+ */
 class answers_handle {
 	bdb_answers* raw_{nullptr};
 
 	explicit answers_handle(bdb_answers* owned) : raw_{owned} {}
 
 public:
-	/// Mints an empty carrier (the ABI's never-fails constructor; an
-	/// allocation failure is process death, not a recoverable state).
+	/**
+	 * Mints an empty carrier (the ABI's never-fails constructor; an
+	 * allocation failure is process death, not a recoverable state).
+	 */
 	[[nodiscard]] static auto make() -> answers_handle {
 		auto* raw = bdb_answers_new();
 		if (raw == nullptr) {
@@ -265,30 +275,37 @@ public:
 		destroy();
 	}
 
-	/// Whether this handle still owns a carrier (false after a move-out).
+	/**
+	 * Whether this handle still owns a carrier (false after a move-out).
+	 */
 	[[nodiscard]] auto alive() const -> bool {
 		return raw_ != nullptr;
 	}
 
-	/// Row count (0 for a moved-from handle — the ABI's own null answer).
+	/**
+	 * Row count (0 for a moved-from handle — the ABI's own null answer).
+	 */
 	[[nodiscard]] auto len() const -> std::size_t {
 		return bdb_answers_len(raw_);
 	}
 
-	/// Column count (0 for a moved-from handle).
+	/**
+	 * Column count (0 for a moved-from handle).
+	 */
 	[[nodiscard]] auto arity() const -> std::size_t {
 		return bdb_answers_arity(raw_);
 	}
 
-	/// Empties the carrier, retaining capacity.
 	auto clear() -> void {
 		if (raw_ != nullptr) {
 			static_cast<void>(bdb_answers_clear(raw_));
 		}
 	}
 
-	/// One cell, bounds-checked host-side: nullopt out of range. The
-	/// returned value's string/bytes payloads BORROW this carrier.
+	/**
+	 * One cell, bounds-checked host-side: nullopt out of range. The
+	 * returned value's string/bytes payloads BORROW this carrier.
+	 */
 	[[nodiscard]] auto cell(std::size_t row, std::size_t column) const -> std::optional<bdb_value> {
 		if (row >= len() || column >= arity()) {
 			return std::nullopt;
@@ -301,7 +318,6 @@ public:
 	}
 
 private:
-	// The execute lane fills this carrier through the raw handle.
 	friend class prepared_handle;
 
 	auto destroy() -> void {
@@ -312,10 +328,12 @@ private:
 	}
 };
 
-/// Owning RAII over a prepared query (TODO_CPP §20). Move-only — the
-/// moved-from handle is inert (alive() == false). The prepared value
-/// co-owns its engine below the boundary (the bridge's PreparedHandle),
-/// so the environment outlives every prepared query by construction.
+/**
+ * Owning RAII over a prepared query. Move-only — the moved-from handle
+ * is inert (alive() == false). The prepared value co-owns its engine
+ * below the boundary, so the environment outlives every prepared query
+ * by construction.
+ */
 class prepared_handle {
 	bdb_prepared* raw_{nullptr};
 
@@ -345,16 +363,19 @@ public:
 		destroy();
 	}
 
-	/// Whether this handle still owns a prepared query (false after a
-	/// move-out).
+	/**
+	 * Whether this handle still owns a prepared query (false after a
+	 * move-out).
+	 */
 	[[nodiscard]] auto alive() const -> bool {
 		return raw_ != nullptr;
 	}
 
-	/// Executes against a snapshot with positional params, filling the
-	/// caller's reusable carrier (cleared first, capacity retained — the
-	/// execute_into lane, TODO_CPP §23). Non-const: execution takes the
-	/// prepared query exclusively (&mut engine-side — §20/§22).
+	/**
+	 * Executes against a snapshot with positional params, filling the
+	 * caller's reusable carrier (cleared first, capacity retained).
+	 * Non-const: execution takes the prepared query exclusively.
+	 */
 	[[nodiscard]] auto execute(bdb_snapshot_ref const& snapshot, std::span<bdb_param const> params, answers_handle& answers)
 	    -> std::expected<void, error_handle> {
 		bdb_error* error = nullptr;
@@ -371,18 +392,24 @@ private:
 	}
 };
 
-/// Owning RAII over a scan/point-read row set. Move-only; cell() is
-/// bounds-checked host-side. A default-constructed/moved-from handle is
-/// the empty row set (len 0) — the ABI's own null answer.
+/**
+ * Owning RAII over a scan/point-read row set. Move-only; cell() is
+ * bounds-checked host-side. A default-constructed/moved-from handle is
+ * the empty row set (len 0) — the ABI's own null answer.
+ */
 class row_set_handle {
 	bdb_row_set* raw_{nullptr};
 
 public:
-	/// The empty row set (also what bdb_tx_get/bdb_snapshot_get write on
-	/// a key miss).
+	/**
+	 * The empty row set (also what bdb_tx_get/bdb_snapshot_get write on
+	 * a key miss).
+	 */
 	row_set_handle() = default;
 
-	/// Adopts an owned row set written by a successful get/scan.
+	/**
+	 * Adopts an owned row set written by a successful get/scan.
+	 */
 	explicit row_set_handle(bdb_row_set* owned) : raw_{owned} {}
 
 	row_set_handle(row_set_handle const&) = delete;
@@ -413,8 +440,10 @@ public:
 		return bdb_row_set_arity(raw_, row);
 	}
 
-	/// One cell, bounds-checked host-side: nullopt out of range. The
-	/// returned value's string/bytes payloads BORROW this row set.
+	/**
+	 * One cell, bounds-checked host-side: nullopt out of range. The
+	 * returned value's string/bytes payloads BORROW this row set.
+	 */
 	[[nodiscard]] auto cell(std::size_t row, std::size_t column) const -> std::optional<bdb_value> {
 		if (row >= len() || column >= arity(row)) {
 			return std::nullopt;
@@ -435,23 +464,23 @@ private:
 	}
 };
 
-/// A callable usable as the body of a lexical read (TODO_CPP §16).
 template<class Body>
 concept SnapshotBody = requires(Body& body, bdb_snapshot_ref const& snapshot) {
 	{ body(snapshot) } -> std::same_as<bdb_callback_control>;
 };
 
-/// A callable usable as the body of a lexical write (TODO_CPP §17).
 template<class Body>
 concept TxBody = requires(Body& body, bdb_tx_ref& transaction) {
 	{ body(transaction) } -> std::same_as<bdb_callback_control>;
 };
 
-/// Owning RAII over bdb_db* (TODO_CPP §15). Move-only; the moved-from
-/// handle is inert (alive() == false; using it further is the unreachable
-/// boundary state). Destruction destroys the handle; the environment lock
-/// releases when the engine's last co-owner (prepared queries, below the
-/// boundary) is gone.
+/**
+ * Owning RAII over bdb_db*. Move-only; the moved-from handle is inert
+ * (alive() == false; using it further is the unreachable boundary
+ * state). Destruction destroys the handle; the environment lock releases
+ * when the engine's last co-owner (prepared queries, below the boundary)
+ * is gone.
+ */
 class db_handle {
 	bdb_db* raw_{nullptr};
 
@@ -464,7 +493,9 @@ class db_handle {
 	}
 
 public:
-	/// Creates a fresh DURABLE store at path from a schema spec view.
+	/**
+	 * Creates a fresh DURABLE store at path from a schema spec view.
+	 */
 	[[nodiscard]] static auto create(std::string_view path, bdb_schema_spec const& spec) -> std::expected<db_handle, error_handle> {
 		bdb_db* database = nullptr;
 		bdb_error* error = nullptr;
@@ -472,7 +503,9 @@ public:
 		return from_status(status, database, error);
 	}
 
-	/// Opens an existing durable store, verifying the fingerprint.
+	/**
+	 * Opens an existing durable store, verifying the fingerprint.
+	 */
 	[[nodiscard]] static auto open(std::string_view path, bdb_schema_spec const& spec) -> std::expected<db_handle, error_handle> {
 		bdb_db* database = nullptr;
 		bdb_error* error = nullptr;
@@ -480,7 +513,9 @@ public:
 		return from_status(status, database, error);
 	}
 
-	/// Opens or initializes an EPHEMERAL store at path.
+	/**
+	 * Opens or initializes an EPHEMERAL store at path.
+	 */
 	[[nodiscard]] static auto ephemeral(std::string_view path, bdb_schema_spec const& spec) -> std::expected<db_handle, error_handle> {
 		bdb_db* database = nullptr;
 		bdb_error* error = nullptr;
@@ -505,13 +540,17 @@ public:
 		destroy();
 	}
 
-	/// Whether this handle still owns a store (false after a move-out).
+	/**
+	 * Whether this handle still owns a store (false after a move-out).
+	 */
 	[[nodiscard]] auto alive() const -> bool {
 		return raw_ != nullptr;
 	}
 
-	/// The admitted store's fingerprint, copied out as 64 lowercase hex
-	/// chars.
+	/**
+	 * The admitted store's fingerprint, copied out as 64 lowercase hex
+	 * chars.
+	 */
 	[[nodiscard]] auto fingerprint() const -> std::expected<std::string, error_handle> {
 		auto raw_fingerprint = bdb_fingerprint{};
 		bdb_error* error = nullptr;
@@ -526,12 +565,13 @@ public:
 		});
 	}
 
-	/// Runs body over one consistent read snapshot (TODO_CPP §16): the
-	/// void* context smuggles &body through the C trampoline; the call is
-	/// synchronous on this thread, so the borrow is sound for exactly the
-	/// callback's extent.
+	/**
+	 * Runs body over one consistent read snapshot, synchronously on this
+	 * thread.
+	 */
 	template<SnapshotBody Body>
 	[[nodiscard]] auto read(Body&& body) const -> std::expected<callback_done, error_handle> {
+		/* SAFETY: the void* context smuggles &body through the C trampoline; the call is synchronous, so the borrow spans exactly the callback */
 		auto trampoline = [](void* context, bdb_snapshot_ref const* snapshot) -> bdb_callback_control {
 			auto& live_body = *static_cast<std::remove_reference_t<Body>*>(context);
 			return live_body(*snapshot);
@@ -541,11 +581,14 @@ public:
 		return callback_outcome(status, error);
 	}
 
-	/// Runs body as the single writer (TODO_CPP §17); OK from the body
-	/// commits, ABORT drops the delta. Re-entrant writes are refused by
-	/// the bridge with a typed EnvironmentLocked error.
+	/**
+	 * Runs body as the single writer; OK from the body commits, ABORT
+	 * drops the delta. A re-entrant write is refused by the bridge with
+	 * a typed EnvironmentLocked error.
+	 */
 	template<TxBody Body>
 	[[nodiscard]] auto write(Body&& body) const -> std::expected<callback_done, error_handle> {
+		/* SAFETY: the void* context smuggles &body through the C trampoline; the call is synchronous, so the borrow spans exactly the callback */
 		auto trampoline = [](void* context, bdb_tx_ref* transaction) -> bdb_callback_control {
 			auto& live_body = *static_cast<std::remove_reference_t<Body>*>(context);
 			return live_body(*transaction);
@@ -555,10 +598,12 @@ public:
 		return callback_outcome(status, error);
 	}
 
-	/// Prepares a program IR view against the store (TODO_CPP §20): the
-	/// engine validates, normalizes, reads statistics, and plans ONCE;
-	/// the returned handle is reusable across snapshots of this database.
-	/// The view graph is copied by the bridge before this returns.
+	/**
+	 * Prepares a program IR view against the store: the engine
+	 * validates, normalizes, reads statistics, and plans ONCE; the
+	 * returned handle is reusable across snapshots of this database. The
+	 * view graph is copied by the bridge before this returns.
+	 */
 	[[nodiscard]] auto prepare(bdb_program const& program) const -> std::expected<prepared_handle, error_handle> {
 		bdb_prepared* prepared = nullptr;
 		bdb_error* error = nullptr;
@@ -568,12 +613,13 @@ public:
 		});
 	}
 
-	/// write conditional on a still-live snapshot (TODO_CPP §18). SAFETY:
-	/// the snapshot ref is forwarded only from inside the read callback
-	/// that owns it — this wrapper never stores it — so the underlying
-	/// &Snapshot is alive for the whole nested synchronous call.
+	/**
+	 * write conditional on a still-live snapshot — callable only from
+	 * inside the read callback that owns the snapshot ref.
+	 */
 	template<TxBody Body>
 	[[nodiscard]] auto write_from(bdb_snapshot_ref const& snapshot, Body&& body) const -> std::expected<callback_done, error_handle> {
+		/* SAFETY: the snapshot ref comes from the owning read callback and is never stored — alive for the whole nested call */
 		auto trampoline = [](void* context, bdb_tx_ref* transaction) -> bdb_callback_control {
 			auto& live_body = *static_cast<std::remove_reference_t<Body>*>(context);
 			return live_body(*transaction);
@@ -592,7 +638,9 @@ private:
 	}
 };
 
-/// Records an insert into the delta; true = the final state changed.
+/**
+ * Records an insert into the delta; true = the final state changed.
+ */
 [[nodiscard]] auto tx_insert(bdb_tx_ref const& transaction, std::uint32_t relation, std::span<bdb_value const> values)
     -> std::expected<bool, error_handle> {
 	auto changed = false;
@@ -601,7 +649,9 @@ private:
 	return value_outcome(status, error, changed);
 }
 
-/// Records a delete into the delta; true = the final state changed.
+/**
+ * Records a delete into the delta; true = the final state changed.
+ */
 [[nodiscard]] auto tx_remove(bdb_tx_ref const& transaction, std::uint32_t relation, std::span<bdb_value const> values)
     -> std::expected<bool, error_handle> {
 	auto changed = false;
@@ -610,7 +660,9 @@ private:
 	return value_outcome(status, error, changed);
 }
 
-/// Final-state membership (base + pending delta).
+/**
+ * Final-state membership (base + pending delta).
+ */
 [[nodiscard]] auto tx_contains(bdb_tx_ref const& transaction, std::uint32_t relation, std::span<bdb_value const> values)
     -> std::expected<bool, error_handle> {
 	auto contains = false;
@@ -619,7 +671,9 @@ private:
 	return value_outcome(status, error, contains);
 }
 
-/// Mints the next fresh value for (relation, field).
+/**
+ * Mints the next fresh value for (relation, field).
+ */
 [[nodiscard]] auto tx_alloc(bdb_tx_ref const& transaction, std::uint32_t relation, std::uint16_t field) -> std::expected<std::uint64_t, error_handle> {
 	auto id = std::uint64_t{0};
 	bdb_error* error = nullptr;
@@ -627,7 +681,9 @@ private:
 	return value_outcome(status, error, id);
 }
 
-/// Committed-state membership of one dynamic fact.
+/**
+ * Committed-state membership of one dynamic fact.
+ */
 [[nodiscard]] auto snapshot_contains(bdb_snapshot_ref const& snapshot, std::uint32_t relation, std::span<bdb_value const> values)
     -> std::expected<bool, error_handle> {
 	auto contains = false;
@@ -636,7 +692,9 @@ private:
 	return value_outcome(status, error, contains);
 }
 
-/// Full-relation export in row_id order: one owned row-set crossing.
+/**
+ * Full-relation export in row_id order: one owned row-set crossing.
+ */
 [[nodiscard]] auto snapshot_scan(bdb_snapshot_ref const& snapshot, std::uint32_t relation) -> std::expected<row_set_handle, error_handle> {
 	bdb_row_set* rows = nullptr;
 	bdb_error* error = nullptr;
@@ -646,9 +704,11 @@ private:
 	});
 }
 
-/// Committed-state point lookup through a key statement (TODO_CPP §26):
-/// key values in the statement's projection order. A miss is the empty
-/// row set (the ABI writes null; row_set_handle owns either way).
+/**
+ * Committed-state point lookup through a key statement: key values in
+ * the statement's projection order. A miss is the empty row set (the ABI
+ * writes null; row_set_handle owns either way).
+ */
 [[nodiscard]] auto snapshot_get(bdb_snapshot_ref const& snapshot, std::uint32_t relation, std::uint16_t key_statement,
                   std::span<bdb_value const> key_values) -> std::expected<row_set_handle, error_handle> {
 	bdb_row_set* row = nullptr;
@@ -659,8 +719,10 @@ private:
 	});
 }
 
-/// Final-state point lookup through a key statement (base + pending
-/// delta); miss = the empty row set.
+/**
+ * Final-state point lookup through a key statement (base + pending
+ * delta); miss = the empty row set.
+ */
 [[nodiscard]] auto tx_get(bdb_tx_ref const& transaction, std::uint32_t relation, std::uint16_t key_statement, std::span<bdb_value const> key_values)
     -> std::expected<row_set_handle, error_handle> {
 	bdb_row_set* row = nullptr;
@@ -671,9 +733,11 @@ private:
 	});
 }
 
-/// The relation names of a spec view, copied out in declaration order —
-/// declaration index IS the minted RelationId (lowering.md §1.1), which is
-/// how the pre-schema lane resolves coordinates to wire ids.
+/**
+ * The relation names of a spec view, copied out in declaration order —
+ * declaration index IS the minted RelationId (lowering.md §1.1), which
+ * is how the pre-schema lane resolves coordinates to wire ids.
+ */
 [[nodiscard]] auto relation_names_of(bdb_schema_spec const& spec) -> std::vector<std::string> {
 	auto names = std::vector<std::string>{};
 	names.reserve(spec.relation_count);
@@ -683,7 +747,9 @@ private:
 	return names;
 }
 
-/// A scalar structural value type (no payload beyond the tag).
+/**
+ * A scalar structural value type (no payload beyond the tag).
+ */
 [[nodiscard]] auto scalar_type(bdb_value_type_kind kind) -> bdb_value_type {
 	return bdb_value_type{
 	    .kind = kind,
@@ -694,7 +760,9 @@ private:
 	};
 }
 
-/// The FixedBytes structural type (the length IS the type).
+/**
+ * The FixedBytes structural type (the length IS the type).
+ */
 [[nodiscard]] auto fixed_bytes_type(std::uint16_t len) -> bdb_value_type {
 	return bdb_value_type{
 	    .kind = bdb_value_type_kind::BDB_VALUE_TYPE_KIND_FIXED_BYTES,
@@ -705,7 +773,9 @@ private:
 	};
 }
 
-/// The general (widthless) interval structural type.
+/**
+ * The general (widthless) interval structural type.
+ */
 [[nodiscard]] auto interval_type(bdb_interval_element element) -> bdb_value_type {
 	return bdb_value_type{
 	    .kind = bdb_value_type_kind::BDB_VALUE_TYPE_KIND_INTERVAL,
@@ -716,8 +786,10 @@ private:
 	};
 }
 
-/// The fixed-width interval structural type (`interval<E, w>` — the width
-/// is a fingerprint input; lowering.md §1.8).
+/**
+ * The fixed-width interval structural type (the width is a fingerprint
+ * input; lowering.md §1.8).
+ */
 [[nodiscard]] auto fixed_interval_type(bdb_interval_element element, std::uint64_t width) -> bdb_value_type {
 	return bdb_value_type{
 	    .kind = bdb_value_type_kind::BDB_VALUE_TYPE_KIND_INTERVAL,
@@ -728,15 +800,10 @@ private:
 	};
 }
 
-// --- the pre-schema spec lane (TODO_CPP §13's placeholder) -------------------
-// Owned, ownership-closed descriptions that lower to borrowed spec views.
-// This is scaffolding for the phase BEFORE bdb::schema<> exists: the
-// runtime tests (and nothing else) spell specs through it, and the schema
-// elaborator replaces it wholesale. Ordinary relations and the fd /
-// containment statement forms only — exactly what the §39 slice needs.
-
-/// One field description (name, structural type, law-class newtype label,
-/// fresh mark) — the owned twin of bdb_field_spec.
+/**
+ * One field description (name, structural type, law-class newtype label,
+ * fresh mark) — the owned twin of bdb_field_spec.
+ */
 struct owned_field {
 	std::string name;
 	bdb_value_type value_type;
@@ -744,8 +811,10 @@ struct owned_field {
 	bool fresh;
 };
 
-/// One literal as spelled: a closed handle BY NAME (the ENGINE resolves
-/// schema-lane handles — lowering.md §7.8), or a tagged value.
+/**
+ * One literal as spelled: a closed handle BY NAME (the engine resolves
+ * schema-lane handles — lowering.md §7.8), or a tagged value.
+ */
 struct owned_literal {
 	bool is_handle;
 	std::string handle;
@@ -756,78 +825,99 @@ struct owned_literal {
 	std::string text;
 };
 
-/// One σ binding: `field == literal-or-set` (1 literal = One; ≥2 = Many).
+/**
+ * One σ binding: `field == literal-or-set` (1 literal = One; ≥2 = Many).
+ */
 struct owned_selection {
 	std::string field;
 	std::vector<owned_literal> literals;
 };
 
-/// One ground axiom of a closed relation: the handle plus one literal per
-/// declared intrinsic column, in field-declaration order.
+/**
+ * One ground axiom of a closed relation: the handle plus one literal per
+ * declared intrinsic column, in field-declaration order.
+ */
 struct owned_closed_row {
 	std::string handle;
 	std::vector<owned_literal> values;
 };
 
-/// A closed relation's closed half (lowering.md §1.3): the handle newtype
-/// (`"<Name>.id"`, always present) and the ground axioms.
+/**
+ * A closed relation's closed half (lowering.md §1.3): the handle newtype
+ * (`"<Name>.id"`, always present) and the ground axioms.
+ */
 struct owned_closed {
 	std::string newtype;
 	std::vector<owned_closed_row> rows;
 };
 
-/// One relation description; `closed` engaged = closed relation (fields
-/// then carry the DECLARED intrinsic columns only — lowering.md §7.3).
-/// Defaulted so the pre-schema lane's ordinary-relation spellings stay
-/// valid designated inits.
+/**
+ * One relation description; `closed` engaged = closed relation (fields
+ * then carry the DECLARED intrinsic columns only — lowering.md §7.3).
+ * Defaulted so ordinary-relation spellings stay valid designated inits.
+ */
 struct owned_relation {
 	std::string name;
 	std::vector<owned_field> fields;
 	std::optional<owned_closed> closed{};
 };
 
-/// key(R, [f...]) — the fd statement form.
+/**
+ * key(R, [f...]) — the fd statement form.
+ */
 struct owned_fd {
 	std::string relation;
 	std::vector<std::string> projection;
 };
 
-/// One statement side: projection + σ selection (lowered AS-IS;
-/// defaulted so bare-face spellings stay valid designated inits).
+/**
+ * One statement side: projection + σ selection (lowered as-is; defaulted
+ * so bare-face spellings stay valid designated inits).
+ */
 struct owned_side {
 	std::string relation;
 	std::vector<std::string> projection;
 	std::vector<owned_selection> selection{};
 };
 
-/// contained(source, target) / mirrors via the bidirectional flag.
+/**
+ * contained(source, target) / mirrors via the bidirectional flag.
+ */
 struct owned_containment {
 	owned_side source;
 	owned_side target;
 	bool bidirectional;
 };
 
-/// A capacity weight; `field` is read for Field/DurationField.
+/**
+ * A capacity weight; `field` is read for Field/DurationField.
+ */
 struct owned_weight {
 	bdb_weight_kind kind;
 	std::string field;
 };
 
-/// One capacity bound; `lit` for Lit, `field` for Field/DurationField.
+/**
+ * One capacity bound; `lit` for Lit, `field` for Field/DurationField.
+ */
 struct owned_bound {
 	bdb_bound_kind kind;
 	std::uint64_t lit;
 	std::string field;
 };
 
-/// One capacity window (Exact/Floor read `lo`; Range reads both).
+/**
+ * One capacity window (Exact/Floor read `lo`; Range reads both).
+ */
 struct owned_capacity_window {
 	bdb_capacity_window_kind kind;
 	owned_bound lo;
 	owned_bound hi;
 };
 
-/// capacity(target, weight, window, source) — the operator read order.
+/**
+ * capacity(target, weight, window, source) — the operator read order.
+ */
 struct owned_capacity {
 	owned_side target;
 	owned_weight weight;
@@ -837,10 +927,12 @@ struct owned_capacity {
 
 using owned_statement = std::variant<owned_fd, owned_containment, owned_capacity>;
 
-/// Owns every byte of a schema spec and materializes the borrowed ABI
-/// view once at construction. Non-copyable and non-movable so the interior
-/// view pointers stay valid for exactly this object's lifetime; view() is
-/// valid while *this is alive.
+/**
+ * Owns every byte of a schema spec and materializes the borrowed ABI
+ * view once at construction. Non-copyable and non-movable so the
+ * interior view pointers stay valid for exactly this object's lifetime;
+ * view() is valid while *this is alive.
+ */
 class owned_schema_spec {
 	std::vector<owned_relation> relations_;
 	std::vector<owned_statement> statements_;
@@ -867,8 +959,13 @@ class owned_schema_spec {
 		return views;
 	}
 
-	/// One literal, viewed (string payloads borrow the owned literal —
-	/// stable because the owning vectors never move after construction).
+	/**
+	 * One literal, viewed. String payloads borrow the owned literal —
+	 * stable because the owning vectors never move after construction.
+	 * The frontends spell schema-lane literals as bool/u64/i64/str/handle
+	 * only (the closed-payload roster); anything else is the unreachable
+	 * boundary state.
+	 */
 	[[nodiscard]] static auto literal_view(owned_literal const& literal) -> bdb_literal {
 		auto out = bdb_literal{};
 		if (literal.is_handle) {
@@ -892,8 +989,6 @@ class owned_schema_spec {
 			out.value.string_value = view_of_owned(literal.text);
 			break;
 		default:
-			// The frontends spell schema-lane literals as bool/u64/i64/
-			// str/handle only (the closed-payload roster).
 			unreachable_boundary_state();
 		}
 		return out;
@@ -951,11 +1046,7 @@ class owned_schema_spec {
 public:
 	owned_schema_spec(std::vector<owned_relation> relations, std::vector<owned_statement> statements)
 	    : relations_{std::move(relations)}, statements_{std::move(statements)} {
-		// Reserve every list-of-lists to its exact total up front: the
-		// view graph holds REFERENCES to the emplaced inner vectors, and
-		// an outer reallocation would invalidate earlier references (the
-		// inner BUFFERS survive a reallocation; the vector objects do
-		// not stay put).
+		/* SAFETY: the view graph references emplaced inner vectors; outer reallocation would invalidate them — reserve exact totals first */
 		auto literal_lists = std::size_t{0};
 		auto closed_relations = std::size_t{0};
 		auto selection_lists = std::size_t{0};
@@ -1035,8 +1126,6 @@ public:
 		}
 		projection_views_.reserve(projection_lists);
 		for (auto const& statement : statements_) {
-			// Unread union-shaped fields stay value-initialized (zeroed);
-			// the bridge reads only what the kind names.
 			auto view = bdb_statement_spec{};
 			if (auto const* fd = std::get_if<owned_fd>(&statement)) {
 				auto const& projection = projection_views_.emplace_back(projection_view(fd->projection));
@@ -1085,10 +1174,12 @@ public:
 	auto operator=(owned_schema_spec&&) -> owned_schema_spec& = delete;
 	~owned_schema_spec() = default;
 
-	/// The borrowed ABI view; valid while *this is alive.
+	/**
+	 * The borrowed ABI view; valid while *this is alive.
+	 */
 	[[nodiscard]] auto view() const -> bdb_schema_spec const& {
 		return view_;
 	}
 };
 
-} // namespace bdb::foreign
+}

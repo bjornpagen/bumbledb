@@ -1,17 +1,3 @@
-// Cookbook recipe 20 — Conditional writes (ts/COOKBOOK.md §20): the
-// witnessed update-where RUNS. The premise ("still Queued" is the
-// witness) reads via the snapshot, the delta rides the tx — delete(old) +
-// insert(new) per matched fact, the claim and its lease committing
-// together (the ψ-target mirrors: a lease exists iff its job is Running).
-// `abandon(payload)` declines to commit without issuing anything —
-// abandonment is DATA on the success path, never an error.
-//
-// Gates: the engine fingerprint equals the shared golden (fixtures line
-// "r20 <64-hex>"); `stillQueued` (the handle-literal premise) prepares
-// through the real engine validator; and the witnessed loop on the EMPTY
-// store abandons with its own payload — the TS test's exact run.
-//
-// argv[1] = the fixtures file path (passed by add_test).
 import std;
 import bumbledb;
 
@@ -38,12 +24,8 @@ inline constexpr auto Jobs =
 
                         bdb::contained(bdb::on(Job.state), bdb::on(State.id)), bdb::key(Lease.job),
 
-                        // A lease exists iff its job is Running (recipe 13's conditional
-                        // target): claiming a job and leasing it commit together or not at
-                        // all.
                         bdb::mirrors(bdb::on(Lease.job), bdb::on(bdb::where(Job, {.state = State.Running}), Job.id)));
 
-// update-where's premise — "still Queued" is the witness:
 inline constexpr auto StillQueued = bdb::query(Jobs).rule([](auto r) consteval {
 	auto vars = r.vars(Job);
 	return r
@@ -66,8 +48,6 @@ struct CaseResult {
 	bool passed;
 };
 
-/// The golden of one recipe: the fixtures file is one `rNN <64-hex>` line
-/// per recipe (ts/test/cookbook.test.ts reads the same file).
 [[nodiscard]] auto golden_of(std::string_view fixtures, std::string_view recipe) -> std::optional<std::string> {
 	for (auto const line_range : std::views::split(fixtures, '\n')) {
 		auto const line = std::string_view{line_range};
@@ -161,11 +141,6 @@ auto run_cases(std::string_view fixtures_path, std::vector<CaseResult>& results)
 		return;
 	}
 
-	// update-where, witnessed: query the premise on the attempt's
-	// snapshot, then delete(old) + insert(new) per matched fact — "still
-	// Queued" is the witness; the claim and its lease commit together
-	// (the mirrors). On the EMPTY store the loop abandons, carrying its
-	// own payload out.
 	auto outcome = db->write_witnessed([&](bdb::Snapshot& snap,
 	                                       bdb::WriteTx& tx) -> std::expected<bdb::WriteDecision<std::monostate, std::string>, bdb::Error> {
 		auto queued = snap.execute(*prepared, {});
@@ -190,8 +165,6 @@ auto run_cases(std::string_view fixtures_path, std::vector<CaseResult>& results)
 		return bdb::commit();
 	});
 
-	// The TS assertions: the outcome is NOT a commit, and the abandoned
-	// arm carries the callback's own payload.
 	auto abandoned = outcome.has_value() && std::holds_alternative<bdb::Abandoned<std::string>>(*outcome);
 	results.push_back(CaseResult{
 	    .name = "the empty store has nothing queued — the loop abandons",
@@ -207,7 +180,7 @@ auto run_cases(std::string_view fixtures_path, std::vector<CaseResult>& results)
 	std::filesystem::remove_all(*dir, code);
 }
 
-} // namespace
+}
 
 auto main(int argc, char** argv) -> int {
 	auto const arguments = std::span{argv, static_cast<std::size_t>(argc)};

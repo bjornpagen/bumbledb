@@ -1,7 +1,3 @@
-// §34 / TODO_CPP §11 — the query cross-class wall: a variable minted in
-// one law class refuses to bind a column of another (two physical u64
-// columns are not query-compatible merely because both are uint64_t).
-// The diagnostic names BOTH coordinates and both classes.
 import std;
 import bumbledb;
 
@@ -16,8 +12,6 @@ struct OutageRow {
 	bdb::interval<std::int64_t> window;
 };
 
-// A schema-less second relation: `actor` is a bare u64 — no law touches
-// it, so it shares no class with Outage.service (class "Service.id").
 struct AuditRow {
 	std::uint64_t actor;
 };

@@ -1,6 +1,3 @@
-// :head — the find-head pattern product (TODO_CPP §11–§12): one slot per
-// matched relation's coordinates, in match order, first name wins on a
-// collision (single-relation rules — the recipe shape — never collide).
 export module bumbledb:head;
 
 import std;
@@ -13,8 +10,10 @@ import :pattern;
 
 namespace bdb::detail {
 
-/// One find-pattern slot: accepts a class-equal bound variable only (the
-/// boundness wall is value-tier, judged at rule assembly).
+/**
+ * One find-pattern slot: accepts a class-equal bound variable only (the
+ * boundness wall is value-tier, judged at rule assembly).
+ */
 template<class T, name_text Relation, name_text Field, field_class Class, bool Classed, coord_ref Law>
 struct find_slot {
 	static constexpr name_text field_name = Field;
@@ -35,9 +34,6 @@ struct find_slot {
 	}
 };
 
-/// The find pattern spans every matched relation's coordinates, in match
-/// order, first name wins on a collision (single-relation rules — the
-/// recipe shape — never collide).
 template<class S, class... Facades>
 struct find_pattern_types {
 	struct Pattern;
@@ -76,12 +72,16 @@ struct find_pattern_types {
 	}
 };
 
-} // namespace bdb::detail
+}
 
 export namespace bdb {
 
-/// The designated-init find head over the rule's matched relations.
+/**
+ * The designated-init find head over the rule's matched relations: every
+ * matched relation's coordinates in match order, first name wins on a
+ * collision (single-relation rules never collide).
+ */
 template<class S, class... Facades>
 using find_pattern_of = typename detail::find_pattern_types<S, Facades...>::Pattern;
 
-} // namespace bdb
+}

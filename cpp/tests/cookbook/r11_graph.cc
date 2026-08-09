@@ -1,16 +1,3 @@
-// Cookbook recipe 11 — Typed graphs (ts/COOKBOOK.md §11): one relation
-// per edge kind; endpoint containments pin which node kinds each edge may
-// touch (a Follows fact cannot touch a Repo — by statement), and
-// composite keys deduplicate pairs. No transitive graph property is
-// claimed.
-//
-// Gates: the engine fingerprint equals the shared golden (fixtures line
-// "r11 <64-hex>"); mutual (the self-join with swapped variables and the
-// var-var `lt` dedup) prepares AND answers the recipe's own semantics;
-// an edge into the wrong node kind is commit-rejected (the endpoint
-// containment is the type).
-//
-// argv[1] = the fixtures file path (passed by add_test).
 import std;
 import bumbledb;
 
@@ -44,19 +31,13 @@ inline constexpr auto Maintains = bdb::relation<"Maintains", MaintainsRow>;
 inline constexpr auto Graph = bdb::schema<"Graph">(
     Person, Repo, Follows, Maintains,
 
-    // A Person→Person edge, by statement — a Follows fact cannot touch a
-    // Repo.
     bdb::contained(bdb::on(Follows.follower), bdb::on(Person.id)), bdb::contained(bdb::on(Follows.followee), bdb::on(Person.id)),
 
-    // At most one edge per pair.
     bdb::key(Follows.follower, Follows.followee),
 
     bdb::contained(bdb::on(Maintains.person), bdb::on(Person.id)), bdb::contained(bdb::on(Maintains.repo), bdb::on(Repo.id)),
     bdb::key(Maintains.person, Maintains.repo));
 
-// Mutual follows — joins are explicit var reuse on both ends (both
-// columns live in the "Person.id" class, so the reuse is lawful); `lt`
-// keeps each pair once.
 inline constexpr auto Mutual = bdb::query(Graph).rule([](auto r) consteval {
 	auto vars = r.vars(Follows);
 	return r
@@ -145,8 +126,6 @@ struct SeedIds {
 	std::uint64_t repo;
 };
 
-/// alice⇄bob are mutual; alice→carol is one-way; alice maintains the one
-/// repo (the Person→Repo edge kind rides its own relation).
 [[nodiscard]] auto seed(bdb::Db& db) -> std::optional<SeedIds> {
 	using Decision = bdb::WriteDecision<SeedIds, std::monostate>;
 	using Result = std::expected<Decision, bdb::Error>;
@@ -238,9 +217,6 @@ auto run_cases(std::string_view fixtures_path, std::vector<CaseResult>& results)
 		return;
 	}
 
-	// A Follows edge whose endpoint resolves to NO Person violates the
-	// endpoint containment — the edge is TYPED by statement (a Follows
-	// fact cannot touch anything outside "Person.id").
 	auto dangling = db->write([&](bdb::WriteTx& tx) -> std::expected<bdb::WriteDecision<std::monostate, std::monostate>, bdb::Error> {
 		auto landed = tx.insert(Follows, FollowsRow{.follower = ids->alice, .followee = 999'999});
 		if (!landed.has_value()) {
@@ -264,8 +240,6 @@ auto run_cases(std::string_view fixtures_path, std::vector<CaseResult>& results)
 		return;
 	}
 
-	// The self-join with swapped variables: alice⇄bob answers ONCE
-	// (lt keeps each pair once); the one-way alice→carol never appears.
 	auto pairs = db->execute(*mutual, {});
 	auto const low = std::min(ids->alice, ids->bob);
 	auto const high = std::max(ids->alice, ids->bob);
@@ -278,7 +252,7 @@ auto run_cases(std::string_view fixtures_path, std::vector<CaseResult>& results)
 	std::filesystem::remove_all(*dir, code);
 }
 
-} // namespace
+}
 
 auto main(int argc, char** argv) -> int {
 	auto const arguments = std::span{argv, static_cast<std::size_t>(argc)};

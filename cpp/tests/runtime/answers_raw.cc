@@ -1,8 +1,3 @@
-// The untyped answers carrier (TODO_CPP §22–§23, §36): mint, emptiness,
-// bounds-checked cell access, clear, and move semantics leaving the source
-// inert. Nothing executes into the carrier until the query phase, so this
-// test proves exactly the resource/lifetime half. Reflection-free: part of
-// BOTH graphs.
 import std;
 import bumbledb;
 
@@ -60,7 +55,7 @@ struct CaseResult {
 	};
 }
 
-} // namespace
+}
 
 auto main() -> int {
 	auto const results = std::array{

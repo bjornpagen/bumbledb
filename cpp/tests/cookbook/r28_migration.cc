@@ -1,32 +1,17 @@
-// Cookbook recipe 28 — Migration is ETL (ts/COOKBOOK.md §28): a schema is
-// a theory, the store records the theory's fingerprint, and opening under
-// a changed theory is a hard fingerprint mismatch — the engine refuses to
-// reinterpret facts it judged under different laws. The SDK pin is the
-// refusal's PREMISE: the v1 theory and the v2 theory (which adds WHEN a
-// salary applied — an interval with a pointwise key) carry two distinct
-// engine-computed fingerprints, and the v2 target matches the shared
-// golden. The post-migration read (`inForceAt`) prepares through the real
-// engine validator and answers the recipe's own semantics against v2 data
-// (the transform's supplied dimension in force at an instant).
-//
-// argv[1] = the fixtures file path (passed by add_test).
 import std;
 import bumbledb;
 
-// The employee shape never moved — the SAME row on both sides.
 struct EmployeeRow {
 	[[= bdb::fresh]] std::uint64_t id;
 
 	std::string name;
 };
 
-// The old theory's salary: WHAT, never WHEN.
 struct SalaryV1Row {
 	std::uint64_t employee;
 	std::int64_t amount;
 };
 
-// The new theory adds what v1 never recorded — when a salary applied.
 struct SalaryRow {
 	std::uint64_t employee;
 	std::int64_t amount;
@@ -37,21 +22,16 @@ inline constexpr auto Employee = bdb::relation<"Employee", EmployeeRow>;
 inline constexpr auto SalaryV1 = bdb::relation<"Salary", SalaryV1Row>;
 inline constexpr auto Salary = bdb::relation<"Salary", SalaryRow>;
 
-// The old theory, judged and fingerprinted (unpinned — the migration
-// SOURCE; the fixture carries only the target).
 inline constexpr auto PayrollV1 = bdb::schema<"PayrollV1">(Employee, SalaryV1,
 
                                                            bdb::contained(bdb::on(SalaryV1.employee), bdb::on(Employee.id)));
 
-// The new theory: the interval dimension with its pointwise key — one
-// salary per employee per instant.
 inline constexpr auto Payroll = bdb::schema<"Payroll">(Employee, Salary,
 
                                                        bdb::contained(bdb::on(Salary.employee), bdb::on(Employee.id)),
 
                                                        bdb::key(Salary.employee, Salary.applies));
 
-// The post-migration read — salaries in force at an instant.
 inline constexpr auto InForceAt = bdb::query(Payroll).rule([](auto r) consteval {
 	auto employee = r.vars(Employee);
 	auto salary = r.vars(Salary);
@@ -81,8 +61,6 @@ struct CaseResult {
 	bool passed;
 };
 
-/// The golden of one recipe: the fixtures file is one `rNN <64-hex>` line
-/// per recipe (ts/test/cookbook.test.ts reads the same file).
 [[nodiscard]] auto golden_of(std::string_view fixtures, std::string_view recipe) -> std::optional<std::string> {
 	for (auto const line_range : std::views::split(fixtures, '\n')) {
 		auto const line = std::string_view{line_range};
@@ -140,8 +118,6 @@ struct CaseResult {
 	return dir;
 }
 
-/// The transformed load: ada under two consecutive salary windows — the
-/// dimension the migration supplied.
 [[nodiscard]] auto seed_v2(bdb::Db& db) -> std::optional<std::uint64_t> {
 	using Decision = bdb::WriteDecision<std::uint64_t, std::monostate>;
 	using Result = std::expected<Decision, bdb::Error>;
@@ -167,7 +143,6 @@ struct CaseResult {
 	return std::get<bdb::Committed<std::uint64_t>>(*written).value;
 }
 
-/// inForceAt(at), answers copied out as (name, amount) pairs.
 [[nodiscard]] auto in_force(bdb::Db& db, bdb::Prepared<InForceAt>& prepared, std::int64_t at)
     -> std::optional<std::vector<std::pair<std::string, std::int64_t>>> {
 	auto result = db.read([&](bdb::Snapshot& snap) -> std::expected<std::vector<std::pair<std::string, std::int64_t>>, bdb::Error> {
@@ -201,8 +176,6 @@ auto run_cases(std::string_view fixtures_path, std::vector<CaseResult>& results)
 		return;
 	}
 
-	// Both theories admit through the REAL engine — two stores, two
-	// judgments.
 	auto v1 = bdb::Db::ephemeral(v1_dir->native(), PayrollV1);
 	auto v2 = bdb::Db::ephemeral(v2_dir->native(), Payroll);
 	results.push_back(CaseResult{
@@ -220,20 +193,16 @@ auto run_cases(std::string_view fixtures_path, std::vector<CaseResult>& results)
 		return;
 	}
 
-	// The pinned target: the v2 theory IS the recipe's schema block.
 	results.push_back(CaseResult{
 	    .name = "the v2 fingerprint matches the pinned r28 golden",
 	    .passed = *v2_fingerprint == *golden,
 	});
 
-	// The refusal's premise: a schema is a theory — the new dimension is
-	// a new fingerprint.
 	results.push_back(CaseResult{
 	    .name = "the v1 and v2 theories carry two distinct fingerprints",
 	    .passed = *v1_fingerprint != *v2_fingerprint,
 	});
 
-	// The post-migration read prepares through the engine validator.
 	auto in_force_at = v2->prepare<InForceAt>();
 	results.push_back(CaseResult{
 	    .name = "inForceAt prepares through the engine validator",
@@ -243,9 +212,6 @@ auto run_cases(std::string_view fixtures_path, std::vector<CaseResult>& results)
 		return;
 	}
 
-	// The transformed load lands into the v2 store (the L half: the
-	// containment target first, then the salaries — one commit judges it
-	// whole).
 	auto const ada = seed_v2(*v2);
 	results.push_back(CaseResult{
 	    .name = "the transformed load commits under the v2 theory",
@@ -255,7 +221,6 @@ auto run_cases(std::string_view fixtures_path, std::vector<CaseResult>& results)
 		return;
 	}
 
-	// The supplied dimension answers: which salary was in force WHEN.
 	auto const at_50 = in_force(*v2, *in_force_at, 50);
 	results.push_back(CaseResult{
 	    .name = "inForceAt(50) answers {(ada, 100)}",
@@ -278,7 +243,7 @@ auto run_cases(std::string_view fixtures_path, std::vector<CaseResult>& results)
 	std::filesystem::remove_all(*v2_dir, code);
 }
 
-} // namespace
+}
 
 auto main(int argc, char** argv) -> int {
 	auto const arguments = std::span{argv, static_cast<std::size_t>(argc)};

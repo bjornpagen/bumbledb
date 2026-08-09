@@ -1,16 +1,3 @@
-// Cookbook recipe 19 — The ledger (ts/COOKBOOK.md §19): the census
-// workload. Balance is a QUERY, never a column — a stored balance column
-// equaling Sum(postings) would be the refused arithmetic-agreement
-// statement; the statements resolve posting references (topology), the
-// host owns the arithmetic. Both rollup reads fold `sum` over a PLAIN
-// SCALAR variable with the fresh id bound (set semantics would otherwise
-// collapse duplicate rows).
-//
-// Gates: the engine fingerprint equals the shared golden (fixtures line
-// "r19 <64-hex>"); `balances` (per-account) and `doubleEntry` (per-entry
-// audit) both prepare through the real engine validator.
-//
-// argv[1] = the fixtures file path (passed by add_test).
 import std;
 import bumbledb;
 
@@ -43,12 +30,8 @@ inline constexpr auto Ledger = bdb::schema<"Ledger">(Account, JournalEntry, Post
 
                                                      bdb::contained(bdb::on(Posting.entry), bdb::on(JournalEntry.id)),
                                                      bdb::contained(bdb::on(Posting.account), bdb::on(Account.id))
-                                                     // A stored balance column equaling Sum(postings) is the arithmetic-
-                                                     // agreement statement — refused: statements prove presence and
-                                                     // topology, never that a value equals a computation.
 );
 
-// balances (bind the fresh id — set semantics collapses duplicates):
 inline constexpr auto Balances = bdb::query(Ledger).rule([](auto r) consteval {
 	auto vars = r.vars(Posting);
 	return r
@@ -65,8 +48,6 @@ inline constexpr auto Balances = bdb::query(Ledger).rule([](auto r) consteval {
 	        bdb::sum<"balance">(vars.minor));
 });
 
-// double-entry audit (host asserts every total is 0 — discipline, not
-// schema):
 inline constexpr auto DoubleEntry = bdb::query(Ledger).rule([](auto r) consteval {
 	auto vars = r.vars(Posting);
 	return r
@@ -90,8 +71,6 @@ struct CaseResult {
 	bool passed;
 };
 
-/// The golden of one recipe: the fixtures file is one `rNN <64-hex>` line
-/// per recipe (ts/test/cookbook.test.ts reads the same file).
 [[nodiscard]] auto golden_of(std::string_view fixtures, std::string_view recipe) -> std::optional<std::string> {
 	for (auto const line_range : std::views::split(fixtures, '\n')) {
 		auto const line = std::string_view{line_range};
@@ -193,7 +172,7 @@ auto run_cases(std::string_view fixtures_path, std::vector<CaseResult>& results)
 	std::filesystem::remove_all(*dir, code);
 }
 
-} // namespace
+}
 
 auto main(int argc, char** argv) -> int {
 	auto const arguments = std::span{argv, static_cast<std::size_t>(argc)};

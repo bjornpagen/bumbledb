@@ -1,24 +1,3 @@
-// Cookbook recipe 1 — the three queries, run against the real engine
-// (TODO_CPP §11–§12, §20–§23; ts/COOKBOOK.md §1). The Uptime theory is
-// admitted through the schema lane, the cookbook's example data lands
-// through tx.alloc + tx.insert, and downAt / overlapping / downtime all
-// prepare through the engine's IR validator and return exactly the
-// answers the recipe's own semantics dictate:
-//
-//   services  search, api (fresh ids minted by the engine)
-//   outages   search [0,100), search [150,200), api [50,120)
-//
-//   downAt(t=60)   → {search, api}     (0≤60<100 and 50≤60<120)
-//   downAt(t=130)  → {}                (no window holds 130)
-//   downAt(t=160)  → {search}          (150≤160<200)
-//   overlapping([110,140)) → {(api, [50,120))}   (only [50,120) shares
-//                             a point with [110,140); [0,100) and
-//                             [150,200) are disjoint from it)
-//   downtime       → {(search, 150), (api, 70)}  (100+50 and 70)
-//
-// Plus the §23 reuse lane (execute_into refills one carrier) and a
-// joined query answering a STRING column (the §22 borrowed-view lane —
-// exercised under ASan by the asan-ubsan preset).
 import std;
 import bumbledb;
 
@@ -29,7 +8,6 @@ struct CaseResult {
 	bool passed;
 };
 
-// Recipe 1's theory (ts/COOKBOOK.md:110-126), through the real elaborator.
 struct ServiceRow {
 	[[= bdb::fresh]] std::uint64_t id;
 
@@ -41,7 +19,7 @@ struct OutageRow {
 	bdb::interval<std::int64_t> window;
 };
 
-} // namespace
+}
 
 inline constexpr auto Service = bdb::relation<"Service", ServiceRow>;
 inline constexpr auto Outage = bdb::relation<"Outage", OutageRow>;
@@ -52,7 +30,6 @@ inline constexpr auto Uptime = bdb::schema<"Uptime">(Service, Outage,
 
                                                      bdb::key(Outage.service, Outage.window));
 
-// down at instant t (COOKBOOK.md:130-136).
 inline constexpr auto DownAt = bdb::query(Uptime).rule([](auto r) consteval {
 	auto vars = r.vars(Outage);
 	return r
@@ -67,7 +44,6 @@ inline constexpr auto DownAt = bdb::query(Uptime).rule([](auto r) consteval {
 	    });
 });
 
-// overlapping an incident window (COOKBOOK.md:138-144).
 inline constexpr auto Overlapping = bdb::query(Uptime).rule([](auto r) consteval {
 	auto vars = r.vars(Outage);
 	return r
@@ -83,7 +59,6 @@ inline constexpr auto Overlapping = bdb::query(Uptime).rule([](auto r) consteval
 	    });
 });
 
-// total downtime per service (COOKBOOK.md:146-149).
 inline constexpr auto Downtime = bdb::query(Uptime).rule([](auto r) consteval {
 	auto vars = r.vars(Outage);
 	return r
@@ -99,8 +74,6 @@ inline constexpr auto Downtime = bdb::query(Uptime).rule([](auto r) consteval {
 	        bdb::sum<"downtime">(r.duration(vars.window)));
 });
 
-// The join twist: down services by NAME — a string answer column, so the
-// §22 borrowed-view contract is exercised end to end.
 inline constexpr auto NamedDownAt = bdb::query(Uptime).rule([](auto r) consteval {
 	auto outage = r.vars(Outage);
 	auto service = r.vars(Service);
@@ -121,8 +94,6 @@ inline constexpr auto NamedDownAt = bdb::query(Uptime).rule([](auto r) consteval
 	    });
 });
 
-// Outages at least 100 long — the scalar order comparison over the
-// measure, proven against the engine (only [0,100) measures 100).
 inline constexpr auto LongOutages = bdb::query(Uptime).rule([](auto r) consteval {
 	auto vars = r.vars(Outage);
 	return r
@@ -161,7 +132,6 @@ struct SeedIds {
 	std::uint64_t api;
 };
 
-/// The recipe's example data: two services, three outages.
 [[nodiscard]] auto seed(bdb::Db& db) -> std::optional<SeedIds> {
 	using Decision = bdb::WriteDecision<SeedIds, std::monostate>;
 	using Result = std::expected<Decision, bdb::Error>;
@@ -199,7 +169,6 @@ struct SeedIds {
 	return std::get<bdb::Committed<SeedIds>>(*written).value;
 }
 
-/// downAt(t), answers sorted (answers are sets; the host sorts).
 [[nodiscard]] auto down_services(bdb::Db& db, bdb::Prepared<DownAt>& prepared, std::int64_t at) -> std::optional<std::vector<std::uint64_t>> {
 	auto result = db.read([&](bdb::Snapshot& snap) -> std::expected<std::vector<std::uint64_t>, bdb::Error> {
 		return snap.execute(prepared, {.t = at}).transform([](bdb::Answers<DownAt> answers) {
@@ -238,7 +207,6 @@ auto run_cases(std::vector<CaseResult>& results) -> void {
 		return;
 	}
 
-	// All three recipe queries prepare through the REAL engine validator.
 	auto down_at = db->prepare<DownAt>();
 	auto overlapping = db->prepare<Overlapping>();
 	auto downtime = db->prepare<Downtime>();
@@ -251,7 +219,6 @@ auto run_cases(std::vector<CaseResult>& results) -> void {
 		return;
 	}
 
-	// downAt: point membership at three instants.
 	auto expected_both = std::vector{ids->search, ids->api};
 	std::ranges::sort(expected_both);
 	auto const at_60 = down_services(*db, *down_at, 60);
@@ -270,8 +237,6 @@ auto run_cases(std::vector<CaseResult>& results) -> void {
 	    .passed = at_160.has_value() && *at_160 == std::vector{ids->search},
 	});
 
-	// overlapping: one Allen mask, an interval param, an interval answer
-	// column.
 	auto const incident = bdb::interval<std::int64_t>::literal(110, 140);
 	auto overlap_rows =
 	    db->read([&](bdb::Snapshot& snap) -> std::expected<std::vector<std::pair<std::uint64_t, bdb::interval<std::int64_t>>>, bdb::Error> {
@@ -292,7 +257,6 @@ auto run_cases(std::vector<CaseResult>& results) -> void {
 	              (*overlap_rows)[0].second == bdb::interval<std::int64_t>::literal(50, 120),
 	});
 
-	// downtime: sum(duration(window)) per service.
 	auto downtime_rows =
 	    db->read([&](bdb::Snapshot& snap) -> std::expected<std::vector<std::pair<std::uint64_t, std::uint64_t>>, bdb::Error> {
 		    return snap.execute(*downtime, {}).transform([](bdb::Answers<Downtime> answers) {
@@ -315,8 +279,6 @@ auto run_cases(std::vector<CaseResult>& results) -> void {
 	    .passed = downtime_rows.has_value() && *downtime_rows == expected_downtime,
 	});
 
-	// §23: execute_into refills ONE caller-owned carrier — capacity
-	// reused, previous answers replaced.
 	auto reused = bdb::Answers<DownAt>{};
 	auto const reuse_sizes = db->read([&](bdb::Snapshot& snap) -> std::expected<std::pair<std::size_t, std::size_t>, bdb::Error> {
 		return snap.execute_into(*down_at, {.t = std::int64_t{60}}, reused)
@@ -334,8 +296,6 @@ auto run_cases(std::vector<CaseResult>& results) -> void {
 	    .passed = reuse_sizes.has_value() && reuse_sizes->first == 2 && reuse_sizes->second == 0,
 	});
 
-	// The measure order comparison against the engine: only [0,100)
-	// measures ≥ 100.
 	auto long_outages = db->prepare<LongOutages>();
 	auto long_services = long_outages.has_value()
 	                         ? db->read([&](bdb::Snapshot& snap) -> std::expected<std::vector<std::uint64_t>, bdb::Error> {
@@ -354,8 +314,6 @@ auto run_cases(std::vector<CaseResult>& results) -> void {
 	    .passed = long_services.has_value() && *long_services == std::vector{ids->search},
 	});
 
-	// The joined STRING answer column (§22 borrowed views, ASan-audited):
-	// names are copied out of the borrowed views inside the read.
 	auto named = db->prepare<NamedDownAt>();
 	auto down_names = named.has_value() ? db->read([&](bdb::Snapshot& snap) -> std::expected<std::vector<std::string>, bdb::Error> {
 		return snap.execute(*named, {.t = std::int64_t{60}}).transform([](bdb::Answers<NamedDownAt> answers) {
@@ -378,7 +336,7 @@ auto run_cases(std::vector<CaseResult>& results) -> void {
 	std::filesystem::remove_all(*dir, code);
 }
 
-} // namespace
+}
 
 auto main() -> int {
 	auto results = std::vector<CaseResult>{};

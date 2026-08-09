@@ -1,7 +1,3 @@
-// :schema_member — which types count as statement coordinates, relation
-// facades, and schema members (the closed statement algebra's
-// representation-level dispatch over the SDK's own templates), plus the
-// shared coordinate-label helpers behind every §34 diagnostic.
 export module bumbledb:schema_member;
 
 import std;
@@ -13,19 +9,17 @@ import :closed_facade;
 
 namespace bdb::detail {
 
-// ————————————————————————————————————————————————————————————————————
-// Type recognition (the closed statement algebra; representation-level
-// dispatch over the SDK's own templates).
-// ————————————————————————————————————————————————————————————————————
-
+/**
+ * A statement coordinate: a reflected `coord` — or a closed relation's
+ * synthetic id, so the closed relation stays usable in schema
+ * statements.
+ */
 template<class T>
 inline constexpr bool is_coordinate_v = false;
 
 template<class T, name_text R, name_text F, std::size_t O, field_class C, bool Fr>
 inline constexpr bool is_coordinate_v<coord<T, R, F, O, C, Fr>> = true;
 
-// A closed relation's synthetic id IS a statement coordinate (TODO_CPP
-// §8: the closed relation stays usable in schema statements).
 template<name_text R, std::size_t H>
 inline constexpr bool is_coordinate_v<closed_id<R, H>> = true;
 
@@ -34,10 +28,12 @@ inline constexpr bool is_coordinate_v<closed_id<R, H>> = true;
 	return std::meta::has_template_arguments(t) && std::meta::template_of(t) == ^^coord;
 }
 
-/// A coordinate-shaped facade member (a reflected field coordinate or the
-/// closed synthetic id) — the filter every facade walk applies (closed
-/// facades also carry handle constants, the axiom readback, and the wire
-/// carrier, none of which are columns).
+/**
+ * A coordinate-shaped facade member (a reflected field coordinate or the
+ * closed synthetic id) — the filter every facade walk applies (closed
+ * facades also carry handle constants, the axiom readback, and the wire
+ * carrier, none of which are columns).
+ */
 [[nodiscard]] consteval auto is_coordinate_like_type(std::meta::info type) -> bool {
 	auto const t = std::meta::dealias(type);
 	if (!std::meta::has_template_arguments(t)) {
@@ -47,8 +43,10 @@ inline constexpr bool is_coordinate_v<closed_id<R, H>> = true;
 	return tmpl == ^^coord || tmpl == ^^closed_id;
 }
 
-/// A relation facade: a class whose every member is a coordinate (the
-/// injected Coords product of :facade).
+/**
+ * A relation facade: a class whose every member is a coordinate (the
+ * injected Coords product of :facade).
+ */
 [[nodiscard]] consteval auto is_facade_type(std::meta::info type) -> bool {
 	auto const t = std::meta::dealias(type);
 	if (!std::meta::is_class_type(t)) {
@@ -71,8 +69,10 @@ template<class T>
 	return is_facade_type(^^T);
 }
 
-/// A schema MEMBER: an ordinary relation facade or a closed relation
-/// facade (:closed_facade's discriminant).
+/**
+ * A schema MEMBER: an ordinary relation facade or a closed relation
+ * facade (:closed_facade's discriminant).
+ */
 [[nodiscard]] consteval auto is_member_type(std::meta::info type) -> bool {
 	return is_facade_type(type) || is_closed_facade_type(type);
 }
@@ -82,8 +82,10 @@ template<class T>
 	return is_member_type(^^T);
 }
 
-/// Decimal rendering for diagnostics (std::to_string is not constexpr on
-/// the pinned libstdc++).
+/**
+ * Decimal rendering for diagnostics (std::to_string is not constexpr on
+ * the pinned libstdc++).
+ */
 [[nodiscard]] consteval auto render_count(std::size_t value) -> std::string {
 	if (value == 0) {
 		return "0";
@@ -96,7 +98,6 @@ template<class T>
 	return out;
 }
 
-// The coordinate label helpers behind every §34 diagnostic.
 [[nodiscard]] consteval auto label(name_text relation, name_text field) -> std::string {
 	return std::string{relation.view()} + "." + std::string{field.view()};
 }
@@ -110,8 +111,10 @@ template<class Coordinate>
 	return label(Coordinate::relation_name, Coordinate::field_name);
 }
 
-/// The first coordinate of a pack whose relation differs from First's —
-/// the offender a span diagnostic names ("" when the pack is coherent).
+/**
+ * The first coordinate of a pack whose relation differs from First's —
+ * the offender a span diagnostic names ("" when the pack is coherent).
+ */
 template<class First, class... Rest>
 [[nodiscard]] consteval auto foreign_relation_label() -> std::string {
 	auto out = std::string{};
@@ -135,4 +138,4 @@ template<class First, class... Rest>
 	       foreign_relation_label<First, Rest...>() + "\" — " + std::string{law};
 }
 
-} // namespace bdb::detail
+}

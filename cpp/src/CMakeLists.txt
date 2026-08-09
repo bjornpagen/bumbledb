@@ -1,14 +1,5 @@
-# One importable named module per component: `bumbledb` is the SDK's only
-# export surface and its internals are partitions, so outsiders physically
-# cannot import them. Every partition file plus the primary interface lives
-# in this one FILE_SET; CMake scans the partition dependencies itself.
-#
-# GCC-only: the module contains reflective partitions (the relation
-# reflector, the schema elaborator, the query builder), so the whole module
-# is outside the Clang lint graph — the top-level CMakeLists adds this
-# directory only in the production graph. The :foreign_program partition is
-# quarantine code and is added to this target from foreign/CMakeLists.txt
-# (it lives in foreign/ but belongs to THIS module — see that file).
+# The one SDK module: internals are partitions, so outsiders physically cannot import them; CMake scans partition dependencies from the one FILE_SET.
+# The :foreign_program partition is added to this target from foreign/CMakeLists.txt.
 add_library(bumbledb)
 
 target_sources(bumbledb
@@ -67,19 +58,11 @@ target_sources(bumbledb
             db/tx.cc
             db/db.cc
     PRIVATE
-        # Module implementation unit (no BMI): holds the Db member bodies a
-        # pinned GCC 16.1 quirk keeps out of the :db partition — see the
-        # comment in db/db_impl.cc.
+        # PIN(gcc-partition-bmi-expected): module implementation unit, no BMI
         db/db_impl.cc
 )
 
-# Pinned GCC 16.1 quirk (TODO_CPP §32): expansion statements (`template
-# for`) trip -Wshadow on compiler-generated scoping whenever the expanded
-# range has more than one element. The reflective partitions instantiate
-# expansion statements, so the module target carries a scoped -Wno-shadow —
-# never an inline suppression. The same option sits on every TU that
-# INSTANTIATES the reflective templates (runtime meta tests, compile-fail
-# cases): expansion happens at the instantiation site.
+# PIN(gcc-template-for-wshadow)
 target_compile_options(bumbledb PRIVATE -Wno-shadow)
 
 target_link_libraries(bumbledb

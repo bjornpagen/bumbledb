@@ -1,22 +1,6 @@
-// Cookbook recipe 2 — Discriminated unions (TODO_CPP §8, §33;
-// ts/COOKBOOK.md §2): a closed-relation discriminator plus per-arm child
-// relations, glued by bidirectional conditional containments over
-// ψ-selected sources. The theory lowers through the C ABI SchemaSpec path
-// — closed spec rows, σ handle literals BY NAME, mirrors as ONE statement
-// — and the engine's fingerprint readback must equal the host-neutral
-// golden (fixtures/cookbook-fingerprints.txt, line "r02 <64-hex>").
-//
-// Host dispatch over the discriminator is the C++ analogue of the TS
-// handle-union switch (`gradedBy`): a switch over the closed reference's
-// row id with the handle constants as case labels. The closed relation
-// itself stays fully relational (§8) — the handles are a projection.
-//
-// argv[1] = the fixtures file path (passed by add_test).
 import std;
 import bumbledb;
 
-// The discriminator vocabulary: a closed relation — its ground axioms are
-// axioms, sealed at declaration, virtual in storage.
 inline constexpr auto Kind = bdb::closed<"Kind", "Deterministic", "CustomOperator">();
 
 struct TaskRow {
@@ -33,8 +17,6 @@ struct DeterministicGradingRow {
 struct CustomOperatorGradingRow {
 	std::uint64_t task;
 
-	// The cross-host wire name is "operator" — a C++ keyword, so the
-	// member carries the wire-name override annotation.
 	[[= bdb::named<"operator">]] std::string op;
 };
 
@@ -45,23 +27,15 @@ inline constexpr auto CustomOperatorGrading = bdb::relation<"CustomOperatorGradi
 inline constexpr auto Grading = bdb::schema<"Grading">(
     Kind, Task, DeterministicGrading, CustomOperatorGrading,
 
-    // The discriminator resolves (and `Task.kind` lands in the "Kind.id"
-    // generator class).
     bdb::contained(bdb::on(Task.kind), bdb::on(Kind.id)),
 
-    // One arm fact per parent.
     bdb::key(DeterministicGrading.task), bdb::key(CustomOperatorGrading.task),
 
-    // Totality + arm validity, one statement per arm: the ψ-selected
-    // SOURCE carries the handle literal BY NAME on the schema wire.
     bdb::mirrors(bdb::on(bdb::where(Task, {.kind = Kind.Deterministic}), Task.id), bdb::on(DeterministicGrading.task)),
     bdb::mirrors(bdb::on(bdb::where(Task, {.kind = Kind.CustomOperator}), Task.id), bdb::on(CustomOperatorGrading.task)));
 
 namespace {
 
-// Host dispatch over the discriminator (the cookbook's `gradedBy`): the
-// handle constants are constant case labels over the closed reference's
-// row id — the projection lane; the vocabulary stays a relation.
 [[nodiscard]] constexpr auto graded_by(bdb::ref_to<Kind.id> kind) -> std::string_view {
 	switch (kind.row) {
 	case Kind.Deterministic.index:
@@ -76,12 +50,9 @@ namespace {
 static_assert(graded_by(Kind.Deterministic) == "tolerance");
 static_assert(graded_by(Kind.CustomOperator) == "operator");
 
-// The handle projection round-trips through the reference value.
 static_assert(bdb::ref_to<Kind.id>{Kind.Deterministic}.row == 0);
 static_assert(bdb::ref_to<Kind.id>{Kind.CustomOperator}.row == 1);
 
-/// The golden of one recipe: the fixtures file is one `rNN <64-hex>` line
-/// per recipe (ts/test/cookbook.test.ts reads the same file).
 [[nodiscard]] auto golden_of(std::string_view fixtures, std::string_view recipe) -> std::optional<std::string> {
 	for (auto const line_range : std::views::split(fixtures, '\n')) {
 		auto const line = std::string_view{line_range};
@@ -139,7 +110,7 @@ static_assert(bdb::ref_to<Kind.id>{Kind.CustomOperator}.row == 1);
 	return dir;
 }
 
-} // namespace
+}
 
 auto main(int argc, char** argv) -> int {
 	auto const arguments = std::span{argv, static_cast<std::size_t>(argc)};
@@ -185,8 +156,6 @@ auto main(int argc, char** argv) -> int {
 		++failures;
 	}
 
-	// The runtime half of the recipe's host dispatch (the compile-time
-	// half is the static_asserts above).
 	if (graded_by(Kind.Deterministic) == "tolerance" && graded_by(Kind.CustomOperator) == "operator") {
 		std::println("pass: gradedBy dispatches over the handle projection");
 	} else {

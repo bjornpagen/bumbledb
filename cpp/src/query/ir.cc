@@ -1,7 +1,3 @@
-// :ir — the flattened query IR (TODO_CPP §11–§12, §21; lowering.md §4):
-// structural values — a query is NTTP-friendly. The builder-stage shapes,
-// the numbered wire IR :foreign_program reads, and the value-tier wall
-// hooks shared by the query partitions.
 export module bumbledb:ir;
 
 import std;
@@ -11,10 +7,7 @@ import :spec;
 
 export namespace bdb {
 
-// ————————————————————————————————————————————————————————————————————
-// Capacities (Phase-D bounds; the engine's own caps are far higher).
-// ————————————————————————————————————————————————————————————————————
-
+/** Builder capacities: SDK bounds only — the engine's own caps are far higher. */
 inline constexpr std::size_t max_query_rules = 4;
 inline constexpr std::size_t max_query_atoms = 8;
 inline constexpr std::size_t max_query_conditions = 8;
@@ -22,21 +15,20 @@ inline constexpr std::size_t max_query_finds = 8;
 inline constexpr std::size_t max_query_params = 8;
 inline constexpr std::size_t max_query_vars = 32;
 
-/// Most recursive predicates one program may declare (the engine's own
-/// MAX_PREDICATES is 16; lowering.md §4.1).
+/**
+ * Most recursive predicates one program may declare (the engine's own
+ * MAX_PREDICATES is 16; lowering.md §4.1).
+ */
 inline constexpr std::size_t max_program_recs = 4;
 
-/// Most handles one closed-membership array may spell in a match record.
+/** Most handles one closed-membership array may spell in a match record. */
 inline constexpr std::size_t max_membership_handles = 8;
 
-// ————————————————————————————————————————————————————————————————————
-// The flattened query IR (structural values — a query is NTTP-friendly).
-// ————————————————————————————————————————————————————————————————————
-
-/// One structural literal payload (match/comparison literals). Strings
-/// and bytes are deliberately absent: a query VALUE must stay structural
-/// (NTTP-usable), and no cookbook query literal needs them — bind such
-/// values through params instead.
+/**
+ * One structural literal payload (match/comparison literals). Strings
+ * and bytes are deliberately absent: a query value must stay structural
+ * (NTTP-usable) — bind such values through params instead.
+ */
 struct query_literal {
 	value_kind kind;
 	bool boolean;
@@ -48,11 +40,13 @@ struct query_literal {
 	std::int64_t i64_end;
 };
 
-/// A term's form (`ir::Term`, lowering.md §4.1). `absent` is the pattern
-/// wildcard — an unmentioned field binds nothing. `param_set` is the
-/// ∈-set binding: a closed-membership array lowers to it over a synthetic
-/// content-addressed registry entry whose set is a PROGRAM CONSTANT (the
-/// execute-time params product never carries it — lowering.md §4.2).
+/**
+ * A term's form (`ir::Term`, lowering.md §4.1). `absent` is the pattern
+ * wildcard — an unmentioned field binds nothing. `param_set` is the ∈-set
+ * binding: a closed-membership array lowers to it over a synthetic
+ * content-addressed registry entry whose set is a program constant, never
+ * carried by the execute-time params product (lowering.md §4.2).
+ */
 enum class query_term_form : std::uint8_t {
 	absent,
 	variable,
@@ -62,10 +56,12 @@ enum class query_term_form : std::uint8_t {
 	measure,
 };
 
-/// One builder-stage term: variables/measures ride their MINT coordinate
-/// (the identity `v(Relation).field` established), params their name.
-/// A membership term additionally carries its pre-resolved handle row ids
-/// (queries resolve handles HOST-side — lowering.md §7.8).
+/**
+ * One builder-stage term: variables/measures ride their mint coordinate
+ * (the identity `v(Relation).field` established), params their name. A
+ * membership term additionally carries its pre-resolved handle row ids —
+ * queries resolve handles host-side (lowering.md §7.8).
+ */
 struct term_data {
 	query_term_form form;
 	coord_ref variable;
@@ -75,21 +71,23 @@ struct term_data {
 	std::array<std::uint64_t, max_membership_handles> members;
 };
 
-/// One pattern binding as recorded: the sealed field ordinal + the term.
+/** One pattern binding as recorded: the sealed field ordinal + the term. */
 struct binding_data {
 	std::size_t field;
 	term_data term;
 };
 
-/// One EDB atom as recorded: the relation's declaration ordinal (the wire
-/// RelationId — lowering.md §1.1) and the bindings in written order.
+/**
+ * One EDB atom as recorded: the relation's declaration ordinal (the wire
+ * RelationId — lowering.md §1.1) and the bindings in written order.
+ */
 struct atom_data {
 	std::uint32_t relation;
 	std::size_t binding_count;
 	std::array<binding_data, max_relation_fields> bindings;
 };
 
-/// The comparison operators the surface mints (`ir::CmpOp`).
+/** The comparison operators the surface mints (`ir::CmpOp`). */
 enum class query_cmp : std::uint8_t {
 	eq,
 	ne,
@@ -101,9 +99,11 @@ enum class query_cmp : std::uint8_t {
 	point_in,
 };
 
-/// One leaf condition. `point_in` stores interval-LEFT, point-RIGHT
-/// whatever the surface argument order (ts/src/query/atom.ts:432-435);
-/// `mask` is the literal 13-bit Allen word (allen conditions only).
+/**
+ * One leaf condition. `point_in` stores interval-LEFT, point-RIGHT
+ * whatever the surface argument order; `mask` is the literal 13-bit Allen
+ * word (allen conditions only).
+ */
 struct condition_data {
 	query_cmp op;
 	std::uint16_t mask;
@@ -111,10 +111,11 @@ struct condition_data {
 	term_data rhs;
 };
 
-/// One named binding of a recursive (IDB) atom — `bdb::bind<"c">(var)`:
-/// the target head column BY NAME, the variable (IDB bindings are var
-/// terms only — ts/src/query/lower.ts:1759-1783), and the variable's
-/// class facts for the head-slot join wall.
+/**
+ * One named binding of a recursive (IDB) atom: the target head column by
+ * name, the variable (IDB bindings are variable terms only), and the
+ * variable's class facts for the head-slot join wall.
+ */
 struct idb_bind_data {
 	name_text column;
 	coord_ref variable;
@@ -123,10 +124,12 @@ struct idb_bind_data {
 	coord_ref law;
 };
 
-/// One recursive atom as recorded: the rec's NAME (resolved to its dense
-/// PredId at program assembly), polarity, and the named bindings. The
-/// binds are placed and numbered in the target's HEAD order at assembly
-/// (`FieldId(i)` = head position i — lowering.md §4.2).
+/**
+ * One recursive atom as recorded: the rec's name (resolved to its dense
+ * PredId at program assembly), polarity, and the named bindings. The
+ * binds are placed and numbered in the target's head order at assembly —
+ * `FieldId(i)` = head position i (lowering.md §4.2).
+ */
 struct idb_atom_data {
 	name_text pred;
 	bool negated;
@@ -134,9 +137,11 @@ struct idb_atom_data {
 	std::array<idb_bind_data, max_query_finds> binds;
 };
 
-/// One rule-body item: the written interleave of match/where is preserved
-/// so variable numbering walks body items in WRITTEN order (lowering.md
-/// §4.2), whatever bucket each item later lowers into.
+/**
+ * One rule-body item: the written interleave of match/where is preserved
+ * so variable numbering walks body items in written order (lowering.md
+ * §4.2), whatever bucket each item later lowers into.
+ */
 enum class body_form : std::uint8_t {
 	atom,
 	negated_atom,
@@ -151,16 +156,17 @@ struct body_item {
 	condition_data condition;
 };
 
-/// A find column's form (`ir::FindTerm`): a projected variable, a
-/// var-scoped aggregate (`sum(minor)`, `count()`, `pack(span)`, ...), or
-/// an aggregate over the measure (`sum(duration(w))`).
+/**
+ * A find column's form (`ir::FindTerm`): a projected variable, a
+ * var-scoped aggregate, or an aggregate over the measure.
+ */
 enum class find_form : std::uint8_t {
 	variable,
 	aggregate,
 	aggregate_measure,
 };
 
-/// The aggregate ops the heads mint (`ir::AggOp`, all eight).
+/** The aggregate ops the heads mint (`ir::AggOp`, all eight). */
 enum class fold_form : std::uint8_t {
 	sum,
 	min,
@@ -172,10 +178,12 @@ enum class fold_form : std::uint8_t {
 	pack,
 };
 
-/// One find column: the answer column name, the term shape, the answer
-/// cell's structural class (the row-product synthesis input), the Arg key
-/// (`arg_max`/`arg_min` only), and — variable finds — the column's law
-/// class (the IDB head-slot join wall's data).
+/**
+ * One find column: the answer column name, the term shape, the answer
+ * cell's structural class (the row-product synthesis input), the Arg key
+ * (`arg_max`/`arg_min` only), and — variable finds — the column's law
+ * class (the IDB head-slot join wall's data).
+ */
 struct find_data {
 	name_text name;
 	find_form form;
@@ -189,20 +197,22 @@ struct find_data {
 	coord_ref law;
 };
 
-/// A param's wire shape (lowering.md §4.2's registry entry).
+/** A param's wire shape (lowering.md §4.2's registry entry). */
 enum class param_shape : std::uint8_t {
 	value,
 	set,
 	mask,
 };
 
-/// One registered parameter: name, shape, the field-anchored bind domain
-/// (the params-product member type AND the wire tag), and whether the
-/// anchoring use was point-domain (an interval field's element under
-/// point_in — TODO_CPP §21). A MEMBERSHIP entry is a synthetic
-/// content-addressed set param pre-resolved at build: it never appears in
-/// the params product, and execution supplies its frozen set positionally
-/// from the query constant (ts/src/query/run.ts:57-63).
+/**
+ * One registered parameter: name, shape, the field-anchored bind domain
+ * (the params-product member type AND the wire tag), and whether the
+ * anchoring use was point-domain (an interval field's element under
+ * point_in). A membership entry is a synthetic content-addressed set
+ * param pre-resolved at build: it never appears in the params product,
+ * and execution supplies its frozen set positionally from the query
+ * constant.
+ */
 struct param_data {
 	name_text name;
 	param_shape shape;
@@ -213,7 +223,7 @@ struct param_data {
 	std::array<std::uint64_t, max_membership_handles> members;
 };
 
-/// One param USE, recorded at the position that anchors it.
+/** One param use, recorded at the position that anchors it. */
 struct param_use {
 	name_text name;
 	param_shape shape;
@@ -224,7 +234,7 @@ struct param_use {
 	std::array<std::uint64_t, max_membership_handles> members;
 };
 
-/// One rule's accumulated builder state (value tier).
+/** One rule's accumulated builder state (value tier). */
 struct rule_state {
 	std::size_t item_count;
 	std::array<body_item, max_query_atoms + max_query_conditions> items;
@@ -234,19 +244,18 @@ struct rule_state {
 	std::array<coord_ref, max_query_vars> bound;
 };
 
-/// One completed rule: the body state plus the find head.
+/** One completed rule: the body state plus the find head. */
 struct rule_data {
 	rule_state state;
 	std::size_t find_count;
 	std::array<find_data, max_query_finds> finds;
 };
 
-// ————————————————————————————————————————————————————————————————————
-// The numbered wire IR (what :foreign_program reads).
-// ————————————————————————————————————————————————————————————————————
-
-/// One numbered term: dense rule-scoped var ids, dense query-global param
-/// ids (registry order = positional bind order — lowering.md §5.1).
+/**
+ * One numbered term of the wire IR :foreign_program reads: dense
+ * rule-scoped var ids, dense query-global param ids (registry order =
+ * positional bind order — lowering.md §5.1).
+ */
 struct wire_term {
 	query_term_form form;
 	std::uint16_t var;
@@ -259,9 +268,11 @@ struct wire_binding {
 	wire_term term;
 };
 
-/// One numbered atom: an EDB atom (`idb == false`, `relation` read) or a
-/// recursive IDB atom (`idb == true`, `pred` read — the target's dense
-/// PredId; bindings address head positions).
+/**
+ * One numbered atom: an EDB atom (`idb == false`, `relation` read) or a
+ * recursive IDB atom (`idb == true`, `pred` read — the target's dense
+ * PredId; bindings address head positions).
+ */
 struct wire_atom {
 	std::uint32_t relation;
 	bool idb;
@@ -277,9 +288,11 @@ struct wire_condition {
 	wire_term rhs;
 };
 
-/// One numbered find term. `over` is read for variable/measure columns
-/// and for aggregates with `has_over` (nullary `count` has none); the key
-/// fields for `arg_max`/`arg_min`.
+/**
+ * One numbered find term. `over` is read for variable/measure columns and
+ * for aggregates with `has_over` (nullary `count` has none); the key
+ * fields for `arg_max`/`arg_min`.
+ */
 struct wire_find {
 	find_form form;
 	fold_form op;
@@ -290,9 +303,10 @@ struct wire_find {
 	std::uint16_t key;
 };
 
-/// One numbered rule, bucketed exactly as the bridge's `bdb_rule` reads
-/// it (positive atoms / negated atoms / conditions, each in written
-/// order).
+/**
+ * One numbered rule, bucketed exactly as the bridge's `bdb_rule` reads it
+ * (positive atoms / negated atoms / conditions, each in written order).
+ */
 struct wire_rule {
 	std::size_t atom_count;
 	std::array<wire_atom, max_query_atoms> atoms;
@@ -304,9 +318,10 @@ struct wire_rule {
 	std::array<wire_find, max_query_finds> finds;
 };
 
-/// One lowered recursive predicate: its NAME (idb resolution + walls),
-/// its head (rule 0's finds — the sealed signature), and its numbered
-/// rules.
+/**
+ * One lowered recursive predicate: its name (idb resolution + walls), its
+ * head (rule 0's finds — the sealed signature), and its numbered rules.
+ */
 struct pred_ir {
 	name_text head_name;
 	std::size_t rule_count;
@@ -315,11 +330,13 @@ struct pred_ir {
 	std::array<find_data, max_query_finds> head;
 };
 
-/// The whole lowered query/program: the recs in declaration order
-/// (`PredId` = index), the OUTPUT predicate's rules/head (a plain query is
-/// the degenerate no-rec program, `output = 0` — lowering.md §4.1), plus
-/// the head columns (row-product synthesis) and the param registry
-/// (params-product synthesis, recs' uses folded FIRST — §4.2).
+/**
+ * The whole lowered query/program: the recs in declaration order (`PredId`
+ * = index), the output predicate's rules/head (a plain query is the
+ * degenerate no-rec program, `output = 0` — lowering.md §4.1), plus the
+ * head columns (row-product synthesis) and the param registry
+ * (params-product synthesis, recs' uses folded first — §4.2).
+ */
 struct query_ir {
 	std::size_t rule_count;
 	std::array<wire_rule, max_query_rules> rules;
@@ -331,24 +348,26 @@ struct query_ir {
 	std::array<pred_ir, max_program_recs> recs;
 };
 
-/// One built condition value (a `.where` argument): the leaf comparison
-/// plus the param uses its construction anchored.
+/**
+ * One built condition value (a `.where` argument): the leaf comparison
+ * plus the param uses its construction anchored.
+ */
 struct cond_value {
 	condition_data data;
 	std::size_t use_count;
 	std::array<param_use, 2> uses;
 };
 
-} // namespace bdb
+}
 
 namespace bdb::detail {
 
-// ————————————————————————————————————————————————————————————————————
-// Value-tier walls (the :interval diagnostic convention: reaching a
-// call to a never-defined non-constexpr function during constant
-// evaluation is the compile error, and the name is the message).
-// ————————————————————————————————————————————————————————————————————
-
+/**
+ * Value-tier walls, this one and every declaration after it: reaching a
+ * call to a never-defined non-constexpr function during constant
+ * evaluation is the compile error, and the name is the message (the
+ * :interval diagnostic convention).
+ */
 auto query_has_too_many_rules() -> void;
 auto rule_has_too_many_atoms() -> void;
 auto rule_has_too_many_conditions() -> void;
@@ -379,4 +398,4 @@ auto program_rec_names_must_be_distinct() -> void;
 auto program_rec_defines_at_least_one_rule() -> void;
 auto program_has_too_many_recs() -> void;
 
-} // namespace bdb::detail
+}

@@ -1,5 +1,3 @@
-// §34 — a key spanning two relations is a construction compile error
-// naming both coordinates: an FD constrains one relation's own rows.
 import std;
 import bumbledb;
 

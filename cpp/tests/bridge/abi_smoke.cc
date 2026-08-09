@@ -1,9 +1,3 @@
-// Smoke test of the wired bridge (TODO_CPP §32/§35): create an ephemeral
-// store from a minimal one-relation SchemaSpec view (Service: fresh id u64,
-// name str — the bridge's own test theory, statement-free), read the
-// fingerprint back (64 lowercase hex chars), destroy. This is the ONE test
-// file that consumes the raw ABI views directly through bdb::foreign; every
-// raw handle stays inside an immediately-scoped helper and never escapes.
 import std;
 import bumbledb_foreign;
 
@@ -16,9 +10,6 @@ struct CaseResult {
 	bool passed;
 };
 
-// Owned bytes for a borrowed ABI text view (the ABI speaks uint8_t, the
-// host speaks char; the copy keeps the conversion explicit and the storage
-// alive for the whole call).
 [[nodiscard]] auto bytes_of(std::string_view text) -> std::vector<std::uint8_t> {
 	auto bytes = std::vector<std::uint8_t>{};
 	bytes.reserve(text.size());
@@ -46,8 +37,6 @@ struct CaseResult {
 	};
 }
 
-// Renders and frees an owned ABI error (null-safe; the message view dies
-// with the error, so it is copied before the destroy).
 [[nodiscard]] auto consume_error(abi::bdb_error* error) -> std::string {
 	if (error == nullptr) {
 		return "(no error payload)";
@@ -63,8 +52,6 @@ struct CaseResult {
 	return text;
 }
 
-// The whole raw lifecycle — create → fingerprint → destroy — in one scope:
-// no ABI handle survives this function.
 [[nodiscard]] auto read_fingerprint(std::string_view store_path) -> std::expected<std::array<std::uint8_t, 64>, std::string> {
 	auto const path_bytes = bytes_of(store_path);
 	auto const service_bytes = bytes_of("Service");
@@ -178,7 +165,7 @@ struct CaseResult {
 	};
 }
 
-} // namespace
+}
 
 auto main() -> int {
 	auto failures = std::size_t{0};

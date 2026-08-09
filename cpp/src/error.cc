@@ -1,17 +1,11 @@
-// :error — the engine failure vocabulary (TODO_CPP §19, §27–§28).
-//
-// The taxonomy is deliberately three-way and never collapsed:
-//
-//   engine failure        -> bdb::Error (this module): an owned, structured
-//                            engine/bridge error crossed back over the ABI;
-//                            always the std::unexpected path.
-//   construction failure  -> bdb::TypeError (:interval): a pre-engine
-//                            checked-value construction failure (interval,
-//                            allen_mask) that never reaches the bridge.
-//   abandonment           -> data, not an error: a write callback that
-//                            decides "no" produces WriteOutcome::Abandoned
-//                            (:write), on the SUCCESS path.
-//
+/**
+ * The engine failure vocabulary. The taxonomy is three-way and never
+ * collapsed: engine failure -> bdb::Error (here, always the
+ * std::unexpected path); pre-engine construction failure ->
+ * bdb::TypeError (:interval), which never reaches the bridge; a write
+ * callback's "no" -> WriteOutcome::Abandoned (:write), data on the
+ * success path. Normative: docs/architecture/70-api.md.
+ */
 export module bumbledb:error;
 
 import std;
@@ -19,9 +13,10 @@ import bumbledb_foreign;
 
 export namespace bdb {
 
-/// The engine error families, one constant per C kind (TODO_CPP §27). The
-/// C++ enum mirrors bdb_error_kind value-for-value; the static_asserts
-/// below pin the correspondence so header drift breaks this compile.
+/**
+ * The engine error families: mirrors bdb_error_kind value-for-value
+ * (static_asserts below pin the correspondence against header drift).
+ */
 enum class ErrorKind : std::uint8_t {
 	Schema,
 	SchemaMismatch,
@@ -54,30 +49,38 @@ enum class ErrorKind : std::uint8_t {
 	Panic,
 };
 
-/// A violated statement's form (the C++ image of bdb_statement_kind,
-/// value-for-value).
+/**
+ * A violated statement's form: mirrors bdb_statement_kind
+ * value-for-value.
+ */
 enum class StatementKind : std::uint8_t {
 	Functionality,
 	Containment,
 	Capacity,
 };
 
-/// A containment citation's violated side; None for key and capacity
-/// citations (the C++ image of bdb_violation_direction, value-for-value).
+/**
+ * A containment citation's violated side; None for key and capacity
+ * citations. Mirrors bdb_violation_direction value-for-value.
+ */
 enum class ViolationDirection : std::uint8_t {
 	None,
 	SourceUnsatisfied,
 	TargetRequired,
 };
 
-/// A capacity measure: u128 as two u64 words.
+/**
+ * A capacity measure: u128 as two u64 words.
+ */
 struct Measure {
 	std::uint64_t lo;
 	std::uint64_t hi;
 };
 
-/// One rendered violation of a rejected commit — ownership-closed (the
-/// spelling is copied out of the error).
+/**
+ * One rendered violation of a rejected commit — ownership-closed: the
+ * spelling is copied out of the error, so it outlives the Error.
+ */
 struct Violation {
 	std::uint16_t statement;
 	StatementKind kind;
@@ -86,18 +89,19 @@ struct Violation {
 	std::optional<Measure> measure;
 };
 
-/// The GenerationMoved payload: the witnessed and current generations.
 struct GenerationMoved {
 	std::uint64_t witnessed;
 	std::uint64_t current;
 };
 
-} // namespace bdb
+}
 
 namespace bdb::detail {
 
-// The value-for-value mirror pins (TODO_CPP §27's tag-table discipline —
-// the C++ enum is the fourth spelling; drift breaks the compile here).
+/**
+ * Pins a mirror enum constant to its wire constant; header drift breaks
+ * these asserts, not the runtime.
+ */
 template<class Mirror, class Wire>
 [[nodiscard]] consteval auto mirrors(Mirror mirror, Wire wire) -> bool {
 	return std::to_underlying(mirror) == static_cast<std::underlying_type_t<Mirror>>(wire);
@@ -143,33 +147,37 @@ static_assert(mirrors(ViolationDirection::None, abi::bdb_violation_direction::BD
 static_assert(mirrors(ViolationDirection::SourceUnsatisfied, abi::bdb_violation_direction::BDB_VIOLATION_DIRECTION_SOURCE_UNSATISFIED));
 static_assert(mirrors(ViolationDirection::TargetRequired, abi::bdb_violation_direction::BDB_VIOLATION_DIRECTION_TARGET_REQUIRED));
 
-} // namespace bdb::detail
+}
 
 export namespace bdb {
 
-/// An owned, structured engine error (TODO_CPP §27): move-only RAII over
-/// the bridge's opaque error payload. Formatting is a separate cold
-/// operation (message/violations copy out); kind() is the hot accessor.
-/// The moved-from Error is inert — never read a moved-from Error.
+/**
+ * An owned, structured engine error: move-only RAII over the bridge's
+ * opaque error payload. kind() is the hot accessor; message() and
+ * violations() are separate cold operations that copy out. The
+ * moved-from Error is inert — never read a moved-from Error.
+ */
 class [[nodiscard]] Error {
 	foreign::error_handle handle_;
 
 public:
-	/// The bridge lane: adopts an owned error handle. Application code
-	/// never constructs Errors; Db and its capabilities do.
+	/**
+	 * Adopts an owned error handle. Application code never constructs
+	 * Errors; Db and its capabilities do.
+	 */
 	explicit Error(foreign::error_handle handle) : handle_{std::move(handle)} {}
 
 	[[nodiscard]] auto kind() const -> ErrorKind {
-		// Value-for-value mirror; pinned by the static_asserts above.
 		return static_cast<ErrorKind>(std::to_underlying(handle_.kind()));
 	}
 
-	/// The rendered message (cold path; copies).
 	[[nodiscard]] auto message() const -> std::string {
 		return handle_.message();
 	}
 
-	/// The GenerationMoved payload; nullopt for every other kind.
+	/**
+	 * The GenerationMoved payload; nullopt for every other kind.
+	 */
 	[[nodiscard]] auto generation_moved() const -> std::optional<GenerationMoved> {
 		return handle_.generation_moved().transform([](foreign::generation_moved_payload payload) -> GenerationMoved {
 			return GenerationMoved{
@@ -179,8 +187,10 @@ public:
 		});
 	}
 
-	/// The complete rendered violation set of a CommitRejected error
-	/// (empty for every other kind). Ownership-closed copies.
+	/**
+	 * The complete rendered violation set of a CommitRejected error;
+	 * empty for every other kind. Ownership-closed copies.
+	 */
 	[[nodiscard]] auto violations() const -> std::vector<Violation> {
 		auto rendered = std::vector<Violation>{};
 		auto const count = handle_.violation_count();
@@ -202,4 +212,4 @@ public:
 	}
 };
 
-} // namespace bdb
+}

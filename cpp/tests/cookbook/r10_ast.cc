@@ -1,16 +1,3 @@
-// Cookbook recipe 10 — Trees and ASTs (ts/COOKBOOK.md §10): node header +
-// per-kind arms (recipe 2's pattern); every edge resolves; the shape
-// theorems come from keys on the edge relations. The edge containments
-// put lhs/rhs in the "Node.id" class — which is exactly what lets the
-// query join lhs against Lit.node. Functional parent (one parent per
-// child) ⇒ paths-or-cycles; acyclicity itself is host discipline.
-//
-// Gates: the engine fingerprint equals the shared golden (fixtures line
-// "r10 <64-hex>"); lhsLiteral (the two-atom join with a param) prepares
-// AND answers the recipe's own semantics; a Node whose arm is missing is
-// commit-rejected (the ψ-selected mirrors, recipe 2's theorems).
-//
-// argv[1] = the fixtures file path (passed by add_test).
 import std;
 import bumbledb;
 
@@ -48,24 +35,14 @@ inline constexpr auto Ast =
 
                        bdb::contained(bdb::on(Node.kind), bdb::on(Kind.id)), bdb::key(Lit.node), bdb::key(Add.node),
 
-                       // Every node's arm is total, valid, and exclusive (recipe 2's
-                       // theorems):
                        bdb::mirrors(bdb::on(bdb::where(Node, {.kind = Kind.Lit}), Node.id), bdb::on(Lit.node)),
                        bdb::mirrors(bdb::on(bdb::where(Node, {.kind = Kind.Add}), Node.id), bdb::on(Add.node)),
 
-                       // Every child edge resolves — no dangling subtrees, judged at commit
-                       // (these containments also put lhs/rhs in the "Node.id" class, which
-                       // is exactly what lets the query below join lhs against Lit.node):
                        bdb::contained(bdb::on(Add.lhs), bdb::on(Node.id)), bdb::contained(bdb::on(Add.rhs), bdb::on(Node.id)),
 
-                       // Functional parent (one parent per child) ⇒ the reachable shape is
-                       // paths-or-cycles; acyclicity itself is outside the ∀∃ vocabulary —
-                       // host discipline, recorded. Transitive reach is recipe 24's closure.
                        bdb::key(Parent.child), bdb::contained(bdb::on(Parent.child), bdb::on(Node.id)),
                        bdb::contained(bdb::on(Parent.parent), bdb::on(Node.id)));
 
-// The two-atom join: the lhs edge (in the "Node.id" class) meets the Lit
-// arm's node column.
 inline constexpr auto LhsLiteral = bdb::query(Ast).rule([](auto r) consteval {
 	auto add = r.vars(Add);
 	auto lit = r.vars(Lit);
@@ -155,8 +132,6 @@ struct SeedIds {
 	std::uint64_t sum;
 };
 
-/// The AST for (2 + 3): two Lit leaves, one Add root, parent edges up —
-/// every node's arm rides the same commit (the mirrors demands the pair).
 [[nodiscard]] auto seed(bdb::Db& db) -> std::optional<SeedIds> {
 	using Decision = bdb::WriteDecision<SeedIds, std::monostate>;
 	using Result = std::expected<Decision, bdb::Error>;
@@ -246,7 +221,6 @@ auto run_cases(std::string_view fixtures_path, std::vector<CaseResult>& results)
 		return;
 	}
 
-	// A node whose arm is MISSING violates the arm-totality mirrors.
 	auto armless = db->write([&](bdb::WriteTx& tx) -> std::expected<bdb::WriteDecision<std::monostate, std::monostate>, bdb::Error> {
 		auto landed = tx.alloc(Node.id).and_then([&](std::uint64_t node) {
 			return tx.insert(Node, NodeRow{.id = node, .kind = Kind.Add});
@@ -271,14 +245,12 @@ auto run_cases(std::string_view fixtures_path, std::vector<CaseResult>& results)
 		return;
 	}
 
-	// The root's lhs edge resolves to the Lit arm carrying 2.
 	auto at_root = db->execute(*lhs_literal, {.n = ids->sum});
 	results.push_back(CaseResult{
 	    .name = "lhsLiteral(n: root) answers {2}",
 	    .passed = at_root.has_value() && at_root->size() == 1 && at_root->rows().front().value == 2,
 	});
 
-	// A leaf is not an Add — the join finds nothing.
 	auto at_leaf = db->execute(*lhs_literal, {.n = ids->two});
 	results.push_back(CaseResult{
 	    .name = "lhsLiteral(n: leaf) answers the empty set",
@@ -289,7 +261,7 @@ auto run_cases(std::string_view fixtures_path, std::vector<CaseResult>& results)
 	std::filesystem::remove_all(*dir, code);
 }
 
-} // namespace
+}
 
 auto main(int argc, char** argv) -> int {
 	auto const arguments = std::span{argv, static_cast<std::size_t>(argc)};

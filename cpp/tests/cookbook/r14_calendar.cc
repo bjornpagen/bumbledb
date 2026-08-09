@@ -1,20 +1,3 @@
-// Cookbook recipe 14 — The calendar core (ts/COOKBOOK.md §14): policy as
-// schema. Hard rules are pointwise keys (rooms cannot double-book), soft
-// rules are the statements you decline to write (people CAN double-book);
-// accepting an invitation IS claiming the time — the ψ-selected mirrors
-// on BOTH SIDES (`Attendance.where(rsvp: Accepted).id ~ Claim.where(arm:
-// Busy).source`) is what TYPES `Claim.source` into the "Attendance.id"
-// class; and Busy time lies inside working hours pointwise (the
-// ψ-selected multi-column coverage containment).
-//
-// Gates: the engine fingerprint equals the shared golden (fixtures line
-// "r14 <64-hex>"); roomConflicts / personLoad (the Allen-vs-param
-// queries) prepare AND answer the recipe's own semantics; the two-sided ψ
-// mirrors admits accept+claim and rejects an accept without its claim;
-// and the free-time twin (recipe 18's `pack`) coalesces one person's
-// Busy spans against the real engine.
-//
-// argv[1] = the fixtures file path (passed by add_test).
 import std;
 import bumbledb;
 
@@ -79,26 +62,18 @@ inline constexpr auto Calendar = bdb::schema<"Calendar">(
     bdb::contained(bdb::on(Attendance.event), bdb::on(Event.id)), bdb::contained(bdb::on(Attendance.person), bdb::on(Person.id)),
     bdb::contained(bdb::on(Attendance.rsvp), bdb::on(Rsvp.id)),
 
-    // One RSVP per (event, person).
     bdb::key(Attendance.event, Attendance.person), bdb::key(Claim.source), bdb::contained(bdb::on(Claim.person), bdb::on(Person.id)),
     bdb::contained(bdb::on(Claim.arm), bdb::on(Arm.id)),
 
-    // HARD: rooms cannot double-book — the pointwise key.
     bdb::key(Booking.room, Booking.span),
 
-    // SOFT: people CAN double-book — key(Claim, [person, span]) is simply
-    // not declared. Accepting an invitation IS claiming the time — and
-    // this is the statement that types Claim.source:
     bdb::mirrors(bdb::on(bdb::where(Attendance, {.rsvp = Rsvp.Accepted}), Attendance.id),
                  bdb::on(bdb::where(Claim, {.arm = Arm.Busy}), Claim.source)),
 
-    // Busy time lies inside working hours, pointwise — coverage rides the
-    // target's own key.
     bdb::key(WorkHours.person, WorkHours.hours),
     bdb::contained(bdb::on(bdb::where(Claim, {.arm = Arm.Busy}), Claim.person, Claim.span), bdb::on(WorkHours.person, WorkHours.hours)),
     bdb::contained(bdb::on(Booking.room), bdb::on(Room.id)), bdb::contained(bdb::on(Booking.event), bdb::on(Event.id)));
 
-// The recipe's queries — the Allen mask against a bind-time interval.
 inline constexpr auto RoomConflicts = bdb::query(Calendar).rule([](auto r) consteval {
 	auto vars = r.vars(Booking);
 	return r
@@ -129,8 +104,6 @@ inline constexpr auto PersonLoad = bdb::query(Calendar).rule([](auto r) consteva
 	    });
 });
 
-// The free-time twin (recipe 18's coalescing fold on this schema): one
-// answer row per (person, maximal Busy segment).
 inline constexpr auto BusyBlocks = bdb::query(Calendar).rule([](auto r) consteval {
 	auto vars = r.vars(Claim);
 	return r
@@ -153,8 +126,6 @@ struct CaseResult {
 	bool passed;
 };
 
-/// The golden of one recipe: the fixtures file is one `rNN <64-hex>` line
-/// per recipe (ts/test/cookbook.test.ts reads the same file).
 [[nodiscard]] auto golden_of(std::string_view fixtures, std::string_view recipe) -> std::optional<std::string> {
 	for (auto const line_range : std::views::split(fixtures, '\n')) {
 		auto const line = std::string_view{line_range};
@@ -219,9 +190,6 @@ struct SeedIds {
 	std::uint64_t review;
 };
 
-/// Alice works [0,100); two back-to-back events [10,20) and [20,30) are
-/// ACCEPTED (each acceptance mirrored by its Busy claim — the two-sided ψ
-/// law demands both in one commit); the room hosts the first event.
 [[nodiscard]] auto seed(bdb::Db& db) -> std::optional<SeedIds> {
 	using Decision = bdb::WriteDecision<SeedIds, std::monostate>;
 	using Result = std::expected<Decision, bdb::Error>;
@@ -337,7 +305,6 @@ auto run_cases(std::string_view fixtures_path, std::vector<CaseResult>& results)
 		return;
 	}
 
-	// An acceptance WITHOUT its Busy claim violates the ψ mirrors.
 	auto unpaired = db->write([&](bdb::WriteTx& tx) -> std::expected<bdb::WriteDecision<std::monostate, std::monostate>, bdb::Error> {
 		auto landed = tx.alloc(Event.id)
 		                  .and_then([&](std::uint64_t event) {
@@ -363,7 +330,6 @@ auto run_cases(std::string_view fixtures_path, std::vector<CaseResult>& results)
 	        !unpaired.has_value() && unpaired.error().kind() == bdb::ErrorKind::CommitRejected && !unpaired.error().violations().empty(),
 	});
 
-	// A TENTATIVE reply claims nothing — the ψ selection admits it bare.
 	auto tentative = db->write([&](bdb::WriteTx& tx) -> std::expected<bdb::WriteDecision<std::monostate, std::monostate>, bdb::Error> {
 		auto landed = tx.alloc(Event.id)
 		                  .and_then([&](std::uint64_t event) {
@@ -401,8 +367,6 @@ auto run_cases(std::string_view fixtures_path, std::vector<CaseResult>& results)
 		return;
 	}
 
-	// roomConflicts: [15,25) intersects the [10,20) booking; [20,30)
-	// touches it only at the boundary (meets shares no point).
 	auto conflicts = db->execute(*room_conflicts, {.want = bdb::interval<std::int64_t>::literal(15, 25)});
 	results.push_back(CaseResult{
 	    .name = "roomConflicts([15,25)) answers {(3a, [10,20))}",
@@ -416,14 +380,12 @@ auto run_cases(std::string_view fixtures_path, std::vector<CaseResult>& results)
 	    .passed = clear.has_value() && clear->size() == 0,
 	});
 
-	// personLoad: both claims intersect [0,50).
 	auto load = db->execute(*person_load, {.window = bdb::interval<std::int64_t>::literal(0, 50)});
 	results.push_back(CaseResult{
 	    .name = "personLoad([0,50)) answers alice's two claims",
 	    .passed = load.has_value() && load->size() == 2,
 	});
 
-	// The coalescing fold: [10,20) and [20,30) pack to ONE [10,30) block.
 	auto blocks = db->execute(*busy_blocks, {});
 	results.push_back(CaseResult{
 	    .name = "busyBlocks packs [10,20)+[20,30) to one [10,30) block",
@@ -435,7 +397,7 @@ auto run_cases(std::string_view fixtures_path, std::vector<CaseResult>& results)
 	std::filesystem::remove_all(*dir, code);
 }
 
-} // namespace
+}
 
 auto main(int argc, char** argv) -> int {
 	auto const arguments = std::span{argv, static_cast<std::size_t>(argc)};

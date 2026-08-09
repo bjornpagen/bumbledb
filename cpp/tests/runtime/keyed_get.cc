@@ -1,10 +1,3 @@
-// Keyed reads through first-class law values (TODO_CPP §26) over the
-// schema-typed Db lane (§13): Db::ephemeral(path, schema-value), the
-// stored key law as the get() selector (structural identity — no
-// generated nominal type), the fresh-field primary lane, the WriteTx
-// final-state twin, and miss-as-absence. Also proves the capacity and
-// mirrors wire paths end-to-end: the engine ADMITS the schemas this
-// elaborator lowers. GCC-only (the `bumbledb` module's reflective graph).
 import std;
 import bumbledb;
 
@@ -15,7 +8,6 @@ struct CaseResult {
 	bool passed;
 };
 
-// TODO_CPP §39 — the Uptime theory through the real elaborator.
 struct ServiceRow {
 	[[= bdb::fresh]] std::uint64_t id;
 
@@ -30,8 +22,6 @@ struct OutageRow {
 inline constexpr auto Service = bdb::relation<"Service", ServiceRow>;
 inline constexpr auto Outage = bdb::relation<"Outage", OutageRow>;
 
-// §26: the law is stored once and passed back verbatim — it IS the
-// selector.
 inline constexpr auto outage_key = bdb::key(Outage.service, Outage.window);
 
 inline constexpr auto Uptime = bdb::schema<"Uptime">(Service, Outage,
@@ -87,7 +77,6 @@ auto run_uptime_cases(std::vector<CaseResult>& results) -> void {
 
 	auto const window = bdb::interval<std::int64_t>::literal(0, 100);
 
-	// Seed one Service + one Outage, carrying the fresh id out.
 	using IdDecision = bdb::WriteDecision<std::uint64_t, std::monostate>;
 	using IdResult = std::expected<IdDecision, bdb::Error>;
 	auto written = db->write([&](bdb::WriteTx& tx) -> IdResult {
@@ -111,7 +100,6 @@ auto run_uptime_cases(std::vector<CaseResult>& results) -> void {
 	}
 	auto const id = std::get<bdb::Committed<std::uint64_t>>(*written).value;
 
-	// §26: the fresh-field primary lane — db.get(Service, {.id = id}).
 	auto const primary = db->get(Service, {.id = id});
 	results.push_back(CaseResult{
 	    .name = "db.get(Service, {.id}) reads through the fresh primary key",
@@ -119,7 +107,6 @@ auto run_uptime_cases(std::vector<CaseResult>& results) -> void {
 	              cell_is_u64(**primary, {.row = 0, .column = 0}, id) && cell_is_text(**primary, {.row = 0, .column = 1}, "search"),
 	});
 
-	// §26: the stored law as the selector — snap.get through db.get.
 	auto const keyed = db->get(Outage, outage_key, {.service = id, .window = window});
 	results.push_back(CaseResult{
 	    .name = "db.get(Outage, outage_key, pattern) resolves the law "
@@ -127,7 +114,6 @@ auto run_uptime_cases(std::vector<CaseResult>& results) -> void {
 	    .passed = keyed.has_value() && keyed->has_value() && (*keyed)->len() == 1 && cell_is_u64(**keyed, {.row = 0, .column = 0}, id),
 	});
 
-	// A key miss is genuine absence, not an error.
 	auto const missing_window = bdb::interval<std::int64_t>::literal(500, 600);
 	auto const miss = db->get(Outage, outage_key, {.service = id, .window = missing_window});
 	results.push_back(CaseResult{
@@ -135,7 +121,6 @@ auto run_uptime_cases(std::vector<CaseResult>& results) -> void {
 	    .passed = miss.has_value() && !miss->has_value(),
 	});
 
-	// The Snapshot lane spells identically inside a read.
 	auto const snap_hit = db->read([&](bdb::Snapshot& snap) -> std::expected<bool, bdb::Error> {
 		return snap.get(Outage, outage_key, {.service = id, .window = window}).transform([&](std::optional<bdb::RowSet> rows) {
 			return rows.has_value() && rows->len() == 1;
@@ -146,9 +131,6 @@ auto run_uptime_cases(std::vector<CaseResult>& results) -> void {
 	    .passed = snap_hit.has_value() && *snap_hit,
 	});
 
-	// The WriteTx twin reads the FINAL state: a delta insert is visible
-	// to tx.get before commit; the write is then abandoned and the fact
-	// never lands.
 	auto const pending_window = bdb::interval<std::int64_t>::literal(200, 300);
 	auto observed = db->write([&](bdb::WriteTx& tx) -> UnitResult {
 		return tx.insert(Outage, OutageRow{.service = id, .window = pending_window})
@@ -167,8 +149,6 @@ auto run_uptime_cases(std::vector<CaseResult>& results) -> void {
 	});
 }
 
-// The capacity and mirrors wire paths: the engine admits what the
-// elaborator lowers (weigh/within/ref and one bidirectional statement).
 struct PoolRow {
 	[[= bdb::fresh]] std::uint64_t id;
 
@@ -202,9 +182,6 @@ struct BookingRow {
 inline constexpr auto Room = bdb::relation<"Room", RoomRow>;
 inline constexpr auto Booking = bdb::relation<"Booking", BookingRow>;
 
-// The mirrors bijection needs BOTH directions key-backed at engine
-// validation: Room.id is the fresh-implied key; Booking.room gets a
-// declared key.
 inline constexpr auto Rooms = bdb::schema<"Rooms">(Room, Booking,
 
                                                    bdb::key(Booking.room),
@@ -233,7 +210,7 @@ auto run_admission_cases(std::vector<CaseResult>& results) -> void {
 	});
 }
 
-} // namespace
+}
 
 auto main() -> int {
 	auto results = std::vector<CaseResult>{};

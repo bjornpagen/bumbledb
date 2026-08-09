@@ -1,16 +1,3 @@
-// Cookbook recipe 8 — The sub-vocabulary (TODO_CPP §8, §33;
-// ts/COOKBOOK.md §8): a reference constrained to the facts of a
-// vocabulary that satisfy a payload selection. Because the target is
-// closed and sealed, the enforcement plan IS the answer set — ψ over the
-// sealed extension compiles the exact paging member set {Critical,
-// Fatal}, and a nonmember write is commit-rejected (proven here: an
-// escalation at "Info" comes back as the typed CommitRejected error).
-//
-// Fingerprint vs the shared golden; the `paged` query (the same ψ on the
-// read side) prepares through the real validator and answers the
-// recipe's own semantics.
-//
-// argv[1] = the fixtures file path (passed by add_test).
 import std;
 import bumbledb;
 
@@ -42,12 +29,8 @@ inline constexpr auto Oncall = bdb::schema<"Oncall">(
 
     bdb::contained(bdb::on(Incident.severity), bdb::on(Severity.id)), bdb::contained(bdb::on(Escalation.incident), bdb::on(Incident.id)),
 
-    // The sub-vocabulary: an escalation carries a PAGING severity, by
-    // statement — ψ over the sealed extension compiles to the member set
-    // {Critical, Fatal}.
     bdb::contained(bdb::on(Escalation.severity), bdb::on(bdb::where(Severity, {.pages = true}), Severity.id)));
 
-// who is being paged — the same ψ, on the read side.
 inline constexpr auto Paged = bdb::query(Oncall).rule([](auto r) consteval {
 	auto vars = r.vars(Escalation);
 	return r
@@ -135,7 +118,6 @@ struct SeedIds {
 	std::uint64_t paged;
 };
 
-/// Two incidents; the critical one escalates at a paging severity.
 [[nodiscard]] auto seed(bdb::Db& db) -> std::optional<SeedIds> {
 	using Decision = bdb::WriteDecision<SeedIds, std::monostate>;
 	using Result = std::expected<Decision, bdb::Error>;
@@ -166,8 +148,6 @@ struct SeedIds {
 	return std::get<bdb::Committed<SeedIds>>(*written).value;
 }
 
-/// An escalation at "Info" (a nonmember of the paging sub-vocabulary)
-/// must be rejected AT COMMIT with the typed CommitRejected error.
 [[nodiscard]] auto info_escalation_rejected(bdb::Db& db, std::uint64_t incident) -> bool {
 	using Decision = bdb::WriteDecision<std::monostate, std::monostate>;
 	using Result = std::expected<Decision, bdb::Error>;
@@ -251,7 +231,7 @@ auto run_cases(std::string_view fixtures_path, std::vector<CaseResult>& results)
 	std::filesystem::remove_all(*dir, code);
 }
 
-} // namespace
+}
 
 auto main(int argc, char** argv) -> int {
 	auto const arguments = std::span{argv, static_cast<std::size_t>(argc)};

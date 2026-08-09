@@ -1,13 +1,4 @@
-// Module IMPLEMENTATION unit of `bumbledb` — the one interface/impl split
-// in the module, forced by a pinned GCC 16.1 quirk, not by design: a
-// NON-template member function DEFINITION whose body instantiates the
-// foreign std::expected API corrupts the :db partition's BMI for
-// re-export — the primary interface's `export import :db;` then dies with
-// "failed to read compiled module cluster N: Bad file data". Template
-// members are unaffected. An implementation unit produces no BMI, so the
-// bodies of Db::admit, the pre-schema Db::create/open/ephemeral lanes,
-// and Db::fingerprint live here (declared in db.cc). Re-test on any GCC
-// bump; fold these back into db.cc when the re-export streams clean.
+/* PIN(gcc-partition-bmi-expected): implementation unit (no BMI to corrupt) for the Db bodies declared in db.cc */
 module bumbledb;
 
 import bumbledb_foreign;
@@ -46,4 +37,4 @@ auto Db::fingerprint() const -> std::expected<std::string, Error> {
 	});
 }
 
-} // namespace bdb
+}

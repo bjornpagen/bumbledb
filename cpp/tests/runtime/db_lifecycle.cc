@@ -1,20 +1,3 @@
-// The runtime resource layer over the §39 Uptime theory (TODO_CPP §15–§19,
-// §24–§25, §36): create/fingerprint, reflection-marshalled inserts with
-// fresh allocation, lexical reads (contains/scan), snapshot-derived writes
-// with the GenerationMoved lane, the §19 outcome algebra (abandonment as
-// data, callback-local failure aborting the delta), commit rejection with
-// the complete violation set, re-entrant write refusal, remove/contains
-// through the final-state view, durable create→drop→open, and Db move
-// semantics leaving the source inert.
-//
-// The schema is built through the PRE-SCHEMA LANE (bumbledb_foreign :raii's
-// owned builder): bdb::schema<> arrives next phase and replaces exactly
-// this scaffolding. The newtype labels below are the §39 law classes
-// computed by hand (Service.id is the one generator; Outage.service is
-// paired with it by the containment) — lowering.md §3.
-//
-// GCC-only: imports the `bumbledb` module, whose reflective partitions
-// exist only in the production graph.
 import std;
 import bumbledb;
 import bumbledb_foreign;
@@ -28,7 +11,6 @@ struct CaseResult {
 	bool passed;
 };
 
-// TODO_CPP §39 — the first-slice rows, spelled exactly as specified.
 struct ServiceRow {
 	[[= bdb::fresh]] std::uint64_t id;
 
@@ -40,10 +22,6 @@ struct OutageRow {
 	bdb::interval<std::int64_t> window;
 };
 
-// The deliberate arity violation (§39: one pointed shape error): one value
-// against Service's two sealed fields. Row/facade agreement is not yet a
-// compile-time theorem (that is the schema phase, TODO_CPP §28), so the
-// engine's FactShape is the wall this phase proves.
 struct ShortServiceRow {
 	std::uint64_t id;
 };
@@ -55,7 +33,6 @@ using UnitDecision = bdb::WriteDecision<std::monostate, std::monostate>;
 using UnitResult = std::expected<UnitDecision, bdb::Error>;
 using UnitCommitted = bdb::Committed<std::monostate>;
 
-// The §39 Uptime spec through the pre-schema lane.
 [[nodiscard]] auto make_uptime_spec() -> abi::owned_schema_spec {
 	auto relations = std::vector<abi::owned_relation>{};
 	relations.push_back(abi::owned_relation{
@@ -131,7 +108,6 @@ using UnitCommitted = bdb::Committed<std::monostate>;
 	});
 }
 
-// A commit-carrying insert body over the Outage relation.
 [[nodiscard]] auto insert_outage_body(std::uint64_t service_id, bdb::interval<std::int64_t> window) {
 	return [service_id, window](bdb::WriteTx& tx) -> UnitResult {
 		return tx.insert(Outage, OutageRow{.service = service_id, .window = window}).transform([](bool) -> UnitDecision {
@@ -139,8 +115,6 @@ using UnitCommitted = bdb::Committed<std::monostate>;
 		});
 	};
 }
-
-// --- the shared-store sequence ----------------------------------------------
 
 [[nodiscard]] auto fingerprint_case(bdb::Db const& db) -> CaseResult {
 	auto const fingerprint = db.fingerprint();
@@ -150,8 +124,6 @@ using UnitCommitted = bdb::Committed<std::monostate>;
 	};
 }
 
-// Fresh alloc + reflection-marshalled insert, committing the id out (§19's
-// Commit<T> carries a value).
 [[nodiscard]] auto insert_service_case(bdb::Db& db, std::vector<CaseResult>& results) -> std::optional<std::uint64_t> {
 	using IdDecision = bdb::WriteDecision<std::uint64_t, std::monostate>;
 	using IdResult = std::expected<IdDecision, bdb::Error>;
@@ -212,8 +184,6 @@ using UnitCommitted = bdb::Committed<std::monostate>;
 	};
 }
 
-// §18: write_from inside the read callback that owns the snapshot; also
-// the interval marshalling lane (Outage.window).
 [[nodiscard]] auto write_from_case(bdb::Db& db, std::uint64_t service_id) -> CaseResult {
 	auto const window = bdb::interval<std::int64_t>::literal(0, 100);
 	auto const nested = db.read([&](bdb::Snapshot& snap) -> std::expected<bool, bdb::Error> {
@@ -230,8 +200,6 @@ using UnitCommitted = bdb::Committed<std::monostate>;
 	};
 }
 
-// §18: a state-changing commit since the snapshot makes the next
-// write_from the typed GenerationMoved error, payload intact.
 [[nodiscard]] auto generation_moved_case(bdb::Db& db, std::uint64_t service_id) -> CaseResult {
 	auto const first_window = bdb::interval<std::int64_t>::literal(200, 300);
 	auto const second_window = bdb::interval<std::int64_t>::literal(400, 500);
@@ -256,9 +224,6 @@ using UnitCommitted = bdb::Committed<std::monostate>;
 	};
 }
 
-// §36: a callback-local failure aborts the whole delta — the valid insert
-// recorded before the failing one commits nothing — and the deliberate
-// arity violation is the engine's typed FactShape.
 [[nodiscard]] auto abort_on_error_case(bdb::Db& db) -> std::vector<CaseResult> {
 	auto ghost_id = std::optional<std::uint64_t>{};
 	auto aborted = db.write([&ghost_id](bdb::WriteTx& tx) -> UnitResult {
@@ -268,7 +233,6 @@ using UnitCommitted = bdb::Committed<std::monostate>;
 			    return tx.insert(Service, ServiceRow{.id = id, .name = std::string{"ghost"}});
 		    })
 		    .and_then([&tx](bool) -> UnitResult {
-			    // One value against two sealed fields: FactShape.
 			    return tx.insert(Service, ShortServiceRow{.id = 1}).transform([](bool) -> UnitDecision {
 				    return bdb::commit();
 			    });
@@ -294,8 +258,6 @@ using UnitCommitted = bdb::Committed<std::monostate>;
 	};
 }
 
-// §19: abandonment is DATA on the success path, round-tripping its
-// payload, and the abandoned delta commits nothing (§36).
 [[nodiscard]] auto abandon_case(bdb::Db& db) -> std::vector<CaseResult> {
 	using Decision = bdb::WriteDecision<std::monostate, std::string>;
 	auto maybe_id = std::optional<std::uint64_t>{};
@@ -330,7 +292,6 @@ using UnitCommitted = bdb::Committed<std::monostate>;
 	};
 }
 
-// §36: a commit rejection returns the complete engine violation result.
 [[nodiscard]] auto commit_rejection_case(bdb::Db& db) -> CaseResult {
 	auto const orphan_service = std::uint64_t{999999};
 	auto const window = bdb::interval<std::int64_t>::literal(1, 2);
@@ -352,8 +313,6 @@ using UnitCommitted = bdb::Committed<std::monostate>;
 	};
 }
 
-// §17: re-entrant writes are refused with a typed error before the
-// engine's assertion can fire; the outer write is unharmed.
 [[nodiscard]] auto reentrant_write_case(bdb::Db& db) -> CaseResult {
 	auto inner_kind = std::optional<bdb::ErrorKind>{};
 	auto outer = db.write([&](bdb::WriteTx&) -> UnitResult {
@@ -371,8 +330,6 @@ using UnitCommitted = bdb::Committed<std::monostate>;
 	};
 }
 
-// The final-state view inside one delta: insert → contains → remove →
-// contains, all before commit.
 [[nodiscard]] auto tx_lanes_case(bdb::Db& db) -> CaseResult {
 	auto seen_after_insert = false;
 	auto seen_after_remove = true;
@@ -405,20 +362,14 @@ using UnitCommitted = bdb::Committed<std::monostate>;
 	};
 }
 
-// §36: moving Db leaves the source inert and the target owning.
 [[nodiscard]] auto move_case(bdb::Db db) -> CaseResult {
 	auto target = std::move(db);
 	return CaseResult{
 	    .name = "moving Db leaves the source inert and valid (§36)",
-	    // NOLINT-free by zoning: observing the moved-from state IS the
-	    // subject (GCC graph carries no clang-tidy).
 	    .passed = !db.alive() && target.alive() && target.fingerprint().has_value(),
 	};
 }
 
-// §36: destroying a database destroys/releases all owned state — the
-// durable store's exclusive lock releases at RAII destruction, so a
-// fingerprint-verified open sees the committed row. No close() exists.
 [[nodiscard]] auto durable_case(abi::owned_schema_spec const& spec) -> std::vector<CaseResult> {
 	auto const dir = make_store_dir("durable");
 	if (!dir.has_value()) {
@@ -438,7 +389,7 @@ using UnitCommitted = bdb::Committed<std::monostate>;
 		if (!stored_id.has_value()) {
 			return results;
 		}
-	} // RAII drops the Db here; the environment lock releases.
+	}
 
 	auto reopened = bdb::Db::open(dir->string(), spec.view());
 	auto const survived =
@@ -496,7 +447,7 @@ using UnitCommitted = bdb::Committed<std::monostate>;
 	return results;
 }
 
-} // namespace
+}
 
 auto main() -> int {
 	auto failures = std::size_t{0};

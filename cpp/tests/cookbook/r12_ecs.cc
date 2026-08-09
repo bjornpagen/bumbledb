@@ -1,16 +1,3 @@
-// Cookbook recipe 12 — Entity-component (ts/COOKBOOK.md §12): the 0..1
-// idiom (recipe 3) at scale. Components are sidecar relations; an entity
-// has a component iff the fact exists; a new component kind is a new
-// relation, not a wider fact. The archetype rule is one containment:
-// every Renderable has a Transform (and, through it, an Entity —
-// containment composes, and the class composes with it).
-//
-// Gates: the engine fingerprint equals the shared golden (fixtures line
-// "r12 <64-hex>"); physics (the component-intersection join) prepares
-// AND answers the recipe's own semantics; a Renderable without its
-// Transform is commit-rejected (the archetype containment).
-//
-// argv[1] = the fixtures file path (passed by add_test).
 import std;
 import bumbledb;
 
@@ -45,17 +32,11 @@ inline constexpr auto Renderable = bdb::relation<"Renderable", RenderableRow>;
 inline constexpr auto Ecs =
     bdb::schema<"Ecs">(Entity, Transform, Velocity, Renderable,
 
-                       // Each component 0..1 per entity.
                        bdb::key(Transform.entity), bdb::contained(bdb::on(Transform.entity), bdb::on(Entity.id)), bdb::key(Velocity.entity),
                        bdb::contained(bdb::on(Velocity.entity), bdb::on(Entity.id)), bdb::key(Renderable.entity),
 
-                       // An archetype rule is one containment: every Renderable has a
-                       // Transform (and, through it, an Entity — containment composes, and
-                       // the class composes with it: every `entity` column lands in
-                       // "Entity.id").
                        bdb::contained(bdb::on(Renderable.entity), bdb::on(Transform.entity)));
 
-// The physics join is the component intersection.
 inline constexpr auto Physics = bdb::query(Ecs).rule([](auto r) consteval {
 	auto t = r.vars(Transform);
 	auto w = r.vars(Velocity);
@@ -150,8 +131,6 @@ struct SeedIds {
 	std::uint64_t rock;
 };
 
-/// The player carries all three components; the rock only a Transform —
-/// an entity has a component iff the fact exists.
 [[nodiscard]] auto seed(bdb::Db& db) -> std::optional<SeedIds> {
 	using Decision = bdb::WriteDecision<SeedIds, std::monostate>;
 	using Result = std::expected<Decision, bdb::Error>;
@@ -231,8 +210,6 @@ auto run_cases(std::string_view fixtures_path, std::vector<CaseResult>& results)
 		return;
 	}
 
-	// A Renderable without its Transform violates the archetype
-	// containment.
 	auto bare = db->write([&](bdb::WriteTx& tx) -> std::expected<bdb::WriteDecision<std::monostate, std::monostate>, bdb::Error> {
 		auto landed = tx.alloc(Entity.id)
 		                  .and_then([&](std::uint64_t ghost) {
@@ -263,8 +240,6 @@ auto run_cases(std::string_view fixtures_path, std::vector<CaseResult>& results)
 		return;
 	}
 
-	// The component intersection: only the player has BOTH Transform and
-	// Velocity.
 	auto moving = db->execute(*physics, {});
 	results.push_back(CaseResult{
 	    .name = "physics answers exactly the player's (x, y, dx, dy)",
@@ -277,7 +252,7 @@ auto run_cases(std::string_view fixtures_path, std::vector<CaseResult>& results)
 	std::filesystem::remove_all(*dir, code);
 }
 
-} // namespace
+}
 
 auto main(int argc, char** argv) -> int {
 	auto const arguments = std::span{argv, static_cast<std::size_t>(argc)};

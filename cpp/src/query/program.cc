@@ -1,7 +1,3 @@
-// :program — stratified recursion (ts/src/query/predicate.ts;
-// lowering.md §4): `bdb::rec<"name">(rules...)`, `bdb::output(rules...)`,
-// and the program entry point that seals the whole lowered program as an
-// ordinary query value.
 export module bumbledb:program;
 
 import std;
@@ -13,20 +9,20 @@ import :query;
 
 export namespace bdb {
 
-// ————————————————————————————————————————————————————————————————————
-// Stratified recursion (ts/src/query/predicate.ts; lowering.md §4).
-// ————————————————————————————————————————————————————————————————————
-
-/// One recursive predicate's DEFINITION: the name plus its rule builders
-/// (evaluated inside bdb::program, where the schema is known). Rule 0
-/// seals the head signature; every later rule derives the same head.
+/**
+ * One recursive predicate's definition: the name plus its rule builders,
+ * evaluated inside bdb::program where the schema is known. Rule 0 seals
+ * the head signature; every later rule derives the same head.
+ */
 template<fixed_string Name, class... Builds>
 struct rec_def {
 	std::tuple<Builds...> builds;
 };
 
-/// Declares one recursive predicate — `bdb::rec<"reach">(rule0, rule1)`.
-/// Declaration order inside bdb::program = the dense PredId.
+/**
+ * Declares one recursive predicate. Declaration order inside bdb::program
+ * = the dense PredId.
+ */
 template<fixed_string Name, class... Builds>
 [[nodiscard]] consteval auto rec(Builds... builds) -> rec_def<Name, Builds...> {
 	static_assert(sizeof...(Builds) >= 1, "bumbledb rec(): a predicate with no defining clause seals no "
@@ -35,8 +31,10 @@ template<fixed_string Name, class... Builds>
 	return {std::tuple{builds...}};
 }
 
-/// The OUTPUT predicate's definition (one rule per build; multiple rules
-/// = set union). Must be bdb::program's LAST argument.
+/**
+ * The output predicate's definition (one rule per build; multiple rules =
+ * set union). Must be bdb::program's last argument.
+ */
 template<class... Builds>
 struct output_def {
 	std::tuple<Builds...> builds;
@@ -49,7 +47,7 @@ template<class... Builds>
 	return {std::tuple{builds...}};
 }
 
-} // namespace bdb
+}
 
 namespace bdb::detail {
 
@@ -73,7 +71,6 @@ struct rec_name_of_t<rec_def<Name, Builds...>> {
 	static constexpr name_text value = to_name_text(Name.view());
 };
 
-/// Evaluates one rule builder under the schema's rule scope.
 template<class S, class Build>
 [[nodiscard]] consteval auto built_rule(Build const& build) -> rule_data {
 	auto const result = build(rule_scope<S>{});
@@ -82,7 +79,6 @@ template<class S, class Build>
 	return result;
 }
 
-/// One predicate's evaluated rules.
 struct built_pred {
 	name_text name;
 	std::size_t rule_count;
@@ -105,20 +101,20 @@ template<class S, class Part>
 	return out;
 }
 
-} // namespace bdb::detail
+}
 
 export namespace bdb {
 
-/// The stratified-program entry point (the TS `program(S, p => ...)`):
-/// `bdb::program(S, bdb::rec<"reach">(rule...), ..., bdb::output(rule...))`.
-/// Recs in declaration order (PredId = index), the output predicate last
-/// (`output = rec count` — lowering.md §4.2). Each rec's rule 0 seals its
-/// head; a rec's rules may `.idb` ONLY the rec itself (the self-recursion
-/// cut) and project bound variables only; output rules join/negate any
-/// FINISHED stratum and aggregate freely. The param registry folds the
-/// recs' uses first (declaration order, rules in order), then the
-/// output's — registry order = positional bind order. The sealed program
-/// is an ordinary query value: `db.prepare<Program>()`.
+/**
+ * The stratified-program entry point: recs in declaration order (PredId =
+ * index), the output predicate last (`output` = rec count — lowering.md
+ * §4.2). A rec's rules may `.idb` only the rec itself and project bound
+ * variables only; output rules join/negate any finished stratum and
+ * aggregate freely. The param registry folds the recs' uses first
+ * (declaration order, rules in order), then the output's — registry order
+ * = positional bind order. The sealed program is an ordinary query value:
+ * `db.prepare<Program>()`.
+ */
 template<Theory S, class... Parts>
 [[nodiscard]] consteval auto program(S const&, Parts const&... parts) -> query_value<S> {
 	constexpr auto part_count = sizeof...(Parts);
@@ -134,8 +130,6 @@ template<Theory S, class... Parts>
 		detail::program_has_too_many_recs();
 	}
 
-	// 1. Evaluate every rule builder (recs in declaration order, output
-	//    last) under the schema's rule scope.
 	auto recs = std::array<detail::built_pred, rec_total == 0 ? 1 : rec_total>{};
 	auto output_rules = detail::built_pred{};
 	{
@@ -161,9 +155,6 @@ template<Theory S, class... Parts>
 		(eat(parts), ...);
 	}
 
-	// 2. Distinct rec names; sealed heads (rule 0 of each rec) with the
-	//    recursive-head roster wall (bound variables only — judged in
-	//    lower_rule) and the alignment wall across each rec's rules.
 	auto out = query_value<S>{};
 	auto& ir = out.ir;
 	ir.rec_count = rec_total;
@@ -187,8 +178,6 @@ template<Theory S, class... Parts>
 		}
 	}
 
-	// 3. The param registry fold: recs first (declaration order, rules in
-	//    order), output rules last (lowering.md §4.2).
 	for (auto index = std::size_t{0}; index != rec_total; ++index) {
 		for (auto rule = std::size_t{0}; rule != recs[index].rule_count; ++rule) {
 			detail::fold_uses(ir, recs[index].rules[rule].state);
@@ -198,9 +187,6 @@ template<Theory S, class... Parts>
 		detail::fold_uses(ir, output_rules.rules[rule].state);
 	}
 
-	// 4. Lower every rule (rec rules under the self-recursion cut; the
-	//    output rules under the finished-strata rules), then seal the
-	//    output head.
 	for (auto index = std::size_t{0}; index != rec_total; ++index) {
 		ir.recs[index].rule_count = recs[index].rule_count;
 		for (auto rule = std::size_t{0}; rule != recs[index].rule_count; ++rule) {
@@ -224,4 +210,4 @@ template<Theory S, class... Parts>
 	return out;
 }
 
-} // namespace bdb
+}

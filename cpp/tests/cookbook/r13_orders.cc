@@ -1,20 +1,3 @@
-// Cookbook recipe 13 — State machines (ts/COOKBOOK.md §13): states are a
-// discriminated union; per-state data lives in arms; and the conditional
-// reference target — a reference to "an order THAT IS shipped" — is one
-// selected statement, the statement SQL cannot write: `mirrors(
-// Shipment.order ~ Order.where(state: Shipped).id)`. History accretes: a
-// Shipped order keeps its Placement (the one-way containment). Transition
-// predicates are host code under the generation witness (recipe 20); the
-// schema pins the states, not the paths.
-//
-// Gates: the engine fingerprint equals the shared golden (fixtures line
-// "r13 <64-hex>"); shipped (the handle-literal + join query) prepares
-// AND answers the recipe's own semantics; a Shipped order without its
-// Shipment is commit-rejected (totality) and a Shipment referencing a
-// Cart order is commit-rejected (validity) — the transition and its
-// evidence commit together.
-//
-// argv[1] = the fixtures file path (passed by add_test).
 import std;
 import bumbledb;
 
@@ -46,18 +29,10 @@ inline constexpr auto Orders =
 
                           bdb::contained(bdb::on(Order.state), bdb::on(State.id)), bdb::key(Placement.order), bdb::key(Shipment.order),
 
-                          // History accretes: a Shipped order keeps its Placement — one-way
-                          // containment admits arms from earlier states surviving the
-                          // transition.
                           bdb::contained(bdb::on(Placement.order), bdb::on(Order.id)),
 
-                          // The conditional target, both ways: every Shipment references an
-                          // order THAT IS Shipped (validity), and every Shipped order has its
-                          // Shipment (totality) — the transition and its evidence commit
-                          // together.
                           bdb::mirrors(bdb::on(Shipment.order), bdb::on(bdb::where(Order, {.state = State.Shipped}), Order.id)));
 
-// The handle literal in the match record + the join into the arm.
 inline constexpr auto Shipped = bdb::query(Orders).rule([](auto r) consteval {
 	auto o = r.vars(Order);
 	auto s = r.vars(Shipment);
@@ -147,9 +122,6 @@ struct SeedIds {
 	std::uint64_t shipped;
 };
 
-/// One order still in the Cart; one Shipped order carrying BOTH arms —
-/// its surviving Placement (history accretes) and the Shipment evidence
-/// the two-way mirrors demands in the same commit.
 [[nodiscard]] auto seed(bdb::Db& db) -> std::optional<SeedIds> {
 	using Decision = bdb::WriteDecision<SeedIds, std::monostate>;
 	using Result = std::expected<Decision, bdb::Error>;
@@ -224,7 +196,6 @@ auto run_cases(std::string_view fixtures_path, std::vector<CaseResult>& results)
 		return;
 	}
 
-	// TOTALITY: a Shipped order without its Shipment evidence.
 	auto unevidenced = db->write([&](bdb::WriteTx& tx) -> std::expected<bdb::WriteDecision<std::monostate, std::monostate>, bdb::Error> {
 		auto landed = tx.alloc(Order.id).and_then([&](std::uint64_t order) {
 			return tx.insert(Order, OrderRow{.id = order, .state = State.Shipped});
@@ -241,7 +212,6 @@ auto run_cases(std::string_view fixtures_path, std::vector<CaseResult>& results)
 	              !unevidenced.error().violations().empty(),
 	});
 
-	// VALIDITY: a Shipment referencing an order that is NOT Shipped.
 	auto premature = db->write([&](bdb::WriteTx& tx) -> std::expected<bdb::WriteDecision<std::monostate, std::monostate>, bdb::Error> {
 		auto landed = tx.insert(Shipment, ShipmentRow{.order = ids->cart, .carrier = std::string{"dhl"}, .at = 11});
 		if (!landed.has_value()) {
@@ -265,8 +235,6 @@ auto run_cases(std::string_view fixtures_path, std::vector<CaseResult>& results)
 		return;
 	}
 
-	// The handle literal + join: only the Shipped order answers, with
-	// its carrier.
 	auto answers = db->execute(*shipped, {});
 	results.push_back(CaseResult{
 	    .name = "shipped answers {(shipped order, ups)}",
@@ -278,7 +246,7 @@ auto run_cases(std::string_view fixtures_path, std::vector<CaseResult>& results)
 	std::filesystem::remove_all(*dir, code);
 }
 
-} // namespace
+}
 
 auto main(int argc, char** argv) -> int {
 	auto const arguments = std::span{argv, static_cast<std::size_t>(argc)};

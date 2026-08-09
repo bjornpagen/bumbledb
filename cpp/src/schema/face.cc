@@ -1,7 +1,3 @@
-// :face — statement faces: bdb::on(coord...) — one relation, a written
-// projection (TODO_CPP §9; lowering.md §2). Statements are VALUES (laws
-// are first-class, §26); the face's σ/ψ selection is its one VALUE
-// payload.
 export module bumbledb:face;
 
 import std;
@@ -12,15 +8,13 @@ import :where;
 
 export namespace bdb {
 
-// ————————————————————————————————————————————————————————————————————
-// Faces: bdb::on(coord...) — one relation, a written projection.
-// ————————————————————————————————————————————————————————————————————
-
-/// A statement face value: `on(Outage.service)`,
-/// `on(Device.model, Device.watts)`. Positional pairing reads the
-/// projection in written order (lowering.md §2). The σ/ψ selection is the
-/// face's one VALUE payload — `on(bdb::where(Task, {...}), Task.id)`
-/// carries its resolved bindings here (empty on a bare face).
+/**
+ * A statement face value: `on(Outage.service)`,
+ * `on(Device.model, Device.watts)`. Positional pairing reads the
+ * projection in written order (lowering.md §2). The σ/ψ selection is the
+ * face's one VALUE payload — `on(bdb::where(Task, {...}), Task.id)`
+ * carries its resolved bindings here (empty on a bare face).
+ */
 template<class First, class... Rest>
 struct face {
 	static constexpr std::size_t width = 1 + sizeof...(Rest);
@@ -31,7 +25,9 @@ struct face {
 	std::array<selection_data, max_face_selections> selections{};
 };
 
-/// Projects one or more columns of ONE relation as a statement face.
+/**
+ * Projects one or more columns of ONE relation as a statement face.
+ */
 template<class First, class... Rest>
 [[nodiscard]] consteval auto on(First, Rest...) -> face<First, Rest...> {
 	static_assert(detail::is_coordinate_v<First> && (detail::is_coordinate_v<Rest> && ...),
@@ -43,7 +39,9 @@ template<class First, class... Rest>
 	return {};
 }
 
-/// Projects columns of a ψ/σ-selected relation as a statement face.
+/**
+ * Projects columns of a ψ/σ-selected relation as a statement face.
+ */
 template<class Facade, class First, class... Rest>
 [[nodiscard]] consteval auto on(selected<Facade> const& source, First, Rest...) -> face<First, Rest...> {
 	static_assert(detail::is_coordinate_v<First> && (detail::is_coordinate_v<Rest> && ...),
@@ -59,7 +57,7 @@ template<class Facade, class First, class... Rest>
 	return out;
 }
 
-} // namespace bdb
+}
 
 namespace bdb::detail {
 
@@ -69,4 +67,4 @@ inline constexpr bool is_face_v = false;
 template<class First, class... Rest>
 inline constexpr bool is_face_v<face<First, Rest...>> = true;
 
-} // namespace bdb::detail
+}

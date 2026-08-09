@@ -1,21 +1,3 @@
-// Cookbook recipe 7 — The classification (TODO_CPP §8, §33;
-// ts/COOKBOOK.md §7): the payload-tier closed vocabulary. Payload columns
-// state what each word MEANS next to the word; ψ reads the payload on
-// both sides:
-//
-//   schema — contained(Certificate.kind ⊆ Kind.where({mastered:true}).id)
-//            lowers the ψ selection AS-IS (the ENGINE folds the member
-//            set at validate);
-//   query  — the closed relation is MATCHABLE like any relation:
-//            match(Kind, {id: k, mastered: true}) with a bool payload
-//            literal.
-//
-// Plus the typed axiom readback (`Kind.axioms.DirectPass.rank`) driving
-// the record-table dispatch idiom. Fingerprint vs the shared golden;
-// the query prepares through the real validator and answers the recipe's
-// own semantics.
-//
-// argv[1] = the fixtures file path (passed by add_test).
 import std;
 import bumbledb;
 
@@ -48,14 +30,8 @@ inline constexpr auto Review =
                           bdb::contained(bdb::on(Attempt.kind), bdb::on(Kind.id)), bdb::key(Certificate.attempt),
                           bdb::contained(bdb::on(Certificate.attempt), bdb::on(Attempt.id)),
 
-                          // ψ reads the payload: certificates carry mastered kinds only — the
-                          // selected TARGET lowers pass-through; the engine compiles the member
-                          // set {DirectPass, JudgedPass} at validate.
                           bdb::contained(bdb::on(Certificate.kind), bdb::on(bdb::where(Kind, {.mastered = true}), Kind.id)));
 
-// The classification read duplicates no flag onto Attempt — ψ walks the
-// vocabulary's payload in the query too: the closed relation is a query
-// atom with a bool payload literal.
 inline constexpr auto MasteredAttempts = bdb::query(Review).rule([](auto r) consteval {
 	auto vars = r.vars(Attempt);
 	return r
@@ -76,7 +52,6 @@ inline constexpr auto MasteredAttempts = bdb::query(Review).rule([](auto r) cons
 
 namespace {
 
-// The typed axiom readback: the sealed rows, read off the facade value.
 static_assert(Kind.axioms.DirectPass.mastered);
 static_assert(Kind.axioms.DirectPass.rank == 30);
 static_assert(Kind.axioms.JudgedPass.mastered);
@@ -84,9 +59,6 @@ static_assert(Kind.axioms.JudgedPass.rank == 20);
 static_assert(!Kind.axioms.Failed.mastered);
 static_assert(Kind.axioms.Failed.rank == 10);
 
-// The record-table dispatch idiom (the cookbook's `labels`): one entry
-// per handle, each reading its sealed axiom row off the typed readback;
-// the switch over the handle projection is total over the roster.
 [[nodiscard]] auto label(bdb::ref_to<Kind.id> kind) -> std::string {
 	switch (kind.row) {
 	case Kind.DirectPass.index:
@@ -168,8 +140,6 @@ struct SeedIds {
 	std::uint64_t failed;
 };
 
-/// One attempt per kind, plus a certificate for the DirectPass attempt
-/// (the ψ containment admits mastered kinds — the commit proves it).
 [[nodiscard]] auto seed(bdb::Db& db) -> std::optional<SeedIds> {
 	using Decision = bdb::WriteDecision<SeedIds, std::monostate>;
 	using Result = std::expected<Decision, bdb::Error>;
@@ -233,7 +203,6 @@ auto run_cases(std::string_view fixtures_path, std::vector<CaseResult>& results)
 	    .passed = fingerprint.has_value() && *fingerprint == *golden,
 	});
 
-	// The record-table dispatch, off the sealed axioms.
 	results.push_back(CaseResult{
 	    .name = "label reads the typed Kind.axioms readback",
 	    .passed = label(Kind.DirectPass) == "mastered, rank 30" && label(Kind.JudgedPass) == "mastered, rank 20" &&
@@ -281,7 +250,7 @@ auto run_cases(std::string_view fixtures_path, std::vector<CaseResult>& results)
 	std::filesystem::remove_all(*dir, code);
 }
 
-} // namespace
+}
 
 auto main(int argc, char** argv) -> int {
 	auto const arguments = std::span{argv, static_cast<std::size_t>(argc)};

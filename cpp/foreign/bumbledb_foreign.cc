@@ -1,8 +1,9 @@
-// bumbledb_foreign — the primary module interface of the quarantine
-// boundary (TODO_CPP §31, AGENTS.md): the raw C ABI re-export (:abi) and
-// the safe RAII adaptation surface over it (:raii). The pre-schema spec
-// lane imports this module explicitly and dies with it; the umbrella
-// `bumbledb` module deliberately does NOT re-export it.
+/**
+ * The quarantine boundary's primary interface: the raw C ABI re-export
+ * (:abi) and the safe RAII surface over it (:raii). The umbrella
+ * `bumbledb` module deliberately does NOT re-export this module; only
+ * the pre-schema spec lane imports it explicitly.
+ */
 export module bumbledb_foreign;
 
 export import :abi;

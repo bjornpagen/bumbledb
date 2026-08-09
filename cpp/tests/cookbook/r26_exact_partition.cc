@@ -1,19 +1,3 @@
-// Cookbook recipe 26 — Exact partition (ts/COOKBOOK.md §26): an exact
-// partition needs BOTH coverage directions. The first containment is the
-// intent-level reference; the two pointwise keys make each side disjoint;
-// the final pair proves equal point supports per policy — forward
-// coverage forbids gaps, reverse coverage forbids overhang. The explicit
-// `key(Policy, [id, live])` is load-bearing: containment targets resolve
-// by their exact projected field set, so the fresh `{id}` key cannot
-// serve the `{id, live}` target.
-//
-// Gates: the engine fingerprint equals the shared golden (fixtures line
-// "r26 <64-hex>"); a policy landing WITH its exact version partition
-// commits (touching half-open segments are legal); a gap in the versions
-// is commit-rejected (forward coverage); a version overhang is
-// commit-rejected (reverse coverage).
-//
-// argv[1] = the fixtures file path (passed by add_test).
 import std;
 import bumbledb;
 
@@ -34,13 +18,10 @@ inline constexpr auto Version = bdb::relation<"Version", VersionRow>;
 inline constexpr auto ExactPartition =
     bdb::schema<"ExactPartition">(Policy, Version,
 
-                                  // Reference intent.
                                   bdb::contained(bdb::on(Version.policy), bdb::on(Policy.id)),
 
-                                  // Disjoint versions; the exact target key (not implied by {id}).
                                   bdb::key(Version.policy, Version.valid), bdb::key(Policy.id, Policy.live),
 
-                                  // No gaps in the policy source span; no version overhang.
                                   bdb::contained(bdb::on(Policy.id, Policy.live), bdb::on(Version.policy, Version.valid)),
                                   bdb::contained(bdb::on(Version.policy, Version.valid), bdb::on(Policy.id, Policy.live)));
 
@@ -51,8 +32,6 @@ struct CaseResult {
 	bool passed;
 };
 
-/// The golden of one recipe: the fixtures file is one `rNN <64-hex>` line
-/// per recipe (ts/test/cookbook.test.ts reads the same file).
 [[nodiscard]] auto golden_of(std::string_view fixtures, std::string_view recipe) -> std::optional<std::string> {
 	for (auto const line_range : std::views::split(fixtures, '\n')) {
 		auto const line = std::string_view{line_range};
@@ -110,8 +89,6 @@ struct CaseResult {
 	return dir;
 }
 
-/// One policy [0,10) plus the given version spans, one transaction —
-/// the mutual coverage pair judges the whole write at commit.
 [[nodiscard]] auto attempt(bdb::Db& db, std::vector<bdb::interval<std::int64_t>> const& versions)
     -> std::expected<bdb::WriteOutcome<std::monostate, std::monostate>, bdb::Error> {
 	return db.write([&](bdb::WriteTx& tx) -> std::expected<bdb::WriteDecision<std::monostate, std::monostate>, bdb::Error> {
@@ -156,9 +133,6 @@ auto run_cases(std::string_view fixtures_path, std::vector<CaseResult>& results)
 	    .passed = fingerprint.has_value() && *fingerprint == *golden,
 	});
 
-	// The exact partition: [0,5) + [5,10) tile [0,10) — touching
-	// half-open segments are legal, the pointwise key keeps them
-	// disjoint, and both coverage directions hold.
 	auto exact = attempt(*db, {bdb::interval<std::int64_t>::literal(0, 5), bdb::interval<std::int64_t>::literal(5, 10)});
 	results.push_back(CaseResult{
 	    .name = "the exact partition commits (touching half-open "
@@ -166,8 +140,6 @@ auto run_cases(std::string_view fixtures_path, std::vector<CaseResult>& results)
 	    .passed = exact.has_value() && std::holds_alternative<bdb::Committed<std::monostate>>(*exact),
 	});
 
-	// A gap: [0,4) + [5,10) leaves [4,5) uncovered — forward coverage
-	// (policy ⊆ versions) rejects the write.
 	auto gapped = attempt(*db, {bdb::interval<std::int64_t>::literal(0, 4), bdb::interval<std::int64_t>::literal(5, 10)});
 	results.push_back(CaseResult{
 	    .name = "a gap in the versions is commit-rejected (forward "
@@ -175,8 +147,6 @@ auto run_cases(std::string_view fixtures_path, std::vector<CaseResult>& results)
 	    .passed = !gapped.has_value() && gapped.error().kind() == bdb::ErrorKind::CommitRejected && !gapped.error().violations().empty(),
 	});
 
-	// An overhang: [0,12) spills past the policy's [0,10) — reverse
-	// coverage (versions ⊆ policy) rejects the write.
 	auto overhang = attempt(*db, {bdb::interval<std::int64_t>::literal(0, 12)});
 	results.push_back(CaseResult{
 	    .name = "a version overhang is commit-rejected (reverse coverage "
@@ -189,7 +159,7 @@ auto run_cases(std::string_view fixtures_path, std::vector<CaseResult>& results)
 	std::filesystem::remove_all(*dir, code);
 }
 
-} // namespace
+}
 
 auto main(int argc, char** argv) -> int {
 	auto const arguments = std::span{argv, static_cast<std::size_t>(argc)};
