@@ -61,8 +61,6 @@ if(NOT BDB_LINT_GRAPH)
     # Reflection is not negotiable: the version gate above guarantees GCC
     # 16.1.x, which implements it.
     string(APPEND CMAKE_CXX_FLAGS " -freflection")
-    # Contracts (P2900): handle_contract_violation links from libstdc++exp.
-    string(APPEND CMAKE_EXE_LINKER_FLAGS " -lstdc++exp")
 endif()
 
 # ----------------------------------------------------------------------------
@@ -72,6 +70,15 @@ endif()
 add_library(bumbledb_language_profile INTERFACE)
 
 target_compile_features(bumbledb_language_profile INTERFACE cxx_std_26)
+
+if(NOT BDB_LINT_GRAPH)
+    # Contracts (P2900): handle_contract_violation lives in libstdc++exp.
+    # Linked as an interface library, NOT via CMAKE_EXE_LINKER_FLAGS: GNU ld
+    # resolves symbols left-to-right and linker flags precede the object
+    # files, so the flag spelling satisfies nothing on Linux (macOS ld64
+    # masked this — first CI run caught it).
+    target_link_libraries(bumbledb_language_profile INTERFACE stdc++exp)
+endif()
 
 # -fno-exceptions / -fno-rtti are global (see CMAKE_CXX_FLAGS above): they
 # must also apply to the CMake-synthesized std module compilation.
