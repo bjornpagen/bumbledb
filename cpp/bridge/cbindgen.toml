@@ -1,0 +1,59 @@
+# cbindgen configuration for the C-ABI bridge (TODO_CPP.md §14).
+# Pinned tool: cbindgen 0.29.4 (installed via `cargo install --locked cbindgen`).
+# Regenerate the committed header with:
+#
+#     cd cpp/bridge && cbindgen --config cbindgen.toml --crate bumbledb-cpp-bridge \
+#         --output ../foreign/bumbledb_c.h
+#
+# The output belongs to cpp/foreign/ — the explicit compatibility zone; it
+# may use the preprocessor because foreign/ is exempt from the dialect's
+# preprocessor ban (§14). The C++ SDK wraps it; no C declaration leaks
+# upward.
+
+language = "C"
+cpp_compat = true
+include_guard = "BUMBLEDB_C_H"
+usize_is_size_t = true
+documentation = true
+documentation_style = "c99"
+style = "both"
+
+header = """
+/* bumbledb_c.h — the generated C ABI of the bumbledb C++ SDK bridge.
+ *
+ * GENERATED FILE — DO NOT EDIT. Regenerate from cpp/bridge with:
+ *     cbindgen --config cbindgen.toml --crate bumbledb-cpp-bridge \\
+ *         --output ../foreign/bumbledb_c.h
+ * (pinned cbindgen 0.29.4; see cpp/bridge/cbindgen.toml)
+ *
+ * Boundary protocol: every fallible function returns a bdb_status and
+ * takes a trailing bdb_error** out-param — BDB_STATUS_OK (no error),
+ * BDB_STATUS_ABORTED (the caller's callback aborted; no error),
+ * BDB_STATUS_ERROR (a bdb_error* is written; the caller owns it and
+ * frees it with bdb_error_destroy), BDB_STATUS_MISUSE (a contract
+ * violation — null required pointer, stale snapshot/tx ref, index out
+ * of range; no error is allocated).
+ *
+ * Lexical capabilities: bdb_snapshot_ref / bdb_tx_ref are valid ONLY
+ * inside the callback they are passed to and are invalidated when it
+ * returns. They are never owned or destroyed by the caller.
+ * bdb_db_write_from may be called from inside a read callback with that
+ * callback's still-live snapshot ref; nested writes are refused with a
+ * typed BDB_ERROR_ENVIRONMENT_LOCKED error.
+ *
+ * View lifetimes: bdb_value string/bytes payloads handed OUT borrow the
+ * carrier named at the accessor (bdb_row_set, bdb_answers, bdb_error)
+ * and die with it (or on the carrier's next clear/execute). Views handed
+ * IN are copied before the call returns; no caller memory is retained.
+ */"""
+
+[export]
+# The ref-only capability types are opaque to C by design (§14): the
+# bridge never lets the caller construct or destroy one.
+
+[enum]
+rename_variants = "ScreamingSnakeCase"
+prefix_with_name = true
+
+[parse]
+parse_deps = false

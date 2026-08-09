@@ -85,7 +85,7 @@ after(function cleanup() {
  * rewrites the fixture from this suite's fingerprints; the Rust side never
  * writes it.
  */
-const goldensPath = path.join(import.meta.dirname, "fixtures", "cookbook-fingerprints.txt")
+const goldensPath = path.join(import.meta.dirname, "..", "..", "fixtures", "cookbook-fingerprints.txt")
 const regenerating = process.env.REGEN_FINGERPRINTS === "1"
 
 /** The pinned goldens — absent while regenerating (the values are in flux). */
@@ -95,7 +95,7 @@ const goldens = regenerating ? undefined : readGoldens()
 const witnessed = new Map<string, string>()
 
 /** The header the regeneration writes back verbatim, above the sorted lines. */
-const GOLDENS_HEADER = `# ts/test/fixtures/cookbook-fingerprints.txt — the per-recipe cross-host
+const GOLDENS_HEADER = `# fixtures/cookbook-fingerprints.txt — the per-recipe cross-host
 # fingerprint goldens: one line per engine-cookbook recipe, \`rNN <64-hex>\`,
 # sorted by recipe number.
 #

@@ -1047,7 +1047,8 @@ fn hex_of(fingerprint: &bumbledb::schema::fingerprint::SchemaFingerprint) -> Str
 
 /// The per-recipe cross-host goldens (PRD-T5): every roster schema's
 /// fingerprint equals its pinned line in the ONE shared fixture,
-/// `ts/test/fixtures/cookbook-fingerprints.txt` — the same file the SDK
+/// `fixtures/cookbook-fingerprints.txt` at the repository root — the same
+/// host-neutral file the SDK
 /// cookbook suite (`ts/test/cookbook.test.ts`) asserts against, and alone
 /// regenerates (`REGEN_FINGERPRINTS=1`; this side never writes it). The TS
 /// side lowers a names-only spec through the napi bridge into the SAME
@@ -1058,7 +1059,7 @@ fn hex_of(fingerprint: &bumbledb::schema::fingerprint::SchemaFingerprint) -> Str
 fn every_recipe_fingerprint_matches_the_cross_host_golden() {
     let fixture = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../ts/test/fixtures/cookbook-fingerprints.txt"
+        "/../../fixtures/cookbook-fingerprints.txt"
     ));
     let mut goldens = std::collections::BTreeMap::new();
     for line in fixture.lines().map(str::trim) {

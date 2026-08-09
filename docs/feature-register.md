@@ -125,7 +125,7 @@ next-but-one rung).
   IR/VarId theory is UNCHANGED — lowering assigns VarIds from reference
   identity in deterministic first-use order — and the Rust macro, the wire,
   the manifest, and the fingerprints are untouched. Zero fingerprint pins
-  move: `ts/test/fixtures/cookbook-fingerprints.txt` is byte-identical across
+  move: `fixtures/cookbook-fingerprints.txt` is byte-identical across
   the break.
 - **Status**: ships as 0.6.0, a deliberate hard break; version staged in
   lockstep, NO tag, NO publish (owner ceremony).

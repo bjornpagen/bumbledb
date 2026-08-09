@@ -18,7 +18,8 @@ recipes: each schema is constructed through the public surface, admitted
 on a real store (the engine's schema validation is the acceptance
 judgment), its fingerprint asserted stable across a reopen AND equal to
 the per-recipe cross-host golden the Rust cookbook suite also pins
-(`test/fixtures/cookbook-fingerprints.txt` — the two cookbooks teach one
+(`fixtures/cookbook-fingerprints.txt` at the repository root — the two
+cookbooks teach one
 theory per recipe number, provably), and every query snippet lowered
 through `db.prepare` (the engine's own IR validation).
 

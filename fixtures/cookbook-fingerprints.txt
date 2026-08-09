@@ -1,4 +1,4 @@
-# ts/test/fixtures/cookbook-fingerprints.txt — the per-recipe cross-host
+# fixtures/cookbook-fingerprints.txt — the per-recipe cross-host
 # fingerprint goldens: one line per engine-cookbook recipe, `rNN <64-hex>`,
 # sorted by recipe number.
 #
