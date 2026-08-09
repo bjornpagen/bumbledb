@@ -30,7 +30,7 @@ struct coord_ref {
 	name_text relation;
 	name_text field;
 
-	constexpr auto operator==(coord_ref const&) const -> bool = default;
+	[[nodiscard]] constexpr auto operator==(coord_ref const&) const -> bool = default;
 };
 
 /// One declared field of the flattened relation table. `width` is the

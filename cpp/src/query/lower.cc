@@ -16,7 +16,7 @@ struct numberer {
 	std::array<coord_ref, max_query_vars> minted;
 };
 
-consteval auto var_id(numberer& numbers, coord_ref variable) -> std::uint16_t {
+[[nodiscard]] consteval auto var_id(numberer& numbers, coord_ref variable) -> std::uint16_t {
 	for (auto index = std::size_t{0}; index != numbers.count; ++index) {
 		if (numbers.minted[index] == variable) {
 			return static_cast<std::uint16_t>(index);
@@ -30,7 +30,7 @@ consteval auto var_id(numberer& numbers, coord_ref variable) -> std::uint16_t {
 	return static_cast<std::uint16_t>(numbers.count - 1);
 }
 
-consteval auto param_id(query_ir const& ir, name_text name) -> std::uint16_t {
+[[nodiscard]] consteval auto param_id(query_ir const& ir, name_text name) -> std::uint16_t {
 	for (auto index = std::size_t{0}; index != ir.param_count; ++index) {
 		if (ir.params[index].name == name) {
 			return static_cast<std::uint16_t>(index);
@@ -42,7 +42,7 @@ consteval auto param_id(query_ir const& ir, name_text name) -> std::uint16_t {
 	return 0;
 }
 
-consteval auto wire_term_of(query_ir const& ir, numberer& numbers, term_data const& term) -> wire_term {
+[[nodiscard]] consteval auto wire_term_of(query_ir const& ir, numberer& numbers, term_data const& term) -> wire_term {
 	auto out = wire_term{};
 	out.form = term.form;
 	switch (term.form) {
@@ -98,7 +98,7 @@ consteval auto fold_uses(query_ir& ir, rule_state const& state) -> void {
 	}
 }
 
-consteval auto term_is_bound_var(rule_state const& state, term_data const& term) -> bool {
+[[nodiscard]] consteval auto term_is_bound_var(rule_state const& state, term_data const& term) -> bool {
 	if (term.form != query_term_form::variable && term.form != query_term_form::measure) {
 		return true;
 	}
@@ -108,7 +108,7 @@ consteval auto term_is_bound_var(rule_state const& state, term_data const& term)
 inline constexpr std::size_t no_rec = ~std::size_t{0};
 
 /// The rec a recursive atom targets, by name (nowhere = the wall).
-consteval auto rec_index_of(query_ir const& ir, name_text name) -> std::size_t {
+[[nodiscard]] consteval auto rec_index_of(query_ir const& ir, name_text name) -> std::size_t {
 	for (auto index = std::size_t{0}; index != ir.rec_count; ++index) {
 		if (ir.recs[index].head_name == name) {
 			return index;
@@ -122,7 +122,7 @@ consteval auto rec_index_of(query_ir const& ir, name_text name) -> std::size_t {
 /// every head column bound exactly once (lowering.md §4.2) — and each
 /// bind's variable must join its head column's class (the TS fieldJoins
 /// wall on the idb pairing).
-consteval auto wire_idb_of(query_ir const& ir, numberer& numbers, idb_atom_data const& atom, std::size_t pred) -> wire_atom {
+[[nodiscard]] consteval auto wire_idb_of(query_ir const& ir, numberer& numbers, idb_atom_data const& atom, std::size_t pred) -> wire_atom {
 	auto const& target = ir.recs[pred];
 	auto out = wire_atom{};
 	out.idb = true;
@@ -170,7 +170,7 @@ consteval auto wire_idb_of(query_ir const& ir, numberer& numbers, idb_atom_data 
 /// only the rec itself, positively — the self-recursion cut and the
 /// monotonicity wall) and `no_rec` for output/query rules. Requires every
 /// rec head in `ir.recs` to be sealed and this rule's param uses folded.
-consteval auto lower_rule(query_ir const& ir, rule_data const& rule, std::size_t self) -> wire_rule {
+[[nodiscard]] consteval auto lower_rule(query_ir const& ir, rule_data const& rule, std::size_t self) -> wire_rule {
 	if (rule.find_count == 0) {
 		rule_finds_nothing();
 	}

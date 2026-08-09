@@ -33,24 +33,24 @@ template<class T, class A>
 using WriteDecision = std::variant<Commit<T>, Abandon<A>>;
 
 /// The valueless commit decision (`return bdb::commit();`).
-constexpr auto commit() -> Commit<std::monostate> {
+[[nodiscard]] constexpr auto commit() -> Commit<std::monostate> {
 	return Commit<std::monostate>{std::monostate{}};
 }
 
 /// A value-carrying commit decision.
 template<class T>
-constexpr auto commit(T value) -> Commit<T> {
+[[nodiscard]] constexpr auto commit(T value) -> Commit<T> {
 	return Commit<T>{std::move(value)};
 }
 
 /// The valueless abandon decision.
-constexpr auto abandon() -> Abandon<std::monostate> {
+[[nodiscard]] constexpr auto abandon() -> Abandon<std::monostate> {
 	return Abandon<std::monostate>{std::monostate{}};
 }
 
 /// A value-carrying abandon decision (abandonment-as-data).
 template<class A>
-constexpr auto abandon(A value) -> Abandon<A> {
+[[nodiscard]] constexpr auto abandon(A value) -> Abandon<A> {
 	return Abandon<A>{std::move(value)};
 }
 

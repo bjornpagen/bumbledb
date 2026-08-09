@@ -60,7 +60,7 @@ inline constexpr bool is_measure_ref_v = false;
 template<class Var>
 inline constexpr bool is_measure_ref_v<measure_ref<Var>> = true;
 
-consteval auto is_query_coord_type(std::meta::info type) -> bool {
+[[nodiscard]] consteval auto is_query_coord_type(std::meta::info type) -> bool {
 	auto const t = std::meta::dealias(type);
 	return std::meta::has_template_arguments(t) && std::meta::template_of(t) == ^^coord;
 }
@@ -68,7 +68,7 @@ consteval auto is_query_coord_type(std::meta::info type) -> bool {
 /// A relation facade: a class whose every member is a coordinate (the
 /// injected Coords product of :facade).
 template<class Facade>
-consteval auto is_query_facade() -> bool {
+[[nodiscard]] consteval auto is_query_facade() -> bool {
 	auto const t = std::meta::dealias(^^Facade);
 	if (!std::meta::is_class_type(t)) {
 		return false;
@@ -89,7 +89,7 @@ consteval auto is_query_facade() -> bool {
 /// closed relation facade (TODO_CPP §8: closed relations stay query
 /// atoms).
 template<class Facade>
-consteval auto is_query_member() -> bool {
+[[nodiscard]] consteval auto is_query_member() -> bool {
 	return is_query_facade<Facade>() || is_closed_facade<Facade>();
 }
 
@@ -105,7 +105,7 @@ struct member_facts {
 	field_class cls;
 };
 
-consteval auto facts_of_member(std::meta::info member) -> member_facts {
+[[nodiscard]] consteval auto facts_of_member(std::meta::info member) -> member_facts {
 	auto const t = std::meta::dealias(std::meta::type_of(member));
 	if (!std::meta::is_class_type(t) || !std::meta::has_template_arguments(t)) {
 		return member_facts{.include = false, .value_type = std::meta::info{}, .relation = {}, .field = {}, .ordinal = 0, .cls = {}};
@@ -135,20 +135,20 @@ consteval auto facts_of_member(std::meta::info member) -> member_facts {
 }
 
 template<class Facade>
-consteval auto facade_relation_name() -> name_text {
+[[nodiscard]] consteval auto facade_relation_name() -> name_text {
 	auto const members = std::meta::nonstatic_data_members_of(^^Facade, std::meta::access_context::current());
 	return facts_of_member(members[0]).relation;
 }
 
 template<class S, class Facade>
-consteval auto foreign_relation_message() -> std::string {
+[[nodiscard]] consteval auto foreign_relation_message() -> std::string {
 	return std::string{"bumbledb query over schema \""} + std::string{S::declared_name.view()} + "\": relation \"" +
 	       std::string{facade_relation_name<Facade>().view()} + "\" is not a member of the schema";
 }
 
 // The law-class lookup off the schema TYPE.
 template<class S>
-consteval auto law_of(name_text relation, name_text field) -> std::pair<bool, coord_ref> {
+[[nodiscard]] consteval auto law_of(name_text relation, name_text field) -> std::pair<bool, coord_ref> {
 	for (auto const& entry : S::member_class_map()) {
 		if (entry.coordinate.relation == relation && entry.coordinate.field == field) {
 			return {entry.classed, entry.class_name};
@@ -160,7 +160,7 @@ consteval auto law_of(name_text relation, name_text field) -> std::pair<bool, co
 inline constexpr std::size_t no_relation = ~std::size_t{0};
 
 template<class S, class Facade>
-consteval auto relation_ordinal() -> std::size_t {
+[[nodiscard]] consteval auto relation_ordinal() -> std::size_t {
 	auto const table = S::member_relation_table();
 	auto const relation = facade_relation_name<Facade>();
 	for (auto index = std::size_t{0}; index != table.size(); ++index) {
@@ -172,7 +172,7 @@ consteval auto relation_ordinal() -> std::size_t {
 }
 
 template<class S, class Facade>
-consteval auto facade_in_schema() -> bool {
+[[nodiscard]] consteval auto facade_in_schema() -> bool {
 	return relation_ordinal<S, Facade>() != no_relation;
 }
 

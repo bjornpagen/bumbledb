@@ -87,7 +87,7 @@ static_assert(Kind.axioms.Failed.rank == 10);
 // The record-table dispatch idiom (the cookbook's `labels`): one entry
 // per handle, each reading its sealed axiom row off the typed readback;
 // the switch over the handle projection is total over the roster.
-auto label(bdb::ref_to<Kind.id> kind) -> std::string {
+[[nodiscard]] auto label(bdb::ref_to<Kind.id> kind) -> std::string {
 	switch (kind.row) {
 	case Kind.DirectPass.index:
 		return std::format("mastered, rank {}", Kind.axioms.DirectPass.rank);
@@ -105,7 +105,7 @@ struct CaseResult {
 	bool passed;
 };
 
-auto golden_of(std::string_view fixtures, std::string_view recipe) -> std::optional<std::string> {
+[[nodiscard]] auto golden_of(std::string_view fixtures, std::string_view recipe) -> std::optional<std::string> {
 	for (auto const line_range : std::views::split(fixtures, '\n')) {
 		auto const line = std::string_view{line_range};
 		if (!line.starts_with(recipe)) {
@@ -127,7 +127,7 @@ auto golden_of(std::string_view fixtures, std::string_view recipe) -> std::optio
 	return std::nullopt;
 }
 
-auto slurp(std::string_view path) -> std::optional<std::string> {
+[[nodiscard]] auto slurp(std::string_view path) -> std::optional<std::string> {
 	auto stream = std::ifstream{std::string{path}, std::ios::binary | std::ios::ate};
 	if (!stream) {
 		return std::nullopt;
@@ -145,7 +145,7 @@ auto slurp(std::string_view path) -> std::optional<std::string> {
 	return text;
 }
 
-auto make_store_dir() -> std::optional<std::filesystem::path> {
+[[nodiscard]] auto make_store_dir() -> std::optional<std::filesystem::path> {
 	auto code = std::error_code{};
 	auto const root = std::filesystem::temp_directory_path(code);
 	if (code) {
@@ -170,7 +170,7 @@ struct SeedIds {
 
 /// One attempt per kind, plus a certificate for the DirectPass attempt
 /// (the ψ containment admits mastered kinds — the commit proves it).
-auto seed(bdb::Db& db) -> std::optional<SeedIds> {
+[[nodiscard]] auto seed(bdb::Db& db) -> std::optional<SeedIds> {
 	using Decision = bdb::WriteDecision<SeedIds, std::monostate>;
 	using Result = std::expected<Decision, bdb::Error>;
 	auto written = db.write([&](bdb::WriteTx& tx) -> Result {

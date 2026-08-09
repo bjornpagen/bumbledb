@@ -59,7 +59,7 @@ inline constexpr bool is_named_find_v<named_find<Name, Var>> = true;
 
 /// One named aggregate's find_data (the type walls ran on the mint).
 template<class Fold>
-consteval auto fold_find_of() -> find_data {
+[[nodiscard]] consteval auto fold_find_of() -> find_data {
 	auto out = find_data{};
 	out.name = Fold::column_name;
 	out.op = Fold::op;
@@ -101,13 +101,13 @@ consteval auto fold_find_of() -> find_data {
 
 /// A numeric (sum-able) variable: u64/i64 — bool stays refused.
 template<class Var>
-consteval auto is_numeric_var() -> bool {
+[[nodiscard]] consteval auto is_numeric_var() -> bool {
 	return is_qvar_v<Var> && (Var::cls.kind == value_kind::u64 || Var::cls.kind == value_kind::i64);
 }
 
 /// An orderable variable: bool folds under min/max (false < true).
 template<class Var>
-consteval auto is_orderable_var() -> bool {
+[[nodiscard]] consteval auto is_orderable_var() -> bool {
 	return is_qvar_v<Var> && (Var::cls.kind == value_kind::boolean || Var::cls.kind == value_kind::u64 || Var::cls.kind == value_kind::i64);
 }
 

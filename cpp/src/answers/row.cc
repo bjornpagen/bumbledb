@@ -22,7 +22,7 @@ export namespace bdb {
 /// un-re-executed. Fixed-width members are values. Answers are SETS — no
 /// order exists; hosts sort (lowering.md §5.2).
 template<class Row>
-class RowAnswers {
+class [[nodiscard]] RowAnswers {
 	AnswersRaw raw_;
 
 	/// The row product's member-type tuple, read structurally (P1061
@@ -38,7 +38,7 @@ class RowAnswers {
 
 	/// One decoded cell at its member type; nullopt on a kind mismatch.
 	template<class Member>
-	static auto decoded_cell(std::optional<Value> cell) -> std::optional<Member> {
+	[[nodiscard]] static auto decoded_cell(std::optional<Value> cell) -> std::optional<Member> {
 		if (!cell.has_value() || !std::holds_alternative<Member>(*cell)) {
 			return std::nullopt;
 		}
@@ -48,7 +48,7 @@ class RowAnswers {
 	/// Decodes one whole row through parenthesized aggregate init — no
 	/// member is ever default-constructed (interval members cannot be).
 	template<std::size_t... Columns>
-	auto decode_row(std::size_t index, [[maybe_unused]] std::index_sequence<Columns...> columns) const -> std::optional<Row> {
+	[[nodiscard]] auto decode_row(std::size_t index, [[maybe_unused]] std::index_sequence<Columns...> columns) const -> std::optional<Row> {
 		auto cells = std::tuple{decoded_cell<std::tuple_element_t<Columns, RowTuple>>(raw_.cell({.row = index, .column = Columns}))...};
 		if (!(std::get<Columns>(cells).has_value() && ...)) {
 			return std::nullopt;

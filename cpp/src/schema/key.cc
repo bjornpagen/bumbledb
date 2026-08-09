@@ -48,7 +48,7 @@ struct key_law {
 
 /// `key(Outage.service, Outage.window)` — R(X) -> R over one relation.
 template<class First, class... Rest>
-consteval auto key(First, Rest...) -> key_law<First, Rest...> {
+[[nodiscard]] consteval auto key(First, Rest...) -> key_law<First, Rest...> {
 	static_assert(detail::is_coordinate_v<First> && (detail::is_coordinate_v<Rest> && ...),
 	              "bumbledb key(): every argument must be a relation coordinate "
 	              "(Relation.field)");

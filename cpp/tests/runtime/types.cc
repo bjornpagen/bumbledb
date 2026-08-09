@@ -44,7 +44,7 @@ static_assert((bdb::allen::covers | bdb::allen::covered_by).bits() ==
                bdb::allen::starts | bdb::allen::finishes)
                   .bits());
 
-auto check_interval_make_accepts_ordered_bounds() -> CaseResult {
+[[nodiscard]] auto check_interval_make_accepts_ordered_bounds() -> CaseResult {
 	auto const made = bdb::interval<std::int64_t>::make(lo_bound, hi_bound);
 	return CaseResult{
 	    .name = "interval::make accepts lo < hi and exposes lo()/hi()",
@@ -52,7 +52,7 @@ auto check_interval_make_accepts_ordered_bounds() -> CaseResult {
 	};
 }
 
-auto check_interval_make_rejects_empty() -> CaseResult {
+[[nodiscard]] auto check_interval_make_rejects_empty() -> CaseResult {
 	auto const bound = std::uint64_t{9};
 	auto const made = bdb::interval<std::uint64_t>::make(bound, bound);
 	return CaseResult{
@@ -61,7 +61,7 @@ auto check_interval_make_rejects_empty() -> CaseResult {
 	};
 }
 
-auto check_allen_make_accepts_low_13_bits() -> CaseResult {
+[[nodiscard]] auto check_allen_make_accepts_low_13_bits() -> CaseResult {
 	auto const made = bdb::allen_mask::make(bdb::allen_mask::all_bits);
 	return CaseResult{
 	    .name = "allen_mask::make accepts the full 13-bit word",
@@ -69,7 +69,7 @@ auto check_allen_make_accepts_low_13_bits() -> CaseResult {
 	};
 }
 
-auto check_allen_make_rejects_high_bits() -> CaseResult {
+[[nodiscard]] auto check_allen_make_rejects_high_bits() -> CaseResult {
 	auto const first_bit_above_the_mask = std::uint16_t{bdb::allen_mask::all_bits + 1U};
 	auto const made = bdb::allen_mask::make(first_bit_above_the_mask);
 	return CaseResult{

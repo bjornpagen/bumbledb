@@ -96,7 +96,7 @@ struct CaseResult {
 
 /// The golden of one recipe: the fixtures file is one `rNN <64-hex>` line
 /// per recipe (ts/test/cookbook.test.ts reads the same file).
-auto golden_of(std::string_view fixtures, std::string_view recipe) -> std::optional<std::string> {
+[[nodiscard]] auto golden_of(std::string_view fixtures, std::string_view recipe) -> std::optional<std::string> {
 	for (auto const line_range : std::views::split(fixtures, '\n')) {
 		auto const line = std::string_view{line_range};
 		if (!line.starts_with(recipe)) {
@@ -118,7 +118,7 @@ auto golden_of(std::string_view fixtures, std::string_view recipe) -> std::optio
 	return std::nullopt;
 }
 
-auto slurp(std::string_view path) -> std::optional<std::string> {
+[[nodiscard]] auto slurp(std::string_view path) -> std::optional<std::string> {
 	auto stream = std::ifstream{std::string{path}, std::ios::binary | std::ios::ate};
 	if (!stream) {
 		return std::nullopt;
@@ -136,7 +136,7 @@ auto slurp(std::string_view path) -> std::optional<std::string> {
 	return text;
 }
 
-auto make_store_dir() -> std::optional<std::filesystem::path> {
+[[nodiscard]] auto make_store_dir() -> std::optional<std::filesystem::path> {
 	auto code = std::error_code{};
 	auto const root = std::filesystem::temp_directory_path(code);
 	if (code) {
@@ -157,7 +157,7 @@ auto make_store_dir() -> std::optional<std::filesystem::path> {
 /// overhangs the lifetime (legal: coverage is one-way).
 ///
 ///   [0,10) @ 100    [10,20) @ 200    [20,25) @ 300
-auto seed(bdb::Db& db) -> std::optional<std::uint64_t> {
+[[nodiscard]] auto seed(bdb::Db& db) -> std::optional<std::uint64_t> {
 	using Decision = bdb::WriteDecision<std::uint64_t, std::monostate>;
 	using Result = std::expected<Decision, bdb::Error>;
 	auto written = db.write([&](bdb::WriteTx& tx) -> Result {
@@ -191,7 +191,7 @@ auto seed(bdb::Db& db) -> std::optional<std::uint64_t> {
 }
 
 /// inForce(p, t), rates sorted (answers are sets; the host sorts).
-auto rates_in_force(bdb::Db& db, bdb::Prepared<InForce>& prepared, std::uint64_t policy, std::int64_t at)
+[[nodiscard]] auto rates_in_force(bdb::Db& db, bdb::Prepared<InForce>& prepared, std::uint64_t policy, std::int64_t at)
     -> std::optional<std::vector<std::int64_t>> {
 	auto result = db.execute(prepared, {.p = policy, .t = at}).transform([](bdb::Answers<InForce> answers) {
 		auto rates = std::vector<std::int64_t>{};

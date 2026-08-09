@@ -90,7 +90,7 @@ concept WitnessedBody = std::invocable<Body&, Snapshot&, WriteTx&> && requires {
 /// The owning database capability (§15): move-only RAII; no shared
 /// ownership exists at this API. The moved-from Db is inert
 /// (alive() == false); RAII owns cleanup — there is no close().
-class Db {
+class [[nodiscard]] Db {
 	// Pinned GCC 16.1 quirk: a NON-template member function DEFINITION
 	// whose body instantiates the foreign std::expected API (admit, the
 	// pre-schema create/open/ephemeral lanes, fingerprint) corrupts this
@@ -106,7 +106,7 @@ class Db {
 
 	Db(foreign::db_handle handle, detail::Manifest manifest) : handle_{std::move(handle)}, manifest_{std::move(manifest)} {}
 
-	static auto admit(std::expected<foreign::db_handle, foreign::error_handle> opened, foreign::bdb_schema_spec const& spec)
+	[[nodiscard]] static auto admit(std::expected<foreign::db_handle, foreign::error_handle> opened, foreign::bdb_schema_spec const& spec)
 	    -> std::expected<Db, Error>;
 
 	// The §19 algebra, shared by write and write_from. The optional slot
@@ -115,7 +115,7 @@ class Db {
 	// user-abandon and user-error both abort the delta but stay
 	// distinguishable on the way out.
 	template<WriteBody Body, class Runner>
-	auto write_through(Body& body, Runner runner) -> typename detail::WriteShape<Body>::Result {
+	[[nodiscard]] auto write_through(Body& body, Runner runner) -> typename detail::WriteShape<Body>::Result {
 		using Shape = detail::WriteShape<Body>;
 		using Result = typename Shape::Result;
 		using BodyResult = std::invoke_result_t<Body&, WriteTx&>;
@@ -152,7 +152,7 @@ class Db {
 	// create/open call (the bridge marshals them before returning); the
 	// manifest is rebuilt from the theory's own tables.
 	template<Theory S>
-	static auto admit_theory(std::expected<foreign::db_handle, foreign::error_handle> opened, S const& theory) -> std::expected<Db, Error> {
+	[[nodiscard]] static auto admit_theory(std::expected<foreign::db_handle, foreign::error_handle> opened, S const& theory) -> std::expected<Db, Error> {
 		return std::move(opened)
 		    .transform([&theory](foreign::db_handle handle) {
 			    return Db{std::move(handle), detail::manifest_of(theory)};
@@ -164,13 +164,13 @@ class Db {
 
 public:
 	/// Creates a fresh DURABLE store (pre-schema lane — module comment).
-	static auto create(std::string_view path, foreign::bdb_schema_spec const& spec) -> std::expected<Db, Error>;
+	[[nodiscard]] static auto create(std::string_view path, foreign::bdb_schema_spec const& spec) -> std::expected<Db, Error>;
 
 	/// Opens an existing durable store, fingerprint-verified.
-	static auto open(std::string_view path, foreign::bdb_schema_spec const& spec) -> std::expected<Db, Error>;
+	[[nodiscard]] static auto open(std::string_view path, foreign::bdb_schema_spec const& spec) -> std::expected<Db, Error>;
 
 	/// Opens or initializes an EPHEMERAL store.
-	static auto ephemeral(std::string_view path, foreign::bdb_schema_spec const& spec) -> std::expected<Db, Error>;
+	[[nodiscard]] static auto ephemeral(std::string_view path, foreign::bdb_schema_spec const& spec) -> std::expected<Db, Error>;
 
 	/// Creates a fresh DURABLE store from a bdb::schema<> value (the
 	/// schema lane, TODO_CPP §13): the spec views are built from the
@@ -178,7 +178,7 @@ public:
 	/// slots fed from the law-computed class map — and handed to the
 	/// engine's SchemaSpec::descriptor(), which stays authoritative.
 	template<Theory S>
-	static auto create(std::string_view path, S const& theory) -> std::expected<Db, Error> {
+	[[nodiscard]] static auto create(std::string_view path, S const& theory) -> std::expected<Db, Error> {
 		auto const spec = foreign::owned_schema_spec{detail::owned_relations_of(theory), detail::owned_statements_of(theory)};
 		return admit_theory(foreign::db_handle::create(path, spec.view()), theory);
 	}
@@ -186,14 +186,14 @@ public:
 	/// Opens an existing durable store against a schema value,
 	/// fingerprint-verified by the engine.
 	template<Theory S>
-	static auto open(std::string_view path, S const& theory) -> std::expected<Db, Error> {
+	[[nodiscard]] static auto open(std::string_view path, S const& theory) -> std::expected<Db, Error> {
 		auto const spec = foreign::owned_schema_spec{detail::owned_relations_of(theory), detail::owned_statements_of(theory)};
 		return admit_theory(foreign::db_handle::open(path, spec.view()), theory);
 	}
 
 	/// Opens or initializes an EPHEMERAL store from a schema value.
 	template<Theory S>
-	static auto ephemeral(std::string_view path, S const& theory) -> std::expected<Db, Error> {
+	[[nodiscard]] static auto ephemeral(std::string_view path, S const& theory) -> std::expected<Db, Error> {
 		auto const spec = foreign::owned_schema_spec{detail::owned_relations_of(theory), detail::owned_statements_of(theory)};
 		return admit_theory(foreign::db_handle::ephemeral(path, spec.view()), theory);
 	}
@@ -218,7 +218,7 @@ public:
 	/// synchronously on this thread. The body's own typed failure comes
 	/// back out through the expected; the Snapshot dies with the callback.
 	template<ReadBody Body>
-	auto read(Body&& body) const -> std::invoke_result_t<Body&, Snapshot&> {
+	[[nodiscard]] auto read(Body&& body) const -> std::invoke_result_t<Body&, Snapshot&> {
 		using Result = std::invoke_result_t<Body&, Snapshot&>;
 		auto slot = std::optional<Result>{};
 		auto outcome = handle_.read([&](foreign::bdb_snapshot_ref const& raw) -> foreign::bdb_callback_control {
@@ -239,7 +239,7 @@ public:
 	/// (commit rejection included) as the error. Re-entrant writes are
 	/// refused with a typed EnvironmentLocked error.
 	template<WriteBody Body>
-	auto write(Body&& body) -> typename detail::WriteShape<Body>::Result {
+	[[nodiscard]] auto write(Body&& body) -> typename detail::WriteShape<Body>::Result {
 		return write_through(body, [this](auto& shim) {
 			return handle_.write(shim);
 		});
@@ -250,7 +250,7 @@ public:
 	/// since the snapshot is the typed GenerationMoved error; retry is
 	/// host policy.
 	template<WriteBody Body>
-	auto write_from(Snapshot& snapshot, Body&& body) -> typename detail::WriteShape<Body>::Result {
+	[[nodiscard]] auto write_from(Snapshot& snapshot, Body&& body) -> typename detail::WriteShape<Body>::Result {
 		return write_through(body, [this, &snapshot](auto& shim) {
 			return handle_.write_from(snapshot.raw_, shim);
 		});
@@ -267,7 +267,7 @@ public:
 	/// Every other engine failure (commit rejection included) surfaces
 	/// unchanged on the first occurrence.
 	template<WitnessedBody Body>
-	auto write_witnessed(Body&& body) -> typename detail::WitnessedShape<Body>::Result {
+	[[nodiscard]] auto write_witnessed(Body&& body) -> typename detail::WitnessedShape<Body>::Result {
 		using Shape = detail::WitnessedShape<Body>;
 		using Result = typename Shape::Result;
 		using Outcome = typename Shape::Outcome;

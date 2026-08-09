@@ -21,7 +21,7 @@ import :coord;
 
 namespace bdb::detail {
 
-consteval auto coord_specs(std::string_view relation_name, std::meta::info row) -> std::vector<std::meta::info> {
+[[nodiscard]] consteval auto coord_specs(std::string_view relation_name, std::meta::info row) -> std::vector<std::meta::info> {
 	auto specs = std::vector<std::meta::info>{};
 	auto ordinal = std::size_t{0};
 	for (auto const member : row_members(row)) {
@@ -63,7 +63,7 @@ export namespace bdb {
 /// are the §34 diagnostics; a rejected row produces exactly one error
 /// (coord_specs classifies totally, so the injection itself never fires).
 template<fixed_string Name, class Row>
-consteval auto make_relation() -> typename detail::RelationTypes<Name, Row>::Coords {
+[[nodiscard]] consteval auto make_relation() -> typename detail::RelationTypes<Name, Row>::Coords {
 	static_assert(detail::row_is_supported(^^Row), detail::unsupported_field_message(detail::relation_subject(Name.view()), ^^Row));
 	static_assert(detail::fresh_marks_are_u64(^^Row), detail::misplaced_fresh_message(detail::relation_subject(Name.view()), ^^Row));
 

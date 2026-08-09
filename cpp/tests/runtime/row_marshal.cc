@@ -36,7 +36,7 @@ struct CaseResult {
 	bool passed;
 };
 
-auto check_outage_lowers_to_u64_interval_i64() -> CaseResult {
+[[nodiscard]] auto check_outage_lowers_to_u64_interval_i64() -> CaseResult {
 	auto const outage = OutageRow{
 	    .service = 7,
 	    .window = bdb::interval<std::int64_t>::literal(-5, 9),
@@ -52,7 +52,7 @@ auto check_outage_lowers_to_u64_interval_i64() -> CaseResult {
 	};
 }
 
-auto check_service_string_cell_borrows_the_row() -> CaseResult {
+[[nodiscard]] auto check_service_string_cell_borrows_the_row() -> CaseResult {
 	auto const service = ServiceRow{.id = 1, .name = "search"};
 	auto const cells = bdb::marshal_row(service);
 	auto const& id_cell = std::get<0>(cells);
@@ -69,7 +69,7 @@ auto check_service_string_cell_borrows_the_row() -> CaseResult {
 	};
 }
 
-auto check_bool_and_bytes_cells() -> CaseResult {
+[[nodiscard]] auto check_bool_and_bytes_cells() -> CaseResult {
 	auto const tagged = TaggedRow{
 	    .live = true,
 	    .tag = bdb::bytes<4>{std::byte{0xde}, std::byte{0xad}, std::byte{0xbe}, std::byte{0xef}},

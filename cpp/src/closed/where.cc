@@ -89,14 +89,14 @@ struct where_pattern_types {
 /// The facade's relation name (both member kinds: the first
 /// coordinate-shaped member carries it).
 template<class Facade>
-consteval auto member_relation_of() -> name_text {
+[[nodiscard]] consteval auto member_relation_of() -> name_text {
 	constexpr auto members = std::define_static_array(std::meta::nonstatic_data_members_of(^^Facade, std::meta::access_context::current()));
 	using First = [:std::meta::type_of(members[0]):];
 	return First::relation_name;
 }
 
 template<class Facade, class First>
-consteval auto selected_projection_message() -> std::string {
+[[nodiscard]] consteval auto selected_projection_message() -> std::string {
 	return "bumbledb on(): the ψ-selected relation is \"" + std::string{member_relation_of<Facade>().view()} +
 	       "\" but the projected coordinates belong to \"" + std::string{First::relation_name.view()} +
 	       "\" — a selected face projects its own relation's columns";

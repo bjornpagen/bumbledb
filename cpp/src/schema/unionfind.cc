@@ -39,7 +39,7 @@ struct law_verdict {
 
 /// The flat coordinate roster of a relation table.
 template<std::size_t CoordCount, std::size_t RelationCount>
-consteval auto coord_roster(std::array<relation_data, RelationCount> const& relations) -> std::array<coord_ref, CoordCount> {
+[[nodiscard]] consteval auto coord_roster(std::array<relation_data, RelationCount> const& relations) -> std::array<coord_ref, CoordCount> {
 	auto out = std::array<coord_ref, CoordCount>{};
 	auto index = std::size_t{0};
 	for (auto const& relation : relations) {
@@ -56,7 +56,7 @@ consteval auto coord_roster(std::array<relation_data, RelationCount> const& rela
 
 /// The whole §3 computation over the flattened tables.
 template<std::size_t CoordCount, std::size_t RelationCount, std::size_t StatementCount>
-consteval auto analyze(std::array<relation_data, RelationCount> const& relations,
+[[nodiscard]] consteval auto analyze(std::array<relation_data, RelationCount> const& relations,
                        std::array<statement_data, StatementCount> const& statements) -> law_verdict<CoordCount> {
 	auto verdict = law_verdict<CoordCount>{};
 	auto const coords = coord_roster<CoordCount>(relations);

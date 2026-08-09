@@ -85,7 +85,7 @@ struct CaseResult {
 	bool passed;
 };
 
-auto golden_of(std::string_view fixtures, std::string_view recipe) -> std::optional<std::string> {
+[[nodiscard]] auto golden_of(std::string_view fixtures, std::string_view recipe) -> std::optional<std::string> {
 	for (auto const line_range : std::views::split(fixtures, '\n')) {
 		auto const line = std::string_view{line_range};
 		if (!line.starts_with(recipe)) {
@@ -107,7 +107,7 @@ auto golden_of(std::string_view fixtures, std::string_view recipe) -> std::optio
 	return std::nullopt;
 }
 
-auto slurp(std::string_view path) -> std::optional<std::string> {
+[[nodiscard]] auto slurp(std::string_view path) -> std::optional<std::string> {
 	auto stream = std::ifstream{std::string{path}, std::ios::binary | std::ios::ate};
 	if (!stream) {
 		return std::nullopt;
@@ -125,7 +125,7 @@ auto slurp(std::string_view path) -> std::optional<std::string> {
 	return text;
 }
 
-auto make_store_dir() -> std::optional<std::filesystem::path> {
+[[nodiscard]] auto make_store_dir() -> std::optional<std::filesystem::path> {
 	auto code = std::error_code{};
 	auto const root = std::filesystem::temp_directory_path(code);
 	if (code) {
@@ -150,7 +150,7 @@ struct SeedIds {
 /// One order still in the Cart; one Shipped order carrying BOTH arms —
 /// its surviving Placement (history accretes) and the Shipment evidence
 /// the two-way mirrors demands in the same commit.
-auto seed(bdb::Db& db) -> std::optional<SeedIds> {
+[[nodiscard]] auto seed(bdb::Db& db) -> std::optional<SeedIds> {
 	using Decision = bdb::WriteDecision<SeedIds, std::monostate>;
 	using Result = std::expected<Decision, bdb::Error>;
 	auto written = db.write([&](bdb::WriteTx& tx) -> Result {

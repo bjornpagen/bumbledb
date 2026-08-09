@@ -29,7 +29,7 @@ namespace bdb::foreign {
 	std::abort();
 }
 
-auto view_of(std::string_view text) -> bdb_string_view {
+[[nodiscard]] auto view_of(std::string_view text) -> bdb_string_view {
 	if (text.empty()) {
 		return bdb_string_view{.data = nullptr, .len = 0};
 	}
@@ -39,7 +39,7 @@ auto view_of(std::string_view text) -> bdb_string_view {
 	};
 }
 
-auto absent_view() -> bdb_string_view {
+[[nodiscard]] auto absent_view() -> bdb_string_view {
 	return bdb_string_view{.data = nullptr, .len = 0};
 }
 
@@ -49,7 +49,7 @@ export namespace bdb::foreign {
 
 /// Borrow-decode of an ABI text view (the ABI speaks uint8_t, the host
 /// speaks char). The result borrows whatever carrier the view borrows.
-auto text_of(bdb_string_view view) -> std::string_view {
+[[nodiscard]] auto text_of(bdb_string_view view) -> std::string_view {
 	if (view.data == nullptr) {
 		return std::string_view{};
 	}
@@ -57,7 +57,7 @@ auto text_of(bdb_string_view view) -> std::string_view {
 }
 
 /// Borrow-decode of an ABI byte view; same borrow contract as text_of.
-auto bytes_span_of(bdb_bytes_view view) -> std::span<std::byte const> {
+[[nodiscard]] auto bytes_span_of(bdb_bytes_view view) -> std::span<std::byte const> {
 	if (view.data == nullptr) {
 		return std::span<std::byte const>{};
 	}
@@ -182,7 +182,7 @@ enum class callback_done : std::uint8_t {
 namespace bdb::foreign {
 
 // The status → outcome fold shared by every callback-shaped entry point.
-auto callback_outcome(bdb_status status, bdb_error* error) -> std::expected<callback_done, error_handle> {
+[[nodiscard]] auto callback_outcome(bdb_status status, bdb_error* error) -> std::expected<callback_done, error_handle> {
 	switch (status) {
 	case bdb_status::BDB_STATUS_OK:
 		return callback_done::completed;
@@ -198,7 +198,7 @@ auto callback_outcome(bdb_status status, bdb_error* error) -> std::expected<call
 
 // The status → value fold for plain fallible calls (no ABORTED shape).
 template<class T>
-auto value_outcome(bdb_status status, bdb_error* error, T value) -> std::expected<T, error_handle> {
+[[nodiscard]] auto value_outcome(bdb_status status, bdb_error* error, T value) -> std::expected<T, error_handle> {
 	switch (status) {
 	case bdb_status::BDB_STATUS_OK:
 		return value;
@@ -212,7 +212,7 @@ auto value_outcome(bdb_status status, bdb_error* error, T value) -> std::expecte
 }
 
 // The status → done fold for value-less fallible calls (no ABORTED shape).
-auto status_outcome(bdb_status status, bdb_error* error) -> std::expected<void, error_handle> {
+[[nodiscard]] auto status_outcome(bdb_status status, bdb_error* error) -> std::expected<void, error_handle> {
 	switch (status) {
 	case bdb_status::BDB_STATUS_OK:
 		return {};
@@ -240,7 +240,7 @@ class answers_handle {
 public:
 	/// Mints an empty carrier (the ABI's never-fails constructor; an
 	/// allocation failure is process death, not a recoverable state).
-	static auto make() -> answers_handle {
+	[[nodiscard]] static auto make() -> answers_handle {
 		auto* raw = bdb_answers_new();
 		if (raw == nullptr) {
 			unreachable_boundary_state();
@@ -457,7 +457,7 @@ class db_handle {
 
 	explicit db_handle(bdb_db* owned) : raw_{owned} {}
 
-	static auto from_status(bdb_status status, bdb_db* database, bdb_error* error) -> std::expected<db_handle, error_handle> {
+	[[nodiscard]] static auto from_status(bdb_status status, bdb_db* database, bdb_error* error) -> std::expected<db_handle, error_handle> {
 		return value_outcome(status, error, database).transform([](bdb_db* owned) {
 			return db_handle{owned};
 		});
@@ -465,7 +465,7 @@ class db_handle {
 
 public:
 	/// Creates a fresh DURABLE store at path from a schema spec view.
-	static auto create(std::string_view path, bdb_schema_spec const& spec) -> std::expected<db_handle, error_handle> {
+	[[nodiscard]] static auto create(std::string_view path, bdb_schema_spec const& spec) -> std::expected<db_handle, error_handle> {
 		bdb_db* database = nullptr;
 		bdb_error* error = nullptr;
 		auto const status = bdb_db_create(view_of(path), &spec, &database, &error);
@@ -473,7 +473,7 @@ public:
 	}
 
 	/// Opens an existing durable store, verifying the fingerprint.
-	static auto open(std::string_view path, bdb_schema_spec const& spec) -> std::expected<db_handle, error_handle> {
+	[[nodiscard]] static auto open(std::string_view path, bdb_schema_spec const& spec) -> std::expected<db_handle, error_handle> {
 		bdb_db* database = nullptr;
 		bdb_error* error = nullptr;
 		auto const status = bdb_db_open(view_of(path), &spec, &database, &error);
@@ -481,7 +481,7 @@ public:
 	}
 
 	/// Opens or initializes an EPHEMERAL store at path.
-	static auto ephemeral(std::string_view path, bdb_schema_spec const& spec) -> std::expected<db_handle, error_handle> {
+	[[nodiscard]] static auto ephemeral(std::string_view path, bdb_schema_spec const& spec) -> std::expected<db_handle, error_handle> {
 		bdb_db* database = nullptr;
 		bdb_error* error = nullptr;
 		auto const status = bdb_db_ephemeral(view_of(path), &spec, &database, &error);
@@ -593,7 +593,7 @@ private:
 };
 
 /// Records an insert into the delta; true = the final state changed.
-auto tx_insert(bdb_tx_ref const& transaction, std::uint32_t relation, std::span<bdb_value const> values)
+[[nodiscard]] auto tx_insert(bdb_tx_ref const& transaction, std::uint32_t relation, std::span<bdb_value const> values)
     -> std::expected<bool, error_handle> {
 	auto changed = false;
 	bdb_error* error = nullptr;
@@ -602,7 +602,7 @@ auto tx_insert(bdb_tx_ref const& transaction, std::uint32_t relation, std::span<
 }
 
 /// Records a delete into the delta; true = the final state changed.
-auto tx_remove(bdb_tx_ref const& transaction, std::uint32_t relation, std::span<bdb_value const> values)
+[[nodiscard]] auto tx_remove(bdb_tx_ref const& transaction, std::uint32_t relation, std::span<bdb_value const> values)
     -> std::expected<bool, error_handle> {
 	auto changed = false;
 	bdb_error* error = nullptr;
@@ -611,7 +611,7 @@ auto tx_remove(bdb_tx_ref const& transaction, std::uint32_t relation, std::span<
 }
 
 /// Final-state membership (base + pending delta).
-auto tx_contains(bdb_tx_ref const& transaction, std::uint32_t relation, std::span<bdb_value const> values)
+[[nodiscard]] auto tx_contains(bdb_tx_ref const& transaction, std::uint32_t relation, std::span<bdb_value const> values)
     -> std::expected<bool, error_handle> {
 	auto contains = false;
 	bdb_error* error = nullptr;
@@ -620,7 +620,7 @@ auto tx_contains(bdb_tx_ref const& transaction, std::uint32_t relation, std::spa
 }
 
 /// Mints the next fresh value for (relation, field).
-auto tx_alloc(bdb_tx_ref const& transaction, std::uint32_t relation, std::uint16_t field) -> std::expected<std::uint64_t, error_handle> {
+[[nodiscard]] auto tx_alloc(bdb_tx_ref const& transaction, std::uint32_t relation, std::uint16_t field) -> std::expected<std::uint64_t, error_handle> {
 	auto id = std::uint64_t{0};
 	bdb_error* error = nullptr;
 	auto const status = bdb_tx_alloc(&transaction, relation, field, &id, &error);
@@ -628,7 +628,7 @@ auto tx_alloc(bdb_tx_ref const& transaction, std::uint32_t relation, std::uint16
 }
 
 /// Committed-state membership of one dynamic fact.
-auto snapshot_contains(bdb_snapshot_ref const& snapshot, std::uint32_t relation, std::span<bdb_value const> values)
+[[nodiscard]] auto snapshot_contains(bdb_snapshot_ref const& snapshot, std::uint32_t relation, std::span<bdb_value const> values)
     -> std::expected<bool, error_handle> {
 	auto contains = false;
 	bdb_error* error = nullptr;
@@ -637,7 +637,7 @@ auto snapshot_contains(bdb_snapshot_ref const& snapshot, std::uint32_t relation,
 }
 
 /// Full-relation export in row_id order: one owned row-set crossing.
-auto snapshot_scan(bdb_snapshot_ref const& snapshot, std::uint32_t relation) -> std::expected<row_set_handle, error_handle> {
+[[nodiscard]] auto snapshot_scan(bdb_snapshot_ref const& snapshot, std::uint32_t relation) -> std::expected<row_set_handle, error_handle> {
 	bdb_row_set* rows = nullptr;
 	bdb_error* error = nullptr;
 	auto const status = bdb_snapshot_scan(&snapshot, relation, &rows, &error);
@@ -649,7 +649,7 @@ auto snapshot_scan(bdb_snapshot_ref const& snapshot, std::uint32_t relation) -> 
 /// Committed-state point lookup through a key statement (TODO_CPP §26):
 /// key values in the statement's projection order. A miss is the empty
 /// row set (the ABI writes null; row_set_handle owns either way).
-auto snapshot_get(bdb_snapshot_ref const& snapshot, std::uint32_t relation, std::uint16_t key_statement,
+[[nodiscard]] auto snapshot_get(bdb_snapshot_ref const& snapshot, std::uint32_t relation, std::uint16_t key_statement,
                   std::span<bdb_value const> key_values) -> std::expected<row_set_handle, error_handle> {
 	bdb_row_set* row = nullptr;
 	bdb_error* error = nullptr;
@@ -661,7 +661,7 @@ auto snapshot_get(bdb_snapshot_ref const& snapshot, std::uint32_t relation, std:
 
 /// Final-state point lookup through a key statement (base + pending
 /// delta); miss = the empty row set.
-auto tx_get(bdb_tx_ref const& transaction, std::uint32_t relation, std::uint16_t key_statement, std::span<bdb_value const> key_values)
+[[nodiscard]] auto tx_get(bdb_tx_ref const& transaction, std::uint32_t relation, std::uint16_t key_statement, std::span<bdb_value const> key_values)
     -> std::expected<row_set_handle, error_handle> {
 	bdb_row_set* row = nullptr;
 	bdb_error* error = nullptr;
@@ -674,7 +674,7 @@ auto tx_get(bdb_tx_ref const& transaction, std::uint32_t relation, std::uint16_t
 /// The relation names of a spec view, copied out in declaration order —
 /// declaration index IS the minted RelationId (lowering.md §1.1), which is
 /// how the pre-schema lane resolves coordinates to wire ids.
-auto relation_names_of(bdb_schema_spec const& spec) -> std::vector<std::string> {
+[[nodiscard]] auto relation_names_of(bdb_schema_spec const& spec) -> std::vector<std::string> {
 	auto names = std::vector<std::string>{};
 	names.reserve(spec.relation_count);
 	for (auto const& relation : std::span{spec.relations, spec.relation_count}) {
@@ -684,7 +684,7 @@ auto relation_names_of(bdb_schema_spec const& spec) -> std::vector<std::string> 
 }
 
 /// A scalar structural value type (no payload beyond the tag).
-auto scalar_type(bdb_value_type_kind kind) -> bdb_value_type {
+[[nodiscard]] auto scalar_type(bdb_value_type_kind kind) -> bdb_value_type {
 	return bdb_value_type{
 	    .kind = kind,
 	    .fixed_len = 0,
@@ -695,7 +695,7 @@ auto scalar_type(bdb_value_type_kind kind) -> bdb_value_type {
 }
 
 /// The FixedBytes structural type (the length IS the type).
-auto fixed_bytes_type(std::uint16_t len) -> bdb_value_type {
+[[nodiscard]] auto fixed_bytes_type(std::uint16_t len) -> bdb_value_type {
 	return bdb_value_type{
 	    .kind = bdb_value_type_kind::BDB_VALUE_TYPE_KIND_FIXED_BYTES,
 	    .fixed_len = len,
@@ -706,7 +706,7 @@ auto fixed_bytes_type(std::uint16_t len) -> bdb_value_type {
 }
 
 /// The general (widthless) interval structural type.
-auto interval_type(bdb_interval_element element) -> bdb_value_type {
+[[nodiscard]] auto interval_type(bdb_interval_element element) -> bdb_value_type {
 	return bdb_value_type{
 	    .kind = bdb_value_type_kind::BDB_VALUE_TYPE_KIND_INTERVAL,
 	    .fixed_len = 0,
@@ -718,7 +718,7 @@ auto interval_type(bdb_interval_element element) -> bdb_value_type {
 
 /// The fixed-width interval structural type (`interval<E, w>` — the width
 /// is a fingerprint input; lowering.md §1.8).
-auto fixed_interval_type(bdb_interval_element element, std::uint64_t width) -> bdb_value_type {
+[[nodiscard]] auto fixed_interval_type(bdb_interval_element element, std::uint64_t width) -> bdb_value_type {
 	return bdb_value_type{
 	    .kind = bdb_value_type_kind::BDB_VALUE_TYPE_KIND_INTERVAL,
 	    .fixed_len = 0,
@@ -854,11 +854,11 @@ class owned_schema_spec {
 	std::vector<bdb_statement_spec> statement_views_;
 	bdb_schema_spec view_{};
 
-	static auto view_of_owned(std::string const& text) -> bdb_string_view {
+	[[nodiscard]] static auto view_of_owned(std::string const& text) -> bdb_string_view {
 		return view_of(std::string_view{text});
 	}
 
-	static auto projection_view(std::vector<std::string> const& names) -> std::vector<bdb_string_view> {
+	[[nodiscard]] static auto projection_view(std::vector<std::string> const& names) -> std::vector<bdb_string_view> {
 		auto views = std::vector<bdb_string_view>{};
 		views.reserve(names.size());
 		for (auto const& name : names) {
@@ -869,7 +869,7 @@ class owned_schema_spec {
 
 	/// One literal, viewed (string payloads borrow the owned literal —
 	/// stable because the owning vectors never move after construction).
-	static auto literal_view(owned_literal const& literal) -> bdb_literal {
+	[[nodiscard]] static auto literal_view(owned_literal const& literal) -> bdb_literal {
 		auto out = bdb_literal{};
 		if (literal.is_handle) {
 			out.kind = bdb_literal_kind::BDB_LITERAL_KIND_HANDLE;
@@ -899,7 +899,7 @@ class owned_schema_spec {
 		return out;
 	}
 
-	auto literals_view(std::vector<owned_literal> const& literals) -> std::vector<bdb_literal> const& {
+	[[nodiscard]] auto literals_view(std::vector<owned_literal> const& literals) -> std::vector<bdb_literal> const& {
 		auto views = std::vector<bdb_literal>{};
 		views.reserve(literals.size());
 		for (auto const& literal : literals) {
@@ -908,7 +908,7 @@ class owned_schema_spec {
 		return literal_views_.emplace_back(std::move(views));
 	}
 
-	auto side_view(owned_side const& side, std::vector<bdb_string_view> const& projection) -> bdb_side {
+	[[nodiscard]] auto side_view(owned_side const& side, std::vector<bdb_string_view> const& projection) -> bdb_side {
 		auto out = bdb_side{
 		    .relation = view_of_owned(side.relation),
 		    .projection = projection.data(),
@@ -940,7 +940,7 @@ class owned_schema_spec {
 		return out;
 	}
 
-	static auto bound_view(owned_bound const& bound) -> bdb_bound {
+	[[nodiscard]] static auto bound_view(owned_bound const& bound) -> bdb_bound {
 		return bdb_bound{
 		    .kind = bound.kind,
 		    .lit = bound.lit,

@@ -23,7 +23,7 @@ template<class Coordinate>
 struct duration_measure {};
 
 template<class Coordinate>
-consteval auto duration(Coordinate) -> duration_measure<Coordinate> {
+[[nodiscard]] consteval auto duration(Coordinate) -> duration_measure<Coordinate> {
 	static_assert(detail::is_coordinate_v<Coordinate>, "bumbledb duration(): the argument must be a relation coordinate "
 	                                                   "(Relation.field)");
 	static_assert(Coordinate::kind == value_kind::interval_u64 || Coordinate::kind == value_kind::interval_i64,
@@ -38,7 +38,7 @@ template<class Coordinate>
 struct ref_bound {};
 
 template<class Coordinate>
-consteval auto ref(Coordinate) -> ref_bound<Coordinate> {
+[[nodiscard]] consteval auto ref(Coordinate) -> ref_bound<Coordinate> {
 	static_assert(detail::is_coordinate_v<Coordinate>, "bumbledb ref(): the argument must be a relation coordinate "
 	                                                   "(Relation.field)");
 	static_assert(Coordinate::kind == value_kind::u64, "bumbledb ref(): a dependent bound reads a std::uint64_t column "
@@ -59,7 +59,7 @@ template<class Coordinate>
 struct duration_weight {};
 
 template<class Coordinate>
-consteval auto weigh(Coordinate) -> field_weight<Coordinate> {
+[[nodiscard]] consteval auto weigh(Coordinate) -> field_weight<Coordinate> {
 	static_assert(detail::is_coordinate_v<Coordinate>, "bumbledb weigh(): the argument must be a relation coordinate "
 	                                                   "(Relation.field) or bdb::duration(coordinate)");
 	static_assert(Coordinate::kind == value_kind::u64, "bumbledb weigh(): a field weight reads a std::uint64_t column of "
@@ -68,7 +68,7 @@ consteval auto weigh(Coordinate) -> field_weight<Coordinate> {
 }
 
 template<class Coordinate>
-consteval auto weigh(duration_measure<Coordinate>) -> duration_weight<Coordinate> {
+[[nodiscard]] consteval auto weigh(duration_measure<Coordinate>) -> duration_weight<Coordinate> {
 	return {};
 }
 
@@ -98,7 +98,7 @@ struct capacity_window {
 };
 
 /// `within(n)` — exactly n.
-consteval auto within(std::uint64_t exact) -> capacity_window<void> {
+[[nodiscard]] consteval auto within(std::uint64_t exact) -> capacity_window<void> {
 	return {window_data{
 	    .form = window_form::exact,
 	    .lo = bound_data{.form = bound_form::lit, .lit = exact, .field = name_text{}},
@@ -109,7 +109,7 @@ consteval auto within(std::uint64_t exact) -> capacity_window<void> {
 /// `within(lo, hi)` — the half-open-count range lo..hi. The banned
 /// spellings (`hi < lo`, `n..n`, `0..0`) are unwritable host-side; the
 /// engine remains the wall.
-consteval auto within(std::uint64_t lo, std::uint64_t hi) -> capacity_window<void> {
+[[nodiscard]] consteval auto within(std::uint64_t lo, std::uint64_t hi) -> capacity_window<void> {
 	if (hi < lo) {
 		detail::capacity_window_must_satisfy_lo_less_than_hi();
 	}
@@ -132,7 +132,7 @@ struct unbounded_t {};
 inline constexpr auto unbounded = unbounded_t{};
 
 /// `within(lo, bdb::unbounded)` — at least lo, no ceiling (floor).
-consteval auto within(std::uint64_t lo, unbounded_t) -> capacity_window<void> {
+[[nodiscard]] consteval auto within(std::uint64_t lo, unbounded_t) -> capacity_window<void> {
 	if (lo == 0) {
 		detail::capacity_floor_zero_is_vacuous_delete_the_statement();
 	}
@@ -145,7 +145,7 @@ consteval auto within(std::uint64_t lo, unbounded_t) -> capacity_window<void> {
 
 /// `within(lo, ref(coord))` — a dependent hi bound (target row's u64).
 template<class Coordinate>
-consteval auto within(std::uint64_t lo, ref_bound<Coordinate>) -> capacity_window<Coordinate> {
+[[nodiscard]] consteval auto within(std::uint64_t lo, ref_bound<Coordinate>) -> capacity_window<Coordinate> {
 	return {window_data{
 	    .form = window_form::range,
 	    .lo = bound_data{.form = bound_form::lit, .lit = lo, .field = name_text{}},
@@ -156,7 +156,7 @@ consteval auto within(std::uint64_t lo, ref_bound<Coordinate>) -> capacity_windo
 /// `within(lo, duration(coord))` — a dependent hi bound (target
 /// interval's measure).
 template<class Coordinate>
-consteval auto within(std::uint64_t lo, duration_measure<Coordinate>) -> capacity_window<Coordinate> {
+[[nodiscard]] consteval auto within(std::uint64_t lo, duration_measure<Coordinate>) -> capacity_window<Coordinate> {
 	return {window_data{
 	    .form = window_form::range,
 	    .lo = bound_data{.form = bound_form::lit, .lit = lo, .field = name_text{}},
@@ -194,45 +194,45 @@ struct weight_shape {
 	name_text field;
 };
 
-consteval auto shape_of_weight(unit_weight) -> weight_shape {
+[[nodiscard]] consteval auto shape_of_weight(unit_weight) -> weight_shape {
 	return {weight_form::unit, name_text{}};
 }
 
 template<class Coordinate>
-consteval auto shape_of_weight(field_weight<Coordinate>) -> weight_shape {
+[[nodiscard]] consteval auto shape_of_weight(field_weight<Coordinate>) -> weight_shape {
 	return {weight_form::field, Coordinate::field_name};
 }
 
 template<class Coordinate>
-consteval auto shape_of_weight(duration_weight<Coordinate>) -> weight_shape {
+[[nodiscard]] consteval auto shape_of_weight(duration_weight<Coordinate>) -> weight_shape {
 	return {weight_form::duration_field, Coordinate::field_name};
 }
 
 // The weight coordinate's owner (empty for unit), for the source-roster
 // membership check.
-consteval auto weight_owner(unit_weight) -> name_text {
+[[nodiscard]] consteval auto weight_owner(unit_weight) -> name_text {
 	return name_text{};
 }
 
 template<class Coordinate>
-consteval auto weight_owner(field_weight<Coordinate>) -> name_text {
+[[nodiscard]] consteval auto weight_owner(field_weight<Coordinate>) -> name_text {
 	return Coordinate::relation_name;
 }
 
 template<class Coordinate>
-consteval auto weight_owner(duration_weight<Coordinate>) -> name_text {
+[[nodiscard]] consteval auto weight_owner(duration_weight<Coordinate>) -> name_text {
 	return Coordinate::relation_name;
 }
 
 template<class Target, class Weight, class Source>
-consteval auto capacity_weight_message() -> std::string {
+[[nodiscard]] consteval auto capacity_weight_message() -> std::string {
 	return "bumbledb capacity(): the weight must read the SOURCE row — "
 	       "the source face is \"" +
 	       std::string{Source::relation_name.view()} + "\" but the weigh() coordinate belongs to another relation";
 }
 
 template<class Target, class HiCoordinate>
-consteval auto capacity_bound_message() -> std::string {
+[[nodiscard]] consteval auto capacity_bound_message() -> std::string {
 	return "bumbledb capacity(): a dependent bound resolves against the "
 	       "TARGET row — the target face is \"" +
 	       std::string{Target::relation_name.view()} + "\" but the bound coordinate is \"" + coordinate_label<HiCoordinate>() + "\"";
@@ -244,7 +244,7 @@ export namespace bdb {
 
 /// `capacity(target, weigh(...), within(...), source)` — the weighed law.
 template<class Target, class Weight, class HiCoordinate, class Source>
-consteval auto capacity(Target target, Weight, capacity_window<HiCoordinate> window, Source source)
+[[nodiscard]] consteval auto capacity(Target target, Weight, capacity_window<HiCoordinate> window, Source source)
     -> capacity_law<Target, Weight, Source> {
 	static_assert(detail::is_face_v<Target> && detail::is_face_v<Source>, "bumbledb capacity(): target and source must be faces — spell "
 	                                                                      "them bdb::on(Relation.field, ...)");
@@ -263,7 +263,7 @@ consteval auto capacity(Target target, Weight, capacity_window<HiCoordinate> win
 /// containment says, and a count of facts bounded by a span of time mixes
 /// dimensions (C18) — both LEGAL on the weighed overload.
 template<class Target, class HiCoordinate, class Source>
-consteval auto capacity(Target target, capacity_window<HiCoordinate> window, Source source) -> capacity_law<Target, unit_weight, Source> {
+[[nodiscard]] consteval auto capacity(Target target, capacity_window<HiCoordinate> window, Source source) -> capacity_law<Target, unit_weight, Source> {
 	if (window.data.form == window_form::floor && window.data.lo.form == bound_form::lit && window.data.lo.lit == 1) {
 		detail::capacity_unit_floor_one_is_the_bare_containment();
 	}

@@ -118,7 +118,7 @@ inline constexpr auto LongOutages = bdb::query(Uptime).rule([](auto r) consteval
 
 namespace {
 
-consteval auto text_is(bdb::name_text name, std::string_view want) -> bool {
+[[nodiscard]] consteval auto text_is(bdb::name_text name, std::string_view want) -> bool {
 	return name.view() == want;
 }
 

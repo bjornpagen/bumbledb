@@ -65,7 +65,7 @@ class interval {
 
 	constexpr interval(T lo, T hi) : lo_{lo}, hi_{hi} {}
 
-	static constexpr auto width_holds(T lo, T hi) -> bool {
+	[[nodiscard]] static constexpr auto width_holds(T lo, T hi) -> bool {
 		if constexpr (Width == 0) {
 			return true;
 		} else {
@@ -78,7 +78,7 @@ public:
 	static constexpr std::uint64_t width = Width;
 
 	/// The constant lane: an invalid literal is a compile error.
-	static consteval auto literal(T lo, T hi) -> interval {
+	[[nodiscard]] static consteval auto literal(T lo, T hi) -> interval {
 		if (!(lo < hi)) {
 			detail::interval_literal_must_satisfy_lo_less_than_hi();
 		}
@@ -89,7 +89,7 @@ public:
 	}
 
 	/// The runtime lane: an invalid pair is a typed recoverable error.
-	static constexpr auto make(T lo, T hi) -> std::expected<interval, TypeError> {
+	[[nodiscard]] static constexpr auto make(T lo, T hi) -> std::expected<interval, TypeError> {
 		if (!(lo < hi)) {
 			return std::unexpected{TypeError::EmptyInterval};
 		}
@@ -109,7 +109,7 @@ public:
 
 	// Member (not hidden-friend) comparison: the pinned GCC 16.1 ICEs
 	// streaming a defaulted friend operator== across a module import.
-	constexpr auto operator==(interval const&) const -> bool = default;
+	[[nodiscard]] constexpr auto operator==(interval const&) const -> bool = default;
 };
 
 } // namespace bdb

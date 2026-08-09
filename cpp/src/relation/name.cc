@@ -32,7 +32,7 @@ struct fixed_string {
 
 	// Member (not hidden-friend) comparison: the pinned GCC 16.1 ICEs
 	// streaming a defaulted friend operator== across a module import.
-	constexpr auto operator==(fixed_string const&) const -> bool = default;
+	[[nodiscard]] constexpr auto operator==(fixed_string const&) const -> bool = default;
 };
 
 template<std::size_t M>
@@ -57,7 +57,7 @@ struct name_text {
 
 	// Member (not hidden-friend) comparison: the pinned GCC 16.1 ICEs
 	// streaming a defaulted friend operator== across a module import.
-	constexpr auto operator==(name_text const&) const -> bool = default;
+	[[nodiscard]] constexpr auto operator==(name_text const&) const -> bool = default;
 };
 
 /// The field-name-override annotation's tag (`[[=bdb::named<"operator">]]`):
@@ -80,7 +80,7 @@ export namespace bdb::detail {
 /// class-scope consteval injection context as non-constant.
 auto reflected_name_must_fit_max_name_length() -> void;
 
-consteval auto to_name_text(std::string_view text) -> name_text {
+[[nodiscard]] consteval auto to_name_text(std::string_view text) -> name_text {
 	if (text.size() > max_name_length) {
 		reflected_name_must_fit_max_name_length();
 	}
@@ -98,7 +98,7 @@ consteval auto to_name_text(std::string_view text) -> name_text {
 /// constructor folds. Every injected member name computed from a
 /// name_text/derived view routes through THIS; names straight from
 /// `identifier_of` (reflection-internal storage) need no detour.
-consteval auto spec_name(std::string_view text) -> std::string {
+[[nodiscard]] consteval auto spec_name(std::string_view text) -> std::string {
 	return std::string(text.begin(), text.end());
 }
 

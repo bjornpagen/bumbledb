@@ -56,7 +56,7 @@ using UnitResult = std::expected<UnitDecision, bdb::Error>;
 using UnitCommitted = bdb::Committed<std::monostate>;
 
 // The §39 Uptime spec through the pre-schema lane.
-auto make_uptime_spec() -> abi::owned_schema_spec {
+[[nodiscard]] auto make_uptime_spec() -> abi::owned_schema_spec {
 	auto relations = std::vector<abi::owned_relation>{};
 	relations.push_back(abi::owned_relation{
 	    .name = "Service",
@@ -108,7 +108,7 @@ auto make_uptime_spec() -> abi::owned_schema_spec {
 	return abi::owned_schema_spec{std::move(relations), std::move(statements)};
 }
 
-auto make_store_dir(std::string_view label) -> std::expected<std::filesystem::path, std::string> {
+[[nodiscard]] auto make_store_dir(std::string_view label) -> std::expected<std::filesystem::path, std::string> {
 	auto code = std::error_code{};
 	auto const root = std::filesystem::temp_directory_path(code);
 	if (code) {
@@ -125,14 +125,14 @@ auto make_store_dir(std::string_view label) -> std::expected<std::filesystem::pa
 	return dir;
 }
 
-auto is_lower_hex(std::string_view text) -> bool {
+[[nodiscard]] auto is_lower_hex(std::string_view text) -> bool {
 	return std::ranges::all_of(text, [](char character) {
 		return (character >= '0' && character <= '9') || (character >= 'a' && character <= 'f');
 	});
 }
 
 // A commit-carrying insert body over the Outage relation.
-auto insert_outage_body(std::uint64_t service_id, bdb::interval<std::int64_t> window) {
+[[nodiscard]] auto insert_outage_body(std::uint64_t service_id, bdb::interval<std::int64_t> window) {
 	return [service_id, window](bdb::WriteTx& tx) -> UnitResult {
 		return tx.insert(Outage, OutageRow{.service = service_id, .window = window}).transform([](bool) -> UnitDecision {
 			return bdb::commit();
@@ -142,7 +142,7 @@ auto insert_outage_body(std::uint64_t service_id, bdb::interval<std::int64_t> wi
 
 // --- the shared-store sequence ----------------------------------------------
 
-auto fingerprint_case(bdb::Db const& db) -> CaseResult {
+[[nodiscard]] auto fingerprint_case(bdb::Db const& db) -> CaseResult {
 	auto const fingerprint = db.fingerprint();
 	return CaseResult{
 	    .name = "fingerprint() is 64 lowercase hex chars",
@@ -152,7 +152,7 @@ auto fingerprint_case(bdb::Db const& db) -> CaseResult {
 
 // Fresh alloc + reflection-marshalled insert, committing the id out (§19's
 // Commit<T> carries a value).
-auto insert_service_case(bdb::Db& db, std::vector<CaseResult>& results) -> std::optional<std::uint64_t> {
+[[nodiscard]] auto insert_service_case(bdb::Db& db, std::vector<CaseResult>& results) -> std::optional<std::uint64_t> {
 	using IdDecision = bdb::WriteDecision<std::uint64_t, std::monostate>;
 	using IdResult = std::expected<IdDecision, bdb::Error>;
 
@@ -174,7 +174,7 @@ auto insert_service_case(bdb::Db& db, std::vector<CaseResult>& results) -> std::
 	return std::get<bdb::Committed<std::uint64_t>>(*written).value;
 }
 
-auto read_contains_case(bdb::Db const& db, std::uint64_t service_id) -> CaseResult {
+[[nodiscard]] auto read_contains_case(bdb::Db const& db, std::uint64_t service_id) -> CaseResult {
 	auto const seen = db.read([service_id](bdb::Snapshot& snap) -> std::expected<bool, bdb::Error> {
 		return snap.contains(Service, ServiceRow{.id = service_id, .name = std::string{"search"}});
 	});
@@ -184,7 +184,7 @@ auto read_contains_case(bdb::Db const& db, std::uint64_t service_id) -> CaseResu
 	};
 }
 
-auto scan_case(bdb::Db const& db, std::uint64_t service_id) -> CaseResult {
+[[nodiscard]] auto scan_case(bdb::Db const& db, std::uint64_t service_id) -> CaseResult {
 	struct ScanFacts {
 		std::size_t rows;
 		std::size_t arity;
@@ -214,7 +214,7 @@ auto scan_case(bdb::Db const& db, std::uint64_t service_id) -> CaseResult {
 
 // §18: write_from inside the read callback that owns the snapshot; also
 // the interval marshalling lane (Outage.window).
-auto write_from_case(bdb::Db& db, std::uint64_t service_id) -> CaseResult {
+[[nodiscard]] auto write_from_case(bdb::Db& db, std::uint64_t service_id) -> CaseResult {
 	auto const window = bdb::interval<std::int64_t>::literal(0, 100);
 	auto const nested = db.read([&](bdb::Snapshot& snap) -> std::expected<bool, bdb::Error> {
 		return db.write_from(snap, insert_outage_body(service_id, window)).transform([](auto outcome) {
@@ -232,7 +232,7 @@ auto write_from_case(bdb::Db& db, std::uint64_t service_id) -> CaseResult {
 
 // §18: a state-changing commit since the snapshot makes the next
 // write_from the typed GenerationMoved error, payload intact.
-auto generation_moved_case(bdb::Db& db, std::uint64_t service_id) -> CaseResult {
+[[nodiscard]] auto generation_moved_case(bdb::Db& db, std::uint64_t service_id) -> CaseResult {
 	auto const first_window = bdb::interval<std::int64_t>::literal(200, 300);
 	auto const second_window = bdb::interval<std::int64_t>::literal(400, 500);
 	auto const observed = db.read([&](bdb::Snapshot& snap) -> std::expected<bool, bdb::Error> {
@@ -259,7 +259,7 @@ auto generation_moved_case(bdb::Db& db, std::uint64_t service_id) -> CaseResult 
 // §36: a callback-local failure aborts the whole delta — the valid insert
 // recorded before the failing one commits nothing — and the deliberate
 // arity violation is the engine's typed FactShape.
-auto abort_on_error_case(bdb::Db& db) -> std::vector<CaseResult> {
+[[nodiscard]] auto abort_on_error_case(bdb::Db& db) -> std::vector<CaseResult> {
 	auto ghost_id = std::optional<std::uint64_t>{};
 	auto aborted = db.write([&ghost_id](bdb::WriteTx& tx) -> UnitResult {
 		return tx.alloc(Service.id)
@@ -296,7 +296,7 @@ auto abort_on_error_case(bdb::Db& db) -> std::vector<CaseResult> {
 
 // §19: abandonment is DATA on the success path, round-tripping its
 // payload, and the abandoned delta commits nothing (§36).
-auto abandon_case(bdb::Db& db) -> std::vector<CaseResult> {
+[[nodiscard]] auto abandon_case(bdb::Db& db) -> std::vector<CaseResult> {
 	using Decision = bdb::WriteDecision<std::monostate, std::string>;
 	auto maybe_id = std::optional<std::uint64_t>{};
 	auto outcome = db.write([&maybe_id](bdb::WriteTx& tx) -> std::expected<Decision, bdb::Error> {
@@ -331,7 +331,7 @@ auto abandon_case(bdb::Db& db) -> std::vector<CaseResult> {
 }
 
 // §36: a commit rejection returns the complete engine violation result.
-auto commit_rejection_case(bdb::Db& db) -> CaseResult {
+[[nodiscard]] auto commit_rejection_case(bdb::Db& db) -> CaseResult {
 	auto const orphan_service = std::uint64_t{999999};
 	auto const window = bdb::interval<std::int64_t>::literal(1, 2);
 	auto rejected = db.write(insert_outage_body(orphan_service, window));
@@ -354,7 +354,7 @@ auto commit_rejection_case(bdb::Db& db) -> CaseResult {
 
 // §17: re-entrant writes are refused with a typed error before the
 // engine's assertion can fire; the outer write is unharmed.
-auto reentrant_write_case(bdb::Db& db) -> CaseResult {
+[[nodiscard]] auto reentrant_write_case(bdb::Db& db) -> CaseResult {
 	auto inner_kind = std::optional<bdb::ErrorKind>{};
 	auto outer = db.write([&](bdb::WriteTx&) -> UnitResult {
 		auto inner = db.write([](bdb::WriteTx&) -> UnitResult {
@@ -373,7 +373,7 @@ auto reentrant_write_case(bdb::Db& db) -> CaseResult {
 
 // The final-state view inside one delta: insert → contains → remove →
 // contains, all before commit.
-auto tx_lanes_case(bdb::Db& db) -> CaseResult {
+[[nodiscard]] auto tx_lanes_case(bdb::Db& db) -> CaseResult {
 	auto seen_after_insert = false;
 	auto seen_after_remove = true;
 	auto removal_changed = false;
@@ -406,7 +406,7 @@ auto tx_lanes_case(bdb::Db& db) -> CaseResult {
 }
 
 // §36: moving Db leaves the source inert and the target owning.
-auto move_case(bdb::Db db) -> CaseResult {
+[[nodiscard]] auto move_case(bdb::Db db) -> CaseResult {
 	auto target = std::move(db);
 	return CaseResult{
 	    .name = "moving Db leaves the source inert and valid (§36)",
@@ -419,7 +419,7 @@ auto move_case(bdb::Db db) -> CaseResult {
 // §36: destroying a database destroys/releases all owned state — the
 // durable store's exclusive lock releases at RAII destruction, so a
 // fingerprint-verified open sees the committed row. No close() exists.
-auto durable_case(abi::owned_schema_spec const& spec) -> std::vector<CaseResult> {
+[[nodiscard]] auto durable_case(abi::owned_schema_spec const& spec) -> std::vector<CaseResult> {
 	auto const dir = make_store_dir("durable");
 	if (!dir.has_value()) {
 		return {CaseResult{.name = dir.error(), .passed = false}};
@@ -455,7 +455,7 @@ auto durable_case(abi::owned_schema_spec const& spec) -> std::vector<CaseResult>
 	}};
 }
 
-auto run_cases() -> std::vector<CaseResult> {
+[[nodiscard]] auto run_cases() -> std::vector<CaseResult> {
 	auto results = std::vector<CaseResult>{};
 	auto const spec = make_uptime_spec();
 

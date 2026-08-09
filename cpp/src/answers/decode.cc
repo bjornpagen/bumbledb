@@ -36,7 +36,7 @@ namespace {
 // an application state). TU-local: referenced only from the non-inline
 // decode_value below, so no exported inline function exposes it.
 template<class Checked>
-auto lifted(std::expected<Checked, TypeError> checked) -> std::optional<Value> {
+[[nodiscard]] auto lifted(std::expected<Checked, TypeError> checked) -> std::optional<Value> {
 	if (!checked.has_value()) {
 		return std::nullopt;
 	}

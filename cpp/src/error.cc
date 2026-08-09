@@ -99,7 +99,7 @@ namespace bdb::detail {
 // The value-for-value mirror pins (TODO_CPP §27's tag-table discipline —
 // the C++ enum is the fourth spelling; drift breaks the compile here).
 template<class Mirror, class Wire>
-consteval auto mirrors(Mirror mirror, Wire wire) -> bool {
+[[nodiscard]] consteval auto mirrors(Mirror mirror, Wire wire) -> bool {
 	return std::to_underlying(mirror) == static_cast<std::underlying_type_t<Mirror>>(wire);
 }
 
@@ -151,7 +151,7 @@ export namespace bdb {
 /// the bridge's opaque error payload. Formatting is a separate cold
 /// operation (message/violations copy out); kind() is the hot accessor.
 /// The moved-from Error is inert — never read a moved-from Error.
-class Error {
+class [[nodiscard]] Error {
 	foreign::error_handle handle_;
 
 public:

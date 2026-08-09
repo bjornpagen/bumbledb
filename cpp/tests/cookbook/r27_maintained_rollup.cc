@@ -71,7 +71,7 @@ struct CaseResult {
 
 /// The golden of one recipe: the fixtures file is one `rNN <64-hex>` line
 /// per recipe (ts/test/cookbook.test.ts reads the same file).
-auto golden_of(std::string_view fixtures, std::string_view recipe) -> std::optional<std::string> {
+[[nodiscard]] auto golden_of(std::string_view fixtures, std::string_view recipe) -> std::optional<std::string> {
 	for (auto const line_range : std::views::split(fixtures, '\n')) {
 		auto const line = std::string_view{line_range};
 		if (!line.starts_with(recipe)) {
@@ -93,7 +93,7 @@ auto golden_of(std::string_view fixtures, std::string_view recipe) -> std::optio
 	return std::nullopt;
 }
 
-auto slurp(std::string_view path) -> std::optional<std::string> {
+[[nodiscard]] auto slurp(std::string_view path) -> std::optional<std::string> {
 	auto stream = std::ifstream{std::string{path}, std::ios::binary | std::ios::ate};
 	if (!stream) {
 		return std::nullopt;
@@ -111,7 +111,7 @@ auto slurp(std::string_view path) -> std::optional<std::string> {
 	return text;
 }
 
-auto make_store_dir() -> std::optional<std::filesystem::path> {
+[[nodiscard]] auto make_store_dir() -> std::optional<std::filesystem::path> {
 	auto code = std::error_code{};
 	auto const root = std::filesystem::temp_directory_path(code);
 	if (code) {
@@ -131,7 +131,7 @@ auto make_store_dir() -> std::optional<std::filesystem::path> {
 /// Two persons' claims: person 1 is Busy [10,20) and [20,30) (touching —
 /// pack coalesces them) plus Ooo [40,50) (the ψ selection excludes it);
 /// person 2 is Busy [5,10). Sources are the claims' own key.
-auto seed(bdb::Db& db) -> bool {
+[[nodiscard]] auto seed(bdb::Db& db) -> bool {
 	using Decision = bdb::WriteDecision<std::monostate, std::monostate>;
 	using Result = std::expected<Decision, bdb::Error>;
 	auto written = db.write([&](bdb::WriteTx& tx) -> Result {
@@ -157,7 +157,7 @@ auto seed(bdb::Db& db) -> bool {
 	return written.has_value() && std::holds_alternative<bdb::Committed<std::monostate>>(*written);
 }
 
-auto store_span(bdb::Db& db, std::uint64_t person, bdb::interval<std::int64_t> span)
+[[nodiscard]] auto store_span(bdb::Db& db, std::uint64_t person, bdb::interval<std::int64_t> span)
     -> std::expected<bdb::WriteOutcome<std::monostate, std::monostate>, bdb::Error> {
 	return db.write([&](bdb::WriteTx& tx) -> std::expected<bdb::WriteDecision<std::monostate, std::monostate>, bdb::Error> {
 		auto landed = tx.insert(BusySpan, BusySpanRow{.person = person, .span = span});

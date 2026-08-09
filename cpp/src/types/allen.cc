@@ -34,7 +34,7 @@ public:
 	static constexpr auto all_bits = std::uint16_t{(1U << 13U) - 1U};
 
 	/// The constant lane: a bit above the low 13 is a compile error.
-	static consteval auto literal(std::uint16_t word) -> allen_mask {
+	[[nodiscard]] static consteval auto literal(std::uint16_t word) -> allen_mask {
 		if ((word & ~all_bits) != 0) {
 			detail::allen_mask_literal_must_fit_the_low_13_bits();
 		}
@@ -42,7 +42,7 @@ public:
 	}
 
 	/// The runtime lane: a bit above the low 13 is a typed error.
-	static constexpr auto make(std::uint16_t word) -> std::expected<allen_mask, TypeError> {
+	[[nodiscard]] static constexpr auto make(std::uint16_t word) -> std::expected<allen_mask, TypeError> {
 		if ((word & ~all_bits) != 0) {
 			return std::unexpected{TypeError::AllenMaskOverflow};
 		}
@@ -56,13 +56,13 @@ public:
 
 	/// Mask union — the closed composition the named vocabulary is built
 	/// from; preserves the low-13 invariant by construction.
-	friend constexpr auto operator|(allen_mask left, allen_mask right) -> allen_mask {
+	[[nodiscard]] friend constexpr auto operator|(allen_mask left, allen_mask right) -> allen_mask {
 		return allen_mask{static_cast<std::uint16_t>(left.bits_ | right.bits_)};
 	}
 
 	// Member (not hidden-friend) comparison: the pinned GCC 16.1 ICEs
 	// streaming a defaulted friend operator== across a module import.
-	constexpr auto operator==(allen_mask const&) const -> bool = default;
+	[[nodiscard]] constexpr auto operator==(allen_mask const&) const -> bool = default;
 };
 
 /// The engine's Allen vocabulary, under Allen's own names — the 13

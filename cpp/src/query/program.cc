@@ -75,7 +75,7 @@ struct rec_name_of_t<rec_def<Name, Builds...>> {
 
 /// Evaluates one rule builder under the schema's rule scope.
 template<class S, class Build>
-consteval auto built_rule(Build const& build) -> rule_data {
+[[nodiscard]] consteval auto built_rule(Build const& build) -> rule_data {
 	auto const result = build(rule_scope<S>{});
 	static_assert(std::same_as<std::remove_cvref_t<decltype(result)>, rule_data>,
 	              "bumbledb program rule: the rule body must end in .find(...)");
@@ -90,7 +90,7 @@ struct built_pred {
 };
 
 template<class S, class Part>
-consteval auto built_pred_of(Part const& part) -> built_pred {
+[[nodiscard]] consteval auto built_pred_of(Part const& part) -> built_pred {
 	auto out = built_pred{};
 	out.name = rec_name_of_t<Part>::value;
 	auto const add = [&](rule_data const& rule) {

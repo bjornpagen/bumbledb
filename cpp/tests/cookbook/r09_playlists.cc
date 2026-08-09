@@ -85,7 +85,7 @@ struct CaseResult {
 	bool passed;
 };
 
-auto golden_of(std::string_view fixtures, std::string_view recipe) -> std::optional<std::string> {
+[[nodiscard]] auto golden_of(std::string_view fixtures, std::string_view recipe) -> std::optional<std::string> {
 	for (auto const line_range : std::views::split(fixtures, '\n')) {
 		auto const line = std::string_view{line_range};
 		if (!line.starts_with(recipe)) {
@@ -107,7 +107,7 @@ auto golden_of(std::string_view fixtures, std::string_view recipe) -> std::optio
 	return std::nullopt;
 }
 
-auto slurp(std::string_view path) -> std::optional<std::string> {
+[[nodiscard]] auto slurp(std::string_view path) -> std::optional<std::string> {
 	auto stream = std::ifstream{std::string{path}, std::ios::binary | std::ios::ate};
 	if (!stream) {
 		return std::nullopt;
@@ -125,7 +125,7 @@ auto slurp(std::string_view path) -> std::optional<std::string> {
 	return text;
 }
 
-auto make_store_dir() -> std::optional<std::filesystem::path> {
+[[nodiscard]] auto make_store_dir() -> std::optional<std::filesystem::path> {
 	auto code = std::error_code{};
 	auto const root = std::filesystem::temp_directory_path(code);
 	if (code) {
@@ -145,7 +145,7 @@ auto make_store_dir() -> std::optional<std::filesystem::path> {
 /// One playlist with extent [0,2) tiled by two unit slots: position 0
 /// plays "a", position 1 plays "b" — the tiling mirrors demands the
 /// extent and its slots land in ONE commit.
-auto seed(bdb::Db& db) -> std::optional<std::uint64_t> {
+[[nodiscard]] auto seed(bdb::Db& db) -> std::optional<std::uint64_t> {
 	using Decision = bdb::WriteDecision<std::uint64_t, std::monostate>;
 	using Result = std::expected<Decision, bdb::Error>;
 	auto written = db.write([&](bdb::WriteTx& tx) -> Result {

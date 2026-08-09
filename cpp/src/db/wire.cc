@@ -13,7 +13,7 @@ import bumbledb_foreign;
 
 namespace bdb::detail {
 
-auto wire_type_of(field_data const& field) -> foreign::bdb_value_type {
+[[nodiscard]] auto wire_type_of(field_data const& field) -> foreign::bdb_value_type {
 	switch (field.kind) {
 	case value_kind::boolean:
 		return foreign::scalar_type(foreign::bdb_value_type_kind::BDB_VALUE_TYPE_KIND_BOOL);
@@ -38,7 +38,7 @@ auto wire_type_of(field_data const& field) -> foreign::bdb_value_type {
 /// The coordinate's law-computed class name, rendered "Relation.field"
 /// for the newtype slot (lowering.md §1.10/§7.7); nullopt on bare.
 template<class Classes>
-auto newtype_of(Classes const& classes, name_text relation, name_text field) -> std::optional<std::string> {
+[[nodiscard]] auto newtype_of(Classes const& classes, name_text relation, name_text field) -> std::optional<std::string> {
 	for (auto const& entry : classes) {
 		if (entry.coordinate.relation == relation && entry.coordinate.field == field) {
 			if (!entry.classed) {
@@ -52,7 +52,7 @@ auto newtype_of(Classes const& classes, name_text relation, name_text field) -> 
 
 /// One schema-lane σ/axiom literal, owned (handles cross BY NAME —
 /// lowering.md §7.8; values tagged).
-auto owned_literal_of(selection_literal const& literal) -> foreign::owned_literal {
+[[nodiscard]] auto owned_literal_of(selection_literal const& literal) -> foreign::owned_literal {
 	auto out = foreign::owned_literal{};
 	if (literal.is_handle) {
 		out.is_handle = true;
@@ -83,7 +83,7 @@ auto owned_literal_of(selection_literal const& literal) -> foreign::owned_litera
 	return out;
 }
 
-auto owned_axiom_of(axiom_literal const& literal) -> foreign::owned_literal {
+[[nodiscard]] auto owned_axiom_of(axiom_literal const& literal) -> foreign::owned_literal {
 	auto out = foreign::owned_literal{};
 	switch (literal.kind) {
 	case value_kind::boolean:
@@ -110,7 +110,7 @@ auto owned_axiom_of(axiom_literal const& literal) -> foreign::owned_literal {
 }
 
 template<Theory S>
-auto owned_relations_of(S const& theory) -> std::vector<foreign::owned_relation> {
+[[nodiscard]] auto owned_relations_of(S const& theory) -> std::vector<foreign::owned_relation> {
 	auto relations = std::vector<foreign::owned_relation>{};
 	relations.reserve(theory.relation_table.size());
 	for (auto const& relation : theory.relation_table) {
@@ -162,7 +162,7 @@ auto owned_relations_of(S const& theory) -> std::vector<foreign::owned_relation>
 	return relations;
 }
 
-auto owned_side_of(side_data const& side) -> foreign::owned_side {
+[[nodiscard]] auto owned_side_of(side_data const& side) -> foreign::owned_side {
 	auto projection = std::vector<std::string>{};
 	projection.reserve(side.width);
 	for (auto index = std::size_t{0}; index != side.width; ++index) {
@@ -189,7 +189,7 @@ auto owned_side_of(side_data const& side) -> foreign::owned_side {
 	};
 }
 
-auto owned_bound_of(bound_data const& bound) -> foreign::owned_bound {
+[[nodiscard]] auto owned_bound_of(bound_data const& bound) -> foreign::owned_bound {
 	auto const kind = [&] {
 		switch (bound.form) {
 		case bound_form::lit:
@@ -209,7 +209,7 @@ auto owned_bound_of(bound_data const& bound) -> foreign::owned_bound {
 }
 
 template<Theory S>
-auto owned_statements_of(S const& theory) -> std::vector<foreign::owned_statement> {
+[[nodiscard]] auto owned_statements_of(S const& theory) -> std::vector<foreign::owned_statement> {
 	auto statements = std::vector<foreign::owned_statement>{};
 	statements.reserve(theory.statements.size());
 	for (auto const& statement : theory.statements) {

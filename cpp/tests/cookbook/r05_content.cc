@@ -65,7 +65,7 @@ struct CaseResult {
 
 /// The golden of one recipe: the fixtures file is one `rNN <64-hex>` line
 /// per recipe (ts/test/cookbook.test.ts reads the same file).
-auto golden_of(std::string_view fixtures, std::string_view recipe) -> std::optional<std::string> {
+[[nodiscard]] auto golden_of(std::string_view fixtures, std::string_view recipe) -> std::optional<std::string> {
 	for (auto const line_range : std::views::split(fixtures, '\n')) {
 		auto const line = std::string_view{line_range};
 		if (!line.starts_with(recipe)) {
@@ -87,7 +87,7 @@ auto golden_of(std::string_view fixtures, std::string_view recipe) -> std::optio
 	return std::nullopt;
 }
 
-auto slurp(std::string_view path) -> std::optional<std::string> {
+[[nodiscard]] auto slurp(std::string_view path) -> std::optional<std::string> {
 	auto stream = std::ifstream{std::string{path}, std::ios::binary | std::ios::ate};
 	if (!stream) {
 		return std::nullopt;
@@ -105,7 +105,7 @@ auto slurp(std::string_view path) -> std::optional<std::string> {
 	return text;
 }
 
-auto make_store_dir() -> std::optional<std::filesystem::path> {
+[[nodiscard]] auto make_store_dir() -> std::optional<std::filesystem::path> {
 	auto code = std::error_code{};
 	auto const root = std::filesystem::temp_directory_path(code);
 	if (code) {
@@ -123,7 +123,7 @@ auto make_store_dir() -> std::optional<std::filesystem::path> {
 }
 
 /// A 32-byte digest filled with one repeated octet.
-auto digest_of(std::uint8_t octet) -> bdb::bytes<32> {
+[[nodiscard]] auto digest_of(std::uint8_t octet) -> bdb::bytes<32> {
 	auto out = bdb::bytes<32>{};
 	out.fill(std::byte{octet});
 	return out;
@@ -136,7 +136,7 @@ struct SeedIds {
 
 /// Two documents (distinct digests) plus one replica of the first — the
 /// replica's digest must land on an existing document (the containment).
-auto seed(bdb::Db& db) -> std::optional<SeedIds> {
+[[nodiscard]] auto seed(bdb::Db& db) -> std::optional<SeedIds> {
 	using Decision = bdb::WriteDecision<SeedIds, std::monostate>;
 	using Result = std::expected<Decision, bdb::Error>;
 	auto written = db.write([&](bdb::WriteTx& tx) -> Result {

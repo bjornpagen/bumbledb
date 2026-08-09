@@ -10,7 +10,7 @@ import :face;
 namespace bdb::detail {
 
 template<class Source, class Target>
-consteval auto arity_message(std::string_view constructor) -> std::string {
+[[nodiscard]] consteval auto arity_message(std::string_view constructor) -> std::string {
 	return "bumbledb " + std::string{constructor} + "(): face \"" + std::string{Source::relation_name.view()} + "\" projects " +
 	       render_count(Source::width) + " columns but face \"" + std::string{Target::relation_name.view()} + "\" projects " +
 	       render_count(Target::width) + " — positionwise pairing requires equal arity";
@@ -41,7 +41,7 @@ struct containment_law {
 
 /// `contained(on(Outage.service), on(Service.id))` — source ⊆ target.
 template<class Source, class Target>
-consteval auto contained(Source source, Target target) -> containment_law<Source, Target, false> {
+[[nodiscard]] consteval auto contained(Source source, Target target) -> containment_law<Source, Target, false> {
 	static_assert(detail::is_face_v<Source> && detail::is_face_v<Target>, "bumbledb contained(): both arguments must be faces — spell them "
 	                                                                      "bdb::on(Relation.field, ...)");
 	static_assert(Source::width == Target::width, detail::arity_message<Source, Target>("contained"));

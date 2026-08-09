@@ -16,7 +16,7 @@ export namespace bdb {
 /// prepared object is outside the dialect's permitted model — execution
 /// takes it non-const (§22).
 template<auto Query>
-class Prepared {
+class [[nodiscard]] Prepared {
 	foreign::prepared_handle handle_;
 
 	explicit Prepared(foreign::prepared_handle handle) : handle_{std::move(handle)} {}

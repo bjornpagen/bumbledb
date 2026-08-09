@@ -115,6 +115,14 @@ FormatStyle: file
 
 CheckOptions:
   # -------------------------------------------------------------------------
+  # The nodiscard law (AGENTS.md §26): error-carrying types are never
+  # silently dropped. The compiler rung ([[nodiscard]] + -Werror) is the
+  # primary enforcement; this covers the Clang-parseable remainder.
+  # -------------------------------------------------------------------------
+  bugprone-unused-return-value.CheckedReturnTypes: '::std::expected;::std::optional;::std::error_code'
+  bugprone-unused-return-value.AllowCastToVoid: 'false'
+
+  # -------------------------------------------------------------------------
   # Preprocessor
   # -------------------------------------------------------------------------
   # Normal project code may not use macros at all. The repository policy

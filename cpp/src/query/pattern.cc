@@ -22,7 +22,7 @@ namespace bdb::detail {
 // The shared consteval string helpers (§34 diagnostics).
 // ————————————————————————————————————————————————————————————————————
 
-consteval auto render_size(std::size_t value) -> std::string {
+[[nodiscard]] consteval auto render_size(std::size_t value) -> std::string {
 	if (value == 0) {
 		return "0";
 	}
@@ -34,11 +34,11 @@ consteval auto render_size(std::size_t value) -> std::string {
 	return out;
 }
 
-consteval auto coordinate_label(name_text relation, name_text field) -> std::string {
+[[nodiscard]] consteval auto coordinate_label(name_text relation, name_text field) -> std::string {
 	return std::string{relation.view()} + "." + std::string{field.view()};
 }
 
-consteval auto kind_label(field_class cls) -> std::string {
+[[nodiscard]] consteval auto kind_label(field_class cls) -> std::string {
 	switch (cls.kind) {
 	case value_kind::boolean:
 		return "bool";
@@ -58,7 +58,7 @@ consteval auto kind_label(field_class cls) -> std::string {
 	return "interval<i64>";
 }
 
-consteval auto class_label(bool classed, coord_ref law) -> std::string {
+[[nodiscard]] consteval auto class_label(bool classed, coord_ref law) -> std::string {
 	if (!classed) {
 		return "bare";
 	}
@@ -68,7 +68,7 @@ consteval auto class_label(bool classed, coord_ref law) -> std::string {
 /// The §34 cross-class wall: names BOTH coordinates and both classes.
 template<name_text VarRel, name_text VarField, bool VarClassed, coord_ref VarLaw, name_text AtRel, name_text AtField, bool AtClassed,
          coord_ref AtLaw>
-consteval auto cross_class_message(std::string_view verb) -> std::string {
+[[nodiscard]] consteval auto cross_class_message(std::string_view verb) -> std::string {
 	return "bumbledb query: variable \"" + coordinate_label(VarRel, VarField) + "\" (" + class_label(VarClassed, VarLaw) + ") cannot " +
 	       std::string{verb} + " coordinate \"" + coordinate_label(AtRel, AtField) + "\" (" + class_label(AtClassed, AtLaw) +
 	       ") — a variable joins only class-equal columns (one variable, "
@@ -78,7 +78,7 @@ consteval auto cross_class_message(std::string_view verb) -> std::string {
 /// The §34 wrong-vocabulary wall at a match binding: names the handle,
 /// its vocabulary, the coordinate, and the coordinate's vocabulary.
 template<name_text HandleRoster, name_text Handle, name_text AtRel, name_text AtField, name_text FieldRoster>
-consteval auto handle_binding_message() -> std::string {
+[[nodiscard]] consteval auto handle_binding_message() -> std::string {
 	return "bumbledb query: handle \"" + std::string{Handle.view()} + "\" of closed relation \"" + std::string{HandleRoster.view()} +
 	       "\" cannot bind coordinate \"" + coordinate_label(AtRel, AtField) + "\" — the field references closed relation \"" +
 	       std::string{FieldRoster.view()} + "\"";
@@ -86,7 +86,7 @@ consteval auto handle_binding_message() -> std::string {
 
 /// The physical-kind wall (structurally unequal columns).
 template<name_text VarRel, name_text VarField, field_class VarClass, name_text AtRel, name_text AtField, field_class AtClass>
-consteval auto kind_mismatch_message(std::string_view verb) -> std::string {
+[[nodiscard]] consteval auto kind_mismatch_message(std::string_view verb) -> std::string {
 	return "bumbledb query: variable \"" + coordinate_label(VarRel, VarField) + "\" (" + kind_label(VarClass) + ") cannot " +
 	       std::string{verb} + " coordinate \"" + coordinate_label(AtRel, AtField) + "\" (" + kind_label(AtClass) +
 	       ") — the structural kinds differ";
@@ -97,7 +97,7 @@ consteval auto kind_mismatch_message(std::string_view verb) -> std::string {
 // ————————————————————————————————————————————————————————————————————
 
 template<class Var>
-consteval auto var_term() -> term_data {
+[[nodiscard]] consteval auto var_term() -> term_data {
 	auto out = term_data{};
 	out.form = query_term_form::variable;
 	out.variable = coord_ref{.relation = Var::relation_name, .field = Var::field_name};
@@ -105,14 +105,14 @@ consteval auto var_term() -> term_data {
 }
 
 template<class Var>
-consteval auto measure_term() -> term_data {
+[[nodiscard]] consteval auto measure_term() -> term_data {
 	auto out = var_term<Var>();
 	out.form = query_term_form::measure;
 	return out;
 }
 
 template<class Param>
-consteval auto param_term() -> term_data {
+[[nodiscard]] consteval auto param_term() -> term_data {
 	auto out = term_data{};
 	out.form = query_term_form::param;
 	out.param = Param::name;
@@ -120,14 +120,14 @@ consteval auto param_term() -> term_data {
 }
 
 template<class Param>
-consteval auto set_param_term() -> term_data {
+[[nodiscard]] consteval auto set_param_term() -> term_data {
 	auto out = term_data{};
 	out.form = query_term_form::param_set;
 	out.param = Param::name;
 	return out;
 }
 
-consteval auto literal_term(query_literal literal) -> term_data {
+[[nodiscard]] consteval auto literal_term(query_literal literal) -> term_data {
 	auto out = term_data{};
 	out.form = query_term_form::literal;
 	out.literal = literal;
@@ -139,7 +139,7 @@ consteval auto literal_term(query_literal literal) -> term_data {
 /// folds to ONE set param (the TS content-addressed registry,
 /// query/lower.ts:453-487). Never a params-product member; the embedded
 /// space keeps it disjoint from every user-spellable param name.
-consteval auto membership_param_name(name_text roster, std::array<std::uint64_t, max_membership_handles> const& members, std::size_t count)
+[[nodiscard]] consteval auto membership_param_name(name_text roster, std::array<std::uint64_t, max_membership_handles> const& members, std::size_t count)
     -> name_text {
 	auto text = std::string{"in "} + std::string{roster.view()};
 	for (auto index = std::size_t{0}; index != count; ++index) {
@@ -152,7 +152,7 @@ consteval auto membership_param_name(name_text roster, std::array<std::uint64_t,
 /// Tags one integral host literal at a scalar domain (the sibling/field
 /// directs the tag — lowering.md §4.2's field/sibling-directed tagging).
 template<class T>
-consteval auto scalar_literal(value_kind kind, T value) -> query_literal {
+[[nodiscard]] consteval auto scalar_literal(value_kind kind, T value) -> query_literal {
 	auto out = query_literal{};
 	out.kind = kind;
 	if (kind == value_kind::boolean) {
@@ -165,7 +165,7 @@ consteval auto scalar_literal(value_kind kind, T value) -> query_literal {
 	return out;
 }
 
-consteval auto interval_literal(interval<std::uint64_t> value) -> query_literal {
+[[nodiscard]] consteval auto interval_literal(interval<std::uint64_t> value) -> query_literal {
 	auto out = query_literal{};
 	out.kind = value_kind::interval_u64;
 	out.u64_start = value.lo();
@@ -173,7 +173,7 @@ consteval auto interval_literal(interval<std::uint64_t> value) -> query_literal 
 	return out;
 }
 
-consteval auto interval_literal(interval<std::int64_t> value) -> query_literal {
+[[nodiscard]] consteval auto interval_literal(interval<std::int64_t> value) -> query_literal {
 	auto out = query_literal{};
 	out.kind = value_kind::interval_i64;
 	out.i64_start = value.lo();
@@ -202,7 +202,7 @@ consteval auto add_bound(rule_state& state, coord_ref variable) -> void {
 	++state.bound_count;
 }
 
-consteval auto is_bound(rule_state const& state, coord_ref variable) -> bool {
+[[nodiscard]] consteval auto is_bound(rule_state const& state, coord_ref variable) -> bool {
 	for (auto index = std::size_t{0}; index != state.bound_count; ++index) {
 		if (state.bound[index] == variable) {
 			return true;

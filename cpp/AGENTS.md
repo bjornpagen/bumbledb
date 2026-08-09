@@ -346,7 +346,7 @@ dialect code.
 
 The repository has two semantic zones.
 
-### 5.1 `src/`, `tests/`, and `benchmarks/`: dialect code
+### 5.1 `src/`, `tests/`, and `examples/`: dialect code
 
 All rules in this document apply.
 
@@ -467,7 +467,7 @@ Textual inclusion is forbidden in dialect code.
 ### Preprocessor
 
 Every preprocessing directive is forbidden in dialect code (`src/`, `tests/`,
-and `benchmarks/`), including:
+and `examples/`), including:
 
 ```text
 #include
@@ -874,10 +874,46 @@ ad-hoc callback concurrency
 
 ### Toolchain status
 
-Sender/receiver is the normative async algebra, but the pinned libstdc++ does
-not yet ship `std::execution`. Until it does, dialect code contains no async
-mechanism at all. The rule exists so that no substitute — threads, callbacks,
-coroutines — is ever admitted in the interim.
+Sender/receiver is **active**: the pinned libstdc++ does not yet ship
+`std::execution`, so the algebra is provided by the reference implementation
+(NVIDIA stdexec, pinned to an immutable SHA in the top-level CMakeLists.txt
+per §3.7) and quarantined behind exactly one swap boundary, re-exported as
+`namespace ex`. The vocabulary rules above bind for real now — they are not
+aspirational.
+
+Boundary law:
+
+- There is exactly ONE swap boundary, spelled across exactly two plain
+  quarantine translation units: `foreign/exec.backend.cc` (the combinator
+  half — `namespace ex` plus the conformance chains) and
+  `unsafe/net.backend.cc` (the I/O half — the kqueue io-context and its
+  readiness senders). Those two TUs are the only ones that may include a
+  stdexec header or spell the implementation namespaces (`stdexec::`,
+  `exec::`); the eventual swap edits only them. Direct
+  implementation-namespace use anywhere else — dialect code, the rest of
+  `unsafe/`, the rest of `foreign/` — is forbidden, and no third stdexec TU
+  may be added: new sender work extends one of the two halves.
+- `ex::` re-exports only the probe-verified combinator subset (`just`,
+  `then`, `upon_error`, `let_value`, `let_error`, `when_all`,
+  `continues_on`, `starts_on`, `schedule`, `on`, `into_variant`,
+  `stopped_as_optional`, `just_error`, `just_stopped`,
+  `static_thread_pool`) plus OUR expected-erroring `wait`. Nothing outside
+  that list escapes the boundary.
+- `stdexec::sync_wait` is forbidden: under `-fno-exceptions` its typed-error
+  channel is silently lossy (routed through a null `exception_ptr`, so every
+  error masquerades as stopped). `ex::wait<E>` returns
+  `optional<expected<values, E>>` — nullopt is stopped, unexpected preserves
+  the typed error.
+- Pinned GCC 16.1 quirk: including a stdexec header in **any** module unit
+  ICEs (global-module-fragment CPO forward-declaration pattern; rationale
+  pinned in `foreign/exec.backend.cc`). Sender composition therefore cannot
+  cross the module boundary on this toolchain: the `starter:exec` partition
+  exports concrete function surfaces over a narrow ABI, not senders.
+  Re-verify on every toolchain bump.
+- The `__cpp_lib_senders` tombstone in `tests/conformance.test.cc` now
+  signals time-to-delete-the-vendor: when the macro appears, rewrite the
+  boundary over `std::execution`, drop the FetchContent pin, and re-export
+  the full vocabulary directly.
 
 ### Shared mutable state
 
@@ -1174,6 +1210,37 @@ Return values instead of output parameters.
 
 Use structured return values instead of tuples whose positions have domain
 meaning when named fields materially improve the API.
+
+### Return values are contracts
+
+Every non-void function in dialect code is declared `[[nodiscard]]`.
+
+If a result is safely ignorable, the function should return `void`: the
+mutation is the result. The rare advisory return stays `[[nodiscard]]`;
+callers acknowledge it explicitly.
+
+Exceptions, set by the language's own conventions: operators whose result
+is the object itself (assignment, compound assignment,
+increment/decrement) and constructors. Immediately-invoked or
+immediately-consumed lambdas need no attribute.
+
+Discarding has exactly two spellings, one per concept:
+
+```cpp
+std::ignore = advisory_value();   // discard a value, deliberately
+auto _ = scoped_capability();     // hold an unnamed RAII object to scope end
+```
+
+`(void)expr` is retired. The two spellings are not interchangeable:
+`std::ignore =` destroys immediately; `auto _ =` lives to scope end.
+
+An `expected` is never discarded by either spelling. Check it; then the
+extracted value may be discarded if advisory. Ignoring an `expected`
+ignores its error — a swallowed failure, not a style choice.
+
+Enforcement is the compiler rung: `[[nodiscard]]` + `-Werror` fails the
+build in every preset. The lint graph supplements with
+`bugprone-unused-return-value` over `expected`/`optional` return types.
 
 ---
 

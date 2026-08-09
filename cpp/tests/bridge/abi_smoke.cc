@@ -19,7 +19,7 @@ struct CaseResult {
 // Owned bytes for a borrowed ABI text view (the ABI speaks uint8_t, the
 // host speaks char; the copy keeps the conversion explicit and the storage
 // alive for the whole call).
-auto bytes_of(std::string_view text) -> std::vector<std::uint8_t> {
+[[nodiscard]] auto bytes_of(std::string_view text) -> std::vector<std::uint8_t> {
 	auto bytes = std::vector<std::uint8_t>{};
 	bytes.reserve(text.size());
 	std::ranges::transform(text, std::back_inserter(bytes), [](char character) {
@@ -28,15 +28,15 @@ auto bytes_of(std::string_view text) -> std::vector<std::uint8_t> {
 	return bytes;
 }
 
-auto view_of(std::span<std::uint8_t const> bytes) -> abi::bdb_string_view {
+[[nodiscard]] auto view_of(std::span<std::uint8_t const> bytes) -> abi::bdb_string_view {
 	return abi::bdb_string_view{.data = bytes.data(), .len = bytes.size()};
 }
 
-auto absent_view() -> abi::bdb_string_view {
+[[nodiscard]] auto absent_view() -> abi::bdb_string_view {
 	return abi::bdb_string_view{.data = nullptr, .len = 0};
 }
 
-auto scalar_type(abi::bdb_value_type_kind kind) -> abi::bdb_value_type {
+[[nodiscard]] auto scalar_type(abi::bdb_value_type_kind kind) -> abi::bdb_value_type {
 	return abi::bdb_value_type{
 	    .kind = kind,
 	    .fixed_len = 0,
@@ -48,7 +48,7 @@ auto scalar_type(abi::bdb_value_type_kind kind) -> abi::bdb_value_type {
 
 // Renders and frees an owned ABI error (null-safe; the message view dies
 // with the error, so it is copied before the destroy).
-auto consume_error(abi::bdb_error* error) -> std::string {
+[[nodiscard]] auto consume_error(abi::bdb_error* error) -> std::string {
 	if (error == nullptr) {
 		return "(no error payload)";
 	}
@@ -65,7 +65,7 @@ auto consume_error(abi::bdb_error* error) -> std::string {
 
 // The whole raw lifecycle — create → fingerprint → destroy — in one scope:
 // no ABI handle survives this function.
-auto read_fingerprint(std::string_view store_path) -> std::expected<std::array<std::uint8_t, 64>, std::string> {
+[[nodiscard]] auto read_fingerprint(std::string_view store_path) -> std::expected<std::array<std::uint8_t, 64>, std::string> {
 	auto const path_bytes = bytes_of(store_path);
 	auto const service_bytes = bytes_of("Service");
 	auto const id_bytes = bytes_of("id");
@@ -119,7 +119,7 @@ auto read_fingerprint(std::string_view store_path) -> std::expected<std::array<s
 	return std::to_array(fingerprint.hex);
 }
 
-auto make_store_dir() -> std::expected<std::filesystem::path, std::string> {
+[[nodiscard]] auto make_store_dir() -> std::expected<std::filesystem::path, std::string> {
 	auto code = std::error_code{};
 	auto const root = std::filesystem::temp_directory_path(code);
 	if (code) {
@@ -136,13 +136,13 @@ auto make_store_dir() -> std::expected<std::filesystem::path, std::string> {
 	return dir;
 }
 
-auto is_lower_hex(std::span<std::uint8_t const> chars) -> bool {
+[[nodiscard]] auto is_lower_hex(std::span<std::uint8_t const> chars) -> bool {
 	return std::ranges::all_of(chars, [](std::uint8_t character) {
 		return (character >= '0' && character <= '9') || (character >= 'a' && character <= 'f');
 	});
 }
 
-auto run_cases() -> std::vector<CaseResult> {
+[[nodiscard]] auto run_cases() -> std::vector<CaseResult> {
 	auto const dir = make_store_dir();
 	if (!dir) {
 		return {CaseResult{

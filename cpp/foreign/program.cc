@@ -32,29 +32,29 @@ namespace bdb::foreign {
 
 // --- the predicate walk (recs first, output last) ----------------------------
 
-consteval auto predicate_total(query_ir const& ir) -> std::size_t {
+[[nodiscard]] consteval auto predicate_total(query_ir const& ir) -> std::size_t {
 	return ir.rec_count + 1;
 }
 
-consteval auto pred_rule_count(query_ir const& ir, std::size_t pred) -> std::size_t {
+[[nodiscard]] consteval auto pred_rule_count(query_ir const& ir, std::size_t pred) -> std::size_t {
 	return pred < ir.rec_count ? ir.recs[pred].rule_count : ir.rule_count;
 }
 
-consteval auto pred_rule(query_ir const& ir, std::size_t pred, std::size_t rule) -> wire_rule const& {
+[[nodiscard]] consteval auto pred_rule(query_ir const& ir, std::size_t pred, std::size_t rule) -> wire_rule const& {
 	return pred < ir.rec_count ? ir.recs[pred].rules[rule] : ir.rules[rule];
 }
 
-consteval auto pred_head_count(query_ir const& ir, std::size_t pred) -> std::size_t {
+[[nodiscard]] consteval auto pred_head_count(query_ir const& ir, std::size_t pred) -> std::size_t {
 	return pred < ir.rec_count ? ir.recs[pred].head_count : ir.head_count;
 }
 
-consteval auto pred_head(query_ir const& ir, std::size_t pred, std::size_t column) -> find_data const& {
+[[nodiscard]] consteval auto pred_head(query_ir const& ir, std::size_t pred, std::size_t column) -> find_data const& {
 	return pred < ir.rec_count ? ir.recs[pred].head[column] : ir.head[column];
 }
 
 // --- IR value -> C view folds (consteval; every output is data) -------------
 
-consteval auto value_of(query_literal const& literal) -> bdb_value {
+[[nodiscard]] consteval auto value_of(query_literal const& literal) -> bdb_value {
 	auto out = bdb_value{};
 	switch (literal.kind) {
 	case value_kind::boolean:
@@ -88,7 +88,7 @@ consteval auto value_of(query_literal const& literal) -> bdb_value {
 	return out;
 }
 
-consteval auto term_of(wire_term const& term) -> bdb_term {
+[[nodiscard]] consteval auto term_of(wire_term const& term) -> bdb_term {
 	auto out = bdb_term{};
 	switch (term.form) {
 	case query_term_form::variable:
@@ -116,7 +116,7 @@ consteval auto term_of(wire_term const& term) -> bdb_term {
 	return out;
 }
 
-consteval auto cmp_kind_of(query_cmp op) -> bdb_cmp_op_kind {
+[[nodiscard]] consteval auto cmp_kind_of(query_cmp op) -> bdb_cmp_op_kind {
 	switch (op) {
 	case query_cmp::eq:
 		return bdb_cmp_op_kind::BDB_CMP_OP_KIND_EQ;
@@ -138,7 +138,7 @@ consteval auto cmp_kind_of(query_cmp op) -> bdb_cmp_op_kind {
 	return bdb_cmp_op_kind::BDB_CMP_OP_KIND_POINT_IN;
 }
 
-consteval auto head_op_of(fold_form op) -> bdb_head_op {
+[[nodiscard]] consteval auto head_op_of(fold_form op) -> bdb_head_op {
 	switch (op) {
 	case fold_form::sum:
 		return bdb_head_op::BDB_HEAD_OP_SUM;
@@ -160,7 +160,7 @@ consteval auto head_op_of(fold_form op) -> bdb_head_op {
 	return bdb_head_op::BDB_HEAD_OP_PACK;
 }
 
-consteval auto condition_of(wire_condition const& condition) -> bdb_condition {
+[[nodiscard]] consteval auto condition_of(wire_condition const& condition) -> bdb_condition {
 	return bdb_condition{
 	    .kind = bdb_condition_kind::BDB_CONDITION_KIND_LEAF,
 	    .cmp =
@@ -180,7 +180,7 @@ consteval auto condition_of(wire_condition const& condition) -> bdb_condition {
 	};
 }
 
-consteval auto find_of(wire_find const& find) -> bdb_find_term {
+[[nodiscard]] consteval auto find_of(wire_find const& find) -> bdb_find_term {
 	auto out = bdb_find_term{};
 	out.op = bdb_agg_op{
 	    .kind = head_op_of(find.op),
@@ -208,7 +208,7 @@ consteval auto find_of(wire_find const& find) -> bdb_find_term {
 
 // --- flattened totals (across every predicate) -------------------------------
 
-consteval auto binding_total(query_ir const& ir) -> std::size_t {
+[[nodiscard]] consteval auto binding_total(query_ir const& ir) -> std::size_t {
 	auto total = std::size_t{0};
 	for (auto pred = std::size_t{0}; pred != predicate_total(ir); ++pred) {
 		for (auto rule = std::size_t{0}; rule != pred_rule_count(ir, pred); ++rule) {
@@ -224,7 +224,7 @@ consteval auto binding_total(query_ir const& ir) -> std::size_t {
 	return total;
 }
 
-consteval auto atom_total(query_ir const& ir) -> std::size_t {
+[[nodiscard]] consteval auto atom_total(query_ir const& ir) -> std::size_t {
 	auto total = std::size_t{0};
 	for (auto pred = std::size_t{0}; pred != predicate_total(ir); ++pred) {
 		for (auto rule = std::size_t{0}; rule != pred_rule_count(ir, pred); ++rule) {
@@ -234,7 +234,7 @@ consteval auto atom_total(query_ir const& ir) -> std::size_t {
 	return total;
 }
 
-consteval auto negated_total(query_ir const& ir) -> std::size_t {
+[[nodiscard]] consteval auto negated_total(query_ir const& ir) -> std::size_t {
 	auto total = std::size_t{0};
 	for (auto pred = std::size_t{0}; pred != predicate_total(ir); ++pred) {
 		for (auto rule = std::size_t{0}; rule != pred_rule_count(ir, pred); ++rule) {
@@ -244,7 +244,7 @@ consteval auto negated_total(query_ir const& ir) -> std::size_t {
 	return total;
 }
 
-consteval auto condition_total(query_ir const& ir) -> std::size_t {
+[[nodiscard]] consteval auto condition_total(query_ir const& ir) -> std::size_t {
 	auto total = std::size_t{0};
 	for (auto pred = std::size_t{0}; pred != predicate_total(ir); ++pred) {
 		for (auto rule = std::size_t{0}; rule != pred_rule_count(ir, pred); ++rule) {
@@ -254,7 +254,7 @@ consteval auto condition_total(query_ir const& ir) -> std::size_t {
 	return total;
 }
 
-consteval auto find_total(query_ir const& ir) -> std::size_t {
+[[nodiscard]] consteval auto find_total(query_ir const& ir) -> std::size_t {
 	auto total = std::size_t{0};
 	for (auto pred = std::size_t{0}; pred != predicate_total(ir); ++pred) {
 		for (auto rule = std::size_t{0}; rule != pred_rule_count(ir, pred); ++rule) {
@@ -264,7 +264,7 @@ consteval auto find_total(query_ir const& ir) -> std::size_t {
 	return total;
 }
 
-consteval auto rule_total(query_ir const& ir) -> std::size_t {
+[[nodiscard]] consteval auto rule_total(query_ir const& ir) -> std::size_t {
 	auto total = std::size_t{0};
 	for (auto pred = std::size_t{0}; pred != predicate_total(ir); ++pred) {
 		total += pred_rule_count(ir, pred);
@@ -272,7 +272,7 @@ consteval auto rule_total(query_ir const& ir) -> std::size_t {
 	return total;
 }
 
-consteval auto head_total(query_ir const& ir) -> std::size_t {
+[[nodiscard]] consteval auto head_total(query_ir const& ir) -> std::size_t {
 	auto total = std::size_t{0};
 	for (auto pred = std::size_t{0}; pred != predicate_total(ir); ++pred) {
 		total += pred_head_count(ir, pred);
@@ -287,7 +287,7 @@ consteval auto head_total(query_ir const& ir) -> std::size_t {
 // BEFORE the same rule's negated-atom bindings.
 
 template<auto Query>
-consteval auto make_bindings() -> std::array<bdb_binding, binding_total(Query.ir)> {
+[[nodiscard]] consteval auto make_bindings() -> std::array<bdb_binding, binding_total(Query.ir)> {
 	auto out = std::array<bdb_binding, binding_total(Query.ir)>{};
 	auto at = std::size_t{0};
 	for (auto pred = std::size_t{0}; pred != predicate_total(Query.ir); ++pred) {
@@ -316,12 +316,12 @@ consteval auto make_bindings() -> std::array<bdb_binding, binding_total(Query.ir
 template<auto Query>
 inline constexpr auto program_bindings = make_bindings<Query>();
 
-consteval auto atom_source_of(wire_atom const& atom) -> bdb_atom_source_kind {
+[[nodiscard]] consteval auto atom_source_of(wire_atom const& atom) -> bdb_atom_source_kind {
 	return atom.idb ? bdb_atom_source_kind::BDB_ATOM_SOURCE_KIND_IDB : bdb_atom_source_kind::BDB_ATOM_SOURCE_KIND_EDB;
 }
 
 template<auto Query>
-consteval auto make_atoms() -> std::array<bdb_atom, atom_total(Query.ir)> {
+[[nodiscard]] consteval auto make_atoms() -> std::array<bdb_atom, atom_total(Query.ir)> {
 	auto out = std::array<bdb_atom, atom_total(Query.ir)>{};
 	auto at = std::size_t{0};
 	auto binding_offset = std::size_t{0};
@@ -354,7 +354,7 @@ template<auto Query>
 inline constexpr auto program_atoms = make_atoms<Query>();
 
 template<auto Query>
-consteval auto make_negated() -> std::array<bdb_atom, negated_total(Query.ir)> {
+[[nodiscard]] consteval auto make_negated() -> std::array<bdb_atom, negated_total(Query.ir)> {
 	auto out = std::array<bdb_atom, negated_total(Query.ir)>{};
 	auto at = std::size_t{0};
 	auto binding_offset = std::size_t{0};
@@ -385,7 +385,7 @@ template<auto Query>
 inline constexpr auto program_negated = make_negated<Query>();
 
 template<auto Query>
-consteval auto make_conditions() -> std::array<bdb_condition, condition_total(Query.ir)> {
+[[nodiscard]] consteval auto make_conditions() -> std::array<bdb_condition, condition_total(Query.ir)> {
 	auto out = std::array<bdb_condition, condition_total(Query.ir)>{};
 	auto at = std::size_t{0};
 	for (auto pred = std::size_t{0}; pred != predicate_total(Query.ir); ++pred) {
@@ -404,7 +404,7 @@ template<auto Query>
 inline constexpr auto program_conditions = make_conditions<Query>();
 
 template<auto Query>
-consteval auto make_finds() -> std::array<bdb_find_term, find_total(Query.ir)> {
+[[nodiscard]] consteval auto make_finds() -> std::array<bdb_find_term, find_total(Query.ir)> {
 	auto out = std::array<bdb_find_term, find_total(Query.ir)>{};
 	auto at = std::size_t{0};
 	for (auto pred = std::size_t{0}; pred != predicate_total(Query.ir); ++pred) {
@@ -423,7 +423,7 @@ template<auto Query>
 inline constexpr auto program_finds = make_finds<Query>();
 
 template<auto Query>
-consteval auto make_rules() -> std::array<bdb_rule, rule_total(Query.ir)> {
+[[nodiscard]] consteval auto make_rules() -> std::array<bdb_rule, rule_total(Query.ir)> {
 	auto out = std::array<bdb_rule, rule_total(Query.ir)>{};
 	auto at = std::size_t{0};
 	auto atom_offset = std::size_t{0};
@@ -457,7 +457,7 @@ template<auto Query>
 inline constexpr auto program_rules = make_rules<Query>();
 
 template<auto Query>
-consteval auto make_heads() -> std::array<bdb_head_term, head_total(Query.ir)> {
+[[nodiscard]] consteval auto make_heads() -> std::array<bdb_head_term, head_total(Query.ir)> {
 	auto out = std::array<bdb_head_term, head_total(Query.ir)>{};
 	auto at = std::size_t{0};
 	for (auto pred = std::size_t{0}; pred != predicate_total(Query.ir); ++pred) {
@@ -483,7 +483,7 @@ template<auto Query>
 inline constexpr auto program_heads = make_heads<Query>();
 
 template<auto Query>
-consteval auto make_predicates() -> std::array<bdb_predicate, predicate_total(Query.ir)> {
+[[nodiscard]] consteval auto make_predicates() -> std::array<bdb_predicate, predicate_total(Query.ir)> {
 	auto out = std::array<bdb_predicate, predicate_total(Query.ir)>{};
 	auto rule_offset = std::size_t{0};
 	auto head_offset = std::size_t{0};
@@ -659,7 +659,7 @@ namespace bdb::foreign {
 // carries it (ts/src/query/run.ts:57-63). The cells live in static
 // constexpr storage, like the rest of the program view graph.
 
-consteval auto membership_cell_total(query_ir const& ir) -> std::size_t {
+[[nodiscard]] consteval auto membership_cell_total(query_ir const& ir) -> std::size_t {
 	auto total = std::size_t{0};
 	for (auto index = std::size_t{0}; index != ir.param_count; ++index) {
 		if (ir.params[index].membership) {
@@ -670,7 +670,7 @@ consteval auto membership_cell_total(query_ir const& ir) -> std::size_t {
 }
 
 template<auto Query>
-consteval auto make_membership_cells() -> std::array<bdb_value, membership_cell_total(Query.ir)> {
+[[nodiscard]] consteval auto make_membership_cells() -> std::array<bdb_value, membership_cell_total(Query.ir)> {
 	auto out = std::array<bdb_value, membership_cell_total(Query.ir)>{};
 	auto at = std::size_t{0};
 	for (auto index = std::size_t{0}; index != Query.ir.param_count; ++index) {

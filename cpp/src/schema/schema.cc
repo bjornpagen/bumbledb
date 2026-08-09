@@ -88,7 +88,7 @@ using fresh_pattern_of = typename detail::fresh_pattern_types<Facade>::Pattern;
 
 /// The facade's fresh-field count (constrains the primary get lane).
 template<class Facade>
-consteval auto fresh_field_count() -> std::size_t {
+[[nodiscard]] consteval auto fresh_field_count() -> std::size_t {
 	auto const entry = detail::relation_entry<Facade>();
 	auto count = std::size_t{0};
 	for (auto field = std::size_t{0}; field != entry.field_count; ++field) {
@@ -141,11 +141,11 @@ struct schema_value {
 	/// static_assert walls there can only read template arguments, never
 	/// a schema VALUE. Deterministic: schema() fills the members from
 	/// exactly these computations.
-	static consteval auto member_relation_table() -> std::array<relation_data, relation_count> {
+	[[nodiscard]] static consteval auto member_relation_table() -> std::array<relation_data, relation_count> {
 		return detail::relation_table<Args...>();
 	}
 
-	static consteval auto member_class_map() -> std::array<class_entry, coordinate_count> {
+	[[nodiscard]] static consteval auto member_class_map() -> std::array<class_entry, coordinate_count> {
 		return detail::analyze_schema<Args...>().classes;
 	}
 
@@ -174,7 +174,7 @@ struct schema_value {
 /// to the wire beyond names — the engine's SchemaSpec::descriptor()
 /// remains the authority.
 template<fixed_string Name, class... Args>
-consteval auto schema(Args const&... args) -> schema_value<Name, Args...> {
+[[nodiscard]] consteval auto schema(Args const&... args) -> schema_value<Name, Args...> {
 	static_assert(detail::args_recognized<Args...>(), "bumbledb schema(): every argument must be a relation facade "
 	                                                  "(bdb::relation<...>) or a statement value (bdb::key / "
 	                                                  "bdb::contained / bdb::mirrors / bdb::capacity)");

@@ -11,7 +11,7 @@ export namespace bdb {
 /// The bare tier's empty payload row (no declared columns; the axioms
 /// readback rows are this empty product).
 struct no_payload {
-	constexpr auto operator==(no_payload const&) const -> bool = default;
+	[[nodiscard]] constexpr auto operator==(no_payload const&) const -> bool = default;
 };
 
 /// One declared vocabulary member (the payload tier's argument):

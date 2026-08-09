@@ -38,7 +38,7 @@ inline constexpr auto DownAt = bdb::query(Uptime).rule([](auto r) consteval {
 });
 
 // What `snap.execute(prepared, {...})` takes — with the wrong name.
-consteval auto misuse() -> bool {
+[[nodiscard]] consteval auto misuse() -> bool {
 	auto const params = bdb::params_of<DownAt>{.at = std::int64_t{42}};
 	return sizeof params != 0;
 }

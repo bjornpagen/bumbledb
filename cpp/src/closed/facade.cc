@@ -37,7 +37,7 @@ export namespace bdb::detail {
 
 /// THE closed-facade discriminant: a class whose FIRST member is a
 /// `closed_id` (the mint puts it there; nothing else does).
-consteval auto is_closed_facade_type(std::meta::info type) -> bool {
+[[nodiscard]] consteval auto is_closed_facade_type(std::meta::info type) -> bool {
 	auto const t = std::meta::dealias(type);
 	if (!std::meta::is_class_type(t)) {
 		return false;
@@ -51,7 +51,7 @@ consteval auto is_closed_facade_type(std::meta::info type) -> bool {
 }
 
 template<class T>
-consteval auto is_closed_facade() -> bool {
+[[nodiscard]] consteval auto is_closed_facade() -> bool {
 	return is_closed_facade_type(^^T);
 }
 
@@ -64,17 +64,17 @@ namespace bdb::detail {
 // injection alive so the closed() static_asserts stay the ONE diagnostic).
 // ————————————————————————————————————————————————————————————————————
 
-consteval auto payload_members(std::meta::info payload) -> std::vector<std::meta::info> {
+[[nodiscard]] consteval auto payload_members(std::meta::info payload) -> std::vector<std::meta::info> {
 	return std::meta::nonstatic_data_members_of(payload, std::meta::access_context::current());
 }
 
-consteval auto closed_subject(std::string_view name) -> std::string {
+[[nodiscard]] consteval auto closed_subject(std::string_view name) -> std::string {
 	return std::string{"bumbledb closed relation \""} + std::string{name} + "\"";
 }
 
 /// A payload column's admissible kinds: the axiom-literal roster (bool /
 /// u64 / i64 / str — the recipes' payload vocabulary).
-consteval auto payload_column_supported(std::meta::info member) -> bool {
+[[nodiscard]] consteval auto payload_column_supported(std::meta::info member) -> bool {
 	auto const cls = classify(std::meta::type_of(member));
 	if (!cls.has_value()) {
 		return false;
@@ -84,7 +84,7 @@ consteval auto payload_column_supported(std::meta::info member) -> bool {
 }
 
 template<class Payload>
-consteval auto payload_supported() -> bool {
+[[nodiscard]] consteval auto payload_supported() -> bool {
 	auto const members = payload_members(^^Payload);
 	if (members.size() > max_closed_columns) {
 		return false;
@@ -105,7 +105,7 @@ consteval auto payload_supported() -> bool {
 }
 
 template<class Payload>
-consteval auto payload_message(std::string_view name) -> std::string {
+[[nodiscard]] consteval auto payload_message(std::string_view name) -> std::string {
 	auto const members = payload_members(^^Payload);
 	if (members.size() > max_closed_columns) {
 		return closed_subject(name) + ": the payload exceeds max_closed_columns";
@@ -136,7 +136,7 @@ consteval auto payload_message(std::string_view name) -> std::string {
 }
 
 template<class... Members>
-consteval auto handles_distinct() -> bool {
+[[nodiscard]] consteval auto handles_distinct() -> bool {
 	auto const names = std::array<name_text, sizeof...(Members)>{Members::handle...};
 	for (auto first = std::size_t{0}; first != names.size(); ++first) {
 		for (auto second = first + 1; second != names.size(); ++second) {
@@ -149,7 +149,7 @@ consteval auto handles_distinct() -> bool {
 }
 
 template<class Payload, class... Members>
-consteval auto handles_avoid_facade_names() -> bool {
+[[nodiscard]] consteval auto handles_avoid_facade_names() -> bool {
 	auto const names = std::array<name_text, sizeof...(Members)>{Members::handle...};
 	for (auto const& name : names) {
 		auto const view = name.view();
@@ -166,7 +166,7 @@ consteval auto handles_avoid_facade_names() -> bool {
 }
 
 template<class... Members>
-consteval auto duplicate_handle_message(std::string_view name) -> std::string {
+[[nodiscard]] consteval auto duplicate_handle_message(std::string_view name) -> std::string {
 	auto const names = std::array<name_text, sizeof...(Members)>{Members::handle...};
 	for (auto first = std::size_t{0}; first != names.size(); ++first) {
 		for (auto second = first + 1; second != names.size(); ++second) {
@@ -179,7 +179,7 @@ consteval auto duplicate_handle_message(std::string_view name) -> std::string {
 }
 
 template<class Payload, class... Members>
-consteval auto reserved_handle_message(std::string_view name) -> std::string {
+[[nodiscard]] consteval auto reserved_handle_message(std::string_view name) -> std::string {
 	auto const names = std::array<name_text, sizeof...(Members)>{Members::handle...};
 	for (auto const& handle : names) {
 		auto const view = handle.view();
@@ -296,7 +296,7 @@ struct closed_types {
 };
 
 template<fixed_string Name, class Payload, class... Members>
-consteval auto mint_closed(Members const&... members) -> typename closed_types<Name, Payload, Members...>::Facade {
+[[nodiscard]] consteval auto mint_closed(Members const&... members) -> typename closed_types<Name, Payload, Members...>::Facade {
 	static_assert(handles_distinct<Members...>(), duplicate_handle_message<Members...>(Name.view()));
 	static_assert(sizeof...(Members) <= max_closed_handles, "bumbledb closed(): the vocabulary exceeds max_closed_handles");
 	static_assert(payload_supported<Payload>(), payload_message<Payload>(Name.view()));

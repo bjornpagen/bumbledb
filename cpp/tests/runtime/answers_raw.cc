@@ -13,7 +13,7 @@ struct CaseResult {
 	bool passed;
 };
 
-auto check_fresh_carrier_is_empty() -> CaseResult {
+[[nodiscard]] auto check_fresh_carrier_is_empty() -> CaseResult {
 	auto const answers = bdb::AnswersRaw{};
 	return CaseResult{
 	    .name = "a fresh carrier is alive with len 0 and arity 0",
@@ -21,7 +21,7 @@ auto check_fresh_carrier_is_empty() -> CaseResult {
 	};
 }
 
-auto check_cell_is_bounds_checked() -> CaseResult {
+[[nodiscard]] auto check_cell_is_bounds_checked() -> CaseResult {
 	auto const answers = bdb::AnswersRaw{};
 	auto const out_of_range = answers.cell(bdb::Cell{.row = 0, .column = 0});
 	return CaseResult{
@@ -30,7 +30,7 @@ auto check_cell_is_bounds_checked() -> CaseResult {
 	};
 }
 
-auto check_clear_keeps_the_carrier_usable() -> CaseResult {
+[[nodiscard]] auto check_clear_keeps_the_carrier_usable() -> CaseResult {
 	auto answers = bdb::AnswersRaw{};
 	answers.clear();
 	return CaseResult{
@@ -39,7 +39,7 @@ auto check_clear_keeps_the_carrier_usable() -> CaseResult {
 	};
 }
 
-auto check_move_leaves_the_source_inert() -> CaseResult {
+[[nodiscard]] auto check_move_leaves_the_source_inert() -> CaseResult {
 	auto source = bdb::AnswersRaw{};
 	auto target = std::move(source);
 	auto const source_inert =
@@ -50,7 +50,7 @@ auto check_move_leaves_the_source_inert() -> CaseResult {
 	};
 }
 
-auto check_move_assign_releases_and_adopts() -> CaseResult {
+[[nodiscard]] auto check_move_assign_releases_and_adopts() -> CaseResult {
 	auto first = bdb::AnswersRaw{};
 	auto second = bdb::AnswersRaw{};
 	first = std::move(second);

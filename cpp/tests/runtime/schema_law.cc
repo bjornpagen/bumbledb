@@ -69,7 +69,7 @@ static_assert(Uptime.statements[1].source.fields[1].view() == "window");
 // Service.id is the generator and names its class; the containment types
 // Outage.service into the same class; key() pairs nothing, so
 // Outage.window stays bare; Service.name is in no law — bare.
-consteval auto class_is(std::optional<bdb::coord_ref> entry, std::string_view relation, std::string_view field) -> bool {
+[[nodiscard]] consteval auto class_is(std::optional<bdb::coord_ref> entry, std::string_view relation, std::string_view field) -> bool {
 	return entry.has_value() && entry->relation.view() == relation && entry->field.view() == field;
 }
 
@@ -183,7 +183,7 @@ struct CaseResult {
 	bool passed;
 };
 
-auto run_cases() -> std::array<CaseResult, 4> {
+[[nodiscard]] auto run_cases() -> std::array<CaseResult, 4> {
 	return std::array{
 	    CaseResult{
 	        .name = "schema flattens relations/statements in written order",

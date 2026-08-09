@@ -36,7 +36,7 @@ export namespace bdb::detail {
 /// The §34 wrong-vocabulary wall's message (the closed-reference twin of
 /// the cross-class walls): names the handle, its vocabulary, and the
 /// reference's vocabulary.
-consteval auto handle_crosses_vocabulary_message(name_text handle_roster, name_text handle, name_text reference_roster) -> std::string {
+[[nodiscard]] consteval auto handle_crosses_vocabulary_message(name_text handle_roster, name_text handle, name_text reference_roster) -> std::string {
 	return std::string{"bumbledb closed reference: handle \""} + std::string{handle.view()} + "\" belongs to closed relation \"" +
 	       std::string{handle_roster.view()} + "\" but the reference's vocabulary is \"" + std::string{reference_roster.view()} +
 	       "\" — a handle binds only its own closed relation";
@@ -67,7 +67,7 @@ struct closed_ref {
 		static_assert(HandleRoster == Roster, detail::handle_crosses_vocabulary_message(HandleRoster, Handle, Roster));
 	}
 
-	constexpr auto operator==(closed_ref const&) const -> bool = default;
+	[[nodiscard]] constexpr auto operator==(closed_ref const&) const -> bool = default;
 };
 
 template<class T>

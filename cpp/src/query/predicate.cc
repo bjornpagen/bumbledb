@@ -131,7 +131,7 @@ namespace bdb::detail {
 // The comparison constructors' shared anchor machinery.
 
 template<class Side>
-consteval auto side_is_term() -> bool {
+[[nodiscard]] consteval auto side_is_term() -> bool {
 	return is_qvar_v<Side> || is_param_ref_v<Side> || is_set_param_ref_v<Side> || is_measure_ref_v<Side>;
 }
 
@@ -139,7 +139,7 @@ consteval auto side_is_term() -> bool {
 /// params (anchored by the variable sibling), measures (order ops), or
 /// integral/bool literals (tagged by the sibling's domain).
 template<query_cmp Op, class Left, class Right>
-consteval auto comparison_of(Left left, Right right) -> cond_value {
+[[nodiscard]] consteval auto comparison_of(Left left, Right right) -> cond_value {
 	constexpr auto ordered = Op == query_cmp::lt || Op == query_cmp::le || Op == query_cmp::gt || Op == query_cmp::ge;
 	static_assert(side_is_term<Left>() || side_is_term<Right>(), "bumbledb comparison: at least one side must be a bound variable, "
 	                                                             "a measure, or a param (two literals compare nothing)");

@@ -139,7 +139,7 @@ inline constexpr auto LongOutages = bdb::query(Uptime).rule([](auto r) consteval
 
 namespace {
 
-auto make_store_dir() -> std::optional<std::filesystem::path> {
+[[nodiscard]] auto make_store_dir() -> std::optional<std::filesystem::path> {
 	auto code = std::error_code{};
 	auto const root = std::filesystem::temp_directory_path(code);
 	if (code) {
@@ -162,7 +162,7 @@ struct SeedIds {
 };
 
 /// The recipe's example data: two services, three outages.
-auto seed(bdb::Db& db) -> std::optional<SeedIds> {
+[[nodiscard]] auto seed(bdb::Db& db) -> std::optional<SeedIds> {
 	using Decision = bdb::WriteDecision<SeedIds, std::monostate>;
 	using Result = std::expected<Decision, bdb::Error>;
 	auto written = db.write([&](bdb::WriteTx& tx) -> Result {
@@ -200,7 +200,7 @@ auto seed(bdb::Db& db) -> std::optional<SeedIds> {
 }
 
 /// downAt(t), answers sorted (answers are sets; the host sorts).
-auto down_services(bdb::Db& db, bdb::Prepared<DownAt>& prepared, std::int64_t at) -> std::optional<std::vector<std::uint64_t>> {
+[[nodiscard]] auto down_services(bdb::Db& db, bdb::Prepared<DownAt>& prepared, std::int64_t at) -> std::optional<std::vector<std::uint64_t>> {
 	auto result = db.read([&](bdb::Snapshot& snap) -> std::expected<std::vector<std::uint64_t>, bdb::Error> {
 		return snap.execute(prepared, {.t = at}).transform([](bdb::Answers<DownAt> answers) {
 			auto services = std::vector<std::uint64_t>{};

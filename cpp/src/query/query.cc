@@ -137,7 +137,7 @@ namespace bdb::detail {
 template<class T>
 inline constexpr auto query_type_reflection = ^^T;
 
-consteval auto answer_type_of(field_class cls) -> std::meta::info {
+[[nodiscard]] consteval auto answer_type_of(field_class cls) -> std::meta::info {
 	switch (cls.kind) {
 	case value_kind::boolean:
 		return query_type_reflection<bool>;
@@ -164,7 +164,7 @@ consteval auto answer_type_of(field_class cls) -> std::meta::info {
 /// the engine's rule). Borrow contract: the span (and any string/bytes
 /// elements) must stay alive for the execute call only — the bridge
 /// copies before returning.
-consteval auto set_type_of(field_class cls) -> std::meta::info {
+[[nodiscard]] consteval auto set_type_of(field_class cls) -> std::meta::info {
 	switch (cls.kind) {
 	case value_kind::boolean:
 		return query_type_reflection<std::span<bool const>>;
@@ -184,7 +184,7 @@ consteval auto set_type_of(field_class cls) -> std::meta::info {
 	return query_type_reflection<std::span<interval<std::int64_t> const>>;
 }
 
-consteval auto param_type_of(param_data const& parameter) -> std::meta::info {
+[[nodiscard]] consteval auto param_type_of(param_data const& parameter) -> std::meta::info {
 	if (parameter.shape == param_shape::mask) {
 		return query_type_reflection<allen_mask>;
 	}

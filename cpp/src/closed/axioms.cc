@@ -44,7 +44,7 @@ namespace bdb::detail {
 /// The flattened wire carrier: handles + axiom literals off the payload
 /// values (declaration order everywhere — lowering.md §7.4).
 template<fixed_string Name, class Payload, std::size_t Count>
-consteval auto closed_info_of(std::array<name_text, Count> const& handles, std::array<Payload, Count> const& payloads) -> closed_info {
+[[nodiscard]] consteval auto closed_info_of(std::array<name_text, Count> const& handles, std::array<Payload, Count> const& payloads) -> closed_info {
 	auto out = closed_info{};
 	out.handle_count = Count;
 	for (auto index = std::size_t{0}; index != Count; ++index) {

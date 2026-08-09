@@ -108,3 +108,10 @@ bdb_compile_fail_case(query_find_unbound_variable
 bdb_compile_fail_case(closed_handle_wrong_vocabulary
     "handle \"Deterministic\" of closed relation \"Kind\" cannot bind coordinate \"Ticket.priority\""
 )
+
+# The nodiscard law (AGENTS.md §26): every fallible SDK operation is
+# [[nodiscard]] under -Werror, so a silently dropped std::expected — a
+# swallowed error — cannot compile.
+bdb_compile_fail_case(discarded_expected
+    "ignoring return value"
+)

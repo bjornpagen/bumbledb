@@ -60,7 +60,7 @@ struct Ordering {
 private:
 	/// One cell against one cell — total over the SDK's cell vocabulary.
 	template<class T>
-	static constexpr auto cell_order(T const& left, T const& right) -> std::strong_ordering {
+	[[nodiscard]] static constexpr auto cell_order(T const& left, T const& right) -> std::strong_ordering {
 		if constexpr (requires {
 			              left.lo();
 			              left.hi();
@@ -87,7 +87,7 @@ private:
 	/// sides). A Desc wrapper is recognized structurally (it carries the
 	/// wrapped member pointer as `.key`).
 	template<class Row, class Key>
-	static constexpr auto key_order(Row const& left, Row const& right, Key const& key) -> std::strong_ordering {
+	[[nodiscard]] static constexpr auto key_order(Row const& left, Row const& right, Key const& key) -> std::strong_ordering {
 		if constexpr (requires { key.key; }) {
 			return cell_order(right.*(key.key), left.*(key.key));
 		} else {

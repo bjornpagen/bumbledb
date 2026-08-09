@@ -8,14 +8,14 @@ struct CaseResult {
 	bool passed;
 };
 
-auto check_version_is_nonempty() -> CaseResult {
+[[nodiscard]] auto check_version_is_nonempty() -> CaseResult {
 	return CaseResult{
 	    .name = "version() returns a nonempty string",
 	    .passed = !bdb::version().empty(),
 	};
 }
 
-auto check_version_is_the_scaffold_seed() -> CaseResult {
+[[nodiscard]] auto check_version_is_the_scaffold_seed() -> CaseResult {
 	return CaseResult{
 	    .name = "version() returns the scaffold seed value",
 	    .passed = bdb::version() == std::string_view{"0.0.0-dev"},

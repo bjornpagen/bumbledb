@@ -62,7 +62,7 @@ namespace {
 // Host dispatch over the discriminator (the cookbook's `gradedBy`): the
 // handle constants are constant case labels over the closed reference's
 // row id — the projection lane; the vocabulary stays a relation.
-constexpr auto graded_by(bdb::ref_to<Kind.id> kind) -> std::string_view {
+[[nodiscard]] constexpr auto graded_by(bdb::ref_to<Kind.id> kind) -> std::string_view {
 	switch (kind.row) {
 	case Kind.Deterministic.index:
 		return "tolerance";
@@ -82,7 +82,7 @@ static_assert(bdb::ref_to<Kind.id>{Kind.CustomOperator}.row == 1);
 
 /// The golden of one recipe: the fixtures file is one `rNN <64-hex>` line
 /// per recipe (ts/test/cookbook.test.ts reads the same file).
-auto golden_of(std::string_view fixtures, std::string_view recipe) -> std::optional<std::string> {
+[[nodiscard]] auto golden_of(std::string_view fixtures, std::string_view recipe) -> std::optional<std::string> {
 	for (auto const line_range : std::views::split(fixtures, '\n')) {
 		auto const line = std::string_view{line_range};
 		if (!line.starts_with(recipe)) {
@@ -104,7 +104,7 @@ auto golden_of(std::string_view fixtures, std::string_view recipe) -> std::optio
 	return std::nullopt;
 }
 
-auto slurp(std::string_view path) -> std::optional<std::string> {
+[[nodiscard]] auto slurp(std::string_view path) -> std::optional<std::string> {
 	auto stream = std::ifstream{std::string{path}, std::ios::binary | std::ios::ate};
 	if (!stream) {
 		return std::nullopt;
@@ -122,7 +122,7 @@ auto slurp(std::string_view path) -> std::optional<std::string> {
 	return text;
 }
 
-auto make_store_dir() -> std::optional<std::filesystem::path> {
+[[nodiscard]] auto make_store_dir() -> std::optional<std::filesystem::path> {
 	auto code = std::error_code{};
 	auto const root = std::filesystem::temp_directory_path(code);
 	if (code) {

@@ -93,7 +93,7 @@ struct CaseResult {
 	bool passed;
 };
 
-auto run_cases() -> std::array<CaseResult, 4> {
+[[nodiscard]] auto run_cases() -> std::array<CaseResult, 4> {
 	return std::array{
 	    CaseResult{
 	        .name = "facade ordinals follow declaration order",

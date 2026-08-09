@@ -43,7 +43,7 @@ inline constexpr auto Uptime = bdb::schema<"Uptime">(Service, Outage,
 using UnitDecision = bdb::WriteDecision<std::monostate, std::monostate>;
 using UnitResult = std::expected<UnitDecision, bdb::Error>;
 
-auto make_store_dir(std::string_view label) -> std::optional<std::filesystem::path> {
+[[nodiscard]] auto make_store_dir(std::string_view label) -> std::optional<std::filesystem::path> {
 	auto code = std::error_code{};
 	auto const root = std::filesystem::temp_directory_path(code);
 	if (code) {
@@ -60,12 +60,12 @@ auto make_store_dir(std::string_view label) -> std::optional<std::filesystem::pa
 	return dir;
 }
 
-auto cell_is_u64(bdb::RowSet const& rows, bdb::Cell at, std::uint64_t want) -> bool {
+[[nodiscard]] auto cell_is_u64(bdb::RowSet const& rows, bdb::Cell at, std::uint64_t want) -> bool {
 	auto const cell = rows.cell(at);
 	return cell.has_value() && std::holds_alternative<std::uint64_t>(*cell) && std::get<std::uint64_t>(*cell) == want;
 }
 
-auto cell_is_text(bdb::RowSet const& rows, bdb::Cell at, std::string_view want) -> bool {
+[[nodiscard]] auto cell_is_text(bdb::RowSet const& rows, bdb::Cell at, std::string_view want) -> bool {
 	auto const cell = rows.cell(at);
 	return cell.has_value() && std::holds_alternative<std::string_view>(*cell) && std::get<std::string_view>(*cell) == want;
 }

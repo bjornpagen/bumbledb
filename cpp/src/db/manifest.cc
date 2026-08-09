@@ -79,7 +79,7 @@ struct Manifest {
 /// admitted spec is an impossible programmer state (the facade and the
 /// spec are both compile-time artifacts of the same declaration set), not
 /// a recoverable input.
-auto resolved_relation(Manifest const& manifest, std::string_view relation) -> std::uint32_t {
+[[nodiscard]] auto resolved_relation(Manifest const& manifest, std::string_view relation) -> std::uint32_t {
 	auto const id = manifest.resolve(relation);
 	contract_assert(id.has_value());
 	return *id;
@@ -89,7 +89,7 @@ auto resolved_relation(Manifest const& manifest, std::string_view relation) -> s
 /// coordinate of one facade carries the same relation name). C++26
 /// structured-binding packs (P1061) — no reflection syntax needed.
 template<class Facade>
-constexpr auto facade_relation_name(Facade const& facade) -> std::string_view {
+[[nodiscard]] constexpr auto facade_relation_name(Facade const& facade) -> std::string_view {
 	auto const& [... coords] = facade;
 	static_assert(sizeof...(coords) > 0);
 	return [](auto const& first, auto const&...) {
@@ -97,13 +97,13 @@ constexpr auto facade_relation_name(Facade const& facade) -> std::string_view {
 	}(coords...);
 }
 
-auto lift(foreign::error_handle handle) -> Error {
+[[nodiscard]] auto lift(foreign::error_handle handle) -> Error {
 	return Error{std::move(handle)};
 }
 
 /// A keyed read's outcome: a hit is one owned row; a miss is genuine
 /// absence (the ABI wrote no row set).
-auto lift_row(foreign::row_set_handle handle) -> std::optional<RowSet> {
+[[nodiscard]] auto lift_row(foreign::row_set_handle handle) -> std::optional<RowSet> {
 	auto rows = RowSet{std::move(handle)};
 	if (rows.len() == 0) {
 		return std::nullopt;
@@ -115,7 +115,7 @@ auto lift_row(foreign::row_set_handle handle) -> std::optional<RowSet> {
 /// order plus the MATERIALIZED statement identities (fresh-implied keys
 /// first, declared statements after — the keyed-read id space).
 template<Theory S>
-auto manifest_of(S const& theory) -> Manifest {
+[[nodiscard]] auto manifest_of(S const& theory) -> Manifest {
 	auto manifest = Manifest{};
 	manifest.relation_names.reserve(theory.relation_table.size());
 	for (auto const& relation : theory.relation_table) {
@@ -169,7 +169,7 @@ auto manifest_of(S const& theory) -> Manifest {
 /// pre-schema-lane store) is an impossible programmer state — the law and
 /// the manifest are both artifacts of the same declaration set.
 template<class First, class... Rest>
-auto resolved_key(Manifest const& manifest, key_law<First, Rest...> const&) -> std::uint16_t {
+[[nodiscard]] auto resolved_key(Manifest const& manifest, key_law<First, Rest...> const&) -> std::uint16_t {
 	using Law = key_law<First, Rest...>;
 	auto names = std::array<std::string_view, Law::width>{};
 	for (auto index = std::size_t{0}; index != Law::width; ++index) {
@@ -182,7 +182,7 @@ auto resolved_key(Manifest const& manifest, key_law<First, Rest...> const&) -> s
 
 /// Resolves a relation's primary key statement, or dies (as above: a
 /// fresh-bearing facade of the admitted schema always has one).
-auto resolved_primary(Manifest const& manifest, std::string_view relation) -> std::uint16_t {
+[[nodiscard]] auto resolved_primary(Manifest const& manifest, std::string_view relation) -> std::uint16_t {
 	auto const id = manifest.resolve_primary(relation);
 	contract_assert(id.has_value());
 	return *id;
@@ -190,7 +190,7 @@ auto resolved_primary(Manifest const& manifest, std::string_view relation) -> st
 
 /// The §26 facade/law agreement diagnostic.
 template<class Facade, class Law>
-consteval auto keyed_get_mismatch() -> std::string {
+[[nodiscard]] consteval auto keyed_get_mismatch() -> std::string {
 	return std::string{"bumbledb get(): the key law constrains relation \""} + std::string{Law::relation_name.view()} +
 	       "\" but the facade names relation \"" + std::string{facade_relation_name(Facade{})} + "\"";
 }

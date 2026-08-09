@@ -33,7 +33,7 @@ auto relation_exceeds_max_relation_fields() -> void;
 /// axiom readback, and wire carrier are filtered out. The closed axioms
 /// themselves are VALUE data; schema() copies them off the facade value.
 template<class Facade>
-consteval auto relation_entry() -> relation_data {
+[[nodiscard]] consteval auto relation_entry() -> relation_data {
 	constexpr auto members = std::define_static_array(std::meta::nonstatic_data_members_of(^^Facade, std::meta::access_context::current()));
 
 	auto out = relation_data{};
@@ -61,24 +61,24 @@ consteval auto relation_entry() -> relation_data {
 }
 
 template<class Facade>
-consteval auto facade_relation_name_of() -> name_text {
+[[nodiscard]] consteval auto facade_relation_name_of() -> name_text {
 	constexpr auto members = std::define_static_array(std::meta::nonstatic_data_members_of(^^Facade, std::meta::access_context::current()));
 	using FirstCoord = [:std::meta::type_of(members[0]):];
 	return FirstCoord::relation_name;
 }
 
 template<class... Args>
-consteval auto relation_count() -> std::size_t {
+[[nodiscard]] consteval auto relation_count() -> std::size_t {
 	return (std::size_t{0} + ... + (is_member<Args>() ? 1U : 0U));
 }
 
 template<class... Args>
-consteval auto statement_count() -> std::size_t {
+[[nodiscard]] consteval auto statement_count() -> std::size_t {
 	return (std::size_t{0} + ... + (is_statement_v<Args> ? 1U : 0U));
 }
 
 template<class... Args>
-consteval auto coord_count() -> std::size_t {
+[[nodiscard]] consteval auto coord_count() -> std::size_t {
 	auto count = std::size_t{0};
 	auto const add = [&]<class A>() {
 		if constexpr (is_member_type(^^A)) {
@@ -90,7 +90,7 @@ consteval auto coord_count() -> std::size_t {
 }
 
 template<class... Args>
-consteval auto relation_table() -> std::array<relation_data, relation_count<Args...>()> {
+[[nodiscard]] consteval auto relation_table() -> std::array<relation_data, relation_count<Args...>()> {
 	auto out = std::array<relation_data, relation_count<Args...>()>{};
 	auto index = std::size_t{0};
 	auto const add = [&]<class A>() {
@@ -105,7 +105,7 @@ consteval auto relation_table() -> std::array<relation_data, relation_count<Args
 
 /// One face type flattened to side data.
 template<class Face>
-consteval auto side_of() -> side_data {
+[[nodiscard]] consteval auto side_of() -> side_data {
 	auto out = side_data{};
 	out.relation = Face::relation_name;
 	out.width = Face::width;
@@ -118,7 +118,7 @@ consteval auto side_of() -> side_data {
 /// One statement type flattened (the capacity window's numeric payload is
 /// value-borne and filled by schema() from the argument value).
 template<class Statement>
-consteval auto statement_shape() -> statement_data {
+[[nodiscard]] consteval auto statement_shape() -> statement_data {
 	auto out = statement_data{};
 	if constexpr (is_key_v<Statement>) {
 		out.form = statement_form::key;
@@ -144,7 +144,7 @@ consteval auto statement_shape() -> statement_data {
 }
 
 template<class... Args>
-consteval auto statement_shapes() -> std::array<statement_data, statement_count<Args...>()> {
+[[nodiscard]] consteval auto statement_shapes() -> std::array<statement_data, statement_count<Args...>()> {
 	auto out = std::array<statement_data, statement_count<Args...>()>{};
 	auto index = std::size_t{0};
 	auto const add = [&]<class A>() {
@@ -158,7 +158,7 @@ consteval auto statement_shapes() -> std::array<statement_data, statement_count<
 }
 
 template<class... Args>
-consteval auto analyze_schema() -> law_verdict<coord_count<Args...>()> {
+[[nodiscard]] consteval auto analyze_schema() -> law_verdict<coord_count<Args...>()> {
 	return analyze<coord_count<Args...>()>(relation_table<Args...>(), statement_shapes<Args...>());
 }
 
@@ -166,12 +166,12 @@ consteval auto analyze_schema() -> law_verdict<coord_count<Args...>()> {
 // Diagnostics (§34: semantic coordinates, never template internals).
 // ————————————————————————————————————————————————————————————————————
 
-consteval auto schema_subject(std::string_view name) -> std::string {
+[[nodiscard]] consteval auto schema_subject(std::string_view name) -> std::string {
 	return std::string{"bumbledb schema \""} + std::string{name} + "\"";
 }
 
 /// Renders one flattened statement for the wall diagnostic.
-consteval auto render_statement(statement_data const& data) -> std::string {
+[[nodiscard]] consteval auto render_statement(statement_data const& data) -> std::string {
 	auto const render_side = [](side_data const& side) -> std::string {
 		auto out = std::string{"on("};
 		for (auto position = std::size_t{0}; position != side.width; ++position) {
@@ -200,7 +200,7 @@ consteval auto render_statement(statement_data const& data) -> std::string {
 }
 
 template<class... Args>
-consteval auto membership_message(std::string_view name) -> std::string {
+[[nodiscard]] consteval auto membership_message(std::string_view name) -> std::string {
 	auto const verdict = analyze_schema<Args...>();
 	auto const coordinate = quoted(verdict.unknown_coordinate.relation, verdict.unknown_coordinate.field);
 	auto out = schema_subject(name) + ": statement " + render_count(verdict.unknown_statement) + " references coordinate " + coordinate;
@@ -213,7 +213,7 @@ consteval auto membership_message(std::string_view name) -> std::string {
 }
 
 template<class... Args>
-consteval auto wall_message(std::string_view name) -> std::string {
+[[nodiscard]] consteval auto wall_message(std::string_view name) -> std::string {
 	auto const verdict = analyze_schema<Args...>();
 	auto const statements = statement_shapes<Args...>();
 	return schema_subject(name) + ": the statements unify two generators into one class — " +
@@ -223,7 +223,7 @@ consteval auto wall_message(std::string_view name) -> std::string {
 }
 
 template<class... Args>
-consteval auto restated_key_message(std::string_view name) -> std::string {
+[[nodiscard]] consteval auto restated_key_message(std::string_view name) -> std::string {
 	auto const verdict = analyze_schema<Args...>();
 	return schema_subject(name) + ": " + render_statement(statement_shapes<Args...>()[verdict.restated_statement]) +
 	       " restates the fresh-implied key of " + quoted(verdict.restated_fresh.relation, verdict.restated_fresh.field) +
@@ -232,7 +232,7 @@ consteval auto restated_key_message(std::string_view name) -> std::string {
 }
 
 template<class... Args>
-consteval auto duplicate_key_message(std::string_view name) -> std::string {
+[[nodiscard]] consteval auto duplicate_key_message(std::string_view name) -> std::string {
 	auto const verdict = analyze_schema<Args...>();
 	return schema_subject(name) + ": " + render_statement(statement_shapes<Args...>()[verdict.duplicate_statement]) +
 	       " duplicates an earlier declared key";
@@ -240,7 +240,7 @@ consteval auto duplicate_key_message(std::string_view name) -> std::string {
 
 /// Whether relations precede statements (the pinned argument shape).
 template<class... Args>
-consteval auto relations_lead() -> bool {
+[[nodiscard]] consteval auto relations_lead() -> bool {
 	auto seen_statement = false;
 	auto ordered = true;
 	auto const step = [&]<class A>() {
@@ -257,12 +257,12 @@ consteval auto relations_lead() -> bool {
 }
 
 template<class... Args>
-consteval auto args_recognized() -> bool {
+[[nodiscard]] consteval auto args_recognized() -> bool {
 	return ((is_member<Args>() || is_statement_v<Args>) && ...);
 }
 
 template<class... Args>
-consteval auto relation_names_distinct() -> bool {
+[[nodiscard]] consteval auto relation_names_distinct() -> bool {
 	auto const relations = relation_table<Args...>();
 	for (auto first = std::size_t{0}; first != relations.size(); ++first) {
 		for (auto second = first + 1; second != relations.size(); ++second) {

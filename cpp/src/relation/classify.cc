@@ -34,7 +34,7 @@ struct field_class {
 	std::uint16_t fixed_len;
 	std::uint64_t width = 0;
 
-	constexpr auto operator==(field_class const&) const -> bool = default;
+	[[nodiscard]] constexpr auto operator==(field_class const&) const -> bool = default;
 };
 
 } // namespace bdb
@@ -53,7 +53,7 @@ export namespace bdb {
 
 /// Classifies one reflected field type against the closed vocabulary;
 /// nullopt = unsupported (the caller renders the product diagnostic).
-consteval auto classify(std::meta::info type) -> std::optional<field_class> {
+[[nodiscard]] consteval auto classify(std::meta::info type) -> std::optional<field_class> {
 	auto const t = std::meta::dealias(type);
 	if (t == ^^bool) {
 		return field_class{value_kind::boolean, 0};
@@ -105,7 +105,7 @@ export namespace bdb::detail {
 
 /// Whether the member carries the `[[=bdb::fresh]]` annotation (matched by
 /// the annotation's type — FreshTag; annotation objects reflect const).
-consteval auto is_fresh_marked(std::meta::info member) -> bool {
+[[nodiscard]] consteval auto is_fresh_marked(std::meta::info member) -> bool {
 	for (auto const annotation : std::meta::annotations_of(member)) {
 		auto const type = std::meta::remove_const(std::meta::type_of(annotation));
 		if (type == ^^FreshTag) {
@@ -118,7 +118,7 @@ consteval auto is_fresh_marked(std::meta::info member) -> bool {
 /// The member's WIRE field name: the `[[=bdb::named<...>]]` override when
 /// present, else the reflected identifier. The override exists because
 /// some cross-host wire names (`operator`, recipe 2) are C++ keywords.
-consteval auto wire_field_name(std::meta::info member) -> std::string {
+[[nodiscard]] consteval auto wire_field_name(std::meta::info member) -> std::string {
 	for (auto const annotation : std::meta::annotations_of(member)) {
 		auto const type = std::meta::remove_const(std::meta::type_of(annotation));
 		if (type == ^^NameTag) {
@@ -131,15 +131,15 @@ consteval auto wire_field_name(std::meta::info member) -> std::string {
 
 /// The row's fields, in declaration order — the one enumeration everything
 /// else derives from.
-consteval auto row_members(std::meta::info row) -> std::vector<std::meta::info> {
+[[nodiscard]] consteval auto row_members(std::meta::info row) -> std::vector<std::meta::info> {
 	return std::meta::nonstatic_data_members_of(row, std::meta::access_context::current());
 }
 
-consteval auto field_count(std::meta::info row) -> std::size_t {
+[[nodiscard]] consteval auto field_count(std::meta::info row) -> std::size_t {
 	return row_members(row).size();
 }
 
-consteval auto row_is_supported(std::meta::info row) -> bool {
+[[nodiscard]] consteval auto row_is_supported(std::meta::info row) -> bool {
 	for (auto const member : row_members(row)) {
 		if (!classify(std::meta::type_of(member)).has_value()) {
 			return false;
@@ -148,7 +148,7 @@ consteval auto row_is_supported(std::meta::info row) -> bool {
 	return true;
 }
 
-consteval auto fresh_marks_are_u64(std::meta::info row) -> bool {
+[[nodiscard]] consteval auto fresh_marks_are_u64(std::meta::info row) -> bool {
 	for (auto const member : row_members(row)) {
 		if (!is_fresh_marked(member)) {
 			continue;
@@ -163,17 +163,17 @@ consteval auto fresh_marks_are_u64(std::meta::info row) -> bool {
 
 /// Diagnostic subjects: `bumbledb relation "Service"` for the relation
 /// lane, `bumbledb row type 'ServiceRow'` for the marshalling lane.
-consteval auto relation_subject(std::string_view name) -> std::string {
+[[nodiscard]] consteval auto relation_subject(std::string_view name) -> std::string {
 	return std::string{"bumbledb relation \""} + std::string{name} + "\"";
 }
 
-consteval auto row_subject(std::meta::info row) -> std::string {
+[[nodiscard]] consteval auto row_subject(std::meta::info row) -> std::string {
 	return std::string{"bumbledb row type '"} + std::string{std::meta::display_string_of(row)} + "'";
 }
 
 /// The pinned unsupported-field diagnostic (compile-fail suite pins its
 /// shape): names the subject, the first offending field, and its type.
-consteval auto unsupported_field_message(std::string subject, std::meta::info row) -> std::string {
+[[nodiscard]] consteval auto unsupported_field_message(std::string subject, std::meta::info row) -> std::string {
 	for (auto const member : row_members(row)) {
 		if (classify(std::meta::type_of(member)).has_value()) {
 			continue;
@@ -189,7 +189,7 @@ consteval auto unsupported_field_message(std::string subject, std::meta::info ro
 
 /// The pinned misplaced-fresh diagnostic: fresh is u64-only (the TS SDK
 /// twin rule; engine validation re-judges).
-consteval auto misplaced_fresh_message(std::string subject, std::meta::info row) -> std::string {
+[[nodiscard]] consteval auto misplaced_fresh_message(std::string subject, std::meta::info row) -> std::string {
 	for (auto const member : row_members(row)) {
 		if (!is_fresh_marked(member)) {
 			continue;
@@ -207,7 +207,7 @@ consteval auto misplaced_fresh_message(std::string subject, std::meta::info row)
 /// Compile-time index range for pairing two parallel reflected member
 /// walks under `template for`.
 template<std::size_t Count>
-consteval auto index_array() -> std::array<std::size_t, Count> {
+[[nodiscard]] consteval auto index_array() -> std::array<std::size_t, Count> {
 	auto indices = std::array<std::size_t, Count>{};
 	for (auto index = std::size_t{0}; index != Count; ++index) {
 		indices[index] = index;

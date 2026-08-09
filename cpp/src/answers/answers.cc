@@ -22,7 +22,7 @@ export namespace bdb {
 /// RAII over the bridge's flat buffer. Minted empty; execution fills it
 /// (the query phase's execute_into lane); clear() retains capacity. The
 /// moved-from carrier is inert (alive() == false, len/arity 0).
-class AnswersRaw {
+class [[nodiscard]] AnswersRaw {
 	foreign::answers_handle handle_;
 
 public:
@@ -69,7 +69,7 @@ public:
 /// move-only RAII over one whole-result crossing, decoded cell by cell
 /// host-side. Typed row decode arrives with the schema phase; this phase
 /// reads cells as bdb::Value.
-class RowSet {
+class [[nodiscard]] RowSet {
 	foreign::row_set_handle handle_;
 
 public:

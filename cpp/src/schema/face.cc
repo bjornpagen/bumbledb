@@ -33,7 +33,7 @@ struct face {
 
 /// Projects one or more columns of ONE relation as a statement face.
 template<class First, class... Rest>
-consteval auto on(First, Rest...) -> face<First, Rest...> {
+[[nodiscard]] consteval auto on(First, Rest...) -> face<First, Rest...> {
 	static_assert(detail::is_coordinate_v<First> && (detail::is_coordinate_v<Rest> && ...),
 	              "bumbledb on(): every argument must be a relation coordinate "
 	              "(Relation.field)");
