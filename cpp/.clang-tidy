@@ -199,7 +199,7 @@ CheckOptions:
   # Default bucket, never ClassCase (plain classes judge correctly), so a
   # PascalCase class template in a linted module trips 'lower_case'. Exempt
   # exactly the linted-graph class templates; re-test on any tidy bump.
-  readability-identifier-naming.DefaultIgnoredRegexp: '^RowAnswers$'
+  readability-identifier-naming.DefaultIgnoredRegexp: '^(RowAnswers|Desc|Ordering)$'
 
   readability-identifier-naming.TypeAliasCase: 'CamelCase'
   readability-identifier-naming.TypedefCase: 'CamelCase'

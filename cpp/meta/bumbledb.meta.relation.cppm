@@ -72,6 +72,14 @@ struct name_text {
     constexpr auto operator==(name_text const&) const -> bool = default;
 };
 
+/// The field-name-override annotation's tag (`[[=bdb::named<"operator">]]`):
+/// some cookbook wire names are C++ keywords, so the reflected identifier
+/// cannot always BE the wire name. The override names the WIRE field; the
+/// facade member keeps the C++ identifier.
+struct NameTag {
+    name_text name;
+};
+
 /// The structural ValueType classification of one row field — the C++
 /// image of the engine's closed value roster (TODO_CPP §7).
 enum class value_kind : std::uint8_t {
@@ -85,10 +93,13 @@ enum class value_kind : std::uint8_t {
 };
 
 /// A field's classification: the kind plus the FixedBytes length (the
-/// length IS part of the type and a fingerprint input; 0 elsewhere).
+/// length IS part of the type and a fingerprint input; 0 elsewhere) plus
+/// the fixed-width interval label (`interval<T, W>` — 0 is the general
+/// interval; a nonzero width is a fingerprint input, lowering.md §1.8).
 struct field_class {
     value_kind kind;
     std::uint16_t fixed_len;
+    std::uint64_t width = 0;
 
     constexpr auto operator==(field_class const&) const -> bool = default;
 };
@@ -111,6 +122,7 @@ struct coord {
     static constexpr name_text relation_name = RelationName;
     static constexpr name_text field_name = FieldName;
     static constexpr std::size_t ordinal = Ordinal;
+    static constexpr field_class cls = Class;
     static constexpr value_kind kind = Class.kind;
     static constexpr std::uint16_t fixed_len = Class.fixed_len;
     static constexpr bool fresh = Fresh;
@@ -123,6 +135,79 @@ struct coord {
         return field_name.view();
     }
 };
+
+/// One member handle of a closed vocabulary (TODO_CPP §8): `Kind.DirectPass`
+/// is a value of this type — the roster, the handle name, and the
+/// declaration-order row id all ride the TYPE, so handle uses resolve and
+/// roster-check during constant evaluation (queries resolve handles
+/// HOST-side — lowering.md §7.8).
+template<name_text Roster, name_text Handle, std::uint64_t Index>
+struct handle_value {
+    static constexpr name_text roster_name = Roster;
+    static constexpr name_text handle_name = Handle;
+    static constexpr std::uint64_t index = Index;
+
+    [[nodiscard]] constexpr auto roster() const -> std::string_view {
+        return roster_name.view();
+    }
+    [[nodiscard]] constexpr auto name() const -> std::string_view {
+        return handle_name.view();
+    }
+};
+
+} // namespace bdb
+
+export namespace bdb::detail {
+
+/// The §34 wrong-vocabulary wall's message (the closed-reference twin of
+/// the cross-class walls): names the handle, its vocabulary, and the
+/// reference's vocabulary.
+consteval auto handle_crosses_vocabulary_message(name_text handle_roster,
+    name_text handle, name_text reference_roster) -> std::string {
+    return std::string{"bumbledb closed reference: handle \""}
+        + std::string{handle.view()} + "\" belongs to closed relation \""
+        + std::string{handle_roster.view()}
+        + "\" but the reference's vocabulary is \""
+        + std::string{reference_roster.view()}
+        + "\" — a handle binds only its own closed relation";
+}
+
+} // namespace bdb::detail
+
+export namespace bdb {
+
+/// A closed-reference column's value type (TODO_CPP §8): `bdb::ref<Kind.id>`
+/// dealiases to this. Physically the engine's u64 handle row id; the TYPE
+/// carries the vocabulary, so a foreign handle cannot cross into the field
+/// (the §34 wrong-vocabulary wall lives on the converting constructor).
+/// The newtype label the wire carries stays LAW-COMPUTED (lowering.md §3);
+/// this type never becomes a user-declared domain wrapper.
+template<name_text Roster>
+struct closed_ref {
+    static constexpr name_text roster_name = Roster;
+
+    std::uint64_t row{};
+
+    closed_ref() = default;
+
+    /// A handle of the same vocabulary IS the value (`.priority =
+    /// Priority.Urgent`); a foreign handle is the pinned §34 diagnostic.
+    template<name_text HandleRoster, name_text Handle, std::uint64_t Index>
+    consteval closed_ref(handle_value<HandleRoster, Handle, Index>)
+        : row{Index} {
+        static_assert(HandleRoster == Roster,
+            detail::handle_crosses_vocabulary_message(
+                HandleRoster, Handle, Roster));
+    }
+
+    constexpr auto operator==(closed_ref const&) const -> bool = default;
+};
+
+template<class T>
+inline constexpr bool is_closed_ref_v = false;
+
+template<name_text Roster>
+inline constexpr bool is_closed_ref_v<closed_ref<Roster>> = true;
 
 } // namespace bdb
 
@@ -160,6 +245,11 @@ consteval auto classify(std::meta::info type)
     }
     auto const tmpl = std::meta::template_of(t);
     auto const args = std::meta::template_arguments_of(t);
+    if (tmpl == ^^closed_ref) {
+        // A closed reference is physically the engine's u64 handle row id
+        // (lowering.md §5.3); the vocabulary rides the TYPE only.
+        return field_class{value_kind::u64, 0};
+    }
     if (tmpl == ^^std::array
         && std::meta::dealias(args[0]) == ^^std::byte) {
         // bdb::bytes<N> dealiases to std::array<std::byte, N>; the engine
@@ -172,11 +262,15 @@ consteval auto classify(std::meta::info type)
         return std::nullopt;
     }
     if (tmpl == ^^interval) {
+        // args[1] is the fixed-width label (0 = the general interval);
+        // the width is part of the classification and a fingerprint
+        // input (lowering.md §1.8).
+        auto const width = std::meta::extract<std::uint64_t>(args[1]);
         if (std::meta::dealias(args[0])
             == detail::type_reflection<std::uint64_t>) {
-            return field_class{value_kind::interval_u64, 0};
+            return field_class{value_kind::interval_u64, 0, width};
         }
-        return field_class{value_kind::interval_i64, 0};
+        return field_class{value_kind::interval_i64, 0, width};
     }
     return std::nullopt;
 }
@@ -196,6 +290,21 @@ consteval auto is_fresh_marked(std::meta::info member) -> bool {
         }
     }
     return false;
+}
+
+/// The member's WIRE field name: the `[[=bdb::named<...>]]` override when
+/// present, else the reflected identifier. The override exists because
+/// some cross-host wire names (`operator`, recipe 2) are C++ keywords.
+consteval auto wire_field_name(std::meta::info member) -> std::string {
+    for (auto const annotation : std::meta::annotations_of(member)) {
+        auto const type =
+            std::meta::remove_const(std::meta::type_of(annotation));
+        if (type == ^^NameTag) {
+            auto const tag = std::meta::extract<NameTag>(annotation);
+            return std::string{tag.name.view()};
+        }
+    }
+    return std::string{std::meta::identifier_of(member)};
 }
 
 /// The row's fields, in declaration order — the one enumeration everything
@@ -345,8 +454,8 @@ consteval auto coord_specs(std::string_view relation_name,
                 {std::meta::type_of(member),
                     std::meta::reflect_constant(
                         to_name_text(relation_name)),
-                    std::meta::reflect_constant(to_name_text(
-                        std::meta::identifier_of(member))),
+                    std::meta::reflect_constant(
+                        to_name_text(wire_field_name(member))),
                     std::meta::reflect_constant(ordinal),
                     std::meta::reflect_constant(cls),
                     std::meta::reflect_constant(
@@ -402,5 +511,12 @@ consteval auto make_relation() ->
 /// type. Member access is deliberately the only binding style.
 template<fixed_string Name, class Row>
 inline constexpr auto relation = make_relation<Name, Row>();
+
+/// The wire-name override annotation: `[[=bdb::named<"operator">]]` on a
+/// row field spells the cross-host wire name when it is not a legal C++
+/// identifier. The facade member keeps the C++ identifier; every wire
+/// surface (field spec, statements, class map) reads the override.
+template<fixed_string Name>
+inline constexpr auto named = NameTag{detail::to_name_text(Name.view())};
 
 } // namespace bdb

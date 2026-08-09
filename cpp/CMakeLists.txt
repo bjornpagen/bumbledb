@@ -52,6 +52,11 @@ set(CMAKE_CXX_MODULE_STD ON)
 # global, not part of the language-profile target.
 string(APPEND CMAKE_CXX_FLAGS " -fno-exceptions -fno-rtti")
 
+# Function-local statics are banned by the dialect, so the thread-safe
+# initialization guards GCC emits for them are dead machinery; drop them so
+# the runtime matches the rulebook.
+string(APPEND CMAKE_CXX_FLAGS " -fno-threadsafe-statics")
+
 if(NOT BDB_LINT_GRAPH)
     # Reflection is not negotiable: the version gate above guarantees GCC
     # 16.1.x, which implements it.

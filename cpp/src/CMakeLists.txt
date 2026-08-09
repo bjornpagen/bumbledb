@@ -49,6 +49,23 @@ target_link_libraries(bumbledb_answers
         bumbledb_foreign_raii
 )
 
+# Host-side answer ordering (ts/src/order.ts): reflection-free dialect
+# code, part of BOTH graphs.
+add_library(bumbledb_order)
+
+target_sources(bumbledb_order
+    PUBLIC
+        FILE_SET CXX_MODULES
+        FILES
+            bumbledb.order.cppm
+)
+
+target_link_libraries(bumbledb_order
+    PUBLIC
+        bumbledb_language_profile
+        bumbledb_types
+)
+
 # The runtime resource layer and the umbrella module are GCC-only: bumbledb.db
 # imports the reflection-backed meta marshaller (bumbledb.meta.row), and the
 # umbrella re-exports it plus bumbledb.meta.relation. ACCEPTED zoning
@@ -92,8 +109,10 @@ if(NOT BDB_LINT_GRAPH)
             bumbledb_types
             bumbledb_error
             bumbledb_answers
+            bumbledb_order
             bumbledb_db
             bumbledb_meta_relation
+            bumbledb_meta_closed
             bumbledb_meta_schema
             bumbledb_meta_query
     )

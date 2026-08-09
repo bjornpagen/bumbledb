@@ -25,6 +25,7 @@ function(bdb_compile_fail_case case)
             bumbledb_version
             bumbledb_types
             bumbledb_meta_relation
+            bumbledb_meta_closed
             bumbledb_meta_schema
             bumbledb_meta_query
             bumbledb_language_profile
@@ -103,4 +104,12 @@ bdb_compile_fail_case(query_wrong_param_name
 
 bdb_compile_fail_case(query_find_unbound_variable
     "find_head_variable_is_not_bound_in_this_rule"
+)
+
+# §34 / TODO_CPP §8: the closed-vocabulary wall — a handle of one closed
+# relation used against a field referencing another fails the match
+# binding with a diagnostic naming the handle, both vocabularies, and the
+# semantic coordinate.
+bdb_compile_fail_case(closed_handle_wrong_vocabulary
+    "handle \"Deterministic\" of closed relation \"Kind\" cannot bind coordinate \"Ticket.priority\""
 )

@@ -101,6 +101,27 @@ struct Abandoned {
 template<class T, class A>
 using WriteOutcome = std::variant<Committed<T>, Abandoned<A>>;
 
+/// The witnessed loop's honesty bound (the TS WITNESSED_ATTEMPT_CAP):
+/// contention alone converges — each rerun reads a FRESHER snapshot; a
+/// workload that moves the generation on EVERY one of this many
+/// consecutive attempts is not converging and never will.
+inline constexpr std::uint64_t witnessed_attempt_cap = 64;
+
+/// The typed livelock refusal `Db::write_witnessed` answers past the cap:
+/// every attempt found the generation moved, which is only sustainable
+/// when the callback ITSELF (even indirectly) commits an interleaved
+/// write each try. Host-policy pathology, not engine judgment — the
+/// remedy is to move the interleaved write out of the callback. Carries
+/// the final attempt's GenerationMoved error.
+struct WitnessedLivelock {
+    std::uint64_t attempts;
+    Error last;
+};
+
+/// What a witnessed write can fail with: an engine failure (commit
+/// rejection included), or the typed livelock refusal.
+using WitnessedFailure = std::variant<Error, WitnessedLivelock>;
+
 } // namespace bdb
 
 namespace bdb::detail {
@@ -228,13 +249,21 @@ auto wire_type_of(field_data const& field) -> foreign::bdb_value_type {
     case value_kind::fixed_bytes:
         return foreign::fixed_bytes_type(field.fixed_len);
     case value_kind::interval_u64:
-        return foreign::interval_type(
-            foreign::bdb_interval_element::BDB_INTERVAL_ELEMENT_U64);
+        return field.width == 0
+            ? foreign::interval_type(
+                  foreign::bdb_interval_element::BDB_INTERVAL_ELEMENT_U64)
+            : foreign::fixed_interval_type(
+                  foreign::bdb_interval_element::BDB_INTERVAL_ELEMENT_U64,
+                  field.width);
     case value_kind::interval_i64:
         break;
     }
-    return foreign::interval_type(
-        foreign::bdb_interval_element::BDB_INTERVAL_ELEMENT_I64);
+    return field.width == 0
+        ? foreign::interval_type(
+              foreign::bdb_interval_element::BDB_INTERVAL_ELEMENT_I64)
+        : foreign::fixed_interval_type(
+              foreign::bdb_interval_element::BDB_INTERVAL_ELEMENT_I64,
+              field.width);
 }
 
 /// The coordinate's law-computed class name, rendered "Relation.field"
@@ -255,15 +284,82 @@ auto newtype_of(Classes const& classes, name_text relation,
     return std::nullopt;
 }
 
+/// One schema-lane σ/axiom literal, owned (handles cross BY NAME —
+/// lowering.md §7.8; values tagged).
+auto owned_literal_of(selection_literal const& literal)
+    -> foreign::owned_literal {
+    auto out = foreign::owned_literal{};
+    if (literal.is_handle) {
+        out.is_handle = true;
+        out.handle = std::string{literal.handle.view()};
+        return out;
+    }
+    switch (literal.kind) {
+    case value_kind::boolean:
+        out.kind = foreign::bdb_value_kind::BDB_VALUE_KIND_BOOL;
+        out.boolean = literal.boolean;
+        return out;
+    case value_kind::u64:
+        out.kind = foreign::bdb_value_kind::BDB_VALUE_KIND_U64;
+        out.u64 = literal.u64;
+        return out;
+    case value_kind::i64:
+        out.kind = foreign::bdb_value_kind::BDB_VALUE_KIND_I64;
+        out.i64 = literal.i64;
+        return out;
+    case value_kind::string:
+    case value_kind::fixed_bytes:
+    case value_kind::interval_u64:
+    case value_kind::interval_i64:
+        break;
+    }
+    out.kind = foreign::bdb_value_kind::BDB_VALUE_KIND_STRING;
+    out.text = std::string{literal.text.view()};
+    return out;
+}
+
+auto owned_axiom_of(axiom_literal const& literal)
+    -> foreign::owned_literal {
+    auto out = foreign::owned_literal{};
+    switch (literal.kind) {
+    case value_kind::boolean:
+        out.kind = foreign::bdb_value_kind::BDB_VALUE_KIND_BOOL;
+        out.boolean = literal.boolean;
+        return out;
+    case value_kind::u64:
+        out.kind = foreign::bdb_value_kind::BDB_VALUE_KIND_U64;
+        out.u64 = literal.u64;
+        return out;
+    case value_kind::i64:
+        out.kind = foreign::bdb_value_kind::BDB_VALUE_KIND_I64;
+        out.i64 = literal.i64;
+        return out;
+    case value_kind::string:
+    case value_kind::fixed_bytes:
+    case value_kind::interval_u64:
+    case value_kind::interval_i64:
+        break;
+    }
+    out.kind = foreign::bdb_value_kind::BDB_VALUE_KIND_STRING;
+    out.text = std::string{literal.text.view()};
+    return out;
+}
+
 template<Theory S>
 auto owned_relations_of(S const& theory)
     -> std::vector<foreign::owned_relation> {
     auto relations = std::vector<foreign::owned_relation>{};
     relations.reserve(theory.relation_table.size());
     for (auto const& relation : theory.relation_table) {
+        // A CLOSED relation's declared FieldSpecs are its intrinsic
+        // payload columns ONLY — the synthetic id (sealed index 0 of the
+        // flattened roster) is materialized by engine validation, never
+        // spelled in the spec (lowering.md §7.3).
+        auto const first_field =
+            relation.closed ? std::size_t{1} : std::size_t{0};
         auto fields = std::vector<foreign::owned_field>{};
-        fields.reserve(relation.field_count);
-        for (auto index = std::size_t{0}; index != relation.field_count;
+        fields.reserve(relation.field_count - first_field);
+        for (auto index = first_field; index != relation.field_count;
             ++index) {
             auto const& field = relation.fields[index];
             fields.push_back(foreign::owned_field{
@@ -274,9 +370,37 @@ auto owned_relations_of(S const& theory)
                 .fresh = field.fresh,
             });
         }
+        auto closed = std::optional<foreign::owned_closed>{};
+        if (relation.closed) {
+            auto const& data = relation.closed_data;
+            auto rows = std::vector<foreign::owned_closed_row>{};
+            rows.reserve(data.handle_count);
+            for (auto handle = std::size_t{0};
+                handle != data.handle_count; ++handle) {
+                auto values = std::vector<foreign::owned_literal>{};
+                values.reserve(data.column_count);
+                for (auto column = std::size_t{0};
+                    column != data.column_count; ++column) {
+                    values.push_back(owned_axiom_of(
+                        data.axioms[handle * max_closed_columns
+                            + column]));
+                }
+                rows.push_back(foreign::owned_closed_row{
+                    .handle = std::string{data.handles[handle].view()},
+                    .values = std::move(values),
+                });
+            }
+            // ClosedSpec.newtype is ALWAYS the id's generator class
+            // "<Name>.id" (lowering.md §7.7).
+            closed = foreign::owned_closed{
+                .newtype = std::string{relation.name.view()} + ".id",
+                .rows = std::move(rows),
+            };
+        }
         relations.push_back(foreign::owned_relation{
             .name = std::string{relation.name.view()},
             .fields = std::move(fields),
+            .closed = std::move(closed),
         });
     }
     return relations;
@@ -288,9 +412,26 @@ auto owned_side_of(side_data const& side) -> foreign::owned_side {
     for (auto index = std::size_t{0}; index != side.width; ++index) {
         projection.emplace_back(side.fields[index].view());
     }
+    auto selection = std::vector<foreign::owned_selection>{};
+    selection.reserve(side.selection_count);
+    for (auto binding = std::size_t{0}; binding != side.selection_count;
+        ++binding) {
+        auto const& data = side.selections[binding];
+        auto literals = std::vector<foreign::owned_literal>{};
+        literals.reserve(data.literal_count);
+        for (auto literal = std::size_t{0};
+            literal != data.literal_count; ++literal) {
+            literals.push_back(owned_literal_of(data.literals[literal]));
+        }
+        selection.push_back(foreign::owned_selection{
+            .field = std::string{data.field.view()},
+            .literals = std::move(literals),
+        });
+    }
     return foreign::owned_side{
         .relation = std::string{side.relation.view()},
         .projection = std::move(projection),
+        .selection = std::move(selection),
     };
 }
 
@@ -406,6 +547,19 @@ auto manifest_of(S const& theory) -> Manifest {
                 .projection = {std::string{field.name.view()}},
             });
         }
+    }
+    // Closed auto-keys follow the fresh-implied keys in MATERIALIZED
+    // order (one `R(id) -> R` per closed relation, declaration order —
+    // lowering.md §2), keeping keyed-read statement ids aligned.
+    for (auto const& relation : theory.relation_table) {
+        if (!relation.closed) {
+            continue;
+        }
+        manifest.statement_rows.push_back(StatementRow{
+            .is_key = true,
+            .relation = std::string{relation.name.view()},
+            .projection = {std::string{"id"}},
+        });
     }
     for (auto const& statement : theory.statements) {
         auto row = StatementRow{
@@ -611,7 +765,10 @@ public:
     [[nodiscard]] auto execute_into(Prepared<Query>& prepared,
         params_of<Query> const& params, Answers<Query>& answers) const
         -> std::expected<void, Error> {
-        auto const wire = foreign::wire_params(params);
+        // The scratch owns any runtime ∈-set cells for exactly this call
+        // (the bridge copies before returning).
+        auto scratch = foreign::param_scratch{};
+        auto const wire = foreign::wire_params_for<Query>(params, scratch);
         return prepared.native()
             .execute(raw_, wire, answers.native().native())
             .transform_error([](foreign::error_handle handle) {
@@ -773,6 +930,22 @@ struct WriteShapeOf<std::expected<std::variant<Commit<T>, Abandon<A>>, Error>> {
 template<class Body>
 using WriteShape = WriteShapeOf<std::invoke_result_t<Body&, WriteTx&>>;
 
+// The witnessed twin: the body takes the WITNESSING snapshot and the tx
+// (premise reads on snap, the delta on tx — TODO_CPP §18).
+template<class BodyResult>
+struct WitnessedShapeOf;
+
+template<class T, class A>
+struct WitnessedShapeOf<
+    std::expected<std::variant<Commit<T>, Abandon<A>>, Error>> {
+    using Outcome = WriteOutcome<T, A>;
+    using Result = std::expected<Outcome, WitnessedFailure>;
+};
+
+template<class Body>
+using WitnessedShape =
+    WitnessedShapeOf<std::invoke_result_t<Body&, Snapshot&, WriteTx&>>;
+
 template<class Result>
 inline constexpr bool is_error_expected = false;
 
@@ -792,6 +965,13 @@ concept ReadBody = std::invocable<Body&, Snapshot&>
 template<class Body>
 concept WriteBody = std::invocable<Body&, WriteTx&>
     && requires { typename detail::WriteShape<Body>::Result; };
+
+/// A witnessed-write body: (Snapshot&, WriteTx&) ->
+/// std::expected<WriteDecision<T, A>, Error> — premise reads on the
+/// snapshot, the delta on the tx (TODO_CPP §18).
+template<class Body>
+concept WitnessedBody = std::invocable<Body&, Snapshot&, WriteTx&>
+    && requires { typename detail::WitnessedShape<Body>::Result; };
 
 /// The owning database capability (§15): move-only RAII; no shared
 /// ownership exists at this API. The moved-from Db is inert
@@ -1006,6 +1186,75 @@ public:
         typename detail::WriteShape<Body>::Result {
         return write_through(body, [this, &snapshot](auto& shim) {
             return handle_.write_from(snapshot.raw_, shim);
+        });
+    }
+
+    /// The witnessed write loop (§18; the TS db.writeWitnessed): one
+    /// callback receives a consistent snapshot AND the write tx; the
+    /// commit lands only if the generation the snapshot witnessed is
+    /// still current. On GenerationMoved the STALE diff is dropped —
+    /// never replayed — and the callback reruns against a FRESH snapshot,
+    /// up to `witnessed_attempt_cap` attempts; past the cap the typed
+    /// WitnessedLivelock refusal comes back (the callback itself moves
+    /// the generation each try — host pathology, not engine judgment).
+    /// Every other engine failure (commit rejection included) surfaces
+    /// unchanged on the first occurrence.
+    template<WitnessedBody Body>
+    auto write_witnessed(Body&& body) ->
+        typename detail::WitnessedShape<Body>::Result {
+        using Shape = detail::WitnessedShape<Body>;
+        using Result = typename Shape::Result;
+        using Outcome = typename Shape::Outcome;
+        for (auto attempt = std::uint64_t{1};; ++attempt) {
+            auto tried =
+                read([&](Snapshot& snapshot)
+                        -> std::expected<Outcome, Error> {
+                    return write_from(snapshot, [&](WriteTx& tx) {
+                        return body(snapshot, tx);
+                    });
+                });
+            if (tried.has_value()) {
+                return Result{std::move(*tried)};
+            }
+            auto error = std::move(tried).error();
+            if (error.kind() != ErrorKind::GenerationMoved) {
+                return Result{std::unexpect,
+                    WitnessedFailure{
+                        std::in_place_type<Error>, std::move(error)}};
+            }
+            if (attempt == witnessed_attempt_cap) {
+                return Result{std::unexpect,
+                    WitnessedFailure{std::in_place_type<WitnessedLivelock>,
+                        WitnessedLivelock{
+                            .attempts = attempt,
+                            .last = std::move(error),
+                        }}};
+            }
+            // Rebuild on a fresh snapshot (the loop's next read).
+        }
+    }
+
+    /// Full-relation export, one call (the TS db.scan symmetry): opens a
+    /// read snapshot for exactly this scan; the RowSet is owned and
+    /// outlives it.
+    template<class Facade>
+    [[nodiscard]] auto scan(Facade const& relation) const
+        -> std::expected<RowSet, Error> {
+        return read([&](Snapshot& snapshot)
+                -> std::expected<RowSet, Error> {
+            return snapshot.scan(relation);
+        });
+    }
+
+    /// Executes a prepared query, one call (the TS db.execute symmetry):
+    /// opens a read snapshot for exactly this execution.
+    template<auto Query>
+    [[nodiscard]] auto execute(Prepared<Query>& prepared,
+        params_of<Query> const& params) const
+        -> std::expected<Answers<Query>, Error> {
+        return read([&](Snapshot& snapshot)
+                -> std::expected<Answers<Query>, Error> {
+            return snapshot.execute(prepared, params);
         });
     }
 

@@ -85,7 +85,12 @@ The build must use the equivalent of:
 -freflection
 -fno-exceptions
 -fno-rtti
+-fno-threadsafe-statics
 ```
+
+`-fno-threadsafe-statics` is sound because function-local statics are banned
+outright (§14): the guard machinery would protect declarations that cannot
+exist, so the build drops it.
 
 Warnings are errors. Use the strongest practical conversion, lifetime,
 undefined-behavior, and API diagnostics for the pinned compiler.

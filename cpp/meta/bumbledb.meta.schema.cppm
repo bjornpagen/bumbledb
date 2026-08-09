@@ -21,6 +21,7 @@ export module bumbledb.meta.schema;
 import std;
 import bumbledb.types;
 import bumbledb.meta.relation;
+export import bumbledb.meta.closed;
 
 export namespace bdb {
 
@@ -31,6 +32,12 @@ inline constexpr std::size_t max_projection_width = 8;
 /// Most declared fields one relation may carry through this elaborator.
 inline constexpr std::size_t max_relation_fields = 16;
 
+/// Most σ/ψ bindings one statement face may carry.
+inline constexpr std::size_t max_face_selections = 4;
+
+/// Most literals one σ binding's set may carry.
+inline constexpr std::size_t max_selection_literals = 4;
+
 /// One semantic coordinate by name: the class-map currency ("Service.id"
 /// as data). Structural and NTTP-friendly like everything here.
 struct coord_ref {
@@ -40,26 +47,60 @@ struct coord_ref {
     constexpr auto operator==(coord_ref const&) const -> bool = default;
 };
 
-/// One declared field of the flattened relation table.
+/// One declared field of the flattened relation table. `width` is the
+/// fixed-width interval label (0 = the general interval — lowering.md
+/// §1.8; a fingerprint input on the wire).
 struct field_data {
     name_text name;
     value_kind kind;
     std::uint16_t fixed_len;
+    std::uint64_t width;
     bool fresh;
 };
 
 /// One relation of the flattened table, declaration order throughout.
+/// A CLOSED member's `fields` are its SEALED roster — the synthetic `id`
+/// at index 0, declared payload columns shifted +1 (lowering.md §1.11);
+/// the wire lane skips index 0 and reads `closed_data` for the sealed
+/// extension (declared columns only cross as FieldSpecs — §7.3).
 struct relation_data {
     name_text name;
     std::size_t field_count;
     std::array<field_data, max_relation_fields> fields;
+    bool closed;
+    closed_info closed_data;
 };
 
-/// One lowered statement face: relation + written projection.
+/// One σ/ψ literal as spelled: a handle crosses BY NAME on the schema
+/// wire (the ENGINE resolves it — lowering.md §7.8); a value literal
+/// crosses tagged.
+struct selection_literal {
+    bool is_handle;
+    name_text handle;
+    value_kind kind;
+    bool boolean;
+    std::uint64_t u64;
+    std::int64_t i64;
+    name_text text;
+};
+
+/// One σ binding: `field == literal-or-set` (read conjunctively across a
+/// face's bindings; a binding's ≥2 literals read disjunctively).
+struct selection_data {
+    name_text field;
+    std::size_t literal_count;
+    std::array<selection_literal, max_selection_literals> literals;
+};
+
+/// One lowered statement face: relation + written projection + the σ/ψ
+/// selection (lowered AS-IS, never pre-folded — the engine folds against
+/// the sealed extension at validate; lowering.md §2).
 struct side_data {
     name_text relation;
     std::size_t width;
     std::array<name_text, max_projection_width> fields;
+    std::size_t selection_count;
+    std::array<selection_data, max_face_selections> selections;
 };
 
 /// The statement form tags (lowering.md §1.9; `key` lowers as fd).
@@ -143,10 +184,28 @@ template<class T, name_text R, name_text F, std::size_t O, field_class C,
     bool Fr>
 inline constexpr bool is_coordinate_v<coord<T, R, F, O, C, Fr>> = true;
 
+// A closed relation's synthetic id IS a statement coordinate (TODO_CPP
+// §8: the closed relation stays usable in schema statements).
+template<name_text R, std::size_t H>
+inline constexpr bool is_coordinate_v<closed_id<R, H>> = true;
+
 consteval auto is_coord_type(std::meta::info type) -> bool {
     auto const t = std::meta::dealias(type);
     return std::meta::has_template_arguments(t)
         && std::meta::template_of(t) == ^^coord;
+}
+
+/// A coordinate-shaped facade member (a reflected field coordinate or the
+/// closed synthetic id) — the filter every facade walk applies (closed
+/// facades also carry handle constants, the axiom readback, and the wire
+/// carrier, none of which are columns).
+consteval auto is_coordinate_like_type(std::meta::info type) -> bool {
+    auto const t = std::meta::dealias(type);
+    if (!std::meta::has_template_arguments(t)) {
+        return false;
+    }
+    auto const tmpl = std::meta::template_of(t);
+    return tmpl == ^^coord || tmpl == ^^closed_id;
 }
 
 /// A relation facade: a class whose every member is a coordinate (the
@@ -172,6 +231,17 @@ consteval auto is_facade_type(std::meta::info type) -> bool {
 template<class T>
 consteval auto is_facade() -> bool {
     return is_facade_type(^^T);
+}
+
+/// A schema MEMBER: an ordinary relation facade or a closed relation
+/// facade (bumbledb.meta.closed's discriminant).
+consteval auto is_member_type(std::meta::info type) -> bool {
+    return is_facade_type(type) || is_closed_facade_type(type);
+}
+
+template<class T>
+consteval auto is_member() -> bool {
+    return is_member_type(^^T);
 }
 
 /// Decimal rendering for diagnostics (std::to_string is not constexpr on
@@ -242,13 +312,18 @@ export namespace bdb {
 
 /// A statement face value: `on(Outage.service)`,
 /// `on(Device.model, Device.watts)`. Positional pairing reads the
-/// projection in written order (lowering.md §2).
+/// projection in written order (lowering.md §2). The σ/ψ selection is the
+/// face's one VALUE payload — `on(bdb::where(Task, {...}), Task.id)`
+/// carries its resolved bindings here (empty on a bare face).
 template<class First, class... Rest>
 struct face {
     static constexpr std::size_t width = 1 + sizeof...(Rest);
     static constexpr name_text relation_name = First::relation_name;
     static constexpr std::array<name_text, width> projection{
         First::field_name, Rest::field_name...};
+
+    std::size_t selection_count{};
+    std::array<selection_data, max_face_selections> selections{};
 };
 
 /// Projects one or more columns of ONE relation as a statement face.
@@ -360,36 +435,41 @@ export namespace bdb {
 
 /// A stored containment law value; `mirrors` is the bidirectional case
 /// and crosses as ONE statement (the ENGINE performs the == split,
-/// source <= target first — lowering.md §2/§7).
+/// source <= target first — lowering.md §2/§7). The faces ride as VALUES:
+/// their σ/ψ selections are value-borne and schema() copies them into the
+/// flattened statement table.
 template<class Source, class Target, bool Bidirectional>
 struct containment_law {
     using source_face = Source;
     using target_face = Target;
     static constexpr bool bidirectional = Bidirectional;
+
+    Source source;
+    Target target;
 };
 
 /// `contained(on(Outage.service), on(Service.id))` — source ⊆ target.
 template<class Source, class Target>
-consteval auto contained(Source, Target)
+consteval auto contained(Source source, Target target)
     -> containment_law<Source, Target, false> {
     static_assert(detail::is_face_v<Source> && detail::is_face_v<Target>,
         "bumbledb contained(): both arguments must be faces — spell them "
         "bdb::on(Relation.field, ...)");
     static_assert(Source::width == Target::width,
         detail::arity_message<Source, Target>("contained"));
-    return {};
+    return {source, target};
 }
 
 /// `mirrors(a, b)` — the bijection (== both ways), one statement.
 template<class Source, class Target>
-consteval auto mirrors(Source, Target)
+consteval auto mirrors(Source source, Target target)
     -> containment_law<Source, Target, true> {
     static_assert(detail::is_face_v<Source> && detail::is_face_v<Target>,
         "bumbledb mirrors(): both arguments must be faces — spell them "
         "bdb::on(Relation.field, ...)");
     static_assert(Source::width == Target::width,
         detail::arity_message<Source, Target>("mirrors"));
-    return {};
+    return {source, target};
 }
 
 // ————————————————————————————————————————————————————————————————————
@@ -468,6 +548,12 @@ namespace bdb::detail {
 // table of lowering.md §1.7 — banned spellings are unwritable).
 auto capacity_window_must_satisfy_lo_less_than_hi() -> void;
 auto capacity_window_exact_is_spelled_within_n() -> void;
+auto capacity_floor_zero_is_vacuous_delete_the_statement() -> void;
+auto capacity_unit_floor_one_is_the_bare_containment() -> void;
+auto capacity_unit_count_bounded_by_duration_mixes_dimensions() -> void;
+auto relation_exceeds_max_relation_fields() -> void;
+auto face_has_too_many_selection_bindings() -> void;
+auto where_selection_binds_nothing() -> void;
 
 } // namespace bdb::detail
 
@@ -510,6 +596,27 @@ consteval auto within(std::uint64_t lo, std::uint64_t hi)
     }};
 }
 
+/// The unbounded-above marker: `within(lo, bdb::unbounded)` is the floor
+/// window (the TS `within(lo, "*")`). `{0..*}` is vacuous and refused at
+/// construction; `{1..*}` on the UNIT instance is the bare containment
+/// respelled and refused at capacity() (weight-sensitive — legal weighed).
+struct unbounded_t {};
+inline constexpr auto unbounded = unbounded_t{};
+
+/// `within(lo, bdb::unbounded)` — at least lo, no ceiling (floor).
+consteval auto within(std::uint64_t lo, unbounded_t)
+    -> capacity_window<void> {
+    if (lo == 0) {
+        detail::capacity_floor_zero_is_vacuous_delete_the_statement();
+    }
+    return {window_data{
+        .form = window_form::floor,
+        .lo = bound_data{
+            .form = bound_form::lit, .lit = lo, .field = name_text{}},
+        .hi = bound_data{},
+    }};
+}
+
 /// `within(lo, ref(coord))` — a dependent hi bound (target row's u64).
 template<class Coordinate>
 consteval auto within(std::uint64_t lo, ref_bound<Coordinate>)
@@ -540,14 +647,16 @@ consteval auto within(std::uint64_t lo, duration_measure<Coordinate>)
 }
 
 /// A stored capacity law value: target, weight, window, source (the
-/// operator read order, C2). The window's numeric payload is the one
-/// value-borne datum of the statement algebra.
+/// operator read order, C2). The window's numeric payload and the faces'
+/// σ selections are the value-borne data of the statement algebra.
 template<class Target, class Weight, class Source>
 struct capacity_law {
     using target_face = Target;
     using source_face = Source;
     using weight_type = Weight;
 
+    Target target;
+    Source source;
     window_data window;
 };
 
@@ -632,8 +741,8 @@ export namespace bdb {
 
 /// `capacity(target, weigh(...), within(...), source)` — the weighed law.
 template<class Target, class Weight, class HiCoordinate, class Source>
-consteval auto capacity(Target, Weight,
-    capacity_window<HiCoordinate> window, Source)
+consteval auto capacity(Target target, Weight,
+    capacity_window<HiCoordinate> window, Source source)
     -> capacity_law<Target, Weight, Source> {
     static_assert(detail::is_face_v<Target> && detail::is_face_v<Source>,
         "bumbledb capacity(): target and source must be faces — spell "
@@ -649,15 +758,207 @@ consteval auto capacity(Target, Weight,
             HiCoordinate::relation_name == Target::relation_name,
             detail::capacity_bound_message<Target, HiCoordinate>());
     }
-    return {window.data};
+    return {target, source, window.data};
 }
 
-/// `capacity(target, within(...), source)` — the unit weight (C4).
+/// `capacity(target, within(...), source)` — the unit weight (C4). The
+/// weight-SENSITIVE window bans run here (the TS capacity() unit-overload
+/// rows): `{1..*}` on the unit instance says only what the bare
+/// containment says, and a count of facts bounded by a span of time mixes
+/// dimensions (C18) — both LEGAL on the weighed overload.
 template<class Target, class HiCoordinate, class Source>
 consteval auto capacity(Target target,
     capacity_window<HiCoordinate> window, Source source)
     -> capacity_law<Target, unit_weight, Source> {
+    if (window.data.form == window_form::floor
+        && window.data.lo.form == bound_form::lit
+        && window.data.lo.lit == 1) {
+        detail::capacity_unit_floor_one_is_the_bare_containment();
+    }
+    if (window.data.hi.form == bound_form::duration_field) {
+        detail::capacity_unit_count_bounded_by_duration_mixes_dimensions();
+    }
     return capacity(target, unit_weight{}, window, source);
+}
+
+} // namespace bdb
+
+namespace bdb::detail {
+
+// ————————————————————————————————————————————————————————————————————
+// ψ/σ selection (lowering.md §2's σ-selected faces; TS Relation.where /
+// Kind.where). The selection is resolved EAGERLY at where() and lowered
+// AS-IS — never pre-folded into an id set (the ENGINE folds against the
+// sealed extension at validate).
+// ————————————————————————————————————————————————————————————————————
+
+/// One where-pattern slot: the default state binds nothing; a literal or
+/// a handle constant binds the field. The closed-reference roster wall
+/// (§34: a foreign handle is rejected NAMING both vocabularies) runs on
+/// the handle constructor.
+template<class T, name_text Relation, name_text Field, field_class Class>
+struct where_slot {
+    static constexpr name_text field_name = Field;
+
+    bool bound{};
+    selection_literal literal{};
+
+    where_slot() = default;
+
+    /// A scalar value literal, field-typed (`{.mastered = true}`).
+    consteval where_slot(T value)
+        requires (!is_closed_ref_v<T>
+            && (Class.kind == value_kind::boolean
+                || Class.kind == value_kind::u64
+                || Class.kind == value_kind::i64))
+        : bound{true} {
+        literal.kind = Class.kind;
+        if constexpr (Class.kind == value_kind::boolean) {
+            literal.boolean = value;
+        } else if constexpr (Class.kind == value_kind::u64) {
+            literal.u64 = value;
+        } else {
+            literal.i64 = value;
+        }
+    }
+
+    /// A handle at a closed-reference field (`{.kind =
+    /// Kind.Deterministic}`) — crosses BY NAME; the ENGINE resolves
+    /// schema-lane handle literals (lowering.md §7.8).
+    template<name_text HandleRoster, name_text Handle, std::uint64_t Index>
+    consteval where_slot(handle_value<HandleRoster, Handle, Index>)
+        requires is_closed_ref_v<T>
+        : bound{true} {
+        static_assert(HandleRoster == T::roster_name,
+            handle_crosses_vocabulary_message(
+                HandleRoster, Handle, T::roster_name));
+        literal.is_handle = true;
+        literal.handle = Handle;
+    }
+};
+
+/// The where-pattern product of one facade: one slot per SELECTABLE
+/// column — every reflected coordinate of an ordinary facade; a closed
+/// facade's declared payload columns only (its synthetic id is
+/// deliberately unspellable here — an id selection is spelled as handle
+/// literals on the REFERENCING side, the canonical utterance).
+template<class Facade>
+struct where_pattern_types {
+    struct Pattern;
+    consteval {
+        auto specs = std::vector<std::meta::info>{};
+        for (auto const member : std::meta::nonstatic_data_members_of(
+                 ^^Facade, std::meta::access_context::current())) {
+            auto const t = std::meta::dealias(std::meta::type_of(member));
+            if (!std::meta::has_template_arguments(t)
+                || std::meta::template_of(t) != ^^coord) {
+                continue;
+            }
+            auto const args = std::meta::template_arguments_of(t);
+            specs.push_back(std::meta::data_member_spec(
+                std::meta::substitute(^^where_slot,
+                    {args[0], args[1], args[2], args[4]}),
+                {.name = std::meta::identifier_of(member)}));
+        }
+        std::meta::define_aggregate(^^Pattern, specs);
+    }
+};
+
+/// The facade's relation name (both member kinds: the first
+/// coordinate-shaped member carries it).
+template<class Facade>
+consteval auto member_relation_of() -> name_text {
+    constexpr auto members = std::define_static_array(
+        std::meta::nonstatic_data_members_of(
+            ^^Facade, std::meta::access_context::current()));
+    using First = [:std::meta::type_of(members[0]):];
+    return First::relation_name;
+}
+
+template<class Facade, class First>
+consteval auto selected_projection_message() -> std::string {
+    return "bumbledb on(): the ψ-selected relation is \""
+        + std::string{member_relation_of<Facade>().view()}
+        + "\" but the projected coordinates belong to \""
+        + std::string{First::relation_name.view()}
+        + "\" — a selected face projects its own relation's columns";
+}
+
+} // namespace bdb::detail
+
+export namespace bdb {
+
+/// The designated-init selection pattern of one facade.
+template<class Facade>
+using where_pattern_of =
+    typename detail::where_pattern_types<Facade>::Pattern;
+
+/// A ψ/σ-selected face source (`bdb::where(Task, {.kind =
+/// Kind.Deterministic})`): the resolved bindings, carried by VALUE into
+/// `bdb::on(selected, coords...)`.
+template<class Facade>
+struct selected {
+    std::size_t selection_count{};
+    std::array<selection_data, max_face_selections> selections{};
+};
+
+/// Applies a σ/ψ selection to a relation for use as a statement face:
+/// `bdb::on(bdb::where(Task, {.kind = Kind.Deterministic}), Task.id)`.
+/// Selections change PAIRING not at all (lowering.md §3.3) — they cross
+/// as the face's σ bindings, read conjunctively.
+template<class Facade>
+[[nodiscard]] consteval auto where(Facade,
+    where_pattern_of<Facade> const& pattern) -> selected<Facade> {
+    static_assert(detail::is_member<Facade>(),
+        "bumbledb where(): the first argument must be a relation facade "
+        "(bdb::relation<...> or bdb::closed<...>)");
+    auto out = selected<Facade>{};
+    using Pattern = where_pattern_of<Facade>;
+    constexpr auto members = std::define_static_array(
+        std::meta::nonstatic_data_members_of(
+            ^^Pattern, std::meta::access_context::current()));
+    template for (constexpr auto index : detail::index_array<members.size()>()) {
+        using Slot = [:std::meta::type_of(members[index]):];
+        auto const& slot = pattern.[:members[index]:];
+        if (slot.bound) {
+            if (out.selection_count == max_face_selections) {
+                detail::face_has_too_many_selection_bindings();
+            }
+            auto binding = selection_data{};
+            binding.field = Slot::field_name;
+            binding.literal_count = 1;
+            binding.literals[0] = slot.literal;
+            out.selections[out.selection_count] = binding;
+            ++out.selection_count;
+        }
+    }
+    if (out.selection_count == 0) {
+        detail::where_selection_binds_nothing();
+    }
+    return out;
+}
+
+/// Projects columns of a ψ/σ-selected relation as a statement face.
+template<class Facade, class First, class... Rest>
+[[nodiscard]] consteval auto on(selected<Facade> const& source, First,
+    Rest...) -> face<First, Rest...> {
+    static_assert(
+        detail::is_coordinate_v<First>
+            && (detail::is_coordinate_v<Rest> && ...),
+        "bumbledb on(): every projected argument must be a relation "
+        "coordinate (Relation.field)");
+    static_assert(detail::same_relation<First, Rest...>(),
+        detail::span_message<First, Rest...>(
+            "on", "a face projects one relation's columns"));
+    static_assert(
+        detail::member_relation_of<Facade>() == First::relation_name,
+        detail::selected_projection_message<Facade, First>());
+    static_assert(1 + sizeof...(Rest) <= max_projection_width,
+        "bumbledb on(): the projection exceeds max_projection_width");
+    auto out = face<First, Rest...>{};
+    out.selection_count = source.selection_count;
+    out.selections = source.selections;
+    return out;
 }
 
 } // namespace bdb
@@ -668,27 +969,39 @@ namespace bdb::detail {
 // Reading facades and statements into the flattened tables.
 // ————————————————————————————————————————————————————————————————————
 
-/// One facade's flattened relation entry, read off its coordinate types.
+/// One facade's flattened relation entry, read off its coordinate-shaped
+/// members. Ordinary facades contribute every member; a CLOSED facade's
+/// columns are its sealed roster — the synthetic `id` (a `closed_id`,
+/// index 0) plus the payload coordinates — while its handle constants,
+/// axiom readback, and wire carrier are filtered out. The closed axioms
+/// themselves are VALUE data; schema() copies them off the facade value.
 template<class Facade>
 consteval auto relation_entry() -> relation_data {
     constexpr auto members = std::define_static_array(
         std::meta::nonstatic_data_members_of(
             ^^Facade, std::meta::access_context::current()));
-    static_assert(members.size() <= max_relation_fields,
-        "bumbledb schema: a relation exceeds max_relation_fields");
 
     auto out = relation_data{};
-    using FirstCoord = [:std::meta::type_of(members[0]):];
-    out.name = FirstCoord::relation_name;
-    out.field_count = members.size();
+    out.closed = is_closed_facade_type(^^Facade);
     template for (constexpr auto index : index_array<members.size()>()) {
-        using Coord = [:std::meta::type_of(members[index]):];
-        out.fields[index] = field_data{
-            .name = Coord::field_name,
-            .kind = Coord::kind,
-            .fixed_len = Coord::fixed_len,
-            .fresh = Coord::fresh,
-        };
+        if constexpr (is_coordinate_like_type(
+                          std::meta::type_of(members[index]))) {
+            using Coord = [:std::meta::type_of(members[index]):];
+            if (out.field_count == 0) {
+                out.name = Coord::relation_name;
+            }
+            if (out.field_count == max_relation_fields) {
+                relation_exceeds_max_relation_fields();
+            }
+            out.fields[out.field_count] = field_data{
+                .name = Coord::field_name,
+                .kind = Coord::kind,
+                .fixed_len = Coord::fixed_len,
+                .width = Coord::cls.width,
+                .fresh = Coord::fresh,
+            };
+            ++out.field_count;
+        }
     }
     return out;
 }
@@ -704,7 +1017,7 @@ consteval auto facade_relation_name_of() -> name_text {
 
 template<class... Args>
 consteval auto relation_count() -> std::size_t {
-    return (std::size_t{0} + ... + (is_facade<Args>() ? 1U : 0U));
+    return (std::size_t{0} + ... + (is_member<Args>() ? 1U : 0U));
 }
 
 template<class... Args>
@@ -716,7 +1029,7 @@ template<class... Args>
 consteval auto coord_count() -> std::size_t {
     auto count = std::size_t{0};
     auto const add = [&]<class A>() {
-        if constexpr (is_facade_type(^^A)) {
+        if constexpr (is_member_type(^^A)) {
             count += relation_entry<A>().field_count;
         }
     };
@@ -730,7 +1043,7 @@ consteval auto relation_table()
     auto out = std::array<relation_data, relation_count<Args...>()>{};
     auto index = std::size_t{0};
     auto const add = [&]<class A>() {
-        if constexpr (is_facade_type(^^A)) {
+        if constexpr (is_member_type(^^A)) {
             out[index] = relation_entry<A>();
             ++index;
         }
@@ -860,13 +1173,17 @@ consteval auto analyze(
     auto verdict = law_verdict<CoordCount>{};
     auto const coords = coord_roster<CoordCount>(relations);
 
+    // The generator judgment (lowering.md §3.2): a fresh-marked field of
+    // an ordinary member, or a CLOSED member's synthetic id (sealed
+    // index 0 — closedness itself mints the class).
     auto fresh = std::array<bool, CoordCount>{};
     {
         auto index = std::size_t{0};
         for (auto const& relation : relations) {
             for (auto field = std::size_t{0};
                 field != relation.field_count; ++field) {
-                fresh[index] = relation.fields[field].fresh;
+                fresh[index] = relation.fields[field].fresh
+                    || (relation.closed && field == 0);
                 ++index;
             }
         }
@@ -1156,7 +1473,7 @@ consteval auto relations_lead() -> bool {
 
 template<class... Args>
 consteval auto args_recognized() -> bool {
-    return ((is_facade<Args>() || is_statement_v<Args>) && ...);
+    return ((is_member<Args>() || is_statement_v<Args>) && ...);
 }
 
 template<class... Args>
@@ -1184,8 +1501,8 @@ struct schema_relation_types {
         auto specs = std::vector<std::meta::info>{};
         [[maybe_unused]] auto const add = [&]<class A>() {
             // The branch must be constexpr: the name reader may only be
-            // instantiated for facade types.
-            if constexpr (is_facade_type(^^A)) {
+            // instantiated for member types.
+            if constexpr (is_member_type(^^A)) {
                 // Skip a duplicate name so the injection stays total and
                 // schema()'s static_assert carries the one diagnostic.
                 auto const name = facade_relation_name_of<A>();
@@ -1362,15 +1679,37 @@ consteval auto schema(Args const&... args) -> schema_value<Name, Args...> {
         .classes = detail::analyze_schema<Args...>().classes,
     };
 
-    // The one value-borne payload: capacity windows (their numeric
-    // bounds are argument VALUES, not types).
+    // The value-borne payloads: capacity windows, face σ/ψ selections,
+    // and closed relations' sealed extensions (axiom values live on the
+    // facade VALUE — the type tier carries only the sealed roster).
+    auto relation_index = std::size_t{0};
     auto index = std::size_t{0};
+    auto const copy_selection = [](side_data& side, auto const& from) {
+        side.selection_count = from.selection_count;
+        side.selections = from.selections;
+    };
     auto const fill = [&]<class A>(A const& argument) {
         if constexpr (detail::is_statement_v<A>) {
             if constexpr (detail::is_capacity_v<A>) {
                 out.statements[index].window = argument.window;
+                copy_selection(
+                    out.statements[index].target, argument.target);
+                copy_selection(
+                    out.statements[index].source, argument.source);
+            }
+            if constexpr (detail::is_containment_v<A>) {
+                copy_selection(
+                    out.statements[index].source, argument.source);
+                copy_selection(
+                    out.statements[index].target, argument.target);
             }
             ++index;
+        } else {
+            if constexpr (detail::is_closed_facade<A>()) {
+                out.relation_table[relation_index].closed_data =
+                    argument.data;
+            }
+            ++relation_index;
         }
     };
     (fill(args), ...);

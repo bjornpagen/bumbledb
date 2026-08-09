@@ -29,6 +29,7 @@ namespace bdb::detail {
 // consteval factory makes the invalid constant a compile error whose
 // diagnostic carries the function name.
 auto interval_literal_must_satisfy_lo_less_than_hi() -> void;
+auto interval_literal_must_match_the_declared_width() -> void;
 auto allen_mask_literal_must_fit_the_low_13_bits() -> void;
 
 } // namespace bdb::detail
@@ -40,6 +41,8 @@ export namespace bdb {
 enum class TypeError : std::uint8_t {
     /// interval: half-open [lo, hi) requires lo < hi.
     EmptyInterval,
+    /// fixed-width interval: hi - lo must equal the declared width.
+    IntervalWidth,
     /// allen_mask: bits above the low 13 are unrepresentable.
     AllenMaskOverflow,
 };
@@ -53,18 +56,39 @@ concept IntervalElement =
 /// A checked half-open interval [lo, hi), strictly lo < hi — the C++ twin
 /// of the engine's `Interval` (stored `Value` intervals are checked at
 /// construction; TODO_CPP §21).
-template<IntervalElement T>
+///
+/// `Width` is the FIXED-WIDTH family label (the TS `interval(u64, 1n)`,
+/// lowering.md §1.8): 0 is the general 16-byte interval; a nonzero width
+/// makes `hi - lo == Width` part of the TYPE — a wrong-width value is
+/// unconstructible host-side (the engine re-judges at commit either way),
+/// and the width is a fingerprint input carried by the field's ValueType.
+template<IntervalElement T, std::uint64_t Width = 0>
 class interval {
     T lo_;
     T hi_;
 
     constexpr interval(T lo, T hi) : lo_{lo}, hi_{hi} {}
 
+    static constexpr auto width_holds(T lo, T hi) -> bool {
+        if constexpr (Width == 0) {
+            return true;
+        } else {
+            return static_cast<std::uint64_t>(hi) - static_cast<std::uint64_t>(lo)
+                == Width;
+        }
+    }
+
 public:
+    /// The declared width label (0 = the general interval).
+    static constexpr std::uint64_t width = Width;
+
     /// The constant lane: an invalid literal is a compile error.
     static consteval auto literal(T lo, T hi) -> interval {
         if (!(lo < hi)) {
             detail::interval_literal_must_satisfy_lo_less_than_hi();
+        }
+        if (!width_holds(lo, hi)) {
+            detail::interval_literal_must_match_the_declared_width();
         }
         return interval{lo, hi};
     }
@@ -74,6 +98,9 @@ public:
         -> std::expected<interval, TypeError> {
         if (!(lo < hi)) {
             return std::unexpected{TypeError::EmptyInterval};
+        }
+        if (!width_holds(lo, hi)) {
+            return std::unexpected{TypeError::IntervalWidth};
         }
         return interval{lo, hi};
     }

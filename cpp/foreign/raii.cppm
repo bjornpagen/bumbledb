@@ -775,6 +775,19 @@ auto interval_type(bdb_interval_element element) -> bdb_value_type {
     };
 }
 
+/// The fixed-width interval structural type (`interval<E, w>` — the width
+/// is a fingerprint input; lowering.md §1.8).
+auto fixed_interval_type(bdb_interval_element element, std::uint64_t width)
+    -> bdb_value_type {
+    return bdb_value_type{
+        .kind = bdb_value_type_kind::BDB_VALUE_TYPE_KIND_INTERVAL,
+        .fixed_len = 0,
+        .element = element,
+        .has_width = true,
+        .width = width,
+    };
+}
+
 // --- the pre-schema spec lane (TODO_CPP §13's placeholder) -------------------
 // Owned, ownership-closed descriptions that lower to borrowed spec views.
 // This is scaffolding for the phase BEFORE bdb::schema<> exists: the
@@ -791,10 +804,46 @@ struct owned_field {
     bool fresh;
 };
 
-/// One ordinary relation description.
+/// One literal as spelled: a closed handle BY NAME (the ENGINE resolves
+/// schema-lane handles — lowering.md §7.8), or a tagged value.
+struct owned_literal {
+    bool is_handle;
+    std::string handle;
+    bdb_value_kind kind;
+    bool boolean;
+    std::uint64_t u64;
+    std::int64_t i64;
+    std::string text;
+};
+
+/// One σ binding: `field == literal-or-set` (1 literal = One; ≥2 = Many).
+struct owned_selection {
+    std::string field;
+    std::vector<owned_literal> literals;
+};
+
+/// One ground axiom of a closed relation: the handle plus one literal per
+/// declared intrinsic column, in field-declaration order.
+struct owned_closed_row {
+    std::string handle;
+    std::vector<owned_literal> values;
+};
+
+/// A closed relation's closed half (lowering.md §1.3): the handle newtype
+/// (`"<Name>.id"`, always present) and the ground axioms.
+struct owned_closed {
+    std::string newtype;
+    std::vector<owned_closed_row> rows;
+};
+
+/// One relation description; `closed` engaged = closed relation (fields
+/// then carry the DECLARED intrinsic columns only — lowering.md §7.3).
+/// Defaulted so the pre-schema lane's ordinary-relation spellings stay
+/// valid designated inits.
 struct owned_relation {
     std::string name;
     std::vector<owned_field> fields;
+    std::optional<owned_closed> closed{};
 };
 
 /// key(R, [f...]) — the fd statement form.
@@ -803,10 +852,12 @@ struct owned_fd {
     std::vector<std::string> projection;
 };
 
-/// One bare side (no σ selection — the §39 slice needs none).
+/// One statement side: projection + σ selection (lowered AS-IS;
+/// defaulted so bare-face spellings stay valid designated inits).
 struct owned_side {
     std::string relation;
     std::vector<std::string> projection;
+    std::vector<owned_selection> selection{};
 };
 
 /// contained(source, target) / mirrors via the bidirectional flag.
@@ -855,6 +906,10 @@ class owned_schema_spec {
     std::vector<owned_relation> relations_;
     std::vector<owned_statement> statements_;
     std::vector<std::vector<bdb_field_spec>> field_views_;
+    std::vector<std::vector<bdb_literal>> literal_views_;
+    std::vector<std::vector<bdb_selection_binding>> selection_views_;
+    std::vector<std::vector<bdb_closed_row>> closed_row_views_;
+    std::vector<bdb_closed_spec> closed_views_;
     std::vector<bdb_relation_spec> relation_views_;
     std::vector<std::vector<bdb_string_view>> projection_views_;
     std::vector<bdb_statement_spec> statement_views_;
@@ -874,15 +929,80 @@ class owned_schema_spec {
         return views;
     }
 
-    static auto side_view(owned_side const& side,
+    /// One literal, viewed (string payloads borrow the owned literal —
+    /// stable because the owning vectors never move after construction).
+    static auto literal_view(owned_literal const& literal) -> bdb_literal {
+        auto out = bdb_literal{};
+        if (literal.is_handle) {
+            out.kind = bdb_literal_kind::BDB_LITERAL_KIND_HANDLE;
+            out.handle = view_of_owned(literal.handle);
+            return out;
+        }
+        out.kind = bdb_literal_kind::BDB_LITERAL_KIND_VALUE;
+        out.value.kind = literal.kind;
+        switch (literal.kind) {
+        case bdb_value_kind::BDB_VALUE_KIND_BOOL:
+            out.value.bool_value = literal.boolean;
+            break;
+        case bdb_value_kind::BDB_VALUE_KIND_U64:
+            out.value.u64_value = literal.u64;
+            break;
+        case bdb_value_kind::BDB_VALUE_KIND_I64:
+            out.value.i64_value = literal.i64;
+            break;
+        case bdb_value_kind::BDB_VALUE_KIND_STRING:
+            out.value.string_value = view_of_owned(literal.text);
+            break;
+        default:
+            // The frontends spell schema-lane literals as bool/u64/i64/
+            // str/handle only (the closed-payload roster).
+            unreachable_boundary_state();
+        }
+        return out;
+    }
+
+    auto literals_view(std::vector<owned_literal> const& literals)
+        -> std::vector<bdb_literal> const& {
+        auto views = std::vector<bdb_literal>{};
+        views.reserve(literals.size());
+        for (auto const& literal : literals) {
+            views.push_back(literal_view(literal));
+        }
+        return literal_views_.emplace_back(std::move(views));
+    }
+
+    auto side_view(owned_side const& side,
         std::vector<bdb_string_view> const& projection) -> bdb_side {
-        return bdb_side{
+        auto out = bdb_side{
             .relation = view_of_owned(side.relation),
             .projection = projection.data(),
             .projection_count = projection.size(),
             .selection = nullptr,
             .selection_count = 0,
         };
+        if (side.selection.empty()) {
+            return out;
+        }
+        auto bindings = std::vector<bdb_selection_binding>{};
+        bindings.reserve(side.selection.size());
+        for (auto const& binding : side.selection) {
+            auto const& literals = literals_view(binding.literals);
+            bindings.push_back(bdb_selection_binding{
+                .field = view_of_owned(binding.field),
+                .set = bdb_literal_set{
+                    .kind = literals.size() == 1
+                        ? bdb_literal_set_kind::BDB_LITERAL_SET_KIND_ONE
+                        : bdb_literal_set_kind::BDB_LITERAL_SET_KIND_MANY,
+                    .literals = literals.data(),
+                    .literal_count = literals.size(),
+                },
+            });
+        }
+        auto const& stored =
+            selection_views_.emplace_back(std::move(bindings));
+        out.selection = stored.data();
+        out.selection_count = stored.size();
+        return out;
     }
 
     static auto bound_view(owned_bound const& bound) -> bdb_bound {
@@ -898,6 +1018,42 @@ public:
         std::vector<owned_statement> statements)
         : relations_{std::move(relations)},
           statements_{std::move(statements)} {
+        // Reserve every list-of-lists to its exact total up front: the
+        // view graph holds REFERENCES to the emplaced inner vectors, and
+        // an outer reallocation would invalidate earlier references (the
+        // inner BUFFERS survive a reallocation; the vector objects do
+        // not stay put).
+        auto literal_lists = std::size_t{0};
+        auto closed_relations = std::size_t{0};
+        auto selection_lists = std::size_t{0};
+        for (auto const& relation : relations_) {
+            if (relation.closed.has_value()) {
+                ++closed_relations;
+                literal_lists += relation.closed->rows.size();
+            }
+        }
+        auto const count_side = [&](owned_side const& side) {
+            if (!side.selection.empty()) {
+                ++selection_lists;
+                literal_lists += side.selection.size();
+            }
+        };
+        for (auto const& statement : statements_) {
+            if (auto const* containment =
+                    std::get_if<owned_containment>(&statement)) {
+                count_side(containment->source);
+                count_side(containment->target);
+            } else if (auto const* capacity =
+                    std::get_if<owned_capacity>(&statement)) {
+                count_side(capacity->target);
+                count_side(capacity->source);
+            }
+        }
+        literal_views_.reserve(literal_lists);
+        selection_views_.reserve(selection_lists);
+        closed_row_views_.reserve(closed_relations);
+        closed_views_.reserve(closed_relations);
+
         field_views_.reserve(relations_.size());
         relation_views_.reserve(relations_.size());
         for (auto const& relation : relations_) {
@@ -913,20 +1069,38 @@ public:
                     .fresh = field.fresh,
                 });
             }
+            auto const* closed_spec = [&]() -> bdb_closed_spec const* {
+                if (!relation.closed.has_value()) {
+                    return nullptr;
+                }
+                auto rows = std::vector<bdb_closed_row>{};
+                rows.reserve(relation.closed->rows.size());
+                for (auto const& row : relation.closed->rows) {
+                    auto const& values = literals_view(row.values);
+                    rows.push_back(bdb_closed_row{
+                        .handle = view_of_owned(row.handle),
+                        .values = values.empty() ? nullptr : values.data(),
+                        .value_count = values.size(),
+                    });
+                }
+                auto const& stored =
+                    closed_row_views_.emplace_back(std::move(rows));
+                closed_views_.push_back(bdb_closed_spec{
+                    .newtype = view_of_owned(relation.closed->newtype),
+                    .rows = stored.empty() ? nullptr : stored.data(),
+                    .row_count = stored.size(),
+                });
+                return &closed_views_.back();
+            }();
             relation_views_.push_back(bdb_relation_spec{
                 .name = view_of_owned(relation.name),
                 .fields = fields.data(),
                 .field_count = fields.size(),
-                .closed = nullptr,
+                .closed = closed_spec,
             });
         }
 
         statement_views_.reserve(statements_.size());
-        // Reserve the projection-list slots up front: side_view holds
-        // REFERENCES to the emplaced inner vectors, and an outer
-        // reallocation between the two emplace_backs of one containment
-        // would invalidate the first reference (the inner BUFFERS survive
-        // a reallocation; the vector objects do not stay put).
         auto projection_lists = std::size_t{0};
         for (auto const& statement : statements_) {
             projection_lists +=
