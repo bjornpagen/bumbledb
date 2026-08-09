@@ -55,6 +55,19 @@ target_compile_features(bumbledb_language_profile INTERFACE cxx_std_26)
 if(NOT BDB_LINT_GRAPH)
     # stdc++exp (P2900 handle_contract_violation) as an interface library, never a linker flag: GNU ld resolves left-to-right and flags precede the objects.
     target_link_libraries(bumbledb_language_profile INTERFACE stdc++exp)
+
+    target_compile_options(bumbledb_language_profile INTERFACE
+        "$<$<CONFIG:Release>:-ffunction-sections;-fdata-sections>"
+    )
+    if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+        target_link_options(bumbledb_language_profile INTERFACE
+            "$<$<CONFIG:Release>:LINKER:-dead_strip>"
+        )
+    else()
+        target_link_options(bumbledb_language_profile INTERFACE
+            "$<$<CONFIG:Release>:LINKER:--gc-sections>"
+        )
+    endif()
 endif()
 
 target_compile_options(bumbledb_language_profile INTERFACE

@@ -55,6 +55,7 @@ Checks: >
   custom-no-dynamic-type,
   custom-no-thread-primitives,
   custom-no-sync-primitives,
+  custom-no-relative-timeouts,
   custom-no-sfinae-relics,
   custom-no-std-function-bind,
   custom-no-using-namespace,
@@ -119,7 +120,11 @@ CheckOptions:
   # silently dropped. The compiler rung ([[nodiscard]] + -Werror) is the
   # primary enforcement; this covers the Clang-parseable remainder.
   # -------------------------------------------------------------------------
-  bugprone-unused-return-value.CheckedReturnTypes: '::std::expected;::std::optional;::std::error_code'
+  # The type list is LLVM 22's default plus ::std::optional, pinned
+  # explicitly so a tool upgrade cannot silently shrink it. AllowCastToVoid
+  # stays false: (void) is a retired spelling — discards are
+  # std::ignore = (values) or auto _ = (RAII holds).
+  bugprone-unused-return-value.CheckedReturnTypes: '^::std::error_code$;^::std::error_condition$;^::std::errc$;^::std::expected$;^::std::optional$;^::boost::system::error_code$'
   bugprone-unused-return-value.AllowCastToVoid: 'false'
 
   # -------------------------------------------------------------------------
@@ -574,6 +579,23 @@ CustomChecks:
     Diagnostic:
       - BindName: node
         Message: "locks and atomics are restricted to unsafe/ concurrency primitives"
+        Level: Warning
+
+  - Name: no-relative-timeouts
+    Query: |
+      match callExpr(
+        isExpansionInMainFile(),
+        callee(functionDecl(hasAnyName(
+          "sleep_for",
+          "wait_for",
+          "try_lock_for",
+          "try_lock_shared_for",
+          "try_acquire_for"
+        )))
+      ).bind("node")
+    Diagnostic:
+      - BindName: node
+        Message: "relative timeouts drift on interruption and re-arm; take an absolute steady_clock::time_point and use the *_until spelling (AGENTS.md 15)"
         Level: Warning
 
   - Name: no-sfinae-relics
