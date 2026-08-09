@@ -24,7 +24,24 @@ graph).
   implementation unit produces no BMI, so there is nothing to corrupt.
 - retire: on any GCC bump, fold the bodies back into `db.cc` and delete
   `db_impl.cc` once the re-export streams clean.
-- upstream: not filed (pinned GCC 16.1.0).
+- upstream: not filed — no standalone repro yet, and three open "Bad
+  file data" reports with standalone repros are already in the queue
+  (PR 125595, same symptom, reduced upstream to VLA streaming in an
+  inline function; PR 125144; PR 125356 — cite all three when filing).
+  A "me too" without a repro is not actionable. Reduction ledger
+  (2026-08-09, absorbed from cpp-starter's deleted
+  upstream/gcc-modules-partition-bmi-expected/): plain
+  partition + `<expected>` GMF shapes do NOT reproduce; neither does
+  the payload-type-from-imported-module shape; the "`import std` is
+  the missing ingredient" hypothesis was tested and falsified. The
+  faithful reproduction remains only this tree: move the five bodies
+  from `db_impl.cc` back into `db.cc` and build the dev preset. Next
+  reduction step: a scratch CMake project mirroring the real
+  two-module graph (`bumbledb` importing `bumbledb_foreign`) with the
+  actual five member bodies, then shrink creduce-style keeping the
+  three-file structure — the full foreign-module context is the
+  remaining suspect. File to Bugzilla (component c++, [modules]) only
+  once a standalone repro exists.
 
 ## gcc-template-for-wshadow
 
