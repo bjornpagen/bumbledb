@@ -32,3 +32,5 @@ SeparateDefinitionBlocks: Always
 
 Cpp11BracedListStyle: true
 SpacesBeforeTrailingComments: 1
+
+FixNamespaceComments: false
