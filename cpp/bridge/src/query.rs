@@ -451,7 +451,7 @@ pub struct bdb_prepared {
 /// normalizes, reads statistics, and plans ONCE; the returned handle is
 /// reusable across snapshots of this database (`&mut` per execution —
 /// one execution at a time; the handle is not thread-shareable).
-/// Validation (roster) failures are `BDB_ERROR_VALIDATION`.
+/// Validation (roster) failures are `BDB_ERROR_KIND_VALIDATION`.
 #[unsafe(no_mangle)]
 #[expect(unsafe_code, reason = "extern export: the unsafe(no_mangle) ABI attribute")]
 pub extern "C" fn bdb_db_prepare(

@@ -1,27 +1,15 @@
-// :closed_facade — closed relations and payload-bearing closed
-// vocabularies (TODO_CPP §8; lowering.md §1.3, §2, §7.3; the TS reference
-// is ts/src/closed.ts).
-//
-// A closed relation stays RELATIONAL: the value minted here is a relation
-// facade — `Kind.id` is a schema coordinate and a union-find GENERATOR,
-// the relation is a schema member and a query atom, and the ground axioms
-// are sealed schema data (virtual storage, frozen by the fingerprint).
-// The handle constants (`Kind.DirectPass`), the axiom readback
-// (`Kind.axioms.DirectPass.rank`) and the `bdb::ref<Kind.id>` field
-// spelling are HOST PROJECTIONS for ergonomics — never replacements for
-// the relational semantics (§8: the projection never replaces Kind).
-//
-// Two tiers, mirrored from ts/src/closed.ts:
-//
-//   bare:     bdb::closed<"Kind", "Deterministic", "CustomOperator">()
-//   payload:  bdb::closed<"Kind", KindPayload>(
-//                 bdb::member<"DirectPass">(
-//                     KindPayload{.mastered = true, .rank = 30}), ...)
-//
-// (Handle names must reach the TYPE tier — they become facade member
-// names via define_aggregate — so the bare tier spells them as NTTPs and
-// the payload tier's `bdb::member<"...">` carries the name in its type;
-// plain string ARGUMENTS cannot mint member names in C++.)
+/**
+ * Closed relations and payload-bearing closed vocabularies (lowering.md
+ * §1.3, §2, §7.3; TS reference: ts/src/closed.ts). The minted value is a
+ * relation facade: `Kind.id` is a schema coordinate and a union-find
+ * generator, and the ground axioms are sealed schema data (virtual
+ * storage, frozen by the fingerprint); the handle constants, the axiom
+ * readback, and the `bdb::ref<Kind.id>` spelling are host projections
+ * for ergonomics — never replacements for the relational semantics.
+ * Handle names ride the TYPE tier (bare-tier NTTPs, the payload tier's
+ * `bdb::member<"...">`) because facade member names are minted by
+ * define_aggregate — plain string arguments cannot mint member names.
+ */
 export module bumbledb:closed_facade;
 
 import std;
@@ -35,8 +23,10 @@ import :axioms;
 
 export namespace bdb::detail {
 
-/// THE closed-facade discriminant: a class whose FIRST member is a
-/// `closed_id` (the mint puts it there; nothing else does).
+/**
+ * THE closed-facade discriminant: a class whose FIRST member is a
+ * `closed_id` (the mint puts it there; nothing else does).
+ */
 [[nodiscard]] consteval auto is_closed_facade_type(std::meta::info type) -> bool {
 	auto const t = std::meta::dealias(type);
 	if (!std::meta::is_class_type(t)) {
@@ -55,14 +45,9 @@ template<class T>
 	return is_closed_facade_type(^^T);
 }
 
-} // namespace bdb::detail
+}
 
 namespace bdb::detail {
-
-// ————————————————————————————————————————————————————————————————————
-// Payload reflection + the §34 walls (total classification keeps the
-// injection alive so the closed() static_asserts stay the ONE diagnostic).
-// ————————————————————————————————————————————————————————————————————
 
 [[nodiscard]] consteval auto payload_members(std::meta::info payload) -> std::vector<std::meta::info> {
 	return std::meta::nonstatic_data_members_of(payload, std::meta::access_context::current());
@@ -72,8 +57,10 @@ namespace bdb::detail {
 	return std::string{"bumbledb closed relation \""} + std::string{name} + "\"";
 }
 
-/// A payload column's admissible kinds: the axiom-literal roster (bool /
-/// u64 / i64 / str — the recipes' payload vocabulary).
+/**
+ * A payload column's admissible kinds: the axiom-literal roster (bool /
+ * u64 / i64 / str — the recipes' payload vocabulary).
+ */
 [[nodiscard]] consteval auto payload_column_supported(std::meta::info member) -> bool {
 	auto const cls = classify(std::meta::type_of(member));
 	if (!cls.has_value()) {
@@ -198,22 +185,25 @@ template<class Payload, class... Members>
 	return {};
 }
 
-// ————————————————————————————————————————————————————————————————————
-// The facade synthesis (the proven class-template-scope define_aggregate
-// pattern, TODO_CPP §38). Member order is load-bearing: id, payload
-// coordinates (sealed ordinals: declared index + 1 — lowering.md §1.11),
-// handles, axioms, data.
-// ————————————————————————————————————————————————————————————————————
-
+/**
+ * The facade synthesis (class-template-scope define_aggregate). Member
+ * order is load-bearing: id, payload coordinates at sealed ordinals
+ * (declared index + 1 — lowering.md §1.11), handle constants
+ * (declaration order = row id), axiom readback, wire carrier. Bad input
+ * never breaks the injections (duplicate names skip, unclassifiable
+ * columns default) so mint_closed()'s static_asserts stay the ONE
+ * diagnostic.
+ */
 template<fixed_string Name, class Payload, class... Members>
 struct closed_types {
+	/**
+	 * The axiom-readback product (`Kind.axioms.DirectPass.rank`): one
+	 * member per handle, typed by the payload row.
+	 */
 	struct Axioms;
 	struct Facade;
 
 	consteval {
-		// The axiom-readback product: one member per handle, typed by the
-		// payload row. Duplicate names are skipped so the injection stays
-		// total; closed()'s static_asserts carry the one diagnostic.
 		auto specs = std::vector<std::meta::info>{};
 		auto used = std::vector<std::string>{};
 		[[maybe_unused]] auto const add = [&](name_text handle) {
@@ -243,14 +233,12 @@ struct closed_types {
 			return false;
 		};
 
-		// 1. The synthetic id (sealed ordinal 0).
 		specs.push_back(std::meta::data_member_spec(std::meta::substitute(^^closed_id,
 		                                                                  {
 		                                                                      std::meta::reflect_constant(to_name_text(Name.view())),
 		                                                                      std::meta::reflect_constant(sizeof...(Members))}),
 		                                            {.name = spec_name("id")}));
 
-		// 2. Payload coordinates at sealed ordinals (declared index + 1).
 		auto ordinal = std::size_t{1};
 		for (auto const column : payload_members(^^Payload)) {
 			auto const cls = classify(std::meta::type_of(column)).value_or(field_class{value_kind::u64, 0});
@@ -269,7 +257,6 @@ struct closed_types {
 			++ordinal;
 		}
 
-		// 3. The handle constants (declaration order = row id).
 		auto index = std::uint64_t{0};
 		[[maybe_unused]] auto const add_handle = [&](name_text handle) {
 			auto const name = spec_name(handle.view());
@@ -286,7 +273,6 @@ struct closed_types {
 		};
 		(add_handle(Members::handle), ...);
 
-		// 4. The axiom readback and the flattened wire carrier.
 		specs.push_back(std::meta::data_member_spec(^^Axioms, {
 		                                                          .name = spec_name("axioms")}));
 		specs.push_back(std::meta::data_member_spec(^^closed_info, {
@@ -308,37 +294,38 @@ template<fixed_string Name, class Payload, class... Members>
 	auto const handles = std::array<name_text, sizeof...(Members)>{Members::handle...};
 	auto const payloads = std::array<Payload, sizeof...(Members)>{members.payload...};
 
-	// The axiom readback rows (`Kind.axioms.DirectPass.rank`).
 	constexpr auto rows =
 	    std::define_static_array(std::meta::nonstatic_data_members_of(^^typename Types::Axioms, std::meta::access_context::current()));
 	template for (constexpr auto index : index_array<rows.size()>()) {
 		out.axioms.[:rows[index]:] = payloads[index];
 	}
 
-	// The flattened wire carrier (schema() copies it into the theory's
-	// relation table at elaboration).
 	out.data = closed_info_of<Name, Payload>(handles, payloads);
 	return out;
 }
 
-} // namespace bdb::detail
+}
 
 export namespace bdb {
 
-/// The bare tier (TODO_CPP §8; ts closed("Kind", ["...", ...])): handles
-/// only, as NTTPs — `bdb::closed<"Kind", "Deterministic",
-/// "CustomOperator">()`. The extension is sealed at declaration; storage
-/// is virtual; row id = declaration order.
+/**
+ * The bare tier (TS `closed("Kind", ["...", ...])`): handles only, as
+ * NTTPs — `bdb::closed<"Kind", "Deterministic", "CustomOperator">()`.
+ * The extension is sealed at declaration; storage is virtual; row id =
+ * declaration order.
+ */
 template<fixed_string Name, fixed_string... Handles>
     requires(sizeof...(Handles) >= 1)
 [[nodiscard]] consteval auto closed() -> typename detail::closed_types<Name, no_payload, member_value<Handles, no_payload>...>::Facade {
 	return detail::mint_closed<Name, no_payload>(member_value<Handles, no_payload>{no_payload{}}...);
 }
 
-/// The payload tier (ts closed("Kind", {cols}, {axioms})): declared
-/// intrinsic columns AND ground axioms, one call —
-/// `bdb::closed<"Kind", KindPayload>(bdb::member<"DirectPass">(
-/// KindPayload{.mastered = true, .rank = 30}), ...)`.
+/**
+ * The payload tier (TS `closed("Kind", {cols}, {axioms})`): declared
+ * intrinsic columns AND ground axioms, one call —
+ * `bdb::closed<"Kind", KindPayload>(bdb::member<"DirectPass">(
+ * KindPayload{.mastered = true, .rank = 30}), ...)`.
+ */
 template<fixed_string Name, class Payload, class... Members>
     requires(sizeof...(Members) >= 1)
 [[nodiscard]] consteval auto closed(Members const&... members) -> typename detail::closed_types<Name, Payload, Members...>::Facade {
@@ -348,4 +335,4 @@ template<fixed_string Name, class Payload, class... Members>
 	return detail::mint_closed<Name, Payload>(members...);
 }
 
-} // namespace bdb
+}

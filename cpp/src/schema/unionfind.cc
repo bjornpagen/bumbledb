@@ -1,7 +1,3 @@
-// :unionfind — the class laws (lowering.md §3): union-find over the
-// projected paired faces, the one-generator wall, generator-first naming.
-// The analysis verdict is total: every check is computed defensively so
-// any single failure produces exactly its own diagnostic.
 export module bumbledb:unionfind;
 
 import std;
@@ -12,9 +8,11 @@ namespace bdb::detail {
 
 inline constexpr std::size_t no_index = ~std::size_t{0};
 
-/// The analysis verdict schema()'s static_asserts read. Total: every
-/// check is computed defensively so any single failure produces exactly
-/// its own diagnostic.
+/**
+ * The analysis verdict schema()'s static_asserts read. Total: every
+ * check is computed defensively so any single failure produces exactly
+ * its own diagnostic.
+ */
 template<std::size_t CoordCount>
 struct law_verdict {
 	bool members_known = true;
@@ -37,7 +35,6 @@ struct law_verdict {
 	std::array<class_entry, CoordCount> classes{};
 };
 
-/// The flat coordinate roster of a relation table.
 template<std::size_t CoordCount, std::size_t RelationCount>
 [[nodiscard]] consteval auto coord_roster(std::array<relation_data, RelationCount> const& relations) -> std::array<coord_ref, CoordCount> {
 	auto out = std::array<coord_ref, CoordCount>{};
@@ -54,16 +51,21 @@ template<std::size_t CoordCount, std::size_t RelationCount>
 	return out;
 }
 
-/// The whole §3 computation over the flattened tables.
+/**
+ * The whole class-law computation of lowering.md §3 over the flattened
+ * tables: the generator judgment (§3.2: a fresh-marked field of an
+ * ordinary member, or a CLOSED member's synthetic id at sealed index 0 —
+ * closedness itself mints the class), union-find over the projected
+ * paired faces with the one-generator wall, generator-first naming
+ * (§3.5), and the restated-implied-key / duplicate-key rejections at
+ * construction, like TS (§7.1).
+ */
 template<std::size_t CoordCount, std::size_t RelationCount, std::size_t StatementCount>
 [[nodiscard]] consteval auto analyze(std::array<relation_data, RelationCount> const& relations,
                        std::array<statement_data, StatementCount> const& statements) -> law_verdict<CoordCount> {
 	auto verdict = law_verdict<CoordCount>{};
 	auto const coords = coord_roster<CoordCount>(relations);
 
-	// The generator judgment (lowering.md §3.2): a fresh-marked field of
-	// an ordinary member, or a CLOSED member's synthetic id (sealed
-	// index 0 — closedness itself mints the class).
 	auto fresh = std::array<bool, CoordCount>{};
 	{
 		auto index = std::size_t{0};
@@ -92,7 +94,6 @@ template<std::size_t CoordCount, std::size_t RelationCount, std::size_t Statemen
 		return false;
 	};
 
-	// Union-find with one generator slot per root (the wall's witness).
 	auto parent = std::array<std::size_t, CoordCount>{};
 	auto generator = std::array<std::size_t, CoordCount>{};
 	for (auto index = std::size_t{0}; index != CoordCount; ++index) {
@@ -125,7 +126,7 @@ template<std::size_t CoordCount, std::size_t RelationCount, std::size_t Statemen
 			for (auto position = std::size_t{0}; position != data.source.width; ++position) {
 				visit_coordinate(statement, data.source.relation, data.source.fields[position]);
 			}
-			continue; // an FD pairs nothing (lowering.md §3.3)
+			continue;
 		}
 		for (auto position = std::size_t{0}; position != data.source.width; ++position) {
 			auto const a = visit_coordinate(statement, data.source.relation, data.source.fields[position]);
@@ -154,8 +155,6 @@ template<std::size_t CoordCount, std::size_t RelationCount, std::size_t Statemen
 		}
 	}
 
-	// Naming: generator-first, else the least member coordinate in
-	// relation-declaration × field-declaration order (§3.5).
 	auto class_name = std::array<std::size_t, CoordCount>{};
 	for (auto index = std::size_t{0}; index != CoordCount; ++index) {
 		class_name[index] = no_index;
@@ -175,9 +174,6 @@ template<std::size_t CoordCount, std::size_t RelationCount, std::size_t Statemen
 		};
 	}
 
-	// Re-stating an implied key doubles it and moves the fingerprint —
-	// reject at construction, like TS (lowering.md §7.1). Also reject an
-	// exact duplicate declared key.
 	for (auto statement = std::size_t{0}; statement != StatementCount; ++statement) {
 		auto const& data = statements[statement];
 		if (data.form != statement_form::key) {
@@ -213,4 +209,4 @@ template<std::size_t CoordCount, std::size_t RelationCount, std::size_t Statemen
 	return verdict;
 }
 
-} // namespace bdb::detail
+}

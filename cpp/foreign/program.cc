@@ -1,24 +1,11 @@
-// :foreign_program — the static program-IR view builder and the
-// execute-time param marshal (TODO_CPP §13, §20–§21; lowering.md §4).
-//
-// Quarantine-zone by nature (AGENTS.md §5.3): a `bdb_program` is a graph
-// of borrowed (pointer, count) views, so building one REQUIRES interior
-// raw pointers — exactly like the owned_schema_spec lane in raii.cc.
-// Everything here presents a compile-time `query_ir` (the lowered query
-// VALUE from the :query partitions) as `static constexpr` C view arrays:
-// the bindings/atoms/conditions/finds/rules/head/predicate objects live
-// in static storage for the program's whole lifetime, and the bridge
-// copies the graph into an owned Rust `Program` inside `bdb_db_prepare`
-// before returning (bumbledb_c.h view-lifetime contract).
-//
-// Predicate layout (lowering.md §4.2): the recs in declaration order
-// (`PredId` = index), the OUTPUT predicate appended last, `output = rec
-// count`. A plain query is the degenerate no-rec program, output 0.
-//
-// A partition of MODULE bumbledb (not bumbledb_foreign), though the file
-// lives in the foreign/ quarantine: it consumes the query IR partitions,
-// and a partition of bumbledb_foreign could not import them without a
-// module cycle (bumbledb's partitions import bumbledb_foreign).
+/**
+ * The static program-IR view builder and the execute-time param marshal
+ * (lowering.md §4/§5.1). Quarantine-zone by nature — a bdb_program is a
+ * graph of borrowed (pointer, count) views — but a partition of MODULE
+ * bumbledb, not bumbledb_foreign: it consumes the query IR partitions,
+ * and a partition of bumbledb_foreign could not import them without a
+ * module cycle.
+ */
 export module bumbledb:foreign_program;
 
 import std;
@@ -29,8 +16,6 @@ import :ir;
 import bumbledb_foreign;
 
 namespace bdb::foreign {
-
-// --- the predicate walk (recs first, output last) ----------------------------
 
 [[nodiscard]] consteval auto predicate_total(query_ir const& ir) -> std::size_t {
 	return ir.rec_count + 1;
@@ -52,8 +37,11 @@ namespace bdb::foreign {
 	return pred < ir.rec_count ? ir.recs[pred].head[column] : ir.head[column];
 }
 
-// --- IR value -> C view folds (consteval; every output is data) -------------
-
+/**
+ * string/bytes are unrepresentable as query literals by construction
+ * (:ir keeps the query value structural), so the fall-through case is
+ * the i64 interval.
+ */
 [[nodiscard]] consteval auto value_of(query_literal const& literal) -> bdb_value {
 	auto out = bdb_value{};
 	switch (literal.kind) {
@@ -79,9 +67,6 @@ namespace bdb::foreign {
 	case value_kind::interval_i64:
 		break;
 	}
-	// string/bytes are unrepresentable as query literals by construction
-	// (:ir keeps the query value structural), so the
-	// remaining case is the i64 interval.
 	out.kind = bdb_value_kind::BDB_VALUE_KIND_INTERVAL_I64;
 	out.interval_i64_start = literal.i64_start;
 	out.interval_i64_end = literal.i64_end;
@@ -206,8 +191,6 @@ namespace bdb::foreign {
 	return out;
 }
 
-// --- flattened totals (across every predicate) -------------------------------
-
 [[nodiscard]] consteval auto binding_total(query_ir const& ir) -> std::size_t {
 	auto total = std::size_t{0};
 	for (auto pred = std::size_t{0}; pred != predicate_total(ir); ++pred) {
@@ -280,12 +263,12 @@ namespace bdb::foreign {
 	return total;
 }
 
-// --- the flattened static arrays (one definition per query value) -----------
-// Every array flattens in ONE canonical walk order — predicate, then rule,
-// then item — so the offset arithmetic in the assemblers below pairs each
-// view with its owner deterministically. Positive-atom bindings flatten
-// BEFORE the same rule's negated-atom bindings.
-
+/**
+ * Every flattened array below is built in ONE canonical walk order —
+ * predicate, then rule, then item, with a rule's positive-atom bindings
+ * before its negated-atom bindings — so the assemblers' offset
+ * arithmetic pairs each view with its owner deterministically.
+ */
 template<auto Query>
 [[nodiscard]] consteval auto make_bindings() -> std::array<bdb_binding, binding_total(Query.ir)> {
 	auto out = std::array<bdb_binding, binding_total(Query.ir)>{};
@@ -340,8 +323,6 @@ template<auto Query>
 				binding_offset += source.binding_count;
 				++at;
 			}
-			// The rule's negated bindings follow its positive ones in
-			// the flattened walk.
 			for (auto atom = std::size_t{0}; atom != wire.negated_count; ++atom) {
 				binding_offset += wire.negated[atom].binding_count;
 			}
@@ -505,26 +486,24 @@ template<auto Query>
 template<auto Query>
 inline constexpr auto program_predicates = make_predicates<Query>();
 
-} // namespace bdb::foreign
+}
 
 export namespace bdb::foreign {
 
-/// The whole lowered program as ONE static constant view graph: the recs
-/// in declaration order, the output predicate last (`output = rec count`
-/// — lowering.md §4.2; a plain query is the degenerate no-rec program,
-/// output 0). Every pointer in the graph aims at `static constexpr`
-/// storage, so the view outlives any `bdb_db_prepare` call by
-/// construction.
+/**
+ * The whole lowered program as ONE static constant view graph: the recs
+ * in declaration order, the output predicate last (`output = rec count`
+ * — lowering.md §4.2; a plain query is the degenerate no-rec program,
+ * output 0). Every pointer in the graph aims at `static constexpr`
+ * storage, so the view outlives any `bdb_db_prepare` call by
+ * construction.
+ */
 template<auto Query>
 inline constexpr auto program_of = bdb_program{
     .predicates = program_predicates<Query>.data(),
     .predicate_count = predicate_total(Query.ir),
     .output = static_cast<std::uint16_t>(Query.ir.rec_count),
 };
-
-// --- execute-time param marshalling (TODO_CPP §21; lowering.md §5.1) --------
-// One overload per params-product member type; the member types were
-// synthesized from the query's anchored domains, so the fold is total.
 
 [[nodiscard]] inline auto wire_param(bool value) -> bdb_param {
 	auto out = bdb_param{};
@@ -550,7 +529,9 @@ inline constexpr auto program_of = bdb_program{
 	return out;
 }
 
-/// Borrowed for the call; the bridge copies before returning.
+/**
+ * Borrowed for the call; the bridge copies before returning.
+ */
 [[nodiscard]] inline auto wire_param(std::string_view value) -> bdb_param {
 	auto out = bdb_param{};
 	out.kind = bdb_param_kind::BDB_PARAM_KIND_SCALAR;
@@ -562,7 +543,9 @@ inline constexpr auto program_of = bdb_program{
 	return out;
 }
 
-/// Borrowed for the call; the bridge copies before returning.
+/**
+ * Borrowed for the call; the bridge copies before returning.
+ */
 [[nodiscard]] inline auto wire_param(std::span<std::byte const> value) -> bdb_param {
 	auto out = bdb_param{};
 	out.kind = bdb_param_kind::BDB_PARAM_KIND_SCALAR;
@@ -592,7 +575,9 @@ inline constexpr auto program_of = bdb_program{
 	return out;
 }
 
-/// An Allen mask travels as a scalar AllenMask value (TODO_CPP §21).
+/**
+ * An Allen mask travels as a scalar AllenMask value.
+ */
 [[nodiscard]] inline auto wire_param(allen_mask value) -> bdb_param {
 	auto out = bdb_param{};
 	out.kind = bdb_param_kind::BDB_PARAM_KIND_SCALAR;
@@ -601,24 +586,23 @@ inline constexpr auto program_of = bdb_program{
 	return out;
 }
 
-/// The set-cell scratch of one execute call: every runtime ∈-set param's
-/// tagged cells live here for exactly the call's extent (the bridge
-/// copies before returning). The OUTER vector may grow (its inner buffers
-/// never move), so earlier set views stay valid.
+/**
+ * The set-cell scratch of one execute call: every runtime ∈-set param's
+ * tagged cells live here for exactly the call's extent (the bridge
+ * copies before returning). The OUTER vector may grow (its inner buffers
+ * never move), so earlier set views stay valid.
+ */
 using param_scratch = std::vector<std::vector<bdb_value>>;
 
-} // namespace bdb::foreign
+}
 
 namespace bdb::foreign {
 
-/// The scalar lane of one member (no scratch consulted).
 template<class Member>
 [[nodiscard]] auto wire_one(Member const& value, param_scratch&) -> bdb_param {
 	return wire_param(value);
 }
 
-/// The set lane of one member: the span's elements tag one by one into
-/// the scratch, and the param views the scratch cells.
 template<class Element>
 [[nodiscard]] auto wire_one(std::span<Element const> values, param_scratch& scratch) -> bdb_param {
 	auto cells = std::vector<bdb_value>{};
@@ -634,30 +618,25 @@ template<class Element>
 	return out;
 }
 
-} // namespace bdb::foreign
+}
 
 export namespace bdb::foreign {
 
-/// The whole params product marshalled POSITIONALLY: member declaration
-/// order IS the registry order (the product was synthesized from the
-/// registry), which IS the engine's positional ParamId order. Runtime
-/// ∈-set members marshal through `scratch`, which must outlive the
-/// execute call.
+/**
+ * The whole params product marshalled POSITIONALLY: member declaration
+ * order IS the registry order, which IS the engine's positional ParamId
+ * order. Runtime ∈-set members marshal through `scratch`, which must
+ * outlive the execute call.
+ */
 template<class Params>
 [[nodiscard]] auto wire_params(Params const& params, param_scratch& scratch) {
 	auto const& [... values] = params;
 	return std::array<bdb_param, sizeof...(values)>{wire_one(values, scratch)...};
 }
 
-} // namespace bdb::foreign
+}
 
 namespace bdb::foreign {
-
-// --- membership set constants (lowering.md §4.2's membership arrays) --------
-// A closed-membership array's set is a PROGRAM CONSTANT pre-resolved at
-// build; execution injects it positionally — the params product never
-// carries it (ts/src/query/run.ts:57-63). The cells live in static
-// constexpr storage, like the rest of the program view graph.
 
 [[nodiscard]] consteval auto membership_cell_total(query_ir const& ir) -> std::size_t {
 	auto total = std::size_t{0};
@@ -669,6 +648,12 @@ namespace bdb::foreign {
 	return total;
 }
 
+/**
+ * A closed-membership array's set is a PROGRAM CONSTANT pre-resolved at
+ * build; execution injects it positionally — the params product never
+ * carries it (lowering.md §4.2). The cells live in static constexpr
+ * storage, like the rest of the program view graph.
+ */
 template<auto Query>
 [[nodiscard]] consteval auto make_membership_cells() -> std::array<bdb_value, membership_cell_total(Query.ir)> {
 	auto out = std::array<bdb_value, membership_cell_total(Query.ir)>{};
@@ -690,15 +675,17 @@ template<auto Query>
 template<auto Query>
 inline constexpr auto membership_cells = make_membership_cells<Query>();
 
-} // namespace bdb::foreign
+}
 
 export namespace bdb::foreign {
 
-/// The query-directed execute marshal: the caller's params product fills
-/// the value/mask/runtime-set entries in registry order, and every
-/// MEMBERSHIP entry is injected from the query's frozen set constant
-/// (positional ParamId order — lowering.md §5.1). `scratch` owns the
-/// runtime set cells and must outlive the execute call.
+/**
+ * The query-directed execute marshal: the caller's params product fills
+ * the value/mask/runtime-set entries in registry order, and every
+ * MEMBERSHIP entry is injected from the query's frozen set constant
+ * (positional ParamId order — lowering.md §5.1). `scratch` owns the
+ * runtime set cells and must outlive the execute call.
+ */
 template<auto Query, class Params>
 [[nodiscard]] auto wire_params_for(Params const& params, param_scratch& scratch) -> std::array<bdb_param, Query.ir.param_count> {
 	auto const scalars = wire_params(params, scratch);
@@ -722,4 +709,4 @@ template<auto Query, class Params>
 	return out;
 }
 
-} // namespace bdb::foreign
+}

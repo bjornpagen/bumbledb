@@ -1,8 +1,3 @@
-// :rule — the rule chain (TODO_CPP §11): value state accumulates through
-// `.match` / `.not_match` / `.idb` / `.not_idb` / `.where`, and `.find`
-// ends the rule with its answer head. The matched facades ride the TYPE
-// (they shape the find pattern). Also the recursive-atom tags
-// (`bdb::pred<"reach">`, `bdb::bind<"c">(var)`).
 export module bumbledb:rule;
 
 import std;
@@ -17,9 +12,11 @@ import :aggregate;
 
 export namespace bdb {
 
-/// A recursive predicate's reference tag — `bdb::pred<"reach">` names the
-/// rec an `.idb`/`.not_idb` atom targets (resolution to the dense PredId
-/// happens at program assembly).
+/**
+ * A recursive predicate's reference tag: names the rec an `.idb`/
+ * `.not_idb` atom targets (resolution to the dense PredId happens at
+ * program assembly).
+ */
 template<fixed_string Name>
 struct pred_tag {
 	static constexpr name_text name = detail::to_name_text(Name.view());
@@ -28,15 +25,16 @@ struct pred_tag {
 template<fixed_string Name>
 inline constexpr auto pred = pred_tag<Name>{};
 
-/// One named binding of a recursive atom — `bdb::bind<"c">(vars.parent)`:
-/// the target head column BY NAME, the bound variable as the value.
+/**
+ * One named binding of a recursive atom: the target head column BY NAME,
+ * the bound variable as the value.
+ */
 template<fixed_string Column, class Var>
 struct idb_bind {
 	using var = Var;
 	static constexpr name_text column = detail::to_name_text(Column.view());
 };
 
-/// A named binding of a recursive atom — `bdb::bind<"c">(vars.parent)`.
 template<fixed_string Column, class Var>
 [[nodiscard]] consteval auto bind(Var) -> idb_bind<Column, Var> {
 	static_assert(detail::is_qvar_v<Var>, "bumbledb bind(): the argument must be a query variable "
@@ -44,7 +42,7 @@ template<fixed_string Column, class Var>
 	return {};
 }
 
-} // namespace bdb
+}
 
 namespace bdb::detail {
 
@@ -53,10 +51,6 @@ inline constexpr bool is_idb_bind_v = false;
 
 template<fixed_string Column, class Var>
 inline constexpr bool is_idb_bind_v<idb_bind<Column, Var>> = true;
-
-// ————————————————————————————————————————————————————————————————————
-// Recording (value tier).
-// ————————————————————————————————————————————————————————————————————
 
 template<class S, class Facade>
 consteval auto record_match(rule_state& state, match_pattern_of<S, Facade> const& pattern, bool negated) -> void {
@@ -81,8 +75,6 @@ consteval auto record_match(rule_state& state, match_pattern_of<S, Facade> const
 		};
 		++atom.binding_count;
 		if (slot.term.form == query_term_form::variable && !negated) {
-			// A negated atom binds nothing — only rejects (the safety
-			// rule); its variables must be bound by positive atoms.
 			add_bound(state, slot.term.variable);
 		}
 		if (slot.term.form == query_term_form::param) {
@@ -93,11 +85,6 @@ consteval auto record_match(rule_state& state, match_pattern_of<S, Facade> const
 			add_use(state, use);
 		}
 		if (slot.term.form == query_term_form::param_set) {
-			// A membership ARRAY entry (member_count != 0) is a synthetic
-			// pre-resolved set param (never a params-product member;
-			// execution supplies the frozen set positionally). A runtime
-			// SET param (member_count == 0) IS a params-product member —
-			// its sequence arrives at execute.
 			auto use = param_use{};
 			use.name = slot.term.param;
 			use.shape = param_shape::set;
@@ -117,9 +104,10 @@ consteval auto record_match(rule_state& state, match_pattern_of<S, Facade> const
 	++state.item_count;
 }
 
-/// Records one recursive atom (either polarity). A POSITIVE idb atom
-/// binds its variables (grounding — reach's step rule); a negated one
-/// binds nothing.
+/**
+ * Records one recursive atom (either polarity). A positive idb atom binds
+ * its variables (grounding); a negated one binds nothing.
+ */
 consteval auto record_idb(rule_state& state, idb_atom_data const& atom) -> void {
 	if (state.item_count == state.items.size()) {
 		rule_has_too_many_atoms();
@@ -154,22 +142,22 @@ consteval auto record_condition(rule_state& state, cond_value const& cond) -> vo
 	}
 }
 
-} // namespace bdb::detail
+}
 
 export namespace bdb {
 
-// ————————————————————————————————————————————————————————————————————
-// The rule chain.
-// ————————————————————————————————————————————————————————————————————
-
-/// The chain after at least one `.match`: value state accumulates; the
-/// matched facades ride the TYPE (they shape the find pattern).
+/**
+ * The chain after at least one `.match`: value state accumulates; the
+ * matched facades ride the TYPE (they shape the find pattern).
+ */
 template<class S, class... Facades>
 struct rule_chain {
 	rule_state state{};
 
-	/// Joins another relation into the rule (shared variables ARE the
-	/// join — reuse a `vars` member across patterns).
+	/**
+	 * Joins another relation into the rule (shared variables ARE the join
+	 * — reuse a `vars` member across patterns).
+	 */
 	template<class Facade>
 	[[nodiscard]] consteval auto match(Facade, match_pattern_of<S, Facade> const& pattern) const -> rule_chain<S, Facades..., Facade> {
 		static_assert(detail::is_query_member<Facade>(), "bumbledb match(): the first argument must be a relation "
@@ -180,11 +168,13 @@ struct rule_chain {
 		return next;
 	}
 
-	/// One NEGATED EDB atom (the anti-join — `ir::Rule::negated`): the
-	/// rule keeps every binding NO matching fact extends. A negated atom
-	/// binds nothing — its variables must be bound by positive atoms (the
-	/// safety rule; judged at rule assembly). The matched facade does NOT
-	/// join the find pattern (nothing of it is bound).
+	/**
+	 * One negated EDB atom (the anti-join — `ir::Rule::negated`): the rule
+	 * keeps every binding NO matching fact extends. A negated atom binds
+	 * nothing — its variables must be bound by positive atoms (the safety
+	 * rule; judged at rule assembly). The matched facade does NOT join the
+	 * find pattern.
+	 */
 	template<class Facade>
 	[[nodiscard]] consteval auto not_match(Facade, match_pattern_of<S, Facade> const& pattern) const -> rule_chain {
 		static_assert(detail::is_query_member<Facade>(), "bumbledb not_match(): the first argument must be a relation "
@@ -195,28 +185,29 @@ struct rule_chain {
 		return next;
 	}
 
-	/// One POSITIVE recursive atom — `.idb(bdb::pred<"reach">,
-	/// bdb::bind<"c">(vars.parent))`: grounds this rule against the
-	/// named predicate's set; binds its variables. Inside a rec's own
-	/// rules only the rec itself may be named (the self-recursion cut);
-	/// output rules join any FINISHED stratum. Every head column of the
-	/// target must be bound exactly once (judged at program assembly).
+	/**
+	 * One positive recursive atom: grounds this rule against the named
+	 * predicate's set and binds its variables. Inside a rec's own rules
+	 * only the rec itself may be named; output rules join any finished
+	 * stratum. Every head column of the target must be bound exactly once
+	 * (judged at program assembly).
+	 */
 	template<fixed_string Name, class... Binds>
 	[[nodiscard]] consteval auto idb(pred_tag<Name>, Binds... binds) const -> rule_chain {
 		return with_idb<Name, false>(binds...);
 	}
 
-	/// The NEGATED finished-stratum atom — `.not_idb(bdb::pred<"seeded">,
-	/// bdb::bind<"c">(vars.id))`: rejects every binding the finished
-	/// stratum extends (output rules only; a recursive rule negates no
-	/// stratum — monotonicity). Binds nothing.
+	/**
+	 * The negated finished-stratum atom: rejects every binding the
+	 * finished stratum extends (output rules only — a recursive rule
+	 * negates no stratum). Binds nothing.
+	 */
 	template<fixed_string Name, class... Binds>
 	[[nodiscard]] consteval auto not_idb(pred_tag<Name>, Binds... binds) const -> rule_chain {
 		return with_idb<Name, true>(binds...);
 	}
 
-	/// Conjoins conditions (each a predicate value — bdb::point_in,
-	/// bdb::allen, bdb::eq/ne/lt/le/gt/ge).
+	/** Conjoins conditions (each a predicate value). */
 	template<class... Conds>
 	[[nodiscard]] consteval auto where(Conds const&... conds) const -> rule_chain {
 		static_assert((std::same_as<std::remove_cvref_t<Conds>, cond_value> && ...),
@@ -227,14 +218,13 @@ struct rule_chain {
 		return next;
 	}
 
-	/// Ends the rule with its answer head: a designated-init pattern over
-	/// the matched relations' coordinates (bound variables only), plus
-	/// optional trailing columns in written order — named variable
-	/// columns (`bdb::as<"c">(vars.id)`) and named aggregates
-	/// (`bdb::sum<"downtime">(r.duration(vars.window))`,
-	/// `bdb::sum<"total">(vars.minor)`, `bdb::count<"n">()`,
-	/// `bdb::pack<"free">(vars.span)`, ...). Head order = pattern
-	/// coordinate order, then the trailing columns in written order.
+	/**
+	 * Ends the rule with its answer head: a designated-init pattern over
+	 * the matched relations' coordinates (bound variables only), plus
+	 * optional trailing columns — named variable columns and named
+	 * aggregates. Head order = pattern coordinate order, then the trailing
+	 * columns in written order.
+	 */
 	template<class... Extras>
 	[[nodiscard]] consteval auto find(find_pattern_of<S, Facades...> const& head, Extras const&... extras) const -> rule_data {
 		auto out = rule_data{.state = state, .find_count = 0, .finds = {}};
@@ -327,4 +317,4 @@ private:
 	}
 };
 
-} // namespace bdb
+}

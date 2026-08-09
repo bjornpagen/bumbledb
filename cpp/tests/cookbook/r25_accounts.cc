@@ -1,21 +1,3 @@
-// Cookbook recipe 25 — The chart of accounts (ts/COOKBOOK.md §25): the
-// ledger workload's real recursion case, in the same two dialects. The
-// HOST composition is recipe 24's loop (one prepared ∈-set query
-// accumulates the subtree), then ONE checked `sum` query over the
-// accumulated set folds the postings — the engine aggregates, the host
-// composes (aggregates never nest). The ENGINE-NATIVE form is one
-// program: aggregation *through* a cycle is refused, but a fold over a
-// recursive predicate from a HIGHER stratum reads a finished set and is
-// ordinary.
-//
-// Gates: the engine fingerprint equals the shared golden (fixtures line
-// "r25 <64-hex>"); frontierStep / subtreeRollup / nativeRollup all
-// prepare through the real engine validator; and the host composition
-// and the native program answer the SAME rollup, subtree for subtree
-// (equal postings to one account both count — the fresh id is bound,
-// recipe 19's discipline spent again).
-//
-// argv[1] = the fixtures file path (passed by add_test).
 import std;
 import bumbledb;
 
@@ -44,12 +26,9 @@ inline constexpr auto Posting = bdb::relation<"Posting", PostingRow>;
 inline constexpr auto Accounts = bdb::schema<"Accounts">(
     Account, AccountParent, Posting,
 
-    // One parent per account.
     bdb::key(AccountParent.child), bdb::contained(bdb::on(AccountParent.child), bdb::on(Account.id)),
     bdb::contained(bdb::on(AccountParent.parent), bdb::on(Account.id)), bdb::contained(bdb::on(Posting.account), bdb::on(Account.id)));
 
-// The host composition's two queries (recipe 24's loop runs between
-// them): the frontier step, verbatim —
 inline constexpr auto FrontierStep = bdb::query(Accounts).rule([](auto r) consteval {
 	auto vars = r.vars(AccountParent);
 	return r
@@ -61,8 +40,6 @@ inline constexpr auto FrontierStep = bdb::query(Accounts).rule([](auto r) conste
 	    .find({}, bdb::as<"c">(vars.child));
 });
 
-// — and the rollup over the accumulated subtree (bind the fresh id:
-// equal postings to one account both count).
 inline constexpr auto SubtreeRollup = bdb::query(Accounts).rule([](auto r) consteval {
 	auto vars = r.vars(Posting);
 	return r
@@ -75,8 +52,6 @@ inline constexpr auto SubtreeRollup = bdb::query(Accounts).rule([](auto r) const
 	    .find({}, bdb::sum<"total">(vars.minor));
 });
 
-// The engine-native form: the closure stratum converges first, then the
-// output's fold runs once over the finished subtree.
 inline constexpr auto NativeRollup = bdb::program(
     Accounts,
     bdb::rec<"sub">(
@@ -110,8 +85,6 @@ struct CaseResult {
 	bool passed;
 };
 
-/// The golden of one recipe: the fixtures file is one `rNN <64-hex>` line
-/// per recipe (ts/test/cookbook.test.ts reads the same file).
 [[nodiscard]] auto golden_of(std::string_view fixtures, std::string_view recipe) -> std::optional<std::string> {
 	for (auto const line_range : std::views::split(fixtures, '\n')) {
 		auto const line = std::string_view{line_range};
@@ -176,9 +149,6 @@ struct SeedIds {
 	std::uint64_t fe;
 };
 
-/// The chart: root → {ops, eng}, eng → {fe}. Postings: root 5, ops 10,
-/// eng 20 TWICE (equal postings to one account — the bound fresh id
-/// makes both count), fe 30.
 [[nodiscard]] auto seed(bdb::Db& db) -> std::optional<SeedIds> {
 	using Decision = bdb::WriteDecision<SeedIds, std::monostate>;
 	using Result = std::expected<Decision, bdb::Error>;
@@ -240,9 +210,6 @@ struct SeedIds {
 	return std::get<bdb::Committed<SeedIds>>(*written).value;
 }
 
-/// The host composition: recipe 24's loop accumulates the subtree's
-/// ∈-set, then one `sum` query over the accumulated set folds the
-/// postings (the engine aggregates, the host composes).
 template<auto Step, auto Rollup>
 [[nodiscard]] auto host_rollup(bdb::Db& db, bdb::Prepared<Step>& step, bdb::Prepared<Rollup>& rollup, std::uint64_t root) -> std::optional<std::int64_t> {
 	auto subtree = std::vector<std::uint64_t>{root};
@@ -318,8 +285,6 @@ auto run_cases(std::string_view fixtures_path, std::vector<CaseResult>& results)
 		return;
 	}
 
-	// The two dialects agree, subtree for subtree — from the whole tree
-	// (5 + 10 + 20 + 20 + 30) and from eng's subtree (20 + 20 + 30).
 	auto const from_root = host_rollup<FrontierStep, SubtreeRollup>(*db, *step, *rollup, ids->root);
 	auto native_root = db->execute(*native, {.root = ids->root});
 	results.push_back(CaseResult{
@@ -342,7 +307,7 @@ auto run_cases(std::string_view fixtures_path, std::vector<CaseResult>& results)
 	std::filesystem::remove_all(*dir, code);
 }
 
-} // namespace
+}
 
 auto main(int argc, char** argv) -> int {
 	auto const arguments = std::span{argv, static_cast<std::size_t>(argc)};

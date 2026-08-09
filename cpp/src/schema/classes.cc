@@ -1,6 +1,3 @@
-// :classes — reading facades and statements into the flattened tables,
-// the class-law analysis driver over them, and the §34 diagnostics that
-// name semantic coordinates (TODO_CPP §9–§10, §34; lowering.md §2–§3).
 export module bumbledb:classes;
 
 import std;
@@ -19,19 +16,19 @@ namespace bdb::detail {
 template<class T>
 inline constexpr bool is_statement_v = is_key_v<T> || is_containment_v<T> || is_capacity_v<T>;
 
-// The :interval diagnostic convention (see :capacity's hook block).
+/**
+ * The :interval diagnostic convention (see :capacity's hook block).
+ */
 auto relation_exceeds_max_relation_fields() -> void;
 
-// ————————————————————————————————————————————————————————————————————
-// Reading facades and statements into the flattened tables.
-// ————————————————————————————————————————————————————————————————————
-
-/// One facade's flattened relation entry, read off its coordinate-shaped
-/// members. Ordinary facades contribute every member; a CLOSED facade's
-/// columns are its sealed roster — the synthetic `id` (a `closed_id`,
-/// index 0) plus the payload coordinates — while its handle constants,
-/// axiom readback, and wire carrier are filtered out. The closed axioms
-/// themselves are VALUE data; schema() copies them off the facade value.
+/**
+ * One facade's flattened relation entry, read off its coordinate-shaped
+ * members. Ordinary facades contribute every member; a CLOSED facade's
+ * columns are its sealed roster — the synthetic `id` (a `closed_id`,
+ * index 0) plus the payload coordinates — while its handle constants,
+ * axiom readback, and wire carrier are filtered out. The closed axioms
+ * themselves are VALUE data; schema() copies them off the facade value.
+ */
 template<class Facade>
 [[nodiscard]] consteval auto relation_entry() -> relation_data {
 	constexpr auto members = std::define_static_array(std::meta::nonstatic_data_members_of(^^Facade, std::meta::access_context::current()));
@@ -103,7 +100,6 @@ template<class... Args>
 	return out;
 }
 
-/// One face type flattened to side data.
 template<class Face>
 [[nodiscard]] consteval auto side_of() -> side_data {
 	auto out = side_data{};
@@ -115,8 +111,10 @@ template<class Face>
 	return out;
 }
 
-/// One statement type flattened (the capacity window's numeric payload is
-/// value-borne and filled by schema() from the argument value).
+/**
+ * One statement type flattened (the capacity window's numeric payload is
+ * value-borne and filled by schema() from the argument value).
+ */
 template<class Statement>
 [[nodiscard]] consteval auto statement_shape() -> statement_data {
 	auto out = statement_data{};
@@ -162,15 +160,14 @@ template<class... Args>
 	return analyze<coord_count<Args...>()>(relation_table<Args...>(), statement_shapes<Args...>());
 }
 
-// ————————————————————————————————————————————————————————————————————
-// Diagnostics (§34: semantic coordinates, never template internals).
-// ————————————————————————————————————————————————————————————————————
-
 [[nodiscard]] consteval auto schema_subject(std::string_view name) -> std::string {
 	return std::string{"bumbledb schema \""} + std::string{name} + "\"";
 }
 
-/// Renders one flattened statement for the wall diagnostic.
+/**
+ * Renders one flattened statement for the §34 wall diagnostics —
+ * semantic coordinates, never template internals.
+ */
 [[nodiscard]] consteval auto render_statement(statement_data const& data) -> std::string {
 	auto const render_side = [](side_data const& side) -> std::string {
 		auto out = std::string{"on("};
@@ -238,7 +235,9 @@ template<class... Args>
 	       " duplicates an earlier declared key";
 }
 
-/// Whether relations precede statements (the pinned argument shape).
+/**
+ * Whether relations precede statements (the pinned argument shape).
+ */
 template<class... Args>
 [[nodiscard]] consteval auto relations_lead() -> bool {
 	auto seen_statement = false;
@@ -274,4 +273,4 @@ template<class... Args>
 	return true;
 }
 
-} // namespace bdb::detail
+}

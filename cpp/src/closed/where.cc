@@ -1,7 +1,3 @@
-// :where — the ψ/σ selection (lowering.md §2's σ-selected faces; TS
-// Relation.where / Kind.where). The selection is resolved EAGERLY at
-// where() and lowered AS-IS — never pre-folded into an id set (the ENGINE
-// folds against the sealed extension at validate).
 export module bumbledb:where;
 
 import std;
@@ -14,16 +10,20 @@ import :schema_member;
 
 namespace bdb::detail {
 
-// The :interval diagnostic convention: reaching a call to one of these
-// never-defined, non-constexpr functions during constant evaluation is
-// the compile error, and the name is the message.
+/**
+ * The :interval diagnostic convention: reaching a call to one of these
+ * never-defined, non-constexpr functions during constant evaluation is
+ * the compile error, and the name is the message.
+ */
 auto face_has_too_many_selection_bindings() -> void;
 auto where_selection_binds_nothing() -> void;
 
-/// One where-pattern slot: the default state binds nothing; a literal or
-/// a handle constant binds the field. The closed-reference roster wall
-/// (§34: a foreign handle is rejected NAMING both vocabularies) runs on
-/// the handle constructor.
+/**
+ * One where-pattern slot: the default state binds nothing; a literal or
+ * a handle constant binds the field. The closed-reference roster wall
+ * (§34: a foreign handle is rejected NAMING both vocabularies) runs on
+ * the handle constructor.
+ */
 template<class T, name_text Relation, name_text Field, field_class Class>
 struct where_slot {
 	static constexpr name_text field_name = Field;
@@ -33,7 +33,9 @@ struct where_slot {
 
 	where_slot() = default;
 
-	/// A scalar value literal, field-typed (`{.mastered = true}`).
+	/**
+	 * A scalar value literal, field-typed (`{.mastered = true}`).
+	 */
 	consteval where_slot(T value)
 	    requires(!is_closed_ref_v<T> &&
 	             (Class.kind == value_kind::boolean || Class.kind == value_kind::u64 || Class.kind == value_kind::i64))
@@ -48,9 +50,11 @@ struct where_slot {
 		}
 	}
 
-	/// A handle at a closed-reference field (`{.kind =
-	/// Kind.Deterministic}`) — crosses BY NAME; the ENGINE resolves
-	/// schema-lane handle literals (lowering.md §7.8).
+	/**
+	 * A handle at a closed-reference field (`{.kind =
+	 * Kind.Deterministic}`) — crosses BY NAME; the ENGINE resolves
+	 * schema-lane handle literals (lowering.md §7.8).
+	 */
 	template<name_text HandleRoster, name_text Handle, std::uint64_t Index>
 	consteval where_slot(handle_value<HandleRoster, Handle, Index>)
 	    requires is_closed_ref_v<T>
@@ -61,11 +65,13 @@ struct where_slot {
 	}
 };
 
-/// The where-pattern product of one facade: one slot per SELECTABLE
-/// column — every reflected coordinate of an ordinary facade; a closed
-/// facade's declared payload columns only (its synthetic id is
-/// deliberately unspellable here — an id selection is spelled as handle
-/// literals on the REFERENCING side, the canonical utterance).
+/**
+ * The where-pattern product of one facade: one slot per SELECTABLE
+ * column — every reflected coordinate of an ordinary facade; a closed
+ * facade's declared payload columns only (its synthetic id is
+ * deliberately unspellable here — an id selection is spelled as handle
+ * literals on the REFERENCING side, the canonical utterance).
+ */
 template<class Facade>
 struct where_pattern_types {
 	struct Pattern;
@@ -86,8 +92,10 @@ struct where_pattern_types {
 	}
 };
 
-/// The facade's relation name (both member kinds: the first
-/// coordinate-shaped member carries it).
+/**
+ * The facade's relation name (both member kinds: the first
+ * coordinate-shaped member carries it).
+ */
 template<class Facade>
 [[nodiscard]] consteval auto member_relation_of() -> name_text {
 	constexpr auto members = std::define_static_array(std::meta::nonstatic_data_members_of(^^Facade, std::meta::access_context::current()));
@@ -102,27 +110,35 @@ template<class Facade, class First>
 	       "\" — a selected face projects its own relation's columns";
 }
 
-} // namespace bdb::detail
+}
 
 export namespace bdb {
 
-/// The designated-init selection pattern of one facade.
+/**
+ * The designated-init selection pattern of one facade.
+ */
 template<class Facade>
 using where_pattern_of = typename detail::where_pattern_types<Facade>::Pattern;
 
-/// A ψ/σ-selected face source (`bdb::where(Task, {.kind =
-/// Kind.Deterministic})`): the resolved bindings, carried by VALUE into
-/// `bdb::on(selected, coords...)`.
+/**
+ * A ψ/σ-selected face source (`bdb::where(Task, {.kind =
+ * Kind.Deterministic})`): the resolved bindings, carried by VALUE into
+ * `bdb::on(selected, coords...)`.
+ */
 template<class Facade>
 struct selected {
 	std::size_t selection_count{};
 	std::array<selection_data, max_face_selections> selections{};
 };
 
-/// Applies a σ/ψ selection to a relation for use as a statement face:
-/// `bdb::on(bdb::where(Task, {.kind = Kind.Deterministic}), Task.id)`.
-/// Selections change PAIRING not at all (lowering.md §3.3) — they cross
-/// as the face's σ bindings, read conjunctively.
+/**
+ * Applies a σ/ψ selection to a relation for use as a statement face:
+ * `bdb::on(bdb::where(Task, {.kind = Kind.Deterministic}), Task.id)`.
+ * Selections change PAIRING not at all (lowering.md §3.3) — they cross
+ * as the face's σ bindings, read conjunctively, resolved eagerly here
+ * and lowered AS-IS, never pre-folded into an id set (the ENGINE folds
+ * against the sealed extension at validate).
+ */
 template<class Facade>
 [[nodiscard]] consteval auto where(Facade, where_pattern_of<Facade> const& pattern) -> selected<Facade> {
 	static_assert(detail::is_member<Facade>(), "bumbledb where(): the first argument must be a relation facade "
@@ -152,4 +168,4 @@ template<class Facade>
 	return out;
 }
 
-} // namespace bdb
+}

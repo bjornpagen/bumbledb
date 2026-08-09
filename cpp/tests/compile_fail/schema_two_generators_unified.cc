@@ -1,7 +1,3 @@
-// §34 / lowering.md §3.4 — the one-generator wall: a containment that
-// unifies two fresh generators into one class is a schema-construction
-// compile error naming BOTH generator coordinates and the statement (two
-// mints cannot share a carrier).
 import std;
 import bumbledb;
 

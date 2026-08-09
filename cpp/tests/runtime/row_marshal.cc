@@ -1,9 +1,3 @@
-// Row marshalling (TODO_CPP §24): an OutageRow lowers to [U64,
-// IntervalI64] with the exact payloads, in declaration order; string and
-// bytes cells are borrowed views into the row (valid for the call). This
-// test consumes the ABI value STRUCTS through bdb::foreign — never
-// handles or functions. GCC-only: imports reflective modules, excluded
-// from the lint graph.
 import std;
 import bumbledb;
 import bumbledb_foreign;
@@ -85,7 +79,7 @@ struct CaseResult {
 	};
 }
 
-} // namespace
+}
 
 auto main() -> int {
 	auto const results = std::array{

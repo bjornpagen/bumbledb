@@ -1,22 +1,6 @@
-// Cookbook recipe 29 — The zone ledger (ts/COOKBOOK.md §29): recipe 9's
-// sidecar composed with recipe 2's discriminated union at INTERVAL
-// positions. The kind-discriminated Zone witness owns cross-sidecar
-// disjointness through one pointwise key, each sidecar's point support
-// equals its kind's zone support (the per-kind ψ-selected mirrors, mixed
-// widths in one element domain), and the arm widths are enforced BY TYPE:
-// a `bdb::interval<std::uint64_t, 1>` value is width 1 or does not exist
-// — no runtime width check, nothing to enforce at commit.
-//
-// Gates: the engine fingerprint equals the shared golden (fixtures line
-// "r29 <64-hex>"); the width family is unconstructible at the wrong
-// width; the coalescing-insensitivity write commits; an uncovered slot is
-// commit-rejected; Db::scan reads the sidecar back typed.
-//
-// argv[1] = the fixtures file path (passed by add_test).
 import std;
 import bumbledb;
 
-// The kind vocabulary: unit zones and pair zones.
 inline constexpr auto Kind = bdb::closed<"Kind", "Unit", "Pair">();
 
 struct LedgerRow {
@@ -25,14 +9,12 @@ struct LedgerRow {
 	std::string name;
 };
 
-// The witness: every zone of the ledger, kind-discriminated.
 struct ZoneRow {
 	std::uint64_t ledger;
 	bdb::ref_to<Kind.id> kind;
 	bdb::interval<std::uint64_t> at;
 };
 
-// The sidecars: the width is part of the TYPE (interval(u64, 1n) / 2n).
 struct UnitSlotRow {
 	std::uint64_t ledger;
 	bdb::interval<std::uint64_t, 1> at;
@@ -55,16 +37,11 @@ inline constexpr auto ZoneLedger = bdb::schema<"ZoneLedger">(
 
     bdb::contained(bdb::on(Zone.ledger), bdb::on(Ledger.id)), bdb::contained(bdb::on(Zone.kind), bdb::on(Kind.id)),
 
-    // All zones disjoint, whatever the kind.
     bdb::key(Zone.ledger, Zone.at), bdb::key(UnitSlot.ledger, UnitSlot.at), bdb::key(PairSlot.ledger, PairSlot.at),
 
-    // Each kind's zones carry exactly its sidecar's points — mixed
-    // widths, one element domain:
     bdb::mirrors(bdb::on(bdb::where(Zone, {.kind = Kind.Unit}), Zone.ledger, Zone.at), bdb::on(UnitSlot.ledger, UnitSlot.at)),
     bdb::mirrors(bdb::on(bdb::where(Zone, {.kind = Kind.Pair}), Zone.ledger, Zone.at), bdb::on(PairSlot.ledger, PairSlot.at)));
 
-// The width family is enforced by TYPE — a wrong-width value is a typed
-// construction failure, before any engine involvement.
 static_assert(bdb::interval<std::uint64_t, 1>::make(4, 5).has_value());
 static_assert(!bdb::interval<std::uint64_t, 1>::make(4, 6).has_value());
 static_assert(bdb::interval<std::uint64_t, 1>::make(4, 6).error() == bdb::TypeError::IntervalWidth);
@@ -77,8 +54,6 @@ struct CaseResult {
 	bool passed;
 };
 
-/// The golden of one recipe: the fixtures file is one `rNN <64-hex>` line
-/// per recipe (ts/test/cookbook.test.ts reads the same file).
 [[nodiscard]] auto golden_of(std::string_view fixtures, std::string_view recipe) -> std::optional<std::string> {
 	for (auto const line_range : std::views::split(fixtures, '\n')) {
 		auto const line = std::string_view{line_range};
@@ -136,10 +111,6 @@ struct CaseResult {
 	return dir;
 }
 
-/// Seeds the ledger and the coalescing-insensitivity witness: ONE
-/// Unit-kind zone [4,6) beside TWO unit slots [4,5), [5,6) — the mirrors
-/// compare point supports, not rows, so this commits (the recipe's
-/// honesty note).
 [[nodiscard]] auto seed(bdb::Db& db) -> std::optional<std::uint64_t> {
 	using Decision = bdb::WriteDecision<std::uint64_t, std::monostate>;
 	using Result = std::expected<Decision, bdb::Error>;
@@ -216,8 +187,6 @@ auto run_cases(std::string_view fixtures_path, std::vector<CaseResult>& results)
 		return;
 	}
 
-	// An uncovered slot: no Unit-kind zone carries [20,21), so the unit
-	// mirrors reject the commit.
 	auto uncovered = db->write([&](bdb::WriteTx& tx) -> std::expected<bdb::WriteDecision<std::monostate, std::monostate>, bdb::Error> {
 		auto landed =
 		    tx.insert(UnitSlot, UnitSlotRow{.ledger = *ledger, .at = bdb::interval<std::uint64_t, 1>::literal(20, 21), .entry = 11});
@@ -232,8 +201,6 @@ auto run_cases(std::string_view fixtures_path, std::vector<CaseResult>& results)
 	        !uncovered.has_value() && uncovered.error().kind() == bdb::ErrorKind::CommitRejected && !uncovered.error().violations().empty(),
 	});
 
-	// Db::scan (the one-call convenience): the sidecar reads back and the
-	// fixed-width cells decode as plain u64 intervals.
 	auto scanned = db->scan(UnitSlot);
 	auto slots = std::vector<bdb::interval<std::uint64_t>>{};
 	if (scanned.has_value()) {
@@ -255,7 +222,7 @@ auto run_cases(std::string_view fixtures_path, std::vector<CaseResult>& results)
 	std::filesystem::remove_all(*dir, code);
 }
 
-} // namespace
+}
 
 auto main(int argc, char** argv) -> int {
 	auto const arguments = std::span{argv, static_cast<std::size_t>(argc)};

@@ -932,6 +932,24 @@ restricted to `unsafe/` concurrency primitives.
 
 No lock may survive an async suspension boundary.
 
+### Time and deadlines
+
+Waiting is spelled with absolute deadlines, never relative timeouts.
+
+- Any API that waits, expires, or retries with backoff takes and stores a
+  `std::chrono::steady_clock::time_point` — a deadline — not a duration.
+- Only the `*_until` spelling of a waiting primitive is dialect; the
+  `*_for` family is forbidden. A relative timeout drifts: a wait that is
+  interrupted and re-armed with its original duration extends the real
+  deadline by the time already waited, invisibly, until a signal or
+  spurious wakeup lands in production. A deadline cannot drift — the
+  remaining time is recomputed (`deadline - now()`) at the last moment
+  before each syscall, and re-arming is idempotent.
+- Durations exist only at the edge where a deadline is minted:
+  configuration may say "5 seconds"; the code that reads it converts
+  once, immediately, and only the deadline travels.
+- Deadlines use `steady_clock`, never `system_clock`: wall clocks jump.
+
 ---
 
 ## 16. Functional core
@@ -1242,6 +1260,118 @@ Enforcement is the compiler rung: `[[nodiscard]]` + `-Werror` fails the
 build in every preset. The lint graph supplements with
 `bugprone-unused-return-value` over `expected`/`optional` return types.
 
+### Errors are decision surfaces
+
+An error type exists so the caller can branch. Design it around the
+caller's actual decision — and for a long-running program the universal
+decision is retryability. Every exported error type answers it:
+
+```cpp
+[[nodiscard]] auto is_transient() const -> bool;
+```
+
+`is_transient()` answers exactly one question: *could the same operation,
+retried later with nothing changed by the caller, plausibly succeed?*
+Contention, peer disconnects, and resource pressure are transient;
+protocol violations, structural misuse, corruption, and configuration
+errors are permanent. When unsure, classify permanent: a caller that
+gives up too early produces a bug report; a caller that retries a
+permanent failure forever produces an outage.
+
+Classification is exhaustive and compile-enforced where the
+representation allows: a `switch` over the error enum with no `default`
+(under `-Werror`, `-Wswitch`) means a new variant fails the build until
+someone classifies it. For errno-carrying errors, unknown values are
+permanent. The policy — which kind sits on which side, and why — is
+pinned by a classification test and documented with the error type's
+reference documentation, not narrated in the implementation.
+
+Messages are rendering, never input: deciding behavior by matching an
+error's text is forbidden. If callers need to distinguish two failures,
+they are two kinds (or one kind with a typed payload), not two strings.
+
+### Failure is transparent
+
+A function that fails returns only the failure. On the `unexpected` path
+(or a sender's `set_error` completion) every caller-visible output —
+out-buffers, referenced targets, partially built state — is exactly as
+the caller left it, unless the surface's documentation says otherwise in
+so many words. `write_response` is canonical: the full size is computed
+first, so a short buffer fails before a single byte lands.
+
+The mirror rule for narrow-ABI error out-parameters (`err_stage`,
+`err_code`): written on the failure path only; untouched on success.
+
+### The code is the document
+
+Prose is a last resort. The representable is represented:
+
+- a capability or requirement -> a concept,
+- a precondition, postcondition, or invariant -> `pre` / `post` /
+  `contract_assert`,
+- a compile-time law -> `static_assert` (with its message as the
+  explanation),
+- a valid-values story -> a type: an enum, a checked constructor, a
+  distinct unit type,
+- behavior -> a test that pins it,
+- a name that would need explaining -> a better name.
+
+A documentation block states only what is genuinely unrepresentable in
+code: units and coordinate conventions, error meanings and the caller
+decisions they drive, lifetime rules the type system cannot see, ABI and
+protocol facts, the "when not to use this." If a concept, contract, type,
+or test can carry the fact, prose may not.
+
+Exactly three comment forms exist:
+
+1. **The documentation block**, immediately above a declaration:
+
+   ```cpp
+   /**
+    * Sum numbers in a vector.
+    *
+    * This sum is the arithmetic sum, not some other kind of sum that
+    * only mathematicians have heard of.
+    *
+    * @param values Container whose values are summed.
+    * @return sum of `values`, or 0.0 if `values` is empty.
+    */
+   ```
+
+   Thin by law: say what the signature cannot, then stop. A block (or a
+   `@param` line) that restates the signature is a violation. Exported
+   declarations carry a block when they hold an unrepresentable fact;
+   internal declarations almost never do. Multi-paragraph treatises
+   belong in `docs/` — the block summarizes and points.
+
+2. **`/* PIN(name): one line */`** at a pinned-workaround site — the
+   license for code that is deliberately wrong by dialect law because
+   the pinned toolchain requires it. Every PIN is backed by a PINS.md
+   registry entry (symptom, affected sites, tombstone condition,
+   upstream link); the essay lives there, once. The PIN's job is to stop
+   the fix-the-violation reflex at the exact line — human or model.
+
+3. **`/* SAFETY: one line */`** in `unsafe/` and `foreign/` only — the
+   justification at each site whose soundness the type system cannot
+   see (aliasing, lifetime across an ABI, thread-crossing).
+
+`//` does not exist in this codebase. No file-header essays, no section
+banners, no in-function narration, no `} // namespace` closers, no TODO
+markers. Rationale lives in PINS.md, `docs/`, and commit messages;
+contracts live at the interface in documentation blocks; everything else
+lives in the code itself.
+
+Why: prose in source is paid by every reader on every read — human or
+model — whether it is needed or not, and it inflates the context required
+to reason about the code; prose in docs is paid on demand. And prose
+asserts nothing: comments rot silently, while names, concepts, contracts,
+and tests break loudly.
+
+Enforcement is review (§34): a comment that is not one of the three forms
+is rejected on sight — that is what the fixed spellings are for. There is
+no machine checker, by the same decision that bans repository grep
+checks.
+
 ---
 
 ## 27. Boolean parameters and state flags
@@ -1299,6 +1429,41 @@ Zero-allocation is a property to design and measure in hot paths, not a reason
 to replace safe containers with pointer arithmetic.
 
 No hidden shared reference counting.
+
+### Steady state
+
+A long-running serving loop has two phases, and allocation belongs to the
+first one.
+
+- **Setup** (startup, configuration, schema load): standard containers,
+  freely. This phase may fail; failing here is cheap and honest.
+- **Steady state** (the request loop): the discipline is reuse and
+  bounds, not abstinence. Buffers are acquired once and reused — clearing
+  is not freeing. Per-request dynamic needs come from per-worker
+  arena-style storage reset between requests. Ad-hoc churn against the
+  global allocator inside the hot loop is a design smell that needs a
+  stated reason.
+
+**Unbounded growth in the serving path is a bug.** Under memory
+overcommit, graceful allocation-failure handling is fiction — the failure
+arrives as a kill signal, not as anything the program can observe (§11:
+allocation failure under `-fno-exceptions` is termination). What actually
+protects a daemon is a flat footprint: a process whose steady-state
+memory is a constant fixed at startup cannot leak, cannot fragment its
+way upward, and cannot bloat into the OOM killer's threshold.
+
+Every wire-facing quantity has a named maximum (`max_request_bytes`,
+`max_header_count`) and buffers are sized from those constants. The bound
+is a security property — an unbounded untrusted input is a
+denial-of-service vector — independent of allocation policy. Where a
+compile-time bound exists, format into the caller's buffer
+(`std::format_to_n`, or size-then-write as `write_response` does);
+returning an owning string from a bounded hot path is churn.
+
+Zero allocation at steady state is not a law; bounded allocation is.
+Measure with allocation counts (§30) when a hot path warrants it. An
+arena primitive is added when the first real consumer appears, not
+before.
 
 ---
 
@@ -1404,15 +1569,25 @@ The rules in this document are enforced by a ladder, strongest layer first:
 3. **clang-tidy AST checks** enforce the semantic bans over the Clang-readable
    graph.
 4. Everything visible only in raw source text — preprocessor directives, lint
-   suppressions, header-like file extensions — is a **review convention**,
-   deliberately **not** machine-enforced. There is no repository grep/regex
-   checker, by decision.
+   suppressions, comments, header-like file extensions — is a **review
+   convention**, deliberately **not** machine-enforced. There is no repository
+   grep/regex checker, by decision.
 
 Accepted gap: a named module with reflection partitions is GCC-only as a unit
 and escapes the AST checks until the pinned Clang parses the project's
 reflection syntax; the lint graph covers the Clang-parseable remainder —
 `foreign/`, `unsafe/`, and any non-importing translation units. There,
 enforcement is compiler flags plus review.
+
+The ladder has a direction. Every rule aspires upward: a review
+convention is a rule still waiting for its mechanism, tolerated only
+while no concept, contract, type, name, build rule, or check can carry
+it. When one can, it must — and the prose version is deleted the same
+day. Evaluate every proposed practice by the highest rung it can ever
+occupy; a practice that can only ever be a convention needs a reason to
+exist at all. This is also the adoption filter for outside wisdom: take
+the rule only if this toolchain can hold it better than its author
+could.
 
 ---
 
@@ -1467,6 +1642,15 @@ Before accepting code, ask in order:
 13. Is this low-level operation actually confined to `unsafe/foreign`?
 14. Does this introduce a second mechanism for something already solved?
 15. Is the new abstraction visible in optimized code when it should disappear?
+16. Is every representable fact represented — concept, contract,
+    static_assert, type, test, name — and every remaining comment one of
+    the three forms, carrying only what code cannot (§26)?
+17. Is every wait an absolute deadline — `steady_clock::time_point`,
+    `*_until` (§15)?
+18. Does every exported error type classify retryability
+    (`is_transient()`), exhaustively (§26)?
+19. Is the serving path's footprint bounded — buffers reused, wire
+    quantities capped by named maxima (§29)?
 
 If a proposed design uses an older mechanism while a blessed mechanism can
 express the same thing, reject it.

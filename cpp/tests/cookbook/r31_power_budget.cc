@@ -1,19 +1,3 @@
-// Cookbook recipe 31 — The power budget (ts/COOKBOOK.md §31): the
-// weighted capacity law with the pinned-column idiom. The two-column
-// containment IS the join stated as a law (a device's watts provably
-// equals its model's at every commit), and Σ watts over a pool's devices
-// stays within the pool's own supply — `capacity(target, weigh(field),
-// within(0, ref(field)), source)`, the operator read order.
-//
-// Gates: the engine fingerprint equals the shared golden (fixtures line
-// "r31 <64-hex>"); utilization is a QUERY, never a column — `draw` folds
-// `sum` over a plain scalar variable (the recipe's own spelling), with
-// count / max / arg_max beside it (the full head-op roster against the
-// real engine); an over-budget commit is rejected citing the capacity
-// statement; and the top-up write runs through Db::write_witnessed (the
-// snapshot-and-tx-in-one-callback lane).
-//
-// argv[1] = the fixtures file path (passed by add_test).
 import std;
 import bumbledb;
 
@@ -46,16 +30,10 @@ inline constexpr auto Racks = bdb::schema<"Racks">(
 
     bdb::contained(bdb::on(Device.pool), bdb::on(Pool.id)),
 
-    // The pinned column: a device's watts provably equals its model's —
-    // the two-column containment IS the join, stated as a law. The
-    // superkey it targets is deliberate write-amplification rent.
     bdb::key(Model.id, Model.watts), bdb::contained(bdb::on(Device.model, Device.watts), bdb::on(Model.id, Model.watts)),
 
-    // Σ watts over a pool's devices stays within the pool's own supply:
     bdb::capacity(bdb::on(Pool.id), bdb::weigh(Device.watts), bdb::within(0, bdb::ref(Pool.supply)), bdb::on(Device.pool)));
 
-// utilization is a query, never a column (the ledger's law, recipe 19):
-// the sum folds a PLAIN SCALAR variable — the recipe's own spelling.
 inline constexpr auto Draw = bdb::query(Racks).rule([](auto r) consteval {
 	auto vars = r.vars(Device);
 	return r
@@ -72,8 +50,6 @@ inline constexpr auto Draw = bdb::query(Racks).rule([](auto r) consteval {
 	        bdb::sum<"total">(vars.watts));
 });
 
-// The fold roster beside it: fleet size (nullary count) and peak draw
-// (max over the scalar).
 inline constexpr auto FleetFacts = bdb::query(Racks).rule([](auto r) consteval {
 	auto vars = r.vars(Device);
 	return r
@@ -90,8 +66,6 @@ inline constexpr auto FleetFacts = bdb::query(Racks).rule([](auto r) consteval {
 	        bdb::count<"n">(), bdb::max<"peak">(vars.watts));
 });
 
-// The Arg restriction rides its own head (the engine's rule: Arg terms
-// and fold aggregates may not mix): the peak device per pool.
 inline constexpr auto TopDevice = bdb::query(Racks).rule([](auto r) consteval {
 	auto vars = r.vars(Device);
 	return r
@@ -115,8 +89,6 @@ struct CaseResult {
 	bool passed;
 };
 
-/// The golden of one recipe: the fixtures file is one `rNN <64-hex>` line
-/// per recipe (ts/test/cookbook.test.ts reads the same file).
 [[nodiscard]] auto golden_of(std::string_view fixtures, std::string_view recipe) -> std::optional<std::string> {
 	for (auto const line_range : std::views::split(fixtures, '\n')) {
 		auto const line = std::string_view{line_range};
@@ -183,8 +155,6 @@ struct SeedIds {
 	std::uint64_t device_40;
 };
 
-/// Pools A (supply 100) and B (supply 30); models at 40/25/10 W; A runs
-/// a 40 W and a 25 W device, B a 10 W one.
 [[nodiscard]] auto seed(bdb::Db& db) -> std::optional<SeedIds> {
 	using Decision = bdb::WriteDecision<SeedIds, std::monostate>;
 	using Result = std::expected<Decision, bdb::Error>;
@@ -302,8 +272,6 @@ auto run_cases(std::string_view fixtures_path, std::vector<CaseResult>& results)
 		return;
 	}
 
-	// The scalar-sum utilization, one Db::execute call, host-sorted by
-	// descending total (the keys-as-data comparator).
 	using DrawRow = bdb::row_of<Draw>;
 	auto totals = db->execute(*draw, {}).transform([](bdb::Answers<Draw> answers) {
 		auto rows = std::vector<DrawRow>{};
@@ -319,7 +287,6 @@ auto run_cases(std::string_view fixtures_path, std::vector<CaseResult>& results)
 	              (*totals)[1].pool == ids->pool_b && (*totals)[1].total == 10,
 	});
 
-	// The fold roster: count / max per pool.
 	using FleetRow = bdb::row_of<FleetFacts>;
 	auto facts = db->execute(*fleet, {}).transform([](bdb::Answers<FleetFacts> answers) {
 		auto rows = std::vector<FleetRow>{};
@@ -340,7 +307,6 @@ auto run_cases(std::string_view fixtures_path, std::vector<CaseResult>& results)
 	    .passed = facts_pass,
 	});
 
-	// The Arg restriction: pool A's peak device is the 40 W one.
 	auto top_a = db->execute(*top, {}).transform([&](bdb::Answers<TopDevice> answers) {
 		auto device = std::optional<std::uint64_t>{};
 		for (auto const& row : answers.rows()) {
@@ -355,8 +321,6 @@ auto run_cases(std::string_view fixtures_path, std::vector<CaseResult>& results)
 	    .passed = top_a.has_value() && top_a->has_value() && **top_a == ids->device_40,
 	});
 
-	// The over-budget commit refuses citing the capacity statement:
-	// B would carry 10 + 40 = 50 > 30.
 	auto overdraw = db->write([&](bdb::WriteTx& tx) -> std::expected<bdb::WriteDecision<std::monostate, std::monostate>, bdb::Error> {
 		auto landed = tx.alloc(Device.id).and_then([&](std::uint64_t minted) {
 			return tx.insert(Device, DeviceRow{.id = minted, .pool = ids->pool_b, .model = ids->model_40, .watts = 40});
@@ -379,9 +343,6 @@ auto run_cases(std::string_view fixtures_path, std::vector<CaseResult>& results)
 	    .passed = overdraw_cited,
 	});
 
-	// The witnessed top-up (Db::write_witnessed): read pool B's current
-	// draw off the WITNESSING snapshot, fill exactly to the ceiling, and
-	// commit — snapshot and tx in one callback, retry owned by the loop.
 	auto witnessed = db->write_witnessed(
 	    [&](bdb::Snapshot& snap, bdb::WriteTx& tx) -> std::expected<bdb::WriteDecision<std::uint64_t, std::monostate>, bdb::Error> {
 		    auto used = snap.execute(*draw, {}).transform([&](bdb::Answers<Draw> answers) {
@@ -400,7 +361,6 @@ auto run_cases(std::string_view fixtures_path, std::vector<CaseResult>& results)
 		    if (headroom < 10) {
 			    return bdb::abandon();
 		    }
-		    // The 10 W model fills part of the headroom.
 		    auto landed = tx.alloc(Device.id).and_then([&](std::uint64_t minted) {
 			    return tx.insert(Device, DeviceRow{.id = minted, .pool = ids->pool_b, .model = ids->model_10, .watts = 10});
 		    });
@@ -417,7 +377,6 @@ auto run_cases(std::string_view fixtures_path, std::vector<CaseResult>& results)
 	    .passed = witnessed_pass,
 	});
 
-	// The topped-up utilization reads back.
 	auto after = db->execute(*draw, {}).transform([&](bdb::Answers<Draw> answers) {
 		auto total = std::uint64_t{0};
 		for (auto const& row : answers.rows()) {
@@ -436,7 +395,7 @@ auto run_cases(std::string_view fixtures_path, std::vector<CaseResult>& results)
 	std::filesystem::remove_all(*dir, code);
 }
 
-} // namespace
+}
 
 auto main(int argc, char** argv) -> int {
 	auto const arguments = std::span{argv, static_cast<std::size_t>(argc)};

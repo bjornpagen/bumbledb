@@ -1,19 +1,3 @@
-// Cookbook recipe 27 — Derived facts, maintained (ts/COOKBOOK.md §27): a
-// stored rollup is an ORDINARY relation with an ordinary soundness
-// statement. `pack` derives the maximal busy spans on the maintenance
-// snapshot, while the ψ-selected coverage containment prevents any
-// stored `BusySpan` point that has no Busy claim behind it. That is
-// soundness, not a refresh theorem: a missing span remains representable
-// until the host maintenance loop fills it.
-//
-// Gates: the engine fingerprint equals the shared golden (fixtures line
-// "r27 <64-hex>" — the SAME hex as r21, the theories coincide); the
-// deriving query (the closed-handle literal + pack fold) prepares AND
-// answers the coalesced spans; the derived rollup row commits (sound —
-// the union of Busy claims covers it); a rollup row with no Busy claim
-// behind it is commit-rejected.
-//
-// argv[1] = the fixtures file path (passed by add_test).
 import std;
 import bumbledb;
 
@@ -40,11 +24,8 @@ inline constexpr auto MaintainedRollup = bdb::schema<"MaintainedRollup">(
     bdb::contained(bdb::on(Claim.arm), bdb::on(Arm.id)), bdb::key(Claim.source), bdb::key(Claim.person, Claim.span),
     bdb::key(BusySpan.person, BusySpan.span),
 
-    // Soundness: every stored BusySpan point has a Busy claim behind it.
     bdb::contained(bdb::on(BusySpan.person, BusySpan.span), bdb::on(bdb::where(Claim, {.arm = Arm.Busy}), Claim.person, Claim.span)));
 
-// Derive the desired rollup on the maintenance snapshot: one answer row
-// per (person, maximal Busy segment).
 inline constexpr auto Deriving = bdb::query(MaintainedRollup).rule([](auto r) consteval {
 	auto vars = r.vars(Claim);
 	return r
@@ -69,8 +50,6 @@ struct CaseResult {
 	bool passed;
 };
 
-/// The golden of one recipe: the fixtures file is one `rNN <64-hex>` line
-/// per recipe (ts/test/cookbook.test.ts reads the same file).
 [[nodiscard]] auto golden_of(std::string_view fixtures, std::string_view recipe) -> std::optional<std::string> {
 	for (auto const line_range : std::views::split(fixtures, '\n')) {
 		auto const line = std::string_view{line_range};
@@ -128,9 +107,6 @@ struct CaseResult {
 	return dir;
 }
 
-/// Two persons' claims: person 1 is Busy [10,20) and [20,30) (touching —
-/// pack coalesces them) plus Ooo [40,50) (the ψ selection excludes it);
-/// person 2 is Busy [5,10). Sources are the claims' own key.
 [[nodiscard]] auto seed(bdb::Db& db) -> bool {
 	using Decision = bdb::WriteDecision<std::monostate, std::monostate>;
 	using Result = std::expected<Decision, bdb::Error>;
@@ -209,9 +185,6 @@ auto run_cases(std::string_view fixtures_path, std::vector<CaseResult>& results)
 	    .passed = seed(*db),
 	});
 
-	// The derivation on the maintenance snapshot: person 1's touching
-	// Busy spans coalesce to ONE [10,30) block (the Ooo claim never
-	// enters the fold); person 2 keeps [5,10).
 	auto derived = db->execute(*deriving, {});
 	auto rows = std::vector<std::pair<std::uint64_t, bdb::interval<std::int64_t>>>{};
 	if (derived.has_value()) {
@@ -230,8 +203,6 @@ auto run_cases(std::string_view fixtures_path, std::vector<CaseResult>& results)
 	              rows[1].second == bdb::interval<std::int64_t>::literal(5, 10),
 	});
 
-	// The maintenance write: the derived span is SOUND — every point of
-	// [10,30) has a Busy claim behind it (the union of the two claims).
 	auto sound = store_span(*db, 1, bdb::interval<std::int64_t>::literal(10, 30));
 	results.push_back(CaseResult{
 	    .name = "the derived rollup row commits (containment proves the "
@@ -239,8 +210,6 @@ auto run_cases(std::string_view fixtures_path, std::vector<CaseResult>& results)
 	    .passed = sound.has_value() && std::holds_alternative<bdb::Committed<std::monostate>>(*sound),
 	});
 
-	// A span with no Busy claim behind it — person 1's [40,50) is Ooo,
-	// not Busy — violates the soundness containment.
 	auto unsound = store_span(*db, 1, bdb::interval<std::int64_t>::literal(40, 50));
 	results.push_back(CaseResult{
 	    .name = "a rollup row with no Busy claim behind it is "
@@ -252,7 +221,7 @@ auto run_cases(std::string_view fixtures_path, std::vector<CaseResult>& results)
 	std::filesystem::remove_all(*dir, code);
 }
 
-} // namespace
+}
 
 auto main(int argc, char** argv) -> int {
 	auto const arguments = std::span{argv, static_cast<std::size_t>(argc)};

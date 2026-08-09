@@ -1,7 +1,3 @@
-// §34 / TODO_CPP §11 — the find head answers BOUND variables only: a
-// head referencing a variable no atom of the rule positively bound is a
-// construction-time wall (the engine's safety refusal stands behind it).
-// The rule below binds only `service`; the head asks for `window`.
 import std;
 import bumbledb;
 

@@ -321,7 +321,7 @@ fn open_with(
 }
 
 /// Creates a fresh DURABLE store at `path` from a schema spec. Schema
-/// resolution/validation failures are `BDB_ERROR_SCHEMA`.
+/// resolution/validation failures are `BDB_ERROR_KIND_SCHEMA`.
 #[unsafe(no_mangle)]
 #[expect(unsafe_code, reason = "extern export: the unsafe(no_mangle) ABI attribute")]
 pub extern "C" fn bdb_db_create(
@@ -334,7 +334,7 @@ pub extern "C" fn bdb_db_create(
 }
 
 /// Opens an existing durable store, verifying format version, store
-/// kind, and schema fingerprint (`BDB_ERROR_SCHEMA_MISMATCH` on drift).
+/// kind, and schema fingerprint (`BDB_ERROR_KIND_SCHEMA_MISMATCH` on drift).
 #[unsafe(no_mangle)]
 #[expect(unsafe_code, reason = "extern export: the unsafe(no_mangle) ABI attribute")]
 pub extern "C" fn bdb_db_open(
@@ -492,10 +492,10 @@ fn write_with(
 /// Runs `callback` as the single writer (§17): the engine's `Db::write`
 /// closure model. `Ok` from the callback commits — the dependency
 /// judgment runs against the final state, and a rejection is
-/// `BDB_ERROR_COMMIT_REJECTED` carrying the complete violation set.
+/// `BDB_ERROR_KIND_COMMIT_REJECTED` carrying the complete violation set.
 /// `Abort` drops the delta (`BDB_STATUS_ABORTED`; LMDB untouched).
 /// Re-entrant writes on this handle are refused with
-/// `BDB_ERROR_ENVIRONMENT_LOCKED` before the engine's assertion.
+/// `BDB_ERROR_KIND_ENVIRONMENT_LOCKED` before the engine's assertion.
 #[unsafe(no_mangle)]
 #[expect(unsafe_code, reason = "extern export: the unsafe(no_mangle) ABI attribute")]
 pub extern "C" fn bdb_db_write(
@@ -516,7 +516,7 @@ pub extern "C" fn bdb_db_write(
 /// engine's `Db::write_from`. Callable from inside the read callback that
 /// owns `snapshot` (the sanctioned nesting — module doc). A
 /// state-changing commit since the snapshot returns
-/// `BDB_ERROR_GENERATION_MOVED` (payload: witnessed/current); retry is
+/// `BDB_ERROR_KIND_GENERATION_MOVED` (payload: witnessed/current); retry is
 /// host policy.
 #[unsafe(no_mangle)]
 #[expect(unsafe_code, reason = "extern export: the unsafe(no_mangle) ABI attribute")]
@@ -542,7 +542,7 @@ pub extern "C" fn bdb_db_write_from(
 
 /// Records an insert into the delta; `out_changed` = whether the final
 /// state changed. Values are the relation's sealed fields in declaration
-/// order; shape violations are typed `BDB_ERROR_FACT_SHAPE` — nothing is
+/// order; shape violations are typed `BDB_ERROR_KIND_FACT_SHAPE` — nothing is
 /// judged until commit.
 #[unsafe(no_mangle)]
 #[expect(unsafe_code, reason = "extern export: the unsafe(no_mangle) ABI attribute")]
@@ -650,7 +650,7 @@ pub extern "C" fn bdb_tx_get(
 /// mint-per-row is the engine's own split (`Db::fresh_field` +
 /// `WriteTx::alloc_at`); the bridge re-resolves per call because the C
 /// surface carries no witness type (ids at this surface are data; a
-/// mis-aimed pair is typed `BDB_ERROR_FACT_SHAPE`).
+/// mis-aimed pair is typed `BDB_ERROR_KIND_FACT_SHAPE`).
 #[unsafe(no_mangle)]
 #[expect(unsafe_code, reason = "extern export: the unsafe(no_mangle) ABI attribute")]
 pub extern "C" fn bdb_tx_alloc(
@@ -765,7 +765,7 @@ pub extern "C" fn bdb_snapshot_scan(
 
 /// Bulk import (`Db::bulk_load_dyn`): atomic 4096-row chunks; prior
 /// chunks stay committed on failure — `out_committed` always carries the
-/// durable count (§24), and a failure is `BDB_ERROR_BULK_LOAD` (the same
+/// durable count (§24), and a failure is `BDB_ERROR_KIND_BULK_LOAD` (the same
 /// count readable via `bdb_error_get_bulk_committed`, the underlying
 /// cause in the message). The importer owns dependency ordering: a
 /// bidirectional statement cluster must land within one chunk.

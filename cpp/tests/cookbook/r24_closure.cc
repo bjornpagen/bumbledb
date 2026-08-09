@@ -1,19 +1,3 @@
-// Cookbook recipe 24 — The closure idiom (ts/COOKBOOK.md §24): both
-// dialects agree, root for root. The HOST dialect is a loop over one
-// prepared ∈-set query (the frontier discipline IS semi-naive
-// evaluation's Δ); the ENGINE dialect is one stratified program under the
-// fixpoint driver (`bdb::program` / `bdb::rec` / `.idb` — the
-// self-recursion cut as construction law); and the complement program
-// negates the FINISHED stratum (`.not_idb` — negation OF a lower stratum
-// is engine-legal; the strata judge refuses only negation *through* a
-// cycle).
-//
-// Gates: the engine fingerprint equals the shared golden (fixtures line
-// "r24 <64-hex>"); all three shapes prepare through the real engine
-// validator; the host loop and the native program answer the SAME
-// closure, root for root; and the complement equals scan-minus-closure.
-//
-// argv[1] = the fixtures file path (passed by add_test).
 import std;
 import bumbledb;
 
@@ -36,8 +20,6 @@ inline constexpr auto Closure = bdb::schema<"Closure">(Node, Parent,
                                                        bdb::key(Parent.child), bdb::contained(bdb::on(Parent.child), bdb::on(Node.id)),
                                                        bdb::contained(bdb::on(Parent.parent), bdb::on(Node.id)));
 
-// The loop's one query — the frontier's children, one ∈-set probe (the
-// runtime set param binds a span at execute).
 inline constexpr auto Step = bdb::query(Closure).rule([](auto r) consteval {
 	auto vars = r.vars(Parent);
 	return r
@@ -49,10 +31,6 @@ inline constexpr auto Step = bdb::query(Closure).rule([](auto r) consteval {
 	    .find({}, bdb::as<"c">(vars.child));
 });
 
-// The same closure, one stratified program under the fixpoint driver
-// (?root seeds the predicate; the output is the finished set's own
-// identity projection — an idb atom is a positive occurrence, so it
-// grounds its variables and no re-grounding join exists).
 inline constexpr auto Reach = bdb::program(
     Closure,
     bdb::rec<"reach">(
@@ -71,15 +49,11 @@ inline constexpr auto Reach = bdb::program(
 	    return r.idb(bdb::pred<"reach">, bdb::bind<"c">(vars.id)).find({}, bdb::as<"c">(vars.id));
     }));
 
-// The EDB anti-join (recipe 3's negation shape on this schema): the
-// nodes NO Parent row claims as a child — a negated atom binds nothing,
-// only rejects.
 inline constexpr auto Roots = bdb::query(Closure).rule([](auto r) consteval {
 	auto node = r.vars(Node);
 	return r.match(Node, {.id = node.id}).not_match(Parent, {.child = node.id}).find({}, bdb::as<"c">(node.id));
 });
 
-// The complement — negation OF the finished stratum.
 inline constexpr auto Unreached = bdb::program(
     Closure,
     bdb::rec<"reach">(
@@ -105,8 +79,6 @@ struct CaseResult {
 	bool passed;
 };
 
-/// The golden of one recipe: the fixtures file is one `rNN <64-hex>` line
-/// per recipe (ts/test/cookbook.test.ts reads the same file).
 [[nodiscard]] auto golden_of(std::string_view fixtures, std::string_view recipe) -> std::optional<std::string> {
 	for (auto const line_range : std::views::split(fixtures, '\n')) {
 		auto const line = std::string_view{line_range};
@@ -171,8 +143,6 @@ struct SeedIds {
 	std::uint64_t lone;
 };
 
-/// The three-level forest plus one unreachable node (the alloc + insert
-/// spelling — the dialect's pinned mint-on-insert form).
 [[nodiscard]] auto seed(bdb::Db& db) -> std::optional<SeedIds> {
 	using Decision = bdb::WriteDecision<SeedIds, std::monostate>;
 	using Result = std::expected<Decision, bdb::Error>;
@@ -269,8 +239,6 @@ auto run_cases(std::string_view fixtures_path, std::vector<CaseResult>& results)
 		return;
 	}
 
-	// The host loop — the frontier discipline IS semi-naive evaluation's
-	// Δ: probe the prepared ∈-set query with each round's fresh set.
 	auto seen = std::vector<std::uint64_t>{ids->root};
 	auto frontier = std::vector<std::uint64_t>{ids->root};
 	auto loop_sound = true;
@@ -293,7 +261,6 @@ auto run_cases(std::string_view fixtures_path, std::vector<CaseResult>& results)
 	}
 	std::ranges::sort(seen);
 
-	// The native program answers the same closure, root for root.
 	auto native = db->execute(*reach, {.root = ids->root}).transform([](bdb::Answers<Reach> answers) {
 		return answer_set<Reach>(answers);
 	});
@@ -304,8 +271,6 @@ auto run_cases(std::string_view fixtures_path, std::vector<CaseResult>& results)
 	    .passed = loop_sound && native.has_value() && *native == seen && seen == expected,
 	});
 
-	// The complement lands in-plan: every node the closure never
-	// reached, judged against the full scan.
 	auto complement = db->execute(*unreached, {.root = ids->root}).transform([](bdb::Answers<Unreached> answers) {
 		return answer_set<Unreached>(answers);
 	});
@@ -333,8 +298,6 @@ auto run_cases(std::string_view fixtures_path, std::vector<CaseResult>& results)
 	        complement.has_value() && scanned.has_value() && *complement == outside && *complement == std::vector<std::uint64_t>{ids->lone},
 	});
 
-	// The EDB anti-join: the nodes no Parent row claims as a child —
-	// root and lone (mid and leaf are somebody's children).
 	auto parentless = db->execute(*roots, {}).transform([](bdb::Answers<Roots> answers) {
 		return answer_set<Roots>(answers);
 	});
@@ -349,7 +312,7 @@ auto run_cases(std::string_view fixtures_path, std::vector<CaseResult>& results)
 	std::filesystem::remove_all(*dir, code);
 }
 
-} // namespace
+}
 
 auto main(int argc, char** argv) -> int {
 	auto const arguments = std::span{argv, static_cast<std::size_t>(argc)};

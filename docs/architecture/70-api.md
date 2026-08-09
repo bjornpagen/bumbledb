@@ -666,6 +666,28 @@ constitution's refusal ledger. A schema may state one or both ordinary
 containment directions when those projections express the intended invariant,
 but it never gains an implicit refresh theorem.
 
+The SDK conveniences `Db::write_witnessed` (C++) and `db.writeWitnessed`
+(TS) are this host protocol spelled once, in host code — not an engine
+retry. The loop retries exactly `GenerationMoved`, discards every stale
+derivation and diff, reruns the host's own callback against a fresh
+snapshot, and refuses past `witnessed_attempt_cap` attempts with a typed
+livelock refusal. The epistemic boundary is unchanged: the engine still
+judges only the witness, the loop lives on the host side of the ABI, and
+every other failure ends the attempt unchanged.
+
+#### Retryability
+
+`Error::is_transient()` answers: could the same operation, retried with
+nothing changed by the caller, plausibly succeed? Transient:
+`GenerationMoved` (rebuild on a fresh snapshot — the protocol above) and
+`ReadersFull` (an LMDB reader slot frees when any reader finishes).
+Every other kind is permanent — notably `CommitSync` and `Io` (the
+post-failure durability state is unknown, so a blind retry is unsafe),
+`Panic` (the store is poisoned), and `EnvironmentLocked` (re-entrant
+write: a programming error, not contention). `write_witnessed` retries a
+strict subset — exactly `GenerationMoved` — because rerunning the
+callback cannot free a reader slot.
+
 The writer mutex serializes write *transactions*, not read-compute-write
 *sequences*: query-driven writes — update-where-predicate, insert-select,
 everything SQL spells with data-modifying CTEs — must read on a snapshot first,

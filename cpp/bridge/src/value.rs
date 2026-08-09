@@ -7,7 +7,7 @@
 //!
 //! Intervals are CHECKED at the boundary exactly as the engine checks
 //! them (`start < end`); an empty interval, an invalid Allen mask, or
-//! non-UTF-8 string bytes are `BDB_ERROR_FACT_SHAPE` marshal refusals,
+//! non-UTF-8 string bytes are `BDB_ERROR_KIND_FACT_SHAPE` marshal refusals,
 //! never a silent repair.
 
 use bumbledb::{AllenMask, AnswerValue, BindValue, Interval, Value};

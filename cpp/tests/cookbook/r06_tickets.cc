@@ -1,19 +1,3 @@
-// Cookbook recipe 6 — The vocabulary (TODO_CPP §8, §33; ts/COOKBOOK.md
-// §6): the enum idiom's replacement, first-class. A bare-tier closed
-// relation, an ordinary relation referencing it (`bdb::ref_to<Priority.id>`),
-// and the two query spellings the recipe pins:
-//
-//   urgent      — a handle LITERAL in the match record ({priority:
-//                 "Urgent"}), host-resolved to the declaration-order row
-//                 id (lowering.md §7.8);
-//   actionable  — a handle-ARRAY membership literal ({priority:
-//                 ["Normal", "Urgent"]}), folding to a pre-resolved wire
-//                 ∈-set (closed-only in match records).
-//
-// Fingerprint vs the shared golden, then both queries prepare through the
-// REAL engine validator and answer the recipe's own semantics.
-//
-// argv[1] = the fixtures file path (passed by add_test).
 import std;
 import bumbledb;
 
@@ -30,11 +14,8 @@ inline constexpr auto Ticket = bdb::relation<"Ticket", TicketRow>;
 
 inline constexpr auto Tickets = bdb::schema<"Tickets">(Priority, Ticket,
 
-                                                       // A closed reference is an ordinary u64 under one containment (which
-                                                       // also types `priority` into the "Priority.id" generator class).
                                                        bdb::contained(bdb::on(Ticket.priority), bdb::on(Priority.id)));
 
-// Handles are literals in queries exactly as in statements.
 inline constexpr auto Urgent = bdb::query(Tickets).rule([](auto r) consteval {
 	auto vars = r.vars(Ticket);
 	return r
@@ -48,8 +29,6 @@ inline constexpr auto Urgent = bdb::query(Tickets).rule([](auto r) consteval {
 	    });
 });
 
-// Set membership is a plain array — closed-only in query match records;
-// the array folds to the same wire set the param spelling crosses.
 inline constexpr auto Actionable = bdb::query(Tickets).rule([](auto r) consteval {
 	auto vars = r.vars(Ticket);
 	return r
@@ -133,7 +112,6 @@ struct SeedIds {
 	std::uint64_t urgent;
 };
 
-/// One ticket per priority (handle -> row id marshal on insert).
 [[nodiscard]] auto seed(bdb::Db& db) -> std::optional<SeedIds> {
 	using Decision = bdb::WriteDecision<SeedIds, std::monostate>;
 	using Result = std::expected<Decision, bdb::Error>;
@@ -250,7 +228,7 @@ auto run_cases(std::string_view fixtures_path, std::vector<CaseResult>& results)
 	std::filesystem::remove_all(*dir, code);
 }
 
-} // namespace
+}
 
 auto main(int argc, char** argv) -> int {
 	auto const arguments = std::span{argv, static_cast<std::size_t>(argc)};

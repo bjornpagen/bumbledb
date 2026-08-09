@@ -8,8 +8,8 @@
 //! is mechanical: [`kind_of`] matches `bumbledb::Error` EXHAUSTIVELY — no
 //! wildcard arm anywhere — so a new engine variant breaks this crate's
 //! compile, exactly the discipline the Node bridge's `wire_tags!` tables
-//! enforce. `BDB_ERROR_PARAM` covers the nine bind-time parameter
-//! variants; `BDB_ERROR_PANIC` is bridge-synthesized (§30), never
+//! enforce. `BDB_ERROR_KIND_PARAM` covers the nine bind-time parameter
+//! variants; `BDB_ERROR_KIND_PANIC` is bridge-synthesized (§30), never
 //! engine-originated.
 
 use bumbledb::{Error, SchemaDescriptor, render_rejection};
@@ -232,9 +232,9 @@ impl bdb_error {
     }
 
     /// A bridge-synthesized error: marshal shape refusals
-    /// (`BDB_ERROR_FACT_SHAPE`), the re-entrant write refusal
-    /// (`BDB_ERROR_ENVIRONMENT_LOCKED`), spec-lowering failures
-    /// (`BDB_ERROR_SCHEMA`), and the panic wall.
+    /// (`BDB_ERROR_KIND_FACT_SHAPE`), the re-entrant write refusal
+    /// (`BDB_ERROR_KIND_ENVIRONMENT_LOCKED`), spec-lowering failures
+    /// (`BDB_ERROR_KIND_SCHEMA`), and the panic wall.
     pub(crate) fn synthesized(kind: bdb_error_kind, message: String) -> Self {
         Self {
             kind,
@@ -253,7 +253,7 @@ pub(crate) fn fail_engine(error: Error, descriptor: Option<&SchemaDescriptor>) -
 
 /// A marshal shape refusal (a bad tag payload, an empty interval, an
 /// invalid Allen mask, non-UTF-8 text): data-shaped input the engine
-/// cannot represent — typed `BDB_ERROR_FACT_SHAPE`, mirroring the
+/// cannot represent — typed `BDB_ERROR_KIND_FACT_SHAPE`, mirroring the
 /// engine's own dynamic-surface taxonomy.
 pub(crate) fn fail_shape(message: &str) -> Fail {
     Fail::Error(Box::new(bdb_error::synthesized(
@@ -291,7 +291,7 @@ pub extern "C" fn bdb_error_get_message(
 }
 
 /// The `GenerationMoved` payload: the witnessed and current generations.
-/// `BDB_STATUS_MISUSE` when the error is not `BDB_ERROR_GENERATION_MOVED`.
+/// `BDB_STATUS_MISUSE` when the error is not `BDB_ERROR_KIND_GENERATION_MOVED`.
 #[unsafe(no_mangle)]
 #[expect(unsafe_code, reason = "extern export: the unsafe(no_mangle) ABI attribute")]
 pub extern "C" fn bdb_error_get_generation_moved(
@@ -310,7 +310,7 @@ pub extern "C" fn bdb_error_get_generation_moved(
 
 /// The `BulkLoad` payload: facts durable in the chunks committed before
 /// the failure (`TODO_CPP.md` §24). `BDB_STATUS_MISUSE` when the error is
-/// not `BDB_ERROR_BULK_LOAD`.
+/// not `BDB_ERROR_KIND_BULK_LOAD`.
 #[unsafe(no_mangle)]
 #[expect(unsafe_code, reason = "extern export: the unsafe(no_mangle) ABI attribute")]
 pub extern "C" fn bdb_error_get_bulk_committed(
@@ -325,7 +325,7 @@ pub extern "C" fn bdb_error_get_bulk_committed(
     })
 }
 
-/// The rendered violation count of a `BDB_ERROR_COMMIT_REJECTED` error
+/// The rendered violation count of a `BDB_ERROR_KIND_COMMIT_REJECTED` error
 /// (0 for every other kind, and for a null handle).
 #[unsafe(no_mangle)]
 #[expect(unsafe_code, reason = "extern export: the unsafe(no_mangle) ABI attribute")]

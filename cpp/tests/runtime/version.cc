@@ -22,7 +22,7 @@ struct CaseResult {
 	};
 }
 
-} // namespace
+}
 
 auto main() -> int {
 	auto const results = std::array{

@@ -1,19 +1,3 @@
-// Cookbook recipe 9 — Ordered collections (ts/COOKBOOK.md §9): the
-// linked-list verdict. Order is a value: the idiomatic ordered collection
-// is an interval partition spelled as a TRIPLE — the entity, the extent
-// as a 0..1 child (empty lists exist, empty intervals do not), and the
-// unit-slot sidecar (`bdb::interval<std::uint64_t, 1>` — the width is the
-// TYPE: a wrong-width value is unrepresentable). The mixed-width
-// multi-column mirrors ([playlist, span] ~ [playlist, slot]) is the
-// tiling law: slots tile the extent exactly.
-//
-// Gates: the engine fingerprint equals the shared golden (fixtures line
-// "r09 <64-hex>"); playingAt (positional access IS membership) prepares
-// AND answers the recipe's own semantics; a slot outside the extent is
-// commit-rejected (the tiling mirrors); and the host owns the sort — the
-// SDK ships the comparator (`bdb::by` / `bdb::desc`, keys as data).
-//
-// argv[1] = the fixtures file path (passed by add_test).
 import std;
 import bumbledb;
 
@@ -23,14 +7,11 @@ struct PlaylistRow {
 	std::string name;
 };
 
-// The extent: a 0..1 child, because empty playlists exist and empty
-// intervals do not — presence of the child IS nonemptiness.
 struct ExtentRow {
 	std::uint64_t playlist;
 	bdb::interval<std::uint64_t> span;
 };
 
-// The unit slot: position p occupies [p, p+1) — the width is the type.
 struct SlotRow {
 	std::uint64_t playlist;
 	bdb::interval<std::uint64_t, 1> slot;
@@ -46,19 +27,14 @@ inline constexpr auto Playlists = bdb::schema<"Playlists">(
 
     bdb::contained(bdb::on(Extent.playlist), bdb::on(Playlist.id)), bdb::contained(bdb::on(Slot.playlist), bdb::on(Playlist.id)),
 
-    // 0..1 extent per playlist.
     bdb::key(Extent.playlist),
 
-    // The exact target key (recipe 26's note).
     bdb::key(Extent.playlist, Extent.span),
 
-    // One occupant per position.
     bdb::key(Slot.playlist, Slot.slot),
 
-    // Slots tile the span exactly — the mixed-width multi-column mirrors.
     bdb::mirrors(bdb::on(Extent.playlist, Extent.span), bdb::on(Slot.playlist, Slot.slot)));
 
-// Positional access is membership — "what plays at position ?pos".
 inline constexpr auto PlayingAt = bdb::query(Playlists).rule([](auto r) consteval {
 	auto vars = r.vars(Slot);
 	return r
@@ -74,7 +50,6 @@ inline constexpr auto PlayingAt = bdb::query(Playlists).rule([](auto r) consteva
 	    });
 });
 
-// The width IS the type: a wrong-width unit slot is unrepresentable.
 static_assert(bdb::interval<std::uint64_t, 1>::make(4, 5).has_value());
 static_assert(!bdb::interval<std::uint64_t, 1>::make(4, 6).has_value());
 
@@ -142,9 +117,6 @@ struct CaseResult {
 	return dir;
 }
 
-/// One playlist with extent [0,2) tiled by two unit slots: position 0
-/// plays "a", position 1 plays "b" — the tiling mirrors demands the
-/// extent and its slots land in ONE commit.
 [[nodiscard]] auto seed(bdb::Db& db) -> std::optional<std::uint64_t> {
 	using Decision = bdb::WriteDecision<std::uint64_t, std::monostate>;
 	using Result = std::expected<Decision, bdb::Error>;
@@ -214,7 +186,6 @@ auto run_cases(std::string_view fixtures_path, std::vector<CaseResult>& results)
 		return;
 	}
 
-	// A slot OUTSIDE the extent breaks the tiling mirrors.
 	auto untiled = db->write([&](bdb::WriteTx& tx) -> std::expected<bdb::WriteDecision<std::monostate, std::monostate>, bdb::Error> {
 		auto landed =
 		    tx.insert(Slot, SlotRow{.playlist = *list, .slot = bdb::interval<std::uint64_t, 1>::literal(2, 3), .track = std::string{"c"}});
@@ -238,7 +209,6 @@ auto run_cases(std::string_view fixtures_path, std::vector<CaseResult>& results)
 		return;
 	}
 
-	// Positional access is membership: position 1 is [1,2) — track "b".
 	auto at_one = db->execute(*playing_at, {.list = *list, .pos = std::uint64_t{1}});
 	results.push_back(CaseResult{
 	    .name = "playingAt(pos: 1) answers {b}",
@@ -256,9 +226,6 @@ auto run_cases(std::string_view fixtures_path, std::vector<CaseResult>& results)
 	    .passed = past_end.has_value() && past_end->size() == 0,
 	});
 
-	// Answers are SETS — the host sorts them, and the SDK ships the
-	// comparator: sort keys as data, a bare member pointer ascending,
-	// `bdb::desc(...)` the flip; intervals order by (start, end).
 	struct Entry {
 		bdb::interval<std::uint64_t> slot;
 		std::string track;
@@ -281,7 +248,7 @@ auto run_cases(std::string_view fixtures_path, std::vector<CaseResult>& results)
 	std::filesystem::remove_all(*dir, code);
 }
 
-} // namespace
+}
 
 auto main(int argc, char** argv) -> int {
 	auto const arguments = std::span{argv, static_cast<std::size_t>(argc)};

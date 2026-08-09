@@ -1,15 +1,3 @@
-// Cookbook recipe 4 — Money (TODO_CPP §8, §33; ts/COOKBOOK.md §4): minor
-// units as a bare i64 (never floats), the currency as a closed vocabulary
-// (`bdb::ref_to<Currency.id>` — physically the u64 handle row id), and the
-// balance as a QUERY, never a column: Σ minor grouped by (account,
-// currency), the fresh posting id bound in the match so every posting
-// weighs in exactly once.
-//
-// Fingerprint vs the shared golden (fixtures/cookbook-fingerprints.txt,
-// line "r04 <64-hex>"), then the totals query prepares through the REAL
-// engine validator and answers the recipe's own semantics.
-//
-// argv[1] = the fixtures file path (passed by add_test).
 import std;
 import bumbledb;
 
@@ -36,13 +24,8 @@ inline constexpr auto Money = bdb::schema<"Money">(Currency, Account, Posting,
 
                                                    bdb::contained(bdb::on(Posting.account), bdb::on(Account.id)),
 
-                                                   // The closed reference resolves (and `Posting.currency` lands in the
-                                                   // "Currency.id" generator class).
                                                    bdb::contained(bdb::on(Posting.currency), bdb::on(Currency.id)));
 
-// The balance is a query (the ledger's law): Σ over the PLAIN SCALAR
-// variable, grouped by the non-aggregated head columns; the fresh id is
-// bound so identical postings never collapse before the fold.
 inline constexpr auto Totals = bdb::query(Money).rule([](auto r) consteval {
 	auto vars = r.vars(Posting);
 	return r
@@ -68,8 +51,6 @@ struct CaseResult {
 	bool passed;
 };
 
-/// The golden of one recipe: the fixtures file is one `rNN <64-hex>` line
-/// per recipe (ts/test/cookbook.test.ts reads the same file).
 [[nodiscard]] auto golden_of(std::string_view fixtures, std::string_view recipe) -> std::optional<std::string> {
 	for (auto const line_range : std::views::split(fixtures, '\n')) {
 		auto const line = std::string_view{line_range};
@@ -132,8 +113,6 @@ struct SeedIds {
 	std::uint64_t bank;
 };
 
-/// Two accounts, four postings: cash carries two USD postings (they must
-/// FOLD, not collapse) and one EUR posting; bank carries one GBP posting.
 [[nodiscard]] auto seed(bdb::Db& db) -> std::optional<SeedIds> {
 	using Decision = bdb::WriteDecision<SeedIds, std::monostate>;
 	using Result = std::expected<Decision, bdb::Error>;
@@ -225,7 +204,6 @@ auto run_cases(std::string_view fixtures_path, std::vector<CaseResult>& results)
 		return;
 	}
 
-	// One answer row per (account, currency); the two USD postings fold.
 	using Total = std::tuple<std::uint64_t, std::uint64_t, std::int64_t>;
 	auto answers = db->execute(*totals, {});
 	auto actual = std::vector<Total>{};
@@ -250,7 +228,7 @@ auto run_cases(std::string_view fixtures_path, std::vector<CaseResult>& results)
 	std::filesystem::remove_all(*dir, code);
 }
 
-} // namespace
+}
 
 auto main(int argc, char** argv) -> int {
 	auto const arguments = std::span{argv, static_cast<std::size_t>(argc)};

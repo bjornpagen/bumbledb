@@ -18,7 +18,7 @@
  * returns. They are never owned or destroyed by the caller.
  * bdb_db_write_from may be called from inside a read callback with that
  * callback's still-live snapshot ref; nested writes are refused with a
- * typed BDB_ERROR_ENVIRONMENT_LOCKED error.
+ * typed BDB_ERROR_KIND_ENVIRONMENT_LOCKED error.
  *
  * View lifetimes: bdb_value string/bytes payloads handed OUT borrow the
  * carrier named at the accessor (bdb_row_set, bdb_answers, bdb_error)
@@ -650,7 +650,7 @@ enum bdb_status bdb_answers_destroy(struct bdb_answers *answers);
 // is taken exclusively for the call (`&mut` on the engine side — one
 // execution at a time, §20/§22); executing a prepared query against a
 // snapshot of a different database is the engine's own typed
-// `BDB_ERROR_FOREIGN_PREPARED`.
+// `BDB_ERROR_KIND_FOREIGN_PREPARED`.
 enum bdb_status bdb_snapshot_execute(const struct bdb_snapshot_ref *snapshot,
                                      struct bdb_prepared *prepared,
                                      const struct bdb_param *params,
@@ -659,14 +659,14 @@ enum bdb_status bdb_snapshot_execute(const struct bdb_snapshot_ref *snapshot,
                                      struct bdb_error **out_error);
 
 // Creates a fresh DURABLE store at `path` from a schema spec. Schema
-// resolution/validation failures are `BDB_ERROR_SCHEMA`.
+// resolution/validation failures are `BDB_ERROR_KIND_SCHEMA`.
 enum bdb_status bdb_db_create(struct bdb_string_view path,
                               const struct bdb_schema_spec *spec,
                               struct bdb_db **out_db,
                               struct bdb_error **out_error);
 
 // Opens an existing durable store, verifying format version, store
-// kind, and schema fingerprint (`BDB_ERROR_SCHEMA_MISMATCH` on drift).
+// kind, and schema fingerprint (`BDB_ERROR_KIND_SCHEMA_MISMATCH` on drift).
 enum bdb_status bdb_db_open(struct bdb_string_view path,
                             const struct bdb_schema_spec *spec,
                             struct bdb_db **out_db,
@@ -708,10 +708,10 @@ enum bdb_status bdb_db_read(const struct bdb_db *db,
 // Runs `callback` as the single writer (§17): the engine's `Db::write`
 // closure model. `Ok` from the callback commits — the dependency
 // judgment runs against the final state, and a rejection is
-// `BDB_ERROR_COMMIT_REJECTED` carrying the complete violation set.
+// `BDB_ERROR_KIND_COMMIT_REJECTED` carrying the complete violation set.
 // `Abort` drops the delta (`BDB_STATUS_ABORTED`; LMDB untouched).
 // Re-entrant writes on this handle are refused with
-// `BDB_ERROR_ENVIRONMENT_LOCKED` before the engine's assertion.
+// `BDB_ERROR_KIND_ENVIRONMENT_LOCKED` before the engine's assertion.
 enum bdb_status bdb_db_write(const struct bdb_db *db,
                              bdb_write_callback callback,
                              void *context,
@@ -721,7 +721,7 @@ enum bdb_status bdb_db_write(const struct bdb_db *db,
 // engine's `Db::write_from`. Callable from inside the read callback that
 // owns `snapshot` (the sanctioned nesting — module doc). A
 // state-changing commit since the snapshot returns
-// `BDB_ERROR_GENERATION_MOVED` (payload: witnessed/current); retry is
+// `BDB_ERROR_KIND_GENERATION_MOVED` (payload: witnessed/current); retry is
 // host policy.
 enum bdb_status bdb_db_write_from(const struct bdb_db *db,
                                   const struct bdb_snapshot_ref *snapshot,
@@ -731,7 +731,7 @@ enum bdb_status bdb_db_write_from(const struct bdb_db *db,
 
 // Records an insert into the delta; `out_changed` = whether the final
 // state changed. Values are the relation's sealed fields in declaration
-// order; shape violations are typed `BDB_ERROR_FACT_SHAPE` — nothing is
+// order; shape violations are typed `BDB_ERROR_KIND_FACT_SHAPE` — nothing is
 // judged until commit.
 enum bdb_status bdb_tx_insert(const struct bdb_tx_ref *transaction,
                               uint32_t relation,
@@ -773,7 +773,7 @@ enum bdb_status bdb_tx_get(const struct bdb_tx_ref *transaction,
 // mint-per-row is the engine's own split (`Db::fresh_field` +
 // `WriteTx::alloc_at`); the bridge re-resolves per call because the C
 // surface carries no witness type (ids at this surface are data; a
-// mis-aimed pair is typed `BDB_ERROR_FACT_SHAPE`).
+// mis-aimed pair is typed `BDB_ERROR_KIND_FACT_SHAPE`).
 enum bdb_status bdb_tx_alloc(const struct bdb_tx_ref *transaction,
                              uint32_t relation,
                              uint16_t field,
@@ -809,7 +809,7 @@ enum bdb_status bdb_snapshot_scan(const struct bdb_snapshot_ref *snapshot,
 
 // Bulk import (`Db::bulk_load_dyn`): atomic 4096-row chunks; prior
 // chunks stay committed on failure — `out_committed` always carries the
-// durable count (§24), and a failure is `BDB_ERROR_BULK_LOAD` (the same
+// durable count (§24), and a failure is `BDB_ERROR_KIND_BULK_LOAD` (the same
 // count readable via `bdb_error_get_bulk_committed`, the underlying
 // cause in the message). The importer owns dependency ordering: a
 // bidirectional statement cluster must land within one chunk.
@@ -849,18 +849,18 @@ enum bdb_status bdb_error_get_message(const struct bdb_error *error,
                                       struct bdb_string_view *out_message);
 
 // The `GenerationMoved` payload: the witnessed and current generations.
-// `BDB_STATUS_MISUSE` when the error is not `BDB_ERROR_GENERATION_MOVED`.
+// `BDB_STATUS_MISUSE` when the error is not `BDB_ERROR_KIND_GENERATION_MOVED`.
 enum bdb_status bdb_error_get_generation_moved(const struct bdb_error *error,
                                                uint64_t *out_witnessed,
                                                uint64_t *out_current);
 
 // The `BulkLoad` payload: facts durable in the chunks committed before
 // the failure (`TODO_CPP.md` §24). `BDB_STATUS_MISUSE` when the error is
-// not `BDB_ERROR_BULK_LOAD`.
+// not `BDB_ERROR_KIND_BULK_LOAD`.
 enum bdb_status bdb_error_get_bulk_committed(const struct bdb_error *error,
                                              uint64_t *out_committed);
 
-// The rendered violation count of a `BDB_ERROR_COMMIT_REJECTED` error
+// The rendered violation count of a `BDB_ERROR_KIND_COMMIT_REJECTED` error
 // (0 for every other kind, and for a null handle).
 size_t bdb_error_violation_count(const struct bdb_error *error);
 
@@ -879,7 +879,7 @@ enum bdb_status bdb_error_destroy(struct bdb_error *error);
 // normalizes, reads statistics, and plans ONCE; the returned handle is
 // reusable across snapshots of this database (`&mut` per execution —
 // one execution at a time; the handle is not thread-shareable).
-// Validation (roster) failures are `BDB_ERROR_VALIDATION`.
+// Validation (roster) failures are `BDB_ERROR_KIND_VALIDATION`.
 enum bdb_status bdb_db_prepare(const struct bdb_db *db,
                                const struct bdb_program *program,
                                struct bdb_prepared **out_prepared,

@@ -1,8 +1,3 @@
-// :pattern — the match-pattern products and their slot types (TODO_CPP
-// §11, §34): identity rides the slot TYPE (coordinate + classes as NTTPs)
-// so the converting constructors can run the §34 class walls as
-// static_asserts naming semantic coordinates. Also the shared consteval
-// term/diagnostic helpers the condition and head partitions reuse.
 export module bumbledb:pattern;
 
 import std;
@@ -17,10 +12,6 @@ import :var;
 import :param;
 
 namespace bdb::detail {
-
-// ————————————————————————————————————————————————————————————————————
-// The shared consteval string helpers (§34 diagnostics).
-// ————————————————————————————————————————————————————————————————————
 
 [[nodiscard]] consteval auto render_size(std::size_t value) -> std::string {
 	if (value == 0) {
@@ -65,7 +56,6 @@ namespace bdb::detail {
 	return "class \"" + coordinate_label(law.relation, law.field) + "\"";
 }
 
-/// The §34 cross-class wall: names BOTH coordinates and both classes.
 template<name_text VarRel, name_text VarField, bool VarClassed, coord_ref VarLaw, name_text AtRel, name_text AtField, bool AtClassed,
          coord_ref AtLaw>
 [[nodiscard]] consteval auto cross_class_message(std::string_view verb) -> std::string {
@@ -75,8 +65,6 @@ template<name_text VarRel, name_text VarField, bool VarClassed, coord_ref VarLaw
 	       "one law class)";
 }
 
-/// The §34 wrong-vocabulary wall at a match binding: names the handle,
-/// its vocabulary, the coordinate, and the coordinate's vocabulary.
 template<name_text HandleRoster, name_text Handle, name_text AtRel, name_text AtField, name_text FieldRoster>
 [[nodiscard]] consteval auto handle_binding_message() -> std::string {
 	return "bumbledb query: handle \"" + std::string{Handle.view()} + "\" of closed relation \"" + std::string{HandleRoster.view()} +
@@ -84,17 +72,12 @@ template<name_text HandleRoster, name_text Handle, name_text AtRel, name_text At
 	       std::string{FieldRoster.view()} + "\"";
 }
 
-/// The physical-kind wall (structurally unequal columns).
 template<name_text VarRel, name_text VarField, field_class VarClass, name_text AtRel, name_text AtField, field_class AtClass>
 [[nodiscard]] consteval auto kind_mismatch_message(std::string_view verb) -> std::string {
 	return "bumbledb query: variable \"" + coordinate_label(VarRel, VarField) + "\" (" + kind_label(VarClass) + ") cannot " +
 	       std::string{verb} + " coordinate \"" + coordinate_label(AtRel, AtField) + "\" (" + kind_label(AtClass) +
 	       ") — the structural kinds differ";
 }
-
-// ————————————————————————————————————————————————————————————————————
-// Term helpers.
-// ————————————————————————————————————————————————————————————————————
 
 template<class Var>
 [[nodiscard]] consteval auto var_term() -> term_data {
@@ -134,11 +117,12 @@ template<class Param>
 	return out;
 }
 
-/// The membership registry entry's content-addressed synthetic name:
-/// "in <Roster> <sorted row ids>" — one identical array in two positions
-/// folds to ONE set param (the TS content-addressed registry,
-/// query/lower.ts:453-487). Never a params-product member; the embedded
-/// space keeps it disjoint from every user-spellable param name.
+/**
+ * The membership registry entry's content-addressed synthetic name:
+ * "in <Roster> <sorted row ids>" — one identical array in two positions
+ * folds to one set param. Never a params-product member; the embedded
+ * space keeps it disjoint from every user-spellable param name.
+ */
 [[nodiscard]] consteval auto membership_param_name(name_text roster, std::array<std::uint64_t, max_membership_handles> const& members, std::size_t count)
     -> name_text {
 	auto text = std::string{"in "} + std::string{roster.view()};
@@ -149,8 +133,10 @@ template<class Param>
 	return to_name_text(text);
 }
 
-/// Tags one integral host literal at a scalar domain (the sibling/field
-/// directs the tag — lowering.md §4.2's field/sibling-directed tagging).
+/**
+ * Tags one integral host literal at a scalar domain — the sibling/field
+ * directs the tag (lowering.md §4.2).
+ */
 template<class T>
 [[nodiscard]] consteval auto scalar_literal(value_kind kind, T value) -> query_literal {
 	auto out = query_literal{};
@@ -211,14 +197,13 @@ consteval auto add_bound(rule_state& state, coord_ref variable) -> void {
 	return false;
 }
 
-// ————————————————————————————————————————————————————————————————————
-// Pattern-product slots. Identity rides the slot TYPE (coordinate +
-// classes as NTTPs) so the converting constructors can run the §34
-// class walls as static_asserts naming semantic coordinates.
-// ————————————————————————————————————————————————————————————————————
-
-/// One match-pattern slot: default state is the wildcard (an unmentioned
-/// designated-init member binds nothing — `ir::Atom`'s absence rule).
+/**
+ * One match-pattern slot. Identity rides the slot type (coordinate +
+ * classes as NTTPs) so the converting constructors can run the class
+ * walls as static_asserts naming semantic coordinates. Default state is
+ * the wildcard — an unmentioned designated-init member binds nothing
+ * (`ir::Atom`'s absence rule).
+ */
 template<class T, name_text Relation, name_text Field, std::size_t Ordinal, field_class Class, bool Classed, coord_ref Law>
 struct binding_slot {
 	static constexpr name_text relation_name = Relation;
@@ -230,8 +215,10 @@ struct binding_slot {
 
 	binding_slot() = default;
 
-	/// A variable binding: the class walls run HERE, where both the
-	/// variable's mint slot and the field's slot are template-visible.
+	/**
+	 * A variable binding: the class walls run here, where both the
+	 * variable's mint slot and the field's slot are template-visible.
+	 */
 	template<class VT, name_text VR, name_text VF, field_class VC, bool VCl, coord_ref VLaw>
 	consteval binding_slot(qvar<VT, VR, VF, VC, VCl, VLaw> variable) {
 		static_assert(VC == Class, kind_mismatch_message<VR, VF, VC, Relation, Field, Class>("bind"));
@@ -240,22 +227,23 @@ struct binding_slot {
 		term = var_term<decltype(variable)>();
 	}
 
-	/// A scalar param binding, anchored at this field's domain.
+	/** A scalar param binding, anchored at this field's domain. */
 	template<fixed_string Name>
 	consteval binding_slot(param_ref<Name> parameter) {
 		term = param_term<decltype(parameter)>();
 	}
 
-	/// A set-param binding (`{.a = bdb::set_param<"frontier">()}`): the
-	/// position matches iff the field value is IN the bound set —
-	/// `ir::Term::ParamSet`, anchored at this field's domain (TODO_CPP
-	/// §21). Unlike a membership ARRAY, the set arrives at execution.
+	/**
+	 * A set-param binding: the position matches iff the field value is in
+	 * the bound set (`ir::Term::ParamSet`, anchored at this field's
+	 * domain). Unlike a membership array, the set arrives at execution.
+	 */
 	template<fixed_string Name>
 	consteval binding_slot(set_param_ref<Name> parameter) {
 		term = set_param_term<decltype(parameter)>();
 	}
 
-	/// A bare literal at a fixed-width field (field-directed tagging).
+	/** A bare literal at a fixed-width field (field-directed tagging). */
 	consteval binding_slot(T value)
 	    requires(!is_closed_ref_v<T> &&
 	             (Class.kind == value_kind::boolean || Class.kind == value_kind::u64 || Class.kind == value_kind::i64))
@@ -263,17 +251,17 @@ struct binding_slot {
 		term = literal_term(scalar_literal(Class.kind, value));
 	}
 
-	/// An interval literal at an interval field.
 	consteval binding_slot(T value)
 	    requires(Class.kind == value_kind::interval_u64 || Class.kind == value_kind::interval_i64)
 	{
 		term = literal_term(interval_literal(value));
 	}
 
-	/// A handle literal at a closed-reference field (`{.priority =
-	/// Priority.Urgent}`): the HOST resolves it — roster-verified here,
-	/// lowered as the declaration-order row id, u64-tagged
-	/// (lowering.md §4.2's taggedHandleId; §7.8).
+	/**
+	 * A handle literal at a closed-reference field: the host resolves it —
+	 * roster-verified here, lowered as the declaration-order row id,
+	 * u64-tagged (lowering.md §4.2, §7.8).
+	 */
 	template<name_text HandleRoster, name_text Handle, std::uint64_t Index>
 	consteval binding_slot(handle_value<HandleRoster, Handle, Index>)
 	    requires is_closed_ref_v<T>
@@ -282,12 +270,13 @@ struct binding_slot {
 		term = literal_term(scalar_literal(value_kind::u64, std::uint64_t{Index}));
 	}
 
-	/// A membership ARRAY at a closed-reference field (`{.priority =
-	/// {Priority.Normal, Priority.Urgent}}`): closed-only in match
-	/// records, folded to a pre-resolved ∈-set over a synthetic
-	/// content-addressed registry entry (lowering.md §4.2's membership
-	/// arrays). Each element's roster wall runs on the closed_ref
-	/// conversion.
+	/**
+	 * A membership array at a closed-reference field — closed-only in
+	 * match records, folded to a pre-resolved ∈-set over a synthetic
+	 * content-addressed registry entry whose address is the sorted row
+	 * ids (lowering.md §4.2). Each element's roster wall runs on the
+	 * closed_ref conversion.
+	 */
 	consteval binding_slot(std::initializer_list<T> handles)
 	    requires is_closed_ref_v<T>
 	{
@@ -303,8 +292,6 @@ struct binding_slot {
 		if (count < 2) {
 			membership_array_needs_at_least_two_handles();
 		}
-		// Sorted row ids are the content address (order-insensitive
-		// dedup, mirroring the TS sorted-members registry name).
 		for (auto first = std::size_t{1}; first != count; ++first) {
 			auto const value = members[first];
 			auto at = first;
@@ -350,12 +337,12 @@ struct match_pattern_types {
 	}
 };
 
-} // namespace bdb::detail
+}
 
 export namespace bdb {
 
-/// The designated-init match pattern of one relation under one schema.
+/** The designated-init match pattern of one relation under one schema. */
 template<class S, class Facade>
 using match_pattern_of = typename detail::match_pattern_types<S, Facade>::Pattern;
 
-} // namespace bdb
+}

@@ -1,19 +1,3 @@
-// Cookbook recipe 17 — Federal income tax (ts/COOKBOOK.md §17): brackets
-// are intervals over money; the top bracket is a RAY (end == MAX denotes
-// [s, ∞), an honest value of the representation, not a sentinel — the
-// point-domain law); regimes key on (year, status) — a key INCLUDING a
-// closed-handle column; and proration happens at write time, never at
-// query time (the representation move that deletes clip-at-query,
-// gravestone recipe 23).
-//
-// Gates: the engine fingerprint equals the shared golden (fixtures line
-// "r17 <64-hex>"); marginal — the two-atom join binding a param AT the
-// closed-handle field ({status: r.param("s")}) — prepares AND answers the
-// recipe's own semantics including the ray bracket; a second regime for
-// one (year, status) and an Earned fact outside residency are both
-// commit-rejected.
-//
-// argv[1] = the fixtures file path (passed by add_test).
 import std;
 import bumbledb;
 
@@ -37,8 +21,6 @@ struct ResidencyRow {
 	bdb::interval<std::int64_t> span;
 };
 
-// Split at write: an Earned fact never spans a year boundary — writers
-// split (prorate) at the boundary, so no reader ever clips.
 struct EarnedRow {
 	std::uint64_t person;
 	std::uint64_t regime;
@@ -56,32 +38,18 @@ inline constexpr auto Tax =
 
                        bdb::contained(bdb::on(Regime.status), bdb::on(Status.id)),
 
-                       // One regime per (year, filing status) — the key includes the
-                       // closed-handle column.
                        bdb::key(Regime.year, Regime.status),
 
                        bdb::contained(bdb::on(Bracket.regime), bdb::on(Regime.id)),
 
-                       // Brackets are disjoint per regime. Seed data conventionally covers
-                       // [0, ∞) and the top bracket is a ray, but this key proves
-                       // disjointness only.
                        bdb::key(Bracket.regime, Bracket.income),
 
                        bdb::contained(bdb::on(Earned.regime), bdb::on(Regime.id)),
 
                        bdb::key(Residency.person, Residency.span),
 
-                       // Residency exclusion: income counts only where earned inside a
-                       // residency period — pointwise coverage, the same judgment as recipe
-                       // 15's. This pair statement is also what puts the two bare `person`
-                       // columns in one (generator-less) class: "Residency.person", by least
-                       // coordinate.
                        bdb::contained(bdb::on(Earned.person, Earned.span), bdb::on(Residency.person, Residency.span)));
 
-// the marginal bracket (membership probes the disjoint bracket set). Tax
-// owed is host arithmetic over the bracket walk — arithmetic beyond the
-// measure is refused (the ledger). The `status` slot binds a PARAM at the
-// closed-handle field.
 inline constexpr auto Marginal = bdb::query(Tax).rule([](auto r) consteval {
 	auto regime = r.vars(Regime);
 	auto bracket = r.vars(Bracket);
@@ -111,8 +79,6 @@ struct CaseResult {
 	bool passed;
 };
 
-/// The golden of one recipe: the fixtures file is one `rNN <64-hex>` line
-/// per recipe (ts/test/cookbook.test.ts reads the same file).
 [[nodiscard]] auto golden_of(std::string_view fixtures, std::string_view recipe) -> std::optional<std::string> {
 	for (auto const line_range : std::views::split(fixtures, '\n')) {
 		auto const line = std::string_view{line_range};
@@ -170,15 +136,8 @@ struct CaseResult {
 	return dir;
 }
 
-/// The ray convention: [s, ∞) is spelled [s, MAX) — an honest value of
-/// the representation, not a sentinel.
 inline constexpr auto ray_top = std::numeric_limits<std::int64_t>::max();
 
-/// One 2024/Single regime with three disjoint brackets (the top one a
-/// ray), one residency [0,100) for person 7, and one Earned fact inside
-/// it.
-///
-///   [0,50) @ 1000bps    [50,100) @ 2000bps    [100, ∞) @ 3000bps
 [[nodiscard]] auto seed(bdb::Db& db) -> std::optional<std::uint64_t> {
 	using Decision = bdb::WriteDecision<std::uint64_t, std::monostate>;
 	using Result = std::expected<Decision, bdb::Error>;
@@ -221,9 +180,6 @@ inline constexpr auto ray_top = std::numeric_limits<std::int64_t>::max();
 	return std::get<bdb::Committed<std::uint64_t>>(*written).value;
 }
 
-/// marginal(y, s, taxable), rates sorted (answers are sets; the host
-/// sorts). The status param crosses as the handle's declaration-order
-/// row id — the closed-handle bind domain is the u64 handle column.
 [[nodiscard]] auto marginal_rates(bdb::Db& db, bdb::Prepared<Marginal>& prepared, std::int64_t year, std::uint64_t status, std::int64_t taxable)
     -> std::optional<std::vector<std::int64_t>> {
 	auto result = db.execute(prepared, {.y = year, .s = status, .taxable = taxable}).transform([](bdb::Answers<Marginal> answers) {
@@ -286,7 +242,6 @@ auto run_cases(std::string_view fixtures_path, std::vector<CaseResult>& results)
 		return;
 	}
 
-	// The membership probe against the disjoint bracket set.
 	auto const at_30 = marginal_rates(*db, *marginal, 2024, Status.Single.index, 30);
 	results.push_back(CaseResult{
 	    .name = "marginal(2024, Single, 30) answers {1000}",
@@ -310,8 +265,6 @@ auto run_cases(std::string_view fixtures_path, std::vector<CaseResult>& results)
 	    .passed = wrong_status.has_value() && wrong_status->empty(),
 	});
 
-	// A second regime for one (year, filing status) violates the key that
-	// includes the closed-handle column.
 	auto duplicated = db->write([&](bdb::WriteTx& tx) -> std::expected<bdb::WriteDecision<std::monostate, std::monostate>, bdb::Error> {
 		auto landed = tx.alloc(Regime.id).and_then([&](std::uint64_t minted) {
 			return tx.insert(Regime, RegimeRow{.id = minted, .year = 2024, .status = Status.Single});
@@ -328,8 +281,6 @@ auto run_cases(std::string_view fixtures_path, std::vector<CaseResult>& results)
 	              !duplicated.error().violations().empty(),
 	});
 
-	// Income earned outside every residency period violates the
-	// residency-exclusion coverage.
 	auto outside = db->write([&](bdb::WriteTx& tx) -> std::expected<bdb::WriteDecision<std::monostate, std::monostate>, bdb::Error> {
 		auto landed = tx.insert(
 		    Earned, EarnedRow{.person = 7, .regime = *regime, .span = bdb::interval<std::int64_t>::literal(150, 160), .minor = 900});
@@ -349,7 +300,7 @@ auto run_cases(std::string_view fixtures_path, std::vector<CaseResult>& results)
 	std::filesystem::remove_all(*dir, code);
 }
 
-} // namespace
+}
 
 auto main(int argc, char** argv) -> int {
 	auto const arguments = std::span{argv, static_cast<std::size_t>(argc)};

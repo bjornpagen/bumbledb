@@ -39,7 +39,7 @@ header = """
  * returns. They are never owned or destroyed by the caller.
  * bdb_db_write_from may be called from inside a read callback with that
  * callback's still-live snapshot ref; nested writes are refused with a
- * typed BDB_ERROR_ENVIRONMENT_LOCKED error.
+ * typed BDB_ERROR_KIND_ENVIRONMENT_LOCKED error.
  *
  * View lifetimes: bdb_value string/bytes payloads handed OUT borrow the
  * carrier named at the accessor (bdb_row_set, bdb_answers, bdb_error)

@@ -1,15 +1,6 @@
-// The consteval schema elaborator (TODO_CPP §9–§10, §26; lowering.md
-// §2–§3): statement values as literals, the §39 Uptime theory as a
-// schema value, the law-computed class map (generators, pairing,
-// generator-first naming, bare fields), the flattened SchemaSpec tables
-// (declared statements only, written order), the capacity flattening
-// (weigh/within/ref/duration), and the keyed-read pattern products.
-// Everything is proven during constant evaluation, then re-reported at
-// runtime so ctest shows the cases. GCC-only (reflective import graph).
 import std;
 import bumbledb;
 
-// TODO_CPP §39 — the first-slice rows, spelled exactly as specified.
 struct ServiceRow {
 	[[= bdb::fresh]] std::uint64_t id;
 
@@ -24,8 +15,6 @@ struct OutageRow {
 inline constexpr auto Service = bdb::relation<"Service", ServiceRow>;
 inline constexpr auto Outage = bdb::relation<"Outage", OutageRow>;
 
-// The stored key law (§26: laws are first-class values — this exact
-// value is later the get() selector).
 inline constexpr auto outage_key = bdb::key(Outage.service, Outage.window);
 
 inline constexpr auto Uptime = bdb::schema<"Uptime">(Service, Outage,
@@ -34,14 +23,11 @@ inline constexpr auto Uptime = bdb::schema<"Uptime">(Service, Outage,
 
                                                      outage_key);
 
-// --- the schema value's shape ------------------------------------------------
-
 static_assert(Uptime.relation_count == 2);
 static_assert(Uptime.statement_count == 2);
 static_assert(Uptime.coordinate_count == 4);
 static_assert(Uptime.schema_name.view() == "Uptime");
 
-// Relations are members, argument order = declaration order (§10).
 static_assert(Uptime.relations.Service.id.fresh);
 static_assert(Uptime.relations.Outage.service.relation() == "Outage");
 static_assert(Uptime.relation_table[0].name.view() == "Service");
@@ -51,7 +37,6 @@ static_assert(Uptime.relation_table[0].fields[0].fresh);
 static_assert(!Uptime.relation_table[0].fields[1].fresh);
 static_assert(Uptime.relation_table[1].fields[1].kind == bdb::value_kind::interval_i64);
 
-// DECLARED statements only, written order (lowering.md §2/§7.1).
 static_assert(Uptime.statements[0].form == bdb::statement_form::containment);
 static_assert(!Uptime.statements[0].bidirectional);
 static_assert(Uptime.statements[0].source.relation.view() == "Outage");
@@ -64,11 +49,6 @@ static_assert(Uptime.statements[1].source.width == 2);
 static_assert(Uptime.statements[1].source.fields[0].view() == "service");
 static_assert(Uptime.statements[1].source.fields[1].view() == "window");
 
-// --- the class laws (lowering.md §3) ----------------------------------------
-
-// Service.id is the generator and names its class; the containment types
-// Outage.service into the same class; key() pairs nothing, so
-// Outage.window stays bare; Service.name is in no law — bare.
 [[nodiscard]] consteval auto class_is(std::optional<bdb::coord_ref> entry, std::string_view relation, std::string_view field) -> bool {
 	return entry.has_value() && entry->relation.view() == relation && entry->field.view() == field;
 }
@@ -77,8 +57,6 @@ static_assert(class_is(Uptime.class_of(Service.id), "Service", "id"));
 static_assert(class_is(Uptime.class_of(Outage.service), "Service", "id"));
 static_assert(!Uptime.class_of(Service.name).has_value());
 static_assert(!Uptime.class_of(Outage.window).has_value());
-
-// --- NTTP-friendliness: the schema and the law travel as template args ------
 
 template<auto Schema>
 struct schema_probe {
@@ -94,8 +72,6 @@ struct law_probe {
 
 static_assert(law_probe<outage_key>::width == 2);
 
-// --- the keyed-read pattern products (§26) -----------------------------------
-
 using OutageKeyPattern = decltype(outage_key)::pattern;
 static_assert(std::same_as<decltype(std::declval<OutageKeyPattern>().service), std::uint64_t>);
 static_assert(std::same_as<decltype(std::declval<OutageKeyPattern>().window), bdb::interval<std::int64_t>>);
@@ -104,8 +80,6 @@ using ServiceFresh = bdb::fresh_pattern_of<std::remove_cvref_t<decltype(Service)
 static_assert(std::same_as<decltype(std::declval<ServiceFresh>().id), std::uint64_t>);
 static_assert(bdb::fresh_field_count<std::remove_cvref_t<decltype(Service)>>() == 1);
 static_assert(bdb::fresh_field_count<std::remove_cvref_t<decltype(Outage)>>() == 0);
-
-// --- capacity / weigh / within / ref / duration flattening -------------------
 
 struct PoolRow {
 	[[= bdb::fresh]] std::uint64_t id;
@@ -140,13 +114,10 @@ static_assert(Power.statements[1].window.lo.lit == 0);
 static_assert(Power.statements[1].window.hi.form == bdb::bound_form::field);
 static_assert(Power.statements[1].window.hi.field.view() == "supply");
 
-// The capacity pairing types Device.pool by Pool.id (positionwise
-// source/target union — §10) and never touches the weight columns.
 static_assert(class_is(Power.class_of(Device.pool), "Pool", "id"));
 static_assert(!Power.class_of(Device.watts).has_value());
 static_assert(!Power.class_of(Pool.supply).has_value());
 
-// The unit overload and the duration measure lower structurally.
 struct BookingRow {
 	std::uint64_t room;
 	bdb::interval<std::uint64_t> span;
@@ -172,7 +143,6 @@ static_assert(Rooms.statements[1].weight == bdb::weight_form::duration_field);
 static_assert(Rooms.statements[1].weight_field.view() == "span");
 static_assert(Rooms.statements[1].window.hi.lit == 720);
 
-// within(n) is the exact form.
 static_assert(bdb::within(std::uint64_t{3}).data.form == bdb::window_form::exact);
 static_assert(bdb::within(std::uint64_t{3}).data.lo.lit == 3);
 
@@ -206,7 +176,7 @@ struct CaseResult {
 	};
 }
 
-} // namespace
+}
 
 auto main() -> int {
 	auto failures = std::size_t{0};

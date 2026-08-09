@@ -1,6 +1,8 @@
-// :wire — the schema wire lane (lowering.md §2): flattened schema tables
-// lowered to the foreign owned spec builder — declared statements only,
-// newtype slots fed from the law-computed class map (lowering.md §2/§7).
+/**
+ * The schema wire lane: flattened schema tables lowered to the foreign
+ * owned spec builder — declared statements only, newtype slots fed from
+ * the law-computed class map (lowering.md §2/§7).
+ */
 export module bumbledb:wire;
 
 import std;
@@ -35,8 +37,10 @@ namespace bdb::detail {
 	                        : foreign::fixed_interval_type(foreign::bdb_interval_element::BDB_INTERVAL_ELEMENT_I64, field.width);
 }
 
-/// The coordinate's law-computed class name, rendered "Relation.field"
-/// for the newtype slot (lowering.md §1.10/§7.7); nullopt on bare.
+/**
+ * The coordinate's law-computed class name, rendered "Relation.field"
+ * for the newtype slot (lowering.md §1.10/§7.7); nullopt on bare.
+ */
 template<class Classes>
 [[nodiscard]] auto newtype_of(Classes const& classes, name_text relation, name_text field) -> std::optional<std::string> {
 	for (auto const& entry : classes) {
@@ -50,8 +54,10 @@ template<class Classes>
 	return std::nullopt;
 }
 
-/// One schema-lane σ/axiom literal, owned (handles cross BY NAME —
-/// lowering.md §7.8; values tagged).
+/**
+ * One schema-lane σ/axiom literal, owned. Handles cross BY NAME — the
+ * engine resolves them (lowering.md §7.8); values are tagged.
+ */
 [[nodiscard]] auto owned_literal_of(selection_literal const& literal) -> foreign::owned_literal {
 	auto out = foreign::owned_literal{};
 	if (literal.is_handle) {
@@ -109,15 +115,16 @@ template<class Classes>
 	return out;
 }
 
+/**
+ * A closed relation's declared FieldSpecs carry its intrinsic payload
+ * columns only — the synthetic id is materialized by engine validation,
+ * never spelled in the spec (lowering.md §7.3).
+ */
 template<Theory S>
 [[nodiscard]] auto owned_relations_of(S const& theory) -> std::vector<foreign::owned_relation> {
 	auto relations = std::vector<foreign::owned_relation>{};
 	relations.reserve(theory.relation_table.size());
 	for (auto const& relation : theory.relation_table) {
-		// A CLOSED relation's declared FieldSpecs are its intrinsic
-		// payload columns ONLY — the synthetic id (sealed index 0 of the
-		// flattened roster) is materialized by engine validation, never
-		// spelled in the spec (lowering.md §7.3).
 		auto const first_field = relation.closed ? std::size_t{1} : std::size_t{0};
 		auto fields = std::vector<foreign::owned_field>{};
 		fields.reserve(relation.field_count - first_field);
@@ -146,8 +153,6 @@ template<Theory S>
 				    .values = std::move(values),
 				});
 			}
-			// ClosedSpec.newtype is ALWAYS the id's generator class
-			// "<Name>.id" (lowering.md §7.7).
 			closed = foreign::owned_closed{
 			    .newtype = std::string{relation.name.view()} + ".id",
 			    .rows = std::move(rows),
@@ -274,4 +279,4 @@ template<Theory S>
 	return statements;
 }
 
-} // namespace bdb::detail
+}

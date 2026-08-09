@@ -1,8 +1,8 @@
-// :classify — the structural ValueType classification of reflected row
-// fields against the closed value vocabulary, plus the shared reflected
-// row walks and the §34 product diagnostics (TODO_CPP §6–§7, §34).
-// Reflection metadata is the sole field source of truth; there is no
-// parallel field list anywhere.
+/**
+ * Reflection metadata is the sole field source of truth: every field
+ * walk and classification derives from the row declaration; there is no
+ * parallel field list anywhere.
+ */
 export module bumbledb:classify;
 
 import std;
@@ -13,8 +13,10 @@ import :handle;
 
 export namespace bdb {
 
-/// The structural ValueType classification of one row field — the C++
-/// image of the engine's closed value roster (TODO_CPP §7).
+/**
+ * The structural classification of one row field — the C++ image of the
+ * engine's closed ValueType roster.
+ */
 enum class value_kind : std::uint8_t {
 	boolean,
 	u64,
@@ -25,10 +27,12 @@ enum class value_kind : std::uint8_t {
 	interval_i64,
 };
 
-/// A field's classification: the kind plus the FixedBytes length (the
-/// length IS part of the type and a fingerprint input; 0 elsewhere) plus
-/// the fixed-width interval label (`interval<T, W>` — 0 is the general
-/// interval; a nonzero width is a fingerprint input, lowering.md §1.8).
+/**
+ * A field's classification: the kind plus the FixedBytes length (part of
+ * the type and a fingerprint input; 0 elsewhere) plus the fixed-width
+ * interval label (0 is the general interval; a nonzero width is a
+ * fingerprint input — 75-cpp-lowering.md §1.8).
+ */
 struct field_class {
 	value_kind kind;
 	std::uint16_t fixed_len;
@@ -37,22 +41,22 @@ struct field_class {
 	[[nodiscard]] constexpr auto operator==(field_class const&) const -> bool = default;
 };
 
-} // namespace bdb
+}
 
 namespace bdb::detail {
 
-// `^^std::uint64_t` is ill-formed on the pinned GCC ("'^^' cannot be
-// applied to a using-declaration"); routing through a template parameter
-// resolves the alias during substitution first.
+/* PIN(reflect-using-decl): ^^ through a template parameter — ^^std::uint64_t is ill-formed on the pinned GCC */
 template<class T>
 inline constexpr auto type_reflection = ^^T;
 
-} // namespace bdb::detail
+}
 
 export namespace bdb {
 
-/// Classifies one reflected field type against the closed vocabulary;
-/// nullopt = unsupported (the caller renders the product diagnostic).
+/**
+ * Classifies one reflected field type against the closed vocabulary;
+ * nullopt = unsupported, and the caller renders the product diagnostic.
+ */
 [[nodiscard]] consteval auto classify(std::meta::info type) -> std::optional<field_class> {
 	auto const t = std::meta::dealias(type);
 	if (t == ^^bool) {
@@ -73,13 +77,9 @@ export namespace bdb {
 	auto const tmpl = std::meta::template_of(t);
 	auto const args = std::meta::template_arguments_of(t);
 	if (tmpl == ^^closed_ref) {
-		// A closed reference is physically the engine's u64 handle row id
-		// (lowering.md §5.3); the vocabulary rides the TYPE only.
 		return field_class{value_kind::u64, 0};
 	}
 	if (tmpl == ^^std::array&& std::meta::dealias(args[0]) == ^^std::byte) {
-		// bdb::bytes<N> dealiases to std::array<std::byte, N>; the engine
-		// admits 1 ≤ N ≤ 64 (ValueType::FixedBytes len — lowering.md §1.8).
 		auto const len = std::meta::extract<std::size_t>(args[1]);
 		if (len >= 1 && len <= 64) {
 			return field_class{value_kind::fixed_bytes, static_cast<std::uint16_t>(len)};
@@ -87,9 +87,6 @@ export namespace bdb {
 		return std::nullopt;
 	}
 	if (tmpl == ^^interval) {
-		// args[1] is the fixed-width label (0 = the general interval);
-		// the width is part of the classification and a fingerprint
-		// input (lowering.md §1.8).
 		auto const width = std::meta::extract<std::uint64_t>(args[1]);
 		if (std::meta::dealias(args[0]) == detail::type_reflection<std::uint64_t>) {
 			return field_class{value_kind::interval_u64, 0, width};
@@ -99,12 +96,14 @@ export namespace bdb {
 	return std::nullopt;
 }
 
-} // namespace bdb
+}
 
 export namespace bdb::detail {
 
-/// Whether the member carries the `[[=bdb::fresh]]` annotation (matched by
-/// the annotation's type — FreshTag; annotation objects reflect const).
+/**
+ * Whether the member carries the `[[=bdb::fresh]]` annotation — matched
+ * by the annotation's type; annotation objects reflect const.
+ */
 [[nodiscard]] consteval auto is_fresh_marked(std::meta::info member) -> bool {
 	for (auto const annotation : std::meta::annotations_of(member)) {
 		auto const type = std::meta::remove_const(std::meta::type_of(annotation));
@@ -115,9 +114,11 @@ export namespace bdb::detail {
 	return false;
 }
 
-/// The member's WIRE field name: the `[[=bdb::named<...>]]` override when
-/// present, else the reflected identifier. The override exists because
-/// some cross-host wire names (`operator`, recipe 2) are C++ keywords.
+/**
+ * The member's WIRE field name: the `[[=bdb::named<...>]]` override when
+ * present, else the reflected identifier — some cross-host wire names
+ * are C++ keywords, so the identifier cannot always be the wire name.
+ */
 [[nodiscard]] consteval auto wire_field_name(std::meta::info member) -> std::string {
 	for (auto const annotation : std::meta::annotations_of(member)) {
 		auto const type = std::meta::remove_const(std::meta::type_of(annotation));
@@ -129,8 +130,10 @@ export namespace bdb::detail {
 	return std::string{std::meta::identifier_of(member)};
 }
 
-/// The row's fields, in declaration order — the one enumeration everything
-/// else derives from.
+/**
+ * The row's fields, in declaration order — the one enumeration
+ * everything else derives from.
+ */
 [[nodiscard]] consteval auto row_members(std::meta::info row) -> std::vector<std::meta::info> {
 	return std::meta::nonstatic_data_members_of(row, std::meta::access_context::current());
 }
@@ -161,8 +164,10 @@ export namespace bdb::detail {
 	return true;
 }
 
-/// Diagnostic subjects: `bumbledb relation "Service"` for the relation
-/// lane, `bumbledb row type 'ServiceRow'` for the marshalling lane.
+/**
+ * Diagnostic subjects: `bumbledb relation "Service"` for the relation
+ * lane, `bumbledb row type 'ServiceRow'` for the marshalling lane.
+ */
 [[nodiscard]] consteval auto relation_subject(std::string_view name) -> std::string {
 	return std::string{"bumbledb relation \""} + std::string{name} + "\"";
 }
@@ -171,8 +176,10 @@ export namespace bdb::detail {
 	return std::string{"bumbledb row type '"} + std::string{std::meta::display_string_of(row)} + "'";
 }
 
-/// The pinned unsupported-field diagnostic (compile-fail suite pins its
-/// shape): names the subject, the first offending field, and its type.
+/**
+ * The unsupported-field diagnostic — the compile-fail suite pins its
+ * shape: the subject, the first offending field, and its type.
+ */
 [[nodiscard]] consteval auto unsupported_field_message(std::string subject, std::meta::info row) -> std::string {
 	for (auto const member : row_members(row)) {
 		if (classify(std::meta::type_of(member)).has_value()) {
@@ -187,8 +194,10 @@ export namespace bdb::detail {
 	return {};
 }
 
-/// The pinned misplaced-fresh diagnostic: fresh is u64-only (the TS SDK
-/// twin rule; engine validation re-judges).
+/**
+ * The misplaced-fresh diagnostic — the compile-fail suite pins its
+ * shape; engine validation re-judges the u64-only rule.
+ */
 [[nodiscard]] consteval auto misplaced_fresh_message(std::string subject, std::meta::info row) -> std::string {
 	for (auto const member : row_members(row)) {
 		if (!is_fresh_marked(member)) {
@@ -204,8 +213,6 @@ export namespace bdb::detail {
 	return {};
 }
 
-/// Compile-time index range for pairing two parallel reflected member
-/// walks under `template for`.
 template<std::size_t Count>
 [[nodiscard]] consteval auto index_array() -> std::array<std::size_t, Count> {
 	auto indices = std::array<std::size_t, Count>{};
@@ -215,4 +222,4 @@ template<std::size_t Count>
 	return indices;
 }
 
-} // namespace bdb::detail
+}

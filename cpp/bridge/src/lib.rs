@@ -40,11 +40,11 @@
 //! A Rust panic unwinding across the C boundary into `-fno-exceptions` C++
 //! is undefined behavior, so EVERY extern entry point routes through
 //! [`guard`]: `std::panic::catch_unwind` maps a caught panic to
-//! `BDB_ERROR_PANIC` (the caller treats the store as poisoned). Unwinding
+//! `BDB_ERROR_KIND_PANIC` (the caller treats the store as poisoned). Unwinding
 //! stays inside Rust, so the engine's own drop guards (the escaped-fresh-id
 //! burn on write failure) run as designed. Re-entrant
 //! `write`/`write_from`/`bulk_load` are refused bridge-side with a typed
-//! `BDB_ERROR_ENVIRONMENT_LOCKED` error BEFORE the engine's non-reentrancy
+//! `BDB_ERROR_KIND_ENVIRONMENT_LOCKED` error BEFORE the engine's non-reentrancy
 //! assertion can fire.
 //!
 //! # Safety shape
@@ -110,7 +110,7 @@ pub(crate) type BridgeResult<T> = Result<T, Fail>;
 
 /// The one panic wall (module doc: panic policy): every extern entry's
 /// body runs under `catch_unwind`; a caught panic becomes
-/// `BDB_ERROR_PANIC`.
+/// `BDB_ERROR_KIND_PANIC`.
 pub(crate) fn guard(
     out_error: *mut *mut bdb_error,
     body: impl FnOnce() -> BridgeResult<bdb_status>,

@@ -1,21 +1,3 @@
-// Cookbook recipe 30 — The keyed read (ts/COOKBOOK.md §30): the key is a
-// LAW, and the read surface is that law made callable. `key(Program.grp)`
-// — one program per group — makes "the program of a group" a well-posed
-// question with at most one answer, enforced on every commit; the stored
-// statement VALUE is the read's selector (statement identity is the
-// membership rule), and the spelling is one and the same on every scope
-// (the symmetry rule): `db.get` standalone, `snap.get` inside a read
-// scope, `tx.get` inside a write transaction answering the FINAL state
-// (read-your-writes). The primary 2-arg form needs no statement: the
-// fresh field IS the primary key.
-//
-// Gates: the engine fingerprint equals the shared golden (fixtures line
-// "r30 <64-hex>"); the 3-arg keyed read answers the seeded fact through
-// the declared law; the primary form agrees; the read scope agrees with
-// the standalone spelling; and the write transaction sees its own
-// pending insert through both forms before commit.
-//
-// argv[1] = the fixtures file path (passed by add_test).
 import std;
 import bumbledb;
 
@@ -35,8 +17,6 @@ struct ProgramRow {
 inline constexpr auto Grp = bdb::relation<"Grp", GrpRow>;
 inline constexpr auto Program = bdb::relation<"Program", ProgramRow>;
 
-// The law: one program per group — hold the statement VALUE, it is the
-// read's selector.
 inline constexpr auto program_grp_key = bdb::key(Program.grp);
 
 inline constexpr auto KeyedRead = bdb::schema<"KeyedRead">(Grp, Program,
@@ -52,8 +32,6 @@ struct CaseResult {
 	bool passed;
 };
 
-/// The golden of one recipe: the fixtures file is one `rNN <64-hex>` line
-/// per recipe (ts/test/cookbook.test.ts reads the same file).
 [[nodiscard]] auto golden_of(std::string_view fixtures, std::string_view recipe) -> std::optional<std::string> {
 	for (auto const line_range : std::views::split(fixtures, '\n')) {
 		auto const line = std::string_view{line_range};
@@ -111,7 +89,6 @@ struct CaseResult {
 	return dir;
 }
 
-// ProgramRow reads back column-ordered: 0 = id, 1 = grp, 2 = title.
 [[nodiscard]] auto cell_is_u64(bdb::RowSet const& rows, bdb::Cell at, std::uint64_t want) -> bool {
 	auto const cell = rows.cell(at);
 	return cell.has_value() && std::holds_alternative<std::uint64_t>(*cell) && std::get<std::uint64_t>(*cell) == want;
@@ -127,7 +104,6 @@ struct SeedIds {
 	std::uint64_t program;
 };
 
-/// The recipe's seed: one group, one program — the minted ids carried out.
 [[nodiscard]] auto seed(bdb::Db& db) -> std::optional<SeedIds> {
 	using Decision = bdb::WriteDecision<SeedIds, std::monostate>;
 	using Result = std::expected<Decision, bdb::Error>;
@@ -157,7 +133,6 @@ struct SeedIds {
 	return std::get<bdb::Committed<SeedIds>>(*written).value;
 }
 
-/// The pre-commit witnesses the mutate transaction carries out.
 struct PendingReads {
 	bool keyed_saw_pending;
 	bool primary_saw_pending;
@@ -197,8 +172,6 @@ auto run_cases(std::string_view fixtures_path, std::vector<CaseResult>& results)
 		return;
 	}
 
-	// db.get, 3-arg — the declared key statement selects the read: the
-	// whole fact answers (id, grp, title).
 	auto const by_group = db->get(Program, program_grp_key, {.grp = ids->grp});
 	results.push_back(CaseResult{
 	    .name = "db.get(Program, programGrpKey, {grp}) answers the typed "
@@ -208,7 +181,6 @@ auto run_cases(std::string_view fixtures_path, std::vector<CaseResult>& results)
 	              cell_is_text(**by_group, {.row = 0, .column = 2}, "linear equations"),
 	});
 
-	// The primary 2-arg form — the fresh field IS the primary key.
 	auto const by_id = db->get(Program, {.id = ids->program});
 	results.push_back(CaseResult{
 	    .name = "db.get(Program, {id}) answers the primary point read",
@@ -216,8 +188,6 @@ auto run_cases(std::string_view fixtures_path, std::vector<CaseResult>& results)
 	        by_id.has_value() && by_id->has_value() && (*by_id)->len() == 1 && cell_is_u64(**by_id, {.row = 0, .column = 1}, ids->grp),
 	});
 
-	// snap.get — the same spelling inside a read scope (the symmetry
-	// rule).
 	auto const via_snap = db->read([&](bdb::Snapshot& snap) -> std::expected<bool, bdb::Error> {
 		return snap.get(Program, program_grp_key, {.grp = ids->grp}).transform([&](std::optional<bdb::RowSet> rows) {
 			return rows.has_value() && rows->len() == 1 && cell_is_u64(*rows, {.row = 0, .column = 0}, ids->program);
@@ -228,8 +198,6 @@ auto run_cases(std::string_view fixtures_path, std::vector<CaseResult>& results)
 	    .passed = via_snap.has_value() && *via_snap,
 	});
 
-	// tx.get — the write transaction answers the FINAL state
-	// (read-your-writes), through the key statement and the primary form.
 	using MutateDecision = bdb::WriteDecision<PendingReads, std::monostate>;
 	using MutateResult = std::expected<MutateDecision, bdb::Error>;
 	auto mutated = db->write([&](bdb::WriteTx& tx) -> MutateResult {
@@ -285,7 +253,7 @@ auto run_cases(std::string_view fixtures_path, std::vector<CaseResult>& results)
 	std::filesystem::remove_all(*dir, code);
 }
 
-} // namespace
+}
 
 auto main(int argc, char** argv) -> int {
 	auto const arguments = std::span{argv, static_cast<std::size_t>(argc)};

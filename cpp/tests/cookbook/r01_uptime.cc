@@ -1,17 +1,6 @@
-// Cookbook recipe 1 — Uptime (TODO_CPP §33, §39; ts/COOKBOOK.md §1): the
-// cross-host parity gate. The §39 theory is built through the REAL
-// bdb::schema<> elaborator, lowered through the C ABI SchemaSpec path,
-// admitted by the engine, and the store's fingerprint readback must equal
-// the host-neutral golden pinned at the repository root
-// (fixtures/cookbook-fingerprints.txt, line "r01 <64-hex>") — the same
-// line the TypeScript suite asserts. Identical bytes or the recipe is
-// wrong (lowering.md §6–§7).
-//
-// argv[1] = the fixtures file path (passed by add_test).
 import std;
 import bumbledb;
 
-// TODO_CPP §39 — the first-slice rows, spelled exactly as specified.
 struct ServiceRow {
 	[[= bdb::fresh]] std::uint64_t id;
 
@@ -34,8 +23,6 @@ inline constexpr auto Uptime = bdb::schema<"Uptime">(Service, Outage,
 
 namespace {
 
-/// The golden of one recipe: the fixtures file is one `rNN <64-hex>` line
-/// per recipe (ts/test/cookbook.test.ts reads the same file).
 [[nodiscard]] auto golden_of(std::string_view fixtures, std::string_view recipe) -> std::optional<std::string> {
 	for (auto const line_range : std::views::split(fixtures, '\n')) {
 		auto const line = std::string_view{line_range};
@@ -93,7 +80,7 @@ namespace {
 	return dir;
 }
 
-} // namespace
+}
 
 auto main(int argc, char** argv) -> int {
 	auto const arguments = std::span{argv, static_cast<std::size_t>(argc)};

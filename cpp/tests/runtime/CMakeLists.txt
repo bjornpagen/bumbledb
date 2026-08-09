@@ -1,12 +1,4 @@
-# Every runtime test imports the one SDK module `bumbledb` (this directory
-# is added only in the production graph — the module's reflective
-# partitions are GCC-only).
-#
-# Pinned GCC 16.1 quirk (TODO_CPP §32): `template for` over a >1-element
-# range trips -Wshadow on compiler-generated scoping, and expansion happens
-# at the template INSTANTIATION site — hence the scoped -Wno-shadow on each
-# test target that instantiates the reflective templates, never an inline
-# suppression.
+# PIN(gcc-template-for-wshadow): scoped -Wno-shadow on every target that instantiates the reflective templates.
 
 add_executable(bumbledb_version_tests)
 
@@ -128,6 +120,25 @@ target_compile_options(bumbledb_db_lifecycle_tests
 
 add_test(NAME runtime.db_lifecycle COMMAND bumbledb_db_lifecycle_tests)
 
+add_executable(bumbledb_error_classification_tests)
+
+target_sources(bumbledb_error_classification_tests
+    PRIVATE
+        error_classification.cc
+)
+
+target_link_libraries(bumbledb_error_classification_tests
+    PRIVATE
+        bumbledb
+        bumbledb_foreign
+        bumbledb_language_profile
+)
+
+target_compile_options(bumbledb_error_classification_tests
+    PRIVATE -Wno-shadow)
+
+add_test(NAME runtime.error_classification COMMAND bumbledb_error_classification_tests)
+
 add_executable(bumbledb_keyed_get_tests)
 
 target_sources(bumbledb_keyed_get_tests
@@ -159,10 +170,7 @@ target_link_libraries(bumbledb_query_ir_tests
         bumbledb_language_profile
 )
 
-# -Wno-missing-field-initializers: a query pattern's UNMENTIONED slot
-# IS the wildcard (absence of a field binds nothing — lowering.md
-# §4.1), so query-writing TUs suppress exactly this -Wextra lint, the
-# scoped way (-Wno-shadow's precedent above).
+# -Wno-missing-field-initializers: an unmentioned query-pattern slot IS the wildcard (lowering.md 4.1).
 target_compile_options(bumbledb_query_ir_tests
     PRIVATE -Wno-shadow -Wno-missing-field-initializers)
 

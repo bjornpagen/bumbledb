@@ -1,12 +1,6 @@
-// The relation reflector's coordinate facade (TODO_CPP §6–§7, §39): the
-// Service/Outage rows of the first vertical slice, proven for ordinals,
-// names (through the coord name hooks), fresh flags, structural kinds, and
-// NTTP-friendliness of coordinates. GCC-only: imports reflective modules,
-// excluded from the lint graph.
 import std;
 import bumbledb;
 
-// TODO_CPP §39 — the first-slice rows, spelled exactly as specified.
 struct ServiceRow {
 	[[= bdb::fresh]] std::uint64_t id;
 
@@ -21,10 +15,6 @@ struct OutageRow {
 inline constexpr auto Service = bdb::relation<"Service", ServiceRow>;
 inline constexpr auto Outage = bdb::relation<"Outage", OutageRow>;
 
-// The facade is compile-time semantic data; everything below is proven
-// during constant evaluation, then re-reported at runtime so ctest shows
-// the cases. A coordinate's physical type rides its value_type; its
-// IDENTITY rides the whole coord type (two fields are two types).
 static_assert(std::same_as<decltype(Service.id)::value_type, std::uint64_t>);
 static_assert(std::same_as<decltype(Service.name)::value_type, std::string>);
 static_assert(std::same_as<decltype(Outage.window)::value_type, bdb::interval<std::int64_t>>);
@@ -51,7 +41,6 @@ static_assert(Service.name.field() == "name");
 static_assert(Outage.window.relation() == "Outage");
 static_assert(Outage.window.field() == "window");
 
-// The whole classification vocabulary, through one row.
 struct KindsRow {
 	bool flag;
 	std::uint64_t count;
@@ -74,8 +63,6 @@ static_assert(Kinds.span.kind == bdb::value_kind::interval_u64);
 static_assert(Kinds.window.kind == bdb::value_kind::interval_i64);
 static_assert(Kinds.window.ordinal == 6);
 
-// Coordinates are structural NTTP-friendly literal types (TODO_CPP §6):
-// a coord travels as a template argument.
 template<auto Coordinate>
 struct coordinate_probe {
 	static constexpr auto ordinal = Coordinate.ordinal;
@@ -116,7 +103,7 @@ struct CaseResult {
 	};
 }
 
-} // namespace
+}
 
 auto main() -> int {
 	auto failures = std::size_t{0};

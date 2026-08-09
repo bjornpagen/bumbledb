@@ -1,19 +1,3 @@
-// Cookbook recipe 32 — Calendar capacity (ts/COOKBOOK.md §32): the
-// Duration weight against the Duration bound. "Total booked time per room
-// stays within the room's own span" is ONE statement —
-// `capacity(on(Room.id), weigh(duration(booked)), within(0,
-// duration(span)), on(Booking.room))` — and the interval enters through
-// the measure argument, never the group key. The pointwise key forbids
-// double-booking (recipe 1); the capacity law bounds the TOTAL: different
-// laws, and this schema wants both.
-//
-// Gates: the engine fingerprint equals the shared golden (fixtures line
-// "r32 <64-hex>"); the booked-time-per-room read (`sum(duration)`)
-// prepares through the engine validator and answers the seeded totals; a
-// double-booking is commit-rejected citing the key (functionality); an
-// over-capacity booking is commit-rejected citing the capacity law.
-//
-// argv[1] = the fixtures file path (passed by add_test).
 import std;
 import bumbledb;
 
@@ -37,14 +21,11 @@ inline constexpr auto Rooms = bdb::schema<"Rooms">(Room, Booking,
 
                                                    bdb::contained(bdb::on(Booking.room), bdb::on(Room.id)),
 
-                                                   // The pointwise key forbids double-booking (recipe 1); the capacity
-                                                   // law bounds the TOTAL. Different laws — a schema usually wants both.
                                                    bdb::key(Booking.room, Booking.booked),
 
                                                    bdb::capacity(bdb::on(Room.id), bdb::weigh(bdb::duration(Booking.booked)),
                                                                  bdb::within(0, bdb::duration(Room.span)), bdb::on(Booking.room)));
 
-// the booked time per room, read back:
 inline constexpr auto Booked = bdb::query(Rooms).rule([](auto r) consteval {
 	auto vars = r.vars(Booking);
 	return r
@@ -68,8 +49,6 @@ struct CaseResult {
 	bool passed;
 };
 
-/// The golden of one recipe: the fixtures file is one `rNN <64-hex>` line
-/// per recipe (ts/test/cookbook.test.ts reads the same file).
 [[nodiscard]] auto golden_of(std::string_view fixtures, std::string_view recipe) -> std::optional<std::string> {
 	for (auto const line_range : std::views::split(fixtures, '\n')) {
 		auto const line = std::string_view{line_range};
@@ -132,8 +111,6 @@ struct SeedIds {
 	std::uint64_t room_b;
 };
 
-/// Room A spans [0,100) and carries bookings [0,30) and [50,80) (total
-/// 60); room B spans [0,50) with one booking [10,20) (total 10).
 [[nodiscard]] auto seed(bdb::Db& db) -> std::optional<SeedIds> {
 	using Decision = bdb::WriteDecision<SeedIds, std::monostate>;
 	using Result = std::expected<Decision, bdb::Error>;
@@ -176,7 +153,6 @@ struct SeedIds {
 	return std::get<bdb::Committed<SeedIds>>(*written).value;
 }
 
-/// One booking landing alone in its own transaction — the rejection lane.
 [[nodiscard]] auto book_one(bdb::Db& db, std::uint64_t room, std::int64_t lo, std::int64_t hi)
     -> std::expected<bdb::WriteOutcome<std::monostate, std::monostate>, bdb::Error> {
 	return db.write([&](bdb::WriteTx& tx) -> std::expected<bdb::WriteDecision<std::monostate, std::monostate>, bdb::Error> {
@@ -190,7 +166,6 @@ struct SeedIds {
 	});
 }
 
-/// The rejection cites exactly the expected statement kind.
 [[nodiscard]] auto rejected_citing(std::expected<bdb::WriteOutcome<std::monostate, std::monostate>, bdb::Error> const& written, bdb::StatementKind kind)
     -> bool {
 	if (written.has_value() || written.error().kind() != bdb::ErrorKind::CommitRejected) {
@@ -246,7 +221,6 @@ auto run_cases(std::string_view fixtures_path, std::vector<CaseResult>& results)
 		return;
 	}
 
-	// The booked time per room, read back: A totals 60, B totals 10.
 	using BookedRow = bdb::row_of<Booked>;
 	auto totals = db->execute(*booked, {}).transform([](bdb::Answers<Booked> answers) {
 		auto rows = std::vector<BookedRow>{};
@@ -267,8 +241,6 @@ auto run_cases(std::string_view fixtures_path, std::vector<CaseResult>& results)
 	    .passed = totals_pass,
 	});
 
-	// The pointwise key forbids double-booking: [20,40) shares points
-	// with A's [0,30).
 	auto const double_booked = book_one(*db, ids->room_a, 20, 40);
 	results.push_back(CaseResult{
 	    .name = "a double-booking is commit-rejected citing the pointwise "
@@ -276,9 +248,6 @@ auto run_cases(std::string_view fixtures_path, std::vector<CaseResult>& results)
 	    .passed = rejected_citing(double_booked, bdb::StatementKind::Functionality),
 	});
 
-	// The capacity law bounds the TOTAL: [200,400) is disjoint from every
-	// booking (the key holds) but adds 200 to A's 60 — over the span's
-	// own measure of 100.
 	auto const over_capacity = book_one(*db, ids->room_a, 200, 400);
 	results.push_back(CaseResult{
 	    .name = "an over-capacity booking is commit-rejected citing the "
@@ -286,8 +255,6 @@ auto run_cases(std::string_view fixtures_path, std::vector<CaseResult>& results)
 	    .passed = rejected_citing(over_capacity, bdb::StatementKind::Capacity),
 	});
 
-	// A booking that fits the remaining budget still lands: [80,100)
-	// brings A to exactly the ceiling (total 80 <= 100).
 	auto const topped = book_one(*db, ids->room_a, 80, 100);
 	results.push_back(CaseResult{
 	    .name = "an in-budget booking still lands after the rejections",
@@ -298,7 +265,7 @@ auto run_cases(std::string_view fixtures_path, std::vector<CaseResult>& results)
 	std::filesystem::remove_all(*dir, code);
 }
 
-} // namespace
+}
 
 auto main(int argc, char** argv) -> int {
 	auto const arguments = std::span{argv, static_cast<std::size_t>(argc)};

@@ -1,22 +1,5 @@
-# The expected-failure compiler harness (TODO_CPP §34).
-#
-# Each case is an EXCLUDE_FROM_ALL object library — a real project target on
-# the real module graph, so cases can import project modules — that the main
-# build never compiles. Its CTest test re-enters the build for just that
-# target; PASS_REGULAR_EXPRESSION means the test passes ONLY when the build
-# output carries the pinned diagnostic substring, i.e. only when the compiler
-# rejects the case for the pinned reason. A case that starts compiling
-# produces no diagnostic and fails; a diagnostic that degrades stops
-# matching and fails.
-#
-# RUN_SERIAL: every case's test drives ninja in this one binary dir; two
-# concurrent `cmake --build` invocations would contend for the ninja lock.
-#
-# Cases link the `bumbledb` module so they can exercise the relation
-# reflector. Pinned GCC 16.1 quirk (TODO_CPP §32): `template for` over a
-# >1-element range trips -Wshadow at the instantiation site — cases carry
-# the same scoped -Wno-shadow as every reflective TU, so the only diagnostic
-# a case emits is the one under test.
+# The expected-failure compiler harness: each case is an EXCLUDE_FROM_ALL object library whose CTest test re-enters the build for just that target; PASS_REGULAR_EXPRESSION passes only when the build output carries the pinned diagnostic.
+# RUN_SERIAL: every case drives ninja in this one binary dir; concurrent builds would contend for the ninja lock.
 function(bdb_compile_fail_case case)
     set(diagnostic ${ARGN})
     add_library(cf_${case} OBJECT EXCLUDE_FROM_ALL ${case}.cc)
@@ -25,10 +8,7 @@ function(bdb_compile_fail_case case)
             bumbledb
             bumbledb_language_profile
     )
-    # -Wno-missing-field-initializers: a query pattern's unmentioned slot
-    # IS the wildcard (lowering.md §4.1) — the same scoped suppression
-    # every query-writing TU carries, so the only diagnostic a case emits
-    # is the one under test.
+    # PIN(gcc-template-for-wshadow); -Wno-missing-field-initializers: an unmentioned query-pattern slot IS the wildcard (lowering.md 4.1) — so the only diagnostic a case emits is the one under test.
     target_compile_options(cf_${case}
         PRIVATE -Wno-shadow -Wno-missing-field-initializers)
     add_test(NAME compile_fail.${case}
@@ -48,15 +28,10 @@ bdb_compile_fail_case(unresolved_import
     "bumbledb_nonexistent"
 )
 
-# §21: the value vocabulary's consteval lane — an invalid constant interval
-# is a compile error that reads as the violated precondition's name.
 bdb_compile_fail_case(interval_empty_literal
     "interval_literal_must_satisfy_lo_less_than_hi"
 )
 
-# §34: the relation reflector's pinned diagnostics — each names the
-# relation, the field, and the offending type (semantic coordinates, never
-# template internals).
 bdb_compile_fail_case(relation_float_field
     "relation \"Ratio\": field \"ratio\" has unsupported row type 'float'"
 )
@@ -69,9 +44,6 @@ bdb_compile_fail_case(fresh_on_string_field
     "relation \"Naming\": field \"name\" is marked .* but has type .* fresh is legal on std::uint64_t fields only"
 )
 
-# §34: the schema elaborator's pinned diagnostics — semantic coordinates,
-# never template internals (lowering.md §3.4's one-generator wall, the
-# key/face single-relation walls, and schema membership).
 bdb_compile_fail_case(schema_two_generators_unified
     "the statements unify two generators into one class — \"Repo.id\" and \"Service.id\""
 )
@@ -84,11 +56,6 @@ bdb_compile_fail_case(schema_foreign_coordinate
     "references coordinate \"Outage.service\" but relation \"Outage\" is not a member of the schema"
 )
 
-# §34 / TODO_CPP §11, §21: the query elaborator's pinned walls — the
-# cross-class variable-reuse diagnostic names BOTH coordinates and both
-# classes; a wrong param name at execute fails the synthesized params
-# product's designated init; an unbound find-head variable fails rule
-# assembly with the named value-tier wall.
 bdb_compile_fail_case(query_var_cross_class_reuse
     "variable \"Outage.service\".*cannot bind coordinate \"Audit.actor\""
 )
@@ -101,17 +68,10 @@ bdb_compile_fail_case(query_find_unbound_variable
     "find_head_variable_is_not_bound_in_this_rule"
 )
 
-# §34 / TODO_CPP §8: the closed-vocabulary wall — a handle of one closed
-# relation used against a field referencing another fails the match
-# binding with a diagnostic naming the handle, both vocabularies, and the
-# semantic coordinate.
 bdb_compile_fail_case(closed_handle_wrong_vocabulary
     "handle \"Deterministic\" of closed relation \"Kind\" cannot bind coordinate \"Ticket.priority\""
 )
 
-# The nodiscard law (AGENTS.md §26): every fallible SDK operation is
-# [[nodiscard]] under -Werror, so a silently dropped std::expected — a
-# swallowed error — cannot compile.
 bdb_compile_fail_case(discarded_expected
     "ignoring return value"
 )

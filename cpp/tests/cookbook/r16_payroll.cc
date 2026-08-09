@@ -1,15 +1,3 @@
-// Cookbook recipe 16 — Disjoint covers (ts/COOKBOOK.md §16): pay periods,
-// shifts, estimated-tax quarters. A pointwise key plus one-way coverage is
-// a DISJOINT COVER — no overlaps among pay periods and no holes in the
-// fiscal year's source span; pay periods may extend beyond that span.
-//
-// Gates: the engine fingerprint equals the shared golden (fixtures line
-// "r16 <64-hex>"); holding (the period holding date t — point_in vs a
-// param) prepares AND answers the recipe's own semantics; an overlapping
-// period, a duplicated sequence number, and a holed fiscal year are all
-// commit-rejected.
-//
-// argv[1] = the fixtures file path (passed by add_test).
 import std;
 import bumbledb;
 
@@ -33,16 +21,12 @@ inline constexpr auto Payroll =
 
                            bdb::contained(bdb::on(PayPeriod.year), bdb::on(FiscalYear.id)),
 
-                           // Sequence numbers stay unique.
                            bdb::key(PayPeriod.year, PayPeriod.seq),
 
-                           // Disjoint: no shared instant.
                            bdb::key(PayPeriod.year, PayPeriod.span),
 
-                           // Covering: no holes in the fiscal year's span; overhang is legal.
                            bdb::contained(bdb::on(FiscalYear.id, FiscalYear.span), bdb::on(PayPeriod.year, PayPeriod.span)));
 
-// the period holding date t.
 inline constexpr auto Holding = bdb::query(Payroll).rule([](auto r) consteval {
 	auto vars = r.vars(PayPeriod);
 	return r
@@ -65,8 +49,6 @@ struct CaseResult {
 	bool passed;
 };
 
-/// The golden of one recipe: the fixtures file is one `rNN <64-hex>` line
-/// per recipe (ts/test/cookbook.test.ts reads the same file).
 [[nodiscard]] auto golden_of(std::string_view fixtures, std::string_view recipe) -> std::optional<std::string> {
 	for (auto const line_range : std::views::split(fixtures, '\n')) {
 		auto const line = std::string_view{line_range};
@@ -124,10 +106,6 @@ struct CaseResult {
 	return dir;
 }
 
-/// One fiscal year spanning [0,30), covered by three meeting periods —
-/// the last extends beyond the year's span (overhang is legal).
-///
-///   seq 1 [0,10)    seq 2 [10,20)    seq 3 [20,35)
 [[nodiscard]] auto seed(bdb::Db& db) -> std::optional<std::uint64_t> {
 	using Decision = bdb::WriteDecision<std::uint64_t, std::monostate>;
 	using Result = std::expected<Decision, bdb::Error>;
@@ -160,8 +138,6 @@ struct CaseResult {
 	return std::get<bdb::Committed<std::uint64_t>>(*written).value;
 }
 
-/// holding(y, t), sequence numbers sorted (answers are sets; the host
-/// sorts).
 [[nodiscard]] auto holding_seqs(bdb::Db& db, bdb::Prepared<Holding>& prepared, std::uint64_t year, std::int64_t at)
     -> std::optional<std::vector<std::uint64_t>> {
 	auto result = db.execute(prepared, {.y = year, .t = at}).transform([](bdb::Answers<Holding> answers) {
@@ -223,7 +199,6 @@ auto run_cases(std::string_view fixtures_path, std::vector<CaseResult>& results)
 		return;
 	}
 
-	// The membership probe: exactly one period holds any covered instant.
 	auto const at_5 = holding_seqs(*db, *holding, *year, 5);
 	results.push_back(CaseResult{
 	    .name = "holding(t=5) answers {1}",
@@ -246,7 +221,6 @@ auto run_cases(std::string_view fixtures_path, std::vector<CaseResult>& results)
 	    .passed = at_40.has_value() && at_40->empty(),
 	});
 
-	// Two periods sharing an instant violate the pointwise key.
 	auto overlapping = db->write([&](bdb::WriteTx& tx) -> std::expected<bdb::WriteDecision<std::monostate, std::monostate>, bdb::Error> {
 		auto landed = tx.insert(PayPeriod, PayPeriodRow{.year = *year, .seq = 4, .span = bdb::interval<std::int64_t>::literal(15, 25)});
 		if (!landed.has_value()) {
@@ -261,8 +235,6 @@ auto run_cases(std::string_view fixtures_path, std::vector<CaseResult>& results)
 	              !overlapping.error().violations().empty(),
 	});
 
-	// A reused sequence number violates the (year, seq) key even on a
-	// disjoint span.
 	auto duplicated = db->write([&](bdb::WriteTx& tx) -> std::expected<bdb::WriteDecision<std::monostate, std::monostate>, bdb::Error> {
 		auto landed = tx.insert(PayPeriod, PayPeriodRow{.year = *year, .seq = 2, .span = bdb::interval<std::int64_t>::literal(40, 50)});
 		if (!landed.has_value()) {
@@ -276,8 +248,6 @@ auto run_cases(std::string_view fixtures_path, std::vector<CaseResult>& results)
 	              !duplicated.error().violations().empty(),
 	});
 
-	// A fiscal year whose span has a hole violates the coverage
-	// containment.
 	auto holed = db->write([&](bdb::WriteTx& tx) -> std::expected<bdb::WriteDecision<std::monostate, std::monostate>, bdb::Error> {
 		auto landed =
 		    tx.alloc(FiscalYear.id)
@@ -306,7 +276,7 @@ auto run_cases(std::string_view fixtures_path, std::vector<CaseResult>& results)
 	std::filesystem::remove_all(*dir, code);
 }
 
-} // namespace
+}
 
 auto main(int argc, char** argv) -> int {
 	auto const arguments = std::span{argv, static_cast<std::size_t>(argc)};
