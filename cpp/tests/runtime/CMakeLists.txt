@@ -120,6 +120,25 @@ target_compile_options(bumbledb_db_lifecycle_tests
 
 add_test(NAME runtime.db_lifecycle COMMAND bumbledb_db_lifecycle_tests)
 
+add_executable(bumbledb_error_classification_tests)
+
+target_sources(bumbledb_error_classification_tests
+    PRIVATE
+        error_classification.cc
+)
+
+target_link_libraries(bumbledb_error_classification_tests
+    PRIVATE
+        bumbledb
+        bumbledb_foreign
+        bumbledb_language_profile
+)
+
+target_compile_options(bumbledb_error_classification_tests
+    PRIVATE -Wno-shadow)
+
+add_test(NAME runtime.error_classification COMMAND bumbledb_error_classification_tests)
+
 add_executable(bumbledb_keyed_get_tests)
 
 target_sources(bumbledb_keyed_get_tests

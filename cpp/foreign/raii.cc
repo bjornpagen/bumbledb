@@ -141,6 +141,14 @@ public:
 		return generation_moved_payload{.witnessed = witnessed, .current = current};
 	}
 
+	[[nodiscard]] auto bulk_committed() const -> std::optional<std::uint64_t> {
+		auto committed = std::uint64_t{0};
+		if (bdb_error_get_bulk_committed(raw_, &committed) != bdb_status::BDB_STATUS_OK) {
+			return std::nullopt;
+		}
+		return committed;
+	}
+
 	[[nodiscard]] auto violation_count() const -> std::size_t {
 		return bdb_error_violation_count(raw_);
 	}

@@ -129,6 +129,47 @@ struct CaseResult {
 	});
 }
 
+[[nodiscard]] auto bulk_committed_fold_case(std::string_view absent_path) -> CaseResult {
+	auto const path_bytes = bytes_of(absent_path);
+	auto const service_bytes = bytes_of("Service");
+	auto const id_bytes = bytes_of("id");
+
+	auto const field = abi::bdb_field_spec{
+	    .name = view_of(id_bytes),
+	    .value_type = scalar_type(abi::bdb_value_type_kind::BDB_VALUE_TYPE_KIND_U64),
+	    .newtype = absent_view(),
+	    .fresh = true,
+	};
+	auto const relation = abi::bdb_relation_spec{
+	    .name = view_of(service_bytes),
+	    .fields = &field,
+	    .field_count = std::size_t{1},
+	    .closed = nullptr,
+	};
+	auto const spec = abi::bdb_schema_spec{
+	    .relations = &relation,
+	    .relation_count = std::size_t{1},
+	    .statements = nullptr,
+	    .statement_count = 0,
+	};
+
+	abi::bdb_db* database = nullptr;
+	abi::bdb_error* error = nullptr;
+	auto const opened = abi::bdb_db_open(view_of(path_bytes), &spec, &database, &error);
+	if (opened != abi::bdb_status::BDB_STATUS_ERROR || error == nullptr) {
+		return CaseResult{
+		    .name = "open on an absent path hands over an owned error",
+		    .passed = false,
+		};
+	}
+	auto const handle = abi::error_handle{error};
+	return CaseResult{
+	    .name = "bulk_committed() folds the non-BulkLoad lane to nullopt",
+	    .passed = handle.kind() != abi::bdb_error_kind::BDB_ERROR_KIND_BULK_LOAD && !handle.bulk_committed().has_value() &&
+	              !handle.generation_moved().has_value(),
+	};
+}
+
 [[nodiscard]] auto run_cases() -> std::vector<CaseResult> {
 	auto const dir = make_store_dir();
 	if (!dir) {
@@ -138,6 +179,7 @@ struct CaseResult {
 		}};
 	}
 	auto const fingerprint = read_fingerprint(dir->string());
+	auto const fold_case = bulk_committed_fold_case((*dir / "absent").string());
 	auto code = std::error_code{};
 	std::filesystem::remove_all(*dir, code);
 	if (!fingerprint) {
@@ -147,6 +189,7 @@ struct CaseResult {
 		}};
 	}
 	return {
+	    fold_case,
 	    CaseResult{
 	        .name = "ephemeral create → fingerprint → destroy round-trips",
 	        .passed = true,

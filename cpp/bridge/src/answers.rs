@@ -103,7 +103,7 @@ pub extern "C" fn bdb_answers_destroy(answers: *mut bdb_answers) -> bdb_status {
 /// is taken exclusively for the call (`&mut` on the engine side — one
 /// execution at a time, §20/§22); executing a prepared query against a
 /// snapshot of a different database is the engine's own typed
-/// `BDB_ERROR_FOREIGN_PREPARED`.
+/// `BDB_ERROR_KIND_FOREIGN_PREPARED`.
 #[unsafe(no_mangle)]
 #[expect(unsafe_code, reason = "extern export: the unsafe(no_mangle) ABI attribute")]
 pub extern "C" fn bdb_snapshot_execute(

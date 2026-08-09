@@ -171,6 +171,52 @@ public:
 		return static_cast<ErrorKind>(std::to_underlying(handle_.kind()));
 	}
 
+	/**
+	 * Could the same operation, retried with nothing changed, plausibly
+	 * succeed? Exactly two kinds: GenerationMoved (rebuild on a fresh
+	 * snapshot — write_witnessed is that loop, spelled once) and
+	 * ReadersFull (a slot frees when any reader finishes). Everything
+	 * else is permanent, including CommitSync/Io (post-failure
+	 * durability unknown; blind retry unsafe) and Panic (store
+	 * poisoned). Per-kind table: docs/architecture/70-api.md.
+	 */
+	[[nodiscard]] auto is_transient() const -> bool {
+		switch (kind()) {
+		case ErrorKind::GenerationMoved:
+		case ErrorKind::ReadersFull:
+			return true;
+		case ErrorKind::Schema:
+		case ErrorKind::SchemaMismatch:
+		case ErrorKind::FormatMismatch:
+		case ErrorKind::AlreadyInitialized:
+		case ErrorKind::NotInitialized:
+		case ErrorKind::EnvironmentLocked:
+		case ErrorKind::StoreKindMismatch:
+		case ErrorKind::DescriptorMissing:
+		case ErrorKind::Validation:
+		case ErrorKind::CommitRejected:
+		case ErrorKind::CommitSync:
+		case ErrorKind::ForeignSnapshot:
+		case ErrorKind::ForeignPrepared:
+		case ErrorKind::FactShape:
+		case ErrorKind::ClosedRelationWrite:
+		case ErrorKind::FreshExhausted:
+		case ErrorKind::BulkLoad:
+		case ErrorKind::Param:
+		case ErrorKind::MeasureOfRay:
+		case ErrorKind::CapacityRayMeasure:
+		case ErrorKind::FixpointBudgetExceeded:
+		case ErrorKind::Overflow:
+		case ErrorKind::ResultBytesOverflow:
+		case ErrorKind::Corruption:
+		case ErrorKind::Io:
+		case ErrorKind::Lmdb:
+		case ErrorKind::Panic:
+			return false;
+		}
+		std::unreachable();
+	}
+
 	[[nodiscard]] auto message() const -> std::string {
 		return handle_.message();
 	}
@@ -185,6 +231,16 @@ public:
 			    .current = payload.current,
 			};
 		});
+	}
+
+	/**
+	 * BulkLoad only: facts already durable — whole chunks committed
+	 * before the failing one. A failed bulk load is not atomic by
+	 * design; this count is where the host resumes. Nullopt for every
+	 * other kind.
+	 */
+	[[nodiscard]] auto bulk_committed() const -> std::optional<std::uint64_t> {
+		return handle_.bulk_committed();
 	}
 
 	/**
