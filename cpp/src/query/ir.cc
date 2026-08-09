@@ -38,14 +38,14 @@ inline constexpr std::size_t max_membership_handles = 8;
 /// (NTTP-usable), and no cookbook query literal needs them — bind such
 /// values through params instead.
 struct query_literal {
-    value_kind kind;
-    bool boolean;
-    std::uint64_t u64;
-    std::int64_t i64;
-    std::uint64_t u64_start;
-    std::uint64_t u64_end;
-    std::int64_t i64_start;
-    std::int64_t i64_end;
+	value_kind kind;
+	bool boolean;
+	std::uint64_t u64;
+	std::int64_t i64;
+	std::uint64_t u64_start;
+	std::uint64_t u64_end;
+	std::int64_t i64_start;
+	std::int64_t i64_end;
 };
 
 /// A term's form (`ir::Term`, lowering.md §4.1). `absent` is the pattern
@@ -54,12 +54,12 @@ struct query_literal {
 /// content-addressed registry entry whose set is a PROGRAM CONSTANT (the
 /// execute-time params product never carries it — lowering.md §4.2).
 enum class query_term_form : std::uint8_t {
-    absent,
-    variable,
-    param,
-    param_set,
-    literal,
-    measure,
+	absent,
+	variable,
+	param,
+	param_set,
+	literal,
+	measure,
 };
 
 /// One builder-stage term: variables/measures ride their MINT coordinate
@@ -67,48 +67,48 @@ enum class query_term_form : std::uint8_t {
 /// A membership term additionally carries its pre-resolved handle row ids
 /// (queries resolve handles HOST-side — lowering.md §7.8).
 struct term_data {
-    query_term_form form;
-    coord_ref variable;
-    name_text param;
-    query_literal literal;
-    std::size_t member_count;
-    std::array<std::uint64_t, max_membership_handles> members;
+	query_term_form form;
+	coord_ref variable;
+	name_text param;
+	query_literal literal;
+	std::size_t member_count;
+	std::array<std::uint64_t, max_membership_handles> members;
 };
 
 /// One pattern binding as recorded: the sealed field ordinal + the term.
 struct binding_data {
-    std::size_t field;
-    term_data term;
+	std::size_t field;
+	term_data term;
 };
 
 /// One EDB atom as recorded: the relation's declaration ordinal (the wire
 /// RelationId — lowering.md §1.1) and the bindings in written order.
 struct atom_data {
-    std::uint32_t relation;
-    std::size_t binding_count;
-    std::array<binding_data, max_relation_fields> bindings;
+	std::uint32_t relation;
+	std::size_t binding_count;
+	std::array<binding_data, max_relation_fields> bindings;
 };
 
 /// The comparison operators the surface mints (`ir::CmpOp`).
 enum class query_cmp : std::uint8_t {
-    eq,
-    ne,
-    lt,
-    le,
-    gt,
-    ge,
-    allen,
-    point_in,
+	eq,
+	ne,
+	lt,
+	le,
+	gt,
+	ge,
+	allen,
+	point_in,
 };
 
 /// One leaf condition. `point_in` stores interval-LEFT, point-RIGHT
 /// whatever the surface argument order (ts/src/query/atom.ts:432-435);
 /// `mask` is the literal 13-bit Allen word (allen conditions only).
 struct condition_data {
-    query_cmp op;
-    std::uint16_t mask;
-    term_data lhs;
-    term_data rhs;
+	query_cmp op;
+	std::uint16_t mask;
+	term_data lhs;
+	term_data rhs;
 };
 
 /// One named binding of a recursive (IDB) atom — `bdb::bind<"c">(var)`:
@@ -116,11 +116,11 @@ struct condition_data {
 /// terms only — ts/src/query/lower.ts:1759-1783), and the variable's
 /// class facts for the head-slot join wall.
 struct idb_bind_data {
-    name_text column;
-    coord_ref variable;
-    field_class cls;
-    bool classed;
-    coord_ref law;
+	name_text column;
+	coord_ref variable;
+	field_class cls;
+	bool classed;
+	coord_ref law;
 };
 
 /// One recursive atom as recorded: the rec's NAME (resolved to its dense
@@ -128,48 +128,48 @@ struct idb_bind_data {
 /// binds are placed and numbered in the target's HEAD order at assembly
 /// (`FieldId(i)` = head position i — lowering.md §4.2).
 struct idb_atom_data {
-    name_text pred;
-    bool negated;
-    std::size_t bind_count;
-    std::array<idb_bind_data, max_query_finds> binds;
+	name_text pred;
+	bool negated;
+	std::size_t bind_count;
+	std::array<idb_bind_data, max_query_finds> binds;
 };
 
 /// One rule-body item: the written interleave of match/where is preserved
 /// so variable numbering walks body items in WRITTEN order (lowering.md
 /// §4.2), whatever bucket each item later lowers into.
 enum class body_form : std::uint8_t {
-    atom,
-    negated_atom,
-    idb_atom,
-    condition,
+	atom,
+	negated_atom,
+	idb_atom,
+	condition,
 };
 
 struct body_item {
-    body_form form;
-    atom_data atom;
-    idb_atom_data idb;
-    condition_data condition;
+	body_form form;
+	atom_data atom;
+	idb_atom_data idb;
+	condition_data condition;
 };
 
 /// A find column's form (`ir::FindTerm`): a projected variable, a
 /// var-scoped aggregate (`sum(minor)`, `count()`, `pack(span)`, ...), or
 /// an aggregate over the measure (`sum(duration(w))`).
 enum class find_form : std::uint8_t {
-    variable,
-    aggregate,
-    aggregate_measure,
+	variable,
+	aggregate,
+	aggregate_measure,
 };
 
 /// The aggregate ops the heads mint (`ir::AggOp`, all eight).
 enum class fold_form : std::uint8_t {
-    sum,
-    min,
-    max,
-    count,
-    count_distinct,
-    arg_max,
-    arg_min,
-    pack,
+	sum,
+	min,
+	max,
+	count,
+	count_distinct,
+	arg_max,
+	arg_min,
+	pack,
 };
 
 /// One find column: the answer column name, the term shape, the answer
@@ -177,23 +177,23 @@ enum class fold_form : std::uint8_t {
 /// (`arg_max`/`arg_min` only), and — variable finds — the column's law
 /// class (the IDB head-slot join wall's data).
 struct find_data {
-    name_text name;
-    find_form form;
-    fold_form op;
-    term_data over;
-    field_class answer;
-    bool has_over;
-    bool key_present;
-    term_data key;
-    bool classed;
-    coord_ref law;
+	name_text name;
+	find_form form;
+	fold_form op;
+	term_data over;
+	field_class answer;
+	bool has_over;
+	bool key_present;
+	term_data key;
+	bool classed;
+	coord_ref law;
 };
 
 /// A param's wire shape (lowering.md §4.2's registry entry).
 enum class param_shape : std::uint8_t {
-    value,
-    set,
-    mask,
+	value,
+	set,
+	mask,
 };
 
 /// One registered parameter: name, shape, the field-anchored bind domain
@@ -204,41 +204,41 @@ enum class param_shape : std::uint8_t {
 /// the params product, and execution supplies its frozen set positionally
 /// from the query constant (ts/src/query/run.ts:57-63).
 struct param_data {
-    name_text name;
-    param_shape shape;
-    field_class domain;
-    bool point;
-    bool membership;
-    std::size_t member_count;
-    std::array<std::uint64_t, max_membership_handles> members;
+	name_text name;
+	param_shape shape;
+	field_class domain;
+	bool point;
+	bool membership;
+	std::size_t member_count;
+	std::array<std::uint64_t, max_membership_handles> members;
 };
 
 /// One param USE, recorded at the position that anchors it.
 struct param_use {
-    name_text name;
-    param_shape shape;
-    field_class domain;
-    bool point;
-    bool membership;
-    std::size_t member_count;
-    std::array<std::uint64_t, max_membership_handles> members;
+	name_text name;
+	param_shape shape;
+	field_class domain;
+	bool point;
+	bool membership;
+	std::size_t member_count;
+	std::array<std::uint64_t, max_membership_handles> members;
 };
 
 /// One rule's accumulated builder state (value tier).
 struct rule_state {
-    std::size_t item_count;
-    std::array<body_item, max_query_atoms + max_query_conditions> items;
-    std::size_t use_count;
-    std::array<param_use, max_query_params * 4> uses;
-    std::size_t bound_count;
-    std::array<coord_ref, max_query_vars> bound;
+	std::size_t item_count;
+	std::array<body_item, max_query_atoms + max_query_conditions> items;
+	std::size_t use_count;
+	std::array<param_use, max_query_params * 4> uses;
+	std::size_t bound_count;
+	std::array<coord_ref, max_query_vars> bound;
 };
 
 /// One completed rule: the body state plus the find head.
 struct rule_data {
-    rule_state state;
-    std::size_t find_count;
-    std::array<find_data, max_query_finds> finds;
+	rule_state state;
+	std::size_t find_count;
+	std::array<find_data, max_query_finds> finds;
 };
 
 // ————————————————————————————————————————————————————————————————————
@@ -248,71 +248,71 @@ struct rule_data {
 /// One numbered term: dense rule-scoped var ids, dense query-global param
 /// ids (registry order = positional bind order — lowering.md §5.1).
 struct wire_term {
-    query_term_form form;
-    std::uint16_t var;
-    std::uint16_t param;
-    query_literal literal;
+	query_term_form form;
+	std::uint16_t var;
+	std::uint16_t param;
+	query_literal literal;
 };
 
 struct wire_binding {
-    std::uint16_t field;
-    wire_term term;
+	std::uint16_t field;
+	wire_term term;
 };
 
 /// One numbered atom: an EDB atom (`idb == false`, `relation` read) or a
 /// recursive IDB atom (`idb == true`, `pred` read — the target's dense
 /// PredId; bindings address head positions).
 struct wire_atom {
-    std::uint32_t relation;
-    bool idb;
-    std::uint16_t pred;
-    std::size_t binding_count;
-    std::array<wire_binding, max_relation_fields> bindings;
+	std::uint32_t relation;
+	bool idb;
+	std::uint16_t pred;
+	std::size_t binding_count;
+	std::array<wire_binding, max_relation_fields> bindings;
 };
 
 struct wire_condition {
-    query_cmp op;
-    std::uint16_t mask;
-    wire_term lhs;
-    wire_term rhs;
+	query_cmp op;
+	std::uint16_t mask;
+	wire_term lhs;
+	wire_term rhs;
 };
 
 /// One numbered find term. `over` is read for variable/measure columns
 /// and for aggregates with `has_over` (nullary `count` has none); the key
 /// fields for `arg_max`/`arg_min`.
 struct wire_find {
-    find_form form;
-    fold_form op;
-    std::uint16_t over;
-    bool has_over;
-    bool key_present;
-    bool key_is_measure;
-    std::uint16_t key;
+	find_form form;
+	fold_form op;
+	std::uint16_t over;
+	bool has_over;
+	bool key_present;
+	bool key_is_measure;
+	std::uint16_t key;
 };
 
 /// One numbered rule, bucketed exactly as the bridge's `bdb_rule` reads
 /// it (positive atoms / negated atoms / conditions, each in written
 /// order).
 struct wire_rule {
-    std::size_t atom_count;
-    std::array<wire_atom, max_query_atoms> atoms;
-    std::size_t negated_count;
-    std::array<wire_atom, max_query_atoms> negated;
-    std::size_t condition_count;
-    std::array<wire_condition, max_query_conditions> conditions;
-    std::size_t find_count;
-    std::array<wire_find, max_query_finds> finds;
+	std::size_t atom_count;
+	std::array<wire_atom, max_query_atoms> atoms;
+	std::size_t negated_count;
+	std::array<wire_atom, max_query_atoms> negated;
+	std::size_t condition_count;
+	std::array<wire_condition, max_query_conditions> conditions;
+	std::size_t find_count;
+	std::array<wire_find, max_query_finds> finds;
 };
 
 /// One lowered recursive predicate: its NAME (idb resolution + walls),
 /// its head (rule 0's finds — the sealed signature), and its numbered
 /// rules.
 struct pred_ir {
-    name_text head_name;
-    std::size_t rule_count;
-    std::array<wire_rule, max_query_rules> rules;
-    std::size_t head_count;
-    std::array<find_data, max_query_finds> head;
+	name_text head_name;
+	std::size_t rule_count;
+	std::array<wire_rule, max_query_rules> rules;
+	std::size_t head_count;
+	std::array<find_data, max_query_finds> head;
 };
 
 /// The whole lowered query/program: the recs in declaration order
@@ -321,22 +321,22 @@ struct pred_ir {
 /// the head columns (row-product synthesis) and the param registry
 /// (params-product synthesis, recs' uses folded FIRST — §4.2).
 struct query_ir {
-    std::size_t rule_count;
-    std::array<wire_rule, max_query_rules> rules;
-    std::size_t head_count;
-    std::array<find_data, max_query_finds> head;
-    std::size_t param_count;
-    std::array<param_data, max_query_params> params;
-    std::size_t rec_count;
-    std::array<pred_ir, max_program_recs> recs;
+	std::size_t rule_count;
+	std::array<wire_rule, max_query_rules> rules;
+	std::size_t head_count;
+	std::array<find_data, max_query_finds> head;
+	std::size_t param_count;
+	std::array<param_data, max_query_params> params;
+	std::size_t rec_count;
+	std::array<pred_ir, max_program_recs> recs;
 };
 
 /// One built condition value (a `.where` argument): the leaf comparison
 /// plus the param uses its construction anchored.
 struct cond_value {
-    condition_data data;
-    std::size_t use_count;
-    std::array<param_use, 2> uses;
+	condition_data data;
+	std::size_t use_count;
+	std::array<param_use, 2> uses;
 };
 
 } // namespace bdb

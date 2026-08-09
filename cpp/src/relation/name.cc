@@ -18,21 +18,21 @@ export namespace bdb {
 /// NTTP is reflective (GCC-only) anyway.
 template<std::size_t N>
 struct fixed_string {
-    std::array<char, N> chars{};
+	std::array<char, N> chars{};
 
-    template<std::size_t M>
-        requires (M == N + 1)
-    consteval fixed_string(char const (&text)[M]) {
-        std::ranges::copy_n(std::ranges::begin(text), N, chars.begin());
-    }
+	template<std::size_t M>
+	    requires(M == N + 1)
+	consteval fixed_string(char const (&text)[M]) {
+		std::ranges::copy_n(std::ranges::begin(text), N, chars.begin());
+	}
 
-    [[nodiscard]] constexpr auto view() const -> std::string_view {
-        return std::string_view{chars.data(), N};
-    }
+	[[nodiscard]] constexpr auto view() const -> std::string_view {
+		return std::string_view{chars.data(), N};
+	}
 
-    // Member (not hidden-friend) comparison: the pinned GCC 16.1 ICEs
-    // streaming a defaulted friend operator== across a module import.
-    constexpr auto operator==(fixed_string const&) const -> bool = default;
+	// Member (not hidden-friend) comparison: the pinned GCC 16.1 ICEs
+	// streaming a defaulted friend operator== across a module import.
+	constexpr auto operator==(fixed_string const&) const -> bool = default;
 };
 
 template<std::size_t M>
@@ -48,16 +48,16 @@ inline constexpr std::size_t max_name_length = 64;
 /// coordinate name hooks (and a coordinate's NTTP identity, so the buffer
 /// is always zero-padded past `length` — equal names are equal values).
 struct name_text {
-    std::array<char, max_name_length> chars{};
-    std::size_t length{};
+	std::array<char, max_name_length> chars{};
+	std::size_t length{};
 
-    [[nodiscard]] constexpr auto view() const -> std::string_view {
-        return std::string_view{chars.data(), length};
-    }
+	[[nodiscard]] constexpr auto view() const -> std::string_view {
+		return std::string_view{chars.data(), length};
+	}
 
-    // Member (not hidden-friend) comparison: the pinned GCC 16.1 ICEs
-    // streaming a defaulted friend operator== across a module import.
-    constexpr auto operator==(name_text const&) const -> bool = default;
+	// Member (not hidden-friend) comparison: the pinned GCC 16.1 ICEs
+	// streaming a defaulted friend operator== across a module import.
+	constexpr auto operator==(name_text const&) const -> bool = default;
 };
 
 /// The field-name-override annotation's tag (`[[=bdb::named<"operator">]]`):
@@ -65,7 +65,7 @@ struct name_text {
 /// cannot always BE the wire name. The override names the WIRE field; the
 /// facade member keeps the C++ identifier.
 struct NameTag {
-    name_text name;
+	name_text name;
 };
 
 } // namespace bdb
@@ -81,13 +81,13 @@ export namespace bdb::detail {
 auto reflected_name_must_fit_max_name_length() -> void;
 
 consteval auto to_name_text(std::string_view text) -> name_text {
-    if (text.size() > max_name_length) {
-        reflected_name_must_fit_max_name_length();
-    }
-    auto result = name_text{};
-    std::ranges::copy(text, result.chars.begin());
-    result.length = text.size();
-    return result;
+	if (text.size() > max_name_length) {
+		reflected_name_must_fit_max_name_length();
+	}
+	auto result = name_text{};
+	std::ranges::copy(text, result.chars.begin());
+	result.length = text.size();
+	return result;
 }
 
 /// The data_member_spec name payload that folds under the SANITIZER
@@ -99,7 +99,7 @@ consteval auto to_name_text(std::string_view text) -> name_text {
 /// name_text/derived view routes through THIS; names straight from
 /// `identifier_of` (reflection-internal storage) need no detour.
 consteval auto spec_name(std::string_view text) -> std::string {
-    return std::string(text.begin(), text.end());
+	return std::string(text.begin(), text.end());
 }
 
 } // namespace bdb::detail

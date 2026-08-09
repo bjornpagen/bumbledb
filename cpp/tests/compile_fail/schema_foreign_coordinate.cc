@@ -5,26 +5,20 @@ import std;
 import bumbledb;
 
 struct ServiceRow {
-    [[=bdb::fresh]]
-    std::uint64_t id;
+	[[= bdb::fresh]] std::uint64_t id;
 
-    std::string name;
+	std::string name;
 };
 
 struct OutageRow {
-    std::uint64_t service;
-    bdb::interval<std::int64_t> window;
+	std::uint64_t service;
+	bdb::interval<std::int64_t> window;
 };
 
 inline constexpr auto Service = bdb::relation<"Service", ServiceRow>;
 inline constexpr auto Outage = bdb::relation<"Outage", OutageRow>;
 
 // Outage is declared above but NOT a member of this schema.
-inline constexpr auto Solo = bdb::schema<"Solo">(
-    Service,
+inline constexpr auto Solo = bdb::schema<"Solo">(Service,
 
-    bdb::contained(
-        bdb::on(Outage.service),
-        bdb::on(Service.id)
-    )
-);
+                                                 bdb::contained(bdb::on(Outage.service), bdb::on(Service.id)));

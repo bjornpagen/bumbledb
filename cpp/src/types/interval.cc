@@ -36,19 +36,18 @@ export namespace bdb {
 /// Recoverable construction failure of a checked vocabulary value
 /// (the runtime `make` lanes' error type).
 enum class TypeError : std::uint8_t {
-    /// interval: half-open [lo, hi) requires lo < hi.
-    EmptyInterval,
-    /// fixed-width interval: hi - lo must equal the declared width.
-    IntervalWidth,
-    /// allen_mask: bits above the low 13 are unrepresentable.
-    AllenMaskOverflow,
+	/// interval: half-open [lo, hi) requires lo < hi.
+	EmptyInterval,
+	/// fixed-width interval: hi - lo must equal the declared width.
+	IntervalWidth,
+	/// allen_mask: bits above the low 13 are unrepresentable.
+	AllenMaskOverflow,
 };
 
 /// The two interval element domains the engine's Value roster carries
 /// (IntervalU64 / IntervalI64). Exact representation is the requirement.
 template<class T>
-concept IntervalElement =
-    std::same_as<T, std::uint64_t> || std::same_as<T, std::int64_t>;
+concept IntervalElement = std::same_as<T, std::uint64_t> || std::same_as<T, std::int64_t>;
 
 /// A checked half-open interval [lo, hi), strictly lo < hi — the C++ twin
 /// of the engine's `Interval` (stored `Value` intervals are checked at
@@ -61,53 +60,56 @@ concept IntervalElement =
 /// and the width is a fingerprint input carried by the field's ValueType.
 template<IntervalElement T, std::uint64_t Width = 0>
 class interval {
-    T lo_;
-    T hi_;
+	T lo_;
+	T hi_;
 
-    constexpr interval(T lo, T hi) : lo_{lo}, hi_{hi} {}
+	constexpr interval(T lo, T hi) : lo_{lo}, hi_{hi} {}
 
-    static constexpr auto width_holds(T lo, T hi) -> bool {
-        if constexpr (Width == 0) {
-            return true;
-        } else {
-            return static_cast<std::uint64_t>(hi) - static_cast<std::uint64_t>(lo)
-                == Width;
-        }
-    }
+	static constexpr auto width_holds(T lo, T hi) -> bool {
+		if constexpr (Width == 0) {
+			return true;
+		} else {
+			return static_cast<std::uint64_t>(hi) - static_cast<std::uint64_t>(lo) == Width;
+		}
+	}
 
 public:
-    /// The declared width label (0 = the general interval).
-    static constexpr std::uint64_t width = Width;
+	/// The declared width label (0 = the general interval).
+	static constexpr std::uint64_t width = Width;
 
-    /// The constant lane: an invalid literal is a compile error.
-    static consteval auto literal(T lo, T hi) -> interval {
-        if (!(lo < hi)) {
-            detail::interval_literal_must_satisfy_lo_less_than_hi();
-        }
-        if (!width_holds(lo, hi)) {
-            detail::interval_literal_must_match_the_declared_width();
-        }
-        return interval{lo, hi};
-    }
+	/// The constant lane: an invalid literal is a compile error.
+	static consteval auto literal(T lo, T hi) -> interval {
+		if (!(lo < hi)) {
+			detail::interval_literal_must_satisfy_lo_less_than_hi();
+		}
+		if (!width_holds(lo, hi)) {
+			detail::interval_literal_must_match_the_declared_width();
+		}
+		return interval{lo, hi};
+	}
 
-    /// The runtime lane: an invalid pair is a typed recoverable error.
-    static constexpr auto make(T lo, T hi)
-        -> std::expected<interval, TypeError> {
-        if (!(lo < hi)) {
-            return std::unexpected{TypeError::EmptyInterval};
-        }
-        if (!width_holds(lo, hi)) {
-            return std::unexpected{TypeError::IntervalWidth};
-        }
-        return interval{lo, hi};
-    }
+	/// The runtime lane: an invalid pair is a typed recoverable error.
+	static constexpr auto make(T lo, T hi) -> std::expected<interval, TypeError> {
+		if (!(lo < hi)) {
+			return std::unexpected{TypeError::EmptyInterval};
+		}
+		if (!width_holds(lo, hi)) {
+			return std::unexpected{TypeError::IntervalWidth};
+		}
+		return interval{lo, hi};
+	}
 
-    [[nodiscard]] constexpr auto lo() const -> T { return lo_; }
-    [[nodiscard]] constexpr auto hi() const -> T { return hi_; }
+	[[nodiscard]] constexpr auto lo() const -> T {
+		return lo_;
+	}
 
-    // Member (not hidden-friend) comparison: the pinned GCC 16.1 ICEs
-    // streaming a defaulted friend operator== across a module import.
-    constexpr auto operator==(interval const&) const -> bool = default;
+	[[nodiscard]] constexpr auto hi() const -> T {
+		return hi_;
+	}
+
+	// Member (not hidden-friend) comparison: the pinned GCC 16.1 ICEs
+	// streaming a defaulted friend operator== across a module import.
+	constexpr auto operator==(interval const&) const -> bool = default;
 };
 
 } // namespace bdb

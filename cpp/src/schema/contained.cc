@@ -11,12 +11,9 @@ namespace bdb::detail {
 
 template<class Source, class Target>
 consteval auto arity_message(std::string_view constructor) -> std::string {
-    return "bumbledb " + std::string{constructor} + "(): face \""
-        + std::string{Source::relation_name.view()} + "\" projects "
-        + render_count(Source::width) + " columns but face \""
-        + std::string{Target::relation_name.view()} + "\" projects "
-        + render_count(Target::width)
-        + " — positionwise pairing requires equal arity";
+	return "bumbledb " + std::string{constructor} + "(): face \"" + std::string{Source::relation_name.view()} + "\" projects " +
+	       render_count(Source::width) + " columns but face \"" + std::string{Target::relation_name.view()} + "\" projects " +
+	       render_count(Target::width) + " — positionwise pairing requires equal arity";
 }
 
 } // namespace bdb::detail
@@ -34,24 +31,21 @@ export namespace bdb {
 /// flattened statement table.
 template<class Source, class Target, bool Bidirectional>
 struct containment_law {
-    using source_face = Source;
-    using target_face = Target;
-    static constexpr bool bidirectional = Bidirectional;
+	using source_face = Source;
+	using target_face = Target;
+	static constexpr bool bidirectional = Bidirectional;
 
-    Source source;
-    Target target;
+	Source source;
+	Target target;
 };
 
 /// `contained(on(Outage.service), on(Service.id))` — source ⊆ target.
 template<class Source, class Target>
-consteval auto contained(Source source, Target target)
-    -> containment_law<Source, Target, false> {
-    static_assert(detail::is_face_v<Source> && detail::is_face_v<Target>,
-        "bumbledb contained(): both arguments must be faces — spell them "
-        "bdb::on(Relation.field, ...)");
-    static_assert(Source::width == Target::width,
-        detail::arity_message<Source, Target>("contained"));
-    return {source, target};
+consteval auto contained(Source source, Target target) -> containment_law<Source, Target, false> {
+	static_assert(detail::is_face_v<Source> && detail::is_face_v<Target>, "bumbledb contained(): both arguments must be faces — spell them "
+	                                                                      "bdb::on(Relation.field, ...)");
+	static_assert(Source::width == Target::width, detail::arity_message<Source, Target>("contained"));
+	return {source, target};
 }
 
 } // namespace bdb
@@ -62,7 +56,6 @@ template<class T>
 inline constexpr bool is_containment_v = false;
 
 template<class Source, class Target, bool B>
-inline constexpr bool is_containment_v<containment_law<Source, Target, B>> =
-    true;
+inline constexpr bool is_containment_v<containment_law<Source, Target, B>> = true;
 
 } // namespace bdb::detail

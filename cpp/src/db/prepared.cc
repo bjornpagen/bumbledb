@@ -17,30 +17,29 @@ export namespace bdb {
 /// takes it non-const (§22).
 template<auto Query>
 class Prepared {
-    foreign::prepared_handle handle_;
+	foreign::prepared_handle handle_;
 
-    explicit Prepared(foreign::prepared_handle handle)
-        : handle_{std::move(handle)} {}
+	explicit Prepared(foreign::prepared_handle handle) : handle_{std::move(handle)} {}
 
-    friend class Db;
+	friend class Db;
 
 public:
-    Prepared(Prepared const&) = delete;
-    auto operator=(Prepared const&) -> Prepared& = delete;
-    Prepared(Prepared&&) noexcept = default;
-    auto operator=(Prepared&&) noexcept -> Prepared& = default;
-    ~Prepared() = default;
+	Prepared(Prepared const&) = delete;
+	auto operator=(Prepared const&) -> Prepared& = delete;
+	Prepared(Prepared&&) noexcept = default;
+	auto operator=(Prepared&&) noexcept -> Prepared& = default;
+	~Prepared() = default;
 
-    /// Whether this handle still owns a prepared query (false after
-    /// move-out — the §36 inert-source witness).
-    [[nodiscard]] auto alive() const -> bool {
-        return handle_.alive();
-    }
+	/// Whether this handle still owns a prepared query (false after
+	/// move-out — the §36 inert-source witness).
+	[[nodiscard]] auto alive() const -> bool {
+		return handle_.alive();
+	}
 
-    /// The bridge lane (Snapshot::execute drives it).
-    [[nodiscard]] auto native() -> foreign::prepared_handle& {
-        return handle_;
-    }
+	/// The bridge lane (Snapshot::execute drives it).
+	[[nodiscard]] auto native() -> foreign::prepared_handle& {
+		return handle_;
+	}
 };
 
 /// The typed answers carrier of one query (TODO_CPP §12, §22–§23):

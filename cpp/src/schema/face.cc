@@ -23,52 +23,40 @@ export namespace bdb {
 /// carries its resolved bindings here (empty on a bare face).
 template<class First, class... Rest>
 struct face {
-    static constexpr std::size_t width = 1 + sizeof...(Rest);
-    static constexpr name_text relation_name = First::relation_name;
-    static constexpr std::array<name_text, width> projection{
-        First::field_name, Rest::field_name...};
+	static constexpr std::size_t width = 1 + sizeof...(Rest);
+	static constexpr name_text relation_name = First::relation_name;
+	static constexpr std::array<name_text, width> projection{First::field_name, Rest::field_name...};
 
-    std::size_t selection_count{};
-    std::array<selection_data, max_face_selections> selections{};
+	std::size_t selection_count{};
+	std::array<selection_data, max_face_selections> selections{};
 };
 
 /// Projects one or more columns of ONE relation as a statement face.
 template<class First, class... Rest>
 consteval auto on(First, Rest...) -> face<First, Rest...> {
-    static_assert(
-        detail::is_coordinate_v<First>
-            && (detail::is_coordinate_v<Rest> && ...),
-        "bumbledb on(): every argument must be a relation coordinate "
-        "(Relation.field)");
-    static_assert(detail::same_relation<First, Rest...>(),
-        detail::span_message<First, Rest...>(
-            "on", "a face projects one relation's columns"));
-    static_assert(1 + sizeof...(Rest) <= max_projection_width,
-        "bumbledb on(): the projection exceeds max_projection_width");
-    return {};
+	static_assert(detail::is_coordinate_v<First> && (detail::is_coordinate_v<Rest> && ...),
+	              "bumbledb on(): every argument must be a relation coordinate "
+	              "(Relation.field)");
+	static_assert(detail::same_relation<First, Rest...>(),
+	              detail::span_message<First, Rest...>("on", "a face projects one relation's columns"));
+	static_assert(1 + sizeof...(Rest) <= max_projection_width, "bumbledb on(): the projection exceeds max_projection_width");
+	return {};
 }
 
 /// Projects columns of a ψ/σ-selected relation as a statement face.
 template<class Facade, class First, class... Rest>
-[[nodiscard]] consteval auto on(selected<Facade> const& source, First,
-    Rest...) -> face<First, Rest...> {
-    static_assert(
-        detail::is_coordinate_v<First>
-            && (detail::is_coordinate_v<Rest> && ...),
-        "bumbledb on(): every projected argument must be a relation "
-        "coordinate (Relation.field)");
-    static_assert(detail::same_relation<First, Rest...>(),
-        detail::span_message<First, Rest...>(
-            "on", "a face projects one relation's columns"));
-    static_assert(
-        detail::member_relation_of<Facade>() == First::relation_name,
-        detail::selected_projection_message<Facade, First>());
-    static_assert(1 + sizeof...(Rest) <= max_projection_width,
-        "bumbledb on(): the projection exceeds max_projection_width");
-    auto out = face<First, Rest...>{};
-    out.selection_count = source.selection_count;
-    out.selections = source.selections;
-    return out;
+[[nodiscard]] consteval auto on(selected<Facade> const& source, First, Rest...) -> face<First, Rest...> {
+	static_assert(detail::is_coordinate_v<First> && (detail::is_coordinate_v<Rest> && ...),
+	              "bumbledb on(): every projected argument must be a relation "
+	              "coordinate (Relation.field)");
+	static_assert(detail::same_relation<First, Rest...>(),
+	              detail::span_message<First, Rest...>("on", "a face projects one relation's columns"));
+	static_assert(detail::member_relation_of<Facade>() == First::relation_name, detail::selected_projection_message<Facade, First>());
+	static_assert(1 + sizeof...(Rest) <= max_projection_width, "bumbledb on(): the projection exceeds max_projection_width");
+	auto out = face<First, Rest...>{};
+	out.selection_count = source.selection_count;
+	out.selections = source.selections;
+	return out;
 }
 
 } // namespace bdb

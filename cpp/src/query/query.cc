@@ -43,59 +43,51 @@ export namespace bdb {
 /// aggregates, and the chain starter.
 template<class S>
 struct rule_scope {
-    /// Mints the relation's variable product — one member per field,
-    /// named per field, member access only (module comment).
-    template<class Facade>
-    [[nodiscard]] consteval auto vars(Facade) const -> vars_of<S, Facade> {
-        static_assert(detail::is_query_member<Facade>(),
-            "bumbledb r.vars(): the argument must be a relation facade "
-            "(bdb::relation<...> or bdb::closed<...>)");
-        static_assert(detail::facade_in_schema<S, Facade>(),
-            detail::foreign_relation_message<S, Facade>());
-        return {};
-    }
+	/// Mints the relation's variable product — one member per field,
+	/// named per field, member access only (module comment).
+	template<class Facade>
+	[[nodiscard]] consteval auto vars(Facade) const -> vars_of<S, Facade> {
+		static_assert(detail::is_query_member<Facade>(), "bumbledb r.vars(): the argument must be a relation facade "
+		                                                 "(bdb::relation<...> or bdb::closed<...>)");
+		static_assert(detail::facade_in_schema<S, Facade>(), detail::foreign_relation_message<S, Facade>());
+		return {};
+	}
 
-    /// The member twin of `bdb::param` (spell it `r.template param<"t">()`
-    /// — the grammar's price for a dependent template-name).
-    template<fixed_string Name>
-    [[nodiscard]] consteval auto param() const -> param_ref<Name> {
-        return {};
-    }
+	/// The member twin of `bdb::param` (spell it `r.template param<"t">()`
+	/// — the grammar's price for a dependent template-name).
+	template<fixed_string Name>
+	[[nodiscard]] consteval auto param() const -> param_ref<Name> {
+		return {};
+	}
 
-    /// The measure of an interval variable (u64 point count).
-    template<class Var>
-    [[nodiscard]] consteval auto duration(Var) const -> measure_ref<Var> {
-        static_assert(detail::is_qvar_v<Var>
-                && (Var::cls.kind == value_kind::interval_u64
-                    || Var::cls.kind == value_kind::interval_i64),
-            "bumbledb r.duration(): the argument must be an interval-typed "
-            "query variable — a duration is an interval's measure");
-        return {};
-    }
+	/// The measure of an interval variable (u64 point count).
+	template<class Var>
+	[[nodiscard]] consteval auto duration(Var) const -> measure_ref<Var> {
+		static_assert(detail::is_qvar_v<Var> && (Var::cls.kind == value_kind::interval_u64 || Var::cls.kind == value_kind::interval_i64),
+		              "bumbledb r.duration(): the argument must be an interval-typed "
+		              "query variable — a duration is an interval's measure");
+		return {};
+	}
 
-    /// The member twin of `bdb::sum` (spell it `r.template sum<...>`).
-    template<fixed_string Name, class Var>
-    [[nodiscard]] consteval auto sum(measure_ref<Var>) const
-        -> agg_ref<Name, fold_form::sum, measure_ref<Var>, void> {
-        return {};
-    }
+	/// The member twin of `bdb::sum` (spell it `r.template sum<...>`).
+	template<fixed_string Name, class Var>
+	[[nodiscard]] consteval auto sum(measure_ref<Var>) const -> agg_ref<Name, fold_form::sum, measure_ref<Var>, void> {
+		return {};
+	}
 
-    /// Starts the rule body with one positive EDB atom.
-    template<class Facade>
-    [[nodiscard]] consteval auto match(Facade facade,
-        match_pattern_of<S, Facade> const& pattern) const
-        -> rule_chain<S, Facade> {
-        return rule_chain<S>{}.match(facade, pattern);
-    }
+	/// Starts the rule body with one positive EDB atom.
+	template<class Facade>
+	[[nodiscard]] consteval auto match(Facade facade, match_pattern_of<S, Facade> const& pattern) const -> rule_chain<S, Facade> {
+		return rule_chain<S>{}.match(facade, pattern);
+	}
 
-    /// Starts the rule body with one POSITIVE recursive atom (an idb atom
-    /// grounds its variables — the finished set's identity projection
-    /// needs no re-grounding join).
-    template<fixed_string Name, class... Binds>
-    [[nodiscard]] consteval auto idb(pred_tag<Name> tag,
-        Binds... binds) const -> rule_chain<S> {
-        return rule_chain<S>{}.idb(tag, binds...);
-    }
+	/// Starts the rule body with one POSITIVE recursive atom (an idb atom
+	/// grounds its variables — the finished set's identity projection
+	/// needs no re-grounding join).
+	template<fixed_string Name, class... Binds>
+	[[nodiscard]] consteval auto idb(pred_tag<Name> tag, Binds... binds) const -> rule_chain<S> {
+		return rule_chain<S>{}.idb(tag, binds...);
+	}
 };
 
 // ————————————————————————————————————————————————————————————————————
@@ -107,21 +99,19 @@ struct rule_scope {
 /// TYPE. `.rule` appends one rule; every rule must derive the same head.
 template<class S>
 struct query_value {
-    query_ir ir{};
+	query_ir ir{};
 
-    template<class Build>
-    [[nodiscard]] consteval auto rule(Build build) const -> query_value {
-        auto const result = build(rule_scope<S>{});
-        static_assert(
-            std::same_as<std::remove_cvref_t<decltype(result)>, rule_data>,
-            "bumbledb query.rule(): the rule body must end in .find(...)");
-        auto next = *this;
-        if constexpr (std::same_as<std::remove_cvref_t<decltype(result)>,
-                          rule_data>) {
-            detail::append_rule(next.ir, result);
-        }
-        return next;
-    }
+	template<class Build>
+	[[nodiscard]] consteval auto rule(Build build) const -> query_value {
+		auto const result = build(rule_scope<S>{});
+		static_assert(std::same_as<std::remove_cvref_t<decltype(result)>, rule_data>,
+		              "bumbledb query.rule(): the rule body must end in .find(...)");
+		auto next = *this;
+		if constexpr (std::same_as<std::remove_cvref_t<decltype(result)>, rule_data>) {
+			detail::append_rule(next.ir, result);
+		}
+		return next;
+	}
 };
 
 /// The query entry point: `bdb::query(Uptime).rule([](auto r) consteval
@@ -130,7 +120,7 @@ struct query_value {
 /// type-derivable — schema_value::member_relation_table).
 template<Theory S>
 [[nodiscard]] consteval auto query(S const&) -> query_value<S> {
-    return {};
+	return {};
 }
 
 } // namespace bdb
@@ -148,25 +138,25 @@ template<class T>
 inline constexpr auto query_type_reflection = ^^T;
 
 consteval auto answer_type_of(field_class cls) -> std::meta::info {
-    switch (cls.kind) {
-    case value_kind::boolean:
-        return query_type_reflection<bool>;
-    case value_kind::u64:
-        return query_type_reflection<std::uint64_t>;
-    case value_kind::i64:
-        return query_type_reflection<std::int64_t>;
-    case value_kind::string:
-        // Borrowed from the answers carrier (TODO_CPP §22).
-        return query_type_reflection<std::string_view>;
-    case value_kind::fixed_bytes:
-        // Borrowed from the answers carrier (TODO_CPP §22).
-        return query_type_reflection<std::span<std::byte const>>;
-    case value_kind::interval_u64:
-        return query_type_reflection<interval<std::uint64_t>>;
-    case value_kind::interval_i64:
-        break;
-    }
-    return query_type_reflection<interval<std::int64_t>>;
+	switch (cls.kind) {
+	case value_kind::boolean:
+		return query_type_reflection<bool>;
+	case value_kind::u64:
+		return query_type_reflection<std::uint64_t>;
+	case value_kind::i64:
+		return query_type_reflection<std::int64_t>;
+	case value_kind::string:
+		// Borrowed from the answers carrier (TODO_CPP §22).
+		return query_type_reflection<std::string_view>;
+	case value_kind::fixed_bytes:
+		// Borrowed from the answers carrier (TODO_CPP §22).
+		return query_type_reflection<std::span<std::byte const>>;
+	case value_kind::interval_u64:
+		return query_type_reflection<interval<std::uint64_t>>;
+	case value_kind::interval_i64:
+		break;
+	}
+	return query_type_reflection<interval<std::int64_t>>;
 }
 
 /// A runtime SET param's member type: a borrowed SEQUENCE of the
@@ -175,58 +165,53 @@ consteval auto answer_type_of(field_class cls) -> std::meta::info {
 /// elements) must stay alive for the execute call only — the bridge
 /// copies before returning.
 consteval auto set_type_of(field_class cls) -> std::meta::info {
-    switch (cls.kind) {
-    case value_kind::boolean:
-        return query_type_reflection<std::span<bool const>>;
-    case value_kind::u64:
-        return query_type_reflection<std::span<std::uint64_t const>>;
-    case value_kind::i64:
-        return query_type_reflection<std::span<std::int64_t const>>;
-    case value_kind::string:
-        return query_type_reflection<std::span<std::string_view const>>;
-    case value_kind::fixed_bytes:
-        return query_type_reflection<
-            std::span<std::span<std::byte const> const>>;
-    case value_kind::interval_u64:
-        return query_type_reflection<
-            std::span<interval<std::uint64_t> const>>;
-    case value_kind::interval_i64:
-        break;
-    }
-    return query_type_reflection<std::span<interval<std::int64_t> const>>;
+	switch (cls.kind) {
+	case value_kind::boolean:
+		return query_type_reflection<std::span<bool const>>;
+	case value_kind::u64:
+		return query_type_reflection<std::span<std::uint64_t const>>;
+	case value_kind::i64:
+		return query_type_reflection<std::span<std::int64_t const>>;
+	case value_kind::string:
+		return query_type_reflection<std::span<std::string_view const>>;
+	case value_kind::fixed_bytes:
+		return query_type_reflection<std::span<std::span<std::byte const> const>>;
+	case value_kind::interval_u64:
+		return query_type_reflection<std::span<interval<std::uint64_t> const>>;
+	case value_kind::interval_i64:
+		break;
+	}
+	return query_type_reflection<std::span<interval<std::int64_t> const>>;
 }
 
-consteval auto param_type_of(param_data const& parameter)
-    -> std::meta::info {
-    if (parameter.shape == param_shape::mask) {
-        return query_type_reflection<allen_mask>;
-    }
-    if (parameter.shape == param_shape::set) {
-        // The runtime ∈-set lane (TODO_CPP §21): the member is a span of
-        // the anchored element type. (Membership entries never reach
-        // here — the product synthesis skips them.)
-        return set_type_of(parameter.domain);
-    }
-    // The scalar lane: the anchored domain IS the member type — a
-    // point-domain param is its element.
-    return answer_type_of(parameter.domain);
+consteval auto param_type_of(param_data const& parameter) -> std::meta::info {
+	if (parameter.shape == param_shape::mask) {
+		return query_type_reflection<allen_mask>;
+	}
+	if (parameter.shape == param_shape::set) {
+		// The runtime ∈-set lane (TODO_CPP §21): the member is a span of
+		// the anchored element type. (Membership entries never reach
+		// here — the product synthesis skips them.)
+		return set_type_of(parameter.domain);
+	}
+	// The scalar lane: the anchored domain IS the member type — a
+	// point-domain param is its element.
+	return answer_type_of(parameter.domain);
 }
 
 /// The synthesized answer-row product: one member per head column, named
 /// per column, typed by the column's answer class (TODO_CPP §12).
 template<auto Query>
 struct query_row_types {
-    struct Row;
-    consteval {
-        auto specs = std::vector<std::meta::info>{};
-        for (auto index = std::size_t{0}; index != Query.ir.head_count;
-            ++index) {
-            specs.push_back(std::meta::data_member_spec(
-                answer_type_of(Query.ir.head[index].answer),
-                {.name = spec_name(Query.ir.head[index].name.view())}));
-        }
-        std::meta::define_aggregate(^^Row, specs);
-    }
+	struct Row;
+	consteval {
+		auto specs = std::vector<std::meta::info>{};
+		for (auto index = std::size_t{0}; index != Query.ir.head_count; ++index) {
+			specs.push_back(std::meta::data_member_spec(answer_type_of(Query.ir.head[index].answer),
+			                                            {.name = spec_name(Query.ir.head[index].name.view())}));
+		}
+		std::meta::define_aggregate(^^Row, specs);
+	}
 };
 
 /// The synthesized params product: one member per registered param in
@@ -238,20 +223,18 @@ struct query_row_types {
 /// them; ts/src/query/run.ts:57-63).
 template<auto Query>
 struct query_params_types {
-    struct Params;
-    consteval {
-        auto specs = std::vector<std::meta::info>{};
-        for (auto index = std::size_t{0}; index != Query.ir.param_count;
-            ++index) {
-            if (Query.ir.params[index].membership) {
-                continue;
-            }
-            specs.push_back(std::meta::data_member_spec(
-                param_type_of(Query.ir.params[index]),
-                {.name = spec_name(Query.ir.params[index].name.view())}));
-        }
-        std::meta::define_aggregate(^^Params, specs);
-    }
+	struct Params;
+	consteval {
+		auto specs = std::vector<std::meta::info>{};
+		for (auto index = std::size_t{0}; index != Query.ir.param_count; ++index) {
+			if (Query.ir.params[index].membership) {
+				continue;
+			}
+			specs.push_back(std::meta::data_member_spec(param_type_of(Query.ir.params[index]),
+			                                            {.name = spec_name(Query.ir.params[index].name.view())}));
+		}
+		std::meta::define_aggregate(^^Params, specs);
+	}
 };
 
 } // namespace bdb::detail

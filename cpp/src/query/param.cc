@@ -15,7 +15,7 @@ export namespace bdb {
 /// the first anchored use (a binding's field, or a comparison sibling).
 template<fixed_string Name>
 struct param_ref {
-    static constexpr name_text name = detail::to_name_text(Name.view());
+	static constexpr name_text name = detail::to_name_text(Name.view());
 };
 
 /// A set-valued query parameter (`ir::Term::ParamSet`, TODO_CPP §21) —
@@ -26,21 +26,21 @@ struct param_ref {
 /// — nowhere else, exactly as the IR rules it.
 template<fixed_string Name>
 struct set_param_ref {
-    static constexpr name_text name = detail::to_name_text(Name.view());
+	static constexpr name_text name = detail::to_name_text(Name.view());
 };
 
 /// A named scalar parameter; type/point-domain inferred from use
 /// (TODO_CPP §21).
 template<fixed_string Name>
 [[nodiscard]] consteval auto param() -> param_ref<Name> {
-    return {};
+	return {};
 }
 
 /// A named SET parameter (`ir::Term::ParamSet`, TODO_CPP §21): bound at
 /// execution to a sequence of the anchoring field's element type.
 template<fixed_string Name>
 [[nodiscard]] consteval auto set_param() -> set_param_ref<Name> {
-    return {};
+	return {};
 }
 
 } // namespace bdb

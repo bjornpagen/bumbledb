@@ -3,8 +3,10 @@ Language: Cpp
 BasedOnStyle: LLVM
 Standard: Latest
 
-ColumnLimit: 100
+ColumnLimit: 140
 IndentWidth: 4
+UseTab: ForIndentation
+TabWidth: 4
 AccessModifierOffset: -4
 ContinuationIndentWidth: 4
 
@@ -19,6 +21,7 @@ AllowShortIfStatementsOnASingleLine: Never
 AllowShortLoopsOnASingleLine: false
 
 AlwaysBreakTemplateDeclarations: Yes
+SpaceAfterTemplateKeyword: false
 PackConstructorInitializers: NextLine
 BreakBeforeBraces: Attach
 

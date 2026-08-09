@@ -6,49 +6,41 @@ import std;
 import bumbledb;
 
 struct ServiceRow {
-    [[=bdb::fresh]]
-    std::uint64_t id;
+	[[= bdb::fresh]] std::uint64_t id;
 
-    std::string name;
+	std::string name;
 };
 
 struct OutageRow {
-    std::uint64_t service;
-    bdb::interval<std::int64_t> window;
+	std::uint64_t service;
+	bdb::interval<std::int64_t> window;
 };
 
 inline constexpr auto Service = bdb::relation<"Service", ServiceRow>;
 inline constexpr auto Outage = bdb::relation<"Outage", OutageRow>;
 
-inline constexpr auto Uptime = bdb::schema<"Uptime">(
-    Service,
-    Outage,
+inline constexpr auto Uptime = bdb::schema<"Uptime">(Service, Outage,
 
-    bdb::contained(
-        bdb::on(Outage.service),
-        bdb::on(Service.id)
-    )
-);
+                                                     bdb::contained(bdb::on(Outage.service), bdb::on(Service.id)));
 
-inline constexpr auto DownAt =
-    bdb::query(Uptime).rule([](auto r) consteval {
-        auto vars = r.vars(Outage);
-        return r
-            .match(Outage,
-                {
-                    .service = vars.service,
-                    .window = vars.window,
-                })
-            .where(bdb::point_in(bdb::param<"t">(), vars.window))
-            .find({
-                .service = vars.service,
-            });
-    });
+inline constexpr auto DownAt = bdb::query(Uptime).rule([](auto r) consteval {
+	auto vars = r.vars(Outage);
+	return r
+	    .match(Outage,
+	           {
+	               .service = vars.service,
+	               .window = vars.window,
+	           })
+	    .where(bdb::point_in(bdb::param<"t">(), vars.window))
+	    .find({
+	        .service = vars.service,
+	    });
+});
 
 // What `snap.execute(prepared, {...})` takes — with the wrong name.
 consteval auto misuse() -> bool {
-    auto const params = bdb::params_of<DownAt>{.at = std::int64_t{42}};
-    return sizeof params != 0;
+	auto const params = bdb::params_of<DownAt>{.at = std::int64_t{42}};
+	return sizeof params != 0;
 }
 
 static_assert(misuse());

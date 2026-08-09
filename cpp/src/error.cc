@@ -23,73 +23,73 @@ export namespace bdb {
 /// C++ enum mirrors bdb_error_kind value-for-value; the static_asserts
 /// below pin the correspondence so header drift breaks this compile.
 enum class ErrorKind : std::uint8_t {
-    Schema,
-    SchemaMismatch,
-    FormatMismatch,
-    AlreadyInitialized,
-    NotInitialized,
-    EnvironmentLocked,
-    StoreKindMismatch,
-    DescriptorMissing,
-    ReadersFull,
-    Validation,
-    CommitRejected,
-    CommitSync,
-    GenerationMoved,
-    ForeignSnapshot,
-    ForeignPrepared,
-    FactShape,
-    ClosedRelationWrite,
-    FreshExhausted,
-    BulkLoad,
-    Param,
-    MeasureOfRay,
-    CapacityRayMeasure,
-    FixpointBudgetExceeded,
-    Overflow,
-    ResultBytesOverflow,
-    Corruption,
-    Io,
-    Lmdb,
-    Panic,
+	Schema,
+	SchemaMismatch,
+	FormatMismatch,
+	AlreadyInitialized,
+	NotInitialized,
+	EnvironmentLocked,
+	StoreKindMismatch,
+	DescriptorMissing,
+	ReadersFull,
+	Validation,
+	CommitRejected,
+	CommitSync,
+	GenerationMoved,
+	ForeignSnapshot,
+	ForeignPrepared,
+	FactShape,
+	ClosedRelationWrite,
+	FreshExhausted,
+	BulkLoad,
+	Param,
+	MeasureOfRay,
+	CapacityRayMeasure,
+	FixpointBudgetExceeded,
+	Overflow,
+	ResultBytesOverflow,
+	Corruption,
+	Io,
+	Lmdb,
+	Panic,
 };
 
 /// A violated statement's form (the C++ image of bdb_statement_kind,
 /// value-for-value).
 enum class StatementKind : std::uint8_t {
-    Functionality,
-    Containment,
-    Capacity,
+	Functionality,
+	Containment,
+	Capacity,
 };
 
 /// A containment citation's violated side; None for key and capacity
 /// citations (the C++ image of bdb_violation_direction, value-for-value).
 enum class ViolationDirection : std::uint8_t {
-    None,
-    SourceUnsatisfied,
-    TargetRequired,
+	None,
+	SourceUnsatisfied,
+	TargetRequired,
 };
 
 /// A capacity measure: u128 as two u64 words.
 struct Measure {
-    std::uint64_t lo;
-    std::uint64_t hi;
+	std::uint64_t lo;
+	std::uint64_t hi;
 };
 
 /// One rendered violation of a rejected commit — ownership-closed (the
 /// spelling is copied out of the error).
 struct Violation {
-    std::uint16_t statement;
-    StatementKind kind;
-    std::string spelling;
-    ViolationDirection direction;
-    std::optional<Measure> measure;
+	std::uint16_t statement;
+	StatementKind kind;
+	std::string spelling;
+	ViolationDirection direction;
+	std::optional<Measure> measure;
 };
 
 /// The GenerationMoved payload: the witnessed and current generations.
 struct GenerationMoved {
-    std::uint64_t witnessed;
-    std::uint64_t current;
+	std::uint64_t witnessed;
+	std::uint64_t current;
 };
 
 } // namespace bdb
@@ -100,8 +100,7 @@ namespace bdb::detail {
 // the C++ enum is the fourth spelling; drift breaks the compile here).
 template<class Mirror, class Wire>
 consteval auto mirrors(Mirror mirror, Wire wire) -> bool {
-    return std::to_underlying(mirror)
-        == static_cast<std::underlying_type_t<Mirror>>(wire);
+	return std::to_underlying(mirror) == static_cast<std::underlying_type_t<Mirror>>(wire);
 }
 
 namespace abi = bdb::foreign;
@@ -153,63 +152,54 @@ export namespace bdb {
 /// operation (message/violations copy out); kind() is the hot accessor.
 /// The moved-from Error is inert — never read a moved-from Error.
 class Error {
-    foreign::error_handle handle_;
+	foreign::error_handle handle_;
 
 public:
-    /// The bridge lane: adopts an owned error handle. Application code
-    /// never constructs Errors; Db and its capabilities do.
-    explicit Error(foreign::error_handle handle)
-        : handle_{std::move(handle)} {}
+	/// The bridge lane: adopts an owned error handle. Application code
+	/// never constructs Errors; Db and its capabilities do.
+	explicit Error(foreign::error_handle handle) : handle_{std::move(handle)} {}
 
-    [[nodiscard]] auto kind() const -> ErrorKind {
-        // Value-for-value mirror; pinned by the static_asserts above.
-        return static_cast<ErrorKind>(std::to_underlying(handle_.kind()));
-    }
+	[[nodiscard]] auto kind() const -> ErrorKind {
+		// Value-for-value mirror; pinned by the static_asserts above.
+		return static_cast<ErrorKind>(std::to_underlying(handle_.kind()));
+	}
 
-    /// The rendered message (cold path; copies).
-    [[nodiscard]] auto message() const -> std::string {
-        return handle_.message();
-    }
+	/// The rendered message (cold path; copies).
+	[[nodiscard]] auto message() const -> std::string {
+		return handle_.message();
+	}
 
-    /// The GenerationMoved payload; nullopt for every other kind.
-    [[nodiscard]] auto generation_moved() const
-        -> std::optional<GenerationMoved> {
-        return handle_.generation_moved().transform(
-            [](foreign::generation_moved_payload payload)
-                -> GenerationMoved {
-                return GenerationMoved{
-                    .witnessed = payload.witnessed,
-                    .current = payload.current,
-                };
-            });
-    }
+	/// The GenerationMoved payload; nullopt for every other kind.
+	[[nodiscard]] auto generation_moved() const -> std::optional<GenerationMoved> {
+		return handle_.generation_moved().transform([](foreign::generation_moved_payload payload) -> GenerationMoved {
+			return GenerationMoved{
+			    .witnessed = payload.witnessed,
+			    .current = payload.current,
+			};
+		});
+	}
 
-    /// The complete rendered violation set of a CommitRejected error
-    /// (empty for every other kind). Ownership-closed copies.
-    [[nodiscard]] auto violations() const -> std::vector<Violation> {
-        auto rendered = std::vector<Violation>{};
-        auto const count = handle_.violation_count();
-        rendered.reserve(count);
-        for (auto index = std::size_t{0}; index != count; ++index) {
-            auto copy = handle_.violation(index);
-            if (!copy.has_value()) {
-                break;
-            }
-            rendered.push_back(Violation{
-                .statement = copy->statement,
-                .kind = static_cast<StatementKind>(
-                    std::to_underlying(copy->kind)),
-                .spelling = std::move(copy->spelling),
-                .direction = static_cast<ViolationDirection>(
-                    std::to_underlying(copy->direction)),
-                .measure = copy->has_measure
-                    ? std::optional{Measure{
-                          .lo = copy->measure_lo, .hi = copy->measure_hi}}
-                    : std::nullopt,
-            });
-        }
-        return rendered;
-    }
+	/// The complete rendered violation set of a CommitRejected error
+	/// (empty for every other kind). Ownership-closed copies.
+	[[nodiscard]] auto violations() const -> std::vector<Violation> {
+		auto rendered = std::vector<Violation>{};
+		auto const count = handle_.violation_count();
+		rendered.reserve(count);
+		for (auto index = std::size_t{0}; index != count; ++index) {
+			auto copy = handle_.violation(index);
+			if (!copy.has_value()) {
+				break;
+			}
+			rendered.push_back(Violation{
+			    .statement = copy->statement,
+			    .kind = static_cast<StatementKind>(std::to_underlying(copy->kind)),
+			    .spelling = std::move(copy->spelling),
+			    .direction = static_cast<ViolationDirection>(std::to_underlying(copy->direction)),
+			    .measure = copy->has_measure ? std::optional{Measure{.lo = copy->measure_lo, .hi = copy->measure_hi}} : std::nullopt,
+			});
+		}
+		return rendered;
+	}
 };
 
 } // namespace bdb

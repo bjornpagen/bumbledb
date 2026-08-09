@@ -16,31 +16,31 @@ export namespace bdb {
 /// (lowering.md §3.2), made by the schema elaborator off this type.
 template<name_text Relation, std::size_t HandleCount>
 struct closed_id {
-    using value_type = closed_ref<Relation>;
+	using value_type = closed_ref<Relation>;
 
-    static constexpr name_text relation_name = Relation;
-    static constexpr name_text field_name = detail::to_name_text("id");
-    static constexpr std::size_t ordinal = 0;
-    static constexpr field_class cls{value_kind::u64, 0};
-    static constexpr value_kind kind = value_kind::u64;
-    static constexpr std::uint16_t fixed_len = 0;
-    static constexpr bool fresh = false;
-    static constexpr std::size_t handle_count = HandleCount;
+	static constexpr name_text relation_name = Relation;
+	static constexpr name_text field_name = detail::to_name_text("id");
+	static constexpr std::size_t ordinal = 0;
+	static constexpr field_class cls{value_kind::u64, 0};
+	static constexpr value_kind kind = value_kind::u64;
+	static constexpr std::uint16_t fixed_len = 0;
+	static constexpr bool fresh = false;
+	static constexpr std::size_t handle_count = HandleCount;
 
-    [[nodiscard]] constexpr auto relation() const -> std::string_view {
-        return relation_name.view();
-    }
-    [[nodiscard]] constexpr auto field() const -> std::string_view {
-        return field_name.view();
-    }
+	[[nodiscard]] constexpr auto relation() const -> std::string_view {
+		return relation_name.view();
+	}
+
+	[[nodiscard]] constexpr auto field() const -> std::string_view {
+		return field_name.view();
+	}
 };
 
 template<class T>
 inline constexpr bool is_closed_id_v = false;
 
 template<name_text Relation, std::size_t HandleCount>
-inline constexpr bool is_closed_id_v<closed_id<Relation, HandleCount>> =
-    true;
+inline constexpr bool is_closed_id_v<closed_id<Relation, HandleCount>> = true;
 
 } // namespace bdb
 
@@ -50,10 +50,9 @@ namespace bdb::detail {
 /// through a struct because alias templates cannot carry requirements.
 template<auto Id>
 struct ref_of {
-    static_assert(is_closed_id_v<std::remove_cvref_t<decltype(Id)>>,
-        "bumbledb ref<>: the argument must be a closed relation's id "
-        "coordinate (bdb::ref<Kind.id>)");
-    using type = closed_ref<std::remove_cvref_t<decltype(Id)>::relation_name>;
+	static_assert(is_closed_id_v<std::remove_cvref_t<decltype(Id)>>, "bumbledb ref<>: the argument must be a closed relation's id "
+	                                                                 "coordinate (bdb::ref<Kind.id>)");
+	using type = closed_ref<std::remove_cvref_t<decltype(Id)>::relation_name>;
 };
 
 } // namespace bdb::detail

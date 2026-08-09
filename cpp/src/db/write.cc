@@ -15,8 +15,8 @@ export namespace bdb {
 /// result value out of the callback.
 template<class T>
 struct Commit {
-    using value_type = T;
-    T value;
+	using value_type = T;
+	T value;
 };
 
 /// The write callback's negative decision AS DATA (§19): drop the delta —
@@ -24,8 +24,8 @@ struct Commit {
 /// Not an error and never the unexpected path.
 template<class A>
 struct Abandon {
-    using value_type = A;
-    A value;
+	using value_type = A;
+	A value;
 };
 
 /// What a write callback decides (§19).
@@ -34,36 +34,36 @@ using WriteDecision = std::variant<Commit<T>, Abandon<A>>;
 
 /// The valueless commit decision (`return bdb::commit();`).
 constexpr auto commit() -> Commit<std::monostate> {
-    return Commit<std::monostate>{std::monostate{}};
+	return Commit<std::monostate>{std::monostate{}};
 }
 
 /// A value-carrying commit decision.
 template<class T>
 constexpr auto commit(T value) -> Commit<T> {
-    return Commit<T>{std::move(value)};
+	return Commit<T>{std::move(value)};
 }
 
 /// The valueless abandon decision.
 constexpr auto abandon() -> Abandon<std::monostate> {
-    return Abandon<std::monostate>{std::monostate{}};
+	return Abandon<std::monostate>{std::monostate{}};
 }
 
 /// A value-carrying abandon decision (abandonment-as-data).
 template<class A>
 constexpr auto abandon(A value) -> Abandon<A> {
-    return Abandon<A>{std::move(value)};
+	return Abandon<A>{std::move(value)};
 }
 
 /// A committed write's outcome, carrying the Commit value.
 template<class T>
 struct Committed {
-    T value;
+	T value;
 };
 
 /// An abandoned write's outcome, carrying the Abandon value.
 template<class A>
 struct Abandoned {
-    A value;
+	A value;
 };
 
 /// What Db::write returns on the SUCCESS path (§19): the write either
@@ -86,8 +86,8 @@ inline constexpr std::uint64_t witnessed_attempt_cap = 64;
 /// remedy is to move the interleaved write out of the callback. Carries
 /// the final attempt's GenerationMoved error.
 struct WitnessedLivelock {
-    std::uint64_t attempts;
-    Error last;
+	std::uint64_t attempts;
+	Error last;
 };
 
 /// What a witnessed write can fail with: an engine failure (commit
