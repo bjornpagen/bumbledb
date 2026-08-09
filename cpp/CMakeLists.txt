@@ -52,11 +52,6 @@ set(CMAKE_CXX_MODULE_STD ON)
 # global, not part of the language-profile target.
 string(APPEND CMAKE_CXX_FLAGS " -fno-exceptions -fno-rtti")
 
-# Function-local statics are banned by the dialect, so the thread-safe
-# initialization guards GCC emits for them are dead machinery; drop them so
-# the runtime matches the rulebook.
-string(APPEND CMAKE_CXX_FLAGS " -fno-threadsafe-statics")
-
 if(NOT BDB_LINT_GRAPH)
     # Reflection is not negotiable: the version gate above guarantees GCC
     # 16.1.x, which implements it.
@@ -97,16 +92,18 @@ target_compile_options(bumbledb_language_profile INTERFACE
     "$<$<CXX_COMPILER_ID:GNU>:-Wuseless-cast;-Wduplicated-branches;-Wduplicated-cond;-Wlogical-op>"
 )
 
-add_subdirectory(src)
-
-# meta/ holds GCC-only reflection modules; it is never part of the lint graph.
+# src/ holds the ONE SDK module `bumbledb` (internals as partitions). The
+# module contains reflective partitions, so it is GCC-only — partitions make
+# the whole module invisible to the Clang lint graph.
 if(NOT BDB_LINT_GRAPH)
-    add_subdirectory(meta)
+    add_subdirectory(src)
 endif()
 
 # foreign/ is the quarantine zone: the cargo-built Rust bridge staticlib and
-# the one wrapper module allowed to see the generated C ABI header. It holds
-# no reflection, so it is part of both graphs.
+# the `bumbledb_foreign` module allowed to see the generated C ABI header.
+# It holds no reflection, so it is part of both graphs. (It also adds the
+# :foreign_program partition to the `bumbledb` target in the production
+# graph — see foreign/CMakeLists.txt — so it must come after src/.)
 add_subdirectory(foreign)
 
 enable_testing()

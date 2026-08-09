@@ -7,8 +7,10 @@
 #   reflection translation units until Clang implements that syntax.
 # - Run this only through the CMake `lint` preset over the dedicated
 #   Clang-readable module graph.
-# - `meta/` is intentionally absent from that graph until the pinned Clang
-#   frontend can parse the project's C++26 reflection syntax.
+# - The `bumbledb` module is intentionally absent from that graph: it
+#   contains reflective partitions, and partitions make the whole module
+#   GCC-only until the pinned Clang frontend can parse the project's C++26
+#   reflection syntax.
 # - Repository-wide rules in AGENTS.md are STRICTER than this file.
 # - Query-based CustomChecks require:
 #       clang-tidy --experimental-custom-checks
@@ -107,7 +109,7 @@ HeaderFilterRegex: '.*'
 # The second alternative excludes the standard-library module sources
 # (share/libc++/v1/...): importing `std` merges their AST into every TU, and
 # they are toolchain code, not project code.
-ExcludeHeaderFilterRegex: '(^|[/\\])(meta|foreign|unsafe|generated|build|out|third_party|vendor)([/\\]|$)|[/\\]share[/\\]libc\+\+[/\\]'
+ExcludeHeaderFilterRegex: '(^|[/\\])(foreign|unsafe|generated|build|out|third_party|vendor)([/\\]|$)|[/\\]share[/\\]libc\+\+[/\\]'
 SystemHeaders: false
 FormatStyle: file
 
@@ -188,7 +190,8 @@ CheckOptions:
   readability-identifier-naming.InlineNamespaceCase: 'lower_case'
 
   # The SDK's value vocabulary is normatively spelled std-style lowercase by
-  # TODO_CPP.md (§7, §21, §39: `bdb::interval<std::int64_t>` appears in user
+  # the design record (docs/handoffs/2026-08-08-cpp-sdk-design-record.md
+  # §7, §21, §39: `bdb::interval<std::int64_t>` appears in user
   # row declarations; cookbook parity pins the spelling). Exactly these
   # names are exempt; everything else keeps PascalCase.
   readability-identifier-naming.ClassIgnoredRegexp: '^(interval|allen_mask)$'

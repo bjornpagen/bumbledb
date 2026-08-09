@@ -1,4 +1,10 @@
-add_subdirectory(runtime)
+# runtime/ and cookbook/ import the `bumbledb` module, which contains
+# reflective partitions and is therefore GCC-only — those suites exist only
+# in the production graph. bridge/ imports only `bumbledb_foreign` (no
+# reflection), so it belongs to both graphs.
+if(NOT BDB_LINT_GRAPH)
+    add_subdirectory(runtime)
+endif()
 add_subdirectory(bridge)
 
 # The compile-fail harness drives the production compiler and pins GCC
@@ -14,8 +20,9 @@ if(NOT BDB_LINT_GRAPH AND NOT CMAKE_CXX_FLAGS MATCHES "-fsanitize")
     add_subdirectory(compile_fail)
 endif()
 
-# The cookbook parity suite imports the schema elaborator (GCC-only
-# reflective graph), so it exists only in the production graph.
+# The cookbook parity suite imports the schema elaborator (a reflective
+# partition of `bumbledb`, GCC-only), so it exists only in the production
+# graph.
 if(NOT BDB_LINT_GRAPH)
     add_subdirectory(cookbook)
 endif()
