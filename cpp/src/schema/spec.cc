@@ -1,0 +1,157 @@
+// :spec — the flattened SchemaSpec data shapes the schema elaborator
+// fills and the runtime lane lowers to the bridge (TODO_CPP §9–§10;
+// lowering.md §2–§3): relations/fields in declaration order, DECLARED
+// statements only in written order, and the law-computed class map.
+export module bumbledb:spec;
+
+import std;
+import :name;
+import :classify;
+import :axioms;
+
+export namespace bdb {
+
+/// Widest projection a statement face may spell (a Phase-C capacity; the
+/// engine's own bound is far higher).
+inline constexpr std::size_t max_projection_width = 8;
+
+/// Most declared fields one relation may carry through this elaborator.
+inline constexpr std::size_t max_relation_fields = 16;
+
+/// Most σ/ψ bindings one statement face may carry.
+inline constexpr std::size_t max_face_selections = 4;
+
+/// Most literals one σ binding's set may carry.
+inline constexpr std::size_t max_selection_literals = 4;
+
+/// One semantic coordinate by name: the class-map currency ("Service.id"
+/// as data). Structural and NTTP-friendly like everything here.
+struct coord_ref {
+    name_text relation;
+    name_text field;
+
+    constexpr auto operator==(coord_ref const&) const -> bool = default;
+};
+
+/// One declared field of the flattened relation table. `width` is the
+/// fixed-width interval label (0 = the general interval — lowering.md
+/// §1.8; a fingerprint input on the wire).
+struct field_data {
+    name_text name;
+    value_kind kind;
+    std::uint16_t fixed_len;
+    std::uint64_t width;
+    bool fresh;
+};
+
+/// One relation of the flattened table, declaration order throughout.
+/// A CLOSED member's `fields` are its SEALED roster — the synthetic `id`
+/// at index 0, declared payload columns shifted +1 (lowering.md §1.11);
+/// the wire lane skips index 0 and reads `closed_data` for the sealed
+/// extension (declared columns only cross as FieldSpecs — §7.3).
+struct relation_data {
+    name_text name;
+    std::size_t field_count;
+    std::array<field_data, max_relation_fields> fields;
+    bool closed;
+    closed_info closed_data;
+};
+
+/// One σ/ψ literal as spelled: a handle crosses BY NAME on the schema
+/// wire (the ENGINE resolves it — lowering.md §7.8); a value literal
+/// crosses tagged.
+struct selection_literal {
+    bool is_handle;
+    name_text handle;
+    value_kind kind;
+    bool boolean;
+    std::uint64_t u64;
+    std::int64_t i64;
+    name_text text;
+};
+
+/// One σ binding: `field == literal-or-set` (read conjunctively across a
+/// face's bindings; a binding's ≥2 literals read disjunctively).
+struct selection_data {
+    name_text field;
+    std::size_t literal_count;
+    std::array<selection_literal, max_selection_literals> literals;
+};
+
+/// One lowered statement face: relation + written projection + the σ/ψ
+/// selection (lowered AS-IS, never pre-folded — the engine folds against
+/// the sealed extension at validate; lowering.md §2).
+struct side_data {
+    name_text relation;
+    std::size_t width;
+    std::array<name_text, max_projection_width> fields;
+    std::size_t selection_count;
+    std::array<selection_data, max_face_selections> selections;
+};
+
+/// The statement form tags (lowering.md §1.9; `key` lowers as fd).
+enum class statement_form : std::uint8_t {
+    key,
+    containment,
+    capacity,
+};
+
+/// A capacity weight's form (unit is a case, never an absence — C4).
+enum class weight_form : std::uint8_t {
+    unit,
+    field,
+    duration_field,
+};
+
+/// A capacity bound's form.
+enum class bound_form : std::uint8_t {
+    lit,
+    field,
+    duration_field,
+};
+
+/// A capacity window's form.
+enum class window_form : std::uint8_t {
+    exact,
+    range,
+    floor,
+};
+
+/// One capacity bound, flattened.
+struct bound_data {
+    bound_form form;
+    std::uint64_t lit;
+    name_text field;
+};
+
+/// One capacity window, flattened.
+struct window_data {
+    window_form form;
+    bound_data lo;
+    bound_data hi;
+};
+
+/// One declared statement, flattened for the wire lane. `key` uses
+/// `source` for its relation/projection; capacity reads target, weight,
+/// window, source (the operator read order, C2).
+struct statement_data {
+    statement_form form;
+    side_data source;
+    side_data target;
+    bool bidirectional;
+    weight_form weight;
+    name_text weight_field;
+    window_data window;
+};
+
+/// One coordinate's law-computed class: absent (`classed == false`) on a
+/// field in no law; otherwise the class-naming coordinate (generator
+/// first, else least member in relation-declaration × field-declaration
+/// order — lowering.md §3.5).
+struct class_entry {
+    coord_ref coordinate;
+    bool classed;
+    coord_ref class_name;
+};
+
+} // namespace bdb

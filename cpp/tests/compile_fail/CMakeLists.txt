@@ -1,4 +1,4 @@
-# The expected-failure compiler harness (TODO_CPP §34; see README.md).
+# The expected-failure compiler harness (TODO_CPP §34).
 #
 # Each case is an EXCLUDE_FROM_ALL object library — a real project target on
 # the real module graph, so cases can import project modules — that the main
@@ -12,22 +12,17 @@
 # RUN_SERIAL: every case's test drives ninja in this one binary dir; two
 # concurrent `cmake --build` invocations would contend for the ninja lock.
 #
-# Cases link the reflective module set so they can exercise the relation
+# Cases link the `bumbledb` module so they can exercise the relation
 # reflector. Pinned GCC 16.1 quirk (TODO_CPP §32): `template for` over a
 # >1-element range trips -Wshadow at the instantiation site — cases carry
 # the same scoped -Wno-shadow as every reflective TU, so the only diagnostic
 # a case emits is the one under test.
 function(bdb_compile_fail_case case)
     set(diagnostic ${ARGN})
-    add_library(cf_${case} OBJECT EXCLUDE_FROM_ALL ${case}.cpp)
+    add_library(cf_${case} OBJECT EXCLUDE_FROM_ALL ${case}.cc)
     target_link_libraries(cf_${case}
         PRIVATE
-            bumbledb_version
-            bumbledb_types
-            bumbledb_meta_relation
-            bumbledb_meta_closed
-            bumbledb_meta_schema
-            bumbledb_meta_query
+            bumbledb
             bumbledb_language_profile
     )
     # -Wno-missing-field-initializers: a query pattern's unmentioned slot
@@ -50,7 +45,7 @@ bdb_compile_fail_case(static_assert_rejected
 )
 
 bdb_compile_fail_case(unresolved_import
-    "bumbledb.nonexistent"
+    "bumbledb_nonexistent"
 )
 
 # §21: the value vocabulary's consteval lane — an invalid constant interval

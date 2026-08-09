@@ -85,12 +85,14 @@ The build must use the equivalent of:
 -freflection
 -fno-exceptions
 -fno-rtti
--fno-threadsafe-statics
 ```
 
-`-fno-threadsafe-statics` is sound because function-local statics are banned
-outright (§14): the guard machinery would protect declarations that cannot
-exist, so the build drops it.
+`-fno-threadsafe-statics` is deliberately NOT used: on conforming code it is
+a no-op (the statics it affects are banned outright, §14), so its only
+observable effect would be converting a ban violation — or a vendored
+dependency's internal static in `foreign/` — into an initialization race
+under threads. A flag whose only behavior is making violations more
+dangerous has negative value.
 
 Warnings are errors. Use the strongest practical conversion, lifetime,
 undefined-behavior, and API diagnostics for the pinned compiler.
@@ -130,7 +132,7 @@ CMake must remain boring.
 Use CMake for:
 
 - declaring targets,
-- explicitly listing module interface and implementation units,
+- explicitly listing the primary interface and every partition file,
 - target-scoped compile features/options,
 - target-scoped dependencies,
 - selecting one platform/foreign implementation,
@@ -156,7 +158,8 @@ architecture in CMake.
 
 ### 3.2 Module declarations are explicit
 
-Every project module interface is explicitly listed in a CMake
+Each component is one CMake module library target: the primary interface and
+every partition file are explicitly listed in that one target's
 `FILE_SET CXX_MODULES`.
 
 Do not glob module files.
@@ -164,24 +167,22 @@ Do not glob module files.
 Conceptually:
 
 ```cmake
-add_library(project_core)
+add_library(project_module)
 
-target_sources(project_core
+target_sources(project_module
     PUBLIC
         FILE_SET CXX_MODULES
         FILES
-            project.core.cppm
-            project.schema.cppm
-            project.query.cppm
-    PRIVATE
-        project.core.cpp
-        project.schema.cpp
-        project.query.cpp
+            project.cc
+            core.cc
+            schema.cc
+            query.cc
 )
 ```
 
-CMake owns module dependency scanning and BMI scheduling. Never hand-construct
-BMI dependency edges or compiler module maps in project code.
+CMake owns module dependency scanning and BMI scheduling — including the
+partition-import edges between the files above. Never hand-construct BMI
+dependency edges or compiler module maps in project code.
 
 Targets that use the standard-library named module enable `CXX_MODULE_STD` in
 one centralized project helper/target policy rather than setting it ad hoc.
@@ -261,11 +262,13 @@ build/gcc-tsan/
 build/clang-lint/
 ```
 
-The GCC graph includes `meta/` and all reflection code.
+The GCC graph includes every named module and all reflection code.
 
-The Clang lint graph excludes every translation unit or module interface whose
-parse graph contains unsupported reflection syntax. `meta/` is GCC-only until
-the pinned Clang version can parse the project's reflection dialect.
+The Clang lint graph excludes every translation unit or module unit whose
+parse graph contains unsupported reflection syntax. A named module with
+reflection partitions is GCC-only as a unit, so the lint graph covers the
+Clang-parseable remainder: `foreign/`/`unsafe/` translation units that import
+no module.
 
 The two graphs represent the same reflection-free source semantics; they are
 not allowed to use conditional source code to create two different programs.
@@ -315,9 +318,10 @@ repository, GCC-only reflection translation units are excluded from clang-tidy.
 This does **not** weaken the language rules. GCC-only files obey this document
 and are checked by compiler diagnostics plus review.
 
-Maintain the dedicated `clang-lint` CMake/Ninja graph for modules whose entire
-parse/import graph is Clang-readable. `meta/` is excluded from that graph until
-the pinned Clang frontend supports the reflection syntax used by the project.
+Maintain the dedicated `clang-lint` CMake/Ninja graph for translation units
+whose entire parse/import graph is Clang-readable. A named module containing
+reflection partitions is excluded from that graph as a unit until the pinned
+Clang frontend supports the reflection syntax used by the project.
 Build Clang-compatible BMIs there; never attempt to feed GCC BMIs to
 clang-tidy.
 
@@ -340,9 +344,9 @@ dialect code.
 
 ## 5. Source zones
 
-The repository has three semantic zones.
+The repository has two semantic zones.
 
-### 5.1 `src/` and `tests/`: dialect code
+### 5.1 `src/`, `tests/`, and `benchmarks/`: dialect code
 
 All rules in this document apply.
 
@@ -351,23 +355,15 @@ No headers.
 No unsafe primitives.
 No lint suppression.
 
-### 5.2 `meta/`: GCC-only reflection code
+Reflective code is ordinary dialect code and lives beside its callers. The
+old `meta/` quarantine is retired because partitions make the whole module
+GCC-only as a unit, so reflection syntax no longer needs its own directory to
+keep the lint graph parseable. Code that clang-tidy cannot see may **not**
+use the preprocessor, headers, exceptions, RTTI, raw allocation, inheritance,
+shared ownership, raw threads, or other forbidden mechanisms merely because
+only GCC checks it.
 
-This is still dialect code.
-
-It may use C++26 reflection syntax that Clang cannot currently parse:
-
-- reflection expressions,
-- splicing,
-- `std::meta`,
-- expansion statements,
-- reflection annotations.
-
-It may **not** use the preprocessor, headers, exceptions, RTTI, raw allocation,
-inheritance, shared ownership, raw threads, or other forbidden mechanisms merely
-because clang-tidy cannot see the file.
-
-### 5.3 `foreign/` and `unsafe/`: quarantine
+### 5.2 `foreign/` and `unsafe/`: quarantine
 
 Only unavoidable machine/ABI adaptation lives here:
 
@@ -382,8 +378,9 @@ Only unavoidable machine/ABI adaptation lives here:
 These directories may use headers and preprocessing when the external interface
 requires them.
 
-They must export a safe named-module or narrow ABI upward. No dialect module may
-include a foreign header or depend on preprocessor state transitively.
+They must export a safe module partition or narrow ABI upward. No dialect
+module unit may include a foreign header or depend on preprocessor state
+transitively.
 
 Do not move ordinary application code into `unsafe/` to escape a rule.
 
@@ -391,24 +388,61 @@ Do not move ordinary application code into `unsafe/` to escape a rule.
 
 ## 6. Modules and preprocessing
 
-### Project code
+### Module structure
 
-Project code uses:
+One importable named module per component. Its internals are partitions:
 
 ```cpp
-export module project.foo;
+// core.cc — one concern per partition file
+export module project:core;
+
 import std;
-import project.bar;
+import :schema;
 ```
 
-Allowed project source extensions:
+```cpp
+// project.cc — the primary interface, the only export surface
+export module project;
+
+export import :core;
+export import :schema;
+```
+
+- The primary interface does nothing but `export import` its partitions.
+- Outsiders import the component module. They physically cannot import a
+  partition, so the module name is the entire public surface — visibility is
+  enforced by the language, not by convention.
+- No dotted module names anywhere. Hierarchy is directories, not name
+  prefixes; the partition name is the file stem (underscore-disambiguated on
+  collision).
+- One partition per concern, in one file (roughly 50-300 lines). Do not split
+  a partition into interface and implementation units; split only on
+  demonstrated rebuild pain.
+
+### Project code
+
+Dependencies between components are module imports:
+
+```cpp
+import std;
+import project;
+```
+
+The single allowed project source extension is:
+
+```text
+.cc
+```
+
+Interface-ness is declared by the build (`FILE_SET CXX_MODULES`), never by
+spelling; the extension is inert. Retired spellings, not to be reintroduced:
 
 ```text
 .cpp
 .cppm
 ```
 
-Forbidden project file extensions include:
+Forbidden header-like extensions include:
 
 ```text
 .h
@@ -432,8 +466,8 @@ Textual inclusion is forbidden in dialect code.
 
 ### Preprocessor
 
-Every preprocessing directive is forbidden in `src/`, `meta/`, and `tests/`,
-including:
+Every preprocessing directive is forbidden in dialect code (`src/`, `tests/`,
+and `benchmarks/`), including:
 
 ```text
 #include
@@ -1307,8 +1341,11 @@ The rules in this document are enforced by a ladder, strongest layer first:
    deliberately **not** machine-enforced. There is no repository grep/regex
    checker, by decision.
 
-Accepted gap: `meta/` escapes the AST checks until the pinned Clang parses the
-project's reflection syntax. There, enforcement is compiler flags plus review.
+Accepted gap: a named module with reflection partitions is GCC-only as a unit
+and escapes the AST checks until the pinned Clang parses the project's
+reflection syntax; the lint graph covers the Clang-parseable remainder —
+`foreign/`, `unsafe/`, and any non-importing translation units. There,
+enforcement is compiler flags plus review.
 
 ---
 
