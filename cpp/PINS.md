@@ -113,9 +113,17 @@ graph).
   check still runs over the TUs.
 - workaround: the scoped single-check accommodation on the single
   target.
-- retire: re-test on any clang-tidy bump; delete the accommodation when
-  the check learns module export surfaces.
-- upstream: LLVM 22 clang-tidy, not filed.
+- tombstone: delete the per-target check-disable when the fix ships in
+  the pinned clang-tidy (re-test on any bump; the true-positive control
+  in the packet must still warn).
+- upstream: packaged at
+  `/Users/bjorn/Documents/cpp-starter/upstream/llvm-tidy-unused-using-decls-modules/`
+  (SUBMIT.md + six-variant repro matrix + fix-it hazard evidence).
+  Verdict: DO NOT FILE — exact dup llvm/llvm-project#162619 is
+  closed-completed, fixed on main by PR #183638, commit `ce6a3d9`
+  (merged 2026-02-28); trunk clang-tidy-24 nightly verified clean.
+  No fix authored, so no fork branch exists; the packet carries a
+  paste-ready backport-request issue instead.
 
 ## compile-fail-vs-sanitizers
 
