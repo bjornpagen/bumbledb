@@ -113,15 +113,18 @@ graph).
   check still runs over the TUs.
 - workaround: the scoped single-check accommodation on the single
   target.
-- tombstone: delete the per-target check-disable when the fix ships in
-  the pinned clang-tidy (re-test on any bump; the true-positive control
-  in the packet must still warn).
-- upstream: packaged at
-  `/Users/bjorn/Documents/cpp-starter/upstream/llvm-tidy-unused-using-decls-modules/`
-  (SUBMIT.md + six-variant repro matrix + fix-it hazard evidence).
-  Verdict: DO NOT FILE — exact dup llvm/llvm-project#162619 is
-  closed-completed, fixed on main by PR #183638, commit `ce6a3d9`
-  (merged 2026-02-28); trunk clang-tidy-24 nightly verified clean.
+- tombstone: delete the per-target check-disable when the pinned
+  clang-tidy contains commit `ce6a3d9`. Re-test on any bump: the
+  exported cases must be silent, and a plain unused `using ::f;` in the
+  purview (the true-positive control) must still warn.
+- upstream: nothing to file — this is already fixed. Exact dup
+  llvm/llvm-project#162619 (closed-completed), fixed on main by PR
+  #183638 ("Teach misc-unused-using-decls that exported using-decls
+  aren't unused"), commit `ce6a3d98cc3e`, merged 2026-02-28; trunk
+  clang-tidy-24 nightly verified clean 2026-08-09 with the
+  true-positive control still warning. The investigation packet was
+  deleted after the verdict (reduce the cognitive load); these
+  identifiers are the durable record.
   No fix authored, so no fork branch exists; the packet carries a
   paste-ready backport-request issue instead.
 
