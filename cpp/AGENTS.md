@@ -61,15 +61,18 @@ the missing primitive before introducing a second way.
 
 ## 2. Toolchain
 
-Production code targets one pinned toolchain tuple: the production compiler +
+Production code targets one toolchain tuple: the production compiler +
 its matching standard library, the build system, the generator, and the
 separately pinned clang-tidy build for the reflection-free lint graph.
 
-The accepted release series and the exact generator are enforced by the
-top-level CMake configure gate. They live there and only there; documentation
-must not duplicate version numbers.
-Toolchain versions are part of the language implementation, not ambient
-developer-machine state.
+The production compiler is GCC at or above the CMake configure-gate floor,
+discovered as `g++` or `$CXX` — not a pinned `g++-N` binary. A newer local
+compiler belongs in gitignored `CMakeUserPresets.json`. clang-tidy remains
+a pinned lint-toolchain series. The accepted GCC floor, Clang lint series,
+and the exact generator are enforced by the top-level CMake configure gate.
+They live there and only there; documentation must not duplicate version
+numbers. Toolchain versions are part of the language implementation, not
+ambient developer-machine state.
 
 Required project compiler properties:
 

@@ -30,8 +30,9 @@ cpp/
 ## Build
 
 Bring the pinned tools on `PATH`; configure rejects every other tuple. Local
-paths belong in a gitignored `CMakeUserPresets.json`. The production compiler
-is GCC 17 / trunk, invoked as `g++` (or a user-preset path to that compiler).
+compiler paths belong in a gitignored `CMakeUserPresets.json`. Production
+presets discover `g++` (or `$CXX`); the CMake gate is a GCC 16+ floor, not a
+pinned binary name.
 
 ```sh
 cmake --preset dev && cmake --build --preset dev && ctest --preset dev

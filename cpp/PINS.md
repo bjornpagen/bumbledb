@@ -9,8 +9,8 @@ Tombstone ritual: on every toolchain bump, read this file top to bottom,
 re-test every retire condition, and delete what upstream fixed — one file,
 one sweep.
 
-The accepted pinned toolchain release series and generator live only in the
-top-level CMake configure gate.
+The production GCC floor, the Clang lint series, and the generator live
+only in the top-level CMake configure gate.
 
 ## darwin-inert-mitigations
 
@@ -89,7 +89,7 @@ top-level CMake configure gate.
 - symptom: `std::string`'s (pointer, size) constructor carries a null
   check that does not constant-fold against ASan-instrumented storage
   (template parameter objects, string literals, `define_static_string`
-  globals) **and**, on GCC 17 / trunk, against `name_text` / reflected
+  globals) **and**, on later GCC / trunk, against `name_text` / reflected
   views used as `static_assert` messages — consteval fails as "not a
   constant expression". The iterator-pair constructor folds.
 - sites: `bdb::detail::spec_name` (`src/relation/name.cc`) — the single
