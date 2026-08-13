@@ -24,7 +24,7 @@ Cookbook tests (`bumbledb-query/tests/cookbook.rs` recipes 24–25): native form
 
 ## TypeScript (`ts/src/query/predicate.ts` and friends)
 
-Delete `program()`, `ProgramScope.rec`, `ProgramScope.output`, `Rec`, `p.rec("reach")`, `p.output(...)`, `recursiveProgram`. The sealed program-as-query-value trick goes with them.
+Delete `program()`, `ProgramScope` (`.rec` / `.output`), `p.rec("reach")`, `p.output(...)`. The sealed program-as-query-value trick goes with them. (There is no `recursiveProgram` in the tree — nothing to delete under that name; do not invent it to kill it.)
 
 Add on the existing query builder (the `Query` value / scope that already builds rules):
 
@@ -42,11 +42,11 @@ Pick this shape, not `rec.rule` plus a later `output`. Base and rec are unmissab
 
 Lowering (`ts/src/query/lower.ts` §4.2 of `75-cpp-lowering.md`): recs-in-declaration-order + output-last **dies**. Emit `interiors[]`, optional `rec { head, base, rec }`, `head`, `rules`. Param registry: interiors in order, then rec base, then rec arms, then main — first use still mints `ParamId`. IDB-head-order bindings become interior-head-order.
 
-Wire (`ts/src/native.ts`): `ProgramIr` / `PredicateDefIr` / `{kind:"idb",pred}` die. `QueryIr` grows `interiors`, `rec`. `{kind:"interior",interior}`. napi `dbPrepare(db, program)` → `dbPrepare(db, query)` only. `ts/crate/src/marshal.rs` `program_in` → `query_in` with the new fields. Rule builders: `.idb(rec, binds)` → `.interior(name, binds)` / `.notInterior`.
+Wire (`ts/src/native.ts`): `ProgramIr` / `PredicateDefIr` / `{kind:"idb",pred}` die. `QueryIr` grows `interiors`, `rec`. `{kind:"interior",interior}`. napi `dbPrepare(db, program)` → `dbPrepare(db, query)` only. `ts/crate/src/marshal.rs` `program_in` → `query_in` with the new fields. Rule builders: `.idb(rec, binds)` → `.interior(name, binds)`. Negation keeps its one spelling: today `r.not(rec, …)` lowers to wire cond `"notIdb"`; after, `r.not(name, …)` lowers to `"notInterior"`. There is no `.notIdb` method to rename and no `.notInterior` method to add.
 
 Tests: `ts/test/query.test.ts` recursion fences, `destructure-kernel` rec ports, `answers-named-orderable-ban` rec-head plumb, `psi-query-atoms` `output: 0` — recut to `interior` / `recursive`. Construction errors for two recs. TS used `program()`; deleting it is the named-without-keyword fence.
 
-**Primer cycle detector.** `requiresCycleQuery` recuts 1:1: `q.recursive("reach", { base: [edge], rec: [step with extra EDB + one reach atom] })` plus a main rule `grp ⋈ reach(x,x)`. Empty answers = DAG. Do not add a named interior of `reach` for the diagonal.
+**Primer cycle detector.** `requiresCycleQuery` recuts 1:1: `q.recursive("reach", { base: [edge], rec: [step with extra EDB + one reach atom] })` plus a main rule `grp ⋈ reach(x,x)`. Empty answers = DAG. Do not add a named interior of `reach` for the diagonal. Primer is a **downstream repo** — this recut is coordination with their P2.4 cutover, not a file in this tree; the in-tree artifacts are the primer-shaped `reach(x,x)` lock and `ts/test/expressibility-operand-views.test.ts` as the living evidence.
 
 TS has no `max_program_recs` today. Do not add an engine-cap duplicate, and do not add `max_ctes`. The engine does not cap interior count. If a sugar cap is added later, it is 4, like C++ `max_query_rules`, and stays sugar.
 
@@ -76,7 +76,7 @@ Zero-duplication law: cite `evalQuery`, `evalQuery_plain`, `reachDen`, `evalLine
 | Doc | Edit |
 |---|---|
 | `20-query-ir.md` | Kill "a query is a program" / engine-recursion Program cut. Query shape: interiors + optional Rec + main. Union paragraph stays (set union, **one sink per rule-list**, no UNION ALL keyword). Caps: `MAX_RULES` per list; rec pools `MAX_RULES`; **no `MAX_CTES` / `MAX_PREDICATES`.** `degenerate_embedding` citations → `evalQuery_plain`. Strata judge → rec roster. Named-head notation → `interior` / `recursive`. Error names from `01` table. Three knobs in one paragraph (walls / this cut / OPEN), citing the chain-window OPEN already in the README |
-| `40-execution.md` | Fixpoint driver section → linear reach driver: one DeltaVariant, round 0 = `reachOp_empty`, interiors-only never enters (`PreparedBody::Rules` or `Empty`). Drop "Lean evalProgram complete only under sufficient fuel." Do not replace it with Lean-fuel incompleteness. Budget = incompleteness vs `reachDen`. Size (`DEFAULT_FIXPOINT_TUPLES`) is the wall, not interior count. Observability: `interiors:` then optional one `reach` then main; no strata, no `STRATUM`, no 16-slot interior span array |
+| `40-execution.md` | Fixpoint driver section → linear reach driver: one DeltaVariant, round 0 = `reachOp_empty`, interiors-only never enters (`PreparedBody::Rules` or `Empty`). Drop "Lean evalProgram complete only under sufficient fuel" — the sentence is false **today** (fuel is internal; `missingCount_le` proves the bound); it does not survive to be retargeted. Do not replace it with Lean-fuel incompleteness. Budget = incompleteness vs `reachDen`. Size (`DEFAULT_FIXPOINT_TUPLES`) is the wall, not interior count. Observability: `interiors:` then optional one `reach` then main; no strata, no `STRATUM`, no 16-slot interior span array |
 | `00-product.md` | Deleted vocabulary: *rule program* stays deleted; engine recursion sentence becomes interiors + one linear rec, budgeted; drop `MAX_PREDICATES`. Deductive-database non-goal unamended |
 | `70-api.md` | `prepare(&Query)` only. Drop `ProgramRef` / `From<Query> for Program` / degenerate embedding paragraph. `set_fixpoint_budget` stays, rec-only effect |
 | `75-cpp-lowering.md` | §4 as above |
@@ -155,7 +155,7 @@ Never `UNION ALL`. `sqlite_run/tests.rs` `UNION ALL` generator-bomb is unrelated
 - `validate_program` entry tests
 - `TooManyPredicates` / any `TooManyCtes` test
 - C++ `bdb::program` / `rec<>` / `output` tests
-- TS `program()` / `p.rec` / `p.output` / `recursiveProgram` tests
+- TS `program()` / `p.rec` / `p.output` tests
 - C ABI `bdb_program` / `BDB_ATOM_SOURCE_KIND_IDB` tests
 - `querygen/shapes_recursive.rs` mutual and nonlinear variants (rewrite the file to Query; do not keep those two coverage rows)
 - `conformance/program.rs` Program JSON builder (rewrite to Reach JSON; Lean files already recut)
@@ -168,7 +168,7 @@ Never `UNION ALL`. `sqlite_run/tests.rs` `UNION ALL` generator-bomb is unrelated
 - `rejects_a_measure_in_a_recursive_head` → `MeasureInInterior` (head, not `MeasureInRec`)
 - `rejects_aggregation_through_a_cycle` → `AggregateInInterior`
 - `a_measure_head_over_a_lower_stratum_is_legal` → measure/Sum on **main** over finished rec (cookbook 25)
-- `negation_of_a_lower_stratum_passes` → negation of an interior or of finished rec **in main** (legal); negation **in rec** refuses (`NegationInRec`) and is **not** the same query as the main anti-join
+- `negation_of_a_lower_stratum_passes` → negation of an interior or of finished rec **in main** (legal); negation **in rec** refuses (`NegationInRec` — self is the wall, finished-table is this-cut/OPEN) and is **not** the same query as the main anti-join
 - `a_degenerate_program_executes_as_its_query` → `evalQuery_plain` lock
 - tree/cyclic closure goldens — cyclic **graph** (data), still linear **rules**. Keep. Mutual **predicates** go.
 - primer cycle detector — recut 1:1; empty on a DAG

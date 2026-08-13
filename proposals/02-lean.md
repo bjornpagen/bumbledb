@@ -19,7 +19,7 @@ The three knobs (`proposals/README.md`) are not Lean constructors. This cut's IR
 | `Exec/Fixpoint.lean` — `programDen`, `stratumOp`, `finished`, `fueledLoop`, `evalProgram`, `degenerate_embedding`, `program_eval_sound`, `PAtom.code` | **Delete the file.** Replace with `Exec/Reach.lean`: `lfpS`, `evalInteriors`, `reachOp`, `reachDen`, `evalQuery`, `evalLinearReach`, `evalQueryList`, agreement theorems. `lfpP` / `PredSets` / `stratumSets` / `stratumOp` / `finished` / `programDen` / `programAnswers` / `evalProgram*` / `strataEval` / `degenerate_embedding` / the even-odd coding / `PRule.Safe` **do not move** — they die. `semi_naive_agrees` **moves** (already `{α} (T : Set α → Set α)`). `fueledLoop` **moves as a private proof device** for `evalLinearReach_eq_lfp`, not as a public denotation |
 | `Exec/Plan.lean`, `Exec/Dedup.lean`, `Exec/Rewrites.lean`, `Exec/Sweep.lean` | Stay. They quantify over **rule lists**, not Programs. `a.relation` → match `.edb`. `⟨n, rs⟩` → `Query.plain n rs` or drop the Query wrapper. `queryAnswers C ⟨n, rs⟩ I ρ` → `rulesAnswers C rs (edbEnv I) ρ`. Comments that say `Program::Empty` mean today's **prepared** empty plan — retarget the comment to `PreparedBody::Empty`. Do not grow interior-aware rewrites |
 | `Bridge.lean` rows on `degenerate_embedding`, `wellFormed_reads_real`, `stratumOp_mono`, `program_den_finite`, `program_eval_sound` (×2), `semi_naive_agrees` (×2) | Retarget per the Bridge table below. `ledger_count` moves with the rows |
-| `Countermodels.lean` — `oddProgram`, `odd_not_monotone`, `succ_prefixed_infinite` | Keep the **walls**. Rewrite `oddProgram` as a `Rec` that `recLinear` refuses (self-negation). `succOp` stays an operator-level countermodel |
+| `Countermodels.lean` — `oddProgram`, `odd_not_monotone`, `odd_no_fixpoint`, `succ_prefixed_infinite` | Keep the **walls**. Rewrite `oddProgram` as a `Rec` that `recLinear` refuses (self-negation); restate `odd_no_fixpoint` on that operator. `succOp` stays an operator-level countermodel |
 | `Main.lean` `ProgramCase` / `checkProgramCase` / `evalProgram` | `ReachCase` / `checkReachCase` / `evalQueryList`. Recut `program-*.json` → `reach-*.json` in the **same Lean commit** |
 | `Conformance.lean` `decodeAtom` / `decodeQuery` (`CQuery`, aggregate finds, JSON `"relation"`) | **Keep this arm.** Seeded query cases stay here. `decodeAtom` maps `"relation"` → `.edb`. Do not require `interiors`/`rec` keys on seeded files |
 | `Bumbledb.lean`, `lean/README.md` | Import `Exec/Reach` instead of `Exec/Fixpoint`. README Level-1 bullet: Reach, not stratified fueled `evalProgram` |
@@ -474,7 +474,7 @@ theorem reachOp_mono {C : Classify} {rec : Rec} {self : InteriorId}
     MonoS (reachOp C rec self I W ρ)
 ```
 
-This **replaces** `stratumOp_mono`. The stratification premise is gone; linearity + no-negation-in-rec are the premise. `Countermodels.odd_not_monotone` remains the **wall**: a rec whose rec arm is a negated self-atom is not `recLinear`, and the operator is not monotone. Do not delete the countermodel; retarget its syntax to a `Rule` with `negated = [⟨.interior self, []⟩]` and show `¬ MonoS (reachOp ...)` on that illegal `Rec`. WF is what keeps accepted programs off the wall.
+This **replaces** `stratumOp_mono`. The stratification premise is gone; linearity + no-negation-in-rec are the premise. The `negated = []` premise is this cut's roster, deliberately **stronger** than the wall: a negated atom whose source is not `self` reads a set constant in `X`, so the operator would still be monotone — that is `stratumOp_mono`'s stratified content, and it is the OPEN row's proof sketch. Do not cite `reachOp_mono` as evidence that finished-table negation in a rec arm is non-monotone; it is not. The wall is the self case. `Countermodels.odd_not_monotone` remains the **wall**: a rec whose rec arm is a negated self-atom is not `recLinear`, and the operator is not monotone. Do not delete the countermodel; retarget its syntax to a `Rule` with `negated = [⟨.interior self, []⟩]` and show `¬ MonoS (reachOp ...)` on that illegal `Rec`. WF is what keeps accepted programs off the wall.
 
 **Round 0 is base. Empty Δ is a closed step.**
 
@@ -534,7 +534,7 @@ def evalLinearReach (C : Classify) (W : ListInstance) (ρ : ParamEnv)
   fueledLoop (reachStep C W ρ rec self V base) (cands.length + 1) []
 ```
 
-`fueledLoop` is **private** in this file (today's definition, moved, not public). `fueledLoop_fixpoint` / `missingCount` / `missingCount_le` stay private beside it. Callers cannot under-fuel the spec evaluator. The fuel argument is not a parameter of `evalLinearReach`.
+`fueledLoop` is **private** in this file (today's definition, moved, not public). `fueledLoop_fixpoint` / `missingCount` / `missingCount_le` stay private beside it. Callers cannot under-fuel the spec evaluator. The fuel argument is not a parameter of `evalLinearReach` — nor is it one to delete from today's `evalProgram`, which already computes its own sufficient fuel under `missingCount_le`. What this cut deletes is the **witness** (`programDen` / `evalProgram` drag `strat : PredId → Nat` through the public denotation) and `fueledLoop`'s public visibility. `reachDen` takes nothing but the operator.
 
 Today's stop: `(step acc).all (· ∈ acc)` i.e. `step acc ⊆ acc`. That **is** engine empty Δ after identifying `new = T(acc) \ acc`:
 
@@ -647,14 +647,14 @@ A rec query is `evalInteriors`, then `reachDen`, then main `rulesAnswers`. Main 
 | `Matches`, `matches_def`, `repeated_var_unifies`, `param_selects_not_binds` | Source-blind |
 | `Safe`, `safe_negated_bound`, `membership_only_unsafe`, `antijoin_over_active_domain` | On `Rule` |
 | `Rule.WellTyped`, comparison shape | Unchanged. `PRule.BindingsMeasureFree` **is** the measure-in-binding conjunct of `WellTyped` — do not keep a second name |
-| `dnf_preserves_denotation` | Retarget the `queryAnswers` mention to `rulesAnswers` on the lowered rule list |
+| `dnf_preserves_denotation` (lives in `Query/Denotation.lean`, not Rewrites) | Retarget the `queryAnswers` mention to `rulesAnswers` on the lowered rule list |
 | `eval_sound` | `evalList` ↔ `rulesAnswers` over `sourceDen W.den T.toEnv` (`InteriorTables.empty` recovers `edbEnv`) |
-| `answers_finite_of_safe` | Same retarget |
+| `answers_finite_of_safe` (same file) | Same retarget |
 | `membership_lowering_preserves`, `_negated` | `a.relation` → `.edb R` under `a.source = .edb R`. JSON `"relation"` stays on the CQuery arm |
 | Aggregate laws in `Query/Aggregates.lean` | `bindingSet` / `Group` / `aggAnswers` take `F`. Recover `I` via `edbEnv I`. A main `Sum` over a finished rec is `aggAnswers` at `sourceDen I V'` — PRD 05 never enters `reachOp`. Cookbook 25 is an **engine** instrument of `evalQuery_sound`, not an Aggregates.lean Bridge row |
 | `semi_naive_agrees` | Move to Reach.lean; instantiate at `reachOp` |
 | `fueledLoop_fixpoint`, `missingCount_le` | Private in Reach.lean; not public semantics |
-| `succ_prefixed_infinite`, `odd_not_monotone` | Walls. Retarget odd's syntax off `Program` |
+| `succ_prefixed_infinite`, `odd_not_monotone`, `odd_no_fixpoint` | Walls. Retarget odd's syntax off `Program` |
 | Plan / Dedup / Rewrites / Sweep theorems | `queryAnswers C ⟨n, rs⟩ I ρ` → `rulesAnswers C rs (edbEnv I) ρ`. `Query.plain` where a Query is still required. `evalList` takes `InteriorTables.empty`. `a.relation` match `.edb` |
 | `lfpP_fixed` | **Delete** with `lfpP`. Replaced by `lfpS_fixed` |
 
@@ -697,7 +697,7 @@ Add:
 |---|---|---|---|
 | `evalQuery_plain` | A query with empty interiors and no rec denotes the union of its main rules over the instance | `validate` / `prepare` on `Query` (no reach driver) | a plain query executes as today (`tests/api.rs` retarget of `a_degenerate_program_executes_as_its_query`) |
 | `wellFormed_interior_reads_real` | Every interior source an accepted query reads names a real interior or the rec | `validate` interior screen; `ValidationError::UnknownInterior` | `rejects_a_negated_phantom_interior` (retarget of `rejects_a_negated_phantom_read`) |
-| `reachOp_mono` | Linearity and no negation in the rec SCC make the reach operator monotone | rec roster (`NegationInRec`, `NonlinearRecArm`) | `rejects_negation_in_rec`; `odd_not_monotone` |
+| `reachOp_mono` | Linearity and the roster's no-negation-in-rec premise make the reach operator monotone (the wall is the self case) | rec roster (`NegationInRec`, `NonlinearRecArm`) | `rejects_negation_in_rec`; `odd_not_monotone` |
 | `reach_den_finite` | Rec heads project bound variables, so the lfp is a finite subset of the active domain | `MeasureInInterior`, `AggregateInInterior` on heads | `rejects_a_measure_in_a_rec_head` (`MeasureInInterior`); `succ_prefixed_infinite` |
 | `evalLinearReach_eq_lfp` | The executable reach lists exactly `reachDen` | conformance `evalQueryList` on `reach-*.json`; `translate_query` | rec corpus three-way |
 | `evalLinearReach_eq_lfp` (engine) | The reach driver computes those answers when it terminates. `FixpointBudgetExceeded` is incompleteness vs `reachDen` — not vs a fueled Lean evaluator (there isn't one) | `run_reach` (`api/prepared/reach.rs`); `Error::FixpointBudgetExceeded` | recursive goldens; `a_tight_fixpoint_budget_trips_with_the_typed_error` |
@@ -713,7 +713,7 @@ Add:
 
 1. **CQuery arm (unchanged files).** `seeded-*.json` and other non-`judgment-*` / non-`reach-*` cases. `Conformance.decodeQuery` / aggregate glue / `evalList` + surface anti-join. Atoms keep JSON `"relation"`; after `Atom.source`, `decodeAtom` writes `.edb ⟨id⟩`. **Do not add `interiors`/`rec` keys. Do not recut 200 seeded files.** Missing keys are not a defaulting story — this arm never looks for them.
 
-2. **Reach arm (this commit).** Recut `lean/conformance/cases/program-*.json` → `reach-*.json` in the **same Lean commit** as the Syntax deletion. No Program decoder. No `strata` / `output` / `predicates` / `idb` keys. `Main.lean`: `ReachCase` / `decodeReachQuery` / `checkReachCase` runs `evalQueryList`. Delete `ProgramCase`, `decodePAtom`, `decodePRule`, `decodePredicate`, `PCase`.
+2. **Reach arm (this commit).** Recut `lean/conformance/cases/program-*.json` → `reach-*.json` in the **same Lean commit** as the Syntax deletion — 27 in, **22** out, per the ledger below. No Program decoder. No `strata` / `output` / `predicates` / `idb` keys. `Main.lean`: `ReachCase` / `decodeReachQuery` / `checkReachCase` runs `evalQueryList`. Delete `ProgramCase`, `decodePAtom`, `decodePRule`, `decodePredicate`, `PCase`.
 
 JSON shape for the reach arm (Lean field names — this is the Lean oracle's interchange, not the engine IR):
 
@@ -737,9 +737,19 @@ JSON shape for the reach arm (Lean field names — this is the Lean oracle's int
 
 Rules: Lean `finds : List VarId`, not engine `HeadTerm`. Atoms `edb` / `interior` (never `idb`, never `cte`, never `relation` on this arm). `rec: null` (or omit) for interiors-only. One-predicate rec programs (`output = 0`) become `interiors = []`, `rec = some`, **identity main** of the same arity — empty `rules` denotes `∅` (`evalQuery_empty_rules`). Interiors-only cases have `rec: null` and nonempty `interiors`. Rec id is `interiors.length` (0 when `interiors` is empty, as in the example).
 
-Filename: `reach-hand-closure.json`, `reach-seeded-0000.json`, … Dispatch in `Main.lean` / `conformance/README.md` by prefix `reach-`. Do **not** name them `query-*.json` — that is the CQuery glob's leftover bucket and would run the wrong decoder.
+Filename: `reach-hand-closure.json`, `reach-seeded-0001.json`, … Keep the source numbering; the gaps (`0000`, `0003`, `0010`, `0021`) are the dropped mutual cases — provenance stays 1:1, do not renumber. Dispatch in `Main.lean` / `conformance/README.md` by prefix `reach-`. Do **not** name them `query-*.json` — that is the CQuery glob's leftover bucket and would run the wrong decoder.
 
-**Drop** `program-hand-mutual.json`. Mutual recursion is unwritable **this cut**. Do not keep it as a Program-shaped trophy. Mutual-linear is OPEN (`05-cutover.md`); a later cut that admits it writes new fixtures, it does not resurrect this file.
+**The recut ledger — 27 in, 22 out.** By shape, not by glob:
+
+| Today's shape | Files | Recut |
+|---|---|---|
+| One predicate, `output = 0`, linear self-read | `program-hand-closure` | rec + identity main of the same arity |
+| Rec + non-rec output reading the finished rec positively | `program-seeded-0001`, `0004`, `0011`, `0015`, `0019`, `0020`, `0022` | rec + main over the finished rec (positive `interior` atom) |
+| Rec + output anti-joining the finished rec (strata `[0,1]`) | `program-hand-unreached`; `program-seeded-0002`, `0005`, `0006`, `0007`, `0008`, `0009`, `0017`, `0018`, `0023` | rec + main with the negated `interior` atom — the `CLOSURE_ROOTS` shape |
+| Three predicates: rec, non-rec reader of the rec, output over the reader | `program-seeded-0012`, `0013`, `0014`, `0016` | **Unfold.** The middle predicate has no this-cut image (interiors cannot read rec): splice its single rule's body into the output rule, rewiring the reader's `FieldId` bindings through the middle head's `finds`. Main reads the rec directly. Rule unfolding, not renaming; answers unchanged |
+| Two names, one SCC (mutual; strata `[0,0]`, cyclic reads) | `program-hand-mutual`; `program-seeded-0000`, `0003`, `0010`, `0021` | **Drop.** Unwritable in `Option Rec`. Not a trophy. Step 4's generator restores seeded coverage in the new shape |
+
+Mutual recursion is unwritable **this cut**. Mutual-linear is OPEN (`05-cutover.md`); a later cut that admits it writes new fixtures, it does not resurrect these files.
 
 Until the Rust builder is recut (step 4 of `05-cutover.md`), the Lean corpus is the checked-in recut files — not a heuristic that still parses `predicates`/`output`. **Do not run `generate_program_corpus` between Lean green and the Rust rewrite** — it would overwrite `reach-*.json` with Program JSON.
 
@@ -747,7 +757,7 @@ Until the Rust builder is recut (step 4 of `05-cutover.md`), the Lean corpus is 
 
 ## Countermodels
 
-- `odd_not_monotone` / `odd_rounds_oscillate` / `odd_not_stratified`: rebuild on `reachOp` of a Rec whose rec arm is `p ← ¬p` (`negated = [⟨.interior self, []⟩]`, `selfCount = 0`). Base may be empty — the countermodel is illegal (`¬ recLinear`, `EmptyRecursiveBase` would also fire). Show `¬ Query.recLinear` (on a Query wrapping that Rec) and `¬ MonoS`. Delete `oddProgram : Query.Program`. Rename `odd_not_stratified` → keep the name as a wall or retarget the statement to `¬ recLinear`; do not keep a `Stratified` predicate.
+- `odd_not_monotone` / `odd_rounds_oscillate` / `odd_not_stratified` / `odd_no_fixpoint`: rebuild on `reachOp` of a Rec whose rec arm is `p ← ¬p` (`negated = [⟨.interior self, []⟩]`, `selfCount = 0`). Base may be empty — the countermodel is illegal (`¬ recLinear`, `EmptyRecursiveBase` would also fire). Show `¬ Query.recLinear` (on a Query wrapping that Rec), `¬ MonoS`, and no fixpoint (`¬ ∃ X, reachOp … X = X` — `odd_no_fixpoint`'s successor; `reach_den_finite`'s docstring cites it where `program_den_finite`'s did). Delete `oddProgram : Query.Program`. Rename `odd_not_stratified` → keep the name as a wall or retarget the statement to `¬ recLinear`; do not keep a `Stratified` predicate.
 - `succ_prefixed_infinite`: keep as operator-level wall. Cite from `reach_den_finite`, not `program_den_finite`.
 - `unsafe_rule_infinite`: unchanged (`Safe`). Atom constructor `.edb`.
 

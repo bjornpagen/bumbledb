@@ -69,7 +69,7 @@ The new roster is `01-language.md` § validation roster (canonical error names t
 
 **Measure (pick A, matches `01-language.md`).** Interior **bodies** may contain measure comparisons; a ray raises `MeasureOfRay` after **that** interior finishes (then later interiors, rec, main still run only if the host continues — same as today's per-query Ray: the execute aborts). Rec refuses **every** measure site (`MeasureInInterior` on heads, `MeasureInRec` on bodies) before execute. Measure **finds** and folds only on **main**. Ray probes: after each interior, then after main. No rec probes. Delete "recursive programs defer the pass."
 
-Error renames (`error.rs`), census-scanned: `01-language.md` table. `FixpointBudgetExceeded` **stays** — rec driver resource abort vs `reachDen`. Payload drops `stratum`: `{ rounds, tuples }`. One rec SCC, no strata.
+Error renames (`error.rs`), census-scanned: `01-language.md` table. The roster names are `ValidationError`; `FixpointBudgetExceeded` / `MeasureOfRay` / `ResultBytesOverflow` live on runtime `Error` and stay there. `FixpointBudgetExceeded` **stays** — rec driver resource abort vs `reachDen`. Payload drops `stratum`: `{ rounds, tuples }`. One rec SCC, no strata.
 
 ### `ValidatedQuery` — three parts, not one lowered list
 
@@ -159,7 +159,7 @@ Statically empty: a dead interior is the empty table (later readers see nothing)
 - Interior preamble as above (finished images, eval once). Then rec. Then main.
 - One rec predicate: `base: Vec<PreparedRule>` (round 0, ordinary rule loop into the rec `ProjectionSink`), `rec: Vec<RecursiveRule>` (rounds ≥ 1).
 - **`RecursiveRule` holds exactly one `DeltaVariant`.** Delete `variants: Box<[DeltaVariant]>`. The unique positive self-atom is the delta occurrence. Nonlinear k-minting in `prepare_program` (`prepare_rule_variant` loop over same-stratum Idb atoms) dies. Extra EDB / interior atoms on a rec arm are accumulated/EDB, never a second delta.
-- Frontier = rec sink's seen-set, watermark, `answers_since`, `TransientImage` ping-pong for delta vs accumulated of **that one SCC**. Delete per-predicate arrays sized by `MAX_PREDICATES`; size 1 for rec plus `interiors.len()` finished slots (the interior slot count is data, not a 16-slot array).
+- Frontier = rec sink's seen-set, watermark, `answers_since`, `TransientImage` ping-pong for delta vs accumulated of **that one SCC**. The per-predicate scratch is a live-count `Vec` today, not a `MAX_PREDICATES` array — the fixed 16 lives in `obs::STRATUM` and its assert, and dies there. Collapse the scratch to size 1 for rec plus `interiors.len()` finished slots (the interior slot count is data, not a 16-slot array).
 - Stop: empty Δ. That is Lean `reachStep acc ⊆ acc` / `T(acc) ⊆ acc` (`02-lean.md`). Budget: `DEFAULT_FIXPOINT_ROUNDS` / `DEFAULT_FIXPOINT_TUPLES` stay (rename constants only if the module is renamed; values stay — 2¹⁶ rounds, 10⁷ tuples). Size is the wall, not round count. `set_fixpoint_budget` stays on `PreparedQuery` and is ignored when `rec` is `None` (no new error; hosts copy-paste).
 - Then main rules, binding the finished rec image like an interior.
 - Ray probes: rec is measure-free by roster — no rec probes. Interiors as above. Main after main. Delete "recursive programs defer the pass."
@@ -203,7 +203,7 @@ Statically empty: a dead interior is the empty table (later readers see nothing)
 | `translate_program` | `translate_query`: lossy SQL of this cut's fragment (`04`). Gate shrinks: mutual / nonlinear / in-cycle fold are unwritable this cut; keep interval-column translator limit. SQLite spelling is not the IR |
 | `querygen/shapes_recursive.rs` | Rewrite to emit `Query` (interiors + optional Rec + identity main). Drop mutual and nonlinear variants. Keep linear, main-negation of finished rec, main fold, empty-Δ, budget-trip, primer-shaped `reach(x,x)` |
 | Conformance `generate_program_corpus` / `conformance/program.rs` | Emit Reach JSON (`reach-*.json`). Lean corpus already recut in the Lean commit; do not run the old generator until this rewrite |
-| C ABI `bdb_program` / `bdb_predicate` / `BDB_ATOM_SOURCE_KIND_IDB` | `bdb_query { interiors, rec, head, rules }`; `BDB_ATOM_SOURCE_KIND_INTERIOR`. `bdb_prepare(db, const bdb_query *)`. Delete `prepare(bdb_program)` in `raii.cc` |
+| C ABI `bdb_program` / `bdb_predicate` / `BDB_ATOM_SOURCE_KIND_IDB` | `bdb_query { interiors, rec, head, rules }`; `BDB_ATOM_SOURCE_KIND_INTERIOR`. `bdb_db_prepare(db, const bdb_query *)` — the entry point keeps its name. Delete `prepare(bdb_program)` in `raii.cc` |
 | C++ `.idb` / `.not_idb` | `.interior<"n">` / `.not_interior<"n">` |
 | `cpp/bridge` `program_in` | `query_in` |
 
@@ -294,4 +294,4 @@ typedef struct bdb_query {
 } bdb_query;
 ```
 
-Delete `bdb_program`, `bdb_predicate`, `bdb_prepare(..., const bdb_program *)`. `bdb_prepare(db, const bdb_query *)`. C++ sugar `interior<"n">` / `not_interior<"n">` lowers to `INTERIOR`. This is bindings work in the same Rust-phase commit as the IR (`04`), listed here so the die-list is grep-complete. Regenerated header: cbindgen, not a hand edit.
+Delete `bdb_program`, `bdb_predicate`. `bdb_db_prepare(..., const bdb_program *)` retargets to `bdb_db_prepare(db, const bdb_query *)` — the entry point is `bdb_db_prepare` today; keep the name, change the parameter. C++ sugar `interior<"n">` / `not_interior<"n">` lowers to `INTERIOR`. This is bindings work in the same Rust-phase commit as the IR (`04`), listed here so the die-list is grep-complete. Regenerated header: cbindgen, not a hand edit.

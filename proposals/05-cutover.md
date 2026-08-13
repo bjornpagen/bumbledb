@@ -18,8 +18,8 @@ Follow `02-lean.md` literally. **One green tree** (one commit, or stacked commit
 2. `Denotation.lean`: `derives`/`ruleAnswers`/`rulesAnswers` over `F`; `sourceDen`/`edbEnv`/`tupleFact`; `factsOf` / `evalRule` taking `T`; retarget `eval_sound`. `Membership.lean`: `"relation"` JSON → `.edb`; theorems match `.edb`. Aggregates: `bindingSet`/`aggAnswers` over `F`.
 3. Add `Exec/Reach.lean`. Delete `Exec/Fixpoint.lean`. `evalInteriors`, `reachOp`, `reachDen = lfpS`, `evalQuery`, `evalLinearReach`, `evalQueryList`, the agreement theorems, `evalQuery_plain`, `evalQuery_empty_rules`. **No fuel on those public defs.**
 4. Plan/Dedup/Rewrites/Sweep: `queryAnswers` → `rulesAnswers` over `edbEnv` / `List Rule`; `⟨n, rs⟩` → `Query.plain n rs` or drop the Query wrapper; `a.source` match `.edb`. Do **not** grow interior-aware rewrites. Comments `Program::Empty` → `PreparedBody::Empty`.
-5. Countermodels: odd off `Program`. Bridge rows. `Bumbledb.lean` / `Main.lean` / `lean/README.md` / `lean/conformance/README.md`. **Recut** `program-*.json` → `reach-*.json` (Lean shape: `interiors`/`interior`/`finds`, identity main, drop `program-hand-mutual.json`). CQuery `seeded-*.json` stay; `decodeAtom` maps `"relation"` → `.edb`. No Program decoder. **Do not run `generate_program_corpus` in this step.**
-6. `lake build` green. `scripts/lean.sh` green. Census: docs still cite dead names — **do not** merge Lean to main with census red. That is why step 2 is next, not Rust. A stacked pair in one PR is fine.
+5. Countermodels: odd off `Program`. Bridge rows. `Bumbledb.lean` / `Main.lean` / `lean/README.md` / `lean/conformance/README.md`. **Recut** `program-*.json` → `reach-*.json` per the ledger in `02-lean.md` — 27 in, **22** out: the five mutual shapes drop (`program-hand-mutual`; seeded `0000`/`0003`/`0010`/`0021`), the four three-predicate shapes unfold their middle predicate into main (seeded `0012`/`0013`/`0014`/`0016`), the rest recut 1:1 (identity main for `output = 0`; anti-join main for the strata-`[0,1]` cases). Keep source numbering; gaps mark the drops. CQuery `seeded-*.json` stay; `decodeAtom` maps `"relation"` → `.edb`. No Program decoder. **Do not run `generate_program_corpus` in this step.**
+6. `lake build` green. `scripts/lean.sh` green. Census: docs still cite dead names — **do not** merge Lean to main with census red. That is why step 2 is next, not Rust. The census is CI-gated in the Lean lane, so steps 1 and 2 are one PR **by construction** — stack them.
 
 If a theorem does not port in a day, **narrow and record** in the Reach module doc (law 5). Do not resurrect `Program` to keep `program_eval_sound` compiling.
 
@@ -29,11 +29,11 @@ If a theorem does not port in a day, **narrow and record** in the Reach module d
 
 ### 3. Rust IR + validate + exec
 
-`03-engine.md`. One engine PR (or a stacked pair: IR+validate, then prepare/execute — but **no** merge that exports both `Program` and `Query.interiors`). `Db::prepare(&Query)` only. Interiors-only lock (`PreparedBody::Rules` or `Empty`, never `Reach`). Reach driver. Delete `strata.rs`. Tests retargeted/refused per `04`. Adversarial sweep on `Query` (including huge `interiors.len()` — must not panic, must not invent `TooManyCtes`). Alloc gate: interiors-only and rec both in the windows.
+`03-engine.md`. One engine PR (or a stacked pair: IR+validate, then prepare/execute — but **no** merge that exports both `Program` and `Query.interiors`). `ts/crate` and `cpp/bridge` are workspace-excluded but CI-gated and path-depend on `crates/bumbledb`: a step-3-only merge reddens both lanes, so steps 3 and 4 land as **one merge** (stacked commits, one PR). `Db::prepare(&Query)` only. Interiors-only lock (`PreparedBody::Rules` or `Empty`, never `Reach`). Reach driver. Delete `strata.rs`. Tests retargeted/refused per `04`. Adversarial sweep on `Query` (including huge `interiors.len()` — must not panic, must not invent `TooManyCtes`). Alloc gate: interiors-only and rec both in the windows.
 
 Do not "temporarily" `impl From<Program> for Query`. Do not keep `validate_program` as a wrapper that wraps the output predicate. Do not add `MAX_CTES`.
 
-### 4. Macros / bindings / oracles
+### 4. Macros / bindings / oracles — same merge as step 3
 
 `query!`, TS, C++, napi marshal, C++ foreign view, `translate_query`, naive eval, conformance corpus builder (`reach-*.json`), cookbook tests, primer-shaped `reach(x,x)` lock. `04`. Fingerprint file regenerated. C++ recipe parity. **Now** the generator may overwrite `reach-*.json` — it emits the Lean Reach shape, not `predicates`/`output`.
 
@@ -76,8 +76,8 @@ The IR change is a break. ETL / regenerate. Not a compatibility shim.
 
 ## Success criteria
 
-1. **Lean.** `Exec/Fixpoint.lean` gone. `Program` gone. `evalQuery_plain`, `evalQuery_sound`, `evalQuery_empty_rules`, `evalLinearReach_eq_lfp`, `reachOp_mono`, `reach_den_finite`, `wellFormed_interior_reads_real` proved. `lake build` green. Conformance agrees on the recut `reach-*.json` corpus via `evalQueryList`. Seeded CQuery cases still pass (`"relation"` → `.edb`). No fuel parameter on those public defs. No public def whose **docs** mention fuel as Lean incompleteness.
-2. **Language.** `query!` all-bare still compiles. Named head without `interior`/`recursive` is a compile error. Cookbook 24–25 native forms use `recursive`. Primer `reach(x,x)` recuts 1:1. TS `program`/`rec`/`output`/`recursiveProgram` gone. C++ `bdb::program`/`rec<>`/`output` gone. C ABI `bdb_program` gone.
+1. **Lean.** `Exec/Fixpoint.lean` gone. `Program` gone. `evalQuery_plain`, `evalQuery_sound`, `evalQuery_empty_rules`, `evalLinearReach_eq_lfp`, `reachOp_mono`, `reach_den_finite`, `wellFormed_interior_reads_real` proved; walls retargeted (`odd_not_monotone`, `odd_no_fixpoint`, `succ_prefixed_infinite`). `lake build` green. Conformance agrees on the recut `reach-*.json` corpus (22 files) via `evalQueryList`. Seeded CQuery cases still pass (`"relation"` → `.edb`). No fuel parameter on those public defs. No public def whose **docs** mention fuel as Lean incompleteness.
+2. **Language.** `query!` all-bare still compiles. Named head without `interior`/`recursive` is a compile error. Cookbook 24–25 native forms use `recursive`. Primer `reach(x,x)` recuts 1:1. TS `program`/`rec`/`output` gone. C++ `bdb::program`/`rec<>`/`output` gone. C ABI `bdb_program` gone.
 3. **Engine.** `prepare(&Query)` only. Interiors-only prepared body is `PreparedBody::Rules` or `Empty`, never `Reach`. Rec path: `ReachDriver`, one `DeltaVariant` per rec arm, watermark Δ, `TransientImage`, existing rule loop. `FixpointBudgetExceeded` vs `reachDen`, not vs Lean fuel. **No `MAX_CTES`.** Rec pools `MAX_RULES`. More than 16 interiors validate. No `strata.rs`. `Db::render_program` gone. `obs::STRATUM` gone. No 16-slot interior span array.
 4. **Oracles.** SQLite translator emits `WITH [RECURSIVE]` for this cut’s fragment (`CLOSURE`, `CLOSURE_ROOTS` inlined main); no `UNION ALL`. That SQL is not the language. Naive complete lfp (empty base ⇒ empty lfp is the iteration). Three-way on rec cases. Interval derived-column still a translator limit.
 5. **Grep.** No `Program` / `PredId` / `evalProgram` / `degenerate_embedding` / `MAX_PREDICATES` / `MAX_CTES` / `ReachProgram` / `bdb_program` / `.idb(` / `STRATUM` / `RecCte` / `CteId` in product trees.
@@ -89,7 +89,7 @@ Do not open these while the Lean/Rust Program deletion is in flight. Mixing them
 
 **Walls — not a later cut either:**
 
-- Bound heads / creation quarantine; negation or aggregation in a recursive SCC; fuel as denotation; rec as implicit answer; stored programs / magic sets / demand rewrite / host-loop internalization; bags / `UNION ALL`
+- Bound heads / creation quarantine; negation or aggregation through the cycle (the rec SCC's own table); fuel as denotation; rec as implicit answer; stored programs / magic sets / demand rewrite / host-loop internalization; bags / `UNION ALL`
 
 **OPEN — other cuts, same complexity class, workload trigger:**
 
@@ -97,11 +97,12 @@ Do not open these while the Lean/Rust Program deletion is in flight. Mixing them
 - **Mutual-linear** (one SCC, several names, each rule ≤1 rec atom). Same class as self-rec; even/odd encodes as one linear predicate with a parity column. Refused **this cut** so Tarjan / k-variants / multi-pred scratch die with Program. *Trigger:* a sighted query that is unnatural as one name **and** is still linear. Admitting it is a new IR (not `Option<Rec>`), not a resurrection of `Program`.
 - **Named interior of a finished rec** (inlining equivalent). This cut inlines into main. *Trigger:* two main-shaped queries over one rec that want to share a named projection without a second prepare — still not a second SCC.
 - **Nonlinear rec** (`P(x,z) ← P(x,y), P(y,z)`). Semi-naive still agrees; it is a worse TC algorithm at 10⁷ / 10 ms (k FJ plans × |Acc|). *Trigger:* a measured L-scale query where the linear encoding is unnatural **and** `|Δ ⋈ Acc|` still fits 10 ms / `DEFAULT_FIXPOINT_TUPLES`. Not “SQLite grew a second reference.”
+- **During-walk anti-join of finished tables** (EDB / an earlier interior negated in a rec arm). Monotone — the negated source is constant in the operator's argument (`stratumOp_mono`'s stratified content; `reachOp_mono` does not witness against it). Refused this cut so `NegationInRec` covers the whole SCC, the driver keeps one negation path, and `recLinear` stays one line. *Trigger:* a workload whose during-walk exclusion cannot be written positively. Admitting it weakens `reachOp_mono`'s premise to no-negated-self; the wall (self) is untouched.
 
 **Already OPEN, unchanged:**
 
 - Chain-window (`w = w₁ ∩ w₂` in a rec head) — created head; `20-query-ir.md` trigger stands
-- During-walk negation in the rec SCC (refused as a wall; not a rewrite into main; not OPEN)
+- During-walk negation **of the rec table itself** (through the cycle) — the wall (`odd_not_monotone` / `odd_no_fixpoint`); never a rewrite into main. The finished-table case is the OPEN row above, not this wall
 
 **Other work, not this feature:**
 

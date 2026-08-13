@@ -9,7 +9,7 @@ The three knobs: `proposals/README.md`. This file states the **language**, then 
 A `Query` is three parts, in evaluation order:
 
 1. **Named interiors** — conjunctive rule-lists, each a finite CQ (union of CQs), evaluated **once**, not an lfp. They form a DAG: declaration order is topological order. An interior may read EDB and any **already-finished** derived table (earlier interiors; after a rec SCC has closed, that rec — inlining-equivalent, OPEN this cut). Bodies may negate finished derived tables (a finished set is a set). Heads are bound variables only (creation quarantine at the interior boundary: no fold, no measure find — those live on main).
-2. **Recursive SCCs** — least fixpoints over named derived relations. A recursive SCC is monotone only if it contains no negation and no aggregation (`odd_not_monotone` / creation quarantine). Heads are range-restricted (bound variables). The denotation of one SCC is `lfpS` of its operator, not a fuel parameter. Recursion is never the answer. Sequential SCCs (A closes, B reads A) are stacked lfps, same class — OPEN this cut. Mutual-linear (several names, one SCC, each rule ≤1 rec atom) is one joint lfp — OPEN this cut.
+2. **Recursive SCCs** — least fixpoints over named derived relations. A recursive SCC's operator is monotone iff nothing negates or folds the SCC's **own** table (`odd_not_monotone` / `odd_no_fixpoint`); this cut's roster refuses all negation in the SCC regardless (`NegationInRec` — the monotone finished-table case is a this-cut refusal, OPEN, not this wall). Heads are range-restricted (bound variables). The denotation of one SCC is `lfpS` of its operator, not a fuel parameter. Recursion is never the answer. Sequential SCCs (A closes, B reads A) are stacked lfps, same class — OPEN this cut. Mutual-linear (several names, one SCC, each rule ≤1 rec atom) is one joint lfp — OPEN this cut.
 3. **Main** — today's query: one head, ≥1 rule, folds, measures, negation, the full per-rule roster. Main reads EDB and every finished derived table. `evalQuery` is main `rulesAnswers` over that environment.
 
 Params are **query-global**. Variables are **rule-scoped**. `AtomSource` names a stored relation or a derived table (an interior or a rec). `RelId` / `RelationId` never puns with `InteriorId`. Statements still quantify over stored relations only.
@@ -98,7 +98,7 @@ Empty `interiors` is legal. An individual `Interior` with zero rules is `EmptyIn
 
 One name. Two lists, so mixed arms are a roster item rather than a classification:
 
-- **Base arms** (`Rec.base`): no atom — positive or negated — whose source is the rec's `InteriorId`. Extra EDB joins and earlier interiors are legal. **Negation is illegal in the whole rec SCC** (base and rec arms, EDB or interior or self): `NegationInRec`. Measure terms (find, binding, comparison) are illegal in the whole rec SCC: heads → `MeasureInInterior`; rec **bodies** → `MeasureInRec`. Aggregates are already unwritable in a bound-var head; a fold find on an interior or rec head is `AggregateInInterior`. There is no `AggregationInRec` variant — the fold is on the head, so it is `AggregateInInterior`.
+- **Base arms** (`Rec.base`): no atom — positive or negated — whose source is the rec's `InteriorId`. Extra EDB joins and earlier interiors are legal. **Negation is illegal in the whole rec SCC** (base and rec arms, EDB or interior or self): `NegationInRec`. Self-negation is the wall; EDB / earlier-interior negation is monotone and refused this cut — one roster item either way, OPEN in `05-cutover.md`. Measure terms (find, binding, comparison) are illegal in the whole rec SCC: heads → `MeasureInInterior`; rec **bodies** → `MeasureInRec`. Aggregates are already unwritable in a bound-var head; a fold find on an interior or rec head is `AggregateInInterior`. There is no `AggregationInRec` variant — the fold is on the head, so it is `AggregateInInterior`.
 - **Rec arms** (`Rec.rec`): each arm has **exactly one** positive self-atom (`Interior` = rec's id). Zero is `RecArmMissingSelf`. Two or more is `NonlinearRecArm`. The self-atom is never negated (already `NegationInRec`). Extra EDB and earlier-interior joins on the same arm are legal — that is where Free Join earns its keep (primer's step rule is several EDB atoms plus one rec).
 
 Both lists nonempty:
@@ -187,7 +187,7 @@ sub(a) | AccountParent(child: a, parent: p), sub(p);
 
 becomes the same rewrite: `recursive sub(...)` on the first two lines; the `Sum` line stays bare (main). Aggregation is not in the rec SCC; it reads the finished rec. The strata-roster sentence "fold over a lower stratum" is now the ordinary sentence "main query over a finished interior."
 
-**Primer cycle detector** (`requiresCycleQuery`): already the allowed shape — linear `reach(from, to)`, extra EDB on the step arm, output is **not** the rec. Recut 1:1. Empty output = the lattice is a DAG.
+**Primer cycle detector** (`requiresCycleQuery`): already the allowed shape — linear `reach(from, to)`, extra EDB on the step arm, output is **not** the rec. Recut 1:1. Empty output = the lattice is a DAG. Primer is a **downstream repo**: the recut is their P2.4 cutover, coordinated; the in-tree artifact is the primer-shaped `reach(x,x)` lock.
 
 ```text
 recursive reach(from, to) | Produces(grp: from, capability: cap),
@@ -231,7 +231,7 @@ recursive reach(c, p) | OrgParent(child: c, parent: m), reach(m, p);
 
 Same answers as a named interior after rec would have given: the anti-join sees the **finished** lfp. The SQLite translator recuts from a second CTE after the rec to a main `SELECT` with `NOT EXISTS` / `LEFT JOIN ... IS NULL` (`04-bindings-docs.md`). That SQL is translator output, not the language.
 
-**Dropped, not inlined — negation *inside* the rec SCC.** Today's recursive predicate that anti-joins a lower stratum (or EDB) during the walk is `NegationInRec`. Putting that anti-join on main is a **different** query (filter after closure ≠ filter during). Do not pretend they are the same rewrite. Hosts that need during-walk exclusion keep the host loop (cookbook 24's other dialect) or wait for a later cut. This is a wall, not OPEN.
+**Dropped, not inlined — negation *inside* the rec SCC.** Today's recursive predicate that anti-joins a lower stratum (or EDB) during the walk is `NegationInRec`. Putting that anti-join on main is a **different** query (filter after closure ≠ filter during). Do not pretend they are the same rewrite. Two cases, named: anti-joining the rec table itself is the **wall** (`odd_not_monotone` / `odd_no_fixpoint`); anti-joining a **finished** table during the walk is monotone (`stratumOp_mono`'s stratified content today) and is dropped **this cut** — OPEN, trigger in `05-cutover.md`. The drop prices at zero today: no corpus case and no accepted test negates from inside a recursive rule. Hosts that need during-walk exclusion keep the host loop (cookbook 24's other dialect) or write the exclusion positively.
 
 **Output was the rec predicate.** One-predicate recursive programs (`output = 0`, the rec IS the answer) become `rec` plus an identity main of the same arity. The rec table is not implicitly returned. `program-hand-closure.json` is this shape.
 
@@ -241,7 +241,7 @@ Mutual recursion, nonlinear rec, named-head-without-keyword, `Program` literals 
 
 ## Validation roster (additions; the per-rule roster stays)
 
-Judged in this order, after the existing query-shape checks (empty main, `MAX_RULES` / DNF per interior and per main and the rec **pool**, nesting, DNF, head-shape alignment):
+Judged in this order, after the existing query-shape checks (empty main, `MAX_RULES` / DNF per interior and per main and the rec **pool**, nesting, DNF, head-shape alignment). Roster names are `ValidationError`; `FixpointBudgetExceeded` / `MeasureOfRay` / `ResultBytesOverflow` are runtime `Error` and stay there:
 
 1. `InteriorIdOverflow` — derived-table count does not fit `u32` (usize, before any `InteriorId`). There is **no** `TooManyCtes`.
 2. Per `Interior` / `Rec` / main: existing empty-rule (`EmptyInterior` for an interior with zero rules; `EmptyRuleSet` only for empty **main**), DNF, head-alignment, per-rule roster, with `IdbSignatures` replaced by `InteriorSignatures` (sealed in declaration order — no chaotic iteration).
@@ -279,7 +279,7 @@ An `Interior` atom on a Query with empty `interiors` and no rec is `UnknownInter
 
 **Walls (forever):**
 
-- Negation or aggregation in a recursive SCC. Main may anti-join / fold the finished rec. During-walk ≠ after-lfp.
+- Negation or aggregation **through the cycle** — the rec SCC's own table under `!` or a fold. Main may anti-join / fold the finished rec. During-walk ≠ after-lfp.
 - Created rec heads (chain-window stays OPEN).
 - Fuel as meaning. The rec denotes an lfp; the budget is a resource abort (`03-engine.md`).
 - Implicit output = last derived table. Bare rules are the output.
@@ -293,5 +293,6 @@ An `Interior` atom on a Query with empty `interiors` and no rec is `UnknownInter
 - Nonlinear rec arms (`NonlinearRecArm`). Trigger in `05-cutover.md`.
 - A named interior of the rec (inline into main). OPEN, inlining-equivalent.
 - A second eval path, a second Free Join, a `ReachProgram` type, Tarjan retained “for interior cycles” (interior cycles are `InteriorNotPrior`).
+- During-walk anti-join of **finished** tables in rec arms (`NegationInRec` covers the whole SCC this cut; the case is monotone; OPEN).
 
 **Not a refusal:** several linear rec arms of one name; extra EDB / earlier-interior joins on a linear arm; main over the finished rec (join, anti-join, fold) — cookbook 25, primer `reach(x,x)`; two independent reaches as two `Query` values (host owns composition); any number of named interiors, each a finite CQ.
