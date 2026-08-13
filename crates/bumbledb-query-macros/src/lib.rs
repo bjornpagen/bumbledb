@@ -49,7 +49,7 @@
 //! pbind   := position ':' var            // sparse explicit position
 //!          | position '==' value         // position selection
 //!          | position 'in' ?param        // position set membership
-//! mask    := MASK ('|' MASK)* | ?param   // masks are sets of basics; '|' is set union
+//! mask    := MASK ('|' MASK)*            // literal sets of basics; '|' is set union
 //! term    := var | ?param | literal
 //! pred    := lowercase ident             // macro-LOCAL: resolved at expansion, never
 //!                                        //   in the IR or the fingerprint; relations

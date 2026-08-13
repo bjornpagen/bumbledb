@@ -6,3 +6,4 @@
 /bench-out/
 /bench-data/
 /.claude/
+/.pnpm-store/

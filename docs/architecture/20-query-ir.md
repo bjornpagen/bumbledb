@@ -342,11 +342,10 @@ join costume.
   packed segment shares its input's element type); at most one `Pack` per head —
   the multi-`Pack` product has no sighting and is refused with the trigger "a
   real query needing two coalesced columns in one answer". `Pack` mixes with **no
-  other aggregate** (the Arg/fold mixing rule, extended: a fold column repeated
-  per segment answer is a join in aggregate costume, and two relation-shaped
-  aggregates do not compose in one head); its companions are group-key positions
-  only. **Across rules `Pack`
-  folds the union** (unlike Arg-restriction): the head projection carries the
+  other aggregate** (a fold column repeated per segment answer is a join in
+  aggregate costume, and two relation-shaped aggregates do not compose in one
+  head); its companions are group-key positions only. **Across rules `Pack`
+  folds the union**: the head projection carries the
   raw claim, so the spanning seen-set keys (group, claim) pairs and the coalesce
   runs over ∪. Composition refusals, recorded: coalesced-time accounting
   (`Sum∘Duration∘Pack`) is **two prepared queries or a host fold over packed

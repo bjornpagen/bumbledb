@@ -36,10 +36,10 @@
  *   (targetRequired); the compliant same-commit stitch and the non-Taught
  *   bare-capsule member both land. No wall: `.where` selections on
  *   containment SOURCE faces are ordinary surface.
- * - Q4 ORDERING: answers are sets — the engine never orders; the
- *   sanctioned read-side spelling is the SDK comparator `by("pos")` on
- *   returned rows (keys as data), stable and deterministic across runs
- *   under the `key(Member, ["program", "pos"])` uniqueness law.
+ * - Q4 ORDERING: answers are sets — the engine never orders; the host
+ *   sorts returned rows locally (`byPos` on `pos`, keys as data), stable
+ *   and deterministic across runs under the
+ *   `key(Member, ["program", "pos"])` uniqueness law.
  */
 
 import assert from "node:assert/strict"

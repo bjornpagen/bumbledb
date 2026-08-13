@@ -330,8 +330,7 @@ member `bumbledb-bench` is the one quarantined exception: it may hold `rusqlite`
 else**; argument parsing, JSON emission, statistics, and randomness are hand-rolled
 there. The quarantine is one-directional: nothing in the engine may ever depend on
 the bench crate. The downstream sugar member is a facade split: `bumbledb-query`
-is the host surface (the `query!` re-export plus the `order` module — host-side
-answer ordering; `70-api.md` § host-side sugar) and `bumbledb-query-macros` is
+is the host surface (the `query!` re-export; `70-api.md` § host-side sugar) and `bumbledb-query-macros` is
 the proc-macro mechanics behind it (hosts still spell `bumbledb-query`). Both
 carry zero foreign dependencies and sit under the same one-directional law:
 hosts may depend on them; nothing in the engine ever does.

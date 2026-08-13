@@ -284,7 +284,7 @@ stream computes exactly the answer set
   (the coalesce spec: `lean/Bumbledb/Query/Aggregates.lean: pack_extensional`,
   `pack_canonical`): per group the sink accumulates
   the claim list — `[start, end]` encoded word pairs appended raw, pooled by
-  group index (the Arg answer-set precedent, capacity retained across executions);
+  group index (capacity retained across executions);
   finalize sorts each group's list by start word (`sort_unstable` — the in-place
   machinery, allocation-free; a pooled radix stays unearned until the bench
   shows the sort on a profile) and drives the shared segment sweep's

@@ -649,8 +649,8 @@ crates/bumbledb-macros/  the schema! proc macro (hand-rolled, no syn/quote)
 crates/bumbledb-theory/  the shared schema library: values, intervals, the
                          Allen mask algebra, descriptors, the SchemaSpec
                          lowering — every host lowers through this one crate
-crates/bumbledb-query/   the host-surface sugar crate: the query! re-export +
-                         the order module (downstream sugar; lowers to IR)
+crates/bumbledb-query/   the host-surface sugar crate: the query! re-export
+                         (downstream sugar; lowers to IR)
 crates/bumbledb-query-macros/  the query! proc-macro mechanics behind it
 crates/bumbledb-bench/   the oracle + benchmark suite
                          (gen/verify/verify-store/bench/trace/scenarios/churn/
