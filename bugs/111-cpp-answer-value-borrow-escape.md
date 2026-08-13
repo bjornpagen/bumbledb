@@ -4,7 +4,7 @@
 - confidence: confirmed
 - area: ffi
 - components: cpp/foreign/raii.cc, cpp/src/answers/decode.cc, cpp/src/answers/answers.cc, cpp/src/answers/row.cc
-- status: open (do not fix)
+- status: fixed (2026-08-13)
 
 ## Summary
 Outbound string/bytes payloads are views into `bdb_answers` / `bdb_row_set`. The C++ raii `cell()` copies a `bdb_value` POD (raw pointers) out of the FFI call; `decode_value` wraps those in `std::string_view` / `std::span<byte const>` inside a copyable `std::variant`. Destroying, moving, `clear()`ing, or re-executing the carrier leaves those copies dangling. Error messages were explicitly copied to `std::string` to avoid this; answers were not.
@@ -42,3 +42,7 @@ Comments document the borrow. C++ AGENTS.md: owning structs do not contain borro
 **Trace:** `answers_handle::cell` copies a `bdb_value` POD out of `bdb_answers_get` (`cpp/foreign/raii.cc:317-326`); comment: payloads BORROW this carrier. `text_of` / `bytes_span_of` wrap those raw pointers (`:48-62`). `decode_value` puts them in a copyable `std::variant` as `string_view` / `span<byte const>` (`cpp/src/answers/decode.cc:18-19, 50-61`). `AnswersRaw::cell` / `RowSet::cell` return `optional<Value>` (`answers.cc:49-56, 98-100`). `RowAnswers::row` builds a `Row` product from those views (`row.cc:15-17, 49-54`); `rows()` yields `Row` by value. Contrast: `error_handle::message()` / `violation()` copy into `std::string` because “the borrowed view dies with the error” (`raii.cc:123-132, 156-175`).
 
 **Why it holds:** `auto v = answers.cell({0,0}); answers.clear(); use(v);` is well-typed and is UAF of the Rust string/byte heap. Snapshot/WriteTx were made non-copyable to block this stash; `Value` is not named `*View` (AGENTS.md §12) and is copyable. Comments document the borrow; the type system does not.
+
+## Resolution (2026-08-13)
+
+Dialect `Value` owns `std::string` / `std::vector<std::byte>`; `decode_value` copies at the boundary. Answer row products use those owning types; inbound params still borrow for the execute call. C ABI `bdb_value` views still borrow the carrier and are copied immediately by decode.

@@ -96,7 +96,7 @@ struct CaseResult {
 
 [[nodiscard]] auto cell_is_text(bdb::RowSet const& rows, bdb::Cell at, std::string_view want) -> bool {
 	auto const cell = rows.cell(at);
-	return cell.has_value() && std::holds_alternative<std::string_view>(*cell) && std::get<std::string_view>(*cell) == want;
+	return cell.has_value() && std::holds_alternative<std::string>(*cell) && std::get<std::string>(*cell) == want;
 }
 
 struct SeedIds {

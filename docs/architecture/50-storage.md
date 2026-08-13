@@ -137,11 +137,15 @@ facts, never interned, so the key hash carries no type tag: forward
   `Db::verify_store`'s counter pass, which judges the one mark where it judged
   two. The unification changes stored bytes, so the version-bump law below
   applies.
-- `fact_bytes` = the canonical encoding owned by `10-data-model.md`; identity =
-  bytes — the encoding is injective, so byte equality IS value equality
-  (`lean/Bumbledb/Values.lean: value_eq_iff_encode_eq`).
+- `fact_bytes` = the canonical encoding owned by `10-data-model.md`; Lean
+  identity is encoding equality
+  (`lean/Bumbledb/Values.lean: value_eq_iff_encode_eq`). Storage membership
+  is blake3-256 of those bytes: **hash equality is treated as fact equality —
+  collisions are an accepted axiom** (2⁻¹²⁸-scale event), not verified against
+  `fact_bytes` on an `M` or dictionary hit.
 - `fact_hash` = full 32-byte blake3 of `fact_bytes`; an `M` hit is trusted without
-  verification (collision axiom, recorded in `10-data-model.md`).
+  verification (collision axiom, recorded in `10-data-model.md` and in
+  `Values.lean`).
 - **`U` determinant index keys** are the FD statement's projected fields' canonical
   encodings, concatenated in statement order — order embeddings, so key order is
   value order (`lean/Bumbledb/Values.lean: encode_u64_order_embedding`,
@@ -492,13 +496,19 @@ stays valid. Pending interns of a no-op commit are dropped — intern ids never 
 
 Bulk load (`70-api.md` surface) is the same delta mechanism at scale — chunked into
 multiple transactions (4096 facts each; a failing chunk aborts whole, prior chunks
-stay committed, and the error carries the committed count). Chunking has a new
+stay committed, and the error carries the committed count). This chunking is the
+engine **operationalization** of Lean `scanLoad`, which judges the transformed
+instance as **one** final state (`lean/Bumbledb/Txn.lean: etl_lands_valid`). They
+are not the same atomic judgment: a migration Lean would reject in one `judge`
+can leave a prefix of chunks committed. Recipe 28 (load containment targets
+first) is the host obligation that makes sequenced commits safe. Chunking has a
 stated consequence under bidirectional containments: **a `==` statement's cluster
 must be judged whole**, so a chunk boundary that splits a cluster mid-load fails
 that chunk's commit loudly (never silently); the documented import order —
 dependency-cluster order, owned by `70-api.md`'s ETL section — makes the failure
 unreachable for well-formed exports. The fresh-database append-order fast path
-stays deliberately unbuilt.
+stays deliberately unbuilt. The chunk size (4096) is engine mechanism, not a
+Lean parameter.
 
 **Corrupt data is a hard error, never a skip:** an `F` value whose length differs from
 the schema's fact width, a dangling intern id, an `M`/`F` disagreement, an

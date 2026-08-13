@@ -1,6 +1,6 @@
 # FFI / unsafe / allocation audit manifest (ids 100–117)
 
-Number range 100–199. One finding per file. Read-only; nothing fixed.
+Number range 100–199. One finding per file. Bashed 2026-08-13: all 17 survivors fixed.
 
 Verified 2026-08-12 against C/C++/Rust source. Deleted 110 and 118 (see `_rebuttals-ffi.md`). No new ids.
 

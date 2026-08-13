@@ -5,7 +5,7 @@
 - area: spec-docs-rust
 - wrong-side: split
 - components: lean/Bumbledb/Values.lean, lean/Bumbledb/Conformance.lean, docs/architecture/10-data-model.md, crates/bumbledb/src/encoding.rs, crates/bumbledb/src/encoding/decode.rs
-- status: open (do not fix)
+- status: fixed (2026-08-13)
 
 ## Summary
 Lean models `bytes<N>` as a length-`N` list of abstract Words and `encodeAt` as that list. Docs and Rust store `N` raw bytes zero-padded to a multiple of 8. For `N ≢ 0 (mod 8)` or `N > 8`, `value_eq_iff_encode_eq` on `fixedBytes` is not byte-identical to on-disk `fact_bytes`. The pad-is-encoding claim in Lean hides a different granularity than the engine's pad-is-trailing-bytes invariant.
@@ -39,3 +39,6 @@ Re-read `FixedBytes` / `encodeAt`, the data-model encoding table, and `fixed_byt
 
 ## Related
 - 219 (hash identity vs canonical-bytes identity)
+
+## Resolution (2026-08-13)
+Lean `FixedBytes n` is now `n` raw `Byte`s; `padFixedBytes` zero-pads to `⌈n/8⌉×8` abstract words. Wire format unchanged. `value_eq_iff_encode_eq` uses right-append cancellation.

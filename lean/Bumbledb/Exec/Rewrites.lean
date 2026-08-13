@@ -1464,7 +1464,7 @@ theorem keyprobe_key_spent {T : Theory} {I : Instance}
   simp only [Statement.judgment, hscalar] at hj
   unfold Theory.den at hj
   rw [hopen] at hj
-  exact hj
+  exact hj.2
 
 /-- The pointwise face of the key premise: on a holding instance an
 accepted key whose field set splits pointwise (one interval field, any
@@ -1510,7 +1510,7 @@ theorem keyprobe_pointwise_key_spent {T : Theory} {I : Instance}
   have hfg : f i = g i := (Fact.project_eq_iff f g K).mp hproj i hiK
   refine Classical.byContradiction fun hne => ?_
   obtain ⟨p, hp⟩ := hpts f hf
-  exact hj f g hf hg hSproj hne p hp (hfg ▸ hp)
+  exact hj.2 f g hf hg hSproj hne p hp (hfg ▸ hp)
 
 /-! ## Item 4 — static emptiness and the latch's two constructors -/
 
@@ -2451,7 +2451,7 @@ theorem step_preserves {T : Theory} {C : Classify} {q q' : Query}
     have hj := hI _ hdecl
     simp only [Statement.judgment, hsrc, htgt] at hj
     exact (elimination_sound hs
-      (containment_transfer (den_agrees hax _) (den_agrees hax _) hj)
+      (containment_transfer (den_agrees hax _) (den_agrees hax _) hj.2)
       t).symm
   | eliminateChained hs₁ hs₂ hroot hdecl₁ hdecl₂ hsrc₁ htgt₁ hsrc₂ htgt₂ =>
     refine queryAnswers_congr_at fun t => ?_
@@ -2460,8 +2460,8 @@ theorem step_preserves {T : Theory} {C : Classify} {q q' : Query}
     simp only [Statement.judgment, hsrc₁, htgt₁] at hj₁
     simp only [Statement.judgment, hsrc₂, htgt₂] at hj₂
     exact (chained_elimination_sound hs₁ hs₂ hroot
-      (containment_transfer (den_agrees hax _) (den_agrees hax _) hj₁)
-      (containment_transfer (den_agrees hax _) (den_agrees hax _) hj₂)
+      (containment_transfer (den_agrees hax _) (den_agrees hax _) hj₁.2)
+      (containment_transfer (den_agrees hax _) (den_agrees hax _) hj₂.2)
       t).symm
   | kill h =>
     exact queryAnswers_drop_at fun t => statically_empty_sound h I ρ t

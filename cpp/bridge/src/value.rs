@@ -13,7 +13,7 @@
 use bumbledb::{AnswerValue, BindValue, Interval, Value};
 
 use crate::error::fail_shape;
-use crate::{BridgeResult, slice_in};
+use crate::{BridgeResult, bool_in, c_tag, slice_in, tag_in};
 
 /// A borrowed UTF-8 text view (NOT NUL-terminated; the length is the
 /// contract). A null `data` with `len == 0` is the empty string; a null
@@ -85,14 +85,28 @@ pub enum bdb_value_kind {
     IntervalI64,
 }
 
+c_tag!(bdb_value_kind {
+    Bool,
+    U64,
+    I64,
+    String,
+    FixedBytes,
+    IntervalU64,
+    IntervalI64,
+});
+
 /// One tagged value. Only the fields the `kind` names are read; the rest
 /// are ignored inbound and zeroed outbound. Boring and flat by design —
 /// no union, no packing.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct bdb_value {
-    pub kind: bdb_value_kind,
-    pub bool_value: bool,
+    /// Integer tag; valid values are [`bdb_value_kind`]. Unknown tags are
+    /// `BDB_STATUS_MISUSE` (the field is `u32` so an out-of-range C enum
+    /// is not UB).
+    pub kind: u32,
+    /// 0 or 1 when `kind` is Bool; any other byte is misuse.
+    pub bool_value: u8,
     pub u64_value: u64,
     pub i64_value: i64,
     /// `String`: UTF-8 text (checked at the boundary).
@@ -111,8 +125,8 @@ impl bdb_value {
     /// The zeroed skeleton every outbound constructor fills.
     pub(crate) fn blank(kind: bdb_value_kind) -> Self {
         Self {
-            kind,
-            bool_value: false,
+            kind: u32::from(kind),
+            bool_value: 0,
             u64_value: 0,
             i64_value: 0,
             string_value: bdb_string_view {
@@ -133,8 +147,8 @@ impl bdb_value {
 
 /// One inbound tagged value, copied into the engine's owned [`Value`].
 pub(crate) fn value_in(view: &bdb_value) -> BridgeResult<Value> {
-    match view.kind {
-        bdb_value_kind::Bool => Ok(Value::Bool(view.bool_value)),
+    match tag_in::<bdb_value_kind>(view.kind)? {
+        bdb_value_kind::Bool => Ok(Value::Bool(bool_in(view.bool_value)?)),
         bdb_value_kind::U64 => Ok(Value::U64(view.u64_value)),
         bdb_value_kind::I64 => Ok(Value::I64(view.i64_value)),
         bdb_value_kind::String => {
@@ -171,7 +185,7 @@ pub(crate) fn value_out(value: &Value) -> bdb_value {
     match value {
         Value::Bool(v) => {
             let mut view = bdb_value::blank(bdb_value_kind::Bool);
-            view.bool_value = *v;
+            view.bool_value = u8::from(*v);
             view
         }
         Value::U64(v) => {
@@ -218,7 +232,7 @@ pub(crate) fn answer_out(value: AnswerValue<'_>) -> bdb_value {
     match value {
         AnswerValue::Bool(v) => {
             let mut view = bdb_value::blank(bdb_value_kind::Bool);
-            view.bool_value = v;
+            view.bool_value = u8::from(v);
             view
         }
         AnswerValue::U64(v) => {
@@ -265,12 +279,14 @@ pub enum bdb_param_kind {
     Set,
 }
 
+c_tag!(bdb_param_kind { Scalar, Set });
+
 /// One positional execution argument — the C mirror of the engine's
 /// public `ParamArg` shape (Scalar | Set).
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct bdb_param {
-    pub kind: bdb_param_kind,
+    pub kind: u32,
     /// `Scalar`: the value.
     pub scalar: bdb_value,
     /// `Set`: `set_len` tagged values.
@@ -289,7 +305,7 @@ pub(crate) enum OwnedParam {
 pub(crate) fn params_in(params: *const bdb_param, count: usize) -> BridgeResult<Vec<OwnedParam>> {
     slice_in(params, count)?
         .iter()
-        .map(|param| match param.kind {
+        .map(|param| match tag_in::<bdb_param_kind>(param.kind)? {
             bdb_param_kind::Scalar => Ok(OwnedParam::Scalar(value_in(&param.scalar)?)),
             bdb_param_kind::Set => Ok(OwnedParam::Set(row_in(param.set, param.set_len)?)),
         })

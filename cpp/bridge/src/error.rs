@@ -15,7 +15,7 @@
 use bumbledb::{Error, SchemaDescriptor, render_rejection};
 
 use crate::value::bdb_string_view;
-use crate::{Fail, bdb_status, box_in, guard, out, ref_in};
+use crate::{Fail, bdb_status, box_in, guard, guard_value, out, ref_in};
 
 /// The C error kind — one constant per engine error family, plus the
 /// bridge-synthesized `Panic`.
@@ -259,16 +259,26 @@ pub(crate) fn fail_shape(message: &str) -> Fail {
     )))
 }
 
+/// Re-entrant use of a handle that is already in a callback or execute
+/// (nested write/read, concurrent prepared execute): typed
+/// `BDB_ERROR_KIND_ENVIRONMENT_LOCKED` before the engine assertion.
+pub(crate) fn fail_locked(message: &str) -> Fail {
+    Fail::Error(Box::new(bdb_error::synthesized(
+        bdb_error_kind::EnvironmentLocked,
+        format!("bumbledb-cpp: {message}"),
+    )))
+}
+
 /// The error's kind. A null handle answers `Panic` — the accessor cannot
 /// carry a status, and `Panic` is the one kind that always means "stop
 /// trusting this process's bridge state".
 #[unsafe(no_mangle)]
 #[expect(unsafe_code, reason = "extern export: the unsafe(no_mangle) ABI attribute")]
 pub extern "C" fn bdb_error_get_kind(error: *const bdb_error) -> bdb_error_kind {
-    match ref_in(error) {
+    guard_value(bdb_error_kind::Panic, || match ref_in(error) {
         Ok(error) => error.kind,
         Err(_) => bdb_error_kind::Panic,
-    }
+    })
 }
 
 /// The rendered message, borrowed from the error (valid until
@@ -327,10 +337,10 @@ pub extern "C" fn bdb_error_get_bulk_committed(
 #[unsafe(no_mangle)]
 #[expect(unsafe_code, reason = "extern export: the unsafe(no_mangle) ABI attribute")]
 pub extern "C" fn bdb_error_violation_count(error: *const bdb_error) -> usize {
-    match ref_in(error) {
+    guard_value(0, || match ref_in(error) {
         Ok(error) => error.violations.len(),
         Err(_) => 0,
-    }
+    })
 }
 
 /// One rendered violation, viewed (the spelling borrows from the error —

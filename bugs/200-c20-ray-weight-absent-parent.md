@@ -5,7 +5,7 @@
 - area: spec-docs-rust
 - wrong-side: split
 - components: lean/Bumbledb/Capacity.lean, docs/architecture/30-dependencies.md, docs/design/capacity-laws.md, crates/bumbledb/src/storage/commit/judgment.rs, crates/bumbledb/src/storage/commit/plan.rs, crates/bumbledb/src/storage/commit/tests/marks.rs
-- status: open (do not fix)
+- status: fixed (2026-08-13)
 
 ## Summary
 Inserting a Duration-weighted capacity child whose interval is a ray, when no matching parent row exists, is a legal no-op under Lean `CapacityLaw` (`capacity_of_empty_parent`) and under the architecture doc that cites that theorem. The engine, by C20 (2026-08-03), refuses the write at plan time with `CapacityRayMeasure`. The design record states this is doctrine and strictly stronger than C10; the architecture docs never mention C20 and still present empty-parent vacuity as the unification stop.
@@ -48,3 +48,6 @@ Re-read Lean, architecture/design docs, and the write path. **Confirmed.** `wron
 ## Related
 - 218 (70-api write-error roster omits `CapacityRayMeasure`)
 - 220 (Lean `durationNat` junk-0 vs C10/C20 refuse)
+
+## Resolution (2026-08-13)
+Engine C20 left intact. Architecture (`30-dependencies.md`) now states C20 as write-time, parent-blind Duration-ray refusal (`CapacityRayMeasure`). Lean `Capacity.lean` records C20 as engine law: empty-parent vacuity does not license a ray Duration child insert; `durationNat?` is `none` on rays.

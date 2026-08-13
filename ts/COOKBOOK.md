@@ -178,7 +178,8 @@ const Grading = schema("Grading", { Kind, Task, DeterministicGrading, CustomOper
 	mirrors(on(Task.where({ kind: "CustomOperator" }), "id"), on(CustomOperatorGrading, "task"))
 	// Exclusivity is a theorem, not a statement: one id in two arms would
 	// force `kind` to equal two handles against the fresh key on id.
-	// The executor spends the same theorem again — recipe 22's free lunch.
+	// The executor spends the same theorem again as a diagnostic witness
+	// (recipe 22); multi-rule execution still keeps a spanning seen-set.
 ])
 
 // Host dispatch over the discriminator is native `switch` narrowing over
@@ -1092,8 +1093,10 @@ const deriving = query(Rollup).rule((r) => {
 
 Guarantee: Lean theorem + represented planner/runtime premise — rule union is
 set-idempotent (`lean/Bumbledb/Query/Denotation.lean: union_idempotent`);
-key-backed DU arms justify the disjointness optimization
-(`lean/Bumbledb/Exec/Dedup.lean: disjoint_witness_licence`).
+key-backed DU arms justify a disjointness *witness*
+(`lean/Bumbledb/Exec/Dedup.lean: disjoint_witness_licence`) spent diagnostically
+only — execution always keeps one spanning seen-set
+(`docs/architecture/40-execution.md` § set semantics).
 
 The whole-DU read is a set of rules: one head, one rule per arm — disjunction
 is data at the top, never an execution node.
@@ -1114,7 +1117,8 @@ const Payments = schema("Payments", { Kind, Payment, Card, Ach }, [
 
 // One query, two rules (set union). The exclusivity theorem (recipe 2) is
 // spent a third time here: rules selecting different `kind` handles are
-// provably disjoint, so the executor elides cross-rule dedup — the free lunch.
+// provably disjoint. Plan introspection retains the witness; execution still
+// probes one spanning seen-set — the measured refutation deleted the elision.
 const wholeDu = query(Payments)
 	.rule((r) => {
 		const { id } = v(Payment)

@@ -5,7 +5,7 @@
 - area: spec-docs-rust
 - wrong-side: spec
 - components: lean/Bumbledb/Dependencies.lean, lean/Bumbledb/Schema.lean, crates/bumbledb/src/schema/validate.rs, docs/architecture/30-dependencies.md
-- status: open (do not fix)
+- status: fixed (2026-08-13)
 
 ## Summary
 `intervalSplit` is position-blind: a single interval field anywhere in the projection yields the pointwise `PointwiseKey` reading. The engine requires that interval to be the *last* projection position (`FunctionalityIntervalNotLast`) because the neighbor probe needs a scalar prefix. Lean records the refusal as making the pointwise-non-final reading "moot for accepted theories." An implementer of `holds` from the spec without the gate would enforce WITHOUT OVERLAPS on a key the storage layer cannot probe.
@@ -43,3 +43,6 @@ Re-read the position-blind split, the last-position architecture rule, and `Func
 
 ## Related
 - 213 (multi-interval default)
+
+## Resolution (2026-08-13)
+Lean refuses a non-final interval FD (`functionalityAdmitted` requires the single interval last), matching `FunctionalityIntervalNotLast`. Not a pointwise reading.

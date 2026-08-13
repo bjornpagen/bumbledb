@@ -15,9 +15,9 @@ use bumbledb::Answers;
 
 use crate::db::bdb_snapshot_ref;
 use crate::error::{bdb_error, fail_engine};
-use crate::query::bdb_prepared;
+use crate::query::{bdb_prepared, enter_execute};
 use crate::value::{answer_out, bdb_param, bdb_value, param_args, params_in};
-use crate::{Fail, bdb_status, box_in, box_out, guard, mut_in, out, ref_in};
+use crate::{Fail, bdb_status, box_in, box_out, guard, guard_value, mut_in, out, ref_in};
 
 /// The opaque, reusable answers carrier.
 pub struct bdb_answers {
@@ -28,8 +28,10 @@ pub struct bdb_answers {
 #[unsafe(no_mangle)]
 #[expect(unsafe_code, reason = "extern export: the unsafe(no_mangle) ABI attribute")]
 pub extern "C" fn bdb_answers_new() -> *mut bdb_answers {
-    box_out(bdb_answers {
-        answers: Answers::new(),
+    guard_value(std::ptr::null_mut(), || {
+        box_out(bdb_answers {
+            answers: Answers::new(),
+        })
     })
 }
 
@@ -47,10 +49,10 @@ pub extern "C" fn bdb_answers_clear(answers: *mut bdb_answers) -> bdb_status {
 #[unsafe(no_mangle)]
 #[expect(unsafe_code, reason = "extern export: the unsafe(no_mangle) ABI attribute")]
 pub extern "C" fn bdb_answers_len(answers: *const bdb_answers) -> usize {
-    match ref_in(answers) {
+    guard_value(0, || match ref_in(answers) {
         Ok(answers) => answers.answers.len(),
         Err(_) => 0,
-    }
+    })
 }
 
 /// Number of columns — the executed query's find terms, in order (0 for
@@ -58,10 +60,10 @@ pub extern "C" fn bdb_answers_len(answers: *const bdb_answers) -> usize {
 #[unsafe(no_mangle)]
 #[expect(unsafe_code, reason = "extern export: the unsafe(no_mangle) ABI attribute")]
 pub extern "C" fn bdb_answers_arity(answers: *const bdb_answers) -> usize {
-    match ref_in(answers) {
+    guard_value(0, || match ref_in(answers) {
         Ok(answers) => answers.answers.arity(),
         Err(_) => 0,
-    }
+    })
 }
 
 /// One answer cell, viewed — string/bytes payloads BORROW the carrier
@@ -116,6 +118,20 @@ pub extern "C" fn bdb_snapshot_execute(
 ) -> bdb_status {
     guard(out_error, || {
         let snap = ref_in(snapshot)?.snapshot()?;
+        if prepared.is_null() {
+            return Err(Fail::Misuse);
+        }
+        #[expect(
+            unsafe_code,
+            reason = "claim in_execute on the raw handle before forming &mut; \
+                      the flag is AtomicBool and destroy checks it before from_raw"
+        )]
+        // SAFETY: non-null was just checked; we only touch `in_execute`
+        // (an AtomicBool) until we win exclusive. Concurrent destroy
+        // loads the same flag before `from_raw` (best-effort, analogous
+        // to enter_write).
+        let flag = unsafe { &(*prepared).in_execute };
+        let _exec = enter_execute(flag)?;
         let prepared = mut_in(prepared)?;
         let owned = params_in(params, param_count)?;
         let args = param_args(&owned)?;

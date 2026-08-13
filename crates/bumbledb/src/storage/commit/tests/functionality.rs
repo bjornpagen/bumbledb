@@ -448,3 +448,152 @@ fn scan_order_is_fresh_order_not_insertion_order() {
         .collect();
     assert_eq!(scanned, vec![3, 6, 9], "scan order is fresh order");
 }
+
+/// Fresh auto-key plus a second unique key: an occupied `F` must still
+/// walk the other determinants so the sealed set is scan-complete.
+fn person_schema() -> Schema {
+    SchemaDescriptor {
+        relations: vec![RelationDescriptor {
+            extension: None,
+            name: "Person".into(),
+            fields: vec![
+                FieldDescriptor {
+                    name: "id".into(),
+                    value_type: ValueType::U64,
+                    generation: Generation::Fresh,
+                },
+                field("email", ValueType::U64),
+            ],
+        }],
+        statements: vec![StatementDescriptor::Functionality {
+            relation: PERSON,
+            projection: Box::new([FieldId(1)]),
+        }],
+    }
+    .validate()
+    .expect("valid fixture")
+}
+
+const PERSON: RelationId = RelationId(0);
+const PERSON_ID_KEY: StatementId = StatementId(0);
+const PERSON_EMAIL_KEY: StatementId = StatementId(1);
+
+fn person_fact(schema: &Schema, id: u64, email: u64) -> Vec<u8> {
+    fact(schema, PERSON, &[ValueRef::U64(id), ValueRef::U64(email)])
+}
+
+#[test]
+fn fresh_f_conflict_still_cites_the_secondary_unique_key() {
+    let dir = TempDir::new("fresh-f-and-email-conflict");
+    let schema = person_schema();
+    let env = Environment::create(dir.path(), &schema).expect("create");
+    apply_delta(
+        &env,
+        &schema,
+        &[],
+        &[
+            (PERSON, person_fact(&schema, 1, 10)),
+            (PERSON, person_fact(&schema, 2, 20)),
+        ],
+    )
+    .expect("base");
+    let colliding = person_fact(&schema, 1, 20);
+    let view = env.read_txn().expect("txn");
+    let mut delta = WriteDelta::new(&schema);
+    delta.insert(&view, PERSON, &colliding).expect("insert");
+    drop(view);
+    let err = commit(delta, &env).unwrap_err();
+    let Error::CommitRejected { violations } = &err else {
+        panic!("expected CommitRejected, got {err:?}");
+    };
+    let statements: Vec<_> = violations
+        .as_slice()
+        .iter()
+        .map(crate::error::Violation::statement)
+        .collect();
+    assert_eq!(
+        statements,
+        vec![PERSON_ID_KEY, PERSON_EMAIL_KEY],
+        "both the fresh auto-key and the email key belong in the sealed set"
+    );
+}
+
+#[test]
+fn a_short_cited_f_value_is_typed_corruption_not_a_panic() {
+    let dir = TempDir::new("short-f-on-commit");
+    let schema = schema();
+    let env = Environment::create(dir.path(), &schema).expect("create");
+    let incumbent = booking_fact(&schema, 1, 10, 20, 0);
+    apply_delta(&env, &schema, &[], &[(BOOKING, incumbent.clone())]).expect("base");
+    {
+        let mut wtxn = env.write_txn().expect("txn");
+        let mut key: crate::storage::keys::KeyBuf = [0; crate::storage::keys::MAX_KEY];
+        let len = crate::storage::keys::fact_key(&mut key, BOOKING, 0);
+        env.data()
+            .put(wtxn.raw_mut(), &key[..len], &[0xAB])
+            .expect("truncate F");
+        wtxn.commit().expect("commit");
+    }
+    let contender = booking_fact(&schema, 1, 15, 25, 1);
+    let view = env.read_txn().expect("txn");
+    let mut delta = WriteDelta::new(&schema);
+    delta.insert(&view, BOOKING, &contender).expect("insert");
+    drop(view);
+    let err = commit(delta, &env).unwrap_err();
+    assert!(
+        matches!(
+            err,
+            Error::Corruption(crate::error::CorruptionError::WrongFactWidth {
+                relation: BOOKING,
+                row_id: 0,
+                actual: 1,
+                ..
+            })
+        ),
+        "{err:?}"
+    );
+}
+
+#[test]
+fn a_decode_failure_on_decoration_keeps_commit_rejected() {
+    // Correct-width but invalid interval in the incumbent F: judging
+    // records the pointwise citation (the U key is intact); decoration
+    // cannot decode the incumbent. The sealed set must survive.
+    let dir = TempDir::new("decoration-keeps-rejected");
+    let schema = schema();
+    let env = Environment::create(dir.path(), &schema).expect("create");
+    let incumbent = booking_fact(&schema, 1, 10, 20, 0);
+    apply_delta(&env, &schema, &[], &[(BOOKING, incumbent.clone())]).expect("base");
+    {
+        let mut corrupted = incumbent.clone();
+        // Interval words sit at bytes 8..24; start == end is invalid.
+        corrupted[8..16].copy_from_slice(&10u64.to_be_bytes());
+        corrupted[16..24].copy_from_slice(&10u64.to_be_bytes());
+        let mut wtxn = env.write_txn().expect("txn");
+        let mut key: crate::storage::keys::KeyBuf = [0; crate::storage::keys::MAX_KEY];
+        let len = crate::storage::keys::fact_key(&mut key, BOOKING, 0);
+        env.data()
+            .put(wtxn.raw_mut(), &key[..len], &corrupted)
+            .expect("corrupt F");
+        wtxn.commit().expect("commit");
+    }
+    let contender = booking_fact(&schema, 1, 15, 25, 1);
+    let view = env.read_txn().expect("txn");
+    let mut delta = WriteDelta::new(&schema);
+    delta.insert(&view, BOOKING, &contender).expect("insert");
+    drop(view);
+    let err = commit(delta, &env).unwrap_err();
+    let Error::CommitRejected { violations } = &err else {
+        panic!("decoration must not replace CommitRejected, got {err:?}");
+    };
+    assert!(
+        matches!(
+            violations.as_slice(),
+            [Violation::Functionality {
+                statement: BOOKING_KEY,
+                ..
+            }]
+        ),
+        "{violations:?}"
+    );
+}

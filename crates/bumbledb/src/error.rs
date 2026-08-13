@@ -1297,10 +1297,11 @@ pub enum Error {
     /// order — never an arbitrary representative among simultaneous
     /// violations (`docs/architecture/30-dependencies.md` § judged on
     /// final states). Key (`Functionality`) violations preempt the
-    /// containment judgment: the containment probes are defined over the
+    /// containment/capacity judgment: those probes are defined over the
     /// keyed final state, which exists only when every key statement
-    /// holds — so one rejection is all-key or all-containment, complete
-    /// within its phase.
+    /// holds — so one rejection is all-key or all-statement (containment
+    /// and capacity together in materialized order), complete within its
+    /// phase.
     CommitRejected {
         violations: Violations,
     },

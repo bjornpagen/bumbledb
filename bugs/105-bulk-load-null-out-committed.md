@@ -4,7 +4,7 @@
 - confidence: confirmed
 - area: ffi
 - components: cpp/bridge/src/db.rs, cpp/foreign/bumbledb_c.h
-- status: open (do not fix)
+- status: fixed (2026-08-13)
 
 ## Summary
 `bdb_db_bulk_load` copies rows, takes the writer flag, then calls `Db::bulk_load_dyn`. Only *after* the engine returns does it `out(out_committed, total)` (success) or `out(out_committed, bulk.committed)` (typed failure). A null `out_committed` turns a completed (or partially durable) import into `BDB_STATUS_MISUSE` with no error payload and no committed-count, contradicting the header (“`out_committed` always carries the durable count”).
@@ -39,3 +39,7 @@ Violates the bulk-load count contract in `bumbledb_c.h` and `TODO_CPP.md` §24 a
 **Why it holds:** A null `out_committed` turns a completed or partially durable import into `BDB_STATUS_MISUSE` with no payload and no count, so callers that branch only on status will retry (duplicate) or skip `bdb_error_get_bulk_committed`. Null required pointers are the defined MISUSE lane — the engine work must not run before that pointer is checked, or the count must live only on the `BulkLoad` error (it already does, but that error is never allocated on this path).
 
 **Note:** Related 110 was deleted (documented “cleared first”); this finding is the remaining “side effect then MISUSE” case.
+
+## Resolution (2026-08-13)
+
+`out_committed` is required before marshal or `bulk_load_dyn`. Null is `MISUSE` with no engine work and no durable facts.

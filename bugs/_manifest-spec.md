@@ -1,11 +1,11 @@
 # Spec-vs-docs-vs-Rust audit manifest (ids 200–225)
 
-Verified 2026-08-12 against Lean, normative docs, and Rust. All 26 survivors confirmed. None deleted; none newly filed.
+Verified 2026-08-12 against Lean, normative docs, and Rust. Bashed 2026-08-13: 24 fixed; 201 and 211 closed obsolete (ArgMax/ArgMin killed). None deleted; none newly filed.
 
 | file | summary | wrong-side | severity | status |
 |---|---|---|---|---|
 | 200-c20-ray-weight-absent-parent.md | C20 refuses a ray Duration child under an absent parent; Lean `capacity_of_empty_parent` and architecture docs treat that insert as a no-op | split | high | confirmed |
-| 201-argkey-measure-missing-from-lean.md | `ArgKey::Measure` is in Rust/docs/R5; Lean `AggOp.argMax` is VarId-only; conformance fences the shape | spec | high | confirmed |
+| 201-argkey-measure-missing-from-lean.md | `ArgKey::Measure` is in Rust/docs/R5; Lean `AggOp.argMax` is VarId-only; conformance fences the shape | spec | high | obsolete (ArgMax killed) |
 | 202-cookbook-claims-disjoint-dedup-elision.md | Cookbook recipe 22 (and TS twin) claims executor elides cross-rule dedup; Lean/40-execution/Rust keep a spanning seen-set | docs | high | confirmed |
 | 203-bridge-abort-fresh-discarded.md | Bridge premise says aborted mint runs are discarded; `Fresh.lean` and the engine persist the high-water | spec | medium | confirmed |
 | 204-abort-never-touched-disk.md | README/70-api claim abort never touched LMDB; abort burn writes `Q` marks | docs | medium | confirmed |
@@ -15,7 +15,7 @@ Verified 2026-08-12 against Lean, normative docs, and Rust. All 26 survivors con
 | 208-closed-containment-interval-unmodeled.md | Closed+interval containment is a Lean judgment; engine `ClosedContainmentInterval` refuses v0 | spec | medium | confirmed |
 | 209-fixedbytes-word-vs-byte-encoding.md | Lean `bytes<N>` is N Words; Rust/docs store N bytes padded to ⌈N/8⌉×8 | split | medium | confirmed |
 | 210-measure-of-ray-not-the-only-runtime-error.md | 70-api omits `MeasureOfRay`; “one runtime type error” slogan hides write-path `CapacityRayMeasure` | docs | medium | rewritten |
-| 211-ts-argkey-measure-missing.md | TS `argMax` keys are variables only; Rust/C++/docs admit `Duration` keys | split | medium | rewritten |
+| 211-ts-argkey-measure-missing.md | TS `argMax` keys are variables only; Rust/C++/docs admit `Duration` keys | split | medium | obsolete (ArgMax killed) |
 | 212-commitrejected-all-containment-comment.md | `CommitRejected` comment says all-containment; statement phase mixes capacity citations | rust | low | confirmed |
 | 213-multi-interval-fd-lean-scalar-default.md | Two interval fields → Lean scalar `Functionality`; Rust `FunctionalityMultipleIntervals` | spec | medium | confirmed |
 | 214-conformance-fences-shipped-shapes.md | Third oracle excludes negated membership, set membership, measure Arg — shipped elsewhere | unspecified | medium | confirmed |
@@ -37,7 +37,7 @@ Verified 2026-08-12 against Lean, normative docs, and Rust. All 26 survivors con
 
 **By wrong-side:** spec 9, rust 2, docs 7, split 5, unspecified 3.
 
-**By verification status:** confirmed 22, rewritten (still confirmed, narrower) 4, deleted 0, new 0.
+**By bash status (2026-08-13):** fixed 24, obsolete 2 (201, 211), deleted 0, new 0.
 
 Wrong-side corrections vs original filing: 217 unspecified→spec; 225 unspecified→split.
 

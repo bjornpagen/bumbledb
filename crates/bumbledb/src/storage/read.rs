@@ -20,6 +20,8 @@ mod scan;
 #[cfg(test)]
 mod tests;
 
+pub(crate) use check_width::check_width;
+
 pub use data_entries::data_entries;
 pub use determinant_row::{DETERMINANT_KEY_HEADER, begin_determinant_key, determinant_row_for_key};
 pub use fact_row::{fact_row, fact_row_by_hash};

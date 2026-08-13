@@ -4,7 +4,7 @@
 - confidence: confirmed
 - area: persistence
 - components: crates/bumbledb/src/storage/commit/write.rs, crates/bumbledb/src/api/db/write.rs
-- status: open (do not fix)
+- status: fixed (2026-08-13)
 
 ## Summary
 
@@ -68,3 +68,7 @@ Two abort owners discard that `Result`:
 The empty-delta success path at `write.rs:109` uses `flush_escaped_fresh_ids(...)?` and therefore surfaces the same I/O class. The next write's `read_fresh_next` (`alloc.rs:76-83`) reads the on-disk `Q` (missing = 0), so a discarded failed burn lets `alloc()` mint the same u64 the previous closure already handed out.
 
 Lean/architecture record this as a sanctioned narrowing (`Fresh.lean` § narrowings recorded, `10-data-model.md:318-321`). It remains a runtime identity hole: the host never sees the burn failure, and `never_reissue_observable` does not hold after that I/O. Severity stays **high**.
+
+## Resolution (2026-08-13)
+
+Abort paths now raise an in-process `Q` high-water before the disk burn, surface flush failure on non-unwind aborts (except a sealed `CommitRejected`, which is kept), and retry a parked burn at the next write begin — Drop still discards the Result to avoid double-panic.

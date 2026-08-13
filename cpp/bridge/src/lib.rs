@@ -27,13 +27,17 @@
 //! # The lexical model
 //!
 //! Snapshots and write transactions are LEXICAL borrowed capabilities:
-//! [`db::bdb_snapshot_ref`] / [`db::bdb_tx_ref`] are stack values passed by
-//! pointer into the caller's synchronous callback and invalidated the
-//! moment the callback returns. They are never owned by C, never destroyed
-//! by C, and every use re-checks the alive flag (returning
-//! `BDB_STATUS_MISUSE` on a stale ref). `bdb_db_write_from` may be called
-//! from inside a read callback with that callback's still-live snapshot
-//! ref — the one sanctioned nesting (§18).
+//! [`db::bdb_snapshot_ref`] / [`db::bdb_tx_ref`] live in a stable heap
+//! slot inside the owning [`db::bdb_db`] (the `Box` until destroy). The
+//! callback receives a pointer into that slot; when the callback returns
+//! the slot is invalidated (`alive = false`, engine pointers nulled). A
+//! stashed pointer still names the db's slot and answers
+//! `BDB_STATUS_MISUSE` rather than use-after-free. They are never owned
+//! by C, never destroyed by C. `bdb_db_write_from` may be called from
+//! inside a read callback with that callback's still-live snapshot ref —
+//! the one sanctioned nesting (§18). One live read callback per handle
+//! (the single snapshot slot); nested or concurrent reads, and destroy
+//! during a live callback, are refused.
 //!
 //! # Panic policy
 //!
@@ -43,9 +47,14 @@
 //! `BDB_ERROR_KIND_PANIC` (the caller treats the store as poisoned). Unwinding
 //! stays inside Rust, so the engine's own drop guards (the escaped-fresh-id
 //! burn on write failure) run as designed. Re-entrant
-//! `write`/`write_from`/`bulk_load` are refused bridge-side with a typed
+//! `write`/`write_from`/`bulk_load` and nested/concurrent reads on the
+//! same handle are refused bridge-side with a typed
 //! `BDB_ERROR_KIND_ENVIRONMENT_LOCKED` error BEFORE the engine's non-reentrancy
-//! assertion can fire.
+//! assertion can fire. Destroy of a db or prepared handle while it is
+//! in a callback/execute is `BDB_STATUS_MISUSE` (those destroy entries
+//! have no error out-param). A C++ exception thrown from a read/write
+//! callback is caught by the foreign trampoline and becomes
+//! `BDB_CALLBACK_CONTROL_ABORT` — it never unwinds into Rust.
 //!
 //! # Safety shape
 //!
@@ -72,9 +81,31 @@ pub mod value;
 #[cfg(test)]
 mod tests;
 
+use std::mem::size_of;
 use std::panic::AssertUnwindSafe;
 
 use error::bdb_error;
+
+/// TryFrom/From for a C ABI enum whose struct field is stored as `u32`.
+macro_rules! c_tag {
+    ($ty:ty { $($variant:ident),* $(,)? }) => {
+        impl TryFrom<u32> for $ty {
+            type Error = ();
+            fn try_from(tag: u32) -> Result<Self, ()> {
+                $(if tag == Self::$variant as u32 {
+                    return Ok(Self::$variant);
+                })*
+                Err(())
+            }
+        }
+        impl From<$ty> for u32 {
+            fn from(value: $ty) -> u32 {
+                value as u32
+            }
+        }
+    };
+}
+pub(crate) use c_tag;
 
 /// The status every fallible export returns (module doc: the boundary
 /// protocol).
@@ -97,6 +128,8 @@ pub enum bdb_callback_control {
     Ok = 0,
     Abort = 1,
 }
+
+c_tag!(bdb_callback_control { Ok, Abort });
 
 /// How a bridge operation failed, before it is rendered to the boundary
 /// protocol: a contract violation (no error allocated), or a typed error
@@ -131,7 +164,8 @@ pub(crate) fn guard(
 
 /// Writes the boxed error to the caller's out-param; a null out-param
 /// drops the error (the caller declined the payload, keeping only the
-/// status).
+/// status). A previously stored non-null `bdb_error*` in the slot is
+/// reclaimed first so reuse without `bdb_error_destroy` does not leak.
 fn store_error(out_error: *mut *mut bdb_error, error: Box<bdb_error>) {
     let raw = Box::into_raw(error);
     #[expect(
@@ -141,13 +175,42 @@ fn store_error(out_error: *mut *mut bdb_error, error: Box<bdb_error>) {
     )]
     // SAFETY: `out_error` was null-checked; per the header contract a
     // non-null value points at a writable `bdb_error*` slot owned by the
-    // caller for the duration of this call.
+    // caller for the duration of this call. A previous occupant was
+    // minted by this bridge (`Box::into_raw`) and is reclaimed exactly
+    // once here.
     unsafe {
         if out_error.is_null() {
             drop(Box::from_raw(raw));
         } else {
+            let previous = *out_error;
+            if !previous.is_null() {
+                drop(Box::from_raw(previous));
+            }
             *out_error = raw;
         }
+    }
+}
+
+/// Panic wall for scalar-returning externs: a caught panic answers
+/// `fallback` (zero, Panic kind, …) rather than unwinding into C++.
+pub(crate) fn guard_value<T>(fallback: T, body: impl FnOnce() -> T) -> T {
+    std::panic::catch_unwind(AssertUnwindSafe(body)).unwrap_or(fallback)
+}
+
+/// An inbound C enum tag: only the documented discriminants are valid;
+/// anything else is `BDB_STATUS_MISUSE` (never a `match` on an
+/// out-of-range `#[repr(C)]` enum — that is UB).
+pub(crate) fn tag_in<T: TryFrom<u32>>(raw: u32) -> BridgeResult<T> {
+    T::try_from(raw).map_err(|_| Fail::Misuse)
+}
+
+/// An inbound C bool payload: only 0 and 1 are valid. Any other byte is
+/// `BDB_STATUS_MISUSE` (a Rust `bool` that is not 0/1 is UB).
+pub(crate) fn bool_in(raw: u8) -> BridgeResult<bool> {
+    match raw {
+        0 => Ok(false),
+        1 => Ok(true),
+        _ => Err(Fail::Misuse),
     }
 }
 
@@ -184,13 +247,23 @@ pub(crate) fn mut_in<'a, T>(ptr: *mut T) -> BridgeResult<&'a mut T> {
 }
 
 /// A borrowed `(pointer, count)` view argument. `count == 0` admits a null
-/// pointer (the empty view); a null pointer under a nonzero count is
-/// misuse.
+/// pointer (the empty view); a null pointer under a nonzero count, a
+/// count whose byte length overflows `isize::MAX`, or an unaligned
+/// pointer is misuse.
 pub(crate) fn slice_in<'a, T>(ptr: *const T, count: usize) -> BridgeResult<&'a [T]> {
     if count == 0 {
         return Ok(&[]);
     }
     if ptr.is_null() {
+        return Err(Fail::Misuse);
+    }
+    let bytes = count
+        .checked_mul(size_of::<T>())
+        .ok_or(Fail::Misuse)?;
+    if bytes > isize::MAX as usize {
+        return Err(Fail::Misuse);
+    }
+    if !ptr.is_aligned() {
         return Err(Fail::Misuse);
     }
     #[expect(
@@ -199,7 +272,8 @@ pub(crate) fn slice_in<'a, T>(ptr: *const T, count: usize) -> BridgeResult<&'a [
                   header contract sizes the allocation at exactly count elements \
                   alive for the duration of the call"
     )]
-    // SAFETY: non-null was just checked; per the header contract the caller
+    // SAFETY: non-null, alignment, and `count * size_of::<T>()` ≤
+    // `isize::MAX` were just checked; per the header contract the caller
     // passes `count` contiguous, initialized T values that outlive this
     // call and are not written to during it.
     unsafe {
@@ -227,9 +301,27 @@ pub(crate) fn out<T>(ptr: *mut T, value: T) -> BridgeResult<()> {
 }
 
 /// Mints an owned handle for the boundary (paired with [`box_in`] at the
-/// matching destroy).
+/// matching destroy). Prefer [`box_out_to`] so a null out-param cannot
+/// leak the `Box`.
 pub(crate) fn box_out<T>(value: T) -> *mut T {
     Box::into_raw(Box::new(value))
+}
+
+/// Required out-param: null is misuse, before any `into_raw`.
+pub(crate) fn require_out<T>(ptr: *mut T) -> BridgeResult<*mut T> {
+    if ptr.is_null() {
+        Err(Fail::Misuse)
+    } else {
+        Ok(ptr)
+    }
+}
+
+/// Mints an owned handle into a required out-param. The `Box` is only
+/// `into_raw`'d after the slot is proven non-null, so a null out-param
+/// drops `value` instead of leaking it.
+pub(crate) fn box_out_to<T>(ptr: *mut *mut T, value: T) -> BridgeResult<()> {
+    let ptr = require_out(ptr)?;
+    out(ptr, box_out(value))
 }
 
 /// Reclaims a [`box_out`]-minted handle at its destroy entry.

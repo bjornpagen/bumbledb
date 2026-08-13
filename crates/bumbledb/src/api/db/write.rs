@@ -3,7 +3,9 @@ use std::sync::PoisonError;
 use super::{BULK_CHUNK, BulkLoadError, CommitSeq, Db, Fact, Snapshot, WriteTx, WriterThreadReset};
 use crate::error::{Error, Result};
 use crate::ir::Value;
-use crate::storage::commit::{commit, crashpoint, flush_escaped_fresh_ids};
+use crate::storage::commit::{
+    commit, crashpoint, flush_escaped_fresh_ids, flush_pending_escaped_fresh_ids,
+};
 use crate::storage::delta::WriteDelta;
 use crate::storage::env::Environment;
 use bumbledb_theory::schema::RelationId;
@@ -75,11 +77,10 @@ impl<S> Drop for EscapedIdBurn<'_, S> {
         // The read view closes before the burn's own write transaction —
         // the same transaction discipline as every other flush site.
         drop(view);
-        // Best-effort, panic-safe: the result is discarded — the abort's
-        // own error (or unwind) dominates, and a discarded flush failure
-        // never turns an unwind into a double-panic abort. The silently
-        // no-oped disk failure is the recorded narrowing
-        // (`lean/Bumbledb/Txn/Fresh.lean` § narrowings recorded).
+        // Panic-safe: the result is discarded so an unwind never becomes
+        // a double-panic. The in-process high-water is raised inside the
+        // flush; a disk failure is parked and retried at the next write
+        // begin (`never_reissue_observable`).
         let _ = flush_escaped_fresh_ids(self.env, &delta);
     }
 }
@@ -253,6 +254,7 @@ impl<S> Db<S> {
                 .unwrap_or_else(PoisonError::into_inner)
                 .take(),
         );
+        flush_pending_escaped_fresh_ids(&self.env)?;
         let view = self.env.read_txn()?;
         // The generation witness (`Db::write_from`): current state-changing
         // generation, read inside the critical section, against the
@@ -286,7 +288,21 @@ impl<S> Db<S> {
                 marker: std::marker::PhantomData,
             },
         );
-        let out = f(burn.tx())?;
+        let out = match f(burn.tx()) {
+            Ok(value) => value,
+            Err(error) => {
+                // Non-unwind abort: disarm so Drop does not flush twice,
+                // then surface a flush failure (the identity burn is
+                // not silent). A sealed CommitRejected is not possible
+                // here — commit has not run.
+                let WriteTx { view, delta, .. } = burn.disarm();
+                drop(view);
+                return match flush_escaped_fresh_ids(&self.env, &delta) {
+                    Ok(()) => Err(error),
+                    Err(flush_err) => Err(flush_err),
+                };
+            }
+        };
         // Disarmed: the delta moves into `commit()`, which owns the flush
         // for every path that reaches it — success flushes the marks
         // inside the commit transaction; reject/infra aborts burn on

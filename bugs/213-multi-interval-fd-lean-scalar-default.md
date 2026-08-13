@@ -5,7 +5,7 @@
 - area: spec-docs-rust
 - wrong-side: spec
 - components: lean/Bumbledb/Schema.lean, lean/Bumbledb/Dependencies.lean, crates/bumbledb/src/schema/validate.rs, docs/architecture/30-dependencies.md
-- status: open (do not fix)
+- status: fixed (2026-08-13)
 
 ## Summary
 `Header.intervalSplit` returns `none` when a projection has two or more interval fields, so `Statement.judgment` on that FD is classical `Functionality` (injectivity of the concatenated tuple), not 2-D exclusion. The engine and architecture docs refuse `FunctionalityMultipleIntervals` at declaration. A theory Lean would judge as a scalar key is unsealable in Rust.
@@ -41,3 +41,6 @@ Re-read `intervalSplit`, `Statement.judgment`, the FD gate, and validate. **Conf
 
 ## Related
 - 215 (interval-not-last: Lean would read pointwise; Rust refuses)
+
+## Resolution (2026-08-13)
+Lean `Header.functionalityAdmitted` refuses two-or-more interval fields (`FunctionalityMultipleIntervals`); `Statement.judgment` is `False`, not scalar Functionality.

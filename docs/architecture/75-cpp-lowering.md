@@ -4,7 +4,9 @@ This is the single normative reference for the C++ frontend's lowering. The
 goal is byte-exact recipe parity: a C++ cookbook theory MUST lower through the
 Rust `SchemaSpec` path to the identical `SchemaDescriptor` — and therefore the
 identical fingerprint — that the TypeScript SDK and the `schema!` macro
-produce. Every claim below is cited against
+produce. That fingerprint is extra-theoretic engine identity (Lean
+`Theory` has no hash); parity is an engine obligation, not a Lean
+theorem. Every claim below is cited against
 the sources it was read from (verified 2026-08-08, branch `cpp-sdk`).
 
 Authority chain, fixed and non-negotiable:

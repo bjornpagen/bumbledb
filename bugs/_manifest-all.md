@@ -1,6 +1,6 @@
 # Combined audit manifest (all findings)
 
-Audit date: 2026-08-12. Status: **verified** — nothing was fixed.
+Audit date: 2026-08-12. Bash date: 2026-08-13. Status: **bashed** — 47 fixed, 2 obsolete (201, 211). Not committed.
 
 Survivors only. Sorted by severity (critical → high → medium → low → info), then id.
 

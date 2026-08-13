@@ -184,7 +184,7 @@ static_assert(NamedDownAt.ir.rules[0].atoms[1].bindings[1].field == 1);
 static_assert(NamedDownAt.ir.rules[0].atoms[1].bindings[1].term.var == 2);
 static_assert(NamedDownAt.ir.rules[0].finds[0].over == 2);
 static_assert(NamedDownAt.ir.head[0].answer == bdb::field_class{bdb::value_kind::string, 0});
-static_assert(std::same_as<decltype(std::declval<bdb::row_of<NamedDownAt>>().name), std::string_view>);
+static_assert(std::same_as<decltype(std::declval<bdb::row_of<NamedDownAt>>().name), std::string>);
 
 auto main() -> int {
 	std::println("pass: recipe-1 query IR lowers to the lower.ts shape "

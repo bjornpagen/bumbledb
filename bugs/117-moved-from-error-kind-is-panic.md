@@ -4,7 +4,7 @@
 - confidence: confirmed
 - area: ffi
 - components: cpp/foreign/raii.cc, cpp/bridge/src/error.rs
-- status: open (do not fix)
+- status: fixed (2026-08-13)
 
 ## Summary
 `error_handle` documents that a moved-from handle is inert and that every accessor is the unreachable boundary state (`std::abort`). `kind()` calls `bdb_error_get_kind(raw_)` with no null check. Rust maps a null error to `BDB_ERROR_KIND_PANIC` (comment: “stop trusting this process’s bridge state”). A moved-from C++ error therefore looks like a caught Rust panic / poisoned store.
@@ -40,3 +40,7 @@ raii.cc: moved-from is unreachable_boundary_state. `kind()` is the one accessor 
 **Trace:** `error_handle` documents moved-from as inert and every accessor as `unreachable_boundary_state` (`cpp/foreign/raii.cc:85-87`). `kind()` is `return bdb_error_get_kind(raw_);` with no null check (`:119-121`). Move sets `other.raw_ = nullptr` (`:105`). `message()` aborts on non-OK (`:127-132`); `kind()` cannot return a status. `bdb_error_get_kind` maps null to `bdb_error_kind::Panic` (`cpp/bridge/src/error.rs:265-274`). Dialect `bdb::Error::kind()` forwards the same call (`cpp/src/error.cc:170-172`) and documents “never read a moved-from Error” (`:158`).
 
 **Why it holds:** Panic is supposed to mean process-level poison / caught Rust panic. Moved-from is a C++ ownership mistake and should abort (the module’s rule), not impersonate that poison. `switch` on `kind()` after `std::move` takes the panic path spuriously.
+
+## Resolution (2026-08-13)
+
+`error_handle::kind()` null-checks `raw_` and aborts via `unreachable_boundary_state`, like other accessors. No death test (the C++ harness is `main()` 0/1).

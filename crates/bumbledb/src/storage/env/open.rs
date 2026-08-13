@@ -1,5 +1,4 @@
 use std::path::Path;
-use std::sync::atomic::Ordering;
 
 use heed::types::Bytes;
 use heed::{Database, WithoutTls};
@@ -12,7 +11,7 @@ use super::open_env::{OpenLane, open_env};
 use super::read_meta::{
     MetaBlock, check_fingerprint, check_format_version, classify_meta_block, read_store_kind,
 };
-use super::{Environment, NEXT_INSTANCE, StoreKind};
+use super::{Environment, StoreKind};
 
 impl Environment {
     /// Opens an existing DURABLE environment, verifying the storage
@@ -103,14 +102,6 @@ impl Environment {
             )?;
         }
         wtxn.commit()?;
-        Ok(Self {
-            env,
-            meta,
-            data,
-            dict,
-            instance: NEXT_INSTANCE.fetch_add(1, Ordering::Relaxed),
-            _lock: Some(lock),
-            dirty_marker: None,
-        })
+        Ok(Self::assemble(env, meta, data, dict, Some(lock), None))
     }
 }

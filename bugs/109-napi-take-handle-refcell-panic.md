@@ -4,7 +4,7 @@
 - confidence: confirmed
 - area: ffi
 - components: ts/crate/src/lib.rs
-- status: open (do not fix)
+- status: fixed (2026-08-13)
 
 ## Summary
 `live` / `live_mut` use `try_borrow` / `try_borrow_mut` and convert a second borrow into a typed “re-entrant use” error. `take_handle` (every `*Close`, `txCommit`, `txAbort`) uses `cell.borrow_mut()`, which **panics** if a `Ref`/`RefMut` is already held. A panic across napi into V8 is undefined / process-aborting, not a JS exception.
@@ -35,3 +35,7 @@ Bridge error taxonomy: programming errors THROW. A panic is not a throw.
 **Trace:** `take_handle` is `cell.borrow_mut().take()` (`ts/crate/src/lib.rs:134-136`). `live` / `live_mut` use `try_borrow(_mut)` and throw “re-entrant use” (`:183-196`). Close/commit/abort all go through `take_handle`: `db_close` (`:310`), `exhume_close` (`:464`), `snapshot_close` (`:807`), `tx_commit` / `tx_abort` (`:1243, 1258`), `prepared_close` (`:1411`).
 
 **Why it holds:** The crate already treats RefCell re-entry as a typed programming error on the live path. Close uses the panicking API, so a future JS callback (or a same-thread nest of `take_handle` under `live()`) unwinds through napi/V8 instead of throwing. That is the same FFI panic class the C++ bridge built `guard` to prevent. Cross-thread `External` use is already UB on `RefCell` (`!Sync`) and overlaps 100.
+
+## Resolution (2026-08-13)
+
+`take_handle` now uses `try_borrow_mut` and throws the same typed re-entrant error as `live`/`live_mut`; prepared close also refuses while `in_flight`.

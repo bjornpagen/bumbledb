@@ -5,7 +5,7 @@
 - area: spec-docs-rust
 - wrong-side: docs
 - components: docs/architecture/10-data-model.md, docs/architecture/20-query-ir.md, docs/architecture/70-api.md, crates/bumbledb/src/error.rs, lean/Bumbledb/Values.lean, lean/Bumbledb/Query/Aggregates.lean
-- status: open (do not fix)
+- status: fixed (2026-08-13)
 
 ## Summary
 Architecture data-model and query-IR docs, and the `Error::MeasureOfRay` comment, call MeasureOfRay "the engine's one runtime type error." The embedding-surface query-error roster (`70-api.md`) lists `Overflow`, `FixpointBudgetExceeded`, and `Corruption` and never names `MeasureOfRay`. Overflow/budget/ResultBytesOverflow are other runtime aborts (range, resource, representation) and do not refute the *type*-error slogan. The slogan is still false of the engine as a whole: `CapacityRayMeasure` is the write-path twin of the same "no finite measure" refusal. Hosts following 70-api will not match on `MeasureOfRay`.
@@ -41,3 +41,6 @@ Re-read the type-error slogan, the 70-api roster, and `Error`. **Confirmed**, re
 ## Related
 - 200, 218 (`CapacityRayMeasure`)
 - 206 (`FixpointBudgetExceeded`)
+
+## Resolution (2026-08-13)
+`70-api.md` query roster lists `MeasureOfRay`; write roster lists `CapacityRayMeasure`. Measure *find* (Duration projection) remains; that is not ArgMax.

@@ -5,7 +5,7 @@
 - area: spec-docs-rust
 - wrong-side: unspecified
 - components: lean/Bumbledb/Txn.lean, docs/architecture/50-storage.md, docs/cookbook.md, crates/bumbledb/src/api/db.rs, crates/bumbledb/src/api/db/write.rs
-- status: open (do not fix)
+- status: fixed (2026-08-13)
 
 ## Summary
 Lean `scanLoad` judges the transformed instance as a single final state (`etl_lands_valid`). Rust `bulk_load` / `bulk_load_dyn` commits 4096-fact chunks as ordinary transactions; a failing chunk leaves prior chunks committed. Lean records chunking as mechanism; hosts that treat `scanLoad` as the API contract will see prefix commits and containment failures that the one-shot model cannot produce.
@@ -39,3 +39,6 @@ Re-read `scanLoad`, the chunking narrowing, `50-storage.md`, and `bulk_chunks`. 
 
 ## Related
 - recipe 28 (`docs/cookbook.md`)
+
+## Resolution (2026-08-13)
+`50-storage.md` and `Txn.lean` record `bulk_load`'s 4096-fact chunking as engine operationalization of Lean `scanLoad` (one final-state judgment). Chunk size unchanged.

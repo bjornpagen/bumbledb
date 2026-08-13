@@ -4,7 +4,7 @@
 - confidence: confirmed
 - area: ffi
 - components: cpp/bridge/src/lib.rs, cpp/bridge/src/db.rs, cpp/bridge/src/query.rs
-- status: open (do not fix)
+- status: fixed (2026-08-13)
 
 ## Summary
 Owned handles are minted with `box_out` ( `Box::into_raw` ) and then written through `out(ptr, value)`. If the out-pointer is null, `out` returns `Misuse` and drops `value` — but `value` is only a `*mut T`, so the `Box` is leaked. For `bdb_db_create`/`open`/`ephemeral` that leak includes an open LMDB environment and its exclusive lock. The same pattern leaks `bdb_prepared` and `bdb_row_set`.
@@ -42,3 +42,7 @@ Header: MISUSE means “no error is allocated.” It does not say “the operati
 **Trace:** `box_out` is `Box::into_raw(Box::new(value))` (`cpp/bridge/src/lib.rs:231-233`). `out` on null takes `value: T` by value and returns `Fail::Misuse` (`:211-214`); `T` here is `*mut bdb_db` / `*mut bdb_prepared` / `*mut bdb_row_set`, so drop does not `from_raw`. `open_with` always mints a live `bdb_db` then `out(out_db, box_out(...))?` (`db.rs:312-319`) — same after a successful `Db::create`/`open`/`ephemeral`. Same pattern: `bdb_db_prepare` (`query.rs:486-492`), `bdb_snapshot_scan` (`db.rs:757`), Some-branch of `bdb_tx_get` / `bdb_snapshot_get` (`:638-644, 724-729`). C++ wrappers pass a real `T**`; the leak is the public C ABI null-required-pointer path the header still defines as MISUSE.
 
 **Why it holds:** MISUSE is supposed to allocate no error object, not leave an immortal LMDB env/lock. A null `out_db` after a successful open is a programming error the ABI explicitly classifies as MISUSE, so the engine work must not `into_raw` before the out-param is checked (or the raw pointer must be `from_raw`’d on that error).
+
+## Resolution (2026-08-13)
+
+`require_out` / `box_out_to` only `into_raw` after a non-null out-pointer. create/open/prepare/get/scan use this. Null `out_db` is `MISUSE` and does not open the store.

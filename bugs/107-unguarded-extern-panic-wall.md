@@ -4,7 +4,7 @@
 - confidence: confirmed
 - area: ffi
 - components: cpp/bridge/src/lib.rs, cpp/bridge/src/answers.rs, cpp/bridge/src/error.rs, cpp/bridge/src/db.rs
-- status: open (do not fix)
+- status: fixed (2026-08-13)
 
 ## Summary
 The bridge’s stated panic policy is that every extern entry runs under `guard` (`catch_unwind`) because unwinding into `-fno-exceptions` C++ is UB. Accessors that return a scalar instead of `bdb_status` — and `bdb_answers_new` — call `ref_in` / `box_out` with no `catch_unwind`. A panic there (future code in `Answers::new`, a debug assertion in `len`, allocator hooks) unwinds the C++ stack.
@@ -33,3 +33,7 @@ Not easily triggerable without injecting a panic in `Answers::len` or `Answers::
 **Trace:** Policy: “EVERY extern entry point routes through `guard`” (`cpp/bridge/src/lib.rs:38-48, 111-129`). Unguarded: `bdb_answers_new` (`answers.rs:30-34`), `bdb_answers_len` / `bdb_answers_arity` (`:49-64`), `bdb_row_set_len` / `bdb_row_set_arity` (`db.rs:818-833`), `bdb_error_get_kind` / `bdb_error_violation_count` (`error.rs:270-274, 332-336`). C++ is `-fno-exceptions` (`cpp/AGENTS.md` §11). `answers_handle::make` even treats a null `bdb_answers_new` as `unreachable_boundary_state` (`raii.cc:261-266`).
 
 **Why it holds:** A panic from any of these still unwinds through `-fno-exceptions` C++ = UB, which is why `guard` exists. The stated policy is already false for the “infallible” accessors. Dangling pointers remain UB at `ref_in`, not a catchable panic — that part of the original writeup is correct and does not change the wall gap.
+
+## Resolution (2026-08-13)
+
+Scalar externs and `bdb_answers_new` route through `guard_value` (zero / Panic kind / null on panic) so a panic cannot unwind into C++.

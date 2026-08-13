@@ -25,10 +25,10 @@ use bumbledb::schema::spec::{
 };
 use bumbledb::schema::{IntervalElement, StatementDescriptor, ValueType};
 use bumbledb::{
-    AggOp, AllenMask, AnswerValue, Answers, Atom, AtomSource, CmpOp, Comparison,
-    ConditionTree, ExecutionStats, FieldId, FindTerm, HeadOp, HeadTerm, Interval, Manifest,
-    ParamId, PredId, PredicateDef, Program, RelationId, RenderedViolation, Rule,
-    SchemaDescriptor, SchemaSpec, StatementId, StatementKind, Term, Value, VarId,
+    AggOp, AllenMask, AnswerValue, Answers, Atom, AtomSource, CmpOp, Comparison, ConditionTree,
+    ExecutionStats, FieldId, FindTerm, HeadOp, HeadTerm, Interval, Manifest, ParamId, PredId,
+    PredicateDef, Program, RelationId, RenderedViolation, Rule, SchemaDescriptor, SchemaSpec,
+    StatementId, StatementKind, Term, Value, VarId,
 };
 use napi::bindgen_prelude::{
     Array, BigInt, Env, FromNapiValue, Object, ToNapiValue, Uint8Array, i64n,
@@ -520,16 +520,20 @@ fn capacity_bound_in(obj: &Object) -> napi::Result<BoundSpec> {
 fn capacity_window_in(obj: &Object) -> napi::Result<CapacityWindowSpec> {
     let kind: String = req(obj, "kind", "capacity window")?;
     match kind.as_str() {
-        tags::capacity_window::EXACT => Ok(CapacityWindowSpec::Exact(capacity_bound_in(
-            &req::<Object>(obj, "n", "exact window")?,
-        )?)),
+        tags::capacity_window::EXACT => {
+            Ok(CapacityWindowSpec::Exact(capacity_bound_in(
+                &req::<Object>(obj, "n", "exact window")?,
+            )?))
+        }
         tags::capacity_window::RANGE => Ok(CapacityWindowSpec::Range {
             lo: capacity_bound_in(&req::<Object>(obj, "lo", "range window")?)?,
             hi: capacity_bound_in(&req::<Object>(obj, "hi", "range window")?)?,
         }),
-        tags::capacity_window::FLOOR => Ok(CapacityWindowSpec::Floor(capacity_bound_in(
-            &req::<Object>(obj, "lo", "floor window")?,
-        )?)),
+        tags::capacity_window::FLOOR => {
+            Ok(CapacityWindowSpec::Floor(capacity_bound_in(
+                &req::<Object>(obj, "lo", "floor window")?,
+            )?))
+        }
         other => Err(err(format!(
             "bumbledb marshal: unknown capacity window kind `{other}`"
         ))),
@@ -800,9 +804,7 @@ fn comparison_in(obj: &Object) -> napi::Result<Comparison> {
             let mask = u16::try_from(bits)
                 .ok()
                 .and_then(AllenMask::new)
-                .ok_or_else(|| {
-                    err(format!("bumbledb marshal: invalid allen mask bits {bits}"))
-                })?;
+                .ok_or_else(|| err(format!("bumbledb marshal: invalid allen mask bits {bits}")))?;
             CmpOp::Allen { mask }
         }
         other => {

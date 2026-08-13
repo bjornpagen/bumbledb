@@ -5,7 +5,7 @@
 - area: spec-docs-rust
 - wrong-side: docs
 - components: docs/cookbook.md, ts/COOKBOOK.md, docs/architecture/40-execution.md, lean/Bumbledb/Exec/Dedup.lean, lean/Bumbledb/Bridge.lean, crates/bumbledb/src/api/prepared/build.rs
-- status: open (do not fix)
+- status: fixed (2026-08-13)
 
 ## Summary
 Cookbook recipe 22's Guarantee cites `disjoint_witness_licence` and then states that provably disjoint DU arms let "the executor elide cross-rule dedup — the free lunch." Lean, Bridge, and `40-execution.md` all record that the witness is spent diagnostically only: after a measured refutation, every multi-rule program keeps a spanning seen-set. The cookbook (and the TS cookbook twin) assert the optimization the engine deleted.
@@ -53,3 +53,6 @@ Re-read Dedup, `40-execution.md`, the cookbook Guarantee, and the sink builder. 
 
 ## Related
 - `docs/architecture/40-execution.md` § set semantics (the measured refutation)
+
+## Resolution (2026-08-13)
+Cookbook recipe 22 Guarantee (and `ts/COOKBOOK.md`) now matches `40-execution.md`: the disjointness witness is diagnostic only; execution keeps one spanning seen-set. Illustrative labels unchanged.

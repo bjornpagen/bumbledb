@@ -117,6 +117,9 @@ public:
 	}
 
 	[[nodiscard]] auto kind() const -> bdb_error_kind {
+		if (raw_ == nullptr) {
+			unreachable_boundary_state();
+		}
 		return bdb_error_get_kind(raw_);
 	}
 
@@ -312,7 +315,8 @@ public:
 
 	/**
 	 * One cell, bounds-checked host-side: nullopt out of range. The
-	 * returned value's string/bytes payloads BORROW this carrier.
+	 * returned bdb_value string/bytes payloads borrow this carrier;
+	 * dialect decode_value copies them into an owning Value.
 	 */
 	[[nodiscard]] auto cell(std::size_t row, std::size_t column) const -> std::optional<bdb_value> {
 		if (row >= len() || column >= arity()) {
@@ -450,7 +454,8 @@ public:
 
 	/**
 	 * One cell, bounds-checked host-side: nullopt out of range. The
-	 * returned value's string/bytes payloads BORROW this row set.
+	 * returned bdb_value string/bytes payloads borrow this row set;
+	 * dialect decode_value copies them into an owning Value.
 	 */
 	[[nodiscard]] auto cell(std::size_t row, std::size_t column) const -> std::optional<bdb_value> {
 		if (row >= len() || column >= arity(row)) {
@@ -491,6 +496,19 @@ concept TxBody = requires(Body& body, bdb_tx_ref& transaction) {
  */
 class db_handle {
 	bdb_db* raw_{nullptr};
+	mutable std::size_t live_callbacks_{0};
+
+	struct live_callback_guard {
+		std::size_t& count;
+		explicit live_callback_guard(std::size_t& count) : count{count} {
+			++count;
+		}
+		~live_callback_guard() {
+			--count;
+		}
+		live_callback_guard(live_callback_guard const&) = delete;
+		auto operator=(live_callback_guard const&) -> live_callback_guard& = delete;
+	};
 
 	explicit db_handle(bdb_db* owned) : raw_{owned} {}
 
@@ -534,10 +552,18 @@ public:
 	db_handle(db_handle const&) = delete;
 	auto operator=(db_handle const&) -> db_handle& = delete;
 
-	db_handle(db_handle&& other) noexcept : raw_{std::exchange(other.raw_, nullptr)} {}
+	db_handle(db_handle&& other) noexcept {
+		if (other.live_callbacks_ != 0) {
+			unreachable_boundary_state();
+		}
+		raw_ = std::exchange(other.raw_, nullptr);
+	}
 
 	auto operator=(db_handle&& other) noexcept -> db_handle& {
 		if (this != &other) {
+			if (live_callbacks_ != 0 || other.live_callbacks_ != 0) {
+				unreachable_boundary_state();
+			}
 			destroy();
 			raw_ = std::exchange(other.raw_, nullptr);
 		}
@@ -579,10 +605,11 @@ public:
 	 */
 	template<SnapshotBody Body>
 	[[nodiscard]] auto read(Body&& body) const -> std::expected<callback_done, error_handle> {
+		[[maybe_unused]] live_callback_guard const live{live_callbacks_};
 		/* SAFETY: the void* context smuggles &body through the C trampoline; the call is synchronous, so the borrow spans exactly the callback */
-		auto trampoline = [](void* context, bdb_snapshot_ref const* snapshot) -> bdb_callback_control {
+		auto trampoline = [](void* context, bdb_snapshot_ref const* snapshot) -> std::uint32_t {
 			auto& live_body = *static_cast<std::remove_reference_t<Body>*>(context);
-			return live_body(*snapshot);
+			return static_cast<std::uint32_t>(live_body(*snapshot));
 		};
 		bdb_error* error = nullptr;
 		auto const status = bdb_db_read(raw_, trampoline, std::addressof(body), &error);
@@ -596,10 +623,11 @@ public:
 	 */
 	template<TxBody Body>
 	[[nodiscard]] auto write(Body&& body) const -> std::expected<callback_done, error_handle> {
+		[[maybe_unused]] live_callback_guard const live{live_callbacks_};
 		/* SAFETY: the void* context smuggles &body through the C trampoline; the call is synchronous, so the borrow spans exactly the callback */
-		auto trampoline = [](void* context, bdb_tx_ref* transaction) -> bdb_callback_control {
+		auto trampoline = [](void* context, bdb_tx_ref* transaction) -> std::uint32_t {
 			auto& live_body = *static_cast<std::remove_reference_t<Body>*>(context);
-			return live_body(*transaction);
+			return static_cast<std::uint32_t>(live_body(*transaction));
 		};
 		bdb_error* error = nullptr;
 		auto const status = bdb_db_write(raw_, trampoline, std::addressof(body), &error);
@@ -627,10 +655,11 @@ public:
 	 */
 	template<TxBody Body>
 	[[nodiscard]] auto write_from(bdb_snapshot_ref const& snapshot, Body&& body) const -> std::expected<callback_done, error_handle> {
+		[[maybe_unused]] live_callback_guard const live{live_callbacks_};
 		/* SAFETY: the snapshot ref comes from the owning read callback and is never stored — alive for the whole nested call */
-		auto trampoline = [](void* context, bdb_tx_ref* transaction) -> bdb_callback_control {
+		auto trampoline = [](void* context, bdb_tx_ref* transaction) -> std::uint32_t {
 			auto& live_body = *static_cast<std::remove_reference_t<Body>*>(context);
-			return live_body(*transaction);
+			return static_cast<std::uint32_t>(live_body(*transaction));
 		};
 		bdb_error* error = nullptr;
 		auto const status = bdb_db_write_from(raw_, &snapshot, trampoline, std::addressof(body), &error);
@@ -639,8 +668,13 @@ public:
 
 private:
 	auto destroy() -> void {
+		if (live_callbacks_ != 0) {
+			unreachable_boundary_state();
+		}
 		if (raw_ != nullptr) {
-			std::ignore = bdb_db_destroy(raw_);
+			if (bdb_db_destroy(raw_) != bdb_status::BDB_STATUS_OK) {
+				unreachable_boundary_state();
+			}
 			raw_ = nullptr;
 		}
 	}
@@ -760,10 +794,10 @@ private:
  */
 [[nodiscard]] auto scalar_type(bdb_value_type_kind kind) -> bdb_value_type {
 	return bdb_value_type{
-	    .kind = kind,
+	    .kind = abi_tag(kind),
 	    .fixed_len = 0,
-	    .element = bdb_interval_element::BDB_INTERVAL_ELEMENT_U64,
-	    .has_width = false,
+	    .element = abi_tag(bdb_interval_element::BDB_INTERVAL_ELEMENT_U64),
+	    .has_width = abi_flag(false),
 	    .width = 0,
 	};
 }
@@ -773,10 +807,10 @@ private:
  */
 [[nodiscard]] auto fixed_bytes_type(std::uint16_t len) -> bdb_value_type {
 	return bdb_value_type{
-	    .kind = bdb_value_type_kind::BDB_VALUE_TYPE_KIND_FIXED_BYTES,
+	    .kind = abi_tag(bdb_value_type_kind::BDB_VALUE_TYPE_KIND_FIXED_BYTES),
 	    .fixed_len = len,
-	    .element = bdb_interval_element::BDB_INTERVAL_ELEMENT_U64,
-	    .has_width = false,
+	    .element = abi_tag(bdb_interval_element::BDB_INTERVAL_ELEMENT_U64),
+	    .has_width = abi_flag(false),
 	    .width = 0,
 	};
 }
@@ -786,10 +820,10 @@ private:
  */
 [[nodiscard]] auto interval_type(bdb_interval_element element) -> bdb_value_type {
 	return bdb_value_type{
-	    .kind = bdb_value_type_kind::BDB_VALUE_TYPE_KIND_INTERVAL,
+	    .kind = abi_tag(bdb_value_type_kind::BDB_VALUE_TYPE_KIND_INTERVAL),
 	    .fixed_len = 0,
-	    .element = element,
-	    .has_width = false,
+	    .element = abi_tag(element),
+	    .has_width = abi_flag(false),
 	    .width = 0,
 	};
 }
@@ -800,10 +834,10 @@ private:
  */
 [[nodiscard]] auto fixed_interval_type(bdb_interval_element element, std::uint64_t width) -> bdb_value_type {
 	return bdb_value_type{
-	    .kind = bdb_value_type_kind::BDB_VALUE_TYPE_KIND_INTERVAL,
+	    .kind = abi_tag(bdb_value_type_kind::BDB_VALUE_TYPE_KIND_INTERVAL),
 	    .fixed_len = 0,
-	    .element = element,
-	    .has_width = true,
+	    .element = abi_tag(element),
+	    .has_width = abi_flag(true),
 	    .width = width,
 	};
 }
@@ -977,15 +1011,15 @@ class owned_schema_spec {
 	[[nodiscard]] static auto literal_view(owned_literal const& literal) -> bdb_literal {
 		auto out = bdb_literal{};
 		if (literal.is_handle) {
-			out.kind = bdb_literal_kind::BDB_LITERAL_KIND_HANDLE;
+			out.kind = abi_tag(bdb_literal_kind::BDB_LITERAL_KIND_HANDLE);
 			out.handle = view_of_owned(literal.handle);
 			return out;
 		}
-		out.kind = bdb_literal_kind::BDB_LITERAL_KIND_VALUE;
-		out.value.kind = literal.kind;
+		out.kind = abi_tag(bdb_literal_kind::BDB_LITERAL_KIND_VALUE);
+		out.value.kind = abi_tag(literal.kind);
 		switch (literal.kind) {
 		case bdb_value_kind::BDB_VALUE_KIND_BOOL:
-			out.value.bool_value = literal.boolean;
+			out.value.bool_value = abi_flag(literal.boolean);
 			break;
 		case bdb_value_kind::BDB_VALUE_KIND_U64:
 			out.value.u64_value = literal.u64;
@@ -1030,8 +1064,8 @@ class owned_schema_spec {
 			    .field = view_of_owned(binding.field),
 			    .set =
 			        bdb_literal_set{
-			            .kind = literals.size() == 1 ? bdb_literal_set_kind::BDB_LITERAL_SET_KIND_ONE
-			                                         : bdb_literal_set_kind::BDB_LITERAL_SET_KIND_MANY,
+			            .kind = abi_tag(literals.size() == 1 ? bdb_literal_set_kind::BDB_LITERAL_SET_KIND_ONE
+			                                                : bdb_literal_set_kind::BDB_LITERAL_SET_KIND_MANY),
 			            .literals = literals.data(),
 			            .literal_count = literals.size(),
 			        },
@@ -1045,7 +1079,7 @@ class owned_schema_spec {
 
 	[[nodiscard]] static auto bound_view(owned_bound const& bound) -> bdb_bound {
 		return bdb_bound{
-		    .kind = bound.kind,
+		    .kind = abi_tag(bound.kind),
 		    .lit = bound.lit,
 		    .field = view_of_owned(bound.field),
 		};
@@ -1094,7 +1128,7 @@ public:
 				    .name = view_of_owned(field.name),
 				    .value_type = field.value_type,
 				    .newtype = field.newtype.has_value() ? view_of_owned(*field.newtype) : absent_view(),
-				    .fresh = field.fresh,
+				    .fresh = abi_flag(field.fresh),
 				});
 			}
 			auto const* closed_spec = [&]() -> bdb_closed_spec const* {
@@ -1137,30 +1171,30 @@ public:
 			auto view = bdb_statement_spec{};
 			if (auto const* fd = std::get_if<owned_fd>(&statement)) {
 				auto const& projection = projection_views_.emplace_back(projection_view(fd->projection));
-				view.kind = bdb_statement_spec_kind::BDB_STATEMENT_SPEC_KIND_FD;
+				view.kind = abi_tag(bdb_statement_spec_kind::BDB_STATEMENT_SPEC_KIND_FD);
 				view.fd_relation = view_of_owned(fd->relation);
 				view.fd_projection = projection.data();
 				view.fd_projection_count = projection.size();
 			} else if (auto const* containment = std::get_if<owned_containment>(&statement)) {
 				auto const& source_projection = projection_views_.emplace_back(projection_view(containment->source.projection));
 				auto const& target_projection = projection_views_.emplace_back(projection_view(containment->target.projection));
-				view.kind = bdb_statement_spec_kind::BDB_STATEMENT_SPEC_KIND_CONTAINMENT;
+				view.kind = abi_tag(bdb_statement_spec_kind::BDB_STATEMENT_SPEC_KIND_CONTAINMENT);
 				view.source = side_view(containment->source, source_projection);
 				view.target = side_view(containment->target, target_projection);
-				view.bidirectional = containment->bidirectional;
+				view.bidirectional = abi_flag(containment->bidirectional);
 			} else {
 				auto const& capacity = std::get<owned_capacity>(statement);
 				auto const& target_projection = projection_views_.emplace_back(projection_view(capacity.target.projection));
 				auto const& source_projection = projection_views_.emplace_back(projection_view(capacity.source.projection));
-				view.kind = bdb_statement_spec_kind::BDB_STATEMENT_SPEC_KIND_CAPACITY;
+				view.kind = abi_tag(bdb_statement_spec_kind::BDB_STATEMENT_SPEC_KIND_CAPACITY);
 				view.target = side_view(capacity.target, target_projection);
 				view.source = side_view(capacity.source, source_projection);
 				view.weight = bdb_weight{
-				    .kind = capacity.weight.kind,
+				    .kind = abi_tag(capacity.weight.kind),
 				    .field = view_of_owned(capacity.weight.field),
 				};
 				view.window = bdb_capacity_window{
-				    .kind = capacity.window.kind,
+				    .kind = abi_tag(capacity.window.kind),
 				    .lo = bound_view(capacity.window.lo),
 				    .hi = bound_view(capacity.window.hi),
 				};

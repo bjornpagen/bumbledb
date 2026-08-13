@@ -5,7 +5,7 @@
 - area: spec-docs-rust
 - wrong-side: rust
 - components: lean/Bumbledb/Exec/Fixpoint.lean, docs/architecture/40-execution.md, crates/bumbledb/src/api/prepared/fixpoint.rs, crates/bumbledb/src/error.rs
-- status: open (do not fix)
+- status: fixed (2026-08-13)
 
 ## Summary
 Lean `evalProgram` is a fueled round loop proved equal to the stratified denotation given sufficient fuel (`program_eval_sound`). The engine adds a host-amendable iteration/tuple budget that aborts with `FixpointBudgetExceeded` before the least fixpoint. Docs acknowledge this as a trust-boundary amendment. Under budget exhaustion the engine's answers are a strict subset of the spec denotation — incompleteness, not a wrong tuple.
@@ -33,3 +33,6 @@ Re-read `evalProgram`, the resource-limits amendment, and the driver. **Confirme
 
 ## Related
 - 210 (runtime error roster)
+
+## Resolution (2026-08-13)
+Fixpoint budget kept. Lean `Exec/Fixpoint.lean` and Bridge `program_eval_sound` name `Error::FixpointBudgetExceeded` as engine-only incompleteness; completeness is under sufficient fuel.

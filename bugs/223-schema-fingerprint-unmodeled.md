@@ -5,7 +5,7 @@
 - area: spec-docs-rust
 - wrong-side: unspecified
 - components: lean/Bumbledb/Schema.lean, crates/bumbledb/src/schema/fingerprint.rs, docs/architecture/10-data-model.md, docs/architecture/70-api.md, docs/architecture/75-cpp-lowering.md
-- status: open (do not fix)
+- status: fixed (2026-08-13)
 
 ## Summary
 Open/create identity is blake3 of canonical descriptor bytes (`bumbledb-schema-v5`), including materialized statement order and C2 capacity field order. Lean `Theory` has no fingerprint; C2 order is cited in `Statement.capacity` comments only. Cross-host "byte-exact fingerprint parity" (`75-cpp-lowering.md`) is an engine obligation with no Lean theorem.
@@ -33,3 +33,6 @@ Re-read `Theory`, fingerprint inputs, and `fingerprint.rs`. **Confirmed.** `wron
 
 ## Related
 - 207 (closed-target acceptance also differs while theories look equal)
+
+## Resolution (2026-08-13)
+Schema fingerprint documented as extra-theoretic engine identity (`Theory` has no hash) in `Schema.lean`, `10-data-model.md`, and `75-cpp-lowering.md`. No blake3 in Lean.

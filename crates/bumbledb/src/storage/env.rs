@@ -1,8 +1,13 @@
 //! LMDB environment lifecycle, `_meta` contents, and transaction wrappers
 //! (docs/architecture/50-storage.md). Authority: `docs/architecture/50-storage.md`, `70-api.md`.
 
+use std::collections::BTreeMap;
+use std::sync::Mutex;
+#[cfg(test)]
+use std::sync::atomic::AtomicU32;
 use std::sync::atomic::AtomicU64;
 
+use bumbledb_theory::schema::{FieldId, RelationId};
 use heed::types::Bytes;
 use heed::{AnyTls, Database, RoTxn, RwTxn, WithoutTls};
 
@@ -10,6 +15,7 @@ mod acquire_lock;
 mod create;
 mod debug;
 mod ephemeral;
+mod escaped_fresh;
 pub(crate) mod exhume;
 mod maintenance;
 mod open;
@@ -253,6 +259,18 @@ pub struct Environment {
     /// lifetime. A reopen that finds it set wipes and re-initializes:
     /// the possibly-torn store is never opened at all.
     dirty_marker: Option<std::path::PathBuf>,
+    /// Process-lifetime escaped `Q` high-water: once `alloc` has handed
+    /// an id to the host, this floor never retreats in this process —
+    /// even when the counters-only disk flush fails
+    /// (`lean/Bumbledb/Txn/Fresh.lean: never_reissue_observable`).
+    escaped_fresh: Mutex<BTreeMap<(RelationId, FieldId), u64>>,
+    /// Dirty `Q` marks whose durable write has not yet succeeded. Retried
+    /// at the next write begin; a still-failing retry poisons alloc until
+    /// the burn is durable.
+    pending_fresh_flush: Mutex<BTreeMap<(RelationId, FieldId), u64>>,
+    /// Test-only: remaining injected failures of the escaped-id flush.
+    #[cfg(test)]
+    fail_fresh_flush: AtomicU32,
 }
 
 /// The clean-close half of the ephemeral crash contract (R18): force
@@ -368,6 +386,32 @@ impl Environment {
 }
 
 impl Environment {
+    /// The one construction site for the handle: open/create/exhume fill
+    /// the LMDB pieces; the escaped-fresh maps start empty (a reopen has
+    /// no in-process high-water — disk `Q` is the floor).
+    pub(super) fn assemble(
+        env: heed::Env<WithoutTls>,
+        meta: Database<Bytes, Bytes>,
+        data: Database<Bytes, Bytes>,
+        dict: Database<Bytes, Bytes>,
+        lock: Option<std::fs::File>,
+        dirty_marker: Option<std::path::PathBuf>,
+    ) -> Self {
+        Self {
+            env,
+            meta,
+            data,
+            dict,
+            instance: NEXT_INSTANCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            _lock: lock,
+            dirty_marker,
+            escaped_fresh: Mutex::new(BTreeMap::new()),
+            pending_fresh_flush: Mutex::new(BTreeMap::new()),
+            #[cfg(test)]
+            fail_fresh_flush: AtomicU32::new(0),
+        }
+    }
+
     /// This environment's process-distinct identity (readers: prepared
     /// queries via [`ReadTxn::env_instance`]; `Db::write_from`'s
     /// witness check, which compares a snapshot's identity against the

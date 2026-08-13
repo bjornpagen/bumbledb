@@ -1,6 +1,6 @@
 # General correctness audit — finding manifest
 
-Auditor range: 300–399. One bug per file. No INDEX.md.
+Auditor range: 300–399. One bug per file. No INDEX.md. Bashed 2026-08-13: all 6 survivors fixed.
 
 | file | severity | confidence | one-line summary |
 |---|---|---|---|

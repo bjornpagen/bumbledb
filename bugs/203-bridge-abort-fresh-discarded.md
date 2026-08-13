@@ -5,7 +5,7 @@
 - area: spec-docs-rust
 - wrong-side: spec
 - components: lean/Bumbledb/Bridge.lean, lean/Bumbledb/Txn/Fresh.lean, docs/architecture/10-data-model.md, crates/bumbledb/src/api/db/write.rs
-- status: open (do not fix)
+- status: fixed (2026-08-13)
 
 ## Summary
 The obligation-ledger premise for `never_reissue_observable` claims an aborted transaction's mint run is "discarded whole, so nothing it minted was observable." The theorem it cites, the Fresh module doc, the architecture data-model, and the Rust abort burn all say the opposite: every fate persists the high-water because `alloc` already handed the id to the host.
@@ -37,3 +37,6 @@ Re-read the Bridge row, `Fresh.lean`, `10-data-model.md`, and `EscapedIdBurn`. *
 
 ## Related
 - 204 (docs that still say abort never touched disk)
+
+## Resolution (2026-08-13)
+Bridge mint row now matches `Fresh.lean` and the engine: every fate (commit, no-op, abort) persists the high-water mark; an aborted mint run is not discarded.

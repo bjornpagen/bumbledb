@@ -14,7 +14,7 @@ spec bug), triaged before anything else merges, never repaired here.
 Three arms, dispatched by file name (`lean/conformance/README.md`):
 
 * **query cases** (everything else): evaluate the denotation
-  (`Bumbledb.Conformance.checkCase` — `evalList` under `eval_sound`,
+  (`Bumbledb.Conformance.checkCase` — join + surface anti-join / AntiProbe,
   plus the recorded aggregate glue) and compare answer sets.
 * **judgment cases** (`judgment-*.json`): decode `(theory, instance,
   delta)`, apply the delta by row-set arithmetic, and run the PROVED

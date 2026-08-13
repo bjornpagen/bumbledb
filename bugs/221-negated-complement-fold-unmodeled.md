@@ -5,7 +5,7 @@
 - area: spec-docs-rust
 - wrong-side: docs
 - components: docs/architecture/40-execution.md, lean/Bumbledb/Exec/Rewrites.lean, crates/bumbledb/src/plan/ground/evaluate.rs
-- status: open (do not fix)
+- status: fixed (2026-08-13)
 
 ## Summary
 The engine folds negated closed atoms to a complement id-set at prepare (`fold_negated`). `40-execution.md` describes that complement rule and cites `Rewrites.lean: grounding_preserves_answers` / `elimination_sound` as covering "both rewrites" (elimination and evaluation). Lean explicitly leaves the negated complement fold unmodeled: preservation is proved for positive grounding only. The architecture citation overclaims the spec.
@@ -42,3 +42,6 @@ Re-read Rewrites narrowings, the grounding overview citation, the complement sub
 
 ## Related
 - 205 (docs citing the wrong Lean theorem)
+
+## Resolution (2026-08-13)
+`40-execution.md` grounding overview no longer cites `grounding_preserves_answers` for `fold_negated`. Complement fold is engine-only / unmodeled.

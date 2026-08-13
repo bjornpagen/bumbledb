@@ -77,19 +77,27 @@ it through the enumeration collapse.
 
 ## Narrowings recorded (law 5: narrow and record)
 
-* **The value readings are junk-total.** `Value.u64Nat` and
-  `Value.durationNat` read 0 off every gate-refused shape (a non-u64
-  weight field, a scalar in duration position) — the recorded
-  junk-total default (`Dependencies.lean`'s precedent for gate-refused
-  shapes): `CapacityLaw` is consumed on accepted theories only,
-  where the weight typing arm of the acceptance gate has already
-  refused every shape the junk value could distinguish.
-* **A ray reads measure 0 here; the ENGINE refuses the commit**
-  (ruling C10: a ray-valued Duration weight or bound at judge time is
-  a typed commit refusal naming the row — the R6 precedent, a ray has
-  no finite measure). The junk value is unobservable on
-  accepted-and-judged commits; the refusal is gate mechanism this
-  level does not restate (`measure_ray_none` is the law it enforces).
+* **The value readings are junk-total for GATE-REFUSED shapes.**
+  `Value.u64Nat` and `Value.durationNat` read 0 off every non-u64 /
+  non-interval shape — the recorded junk-total default. `CapacityLaw`
+  is consumed on accepted theories only, where the weight typing arm
+  of the acceptance gate has already refused every shape the junk
+  value could distinguish.
+* **A ray Duration weight is a typed refusal, not 0.** `durationNat?`
+  is `none` on a general-interval ray (`measure_ray_none`). The engine
+  refuses the commit with `Error::CapacityRayMeasure` — undefined,
+  never a 0-weight, never a violation (C10 at judge time; C20
+  parent-blind at write-time plan). `durationNat` still collapses
+  `none` to 0 so the numeric fold stays total; that 0 is **not** the
+  engine reading. `CapacityLaw` is only consumed on instances the
+  engine would judge: every Duration weight on a written child and
+  every Duration bound on a selected parent is defined
+  (`Weight.durationDefined` / `CapWindow.durationDefined`).
+* **C20 is engine law.** Empty-parent vacuity
+  (`capacity_of_empty_parent`) proves every `CapacityLaw` when no
+  ψ-selected parent exists. It does **not** license a ray Duration
+  child insert: C20 refuses that write at plan time whether or not
+  any parent exists (`docs/design/capacity-laws.md` §8b).
 * **Acceptance is not restated.** `Y` a key of `B`, the weight-typing
   roster (signed/non-u64 refusals, the path-weight refusal naming the
   pinned-column idiom), dependent-bound typing, and the dimension
@@ -447,19 +455,40 @@ def Value.u64Nat : Value → Nat
   | { type := .u64, val := v } => v.val
   | _ => 0
 
-/-- The interval measure of a value, junk-total — the Duration
-extractor at the denotation altitude: a general interval reads
-`«end» − start` through `Interval.measure` with the RAY defaulting to
-0 (recorded narrowing; ruling C10 makes a ray-valued Duration weight
-or bound a typed COMMIT refusal at the engine's law site, so the
-junk value is unobservable on judged commits — `measure_ray_none` is
-the law it enforces); a fixed-width value reads its constant width
-(`fixed_measure_const_u64`); every non-interval shape reads 0. -/
-def Value.durationNat : Value → Nat
-  | { type := .interval .u64, val := iv } => iv.measure.getD 0
-  | { type := .interval .i64, val := iv } => iv.measure.getD 0
-  | { type := .intervalFixed _ w, val := _ } => w
-  | _ => 0
+/-- The interval measure of a value: `none` on a general-interval RAY
+(C10/C20 — typed `CapacityRayMeasure`, not 0); a bounded general
+interval reads `«end» − start`; a fixed-width value reads its constant
+width (`fixed_measure_const_u64`); every non-interval shape is
+junk-`some 0` (gate-refused). -/
+def Value.durationNat? : Value → Option Nat
+  | { type := .interval .u64, val := iv } => iv.measure
+  | { type := .interval .i64, val := iv } => iv.measure
+  | { type := .intervalFixed _ w, val := _ } => some w
+  | _ => some 0
+
+/-- Numeric Duration reading for the total fold. A ray collapses to 0
+here so `Weight.apply` stays `Nat`; that 0 is **not** the engine
+(see `durationNat?` and the module-doc C10/C20 narrowing). -/
+def Value.durationNat (v : Value) : Nat :=
+  v.durationNat?.getD 0
+
+/-- A Duration weight is defined on `f` when the named field is not a
+ray. Unit and u64-field weights are always defined. -/
+def Weight.durationDefined : Weight → Fact → Prop
+  | .durationOf i, f => ((f i).durationNat?).isSome
+  | _, _ => True
+
+/-- A Duration bound is defined on the target row when the named field
+is not a ray. -/
+def Bound.durationDefined : Bound → Fact → Prop
+  | .targetDuration i, g => ((g i).durationNat?).isSome
+  | _, _ => True
+
+/-- The window's Duration bounds are defined at this parent row. -/
+def CapWindow.durationDefined (w : CapWindow) (g : Fact) : Prop :=
+  match w.hi with
+  | some b => b.durationDefined g
+  | none => True
 
 /-- The weight's reading: the measure of one SOURCE fact
 (`Weight.unit` is `const 1` — the count instance, definitionally). -/
@@ -517,10 +546,9 @@ theorem mem_childGroup {A : Set Fact} {φ : Selection}
 
 /-- The capacity judgment `B(Y | ψ) <=[wt]{w} A(X | φ)`: for every
 selected target fact, the child group's measure under the weight lies
-in the window resolved against that target's own row. The ONE
-structural novelty over the retired count judgment is
-`w.resolve g` — the
-dependent-bound read at the quantified parent. ACCEPTANCE IS NOT
+in the window resolved against that target's own row. Consumed on
+instances the engine would judge: Duration weights and bounds are
+defined (`durationNat?`), not junk-0 rays. ACCEPTANCE IS NOT
 HERE: `Y` a key of `B` and the whole weight/bound typing roster are
 acceptance premises, carried as hypotheses where a theorem spends
 them — exactly the containment discipline. -/
@@ -534,7 +562,10 @@ def CapacityLaw (A : Set Fact) (φ : Selection) (X : List FieldId)
 /-- **Behavior under the empty parent denotation.** Every capacity
 law holds when no parent fact is selected — capacity constrains
 measures PER PARENT and never manufactures a parent; existence
-obligations are containments' alone (weight- and bound-independent). -/
+obligations are containments' alone (weight- and bound-independent).
+**C20:** this vacuity does not license a ray Duration child insert.
+The engine refuses that write at plan time, parent-blind
+(`Error::CapacityRayMeasure`). -/
 theorem capacity_of_empty_parent {A : Set Fact} {φ : Selection}
     {X : List FieldId} {wt : Weight} {w : CapWindow} {B : Set Fact}
     {ψ : Selection} {Y : List FieldId}

@@ -136,10 +136,6 @@ pub struct Report {
     pub written: u64,
     /// A query/param string literal outside the world's vocabulary.
     pub excluded_unresolved: u64,
-    /// A membership binding on a negated atom.
-    pub excluded_negated_membership: u64,
-    /// An element-typed param-set membership binding.
-    pub excluded_set_membership: u64,
     /// The engine answered `Overflow` / `MeasureOfRay`.
     pub excluded_engine_error: u64,
     /// Naive wall time over [`NAIVE_BUDGET_MS`].
@@ -154,13 +150,10 @@ impl Report {
     pub fn coverage_line(&self) -> String {
         format!(
             "conformance coverage: {}/{} expressible (excluded: {} unresolved-literal, \
-             {} negated-membership, {} set-membership, \
              {} engine-error, {} slow, {} wide)",
             self.written,
             self.attempted,
             self.excluded_unresolved,
-            self.excluded_negated_membership,
-            self.excluded_set_membership,
             self.excluded_engine_error,
             self.excluded_slow,
             self.excluded_wide,
@@ -172,8 +165,6 @@ impl Report {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Exclusion {
     UnresolvedLiteral,
-    NegatedMembership,
-    SetMembership,
 }
 
 /// One loaded Tiny world: the engine store, the naive model, and the
@@ -676,9 +667,9 @@ fn scalar_anchors(rule: &Rule, var_count: u16) -> Vec<bool> {
 }
 
 /// Whether one binding term on an interval field reads as point
-/// membership (the typing rule), value equality, or an excluded shape.
-fn membership(term: &Term, anchored: &[bool], params: &[ParamValue]) -> Result<bool, Exclusion> {
-    Ok(match term {
+/// membership (the typing rule) or value equality.
+fn membership(term: &Term, anchored: &[bool], params: &[ParamValue]) -> bool {
+    match term {
         Term::Var(v) => anchored[usize::from(v.0)],
         Term::Literal(value) => matches!(value, Value::U64(_) | Value::I64(_)),
         Term::Param(p) => match &params[usize::from(p.0)] {
@@ -688,23 +679,20 @@ fn membership(term: &Term, anchored: &[bool], params: &[ParamValue]) -> Result<b
         },
         Term::ParamSet(p) => match &params[usize::from(p.0)] {
             ParamValue::Set(values) => {
-                if matches!(values.first(), Some(Value::U64(_) | Value::I64(_))) {
-                    return Err(Exclusion::SetMembership);
-                }
-                false
+                matches!(values.first(), Some(Value::U64(_) | Value::I64(_)))
             }
             ParamValue::Scalar(_) => unreachable!("validated: set use of a scalar param"),
         },
         Term::Measure(_) => unreachable!("validated: no measure in bindings"),
-    })
+    }
 }
 
 /// One rule after the membership lowering: rewritten positive atoms,
-/// untouched negated atoms (membership there is the recorded
-/// exclusion), the original conditions plus the lowered `PointIn`
-/// leaves, and the SURFACE WIDTH — the written rule's variable count,
-/// below the fresh mints, so the Lean fold domain projects every mint
-/// away (finding 087, discharged).
+/// negated atoms left in SURFACE form (Lean AntiProbe /
+/// `surfaceMatchesB` reads membership there), the original conditions
+/// plus the lowered `PointIn` leaves, and the SURFACE WIDTH — the
+/// written rule's variable count, below the fresh mints, so the Lean
+/// fold domain projects every mint away (finding 087, discharged).
 struct LoweredRule<'a> {
     finds: &'a [FindTerm],
     atoms: Vec<Atom>,
@@ -725,7 +713,7 @@ fn lower_rule<'a>(rule: &'a Rule, params: &[ParamValue]) -> Result<LoweredRule<'
     for atom in &rule.atoms {
         let mut bindings = Vec::with_capacity(atom.bindings.len());
         for (field, term) in &atom.bindings {
-            if field_is_interval(atom.relation(), *field) && membership(term, &anchored, params)? {
+            if field_is_interval(atom.relation(), *field) && membership(term, &anchored, params) {
                 let interval_var = VarId(fresh);
                 fresh += 1;
                 bindings.push((*field, Term::Var(interval_var)));
@@ -742,13 +730,6 @@ fn lower_rule<'a>(rule: &'a Rule, params: &[ParamValue]) -> Result<LoweredRule<'
             source: bumbledb::AtomSource::Edb(atom.relation()),
             bindings,
         });
-    }
-    for atom in &rule.negated {
-        for (field, term) in &atom.bindings {
-            if field_is_interval(atom.relation(), *field) && membership(term, &anchored, params)? {
-                return Err(Exclusion::NegatedMembership);
-            }
-        }
     }
     Ok(LoweredRule {
         finds: &rule.finds,
@@ -1106,14 +1087,6 @@ fn one_case(
         }
         Err(Exclusion::UnresolvedLiteral) => {
             report.excluded_unresolved += 1;
-            None
-        }
-        Err(Exclusion::NegatedMembership) => {
-            report.excluded_negated_membership += 1;
-            None
-        }
-        Err(Exclusion::SetMembership) => {
-            report.excluded_set_membership += 1;
             None
         }
     }
@@ -1892,7 +1865,7 @@ mod tests {
     /// THE three-way comparator (the PRD's test): for each corpus case,
     /// the engine fresh and the naive model fresh (byte-held to the
     /// checked-in file), then `lake exe conformance` — the Lean
-    /// denotation, `evalList` under `eval_sound` — over the same files.
+    /// denotation, join + surface anti-join / AntiProbe — over the same files.
     /// Any disagreement names the case file. Ignored in the plain
     /// workspace run because it needs the Lean toolchain;
     /// `scripts/lean.sh` runs it with `--ignored` after the corpus

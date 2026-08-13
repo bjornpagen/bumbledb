@@ -5,7 +5,7 @@
 - area: spec-docs-rust
 - wrong-side: spec
 - components: lean/Bumbledb/Schema.lean, crates/bumbledb-theory/src/schema.rs, crates/bumbledb/src/schema.rs, docs/architecture/30-dependencies.md
-- status: open (do not fix)
+- status: fixed (2026-08-13)
 
 ## Summary
 Lean `GroundExtension` is an arbitrary fact list. Rust compiles closed membership into a 256-bit `MemberSet` and rejects extensions above `MAX_EXTENSION_ROWS = 256`. Docs present the cap as what "fixes this width." A Lean theory with 257 ground axioms is a model; it is not a sealable schema.
@@ -33,3 +33,6 @@ Re-read `GroundExtension`, the architecture width sentence, and `MAX_EXTENSION_R
 
 ## Related
 - 207, 208 (other closed-relation acceptance gaps)
+
+## Resolution (2026-08-13)
+Lean `GroundExtension.withinCap` / `maxExtensionRows = 256` documents the engine's closed-roster cap. The structure remains an unbounded list; the cap is an acceptance premise, not a type constraint. Engine cap not lifted.

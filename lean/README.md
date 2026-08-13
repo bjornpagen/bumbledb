@@ -117,7 +117,14 @@ Mechanism and measurement (the planner's cost decisions, batching,
 kernels, LMDB layout, every pinned number), durability and crash (the
 crashpoint estate owns those; Level 2 models committed-state
 transitions only), the notation grammar (a host-surface fact), and
-operations. Those live in `docs/architecture/`, whole.
+operations. Those live in `docs/architecture/`, whole. **Hashing is
+mechanism:** Lean identity is canonical encoding equality
+(`value_eq_iff_encode_eq`); the store treats blake3 equality as fact
+equality (collision axiom in `10-data-model.md`). **Schema fingerprint**
+is extra-theoretic engine identity, not a hash of `Theory`.
+**Fixpoint completeness** is under sufficient fuel; the engine may abort
+with `Error::FixpointBudgetExceeded`. **OriginCapacity** and
+**ResultBytesOverflow** are engine-only resource errors.
 
 ## History — the seed artifact's provenance
 

@@ -538,11 +538,14 @@ never removals, so occurrence ids never move. Elimination removes atoms that
 statements prove redundant; evaluation removes atoms whose extension is
 stage-0-known by *running them at prepare*: `Kind(id: k, mastered == true)` is
 not a join to plan — it is a three-element id-set computed before the DP ever
-sees the query, residual cost zero. Both rewrites — and any chain of them with
-the statically-empty kill, in any order — preserve the query's answers
-(`lean/Bumbledb/Exec/Rewrites.lean: grounding_preserves_answers`,
-`elimination_sound`, composed by `rewrite_composition`), and the bench
-crate's dual-run differential checks the same statement empirically
+sees the query, residual cost zero. Elimination, **positive** evaluation, the
+statically-empty kill, and any chain of those — in any order — preserve the
+query's answers (`lean/Bumbledb/Exec/Rewrites.lean: grounding_preserves_answers`,
+`elimination_sound`, composed by `rewrite_composition`). The **negated
+complement fold** (`fold_negated`) is engine-only and unmodeled in Lean —
+those theorems cover positive grounding only; the complement block below is
+the semantic authority for `!Closed(...)`. The bench crate's dual-run
+differential checks the same statement empirically
 (`crates/bumbledb-bench/src/differential/tests` — through the
 `ground-off` switch).
 
@@ -665,8 +668,9 @@ surviving set as **handles**, the vocabulary's names (the handle set IS the
 payload): `folded: Kind{mastered == true} → {DirectPass, JudgedPass}` (negated:
 `folded: !Kind{…} → {…} rejected`); the differential off-switch
 (`with_grounding_disabled`) covers the evaluator inside the same fixpoint, and the
-dual-run corpus pins byte-identical results — the fold is never semantic
-(`lean/Bumbledb/Exec/Rewrites.lean: grounding_preserves_answers`).
+dual-run corpus pins byte-identical results. Positive folds are the modeled
+`grounding_preserves_answers` reading; the negated complement fold is
+unmodeled in Lean (this block is the authority).
 The normalization fold's narrower `with_fold_disabled` switch is compiled under
 `cfg(test)` — the engine unit suites alone reach it (the `fold-off` feature that
 once exposed it to the detached fuzz crate died with the fuzzing apparatus,
@@ -952,23 +956,25 @@ execution does not even touch the shared image-cache mutex).
 Intra-query parallelism is a non-goal with a recorded reversal trigger
 (`00-product.md`).
 
-**Resource limits: none in v0, stated — with one deliberate and narrow
-amendment.** Dedup sets, group maps, and result buffers grow with output; a
-pathological query can exceed the envelope and the OS is the backstop. The
-scale axiom makes engine-imposed caps ceremony; revisit only on real pain.
-**The fixpoint budget amends this stance for fixpoints only** (decided with
-the fixpoint driver — § the fixpoint driver above owns the mechanism; this
-section owns the stance): the OS-backstop argument
-priced one join's envelope, not an unbounded round count crossing the trust
-boundary — termination is a theorem of the validation roster
+**Resource limits: representation ceilings plus the fixpoint budget.** Dedup
+sets, group maps, and result buffers grow with output until a representation
+ceiling trips: `Error::Overflow(OriginCapacity)` when a D2 origin counter
+would cross `u32`, and `Error::ResultBytesOverflow` when answer-byte offsets
+do not fit `u32`. Those are engine-only runtime resource errors — Lean
+`eval_sound` / `ruleAnswers` still denote the finite answer set. The OS is
+the backstop past those ceilings. **The fixpoint budget amends completeness
+for recursion** (decided with the fixpoint driver — § the fixpoint driver
+above owns the mechanism; this section owns the stance): termination is a
+theorem of the validation roster
 (`lean/Bumbledb/Exec/Fixpoint.lean: program_den_finite`), but the fixpoint's
 *size* is data-shaped, and a foreign query may legally demand a quadratic
 closure. The driver therefore carries an iteration/tuple budget with a
 documented default and the typed execution error
-`Error::FixpointBudgetExceeded` (§ the fixpoint driver). Policy stays
-host-owned — the staleness doctrine verbatim: the engine ships the typed
-condition, never a threshold loop; the default exists so the boundary is never
-unguarded. Non-recursive execution keeps the unamended stance.
+`Error::FixpointBudgetExceeded` (§ the fixpoint driver). Lean `evalProgram`
+is complete only under sufficient fuel; this abort is engine-only
+incompleteness. Policy stays host-owned — the staleness doctrine verbatim:
+the engine ships the typed condition, never a threshold loop; the default
+exists so the boundary is never unguarded.
 
 ## Deviation D1 — data source
 

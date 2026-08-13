@@ -18,22 +18,21 @@
 //! is what avoids the Node bridge's audited `&'static Snapshot`
 //! fabrication (findings 018/021) entirely.
 
-use std::cell::Cell;
 use std::ffi::c_void;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 
 use bumbledb::schema::ValidateDescriptor as _;
 use bumbledb::{
     Db, Error, FieldId, RelationId, SchemaDescriptor, Snapshot, StatementId, Value, WriteTx,
 };
 
-use crate::error::{bdb_error, bdb_error_kind, fail_engine};
+use crate::error::{bdb_error, bdb_error_kind, fail_engine, fail_locked};
 use crate::schema::{bdb_schema_spec, schema_spec_in};
 use crate::value::{bdb_string_view, bdb_value, row_in, value_out};
 use crate::{
-    BridgeResult, Fail, bdb_callback_control, bdb_status, box_in, box_out, guard, out, ref_in,
-    slice_in,
+    BridgeResult, Fail, bdb_callback_control, bdb_status, box_in, box_out_to, guard, guard_value,
+    out, ref_in, require_out, slice_in, tag_in,
 };
 
 /// The engine typestate every handle shares: runtime-built schemas all
@@ -43,13 +42,16 @@ pub(crate) type Engine = Db<SchemaDescriptor>;
 
 /// The opaque database handle: the engine behind an `Arc` (prepared
 /// queries co-own it below the boundary — never visible to C++), the
-/// admitted descriptor (violation rendering, fingerprint readback), and
-/// the bridge-level writer flag (§17: re-entrant writes are refused typed
-/// BEFORE the engine's assertion).
+/// admitted descriptor (violation rendering, fingerprint readback), the
+/// bridge-level writer/reader flags, and the heap slots that give
+/// snapshot/tx refs a stable address for as long as this `Box` lives.
 pub struct bdb_db {
     pub(crate) db: Arc<Engine>,
     pub(crate) descriptor: SchemaDescriptor,
     in_write: AtomicBool,
+    in_read: AtomicBool,
+    snapshot_slot: bdb_snapshot_ref,
+    tx_slot: bdb_tx_ref,
 }
 
 /// The 64 lowercase hex chars of the store's schema fingerprint — the
@@ -61,29 +63,30 @@ pub struct bdb_fingerprint {
 }
 
 /// A borrowed snapshot capability, valid ONLY inside the read callback it
-/// was passed to (§16). Never owned by C++, never destroyed by C++; every
-/// use re-checks the alive flag the bridge clears when the callback
-/// returns, so a stashed ref answers `BDB_STATUS_MISUSE` instead of being
-/// replayed.
+/// was passed to (§16). The struct lives in a heap slot on [`bdb_db`] so
+/// a stashed C pointer remains a real object after the callback: every
+/// use re-checks `alive`, and a stale ref answers `BDB_STATUS_MISUSE`
+/// instead of being replayed or use-after-freeing a stack frame.
 pub struct bdb_snapshot_ref {
     /// `*const Snapshot<'_, SchemaDescriptor>`, lifetime erased — valid
-    /// exactly while `alive` holds (the ref lives on the enclosing
-    /// closure's stack frame, so the pointer outlives every legal use).
-    snap: *const c_void,
-    alive: Cell<bool>,
+    /// exactly while `alive` holds. Nulled on invalidate.
+    snap: AtomicPtr<c_void>,
+    alive: AtomicBool,
 }
 
 /// A borrowed write-transaction capability, valid ONLY inside the write
 /// callback (§17) — the [`bdb_snapshot_ref`] discipline, mutably. Carries
 /// its engine pointer so `bdb_tx_alloc` can resolve fresh fields without
-/// a second handle argument.
+/// a second handle argument. `in_op` makes `transaction()` exclusive
+/// across threads for the duration of one `bdb_tx_*` entry.
 pub struct bdb_tx_ref {
     /// `*mut WriteTx<'_, SchemaDescriptor>`, lifetime erased — valid
-    /// exactly while `alive` holds.
-    tx: *mut c_void,
+    /// exactly while `alive` holds. Nulled on invalidate.
+    tx: AtomicPtr<c_void>,
     /// `*const Engine` — the same handle's engine, for `fresh_field`.
-    db: *const c_void,
-    alive: Cell<bool>,
+    db: AtomicPtr<c_void>,
+    alive: AtomicBool,
+    in_op: AtomicBool,
 }
 
 /// The owned row carrier for scans and point reads: engine values copied
@@ -103,19 +106,20 @@ pub struct bdb_row_view {
 }
 
 /// The read callback: synchronous, on the calling thread, with a
-/// snapshot ref valid only until it returns.
+/// snapshot ref valid only until it returns. The return is an integer
+/// tag (`bdb_callback_control`); unknown values are `BDB_STATUS_MISUSE`.
+/// A C++ exception thrown from the function is converted to Abort by
+/// the foreign trampoline and never unwinds into Rust.
 pub type bdb_read_callback = Option<
-    unsafe extern "C" fn(context: *mut c_void, snapshot: *const bdb_snapshot_ref)
-        -> bdb_callback_control,
+    unsafe extern "C" fn(context: *mut c_void, snapshot: *const bdb_snapshot_ref) -> u32,
 >;
 
 /// The write callback: synchronous, on the calling thread, with a tx ref
 /// valid only until it returns. `Ok` commits the delta (the engine judges
 /// dependencies against the final state); `Abort` drops it — LMDB never
-/// saw a fact.
+/// saw a fact. Throw-to-Abort as [`bdb_read_callback`].
 pub type bdb_write_callback = Option<
-    unsafe extern "C" fn(context: *mut c_void, transaction: *mut bdb_tx_ref)
-        -> bdb_callback_control,
+    unsafe extern "C" fn(context: *mut c_void, transaction: *mut bdb_tx_ref) -> u32,
 >;
 
 // ---------------------------------------------------------------------------
@@ -123,18 +127,31 @@ pub type bdb_write_callback = Option<
 // ---------------------------------------------------------------------------
 
 impl bdb_snapshot_ref {
-    fn new(snap: &Snapshot<'_, SchemaDescriptor>) -> Self {
+    fn empty() -> Self {
         Self {
-            snap: (&raw const *snap).cast::<c_void>(),
-            alive: Cell::new(true),
+            snap: AtomicPtr::new(std::ptr::null_mut()),
+            alive: AtomicBool::new(false),
         }
+    }
+
+    fn mint(&self, snap: &Snapshot<'_, SchemaDescriptor>) {
+        self.snap.store(
+            (&raw const *snap).cast::<c_void>().cast_mut(),
+            Ordering::Relaxed,
+        );
+        self.alive.store(true, Ordering::Release);
     }
 
     /// The borrowed snapshot, alive-checked. The returned lifetime is the
     /// caller's borrow of the ref — legal because a live ref's snapshot
-    /// outlives the enclosing callback frame (module doc).
+    /// outlives the enclosing callback frame (module doc), and the ref
+    /// itself lives in the `bdb_db` heap slot until destroy.
     pub(crate) fn snapshot(&self) -> BridgeResult<&Snapshot<'_, SchemaDescriptor>> {
-        if !self.alive.get() {
+        if !self.alive.load(Ordering::Acquire) {
+            return Err(Fail::Misuse);
+        }
+        let ptr = self.snap.load(Ordering::Acquire);
+        if ptr.is_null() {
             return Err(Fail::Misuse);
         }
         #[expect(
@@ -144,59 +161,112 @@ impl bdb_snapshot_ref {
                       contract carry the argument"
         )]
         // SAFETY: `snap` was minted from a live `&Snapshot` in
-        // `bdb_db_read`'s closure frame; `alive` is cleared before that
-        // frame returns, so a true flag proves the closure — and therefore
-        // the snapshot — is still on the stack of this same thread.
+        // `bdb_db_read`'s closure frame into this heap slot; `alive` is
+        // cleared and the pointer nulled before that frame returns, so a
+        // true flag proves the closure — and therefore the snapshot — is
+        // still on the stack of this same thread. The slot itself outlives
+        // the callback (it lives in `bdb_db`).
         unsafe {
-            Ok(&*self.snap.cast::<Snapshot<'_, SchemaDescriptor>>())
+            Ok(&*ptr.cast::<Snapshot<'_, SchemaDescriptor>>())
         }
     }
 
     fn invalidate(&self) {
-        self.alive.set(false);
+        self.alive.store(false, Ordering::Release);
+        self.snap.store(std::ptr::null_mut(), Ordering::Release);
+    }
+}
+
+/// Clears the snapshot slot on every exit from the read closure,
+/// including a panic inside the C callback / trampoline.
+struct InvalidateSnapshot<'a>(&'a bdb_snapshot_ref);
+
+impl Drop for InvalidateSnapshot<'_> {
+    fn drop(&mut self) {
+        self.0.invalidate();
+    }
+}
+
+struct InOpReset<'a>(&'a AtomicBool);
+
+impl Drop for InOpReset<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
     }
 }
 
 impl bdb_tx_ref {
-    fn new(tx: &mut WriteTx<'_, SchemaDescriptor>, db: &Engine) -> Self {
+    fn empty() -> Self {
         Self {
-            tx: (&raw mut *tx).cast::<c_void>(),
-            db: (&raw const *db).cast::<c_void>(),
-            alive: Cell::new(true),
+            tx: AtomicPtr::new(std::ptr::null_mut()),
+            db: AtomicPtr::new(std::ptr::null_mut()),
+            alive: AtomicBool::new(false),
+            in_op: AtomicBool::new(false),
         }
     }
 
-    /// The borrowed transaction, alive-checked and exclusive: bridge
-    /// entries run one at a time on the callback's thread, so no second
-    /// `&mut` can exist during the borrow.
+    fn mint(&self, tx: &mut WriteTx<'_, SchemaDescriptor>, db: &Engine) {
+        self.tx
+            .store((&raw mut *tx).cast::<c_void>(), Ordering::Relaxed);
+        self.db.store(
+            (&raw const *db).cast::<c_void>().cast_mut(),
+            Ordering::Relaxed,
+        );
+        self.alive.store(true, Ordering::Release);
+    }
+
+    /// Exclusive claim for one `bdb_tx_*` entry: two threads cannot both
+    /// `transaction()` at once. Sequential same-thread calls are fine
+    /// (the previous entry's `_op` drops before the next).
+    fn enter_op(&self) -> BridgeResult<InOpReset<'_>> {
+        if !self.alive.load(Ordering::Acquire) {
+            return Err(Fail::Misuse);
+        }
+        if self.in_op.swap(true, Ordering::AcqRel) {
+            return Err(Fail::Misuse);
+        }
+        Ok(InOpReset(&self.in_op))
+    }
+
+    /// The borrowed transaction, alive-checked. Caller must hold
+    /// [`Self::enter_op`]'s guard so this `&mut` is exclusive.
     #[expect(
         clippy::mut_from_ref,
         reason = "the FFI reborrow: the mutability is the pointee's (the write \
-                  transaction the ref erases), not the ref struct's — the \
-                  single-threaded callback protocol makes it exclusive"
+                  transaction the ref erases), not the ref struct's — `in_op` \
+                  makes it exclusive for the duration of the entry"
     )]
     fn transaction(&self) -> BridgeResult<&mut WriteTx<'_, SchemaDescriptor>> {
-        if !self.alive.get() {
+        if !self.alive.load(Ordering::Acquire) {
+            return Err(Fail::Misuse);
+        }
+        let ptr = self.tx.load(Ordering::Acquire);
+        if ptr.is_null() {
             return Err(Fail::Misuse);
         }
         #[expect(
             unsafe_code,
             reason = "reborrowing the engine write transaction behind the \
-                      lifetime-erased ref pointer; the alive flag plus the \
-                      single-threaded lexical-callback contract carry the \
-                      argument"
+                      lifetime-erased ref pointer; the alive flag plus `in_op` \
+                      exclusive carry the argument"
         )]
         // SAFETY: `tx` was minted from the live `&mut WriteTx` in the
-        // write closure frame; `alive` is cleared before that frame
-        // returns, and the callback protocol is synchronous single-thread,
-        // so this is the only reference for the duration of the entry.
+        // write closure frame into this heap slot; `alive` is cleared and
+        // the pointer nulled before that frame returns. `enter_op` won
+        // the exclusive, so this is the only `&mut WriteTx` for the
+        // duration of the entry (including across threads that captured
+        // the C pointer).
         unsafe {
-            Ok(&mut *self.tx.cast::<WriteTx<'_, SchemaDescriptor>>())
+            Ok(&mut *ptr.cast::<WriteTx<'_, SchemaDescriptor>>())
         }
     }
 
     fn engine(&self) -> BridgeResult<&Engine> {
-        if !self.alive.get() {
+        if !self.alive.load(Ordering::Acquire) {
+            return Err(Fail::Misuse);
+        }
+        let ptr = self.db.load(Ordering::Acquire);
+        if ptr.is_null() {
             return Err(Fail::Misuse);
         }
         #[expect(
@@ -205,16 +275,27 @@ impl bdb_tx_ref {
                       pointer; same lexical argument as `transaction`"
         )]
         // SAFETY: `db` points at the `Engine` owned by the `bdb_db` handle
-        // that spawned this write; the handle outlives the write call by
-        // the header contract (destroying a db during its own callback is
-        // caller UB the alive flag cannot see).
+        // that spawned this write; destroy of that handle during its own
+        // callback is refused (typed), so the engine outlives the write
+        // call.
         unsafe {
-            Ok(&*self.db.cast::<Engine>())
+            Ok(&*ptr.cast::<Engine>())
         }
     }
 
     fn invalidate(&self) {
-        self.alive.set(false);
+        self.alive.store(false, Ordering::Release);
+        self.tx.store(std::ptr::null_mut(), Ordering::Release);
+        self.db.store(std::ptr::null_mut(), Ordering::Release);
+    }
+}
+
+/// Clears the tx slot on every exit from the write closure.
+struct InvalidateTx<'a>(&'a bdb_tx_ref);
+
+impl Drop for InvalidateTx<'_> {
+    fn drop(&mut self) {
+        self.0.invalidate();
     }
 }
 
@@ -238,17 +319,65 @@ impl Drop for InWriteReset<'_> {
 
 fn enter_write(handle: &bdb_db) -> BridgeResult<InWriteReset<'_>> {
     if handle.in_write.swap(true, Ordering::AcqRel) {
-        return Err(Fail::Error(Box::new(bdb_error::synthesized(
-            bdb_error_kind::EnvironmentLocked,
-            "bumbledb-cpp: re-entrant write on this db handle (the engine is \
-             single-writer and non-reentrant; finish the enclosing write first)"
-                .to_string(),
-        ))));
+        return Err(fail_locked(
+            "re-entrant write on this db handle (the engine is \
+             single-writer and non-reentrant; finish the enclosing write first)",
+        ));
     }
     Ok(InWriteReset(&handle.in_write))
 }
 
-/// Invokes a caller callback — the one C-call site shape.
+struct InReadReset<'a>(&'a AtomicBool);
+
+impl Drop for InReadReset<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
+}
+
+fn enter_read(handle: &bdb_db) -> BridgeResult<InReadReset<'_>> {
+    if handle.in_write.load(Ordering::Acquire) {
+        return Err(fail_locked(
+            "re-entrant read on this db handle (a write callback is live; \
+             finish it first)",
+        ));
+    }
+    if handle.in_read.swap(true, Ordering::AcqRel) {
+        return Err(fail_locked(
+            "re-entrant read on this db handle (one live read callback per \
+             handle — the snapshot slot is exclusive)",
+        ));
+    }
+    Ok(InReadReset(&handle.in_read))
+}
+
+fn handle_in_callback(handle: &bdb_db) -> bool {
+    handle.in_read.load(Ordering::Acquire) || handle.in_write.load(Ordering::Acquire)
+}
+
+#[expect(
+    unsafe_code,
+    reason = "the C++ exception trampoline is a foreign extern; SAFETY at each call"
+)]
+#[expect(
+    improper_ctypes,
+    reason = "the trampoline takes opaque snapshot/tx pointers; C never sees the layout"
+)]
+unsafe extern "C" {
+    fn bdb_invoke_read_callback(
+        callback: unsafe extern "C" fn(*mut c_void, *const bdb_snapshot_ref) -> u32,
+        context: *mut c_void,
+        snapshot: *const bdb_snapshot_ref,
+    ) -> u32;
+    fn bdb_invoke_write_callback(
+        callback: unsafe extern "C" fn(*mut c_void, *mut bdb_tx_ref) -> u32,
+        context: *mut c_void,
+        transaction: *mut bdb_tx_ref,
+    ) -> u32;
+}
+
+/// Invokes a caller callback through the exception trampoline, then
+/// range-checks the integer control tag.
 fn call_read_callback(
     callback: bdb_read_callback,
     context: *mut c_void,
@@ -257,34 +386,33 @@ fn call_read_callback(
     let callback = callback.ok_or(Fail::Misuse)?;
     #[expect(
         unsafe_code,
-        reason = "invoking the caller's C function pointer; the header contract \
+        reason = "invoking the foreign exception trampoline; the header contract \
                   makes a non-null callback a valid function of this exact \
                   signature"
     )]
-    // SAFETY: non-null was just checked; the pointer types match the
-    // declared ABI signature, and the ref argument is a live stack value.
-    unsafe {
-        Ok(callback(context, &raw const *snapshot))
-    }
+    // SAFETY: non-null was just checked; the trampoline is linked from
+    // cpp/foreign/callback_trampoline.cc; the ref argument is the db's
+    // heap slot, live for the call.
+    let raw = unsafe { bdb_invoke_read_callback(callback, context, snapshot) };
+    tag_in(raw)
 }
 
 /// [`call_read_callback`]'s write twin.
 fn call_write_callback(
     callback: bdb_write_callback,
     context: *mut c_void,
-    transaction: &mut bdb_tx_ref,
+    transaction: &bdb_tx_ref,
 ) -> BridgeResult<bdb_callback_control> {
     let callback = callback.ok_or(Fail::Misuse)?;
     #[expect(
         unsafe_code,
-        reason = "invoking the caller's C function pointer; the header contract \
+        reason = "invoking the foreign exception trampoline; the header contract \
                   makes a non-null callback a valid function of this exact \
                   signature"
     )]
     // SAFETY: as `call_read_callback`.
-    unsafe {
-        Ok(callback(context, &raw mut *transaction))
-    }
+    let raw = unsafe { bdb_invoke_write_callback(callback, context, (&raw const *transaction).cast_mut()) };
+    tag_in(raw)
 }
 
 // ---------------------------------------------------------------------------
@@ -297,6 +425,7 @@ fn open_with(
     out_db: *mut *mut bdb_db,
     open: impl FnOnce(&std::path::Path, SchemaDescriptor) -> bumbledb::Result<Engine>,
 ) -> BridgeResult<bdb_status> {
+    require_out(out_db)?;
     let path = path.as_str("store path")?;
     let spec = schema_spec_in(ref_in(spec)?)?;
     // The canonical lowering: name resolution, canonical-utterance rules,
@@ -309,13 +438,16 @@ fn open_with(
     })?;
     let db = open(std::path::Path::new(path), descriptor.clone())
         .map_err(|error| fail_engine(error, Some(&descriptor)))?;
-    out(
+    box_out_to(
         out_db,
-        box_out(bdb_db {
+        bdb_db {
             db: Arc::new(db),
             descriptor,
             in_write: AtomicBool::new(false),
-        }),
+            in_read: AtomicBool::new(false),
+            snapshot_slot: bdb_snapshot_ref::empty(),
+            tx_slot: bdb_tx_ref::empty(),
+        },
     )?;
     Ok(bdb_status::Ok)
 }
@@ -367,6 +499,10 @@ pub extern "C" fn bdb_db_ephemeral(
 #[expect(unsafe_code, reason = "extern export: the unsafe(no_mangle) ABI attribute")]
 pub extern "C" fn bdb_db_destroy(db: *mut bdb_db) -> bdb_status {
     guard(std::ptr::null_mut(), || {
+        let handle = ref_in(db)?;
+        if handle_in_callback(handle) {
+            return Err(Fail::Misuse);
+        }
         drop(box_in(db)?);
         Ok(bdb_status::Ok)
     })
@@ -423,12 +559,13 @@ pub extern "C" fn bdb_db_read(
 ) -> bdb_status {
     guard(out_error, || {
         let handle = ref_in(db)?;
+        let _reader = enter_read(handle)?;
         let mut aborted = false;
         let mut misuse = false;
         let result = handle.db.read(|snap| {
-            let snapshot_ref = bdb_snapshot_ref::new(snap);
-            let control = call_read_callback(callback, context, &snapshot_ref);
-            snapshot_ref.invalidate();
+            handle.snapshot_slot.mint(snap);
+            let _slot = InvalidateSnapshot(&handle.snapshot_slot);
+            let control = call_read_callback(callback, context, &handle.snapshot_slot);
             match control {
                 Ok(bdb_callback_control::Ok) => Ok(()),
                 Ok(bdb_callback_control::Abort) => {
@@ -465,9 +602,9 @@ fn write_with(
     let mut misuse = false;
     let engine = &*handle.db;
     let mut body = |tx: &mut WriteTx<'_, SchemaDescriptor>| -> bumbledb::Result<()> {
-        let mut tx_ref = bdb_tx_ref::new(tx, engine);
-        let control = call_write_callback(callback, context, &mut tx_ref);
-        tx_ref.invalidate();
+        handle.tx_slot.mint(tx, engine);
+        let _slot = InvalidateTx(&handle.tx_slot);
+        let control = call_write_callback(callback, context, &handle.tx_slot);
         match control {
             Ok(bdb_callback_control::Ok) => Ok(()),
             Ok(bdb_callback_control::Abort) => {
@@ -556,6 +693,7 @@ pub extern "C" fn bdb_tx_insert(
 ) -> bdb_status {
     guard(out_error, || {
         let tx_ref = ref_in(transaction)?;
+        let _op = tx_ref.enter_op()?;
         let row = row_in(values, value_count)?;
         let changed = tx_ref
             .transaction()?
@@ -580,6 +718,7 @@ pub extern "C" fn bdb_tx_delete(
 ) -> bdb_status {
     guard(out_error, || {
         let tx_ref = ref_in(transaction)?;
+        let _op = tx_ref.enter_op()?;
         let row = row_in(values, value_count)?;
         let changed = tx_ref
             .transaction()?
@@ -604,6 +743,7 @@ pub extern "C" fn bdb_tx_contains(
 ) -> bdb_status {
     guard(out_error, || {
         let tx_ref = ref_in(transaction)?;
+        let _op = tx_ref.enter_op()?;
         let row = row_in(values, value_count)?;
         let contains = tx_ref
             .transaction()?
@@ -630,18 +770,17 @@ pub extern "C" fn bdb_tx_get(
 ) -> bdb_status {
     guard(out_error, || {
         let tx_ref = ref_in(transaction)?;
+        let _op = tx_ref.enter_op()?;
+        require_out(out_row)?;
         let keys = row_in(key_values, key_value_count)?;
         let found = tx_ref
             .transaction()?
             .get_dyn(RelationId(relation), StatementId(key_statement), &keys)
             .map_err(|error| fail_engine(error, None))?;
-        out(
-            out_row,
-            match found {
-                Some(values) => box_out(bdb_row_set { rows: vec![values] }),
-                None => std::ptr::null_mut(),
-            },
-        )?;
+        match found {
+            Some(values) => box_out_to(out_row, bdb_row_set { rows: vec![values] })?,
+            None => out(out_row, std::ptr::null_mut())?,
+        }
         Ok(bdb_status::Ok)
     })
 }
@@ -662,6 +801,7 @@ pub extern "C" fn bdb_tx_alloc(
 ) -> bdb_status {
     guard(out_error, || {
         let tx_ref = ref_in(transaction)?;
+        let _op = tx_ref.enter_op()?;
         let fresh = tx_ref
             .engine()?
             .fresh_field(RelationId(relation), FieldId(field))
@@ -717,17 +857,15 @@ pub extern "C" fn bdb_snapshot_get(
 ) -> bdb_status {
     guard(out_error, || {
         let snap = ref_in(snapshot)?.snapshot()?;
+        require_out(out_row)?;
         let keys = row_in(key_values, key_value_count)?;
         let found = snap
             .get_dyn(RelationId(relation), StatementId(key_statement), &keys)
             .map_err(|error| fail_engine(error, None))?;
-        out(
-            out_row,
-            match found {
-                Some(values) => box_out(bdb_row_set { rows: vec![values] }),
-                None => std::ptr::null_mut(),
-            },
-        )?;
+        match found {
+            Some(values) => box_out_to(out_row, bdb_row_set { rows: vec![values] })?,
+            None => out(out_row, std::ptr::null_mut())?,
+        }
         Ok(bdb_status::Ok)
     })
 }
@@ -745,6 +883,7 @@ pub extern "C" fn bdb_snapshot_scan(
 ) -> bdb_status {
     guard(out_error, || {
         let snap = ref_in(snapshot)?.snapshot()?;
+        require_out(out_rows)?;
         let rows = (|| -> bumbledb::Result<Vec<Vec<Value>>> {
             let iter = snap.scan(RelationId(relation))?;
             let mut rows = Vec::new();
@@ -754,7 +893,7 @@ pub extern "C" fn bdb_snapshot_scan(
             Ok(rows)
         })()
         .map_err(|error| fail_engine(error, None))?;
-        out(out_rows, box_out(bdb_row_set { rows }))?;
+        box_out_to(out_rows, bdb_row_set { rows })?;
         Ok(bdb_status::Ok)
     })
 }
@@ -780,6 +919,7 @@ pub extern "C" fn bdb_db_bulk_load(
     out_error: *mut *mut bdb_error,
 ) -> bdb_status {
     guard(out_error, || {
+        require_out(out_committed)?;
         let handle = ref_in(db)?;
         // Copied whole before the engine runs: a marshal refusal is a
         // clean typed error with ZERO facts durable, never a mid-import
@@ -816,10 +956,10 @@ pub extern "C" fn bdb_db_bulk_load(
 #[unsafe(no_mangle)]
 #[expect(unsafe_code, reason = "extern export: the unsafe(no_mangle) ABI attribute")]
 pub extern "C" fn bdb_row_set_len(rows: *const bdb_row_set) -> usize {
-    match ref_in(rows) {
+    guard_value(0, || match ref_in(rows) {
         Ok(rows) => rows.rows.len(),
         Err(_) => 0,
-    }
+    })
 }
 
 /// The row's cell count (sealed field order — every row of one scan has
@@ -827,10 +967,10 @@ pub extern "C" fn bdb_row_set_len(rows: *const bdb_row_set) -> usize {
 #[unsafe(no_mangle)]
 #[expect(unsafe_code, reason = "extern export: the unsafe(no_mangle) ABI attribute")]
 pub extern "C" fn bdb_row_set_arity(rows: *const bdb_row_set, row: usize) -> usize {
-    match ref_in(rows) {
+    guard_value(0, || match ref_in(rows) {
         Ok(rows) => rows.rows.get(row).map_or(0, Vec::len),
         Err(_) => 0,
-    }
+    })
 }
 
 /// One cell, viewed — string/bytes payloads BORROW the row set and die

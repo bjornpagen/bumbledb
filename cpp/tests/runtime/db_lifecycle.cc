@@ -173,8 +173,8 @@ using UnitCommitted = bdb::Committed<std::monostate>;
 			    .arity = rows.arity(0),
 			    .id_matches = id_cell.has_value() && std::holds_alternative<std::uint64_t>(*id_cell) &&
 			                  std::get<std::uint64_t>(*id_cell) == service_id,
-			    .name_matches = name_cell.has_value() && std::holds_alternative<std::string_view>(*name_cell) &&
-			                    std::get<std::string_view>(*name_cell) == "search",
+			    .name_matches = name_cell.has_value() && std::holds_alternative<std::string>(*name_cell) &&
+			                    std::get<std::string>(*name_cell) == "search",
 			};
 		});
 	});

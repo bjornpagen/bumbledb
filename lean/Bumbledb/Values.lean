@@ -50,9 +50,12 @@ parameter that merely checks values would be a CHECK constraint
   `x ↦ (x + 2^63).toNat`, which is what the byte-level sign-bit flip
   computes on two's-complement words; the engine's exhaustive order
   suite samples the byte fact itself.
-* `FixedBytes n` is a length-indexed word list; the zero-pad to the
-  word boundary is encoding, not data, and is invisible at this
-  level (constant for a fixed `n`, so injectivity is unaffected).
+* `FixedBytes n` is `n` raw bytes (`Byte`, `0..256`). Encoding
+  zero-pads to a multiple of 8 (`paddedByteCount n` = `⌈n/8⌉ × 8`)
+  matching `encoding.rs::fixed_bytes_words` / `10-data-model.md`.
+  The pad is encoding, not data. The engine then stores those padded
+  bytes as `⌈n/8⌉` machine words; at this altitude each pad-byte is
+  one abstract `Word` `0..256`.
 * `encode_interval_order` is stated concretely over the I64 domain
   (the sign-flipped, interesting half); `encode_interval_order_u64`
   is its U64 companion. Generalizing over an abstract order-embedding
@@ -77,6 +80,12 @@ parameter that merely checks values would be a CHECK constraint
   generality is dead — widths no code implements —
   and `value_eq_iff_encode_eq` is proved uniformly in `n`, so nothing
   false rides it.
+* **Storage membership is blake3 of `fact_bytes`, not encoding
+  equality.** `value_eq_iff_encode_eq` is Lean identity. The store
+  treats hash equality as fact equality — collisions are an accepted
+  axiom (`10-data-model.md`, `50-storage.md`); a blake3 collision
+  unifies two Lean-distinct facts. Hashing is extra-theoretic
+  mechanism this module does not own (`lean/README.md`).
 * **The fixed-width carrier is concrete per element domain**
   (`FixedU64`/`FixedI64`), like `encode_interval_order`: the two real
   domains cost less than an abstract order-embedding class. The
@@ -519,9 +528,22 @@ structure StrId where
   id : Nat
 deriving DecidableEq
 
-/-- A `bytes<N>` payload: exactly `n` words. The zero-pad to the word
-boundary is encoding, not data (constant for fixed `n`). -/
-abbrev FixedBytes (n : Nat) : Type := { l : List Word // l.length = n }
+/-- A byte in `0..256`. -/
+abbrev Byte : Type := { n : Nat // n < 256 }
+
+/-- A `bytes<N>` payload: exactly `n` raw bytes. Encoding zero-pads
+to a multiple of 8 (`paddedByteCount n`), matching
+`encoding.rs::FixedBytesValue::padded`. The pad is encoding, not
+data. -/
+abbrev FixedBytes (n : Nat) : Type := { l : List Byte // l.length = n }
+
+/-- On-disk byte length of `bytes<n>`: `⌈n/8⌉ × 8`. -/
+def paddedByteCount (n : Nat) : Nat := (n + 7) / 8 * 8
+
+/-- Canonical encoding of `bytes<n>`: the `n` raw bytes as abstract
+words, zero-padded to `paddedByteCount n`. -/
+def padFixedBytes {n : Nat} (bs : FixedBytes n) : List Word :=
+  bs.val.map (fun b => b.val) ++ List.replicate (paddedByteCount n - n) 0
 
 /-- Each value type's carrier. -/
 def ValueType.carrier : ValueType → Type
@@ -550,7 +572,7 @@ def encodeAt : (t : ValueType) → t.carrier → List Word
   | .u64, v => [encodeU64 v]
   | .i64, v => [encodeI64 v]
   | .str, s => [s.id]
-  | .fixedBytes _, bs => bs.val
+  | .fixedBytes _, bs => padFixedBytes bs
   | .interval .u64, iv => [(encodeIntervalU64 iv).1, (encodeIntervalU64 iv).2]
   | .interval .i64, iv => [(encodeIntervalI64 iv).1, (encodeIntervalI64 iv).2]
   -- ONE word: the width is the type's, never the bytes' — the end is
@@ -565,7 +587,9 @@ def Value.encode (v : Value) : List Word := encodeAt v.type v.val
 two values are equal exactly when their canonical encodings are —
 the fact-identity law. Stated per type, because cross-type injectivity
 is deliberately FALSE (a str intern id and a u64 encode alike; the
-column type disambiguates). Bridge:
+column type disambiguates). Storage implements membership as blake3
+of these bytes; hash equality is treated as fact equality (collision
+axiom — extra-theoretic). Bridge:
 `crate::encoding::encode::encode_literal` / `encode_fact`. -/
 theorem value_eq_iff_encode_eq (t : ValueType) (a b : t.carrier) :
     a = b ↔ encodeAt t a = encodeAt t b := by
@@ -583,7 +607,19 @@ theorem value_eq_iff_encode_eq (t : ValueType) (a b : t.carrier) :
     simp only [encodeAt, List.cons.injEq, and_true] at heq
     cases a; cases b; cases heq; rfl
   | .fixedBytes n, a, b =>
-    exact Subtype.ext heq
+    simp only [encodeAt, padFixedBytes] at heq
+    -- Same pad length on both sides, so the raw-byte prefixes decide.
+    have hmap : a.val.map (fun b : Byte => b.val) =
+        b.val.map (fun b : Byte => b.val) :=
+      List.append_cancel_right heq
+    refine Subtype.ext ?_
+    apply List.ext_getElem ?_ fun i hi _ => ?_
+    · simp [a.property, b.property]
+    · have hi' : i < (a.val.map fun b : Byte => b.val).length := by
+        simpa [List.length_map, a.property] using hi
+      have := List.getElem_of_eq hmap hi'
+      simp at this
+      exact Subtype.ext this
   | .interval .u64, a, b =>
     simp only [encodeAt, encodeIntervalU64, List.cons.injEq, and_true] at heq
     exact Interval.ext ((encodeU64_eq_iff _ _).mp heq.1)

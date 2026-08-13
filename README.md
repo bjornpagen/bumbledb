@@ -48,7 +48,8 @@ bumbledb::schema! {
 let db = bumbledb::Db::create(path, Ledger)?;
 
 // Writes are set arithmetic on an in-memory delta; every statement is
-// judged at commit against the final state — an abort never touched disk.
+// judged at commit against the final state — an abort never wrote a fact
+// (escaped fresh high-water still persists on the `Q` marks).
 db.write(|tx| {
     let holder: HolderId = tx.alloc()?;
     tx.insert(&Holder { id: holder, name: "alice", region: Region::Eu.id() })?;
@@ -441,7 +442,7 @@ calculus's semantics, and its grammar is open-ended and gate-governed — a
 statement form enters when it carries an enforcement plan, never before.
 
 
-### The signature — six types and the vocabulary form
+### The signature — value types and the vocabulary form
 
 | type | syntax | encoding (canonical; identity = bytes) | denotes | query operators |
 |---|---|---|---|---|
@@ -451,6 +452,7 @@ statement form enters when it carries an enforcement plan, never before.
 | `str` | `s: str` | intern id — the dictionary maps repeated text to words; UTF-8 parsed at intern | text under reuse | `==` `!=`, ∈-sets; **order/prefix refused** |
 | `bytes<N>` | `h: bytes<32>` | N raw bytes inline, word-padded; never interned | an identity (digest) | `==` `!=`, ∈-sets; **order refused** (a hash's order is an encoding artifact) |
 | `interval<E>` | `d: interval<i64>` | two order-preserving words `(start, end)`, half-open `[s, e)`, `s < e`; `end = MAX` denotes the ray `[s, ∞)` | **the set of points** `{p : s ≤ p < e}` | `p ∈ d` (membership), `Allen(mask)` (all 8,192 pair relations), `Duration` (the measure), `Pack` (coalesce) |
+| `interval<E, w>` | `d: interval<u64, 1>` | one order-preserving word (the start); end = start + `w`; `w ≥ 1` is the type | the point set `[s, s+w)` — never a ray | same as `interval<E>` (`Duration` is the constant `w`) |
 | `closed relation` | `closed relation Status as StatusId = { Open, Frozen }` | virtual — **ground axioms** sealed at validate, handle id = declaration order; the store holds zero vocabulary bytes | a vocabulary: the theory's named constants | referenced as a `u64` + containment to its key; handles resolve at expansion; `==` `!=`, ∈-sets; **order refused** |
 
 `closed relation` is a relation form, not a seventh value type: its ground axioms

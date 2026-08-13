@@ -32,14 +32,24 @@ header = """
  * BDB_STATUS_ERROR (a bdb_error* is written; the caller owns it and
  * frees it with bdb_error_destroy), BDB_STATUS_MISUSE (a contract
  * violation — null required pointer, stale snapshot/tx ref, index out
- * of range; no error is allocated).
+ * of range, unknown enum tag, bool payload other than 0/1; no error is
+ * allocated).
  *
- * Lexical capabilities: bdb_snapshot_ref / bdb_tx_ref are valid ONLY
- * inside the callback they are passed to and are invalidated when it
- * returns. They are never owned or destroyed by the caller.
- * bdb_db_write_from may be called from inside a read callback with that
- * callback's still-live snapshot ref; nested writes are refused with a
- * typed BDB_ERROR_KIND_ENVIRONMENT_LOCKED error.
+ * Lexical capabilities: bdb_snapshot_ref / bdb_tx_ref live in a stable
+ * heap slot inside the owning bdb_db. The callback receives a pointer
+ * into that slot; when the callback returns the slot is invalidated
+ * (alive = false, engine pointers nulled). A stashed pointer still names
+ * the db's slot and answers BDB_STATUS_MISUSE rather than use-after-free.
+ * They are never owned or destroyed by the caller. bdb_db_write_from may
+ * be called from inside a read callback with that callback's still-live
+ * snapshot ref; nested writes are refused with a typed
+ * BDB_ERROR_KIND_ENVIRONMENT_LOCKED error. One live read callback per
+ * handle (the single snapshot slot); nested or concurrent reads, and
+ * destroy during a live callback, are refused.
+ *
+ * Callbacks: a C++ exception thrown from a read/write callback is caught
+ * by the foreign trampoline and becomes BDB_CALLBACK_CONTROL_ABORT; it
+ * never unwinds into Rust. Unknown callback-control tags are MISUSE.
  *
  * View lifetimes: bdb_value string/bytes payloads handed OUT borrow the
  * carrier named at the accessor (bdb_row_set, bdb_answers, bdb_error)
@@ -49,7 +59,9 @@ header = """
 
 [export]
 # The ref-only capability types are opaque to C by design (§14): the
-# bridge never lets the caller construct or destroy one.
+# bridge never lets the caller construct or destroy one. The exception
+# trampoline is linked from the staticlib, not a public C entry.
+exclude = ["bdb_invoke_read_callback", "bdb_invoke_write_callback"]
 
 [enum]
 rename_variants = "ScreamingSnakeCase"

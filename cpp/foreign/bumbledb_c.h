@@ -11,14 +11,24 @@
  * BDB_STATUS_ERROR (a bdb_error* is written; the caller owns it and
  * frees it with bdb_error_destroy), BDB_STATUS_MISUSE (a contract
  * violation — null required pointer, stale snapshot/tx ref, index out
- * of range; no error is allocated).
+ * of range, unknown enum tag, bool payload other than 0/1; no error is
+ * allocated).
  *
- * Lexical capabilities: bdb_snapshot_ref / bdb_tx_ref are valid ONLY
- * inside the callback they are passed to and are invalidated when it
- * returns. They are never owned or destroyed by the caller.
- * bdb_db_write_from may be called from inside a read callback with that
- * callback's still-live snapshot ref; nested writes are refused with a
- * typed BDB_ERROR_KIND_ENVIRONMENT_LOCKED error.
+ * Lexical capabilities: bdb_snapshot_ref / bdb_tx_ref live in a stable
+ * heap slot inside the owning bdb_db. The callback receives a pointer
+ * into that slot; when the callback returns the slot is invalidated
+ * (alive = false, engine pointers nulled). A stashed pointer still names
+ * the db's slot and answers BDB_STATUS_MISUSE rather than use-after-free.
+ * They are never owned or destroyed by the caller. bdb_db_write_from may
+ * be called from inside a read callback with that callback's still-live
+ * snapshot ref; nested writes are refused with a typed
+ * BDB_ERROR_KIND_ENVIRONMENT_LOCKED error. One live read callback per
+ * handle (the single snapshot slot); nested or concurrent reads, and
+ * destroy during a live callback, are refused.
+ *
+ * Callbacks: a C++ exception thrown from a read/write callback is caught
+ * by the foreign trampoline and becomes BDB_CALLBACK_CONTROL_ABORT; it
+ * never unwinds into Rust. Unknown callback-control tags are MISUSE.
  *
  * View lifetimes: bdb_value string/bytes payloads handed OUT borrow the
  * carrier named at the accessor (bdb_row_set, bdb_answers, bdb_error)
@@ -43,92 +53,6 @@ typedef enum bdb_status {
   BDB_STATUS_ABORTED = 2,
   BDB_STATUS_MISUSE = 3,
 } bdb_status;
-
-// The value tag — one constant per `bumbledb::Value` variant.
-typedef enum bdb_value_kind {
-  BDB_VALUE_KIND_BOOL,
-  BDB_VALUE_KIND_U64,
-  BDB_VALUE_KIND_I64,
-  BDB_VALUE_KIND_STRING,
-  BDB_VALUE_KIND_FIXED_BYTES,
-  BDB_VALUE_KIND_INTERVAL_U64,
-  BDB_VALUE_KIND_INTERVAL_I64,
-} bdb_value_kind;
-
-// The execute-parameter tag: a scalar (a [`bdb_value`]) or a param set
-// (a value array — points only; the engine types the elements).
-typedef enum bdb_param_kind {
-  BDB_PARAM_KIND_SCALAR,
-  BDB_PARAM_KIND_SET,
-} bdb_param_kind;
-
-// The structural value-type tag (`bumbledb::schema::ValueType`, spelled
-// C).
-typedef enum bdb_value_type_kind {
-  BDB_VALUE_TYPE_KIND_BOOL,
-  BDB_VALUE_TYPE_KIND_U64,
-  BDB_VALUE_TYPE_KIND_I64,
-  BDB_VALUE_TYPE_KIND_STRING,
-  BDB_VALUE_TYPE_KIND_FIXED_BYTES,
-  BDB_VALUE_TYPE_KIND_INTERVAL,
-} bdb_value_type_kind;
-
-// An interval's element domain.
-typedef enum bdb_interval_element {
-  BDB_INTERVAL_ELEMENT_U64,
-  BDB_INTERVAL_ELEMENT_I64,
-} bdb_interval_element;
-
-// A literal's tag: a plain tagged value, or a closed relation's handle
-// by name.
-typedef enum bdb_literal_kind {
-  BDB_LITERAL_KIND_VALUE,
-  BDB_LITERAL_KIND_HANDLE,
-} bdb_literal_kind;
-
-// A statement's form tag.
-typedef enum bdb_statement_spec_kind {
-  BDB_STATEMENT_SPEC_KIND_FD,
-  BDB_STATEMENT_SPEC_KIND_CONTAINMENT,
-  BDB_STATEMENT_SPEC_KIND_CAPACITY,
-} bdb_statement_spec_kind;
-
-// A σ binding's right side: one literal or a literal set (read
-// disjunctively).
-typedef enum bdb_literal_set_kind {
-  BDB_LITERAL_SET_KIND_ONE,
-  BDB_LITERAL_SET_KIND_MANY,
-} bdb_literal_set_kind;
-
-// A capacity weight's tag.
-typedef enum bdb_weight_kind {
-  BDB_WEIGHT_KIND_UNIT,
-  BDB_WEIGHT_KIND_FIELD,
-  BDB_WEIGHT_KIND_DURATION_FIELD,
-} bdb_weight_kind;
-
-// A capacity window's tag.
-typedef enum bdb_capacity_window_kind {
-  BDB_CAPACITY_WINDOW_KIND_EXACT,
-  BDB_CAPACITY_WINDOW_KIND_RANGE,
-  BDB_CAPACITY_WINDOW_KIND_FLOOR,
-} bdb_capacity_window_kind;
-
-// A capacity bound's tag.
-typedef enum bdb_bound_kind {
-  BDB_BOUND_KIND_LIT,
-  BDB_BOUND_KIND_FIELD,
-  BDB_BOUND_KIND_DURATION_FIELD,
-} bdb_bound_kind;
-
-// A callback's control return: `Ok` commits (write) / completes (read);
-// `Abort` abandons — the write delta drops, LMDB untouched, and the outer
-// call returns `BDB_STATUS_ABORTED` (the ts bridge's abort sentinel,
-// spelled as control flow).
-typedef enum bdb_callback_control {
-  BDB_CALLBACK_CONTROL_OK = 0,
-  BDB_CALLBACK_CONTROL_ABORT = 1,
-} bdb_callback_control;
 
 // The C error kind — one constant per engine error family, plus the
 // bridge-synthesized `Panic`.
@@ -179,75 +103,14 @@ typedef enum bdb_violation_direction {
   BDB_VIOLATION_DIRECTION_TARGET_REQUIRED,
 } bdb_violation_direction;
 
-// A head position's tag.
-typedef enum bdb_head_term_kind {
-  BDB_HEAD_TERM_KIND_VAR,
-  BDB_HEAD_TERM_KIND_AGGREGATE,
-} bdb_head_term_kind;
-
-// The var-free aggregate-op kind at a head position
-// (`bumbledb::ir::HeadOp`).
-typedef enum bdb_head_op {
-  BDB_HEAD_OP_SUM,
-  BDB_HEAD_OP_MIN,
-  BDB_HEAD_OP_MAX,
-  BDB_HEAD_OP_COUNT,
-  BDB_HEAD_OP_PACK,
-} bdb_head_op;
-
-// A find term's tag (`bumbledb::ir::FindTerm`).
-typedef enum bdb_find_term_kind {
-  BDB_FIND_TERM_KIND_VAR,
-  BDB_FIND_TERM_KIND_MEASURE,
-  BDB_FIND_TERM_KIND_AGGREGATE,
-  BDB_FIND_TERM_KIND_AGGREGATE_MEASURE,
-} bdb_find_term_kind;
-
-// An atom source's tag: a stored relation (`Edb`) or a predicate of the
-// same program (`Idb`).
-typedef enum bdb_atom_source_kind {
-  BDB_ATOM_SOURCE_KIND_EDB,
-  BDB_ATOM_SOURCE_KIND_IDB,
-} bdb_atom_source_kind;
-
-// A term's tag (`bumbledb::ir::Term`).
-typedef enum bdb_term_kind {
-  BDB_TERM_KIND_VAR,
-  BDB_TERM_KIND_PARAM,
-  BDB_TERM_KIND_PARAM_SET,
-  BDB_TERM_KIND_LITERAL,
-  BDB_TERM_KIND_MEASURE,
-} bdb_term_kind;
-
-// A condition node's tag.
-typedef enum bdb_condition_kind {
-  BDB_CONDITION_KIND_LEAF,
-  BDB_CONDITION_KIND_AND,
-  BDB_CONDITION_KIND_OR,
-} bdb_condition_kind;
-
-// A comparison operator's tag (`bumbledb::ir::CmpOp`). For `PointIn`
-// the lhs is the INTERVAL term and the rhs the point term (the engine's
-// ordered lowering; the notation reads point-first).
-typedef enum bdb_cmp_op_kind {
-  BDB_CMP_OP_KIND_EQ,
-  BDB_CMP_OP_KIND_NE,
-  BDB_CMP_OP_KIND_LT,
-  BDB_CMP_OP_KIND_LE,
-  BDB_CMP_OP_KIND_GT,
-  BDB_CMP_OP_KIND_GE,
-  BDB_CMP_OP_KIND_ALLEN,
-  BDB_CMP_OP_KIND_POINT_IN,
-} bdb_cmp_op_kind;
-
 // The opaque, reusable answers carrier.
 typedef struct bdb_answers bdb_answers;
 
 // The opaque database handle: the engine behind an `Arc` (prepared
 // queries co-own it below the boundary — never visible to C++), the
-// admitted descriptor (violation rendering, fingerprint readback), and
-// the bridge-level writer flag (§17: re-entrant writes are refused typed
-// BEFORE the engine's assertion).
+// admitted descriptor (violation rendering, fingerprint readback), the
+// bridge-level writer/reader flags, and the heap slots that give
+// snapshot/tx refs a stable address for as long as this `Box` lives.
 typedef struct bdb_db bdb_db;
 
 // The opaque error handle: kind + rendered message + the structured
@@ -266,16 +129,17 @@ typedef struct bdb_prepared bdb_prepared;
 typedef struct bdb_row_set bdb_row_set;
 
 // A borrowed snapshot capability, valid ONLY inside the read callback it
-// was passed to (§16). Never owned by C++, never destroyed by C++; every
-// use re-checks the alive flag the bridge clears when the callback
-// returns, so a stashed ref answers `BDB_STATUS_MISUSE` instead of being
-// replayed.
+// was passed to (§16). The struct lives in a heap slot on [`bdb_db`] so
+// a stashed C pointer remains a real object after the callback: every
+// use re-checks `alive`, and a stale ref answers `BDB_STATUS_MISUSE`
+// instead of being replayed or use-after-freeing a stack frame.
 typedef struct bdb_snapshot_ref bdb_snapshot_ref;
 
 // A borrowed write-transaction capability, valid ONLY inside the write
 // callback (§17) — the [`bdb_snapshot_ref`] discipline, mutably. Carries
 // its engine pointer so `bdb_tx_alloc` can resolve fresh fields without
-// a second handle argument.
+// a second handle argument. `in_op` makes `transaction()` exclusive
+// across threads for the duration of one `bdb_tx_*` entry.
 typedef struct bdb_tx_ref bdb_tx_ref;
 
 // A borrowed UTF-8 text view (NOT NUL-terminated; the length is the
@@ -298,8 +162,12 @@ typedef struct bdb_bytes_view {
 // are ignored inbound and zeroed outbound. Boring and flat by design —
 // no union, no packing.
 typedef struct bdb_value {
-  enum bdb_value_kind kind;
-  bool bool_value;
+  // Integer tag; valid values are [`bdb_value_kind`]. Unknown tags are
+  // `BDB_STATUS_MISUSE` (the field is `u32` so an out-of-range C enum
+  // is not UB).
+  uint32_t kind;
+  // 0 or 1 when `kind` is Bool; any other byte is misuse.
+  uint8_t bool_value;
   uint64_t u64_value;
   int64_t i64_value;
   // `String`: UTF-8 text (checked at the boundary).
@@ -317,7 +185,7 @@ typedef struct bdb_value {
 // One positional execution argument — the C mirror of the engine's
 // public `ParamArg` shape (Scalar | Set).
 typedef struct bdb_param {
-  enum bdb_param_kind kind;
+  uint32_t kind;
   // `Scalar`: the value.
   struct bdb_value scalar;
   // `Set`: `set_len` tagged values.
@@ -329,10 +197,10 @@ typedef struct bdb_param {
 // `element` / `has_width` / `width` for `Interval` (`has_width == false`
 // is the general 16-byte interval; `true` the fixed-width family).
 typedef struct bdb_value_type {
-  enum bdb_value_type_kind kind;
+  uint32_t kind;
   uint16_t fixed_len;
-  enum bdb_interval_element element;
-  bool has_width;
+  uint32_t element;
+  uint8_t has_width;
   uint64_t width;
 } bdb_value_type;
 
@@ -343,12 +211,12 @@ typedef struct bdb_field_spec {
   struct bdb_string_view name;
   struct bdb_value_type value_type;
   struct bdb_string_view newtype;
-  bool fresh;
+  uint8_t fresh;
 } bdb_field_spec;
 
 // One literal as spelled.
 typedef struct bdb_literal {
-  enum bdb_literal_kind kind;
+  uint32_t kind;
   struct bdb_value value;
   struct bdb_string_view handle;
 } bdb_literal;
@@ -381,7 +249,7 @@ typedef struct bdb_relation_spec {
 // One literal set. `One` reads `literals[0]` (`literal_count` must be
 // 1); `Many` reads all `literal_count` entries.
 typedef struct bdb_literal_set {
-  enum bdb_literal_set_kind kind;
+  uint32_t kind;
   const struct bdb_literal *literals;
   size_t literal_count;
 } bdb_literal_set;
@@ -404,14 +272,14 @@ typedef struct bdb_side {
 
 // A capacity weight; `field` is read for `Field`/`DurationField`.
 typedef struct bdb_weight {
-  enum bdb_weight_kind kind;
+  uint32_t kind;
   struct bdb_string_view field;
 } bdb_weight;
 
 // One capacity bound; `lit` for `Lit`, `field` for
 // `Field`/`DurationField`.
 typedef struct bdb_bound {
-  enum bdb_bound_kind kind;
+  uint32_t kind;
   uint64_t lit;
   struct bdb_string_view field;
 } bdb_bound;
@@ -419,7 +287,7 @@ typedef struct bdb_bound {
 // One capacity window: `Exact` reads `lo` as the exact bound; `Floor`
 // reads `lo`; `Range` reads `lo` and `hi`.
 typedef struct bdb_capacity_window {
-  enum bdb_capacity_window_kind kind;
+  uint32_t kind;
   struct bdb_bound lo;
   struct bdb_bound hi;
 } bdb_capacity_window;
@@ -429,13 +297,13 @@ typedef struct bdb_capacity_window {
 // `Capacity` reads `target`/`weight`/`window`/`source` (the operator's
 // read order).
 typedef struct bdb_statement_spec {
-  enum bdb_statement_spec_kind kind;
+  uint32_t kind;
   struct bdb_string_view fd_relation;
   const struct bdb_string_view *fd_projection;
   size_t fd_projection_count;
   struct bdb_side source;
   struct bdb_side target;
-  bool bidirectional;
+  uint8_t bidirectional;
   struct bdb_weight weight;
   struct bdb_capacity_window window;
 } bdb_statement_spec;
@@ -456,16 +324,17 @@ typedef struct bdb_fingerprint {
 } bdb_fingerprint;
 
 // The read callback: synchronous, on the calling thread, with a
-// snapshot ref valid only until it returns.
-typedef enum bdb_callback_control (*bdb_read_callback)(void *context,
-                                                       const struct bdb_snapshot_ref *snapshot);
+// snapshot ref valid only until it returns. The return is an integer
+// tag (`bdb_callback_control`); unknown values are `BDB_STATUS_MISUSE`.
+// A C++ exception thrown from the function is converted to Abort by
+// the foreign trampoline and never unwinds into Rust.
+typedef uint32_t (*bdb_read_callback)(void *context, const struct bdb_snapshot_ref *snapshot);
 
 // The write callback: synchronous, on the calling thread, with a tx ref
 // valid only until it returns. `Ok` commits the delta (the engine judges
 // dependencies against the final state); `Abort` drops it — LMDB never
-// saw a fact.
-typedef enum bdb_callback_control (*bdb_write_callback)(void *context,
-                                                        struct bdb_tx_ref *transaction);
+// saw a fact. Throw-to-Abort as [`bdb_read_callback`].
+typedef uint32_t (*bdb_write_callback)(void *context, struct bdb_tx_ref *transaction);
 
 // One borrowed bulk-import row: `value_count` tagged values in
 // declaration order.
@@ -491,30 +360,30 @@ typedef struct bdb_violation {
 
 // One head position; `op` is read for `Aggregate`.
 typedef struct bdb_head_term {
-  enum bdb_head_term_kind kind;
-  enum bdb_head_op op;
+  uint32_t kind;
+  uint32_t op;
 } bdb_head_term;
 
 // One rule-scoped aggregate op.
 typedef struct bdb_agg_op {
-  enum bdb_head_op kind;
+  uint32_t kind;
 } bdb_agg_op;
 
 // One find term. `var` is read for `Var`/`Measure`; `op` plus
 // `has_over`/`over` for `Aggregate` (`has_over == false` is the nullary
 // `Count`); `op` plus `over` for `AggregateMeasure`.
 typedef struct bdb_find_term {
-  enum bdb_find_term_kind kind;
+  uint32_t kind;
   uint16_t var;
   struct bdb_agg_op op;
-  bool has_over;
+  uint8_t has_over;
   uint16_t over;
 } bdb_find_term;
 
 // One term. `var` is read for `Var`/`Measure`, `param` for
 // `Param`/`ParamSet`, `literal` for `Literal`.
 typedef struct bdb_term {
-  enum bdb_term_kind kind;
+  uint32_t kind;
   uint16_t var;
   uint16_t param;
   struct bdb_value literal;
@@ -529,7 +398,7 @@ typedef struct bdb_binding {
 
 // One atom. `relation` is read for `Edb`, `pred` for `Idb`.
 typedef struct bdb_atom {
-  enum bdb_atom_source_kind source_kind;
+  uint32_t source_kind;
   uint32_t relation;
   uint16_t pred;
   const struct bdb_binding *bindings;
@@ -539,7 +408,7 @@ typedef struct bdb_atom {
 // One comparison operator; `mask` is the literal 13-bit Allen mask,
 // read for `Allen` only.
 typedef struct bdb_cmp_op {
-  enum bdb_cmp_op_kind kind;
+  uint32_t kind;
   uint16_t mask;
 } bdb_cmp_op;
 
@@ -555,7 +424,7 @@ typedef struct bdb_comparison {
 // `MAX_CONDITION_DEPTH` is refused at marshal (the engine's own bound,
 // re-checked here so the recursion is stack-safe on hostile input).
 typedef struct bdb_condition {
-  enum bdb_condition_kind kind;
+  uint32_t kind;
   struct bdb_comparison cmp;
   const struct bdb_condition *children;
   size_t child_count;

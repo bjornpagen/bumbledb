@@ -4,7 +4,7 @@
 - confidence: confirmed
 - area: ffi
 - components: cpp/bridge/src/db.rs, cpp/bridge/src/lib.rs, cpp/foreign/raii.cc, cpp/AGENTS.md
-- status: open (do not fix)
+- status: fixed (2026-08-13)
 
 ## Summary
 `catch_unwind` only catches *Rust* panics. The read/write callbacks are `extern "C"` function pointers invoked from Rust. If a callback is compiled with exceptions enabled and throws, the exception unwinds through `Db::read`/`Db::write` drop glue (including `EscapedIdBurn` and LMDB txn drops) and into `-fno-exceptions` frames — undefined behavior on both sides. The in-tree SDK sets `-fno-exceptions`, so this is a third-party / mixed-TU hazard, not the cookbook path.
@@ -38,3 +38,7 @@ from inside `bdb_db_write`. Expect process abort or corrupted LMDB, not `BDB_ERR
 **Trace:** `call_read_callback` / `call_write_callback` are `unsafe { callback(context, ptr) }` with no foreign try (impossible in the Rust TU) (`cpp/bridge/src/db.rs:252-287`). `guard` is `catch_unwind` only (`lib.rs:114-129`). Production dialect: `-fno-exceptions` (`cpp/AGENTS.md` §11). Header `bdb_read_callback` / `bdb_write_callback` do not say “must not throw.” A C++ plugin compiled with exceptions can `throw` from inside `bdb_db_write`.
 
 **Why it holds:** Foreign exceptions through Rust `extern "C"` are UB (nomicon). `catch_unwind` cannot catch them. Drop of `WriteTx` / escaped-fresh-id burn during a C++ unwind is the dangerous part. The panic wall was built for this class of crossing and only covers `panic!`. This is not the in-tree happy path; it is a real published-ABI hole.
+
+## Resolution (2026-08-13)
+
+Rust calls `bdb_invoke_read_callback` / `bdb_invoke_write_callback` in `cpp/foreign/callback_trampoline.cc`, compiled with `-fexceptions` via bridge `build.rs`. A throw becomes Abort and never enters Rust. The C header documents this. In-tree SDK TUs remain `-fno-exceptions` and cannot throw. Leftover: the trampoline is in the cargo staticlib (not a separate CMake TU, to avoid duplicate symbols); mixing one EH object into a `-fno-exceptions` link is the usual GCC mix.

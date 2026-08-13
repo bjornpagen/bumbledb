@@ -13,12 +13,15 @@ induction on the stratum index, over `Query/Syntax.lean`'s program
 cut), and **Level 1** is the fueled round loop (`evalProgram` — round
 = evaluate every rule against the current predicate tables, union,
 stop on no change) proved sound AND complete against Level 0
-(`program_eval_sound`). The IR cut, stratification with the safety
-theorem, the delta rewrite's operator-level face, and the driver's
-round loop land here; delta images, watermarks, budgets, and plan
-variants are mechanism and stay in the docs, whole — the mechanism
-fence (`docs/architecture/20-query-ir.md` § engine recursion;
-`docs/architecture/40-execution.md` § the fixpoint driver).
+(`program_eval_sound`). Completeness is under **sufficient fuel**;
+the engine may abort with `Error::FixpointBudgetExceeded` before the
+least fixpoint — that is engine-only incompleteness vs Lean
+`evalProgram`, not a Level-0 gap. The IR cut, stratification with the
+safety theorem, the delta rewrite's operator-level face, and the
+driver's round loop land here; delta images, watermarks, and plan
+variants stay in the docs. The iteration/tuple budget is named as
+that engine abort (`docs/architecture/20-query-ir.md` § engine
+recursion; `docs/architecture/40-execution.md` § the fixpoint driver).
 
 ## The shape of the semantics
 

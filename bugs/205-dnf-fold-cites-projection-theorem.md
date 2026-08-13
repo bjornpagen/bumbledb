@@ -5,7 +5,7 @@
 - area: spec-docs-rust
 - wrong-side: docs
 - components: docs/architecture/20-query-ir.md, lean/Bumbledb/Query/Denotation.lean, lean/Bumbledb/Exec/Dedup.lean, crates/bumbledb/src/api/prepared/build.rs
-- status: open (do not fix)
+- status: fixed (2026-08-13)
 
 ## Summary
 The query-IR architecture doc claims DNF lowering is both answer-preserving and fold-preserving, and cites `Denotation.lean: dnf_preserves_denotation` for that sentence. That theorem is proved only for projection `ruleAnswers`. The aggregate or-transparency law lives in `Dedup.lean: dnf_rekey_transparent`. A reader who treats the citation as covering Sum/Count domains can miss the R2 re-key (shared slot arrays vs head projection).
@@ -58,3 +58,6 @@ Re-read both theorems and the DNF paragraph. **Confirmed.** `wrong-side: docs`. 
 
 ## Related
 - 202 (another docs overclaim on Dedup licences)
+
+## Resolution (2026-08-13)
+`20-query-ir.md` cites `dnf_preserves_denotation` for projection and `dnf_rekey_transparent` for the fold law.

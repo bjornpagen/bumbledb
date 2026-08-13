@@ -60,20 +60,11 @@ model's recorded fact, not an oversight.
 
 * `Statement.judgment` reads interval shape from the field SET
   (`Header.intervalSplit` — the FieldSet doctrine): exactly one
-  interval-typed field is the pointwise reading at ANY written
-  position, matching the engine's order canonicalization
-  (`resolve_target_key` counts interval positions as a set;
-  `key_permutation` bridges statement order to key order). The gate-
-  refused shapes read truthfully as follows: mixed interval/scalar
-  side pairs and several-interval projections split to `none` and
-  default to the scalar reading; an FD with exactly ONE interval
-  position written NON-FINALLY receives the POINTWISE reading — the
-  set-canonical split is position-blind by design. That reading is
-  moot for accepted theories: the engine refuses the non-final shape
-  at declaration (`FunctionalityIntervalNotLast`,
-  `schema/validate.rs` — the neighbor probe needs the scalar prefix
-  as its determinant group), so no accepted theory reaches it, and
-  `holds` is consumed on ACCEPTED theories only (Txn, PRD 09).
+  interval-typed field **in last position** is the pointwise reading
+  (`Header.functionalityAdmitted`). The engine refuses a non-final
+  interval FD (`FunctionalityIntervalNotLast`) and two-or-more
+  interval fields (`FunctionalityMultipleIntervals`); those shapes
+  judge as `False` here, not as pointwise or scalar Functionality.
 * The pointwise judgments quantify over the tagged `Point` sum
   (`Schema.lean`), so no typing premise appears; accepted statements
   stay within one tag by positional typing — which at interval
@@ -86,17 +77,13 @@ model's recorded fact, not an oversight.
 * Finiteness is never demanded: the ten items are subset and
   injectivity algebra, valid over arbitrary fact sets; the named token
   (`Set.Finite`) stays unspent in this module.
-* **Closed-target key resolution is STRICTER than
-  `TargetKeyAccepted`.** A containment into a closed relation resolves
-  only the synthetic `[FieldId(0)]` id key
-  (`schema/validate.rs::resolve_target_key`, the sealed-extension
-  arm); a user-declared non-id key on a
-  closed relation satisfies `TargetKeyAccepted` here yet Rust refuses
-  the containment — acceptance strictly narrower, sound direction.
-  Likewise `ClosedContainmentInterval`
-  (`schema/validate.rs::validate_containment`) refuses
-  interval-typed projections under a closed target outright — a v0
-  refusal this model does not restate.
+* **Closed-target key resolution matches the engine gate.**
+  `TargetKeyAccepted` requires the synthetic `[FieldId(0)]` handle
+  when the target is closed (`ClosedTargetNotHandle`) — not any
+  declared payload key. Interval-typed projections on a containment
+  with a closed side are `False` (`ClosedContainmentInterval`,
+  `Theory.closedContainmentInterval`) — a v0 refusal restated as
+  the judgment, not Coverage.
 -/
 
 namespace Bumbledb
@@ -174,15 +161,17 @@ def Containment (A : Set Fact) (φ : Selection) (X : List FieldId)
 
 /-- The ACCEPTANCE premise, distinct from the denotation: the target
 projection resolves — as an exact FIELD SET — to a declared
-functionality statement of the theory. This is
-`schema/validate.rs::resolve_target_key`'s exact-field-set rule
-(probe-ability: one determinant get answers "is this tuple present");
-set equality also means a resolved key carries any interval field of
-the projection, so the pointwise gate's "key carries its interval"
-demand is discharged by construction, exactly as in Rust. -/
+functionality statement of the theory. For a **closed** target the
+engine admits only the synthetic handle `FieldId(0)`
+(`ClosedTargetNotHandle`); that conjunct is here, matching
+`schema/validate.rs::resolve_target_key`. Set equality also means a
+resolved key carries any interval field of the projection, so the
+pointwise gate's "key carries its interval" demand is discharged by
+construction, exactly as in Rust. -/
 def TargetKeyAccepted (T : Theory) (target : Atom) : Prop :=
-  ∃ K, Statement.functionality target.relation K ∈ T.statements ∧
-    sameFields K target.projection
+  ((T.closed target.relation).isSome → target.projection = [⟨0⟩]) ∧
+    ∃ K, Statement.functionality target.relation K ∈ T.statements ∧
+      sameFields K target.projection
 
 /-- Bare `==`: mutual containment, each direction judged
 independently — projected view equality, NOT unique correspondence
@@ -262,31 +251,30 @@ def ExactPartition (A : Set Fact) (φ : Selection) (S : List FieldId)
 `I` — interval positions read through the denotation (a fact stands
 for its point-family): an all-scalar projection is the classical
 judgment unchanged; a projection whose field set carries exactly one
-interval field is the pointwise lifting, whatever its written
-position (the FieldSet doctrine — `Header.intervalSplit`).
-Gate-refused shapes default to the scalar reading (recorded
-narrowing — `holds` is consumed on accepted theories only). The
-extension form reads its own denotation: a capacity statement is the
-per-parent measure judgment over the window resolved at each parent
-row (`Capacity.lean` — projections refuse interval positions at the
-gate, the recorded v0 trigger narrowed to PROJECTIONS since
-intervals now enter through the measure argument, so no split is
-consulted). -/
+interval field **in last position** is the pointwise lifting
+(`Header.functionalityAdmitted`). Refused FD shapes (multiple interval
+fields, non-final interval) judge as `False`. Closed+interval
+containment judges as `False` (`Theory.closedContainmentInterval`),
+not Coverage. The extension form reads its own denotation: a capacity
+statement is the per-parent measure judgment over the window resolved
+at each parent row (`Capacity.lean`). -/
 def Statement.judgment (T : Theory) (I : Instance) :
     Statement → Prop
   | .functionality R X =>
-    match T.header.intervalSplit R X with
-    | some (S, i) => PointwiseKey (T.den I R) S i
-    | none => Functionality (T.den I R) X
+    T.header.functionalityAdmitted R X = true ∧
+      match T.header.intervalSplit R X with
+      | some (S, i) => PointwiseKey (T.den I R) S i
+      | none => Functionality (T.den I R) X
   | .containment src tgt =>
-    match T.header.intervalSplit src.relation src.projection,
-          T.header.intervalSplit tgt.relation tgt.projection with
-    | some (S, i), some (U, j) =>
-      Coverage (T.den I src.relation) src.selection S i
-        (T.den I tgt.relation) tgt.selection U j
-    | _, _ =>
-      Containment (T.den I src.relation) src.selection src.projection
-        (T.den I tgt.relation) tgt.selection tgt.projection
+    T.closedContainmentInterval src tgt = false ∧
+      match T.header.intervalSplit src.relation src.projection,
+            T.header.intervalSplit tgt.relation tgt.projection with
+      | some (S, i), some (U, j) =>
+        Coverage (T.den I src.relation) src.selection S i
+          (T.den I tgt.relation) tgt.selection U j
+      | _, _ =>
+        Containment (T.den I src.relation) src.selection src.projection
+          (T.den I tgt.relation) tgt.selection tgt.projection
   | .capacity tgt wt w src =>
     CapacityLaw (T.den I src.relation) src.selection src.projection
       wt w (T.den I tgt.relation) tgt.selection tgt.projection
@@ -578,12 +566,12 @@ theorem accepted_target_key_spent
     (hscalar : ∀ i, i ∈ tgt.projection →
       T.header.isInterval tgt.relation i = false) :
     Functionality (T.den I tgt.relation) tgt.projection := by
-  obtain ⟨K, hmem, hset⟩ := hacc
+  obtain ⟨_, K, hmem, hset⟩ := hacc
   have hj := hI _ hmem
   have hnone : T.header.intervalSplit tgt.relation K = none :=
     T.header.intervalSplit_scalar tgt.relation K
       fun i hi => hscalar i ((hset i).mp hi)
   simp only [Statement.judgment, hnone] at hj
-  exact (functionality_respects_field_set hset).mp hj
+  exact (functionality_respects_field_set hset).mp hj.2
 
 end Bumbledb

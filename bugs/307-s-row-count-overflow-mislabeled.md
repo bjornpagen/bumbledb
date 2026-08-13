@@ -4,7 +4,7 @@
 - confidence: confirmed
 - area: other
 - components: crates/bumbledb/src/storage/commit/write.rs
-- status: open (do not fix)
+- status: fixed (2026-08-13)
 
 ## Summary
 
@@ -38,3 +38,7 @@ Craft (or mock) a stored `S` row count of `u64::MAX` and a positive `row_count_d
 ## Verification (2026-08-12)
 
 Confirmed. `flush_counters` (`write.rs:343-347`) maps every `checked_add_signed` `None` to `MalformedValue("S row count underflow")`. `u64::checked_add_signed` fails for both a negative delta past 0 and a positive delta past `u64::MAX`. `count_delta` is the delta's net insert/delete (`insert.rs` `+= 1`, `delete.rs` `-= 1`). Overflow of an honest count is not a practical host path (near-2^64 live rows), but a stored `S` of `u64::MAX` plus one insert hits the overflow arm and is still labeled underflow. The commit aborts either way. Severity stays **info**.
+
+## Resolution (2026-08-13)
+
+`checked_add_signed` failure now names overflow when the delta is positive and underflow when it is negative; the commit still aborts.

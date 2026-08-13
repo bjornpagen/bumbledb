@@ -891,21 +891,24 @@ theorem capacityB_iff {LA LB : List Row} {A B : Set Fact}
 /-! ## The per-statement dispatcher -/
 
 /-- One statement's checker — `Statement.judgment`'s dispatch,
-executable: the same `intervalSplit` reads select the same arms. -/
+executable: the same `functionalityAdmitted` / `closedContainmentInterval`
+gates and `intervalSplit` reads select the same arms. -/
 def Statement.checkB (T : Theory) (W : RowInstance) : Statement → Bool
   | .functionality R X =>
-    match T.header.intervalSplit R X with
-    | some (S, i) => pointwiseKeyB (W.rows R) S i
-    | none => funcB (W.rows R) X
+    T.header.functionalityAdmitted R X &&
+      match T.header.intervalSplit R X with
+      | some (S, i) => pointwiseKeyB (W.rows R) S i
+      | none => funcB (W.rows R) X
   | .containment src tgt =>
-    match T.header.intervalSplit src.relation src.projection,
-          T.header.intervalSplit tgt.relation tgt.projection with
-    | some (S, i), some (U, j) =>
-      coverageB (W.rows src.relation) src.selection S i
-        (W.rows tgt.relation) tgt.selection U j
-    | _, _ =>
-      containB (W.rows src.relation) src.selection src.projection
-        (W.rows tgt.relation) tgt.selection tgt.projection
+    !T.closedContainmentInterval src tgt &&
+      match T.header.intervalSplit src.relation src.projection,
+            T.header.intervalSplit tgt.relation tgt.projection with
+      | some (S, i), some (U, j) =>
+        coverageB (W.rows src.relation) src.selection S i
+          (W.rows tgt.relation) tgt.selection U j
+      | _, _ =>
+        containB (W.rows src.relation) src.selection src.projection
+          (W.rows tgt.relation) tgt.selection tgt.projection
   | .capacity tgt wt w src =>
     capacityB (W.rows src.relation) src.selection src.projection wt w
       (W.rows tgt.relation) tgt.selection tgt.projection
@@ -917,42 +920,50 @@ theorem Statement.checkB_iff {T : Theory} {W : RowInstance}
     st.checkB T W = true ↔ st.judgment T W.den := by
   cases st with
   | functionality R X =>
-    cases hsplit : T.header.intervalSplit R X with
-    | some si =>
-      obtain ⟨S, i⟩ := si
-      simp only [Statement.checkB, Statement.judgment, hsplit]
-      exact pointwiseKeyB_iff (theoryDen_denotes hclosed R) S i
-    | none =>
-      simp only [Statement.checkB, Statement.judgment, hsplit]
-      exact funcB_iff (theoryDen_denotes hclosed R) X
+    cases hadm : T.header.functionalityAdmitted R X with
+    | false =>
+      simp [Statement.checkB, Statement.judgment, hadm]
+    | true =>
+      cases hsplit : T.header.intervalSplit R X with
+      | some si =>
+        obtain ⟨S, i⟩ := si
+        simp [Statement.checkB, Statement.judgment, hadm, hsplit]
+        exact pointwiseKeyB_iff (theoryDen_denotes hclosed R) S i
+      | none =>
+        simp [Statement.checkB, Statement.judgment, hadm, hsplit]
+        exact funcB_iff (theoryDen_denotes hclosed R) X
   | containment src tgt =>
-    cases hs : T.header.intervalSplit src.relation src.projection with
-    | some si =>
-      obtain ⟨S, i⟩ := si
-      cases ht : T.header.intervalSplit tgt.relation tgt.projection with
-      | some uj =>
-        obtain ⟨U, j⟩ := uj
-        simp only [Statement.checkB, Statement.judgment, hs, ht]
-        exact coverageB_iff (theoryDen_denotes hclosed src.relation)
-          (theoryDen_denotes hclosed tgt.relation) src.selection S i
-          tgt.selection U j
+    cases hci : T.closedContainmentInterval src tgt with
+    | true =>
+      simp [Statement.checkB, Statement.judgment, hci]
+    | false =>
+      cases hs : T.header.intervalSplit src.relation src.projection with
+      | some si =>
+        obtain ⟨S, i⟩ := si
+        cases ht : T.header.intervalSplit tgt.relation tgt.projection with
+        | some uj =>
+          obtain ⟨U, j⟩ := uj
+          simp [Statement.checkB, Statement.judgment, hci, hs, ht]
+          exact coverageB_iff (theoryDen_denotes hclosed src.relation)
+            (theoryDen_denotes hclosed tgt.relation) src.selection S i
+            tgt.selection U j
+        | none =>
+          simp [Statement.checkB, Statement.judgment, hci, hs, ht]
+          exact containB_iff (theoryDen_denotes hclosed src.relation)
+            (theoryDen_denotes hclosed tgt.relation) src.selection
+            src.projection tgt.selection tgt.projection
       | none =>
-        simp only [Statement.checkB, Statement.judgment, hs, ht]
-        exact containB_iff (theoryDen_denotes hclosed src.relation)
-          (theoryDen_denotes hclosed tgt.relation) src.selection
-          src.projection tgt.selection tgt.projection
-    | none =>
-      cases ht : T.header.intervalSplit tgt.relation tgt.projection with
-      | some uj =>
-        simp only [Statement.checkB, Statement.judgment, hs, ht]
-        exact containB_iff (theoryDen_denotes hclosed src.relation)
-          (theoryDen_denotes hclosed tgt.relation) src.selection
-          src.projection tgt.selection tgt.projection
-      | none =>
-        simp only [Statement.checkB, Statement.judgment, hs, ht]
-        exact containB_iff (theoryDen_denotes hclosed src.relation)
-          (theoryDen_denotes hclosed tgt.relation) src.selection
-          src.projection tgt.selection tgt.projection
+        cases ht : T.header.intervalSplit tgt.relation tgt.projection with
+        | some uj =>
+          simp [Statement.checkB, Statement.judgment, hci, hs, ht]
+          exact containB_iff (theoryDen_denotes hclosed src.relation)
+            (theoryDen_denotes hclosed tgt.relation) src.selection
+            src.projection tgt.selection tgt.projection
+        | none =>
+          simp [Statement.checkB, Statement.judgment, hci, hs, ht]
+          exact containB_iff (theoryDen_denotes hclosed src.relation)
+            (theoryDen_denotes hclosed tgt.relation) src.selection
+            src.projection tgt.selection tgt.projection
   | capacity tgt wt w src =>
     simp only [Statement.checkB, Statement.judgment]
     exact capacityB_iff (theoryDen_denotes hclosed src.relation)

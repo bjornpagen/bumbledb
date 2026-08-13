@@ -5,7 +5,7 @@
 - area: spec-docs-rust
 - wrong-side: split
 - components: crates/bumbledb/src/error.rs, crates/bumbledb/src/exec/run.rs, crates/bumbledb/src/api/prepared/resolve_memo.rs, lean/Bumbledb/Query/Denotation.lean, docs/architecture/70-api.md, docs/architecture/40-execution.md
-- status: open (do not fix)
+- status: fixed (2026-08-13)
 
 ## Summary
 The executor can abort a well-typed query with `Overflow(OriginCapacity)` when a D2 origin counter would cross `u32`, and with `ResultBytesOverflow` when answer-byte offsets do not fit `u32`. Lean `eval_sound` / `ruleAnswers` have no such errors — every denotational answer is a tuple. 70-api lists `Overflow` as “aggregate range check” and omits both `OriginCapacity` and `ResultBytesOverflow`. `40-execution.md` still says resource limits are “none in v0” except the fixpoint budget, while result buffers are supposed to grow until the OS is the backstop. These are representation ceilings that make the engine incomplete on large-but-finite answer sets the spec still denotes.
@@ -34,3 +34,6 @@ Re-read `eval_sound`, the 70-api/40-execution resource stance, and the two raise
 ## Related
 - 206 (another incompleteness vs Lean eval)
 - 210 (runtime error roster)
+
+## Resolution (2026-08-13)
+`70-api.md` and `40-execution.md` list `Overflow(OriginCapacity)` and `ResultBytesOverflow` as engine-only resource errors. Lean `Txn.lean` / README note they are unmodeled. Checks kept.

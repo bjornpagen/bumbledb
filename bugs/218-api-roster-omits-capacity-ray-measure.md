@@ -5,7 +5,7 @@
 - area: spec-docs-rust
 - wrong-side: docs
 - components: docs/architecture/70-api.md, crates/bumbledb/src/error.rs, docs/design/capacity-laws.md, crates/bumbledb/src/storage/commit/judgment.rs
-- status: open (do not fix)
+- status: fixed (2026-08-13)
 
 ## Summary
 The embedding-surface architecture doc lists write errors as `CommitRejected`, `GenerationMoved`, `ForeignSnapshot`, `FreshExhausted`, `FactShape`, `Corruption`, `Io`/`Lmdb`. A Duration-weighted capacity insert of a ray fails with `Error::CapacityRayMeasure` — not a violation set, not `CommitRejected`. Lean has no such constructor (junk-0 / empty-parent vacuity). Hosts following 70-api will not handle the typed refusal C10/C20 made load-bearing.
@@ -34,3 +34,6 @@ Re-read the 70-api write roster, C10/C20 docs, and `Error::CapacityRayMeasure`. 
 ## Related
 - 200 (C20 behavioral split)
 - 210 (runtime roster also incomplete)
+
+## Resolution (2026-08-13)
+`70-api.md` write-error roster includes `CapacityRayMeasure` (C10 judge-time, C20 parent-blind).

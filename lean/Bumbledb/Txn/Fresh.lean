@@ -365,7 +365,7 @@ theorem materialized_key_is_functionality {T : Theory}
       rw [hjm]
       exact hscalar
   simp only [Statement.judgment, hnone] at hj
-  exact hj
+  exact hj.2
 
 end Fresh
 end Txn

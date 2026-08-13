@@ -119,7 +119,7 @@ namespace bdb::detail {
 template<class T>
 inline constexpr auto query_type_reflection = ^^T;
 
-/** String and bytes answer members are borrowed from the answers carrier. */
+/** String and bytes answer members are owned copies taken at decode. */
 [[nodiscard]] consteval auto answer_type_of(field_class cls) -> std::meta::info {
 	switch (cls.kind) {
 	case value_kind::boolean:
@@ -129,9 +129,9 @@ inline constexpr auto query_type_reflection = ^^T;
 	case value_kind::i64:
 		return query_type_reflection<std::int64_t>;
 	case value_kind::string:
-		return query_type_reflection<std::string_view>;
+		return query_type_reflection<std::string>;
 	case value_kind::fixed_bytes:
-		return query_type_reflection<std::span<std::byte const>>;
+		return query_type_reflection<std::vector<std::byte>>;
 	case value_kind::interval_u64:
 		return query_type_reflection<interval<std::uint64_t>>;
 	case value_kind::interval_i64:
@@ -166,11 +166,35 @@ inline constexpr auto query_type_reflection = ^^T;
 	return query_type_reflection<std::span<interval<std::int64_t> const>>;
 }
 
+/**
+ * A runtime scalar param's member type: string/bytes borrow the caller's
+ * storage for the execute call only — the bridge copies before returning.
+ */
+[[nodiscard]] consteval auto param_scalar_type_of(field_class cls) -> std::meta::info {
+	switch (cls.kind) {
+	case value_kind::boolean:
+		return query_type_reflection<bool>;
+	case value_kind::u64:
+		return query_type_reflection<std::uint64_t>;
+	case value_kind::i64:
+		return query_type_reflection<std::int64_t>;
+	case value_kind::string:
+		return query_type_reflection<std::string_view>;
+	case value_kind::fixed_bytes:
+		return query_type_reflection<std::span<std::byte const>>;
+	case value_kind::interval_u64:
+		return query_type_reflection<interval<std::uint64_t>>;
+	case value_kind::interval_i64:
+		break;
+	}
+	return query_type_reflection<interval<std::int64_t>>;
+}
+
 [[nodiscard]] consteval auto param_type_of(param_data const& parameter) -> std::meta::info {
 	if (parameter.shape == param_shape::set) {
 		return set_type_of(parameter.domain);
 	}
-	return answer_type_of(parameter.domain);
+	return param_scalar_type_of(parameter.domain);
 }
 
 /**

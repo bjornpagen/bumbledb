@@ -1625,5 +1625,31 @@ theorem antiprobe_eq_antijoin_of_negFree {Γ : Typing} {C : Classify}
     exact hn a ha
       ⟨f, hf, (surfaceMatches_of_membershipFree (hneg a ha)).mp hm⟩
 
+/-! ## Executable surface matching (conformance AntiProbe) -/
+
+/-- Decided point membership — `Value.pointMem` as a `Bool`. -/
+def Value.pointMemB (x w : Value) : Bool :=
+  match x.point with
+  | none => false
+  | some p => decide (p ∈ w.points)
+
+/-- Executable `Term.selectsAt`: membership positions scan the term's
+finite value list (`Term.values`); every other position is
+`Term.selects`. -/
+def Term.selectsAtB (Γ : Typing) (ρ : ParamEnv) (σ : Assignment)
+    (R : RelId) (i : FieldId) (t : Term) (w : Value) : Bool :=
+  if Γ.membership R i t then
+    (Term.values ρ σ t).any fun x => Value.pointMemB x w
+  else
+    decide (Term.selects ρ σ t w)
+
+/-- Executable `SurfaceMatches` — the engine's negated-membership
+reading (`normalize.rs::AntiProbe`) as a filter over a concrete
+world. On membership-free atoms this coincides with `matchesB`. -/
+def surfaceMatchesB (Γ : Typing) (ρ : ParamEnv) (σ : Assignment)
+    (a : Atom) (f : Fact) : Bool :=
+  a.bindings.all fun b =>
+    Term.selectsAtB Γ ρ σ a.relation b.1 b.2 (f b.1)
+
 end Query
 end Bumbledb

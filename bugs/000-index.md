@@ -1,8 +1,9 @@
 # Bug audit index
 
 - **Audit date:** 2026-08-12
+- **Bash date:** 2026-08-13
 - **Scope:** entire codebase — FFI / lifetimes / unsafe; three-way Lean spec vs Rust vs normative docs; general correctness (engine, macros, persistence, C++ dialect)
-- **Status:** **verified.** Nothing was fixed. Remaining finding files stay `open (do not fix)`. This directory is a read-only dump; coordinators and later work must treat every surviving file as still live unless a later change explicitly closes it.
+- **Status:** **bashed.** Every surviving finding is `fixed (2026-08-13)` or `closed (obsolete)`. Product code was modified in this bash; nothing was committed.
 - **Layout:** flat directory only. No nested folders.
 
 ## How files are named
@@ -99,9 +100,20 @@ Spec findings also record **wrong-side** (which artifact is wrong, or a split):
 
 ---
 
+## Bug bash (2026-08-13)
+
+47 fixed in code. 2 closed obsolete (kill-list; do not resurrect). 0 blocked. No commit.
+
+| Bucket | Ids |
+|---|---|
+| **Obsolete** | 201, 211 — ArgMax/ArgMin (including measure-keyed R5) killed |
+| **Fixed** | every other surviving id (100–109, 111–117, 200, 202–210, 212–225, 301–304, 307–308) |
+
+Kill-list items with no dedicated ticket (CountDistinct, writeWitnessed retry, host sort helpers, Allen mask params) were not resurrected. Public explain/staleness/introspect stay off the embedding API; raw NAPI `preparedExplain`/`preparedStaleness` remain and were included in 100.
+
 ## Read this first
 
-Critical, then every high finding. One line each. **Status = verified; nothing fixed.**
+Critical, then every high finding. One line each. **Bashed 2026-08-13.**
 
 ### Critical
 
@@ -124,7 +136,7 @@ Critical, then every high finding. One line each. **Status = verified; nothing f
 
 ## Full catalog
 
-Every surviving finding. Status is **open (do not fix)** for all. Spec `wrong-side` is in parentheses under Area when present.
+Every surviving finding. Status is **fixed (2026-08-13)** except 201 and 211 (**closed obsolete**). Spec `wrong-side` is in parentheses under Area when present.
 
 | Id | Sev | Conf | Area | Title | File |
 |---|---|---|---|---|---|
@@ -299,6 +311,6 @@ Same *host diagnosis* contract (complete sealed violation set), engine paths plu
 
 ---
 
-## Explicit: nothing was fixed
+## Explicit: bash complete, not committed
 
-Every surviving finding file has `status: open (do not fix)`. Verification deleted four ids (see rebuttals), downgraded 107 and 113, rewrote 116 / 210 / 211 / 224 / 225, and added 308. Product source trees were not modified as part of this audit.
+Every surviving finding file is `fixed (2026-08-13)` or `closed (obsolete)` (201, 211). Verification (2026-08-12) deleted four ids (see rebuttals), downgraded 107 and 113, rewrote 116 / 210 / 211 / 224 / 225, and added 308. The 2026-08-13 bash modified product trees; the owner commits once at the end.

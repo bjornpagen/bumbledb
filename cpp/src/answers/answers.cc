@@ -10,9 +10,8 @@ export namespace bdb {
  * The untyped, reusable answers carrier: move-only RAII over the
  * bridge's flat buffer. Minted empty; execution fills it; clear()
  * retains capacity. The moved-from carrier is inert (alive() == false,
- * len/arity 0). String/bytes alternatives of a decoded Value BORROW this
- * carrier — valid only while it is alive, un-cleared, and un-re-executed;
- * fixed-width alternatives are values.
+ * len/arity 0). decode_value copies string/bytes into the returned
+ * Value; those copies do not borrow this carrier.
  */
 class [[nodiscard]] AnswersRaw {
 	foreign::answers_handle handle_;
@@ -39,8 +38,8 @@ public:
 	}
 
 	/**
-	 * Empties the carrier, retaining capacity (invalidates borrowed
-	 * string/bytes cells).
+	 * Empties the carrier, retaining capacity. Previously decoded Value
+	 * copies are unaffected.
 	 */
 	auto clear() -> void {
 		handle_.clear();
@@ -48,7 +47,7 @@ public:
 
 	/**
 	 * One cell, bounds-checked: nullopt out of range, never a panic.
-	 * String/bytes alternatives borrow THIS carrier.
+	 * String/bytes alternatives are owned copies.
 	 */
 	[[nodiscard]] auto cell(Cell at) const -> std::optional<Value> {
 		return handle_.cell(at.row, at.column).and_then([](foreign::bdb_value const& wire) -> std::optional<Value> {
@@ -93,7 +92,7 @@ public:
 
 	/**
 	 * One cell, bounds-checked: nullopt out of range. String/bytes
-	 * alternatives borrow THIS row set.
+	 * alternatives are owned copies.
 	 */
 	[[nodiscard]] auto cell(Cell at) const -> std::optional<Value> {
 		return handle_.cell(at.row, at.column).and_then([](foreign::bdb_value const& wire) -> std::optional<Value> {

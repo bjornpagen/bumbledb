@@ -712,7 +712,7 @@ pub(super) fn check_target(
                     let (_, _, source_rel, source_row) = keys::parse_reverse_key(r_key).ok_or(
                         Error::Corruption(CorruptionError::MalformedValue("R key shape")),
                     )?;
-                    let fact = fact_by_row(data, txn.raw(), source_rel, source_row)?;
+                    let fact = fact_by_row(data, txn.raw(), schema, source_rel, source_row)?;
                     if plan.inserts_fact(source_rel, fact) {
                         continue;
                     }
@@ -757,7 +757,7 @@ pub(super) fn check_target(
                 "R key statement",
             )));
         };
-        let fact_bytes = fact_by_row(data, txn.raw(), source_rel, source_row)?;
+        let fact_bytes = fact_by_row(data, txn.raw(), schema, source_rel, source_row)?;
         if plan.inserts_fact(source_rel, fact_bytes) {
             // The survivor partition again: an inserted source's
             // coverage demand is the source side's probe, not a
@@ -880,6 +880,7 @@ fn establishing_fact<'t>(
         return fact_by_row(
             data,
             txn.raw(),
+            schema,
             statement.relation,
             fresh_row_word(determinant)?,
         );
@@ -891,7 +892,13 @@ fn establishing_fact<'t>(
         .ok_or(Error::Corruption(CorruptionError::MalformedValue(
             "re-established U determinant",
         )))?;
-    fact_by_row(data, txn.raw(), statement.relation, decode_row_id(value)?)
+    fact_by_row(
+        data,
+        txn.raw(),
+        schema,
+        statement.relation,
+        decode_row_id(value)?,
+    )
 }
 
 /// The first sealed source axiom inside φ projecting to the
@@ -1084,6 +1091,10 @@ impl<'a> Checker<'a> {
             schema,
             key: [0; MAX_KEY],
         }
+    }
+
+    fn row_fact(&self, relation: RelationId, row_id: u64) -> Result<&'a [u8]> {
+        fact_by_row(self.data, self.txn, self.schema, relation, row_id)
     }
 
     /// Scalar target probe: one `U` get on the target key's determinant. A miss
@@ -1342,12 +1353,7 @@ impl<'a> Checker<'a> {
                         if measure < u128::from(statement.lo)
                             || hi.is_some_and(|hi| measure > u128::from(hi))
                         {
-                            let parent_fact = fact_by_row(
-                                self.data,
-                                self.txn,
-                                statement.target.relation,
-                                row_id,
-                            )?;
+                            let parent_fact = self.row_fact(statement.target.relation, row_id)?;
                             return Err(Error::CommitRejected {
                                 violations: Violations::one(Violation::Capacity {
                                     statement: statement.id,
@@ -1358,7 +1364,7 @@ impl<'a> Checker<'a> {
                         }
                         return Ok(());
                     }
-                    fact_by_row(self.data, self.txn, statement.target.relation, row_id)?
+                    self.row_fact(statement.target.relation, row_id)?
                 };
                 let layout = self.schema.relation(statement.target.relation).layout();
                 if !satisfies(&checks.target, layout, fact) {
@@ -1515,8 +1521,15 @@ impl<'a> Checker<'a> {
         relation: RelationId,
         determinant: &[u8],
     ) -> Result<Option<&'a [u8]>> {
-        let f_len = keys::fact_key(&mut self.key, relation, fresh_row_word(determinant)?);
-        Ok(self.data.get(self.txn, &self.key[..f_len])?)
+        let row_id = fresh_row_word(determinant)?;
+        let f_len = keys::fact_key(&mut self.key, relation, row_id);
+        match self.data.get(self.txn, &self.key[..f_len])? {
+            None => Ok(None),
+            Some(bytes) => {
+                crate::storage::read::check_width(self.schema, relation, row_id, bytes)?;
+                Ok(Some(bytes))
+            }
+        }
     }
 
     /// The per-segment target-selection check: with an empty σ the determinant
@@ -1527,7 +1540,7 @@ impl<'a> Checker<'a> {
             return Ok(());
         }
         let row_id = decode_row_id(value)?;
-        let target_fact = fact_by_row(self.data, self.txn, probe.target_relation, row_id)?;
+        let target_fact = self.row_fact(probe.target_relation, row_id)?;
         self.check_fact(probe, target_fact)
     }
 

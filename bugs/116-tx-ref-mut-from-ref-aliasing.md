@@ -4,7 +4,7 @@
 - confidence: confirmed
 - area: ffi
 - components: cpp/bridge/src/db.rs
-- status: open (do not fix)
+- status: fixed (2026-08-13)
 
 ## Summary
 `bdb_tx_ref::transaction` is `fn(&self) -> &mut WriteTx` (`clippy::mut_from_ref` expect). Each `bdb_tx_*` entry `ref_in`s the same `bdb_tx_ref` and reborrows `&mut` to the erased transaction. Same-thread sequential FFI calls are sound (each entry’s `&mut` drops before return). The C ABI pointer is still shareable: a callback that hands `bdb_tx_ref*` to another OS thread can create two live `&mut WriteTx` values, and `Cell<bool> alive` is a data race against `invalidate`. There is no “in_tx_op” flag analogous to `in_write`.
@@ -35,3 +35,7 @@ Header: callbacks are “synchronous, on the calling thread.” It does not say 
 **Trace:** `transaction(&self) -> &mut WriteTx` (`db.rs:172-195`); `alive` is `Cell<bool>` (`:73, 86`); `bdb_tx_insert` `ref_in` then `transaction()?` (`:549-566`). Contrast `enter_write`’s `AtomicBool`.
 
 **Why the remaining claim holds:** The SAFETY comment’s “this is the only reference” is a protocol assumption, not a runtime exclusive. Sharing the C pointer across threads during the callback is representable and is aliasing UB / a `Cell` data race. Same exclusive-access gap as 112, for the lexical tx capability.
+
+## Resolution (2026-08-13)
+
+`alive` is `AtomicBool`. `in_op` makes `transaction()` exclusive; a second concurrent call is `MISUSE`. The SAFETY comment names that exclusive.

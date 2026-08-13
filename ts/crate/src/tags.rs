@@ -39,8 +39,8 @@ use bumbledb::schema::spec::{
 };
 use bumbledb::schema::{IntervalElement, ValueType};
 use bumbledb::{
-    AggOp, AtomSource, CmpOp, ConditionTree, Direction, FindTerm, HeadOp, HeadTerm,
-    StatementKind, Term, Value,
+    AggOp, AtomSource, CmpOp, ConditionTree, Direction, FindTerm, HeadOp, HeadTerm, StatementKind,
+    Term, Value,
 };
 
 use crate::marshal::OwnedParam;

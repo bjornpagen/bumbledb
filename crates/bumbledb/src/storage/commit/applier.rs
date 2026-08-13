@@ -5,7 +5,7 @@ use bumbledb_theory::schema::{RelationId, StatementId};
 use super::plan::FactOp;
 use super::{Applier, crashpoint, decode_row_id, fact_by_row};
 
-impl Applier<'_> {
+impl Applier<'_, '_> {
     /// Phase-1 step: removes one fact's F/M/U/R entries, every key byte
     /// taken from the plan. The fact exists in base state by the delta's
     /// net-disposition invariant the plan was derived from — a missing
@@ -105,9 +105,9 @@ impl Applier<'_> {
     /// collector and the step continues (scan-complete: every determinant of
     /// every fact is judged, so the rejection carries the complete set of
     /// violated key statements; the transaction aborts after phase 2
-    /// either way, so the skipped put persists nothing — an `F`-conflicted
-    /// fact skips its remaining puts whole: its row id has no free slot to
-    /// land in, and the recorded conviction already names the statement).
+    /// either way, so skipped puts persist nothing). An `F`-conflicted
+    /// fact skips its remaining *puts* (its row id has no free slot) but
+    /// still walks every additional key in `op.determinants`.
     /// The fact is absent from base state by the delta's net-disposition
     /// invariant the plan was derived from — a live `M` entry means
     /// storage disagrees with what the plan *proved*, unambiguously
@@ -118,6 +118,7 @@ impl Applier<'_> {
         // pre-existence probe and the `M` put fold into one
         // `NO_OVERWRITE` descent below — `self.key` is free scratch
         // until the membership derivation.
+        let mut skip_puts = false;
         let row_id = match &op.fresh_row {
             Some(fresh) => {
                 let f_len = keys::fact_key(&mut self.key, rel, fresh.row_id);
@@ -139,34 +140,36 @@ impl Applier<'_> {
                         fact: op.fact.into(),
                         incumbent: None,
                     });
-                    return Ok(());
+                    skip_puts = true;
                 }
                 fresh.row_id
             }
             None => self.next_row_id(rel)?,
         };
-        let m_len = keys::membership_key(&mut self.key, rel, op.fact_hash);
-        // The pre-existence probe IS the put: `NO_OVERWRITE` surfaces an
-        // occupied `M` key as `KeyExist` in the same descent the put
-        // pays anyway — one root-to-leaf walk, not two.
-        match self.data.put_with_flags(
-            self.txn.raw_mut(),
-            heed::PutFlags::NO_OVERWRITE,
-            &self.key[..m_len],
-            row_id.to_le_bytes().as_slice(),
-        ) {
-            Ok(()) => {}
-            Err(heed::Error::Mdb(heed::MdbError::KeyExist)) => {
-                return Err(Error::Corruption(CorruptionError::DispositionDesync {
-                    relation: rel,
-                }));
+        if !skip_puts {
+            let m_len = keys::membership_key(&mut self.key, rel, op.fact_hash);
+            // The pre-existence probe IS the put: `NO_OVERWRITE` surfaces an
+            // occupied `M` key as `KeyExist` in the same descent the put
+            // pays anyway — one root-to-leaf walk, not two.
+            match self.data.put_with_flags(
+                self.txn.raw_mut(),
+                heed::PutFlags::NO_OVERWRITE,
+                &self.key[..m_len],
+                row_id.to_le_bytes().as_slice(),
+            ) {
+                Ok(()) => {}
+                Err(heed::Error::Mdb(heed::MdbError::KeyExist)) => {
+                    return Err(Error::Corruption(CorruptionError::DispositionDesync {
+                        relation: rel,
+                    }));
+                }
+                Err(other) => return Err(other.into()),
             }
-            Err(other) => return Err(other.into()),
+            crashpoint!("mid-write-m");
+            let f_len = keys::fact_key(&mut self.key, rel, row_id);
+            self.put_data(f_len, op.fact)?;
+            crashpoint!("mid-write-f");
         }
-        crashpoint!("mid-write-m");
-        let f_len = keys::fact_key(&mut self.key, rel, row_id);
-        self.put_data(f_len, op.fact)?;
-        crashpoint!("mid-write-f");
 
         for determinant in &op.determinants {
             let u_len = keys::determinant_key(
@@ -187,7 +190,10 @@ impl Applier<'_> {
             if let Some(value) = self.data.get(self.txn.raw(), &self.key[..u_len])? {
                 let incumbent = if determinant.pointwise.is_some() {
                     let incumbent_row = decode_row_id(value)?;
-                    Some(fact_by_row(self.data, self.txn.raw(), rel, incumbent_row)?.into())
+                    Some(
+                        fact_by_row(self.data, self.txn.raw(), self.schema, rel, incumbent_row)?
+                            .into(),
+                    )
                 } else {
                     None
                 };
@@ -198,6 +204,12 @@ impl Applier<'_> {
                 });
                 continue;
             }
+            if skip_puts {
+                if let Some(tail) = determinant.pointwise {
+                    self.probe_neighbors(rel, determinant.statement, u_len, tail, op.fact)?;
+                }
+                continue;
+            }
             self.put_data(u_len, row_id.to_le_bytes().as_slice())?;
             crashpoint!("mid-write-u");
             if let Some(tail) = determinant.pointwise {
@@ -206,6 +218,9 @@ impl Applier<'_> {
                 // neighbors within the scalar-prefix group.
                 self.probe_neighbors(rel, determinant.statement, u_len, tail, op.fact)?;
             }
+        }
+        if skip_puts {
+            return Ok(());
         }
         for edge in &op.edges {
             let r_len =
@@ -341,7 +356,7 @@ impl Applier<'_> {
         };
         // Cold aborting path: name the incumbent by its fact bytes via
         // row_id → F get (errors carry facts, never row ids).
-        let incumbent = fact_by_row(self.data, self.txn.raw(), rel, row)?;
+        let incumbent = fact_by_row(self.data, self.txn.raw(), self.schema, rel, row)?;
         self.violations.push(Violation::Functionality {
             statement,
             fact: fact_bytes.into(),

@@ -5,7 +5,7 @@ use crate::obs;
 use crate::storage::delta::WriteDelta;
 use crate::storage::env::{Environment, WriteTxn};
 use crate::storage::keys::{self, KeyBuf, MAX_KEY, StatKind};
-use bumbledb_theory::schema::RelationId;
+use bumbledb_theory::schema::{FieldId, RelationId};
 
 use super::plan::plan_commit;
 use super::{Applied, CommitReport, apply, crashpoint, judgment};
@@ -139,7 +139,7 @@ pub fn commit(delta: WriteDelta<'_>, env: &Environment) -> Result<CommitReport> 
             let Applied {
                 mut txn,
                 row_id_next,
-            } = apply(&plan, env)?;
+            } = apply(&plan, env, schema)?;
             crashpoint!("before-judgment");
 
             // Phase 3, the judgment phase: final-state probes inside this same
@@ -159,7 +159,7 @@ pub fn commit(delta: WriteDelta<'_>, env: &Environment) -> Result<CommitReport> 
             {
                 let mut span = obs::span(obs::names::COUNTERS_FLUSH, obs::Category::Commit);
                 let interns = delta.pending_interns().count() as u64;
-                flush_counters(&mut txn, &delta, &row_id_next)?;
+                flush_counters(&mut txn, &delta, &row_id_next, env)?;
                 span.set_args(interns, 0);
             }
 
@@ -188,11 +188,15 @@ pub fn commit(delta: WriteDelta<'_>, env: &Environment) -> Result<CommitReport> 
     // escaped `Q` high-water burns regardless of the abort's shape
     // (`lean/Bumbledb/Txn/Fresh.lean: never_reissue_observable`; the
     // counters-only commit writes exactly the dirty marks — no generation
-    // bump, no cache advance). Best-effort: a flush failure must never
-    // mask the error the caller has to see.
-    if outcome.is_err() {
-        let _ = flush_escaped_fresh_ids(env, &delta);
-    }
+    // bump, no cache advance). The in-process floor is raised even when
+    // the disk write fails; a flush failure is parked and retried at the
+    // next write begin. A sealed `CommitRejected` is never replaced by
+    // that flush error (or by a later decoration failure).
+    let flush = if outcome.is_err() {
+        flush_escaped_fresh_ids(env, &delta)
+    } else {
+        Ok(())
+    };
     // The one rejection exit: every `CommitRejected` — phase 2's key
     // set, phase 3's containment/capacity set — passes here, so the cited
     // facts decode here, ONCE, while the delta's provisional intern ids
@@ -200,18 +204,45 @@ pub fn commit(delta: WriteDelta<'_>, env: &Environment) -> Result<CommitReport> 
     // never its interns (intern ids never escape — hosts see values, not
     // words), so a later decode would still misread a novel `str` field
     // as a dangling id (`docs/architecture/30-dependencies.md` §
-    // rendering the rejection).
+    // rendering the rejection). Decoration is best-effort: a `read_txn`
+    // or decode failure leaves the sealed set undecoded rather than
+    // swapping the error kind.
     let report = match outcome {
         Err(Error::CommitRejected { violations }) => {
-            let view = env.read_txn()?;
-            return Err(Error::CommitRejected {
-                violations: decode_cited_facts(violations, schema, &view, &delta)?,
+            let violations = decorate_rejected(violations, schema, env, &delta);
+            return Err(Error::CommitRejected { violations });
+        }
+        Err(other) => {
+            return Err(match flush {
+                Err(flush_err) => flush_err,
+                Ok(()) => other,
             });
         }
-        other => other?,
+        Ok(report) => {
+            env.clear_pending_fresh_flush();
+            report
+        }
     };
     commit_span.set_args(1, 0);
     Ok(report)
+}
+
+/// Decodes cited facts for a sealed rejection. Any secondary failure
+/// (`ReadersFull`, `Corruption`, LMDB) returns the undecoded set — the
+/// sealed citations are the contract, not the decoration.
+fn decorate_rejected(
+    violations: Violations,
+    schema: &crate::schema::Schema,
+    env: &Environment,
+    delta: &WriteDelta<'_>,
+) -> Violations {
+    match env.read_txn() {
+        Ok(view) => match decode_cited_facts(&violations, schema, &view, delta) {
+            Ok(cited) => violations.attach_cited(cited),
+            Err(_) => violations,
+        },
+        Err(_) => violations,
+    }
 }
 
 /// Decodes every citation's offending fact bytes into owned
@@ -224,13 +255,14 @@ pub fn commit(delta: WriteDelta<'_>, env: &Environment) -> Result<CommitReport> 
 /// # Errors
 ///
 /// `Corruption` on undecodable fact bytes or a genuinely dangling intern
-/// id (pending and committed both miss); `Lmdb` on dictionary reads.
+/// id (pending and committed both miss); `Lmdb` on dictionary reads. The
+/// caller keeps the sealed `CommitRejected` when this fails.
 fn decode_cited_facts(
-    violations: Violations,
+    violations: &Violations,
     schema: &crate::schema::Schema,
     view: &crate::storage::env::ReadTxn<'_>,
     delta: &WriteDelta<'_>,
-) -> Result<Violations> {
+) -> Result<Vec<Box<[crate::error::CitedFact]>>> {
     use crate::error::{CitedFact, Violation};
     use crate::schema::StatementView;
     let mut cited: Vec<Box<[CitedFact]>> = Vec::with_capacity(violations.as_slice().len());
@@ -270,9 +302,15 @@ fn decode_cited_facts(
             }
         };
         let layout = schema.relation(relation).layout();
+        let expected = layout.fact_width();
         let decoded = facts
             .into_iter()
             .map(|bytes| {
+                if bytes.len() != expected {
+                    return Err(Error::Corruption(CorruptionError::MalformedValue(
+                        "cited fact width",
+                    )));
+                }
                 let values = crate::encoding::decode_values(bytes, layout, |id| {
                     match delta.pending_raw(id) {
                         Some(raw) => Ok(Box::from(raw)),
@@ -287,7 +325,7 @@ fn decode_cited_facts(
             .collect::<Result<Box<[CitedFact]>>>()?;
         cited.push(decoded);
     }
-    Ok(violations.attach_cited(cited))
+    Ok(cited)
 }
 
 /// The counters-only commit of a successful no-op write: exactly the
@@ -298,23 +336,60 @@ fn decode_cited_facts(
 /// valid, and the tx-id-advances-iff-data-changed rule is untouched.
 /// With no dirty marks no transaction begins — LMDB sees nothing. The
 /// same [`commit_bounded`] durability boundary as the full commit: one
-/// mechanism, two callers.
+/// mechanism, two callers. Raises the in-process high-water before the
+/// disk write so a failed flush cannot rewind `alloc` in this process.
 pub(crate) fn flush_escaped_fresh_ids(env: &Environment, delta: &WriteDelta<'_>) -> Result<()> {
-    if delta.dirty_fresh_marks().next().is_none() {
+    env.note_escaped_fresh(delta.dirty_fresh_marks());
+    let mut marks = env.take_pending_fresh_flush();
+    for (rel, field, next) in delta.dirty_fresh_marks() {
+        marks
+            .entry((rel, field))
+            .and_modify(|held| *held = (*held).max(next))
+            .or_insert(next);
+    }
+    persist_or_park(env, marks)
+}
+
+/// Retries a parked escaped-id burn. Called at write begin: a still-failing
+/// flush returns the error and leaves the store poisoned for `alloc`
+/// until `Q` is durable.
+pub(crate) fn flush_pending_escaped_fresh_ids(env: &Environment) -> Result<()> {
+    persist_or_park(env, env.take_pending_fresh_flush())
+}
+
+fn persist_or_park(env: &Environment, marks: BTreeMap<(RelationId, FieldId), u64>) -> Result<()> {
+    if marks.is_empty() {
         return Ok(());
+    }
+    match persist_fresh_marks(env, &marks) {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            env.park_fresh_flush(marks);
+            Err(error)
+        }
+    }
+}
+
+fn persist_fresh_marks(
+    env: &Environment,
+    marks: &BTreeMap<(RelationId, FieldId), u64>,
+) -> Result<()> {
+    #[cfg(test)]
+    if env.consume_fresh_flush_failure() {
+        return Err(Error::Lmdb(heed::Error::Mdb(heed::MdbError::MapFull)));
     }
     commit_bounded(|| {
         let mut txn = env.write_txn()?;
         let data = txn.env().data();
         let mut key: KeyBuf = [0; MAX_KEY];
-        let mut marks = 0u64;
+        let mut count = 0u64;
         let mut span = obs::span(obs::names::COUNTERS_FLUSH, obs::Category::Commit);
-        for (rel, field, next) in delta.dirty_fresh_marks() {
-            let len = keys::fresh_key(&mut key, rel, field);
+        for ((rel, field), next) in marks {
+            let len = keys::fresh_key(&mut key, *rel, *field);
             data.put(txn.raw_mut(), &key[..len], next.to_le_bytes().as_slice())?;
-            marks += 1;
+            count += 1;
         }
-        span.set_args(0, marks);
+        span.set_args(0, count);
         span.end();
         let _s = obs::span(obs::names::LMDB_COMMIT, obs::Category::Commit);
         txn.commit()
@@ -323,11 +398,13 @@ pub(crate) fn flush_escaped_fresh_ids(env: &Environment, delta: &WriteDelta<'_>)
 
 /// Phase 4: folds row-count deltas into `S`, writes row-id high-waters,
 /// fresh next-values (`Q`), pending dictionary entries, and the
-/// dictionary next-id.
+/// dictionary next-id. Parked escaped-id burns merge into the `Q` puts
+/// so a later successful commit makes them durable.
 fn flush_counters(
     txn: &mut WriteTxn<'_>,
     delta: &WriteDelta<'_>,
     row_id_next: &BTreeMap<RelationId, u64>,
+    env: &Environment,
 ) -> Result<()> {
     let data = txn.env().data();
     let mut key: KeyBuf = [0; MAX_KEY];
@@ -340,11 +417,19 @@ fn flush_counters(
             Some(bytes) => crate::storage::stored_u64(bytes, "S row count")?,
             None => 0,
         };
-        let updated = current
-            .checked_add_signed(count_delta)
-            .ok_or(Error::Corruption(CorruptionError::MalformedValue(
-                "S row count underflow",
-            )))?;
+        let updated = match current.checked_add_signed(count_delta) {
+            Some(n) => n,
+            None if count_delta < 0 => {
+                return Err(Error::Corruption(CorruptionError::MalformedValue(
+                    "S row count underflow",
+                )));
+            }
+            None => {
+                return Err(Error::Corruption(CorruptionError::MalformedValue(
+                    "S row count overflow",
+                )));
+            }
+        };
         data.put(txn.raw_mut(), &key[..len], updated.to_le_bytes().as_slice())?;
         crashpoint!("mid-write-s");
     }
@@ -352,7 +437,17 @@ fn flush_counters(
         let len = keys::stat_key(&mut key, *rel, StatKind::RowIdHighWater);
         data.put(txn.raw_mut(), &key[..len], next.to_le_bytes().as_slice())?;
     }
+    let mut q_marks = BTreeMap::new();
     for (rel, field, next) in delta.fresh_marks() {
+        q_marks.insert((rel, field), next);
+    }
+    for ((rel, field), next) in env.peek_pending_fresh_flush() {
+        q_marks
+            .entry((rel, field))
+            .and_modify(|held| *held = (*held).max(next))
+            .or_insert(next);
+    }
+    for ((rel, field), next) in q_marks {
         let len = keys::fresh_key(&mut key, rel, field);
         data.put(txn.raw_mut(), &key[..len], next.to_le_bytes().as_slice())?;
     }

@@ -77,8 +77,9 @@ pub(crate) fn read_fresh_next(view: &ReadTxn<'_>, rel: RelationId, field: FieldI
     let mut buf = [0u8; keys::FRESH_KEY_LEN];
     let len = keys::fresh_key(&mut buf, rel, field);
     debug_assert_eq!(len, buf.len());
-    match view.env().data().get(view.raw(), &buf[..len])? {
-        Some(bytes) => crate::storage::stored_u64(bytes, "Q fresh next"),
-        None => Ok(0),
-    }
+    let disk = match view.env().data().get(view.raw(), &buf[..len])? {
+        Some(bytes) => crate::storage::stored_u64(bytes, "Q fresh next")?,
+        None => 0,
+    };
+    Ok(disk.max(view.env().in_process_fresh_next(rel, field)))
 }

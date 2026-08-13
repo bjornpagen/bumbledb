@@ -4,7 +4,8 @@ Worked schemas for the owner and any agent writing a theory. **This document is
 illustrative, never normative**: where a recipe and an architecture chapter
 disagree, the chapter wins and the recipe is amended in the same change
 (`docs/architecture/README.md` rule 5). The chapters it defers to:
-`docs/architecture/10-data-model.md` (the six value types and the closed-relation
+`docs/architecture/10-data-model.md` (the value types — including both
+`interval<E>` and `interval<E, w>` — and the closed-relation
 form, the interval denotation, the modeling discipline, derived relations),
 `30-dependencies.md` (the two
 judgments and their theorems), `20-query-ir.md` (query semantics; § the query
@@ -107,7 +108,8 @@ bumbledb::schema! {
     Task(id | kind == CustomOperator) == CustomOperatorGrading(task);
     // Exclusivity is a theorem, not a statement: one id in two arms would
     // force `kind` to equal two handles against the fresh key on id.
-    // The executor spends the same theorem again — recipe 22's free lunch.
+    // The executor spends the same theorem again as a diagnostic witness
+    // (recipe 22); multi-rule execution still keeps a spanning seen-set.
 }
 ```
 
@@ -1016,8 +1018,10 @@ let deriving = query!(Rollup {
 
 Guarantee: Lean theorem + represented planner/runtime premise — rule union is
 set-idempotent (`lean/Bumbledb/Query/Denotation.lean: union_idempotent`);
-key-backed DU arms justify the disjointness optimization
-(`lean/Bumbledb/Exec/Dedup.lean: disjoint_witness_licence`).
+key-backed DU arms justify a disjointness *witness*
+(`lean/Bumbledb/Exec/Dedup.lean: disjoint_witness_licence`) spent diagnostically
+only — execution always keeps one spanning seen-set
+(`docs/architecture/40-execution.md` § set semantics).
 
 The whole-DU read is a set of rules: one head, one rule per arm — disjunction
 is data at the top, never an execution node.
@@ -1042,8 +1046,9 @@ bumbledb::schema! {
 
 One query, two rules (set union). The exclusivity theorem (recipe 2) is
 spent a third time here: rules selecting different `kind` values are
-provably disjoint, so the executor elides cross-rule dedup — the free lunch
-(`40-execution.md` § set semantics):
+provably disjoint. Plan introspection retains `disjoint_rules: proven`;
+execution still probes one seen-set spanning both rules — the measured
+refutation deleted the elision (`40-execution.md` § set semantics):
 
 ```rust
 let methods = query!(Payments {

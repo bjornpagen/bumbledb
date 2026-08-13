@@ -5,7 +5,7 @@
 - area: spec-docs-rust
 - wrong-side: spec
 - components: lean/Bumbledb/Query/Membership.lean, lean/Bumbledb/Bridge.lean, crates/bumbledb/src/ir/normalize/normalize.rs, docs/architecture/20-query-ir.md
-- status: open (do not fix)
+- status: fixed (2026-08-13)
 
 ## Summary
 The Bridge-cited seam theorem `membership_lowering_preserves` requires every negated atom to be membership-free. The engine lowers negated membership bindings to `AntiProbe` and executes them. A companion theorem `membership_lowering_preserves_negated` / `surface_antiprobe_filters` covers the full roster against the anti-probe form, and `20-query-ir.md` cites that split correctly. The executable `ruleAnswers`/`eval_sound` path — and the Bridge *premise* for the named theorem (“over the full term roster”) — still do not. Conformance fences the fragment (214).
@@ -43,3 +43,6 @@ Re-read both lowering theorems, Bridge, `20-query-ir.md`, and `lower_atom`. **Co
 ## Related
 - 214 (corpus fence)
 - 221 (another unmodeled negation rewrite)
+
+## Resolution (2026-08-13)
+Bridge `membership_lowering_preserves` names the membership-free-negation hypothesis. Engine negated membership is `membership_lowering_preserves_negated` / `surface_antiprobe_filters` / `normalize.rs::AntiProbe`. Conformance eval uses `surfaceMatchesB`. Ticket 214 un-fence depends on this.

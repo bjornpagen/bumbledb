@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 
 use crate::error::{Error, Result, Violations};
 use crate::obs;
+use crate::schema::Schema;
 use crate::storage::env::Environment;
 use crate::storage::keys::MAX_KEY;
 
@@ -26,11 +27,16 @@ use super::{Applied, Applier};
 /// states). `Lmdb` on storage failure; `Corruption` on base state
 /// disagreeing with what the plan proved. On any error the transaction is
 /// dropped — nothing persists.
-pub fn apply<'env>(plan: &CommitPlan<'_>, env: &'env Environment) -> Result<Applied<'env>> {
+pub fn apply<'env>(
+    plan: &CommitPlan<'_>,
+    env: &'env Environment,
+    schema: &Schema,
+) -> Result<Applied<'env>> {
     let txn = env.write_txn()?;
     let mut applier = Applier {
         txn,
         data: env.data(),
+        schema,
         row_id_next: BTreeMap::new(),
         key: [0; MAX_KEY],
         violations: Vec::new(),

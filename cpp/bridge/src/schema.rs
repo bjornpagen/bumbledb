@@ -14,7 +14,7 @@ use bumbledb::SchemaSpec;
 
 use crate::error::fail_shape;
 use crate::value::{bdb_string_view, bdb_value, value_in};
-use crate::{BridgeResult, ref_in, slice_in};
+use crate::{BridgeResult, bool_in, c_tag, ref_in, slice_in, tag_in};
 
 /// The structural value-type tag (`bumbledb::schema::ValueType`, spelled
 /// C).
@@ -29,6 +29,15 @@ pub enum bdb_value_type_kind {
     Interval,
 }
 
+c_tag!(bdb_value_type_kind {
+    Bool,
+    U64,
+    I64,
+    String,
+    FixedBytes,
+    Interval,
+});
+
 /// An interval's element domain.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -37,16 +46,18 @@ pub enum bdb_interval_element {
     I64,
 }
 
+c_tag!(bdb_interval_element { U64, I64 });
+
 /// One structural value type. `fixed_len` is read for `FixedBytes`;
 /// `element` / `has_width` / `width` for `Interval` (`has_width == false`
 /// is the general 16-byte interval; `true` the fixed-width family).
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct bdb_value_type {
-    pub kind: bdb_value_type_kind,
+    pub kind: u32,
     pub fixed_len: u16,
-    pub element: bdb_interval_element,
-    pub has_width: bool,
+    pub element: u32,
+    pub has_width: u8,
     pub width: u64,
 }
 
@@ -59,7 +70,7 @@ pub struct bdb_field_spec {
     pub name: bdb_string_view,
     pub value_type: bdb_value_type,
     pub newtype: bdb_string_view,
-    pub fresh: bool,
+    pub fresh: u8,
 }
 
 /// A literal's tag: a plain tagged value, or a closed relation's handle
@@ -71,11 +82,13 @@ pub enum bdb_literal_kind {
     Handle,
 }
 
+c_tag!(bdb_literal_kind { Value, Handle });
+
 /// One literal as spelled.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct bdb_literal {
-    pub kind: bdb_literal_kind,
+    pub kind: u32,
     pub value: bdb_value,
     pub handle: bdb_string_view,
 }
@@ -89,12 +102,14 @@ pub enum bdb_literal_set_kind {
     Many,
 }
 
+c_tag!(bdb_literal_set_kind { One, Many });
+
 /// One literal set. `One` reads `literals[0]` (`literal_count` must be
 /// 1); `Many` reads all `literal_count` entries.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct bdb_literal_set {
-    pub kind: bdb_literal_set_kind,
+    pub kind: u32,
     pub literals: *const bdb_literal,
     pub literal_count: usize,
 }
@@ -128,11 +143,13 @@ pub enum bdb_weight_kind {
     DurationField,
 }
 
+c_tag!(bdb_weight_kind { Unit, Field, DurationField });
+
 /// A capacity weight; `field` is read for `Field`/`DurationField`.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct bdb_weight {
-    pub kind: bdb_weight_kind,
+    pub kind: u32,
     pub field: bdb_string_view,
 }
 
@@ -145,12 +162,14 @@ pub enum bdb_bound_kind {
     DurationField,
 }
 
+c_tag!(bdb_bound_kind { Lit, Field, DurationField });
+
 /// One capacity bound; `lit` for `Lit`, `field` for
 /// `Field`/`DurationField`.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct bdb_bound {
-    pub kind: bdb_bound_kind,
+    pub kind: u32,
     pub lit: u64,
     pub field: bdb_string_view,
 }
@@ -164,12 +183,14 @@ pub enum bdb_capacity_window_kind {
     Floor,
 }
 
+c_tag!(bdb_capacity_window_kind { Exact, Range, Floor });
+
 /// One capacity window: `Exact` reads `lo` as the exact bound; `Floor`
 /// reads `lo`; `Range` reads `lo` and `hi`.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct bdb_capacity_window {
-    pub kind: bdb_capacity_window_kind,
+    pub kind: u32,
     pub lo: bdb_bound,
     pub hi: bdb_bound,
 }
@@ -183,6 +204,8 @@ pub enum bdb_statement_spec_kind {
     Capacity,
 }
 
+c_tag!(bdb_statement_spec_kind { Fd, Containment, Capacity });
+
 /// One dependency statement. `Fd` reads `fd_relation` +
 /// `fd_projection`; `Containment` reads `source`/`target`/`bidirectional`;
 /// `Capacity` reads `target`/`weight`/`window`/`source` (the operator's
@@ -190,13 +213,13 @@ pub enum bdb_statement_spec_kind {
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct bdb_statement_spec {
-    pub kind: bdb_statement_spec_kind,
+    pub kind: u32,
     pub fd_relation: bdb_string_view,
     pub fd_projection: *const bdb_string_view,
     pub fd_projection_count: usize,
     pub source: bdb_side,
     pub target: bdb_side,
-    pub bidirectional: bool,
+    pub bidirectional: u8,
     pub weight: bdb_weight,
     pub window: bdb_capacity_window,
 }
@@ -243,14 +266,8 @@ pub struct bdb_schema_spec {
     pub statement_count: usize,
 }
 
-#[expect(
-    clippy::unnecessary_wraps,
-    reason = "the uniform marshal-lane shape: every `*_in` reader returns \
-              `BridgeResult` so call sites compose with `?` regardless of \
-              which tags can currently fail"
-)]
 fn value_type_in(view: &bdb_value_type) -> BridgeResult<ValueType> {
-    Ok(match view.kind {
+    Ok(match tag_in::<bdb_value_type_kind>(view.kind)? {
         bdb_value_type_kind::Bool => ValueType::Bool,
         bdb_value_type_kind::U64 => ValueType::U64,
         bdb_value_type_kind::I64 => ValueType::I64,
@@ -259,17 +276,17 @@ fn value_type_in(view: &bdb_value_type) -> BridgeResult<ValueType> {
             len: view.fixed_len,
         },
         bdb_value_type_kind::Interval => ValueType::Interval {
-            element: match view.element {
+            element: match tag_in::<bdb_interval_element>(view.element)? {
                 bdb_interval_element::U64 => IntervalElement::U64,
                 bdb_interval_element::I64 => IntervalElement::I64,
             },
-            width: view.has_width.then_some(view.width),
+            width: bool_in(view.has_width)?.then_some(view.width),
         },
     })
 }
 
 fn literal_in(view: &bdb_literal) -> BridgeResult<LiteralSpec> {
-    Ok(match view.kind {
+    Ok(match tag_in::<bdb_literal_kind>(view.kind)? {
         bdb_literal_kind::Value => LiteralSpec::Value(value_in(&view.value)?),
         bdb_literal_kind::Handle => {
             LiteralSpec::Handle(view.handle.as_str("handle literal")?.into())
@@ -279,7 +296,7 @@ fn literal_in(view: &bdb_literal) -> BridgeResult<LiteralSpec> {
 
 fn literal_set_in(view: &bdb_literal_set) -> BridgeResult<LiteralSetSpec> {
     let literals = slice_in(view.literals, view.literal_count)?;
-    Ok(match view.kind {
+    Ok(match tag_in::<bdb_literal_set_kind>(view.kind)? {
         bdb_literal_set_kind::One => {
             let [literal] = literals else {
                 return Err(fail_shape(&format!(
@@ -323,7 +340,7 @@ fn side_in(view: &bdb_side) -> BridgeResult<SideSpec> {
 }
 
 fn weight_in(view: &bdb_weight) -> BridgeResult<WeightSpec> {
-    Ok(match view.kind {
+    Ok(match tag_in::<bdb_weight_kind>(view.kind)? {
         bdb_weight_kind::Unit => WeightSpec::Unit,
         bdb_weight_kind::Field => WeightSpec::Field(view.field.as_str("weight field name")?.into()),
         bdb_weight_kind::DurationField => {
@@ -333,7 +350,7 @@ fn weight_in(view: &bdb_weight) -> BridgeResult<WeightSpec> {
 }
 
 fn bound_in(view: &bdb_bound) -> BridgeResult<BoundSpec> {
-    Ok(match view.kind {
+    Ok(match tag_in::<bdb_bound_kind>(view.kind)? {
         bdb_bound_kind::Lit => BoundSpec::Lit(view.lit),
         bdb_bound_kind::Field => BoundSpec::Field(view.field.as_str("bound field name")?.into()),
         bdb_bound_kind::DurationField => {
@@ -343,7 +360,7 @@ fn bound_in(view: &bdb_bound) -> BridgeResult<BoundSpec> {
 }
 
 fn window_in(view: &bdb_capacity_window) -> BridgeResult<CapacityWindowSpec> {
-    Ok(match view.kind {
+    Ok(match tag_in::<bdb_capacity_window_kind>(view.kind)? {
         bdb_capacity_window_kind::Exact => CapacityWindowSpec::Exact(bound_in(&view.lo)?),
         bdb_capacity_window_kind::Range => CapacityWindowSpec::Range {
             lo: bound_in(&view.lo)?,
@@ -354,7 +371,7 @@ fn window_in(view: &bdb_capacity_window) -> BridgeResult<CapacityWindowSpec> {
 }
 
 fn statement_in(view: &bdb_statement_spec) -> BridgeResult<StatementSpec> {
-    Ok(match view.kind {
+    Ok(match tag_in::<bdb_statement_spec_kind>(view.kind)? {
         bdb_statement_spec_kind::Fd => StatementSpec::Fd {
             relation: view.fd_relation.as_str("fd relation name")?.into(),
             projection: names_in(
@@ -366,7 +383,7 @@ fn statement_in(view: &bdb_statement_spec) -> BridgeResult<StatementSpec> {
         bdb_statement_spec_kind::Containment => StatementSpec::Containment {
             source: side_in(&view.source)?,
             target: side_in(&view.target)?,
-            bidirectional: view.bidirectional,
+            bidirectional: bool_in(view.bidirectional)?,
         },
         bdb_statement_spec_kind::Capacity => StatementSpec::Capacity {
             target: side_in(&view.target)?,
@@ -388,7 +405,7 @@ fn relation_in(view: &bdb_relation_spec) -> BridgeResult<RelationSpec> {
                     .newtype
                     .as_opt_str("field newtype")?
                     .map(Into::into),
-                fresh: field.fresh,
+                fresh: bool_in(field.fresh)?,
             })
         })
         .collect::<BridgeResult<Vec<_>>>()?;

@@ -224,7 +224,14 @@ load-bearing, not decorative
 (`lean/Bumbledb/Countermodels.lean: unit_window_two_children`). Where the
 unification stops: existence obligations remain containment's alone —
 capacity statements never manufacture parents
-(`lean/Bumbledb/Capacity.lean: capacity_of_empty_parent`).
+(`lean/Bumbledb/Capacity.lean: capacity_of_empty_parent`). That vacuity
+does **not** license a Duration-weighted child whose interval is a ray:
+C20 (write-time, parent-blind) refuses the insert at plan time with
+`Error::CapacityRayMeasure` even when no ψ-selected parent exists to
+judge (`docs/design/capacity-laws.md` §8b C20; the engine pin is
+`capacity_duration_ray_under_an_absent_parent_still_refuses`). Empty-parent
+`CapacityLaw` is still true of the numeric judgment; the write is refused
+before that judgment runs.
 
 **The window vocabulary** is closed under the **canonical-utterance law**
 (`70-api.md` records the law, now per-aggregate where weight-sensitive): the
@@ -254,8 +261,11 @@ R5 machinery) — calendar capacity as one schema statement. The weight
 vocabulary is closed at the row: `[field]`, `[Duration(field)]`, absent —
 and the engine's `Weight` is a total sum with an explicit `Unit` member: unit
 is a case, not an absence (ruled 2026-07-24, C4). A ray-valued Duration
-weight or bound at judge time is a typed commit refusal naming the row — a
-ray has no finite measure (ruled 2026-07-24, C10).
+weight or bound is a typed commit refusal naming the row — a ray has no
+finite measure, never a 0-weight, never a violation (`Error::CapacityRayMeasure`;
+ruled 2026-07-24, C10 at judge time). C20 (ruled 2026-08-03) is strictly
+stronger: the same refusal fires at **write-time plan**, parent-blind, so a
+ray child under an absent parent is refused too.
 
 **Dependent bounds.** A bound is a non-negative integer literal, `*` (hi
 only), or a field of TARGET's row — **hi slot only** (ruled 2026-07-24, C6:

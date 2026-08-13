@@ -80,13 +80,15 @@ relations as instance-independent sealed constants.
   order** — the FieldSet doctrine: `resolve_target_key` counts
   interval positions as a set and `key_permutation` bridges statement
   order to key order, so the engine's pointwise reading is
-  order-canonical and the split matches it. Exactly one interval-typed
-  field splits to the pointwise shape at ANY written position; zero or
-  several split to `none` and receive the scalar reading downstream.
-  The several-interval shape is gate-refused
-  (`FunctionalityMultipleIntervals`; the pointwise gate in
-  `resolve_target_key`); `holds` is consumed on accepted theories
-  only.
+  order-canonical and the split matches it.   Exactly one interval-typed
+  field splits to the pointwise shape **when that field is the last
+  written position** (the neighbor probe's scalar prefix). Zero
+  interval fields split to `none` (classical `Functionality`). Two or
+  more interval fields, or a single interval written non-finally, are
+  engine-refused (`FunctionalityMultipleIntervals`,
+  `FunctionalityIntervalNotLast`); `Header.functionalityAdmitted` is
+  the gate, and `Statement.judgment` is `False` on a refused shape —
+  not a scalar-reading default.
 * Acceptance's remaining shape checks (duplicate-free projections,
   arity and positional type match between sides, determinant width,
   the FD-side interval-finality demand — the neighbor probe's
@@ -364,11 +366,11 @@ interval positions as a SET; `key_permutation` bridges written order
 to key order): a projection whose field set carries EXACTLY ONE
 interval-typed field splits to `some` — the scalar rest in written
 order, paired with that interval field, wherever it was written.
-Every other shape splits to `none`, truthfully: zero interval fields
-is the classical reading, and two or more are gate-refused
-(`FunctionalityMultipleIntervals`; the pointwise gate in
-`resolve_target_key`) and take the scalar-reading default recorded in
-the module doc. -/
+The several-interval shape and a non-final single interval are
+**refused at declaration** (`FunctionalityMultipleIntervals`,
+`FunctionalityIntervalNotLast`); `Statement.judgment` is `False` on
+those shapes — not a scalar or pointwise reading. `holds` is consumed
+on accepted theories, and the engine never seals a refused FD. -/
 def Header.intervalSplit (h : Header) (R : RelId)
     (X : List FieldId) : Option (List FieldId × FieldId) :=
   match X.filter (fun i => h.isInterval R i) with
@@ -406,6 +408,19 @@ theorem Header.intervalSplit_some {h : Header} {R : RelId}
     exact ⟨by rw [hai], hS.symm⟩
   · simp only [Header.intervalSplit, hfil] at hs
     exact nomatch hs
+
+/-- Engine FD gate (`FunctionalityMultipleIntervals`,
+`FunctionalityIntervalNotLast`): admitted iff the projection has no
+interval field, or exactly one occupying the **last** written
+position. Two or more interval fields, or a non-final single
+interval, are refused — `Statement.judgment` is `False`, not a
+scalar or pointwise reading. -/
+def Header.functionalityAdmitted (h : Header) (R : RelId)
+    (X : List FieldId) : Bool :=
+  match X.filter (fun i => h.isInterval R i) with
+  | [] => true
+  | [i] => decide (X.getLast? = some i)
+  | _ => false
 
 /-! ## Extension syntax — windows and capacity
 
@@ -519,13 +534,31 @@ inductive Statement where
 /-! ## Theories, instances, ground axioms -/
 
 /-- A closed relation's sealed extension: the ground axioms, a finite
-fact list fixed at declaration (`crate::schema::SealedRow`; the ≤256
-roster cap is mechanism, not modeled). -/
+fact list fixed at declaration (`crate::schema::SealedRow`). The
+engine compiles closed membership into a 256-bit `MemberSet` and
+refuses extensions above `maxExtensionRows` (256); that cap is
+engine law (`schema.rs::MAX_EXTENSION_ROWS`). This structure is an
+arbitrary list — a 257-axiom theory is a Lean model and is not a
+sealable schema. Accepted sealed theories satisfy
+`GroundExtension.withinCap`. -/
 structure GroundExtension where
   facts : List Fact
 
+/-- The engine's closed-roster cap: 256 axioms, the compiled member-set
+width. Not a Lean type constraint on `GroundExtension`. -/
+def maxExtensionRows : Nat := 256
+
+/-- The engine acceptance premise for a closed extension. -/
+def GroundExtension.withinCap (e : GroundExtension) : Prop :=
+  e.facts.length ≤ maxExtensionRows
+
 /-- A theory: the header, the closed relations' sealed extensions,
-and the declared statements (`crate::schema::Schema`, sealed). -/
+and the declared statements (`crate::schema::Schema`, sealed).
+**Schema fingerprint is extra-theoretic engine identity** — blake3 of
+canonical descriptor bytes (`bumbledb-schema-v5`), including
+materialized statement order and C2 capacity field order. `Theory`
+has no hash; two Lean-equal theories can still `SchemaMismatch` if
+encoding order differs (`docs/architecture/10-data-model.md`). -/
 structure Theory where
   header : Header
   /-- Closed relations: ground axioms as sealed constants of the
@@ -548,6 +581,16 @@ def Theory.den (T : Theory) (I : Instance) (R : RelId) : Set Fact :=
   match T.closed R with
   | some ext => fun f => f ∈ ext.facts
   | none => I R
+
+/-- Engine `ClosedContainmentInterval`: interval positions on the
+**target** projection of a containment with a closed side (source or
+target) are refused v0. `Statement.judgment` is `False` on that
+shape — not `Coverage`. -/
+def Theory.closedContainmentInterval (T : Theory) (src tgt : Atom) :
+    Bool :=
+  ((T.closed src.relation).isSome || (T.closed tgt.relation).isSome) &&
+    !(tgt.projection.filter (fun i => T.header.isInterval tgt.relation i)
+      |>.isEmpty)
 
 /-- **Ground axioms are instance-independent**: a closed relation
 denotes the same fact set at every instance — the sealed extension is

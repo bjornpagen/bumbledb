@@ -724,6 +724,7 @@ theorem per_op_final_holds :
     holds pcTheory (Txn.applyOps pcInst parentFirst) := by
   intro st hst
   cases List.mem_singleton.mp hst
+  refine ⟨rfl, ?_⟩
   intro f hf _
   exact absurd ⟨rfl, hf.1.1⟩ hf.2
 
@@ -735,7 +736,7 @@ theorem per_op_mid_violates :
   intro h
   have hj := h pcStatement (List.mem_singleton.mpr rfl)
   obtain ⟨g, hg, -, -⟩ :=
-    hj linkFact ⟨rfl, fun hpc => child_ne_parent hpc.1⟩
+    hj.2 linkFact ⟨rfl, fun hpc => child_ne_parent hpc.1⟩
       (Selection.empty_satisfies _)
   exact hg.2 ⟨rfl, hg.1⟩
 
@@ -783,6 +784,7 @@ theorem stale_but_sound :
   refine ⟨?_, ⟨rfl, rfl⟩, fun h => child_ne_parent h.1⟩
   intro st hst
   cases List.mem_singleton.mp hst
+  refine ⟨rfl, ?_⟩
   intro f hf _
   exact absurd hf.1 child_ne_parent
 
@@ -850,7 +852,7 @@ theorem incremental_verdict_needs_holds :
     have hF : rowFalse ∈
         fdTheory.den (emptyDelta.applyTo violInstance) ⟨0⟩ :=
       Or.inl ⟨Or.inr rfl, fun hf => hf⟩
-    exact rowTrue_ne_rowFalse (hj rowTrue rowFalse hT hF rfl)
+    exact rowTrue_ne_rowFalse (hj.2 rowTrue rowFalse hT hF rfl)
 
 /-! ## The unkeyed double-count countermodel (PRD 07)
 
@@ -1149,15 +1151,17 @@ def twoIntervalHeader : Header :=
   ⟨fun _ => [.interval .u64, .interval .u64]⟩
 
 /-- **The permuted-shape lock.** `[interval, scalar]` splits to
-`some ([scalar], interval)` — the pointwise reading at ANY written
-position, exactly the engine's FieldSet canonicalization
-(`judgment.rs` enforces coverage in permuted determinant order). -/
+`some ([scalar], interval)` — `intervalSplit` is still set-canonical
+and position-blind. The **engine gate** (`functionalityAdmitted`)
+refuses this non-final interval (`FunctionalityIntervalNotLast`);
+`Statement.judgment` is `False`, not pointwise. -/
 theorem split_permuted_some :
     permHeader.intervalSplit ⟨0⟩ [⟨0⟩, ⟨1⟩] = some ([⟨1⟩], ⟨0⟩) := rfl
 
 /-- **The several-interval lock.** `[interval, interval]` splits to
-`none` — under the set-canonical definition "every other shape splits
-to `none`" is TRUE (the D2 spec error, closed). -/
+`none`. The engine refuses the shape (`FunctionalityMultipleIntervals`);
+`functionalityAdmitted` is false and `Statement.judgment` is `False`,
+not scalar `Functionality`. -/
 theorem split_two_intervals_none :
     twoIntervalHeader.intervalSplit ⟨0⟩ [⟨0⟩, ⟨1⟩] = none := rfl
 

@@ -5,7 +5,7 @@
 - area: spec-docs-rust
 - wrong-side: unspecified
 - components: crates/bumbledb-bench/src/conformance.rs, lean/Bumbledb/Query/Membership.lean, lean/Bumbledb/Query/Aggregates.lean, crates/bumbledb/src/ir.rs, docs/architecture/20-query-ir.md
-- status: open (do not fix)
+- status: fixed (2026-08-13)
 
 ## Summary
 The Lean denotation and the Rust engine both define negated membership anti-probes, element-typed param-set membership, and (engine/docs) measure-keyed Arg. The executable three-way conformance corpus excludes all three (`excluded_negated_membership`, `excluded_set_membership`, `excluded_measure_arg_key`). The "third oracle" therefore does not watch the shipped semantics on those fragments.
@@ -35,3 +35,6 @@ Re-read the denotation, `60-validation.md` third-oracle claim, and the corpus bu
 
 ## Related
 - 201 (`excluded_measure_arg_key`)
+
+## Resolution (2026-08-13)
+Un-fenced negated membership and param-set membership in `conformance.rs`. Measure Arg stays killed (no ArgMax cases). Lean third oracle uses `surfaceMatchesB` (AntiProbe) on negated atoms. Checked-in corpus replay is byte-identical; new shapes enter on the next regeneration.

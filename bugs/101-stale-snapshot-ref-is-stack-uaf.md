@@ -4,7 +4,7 @@
 - confidence: confirmed
 - area: ffi
 - components: cpp/bridge/src/db.rs, cpp/bridge/src/tests.rs, cpp/foreign/bumbledb_c.h, cpp/foreign/raii.cc
-- status: open (do not fix)
+- status: fixed (2026-08-13)
 
 ## Summary
 `bdb_snapshot_ref` / `bdb_tx_ref` are stack values inside the Rust `Db::read` / `Db::write` closures. The header, module docs, and a unit test claim that stashing the pointer and using it after the callback returns `BDB_STATUS_MISUSE` via an `alive` flag. After the callback, the stack object is dropped; any later load of `alive` is a use-after-free of that stack slot. The flag can only look like it works while that memory has not been reused.
@@ -38,3 +38,7 @@ Violates the C ABI contract in `bumbledb_c.h` and `cpp/bridge/src/lib.rs` (“le
 **Trace:** `bdb_snapshot_ref` is a stack local inside `handle.db.read` (`cpp/bridge/src/db.rs:428-431`): minted, handed to C as `&raw const *snapshot_ref`, `invalidate()` (sets `alive = false` on that same local, `:155-157`), then the closure returns and the local is dropped. `snapshot()` loads `self.alive.get()` then dereferences `self.snap` (`:136-152`). `bdb_tx_ref` is the same shape in `write_with` (`:467-470, 216-218`). Header still promises a stashed ref “answers `BDB_STATUS_MISUSE` instead of being replayed” (`cpp/foreign/bumbledb_c.h:285-289`). The ABI test stashes the pointer and replays it after `bdb_db_read` returns (`cpp/bridge/src/tests.rs:995-1012`), commenting that “the frame’s memory is gone in principle.” Types are incomplete in C, so the only stash is the pointer.
 
 **Why it holds:** After the callback, the `alive` flag does not exist. A later `bdb_snapshot_contains` / `bdb_db_write_from` is a load of a dropped stack slot, then (if the bytes still look live) a dereference of the erased `Snapshot*`. `invalidate()` can only help while the object is still on the stack — i.e. not for the documented post-callback MISUSE path. C++ `Snapshot` is non-copyable (`cpp/src/db/snapshot.cc:32-34`), which blocks accidental copies, not a stashed `Snapshot*` / `bdb_snapshot_ref const*`.
+
+## Resolution (2026-08-13)
+
+Refs live in heap slots inside `bdb_db`. The callback receives a pointer into that slot; `invalidate()` runs on every closure exit (Drop). A stashed pointer is real `BDB_STATUS_MISUSE`, not stack UAF. Nested `write_from` during read still uses the live slot.

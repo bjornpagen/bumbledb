@@ -12,10 +12,10 @@ export namespace bdb {
  * product. Move-only through its carrier; minted empty; execution fills
  * it (Snapshot::execute_into) and clear() retains capacity.
  *
- * string_view / span<byte const> row members BORROW this carrier —
- * valid only while it is alive, un-cleared, and un-re-executed;
- * fixed-width members are values. Answers are SETS — no order exists;
- * hosts sort (lowering.md §5.2).
+ * string / vector<byte> row members are owned copies taken at decode —
+ * they survive clear and destroy of this carrier. Fixed-width members
+ * are values. Answers are SETS — no order exists; hosts sort
+ * (lowering.md §5.2).
  */
 template<class Row>
 class [[nodiscard]] RowAnswers {
@@ -69,8 +69,8 @@ public:
 	}
 
 	/**
-	 * Empties the carrier, retaining capacity (invalidates every
-	 * borrowed row member).
+	 * Empties the carrier, retaining capacity. Previously decoded rows
+	 * keep their owned string/bytes copies.
 	 */
 	auto clear() -> void {
 		raw_.clear();
@@ -91,12 +91,12 @@ public:
 	}
 
 	/**
-	 * The typed row range, decoded lazily; row values borrow THIS
-	 * carrier — the range is valid only while *this is alive and
-	 * unchanged. A row that fails to decode is an impossible programmer
-	 * state on the typed lane (the row product and the buffer come from
-	 * one query); termination is the one honest spelling here (the raii
-	 * module's rule — the pinned lint Clang has no C++26 contracts).
+	 * The typed row range, decoded lazily; row values own their
+	 * string/bytes copies. A row that fails to decode is an impossible
+	 * programmer state on the typed lane (the row product and the buffer
+	 * come from one query); termination is the one honest spelling here
+	 * (the raii module's rule — the pinned lint Clang has no C++26
+	 * contracts).
 	 */
 	[[nodiscard]] auto rows() const {
 		return std::views::iota(std::size_t{0}, raw_.len()) | std::views::transform([&self = *this](std::size_t index) -> Row {

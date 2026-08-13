@@ -127,4 +127,12 @@ export using ::bdb_error_destroy;
 export using ::bdb_db_prepare;
 export using ::bdb_prepared_destroy;
 
+[[nodiscard]] constexpr auto abi_tag(auto enumerator) -> uint32_t {
+	return static_cast<uint32_t>(enumerator);
+}
+
+[[nodiscard]] constexpr auto abi_flag(bool value) -> uint8_t {
+	return static_cast<uint8_t>(value);
+}
+
 }

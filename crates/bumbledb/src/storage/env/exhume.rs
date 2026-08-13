@@ -1,5 +1,4 @@
 use std::path::Path;
-use std::sync::atomic::Ordering;
 
 use heed::Database;
 use heed::types::Bytes;
@@ -8,7 +7,7 @@ use crate::error::{CorruptionError, Error, Result};
 
 use super::open_env::{OpenLane, open_env};
 use super::read_meta::{check_format_version, read_fingerprint, read_store_kind};
-use super::{Environment, META_SCHEMA_DESCRIPTOR, NEXT_INSTANCE, StoreKind};
+use super::{Environment, META_SCHEMA_DESCRIPTOR, StoreKind};
 
 /// What [`Environment::exhume`] hands the API layer: the opened
 /// environment plus the raw self-description the store carries — the
@@ -95,17 +94,12 @@ impl Environment {
         // writes nothing, so the read-only lane stays read-only.
         rtxn.commit()?;
         Ok(ExhumedEnvironment {
-            env: Self {
-                env,
-                meta,
-                data,
-                dict,
-                instance: NEXT_INSTANCE.fetch_add(1, Ordering::Relaxed),
+            env: Self::assemble(
+                env, meta, data, dict,
                 // The lock law is a writer law (R17): the read-only lane
                 // holds none.
-                _lock: None,
-                dirty_marker: None,
-            },
+                None, None,
+            ),
             kind,
             fingerprint,
             descriptor,

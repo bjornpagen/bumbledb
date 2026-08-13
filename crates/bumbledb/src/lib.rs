@@ -15,7 +15,8 @@
 //!   schema-A fact cannot reach a schema-B database (see below).
 //! - Write through [`Db::write`]: the transaction is an in-memory delta —
 //!   set arithmetic, statements judged at commit against the final
-//!   state, an abort never touched disk. `delete(old); insert(new)` in
+//!   state, an abort never wrote a fact (escaped fresh high-water still
+//!   persists). `delete(old); insert(new)` in
 //!   either order is the blessed mutation idiom.
 //! - Query through [`Db::prepare`] ([`ir::Query`] is the IR) and execute
 //!   inside [`Db::read`] snapshots into a reusable [`Answers`] —

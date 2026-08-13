@@ -448,6 +448,93 @@ fn a_panicking_write_burns_its_escaped_fresh_ids() {
     .expect("the writer surface survives the panic");
 }
 
+#[test]
+fn a_failed_escaped_flush_on_closure_err_is_visible_and_retried() {
+    let dir = TempDir::new("db-flush-fail-closure");
+    let db = Db::create(dir.path(), fresh_schema()).expect("create");
+    let id_field = db
+        .fresh_field(RelationId(0), FieldId(0))
+        .expect("fresh field");
+    db.env().fail_next_fresh_flushes(1);
+    let err = db
+        .write(|tx| -> Result<()> {
+            assert_eq!(tx.alloc_at(id_field)?, 0);
+            Err(Error::ForeignSnapshot)
+        })
+        .unwrap_err();
+    assert!(
+        matches!(err, Error::Lmdb(heed::Error::Mdb(heed::MdbError::MapFull))),
+        "flush failure is the visible error, got {err:?}"
+    );
+    db.write(|tx| {
+        assert_eq!(
+            tx.alloc_at(id_field)?,
+            1,
+            "the parked burn retried; 0 was never reissued"
+        );
+        Ok(())
+    })
+    .expect("retry at write begin succeeds");
+}
+
+#[test]
+fn a_still_failing_q_burn_poisons_the_next_write_begin() {
+    let dir = TempDir::new("db-flush-poison");
+    let db = Db::create(dir.path(), fresh_schema()).expect("create");
+    let id_field = db
+        .fresh_field(RelationId(0), FieldId(0))
+        .expect("fresh field");
+    db.env().fail_next_fresh_flushes(2);
+    let _ = db
+        .write(|tx| -> Result<()> {
+            assert_eq!(tx.alloc_at(id_field)?, 0);
+            Err(Error::ForeignSnapshot)
+        })
+        .unwrap_err();
+    let ran = std::sync::atomic::AtomicBool::new(false);
+    let err = db
+        .write(|tx| {
+            ran.store(true, std::sync::atomic::Ordering::SeqCst);
+            let _ = tx.alloc_at(id_field)?;
+            Ok(())
+        })
+        .unwrap_err();
+    assert!(
+        matches!(err, Error::Lmdb(heed::Error::Mdb(heed::MdbError::MapFull))),
+        "{err:?}"
+    );
+    assert!(
+        !ran.load(std::sync::atomic::Ordering::SeqCst),
+        "the write closure must not run while Q is not durable"
+    );
+}
+
+#[test]
+fn a_panicking_write_with_a_failed_flush_still_never_reissues() {
+    let dir = TempDir::new("db-panic-flush-fail");
+    let db = Db::create(dir.path(), fresh_schema()).expect("create");
+    let id_field = db
+        .fresh_field(RelationId(0), FieldId(0))
+        .expect("fresh field");
+    db.env().fail_next_fresh_flushes(1);
+    let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _: Result<()> = db.write(|tx| {
+            assert_eq!(tx.alloc_at(id_field)?, 0);
+            panic!("host bug after alloc");
+        });
+    }));
+    assert!(unwound.is_err());
+    db.write(|tx| {
+        assert_eq!(
+            tx.alloc_at(id_field)?,
+            1,
+            "Drop discarded the flush error but kept the in-process floor"
+        );
+        Ok(())
+    })
+    .expect("write begin retried the parked burn");
+}
+
 /// The drop-order lock window: `Db`'s fields drop in declaration
 /// order, and a parked reader's transaction owns its own env clone —
 /// if the `Environment` (and with it the advisory lock) dropped before

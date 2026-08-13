@@ -12,15 +12,21 @@
 //! FFI, so each live snapshot or write transaction is a dedicated worker
 //! thread PARKED inside the engine closure, serving one request at a time
 //! over an mpsc channel pair. Every request is a synchronous round trip: the
-//! JS thread sends, blocks on the reply, and returns — so at most one thread
-//! touches any engine object at any instant, which is the whole soundness
-//! argument for the one raw pointer that crosses threads here (a prepared
-//! query during `preparedExecute`/`preparedStaleness`, dereferenced only
-//! while the JS thread is blocked on the corresponding reply). The
-//! `dbWriteFrom` witness is NOT a pointer: the snapshot worker mints the
-//! engine's own `Witness` value inside its closure and the value moves —
-//! snapshot close order cannot dangle anything. `WriteTx` point reads are
-//! the engine's own final-state view, live, never simulated.
+//! JS thread sends, blocks on the reply, and returns. `PreparedQuery` is
+//! `!Sync` (interior scratch); the one raw pointer that crosses to the
+//! snapshot worker during `preparedExecute` / `preparedExplain` /
+//! `preparedStaleness` is taken under an exclusive `in_flight` lease: the JS
+//! thread briefly borrows the handle only to refuse re-entry, set the lease,
+//! and extract the address from `UnsafeCell`, then DROPS that `Ref`/`RefMut`
+//! before `SnapWorker::call`. Close/`take_handle` refuse the same lease with
+//! a typed re-entrant error. The worker dereferences the pointer only while
+//! the lease is held and no typed Rust reference exists on the JS thread —
+//! that lease, not "JS is blocked so a live `RefMut` is fine," is the
+//! soundness argument. The `dbWriteFrom` witness is NOT a pointer: the
+//! snapshot worker mints the engine's own `Witness` value inside its closure
+//! and the value moves — snapshot close order cannot dangle anything.
+//! `WriteTx` point reads are the engine's own final-state view, live, never
+//! simulated.
 //!
 //! # Handle lifecycle
 //!
@@ -42,7 +48,7 @@
 //! errors THROW: marshaling mismatches (naming relation/field/expected/got),
 //! use-after-close, engine `FactShape`/storage errors.
 
-use std::cell::{Ref, RefCell, RefMut};
+use std::cell::{Ref, RefCell, RefMut, UnsafeCell};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
@@ -119,6 +125,10 @@ fn closed_handle(what: &str) -> napi::Error {
     marshal::err(format!("bumbledb: use of a closed {what} handle"))
 }
 
+fn reentrant_use(what: &str) -> napi::Error {
+    marshal::err(format!("bumbledb: re-entrant use of a {what} handle"))
+}
+
 fn worker_died(what: &str) -> napi::Error {
     marshal::err(format!("bumbledb: the {what} worker thread died"))
 }
@@ -131,8 +141,11 @@ fn throw_engine(error: &Error) -> napi::Error {
 
 /// Takes a handle's inner value, spending it — the shared close/commit/abort
 /// seam: `None` (already spent) is the typed use-after-close refusal.
+/// Re-entrant `RefCell` use throws (the same error as [`live`]/[`live_mut`])
+/// rather than panicking across napi.
 fn take_handle<T>(cell: &RefCell<Option<T>>, what: &str) -> napi::Result<T> {
-    cell.borrow_mut().take().ok_or_else(|| closed_handle(what))
+    let mut borrowed = cell.try_borrow_mut().map_err(|_| reentrant_use(what))?;
+    borrowed.take().ok_or_else(|| closed_handle(what))
 }
 
 /// The reply-unwrap triplet, ONE spelling (cleanup-0.5.0 U3 kill 12): a
@@ -181,17 +194,13 @@ macro_rules! outcome_to_napi {
 /// Borrows a handle's live inner value or throws the typed
 /// use-after-close error.
 fn live<'a, T>(cell: &'a RefCell<Option<T>>, what: &str) -> napi::Result<Ref<'a, T>> {
-    let borrowed = cell
-        .try_borrow()
-        .map_err(|_| marshal::err(format!("bumbledb: re-entrant use of a {what} handle")))?;
+    let borrowed = cell.try_borrow().map_err(|_| reentrant_use(what))?;
     Ref::filter_map(borrowed, Option::as_ref).map_err(|_| closed_handle(what))
 }
 
 /// [`live`], mutably.
 fn live_mut<'a, T>(cell: &'a RefCell<Option<T>>, what: &str) -> napi::Result<RefMut<'a, T>> {
-    let borrowed = cell
-        .try_borrow_mut()
-        .map_err(|_| marshal::err(format!("bumbledb: re-entrant use of a {what} handle")))?;
+    let borrowed = cell.try_borrow_mut().map_err(|_| reentrant_use(what))?;
     RefMut::filter_map(borrowed, Option::as_mut).map_err(|_| closed_handle(what))
 }
 
@@ -505,26 +514,43 @@ pub fn exhume_scan(
 // Snapshot handle (worker thread parked inside `Db::read`)
 // ---------------------------------------------------------------------------
 
+/// A leased `PreparedQuery` pointer that may cross to the snapshot worker.
+/// Raw `*mut` is `!Send` on this toolchain; the `in_flight` lease is the
+/// exclusive-access proof (`PreparedQuery` is `!Sync`).
+#[repr(transparent)]
+struct LeasedPrepared(*mut PreparedQuery<'static, SchemaDescriptor>);
+
+// SAFETY: only `lease_prepared` constructs this, after setting `in_flight`.
+// The JS thread holds no `Ref`/`RefMut` to `PreparedInner` while the
+// pointer is in flight; the snapshot worker is the only dereference;
+// `take_prepared` refuses the lease so the pointee outlives the send.
+#[expect(
+    unsafe_code,
+    reason = "the in_flight lease is exclusive access for a !Sync pointee \
+              whose raw pointer is !Send on this toolchain"
+)]
+unsafe impl Send for LeasedPrepared {}
+
 enum SnapReq {
     Scan(RelationId),
     Contains(RelationId, Vec<Value>),
     Get(RelationId, StatementId, Vec<Value>),
     Execute {
-        /// `*mut PreparedQuery<'static, SchemaDescriptor>` as an address —
-        /// dereferenced only while the JS thread blocks on this request's
-        /// reply (module doc, threading model).
-        prepared: usize,
+        /// `UnsafeCell::get()` pointer from a live `in_flight` lease —
+        /// the JS thread holds no `Ref`/`RefMut` to `PreparedInner` while
+        /// this request is in flight (module doc, threading model).
+        prepared: LeasedPrepared,
         params: Vec<OwnedParam>,
     },
     Explain {
-        /// `*mut PreparedQuery<'static, SchemaDescriptor>` as an address —
-        /// the same discipline as `Execute`.
-        prepared: usize,
+        /// Same exclusive lease as `Execute`.
+        prepared: LeasedPrepared,
         params: Vec<OwnedParam>,
     },
     Staleness {
-        /// `*const PreparedQuery<'static, SchemaDescriptor>` as an address.
-        prepared: usize,
+        /// Same exclusive lease as `Execute` (`PreparedQuery` is `!Sync`,
+        /// so even a shared engine method rides the exclusive pointer).
+        prepared: LeasedPrepared,
     },
     /// Replies with the parked `Snapshot`'s minted [`Witness`] value for
     /// `dbWriteFrom` — evidence minted where the snapshot lives, moved
@@ -637,53 +663,40 @@ fn run_snapshot(db: Arc<Engine>, requests: Receiver<SnapReq>, replies: Sender<Sn
                     SnapReply::Row(snap.get_dyn(relation, key, &values).map_err(|e| wire(&e)))
                 }
                 SnapReq::Execute { prepared, params } => {
-                    // SAFETY: the address is `preparedExecute`'s live
-                    // `&mut PreparedInner::prepared`, taken under `live_mut`'s
-                    // exclusive borrow; the JS thread blocks on this request's
-                    // reply for the whole dereference (module doc, threading
-                    // model), so no second reference exists anywhere.
+                    // SAFETY: `prepared` is `lease_prepared`'s
+                    // `UnsafeCell::get()` pointer. The JS thread dropped
+                    // every `Ref`/`RefMut` to `PreparedInner` before
+                    // `SnapWorker::call` and holds the `in_flight` lease
+                    // until after `recv`; close refuses that lease. No
+                    // second typed reference exists. `PreparedQuery` is
+                    // `!Sync`; the lease is the exclusive-access proof.
                     #[expect(
                         unsafe_code,
                         reason = "a prepared query cannot cross the FFI as a closure \
-                                  capture; its address rides the request while the JS \
-                                  thread blocks on the reply"
+                                  capture; its leased address rides the request"
                     )]
-                    let prepared = unsafe {
-                        &mut *(prepared as *mut PreparedQuery<'static, SchemaDescriptor>)
-                    };
+                    let prepared = unsafe { &mut *prepared.0 };
                     SnapReply::Answers(execute_answers(snap, prepared, &params))
                 }
                 SnapReq::Explain { prepared, params } => {
-                    // SAFETY: `preparedExplain`'s live `&mut
-                    // PreparedInner::prepared`, taken under `live_mut`'s
-                    // exclusive borrow; the JS thread blocks on this
-                    // request's reply for the whole dereference (module
-                    // doc, threading model), so no second reference
-                    // exists anywhere.
+                    // SAFETY: same `in_flight` lease as `Execute`.
                     #[expect(
                         unsafe_code,
                         reason = "a prepared query cannot cross the FFI as a closure \
-                                  capture; its address rides the request while the JS \
-                                  thread blocks on the reply"
+                                  capture; its leased address rides the request"
                     )]
-                    let prepared = unsafe {
-                        &mut *(prepared as *mut PreparedQuery<'static, SchemaDescriptor>)
-                    };
+                    let prepared = unsafe { &mut *prepared.0 };
                     SnapReply::Explain(explain_stats(snap, prepared, &params))
                 }
                 SnapReq::Staleness { prepared } => {
-                    // SAFETY: `preparedStaleness`'s live shared borrow of
-                    // `PreparedInner::prepared`; the JS thread blocks on this
-                    // request's reply for the whole dereference, so the borrow
-                    // outlives every use here.
+                    // SAFETY: same exclusive `in_flight` lease as `Execute`
+                    // (`PreparedQuery` is `!Sync`).
                     #[expect(
                         unsafe_code,
                         reason = "a prepared query cannot cross the FFI as a closure \
-                                  capture; its address rides the request while the JS \
-                                  thread blocks on the reply"
+                                  capture; its leased address rides the request"
                     )]
-                    let prepared =
-                        unsafe { &*(prepared as *const PreparedQuery<'static, SchemaDescriptor>) };
+                    let prepared = unsafe { &*prepared.0 };
                     SnapReply::Staleness(staleness_wire(snap, prepared))
                 }
                 SnapReq::Witness => SnapReply::Witness(snap.witness().map_err(|e| wire(&e))),
@@ -1053,7 +1066,17 @@ fn spawn_tx(inner: &DbInner, witness: Option<Witness<SchemaDescriptor>>) -> napi
     let (rep_tx, rep_rx) = channel::<TxReply>();
     let engine = Arc::clone(&inner.db);
     let sealed = Arc::clone(&inner.sealed);
-    let thread = std::thread::spawn(move || run_tx(engine, sealed, witness, req_rx, rep_tx));
+    let thread = match std::thread::Builder::new().spawn(move || {
+        run_tx(engine, sealed, witness, req_rx, rep_tx);
+    }) {
+        Ok(thread) => thread,
+        Err(error) => {
+            inner.tx_open.store(false, Ordering::Release);
+            return Err(marshal::err(format!(
+                "bumbledb: failed to spawn the write-transaction worker: {error}"
+            )));
+        }
+    };
     Ok(TxWorker {
         requests: req_tx,
         replies: rep_rx,
@@ -1275,8 +1298,60 @@ pub struct PreparedHandle {
 }
 
 struct PreparedInner {
-    prepared: PreparedQuery<'static, SchemaDescriptor>,
+    prepared: UnsafeCell<PreparedQuery<'static, SchemaDescriptor>>,
+    /// Exclusive lease for the snapshot-worker pointer. Set only around
+    /// `SnapWorker::call`; close refuses while set.
+    in_flight: AtomicBool,
     _db: Arc<Engine>,
+}
+
+/// Clears `in_flight` after the worker round trip. Does not hold a typed
+/// reference to `PreparedQuery` — that is the whole point of the lease.
+#[must_use]
+struct PreparedLease<'a> {
+    cell: &'a RefCell<Option<PreparedInner>>,
+}
+
+impl Drop for PreparedLease<'_> {
+    fn drop(&mut self) {
+        if let Ok(inner) = self.cell.try_borrow()
+            && let Some(inner) = inner.as_ref()
+        {
+            inner.in_flight.store(false, Ordering::Release);
+        }
+    }
+}
+
+/// Briefly borrows the handle to refuse re-entry, set `in_flight`, and
+/// extract the `UnsafeCell` pointer — then drops the `RefMut` before the
+/// caller invokes `SnapWorker::call`.
+fn lease_prepared(
+    cell: &RefCell<Option<PreparedInner>>,
+) -> napi::Result<(LeasedPrepared, PreparedLease<'_>)> {
+    let ptr = {
+        let inner = live_mut(cell, "prepared query")?;
+        if inner.in_flight.swap(true, Ordering::AcqRel) {
+            return Err(reentrant_use("prepared query"));
+        }
+        inner.prepared.get()
+    };
+    Ok((LeasedPrepared(ptr), PreparedLease { cell }))
+}
+
+/// [`take_handle`] for a prepared query: also refuses while `in_flight`.
+fn take_prepared(cell: &RefCell<Option<PreparedInner>>) -> napi::Result<PreparedInner> {
+    let mut borrowed = cell
+        .try_borrow_mut()
+        .map_err(|_| reentrant_use("prepared query"))?;
+    if borrowed
+        .as_ref()
+        .is_some_and(|inner| inner.in_flight.load(Ordering::Acquire))
+    {
+        return Err(reentrant_use("prepared query"));
+    }
+    borrowed
+        .take()
+        .ok_or_else(|| closed_handle("prepared query"))
 }
 
 /// `dbPrepare`'s domain outcome.
@@ -1327,7 +1402,8 @@ pub fn db_prepare(db: &External<DbHandle>, program: Object) -> napi::Result<Prep
     };
     Ok(PrepareOutcome::Ok(External::new(PreparedHandle {
         inner: RefCell::new(Some(PreparedInner {
-            prepared,
+            prepared: UnsafeCell::new(prepared),
+            in_flight: AtomicBool::new(false),
             _db: engine,
         })),
     })))
@@ -1345,12 +1421,11 @@ pub fn prepared_execute(
     params: Array,
 ) -> napi::Result<Vec<Vec<ValueOut>>> {
     let params = marshal::params_in(&params)?;
-    let mut prepared_inner = live_mut(&prepared.inner, "prepared query")?;
+    let (prepared_ptr, _lease) = lease_prepared(&prepared.inner)?;
     let worker = live(&snap.inner, "snapshot")?;
-    let address = std::ptr::from_mut(&mut prepared_inner.prepared) as usize;
     let answers = reply!(
         worker.call(SnapReq::Execute {
-            prepared: address,
+            prepared: prepared_ptr,
             params,
         })?,
         SnapReply::Answers,
@@ -1373,12 +1448,11 @@ pub fn prepared_explain(
     params: Array,
 ) -> napi::Result<ExplainWire> {
     let params = marshal::params_in(&params)?;
-    let mut prepared_inner = live_mut(&prepared.inner, "prepared query")?;
+    let (prepared_ptr, _lease) = lease_prepared(&prepared.inner)?;
     let worker = live(&snap.inner, "snapshot")?;
-    let address = std::ptr::from_mut(&mut prepared_inner.prepared) as usize;
     let stats = reply!(
         worker.call(SnapReq::Explain {
-            prepared: address,
+            prepared: prepared_ptr,
             params,
         })?,
         SnapReply::Explain,
@@ -1394,11 +1468,12 @@ pub fn prepared_staleness(
     prepared: &External<PreparedHandle>,
     snap: &External<SnapshotHandle>,
 ) -> napi::Result<StalenessWire> {
-    let prepared_inner = live(&prepared.inner, "prepared query")?;
+    let (prepared_ptr, _lease) = lease_prepared(&prepared.inner)?;
     let worker = live(&snap.inner, "snapshot")?;
-    let address = std::ptr::from_ref(&prepared_inner.prepared) as usize;
     reply!(
-        worker.call(SnapReq::Staleness { prepared: address })?,
+        worker.call(SnapReq::Staleness {
+            prepared: prepared_ptr,
+        })?,
         SnapReply::Staleness,
         "snapshot"
     )
@@ -1407,6 +1482,47 @@ pub fn prepared_staleness(
 /// Releases the prepared query (its plan, memo, and engine reference).
 #[napi]
 pub fn prepared_close(prepared: &External<PreparedHandle>) -> napi::Result<()> {
-    take_handle(&prepared.inner, "prepared query")?;
+    take_prepared(&prepared.inner)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod handle_lifecycle {
+    use super::*;
+
+    #[test]
+    fn take_handle_reentrant_borrow_is_typed_error() {
+        let cell = RefCell::new(Some(1_u8));
+        let error = {
+            let _guard = cell.borrow();
+            take_handle(&cell, "db").expect_err("re-entrant take must not panic")
+        };
+        assert!(
+            error.reason.contains("re-entrant use of a db handle"),
+            "{}",
+            error.reason
+        );
+        assert!(
+            cell.borrow().is_some(),
+            "re-entrant take must not spend the handle"
+        );
+    }
+
+    #[test]
+    fn take_handle_closed_is_typed_error() {
+        let cell = RefCell::new(None::<u8>);
+        let error = take_handle(&cell, "snapshot").expect_err("empty handle");
+        assert!(
+            error.reason.contains("closed snapshot handle"),
+            "{}",
+            error.reason
+        );
+    }
+
+    #[test]
+    fn take_handle_spends_the_value() {
+        let cell = RefCell::new(Some(7_u8));
+        assert_eq!(take_handle(&cell, "db").expect("live handle"), 7);
+        assert!(cell.borrow().is_none());
+    }
 }

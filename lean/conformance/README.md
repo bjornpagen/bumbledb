@@ -5,10 +5,11 @@ the debugging surface when the three oracles disagree. The Rust
 serializer and corpus builder live in
 `crates/bumbledb-bench/src/conformance.rs`; the Lean decoder/evaluator
 in `Bumbledb/Conformance.lean` (`lake exe conformance cases/`, driver
-in `Main.lean`). The evaluation is the DENOTATION: plain projections
-run through `evalList`, proved equal to the set denotation by
-`eval_sound` (`Bumbledb/Query/Denotation.lean`); aggregate heads run
-the recorded glue over PRD 05's proved computable folds
+in `Main.lean`). The evaluation is the DENOTATION: plain projections run the join plus
+the **surface anti-join** (`surfaceMatchesB` / AntiProbe) so negated
+membership and param-set membership are in the fragment; `eval_sound`
+still names membership-free negation. Aggregate heads run the recorded
+glue over PRD 05's proved computable folds
 (`Bumbledb/Conformance.lean`, module doc).
 
 Three case kinds share the directory, dispatched by FILE NAME:
@@ -106,11 +107,13 @@ byte-format drift cannot silently pass or fail a case.
 The engine's membership BINDING is a typing rule, not a syntax node:
 an element-typed term on an interval field means point membership,
 resolved by the validator (`ir/validate/context.rs::resolve_bivalents`).
-The Lean matching equation reads every binding as value selection, so
-the serializer performs the same resolution: such a binding becomes a
-fresh interval variable plus a `PointIn` condition — the predicate form
-the typing rule licenses. The engine executes the original query; Lean
-evaluates the lowered one; their agreement is part of what the lane
+The serializer lowers POSITIVE membership to a fresh interval variable
+plus a `PointIn` condition — the predicate form the typing rule
+licenses. NEGATED membership is left in surface form: Lean's third
+oracle rejects those atoms by AntiProbe (`surfaceMatchesB`,
+`Atom.lowerNegated` / `membership_lowering_preserves_negated`), matching
+`normalize.rs::AntiProbe`. The engine executes the original query; Lean
+evaluates that mixed lowering; their agreement is part of what the lane
 checks.
 
 ## The fold-domain keys: `width` and `dnf`
@@ -154,11 +157,14 @@ so no count is pinned here):
 * **unresolved string literals** (31) — the model has no intern
   dictionary; a query/param string outside the world's vocabulary is
   the engine's dictionary-miss latch, excluded on principle.
-* **negated-atom membership** (5) — the membership lowering has no
-  home inside an anti-join atom (no fresh variable may bind there).
-* **element-typed param-set membership** (0 this build) — the lowered
-  `PointIn`-with-set shape would violate the `WellTyped` premise
-  `eval_sound` names.
+* **negated-atom membership** — LIFTED (2026-08-13): Lean evaluates
+  negated atoms with `surfaceMatchesB` (AntiProbe). The class enters
+  the corpus at the next regeneration; replay of the checked-in files
+  is unchanged.
+* **element-typed param-set membership** — LIFTED (2026-08-13):
+  positive set membership lowers to `PointIn` with a param-set rhs
+  (`condHoldsB`); negated set membership is AntiProbe
+  `selectsAt_paramSet_membership`. Same regeneration note as above.
 * **membership under an additive fold** — LIFTED (2026-07-23 audit,
   finding 087; 0 in this build's corpus): the fold domain now reads
   the surface width (the `width` key, above), so the fresh interval
@@ -167,6 +173,8 @@ so no count is pinned here):
   licenses. The `AggregateMembership` exclusion dies bench-side and
   the class enters the corpus at the next regeneration, so the third
   oracle adjudicates it instead of excluding it.
+* **measure-keyed Arg** — KILLED (ArgMax/ArgMin cull; tickets 201/211
+  obsolete). Not a fence: the operator is gone.
 * **engine runtime errors** (0 this build) — `Overflow` /
   `MeasureOfRay`: the lane compares answer sets on error-free
   executions only (the model reads a ray's measure as `none`; the

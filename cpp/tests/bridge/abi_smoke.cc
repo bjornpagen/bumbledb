@@ -29,10 +29,10 @@ struct CaseResult {
 
 [[nodiscard]] auto scalar_type(abi::bdb_value_type_kind kind) -> abi::bdb_value_type {
 	return abi::bdb_value_type{
-	    .kind = kind,
+	    .kind = abi::abi_tag(kind),
 	    .fixed_len = 0,
-	    .element = abi::bdb_interval_element::BDB_INTERVAL_ELEMENT_U64,
-	    .has_width = false,
+	    .element = abi::abi_tag(abi::bdb_interval_element::BDB_INTERVAL_ELEMENT_U64),
+	    .has_width = abi::abi_flag(false),
 	    .width = 0,
 	};
 }
@@ -63,13 +63,13 @@ struct CaseResult {
 	        .name = view_of(id_bytes),
 	        .value_type = scalar_type(abi::bdb_value_type_kind::BDB_VALUE_TYPE_KIND_U64),
 	        .newtype = absent_view(),
-	        .fresh = true,
+	        .fresh = abi::abi_flag(true),
 	    },
 	    abi::bdb_field_spec{
 	        .name = view_of(name_bytes),
 	        .value_type = scalar_type(abi::bdb_value_type_kind::BDB_VALUE_TYPE_KIND_STRING),
 	        .newtype = absent_view(),
-	        .fresh = false,
+	        .fresh = abi::abi_flag(false),
 	    },
 	};
 	auto const relation = abi::bdb_relation_spec{
@@ -138,7 +138,7 @@ struct CaseResult {
 	    .name = view_of(id_bytes),
 	    .value_type = scalar_type(abi::bdb_value_type_kind::BDB_VALUE_TYPE_KIND_U64),
 	    .newtype = absent_view(),
-	    .fresh = true,
+	    .fresh = abi::abi_flag(true),
 	};
 	auto const relation = abi::bdb_relation_spec{
 	    .name = view_of(service_bytes),

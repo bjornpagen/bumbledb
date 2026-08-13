@@ -1378,12 +1378,17 @@ impl Emitter<'_> {
                 format!("{value}::{variant}({})", int_text(int))
             }
             Lit::Interval { start, end } => {
-                let variant = if start.signed || end.signed {
-                    "IntervalI64"
+                let (variant, ty) = if start.signed || end.signed {
+                    ("IntervalI64", "i64")
                 } else {
-                    "IntervalU64"
+                    ("IntervalU64", "u64")
                 };
-                format!("{value}::{variant}({}, {})", int_text(start), int_text(end))
+                format!(
+                    "{value}::{variant}(::bumbledb::Interval::<{ty}>::new({}, {})\
+                     .expect(\"query! interval literals are nonempty\"))",
+                    int_text(start),
+                    int_text(end)
+                )
             }
             Lit::Str(text) => {
                 format!("{value}::String(::std::boxed::Box::from({text}.as_bytes()))")

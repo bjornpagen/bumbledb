@@ -542,3 +542,110 @@ fn a_pre_plan_infra_failure_still_burns_the_escaped_fresh_ids() {
     let (id, _delta) = mint(&env, false);
     assert_eq!(id, 2, "the no-op-path abort burned its escaped id");
 }
+
+#[test]
+fn a_failed_escaped_flush_still_never_reissues_in_process() {
+    let dir = TempDir::new("commit-flush-fail-in-process");
+    let schema = schema();
+    let env = Environment::create(dir.path(), &schema).expect("create");
+    let view = env.read_txn().expect("txn");
+    let mut delta = WriteDelta::new(&schema);
+    let id = delta.alloc(&view, TARGET, FieldId(0)).expect("alloc");
+    assert_eq!(id, 0);
+    delta
+        .insert(&view, KEYED, &keyed_fact(&schema, 1, 10))
+        .expect("insert");
+    delta
+        .insert(&view, KEYED, &keyed_fact(&schema, 1, 20))
+        .expect("insert");
+    drop(view);
+    env.fail_next_fresh_flushes(1);
+    let err = commit(delta, &env).unwrap_err();
+    assert!(
+        matches!(err, Error::CommitRejected { .. }),
+        "a sealed rejection survives a failed Q burn, got {err:?}"
+    );
+    let q_key = key(|buf| keys::fresh_key(buf, TARGET, FieldId(0)));
+    {
+        let rtxn = env.read_txn().expect("txn");
+        assert!(
+            env.data().get(rtxn.raw(), &q_key).expect("get").is_none(),
+            "the failed burn left disk Q untouched"
+        );
+    }
+    let view = env.read_txn().expect("txn");
+    let mut next = WriteDelta::new(&schema);
+    assert_eq!(
+        next.alloc(&view, TARGET, FieldId(0)).expect("alloc"),
+        1,
+        "in-process high-water forbids reissuing 0"
+    );
+}
+
+#[test]
+fn s_row_count_overflow_is_labeled_overflow() {
+    let dir = TempDir::new("commit-s-overflow");
+    let schema = schema();
+    let env = Environment::create(dir.path(), &schema).expect("create");
+    {
+        let mut wtxn = env.write_txn().expect("txn");
+        let mut key: KeyBuf = [0; MAX_KEY];
+        let len = keys::stat_key(&mut key, KEYED, StatKind::RowCount);
+        env.data()
+            .put(
+                wtxn.raw_mut(),
+                &key[..len],
+                u64::MAX.to_le_bytes().as_slice(),
+            )
+            .expect("put S");
+        wtxn.commit().expect("commit");
+    }
+    let view = env.read_txn().expect("txn");
+    let mut delta = WriteDelta::new(&schema);
+    delta
+        .insert(&view, KEYED, &keyed_fact(&schema, 1, 10))
+        .expect("insert");
+    drop(view);
+    let err = commit(delta, &env).unwrap_err();
+    assert!(
+        matches!(
+            err,
+            Error::Corruption(crate::error::CorruptionError::MalformedValue(
+                "S row count overflow"
+            ))
+        ),
+        "{err:?}"
+    );
+}
+
+#[test]
+fn s_row_count_underflow_keeps_the_underflow_label() {
+    let dir = TempDir::new("commit-s-underflow");
+    let schema = schema();
+    let env = Environment::create(dir.path(), &schema).expect("create");
+    let fact = keyed_fact(&schema, 1, 10);
+    apply_delta(&env, &schema, &[], &[(KEYED, fact.clone())]).expect("base");
+    {
+        let mut wtxn = env.write_txn().expect("txn");
+        let mut key: KeyBuf = [0; MAX_KEY];
+        let len = keys::stat_key(&mut key, KEYED, StatKind::RowCount);
+        env.data()
+            .put(wtxn.raw_mut(), &key[..len], 0u64.to_le_bytes().as_slice())
+            .expect("zero S");
+        wtxn.commit().expect("commit");
+    }
+    let view = env.read_txn().expect("txn");
+    let mut delta = WriteDelta::new(&schema);
+    delta.delete(&view, KEYED, &fact).expect("delete");
+    drop(view);
+    let err = commit(delta, &env).unwrap_err();
+    assert!(
+        matches!(
+            err,
+            Error::Corruption(crate::error::CorruptionError::MalformedValue(
+                "S row count underflow"
+            ))
+        ),
+        "{err:?}"
+    );
+}

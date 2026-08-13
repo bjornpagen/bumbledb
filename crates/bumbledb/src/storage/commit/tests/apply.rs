@@ -23,7 +23,7 @@ fn insert_lands_exactly_the_expected_key_set() {
         delta.insert(&view, KEYED, &k).expect("insert");
         drop(view);
         let plan = plan_for(&delta, &env);
-        let applied = apply(&plan, &env).expect("apply");
+        let applied = apply(&plan, &env, &schema).expect("apply");
 
         let t_hash = crate::encoding::fact_hash(&t);
         let k_hash = crate::encoding::fact_hash(&k);
@@ -66,7 +66,7 @@ fn deleting_a_fact_with_a_scrubbed_f_row_is_corruption() {
         delta.insert(&view, TARGET, &t5).expect("insert");
         drop(view);
         let plan = plan_for(&delta, &env);
-        apply(&plan, &env)
+        apply(&plan, &env, &schema)
             .expect("apply")
             .txn
             .commit()
@@ -90,7 +90,7 @@ fn deleting_a_fact_with_a_scrubbed_f_row_is_corruption() {
     delta.delete(&view, TARGET, &t5).expect("record delete");
     drop(view);
     let plan = plan_for(&delta, &env);
-    let Err(err) = apply(&plan, &env).map(|_| ()) else {
+    let Err(err) = apply(&plan, &env, &schema).map(|_| ()) else {
         panic!("apply must fail on a scrubbed F row");
     };
     assert!(matches!(
@@ -118,7 +118,7 @@ fn deleting_a_fact_with_a_scrubbed_interval_determinant_is_corruption() {
         delta.insert(&view, BOOKING, &booked).expect("insert");
         drop(view);
         let plan = plan_for(&delta, &env);
-        apply(&plan, &env)
+        apply(&plan, &env, &schema)
             .expect("apply")
             .txn
             .commit()
@@ -147,7 +147,7 @@ fn deleting_a_fact_with_a_scrubbed_interval_determinant_is_corruption() {
         .expect("record delete");
     drop(view);
     let plan = plan_for(&delta, &env);
-    let Err(err) = apply(&plan, &env).map(|_| ()) else {
+    let Err(err) = apply(&plan, &env, &schema).map(|_| ()) else {
         panic!("apply must fail on a scrubbed U determinant");
     };
     assert!(matches!(
@@ -183,14 +183,14 @@ fn base_state_disagreeing_with_a_proved_disposition_is_corruption() {
         sneak.insert(&view, TARGET, &t5).expect("insert");
         drop(view);
         let plan = plan_for(&sneak, &env);
-        apply(&plan, &env)
+        apply(&plan, &env, &schema)
             .expect("apply")
             .txn
             .commit()
             .expect("commit");
     }
     let plan = plan_for(&insert_delta, &env);
-    let Err(err) = apply(&plan, &env).map(|_| ()) else {
+    let Err(err) = apply(&plan, &env, &schema).map(|_| ()) else {
         panic!("apply must fail on a base state the delta disproved");
     };
     assert!(matches!(
@@ -217,7 +217,7 @@ fn base_state_disagreeing_with_a_proved_disposition_is_corruption() {
         wtxn.commit().expect("commit");
     }
     let plan = plan_for(&delete_delta, &env);
-    let Err(err) = apply(&plan, &env).map(|_| ()) else {
+    let Err(err) = apply(&plan, &env, &schema).map(|_| ()) else {
         panic!("apply must fail on a base state the delta disproved");
     };
     assert!(matches!(
@@ -243,7 +243,7 @@ fn delete_removes_exactly_its_entries() {
         delta.insert(&view, KEYED, &k).expect("insert");
         drop(view);
         let plan = plan_for(&delta, &env);
-        apply(&plan, &env)
+        apply(&plan, &env, &schema)
             .expect("apply")
             .txn
             .commit()
@@ -257,7 +257,7 @@ fn delete_removes_exactly_its_entries() {
     delta.delete(&view, KEYED, &k).expect("delete");
     drop(view);
     let plan = plan_for(&delta, &env);
-    let applied = apply(&plan, &env).expect("apply");
+    let applied = apply(&plan, &env, &schema).expect("apply");
 
     let k_hash = crate::encoding::fact_hash(&k);
     let removed: BTreeSet<Vec<u8>> = [
@@ -289,7 +289,7 @@ fn deleting_a_containment_targeted_key_records_its_determinant() {
         delta.insert(&view, TARGET, &t5).expect("insert");
         drop(view);
         let plan = plan_for(&delta, &env);
-        apply(&plan, &env)
+        apply(&plan, &env, &schema)
             .expect("apply")
             .txn
             .commit()
@@ -320,7 +320,7 @@ fn inserting_a_source_fact_writes_its_reverse_edge() {
     delta.insert(&view, CLAIM, &c).expect("insert");
     drop(view);
     let plan = plan_for(&delta, &env);
-    let applied = apply(&plan, &env).expect("apply");
+    let applied = apply(&plan, &env, &schema).expect("apply");
 
     // R | statement | key_bytes | source_rel | source_row: key_bytes is
     // the claim's projection in Target's determinant order, the source row is
@@ -343,7 +343,7 @@ fn deleting_a_source_fact_removes_the_same_reverse_edge() {
         delta.insert(&view, CLAIM, &c).expect("insert");
         drop(view);
         let plan = plan_for(&delta, &env);
-        apply(&plan, &env)
+        apply(&plan, &env, &schema)
             .expect("apply")
             .txn
             .commit()
@@ -360,7 +360,7 @@ fn deleting_a_source_fact_removes_the_same_reverse_edge() {
     delta.delete(&view, CLAIM, &c).expect("delete");
     drop(view);
     let plan = plan_for(&delta, &env);
-    let applied = apply(&plan, &env).expect("apply");
+    let applied = apply(&plan, &env, &schema).expect("apply");
     let c_hash = crate::encoding::fact_hash(&c);
     let removed: BTreeSet<Vec<u8>> = [
         key(|b| keys::fact_key(b, CLAIM, 0)),
@@ -389,7 +389,7 @@ fn delete_plus_insert_of_same_key_succeeds_in_either_user_order() {
         delta.insert(&view, KEYED, &old).expect("insert");
         drop(view);
         let plan = plan_for(&delta, &env);
-        apply(&plan, &env)
+        apply(&plan, &env, &schema)
             .expect("apply")
             .txn
             .commit()
@@ -404,7 +404,7 @@ fn delete_plus_insert_of_same_key_succeeds_in_either_user_order() {
     delta.delete(&view, KEYED, &old).expect("delete");
     drop(view);
     let plan = plan_for(&delta, &env);
-    let applied = apply(&plan, &env).expect("apply");
+    let applied = apply(&plan, &env, &schema).expect("apply");
     // The determinant key survives, now pointing at the new row.
     let u = key(|b| keys::determinant_key(b, KEYED, KEYED_KEY, &encode_u64(1)));
     assert!(all_data_keys(&applied.txn, &env).contains(&u));
@@ -423,7 +423,7 @@ fn rederived_determinant_keys_match_independent_computation() {
     delta.insert(&view, BOOKING, &booked).expect("insert");
     drop(view);
     let plan = plan_for(&delta, &env);
-    let applied = apply(&plan, &env).expect("apply");
+    let applied = apply(&plan, &env, &schema).expect("apply");
 
     // The scalar determinant is the canonical encoding of `x`; the pointwise
     // determinant is `room ‖ during` with the interval's whole 16 bytes —

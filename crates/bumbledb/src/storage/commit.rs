@@ -25,8 +25,10 @@ use heed::types::Bytes;
 use heed::{AnyTls, Database, RoTxn};
 
 use crate::error::{CorruptionError, Error, Result};
+use crate::schema::Schema;
 use crate::storage::env::{GenerationId, WriteTxn};
 use crate::storage::keys::{self, KeyBuf, MAX_KEY};
+use crate::storage::read::check_width;
 use bumbledb_theory::schema::RelationId;
 
 mod applier;
@@ -43,7 +45,7 @@ mod tests;
 
 pub use apply::apply;
 pub use write::commit;
-pub(crate) use write::flush_escaped_fresh_ids;
+pub(crate) use write::{flush_escaped_fresh_ids, flush_pending_escaped_fresh_ids};
 
 /// Named commit-pipeline markers. The former crashpoint harness died with
 /// the fuzzer; the sites remain as documentation of the atomicity
@@ -78,9 +80,10 @@ pub struct CommitReport {
 /// plumbing, one key scratch — no derivation state; the plan owns it —
 /// and the key-violation collector (recorded conflicts, sealed into the
 /// complete rejection set after phase 2).
-struct Applier<'env> {
+struct Applier<'env, 's> {
     txn: WriteTxn<'env>,
     data: heed::Database<heed::types::Bytes, heed::types::Bytes>,
+    schema: &'s Schema,
     row_id_next: BTreeMap<RelationId, u64>,
     key: KeyBuf,
     violations: Vec<crate::error::Violation>,
@@ -100,14 +103,18 @@ fn decode_row_id(bytes: &[u8]) -> Result<u64> {
 fn fact_by_row<'t>(
     data: Database<Bytes, Bytes>,
     txn: &'t RoTxn<'_, AnyTls>,
+    schema: &Schema,
     relation: RelationId,
     row_id: u64,
 ) -> Result<&'t [u8]> {
     let mut key: KeyBuf = [0; MAX_KEY];
     let f_len = keys::fact_key(&mut key, relation, row_id);
-    data.get(txn, &key[..f_len])?
-        .ok_or(Error::Corruption(CorruptionError::MissingFact {
-            relation,
-            row_id,
-        }))
+    let bytes =
+        data.get(txn, &key[..f_len])?
+            .ok_or(Error::Corruption(CorruptionError::MissingFact {
+                relation,
+                row_id,
+            }))?;
+    check_width(schema, relation, row_id, bytes)?;
+    Ok(bytes)
 }

@@ -49,8 +49,8 @@ public:
 /**
  * The typed answers carrier of one query: `bdb::Answers<DownAt>` decodes
  * rows as the synthesized row product of the query's `.find` head —
- * named members, fixed-width by value, string_view/span borrowed from
- * the carrier.
+ * named members, fixed-width by value, string/bytes owned copies from
+ * decode.
  */
 template<auto Query>
 using Answers = RowAnswers<row_of<Query>>;

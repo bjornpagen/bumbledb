@@ -544,11 +544,15 @@ theorem statement_delta_restriction (T : Theory) (I : Instance)
     cases hsplit : T.header.intervalSplit R X with
     | none =>
       simp only [Statement.judgment, deltaCheck, hsplit] at hpre ⊢
-      exact fd_delta_restriction hpre
+      obtain ⟨hadm, hpre'⟩ := hpre
+      simp [hadm]
+      exact fd_delta_restriction hpre'
     | some p =>
       obtain ⟨S, i⟩ := p
       simp only [Statement.judgment, deltaCheck, hsplit] at hpre ⊢
-      exact pointwise_delta_restriction hpre
+      obtain ⟨hadm, hpre'⟩ := hpre
+      simp [hadm]
+      exact pointwise_delta_restriction hpre'
   | containment src tgt =>
     cases hs : T.header.intervalSplit src.relation src.projection with
     | some p =>
@@ -558,19 +562,27 @@ theorem statement_delta_restriction (T : Theory) (I : Instance)
       | some q =>
         obtain ⟨U, j⟩ := q
         simp only [Statement.judgment, deltaCheck, hs, ht] at hpre ⊢
-        exact coverage_delta_restriction hpre
+        obtain ⟨hcci, hpre'⟩ := hpre
+        simp [hcci]
+        exact coverage_delta_restriction hpre'
       | none =>
         simp only [Statement.judgment, deltaCheck, hs, ht] at hpre ⊢
-        exact containment_delta_restriction hpre
+        obtain ⟨hcci, hpre'⟩ := hpre
+        simp [hcci]
+        exact containment_delta_restriction hpre'
     | none =>
       cases ht : T.header.intervalSplit tgt.relation
           tgt.projection with
       | some q =>
         simp only [Statement.judgment, deltaCheck, hs, ht] at hpre ⊢
-        exact containment_delta_restriction hpre
+        obtain ⟨hcci, hpre'⟩ := hpre
+        simp [hcci]
+        exact containment_delta_restriction hpre'
       | none =>
         simp only [Statement.judgment, deltaCheck, hs, ht] at hpre ⊢
-        exact containment_delta_restriction hpre
+        obtain ⟨hcci, hpre'⟩ := hpre
+        simp [hcci]
+        exact containment_delta_restriction hpre'
   | capacity tgt wt w src =>
     simp only [Statement.judgment, deltaCheck] at hpre ⊢
     exact capacity_delta_restriction hpre

@@ -319,11 +319,12 @@ def functionalityForm : AdmissibleForm (RelId × List FieldId) Unit where
 dispatcher's arm — the tie to the closed vocabulary. -/
 theorem functionalityForm_denotes {T : Theory} {I : Instance}
     {R : RelId} {X : List FieldId}
-    (hscalar : T.header.intervalSplit R X = none) :
+    (hscalar : T.header.intervalSplit R X = none)
+    (hadm : T.header.functionalityAdmitted R X = true) :
     functionalityForm.Judgment (R, X) T I ↔
       (Statement.functionality R X).judgment T I := by
   show Functionality (T.den I R) X ↔ _
-  simp only [Statement.judgment, hscalar]
+  simp [Statement.judgment, hscalar, hadm]
 
 /-! ## Inhabitant 2 — containment, scalar
 
@@ -431,14 +432,15 @@ def containmentForm : AdmissibleForm (Atom × Atom) Bool where
 the containment form's judgment IS the statement dispatcher's arm. -/
 theorem containmentForm_denotes {T : Theory} {I : Instance}
     {src tgt : Atom}
-    (hs : T.header.intervalSplit src.relation src.projection = none) :
+    (hs : T.header.intervalSplit src.relation src.projection = none)
+    (hcci : T.closedContainmentInterval src tgt = false) :
     containmentForm.Judgment (src, tgt) T I ↔
       (Statement.containment src tgt).judgment T I := by
   show Containment (T.den I src.relation) src.selection src.projection
       (T.den I tgt.relation) tgt.selection tgt.projection ↔ _
   cases ht : T.header.intervalSplit tgt.relation tgt.projection with
-  | none => simp only [Statement.judgment, hs, ht]
-  | some q => simp only [Statement.judgment, hs, ht]
+  | none => simp [Statement.judgment, hs, ht, hcci]
+  | some q => simp [Statement.judgment, hs, ht, hcci]
 
 /-! ## Inhabitant 3 — the capacity statement (ruling C11)
 
@@ -644,11 +646,12 @@ def pointwiseForm :
 the form's judgment IS the statement dispatcher's arm. -/
 theorem pointwiseForm_denotes {T : Theory} {I : Instance} {R : RelId}
     {X S : List FieldId} {i : FieldId}
-    (hsplit : T.header.intervalSplit R X = some (S, i)) :
+    (hsplit : T.header.intervalSplit R X = some (S, i))
+    (hadm : T.header.functionalityAdmitted R X = true) :
     pointwiseForm.Judgment (R, S, i) T I ↔
       (Statement.functionality R X).judgment T I := by
   show PointwiseKey (T.den I R) S i ↔ _
-  simp only [Statement.judgment, hsplit]
+  simp [Statement.judgment, hsplit, hadm]
 
 /-! ## Inhabitant 5 — containment, pointwise (coverage)
 
@@ -757,14 +760,15 @@ theorem coverageForm_denotes {T : Theory} {I : Instance}
     (hs : T.header.intervalSplit src.relation src.projection =
       some (S, i))
     (ht : T.header.intervalSplit tgt.relation tgt.projection =
-      some (U, j)) :
+      some (U, j))
+    (hcci : T.closedContainmentInterval src tgt = false) :
     coverageForm.Judgment
         ((src.relation, src.selection, S, i),
          (tgt.relation, tgt.selection, U, j)) T I ↔
       (Statement.containment src tgt).judgment T I := by
   show Coverage (T.den I src.relation) src.selection S i
       (T.den I tgt.relation) tgt.selection U j ↔ _
-  simp only [Statement.judgment, hs, ht]
+  simp [Statement.judgment, hs, ht, hcci]
 
 end Admission
 end Bumbledb

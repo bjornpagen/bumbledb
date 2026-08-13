@@ -5,7 +5,7 @@
 - area: spec-docs-rust
 - wrong-side: spec
 - components: lean/Bumbledb/Capacity.lean, lean/Bumbledb/Values.lean, docs/architecture/30-dependencies.md, crates/bumbledb/src/storage/commit/judgment.rs
-- status: open (do not fix)
+- status: fixed (2026-08-13)
 
 ## Summary
 When a parent *is* present, Lean `Value.durationNat` reads a ray as 0 (`measure.getD 0`). `CapacityLaw` then admits or convicts that 0 against the window. The engine never forms that measure: `end == MAX` → `CapacityRayMeasure`, "the law is not judged false; its measure is undefined." Lean records this as unobservable on judged commits; the executable denotation (`Decide` / conformance judgment) still uses the junk-0 reading unless the corpus avoids rays.
@@ -44,3 +44,6 @@ Re-read `durationNat`, C10 docs, and `interval_measure`. **Confirmed.** Distinct
 ## Related
 - 200 (absent parent)
 - 218 (error not in 70-api roster)
+
+## Resolution (2026-08-13)
+Lean `durationNat?` is `none` on a ray (typed refusal, not 0). `durationNat` still junk-0 for the total fold, explicitly not the engine reading. `CapacityLaw` is only consumed where Duration weights are defined.

@@ -38,36 +38,36 @@ template<class Row>
 		auto& cell = cells[index];
 		auto const& value = row.[:member:];
 		if constexpr (cls.kind == value_kind::boolean) {
-			cell.kind = foreign::bdb_value_kind::BDB_VALUE_KIND_BOOL;
-			cell.bool_value = value;
+			cell.kind = foreign::abi_tag(foreign::bdb_value_kind::BDB_VALUE_KIND_BOOL);
+			cell.bool_value = foreign::abi_flag(value);
 		} else if constexpr (cls.kind == value_kind::u64) {
-			cell.kind = foreign::bdb_value_kind::BDB_VALUE_KIND_U64;
+			cell.kind = foreign::abi_tag(foreign::bdb_value_kind::BDB_VALUE_KIND_U64);
 			if constexpr (is_closed_ref_v<std::remove_cvref_t<decltype(value)>>) {
 				cell.u64_value = value.row;
 			} else {
 				cell.u64_value = value;
 			}
 		} else if constexpr (cls.kind == value_kind::i64) {
-			cell.kind = foreign::bdb_value_kind::BDB_VALUE_KIND_I64;
+			cell.kind = foreign::abi_tag(foreign::bdb_value_kind::BDB_VALUE_KIND_I64);
 			cell.i64_value = value;
 		} else if constexpr (cls.kind == value_kind::string) {
-			cell.kind = foreign::bdb_value_kind::BDB_VALUE_KIND_STRING;
+			cell.kind = foreign::abi_tag(foreign::bdb_value_kind::BDB_VALUE_KIND_STRING);
 			cell.string_value = foreign::bdb_string_view{
 			    .data = std::bit_cast<std::uint8_t const*>(value.data()),
 			    .len = value.size(),
 			};
 		} else if constexpr (cls.kind == value_kind::fixed_bytes) {
-			cell.kind = foreign::bdb_value_kind::BDB_VALUE_KIND_FIXED_BYTES;
+			cell.kind = foreign::abi_tag(foreign::bdb_value_kind::BDB_VALUE_KIND_FIXED_BYTES);
 			cell.bytes_value = foreign::bdb_bytes_view{
 			    .data = std::bit_cast<std::uint8_t const*>(value.data()),
 			    .len = value.size(),
 			};
 		} else if constexpr (cls.kind == value_kind::interval_u64) {
-			cell.kind = foreign::bdb_value_kind::BDB_VALUE_KIND_INTERVAL_U64;
+			cell.kind = foreign::abi_tag(foreign::bdb_value_kind::BDB_VALUE_KIND_INTERVAL_U64);
 			cell.interval_u64_start = value.lo();
 			cell.interval_u64_end = value.hi();
 		} else {
-			cell.kind = foreign::bdb_value_kind::BDB_VALUE_KIND_INTERVAL_I64;
+			cell.kind = foreign::abi_tag(foreign::bdb_value_kind::BDB_VALUE_KIND_INTERVAL_I64);
 			cell.interval_i64_start = value.lo();
 			cell.interval_i64_end = value.hi();
 		}

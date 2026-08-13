@@ -4,7 +4,7 @@
 - confidence: confirmed
 - area: correctness
 - components: crates/bumbledb/src/storage/commit.rs, crates/bumbledb/src/storage/commit/write.rs, crates/bumbledb/src/encoding/decode.rs
-- status: open (do not fix)
+- status: fixed (2026-08-13)
 
 ## Summary
 
@@ -57,3 +57,7 @@ Scalar-key functionality citations store `incumbent: None` and the novel fact co
 ## Verification (2026-08-12)
 
 Confirmed. `fact_by_row` (`storage/commit.rs:174-187`) is a bare `F` get: miss is `MissingFact`, success returns the value bytes with no `check_width`. Pointwise incumbents (`applier.rs:344`) and containment witnesses (`judgment.rs:715-723`) copy that slice into the citation. `decode_cited_facts` then runs `decode_values` (`write.rs:273-287`). `field_bytes` (`encoding/decode.rs:122-125`) `debug_assert`s layout width and slices `offset..offset+desc.width()`; a 1-byte `F` value panics in debug and release. `fetch`/`scan` already return `WrongFactWidth` with the `F`-key id (`check_width.rs:15-20`, `scan.rs:144`). Severity **medium**: requires prior corruption, but the write path panics instead of the typed error those read paths already use.
+
+## Resolution (2026-08-13)
+
+Commit-path `F` gets (`fact_by_row` and the fresh-row sibling) now `check_width` and return `Corruption(WrongFactWidth)` with the real row id; decoration also refuses to panic on a short cited fact and, with 304, will not erase a sealed rejection.

@@ -5,7 +5,7 @@
 - area: spec-docs-rust
 - wrong-side: docs
 - components: README.md, docs/architecture/70-api.md, crates/bumbledb/src/lib.rs, docs/architecture/10-data-model.md, crates/bumbledb/src/api/db.rs, crates/bumbledb/src/api/db/write.rs, lean/Bumbledb/Txn/Fresh.lean
-- status: open (do not fix)
+- status: fixed (2026-08-13)
 
 ## Summary
 The product README, crate docs, and the embedding-surface architecture doc state that an abort never touched disk / never wrote anything / never touched LMDB. The data-model doc and the write path persist escaped fresh high-water via a counters-only LMDB commit on abort. Lean Fresh requires that persistence. The "never wrote" claim is true of *facts* and *generation*, false of the `Q` namespace.
@@ -49,3 +49,6 @@ Re-read README, `70-api.md`, crate docs, Fresh, and the abort burn. **Confirmed.
 
 ## Related
 - 203 (Bridge prose still describes abort-as-discard)
+
+## Resolution (2026-08-13)
+README, `70-api.md`, and crate-root docs now say abort never wrote a *fact*; escaped fresh high-water still flushes `Q` marks. `10-data-model.md` was already correct.

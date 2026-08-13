@@ -585,7 +585,9 @@ of one comparison, a non-interval variable, and any fold but the three.
   subtraction path tests `end == MAX` and yields the **Ray verdict**, raised
   as the typed execution error
   `MeasureOfRay`, carrying the offending interval's two encoded words —
-  **the engine's one runtime type error**; one ray in a group poisons the
+  **the query-path runtime type error for unbounded measure** (the write-path
+  twin is `CapacityRayMeasure`; other runtime aborts are range/resource —
+  `Overflow`, `FixpointBudgetExceeded`, `ResultBytesOverflow`); one ray in a group poisons the
   whole group's measure column, never yielding a value
   (`lean/Bumbledb/Query/Aggregates.lean: measure_fold_laws`). Hosts exclude
   rays first: an
@@ -706,7 +708,8 @@ rules**, so validation distributes every rule's trees to disjunctive normal
 form and **each disjunct becomes a rule** — atoms and finds cloned, the
 rule's conditions that disjunct's leaves — before any per-rule check runs,
 answer-preservingly (`lean/Bumbledb/Query/Denotation.lean:
-dnf_preserves_denotation`) and **fold-preservingly**: the disjunct rules
+dnf_preserves_denotation` — projection `ruleAnswers`) and **fold-preservingly**
+(`lean/Bumbledb/Exec/Dedup.lean: dnf_rekey_transparent`): the disjunct rules
 share the written rule's variable scope and slot layout, and the union dedup
 re-keys on those shared slot arrays, so distribution never changes a fold
 domain (the or-transparency law, § aggregation; ruled 2026-07-23, R2).

@@ -224,8 +224,11 @@ needs ray awareness. Consequences, typed rather than left to be discovered:
 - A **ray has no finite measure**
   (`lean/Bumbledb/Values.lean: measure_ray_none`): `Duration` over a ray is the
   typed execution
-  error `MeasureOfRay` — the one runtime type error in the engine, since
-  boundedness is not provable at validation. The alternative — silently yield
+  error `MeasureOfRay` — the query-path runtime type error for unbounded
+  measure (boundedness is not provable at validation). The write-path twin is
+  `CapacityRayMeasure`. Other runtime aborts (`Overflow`,
+  `FixpointBudgetExceeded`, `ResultBytesOverflow`) are range or resource,
+  not this type error. The alternative — silently yield
   MAX — fabricates arithmetic.
 - **Coverage judgments over rays**: a source ray is satisfied only by a target
   chain reaching a ray (`lean/Bumbledb/Exec/Sweep.lean: ray_needs_ray`); the
@@ -577,8 +580,12 @@ struct implements, with a runtime-built `SchemaDescriptor` as its own definition
 Schemas are declared in Rust and compiled into the binary. The declaration produces
 descriptors, the host-side newtypes, and a canonical byte encoding hashed (blake3)
 into the **schema fingerprint**, stored at database creation; open compares fingerprints
-and mismatches are hard failures. No migration, no ALTER: schema change = ETL into a new
-database (export surface: `70-api.md`).
+and mismatches are hard failures (`SchemaMismatch`). The fingerprint is
+**extra-theoretic engine identity**: Lean `Theory` has no hash of a theory
+(statement order, closed-row order, and the `bumbledb-schema-v5` label are
+engine/docs law, not a Lean theorem). Cross-host byte-exact fingerprint parity
+(`75-cpp-lowering.md`) is an engine obligation. No migration, no ALTER: schema
+change = ETL into a new database (export surface: `70-api.md`).
 
 **Fingerprint inputs, exhaustively:** an encoding-format version label; relations in
 declaration order — for each: name and fields in declaration order (name, structural

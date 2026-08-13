@@ -5,7 +5,7 @@
 - area: spec-docs-rust
 - wrong-side: spec
 - components: lean/Bumbledb/Query/Aggregates.lean, lean/Bumbledb/Conformance.lean, crates/bumbledb/src/ir.rs, docs/architecture/20-query-ir.md, crates/bumbledb-bench/src/conformance.rs
-- status: open (do not fix)
+- status: closed (obsolete) — ArgMax/ArgMin killed; do not resurrect
 
 ## Summary
 R5 admits two Arg-restriction keys: an orderable variable, or the interval measure (`ArgMax(w, Duration(w))`). Rust IR and the query-IR architecture doc implement both. Lean `AggOp.argMax` / `argMin` take only `VarId` keys. The conformance lane fences measure-keyed Arg cases until "the denotation lands," so the third oracle cannot check a shipped, documented operator.
@@ -58,3 +58,7 @@ Re-read `AggOp`, the query-IR roster, and the engine IR. **Confirmed.** `wrong-s
 ## Related
 - 211 (TypeScript surface also cannot express `ArgKey::Measure`)
 - 214 (other conformance fences)
+
+## Resolution (2026-08-13)
+
+Obsolete: ArgMax/ArgMin (including measure-keyed R5) were killed. Remaining folds: Count, Sum, Min, Max, Pack. Do not resurrect.

@@ -52,6 +52,7 @@ name = "bumbledb-cpp-bridge"
 version = "0.1.0"
 dependencies = [
  "bumbledb",
+ "cc",
 ]
 
 [[package]]

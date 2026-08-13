@@ -39,6 +39,15 @@ all measured against. Plus the EXECUTABLE half: `evalList`, a
   the typed pass — `ValidationError::IllegalComparison`), so no
   accepted rule reaches these arms; totality is for the model's own
   sake, not a semantic claim.
+* **`eval_sound` / `evalList` anti-join is `Matches` (value equality).**
+  The engine's negated membership is `AntiProbe`
+  (`normalize.rs::lower_atom`, role-blind): domain bindings plus
+  point-membership filters inside the probe. That reading is
+  `surface_antiprobe_filters` /
+  `membership_lowering_preserves_negated` (`Query/Membership.lean`).
+  `eval_sound` does not licence the engine's negated-membership
+  answers; the `membership_lowering_preserves` hypothesis
+  `Atom.membershipFree` on negated atoms is exactly this split.
 * **Finite instances are association lists** (`ListInstance`) for the
   executable half; the `Set`-valued denotation stays over arbitrary
   `Instance`s.
@@ -1656,7 +1665,10 @@ exactly the acceptance rules — the theorem names the premises the
 engine's validator discharges, which is the covenant's Level-1
 pattern.
 Bridge: PRD 13 runs `evalList` on Tiny worlds as the third
-differential oracle against `crate::exec` and the naive model. -/
+differential oracle against `crate::exec` and the naive model, on the
+membership-free-negation fragment `eval_sound` names. Negated
+membership is `antiProbeRuleAnswers` /
+`membership_lowering_preserves_negated`. -/
 theorem eval_sound {C : Classify} {W : ListInstance} {ρ : ParamEnv}
     {q : Query} (hsafe : ∀ r, r ∈ q.rules → Safe r)
     (hwt : ∀ r, r ∈ q.rules → r.WellTyped) :

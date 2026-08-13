@@ -601,8 +601,11 @@ is the consumer that names its shape.)
   read on a snapshot, write through `write_from`.
 - **The transaction is a delta** (`50-storage.md`): operations are in-memory set
   arithmetic; operation order is semantically irrelevant
-  (`lean/Bumbledb/Txn.lean: final_state_judgment_order_free`); nothing touches LMDB until
-  commit, and an abort never wrote anything. `delete(old); insert(new)` in either
+  (`lean/Bumbledb/Txn.lean: final_state_judgment_order_free`); nothing writes
+  facts or generation until commit, and an abort never wrote a fact. The one
+  durable exception is the escaped fresh high-water: abort flushes dirty `Q`
+  marks through a counters-only commit (`10-data-model.md`,
+  `lean/Bumbledb/Txn/Fresh.lean`) so issued ids are never recycled. `delete(old); insert(new)` in either
   order is the blessed mutation idiom — a host-side `replace()` helper is optional
   sugar, not an engine operation (closed decision).
 - **Dependencies are judged at commit against the final state**
@@ -806,24 +809,36 @@ proposition the commit checks in one integer compare.
   errors and never alter the fingerprint.
 - **Validation errors** (IR boundary, `20-query-ir.md` roster): typed, enumerated,
   returned at prepare time.
-- **Runtime query errors:** `Overflow` (aggregate range check),
-  `FixpointBudgetExceeded { stratum, rounds, tuples }` (a recursive stratum
-  crossed the driver's iteration/tuple budget — ids and counts, the documented
-  default host-amendable via `set_fixpoint_budget`; `40-execution.md` § the
-  fixpoint driver), `Corruption` (hard error, never a skip — `50-storage.md`).
-  They abort the query; the read transaction remains usable.
+- **Runtime query errors:** `MeasureOfRay` (Duration of a general-interval ray —
+  a runtime type error; boundedness is not a validation theorem; measure *find*
+  still exists as a Duration projection), `Overflow` (aggregate range check, or
+  `OverflowKind::OriginCapacity` when a D2 origin counter would cross `u32`),
+  `ResultBytesOverflow` (answer-byte offsets do not fit `u32` — a representation
+  ceiling), `FixpointBudgetExceeded { stratum, rounds, tuples }` (a recursive
+  stratum crossed the driver's iteration/tuple budget — ids and counts, the
+  documented default host-amendable via `set_fixpoint_budget`; `40-execution.md`
+  § the fixpoint driver; Lean `evalProgram` is complete only under sufficient
+  fuel — this abort is engine-only incompleteness), `Corruption` (hard error,
+  never a skip — `50-storage.md`). They abort the query; the read transaction
+  remains usable. `OriginCapacity` and `ResultBytesOverflow` are engine-only
+  resource errors Lean `eval_sound` / `ruleAnswers` do not denote.
 - **Write errors:** `CommitRejected` (raised at commit, against the final state,
   carrying the failing phase's COMPLETE violation set in statement order —
   `lean/Bumbledb/Txn.lean: rejection_is_complete` — with each citation's
   offending facts ALSO decoded to owned values at the rejection boundary,
   renderable to named plain data via `schema::render_rejection`;
-  `30-dependencies.md` § rendering the rejection), `GenerationMoved`
+  `30-dependencies.md` § rendering the rejection), `CapacityRayMeasure { statement, fact }`
+  (a Duration-weighted capacity weight or bound whose interval is a ray — the
+  measure is undefined, never a violation; C10 at judge time, C20 parent-blind
+  at plan time — `30-dependencies.md`, `docs/design/capacity-laws.md` §8b),
+  `GenerationMoved`
   (the witness compare, § conditional writes — carrying the two generations),
   `ForeignSnapshot` (a witness of another database), `FreshExhausted`,
   `FactShape` (the dynamic surface's shape roster — including the dyn-boundary
   foreign-`FreshField` refusal at the mint's sequence init, § ETL),
-  `Corruption`, `Io`/`Lmdb`. Any error aborts the whole write transaction — and
-  since the transaction is a delta, an aborted transaction never touched LMDB at all.
+  `Corruption`, `Io`/`Lmdb`. Any error aborts the whole write transaction. An
+  abort never wrote a fact; escaped fresh high-water still flushes through a
+  counters-only `Q` commit (`10-data-model.md`).
 - Error payloads carry ids, not formatted strings, on hot paths (allocation contract).
 
 ## ETL / migration surface

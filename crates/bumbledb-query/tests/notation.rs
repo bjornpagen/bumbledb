@@ -826,3 +826,72 @@ fn condition_tree_lowers_to_the_exact_ir() {
     };
     assert_eq!(banded, bumbledb::Query::single(rule));
 }
+
+/// `start..end` interval literals must emit `Value::Interval*(Interval::new(...))`,
+/// not a two-argument enum constructor.
+mod interval_lit {
+    bumbledb::schema! {
+        pub IntervalLit;
+        relation R { x: u64, w: interval<u64> }
+    }
+}
+
+#[test]
+fn interval_literals_compile_prepare_and_render() {
+    use bumbledb::{
+        AllenMask, Atom, CmpOp, Comparison, ConditionTree, FindTerm, Interval, Rule, Term, Value,
+        VarId,
+    };
+    use interval_lit::IntervalLit;
+
+    // Two literals: compiles (the E0061 hole) and lowers to Interval::new.
+    // Prepare refuses a constant comparison; the grammar is still usable
+    // at a variable position below.
+    let point_in = query!(IntervalLit {
+        (x) | R(x, w), 5 in 0..10;
+    });
+    let interval = Interval::<u64>::new(0, 10).expect("nonempty");
+    assert_eq!(
+        point_in,
+        bumbledb::Query::single(Rule {
+            finds: vec![FindTerm::Var(VarId(0))],
+            atoms: vec![Atom {
+                source: bumbledb::AtomSource::Edb(IntervalLit::R),
+                bindings: vec![
+                    (IntervalLit::R_X, Term::Var(VarId(0))),
+                    (IntervalLit::R_W, Term::Var(VarId(1))),
+                ],
+            }],
+            negated: vec![],
+            conditions: vec![ConditionTree::Leaf(Comparison {
+                op: CmpOp::PointIn,
+                lhs: Term::Literal(Value::IntervalU64(interval)),
+                rhs: Term::Literal(Value::U64(5)),
+            })],
+        })
+    );
+
+    let allen = query!(IntervalLit {
+        (x) | R(x, w), Allen(w, INTERSECTS, 0..10);
+    });
+    assert_eq!(
+        pin("interval-literal-allen", IntervalLit, &allen),
+        "(v0) | R(x: v0, w: v1), Allen(v1, INTERSECTS, 0..10);"
+    );
+    assert!(matches!(
+        &allen.rules[0].conditions[0],
+        ConditionTree::Leaf(Comparison {
+            op: CmpOp::Allen { mask },
+            rhs: Term::Literal(Value::IntervalU64(_)),
+            ..
+        }) if *mask == AllenMask::INTERSECTS
+    ));
+
+    let eq = query!(IntervalLit {
+        (x) | R(x, w == 1..2);
+    });
+    assert_eq!(
+        pin("interval-literal-eq", IntervalLit, &eq),
+        "(v0) | R(x: v0, w == 1..2);"
+    );
+}

@@ -1,5 +1,6 @@
 import Lean.Data.Json
 import Bumbledb.Query.Aggregates
+import Bumbledb.Query.Membership
 
 /-!
 # Conformance — the denotation executes as the third oracle (PRD 13)
@@ -12,12 +13,16 @@ it, canonically sort, and compare against the recorded engine answers.
 corpus builder, and the Rust comparator.
 
 **The evaluation is the DENOTATION.** The projection fragment runs
-through `evalList`, whose `eval_sound` theorem proves it equal —
-membership for membership — to the set-theoretic `queryAnswers` under
-exactly the premises the engine's validator discharges (`Safe` +
-measure-free bindings). So this lane compares the engine and the naive
-model against the SPEC itself, not against a third implementation —
-the class a shared misreading of the docs cannot survive.
+the join of `evalList` with the **surface anti-join**
+(`surfaceMatchesB` / `Atom.lowerNegated`): positive atoms are the
+serializer's pre-lowered `Matches`/`PointIn` form, and negated atoms
+— membership bindings included — reject by AntiProbe, the engine's
+`normalize.rs::lower_atom` reading (`membership_lowering_preserves_negated`,
+`surface_antiprobe_filters`). `eval_sound` still names the
+membership-free-negation fragment; this lane does not silently fence
+the rest. So the third oracle compares the engine and the naive model
+against the SPEC itself, not against a third implementation — the
+class a shared misreading of the docs cannot survive.
 
 ## The aggregate glue (recorded composition)
 
@@ -99,7 +104,8 @@ def renderValue : Value → String
   | { type := .i64, val := x } => "{\"i64\":" ++ toString x.val ++ "}"
   | { type := .str, val := s } => "{\"str\":" ++ toString s.id ++ "}"
   | { type := .fixedBytes _, val := bs } =>
-    "{\"bytes\":[" ++ String.intercalate "," (bs.val.map toString) ++ "]}"
+    "{\"bytes\":[" ++
+      String.intercalate "," (bs.val.map fun b => toString b.val) ++ "]}"
   | { type := .interval .u64, val := iv } =>
     "{\"interval_u64\":[" ++ toString iv.start.val ++ "," ++
       toString iv.«end».val ++ "]}"
@@ -193,10 +199,12 @@ inductive PVal where
 
 /-- One decoded case: the world (open instance + ground axioms merged
 — a closed relation's extension is ordinary facts to the matching
-equation), the query, the parameter environment, and the recorded
-engine answers. -/
+equation), the sealed field-type header (the `theory.relations`
+block — AntiProbe typing), the query, the parameter environment, and
+the recorded engine answers. -/
 structure Case where
   world : Query.ListInstance
+  header : Header
   query : CQuery
   env : Query.ParamEnv
   expected : List (List Value)
@@ -243,8 +251,10 @@ def decodeValue (j : Json) : Except String Value := do
   if let some n := objKey? j "str" then
     return ⟨.str, ⟨← n.getNat?⟩⟩
   if let some bs := objKey? j "bytes" then
-    let words ← (← bs.getArr?).toList.mapM (·.getNat?)
-    return ⟨.fixedBytes words.length, ⟨words, rfl⟩⟩
+    let nats ← (← bs.getArr?).toList.mapM (·.getNat?)
+    let bytes ← nats.mapM fun n =>
+      if h : n < 256 then .ok ⟨n, h⟩ else .error "byte out of range"
+    return ⟨.fixedBytes bytes.length, ⟨bytes, rfl⟩⟩
   if let some iv := objKey? j "interval_u64" then
     return ⟨.interval .u64, ← decodeIntervalU64 iv⟩
   if let some iv := objKey? j "interval_i64" then
@@ -296,6 +306,10 @@ width) — and the boundary POSITIVES one below each ceiling. -/
              Json.num 5])])).isOk  -- i64 at-bound
 #guard !(decodeValue (Json.mkObj [("interval_u64_fixed",
   Json.arr #[Json.num 3, Json.num 0])])).isOk  -- w = 0 denotes nothing
+#guard (decodeValue (Json.mkObj [("bytes",
+  Json.arr #[Json.num 7, Json.num 0, Json.num 255])])).isOk
+#guard !(decodeValue (Json.mkObj [("bytes",
+  Json.arr #[Json.num 256])])).isOk
 
 /-- The thirteen Allen relation names, as the format spells them. -/
 def relOfName : String → Except String Query.AllenRel
@@ -428,6 +442,44 @@ def decodeParam (j : Json) : Except String PVal := do
     return .set (← (← vs.getArr?).toList.mapM decodeValue)
   .error "unknown param tag"
 
+/-- A field-type spelling (`theory.relations[].fields`). -/
+def typeOfName (s : String) : Except String ValueType :=
+  match s with
+  | "bool" => .ok .bool
+  | "u64" => .ok .u64
+  | "i64" => .ok .i64
+  | "str" => .ok .str
+  | "interval_u64" => .ok (.interval .u64)
+  | "interval_i64" => .ok (.interval .i64)
+  | _ =>
+    if s.startsWith "bytes<" && s.endsWith ">" then
+      match ((s.drop 6).dropEnd 1).toNat? with
+      | some n => .ok (.fixedBytes n)
+      | none => .error s!"bad bytes width in {s}"
+    else if s.startsWith "interval_u64_fixed<" && s.endsWith ">" then
+      match ((s.drop 19).dropEnd 1).toNat? with
+      | some w => if 0 < w then .ok (.intervalFixed .u64 w)
+                  else .error s!"zero width in {s}"
+      | none => .error s!"bad interval width in {s}"
+    else if s.startsWith "interval_i64_fixed<" && s.endsWith ">" then
+      match ((s.drop 19).dropEnd 1).toNat? with
+      | some w => if 0 < w then .ok (.intervalFixed .i64 w)
+                  else .error s!"zero width in {s}"
+      | none => .error s!"bad interval width in {s}"
+    else .error s!"unknown field type {s}"
+
+/-- The sealed header the AntiProbe typing reads: `id → field types`. -/
+def decodeHeader (j : Json) : Except String Header := do
+  let rels ← (← j.getArr?).toList.mapM fun r => do
+    let id ← natKey r "id"
+    let fields ← (← (← r.getObjVal? "fields").getArr?).toList.mapM
+      fun t => do typeOfName (← t.getStr?)
+    pure (id, fields)
+  return { sig := fun R =>
+    match rels.find? (fun e => e.1 == R.id) with
+    | some e => e.2
+    | none => [] }
+
 /-- The environment the positional parameters denote (an id's unused
 faces read defaults no accepted query consults). -/
 def paramEnv (params : List PVal) : Query.ParamEnv where
@@ -456,33 +508,58 @@ def decodeRelationFacts (j : Json) :
 
 /-- One full case document. -/
 def decodeCase (j : Json) : Except String Case := do
+  let theory ← j.getObjVal? "theory"
   let open_ ← (← (← j.getObjVal? "instance").getArr?).toList.mapM
     decodeRelationFacts
-  let closed ← (← (← (← j.getObjVal? "theory").getObjVal?
+  let closed ← (← (← theory.getObjVal?
     "ground_axioms").getArr?).toList.mapM decodeRelationFacts
+  let header ← decodeHeader (← theory.getObjVal? "relations")
   let query ← decodeQuery (← j.getObjVal? "query")
   let params ← (← (← j.getObjVal? "params").getArr?).toList.mapM decodeParam
   let expected ← (← (← j.getObjVal? "answers").getArr?).toList.mapM
     fun row => do (← row.getArr?).toList.mapM decodeValue
-  return { world := ⟨open_ ++ closed⟩, query, env := paramEnv params,
-           expected }
+  return { world := ⟨open_ ++ closed⟩, header, query,
+           env := paramEnv params, expected }
 
-/-! ## Evaluation — `evalList` plus the aggregate glue -/
+/-! ## Evaluation — join + surface anti-join (AntiProbe) plus the aggregate glue -/
 
 /-- The classifier: PRD 05's DEFINED refinement of the abstract
 parameter — the lane evaluates the real thirteen-way classification. -/
 def theClassify : Query.Classify := Query.classifyRefined
 
-/-- One rule body's surviving states: the join over the positive atoms,
-the anti-join filter, the condition filter — `evalRule`'s stages before
-its projection (`Query.evalRule` composes exactly this with the find
-map; the aggregate paths need the states themselves). -/
-def ruleStates (W : Query.ListInstance) (ρ : Query.ParamEnv)
+/-- A variable is scalar-anchored when a positive atom binds it on a
+non-interval field — the bivalent-resolution rule the serializer and
+the engine share (`conformance.rs::scalar_anchors`). -/
+def scalarAnchored (h : Header) (r : Query.Rule) (v : Query.VarId) :
+    Bool :=
+  r.atoms.any fun a =>
+    a.bindings.any fun b =>
+      match b.2 with
+      | .var u => decide (u = v) && !h.isInterval a.relation b.1
+      | _ => false
+
+/-- The typing witness `SurfaceMatches` / AntiProbe consult: field
+types from the sealed header, params from the environment, variables
+`.u64` when scalar-anchored else interval-shaped (only `isInterval`
+matters). -/
+def typingOf (h : Header) (ρ : Query.ParamEnv) (r : Query.Rule) :
+    Query.Typing where
+  header := h
+  var v := if scalarAnchored h r v then .u64 else .interval .u64
+  param p := (ρ.scalar p).type
+
+/-- One rule body's surviving states: the join over the positive atoms
+(`Matches` / already-lowered `PointIn`), the **surface** anti-join
+(`surfaceMatchesB` — AntiProbe, membership bindings included), the
+condition filter. On membership-free negated atoms this coincides
+with `evalList`'s `matchesB` anti-join. -/
+def ruleStates (h : Header) (W : Query.ListInstance) (ρ : Query.ParamEnv)
     (r : Query.Rule) : List Query.PartialAssign :=
+  let Γ := typingOf h ρ r
   (Query.joinAtoms W ρ r.atoms [[]]).filter fun σp =>
     (r.negated.all fun a =>
       (W.facts a.relation).all fun f =>
-        ! Query.matchesB ρ (Query.totalize σp) a f) &&
+        ! Query.surfaceMatchesB Γ ρ (Query.totalize σp) a f) &&
     (r.conditions.all fun t =>
       Query.condHoldsB theClassify ρ (Query.totalize σp) t)
 
@@ -516,9 +593,9 @@ def ruleWidth (r : CRule) : Nat :=
 /-- The distinct full binding set of one rule — the fold domain
 (`agg_over_distinct_bindings`: no fold observes a duplicate), read at
 the surface width. -/
-def ruleBindings (W : Query.ListInstance) (ρ : Query.ParamEnv)
+def ruleBindings (h : Header) (W : Query.ListInstance) (ρ : Query.ParamEnv)
     (r : CRule) : List (List Value) :=
-  dedupRows ((ruleStates W ρ r.body).map (fullRow (ruleWidth r)))
+  dedupRows ((ruleStates h W ρ r.body).map (fullRow (ruleWidth r)))
 
 /-- The re-keyed fold domain of a DNF-derived rule set (ruled
 2026-07-23, R2): the disjuncts share one variable vocabulary and one
@@ -526,11 +603,11 @@ layout, so the fold domain is the deduplicated union of their full
 binding rows over the shared width — the WRITTEN rule's own domain
 (`dnf_rekey_transparent`; `dnf_rekey_stream` is the stream this dedup
 realizes). -/
-def dnfBindings (W : Query.ListInstance) (ρ : Query.ParamEnv)
+def dnfBindings (h : Header) (W : Query.ListInstance) (ρ : Query.ParamEnv)
     (rules : List CRule) : List (List Value) :=
   let n := rules.foldl (fun m r => max m (ruleWidth r)) 0
   dedupRows (rules.flatMap fun r =>
-    (ruleStates W ρ r.body).map (fullRow n))
+    (ruleStates h W ρ r.body).map (fullRow n))
 
 /-! The fold-domain keys, decode-pinned: the derivation mark and the
 surface width read when present and default when absent — a corpus
@@ -741,9 +818,9 @@ def evalGrouped (finds : List CFind) (domain : List (List Value)) :
 
 /-- The single-rule aggregate/measure path: the rule's distinct full
 bindings, grouped. -/
-def evalSingle (W : Query.ListInstance) (ρ : Query.ParamEnv)
+def evalSingle (h : Header) (W : Query.ListInstance) (ρ : Query.ParamEnv)
     (r : CRule) : Except String (List (List Value)) :=
-  evalGrouped r.finds (ruleBindings W ρ r)
+  evalGrouped r.finds (ruleBindings h W ρ r)
 
 /-- One rule's head-projected input row (the multi-rule union fold's
 domain element): var and measure positions project, fold positions
@@ -815,7 +892,7 @@ def projectUnionGroup (finds : List CFind)
 /-- The multi-rule aggregate head: the union of the rules' distinct
 head-projected binding sets, fibered by the key positions, folded per
 position — the rules-IR union fold. -/
-def evalUnion (W : Query.ListInstance) (ρ : Query.ParamEnv)
+def evalUnion (h : Header) (W : Query.ListInstance) (ρ : Query.ParamEnv)
     (q : CQuery) : Except String (List (List Value)) := do
   let finds :=
     match q.rules with
@@ -823,7 +900,7 @@ def evalUnion (W : Query.ListInstance) (ρ : Query.ParamEnv)
     | [] => []
   let domain ← q.rules.foldlM
     (fun acc r => do
-      let rows ← (ruleBindings W ρ r).mapM (headRow r.finds)
+      let rows ← (ruleBindings h W ρ r).mapM (headRow r.finds)
       pure (acc ++ rows))
     []
   let groups ← groupBy (fun row => pure (headKey finds row))
@@ -849,36 +926,47 @@ def plainQuery (q : CQuery) : Query.Query :=
     rules := q.rules.map fun r =>
       { r.body with finds := r.finds.filterMap CFind.plainVar? } }
 
-/-- **The evaluator**: plain projections run through `evalList` — THE
-denotation by `eval_sound` — and the aggregate/measure head shapes
-run the recorded glue over the same join states. -/
-def evalQuery (W : Query.ListInstance) (ρ : Query.ParamEnv)
+/-- The plain-projection evaluator: join + surface anti-join + head
+projection — `evalList`'s pipeline with AntiProbe on negated atoms. -/
+def evalPlain (h : Header) (W : Query.ListInstance) (ρ : Query.ParamEnv)
+    (q : CQuery) : List (List Value) :=
+  q.rules.flatMap fun r =>
+    let vars := r.finds.filterMap CFind.plainVar?
+    (ruleStates h W ρ r.body).map fun σp =>
+      vars.map (Query.totalize σp)
+
+/-- **The evaluator**: plain projections run the join + surface
+anti-join (`evalPlain` — AntiProbe on negated membership; coincides
+with `evalList` on membership-free negation), and the
+aggregate/measure head shapes run the recorded glue over the same
+join states. -/
+def evalQuery (h : Header) (W : Query.ListInstance) (ρ : Query.ParamEnv)
     (q : CQuery) : Except String (List (List Value)) :=
   match q.rules with
   | [] => .error "a query needs at least one rule"
   | [r] =>
     if r.finds.all fun f => (CFind.plainVar? f).isSome then
-      .ok (Query.evalList theClassify W ρ (plainQuery q))
+      .ok (evalPlain h W ρ q)
     else
-      evalSingle W ρ r
+      evalSingle h W ρ r
   | r0 :: _ =>
     if q.rules.all fun r =>
         r.finds.all fun f => (CFind.plainVar? f).isSome then
-      .ok (Query.evalList theClassify W ρ (plainQuery q))
+      .ok (evalPlain h W ρ q)
     else if q.dnf then
       -- The re-keyed regime (ruled 2026-07-23, R2): a DNF-derived
       -- rule set evaluates the WRITTEN rule's own denotation — the
       -- disjuncts' binding rows unioned over the shared width,
       -- grouped once.
-      evalGrouped r0.finds (dnfBindings W ρ q.rules)
+      evalGrouped r0.finds (dnfBindings h W ρ q.rules)
     else if r0.finds.any CFind.isAgg then
-      evalUnion W ρ q
+      evalUnion h W ρ q
     else
       -- Measure finds, no aggregate: the union of the per-rule
       -- projections (the plain multi-rule reading, measure positions
       -- projected per rule).
       q.rules.foldlM
-        (fun acc r => do pure (acc ++ (← evalSingle W ρ r)))
+        (fun acc r => do pure (acc ++ (← evalSingle h W ρ r)))
         []
 
 /-! ## The comparison -/
@@ -890,7 +978,7 @@ def checkCase (text : String) :
     Except String (Option (List String × List String)) := do
   let json ← Json.parse text
   let case ← decodeCase json
-  let evaluated ← evalQuery case.world case.env case.query
+  let evaluated ← evalQuery case.header case.world case.env case.query
   let want := canonical case.expected
   let got := canonical evaluated
   if want == got then

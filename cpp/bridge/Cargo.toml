@@ -54,3 +54,9 @@ missing_safety_doc = "allow"
 # working tree holds, and any engine change lands BEFORE the SDK/bridge
 # change that consumes it.
 bumbledb = { path = "../../crates/bumbledb" }
+
+[build-dependencies]
+# Compiles cpp/foreign/callback_trampoline.cc (exceptions ON) into this
+# crate so cargo test and the CMake-linked staticlib both catch C++ throws
+# at the callback wall.
+cc = "1.2"

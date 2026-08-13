@@ -1,5 +1,4 @@
 use std::path::Path;
-use std::sync::atomic::Ordering;
 
 use heed::WithoutTls;
 
@@ -12,7 +11,7 @@ use super::open_env::{OpenLane, open_env};
 use super::read_meta::{MetaBlock, classify_meta_block};
 use super::{
     Environment, FORMAT_VERSION, META_DICT_NEXT_ID, META_FINGERPRINT, META_FORMAT_VERSION,
-    META_SCHEMA_DESCRIPTOR, META_STORE_KIND, META_TX_ID, NEXT_INSTANCE, StoreKind,
+    META_SCHEMA_DESCRIPTOR, META_STORE_KIND, META_TX_ID, StoreKind,
 };
 
 impl Environment {
@@ -102,14 +101,6 @@ impl Environment {
         meta.put(&mut wtxn, META_TX_ID, 0u64.to_le_bytes().as_slice())?;
         meta.put(&mut wtxn, META_DICT_NEXT_ID, 0u64.to_le_bytes().as_slice())?;
         wtxn.commit()?;
-        Ok(Self {
-            env,
-            meta,
-            data,
-            dict,
-            instance: NEXT_INSTANCE.fetch_add(1, Ordering::Relaxed),
-            _lock: Some(lock),
-            dirty_marker: None,
-        })
+        Ok(Self::assemble(env, meta, data, dict, Some(lock), None))
     }
 }

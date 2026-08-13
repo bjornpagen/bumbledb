@@ -5,7 +5,7 @@
 - area: spec-docs-rust
 - wrong-side: split
 - components: lean/Bumbledb/Values.lean, docs/architecture/10-data-model.md, crates/bumbledb/src/encoding/fact_hash.rs, crates/bumbledb/src/storage/dict.rs
-- status: open (do not fix)
+- status: fixed (2026-08-13)
 
 ## Summary
 Lean `value_eq_iff_encode_eq` is equality of canonical encodings (abstract words). Architecture docs state that storage membership is blake3-256 of `fact_bytes` and that **hash equality is treated as fact equality — collisions are an accepted axiom**, with no byte verification on `M` or dictionary probes. Lean is silent (mechanism fence). A blake3 collision unifies two Lean-distinct facts in the engine.
@@ -33,3 +33,6 @@ Re-read theorem 7, the identity section, and `fact_hash`. **Confirmed.** `wrong-
 
 ## Related
 - 209 (`bytes<N>` encoding granularity compounds what is hashed)
+
+## Resolution (2026-08-13)
+Documented the blake3 collision axiom: Lean identity is canonical encoding equality; store membership is hash equality (`Values.lean` theorem 7, `50-storage.md`, `lean/README.md`). Store unchanged.

@@ -5,7 +5,7 @@
 - area: spec-docs-rust
 - wrong-side: split
 - components: ts/src/query/find.ts, ts/src/native.ts, crates/bumbledb/src/ir.rs, docs/architecture/20-query-ir.md, docs/architecture/75-cpp-lowering.md, cpp/bridge/src/query.rs, cpp/src/query/aggregate.cc, lean/Bumbledb/Query/Aggregates.lean
-- status: open (do not fix)
+- status: closed (obsolete) — ArgMax/ArgMin killed; do not resurrect
 
 ## Summary
 R5's exhaustive Arg-key roster includes `ArgKey::Measure`. The Rust IR, C++ dialect, C++ bridge, and query-IR docs implement it. The TypeScript query surface types `argMax`/`argMin` keys as `AnyVar` only, and the TS IR mirror stores `key: number` with no measure arm. Lean also lacks the denotation (201). TS hosts cannot write `ArgMax(w, Duration(w))` even as raw IR. `75-cpp-lowering.md` schema field-for-field is about `SchemaSpec`, not this operator; its query section lists engine `ArgKey::Measure` and TS `key: number` side by side and still tells C++ to reproduce `lower.ts` exactly.
@@ -47,3 +47,7 @@ Re-read TS builders/IR, C++ `arg_max`, engine `ArgKey`, and both docs. **Confirm
 
 ## Related
 - 201 (Lean denotation missing)
+
+## Resolution (2026-08-13)
+
+Obsolete: ArgMax/ArgMin (including measure-keyed R5) were killed. Remaining folds: Count, Sum, Min, Max, Pack. Do not resurrect. Hosts that want "the row at max(key)" compose Max then keyed get.

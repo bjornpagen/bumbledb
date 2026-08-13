@@ -264,7 +264,7 @@ def ledger : List Obligation := [
     "membership_of_the_last_point_in_a_ray_is_true_and_the_ceiling_rejects (crates/bumbledb/src/api/prepared/tests/sets.rs)",
 
   .row @Query.membership_lowering_preserves `Bumbledb.Query.membership_lowering_preserves
-    "The bivalent surface binding lowers answer-preservingly: an element-typed term at an interval field reads as point membership, and rewriting each such binding to an interval-variable read plus a PointIn condition preserves the rule's answers, over the full term roster."
+    "The bivalent surface binding lowers answer-preservingly for POSITIVE membership (and membership-free negation): an element-typed term at an interval field reads as point membership. The hypothesis `Atom.membershipFree` on negated atoms is required because pre-lowered RULE syntax cannot spell a negated membership mint. The engine's negated membership is `AntiProbe` (`membership_lowering_preserves_negated`, `surface_antiprobe_filters`) — that companion, not this theorem, is the full-roster seam."
     "normalize.rs::is_membership (crates/bumbledb/src/ir/normalize/normalize.rs); normalize.rs::lower_atom (crates/bumbledb/src/ir/normalize/normalize.rs); context.rs::resolve_bivalents (crates/bumbledb/src/ir/validate/context.rs)"
     "same_atom_membership_variable_lowers_to_the_field_composition (crates/bumbledb/src/ir/normalize/tests.rs); membership_point_var_join_end_to_end (crates/bumbledb/src/api/prepared/tests/sets.rs)",
 
@@ -527,7 +527,7 @@ def ledger : List Obligation := [
 
   .row @Txn.Fresh.never_reissue_observable
     `Bumbledb.Txn.Fresh.never_reissue_observable
-    "The mint is a monotone high-water mark per relation and field: any id a committed transaction made observable — generator-returned or explicitly supplied — sits below the persisted mark and is never returned again; an aborted transaction's run is discarded whole, so nothing it minted was observable."
+    "The mint is a monotone high-water mark per relation and field: any id a committed transaction made observable — generator-returned or explicitly supplied — sits below the persisted mark and is never returned again; EVERY transaction persists its final mark — committed, no-op, or aborted alike — because alloc already handed the id to the host (an aborted run is NOT discarded)."
     "WriteDelta::alloc (crates/bumbledb/src/storage/delta/alloc.rs); advance_fresh_marks (crates/bumbledb/src/storage/delta/insert.rs); dirty_fresh_marks (crates/bumbledb/src/storage/delta/accessors.rs)"
     "alloc_is_strictly_increasing_and_reads_q_once (crates/bumbledb/src/storage/delta/tests.rs); fresh_ids_allocated_in_a_rejected_txn_are_burned (crates/bumbledb/src/storage/commit/tests/commit.rs); escaped_fresh_ids_survive_noop_commits (crates/bumbledb/tests/api.rs)",
 
@@ -583,7 +583,7 @@ def ledger : List Obligation := [
   ledger — the delta rewrite, the transient images, the driver) -/
 
   .row @Query.program_eval_sound `Bumbledb.Query.program_eval_sound
-    "The engine discharge: the per-stratum driver computes evalProgram's answers — strata in condensation order through the output's own (evalProgramAt's reading), round 0 the rule loop verbatim, rounds >= 1 the delta variants against the watermark frontier, empty delta the stop — held to the model by the three-way closure goldens and the generated-program differential."
+    "The engine discharge: given sufficient fuel, the per-stratum driver computes evalProgram's answers — strata in condensation order through the output's own (evalProgramAt's reading), round 0 the rule loop verbatim, rounds >= 1 the delta variants against the watermark frontier, empty delta the stop — held to the model by the three-way closure goldens and the generated-program differential. Completeness is NOT unconditional: the engine may abort with Error::FixpointBudgetExceeded before the least fixpoint (engine-only incompleteness vs Lean evalProgram)."
     "run_fixpoint (crates/bumbledb/src/api/prepared/fixpoint.rs); prepare_program (crates/bumbledb/src/api/prepared/build.rs); Error::FixpointBudgetExceeded (crates/bumbledb/src/error.rs)"
     "tree_closure_matches_the_hand_answer_on_every_oracle (crates/bumbledb-bench/src/differential/tests/recursive.rs); the_recursive_arm_covers_its_contract_and_agrees_across_oracles (crates/bumbledb-bench/src/querygen/tests.rs); prepare_executes_recursion_under_the_driver (crates/bumbledb/tests/api.rs); a_tight_fixpoint_budget_trips_with_the_typed_error (crates/bumbledb/tests/api.rs)",
 

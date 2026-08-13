@@ -107,14 +107,21 @@ when a key fails, and both the engine and the naive model preempt
   `ForeignSnapshot` environment-identity check and the writer mutex
   are mechanism outside the model.
 * **`scanLoad` bulk-judges the transformed instance as ONE final
-  state.** `bulk_load`'s 4096-fact chunking is mechanism: a chunked
+  state.** `bulk_load`'s 4096-fact chunking is the engine
+  **operationalization**, not the same atomic judgment: a chunked
   load is a SEQUENCE of ordinary commits, each judged
   (`committed_states_model` covers every prefix), which is exactly why
   recipe 28's first law — load containment targets first — is
   host-facing: an early chunk is judged before later chunks land.
   Recipe 28's second law (fresh identity survives, the mint catches
   up) is id-allocation mechanism, not modeled; the third law is
-  `etl_lands_valid`.
+  `etl_lands_valid`. Do not treat `scanLoad` as `bulk_load`'s API
+  contract.
+* **Engine-only query resource errors.** `Error::Overflow(OriginCapacity)`
+  and `Error::ResultBytesOverflow` abort a well-typed query whose Lean
+  denotation is still a finite tuple set. They are representation
+  ceilings, not Lean `eval_sound` constructors (`70-api.md`,
+  `40-execution.md`).
 * **The transform is one partial map `Fact → Option Fact`** applied
   uniformly (dropping facts is expressible; per-relation retargeting
   is host plumbing the model does not restate).
@@ -641,10 +648,10 @@ theorem holds_scalar_containment {T : Theory} {I : Instance}
   cases htgt : T.header.intervalSplit tgt.relation tgt.projection with
   | none =>
     simp only [Statement.judgment, hsplit, htgt] at hj
-    exact hj
+    exact hj.2
   | some x =>
     simp only [Statement.judgment, hsplit, htgt] at hj
-    exact hj
+    exact hj.2
 
 /-- **Item 6.** The maintenance protocol's division of authority: a
 containment-constrained derived relation is SOUND in every committed

@@ -6,6 +6,8 @@
 //! the Node bridge's `marshal::program_in` reads off JS objects. The
 //! engine's IR validator remains the trust boundary at `bdb_db_prepare`.
 
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use bumbledb::{
     AggOp, AllenMask, Atom, AtomSource, CmpOp, Comparison, ConditionTree, FieldId,
     FindTerm, HeadOp, HeadTerm, ParamId, PredId, PredicateDef, PreparedQuery, Program,
@@ -13,9 +15,12 @@ use bumbledb::{
 };
 
 use crate::db::{Engine, bdb_db};
-use crate::error::{bdb_error, fail_engine, fail_shape};
+use crate::error::{bdb_error, fail_engine, fail_locked, fail_shape};
 use crate::value::{bdb_value, value_in};
-use crate::{BridgeResult, bdb_status, box_in, box_out, guard, out, ref_in, slice_in};
+use crate::{
+    BridgeResult, Fail, bdb_status, bool_in, box_in, box_out_to, c_tag, guard, ref_in, require_out,
+    slice_in, tag_in,
+};
 
 // ---------------------------------------------------------------------------
 // IR views
@@ -32,12 +37,20 @@ pub enum bdb_term_kind {
     Measure,
 }
 
+c_tag!(bdb_term_kind {
+    Var,
+    Param,
+    ParamSet,
+    Literal,
+    Measure,
+});
+
 /// One term. `var` is read for `Var`/`Measure`, `param` for
 /// `Param`/`ParamSet`, `literal` for `Literal`.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct bdb_term {
-    pub kind: bdb_term_kind,
+    pub kind: u32,
     pub var: u16,
     pub param: u16,
     pub literal: bdb_value,
@@ -61,11 +74,13 @@ pub enum bdb_atom_source_kind {
     Idb,
 }
 
+c_tag!(bdb_atom_source_kind { Edb, Idb });
+
 /// One atom. `relation` is read for `Edb`, `pred` for `Idb`.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct bdb_atom {
-    pub source_kind: bdb_atom_source_kind,
+    pub source_kind: u32,
     pub relation: u32,
     pub pred: u16,
     pub bindings: *const bdb_binding,
@@ -84,11 +99,13 @@ pub enum bdb_head_op {
     Pack,
 }
 
+c_tag!(bdb_head_op { Sum, Min, Max, Count, Pack });
+
 /// One rule-scoped aggregate op.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct bdb_agg_op {
-    pub kind: bdb_head_op,
+    pub kind: u32,
 }
 
 /// A find term's tag (`bumbledb::ir::FindTerm`).
@@ -101,16 +118,23 @@ pub enum bdb_find_term_kind {
     AggregateMeasure,
 }
 
+c_tag!(bdb_find_term_kind {
+    Var,
+    Measure,
+    Aggregate,
+    AggregateMeasure,
+});
+
 /// One find term. `var` is read for `Var`/`Measure`; `op` plus
 /// `has_over`/`over` for `Aggregate` (`has_over == false` is the nullary
 /// `Count`); `op` plus `over` for `AggregateMeasure`.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct bdb_find_term {
-    pub kind: bdb_find_term_kind,
+    pub kind: u32,
     pub var: u16,
     pub op: bdb_agg_op,
-    pub has_over: bool,
+    pub has_over: u8,
     pub over: u16,
 }
 
@@ -122,12 +146,14 @@ pub enum bdb_head_term_kind {
     Aggregate,
 }
 
+c_tag!(bdb_head_term_kind { Var, Aggregate });
+
 /// One head position; `op` is read for `Aggregate`.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct bdb_head_term {
-    pub kind: bdb_head_term_kind,
-    pub op: bdb_head_op,
+    pub kind: u32,
+    pub op: u32,
 }
 
 /// A comparison operator's tag (`bumbledb::ir::CmpOp`). For `PointIn`
@@ -146,12 +172,23 @@ pub enum bdb_cmp_op_kind {
     PointIn,
 }
 
+c_tag!(bdb_cmp_op_kind {
+    Eq,
+    Ne,
+    Lt,
+    Le,
+    Gt,
+    Ge,
+    Allen,
+    PointIn,
+});
+
 /// One comparison operator; `mask` is the literal 13-bit Allen mask,
 /// read for `Allen` only.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct bdb_cmp_op {
-    pub kind: bdb_cmp_op_kind,
+    pub kind: u32,
     pub mask: u16,
 }
 
@@ -173,6 +210,8 @@ pub enum bdb_condition_kind {
     Or,
 }
 
+c_tag!(bdb_condition_kind { Leaf, And, Or });
+
 /// One condition-tree node. `cmp` is read for `Leaf`;
 /// `children`/`child_count` for `And`/`Or`. Nesting past the engine's
 /// `MAX_CONDITION_DEPTH` is refused at marshal (the engine's own bound,
@@ -180,7 +219,7 @@ pub enum bdb_condition_kind {
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct bdb_condition {
-    pub kind: bdb_condition_kind,
+    pub kind: u32,
     pub cmp: bdb_comparison,
     pub children: *const bdb_condition,
     pub child_count: usize,
@@ -226,7 +265,7 @@ pub struct bdb_program {
 // ---------------------------------------------------------------------------
 
 fn term_in(view: &bdb_term) -> BridgeResult<Term> {
-    Ok(match view.kind {
+    Ok(match tag_in::<bdb_term_kind>(view.kind)? {
         bdb_term_kind::Var => Term::Var(VarId(view.var)),
         bdb_term_kind::Param => Term::Param(ParamId(view.param)),
         bdb_term_kind::ParamSet => Term::ParamSet(ParamId(view.param)),
@@ -236,7 +275,7 @@ fn term_in(view: &bdb_term) -> BridgeResult<Term> {
 }
 
 fn atom_in(view: &bdb_atom) -> BridgeResult<Atom> {
-    let source = match view.source_kind {
+    let source = match tag_in::<bdb_atom_source_kind>(view.source_kind)? {
         bdb_atom_source_kind::Edb => AtomSource::Edb(RelationId(view.relation)),
         bdb_atom_source_kind::Idb => AtomSource::Idb(PredId(view.pred)),
     };
@@ -249,42 +288,36 @@ fn atom_in(view: &bdb_atom) -> BridgeResult<Atom> {
 
 /// The tag-to-op lift, exhaustive over [`bdb_head_op`]: a new engine
 /// `HeadOp` variant grows the C enum and breaks THIS match at compile.
-fn agg_op_in(view: bdb_agg_op) -> AggOp {
-    match view.kind {
+fn agg_op_in(view: bdb_agg_op) -> BridgeResult<AggOp> {
+    Ok(match tag_in::<bdb_head_op>(view.kind)? {
         bdb_head_op::Sum => AggOp::Sum,
         bdb_head_op::Min => AggOp::Min,
         bdb_head_op::Max => AggOp::Max,
         bdb_head_op::Count => AggOp::Count,
         bdb_head_op::Pack => AggOp::Pack,
-    }
+    })
 }
 
-fn head_op_in(op: bdb_head_op) -> HeadOp {
-    match op {
+fn head_op_in(op: u32) -> BridgeResult<HeadOp> {
+    Ok(match tag_in::<bdb_head_op>(op)? {
         bdb_head_op::Sum => HeadOp::Sum,
         bdb_head_op::Min => HeadOp::Min,
         bdb_head_op::Max => HeadOp::Max,
         bdb_head_op::Count => HeadOp::Count,
         bdb_head_op::Pack => HeadOp::Pack,
-    }
+    })
 }
 
-#[expect(
-    clippy::unnecessary_wraps,
-    reason = "the uniform marshal-lane shape: every `*_in` reader returns \
-              `BridgeResult` so call sites compose with `?` regardless of \
-              which tags can currently fail"
-)]
 fn find_term_in(view: &bdb_find_term) -> BridgeResult<FindTerm> {
-    Ok(match view.kind {
+    Ok(match tag_in::<bdb_find_term_kind>(view.kind)? {
         bdb_find_term_kind::Var => FindTerm::Var(VarId(view.var)),
         bdb_find_term_kind::Measure => FindTerm::Measure(VarId(view.var)),
         bdb_find_term_kind::Aggregate => FindTerm::Aggregate {
-            op: agg_op_in(view.op),
-            over: view.has_over.then_some(VarId(view.over)),
+            op: agg_op_in(view.op)?,
+            over: bool_in(view.has_over)?.then_some(VarId(view.over)),
         },
         bdb_find_term_kind::AggregateMeasure => FindTerm::AggregateMeasure {
-            op: agg_op_in(view.op),
+            op: agg_op_in(view.op)?,
             over: VarId(view.over),
         },
     })
@@ -295,7 +328,7 @@ fn mask_in(op: bdb_cmp_op) -> BridgeResult<AllenMask> {
 }
 
 fn comparison_in(view: &bdb_comparison) -> BridgeResult<Comparison> {
-    let op = match view.op.kind {
+    let op = match tag_in::<bdb_cmp_op_kind>(view.op.kind)? {
         bdb_cmp_op_kind::Eq => CmpOp::Eq,
         bdb_cmp_op_kind::Ne => CmpOp::Ne,
         bdb_cmp_op_kind::Lt => CmpOp::Lt,
@@ -325,7 +358,7 @@ fn condition_in(view: &bdb_condition, depth: usize) -> BridgeResult<ConditionTre
             bumbledb::MAX_CONDITION_DEPTH
         )));
     }
-    Ok(match view.kind {
+    Ok(match tag_in::<bdb_condition_kind>(view.kind)? {
         bdb_condition_kind::Leaf => ConditionTree::Leaf(comparison_in(&view.cmp)?),
         bdb_condition_kind::And => ConditionTree::And(condition_children(view, depth)?),
         bdb_condition_kind::Or => ConditionTree::Or(condition_children(view, depth)?),
@@ -373,10 +406,10 @@ pub(crate) fn program_in(view: &bdb_program) -> BridgeResult<Program> {
                 head: slice_in(predicate.head, predicate.head_count)?
                     .iter()
                     .map(|term| {
-                        Ok(match term.kind {
+                        Ok(match tag_in::<bdb_head_term_kind>(term.kind)? {
                             bdb_head_term_kind::Var => HeadTerm::Var,
                             bdb_head_term_kind::Aggregate => {
-                                HeadTerm::Aggregate(head_op_in(term.op))
+                                HeadTerm::Aggregate(head_op_in(term.op)?)
                             }
                         })
                     })
@@ -404,6 +437,25 @@ pub(crate) fn program_in(view: &bdb_program) -> BridgeResult<Program> {
 pub struct bdb_prepared {
     pub(crate) prepared: PreparedQuery<'static, SchemaDescriptor>,
     _db: std::sync::Arc<Engine>,
+    pub(crate) in_execute: AtomicBool,
+}
+
+pub(crate) struct InExecuteReset<'a>(&'a AtomicBool);
+
+impl Drop for InExecuteReset<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
+}
+
+pub(crate) fn enter_execute(flag: &AtomicBool) -> BridgeResult<InExecuteReset<'_>> {
+    if flag.swap(true, Ordering::AcqRel) {
+        return Err(fail_locked(
+            "re-entrant or concurrent execute on this prepared handle (one \
+             execution at a time)",
+        ));
+    }
+    Ok(InExecuteReset(flag))
 }
 
 /// Prepares a program against the database: the engine validates,
@@ -420,6 +472,7 @@ pub extern "C" fn bdb_db_prepare(
     out_error: *mut *mut bdb_error,
 ) -> bdb_status {
     guard(out_error, || {
+        require_out(out_prepared)?;
         let handle = ref_in(db)?;
         let program = program_in(ref_in(program)?)?;
         let engine = std::sync::Arc::clone(&handle.db);
@@ -443,12 +496,13 @@ pub extern "C" fn bdb_db_prepare(
                 PreparedQuery<'static, SchemaDescriptor>,
             >(prepared)
         };
-        out(
+        box_out_to(
             out_prepared,
-            box_out(bdb_prepared {
+            bdb_prepared {
                 prepared,
                 _db: engine,
-            }),
+                in_execute: AtomicBool::new(false),
+            },
         )?;
         Ok(bdb_status::Ok)
     })
@@ -459,6 +513,10 @@ pub extern "C" fn bdb_db_prepare(
 #[expect(unsafe_code, reason = "extern export: the unsafe(no_mangle) ABI attribute")]
 pub extern "C" fn bdb_prepared_destroy(prepared: *mut bdb_prepared) -> bdb_status {
     guard(std::ptr::null_mut(), || {
+        let handle = ref_in(prepared)?;
+        if handle.in_execute.load(Ordering::Acquire) {
+            return Err(Fail::Misuse);
+        }
         drop(box_in(prepared)?);
         Ok(bdb_status::Ok)
     })

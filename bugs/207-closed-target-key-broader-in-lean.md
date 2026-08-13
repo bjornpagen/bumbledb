@@ -5,7 +5,7 @@
 - area: spec-docs-rust
 - wrong-side: spec
 - components: lean/Bumbledb/Dependencies.lean, crates/bumbledb/src/schema/validate.rs, docs/architecture/30-dependencies.md, crates/bumbledb/src/schema/tests/reject.rs
-- status: open (do not fix)
+- status: fixed (2026-08-13)
 
 ## Summary
 Lean `TargetKeyAccepted` is exact field-set match against any declared functionality of the target. For a closed target the engine refuses every projection except the synthetic id `FieldId(0)`, even when a user-declared payload key has the same field set. Lean records this as "acceptance strictly narrower, sound direction" but leaves `TargetKeyAccepted` broader than the gate theorems spend. Architecture docs match Rust, not the Lean definition.
@@ -49,3 +49,6 @@ Re-read `TargetKeyAccepted`, the closed-target architecture rule, and `resolve_t
 
 ## Related
 - 208 (closed + interval containment also Lean-permissive / Rust-refused)
+
+## Resolution (2026-08-13)
+Lean `TargetKeyAccepted` now requires closed targets to be the synthetic `[FieldId(0)]` handle, matching `ClosedTargetNotHandle`. Rust closed-target gate unchanged.

@@ -5,7 +5,7 @@
 - area: spec-docs-rust
 - wrong-side: spec
 - components: lean/Bumbledb/Dependencies.lean, lean/Bumbledb/Schema.lean, crates/bumbledb/src/schema/validate.rs, docs/architecture/30-dependencies.md
-- status: open (do not fix)
+- status: fixed (2026-08-13)
 
 ## Summary
 A containment with an interval-typed projection and a closed side is a well-formed `Coverage` / `Containment` judgment in Lean (`Statement.judgment` via `intervalSplit`). The engine and architecture docs refuse that shape at declaration (`ClosedContainmentInterval`). Lean notes the v0 refusal as unstated mechanism; `holds` is still defined on theories the engine will never seal.
@@ -40,3 +40,6 @@ Re-read `Statement.judgment`, the v0 architecture refusal, and `validate_contain
 ## Related
 - 207 (closed-target key)
 - 213, 215 (other gate-vs-denotation splits)
+
+## Resolution (2026-08-13)
+Lean `Theory.closedContainmentInterval` + `Statement.judgment` refuse closed+interval containment (v0), matching `ClosedContainmentInterval`. Feature not implemented.

@@ -4,7 +4,7 @@
 - confidence: confirmed
 - area: correctness
 - components: crates/bumbledb-query-macros/src/lib.rs, crates/bumbledb-theory/src/value.rs, crates/bumbledb/src/ir/render.rs
-- status: open (do not fix)
+- status: fixed (2026-08-13)
 
 ## Summary
 
@@ -70,3 +70,7 @@ Same for `Allen(w, INTERSECTS, 0..10)` and for `field == 1..2` selections.
 ## Verification (2026-08-12)
 
 Confirmed. `finish_int` (`bumbledb-query-macros/src/lib.rs:505-514`) accepts `start..end` as `Lit::Interval`. `Lit::lit` emits `{value}::{variant}({}, {})` (`lib.rs:1427-1434`) with `value = "::bumbledb::Value"`. That type is `bumbledb_theory::Value` (`crates/bumbledb/src/value.rs` re-export): `IntervalU64(Interval<u64>)` / `IntervalI64(Interval<i64>)` — unary. The theory crate's own `compile_fail` (`value.rs:36-39`) is `Value::IntervalU64(7, 7)`, the same shape. `schema!` wraps `Interval::new` (`bumbledb-macros/src/lib.rs:2217-2221`). `ir/render.rs:514-518` still prints `start..end`. Module docs advertise the spelling (`query-macros/src/lib.rs:104-120`). No `query!` corpus case contains an interval literal, so CI never compiled the arm. Severity stays **medium** (advertised grammar does not compile; not a silent wrong runtime result).
+
+## Resolution (2026-08-13)
+
+`query!` now wraps interval literals in `Interval::new` the same way `schema!` does, so `start..end` compiles; a notation test covers PointIn, Allen, and field-equality spellings.
