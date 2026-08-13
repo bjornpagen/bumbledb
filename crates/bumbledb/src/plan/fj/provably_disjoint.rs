@@ -194,7 +194,7 @@ fn head_reads(term: &FindTerm) -> Option<VarId> {
     match term {
         FindTerm::Var(var) => Some(*var),
         FindTerm::Aggregate {
-            op: AggOp::Sum | AggOp::Min | AggOp::Max | AggOp::CountDistinct,
+            op: AggOp::Sum | AggOp::Min | AggOp::Max,
             over,
         } => *over,
         // The remaining positions witness nothing: the nullary Count and

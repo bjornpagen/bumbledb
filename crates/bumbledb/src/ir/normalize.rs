@@ -205,13 +205,12 @@ pub struct PlacedDuration {
 /// four endpoint slot words (each side's pair at its slot base) plus the
 /// mask, evaluated classify-then-test at the earliest plan node where
 /// both sides are bound, exactly where whole-value residuals attach. The
-/// mask stays symbolic ([`crate::ir::MaskTerm`]): a param mask resolves
-/// per execution ([`crate::exec::run::Executor::bind_allen_masks`]).
+/// mask is a literal Allen mask.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PlacedAllen {
     pub lhs: VarId,
     pub rhs: VarId,
-    pub mask: crate::ir::MaskTerm,
+    pub mask: bumbledb_theory::allen::AllenMask,
 }
 
 /// Which of a variable's binding words a residual side reads (the

@@ -2,7 +2,7 @@ use super::{ClassifiedComparison, Context, DurationOperand, ParamKind, SealedCon
 use crate::error::ValidationError;
 use crate::image::view::MaskConst;
 use crate::ir::normalize::LoweredRule;
-use crate::ir::{CmpOp, Comparison, MaskTerm, ParamId, Term, Value, VarId};
+use crate::ir::{CmpOp, Comparison, ParamId, Term, Value, VarId};
 use crate::schema::Schema;
 use bumbledb_theory::allen::AllenMask;
 use bumbledb_theory::schema::{FieldId, IntervalElement, ValueType};
@@ -30,10 +30,8 @@ fn bivalent_admits(element: IntervalElement, width: Option<u64>, candidate: &Val
 }
 
 /// The structural type a literal contributes as a comparison anchor.
-/// `None` for a mask literal: it names no data-model type, so it anchors
-/// nothing — it is *checked* against the other side's type instead.
-fn literal_anchor_type(value: &Value) -> Option<ValueType> {
-    Some(match value {
+fn literal_anchor_type(value: &Value) -> ValueType {
+    match value {
         Value::Bool(_) => ValueType::Bool,
         Value::U64(_) => ValueType::U64,
         Value::I64(_) => ValueType::I64,
@@ -53,11 +51,7 @@ fn literal_anchor_type(value: &Value) -> Option<ValueType> {
             element: IntervalElement::I64,
             width: None,
         },
-        // A mask literal is no data-model type at all (it is only ever
-        // legal inside `CmpOp::Allen`'s mask position, never as a term) —
-        // it anchors nothing and is checked against the other side.
-        Value::AllenMask(_) => return None,
-    })
+    }
 }
 
 /// Whether an element-typed value sits at its domain ceiling (`MAX`) —
@@ -113,7 +107,7 @@ enum OpClass {
     /// `Lt`/`Le`/`Gt`/`Ge`, with the mirrored operator alongside.
     Order { op: CmpOp, mirror: CmpOp },
     /// `Allen { mask }`.
-    Allen { mask: MaskTerm },
+    Allen { mask: AllenMask },
     /// `PointIn`.
     PointIn,
 }
@@ -197,14 +191,14 @@ enum Shaped<'rule> {
     },
     /// `Allen` over two variables, the mask as written.
     AllenVarVar {
-        mask: MaskTerm,
+        mask: AllenMask,
         lhs: VarId,
         rhs: VarId,
     },
     /// `Allen` against a constant (written order kept for the mask
     /// converse).
     AllenVarConst {
-        mask: MaskTerm,
+        mask: AllenMask,
         var: VarId,
         var_on_left: bool,
         constant: ConstSide<'rule>,
@@ -285,15 +279,9 @@ fn equality_op(negated: bool) -> CmpOp {
 /// the mirrored form pre-encoded exactly as the filter shape carries it:
 /// `Allen(a, b, m) ≡ Allen(b, a, converse(m))`, so a comparison written
 /// constant-first seals the field on the left and the mask conversed —
-/// immediately for a literal, deferred to bind for a param
-/// ([`MaskConst::ConversedParam`]).
-fn sealed_mask(mask: MaskTerm, mirrored: bool) -> MaskConst {
-    match (mask, mirrored) {
-        (MaskTerm::Literal(mask), false) => MaskConst::Mask(mask),
-        (MaskTerm::Literal(mask), true) => MaskConst::Mask(mask.converse()),
-        (MaskTerm::Param(param), false) => MaskConst::Param(param),
-        (MaskTerm::Param(param), true) => MaskConst::ConversedParam(param),
-    }
+/// immediately for a literal.
+fn sealed_mask(mask: AllenMask, mirrored: bool) -> MaskConst {
+    if mirrored { mask.converse() } else { mask }
 }
 
 /// The order operators' operand screen: every equality-only type gets its
@@ -729,19 +717,11 @@ impl Context {
         // condition) and the roster registration for params (their
         // vacuity is checked at bind, where the value exists).
         if let OpClass::Allen { mask } = class {
-            match mask {
-                MaskTerm::Literal(mask) => {
-                    if mask.is_empty() {
-                        return Err(ValidationError::EmptyAllenMask { index });
-                    }
-                    if mask.is_full() {
-                        return Err(ValidationError::FullAllenMask { index });
-                    }
-                }
-                MaskTerm::Param(param) => {
-                    self.note_param_kind(param, ParamKind::Scalar)?;
-                    self.mask_params.insert(param);
-                }
+            if mask.is_empty() {
+                return Err(ValidationError::EmptyAllenMask { index });
+            }
+            if mask.is_full() {
+                return Err(ValidationError::FullAllenMask { index });
             }
         }
         match (lhs, rhs) {
@@ -950,7 +930,7 @@ impl Context {
                 Some(TypeSlot::Mono(value_type)) => Some(value_type.clone()),
                 _ => None,
             },
-            Term::Literal(value) => literal_anchor_type(value),
+            Term::Literal(value) => Some(literal_anchor_type(value)),
             // The measure is u64-valued by definition, whatever its
             // variable resolves to (the interval requirement is checked
             // in `check_order` against final types).
@@ -1086,7 +1066,7 @@ impl Context {
                     ClassifiedComparison::AllenVarVar {
                         lhs: *lhs,
                         rhs: *rhs,
-                        mask: MaskTerm::Literal(equals_mask(*negated)),
+                        mask: equals_mask(*negated),
                     }
                 } else {
                     ClassifiedComparison::VarVar {
@@ -1108,7 +1088,7 @@ impl Context {
                     ClassifiedComparison::AllenVarConst {
                         var: *var,
                         other: value,
-                        mask: sealed_mask(MaskTerm::Literal(equals_mask(*negated)), !var_on_left),
+                        mask: sealed_mask(equals_mask(*negated), !var_on_left),
                     }
                 } else {
                     ClassifiedComparison::VarConst {
@@ -1371,8 +1351,7 @@ impl Context {
                     })
                 }
                 ConstSide::Literal(value) => {
-                    let Some(ValueType::Interval { element, .. }) = literal_anchor_type(value)
-                    else {
+                    let ValueType::Interval { element, .. } = literal_anchor_type(value) else {
                         return Err(ValidationError::IllegalComparison { index });
                     };
                     if *self.resolved_var_type(*var) != element_type(element) {
@@ -1417,7 +1396,7 @@ impl Context {
                 Some(TypeSlot::Mono(value_type)) => Some(value_type.clone()),
                 _ => None,
             },
-            ConstSide::Literal(value) => literal_anchor_type(value),
+            ConstSide::Literal(value) => Some(literal_anchor_type(value)),
         }
     }
 

@@ -22,7 +22,6 @@ import type {
 	FindTermIr,
 	HeadOpIr,
 	HeadTermIr,
-	MaskTermIr,
 	QueryParam,
 	StatementKindTag,
 	TaggedValue,
@@ -45,7 +44,7 @@ type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ?
 type Expect<T extends true> = T extends true ? true : never
 
 const ROSTERS = {
-	value: ["bool", "u64", "i64", "string", "fixedBytes", "intervalU64", "intervalI64", "allenMask"],
+	value: ["bool", "u64", "i64", "string", "fixedBytes", "intervalU64", "intervalI64"],
 	valueType: ["bool", "u64", "i64", "string", "fixedBytes", "interval"],
 	intervalElement: ["u64", "i64"],
 	literal: ["handle", "value"],
@@ -56,12 +55,11 @@ const ROSTERS = {
 	statement: ["fd", "containment", "capacity"],
 	statementKind: ["functionality", "containment", "capacity"],
 	term: ["var", "param", "paramSet", "literal", "measure"],
-	aggregateOp: ["sum", "min", "max", "count", "countDistinct", "argMax", "argMin", "pack"],
+	aggregateOp: ["sum", "min", "max", "count", "pack"],
 	headTerm: ["var", "aggregate"],
 	findTerm: ["var", "aggregate", "measure", "aggregateMeasure"],
 	atomSource: ["edb", "idb"],
 	cmpOp: ["eq", "ne", "lt", "le", "gt", "ge", "allen", "pointIn"],
-	maskTerm: ["literal", "param"],
 	condition: ["leaf", "and", "or"],
 	direction: ["sourceUnsatisfied", "targetRequired"],
 	param: ["set"]
@@ -86,13 +84,10 @@ type Pins = [
 	Expect<Equal<(typeof ROSTERS.findTerm)[number], FindTermIr["kind"]>>,
 	Expect<Equal<(typeof ROSTERS.atomSource)[number], AtomSourceIr["kind"]>>,
 	Expect<Equal<(typeof ROSTERS.cmpOp)[number], CmpOpIr["kind"]>>,
-	Expect<Equal<(typeof ROSTERS.maskTerm)[number], MaskTermIr["kind"]>>,
 	Expect<Equal<(typeof ROSTERS.condition)[number], ConditionTreeIr["kind"]>>,
 	Expect<Equal<(typeof ROSTERS.direction)[number], Exclude<Violation["direction"], undefined>>>,
 	Expect<Equal<(typeof ROSTERS.param)[number], Exclude<QueryParam["kind"], TaggedValue["kind"]>>>,
-	// The spec's ValueSpec is the tagged-value vocabulary minus the
-	// bind-time-only Allen mask — pinned so the two lanes stay one family.
-	Expect<Equal<Exclude<(typeof ROSTERS.value)[number], "allenMask">, ValueSpec["kind"]>>
+	Expect<Equal<(typeof ROSTERS.value)[number], ValueSpec["kind"]>>
 ]
 
 test("the wire-tag rosters equal the tags.json golden, key for key", function goldenAgreement() {

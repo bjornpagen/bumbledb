@@ -22,8 +22,8 @@ impl Sink for AggregateSink {
         if self.seen.is_some() {
             return false;
         }
-        // CountDistinct and Arg-restriction fold per row (set-valued
-        // group state — no fold kernel exists); their leaves stay on
+        // Measures and Pack fold per row (derived words / claim lists
+        // — no fold kernel exists); their leaves stay on
         // the batch path.
         if self.row_fold_only {
             return false;
@@ -66,9 +66,6 @@ impl Sink for AggregateSink {
                     (FoldOp::Min, _) => Acc::Min(u64::MAX),
                     (FoldOp::Max, _) => Acc::Max(u64::MIN),
                     (FoldOp::Count, _) => Acc::Count(0),
-                    (FoldOp::CountDistinct, _) => {
-                        unreachable!("row-fold ops declined the scan above")
-                    }
                 });
             }
         }
@@ -194,9 +191,10 @@ impl Sink for AggregateSink {
         // group slot outer means the whole batch folds into ONE
         // accumulator row — the trie already grouped it.
         self.refresh_shape_cache(batch);
-        // CountDistinct and Arg-restriction fold per row: their group
-        // state is a set, not a scalar accumulator, so no gather kernel
-        // applies — the per-row scratch fold is the correctness path.
+        // Measures and Pack fold per row: derived words exist only in
+        // the scratch row, and Pack's group state is a claim list, so
+        // no gather kernel applies — the per-row scratch fold is the
+        // correctness path.
         if self.row_fold_only {
             self.fold_batch_rows(batch);
             return Flow::Continue;

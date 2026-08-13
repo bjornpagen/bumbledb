@@ -640,10 +640,6 @@ fn literal(f: &mut fmt::Formatter<'_>, value: &Value) -> fmt::Result {
         Value::Bool(v) => write!(f, "{v}"),
         Value::U64(v) => write!(f, "{v}"),
         Value::I64(v) => write!(f, "{v}"),
-        // Unreachable through validated schemas (a mask is not a field
-        // type, so no selection holds one); rendered anyway — Display
-        // stays total on plain data.
-        Value::AllenMask(mask) => write!(f, "allen({:#015b})", mask.bits()),
         Value::IntervalU64(interval) => write!(f, "{}..{}", interval.start(), interval.end()),
         Value::IntervalI64(interval) => write!(f, "{}..{}", interval.start(), interval.end()),
         Value::String(bytes) => {

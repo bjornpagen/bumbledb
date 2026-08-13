@@ -188,19 +188,6 @@ pub enum AggOp {
     Max,
     /// Nullary (`over: None`): |the group's binding set|, result type U64.
     Count,
-    /// |the set of distinct values of `over` across the group's binding
-    /// set|, result type U64; legal over every type.
-    CountDistinct,
-    /// Arg-restriction: the group's binding set is first restricted to the
-    /// bindings attaining the **maximum** of `key`, and the group's output
-    /// rows are projected from that restricted set — a tie yields every
-    /// attaining row. `over` is the carried variable; the key positions
-    /// are [`ArgKey`]'s two, exhaustively, and all Arg terms in one
-    /// query share one key and one direction.
-    ArgMax { key: ArgKey },
-    /// Arg-restriction toward the **minimum** of `key`; rules as
-    /// [`AggOp::ArgMax`].
-    ArgMin { key: ArgKey },
     /// The coalescing fold (Snodgrass coalesce) over an interval-typed
     /// variable: per group, the result is the set of **maximal disjoint
     /// half-open segments** of the union of the group's interval point
@@ -209,41 +196,14 @@ pub enum AggOp {
     /// (`docs/architecture/20-query-ir.md` § aggregation). Adjacency
     /// merges (`end == next.start` — the half-open law), a packed ray is
     /// a ray, and identical claims collapse in the coalesce. At most one
-    /// `Pack` per head, never beside fold or Arg terms — the group
-    /// variables are the only companions (validation, each refusal
-    /// typed).
+    /// `Pack` per head, never beside fold terms — the group variables are
+    /// the only companions (validation, each refusal typed).
     Pack,
 }
 
-/// An Arg-restriction key position — the two, exhaustively (ruled
-/// 2026-07-23, R5): a bound variable of orderable type (U64/I64, and
-/// bool per R3 — closed references refused per R4), or the **interval
-/// measure** of a bound interval-typed variable — `ArgMax(w,
-/// Duration(w))` is "the longest interval per group"; the restriction
-/// sweeps the derived measure word with the measure's ray poisoning
-/// (`docs/architecture/20-query-ir.md` § the measure). A variable key
-/// may itself be projected.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ArgKey {
-    Var(VarId),
-    Measure(VarId),
-}
-
-impl ArgKey {
-    /// The key's rule variable — the bound var itself, or the interval
-    /// variable the measure reads (Datalog safety walks read this).
-    #[must_use]
-    pub fn var(self) -> VarId {
-        match self {
-            Self::Var(var) | Self::Measure(var) => var,
-        }
-    }
-}
-
 /// One find term: a projected variable or an aggregate. `over` is `None`
-/// for the nullary `Count`, `Some(counted var)` for `CountDistinct`, the
-/// aggregated variable for `Sum`/`Min`/`Max`, and the *carried* variable
-/// for `ArgMax`/`ArgMin` (the key rides in the op).
+/// for the nullary `Count`, and the aggregated variable for
+/// `Sum`/`Min`/`Max`/`Pack`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FindTerm {
     Var(VarId),
@@ -259,8 +219,7 @@ pub enum FindTerm {
     /// measure and raises [`crate::Error::MeasureOfRay`] at evaluation.
     Measure(VarId),
     /// A fold over the measure: `Sum`/`Min`/`Max` of `Duration(over)` —
-    /// the only three ops the measure admits (`Count` is nullary;
-    /// `CountDistinct` and the Arg ops are typed rejections). Accumulates
+    /// the only three ops the measure admits (`Count` is nullary). Accumulates
     /// exactly as `Sum`/`Min`/`Max` over a u64 variable — Sum in the wide
     /// accumulator with the single finalize range check. A ray has no finite
     /// measure and raises [`crate::Error::MeasureOfRay`] at evaluation.
@@ -287,18 +246,14 @@ impl FindTerm {
 }
 
 /// The aggregate-op kind at a head position: [`AggOp`] with its rule-scoped
-/// variables stripped (an Arg key is a rule variable; the head is
-/// var-free). Rules supply the variables; validation checks each rule's
-/// find term against the head's op kind position by position.
+/// variables stripped. Rules supply the variables; validation checks each
+/// rule's find term against the head's op kind position by position.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HeadOp {
     Sum,
     Min,
     Max,
     Count,
-    CountDistinct,
-    ArgMax,
-    ArgMin,
     Pack,
 }
 
@@ -311,9 +266,6 @@ impl AggOp {
             Self::Min => HeadOp::Min,
             Self::Max => HeadOp::Max,
             Self::Count => HeadOp::Count,
-            Self::CountDistinct => HeadOp::CountDistinct,
-            Self::ArgMax { .. } => HeadOp::ArgMax,
-            Self::ArgMin { .. } => HeadOp::ArgMin,
             Self::Pack => HeadOp::Pack,
         }
     }
@@ -329,18 +281,6 @@ impl AggOp {
 pub enum HeadTerm {
     Var,
     Aggregate(HeadOp),
-}
-
-/// The `Allen` comparison's mask position: a literal mask, or a param
-/// resolved at bind (`Value::AllenMask` / [`crate::BindValue::AllenMask`])
-/// — the temporal relation as a bind-time argument. A two-variant sum, not
-/// a [`Term`]: a variable or set mask is unrepresentable, not rejected.
-/// Both surfaces reject the vacuous ∅/full masks with distinct typed
-/// errors — validation for literals, bind for params.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MaskTerm {
-    Literal(bumbledb_theory::allen::AllenMask),
-    Param(ParamId),
 }
 
 /// Comparison operators. `Eq`/`Ne` are legal for all six types; order
@@ -363,7 +303,9 @@ pub enum CmpOp {
     Le,
     Gt,
     Ge,
-    Allen { mask: MaskTerm },
+    Allen {
+        mask: bumbledb_theory::allen::AllenMask,
+    },
     PointIn,
 }
 
@@ -747,11 +689,8 @@ mod tests {
                 bumbledb_theory::Interval::<i64>::new(i64::MIN, i64::MAX)
                     .expect("nonempty interval"),
             ),
-            // Plus the one non-field value shape: the Allen mask (a
-            // param's bind-time payload, never a stored type).
-            Value::AllenMask(bumbledb_theory::allen::AllenMask::DISJOINT),
         ];
-        assert_eq!(values.len(), 8);
+        assert_eq!(values.len(), 7);
     }
 
     #[test]

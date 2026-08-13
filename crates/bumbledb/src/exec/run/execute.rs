@@ -201,17 +201,7 @@ impl Executor {
             .collect();
         let allen_masks: Vec<Vec<bumbledb_theory::allen::AllenMask>> = allen_residual_slots
             .iter()
-            .map(|slots| {
-                slots
-                    .iter()
-                    .map(|(residual, _, _)| match residual.mask {
-                        crate::ir::MaskTerm::Literal(mask) => mask,
-                        // Placeholder until the first bind — every
-                        // execution entry rewrites param masks first.
-                        crate::ir::MaskTerm::Param(_) => bumbledb_theory::allen::AllenMask::EMPTY,
-                    })
-                    .collect()
-            })
+            .map(|slots| slots.iter().map(|(residual, _, _)| residual.mask).collect())
             .collect();
         // Measure residuals: the interval side's base slot (pair read at
         // offsets 0/1) and the scalar side's single slot.
@@ -326,26 +316,13 @@ impl Executor {
     }
 
     /// Resolves this execution's Allen-residual masks in place: literal
-    /// masks are re-copied (idempotent), param masks read the bind slice
-    /// — with the ∅/full vacuity already rejected at bind, the hot path
-    /// sees only honest masks. Called by the prepared query before
+    /// masks are re-copied (idempotent). Called by the prepared query before
     /// every join execution; the executor itself never touches params.
-    pub fn bind_allen_masks(&mut self, params: &[crate::image::view::Const]) {
+    pub fn bind_allen_masks(&mut self, _params: &[crate::image::view::Const]) {
         for (node_slots, node_masks) in self.allen_residual_slots.iter().zip(&mut self.allen_masks)
         {
             for ((residual, _, _), mask) in node_slots.iter().zip(node_masks.iter_mut()) {
-                *mask = match residual.mask {
-                    crate::ir::MaskTerm::Literal(literal) => literal,
-                    crate::ir::MaskTerm::Param(param) => match &params[usize::from(param.0)] {
-                        crate::image::view::Const::Word(word) => {
-                            bumbledb_theory::allen::AllenMask::new(
-                                u16::try_from(*word).expect("bind stored 13-bit mask words"),
-                            )
-                            .expect("bind validated the mask")
-                        }
-                        _ => unreachable!("validated: a mask param resolves to a word"),
-                    },
-                };
+                *mask = residual.mask;
             }
         }
     }

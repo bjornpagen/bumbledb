@@ -28,8 +28,7 @@ rule (`agg_over_distinct_bindings`; `dedup`), grouping is the fibering
 by the key positions (`Group`), an empty binding set yields the empty
 answer set (`empty_global_no_answer` — the glue folds groups, and no
 binding means no group), sums are checked (`checkedSum`), Pack is the
-coalescing fold (`pack` — `pack_canonical`/`pack_extensional`), Arg
-restriction keeps every tie (`argmax_ties_all_kept`), Allen masks
+coalescing fold (`pack` — `pack_canonical`/`pack_extensional`), Allen masks
 classify through the DEFINED classifier (`classifyRefined`), and the
 measure poisons on rays (`Value.measure?` reads `none` — the lane's
 corpus excludes engine-error executions, so a `none` here is a
@@ -191,7 +190,6 @@ structure CQuery where
 inductive PVal where
   | scalar (v : Value)
   | set (vs : List Value)
-  | mask (m : Query.AllenMask)
 
 /-- One decoded case: the world (open instance + ground axioms merged
 — a closed relation's extension is ordinary facts to the matching
@@ -349,10 +347,8 @@ def decodeCmp (j : Json) : Except String Query.Comparison := do
     | "point_in" => pure .pointIn
     | "allen" =>
       if let some m := objKey? j "mask" then
-        pure (.allen (.lit (← decodeMask m)))
-      else if let some p := objKey? j "mask_param" then
-        pure (.allen (.param ⟨← p.getNat?⟩))
-      else .error "allen expects mask or mask_param"
+        pure (.allen (← decodeMask m))
+      else .error "allen expects a literal mask"
     | other => .error s!"unknown comparison op {other}"
   return { op, lhs, rhs }
 
@@ -389,15 +385,10 @@ def decodeFind (j : Json) : Except String CFind := do
     let op ← (← a.getObjVal? "op").getStr?
     match op with
     | "count" => return .agg .count
-    | "count_distinct" => return .agg (.countDistinct ⟨← natKey a "over"⟩)
     | "sum" => return .agg (.sum ⟨← natKey a "over"⟩)
     | "min" => return .agg (.min ⟨← natKey a "over"⟩)
     | "max" => return .agg (.max ⟨← natKey a "over"⟩)
     | "pack" => return .agg (.pack ⟨← natKey a "over"⟩)
-    | "arg_max" =>
-      return .agg (.argMax ⟨← natKey a "over"⟩ ⟨← natKey a "key"⟩)
-    | "arg_min" =>
-      return .agg (.argMin ⟨← natKey a "over"⟩ ⟨← natKey a "key"⟩)
     | other => .error s!"unknown aggregate op {other}"
   if let some a := objKey? j "agg_measure" then
     let op ← (← a.getObjVal? "op").getStr?
@@ -435,8 +426,6 @@ def decodeParam (j : Json) : Except String PVal := do
     return .scalar (← decodeValue v)
   if let some vs := objKey? j "set" then
     return .set (← (← vs.getArr?).toList.mapM decodeValue)
-  if let some m := objKey? j "mask" then
-    return .mask (← decodeMask m)
   .error "unknown param tag"
 
 /-- The environment the positional parameters denote (an id's unused
@@ -449,10 +438,6 @@ def paramEnv (params : List PVal) : Query.ParamEnv where
   set p :=
     match params.getD p.id (.set []) with
     | .set vs => vs
-    | _ => []
-  mask p :=
-    match params.getD p.id (.mask []) with
-    | .mask m => m
     | _ => []
 
 /-- One fact: a value array read as the tree's total field assignment
@@ -510,11 +495,9 @@ def varCount (r : CRule) : Nat :=
       match f with
       | .var v | .measure v => max n (v.id + 1)
       | .agg .count => n
-      | .agg (.countDistinct v) | .agg (.sum v) | .agg (.min v)
+      | .agg (.sum v) | .agg (.min v)
       | .agg (.max v) | .agg (.pack v)
-      | .agg (.measureFold _ v) => max n (v.id + 1)
-      | .agg (.argMax v k) | .agg (.argMin v k) =>
-        max n (max (v.id + 1) (k.id + 1)))
+      | .agg (.measureFold _ v) => max n (v.id + 1))
     bodyMax
 
 /-- One state as the full binding row over `0..n` (unbound positions
@@ -666,8 +649,6 @@ def foldAgg (op : Query.AggOp) (group : List (List Value)) :
     Except String Value :=
   match op with
   | .count => natValue group.length
-  | .countDistinct v =>
-    natValue (dedupRows (group.map fun b => [rowGet b v])).length
   | .sum v => sumVals (group.map (rowGet · v))
   | .min v => pickExtreme false (group.map (rowGet · v))
   | .max v => pickExtreme true (group.map (rowGet · v))
@@ -678,7 +659,6 @@ def foldAgg (op : Query.AggOp) (group : List (List Value)) :
     | .min => pickExtreme false ms
     | .max => pickExtreme true ms
   | .pack _ => .error "Pack takes the segment path"
-  | .argMax .. | .argMin .. => .error "Arg takes the restriction path"
 
 /-- The group key of one binding: the values at the var and measure
 head positions, in head order — grouping is the fibering by exactly
@@ -713,14 +693,6 @@ where
       if k' == k then run k (r' :: acc) rest
       else acc.reverse :: run k' [r'] rest
 
-/-- The head's Arg restriction, if any: (key, isMax). -/
-def argInfo (finds : List CFind) : Option (Query.VarId × Bool) :=
-  finds.findSome? fun f =>
-    match f with
-    | .agg (.argMax _ k) => some (k, true)
-    | .agg (.argMin _ k) => some (k, false)
-    | _ => none
-
 /-- Whether the head carries a Pack position. -/
 def hasPack (finds : List CFind) : Bool :=
   finds.any fun f =>
@@ -729,9 +701,7 @@ def hasPack (finds : List CFind) : Bool :=
     | _ => false
 
 /-- One group's output rows (single-rule path): Pack emits one row per
-maximal segment, Arg projects every extreme-attaining binding (ties
-are set-honest — `argmax_ties_all_kept`), and everything else is one
-row of key values and folds. -/
+maximal segment; everything else is one row of key values and folds. -/
 def projectGroup (finds : List CFind) (group : List (List Value)) :
     Except String (List (List Value)) := do
   match group with
@@ -752,26 +722,13 @@ def projectGroup (finds : List CFind) (group : List (List Value)) :
           | .measure v => measureVal (rowGet b0 v)
           | .agg (.pack _) => pure seg
           | .agg _ => .error "Pack mixes with no other aggregate"
-    else
-      match argInfo finds with
-      | some (key, isMax) =>
-        let extreme ← pickExtreme isMax (group.map (rowGet · key))
-        let survivors := group.filter fun b => rowGet b key == extreme
-        survivors.mapM fun b =>
-          finds.mapM fun f =>
-            match f with
-            | .var v => pure (rowGet b v)
-            | .measure v => measureVal (rowGet b v)
-            | .agg (.argMax v _) | .agg (.argMin v _) =>
-              pure (rowGet b v)
-            | .agg _ => .error "Arg terms and folds never mix"
-      | none => do
-        let row ← finds.mapM fun f =>
-          match f with
-          | .var v => pure (rowGet b0 v)
-          | .measure v => measureVal (rowGet b0 v)
-          | .agg op => foldAgg op group
-        pure [row]
+    else do
+      let row ← finds.mapM fun f =>
+        match f with
+        | .var v => pure (rowGet b0 v)
+        | .measure v => measureVal (rowGet b0 v)
+        | .agg op => foldAgg op group
+      pure [row]
 
 /-- The grouped aggregate path over an explicit fold domain: fibered
 by the key positions, one output batch per inhabited fiber — no
@@ -798,11 +755,9 @@ def headRow (finds : List CFind) (b : List Value) :
     | .var v => pure (rowGet b v)
     | .measure v => measureVal (rowGet b v)
     | .agg .count => pure ⟨.bool, false⟩
-    | .agg (.countDistinct v) | .agg (.sum v) | .agg (.min v)
+    | .agg (.sum v) | .agg (.min v)
     | .agg (.max v) | .agg (.pack v) => pure (rowGet b v)
     | .agg (.measureFold _ v) => measureVal (rowGet b v)
-    | .agg (.argMax ..) | .agg (.argMin ..) =>
-      .error "validation refuses Arg across rules"
 
 /-- The key positions of a head-projected row. -/
 def headKey (finds : List CFind) (row : List Value) : List Value :=
@@ -848,9 +803,6 @@ def projectUnionGroup (finds : List CFind)
         match f with
         | .var _ | .measure _ => pure (r0.getD i ⟨.bool, false⟩)
         | .agg .count => natValue group.length
-        | .agg (.countDistinct _) =>
-          natValue (dedupRows (group.map fun r =>
-            [r.getD i ⟨.bool, false⟩])).length
         | .agg (.sum _) | .agg (.measureFold .sum _) =>
           sumVals (colVals i group)
         | .agg (.min _) | .agg (.measureFold .min _) =>
@@ -858,8 +810,6 @@ def projectUnionGroup (finds : List CFind)
         | .agg (.max _) | .agg (.measureFold .max _) =>
           pickExtreme true (colVals i group)
         | .agg (.pack _) => .error "Pack takes the segment path"
-        | .agg (.argMax ..) | .agg (.argMin ..) =>
-          .error "validation refuses Arg across rules"
       pure [row]
 
 /-- The multi-rule aggregate head: the union of the rules' distinct

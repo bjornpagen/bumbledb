@@ -7,8 +7,8 @@
 //! engine's IR validator remains the trust boundary at `bdb_db_prepare`.
 
 use bumbledb::{
-    AggOp, AllenMask, ArgKey, Atom, AtomSource, CmpOp, Comparison, ConditionTree, FieldId,
-    FindTerm, HeadOp, HeadTerm, MaskTerm, ParamId, PredId, PredicateDef, PreparedQuery, Program,
+    AggOp, AllenMask, Atom, AtomSource, CmpOp, Comparison, ConditionTree, FieldId,
+    FindTerm, HeadOp, HeadTerm, ParamId, PredId, PredicateDef, PreparedQuery, Program,
     RelationId, Rule, SchemaDescriptor, Term, VarId,
 };
 
@@ -81,28 +81,14 @@ pub enum bdb_head_op {
     Min,
     Max,
     Count,
-    CountDistinct,
-    ArgMax,
-    ArgMin,
     Pack,
 }
 
-/// An Arg-restriction key position's tag.
-#[repr(C)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum bdb_arg_key_kind {
-    Var,
-    Measure,
-}
-
-/// One rule-scoped aggregate op: the kind, plus the Arg key for
-/// `ArgMax`/`ArgMin` (ignored for every other kind).
+/// One rule-scoped aggregate op.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct bdb_agg_op {
     pub kind: bdb_head_op,
-    pub arg_key_kind: bdb_arg_key_kind,
-    pub arg_key_var: u16,
 }
 
 /// A find term's tag (`bumbledb::ir::FindTerm`).
@@ -144,15 +130,6 @@ pub struct bdb_head_term {
     pub op: bdb_head_op,
 }
 
-/// The Allen mask position's tag: a literal mask or a param resolved at
-/// bind.
-#[repr(C)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum bdb_mask_term_kind {
-    Literal,
-    Param,
-}
-
 /// A comparison operator's tag (`bumbledb::ir::CmpOp`). For `PointIn`
 /// the lhs is the INTERVAL term and the rhs the point term (the engine's
 /// ordered lowering; the notation reads point-first).
@@ -169,15 +146,13 @@ pub enum bdb_cmp_op_kind {
     PointIn,
 }
 
-/// One comparison operator; the mask fields are read for `Allen` only
-/// (`mask` for a `Literal` mask term, `mask_param` for a `Param` one).
+/// One comparison operator; `mask` is the literal 13-bit Allen mask,
+/// read for `Allen` only.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct bdb_cmp_op {
     pub kind: bdb_cmp_op_kind,
-    pub mask_kind: bdb_mask_term_kind,
     pub mask: u16,
-    pub mask_param: u16,
 }
 
 /// One comparison condition.
@@ -274,19 +249,12 @@ fn atom_in(view: &bdb_atom) -> BridgeResult<Atom> {
 
 /// The tag-to-op lift, exhaustive over [`bdb_head_op`]: a new engine
 /// `HeadOp` variant grows the C enum and breaks THIS match at compile.
-fn agg_op_in(view: &bdb_agg_op) -> AggOp {
-    let arg_key = || match view.arg_key_kind {
-        bdb_arg_key_kind::Var => ArgKey::Var(VarId(view.arg_key_var)),
-        bdb_arg_key_kind::Measure => ArgKey::Measure(VarId(view.arg_key_var)),
-    };
+fn agg_op_in(view: bdb_agg_op) -> AggOp {
     match view.kind {
         bdb_head_op::Sum => AggOp::Sum,
         bdb_head_op::Min => AggOp::Min,
         bdb_head_op::Max => AggOp::Max,
         bdb_head_op::Count => AggOp::Count,
-        bdb_head_op::CountDistinct => AggOp::CountDistinct,
-        bdb_head_op::ArgMax => AggOp::ArgMax { key: arg_key() },
-        bdb_head_op::ArgMin => AggOp::ArgMin { key: arg_key() },
         bdb_head_op::Pack => AggOp::Pack,
     }
 }
@@ -297,9 +265,6 @@ fn head_op_in(op: bdb_head_op) -> HeadOp {
         bdb_head_op::Min => HeadOp::Min,
         bdb_head_op::Max => HeadOp::Max,
         bdb_head_op::Count => HeadOp::Count,
-        bdb_head_op::CountDistinct => HeadOp::CountDistinct,
-        bdb_head_op::ArgMax => HeadOp::ArgMax,
-        bdb_head_op::ArgMin => HeadOp::ArgMin,
         bdb_head_op::Pack => HeadOp::Pack,
     }
 }
@@ -315,23 +280,18 @@ fn find_term_in(view: &bdb_find_term) -> BridgeResult<FindTerm> {
         bdb_find_term_kind::Var => FindTerm::Var(VarId(view.var)),
         bdb_find_term_kind::Measure => FindTerm::Measure(VarId(view.var)),
         bdb_find_term_kind::Aggregate => FindTerm::Aggregate {
-            op: agg_op_in(&view.op),
+            op: agg_op_in(view.op),
             over: view.has_over.then_some(VarId(view.over)),
         },
         bdb_find_term_kind::AggregateMeasure => FindTerm::AggregateMeasure {
-            op: agg_op_in(&view.op),
+            op: agg_op_in(view.op),
             over: VarId(view.over),
         },
     })
 }
 
-fn mask_term_in(op: &bdb_cmp_op) -> BridgeResult<MaskTerm> {
-    Ok(match op.mask_kind {
-        bdb_mask_term_kind::Literal => MaskTerm::Literal(AllenMask::new(op.mask).ok_or_else(
-            || fail_shape(&format!("invalid allen mask bits {}", op.mask)),
-        )?),
-        bdb_mask_term_kind::Param => MaskTerm::Param(ParamId(op.mask_param)),
-    })
+fn mask_in(op: bdb_cmp_op) -> BridgeResult<AllenMask> {
+    AllenMask::new(op.mask).ok_or_else(|| fail_shape(&format!("invalid allen mask bits {}", op.mask)))
 }
 
 fn comparison_in(view: &bdb_comparison) -> BridgeResult<Comparison> {
@@ -343,7 +303,7 @@ fn comparison_in(view: &bdb_comparison) -> BridgeResult<Comparison> {
         bdb_cmp_op_kind::Gt => CmpOp::Gt,
         bdb_cmp_op_kind::Ge => CmpOp::Ge,
         bdb_cmp_op_kind::Allen => CmpOp::Allen {
-            mask: mask_term_in(&view.op)?,
+            mask: mask_in(view.op)?,
         },
         bdb_cmp_op_kind::PointIn => CmpOp::PointIn,
     };

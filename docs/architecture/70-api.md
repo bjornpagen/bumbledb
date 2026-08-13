@@ -529,24 +529,10 @@ is the consumer that names its shape.)
   query executes only against snapshots of the database that prepared it — every
   execution entry checks the environment's process-unique instance id first and
   returns `ForeignPreparedQuery` on a foreign snapshot (plan, statistics, and view
-  memo all belong to the preparing environment).
-- `prepared.staleness(&snap)` — the plan-drift signal, the pin-at-prepare decision's
-  compensating control (`20-query-ir.md`): per participating occurrence, the fact
-  count the plan was costed with against the snapshot's live `S` counter (one O(1)
-  get each, ≤ 20 by the roster cap), each ratio
-  `max(live, pinned) / max(1, min(live, pinned))` so shrink and growth both read as
-  drift ≥ 1, plus the max. Pull-based and engine-policy-free: the engine never calls
-  it and holds no thresholds — the host owns policy (`00-product.md`). There is no
-  universal reprepare ratio: the 2026-07-12 estimator diagnosis found fresh-plan
-  execution-work ratios vary by query class up to 4761.9×, so a fixed cutoff cannot
-  separate drift from estimation shape. Hosts may compare this raw signal across
-  generations using workload-specific evidence. Same
-  foreign-snapshot check as execution; it allocates — a diagnostic surface, never a
-  warm-path call. Negated and grounding-eliminated occurrences earn no statistics read
-  at prepare and so carry no pin; key probes pin nothing. The stats/plan introspection
-  surface (`Snapshot::profile`) carries the same pin record per occurrence —
-  "estimated from (pinned facts at prepare)" — so a drifted plan is visible in one
-  read of the existing report.
+  memo all belong to the preparing environment). Plan-drift / `staleness` /
+  `ExecutionStats` are **not** embedding API — the bench harness may still
+  read them via crate-visible / `#[doc(hidden)]` paths (§ Observability;
+  WITHDRAWN as embedding API below).
 - `db.write(|tx| ...)` — the single writer; commits on `Ok`, aborts on `Err`/panic.
   Non-reentrant: a nested `write` from within a write closure on the same thread
   panics with a named message ("nested Db::write") rather than self-deadlocking on
@@ -666,15 +652,6 @@ constitution's refusal ledger. A schema may state one or both ordinary
 containment directions when those projections express the intended invariant,
 but it never gains an implicit refresh theorem.
 
-The SDK conveniences `Db::write_witnessed` (C++) and `db.writeWitnessed`
-(TS) are this host protocol spelled once, in host code — not an engine
-retry. The loop retries exactly `GenerationMoved`, discards every stale
-derivation and diff, reruns the host's own callback against a fresh
-snapshot, and refuses past `witnessed_attempt_cap` attempts with a typed
-livelock refusal. The epistemic boundary is unchanged: the engine still
-judges only the witness, the loop lives on the host side of the ABI, and
-every other failure ends the attempt unchanged.
-
 #### Retryability
 
 `Error::is_transient()` answers: could the same operation, retried with
@@ -684,8 +661,8 @@ nothing changed by the caller, plausibly succeed? Transient:
 Every other kind is permanent — notably `CommitSync` and `Io` (the
 post-failure durability state is unknown, so a blind retry is unsafe),
 `Panic` (the store is poisoned), and `EnvironmentLocked` (re-entrant
-write: a programming error, not contention). `write_witnessed` retries a
-strict subset — exactly `GenerationMoved` — because rerunning the
+write: a programming error, not contention). A host retry loop, if any,
+retries a strict subset — exactly `GenerationMoved` — because rerunning the
 callback cannot free a reader slot.
 
 The writer mutex serializes write *transactions*, not read-compute-write
@@ -956,9 +933,9 @@ feature registers the counting allocator (events + bytes + current live bytes, t
 the benchmark's memory truth), and the `trace` feature enables `bumbledb::obs` —
 explicit per-thread capture of nanosecond spans and point events over every prepare/
 execute/commit phase, drained by tooling into Chrome-trace artifacts. Plan
-introspection — EXPLAIN, colloquially — is always available through
-`snap.introspect(..)` — and on the TS surface through `explain()`, plan-as-data
-(ruled 2026-07-23, R13; § the TypeScript SDK). `snap.introspect(..)`
+introspection — EXPLAIN, colloquially — is an in-workspace bench harness
+surface (`#[doc(hidden)]` on the embedding crate), not a host-facing SDK
+API. `snap.introspect(..)`
 returns an ANALYZE-semantics rendered artifact beginning
 with `introspection v3`, then the query in rule notation (`20-query-ir.md` § the
 renderer; `PreparedQuery::rendered_query` exposes the same query string), predicate,
@@ -1003,12 +980,11 @@ names — so roster errors print beside the query they reject.
   blessed Rust sugar is `crates/bumbledb-query`'s `query!` macro** — a downstream
   crate on the bench-crate quarantine, lowering the notation (`20-query-ir.md`
   § the query notation) to the `ir::Query` value at compile time and resolving
-  names through the emitted id constants. The crate has exactly TWO members:
-  the `query!` macro (its proc-macro mechanics live in
-  `bumbledb-query-macros`, re-exported — packaging, not surface) and the
-  `order` module (host-side answer ordering over the engine's unordered
-  sets: `SortKey` data, `by`, `value_cmp`) — both under the same
-  one-directional quarantine: hosts may depend on the crate, the engine
+  names through the emitted id constants. The crate's public member is the
+  `query!` macro (its proc-macro mechanics live in `bumbledb-query-macros`,
+  re-exported — packaging, not surface). Host sort helpers were withdrawn:
+  answers are sets; the host sorts with the language's own comparators.
+  One-directional quarantine: hosts may depend on the crate, the engine
   never does.
 
 ## The TypeScript SDK — the shipped binding
@@ -1068,21 +1044,10 @@ native control-flow form is a defect — the SDK's `Kind.match` operator was
 exactly that, an imitation of Rust's `match` built because handles were
 opaque bigints, and it died with its cause (0.4.0).
 
-Ordering has ONE vocabulary, both arities (ruled 2026-07-25): `by(...keys)`
-folds row sort keys into the comparator the language's own `.sort` wants,
-and `by()`/`desc()` with ZERO keys are the ascending/descending comparators
-over bare engine-orderable scalars themselves (`bigint[]` of ids, map keys)
-— the identity key: with no column to name, the value is the key, nothing
-folds, the comparator is the result. The identity arms are typed to EXACTLY
-the engine-orderable roster (`EngineOrderable = bigint | boolean`, a
-root export) — `string` and `number` are compile errors at the `.sort` site
-citing the orderability law (`10-data-model.md` § "Orderability, complete"),
-because a bare scalar carries no law-typed column proof, so the type wall
-must carry the law itself. One owner for scalar ordering semantics: both
-arms route through the same cell order, whose bigint/boolean arms mirror
-the engine's U64/I64/Bool order (false < true, R3) — a host sort can never
-disagree with an engine order judgment over the same values
-(`ts/test/order.test.ts` pins the agreement at every `Lt` cut).
+Host sort helpers (`by`/`desc`/`EngineOrderable`) are **WITHDRAWN** as
+engine/SDK surface. Answers are sets; the host sorts with the language's
+own comparators. Engine-side top-k is refused. Limit remains `.slice` /
+`truncate` / `take`.
 
 The handle-union texture, concretely: a closed-referencing column TYPES and
 HOLDS the roster's string-literal handle union (`"DirectPass" |
@@ -1148,7 +1113,7 @@ the vars' own classes — the find object's keys ARE the row's column names, so
 renames are real (`find({ edgeId: id, group: toGrp })`). `select(strings)` is
 dead and the old name-keyed variable accessor is gone — no shims, no
 deprecation alias; 0.6.0 is a deliberate hard break. Params, by contrast,
-stay STRING-NAMED: `r.param`/`r.inSet` and the mask params keep their string
+stay STRING-NAMED: `r.param`/`r.inSet` keep their string
 names, because those names are the `execute()` params object's runtime keys —
 an honest, load-bearing channel, not a type-level lie. ES shorthand is the
 binding idiom (`{ id, requires }`); a join spells as `{ id: toGrp }`;
@@ -1188,14 +1153,12 @@ idiom. The zero-closables doctrine restates as: **lifetimes are disposables,
 never `close()`** — release is deterministic and scope-shaped in the
 language's own syntax, never a method to remember and never a GC race.
 
-### explain() — the diagnostic surface (ruled 2026-07-23, R13)
+### Plan diagnostics — WITHDRAWN as embedding API
 
-`explain()` takes a prepared query to its plan as data — the `FjPlan` shape
-plus counters, crossing the bridge as plain values — so a TS host reads what
-the engine did with its query without a second toolchain. A diagnostic
-surface, EXPLICITLY UNFROZEN: its shape follows the plan representation
-wherever that goes, and no compatibility claim ever attaches to it.
-ANALYZE-grade profiling stays engine-side (§ observability).
+`explain()` / `snap.introspect` / `prepared.staleness` / public
+`ExecutionStats` are not host-facing SDK API. The bench harness may still
+introspect via crate-visible / `#[doc(hidden)]` paths. ANALYZE-grade
+profiling stays engine-internal (§ observability).
 
 ## The freeze, and the OPEN ledger
 
@@ -1267,25 +1230,9 @@ engine-first change, and nothing re-enters without a new ruling.
   (census 2026-07-17).** The sorting half **FIRED**: four hand-rolled bigint
   comparators, every rank/pos consumer sorting host-side, and "answers are
   sets; the host sorts" recurring as a consumer comment.
-  **SHIPPED (2026-07-19, the surface-pair wave)** — host-side only, the
-  engine-never-orders ruling untouched (answers remain sets). The final
-  spelling, both hosts: TS — `ts/src/order.ts`, sort keys as data (`"rank"`
-  bare = ascending, `desc("rank")` descending) folded by `by(...)` into a
-  row-typed comparator for the language's own `Array.prototype.sort`; a key
-  the row lacks or a non-FactValue column is a compile error at the sort
-  site. The SCALAR arm followed (ruled 2026-07-25, primer's second census —
-  the same bigint comparator hand-rolled 3+ times over bare id arrays):
-  `by()`/`desc()` with zero keys are the identity-key comparators over
-  engine-orderable scalars exactly (`bigint | boolean`; string/number are
-  typed refusals citing the orderability law) — one vocabulary, no sibling
-  names, one owner for the cell order. Rust — `bumbledb_query::order` (`SortKey::{Asc, Desc}` as data,
-  `by(&keys)` for `Vec::sort_by`, `value_cmp` the total cell order), in the
-  quarantine crate, whose proc-macro mechanics now live in
-  `bumbledb-query-macros` (packaging, not surface — hosts still spell
-  `bumbledb-query`). LIMIT REFUSED AS SURFACE, recorded: `.slice(0, n)` /
-  `truncate`/`take` are the language's own operators (the drizzle law) and
-  zero limit-shaped call sites were sighted in the census consumer. No `asc`
-  wrapper exists: the bare spelling IS ascending — one spelling per meaning.
+  **WITHDRAWN as engine/SDK surface.** Answers remain sets; the host
+  sorts with the language's own comparators. Engine-side top-k is refused.
+  LIMIT remains the language's `.slice(0, n)` / `truncate`/`take`.
   The `FromAnswers` half is **DECLINED** vocabulary:
   answers already decode to typed named records at the SDK boundary and zero
   hand-destructuring was sighted — the derive has no consumer shape to learn
@@ -1322,7 +1269,6 @@ engine-first change, and nothing re-enters without a new ruling.
   written.
 
 Resolved by ruling or implementation (recorded above): the `Answers` shape;
-the dynamic-fact ETL form; plan introspection's versioned surface
-(`snap.introspect(&mut prepared, params) -> (Answers, String)` — ANALYZE
-semantics, rendered-text report); WriteTx point reads; the unified `prepare`;
-the typed bulk lane.
+the dynamic-fact ETL form; WriteTx point reads; the unified `prepare`;
+the typed bulk lane. Plan introspection (`introspect` / `profile` /
+`staleness` / `ExecutionStats`) is harness-only, not embedding API.

@@ -165,7 +165,7 @@ pub(super) fn random_lane<S>(
                         break 'random;
                     }
                 }
-                Err(Inexpressible::PackAggregate | Inexpressible::AllenMaskParam) => {
+                Err(Inexpressible::PackAggregate) => {
                     naive_routed.push(differential::Op::Query {
                         query: query.clone(),
                         params: positional(&draw),
@@ -190,7 +190,7 @@ pub(super) fn naive_routed_lane<S>(
     ops: &[differential::Op],
 ) {
     eprintln!(
-        "verify: {} naive-routed {label} cases (Pack + mask params — \
+        "verify: {} naive-routed {label} cases (Pack — \
          SQLite-inexpressible by the typed gate, enumerated, never silently skipped)",
         ops.len()
     );

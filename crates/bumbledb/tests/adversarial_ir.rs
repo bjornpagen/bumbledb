@@ -21,9 +21,9 @@
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use bumbledb::{
-    AggOp, AllenMask, ArgKey, Atom, AtomSource, CmpOp, Comparison, ConditionTree, Db, FieldId,
-    FindTerm, MAX_CONDITION_DEPTH, MAX_RULES, MaskTerm, ParamId, PredId, PredicateDef, Program,
-    Query, RelationId, Rule, Term, Value, VarId,
+    AggOp, AllenMask, Atom, AtomSource, CmpOp, Comparison, ConditionTree, Db, FieldId, FindTerm,
+    MAX_CONDITION_DEPTH, MAX_RULES, ParamId, PredId, PredicateDef, Program, Query, RelationId,
+    Rule, Term, Value, VarId,
 };
 
 mod common;
@@ -109,9 +109,9 @@ fn field_id(rng: &mut Rng) -> FieldId {
 /// A literal over every `Value` variant, boundary shapes included:
 /// domain ceilings, empty and ray intervals, non-UTF-8 strings,
 /// wrong-width digests, row-id-shaped smalls straddling the closed
-/// roster, and the mask value that is never a term.
+/// roster, never a mask (masks are comparison literals, not values).
 fn value(rng: &mut Rng) -> Value {
-    match rng.below(14) {
+    match rng.below(13) {
         0 => Value::Bool(rng.chance(2)),
         1 => Value::U64(rng.below(100)),
         2 => Value::U64(u64::MAX),
@@ -138,8 +138,7 @@ fn value(rng: &mut Rng) -> Value {
         12 => Value::IntervalI64(
             bumbledb::Interval::<i64>::new(-5, i64::MAX).expect("nonempty interval"),
         ),
-        13 => Value::AllenMask(AllenMask::DISJOINT),
-        _ => unreachable!("below(14)"),
+        _ => unreachable!("below(13)"),
     }
 }
 
@@ -187,7 +186,7 @@ fn atom_source(rng: &mut Rng) -> AtomSource {
 }
 
 fn cmp_op(rng: &mut Rng) -> CmpOp {
-    match rng.below(9) {
+    match rng.below(8) {
         0 => CmpOp::Eq,
         1 => CmpOp::Ne,
         2 => CmpOp::Lt,
@@ -196,20 +195,17 @@ fn cmp_op(rng: &mut Rng) -> CmpOp {
         5 => CmpOp::Ge,
         6 => CmpOp::PointIn,
         7 => CmpOp::Allen {
-            mask: MaskTerm::Param(ParamId(u16::try_from(rng.below(3)).expect("small"))),
-        },
-        8 => CmpOp::Allen {
             // ∅ and full both occur (the vacuity rejections), plus
             // arbitrary 13-bit masks.
-            mask: MaskTerm::Literal(match rng.below(4) {
+            mask: match rng.below(4) {
                 0 => AllenMask::EMPTY,
                 1 => AllenMask::FULL,
                 2 => AllenMask::INTERSECTS,
                 _ => AllenMask::new(u16::try_from(rng.below(1 << 13)).expect("13 bits"))
                     .expect("13-bit mask"),
-            }),
+            },
         },
-        _ => unreachable!("below(9)"),
+        _ => unreachable!("below(8)"),
     }
 }
 
@@ -237,19 +233,12 @@ fn tree(rng: &mut Rng, depth: u64) -> ConditionTree {
 
 fn find_term(rng: &mut Rng) -> FindTerm {
     let var = |rng: &mut Rng| VarId(u16::try_from(rng.below(5)).expect("small"));
-    let agg_op = |rng: &mut Rng| match rng.below(8) {
+    let agg_op = |rng: &mut Rng| match rng.below(5) {
         0 => AggOp::Sum,
         1 => AggOp::Min,
         2 => AggOp::Max,
         3 => AggOp::Count,
-        4 => AggOp::CountDistinct,
-        5 => AggOp::Pack,
-        6 => AggOp::ArgMax {
-            key: ArgKey::Var(VarId(1)),
-        },
-        _ => AggOp::ArgMin {
-            key: ArgKey::Var(VarId(999)),
-        },
+        _ => AggOp::Pack,
     };
     match rng.below(6) {
         0..=2 => FindTerm::Var(var(rng)),
@@ -328,7 +317,7 @@ fn plausible_query(rng: &mut Rng) -> Query {
         negated: vec![],
         conditions: vec![ConditionTree::Leaf(Comparison {
             op: CmpOp::Allen {
-                mask: MaskTerm::Literal(AllenMask::INTERSECTS),
+                mask: AllenMask::INTERSECTS,
             },
             lhs: Term::Var(VarId(1)),
             rhs: Term::Param(ParamId(0)),
@@ -468,11 +457,11 @@ fn mutate(rng: &mut Rng, query: &mut Query) {
             if let Some(rule) = query.rules.first_mut() {
                 rule.conditions.push(ConditionTree::Leaf(Comparison {
                     op: CmpOp::Allen {
-                        mask: MaskTerm::Literal(if rng.chance(2) {
+                        mask: if rng.chance(2) {
                             AllenMask::EMPTY
                         } else {
                             AllenMask::FULL
-                        }),
+                        },
                     },
                     lhs: Term::Var(VarId(1)),
                     rhs: Term::Var(VarId(1)),

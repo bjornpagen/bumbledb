@@ -35,12 +35,11 @@ ported. The refused zero-row reading gets its countermodel:
 record cites this)
 
 The creators are boundary-only: atoms select, filters compare, and
-value CREATION happens once, over finished binding sets, exiting to
-the host. The inventory: the measure and the folds (`Sum`, `Count`,
-`CountDistinct`) create values outside the active domain; `pack`
-creates LATTICE-CLOSED values — a coalesced segment's endpoints are
-SELECTED from stored endpoints, never invented
-(`pack_lattice_closed`) — and `Min`/`Max`/`ArgMax`/`ArgMin` select
+value CREATION happens once, over finished binding sets, exiting to the
+host. The inventory: the measure and the folds (`Sum`, `Count`) create
+values outside the active domain; `pack` creates LATTICE-CLOSED values
+— a coalesced segment's endpoints are SELECTED from stored endpoints,
+never invented (`pack_lattice_closed`) — and `Min`/`Max` select
 outright. The lattice-closedness is the chain-window fence's premise
 (`20-query-ir.md` § engine recursion, the chain-window fence) and the
 fence for every future interval
@@ -58,11 +57,6 @@ categorically.
   the two real element domains (by `omega`) — mirroring `Ord + Copy`
   on the Rust side. The general `allen_jepd` therefore needed NO
   two-domain narrowing (the spec's recorded fallback went unspent).
-* **Arg keys compare as encoded words.** `argMaxSet` orders its key
-  by a `Nat`-valued observer — the engine compares encoded words
-  (`fold_row.rs::fold_arg`), and the encodings are order embeddings
-  (`encode_u64_order_embedding` / `encode_i64_order_embedding`), so
-  word order IS value order.
 * **`AggOp` is the head-shape row** (the narrowing PRD 04 recorded:
   finds degenerate to variables there; the aggregate find shapes
   arrive here). The theorems are stated over the underlying folds
@@ -1546,8 +1540,7 @@ can observe a duplicate, which is set semantics through aggregation
 posting twice is one"). Bridge: the binding seen-set (`fold_row.rs`:
 single-rule programs key the whole slot array, the union regime keys
 the head projection) and its elision licence — `DistinctWitness`,
-whose proof is PRD 07's; `CountDistinct`'s value set dedups beneath
-it (distinct bindings ⊇ distinct values). -/
+whose proof is PRD 07's. -/
 theorem agg_over_distinct_bindings {β γ : Type} [DecidableEq β]
     (fold : List β → γ) {x : β} {l : List β} (hx : x ∈ l) :
     fold (dedup (x :: l)) = fold (dedup l) := by
@@ -2032,50 +2025,6 @@ mutual
         condAnyV_of_rayFree C ρ σ ts hts, Verdict3.or_ofOption]
 end
 
-/-! ## Arg-restriction — restrict-then-project -/
-
-/-- The Arg restriction of a binding set: the fiber attaining the
-key's extreme (`max` direction; `argMinSet` mirrors — the engine's
-one `arg.max` flag). The key is a `Nat` observer — the encoded word,
-which IS value order for both orderable domains
-(`encode_u64_order_embedding` / `encode_i64_order_embedding`; the
-module doc's recorded narrowing). -/
-def argMaxSet (B : Set Assignment) (key : Assignment → Nat) :
-    Set Assignment :=
-  fun σ => σ ∈ B ∧ ∀ σ', σ' ∈ B → key σ' ≤ key σ
-
-/-- The mirrored direction. -/
-def argMinSet (B : Set Assignment) (key : Assignment → Nat) :
-    Set Assignment :=
-  fun σ => σ ∈ B ∧ ∀ σ', σ' ∈ B → key σ ≤ key σ'
-
-/-- Arg answers: rows projected from the RESTRICTED set — a `Set`,
-so tied bindings projecting equal rows collapse into one answer by
-the carrier itself. -/
-def argAnswers (B : Set Assignment) (key : Assignment → Nat)
-    (finds : List VarId) : Set AnswerTuple :=
-  fun t => ∃ σ, σ ∈ argMaxSet B key ∧ t = finds.map σ
-
-/-- **Theorem 10 (`argmax_ties_all_kept`).** Ties are set-honest:
-key-equality with a survivor IS survival — every extreme-attaining
-binding is retained by the restriction, and each projects its answer
-into `argAnswers`, where equal rows are ONE answer (the `Set` carrier
-makes the dedup definitional — `answer_identity_canonical` is the
-same law at PRD 04's boundary). Bridge: `fold_row.rs::fold_arg` —
-"push with row-level dedup — ties are set-honest ... this dedup is
-never elided"; the ArgMax contract, `20-query-ir.md` § aggregation:
-"a tie yields every attaining answer". -/
-theorem argmax_ties_all_kept {B : Set Assignment}
-    {key : Assignment → Nat} {σ σ' : Assignment}
-    (hσ : σ ∈ argMaxSet B key) (hσ' : σ' ∈ B)
-    (htie : key σ' = key σ) :
-    σ' ∈ argMaxSet B key ∧
-      ∀ finds : List VarId,
-        (finds.map σ' : AnswerTuple) ∈ argAnswers B key finds := by
-  have hmem : σ' ∈ argMaxSet B key :=
-    ⟨hσ', fun σ'' hσ'' => htie.symm ▸ hσ.2 σ'' hσ''⟩
-  exact ⟨hmem, fun finds => ⟨σ', hmem, rfl⟩⟩
-
 /-! ## The op inventory — the head-shape row -/
 
 /-- The scalar folds a measure column feeds. -/
@@ -2087,23 +2036,20 @@ deriving DecidableEq
 
 /-- The executable aggregate ops — the head-shape row PRD 04's
 recorded narrowing deferred here (the aggregate faces of
-`crate::ir::HeadTerm`). The theorems of this module are these ops'
+`crate::ir::HeadTerm`). Remaining folds: Count, Sum, Min, Max, Pack,
+and the measure folds. The theorems of this module are these ops'
 laws: every op folds its group's distinct binding set
 (`agg_over_distinct_bindings`), emits nothing over the empty set
 (`empty_global_no_answer`), sums checked (`checkedSum_sound`,
 `wide_accumulator_exact`), poisons on rays (`measure_fold_laws`),
 packs canonically and extensionally (`pack_canonical`,
-`pack_extensional`, `pack_adjacency`, `pack_lattice_closed`), and
-keeps ties (`argmax_ties_all_kept`). -/
+`pack_extensional`, `pack_adjacency`, `pack_lattice_closed`). -/
 inductive AggOp where
   | count
-  | countDistinct (v : VarId)
   | sum (v : VarId)
   | min (v : VarId)
   | max (v : VarId)
   | pack (v : VarId)
-  | argMax (v k : VarId)
-  | argMin (v k : VarId)
   | measureFold (op : ScalarFold) (v : VarId)
 deriving DecidableEq
 

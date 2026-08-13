@@ -404,7 +404,7 @@ fn same_atom_interval_shapes_evaluate_their_fixed_compositions() {
         run(FilterPredicate::FieldsAllen {
             left: P_DURING,
             right: P_REVIEW,
-            mask: MaskConst::Mask(AllenMask::INTERSECTS),
+            mask: AllenMask::INTERSECTS,
         }),
         [1, 2, 3, 5]
     );
@@ -413,7 +413,7 @@ fn same_atom_interval_shapes_evaluate_their_fixed_compositions() {
         run(FilterPredicate::FieldsAllen {
             left: P_DURING,
             right: P_REVIEW,
-            mask: MaskConst::Mask(AllenMask::COVERS),
+            mask: AllenMask::COVERS,
         }),
         [1, 2, 5]
     );
@@ -422,7 +422,7 @@ fn same_atom_interval_shapes_evaluate_their_fixed_compositions() {
         run(FilterPredicate::FieldsAllen {
             left: P_DURING,
             right: P_REVIEW,
-            mask: MaskConst::Mask(AllenMask::EQUALS),
+            mask: AllenMask::EQUALS,
         }),
         [5]
     );
@@ -472,64 +472,6 @@ fn field_within_is_scalar_membership_in_the_constant_interval() {
         sorted_ids(&apply(&image, &scalar_within, &[], Vec::new())),
         [1, 3, 4]
     );
-}
-
-#[test]
-fn field_allen_classifies_against_the_constant_interval() {
-    let dir = TempDir::new("view-field-allen");
-    let image = interval_image(&dir);
-    let run = |mask: MaskConst, start: i64, end: i64, params: &[Const]| {
-        let predicates = vec![FilterPredicate::FieldAllen {
-            field: P_DURING,
-            other: if params.is_empty() || matches!(params[0], Const::Word(_)) {
-                Const::Interval {
-                    start: w(start),
-                    end: w(end),
-                }
-            } else {
-                Const::Param(ParamId(0))
-            },
-            mask,
-        }];
-        sorted_ids(&apply(&image, &predicates, params, Vec::new()))
-    };
-
-    // Value equality and its complement — the Eq/Ne derived facts.
-    assert_eq!(run(MaskConst::Mask(AllenMask::EQUALS), 2, 9, &[]), [1]);
-    assert_eq!(
-        run(MaskConst::Mask(AllenMask::EQUALS.complement()), 2, 9, &[]),
-        [2, 3, 4, 5]
-    );
-    // The intersection composite, literal and param-bound constant.
-    assert_eq!(
-        run(MaskConst::Mask(AllenMask::INTERSECTS), 3, 10, &[]),
-        [1, 2, 4]
-    );
-    let bound = [Const::Interval {
-        start: w(3),
-        end: w(10),
-    }];
-    assert_eq!(
-        run(MaskConst::Mask(AllenMask::INTERSECTS), 0, 0, &bound),
-        [1, 2, 4]
-    );
-    // The field's interval covers the constant.
-    assert_eq!(run(MaskConst::Mask(AllenMask::COVERS), 3, 4, &[]), [1, 4]);
-    // COVERED_BY: the field within [0,10) — the old reversed containment,
-    // now a mask like everything else.
-    assert_eq!(
-        run(MaskConst::Mask(AllenMask::COVERED_BY), 0, 10, &[]),
-        [1, 4, 5]
-    );
-    // A param mask resolves through the slice as its 13-bit word; the
-    // mirrored form (`ConversedParam`) converses after resolution —
-    // COVERED_BY via a COVERS param proves the involution end to end.
-    let mask_param = [Const::Word(u64::from(AllenMask::COVERS.bits()))];
-    assert_eq!(
-        run(MaskConst::ConversedParam(ParamId(0)), 0, 10, &mask_param),
-        [1, 4, 5]
-    );
-    assert_eq!(run(MaskConst::Param(ParamId(0)), 3, 4, &mask_param), [1, 4]);
 }
 
 #[test]

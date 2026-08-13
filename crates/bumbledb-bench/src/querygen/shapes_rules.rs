@@ -11,7 +11,7 @@
 //!   import arm vs `ImportBatch`, equal denotations by the corpus's
 //!   `==` statement, total duplication.
 //! - **The union fold**: a multi-rule aggregate head (`Sum`/`Count`/
-//!   `CountDistinct`) — the fold over the union of head-projected answers.
+//!   `Min`/`Max`) — the fold over the union of head-projected answers.
 //!
 //! Rules bind literals only (no params): variables are rule-scoped and
 //! restart per arm; the head aligns positionally by construction. Like
@@ -165,7 +165,7 @@ fn overlapping_arms(rng: &mut Rng, domains: &Domains) -> Query {
 
 /// The multi-rule aggregate head: 2–3 `Posting` arms under one fold —
 /// the union-fold path (per-rule head projection, one set union, then
-/// the fold), `Sum`/`Count`/`CountDistinct` drawn per query.
+/// the fold), `Sum`/`Min`/`Max` drawn per query.
 fn union_fold(rng: &mut Rng, domains: &Domains) -> Query {
     let arms = 2 + rng.range(2);
     let span = i64::try_from(domains.postings).expect("fits") * target::AT_STEP;
@@ -186,7 +186,7 @@ fn union_fold(rng: &mut Rng, domains: &Domains) -> Query {
             over: Some(VarId(1)),
         },
         _ => FindTerm::Aggregate {
-            op: AggOp::CountDistinct,
+            op: AggOp::Max,
             over: Some(VarId(1)),
         },
     };

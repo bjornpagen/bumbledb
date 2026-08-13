@@ -38,12 +38,10 @@ export using ::bdb_violation_direction;
 export using ::bdb_head_term_kind;
 export using ::bdb_head_op;
 export using ::bdb_find_term_kind;
-export using ::bdb_arg_key_kind;
 export using ::bdb_atom_source_kind;
 export using ::bdb_term_kind;
 export using ::bdb_condition_kind;
 export using ::bdb_cmp_op_kind;
-export using ::bdb_mask_term_kind;
 
 export using ::bdb_string_view;
 export using ::bdb_bytes_view;

@@ -48,7 +48,6 @@ fn sql_literal(value: &Value) -> Result<String, String> {
         Value::IntervalU64(..) | Value::IntervalI64(..) => {
             return Err("interval literal in a scalar position".to_owned());
         }
-        Value::AllenMask(_) => return Err("mask value in a scalar position".to_owned()),
     })
 }
 
@@ -478,12 +477,6 @@ impl Builder<'_> {
             // query's SELECT DISTINCT keeps the disjunction honest
             // (`60-validation.md`).
             (CmpOp::Allen { mask }, Rendered::Pair(ls, le), Rendered::Pair(rs, re)) => {
-                let bumbledb::MaskTerm::Literal(mask) = mask else {
-                    // The fleet emits literal masks; a param mask would
-                    // re-render per execution like a set param — owed to
-                    // whichever family first needs one.
-                    return Err("param masks are not translated".to_owned());
-                };
                 let arms: Vec<String> = bumbledb::Basic::ALL
                     .iter()
                     .filter(|basic| mask.contains(**basic))

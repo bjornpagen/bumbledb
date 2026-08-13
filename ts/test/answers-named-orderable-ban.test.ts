@@ -10,13 +10,12 @@
  * positional rows re-decoded by hand); the rec-head plumb (an output rule's
  * idb-joined closed column decodes named — every idb var is EDB-bound in
  * its own rule, so the descriptor always survives the head); the
- * Arg-carried closed payload (named too); the out-of-roster pointed throw
+ * out-of-roster pointed throw
  * (shared with H2's fact decode — one bijection, two call sites); COUNTING
- * IS NOT ORDERING (`count`/`countDistinct` over closed-atom-filtered rules
+ * IS NOT ORDERING (`count` over closed-atom-filtered rules
  * stay legal, and a closed vocabulary's ordinary payload column still
  * folds); and THE ORDERABLE BAN, two tiers at every position — `lt` (and
- * the order roster), the `pointIn` point side, `sum`/`max` folds, the
- * `argMax` key, and an order-comparison param anchored at a closed field —
+ * the order roster), the `pointIn` point side, `sum`/`max` folds, and an order-comparison param anchored at a closed field —
  * each `@ts-expect-error` real, each construction refusal pinned by the
  * data-model ruling's fragment ("declaration order is an accident, not
  * semantics: vocabularies do not order",
@@ -244,28 +243,12 @@ describe("answer rows arrive named + the orderable ban", function suite() {
 		assert.equal(pins.length, 1)
 	})
 
-	test("an Arg-carried closed payload decodes named too (the key orders, the carried value only rides)", function argCarried() {
-		const topSev = query(Oncall).rule((r) => {
-			const { id, sev } = v(Incident)
-			return r.match(Incident, { id, sev }).find({ s: r.argMax(sev, id) })
-		})
-		type ArgRowPin = Expect<Equal<QueryRow<typeof topSev>, { readonly s: "Info" | "Warn" | "Crit" | "Fatal" }>>
-		assert.deepEqual(run(topSev, {}), [{ s: "Fatal" }], "incident 4 is the max key; its severity arrives named")
-		const pins: [ArgRowPin] = [true]
-		assert.equal(pins.length, 1)
-	})
-
-	test("COUNTING IS NOT ORDERING: count over closed-atom-filtered rules and countDistinct over the closed var stay legal", function countingStays() {
+	test("COUNTING IS NOT ORDERING: count over closed-atom-filtered rules stays legal", function countingStays() {
 		const paged = query(Oncall).rule((r) => {
 			const { id } = v(Incident)
 			return r.match(Incident, { id, sev: ["Crit", "Fatal"] }).find({ count: r.count() })
 		})
 		assert.deepEqual(run(paged, {}), [{ count: 2n }])
-		const distinct = query(Oncall).rule((r) => {
-			const { sev } = v(Incident)
-			return r.match(Incident, { sev }).find({ s: r.countDistinct(sev) })
-		})
-		assert.deepEqual(run(distinct, {}), [{ s: 4n }])
 		// A closed vocabulary's ORDINARY payload column still folds — the ban
 		// covers the reference id, never the payload's own structural type.
 		const totalRank = query(Oncall).rule((r) => {
@@ -314,7 +297,7 @@ describe("answer rows arrive named + the orderable ban", function suite() {
 		}, BAN)
 	})
 
-	test("the orderable ban, fold tier: sum/max over a closed column and the argMax key refuse (both tiers)", function foldBan() {
+	test("the orderable ban, fold tier: sum/max over a closed column refuse (both tiers)", function foldBan() {
 		assert.throws(function sumClosed() {
 			query(Oncall).rule((r) => {
 				const { sev } = v(Incident)
@@ -334,17 +317,6 @@ describe("answer rows arrive named + the orderable ban", function suite() {
 						.match(Incident, { sev })
 						// @ts-expect-error — max over a closed column is the same accident
 						.find({ s: r.max(sev) })
-				)
-			})
-		}, BAN)
-		assert.throws(function argMaxClosedKey() {
-			query(Oncall).rule((r) => {
-				const { id, sev } = v(Incident)
-				return (
-					r
-						.match(Incident, { id, sev })
-						// @ts-expect-error — the argMax KEY must be orderable; a closed key is banned (the carried value may be closed)
-						.find({ n: r.argMax(id, sev) })
 				)
 			})
 		}, BAN)

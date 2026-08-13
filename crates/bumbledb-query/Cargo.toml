@@ -4,7 +4,7 @@
 # FOREIGN dependencies — the proc-macro mechanics live in
 # `bumbledb-query-macros` (internal packaging, hand-rolled parser), this
 # crate is the one name hosts spell, and the engine is a real dependency
-# of the `order` surface (the quarantine direction is one-way and
+# of the query surface (the quarantine direction is one-way and
 # unbroken: hosts → bumbledb-query → bumbledb).
 [package]
 name = "bumbledb-query"

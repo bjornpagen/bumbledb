@@ -345,47 +345,6 @@ fn membership_bound_interval_disables_key_coverage() {
     assert_eq!(estimate(5, occs[0].vars, &occs, &[], 1), 50);
 }
 
-/// An Allen-connected pair never prices as a bare Cartesian product
-/// (the R19 scope: the one residual class with a workload-free
-/// measure): a literal mask credits popcount/13 at the step completing
-/// the pair; a param mask takes the range class.
-#[test]
-fn allen_connected_pairs_price_the_mask_measure() {
-    use crate::ir::MaskTerm;
-    use crate::ir::normalize::PlacedAllen;
-    use bumbledb_theory::allen::AllenMask;
-
-    let schema = schema(2, 2);
-    // Two occurrences sharing no variable, related only by the mask.
-    let mut query = normalized(vec![
-        occurrence(0, 0, vec![(1, 0)]),
-        occurrence(1, 1, vec![(1, 1)]),
-    ]);
-    query.allen_residuals = vec![PlacedAllen {
-        lhs: VarId(0),
-        rhs: VarId(1),
-        mask: MaskTerm::Literal(AllenMask::DURING | AllenMask::MEETS),
-    }];
-    let positive: Vec<&Occurrence> = query.occurrences.iter().collect();
-    let (occs, allen) = densify(&query, &positive, &schema, &stats(&[100, 130]));
-    let est = estimate(100, occs[0].vars, &occs, &allen, 1);
-    assert_eq!(est, 2000, "13000 x 2/13, never the bare product");
-
-    // A param mask is unmeasurable at prepare: the range class.
-    query.allen_residuals[0].mask = MaskTerm::Param(crate::ir::ParamId(0));
-    let (occs, allen) = densify(&query, &positive, &schema, &stats(&[100, 130]));
-    assert_eq!(estimate(100, occs[0].vars, &occs, &allen, 1), 13000 / 4);
-
-    // Already-covered residuals never re-price: with both vars in the
-    // prefix the fraction was charged at an earlier step.
-    let (occs, allen) = densify(&query, &positive, &schema, &stats(&[100, 130]));
-    assert_eq!(
-        estimate(100, occs[0].vars | occs[1].vars, &occs, &allen, 1),
-        100 * 130,
-        "a prefix-covered residual charges nothing again"
-    );
-}
-
 /// A compound key with one field Eq-pinned certifies fanout 1 when the
 /// join covers the var-bound remainder — the pinned field is covered
 /// with no variable bit (the shared pinned-field vocabulary that

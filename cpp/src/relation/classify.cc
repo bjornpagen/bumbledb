@@ -124,10 +124,10 @@ export namespace bdb::detail {
 		auto const type = std::meta::remove_const(std::meta::type_of(annotation));
 		if (type == ^^NameTag) {
 			auto const tag = std::meta::extract<NameTag>(annotation);
-			return std::string{tag.name.view()};
+			return spec_name(tag.name.view());
 		}
 	}
-	return std::string{std::meta::identifier_of(member)};
+	return spec_name(std::meta::identifier_of(member));
 }
 
 /**
@@ -169,11 +169,11 @@ export namespace bdb::detail {
  * lane, `bumbledb row type 'ServiceRow'` for the marshalling lane.
  */
 [[nodiscard]] consteval auto relation_subject(std::string_view name) -> std::string {
-	return std::string{"bumbledb relation \""} + std::string{name} + "\"";
+	return std::string{"bumbledb relation \""} + spec_name(name) + "\"";
 }
 
 [[nodiscard]] consteval auto row_subject(std::meta::info row) -> std::string {
-	return std::string{"bumbledb row type '"} + std::string{std::meta::display_string_of(row)} + "'";
+	return std::string{"bumbledb row type '"} + spec_name(std::meta::display_string_of(row)) + "'";
 }
 
 /**
@@ -185,8 +185,8 @@ export namespace bdb::detail {
 		if (classify(std::meta::type_of(member)).has_value()) {
 			continue;
 		}
-		return subject + ": field \"" + std::string{std::meta::identifier_of(member)} + "\" has unsupported row type '" +
-		       std::string{std::meta::display_string_of(std::meta::type_of(member))} +
+		return subject + ": field \"" + spec_name(std::meta::identifier_of(member)) + "\" has unsupported row type '" +
+		       spec_name(std::meta::display_string_of(std::meta::type_of(member))) +
 		       "' — the value vocabulary is closed: bool, std::uint64_t, "
 		       "std::int64_t, std::string, bdb::bytes<1..=64>, "
 		       "bdb::interval<std::uint64_t>, bdb::interval<std::int64_t>";
@@ -207,8 +207,8 @@ export namespace bdb::detail {
 		if (cls.has_value() && cls->kind == value_kind::u64) {
 			continue;
 		}
-		return subject + ": field \"" + std::string{std::meta::identifier_of(member)} + "\" is marked [[=bdb::fresh]] but has type '" +
-		       std::string{std::meta::display_string_of(std::meta::type_of(member))} + "' — fresh is legal on std::uint64_t fields only";
+		return subject + ": field \"" + spec_name(std::meta::identifier_of(member)) + "\" is marked [[=bdb::fresh]] but has type '" +
+		       spec_name(std::meta::display_string_of(std::meta::type_of(member))) + "' — fresh is legal on std::uint64_t fields only";
 	}
 	return {};
 }

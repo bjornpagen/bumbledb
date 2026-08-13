@@ -99,7 +99,7 @@ template<class T>
 }
 
 [[nodiscard]] consteval auto label(name_text relation, name_text field) -> std::string {
-	return std::string{relation.view()} + "." + std::string{field.view()};
+	return spec_name(relation.view()) + "." + spec_name(field.view());
 }
 
 [[nodiscard]] consteval auto quoted(name_text relation, name_text field) -> std::string {

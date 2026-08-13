@@ -77,9 +77,10 @@ inline constexpr auto TopDevice = bdb::query(Racks).rule([](auto r) consteval {
 	           })
 	    .find(
 	        {
+	            .id = vars.id,
 	            .pool = vars.pool,
-	        },
-	        bdb::arg_max<"top">(vars.id, vars.watts));
+	            .watts = vars.watts,
+	        });
 });
 
 namespace {
@@ -278,7 +279,7 @@ auto run_cases(std::string_view fixtures_path, std::vector<CaseResult>& results)
 		for (auto const& row : answers.rows()) {
 			rows.push_back(row);
 		}
-		std::ranges::sort(rows, bdb::by(bdb::desc(&DrawRow::total)));
+		std::ranges::sort(rows, [](auto const& left, auto const& right) { return left.total > right.total; });
 		return rows;
 	});
 	results.push_back(CaseResult{
@@ -293,7 +294,7 @@ auto run_cases(std::string_view fixtures_path, std::vector<CaseResult>& results)
 		for (auto const& row : answers.rows()) {
 			rows.push_back(row);
 		}
-		std::ranges::sort(rows, bdb::by(&FleetRow::pool));
+		std::ranges::sort(rows, [](auto const& left, auto const& right) { return left.pool < right.pool; });
 		return rows;
 	});
 	auto facts_pass = facts.has_value() && facts->size() == 2;
@@ -309,15 +310,17 @@ auto run_cases(std::string_view fixtures_path, std::vector<CaseResult>& results)
 
 	auto top_a = db->execute(*top, {}).transform([&](bdb::Answers<TopDevice> answers) {
 		auto device = std::optional<std::uint64_t>{};
+		auto peak = std::uint64_t{0};
 		for (auto const& row : answers.rows()) {
-			if (row.pool == ids->pool_a) {
-				device = row.top;
+			if (row.pool == ids->pool_a && (!device.has_value() || row.watts > peak)) {
+				peak = row.watts;
+				device = row.id;
 			}
 		}
 		return device;
 	});
 	results.push_back(CaseResult{
-	    .name = "topDevice answers pool A's 40 W device (argMax)",
+	    .name = "host pick of max watts answers pool A's 40 W device",
 	    .passed = top_a.has_value() && top_a->has_value() && **top_a == ids->device_40,
 	});
 
@@ -343,8 +346,9 @@ auto run_cases(std::string_view fixtures_path, std::vector<CaseResult>& results)
 	    .passed = overdraw_cited,
 	});
 
-	auto witnessed = db->write_witnessed(
-	    [&](bdb::Snapshot& snap, bdb::WriteTx& tx) -> std::expected<bdb::WriteDecision<std::uint64_t, std::monostate>, bdb::Error> {
+	auto witnessed = db->read([&](bdb::Snapshot& snap) {
+		return db->write_from(
+		    snap, [&](bdb::WriteTx& tx) -> std::expected<bdb::WriteDecision<std::uint64_t, std::monostate>, bdb::Error> {
 		    auto used = snap.execute(*draw, {}).transform([&](bdb::Answers<Draw> answers) {
 			    auto total = std::uint64_t{0};
 			    for (auto const& row : answers.rows()) {
@@ -368,11 +372,12 @@ auto run_cases(std::string_view fixtures_path, std::vector<CaseResult>& results)
 			    return std::unexpected{std::move(landed).error()};
 		    }
 		    return bdb::commit(*used + 10);
-	    });
+		    });
+	});
 	auto witnessed_pass = witnessed.has_value() && std::holds_alternative<bdb::Committed<std::uint64_t>>(*witnessed) &&
 	                      std::get<bdb::Committed<std::uint64_t>>(*witnessed).value == 20;
 	results.push_back(CaseResult{
-	    .name = "write_witnessed tops pool B up to 20 W (snapshot + tx in "
+	    .name = "write_from tops pool B up to 20 W (snapshot + tx in "
 	            "one callback)",
 	    .passed = witnessed_pass,
 	});

@@ -63,11 +63,6 @@ pub enum BindValue<'a> {
     IntervalU64(u64, u64),
     /// A half-open `[start, end)`.
     IntervalI64(i64, i64),
-    /// An Allen mask for an `Allen` comparison's mask param — the
-    /// temporal relation as a bind-time argument (`crate::allen`). The
-    /// vacuous ∅/full masks are rejected at bind with distinct typed
-    /// errors, mirroring validation's literal-mask rules.
-    AllenMask(bumbledb_theory::allen::AllenMask),
 }
 
 /// One positional execution argument (`docs/architecture/70-api.md`
@@ -531,8 +526,6 @@ enum ParamSpec {
     /// A set slot. `elem` is the element type, and `point` applies to
     /// each element.
     Set { elem: ValueType, point: bool },
-    /// An Allen mask: neither a data-model value nor a set/point.
-    Mask,
 }
 
 /// One scalar param slot's memoized String resolution

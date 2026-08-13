@@ -55,9 +55,6 @@ pub(super) fn dyn_value_refs(
             Err(mismatch) => return Err(shape_mismatch(rel, field_id, mismatch).into()),
         };
         let value_ref = match value {
-            Value::AllenMask(_) => {
-                unreachable!("the check rejected mask values above: not a field type")
-            }
             // A String's acceptance IS its parse (parse, don't
             // validate): the checked `&str` feeds the dictionary
             // directly, no second scan.

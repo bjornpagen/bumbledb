@@ -88,8 +88,6 @@ pub fn encode_literal(value: &Value, desc: TypeDesc, out: &mut Vec<u8>) {
         Value::String(_) => {
             unreachable!("interned literals resolve at their consumer's boundary")
         }
-        // A mask is not a field type; nothing storable carries one.
-        Value::AllenMask(_) => unreachable!("mask values never encode"),
     };
     append_key_field(value, out);
 }

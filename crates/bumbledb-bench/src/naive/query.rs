@@ -12,16 +12,14 @@
 //! is proven *against* this evaluation), negated atoms as
 //! plain anti-joins, full bindings deduplicated into a `BTreeSet`, and
 //! finds projected or folded per the aggregation rules (Sum in i128,
-//! `CountDistinct` via `BTreeSet`, Arg terms as literal
-//! restrict-then-project with ties surviving, empty-input global
-//! aggregates yielding the empty set).
+//! empty-input global aggregates yielding the empty set).
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use bumbledb::schema::ValueType;
 use bumbledb::{
-    AggOp, ArgKey, Atom, AtomSource, Basic, CmpOp, Comparison, ConditionTree, FindTerm, HeadTerm,
-    MaskTerm, Program, Query, Rule, Term, Value, VarId,
+    AggOp, Atom, AtomSource, Basic, CmpOp, Comparison, ConditionTree, FindTerm, HeadTerm, Program,
+    Query, Rule, Term, Value, VarId,
 };
 
 use super::tuple::{cmp_value, endpoints, point, point_in};
@@ -404,14 +402,7 @@ impl NaiveDb {
                     .finds
                     .iter()
                     .map(|find| match find {
-                        // A projected variable and an Arg-carried one
-                        // type their positions identically: the value
-                        // is the variable's.
-                        FindTerm::Var(var)
-                        | FindTerm::Aggregate {
-                            op: AggOp::ArgMax { .. } | AggOp::ArgMin { .. },
-                            over: Some(var),
-                        } => var_is_interval(*var),
+                        FindTerm::Var(var) => var_is_interval(*var),
                         FindTerm::Aggregate {
                             op: AggOp::Pack, ..
                         } => true,
@@ -495,10 +486,7 @@ impl NaiveDb {
     /// to the head (per position: the variable's value, or the
     /// aggregate's fold-input value — the nullary `Count` contributes a
     /// constant filler), unioned as a set, then grouped and folded per
-    /// position. Arg terms are single-rule-only — validation refuses
-    /// them across rules (their key is a rule variable the head
-    /// projection does not carry, so the union's extreme is undefined —
-    /// `20-query-ir.md` § aggregation).
+    /// position. Pack is relation-shaped and stays on its own path.
     fn union_fold(
         &self,
         rules: &[Rule],
@@ -506,16 +494,6 @@ impl NaiveDb {
         preds: &PredWorld<'_>,
     ) -> Result<BTreeSet<Tuple>, QueryError> {
         let head = &rules[0].finds;
-        assert!(
-            !head.iter().any(|term| matches!(
-                term,
-                FindTerm::Aggregate {
-                    op: AggOp::ArgMax { .. } | AggOp::ArgMin { .. },
-                    ..
-                }
-            )),
-            "validation refuses Arg-restriction across rules"
-        );
         let mut domain: BTreeSet<Tuple> = BTreeSet::new();
         for rule in rules {
             for binding in &self.rule_bindings(rule, params, preds)? {
@@ -744,12 +722,9 @@ fn count_vars(rule: &Rule) -> usize {
         match find {
             FindTerm::Var(var) | FindTerm::Measure(var) => see(&mut count, *var),
             FindTerm::AggregateMeasure { over, .. } => see(&mut count, *over),
-            FindTerm::Aggregate { op, over } => {
+            FindTerm::Aggregate { over, .. } => {
                 if let Some(var) = over {
                     see(&mut count, *var);
-                }
-                if let AggOp::ArgMax { key } | AggOp::ArgMin { key } = op {
-                    see(&mut count, key.var());
                 }
             }
         }
@@ -763,21 +738,7 @@ fn count_vars(rule: &Rule) -> usize {
 fn substitute_tree(tree: &ConditionTree, params: &[ParamValue]) -> SubstitutedTree {
     match tree {
         ConditionTree::Leaf(Comparison { op, lhs, rhs }) => {
-            let op = match op {
-                CmpOp::Allen {
-                    mask: MaskTerm::Param(param),
-                } => {
-                    let ParamValue::Scalar(Value::AllenMask(mask)) = &params[usize::from(param.0)]
-                    else {
-                        panic!("validated: a mask param binds an Allen mask")
-                    };
-                    CmpOp::Allen {
-                        mask: MaskTerm::Literal(*mask),
-                    }
-                }
-                op => *op,
-            };
-            SubstitutedTree::Leaf(op, substitute(lhs, params), substitute(rhs, params))
+            SubstitutedTree::Leaf(*op, substitute(lhs, params), substitute(rhs, params))
         }
         ConditionTree::And(children) => SubstitutedTree::And(
             children
@@ -1120,9 +1081,6 @@ fn leaf_comparison(
             }
         }
         CmpOp::Allen { mask } => {
-            let MaskTerm::Literal(mask) = mask else {
-                panic!("param masks substitute before evaluation")
-            };
             let (a, b) = (endpoints(&left), endpoints(&right));
             Basic::ALL
                 .iter()
@@ -1215,73 +1173,11 @@ fn project(finds: &[FindTerm], bindings: &BTreeSet<Tuple>) -> Result<BTreeSet<Tu
         }
         groups.entry(Tuple(key)).or_default().push(binding);
     }
-    let arg = finds.iter().find_map(|find| match find {
-        FindTerm::Aggregate {
-            op: AggOp::ArgMax { key },
-            ..
-        } => Some((*key, true)),
-        FindTerm::Aggregate {
-            op: AggOp::ArgMin { key },
-            ..
-        } => Some((*key, false)),
-        _ => None,
-    });
     let pack = pack_position(finds);
     let mut rows = BTreeSet::new();
     for group in groups.values() {
         if let Some((position, over)) = pack {
             pack_group_rows(finds, position, over, group, &mut rows)?;
-        } else if let Some((key, is_max)) = arg {
-            // Arg-restriction: restrict the group to the bindings
-            // attaining the key's extreme, then project every survivor —
-            // a tie yields every attaining row. The key value per
-            // binding is the variable's value, or its measure (R5:
-            // `ArgMax(w, Duration(w))` — a ray raises, the demanded-
-            // position law).
-            let key_value = |binding: &Tuple| -> Result<Value, QueryError> {
-                let value = &binding.0[usize::from(key.var().0)];
-                match key {
-                    ArgKey::Var(_) => Ok(value.clone()),
-                    ArgKey::Measure(_) => measure_value(value).map(Value::U64),
-                }
-            };
-            let mut extreme: Option<Value> = None;
-            for binding in group {
-                let candidate = key_value(binding)?;
-                let better = extreme.as_ref().is_none_or(|best| {
-                    let ordering = cmp_value(&candidate, best);
-                    if is_max {
-                        ordering == std::cmp::Ordering::Greater
-                    } else {
-                        ordering == std::cmp::Ordering::Less
-                    }
-                });
-                if better {
-                    extreme = Some(candidate);
-                }
-            }
-            let extreme = extreme.expect("groups are nonempty by construction");
-            for binding in group {
-                if key_value(binding)? != extreme {
-                    continue;
-                }
-                let row: Result<Vec<Value>, QueryError> = finds
-                    .iter()
-                    .map(|find| match find {
-                        FindTerm::Var(var) => Ok(binding.0[usize::from(var.0)].clone()),
-                        FindTerm::Measure(var) => {
-                            measure_value(&binding.0[usize::from(var.0)]).map(Value::U64)
-                        }
-                        FindTerm::Aggregate { over, .. } => Ok(binding.0
-                            [usize::from(over.expect("Arg terms carry a variable").0)]
-                        .clone()),
-                        FindTerm::AggregateMeasure { .. } => {
-                            unreachable!("validated: Arg terms and folds never mix")
-                        }
-                    })
-                    .collect();
-                rows.insert(Tuple(row?));
-            }
         } else {
             let row: Result<Vec<Value>, QueryError> = finds
                 .iter()
@@ -1311,13 +1207,6 @@ fn fold_position(op: AggOp, index: usize, group: &[&Tuple]) -> Result<Value, Que
         AggOp::Count => Ok(Value::U64(
             u64::try_from(group.len()).expect("group sizes fit u64"),
         )),
-        AggOp::CountDistinct => {
-            let distinct: BTreeSet<Tuple> =
-                values().map(|value| Tuple(vec![value.clone()])).collect();
-            Ok(Value::U64(
-                u64::try_from(distinct.len()).expect("group sizes fit u64"),
-            ))
-        }
         AggOp::Sum => {
             let total: i128 = values()
                 .map(|value| point(value).expect("validated: Sum takes integers"))
@@ -1344,9 +1233,6 @@ fn fold_position(op: AggOp, index: usize, group: &[&Tuple]) -> Result<Value, Que
                 })
                 .expect("groups are nonempty");
             Ok(picked.clone())
-        }
-        AggOp::ArgMax { .. } | AggOp::ArgMin { .. } => {
-            unreachable!("multi-rule Arg terms are rejected by the caller")
         }
         AggOp::Pack => unreachable!("Pack heads take the segment path"),
     }
@@ -1395,15 +1281,6 @@ fn fold(
         AggOp::Count => Ok(Value::U64(
             u64::try_from(group.len()).expect("group sizes fit u64"),
         )),
-        AggOp::CountDistinct => {
-            let var = over.expect("validated: CountDistinct carries a variable");
-            let distinct: BTreeSet<Tuple> = values(var)
-                .map(|value| Tuple(vec![value.clone()]))
-                .collect();
-            Ok(Value::U64(
-                u64::try_from(distinct.len()).expect("group sizes fit u64"),
-            ))
-        }
         AggOp::Sum => {
             let var = over.expect("validated: Sum carries a variable");
             let total: i128 = values(var)
@@ -1432,9 +1309,6 @@ fn fold(
                 })
                 .expect("groups are nonempty");
             Ok(picked.clone())
-        }
-        AggOp::ArgMax { .. } | AggOp::ArgMin { .. } => {
-            unreachable!("Arg terms take the restriction path")
         }
         AggOp::Pack => unreachable!("Pack heads take the segment path"),
     }

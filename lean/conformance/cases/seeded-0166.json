@@ -1,11 +1,22 @@
 {
 "case":"seeded-0166",
-"provenance":{"world_seed":12603138,"case_seed":1245431,"draw":3},
-"strings":[],
-"theory":{"relations":[{"id":7,"name":"OrgParent","closed":false,"fields":["u64","u64"]},
+"provenance":{"world_seed":12603138,"case_seed":1245437,"draw":1},
+"strings":[[934,"org-00"],[935,"org-01"],[936,"org-02"],[937,"org-03"],[938,"org-04"],[939,"org-05"],[940,"org-06"],[941,"org-07"]],
+"theory":{"relations":[{"id":6,"name":"Org","closed":false,"fields":["u64","str"]},
+{"id":7,"name":"OrgParent","closed":false,"fields":["u64","u64"]},
 {"id":9,"name":"Transfer","closed":false,"fields":["u64","bytes<32>","interval_u64","bytes<7>","bytes<8>","bytes<9>","bytes<16>","bytes<63>","bytes<64>"]}],
 "ground_axioms":[]},
-"instance":[{"relation":7,"facts":[
+"instance":[{"relation":6,"facts":[
+[{"u64":0},{"str":934}],
+[{"u64":1},{"str":935}],
+[{"u64":2},{"str":936}],
+[{"u64":3},{"str":937}],
+[{"u64":4},{"str":938}],
+[{"u64":5},{"str":939}],
+[{"u64":6},{"str":940}],
+[{"u64":7},{"str":941}]
+]},
+{"relation":7,"facts":[
 [{"u64":1},{"u64":0}],
 [{"u64":2},{"u64":1}],
 [{"u64":3},{"u64":1}],
@@ -529,11 +540,11 @@
 [{"u64":511},{"bytes":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,255]},{"interval_u64":[131255,131491]},{"bytes":[0,0,0,0,0,0,36]},{"bytes":[0,0,0,0,0,0,0,39]},{"bytes":[0,0,0,0,0,0,0,0,52]},{"bytes":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,33]},{"bytes":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,13]},{"bytes":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,7]}]
 ]}],
 "query":{"rules":[
-{"finds":[{"var":0},{"var":2}],
- "atoms":[{"relation":9,"bindings":[[1,{"lit":{"bytes":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,183]}}],[0,{"var":0}],[2,{"var":1}]]},{"relation":9,"bindings":[[1,{"lit":{"bytes":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,251]}}],[0,{"var":2}],[2,{"var":3}]]}],
- "negated":[{"relation":7,"bindings":[]}],
- "conditions":[{"cmp":{"op":"allen","mask":["before","meets","starts","equals","overlapped_by","met_by","after"],"lhs":{"var":1},"rhs":{"var":3}}},{"cmp":{"op":"eq","lhs":{"var":3},"rhs":{"lit":{"interval_u64":[23533,23552]}}}}],
- "width":4}
+{"finds":[{"var":0}],
+ "atoms":[{"relation":9,"bindings":[[1,{"lit":{"bytes":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,24]}}],[0,{"var":0}],[2,{"var":1}]]}],
+ "negated":[{"relation":7,"bindings":[]},{"relation":6,"bindings":[]}],
+ "conditions":[{"cmp":{"op":"allen","mask":["before","meets","met_by","after"],"lhs":{"var":1},"rhs":{"lit":{"interval_u64":[35809,35840]}}}}],
+ "width":2}
 ]},
 "params":[],
 "answers":[]

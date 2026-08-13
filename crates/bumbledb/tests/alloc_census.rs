@@ -29,8 +29,8 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use bumbledb::ir::{
-    AggOp, Atom, AtomSource, CmpOp, Comparison, FindTerm, HeadTerm, MaskTerm, ParamId, Query, Rule,
-    Term, Value, VarId,
+    AggOp, Atom, AtomSource, CmpOp, Comparison, FindTerm, HeadTerm, ParamId, Query, Rule, Term,
+    Value, VarId,
 };
 use bumbledb::schema::{
     Bound, FieldDescriptor, FieldId, Generation, RelationDescriptor, RelationId, SchemaDescriptor,
@@ -715,7 +715,7 @@ fn calendar_query() -> Query {
         negated: vec![],
         conditions: vec![ConditionTree::Leaf(Comparison {
             op: CmpOp::Allen {
-                mask: MaskTerm::Literal(AllenMask::INTERSECTS),
+                mask: AllenMask::INTERSECTS,
             },
             lhs: Term::Var(VarId(2)),
             rhs: Term::Var(VarId(3)),

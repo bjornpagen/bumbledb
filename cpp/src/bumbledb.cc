@@ -11,7 +11,6 @@ export import :bytes;
 export import :allen;
 export import :fresh;
 export import :error;
-export import :order;
 export import :version;
 export import :name;
 export import :classify;

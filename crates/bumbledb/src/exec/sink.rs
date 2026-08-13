@@ -49,8 +49,8 @@ mod projection;
 #[cfg(test)]
 mod tests;
 
-/// One find term in execution form: a projected slot span, a fold
-/// aggregate, or an Arg-restriction carry. Widths come from the plan's
+/// One find term in execution form: a projected slot span or a fold
+/// aggregate. Widths come from the plan's
 /// binding-slot layout (`ValidatedPlan::slots`) — never assumed 1.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FindSpec {
@@ -75,8 +75,7 @@ pub enum FindSpec {
     /// [`FindSpec::Duration`].
     AggDuration { op: FoldOp, slot: usize },
     /// A fold aggregate over a slot span (`over_slot: None` for the
-    /// nullary Count; `over_width` > 1 only for `CountDistinct` — the
-    /// arithmetic folds are validated scalar).
+    /// nullary Count; arithmetic folds are validated scalar).
     Agg {
         op: FoldOp,
         over_slot: Option<usize>,
@@ -85,28 +84,12 @@ pub enum FindSpec {
         /// biased form; Sum must decode before accumulating).
         signed: bool,
     },
-    /// An Arg-restriction carry (`ArgMax`/`ArgMin` — 20-query-ir
-    /// § aggregation): the carried variable's slot span, plus the shared
-    /// key. Validation guarantees every Arg term of a query names one key
-    /// and one direction, so the per-find copies agree.
-    Arg {
-        slot: usize,
-        width: usize,
-        /// The shared key's one word (ruled 2026-07-23, R5): a key
-        /// variable's slot (orderable — width 1), or the measure of an
-        /// interval variable's two-slot span — construction parses the
-        /// measure onto a derived scratch word, ray poisoning included,
-        /// exactly as the measure finds.
-        key: ProjSource,
-        /// `true` for `ArgMax`, `false` for `ArgMin`.
-        max: bool,
-    },
     /// The coalescing fold (`Pack` — 20-query-ir § aggregation): the
     /// interval variable's two-slot span. Relation-shaped group state —
     /// per group the sink accumulates the claim list; finalize sorts by
     /// start word and drives the shared segment sweep
     /// (`crate::interval::sweep`), one head answer per maximal segment.
-    /// Validation admits at most one per head and no fold or Arg
+    /// Validation admits at most one per head and no fold
     /// companions.
     Pack { slot: usize },
 }
@@ -126,27 +109,18 @@ enum SinkSpec {
         over_width: usize,
         signed: bool,
     },
-    /// An Arg-restriction carry and its shared extreme key.
-    Arg {
-        slot: usize,
-        width: usize,
-        key_slot: usize,
-        max: bool,
-    },
     /// A coalescing interval claim.
     Pack { slot: usize },
 }
 
 /// A fold aggregate's operator, execution-side: exactly the ops that fold
-/// into an [`Acc`] — the Arg ops are not folds (they restrict the binding
-/// set; [`FindSpec::Arg`]) and are unrepresentable here.
+/// into an [`Acc`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FoldOp {
     Sum,
     Min,
     Max,
     Count,
-    CountDistinct,
 }
 
 /// Decodes a binding word back to the i64 it encodes (the biased word form
@@ -220,7 +194,7 @@ fn extend_sources(finds: &[SinkSpec], measures: &[(usize, usize)], out: &mut Vec
                     out.extend((*slot..slot + width).map(ProjSource::Slot));
                 }
             }
-            SinkSpec::Agg { .. } | SinkSpec::Arg { .. } | SinkSpec::Pack { .. } => {}
+            SinkSpec::Agg { .. } | SinkSpec::Pack { .. } => {}
         }
     }
 }
@@ -340,18 +314,6 @@ enum Acc {
     Min(u64),
     Max(u64),
     Count(u64),
-    /// `CountDistinct`: index into the sink's `value_sets` pool — the
-    /// group's distinct-value word-set (20-query-ir § aggregation);
-    /// finalize is its `len()`.
-    CountDistinct(usize),
-}
-
-/// The one Arg-restriction unit of a query (validation: all Arg terms
-/// share one key variable and one direction).
-#[derive(Debug, Clone, Copy)]
-struct ArgSpec {
-    key_slot: usize,
-    max: bool,
 }
 
 /// The aggregate sink: group map keyed by the group-key words, folding each
@@ -400,49 +362,22 @@ pub struct AggregateSink {
     /// Flat accumulator rows: `accs[group * n_aggs ..][..n_aggs]`.
     accs: Vec<Acc>,
     n_aggs: usize,
-    /// `CountDistinct` per-group value sets, pooled (arena-backed, reused
-    /// across executions by allocation index — the allocation order is
-    /// (group, `CountDistinct` find) and the arity sequence repeats, so a
-    /// reused map always matches its span width). Exactly the
-    /// projection-dedup mechanism scoped per group, keyed on the value's
-    /// 1–8 word span with the seen-set's tuple hashing.
-    value_sets: Vec<WordMap<()>>,
-    /// Pool high-water: sets `< value_sets_live` belong to this
-    /// execution's groups.
-    value_sets_live: usize,
-    /// The Arg-restriction unit, when the finds carry Arg terms
-    /// (validation: never alongside folds).
-    arg: Option<ArgSpec>,
-    /// Per group: the extreme key word so far. Encoded words compare
-    /// correctly unsigned for both orderable key types — U64 words are
-    /// the value, I64 words are the sign-flipped biased form, and both
-    /// encodings are order-preserving (docs/architecture/40-execution.md).
-    arg_best: Vec<u64>,
-    /// Per group: the restricted set's projected answers (all Arg carries
-    /// concatenated, in find order) — a word-set, because ties are
-    /// set-honest: two distinct bindings may project equal rows, and the
-    /// answer is a set (20-query-ir § aggregation). Pooled by group
-    /// index, capacity retained across executions.
-    arg_answers: Vec<WordMap<()>>,
-    /// Words per Arg row (the carries' total width).
-    carry_words: usize,
-    /// Arg row assembly scratch.
-    carry_scratch: Vec<u64>,
     /// The Pack term's interval slot span start, when the head carries
-    /// one (validation: at most one, never beside folds or Arg terms).
+    /// one (validation: at most one, never beside folds).
     /// Re-aimed per rule like every slot table.
     pack: Option<usize>,
     /// Per group: `Pack`'s claim accumulation list — `[start, end]`
     /// encoded word pairs, appended raw at fold time (identical and
     /// overlapping claims collapse in the finalize sweep, never here)
-    /// and pooled by group index exactly like the Arg row sets (capacity
+    /// and pooled by group index (capacity
     /// retained across executions, cleared at group creation). Memory is
     /// O(the group's claims) — the allocation contract's retained
     /// high-water scratch.
     pack_claims: Vec<Vec<[u64; 2]>>,
-    /// `CountDistinct` and Arg fold per row — their group state is a set,
-    /// not a scalar accumulator, so no gather kernel or scan pushdown
-    /// applies; batches route through the per-row scratch fold.
+    /// Measures and Pack fold per row — derived words exist only in
+    /// the scratch row, and Pack's group state is a claim list, so no
+    /// gather kernel or scan pushdown applies; batches route through
+    /// the per-row scratch fold.
     row_fold_only: bool,
     /// Binding dedup, elided (`None`) when the emitted key stream is
     /// proven duplicate-free: single-rule, the plan's distinct-bindings

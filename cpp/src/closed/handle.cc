@@ -37,8 +37,8 @@ export namespace bdb::detail {
  * reference's vocabulary.
  */
 [[nodiscard]] consteval auto handle_crosses_vocabulary_message(name_text handle_roster, name_text handle, name_text reference_roster) -> std::string {
-	return std::string{"bumbledb closed reference: handle \""} + std::string{handle.view()} + "\" belongs to closed relation \"" +
-	       std::string{handle_roster.view()} + "\" but the reference's vocabulary is \"" + std::string{reference_roster.view()} +
+	return std::string{"bumbledb closed reference: handle \""} + spec_name(handle.view()) + "\" belongs to closed relation \"" +
+	       spec_name(handle_roster.view()) + "\" but the reference's vocabulary is \"" + spec_name(reference_roster.view()) +
 	       "\" — a handle binds only its own closed relation";
 }
 

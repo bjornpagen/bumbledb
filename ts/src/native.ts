@@ -60,10 +60,9 @@ type FactValue = boolean | bigint | string | Uint8Array | IntervalValue
 
 /**
  * One tagged engine value — the 1:1 mirror of `bumbledb::Value` for the
- * positions no schema field directs (IR literals, query params). The spec's
- * `ValueSpec` vocabulary plus the bind-time-only Allen mask.
+ * positions no schema field directs (IR literals, query params).
  */
-type TaggedValue = ValueSpec | { readonly kind: "allenMask"; readonly mask: number }
+type TaggedValue = ValueSpec
 
 /**
  * One positional execution argument: a tagged scalar, or a param SET
@@ -92,7 +91,7 @@ interface PredicateDefIr {
 type HeadTermIr = { readonly kind: "var" } | { readonly kind: "aggregate"; readonly op: HeadOpIr }
 
 /** The var-free aggregate-op kind at a head position. */
-type HeadOpIr = "sum" | "min" | "max" | "count" | "countDistinct" | "argMax" | "argMin" | "pack"
+type HeadOpIr = "sum" | "min" | "max" | "count" | "pack"
 
 /** One rule: conjunctive body, anti-join atoms, condition trees. */
 interface RuleIr {
@@ -115,9 +114,6 @@ type AggOpIr =
 	| { readonly kind: "min" }
 	| { readonly kind: "max" }
 	| { readonly kind: "count" }
-	| { readonly kind: "countDistinct" }
-	| { readonly kind: "argMax"; readonly key: number }
-	| { readonly kind: "argMin"; readonly key: number }
 	| { readonly kind: "pack" }
 
 /** Where an atom draws its facts: a stored relation or a program predicate. */
@@ -142,11 +138,6 @@ type TermIr =
 	| { readonly kind: "literal"; readonly value: TaggedValue }
 	| { readonly kind: "measure"; readonly var: number }
 
-/** The `Allen` comparison's mask position: a literal mask or a param. */
-type MaskTermIr =
-	| { readonly kind: "literal"; readonly mask: number }
-	| { readonly kind: "param"; readonly param: number }
-
 /** One comparison operator (mirrors `ir::CmpOp`). */
 type CmpOpIr =
 	| { readonly kind: "eq" }
@@ -155,7 +146,7 @@ type CmpOpIr =
 	| { readonly kind: "le" }
 	| { readonly kind: "gt" }
 	| { readonly kind: "ge" }
-	| { readonly kind: "allen"; readonly mask: MaskTermIr }
+	| { readonly kind: "allen"; readonly mask: number }
 	| { readonly kind: "pointIn" }
 
 /** One comparison condition. */
@@ -629,7 +620,6 @@ export type {
 	ManifestRelation,
 	ManifestRow,
 	ManifestStatement,
-	MaskTermIr,
 	Native,
 	OccurrenceDrift,
 	PredicateDefIr,

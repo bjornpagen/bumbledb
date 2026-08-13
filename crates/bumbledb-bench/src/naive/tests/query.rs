@@ -9,8 +9,8 @@ use std::collections::BTreeSet;
 
 use bumbledb::schema::{IntervalElement, RelationDescriptor, SchemaDescriptor, ValueType};
 use bumbledb::{
-    AggOp, AllenMask, CmpOp, Comparison, ConditionTree, FindTerm, MaskTerm, ParamId, Query,
-    RelationId, Rule, Term, Value, VarId,
+    AggOp, AllenMask, CmpOp, Comparison, ConditionTree, FindTerm, ParamId, Query, RelationId, Rule,
+    Term, Value, VarId,
 };
 
 use crate::fixture::{atom, field, var};
@@ -186,32 +186,6 @@ fn empty_input_global_aggregate_is_the_empty_set() {
 }
 
 #[test]
-fn arg_tie_yields_every_attaining_row() {
-    // Two postings share the maximal amount 100: ArgMax carries both ids
-    // — the answer is a set, and a tie survives on every carried column.
-    let db = db(vec![
-        posting(1, 7, 100),
-        posting(2, 7, 100),
-        posting(3, 7, 99),
-    ]);
-    let query = Query::single(Rule {
-        finds: vec![FindTerm::Aggregate {
-            op: AggOp::ArgMax {
-                key: bumbledb::ArgKey::Var(VarId(2)),
-            },
-            over: Some(VarId(1)),
-        }],
-        atoms: vec![atom(POSTING, &[(0, var(1)), (1, var(0)), (2, var(2))])],
-        negated: vec![],
-        conditions: vec![],
-    });
-    assert_eq!(
-        db.query(&query, &[]).unwrap(),
-        rows(vec![vec![Value::U64(1)], vec![Value::U64(2)]])
-    );
-}
-
-#[test]
 fn membership_boundaries_are_half_open() {
     // Mandate active over [10, 20): the start is in, the end is out.
     let db = db(vec![mandate(1, 10, 20)]);
@@ -323,35 +297,6 @@ fn negated_zero_binding_atom_is_an_emptiness_gate() {
 }
 
 #[test]
-fn count_distinct_folds_values_not_bindings() {
-    let db = db(vec![
-        posting(1, 7, 100),
-        posting(2, 7, 100),
-        posting(3, 8, 5),
-    ]);
-    let query = Query::single(Rule {
-        finds: vec![
-            FindTerm::Aggregate {
-                op: AggOp::Count,
-                over: None,
-            },
-            FindTerm::Aggregate {
-                op: AggOp::CountDistinct,
-                over: Some(VarId(0)),
-            },
-        ],
-        atoms: vec![atom(POSTING, &[(0, var(1)), (1, var(0)), (2, var(2))])],
-        negated: vec![],
-        conditions: vec![],
-    });
-    // 3 distinct bindings, 2 distinct accounts.
-    assert_eq!(
-        db.query(&query, &[]).unwrap(),
-        rows(vec![vec![Value::U64(3), Value::U64(2)]])
-    );
-}
-
-#[test]
 fn param_set_membership_and_the_empty_set() {
     let db = db(vec![
         posting(1, 7, 100),
@@ -395,7 +340,7 @@ fn allen_masks_use_the_point_set_definitions() {
         conditions: vec![
             ConditionTree::Leaf(Comparison {
                 op: CmpOp::Allen {
-                    mask: MaskTerm::Literal(AllenMask::INTERSECTS),
+                    mask: AllenMask::INTERSECTS,
                 },
                 lhs: var(1),
                 rhs: var(3),
@@ -422,7 +367,7 @@ fn allen_masks_use_the_point_set_definitions() {
         negated: vec![],
         conditions: vec![ConditionTree::Leaf(Comparison {
             op: CmpOp::Allen {
-                mask: MaskTerm::Literal(AllenMask::COVERS),
+                mask: AllenMask::COVERS,
             },
             lhs: var(1),
             rhs: Term::Literal(Value::IntervalU64(

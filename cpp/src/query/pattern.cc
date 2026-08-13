@@ -26,7 +26,7 @@ namespace bdb::detail {
 }
 
 [[nodiscard]] consteval auto coordinate_label(name_text relation, name_text field) -> std::string {
-	return std::string{relation.view()} + "." + std::string{field.view()};
+	return spec_name(relation.view()) + "." + spec_name(field.view());
 }
 
 [[nodiscard]] consteval auto kind_label(field_class cls) -> std::string {
@@ -60,22 +60,22 @@ template<name_text VarRel, name_text VarField, bool VarClassed, coord_ref VarLaw
          coord_ref AtLaw>
 [[nodiscard]] consteval auto cross_class_message(std::string_view verb) -> std::string {
 	return "bumbledb query: variable \"" + coordinate_label(VarRel, VarField) + "\" (" + class_label(VarClassed, VarLaw) + ") cannot " +
-	       std::string{verb} + " coordinate \"" + coordinate_label(AtRel, AtField) + "\" (" + class_label(AtClassed, AtLaw) +
+	       spec_name(verb) + " coordinate \"" + coordinate_label(AtRel, AtField) + "\" (" + class_label(AtClassed, AtLaw) +
 	       ") — a variable joins only class-equal columns (one variable, "
 	       "one law class)";
 }
 
 template<name_text HandleRoster, name_text Handle, name_text AtRel, name_text AtField, name_text FieldRoster>
 [[nodiscard]] consteval auto handle_binding_message() -> std::string {
-	return "bumbledb query: handle \"" + std::string{Handle.view()} + "\" of closed relation \"" + std::string{HandleRoster.view()} +
+	return "bumbledb query: handle \"" + spec_name(Handle.view()) + "\" of closed relation \"" + spec_name(HandleRoster.view()) +
 	       "\" cannot bind coordinate \"" + coordinate_label(AtRel, AtField) + "\" — the field references closed relation \"" +
-	       std::string{FieldRoster.view()} + "\"";
+	       spec_name(FieldRoster.view()) + "\"";
 }
 
 template<name_text VarRel, name_text VarField, field_class VarClass, name_text AtRel, name_text AtField, field_class AtClass>
 [[nodiscard]] consteval auto kind_mismatch_message(std::string_view verb) -> std::string {
 	return "bumbledb query: variable \"" + coordinate_label(VarRel, VarField) + "\" (" + kind_label(VarClass) + ") cannot " +
-	       std::string{verb} + " coordinate \"" + coordinate_label(AtRel, AtField) + "\" (" + kind_label(AtClass) +
+	       spec_name(verb) + " coordinate \"" + coordinate_label(AtRel, AtField) + "\" (" + kind_label(AtClass) +
 	       ") — the structural kinds differ";
 }
 
@@ -125,7 +125,7 @@ template<class Param>
  */
 [[nodiscard]] consteval auto membership_param_name(name_text roster, std::array<std::uint64_t, max_membership_handles> const& members, std::size_t count)
     -> name_text {
-	auto text = std::string{"in "} + std::string{roster.view()};
+	auto text = std::string{"in "} + spec_name(roster.view());
 	for (auto index = std::size_t{0}; index != count; ++index) {
 		text += index == 0 ? " " : ",";
 		text += render_size(members[index]);

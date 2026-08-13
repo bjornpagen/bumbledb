@@ -1,6 +1,4 @@
-use crate::exec::sink::{
-    AggregateSink, ArgSpec, DENSE_GROUPS_CAP, FindSpec, FoldOp, GroupTable, SinkSpec,
-};
+use crate::exec::sink::{AggregateSink, DENSE_GROUPS_CAP, FindSpec, GroupTable, SinkSpec};
 use crate::exec::wordmap::WordMap;
 
 /// Parses prepare's find vocabulary into the measure-free execution
@@ -62,31 +60,6 @@ pub(in crate::exec::sink) fn parse_finds_into(
                 over_width,
                 signed,
             },
-            // The Arg key's measure form (R5) parses exactly as the
-            // measure finds: one derived scratch word past the real
-            // slots, computed (and ray-checked) per row — the
-            // restriction sweep reads a plain word either way.
-            FindSpec::Arg {
-                slot,
-                width,
-                key,
-                max,
-            } => {
-                let key_slot = match key {
-                    crate::exec::sink::ProjSource::Slot(slot) => slot,
-                    crate::exec::sink::ProjSource::Measure { start } => {
-                        let derived = slot_count + measures.len();
-                        measures.push((derived, start));
-                        derived
-                    }
-                };
-                SinkSpec::Arg {
-                    slot,
-                    width,
-                    key_slot,
-                    max,
-                }
-            }
             FindSpec::Pack { slot } => SinkSpec::Pack { slot },
         };
         parsed.push(spec);
@@ -219,10 +192,6 @@ impl AggregateSink {
         )
     }
 
-    #[expect(
-        clippy::too_many_lines,
-        reason = "one sink constructor, every regime's wiring in one place — clearer kept together"
-    )]
     fn build(
         finds: &[FindSpec],
         slot_count: usize,
@@ -243,7 +212,7 @@ impl AggregateSink {
             .iter()
             .filter_map(|f| match f {
                 SinkSpec::Var { slot, width } => Some((*slot, *width)),
-                SinkSpec::Agg { .. } | SinkSpec::Arg { .. } | SinkSpec::Pack { .. } => None,
+                SinkSpec::Agg { .. } | SinkSpec::Pack { .. } => None,
             })
             .collect();
         let key_words: usize = group_spans.iter().map(|(_, width)| width).sum();
@@ -251,48 +220,11 @@ impl AggregateSink {
             .iter()
             .filter(|f| matches!(f, SinkSpec::Agg { .. }))
             .count();
-        let carry_words: usize = finds
-            .iter()
-            .filter_map(|f| match f {
-                SinkSpec::Arg { width, .. } => Some(*width),
-                SinkSpec::Var { .. } | SinkSpec::Agg { .. } | SinkSpec::Pack { .. } => None,
-            })
-            .sum();
-        // Validation guarantees every Arg term names one key and one
-        // direction (20-query-ir § aggregation), so the first spec is
-        // THE spec.
-        let arg = finds.iter().find_map(|f| match f {
-            SinkSpec::Arg { key_slot, max, .. } => Some(ArgSpec {
-                key_slot: *key_slot,
-                max: *max,
-            }),
-            SinkSpec::Var { .. } | SinkSpec::Agg { .. } | SinkSpec::Pack { .. } => None,
-        });
-        debug_assert!(
-            finds.iter().all(|f| match f {
-                SinkSpec::Arg { key_slot, max, .. } =>
-                    arg.is_some_and(|spec| spec.key_slot == *key_slot && spec.max == *max),
-                SinkSpec::Var { .. } | SinkSpec::Agg { .. } | SinkSpec::Pack { .. } => true,
-            }),
-            "validated: all Arg terms share one key and one direction"
-        );
         let pack = pack_slot(&finds);
         // Measures fold per row too: their derived words exist only in
         // the scratch row, so no gather kernel or scan pushdown can read
-        // them. Pack is set-valued group state like Arg — per-row as
-        // well.
-        let row_fold_only = arg.is_some()
-            || pack.is_some()
-            || !measures.is_empty()
-            || finds.iter().any(|f| {
-                matches!(
-                    f,
-                    SinkSpec::Agg {
-                        op: FoldOp::CountDistinct,
-                        ..
-                    }
-                )
-            });
+        // them. Pack is set-valued group state — per-row as well.
+        let row_fold_only = pack.is_some() || !measures.is_empty();
         // The union key by provenance (R2): head projection for a
         // hand-written rule set, the shared slot arrays for a
         // DNF-derived one.
@@ -304,10 +236,6 @@ impl AggregateSink {
         let union_words: usize = union_spans
             .as_ref()
             .map_or(0, |spans| spans.iter().map(|(_, width)| width).sum());
-        debug_assert!(
-            !(union && arg.is_some()),
-            "validated: Arg-restriction never crosses rules"
-        );
         // The group representation (finding 049): dense when the caller
         // proved every key word a small domain — the product is capped
         // at construction, so the table is at most `DENSE_GROUPS_CAP`
@@ -351,13 +279,6 @@ impl AggregateSink {
             scan_count: 0,
             cached_outer_slots: Vec::new(),
             cached_constant_group: false,
-            value_sets: Vec::new(),
-            value_sets_live: 0,
-            arg,
-            arg_best: Vec::new(),
-            arg_answers: Vec::new(),
-            carry_words,
-            carry_scratch: Vec::with_capacity(carry_words),
             pack,
             pack_claims: Vec::new(),
             row_fold_only,
@@ -392,7 +313,7 @@ impl AggregateSink {
         self.group_spans
             .extend(self.finds.iter().filter_map(|f| match f {
                 SinkSpec::Var { slot, width } => Some((*slot, *width)),
-                SinkSpec::Agg { .. } | SinkSpec::Arg { .. } | SinkSpec::Pack { .. } => None,
+                SinkSpec::Agg { .. } | SinkSpec::Pack { .. } => None,
             }));
         // The Pack slot is the rule's (the head position is fixed;
         // validation aligned every rule's Pack term against it).
@@ -408,10 +329,6 @@ impl AggregateSink {
                 spans.extend(self.finds.iter().filter_map(union_span));
             }
         }
-        debug_assert!(
-            self.arg.is_none() && !self.finds.iter().any(|f| matches!(f, SinkSpec::Arg { .. })),
-            "validated: Arg-restriction never crosses rules"
-        );
         self.binding_scratch.clear();
         self.binding_scratch
             .resize(slot_count + self.measures.len(), 0);
@@ -438,8 +355,7 @@ impl AggregateSink {
     }
 
     /// Whether the binding seen-set is elided (the plan proved distinct
-    /// bindings) — the elision observable. `CountDistinct`'s value sets and
-    /// the Arg row-dedup are different sets and are NEVER elided.
+    /// bindings) — the elision observable.
     #[cfg(test)]
     #[must_use]
     pub fn seen_elided(&self) -> bool {
@@ -454,28 +370,13 @@ impl AggregateSink {
         matches!(self.groups, GroupTable::Dense { .. })
     }
 
-    /// Distinct values held across every live `CountDistinct` set — the
-    /// value-dedup observable the elision fixture asserts alongside
-    /// [`Self::seen_elided`].
-    #[cfg(test)]
-    #[must_use]
-    pub fn distinct_values_held(&self) -> usize {
-        self.value_sets[..self.value_sets_live]
-            .iter()
-            .map(WordMap::len)
-            .sum()
-    }
-
-    /// Empties the sink for the next execution, retaining capacity —
-    /// value sets and Arg row sets stay pooled (cleared on reuse at
-    /// group creation, never dropped). Called once per execution, never
+    /// Empties the sink for the next execution, retaining capacity.
+    /// Called once per execution, never
     /// per rule: the seen-set spanning rules IS the union
     /// (docs/architecture/40-execution.md § the rule loop).
     pub fn reset(&mut self) {
         self.groups.clear();
         self.accs.clear();
-        self.value_sets_live = 0;
-        self.arg_best.clear();
         self.ray = None;
         if let Some(seen) = &mut self.seen {
             seen.clear();
@@ -514,8 +415,7 @@ enum DedupRegime<'k> {
 /// (group, claim) pairs and the coalesce folds the union — 20-query-ir
 /// § aggregation); the nullary `Count` reads nothing and contributes
 /// nothing (the naive model's "constant filler", represented as
-/// absence). Arg terms are unreachable here (validation refuses
-/// Arg-restriction across rules).
+/// absence).
 fn union_span(find: &SinkSpec) -> Option<(usize, usize)> {
     match find {
         SinkSpec::Var { slot, width } => Some((*slot, *width)),
@@ -528,7 +428,6 @@ fn union_span(find: &SinkSpec) -> Option<(usize, usize)> {
         SinkSpec::Agg {
             over_slot: None, ..
         } => None,
-        SinkSpec::Arg { .. } => unreachable!("validated: no Arg across rules"),
     }
 }
 

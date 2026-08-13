@@ -133,12 +133,6 @@ namespace bdb::foreign {
 		return bdb_head_op::BDB_HEAD_OP_MAX;
 	case fold_form::count:
 		return bdb_head_op::BDB_HEAD_OP_COUNT;
-	case fold_form::count_distinct:
-		return bdb_head_op::BDB_HEAD_OP_COUNT_DISTINCT;
-	case fold_form::arg_max:
-		return bdb_head_op::BDB_HEAD_OP_ARG_MAX;
-	case fold_form::arg_min:
-		return bdb_head_op::BDB_HEAD_OP_ARG_MIN;
 	case fold_form::pack:
 		break;
 	}
@@ -153,9 +147,7 @@ namespace bdb::foreign {
 	            .op =
 	                bdb_cmp_op{
 	                    .kind = cmp_kind_of(condition.op),
-	                    .mask_kind = bdb_mask_term_kind::BDB_MASK_TERM_KIND_LITERAL,
 	                    .mask = condition.mask,
-	                    .mask_param = 0,
 	                },
 	            .lhs = term_of(condition.lhs),
 	            .rhs = term_of(condition.rhs),
@@ -169,8 +161,6 @@ namespace bdb::foreign {
 	auto out = bdb_find_term{};
 	out.op = bdb_agg_op{
 	    .kind = head_op_of(find.op),
-	    .arg_key_kind = find.key_is_measure ? bdb_arg_key_kind::BDB_ARG_KEY_KIND_MEASURE : bdb_arg_key_kind::BDB_ARG_KEY_KIND_VAR,
-	    .arg_key_var = find.key,
 	};
 	switch (find.form) {
 	case find_form::variable:
@@ -576,17 +566,6 @@ inline constexpr auto program_of = bdb_program{
 }
 
 /**
- * An Allen mask travels as a scalar AllenMask value.
- */
-[[nodiscard]] inline auto wire_param(allen_mask value) -> bdb_param {
-	auto out = bdb_param{};
-	out.kind = bdb_param_kind::BDB_PARAM_KIND_SCALAR;
-	out.scalar.kind = bdb_value_kind::BDB_VALUE_KIND_ALLEN_MASK;
-	out.scalar.allen_mask = value.bits();
-	return out;
-}
-
-/**
  * The set-cell scratch of one execute call: every runtime ∈-set param's
  * tagged cells live here for exactly the call's extent (the bridge
  * copies before returning). The OUTER vector may grow (its inner buffers
@@ -681,10 +660,10 @@ export namespace bdb::foreign {
 
 /**
  * The query-directed execute marshal: the caller's params product fills
- * the value/mask/runtime-set entries in registry order, and every
- * MEMBERSHIP entry is injected from the query's frozen set constant
- * (positional ParamId order — lowering.md §5.1). `scratch` owns the
- * runtime set cells and must outlive the execute call.
+ * the scalar/runtime-set entries in registry order, and every MEMBERSHIP
+ * entry is injected from the query's frozen set constant (positional
+ * ParamId order — lowering.md §5.1). `scratch` owns the runtime set
+ * cells and must outlive the execute call.
  */
 template<auto Query, class Params>
 [[nodiscard]] auto wire_params_for(Params const& params, param_scratch& scratch) -> std::array<bdb_param, Query.ir.param_count> {

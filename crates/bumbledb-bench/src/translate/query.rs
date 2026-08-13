@@ -137,19 +137,16 @@ fn from_where(b: &Builder) -> (String, String) {
     (from, where_clause)
 }
 
-/// The single-rule templates — the conjunctive query's three forms
-/// (projection, fold, Arg join-back), unchanged from the pre-rules
-/// translator.
+/// The single-rule templates — the conjunctive query's two forms
+/// (projection, fold).
 fn single_rule_sql(rule: &Rule, b: &Builder) -> Result<String, String> {
-    let (from, where_clause) = from_where(b);
-    if let Some((key, is_max)) = arg_restriction(&rule.finds) {
-        arg_sql(&rule.finds, b, &from, &where_clause, key, is_max)
-    } else if rule.finds.iter().any(|f| {
+    if rule.finds.iter().any(|f| {
         matches!(
             f,
             FindTerm::Aggregate { .. } | FindTerm::AggregateMeasure { .. }
         )
     }) {
+        let (from, where_clause) = from_where(b);
         fold_sql(&rule.finds, b, &from, &where_clause)
     } else {
         projection_sql(&rule.finds, b)
@@ -272,22 +269,6 @@ fn union_fold_sql(finds: &[FindTerm], arms: &[String]) -> Result<String, String>
                 AggOp::Min => format!("MIN(h{position})"),
                 AggOp::Max => format!("MAX(h{position})"),
                 AggOp::Count => "COUNT(*)".to_owned(),
-                AggOp::CountDistinct => {
-                    if arms
-                        .first()
-                        .is_some_and(|arm| arm.contains(&format!("h{position}_start")))
-                    {
-                        // COUNT(DISTINCT ...) takes one expression: an
-                        // interval's halves concatenate through an
-                        // injective decimal rendering.
-                        format!("COUNT(DISTINCT h{position}_start || ',' || h{position}_end)")
-                    } else {
-                        format!("COUNT(DISTINCT h{position})")
-                    }
-                }
-                AggOp::ArgMax { .. } | AggOp::ArgMin { .. } => {
-                    unreachable!("validation refuses Arg-restriction across rules")
-                }
                 // The expressibility gate (`super::sqlite_expressible`)
                 // routes Pack heads to the naive lane before translation.
                 AggOp::Pack => return Err("Pack is naive-only (no SQL coalesce)".to_owned()),
@@ -317,23 +298,6 @@ fn head_group_names(arms: &[String], position: usize) -> Vec<String> {
     } else {
         vec![format!("h{position}")]
     }
-}
-
-/// The Arg key and direction, if any find term is an Arg-restriction
-/// (validation guarantees all Arg terms share one key and direction,
-/// that no fold aggregate mixes in, and that Arg heads are single-rule).
-fn arg_restriction(finds: &[FindTerm]) -> Option<(bumbledb::ArgKey, bool)> {
-    finds.iter().find_map(|find| match find {
-        FindTerm::Aggregate {
-            op: AggOp::ArgMax { key },
-            ..
-        } => Some((*key, true)),
-        FindTerm::Aggregate {
-            op: AggOp::ArgMin { key },
-            ..
-        } => Some((*key, false)),
-        _ => None,
-    })
 }
 
 /// The distinct-subquery column list — every bound variable, interval
@@ -415,24 +379,6 @@ fn fold_sql(
                     format!("{agg}(v{})", var.0)
                 }
                 AggOp::Count => "COUNT(*)".to_owned(),
-                AggOp::CountDistinct => {
-                    let var = over.ok_or("CountDistinct without a variable")?;
-                    match b.columns.get(&var) {
-                        // COUNT(DISTINCT ...) takes one expression: an
-                        // interval's halves concatenate through an
-                        // injective decimal rendering.
-                        Some(VarCols::Interval { .. }) => {
-                            format!("COUNT(DISTINCT v{0}_start || ',' || v{0}_end)", var.0)
-                        }
-                        Some(VarCols::Scalar(_)) => format!("COUNT(DISTINCT v{})", var.0),
-                        None => return Err(format!("find variable {} unbound", var.0)),
-                    }
-                }
-                AggOp::ArgMax { .. } | AggOp::ArgMin { .. } => {
-                    unreachable!("Arg terms take the join-back template")
-                }
-                // The expressibility gate (`super::sqlite_expressible`)
-                // routes Pack heads to the naive lane before translation.
                 AggOp::Pack => return Err("Pack is naive-only (no SQL coalesce)".to_owned()),
             }),
         }
@@ -446,98 +392,4 @@ fn fold_sql(
         format!(" GROUP BY {}", group.join(", "))
     };
     Ok(format!("SELECT {} FROM ({inner}){tail}", outer.join(", ")))
-}
-
-/// The Arg-restriction join-back template
-/// (`docs/architecture/60-validation.md`, normative): the distinct
-/// binding set `d` joined against its per-group key extreme, with
-/// `SELECT DISTINCT` on the outer — ties survive set-honestly on both
-/// sides by construction. The global variant omits the group columns.
-fn arg_sql(
-    finds: &[FindTerm],
-    b: &Builder,
-    from: &str,
-    where_clause: &str,
-    key: bumbledb::ArgKey,
-    is_max: bool,
-) -> Result<String, String> {
-    let inner = format!(
-        "SELECT DISTINCT {} FROM {from}{where_clause}",
-        inner_columns(b).join(", ")
-    );
-    // Per group position: (the m-subquery's select entry with alias, the
-    // GROUP BY expression, the join equality). A plain column aliases to
-    // itself; a measure aliases its end − start expression so the
-    // join-back can name it.
-    let mut group: Vec<(String, String, String)> = Vec::new();
-    let mut outer: Vec<String> = Vec::new();
-    for find in finds {
-        match find {
-            FindTerm::Var(var) => {
-                for name in var_names(b, *var, "")? {
-                    group.push((name.clone(), name.clone(), format!("d.{name} = m.{name}")));
-                }
-                outer.extend(var_names(b, *var, "d.")?);
-            }
-            // The measure as an aliased group-key expression on both
-            // sides of the join-back.
-            FindTerm::Measure(var) => {
-                let expr = format!("(v{0}_end - v{0}_start)", var.0);
-                group.push((
-                    format!("{expr} AS dur{}", var.0),
-                    expr,
-                    format!("(d.v{0}_end - d.v{0}_start) = m.dur{0}", var.0),
-                ));
-                outer.push(format!("(d.v{0}_end - d.v{0}_start)", var.0));
-            }
-            FindTerm::Aggregate { over, .. } => {
-                let carry = over.ok_or("Arg term without a carried variable")?;
-                outer.extend(var_names(b, carry, "d.")?);
-            }
-            FindTerm::AggregateMeasure { .. } => {
-                return Err("Arg terms and measure folds never mix".to_owned());
-            }
-        }
-    }
-    let extreme = if is_max { "MAX" } else { "MIN" };
-    // The key expression per side: an orderable variable is one column
-    // by validation; a measure key (R5) is the end − start arithmetic
-    // over the interval halves.
-    let key_expr = |prefix: &str| match key {
-        bumbledb::ArgKey::Var(var) => format!("{prefix}v{}", var.0),
-        bumbledb::ArgKey::Measure(var) => {
-            format!("({prefix}v{0}_end - {prefix}v{0}_start)", var.0)
-        }
-    };
-    let outer = outer.join(", ");
-    if group.is_empty() {
-        return Ok(format!(
-            "WITH d AS ({inner}) SELECT DISTINCT {outer} FROM d \
-             JOIN (SELECT {extreme}({key}) AS mk FROM d) m ON {dkey} = m.mk",
-            key = key_expr(""),
-            dkey = key_expr("d.")
-        ));
-    }
-    let group_eq = group
-        .iter()
-        .map(|(_, _, eq)| eq.clone())
-        .collect::<Vec<_>>()
-        .join(" AND ");
-    let select = group
-        .iter()
-        .map(|(select, _, _)| select.clone())
-        .collect::<Vec<_>>()
-        .join(", ");
-    let group_by = group
-        .iter()
-        .map(|(_, by, _)| by.clone())
-        .collect::<Vec<_>>()
-        .join(", ");
-    Ok(format!(
-        "WITH d AS ({inner}) SELECT DISTINCT {outer} FROM d \
-         JOIN (SELECT {select}, {extreme}({key}) AS mk FROM d GROUP BY {group_by}) m \
-         ON {group_eq} AND {dkey} = m.mk",
-        key = key_expr(""),
-        dkey = key_expr("d.")
-    ))
 }

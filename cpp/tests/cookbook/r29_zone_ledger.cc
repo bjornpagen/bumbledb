@@ -211,7 +211,7 @@ auto run_cases(std::string_view fixtures_path, std::vector<CaseResult>& results)
 			}
 		}
 	}
-	std::ranges::sort(slots, bdb::by());
+	std::ranges::sort(slots, [](auto const& left, auto const& right) { return left.lo() < right.lo(); });
 	results.push_back(CaseResult{
 	    .name = "Db::scan(UnitSlot) answers [4,5) and [5,6)",
 	    .passed = scanned.has_value() && slots.size() == 2 && slots[0] == bdb::interval<std::uint64_t>::literal(4, 5) &&

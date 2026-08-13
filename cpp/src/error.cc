@@ -174,7 +174,7 @@ public:
 	/**
 	 * Could the same operation, retried with nothing changed, plausibly
 	 * succeed? Exactly two kinds: GenerationMoved (rebuild on a fresh
-	 * snapshot — write_witnessed is that loop, spelled once) and
+	 * snapshot — retry is host policy) and
 	 * ReadersFull (a slot frees when any reader finishes). Everything
 	 * else is permanent, including CommitSync/Io (post-failure
 	 * durability unknown; blind retry unsafe) and Panic (store

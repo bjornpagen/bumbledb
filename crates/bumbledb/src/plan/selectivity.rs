@@ -69,13 +69,7 @@ pub(crate) const RANGE_KEEP_DEN: u64 = 4;
 /// *param* mask is unmeasurable at prepare (the ladder's carve-out) and
 /// takes the range class ([`RANGE_KEEP_DEN`]), like every other param.
 fn allen_keep(estimate: u64, mask: crate::image::view::MaskConst) -> u64 {
-    match mask {
-        crate::image::view::MaskConst::Mask(mask) => {
-            (estimate.saturating_mul(u64::from(mask.popcount())) / 13).max(1)
-        }
-        crate::image::view::MaskConst::Param(_)
-        | crate::image::view::MaskConst::ConversedParam(_) => (estimate / RANGE_KEEP_DEN).max(1),
-    }
+    (estimate.saturating_mul(u64::from(mask.popcount())) / 13).max(1)
 }
 
 /// A same-fact field equality (`FieldsCompare` under `Eq`, the repeated

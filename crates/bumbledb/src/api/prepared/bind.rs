@@ -4,7 +4,7 @@ use super::{
 };
 
 use crate::error::{Error, Result};
-use crate::image::view::{MaskConst, ResolvedWordSource};
+use crate::image::view::ResolvedWordSource;
 use crate::ir::{CmpOp, ParamId, Value};
 use crate::obs;
 use crate::storage::dict;
@@ -113,23 +113,6 @@ impl<S> PreparedQuery<'_, S> {
         let param = param_id(idx);
         match &self.params[idx] {
             ParamSpec::Set { .. } => Err(Error::ParamSetExpected { param }),
-            // A mask slot: the vacuity rules land here, where the value
-            // exists — the bind-time sibling of validation's literal-mask
-            // rejections. Resolves to the mask's bits as a word.
-            ParamSpec::Mask => {
-                let BindValue::AllenMask(mask) = value else {
-                    return Err(Error::AllenMaskParamExpected { param });
-                };
-                if mask.is_empty() {
-                    return Err(Error::EmptyAllenMaskParam { param });
-                }
-                if mask.is_full() {
-                    return Err(Error::FullAllenMaskParam { param });
-                }
-                self.resolved_params[idx] = Const::Word(u64::from(mask.bits()));
-                self.missed_params[idx] = false;
-                Ok(())
-            }
             ParamSpec::Scalar { ty, point } => {
                 // The one non-inline scalar kind, resolved IN PLACE: a
                 // `bytes<N>` param's padded words land in the slot's
@@ -227,7 +210,7 @@ impl<S> PreparedQuery<'_, S> {
         let param = param_id(idx);
         let (expected, point) = match &self.params[idx] {
             ParamSpec::Set { elem, point } => (elem, *point),
-            ParamSpec::Scalar { .. } | ParamSpec::Mask => {
+            ParamSpec::Scalar { .. } => {
                 return Err(Error::ParamScalarExpected { param });
             }
         };
@@ -690,7 +673,7 @@ fn resolve_filter_into(
             *dst = FilterPredicate::FieldsAllen {
                 left: *left,
                 right: *right,
-                mask: MaskConst::Mask(crate::image::view::mask_of(*mask, params)),
+                mask: crate::image::view::mask_of(*mask, params),
             };
         }
         FilterPredicate::FieldAllen { field, other, mask } => {
@@ -702,7 +685,7 @@ fn resolve_filter_into(
             *dst = FilterPredicate::FieldAllen {
                 field: *field,
                 other: resolved,
-                mask: MaskConst::Mask(crate::image::view::mask_of(*mask, params)),
+                mask: crate::image::view::mask_of(*mask, params),
             };
         }
         // The measure-vs-constant kind: the u64 bound resolves like any
@@ -803,9 +786,6 @@ fn element_view(value: &Value) -> Option<BindValue<'_>> {
         Value::FixedBytes(raw) => BindValue::FixedBytes(raw),
         Value::IntervalU64(interval) => BindValue::IntervalU64(interval.start(), interval.end()),
         Value::IntervalI64(interval) => BindValue::IntervalI64(interval.start(), interval.end()),
-        // A mask is no element type — a set never holds masks; the
-        // caller reports the element mismatch.
-        Value::AllenMask(_) => return None,
     })
 }
 

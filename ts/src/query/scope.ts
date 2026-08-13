@@ -120,17 +120,6 @@ interface SetParam<Name extends string = string> {
 }
 
 /**
- * An Allen-mask parameter (the IR's `MaskTerm::Param`) — the temporal
- * relation as a bind-time argument: one prepared query answers any of the
- * mask questions per execution. Bound to a 13-bit mask number built from
- * the `ALLEN` constants.
- */
-interface MaskParam<Name extends string = string> {
-	readonly [term]: "maskParam"
-	readonly name: Name
-}
-
-/**
  * The measure of an interval-typed variable (`ir::Term::Measure`):
  * `|[s, e)| = e − s`, u64 — legal as one side of an order comparison, as a
  * find entry, and as the input of `sum`/`min`/`max`; every other position
@@ -143,7 +132,7 @@ interface Duration<V extends AnyVar = AnyVar> {
 }
 
 /** Any scope term value. */
-type AnyTerm = Var | Param | SetParam | MaskParam | Duration
+type AnyTerm = Var | Param | SetParam | Duration
 
 /** Narrows an unknown position value to a scope term (vs a host literal). */
 function isTerm(value: unknown): value is AnyTerm {
@@ -210,12 +199,6 @@ function makeParam<const Name extends string>(name: Name): Param<Name> {
 /** Builds one set-parameter term. */
 function makeSetParam<const Name extends string>(name: Name): SetParam<Name> {
 	const value: SetParam<Name> = { [term]: "setParam", name }
-	return Object.freeze(value)
-}
-
-/** Builds one Allen-mask-parameter term. */
-function makeMaskParam<const Name extends string>(name: Name): MaskParam<Name> {
-	const value: MaskParam<Name> = { [term]: "maskParam", name }
 	return Object.freeze(value)
 }
 
@@ -391,7 +374,7 @@ type InferredOf<T> = T extends { readonly [inferred]?: infer S } ? Exclude<S, un
  */
 interface ParamEntry {
 	readonly name: string
-	readonly shape: "value" | "set" | "mask"
+	readonly shape: "value" | "set"
 	readonly anchor: AnyField | "measure" | undefined
 	readonly op: "binding" | "eq" | "ne" | "lt" | "le" | "gt" | "ge" | "pointIn" | "allen"
 	readonly membership: QueryParam | undefined
@@ -405,7 +388,6 @@ export type {
 	Flatten,
 	InferredOf,
 	JoinOk,
-	MaskParam,
 	MatchFields,
 	MatchOwner,
 	MintClassOf,
@@ -420,4 +402,4 @@ export type {
 	Var,
 	VarsOf
 }
-export { fieldJoins, inferred, isTerm, makeDuration, makeMaskParam, makeParam, makeSetParam, renderFieldKind, term, v }
+export { fieldJoins, inferred, isTerm, makeDuration, makeParam, makeSetParam, renderFieldKind, term, v }

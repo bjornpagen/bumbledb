@@ -129,14 +129,16 @@ judgment, never the judgment's home; in particular the closed-reference
 refusal lives in engine validation, where the schema's closedness already
 resolves, not in any one SDK's type tier.
 
-**The mask value shape:** the interval-pair relation itself is a value —
+**The mask value shape:** the interval-pair relation is an operator argument —
 `AllenMask`, a 13-bit word, bit *i* = Allen basic *i* in the palindromic order
 (before, meets, overlaps, starts, during, finishes, equals, finished-by,
 contains, started-by, overlapped-by, met-by, after), so the algebra's converse
-involution is the 13-bit reversal. It is **not a field type** — nothing stores
-a mask; the roster stays at six — it exists so the temporal relation can be
-a bind-time argument (`Value::AllenMask` / `BindValue::AllenMask`,
-`20-query-ir.md`).
+involution is the 13-bit reversal. It is **not a field type and not a bind
+value** — nothing stores a mask; the roster stays at six — and the query
+IR carries only a **literal** mask (`Allen { mask: AllenMask }`,
+`20-query-ir.md`). Named constants (`INTERSECTS`, `MEETS`, `DISJOINT`, the
+13 basics) and `|` unions are the spelling; a param in the mask position
+has no grammar.
 
 **Names live in the host.** The schema macro generates Rust newtypes
 (`struct AccountId(pub u64);`, `struct Cents(pub i64);`, `struct ValidDuring(pub

@@ -265,7 +265,6 @@ fn sql_literal(value: &Value) -> String {
         Value::IntervalU64(..) | Value::IntervalI64(..) => {
             panic!("an interval maps to two columns — rows split before rendering")
         }
-        Value::AllenMask(_) => panic!("mask values are comparison arguments, never columns"),
     }
 }
 
@@ -374,7 +373,6 @@ pub fn to_sql_value(value: &Value) -> rusqlite::types::Value {
         Value::IntervalU64(..) | Value::IntervalI64(..) => {
             panic!("an interval maps to two columns — split through interval_halves")
         }
-        Value::AllenMask(_) => panic!("mask values are comparison arguments, never columns"),
     }
 }
 

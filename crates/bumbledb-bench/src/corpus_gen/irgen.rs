@@ -13,8 +13,8 @@
 //! confirm them).
 
 use bumbledb::{
-    AggOp, AllenMask, Atom, CmpOp, Comparison, ConditionTree, FieldId, FindTerm, MaskTerm, ParamId,
-    Query, RelationId, Rule, Term, Value, VarId,
+    AggOp, AllenMask, Atom, CmpOp, Comparison, ConditionTree, FieldId, FindTerm, ParamId, Query,
+    RelationId, Rule, Term, Value, VarId,
 };
 
 use super::Rng;
@@ -157,26 +157,11 @@ fn random_find(rng: &mut Rng) -> FindTerm {
 }
 
 fn random_agg(rng: &mut Rng) -> AggOp {
-    match rng.range(8) {
+    match rng.range(5) {
         0 => AggOp::Sum,
         1 => AggOp::Min,
         2 => AggOp::Max,
         3 => AggOp::Count,
-        4 => AggOp::CountDistinct,
-        5 => AggOp::ArgMax {
-            key: if rng.chance(1, 4) {
-                bumbledb::ArgKey::Measure(var(rng))
-            } else {
-                bumbledb::ArgKey::Var(var(rng))
-            },
-        },
-        6 => AggOp::ArgMin {
-            key: if rng.chance(1, 4) {
-                bumbledb::ArgKey::Measure(var(rng))
-            } else {
-                bumbledb::ArgKey::Var(var(rng))
-            },
-        },
         _ => AggOp::Pack,
     }
 }
@@ -285,13 +270,10 @@ fn random_comparison(rng: &mut Rng) -> Comparison {
 }
 
 /// Any of the 2¹³ literal masks — ∅ and FULL (the vacuous rejections)
-/// included — or a param mask.
-fn random_mask(rng: &mut Rng) -> MaskTerm {
-    if rng.chance(1, 8) {
-        return MaskTerm::Param(param(rng));
-    }
+/// included.
+fn random_mask(rng: &mut Rng) -> AllenMask {
     let bits = u16::try_from(rng.range(1 << 13)).expect("13 bits fit u16");
-    MaskTerm::Literal(AllenMask::new(bits).expect("13-bit draw is a mask"))
+    AllenMask::new(bits).expect("13-bit draw is a mask")
 }
 
 /// Mostly within the target theory's relation span, sometimes dangling.

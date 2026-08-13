@@ -600,23 +600,12 @@ pub enum ValidationError {
         rule: usize,
         position: usize,
     },
-    /// Arg-restriction (`ArgMax`/`ArgMin`) in a multi-rule program
-    /// (DNF-lowered rules included): the restriction key is a rule-scoped
-    /// variable outside the head's vocabulary — rules need not even
-    /// agree on its type — so "the extreme over the union" is undefined
-    /// and refused at the boundary. The modeling answer is one Arg query
-    /// per disjunct, host-merged; the trigger for defining a cross-rule
-    /// restriction is a real query
-    /// (`docs/architecture/20-query-ir.md` § aggregation).
-    ArgAcrossRules {
-        rules: usize,
-    },
     /// A nullary `Count` in a fold-free head of a hand-written 2+-rule
     /// program (ruled 2026-07-23, R1): under the head-projection law a
     /// fold-free head admits one projection per group, so the Count is
     /// definitionally the constant 1 — an uninformative query, made
-    /// unrepresentable beside [`Self::ArgAcrossRules`] with the same
-    /// modeling answer: one Count per disjunct, host-merged. DNF-derived
+    /// unrepresentable. The modeling answer: one Count per disjunct,
+    /// host-merged. DNF-derived
     /// rule sets are exempt — or-transparency (R2) keeps their fold
     /// domain the written rule's full binding set, so their Count counts
     /// (`docs/architecture/20-query-ir.md` § aggregation).
@@ -728,14 +717,13 @@ pub enum ValidationError {
     },
     /// An `Allen` comparison whose literal mask is empty — no basic
     /// relation can hold, so the condition is "never": write no query
-    /// (`docs/architecture/20-query-ir.md` § the Allen operator; the
-    /// bind-time sibling is [`Error::EmptyAllenMaskParam`]).
+    /// (`docs/architecture/20-query-ir.md` § the Allen operator).
     EmptyAllenMask {
         index: usize,
     },
     /// An `Allen` comparison whose literal mask is all 13 basics — every
     /// pair satisfies it, so the condition is "always": write no
-    /// condition (the bind-time sibling is [`Error::FullAllenMaskParam`]).
+    /// condition.
     FullAllenMask {
         index: usize,
     },
@@ -770,12 +758,10 @@ pub enum ValidationError {
     /// Sum/Min/Max over a variable outside the fold's roster — Sum takes
     /// U64/I64; Min/Max take the orderable types, bool included (`Max`
     /// over bool is Any, `Min` is All — ruled 2026-07-23, R3).
-    /// `CountDistinct` is legal over every type: equality is all it
-    /// needs.
     AggregateInputType {
         find: usize,
     },
-    /// A `Sum`/`Min`/`Max` fold or an Arg key over a closed-bound
+    /// A `Sum`/`Min`/`Max` fold over a closed-bound
     /// variable (ruled 2026-07-23, R4): its words are declaration
     /// indices, so folding or sweeping their order is ordering an
     /// accident — refused exactly as the order comparison is
@@ -787,26 +773,11 @@ pub enum ValidationError {
     CountWithVariable {
         find: usize,
     },
-    /// Sum/Min/Max/CountDistinct require a variable, and Arg terms a
-    /// carried variable.
+    /// Sum/Min/Max require a variable.
     AggregateWithoutVariable {
         find: usize,
     },
     AggregateOverGroupKey {
-        find: usize,
-    },
-    /// Arg terms and fold aggregates (Sum/Min/Max/Count/CountDistinct)
-    /// may not mix in one query — "sum of the latest" is two queries.
-    MixedArgAndFold {
-        find: usize,
-    },
-    /// All Arg terms in one query share one key variable and one
-    /// direction; this find disagrees with an earlier Arg term.
-    ArgKeyMismatch {
-        find: usize,
-    },
-    /// An Arg key must be orderable: U64 or I64.
-    NonOrderableArgKey {
         find: usize,
     },
     /// A second `Pack` term in one head: the multi-`Pack` product has no
@@ -816,18 +787,13 @@ pub enum ValidationError {
     MultiplePackTerms {
         find: usize,
     },
-    /// `Pack` beside a fold aggregate (Sum/Min/Max/Count/CountDistinct):
+    /// `Pack` beside a fold aggregate (Sum/Min/Max/Count):
     /// `Pack` is relation-shaped — a fold column repeated per segment row
     /// is a join in aggregate costume. Coalesced-time accounting
     /// (`Sum∘Duration∘Pack`) is two prepared queries or a host fold over
     /// packed answers; *trigger* for a composed form: a measured two-pass
     /// budget violation.
     MixedPackAndFold {
-        find: usize,
-    },
-    /// `Pack` beside Arg terms — the two relation-shaped aggregates do
-    /// not compose in one head (the Arg/fold mixing rule, extended).
-    MixedPackAndArg {
         find: usize,
     },
     /// `Pack` over a non-interval variable: the coalesce is defined by
@@ -851,9 +817,7 @@ pub enum ValidationError {
         var: VarId,
     },
     /// A `FindTerm::AggregateMeasure` whose op is not `Sum`/`Min`/`Max`
-    /// — `Count` is nullary, `CountDistinct` over a measure is a count
-    /// over derived values with no sighted use, and the Arg ops key on
-    /// variables, not computations.
+    /// — `Count` is nullary and Pack coalesces intervals, not measures.
     DurationAggregateOp {
         find: usize,
     },
@@ -1446,23 +1410,6 @@ pub enum Error {
     /// bind-time sibling of
     /// [`ValidationError::PointLiteralAtCeiling`].
     PointParamAtCeiling {
-        param: ParamId,
-    },
-    /// Bind-time: a non-mask value supplied for an `Allen` comparison's
-    /// mask param — supply [`crate::BindValue::AllenMask`].
-    AllenMaskParamExpected {
-        param: ParamId,
-    },
-    /// Bind-time: a mask param bound to the empty mask — the condition
-    /// would be "never" (the validation-time sibling is
-    /// [`ValidationError::EmptyAllenMask`]).
-    EmptyAllenMaskParam {
-        param: ParamId,
-    },
-    /// Bind-time: a mask param bound to the full mask — the condition
-    /// would be "always" (the validation-time sibling is
-    /// [`ValidationError::FullAllenMask`]).
-    FullAllenMaskParam {
         param: ParamId,
     },
     /// `Duration` reached a ray: an interval with `end == MAX` denotes

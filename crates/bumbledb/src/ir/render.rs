@@ -35,9 +35,7 @@
 //!   newtype names), because rendering hides nothing. Comparison terms
 //!   carry no field position, so a literal there renders by value;
 //!   the notation's selection form is the handle's home;
-//! - the Arg terms, absent from the notation grammar (Arg is single-rule
-//!   only and its key is rule-internal), render as `ArgMax(carried,
-//!   key)` — an honest extension, not grammar;
+//! - the remaining folds render as `Sum`/`Min`/`Max`/`Count`/`Pack`;
 //! - a nested condition tree renders in the notation's own `and(..)` /
 //!   `or(..)` forms — grammar, not merely diagnostics (ruled 2026-07-23,
 //!   R9): `query!` parses them back, so the render→parse round trip
@@ -52,8 +50,8 @@ use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
 use crate::ir::{
-    AggOp, Atom, CmpOp, Comparison, ConditionTree, FindTerm, MaskTerm, ParamId, Query, Rule, Term,
-    Value, VarId,
+    AggOp, Atom, CmpOp, Comparison, ConditionTree, FindTerm, ParamId, Query, Rule, Term, Value,
+    VarId,
 };
 use crate::schema::{Enforcement, Relation, Schema};
 use bumbledb_theory::allen::AllenMask;
@@ -224,25 +222,17 @@ fn find_term(out: &mut String, term: &FindTerm) {
 }
 
 /// One aggregate head term: `Sum(v0)`, `Count`, `Pack(v1)`,
-/// `Sum(Duration(v0))`, `ArgMax(v0, v1)` (carried, key — the honest
-/// extension; see the module doc).
+/// `Sum(Duration(v0))`.
 fn aggregate(out: &mut String, op: AggOp, over: Option<VarId>, measure: bool) {
     let name = match op {
         AggOp::Sum => "Sum",
         AggOp::Min => "Min",
         AggOp::Max => "Max",
         AggOp::Count => "Count",
-        AggOp::CountDistinct => "CountDistinct",
-        AggOp::ArgMax { .. } => "ArgMax",
-        AggOp::ArgMin { .. } => "ArgMin",
         AggOp::Pack => "Pack",
     };
     out.push_str(name);
-    let key = match op {
-        AggOp::ArgMax { key } | AggOp::ArgMin { key } => Some(key),
-        _ => None,
-    };
-    if over.is_none() && key.is_none() {
+    if over.is_none() {
         return;
     }
     out.push('(');
@@ -253,21 +243,6 @@ fn aggregate(out: &mut String, op: AggOp, over: Option<VarId>, measure: bool) {
             out.push(')');
         } else {
             var_name(out, var);
-        }
-    }
-    if let Some(key) = key {
-        if over.is_some() {
-            out.push_str(", ");
-        }
-        // The key's two spellings (R5): the variable, or its measure —
-        // `ArgMax(w, Duration(w))`.
-        match key {
-            crate::ir::ArgKey::Var(var) => var_name(out, var),
-            crate::ir::ArgKey::Measure(var) => {
-                out.push_str("Duration(");
-                var_name(out, var);
-                out.push(')');
-            }
         }
     }
     out.push(')');
@@ -432,12 +407,9 @@ fn term(out: &mut String, term: &Term) {
     }
 }
 
-/// The mask position: a named mask expression, or the param.
-fn mask_term(out: &mut String, mask: MaskTerm) {
-    match mask {
-        MaskTerm::Literal(mask) => mask_names(out, mask),
-        MaskTerm::Param(param) => param_name(out, param),
-    }
+/// The mask position: a named mask expression.
+fn mask_term(out: &mut String, mask: AllenMask) {
+    mask_names(out, mask);
 }
 
 /// A literal mask as named values of the algebra: an exact workload
@@ -530,12 +502,6 @@ pub(crate) fn literal(out: &mut String, value: &Value) {
                 let _ = write!(out, "{}", byte.escape_ascii());
             }
             out.push('"');
-        }
-        // A mask value is never a term of a well-formed query (it is only
-        // legal inside `Allen`'s mask position); rendered anyway — the
-        // statement renderer's format, totality on plain data.
-        Value::AllenMask(mask) => {
-            let _ = write!(out, "allen({:#015b})", mask.bits());
         }
     }
 }

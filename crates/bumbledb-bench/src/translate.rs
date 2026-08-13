@@ -31,12 +31,7 @@
 //!   of **all bound variables** (the distinct full binding set), grouped
 //!   by the non-aggregated finds; a *global* aggregate appends
 //!   `HAVING COUNT(*) > 0` so SQL's one-NULL-row-over-empty collapses to
-//!   the engine's empty set. `CountDistinct(x)` = `COUNT(DISTINCT x)`
-//!   over that subquery.
-//! - Arg-restriction = the join-back template: the distinct subquery as
-//!   `WITH d AS (...)`, joined against its per-group key extreme, with
-//!   `SELECT DISTINCT` on the outer — ties survive set-honestly on both
-//!   sides. The global variant omits the group columns.
+//!   the engine's empty set.
 //! - A zero-binding atom (nonemptiness gate) becomes `EXISTS (SELECT 1
 //!   FROM t)`; negated, `NOT EXISTS` (the relation must be empty).
 //! - Never-interned strings/bytes need no special case: SQL compares
@@ -211,12 +206,6 @@ pub enum Inexpressible {
     /// emulation, not the engine. Naive-only by decision; the verify
     /// harness consumes this enumeration to route and report it.
     PackAggregate,
-    /// A bind-time Allen mask (`MaskTerm::Param`): the rendered SQL
-    /// embeds the mask's basic disjunction as text, so a per-execution
-    /// mask has no prepared-statement slot to ride — re-rendering per
-    /// draw would test the renderer, not the binding. Naive-only; the
-    /// verify harness routes it exactly like `Pack` (finding 086).
-    AllenMaskParam,
     /// A capacity verdict: SQL has no per-parent measure-window
     /// judgment with a pinned statement id — the same class as the
     /// other two judgment kinds, and the weighted form is exactly as
@@ -253,11 +242,11 @@ pub enum Inexpressible {
     SelfNegation,
 }
 
-/// The `SQLite` lane's expressibility gate. Every other query construct
-/// translates — negation, membership, param sets, `CountDistinct`,
-/// Arg-restriction included — so a `Query` arm without a `Pack` head
-/// or a bind-time mask param is unconditionally expressible; those two
-/// and the dependency judgments are the naive lane's alone.
+/// The `SQLite` lane's expressibility gate. Every remaining query
+/// construct translates — negation, membership, param sets, remaining
+/// folds — so a `Query` arm without a `Pack` head is unconditionally
+/// expressible; Pack and the dependency judgments are the naive lane's
+/// alone.
 ///
 /// # Errors
 ///
@@ -272,17 +261,6 @@ pub fn sqlite_expressible(case: &LaneCase<'_>) -> Result<(), Inexpressible> {
                 .any(|term| matches!(term, bumbledb::HeadTerm::Aggregate(bumbledb::HeadOp::Pack)))
             {
                 Err(Inexpressible::PackAggregate)
-            } else if query.rules.iter().any(|rule| {
-                rule.conditions.iter().map(leaf).any(|comparison| {
-                    matches!(
-                        comparison.op,
-                        bumbledb::CmpOp::Allen {
-                            mask: bumbledb::MaskTerm::Param(_)
-                        }
-                    )
-                })
-            }) {
-                Err(Inexpressible::AllenMaskParam)
             } else {
                 Ok(())
             }

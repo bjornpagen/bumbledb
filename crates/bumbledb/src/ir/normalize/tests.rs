@@ -1,11 +1,9 @@
 use super::lower_literal::lower_literal;
 use super::*;
 use crate::encoding::{ValueRef, encode_fact, encode_i64};
-use crate::image::view::{Const, MaskConst, ResolvedWordSource};
+use crate::image::view::{Const, ResolvedWordSource};
 use crate::ir::validate::validate;
-use crate::ir::{
-    Atom, Comparison, ConditionTree, FindTerm, MaskTerm, ParamId, Query, Rule, Term, Value,
-};
+use crate::ir::{Atom, Comparison, ConditionTree, FindTerm, ParamId, Query, Rule, Term, Value};
 use crate::schema::Schema;
 use crate::schema::ValidateDescriptor as _;
 use crate::storage::commit::commit;
@@ -507,7 +505,7 @@ fn same_atom_allen_lowers_to_the_mask_carrying_shape() {
         vec![],
         vec![Comparison {
             op: CmpOp::Allen {
-                mask: MaskTerm::Literal(AllenMask::INTERSECTS),
+                mask: AllenMask::INTERSECTS,
             },
             lhs: var(0),
             rhs: var(1),
@@ -524,7 +522,7 @@ fn same_atom_allen_lowers_to_the_mask_carrying_shape() {
         vec![FilterPredicate::FieldsAllen {
             left: P_DURING,
             right: P_REVIEW,
-            mask: MaskConst::Mask(AllenMask::INTERSECTS),
+            mask: AllenMask::INTERSECTS,
         }]
     );
     // Interval variables occupy two slots each.
@@ -550,7 +548,7 @@ fn same_atom_allen_lowers_to_the_mask_carrying_shape() {
         vec![FilterPredicate::FieldsAllen {
             left: P_DURING,
             right: P_REVIEW,
-            mask: MaskConst::Mask(AllenMask::EQUALS),
+            mask: AllenMask::EQUALS,
         }]
     );
     let ne = query(
@@ -570,7 +568,7 @@ fn same_atom_allen_lowers_to_the_mask_carrying_shape() {
         vec![FilterPredicate::FieldsAllen {
             left: P_DURING,
             right: P_REVIEW,
-            mask: MaskConst::Mask(AllenMask::EQUALS.complement()),
+            mask: AllenMask::EQUALS.complement(),
         }]
     );
 
@@ -666,7 +664,7 @@ fn cross_atom_allen_becomes_the_mask_residual() {
         vec![],
         vec![Comparison {
             op: CmpOp::Allen {
-                mask: MaskTerm::Literal(AllenMask::INTERSECTS),
+                mask: AllenMask::INTERSECTS,
             },
             lhs: var(0),
             rhs: var(1),
@@ -679,7 +677,7 @@ fn cross_atom_allen_becomes_the_mask_residual() {
         vec![PlacedAllen {
             lhs: VarId(0),
             rhs: VarId(1),
-            mask: MaskTerm::Literal(AllenMask::INTERSECTS),
+            mask: AllenMask::INTERSECTS,
         }]
     );
     // Cross-atom interval Eq canonicalizes into the same residual kind.
@@ -708,7 +706,7 @@ fn cross_atom_allen_becomes_the_mask_residual() {
         vec![PlacedAllen {
             lhs: VarId(0),
             rhs: VarId(1),
-            mask: MaskTerm::Literal(AllenMask::EQUALS),
+            mask: AllenMask::EQUALS,
         }]
     );
     assert_eq!(norm.slot_widths[&VarId(0)], SlotWidth::TWO);
@@ -866,169 +864,6 @@ fn cross_atom_membership_variable_lowers_to_point_in_over_the_binding() {
 }
 
 // --- constant-side interval comparisons -------------------------------------
-
-#[test]
-#[expect(
-    clippy::too_many_lines,
-    reason = "the linear table or protocol is clearer kept together"
-)] // a fixed list, one entry per const shape
-fn constant_interval_comparisons_lower_to_fixed_const_shapes() {
-    let iv = || {
-        Term::Literal(Value::IntervalI64(
-            bumbledb_theory::Interval::<i64>::new(2, 9).expect("nonempty interval"),
-        ))
-    };
-    let iv_const = Const::Interval {
-        start: w(2),
-        end: w(9),
-    };
-    let p_atom = || Atom {
-        source: crate::ir::AtomSource::Edb(P),
-        bindings: vec![(P_DURING, var(0))],
-    };
-
-    // Allen(x, [2,9), INTERSECTS) — the field stays on the left.
-    let intersects = query(
-        vec![p_atom()],
-        vec![],
-        vec![Comparison {
-            op: CmpOp::Allen {
-                mask: MaskTerm::Literal(AllenMask::INTERSECTS),
-            },
-            lhs: var(0),
-            rhs: iv(),
-        }],
-    );
-    assert_eq!(
-        normalized(&intersects).occurrences[0].filters,
-        vec![FilterPredicate::FieldAllen {
-            field: P_DURING,
-            other: iv_const.clone(),
-            mask: MaskConst::Mask(AllenMask::INTERSECTS),
-        }]
-    );
-
-    // Allen([2,9), x, COVERS) — constant-first mirrors as the converse
-    // mask; the field stays the left operand.
-    let mirrored = query(
-        vec![p_atom()],
-        vec![],
-        vec![Comparison {
-            op: CmpOp::Allen {
-                mask: MaskTerm::Literal(AllenMask::COVERS),
-            },
-            lhs: iv(),
-            rhs: var(0),
-        }],
-    );
-    assert_eq!(
-        normalized(&mirrored).occurrences[0].filters,
-        vec![FilterPredicate::FieldAllen {
-            field: P_DURING,
-            other: iv_const.clone(),
-            mask: MaskConst::Mask(AllenMask::COVERED_BY),
-        }]
-    );
-
-    // ...and a mirrored param mask defers the converse to bind.
-    let mirrored_param = query(
-        vec![p_atom()],
-        vec![],
-        vec![Comparison {
-            op: CmpOp::Allen {
-                mask: MaskTerm::Param(ParamId(0)),
-            },
-            lhs: iv(),
-            rhs: var(0),
-        }],
-    );
-    assert_eq!(
-        normalized(&mirrored_param).occurrences[0].filters,
-        vec![FilterPredicate::FieldAllen {
-            field: P_DURING,
-            other: iv_const.clone(),
-            mask: MaskConst::ConversedParam(ParamId(0)),
-        }]
-    );
-
-    // Ne(x, [2,9)) canonicalizes: Allen(¬EQUALS) against the constant.
-    let ne = query(
-        vec![p_atom()],
-        vec![],
-        vec![Comparison {
-            op: CmpOp::Ne,
-            lhs: var(0),
-            rhs: iv(),
-        }],
-    );
-    assert_eq!(
-        normalized(&ne).occurrences[0].filters,
-        vec![FilterPredicate::FieldAllen {
-            field: P_DURING,
-            other: iv_const.clone(),
-            mask: MaskConst::Mask(AllenMask::EQUALS.complement()),
-        }]
-    );
-
-    // PointIn([2,9), t) over a scalar variable — the reversed point
-    // containment on the point's field.
-    let point_within = query(
-        vec![Atom {
-            source: crate::ir::AtomSource::Edb(E),
-            bindings: vec![(FieldId(0), var(0)), (E_AT, var(1))],
-        }],
-        vec![],
-        vec![Comparison {
-            op: CmpOp::PointIn,
-            lhs: iv(),
-            rhs: var(1),
-        }],
-    );
-    assert_eq!(
-        normalized(&point_within).occurrences[0].filters,
-        vec![FilterPredicate::FieldWithin {
-            field: E_AT,
-            outer: iv_const.clone(),
-        }]
-    );
-
-    // PointIn(x, 5) — a constant point is membership.
-    let point_in = query(
-        vec![p_atom()],
-        vec![],
-        vec![Comparison {
-            op: CmpOp::PointIn,
-            lhs: var(0),
-            rhs: Term::Literal(Value::I64(5)),
-        }],
-    );
-    assert_eq!(
-        normalized(&point_in).occurrences[0].filters,
-        vec![FilterPredicate::PointIn {
-            field: P_DURING,
-            point: ResolvedWordSource::Word(w(5)),
-        }]
-    );
-
-    // during = [2,9) — interval value equality is an ordinary Eq compare
-    // (a probeable selection over the two-word pair).
-    let equality = query(
-        vec![Atom {
-            source: crate::ir::AtomSource::Edb(P),
-            bindings: vec![(P_EMP, var(0)), (P_DURING, iv())],
-        }],
-        vec![],
-        vec![],
-    );
-    assert_eq!(
-        normalized(&equality).occurrences[0].filters,
-        vec![FilterPredicate::Compare {
-            field: P_DURING,
-            op: CmpOp::Eq,
-            value: iv_const,
-        }]
-    );
-}
 
 #[test]
 fn interval_param_equality_binding_stays_an_eq_compare() {
@@ -1228,144 +1063,6 @@ fn sweep_param_set_comparison_placements() {
             "const_first={const_first}"
         );
     }
-}
-
-#[test]
-#[expect(
-    clippy::too_many_lines,
-    reason = "the linear table or protocol is clearer kept together"
-)] // one pinned placement per param-side Allen shape
-fn sweep_allen_param_placements() {
-    // The param-side Allen shapes the goldens don't already pin: a param
-    // mask on the same-atom and cross-atom variable pairs, a param
-    // constant side, and interval equality against a param (both written
-    // orders — the EQUALS mask is its own converse).
-    let mask_param = CmpOp::Allen {
-        mask: MaskTerm::Param(ParamId(0)),
-    };
-    let same = query(
-        vec![Atom {
-            source: crate::ir::AtomSource::Edb(P),
-            bindings: vec![(P_DURING, var(0)), (P_REVIEW, var(1))],
-        }],
-        vec![],
-        vec![Comparison {
-            op: mask_param,
-            lhs: var(0),
-            rhs: var(1),
-        }],
-    );
-    assert_eq!(
-        normalized(&same).occurrences[0].filters,
-        vec![FilterPredicate::FieldsAllen {
-            left: P_DURING,
-            right: P_REVIEW,
-            mask: MaskConst::Param(ParamId(0)),
-        }]
-    );
-    let cross = query(
-        vec![
-            Atom {
-                source: crate::ir::AtomSource::Edb(P),
-                bindings: vec![(P_DURING, var(0))],
-            },
-            Atom {
-                source: crate::ir::AtomSource::Edb(P),
-                bindings: vec![(P_DURING, var(1))],
-            },
-        ],
-        vec![],
-        vec![Comparison {
-            op: mask_param,
-            lhs: var(0),
-            rhs: var(1),
-        }],
-    );
-    assert_eq!(
-        normalized(&cross).allen_residuals,
-        vec![PlacedAllen {
-            lhs: VarId(0),
-            rhs: VarId(1),
-            mask: MaskTerm::Param(ParamId(0)),
-        }]
-    );
-
-    // A param constant side under a literal mask.
-    let p_atom = || Atom {
-        source: crate::ir::AtomSource::Edb(P),
-        bindings: vec![(P_DURING, var(0))],
-    };
-    let against_param = query(
-        vec![p_atom()],
-        vec![],
-        vec![Comparison {
-            op: CmpOp::Allen {
-                mask: MaskTerm::Literal(AllenMask::INTERSECTS),
-            },
-            lhs: var(0),
-            rhs: Term::Param(ParamId(0)),
-        }],
-    );
-    assert_eq!(
-        normalized(&against_param).occurrences[0].filters,
-        vec![FilterPredicate::FieldAllen {
-            field: P_DURING,
-            other: Const::Param(ParamId(0)),
-            mask: MaskConst::Mask(AllenMask::INTERSECTS),
-        }]
-    );
-
-    // Interval equality against a param canonicalizes to the EQUALS mask;
-    // written constant-first it seals the converse (EQUALS is symmetric).
-    for const_first in [false, true] {
-        let param = Term::Param(ParamId(0));
-        let (lhs, rhs) = if const_first {
-            (param, var(0))
-        } else {
-            (var(0), param)
-        };
-        let eq = query(
-            vec![p_atom()],
-            vec![],
-            vec![Comparison {
-                op: CmpOp::Eq,
-                lhs,
-                rhs,
-            }],
-        );
-        let expected_mask = if const_first {
-            AllenMask::EQUALS.converse()
-        } else {
-            AllenMask::EQUALS
-        };
-        assert_eq!(
-            normalized(&eq).occurrences[0].filters,
-            vec![FilterPredicate::FieldAllen {
-                field: P_DURING,
-                other: Const::Param(ParamId(0)),
-                mask: MaskConst::Mask(expected_mask),
-            }],
-            "const_first={const_first}"
-        );
-    }
-    // ...and interval Ne against a param seals the complement.
-    let ne = query(
-        vec![p_atom()],
-        vec![],
-        vec![Comparison {
-            op: CmpOp::Ne,
-            lhs: var(0),
-            rhs: Term::Param(ParamId(0)),
-        }],
-    );
-    assert_eq!(
-        normalized(&ne).occurrences[0].filters,
-        vec![FilterPredicate::FieldAllen {
-            field: P_DURING,
-            other: Const::Param(ParamId(0)),
-            mask: MaskConst::Mask(AllenMask::EQUALS.complement()),
-        }]
-    );
 }
 
 #[test]
@@ -1571,10 +1268,10 @@ fn residuals_are_never_single_occurrence_across_the_new_kinds() {
     };
     for op in [
         CmpOp::Allen {
-            mask: MaskTerm::Literal(AllenMask::INTERSECTS),
+            mask: AllenMask::INTERSECTS,
         },
         CmpOp::Allen {
-            mask: MaskTerm::Literal(AllenMask::COVERS),
+            mask: AllenMask::COVERS,
         },
         CmpOp::Eq,
         CmpOp::Ne,

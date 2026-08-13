@@ -31,14 +31,14 @@ finding stamps live in git history.
 
 - **1.0.0 close** — owner-gated, explicitly deferred 2026-07-18. Owner
   ceremony only.
-- **crashpoint + image-oracle disposition** — consumer-less test-support
-  features (fuzzer deletion); keep-dormant vs delete is an owner ruling.
+- **crashpoint + image-oracle** — deleted (owner kill: consumer-less
+  test-support; `crashpoint!` sites remain as no-op atomicity names).
 - **Audit-2026-07 deferred findings**: 014 (per-parent leaf batch-of-1 —
   the campaign's pinned-run fold `a75d1e65` lands the adjacent mechanism,
   but o4's lane was not re-benched), 044 (forced-map telescoped distinct
   Count), 053 (two FilterPredicate interpreters), the 009 step-2
-  per-forced-map min/max fence, and the R5 tail (TS measure-keyed Arg
-  spelling + the Lean denotation's conformance fence).
+  per-forced-map min/max fence. (The R5 ArgMax/ArgMin tail, including
+  measure-keyed keys, is killed with the rest of Arg/CountDistinct.)
 - **Feature-register triggers, recorded and waiting**: C19 balance laws
   (`Sum == Sum` per group — double-entry); temporal capacity (per-instant
   stabbing-set windows — mechanism sketch recorded beside the trigger:

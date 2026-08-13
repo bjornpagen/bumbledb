@@ -8,7 +8,6 @@ use crate::querygen::shapes_closed::{closed_join, ground_fold};
 use crate::querygen::shapes_ground::{du_walk, existence_walk};
 use crate::querygen::shapes_interval::{boundary, interval_join, measure, membership, pack};
 use crate::querygen::shapes_rules::rules;
-use crate::querygen::shapes_sink::{arg, count_distinct};
 use crate::querygen::target::{Domains, ids};
 use crate::querygen::{Builder, GenTags, SHAPE_WEIGHTS, Shape};
 
@@ -32,12 +31,11 @@ fn build(rng: &mut Rng, shape: Shape, cfg: GenConfig, domains: &Domains) -> Buil
         Shape::Chain => chain(&mut b, rng),
         Shape::SelfJoin => self_join(&mut b, rng),
         Shape::Gated => {
-            match rng.range(5) {
+            match rng.range(4) {
                 0 => key_probe(&mut b, rng),
                 1 => star(&mut b, rng),
                 2 => chain(&mut b, rng),
-                3 => aggregate(&mut b, rng),
-                _ => count_distinct(&mut b, rng),
+                _ => aggregate(&mut b, rng),
             }
             // The zero-binding nonemptiness gate, drawn from more than
             // one relation (falsity is the empty-store pass's job;
@@ -53,8 +51,6 @@ fn build(rng: &mut Rng, shape: Shape, cfg: GenConfig, domains: &Domains) -> Buil
         Shape::Membership => membership(&mut b, rng, cfg, domains),
         Shape::IntervalJoin => interval_join(&mut b, rng, cfg, domains),
         Shape::Boundary => boundary(&mut b, rng, cfg, domains),
-        Shape::CountDistinct => count_distinct(&mut b, rng),
-        Shape::Arg => arg(&mut b, rng),
         Shape::ExistenceWalk => existence_walk(&mut b, rng),
         Shape::DuWalk => du_walk(&mut b, rng),
         Shape::Measure => measure(&mut b, rng, cfg, domains),
@@ -105,7 +101,6 @@ pub(super) fn random_query_tagged(rng: &mut Rng, cfg: GenConfig) -> (Query, Shap
         adjacent_right: b.adjacent_right,
         ladder: b.ladder,
         random_mask: b.random_mask,
-        mask_param: b.mask_param,
         ground: b.ground,
         rules: None,
         closed: b.closed,

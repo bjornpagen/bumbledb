@@ -1,6 +1,6 @@
 {
 "case":"seeded-0157",
-"provenance":{"world_seed":12603138,"case_seed":1245417,"draw":1},
+"provenance":{"world_seed":12603138,"case_seed":1245427,"draw":3},
 "strings":[],
 "theory":{"relations":[{"id":8,"name":"Mandate","closed":false,"fields":["u64","u64","interval_i64"]}],
 "ground_axioms":[]},
@@ -30,7 +30,7 @@
 {"finds":[{"var":0},{"var":1}],
  "atoms":[{"relation":8,"bindings":[[0,{"lit":{"u64":4}}],[1,{"var":0}],[2,{"var":1}]]}],
  "negated":[],
- "conditions":[{"cmp":{"op":"point_in","lhs":{"var":1},"rhs":{"lit":{"i64":2000000000055393}}}}],
+ "conditions":[{"cmp":{"op":"point_in","lhs":{"var":1},"rhs":{"lit":{"i64":2000000000004249}}}},{"cmp":{"op":"ne","lhs":{"var":1},"rhs":{"lit":{"interval_i64":[2000000000030720,2000000000030776]}}}}],
  "width":2}
 ]},
 "params":[],

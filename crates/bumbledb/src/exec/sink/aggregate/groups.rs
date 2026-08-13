@@ -1,6 +1,5 @@
 use crate::exec::run::{LeafBatch, LeafSource};
 use crate::exec::sink::{Acc, AggregateSink, FoldOp, GroupTable, SinkSpec};
-use crate::exec::wordmap::WordMap;
 
 /// Loads a group key, span-wise (the `SlotWidth` layout): each group
 /// variable contributes its full word span — never a bare width-1 read.
@@ -42,8 +41,8 @@ impl AggregateSink {
     }
 
     /// Probes the group map with the key currently in `key_scratch`,
-    /// seeding a fresh accumulator row (and, per regime, a `CountDistinct`
-    /// value set per `CountDistinct` find or the group's Arg state) on
+    /// seeding a fresh accumulator row (and, per regime, the group's
+    /// Pack claim list) on
     /// first sight. The one place a group probe happens — the batch path
     /// memoizes around it.
     pub(super) fn probe_group(&mut self) -> usize {
@@ -99,17 +98,11 @@ impl AggregateSink {
                             (FoldOp::Min, _) => Acc::Min(u64::MAX),
                             (FoldOp::Max, _) => Acc::Max(u64::MIN),
                             (FoldOp::Count, _) => Acc::Count(0),
-                            (FoldOp::CountDistinct, _) => {
-                                Acc::CountDistinct(self.alloc_value_set(find))
-                            }
                         };
                         self.accs.push(acc);
                     }
-                    SinkSpec::Var { .. } | SinkSpec::Arg { .. } | SinkSpec::Pack { .. } => {}
+                    SinkSpec::Var { .. } | SinkSpec::Pack { .. } => {}
                 }
-            }
-            if self.arg.is_some() {
-                self.init_arg_group(group_idx);
             }
             if self.pack.is_some() {
                 self.init_pack_group(group_idx);
@@ -118,56 +111,13 @@ impl AggregateSink {
         group_idx
     }
 
-    /// Takes a value set from the pool (or grows it): allocation order is
-    /// (group, `CountDistinct` find), so a reused map's arity always equals
-    /// the find's span width (the map's own insert-time arity assert
-    /// backs this).
-    fn alloc_value_set(&mut self, find: SinkSpec) -> usize {
-        let SinkSpec::Agg {
-            over_slot,
-            over_width,
-            ..
-        } = find
-        else {
-            unreachable!("callers pass CountDistinct finds")
-        };
-        debug_assert!(
-            over_slot.is_some(),
-            "validated: CountDistinct has a variable"
-        );
-        let idx = self.value_sets_live;
-        if idx < self.value_sets.len() {
-            self.value_sets[idx].clear();
-        } else {
-            self.value_sets.push(WordMap::new(over_width));
-        }
-        self.value_sets_live += 1;
-        idx
-    }
-
     /// Seeds a fresh group's Pack state: an empty claim list, pooled by
-    /// group index (capacity retained across executions — the Arg row-set
-    /// precedent).
+    /// group index (capacity retained across executions).
     fn init_pack_group(&mut self, group_idx: usize) {
         if group_idx < self.pack_claims.len() {
             self.pack_claims[group_idx].clear();
         } else {
             self.pack_claims.push(Vec::new());
-        }
-    }
-
-    /// Seeds a fresh group's Arg state: the identity extreme (any first
-    /// key compares equal-or-better against it, so the first binding
-    /// always lands) and an empty row set — pooled by group index.
-    fn init_arg_group(&mut self, group_idx: usize) {
-        debug_assert_eq!(group_idx, self.arg_best.len(), "groups are dense");
-        let arg = self.arg.expect("callers check");
-        self.arg_best
-            .push(if arg.max { u64::MIN } else { u64::MAX });
-        if group_idx < self.arg_answers.len() {
-            self.arg_answers[group_idx].clear();
-        } else {
-            self.arg_answers.push(WordMap::new(self.carry_words));
         }
     }
 }

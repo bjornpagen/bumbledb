@@ -32,7 +32,6 @@ fn owned(value: &Value) -> Result<Owned, String> {
         Value::FixedBytes(raw) => Ok(Owned::Bytes(raw.to_vec())),
         Value::IntervalU64(interval) => Ok(Owned::IntervalU64(interval.start(), interval.end())),
         Value::IntervalI64(interval) => Ok(Owned::IntervalI64(interval.start(), interval.end())),
-        Value::AllenMask(_) => Err("mask values are never stored fields".to_owned()),
     }
 }
 

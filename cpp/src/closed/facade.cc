@@ -54,7 +54,7 @@ namespace bdb::detail {
 }
 
 [[nodiscard]] consteval auto closed_subject(std::string_view name) -> std::string {
-	return std::string{"bumbledb closed relation \""} + std::string{name} + "\"";
+	return std::string{"bumbledb closed relation \""} + spec_name(name) + "\"";
 }
 
 /**
@@ -101,7 +101,7 @@ template<class Payload>
 		auto const field = wire_field_name(member);
 		if (!payload_column_supported(member)) {
 			return closed_subject(name) + ": payload column \"" + field + "\" has unsupported type '" +
-			       std::string{std::meta::display_string_of(std::meta::type_of(member))} +
+			       spec_name(std::meta::display_string_of(std::meta::type_of(member))) +
 			       "' — closed payload columns are bool, std::uint64_t, "
 			       "std::int64_t, or std::string";
 		}
@@ -158,7 +158,7 @@ template<class... Members>
 	for (auto first = std::size_t{0}; first != names.size(); ++first) {
 		for (auto second = first + 1; second != names.size(); ++second) {
 			if (names[first] == names[second]) {
-				return closed_subject(name) + ": duplicate handle \"" + std::string{names[first].view()} + "\"";
+				return closed_subject(name) + ": duplicate handle \"" + spec_name(names[first].view()) + "\"";
 			}
 		}
 	}
@@ -171,14 +171,14 @@ template<class Payload, class... Members>
 	for (auto const& handle : names) {
 		auto const view = handle.view();
 		if (view == "id" || view == "axioms" || view == "data") {
-			return closed_subject(name) + ": handle \"" + std::string{view} +
+			return closed_subject(name) + ": handle \"" + spec_name(view) +
 			       "\" collides with the facade's own surface (id / axioms "
 			       "/ data) — the C++ facade projects handles as members, "
 			       "so those three names are reserved here";
 		}
 		for (auto const column : payload_members(^^Payload)) {
 			if (view == wire_field_name(column)) {
-				return closed_subject(name) + ": handle \"" + std::string{view} + "\" collides with a payload column of the same name";
+				return closed_subject(name) + ": handle \"" + spec_name(view) + "\" collides with a payload column of the same name";
 			}
 		}
 	}

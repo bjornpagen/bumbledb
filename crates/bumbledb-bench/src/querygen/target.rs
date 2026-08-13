@@ -578,7 +578,7 @@ pub const ZERO_DECIMAL_CURRENCY: u64 = 2;
 pub const DIGEST_WIDTHS: [u16; 6] = [7, 8, 9, 16, 63, 64];
 
 /// The digest-tag vocabulary size per width: small, so group-by and
-/// `CountDistinct` over bytes<N> see real multiplicity.
+/// `Count` over bytes<N> see real multiplicity.
 pub const DIGEST_VOCAB: u64 = 61;
 
 /// Derived per-relation domains (dense ids are `0..n`) — the dressing

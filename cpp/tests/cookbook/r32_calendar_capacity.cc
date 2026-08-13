@@ -227,7 +227,7 @@ auto run_cases(std::string_view fixtures_path, std::vector<CaseResult>& results)
 		for (auto const& row : answers.rows()) {
 			rows.push_back(row);
 		}
-		std::ranges::sort(rows, bdb::by(&BookedRow::room));
+		std::ranges::sort(rows, [](auto const& left, auto const& right) { return left.room < right.room; });
 		return rows;
 	});
 	auto totals_pass = totals.has_value() && totals->size() == 2;

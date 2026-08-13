@@ -59,7 +59,7 @@ struct rule_scope {
 
 	/** The member twin of `bdb::sum` (spell it `r.template sum<...>`). */
 	template<fixed_string Name, class Var>
-	[[nodiscard]] consteval auto sum(measure_ref<Var>) const -> agg_ref<Name, fold_form::sum, measure_ref<Var>, void> {
+	[[nodiscard]] consteval auto sum(measure_ref<Var>) const -> agg_ref<Name, fold_form::sum, measure_ref<Var>> {
 		return {};
 	}
 
@@ -167,9 +167,6 @@ inline constexpr auto query_type_reflection = ^^T;
 }
 
 [[nodiscard]] consteval auto param_type_of(param_data const& parameter) -> std::meta::info {
-	if (parameter.shape == param_shape::mask) {
-		return query_type_reflection<allen_mask>;
-	}
 	if (parameter.shape == param_shape::set) {
 		return set_type_of(parameter.domain);
 	}

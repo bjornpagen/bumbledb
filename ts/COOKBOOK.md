@@ -38,12 +38,10 @@ import {
 	abandon,
 	allen,
 	bool,
-	by,
 	bytes,
 	capacity,
 	closed,
 	contained,
-	desc,
 	duration,
 	eq,
 	i64,
@@ -513,13 +511,32 @@ const playingAt = query(Playlists).rule((r) => {
 		.find({ track })
 })
 
-// Answers are SETS — the host sorts them, and the SDK ships the comparator:
-// sort keys as data, a bare name ascending, `desc(...)` the flip; intervals
-// order by (start, end). Limit is the language's own `.slice(0, n)`.
+// Answers are SETS — the host sorts them. Limit is the language's own
+// `.slice(0, n)`.
 const inPlayOrder = [
 	{ slot: { start: 1n, end: 2n }, track: "b" },
 	{ slot: { start: 0n, end: 1n }, track: "a" }
-].sort(by("slot", "track"))
+].sort(function bySlotThenTrack(left, right) {
+	if (left.slot.start < right.slot.start) {
+		return -1
+	}
+	if (left.slot.start > right.slot.start) {
+		return 1
+	}
+	if (left.slot.end < right.slot.end) {
+		return -1
+	}
+	if (left.slot.end > right.slot.end) {
+		return 1
+	}
+	if (left.track < right.track) {
+		return -1
+	}
+	if (left.track > right.track) {
+		return 1
+	}
+	return 0
+})
 ```
 
 Middle insert is honest about its cost: making room at position `k` shifts
@@ -929,8 +946,7 @@ const claimed = query(FreeTime).rule((r) => {
 })
 // Coalesced totals = the two-query composition (pack, then a host fold) —
 // aggregates never nest; free time (gaps) is the two-line host walk over
-// sorted packed answers (`rows.sort(by("person", "span"))` — the
-// keys-as-data comparator; limit is the language's own `.slice`) — both
+// sorted packed answers (host sorts by person then span start/end) — both
 // refusals recorded in the ledger.
 ```
 
@@ -983,14 +999,12 @@ discipline — snapshot-derived writes detect movement
 final-state point reads need no earlier witness.
 
 The generation witness: read the model, propose a delta, commit iff the model
-you read is still the model. In the SDK the whole loop is `db.writeWitnessed`
-— retry on movement is built in (every generation move is self-inflicted by
-the host's own interleaved writes), capped at 64 attempts: a callback that
-itself issues a plain `db.write` each try re-moves the generation it is about
-to witness, and past the cap that interleave hazard throws the typed
-`ErrWitnessedLivelock` instead of spinning forever. `abandon(payload)`
+you read is still the model. The SDK ships one-shot `writeFrom` (must run
+inside the read callback that owns the snapshot). Retry on
+`ErrGenerationMoved` is host policy — a short loop around `db.read` +
+`writeFrom` if the host wants it. `abandon(payload)`
 declines to commit without issuing anything — from `db.write` and
-`db.writeWitnessed` alike (the sentinel's contract is unconditional, and
+`db.writeFrom` alike (the sentinel's contract is unconditional, and
 the outcome arm is in the result type exactly when the callback can
 abandon).
 
@@ -1016,22 +1030,25 @@ const stillQueued = query(Jobs).rule((r) => {
 const db = await Db.create("./jobs.db", Jobs)
 const prepared = db.prepare(stillQueued)
 
-// The witnessed loop: premise reads via `snap`, the delta via `tx`; on a
-// moved generation the WHOLE callback reruns on a fresh snapshot. The other
-// two idioms: insert-select is the same shape (query source answers, insert
-// the derived facts); key-shaped read-modify-write uses `tx.get`/`tx.contains`
-// — final-state point reads need no earlier witness.
-const outcome = db.writeWitnessed(function updateWhere(snap, tx) {
-	const queued = snap.execute(prepared, {})
-	if (queued.length === 0) {
-		return abandon("nothing queued")
-	}
-	for (const row of queued) {
-		tx.delete(Job, { id: row.id, state: "Queued", payload: row.payload })
-		tx.insert(Job, { id: row.id, state: "Running", payload: row.payload })
-		tx.insert(Lease, { job: row.id, worker: 7n, until: 60n })
-	}
-	return undefined
+// The witnessed write: premise reads via `snap`, the delta via `tx`. On a
+// moved generation `writeFrom` throws `ErrGenerationMoved` — retry is host
+// policy. The other two idioms: insert-select is the same shape (query
+// source answers, insert the derived facts); key-shaped read-modify-write
+// uses `tx.get`/`tx.contains` — final-state point reads need no earlier
+// witness.
+const outcome = db.read(function attempt(snap) {
+	return db.writeFrom(snap, function updateWhere(tx) {
+		const queued = snap.execute(prepared, {})
+		if (queued.length === 0) {
+			return abandon("nothing queued")
+		}
+		for (const row of queued) {
+			tx.delete(Job, { id: row.id, state: "Queued", payload: row.payload })
+			tx.insert(Job, { id: row.id, state: "Running", payload: row.payload })
+			tx.insert(Lease, { job: row.id, worker: 7n, until: 60n })
+		}
+		return undefined
+	})
 })
 ```
 
@@ -1420,9 +1437,9 @@ const deriving = query(MaintainedRollup).rule((r) => {
 })
 ```
 
-The host loop is `db.writeWitnessed`: derive on the attempt's snapshot, diff,
-build the delta — recipe 20's third idiom. On a moved generation the SDK
-throws away the attempt and reruns the whole callback on a fresh snapshot; it
+The host loop is `db.read` + `writeFrom`: derive on the attempt's snapshot, diff,
+build the delta — recipe 20's third idiom. On a moved generation the host
+throws away the attempt and retries on a fresh snapshot; it
 never retries a stale diff. Dependencies prove every surviving stored span
 sound, while the witness proves which source state the derivation saw;
 neither mechanism proves completeness. The engine's compiled copy

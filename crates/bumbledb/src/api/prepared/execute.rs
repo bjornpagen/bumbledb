@@ -80,8 +80,7 @@ impl<S> PreparedQuery<'_, S> {
         out: &mut Answers,
     ) -> Result<()> {
         // The statically-empty program (ir/normalize/fold.rs): params
-        // were bound above — bind errors surfaced, a vacuous mask param
-        // included — and nothing else exists to run: no sink reset, no
+        // were bound above — bind errors surfaced — and nothing else exists to run: no sink reset, no
         // rule loop, no image, no view bind, no finalize; the cleared
         // buffer IS the empty result (docs/architecture/40-execution.md
         // § access paths). Always the whole program: this variant is

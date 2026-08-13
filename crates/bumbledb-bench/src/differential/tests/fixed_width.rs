@@ -10,8 +10,8 @@ use bumbledb::schema::{
     IntervalElement, RelationDescriptor, SchemaDescriptor, Side, StatementDescriptor, ValueType,
 };
 use bumbledb::{
-    AllenMask, CmpOp, Comparison, ConditionTree, Db, FieldId, FindTerm, MaskTerm, Query,
-    RelationId, Rule, Value, VarId,
+    AllenMask, CmpOp, Comparison, ConditionTree, Db, FieldId, FindTerm, Query, RelationId, Rule,
+    Value, VarId,
 };
 
 use super::{Rng, pick};
@@ -126,7 +126,7 @@ fn ladder_queries() -> Vec<Query> {
             negated: vec![],
             conditions: vec![ConditionTree::Leaf(Comparison {
                 op: CmpOp::Allen {
-                    mask: MaskTerm::Literal(AllenMask::INTERSECTS),
+                    mask: AllenMask::INTERSECTS,
                 },
                 lhs: var(2),
                 rhs: var(3),

@@ -21,9 +21,9 @@
 //! this compiled verdict per binding and poisons on the first Ray.
 
 use crate::image::view::{Const, MaskConst, mask_of};
+use crate::ir::CmpOp;
 use crate::ir::normalize::lower_literal;
 use crate::ir::validate::{ClassifiedComparison, DurationOperand, SealedConst};
-use crate::ir::{CmpOp, MaskTerm};
 
 /// The three-valued verdict of one condition evaluation — the strong
 /// Kleene lattice: `Fails` absorbs `and`, `Holds` absorbs `or`, `Ray`
@@ -153,10 +153,7 @@ impl CompiledVerdict {
                     ClassifiedComparison::AllenVarVar { lhs, rhs, mask } => Leaf::AllenVarVar {
                         lhs: slot_of(*lhs),
                         rhs: slot_of(*rhs),
-                        mask: match mask {
-                            MaskTerm::Literal(mask) => MaskConst::Mask(*mask),
-                            MaskTerm::Param(param) => MaskConst::Param(*param),
-                        },
+                        mask: *mask,
                     },
                     ClassifiedComparison::AllenVarConst { var, other, mask } => {
                         Leaf::AllenVarConst {

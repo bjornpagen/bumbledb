@@ -4,7 +4,7 @@ use crate::exec::sink::{Acc, AggregateSink, FoldOp, SinkSpec, word_to_i64};
 impl AggregateSink {
     /// The per-row batch arm: outer slots prefilled once, leaf key slots
     /// overwritten per row, each full binding folded through the scratch
-    /// (dedup, varying-group, and row-fold — `CountDistinct`/Arg —
+    /// (dedup, varying-group, and row-fold —
     /// regimes). `key_slots` is word-level (an interval variable's pair
     /// appears as two entries), so the scratch fill is layout-correct by
     /// construction.
@@ -178,9 +178,6 @@ impl AggregateSink {
                         }
                     };
                     *best = (*best).max(word);
-                }
-                (FoldOp::CountDistinct, _) => {
-                    unreachable!("row-fold ops take the per-row path (emit_batch gates)")
                 }
                 _ => unreachable!("accumulators are seeded per op"),
             }

@@ -46,16 +46,6 @@ mod delete_dyn;
 mod encode_dyn;
 mod exhume;
 mod get;
-/// Test-support infrastructure (feature `image-oracle`): the
-/// copy-on-append column differential — the served image compared
-/// against a from-scratch build. Engine-hosted behind a feature because
-/// an external crate cannot reach `cfg(test)`; its former consumer, the
-/// detached fuzz crate's `ops` target, died with the fuzzing apparatus
-/// (the 2026-07-20 hard-delete ruling,
-/// docs/architecture/60-validation.md § the deletion record). No
-/// runtime mode ships.
-#[cfg(feature = "image-oracle")]
-pub mod image_oracle;
 mod insert;
 mod insert_dyn;
 mod maintain;

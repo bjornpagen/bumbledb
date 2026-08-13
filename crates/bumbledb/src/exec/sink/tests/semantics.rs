@@ -142,11 +142,6 @@ fn global_aggregate_over_empty_input_yields_zero_rows() {
     // The empty set — not a [NULL] or [0] row (documented divergence
     // from SQL's ungrouped-aggregate behavior).
     assert!(rows.is_empty());
-
-    // Same for the Arg regime: no bindings, no groups, no rows.
-    let finds = vec![arg_spec(&plan, 1, 0, true)];
-    let rows = run_aggregate(&plan, &views[..1], finds).expect("rows");
-    assert!(rows.is_empty());
 }
 
 #[test]
@@ -218,28 +213,4 @@ fn min_and_max_honor_logical_i64_order_across_the_sign_boundary() {
     }
     let rows = sink.into_answers().expect("rows");
     assert_eq!(rows, vec![vec![i64_to_word(-100), i64_to_word(42)]]);
-}
-
-/// PRD 18: Arg keys compare by encoded word for I64 too — the
-/// sign-flipped biased form is order-preserving, so a negative key
-/// never beats a positive one under `ArgMax`.
-#[test]
-fn arg_keys_honor_logical_i64_order_across_the_sign_boundary() {
-    // Two slots: slot 0 = the I64 key, slot 1 = a U64 carry.
-    let finds = vec![FindSpec::Arg {
-        slot: 1,
-        width: 1,
-        key: crate::exec::sink::ProjSource::Slot(0),
-        max: true,
-    }];
-    let mut sink = AggregateSink::new(finds, 2);
-    let mut bindings = Bindings::new(2);
-    bindings.reset();
-    for (key, carry) in [(-5i64, 10u64), (3, 20), (-100, 30), (0, 40)] {
-        bindings.set(0, i64_to_word(key));
-        bindings.set(1, carry);
-        sink.emit(&bindings);
-    }
-    let rows = sink.into_answers().expect("rows");
-    assert_eq!(rows, vec![vec![20]], "key 3 is the logical maximum");
 }

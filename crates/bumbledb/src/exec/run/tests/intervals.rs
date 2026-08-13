@@ -7,7 +7,6 @@
 
 use super::*;
 use crate::image::view::{FilterPredicate, ResolvedWordSource};
-use crate::ir::MaskTerm;
 use crate::ir::normalize::{IntervalWord, PlacedAllen, PlacedWordComparison, SlotWidth, VarWord};
 use bumbledb_theory::allen::AllenMask;
 use bumbledb_theory::schema::ValueType;
@@ -172,7 +171,7 @@ fn allen_residual(mask: AllenMask) -> Vec<PlacedAllen> {
     vec![PlacedAllen {
         lhs: VarId(1),
         rhs: VarId(3),
-        mask: MaskTerm::Literal(mask),
+        mask,
     }]
 }
 
@@ -943,7 +942,7 @@ fn keyed_span_query_between(masks: &[AllenMask], outer: u32, inner: u32) -> Norm
             .map(|mask| PlacedAllen {
                 lhs: VarId(2),
                 rhs: VarId(4),
-                mask: MaskTerm::Literal(*mask),
+                mask: *mask,
             })
             .collect(),
         duration_residuals: Vec::new(),
@@ -1379,7 +1378,7 @@ fn const_side_touching_residuals_conjoin_into_one_window_query() {
     let residual = |lhs: u16, mask: AllenMask| PlacedAllen {
         lhs: VarId(lhs),
         rhs: VarId(5),
-        mask: MaskTerm::Literal(mask),
+        mask,
     };
     let query_for = |m1: AllenMask, m2: AllenMask| NormalizedQuery {
         dead: None,
@@ -1524,7 +1523,7 @@ fn allen_masks_agree_with_the_naive_model_through_the_pipelined_pass() {
             allen_residuals: vec![PlacedAllen {
                 lhs: VarId(1),
                 rhs: VarId(3),
-                mask: MaskTerm::Literal(mask),
+                mask,
             }],
             duration_residuals: Vec::new(),
             anti_probes: vec![],

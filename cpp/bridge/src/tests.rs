@@ -36,9 +36,9 @@ use crate::error::{
 use crate::query::{
     bdb_atom, bdb_atom_source_kind, bdb_binding, bdb_cmp_op, bdb_cmp_op_kind, bdb_comparison,
     bdb_condition, bdb_condition_kind, bdb_db_prepare, bdb_find_term, bdb_find_term_kind,
-    bdb_head_op, bdb_head_term, bdb_head_term_kind, bdb_mask_term_kind, bdb_prepared,
+    bdb_head_op, bdb_head_term, bdb_head_term_kind, bdb_prepared,
     bdb_prepared_destroy, bdb_program, bdb_rule, bdb_term, bdb_term_kind, bdb_agg_op,
-    bdb_arg_key_kind, bdb_predicate,
+    bdb_predicate,
 };
 use crate::schema::{
     bdb_field_spec, bdb_relation_spec, bdb_schema_spec, bdb_side, bdb_statement_spec,
@@ -420,8 +420,6 @@ fn seed_service_outage(db: *mut bdb_db, name: &str, window: (i64, i64)) -> u64 {
 fn blank_agg() -> bdb_agg_op {
     bdb_agg_op {
         kind: bdb_head_op::Count,
-        arg_key_kind: bdb_arg_key_kind::Var,
-        arg_key_var: 0,
     }
 }
 
@@ -454,9 +452,7 @@ fn head_var() -> bdb_head_term {
 fn cmp_op(kind: bdb_cmp_op_kind) -> bdb_cmp_op {
     bdb_cmp_op {
         kind,
-        mask_kind: bdb_mask_term_kind::Literal,
         mask: 0,
-        mask_param: 0,
     }
 }
 

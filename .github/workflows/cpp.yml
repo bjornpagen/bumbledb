@@ -5,15 +5,18 @@
 # Jobs (all path-filtered to cpp/** + fixtures/** so engine-only pushes
 # skip the whole file; rust-toolchain.toml and this workflow are included
 # in the filter because a change to either invalidates every job here):
-#   * gcc-release   — gcc:16.1.0-trixie container; release configure/build/
+#   * gcc-release   — gcc image (unversioned `g++`); release configure/build/
 #                     ctest. ctest release carries the WHOLE production
 #                     suite: unit + toolchain-conformance + bridge smoke +
 #                     runtime + cookbook fingerprint/runtime parity tests
 #                     (golden: fixtures/cookbook-fingerprints.txt) AND the
 #                     compile-fail suite (pinned-diagnostic tests run
 #                     only in unsanitized production graphs — see
-#                     cpp/tests/CMakeLists.txt for the pinned GCC 16.1
-#                     sanitizer/constexpr quirk).
+#                     cpp/tests/CMakeLists.txt for the compile-fail-vs-sanitizers
+#                     quirk). Production GCC is 17 / trunk; the image tag
+#                     below is the newest official library/gcc release
+#                     (no gcc:17 tag as of 2026-08-13). Swap it when
+#                     library/gcc publishes 17; the CMake gate requires 17.
 #   * gcc-asan-ubsan, gcc-tsan — same container, sanitizer presets
 #                     (compile-fail self-excludes there by design).
 #   * lint          — ubuntu-24.04 + apt.llvm.org LLVM 22; configures the
@@ -35,11 +38,13 @@
 #
 # Every remote pin, verified 2026-08-08 without running containers (no
 # docker on the authoring machine):
-#   * docker.io/library/gcc:16.1.0-trixie — Docker Hub API: tag exists,
-#     active, amd64 digest sha256:cd2f0099…, last pushed 2026-08-05. It is
-#     the most specific 16.1 tag and ships the compiler as unversioned
-#     `g++`, hence -DCMAKE_CXX_COMPILER=g++ below (the cpp/ configure gate
-#     still enforces GNU 16.1 or later).
+#   * docker.io/library/gcc:16.1.0-trixie — newest official library/gcc
+#     tag as of 2026-08-13 (Docker Hub: 16.1.0 / 16.1 / 16 / latest /
+#     16.1.0-trixie; no gcc:17). Ships the compiler as unversioned `g++`,
+#     matching CMakePresets.json. The cpp/ configure gate requires GNU 17
+#     or later — this image will fail that gate until library/gcc
+#     publishes a 17/trunk tag; do not put g++-16 back in the preset to
+#     paper over the lag.
 #   * CMake 4.2.1 linux-x86_64 tarball — asset present on the Kitware
 #     v4.2.1 release; SHA-256 below matches the official
 #     cmake-4.2.1-SHA-256.txt from the same release. Newer 4.2.x exist
@@ -80,8 +85,8 @@
 #     beyond curl/tar/git, glibc vs. the runner);
 #   * sanitizer runtime vs. the runner kernel's ASLR entropy
 #     (vm.mmap_rnd_bits) — historically flaky for ASan/TSan on
-#     ubuntu-24.04 runners with older toolchains; GCC 16.1's runtimes are
-#     expected to cope, untested here;
+#     ubuntu-24.04 runners with older toolchains; modern GCC sanitizer
+#     runtimes are expected to cope, untested here;
 #   * `rustup show` component installs (miri/llvm-tools/rust-src) for
 #     nightly-2026-07-12 on x86_64-linux inside the trixie container —
 #     the engine ci.yml proves the same invocation on ubuntu-latest, the
@@ -148,11 +153,11 @@ jobs:
           # and installs it (the engine ci.yml precedent).
           "$HOME/.cargo/bin/rustup" show
           "$HOME/.cargo/bin/cargo" --version
-      # The gcc image ships the compiler as unversioned `g++`; override the
-      # preset's g++-16 (the configure gate still enforces GNU 16.1 or later).
+      # The gcc image ships the compiler as unversioned `g++`, which is
+      # what the release preset names. Do not hardcode g++-16.
       - name: Configure
         working-directory: cpp
-        run: cmake --preset release -DCMAKE_CXX_COMPILER=g++
+        run: cmake --preset release
       - name: Build
         working-directory: cpp
         run: cmake --build --preset release
@@ -186,7 +191,7 @@ jobs:
           "$HOME/.cargo/bin/rustup" show
       - name: Configure
         working-directory: cpp
-        run: cmake --preset asan-ubsan -DCMAKE_CXX_COMPILER=g++
+        run: cmake --preset asan-ubsan
       - name: Build
         working-directory: cpp
         run: cmake --build --preset asan-ubsan
@@ -218,7 +223,7 @@ jobs:
           "$HOME/.cargo/bin/rustup" show
       - name: Configure
         working-directory: cpp
-        run: cmake --preset tsan -DCMAKE_CXX_COMPILER=g++
+        run: cmake --preset tsan
       - name: Build
         working-directory: cpp
         run: cmake --build --preset tsan

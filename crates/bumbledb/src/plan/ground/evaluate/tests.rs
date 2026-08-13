@@ -6,9 +6,7 @@
 use super::*;
 use crate::ir::normalize::{NormalizedQuery, normalize};
 use crate::ir::validate::validate;
-use crate::ir::{
-    Atom, Comparison, ConditionTree, FindTerm, HeadTerm, MaskTerm, Query, Rule, Term, Value,
-};
+use crate::ir::{Atom, Comparison, ConditionTree, FindTerm, HeadTerm, Query, Rule, Term, Value};
 use crate::plan::ground::{ground, with_grounding_disabled};
 use crate::schema::Schema;
 use crate::schema::ValidateDescriptor as _;
@@ -432,7 +430,7 @@ fn assert_structured_filters_parse() {
         FilterPredicate::FieldsAllen {
             left: f,
             right: FieldId(2),
-            mask: MaskConst::Mask(AllenMask::BEFORE),
+            mask: AllenMask::BEFORE,
         },
         Some(ResolvableFilter::FieldsAllen {
             left: f,
@@ -444,7 +442,7 @@ fn assert_structured_filters_parse() {
         FilterPredicate::FieldAllen {
             field: f,
             other: Const::Interval { start: 2, end: 9 },
-            mask: MaskConst::Mask(AllenMask::BEFORE),
+            mask: AllenMask::BEFORE,
         },
         Some(ResolvableFilter::Allen {
             field: f,
@@ -457,7 +455,7 @@ fn assert_structured_filters_parse() {
 fn assert_compare_refusals() {
     let f = FieldId(1);
     let allen_op = CmpOp::Allen {
-        mask: MaskTerm::Literal(AllenMask::BEFORE),
+        mask: AllenMask::BEFORE,
     };
     for filter in [
         FilterPredicate::Compare {
@@ -532,25 +530,10 @@ fn assert_other_refusals() {
             field: f,
             set: Const::ParamSet(crate::ir::ParamId(0)),
         },
-        FilterPredicate::FieldsAllen {
-            left: f,
-            right: FieldId(2),
-            mask: MaskConst::Param(crate::ir::ParamId(0)),
-        },
-        FilterPredicate::FieldsAllen {
-            left: f,
-            right: FieldId(2),
-            mask: MaskConst::ConversedParam(crate::ir::ParamId(0)),
-        },
         FilterPredicate::FieldAllen {
             field: f,
             other: Const::Param(crate::ir::ParamId(0)),
-            mask: MaskConst::Mask(AllenMask::BEFORE),
-        },
-        FilterPredicate::FieldAllen {
-            field: f,
-            other: Const::Interval { start: 2, end: 9 },
-            mask: MaskConst::Param(crate::ir::ParamId(0)),
+            mask: AllenMask::BEFORE,
         },
         FilterPredicate::FieldWithin {
             field: f,
@@ -618,7 +601,7 @@ fn parsed_evaluator_agrees_with_the_pinned_extension_id_sets() {
             vec![FilterPredicate::FieldAllen {
                 field: FieldId(1),
                 other: Const::Interval { start: 6, end: 8 },
-                mask: MaskConst::Mask(AllenMask::BEFORE),
+                mask: AllenMask::BEFORE,
             }],
             vec![0],
         ),
@@ -897,7 +880,7 @@ fn interval_filters_evaluate_against_the_sealed_extension() {
         negated: vec![],
         conditions: vec![ConditionTree::Leaf(Comparison {
             op: CmpOp::Allen {
-                mask: MaskTerm::Literal(AllenMask::BEFORE),
+                mask: AllenMask::BEFORE,
             },
             lhs: var(2),
             rhs: Term::Literal(Value::IntervalU64(

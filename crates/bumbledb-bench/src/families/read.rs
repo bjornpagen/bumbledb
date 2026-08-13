@@ -1,6 +1,6 @@
 use bumbledb::{
-    AggOp, AllenMask, Atom, CmpOp, Comparison, ConditionTree, FindTerm, MaskTerm, ParamId, Query,
-    Rule, Term, Value, VarId,
+    AggOp, AllenMask, Atom, CmpOp, Comparison, ConditionTree, FindTerm, ParamId, Query, Rule, Term,
+    Value, VarId,
 };
 
 use crate::corpus_gen::{self, GenConfig, Rng, Sizes};
@@ -604,20 +604,16 @@ fn postings_without_tag_params(cfg: &GenConfig) -> Vec<Draw> {
     ]
 }
 
-/// `latest_posting_per_account` — `Q(a, ArgMax_at(p)) :- Posting(id = p,
-/// account = a, at = t)` — the Arg-restriction family: each account's
-/// latest posting (the join-back template on the `SQLite` side; `at` is
-/// strictly increasing per posting id, so groups are tie-free — tie
-/// semantics are the query generator's lane).
+/// `latest_posting_per_account` — `Q(a, Max(t)) :- Posting(id = p,
+/// account = a, at = t)` — each account's latest posting time (the
+/// remaining Max fold; the engine never Arg-restricts).
 fn latest_posting_per_account_query() -> Query {
     Query::single(Rule {
         finds: vec![
             FindTerm::Var(VarId(0)),
             FindTerm::Aggregate {
-                op: AggOp::ArgMax {
-                    key: bumbledb::ArgKey::Var(VarId(2)),
-                },
-                over: Some(VarId(1)),
+                op: AggOp::Max,
+                over: Some(VarId(2)),
             },
         ],
         atoms: vec![Atom {
@@ -724,7 +720,7 @@ fn mandate_overlap_query() -> Query {
         negated: vec![],
         conditions: vec![ConditionTree::Leaf(Comparison {
             op: CmpOp::Allen {
-                mask: MaskTerm::Literal(AllenMask::INTERSECTS),
+                mask: AllenMask::INTERSECTS,
             },
             lhs: var(2),
             rhs: var(3),
@@ -742,7 +738,7 @@ fn mandate_overlap_params(cfg: &GenConfig) -> Vec<Draw> {
 
 /// The registry: the fifteen gated, in the suite's canonical order —
 /// the ported ten, then the redesign's five (param set, negation,
-/// Arg-restriction, membership, overlap) — then the report tail: the
+/// latest-posting Max, membership, overlap) — then the report tail: the
 /// depth lane (`deep_chain`, the ≥ 4-node pump regime).
 #[must_use]
 #[expect(
@@ -872,8 +868,8 @@ pub fn all() -> &'static [Family] {
             kind: Kind::Gate,
             query: latest_posting_per_account_query,
             params: latest_posting_per_account_params,
-            golden_sql: goldens::ARG_MAX,
-            param_policy: "No params — full Arg-restriction over every account; one empty draw.",
+            golden_sql: goldens::LATEST_POSTING,
+            param_policy: "No params — full Max(at) over every account; one empty draw.",
             indexes: &[("idx_posting_account_at", "Posting", &["account", "at"])],
         },
         Family {

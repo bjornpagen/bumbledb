@@ -13,8 +13,8 @@
 //! the engine and the naive model before any timing.
 
 use bumbledb::{
-    AggOp, AllenMask, Atom, CmpOp, Comparison, ConditionTree, FindTerm, MaskTerm, ParamId, Query,
-    Rule, Term, Value, VarId,
+    AggOp, AllenMask, Atom, CmpOp, Comparison, ConditionTree, FindTerm, ParamId, Query, Rule, Term,
+    Value, VarId,
 };
 
 use crate::calendar::corpus_gen::{CAL_BASE, CAL_HORIZON, CalSizes, HOUR, created_at};
@@ -30,9 +30,7 @@ fn param(id: u16) -> Term {
 
 fn allen(lhs: Term, rhs: Term, mask: AllenMask) -> ConditionTree {
     ConditionTree::Leaf(Comparison {
-        op: CmpOp::Allen {
-            mask: MaskTerm::Literal(mask),
-        },
+        op: CmpOp::Allen { mask },
         lhs,
         rhs,
     })

@@ -18,7 +18,6 @@ import { closed } from "#closed.ts"
 import { Db } from "#db.ts"
 import { on } from "#face.ts"
 import { interval, str, u64 } from "#fields.ts"
-import { by } from "#order.ts"
 import type { QueryParams, QueryRow, QueryRuleScope } from "#query/lower.ts"
 import { lowerQuery, query } from "#query/lower.ts"
 import { program } from "#query/predicate.ts"
@@ -68,7 +67,9 @@ const ACCOUNT_ID = 2
 
 /** Sorts a bigint array ascending (answers are sets; the host sorts via the one comparator owner). */
 function sorted(values: readonly bigint[]): bigint[] {
-	return [...values].sort(by())
+	return [...values].sort(function asc(left, right) {
+		return left < right ? -1 : left > right ? 1 : 0
+	})
 }
 
 let db: Db<Rels>
@@ -163,14 +164,10 @@ test("find keys name the answer columns — renames are real", function renames(
 	assert.ok(pin)
 })
 
-test("aggregates ride find over var references: count, countDistinct, sum, min, max, argMax, argMin, pack, duration", function aggregates() {
+test("aggregates ride find over var references: count, sum, min, max, pack, duration", function aggregates() {
 	const countQ = query(Theory).rule(function rule(r) {
 		const a = v(Account)
 		return r.match(Account, { holder: a.holder }).find({ holder: a.holder, n: r.count() })
-	})
-	const distinctQ = query(Theory).rule(function rule(r) {
-		const a = v(Account)
-		return r.match(Account, { holder: a.holder }).find({ holders: r.countDistinct(a.holder) })
 	})
 	const sumQ = query(Theory).rule(function rule(r) {
 		const h = v(Holder)
@@ -183,14 +180,6 @@ test("aggregates ride find over var references: count, countDistinct, sum, min, 
 	const maxQ = query(Theory).rule(function rule(r) {
 		const h = v(Holder)
 		return r.match(Holder, { id: h.id, rank: h.rank }).find({ hi: r.max(h.rank) })
-	})
-	const argMaxQ = query(Theory).rule(function rule(r) {
-		const h = v(Holder)
-		return r.match(Holder, { id: h.id, rank: h.rank }).find({ top: r.argMax(h.id, h.rank) })
-	})
-	const argMinQ = query(Theory).rule(function rule(r) {
-		const h = v(Holder)
-		return r.match(Holder, { id: h.id, rank: h.rank }).find({ bottom: r.argMin(h.id, h.rank) })
 	})
 	const packQ = query(Theory).rule(function rule(r) {
 		const a = v(Account)
@@ -205,12 +194,9 @@ test("aggregates ride find over var references: count, countDistinct, sum, min, 
 		return r.match(Account, { id: a.id, window: a.window }).find({ longest: r.max(r.duration(a.window)) })
 	})
 	assert.ok(db.prepare(countQ))
-	assert.ok(db.prepare(distinctQ))
 	assert.ok(db.prepare(sumQ))
 	assert.ok(db.prepare(minQ))
 	assert.ok(db.prepare(maxQ))
-	assert.ok(db.prepare(argMaxQ))
-	assert.ok(db.prepare(argMinQ))
 	assert.ok(db.prepare(packQ))
 	assert.ok(db.prepare(durationProjQ))
 	assert.ok(db.prepare(durationFoldQ))
@@ -284,7 +270,7 @@ test("a var minted from a relation the schema does not declare is refused, typed
 	}, /does not declare/)
 })
 
-test("params stay string-named: param/inSet/maskParam register by first use and execute under the inferred Params object", function params() {
+test("params stay string-named: param/inSet register by first use and execute under the inferred Params object", function params() {
 	const paramQ = query(Theory).rule(function rule(r) {
 		const h = v(Holder)
 		return r
@@ -331,25 +317,6 @@ test("params stay string-named: param/inSet/maskParam register by first use and 
 		),
 		sorted([10n, 11n])
 	)
-
-	const maskQ = query(Theory).rule(function rule(r) {
-		const a = v(Account)
-		const b = v(Account)
-		return r
-			.match(Account, { id: a.id, window: a.window })
-			.match(Account, { id: b.id, window: b.window })
-			.where(r.allen(a.window, r.maskParam("rel"), b.window))
-			.find({ x: a.id, y: b.id })
-	})
-	assert.deepEqual(
-		maskQ.data.params.map(function nameOf(p) {
-			return p.name
-		}),
-		["rel"]
-	)
-	assert.ok(db.prepare(maskQ))
-	const pin: Pin = true
-	assert.ok(pin)
 })
 
 test("the same query built twice from fresh mints lowers to deeply-equal IR", function stable() {

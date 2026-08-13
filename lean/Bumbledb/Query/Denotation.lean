@@ -182,15 +182,14 @@ sense that no binding constrains it; the matching equation then binds
 it by constraining `σ v`. -/
 abbrev Assignment : Type := VarId → Value
 
-/-- The parameter environment: scalar values, set slices, and Allen
-masks, each by param id. A `ParamId` is scalar or set, never both
-(`ValidationError::ParamScalarAndSet`); the three faces model the
-three bind-time payload kinds (`crate::BindValue`), and an id's unused
-faces are simply never read. -/
+/-- The parameter environment: scalar values and set slices, each by
+param id. A `ParamId` is scalar or set, never both
+(`ValidationError::ParamScalarAndSet`); Allen masks are literals on
+the comparison, never bind-time payloads. An id's unused face is
+simply never read. -/
 structure ParamEnv where
   scalar : ParamId → Value
   set : ParamId → List Value
-  mask : ParamId → AllenMask
 
 /-- One answer: the projected find tuple. -/
 abbrev AnswerTuple : Type := List Value
@@ -418,13 +417,6 @@ def classifyValue (C : Classify) (a b : Value) : Option AllenRel :=
     | some iv, some jv => some (C.i64 iv jv)
     | _, _ => none
 
-/-- The mask a mask term denotes: a literal mask is itself; a param
-mask reads the environment (`crate::BindValue::AllenMask`, resolved at
-bind). -/
-def MaskTerm.den (ρ : ParamEnv) : MaskTerm → AllenMask
-  | .lit m => m
-  | .param p => ρ.mask p
-
 /-- One operator's denotation over a value pair. Equality is value
 identity (the canonical-bytes law `value_eq_iff_encode_eq` carries it
 to the encoding); order reads the encoded word order (`Value.vlt`,
@@ -446,7 +438,7 @@ def cmpDen (C : Classify) (ρ : ParamEnv) : CmpOp → Value → Value → Prop
   | .le, a, b => a.vle b
   | .gt, a, b => b.vlt a
   | .ge, a, b => b.vle a
-  | .allen m, a, b => ∃ rel, classifyValue C a b = some rel ∧ rel ∈ m.den ρ
+  | .allen m, a, b => ∃ rel, classifyValue C a b = some rel ∧ rel ∈ m
   | .pointIn, a, b => ∃ p, b.point = some p ∧ p ∈ a.points
 
 /-- One comparison holds when each side selects a value and the
@@ -540,9 +532,9 @@ the `u64` element domain; `allen_mask_denotation_i64` is the
 companion. Bridge: `crate::allen::AllenMask::contains(classify(lhs,
 rhs))` — the mask-carrying filter shapes of `ir/normalize`. -/
 theorem allen_mask_denotation (C : Classify) (ρ : ParamEnv)
-    (m : MaskTerm) (iv jv : Interval U64) :
+    (m : AllenMask) (iv jv : Interval U64) :
     cmpDen C ρ (.allen m) ⟨.interval .u64, iv⟩ ⟨.interval .u64, jv⟩ ↔
-      C.u64 iv jv ∈ m.den ρ := by
+      C.u64 iv jv ∈ m := by
   constructor
   · rintro ⟨rel, hrel, hmem⟩
     cases hrel
@@ -552,9 +544,9 @@ theorem allen_mask_denotation (C : Classify) (ρ : ParamEnv)
 
 /-- **Theorem 8b (i64 companion).** -/
 theorem allen_mask_denotation_i64 (C : Classify) (ρ : ParamEnv)
-    (m : MaskTerm) (iv jv : Interval I64) :
+    (m : AllenMask) (iv jv : Interval I64) :
     cmpDen C ρ (.allen m) ⟨.interval .i64, iv⟩ ⟨.interval .i64, jv⟩ ↔
-      C.i64 iv jv ∈ m.den ρ := by
+      C.i64 iv jv ∈ m := by
   constructor
   · rintro ⟨rel, hrel, hmem⟩
     cases hrel
@@ -1032,7 +1024,7 @@ instance (C : Classify) (ρ : ParamEnv) :
   | .ge, a, b => inferInstanceAs (Decidable (b.vle a))
   | .allen m, a, b =>
     inferInstanceAs
-      (Decidable (∃ rel, classifyValue C a b = some rel ∧ rel ∈ m.den ρ))
+      (Decidable (∃ rel, classifyValue C a b = some rel ∧ rel ∈ m))
   | .pointIn, a, b =>
     inferInstanceAs (Decidable (∃ p, b.point = some p ∧ p ∈ a.points))
 

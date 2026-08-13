@@ -70,8 +70,6 @@ const S: u16 = 4;
 const X: u16 = 5;
 const PU: u16 = 6;
 const PI: u16 = 7;
-const KU: u16 = 8;
-const KI: u16 = 9;
 
 /// Every (field, type) pair of the fixture — the per-type row generators
 /// below iterate this roster so no type is skippable by omission.
@@ -173,16 +171,6 @@ fn cases() -> Vec<Case> {
         vec![ValueType::U64],
     ));
 
-    // CountDistinct, every type: U64 whatever it counted.
-    for (field, ty) in type_roster() {
-        cases.push(case(
-            format!("count_distinct over {ty:?}"),
-            vec![fold(AggOp::CountDistinct, 0)],
-            vec![(field, 0)],
-            vec![ValueType::U64],
-        ));
-    }
-
     // The arithmetic folds, both integer types: the input's type.
     for op in [AggOp::Sum, AggOp::Min, AggOp::Max] {
         for (field, ty) in [(U, ValueType::U64), (I, ValueType::I64)] {
@@ -231,48 +219,8 @@ fn cases() -> Vec<Case> {
         vec![interval_i64()],
     ));
 
-    // The Arg forms: the column is the carried (projected) payload's
-    // type, every type carriable; the key is rule-internal. ArgMax
-    // rides a U64 key, ArgMin an I64 key, so both key types are covered.
-    for (field, ty) in type_roster() {
-        cases.push(case(
-            format!("argmax carrying {ty:?}"),
-            vec![FindTerm::Aggregate {
-                op: AggOp::ArgMax {
-                    key: crate::ir::ArgKey::Var(VarId(1)),
-                },
-                over: Some(VarId(0)),
-            }],
-            vec![(field, 0), (KU, 1)],
-            vec![ty.clone()],
-        ));
-        cases.push(case(
-            format!("argmin carrying {ty:?}"),
-            vec![FindTerm::Aggregate {
-                op: AggOp::ArgMin {
-                    key: crate::ir::ArgKey::Var(VarId(1)),
-                },
-                over: Some(VarId(0)),
-            }],
-            vec![(field, 0), (KI, 1)],
-            vec![ty],
-        ));
-    }
-    // The self-carry: the carried variable may be the key itself.
-    cases.push(case(
-        "argmax carrying its own key",
-        vec![FindTerm::Aggregate {
-            op: AggOp::ArgMax {
-                key: crate::ir::ArgKey::Var(VarId(0)),
-            },
-            over: Some(VarId(0)),
-        }],
-        vec![(U, 0)],
-        vec![ValueType::U64],
-    ));
-
     // Multi-column heads mixing the forms (group keys + folds, group
-    // keys + measures, group keys + Pack, group keys + Arg terms).
+    // keys + measures, group keys + Pack).
     cases.push(case(
         "group key + sum + count",
         vec![
@@ -285,12 +233,6 @@ fn cases() -> Vec<Case> {
         ],
         vec![(U, 0), (I, 1)],
         vec![ValueType::U64, ValueType::I64, ValueType::U64],
-    ));
-    cases.push(case(
-        "string group key + count_distinct over bytes",
-        vec![FindTerm::Var(VarId(0)), fold(AggOp::CountDistinct, 1)],
-        vec![(S, 0), (X, 1)],
-        vec![ValueType::String, ValueType::U64],
     ));
     cases.push(case(
         "projected measure + folded measure",
@@ -310,30 +252,6 @@ fn cases() -> Vec<Case> {
         vec![FindTerm::Var(VarId(0)), fold(AggOp::Pack, 1)],
         vec![(B, 0), (PU, 1)],
         vec![ValueType::Bool, interval_u64()],
-    ));
-    cases.push(case(
-        "group key + two arg carries sharing one key",
-        vec![
-            FindTerm::Var(VarId(0)),
-            FindTerm::Aggregate {
-                op: AggOp::ArgMax {
-                    key: crate::ir::ArgKey::Var(VarId(3)),
-                },
-                over: Some(VarId(1)),
-            },
-            FindTerm::Aggregate {
-                op: AggOp::ArgMax {
-                    key: crate::ir::ArgKey::Var(VarId(3)),
-                },
-                over: Some(VarId(2)),
-            },
-        ],
-        vec![(I, 0), (S, 1), (X, 2), (U, 3)],
-        vec![
-            ValueType::I64,
-            ValueType::String,
-            ValueType::FixedBytes { len: 8 },
-        ],
     ));
     cases.push(case(
         "interval group key + count",
@@ -392,103 +310,4 @@ fn the_signature_table_pins_every_head_form() {
             case.name
         );
     }
-}
-
-/// The other half of each column — the fold producing it ([`AggKind`]):
-/// `None` for plain projections and the projected measure, the fold's
-/// kind everywhere else, key payloads elided. New with the predicate
-/// (nothing pre-refactor represented this), pinned here beside the
-/// signature table.
-#[test]
-fn the_fold_kind_rides_each_column() {
-    use crate::ir::validate::AggKind;
-    let schema = sig_schema();
-    let ops_of = |case: &Case| -> Vec<Option<AggKind>> {
-        crate::ir::validate::validate(&schema, &query_of(case))
-            .expect("validate")
-            .predicate()
-            .columns
-            .iter()
-            .map(|column| column.op)
-            .collect()
-    };
-
-    let plain = case(
-        "plain",
-        vec![FindTerm::Var(VarId(0)), FindTerm::Measure(VarId(1))],
-        vec![(U, 0), (PU, 1)],
-        vec![],
-    );
-    assert_eq!(ops_of(&plain), vec![None, None]);
-
-    let folds = case(
-        "folds",
-        vec![
-            FindTerm::Var(VarId(0)),
-            fold(AggOp::Sum, 1),
-            fold(AggOp::Min, 2),
-            FindTerm::Aggregate {
-                op: AggOp::Count,
-                over: None,
-            },
-            fold(AggOp::CountDistinct, 3),
-        ],
-        vec![(U, 0), (I, 1), (KI, 2), (S, 3)],
-        vec![],
-    );
-    assert_eq!(
-        ops_of(&folds),
-        vec![
-            None,
-            Some(AggKind::Sum),
-            Some(AggKind::Min),
-            Some(AggKind::Count),
-            Some(AggKind::CountDistinct),
-        ]
-    );
-
-    let measure_fold = case(
-        "measure fold",
-        vec![FindTerm::AggregateMeasure {
-            op: AggOp::Max,
-            over: VarId(0),
-        }],
-        vec![(PU, 0)],
-        vec![],
-    );
-    assert_eq!(ops_of(&measure_fold), vec![Some(AggKind::Max)]);
-
-    let arg = case(
-        "arg",
-        vec![FindTerm::Aggregate {
-            op: AggOp::ArgMax {
-                key: crate::ir::ArgKey::Var(VarId(1)),
-            },
-            over: Some(VarId(0)),
-        }],
-        vec![(S, 0), (KU, 1)],
-        vec![],
-    );
-    assert_eq!(ops_of(&arg), vec![Some(AggKind::ArgMax)]);
-
-    let arg_min = case(
-        "argmin",
-        vec![FindTerm::Aggregate {
-            op: AggOp::ArgMin {
-                key: crate::ir::ArgKey::Var(VarId(1)),
-            },
-            over: Some(VarId(0)),
-        }],
-        vec![(S, 0), (KI, 1)],
-        vec![],
-    );
-    assert_eq!(ops_of(&arg_min), vec![Some(AggKind::ArgMin)]);
-
-    let pack = case(
-        "pack",
-        vec![FindTerm::Var(VarId(0)), fold(AggOp::Pack, 1)],
-        vec![(U, 0), (PU, 1)],
-        vec![],
-    );
-    assert_eq!(ops_of(&pack), vec![None, Some(AggKind::Pack)]);
 }

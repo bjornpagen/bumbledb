@@ -6,7 +6,7 @@
 
 use bumbledb::ir::Rule;
 use bumbledb::schema::{Generation, IntervalElement, ValueType};
-use bumbledb::{AggOp, Atom, Basic, CmpOp, FindTerm, MaskTerm, Query, Term, VarId};
+use bumbledb::{AggOp, Atom, Basic, CmpOp, FindTerm, Query, Term, VarId};
 use std::collections::{HashMap, HashSet};
 
 use crate::corpus_gen::{GenConfig, Rng};
@@ -248,8 +248,6 @@ impl Coverage {
             Shape::Membership => self.membership += 1,
             Shape::IntervalJoin => self.interval_join += 1,
             Shape::Boundary => self.boundary += 1,
-            Shape::CountDistinct => self.count_distinct += 1,
-            Shape::Arg => self.arg += 1,
             Shape::ExistenceWalk => self.existence_walk += 1,
             Shape::DuWalk => self.du_walk += 1,
             Shape::Rules => self.rules += 1,
@@ -361,14 +359,6 @@ impl Coverage {
                         Some(IntervalElement::I64) => self.allen_i64 += 1,
                         None => unreachable!("Allen is interval-typed by construction"),
                     }
-                    // A bind-time mask param has no literal to tally:
-                    // its non-vacuous value is a per-draw oracle draw
-                    // (finding 086), counted by the `allen_mask_param`
-                    // tag; the composite/singleton and per-basic cells
-                    // are the literal grammar's.
-                    let MaskTerm::Literal(mask) = mask else {
-                        continue;
-                    };
                     if mask.popcount() > 1 {
                         self.allen_composite += 1;
                     } else {
@@ -455,15 +445,11 @@ impl Coverage {
 
     fn record_finds(&mut self, rule: &Rule, t: &Typing) -> bool {
         let mut aggregates = 0u64;
-        let mut has_var_find = false;
-        let mut arg_key: Option<VarId> = None;
-        let mut arg_key_projected = false;
         let mut projected_words = 0u64;
         let mut interval_finds = 0u64;
         for term in &rule.finds {
             match term {
                 FindTerm::Var(var) => {
-                    has_var_find = true;
                     if matches!(t.var_types.get(var), Some(ValueType::Interval { .. })) {
                         interval_finds += 1;
                         projected_words += 2;
@@ -478,28 +464,6 @@ impl Coverage {
                         AggOp::Min => self.agg_min += 1,
                         AggOp::Max => self.agg_max += 1,
                         AggOp::Count => self.agg_count += 1,
-                        AggOp::CountDistinct => {
-                            let var = over.expect("CountDistinct carries its input");
-                            let ty = t.var_types.get(&var).expect("finds are bound");
-                            self.count_distinct_types[type_index(ty)] += 1;
-                        }
-                        AggOp::ArgMax { key } => {
-                            self.arg_max += 1;
-                            self.arg_measure_key +=
-                                u64::from(matches!(key, bumbledb::ArgKey::Measure(_)));
-                            arg_key = Some(key.var());
-                            arg_key_projected |= *over == Some(key.var());
-                        }
-                        AggOp::ArgMin { key } => {
-                            self.arg_min += 1;
-                            self.arg_measure_key +=
-                                u64::from(matches!(key, bumbledb::ArgKey::Measure(_)));
-                            arg_key = Some(key.var());
-                            arg_key_projected |= *over == Some(key.var());
-                        }
-                        // Pack rides its own shape row; the verify lane
-                        // routes its draws to the naive leg by the typed
-                        // expressibility gate (finding 025).
                         AggOp::Pack => {}
                     }
                     if let Some(var) = over
@@ -518,23 +482,6 @@ impl Coverage {
                     self.duration_fold += 1;
                     aggregates += 1;
                 }
-            }
-        }
-        if let Some(key) = arg_key {
-            if arg_key_projected {
-                self.arg_key_projected += 1;
-            }
-            if !has_var_find {
-                self.arg_global += 1;
-            }
-            match t.var_pos.get(&key) {
-                Some(&(ids::POSTING, field)) if field == ids::posting::AMOUNT => {
-                    self.arg_tie_key += 1;
-                }
-                Some(&(ids::POSTING, field)) if field == ids::posting::AT => {
-                    self.arg_tie_free_key += 1;
-                }
-                _ => {}
             }
         }
         self.multi_aggregate += u64::from(aggregates > 1);
@@ -577,7 +524,6 @@ impl Coverage {
             self.ladder[index] += u64::from(*drawn);
         }
         self.allen_random_mask += u64::from(tags.random_mask);
-        self.allen_mask_param += u64::from(tags.mask_param);
         // Per-query composition flags, accumulated across rules
         // (variables are rule-scoped, so the typing walk runs per rule).
         let (mut has_membership, mut has_allen, mut has_negation, mut has_aggregate) =

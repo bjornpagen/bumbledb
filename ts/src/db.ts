@@ -2,35 +2,32 @@
  * `Db` — the living half of the SDK (PRD-07): open/create a store from a
  * `Schema`, write typed facts through delta transactions with race-free
  * final-state point reads, receive rejections as typed violation VALUES
- * keyed to statements, read through scoped snapshots, and run the witnessed
- * read-compute-write loop — all typed by the schema's relations record.
+ * keyed to statements, and read through scoped snapshots — all typed by
+ * the schema's relations record.
  *
  * LIFETIMES ARE DISPOSABLES, never `close()` (ruled 2026-07-23, R12): no
  * value this module returns carries a close spelling — release is
- * deterministic and scope-shaped in the language's own syntax. `Db` values
- * are CACHED per canonical path for the life of the process (a best-effort
- * exit hook closes the cached environments; correctness never depends on it
- * — the engine fsyncs every commit, so a process that dies without the hook
- * loses nothing that was committed). Snapshots are scope-shaped both ways:
- * `read(fn)` opens one before `fn` and closes it after unconditionally
- * (the {@link ReadScope} handed to `fn` is invalidated the moment `fn`
- * returns), and `using snap = db.read()` hands the caller the lifetime,
- * released by the scope's own `Symbol.dispose` at scope exit. Prepared
- * plans are plain values whose engine-side half is reclaimed by a GC
- * finalizer — reclamation only, never correctness.
+ * deterministic and scope-shaped in the language's own syntax. Snapshots
+ * are scope-shaped both ways: `read(fn)` opens one before `fn` and closes
+ * it after unconditionally (the {@link ReadScope} handed to `fn` is
+ * invalidated the moment `fn` returns), and `using snap = db.read()` hands
+ * the caller the lifetime, released by the scope's own `Symbol.dispose`
+ * at scope exit. Prepared plans are plain values whose engine-side half
+ * is reclaimed by a GC finalizer — reclamation only, never correctness.
  *
  * PROCESS MODEL: one process, one exclusive-lock handle per store. The
- * cached `Db` value owns the LMDB environment's exclusive lock until
- * process exit; a second engine-level open of the same store (an aliased
- * path spelling, or another process) is refused by the engine. The
- * run-store process model (PRD-16) depends on this being true: resume =
- * reopen, which is either this process's cached value or a fresh process's
- * open.
+ * `Db` value owns the LMDB environment's exclusive lock until process
+ * exit (or until GC reclaims the native handle); a second engine-level
+ * open of the same store is refused by the engine (`EnvironmentLocked`),
+ * matching Rust. Resume = reopen in a fresh process, or hold the one `Db`
+ * this process already opened. The host owns composition; retry is host
+ * policy.
  *
  * REJECTION IS DATA: a rejected commit is a domain outcome (it becomes the
  * LLM repair prompt downstream), returned as a {@link WriteResult} carrying
  * {@link Violation} values. Genuine failures — I/O, used-after-scope,
- * marshal shape — throw `@superbuilders/errors` wrapped errors instead.
+ * marshal shape, a moved generation on {@link Db.writeFrom} — throw
+ * `@superbuilders/errors` wrapped errors instead.
  */
 
 import * as path from "node:path"
@@ -54,12 +51,10 @@ import {
 
 import type {
 	DbHandle,
-	Explain,
 	FactValue,
 	Manifest,
 	PreparedHandle,
 	SnapshotHandle,
-	Staleness,
 	StatementKindTag,
 	TxHandle,
 	Violation as WireViolation,
@@ -170,14 +165,14 @@ type DeltaBuild<Rels extends SchemaRelations, R = void> = (tx: Tx<Rels>) => R
 
 /**
  * The runtime discriminant of {@link Abandon} values — a property probe is
- * how `writeWitnessed` distinguishes "abort without committing" from an
+ * how `write`/`writeFrom` distinguish "abort without committing" from an
  * ordinary callback result, never a guess about the host's own value shapes.
  */
 const abandonMark: unique symbol = Symbol("bumbledb.abandon")
 
 /**
  * The abandon sentinel {@link abandon} builds: returning one from a `write`
- * or `writeWitnessed` callback rolls the transaction back WITHOUT
+ * or `writeFrom` callback rolls the transaction back WITHOUT
  * committing (no empty commit is ever issued) and surfaces the payload as
  * `{ ok: false, abandoned: payload }` (ruled 2026-07-23, R10 — the
  * sentinel's contract is unconditional, whichever write verb received it).
@@ -191,7 +186,7 @@ interface Abandon<P> {
  * Wraps a payload in the {@link Abandon} sentinel — the one way a write
  * callback declines to commit: `return abandon(payload)` aborts the delta
  * (nothing is committed, not even an empty commit) and the write resolves
- * to `{ ok: false, abandoned: payload }`, from `write` and `writeWitnessed`
+ * to `{ ok: false, abandoned: payload }`, from `write` and `writeFrom`
  * alike (R10).
  */
 function abandon<P>(payload: P): Abandon<P> {
@@ -246,7 +241,7 @@ function abandonedOutcome<Rels extends SchemaRelations, R>(
  * One live write transaction: the submitted delta with the engine's
  * FINAL-STATE point-read view (base + pending delta — the exact state the
  * commit judgment judges, so check-then-act is race-free by construction).
- * Spent when its owning `write`/`writeWitnessed` call resolves the attempt;
+ * Spent when its owning `write`/`writeFrom` call resolves the attempt;
  * any later use throws.
  */
 interface Tx<Rels extends SchemaRelations> {
@@ -328,16 +323,6 @@ interface ReadScope<Rels extends SchemaRelations> extends Disposable {
 	 * execution spelling ({@link Prepared} carries no `execute`).
 	 */
 	execute<Row, Params extends ParamsRecord>(prepared: Prepared<Rels, Row, Params>, params: Params): Row[]
-	/**
-	 * Plan introspection as data (ruled 2026-07-23, R13): runs the prepared
-	 * query against this scope's snapshot with counting instrumentation
-	 * (the engine's ANALYZE semantics) and returns the structured
-	 * {@link Explain} report — plan sections and counters as plain values,
-	 * so the host reads what the engine did with its query without a
-	 * second toolchain. A diagnostic surface, EXPLICITLY UNFROZEN: the
-	 * shape follows the plan representation wherever it goes.
-	 */
-	explain<Row, Params extends ParamsRecord>(prepared: Prepared<Rels, Row, Params>, params: Params): Explain
 }
 
 /**
@@ -361,21 +346,15 @@ const preparedTypes: unique symbol = Symbol("bumbledb.prepared.types")
  * everything).
  */
 interface Prepared<Rels extends SchemaRelations, Row, Params extends ParamsRecord> {
-	/**
-	 * The pull-based plan-drift report against a read scope's snapshot —
-	 * engine-policy-free: no threshold exists engine-side; the host owns
-	 * re-prepare.
-	 */
-	staleness(snap: ReadScope<Rels>): Staleness
-	readonly [preparedTypes]?: { readonly row: Row; readonly params: Params }
+	readonly [preparedTypes]?: { readonly rels: Rels; readonly row: Row; readonly params: Params }
 }
 
 /**
- * An open store, cached per canonical path for the life of the process.
- * There is no close: read through `read`/the read sugar, write through
- * `write`/`writeWitnessed`, and let the process own the environment's
- * lifetime (the engine fsyncs every commit, so durability never waits on a
- * close).
+ * An open store. There is no close: read through `read`/the read sugar,
+ * write through `write`/`writeFrom`, and let the process own the
+ * environment's lifetime (the engine fsyncs every commit, so durability
+ * never waits on a close). A second `open`/`create` of the same path
+ * while this handle lives is the engine's `EnvironmentLocked`.
  */
 interface Db<Rels extends SchemaRelations> {
 	/** The theory this store was opened with (fingerprint-verified by the engine). */
@@ -409,8 +388,6 @@ interface Db<Rels extends SchemaRelations> {
 	contains<R extends MemberRelation<Rels>>(relation: R, fact: Fact<R>): boolean
 	/** `db.execute(p, params)` === `db.read(snap => snap.execute(p, params))` — the symmetry rule. */
 	execute<Row, Params extends ParamsRecord>(prepared: Prepared<Rels, Row, Params>, params: Params): Row[]
-	/** `db.explain(p, params)` === `db.read(snap => snap.explain(p, params))` — the symmetry rule (R13). */
-	explain<Row, Params extends ParamsRecord>(prepared: Prepared<Rels, Row, Params>, params: Params): Explain
 	/**
 	 * One delta transaction: builds the delta synchronously through `fn`,
 	 * commits, and returns the domain outcome. A throw from `fn` aborts
@@ -422,24 +399,14 @@ interface Db<Rels extends SchemaRelations> {
 	 */
 	write<R = void>(fn: DeltaBuild<Rels, R>): WriteResult<Rels, R>
 	/**
-	 * The ONE witnessed-write form: snapshot → `fn` (premise reads via
-	 * `snap`, delta via `tx`) → witnessed commit, which lands only if no
-	 * state-changing commit intervened since the snapshot. On a moved
-	 * generation the WHOLE `fn` reruns on a fresh snapshot: this process
-	 * holds the store's only write handle, so every generation move is
-	 * self-inflicted by the host's own interleaved writes, and each rerun
-	 * witnesses a strictly newer generation — the benign race converges.
-	 * The loop's honesty bound is {@link WITNESSED_ATTEMPT_CAP}: a callback
-	 * that moves the generation on EVERY attempt (a plain `db.write` before
-	 * its first tx verb) would spin forever, so past the cap the typed
-	 * {@link ErrWitnessedLivelock} is thrown instead of a silent loop (the
-	 * engine's ruling: the error, never a loop — retry is host policy, and
-	 * the cap is that policy's own diagnostic). `fn` may decline to commit
-	 * by returning {@link abandon}`(payload)` — the outcome is then
-	 * `{ ok: false, abandoned: payload }` and NO commit (not even an empty
-	 * one) is issued.
+	 * One-shot witnessed write from a live read snapshot: begins a
+	 * transaction that commits only if no state-changing commit landed
+	 * since `snap` was taken. Must run inside the read callback that owns
+	 * `snap`. A moved generation is the typed {@link ErrGenerationMoved}
+	 * — retry is host policy; this method never loops. `fn` may decline to
+	 * commit by returning {@link abandon}`(payload)`.
 	 */
-	writeWitnessed<R>(fn: (snap: ReadScope<Rels>, tx: Tx<Rels>) => R): WriteResult<Rels, R>
+	writeFrom<R>(snap: ReadScope<Rels>, fn: DeltaBuild<Rels, R>): WriteResult<Rels, R>
 	/**
 	 * Prepares a query value built against THIS schema (identity is the
 	 * membership rule): lowers it to the engine IR, pins the plan, and
@@ -712,7 +679,7 @@ interface PointReads {
  * One read scope's PRIVATE lifetime record: its live snapshot handle, the
  * generation it witnessed (carried by the snapshot open itself — one
  * crossing, finding 016), its liveness flag (flipped when the owning
- * `read`/`writeWitnessed` callback returns, or by the scope's own
+ * `read` callback returns, or by the scope's own
  * `Symbol.dispose`), its close latch (`closed` — the snapshot closes
  * exactly once, whichever of the owner and the dispose gets there first),
  * and its owning store's identity token. Held in {@link scopeStates} —
@@ -761,37 +728,12 @@ const planReclaimer = new FinalizationRegistry<PreparedHandle>(function reclaimP
 })
 
 /**
- * The internal retry signal a lazily-witnessed transaction throws when the
- * engine reports a moved generation at begin: `writeWitnessed` catches it
- * by identity (through cause chains, via `errors.is`) and reruns the whole
- * callback on a fresh snapshot. It never escapes the SDK.
+ * The typed generation-moved refusal `writeFrom` throws when a
+ * state-changing commit landed since the witness snapshot: retry is host
+ * policy. Match with `errors.is`.
  */
-const generationMovedSignal = errors.new("bumbledb witnessed generation moved")
-
-/**
- * The witnessed loop's attempt cap — a generous power of two. Benign
- * self-inflicted contention (the host's own commits landing between an
- * attempt's snapshot and its witnessed begin) converges in a handful of
- * retries because each rerun reads a FRESHER snapshot; a workload that moves
- * the generation on EVERY one of this many consecutive attempts is not
- * converging and never will (see {@link ErrWitnessedLivelock}).
- */
-const WITNESSED_ATTEMPT_CAP = 64
-
-/**
- * The typed livelock refusal `writeWitnessed` throws past
- * {@link WITNESSED_ATTEMPT_CAP} attempts: every attempt found the generation
- * moved, which is only sustainable when the callback ITSELF (even
- * indirectly) issues an interleaved plain `db.write` before its first tx
- * verb on every attempt — each rerun then re-moves the generation it is
- * about to witness, forever. That is host-policy pathology, not engine
- * judgment (the engine ships the error, never a loop), so it THROWS rather
- * than returning a result arm. Match with `errors.is`; the remedy is to
- * move the interleaved write out of the callback (or make it first-attempt
- * only — the delta belongs on `tx`, premise reads on `snap`).
- */
-const ErrWitnessedLivelock = errors.new(
-	"bumbledb writeWitnessed livelock: the generation moved on every attempt — the callback itself commits an interleaved write each try, so no snapshot can ever stay current"
+const ErrGenerationMoved = errors.new(
+	"bumbledb generationMoved: a state-changing commit landed since the witness snapshot"
 )
 
 /**
@@ -1037,14 +979,6 @@ function openDb<Rels extends SchemaRelations>(handle: DbHandle, theory: Schema<R
 			})
 			return decodeAnswers<Row>(plan.finds, rows)
 		}
-		function explain<Row, Params extends ParamsRecord>(prepared: Prepared<Rels, Row, Params>, params: Params): Explain {
-			assertLive()
-			const plan = planOf(prepared)
-			const wire = wireParams(plan.params, recordOf(params))
-			return bridged("explain bumbledb prepared query", function callExplain() {
-				return native.preparedExplain(plan.handle, state.handle, wire)
-			})
-		}
 		/** The R12 teardown: invalidate, then close — idempotent through the state's close latch. */
 		function dispose(): void {
 			state.live = false
@@ -1056,7 +990,6 @@ function openDb<Rels extends SchemaRelations>(handle: DbHandle, theory: Schema<R
 			get: reads.get,
 			contains: reads.contains,
 			execute,
-			explain,
 			[Symbol.dispose]: dispose
 		})
 		scopeStates.set(scope, state)
@@ -1171,18 +1104,9 @@ function openDb<Rels extends SchemaRelations>(handle: DbHandle, theory: Schema<R
 		})
 	}
 
-	function explain<Row, Params extends ParamsRecord>(prepared: Prepared<Rels, Row, Params>, params: Params): Explain {
-		return read(function explainInScope(snap) {
-			return snap.explain(prepared, params)
-		})
-	}
-
 	/**
-	 * Builds one {@link Tx} over a transaction-handle thunk: `write` passes
-	 * an already-begun handle; `writeWitnessed` passes a LAZY thunk that
-	 * begins the witnessed transaction on the first delta verb (so premise
-	 * reads and the host's own interleaved writes can precede it) and
-	 * throws {@link generationMovedSignal} when the witness is stale.
+	 * Builds one {@link Tx} over a transaction-handle thunk: `write` and
+	 * `writeFrom` pass an already-begun handle.
 	 */
 	function makeTx(resolveTx: () => TxHandle): { readonly tx: Tx<Rels>; spend(): void } {
 		const txState = { spent: false }
@@ -1326,159 +1250,31 @@ function openDb<Rels extends SchemaRelations>(handle: DbHandle, theory: Schema<R
 	}
 
 	/**
-	 * Commits an already-begun witnessed transaction and closes the
-	 * attempt's snapshot: the committed generation, or the engine's
-	 * complete violation set as data.
+	 * One-shot write from a live snapshot this store owns. Begins immediately;
+	 * a moved generation throws {@link ErrGenerationMoved} and `fn` never
+	 * runs. The snapshot stays owned by the caller's read callback.
 	 */
-	function commitWitnessed<R>(state: ScopeState, txHandle: TxHandle): WriteResult<Rels, R> {
-		const committed = errors.trySync(function commitWitnessedDelta() {
-			return bridged("commit bumbledb witnessed write transaction", function commit() {
-				return native.txCommit(txHandle)
-			})
+	function writeFrom<R>(snap: ReadScope<Rels>, fn: DeltaBuild<Rels, R>): WriteResult<Rels, R> {
+		const snapState = scopeStates.get(snap)
+		if (snapState === undefined) {
+			throw errors.new("bumbledb writeFrom witness is not a read scope of this SDK")
+		}
+		if (snapState.owner !== owner) {
+			throw errors.new(`bumbledb writeFrom snapshot belongs to a different store (schema ${theory.name})`)
+		}
+		if (!snapState.live) {
+			throw errors.new("bumbledb writeFrom snapshot is invalidated — its owning read callback already returned")
+		}
+		const witnessed = bridged("begin witnessed bumbledb write transaction", function begin() {
+			return native.dbWriteFrom(handle, snapState.handle)
 		})
-		if (committed.error) {
-			/** Same one-writer law as `runDelta`: a thrown commit aborts before rethrowing. */
-			const aborted = errors.trySync(function abortAfterFailedCommit() {
-				native.txAbort(txHandle)
-			})
-			if (aborted.error) {
-			}
-			closeScopeState(state)
-			throw errors.wrap(committed.error, "commit bumbledb witnessed write transaction")
-		}
-		const outcome = committed.data
-		closeScopeState(state)
-		if (outcome.ok) {
-			return Object.freeze({ ok: true, generation: outcome.generation })
-		}
-		return Object.freeze({
-			ok: false,
-			violations: Object.freeze(outcome.violations.map(violationOf))
-		})
-	}
-
-	/**
-	 * One attempt of the witnessed loop: fresh snapshot, the callback over
-	 * its scope and a LAZILY-begun witnessed transaction (the first delta
-	 * verb begins it, so premise reads and the host's own interleaved
-	 * writes can precede the witness check), then the witnessed commit —
-	 * or the abandon abort, which never issues a commit. Returns
-	 * `undefined` exactly when the generation moved and the whole callback
-	 * must rerun on a fresh snapshot.
-	 */
-	function witnessedAttempt<R>(fn: (snap: ReadScope<Rels>, tx: Tx<Rels>) => R): WriteResult<Rels, R> | undefined {
-		const state = openScopeState()
-		const scope = makeScope(state)
-		const pending: { tx: TxHandle | undefined } = { tx: undefined }
-		function beginWitnessed(): TxHandle | undefined {
-			const witnessed = bridged("begin witnessed bumbledb write transaction", function begin() {
-				return native.dbWriteFrom(handle, state.handle)
-			})
-			if (!witnessed.ok) {
-				return undefined
-			}
-			return witnessed.tx
-		}
-		const made = makeTx(function resolveWitnessedTx() {
-			if (pending.tx === undefined) {
-				const begun = beginWitnessed()
-				if (begun === undefined) {
-					throw generationMovedSignal
-				}
-				pending.tx = begun
-			}
-			return pending.tx
-		})
-		const built = errors.trySync(function computeWitnessed() {
-			return fn(scope, made.tx)
-		})
-		made.spend()
-		state.live = false
-		/**
-		 * Aborts the pending transaction if one was begun. A faulted abort
-		 * still closes the attempt's snapshot BEFORE rethrowing — every
-		 * openScopeState is paired with closeScopeState on every exit, or a
-		 * reader slot and its snapshot worker leak for the process's lifetime.
-		 */
-		function abortPending(): void {
-			const txHandle = pending.tx
-			if (txHandle === undefined) {
-				return
-			}
-			const aborted = errors.trySync(function abort() {
-				native.txAbort(txHandle)
-			})
-			if (aborted.error) {
-				closeScopeState(state)
-				throw errors.wrap(aborted.error, "abort bumbledb witnessed write transaction")
-			}
-		}
-		if (built.error) {
-			abortPending()
-			closeScopeState(state)
-			if (errors.is(built.error, generationMovedSignal)) {
-				return undefined
-			}
-			throw errors.wrap(built.error, "build witnessed write delta")
-		}
-		if (isThenable(built.data)) {
-			/** The same async-callback refusal as `runDelta` — a thenable means the real delta build races the commit; nothing is committed. */
-			abortPending()
-			closeScopeState(state)
-			throw errors.new(
-				"bumbledb writeWitnessed callback returned a thenable — the delta build is synchronous; an async callback is refused, nothing was committed"
+		if (!witnessed.ok) {
+			throw errors.wrap(
+				ErrGenerationMoved,
+				`writeFrom: generation moved (witnessed ${witnessed.witnessed} current ${witnessed.current}) against schema ${theory.name}`
 			)
 		}
-		if (isAbandon(built.data)) {
-			abortPending()
-			closeScopeState(state)
-			return abandonedOutcome<Rels, R>(built.data)
-		}
-		const late = errors.trySync(function resolveCommitTx() {
-			if (pending.tx === undefined) {
-				return beginWitnessed()
-			}
-			return pending.tx
-		})
-		if (late.error) {
-			/** A faulted late begin must not leak the attempt's snapshot either. */
-			closeScopeState(state)
-			throw late.error
-		}
-		const txHandle = late.data
-		if (txHandle === undefined) {
-			closeScopeState(state)
-			return undefined
-		}
-		return commitWitnessed(state, txHandle)
-	}
-
-	/**
-	 * The witnessed retry loop. What it retries: the benign race — the
-	 * host's OWN interleaved commit landing between an attempt's snapshot
-	 * and its witnessed begin (every writer shares this handle, so a move
-	 * is always self-inflicted) — by rerunning the WHOLE callback on a
-	 * fresh snapshot, which converges because each rerun witnesses a
-	 * strictly newer generation. What it refuses: the pathology where the
-	 * callback itself (even indirectly) issues a plain `db.write` before
-	 * its first tx verb, moving the generation on EVERY attempt — an
-	 * unbounded loop would spin forever with no diagnostic, so past
-	 * {@link WITNESSED_ATTEMPT_CAP} attempts the loop throws the typed
-	 * {@link ErrWitnessedLivelock} instead (the engine's ruling: the
-	 * error, never a loop — retry is host policy, and this is the host
-	 * policy's own honesty bound).
-	 */
-	function writeWitnessed<R>(fn: (snap: ReadScope<Rels>, tx: Tx<Rels>) => R): WriteResult<Rels, R> {
-		for (let attempts = 0; attempts < WITNESSED_ATTEMPT_CAP; attempts += 1) {
-			const attempt = witnessedAttempt(fn)
-			if (attempt !== undefined) {
-				return attempt
-			}
-		}
-		throw errors.wrap(
-			ErrWitnessedLivelock,
-			`writeWitnessed livelock: the generation moved on all ${WITNESSED_ATTEMPT_CAP} attempts against schema ${theory.name}`
-		)
+		return runDelta(witnessed.tx, fn)
 	}
 
 	function prepare<Row, Params extends ParamsRecord>(q: Query<Rels, Row, Params>): Prepared<Rels, Row, Params> {
@@ -1495,24 +1291,7 @@ function openDb<Rels extends SchemaRelations>(handle: DbHandle, theory: Schema<R
 			throw errors.new(`bumbledb ${outcome.kind} (prepare): ${outcome.message}`)
 		}
 		const preparedHandle = outcome.prepared
-		function staleness(snap: ReadScope<Rels>): Staleness {
-			const snapState = scopeStates.get(snap)
-			if (snapState === undefined) {
-				throw errors.new("bumbledb staleness witness is not a read scope of this SDK")
-			}
-			if (snapState.owner !== owner) {
-				throw errors.new(
-					`bumbledb read scope belongs to a different store than this prepared value (schema ${theory.name})`
-				)
-			}
-			if (!snapState.live) {
-				throw errors.new("bumbledb read scope is invalidated — its owning read callback already returned")
-			}
-			return bridged("read bumbledb prepared staleness", function callStaleness() {
-				return native.preparedStaleness(preparedHandle, snapState.handle)
-			})
-		}
-		const prepared: Prepared<Rels, Row, Params> = Object.freeze({ staleness })
+		const prepared: Prepared<Rels, Row, Params> = Object.freeze({})
 		preparedPlans.set(
 			prepared,
 			Object.freeze({
@@ -1533,62 +1312,11 @@ function openDb<Rels extends SchemaRelations>(handle: DbHandle, theory: Schema<R
 		get,
 		contains,
 		execute,
-		explain,
 		write,
-		writeWitnessed,
+		writeFrom,
 		prepare
 	})
 }
-
-/**
- * One cached open store: the theory VALUE it was admitted with (identity is
- * the membership rule — the fingerprint check against a cached path is a
- * `===` on this), the `Db` value every same-path open returns, and the
- * environment handle the exit hook closes.
- */
-interface CachedStore {
-	readonly theory: AnySchema
-	readonly db: unknown
-	readonly handle: DbHandle
-}
-
-/**
- * The per-process store cache, keyed by canonical path
- * (`node:path.resolve` — absolute and normalized). Symlink aliasing is
- * deliberately not resolved here: an aliased spelling misses the cache and
- * reaches the engine, whose exclusive lock refuses a second live handle on
- * the same store — the backstop that keeps "one store, one handle" true.
- */
-const openStores = new Map<string, CachedStore>()
-
-/**
- * The in-process fingerprint check and its typing proof in one probe:
- * theory identity (`===`) implies `Rels` identity, because a cache entry's
- * `db` was constructed from that very theory value — so a hit narrows the
- * entry's `db` to `Db<Rels>` with no assertion anywhere.
- */
-function holdsTheory<Rels extends SchemaRelations>(
-	entry: CachedStore,
-	theory: Schema<Rels>
-): entry is CachedStore & { readonly db: Db<Rels> } {
-	return entry.theory === theory
-}
-
-/**
- * The best-effort exit hook: closes every cached environment so LMDB
- * releases its locks tidily on a clean exit. CORRECTNESS NEVER RESTS HERE —
- * the engine fsyncs every commit, so a process killed before (or during)
- * this hook loses nothing that was committed.
- */
-process.once("exit", function closeCachedStores() {
-	for (const cached of openStores.values()) {
-		const closed = errors.trySync(function closeEnvironment() {
-			native.dbClose(cached.handle)
-		})
-		if (closed.error) {
-		}
-	}
-})
 
 /**
  * The engine twin of the schema-level class wall, as a matchable value
@@ -1626,16 +1354,15 @@ function refuseShadowedChanged(theory: AnySchema): void {
 }
 
 /**
- * The one admission path both verbs share: canonical-path cache lookup
- * first (a hit returns the SAME `Db` value for the identical theory, a
- * typed fingerprint error for a different one, and a typed refusal for
- * `create` — the store a cache entry proves initialized is exactly what
- * create refuses). On a miss: lower the theory, run one bridge call, and
- * wrap the domain refusals — `schemaError` (spec resolution + schema
- * validation, every issue in one message), `newtypeMismatch` (the
- * coherence wall, {@link ErrNewtypeMismatch}), and `fingerprintMismatch`
- * (a different theory cannot open the store) — into typed errors carrying
- * the engine's message intact.
+ * The one admission path both verbs share: lower the theory, run one
+ * bridge call, and wrap the domain refusals — `schemaError` (spec
+ * resolution + schema validation, every issue in one message),
+ * `newtypeMismatch` (the coherence wall, {@link ErrNewtypeMismatch}),
+ * and `fingerprintMismatch` (a different theory cannot open the store)
+ * — into typed errors carrying the engine's message intact.
+ * Environment failures (a second live writer on the same path, IO)
+ * throw from the bridge; the engine's `EnvironmentLocked` message is
+ * "another live handle holds this environment's lock".
  */
 function admit<Rels extends SchemaRelations>(
 	verb: "create" | "open",
@@ -1644,20 +1371,6 @@ function admit<Rels extends SchemaRelations>(
 ): Db<Rels> {
 	refuseShadowedChanged(theory)
 	const canonical = path.resolve(storePath)
-	const cached = openStores.get(canonical)
-	if (cached !== undefined) {
-		if (verb === "create") {
-			throw errors.new(
-				`create bumbledb store at ${canonical}: the store is already open in this process — create refuses an already-initialized directory`
-			)
-		}
-		if (!holdsTheory(cached, theory)) {
-			throw errors.new(
-				`bumbledb fingerprintMismatch (open ${canonical}): the cached store was opened with schema ${cached.theory.name}, not this theory value — schema identity is the membership rule`
-			)
-		}
-		return cached.db
-	}
 	const spec = lower(theory)
 	const opened = bridged(`${verb} bumbledb store at ${canonical}`, function callBridge() {
 		if (verb === "create") {
@@ -1674,35 +1387,31 @@ function admit<Rels extends SchemaRelations>(
 	const manifest = bridged("fetch bumbledb manifest", function fetchManifest() {
 		return native.dbManifest(opened.db)
 	})
-	const db = openDb(opened.db, theory, manifest)
-	openStores.set(canonical, Object.freeze({ theory, db, handle: opened.db }))
-	return db
+	return openDb(opened.db, theory, manifest)
 }
 
 /**
  * The store lifecycle — `Db.create(path, schema)` / `Db.open(path, schema)`.
  * Create refuses an already-initialized directory; open verifies format
- * version, store kind, and the schema fingerprint. Both return values
- * CACHED per canonical path: a second open of the same path with the
- * identical theory value returns the SAME `Db`, and a different theory on
- * a cached path is a typed fingerprint error. There is no close anywhere:
- * the process owns every cached environment until exit (a best-effort exit
- * hook closes them; durability is the engine's per-commit fsync). One
- * store kind exists: durable — resume = reopen, meaning this process's
- * cached value or a fresh process's open.
+ * version, store kind, and the schema fingerprint. A second live handle
+ * on the same path is the engine's `EnvironmentLocked`. There is no close
+ * anywhere: the process owns the environment until GC/exit (durability is
+ * the engine's per-commit fsync). One store kind exists: durable —
+ * resume = reopen in a fresh process, or hold the `Db` this process opened.
  */
 const Db = Object.freeze({
-	/** Creates a fresh durable store at `path` from the schema; the value is cached for every later open. */
+	/** Creates a fresh durable store at `path` from the schema. */
 	async create<Rels extends SchemaRelations>(path: string, theory: Schema<Rels>): Promise<Db<Rels>> {
 		return admit("create", path, theory)
 	},
 	/**
-	 * Opens an existing durable store at `path` with the same theory — the
-	 * cached value when this process already holds it. A fingerprint-matching
-	 * open also BACK-FILLS the store's persisted schema descriptor when it is
-	 * absent (self-describing stores, engine 50-storage.md § the `_meta`
-	 * block), so a legacy store becomes exhumable after one ordinary open —
-	 * adoption is automatic, never a separate verb.
+	 * Opens an existing durable store at `path` with the same theory.
+	 * A fingerprint-matching open also BACK-FILLS the store's persisted
+	 * schema descriptor when it is absent (self-describing stores, engine
+	 * 50-storage.md § the `_meta` block), so a legacy store becomes
+	 * exhumable after one ordinary open — adoption is automatic, never a
+	 * separate verb. A second open of a still-live path is
+	 * `EnvironmentLocked`.
 	 */
 	async open<Rels extends SchemaRelations>(path: string, theory: Schema<Rels>): Promise<Db<Rels>> {
 		return admit("open", path, theory)
@@ -1737,4 +1446,4 @@ export type {
 	Violation,
 	WriteResult
 }
-export { abandon, Db, ErrNewtypeMismatch, ErrWitnessedLivelock, WITNESSED_ATTEMPT_CAP }
+export { abandon, Db, ErrGenerationMoved, ErrNewtypeMismatch }

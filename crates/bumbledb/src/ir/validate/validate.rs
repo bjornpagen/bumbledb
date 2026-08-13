@@ -63,9 +63,7 @@ pub fn validate(schema: &Schema, query: &Query) -> Result<ValidatedQuery, Valida
         let (typing, ctx) = validate_rule(schema, &IdbSignatures::EMPTY, rule)?;
         // Every rule derives the predicate: rule 0's resolved positional
         // input row pins the head, and every later rule must agree
-        // position by position (the input row, not the signature — a
-        // `CountDistinct` position anchors its *input* type across
-        // rules, though its signature column is U64 regardless).
+        // position by position.
         let row = input_row(rule, &typing);
         if rule_idx == 0 {
             pinned_row = row;
@@ -379,7 +377,6 @@ fn seal(
         param_types: params.param_types.clone(),
         set_params,
         point_params: params.point_params.clone(),
-        mask_params: params.mask_params.clone(),
     }
 }
 
@@ -454,26 +451,6 @@ fn lower_rules(
         // Every rule's disjunction was empty: the program lowered to the
         // empty union — no query.
         return Err(ValidationError::EmptyRuleSet);
-    }
-    // Arg-restriction across rules is undefined — the restriction key is
-    // a rule-scoped variable outside the head's vocabulary, and rules
-    // need not even agree on its type — so it refuses at the boundary,
-    // judged on the LOWERED rule count (a DNF blowup of one Arg rule
-    // refuses too). Modeling answer: one Arg query per disjunct,
-    // host-merged (20-query-ir § aggregation).
-    if lowered.len() > 1
-        && head.iter().any(|term| {
-            matches!(
-                term,
-                crate::ir::HeadTerm::Aggregate(
-                    crate::ir::HeadOp::ArgMax | crate::ir::HeadOp::ArgMin
-                )
-            )
-        })
-    {
-        return Err(ValidationError::ArgAcrossRules {
-            rules: lowered.len(),
-        });
     }
     // Cross-rule fold-free nullary `Count` refuses beside the Arg
     // refusal (ruled 2026-07-23, R1): under the head-projection law a
@@ -618,10 +595,8 @@ fn validate_rule(
 
 /// One rule's positional INPUT contribution to the alignment check: a
 /// variable position carries the variable's type; an aggregate position
-/// its fold input type (the nullary `Count` is `U64`; an Arg position
-/// carries the *carried* variable's type — the key is rule-internal).
-/// Alignment-only — the signature is [`super::Predicate::derive`],
-/// never this row (their one divergence: a `CountDistinct` input).
+/// its fold input type (the nullary `Count` is `U64`).
+/// Alignment-only — the signature is [`super::Predicate::derive`].
 fn input_row(rule: &LoweredRule, typing: &RuleTyping) -> Vec<ValueType> {
     let var_type = |var: &VarId| typing.var_types[var].clone();
     rule.finds
@@ -632,16 +607,9 @@ fn input_row(rule: &LoweredRule, typing: &RuleTyping) -> Vec<ValueType> {
             FindTerm::Measure(_) | FindTerm::AggregateMeasure { .. } => ValueType::U64,
             FindTerm::Aggregate { op, over } => match op {
                 AggOp::Count => ValueType::U64,
-                // A Pack position's row entry is an interval — the packed
-                // segment shares its input's interval type, so the pinned
-                // row carries `Interval(E)` there like any interval find.
-                AggOp::Sum
-                | AggOp::Min
-                | AggOp::Max
-                | AggOp::CountDistinct
-                | AggOp::ArgMax { .. }
-                | AggOp::ArgMin { .. }
-                | AggOp::Pack => var_type(&over.expect("validated: only Count is nullary")),
+                AggOp::Sum | AggOp::Min | AggOp::Max | AggOp::Pack => {
+                    var_type(&over.expect("validated: only Count is nullary"))
+                }
             },
         })
         .collect()
@@ -655,7 +623,6 @@ fn input_row(rule: &LoweredRule, typing: &RuleTyping) -> Vec<ValueType> {
 struct ParamTables {
     param_types: BTreeMap<ParamId, ValueType>,
     param_kinds: BTreeMap<ParamId, ParamKind>,
-    mask_params: BTreeSet<ParamId>,
     point_params: BTreeSet<ParamId>,
 }
 
@@ -700,21 +667,13 @@ impl ParamTables {
                 }
             }
         }
-        self.mask_params.extend(ctx.mask_params);
         Ok(())
     }
 
-    /// The two whole-program param rules, checked after every rule
-    /// contributed: a mask param with any value anchor anywhere (a mask
-    /// is not a data-model type), and id density — jointly across value
-    /// and mask params, across all rules (a gap would be a positional
-    /// slot at execution whose supplied value is never type-checked).
+    /// Param id density — jointly across all rules (a gap would be a
+    /// positional slot at execution whose supplied value is never
+    /// type-checked).
     fn check_masks_and_density(&self) -> Result<(), ValidationError> {
-        for param in &self.mask_params {
-            if self.param_types.contains_key(param) {
-                return Err(ValidationError::ParamTypeConflict { param: *param });
-            }
-        }
         for (position, param) in self.param_kinds.keys().enumerate() {
             if usize::from(param.0) != position {
                 return Err(ValidationError::ParamIdGap {

@@ -1061,7 +1061,7 @@ fn push_value(out: &mut String, value: &Value, ty: Option<&ValueType>) {
         Value::IntervalI64(iv) => {
             let _ = write!(out, "{{\"interval_i64\":[{},{}]}}", iv.start(), iv.end());
         }
-        Value::String(_) | Value::AllenMask(_) => {
+        Value::String(_) => {
             unreachable!("judgment fixtures carry no strings or masks")
         }
     }

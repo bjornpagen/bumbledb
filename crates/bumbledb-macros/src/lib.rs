@@ -2228,7 +2228,6 @@ fn value_tokens(value: &Value) -> String {
                  .expect(\"schema! interval literals are nonempty\"))"
             )
         }
-        Value::AllenMask(_) => unreachable!("schema! literals never carry an Allen mask"),
     }
 }
 
@@ -2712,7 +2711,6 @@ fn const_value_tokens(value: &Value, field: &Field) -> String {
             let (start, end) = interval.bounds();
             format!("::bumbledb::Interval::<i64>::__ground_axiom({start}, {end})")
         }
-        Value::AllenMask(_) => unreachable!("schema! literals never carry an Allen mask"),
     };
     match &field.newtype {
         Some(newtype) => format!("{newtype}({raw})"),

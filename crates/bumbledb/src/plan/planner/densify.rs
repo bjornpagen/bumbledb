@@ -33,10 +33,7 @@ pub(super) fn densify(
         .filter_map(|residual| {
             let vars = (1u128 << *var_index.get(&residual.lhs)?)
                 | (1u128 << *var_index.get(&residual.rhs)?);
-            let (keep_num, keep_den) = match residual.mask {
-                crate::ir::MaskTerm::Literal(mask) => (u64::from(mask.popcount()), 13),
-                crate::ir::MaskTerm::Param(_) => (1, crate::plan::selectivity::RANGE_KEEP_DEN),
-            };
+            let (keep_num, keep_den) = (u64::from(residual.mask.popcount()), 13);
             Some(AllenKeep {
                 vars,
                 keep_num,

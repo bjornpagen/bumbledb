@@ -33,7 +33,7 @@ naive model implements chapter 30 literally — after every commit in a differen
 run it evaluates **every statement by brute force over the full final state** and
 must agree with the engine's accept/abort verdict *and*, on abort, the violating
 statement id and the judgment `Direction` — verdicts compare whole. It also executes every query IR (negation, membership, param sets, and
-Arg-restriction included) by nested loops, closing the expressibility gaps in the
+) by nested loops, closing the expressibility gaps in the
 SQLite lane. The naive model is the executable form of the semantics chapters: when
 engine, model, and docs disagree, the docs arbitrate and the loser is fixed in the
 same change.
@@ -171,10 +171,7 @@ families, stated). **Aggregate queries (normative template):** the aggregate app
 over a `SELECT DISTINCT <all bound query variables>` subquery — never a bare
 `GROUP BY` over the joined bag (which folds witness multiplicity) and never
 `SUM(DISTINCT x)` (which folds distinct values). `Count` = `COUNT(*)` over that
-subquery; `CountDistinct(x)` = `COUNT(DISTINCT x)` over it. **Arg-restriction:** the
-subquery joined back against its per-group extreme (`WHERE (group, key) IN (SELECT
-group, MAX(key) ...)`) — ties survive on both sides by construction, matching the
-set-honest semantics. **Empty-input global aggregates:** bumbledb yields the empty
+subquery. **Empty-input global aggregates:** bumbledb yields the empty
 set; SQLite yields one NULL/0 row; the harness rule is that the oracle SQL wraps
 ungrouped aggregates to drop the empty-input row — a documented translation rule,
 not an ad-hoc comparison patch.
@@ -261,7 +258,7 @@ cover key point lookups; postings for a holder/account over a time range; entrie
 touching an account set (**param-set family** — the host-side union convention is
 retired with `ParamSet`); multi-hop joins across holders/accounts/postings/
 instruments/entries; balance-style aggregates; interned strings; skew; summary
-statistics; **latest-posting-per-account (Arg-restriction family)**;
+statistics; **latest-posting-per-account (Max(at) family)**;
 **postings-with-no-tag (negation family)**; **mandate-at-instant and
 mandate-overlap (interval families — membership probe and Allen-mask join)**; a
 cyclic join for WCOJ honesty; and a duplicate-witness projection. Data: seeded,
@@ -795,8 +792,7 @@ no per-family sentence, nothing.
   generator bounding its cost is the same duty as bounding reachable sums;
   aggregates of every op
   over their legal types (u64 generators must bound reachable sums below 2⁶³);
-  CountDistinct over every type; Arg-restriction with and without ties (tie data
-  constructed, not hoped for) and with the key projected; multi-aggregate find
+  multi-aggregate find
   lists; and **duplicate-witness data that exercises the D2 subtree skip and the
   aggregate-sink binding dedup** (the two places a set-semantics bug would hide).
   The algebra families extend the same contract: **multi-rule programs** at arm
@@ -1059,7 +1055,7 @@ set-semantics signature), exact projection sets, duplicate insert no-ops, absent
 no-ops, judgment violations of both forms (with the statement id pinned), the union
 theorems by hand (exclusivity, totality, demolition), pointwise-key boundary cases
 (abutting passes, one-point overlap aborts), aggregate folds with
-collapsing-vs-distinguished bindings, Arg-restriction ties, negation against empty
+collapsing-vs-distinguished bindings, negation against empty
 and nonempty relations, and empty-input aggregates.
 
 ## The allocation gate

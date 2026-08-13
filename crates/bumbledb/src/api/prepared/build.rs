@@ -633,37 +633,28 @@ fn plan_pending_literals(plan: &crate::plan::fj::ValidatedPlan) -> u32 {
         .sum()
 }
 
-/// Dense bind contracts (validation rejected gaps jointly across value
-/// and mask params, across all rules). A value param becomes exactly one
-/// scalar/set variant carrying its point-domain bit; a mask becomes the
-/// typeless mask variant.
+/// Dense bind contracts (validation rejected gaps). A value param
+/// becomes exactly one scalar/set variant carrying its point-domain bit.
 fn param_specs(witness: &crate::ir::validate::ValidatedQuery) -> Vec<super::ParamSpec> {
     let value_types: std::collections::BTreeMap<crate::ir::ParamId, &ValueType> =
         witness.param_types().collect();
-    let param_count = value_types.len() + witness.mask_params().len();
+    let param_count = value_types.len();
     let mut params = Vec::with_capacity(param_count);
     for idx in 0..param_count {
         let id = crate::ir::ParamId(u16::try_from(idx).expect("param ids fit u16"));
         let point = witness.point_params().contains(&id);
-        let spec = value_types.get(&id).map_or_else(
-            || {
-                debug_assert!(witness.mask_params().contains(&id), "dense param ids");
-                super::ParamSpec::Mask
-            },
-            |ty| {
-                if witness.set_params().contains(&id) {
-                    super::ParamSpec::Set {
-                        elem: (*ty).clone(),
-                        point,
-                    }
-                } else {
-                    super::ParamSpec::Scalar {
-                        ty: (*ty).clone(),
-                        point,
-                    }
-                }
-            },
-        );
+        let ty = value_types.get(&id).expect("dense param ids");
+        let spec = if witness.set_params().contains(&id) {
+            super::ParamSpec::Set {
+                elem: (*ty).clone(),
+                point,
+            }
+        } else {
+            super::ParamSpec::Scalar {
+                ty: (*ty).clone(),
+                point,
+            }
+        };
         params.push(spec);
     }
     params
@@ -1231,44 +1222,17 @@ fn find_specs(rule: &RuleWitness<'_>, layout: &impl SlotLayout) -> Vec<FindSpec>
                     AggOp::Sum => crate::exec::sink::FoldOp::Sum,
                     AggOp::Min => crate::exec::sink::FoldOp::Min,
                     AggOp::Max => crate::exec::sink::FoldOp::Max,
-                    AggOp::Count
-                    | AggOp::CountDistinct
-                    | AggOp::ArgMax { .. }
-                    | AggOp::ArgMin { .. }
-                    | AggOp::Pack => {
+                    AggOp::Count | AggOp::Pack => {
                         unreachable!("validated: measure folds are Sum/Min/Max")
                     }
                 },
                 slot: layout.slot_of(*over),
             },
             FindTerm::Aggregate { op, over } => match op {
-                // Arg-restriction: the carry's span plus the shared key
-                // — a key variable's slot, or the interval measure's
-                // two-slot span (the sink parses it onto a derived word
-                // with ray poisoning — R5).
-                AggOp::ArgMax { key } | AggOp::ArgMin { key } => {
-                    let carry = over.expect("validated: Arg carries a variable");
-                    FindSpec::Arg {
-                        slot: layout.slot_of(carry),
-                        width: layout.width_of(carry),
-                        key: match key {
-                            crate::ir::ArgKey::Var(var) => {
-                                crate::exec::sink::ProjSource::Slot(layout.slot_of(*var))
-                            }
-                            crate::ir::ArgKey::Measure(var) => {
-                                crate::exec::sink::ProjSource::Measure {
-                                    start: layout.slot_of(*var),
-                                }
-                            }
-                        },
-                        max: matches!(op, AggOp::ArgMax { .. }),
-                    }
-                }
-                // Pack: the interval variable's two-slot span.
                 AggOp::Pack => FindSpec::Pack {
                     slot: layout.slot_of(over.expect("validated: Pack carries a variable")),
                 },
-                AggOp::Sum | AggOp::Min | AggOp::Max | AggOp::Count | AggOp::CountDistinct => {
+                AggOp::Sum | AggOp::Min | AggOp::Max | AggOp::Count => {
                     let (over_slot, over_width, over_ty) = match over {
                         Some(var) => (
                             Some(layout.slot_of(*var)),
@@ -1282,18 +1246,12 @@ fn find_specs(rule: &RuleWitness<'_>, layout: &impl SlotLayout) -> Vec<FindSpec>
                         AggOp::Min => crate::exec::sink::FoldOp::Min,
                         AggOp::Max => crate::exec::sink::FoldOp::Max,
                         AggOp::Count => crate::exec::sink::FoldOp::Count,
-                        AggOp::CountDistinct => crate::exec::sink::FoldOp::CountDistinct,
-                        AggOp::ArgMax { .. } | AggOp::ArgMin { .. } | AggOp::Pack => {
-                            unreachable!("handled above")
-                        }
+                        AggOp::Pack => unreachable!("handled above"),
                     };
                     FindSpec::Agg {
                         op: fold,
                         over_slot,
                         over_width,
-                        // The fold INPUT's signedness (a rule-local
-                        // fact, not the signature's): Sum must decode
-                        // the biased word form before accumulating.
                         signed: matches!(over_ty, ValueType::I64),
                     }
                 }
@@ -1324,7 +1282,6 @@ fn key_probe_find_table(
             }
             // aggregate and measure key_probes keep the sink path
             FindSpec::Agg { .. }
-            | FindSpec::Arg { .. }
             | FindSpec::Pack { .. }
             | FindSpec::Duration { .. }
             | FindSpec::AggDuration { .. } => None,

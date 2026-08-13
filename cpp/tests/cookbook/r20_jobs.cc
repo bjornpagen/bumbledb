@@ -141,8 +141,8 @@ auto run_cases(std::string_view fixtures_path, std::vector<CaseResult>& results)
 		return;
 	}
 
-	auto outcome = db->write_witnessed([&](bdb::Snapshot& snap,
-	                                       bdb::WriteTx& tx) -> std::expected<bdb::WriteDecision<std::monostate, std::string>, bdb::Error> {
+	auto outcome = db->read([&](bdb::Snapshot& snap) {
+		return db->write_from(snap, [&](bdb::WriteTx& tx) -> std::expected<bdb::WriteDecision<std::monostate, std::string>, bdb::Error> {
 		auto queued = snap.execute(*prepared, {});
 		if (!queued.has_value()) {
 			return std::unexpected{std::move(queued).error()};
@@ -163,6 +163,7 @@ auto run_cases(std::string_view fixtures_path, std::vector<CaseResult>& results)
 			}
 		}
 		return bdb::commit();
+		});
 	});
 
 	auto abandoned = outcome.has_value() && std::holds_alternative<bdb::Abandoned<std::string>>(*outcome);

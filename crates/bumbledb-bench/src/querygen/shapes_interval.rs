@@ -22,13 +22,11 @@
 //! ([`pin_transfer`] — Transfers have no scalar join key). The unbounded
 //! shape is unemittable, not filtered after.
 
-use bumbledb::{AllenMask, Basic, CmpOp, Comparison, MaskTerm, Term, Value, VarId};
+use bumbledb::{AllenMask, Basic, CmpOp, Comparison, Term, Value, VarId};
 
 /// An `Allen` op with a literal mask — the shapes' one constructor.
 fn allen(mask: AllenMask) -> CmpOp {
-    CmpOp::Allen {
-        mask: MaskTerm::Literal(mask),
-    }
+    CmpOp::Allen { mask }
 }
 
 /// A uniformly drawn singleton basic's mask.
@@ -290,7 +288,7 @@ enum Right {
 /// second occurrence at all; their literals draw from the
 /// boundary-shape ladder.
 pub(super) fn interval_join(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, domains: &Domains) {
-    let draw = rng.range(16);
+    let draw = rng.range(14);
     let (op, right) = match draw {
         0 | 1 => (allen(AllenMask::INTERSECTS), Right::Var),
         2 => (allen(AllenMask::INTERSECTS), Right::Literal),
@@ -309,31 +307,9 @@ pub(super) fn interval_join(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, doma
             b.random_mask = true;
             (allen(random_mask(rng)), Right::Var)
         }
-        13 => {
+        _ => {
             b.random_mask = true;
             (allen(random_mask(rng)), Right::Literal)
-        }
-        // Bind-time mask params, both operand shapes (finding 086): the
-        // temporal relation as an argument — the oracle draws the
-        // non-vacuous mask value per draw, and the executor resolves
-        // `MaskTerm::Param` per execution.
-        14 => {
-            b.mask_param = true;
-            (
-                CmpOp::Allen {
-                    mask: MaskTerm::Param(b.fresh_param()),
-                },
-                Right::Var,
-            )
-        }
-        _ => {
-            b.mask_param = true;
-            (
-                CmpOp::Allen {
-                    mask: MaskTerm::Param(b.fresh_param()),
-                },
-                Right::Literal,
-            )
         }
     };
     let (lhs, rhs) = if rng.chance(1, 2) {

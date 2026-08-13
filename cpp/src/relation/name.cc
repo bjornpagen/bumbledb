@@ -26,7 +26,7 @@ struct fixed_string {
 	}
 
 	/**
-	 * Member, not hidden-friend: the pinned GCC 16.1 ICEs streaming a
+	 * Member, not hidden-friend: the production GCC ICEs streaming a
 	 * defaulted friend operator== across a module import.
 	 */
 	[[nodiscard]] constexpr auto operator==(fixed_string const&) const -> bool = default;
@@ -58,7 +58,7 @@ struct name_text {
 	}
 
 	/**
-	 * Member, not hidden-friend: the pinned GCC 16.1 ICEs streaming a
+	 * Member, not hidden-friend: the production GCC ICEs streaming a
 	 * defaulted friend operator== across a module import.
 	 */
 	[[nodiscard]] constexpr auto operator==(name_text const&) const -> bool = default;
@@ -80,7 +80,7 @@ export namespace bdb::detail {
  * Never defined: reaching this makes an over-long reflected name a
  * compile error whose diagnostic carries the function name (the
  * :interval static-failure convention). A contract_assert cannot serve
- * here: the pinned GCC 16.1 rejects contract conditions inside the
+ * here: the production GCC rejects contract conditions inside the
  * class-scope consteval injection context as non-constant.
  */
 auto reflected_name_must_fit_max_name_length() -> void;
@@ -95,7 +95,7 @@ auto reflected_name_must_fit_max_name_length() -> void;
 	return result;
 }
 
-/* PIN(ubsan-constexpr-string): the iterator-pair constructor folds under the sanitizer graphs; every synthesized spec name routes through this funnel */
+/* PIN(ubsan-constexpr-string): the iterator-pair constructor folds under GCC 17 static_assert messages and the sanitizer graphs; every synthesized spec name and consteval diagnostic string from a view routes through this funnel */
 [[nodiscard]] consteval auto spec_name(std::string_view text) -> std::string {
 	return std::string(text.begin(), text.end());
 }

@@ -75,11 +75,6 @@ laws).
   in the host's frontier meanwhile (`../cookbook.md` recipe 24). *Trigger:
   a real workload dominated by interval-intersection-along-paths — it
   re-opens theory before engineering.*
-- **Engine-side top-k pushdown**: results are sets and the host sorts — the
-  host-side ordering conveniences are shipped surface (`bumbledb_query::order`,
-  `ts/src/order.ts`) and `limit` was refused as surface (`70-api.md`, the
-  closed ledger), so pushdown is the only live residue. *Trigger: a measured
-  materialize-then-sort latency-budget violation.*
 - **Declared range/stabbing accelerators**: time-range, point-membership, and
   overlap scans are O(n) by decision; accelerators return only with a benchmark that
   demands them. Candidate mechanism on trigger: determinant skip scan (cursor `set_range`
@@ -161,8 +156,7 @@ re-litigated by accident:
   dictionary is str-only and its key hash carries no tag (`10-data-model.md`,
   `50-storage.md`).
 - **The IR carries** negation (anti-join atoms with the safety rule), point membership
-  (a typing rule), param sets (`IN`), `CountDistinct`, Arg-restriction with
-  set-honest ties, and the relation-shaped `Pack` (one answer per (group, maximal
+  (a typing rule), param sets (`IN`), and the relation-shaped `Pack` (one answer per (group, maximal
   segment) — the coalescing fold); the outer join is a documented decomposition,
   never a node (`20-query-ir.md`).
 - **The query surface is the IR, permanently — pure data** (the text-language OPEN

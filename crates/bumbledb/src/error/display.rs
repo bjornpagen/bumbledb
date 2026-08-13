@@ -613,12 +613,6 @@ impl fmt::Display for ValidationError {
                 f,
                 "rule {rule}: find term {position} disagrees with the head's shape at that position"
             ),
-            Self::ArgAcrossRules { rules } => write!(
-                f,
-                "Arg-restriction over a {rules}-rule program: the restriction key is \
-                 rule-scoped and the union's extreme is undefined — write one Arg query \
-                 per disjunct and merge in the host"
-            ),
             Self::CountAcrossRules { rules } => write!(
                 f,
                 "nullary Count in a fold-free head of a hand-written {rules}-rule \
@@ -737,7 +731,7 @@ impl fmt::Display for ValidationError {
             }
             Self::AggregateOverClosedReference { find } => write!(
                 f,
-                "find {find}: ordering fold or Arg key over a closed reference — \
+                "find {find}: ordering fold over a closed reference — \
                  declaration-id order is an accident, not semantics"
             ),
             Self::CountWithVariable { find } => {
@@ -749,24 +743,11 @@ impl fmt::Display for ValidationError {
             Self::AggregateOverGroupKey { find } => {
                 write!(f, "find {find}: aggregate over a group-key variable")
             }
-            Self::MixedArgAndFold { find } => {
-                write!(f, "find {find}: Arg terms and fold aggregates may not mix")
-            }
-            Self::ArgKeyMismatch { find } => write!(
-                f,
-                "find {find}: Arg terms must share one key variable and one direction"
-            ),
-            Self::NonOrderableArgKey { find } => {
-                write!(f, "find {find}: the Arg key must be U64 or I64")
-            }
             Self::MultiplePackTerms { find } => {
                 write!(f, "find {find}: at most one Pack term per head")
             }
             Self::MixedPackAndFold { find } => {
                 write!(f, "find {find}: Pack and fold aggregates may not mix")
-            }
-            Self::MixedPackAndArg { find } => {
-                write!(f, "find {find}: Pack and Arg terms may not mix")
             }
             Self::PackInputType { find } => {
                 write!(f, "find {find}: Pack folds an interval variable only")
@@ -997,23 +978,6 @@ impl fmt::Display for Error {
                 f,
                 "parameter {}: point value at the domain ceiling — \
                  points are MIN..=MAX-1; MAX is the ray's \u{221e}",
-                param.0
-            ),
-            Self::AllenMaskParamExpected { param } => write!(
-                f,
-                "parameter {}: expected an Allen mask (BindValue::AllenMask)",
-                param.0
-            ),
-            Self::EmptyAllenMaskParam { param } => write!(
-                f,
-                "parameter {}: empty Allen mask — no basic relation can hold; \
-                 write no query",
-                param.0
-            ),
-            Self::FullAllenMaskParam { param } => write!(
-                f,
-                "parameter {}: full Allen mask — every pair satisfies it; \
-                 write no condition",
                 param.0
             ),
             Self::MeasureOfRay { start, end } => write!(

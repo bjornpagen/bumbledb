@@ -93,7 +93,7 @@ use std::collections::BTreeSet;
 
 use crate::allen::classify_bounds;
 use crate::encoding::field_bytes;
-use crate::image::view::{Const, FilterPredicate, MaskConst, ResolvedWordSource};
+use crate::image::view::{Const, FilterPredicate, ResolvedWordSource};
 use crate::ir::normalize::{FoldedMark, NormalizedQuery, Role};
 use crate::ir::render::{literal, mask_names};
 use crate::ir::{CmpOp, VarId};
@@ -459,11 +459,7 @@ fn parse_filter(filter: &FilterPredicate) -> Option<ResolvableFilter> {
             start: *start,
             end: *end,
         }),
-        FilterPredicate::FieldsAllen {
-            left,
-            right,
-            mask: MaskConst::Mask(mask),
-        } => Some(ResolvableFilter::FieldsAllen {
+        FilterPredicate::FieldsAllen { left, right, mask } => Some(ResolvableFilter::FieldsAllen {
             left: *left,
             right: *right,
             mask: *mask,
@@ -471,20 +467,19 @@ fn parse_filter(filter: &FilterPredicate) -> Option<ResolvableFilter> {
         FilterPredicate::FieldAllen {
             field,
             other: Const::Interval { start, end },
-            mask: MaskConst::Mask(mask),
+            mask,
         } => Some(ResolvableFilter::Allen {
             field: *field,
             other: (*start, *end),
             mask: *mask,
         }),
-        // Param points/masks/intervals, `AnyPointIn`'s stage-3 set, and
+        // Param points/intervals, `AnyPointIn`'s stage-3 set, and
         // measure filters refuse for the staging/error-timing reasons
         // above. The unmatched `FieldsCompare` arm is Allen/PointIn,
         // which normalization lowers to fixed filter shapes.
         FilterPredicate::FieldsCompare { .. }
         | FilterPredicate::PointIn { .. }
         | FilterPredicate::AnyPointIn { .. }
-        | FilterPredicate::FieldsAllen { .. }
         | FilterPredicate::FieldAllen { .. }
         | FilterPredicate::FieldWithin { .. }
         | FilterPredicate::DurationCompare { .. }
@@ -812,10 +807,6 @@ fn render_filter(out: &mut String, relation: &Relation, filter: &FilterPredicate
             literal(out, &decoded_interval(&outer_type, (*start, *end)));
         }
         FilterPredicate::FieldsAllen { left, right, mask } => {
-            let MaskConst::Mask(mask) = mask else {
-                render_unparsed_filter(out, filter);
-                return;
-            };
             out.push_str("Allen(");
             out.push_str(name(left));
             out.push_str(", ");
@@ -825,7 +816,7 @@ fn render_filter(out: &mut String, relation: &Relation, filter: &FilterPredicate
             out.push(')');
         }
         FilterPredicate::FieldAllen { field, other, mask } => {
-            let (MaskConst::Mask(mask), Const::Interval { start, end }) = (mask, other) else {
+            let (mask, Const::Interval { start, end }) = (mask, other) else {
                 render_unparsed_filter(out, filter);
                 return;
             };

@@ -5,8 +5,8 @@
  * never declared: THE LAWS TYPE THE COLUMNS, `schema()` computing every
  * field's equivalence class FROM the statement list at both tiers), the
  * statement algebra with `schema()` and `SchemaSpec` lowering (PRD-06), the `Db`
- * runtime (path-cached stores, transactions, typed violations, scoped
- * snapshot reads, the witnessed write loop with `abandon` — PRD-07, zero
+ * runtime (exclusive-lock stores, transactions, typed violations, scoped
+ * snapshot reads, one-shot `write`/`writeFrom` with `abandon` — PRD-07, zero
  * closables), the query surface (Datalog as values, kysely-shaped:
  * `query(S).rule(r => { const { id, name } = v(Holder); return r.match(Holder, { id, name }).find({ name }) })` —
  * variables minted by `v()` and joined by OBJECT REFERENCE (reuse is the
@@ -19,10 +19,7 @@
  * not rename for collision-avoidance), the exhume surface
  * (`Db.exhume` — the one schema-independent read path: the store's
  * self-described shapes and raw facts by name, typed at bare structural
- * values, deliberately schema-free), and the answer-ordering helpers
- * (`by`/`desc` — sort keys as data for the language's own `.sort`; answers
- * are sets, the engine never orders, and limit is the language's own
- * `.slice`). The raw native bridge is not exported.
+ * values, deliberately schema-free). The raw native bridge is not exported.
  */
 
 export type {
@@ -63,7 +60,7 @@ export type {
 	Violation,
 	WriteResult
 } from "#db.ts"
-export { abandon, Db, ErrNewtypeMismatch, ErrWitnessedLivelock, WITNESSED_ATTEMPT_CAP } from "#db.ts"
+export { abandon, Db, ErrGenerationMoved, ErrNewtypeMismatch } from "#db.ts"
 export type {
 	Exhumed,
 	ExhumedAxiom,
@@ -112,15 +109,7 @@ export { bool, bytes, i64, interval, span, str, u64 } from "#fields.ts"
 export type { ClassesOf, ClassWall, LawfulStatements, RelationClasses, SchemaClasses } from "#law.ts"
 export { lower, lowerClosed, lowerRelation } from "#lower.ts"
 export type { KeyFact, Minted } from "#marshal.ts"
-export type {
-	FactValue,
-	OccurrenceDrift,
-	ProgramIr,
-	Staleness,
-	StatementKindTag
-} from "#native.ts"
-export type { Desc, EngineOrderable, SortKey } from "#order.ts"
-export { by, desc } from "#order.ts"
+export type { FactValue, ProgramIr, StatementKindTag } from "#native.ts"
 
 export type {
 	AnyCond,
@@ -160,7 +149,6 @@ export { program } from "#query/predicate.ts"
 export type {
 	ClassedField,
 	Duration,
-	MaskParam,
 	MatchFields,
 	MatchOwner,
 	Param,

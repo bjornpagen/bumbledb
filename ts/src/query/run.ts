@@ -20,17 +20,8 @@ import * as errors from "@superbuilders/errors"
 import { handleOf } from "#marshal.ts"
 import type { FactValue, QueryParam, TaggedValue } from "#native.ts"
 import type { FindColumn } from "#query/atom.ts"
-import { ALLEN_ALL_BITS } from "#query/atom.ts"
 import { taggedCmpLiteral } from "#query/lower.ts"
 import type { ParamEntry } from "#query/scope.ts"
-
-/** Tags one supplied mask-param value. */
-function wireMask(name: string, value: unknown): TaggedValue {
-	if (typeof value !== "number" || !Number.isInteger(value) || value < 0 || value > ALLEN_ALL_BITS) {
-		throw errors.new(`param ${name}: an Allen-mask param binds a 13-bit mask number built from the ALLEN constants`)
-	}
-	return { kind: "allenMask", mask: value }
-}
 
 /** Tags one supplied value-param cell by its anchoring use. */
 function wireValue(entry: ParamEntry, context: string, value: unknown): TaggedValue {
@@ -62,9 +53,6 @@ function wireParams(entries: readonly ParamEntry[], supplied: Readonly<Record<st
 		const value = supplied[entry.name]
 		if (value === undefined) {
 			throw errors.new(`execute params object is missing param ${entry.name}`)
-		}
-		if (entry.shape === "mask") {
-			return wireMask(entry.name, value)
 		}
 		if (entry.shape === "set") {
 			if (!Array.isArray(value)) {

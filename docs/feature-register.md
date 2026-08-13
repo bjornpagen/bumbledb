@@ -113,7 +113,7 @@ next-but-one rung).
   dies into
   `find({ key: varOrAgg })` — the find object's keys name the result row,
   fully typed. `r.var` dies with no shim. Params stay string-named
-  (`r.param`/`r.inSet`/mask params): their names are execute()'s runtime
+  (`r.param`/`r.inSet`): their names are execute()'s runtime
   params-object keys — an honest load-bearing channel, not a lie.
 - **The rationale (the reason, not decoration).** This is the TRUE UNION —
   TypeScript's own binding constructs carrying the calculus's classes — and
@@ -129,7 +129,12 @@ next-but-one rung).
 - **Status**: ships as 0.6.0, a deliberate hard break; version staged in
   lockstep, NO tag, NO publish (owner ceremony).
 
-### 7. Measure-keyed Arg restriction — RULED IN (ruled 2026-07-23, R5)
+### 7. Measure-keyed Arg restriction — WITHDRAWN
+ArgMax/ArgMin (including the measure-keyed R5 face) are killed. Remaining
+folds: Count, Sum, Min, Max, Pack. Hosts that want "the row at max(key)"
+compose Max then keyed get.
+
+### 7 (historical). Measure-keyed Arg restriction — RULED IN then withdrawn (ruled 2026-07-23, R5)
 - **The law.** The `ArgMax`/`ArgMin` key position admits the interval
   measure: "the longest interval per group, with its carried payload" is
   spellable on every surface — IR, validation, sink, both macro grammars,
@@ -180,12 +185,11 @@ next-but-one rung).
   lifetimes are disposables, never `close()`. Kills the GC-held exclusive
   lock — same-path reuse hostage to an unforceable finalizer (finding 066).
 
-### 12. TS explain() — RULED IN (ruled 2026-07-23, R13)
-- **The law.** Read-only plan introspection crosses the FFI: prepared query
-  → plan-as-data (FjPlan + counters). A diagnostic surface, explicitly
-  unfrozen. ANALYZE/profiling stays engine-side. Closes the asymmetry where
-  "the debugging story" existed only on the Rust surface while the primary
-  consumer had no way to see the plan (finding 117).
+### 12. TS explain() — WITHDRAWN as embedding API (was R13)
+- Plan diagnostics (`explain` / `snap.introspect` / `prepared.staleness` /
+  public `ExecutionStats`) are not host-facing SDK API. The bench harness
+  may still introspect via crate-visible / `#[doc(hidden)]` paths.
+  ANALYZE-grade profiling stays engine-internal.
 
 ### 13. Closed-column const accessors — RULED IN (ruled 2026-07-23, R14)
 - **The law.** Closed-relation column values are expansion-time constants;
@@ -319,28 +323,10 @@ under the tag) — both rows shipped 2026-07-19:
   re-implements keyed lookup host-side five ways, the ETL shadows its own key
   laws with five host maps, and the existing primary-key get goes unused
   (~15 workaround sites total). The keys are laws; the surface exposes them.
-- **Answer ordering/limit conveniences** — **SHIPPED (2026-07-19)**: the
-  census-split sorting half (four hand-rolled bigint comparators, every
-  rank/pos consumer sorting host-side) landed host-side, on the `query!`
-  quarantine — the engine never orders; that ruling stands. The two
-  spellings: TS `by`/`desc` in `ts/src/order.ts` (a bare column name IS
-  ascending; keys as data folded into one row-typed comparator for the
-  language's own `.sort`); Rust `bumbledb_query::order::{SortKey, by,
-  value_cmp}` (direction as the `SortKey` variant, `by` folds for
-  `Vec::sort_by`). Limit REFUSED, recorded: the language owns it —
-  `.slice(0, n)` / `truncate`/`take` — no operator invented where one
-  already exists. The four-hand-rolled-bigint-comparators finding is
-  **CLOSED — SHIPPED (2026-07-25, primer C33)**: the residue was BARE
-  scalar arrays (`bigint[]` of ids, map keys) the row-typed keys could
-  never reach — no column to name — so the identity key landed as the same
-  two spellings at zero arity: TS `by()`/`desc()` ARE the
-  ascending/descending comparators over the value itself (nothing to fold;
-  the comparator is the result), typed to EXACTLY the engine-orderable
-  roster (`EngineOrderable = bigint | boolean`, false < true per R3) with
-  `string`/`number` compile-refused citing `10-data-model.md`
-  § "Orderability, complete" — one vocabulary, no sibling names, one owner
-  for the cell order (the agreement pin in `ts/test/order.test.ts` sweeps
-  every `Lt` cut against a real store).
+- **Answer ordering/limit conveniences** — **WITHDRAWN as engine/SDK
+  surface**: the engine never orders; hosts sort with the language's own
+  comparators. Limit remains `.slice` / `truncate` / `take`. Engine-side
+  top-k is refused.
 
 ## Also parked elsewhere (cross-references)
 

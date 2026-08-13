@@ -9,8 +9,8 @@
 use super::render;
 use crate::ir::validate::validate;
 use crate::ir::{
-    AggOp, Atom, CmpOp, Comparison, ConditionTree, FindTerm, MaskTerm, ParamId, Query, Rule, Term,
-    Value, VarId,
+    AggOp, Atom, CmpOp, Comparison, ConditionTree, FindTerm, ParamId, Query, Rule, Term, Value,
+    VarId,
 };
 use crate::schema::Schema;
 use crate::schema::ValidateDescriptor as _;
@@ -98,18 +98,18 @@ fn projection_rule(relation: RelationId) -> Rule {
         negated: vec![],
         conditions: vec![ConditionTree::Leaf(Comparison {
             op: CmpOp::Allen {
-                mask: MaskTerm::Param(ParamId(0)),
+                mask: AllenMask::INTERSECTS,
             },
             lhs: Term::Var(VarId(1)),
-            rhs: Term::Param(ParamId(1)),
+            rhs: Term::Param(ParamId(0)),
         })],
     }
 }
 
 /// The calendar union query, golden: unavailability is Busy ∪ Ooo
 /// against a window param — two rules, each `;`-terminated,
-/// newline-separated (the mask is a param here; the literal-mask spelling
-/// is pinned below).
+/// newline-separated (literal INTERSECTS; other literal-mask spellings
+/// are pinned below).
 #[test]
 fn calendar_union_golden() {
     let rule = projection_rule(BUSY);
@@ -121,8 +121,8 @@ fn calendar_union_golden() {
     validate(&schema, &query).expect("the golden query is a real query");
     assert_eq!(
         render(&schema, &query),
-        "(v0, v1) | Busy(person: v0, during: v1), Allen(v1, ?0, ?1);\n\
-         (v0, v1) | Ooo(person: v0, during: v1), Allen(v1, ?0, ?1);"
+        "(v0, v1) | Busy(person: v0, during: v1), Allen(v1, INTERSECTS, ?0);\n\
+         (v0, v1) | Ooo(person: v0, during: v1), Allen(v1, INTERSECTS, ?0);"
     );
 }
 
@@ -147,7 +147,7 @@ fn selection_negation_and_literal_mask_golden() {
         }],
         conditions: vec![ConditionTree::Leaf(Comparison {
             op: CmpOp::Allen {
-                mask: MaskTerm::Literal(AllenMask::INTERSECTS),
+                mask: AllenMask::INTERSECTS,
             },
             lhs: Term::Var(VarId(1)),
             rhs: Term::Literal(Value::IntervalU64(
@@ -325,7 +325,7 @@ fn malformed_queries_render_with_placeholders() {
         conditions: vec![ConditionTree::Or(vec![
             ConditionTree::Leaf(Comparison {
                 op: CmpOp::Allen {
-                    mask: MaskTerm::Literal(AllenMask::EMPTY),
+                    mask: AllenMask::EMPTY,
                 },
                 lhs: Term::Var(VarId(3)),
                 rhs: Term::Var(VarId(4)),
@@ -353,9 +353,7 @@ fn mask_union_spelling() {
         }],
         negated: vec![],
         conditions: vec![ConditionTree::Leaf(Comparison {
-            op: CmpOp::Allen {
-                mask: MaskTerm::Literal(mask),
-            },
+            op: CmpOp::Allen { mask },
             lhs: Term::Var(VarId(1)),
             rhs: Term::Literal(Value::IntervalU64(
                 bumbledb_theory::Interval::<u64>::new(5, 9).expect("nonempty interval"),

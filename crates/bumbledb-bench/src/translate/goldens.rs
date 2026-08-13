@@ -83,17 +83,10 @@ pub const INTERVAL_EQ_LITERAL: &str = "SELECT DISTINCT t0.\"org\" FROM \"Mandate
 /// placeholders, start then end.
 pub const INTERVAL_EQ_PARAM: &str = "SELECT DISTINCT t0.\"org\" FROM \"Mandate\" AS t0 WHERE t0.\"active_start\" = ?1 AND t0.\"active_end\" = ?2";
 
-/// `count_distinct` — `Q(h, CountDistinct(i)) :- Account(id = a,
-/// holder = h), Posting(account = a, instrument = i)`: distinct
-/// instruments per holder — `COUNT(DISTINCT x)` over the distinct full
-/// binding set, never over the joined bag.
-pub const COUNT_DISTINCT: &str = "SELECT v0, COUNT(DISTINCT v2) FROM (SELECT DISTINCT t0.\"holder\" AS v0, t0.\"id\" AS v1, t1.\"instrument\" AS v2 FROM \"Account\" AS t0, \"Posting\" AS t1 WHERE t0.\"id\" = t1.\"account\") GROUP BY v0";
-
-/// `arg_max` — `Q(a, ArgMax_at(p)) :- Posting(id = p, account = a,
-/// at = t)`: latest-posting-per-account, the join-back template. The
-/// distinct binding set `d` joins its per-group `MAX` key; the outer
-/// `SELECT DISTINCT` keeps ties on both sides.
-pub const ARG_MAX: &str = "WITH d AS (SELECT DISTINCT t0.\"account\" AS v0, t0.\"id\" AS v1, t0.\"at\" AS v2 FROM \"Posting\" AS t0) SELECT DISTINCT d.v0, d.v1 FROM d JOIN (SELECT v0, MAX(v2) AS mk FROM d GROUP BY v0) m ON d.v0 = m.v0 AND d.v2 = m.mk";
+/// `latest_posting` — `Q(a, Max(t)) :- Posting(id = p, account = a,
+/// at = t)`: each account's latest posting time. The engine folds Max;
+/// the host that wants the posting id joins back on `(account, at)`.
+pub const LATEST_POSTING: &str = "SELECT v0, MAX(v2) FROM (SELECT DISTINCT t0.\"account\" AS v0, t0.\"id\" AS v1, t0.\"at\" AS v2 FROM \"Posting\" AS t0) GROUP BY v0";
 
 /// chain — `Q(src, amount, at) :- Posting(entry = e, account = a,
 /// amount, at), JournalEntry(id = e, source = src),
@@ -149,12 +142,6 @@ pub const POSTINGS_WITHOUT_TAG: &str = "SELECT DISTINCT t0.\"id\", t0.\"amount\"
 /// intersect in time — an Allen-mask **join** across accounts, not a
 /// filter; the mask renders as its 9 sharing basics OR'd.
 pub const MANDATE_OVERLAP: &str = "SELECT DISTINCT t0.\"account\", t1.\"account\" FROM \"Mandate\" AS t0, \"Mandate\" AS t1 WHERE t0.\"org\" = ?1 AND t1.\"org\" = ?1 AND ((t0.\"active_start\" < t1.\"active_start\" AND t1.\"active_start\" < t0.\"active_end\" AND t0.\"active_end\" < t1.\"active_end\") OR (t0.\"active_start\" = t1.\"active_start\" AND t0.\"active_end\" < t1.\"active_end\") OR (t1.\"active_start\" < t0.\"active_start\" AND t0.\"active_end\" < t1.\"active_end\") OR (t1.\"active_start\" < t0.\"active_start\" AND t0.\"active_end\" = t1.\"active_end\") OR (t0.\"active_start\" = t1.\"active_start\" AND t0.\"active_end\" = t1.\"active_end\") OR (t0.\"active_start\" < t1.\"active_start\" AND t0.\"active_end\" = t1.\"active_end\") OR (t0.\"active_start\" < t1.\"active_start\" AND t1.\"active_end\" < t0.\"active_end\") OR (t0.\"active_start\" = t1.\"active_start\" AND t1.\"active_end\" < t0.\"active_end\") OR (t1.\"active_start\" < t0.\"active_start\" AND t0.\"active_start\" < t1.\"active_end\" AND t1.\"active_end\" < t0.\"active_end\"))";
-
-/// `arg_max_global` — `Q(ArgMax_at(p)) :- Posting(id = p, at = t)`: the
-/// global-group variant omits the GROUP BY and the group join keys; an
-/// empty `d` joins nothing (the NULL extreme matches no row), so the
-/// empty input yields the empty set with no HAVING patch.
-pub const ARG_MAX_GLOBAL: &str = "WITH d AS (SELECT DISTINCT t0.\"id\" AS v0, t0.\"at\" AS v1 FROM \"Posting\" AS t0) SELECT DISTINCT d.v0 FROM d JOIN (SELECT MAX(v1) AS mk FROM d) m ON d.v1 = m.mk";
 
 /// closure — the linear transitive closure over `OrgParent` read as
 /// edges: `p0(x, a) | OrgParent(child = x, parent = a); p0(x, a) |

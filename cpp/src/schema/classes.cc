@@ -161,7 +161,7 @@ template<class... Args>
 }
 
 [[nodiscard]] consteval auto schema_subject(std::string_view name) -> std::string {
-	return std::string{"bumbledb schema \""} + std::string{name} + "\"";
+	return std::string{"bumbledb schema \""} + spec_name(name) + "\"";
 }
 
 /**
@@ -202,9 +202,9 @@ template<class... Args>
 	auto const coordinate = quoted(verdict.unknown_coordinate.relation, verdict.unknown_coordinate.field);
 	auto out = schema_subject(name) + ": statement " + render_count(verdict.unknown_statement) + " references coordinate " + coordinate;
 	if (verdict.relation_missing) {
-		out += " but relation \"" + std::string{verdict.unknown_coordinate.relation.view()} + "\" is not a member of the schema";
+		out += " but relation \"" + spec_name(verdict.unknown_coordinate.relation.view()) + "\" is not a member of the schema";
 	} else {
-		out += " but relation \"" + std::string{verdict.unknown_coordinate.relation.view()} + "\" declares no such field";
+		out += " but relation \"" + spec_name(verdict.unknown_coordinate.relation.view()) + "\" declares no such field";
 	}
 	return out;
 }

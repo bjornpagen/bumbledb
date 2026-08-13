@@ -36,7 +36,6 @@ import type {
 	ClassedField,
 	Duration,
 	JoinOk,
-	MaskParam,
 	MatchFields,
 	MatchOwner,
 	MintSlotOf,
@@ -87,7 +86,7 @@ type CmpTermData =
 	| { readonly kind: "literal"; readonly value: unknown }
 
 /** The `allen` mask position as runtime data. */
-type MaskData = { readonly kind: "literal"; readonly mask: number } | { readonly kind: "param"; readonly name: string }
+type MaskData = { readonly kind: "literal"; readonly mask: number }
 
 /** One comparison condition as runtime data (`mask` present exactly for `allen`). */
 interface CmpData {
@@ -111,13 +110,11 @@ type CondData = CmpData | TreeData
 /** One aggregate's runtime description (find vocabulary, over variable REFERENCES). */
 type AggData =
 	| { readonly op: "count" }
-	| { readonly op: "countDistinct"; readonly over: AnyVar }
 	| {
 			readonly op: "fold"
 			readonly fold: "sum" | "min" | "max"
 			readonly over: AnyVar | { readonly duration: AnyVar }
 	  }
-	| { readonly op: "arg"; readonly direction: "argMax" | "argMin"; readonly over: AnyVar; readonly key: AnyVar }
 	| { readonly op: "pack"; readonly over: AnyVar }
 
 /** One classified find entry as runtime data (variables and the measure ride BY REFERENCE). */
@@ -129,9 +126,9 @@ type FindEntryData =
 /**
  * One answer column: its name (the row object key — the find record's key,
  * so renames are real and a duplicate column is unrepresentable), its entry,
- * the classed mint SLOT its values flow from (a projected var or an
- * Arg-carried payload; `undefined` for counts/folds/measures/pack, which
- * derive numbers or intervals), and — when that slot is a closed reference —
+ * the classed mint SLOT its values flow from (a projected var;
+ * `undefined` for counts/folds/measures/pack, which derive numbers or
+ * intervals), and — when that slot is a closed reference —
  * the roster the decode lifts row ids back to handle NAMES through
  * (`undefined` on every bare column). The slice is SDK-side marshaling data
  * only: the wire `ProgramIr` never carries it.
@@ -168,7 +165,7 @@ type RuleItem =
  */
 interface ParamUse {
 	readonly name: string
-	readonly shape: "value" | "set" | "mask"
+	readonly shape: "value" | "set"
 	readonly anchor: AnyField | "measure" | undefined
 	readonly op: "binding" | CmpKind
 	readonly members: readonly string[] | undefined
@@ -473,16 +470,15 @@ const ALLEN = Object.freeze({
 /**
  * THE interval-pair comparison (`ir::CmpOp::Allen`): two interval terms of
  * one element type, satisfied iff the pair's classification is in the
- * 13-bit mask — a literal built from the `ALLEN` constants, or a mask
- * parameter (`r.maskParam`).
+ * 13-bit mask — a literal built from the `ALLEN` constants.
  */
-function allen<const A extends IntervalSide, const M extends number | MaskParam<string>, const B extends IntervalSide>(
+function allen<const A extends IntervalSide, const B extends IntervalSide>(
 	left: A,
-	mask: M,
+	mask: number,
 	right: B
-): Cmp<"allen", A, B, M> {
+): Cmp<"allen", A, B, number> {
 	assertTermSide("allen", left, right)
-	if (typeof mask === "number" && (!Number.isInteger(mask) || mask < 0 || mask > ALLEN_ALL_BITS)) {
+	if (!Number.isInteger(mask) || mask < 0 || mask > ALLEN_ALL_BITS) {
 		throw errors.new(
 			`allen mask ${mask} is not a 13-bit mask — build masks from the ALLEN constants (bumbledb allen.rs: bits above the low 13 are unrepresentable)`
 		)
@@ -829,9 +825,6 @@ type PointParams<T> = T extends Param<infer P extends string> ? { readonly [Q in
 /** An interval side's params contribution. */
 type IntervalSideParams<T> = T extends Param<infer P extends string> ? { readonly [Q in P]: IntervalValue } : never
 
-/** The mask position's params contribution. */
-type MaskParams<M> = M extends MaskParam<infer P extends string> ? { readonly [Q in P]: number } : never
-
 /**
  * One condition's params-object fragments (a union; the rule builder folds
  * them into the inferred `Params` record) — every param typed by its use.
@@ -839,7 +832,7 @@ type MaskParams<M> = M extends MaskParam<infer P extends string> ? { readonly [Q
  */
 type CondParams<C> = [AnyTreeChild] extends [C]
 	? never
-	: C extends Cmp<infer Op, infer L, infer R, infer M>
+	: C extends Cmp<infer Op, infer L, infer R, infer _M>
 		? Op extends "eq" | "ne"
 			? EqParams<L, R>
 			: Op extends "lt" | "le" | "gt" | "ge"
@@ -847,7 +840,7 @@ type CondParams<C> = [AnyTreeChild] extends [C]
 				: Op extends "pointIn"
 					? IntervalSideParams<L> | PointParams<R>
 					: Op extends "allen"
-						? IntervalSideParams<L> | IntervalSideParams<R> | MaskParams<M>
+						? IntervalSideParams<L> | IntervalSideParams<R>
 						: never
 		: C extends Tree<infer Ch extends readonly AnyTreeChild[]>
 			? CondParams<Ch[number]>

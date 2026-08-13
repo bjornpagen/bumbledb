@@ -66,7 +66,6 @@ import {
 	within
 } from "#index.ts"
 import { native } from "#native.ts"
-import { by } from "#order.ts"
 
 const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bumbledb-cookbook-"))
 
@@ -217,7 +216,9 @@ function must<T>(value: T | undefined): T {
 
 /** Sorts a bigint array ascending (answers are sets; the host sorts via the one comparator owner). */
 function sorted(values: readonly bigint[]): bigint[] {
-	return [...values].sort(by())
+	return [...values].sort(function asc(left, right) {
+		return left < right ? -1 : left > right ? 1 : 0
+	})
 }
 
 describe("the SDK cookbook — every recipe compiles, admits, and lowers", function suite() {
@@ -808,17 +809,21 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 		// update-where, witnessed: query the premise on the attempt's snapshot,
 		// then delete(old) + insert(new) per matched fact — "still Queued" is
 		// the witness; the claim and its lease commit together (the mirrors).
-		const outcome = db.writeWitnessed(function updateWhere(snap, tx) {
+		const outcome = db.read(function updateWhere(snap) {
 			const queued = snap.execute(prepared, {})
 			if (queued.length === 0) {
-				return abandon("nothing queued")
+				return db.writeFrom(snap, function decline() {
+					return abandon("nothing queued")
+				})
 			}
-			for (const row of queued) {
-				tx.delete(Job, { id: row.id, state: "Queued", payload: row.payload })
-				tx.insert(Job, { id: row.id, state: "Running", payload: row.payload })
-				tx.insert(Lease, { job: row.id, worker: 7n, until: 60n })
-			}
-			return undefined
+			return db.writeFrom(snap, function claim(tx) {
+				for (const row of queued) {
+					tx.delete(Job, { id: row.id, state: "Queued", payload: row.payload })
+					tx.insert(Job, { id: row.id, state: "Running", payload: row.payload })
+					tx.insert(Lease, { job: row.id, worker: 7n, until: 60n })
+				}
+				return undefined
+			})
 		})
 		assert.ok(!outcome.ok, "the empty store has nothing queued — the loop abandons")
 		assert.ok("abandoned" in outcome && outcome.abandoned === "nothing queued")

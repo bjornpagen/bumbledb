@@ -8,7 +8,7 @@
 //! is mechanical: [`kind_of`] matches `bumbledb::Error` EXHAUSTIVELY — no
 //! wildcard arm anywhere — so a new engine variant breaks this crate's
 //! compile, exactly the discipline the Node bridge's `wire_tags!` tables
-//! enforce. `BDB_ERROR_KIND_PARAM` covers the nine bind-time parameter
+//! enforce. `BDB_ERROR_KIND_PARAM` covers the six bind-time parameter
 //! variants; `BDB_ERROR_KIND_PANIC` is bridge-synthesized (§30), never
 //! engine-originated.
 
@@ -110,7 +110,7 @@ pub struct bdb_error {
 }
 
 /// The engine error's C kind — the EXHAUSTIVE match (module doc): a new
-/// `bumbledb::Error` variant fails to compile here, on purpose. The nine
+/// `bumbledb::Error` variant fails to compile here, on purpose. The six
 /// bind-time parameter variants collapse to `Param`; nothing else
 /// collapses.
 fn kind_of(error: &Error) -> bdb_error_kind {
@@ -141,10 +141,7 @@ fn kind_of(error: &Error) -> bdb_error_kind {
         | Error::ParamSetExpected { .. }
         | Error::ParamScalarExpected { .. }
         | Error::ParamElementTypeMismatch { .. }
-        | Error::PointParamAtCeiling { .. }
-        | Error::AllenMaskParamExpected { .. }
-        | Error::EmptyAllenMaskParam { .. }
-        | Error::FullAllenMaskParam { .. } => bdb_error_kind::Param,
+        | Error::PointParamAtCeiling { .. } => bdb_error_kind::Param,
         Error::MeasureOfRay { .. } => bdb_error_kind::MeasureOfRay,
         Error::CapacityRayMeasure { .. } => bdb_error_kind::CapacityRayMeasure,
         Error::FixpointBudgetExceeded { .. } => bdb_error_kind::FixpointBudgetExceeded,

@@ -9,7 +9,7 @@
 //! generator's mask distribution: named composites, singletons, and
 //! random masks, over both element lanes and every operand shape.
 
-use bumbledb::{CmpOp, ConditionTree, MaskTerm, Query};
+use bumbledb::{CmpOp, ConditionTree, Query};
 
 use crate::corpus_gen::Rng;
 use crate::differential::engine_query;
@@ -33,12 +33,9 @@ fn converse_twin(query: &Query) -> Option<Query> {
             let ConditionTree::Leaf(comparison) = tree else {
                 continue; // the generator emits flat conjunctions
             };
-            if let CmpOp::Allen {
-                mask: MaskTerm::Literal(mask),
-            } = comparison.op
-            {
+            if let CmpOp::Allen { mask } = comparison.op {
                 comparison.op = CmpOp::Allen {
-                    mask: MaskTerm::Literal(mask.converse()),
+                    mask: mask.converse(),
                 };
                 std::mem::swap(&mut comparison.lhs, &mut comparison.rhs);
                 any = true;

@@ -246,8 +246,6 @@ struct rule_chain {
 				    .over = slot.term,
 				    .answer = Slot::cls,
 				    .has_over = true,
-				    .key_present = false,
-				    .key = {},
 				    .classed = Slot::classed,
 				    .law = Slot::law,
 				};
@@ -259,8 +257,7 @@ struct rule_chain {
 			static_assert(detail::is_agg_ref_v<Extra> || detail::is_named_find_v<Extra>,
 			              "bumbledb find(): every trailing argument must be a named "
 			              "head column — bdb::as<\"c\">(var) or a named aggregate "
-			              "(bdb::sum / min / max / count / count_distinct / arg_max "
-			              "/ arg_min / pack)");
+			              "(bdb::sum / min / max / count / pack)");
 			if (out.find_count == max_query_finds) {
 				detail::rule_has_too_many_finds();
 			}
@@ -273,8 +270,6 @@ struct rule_chain {
 				    .over = detail::var_term<Var>(),
 				    .answer = Var::cls,
 				    .has_over = true,
-				    .key_present = false,
-				    .key = {},
 				    .classed = Var::classed,
 				    .law = Var::law,
 				};

@@ -47,14 +47,14 @@ lowering's object literals insert it (`ts/src/query/lower.ts`):
 - program — `{"predicates": [predicate…], "output": N}`
 - predicate — `{"head": [headTerm…], "rules": [rule…]}`
 - headTerm — `{"kind":"var"}` |
-  `{"kind":"aggregate","op":"sum"|"min"|"max"|"count"|"countDistinct"|"argMax"|"argMin"|"pack"}`
+  `{"kind":"aggregate","op":"sum"|"min"|"max"|"count"|"pack"}`
 - rule — `{"finds":[…],"atoms":[…],"negated":[…],"conditions":[…]}`
 - find — `{"kind":"var","var":N}` | `{"kind":"measure","var":N}` |
   `{"kind":"aggregate","op":AGG}` (nullary `Count`: no `over` key) |
   `{"kind":"aggregate","op":AGG,"over":N}` |
   `{"kind":"aggregateMeasure","op":AGG,"over":N}`
-- AGG — `{"kind":"sum"}` … `{"kind":"argMax","key":N}` |
-  `{"kind":"argMin","key":N}` | `{"kind":"pack"}`
+- AGG — `{"kind":"sum"}` | `{"kind":"min"}` | `{"kind":"max"}` |
+  `{"kind":"count"}` | `{"kind":"pack"}`
 - atom — `{"source":{"kind":"edb","relation":N}|{"kind":"idb","pred":N},
   "bindings":[[fieldId, term]…]}` (an idb atom's field ids address head
   POSITIONS; binding order is written order)
@@ -65,14 +65,14 @@ lowering's object literals insert it (`ts/src/query/lower.ts`):
   `{"kind":"and"|"or","children":[…]}`
 - CMP — `{"op":OP,"lhs":term,"rhs":term}`; OP —
   `{"kind":"eq"|"ne"|"lt"|"le"|"gt"|"ge"|"pointIn"}` |
-  `{"kind":"allen","mask":{"kind":"literal","mask":BITS}|{"kind":"param","param":N}}`
-  (`PointIn` is stored interval-left, point-right)
+  `{"kind":"allen","mask":BITS}`
+  (`PointIn` is stored interval-left, point-right; the Allen mask is a
+  literal 13-bit number, never a param)
 - V (tagged value) — `{"kind":"bool","value":true}` |
   `{"kind":"u64","value":"18446744073709551615"}` |
   `{"kind":"i64","value":"-3"}` | `{"kind":"string","value":"…"}` |
   `{"kind":"intervalU64","start":"3","end":"10"}` |
-  `{"kind":"intervalI64","start":"-3","end":"10"}` |
-  `{"kind":"allenMask","mask":BITS}`
+  `{"kind":"intervalI64","start":"-3","end":"10"}`
 
 **Integer normalization**: every id (relation, field, predicate, variable,
 param, output) and every mask is a JSON NUMBER; every `Value` scalar
@@ -116,9 +116,8 @@ production fails the test, as does a case naming an unknown production.
 | `point-in` | `?t in v` — point membership in an interval variable |
 | `allen-literal-mask` | `Allen(a, MASK, b)` with a named mask |
 | `allen-mask-union` | a `\|`-united mask (`BEFORE\|MEETS`) |
-| `allen-mask-param` | `Allen(a, ?p, b)` — the mask as a param |
 | `negation` | `!atom` — the anti-join |
-| `agg-sum` `agg-min` `agg-max` `agg-count` `agg-count-distinct` `agg-arg-max` `agg-arg-min` `agg-pack` | the eight aggregates |
+| `agg-sum` `agg-min` `agg-max` `agg-count` `agg-pack` | the five remaining aggregates |
 | `duration` | the measure: `Duration(v)` finds, folds, and comparisons |
 | `named-columns` | `name: Agg(…)` head naming (call-site only; the IR is positional) |
 | `multi-rule-union` | several rules, one head — set union |

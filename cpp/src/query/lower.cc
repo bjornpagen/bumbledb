@@ -229,8 +229,7 @@ inline constexpr std::size_t no_rec = ~std::size_t{0};
 				++fold_count;
 			}
 		}
-		if ((column.has_over && !term_is_bound_var(rule.state, column.over)) ||
-		    (column.key_present && !term_is_bound_var(rule.state, column.key))) {
+		if (column.has_over && !term_is_bound_var(rule.state, column.over)) {
 			find_head_variable_is_not_bound_in_this_rule();
 		}
 		for (auto other = std::size_t{0}; other != index; ++other) {
@@ -312,11 +311,6 @@ inline constexpr std::size_t no_rec = ~std::size_t{0};
 		find.form = column.form;
 		find.op = column.op;
 		find.has_over = column.has_over;
-		if (column.key_present) {
-			find.key_present = true;
-			find.key_is_measure = column.key.form == query_term_form::measure;
-			find.key = var_id(numbers, column.key.variable);
-		}
 		if (column.has_over) {
 			find.over = var_id(numbers, column.over.variable);
 		}

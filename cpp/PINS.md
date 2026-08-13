@@ -86,24 +86,27 @@ top-level CMake configure gate.
 
 ## ubsan-constexpr-string
 
-- symptom: under `-fsanitize=address,undefined`, `std::string`'s
-  (pointer, size) constructor carries a null check that does not
-  constant-fold against ASan-instrumented storage (template parameter
-  objects, string literals, `define_static_string` globals), so
-  consteval name synthesis fails as "not a constant expression". The
-  iterator-pair constructor folds.
+- symptom: `std::string`'s (pointer, size) constructor carries a null
+  check that does not constant-fold against ASan-instrumented storage
+  (template parameter objects, string literals, `define_static_string`
+  globals) **and**, on GCC 17 / trunk, against `name_text` / reflected
+  views used as `static_assert` messages — consteval fails as "not a
+  constant expression". The iterator-pair constructor folds.
 - sites: `bdb::detail::spec_name` (`src/relation/name.cc`) — the single
   funnel, built with `std::string(text.begin(), text.end())`. Every
-  injected `data_member_spec` name computed from a `name_text` or
-  derived view routes through it (callers in `src/closed/facade.cc`,
-  `src/schema/key.cc`, `src/schema/schema.cc`, `src/query/query.cc`);
-  names straight from `identifier_of` (reflection-internal storage)
-  need no detour.
-- workaround: construct the name payload through the iterator-pair
-  constructor, and keep every synthesized name routed through the one
-  funnel.
+  injected `data_member_spec` name and every consteval diagnostic string
+  built from a `name_text` or `string_view` routes through it (callers in
+  `src/closed/facade.cc`, `src/schema/key.cc`, `src/schema/schema.cc`,
+  `src/schema/classes.cc`, `src/schema/member.cc`, `src/query/query.cc`,
+  `src/query/pattern.cc`, `src/relation/classify.cc`, `src/closed/handle.cc`);
+  names straight from `identifier_of` still go through the funnel when
+  they become a `std::string` in a consteval message.
+- workaround: construct the payload through the iterator-pair
+  constructor, and keep every synthesized name and diagnostic string
+  routed through the one funnel.
 - retire: on any GCC bump, respell `spec_name`'s body as the
-  (pointer, size) construction and run the asan-ubsan preset.
+  (pointer, size) construction, run the asan-ubsan preset, and re-run
+  the compile-fail suite.
 - upstream: GCC PR 71962.
 
 ## reflect-using-decl

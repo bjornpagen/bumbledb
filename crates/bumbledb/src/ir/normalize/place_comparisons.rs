@@ -4,7 +4,8 @@ use super::{
 };
 use crate::image::view::{Const, FilterPredicate, MaskConst, ResolvedWordSource};
 use crate::ir::validate::{ClassifiedComparison, DurationOperand, SealedConst};
-use crate::ir::{CmpOp, MaskTerm, VarId};
+use crate::ir::{CmpOp, VarId};
+use bumbledb_theory::allen::AllenMask;
 use bumbledb_theory::schema::FieldId;
 
 /// The lowered constant of a sealed comparison side. String stays a
@@ -20,11 +21,8 @@ fn sealed_const(constant: &SealedConst) -> Const {
 
 /// The same-atom mask side of an `Allen` variable pair: the field kept on
 /// the left (both variables are the atom's fields), so no mirror applies.
-fn same_atom_mask(mask: MaskTerm) -> MaskConst {
-    match mask {
-        MaskTerm::Literal(mask) => MaskConst::Mask(mask),
-        MaskTerm::Param(param) => MaskConst::Param(param),
-    }
+fn same_atom_mask(mask: AllenMask) -> MaskConst {
+    mask
 }
 
 /// The variable's first positive occurrence and the field it reads there.

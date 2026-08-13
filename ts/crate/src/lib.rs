@@ -599,7 +599,6 @@ fn bind_value(value: &Value) -> Result<BindValue<'_>, WireError> {
         Value::FixedBytes(bytes) => BindValue::FixedBytes(bytes),
         Value::IntervalU64(interval) => BindValue::IntervalU64(interval.start(), interval.end()),
         Value::IntervalI64(interval) => BindValue::IntervalI64(interval.start(), interval.end()),
-        Value::AllenMask(mask) => BindValue::AllenMask(*mask),
     })
 }
 

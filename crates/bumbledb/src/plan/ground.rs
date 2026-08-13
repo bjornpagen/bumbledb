@@ -83,7 +83,7 @@ use std::collections::BTreeSet;
 
 use crate::image::view::{Const, FilterPredicate, ResolvedWordSource};
 use crate::ir::normalize::{NormalizedQuery, Occurrence, Role, lower_literal};
-use crate::ir::{AggOp, AtomSource, CmpOp, FindTerm, VarId};
+use crate::ir::{AtomSource, CmpOp, FindTerm, VarId};
 use crate::schema::{Enforcement, Schema};
 use bumbledb_theory::schema::{FieldId, Side, StatementId};
 
@@ -615,12 +615,9 @@ fn output_vars(finds: &[FindTerm]) -> BTreeSet<VarId> {
             | FindTerm::AggregateMeasure { over: var, .. } => {
                 vars.insert(*var);
             }
-            FindTerm::Aggregate { op, over } => {
+            FindTerm::Aggregate { over, .. } => {
                 if let Some(var) = over {
                     vars.insert(*var);
-                }
-                if let AggOp::ArgMax { key } | AggOp::ArgMin { key } = op {
-                    vars.insert(key.var());
                 }
             }
         }

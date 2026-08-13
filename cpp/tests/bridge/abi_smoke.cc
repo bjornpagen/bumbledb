@@ -178,8 +178,8 @@ struct CaseResult {
 		    .passed = false,
 		}};
 	}
-	auto const fingerprint = read_fingerprint(dir->string());
-	auto const fold_case = bulk_committed_fold_case((*dir / "absent").string());
+	auto const fingerprint = read_fingerprint(dir->native());
+	auto const fold_case = bulk_committed_fold_case((*dir / "absent").native_encoded_string());
 	auto code = std::error_code{};
 	std::filesystem::remove_all(*dir, code);
 	if (!fingerprint) {

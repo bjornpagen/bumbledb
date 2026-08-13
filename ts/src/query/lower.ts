@@ -79,7 +79,7 @@ import type {
 } from "#query/atom.ts"
 import { allen, and, eq, ge, gt, le, lt, ne, not, or, pointIn } from "#query/atom.ts"
 import type { CheckFind, CheckRecFind, FindShape, HeadRecordOf, RowOfFind } from "#query/find.ts"
-import { argMax, argMin, count, countDistinct, max, min, pack, sum } from "#query/find.ts"
+import { count, max, min, pack, sum } from "#query/find.ts"
 import type {
 	AnyVar,
 	ClassedField,
@@ -95,7 +95,6 @@ import {
 	inferred,
 	isTerm,
 	makeDuration,
-	makeMaskParam,
 	makeParam,
 	makeSetParam,
 	renderFieldKind,
@@ -193,8 +192,6 @@ interface TermOps {
 	readonly param: typeof makeParam
 	/** Names one ∈-set parameter (the IR's `ParamSet`): bound to a readonly array at execution. */
 	readonly inSet: typeof makeSetParam
-	/** Names one Allen-mask parameter (`MaskTerm::Param`): a bind-time 13-bit mask number. */
-	readonly maskParam: typeof makeMaskParam
 	/** The measure of an interval-typed variable: `|[s, e)| = e − s`, u64. */
 	readonly duration: typeof makeDuration
 	readonly eq: typeof eq
@@ -209,12 +206,9 @@ interface TermOps {
 	readonly or: typeof or
 	readonly not: typeof not
 	readonly count: typeof count
-	readonly countDistinct: typeof countDistinct
 	readonly sum: typeof sum
 	readonly min: typeof min
 	readonly max: typeof max
-	readonly argMax: typeof argMax
-	readonly argMin: typeof argMin
 	readonly pack: typeof pack
 }
 
@@ -383,7 +377,6 @@ interface QueryStart<Rels extends SchemaRelations, Classes extends SchemaClasses
 const termOps: TermOps = Object.freeze({
 	param: makeParam,
 	inSet: makeSetParam,
-	maskParam: makeMaskParam,
 	duration: makeDuration,
 	eq,
 	ne,
@@ -397,12 +390,9 @@ const termOps: TermOps = Object.freeze({
 	or,
 	not,
 	count,
-	countDistinct,
 	sum,
 	min,
 	max,
-	argMax,
-	argMin,
 	pack
 })
 
@@ -558,10 +548,6 @@ function resolveBindings(
 					)
 					break
 				}
-				case "maskParam":
-					throw errors.new(
-						`${label}.${fieldName}: an Allen-mask param is not a field-typed value — masks live in allen() conditions only`
-					)
 				case "duration":
 					throw errors.new(
 						`${label}.${fieldName}: the measure is not a field-typed value — it lives in comparisons and find entries`
@@ -607,7 +593,7 @@ function advanceMatch(
 }
 
 /** Resolves one comparison side to its runtime term (variables and the measure ride by reference). */
-function cmpTermDataOf(op: string, value: unknown): CmpTermData {
+function cmpTermDataOf(value: unknown): CmpTermData {
 	if (isTerm(value)) {
 		switch (value[term]) {
 			case "var":
@@ -618,8 +604,6 @@ function cmpTermDataOf(op: string, value: unknown): CmpTermData {
 				return Object.freeze({ kind: "setParam" as const, name: value.name })
 			case "duration":
 				return Object.freeze({ kind: "measure" as const, ref: value.over })
-			case "maskParam":
-				throw errors.new(`${op}: an Allen-mask param is not a comparison term — masks live in allen()'s mask position`)
 		}
 	}
 	return Object.freeze({ kind: "literal" as const, value })
@@ -656,29 +640,17 @@ function sideUses(op: CmpKind, side: CmpTermData, sibling: CmpTermData, uses: Pa
 /** Lowers one condition VALUE to its runtime data, recording param uses. */
 function condDataOf(cond: AnyCond, uses: ParamUse[]): CondData {
 	if (cond.cond === "cmp") {
-		const lhs = cmpTermDataOf(cond.op, cond.lhs)
-		const rhs = cmpTermDataOf(cond.op, cond.rhs)
+		const lhs = cmpTermDataOf(cond.lhs)
+		const rhs = cmpTermDataOf(cond.rhs)
 		sideUses(cond.op, lhs, rhs, uses)
 		sideUses(cond.op, rhs, lhs, uses)
 		let mask: MaskData | undefined
 		if (cond.op === "allen") {
 			const maskValue = cond.mask
-			if (typeof maskValue === "number") {
-				mask = Object.freeze({ kind: "literal" as const, mask: maskValue })
-			} else if (isTerm(maskValue) && maskValue[term] === "maskParam") {
-				mask = Object.freeze({ kind: "param" as const, name: maskValue.name })
-				uses.push(
-					Object.freeze({
-						name: maskValue.name,
-						shape: "mask" as const,
-						anchor: undefined,
-						op: "allen" as const,
-						members: undefined
-					})
-				)
-			} else {
-				throw errors.new("allen: the mask position takes a 13-bit mask number or a maskParam")
+			if (typeof maskValue !== "number") {
+				throw errors.new("allen: the mask position takes a 13-bit mask number built from the ALLEN constants")
 			}
+			mask = Object.freeze({ kind: "literal" as const, mask: maskValue })
 		}
 		return Object.freeze({ kind: "cmp" as const, op: cond.op, mask, lhs, rhs })
 	}
@@ -773,9 +745,7 @@ function advanceIdb(
 }
 
 /** Narrows a find entry to an aggregate value. */
-function isAggregateEntry(
-	value: unknown
-): value is { readonly agg: string; readonly over: unknown; readonly key: unknown } {
+function isAggregateEntry(value: unknown): value is { readonly agg: string; readonly over: unknown } {
 	return typeof value === "object" && value !== null && "agg" in value
 }
 
@@ -788,16 +758,11 @@ function asVarTerm(context: string, value: unknown): AnyVar {
 }
 
 /** Classifies one aggregate find entry into its runtime data (variables ride by reference). */
-function aggDataOf(
-	name: string,
-	entry: { readonly agg: string; readonly over: unknown; readonly key: unknown }
-): AggData {
+function aggDataOf(name: string, entry: { readonly agg: string; readonly over: unknown }): AggData {
 	const over = entry.over
 	switch (entry.agg) {
 		case "count":
 			return Object.freeze({ op: "count" as const })
-		case "countDistinct":
-			return Object.freeze({ op: "countDistinct" as const, over: asVarTerm(`find ${name} (countDistinct)`, over) })
 		case "sum":
 		case "min":
 		case "max": {
@@ -809,14 +774,6 @@ function aggDataOf(
 			}
 			throw errors.new(`find ${name} (${entry.agg}): takes a variable or r.duration(v)`)
 		}
-		case "argMax":
-		case "argMin":
-			return Object.freeze({
-				op: "arg" as const,
-				direction: entry.agg,
-				over: asVarTerm(`find ${name} (${entry.agg})`, over),
-				key: asVarTerm(`find ${name} (${entry.agg} key)`, entry.key)
-			})
 		case "pack":
 			return Object.freeze({ op: "pack" as const, over: asVarTerm(`find ${name} (pack)`, over) })
 		default:
@@ -903,16 +860,13 @@ function assertNotClosed(where: string, position: string, ref: AnyVar): void {
 
 /**
  * The classed mint slot one answer column's VALUES flow from: a projected
- * variable's mint slot, or an Arg-carried payload's. Counts, folds, `pack`
- * and the measure derive numbers/intervals, so they resolve no slot.
+ * variable's mint slot. Counts, folds, `pack` and the measure derive
+ * numbers/intervals, so they resolve no slot.
  */
 function findColumnSlotOf(context: ChainContext, column: FindColumn): ClassedField | undefined {
 	const entry = column.entry
 	if (entry.kind === "var") {
 		return mintSlotOf(context, entry.over)
-	}
-	if (entry.kind === "aggregate" && entry.agg.op === "arg") {
-		return mintSlotOf(context, entry.agg.over)
 	}
 	return undefined
 }
@@ -934,9 +888,6 @@ function validateColumn(context: ChainContext, bound: ReadonlySet<AnyVar>, colum
 	switch (agg.op) {
 		case "count":
 			return
-		case "countDistinct":
-			assertBound(where, bound, agg.over)
-			return
 		case "fold": {
 			if ("duration" in agg.over) {
 				assertBound(where, bound, agg.over.duration)
@@ -945,12 +896,6 @@ function validateColumn(context: ChainContext, bound: ReadonlySet<AnyVar>, colum
 			}
 			assertBound(where, bound, agg.over)
 			assertNotClosed(where, `the ${agg.fold} input`, agg.over)
-			return
-		}
-		case "arg": {
-			assertBound(where, bound, agg.over)
-			assertBound(where, bound, agg.key)
-			assertNotClosed(where, `the ${agg.direction} key`, agg.key)
 			return
 		}
 		case "pack":
@@ -1306,9 +1251,6 @@ function headSignature(column: FindColumn): string {
 	const agg = entry.agg
 	if (agg.op === "fold") {
 		return `${column.name}:${agg.fold}`
-	}
-	if (agg.op === "arg") {
-		return `${column.name}:${agg.direction}`
 	}
 	return `${column.name}:${agg.op}`
 }
@@ -1826,10 +1768,7 @@ function lowerComparison(ctx: LowerContext, cmp: CmpData, ids: VarIds): Comparis
 		if (maskData === undefined) {
 			throw errors.new("query lowering: an allen comparison lost its mask")
 		}
-		const mask =
-			maskData.kind === "literal"
-				? { kind: "literal" as const, mask: maskData.mask }
-				: { kind: "param" as const, param: paramIdOf(ctx, maskData.name) }
+		const mask = maskData.mask
 		return {
 			op: { kind: "allen", mask },
 			lhs: lowerCmpTerm(ctx, cmp.lhs, cmp.rhs, ids, "allen"),
@@ -1868,16 +1807,12 @@ function lowerFind(entry: FindEntryData, ids: VarIds): FindTermIr {
 	switch (agg.op) {
 		case "count":
 			return { kind: "aggregate", op: { kind: "count" } }
-		case "countDistinct":
-			return { kind: "aggregate", op: { kind: "countDistinct" }, over: ids.of(agg.over) }
 		case "fold": {
 			if ("duration" in agg.over) {
 				return { kind: "aggregateMeasure", op: { kind: agg.fold }, over: ids.of(agg.over.duration) }
 			}
 			return { kind: "aggregate", op: { kind: agg.fold }, over: ids.of(agg.over) }
 		}
-		case "arg":
-			return { kind: "aggregate", op: { kind: agg.direction, key: ids.of(agg.key) }, over: ids.of(agg.over) }
 		case "pack":
 			return { kind: "aggregate", op: { kind: "pack" }, over: ids.of(agg.over) }
 	}
@@ -1888,12 +1823,8 @@ function headOpOf(agg: AggData): HeadOpIr {
 	switch (agg.op) {
 		case "count":
 			return "count"
-		case "countDistinct":
-			return "countDistinct"
 		case "fold":
 			return agg.fold
-		case "arg":
-			return agg.direction
 		case "pack":
 			return "pack"
 	}
@@ -1963,7 +1894,7 @@ function lowerQuery(q: AnyQuery): ProgramIr {
 	const paramIds = new Map<string, number>()
 	const params = new Map<string, ParamEntry>()
 	q.data.params.forEach(function assignParamId(entry, index) {
-		if (entry.anchor === undefined && entry.shape !== "mask") {
+		if (entry.anchor === undefined) {
 			throw errors.new(
 				`query param ${entry.name} has no field-anchored use — bind it in an atom or compare it against a bound variable`
 			)

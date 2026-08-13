@@ -5,7 +5,7 @@ use super::*;
 use crate::fixture::{field, fresh, var};
 use bumbledb::AggOp;
 use bumbledb::AllenMask;
-use bumbledb::ir::{Atom, CmpOp, Comparison, ConditionTree, FindTerm, MaskTerm, Rule, Term};
+use bumbledb::ir::{Atom, CmpOp, Comparison, ConditionTree, FindTerm, Rule, Term};
 use bumbledb::schema::{IntervalElement, RelationDescriptor, SchemaDescriptor, Side, ValueType};
 use bumbledb::{FieldId, PredId, PredicateDef, Program};
 
@@ -535,7 +535,7 @@ fn allen_intersects_matches_its_hand_written_golden() {
         negated: vec![],
         conditions: vec![ConditionTree::Leaf(Comparison {
             op: CmpOp::Allen {
-                mask: MaskTerm::Literal(AllenMask::INTERSECTS),
+                mask: AllenMask::INTERSECTS,
             },
             lhs: var(3),
             rhs: var(4),
@@ -558,7 +558,7 @@ fn point_in_matches_both_goldens() {
         negated: vec![],
         conditions: vec![ConditionTree::Leaf(Comparison {
             op: CmpOp::Allen {
-                mask: MaskTerm::Literal(AllenMask::COVERS),
+                mask: AllenMask::COVERS,
             },
             lhs: var(1),
             rhs: Term::Param(ParamId(0)),
@@ -671,131 +671,6 @@ fn interval_equality_matches_its_goldens() {
         t.params,
         vec![ParamSlot::Start(ParamId(0)), ParamSlot::End(ParamId(0))]
     );
-}
-
-#[test]
-fn count_distinct_matches_its_hand_written_golden() {
-    // Q(h, CountDistinct(i)) :- Account(id = a, holder = h),
-    //                           Posting(account = a, instrument = i).
-    let query = Query::single(Rule {
-        finds: vec![
-            FindTerm::Var(VarId(0)),
-            FindTerm::Aggregate {
-                op: AggOp::CountDistinct,
-                over: Some(VarId(2)),
-            },
-        ],
-        atoms: vec![
-            Atom {
-                source: bumbledb::AtomSource::Edb(ids::ACCOUNT),
-                bindings: vec![(ids::account::ID, var(1)), (ids::account::HOLDER, var(0))],
-            },
-            Atom {
-                source: bumbledb::AtomSource::Edb(ids::POSTING),
-                bindings: vec![
-                    (ids::posting::ACCOUNT, var(1)),
-                    (ids::posting::INSTRUMENT, var(2)),
-                ],
-            },
-        ],
-        negated: vec![],
-        conditions: vec![],
-    });
-    let t = translate(&query, schema(), &[]).expect("translates");
-    assert_eq!(t.sql, goldens::COUNT_DISTINCT);
-}
-
-#[test]
-fn count_distinct_over_an_interval_concatenates_the_halves() {
-    // Q(CountDistinct(u)) :- Mandate(account = a, active = u): the halves
-    // fold through an injective decimal rendering (COUNT(DISTINCT ...)
-    // takes one expression).
-    let query = Query::single(Rule {
-        finds: vec![FindTerm::Aggregate {
-            op: AggOp::CountDistinct,
-            over: Some(VarId(1)),
-        }],
-        atoms: vec![Atom {
-            source: bumbledb::AtomSource::Edb(ids::MANDATE),
-            bindings: vec![
-                (ids::mandate::ACCOUNT, var(0)),
-                (ids::mandate::ACTIVE, var(1)),
-            ],
-        }],
-        negated: vec![],
-        conditions: vec![],
-    });
-    let t = translate(&query, schema(), &[]).expect("translates");
-    assert!(
-        t.sql.contains("COUNT(DISTINCT v1_start || ',' || v1_end)"),
-        "{}",
-        t.sql
-    );
-    assert!(t.sql.ends_with("HAVING COUNT(*) > 0"), "{}", t.sql);
-}
-
-#[test]
-fn arg_restriction_matches_its_goldens() {
-    // Grouped: Q(a, ArgMax_at(p)) :- Posting(id = p, account = a, at = t).
-    let query = Query::single(Rule {
-        finds: vec![
-            FindTerm::Var(VarId(0)),
-            FindTerm::Aggregate {
-                op: AggOp::ArgMax {
-                    key: bumbledb::ArgKey::Var(VarId(2)),
-                },
-                over: Some(VarId(1)),
-            },
-        ],
-        atoms: vec![Atom {
-            source: bumbledb::AtomSource::Edb(ids::POSTING),
-            bindings: vec![
-                (ids::posting::ID, var(1)),
-                (ids::posting::ACCOUNT, var(0)),
-                (ids::posting::AT, var(2)),
-            ],
-        }],
-        negated: vec![],
-        conditions: vec![],
-    });
-    let t = translate(&query, schema(), &[]).expect("translates");
-    assert_eq!(t.sql, goldens::ARG_MAX);
-
-    // Global: Q(ArgMax_at(p)) :- Posting(id = p, at = t).
-    let query = Query::single(Rule {
-        finds: vec![FindTerm::Aggregate {
-            op: AggOp::ArgMax {
-                key: bumbledb::ArgKey::Var(VarId(1)),
-            },
-            over: Some(VarId(0)),
-        }],
-        atoms: vec![Atom {
-            source: bumbledb::AtomSource::Edb(ids::POSTING),
-            bindings: vec![(ids::posting::ID, var(0)), (ids::posting::AT, var(1))],
-        }],
-        negated: vec![],
-        conditions: vec![],
-    });
-    let t = translate(&query, schema(), &[]).expect("translates");
-    assert_eq!(t.sql, goldens::ARG_MAX_GLOBAL);
-
-    // ArgMin swaps the extreme.
-    let query = Query::single(Rule {
-        finds: vec![FindTerm::Aggregate {
-            op: AggOp::ArgMin {
-                key: bumbledb::ArgKey::Var(VarId(1)),
-            },
-            over: Some(VarId(0)),
-        }],
-        atoms: vec![Atom {
-            source: bumbledb::AtomSource::Edb(ids::POSTING),
-            bindings: vec![(ids::posting::ID, var(0)), (ids::posting::AT, var(1))],
-        }],
-        negated: vec![],
-        conditions: vec![],
-    });
-    let t = translate(&query, schema(), &[]).expect("translates");
-    assert!(t.sql.contains("SELECT MIN(v1) AS mk FROM d"), "{}", t.sql);
 }
 
 #[test]

@@ -53,7 +53,6 @@ typedef enum bdb_value_kind {
   BDB_VALUE_KIND_FIXED_BYTES,
   BDB_VALUE_KIND_INTERVAL_U64,
   BDB_VALUE_KIND_INTERVAL_I64,
-  BDB_VALUE_KIND_ALLEN_MASK,
 } bdb_value_kind;
 
 // The execute-parameter tag: a scalar (a [`bdb_value`]) or a param set
@@ -193,9 +192,6 @@ typedef enum bdb_head_op {
   BDB_HEAD_OP_MIN,
   BDB_HEAD_OP_MAX,
   BDB_HEAD_OP_COUNT,
-  BDB_HEAD_OP_COUNT_DISTINCT,
-  BDB_HEAD_OP_ARG_MAX,
-  BDB_HEAD_OP_ARG_MIN,
   BDB_HEAD_OP_PACK,
 } bdb_head_op;
 
@@ -206,12 +202,6 @@ typedef enum bdb_find_term_kind {
   BDB_FIND_TERM_KIND_AGGREGATE,
   BDB_FIND_TERM_KIND_AGGREGATE_MEASURE,
 } bdb_find_term_kind;
-
-// An Arg-restriction key position's tag.
-typedef enum bdb_arg_key_kind {
-  BDB_ARG_KEY_KIND_VAR,
-  BDB_ARG_KEY_KIND_MEASURE,
-} bdb_arg_key_kind;
 
 // An atom source's tag: a stored relation (`Edb`) or a predicate of the
 // same program (`Idb`).
@@ -249,13 +239,6 @@ typedef enum bdb_cmp_op_kind {
   BDB_CMP_OP_KIND_ALLEN,
   BDB_CMP_OP_KIND_POINT_IN,
 } bdb_cmp_op_kind;
-
-// The Allen mask position's tag: a literal mask or a param resolved at
-// bind.
-typedef enum bdb_mask_term_kind {
-  BDB_MASK_TERM_KIND_LITERAL,
-  BDB_MASK_TERM_KIND_PARAM,
-} bdb_mask_term_kind;
 
 // The opaque, reusable answers carrier.
 typedef struct bdb_answers bdb_answers;
@@ -329,13 +312,10 @@ typedef struct bdb_value {
   // `IntervalI64`: half-open `[start, end)`, `start < end` checked.
   int64_t interval_i64_start;
   int64_t interval_i64_end;
-  // `AllenMask`: the low-13-bit mask (checked at the boundary).
-  uint16_t allen_mask;
 } bdb_value;
 
 // One positional execution argument — the C mirror of the engine's
-// public `ParamArg` shape (Scalar | Set; an Allen mask travels as a
-// scalar `AllenMask` value).
+// public `ParamArg` shape (Scalar | Set).
 typedef struct bdb_param {
   enum bdb_param_kind kind;
   // `Scalar`: the value.
@@ -515,12 +495,9 @@ typedef struct bdb_head_term {
   enum bdb_head_op op;
 } bdb_head_term;
 
-// One rule-scoped aggregate op: the kind, plus the Arg key for
-// `ArgMax`/`ArgMin` (ignored for every other kind).
+// One rule-scoped aggregate op.
 typedef struct bdb_agg_op {
   enum bdb_head_op kind;
-  enum bdb_arg_key_kind arg_key_kind;
-  uint16_t arg_key_var;
 } bdb_agg_op;
 
 // One find term. `var` is read for `Var`/`Measure`; `op` plus
@@ -559,13 +536,11 @@ typedef struct bdb_atom {
   size_t binding_count;
 } bdb_atom;
 
-// One comparison operator; the mask fields are read for `Allen` only
-// (`mask` for a `Literal` mask term, `mask_param` for a `Param` one).
+// One comparison operator; `mask` is the literal 13-bit Allen mask,
+// read for `Allen` only.
 typedef struct bdb_cmp_op {
   enum bdb_cmp_op_kind kind;
-  enum bdb_mask_term_kind mask_kind;
   uint16_t mask;
-  uint16_t mask_param;
 } bdb_cmp_op;
 
 // One comparison condition.

@@ -60,7 +60,6 @@ fn owned_value(value: &Value) -> Result<Owned, String> {
         Value::FixedBytes(raw) => Owned::Bytes(raw.to_vec()),
         Value::IntervalU64(interval) => Owned::IntervalU64(interval.start(), interval.end()),
         Value::IntervalI64(interval) => Owned::IntervalI64(interval.start(), interval.end()),
-        Value::AllenMask(_) => return Err("mask values are not results".to_owned()),
     })
 }
 

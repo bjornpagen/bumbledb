@@ -148,21 +148,23 @@ describe("keyed get: typed point reads through a declared key statement", async 
 		)
 	})
 
-	test("writeWitnessed sees one spelling on both hands", function witnessed() {
-		const outcome = db.writeWitnessed(function bothHands(snap, tx) {
+	test("writeFrom sees one spelling on both hands", function witnessed() {
+		const outcome = db.read(function bothHands(snap) {
 			const committed = snap.get(Program, programGrpKey, { grp })
 			assert.ok(committed, "the snapshot hand answers the keyed committed-state read")
 			assert.equal(committed.id, program)
-			const g = tx.insert(Grp, { label: "calculus" })
-			const p = tx.insert(Program, { grp: g.id, title: "limits" })
-			const pending = tx.get(Program, programGrpKey, { grp: g.id })
-			assert.ok(pending, "the transaction hand answers the keyed final-state read")
-			assert.equal(pending.id, p.id)
-			assert.equal(
-				snap.get(Program, programGrpKey, { grp: g.id }),
-				undefined,
-				"the snapshot hand still witnesses only committed state"
-			)
+			return db.writeFrom(snap, function delta(tx) {
+				const g = tx.insert(Grp, { label: "calculus" })
+				const p = tx.insert(Program, { grp: g.id, title: "limits" })
+				const pending = tx.get(Program, programGrpKey, { grp: g.id })
+				assert.ok(pending, "the transaction hand answers the keyed final-state read")
+				assert.equal(pending.id, p.id)
+				assert.equal(
+					snap.get(Program, programGrpKey, { grp: g.id }),
+					undefined,
+					"the snapshot hand still witnesses only committed state"
+				)
+			})
 		})
 		assert.ok(outcome.ok, "the witnessed write commits")
 	})

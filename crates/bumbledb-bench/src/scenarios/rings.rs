@@ -11,8 +11,8 @@
 
 use bumbledb::schema::ValidateDescriptor as _;
 use bumbledb::{
-    AggOp, AllenMask, Atom, CmpOp, Comparison, ConditionTree, FindTerm, MaskTerm, ParamId, Query,
-    RelationId, Rule, Term, Value, VarId,
+    AggOp, AllenMask, Atom, CmpOp, Comparison, ConditionTree, FindTerm, ParamId, Query, RelationId,
+    Rule, Term, Value, VarId,
 };
 
 use super::{DEFAULT_CAP, Scenario, ScenarioQuery, Surface, Twin};
@@ -133,7 +133,7 @@ fn ge(lhs: Term, rhs: Term) -> ConditionTree {
 fn intersects(lhs: Term, rhs: Term) -> ConditionTree {
     ConditionTree::Leaf(Comparison {
         op: CmpOp::Allen {
-            mask: MaskTerm::Literal(AllenMask::INTERSECTS),
+            mask: AllenMask::INTERSECTS,
         },
         lhs,
         rhs,

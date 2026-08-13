@@ -75,12 +75,12 @@ impl<S> PreparedQuery<'_, S> {
     /// `max(live, pinned) / max(1, min(live, pinned))`, so shrink and
     /// growth both read as drift ≥ 1.
     ///
-    /// The engine never calls this and no threshold exists in code —
-    /// the host owns policy (docs/architecture/00-product.md). There is
-    /// deliberately no universal reprepare ratio: fresh-plan
+    /// The engine never calls this and no threshold exists in code.
+    /// There is deliberately no universal reprepare ratio: fresh-plan
     /// estimate/executed-work error varies by query class, so a fixed
-    /// cutoff cannot distinguish drift from plan shape. Hosts compare
-    /// this raw signal across generations using workload-specific evidence.
+    /// cutoff cannot distinguish drift from plan shape. The bench harness
+    /// compares this raw signal across generations using workload-specific
+    /// evidence. Harness-only (not embedding API).
     ///
     /// This call allocates (the per-occurrence report) and is a
     /// diagnostic surface, not a warm-path call — keep it outside
@@ -92,6 +92,7 @@ impl<S> PreparedQuery<'_, S> {
     /// any environment other than the preparing one — the same key-probe check,
     /// same error as every execution entry; `Lmdb`/`Corruption` from
     /// the counter gets.
+    #[doc(hidden)]
     pub fn staleness(&self, snap: &Snapshot<'_, S>) -> Result<Staleness> {
         self.check_snapshot(snap.txn())?;
         let per_occurrence = self

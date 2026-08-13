@@ -459,7 +459,6 @@ fn literal_cmp(a: &Value, b: &Value) -> std::cmp::Ordering {
             Value::FixedBytes(_) => 4,
             Value::IntervalU64(_) => 5,
             Value::IntervalI64(_) => 6,
-            Value::AllenMask(_) => 7,
         }
     }
     match (a, b) {
@@ -475,7 +474,6 @@ fn literal_cmp(a: &Value, b: &Value) -> std::cmp::Ordering {
         (Value::IntervalI64(x), Value::IntervalI64(y)) => {
             (x.start(), x.end()).cmp(&(y.start(), y.end()))
         }
-        (Value::AllenMask(x), Value::AllenMask(y)) => x.bits().cmp(&y.bits()),
         _ => rank(a).cmp(&rank(b)),
     }
 }

@@ -358,7 +358,7 @@ def ledger : List Obligation := [
   .row @Query.agg_over_distinct_bindings `Bumbledb.Query.agg_over_distinct_bindings
     "Every aggregate folds the distinct binding set of its group — no fold can observe a duplicate, set semantics through aggregation."
     "fold_row.rs::fold_scratch_row (crates/bumbledb/src/exec/sink/aggregate/fold_row.rs); exec/sink.rs::seen (crates/bumbledb/src/exec/sink.rs)"
-    "dedup_constant_group_collapses_duplicates_before_folding (crates/bumbledb/src/exec/sink/tests/aggregate.rs); count_distinct_collapses_multiplicities_per_group (crates/bumbledb/src/exec/sink/tests/aggregate.rs)",
+    "dedup_constant_group_collapses_duplicates_before_folding (crates/bumbledb/src/exec/sink/tests/aggregate.rs)",
 
   .row @Query.empty_global_no_answer `Bumbledb.Query.empty_global_no_answer
     "An aggregate over the empty binding set yields the empty answer set — not a zero row; the SQL reading is refused."
@@ -369,11 +369,6 @@ def ledger : List Obligation := [
     "The measure column is poisoned exactly by a ray in the group — one unbounded interval makes the whole group's measure erroneous, never a value."
     "fold_row.rs::fold_scratch_row (crates/bumbledb/src/exec/sink/aggregate/fold_row.rs); crate::Error::MeasureOfRay (crates/bumbledb/src/error.rs)"
     "a_ray_reaching_duration_raises_and_a_filtered_query_succeeds (crates/bumbledb/src/api/prepared/tests/measure.rs)",
-
-  .row @Query.argmax_ties_all_kept `Bumbledb.Query.argmax_ties_all_kept
-    "Arg ties are set-honest: every extreme-attaining binding survives the restriction, and equal projected rows are one answer — this dedup is never elided."
-    "fold_row.rs::fold_arg (crates/bumbledb/src/exec/sink/aggregate/fold_row.rs)"
-    "arg_ties_keep_every_attaining_row_as_a_set (crates/bumbledb/src/exec/sink/tests/aggregate.rs); arg_ties_are_set_honest (crates/bumbledb/src/api/prepared/tests/aggregates.rs)",
 
   /- ## PRD 06 — the sweep -/
 
@@ -417,7 +412,7 @@ def ledger : List Obligation := [
   .row @Query.distinct_witness_licence `Bumbledb.Query.distinct_witness_licence
     "The distinct-bindings licence: when every participating occurrence's bound fields cover a key, the key stream is already duplicate-free and the binding seen-set may be elided — single-rule only."
     "plan/fj/provably_distinct.rs::DistinctWitness (crates/bumbledb/src/plan/fj/provably_distinct.rs); AggregateSink::without_seen_set (crates/bumbledb/src/exec/sink/aggregate/new.rs)"
-    "witnessed_elision_matches_the_seen_set_path (crates/bumbledb/src/exec/sink/tests/semantics.rs); elision_skips_binding_dedup_but_count_distinct_still_collapses (crates/bumbledb/src/api/prepared/tests/aggregates.rs)",
+    "witnessed_elision_matches_the_seen_set_path (crates/bumbledb/src/exec/sink/tests/semantics.rs)",
 
   .row @Query.disjoint_witness_licence `Bumbledb.Query.disjoint_witness_licence
     "The disjoint-arms licence: under pairwise arm disjointness, cross-rule dedup is a no-op — proved sound, and spent diagnostically only (the measured refutation keeps the spanning seen-set)."
@@ -479,7 +474,7 @@ def ledger : List Obligation := [
   .row @Query.statically_empty_sound `Bumbledb.Query.statically_empty_sound
     "A statically refuted rule contributes the empty answer set on every instance — the verdict never consulted one."
     "Program::Empty (crates/bumbledb/src/api/prepared.rs); NormalizedQuery::dead (crates/bumbledb/src/ir/normalize.rs)"
-    "an_all_dead_program_prepares_to_empty_and_binds_params_first (crates/bumbledb/src/api/prepared/tests/statically_empty.rs)",
+    "the_empty_program_builds_no_image_and_binds_no_view (crates/bumbledb/src/api/prepared/tests/statically_empty.rs)",
 
   .row @Query.range_summary_replacement `Bumbledb.Query.range_summary_replacement
     "On the bounded word domain one slot's conjunction of constant order bounds means exactly its folded summary's at-most-two emitted bounds, and an in-range equality pin implies every constituent — the filter replacement never changes which words pass."
@@ -614,7 +609,7 @@ def ledger : List Obligation := [
 /-- The ledger count, asserted: a dropped or added row moves this
 number, so the census (which re-derives the count by grep) and the
 build (which checks this literal) both notice. -/
-theorem ledger_count : ledger.length = 97 := rfl
+theorem ledger_count : ledger.length = 96 := rfl
 
 end Bridge
 end Bumbledb

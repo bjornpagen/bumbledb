@@ -159,13 +159,6 @@ deriving DecidableEq
 engine's bitmask (`crate::allen::AllenMask`) is its encoding. -/
 abbrev AllenMask : Type := List AllenRel
 
-/-- The `Allen` comparison's mask position: a literal mask, or a param
-resolved at bind — a two-variant sum, not a `Term`: a variable or set
-mask is UNREPRESENTABLE, not rejected (`crate::ir::MaskTerm`). -/
-inductive MaskTerm where
-  | lit (mask : AllenMask)
-  | param (p : ParamId)
-
 /-! ## Terms and atoms -/
 
 /-- One term of an atom binding or comparison (`crate::ir::Term`).
@@ -194,10 +187,11 @@ structure Atom where
 types, order operators for the two orderable scalars, `allen` as THE
 interval-pair comparison (interval `Eq`/`Ne` are its derived facts —
 normalization canonicalizes them to `EQUALS`/`¬EQUALS`), and `pointIn`
-as point membership in predicate form (interval left, point right). -/
+as point membership in predicate form (interval left, point right).
+The `allen` mask is a literal — bind-time mask params are unrepresentable. -/
 inductive CmpOp where
   | eq | ne | lt | le | gt | ge
-  | allen (mask : MaskTerm)
+  | allen (mask : AllenMask)
   | pointIn
 
 /-- One comparison condition (`crate::ir::Comparison`). `eq` between

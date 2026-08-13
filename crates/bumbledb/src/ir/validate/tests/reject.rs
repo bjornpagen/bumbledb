@@ -1,5 +1,5 @@
 use super::*;
-use crate::ir::{AggOp, CmpOp, Comparison, MaskTerm, Value};
+use crate::ir::{AggOp, CmpOp, Comparison, Value};
 
 // --- Rejecting shapes, one per roster item ---
 
@@ -300,64 +300,6 @@ fn rejects_point_membership_of_a_closed_reference() {
     assert_eq!(
         closed_expect_err(&query),
         ValidationError::OrderComparisonOnClosedReference { index: 0 }
-    );
-}
-
-#[test]
-fn rejects_min_max_folds_over_a_closed_reference() {
-    // Max(priority) ranks by declaration order — refused for every
-    // ordering fold (R4); CountDistinct stays legal (equality-only).
-    for op in [AggOp::Min, AggOp::Max, AggOp::Sum] {
-        let query = Query::single(Rule {
-            finds: vec![
-                FindTerm::Var(VarId(0)),
-                FindTerm::Aggregate {
-                    op,
-                    over: Some(VarId(1)),
-                },
-            ],
-            atoms: vec![atom(RelationId(0), vec![(0, var(0)), (1, var(1))])],
-            negated: vec![],
-            conditions: vec![],
-        });
-        assert_eq!(
-            closed_expect_err(&query),
-            ValidationError::AggregateOverClosedReference { find: 1 }
-        );
-    }
-    let count_distinct = Query::single(Rule {
-        finds: vec![
-            FindTerm::Var(VarId(0)),
-            FindTerm::Aggregate {
-                op: AggOp::CountDistinct,
-                over: Some(VarId(1)),
-            },
-        ],
-        atoms: vec![atom(RelationId(0), vec![(0, var(0)), (1, var(1))])],
-        negated: vec![],
-        conditions: vec![],
-    });
-    crate::ir::validate::validate(&closed_schema(), &count_distinct)
-        .expect("CountDistinct needs equality only");
-}
-
-#[test]
-fn rejects_an_arg_key_on_a_closed_reference() {
-    // ArgMax(id, priority) sweeps the key's order — the same wall (R4).
-    let query = Query::single(Rule {
-        finds: vec![FindTerm::Aggregate {
-            op: AggOp::ArgMax {
-                key: crate::ir::ArgKey::Var(VarId(1)),
-            },
-            over: Some(VarId(0)),
-        }],
-        atoms: vec![atom(RelationId(0), vec![(0, var(0)), (1, var(1))])],
-        negated: vec![],
-        conditions: vec![],
-    });
-    assert_eq!(
-        closed_expect_err(&query),
-        ValidationError::AggregateOverClosedReference { find: 0 }
     );
 }
 
@@ -865,102 +807,6 @@ fn an_aggregate_output_does_not_bind_a_negated_variable_even_when_written_after_
 }
 
 #[test]
-fn rejects_mixed_arg_and_fold_aggregates() {
-    // ArgMax + Sum in one find list: "sum of the latest" is two queries.
-    let query = simple(
-        vec![
-            FindTerm::Aggregate {
-                op: AggOp::ArgMax {
-                    key: crate::ir::ArgKey::Var(VarId(0)),
-                },
-                over: Some(VarId(1)),
-            },
-            FindTerm::Aggregate {
-                op: AggOp::Sum,
-                over: Some(VarId(2)),
-            },
-        ],
-        vec![atom(POSTING, vec![(3, var(0)), (1, var(1)), (2, var(2))])],
-    );
-    assert!(matches!(
-        expect_err(&query),
-        ValidationError::MixedArgAndFold { find: 1 }
-    ));
-}
-
-#[test]
-fn rejects_arg_terms_with_differing_keys() {
-    let query = simple(
-        vec![
-            FindTerm::Aggregate {
-                op: AggOp::ArgMax {
-                    key: crate::ir::ArgKey::Var(VarId(0)),
-                },
-                over: Some(VarId(1)),
-            },
-            FindTerm::Aggregate {
-                op: AggOp::ArgMax {
-                    key: crate::ir::ArgKey::Var(VarId(2)),
-                },
-                over: Some(VarId(3)),
-            },
-        ],
-        vec![atom(
-            POSTING,
-            vec![(3, var(0)), (1, var(1)), (2, var(2)), (0, var(3))],
-        )],
-    );
-    assert!(matches!(
-        expect_err(&query),
-        ValidationError::ArgKeyMismatch { find: 1 }
-    ));
-}
-
-#[test]
-fn rejects_arg_terms_with_differing_directions() {
-    // One key, two directions: ArgMax and ArgMin may not mix either.
-    let query = simple(
-        vec![
-            FindTerm::Aggregate {
-                op: AggOp::ArgMax {
-                    key: crate::ir::ArgKey::Var(VarId(0)),
-                },
-                over: Some(VarId(1)),
-            },
-            FindTerm::Aggregate {
-                op: AggOp::ArgMin {
-                    key: crate::ir::ArgKey::Var(VarId(0)),
-                },
-                over: Some(VarId(2)),
-            },
-        ],
-        vec![atom(POSTING, vec![(3, var(0)), (1, var(1)), (2, var(2))])],
-    );
-    assert!(matches!(
-        expect_err(&query),
-        ValidationError::ArgKeyMismatch { find: 1 }
-    ));
-}
-
-#[test]
-fn rejects_a_non_orderable_arg_key() {
-    // Holder.name (String) as the Arg key: no extreme to attain.
-    let query = simple(
-        vec![FindTerm::Aggregate {
-            op: AggOp::ArgMax {
-                key: crate::ir::ArgKey::Var(VarId(0)),
-            },
-            over: Some(VarId(1)),
-        }],
-        vec![atom(HOLDER, vec![(1, var(0)), (0, var(1))])],
-    );
-    assert!(matches!(
-        expect_err(&query),
-        ValidationError::NonOrderableArgKey { find: 0 }
-    ));
-}
-
-#[test]
 fn rejects_a_point_literal_at_the_ceiling_in_a_membership_binding() {
     // The point-domain law: points are MIN..=MAX-1, and MAX is the ray's
     // ∞ — inside no interval, so the membership is typed out, never
@@ -1032,7 +878,7 @@ fn rejects_the_empty_allen_mask() {
         negated: vec![],
         conditions: vec![ConditionTree::Leaf(Comparison {
             op: CmpOp::Allen {
-                mask: MaskTerm::Literal(bumbledb_theory::allen::AllenMask::EMPTY),
+                mask: bumbledb_theory::allen::AllenMask::EMPTY,
             },
             lhs: var(1),
             rhs: Term::Literal(Value::IntervalU64(
@@ -1059,7 +905,7 @@ fn rejects_the_full_allen_mask() {
         negated: vec![],
         conditions: vec![ConditionTree::Leaf(Comparison {
             op: CmpOp::Allen {
-                mask: MaskTerm::Literal(bumbledb_theory::allen::AllenMask::FULL),
+                mask: bumbledb_theory::allen::AllenMask::FULL,
             },
             lhs: var(1),
             rhs: var(3),
@@ -1081,7 +927,7 @@ fn rejects_allen_over_non_interval_sides() {
         negated: vec![],
         conditions: vec![ConditionTree::Leaf(Comparison {
             op: CmpOp::Allen {
-                mask: MaskTerm::Literal(bumbledb_theory::allen::AllenMask::INTERSECTS),
+                mask: bumbledb_theory::allen::AllenMask::INTERSECTS,
             },
             lhs: var(1),
             rhs: Term::Literal(Value::I64(5)),
@@ -1130,38 +976,6 @@ fn rejects_point_in_between_two_intervals() {
     assert!(matches!(
         expect_err(&literal),
         ValidationError::IllegalComparison { index: 0 }
-    ));
-}
-
-#[test]
-fn rejects_a_mask_param_with_a_value_anchor() {
-    // ?0 is both the Allen mask and a field binding: a mask is not a
-    // data-model type, so the anchors conflict.
-    let query = Query::single(Rule {
-        finds: vec![FindTerm::Var(VarId(0))],
-        atoms: vec![
-            atom(
-                ACCOUNT,
-                vec![
-                    (0, var(0)),
-                    (1, Term::Param(ParamId(0))),
-                    (VALIDITY, var(1)),
-                ],
-            ),
-            atom(POSTING, vec![(0, var(2)), (SPAN, var(3))]),
-        ],
-        negated: vec![],
-        conditions: vec![ConditionTree::Leaf(Comparison {
-            op: CmpOp::Allen {
-                mask: MaskTerm::Param(ParamId(0)),
-            },
-            lhs: var(1),
-            rhs: var(3),
-        })],
-    });
-    assert!(matches!(
-        expect_err(&query),
-        ValidationError::ParamTypeConflict { param: ParamId(0) }
     ));
 }
 
@@ -1226,25 +1040,6 @@ fn rejects_a_duration_find_over_a_non_interval_variable() {
     assert!(matches!(
         expect_err(&query),
         ValidationError::DurationOverNonInterval { var: VarId(0) }
-    ));
-}
-
-#[test]
-fn rejects_a_duration_aggregate_outside_sum_min_max() {
-    // Count is nullary; CountDistinct and the Arg ops are refused too.
-    let query = simple(
-        vec![
-            FindTerm::Var(VarId(0)),
-            FindTerm::AggregateMeasure {
-                op: AggOp::CountDistinct,
-                over: VarId(1),
-            },
-        ],
-        vec![atom(POSTING, vec![(0, var(0)), (SPAN, var(1))])],
-    );
-    assert!(matches!(
-        expect_err(&query),
-        ValidationError::DurationAggregateOp { find: 1 }
     ));
 }
 
@@ -1411,29 +1206,6 @@ fn rejects_pack_beside_a_measure_fold() {
 }
 
 #[test]
-fn rejects_pack_beside_arg_terms() {
-    let query = simple(
-        vec![
-            FindTerm::Aggregate {
-                op: AggOp::Pack,
-                over: Some(VarId(1)),
-            },
-            FindTerm::Aggregate {
-                op: AggOp::ArgMax {
-                    key: crate::ir::ArgKey::Var(VarId(2)),
-                },
-                over: Some(VarId(2)),
-            },
-        ],
-        vec![atom(POSTING, vec![(3, var(2)), (SPAN, var(1))])],
-    );
-    assert!(matches!(
-        expect_err(&query),
-        ValidationError::MixedPackAndArg { find: 1 }
-    ));
-}
-
-#[test]
 fn rejects_pack_over_a_non_interval_variable() {
     // Posting.amount is I64: the coalesce is defined by the interval
     // point-set denotation and by nothing else.
@@ -1544,7 +1316,7 @@ fn rejects_an_allen_pair_across_element_domains_whatever_the_widths() {
         negated: vec![],
         conditions: vec![ConditionTree::Leaf(Comparison {
             op: CmpOp::Allen {
-                mask: MaskTerm::Literal(bumbledb_theory::allen::AllenMask::INTERSECTS),
+                mask: bumbledb_theory::allen::AllenMask::INTERSECTS,
             },
             lhs: var(1), // interval<u64, 5>
             rhs: var(2), // interval<i64>
@@ -1612,25 +1384,4 @@ fn rejects_a_width_matched_ray_literal_at_a_fixed_width_field() {
         validate(&cross_domain_schema(), &query).expect_err("the width-matched ray must reject"),
         ValidationError::LiteralTypeMismatch { atom: 0, .. }
     ));
-}
-
-#[test]
-fn rejects_a_measure_arg_key_over_a_non_interval() {
-    // ArgMax(memo, Duration(amount)): the measure key reads intervals
-    // only (R5) — the scalar gets the measure's own diagnostic.
-    let query = Query::single(Rule {
-        finds: vec![FindTerm::Aggregate {
-            op: AggOp::ArgMax {
-                key: crate::ir::ArgKey::Measure(VarId(1)),
-            },
-            over: Some(VarId(0)),
-        }],
-        atoms: vec![atom(POSTING, vec![(4, var(0)), (2, var(1))])],
-        negated: vec![],
-        conditions: vec![],
-    });
-    assert_eq!(
-        expect_err(&query),
-        ValidationError::DurationOverNonInterval { var: VarId(1) }
-    );
 }

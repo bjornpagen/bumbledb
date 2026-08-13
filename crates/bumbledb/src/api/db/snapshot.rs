@@ -75,9 +75,12 @@ impl<S> Snapshot<'_, S> {
     /// mixed [`ParamArg`] entry — execute-symmetry (R13): whatever
     /// [`Snapshot::execute_args`] binds, introspection binds.
     ///
+    /// Harness-only (not embedding API).
+    ///
     /// # Errors
     ///
     /// As [`Snapshot::execute_args`].
+    #[doc(hidden)]
     pub fn introspect(
         &self,
         prepared: &mut PreparedQuery<'_, S>,
@@ -91,9 +94,12 @@ impl<S> Snapshot<'_, S> {
     /// as data. Takes the mixed [`ParamArg`] entry — execute-symmetry
     /// (R13): whatever [`Snapshot::execute_args`] binds, profiling binds.
     ///
+    /// Harness-only (not embedding API).
+    ///
     /// # Errors
     ///
     /// As [`Snapshot::execute_args`].
+    #[doc(hidden)]
     pub fn profile(
         &self,
         prepared: &mut PreparedQuery<'_, S>,

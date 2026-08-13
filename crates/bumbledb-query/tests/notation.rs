@@ -250,8 +250,8 @@ fn calendar_union_golden() {
 #[test]
 fn calendar_union_lowers_to_the_exact_ir() {
     use bumbledb::{
-        AllenMask, Atom, CmpOp, Comparison, ConditionTree, FindTerm, MaskTerm, ParamId, Rule, Term,
-        Value, VarId,
+        AllenMask, Atom, CmpOp, Comparison, ConditionTree, FindTerm, ParamId, Rule, Term, Value,
+        VarId,
     };
     let lowered = query!(Scheduling {
         (person, span) | Claim(person, span, arm == ClaimKind::Busy),
@@ -270,7 +270,7 @@ fn calendar_union_lowers_to_the_exact_ir() {
         negated: vec![],
         conditions: vec![ConditionTree::Leaf(Comparison {
             op: CmpOp::Allen {
-                mask: MaskTerm::Literal(AllenMask::INTERSECTS),
+                mask: AllenMask::INTERSECTS,
             },
             lhs: Term::Var(VarId(1)),
             rhs: Term::Param(ParamId(0)),
@@ -404,133 +404,14 @@ fn closed_reference_handles_are_a_fixed_point() {
 #[test]
 fn aggregate_heads_golden() {
     let balances = query!(Ledger {
-        (account, total: Sum(amount), n: Count,
-         entries: CountDistinct(entry), lo: Min(amount), hi: Max(amount))
+        (account, total: Sum(amount), n: Count, lo: Min(amount), hi: Max(amount))
             | Posting(entry, account, amount);
     });
     assert_eq!(
         pin("balances", Ledger, &balances),
-        "(v1, Sum(v2), Count, CountDistinct(v0), Min(v2), Max(v2)) | \
+        "(v1, Sum(v2), Count, Min(v2), Max(v2)) | \
          Posting(entry: v0, account: v1, amount: v2);"
     );
-}
-
-/// Arg restriction is writable and renderer-total in all three important
-/// shapes: singleton carry, coherent multi-carry, and the key carrying itself.
-/// Each source spelling renders to the normalized form, whose positional form
-/// reparses and renders byte-identically.
-#[test]
-fn arg_heads_round_trip_singleton_composite_and_self_carry() {
-    let singleton = query!(Ledger {
-        (ArgMax(id, at)) | Posting(id, at);
-    });
-    let singleton_normalized = "(ArgMax(v0, v1)) | Posting(id: v0, at: v1);";
-    assert_eq!(
-        pin("arg-singleton", Ledger, &singleton),
-        singleton_normalized
-    );
-    let singleton_reparsed = query!(Ledger {
-        (ArgMax(v0, v1)) | Posting(id: v0, at: v1);
-    });
-    assert_eq!(
-        pin("arg-singleton-fixed-point", Ledger, &singleton_reparsed),
-        singleton_normalized
-    );
-
-    let composite = query!(Ledger {
-        (account, ArgMax(id, at), ArgMax(amount, at))
-            | Posting(id, account, amount, at);
-    });
-    let composite_normalized = "(v1, ArgMax(v0, v3), ArgMax(v2, v3)) | \
-        Posting(id: v0, account: v1, amount: v2, at: v3);";
-    assert_eq!(
-        pin("arg-composite", Ledger, &composite),
-        composite_normalized
-    );
-    let composite_reparsed = query!(Ledger {
-        (v1, ArgMax(v0, v3), ArgMax(v2, v3))
-            | Posting(id: v0, account: v1, amount: v2, at: v3);
-    });
-    assert_eq!(
-        pin("arg-composite-fixed-point", Ledger, &composite_reparsed),
-        composite_normalized
-    );
-
-    let self_carry = query!(Ledger {
-        (ArgMin(at, at)) | Posting(at);
-    });
-    let self_carry_normalized = "(ArgMin(v0, v0)) | Posting(at: v0);";
-    assert_eq!(
-        pin("arg-self-carry", Ledger, &self_carry),
-        self_carry_normalized
-    );
-    let self_carry_reparsed = query!(Ledger {
-        (ArgMin(v0, v0)) | Posting(at: v0);
-    });
-    assert_eq!(
-        pin("arg-self-carry-fixed-point", Ledger, &self_carry_reparsed),
-        self_carry_normalized
-    );
-}
-
-/// The measure-keyed Arg restriction (ruled 2026-07-23, R5): the key
-/// position admits `Duration(v)` — "the longest claim per person, with
-/// its window" — in both the self-keyed and carried-payload shapes, and
-/// the renderer's spelling reparses to the same bytes.
-#[test]
-fn measure_keyed_arg_round_trips() {
-    let longest = query!(Scheduling {
-        (person, ArgMax(span, Duration(span))) | Claim(person, span);
-    });
-    let normalized = "(v0, ArgMax(v1, Duration(v1))) | Claim(person: v0, span: v1);";
-    assert_eq!(pin("longest-claim", Scheduling, &longest), normalized);
-    let reparsed = query!(Scheduling {
-        (v0, ArgMax(v1, Duration(v1))) | Claim(person: v0, span: v1);
-    });
-    assert_eq!(
-        pin("longest-claim-fixed-point", Scheduling, &reparsed),
-        normalized
-    );
-
-    let carried = query!(Scheduling {
-        (person, ArgMin(source, Duration(span))) | Claim(source, person, span);
-    });
-    let carried_normalized =
-        "(v1, ArgMin(v0, Duration(v2))) | Claim(source: v0, person: v1, span: v2);";
-    assert_eq!(
-        pin("shortest-claim-source", Scheduling, &carried),
-        carried_normalized
-    );
-    let carried_reparsed = query!(Scheduling {
-        (v1, ArgMin(v0, Duration(v2))) | Claim(source: v0, person: v1, span: v2);
-    });
-    assert_eq!(
-        pin(
-            "shortest-claim-source-fixed-point",
-            Scheduling,
-            &carried_reparsed
-        ),
-        carried_normalized
-    );
-}
-
-/// Grammar exposure does not weaken the semantic boundary: Arg restriction
-/// remains single-rule because its key is rule-scoped outside the head.
-#[test]
-fn arg_across_rules_is_the_typed_notation_level_refusal() {
-    let query = query!(Ledger {
-        (ArgMax(id, at)) | Posting(id, account == 3, at);
-        (ArgMax(id, at)) | Posting(id, account == 7, at);
-    });
-    let dir = TempDir::new("arg-across-rules");
-    let db = Db::create(dir.path(), Ledger).expect("create");
-    let Err(error) = db.prepare(&query) else {
-        panic!("Arg restriction across rules must be refused");
-    };
-    assert!(matches!(
-        error,
-        bumbledb::Error::Validation(bumbledb::error::ValidationError::ArgAcrossRules { rules: 2 })
-    ));
 }
 
 /// `Pack` (the coalescing fold) and the measure forms: a `Duration`

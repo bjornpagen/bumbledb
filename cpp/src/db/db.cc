@@ -36,18 +36,6 @@ struct WriteShapeOf<std::expected<std::variant<Commit<T>, Abandon<A>>, Error>> {
 template<class Body>
 using WriteShape = WriteShapeOf<std::invoke_result_t<Body&, WriteTx&>>;
 
-template<class BodyResult>
-struct WitnessedShapeOf;
-
-template<class T, class A>
-struct WitnessedShapeOf<std::expected<std::variant<Commit<T>, Abandon<A>>, Error>> {
-	using Outcome = WriteOutcome<T, A>;
-	using Result = std::expected<Outcome, WitnessedFailure>;
-};
-
-template<class Body>
-using WitnessedShape = WitnessedShapeOf<std::invoke_result_t<Body&, Snapshot&, WriteTx&>>;
-
 template<class Result>
 inline constexpr bool is_error_expected = false;
 
@@ -63,13 +51,6 @@ concept ReadBody = std::invocable<Body&, Snapshot&> && detail::is_error_expected
 
 template<class Body>
 concept WriteBody = std::invocable<Body&, WriteTx&> && requires { typename detail::WriteShape<Body>::Result; };
-
-/**
- * A witnessed-write body: premise reads belong on the Snapshot, the
- * delta on the WriteTx.
- */
-template<class Body>
-concept WitnessedBody = std::invocable<Body&, Snapshot&, WriteTx&> && requires { typename detail::WitnessedShape<Body>::Result; };
 
 /**
  * The owning database capability: move-only RAII; no shared ownership
@@ -239,41 +220,6 @@ public:
 		return write_through(body, [this, &snapshot](auto& shim) {
 			return handle_.write_from(snapshot.raw_, shim);
 		});
-	}
-
-	/**
-	 * The derived-fact maintenance protocol spelled once, host-side
-	 * (normative: docs/architecture/70-api.md, "Derived-fact maintenance
-	 * protocol"): retries exactly GenerationMoved — stale diff dropped,
-	 * the body rerun against a fresh snapshot — and refuses past
-	 * witnessed_attempt_cap attempts with the typed WitnessedLivelock.
-	 * Every other failure surfaces unchanged on first occurrence.
-	 */
-	template<WitnessedBody Body>
-	[[nodiscard]] auto write_witnessed(Body&& body) -> typename detail::WitnessedShape<Body>::Result {
-		using Shape = detail::WitnessedShape<Body>;
-		using Result = typename Shape::Result;
-		using Outcome = typename Shape::Outcome;
-		for (auto attempt = std::uint64_t{1};; ++attempt) {
-			auto tried = read([&](Snapshot& snapshot) -> std::expected<Outcome, Error> {
-				return write_from(snapshot, [&](WriteTx& tx) {
-					return body(snapshot, tx);
-				});
-			});
-			if (tried.has_value()) {
-				return Result{std::move(*tried)};
-			}
-			auto error = std::move(tried).error();
-			if (error.kind() != ErrorKind::GenerationMoved) {
-				return Result{std::unexpect, WitnessedFailure{std::in_place_type<Error>, std::move(error)}};
-			}
-			if (attempt == witnessed_attempt_cap) {
-				return Result{std::unexpect, WitnessedFailure{std::in_place_type<WitnessedLivelock>, WitnessedLivelock{
-				                                                                                         .attempts = attempt,
-				                                                                                         .last = std::move(error),
-				                                                                                     }}};
-			}
-		}
 	}
 
 	/**

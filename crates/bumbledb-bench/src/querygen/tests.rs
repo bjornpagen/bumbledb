@@ -43,18 +43,12 @@ fn a_thousand_queries_validate_and_translate() {
                         panic!("query {i} fails translation: {error}\n{query:#?}");
                     }
                 }
-                Err(
-                    crate::translate::Inexpressible::PackAggregate
-                    | crate::translate::Inexpressible::AllenMaskParam,
-                ) => naive_routed += 1,
+                Err(crate::translate::Inexpressible::PackAggregate) => naive_routed += 1,
                 Err(other) => panic!("query {i}: unroutable class {other:?}\n{query:#?}"),
             }
         }
     }
-    assert!(
-        naive_routed > 0,
-        "the Pack and mask-param shapes reach the naive route"
-    );
+    assert!(naive_routed > 0, "the Pack shape reaches the naive route");
     drop(db);
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -64,8 +58,8 @@ fn a_thousand_queries_validate_and_translate() {
 /// *legal* cell of the per-(op, type) comparison matrix nonzero and
 /// every illegal cell zero, every construct present — negation shapes,
 /// param-set sizes, membership kinds, both interval element lanes, the
-/// adjacent-touching boundary in both polarities, `CountDistinct` over
-/// every type, Arg-restriction variants — and the structural
+/// adjacent-touching boundary in both polarities, remaining folds
+/// (Count/Sum/Min/Max/Pack), and the structural
 /// compositions at least once per run.
 #[test]
 #[expect(
@@ -91,8 +85,6 @@ fn the_coverage_contract_holds_at_a_thousand() {
     band("membership", cov.membership, 10);
     band("interval_join", cov.interval_join, 10);
     band("boundary", cov.boundary, 6);
-    band("count_distinct", cov.count_distinct, 10);
-    band("arg", cov.arg, 8);
     band("existence_walk", cov.existence_walk, 8);
     band("du_walk", cov.du_walk, 6);
     band("rules", cov.rules, 10);
@@ -112,13 +104,6 @@ fn the_coverage_contract_holds_at_a_thousand() {
         ("agg_count", cov.agg_count),
         ("agg_u64", cov.agg_u64),
         ("multi_aggregate", cov.multi_aggregate),
-        ("arg_max", cov.arg_max),
-        ("arg_min", cov.arg_min),
-        ("arg_key_projected", cov.arg_key_projected),
-        ("arg_global", cov.arg_global),
-        ("arg_tie_key", cov.arg_tie_key),
-        ("arg_tie_free_key", cov.arg_tie_free_key),
-        ("arg_measure_key", cov.arg_measure_key),
         ("membership_literal", cov.membership_literal),
         ("membership_param", cov.membership_param),
         ("membership_var", cov.membership_var),
@@ -129,7 +114,6 @@ fn the_coverage_contract_holds_at_a_thousand() {
         ("allen_composite", cov.allen_composite),
         ("allen_singleton", cov.allen_singleton),
         ("allen_random_mask", cov.allen_random_mask),
-        ("allen_mask_param", cov.allen_mask_param),
         ("point_in_u64", cov.point_in_u64),
         ("point_in_i64", cov.point_in_i64),
         ("adjacent_left", cov.adjacent_left),
@@ -185,12 +169,6 @@ fn the_coverage_contract_holds_at_a_thousand() {
         ("closed_handle_set", cov.closed_handle_set),
     ] {
         assert!(count > 0, "{name} never generated");
-    }
-    for (index, name) in CMP_TYPES.iter().enumerate() {
-        assert!(
-            cov.count_distinct_types[index] > 0,
-            "CountDistinct over {name} never generated"
-        );
     }
     for (op_idx, op) in CMP_OPS.iter().enumerate() {
         for (type_idx, ty) in CMP_TYPES.iter().enumerate() {
@@ -431,12 +409,7 @@ fn params_for_produces_the_documented_draws() {
         }
         let miss = &draws[3];
         for (param, value) in &miss.scalars {
-            let ParamAnchor::Field(anchor) = anchors[usize::from(param.0)] else {
-                // A bind-time mask has no miss policy: the draw is a
-                // non-vacuous mask whatever the kind.
-                assert!(matches!(value, Value::AllenMask(_)));
-                continue;
-            };
+            let ParamAnchor::Field(anchor) = anchors[usize::from(param.0)];
             check_miss(
                 value,
                 anchor.relation,
@@ -448,9 +421,7 @@ fn params_for_produces_the_documented_draws() {
             );
         }
         for (param, elements) in &miss.sets {
-            let ParamAnchor::Field(anchor) = anchors[usize::from(param.0)] else {
-                unreachable!("mask params are scalars")
-            };
+            let ParamAnchor::Field(anchor) = anchors[usize::from(param.0)];
             for value in elements {
                 check_miss(
                     value,

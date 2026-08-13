@@ -11,11 +11,10 @@
  * canonical spellings equal to `renderStatement` output (containment +
  * capacity together in one commit; the FD alone in another — the engine's
  * key phase preempts the statement phase, so no single commit can cite all
- * three forms); `writeWitnessed` retrying self-inflicted contention,
- * surfacing rejections as data, and aborting without any commit on
- * `abandon`; and resume = reopen, which in-process means the cached value
- * (cross-process durability is the engine's per-commit fsync, pinned at
- * the FFI layer).
+ * three forms); `writeFrom` one-shot witnessed writes (retry is host
+ * policy), surfacing rejections as data, and aborting without any commit on
+ * `abandon`; and a second in-process open of a live path is
+ * `EnvironmentLocked` (the host holds the `Db`).
  */
 
 import assert from "node:assert/strict"
@@ -34,21 +33,18 @@ import {
 	closed,
 	contained,
 	Db,
-	ErrWitnessedLivelock,
+	ErrGenerationMoved,
 	i64,
 	interval,
 	key,
 	mirrors,
 	on,
-	query,
 	relation,
 	renderStatement,
 	schema,
 	span,
 	str,
 	u64,
-	v,
-	WITNESSED_ATTEMPT_CAP,
 	within
 } from "#index.ts"
 
@@ -130,24 +126,13 @@ describe("the Db runtime against a real store", function suite() {
 		}, /schemaError/)
 	})
 
-	test("the store cache: same path + identical theory is the SAME Db value", async function cacheIdentity() {
-		const again = await Db.open(storeDir, Ledger)
-		assert.strictEqual(again, db, "the cache returns the one value, never a second handle")
-		const viaAliasedSpelling = await Db.open(`${storeDir}${path.sep}.`, Ledger)
-		assert.strictEqual(viaAliasedSpelling, again, "the cache key is the canonical path")
-	})
-
-	test("a different theory on a cached path is a typed fingerprint error", async function cacheFingerprint() {
-		const Other = schema("Ledger", { Kind, Holder, Account, SavingsTerms, Audit }, [savingsKey])
-		await assert.rejects(async function mismatched() {
-			await Db.open(storeDir, Other)
-		}, /fingerprintMismatch/)
-	})
-
-	test("create refuses a cached path (the entry proves the directory initialized)", async function cacheCreateRefusal() {
+	test("a second open of a live path is EnvironmentLocked", async function secondOpenLocked() {
+		await assert.rejects(async function reopen() {
+			await Db.open(storeDir, Ledger)
+		}, /another live handle holds this environment's lock/)
 		await assert.rejects(async function recreate() {
 			await Db.create(storeDir, Ledger)
-		}, /already open in this process/)
+		}, /another live handle holds this environment's lock|alreadyInitialized/)
 	})
 
 	test("no close verb exists anywhere — lifetimes are disposables (R12)", function zeroClosables() {
@@ -157,7 +142,7 @@ describe("the Db runtime against a real store", function suite() {
 		assert.equal("snapshot" in db, false)
 		assert.deepEqual(
 			Reflect.ownKeys(db).toSorted(),
-			["contains", "execute", "explain", "get", "prepare", "read", "scan", "schema", "write", "writeWitnessed"],
+			["contains", "execute", "get", "prepare", "read", "scan", "schema", "write", "writeFrom"],
 			"the surface is exactly the pinned verbs — no retired write form survives"
 		)
 		db.read(function probeScope(snap) {
@@ -373,72 +358,45 @@ describe("the Db runtime against a real store", function suite() {
 		}, /spent/)
 	})
 
-	test("writeWitnessed lands a clean witnessed commit", function witnessedCommit() {
-		const outcome = db.writeWitnessed(function seed(snap, tx) {
+	test("writeFrom lands a clean witnessed commit", function witnessedCommit() {
+		const outcome = db.read(function seed(snap) {
 			const holders = snap.scan(Holder)
 			assert.ok(holders.length > 0)
-			tx.insert(Holder, { name: "witnessed" })
+			return db.writeFrom(snap, function insert(tx) {
+				tx.insert(Holder, { name: "witnessed" })
+			})
 		})
 		assert.ok(outcome.ok, "the witnessed commit lands")
 		assert.equal(typeof outcome.generation, "bigint")
 	})
 
-	test("writeWitnessed retries the whole fn on self-inflicted contention", function witnessedRetry() {
-		let attempts = 0
-		const outcome = db.writeWitnessed(function compute(snap, tx) {
-			attempts += 1
-			const holders = snap.scan(Holder)
-			if (attempts === 1) {
+	test("writeFrom throws GenerationMoved on self-inflicted contention — retry is host policy", function witnessedMoved() {
+		const spun = errors.trySync(function contend() {
+			return db.read(function compute(snap) {
+				const holders = snap.scan(Holder)
 				const mover = db.write(function race(inner) {
 					inner.insert(Holder, { name: "wit-mover" })
 				})
 				assert.ok(mover.ok, "the interleaved write lands and moves the generation")
-			}
-			tx.insert(Holder, { name: `wit-count-${holders.length}` })
+				return db.writeFrom(snap, function insert(tx) {
+					tx.insert(Holder, { name: `wit-count-${holders.length}` })
+				})
+			})
 		})
-		assert.ok(outcome.ok, "the retried witness lands")
-		assert.equal(attempts, 2, "one generation move, one convergence")
+		assert.ok(spun.error, "the one-shot writeFrom throws instead of retrying")
+		assert.ok(errors.is(spun.error, ErrGenerationMoved), "the throw is the typed generationMoved error")
 		const landed = db.scan(Holder).filter(function witnessedRows(holder) {
 			return holder.name.startsWith("wit-count-")
 		})
-		assert.equal(landed.length, 1, "only the fresh-premise attempt committed")
+		assert.equal(landed.length, 0, "the stale-premise attempt never committed")
 	})
 
-	test("writeWitnessed refuses the livelock with the typed cap error", function witnessedLivelock() {
-		/**
-		 * The pathology the cap exists for: the callback itself commits an
-		 * interleaved plain write before its first tx verb on EVERY attempt,
-		 * so every rerun re-moves the generation it is about to witness —
-		 * an uncapped loop would spin forever. The typed error must arrive
-		 * after exactly WITNESSED_ATTEMPT_CAP attempts (the cap is what
-		 * keeps this test fast), and it is THROWN — host-policy pathology,
-		 * never a WriteResult arm.
-		 */
-		let attempts = 0
-		const spun = errors.trySync(function spin() {
-			return db.writeWitnessed(function livelock(snap, tx) {
-				attempts += 1
-				const mover = db.write(function race(inner) {
-					inner.insert(Holder, { name: `livelock-mover-${attempts}-${snap.generation}` })
-				})
-				assert.ok(mover.ok, "each interleaved write lands and moves the generation")
-				tx.insert(Holder, { name: "livelock-never-lands" })
-			})
-		})
-		assert.ok(spun.error, "the capped loop throws instead of spinning")
-		assert.ok(errors.is(spun.error, ErrWitnessedLivelock), "the throw is the typed livelock error, errors.is-matchable")
-		assert.match(spun.error.message, /livelock/, "the message names the livelock shape")
-		assert.equal(attempts, WITNESSED_ATTEMPT_CAP, "every attempt ran once, then the cap refused promptly")
-		const ghosts = db.scan(Holder).filter(function witnessedRows(holder) {
-			return holder.name === "livelock-never-lands"
-		})
-		assert.equal(ghosts.length, 0, "no witnessed attempt ever committed")
-	})
-
-	test("writeWitnessed surfaces engine rejection as data", function witnessedRejection() {
-		const rejected = db.writeWitnessed(function violate(snap, tx) {
+	test("writeFrom surfaces engine rejection as data", function witnessedRejection() {
+		const rejected = db.read(function violate(snap) {
 			assert.equal(typeof snap.generation, "bigint")
-			tx.insert(SavingsTerms, { account: must(ids.graceAccount), rate: 11n })
+			return db.writeFrom(snap, function insert(tx) {
+				tx.insert(SavingsTerms, { account: must(ids.graceAccount), rate: 11n })
+			})
 		})
 		assert.ok(!rejected.ok)
 		assert.ok("violations" in rejected, "the rejection is the WriteResult false arm")
@@ -446,14 +404,16 @@ describe("the Db runtime against a real store", function suite() {
 		assert.strictEqual(violation.statement, savingsKey)
 	})
 
-	test("writeWitnessed abandon aborts without committing — not even an empty commit", function witnessedAbandon() {
+	test("writeFrom abandon aborts without committing — not even an empty commit", function witnessedAbandon() {
 		const before = db.read(function generationOf(snap) {
 			return snap.generation
 		})
-		const outcome = db.writeWitnessed(function bail(snap, tx) {
+		const outcome = db.read(function bail(snap) {
 			assert.equal(snap.generation, before)
-			tx.insert(Holder, { name: "never-lands" })
-			return abandon({ reason: "stale premise" })
+			return db.writeFrom(snap, function decline(tx) {
+				tx.insert(Holder, { name: "never-lands" })
+				return abandon({ reason: "stale premise" })
+			})
 		})
 		assert.ok(!outcome.ok)
 		assert.ok("abandoned" in outcome, "the abandon payload is the outcome")
@@ -468,12 +428,14 @@ describe("the Db runtime against a real store", function suite() {
 		assert.equal(ghosts.length, 0, "the recorded delta was aborted")
 	})
 
-	test("writeWitnessed abandon works before any delta verb (no transaction ever begins)", function witnessedAbandonEarly() {
+	test("writeFrom abandon works with no delta verbs (the begun transaction aborts)", function witnessedAbandonEarly() {
 		const before = db.read(function generationOf(snap) {
 			return snap.generation
 		})
-		const outcome = db.writeWitnessed(function bailEarly(snap) {
-			return abandon(snap.scan(Holder).length)
+		const outcome = db.read(function bailEarly(snap) {
+			return db.writeFrom(snap, function decline() {
+				return abandon(snap.scan(Holder).length)
+			})
 		})
 		assert.ok(!outcome.ok)
 		assert.ok("abandoned" in outcome)
@@ -581,71 +543,8 @@ describe("the Db runtime against a real store", function suite() {
 		assert.ok(landed.ok, "no reader slot leaked — the write begins cleanly")
 	})
 
-	test("explain() returns the plan as data — the R13 diagnostic surface", function explainPlan() {
-		const q = query(Ledger).rule(function rule(r) {
-			const { id, name } = v(Holder)
-			return r.match(Holder, { id, name }).find({ id, name })
-		})
-		const prepared = db.prepare(q)
-		const report = db.explain(prepared, {})
-		assert.equal(typeof report.introspectionVersion, "number")
-		assert.equal(typeof report.emits, "bigint")
-		assert.ok(report.emits > 0n, "the ANALYZE run really executed (Holder rows emitted)")
-		assert.ok(Array.isArray(report.rules) && report.rules.length === 1, "one rule, one stats section")
-		assert.ok(Array.isArray(report.strata), "the strata sections ride along")
-		assert.deepEqual(
-			db.read(function inScope(snap) {
-				return snap.explain(prepared, {})
-			}).emits,
-			report.emits,
-			"the scoped spelling agrees (the symmetry rule)"
-		)
-	})
-
-	test("explain() binds set params and literal membership exactly as execute — R13 execute-symmetry", function explainSets() {
-		// A set param: whatever executes, explains — the profile entry
-		// binds the same mixed scalar/set arguments as execute (the
-		// scalar-only explain spelling died with the symmetry).
-		const bySet = query(Ledger).rule(function rule(r) {
-			const { id, name } = v(Holder)
-			return r
-				.match(Holder, { id: r.inSet("who"), name })
-				.match(Holder, { id })
-				.find({ id, name })
-		})
-		const preparedSet = db.prepare(bySet)
-		const someIds = db.execute(
-			db.prepare(
-				query(Ledger).rule(function all(r) {
-					const { id } = v(Holder)
-					return r.match(Holder, { id }).find({ id })
-				})
-			),
-			{}
-		)
-		assert.ok(someIds.length >= 2, "the fixture holds holders")
-		const who = someIds.slice(0, 2).map(function idOf(row) {
-			return row.id
-		})
-		const executed = db.execute(preparedSet, { who })
-		const report = db.explain(preparedSet, { who })
-		assert.equal(report.emits, BigInt(executed.length), "the ANALYZE run bound the set and executed")
-		// A literal membership array is a program constant crossing as a
-		// set param on the wire — explain takes it exactly like execute.
-		const byMembership = query(Ledger).rule(function rule(r) {
-			const { id } = v(Account)
-			return r.match(Account, { id, kind: ["Checking", "Savings"] }).find({ id })
-		})
-		const preparedMembership = db.prepare(byMembership)
-		const rows = db.execute(preparedMembership, {})
-		const membershipReport = db.explain(preparedMembership, {})
-		assert.equal(membershipReport.emits, BigInt(rows.length), "the membership array explains exactly as it executes")
-	})
-
-	test("resume = reopen: the cached open reads every committed fact back", async function reopen() {
-		const again = await Db.open(storeDir, Ledger)
-		assert.strictEqual(again, db, "in-process resume is the cached value itself")
-		const ada = again.get(Holder, { id: must(ids.ada) })
+	test("the live handle still reads every committed fact", function liveReads() {
+		const ada = db.get(Holder, { id: must(ids.ada) })
 		assert.ok(ada, "the committed data reads back")
 		assert.equal(ada.name, "ada lovelace")
 	})

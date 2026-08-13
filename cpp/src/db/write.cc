@@ -72,30 +72,4 @@ struct Abandoned {
 template<class T, class A>
 using WriteOutcome = std::variant<Committed<T>, Abandoned<A>>;
 
-/**
- * The witnessed loop's honesty bound (the TS WITNESSED_ATTEMPT_CAP):
- * contention alone converges — each rerun reads a fresher snapshot; a
- * workload that moves the generation on every one of this many
- * consecutive attempts is not converging and never will.
- */
-inline constexpr std::uint64_t witnessed_attempt_cap = 64;
-
-/**
- * The typed livelock refusal Db::write_witnessed answers past the cap:
- * every attempt found the generation moved, which is only sustainable
- * when the callback itself (even indirectly) commits an interleaved
- * write each try — the remedy is to move that write out of the callback.
- * Carries the final attempt's GenerationMoved error.
- */
-struct WitnessedLivelock {
-	std::uint64_t attempts;
-	Error last;
-};
-
-/**
- * What a witnessed write can fail with: an engine failure (commit
- * rejection included), or the typed livelock refusal.
- */
-using WitnessedFailure = std::variant<Error, WitnessedLivelock>;
-
 }

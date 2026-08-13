@@ -41,7 +41,6 @@ import { bool, bytes, i64, interval, span, str, u64 } from "#fields.ts"
 import { lower } from "#lower.ts"
 import type { DbHandle } from "#native.ts"
 import { native } from "#native.ts"
-import { by } from "#order.ts"
 import { ALLEN } from "#query/atom.ts"
 import type { AnyQuery, Query, QueryParams, QueryRow } from "#query/lower.ts"
 import { lowerQuery, query } from "#query/lower.ts"
@@ -118,7 +117,9 @@ const ids = {
 
 /** Sorts a bigint array ascending (answers are sets; the host sorts via the one comparator owner). */
 function sorted(values: readonly bigint[]): bigint[] {
-	return [...values].sort(by())
+	return [...values].sort(function asc(left, right) {
+		return left < right ? -1 : left > right ? 1 : 0
+	})
 }
 
 describe("the query surface against a real store", function suite() {
@@ -533,7 +534,7 @@ describe("the query surface against a real store", function suite() {
 		assert.ok(pin)
 	})
 
-	test("allen with a literal mask and with a bound mask param", function allenComparisons() {
+	test("allen with a literal mask", function allenComparisons() {
 		const intersecting = query(Ledger).rule((r) => {
 			const { id: acct, active: w } = v(Account)
 			return r
@@ -555,29 +556,18 @@ describe("the query surface against a real store", function suite() {
 			const { id: acct, active: w } = v(Account)
 			return r
 				.match(Account, { id: acct, active: w })
-				.where(r.allen(w, r.maskParam("rel"), span(0n, 12n)))
+				.where(r.allen(w, ALLEN.after, span(0n, 12n)))
 				.find({ acct })
 		})
-		type ParamsPin = Expect<Equal<QueryParams<typeof related>, { readonly rel: number }>>
 		assert.deepEqual(
 			sorted(
-				run(related, { rel: ALLEN.intersects }).map(function acct(row) {
-					return row.acct
-				})
-			),
-			sorted([ids.adaChecking, ids.graceSavings])
-		)
-		assert.deepEqual(
-			sorted(
-				run(related, { rel: ALLEN.after }).map(function acct(row) {
+				run(related, {}).map(function acct(row) {
 					return row.acct
 				})
 			),
 			sorted([ids.adaSavings, ids.kurtChecking]),
-			"one prepared query answers any mask question per execution"
+			"a second literal mask answers the complementary temporal question"
 		)
-		const pin: ParamsPin = true
-		assert.ok(pin)
 	})
 
 	test("∈-set params match on membership; the empty set matches nothing", function setParams() {
@@ -800,11 +790,6 @@ describe("the query surface against a real store", function suite() {
 					.where(r.or(r.and(r.eq(k, "Checking"), r.gt(b, 4n)), r.eq(k, "Savings")))
 					.find({ acct })
 			}),
-			// countDistinct (all-aggregate find: empty input yields the empty set)
-			query(Ledger).rule((r) => {
-				const { holder: h } = v(Account)
-				return r.match(Account, { holder: h }).find({ h: r.countDistinct(h) })
-			}),
 			// the folds over a variable
 			query(Ledger).rule((r) => {
 				const { holder: h, balance: b } = v(Account)
@@ -822,15 +807,6 @@ describe("the query surface against a real store", function suite() {
 			query(Ledger).rule((r) => {
 				const { holder: h, active: w } = v(Account)
 				return r.match(Account, { holder: h, active: w }).find({ h, w: r.sum(r.duration(w)) })
-			}),
-			// the Arg forms
-			query(Ledger).rule((r) => {
-				const { id: acct, holder: h, balance: b } = v(Account)
-				return r.match(Account, { id: acct, holder: h, balance: b }).find({ h, acct: r.argMax(acct, b) })
-			}),
-			query(Ledger).rule((r) => {
-				const { id: acct, holder: h, balance: b } = v(Account)
-				return r.match(Account, { id: acct, holder: h, balance: b }).find({ h, acct: r.argMin(acct, b) })
 			}),
 			// pack (the coalescing fold)
 			query(Ledger).rule((r) => {
@@ -887,12 +863,15 @@ describe("the query surface against a real store", function suite() {
 	})
 
 	test("engine roster refusals surface as typed prepare errors", function rosterError() {
-		const argAndFoldMixed = query(Ledger).rule((r) => {
-			const { id: acct, holder: h, balance: b } = v(Account)
-			return r.match(Account, { id: acct, holder: h, balance: b }).find({ h, acct: r.argMax(acct, b), b: r.sum(b) })
+		const emptyMask = query(Ledger).rule((r) => {
+			const { id: acct, active: w } = v(Account)
+			return r
+				.match(Account, { id: acct, active: w })
+				.where(r.allen(w, 0, span(0n, 12n)))
+				.find({ acct })
 		})
-		const prepared = native.dbPrepare(db, lowerQuery(argAndFoldMixed))
-		assert.ok(!prepared.ok, "Arg and fold aggregates never mix — the engine's typed rule")
+		const prepared = native.dbPrepare(db, lowerQuery(emptyMask))
+		assert.ok(!prepared.ok, "the empty Allen mask is the engine's typed refusal")
 		assert.equal(prepared.kind, "irError")
 	})
 

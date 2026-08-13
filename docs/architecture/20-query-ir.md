@@ -56,9 +56,9 @@ pre-rules query is a one-rule program.
 - **A query defines one anonymous predicate; rules derive it.** The head is
   its definition, and its typed **signature** is the answer-type tuple: one
   column per head position, each carrying the type that lands in the buffer
-  (`Count`/`CountDistinct` are U64 whatever they counted; the measure is
+  (`Count` is U64 whatever it counted; the measure is
   U64; `Sum`/`Min`/`Max` carry their input's type; `Pack` its interval
-  type; the Arg forms the carried payload's type) together with the fold
+  type) together with the fold
   producing it. It is derived **once**, at validation, and sealed in the
   witness (`ir/validate`'s `Predicate`); sink construction, result-buffer
   typing, finalize's column writers, and plan introspection's header all read that
@@ -323,35 +323,12 @@ join costume.
   check): Sum(I64)→I64, Sum(U64)→U64; deterministic under any fold order (set
   folds have none).
 - `Count` is **nullary**: |the group's binding set|, result type U64.
-  `CountDistinct(x)`: |the distinct values of x across the group|, U64, legal
-  over every type. `Min`/`Max` accept the orderable types
+`Min`/`Max` accept the orderable types
   (`10-data-model.md`): U64, I64, and bool, ordered false < true (ruled
   2026-07-23, R3) — `Max` over bool is **Any** and `Min` is **All**, the two
   quantifiers as the two extremes of the 0/1 encoding, no dedicated
   operators; result type = input type; deterministic (a set has one
   minimum).
-- **Arg-restriction (`ArgMax`/`ArgMin`):** the group's binding set is first
-  **restricted to the bindings attaining the extreme of the key variable**, and
-  the group's answers are projected from that restricted set — multi-carry is
-  coherent by construction, and **a tie yields every attaining answer**
-  (`lean/Bumbledb/Query/Aggregates.lean: argmax_ties_all_kept`); with fresh
-  keys ties cannot occur. Validation: all Arg terms
-  in one query share one key and one direction; **the key positions,
-  exhaustively:** a bound variable of orderable type (U64/I64, and bool per
-  R3), or the interval measure — `ArgMax(w, Duration(w))` is "the longest
-  interval per group" (ruled 2026-07-23, R5), the restriction sweeping the
-  derived measure word with the measure's ray poisoning (§ the measure); a
-  variable key may itself be projected. Arg terms and fold aggregates
-  (Sum/Min/Max/Count/CountDistinct) may not mix in one query in v0 — "sum of the
-  latest" is two queries, and the composed form waits for a real need.
-  **Arg-restriction is single-rule only** (a typed validation error on 2+-rule
-  programs, DNF-lowered rules included): the restriction key is rule-scoped
-  and outside the head's vocabulary — hand-written rules need not even agree
-  on its type — so "the extreme over the union" is undefined. Modeling answer: one Arg query per
-  disjunct, host-merged. The notation writes these forms directly as
-  `ArgMax(value, key)` / `ArgMin(value, key)`; the renderer emits the same forms,
-  including self-carry (`ArgMax(x, x)`). *Trigger* for defining a cross-rule restriction: a real
-  query.
 - **`Pack` (the coalescing fold — Snodgrass's coalesce):** per group, the
   maximal disjoint half-open segments of the union of the group's interval
   point sets (`lean/Bumbledb/Query/Aggregates.lean: pack_canonical`,
@@ -360,8 +337,7 @@ join costume.
   **the packed ray is a ray** (no measure is taken, so no `MeasureOfRay`
   interaction). **`Pack`
   is relation-shaped: one answer per (group, maximal segment)** — the
-  one-answer-per-group convention was never a law (`ArgMax`'s tie sets were the
-  precedent). Head
+  one-answer-per-group convention was never a law. Head
   shape: the group variables plus **one interval-typed result position** (the
   packed segment shares its input's element type); at most one `Pack` per head —
   the multi-`Pack` product has no sighting and is refused with the trigger "a
@@ -419,7 +395,7 @@ HeadTerm   = Var | Aggregate(HeadOp)  // var-free: variables are rule-scoped,
                                       //   rules supply the variables (a
                                       //   Measure find is a Var position:
                                       //   a u64 value per binding)
-HeadOp     = Sum | Min | Max | Count | CountDistinct | ArgMax | ArgMin | Pack
+HeadOp     = Sum | Min | Max | Count | Pack
 Atom {
     source:     AtomSource,
     bindings:   Vec<(FieldId, Term)>, // named-field; absence of a field IS the wildcard
@@ -438,8 +414,6 @@ Value      = Bool(bool) | U64(u64) | I64(i64)
            | String(Box<[u8]>)        // raw UTF-8 bytes; interning is the engine's job
            | FixedBytes(Box<[u8]>)    // a bytes<N> value: exactly N raw bytes — the
                                       //   length is the type; inline, never interned
-           | AllenMask(AllenMask)     // the mask value shape — a param payload,
-                                      //   never a field type (10-data-model.md)
 FindTerm   = Var(VarId)
            | Aggregate { op: AggOp, over: Option<VarId> }   // over: None for Count
            | Measure(VarId)                                 // the measure, projected
@@ -447,21 +421,15 @@ FindTerm   = Var(VarId)
                                                             //   measure (only those
                                                             //   three; typed rejection
                                                             //   otherwise)
-AggOp      = Sum | Min | Max | Count | CountDistinct
-           | ArgMax { key: ArgKey } | ArgMin { key: ArgKey } // over = the carried var
+AggOp      = Sum | Min | Max | Count
            | Pack                                           // over = the packed interval var;
                                                             //   relation-shaped (§ aggregation)
-ArgKey     = Var(VarId) | Measure(VarId)                    // the restriction key: an
-                                                            //   orderable variable or the
-                                                            //   interval measure (ruled
-                                                            //   2026-07-23, R5)
 Comparison { op: CmpOp, lhs: Term, rhs: Term }
 CmpOp      = Eq | Ne | Lt | Le | Gt | Ge
-           | Allen { mask: MaskTerm }  // THE interval-pair comparison (below)
+           | Allen { mask: AllenMask }  // THE interval-pair comparison (below);
+                                       //   the mask is a literal 13-bit word
            | PointIn                   // point membership as a predicate — the
                                        //   point form only; ⊇ is Allen(COVERS)
-MaskTerm   = Literal(AllenMask) | Param(ParamId)  // a variable or set mask is
-                                                  //   unrepresentable, not rejected
 ```
 
 Representation notes (the branch-removal decisions): no `union`/`or` node
@@ -556,11 +524,7 @@ never grow again, because nothing exists outside the coordinate system.
   `INTERSECTS`' complement).
 - **Vacuity is typed out**: validation rejects the empty mask ("never" —
   write no query) and the full mask ("always" — write no condition) with
-  distinct errors; a mask *param* gets the same two rejections at bind, where
-  the value exists.
-- **The mask is paramable**: `MaskTerm::Param` makes the temporal relation a
-  bind-time argument (`Value::AllenMask` / `BindValue::AllenMask`) — one
-  prepared query answers any of the 2¹³ − 2 questions per execution.
+  distinct errors. Masks are literals, not parameters.
 - **Interval `Eq`/`Ne` are derived facts**: normalization canonicalizes them
   to `Allen(EQUALS)` / `Allen(¬EQUALS)`, so exactly one interval-pair form
   reaches the planner. (Bindings are untouched: an interval term in an
@@ -603,10 +567,7 @@ under aggregation, exactly like a plain variable find; in a `Program`,
 legal at the OUTPUT predicate's head only — `MeasureInteriorPredicate` /
 `MeasureInRecursiveHead`, § engine recursion); the aggregated
 input of `Sum`/`Min`/`Max` (`FindTerm::AggregateMeasure` — `Sum` in the
-wide accumulator with the single finalize range check, like every Sum); the
-**Arg-restriction key** (`ArgKey::Measure` — `ArgMax(w, Duration(w))`, "the
-longest interval per group"; the restriction sweeps the derived measure
-word, ray poisoning included — ruled 2026-07-23, R5); and
+wide accumulator with the single finalize range check, like every Sum); and
 one side of an **order comparison** (`Lt`/`Le`/`Gt`/`Ge`) against a
 u64-typed term or literal — "meetings longer than an hour". Every other
 position is a typed validation rejection: a binding position (the measure
@@ -711,8 +672,8 @@ dataflow is one-way: atoms *select* (every joined value exists in a stored
 column), filters *compare* (a comparison-side measure is created and discarded,
 never bound — a computation, not a bindable value), and heads and folds *create*
 only at the answer boundary — once, over finished binding sets, exiting to the
-host. The operator inventory under the law: `Min`/`Max`/`ArgMax`/`ArgMin`
-select; `Sum`/`Count`/`CountDistinct` and the measure create values outside the
+host. The operator inventory under the law: `Min`/`Max`
+select; `Sum`/`Count` and the measure create values outside the
 active domain; `Pack` creates lattice-closed values (a coalesced segment's
 endpoints are *selected* from stored endpoints, never invented —
 `lean/Bumbledb/Query/Aggregates.lean: pack_lattice_closed`) and
@@ -940,17 +901,14 @@ operands (the point-domain law — point params
 get the same rejection at bind, where the value exists); comparisons violating the
 type rules above (order operators on intervals and on `bytes<N>` each named in
 their own diagnostic — the predictable mistake gets the good error); the Allen vacuity rules (the ∅
-and full literal masks, distinct typed errors; mask params get the same two at
-bind); constant comparisons;
+and full literal masks, distinct typed errors); constant comparisons;
 self-comparisons; a ParamId used both scalar and set, or a ParamSet under any
-operator but `Eq`; a mask param with any value anchor (a mask is not a
-data-model type); non-dense param ids — dense across value and mask params
-jointly; point variables bound only by membership;
+operator but `Eq`; non-dense param ids;
+point variables bound only by membership;
 negated-atom variables not bound by any positive atom; unbound find variables;
 comparison-only variables; empty finds; duplicate find terms; no positive atoms;
-aggregate input-type violations; aggregate-over-group-key; mixed Arg and fold
-aggregates, Arg terms with differing keys or directions, or a non-orderable Arg
-key; the `Pack` roster (a second `Pack` term, `Pack` beside a fold or an Arg
+aggregate input-type violations; aggregate-over-group-key;
+the `Pack` roster (a second `Pack` term, `Pack` beside a fold
 term, `Pack` over a non-interval variable — each its own typed error); the
 measure's position roster (§ the measure — a `Duration` in a binding,
 over a non-interval variable, under a non-order operator, on both sides of one
@@ -1040,9 +998,8 @@ program := rule+                       // bare-headed rules ARE the output predi
 rule    := [pred] '(' head ')' '|' body ';'
 head    := headterm (',' headterm)*
 headterm:= var | [name ':'] agg        // named positions become result columns
-agg     := Sum(t) | Min(t) | Max(t) | Count | CountDistinct(v) | Pack(v)
-          | ArgMax(v, key) | ArgMin(v, key)
-           where t := v | Duration(v)  and  key := v | Duration(v)
+agg     := Sum(t) | Min(t) | Max(t) | Count | Pack(v)
+           where t := v | Duration(v)
 body    := item (',' item)*
 item    := atom                        // positive occurrence
          | '!' atom                    // negation (anti-probe; safety per roster)
@@ -1067,7 +1024,7 @@ pbind   := position ':' var            // sparse explicit position
          | position '==' value         // position selection
          | position 'in' ?param        // position set membership
 pred    := lowercase ident             // relations are UpperCamel — the case split
-mask    := MASK ('|' MASK)* | ?param   // masks are sets of basics; '|' is set union
+mask    := MASK ('|' MASK)*            // literal sets of basics; '|' is set union
 term    := var | ?param | literal
 ```
 

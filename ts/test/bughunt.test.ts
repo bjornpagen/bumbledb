@@ -394,9 +394,11 @@ describe("marshal edges and lifecycle sanity against a real store", async functi
 	test("a thrown witnessed callback (after a delta verb) aborts and frees the writer", function thrownWitnessed() {
 		const before = db.scan(Num).length
 		assert.throws(function boom() {
-			db.writeWitnessed(function bad(_snap, tx) {
-				tx.insert(Num, { u: 3n, s: 3n })
-				throw errors.new("witnessed boom")
+			db.read(function boom(snap) {
+				return db.writeFrom(snap, function bad(tx) {
+					tx.insert(Num, { u: 3n, s: 3n })
+					throw errors.new("witnessed boom")
+				})
 			})
 		}, /witnessed boom/)
 		assert.equal(db.scan(Num).length, before)

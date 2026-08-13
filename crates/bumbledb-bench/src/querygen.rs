@@ -26,9 +26,7 @@
 //! (`docs/architecture/60-validation.md` § the two oracles), all
 //! oracles live.
 
-use bumbledb::{
-    AllenMask, Atom, CmpOp, Comparison, FieldId, FindTerm, MaskTerm, RelationId, VarId,
-};
+use bumbledb::{AllenMask, Atom, CmpOp, Comparison, FieldId, FindTerm, RelationId, VarId};
 
 mod builder;
 mod construct;
@@ -45,7 +43,6 @@ mod shapes_ground;
 mod shapes_interval;
 mod shapes_recursive;
 mod shapes_rules;
-mod shapes_sink;
 pub mod target;
 #[cfg(test)]
 mod tests;
@@ -62,8 +59,7 @@ pub use shapes_recursive::{
 /// The shape grammar's weights (drawn by range over the sum). The five
 /// original join shapes keep their proportions; the redesign's surface
 /// joins the table: point membership, interval joins, the
-/// adjacent-touching boundary probes, `CountDistinct` over every type,
-/// and Arg-restriction.
+/// adjacent-touching boundary probes, and remaining folds.
 const SHAPE_WEIGHTS: &[(Shape, u64)] = &[
     (Shape::KeyProbe, 10),
     (Shape::Star, 15),
@@ -74,8 +70,6 @@ const SHAPE_WEIGHTS: &[(Shape, u64)] = &[
     (Shape::Membership, 10),
     (Shape::IntervalJoin, 10),
     (Shape::Boundary, 6),
-    (Shape::CountDistinct, 10),
-    (Shape::Arg, 8),
     (Shape::ExistenceWalk, 8),
     (Shape::DuWalk, 6),
     (Shape::Rules, 10),
@@ -107,11 +101,6 @@ enum Shape {
     /// The adjacent-touching boundary: query literals recomputed to touch
     /// a corpus interval exactly at its endpoint, both polarities.
     Boundary,
-    /// `CountDistinct` steered across all six types.
-    CountDistinct,
-    /// Arg-restriction: `ArgMax`/`ArgMin` over tie-rich and tie-free
-    /// keys, key-projected and multi-carry variants.
-    Arg,
     /// The grounding's existence walk (`shapes_ground.rs`): the containment
     /// target joined on its full key with nothing else read from it —
     /// eliminable — plus the extra-projected-field near-miss.
@@ -231,9 +220,6 @@ struct Builder {
     ladder: [bool; 4],
     /// Whether an `Allen` predicate carries a random (unnamed) mask.
     random_mask: bool,
-    /// Whether an `Allen` predicate carries a bind-time mask param
-    /// (`MaskTerm::Param` — finding 086).
-    mask_param: bool,
     /// Which grounding-shape variant this query is, when the shape is one.
     ground: Option<GroundVariant>,
     /// Which closed-relation class this query is, when the shape is one.
@@ -268,7 +254,6 @@ struct GenTags {
     adjacent_right: bool,
     ladder: [bool; 4],
     random_mask: bool,
-    mask_param: bool,
     ground: Option<GroundVariant>,
     rules: Option<RulesVariant>,
     closed: Option<ClosedVariant>,
@@ -302,7 +287,7 @@ pub const CMP_OPS: [CmpOp; 8] = [
     CmpOp::Gt,
     CmpOp::Ge,
     CmpOp::Allen {
-        mask: MaskTerm::Literal(AllenMask::INTERSECTS),
+        mask: AllenMask::INTERSECTS,
     },
     CmpOp::PointIn,
 ];
@@ -322,8 +307,6 @@ pub struct Coverage {
     pub membership: u64,
     pub interval_join: u64,
     pub boundary: u64,
-    pub count_distinct: u64,
-    pub arg: u64,
     pub existence_walk: u64,
     pub du_walk: u64,
     pub rules: u64,
@@ -362,22 +345,6 @@ pub struct Coverage {
     pub agg_u64: u64,
     /// Aggregate-bearing find lists with more than one aggregate.
     pub multi_aggregate: u64,
-    /// `CountDistinct` inputs per `CMP_TYPES` index — every type.
-    pub count_distinct_types: [u64; 6],
-    pub arg_max: u64,
-    pub arg_min: u64,
-    /// Arg terms carrying the key variable itself.
-    pub arg_key_projected: u64,
-    /// Arg queries with an empty group key (one global group).
-    pub arg_global: u64,
-    /// Arg keys anchored on the tie-rich field (`Posting.amount`, values
-    /// quantized by the corpus) / the tie-free field (`Posting.at`,
-    /// strictly monotone by construction).
-    pub arg_tie_key: u64,
-    pub arg_tie_free_key: u64,
-    /// Arg restrictions keyed on an interval measure
-    /// (`ArgKey::Measure` — ruled 2026-07-23, R5).
-    pub arg_measure_key: u64,
     /// Membership bindings by point-term kind and by element type.
     pub membership_literal: u64,
     pub membership_param: u64,
@@ -393,10 +360,6 @@ pub struct Coverage {
     pub allen_composite: u64,
     pub allen_singleton: u64,
     pub allen_random_mask: u64,
-    /// `Allen` predicates whose mask is a bind-time param
-    /// (`MaskTerm::Param` — finding 086: the temporal relation as an
-    /// argument, its own bind-time vacuous-mask rejection).
-    pub allen_mask_param: u64,
     pub allen_basics: [u64; 13],
     pub point_in_u64: u64,
     pub point_in_i64: u64,

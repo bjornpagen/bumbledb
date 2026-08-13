@@ -92,9 +92,14 @@
 compile_error!("bumbledb targets 64-bit platforms only (docs/architecture/00-product.md)");
 
 pub mod allen;
+/// Counting allocator for the zero-warm-allocation gate and the bench
+/// harness. Not embedding API.
+#[doc(hidden)]
 pub mod alloc_counter;
 pub(crate) mod api;
 pub(crate) mod arena;
+/// Content digest used by the bench corpus/stamp harness. Not embedding API.
+#[doc(hidden)]
 pub mod digest;
 pub(crate) mod encoding;
 pub mod error;
@@ -102,6 +107,8 @@ pub(crate) mod exec;
 pub(crate) mod image;
 mod interval;
 pub mod ir;
+/// Execution tracing used by the bench harness. Not embedding API.
+#[doc(hidden)]
 pub mod obs;
 pub(crate) mod plan;
 pub mod schema;
@@ -110,22 +117,17 @@ mod value;
 mod verify_store;
 
 pub use allen::{AllenMask, Basic, classify};
-/// The copy-on-append column-differential divergence facets
-/// (`api/db/image_oracle.rs`), reachable only under the `image-oracle`
-/// test-support feature: the served image compared against a
-/// from-scratch build, facet by facet
-/// (the retired I1 copy-on-append packet (git history) § coverage
-/// item 3(b)). Its former consumer, the detached fuzz crate's `ops`
-/// target, died with the fuzzing apparatus (the 2026-07-20 hard-delete
-/// ruling, docs/architecture/60-validation.md § the deletion record).
-#[cfg(feature = "image-oracle")]
-pub use api::db::image_oracle::ImageDivergence;
 pub use api::db::{
     BulkLoadError, Db, Exhumed, Fact, Fresh, Key, Snapshot, Witness, WriteTx, exhume,
 };
-pub use api::prepared::{
-    Answer, AnswerValue, Answers, BindValue, OccurrenceDrift, ParamArg, PreparedQuery, Staleness,
-};
+pub use api::prepared::{Answer, AnswerValue, Answers, BindValue, ParamArg, PreparedQuery};
+/// Plan-introspection types used by the in-workspace bench harness.
+/// Not embedding API.
+#[doc(hidden)]
+pub use api::prepared::{OccurrenceDrift, Staleness};
+/// Structured execution counters used by the in-workspace bench harness.
+/// Not embedding API.
+#[doc(hidden)]
 pub use api::stats::{
     CoverStats, DeadRule, DisjointRules, EliminatedOccurrence, ExecutionStats, FoldedOccurrence,
     INTROSPECTION_VERSION, KeyProbeStats, NodeStats, PinnedRows, RuleStats,
@@ -137,16 +139,6 @@ pub use interval::Interval;
 /// differential unit tests (as a dev-dependency) enable.
 #[cfg(feature = "ground-off")]
 pub use plan::ground::with_grounding_disabled;
-/// The crashpoint table (`storage/commit.rs`): the commit pipeline's
-/// named phase boundaries with their expected recovery sides, reachable
-/// only under the `crashpoint` test-support feature. Its consumer — the
-/// detached fuzz crate's `crash` target, which drew points from the
-/// table and judged recovery by its sides — died with the fuzzing
-/// apparatus (the 2026-07-20 hard-delete ruling,
-/// docs/architecture/60-validation.md § the deletion record); the table
-/// remains the engine's claimed atomicity structure, as data.
-#[cfg(feature = "crashpoint")]
-pub use storage::commit::{CRASHPOINTS, CrashpointSide};
 /// The storage format version (`storage/env.rs`), public so
 /// store-shaped derived identities (the bench corpus cache, stamps) can
 /// key on it: a format bump must regenerate every store-derived
@@ -158,9 +150,9 @@ pub use storage::env::StoreKind;
 // appear in `Db`'s own signatures — importable from the root, no
 // module-path scavenger hunt.
 pub use ir::{
-    AggOp, ArgKey, Atom, AtomSource, CmpOp, Comparison, ConditionTree, FindTerm, HeadOp, HeadTerm,
-    MAX_CONDITION_DEPTH, MAX_PREDICATES, MAX_RULES, MaskTerm, ParamId, PredId, PredicateDef,
-    Program, ProgramRef, Query, Rule, Term, Value, VarId,
+    AggOp, Atom, AtomSource, CmpOp, Comparison, ConditionTree, FindTerm, HeadOp, HeadTerm,
+    MAX_CONDITION_DEPTH, MAX_PREDICATES, MAX_RULES, ParamId, PredId, PredicateDef, Program,
+    ProgramRef, Query, Rule, Term, Value, VarId,
 };
 // The bindings roster (docs/architecture/70-api.md § the SchemaSpec
 // bindings contract): everything a foreign-host bridge needs, reachable
@@ -176,6 +168,9 @@ pub use schema::{
     SchemaDescriptor, SchemaSpec, SchemaSpecError, SchemaWarning, StatementId, StatementKind,
     Theory, render_rejection,
 };
+/// Offline store sweeper used by the bench harness and engine tests.
+/// Not embedding API.
+#[doc(hidden)]
 pub use verify_store::{StoreFinding, StoreReport};
 
 /// The declarative schema surface (docs/architecture/70-api.md). (The macro and the `schema`

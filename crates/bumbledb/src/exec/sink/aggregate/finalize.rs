@@ -11,10 +11,7 @@ impl AggregateSink {
     /// yields zero rows: a global aggregate over nothing is the empty
     /// set, not a 0 or NULL row.
     ///
-    /// Fold groups emit one row each; Arg-restriction groups emit
-    /// **every stored row** — the rows projected from the bindings
-    /// attaining the key's extreme, ties included (set-honest,
-    /// 20-query-ir § aggregation); Pack groups emit **one row per
+    /// Fold groups emit one row each; Pack groups emit **one row per
     /// maximal segment** of the group's claim union (relation-shaped —
     /// the claim lists sort here, hence `&mut self`).
     ///
@@ -84,9 +81,6 @@ impl AggregateSink {
         if self.pack.is_some() {
             return self.emit_pack_group(key, group_idx, answer_scratch, emit);
         }
-        if self.arg.is_some() {
-            return self.emit_arg_group(key, group_idx, answer_scratch, emit);
-        }
         let accs = &self.accs[group_idx * self.n_aggs..(group_idx + 1) * self.n_aggs];
         answer_scratch.clear();
         let mut key_cursor = 0;
@@ -98,10 +92,10 @@ impl AggregateSink {
                     key_cursor += width;
                 }
                 SinkSpec::Agg { .. } => {
-                    answer_scratch.push(self.finalize_acc(accs[acc_cursor], find_idx)?);
+                    answer_scratch.push(Self::finalize_acc(accs[acc_cursor], find_idx)?);
                     acc_cursor += 1;
                 }
-                SinkSpec::Arg { .. } | SinkSpec::Pack { .. } => {
+                SinkSpec::Pack { .. } => {
                     unreachable!("validated: relation-shaped terms and folds never mix")
                 }
             }
@@ -154,7 +148,7 @@ impl AggregateSink {
                             self.answer_scratch.push(start);
                             self.answer_scratch.push(frontier);
                         }
-                        SinkSpec::Agg { .. } | SinkSpec::Arg { .. } => {
+                        SinkSpec::Agg { .. } => {
                             unreachable!("validated: Pack mixes with no other aggregate")
                         }
                     }
@@ -178,44 +172,8 @@ impl AggregateSink {
         )
     }
 
-    /// One Arg group's emission: every row of the restricted set,
-    /// interleaved with the group key per find order (restrict-then-
-    /// project — the stored row was projected whole from one surviving
-    /// binding, so multi-carry coherence needs no per-term bookkeeping).
-    fn emit_arg_group(
-        &self,
-        key: &[u64],
-        group_idx: usize,
-        answer_scratch: &mut Vec<u64>,
-        emit: &mut impl FnMut(&[u64]) -> Result<()>,
-    ) -> Result<()> {
-        for (carry_row, ()) in self.arg_answers[group_idx].iter() {
-            answer_scratch.clear();
-            let mut key_cursor = 0;
-            let mut carry_cursor = 0;
-            for find in &self.finds {
-                match find {
-                    SinkSpec::Var { width, .. } => {
-                        answer_scratch.extend_from_slice(&key[key_cursor..key_cursor + width]);
-                        key_cursor += width;
-                    }
-                    SinkSpec::Arg { width, .. } => {
-                        answer_scratch
-                            .extend_from_slice(&carry_row[carry_cursor..carry_cursor + width]);
-                        carry_cursor += width;
-                    }
-                    SinkSpec::Agg { .. } | SinkSpec::Pack { .. } => {
-                        unreachable!("validated: Arg terms mix with no other aggregate")
-                    }
-                }
-            }
-            emit(answer_scratch)?;
-        }
-        Ok(())
-    }
-
     /// Range-checks and word-encodes one accumulator.
-    fn finalize_acc(&self, acc: Acc, find_idx: usize) -> Result<u64> {
+    fn finalize_acc(acc: Acc, find_idx: usize) -> Result<u64> {
         match acc {
             Acc::SumSigned(total) => i64::try_from(total)
                 .map(i64_to_word)
@@ -223,8 +181,6 @@ impl AggregateSink {
             Acc::SumUnsigned(total) => u64::try_from(total)
                 .map_err(|_| Error::Overflow(OverflowKind::Aggregate { find: find_idx })),
             Acc::Min(word) | Acc::Max(word) | Acc::Count(word) => Ok(word),
-            // |distinct values of the group| — the value set's size.
-            Acc::CountDistinct(set) => Ok(self.value_sets[set].len() as u64),
         }
     }
 

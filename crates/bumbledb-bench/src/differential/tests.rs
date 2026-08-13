@@ -24,7 +24,7 @@ use bumbledb::schema::{
 };
 use bumbledb::{
     AggOp, AllenMask, Atom, CmpOp, Comparison, ConditionTree, Db, FindTerm, HeadOp, HeadTerm,
-    MaskTerm, ParamId, Query, RelationId, Rule, Term, Value, VarId,
+    ParamId, Query, RelationId, Rule, Term, Value, VarId,
 };
 
 use crate::differential::{Op, Summary, run};
@@ -337,38 +337,19 @@ fn queries() -> Vec<(Query, Vec<ParamValue>)> {
             plain(vec![v(0), agg(AggOp::Sum, Some(2))], vec![booking_atom()]),
             vec![],
         ),
-        // 10: distinct rooms, globally.
+        // 10: global Max of the booking reference.
         (
-            plain(
-                vec![agg(AggOp::CountDistinct, Some(0))],
-                vec![booking_atom()],
-            ),
+            plain(vec![agg(AggOp::Max, Some(2))], vec![booking_atom()]),
             vec![],
         ),
-        // 11: the room carrying the maximal reference.
+        // 11: Max reference per room.
         (
-            plain(
-                vec![agg(
-                    AggOp::ArgMax {
-                        key: bumbledb::ArgKey::Var(VarId(2)),
-                    },
-                    Some(0),
-                )],
-                vec![booking_atom()],
-            ),
+            plain(vec![v(0), agg(AggOp::Max, Some(2))], vec![booking_atom()]),
             vec![],
         ),
-        // 12: the span carrying the minimal reference.
+        // 12: global Min of the booking reference.
         (
-            plain(
-                vec![agg(
-                    AggOp::ArgMin {
-                        key: bumbledb::ArgKey::Var(VarId(2)),
-                    },
-                    Some(1),
-                )],
-                vec![booking_atom()],
-            ),
+            plain(vec![agg(AggOp::Min, Some(2))], vec![booking_atom()]),
             vec![],
         ),
         // 13: overlapping spans across distinct bookings.
@@ -383,7 +364,7 @@ fn queries() -> Vec<(Query, Vec<ParamValue>)> {
                 conditions: vec![
                     ConditionTree::Leaf(Comparison {
                         op: CmpOp::Allen {
-                            mask: MaskTerm::Literal(AllenMask::INTERSECTS),
+                            mask: AllenMask::INTERSECTS,
                         },
                         lhs: var(1),
                         rhs: var(4),
@@ -409,7 +390,7 @@ fn queries() -> Vec<(Query, Vec<ParamValue>)> {
                 conditions: vec![
                     ConditionTree::Leaf(Comparison {
                         op: CmpOp::Allen {
-                            mask: MaskTerm::Literal(AllenMask::COVERS),
+                            mask: AllenMask::COVERS,
                         },
                         lhs: var(1),
                         rhs: var(4),

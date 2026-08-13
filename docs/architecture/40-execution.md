@@ -80,8 +80,8 @@ every instance, the verdict never consulted one
 (`lean/Bumbledb/Exec/Rewrites.lean: statically_empty_sound`); a program whose
 every rule dies prepares to the empty program. Prepared
 execution has two rule kinds — key probe and Free Join — plus this
-program-level empty variant. Execution binds params first — bind errors still surface, a
-vacuous Allen mask param is rejected exactly as on a live plan — then
+program-level empty variant. Execution binds params first — bind errors still surface —
+then
 touches no images, binds no views, runs no join, and the result is the
 empty buffer. Plan introspection prints `access path: statically empty` plus each dead
 rule's killing condition; a dead rule inside a live program was deleted at
@@ -280,16 +280,6 @@ stream computes exactly the answer set
 - The **projection sink** dedups projected answers (its job anyway).
 - The **aggregate sink** folds a binding only on first occurrence, using a seen-set of
   full binding tuples — the same arena-backed mechanism as projection dedup.
-- **`CountDistinct`** folds through a per-group distinct-value set (one word per
-  value — intern ids, encoded scalars, or interval words pairwise), arena-backed
-  like the group map.
-- **Arg-restriction (`ArgMax`/`ArgMin`)** is a group-state fold, not a
-  post-materialization pass: per group the sink keeps the current extreme key and
-  the set of surviving projected answers; a strictly-better key clears the set, an
-  equal key inserts (ties are set-honest —
-  `lean/Bumbledb/Query/Aggregates.lean: argmax_ties_all_kept`), a worse key is a
-  no-op. Memory is O(groups × ties), and ties are structurally rare (fresh keys
-  cannot tie).
 - **`Pack`** is a group-state fold with a **relation-shaped finalize**
   (the coalesce spec: `lean/Bumbledb/Query/Aggregates.lean: pack_extensional`,
   `pack_canonical`): per group the sink accumulates
@@ -304,8 +294,7 @@ stream computes exactly the answer set
   one head answer per maximal segment.
   Identical and overlapping claims collapse in the sweep, never at fold time;
   memory is O(the group's claims) — retained high-water scratch under the
-  allocation contract, gated like every sink pool. Like `CountDistinct` and
-  Arg, the set-valued group state folds per binding (no gather kernel or scan
+  allocation contract, gated like every sink pool. The set-valued group state folds per binding (no gather kernel or scan
   pushdown applies).
 - **Elision optimization:** the seen-set is elided when every atom occurrence's
   bound fields cover a key of its relation (typical for ledger queries that bind
@@ -360,8 +349,8 @@ never — product semantics.
 private sink trait; projection-dedup and aggregate folds (semantics normative in
 `20-query-ir.md`) are the two sinks. Aggregation never materializes the join. Group
 maps live in sink arena state; aggregate result types: Sum(I64)→I64, Sum(U64)→U64
-(i128/u128 accumulators, one final range check), Count/CountDistinct→U64,
-Min/Max→input type, Arg carries→their variables' types, Pack→its input's
+(i128/u128 accumulators, one final range check), Count→U64,
+Min/Max→input type, Pack→its input's
 interval type. **Reverses if:** never structurally.
 
 ## The rule loop
@@ -441,9 +430,6 @@ and stays a non-goal.
   `(relation, storage_tx_id)`), and each occurrence's filtered views memoize per
   (generation, resolved filters) exactly as within one rule — a repeat execution of
   the program rebuilds nothing in any rule.
-- **Arg-restriction never crosses rules** — refused at validation
-  (`20-query-ir.md` § aggregation): the restriction key is rule-scoped, outside the
-  head's vocabulary.
 - **`Pack` does cross rules**: its head position reads the raw claim's two
   words, so the spanning head-projection seen-set keys (group, claim) pairs —
   a claim two rules derive folds once — and the coalesce runs over the union:

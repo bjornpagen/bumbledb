@@ -7,9 +7,8 @@
 
 use super::*;
 use crate::encoding::ValueRef;
+use crate::ir::HeadTerm;
 use crate::ir::normalize::with_fold_disabled;
-use crate::ir::{HeadTerm, MaskTerm, ParamId};
-use bumbledb_theory::allen::AllenMask;
 use bumbledb_theory::schema::{IntervalElement, SchemaDescriptor};
 
 /// Event(id u64 fresh, kind u64, during interval<i64>, score i64) — the
@@ -201,84 +200,6 @@ fn a_dead_rule_opens_no_rule_span() {
         .filter(|name| name.starts_with("rule_"))
         .collect();
     assert_eq!(rule_spans, vec!["rule_0"], "one rule span: the live rule");
-}
-
-#[test]
-fn an_all_dead_program_prepares_to_empty_and_binds_params_first() {
-    let dir = TempDir::new("statically-empty-all");
-    let schema = event_schema();
-    let env = Environment::create(dir.path(), &schema).expect("create");
-    insert_events(&env, &schema, &[(1, 3, (0, 10), 10)]);
-    let cache = ImageCache::new(&schema);
-    let txn = env.read_txn().expect("txn");
-
-    // Both rules die on the score contradiction; rule 1 also carries an
-    // Allen mask param — params are stage-3, so the mask leg never
-    // folds, and bind must still judge it on the empty program.
-    let mut masked = contradiction();
-    masked.push(Comparison {
-        op: CmpOp::Allen {
-            mask: MaskTerm::Param(ParamId(0)),
-        },
-        lhs: Term::Var(VarId(1)),
-        rhs: Term::Literal(Value::IntervalI64(
-            bumbledb_theory::Interval::<i64>::new(7, 9).expect("nonempty interval"),
-        )),
-    });
-    let mut rule1 = by_kind_rule(7, masked);
-    rule1.atoms[0]
-        .bindings
-        .push((FieldId(2), Term::Var(VarId(1))));
-    let query = Query {
-        head: vec![HeadTerm::Var],
-        rules: vec![by_kind_rule(3, contradiction()), rule1],
-    };
-    let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
-    assert!(
-        matches!(prepared.program, Program::Empty),
-        "all rules dead: the empty program"
-    );
-
-    // Params bind FIRST: a vacuous mask param still errors, exactly as
-    // on a live plan.
-    let err = prepared
-        .execute_collect(&txn, &cache, &[BindValue::AllenMask(AllenMask::EMPTY)])
-        .expect_err("a vacuous mask param must still be rejected");
-    assert!(
-        matches!(err, Error::EmptyAllenMaskParam { param: ParamId(0) }),
-        "typed, named: {err:?}"
-    );
-
-    // A well-formed bind executes to the empty result — correctly
-    // shaped: the empty program still has an arity and buffer types,
-    // read off the predicate (it sits beside the program exactly so
-    // this path can type an empty buffer).
-    let out = prepared
-        .execute_collect(&txn, &cache, &[BindValue::AllenMask(AllenMask::INTERSECTS)])
-        .expect("execute");
-    assert_eq!(out.len(), 0, "stage-2-known empty");
-    assert_eq!(out.arity(), 1, "the predicate shapes the empty buffer");
-
-    // introspection prints the program kind and both killing conditions.
-    let (out, report) = prepared
-        .introspect(
-            &txn,
-            &cache,
-            &[ParamArg::Scalar(BindValue::AllenMask(
-                AllenMask::INTERSECTS,
-            ))],
-        )
-        .expect("introspect");
-    assert_eq!(out.len(), 0);
-    assert!(report.contains("access path: statically empty"), "{report}");
-    assert!(
-        report.contains("statically empty: rule 0: Event: score > 5 ∧ score < 3"),
-        "{report}"
-    );
-    assert!(
-        report.contains("statically empty: rule 1: Event: score > 5 ∧ score < 3"),
-        "{report}"
-    );
 }
 
 /// The `[shape]` leg: the empty program touches no image and binds no view

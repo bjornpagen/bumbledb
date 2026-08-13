@@ -160,8 +160,9 @@ impl<S> PreparedQuery<'_, S> {
 
     /// The query in the rule notation, rendered at prepare
     /// ([`crate::ir::render`] — one rendered block per rule, `;`-terminated):
-    /// the diagnostic twin of the introspection report's header, for hosts
-    /// that log or display the query a prepared handle answers.
+    /// the diagnostic twin of the introspection report's header.
+    /// Harness-only (not embedding API).
+    #[doc(hidden)]
     #[must_use]
     pub fn rendered_query(&self) -> &str {
         &self.rendered

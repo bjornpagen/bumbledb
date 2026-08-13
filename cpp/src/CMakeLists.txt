@@ -9,7 +9,6 @@ target_sources(bumbledb
         FILES
             bumbledb.cc
             error.cc
-            order.cc
             version.cc
             types/interval.cc
             types/bytes.cc

@@ -257,7 +257,7 @@ using UnitCommitted = bdb::Committed<std::monostate>;
 		results.push_back(CaseResult{.name = dir.error(), .passed = false});
 		return results;
 	}
-	auto opened = bdb::Db::ephemeral(dir->string(), spec.view());
+	auto opened = bdb::Db::ephemeral(dir->native(), spec.view());
 	if (!opened.has_value()) {
 		results.push_back(CaseResult{
 		    .name = std::format("ephemeral create failed: {}", opened.error().message()),

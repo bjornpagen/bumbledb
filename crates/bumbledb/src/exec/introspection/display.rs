@@ -245,12 +245,12 @@ fn fmt_free_join(
         if !node.allen_residuals.is_empty() {
             write!(f, "    allen masks (est keep, actual above):")?;
             for placed in &node.allen_residuals {
-                match placed.mask {
-                    crate::ir::MaskTerm::Literal(mask) => {
-                        write!(f, " {:#06x}({}/13)", mask.bits(), mask.popcount())?;
-                    }
-                    crate::ir::MaskTerm::Param(param) => write!(f, " param{}(?/13)", param.0)?,
-                }
+                write!(
+                    f,
+                    " {:#06x}({}/13)",
+                    placed.mask.bits(),
+                    placed.mask.popcount()
+                )?;
             }
             writeln!(f)?;
         }

@@ -18,9 +18,8 @@
 //!                                        //   any named head lowers to ir::Program
 //! head    := headterm (',' headterm)*
 //! headterm:= var | [name ':'] agg        // named positions become result columns
-//! agg     := Sum(t) | Min(t) | Max(t) | Count | CountDistinct(v) | Pack(v)
-//!          | ArgMax(v, key) | ArgMin(v, key)
-//!            where t := v | Duration(v)  and  key := v | Duration(v)
+//! agg     := Sum(t) | Min(t) | Max(t) | Count | Pack(v)
+//!            where t := v | Duration(v)
 //! body    := item (',' item)*
 //! item    := atom                        // positive occurrence
 //!          | '!' atom                    // negation (anti-probe; safety per roster)
@@ -254,10 +253,9 @@ struct Atom {
     bindings: Vec<Binding>,
 }
 
-/// The `Allen` mask position: named masks joined by `|`, or a param.
+/// The `Allen` mask position: named masks joined by `|`.
 enum Mask {
     Names(Vec<Name>),
-    Param(Param),
 }
 
 /// One comparison — the condition grammar's leaf vocabulary (every
@@ -304,10 +302,7 @@ enum AggOp {
     Min,
     Max,
     Count,
-    CountDistinct,
     Pack,
-    ArgMax,
-    ArgMin,
 }
 
 impl AggOp {
@@ -317,10 +312,7 @@ impl AggOp {
             Self::Min => "Min",
             Self::Max => "Max",
             Self::Count => "Count",
-            Self::CountDistinct => "CountDistinct",
             Self::Pack => "Pack",
-            Self::ArgMax => "ArgMax",
-            Self::ArgMin => "ArgMin",
         }
     }
 }
@@ -336,17 +328,7 @@ enum HeadTerm {
         over: Option<Name>,
         /// The aggregated term is `Duration(v)` (Sum/Min/Max only).
         measure: bool,
-        /// Arg-restriction's key; absent for folds.
-        key: Option<ArgKeyTerm>,
     },
-}
-
-/// Arg-restriction's key spelling — the IR `ArgKey`'s two, at the text
-/// layer (ruled 2026-07-23, R5): a variable, or the interval measure
-/// `Duration(v)` ("the longest interval per group").
-enum ArgKeyTerm {
-    Var(Name),
-    Measure(Name),
 }
 
 struct ParsedRule {
@@ -575,15 +557,12 @@ fn parse_param(tokens: &mut Tokens, question: Span) -> Parse<Param> {
 // The grammar, production by production.
 // ---------------------------------------------------------------------
 
-const AGG_NAMES: [(&str, AggOp); 8] = [
+const AGG_NAMES: [(&str, AggOp); 5] = [
     ("Sum", AggOp::Sum),
     ("Min", AggOp::Min),
     ("Max", AggOp::Max),
     ("Count", AggOp::Count),
-    ("CountDistinct", AggOp::CountDistinct),
     ("Pack", AggOp::Pack),
-    ("ArgMax", AggOp::ArgMax),
-    ("ArgMin", AggOp::ArgMin),
 ];
 
 fn agg_op(name: &str) -> Option<AggOp> {
@@ -595,47 +574,17 @@ fn agg_op(name: &str) -> Option<AggOp> {
 
 /// Parses one aggregate's argument group: `(v)` for every unary op,
 /// `(Duration(v))` admitted under `Sum`/`Min`/`Max` only (the measure's
-/// three folds — the grammar's `t := v | Duration(v)`), and `(v, key)`
-/// for the Arg ops with `key := v | Duration(v)` (the measure-keyed
-/// restriction, ruled 2026-07-23, R5).
+/// three folds — the grammar's `t := v | Duration(v)`).
 fn parse_agg(tokens: &mut Tokens, op: AggOp) -> Parse<HeadTerm> {
     if op == AggOp::Count {
         return Ok(HeadTerm::Agg {
             op,
             over: None,
             measure: false,
-            key: None,
         });
     }
     let (mut arg, _) = take_paren_group(tokens, "the aggregate's argument")?;
     let first = expect_ident(&mut arg, "a variable")?;
-    if matches!(op, AggOp::ArgMax | AggOp::ArgMin) {
-        expect_punct(&mut arg, ',', "`,` between the Arg value and key")?;
-        let name = expect_ident(&mut arg, "the Arg key")?;
-        let key = if name.text == "Duration" && matches!(arg.peek(), Some(TokenTree::Group(_))) {
-            let (mut inner, _) = take_paren_group(&mut arg, "the measured variable")?;
-            let var = expect_ident(&mut inner, "a variable")?;
-            if let Some(extra) = inner.next() {
-                return fail(extra.span(), "query!: Duration takes one variable");
-            }
-            ArgKeyTerm::Measure(var)
-        } else {
-            ArgKeyTerm::Var(name)
-        };
-        if let Some(extra) = arg.next() {
-            return fail(
-                extra.span(),
-                "query!: ArgMax/ArgMin take a carried variable and a key — \
-                 `v` or `Duration(v)`",
-            );
-        }
-        return Ok(HeadTerm::Agg {
-            op,
-            over: Some(first),
-            measure: false,
-            key: Some(key),
-        });
-    }
     let measure = first.text == "Duration" && matches!(arg.peek(), Some(TokenTree::Group(_)));
     let over = if measure {
         if !matches!(op, AggOp::Sum | AggOp::Min | AggOp::Max) {
@@ -661,7 +610,6 @@ fn parse_agg(tokens: &mut Tokens, op: AggOp) -> Parse<HeadTerm> {
         op,
         over: Some(over),
         measure,
-        key: None,
     })
 }
 
@@ -688,7 +636,7 @@ fn parse_head_term(tokens: &mut Tokens) -> Parse<HeadTerm> {
                 agg_name.span,
                 format!(
                     "query!: `{}` is not an aggregate — a named head position \
-                     takes Sum/Min/Max/Count/CountDistinct/Pack/ArgMax/ArgMin",
+                     takes Sum/Min/Max/Count/Pack",
                     agg_name.text
                 ),
             );
@@ -857,13 +805,18 @@ fn parse_term(tokens: &mut Tokens) -> Parse<Term> {
     Ok(Term::Lit(parse_lit(tokens)?))
 }
 
-/// Parses the `Allen` mask position: `?param`, or mask names joined by
+/// Parses the `Allen` mask position: mask names joined by
 /// `|` (set union over the 13 basics; the names are `AllenMask`'s own
-/// constants, so a typo is a compile error).
+/// constants, so a typo is a compile error). Mask params are refused —
+/// the mask is a literal.
 fn parse_mask(tokens: &mut Tokens) -> Parse<Mask> {
     if peek_punct(tokens, '?') {
         let question = expect_punct(tokens, '?', "`?`")?;
-        return Ok(Mask::Param(parse_param(tokens, question)?));
+        return fail(
+            question,
+            "query!: Allen masks are literals — `INTERSECTS`, `MEETS`, \
+             `DISJOINT`, a basic, or a `|` union; not a param",
+        );
     }
     let mut names = vec![expect_ident(tokens, "a mask name")?];
     while peek_punct(tokens, '|') {
@@ -1642,21 +1595,14 @@ impl Emitter<'_> {
         ))
     }
 
-    fn mask(&mut self, mask: &Mask) -> Parse<String> {
-        Ok(match mask {
-            Mask::Names(names) => {
-                let union = names
-                    .iter()
-                    .map(|name| format!("::bumbledb::AllenMask::{}", name.text))
-                    .collect::<Vec<_>>()
-                    .join(" | ");
-                format!("::bumbledb::MaskTerm::Literal({union})")
-            }
-            Mask::Param(param) => {
-                let id = self.params.resolve(param)?;
-                format!("::bumbledb::MaskTerm::Param(::bumbledb::ParamId({id}))")
-            }
-        })
+    fn mask(mask: &Mask) -> String {
+        match mask {
+            Mask::Names(names) => names
+                .iter()
+                .map(|name| format!("::bumbledb::AllenMask::{}", name.text))
+                .collect::<Vec<_>>()
+                .join(" | "),
+        }
     }
 
     fn leaf(op: &str, lhs: &str, rhs: &str) -> String {
@@ -1673,7 +1619,7 @@ impl Emitter<'_> {
             Cond::Leaf(Leaf::Allen { lhs, mask, rhs }) => {
                 let lhs = self.term(scope, lhs)?;
                 let rhs = self.term(scope, rhs)?;
-                let mask = self.mask(mask)?;
+                let mask = Self::mask(mask);
                 let op = format!("::bumbledb::CmpOp::Allen {{ mask: {mask} }}");
                 Self::leaf(&op, &lhs, &rhs)
             }
@@ -1717,26 +1663,8 @@ impl Emitter<'_> {
                 "::bumbledb::FindTerm::Measure(::bumbledb::VarId({}))",
                 scope.head_var(name)?
             ),
-            HeadTerm::Agg {
-                op,
-                over,
-                measure,
-                key,
-            } => {
-                let op_expr = match op {
-                    AggOp::ArgMax | AggOp::ArgMin => {
-                        let (variant, var) = match key.as_ref().expect("Arg parser seals a key") {
-                            ArgKeyTerm::Var(name) => ("Var", name),
-                            ArgKeyTerm::Measure(name) => ("Measure", name),
-                        };
-                        format!(
-                            "::bumbledb::AggOp::{} {{ key: ::bumbledb::ArgKey::{variant}(::bumbledb::VarId({})) }}",
-                            op.ir_name(),
-                            scope.head_var(var)?
-                        )
-                    }
-                    _ => format!("::bumbledb::AggOp::{}", op.ir_name()),
-                };
+            HeadTerm::Agg { op, over, measure } => {
+                let op_expr = format!("::bumbledb::AggOp::{}", op.ir_name());
                 match over {
                     None => format!(
                         "::bumbledb::FindTerm::Aggregate {{ op: {op_expr}, \

@@ -88,8 +88,7 @@ Two closed relations claiming one handle newtype is
 `Bool(bool)`, `U64(u64)`, `I64(i64)`, `String(Box<[u8]>)` (raw UTF-8),
 `FixedBytes(Box<[u8]>)`, `IntervalU64(Interval<u64>)`,
 `IntervalI64(Interval<i64>)` — intervals half-open `[start, end)`, strictly
-`start < end` — plus `AllenMask` (query bind-time only, NEVER a schema
-literal). Wire mirror `ValueSpec` (spec.ts:44-51) tags:
+`start < end`. Wire mirror `ValueSpec` (spec.ts:44-51) tags:
 `bool/u64/i64/string/fixedBytes/intervalU64/intervalI64`.
 
 ### 1.7 Capacity payloads
@@ -404,16 +403,13 @@ field-declaration order").
   one side of `Eq` only; `Measure` only as one side of an order comparison.
 - `Atom { source, bindings: Vec<(FieldId, Term)> }` — absence of a field IS
   the wildcard; zero bindings = nonemptiness gate (ir.rs:150-166).
-- `AggOp` = `Sum | Min | Max | Count | CountDistinct | ArgMax{key: ArgKey} |
-  ArgMin{key} | Pack` (ir.rs:178-216); `ArgKey` = `Var(VarId) |
-  Measure(VarId)` (ir.rs:227-231).
+- `AggOp` = `Sum | Min | Max | Count | Pack`.
 - `FindTerm` = `Var(VarId) | Aggregate{op, over: Option<VarId>} |
   Measure(VarId) | AggregateMeasure{op, over: VarId}` (ir.rs:248-271).
   `over` is `None` for nullary `Count`.
 - `HeadTerm` = `Var | Aggregate(HeadOp)` — var-free head shapes
   (ir.rs:294-332).
-- `MaskTerm` = `Literal(AllenMask) | Param(ParamId)` (ir.rs:341-344).
-- `CmpOp` = `Eq | Ne | Lt | Le | Gt | Ge | Allen{mask: MaskTerm} | PointIn`
+- `CmpOp` = `Eq | Ne | Lt | Le | Gt | Ge | Allen{mask: AllenMask} | PointIn`
   (ir.rs:359-368). `PointIn` is lowered interval-LEFT, point-RIGHT
   (ir.rs:355-357).
 - `ConditionTree` = `Leaf(Comparison) | And(Vec) | Or(Vec)` (ir.rs:418-422);
@@ -431,15 +427,15 @@ field-declaration order").
 Wire mirror (what the bridge takes, 1:1 — `ts/src/native.ts:80-175`):
 `ProgramIr{predicates, output}`, `PredicateDefIr{head, rules}`,
 `HeadTermIr {kind:"var"} | {kind:"aggregate", op}` with `HeadOpIr` strings
-`"sum"|"min"|"max"|"count"|"countDistinct"|"argMax"|"argMin"|"pack"`,
+`"sum"|"min"|"max"|"count"|"pack"`,
 `RuleIr{finds, atoms, negated, conditions}`,
 `FindTermIr {kind:"var",var} | {kind:"aggregate",op,over?} |
 {kind:"measure",var} | {kind:"aggregateMeasure",op,over}`,
-`AggOpIr` (`argMax`/`argMin` carry `key: number`),
+`AggOpIr` (kind string only),
 `AtomIr{source, bindings: [fieldId, TermIr][]}`,
 `AtomSourceIr {kind:"edb",relation} | {kind:"idb",pred}`,
 `TermIr {kind:"var"|"param"|"paramSet"|"literal"|"measure", ...}`,
-`CmpOpIr` (allen carries `mask: MaskTermIr`), `ComparisonIr{op,lhs,rhs}`,
+`CmpOpIr` (allen carries a literal `mask` number), `ComparisonIr{op,lhs,rhs}`,
 `ConditionTreeIr {kind:"leaf",cmp} | {kind:"and"|"or", children}`.
 Ids only — the bridge never sees names in queries (native.ts:75-79).
 
@@ -492,8 +488,6 @@ value lowers to deeply-equal IR every time.
   `{kind:"aggregate", op:{kind:"sum"|...}, over: varId}`;
   `sum/min/max(duration(v))` → `{kind:"aggregateMeasure", op, over: varId}`;
   `count()` → `{kind:"aggregate", op:{kind:"count"}}` (no `over`);
-  `countDistinct(v)` → over varId; `argMax/argMin(over, key)` →
-  `{kind:"aggregate", op:{kind:"argMax"|"argMin", key: keyVarId}, over}`;
   `pack(v)` → `{kind:"aggregate", op:{kind:"pack"}, over}`. Head terms:
   var and measure finds → `{kind:"var"}`; aggregates →
   `{kind:"aggregate", op: <HeadOpIr string>}` (query/lower.ts:1887-1909).
@@ -516,10 +510,8 @@ value lowers to deeply-equal IR every time.
   `{kind:"u64", value: BigInt(index)}` (`taggedHandleId` — THE single
   roster-verification point). Order comparisons and folds over closed-bound
   terms are refused (the orderable ban, query/lower.ts:869-902).
-- **Allen masks**: 13-bit literal masks (bit order
-  ts/src/query/atom.ts:449-471, identical to the engine's palindromic order)
-  or `maskParam` → `MaskTermIr {kind:"param", param}` (query/lower.ts:
-  1823-1844).
+- **Allen masks**: 13-bit literal masks only (bit order
+  ts/src/query/atom.ts, identical to the engine's palindromic order).
 - **pointIn operand sealing**: the VALUE stores interval-left, point-right
   whatever the surface argument order (ts/src/query/atom.ts:432-435); the
   lowering emits lhs = interval side, rhs = point side.
@@ -536,7 +528,6 @@ pub enum BindValue<'a> {              // prepared.rs:53-71
     FixedBytes(&'a [u8]),             // exactly the anchored field's N bytes
     IntervalU64(u64, u64),            // half-open [start, end)
     IntervalI64(i64, i64),
-    AllenMask(AllenMask),             // bind-time mask param; ∅/full rejected at bind
 }
 pub enum ParamArg<'a> {               // prepared.rs:82-85
     Scalar(BindValue<'a>),
@@ -547,7 +538,7 @@ pub enum ParamArg<'a> {               // prepared.rs:82-85
 Params are supplied POSITIONALLY by `ParamId` (registry order). Bind checks
 count, scalar-vs-set usage, and element types (prepared.rs:73-80). Bridge
 wire twin: `QueryParam = TaggedValue | {kind:"set", values: TaggedValue[]}`
-where `TaggedValue = ValueSpec | {kind:"allenMask", mask}` (native.ts:66-72);
+where `TaggedValue = ValueSpec` (native.ts:66-72);
 marshalled by `wireParams` in registry order, each value tagged by its
 param's anchoring use (ts/src/query/run.ts:57-82).
 

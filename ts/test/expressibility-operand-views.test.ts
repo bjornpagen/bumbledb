@@ -12,9 +12,7 @@
  *
  * - Q1 MULTI-WAY: the single conjunctive 8-way rule (capability twice),
  *   parameterized by a bound program id, prepares, plans, and answers
- *   correctly at a few hundred rows; `explain()` returns the plan as data
- *   (one rule section, node list with per-subatom covers), and the
- *   planning cliff sits at `plan::planner::MAX_OCCURRENCES` = 20 — the
+ *   correctly at a few hundred rows. The planning cliff sits at `plan::planner::MAX_OCCURRENCES` = 20 — the
  *   21-atom rule refuses TYPED at prepare, so 8 atoms is deep headroom.
  * - Q2 OPTIONAL SIDECARS: conjunctive rules drop non-matching rows, so
  *   the non-Taught arm cannot ride the Taught join. The SANCTIONED idiom
@@ -52,7 +50,6 @@ import { after, describe, test } from "node:test"
 
 import type { Db as DbValue } from "#index.ts"
 import {
-	by,
 	closed,
 	contained,
 	Db,
@@ -67,6 +64,10 @@ import {
 	u64,
 	v
 } from "#index.ts"
+
+function byPos<T extends { readonly pos: bigint }>(left: T, right: T): number {
+	return left.pos < right.pos ? -1 : left.pos > right.pos ? 1 : 0
+}
 
 const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bumbledb-operand-"))
 const storeDir = path.join(tmpRoot, "store")
@@ -262,7 +263,7 @@ describe("expressibility: the primer's prompt-operand view as rules and laws", f
 		assert.ok(landed.ok, "the seed commit satisfies all four kind-conditional inclusions at final state")
 	})
 
-	test("Q1: the 8-way conjunctive rule prepares, answers correctly, and explains as one planned rule", function multiWay() {
+	test("Q1: the 8-way conjunctive rule prepares and answers correctly", function multiWay() {
 		const prepared = db.prepare(taughtContract)
 		const rows = db.execute(prepared, { program: progA })
 		assert.equal(rows.length, MEMBERS_PER_PROGRAM / 3, "one contract row per Taught member of program A")
@@ -285,20 +286,6 @@ describe("expressibility: the primer's prompt-operand view as rules and laws", f
 
 		// program B answers independently through the same prepared value:
 		assert.equal(db.execute(prepared, { program: progB }).length, MEMBERS_PER_PROGRAM / 3)
-
-		// the plan as data (R13): one rule section; the free-join node list
-		// carries per-subatom covers — the shape evidence Q1 asks for.
-		const report = db.explain(prepared, { program: progA })
-		assert.equal(report.rules.length, 1, "one rule, one plan")
-		assert.equal(report.emits, 50n, "the ANALYZE run emitted exactly the Taught contracts")
-		const rule = must(report.rules[0])
-		const nodes = rule.nodes
-		assert.ok(Array.isArray(nodes) && nodes.length >= 1, "the free-join plan reports its node list")
-		assert.ok(nodes.length <= 8, "at most one node per atom occurrence")
-		for (const node of nodes) {
-			const covers = (node as Readonly<Record<string, unknown>>).covers
-			assert.ok(Array.isArray(covers) && covers.length >= 1, "every node covers at least one subatom")
-		}
 	})
 
 	test("Q1: the planning cliff is the occurrence cap — 21 atoms refuse typed at prepare, 8 has headroom", function cliff() {
@@ -330,7 +317,7 @@ describe("expressibility: the primer's prompt-operand view as rules and laws", f
 
 		// the complement spellings agree on the shared projection:
 		const project = function project(rows: readonly { m: bigint; c: bigint; pos: bigint }[]) {
-			return rows.map((row) => ({ m: row.m, c: row.c, pos: row.pos })).sort(by("pos"))
+			return rows.map((row) => ({ m: row.m, c: row.c, pos: row.pos })).sort(byPos)
 		}
 		assert.deepEqual(project(db.execute(db.prepare(restExplicit), { program: progA })), project(rest))
 		assert.deepEqual(project(db.execute(db.prepare(restUnion), { program: progA })), project(rest))
@@ -410,10 +397,10 @@ describe("expressibility: the primer's prompt-operand view as rules and laws", f
 		assert.ok(bare.ok, "the ψ selection scopes the law to Taught rows only")
 	})
 
-	test('Q4: answers are sets — by("pos") is the sanctioned ordering, stable and deterministic', function ordering() {
+	test("Q4: answers are sets — the host sorts; two executions agree", function ordering() {
 		const prepared = db.prepare(restMembers)
-		const first = [...db.execute(prepared, { program: progB })].sort(by("pos"))
-		const second = [...db.execute(prepared, { program: progB })].sort(by("pos"))
+		const first = [...db.execute(prepared, { program: progB })].sort(byPos)
+		const second = [...db.execute(prepared, { program: progB })].sort(byPos)
 		assert.equal(first.length, 100)
 		for (let i = 1; i < first.length; i++) {
 			assert.ok(

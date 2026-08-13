@@ -30,8 +30,8 @@ cpp/
 ## Build
 
 Bring the pinned tools on `PATH`; configure rejects every other tuple. Local
-paths belong in a gitignored `CMakeUserPresets.json`. Production GCC is 16.1
-or later (Linux production is 16.1; Darwin development may use trunk).
+paths belong in a gitignored `CMakeUserPresets.json`. The production compiler
+is GCC 17 / trunk, invoked as `g++` (or a user-preset path to that compiler).
 
 ```sh
 cmake --preset dev && cmake --build --preset dev && ctest --preset dev

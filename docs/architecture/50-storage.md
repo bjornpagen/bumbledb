@@ -426,21 +426,19 @@ adversarially until the fuzzing apparatus was deleted, `60-validation.md` § the
 deletion record). Dictionary entries are never removed (accepted leak; the delete
 path never *adds* one either — a never-interned value proves its fact absent).
 
-**Crashpoints: the named atomicity structure.** Under the `crashpoint` feature (off
-by default; the hook macro expands to nothing without it, and the compiled hooks are
-inert unless `BUMBLEDB_CRASHPOINT` is set) every phase boundary above is NAMED, and a
-process whose environment names one aborts there — a real unclean death, no unwinding
-cleanup. The table (`storage/commit.rs`)
-IS the claimed atomicity structure, reviewable in one grep of the hook macro's call
-sites. The recovery claim it makes was proven per point by the `crash` fuzz target
-and its deterministic sweep before the fuzzing apparatus was deleted
-(`60-validation.md` § the deletion record — the sweeps ran green, every point): the
-store
-reopens, `verify_store` is green, full contents equal the pre-victim state at every
-point before `mdb_txn_commit` and the post-commit state after it (all-or-nothing —
-there is no third observable outcome), and re-running the torn commit lands its post
-state. We do not fault-inject the filesystem — LMDB owns that layer; we kill
-ourselves between logical phases.
+**Crashpoints: the named atomicity structure.** The `crashpoint` feature and
+`CRASHPOINTS` export died with the fuzzer (`60-validation.md` § the deletion
+record). The hook sites remain as documentation of the claimed atomicity
+structure (`storage/commit.rs` — the macro expands to nothing) and are
+reviewable in one grep of the call sites. The recovery claim was proven per
+point by the `crash` fuzz target and its deterministic sweep before that
+apparatus was deleted (the sweeps ran green, every point): the store reopens,
+`verify_store` is green, full contents equal the pre-victim state at every
+point before `mdb_txn_commit` and the post-commit state after it
+(all-or-nothing — there is no third observable outcome), and re-running the
+torn commit lands its post state. We do not fault-inject the filesystem —
+LMDB owns that layer; the historical harness killed the process between
+logical phases.
 
 | crashpoint | where | recovery |
 | --- | --- | --- |

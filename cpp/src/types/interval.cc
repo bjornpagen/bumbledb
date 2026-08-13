@@ -108,7 +108,7 @@ public:
 	}
 
 	/**
-	 * Member, not hidden-friend: the pinned GCC 16.1 ICEs streaming a
+	 * Member, not hidden-friend: the production GCC ICEs streaming a
 	 * defaulted friend operator== across a module import.
 	 */
 	[[nodiscard]] constexpr auto operator==(interval const&) const -> bool = default;

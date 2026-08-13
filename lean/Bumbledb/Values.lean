@@ -60,16 +60,13 @@ parameter that merely checks values would be a CHECK constraint
   justify.
 * `Set` is defined in-tree (`α → Prop` with membership): core Lean
   v4.32.0 has no `Set`, and mathlib is refused.
-* **`Value` mirrors the STORABLE sum, not the literal Rust enum.**
-  `crate::value::Value` carries a seventh, panic-guarded `AllenMask`
-  variant (`encoding/encode.rs::encode_literal`'s
-  `unreachable!`) that no `TypeDesc` arm admits and no
-  extension row survives `value_matches` carrying; and the str carrier
-  is split across two Rust types — `Value::String` holds raw UTF-8 the
-  encoder refuses, while `encode_fact`'s `ValueRef::String(u64)` arm
-  carries the id encoding modeled here. The mirror of this `Value` is
-  `Value ⊎ ValueRef` with callers peeling first (all three
-  `encode_literal` call sites route `String` elsewhere).
+* **`Value` mirrors the STORABLE sum.** The Allen mask is a comparison
+  operator, not a value variant — nothing storable carries one.
+  The str carrier is split across two Rust types — `Value::String`
+  holds raw UTF-8 the encoder refuses, while `encode_fact`'s
+  `ValueRef::String(u64)` arm carries the id encoding modeled here.
+  The mirror of this `Value` is `Value ⊎ ValueRef` with callers peeling
+  first (all three `encode_literal` call sites route `String` elsewhere).
 * **The sentinel intern id is unmodeled.** `StrId.id` is unbounded and
   every id is a value; Rust reserves `SENTINEL_ID = u64::MAX`
   (`storage/dict.rs::SENTINEL_ID`) as never-minted dictionary state —

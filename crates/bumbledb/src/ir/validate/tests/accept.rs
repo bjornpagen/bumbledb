@@ -1,5 +1,5 @@
 use super::*;
-use crate::ir::{AggOp, CmpOp, Comparison, MaskTerm, Value};
+use crate::ir::{AggOp, CmpOp, Comparison, Value};
 
 // --- Accepting shapes ---
 
@@ -261,42 +261,6 @@ fn point_params_are_the_element_typed_interval_position_params() {
     assert!(!witness.point_params().contains(&ParamId(1)));
 }
 
-#[test]
-fn accepts_allen_between_interval_variables_from_different_atoms() {
-    // (d) Allen(v1, v3, INTERSECTS): the interval-pair comparison needs
-    // no shared point variable — both vars stay bivalent and resolve to
-    // intervals. Both mask forms are exercised: literal and param.
-    let masks = [
-        MaskTerm::Literal(bumbledb_theory::allen::AllenMask::INTERSECTS),
-        MaskTerm::Param(ParamId(0)),
-    ];
-    for mask in masks {
-        let query = Query::single(Rule {
-            finds: vec![FindTerm::Var(VarId(0))],
-            atoms: vec![
-                atom(ACCOUNT, vec![(0, var(0)), (VALIDITY, var(1))]),
-                atom(POSTING, vec![(0, var(2)), (SPAN, var(3))]),
-            ],
-            negated: vec![],
-            conditions: vec![ConditionTree::Leaf(Comparison {
-                op: CmpOp::Allen { mask },
-                lhs: var(1),
-                rhs: var(3),
-            })],
-        });
-        let witness = validate(&schema(), &query).expect("valid");
-        let interval = ValueType::Interval {
-            element: IntervalElement::U64,
-            width: None,
-        };
-        assert_eq!(witness.rule(0).var_type(VarId(1)), &interval);
-        assert_eq!(witness.rule(0).var_type(VarId(3)), &interval);
-        if let MaskTerm::Param(param) = mask {
-            assert!(witness.mask_params().contains(&param));
-        }
-    }
-}
-
 // --- Negation, param sets, and the new aggregates ---
 
 #[test]
@@ -370,56 +334,6 @@ fn accepts_param_sets_in_bindings_and_under_eq() {
 }
 
 #[test]
-fn accepts_count_distinct_over_every_type() {
-    // CountDistinct over a String variable — equality is all it needs.
-    let query = simple(
-        vec![
-            FindTerm::Var(VarId(0)),
-            FindTerm::Aggregate {
-                op: AggOp::CountDistinct,
-                over: Some(VarId(1)),
-            },
-        ],
-        vec![atom(HOLDER, vec![(0, var(0)), (1, var(1))])],
-    );
-    validate(&schema(), &query).expect("valid");
-}
-
-#[test]
-fn accepts_arg_restriction_with_a_projected_key() {
-    // finds [at, ArgMax_{at}(memo)]: the key variable may itself be
-    // projected; the carry rides with the attaining bindings.
-    let query = simple(
-        vec![
-            FindTerm::Var(VarId(0)),
-            FindTerm::Aggregate {
-                op: AggOp::ArgMax {
-                    key: crate::ir::ArgKey::Var(VarId(0)),
-                },
-                over: Some(VarId(1)),
-            },
-        ],
-        vec![atom(POSTING, vec![(3, var(0)), (4, var(1))])],
-    );
-    validate(&schema(), &query).expect("valid");
-}
-
-#[test]
-fn accepts_an_arg_carry_equal_to_its_key() {
-    // over = the carry, and it may equal the key: ArgMax_{at}(at).
-    let query = simple(
-        vec![FindTerm::Aggregate {
-            op: AggOp::ArgMax {
-                key: crate::ir::ArgKey::Var(VarId(0)),
-            },
-            over: Some(VarId(0)),
-        }],
-        vec![atom(POSTING, vec![(3, var(0)), (1, var(1))])],
-    );
-    validate(&schema(), &query).expect("valid");
-}
-
-#[test]
 fn accepts_pack_and_pins_the_interval_result_type() {
     // finds [account, Pack(span)]: the coalescing fold — the result
     // position is interval-typed (a packed segment shares its input's
@@ -483,45 +397,6 @@ fn accepts_pack_across_rules() {
     validate(&schema(), &query).expect("valid");
 }
 
-#[test]
-fn accepts_identity_operations_over_fixed_bytes() {
-    // The bytes<N> roster: Eq/Ne (literal, param, var-var) and
-    // membership sets — identity only; CountDistinct folds it (equality
-    // is all it needs). Posting.memo is bytes<32>.
-    let query = Query::single(Rule {
-        finds: vec![
-            FindTerm::Var(VarId(0)),
-            FindTerm::Aggregate {
-                op: AggOp::CountDistinct,
-                over: Some(VarId(1)),
-            },
-        ],
-        atoms: vec![
-            atom(POSTING, vec![(0, var(0)), (4, var(1))]),
-            atom(POSTING, vec![(0, var(2)), (4, Term::ParamSet(ParamId(0)))]),
-        ],
-        negated: vec![],
-        conditions: vec![
-            ConditionTree::Leaf(Comparison {
-                op: CmpOp::Ne,
-                lhs: var(1),
-                rhs: Term::Literal(Value::FixedBytes(vec![7u8; 32].into())),
-            }),
-            ConditionTree::Leaf(Comparison {
-                op: CmpOp::Eq,
-                lhs: var(1),
-                rhs: Term::Param(ParamId(1)),
-            }),
-        ],
-    });
-    let witness = validate(&schema(), &query).expect("valid");
-    assert_eq!(
-        witness.param_type(ParamId(0)),
-        &ValueType::FixedBytes { len: 32 }
-    );
-    assert!(witness.set_params().contains(&ParamId(0)));
-}
-
 // --- Q1: element-domain typing at interval comparison positions ---
 
 /// Zone(id u64, span interval<u64>, lane interval<u64, 5>) — the local
@@ -577,7 +452,7 @@ fn accepts_a_mixed_width_allen_pair_of_one_element_domain() {
         negated: vec![],
         conditions: vec![ConditionTree::Leaf(Comparison {
             op: CmpOp::Allen {
-                mask: MaskTerm::Literal(bumbledb_theory::allen::AllenMask::INTERSECTS),
+                mask: bumbledb_theory::allen::AllenMask::INTERSECTS,
             },
             lhs: var(1), // interval<u64>
             rhs: var(2), // interval<u64, 5>
@@ -597,7 +472,7 @@ fn accepts_a_general_interval_literal_allen_against_a_fixed_width_var() {
         negated: vec![],
         conditions: vec![ConditionTree::Leaf(Comparison {
             op: CmpOp::Allen {
-                mask: MaskTerm::Literal(bumbledb_theory::allen::AllenMask::INTERSECTS),
+                mask: bumbledb_theory::allen::AllenMask::INTERSECTS,
             },
             lhs: var(1), // interval<u64, 5>
             rhs: Term::Literal(Value::IntervalU64(

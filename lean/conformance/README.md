@@ -30,7 +30,6 @@ everything else is a **query case**. A judgment case also carries
 | `interval_i64` | `{"interval_i64":[0,9223372036854775807]}` | `end = MAX_END` IS the ray `[0, ∞)` |
 | `interval_u64_fixed` | `{"interval_u64_fixed":[3,5]}` | `[start, width]` — the width is the TYPE'S (`interval_u64_fixed<5>` in the field list); the decoder re-checks the Q2 bound `start + w < MAX_END` and `w ≥ 1`, refusing at-bound/past-bound starts and `w = 0` (`Conformance.lean`'s ceiling `#guard`s) |
 | `interval_i64_fixed` | `{"interval_i64_fixed":[3,5]}` | the i64 twin — never a ray, by the same bound |
-| `mask` | `{"mask":["before","meets"]}` | params only — the Allen mask value |
 
 Rays need no special spelling: an interval whose `end` is the element
 domain's ceiling (`2^64−1` for u64, `2^63−1` for i64) is the ray, on
@@ -79,10 +78,10 @@ both sides of the lane (`Interval.isRay`).
    "negated":[],                            // anti-join atoms
    "conditions":[]}]},                      // {"cmp":{op,lhs,rhs}} |
                                             // {"and":[…]} | {"or":[…]};
-                                            // allen carries "mask" or
-                                            // "mask_param" beside "op"
+                                            // allen carries a literal "mask"
+                                            // beside "op"
 "params":[],                                // positional: {"scalar":v} |
-                                            // {"set":[v…]} | {"mask":[…]}
+                                            // {"set":[v…]}
 "answers":[                                 // the ENGINE's answers,
   [{"u64":0},{"u64":0},{"u64":2}],          // canonically sorted (below)
   [{"u64":1},{"u64":2},{"u64":0}],

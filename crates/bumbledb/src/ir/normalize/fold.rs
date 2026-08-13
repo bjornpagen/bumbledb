@@ -44,7 +44,7 @@ use std::collections::BTreeMap;
 
 use super::Occurrence;
 use crate::encoding::decode_i64;
-use crate::image::view::{Const, FilterPredicate, MaskConst, ResolvedWordSource};
+use crate::image::view::{Const, FilterPredicate, ResolvedWordSource};
 use crate::ir::render::{literal, mask_names};
 use crate::ir::{CmpOp, Value};
 use crate::schema::{Relation, Schema};
@@ -327,7 +327,7 @@ fn interval_contradictions(
         if let FilterPredicate::FieldAllen {
             field,
             other: Const::Interval { start, end },
-            mask: MaskConst::Mask(mask),
+            mask,
         } = filter
             && *mask == AllenMask::EQUALS
         {
@@ -344,7 +344,7 @@ fn interval_contradictions(
             FilterPredicate::FieldAllen {
                 field,
                 other: Const::Interval { start, end },
-                mask: MaskConst::Mask(mask),
+                mask,
             } => {
                 if let Some(pin) = interval_pins.get(field)
                     && allen_refuted(*pin, *mask, (*start, *end))
@@ -359,11 +359,7 @@ fn interval_contradictions(
                 }
             }
             // Rule (e), field-vs-field: both sides pinned.
-            FilterPredicate::FieldsAllen {
-                left,
-                right,
-                mask: MaskConst::Mask(mask),
-            } => {
+            FilterPredicate::FieldsAllen { left, right, mask } => {
                 if let (Some(lhs), Some(rhs)) = (interval_pins.get(left), interval_pins.get(right))
                     && allen_refuted(*lhs, *mask, *rhs)
                 {

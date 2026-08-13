@@ -25,9 +25,9 @@ use bumbledb::schema::spec::{
 };
 use bumbledb::schema::{IntervalElement, StatementDescriptor, ValueType};
 use bumbledb::{
-    AggOp, AllenMask, AnswerValue, Answers, ArgKey, Atom, AtomSource, CmpOp, Comparison,
+    AggOp, AllenMask, AnswerValue, Answers, Atom, AtomSource, CmpOp, Comparison,
     ConditionTree, ExecutionStats, FieldId, FindTerm, HeadOp, HeadTerm, Interval, Manifest,
-    MaskTerm, ParamId, PredId, PredicateDef, Program, RelationId, RenderedViolation, Rule,
+    ParamId, PredId, PredicateDef, Program, RelationId, RenderedViolation, Rule,
     SchemaDescriptor, SchemaSpec, StatementId, StatementKind, Term, Value, VarId,
 };
 use napi::bindgen_prelude::{
@@ -366,14 +366,6 @@ pub(crate) fn tagged_value(obj: &Object) -> napi::Result<Value> {
         )),
         tags::value::INTERVAL_U64 => interval_in(obj, IntervalElement::U64, "intervalU64 value"),
         tags::value::INTERVAL_I64 => interval_in(obj, IntervalElement::I64, "intervalI64 value"),
-        tags::value::ALLEN_MASK => {
-            let bits = ordinal(req::<f64>(obj, "mask", "allenMask value")?, "allen mask")?;
-            let bits = u16::try_from(bits)
-                .ok()
-                .and_then(AllenMask::new)
-                .ok_or_else(|| err(format!("bumbledb marshal: invalid allen mask bits {bits}")))?;
-            Ok(Value::AllenMask(bits))
-        }
         other => Err(err(format!(
             "bumbledb marshal: unknown value kind `{other}`"
         ))),
@@ -702,17 +694,6 @@ fn agg_op_in(obj: &Object) -> napi::Result<AggOp> {
         HeadOp::Min => AggOp::Min,
         HeadOp::Max => AggOp::Max,
         HeadOp::Count => AggOp::Count,
-        HeadOp::CountDistinct => AggOp::CountDistinct,
-        // The wire spells only the variable key today: the SDK's Arg
-        // surface takes a bound var (`query/find.ts`), and the
-        // measure-keyed spelling (`Duration(v)`, ruled 2026-07-23, R5)
-        // lands with the surface that can utter it.
-        HeadOp::ArgMax => AggOp::ArgMax {
-            key: ArgKey::Var(var_in(obj, "key", "argMax op")?),
-        },
-        HeadOp::ArgMin => AggOp::ArgMin {
-            key: ArgKey::Var(var_in(obj, "key", "argMin op")?),
-        },
         HeadOp::Pack => AggOp::Pack,
     })
 }
@@ -815,31 +796,13 @@ fn comparison_in(obj: &Object) -> napi::Result<Comparison> {
         tags::cmp_op::GE => CmpOp::Ge,
         tags::cmp_op::POINT_IN => CmpOp::PointIn,
         tags::cmp_op::ALLEN => {
-            let mask: Object = req(&op, "mask", "allen op")?;
-            let mask_kind: String = req(&mask, "kind", "allen mask")?;
-            let mask = match mask_kind.as_str() {
-                tags::mask_term::LITERAL => {
-                    let bits = ordinal(
-                        req::<f64>(&mask, "mask", "allen mask literal")?,
-                        "allen mask",
-                    )?;
-                    let mask = u16::try_from(bits)
-                        .ok()
-                        .and_then(AllenMask::new)
-                        .ok_or_else(|| {
-                            err(format!("bumbledb marshal: invalid allen mask bits {bits}"))
-                        })?;
-                    MaskTerm::Literal(mask)
-                }
-                tags::mask_term::PARAM => {
-                    MaskTerm::Param(param_in(&mask, "param", "allen mask param")?)
-                }
-                other => {
-                    return Err(err(format!(
-                        "bumbledb marshal: unknown allen mask kind `{other}`"
-                    )));
-                }
-            };
+            let bits = ordinal(req::<f64>(&op, "mask", "allen mask")?, "allen mask")?;
+            let mask = u16::try_from(bits)
+                .ok()
+                .and_then(AllenMask::new)
+                .ok_or_else(|| {
+                    err(format!("bumbledb marshal: invalid allen mask bits {bits}"))
+                })?;
             CmpOp::Allen { mask }
         }
         other => {
@@ -1007,7 +970,6 @@ impl ValueOut {
                 start: interval.start(),
                 end: interval.end(),
             },
-            Value::AllenMask(mask) => Self::U64(u64::from(mask.bits())),
         })
     }
 }

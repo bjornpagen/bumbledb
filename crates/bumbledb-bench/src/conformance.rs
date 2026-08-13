@@ -94,7 +94,7 @@ use std::time::Instant;
 use bumbledb::schema::ValueType;
 use bumbledb::{
     AggOp, AllenMask, Atom, Basic, CmpOp, Comparison, ConditionTree, Db, FieldId, FindTerm,
-    MaskTerm, ParamId, Query, RelationId, Rule, Term, Value, VarId,
+    ParamId, Query, RelationId, Rule, Term, Value, VarId,
 };
 
 use crate::corpus_gen::{GenConfig, Rng, Scale};
@@ -140,11 +140,6 @@ pub struct Report {
     pub excluded_negated_membership: u64,
     /// An element-typed param-set membership binding.
     pub excluded_set_membership: u64,
-    /// A measure-keyed Arg restriction (`ArgKey::Measure`, R5): the
-    /// Lean model's `PFind.argMax` carries a plain variable key — the
-    /// shape is fenced, counted, until the denotation lands (the
-    /// engine-vs-naive differential already quantifies it in querygen).
-    pub excluded_measure_arg_key: u64,
     /// The engine answered `Overflow` / `MeasureOfRay`.
     pub excluded_engine_error: u64,
     /// Naive wall time over [`NAIVE_BUDGET_MS`].
@@ -159,14 +154,13 @@ impl Report {
     pub fn coverage_line(&self) -> String {
         format!(
             "conformance coverage: {}/{} expressible (excluded: {} unresolved-literal, \
-             {} negated-membership, {} set-membership, {} measure-arg-key, \
+             {} negated-membership, {} set-membership, \
              {} engine-error, {} slow, {} wide)",
             self.written,
             self.attempted,
             self.excluded_unresolved,
             self.excluded_negated_membership,
             self.excluded_set_membership,
-            self.excluded_measure_arg_key,
             self.excluded_engine_error,
             self.excluded_slow,
             self.excluded_wide,
@@ -180,7 +174,6 @@ enum Exclusion {
     UnresolvedLiteral,
     NegatedMembership,
     SetMembership,
-    MeasureArgKey,
 }
 
 /// One loaded Tiny world: the engine store, the naive model, and the
@@ -453,11 +446,6 @@ fn push_value(
         Value::IntervalI64(iv) => {
             let _ = write!(out, "{{\"interval_i64\":[{},{}]}}", iv.start(), iv.end());
         }
-        Value::AllenMask(mask) => {
-            out.push_str("{\"mask\":");
-            push_mask(out, *mask);
-            out.push('}');
-        }
     }
     Ok(())
 }
@@ -533,15 +521,8 @@ fn push_comparison(
         CmpOp::PointIn => out.push_str("\"point_in\""),
         CmpOp::Allen { mask } => {
             out.push_str("\"allen\"");
-            match mask {
-                MaskTerm::Literal(mask) => {
-                    out.push_str(",\"mask\":");
-                    push_mask(out, mask);
-                }
-                MaskTerm::Param(p) => {
-                    let _ = write!(out, ",\"mask_param\":{}", p.0);
-                }
-            }
+            out.push_str(",\"mask\":");
+            push_mask(out, mask);
         }
     }
     out.push_str(",\"lhs\":");
@@ -590,13 +571,6 @@ fn push_find(out: &mut String, find: &FindTerm) {
         }
         FindTerm::Aggregate { op, over } => match (op, over) {
             (AggOp::Count, None) => out.push_str("{\"agg\":{\"op\":\"count\"}}"),
-            (AggOp::CountDistinct, Some(v)) => {
-                let _ = write!(
-                    out,
-                    "{{\"agg\":{{\"op\":\"count_distinct\",\"over\":{}}}}}",
-                    v.0
-                );
-            }
             (AggOp::Sum, Some(v)) => {
                 let _ = write!(out, "{{\"agg\":{{\"op\":\"sum\",\"over\":{}}}}}", v.0);
             }
@@ -608,34 +582,6 @@ fn push_find(out: &mut String, find: &FindTerm) {
             }
             (AggOp::Pack, Some(v)) => {
                 let _ = write!(out, "{{\"agg\":{{\"op\":\"pack\",\"over\":{}}}}}", v.0);
-            }
-            // The measure-keyed face is fenced upstream
-            // (`Exclusion::MeasureArgKey`) — a plain `"key"` var is the
-            // only spelled form, so a measure key can never silently
-            // serialize as an interval-ordering the Lean side refuses.
-            (
-                AggOp::ArgMax {
-                    key: bumbledb::ArgKey::Var(key),
-                },
-                Some(v),
-            ) => {
-                let _ = write!(
-                    out,
-                    "{{\"agg\":{{\"op\":\"arg_max\",\"over\":{},\"key\":{}}}}}",
-                    v.0, key.0
-                );
-            }
-            (
-                AggOp::ArgMin {
-                    key: bumbledb::ArgKey::Var(key),
-                },
-                Some(v),
-            ) => {
-                let _ = write!(
-                    out,
-                    "{{\"agg\":{{\"op\":\"arg_min\",\"over\":{},\"key\":{}}}}}",
-                    v.0, key.0
-                );
             }
             other => unreachable!("validated: no such aggregate shape {other:?}"),
         },
@@ -700,12 +646,9 @@ fn count_vars(rule: &Rule) -> u16 {
         match find {
             FindTerm::Var(var) | FindTerm::Measure(var) => see(&mut count, *var),
             FindTerm::AggregateMeasure { over, .. } => see(&mut count, *over),
-            FindTerm::Aggregate { op, over } => {
+            FindTerm::Aggregate { over, .. } => {
                 if let Some(var) = over {
                     see(&mut count, *var);
-                }
-                if let AggOp::ArgMax { key } | AggOp::ArgMin { key } = op {
-                    see(&mut count, key.var());
                 }
             }
         }
@@ -884,10 +827,6 @@ fn closed_facts(relation: RelationId) -> Vec<Vec<Value>> {
 /// out of the corpus. The answers are canonically sorted: each row
 /// rendered in the tagged compact form, rows in lexicographic byte
 /// order of that rendering (the README's canonical-order rule).
-#[expect(
-    clippy::too_many_lines,
-    reason = "one case document, header to answers — clearer kept together"
-)]
 fn render_case(
     world: &World,
     name: &str,
@@ -896,30 +835,6 @@ fn render_case(
     params: &[ParamValue],
     answers: &BTreeSet<Tuple>,
 ) -> Result<String, Exclusion> {
-    // Measure-keyed Arg (ruled 2026-07-23, R5) has no Lean denotation
-    // yet — `PFind.argMax` carries a plain variable key — so the corpus
-    // fences the shape, counted, and the engine-vs-naive differential
-    // (querygen's fleet) owns its oracle coverage meanwhile.
-    let measure_key = |find: &FindTerm| {
-        matches!(
-            find,
-            FindTerm::Aggregate {
-                op: AggOp::ArgMax {
-                    key: bumbledb::ArgKey::Measure(_)
-                } | AggOp::ArgMin {
-                    key: bumbledb::ArgKey::Measure(_)
-                },
-                ..
-            }
-        )
-    };
-    if query
-        .rules
-        .iter()
-        .any(|rule| rule.finds.iter().any(measure_key))
-    {
-        return Err(Exclusion::MeasureArgKey);
-    }
     let mut used = BTreeSet::new();
     let lowered: Vec<LoweredRule<'_>> = query
         .rules
@@ -975,11 +890,6 @@ fn render_case(
             params_block.push(',');
         }
         match param {
-            ParamValue::Scalar(Value::AllenMask(mask)) => {
-                params_block.push_str("{\"mask\":");
-                push_mask(&mut params_block, *mask);
-                params_block.push('}');
-            }
             ParamValue::Scalar(value) => {
                 params_block.push_str("{\"scalar\":");
                 push_value(world, &mut used, &mut params_block, value)?;
@@ -1206,10 +1116,6 @@ fn one_case(
             report.excluded_set_membership += 1;
             None
         }
-        Err(Exclusion::MeasureArgKey) => {
-            report.excluded_measure_arg_key += 1;
-            None
-        }
     }
 }
 
@@ -1291,9 +1197,8 @@ fn agg(op: AggOp, over: u16) -> FindTerm {
 
 /// The hand-picked shapes the PRD names: exact partition (Pack over the
 /// Mandate segment groups, rays included), aggregates (empty-global,
-/// Arg, `CountDistinct`, union fold), Allen masks (composite literal and
-/// the mask-param face), Pack, negation, unions, membership, measure,
-/// param sets, and the closed-relation join.
+/// union fold), Allen literal masks, Pack, negation, unions, membership,
+/// measure, param sets, and the closed-relation join.
 #[expect(
     clippy::too_many_lines,
     reason = "one flat case roster, data not logic"
@@ -1349,124 +1254,6 @@ fn hand_cases(cfg: GenConfig) -> Vec<HandCase> {
             )),
             params: vec![],
         },
-        // Arg-restriction over the tie-rich amount: every attaining row
-        // survives (`argmax_ties_all_kept`).
-        HandCase {
-            name: "hand-arg-max-ties",
-            query: Query::single(rule(
-                vec![
-                    fv(1),
-                    agg(
-                        AggOp::ArgMax {
-                            key: bumbledb::ArgKey::Var(VarId(2)),
-                        },
-                        0,
-                    ),
-                ],
-                vec![atom(
-                    ids::POSTING,
-                    &[
-                        (ids::posting::ID, v(0)),
-                        (ids::posting::ACCOUNT, v(1)),
-                        (ids::posting::AMOUNT, v(2)),
-                    ],
-                )],
-                vec![],
-                vec![],
-            )),
-            params: vec![],
-        },
-        // A composite Allen mask between two mandate intervals of one
-        // account (DISJOINT = before ∪ meets ∪ met-by ∪ after).
-        HandCase {
-            name: "hand-allen-mixed-width",
-            // Q1's element-domain rule through the third oracle: a
-            // FIXED-width lane (`interval<i64, 5>`) Allen-classified
-            // against the GENERAL mandate interval of one account —
-            // mixed widths, one element domain, classified over derived
-            // bounds (`Query/Denotation.lean: classifyValue`'s fixed
-            // arms). Scalar finds only: the answer channel widens fixed
-            // values to bounds, so fixed values live in the instance
-            // columns where the Lean side decodes the family's own tag.
-            query: Query::single(rule(
-                vec![fv(0), fv(3)],
-                vec![
-                    atom(
-                        ids::MANDATE,
-                        &[(ids::mandate::ACCOUNT, v(0)), (ids::mandate::ACTIVE, v(1))],
-                    ),
-                    atom(
-                        ids::LANE,
-                        &[
-                            (ids::lane::ACCOUNT, v(0)),
-                            (ids::lane::LANE, v(2)),
-                            (ids::lane::TAG, v(3)),
-                        ],
-                    ),
-                ],
-                vec![],
-                vec![ConditionTree::Leaf(Comparison {
-                    op: CmpOp::Allen {
-                        mask: MaskTerm::Literal(AllenMask::STARTS),
-                    },
-                    lhs: v(2),
-                    rhs: v(1),
-                })],
-            )),
-            params: vec![],
-        },
-        HandCase {
-            name: "hand-allen-composite-mask",
-            query: Query::single(rule(
-                vec![fv(0), fv(1), fv(2)],
-                vec![
-                    atom(
-                        ids::MANDATE,
-                        &[(ids::mandate::ACCOUNT, v(0)), (ids::mandate::ACTIVE, v(1))],
-                    ),
-                    atom(
-                        ids::MANDATE,
-                        &[(ids::mandate::ACCOUNT, v(0)), (ids::mandate::ACTIVE, v(2))],
-                    ),
-                ],
-                vec![],
-                vec![ConditionTree::Leaf(Comparison {
-                    op: CmpOp::Allen {
-                        mask: MaskTerm::Literal(AllenMask::DISJOINT),
-                    },
-                    lhs: v(1),
-                    rhs: v(2),
-                })],
-            )),
-            params: vec![],
-        },
-        // The mask-param face: the same shape with the mask resolved at
-        // bind (`ParamEnv.mask` on the Lean side).
-        HandCase {
-            name: "hand-allen-mask-param",
-            query: Query::single(rule(
-                vec![fv(0), fv(1), fv(2)],
-                vec![
-                    atom(
-                        ids::MANDATE,
-                        &[(ids::mandate::ACCOUNT, v(0)), (ids::mandate::ACTIVE, v(1))],
-                    ),
-                    atom(
-                        ids::MANDATE,
-                        &[(ids::mandate::ACCOUNT, v(0)), (ids::mandate::ACTIVE, v(2))],
-                    ),
-                ],
-                vec![],
-                vec![ConditionTree::Leaf(Comparison {
-                    op: CmpOp::Allen {
-                        mask: MaskTerm::Param(ParamId(0)),
-                    },
-                    lhs: v(1),
-                    rhs: v(2),
-                })],
-            )),
-            params: vec![ParamValue::Scalar(Value::AllenMask(AllenMask::MEETS))],
-        },
         // Negation: postings no tag names — the plain anti-join.
         HandCase {
             name: "hand-negation-untagged",
@@ -1520,74 +1307,6 @@ fn hand_cases(cfg: GenConfig) -> Vec<HandCase> {
             },
             params: vec![],
         },
-        // The multi-rule aggregate head: the union fold. A VALUED fold
-        // — the nullary Count across written rules is definitionally
-        // constant 1 and refuses now (ruled 2026-07-23, R1:
-        // `CountAcrossRules`; the refusal row is the verify error-parity
-        // lane's), so the case carries the fold the union can inform.
-        HandCase {
-            name: "hand-union-aggregate-fold",
-            query: Query {
-                head: vec![
-                    bumbledb::HeadTerm::Var,
-                    bumbledb::HeadTerm::Aggregate(bumbledb::HeadOp::CountDistinct),
-                ],
-                rules: vec![
-                    rule(
-                        vec![
-                            fv(0),
-                            FindTerm::Aggregate {
-                                op: AggOp::CountDistinct,
-                                over: Some(VarId(1)),
-                            },
-                        ],
-                        vec![atom(
-                            ids::POSTING,
-                            &[
-                                (ids::posting::ACCOUNT, v(0)),
-                                (ids::posting::ENTRY, v(1)),
-                                (ids::posting::RECONCILED, Term::Literal(Value::Bool(true))),
-                            ],
-                        )],
-                        vec![],
-                        vec![],
-                    ),
-                    rule(
-                        vec![
-                            fv(0),
-                            FindTerm::Aggregate {
-                                op: AggOp::CountDistinct,
-                                over: Some(VarId(1)),
-                            },
-                        ],
-                        vec![atom(
-                            ids::ORG_PARENT,
-                            &[
-                                (ids::org_parent::CHILD, v(0)),
-                                (ids::org_parent::PARENT, v(1)),
-                            ],
-                        )],
-                        vec![],
-                        vec![],
-                    ),
-                ],
-            },
-            params: vec![],
-        },
-        // CountDistinct over the interned-string column.
-        HandCase {
-            name: "hand-count-distinct-strings",
-            query: Query::single(rule(
-                vec![fv(0), agg(AggOp::CountDistinct, 1)],
-                vec![atom(
-                    ids::POSTING,
-                    &[(ids::posting::ACCOUNT, v(0)), (ids::posting::MEMO, v(1))],
-                )],
-                vec![],
-                vec![],
-            )),
-            params: vec![],
-        },
         // The measure at a find position (Transfer windows sit below
         // the ray by construction — the total lane).
         HandCase {
@@ -1623,7 +1342,7 @@ fn hand_cases(cfg: GenConfig) -> Vec<HandCase> {
                 vec![],
                 vec![ConditionTree::Leaf(Comparison {
                     op: CmpOp::Allen {
-                        mask: MaskTerm::Literal(AllenMask::COVERED_BY),
+                        mask: AllenMask::COVERED_BY,
                     },
                     lhs: v(1),
                     rhs: Term::Literal(full_i64.clone()),
@@ -1653,7 +1372,7 @@ fn hand_cases(cfg: GenConfig) -> Vec<HandCase> {
                 vec![],
                 vec![ConditionTree::Leaf(Comparison {
                     op: CmpOp::Allen {
-                        mask: MaskTerm::Literal(AllenMask::COVERED_BY),
+                        mask: AllenMask::COVERED_BY,
                     },
                     lhs: v(0),
                     rhs: Term::Literal(full_i64.clone()),

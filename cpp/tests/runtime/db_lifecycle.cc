@@ -377,7 +377,7 @@ using UnitCommitted = bdb::Committed<std::monostate>;
 	}
 	auto stored_id = std::optional<std::uint64_t>{};
 	{
-		auto created = bdb::Db::create(dir->string(), spec.view());
+		auto created = bdb::Db::create(dir->native(), spec.view());
 		if (!created.has_value()) {
 			return {CaseResult{
 			    .name = std::format("durable create failed: {}", created.error().message()),
@@ -391,7 +391,7 @@ using UnitCommitted = bdb::Committed<std::monostate>;
 		}
 	}
 
-	auto reopened = bdb::Db::open(dir->string(), spec.view());
+	auto reopened = bdb::Db::open(dir->native(), spec.view());
 	auto const survived =
 	    reopened.has_value() && reopened
 	                                ->read([&](bdb::Snapshot& snap) -> std::expected<bool, bdb::Error> {
@@ -415,7 +415,7 @@ using UnitCommitted = bdb::Committed<std::monostate>;
 		results.push_back(CaseResult{.name = dir.error(), .passed = false});
 		return results;
 	}
-	auto opened = bdb::Db::ephemeral(dir->string(), spec.view());
+	auto opened = bdb::Db::ephemeral(dir->native(), spec.view());
 	if (!opened.has_value()) {
 		results.push_back(CaseResult{
 		    .name = std::format("ephemeral create failed: {}", opened.error().message()),

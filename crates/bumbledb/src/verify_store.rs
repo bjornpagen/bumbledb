@@ -323,6 +323,7 @@ impl<S> Db<S> {
     /// unreadable `_meta` counter — environmental failure only. Store
     /// content never errors: every observation is a finding, and a
     /// desynced store returns `Ok` with a populated report.
+    #[doc(hidden)]
     pub fn verify_store(&self) -> Result<StoreReport> {
         let txn = self.env().read_txn()?;
         let mut sweep = Sweep {

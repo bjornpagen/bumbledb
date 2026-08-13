@@ -39,7 +39,7 @@ use bumbledb::schema::spec::{
 };
 use bumbledb::schema::{IntervalElement, ValueType};
 use bumbledb::{
-    AggOp, AtomSource, CmpOp, ConditionTree, Direction, FindTerm, HeadOp, HeadTerm, MaskTerm,
+    AggOp, AtomSource, CmpOp, ConditionTree, Direction, FindTerm, HeadOp, HeadTerm,
     StatementKind, Term, Value,
 };
 
@@ -132,7 +132,6 @@ wire_tags! {
         FIXED_BYTES: Value::FixedBytes(_) => "fixedBytes",
         INTERVAL_U64: Value::IntervalU64(_) => "intervalU64",
         INTERVAL_I64: Value::IntervalI64(_) => "intervalI64",
-        ALLEN_MASK: Value::AllenMask(_) => "allenMask",
     }
 }
 
@@ -240,8 +239,7 @@ wire_tags! {
 wire_tags! {
     /// `bumbledb::HeadOp` — the var-free aggregate-op vocabulary. ONE
     /// table serves both op parsers: `agg_op_in` lifts `parse`'s `HeadOp`
-    /// into `AggOp` (attaching the Arg keys through an exhaustive match —
-    /// the second tripwire), `head_term_in` takes `parse` bare — the old
+    /// into `AggOp`, `head_term_in` takes `parse` bare — the old
     /// hand-mirrored string matches are dead. `AggOp::head_op` is the
     /// engine's own exhaustive `AggOp` ↔ `HeadOp` twin, so this table
     /// covers both enums.
@@ -250,9 +248,6 @@ wire_tags! {
         MIN: HeadOp::Min => "min",
         MAX: HeadOp::Max => "max",
         COUNT: HeadOp::Count => "count",
-        COUNT_DISTINCT: HeadOp::CountDistinct => "countDistinct",
-        ARG_MAX: HeadOp::ArgMax => "argMax",
-        ARG_MIN: HeadOp::ArgMin => "argMin",
         PACK: HeadOp::Pack => "pack",
     }
 }
@@ -303,14 +298,6 @@ wire_tags! {
         GE: CmpOp::Ge => "ge",
         ALLEN: CmpOp::Allen { .. } => "allen",
         POINT_IN: CmpOp::PointIn => "pointIn",
-    }
-}
-
-wire_tags! {
-    /// `bumbledb::MaskTerm` — the `allen` mask position (`comparison_in`).
-    mod mask_term for MaskTerm {
-        LITERAL: MaskTerm::Literal(_) => "literal",
-        PARAM: MaskTerm::Param(_) => "param",
     }
 }
 
@@ -377,7 +364,6 @@ mod golden {
             ("findTerm", super::find_term::TAGS.to_vec()),
             ("atomSource", super::atom_source::TAGS.to_vec()),
             ("cmpOp", super::cmp_op::TAGS.to_vec()),
-            ("maskTerm", super::mask_term::TAGS.to_vec()),
             ("condition", super::condition::TAGS.to_vec()),
             ("direction", super::direction::TAGS.to_vec()),
             ("param", wire_param),

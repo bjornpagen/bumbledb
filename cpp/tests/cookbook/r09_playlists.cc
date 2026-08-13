@@ -235,12 +235,16 @@ auto run_cases(std::string_view fixtures_path, std::vector<CaseResult>& results)
 	    Entry{.slot = bdb::interval<std::uint64_t>::literal(1, 2), .track = std::string{"b"}},
 	    Entry{.slot = bdb::interval<std::uint64_t>::literal(0, 1), .track = std::string{"a"}},
 	};
-	std::ranges::sort(in_play_order, bdb::by(&Entry::slot, &Entry::track));
+	std::ranges::sort(in_play_order, [](auto const& left, auto const& right) {
+		if (left.slot.lo() != right.slot.lo()) {
+			return left.slot.lo() < right.slot.lo();
+		}
+		return left.track < right.track;
+	});
 	auto reversed = in_play_order;
-	std::ranges::sort(reversed, bdb::by(bdb::desc(&Entry::slot)));
+	std::ranges::sort(reversed, [](auto const& left, auto const& right) { return left.slot.lo() > right.slot.lo(); });
 	results.push_back(CaseResult{
-	    .name = "the host sorts with the shipped comparator (bdb::by "
-	            "ascends, bdb::desc flips)",
+	    .name = "the host sorts locally (interval lo, then track; reverse lo)",
 	    .passed = in_play_order.front().track == "a" && in_play_order.back().track == "b" && reversed.front().track == "b",
 	});
 

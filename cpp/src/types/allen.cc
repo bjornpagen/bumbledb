@@ -21,8 +21,9 @@ export namespace bdb {
  * in the engine's palindromic bit order — before, meets, overlaps,
  * starts, during, finishes, equals, finished-by, contains, started-by,
  * overlapped-by, met-by, after (crates/bumbledb-theory/src/allen.rs; the
- * bit order is a specified representation). Query bind-time vocabulary
- * only — never a row field type (75-cpp-lowering.md §1.6).
+ * bit order is a specified representation). Query-literal operator
+ * vocabulary only — never a row field type, never a bind value
+ * (75-cpp-lowering.md §1.6).
  */
 class allen_mask {
 	std::uint16_t bits_;
@@ -54,7 +55,7 @@ public:
 
 	/**
 	 * The raw 13-bit word — what crosses the ABI as
-	 * `bdb_value.allen_mask`.
+	 * the comparison operator's literal mask word.
 	 */
 	[[nodiscard]] constexpr auto bits() const -> std::uint16_t {
 		return bits_;
@@ -68,7 +69,7 @@ public:
 	}
 
 	/**
-	 * Member, not hidden-friend: the pinned GCC 16.1 ICEs streaming a
+	 * Member, not hidden-friend: the production GCC ICEs streaming a
 	 * defaulted friend operator== across a module import.
 	 */
 	[[nodiscard]] constexpr auto operator==(allen_mask const&) const -> bool = default;

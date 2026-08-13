@@ -94,22 +94,11 @@ pub enum ResolvedWordSource {
     Var(crate::ir::VarId),
 }
 
-/// The mask side of a lowered `Allen` shape: a resolved mask, or a param
-/// marker resolved at bind — with the mirrored form pre-encoded
-/// (`Allen(a, b, m) ≡ Allen(b, a, converse(m))`, `crate::allen`): a
-/// comparison written constant-first lowers with the field kept on the
-/// left and the mask conversed — immediately for a literal,
-/// [`ConversedParam`](MaskConst::ConversedParam) for a param, so
-/// evaluation never carries an operand-order flag.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MaskConst {
-    Mask(bumbledb_theory::allen::AllenMask),
-    /// Bind-time mask param; the evaluator indexes the param slice.
-    Param(crate::ir::ParamId),
-    /// Bind-time mask param whose comparison was written with the field
-    /// on the right: `converse()` applies after resolution.
-    ConversedParam(crate::ir::ParamId),
-}
+/// The mask side of a lowered `Allen` shape: a resolved 13-bit mask,
+/// with the mirrored form pre-encoded (`Allen(a, b, m) ≡ Allen(b, a,
+/// converse(m))`, `crate::allen`). A comparison written constant-first
+/// lowers with the field kept on the left and the mask already conversed.
+pub type MaskConst = bumbledb_theory::allen::AllenMask;
 
 /// One lowered per-atom filter (produced by the 20-query-ir doc's normalization).
 ///

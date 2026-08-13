@@ -1428,7 +1428,7 @@ inductive HeadSlot where
   /-- A projected group-key position: a plain variable or the
   measure. -/
   | key (k : KeyTerm)
-  /-- A fold input (`CountDistinct`/`Sum`/`Min`/`Max`/`Pack` over a
+  /-- A fold input (`Sum`/`Min`/`Max`/`Pack` over a
   variable): its value enters the union key. -/
   | fold (v : VarId)
   /-- A measure fold input: its evaluated measure enters the key. -/

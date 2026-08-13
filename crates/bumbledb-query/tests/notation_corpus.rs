@@ -23,8 +23,8 @@ use bumbledb::ir::render::{render, render_program};
 use bumbledb::ir::{HeadOp, HeadTerm};
 use bumbledb::schema::ValidateDescriptor as _;
 use bumbledb::{
-    AggOp, Atom, AtomSource, CmpOp, Comparison, ConditionTree, Db, FindTerm, MaskTerm,
-    PredicateDef, Program, Query, Rule, Schema, Term, Theory, Value,
+    AggOp, Atom, AtomSource, CmpOp, Comparison, ConditionTree, Db, FindTerm, PredicateDef, Program,
+    Query, Rule, Schema, Term, Theory, Value,
 };
 use bumbledb_query::query;
 
@@ -195,7 +195,6 @@ fn value_json(value: &Value) -> String {
             interval.start(),
             interval.end()
         ),
-        Value::AllenMask(mask) => format!("{{\"kind\":\"allenMask\",\"mask\":{}}}", mask.bits()),
     }
 }
 
@@ -215,20 +214,7 @@ fn agg_op_json(op: AggOp) -> String {
         AggOp::Min => "{\"kind\":\"min\"}".to_string(),
         AggOp::Max => "{\"kind\":\"max\"}".to_string(),
         AggOp::Count => "{\"kind\":\"count\"}".to_string(),
-        AggOp::CountDistinct => "{\"kind\":\"countDistinct\"}".to_string(),
-        AggOp::ArgMax { key } => format!("{{\"kind\":\"argMax\",\"key\":{}}}", arg_key_json(key)),
-        AggOp::ArgMin { key } => format!("{{\"kind\":\"argMin\",\"key\":{}}}", arg_key_json(key)),
         AggOp::Pack => "{\"kind\":\"pack\"}".to_string(),
-    }
-}
-
-/// The Arg key's two spellings (R5): a variable key keeps its bare id
-/// (the pre-R5 canonical form, corpus-stable), a measure key nests the
-/// interval variable under `duration`.
-fn arg_key_json(key: bumbledb::ArgKey) -> String {
-    match key {
-        bumbledb::ArgKey::Var(v) => v.0.to_string(),
-        bumbledb::ArgKey::Measure(v) => format!("{{\"duration\":{}}}", v.0),
     }
 }
 
@@ -279,13 +265,7 @@ fn cmp_op_json(op: CmpOp) -> String {
         CmpOp::Ge => "{\"kind\":\"ge\"}".to_string(),
         CmpOp::PointIn => "{\"kind\":\"pointIn\"}".to_string(),
         CmpOp::Allen { mask } => {
-            let mask = match mask {
-                MaskTerm::Literal(mask) => {
-                    format!("{{\"kind\":\"literal\",\"mask\":{}}}", mask.bits())
-                }
-                MaskTerm::Param(param) => format!("{{\"kind\":\"param\",\"param\":{}}}", param.0),
-            };
-            format!("{{\"kind\":\"allen\",\"mask\":{mask}}}")
+            format!("{{\"kind\":\"allen\",\"mask\":{}}}", mask.bits())
         }
     }
 }
@@ -358,9 +338,6 @@ fn head_term_json(term: HeadTerm) -> String {
                 HeadOp::Min => "min",
                 HeadOp::Max => "max",
                 HeadOp::Count => "count",
-                HeadOp::CountDistinct => "countDistinct",
-                HeadOp::ArgMax => "argMax",
-                HeadOp::ArgMin => "argMin",
                 HeadOp::Pack => "pack",
             };
             format!("{{\"kind\":\"aggregate\",\"op\":\"{name}\"}}")
@@ -564,15 +541,6 @@ fn cases() -> Vec<Case> {
         { (org) | Mandate(org, active), Allen(active, BEFORE|MEETS, ?window); },
         { (v0) | Mandate(org: v0, active: v1), Allen(v1, BEFORE|MEETS, ?0); });
 
-    corpus_case!(cases, query, "mandate-mask-param",
-        ["allen-mask-param"],
-        "(a, b) | Mandate(account: a, active: s), Mandate(account: b, active: t), \
-         a < b, Allen(s, ?rel, t);",
-        { (a, b) | Mandate(account: a, active: s), Mandate(account: b, active: t),
-                   a < b, Allen(s, ?rel, t); },
-        { (v0, v2) | Mandate(account: v0, active: v1), Mandate(account: v2, active: v3),
-                     v0 < v2, Allen(v1, ?0, v3); });
-
     corpus_case!(cases, query, "dormant-holders",
         ["negation"],
         "(holder) | Account(id: a, holder), !Posting(account: a);",
@@ -585,12 +553,6 @@ fn cases() -> Vec<Case> {
         { (account, total: Sum(amount), n: Count) | Posting(account, amount); },
         { (v0, Sum(v1), Count) | Posting(account: v0, amount: v1); });
 
-    corpus_case!(cases, query, "entry-fanout",
-        ["agg-count-distinct"],
-        "(account, entries: CountDistinct(entry)) | Posting(entry, account);",
-        { (account, entries: CountDistinct(entry)) | Posting(entry, account); },
-        { (v1, CountDistinct(v0)) | Posting(entry: v0, account: v1); });
-
     corpus_case!(cases, query, "amount-floor",
         ["agg-min"],
         "(account, lo: Min(amount)) | Posting(account, amount);",
@@ -602,18 +564,6 @@ fn cases() -> Vec<Case> {
         "(account, hi: Max(amount)) | Posting(account, amount);",
         { (account, hi: Max(amount)) | Posting(account, amount); },
         { (v0, Max(v1)) | Posting(account: v0, amount: v1); });
-
-    corpus_case!(cases, query, "latest-posting",
-        ["agg-arg-max"],
-        "(ArgMax(id, at)) | Posting(id, at);",
-        { (ArgMax(id, at)) | Posting(id, at); },
-        { (ArgMax(v0, v1)) | Posting(id: v0, at: v1); });
-
-    corpus_case!(cases, query, "earliest-posting",
-        ["agg-arg-min"],
-        "(ArgMin(id, at)) | Posting(id, at);",
-        { (ArgMin(id, at)) | Posting(id, at); },
-        { (ArgMin(v0, v1)) | Posting(id: v0, at: v1); });
 
     corpus_case!(cases, query, "mandate-pack",
         ["agg-pack"],
@@ -709,15 +659,11 @@ const REQUIRED_PRODUCTIONS: &[&str] = &[
     "point-in",
     "allen-literal-mask",
     "allen-mask-union",
-    "allen-mask-param",
     "negation",
     "agg-sum",
     "agg-min",
     "agg-max",
     "agg-count",
-    "agg-count-distinct",
-    "agg-arg-max",
-    "agg-arg-min",
     "agg-pack",
     "duration",
     "named-columns",

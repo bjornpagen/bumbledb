@@ -1545,7 +1545,7 @@ mod fixed_width_intervals {
     //! neighbor probe judging overlap over derived bounds.
 
     use bumbledb::ir::{
-        Atom, CmpOp, Comparison, ConditionTree, FindTerm, MaskTerm, Query, Rule, Term, Value, VarId,
+        Atom, CmpOp, Comparison, ConditionTree, FindTerm, Query, Rule, Term, Value, VarId,
     };
     use bumbledb::schema::ValidateDescriptor as _;
     use bumbledb::schema::{FieldId, ValueType};
@@ -1796,7 +1796,7 @@ mod fixed_width_intervals {
             negated: vec![],
             conditions: vec![ConditionTree::Leaf(Comparison {
                 op: CmpOp::Allen {
-                    mask: MaskTerm::Literal(AllenMask::MEETS),
+                    mask: AllenMask::MEETS,
                 },
                 lhs: Term::Var(VarId(2)),
                 rhs: Term::Var(VarId(3)),
@@ -1871,7 +1871,7 @@ mod element_domain_typing {
 
     use bumbledb::error::Direction;
     use bumbledb::ir::{
-        Atom, CmpOp, Comparison, ConditionTree, FindTerm, MaskTerm, Query, Rule, Term, VarId,
+        Atom, CmpOp, Comparison, ConditionTree, FindTerm, Query, Rule, Term, VarId,
     };
     use bumbledb::schema::{FieldId, StatementId};
     use bumbledb::{AllenMask, AnswerValue, Db, Error, Fact as _, Interval, Violation};
@@ -2069,9 +2069,7 @@ mod element_domain_typing {
                 ],
                 negated: vec![],
                 conditions: vec![ConditionTree::Leaf(Comparison {
-                    op: CmpOp::Allen {
-                        mask: MaskTerm::Literal(mask),
-                    },
+                    op: CmpOp::Allen { mask },
                     lhs: Term::Var(VarId(2)), // slot: interval<u64, 1>
                     rhs: Term::Var(VarId(1)), // span: interval<u64>
                 })],

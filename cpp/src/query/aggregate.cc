@@ -14,13 +14,11 @@ export namespace bdb {
  * designated-init head cannot mint new member names the way a TS object
  * literal can — the aggregate column's name is the one datum the pattern
  * product cannot express. `Over` is a qvar, a measure_ref, or void
- * (nullary count); `Key` a qvar or measure_ref on the Arg ops, void
- * elsewhere.
+ * (nullary count).
  */
-template<fixed_string Name, fold_form Op, class Over, class Key>
+template<fixed_string Name, fold_form Op, class Over>
 struct agg_ref {
 	using over = Over;
-	using key = Key;
 	static constexpr name_text column_name = detail::to_name_text(Name.view());
 	static constexpr fold_form op = Op;
 };
@@ -43,8 +41,8 @@ namespace bdb::detail {
 template<class T>
 inline constexpr bool is_agg_ref_v = false;
 
-template<fixed_string Name, fold_form Op, class Over, class Key>
-inline constexpr bool is_agg_ref_v<agg_ref<Name, Op, Over, Key>> = true;
+template<fixed_string Name, fold_form Op, class Over>
+inline constexpr bool is_agg_ref_v<agg_ref<Name, Op, Over>> = true;
 
 template<class T>
 inline constexpr bool is_named_find_v = false;
@@ -58,7 +56,6 @@ template<class Fold>
 	out.name = Fold::column_name;
 	out.op = Fold::op;
 	using Over = typename Fold::over;
-	using Key = typename Fold::key;
 	if constexpr (std::same_as<Over, void>) {
 		out.form = find_form::aggregate;
 		out.has_over = false;
@@ -72,19 +69,7 @@ template<class Fold>
 		out.form = find_form::aggregate;
 		out.has_over = true;
 		out.over = var_term<Over>();
-		if constexpr (Fold::op == fold_form::count_distinct) {
-			out.answer = field_class{value_kind::u64, 0};
-		} else {
-			out.answer = Over::cls;
-		}
-	}
-	if constexpr (!std::same_as<Key, void>) {
-		out.key_present = true;
-		if constexpr (is_measure_ref_v<Key>) {
-			out.key = measure_term<typename Key::over>();
-		} else {
-			out.key = var_term<Key>();
-		}
+		out.answer = Over::cls;
 	}
 	return out;
 }
@@ -116,37 +101,37 @@ template<fixed_string Name, class Var>
 
 /** A named sum of the measure of an interval variable. */
 template<fixed_string Name, class Var>
-[[nodiscard]] consteval auto sum(measure_ref<Var>) -> agg_ref<Name, fold_form::sum, measure_ref<Var>, void> {
+[[nodiscard]] consteval auto sum(measure_ref<Var>) -> agg_ref<Name, fold_form::sum, measure_ref<Var>> {
 	return {};
 }
 
 /** Exact checked sum into a wide accumulator. */
 template<fixed_string Name, class Var>
-[[nodiscard]] consteval auto sum(Var) -> agg_ref<Name, fold_form::sum, Var, void> {
+[[nodiscard]] consteval auto sum(Var) -> agg_ref<Name, fold_form::sum, Var> {
 	static_assert(detail::is_numeric_var<Var>(), "bumbledb sum(): the input is a numeric (u64/i64) variable or "
 	                                             "r.duration(interval variable) — sum over bool is refused");
 	return {};
 }
 
 template<fixed_string Name, class Var>
-[[nodiscard]] consteval auto min(measure_ref<Var>) -> agg_ref<Name, fold_form::min, measure_ref<Var>, void> {
+[[nodiscard]] consteval auto min(measure_ref<Var>) -> agg_ref<Name, fold_form::min, measure_ref<Var>> {
 	return {};
 }
 
 template<fixed_string Name, class Var>
-[[nodiscard]] consteval auto min(Var) -> agg_ref<Name, fold_form::min, Var, void> {
+[[nodiscard]] consteval auto min(Var) -> agg_ref<Name, fold_form::min, Var> {
 	static_assert(detail::is_orderable_var<Var>(), "bumbledb min(): the input is an orderable (bool/u64/i64) "
 	                                               "variable or r.duration(interval variable)");
 	return {};
 }
 
 template<fixed_string Name, class Var>
-[[nodiscard]] consteval auto max(measure_ref<Var>) -> agg_ref<Name, fold_form::max, measure_ref<Var>, void> {
+[[nodiscard]] consteval auto max(measure_ref<Var>) -> agg_ref<Name, fold_form::max, measure_ref<Var>> {
 	return {};
 }
 
 template<fixed_string Name, class Var>
-[[nodiscard]] consteval auto max(Var) -> agg_ref<Name, fold_form::max, Var, void> {
+[[nodiscard]] consteval auto max(Var) -> agg_ref<Name, fold_form::max, Var> {
 	static_assert(detail::is_orderable_var<Var>(), "bumbledb max(): the input is an orderable (bool/u64/i64) "
 	                                               "variable or r.duration(interval variable)");
 	return {};
@@ -154,38 +139,7 @@ template<fixed_string Name, class Var>
 
 /** The nullary count: |the group's set of distinct full bindings|, u64. */
 template<fixed_string Name>
-[[nodiscard]] consteval auto count() -> agg_ref<Name, fold_form::count, void, void> {
-	return {};
-}
-
-/** |distinct values of one bound variable within the group|, u64. */
-template<fixed_string Name, class Var>
-[[nodiscard]] consteval auto count_distinct(Var) -> agg_ref<Name, fold_form::count_distinct, Var, void> {
-	static_assert(detail::is_qvar_v<Var>, "bumbledb count_distinct(): the argument must be a query "
-	                                      "variable (vars.field)");
-	return {};
-}
-
-/**
- * Arg-restriction toward the maximum of `key` (`ir::AggOp::ArgMax`):
- * carries `value` from the group's key-maximal bindings.
- */
-template<fixed_string Name, class Value, class Key>
-[[nodiscard]] consteval auto arg_max(Value, Key) -> agg_ref<Name, fold_form::arg_max, Value, Key> {
-	static_assert(detail::is_qvar_v<Value>, "bumbledb arg_max(): the carried value must be a query variable");
-	static_assert(detail::is_orderable_var<Key>() || detail::is_measure_ref_v<Key>,
-	              "bumbledb arg_max(): the key must be an orderable variable or "
-	              "r.duration(interval variable)");
-	return {};
-}
-
-/** Arg-restriction toward the minimum of `key`; rules as arg_max. */
-template<fixed_string Name, class Value, class Key>
-[[nodiscard]] consteval auto arg_min(Value, Key) -> agg_ref<Name, fold_form::arg_min, Value, Key> {
-	static_assert(detail::is_qvar_v<Value>, "bumbledb arg_min(): the carried value must be a query variable");
-	static_assert(detail::is_orderable_var<Key>() || detail::is_measure_ref_v<Key>,
-	              "bumbledb arg_min(): the key must be an orderable variable or "
-	              "r.duration(interval variable)");
+[[nodiscard]] consteval auto count() -> agg_ref<Name, fold_form::count, void> {
 	return {};
 }
 
@@ -197,7 +151,7 @@ template<fixed_string Name, class Value, class Key>
  * assembly).
  */
 template<fixed_string Name, class Var>
-[[nodiscard]] consteval auto pack(Var) -> agg_ref<Name, fold_form::pack, Var, void> {
+[[nodiscard]] consteval auto pack(Var) -> agg_ref<Name, fold_form::pack, Var> {
 	static_assert(detail::is_qvar_v<Var> && (Var::cls.kind == value_kind::interval_u64 || Var::cls.kind == value_kind::interval_i64),
 	              "bumbledb pack(): the input must be an interval-typed query "
 	              "variable — pack coalesces interval point sets");

@@ -10,7 +10,7 @@
 //! non-UTF-8 string bytes are `BDB_ERROR_KIND_FACT_SHAPE` marshal refusals,
 //! never a silent repair.
 
-use bumbledb::{AllenMask, AnswerValue, BindValue, Interval, Value};
+use bumbledb::{AnswerValue, BindValue, Interval, Value};
 
 use crate::error::fail_shape;
 use crate::{BridgeResult, slice_in};
@@ -83,7 +83,6 @@ pub enum bdb_value_kind {
     FixedBytes,
     IntervalU64,
     IntervalI64,
-    AllenMask,
 }
 
 /// One tagged value. Only the fields the `kind` names are read; the rest
@@ -106,8 +105,6 @@ pub struct bdb_value {
     /// `IntervalI64`: half-open `[start, end)`, `start < end` checked.
     pub interval_i64_start: i64,
     pub interval_i64_end: i64,
-    /// `AllenMask`: the low-13-bit mask (checked at the boundary).
-    pub allen_mask: u16,
 }
 
 impl bdb_value {
@@ -130,7 +127,6 @@ impl bdb_value {
             interval_u64_end: 0,
             interval_i64_start: 0,
             interval_i64_end: 0,
-            allen_mask: 0,
         }
     }
 }
@@ -160,12 +156,6 @@ pub(crate) fn value_in(view: &bdb_value) -> BridgeResult<Value> {
             Interval::<i64>::new(start, end)
                 .map(Value::IntervalI64)
                 .ok_or_else(|| fail_shape(&format!("empty interval (start {start} >= end {end})")))
-        }
-        bdb_value_kind::AllenMask => {
-            let bits = view.allen_mask;
-            AllenMask::new(bits)
-                .map(Value::AllenMask)
-                .ok_or_else(|| fail_shape(&format!("invalid allen mask bits {bits}")))
         }
     }
 }
@@ -217,11 +207,6 @@ pub(crate) fn value_out(value: &Value) -> bdb_value {
             let mut view = bdb_value::blank(bdb_value_kind::IntervalI64);
             view.interval_i64_start = interval.start();
             view.interval_i64_end = interval.end();
-            view
-        }
-        Value::AllenMask(mask) => {
-            let mut view = bdb_value::blank(bdb_value_kind::AllenMask);
-            view.allen_mask = mask.bits();
             view
         }
     }
@@ -281,8 +266,7 @@ pub enum bdb_param_kind {
 }
 
 /// One positional execution argument — the C mirror of the engine's
-/// public `ParamArg` shape (Scalar | Set; an Allen mask travels as a
-/// scalar `AllenMask` value).
+/// public `ParamArg` shape (Scalar | Set).
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct bdb_param {
@@ -328,7 +312,6 @@ pub(crate) fn bind_value(value: &Value) -> BridgeResult<BindValue<'_>> {
         Value::FixedBytes(bytes) => BindValue::FixedBytes(bytes),
         Value::IntervalU64(interval) => BindValue::IntervalU64(interval.start(), interval.end()),
         Value::IntervalI64(interval) => BindValue::IntervalI64(interval.start(), interval.end()),
-        Value::AllenMask(mask) => BindValue::AllenMask(*mask),
     })
 }
 

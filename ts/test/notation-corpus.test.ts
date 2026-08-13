@@ -166,16 +166,6 @@ const constructions: Readonly<Record<string, AnyQuery>> = {
 			.where(r.allen(active, ALLEN.before | ALLEN.meets, r.param("window")))
 			.find({ org })
 	}),
-	"mandate-mask-param": query(Ledger).rule((r) => {
-		const { account: a, active: s } = v(Mandate)
-		const { account: b, active: t } = v(Mandate)
-		return r
-			.match(Mandate, { account: a, active: s })
-			.match(Mandate, { account: b, active: t })
-			.where(r.lt(a, b))
-			.where(r.allen(s, r.maskParam("rel"), t))
-			.find({ a, b })
-	}),
 	"dormant-holders": query(Ledger).rule((r) => {
 		const { id: a, holder } = v(Account)
 		return r
@@ -187,10 +177,6 @@ const constructions: Readonly<Record<string, AnyQuery>> = {
 		const { account, amount } = v(Posting)
 		return r.match(Posting, { account, amount }).find({ account, amount: r.sum(amount), count: r.count() })
 	}),
-	"entry-fanout": query(Ledger).rule((r) => {
-		const { entry, account } = v(Posting)
-		return r.match(Posting, { entry, account }).find({ account, entry: r.countDistinct(entry) })
-	}),
 	"amount-floor": query(Ledger).rule((r) => {
 		const { account, amount } = v(Posting)
 		return r.match(Posting, { account, amount }).find({ account, amount: r.min(amount) })
@@ -198,14 +184,6 @@ const constructions: Readonly<Record<string, AnyQuery>> = {
 	"amount-ceiling": query(Ledger).rule((r) => {
 		const { account, amount } = v(Posting)
 		return r.match(Posting, { account, amount }).find({ account, amount: r.max(amount) })
-	}),
-	"latest-posting": query(Ledger).rule((r) => {
-		const { id, at } = v(Posting)
-		return r.match(Posting, { id, at }).find({ id: r.argMax(id, at) })
-	}),
-	"earliest-posting": query(Ledger).rule((r) => {
-		const { id, at } = v(Posting)
-		return r.match(Posting, { id, at }).find({ id: r.argMin(id, at) })
 	}),
 	"mandate-pack": query(Ledger).rule((r) => {
 		const { org, active } = v(Mandate)

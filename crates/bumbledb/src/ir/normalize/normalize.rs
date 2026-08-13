@@ -92,7 +92,7 @@ pub fn normalize_ray_probe(
     let is_ray = crate::ir::validate::ClassifiedComparison::AllenVarConst {
         var: measured,
         other: crate::ir::validate::SealedConst::Literal(probe),
-        mask: crate::image::view::MaskConst::Mask(bumbledb_theory::allen::AllenMask::INTERSECTS),
+        mask: bumbledb_theory::allen::AllenMask::INTERSECTS,
     };
     normalize_rule_with(schema, signatures, rule, std::slice::from_ref(&is_ray))
 }

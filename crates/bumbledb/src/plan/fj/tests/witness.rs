@@ -6,7 +6,7 @@ use super::*;
 use crate::image::{ColumnSpan, ColumnWidth};
 use crate::ir::normalize::normalize;
 use crate::ir::validate::validate as validate_ir;
-use crate::ir::{Atom, CmpOp, Comparison, ConditionTree, FindTerm, MaskTerm, Query, Rule, Term};
+use crate::ir::{Atom, CmpOp, Comparison, ConditionTree, FindTerm, Query, Rule, Term};
 use crate::plan::planner::{OccStats, plan};
 use bumbledb_theory::schema::IntervalElement;
 use std::collections::BTreeSet;
@@ -231,7 +231,7 @@ fn allen_residual_query_validates_into_the_witness() {
         negated: vec![],
         conditions: vec![ConditionTree::Leaf(Comparison {
             op: CmpOp::Allen {
-                mask: MaskTerm::Literal(bumbledb_theory::allen::AllenMask::INTERSECTS),
+                mask: bumbledb_theory::allen::AllenMask::INTERSECTS,
             },
             lhs: Term::Var(d1),
             rhs: Term::Var(d2),
@@ -264,7 +264,7 @@ fn allen_residual_query_validates_into_the_witness() {
         vec![PlacedAllen {
             lhs: d1,
             rhs: d2,
-            mask: MaskTerm::Literal(bumbledb_theory::allen::AllenMask::INTERSECTS),
+            mask: bumbledb_theory::allen::AllenMask::INTERSECTS,
         }]
     );
 

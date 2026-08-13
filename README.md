@@ -96,7 +96,7 @@ known write-lane condition), and the four timed curve blocks are all
 clean. The writes ladder and churn ran wall-powered in this set — the
 night-pin debt the earlier README carried is retired. Every query is
 oracle-gated before it is ever timed: value-identical multisets against
-SQLite (2,889 differential cases for the suite, the oracle stamp re-earned
+SQLite (2,887 differential cases for the suite, the oracle stamp re-earned
 per binary; per-draw gates in the lanes), and every write verdict matches
 an independent naive model.
 SQLite is measured warm, prepared, and well-indexed on identical data,
@@ -596,7 +596,7 @@ denotation — with any disagreement a failed gate.
 The part of this repo most worth stealing. Performance claims here are gated
 by machinery, not judgment:
 
-- **Two differential oracles before every timing run**: 2,889 cases —
+- **Two differential oracles before every timing run**: 2,887 cases —
   family queries and randomized queries against SQLite, plus a randomized
   write stream whose every commit verdict (accept or abort, and the
   violated statement) must match an independent brute-force naive model;

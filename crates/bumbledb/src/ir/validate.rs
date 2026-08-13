@@ -61,8 +61,8 @@
 //!     `PointIn` interval × element — its interval⊇interval form is
 //!     `Allen(COVERS)`, not an operator), and the Allen vacuity rules:
 //!     the ∅ mask ("never" — write no query) and the full mask
-//!     ("always" — write no condition), distinct typed errors here for
-//!     literal masks and at bind for mask params
+//!     ("always" — write no condition), distinct typed errors for
+//!     literal masks
 //! 10. constant comparisons (no variable side) and self-comparisons
 //! 11. point variables bound only by membership (no enumerable domain)
 //! 12. negated-atom variables not bound by any positive atom (negated
@@ -72,22 +72,20 @@
 //! 15. empty finds
 //! 16. duplicate find terms
 //! 17. no positive atoms
-//! 18. aggregate input types (Sum/Min/Max integers only; `CountDistinct`
-//!     every type; Count nullary)
+//! 18. aggregate input types (Sum/Min/Max integers only; Count nullary)
 //! 19. aggregate over a group-key variable
-//! 20. mixed Arg and fold aggregates; Arg terms with differing keys or
-//!     directions; a non-orderable Arg key
-//! 21. planner caps: more than `MAX_OCCURRENCES` atom occurrences —
+//! 20. planner caps: more than `MAX_OCCURRENCES` atom occurrences —
 //!     negated occurrences counted — or more than 128 distinct variables
 //!     (rejected here so downstream id widths and bitset sizes are true
 //!     invariants)
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use crate::allen::AllenMask;
 use crate::error::ValidationError;
 use crate::image::view::MaskConst;
 use crate::ir::normalize::LoweredRule;
-use crate::ir::{CmpOp, FindTerm, MaskTerm, ParamId, PredId, Value, VarId};
+use crate::ir::{CmpOp, FindTerm, ParamId, PredId, Value, VarId};
 use bumbledb_theory::schema::{FieldId, IntervalElement, ValueType};
 
 mod context;
@@ -179,12 +177,6 @@ pub enum AggKind {
     Max,
     /// [`crate::ir::AggOp::Count`].
     Count,
-    /// [`crate::ir::AggOp::CountDistinct`].
-    CountDistinct,
-    /// [`crate::ir::AggOp::ArgMax`], key elided.
-    ArgMax,
-    /// [`crate::ir::AggOp::ArgMin`], key elided.
-    ArgMin,
     /// [`crate::ir::AggOp::Pack`].
     Pack,
 }
@@ -197,9 +189,6 @@ impl std::fmt::Display for AggKind {
             Self::Min => "Min",
             Self::Max => "Max",
             Self::Count => "Count",
-            Self::CountDistinct => "CountDistinct",
-            Self::ArgMax => "ArgMax",
-            Self::ArgMin => "ArgMin",
             Self::Pack => "Pack",
         })
     }
@@ -246,11 +235,10 @@ pub(crate) enum ClassifiedComparison {
     AllenVarVar {
         lhs: VarId,
         rhs: VarId,
-        mask: MaskTerm,
+        mask: AllenMask,
     },
     /// The interval-pair comparison against a constant, the mask sealed
-    /// field-on-left ([`MaskConst`]: conversed immediately for a literal
-    /// written constant-first, `ConversedParam` for a param).
+    /// field-on-left (conversed immediately when written constant-first).
     AllenVarConst {
         var: VarId,
         other: SealedConst,
@@ -437,11 +425,6 @@ pub struct ValidatedQuery {
     /// point-domain law (`docs/architecture/10-data-model.md`) forbids the
     /// domain ceiling — enforced at bind, where the value exists.
     point_params: BTreeSet<ParamId>,
-    /// Params in `Allen` mask positions ([`crate::ir::MaskTerm::Param`]):
-    /// bound as [`crate::BindValue::AllenMask`], with the ∅/full vacuity
-    /// rejection at bind. Disjoint from `param_types` — a mask is not a
-    /// data-model type.
-    mask_params: BTreeSet<ParamId>,
 }
 
 /// One rule's derived typing tables — rule-scoped by definition.
@@ -521,14 +504,6 @@ impl ValidatedQuery {
     #[must_use]
     pub fn point_params(&self) -> &BTreeSet<ParamId> {
         &self.point_params
-    }
-
-    /// The mask params (`Allen` mask positions): bind-time expects an
-    /// Allen mask for each, rejecting the vacuous ∅/full masks. Absent
-    /// from [`Self::param_types`] — a mask is not a data-model type.
-    #[must_use]
-    pub fn mask_params(&self) -> &BTreeSet<ParamId> {
-        &self.mask_params
     }
 }
 
@@ -703,7 +678,7 @@ struct Context {
     /// closed relation's own id field — `ir/render`'s `ClosedRefs`
     /// table), each with the sealed extension's row count. Their words
     /// are declaration-order accidents, so order positions —
-    /// `Lt`-family comparisons, `Sum`/`Min`/`Max` folds, and Arg keys —
+    /// `Lt`-family comparisons and `Sum`/`Min`/`Max` folds —
     /// refuse them (ruled 2026-07-23, R4); the row count is the proven
     /// dense group domain (finding 049: closed ids are declaration
     /// indices `0..N`, containment-enforced in-domain).
@@ -717,9 +692,6 @@ struct Context {
     /// `PointIn` operands); those that resolve element-typed are the
     /// witness's point params.
     interval_position_params: BTreeSet<ParamId>,
-    /// Params in `Allen` mask positions (never in `param_slots` — the
-    /// conflict is checked, not represented).
-    mask_params: BTreeSet<ParamId>,
 }
 
 #[cfg(test)]

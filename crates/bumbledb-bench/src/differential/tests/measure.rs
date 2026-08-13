@@ -9,8 +9,8 @@
 
 use bumbledb::schema::{IntervalElement, RelationDescriptor, SchemaDescriptor, ValueType};
 use bumbledb::{
-    AggOp, AllenMask, Atom, CmpOp, Comparison, ConditionTree, Db, FindTerm, MaskTerm, ParamId,
-    Query, RelationId, Rule, Term, Value, VarId,
+    AggOp, AllenMask, Atom, CmpOp, Comparison, ConditionTree, Db, FindTerm, ParamId, Query,
+    RelationId, Rule, Term, Value, VarId,
 };
 
 use crate::differential::{Op, run};
@@ -366,7 +366,7 @@ fn measure_error_verdicts_agree_with_the_naive_model() {
         // end is MAX — exactly the rays; DISJOINT keeps the bounded.
         vec![ConditionTree::Leaf(Comparison {
             op: CmpOp::Allen {
-                mask: MaskTerm::Literal(AllenMask::DISJOINT),
+                mask: AllenMask::DISJOINT,
             },
             lhs: var(1),
             rhs: Term::Literal(interval_u64(u64::MAX - 1, u64::MAX)),

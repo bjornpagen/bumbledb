@@ -166,23 +166,20 @@ enum class find_form : std::uint8_t {
 	aggregate_measure,
 };
 
-/** The aggregate ops the heads mint (`ir::AggOp`, all eight). */
+/** The aggregate ops the heads mint (`ir::AggOp`). */
 enum class fold_form : std::uint8_t {
 	sum,
 	min,
 	max,
 	count,
-	count_distinct,
-	arg_max,
-	arg_min,
 	pack,
 };
 
 /**
  * One find column: the answer column name, the term shape, the answer
- * cell's structural class (the row-product synthesis input), the Arg key
- * (`arg_max`/`arg_min` only), and — variable finds — the column's law
- * class (the IDB head-slot join wall's data).
+ * cell's structural class (the row-product synthesis input), and —
+ * variable finds — the column's law class (the IDB head-slot join wall's
+ * data).
  */
 struct find_data {
 	name_text name;
@@ -191,8 +188,6 @@ struct find_data {
 	term_data over;
 	field_class answer;
 	bool has_over;
-	bool key_present;
-	term_data key;
 	bool classed;
 	coord_ref law;
 };
@@ -201,7 +196,6 @@ struct find_data {
 enum class param_shape : std::uint8_t {
 	value,
 	set,
-	mask,
 };
 
 /**
@@ -290,17 +284,13 @@ struct wire_condition {
 
 /**
  * One numbered find term. `over` is read for variable/measure columns and
- * for aggregates with `has_over` (nullary `count` has none); the key
- * fields for `arg_max`/`arg_min`.
+ * for aggregates with `has_over` (nullary `count` has none).
  */
 struct wire_find {
 	find_form form;
 	fold_form op;
 	std::uint16_t over;
 	bool has_over;
-	bool key_present;
-	bool key_is_measure;
-	std::uint16_t key;
 };
 
 /**

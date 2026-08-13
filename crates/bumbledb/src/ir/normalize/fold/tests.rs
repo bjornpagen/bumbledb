@@ -2,9 +2,7 @@ use super::super::{OccId, Role, normalize};
 use super::*;
 use crate::encoding::encode_i64;
 use crate::ir::validate::validate;
-use crate::ir::{
-    Atom, Comparison, ConditionTree, FindTerm, MaskTerm, ParamId, Query, Rule, Term, VarId,
-};
+use crate::ir::{Atom, Comparison, ConditionTree, FindTerm, ParamId, Query, Rule, Term, VarId};
 use crate::schema::ValidateDescriptor as _;
 use crate::storage::dict::SENTINEL_ID;
 use bumbledb_theory::schema::{
@@ -344,7 +342,7 @@ fn an_allen_equals_pin_refutes_a_sibling_literal_mask() {
             }),
             ConditionTree::Leaf(Comparison {
                 op: CmpOp::Allen {
-                    mask: MaskTerm::Literal(AllenMask::AFTER),
+                    mask: AllenMask::AFTER,
                 },
                 lhs: Term::Var(VarId(0)),
                 rhs: Term::Literal(Value::IntervalI64(

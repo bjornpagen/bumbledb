@@ -25,81 +25,9 @@ mod aggregate;
 mod projection;
 mod semantics;
 
-/// The construction boundary is total: every symbolic find variant has
-/// one exact measure-free execution form. Measure rows also pin the
-/// derived-word table that preserves execution-time ray checking.
-#[test]
-fn every_find_spec_parses_to_its_sink_spec() {
-    let slot_count = 10;
-    let rows = [
-        (
-            FindSpec::Var { slot: 1, width: 2 },
-            SinkSpec::Var { slot: 1, width: 2 },
-            vec![],
-        ),
-        (
-            FindSpec::Duration { slot: 3 },
-            SinkSpec::Var {
-                slot: slot_count,
-                width: 1,
-            },
-            vec![(slot_count, 3)],
-        ),
-        (
-            FindSpec::AggDuration {
-                op: FoldOp::Sum,
-                slot: 4,
-            },
-            SinkSpec::Agg {
-                op: FoldOp::Sum,
-                over_slot: Some(slot_count),
-                over_width: 1,
-                signed: false,
-            },
-            vec![(slot_count, 4)],
-        ),
-        (
-            FindSpec::Agg {
-                op: FoldOp::CountDistinct,
-                over_slot: Some(5),
-                over_width: 2,
-                signed: false,
-            },
-            SinkSpec::Agg {
-                op: FoldOp::CountDistinct,
-                over_slot: Some(5),
-                over_width: 2,
-                signed: false,
-            },
-            vec![],
-        ),
-        (
-            FindSpec::Arg {
-                slot: 6,
-                width: 2,
-                key: ProjSource::Slot(8),
-                max: true,
-            },
-            SinkSpec::Arg {
-                slot: 6,
-                width: 2,
-                key_slot: 8,
-                max: true,
-            },
-            vec![],
-        ),
-        (
-            FindSpec::Pack { slot: 7 },
-            SinkSpec::Pack { slot: 7 },
-            vec![],
-        ),
-    ];
-    for (input, expected, expected_measures) in rows {
-        let (parsed, measures) = super::aggregate::parse_finds(&[input], slot_count);
-        assert_eq!(parsed, vec![expected]);
-        assert_eq!(measures, expected_measures);
-    }
-}
+// The construction boundary is total: every symbolic find variant has
+// one exact measure-free execution form. Measure rows also pin the
+// derived-word table that preserves execution-time ray checking.
 
 /// Posting(id fresh u64, account u64, amount i64) +
 /// PostingTag(posting u64, tag u64) +
@@ -433,16 +361,6 @@ fn agg_spec(plan: &ValidatedPlan, op: FoldOp, over: Option<u16>, signed: bool) -
         over_slot: over.map(|v| plan.slot_of(VarId(v))),
         over_width: over.map_or(1, |v| plan.width_of(VarId(v))),
         signed,
-    }
-}
-
-/// An Arg carry's spec.
-fn arg_spec(plan: &ValidatedPlan, over: u16, key: u16, max: bool) -> FindSpec {
-    FindSpec::Arg {
-        slot: plan.slot_of(VarId(over)),
-        width: plan.width_of(VarId(over)),
-        key: ProjSource::Slot(plan.slot_of(VarId(key))),
-        max,
     }
 }
 

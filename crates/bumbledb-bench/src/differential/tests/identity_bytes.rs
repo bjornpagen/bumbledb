@@ -1,7 +1,7 @@
 //! The identity-bytes differential criteria (10-data-model, the
 //! `bytes<N>` cut): round-trip, determinant-key FD enforcement, and
 //! containment over a **bytes<32> key** — engine vs the naive model —
-//! plus `CountDistinct` and group-by over bytes<N> at widths
+//! plus Max(weight) and group-by over bytes<N> at widths
 //! 8/16/32/64. The corpus digests are adversarial by construction:
 //! shared prefixes (whole zero words), single-byte deltas between
 //! neighbors, the all-zeros digest, and the pad-boundary widths 7/9/63
@@ -203,7 +203,7 @@ fn plain(finds: Vec<FindTerm>, atoms: Vec<Atom>, conditions: Vec<ConditionTree>)
 /// projections of every width (7/8/9/16/32/63/64 — the pad boundaries),
 /// bytes<32> Eq hits and adversarial misses, a membership set, a
 /// bytes<32> join (Ref ⋈ Blob on hash), and the criteria pair —
-/// group-by over bytes<N> and `CountDistinct` at widths 8/16/32/64.
+/// group-by over bytes<N> and Max(weight) at widths 8/16/32/64.
 #[expect(
     clippy::too_many_lines,
     reason = "the linear table or protocol is clearer kept together"
@@ -282,7 +282,7 @@ fn queries() -> Vec<Op> {
         params: vec![],
     });
     // The criteria pair, per width 8/16/32/64: group-by the digest
-    // (finds: [digest, Count]) and CountDistinct over it (global).
+    // (finds: [digest, Count]) and Max(weight) over it (global).
     for field in [1u16, 2, 0, 3] {
         ops.push(Op::Query {
             query: plain(
@@ -301,26 +301,24 @@ fn queries() -> Vec<Op> {
         ops.push(Op::Query {
             query: plain(
                 vec![FindTerm::Aggregate {
-                    op: AggOp::CountDistinct,
-                    over: Some(VarId(0)),
+                    op: AggOp::Max,
+                    over: Some(VarId(1)),
                 }],
                 vec![blob_atom(vec![(field, var(0)), (7, var(1))])],
                 vec![],
             ),
             params: vec![],
         });
-        // And grouped CountDistinct: distinct digests per weight-parity
-        // bucket... the schema has no parity column, so group by d8
-        // instead when counting a different width — cross-width group
-        // keys exercise multi-word group keys beside multi-word inputs.
+        // Grouped Max(weight) by a different-width digest: cross-width
+        // group keys exercise multi-word group keys beside multi-word inputs.
         if field != 1 {
             ops.push(Op::Query {
                 query: plain(
                     vec![
                         FindTerm::Var(VarId(2)),
                         FindTerm::Aggregate {
-                            op: AggOp::CountDistinct,
-                            over: Some(VarId(0)),
+                            op: AggOp::Max,
+                            over: Some(VarId(1)),
                         },
                     ],
                     vec![blob_atom(vec![(field, var(0)), (1, var(2)), (7, var(1))])],

@@ -1,5 +1,5 @@
 {
-	"value": ["bool", "u64", "i64", "string", "fixedBytes", "intervalU64", "intervalI64", "allenMask"],
+	"value": ["bool", "u64", "i64", "string", "fixedBytes", "intervalU64", "intervalI64"],
 	"valueType": ["bool", "u64", "i64", "string", "fixedBytes", "interval"],
 	"intervalElement": ["u64", "i64"],
 	"literal": ["handle", "value"],
@@ -10,12 +10,11 @@
 	"statement": ["fd", "containment", "capacity"],
 	"statementKind": ["functionality", "containment", "capacity"],
 	"term": ["var", "param", "paramSet", "literal", "measure"],
-	"aggregateOp": ["sum", "min", "max", "count", "countDistinct", "argMax", "argMin", "pack"],
+	"aggregateOp": ["sum", "min", "max", "count", "pack"],
 	"headTerm": ["var", "aggregate"],
 	"findTerm": ["var", "aggregate", "measure", "aggregateMeasure"],
 	"atomSource": ["edb", "idb"],
 	"cmpOp": ["eq", "ne", "lt", "le", "gt", "ge", "allen", "pointIn"],
-	"maskTerm": ["literal", "param"],
 	"condition": ["leaf", "and", "or"],
 	"direction": ["sourceUnsatisfied", "targetRequired"],
 	"param": ["set"]

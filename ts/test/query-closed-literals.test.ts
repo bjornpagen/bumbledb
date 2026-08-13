@@ -33,7 +33,6 @@ import { bool, u64 } from "#fields.ts"
 import { lower } from "#lower.ts"
 import type { DbHandle } from "#native.ts"
 import { native } from "#native.ts"
-import { by } from "#order.ts"
 import type { Query, QueryParams, QueryRow } from "#query/lower.ts"
 import { lowerQuery, query } from "#query/lower.ts"
 import { decodeAnswers, wireParams } from "#query/run.ts"
@@ -81,7 +80,9 @@ const INCIDENT_ID = 2
 
 /** Sorts one bigint column for a set-equality comparison (answers are sets; the host sorts). */
 function sorted(values: readonly bigint[]): bigint[] {
-	return [...values].sort(by())
+	return [...values].sort(function asc(left, right) {
+		return left < right ? -1 : left > right ? 1 : 0
+	})
 }
 
 describe("query literals, params & membership arrays over closed references", function suite() {
