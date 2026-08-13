@@ -22,5 +22,14 @@ Lean `evalProgram` is a fueled round loop proved equal to the stratified denotat
 ## Why this matters
 A recursive query whose fixpoint exists (Lean: finite subset of the active domain) can fail at runtime with a typed error and empty/partial answers. Hosts that treat Lean `programAnswers` as the engine contract will see a false abort. The Bridge row papers over the gap by citing both `run_fixpoint` and `FixpointBudgetExceeded` against the completeness theorem.
 
+## Verification (2026-08-12)
+Re-read `evalProgram`, the resource-limits amendment, and the driver. **Confirmed.** Docs are honest about the amendment; the engine is still incomplete versus Lean when the budget trips. `wrong-side: rust`.
+
+**Lean** (`lean/Bumbledb/Exec/Fixpoint.lean:11-21`): Level 1 `evalProgram` is “proved sound AND complete” (`program_eval_sound`); “budgets … stay in the docs, whole.” No `FixpointBudgetExceeded` constructor.
+
+**Docs** (`docs/architecture/40-execution.md:969-985`): “Resource limits: none in v0” except the fixpoint budget; termination is a theorem (`program_den_finite`) but size is data-shaped; host-owned policy.
+
+**Rust** (`crates/bumbledb/src/api/prepared/fixpoint.rs:37-47`): “The budget is the one new trust boundary”; `Error::FixpointBudgetExceeded`. Bridge (`lean/Bumbledb/Bridge.lean:590-593`) lists `run_fixpoint` *and* `Error::FixpointBudgetExceeded` against `program_eval_sound`.
+
 ## Related
 - 210 (runtime error roster)

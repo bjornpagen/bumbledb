@@ -41,3 +41,11 @@ C++ AGENTS.md ownership/lifetime rules: a sender/callback must not capture local
 ## Related
 - 101 (stale ref after callback)
 - 104 (related: destroy of other boxed handles)
+
+## Verification (2026-08-12)
+
+**Verdict:** confirmed. Severity unchanged (high).
+
+**Trace:** `bdb_db_read` does `let handle = ref_in(db)?` then `handle.db.read(|snap| { … callback … })` (`cpp/bridge/src/db.rs:424-430`). Nothing in that frame prevents the callback from calling `bdb_db_destroy(db)`, which is `drop(box_in(db)?)` (`:368-372`) — `Box::from_raw` of the allocation `handle` still borrows. `bdb_tx_ref::engine` SAFETY already admits “destroying a db during its own callback is caller UB the alive flag cannot see” (`:207-210`). Re-entrant *writes* are refused with typed `EnvironmentLocked` via `enter_write` (`:239-248, 463`); destroy and nested read are not. C++: `Db` is movable (`cpp/src/db/db.cc:180-181`); `Snapshot` / `WriteTx` hold `detail::Manifest const&` into that `Db` (`snapshot.cc:24-27`, `tx.cc:21-24`). `db.read` is `const` but the caller lambda can still `std::move` the named `Db` (`db.cc:201-216`). `db_handle::~` calls `bdb_db_destroy` (`cpp/foreign/raii.cc:641-645`).
+
+**Why it holds:** This is UAF of `bdb_db` (the `Box`) plus, if that `Arc` was last, the engine/LMDB txn under live `Snapshot`/`WriteTx` pointers, plus a dangling `manifest_` after `std::move(db)` inside `read`. Nested write was treated as a recoverable typed error; destroy/move of the same owner is the same class of re-entrancy and is silent UB.

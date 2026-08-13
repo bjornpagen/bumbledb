@@ -24,5 +24,14 @@ Engine: `normalize.rs::lower_atom` / `AntiProbe`; `Term::ParamSet`; `ArgKey::Mea
 ## Why this matters
 A regression in negated membership or set-membership matching will not fail `three_way_conformance_over_the_checked_in_corpus`. The census still lists that instrument as watching `Query.matches_def` / `eval_sound` / `program_eval_sound` for the whole query surface.
 
+## Verification (2026-08-12)
+Re-read the denotation, `60-validation.md` third-oracle claim, and the corpus builder exclusions. **Confirmed.** `wrong-side: unspecified` stays: Lean and the engine denote (most of) the shapes; the *harness* drops them. Measure Arg is also missing from Lean (201).
+
+**Lean:** `surface_antiprobe_filters` (`Membership.lean:391-406`); `paramSet_selects_membership` (`Denotation.lean:287`). Measure Arg keys absent (201). `membership_lowering_preserves` still assumes `Atom.membershipFree` on negated atoms (`Membership.lean:1417-1433`).
+
+**Docs:** `20-query-ir.md:255-261`, `:488-494`, `:692` admit negated membership, ParamSet, and (elsewhere) R5 measure Arg as accepted IR. `60-validation.md:46-59` presents the Lean denotation as the third oracle over the checked-in corpus.
+
+**Rust:** Engine: `normalize.rs::lower_atom` / `AntiProbe`; `Term::ParamSet` (`ir.rs:123`); `ArgKey::Measure`. Builder (`conformance.rs:139-147`, `:1197-1210`) increments `excluded_negated_membership` / `excluded_set_membership` / `excluded_measure_arg_key` and drops the case.
+
 ## Related
 - 201 (`excluded_measure_arg_key`)

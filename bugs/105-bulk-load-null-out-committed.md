@@ -29,4 +29,13 @@ Violates the bulk-load count contract in `bumbledb_c.h` and `TODO_CPP.md` §24 a
 
 ## Related
 - 104 (same `out()`-after-side-effect ordering)
-- 110 (another “mutate then fail” boundary)
+
+## Verification (2026-08-12)
+
+**Verdict:** confirmed. Severity unchanged (high).
+
+**Trace:** `bdb_db_bulk_load` copies rows, `enter_write`, then `bulk_load_dyn`. Only after the engine returns does it `out(out_committed, total)?` or `out(out_committed, bulk.committed)?` (`cpp/bridge/src/db.rs:782-807`). `out` on null is `Fail::Misuse` (`lib.rs:211-214`) with no error object. Header: “`out_committed` always carries the durable count (§24), and a failure is `BDB_ERROR_KIND_BULK_LOAD`” (`cpp/foreign/bumbledb_c.h:810-815`). Engine contract: prior 4096-row chunks stay committed.
+
+**Why it holds:** A null `out_committed` turns a completed or partially durable import into `BDB_STATUS_MISUSE` with no payload and no count, so callers that branch only on status will retry (duplicate) or skip `bdb_error_get_bulk_committed`. Null required pointers are the defined MISUSE lane — the engine work must not run before that pointer is checked, or the count must live only on the `BulkLoad` error (it already does, but that error is never allocated on this path).
+
+**Note:** Related 110 was deleted (documented “cleared first”); this finding is the remaining “side effect then MISUSE” case.

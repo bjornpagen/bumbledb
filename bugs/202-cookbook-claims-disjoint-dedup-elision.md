@@ -42,5 +42,14 @@ The cited section says the opposite (`40-execution.md:326-330`): "Plan introspec
 ## Why this matters
 A host or agent following the cookbook Guarantee will expect no cross-rule dedup cost and may write unions that depend on elision for latency. The engine always probes the spanning map. The Guarantee label is a false theorem citation.
 
+## Verification (2026-08-12)
+Re-read Dedup, `40-execution.md`, the cookbook Guarantee, and the sink builder. **Confirmed.** Cookbook is labeled illustrative (`docs/cookbook.md:3-5`) but recipe 22’s `Guarantee:` still cites `disjoint_witness_licence` and then asserts the elision the measured refutation deleted. `wrong-side: docs`.
+
+**Lean** (`lean/Bumbledb/Exec/Dedup.lean:563-577`): the theorem proves what the witness *could* license; the module text says the engine spends it “diagnostically only” and keeps the spanning seen-set. Bridge (`lean/Bumbledb/Bridge.lean:422-425`) matches: “spent diagnostically only”.
+
+**Docs:** Cookbook (`docs/cookbook.md:1018-1047`) and TS twin (`ts/COOKBOOK.md:1098-1100`): “the executor elides cross-rule dedup — the free lunch”. The cited chapter (`docs/architecture/40-execution.md:326-330`) says the opposite: execution always keeps one spanning seen-set. Aggregation (`20-query-ir.md:302-306`) agrees with architecture.
+
+**Rust** (`crates/bumbledb/src/api/prepared/build.rs:136-140`): “Every multi-rule sink keeps one seen-set spanning all rules.”
+
 ## Related
 - `docs/architecture/40-execution.md` § set semantics (the measured refutation)

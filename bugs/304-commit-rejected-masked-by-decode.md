@@ -52,3 +52,7 @@ A corrupt intern id in a cited novel `str` field similarly turns the rejection i
 - `decode_cited_facts` in the same file
 - `Violations::attach_cited` (assumes decode succeeded in parallel)
 - Finding 301 (abort path already best-effort on a different flush)
+
+## Verification (2026-08-12)
+
+Confirmed. After the abort-path Q burn, `commit` (`write.rs:204-209`) matches `Error::CommitRejected` and runs `env.read_txn()?` then `decode_cited_facts(...)?`. Either `?` drops the sealed `Violations` and returns the secondary error. `decode_cited_facts` (`write.rs:273-287`) `?`s `encoding::decode_values` and `dict::resolve`, which is `Corruption(DanglingInternId)` on a miss (`dict.rs:147-150`). This is a new snapshot under the writer mutex, not the aborted write txn; concurrent readers can fill the 1024-slot table (`MAX_READERS`, `env.rs:202-203`). `70-api.md` and C++ `Error::is_transient()` (`cpp/src/error.cc:183-187`) treat `ReadersFull` as retryable and `CommitRejected` as permanent, so a host retry loop can storm a write that can never succeed until a slot frees — then it would see the real rejection. Severity stays **medium**: the illegal write still does not persist; the lost citation set and kind swap are the defect.

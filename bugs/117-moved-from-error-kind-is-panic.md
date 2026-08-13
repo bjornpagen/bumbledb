@@ -32,3 +32,11 @@ raii.cc: moved-from is unreachable_boundary_state. `kind()` is the one accessor 
 
 ## Related
 - 107 (Panic kind is also the catch_unwind mapping)
+
+## Verification (2026-08-12)
+
+**Verdict:** confirmed. Severity unchanged (low).
+
+**Trace:** `error_handle` documents moved-from as inert and every accessor as `unreachable_boundary_state` (`cpp/foreign/raii.cc:85-87`). `kind()` is `return bdb_error_get_kind(raw_);` with no null check (`:119-121`). Move sets `other.raw_ = nullptr` (`:105`). `message()` aborts on non-OK (`:127-132`); `kind()` cannot return a status. `bdb_error_get_kind` maps null to `bdb_error_kind::Panic` (`cpp/bridge/src/error.rs:265-274`). Dialect `bdb::Error::kind()` forwards the same call (`cpp/src/error.cc:170-172`) and documents “never read a moved-from Error” (`:158`).
+
+**Why it holds:** Panic is supposed to mean process-level poison / caught Rust panic. Moved-from is a C++ ownership mistake and should abort (the module’s rule), not impersonate that poison. `switch` on `kind()` after `std::move` takes the panic path spuriously.

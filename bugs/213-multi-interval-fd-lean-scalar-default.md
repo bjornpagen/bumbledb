@@ -30,5 +30,14 @@
 ## Why this matters
 If a hand-built descriptor or a future frontend skipped the gate, Lean would accept overlapping intervals that share a scalar prefix as long as the full (S, i1, i2) tuples differ — not WITHOUT OVERLAPS. The dangerous reading is the Lean default, not the engine. Ambiguous spec for anyone implementing validate from `Statement.judgment`.
 
+## Verification (2026-08-12)
+Re-read `intervalSplit`, `Statement.judgment`, the FD gate, and validate. **Confirmed.** `wrong-side: spec`.
+
+**Lean** (`lean/Bumbledb/Schema.lean:361-376`): two or more interval fields → `intervalSplit` is `none`. `Statement.judgment` (`Dependencies.lean:277-280`): `none => Functionality` (scalar injectivity of the concatenated tuple). Module docs say `holds` is consumed on accepted theories only — not in the type.
+
+**Docs** (`docs/architecture/30-dependencies.md:427-433`): FD “at most **one** interval-typed field, and it must be the **final** projection position”; two interval positions would be 2-D exclusion.
+
+**Rust** (`crates/bumbledb/src/schema/validate.rs:568-573`): `positions.len() > 1` → `FunctionalityMultipleIntervals`.
+
 ## Related
 - 215 (interval-not-last: Lean would read pointwise; Rust refuses)

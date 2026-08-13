@@ -38,5 +38,14 @@ True on the same axis in `10-data-model.md:313-321`: "The escaped high-water flu
 ## Why this matters
 Crash/recovery and lock reasoning that assume abort is a pure in-memory drop will miss a durable `Q` write (and its fsync on durable stores). The never-reissue law is exactly that write. 70-api's "never touched LMDB at all" is a false durability claim.
 
+## Verification (2026-08-12)
+Re-read README, `70-api.md`, crate docs, Fresh, and the abort burn. **Confirmed.** `wrong-side: docs`. The “never wrote” claim is true of facts/generation and false of `Q`.
+
+**Lean** (`lean/Bumbledb/Txn/Fresh.lean:8-12`, `:73-80`, `:81-93`): every transaction persists its final mark, aborts included, via `flush_escaped_fresh_ids`; abort burn unconditional modulo I/O.
+
+**Docs:** False: `README.md:50-51` (“an abort never touched disk”); `docs/architecture/70-api.md:616-619` (“an abort never wrote anything”); `:849` (“never touched LMDB at all”); crate root `crates/bumbledb/src/lib.rs:16-18`. True: `10-data-model.md:313-321` (counters-only `Q` flush).
+
+**Rust** (`crates/bumbledb/src/api/db.rs:7-11`; `write.rs:67-80`): abort never wrote a *fact*; `EscapedIdBurn` persists escaped fresh high-water.
+
 ## Related
 - 203 (Bridge prose still describes abort-as-discard)

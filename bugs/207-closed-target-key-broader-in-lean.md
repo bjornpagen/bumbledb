@@ -38,5 +38,14 @@ Reject tests: `schema/tests/reject.rs` `ClosedTargetNotHandle` cases (~1143+).
 ## Why this matters
 A schema that Lean would call `TargetKeyAccepted` (containment into a closed relation on a declared payload key) is a validate-time error in the engine. Admission/Oracle theorems that assume `TargetKeyAccepted` overstate what the engine admits. Sound direction for runtime, but the Lean acceptance premise is not the engine's.
 
+## Verification (2026-08-12)
+Re-read `TargetKeyAccepted`, the closed-target architecture rule, and `resolve_target_key`. **Confirmed.** `wrong-side: spec`: Lean records the narrowing in prose and leaves the predicate broader than the gate.
+
+**Lean** (`lean/Bumbledb/Dependencies.lean:183-185`): `TargetKeyAccepted` is exact field-set match against *any* declared functionality of the target. Narrowing (`:89-95`): a user-declared non-id key on a closed relation satisfies the predicate “yet Rust refuses”.
+
+**Docs** (`docs/architecture/30-dependencies.md:452-456`): IND into a closed target has “no key search”; “Y must be exactly the synthetic id”.
+
+**Rust** (`crates/bumbledb/src/schema/validate.rs:1353-1360`): sealed target ⇒ `projection.len() != 1 || projection[0] != FieldId(0)` → `ClosedTargetNotHandle`.
+
 ## Related
 - 208 (closed + interval containment also Lean-permissive / Rust-refused)

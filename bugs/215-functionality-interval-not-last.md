@@ -32,5 +32,14 @@
 ## Why this matters
 Low on the sealed engine path. High if someone ports validate from Lean `Statement.judgment` alone: they would accept `R(window, id) -> R` as pointwise and then lack an ordered determinant group for neighbor probes.
 
+## Verification (2026-08-12)
+Re-read the position-blind split, the last-position architecture rule, and `FunctionalityIntervalNotLast`. **Confirmed.** `wrong-side: spec`.
+
+**Lean** (`lean/Bumbledb/Dependencies.lean:61-76`): exactly one interval field anywhere yields the pointwise reading; “moot for accepted theories” because the engine refuses non-final at declaration. `Schema.lean:361-376`: `intervalSplit` is field-set / position-blind.
+
+**Docs** (`docs/architecture/30-dependencies.md:427-428`): “at most **one** interval-typed field, and it must be the **final** projection position (the neighbor probe needs the scalar prefix as its group).”
+
+**Rust** (`crates/bumbledb/src/schema/validate.rs:576-583`): `pos != projection.ordered().len() - 1` → `FunctionalityIntervalNotLast`.
+
 ## Related
 - 213 (multi-interval default)

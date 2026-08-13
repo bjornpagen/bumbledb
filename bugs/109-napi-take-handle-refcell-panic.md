@@ -1,7 +1,7 @@
 # NAPI take_handle uses RefCell::borrow_mut and panics into Node on re-entrant close
 - id: 109
 - severity: medium
-- confidence: likely
+- confidence: confirmed
 - area: ffi
 - components: ts/crate/src/lib.rs
 - status: open (do not fix)
@@ -27,3 +27,11 @@ Bridge error taxonomy: programming errors THROW. A panic is not a throw.
 ## Related
 - 100 (same handles, cross-thread)
 - 107 (C++ panic wall)
+
+## Verification (2026-08-12)
+
+**Verdict:** confirmed (was `likely`). Severity unchanged (medium). Same-thread SDK scripts still will not hit this while `SnapWorker::call` blocks in `recv`; the defect is the panicking API on the close/commit path, not a demonstrated production re-entry today.
+
+**Trace:** `take_handle` is `cell.borrow_mut().take()` (`ts/crate/src/lib.rs:134-136`). `live` / `live_mut` use `try_borrow(_mut)` and throw “re-entrant use” (`:183-196`). Close/commit/abort all go through `take_handle`: `db_close` (`:310`), `exhume_close` (`:464`), `snapshot_close` (`:807`), `tx_commit` / `tx_abort` (`:1243, 1258`), `prepared_close` (`:1411`).
+
+**Why it holds:** The crate already treats RefCell re-entry as a typed programming error on the live path. Close uses the panicking API, so a future JS callback (or a same-thread nest of `take_handle` under `live()`) unwinds through napi/V8 instead of throwing. That is the same FFI panic class the C++ bridge built `guard` to prevent. Cross-thread `External` use is already UB on `RefCell` (`!Sync`) and overlaps 100.

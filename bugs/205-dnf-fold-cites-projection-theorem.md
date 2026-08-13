@@ -47,5 +47,14 @@ DNF-derived multi-rule sinks use the shared-slot union key (`build.rs` DNF prove
 ## Why this matters
 Wrong citation can license a head-projection fold over DNF arms (the hand-written multi-rule regime), changing `Sum` over an `or` of conditions. The engine got this right; the architecture citation does not.
 
+## Verification (2026-08-12)
+Re-read both theorems and the DNF paragraph. **Confirmed.** `wrong-side: docs`. The aggregation section states R2 correctly; the DNF section cites the projection theorem for a fold claim.
+
+**Lean** (`lean/Bumbledb/Query/Denotation.lean:780-783`): `dnf_preserves_denotation` is `ruleAnswers` (projection). Fold law (`lean/Bumbledb/Exec/Dedup.lean:1345-1358`): `dnf_rekey_transparent` on shared slot arrays. No `dnf_*` theorem in `Query/Aggregates.lean`.
+
+**Docs** (`docs/architecture/20-query-ir.md:748-752`): DNF lowering is “answer-preservingly (`dnf_preserves_denotation`) and **fold-preservingly**”. Aggregation (`:286-306`) states the or-transparency law and the hand-written vs DNF key split correctly.
+
+**Rust** (`crates/bumbledb/src/api/prepared/build.rs:136-140`): DNF-derived multi-rule sinks re-key on shared slot arrays — `dnf_rekey_transparent`, not head-projection `ruleAnswers`.
+
 ## Related
 - 202 (another docs overclaim on Dedup licences)

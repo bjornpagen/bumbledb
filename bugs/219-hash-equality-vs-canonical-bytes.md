@@ -22,5 +22,14 @@ Lean `value_eq_iff_encode_eq` is equality of canonical encodings (abstract words
 ## Why this matters
 The Lean identity law is encoding equality. The engine's insert/delete/contains path is hash equality. Docs explicitly accept silent unification of distinct facts. That is a specified weakening of the spec identity theorem, not an accident — but `value_eq_iff_encode_eq` is still cited as if it were the store's membership law. A collision is a set-semantics bug the spec cannot see and the store will not detect.
 
+## Verification (2026-08-12)
+Re-read theorem 7, the identity section, and `fact_hash`. **Confirmed.** `wrong-side: split`: Lean encoding equality vs documented blake3 axiom. Docs are explicit, not accidental.
+
+**Lean** (`lean/Bumbledb/Values.lean:567-572`): within one value type, values are equal iff canonical encodings are equal. No hash. `lean/README.md:114-120`: hashing/LMDB are mechanism Lean does not own.
+
+**Docs** (`docs/architecture/10-data-model.md:480-493`): “Value equality is `fact_bytes` equality (`value_eq_iff_encode_eq`)” then “Storage implements membership as blake3-256 of `fact_bytes`; **hash equality is treated as fact equality — collisions are an accepted axiom**.” Same on the dictionary (`:491-501`).
+
+**Rust** (`crates/bumbledb/src/encoding/fact_hash.rs:1-10`): blake3 of canonical fact bytes; no byte verification on hash hit. Dictionary forward `blake3(bytes) → id` (`storage/dict.rs:11`, `:30`).
+
 ## Related
 - 209 (`bytes<N>` encoding granularity compounds what is hashed)

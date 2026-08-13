@@ -55,3 +55,16 @@ Contrast: the same `alloc()` in a successful empty-delta commit surfaces flush f
 - `lean/Bumbledb/Txn/Fresh.lean: never_reissue_observable`
 - `flush_escaped_fresh_ids` in `storage/commit/write.rs`
 - Empty-delta path at `write.rs:100-110` (correct `?`)
+
+## Verification (2026-08-12)
+
+Confirmed. `WriteDelta::alloc` returns the current `Q` mark to the caller and advances it in memory (`crates/bumbledb/src/storage/delta/alloc.rs:26-36`). Those dirty marks (`dirty_fresh_marks`, `next > base`) are the only thing `flush_escaped_fresh_ids` writes (`write.rs:302-321`): a real `commit_bounded` LMDB write txn + `txn.commit()`, which can still return `CommitSync` after three retries or `Lmdb`/`Io` on map-full / ENOSPC.
+
+Two abort owners discard that `Result`:
+
+- After `commit()`'s `outcome` closure: `write.rs:193-195` `let _ = flush_escaped_fresh_ids(env, &delta);` — comment says a flush failure must not mask the caller's error.
+- `EscapedIdBurn::drop` when the write closure returns `Err` or panics before `commit()`: `api/db/write.rs:78-83` `let _ = flush_escaped_fresh_ids(...)`.
+
+The empty-delta success path at `write.rs:109` uses `flush_escaped_fresh_ids(...)?` and therefore surfaces the same I/O class. The next write's `read_fresh_next` (`alloc.rs:76-83`) reads the on-disk `Q` (missing = 0), so a discarded failed burn lets `alloc()` mint the same u64 the previous closure already handed out.
+
+Lean/architecture record this as a sanctioned narrowing (`Fresh.lean` § narrowings recorded, `10-data-model.md:318-321`). It remains a runtime identity hole: the host never sees the burn failure, and `never_reissue_observable` does not hold after that I/O. Severity stays **high**.

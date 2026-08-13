@@ -24,3 +24,11 @@ None.
 
 ## Related
 - 101
+
+## Verification (2026-08-12)
+
+**Verdict:** confirmed. Severity unchanged (info).
+
+**Trace:** `stale_snapshot_ref_is_misuse` (`cpp/bridge/src/tests.rs:995-1012`) saves `stashed = snap` inside the callback, then after `db_read` returns calls `db_write_from(db, stashed, …)` and expects `bdb_status::Misuse`. The pointee is the `bdb_snapshot_ref` local in `bdb_db_read`’s closure (`db.rs:428-431`), dropped when that closure returns. The test itself comments that the frame is gone “in principle.”
+
+**Why it holds:** The test is UAF. Passing CI does not prove the MISUSE contract; it proves the stack slot was not reused yet. Recorded separately from 101 so a coordinator does not treat the test as evidence the feature works.

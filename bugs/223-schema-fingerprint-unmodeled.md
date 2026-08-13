@@ -4,7 +4,7 @@
 - confidence: confirmed
 - area: spec-docs-rust
 - wrong-side: unspecified
-- components: lean/Bumbledb/Schema.lean, crates/bumbledb/src/schema/fingerprint.rs, docs/architecture/10-data-model.md, docs/architecture/50-storage.md, docs/architecture/75-cpp-lowering.md
+- components: lean/Bumbledb/Schema.lean, crates/bumbledb/src/schema/fingerprint.rs, docs/architecture/10-data-model.md, docs/architecture/70-api.md, docs/architecture/75-cpp-lowering.md
 - status: open (do not fix)
 
 ## Summary
@@ -21,6 +21,15 @@ Open/create identity is blake3 of canonical descriptor bytes (`bumbledb-schema-v
 
 ## Why this matters
 A Lean-equal theory (same `holds`) can be a `SchemaMismatch` if statement order, closed-row order, or C2 encoding differs. Frontends that "match the spec" without matching `fingerprint.rs` cannot open each other's stores. Lean cannot prove the parity `75-cpp-lowering.md` claims.
+
+## Verification (2026-08-12)
+Re-read `Theory`, fingerprint inputs, and `fingerprint.rs`. **Confirmed.** `wrong-side: unspecified` stays: Lean has no hash; docs and Rust agree on blake3 v5. Original citation of `50-storage.md` for `SchemaMismatch` is the wrong file — open-time mismatch lives in `70-api.md:815` and `10-data-model.md:575-578`.
+
+**Lean** (`lean/Bumbledb/Schema.lean:521-534`): `Theory` = header + closed map + statement list. No blake3, no version label. `Statement.capacity` (`:511-514`) pins C2 operator order as syntax, not a hash.
+
+**Docs:** `docs/architecture/10-data-model.md:575-584` fingerprint inputs; `70-api.md:815` `SchemaMismatch`; `75-cpp-lowering.md:1-7` byte-exact fingerprint parity via `SchemaSpec::descriptor()`.
+
+**Rust** (`crates/bumbledb/src/schema/fingerprint.rs:10-16`, `:40`): `FORMAT_VERSION_LABEL = b"bumbledb-schema-v5"`; blake3 of canonical bytes; enforcement plans and mirror links not hashed.
 
 ## Related
 - 207 (closed-target acceptance also differs while theories look equal)

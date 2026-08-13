@@ -72,3 +72,9 @@ The “skipped put persists nothing” comment is true for durability (the write
 - `lean/Bumbledb/Txn.lean: rejection_is_complete`
 - `error.rs` `Violations::seal` (one citation per statement)
 - Neighbor `U` conflicts in the same function correctly `continue` rather than return (`applier.rs:187-199`)
+
+## Verification (2026-08-12)
+
+Confirmed. `plan.rs:366-383` puts the fresh auto-key in `fresh_row` and `continue`s, so additional `Functionality` keys still populate `op.determinants`. `insert_fact` (`applier.rs:121-142`) on an occupied `F` (after the `M` `DispositionDesync` disambiguation) pushes one `Violation::Functionality` for `fresh.statement` and `return Ok(())`. The determinant loop at `applier.rs:171` never runs for that fact; scalar/`pointwise` `U` conflicts in that loop `continue` rather than return (`applier.rs:187-199`).
+
+`apply.rs:48-58` still walks every insert op — phase 2 finishes the *fact* scan — then `Violations::seal` (`error.rs:1141-1146`) dedups by `(statement, direction)` (`citation()` at `error.rs:1073-1083`). A second key violated only by the `F`-conflicted fact is absent from the sealed set. `apply.rs:20-26` and `rejection_is_complete` (key arm) require every violated key statement. The skip-puts comment at `applier.rs:107-110` is right about durability (the write txn aborts) and wrong about completeness. Severity stays **medium**.

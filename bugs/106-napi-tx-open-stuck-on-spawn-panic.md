@@ -25,3 +25,11 @@ None in Lean. Bridge module doc: one write tx per Db handle; this path leaves th
 
 ## Related
 - 109 (`take_handle` panic vs typed close)
+
+## Verification (2026-08-12)
+
+**Verdict:** confirmed. Severity unchanged (medium).
+
+**Trace:** `spawn_tx` `swap`s `tx_open` to true (`ts/crate/src/lib.rs:1046-1052`), then creates channels, then `std::thread::spawn` (`:1057`), then constructs `TxWorker` (`:1058-1064`). `TxWorker::finish` / `Drop` are the only `tx_open.store(false)` sites (`:926-927, 934-942`). `begin_outcome` calls `finish()` on moved/failed/died replies (`:1089-1099`), but only after a `TxWorker` exists. `thread::spawn` panics if the OS cannot create a thread (`Builder::spawn` is the `io::Result` spelling). Snapshot open (`db_snapshot`, `:780`) uses spawn without a latch; this finding is the write-guard latch only.
+
+**Why it holds:** A transient thread-create failure leaves the single-writer flag true with no live writer. Later `dbWriteBegin` / `dbWriteFrom` hit the “already open” error until the `Db` handle is dropped. The comment on `tx_open` is that a second begin would deadlock — here there is no writer at all.

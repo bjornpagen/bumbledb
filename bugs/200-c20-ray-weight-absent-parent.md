@@ -36,6 +36,15 @@ Write-time slot derivation refuses a ray Duration weight on INSERT, parent-blind
 ## Why this matters
 A well-typed insert that Lean and the architecture docs treat as a no-op (no parent to constrain) is a hard commit refusal in the engine. Hosts following `capacity_of_empty_parent` will see `CapacityRayMeasure` instead of a successful empty-parent commit. The third oracle / naive twin must mirror C20 or the differential wall disagrees on this cell.
 
+## Verification (2026-08-12)
+Re-read Lean, architecture/design docs, and the write path. **Confirmed.** `wrong-side: split` is right: Lean plus `30-dependencies.md` still stop at empty-parent vacuity and C10 (judge time); the engine and `capacity-laws.md` C20 refuse at plan time.
+
+**Lean** (`lean/Bumbledb/Capacity.lean:534-543`): `capacity_of_empty_parent` proves every `CapacityLaw` when no ψ-selected parent exists. Rays are junk-0 in `durationNat` (`:448-461`); C10 is named as engine mechanism not restated (`:87-92`). No C20 symbol in the Lean tree.
+
+**Docs:** Architecture (`docs/architecture/30-dependencies.md:225-227`) cites that theorem as the unification stop; weight typing (`:256-258`) states only C10 (“at judge time”). `rg C20 docs/architecture` is empty. The design record (`docs/design/capacity-laws.md:411-423`) rules C20 as doctrine for the absent-parent cell.
+
+**Rust** (`crates/bumbledb/src/storage/commit/judgment.rs:103-110`, `:228-240`; `plan.rs:223-228`): Duration weight derivation refuses `end == u64::MAX` parent-blind at plan time. Pin: `capacity_duration_ray_under_an_absent_parent_still_refuses` (`marks.rs:896-924`).
+
 ## Related
 - 218 (70-api write-error roster omits `CapacityRayMeasure`)
 - 220 (Lean `durationNat` junk-0 vs C10/C20 refuse)

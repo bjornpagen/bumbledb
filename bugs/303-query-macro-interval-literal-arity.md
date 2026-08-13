@@ -66,3 +66,7 @@ Same for `Allen(w, INTERSECTS, 0..10)` and for `field == 1..2` selections.
 - `schema!` `value_tokens` (correct)
 - `docs/architecture/20-query-ir.md` query notation (`start..end`)
 - `crates/bumbledb-query/tests/notation_corpus.rs` (gap: no interval-literal cases)
+
+## Verification (2026-08-12)
+
+Confirmed. `finish_int` (`bumbledb-query-macros/src/lib.rs:505-514`) accepts `start..end` as `Lit::Interval`. `Lit::lit` emits `{value}::{variant}({}, {})` (`lib.rs:1427-1434`) with `value = "::bumbledb::Value"`. That type is `bumbledb_theory::Value` (`crates/bumbledb/src/value.rs` re-export): `IntervalU64(Interval<u64>)` / `IntervalI64(Interval<i64>)` — unary. The theory crate's own `compile_fail` (`value.rs:36-39`) is `Value::IntervalU64(7, 7)`, the same shape. `schema!` wraps `Interval::new` (`bumbledb-macros/src/lib.rs:2217-2221`). `ir/render.rs:514-518` still prints `start..end`. Module docs advertise the spelling (`query-macros/src/lib.rs:104-120`). No `query!` corpus case contains an interval literal, so CI never compiled the arm. Severity stays **medium** (advertised grammar does not compile; not a silent wrong runtime result).

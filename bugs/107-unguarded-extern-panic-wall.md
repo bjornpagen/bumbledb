@@ -1,6 +1,6 @@
 # Several extern "C" entry points skip catch_unwind despite the panic-into-C++ policy
 - id: 107
-- severity: medium
+- severity: low
 - confidence: confirmed
 - area: ffi
 - components: cpp/bridge/src/lib.rs, cpp/bridge/src/answers.rs, cpp/bridge/src/error.rs, cpp/bridge/src/db.rs
@@ -25,3 +25,11 @@ Not easily triggerable without injecting a panic in `Answers::len` or `Answers::
 
 ## Related
 - 103 (callback return is another unguarded UB class)
+
+## Verification (2026-08-12)
+
+**Verdict:** confirmed. **Severity downgraded medium → low:** the wall is incomplete, but today’s accessor bodies (`Answers::len` uses `checked_div` then `unwrap_or(0)`; `arity`/`kind`/`violation_count` are field/Vec reads; `bdb_answers_new` is `Box::new` of `Answers::default()`) have no panic site. OOM typically aborts rather than unwinding. The defect is the missing `catch_unwind`, not a current panic.
+
+**Trace:** Policy: “EVERY extern entry point routes through `guard`” (`cpp/bridge/src/lib.rs:38-48, 111-129`). Unguarded: `bdb_answers_new` (`answers.rs:30-34`), `bdb_answers_len` / `bdb_answers_arity` (`:49-64`), `bdb_row_set_len` / `bdb_row_set_arity` (`db.rs:818-833`), `bdb_error_get_kind` / `bdb_error_violation_count` (`error.rs:270-274, 332-336`). C++ is `-fno-exceptions` (`cpp/AGENTS.md` §11). `answers_handle::make` even treats a null `bdb_answers_new` as `unreachable_boundary_state` (`raii.cc:261-266`).
+
+**Why it holds:** A panic from any of these still unwinds through `-fno-exceptions` C++ = UB, which is why `guard` exists. The stated policy is already false for the “infallible” accessors. Dangling pointers remain UB at `ref_in`, not a catchable panic — that part of the original writeup is correct and does not change the wall gap.

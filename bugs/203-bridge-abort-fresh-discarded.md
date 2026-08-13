@@ -26,5 +26,14 @@ The cited theorem (`Fresh.lean:269-280`, `Reachable.txn` at `:254-258`) states a
 ## Why this matters
 The census-checked Bridge is the machine-listable Lean↔Rust seam. A reader of the ledger (or a future discharge) who trusts the premise sentence will implement abort-as-discard and re-issue ids the host already observed — the exact observability hole Fresh exists to close.
 
+## Verification (2026-08-12)
+Re-read the Bridge row, `Fresh.lean`, `10-data-model.md`, and `EscapedIdBurn`. **Confirmed.** The *theorem* is correct; the Bridge *premise English* is not. `wrong-side: spec` names that ledger sentence, not `never_reissue_observable`.
+
+**Lean:** Bridge (`lean/Bumbledb/Bridge.lean:533-537`) claims “an aborted transaction's run is discarded whole, so nothing it minted was observable.” `Fresh.lean:8-12` and `:254-258` (`Reachable.txn`) and `:269-280` (`never_reissue_observable`) say every fate persists the mark because `alloc` already handed the id to the host.
+
+**Docs** (`docs/architecture/10-data-model.md:313-321`): abort flushes dirty `Q` marks through a counters-only commit; best-effort modulo I/O.
+
+**Rust** (`crates/bumbledb/src/api/db/write.rs:67-80`): `EscapedIdBurn` drop issues that counters-only write. Module doc (`api/db.rs:7-11`) already qualifies “never wrote a fact”.
+
 ## Related
 - 204 (docs that still say abort never touched disk)

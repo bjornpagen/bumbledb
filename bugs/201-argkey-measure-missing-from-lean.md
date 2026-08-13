@@ -46,6 +46,15 @@ Engine tests: `api/prepared/tests/measure.rs` (measure-keyed Arg). Naive model e
 ## Why this matters
 `ArgMax(w, Duration(w))` is a shipped query form with ray-poisoning semantics. Lean cannot state or prove its denotation; the checked-in corpus never includes it. A wrong engine reading of measure-key ties or ray groups would not fail the Lean conformance lane.
 
+## Verification (2026-08-12)
+Re-read `AggOp`, the query-IR roster, and the engine IR. **Confirmed.** `wrong-side: spec` is right: Rust and `20-query-ir.md` ship R5 measure keys; Lean `argMax` is `VarId`-only.
+
+**Lean** (`lean/Bumbledb/Query/Aggregates.lean:2098-2107`): `| argMax (v k : VarId) | argMin (v k : VarId)`. Conformance decode (`lean/Bumbledb/Conformance.lean:397-400`) reads `"key"` as a `VarId` only. Measure *folds* exist (`measureFold`); measure Arg keys do not.
+
+**Docs** (`docs/architecture/20-query-ir.md:339-343`, `:607-609`): exhaustive key positions include `ArgMax(w, Duration(w))` / `ArgKey::Measure`.
+
+**Rust** (`crates/bumbledb/src/ir.rs:218-230`): `ArgKey::{Var, Measure}`. Conformance builder fences the shape (`crates/bumbledb-bench/src/conformance.rs:143-147`, `:1209-1210` `excluded_measure_arg_key`).
+
 ## Related
 - 211 (TypeScript surface also cannot express `ArgKey::Measure`)
 - 214 (other conformance fences)

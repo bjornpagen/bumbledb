@@ -33,4 +33,12 @@ Comments document the borrow. C++ AGENTS.md: owning structs do not contain borro
 
 ## Related
 - 101 (another stash-the-borrow)
-- 110 (clear on error makes this easier to hit)
+- 105 (clear/mutate-then-fail is a different boundary; execute wipe of prior answers is documented “cleared first”)
+
+## Verification (2026-08-12)
+
+**Verdict:** confirmed. Severity unchanged (medium).
+
+**Trace:** `answers_handle::cell` copies a `bdb_value` POD out of `bdb_answers_get` (`cpp/foreign/raii.cc:317-326`); comment: payloads BORROW this carrier. `text_of` / `bytes_span_of` wrap those raw pointers (`:48-62`). `decode_value` puts them in a copyable `std::variant` as `string_view` / `span<byte const>` (`cpp/src/answers/decode.cc:18-19, 50-61`). `AnswersRaw::cell` / `RowSet::cell` return `optional<Value>` (`answers.cc:49-56, 98-100`). `RowAnswers::row` builds a `Row` product from those views (`row.cc:15-17, 49-54`); `rows()` yields `Row` by value. Contrast: `error_handle::message()` / `violation()` copy into `std::string` because “the borrowed view dies with the error” (`raii.cc:123-132, 156-175`).
+
+**Why it holds:** `auto v = answers.cell({0,0}); answers.clear(); use(v);` is well-typed and is UAF of the Rust string/byte heap. Snapshot/WriteTx were made non-copyable to block this stash; `Value` is not named `*View` (AGENTS.md §12) and is copyable. Comments document the borrow; the type system does not.

@@ -30,3 +30,11 @@ Standard C out-param ownership; the header does not say “slot must be null.”
 
 ## Related
 - 104 (other leak-on-misuse paths)
+
+## Verification (2026-08-12)
+
+**Verdict:** confirmed. Severity unchanged (low).
+
+**Trace:** `store_error` (`cpp/bridge/src/lib.rs:135-151`): null out-param `from_raw`s the new error; else `*out_error = raw` with no `from_raw` of a previous pointer. Header: caller owns the written `bdb_error*` and must `bdb_error_destroy` (`cpp/foreign/bumbledb_c.h:8-14, 270-272`). raii always starts `bdb_error* error = nullptr` (`raii.cc:635` and siblings), so the dialect does not hit this.
+
+**Why it holds:** Two failing `bdb_db_open`s with one `bdb_error* err` and no destroy in between leak the first error (message `String`, violation spellings). The header does not say “slot must be null.” Not UAF unless the caller also keeps views into the first error; the leak is the defect.

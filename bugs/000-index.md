@@ -2,7 +2,7 @@
 
 - **Audit date:** 2026-08-12
 - **Scope:** entire codebase — FFI / lifetimes / unsafe; three-way Lean spec vs Rust vs normative docs; general correctness (engine, macros, persistence, C++ dialect)
-- **Status:** **open.** Nothing was fixed. This directory is a read-only finding dump. Coordinators and later work must treat every file as still live unless a later change explicitly closes it.
+- **Status:** **verified.** Nothing was fixed. Remaining finding files stay `open (do not fix)`. This directory is a read-only dump; coordinators and later work must treat every surviving file as still live unless a later change explicitly closes it.
 - **Layout:** flat directory only. No nested folders.
 
 ## How files are named
@@ -17,16 +17,43 @@ One finding per file. Combined machine list: [`_manifest-all.md`](_manifest-all.
 
 ## Disk vs manifests
 
-All three auditor manifests match files on disk. No finding file is missing, empty, or malformed.
+All three auditor manifests match files on disk. No surviving finding file is missing. Deleted ids 110, 118, 305, and 306 have no leftover files.
 
 | Auditor | Manifest ids | Files on disk | Match |
 |---|---|---|---|
-| FFI | 100–118 (19) | 19 | yes |
+| FFI | 100–109, 111–117 (17; no 110, 118) | 17 | yes |
 | Spec/docs/rust | 200–225 (26) | 26 | yes |
-| General | 301–307 (7; no 300) | 7 | yes |
-| **Total findings** | **52** | **52** | **yes** |
+| General | 301–304, 307–308 (6; no 305, 306) | 6 | yes |
+| **Total findings** | **49** | **49** | **yes** |
 
-Extra files in this directory (not findings): the three per-auditor manifests, this index, and `_manifest-all.md`.
+Extra files in this directory (not findings): the three per-auditor manifests, this index, [`_manifest-all.md`](_manifest-all.md), [`_rebuttals-ffi.md`](_rebuttals-ffi.md), and [`_rebuttals-general.md`](_rebuttals-general.md).
+
+## Deleted
+
+| Id | Area | Rebuttal |
+|---|---|---|
+| 110 | FFI | [`_rebuttals-ffi.md`](_rebuttals-ffi.md) — documented carrier-clear on execute is the warm-path contract, not a failure-transparency hole |
+| 118 | FFI | [`_rebuttals-ffi.md`](_rebuttals-ffi.md) — inbound view lifetimes are copied before return; no current escape |
+| 305 | general | [`_rebuttals-general.md`](_rebuttals-general.md) — scan `check_width` already reports the `F` row id |
+| 306 | general | [`_rebuttals-general.md`](_rebuttals-general.md) — `violation(i)` for `i < count` aborts, never returns empty |
+
+No spec deletions. No `_rebuttals-spec.md`. Ids 110, 118, 305, 306 are not reused.
+
+## New
+
+| Id | Sev | File |
+|---|---|---|
+| 308 | medium | [308-citation-decode-panics-on-short-fact.md](308-citation-decode-panics-on-short-fact.md) — `fact_by_row` skips `check_width`; citation decode panics on a short cited `F` value |
+
+No new FFI (119+) or spec (226+) ids.
+
+## Verification notes
+
+- FFI 107 and 113 confirmed, severity dropped medium → low.
+- FFI 116 rewritten (dropped same-thread nested aliasing; remaining claim is cross-thread).
+- Spec 210, 211, 224, 225 rewritten narrower; all still confirmed.
+- Spec 217 wrong-side unspecified → spec; 225 unspecified → split.
+- All 49 survivors are **confirmed**.
 
 ## Totals by severity
 
@@ -34,10 +61,10 @@ Extra files in this directory (not findings): the three per-auditor manifests, t
 |---|---:|---:|---:|---:|
 | critical | 1 | 0 | 0 | **1** |
 | high | 6 | 3 | 1 | **10** |
-| medium | 8 | 16 | 3 | **27** |
-| low | 3 | 7 | 2 | **12** |
+| medium | 5 | 16 | 4 | **25** |
+| low | 4 | 7 | 0 | **11** |
 | info | 1 | 0 | 1 | **2** |
-| **Total** | **19** | **26** | **7** | **52** |
+| **Total** | **17** | **26** | **6** | **49** |
 
 ## Totals by area
 
@@ -45,9 +72,9 @@ Area is the `area:` field in each finding file (not the id range).
 
 | Area | Count | Ids |
 |---|---:|---|
-| `ffi` | 19 | 100–118 |
+| `ffi` | 17 | 100–109, 111–117 |
 | `spec-docs-rust` | 26 | 200–225 |
-| `correctness` | 5 | 302–306 |
+| `correctness` | 4 | 302–304, 308 |
 | `persistence` | 1 | 301 |
 | `other` | 1 | 307 |
 
@@ -55,30 +82,26 @@ Spec findings also record **wrong-side** (which artifact is wrong, or a split):
 
 | Wrong-side | Count | Ids |
 |---|---:|---|
-| spec (Lean) | 8 | 201, 203, 207, 208, 213, 215, 220, 224 |
+| spec (Lean) | 9 | 201, 203, 207, 208, 213, 215, 217, 220, 224 |
 | docs | 7 | 202, 204, 205, 210, 216, 218, 221 |
-| split | 4 | 200, 209, 211, 219 |
-| unspecified | 5 | 214, 217, 222, 223, 225 |
+| split | 5 | 200, 209, 211, 219, 225 |
+| unspecified | 3 | 214, 222, 223 |
 | rust | 2 | 206, 212 |
 
 ## Totals by confidence
 
 | Confidence | FFI | Spec | General | Total |
 |---|---:|---:|---:|---:|
-| confirmed | 14 | 25 | 6 | **45** |
-| likely | 3 | 1 | 1 | **5** |
-| possible | 2 | 0 | 0 | **2** |
-| **Total** | **19** | **26** | **7** | **52** |
-
-Likely: [108](108-slice-in-count-overflow.md), [109](109-napi-take-handle-refcell-panic.md), [116](116-tx-ref-mut-from-ref-aliasing.md), [225](225-origin-and-result-bytes-overflow.md), [306](306-cpp-violations-silent-truncate.md).
-
-Possible: [113](113-cpp-exception-through-rust-callback.md), [118](118-inbound-view-unbounded-lifetime.md).
+| confirmed | 17 | 26 | 6 | **49** |
+| likely | 0 | 0 | 0 | **0** |
+| possible | 0 | 0 | 0 | **0** |
+| **Total** | **17** | **26** | **6** | **49** |
 
 ---
 
 ## Read this first
 
-Critical, then every high finding. One line each. **Status = open.**
+Critical, then every high finding. One line each. **Status = verified; nothing fixed.**
 
 ### Critical
 
@@ -101,7 +124,7 @@ Critical, then every high finding. One line each. **Status = open.**
 
 ## Full catalog
 
-Every finding. Status is **open** for all. Spec `wrong-side` is in parentheses under Area when present.
+Every surviving finding. Status is **open (do not fix)** for all. Spec `wrong-side` is in parentheses under Area when present.
 
 | Id | Sev | Conf | Area | Title | File |
 |---|---|---|---|---|---|
@@ -112,18 +135,16 @@ Every finding. Status is **open** for all. Spec `wrong-side` is in parentheses u
 | 104 | high | confirmed | ffi | `box_out` then failed `out()` leaks the `Box` (engine, row sets, prepared queries) | [104-box-out-null-outparam-leak.md](104-box-out-null-outparam-leak.md) |
 | 105 | high | confirmed | ffi | `bdb_db_bulk_load` can commit facts then return MISUSE if `out_committed` is null | [105-bulk-load-null-out-committed.md](105-bulk-load-null-out-committed.md) |
 | 106 | medium | confirmed | ffi | Node write-begin can permanently stick `tx_open` if `thread::spawn` panics | [106-napi-tx-open-stuck-on-spawn-panic.md](106-napi-tx-open-stuck-on-spawn-panic.md) |
-| 107 | medium | confirmed | ffi | Several `extern "C"` entry points skip `catch_unwind` despite the panic-into-C++ policy | [107-unguarded-extern-panic-wall.md](107-unguarded-extern-panic-wall.md) |
-| 108 | medium | likely | ffi | `slice_in` builds slices without rejecting `count*size` overflow or unaligned pointers | [108-slice-in-count-overflow.md](108-slice-in-count-overflow.md) |
-| 109 | medium | likely | ffi | NAPI `take_handle` uses `RefCell::borrow_mut` and panics into Node on re-entrant close | [109-napi-take-handle-refcell-panic.md](109-napi-take-handle-refcell-panic.md) |
-| 110 | medium | confirmed | ffi | Execute clears (and may partially refill) the answers carrier before the call can fail | [110-execute-clears-answers-on-error.md](110-execute-clears-answers-on-error.md) |
+| 107 | low | confirmed | ffi | Several `extern "C"` entry points skip `catch_unwind` despite the panic-into-C++ policy | [107-unguarded-extern-panic-wall.md](107-unguarded-extern-panic-wall.md) |
+| 108 | medium | confirmed | ffi | `slice_in` builds slices without rejecting `count*size` overflow or unaligned pointers | [108-slice-in-count-overflow.md](108-slice-in-count-overflow.md) |
+| 109 | medium | confirmed | ffi | NAPI `take_handle` uses `RefCell::borrow_mut` and panics into Node on re-entrant close | [109-napi-take-handle-refcell-panic.md](109-napi-take-handle-refcell-panic.md) |
 | 111 | medium | confirmed | ffi | C++ `cell()` returns a copyable `Value`/`bdb_value` that borrows the carrier with no lifetime | [111-cpp-answer-value-borrow-escape.md](111-cpp-answer-value-borrow-escape.md) |
 | 112 | high | confirmed | ffi | C ABI does not serialize `PreparedQuery`; concurrent execute is a data race on `!Sync` scratch | [112-c-abi-prepared-no-exclusive-lock.md](112-c-abi-prepared-no-exclusive-lock.md) |
-| 113 | medium | possible | ffi | A C++ exception escaping a read/write callback unwinds through Rust (UB) | [113-cpp-exception-through-rust-callback.md](113-cpp-exception-through-rust-callback.md) |
+| 113 | low | confirmed | ffi | A C++ exception escaping a read/write callback unwinds through Rust (UB) | [113-cpp-exception-through-rust-callback.md](113-cpp-exception-through-rust-callback.md) |
 | 114 | low | confirmed | ffi | `store_error` overwrites a live `bdb_error*` without freeing it | [114-store-error-overwrites-without-free.md](114-store-error-overwrites-without-free.md) |
 | 115 | info | confirmed | ffi | Unit test `stale_snapshot_ref_is_misuse` is itself use-after-free | [115-stale-ref-test-is-uaf.md](115-stale-ref-test-is-uaf.md) |
-| 116 | medium | likely | ffi | `bdb_tx_ref::transaction` yields `&mut WriteTx` from `&self`; nested FFI entries alias it | [116-tx-ref-mut-from-ref-aliasing.md](116-tx-ref-mut-from-ref-aliasing.md) |
+| 116 | medium | confirmed | ffi | `bdb_tx_ref::transaction` yields `&mut WriteTx` from `&self`; cross-thread use aliases it | [116-tx-ref-mut-from-ref-aliasing.md](116-tx-ref-mut-from-ref-aliasing.md) |
 | 117 | low | confirmed | ffi | Moved-from C++ `error_handle::kind()` returns Panic instead of aborting | [117-moved-from-error-kind-is-panic.md](117-moved-from-error-kind-is-panic.md) |
-| 118 | low | possible | ffi | Inbound `bdb_string_view::as_str` fabricates an unbounded lifetime from a raw pointer | [118-inbound-view-unbounded-lifetime.md](118-inbound-view-unbounded-lifetime.md) |
 | 200 | high | confirmed | spec-docs-rust (split) | C20 write-time ray refusal vs Lean empty-parent vacuity | [200-c20-ray-weight-absent-parent.md](200-c20-ray-weight-absent-parent.md) |
 | 201 | high | confirmed | spec-docs-rust (spec) | `ArgKey::Measure` exists in Rust and docs, not in Lean `AggOp` | [201-argkey-measure-missing-from-lean.md](201-argkey-measure-missing-from-lean.md) |
 | 202 | high | confirmed | spec-docs-rust (docs) | Cookbook claims executor elides cross-rule dedup; execution never does | [202-cookbook-claims-disjoint-dedup-elision.md](202-cookbook-claims-disjoint-dedup-elision.md) |
@@ -141,7 +162,7 @@ Every finding. Status is **open** for all. Spec `wrong-side` is in parentheses u
 | 214 | medium | confirmed | spec-docs-rust (unspecified) | Conformance third oracle fences shapes Lean and the engine already denote | [214-conformance-fences-shipped-shapes.md](214-conformance-fences-shipped-shapes.md) |
 | 215 | low | confirmed | spec-docs-rust (spec) | Non-final interval FD is pointwise in Lean, refused in Rust | [215-functionality-interval-not-last.md](215-functionality-interval-not-last.md) |
 | 216 | low | confirmed | spec-docs-rust (docs) | README type table omits `interval<E, w>` | [216-readme-omits-fixed-width-interval.md](216-readme-omits-fixed-width-interval.md) |
-| 217 | low | confirmed | spec-docs-rust (unspecified) | Closed-relation 256-axiom cap is engine law; Lean `GroundExtension` is unbounded | [217-closed-roster-cap-unmodeled.md](217-closed-roster-cap-unmodeled.md) |
+| 217 | low | confirmed | spec-docs-rust (spec) | Closed-relation 256-axiom cap is engine law; Lean `GroundExtension` is unbounded | [217-closed-roster-cap-unmodeled.md](217-closed-roster-cap-unmodeled.md) |
 | 218 | medium | confirmed | spec-docs-rust (docs) | 70-api write-error roster omits `CapacityRayMeasure` | [218-api-roster-omits-capacity-ray-measure.md](218-api-roster-omits-capacity-ray-measure.md) |
 | 219 | medium | confirmed | spec-docs-rust (split) | Fact identity is canonical bytes in Lean, blake3 of those bytes in the store | [219-hash-equality-vs-canonical-bytes.md](219-hash-equality-vs-canonical-bytes.md) |
 | 220 | medium | confirmed | spec-docs-rust (spec) | Lean Duration weight of a ray is 0; engine refuses the commit | [220-capacity-ray-junk-zero.md](220-capacity-ray-junk-zero.md) |
@@ -149,14 +170,13 @@ Every finding. Status is **open** for all. Spec `wrong-side` is in parentheses u
 | 222 | low | confirmed | spec-docs-rust (unspecified) | Lean `scanLoad` is one judgment; `bulk_load` is a sequence of 4096-fact commits | [222-bulk-load-chunking-vs-scanload.md](222-bulk-load-chunking-vs-scanload.md) |
 | 223 | low | confirmed | spec-docs-rust (unspecified) | Schema fingerprint bytes are engine/docs law; Lean has no hash of a theory | [223-schema-fingerprint-unmodeled.md](223-schema-fingerprint-unmodeled.md) |
 | 224 | medium | confirmed | spec-docs-rust (spec) | `membership_lowering_preserves` assumes membership-free negation; the engine does not | [224-membership-lowering-excludes-negated.md](224-membership-lowering-excludes-negated.md) |
-| 225 | low | likely | spec-docs-rust (unspecified) | `OriginOverflow` and `ResultBytesOverflow` are runtime errors Lean does not denote | [225-origin-and-result-bytes-overflow.md](225-origin-and-result-bytes-overflow.md) |
+| 225 | low | confirmed | spec-docs-rust (split) | `OriginOverflow` and `ResultBytesOverflow` are runtime errors Lean does not denote | [225-origin-and-result-bytes-overflow.md](225-origin-and-result-bytes-overflow.md) |
 | 301 | high | confirmed | persistence | Escaped fresh-ID flush failures are silently discarded | [301-escaped-fresh-id-flush-swallowed.md](301-escaped-fresh-id-flush-swallowed.md) |
 | 302 | medium | confirmed | correctness | Fresh-row `F` conflict returns early and skips other key violations | [302-fresh-f-conflict-skips-other-keys.md](302-fresh-f-conflict-skips-other-keys.md) |
 | 303 | medium | confirmed | correctness | `query!` interval literals emit a two-argument `Value::Interval*` constructor | [303-query-macro-interval-literal-arity.md](303-query-macro-interval-literal-arity.md) |
 | 304 | medium | confirmed | correctness | `CommitRejected` can be replaced by a later `read_txn` / decode error | [304-commit-rejected-masked-by-decode.md](304-commit-rejected-masked-by-decode.md) |
-| 305 | low | confirmed | correctness | Image decode reports scan ordinal as LMDB row id in `WrongFactWidth` | [305-wrong-fact-width-reports-scan-ordinal.md](305-wrong-fact-width-reports-scan-ordinal.md) |
-| 306 | low | likely | correctness | C++ `Error::violations()` silently truncates a partial citation list | [306-cpp-violations-silent-truncate.md](306-cpp-violations-silent-truncate.md) |
 | 307 | info | confirmed | other | `S` row-count arithmetic overflow is always labeled “underflow” | [307-s-row-count-overflow-mislabeled.md](307-s-row-count-overflow-mislabeled.md) |
+| 308 | medium | confirmed | correctness | Citation decode panics on a short cited `F` value | [308-citation-decode-panics-on-short-fact.md](308-citation-decode-panics-on-short-fact.md) |
 
 ---
 
@@ -179,13 +199,12 @@ Nearby: [109](109-napi-take-handle-refcell-panic.md) (same NAPI handles, panicki
 - [115](115-stale-ref-test-is-uaf.md) — the unit test that “proves” 101 is itself UAF (green-wash). Not a second product bug; do not cite the test as evidence 101 works.
 - [102](102-destroy-db-during-callback-uaf.md) — destroy/move of `Db` *during* the callback; C++ `Snapshot` also borrows `manifest_`.
 
-Nearby: [111](111-cpp-answer-value-borrow-escape.md) (stash-the-borrow), [118](118-inbound-view-unbounded-lifetime.md) (lifetime lie, currently copied).
+Nearby: [111](111-cpp-answer-value-borrow-escape.md) (stash-the-borrow).
 
-### 3. `out()` after side effect (104, 105, 110)
+### 3. `out()` after side effect (104, 105)
 
 - [104](104-box-out-null-outparam-leak.md) — mint `Box`, then null `out()` leaks it.
 - [105](105-bulk-load-null-out-committed.md) — durable import, then MISUSE if `out_committed` is null.
-- [110](110-execute-clears-answers-on-error.md) — carrier cleared/partially filled before failure (C++ `execute_into` vs AGENTS.md failure-transparency).
 
 Nearby: [114](114-store-error-overwrites-without-free.md) (overwrite leak), [222](222-bulk-load-chunking-vs-scanload.md) (chunked bulk_load vs one-shot Lean `scanLoad`).
 
@@ -202,7 +221,7 @@ Same durability story, three angles. **Not duplicates.**
 - [200](200-c20-ray-weight-absent-parent.md) — absent parent: Lean/docs no-op vs engine C20 refuse (**high**, split).
 - [220](220-capacity-ray-junk-zero.md) — present parent: Lean junk-0 vs engine `CapacityRayMeasure`.
 - [218](218-api-roster-omits-capacity-ray-measure.md) — 70-api write-error roster omits the typed error.
-- [210](210-measure-of-ray-not-the-only-runtime-error.md) — “one runtime type error” slogan + 70-api query roster incomplete (`MeasureOfRay`, Overflow, budget, …).
+- [210](210-measure-of-ray-not-the-only-runtime-error.md) — “one runtime type error” slogan + 70-api query roster omits `MeasureOfRay`; write-path twin is `CapacityRayMeasure`.
 
 ### 6. ArgKey::Measure (201, 211, 214)
 
@@ -231,15 +250,15 @@ Lean judgments broader than engine gates.
 
 ### 10. Negation / membership unmodeled or fenced (214, 224, 221)
 
-- [224](224-membership-lowering-excludes-negated.md) — Bridge-cited `membership_lowering_preserves` requires membership-free negation; engine runs `AntiProbe`.
+- [224](224-membership-lowering-excludes-negated.md) — named `membership_lowering_preserves` requires membership-free negation; engine runs `AntiProbe`.
 - [214](214-conformance-fences-shipped-shapes.md) — corpus drops negated membership (and set membership, measure Arg).
 - [221](221-negated-complement-fold-unmodeled.md) — prepare-time complement fold.
 
 ### 11. Engine incompleteness vs Lean eval (206, 225, 210)
 
 - [206](206-fixpoint-budget-incompleteness.md) — `FixpointBudgetExceeded` vs `program_eval_sound`.
-- [225](225-origin-and-result-bytes-overflow.md) — `OriginCapacity` / `ResultBytesOverflow`; Lean still denotes the tuples.
-- [210](210-measure-of-ray-not-the-only-runtime-error.md) — roster that should list these.
+- [225](225-origin-and-result-bytes-overflow.md) — `OriginCapacity` / `ResultBytesOverflow`; Lean still denotes the tuples; 70-api/40-execution understate.
+- [210](210-measure-of-ray-not-the-only-runtime-error.md) — roster that should list `MeasureOfRay` (and the write-path twin).
 
 ### 12. Documented MISUSE, actual UB (103, 108)
 
@@ -248,31 +267,29 @@ Lean judgments broader than engine gates.
 
 ### 13. Panic / exception walls (107, 113, 109, 117)
 
-- [107](107-unguarded-extern-panic-wall.md) — scalar accessors skip `guard`/`catch_unwind`.
-- [113](113-cpp-exception-through-rust-callback.md) — C++ throw through Rust (in-tree `-fno-exceptions`; mixed-TU hazard).
+- [107](107-unguarded-extern-panic-wall.md) — scalar accessors skip `guard`/`catch_unwind` (**low**; no current panic site).
+- [113](113-cpp-exception-through-rust-callback.md) — C++ throw through Rust (**low**; in-tree `-fno-exceptions`; mixed-TU hazard).
 - [109](109-napi-take-handle-refcell-panic.md) — panicking `borrow_mut` into napi.
 - [117](117-moved-from-error-kind-is-panic.md) — moved-from `kind()` impersonates `PANIC`.
 
-### 14. C++ dialect vs FFI (111, 113, 117, 102, 306, 110)
+### 14. C++ dialect vs FFI (111, 113, 117, 102)
 
 C++ SDK issues that sit next to, but are not the same as, the C ABI holes.
 
 - [111](111-cpp-answer-value-borrow-escape.md) — `Value` holds `string_view`/`span` into the carrier.
 - [102](102-destroy-db-during-callback-uaf.md) — `std::move(db)` inside `read`.
-- [110](110-execute-clears-answers-on-error.md) — dialect `execute_into` vs AGENTS.md §26.
 - [113](113-cpp-exception-through-rust-callback.md), [117](117-moved-from-error-kind-is-panic.md).
-- [306](306-cpp-violations-silent-truncate.md) — `Error::violations()` breaks on a mid-list empty fetch (wrapper completeness, not UAF).
 
-### 15. Incomplete `CommitRejected` / citation sets (302, 304, 306, 212)
+### 15. Incomplete `CommitRejected` / citation sets (302, 304, 308, 212)
 
-Same *host diagnosis* contract (complete sealed violation set), three implementations plus a wrong comment.
+Same *host diagnosis* contract (complete sealed violation set), engine paths plus a wrong comment.
 
 - [302](302-fresh-f-conflict-skips-other-keys.md) — occupied fresh `F` records only the auto-key and skips other Functionality keys.
 - [304](304-commit-rejected-masked-by-decode.md) — citation decode `?` can replace `CommitRejected` with `ReadersFull`/`Corruption`.
-- [306](306-cpp-violations-silent-truncate.md) — C++ list can return a prefix with no error.
+- [308](308-citation-decode-panics-on-short-fact.md) — `fact_by_row` skips `check_width`; a short cited `F` panics instead of `Corruption` / a sealed set.
 - [212](212-commitrejected-all-containment-comment.md) — public error comment says all-containment; statement phase mixes capacity (comment-only; runtime sealing matches Lean).
 
-304 and 301 share the abort-path `write.rs` block (`flush` then decode).
+304, 308, and 301 share the abort/commit-path `write.rs` block (`flush` then decode).
 
 ### 16. Encoding / identity (209, 219, 216)
 
@@ -280,13 +297,8 @@ Same *host diagnosis* contract (complete sealed violation set), three implementa
 - [219](219-hash-equality-vs-canonical-bytes.md) — Lean identity is canonical bytes; store membership is blake3 (collision axiom).
 - [216](216-readme-omits-fixed-width-interval.md) — README type table missing `interval<E, w>`.
 
-### 17. Lifetime fabrication (118, 100, 101)
-
-- [118](118-inbound-view-unbounded-lifetime.md) — caller-chosen `'a` on inbound views; sound today only because inbound copies. Same shape as old Node `&'static Snapshot`.
-- [100](100-napi-prepared-cross-thread-aliasing.md), [101](101-stale-snapshot-ref-is-stack-uaf.md) — the lies that *do* escape.
-
 ---
 
 ## Explicit: nothing was fixed
 
-Every finding file has `status: open (do not fix)`. This index and the manifests do not close, downgrade, or merge any item. Source trees were not modified as part of this audit.
+Every surviving finding file has `status: open (do not fix)`. Verification deleted four ids (see rebuttals), downgraded 107 and 113, rewrote 116 / 210 / 211 / 224 / 225, and added 308. Product source trees were not modified as part of this audit.

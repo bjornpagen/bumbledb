@@ -1,7 +1,7 @@
 # slice_in builds slices without rejecting count*size overflow or unaligned pointers
 - id: 108
 - severity: medium
-- confidence: likely
+- confidence: confirmed
 - area: ffi
 - components: cpp/bridge/src/lib.rs, cpp/bridge/src/value.rs, cpp/bridge/src/schema.rs, cpp/bridge/src/query.rs
 - status: open (do not fix)
@@ -26,3 +26,11 @@ Header: views are `(pointer, count)` with count naming the allocation. Mis-sized
 
 ## Related
 - 103 (same “documented MISUSE, actual UB” pattern for tags)
+
+## Verification (2026-08-12)
+
+**Verdict:** confirmed (was `likely`). Severity unchanged (medium).
+
+**Trace:** `slice_in` (`cpp/bridge/src/lib.rs:189-207`): `count == 0` → `&[]`; null + nonzero → `Misuse`; else `from_raw_parts(ptr, count)` with no `count.checked_mul(size_of::<T>())` vs `isize::MAX` and no alignment check. Call sites include bulk `bdb_row_view` lists (`db.rs:787`), every IR graph (`query.rs:268, 379, 387-399, 409-424`), schema `relation_count` (`schema.rs:427`), `row_in` of `bdb_value` (`value.rs:174-175`). `bdb_value` is a large `repr(C)` struct; `count = SIZE_MAX` fails the `isize` rule on 64-bit without touching the allocation.
+
+**Why it holds:** `from_raw_parts` preconditions are language UB at slice construction, not at first index. The helper already treats some contract breaks as `Misuse`, so overflow/misalignment are the same class left incomplete. A C `size_t` wrap or a byte-offset pointer is enough; C++ `span` wrappers still pass `.data()/.size()` into this helper.

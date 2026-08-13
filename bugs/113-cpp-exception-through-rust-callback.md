@@ -1,7 +1,7 @@
 # A C++ exception escaping a read/write callback unwinds through Rust (UB)
 - id: 113
-- severity: medium
-- confidence: possible
+- severity: low
+- confidence: confirmed
 - area: ffi
 - components: cpp/bridge/src/db.rs, cpp/bridge/src/lib.rs, cpp/foreign/raii.cc, cpp/AGENTS.md
 - status: open (do not fix)
@@ -30,3 +30,11 @@ from inside `bdb_db_write`. Expect process abort or corrupted LMDB, not `BDB_ERR
 
 ## Related
 - 107 (Rust panic wall holes)
+
+## Verification (2026-08-12)
+
+**Verdict:** confirmed (was `possible`). **Severity downgraded medium → low:** in-tree C++ is `-fno-exceptions`, so cookbook/SDK TUs cannot throw. The gap is the published C ABI callable from a throw-enabled TU.
+
+**Trace:** `call_read_callback` / `call_write_callback` are `unsafe { callback(context, ptr) }` with no foreign try (impossible in the Rust TU) (`cpp/bridge/src/db.rs:252-287`). `guard` is `catch_unwind` only (`lib.rs:114-129`). Production dialect: `-fno-exceptions` (`cpp/AGENTS.md` §11). Header `bdb_read_callback` / `bdb_write_callback` do not say “must not throw.” A C++ plugin compiled with exceptions can `throw` from inside `bdb_db_write`.
+
+**Why it holds:** Foreign exceptions through Rust `extern "C"` are UB (nomicon). `catch_unwind` cannot catch them. Drop of `WriteTx` / escaped-fresh-id burn during a C++ unwind is the dangerous part. The panic wall was built for this class of crossing and only covers `panic!`. This is not the in-tree happy path; it is a real published-ABI hole.

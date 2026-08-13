@@ -22,6 +22,15 @@ Silent. `Txn.WriteResult` is `ok | violations | generationMoved`. Capacity rays 
 ## Why this matters
 Error-handling code generated from 70-api will treat `CapacityRayMeasure` as an unexpected `Error` variant (or map it to Corruption). The distinction "undefined measure vs false law" is the C10/C20 design; the public API doc drops it.
 
+## Verification (2026-08-12)
+Re-read the 70-api write roster, C10/C20 docs, and `Error::CapacityRayMeasure`. **Confirmed.** Stronger than filed: `rg CapacityRayMeasure docs/architecture` is empty (C10 in `30-dependencies.md:256-258` does not name the constructor). `wrong-side: docs`. Lean is silent (no such write-result constructor).
+
+**Lean:** Silent. `Txn.WriteResult` is `ok | violations | generationMoved`. Capacity rays are junk-0 / C10-as-mechanism (`Capacity.lean:87-92`).
+
+**Docs:** `docs/architecture/70-api.md:838-849` write errors: `CommitRejected`, `GenerationMoved`, `ForeignSnapshot`, `FreshExhausted`, `FactShape`, `Corruption`, `Io`/`Lmdb`. Design record `docs/design/capacity-laws.md:411-423` names the engine pin, not the public API type.
+
+**Rust** (`crates/bumbledb/src/error.rs:1488-1497`): `CapacityRayMeasure { statement, fact }` — “never a violation (the law is not judged false; its measure is undefined).” Raised from `interval_measure` (`judgment.rs:228-240`) at plan or judge.
+
 ## Related
 - 200 (C20 behavioral split)
 - 210 (runtime roster also incomplete)

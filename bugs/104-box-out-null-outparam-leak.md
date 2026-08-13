@@ -34,3 +34,11 @@ Header: MISUSE means “no error is allocated.” It does not say “the operati
 ## Related
 - 105 (bulk_load commits then fails the out-param)
 - 102 (handle lifetime)
+
+## Verification (2026-08-12)
+
+**Verdict:** confirmed. Severity unchanged (high).
+
+**Trace:** `box_out` is `Box::into_raw(Box::new(value))` (`cpp/bridge/src/lib.rs:231-233`). `out` on null takes `value: T` by value and returns `Fail::Misuse` (`:211-214`); `T` here is `*mut bdb_db` / `*mut bdb_prepared` / `*mut bdb_row_set`, so drop does not `from_raw`. `open_with` always mints a live `bdb_db` then `out(out_db, box_out(...))?` (`db.rs:312-319`) — same after a successful `Db::create`/`open`/`ephemeral`. Same pattern: `bdb_db_prepare` (`query.rs:486-492`), `bdb_snapshot_scan` (`db.rs:757`), Some-branch of `bdb_tx_get` / `bdb_snapshot_get` (`:638-644, 724-729`). C++ wrappers pass a real `T**`; the leak is the public C ABI null-required-pointer path the header still defines as MISUSE.
+
+**Why it holds:** MISUSE is supposed to allocate no error object, not leave an immortal LMDB env/lock. A null `out_db` after a successful open is a programming error the ABI explicitly classifies as MISUSE, so the engine work must not `into_raw` before the out-param is checked (or the raw pointer must be `from_raw`’d on that error).

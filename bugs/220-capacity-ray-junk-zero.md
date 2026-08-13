@@ -32,6 +32,15 @@ def Value.durationNat : Value → Nat
 ## Why this matters
 A Lean `holds` / `capacityB` run on a ray-weighted instance can accept (weight 0 in window) or reject (floor missed) while the engine refuses with a non-violation error. Conformance judgment cases that include rays must special-case the engine error or they compare junk-0 to a typed abort. Combined with 200, both the absent-parent and present-parent ray cells diverge.
 
+## Verification (2026-08-12)
+Re-read `durationNat`, C10 docs, and `interval_measure`. **Confirmed.** Distinct from 200 (that cell is absent parent / C20). Here a parent *is* present: Lean still junk-0s the ray; the engine never forms the measure. `wrong-side: spec`.
+
+**Lean** (`lean/Bumbledb/Capacity.lean:448-461`): `durationNat` uses `iv.measure.getD 0`. `measure_ray_none` (`Values.lean:258-264`) is `none`; the capacity layer collapses `none` to 0. C10 is recorded as unobservable on judged commits (`Capacity.lean:87-92`).
+
+**Docs** (`docs/architecture/30-dependencies.md:256-258`): C10 typed commit refusal, not a 0 weight. `capacity-laws.md` C10/C20: undefined, never silent MAX, never a violation.
+
+**Rust** (`crates/bumbledb/src/storage/commit/judgment.rs:228-240`): `end == u64::MAX` → `Err(CapacityRayMeasure)`, no `end - start`. Naive twin: `Violation::CapacityRayMeasure` before measure folds.
+
 ## Related
 - 200 (absent parent)
 - 218 (error not in 70-api roster)

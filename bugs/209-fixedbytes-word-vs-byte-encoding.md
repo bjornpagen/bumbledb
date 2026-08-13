@@ -28,5 +28,14 @@ abbrev FixedBytes (n : Nat) : Type := { l : List Word // l.length = n }
 ## Why this matters
 Anyone treating Lean `encodeAt` as the on-disk layout will mis-size `bytes<9>` (Lean: 9 words; Rust: 16 stored bytes, 9 value bytes). Fact-hash and determinant keys are over the padded byte encoding. Query-level value equality via conformance JSON still aligns; storage-level identity does not refine.
 
+## Verification (2026-08-12)
+Re-read `FixedBytes` / `encodeAt`, the data-model encoding table, and `fixed_bytes_words`. **Confirmed.** `wrong-side: split`: Lean models N abstract words with pad invisible; docs and Rust store N raw bytes padded to `⌈N/8⌉×8`. Lean (`Values.lean:48-55`) disclaims byte layouts, so this is a refinement gap, not a silent contradiction in the math — still a real encode-length mismatch for anyone reading `encodeAt` as `fact_bytes`.
+
+**Lean** (`lean/Bumbledb/Values.lean:525-527`, `:551-556`): `FixedBytes n` is `{ l : List Word // l.length = n }`; `encodeAt .fixedBytes _ bs => bs.val`. Conformance JSON maps one byte → one Word (`Conformance.lean:247-249`). `n` is total over ℕ; Rust is `1..=64` (`Values.lean:78-82`).
+
+**Docs** (`docs/architecture/10-data-model.md:14-16`, `:489-490`): `Bytes(N), N ∈ 1..=64` is “the N raw bytes, zero-padded to the word boundary”.
+
+**Rust** (`crates/bumbledb/src/encoding.rs:45-50`, `:97-101`): `MAX_FIXED_BYTES = 64`; `fixed_bytes_words(len) = ⌈len/8⌉`; `FixedBytesValue::padded` returns that many bytes.
+
 ## Related
 - 219 (hash identity vs canonical-bytes identity)
