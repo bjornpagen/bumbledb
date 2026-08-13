@@ -688,7 +688,7 @@ fn membership(term: &Term, anchored: &[bool], params: &[ParamValue]) -> bool {
 }
 
 /// One rule after the membership lowering: rewritten positive atoms,
-/// negated atoms left in SURFACE form (Lean AntiProbe /
+/// negated atoms left in SURFACE form (Lean `AntiProbe` /
 /// `surfaceMatchesB` reads membership there), the original conditions
 /// plus the lowered `PointIn` leaves, and the SURFACE WIDTH — the
 /// written rule's variable count, below the fresh mints, so the Lean
@@ -704,7 +704,7 @@ struct LoweredRule<'a> {
 /// Performs the bivalent resolution the validator owns: element-typed
 /// terms on interval fields become fresh interval variables plus
 /// `PointIn` conditions (module doc, "the membership lowering").
-fn lower_rule<'a>(rule: &'a Rule, params: &[ParamValue]) -> Result<LoweredRule<'a>, Exclusion> {
+fn lower_rule<'a>(rule: &'a Rule, params: &[ParamValue]) -> LoweredRule<'a> {
     let var_count = count_vars(rule);
     let anchored = scalar_anchors(rule, var_count);
     let mut fresh = var_count;
@@ -731,13 +731,13 @@ fn lower_rule<'a>(rule: &'a Rule, params: &[ParamValue]) -> Result<LoweredRule<'
             bindings,
         });
     }
-    Ok(LoweredRule {
+    LoweredRule {
         finds: &rule.finds,
         atoms,
         negated: &rule.negated,
         conditions,
         width: var_count,
-    })
+    }
 }
 
 /// The relations a lowered query mentions, positive and negated — the
@@ -821,7 +821,7 @@ fn render_case(
         .rules
         .iter()
         .map(|rule| lower_rule(rule, params))
-        .collect::<Result<_, _>>()?;
+        .collect();
 
     // The query block.
     let mut query_block = String::from("{\"rules\":[\n");
@@ -1754,8 +1754,7 @@ mod tests {
             ],
         ] {
             let additive = rule(finds);
-            let lowered = lower_rule(&additive, &[])
-                .expect("an additive fold over a fired lowering is licensed (087)");
+            let lowered = lower_rule(&additive, &[]);
             assert_eq!(lowered.width, 1, "the surface width excludes the mint");
             assert_eq!(
                 lowered.conditions.len(),
@@ -1767,23 +1766,21 @@ mod tests {
         // The always-licensed shapes are unchanged: the set-semantics
         // projection (membership_lowering_preserves' own regime) …
         let projection = rule(vec![FindTerm::Var(VarId(0))]);
-        let lowered =
-            lower_rule(&projection, &[]).expect("the set-semantics projection is licensed");
+        let lowered = lower_rule(&projection, &[]);
         assert_eq!(
             lowered.conditions.len(),
             1,
             "the lowering fired: one PointIn condition"
         );
         // … a set-reading fold (insensitive to the binding split) …
-        assert!(
-            lower_rule(
-                &rule(vec![FindTerm::Aggregate {
-                    op: AggOp::Max,
-                    over: Some(VarId(0)),
-                }]),
-                &[]
-            )
-            .is_ok(),
+        let max_rule = rule(vec![FindTerm::Aggregate {
+            op: AggOp::Max,
+            over: Some(VarId(0)),
+        }]);
+        let max = lower_rule(&max_rule, &[]);
+        assert_eq!(
+            max.conditions.len(),
+            1,
             "Max reads the value set — insensitive, not fenced"
         );
         // … and an additive fold whose rule has NO fired lowering
@@ -1807,7 +1804,7 @@ mod tests {
             conditions: vec![],
         };
         assert!(
-            lower_rule(&no_membership, &[]).is_ok(),
+            lower_rule(&no_membership, &[]).conditions.is_empty(),
             "Count without a fired lowering stays expressible"
         );
     }
@@ -1865,7 +1862,7 @@ mod tests {
     /// THE three-way comparator (the PRD's test): for each corpus case,
     /// the engine fresh and the naive model fresh (byte-held to the
     /// checked-in file), then `lake exe conformance` — the Lean
-    /// denotation, join + surface anti-join / AntiProbe — over the same files.
+    /// denotation, join + surface anti-join / `AntiProbe` — over the same files.
     /// Any disagreement names the case file. Ignored in the plain
     /// workspace run because it needs the Lean toolchain;
     /// `scripts/lean.sh` runs it with `--ignored` after the corpus

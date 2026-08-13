@@ -83,9 +83,9 @@ parameter that merely checks values would be a CHECK constraint
 * **Storage membership is blake3 of `fact_bytes`, not encoding
   equality.** `value_eq_iff_encode_eq` is Lean identity. The store
   treats hash equality as fact equality — collisions are an accepted
-  axiom (`10-data-model.md`, `50-storage.md`); a blake3 collision
-  unifies two Lean-distinct facts. Hashing is extra-theoretic
-  mechanism this module does not own (`lean/README.md`).
+  extra-theoretic assumption (`10-data-model.md`, `50-storage.md`); a
+  blake3 collision unifies two Lean-distinct facts. Hashing is
+  extra-theoretic mechanism this module does not own (`lean/README.md`).
 * **The fixed-width carrier is concrete per element domain**
   (`FixedU64`/`FixedI64`), like `encode_interval_order`: the two real
   domains cost less than an abstract order-embedding class. The
@@ -588,8 +588,8 @@ two values are equal exactly when their canonical encodings are —
 the fact-identity law. Stated per type, because cross-type injectivity
 is deliberately FALSE (a str intern id and a u64 encode alike; the
 column type disambiguates). Storage implements membership as blake3
-of these bytes; hash equality is treated as fact equality (collision
-axiom — extra-theoretic). Bridge:
+of these bytes; hash equality is treated as fact equality (a collision
+is extra-theoretic). Bridge:
 `crate::encoding::encode::encode_literal` / `encode_fact`. -/
 theorem value_eq_iff_encode_eq (t : ValueType) (a b : t.carrier) :
     a = b ↔ encodeAt t a = encodeAt t b := by

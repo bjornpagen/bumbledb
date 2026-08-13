@@ -500,8 +500,8 @@ class db_handle {
 
 	struct live_callback_guard {
 		std::size_t& count;
-		explicit live_callback_guard(std::size_t& count) : count{count} {
-			++count;
+		explicit live_callback_guard(std::size_t& live) : count{live} {
+			++live;
 		}
 		~live_callback_guard() {
 			--count;

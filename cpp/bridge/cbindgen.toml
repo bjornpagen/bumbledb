@@ -58,6 +58,29 @@ header = """
  */"""
 
 [export]
+# Tag enumerations are named constants for C++ (`abi_tag`); wire fields
+# are u32 so an out-of-range C enum is MISUSE rather than UB. cbindgen
+# drops unused types, so the tags must be forced into the header.
+include = [
+    "bdb_value_kind",
+    "bdb_param_kind",
+    "bdb_value_type_kind",
+    "bdb_interval_element",
+    "bdb_literal_kind",
+    "bdb_statement_spec_kind",
+    "bdb_literal_set_kind",
+    "bdb_weight_kind",
+    "bdb_capacity_window_kind",
+    "bdb_bound_kind",
+    "bdb_callback_control",
+    "bdb_head_term_kind",
+    "bdb_head_op",
+    "bdb_find_term_kind",
+    "bdb_atom_source_kind",
+    "bdb_term_kind",
+    "bdb_condition_kind",
+    "bdb_cmp_op_kind",
+]
 # The ref-only capability types are opaque to C by design (§14): the
 # bridge never lets the caller construct or destroy one. The exception
 # trampoline is linked from the staticlib, not a public C entry.

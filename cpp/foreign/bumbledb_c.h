@@ -103,6 +103,153 @@ typedef enum bdb_violation_direction {
   BDB_VIOLATION_DIRECTION_TARGET_REQUIRED,
 } bdb_violation_direction;
 
+// The value tag — one constant per `bumbledb::Value` variant.
+typedef enum bdb_value_kind {
+  BDB_VALUE_KIND_BOOL,
+  BDB_VALUE_KIND_U64,
+  BDB_VALUE_KIND_I64,
+  BDB_VALUE_KIND_STRING,
+  BDB_VALUE_KIND_FIXED_BYTES,
+  BDB_VALUE_KIND_INTERVAL_U64,
+  BDB_VALUE_KIND_INTERVAL_I64,
+} bdb_value_kind;
+
+// The execute-parameter tag: a scalar (a [`bdb_value`]) or a param set
+// (a value array — points only; the engine types the elements).
+typedef enum bdb_param_kind {
+  BDB_PARAM_KIND_SCALAR,
+  BDB_PARAM_KIND_SET,
+} bdb_param_kind;
+
+// The structural value-type tag (`bumbledb::schema::ValueType`, spelled
+// C).
+typedef enum bdb_value_type_kind {
+  BDB_VALUE_TYPE_KIND_BOOL,
+  BDB_VALUE_TYPE_KIND_U64,
+  BDB_VALUE_TYPE_KIND_I64,
+  BDB_VALUE_TYPE_KIND_STRING,
+  BDB_VALUE_TYPE_KIND_FIXED_BYTES,
+  BDB_VALUE_TYPE_KIND_INTERVAL,
+} bdb_value_type_kind;
+
+// An interval's element domain.
+typedef enum bdb_interval_element {
+  BDB_INTERVAL_ELEMENT_U64,
+  BDB_INTERVAL_ELEMENT_I64,
+} bdb_interval_element;
+
+// A literal's tag: a plain tagged value, or a closed relation's handle
+// by name.
+typedef enum bdb_literal_kind {
+  BDB_LITERAL_KIND_VALUE,
+  BDB_LITERAL_KIND_HANDLE,
+} bdb_literal_kind;
+
+// A statement's form tag.
+typedef enum bdb_statement_spec_kind {
+  BDB_STATEMENT_SPEC_KIND_FD,
+  BDB_STATEMENT_SPEC_KIND_CONTAINMENT,
+  BDB_STATEMENT_SPEC_KIND_CAPACITY,
+} bdb_statement_spec_kind;
+
+// A σ binding's right side: one literal or a literal set (read
+// disjunctively).
+typedef enum bdb_literal_set_kind {
+  BDB_LITERAL_SET_KIND_ONE,
+  BDB_LITERAL_SET_KIND_MANY,
+} bdb_literal_set_kind;
+
+// A capacity weight's tag.
+typedef enum bdb_weight_kind {
+  BDB_WEIGHT_KIND_UNIT,
+  BDB_WEIGHT_KIND_FIELD,
+  BDB_WEIGHT_KIND_DURATION_FIELD,
+} bdb_weight_kind;
+
+// A capacity window's tag.
+typedef enum bdb_capacity_window_kind {
+  BDB_CAPACITY_WINDOW_KIND_EXACT,
+  BDB_CAPACITY_WINDOW_KIND_RANGE,
+  BDB_CAPACITY_WINDOW_KIND_FLOOR,
+} bdb_capacity_window_kind;
+
+// A capacity bound's tag.
+typedef enum bdb_bound_kind {
+  BDB_BOUND_KIND_LIT,
+  BDB_BOUND_KIND_FIELD,
+  BDB_BOUND_KIND_DURATION_FIELD,
+} bdb_bound_kind;
+
+// A callback's control return: `Ok` commits (write) / completes (read);
+// `Abort` abandons — the write delta drops, LMDB untouched, and the outer
+// call returns `BDB_STATUS_ABORTED` (the ts bridge's abort sentinel,
+// spelled as control flow).
+typedef enum bdb_callback_control {
+  BDB_CALLBACK_CONTROL_OK = 0,
+  BDB_CALLBACK_CONTROL_ABORT = 1,
+} bdb_callback_control;
+
+// A head position's tag.
+typedef enum bdb_head_term_kind {
+  BDB_HEAD_TERM_KIND_VAR,
+  BDB_HEAD_TERM_KIND_AGGREGATE,
+} bdb_head_term_kind;
+
+// The var-free aggregate-op kind at a head position
+// (`bumbledb::ir::HeadOp`).
+typedef enum bdb_head_op {
+  BDB_HEAD_OP_SUM,
+  BDB_HEAD_OP_MIN,
+  BDB_HEAD_OP_MAX,
+  BDB_HEAD_OP_COUNT,
+  BDB_HEAD_OP_PACK,
+} bdb_head_op;
+
+// A find term's tag (`bumbledb::ir::FindTerm`).
+typedef enum bdb_find_term_kind {
+  BDB_FIND_TERM_KIND_VAR,
+  BDB_FIND_TERM_KIND_MEASURE,
+  BDB_FIND_TERM_KIND_AGGREGATE,
+  BDB_FIND_TERM_KIND_AGGREGATE_MEASURE,
+} bdb_find_term_kind;
+
+// An atom source's tag: a stored relation (`Edb`) or a predicate of the
+// same program (`Idb`).
+typedef enum bdb_atom_source_kind {
+  BDB_ATOM_SOURCE_KIND_EDB,
+  BDB_ATOM_SOURCE_KIND_IDB,
+} bdb_atom_source_kind;
+
+// A term's tag (`bumbledb::ir::Term`).
+typedef enum bdb_term_kind {
+  BDB_TERM_KIND_VAR,
+  BDB_TERM_KIND_PARAM,
+  BDB_TERM_KIND_PARAM_SET,
+  BDB_TERM_KIND_LITERAL,
+  BDB_TERM_KIND_MEASURE,
+} bdb_term_kind;
+
+// A condition node's tag.
+typedef enum bdb_condition_kind {
+  BDB_CONDITION_KIND_LEAF,
+  BDB_CONDITION_KIND_AND,
+  BDB_CONDITION_KIND_OR,
+} bdb_condition_kind;
+
+// A comparison operator's tag (`bumbledb::ir::CmpOp`). For `PointIn`
+// the lhs is the INTERVAL term and the rhs the point term (the engine's
+// ordered lowering; the notation reads point-first).
+typedef enum bdb_cmp_op_kind {
+  BDB_CMP_OP_KIND_EQ,
+  BDB_CMP_OP_KIND_NE,
+  BDB_CMP_OP_KIND_LT,
+  BDB_CMP_OP_KIND_LE,
+  BDB_CMP_OP_KIND_GT,
+  BDB_CMP_OP_KIND_GE,
+  BDB_CMP_OP_KIND_ALLEN,
+  BDB_CMP_OP_KIND_POINT_IN,
+} bdb_cmp_op_kind;
+
 // The opaque, reusable answers carrier.
 typedef struct bdb_answers bdb_answers;
 
