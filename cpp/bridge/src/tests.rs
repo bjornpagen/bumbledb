@@ -1,4 +1,4 @@
-//! Raw-ABI tests (`TODO_CPP.md` §35): every case calls the extern "C"
+//! Raw-ABI tests: every case calls the extern "C"
 //! surface exactly as C would — views built in the test frame, callbacks
 //! as C function pointers, errors destroyed through the ABI. No C harness
 //! needed; the point is that the FOREIGN BRIDGE is correct (the C++
@@ -189,7 +189,7 @@ fn db_write_from<F: FnMut(*mut bdb_tx_ref) -> bdb_callback_control>(
 }
 
 // ---------------------------------------------------------------------------
-// The Service/Outage theory (TODO_CPP.md §39), as C views
+// The Service/Outage theory, as C views
 // ---------------------------------------------------------------------------
 
 const SERVICE: u32 = 0;

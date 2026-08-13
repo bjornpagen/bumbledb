@@ -1,4 +1,4 @@
-//! The owned answers carrier (`TODO_CPP.md` §22–§23): execution crosses the
+//! The owned answers carrier: execution crosses the
 //! engine's flat `Answers` buffer WHOLE behind one opaque handle; C++
 //! decodes cell by cell through bounds-checked accessors — never one FFI
 //! call per cell on the engine side, never a panic from an index bug

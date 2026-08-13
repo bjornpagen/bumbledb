@@ -1,4 +1,4 @@
-# The C++ SDK CI matrix (TODO_CPP.md §32) — lands complete, not
+# The C++ SDK CI matrix — lands complete, not
 # incrementally, per the cpp-starter template's CI discipline: exact
 # container tags, checksummed CMake/Ninja, SHA-pinned actions, pinned Rust.
 #
@@ -10,7 +10,7 @@
 #                     suite: unit + toolchain-conformance + bridge smoke +
 #                     runtime + cookbook fingerprint/runtime parity tests
 #                     (golden: fixtures/cookbook-fingerprints.txt) AND the
-#                     §34 compile-fail suite (pinned-diagnostic tests run
+#                     compile-fail suite (pinned-diagnostic tests run
 #                     only in unsanitized production graphs — see
 #                     cpp/tests/CMakeLists.txt for the pinned GCC 16.1
 #                     sanitizer/constexpr quirk).
@@ -20,11 +20,11 @@
 #                     `lint` preset (BDB_LINT_GRAPH=ON) with -D overrides
 #                     pointing at the real LLVM 22 binaries and the libc++
 #                     modules manifest (the starter's proven recipe);
-#                     clang-tidy with the dialect custom checks runs during
+#                     clang-tidy with the quarantine profile runs during
 #                     the build. No ctest: the lint graph is enforcement,
 #                     not a test runner (no lint test preset exists).
 #   * bridge        — plain ubuntu-24.04; cargo clippy -D warnings + cargo
-#                     test for cpp/bridge (raw ABI tests, §35), under the
+#                     test for cpp/bridge (raw ABI tests), under the
 #                     crate's own [lints] regime (the workspace lint set,
 #                     restated in cpp/bridge/Cargo.toml because the crate
 #                     is a workspace-excluded leaf).
@@ -39,7 +39,7 @@
 #     active, amd64 digest sha256:cd2f0099…, last pushed 2026-08-05. It is
 #     the most specific 16.1 tag and ships the compiler as unversioned
 #     `g++`, hence -DCMAKE_CXX_COMPILER=g++ below (the cpp/ configure gate
-#     still enforces GNU 16.1.x exactly).
+#     still enforces GNU 16.1 or later).
 #   * CMake 4.2.1 linux-x86_64 tarball — asset present on the Kitware
 #     v4.2.1 release; SHA-256 below matches the official
 #     cmake-4.2.1-SHA-256.txt from the same release. Newer 4.2.x exist
@@ -72,7 +72,7 @@
 #     /usr/lib/llvm-22/lib/libc++.modules.json (and a copy under
 #     /usr/lib/x86_64-linux-gnu/). apt.llvm.org is a moving snapshot
 #     archive — the suite name pins the major (22), not the snapshot; the
-#     cpp/ configure gate rejects anything outside Clang 22.x.
+#     cpp/ configure gate rejects anything outside Clang 22.1.x.
 #
 # Not verifiable without a first run (no docker locally, workflow never
 # executed):
@@ -149,7 +149,7 @@ jobs:
           "$HOME/.cargo/bin/rustup" show
           "$HOME/.cargo/bin/cargo" --version
       # The gcc image ships the compiler as unversioned `g++`; override the
-      # preset's g++-16 (the configure gate still enforces GNU 16.1.x).
+      # preset's g++-16 (the configure gate still enforces GNU 16.1 or later).
       - name: Configure
         working-directory: cpp
         run: cmake --preset release -DCMAKE_CXX_COMPILER=g++
@@ -267,9 +267,9 @@ jobs:
           cmake --preset lint \
             -DCMAKE_CXX_COMPILER=/usr/lib/llvm-22/bin/clang++ \
             -DCMAKE_CXX_COMPILER_CLANG_SCAN_DEPS=/usr/lib/llvm-22/bin/clang-scan-deps \
-            -DCMAKE_CXX_CLANG_TIDY='/usr/lib/llvm-22/bin/clang-tidy;--experimental-custom-checks' \
+            -DCMAKE_CXX_CLANG_TIDY=/usr/lib/llvm-22/bin/clang-tidy \
             -DCMAKE_CXX_STDLIB_MODULES_JSON=/usr/lib/llvm-22/lib/libc++.modules.json
-      # clang-tidy (with the dialect custom checks) runs during the build;
+      # clang-tidy (quarantine profile) runs during the build;
       # a lint finding is a build failure. There is no lint test preset.
       - name: Build
         working-directory: cpp
@@ -291,7 +291,7 @@ jobs:
       - name: Clippy
         working-directory: cpp/bridge
         run: cargo clippy --all-targets -- -D warnings
-      # The raw ABI test suite (TODO_CPP §35).
+      # The raw ABI test suite.
       - name: Test
         working-directory: cpp/bridge
         run: cargo test

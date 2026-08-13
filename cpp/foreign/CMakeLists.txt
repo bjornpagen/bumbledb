@@ -46,9 +46,6 @@ if(BDB_LINT_GRAPH)
     set_target_properties(bumbledb_foreign PROPERTIES
         CXX_CLANG_TIDY "${CMAKE_CXX_CLANG_TIDY};--checks=-misc-unused-using-decls"
     )
-
-    # Foreign-zone TU: raw ABI adaptation is its subject, so it stays Clang-compiled but untidied; enforcement is review under the foreign boundary rules.
-    set_source_files_properties(raii.cc PROPERTIES SKIP_LINTING ON)
 endif()
 
 # program.cc is quarantine code but a partition of MODULE bumbledb (:foreign_program): it consumes the query IR partitions, and a bumbledb_foreign partition could not import them without a module cycle.

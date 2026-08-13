@@ -1,4 +1,4 @@
-//! The C-ABI bridge for the C++26 SDK (`TODO_CPP.md` §14, §30).
+//! The C-ABI bridge for the C++26 SDK.
 //!
 //! The dumb-bridge law (the ts/crate precedent): no logic beyond marshaling
 //! will EVER live in this crate. No schema knowledge beyond schema-DIRECTED
@@ -24,7 +24,7 @@
 //!   callback returned, an out-of-range answers index, an unknown enum tag.
 //!   No error is allocated: misuse is a programming error, not data.
 //!
-//! # The lexical model (`TODO_CPP.md` §16–§18)
+//! # The lexical model
 //!
 //! Snapshots and write transactions are LEXICAL borrowed capabilities:
 //! [`db::bdb_snapshot_ref`] / [`db::bdb_tx_ref`] are stack values passed by
@@ -35,7 +35,7 @@
 //! from inside a read callback with that callback's still-live snapshot
 //! ref — the one sanctioned nesting (§18).
 //!
-//! # Panic policy (`TODO_CPP.md` §30)
+//! # Panic policy
 //!
 //! A Rust panic unwinding across the C boundary into `-fno-exceptions` C++
 //! is undefined behavior, so EVERY extern entry point routes through

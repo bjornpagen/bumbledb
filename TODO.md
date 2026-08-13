@@ -44,8 +44,8 @@ finding stamps live in git history.
   stabbing-set windows — mechanism sketch recorded beside the trigger:
   half-open boundary sweep, 1-D Helly, the overlap index as the judge's
   walk, polarity intact). Min/Max-window refusal trigger likewise.
-- **Primer follow-through**: expect their P2.4 cutover questions via
-  `docs/handoffs/`; the expressibility test
+- **Primer follow-through**: expect their P2.4 cutover questions; the
+  expressibility test
   (`ts/test/expressibility-operand-views.test.ts`) is the living evidence
   to point at.
 
@@ -77,8 +77,8 @@ finding stamps live in git history.
   primer pins. CI green all lanes.
 - **0.8.0** (2026-07-25): the capacity cutover whole — `<=[w]{lo..hi}`,
   format v7, fingerprint tag 4/label v5, corpus `judgment-capacity-*`,
-  zero-trace gate green. Design + dossier stamped LANDED in
-  `docs/design/capacity-laws.md` + `capacity-cutover.md`.
+  zero-trace gate green. Design stamped LANDED in
+  `docs/design/capacity-laws.md`.
 - **0.7.0** (2026-07-24): the audit campaign — 162 findings (158 fixed),
   22 rulings (21 implemented, R5 partial), GJ split, overlap join, point
   path, R16/R17/R18, wall-power re-bench, R21 re-pins. Detail in git

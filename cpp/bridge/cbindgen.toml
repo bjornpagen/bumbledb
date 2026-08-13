@@ -1,4 +1,4 @@
-# cbindgen configuration for the C-ABI bridge (TODO_CPP.md §14).
+# cbindgen configuration for the C-ABI bridge.
 # Pinned tool: cbindgen 0.29.4 (installed via `cargo install --locked cbindgen`).
 # Regenerate the committed header with:
 #

@@ -1,4 +1,4 @@
-//! The schema-spec crossing (`TODO_CPP.md` §13): borrowed C view structs
+//! The schema-spec crossing: borrowed C view structs
 //! mirroring `bumbledb::SchemaSpec` field for field, copied IMMEDIATELY
 //! into the Rust-owned spec — no borrowed C++ memory survives
 //! `bdb_db_create` / `bdb_db_open` / `bdb_db_ephemeral`. The engine's
@@ -52,7 +52,7 @@ pub struct bdb_value_type {
 
 /// One field: name, structural type, optional host newtype label (null
 /// `data` = absent; carried for closed-handle resolution only, dropped at
-/// descriptor lowering — `TODO_CPP.md` §13), and the `fresh` mark.
+/// descriptor lowering), and the `fresh` mark.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct bdb_field_spec {

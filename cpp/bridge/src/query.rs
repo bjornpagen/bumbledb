@@ -1,5 +1,4 @@
-//! The query/program IR crossing (`TODO_CPP.md` §13) and the prepared-query
-//! handle (§20).
+//! The query/program IR crossing and the prepared-query handle.
 //!
 //! The C view structs mirror `bumbledb::ir` 1:1 — relations, fields, and
 //! predicates by numeric id (the C++ layer resolves names at compile time
@@ -436,7 +435,7 @@ pub(crate) fn program_in(view: &bdb_program) -> BridgeResult<Program> {
 }
 
 // ---------------------------------------------------------------------------
-// Prepared queries (TODO_CPP.md §20)
+// Prepared queries
 // ---------------------------------------------------------------------------
 
 /// The opaque prepared-query handle. Field order is load-bearing: the

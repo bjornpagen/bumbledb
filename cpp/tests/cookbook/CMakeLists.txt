@@ -691,3 +691,8 @@ add_test(NAME cookbook.r18_freetime
     COMMAND bumbledb_cookbook_r18
         ${CMAKE_SOURCE_DIR}/../fixtures/cookbook-fingerprints.txt
 )
+
+if(BDB_DARWIN)
+    get_property(_bdb_tests DIRECTORY PROPERTY TESTS)
+    set_tests_properties(${_bdb_tests} PROPERTIES ENVIRONMENT "MallocProbGuard=1")
+endif()

@@ -1,5 +1,5 @@
-//! Database ownership and the lexical read/write boundary (`TODO_CPP.md`
-//! §15–§18): the opaque [`bdb_db`] handle, the three store constructors,
+//! Database ownership and the lexical read/write boundary: the opaque
+//! [`bdb_db`] handle, the three store constructors,
 //! the fingerprint readback, synchronous callback-scoped snapshots and
 //! write transactions, the dynamic fact surface, fresh allocation, bulk
 //! import, and the owned [`bdb_row_set`] carrier for scans and point
@@ -373,7 +373,7 @@ pub extern "C" fn bdb_db_destroy(db: *mut bdb_db) -> bdb_status {
 }
 
 /// The open store's schema fingerprint, 64 lowercase hex chars — the
-/// cross-host identity readback (`TODO_CPP.md` §33; the Node bridge's
+/// cross-host identity readback (the Node bridge's
 /// `dbFingerprint`, verbatim): `create` stored this exact value and
 /// `open` verified it, so the descriptor's fingerprint IS the store's.
 /// Dumb-bridge legal: validation and blake3 are the ENGINE's own

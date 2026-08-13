@@ -62,7 +62,10 @@ target_sources(bumbledb
         db/db_impl.cc
 )
 
-# PIN(gcc-template-for-wshadow)
+# PIN(gcc-template-for-wshadow): instantiation of the six `template for`
+# partitions fires in other TUs of this module, so the suppression is
+# target-wide rather than source-scoped the way a single-partition starter
+# module can be.
 target_compile_options(bumbledb PRIVATE -Wno-shadow)
 
 target_link_libraries(bumbledb

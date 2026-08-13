@@ -1,4 +1,4 @@
-//! The value crossing (`TODO_CPP.md` §14): one `#[repr(C)]` tagged POD,
+//! The value crossing: one `#[repr(C)]` tagged POD,
 //! [`bdb_value`], carries every `bumbledb::Value` variant in BOTH
 //! directions. Inbound, the bridge copies the view into Rust-owned data
 //! before any engine call (no borrowed C++ memory survives the entry);
@@ -282,7 +282,7 @@ pub enum bdb_param_kind {
 
 /// One positional execution argument — the C mirror of the engine's
 /// public `ParamArg` shape (Scalar | Set; an Allen mask travels as a
-/// scalar `AllenMask` value, `TODO_CPP.md` §21).
+/// scalar `AllenMask` value).
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct bdb_param {

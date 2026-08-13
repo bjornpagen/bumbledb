@@ -175,3 +175,8 @@ target_compile_options(bumbledb_query_ir_tests
     PRIVATE -Wno-shadow -Wno-missing-field-initializers)
 
 add_test(NAME runtime.query_ir COMMAND bumbledb_query_ir_tests)
+
+if(BDB_DARWIN)
+    get_property(_bdb_tests DIRECTORY PROPERTY TESTS)
+    set_tests_properties(${_bdb_tests} PROPERTIES ENVIRONMENT "MallocProbGuard=1")
+endif()

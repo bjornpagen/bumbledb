@@ -1,4 +1,4 @@
-//! The typed error crossing (`TODO_CPP.md` §27): the opaque [`bdb_error`]
+//! The typed error crossing: the opaque [`bdb_error`]
 //! owns the rendered engine failure; accessor functions expose structured
 //! payloads. Formatting happened once at construction (cold path — the
 //! error IS the diagnostic); accessors only hand out views.
@@ -17,8 +17,8 @@ use bumbledb::{Error, SchemaDescriptor, render_rejection};
 use crate::value::bdb_string_view;
 use crate::{Fail, bdb_status, box_in, guard, out, ref_in};
 
-/// The C error kind — one constant per engine error family (`TODO_CPP.md`
-/// §27), plus the bridge-synthesized `Panic`.
+/// The C error kind — one constant per engine error family, plus the
+/// bridge-synthesized `Panic`.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum bdb_error_kind {
@@ -309,7 +309,7 @@ pub extern "C" fn bdb_error_get_generation_moved(
 }
 
 /// The `BulkLoad` payload: facts durable in the chunks committed before
-/// the failure (`TODO_CPP.md` §24). `BDB_STATUS_MISUSE` when the error is
+/// the failure. `BDB_STATUS_MISUSE` when the error is
 /// not `BDB_ERROR_KIND_BULK_LOAD`.
 #[unsafe(no_mangle)]
 #[expect(unsafe_code, reason = "extern export: the unsafe(no_mangle) ABI attribute")]

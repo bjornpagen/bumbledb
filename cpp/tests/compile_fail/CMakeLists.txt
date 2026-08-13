@@ -73,5 +73,10 @@ bdb_compile_fail_case(closed_handle_wrong_vocabulary
 )
 
 bdb_compile_fail_case(discarded_expected
-    "ignoring return value"
+    "ignoring return value of .*ephemeral"
 )
+
+if(BDB_DARWIN)
+    get_property(_bdb_tests DIRECTORY PROPERTY TESTS)
+    set_tests_properties(${_bdb_tests} PROPERTIES ENVIRONMENT "MallocProbGuard=1")
+endif()

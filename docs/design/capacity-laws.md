@@ -15,8 +15,7 @@ comment at the walk (`crates/bumbledb/src/storage/commit/judgment.rs`). The
 one consequence it surfaced is RULED: C20 (2026-08-03) blesses the write-time
 ray refusal as doctrine — strictly stronger than C10's judge-time refusal.
 The §8b zero-trace gate ran GREEN at close over the full scope.
-Ground-truth deltas from execution are stamped on the companion dossier
-(`capacity-cutover.md`). Drafted 2026-07-24 from the weighted-capacity
+Drafted 2026-07-24 from the weighted-capacity
 discussion. This document specifies a deletion and a generalization: the `<={lo..hi}`
 cardinality-window mechanism is removed root and branch, and schema capacity laws are
 restated as **aggregate containments** — the query aggregate vocabulary appearing in law

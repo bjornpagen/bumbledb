@@ -178,7 +178,7 @@ public:
 private:
 	auto destroy() -> void {
 		if (raw_ != nullptr) {
-			static_cast<void>(bdb_error_destroy(raw_));
+			std::ignore = bdb_error_destroy(raw_);
 			raw_ = nullptr;
 		}
 	}
@@ -306,7 +306,7 @@ public:
 
 	auto clear() -> void {
 		if (raw_ != nullptr) {
-			static_cast<void>(bdb_answers_clear(raw_));
+			std::ignore = bdb_answers_clear(raw_);
 		}
 	}
 
@@ -330,7 +330,7 @@ private:
 
 	auto destroy() -> void {
 		if (raw_ != nullptr) {
-			static_cast<void>(bdb_answers_destroy(raw_));
+			std::ignore = bdb_answers_destroy(raw_);
 			raw_ = nullptr;
 		}
 	}
@@ -394,7 +394,7 @@ public:
 private:
 	auto destroy() -> void {
 		if (raw_ != nullptr) {
-			static_cast<void>(bdb_prepared_destroy(raw_));
+			std::ignore = bdb_prepared_destroy(raw_);
 			raw_ = nullptr;
 		}
 	}
@@ -466,7 +466,7 @@ public:
 private:
 	auto destroy() -> void {
 		if (raw_ != nullptr) {
-			static_cast<void>(bdb_row_set_destroy(raw_));
+			std::ignore = bdb_row_set_destroy(raw_);
 			raw_ = nullptr;
 		}
 	}
@@ -640,7 +640,7 @@ public:
 private:
 	auto destroy() -> void {
 		if (raw_ != nullptr) {
-			static_cast<void>(bdb_db_destroy(raw_));
+			std::ignore = bdb_db_destroy(raw_);
 			raw_ = nullptr;
 		}
 	}

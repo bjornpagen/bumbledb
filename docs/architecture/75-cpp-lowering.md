@@ -4,14 +4,14 @@ This is the single normative reference for the C++ frontend's lowering. The
 goal is byte-exact recipe parity: a C++ cookbook theory MUST lower through the
 Rust `SchemaSpec` path to the identical `SchemaDescriptor` — and therefore the
 identical fingerprint — that the TypeScript SDK and the `schema!` macro
-produce (docs/handoffs/2026-08-08-cpp-sdk-design-record.md:881-889, 1986-2001). Every claim below is cited against
+produce. Every claim below is cited against
 the sources it was read from (verified 2026-08-08, branch `cpp-sdk`).
 
 Authority chain, fixed and non-negotiable:
 
 1. The C++ frontend builds a `SchemaSpec` (named plain data) and hands it to
    the bridge. It NEVER re-implements the canonical lowering as a runtime
-   source of truth (docs/handoffs/2026-08-08-cpp-sdk-design-record.md:881).
+   source of truth.
 2. The engine's `SchemaSpec::descriptor()` does name→id resolution, handle
    resolution, `==` splitting, and the canonical-utterance ban table
    (crates/bumbledb-theory/src/schema/spec.rs:996-1027).
@@ -145,7 +145,7 @@ containment descriptors, `source <= target` FIRST (spec.rs:202-205,
 
 `SchemaSpec::descriptor()` drops EVERY newtype: `FieldSpec::newtype` and
 `ClosedSpec::newtype` never reach `SchemaDescriptor` and are never
-fingerprinted (spec.rs:71-76, 91-97; docs/handoffs/2026-08-08-cpp-sdk-design-record.md:574, 886). They exist for
+fingerprinted (spec.rs:71-76, 91-97). They exist for
 exactly two engine-side jobs, both authoring-time:
 
 1. Handle-literal resolution: `LiteralSpec::Handle` resolves through the
@@ -161,8 +161,7 @@ exactly two engine-side jobs, both authoring-time:
 Consequence for C++: the class names computed in §3 MUST be fed into the
 `newtype` slots (or handle literals will not resolve and the coherence check
 will fire), and they MUST match the TS naming discipline exactly so
-diagnostics agree cross-host — but they can never move the fingerprint
-(docs/handoffs/2026-08-08-cpp-sdk-design-record.md:884-889).
+diagnostics agree cross-host — but they can never move the fingerprint.
 
 ### 1.11 The sealed shape / synthetic-id law
 
@@ -381,11 +380,11 @@ exactly:
 7. **Fingerprint neutrality.** Class names flow ONLY into `newtype` slots and
    query-join judgments; the engine drops them at descriptor lowering, so
    class identity NEVER enters the fingerprint (law.ts docs; lower.ts:57-62;
-   spec.rs:426-428; docs/handoffs/2026-08-08-cpp-sdk-design-record.md:680-682). Getting a class name wrong cannot
+   spec.rs:426-428). Getting a class name wrong cannot
    move a fingerprint — it fails handle resolution, the coherence check, or
    cross-host diagnostics instead.
 
-C++ binding: docs/handoffs/2026-08-08-cpp-sdk-design-record.md:886-889 makes this discipline normative
+C++ binding: this discipline is normative
 ("generator-first, else least member coordinate in relation-declaration ×
 field-declaration order").
 
@@ -566,7 +565,7 @@ pub enum AnswerValue<'a> {            // prepared.rs:89-101, borrowed from Answe
 `Answers` (prepared.rs:118-129) is the caller-owned reusable buffer: flat
 cells (fixed-width inline; String/FixedBytes as ranges into two byte heaps —
 prepared.rs:103-116), arity = find-term count, `clear()` retains capacity,
-`get` panics out-of-range (docs/handoffs/2026-08-08-cpp-sdk-design-record.md:186-190). Answers are SETS — no order
+`get` panics out-of-range. Answers are SETS — no order
 exists; hosts sort. Column order = the program's head order = the find
 record's written order.
 
@@ -640,9 +639,9 @@ out-of-roster id is a pointed error, never a fallback.
   ts/test/cookbook.test.ts:79-206). The cross-host lock additionally pins
   one everything-theory constant in both hosts (`PIN`,
   ts/test/fingerprint.test.ts:53; Rust twin
-  `ts/crate/src/fingerprint_lock.rs`). Per docs/handoffs/2026-08-08-cpp-sdk-design-record.md:1993-2001 the
-  goldens live host-neutral at the repository root and the C++ suite reads
-  the same file, taking its hex off the create outcome exactly as TS does.
+  `ts/crate/src/fingerprint_lock.rs`). The goldens live host-neutral at the
+  repository root and the C++ suite reads the same file, taking its hex off
+  the create outcome exactly as TS does.
 
 ---
 

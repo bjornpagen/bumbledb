@@ -41,7 +41,8 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "RelWithDebInfo",
         "CMAKE_CXX_FLAGS": "-fsanitize=address,undefined -fno-sanitize-recover=all",
-        "CMAKE_EXE_LINKER_FLAGS": "-fsanitize=address,undefined"
+        "CMAKE_EXE_LINKER_FLAGS": "-fsanitize=address,undefined",
+        "BDB_RUNTIME_SANITIZERS": "ON"
       }
     },
     {
@@ -51,7 +52,8 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "RelWithDebInfo",
         "CMAKE_CXX_FLAGS": "-fsanitize=thread",
-        "CMAKE_EXE_LINKER_FLAGS": "-fsanitize=thread"
+        "CMAKE_EXE_LINKER_FLAGS": "-fsanitize=thread",
+        "BDB_RUNTIME_SANITIZERS": "ON"
       }
     },
     {
@@ -62,7 +64,7 @@
         "CMAKE_CXX_COMPILER": "clang++",
         "CMAKE_BUILD_TYPE": "Debug",
         "CMAKE_CXX_FLAGS": "-stdlib=libc++",
-        "CMAKE_CXX_CLANG_TIDY": "clang-tidy;--experimental-custom-checks",
+        "CMAKE_CXX_CLANG_TIDY": "clang-tidy",
         "BDB_LINT_GRAPH": "ON"
       }
     }

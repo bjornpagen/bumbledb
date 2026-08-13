@@ -131,8 +131,8 @@ typedef enum bdb_callback_control {
   BDB_CALLBACK_CONTROL_ABORT = 1,
 } bdb_callback_control;
 
-// The C error kind — one constant per engine error family (`TODO_CPP.md`
-// §27), plus the bridge-synthesized `Panic`.
+// The C error kind — one constant per engine error family, plus the
+// bridge-synthesized `Panic`.
 typedef enum bdb_error_kind {
   BDB_ERROR_KIND_SCHEMA,
   BDB_ERROR_KIND_SCHEMA_MISMATCH,
@@ -335,7 +335,7 @@ typedef struct bdb_value {
 
 // One positional execution argument — the C mirror of the engine's
 // public `ParamArg` shape (Scalar | Set; an Allen mask travels as a
-// scalar `AllenMask` value, `TODO_CPP.md` §21).
+// scalar `AllenMask` value).
 typedef struct bdb_param {
   enum bdb_param_kind kind;
   // `Scalar`: the value.
@@ -358,7 +358,7 @@ typedef struct bdb_value_type {
 
 // One field: name, structural type, optional host newtype label (null
 // `data` = absent; carried for closed-handle resolution only, dropped at
-// descriptor lowering — `TODO_CPP.md` §13), and the `fresh` mark.
+// descriptor lowering), and the `fresh` mark.
 typedef struct bdb_field_spec {
   struct bdb_string_view name;
   struct bdb_value_type value_type;
@@ -686,7 +686,7 @@ enum bdb_status bdb_db_ephemeral(struct bdb_string_view path,
 enum bdb_status bdb_db_destroy(struct bdb_db *db);
 
 // The open store's schema fingerprint, 64 lowercase hex chars — the
-// cross-host identity readback (`TODO_CPP.md` §33; the Node bridge's
+// cross-host identity readback (the Node bridge's
 // `dbFingerprint`, verbatim): `create` stored this exact value and
 // `open` verified it, so the descriptor's fingerprint IS the store's.
 // Dumb-bridge legal: validation and blake3 are the ENGINE's own
@@ -855,7 +855,7 @@ enum bdb_status bdb_error_get_generation_moved(const struct bdb_error *error,
                                                uint64_t *out_current);
 
 // The `BulkLoad` payload: facts durable in the chunks committed before
-// the failure (`TODO_CPP.md` §24). `BDB_STATUS_MISUSE` when the error is
+// the failure. `BDB_STATUS_MISUSE` when the error is
 // not `BDB_ERROR_KIND_BULK_LOAD`.
 enum bdb_status bdb_error_get_bulk_committed(const struct bdb_error *error,
                                              uint64_t *out_committed);

@@ -61,12 +61,13 @@ the missing primitive before introducing a second way.
 
 ## 2. Toolchain
 
-Production code targets exactly one pinned toolchain tuple: the production
-compiler + its matching standard library, the build system, the generator, and
-the separately pinned clang-tidy build for the reflection-free lint graph.
+Production code targets one pinned toolchain tuple: the production compiler +
+its matching standard library, the build system, the generator, and the
+separately pinned clang-tidy build for the reflection-free lint graph.
 
-The exact versions are enforced by the top-level CMake configure gate. They
-live there and only there; documentation must not duplicate version numbers.
+The accepted release series and the exact generator are enforced by the
+top-level CMake configure gate. They live there and only there; documentation
+must not duplicate version numbers.
 Toolchain versions are part of the language implementation, not ambient
 developer-machine state.
 
@@ -225,27 +226,38 @@ the reflection-free lint graph.
 
 Enable compilation database generation for configurations consumed by tooling.
 
-### 3.5 One language-profile target
+### 3.5 One centralized language profile
 
-Compiler and language-profile requirements must be centralized in one CMake
-interface target (for example `project_language_profile`) and linked by every
-dialect target.
-
-That target is the single build-system source of truth for requirements such as:
+CMake's synthesized standard-library module target does not consume project
+usage-requirement targets. Module-ABI requirements therefore live once at top
+level so the synthesized BMI and every importer receive the same settings:
 
 ```text
 C++26
 -freflection             GCC production graph only
 -fno-exceptions
 -fno-rtti
+```
+
+All project targets additionally link one CMake interface target (for example
+`project_language_profile`). It is the single source of truth for target usage
+requirements such as:
+
+```text
 warnings-as-errors
 conversion warnings
 project-wide diagnostics
+contracts runtime linkage
 ```
 
-Do not duplicate the language profile across individual targets.
+Codegen flags that Clang records in the `import std` BMI (stack protector,
+trivial auto-var init, zero-call-used-regs) live on `CMAKE_CXX_FLAGS` with the
+module-ABI half, not on the interface target. Do not duplicate either half
+across individual targets, and do not spell a module-ABI flag both globally
+and per target. The split exists only because the CMake-owned BMI cannot
+link the interface target.
 
-Foreign/unsafe targets may link a separate narrowly defined profile containing
+Foreign targets may link a separate narrowly defined profile containing
 only the exceptions required by that boundary.
 
 ### 3.6 Separate GCC and Clang graphs
@@ -255,11 +267,11 @@ Do not point clang-tidy at GCC-produced BMIs.
 Maintain:
 
 ```text
-build/gcc-dev/
-build/gcc-release/
-build/gcc-asan-ubsan/
-build/gcc-tsan/
-build/clang-lint/
+build/dev/
+build/release/
+build/asan-ubsan/
+build/tsan/
+build/lint/
 ```
 
 The GCC graph includes every named module and all reflection code.
@@ -267,8 +279,8 @@ The GCC graph includes every named module and all reflection code.
 The Clang lint graph excludes every translation unit or module unit whose
 parse graph contains unsupported reflection syntax. A named module with
 reflection partitions is GCC-only as a unit, so the lint graph covers the
-Clang-parseable remainder: `foreign/`/`unsafe/` translation units that import
-no module.
+Clang-parseable remainder: `foreign/` translation units that import no
+reflective module. This tree has no `unsafe/` directory.
 
 The two graphs represent the same reflection-free source semantics; they are
 not allowed to use conditional source code to create two different programs.
@@ -318,22 +330,24 @@ repository, GCC-only reflection translation units are excluded from clang-tidy.
 This does **not** weaken the language rules. GCC-only files obey this document
 and are checked by compiler diagnostics plus review.
 
-Maintain the dedicated `clang-lint` CMake/Ninja graph for translation units
+Maintain the dedicated `lint` CMake/Ninja graph for translation units
 whose entire parse/import graph is Clang-readable. A named module containing
 reflection partitions is excluded from that graph as a unit until the pinned
 Clang frontend supports the reflection syntax used by the project.
 Build Clang-compatible BMIs there; never attempt to feed GCC BMIs to
 clang-tidy.
 
-Pin the clang-tidy version. Query-based custom checks are experimental; tool
-upgrades require deliberate review of `.clang-tidy`, `-list-checks`, and
-`--dump-config`.
+Pin the clang-tidy version. Tool upgrades require deliberate review of
+`.clang-tidy`, `-list-checks`, and `--dump-config`.
 
-Run query-based rules with:
-
-```text
-clang-tidy --experimental-custom-checks ...
-```
+The current `.clang-tidy` is a quarantine profile because the entire
+Clang-readable graph is `foreign/`. It checks boundary code for real
+correctness, lifetime, concurrency, portability, and performance defects;
+it does not flag the raw pointers, ABI casts, or C APIs that define the
+reason that zone exists. Do not encode dialect-only bans in that profile.
+When Clang can parse the reflection-bearing module graph, add a separate
+dialect profile and target rather than weakening or conflating either
+rule set.
 
 A clang-tidy warning is a build failure.
 
@@ -346,9 +360,12 @@ dialect code.
 
 The repository has two semantic zones.
 
-### 5.1 `src/`, `tests/`, and `examples/`: dialect code
+### 5.1 C++ in `src/` and `tests/`: dialect code
 
-All rules in this document apply.
+All C++ translation units in these directories are dialect code and obey every
+language rule in this document. CMake metadata and narrow test-driver scripts
+are repository tooling, not an alternate C++ source zone; they may not compile
+or generate project code behind the declared CMake graph.
 
 No preprocessor.
 No headers.
@@ -363,7 +380,10 @@ use the preprocessor, headers, exceptions, RTTI, raw allocation, inheritance,
 shared ownership, raw threads, or other forbidden mechanisms merely because
 only GCC checks it.
 
-### 5.2 `foreign/` and `unsafe/`: quarantine
+### 5.2 `foreign/`: quarantine
+
+This tree's quarantine is `foreign/` (the C ABI and cbindgen header). There
+is no `unsafe/` directory.
 
 Only unavoidable machine/ABI adaptation lives here:
 
@@ -375,14 +395,19 @@ Only unavoidable machine/ABI adaptation lives here:
 - pointer arithmetic required by an ABI or memory primitive,
 - `reinterpret_cast` required by the boundary.
 
-These directories may use headers and preprocessing when the external interface
+This directory may use headers and preprocessing when the external interface
 requires them.
 
-They must export a safe module partition or narrow ABI upward. No dialect
+It must export a safe module partition or narrow ABI upward. No dialect
 module unit may include a foreign header or depend on preprocessor state
 transitively.
 
-Do not move ordinary application code into `unsafe/` to escape a rule.
+Quarantine relaxes representation rules, not ownership rules. Project-authored
+quarantine code still has exactly one RAII owner for every resource and heap
+allocation. Raw pointers may be transient ABI arguments; they may not own
+and may not be stored as asynchronous state.
+
+Do not move ordinary application code into `foreign/` to escape a rule.
 
 ---
 
@@ -720,7 +745,9 @@ Prefer values.
 Use `std::unique_ptr<T>` only when dynamic stable ownership is actually
 required.
 
-Use an arena when many objects share one obvious lifetime or stable storage.
+Use ordinary owning standard containers before inventing an arena. An arena is
+permitted only when many objects demonstrably share one lifetime and its reset
+boundary is the ownership boundary, not as a performance reflex.
 
 ### Forbidden
 
@@ -765,8 +792,13 @@ semantic need not covered by these primitives.
 ### Lifetime rules
 
 - Synchronous function parameters may borrow.
-- Owning structs do not contain borrows unless the type is explicitly an
-  ephemeral view product (`FooView` naming).
+- Public parsers and decoders return owning values. A temporary input must be
+  safe: `parse(std::string{...})` may not return data referring to that string.
+- Owning structs do not contain borrows. An explicitly ephemeral `FooView`
+  product is permitted only inside one synchronous call chain and is never a
+  public parser result.
+- A returned view is permitted only when it refers to immutable
+  program-lifetime storage, such as a string literal or reflected name.
 - Values crossing an async/sender boundary must be owned.
 - A sender returned from a function must not capture locals or parameters by
   reference.
@@ -774,6 +806,33 @@ semantic need not covered by these primitives.
 - Messages between concurrent components must be ownership-closed: recursively
   free of references, `std::optional<T&>`, `std::span`, `std::string_view`, and
   `std::function_ref`.
+- When ownership and borrowing are both viable, copy at the lifetime boundary.
+  Bounded copying is cheaper than maintaining a soundness proof that C++ cannot
+  check.
+
+### Guarantee boundary
+
+Following this profile makes several bug classes structurally absent from
+dialect designs:
+
+- raw-owner double-free, ownership use-after-free, and reference-count cycles,
+- public parser results dangling into temporary input.
+
+This is not general lifetime analysis. Required references and synchronous
+views can still dangle when code violates the call-scoped borrowing rule;
+indices and iterators can still be wrong; stack depth can still overflow; and
+`foreign/`, the compiler, the standard library, or a vendor can still
+contain pointer, aliasing, concurrency, or ABI defects. Therefore:
+
+- prefer an owning value whenever a borrow is not both necessary and visibly
+  call-scoped,
+- never retain a borrow through a returned value, callback, sender, or
+  concurrent message,
+- keep every unavoidable pointer cast, arithmetic operation, or stored borrow
+  in a tiny reviewed quarantine boundary with a `/* SAFETY: ... */`
+  justification,
+- run the sanitizer and lint presets; policy narrows the remaining attack
+  surface but does not replace verification.
 
 ---
 
@@ -874,46 +933,25 @@ ad-hoc callback concurrency
 
 ### Toolchain status
 
-Sender/receiver is **active**: the pinned libstdc++ does not yet ship
-`std::execution`, so the algebra is provided by the reference implementation
-(NVIDIA stdexec, pinned to an immutable SHA in the top-level CMakeLists.txt
-per §3.7) and quarantined behind exactly one swap boundary, re-exported as
-`namespace ex`. The vocabulary rules above bind for real now — they are not
-aspirational.
+Sender/receiver remains the dialect's only application async algebra. This
+SDK does not compose senders: it is a synchronous C ABI over the Rust
+engine. Do not vendor stdexec, do not add `exec.backend.cc`, and do not
+FetchContent NVIDIA/stdexec.
 
-Boundary law:
+The vocabulary rules above bind as law for any future public surface; they
+are not implemented here. When a sender-shaped surface appears:
 
-- There is exactly ONE swap boundary, spelled across exactly two plain
-  quarantine translation units: `foreign/exec.backend.cc` (the combinator
-  half — `namespace ex` plus the conformance chains) and
-  `unsafe/net.backend.cc` (the I/O half — the kqueue io-context and its
-  readiness senders). Those two TUs are the only ones that may include a
-  stdexec header or spell the implementation namespaces (`stdexec::`,
-  `exec::`); the eventual swap edits only them. Direct
-  implementation-namespace use anywhere else — dialect code, the rest of
-  `unsafe/`, the rest of `foreign/` — is forbidden, and no third stdexec TU
-  may be added: new sender work extends one of the two halves.
-- `ex::` re-exports only the probe-verified combinator subset (`just`,
-  `then`, `upon_error`, `let_value`, `let_error`, `when_all`,
-  `continues_on`, `starts_on`, `schedule`, `on`, `into_variant`,
-  `stopped_as_optional`, `just_error`, `just_stopped`,
-  `static_thread_pool`) plus OUR expected-erroring `wait`. Nothing outside
-  that list escapes the boundary.
-- `stdexec::sync_wait` is forbidden: under `-fno-exceptions` its typed-error
-  channel is silently lossy (routed through a null `exception_ptr`, so every
-  error masquerades as stopped). `ex::wait<E>` returns
-  `optional<expected<values, E>>` — nullopt is stopped, unexpected preserves
-  the typed error.
-- Pinned GCC 16.1 quirk: including a stdexec header in **any** module unit
-  ICEs (global-module-fragment CPO forward-declaration pattern; rationale
-  pinned in `foreign/exec.backend.cc`). Sender composition therefore cannot
-  cross the module boundary on this toolchain: the `starter:exec` partition
-  exports concrete function surfaces over a narrow ABI, not senders.
-  Re-verify on every toolchain bump.
-- The `__cpp_lib_senders` tombstone in `tests/conformance.test.cc` now
-  signals time-to-delete-the-vendor: when the macro appears, rewrite the
-  boundary over `std::execution`, drop the FetchContent pin, and re-export
-  the full vocabulary directly.
+- libstdc++ still does not ship `std::execution` on the pinned series, so
+  any vendor include stays in one plain (non-module) quarantine TU.
+- Including a stdexec header in **any** module unit ICEs (PIN
+  `gcc-gmf-stdexec-ice`, GCC PR 126783). Sender composition cannot cross
+  the module boundary on this toolchain.
+- `stdexec::sync_wait` is forbidden under `-fno-exceptions`: its typed-error
+  channel is silently lossy.
+- On every pinned-toolchain bump, the `PINS.md` ritual checks for native
+  senders. Once the standard library provides them, bind to
+  `std::execution`. Do not reintroduce feature-test preprocessing into a
+  dialect translation unit to automate that deliberate migration.
 
 ### Shared mutable state
 
@@ -1135,7 +1173,7 @@ nominal downcasting.
 Prefer constructors, conversion functions, `std::bit_cast`, safe numeric
 conversion helpers, or structural APIs as appropriate.
 
-Pointer/integer conversion belongs only in `unsafe/foreign`.
+Pointer/integer conversion belongs only in `foreign/`.
 
 ---
 
@@ -1239,8 +1277,9 @@ callers acknowledge it explicitly.
 
 Exceptions, set by the language's own conventions: operators whose result
 is the object itself (assignment, compound assignment,
-increment/decrement) and constructors. Immediately-invoked or
-immediately-consumed lambdas need no attribute.
+increment/decrement), constructors, and the `main` entry point whose status is
+consumed by the host. Immediately-invoked or immediately-consumed lambdas need
+no attribute.
 
 Discarding has exactly two spellings, one per concept:
 
@@ -1296,8 +1335,8 @@ A function that fails returns only the failure. On the `unexpected` path
 (or a sender's `set_error` completion) every caller-visible output —
 out-buffers, referenced targets, partially built state — is exactly as
 the caller left it, unless the surface's documentation says otherwise in
-so many words. `write_response` is canonical: the full size is computed
-first, so a short buffer fails before a single byte lands.
+so many words. A fallible write computes the full size first, so a short
+buffer fails before a single byte lands.
 
 The mirror rule for narrow-ABI error out-parameters (`err_stage`,
 `err_code`): written on the failure path only; untouched on success.
@@ -1402,7 +1441,7 @@ Destructors must not fail.
 Move operations for resource holders should be `noexcept` when semantically
 possible.
 
-Do not expose raw native handles except inside `unsafe/foreign` adaptation.
+Do not expose raw native handles except inside `foreign/` adaptation.
 When unavoidable, make the escape explicit and narrow.
 
 ---
@@ -1417,53 +1456,59 @@ Prefer, in order:
 2. fixed-size containers (`std::array`, fixed-capacity structures),
 3. `std::inplace_vector<T, N>` where a bounded capacity is semantically real,
 4. ordinary standard containers when dynamic capacity is semantically needed,
-5. arenas for bulk/stable ownership,
-6. `std::indirect<T>` for value-semantic heap indirection without pointer
+5. `std::indirect<T>` for value-semantic heap indirection without pointer
    identity,
-7. `std::unique_ptr` for truly independent dynamic lifetime.
+6. `std::unique_ptr` for truly independent dynamic lifetime,
+7. arenas for a demonstrated bulk lifetime shared by many objects.
 
 The pinned toolchain implements both `std::inplace_vector` and
 `std::indirect`; they narrow the legitimate uses of `std::unique_ptr`.
 
 Zero-allocation is a property to design and measure in hot paths, not a reason
-to replace safe containers with pointer arithmetic.
+to replace owning values with borrows, safe containers with pointer arithmetic,
+or explicit state with callback machinery.
 
 No hidden shared reference counting.
 
+Every heap allocation is owned by exactly one RAII value. A plain pointer is
+never a strong reference and is never freed. Project-authored `foreign/` code
+obeys this rule too; a custom-deleter allocation is placed directly into its
+unique owner at the allocation expression and never exists as a named raw
+owner.
+
 ### Steady state
 
-A long-running serving loop has two phases, and allocation belongs to the
-first one.
+A long-running serving loop has two phases. Persistent capacity belongs to
+the first one; short-lived owning values may allocate under explicit bounds in
+the second.
 
 - **Setup** (startup, configuration, schema load): standard containers,
   freely. This phase may fail; failing here is cheap and honest.
 - **Steady state** (the request loop): the discipline is reuse and
-  bounds, not abstinence. Buffers are acquired once and reused — clearing
-  is not freeing. Per-request dynamic needs come from per-worker
-  arena-style storage reset between requests. Ad-hoc churn against the
-  global allocator inside the hot loop is a design smell that needs a
-  stated reason.
+  bounds, not abstinence. Long-lived slot and buffer capacity is acquired
+  once. Short-lived owning parse results may allocate within named bounds:
+  ownership safety outranks avoiding allocator traffic.
 
 **Unbounded growth in the serving path is a bug.** Under memory
 overcommit, graceful allocation-failure handling is fiction — the failure
 arrives as a kill signal, not as anything the program can observe (§11:
 allocation failure under `-fno-exceptions` is termination). What actually
-protects a daemon is a flat footprint: a process whose steady-state
-memory is a constant fixed at startup cannot leak, cannot fragment its
-way upward, and cannot bloat into the OOM killer's threshold.
+protects a process is a bounded live set: setup capacity plus at most the named
+per-operation bounds. Allocator high-water behavior may vary, but retaining
+memory without a corresponding bounded live value is a leak and a policy
+violation.
 
-Every wire-facing quantity has a named maximum (`max_request_bytes`,
-`max_header_count`) and buffers are sized from those constants. The bound
-is a security property — an unbounded untrusted input is a
-denial-of-service vector — independent of allocation policy. Where a
-compile-time bound exists, format into the caller's buffer
-(`std::format_to_n`, or size-then-write as `write_response` does);
-returning an owning string from a bounded hot path is churn.
+Every wire-facing quantity has a named maximum and buffers or tables are sized
+from those constants. The bound is a security property — an unbounded
+untrusted input is a denial-of-service vector — independent of allocation
+policy. Where a compile-time bound exists, a public codec returns one bounded
+owning value; quarantine may then perform one size-checked copy into its
+fixed ABI buffer. Public parsing and formatting return owning values;
+zero-copy is not an excuse to export a lifetime or aliasing hazard.
 
 Zero allocation at steady state is not a law; bounded allocation is.
-Measure with allocation counts (§30) when a hot path warrants it. An
-arena primitive is added when the first real consumer appears, not
-before.
+Measure with allocation counts (§30) when a hot path warrants it. An arena
+primitive is added when the first real lifetime model requires it, not before.
 
 ---
 
@@ -1521,11 +1566,16 @@ Required CI modes should include:
 - GCC static analysis where useful,
 - clang-tidy over the Clang-readable graph,
 - AddressSanitizer + UndefinedBehaviorSanitizer build,
-- separate ThreadSanitizer build,
+- separate ThreadSanitizer build (the engine behind the C ABI is concurrent;
+  do not drop this personality),
 - fuzz/property testing for parsers, codecs, storage boundaries, and protocol
   surfaces where appropriate.
 
 Do not combine ASan and TSan into one configuration.
+
+On Darwin, every ctest binary runs with `MallocProbGuard=1` so libmalloc's
+probabilistic guard detects heap overflows the sanitizers would miss in the
+uninstrumented graphs.
 
 ---
 
@@ -1566,8 +1616,9 @@ The rules in this document are enforced by a ladder, strongest layer first:
    `-fno-rtti` remove exceptions and RTTI from the language itself.
 2. **The build graph** rejects what it can: module lists are explicit, header
    units fail dependency scanning, and wrong toolchains fail configure.
-3. **clang-tidy AST checks** enforce the semantic bans over the Clang-readable
-   graph.
+3. **clang-tidy AST checks** find boundary defects over the Clang-readable
+   quarantine graph. A separate dialect profile will enforce semantic bans
+   when Clang can parse that graph.
 4. Everything visible only in raw source text — preprocessor directives, lint
    suppressions, comments, header-like file extensions — is a **review
    convention**, deliberately **not** machine-enforced. There is no repository
@@ -1576,8 +1627,8 @@ The rules in this document are enforced by a ladder, strongest layer first:
 Accepted gap: a named module with reflection partitions is GCC-only as a unit
 and escapes the AST checks until the pinned Clang parses the project's
 reflection syntax; the lint graph covers the Clang-parseable remainder —
-`foreign/`, `unsafe/`, and any non-importing translation units. There,
-enforcement is compiler flags plus review.
+`foreign/` and any non-importing translation units. There, the quarantine
+profile supplements compiler flags and review with boundary-focused analysis.
 
 The ladder has a direction. Every rule aspires upward: a review
 convention is a rule still waiting for its mechanism, tolerated only
@@ -1639,7 +1690,7 @@ Before accepting code, ask in order:
 10. Can ownership be unique or arena-based instead of shared?
 11. Can a reference/span/view replace a pointer?
 12. Can local mutation replace shared mutation?
-13. Is this low-level operation actually confined to `unsafe/foreign`?
+13. Is this low-level operation actually confined to `foreign/`?
 14. Does this introduce a second mechanism for something already solved?
 15. Is the new abstraction visible in optimized code when it should disappear?
 16. Is every representable fact represented — concept, contract,
@@ -1651,6 +1702,10 @@ Before accepting code, ask in order:
     (`is_transient()`), exhaustively (§26)?
 19. Is the serving path's footprint bounded — buffers reused, wire
     quantities capped by named maxima (§29)?
+20. Does every heap allocation enter one RAII owner immediately, including in
+    quarantine code (§29)?
+21. Does every public parser return owned data, and is every remaining view
+    call-scoped or program-lifetime (§12)?
 
 If a proposed design uses an older mechanism while a blessed mechanism can
 express the same thing, reject it.

@@ -238,9 +238,8 @@ next-but-one rung).
   are `[field]` / `[Duration(field)]` — calendar capacity rides the R5
   machinery free; dependent bounds read the hi slot from the target row
   (C1/C6); path weights refuse typed naming the pinned-column composition
-  idiom (§8 ruling 6). The design is `docs/design/capacity-laws.md`
-  (§8 rulings 1–6, §8b C1–C19); the impact dossier is
-  `docs/design/capacity-cutover.md` — both stamped LANDED at close.
+  idiom (§8 ruling 6).   The design is `docs/design/capacity-laws.md`
+  (§8 rulings 1–6, §8b C1–C19), stamped LANDED at close.
 - **The hard cutover, executed:** FORMAT_VERSION 7 refuses every pre-cutover
   store on every open lane; the fingerprint mints statement-form tag 4 under
   the v5 encoding label (C5 — tag 3 never reissues) so every schema
