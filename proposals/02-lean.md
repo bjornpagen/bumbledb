@@ -368,8 +368,9 @@ Level 1: `evalLinearReach`, `evalQueryList`, proved equal to Level 0.
 why `cands.length + 1` always suffices). It is not a parameter of any
 public def and not a Bridge incompleteness caveat.
 
-Engine `FixpointBudgetExceeded` is incompleteness vs `reachDen`, the
-same class as `ResultBytesOverflow` vs `rulesAnswers`.
+Engine `DerivedBudgetExceeded` is incompleteness vs `evalQuery` —
+one derived-tuples ledger over interior tables and `reachDen` alike —
+the same class as `ResultBytesOverflow` vs `rulesAnswers`.
 -/
 ```
 
@@ -551,7 +552,7 @@ theorem evalLinearReach_eq_lfp
          t ∈ reachDen C rec self W.den V.toEnv ρ
 ```
 
-This **replaces** `program_eval_sound` as the rec agreement. The public theorem has no fuel hypothesis. The engine may still abort with `FixpointBudgetExceeded` before the lfp — engine-only incompleteness vs `reachDen`. Document that in the Bridge **engine** row, in `40-execution.md`, and in `fixpoint.rs`'s successor module. Withdraw the sentence in `40-execution.md` that "Lean `evalProgram` is complete only under sufficient fuel." Do not replace it with a sentence that Lean `evalLinearReach` is incomplete under insufficient fuel — there is no such parameter.
+This **replaces** `program_eval_sound` as the rec agreement. The public theorem has no fuel hypothesis. The engine may still abort with `DerivedBudgetExceeded` before the lfp — engine-only incompleteness vs `reachDen` (the same ledger already prices interior tables, vs `evalQuery`). Document that in the Bridge **engine** row, in `40-execution.md`, and in `fixpoint.rs`'s successor module. Withdraw the sentence in `40-execution.md` that "Lean `evalProgram` is complete only under sufficient fuel." Do not replace it with a sentence that Lean `evalLinearReach` is incomplete under insufficient fuel — there is no such parameter.
 
 `evalLinearReach` is the **naive** chain. The engine is the **semi-naive** realization (`new = T(acc) \ acc` after round 0, one `DeltaVariant` per rec arm). Do not implement `evalLinearReach` as delta-variants. `semi_naive_agrees` instantiates at `T := reachOp C rec self I W ρ`. Keep the theorem; delete the k-variant reading from its Bridge engine row. One self-atom ⇒ one delta occurrence ⇒ `new = T(acc) \ acc = rec(acc) \ acc` after round 0 (`base ⊆ acc`).
 
@@ -700,7 +701,7 @@ Add:
 | `reachOp_mono` | Linearity and the roster's no-negation-in-rec premise make the reach operator monotone (the wall is the self case) | rec roster (`NegationInRec`, `NonlinearRecArm`) | `rejects_negation_in_rec`; `odd_not_monotone` |
 | `reach_den_finite` | Rec heads project bound variables, so the lfp is a finite subset of the active domain | `MeasureInInterior`, `AggregateInInterior` on heads | `rejects_a_measure_in_a_rec_head` (`MeasureInInterior`); `succ_prefixed_infinite` |
 | `evalLinearReach_eq_lfp` | The executable reach lists exactly `reachDen` | conformance `evalQueryList` on `reach-*.json`; `translate_query` | rec corpus three-way |
-| `evalLinearReach_eq_lfp` (engine) | The reach driver computes those answers when it terminates. `FixpointBudgetExceeded` is incompleteness vs `reachDen` — not vs a fueled Lean evaluator (there isn't one) | `run_reach` (`api/prepared/reach.rs`); `Error::FixpointBudgetExceeded` | recursive goldens; `a_tight_fixpoint_budget_trips_with_the_typed_error` |
+| `evalLinearReach_eq_lfp` (engine) | The reach driver computes those answers when it terminates. `DerivedBudgetExceeded` is incompleteness vs `evalQuery` (interior tables and `reachDen` on one ledger) — not vs a fueled Lean evaluator (there isn't one) | `run_reach` (`api/prepared/reach.rs`); `Error::DerivedBudgetExceeded` | recursive goldens; `a_tight_derived_budget_trips_under_reach`; `a_tight_tuple_budget_trips_on_an_interiors_only_query` |
 | `evalQuery_sound` | Interior DAG once, optional `reachDen`, then main `rulesAnswers` — listed by `evalQueryList` | `run_interiors` + `run_reach` + rule loop | cookbook 24 goldens; cookbook 25 is main `Sum` over finished rec (engine, not an Aggregates theorem); interiors-only does not enter reach; primer `reach(x,x)` |
 | `semi_naive_agrees` (engine) | One delta occurrence per rec arm walks the naive chain; the spanning seen-set absorbs re-derivation | `DeltaVariant` (exactly one per rec arm); `answers_since` | recursive goldens; delete k-variant tests |
 | `evalQuery_empty_rules` | Empty main denotes `∅`; the rec is never the answer | `EmptyRuleSet` at validate; identity main required | recut of `output = 0` programs |
@@ -789,7 +790,7 @@ Do not add a Bridge row that cites cookbook 25 as an Aggregates.lean theorem. Co
 
 ## What Lean will not take on in this cut
 
-`ArgKey::Measure`, C20, FFI UAF, Q-mark abort, chain-window (`w = w₁ ∩ w₂` in a rec head), the negated-closed complement fold (still unmodeled in Rewrites), Plan/COLT, interior-aware rewrites, interior membership in `Membership.lean`, `FixpointBudgetExceeded` as a Lean error (it is not an error in `reachDen`; it is engine incompleteness). Smashing CQuery into `Syntax.Query` (aggregate finds). Stacked sequential lfps, mutual-linear, named interiors of finished rec, nonlinear rec — OPEN (`05-cutover.md`), unrepresentable in `Option Rec` + `recLinear`. `05-cutover.md` § not in the cut.
+`ArgKey::Measure`, C20, FFI UAF, Q-mark abort, chain-window (`w = w₁ ∩ w₂` in a rec head), the negated-closed complement fold (still unmodeled in Rewrites), Plan/COLT, interior-aware rewrites, interior membership in `Membership.lean`, `DerivedBudgetExceeded` as a Lean error (it is not an error in `reachDen` or `evalQuery`; it is engine incompleteness). Smashing CQuery into `Syntax.Query` (aggregate finds). Stacked sequential lfps, mutual-linear, named interiors of finished rec, nonlinear rec — OPEN (`05-cutover.md`), unrepresentable in `Option Rec` + `recLinear`. `05-cutover.md` § not in the cut.
 
 ## First file to open
 

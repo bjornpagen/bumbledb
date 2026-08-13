@@ -46,9 +46,9 @@ Wire (`ts/src/native.ts`): `ProgramIr` / `PredicateDefIr` / `{kind:"idb",pred}` 
 
 Tests: `ts/test/query.test.ts` recursion fences, `destructure-kernel` rec ports, `answers-named-orderable-ban` rec-head plumb, `psi-query-atoms` `output: 0` — recut to `interior` / `recursive`. Construction errors for two recs. TS used `program()`; deleting it is the named-without-keyword fence.
 
-**Primer cycle detector.** `requiresCycleQuery` recuts 1:1: `q.recursive("reach", { base: [edge], rec: [step with extra EDB + one reach atom] })` plus a main rule `grp ⋈ reach(x,x)`. Empty answers = DAG. Do not add a named interior of `reach` for the diagonal. Primer is a **downstream repo** — this recut is coordination with their P2.4 cutover, not a file in this tree; the in-tree artifacts are the primer-shaped `reach(x,x)` lock and `ts/test/expressibility-operand-views.test.ts` as the living evidence.
+**Primer cycle detector.** `requiresCycleQuery` recuts 1:1: `q.recursive("reach", { base: [edge], rec: [step with extra EDB + one reach atom] })` plus a main rule `grp ⋈ reach(x,x)`. Empty answers = DAG. Do not add a named interior of `reach` for the diagonal. Primer is a **downstream repo** and its recut is **out of this cut**: when steps 3+4 merge, file the Primer issue carrying this recipe verbatim; it lands on their cadence and gates nothing here. The in-tree artifacts are the primer-shaped `reach(x,x)` lock and `ts/test/expressibility-operand-views.test.ts` as the living evidence.
 
-TS has no `max_program_recs` today. Do not add an engine-cap duplicate, and do not add `max_ctes`. The engine does not cap interior count. If a sugar cap is added later, it is 4, like C++ `max_query_rules`, and stays sugar.
+TS has no `max_program_recs` today. Do not add an engine-cap duplicate, do not add `max_ctes`, and do not add a sugar cap either: named interiors are uncapped at every layer — the builder is variadic, mirroring the engine.
 
 ## C++ (`cpp/src/query/program.cc`, `ir.cc`, `foreign/program.cc`)
 
@@ -63,7 +63,7 @@ q.recursive<"reach">(bdb::base{...}, bdb::rec{...})
 
 Two **tagged packs**, not a flat variadic with no separator. Trailing `output(...)` is gone; main rules **are** the trailing builders, as a non-recursive query already is. `.idb(pred, ...)` / `.not_idb` become `.interior<"n">` / `.not_interior<"n">`. `interior` / `recursive` after a main rule, `interior` after `recursive`, a second `interior<"mid">`, a second `recursive` — consteval errors.
 
-`max_program_recs = 4` dies as a Program-era name. If C++ keeps a sugar cap on named interiors, it is `max_interiors = 4` beside `max_query_rules = 4`, consteval-only. **The engine has no matching constant.** A builder that exceeds 4 fails at consteval; a raw IR with five interiors validates. Comment in `ir.cc` already says this about `max_query_rules` vs `MAX_RULES` — same sentence, interiors edition. Do not write `MAX_CTES = 16` next to it.
+`max_program_recs = 4` dies as a Program-era name, and **no `max_interiors` replaces it**: named interiors are uncapped in C++ sugar too — a variadic pack of `interior<"n">` clauses, mirroring the engine. `max_query_rules = 4` stays what it is: a consteval cap on *rules* per recipe, with the existing `ir.cc` comment that the engine's `MAX_RULES` is the real law. Do not write `MAX_CTES = 16` next to it.
 
 `75-cpp-lowering.md` §4 rewrite: drop Program shapes; Query with `interiors`/`rec`; `AtomSource` `interior`; lowering order interiors then rec then main; `output = recs.length` sentence deleted. Recipe parity: cookbook 24–25 C++ ports use `recursive`. Fingerprints will change (IR shape change); `00-product.md` compatibility is never a design input — regenerate the recipe fingerprint file in the same commit.
 
@@ -76,9 +76,9 @@ Zero-duplication law: cite `evalQuery`, `evalQuery_plain`, `reachDen`, `evalLine
 | Doc | Edit |
 |---|---|
 | `20-query-ir.md` | Kill "a query is a program" / engine-recursion Program cut. Query shape: interiors + optional Rec + main. Union paragraph stays (set union, **one sink per rule-list**, no UNION ALL keyword). Caps: `MAX_RULES` per list; rec pools `MAX_RULES`; **no `MAX_CTES` / `MAX_PREDICATES`.** `degenerate_embedding` citations → `evalQuery_plain`. Strata judge → rec roster. Named-head notation → `interior` / `recursive`. Error names from `01` table. Three knobs in one paragraph (walls / this cut / OPEN), citing the chain-window OPEN already in the README |
-| `40-execution.md` | Fixpoint driver section → linear reach driver: one DeltaVariant, round 0 = `reachOp_empty`, interiors-only never enters (`PreparedBody::Rules` or `Empty`). Drop "Lean evalProgram complete only under sufficient fuel" — the sentence is false **today** (fuel is internal; `missingCount_le` proves the bound); it does not survive to be retargeted. Do not replace it with Lean-fuel incompleteness. Budget = incompleteness vs `reachDen`. Size (`DEFAULT_FIXPOINT_TUPLES`) is the wall, not interior count. Observability: `interiors:` then optional one `reach` then main; no strata, no `STRATUM`, no 16-slot interior span array |
+| `40-execution.md` | Fixpoint driver section → linear reach driver: one DeltaVariant, round 0 = `reachOp_empty`, interiors-only never enters (`PreparedBody::Rules` or `Empty`). Drop "Lean evalProgram complete only under sufficient fuel" — the sentence is false **today** (fuel is internal; `missingCount_le` proves the bound); it does not survive to be retargeted. Do not replace it with Lean-fuel incompleteness. Budget = one derived-tuples ledger over interiors ∪ rec (`DerivedBudgetExceeded`), incompleteness vs `evalQuery`; rounds axis rec-only. Size (`DEFAULT_DERIVED_TUPLES`, né `DEFAULT_FIXPOINT_TUPLES`) is the wall, not interior count. Observability: `interiors:` then optional one `reach` then main; no strata, no `STRATUM`, no 16-slot interior span array |
 | `00-product.md` | Deleted vocabulary: *rule program* stays deleted; engine recursion sentence becomes interiors + one linear rec, budgeted; drop `MAX_PREDICATES`. Deductive-database non-goal unamended |
-| `70-api.md` | `prepare(&Query)` only. Drop `ProgramRef` / `From<Query> for Program` / degenerate embedding paragraph. `set_fixpoint_budget` stays, rec-only effect |
+| `70-api.md` | `prepare(&Query)` only. Drop `ProgramRef` / `From<Query> for Program` / degenerate embedding paragraph. `set_derived_budget(rounds, tuples)` (né `set_fixpoint_budget`): tuples axis judges every query, rounds axis rec-only |
 | `75-cpp-lowering.md` | §4 as above |
 | `60-validation.md` | `translate_program` → `translate_query`; `program-*.json` → `reach-*.json`; third oracle on that arm is `evalQueryList`. CQuery arm unchanged. SQLite is a lossy translator of this cut; inexpressible-set rows for mutual/nonlinear become unreachable (unwritable), not a denotation reason |
 | `docs/architecture/README.md` | Recursion OPEN: chain-window unchanged. Add OPEN rows for stacked linear lfps, mutual-linear, named interior of finished rec, nonlinear-at-L — triggers from `05-cutover.md`. No new OPEN that re-litigates walls |
@@ -171,6 +171,6 @@ Never `UNION ALL`. `sqlite_run/tests.rs` `UNION ALL` generator-bomb is unrelated
 - `negation_of_a_lower_stratum_passes` → negation of an interior or of finished rec **in main** (legal); negation **in rec** refuses (`NegationInRec` — self is the wall, finished-table is this-cut/OPEN) and is **not** the same query as the main anti-join
 - `a_degenerate_program_executes_as_its_query` → `evalQuery_plain` lock
 - tree/cyclic closure goldens — cyclic **graph** (data), still linear **rules**. Keep. Mutual **predicates** go.
-- primer cycle detector — recut 1:1; empty on a DAG
+- primer cycle detector (the **in-tree** lock / TS expressibility test) — recut 1:1; empty on a DAG. The Primer repo itself is the filed issue, not this list
 
 Iterative Tarjan unit tests in `strata.rs` die with the file. Do not reimplement SCC "in case."

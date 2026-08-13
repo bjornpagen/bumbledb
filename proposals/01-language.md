@@ -60,7 +60,7 @@ Params remain **query-global**: one binding surface across every interior rule, 
 
 ## No `MAX_CTES`
 
-`MAX_PREDICATES = 16` and `MAX_RULES = 16` were Program-era “keep programs query-shaped.” A **second** 16 on how many named interiors you wrote is not a complexity wall. Each interior is a finite CQ evaluated once (not an lfp). Work is bounded by the existing rule-size law plus result / tuple budgets, not by an interior counter.
+`MAX_PREDICATES = 16` and `MAX_RULES = 16` were Program-era “keep programs query-shaped.” A **second** 16 on how many named interiors you wrote is not a complexity wall. Each interior is a finite CQ evaluated once (not an lfp). Work is bounded by the existing rule-size law plus the derived-tuples ledger below, not by an interior counter.
 
 **Do not invent `MAX_CTES`.** Do not export `MAX_INTERIORS`. Do not size an obs array to 16 interiors. `TooManyCtes` / `TooManyPredicates` have no successor that counts interiors.
 
@@ -72,11 +72,11 @@ If query-shaped-ness still needs a number, it is the existing `MAX_RULES` (16), 
 
 Judged in declaration order: each interior, then the rec pool, then main. First failure wins. Payloads stay `{ count }` / `{ produced, cap }` — no `PredId`.
 
-The expensive object is **rec answer size** (`DEFAULT_FIXPOINT_TUPLES` = 10⁷, result bytes), not how many named interiors you wrote. Complete-graph TC is n² whether the syntax is linear or not; seed the frontier (host demand). Rounds default `2¹⁶` is diameter headroom; size is the wall.
+The expensive object is **derived-table size**, not how many named interiors you wrote — and one ledger prices it. Every derived sink counts against one **derived-tuples budget** (10⁷ default; today's `DEFAULT_FIXPOINT_TUPLES` value, new spelling `DEFAULT_DERIVED_TUPLES`): each interior's emits, then the rec's table. Judged after each interior finishes and between rec rounds — today's per-round check, relocated; one `usize` read per unit, no per-emit cost. Tripping is runtime `DerivedBudgetExceeded { rounds, tuples }` (`rounds` = rec rounds so far; `0` on a preamble trip). The ledger is also the real defense of "no interior counter": 100 000 tiny interiors and one n² cross-product interior meet the same wall. The main answer stays priced in **bytes** (`ResultBytesOverflow`) — derived tables in tuples, the answer in bytes, no derived materialization unguarded. Complete-graph TC is n² whether the syntax is linear or not; seed the frontier (host demand). Rounds default `2¹⁶` is diameter headroom and is rec-only; size is the wall.
 
 **`InteriorId` construction never panics.** Count with `usize`. `InteriorId` is `u32`, the same width as `RelationId`. If `interiors.len() + rec.is_some() as usize` does not fit in `u32`, that is a representation error (`InteriorIdOverflow`) — id-width, not a product cap of 16. Hostile `interiors.len() == 100_000` is a legal Query: each interior is still ≤ `MAX_RULES`, still eval-once. Judge overflow **before** any `InteriorId(u32)`. Never `u32::try_from(interiors.len()).unwrap()`.
 
-C++ / TS sugar may still cap named interiors at 4 (`max_query_rules` precedent). That is sugar. The engine does not shrink to match it, and it is not `MAX_CTES`.
+C++ / TS sugar does **not** cap named interiors either — variadic builders, no `max_interiors`. `max_query_rules = 4` stays what it is: a sugar cap on *rules* per recipe. Interiors are uncapped at every layer.
 
 ## Union
 
@@ -90,7 +90,7 @@ Non-recursive. Declaration order **is** the topological order. Interior `i` may 
 
 Bodies: EDB atoms, earlier interiors, negation of either (a finished interior is a set — anti-join is ordinary), conditions, membership, params. **Measure comparisons in an interior body are legal** (filters; a ray raises `MeasureOfRay` after that interior, like any query). Rec bodies refuse every measure site. Heads: bound variables only — no `Aggregate`, no `Measure`, no `AggregateMeasure`. That is today's executable-class item (`AggregateInteriorPredicate` / `MeasureInteriorPredicate`) restated for interiors: an interior is a projection-shaped word-row table. Measure **finds** and folds live on the **main** query, over finished interiors/rec.
 
-Eval once, in declaration order, into a transient image, before the rec if present, then the main query. A Query whose `rec` is `None` **never** enters the reach driver — interiors-only is the ordinary rule loop plus an interior preamble. No watermark, no round budget, no `FixpointBudgetExceeded`.
+Eval once, in declaration order, into a transient image, before the rec if present, then the main query. A Query whose `rec` is `None` **never** enters the reach driver — interiors-only is the ordinary rule loop plus an interior preamble. No watermark, no rounds axis — but the derived-tuples ledger still prices every interior table (§ No `MAX_CTES`): a cross-product interior trips `DerivedBudgetExceeded { rounds: 0, tuples }`, not the OOM killer. Skipping the driver does not skip the budget.
 
 Empty `interiors` is legal. An individual `Interior` with zero rules is `EmptyInterior` (not `EmptyRuleSet` — that name is the main query).
 
@@ -187,7 +187,7 @@ sub(a) | AccountParent(child: a, parent: p), sub(p);
 
 becomes the same rewrite: `recursive sub(...)` on the first two lines; the `Sum` line stays bare (main). Aggregation is not in the rec SCC; it reads the finished rec. The strata-roster sentence "fold over a lower stratum" is now the ordinary sentence "main query over a finished interior."
 
-**Primer cycle detector** (`requiresCycleQuery`): already the allowed shape — linear `reach(from, to)`, extra EDB on the step arm, output is **not** the rec. Recut 1:1. Empty output = the lattice is a DAG. Primer is a **downstream repo**: the recut is their P2.4 cutover, coordinated; the in-tree artifact is the primer-shaped `reach(x,x)` lock.
+**Primer cycle detector** (`requiresCycleQuery`): already the allowed shape — linear `reach(from, to)`, extra EDB on the step arm, output is **not** the rec. Recut 1:1. Empty output = the lattice is a DAG. Primer is a **downstream repo**: its recut is out of this cut — filed as a Primer issue when steps 3+4 merge, landed on their cadence, gating nothing here. The in-tree artifact is the primer-shaped `reach(x,x)` lock.
 
 ```text
 recursive reach(from, to) | Produces(grp: from, capability: cap),
@@ -216,7 +216,7 @@ interior mid(x) | Edge(src: x);
 
 This Query has `rec: None`. It prepares and executes as interiors-only. It must not touch the reach driver. That is the interior-as-eval-once law, operational.
 
-**Interior that reads the rec.** Today's legal program `rec + non-recursive interior predicate that reads rec + output` has no this-cut interior image: interiors cannot read the rec (`InteriorId(interiors.len())` is never `< i`). Those interior rules **inline into the main query** (union of conjunctive bodies, DNF as ever). You cannot name a view of the rec this cut. Two different main-shaped queries over the same rec are two `Query` values (two prepares). OPEN: a named interior of a finished rec (inlining equivalent).
+**Interior that reads the rec.** Today's legal program `rec + non-recursive interior predicate that reads rec + output` has no this-cut interior image: interiors cannot read the rec (`InteriorId(interiors.len())` is never `< i`). Those interior rules **inline into the main query** (union of conjunctive bodies, DNF as ever). Inlining is equivalence **up to the caps**: unfolding a k-rule view into m main rules multiplies to k·m conjunctive rules, judged by main's `MAX_RULES` / DNF pool — a today-legal 16-rule view over a rec read by a 2-rule output has **no this-cut image at all**. That is part of the OPEN trigger, not a reason to widen the caps. You cannot name a view of the rec this cut. Two different main-shaped queries over the same rec are two `Query` values (two prepares). OPEN: a named interior of a finished rec (inlining equivalent).
 
 Worked example — today's `CLOSURE_ROOTS` (non-recursive `p1` anti-joins finished `p0`):
 
@@ -241,7 +241,7 @@ Mutual recursion, nonlinear rec, named-head-without-keyword, `Program` literals 
 
 ## Validation roster (additions; the per-rule roster stays)
 
-Judged in this order, after the existing query-shape checks (empty main, `MAX_RULES` / DNF per interior and per main and the rec **pool**, nesting, DNF, head-shape alignment). Roster names are `ValidationError`; `FixpointBudgetExceeded` / `MeasureOfRay` / `ResultBytesOverflow` are runtime `Error` and stay there:
+Judged in this order, after the existing query-shape checks (empty main, `MAX_RULES` / DNF per interior and per main and the rec **pool**, nesting, DNF, head-shape alignment). Roster names are `ValidationError`; `DerivedBudgetExceeded` (né `FixpointBudgetExceeded`) / `MeasureOfRay` / `ResultBytesOverflow` are runtime `Error` and stay there:
 
 1. `InteriorIdOverflow` — derived-table count does not fit `u32` (usize, before any `InteriorId`). There is **no** `TooManyCtes`.
 2. Per `Interior` / `Rec` / main: existing empty-rule (`EmptyInterior` for an interior with zero rules; `EmptyRuleSet` only for empty **main**), DNF, head-alignment, per-rule roster, with `IdbSignatures` replaced by `InteriorSignatures` (sealed in declaration order — no chaotic iteration).
@@ -268,6 +268,7 @@ Judged in this order, after the existing query-shape checks (empty main, `MAX_RU
 | `MeasureInInterior` | `MeasureInteriorPredicate` + `MeasureInRecursiveHead` when the measure **find** is on an interior/rec **head** |
 | `MeasureInRec` | measure in a rec **body** (comparison / binding). Bindings may still hit `DurationInBinding` first (per-rule roster runs earlier) — both are correct; do not add a third name |
 | `EmptyRuleSet` | empty **main** only |
+| `DerivedBudgetExceeded` | `FixpointBudgetExceeded` — runtime `Error`, not roster. One derived-tuples ledger over interiors ∪ rec (§ No `MAX_CTES`); rounds axis rec-only; payload `{ rounds, tuples }`, no `stratum` |
 
 **Deleted roster items (no replacement that preserves the shape):** `TooManyPredicates`, `TooManyCtes` (never ship it), `UnknownOutputPredicate`, `UnknownPredicate`, `PredicateColumnOutOfRange`, `NegationThroughCycle`, `AggregationThroughCycle`, `UnresolvedPredicateSignature`, `AggregateInteriorPredicate`, `MeasureInteriorPredicate`, `MeasureInRecursiveHead`. There is **no** `AggregationInRec` / `AggregationInRecCte`. Do not keep the old `*InCte` spellings as aliases.
 
