@@ -1,38 +1,52 @@
-# Cut: delete Program — Query + WITH + one linear reach
+# Cut: delete Program — Query, interiors, one linear reach
 
 This folder is **one** proposal. Not a wiki. Read in order, then open Lean.
 
-The cut: user-facing `Program` / stratified Datalog / `evalProgram` / fuel-as-semantics die. The one execute target is `Query`. Named views are non-recursive `WITH` (a DAG, evaluated once). Recursion is at most one **linear** `WITH RECURSIVE`, denoted by a least fixpoint with **no fuel**, executed by specializing the existing rule loop — one `DeltaVariant`, watermark Δ, `TransientImage`, Free Join. Then delete the Program system entire: no zombie one-stratum `Program`, no `From<Query> for Program`, no Tarjan, no mutual recursion, no k-variants.
+The cut: user-facing `Program` / stratified Datalog / `evalProgram` / fuel-as-semantics die. The one execute target is `Query`. Named **interiors** are a DAG of conjunctive rule-lists, each evaluated once. Recursion is at most one **linear** SCC, denoted by a least fixpoint with **no fuel**, executed by specializing the existing rule loop — one `DeltaVariant`, watermark Δ, `TransientImage`, Free Join. Then delete the Program system entire: no zombie one-stratum `Program`, no `From<Query> for Program`, no Tarjan, no k-variants. Mutual recursion is unwritable **this cut** (OPEN, not a wall).
 
 Do not implement from this folder until `02-lean.md` is the working spec and the Lean tree is green. Docs after Lean. Rust after docs. Bindings after Rust. Leftover `Program` last.
 
 **Lean work is one green tree**, not five mergeable half-states. The numbered Lean steps below are the queue *inside* that commit (or stacked commits that do not land on main until `lake build` is green). Do not merge `Atom.source` with `Program` still alive, and do not merge `Program` gone with no `evalQuery`.
 
+SQLite is a **lossy translator** of this cut’s fragment. It is never the denotation and never the language. Do not specify the IR by writing `WITH RECURSIVE`.
+
+## Three knobs (normative; every file uses these words)
+
+Do not collapse these into one “the language refuses.” A this-cut refusal is not a wall. An OPEN item is not unwritable forever.
+
+**Walls (conceptual, forever).** Bound heads / creation quarantine — the lfp is finite because heads project bound variables (`reach_den_finite`; `succ_prefixed_infinite` is the wall). No negation or aggregation **in a recursive SCC** (`reachOp_mono`; `odd_not_monotone` is the wall). Not a Datalog runtime: no stored programs, no magic sets, no demand rewrite, no host-loop internalization. Denotation is `lfp`, not fuel. Recursion is never the answer (main is). Chain-window stays OPEN (created head). Filtering during the walk is not anti-joining the finished lfp.
+
+**This cut (scope, not morality).** Query = named interiors (DAG, eval once) + **one** recursive SCC + main. Linear arms (exactly one positive rec occurrence per rec rule) because k=1 Δ-variant × Free Join at 10⁷ / 10 ms — the better TC algorithm for sighted graphs, not because SQLite. One `ReachDriver`. Interiors then rec then main. Primer `reach(x,x)` recuts 1:1. `MAX_RULES` applies to every rule-list in interiors ∪ rec ∪ main. **No interior-count cap.**
+
+**OPEN (same complexity class; workload trigger; not unwritable forever).** Stacked sequential linear lfps. Mutual-linear (one SCC, each rule ≤1 rec atom) — refused **this cut** so Tarjan / k-variants die with Program. Named interior of a **finished** rec (inlining is equivalent). Nonlinear refused until a measured L-scale query makes the linear encoding unnatural **and** the work still fits the tuple budget.
+
+`01-language.md` states the language, then this-cut narrowing, then the roster. `05-cutover.md` does not contradict that: mutual-linear is OPEN / other cuts; this cut’s IR cannot write it.
+
 ## Read order
 
 | File | Job |
 |---|---|
-| `00-manifesto.md` | Why Program is the wrong model; what elegance means here |
-| `01-language.md` | Normative Query + WITH + RecCte; grammar; mapping; errors |
+| `00-manifesto.md` | Why Program is the wrong model; the three knobs; why linear; why SQLite is not the language |
+| `01-language.md` | Language + this-cut IR; grammar as host sugar; mapping; errors |
 | `02-lean.md` | **The core.** Types, eval, theorems to keep/retarget/delete. Start here in the tree |
 | `03-engine.md` | IR after Program; drivers; files/types that die |
 | `04-bindings-docs.md` | `query!`, TS, C++, cookbook, oracles, refusals |
-| `05-cutover.md` | Ordered plan. Lean green first. Success criteria. Out of cut |
+| `05-cutover.md` | Ordered plan (this cut’s engineering sequence). Success criteria. OPEN / out of cut |
 
 ## Locked (do not re-open)
 
-- Query-only. Lean field `views`; engine / C ABI / TS IR field `with`. `with` is a Lean keyword.
-- One linear `RecCte`. No `UNION` keyword. No fuel in any public Lean denotation.
+- Query-only. Lean and engine field `interiors`. Do not spell the IR `with` (`with` is a Lean keyword; that collision was the tell that the last draft was a CTE dialect).
+- This cut: one linear `Rec`. No `UNION` keyword. No fuel in any public Lean denotation.
 - Specialize the existing driver. No FFI / Q-mark / C20 sprawl.
 - Delete Program utterly — including `enum Program` in `prepared.rs` and any “internal one-stratum Program”.
-- `MAX_CTES = 16` excludes main. Rec CTE pools `MAX_RULES` across `base`+`rec`. C++/TS `max_ctes = 4` is sugar.
+- **No `MAX_CTES`.** `MAX_PREDICATES` dies with Program. Do not replace it with a second 16 on interiors. `MAX_RULES` (16) is the remaining query-shaped cap, per rule-list; the rec SCC pools it across `base`+`rec`. C++/TS sugar caps stay sugar (`max_query_rules = 4`; if C++ caps named interiors, that is sugar, not an engine constant).
 - Conformance: existing `seeded-*.json` stay the CQuery arm (`"relation"` → `.edb`). Former `program-*.json` become `reach-*.json` evaluated by `evalQueryList`. Do not dump them into the CQuery glob.
 
 ## Lean-first sequence (the only sequence)
 
-1. Widen `Atom` to `AtomSource` (`edb | cte`). Generalize `derives` / `ruleAnswers` over `F : AtomSource → Set Fact`. Recover today's lemmas at `edbEnv I`. Delete `PAtom` / `PRule` / the even-odd coding transport. Executable join reads `factsOf W T` — never re-pun `CteId` into `RelId`. Every `a.relation` site matches `.edb R` (Membership, Plan, Rewrites, Dedup, Sweep, Conformance `decodeAtom`).
-2. Add `WithDef`, `RecCte`, `CteId`. Widen Lean `Query` with `views : List WithDef` and `rec : Option RecCte`. Engine IR field is `with`. Delete `Program` / `PredicateDef` / `PredId` / `Query.toProgram`.
-3. Define `evalWith`, `reachOp`, `reachDen = lfpS`, `evalQuery`. Executable `evalLinearReach` / `evalQueryList` proved equal to those denotations. **No fuel in any public denotation.**
+1. Widen `Atom` to `AtomSource` (`edb | interior`). Generalize `derives` / `ruleAnswers` over `F : AtomSource → Set Fact`. Recover today's lemmas at `edbEnv I`. Delete `PAtom` / `PRule` / the even-odd coding transport. Executable join reads `factsOf W T` — never re-pun `InteriorId` into `RelId`. Every `a.relation` site matches `.edb R` (Membership, Plan, Rewrites, Dedup, Sweep, Conformance `decodeAtom`).
+2. Add `Interior`, `Rec`, `InteriorId`. Widen Lean `Query` with `interiors : List Interior` and `rec : Option Rec`. Engine IR field is `interiors`. Delete `Program` / `PredicateDef` / `PredId` / `Query.toProgram`.
+3. Define `evalInteriors`, `reachOp`, `reachDen = lfpS`, `evalQuery`. Executable `evalLinearReach` / `evalQueryList` proved equal to those denotations. **No fuel in any public denotation.**
 4. Retarget Bridge, Countermodels, conformance (`evalProgram` → `evalQueryList` on `reach-*.json`). `lake build` green. Census green (docs in the next commit of the same PR if needed — do not merge Lean to main with red census).
 5. Then — and only then — architecture docs as the new present tense, then Rust IR+validate+exec, then macros/bindings, then grep-clean `Program`.
 

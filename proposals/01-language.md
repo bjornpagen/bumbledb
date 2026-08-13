@@ -1,135 +1,163 @@
-# 01 — Language: Query, WITH, one RecCte
+# 01 — Language: Query, interiors, one Rec
 
-Normative surface after the cut. Semantics live in `02-lean.md` and are cited, not restated. This file fixes shape, grammar, mapping, and the roster of new refusals.
+Normative surface after the cut. Semantics live in `02-lean.md` and are cited, not restated. This file fixes shape, mapping, and the roster of new refusals. Host-sugar tokens (`query!`, TS, C++) live in `04-bindings-docs.md`; they lower to this IR. They are not SQL, and this IR is not a CTE dialect.
 
-## The one execute target
+The three knobs: `proposals/README.md`. This file states the **language**, then **this-cut narrowing**, then the roster. Mutual-linear is not “the language refuses”; it is this-cut scope (`Option<Rec>`, one name) so Tarjan dies with Program. `05-cutover.md` lists it under OPEN / other cuts — the same fact, not a contradiction.
 
-`Query` is the only value `Db::prepare` accepts. There is no `Program`, no `PredicateDef`, no `PredId`, no `ProgramRef`, no `From<Query> for Program`.
+## The language
+
+A `Query` is three parts, in evaluation order:
+
+1. **Named interiors** — conjunctive rule-lists, each a finite CQ (union of CQs), evaluated **once**, not an lfp. They form a DAG: declaration order is topological order. An interior may read EDB and any **already-finished** derived table (earlier interiors; after a rec SCC has closed, that rec — inlining-equivalent, OPEN this cut). Bodies may negate finished derived tables (a finished set is a set). Heads are bound variables only (creation quarantine at the interior boundary: no fold, no measure find — those live on main).
+2. **Recursive SCCs** — least fixpoints over named derived relations. A recursive SCC is monotone only if it contains no negation and no aggregation (`odd_not_monotone` / creation quarantine). Heads are range-restricted (bound variables). The denotation of one SCC is `lfpS` of its operator, not a fuel parameter. Recursion is never the answer. Sequential SCCs (A closes, B reads A) are stacked lfps, same class — OPEN this cut. Mutual-linear (several names, one SCC, each rule ≤1 rec atom) is one joint lfp — OPEN this cut.
+3. **Main** — today's query: one head, ≥1 rule, folds, measures, negation, the full per-rule roster. Main reads EDB and every finished derived table. `evalQuery` is main `rulesAnswers` over that environment.
+
+Params are **query-global**. Variables are **rule-scoped**. `AtomSource` names a stored relation or a derived table (an interior or a rec). `RelId` / `RelationId` never puns with `InteriorId`. Statements still quantify over stored relations only.
+
+That is the object. Walls apply to every recursive SCC, in this cut and in any later one. The IR below is the **narrowing**: one linear SCC, interiors as a prefix that cannot see rec, main last.
+
+## This cut (the IR we implement)
+
+At most **one** recursive SCC, **one** name, **linear** arms. Interiors, then that rec, then main. No named interior of a finished rec (inline into main — equivalent). No second rec after the first. No mutual names in one SCC.
 
 ```rust
 Query {
-    with: Vec<WithDef>,         // 0..=MAX_CTES, declaration order = DAG order
-    rec:  Option<RecCte>,       // at most one; counts against MAX_CTES
-    head: Vec<HeadTerm>,        // today's head — the MAIN query's answer shape
-    rules: Vec<Rule>,           // today's rules — the MAIN query; ≥1 at validate, ≤ MAX_RULES
+    interiors: Vec<Interior>,   // DAG, declaration order; no count cap
+    rec:       Option<Rec>,     // at most one recursive SCC
+    head:      Vec<HeadTerm>,   // MAIN answer shape
+    rules:     Vec<Rule>,       // MAIN; ≥1 at validate, ≤ MAX_RULES
 }
 
-WithDef {
+Interior {
     head:  Vec<HeadTerm>,       // bound-variable positions only (every HeadTerm::Var)
-    rules: Vec<Rule>,           // ≥1, ≤ MAX_RULES; union; bodies: EDB ∪ earlier WITH
+    rules: Vec<Rule>,           // ≥1, ≤ MAX_RULES; union; bodies: EDB ∪ earlier interiors
 }
 
-RecCte {
+Rec {
     head: Vec<HeadTerm>,        // bound-variable positions only
     base: Vec<Rule>,            // ≥1; no self atom
     rec:  Vec<Rule>,            // ≥1; each arm: exactly one positive self-atom
-                                // base.len() + rec.len() ≤ MAX_RULES  (one CTE, one cap)
+                                // base.len() + rec.len() ≤ MAX_RULES  (one SCC, one cap)
 }
 
-AtomSource = Edb(RelationId) | Cte(CteId)
+AtomSource = Edb(RelationId) | Interior(InteriorId)
 
-CteId(u16)  // index: with[i] has CteId(i);
-            // the RecCte, if present, has CteId(with.len() as u16)
+InteriorId(u32)  // index: interiors[i] has InteriorId(i);
+                 // the Rec, if present, has InteriorId(interiors.len() as u32)
 ```
 
-Lean spells `Query.with` as `views` (`with` is a keyword). Same list, same order, same `CteId` numbering.
+Lean spells the same list `interiors`, the same `Rec`, the same `InteriorId` numbering. There is no engine field named `with`.
 
-`Rule`, `Atom`, `Term`, `FindTerm`, `ConditionTree`, `MAX_RULES` (16), `MAX_CONDITION_DEPTH` (64) are unchanged. `Atom.source` replaces `AtomSource::Idb(PredId)` with `AtomSource::Cte(CteId)`. A `Cte` atom's `FieldId(i)` addresses that CTE's head position `i` — positional, never nominal, today's Idb reading verbatim.
+`Rule`, `Atom`, `Term`, `FindTerm`, `ConditionTree`, `MAX_RULES` (16), `MAX_CONDITION_DEPTH` (64) are unchanged. `Atom.source` replaces `AtomSource::Idb(PredId)` with `AtomSource::Interior(InteriorId)`. An interior atom's `FieldId(i)` addresses that derived head position `i` — positional, never nominal, today's Idb reading verbatim.
 
-**No pun.** `RelId` / `RelationId` names stored relations. `CteId` names WITH/rec tables. `PredId` dies. Never encode a `CteId` as a `RelId` (the even/odd coding dies with `PAtom.code`).
+**No pun.** `RelId` / `RelationId` names stored relations. `InteriorId` names derived tables (interiors and the rec). `PredId` dies. Never encode an `InteriorId` as a `RelId` (the even/odd coding dies with `PAtom.code`).
 
-Params remain **query-global**: one binding surface across every WITH rule, every rec arm, and the main query. `ParamIdGap` / scalar-set conflict are judged once across that whole surface. Variables remain **rule-scoped**.
+Params remain **query-global**: one binding surface across every interior rule, every rec arm, and the main query. `ParamIdGap` / scalar-set conflict are judged once across that whole surface. Variables remain **rule-scoped**.
 
-**IR vs plan.** Validate refuses a Query with empty `Query.rules` (`EmptyRuleSet`). Prepare may still land `PreparedBody::Empty` when every **main** rule is statically dead — today's empty plan. That is not an empty IR. WITH preamble still runs when `with` is nonempty (`03-engine.md`).
+**IR vs plan.** Validate refuses a Query with empty `Query.rules` (`EmptyRuleSet`). Prepare may still land `PreparedBody::Empty` when every **main** rule is statically dead — today's empty plan. That is not an empty IR. Interior preamble still runs when `interiors` is nonempty (`03-engine.md`).
 
-## MAX_CTES = 16
+`Query` is the only value `Db::prepare` accepts. There is no `Program`, no `PredicateDef`, no `PredId`, no `ProgramRef`, no `From<Query> for Program`.
 
-`MAX_PREDICATES` (16) is **not** a rename of the same count. Today's cap counted **predicates including the output**. `MAX_CTES` counts `with.len() + rec.is_some() as usize` and **excludes** the main query. A query may therefore carry 16 CTE tables plus one answer sink — a one-slot relaxation.
+## No `MAX_CTES`
 
-**Why exclude main, and why 16 not 15.** The cap's reader is CTE materialization: one `TransientImage` per WITH/rec, pin-at-prepare floors, allocation high-water on those pools. The main query is today's `Query.rules` — it already exists, already has `MAX_RULES`, already has the head-owned sink, and does not get a CTE image. Shrinking to 15 to "keep 16 rule-lists" would be counting the wrong object. The product decision is unamended: queries stay query-shaped; the engine is never a rule-program runtime. Cookbook 24–25 use one rec and zero views. A DAG of sixteen named views is already past every sighted workload; past the cap is `TooManyCtes`. C++ / TS sugar caps stay sugar (`max_program_recs = 4` becomes `max_ctes = 4` in the C++ builder). The engine cap does not shrink to match sugar.
+`MAX_PREDICATES = 16` and `MAX_RULES = 16` were Program-era “keep programs query-shaped.” A **second** 16 on how many named interiors you wrote is not a complexity wall. Each interior is a finite CQ evaluated once (not an lfp). Work is bounded by the existing rule-size law plus result / tuple budgets, not by an interior counter.
 
-**`CteId` construction never panics.** Count with `usize`. `TooManyCtes` (and the implied `count > u16::MAX`) is judged **before** any `CteId(u16)`. After the cap, `i < MAX_CTES ≤ 16` so `CteId(i as u16)` is in range. Hostile `with.len() == 100_000` is a typed error, not `try_from(...).unwrap()`.
+**Do not invent `MAX_CTES`.** Do not export `MAX_INTERIORS`. Do not size an obs array to 16 interiors. `TooManyCtes` / `TooManyPredicates` have no successor that counts interiors.
 
-**`MAX_RULES` (16), per list, with one pooled rec CTE.** Each `WithDef.rules` and the main `Query.rules` are capped independently at 16 — today's per-predicate cap (structural `TooManyRules`, then `DnfExceedsRules` on that list's DNF). The rec CTE is **one** CTE, one pool:
+If query-shaped-ness still needs a number, it is the existing `MAX_RULES` (16), applying uniformly to every rule-list in interiors ∪ rec ∪ main:
 
-- Structural: `base.len() + rec.len() ≤ MAX_RULES` (`TooManyRules { count }` — `count` is the sum). A 17-rule base is this error; do not also run a redundant per-arm structural cap.
-- DNF: `dnf_width(base) + dnf_width(rec) ≤ MAX_RULES` (`DnfExceedsRules { produced: sum, cap: MAX_RULES }`). Do **not** allow 16+16 of DNF.
+- Each `Interior.rules` independently ≤ `MAX_RULES` (structural `TooManyRules`, then `DnfExceedsRules` on that list's DNF).
+- Main `Query.rules` independently ≤ `MAX_RULES` (today's query).
+- The rec SCC is **one** SCC, one pool: `base.len() + rec.len() ≤ MAX_RULES` (`TooManyRules { count }` — `count` is the sum). A 17-rule base is this error; do not also run a redundant per-arm structural cap. DNF: `dnf_width(base) + dnf_width(rec) ≤ MAX_RULES` (`DnfExceedsRules { produced: sum, cap: MAX_RULES }`). Do **not** allow 16+16 of DNF.
 
-Judged in declaration order: each WITH, then the rec pool, then main. First failure wins. Payloads stay `{ count }` / `{ produced, cap }` — no `PredId`.
+Judged in declaration order: each interior, then the rec pool, then main. First failure wins. Payloads stay `{ count }` / `{ produced, cap }` — no `PredId`.
+
+The expensive object is **rec answer size** (`DEFAULT_FIXPOINT_TUPLES` = 10⁷, result bytes), not how many named interiors you wrote. Complete-graph TC is n² whether the syntax is linear or not; seed the frontier (host demand). Rounds default `2¹⁶` is diameter headroom; size is the wall.
+
+**`InteriorId` construction never panics.** Count with `usize`. `InteriorId` is `u32`, the same width as `RelationId`. If `interiors.len() + rec.is_some() as usize` does not fit in `u32`, that is a representation error (`InteriorIdOverflow`) — id-width, not a product cap of 16. Hostile `interiors.len() == 100_000` is a legal Query: each interior is still ≤ `MAX_RULES`, still eval-once. Judge overflow **before** any `InteriorId(u32)`. Never `u32::try_from(interiors.len()).unwrap()`.
+
+C++ / TS sugar may still cap named interiors at 4 (`max_query_rules` precedent). That is sugar. The engine does not shrink to match it, and it is not `MAX_CTES`.
 
 ## Union
 
-Unchanged at the rule-list: several conjunctive rules, one head, set semantics, **one sink per rule-list**, spanning seen-set. There is one sink per `WithDef`, one sink for the `RecCte`, one sink for the main query — not one sink for the whole `Query`. No merge node concatenates CTE tables into the answer; later clauses read a finished CTE as an atom. `lean/Bumbledb/Query/Denotation.lean: mem_queryAnswers` retargeted as `mem_rulesAnswers` (`02-lean.md`). There is no `UNION` / `UNION ALL` keyword in the IR or the notation. Bags are unrepresentable. The SQLite oracle may emit SQL `UNION` (which is ∪ under `SELECT DISTINCT`) — that is translator spelling, not an IR node.
+Unchanged at the rule-list: several conjunctive rules, one head, set semantics, **one sink per rule-list**, spanning seen-set. There is one sink per `Interior`, one sink for the `Rec`, one sink for the main query — not one sink for the whole `Query`. No merge node concatenates derived tables into the answer; later clauses read a finished derived table as an atom. `lean/Bumbledb/Query/Denotation.lean: mem_queryAnswers` retargeted as `mem_rulesAnswers` (`02-lean.md`). There is no `UNION` / `UNION ALL` keyword in the IR or the notation. Bags are unrepresentable. The SQLite translator may emit SQL `UNION` (which is ∪ under `SELECT DISTINCT`) — that is translator spelling, not an IR node (`04-bindings-docs.md`).
 
-## WITH — named views, DAG, eval once
+## Interiors — named, DAG, eval once
 
-Non-recursive. Declaration order **is** the topological order. WithDef `i` may read `Cte(j)` only for `j < i`. A self-read or a forward read is `CteNotPrior`. WITH cannot read the rec CTE: the rec's `CteId` is `with.len()`, which is never `< i`. Unwritable, not a special case.
+Non-recursive. Declaration order **is** the topological order. Interior `i` may read `Interior(j)` only for `j < i`. A self-read or a forward read is `InteriorNotPrior`.
 
-Bodies: EDB atoms, earlier WITH, negation of either (a finished view is a set — anti-join is ordinary), conditions, membership, params. **Measure comparisons in a WITH body are legal** (filters; a ray raises `MeasureOfRay` after that CTE, like any query). Rec CTE bodies refuse every measure site. Heads: bound variables only — no `Aggregate`, no `Measure`, no `AggregateMeasure`. That is today's executable-class item (`AggregateInteriorPredicate` / `MeasureInteriorPredicate`) restated for views: a WITH is a projection-shaped word-row table. Measure **finds** and folds live on the **main** query, over finished WITH/rec.
+**This cut:** interiors cannot read the rec. The rec's `InteriorId` is `interiors.len()`, which is never `< i`. That is the three-phase IR (`interiors` is a prefix list, `rec` is `Option`), not a wall. A named interior of a **finished** rec is inlining-equivalent and is OPEN (`05-cutover.md`). Hostile IR with an interior after rec is unrepresentable this cut — not an `InteriorNotPrior` on main.
 
-Eval once, in declaration order, into a transient image, before the rec CTE if present, then the main query. A Query whose `rec` is `None` **never** enters the reach driver — WITH-only is the ordinary rule loop plus a CTE preamble. No watermark, no round budget, no `FixpointBudgetExceeded`.
+Bodies: EDB atoms, earlier interiors, negation of either (a finished interior is a set — anti-join is ordinary), conditions, membership, params. **Measure comparisons in an interior body are legal** (filters; a ray raises `MeasureOfRay` after that interior, like any query). Rec bodies refuse every measure site. Heads: bound variables only — no `Aggregate`, no `Measure`, no `AggregateMeasure`. That is today's executable-class item (`AggregateInteriorPredicate` / `MeasureInteriorPredicate`) restated for interiors: an interior is a projection-shaped word-row table. Measure **finds** and folds live on the **main** query, over finished interiors/rec.
 
-Empty `with` is legal. An individual `WithDef` with zero rules is `EmptyCte` (not `EmptyRuleSet` — that name is the main query).
+Eval once, in declaration order, into a transient image, before the rec if present, then the main query. A Query whose `rec` is `None` **never** enters the reach driver — interiors-only is the ordinary rule loop plus an interior preamble. No watermark, no round budget, no `FixpointBudgetExceeded`.
 
-## RecCte — at most one linear WITH RECURSIVE
+Empty `interiors` is legal. An individual `Interior` with zero rules is `EmptyInterior` (not `EmptyRuleSet` — that name is the main query).
 
-SQL-shaped forest walk. One name. Two lists, so mixed arms are a roster item rather than a classification:
+## Rec — this cut: at most one linear SCC
 
-- **Base arms** (`RecCte.base`): no atom — positive or negated — whose source is the rec's `CteId`. Extra EDB joins and earlier WITH are legal. **Negation is illegal in the whole rec CTE** (base and rec arms, EDB or WITH or self): `NegationInRecCte`. Measure terms (find, binding, comparison) are illegal in the whole rec CTE: heads → `MeasureInCte`; rec **bodies** → `MeasureInRecCte`. Aggregates are already unwritable in a bound-var head; a fold find on a WITH or rec head is `AggregateInCte`. There is no `AggregationInRecCte` variant — the fold is on the head, so it is `AggregateInCte`.
-- **Rec arms** (`RecCte.rec`): each arm has **exactly one** positive self-atom (`Cte` = rec's id). Zero is `RecArmMissingSelf`. Two or more is `NonlinearRecArm`. The self-atom is never negated (already `NegationInRecCte`). Extra EDB and earlier WITH joins on the same arm are legal.
+One name. Two lists, so mixed arms are a roster item rather than a classification:
 
-Both lists nonempty: `EmptyRecursiveBase` if `base` is empty (lfp would be empty; SQLite refuses the CTE; write no query). `EmptyRecursiveStep` if `rec` is empty (that is a WITH; write `with`, not `with recursive`).
+- **Base arms** (`Rec.base`): no atom — positive or negated — whose source is the rec's `InteriorId`. Extra EDB joins and earlier interiors are legal. **Negation is illegal in the whole rec SCC** (base and rec arms, EDB or interior or self): `NegationInRec`. Measure terms (find, binding, comparison) are illegal in the whole rec SCC: heads → `MeasureInInterior`; rec **bodies** → `MeasureInRec`. Aggregates are already unwritable in a bound-var head; a fold find on an interior or rec head is `AggregateInInterior`. There is no `AggregationInRec` variant — the fold is on the head, so it is `AggregateInInterior`.
+- **Rec arms** (`Rec.rec`): each arm has **exactly one** positive self-atom (`Interior` = rec's id). Zero is `RecArmMissingSelf`. Two or more is `NonlinearRecArm`. The self-atom is never negated (already `NegationInRec`). Extra EDB and earlier-interior joins on the same arm are legal — that is where Free Join earns its keep (primer's step rule is several EDB atoms plus one rec).
 
-The rec CTE's head is bound variables only — creation quarantine restated: `program_den_finite`'s premise, retargeted as `reach_den_finite`. The chain-window class (`w = w₁ ∩ w₂` in a rec head) stays outside, OPEN, unchanged.
+Both lists nonempty:
 
-The main query may join, anti-join, `Sum`, `Pack`, and measure the **finished** rec CTE. It does not grow the recursive name: `reachOp` reads only `RecCte.base` / `RecCte.rec`. Unwritable from main.
+- `EmptyRecursiveBase` if `base` is empty. **Math:** a positive self-atom against an empty table derives nothing, so `rec(∅) = ∅`, so `T(∅) = ∅`, so the lfp is empty (`02-lean.md: reachOp_empty`). The roster refuses a constantly-empty rec (write no rec, or write a nonempty base). This is not “SQLite refuses the CTE.”
+- `EmptyRecursiveStep` if `rec` is empty. That is an interior. Write an interior, not a rec.
 
-Identity projection is never implicit. The rec CTE is **never** the answer predicate (`02-lean.md: evalQuery_empty_rules` — empty main denotes `∅` even when `reachDen` is huge). `(c) | reach(c);` is a main rule, required, as today's bare output rule was required. A query of only `with` / `with recursive` and no bare rule is `EmptyRuleSet` — and in `query!`, a compile error. Today's programs whose `output` **was** the recursive predicate recut as rec CTE plus an identity main of the same arity.
+The rec head is bound variables only — creation quarantine restated: `program_den_finite`'s premise, retargeted as `reach_den_finite`. The chain-window class (`w = w₁ ∩ w₂` in a rec head) stays outside, OPEN, unchanged.
+
+The main query may join, anti-join, `Sum`, `Pack`, and measure the **finished** rec. It does not grow the recursive name: `reachOp` reads only `Rec.base` / `Rec.rec`. Unwritable from main.
+
+Identity projection is never implicit. The rec is **never** the answer predicate (`02-lean.md: evalQuery_empty_rules` — empty main denotes `∅` even when `reachDen` is huge). `(c) | reach(c);` is a main rule, required, as today's bare output rule was required. A query of only interiors / rec and no bare rule is `EmptyRuleSet` — and in `query!`, a compile error. Today's programs whose `output` **was** the recursive predicate recut as rec plus an identity main of the same arity.
+
+Linear is this cut because k=1 Δ-variant × Free Join at 10⁷ / 10 ms, not because SQLite allows one self-reference (`00-manifesto.md`). Several rec **arms** of one name (union) are legal. Nonlinear is OPEN (`05-cutover.md`), refused here as `NonlinearRecArm`.
 
 ## Main query
 
-Today's query: one head, ≥1 rule, ≤ `MAX_RULES`, DNF, head alignment, folds, measures, negation, the full per-rule roster. Atoms may read EDB, any WITH, and the rec CTE if present. An out-of-range `CteId` is `UnknownCte` (today's `UnknownPredicate` screen, spent as `wellFormed_reads_real` is spent — `02-lean.md`).
+Today's query: one head, ≥1 rule, ≤ `MAX_RULES`, DNF, head alignment, folds, measures, negation, the full per-rule roster. Atoms may read EDB, any interior, and the rec if present. An out-of-range `InteriorId` is `UnknownInterior` (today's `UnknownPredicate` screen, spent as `wellFormed_reads_real` is spent — `02-lean.md`).
 
-## Grammar (`query!` / `ir::render`)
+## Notation (host sugar, not SQL)
 
-The notation stays the statement grammar's query side. Keywords are added so Program cannot sneak back through named heads.
+The notation stays the statement grammar's query side. Keywords are added so Program cannot sneak back through named heads. Tokens are host sugar (`query!` / `ir::render`); the IR fields are `interiors` / `rec`. Do not read this block as `WITH RECURSIVE`.
 
 ```text
-query   := with* rec? main
-with    := 'with' pred '(' head ')' '|' body ';'
-rec     := 'with' 'recursive' pred '(' head ')' '|' body ';'
-main    := barerule+
-barerule:= '(' head ')' '|' body ';'
-pred    := lowercase ident
+query     := interior* recblock? main
+interior  := 'interior' pred '(' head ')' '|' body ';'
+recblock  := 'recursive' pred '(' head ')' '|' body ';'
+main      := barerule+
+barerule  := '(' head ')' '|' body ';'
+pred      := lowercase ident
 ```
 
-`body` / `head` / `atom` / `cond` otherwise unchanged from `20-query-ir.md` § the query notation, except: a body atom naming `pred` is a `Cte` atom (ordered-dense or indexed, same two spellings, never mixed). Relations remain UpperCamel. `and` / `or` remain reserved.
+`body` / `head` / `atom` / `cond` otherwise unchanged from `20-query-ir.md` § the query notation, except: a body atom naming `pred` is an `Interior` atom (ordered-dense or indexed, same two spellings, never mixed). Relations remain UpperCamel. `and` / `or` / `interior` / `recursive` are reserved.
 
-**Grouping — one law, every surface.** CTE names are unique. Multiple rules of one CTE are several builders / several notation lines of **that one name**, not a second CTE.
+**Grouping — one law, every surface.** Derived names are unique. Multiple rules of one interior or one rec are several builders / several notation lines of **that one name**, not a second derived table.
 
-| Surface | How one CTE gets several rules | Second declaration of the same name |
+| Surface | How one name gets several rules | Second declaration of the same name |
 |---|---|---|
-| `query!` | Consecutive `with pred(...)` lines → one `WithDef`. Consecutive `with recursive pred(...)` lines → one `RecCte`; a line whose body has an **atom** (positive or negated, either spelling) naming `pred` is a rec arm, else a base arm. The macro classifies, then emits `base` / `rec`. | Non-consecutive reuse is a compile error (write the rules together). |
-| TS | `q.with("mid", ...builders)` one `WithDef`. `q.withRecursive("reach", { base: [...], rec: [...] })` — **arrays**. One callback is not "exactly one rec arm." | `q.with("mid", ...)` a second time is a construction error. TS does not consecutive-union. |
-| C++ | `bdb::with<"mid">(rule_builders...)` one `WithDef`. `bdb::with_recursive<"reach">(bdb::base{...}, bdb::rec{...})` — **two tagged packs**. | A second `with<"mid">` is a consteval error. |
+| `query!` | Consecutive `interior pred(...)` lines → one `Interior`. Consecutive `recursive pred(...)` lines → one `Rec`; a line whose body has an **atom** (positive or negated, either spelling) naming `pred` is a rec arm, else a base arm. The macro classifies, then emits `base` / `rec`. | Non-consecutive reuse is a compile error (write the rules together). |
+| TS | `q.interior("mid", ...builders)` one `Interior`. `q.recursive("reach", { base: [...], rec: [...] })` — **arrays**. One callback is not "exactly one rec arm." | `q.interior("mid", ...)` a second time is a construction error. TS does not consecutive-union. |
+| C++ | `bdb::interior<"mid">(rule_builders...)` one `Interior`. `bdb::recursive<"reach">(bdb::base{...}, bdb::rec{...})` — **two tagged packs**. | A second `interior<"mid">` is a consteval error. |
 
-TS/C++ never scan bodies to classify base vs rec: the tagged lists **are** the IR. `query!` classifies because the text grammar has one production for both arms. A `query!` rec line that mentions `pred` only in a comment is a base arm; a line whose only self occurrence is negated is a rec arm, then `NegationInRecCte` / `RecArmMissingSelf` at validate.
+TS/C++ never scan bodies to classify base vs rec: the tagged lists **are** the IR. `query!` classifies because the text grammar has one production for both arms. A `query!` rec line that mentions `pred` only in a comment is a base arm; a line whose only self occurrence is negated is a rec arm, then `NegationInRec` / `RecArmMissingSelf` at validate.
 
-TS/C++ also throw if `with` / `withRecursive` is called after a main rule has been added, or `with` after `withRecursive`. Declaration order is WITH, then rec, then main — same as `query!`.
+TS/C++ also throw if `interior` / `recursive` is called after a main rule has been added, or `interior` after `recursive`. Declaration order is interiors, then rec, then main — same as `query!`.
 
 **Compile errors (macro, spanned), exhaustive for this cut:**
 
-- A named head **without** `with` / `with recursive` — the former Program sneak. Message names the keywords.
-- Two different names under `with recursive` — at most one rec CTE.
-- `with` and `with recursive` sharing a name.
-- `with` after `with recursive`, or either after a bare rule — declaration order is WITH, then rec, then main.
+- A named head **without** `interior` / `recursive` — the former Program sneak. Message names the keywords.
+- Two different names under `recursive` — at most one rec SCC this cut.
+- `interior` and `recursive` sharing a name.
+- `interior` after `recursive`, or either after a bare rule — declaration order is interiors, then rec, then main.
 - No bare rule (no main).
-- `with recursive` with zero base lines or zero rec lines (after classification).
-- Duplicate `with` names that are not consecutive-union of the same pred — names are unique; non-consecutive reuse is a compile error.
+- `recursive` with zero base lines or zero rec lines (after classification).
+- Duplicate interior names that are not consecutive-union of the same pred — names are unique; non-consecutive reuse is a compile error.
 
-All-bare `query!` (no `with`, no named heads) lowers to `Query { with: vec![], rec: None, head, rules }` — today's `ir::Query`, field for field plus two empty fields. Text-level backward compatibility for every existing non-recursive query.
+All-bare `query!` (no `interior`, no named heads) lowers to `Query { interiors: vec![], rec: None, head, rules }` — today's `ir::Query`, field for field plus two empty fields. Text-level backward compatibility for every existing non-recursive query.
 
-Renderer: `with p{id}(...) | ...;` then `with recursive p{id}(...) | ...;` then bare main rules. Interior names stay synthesized `p{id}` — names remain a macro-local sidecar, never in the IR or the fingerprint. Round-trip goldens pin `render(lower(text))` as today.
+Renderer: `interior p{id}(...) | ...;` then `recursive p{id}(...) | ...;` then bare main rules. Interior names stay synthesized `p{id}` — names remain a macro-local sidecar, never in the IR or the fingerprint. Round-trip goldens pin `render(lower(text))` as today.
 
 ## Mapping from today's reach programs
 
@@ -144,8 +172,8 @@ reach(c) | Parent(child: c, parent: m), reach(m);
 becomes:
 
 ```text
-with recursive reach(c) | Node(id: c), c == ?root;
-with recursive reach(c) | Parent(child: c, parent: m), reach(m);
+recursive reach(c) | Node(id: c), c == ?root;
+recursive reach(c) | Parent(child: c, parent: m), reach(m);
 (c) | reach(c);
 ```
 
@@ -157,7 +185,20 @@ sub(a) | AccountParent(child: a, parent: p), sub(p);
 (total: Sum(minor)) | Posting(id, account: a, minor), sub(a);
 ```
 
-becomes the same rewrite: `with recursive sub(...)` on the first two lines; the `Sum` line stays bare (main). Aggregation is not in the rec CTE; it reads the finished CTE. The strata-roster sentence "fold over a lower stratum" is now the ordinary sentence "main query over a finished view."
+becomes the same rewrite: `recursive sub(...)` on the first two lines; the `Sum` line stays bare (main). Aggregation is not in the rec SCC; it reads the finished rec. The strata-roster sentence "fold over a lower stratum" is now the ordinary sentence "main query over a finished interior."
+
+**Primer cycle detector** (`requiresCycleQuery`): already the allowed shape — linear `reach(from, to)`, extra EDB on the step arm, output is **not** the rec. Recut 1:1. Empty output = the lattice is a DAG.
+
+```text
+recursive reach(from, to) | Produces(grp: from, capability: cap),
+    Requires(consumer: to, capability: cap, state: Upheld), from != to;
+recursive reach(from, to) | Produces(grp: from, capability: cap),
+    Requires(consumer: mid, capability: cap, state: Upheld),
+    Requires(consumer: to, state: Upheld), from != mid, reach(mid, to);
+(node) | Grp(id: node), reach(node, node);
+```
+
+The step arm is several EDB atoms plus **one** rec atom — linear, Free Join's case. Main `reach(x,x)` is a join of the finished rec, not a second SCC. Do not invent a named interior of `reach` for the diagonal; the main rule *is* the diagonal.
 
 Non-recursive interior predicate (today's fanout / view-as-Idb):
 
@@ -169,13 +210,13 @@ mid(x) | Edge(src: x);
 becomes:
 
 ```text
-with mid(x) | Edge(src: x);
+interior mid(x) | Edge(src: x);
 (x) | mid(x);
 ```
 
-This Query has `rec: None`. It prepares and executes as WITH-only. It must not touch the reach driver. That is the interior-Idb-as-view law, operational.
+This Query has `rec: None`. It prepares and executes as interiors-only. It must not touch the reach driver. That is the interior-as-eval-once law, operational.
 
-**Interior that reads the rec.** Today's legal program `rec + non-recursive interior predicate that reads rec + output` has no WITH image: WITH cannot read the rec (`CteId(with.len())` is never `< i`). Those interior rules **inline into the main query** (union of conjunctive bodies, DNF as ever). You cannot name a view of the rec CTE. Two different main-shaped queries over the same rec are two `Query` values (two prepares). Hostile IR with a WITH after rec is unrepresentable (`rec` is `Option`, `with` is a prefix list) — not a `CteNotPrior` on main.
+**Interior that reads the rec.** Today's legal program `rec + non-recursive interior predicate that reads rec + output` has no this-cut interior image: interiors cannot read the rec (`InteriorId(interiors.len())` is never `< i`). Those interior rules **inline into the main query** (union of conjunctive bodies, DNF as ever). You cannot name a view of the rec this cut. Two different main-shaped queries over the same rec are two `Query` values (two prepares). OPEN: a named interior of a finished rec (inlining equivalent).
 
 Worked example — today's `CLOSURE_ROOTS` (non-recursive `p1` anti-joins finished `p0`):
 
@@ -183,61 +224,74 @@ Worked example — today's `CLOSURE_ROOTS` (non-recursive `p1` anti-joins finish
 -- today: p0 recursive, p1 reads p0, output = p1
 -- after: rec p0, main is p1's body (anti-join of finished rec).
 -- Absent field is the wildcard (no `_` term).
-with recursive reach(c, p) | OrgParent(child: c, parent: p);
-with recursive reach(c, p) | OrgParent(child: c, parent: m), reach(m, p);
+recursive reach(c, p) | OrgParent(child: c, parent: p);
+recursive reach(c, p) | OrgParent(child: c, parent: m), reach(m, p);
 (id) | Org(id: id), !reach(c: id);
 ```
 
-Same answers as a WITH after rec would have given: the anti-join sees the **finished** lfp. SQLite golden recuts from `WITH RECURSIVE p0 AS (...), p1 AS (... FROM p0) SELECT FROM p1` to `WITH RECURSIVE r AS (...) SELECT ... FROM Org WHERE NOT EXISTS (SELECT 1 FROM r ...)`.
+Same answers as a named interior after rec would have given: the anti-join sees the **finished** lfp. The SQLite translator recuts from a second CTE after the rec to a main `SELECT` with `NOT EXISTS` / `LEFT JOIN ... IS NULL` (`04-bindings-docs.md`). That SQL is translator output, not the language.
 
-**Dropped, not inlined — negation *inside* the rec CTE.** Today's recursive predicate that anti-joins a lower stratum (or EDB) during the walk is `NegationInRecCte`. Putting that anti-join on main is a **different** query (filter after closure ≠ filter during). Do not pretend they are the same rewrite. Hosts that need during-walk exclusion keep the host loop (cookbook 24's other dialect) or wait for a later cut. This cut does not grow a second rec operator.
+**Dropped, not inlined — negation *inside* the rec SCC.** Today's recursive predicate that anti-joins a lower stratum (or EDB) during the walk is `NegationInRec`. Putting that anti-join on main is a **different** query (filter after closure ≠ filter during). Do not pretend they are the same rewrite. Hosts that need during-walk exclusion keep the host loop (cookbook 24's other dialect) or wait for a later cut. This is a wall, not OPEN.
 
 **Output was the rec predicate.** One-predicate recursive programs (`output = 0`, the rec IS the answer) become `rec` plus an identity main of the same arity. The rec table is not implicitly returned. `program-hand-closure.json` is this shape.
 
-A today's degenerate `Program` (one predicate, no Idb) is a today's `Query`. After the cut it is `Query { with: [], rec: None, ... }`. There is no embedding type.
+A today's degenerate `Program` (one predicate, no Idb) is a today's `Query`. After the cut it is `Query { interiors: [], rec: None, ... }`. There is no embedding type.
 
-Mutual recursion, nonlinear rec, named-head-without-`with`, `Program` literals in tests — unwritable or refused. `04-bindings-docs.md` lists the test conversions.
+Mutual recursion, nonlinear rec, named-head-without-keyword, `Program` literals in tests — unwritable **this cut** or refused. Mutual-linear and nonlinear are OPEN (`05-cutover.md`), not walls. `04-bindings-docs.md` lists the test conversions.
 
 ## Validation roster (additions; the per-rule roster stays)
 
-Judged in this order, after the existing query-shape checks (empty main, `MAX_RULES` / DNF per WITH and per main and the rec **pool**, nesting, DNF, head-shape alignment):
+Judged in this order, after the existing query-shape checks (empty main, `MAX_RULES` / DNF per interior and per main and the rec **pool**, nesting, DNF, head-shape alignment):
 
-1. `TooManyCtes { count }` — `with.len() + rec.is_some() as usize > MAX_CTES` (usize, before any `CteId`).
-2. Per `WithDef` / `RecCte` / main: existing empty-rule (`EmptyCte` for a WITH with zero rules; `EmptyRuleSet` only for empty **main**), DNF, head-alignment, per-rule roster, with `IdbSignatures` replaced by `CteSignatures` (sealed in declaration order — no chaotic iteration).
-3. `CteNotPrior { cte, at }` — WITH `i` reads `j ≥ i`, or any WITH reads the rec id. `at` is the reading CTE's id; `cte` is the illegal target.
-4. `UnknownCte { atom, cte }` / `CteColumnOutOfRange { atom, field }` — the well-formedness screen (`Query.WellFormed`, `02-lean.md`). Replaces `UnknownPredicate` / `PredicateColumnOutOfRange`.
-5. Rec roster: `EmptyRecursiveBase`, `EmptyRecursiveStep`, `SelfInBase`, `RecArmMissingSelf`, `NonlinearRecArm`, `NegationInRecCte`, `MeasureInRecCte` (every measure site in a rec **body**: find is a head — that's item 6; binding and comparison are bodies).
-6. `AggregateInCte` / `MeasureInCte` — fold or measure **find** on a WITH or rec **head** (bound-var law). One error per shape: heads of WITH or rec → `*InCte`; rec bodies → `MeasureInRecCte`. Main heads keep today's aggregate/measure roster. WITH **bodies** may contain measure comparisons (not this item).
+1. `InteriorIdOverflow` — derived-table count does not fit `u32` (usize, before any `InteriorId`). There is **no** `TooManyCtes`.
+2. Per `Interior` / `Rec` / main: existing empty-rule (`EmptyInterior` for an interior with zero rules; `EmptyRuleSet` only for empty **main**), DNF, head-alignment, per-rule roster, with `IdbSignatures` replaced by `InteriorSignatures` (sealed in declaration order — no chaotic iteration).
+3. `InteriorNotPrior { interior, at }` — interior `i` reads `j ≥ i`, or any interior reads the rec id. `at` is the reading interior's id; `interior` is the illegal target.
+4. `UnknownInterior { atom, interior }` / `InteriorColumnOutOfRange { atom, field }` — the well-formedness screen (`Query.WellFormed`, `02-lean.md`). Replaces `UnknownPredicate` / `PredicateColumnOutOfRange`.
+5. Rec roster: `EmptyRecursiveBase`, `EmptyRecursiveStep`, `SelfInBase`, `RecArmMissingSelf`, `NonlinearRecArm`, `NegationInRec`, `MeasureInRec` (every measure site in a rec **body**: find is a head — that's item 6; binding and comparison are bodies).
+6. `AggregateInInterior` / `MeasureInInterior` — fold or measure **find** on an interior or rec **head** (bound-var law). One error per shape: heads of interior or rec → `*InInterior`; rec bodies → `MeasureInRec`. Main heads keep today's aggregate/measure roster. Interior **bodies** may contain measure comparisons (not this item).
 7. Query-global param unification (today's program-global pass, now the only pass).
 
 **Canonical error names (this cut). Use these spellings everywhere — docs, tests, Bridge instruments.**
 
 | New | Replaces / notes |
 |---|---|
-| `TooManyCtes` | `TooManyPredicates` |
-| `UnknownCte` | `UnknownPredicate` |
-| `CteColumnOutOfRange` | `PredicateColumnOutOfRange` |
-| `CteNotPrior` | forward/self WITH read; WITH reading rec |
-| `EmptyCte` | zero-rule `WithDef` |
-| `EmptyRecursiveBase` / `EmptyRecursiveStep` | new |
-| `SelfInBase` / `RecArmMissingSelf` / `NonlinearRecArm` | new (k-variants die) |
-| `NegationInRecCte` | `NegationThroughCycle` for the rec CTE; main anti-join of finished CTE is legal |
-| `AggregateInCte` | `AggregateInteriorPredicate` + `AggregationThroughCycle` when the fold is on a WITH/rec **head** |
-| `MeasureInCte` | `MeasureInteriorPredicate` + `MeasureInRecursiveHead` when the measure **find** is on a WITH/rec **head** |
-| `MeasureInRecCte` | measure in a rec **body** (comparison / binding). Bindings may still hit `DurationInBinding` first (per-rule roster runs earlier) — both are correct; do not add a third name |
+| *(none)* | `TooManyPredicates` dies. **No** `TooManyCtes`. Interior count is uncapped |
+| `InteriorIdOverflow` | derived-table count > `u32::MAX` (id-width, not a product 16) |
+| `UnknownInterior` | `UnknownPredicate` |
+| `InteriorColumnOutOfRange` | `PredicateColumnOutOfRange` |
+| `InteriorNotPrior` | forward/self interior read; interior reading rec (this cut) |
+| `EmptyInterior` | zero-rule `Interior` |
+| `EmptyRecursiveBase` / `EmptyRecursiveStep` | new. Empty base is empty lfp (math), refused as constantly-empty rec |
+| `SelfInBase` / `RecArmMissingSelf` / `NonlinearRecArm` | new (k-variants die this cut) |
+| `NegationInRec` | `NegationThroughCycle` for the rec SCC; main anti-join of finished rec is legal |
+| `AggregateInInterior` | `AggregateInteriorPredicate` + `AggregationThroughCycle` when the fold is on an interior/rec **head** |
+| `MeasureInInterior` | `MeasureInteriorPredicate` + `MeasureInRecursiveHead` when the measure **find** is on an interior/rec **head** |
+| `MeasureInRec` | measure in a rec **body** (comparison / binding). Bindings may still hit `DurationInBinding` first (per-rule roster runs earlier) — both are correct; do not add a third name |
 | `EmptyRuleSet` | empty **main** only |
 
-**Deleted roster items (no replacement that preserves the shape):** `TooManyPredicates`, `UnknownOutputPredicate`, `UnknownPredicate`, `PredicateColumnOutOfRange`, `NegationThroughCycle`, `AggregationThroughCycle`, `UnresolvedPredicateSignature`, `AggregateInteriorPredicate`, `MeasureInteriorPredicate`, `MeasureInRecursiveHead`. There is **no** `AggregationInRecCte`.
+**Deleted roster items (no replacement that preserves the shape):** `TooManyPredicates`, `TooManyCtes` (never ship it), `UnknownOutputPredicate`, `UnknownPredicate`, `PredicateColumnOutOfRange`, `NegationThroughCycle`, `AggregationThroughCycle`, `UnresolvedPredicateSignature`, `AggregateInteriorPredicate`, `MeasureInteriorPredicate`, `MeasureInRecursiveHead`. There is **no** `AggregationInRec` / `AggregationInRecCte`. Do not keep the old `*InCte` spellings as aliases.
 
-Signature sealing: WITH `i` seals from its rules against already-sealed `0..i`. Rec seals from **base** (EDB + sealed WITH — a stored column always names the type) then rec arms (self already sealed). `p(x) | p(x)` as a rec with empty base is `EmptyRecursiveBase`, not a sealing timeout. The signature fixpoint loop in `validate_program` dies.
+Signature sealing: interior `i` seals from its rules against already-sealed `0..i`. Rec seals from **base** (EDB + sealed interiors — a stored column always names the type) then rec arms (self already sealed). `p(x) | p(x)` as a rec with empty base is `EmptyRecursiveBase`, not a sealing timeout. The signature fixpoint loop in `validate_program` dies.
 
-A `Cte` atom on a Query with empty `with` and no rec is `UnknownCte` — today's "Idb at the query boundary" refusal, without a Program to route through.
+An `Interior` atom on a Query with empty `interiors` and no rec is `UnknownInterior` — today's "Idb at the query boundary" refusal, without a Program to route through.
 
-## What this language refuses to be
+## What each knob refuses
 
-- A stratified Datalog program. One rec CTE, linear, no not-in-rec, no mutual, no SCC.
+**Walls (forever):**
+
+- Negation or aggregation in a recursive SCC. Main may anti-join / fold the finished rec. During-walk ≠ after-lfp.
+- Created rec heads (chain-window stays OPEN).
+- Fuel as meaning. The rec denotes an lfp; the budget is a resource abort (`03-engine.md`).
+- Implicit output = last derived table. Bare rules are the output.
+- A Datalog runtime: stored programs, magic sets, demand transformation, host-loop internalization. The host-loop idiom in cookbook 24 remains a **host** idiom, not an engine mode.
 - Bags / `UNION ALL`.
-- Implicit output = last CTE. Bare rules are the output.
-- Fuel as meaning. The rec CTE denotes an lfp; the budget is a resource abort (`03-engine.md`).
-- A second eval path (host-loop internalization, ParamSet-per-round). The host-loop idiom in cookbook 24 remains a **host** idiom, not an engine mode.
-- During-walk negation in the rec CTE. Main may anti-join the finished rec.
+
+**This cut (scope):**
+
+- More than one recursive SCC (`rec: Option<Rec>`). Stacked sequential linear lfps are OPEN.
+- Mutual names in one SCC. Mutual-linear is OPEN; refusing it here is how Tarjan / k-variants die with Program.
+- Nonlinear rec arms (`NonlinearRecArm`). Trigger in `05-cutover.md`.
+- A named interior of the rec (inline into main). OPEN, inlining-equivalent.
+- A second eval path, a second Free Join, a `ReachProgram` type, Tarjan retained “for interior cycles” (interior cycles are `InteriorNotPrior`).
+
+**Not a refusal:** several linear rec arms of one name; extra EDB / earlier-interior joins on a linear arm; main over the finished rec (join, anti-join, fold) — cookbook 25, primer `reach(x,x)`; two independent reaches as two `Query` values (host owns composition); any number of named interiors, each a finite CQ.
