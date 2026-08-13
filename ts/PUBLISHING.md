@@ -26,7 +26,7 @@ bound now die at COMPILE time (both were engine refusals at runtime before —
 code that stops compiling was already broken), and `explain()` gains R13
 execute-symmetry (profile/introspect take the mixed `ParamArg` entry). Wire,
 manifest, storage format (v7), and every schema fingerprint are UNTOUCHED —
-zero pins moved. Campaign ledger: `audit-2026-07-25/README.md`.
+zero pins moved. Campaign detail is in git history.
 
 Lineage: `0.9.0` was a minor over `0.8.0` that broke nothing — the zero-key
 identity comparators (`by()`/`desc()` over exactly the engine-orderable

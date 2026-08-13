@@ -176,10 +176,9 @@ facts, never interned, so the key hash carries no type tag: forward
   3-field interval projection, warm DRAM, interleaved min-of-7 × 200k
   facts, two process runs; pre-stated bar 1.09) was entirely the permuted
   arm's per-fact O(k²) inverse search, now hoisted to the seal; the
-  committed ladder pin is the wall-power rebench's
-  (`bench-out/baseline-2026-07-25-post/writes/` — the night-pin debt the
-  campaign manifest recorded is retired; the night ladder stays in git
-  history beside it).
+  committed ladder pin is the wall-power rebench (the night-pin debt
+  the campaign recorded is retired; the night ladder stays in git
+  history).
 - **`R` keys are statement-scoped**, not relation-scoped: `statement` is the
   schema-global materialized statement id (`10-data-model.md` fingerprint), and
   `key` is the *target-side* projection value the source fact requires. One source
@@ -201,8 +200,7 @@ facts, never interned, so the key hash carries no type tag: forward
   power-budget lane priced it against the fetch-per-child alternative and
   the losing arm plus its `CAPACITY_WEIGHT_SLOT` flag were deleted — the
   numbers live at the CONSTRAINT comment beside the walk
-  (`storage/commit/judgment.rs`) and the run artifacts in
-  `bench-out/baseline-2026-07-25/capacity-c17/`. Readers dispatch on the
+  (`storage/commit/judgment.rs`). Readers dispatch on the
   statement's declared weight, never on value length — a width disagreeing
   with the declaration is corruption, not a fallback.
 - The `statement` component of every `U` and `R` key is always the

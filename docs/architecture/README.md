@@ -59,9 +59,8 @@ laws).
 
 - **Scale-L claims are informational only**: the oracle stamp, the benchmark
   ALL-WIN, and the pinned denominators are earned at scale S (most recently
-  the committed `bench-out/baseline-2026-07-25-post/` artifacts, code rev
-  `3b31cd84`, verify-stamped per binary; the 2026-07-25 baseline and the
-  2026-07-23 campaign stand beside it) — but no L corpus exists, so the
+  the 2026-08-03 rebench, code rev `3b31cd84`, verify-stamped per binary;
+  charts in `assets/`, raw traces in git history) — but no L corpus exists, so the
   10 ms budget and every L-scale claim bind nothing yet (`00-product.md`).
   (The ephemeral-lane numbers ride the like-for-like NOSYNC pairing
   established at the campaign; the pre-campaign Measure-phase artifacts

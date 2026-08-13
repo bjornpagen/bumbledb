@@ -10,8 +10,7 @@
 //!   `commit_capacity_sum`. This lane was also the C17 measuring
 //!   instrument: it decided slot-vs-fetch-per-child (2026-08-01, the
 //!   slot arm landed; numbers at the CONSTRAINT comment in
-//!   `storage/commit/judgment.rs` and the run artifacts in
-//!   `bench-out/baseline-2026-07-25/capacity-c17/`).
+//!   `storage/commit/judgment.rs`).
 //! - **Calendar capacity** (`Duration` weight): `Room(id) <=
 //!   [Duration(booked)]{0..Duration(span)} Booking(room)` — row
 //!   `commit_capacity_duration`. A FRESH twin world by ruling (C15):

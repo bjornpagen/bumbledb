@@ -1,4 +1,0 @@
-write_txn 29541
-write_txn;commit 42584
-write_txn;commit;apply_deletes 83
-write_txn;commit;apply_inserts 54958

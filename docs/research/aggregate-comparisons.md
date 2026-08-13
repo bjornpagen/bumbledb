@@ -10,7 +10,7 @@ host folding after execution.
 
 STATUS: complete — the workload (§ 5), Lean-model (§ 6), and engine (§ 7)
 reports landed. Updated 2026-07-23: the audit's aggregate-law rulings (R1, R2,
-R3, R5, R6 — `audit-2026-07/RULINGS.md`) are flushed into the statements below.
+R3, R5, R6) are flushed into the statements below.
 `docs/architecture/20-query-ir.md` owns the laws; this doc compares and cites.
 
 ---

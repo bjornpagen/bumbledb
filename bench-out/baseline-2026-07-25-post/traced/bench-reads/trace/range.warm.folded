@@ -1,9 +1,0 @@
-execute 5250
-execute;bind_params 83
-execute;finalize 5500
-execute;rule_0 335
-execute;rule_0;join 541
-execute;rule_0;join;jp_descend_n0 15250
-execute;rule_0;resolve_filters 83
-execute;rule_0;selections 208
-execute;rule_0;views 208

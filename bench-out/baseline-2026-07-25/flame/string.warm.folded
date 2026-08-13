@@ -1,7 +1,0 @@
-execute 1208
-execute;bind_params 250
-execute;finalize 500
-execute;rule_0 502
-execute;rule_0;join 5166
-execute;rule_0;resolve_filters 41
-execute;rule_0;views 166

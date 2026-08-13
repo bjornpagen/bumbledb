@@ -92,8 +92,8 @@ pub(super) fn judge(view: &FinalStateView<'_, '_, '_>) -> Result<Option<Violatio
 // reads the entries it already visits. Unit edges keep the empty value.
 // The losing fetch-per-child arm (empty values everywhere, one `F` get
 // per walked edge) is DELETED with its `CAPACITY_WEIGHT_SLOT` flag —
-// the power-budget lane decided it (bench-out/baseline-2026-07-25/
-// capacity-c17/, min-of-3 ephemeral p50s, µs; identical statement-free
+// the power-budget lane decided it (2026-08-01, min-of-3 ephemeral p50s,
+// µs; identical statement-free
 // control 18.2 both arms): commit_capacity_sum fetch 35.2 vs slot 32.3
 // (judged surface +17.0 → +14.1, −17%); commit_capacity_duration fetch
 // 34.2 vs slot 30.8 (+16.0 → +12.6, −21%); the fsync-shadowed durable

@@ -1,6 +1,0 @@
-execute 210
-execute;bind_params 41
-execute;finalize 35208
-execute;rule_0 208
-execute;rule_0;join 44583
-execute;rule_0;views 125

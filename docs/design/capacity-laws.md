@@ -8,7 +8,7 @@ slot-vs-fetch measured choice ran on the power-budget lane (both arms, same
 protocol, oracle-gated per arm) and the SLOT arm won on every weighted row —
 min-of-3 ephemeral p50s, µs: `commit_capacity_sum` fetch 35.2 vs slot 32.3,
 `commit_capacity_duration` fetch 34.2 vs slot 30.8, statement-free control
-18.2 under both arms; artifacts `bench-out/baseline-2026-07-25/capacity-c17/`.
+18.2 under both arms.
 The slot arm landed as the only form, the fetch arm and the
 `CAPACITY_WEIGHT_SLOT` flag are deleted, and the numbers are the CONSTRAINT
 comment at the walk (`crates/bumbledb/src/storage/commit/judgment.rs`). The
@@ -421,11 +421,11 @@ hard cutover 2026-07-24; C20 ruled 2026-08-03 off C17's measured close)
   the plan-phase refusal (`bumbledb-bench/src/naive.rs: ray_weight_refusal`), the engine
   pin is `storage/commit/tests/marks.rs:
   capacity_duration_ray_under_an_absent_parent_still_refuses`, and the C17 record is
-  `bench-out/baseline-2026-07-25/capacity-c17/SUMMARY.md`.
+  git history (the C17 power-budget run, 2026-08-01).
 
 **The zero-trace gate:** at campaign close, `rg -i cardinal` over crates/, ts/src, ts/crate,
 ts/test, lean/, docs/architecture/, docs/research/, scripts/ returns zero hits. Historical
-records (docs/design/, audit-2026-07/, bench-out/, git history) are exempt as records.
+records (docs/design/, git history) are exempt as records.
 
 ## 9. Sequencing
 

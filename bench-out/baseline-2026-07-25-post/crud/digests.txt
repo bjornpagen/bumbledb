@@ -1,4 +1,0 @@
-306cc4de9c38fd7458a5bf823d619955c7a1d94a1054c321f084e8437f6b33e2  bench-data/crud/durable/db/data.mdb
-59c7311278d07f5c13f8a97a38c01dee68e47f0b862c970a683580c4a3eaa860  bench-data/crud/durable/oracle.sqlite
-6e61db86fb397739d6e1a75f11d54ebb649312570f3ce1a8bfb866953e136f75  bench-data/crud/nosync/db/data.mdb
-59c7311278d07f5c13f8a97a38c01dee68e47f0b862c970a683580c4a3eaa860  bench-data/crud/nosync/oracle.sqlite

@@ -78,12 +78,11 @@ type discipline is enforced by rustc, not by runtime checks.
 ## The numbers
 
 **The protocol note, once, for every number and chart below.** Everything
-derives from one committed artifact set: the 2026-08-03 post-fix rebench
-of the bugbash-perf campaign (`bench-out/baseline-2026-07-25-post/`, code
-rev `3b31cd84`, Apple M2 Max, **wall power** — AC pmset-asserted before
-and after every lane — the same S-scale corpora as the 2026-07-25 baseline
-and the 2026-07-23 campaign, both committed beside it; the full delta
-story is `bench-out/baseline-2026-07-25-post/DELTA.md`). Protocol
+derives from the 2026-08-03 post-fix rebench of the bugbash-perf campaign
+(code rev `3b31cd84`, Apple M2 Max, **wall power** — AC pmset-asserted
+before and after every lane — the same S-scale corpora as the 2026-07-25
+baseline and the 2026-07-23 campaign). Charts live in `assets/`; raw
+traces live in git history. Protocol
 unchanged down the whole chain: a **shared-machine run** under the
 recorded ruling — boosted (user-interactive) QoS, every report stamping
 `shared_machine: true` plus the load averages, one `scripts/measure.sh`
@@ -153,9 +152,8 @@ Six non-ledger worlds — joins, graph, olap, points, rings, temporal — 36
 the **34 timed lanes: 19.9×** (the campaign ran 18.0×, the night 12.0×;
 the bugbash fix lanes cashed where their attribution pointed — the
 g6/t1/g3 ratios landed 3.0×/2.4×/1.6× better than the 07-25 baseline — and the
-flat/adverse lanes are reported exactly as measured in
-`bench-out/baseline-2026-07-25-post/DELTA.md`, including the one real
-regression the rebench called on itself: `r6_two_path_count` 1.46× worse,
+flat/adverse lanes are reported exactly as measured, including the one
+real regression the rebench called on itself: `r6_two_path_count` 1.46× worse,
 a standing Hunt item); the 2 lanes where SQLite exceeded the per-sample
 cap are excluded from that geomean and counted (they get their own chart
 below):
@@ -388,9 +386,9 @@ target/release/bumbledb-bench lawful --out out/lawful
 target/release/bumbledb-bench curves --warmth --out out/curves
 target/release/bumbledb-bench churn --out out/churn
 
-# every chart, from the pinned post-fix rebench (discovery finds every
-# lane report; a run dir carrying CONTAMINATED.md is excluded and counted):
-python3 scripts/bench_viz.py --night bench-out/baseline-2026-07-25-post \
+# every chart, from a local night dir (discovery finds every lane
+# report; a run dir carrying CONTAMINATED.md is excluded and counted):
+python3 scripts/bench_viz.py --night bench-out/night-$(date +%F) \
     --out assets
 ```
 

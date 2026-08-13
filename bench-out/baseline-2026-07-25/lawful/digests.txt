@@ -1,4 +1,0 @@
-53f3dd063ebdb97c9628efa7e79153ff810e830d097a79b03cc75b30856a7e06  bench-data/durable/db/data.mdb
-8f8cb730a10e9d2e9eafc81f5e3942150814fb5842180b2a68bfa1df80b964ba  bench-data/durable/oracle.sqlite
-7ddffe5004a3c682c978fa1e882e895ad358f12469f10bff80557e6af7e97d0f  bench-data/nosync/db/data.mdb
-8f8cb730a10e9d2e9eafc81f5e3942150814fb5842180b2a68bfa1df80b964ba  bench-data/nosync/oracle.sqlite

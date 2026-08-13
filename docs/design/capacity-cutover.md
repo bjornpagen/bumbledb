@@ -26,8 +26,7 @@ deltas recorded at close, each per the design's intent:
   30.8 vs 34.2 µs (min-of-3 ephemeral p50s; the fsync-shadowed durable lane
   agreed in direction). The slot arm is the only form, the fetch arm and the
   `CAPACITY_WEIGHT_SLOT` flag are deleted, the numbers live at the
-  CONSTRAINT comment (`storage/commit/judgment.rs`), artifacts in
-  `bench-out/baseline-2026-07-25/capacity-c17/`. The write-time ray-corner
+  CONSTRAINT comment (`storage/commit/judgment.rs`). The write-time ray-corner
   ruling (strictly stronger than C10's judge-time refusal — documented at
   the constraint) is now LIVE semantics and OWED to the owner.
 - **C10 ray-Duration refusal parity engine-vs-naive is designed but

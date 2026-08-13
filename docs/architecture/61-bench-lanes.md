@@ -20,8 +20,8 @@ ledger and calendar ALL-WIN families and their budget gates
 closed; this chapter never adds to it. The night runner reruns the gate
 lanes, but it reruns them *as reports*: a published claim remains owner
 ceremony — the owner runs `scripts/bench-night.sh` personally on an idle
-machine and publishes by hand-copying artifacts into `bench-out/` and
-rendering `assets/` from committed pins. The Report classification is
+machine and publishes by rendering `assets/` from a local run; raw
+traces stay local and uncommitted (`bench-out/` is gitignored). The Report classification is
 structural where it can be (`lanes.rs` carries the metric-lanes charter: lane
 reports are plain-data types that cannot reach the gated `crate::report`
 type; churn is `Kind::Report` by construction) and registry-driven here for

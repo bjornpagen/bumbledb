@@ -14,7 +14,7 @@ impl Executor {
     /// on a fast path firing).
     ///
     /// MEASURED LAW (cleanup-0.5.0 ruling 6, the Measure phase,
-    /// 2026-07-19, `bench-out/measure-twins/`): the leaf-elision
+    /// 2026-07-19): the leaf-elision
     /// complex — the single-subatom classification
     /// (`leaf_precompute.rs`), this dispatcher, and the pinned-row arm
     /// below — measured **1.69–1.71× generic/elided** end-to-end on a

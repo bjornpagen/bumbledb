@@ -8,8 +8,7 @@ is relitigated from vibes and nothing worthy is forgotten. Investigated
 2026-07-19 against primer's real workload (50 prepared queries, the store
 schema, the host-gate census); the notation verdicts (5–6) recorded
 2026-07-20 from the destructure-060 owner ruling; verdicts 7–14 recorded
-2026-07-23 from the audit rulings (`audit-2026-07/RULINGS.md`, findings in
-`audit-2026-07/findings/`); verdicts 15–16 recorded 2026-07-24 from the
+2026-07-23 from the audit campaign (git history); verdicts 15–16 recorded 2026-07-24 from the
 capacity rulings (`docs/design/capacity-laws.md` §8 ruling 4 and §8b C19);
 verdict 17 recorded 2026-07-25 at the capacity campaign close; verdict 18
 recorded 2026-07-25 (the temporal-capacity trigger, the family's known
@@ -257,8 +256,7 @@ next-but-one rung).
   vs 34.2 µs, min-of-3 ephemeral p50s; control 18.2 both arms). The fetch
   arm and the `CAPACITY_WEIGHT_SLOT` flag are deleted per C17's own law;
   the numbers are the CONSTRAINT comment at the walk
-  (`crates/bumbledb/src/storage/commit/judgment.rs`), artifacts in
-  `bench-out/baseline-2026-07-25/capacity-c17/`. **OWNER RULING OWED:** the
+  (`crates/bumbledb/src/storage/commit/judgment.rs`). **OWNER RULING OWED:** the
   slot arm's recorded corner is now live — a ray Duration weight refuses at
   WRITE time, strictly stronger than C10's judge-time refusal, visible only
   for a ray child under an absent parent (documented at the constraint).

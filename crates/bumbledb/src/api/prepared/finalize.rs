@@ -26,7 +26,7 @@ use crate::storage::env::ReadTxn;
 /// and keeps the row-major path with ONE dispatch per cell.
 ///
 /// GRAVESTONE (cleanup-0.5.0 ruling 7, the Measure phase, 2026-07-19,
-/// `bench-out/measure-twins/`): an all-words fast path — a second
+/// git history): an all-words fast path — a second
 /// `AnswerHeap::Words` route that skipped the memo/byte-heap plumbing
 /// when no column was string/bytes — was measure-or-merge twinned and
 /// REFUTED: resolved/words 0.996–1.005 on both sinks (projection
