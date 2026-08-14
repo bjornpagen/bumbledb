@@ -46,8 +46,8 @@ use crate::interval::sweep::{Continuation, sweep};
 use crate::obs;
 use crate::schema::{
     AxiomIndex, BoundCeiling, CapacityEnforcement, CapacityId, CapacityStatement, CompiledCheck,
-    ContainmentId, DisjointDeterminantProof, Enforcement, IntervalTail, KeyId, Schema, SealedBound,
-    SealedWeight, StatementView,
+    ContainmentId, DisjointDeterminantProof, Enforcement, IntervalTail, KeyForm, KeyId, Schema,
+    SealedBound, SealedWeight, StatementView,
 };
 use crate::storage::delta::WriteDelta;
 use crate::storage::env::{ReadTxn, WriteTxn};
@@ -1297,57 +1297,62 @@ impl<'a> Checker<'a> {
                 // A fresh-row parent key has no `U` tree (R16): the
                 // parent tuple IS the `F` row id, one get, the value the
                 // holder itself — nothing to defer.
-                let fact = if key_statement.form().as_fresh_row().is_some() {
-                    let Some(fact) = self.fresh_row_fact(statement.target.relation, parent_key)?
-                    else {
-                        return Ok(());
-                    };
-                    fact
-                } else {
-                    let u_len = keys::determinant_key(
-                        &mut self.key,
-                        statement.target.relation,
-                        key_statement.id,
-                        parent_key,
-                    );
-                    let Some(value) = self.data.get(self.txn, &self.key[..u_len])? else {
-                        return Ok(());
-                    };
-                    let row_id = decode_row_id(value)?;
-                    // The holder's fact bytes are needed eagerly only by
-                    // ψ and by a dependent bound. An empty-ψ
-                    // literal-bound statement judges its whole hot path
-                    // from the `U` probe and the `R` walk alone — its
-                    // `F` get defers to the conviction (cold) path,
-                    // where the violation payload requires it anyway.
-                    let needs_fact = !matches!(checks.target, SelectionCheck::Empty)
-                        || statement.hi.needs_parent_fact();
-                    if !needs_fact {
-                        // ψ is Empty by construction, so the determinant
-                        // hit alone proves the holder; the bound is
-                        // literal or unbounded, resolved fact-free.
-                        let hi = match statement.hi {
-                            SealedBound::Unbounded => BoundCeiling::Unbounded,
-                            SealedBound::Lit(n) => BoundCeiling::Finite(n),
-                            SealedBound::TargetField(_) | SealedBound::Duration { .. } => {
-                                unreachable!("a dependent bound forces the eager holder fetch")
-                            }
+                let fact = match key_statement.form() {
+                    KeyForm::FreshRow { .. } => {
+                        let Some(fact) =
+                            self.fresh_row_fact(statement.target.relation, parent_key)?
+                        else {
+                            return Ok(());
                         };
-                        let measure =
-                            self.measure_children(statement, &checks.source, parent_key, hi)?;
-                        if measure < u128::from(statement.lo) || exceeds_ceiling(measure, hi) {
-                            let parent_fact = self.row_fact(statement.target.relation, row_id)?;
-                            return Err(Error::CommitRejected {
-                                violations: Violations::one(Violation::Capacity {
-                                    statement: statement.id,
-                                    fact: parent_fact.into(),
-                                    measure,
-                                }),
-                            });
-                        }
-                        return Ok(());
+                        fact
                     }
-                    self.row_fact(statement.target.relation, row_id)?
+                    KeyForm::Scalar | KeyForm::Pointwise { .. } => {
+                        let u_len = keys::determinant_key(
+                            &mut self.key,
+                            statement.target.relation,
+                            key_statement.id,
+                            parent_key,
+                        );
+                        let Some(value) = self.data.get(self.txn, &self.key[..u_len])? else {
+                            return Ok(());
+                        };
+                        let row_id = decode_row_id(value)?;
+                        // The holder's fact bytes are needed eagerly only by
+                        // ψ and by a dependent bound. An empty-ψ
+                        // literal-bound statement judges its whole hot path
+                        // from the `U` probe and the `R` walk alone — its
+                        // `F` get defers to the conviction (cold) path,
+                        // where the violation payload requires it anyway.
+                        let needs_fact = !matches!(checks.target, SelectionCheck::Empty)
+                            || statement.hi.needs_parent_fact();
+                        if !needs_fact {
+                            // ψ is Empty by construction, so the determinant
+                            // hit alone proves the holder; the bound is
+                            // literal or unbounded, resolved fact-free.
+                            let hi = match statement.hi {
+                                SealedBound::Unbounded => BoundCeiling::Unbounded,
+                                SealedBound::Lit(n) => BoundCeiling::Finite(n),
+                                SealedBound::TargetField(_) | SealedBound::Duration { .. } => {
+                                    unreachable!("a dependent bound forces the eager holder fetch")
+                                }
+                            };
+                            let measure =
+                                self.measure_children(statement, &checks.source, parent_key, hi)?;
+                            if measure < u128::from(statement.lo) || exceeds_ceiling(measure, hi) {
+                                let parent_fact =
+                                    self.row_fact(statement.target.relation, row_id)?;
+                                return Err(Error::CommitRejected {
+                                    violations: Violations::one(Violation::Capacity {
+                                        statement: statement.id,
+                                        fact: parent_fact.into(),
+                                        measure,
+                                    }),
+                                });
+                            }
+                            return Ok(());
+                        }
+                        self.row_fact(statement.target.relation, row_id)?
+                    }
                 };
                 let layout = self.schema.relation(statement.target.relation).layout();
                 if !satisfies(&checks.target, layout, fact) {

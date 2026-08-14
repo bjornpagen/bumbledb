@@ -258,23 +258,17 @@ impl<S> Snapshot<'_, S> {
                 return Ok(false);
             }
             let rel = self.schema.relation(relation);
-            let bytes = if rel.body().closed_rows().is_some() {
-                super::get::closed_fact_by_determinant(
-                    rel,
-                    statement,
-                    &key_bytes[read::DETERMINANT_KEY_HEADER..],
-                )
-            } else if statement.form().as_fresh_row().is_some() {
-                // The fresh-row auto-key reads `F` directly: its
-                // determinant IS the row id (R16).
-                read::fact_at(
-                    &self.txn,
-                    self.schema,
-                    relation,
-                    super::get::fresh_row_id(&key_bytes[read::DETERMINANT_KEY_HEADER..]),
-                )?
-            } else {
-                read::fact_for_key(&self.txn, self.schema, relation, key_bytes)?
+            let determinant = &key_bytes[read::DETERMINANT_KEY_HEADER..];
+            let bytes = match super::get::point_read(rel, statement, determinant) {
+                super::get::PointRead::Closed => {
+                    super::get::closed_fact_by_determinant(rel, statement, determinant)
+                }
+                super::get::PointRead::FreshRow { row_id } => {
+                    read::fact_at(&self.txn, self.schema, relation, row_id)?
+                }
+                super::get::PointRead::Determinant => {
+                    read::fact_for_key(&self.txn, self.schema, relation, key_bytes)?
+                }
             };
             let Some(fact) = bytes else {
                 return Ok(false);
@@ -330,23 +324,17 @@ impl<S> Snapshot<'_, S> {
                 return Ok(None);
             }
             let rel = self.schema.relation(relation);
-            let bytes = if rel.body().closed_rows().is_some() {
-                super::get::closed_fact_by_determinant(
-                    rel,
-                    statement,
-                    &key_bytes[read::DETERMINANT_KEY_HEADER..],
-                )
-            } else if statement.form().as_fresh_row().is_some() {
-                // The fresh-row auto-key reads `F` directly: its
-                // determinant IS the row id (R16).
-                read::fact_at(
-                    &self.txn,
-                    self.schema,
-                    relation,
-                    super::get::fresh_row_id(&key_bytes[read::DETERMINANT_KEY_HEADER..]),
-                )?
-            } else {
-                read::fact_for_key(&self.txn, self.schema, relation, key_bytes)?
+            let determinant = &key_bytes[read::DETERMINANT_KEY_HEADER..];
+            let bytes = match super::get::point_read(rel, statement, determinant) {
+                super::get::PointRead::Closed => {
+                    super::get::closed_fact_by_determinant(rel, statement, determinant)
+                }
+                super::get::PointRead::FreshRow { row_id } => {
+                    read::fact_at(&self.txn, self.schema, relation, row_id)?
+                }
+                super::get::PointRead::Determinant => {
+                    read::fact_for_key(&self.txn, self.schema, relation, key_bytes)?
+                }
             };
             bytes.map(|fact| K::Fact::decode(self, fact)).transpose()
         });

@@ -10,7 +10,7 @@ use super::{Fact, InternMode, Key, WriteTx, plumbing};
 use crate::encoding::encode_u64;
 use crate::error::{FactShapeError, Result};
 use crate::ir::Value;
-use crate::schema::{KeyId, KeyStatement, Relation, Schema, StatementView};
+use crate::schema::{KeyForm, KeyId, KeyStatement, Relation, RelationBody, Schema, StatementView};
 use crate::storage::delta::DeterminantOverlay;
 use crate::storage::read;
 use bumbledb_theory::schema::{FieldId, RelationId, StatementId};
@@ -107,6 +107,30 @@ pub(super) fn fresh_row_id(determinant: &[u8]) -> u64 {
         unreachable!("KeyForm::FreshRow determinant is one encoded u64");
     };
     u64::from_be_bytes(word)
+}
+
+/// The sealed point-read path: relation kind, then key form. One match
+/// used by snapshot get, write-tx get, and the capacity parent probe.
+pub(crate) enum PointRead {
+    Closed,
+    FreshRow { row_id: u64 },
+    Determinant,
+}
+
+pub(crate) fn point_read(
+    rel: &Relation,
+    statement: &KeyStatement,
+    determinant: &[u8],
+) -> PointRead {
+    match rel.body() {
+        RelationBody::Closed { .. } => PointRead::Closed,
+        RelationBody::Ordinary { .. } => match statement.form() {
+            KeyForm::FreshRow { .. } => PointRead::FreshRow {
+                row_id: fresh_row_id(determinant),
+            },
+            KeyForm::Scalar | KeyForm::Pointwise { .. } => PointRead::Determinant,
+        },
+    }
 }
 
 /// A **closed** relation's determinant lookup: virtual storage holds no
@@ -362,16 +386,21 @@ impl<S> WriteTx<'_, S> {
         let rel = self.schema.relation(relation);
         let statement = self.schema.key(key);
         let determinant = &u_key[read::DETERMINANT_KEY_HEADER..];
-        if rel.body().closed_rows().is_some() {
-            return Ok(closed_fact_by_determinant(rel, statement, determinant));
-        }
-        match self.delta.determinant_overlay(key, determinant) {
-            Some(DeterminantOverlay::Present(bytes)) => Ok(Some(bytes)),
-            Some(DeterminantOverlay::Absent) => Ok(None),
-            None if statement.form().as_fresh_row().is_some() => {
-                read::fact_at(&self.view, self.schema, relation, fresh_row_id(determinant))
-            }
-            None => read::fact_for_key(&self.view, self.schema, relation, u_key),
+        match point_read(rel, statement, determinant) {
+            PointRead::Closed => Ok(closed_fact_by_determinant(rel, statement, determinant)),
+            path => match self.delta.determinant_overlay(key, determinant) {
+                Some(DeterminantOverlay::Present(bytes)) => Ok(Some(bytes)),
+                Some(DeterminantOverlay::Absent) => Ok(None),
+                None => match path {
+                    PointRead::FreshRow { row_id } => {
+                        read::fact_at(&self.view, self.schema, relation, row_id)
+                    }
+                    PointRead::Determinant => {
+                        read::fact_for_key(&self.view, self.schema, relation, u_key)
+                    }
+                    PointRead::Closed => unreachable!("closed relations have no delta overlay"),
+                },
+            },
         }
     }
 
