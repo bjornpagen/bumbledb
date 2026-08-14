@@ -2,7 +2,7 @@
 
 - **Severity:** medium
 - **Tree:** lean
-- **Status:** OPEN
+- **Status:** FIXED(b10d9df5)
 - **Source:** audit/lean.md M4
 - **Depends on:** lean-002 (reachOp's signature changes under it)
 
@@ -40,9 +40,9 @@ Per `audit/CONTRACT.md §C4` ("`naiveIter`/`semiNaiveIter` leave the meaning mod
 
 ## Acceptance criteria
 
-- [ ] Moved: `rg -nw 'naiveIter|semiNaiveIter' lean/Bumbledb/Exec/Reach.lean` → no matches; definitions exist in the new mechanism file with statements textually unchanged; `rg -n 'Query.naiveIter' lean/Bumbledb/Countermodels.lean` still matches.
-- [ ] Bridge honest: `./scripts/spec-census.sh` green; both `semi_naive_agrees` rows resolve.
-- [ ] Commands green: `cd lean && lake build`; `lake exe conformance conformance/cases` (268, 0).
+- [x] Moved: `rg -nw 'naiveIter|semiNaiveIter' lean/Bumbledb/Exec/Reach.lean` → no matches; definitions exist in the new mechanism file with statements textually unchanged; `rg -n 'Query.naiveIter' lean/Bumbledb/Countermodels.lean` still matches.
+- [x] Bridge honest: `./scripts/spec-census.sh` green; both `semi_naive_agrees` rows resolve.
+- [x] Commands green: `cd lean && lake build`; `lake exe conformance conformance/cases` (268, 0).
 
 ## Constraints
 

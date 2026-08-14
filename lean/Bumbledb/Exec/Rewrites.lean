@@ -1282,10 +1282,10 @@ structure KeyProbeShape (T : Theory) (r : Rule) (a : Atom)
   /-- Positive only — no anti-joins on the fast path. -/
   negated : r.negated = []
   /-- The key resolves against a declared functionality statement
-  (`key_probe_candidate`; fresh auto-keys included). -/
-  declared : (match a.source with
-      | .edb R => Statement.functionality R K
-      | .interior _ => Statement.functionality ⟨0⟩ K) ∈ T.statements
+  (`key_probe_candidate`; fresh auto-keys included). Interior
+  key-probe is unrepresentable — statements name stored relations. -/
+  declared : ∃ R, a.source = .edb R ∧
+    Statement.functionality R K ∈ T.statements
   /-- Every key field is bound by value (`value_of` finds an `Eq`
   constant for each). -/
   covered : ∀ i, i ∈ K → ∃ t, (i, t) ∈ a.bindings ∧ t.pinned
@@ -1299,9 +1299,9 @@ finds projected, exactly the probe kernel's shape
 (`exec/dispatch/execute_key_probe.rs`). Reuses the `evalList`
 machinery: `bindAtom` is the decode-and-check step, `condHoldsB` the
 residual filter. -/
-def keyProbeEval (C : Classify) (W : ListInstance) (ρ : ParamEnv)
+def keyProbeEval (C : Classify) (facts : List Fact) (ρ : ParamEnv)
     (r : Rule) (a : Atom) (K : List FieldId) : List AnswerTuple :=
-  match (factsOf W InteriorTables.empty a.source).find? (probeHitB ρ a K) with
+  match facts.find? (probeHitB ρ a K) with
   | none => []
   | some f =>
     match bindAtom ρ f a.bindings [] with
@@ -1362,20 +1362,19 @@ Bridge: `PreparedRule::KeyProbe` (minted at
 `api/prepared/build.rs::prepare_rule_variant`); `remaining_filters`
 (`exec/dispatch/classify.rs::unconsumed_filters`). -/
 theorem keyprobe_equiv_join {T : Theory} {C : Classify}
-    {W : ListInstance} {ρ : ParamEnv} {r : Rule} {a : Atom}
+    {F : AtomSource → Set Fact} {facts : List Fact}
+    {ρ : ParamEnv} {r : Rule} {a : Atom}
     {K : List FieldId} (hshape : KeyProbeShape T r a K)
-    (hkey : Functionality (edbEnv W.den a.source) K) (hsafe : Safe r)
+    (hlist : ∀ f, f ∈ facts ↔ f ∈ F a.source)
+    (hkey : Functionality (F a.source) K) (hsafe : Safe r)
     (hnm : ∀ bd, bd ∈ a.bindings → ¬ bd.2.isMeasure) :
-    ∀ t, t ∈ keyProbeEval C W ρ r a K ↔ t ∈ ruleAnswers C r (edbEnv W.den) ρ := by
+    ∀ t, t ∈ keyProbeEval C facts ρ r a K ↔ t ∈ ruleAnswers C r F ρ := by
   intro t
-  have henv : InteriorTables.empty.toEnv = InteriorEnv.empty := by
-    funext _ _
-    simp [InteriorTables.toEnv, InteriorTables.empty, InteriorEnv.empty]
   constructor
   · -- the probe's answer derives
     intro ht
     unfold keyProbeEval at ht
-    cases hfind : (factsOf W InteriorTables.empty a.source).find? (probeHitB ρ a K) with
+    cases hfind : facts.find? (probeHitB ρ a K) with
     | none =>
       simp only [hfind] at ht
       cases ht
@@ -1401,10 +1400,7 @@ theorem keyprobe_equiv_join {T : Theory} {C : Classify}
             rw [hshape.atoms] at hx
             rcases List.mem_singleton.mp hx with rfl
             refine ⟨f, ?_, fun bd hbd => (hpins bd hbd).selects⟩
-            unfold edbEnv
-            rw [← henv]
-            exact (mem_factsOf W InteriorTables.empty x.source f).mp
-              (List.mem_of_find?_eq_some hfind)
+            exact (hlist f).mp (List.mem_of_find?_eq_some hfind)
           · intro n hn
             rw [hshape.negated] at hn
             cases hn
@@ -1417,23 +1413,15 @@ theorem keyprobe_equiv_join {T : Theory} {C : Classify}
     obtain ⟨f, hfI, hm⟩ := hatoms a (by
       rw [hshape.atoms]
       exact List.mem_singleton.mpr rfl)
-    have hf : f ∈ factsOf W InteriorTables.empty a.source :=
-      (mem_factsOf W InteriorTables.empty a.source f).mpr (by
-        unfold edbEnv at hfI
-        rw [henv]
-        exact hfI)
+    have hf : f ∈ facts := (hlist f).mpr hfI
     have hhit := probeHit_of_matches hshape.covered hm
     -- the one get finds exactly the deriving fact
-    cases hfind : (factsOf W InteriorTables.empty a.source).find? (probeHitB ρ a K) with
+    cases hfind : facts.find? (probeHitB ρ a K) with
     | none => exact absurd hhit (List.find?_eq_none.mp hfind f hf)
     | some g =>
       have hghit := List.find?_some hfind
-      have hgmem : g ∈ factsOf W InteriorTables.empty a.source :=
-        List.mem_of_find?_eq_some hfind
-      have hgF : g ∈ edbEnv W.den a.source := by
-        unfold edbEnv
-        rw [← henv]
-        exact (mem_factsOf W InteriorTables.empty a.source g).mp hgmem
+      have hgmem : g ∈ facts := List.mem_of_find?_eq_some hfind
+      have hgF : g ∈ F a.source := (hlist g).mp hgmem
       have hgf : g = f :=
         functionality_unique_witness hkey (f.project K) f hfI rfl g
           hgF (probeHit_project hghit hhit)

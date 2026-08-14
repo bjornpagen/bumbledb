@@ -2,7 +2,7 @@
 
 - **Severity:** low
 - **Tree:** lean
-- **Status:** OPEN
+- **Status:** FIXED(c8af2915)
 - **Source:** audit/lean.md L1
 - **Depends on:** lean-002 (decides whether the theorem is renamed or deleted)
 
@@ -33,9 +33,9 @@ Two cases, decided by lean-002's landing:
 
 ## Acceptance criteria
 
-- [ ] Gone: `rg -nw 'odd_not_stratified|stratified' lean --glob '!conformance/cases/**'` → no matches (prose included).
-- [ ] Walls intact: `rg -nw 'odd_not_monotone|odd_rounds_oscillate|odd_no_fixpoint|succOp_monotone|succ_chain_ascends|succ_prefixed_infinite' lean/Bumbledb/Countermodels.lean` → all present; odd-* conclusions unchanged (not monotone / oscillates / no fixpoint); `oddOp` is not defined via `Rec`.
-- [ ] Commands green: `cd lean && lake build`; `./scripts/spec-census.sh`; no `sorry`/`admit`.
+- [x] Gone: `rg -nw 'odd_not_stratified|stratified' lean --glob '!conformance/cases/**'` → no matches (prose included).
+- [x] Walls intact: `rg -nw 'odd_not_monotone|odd_rounds_oscillate|odd_no_fixpoint|succOp_monotone|succ_chain_ascends|succ_prefixed_infinite' lean/Bumbledb/Countermodels.lean` → all present; odd-* conclusions unchanged (not monotone / oscillates / no fixpoint); `oddOp` is not defined via `Rec`.
+- [x] Commands green: `cd lean && lake build`; `./scripts/spec-census.sh`; no `sorry`/`admit`.
 
 ## Constraints
 

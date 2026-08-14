@@ -1728,7 +1728,7 @@ theorem membership_fibers_eq (Γ : Typing) (C : Classify) (r : Rule)
     SurfaceGroupSlots Γ C r I ρ keys gk slots =
       GroupSlots C (r.lowerMembership Γ).2 I ρ keys gk slots := by
   have hposF := lowerFuel_posFree _ Γ r (Nat.le_refl _)
-  have hnegF := lowerFuel_negFree (memCount Γ.membership r.atoms) Γ r hneg
+  have hnegF := lowerFuel_negFree (memCount Γ.membershipSrc r.atoms) Γ r hneg
   funext t
   refine propext ?_
   constructor
@@ -1757,7 +1757,7 @@ theorem membership_lowering_preserves_fold (Γ : Typing) (C : Classify)
     surfaceAggAnswersOn Γ C r I ρ keys slots fold =
       aggAnswersOn C (r.lowerMembership Γ).2 I ρ keys slots fold := by
   have hposF := lowerFuel_posFree _ Γ r (Nat.le_refl _)
-  have hnegF := lowerFuel_negFree (memCount Γ.membership r.atoms) Γ r hneg
+  have hnegF := lowerFuel_negFree (memCount Γ.membershipSrc r.atoms) Γ r hneg
   funext t
   refine propext ?_
   constructor
