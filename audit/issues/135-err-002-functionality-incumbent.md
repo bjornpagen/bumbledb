@@ -2,7 +2,7 @@
 
 - **Severity:** medium
 - **Tree:** err
-- **Status:** OPEN
+- **Status:** FIXED(ba8ef508)
 - **Source:** audit/storage-schema.md F10
 - **Depends on:** none
 - **Conflicts with:** err-001, err-003 (same `Violation` / cited-facts shape)

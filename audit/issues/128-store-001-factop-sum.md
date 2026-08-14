@@ -2,7 +2,7 @@
 
 - **Severity:** medium
 - **Tree:** store
-- **Status:** OPEN
+- **Status:** FIXED(92941c5c)
 - **Source:** audit/storage-schema.md F7
 - **Depends on:** none
 - **Conflicts with:** none
