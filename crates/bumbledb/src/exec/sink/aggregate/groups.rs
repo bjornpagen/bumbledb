@@ -1,5 +1,5 @@
 use crate::exec::run::{LeafBatch, LeafSource};
-use crate::exec::sink::{Acc, AggregateSink, FoldOp, GroupTable, SinkSpec};
+use crate::exec::sink::{AggSpec, AggregateSink, GroupTable, SinkSpec};
 
 /// Loads a group key, span-wise (the `SlotWidth` layout): each group
 /// variable contributes its full word span — never a bare width-1 read.
@@ -91,15 +91,8 @@ impl AggregateSink {
             for i in 0..self.finds.len() {
                 let find = self.finds[i];
                 match find {
-                    SinkSpec::Agg { op, signed, .. } => {
-                        let acc = match (op, signed) {
-                            (FoldOp::Sum, true) => Acc::SumSigned(0),
-                            (FoldOp::Sum, false) => Acc::SumUnsigned(0),
-                            (FoldOp::Min, _) => Acc::Min(u64::MAX),
-                            (FoldOp::Max, _) => Acc::Max(u64::MIN),
-                            (FoldOp::Count, _) => Acc::Count(0),
-                        };
-                        self.accs.push(acc);
+                    SinkSpec::Agg(spec) => {
+                        self.accs.push(spec.seed_acc());
                     }
                     SinkSpec::Var { .. } | SinkSpec::Pack { .. } => {}
                 }

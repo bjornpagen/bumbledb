@@ -458,18 +458,13 @@ fn the_union_seen_set_keys_head_projections_across_rule_layouts() {
                 slot: group,
                 width: 1,
             },
-            FindSpec::Agg {
+            FindSpec::Agg(AggSpec::Fold {
                 op: FoldOp::Sum,
-                over_slot: Some(x),
-                over_width: 1,
+                slot: x,
+                width: 1,
                 signed: false,
-            },
-            FindSpec::Agg {
-                op: FoldOp::Count,
-                over_slot: None,
-                over_width: 1,
-                signed: false,
-            },
+            }),
+            FindSpec::Agg(AggSpec::Count),
         ]
     };
     let mut sink = AggregateSink::for_union(&spec(0, 1), 2, 0);
@@ -531,12 +526,12 @@ fn the_dnf_union_seen_set_keys_shared_slot_arrays_across_clone_layouts() {
     let spec = |g: usize, x: usize| {
         vec![
             FindSpec::Var { slot: g, width: 1 },
-            FindSpec::Agg {
+            FindSpec::Agg(AggSpec::Fold {
                 op: FoldOp::Sum,
-                over_slot: Some(x),
-                over_width: 1,
+                slot: x,
+                width: 1,
                 signed: false,
-            },
+            }),
         ]
     };
     // VarId order: v0 → g's slot, v1 → x's, v2 → e's, per clone.
@@ -593,18 +588,13 @@ fn dense_group_tables_match_the_hashed_map_word_for_word() {
     let spec = vec![
         FindSpec::Var { slot: 0, width: 1 },
         FindSpec::Var { slot: 1, width: 1 },
-        FindSpec::Agg {
+        FindSpec::Agg(AggSpec::Fold {
             op: FoldOp::Sum,
-            over_slot: Some(2),
-            over_width: 1,
+            slot: 2,
+            width: 1,
             signed: false,
-        },
-        FindSpec::Agg {
-            op: FoldOp::Count,
-            over_slot: None,
-            over_width: 1,
-            signed: false,
-        },
+        }),
+        FindSpec::Agg(AggSpec::Count),
     ];
     let mut dense = AggregateSink::new_dense(&spec, 3, &[2, 3]);
     let mut hashed = AggregateSink::new(&spec, 3);

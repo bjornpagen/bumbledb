@@ -1157,28 +1157,21 @@ fn find_specs(rule: &RuleWitness<'_>, layout: &impl SlotLayout) -> Vec<FindSpec>
                 AggOp::Pack => FindSpec::Pack {
                     slot: layout.slot_of(over.expect("validated: Pack carries a variable")),
                 },
-                AggOp::Sum | AggOp::Min | AggOp::Max | AggOp::Count => {
-                    let (over_slot, over_width, over_ty) = match over {
-                        Some(var) => (
-                            Some(layout.slot_of(*var)),
-                            layout.width_of(*var),
-                            rule.var_type(*var).clone(),
-                        ),
-                        None => (None, 1, ValueType::U64), // Count
-                    };
+                AggOp::Count => FindSpec::Agg(crate::exec::sink::AggSpec::Count),
+                AggOp::Sum | AggOp::Min | AggOp::Max => {
+                    let var = over.expect("validated: Sum/Min/Max carry a variable");
                     let fold = match op {
                         AggOp::Sum => crate::exec::sink::FoldOp::Sum,
                         AggOp::Min => crate::exec::sink::FoldOp::Min,
                         AggOp::Max => crate::exec::sink::FoldOp::Max,
-                        AggOp::Count => crate::exec::sink::FoldOp::Count,
-                        AggOp::Pack => unreachable!("handled above"),
+                        AggOp::Count | AggOp::Pack => unreachable!("handled above"),
                     };
-                    FindSpec::Agg {
+                    FindSpec::Agg(crate::exec::sink::AggSpec::Fold {
                         op: fold,
-                        over_slot,
-                        over_width,
-                        signed: matches!(over_ty, ValueType::I64),
-                    }
+                        slot: layout.slot_of(var),
+                        width: layout.width_of(var),
+                        signed: matches!(rule.var_type(var), ValueType::I64),
+                    })
                 }
             },
         })
@@ -1206,7 +1199,7 @@ fn key_probe_find_table(
                 Some((var.field, column.ty.clone()))
             }
             // aggregate and measure key_probes keep the sink path
-            FindSpec::Agg { .. }
+            FindSpec::Agg(_)
             | FindSpec::Pack { .. }
             | FindSpec::Duration { .. }
             | FindSpec::AggDuration { .. } => None,

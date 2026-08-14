@@ -1,7 +1,7 @@
 use super::*;
 use crate::encoding::{ValueRef, encode_fact};
 use crate::exec::run::Bindings;
-use crate::exec::sink::{AggregateSink, FindSpec, FoldOp, ProjectionSink};
+use crate::exec::sink::{AggSpec, AggregateSink, FindSpec, ProjectionSink};
 use crate::image::view::ResolvedWordSource;
 use crate::ir::normalize::{NormalizedQuery, OccId, Occurrence, PlacedComparison, Role, SlotWidth};
 use crate::ir::{CmpOp, ParamId, VarId};
@@ -698,12 +698,7 @@ fn aggregate_over_a_point_lookup_folds_one_binding() {
     let txn = env.read_txn().expect("txn");
     let mut bindings = Bindings::new(1);
     let mut sink = AggregateSink::new(
-        vec![FindSpec::Agg {
-            op: FoldOp::Count,
-            over_slot: None,
-            over_width: 1,
-            signed: false,
-        }],
+        vec![FindSpec::Agg(AggSpec::Count)],
         1,
     );
     let mut key = Vec::new();

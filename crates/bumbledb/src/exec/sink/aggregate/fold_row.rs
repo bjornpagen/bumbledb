@@ -1,4 +1,4 @@
-use crate::exec::sink::{Acc, AggregateSink, FoldOp, SinkSpec, measure, word_to_i64};
+use crate::exec::sink::{Acc, AggSpec, AggregateSink, FoldOp, SinkSpec, measure, word_to_i64};
 
 impl AggregateSink {
     /// Folds the full binding currently in `binding_scratch`: the
@@ -33,15 +33,11 @@ impl AggregateSink {
         // layout). Multi-rule key: the head projection — rule-independent
         // by construction, so the seen-set spanning rules folds each
         // element of the union exactly once (20-query-ir § aggregation).
-        if let Some(seen) = &mut self.seen {
-            let key = dedup_key(
-                self.union_spans.as_deref(),
-                &mut self.union_scratch,
-                &self.binding_scratch,
-            );
-            if !seen.insert(key) {
-                return;
-            }
+        if !self
+            .dedup
+            .consider(&self.binding_scratch, &mut self.union_scratch)
+        {
+            return;
         }
 
         super::groups::load_group_key(&mut self.key_scratch, &self.group_spans, |slot| {
@@ -60,67 +56,43 @@ impl AggregateSink {
 
         let mut acc_cursor = 0;
         for find in &self.finds {
-            let SinkSpec::Agg {
-                op,
-                over_slot,
-                over_width: _,
-                signed,
-            } = find
-            else {
+            let SinkSpec::Agg(spec) = find else {
                 continue;
             };
             let acc = &mut self.accs[group_idx * self.n_aggs + acc_cursor];
             acc_cursor += 1;
-            match (op, acc) {
-                (FoldOp::Count, Acc::Count(n)) => *n += 1,
-                (FoldOp::Sum, Acc::SumSigned(total)) => {
-                    let word =
-                        self.binding_scratch[over_slot.expect("validated: Sum has a variable")];
-                    debug_assert!(*signed);
-                    *total += i128::from(word_to_i64(word));
+            match spec {
+                AggSpec::Count => {
+                    let Acc::Count(n) = acc else {
+                        unreachable!("accumulators are seeded per op");
+                    };
+                    *n += 1;
                 }
-                (FoldOp::Sum, Acc::SumUnsigned(total)) => {
-                    let word =
-                        self.binding_scratch[over_slot.expect("validated: Sum has a variable")];
-                    *total += u128::from(word);
+                AggSpec::Fold {
+                    op,
+                    slot,
+                    signed,
+                    ..
+                } => {
+                    let word = self.binding_scratch[*slot];
+                    match (op, acc) {
+                        (FoldOp::Sum, Acc::SumSigned(total)) => {
+                            debug_assert!(*signed);
+                            *total += i128::from(word_to_i64(word));
+                        }
+                        (FoldOp::Sum, Acc::SumUnsigned(total)) => {
+                            *total += u128::from(word);
+                        }
+                        (FoldOp::Min, Acc::Min(best)) => {
+                            *best = (*best).min(word);
+                        }
+                        (FoldOp::Max, Acc::Max(best)) => {
+                            *best = (*best).max(word);
+                        }
+                        _ => unreachable!("accumulators are seeded per op"),
+                    }
                 }
-                (FoldOp::Min, Acc::Min(best)) => {
-                    let word =
-                        self.binding_scratch[over_slot.expect("validated: Min has a variable")];
-                    *best = (*best).min(word);
-                }
-                (FoldOp::Max, Acc::Max(best)) => {
-                    let word =
-                        self.binding_scratch[over_slot.expect("validated: Max has a variable")];
-                    *best = (*best).max(word);
-                }
-                _ => unreachable!("accumulators are seeded per op"),
             }
         }
-    }
-}
-
-/// The binding-dedup key for the row in `binding_scratch`
-/// (docs/architecture/40-execution.md § the rule loop): the union
-/// spans' gathered words under the multi-rule regime — the head
-/// projection for a hand-written rule set, the `VarId`-ordered shared
-/// slot arrays for a DNF-derived one (R2) — or the whole slot array
-/// verbatim for a single-rule program. Both span shapes are
-/// rule-independent: the head is the hand-written rules' only shared
-/// vocabulary, and DNF clones share one variable scope.
-pub(super) fn dedup_key<'k>(
-    union_spans: Option<&[(usize, usize)]>,
-    scratch: &'k mut Vec<u64>,
-    binding_scratch: &'k [u64],
-) -> &'k [u64] {
-    match union_spans {
-        Some(spans) => {
-            scratch.clear();
-            for &(slot, width) in spans {
-                scratch.extend_from_slice(&binding_scratch[slot..slot + width]);
-            }
-            scratch
-        }
-        None => binding_scratch,
     }
 }

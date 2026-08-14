@@ -1,4 +1,6 @@
-use crate::exec::sink::{AggregateSink, DENSE_GROUPS_CAP, FindSpec, GroupTable, SinkSpec};
+use crate::exec::sink::{
+    AggSpec, AggregateSink, DENSE_GROUPS_CAP, DedupState, FindSpec, GroupTable, SinkSpec,
+};
 use crate::exec::wordmap::WordMap;
 
 /// Parses prepare's find vocabulary into the measure-free execution
@@ -39,27 +41,17 @@ pub(in crate::exec::sink) fn parse_finds_into(
             FindSpec::AggDuration { op, slot } => {
                 let derived = slot_count + measures.len();
                 measures.push((derived, slot));
-                SinkSpec::Agg {
+                SinkSpec::Agg(AggSpec::Fold {
                     op,
-                    over_slot: Some(derived),
-                    over_width: 1,
+                    slot: derived,
+                    width: 1,
                     // The measure is u64 — the unsigned wide accumulator
                     // with the single finalize range check, like every
                     // Sum(U64).
                     signed: false,
-                }
+                })
             }
-            FindSpec::Agg {
-                op,
-                over_slot,
-                over_width,
-                signed,
-            } => SinkSpec::Agg {
-                op,
-                over_slot,
-                over_width,
-                signed,
-            },
+            FindSpec::Agg(spec) => SinkSpec::Agg(spec),
             FindSpec::Pack { slot } => SinkSpec::Pack { slot },
         };
         parsed.push(spec);
@@ -199,11 +191,6 @@ impl AggregateSink {
         hint: usize,
         dense_groups: &[u16],
     ) -> Self {
-        let union = matches!(regime, DedupRegime::Union | DedupRegime::DnfUnion(_));
-        let distinct_witness = match regime {
-            DedupRegime::Elided(witness) => Some(witness),
-            DedupRegime::Bindings | DedupRegime::Union | DedupRegime::DnfUnion(_) => None,
-        };
         // Parse first: everything below sees the measure-free execution
         // vocabulary over the extended scratch row.
         let (finds, measures) = parse_finds(finds, slot_count);
@@ -212,13 +199,13 @@ impl AggregateSink {
             .iter()
             .filter_map(|f| match f {
                 SinkSpec::Var { slot, width } => Some((*slot, *width)),
-                SinkSpec::Agg { .. } | SinkSpec::Pack { .. } => None,
+                SinkSpec::Agg(_) | SinkSpec::Pack { .. } => None,
             })
             .collect();
         let key_words: usize = group_spans.iter().map(|(_, width)| width).sum();
         let n_aggs = finds
             .iter()
-            .filter(|f| matches!(f, SinkSpec::Agg { .. }))
+            .filter(|f| matches!(f, SinkSpec::Agg(_)))
             .count();
         let pack = pack_slot(&finds);
         // Measures fold per row too: their derived words exist only in
@@ -227,15 +214,38 @@ impl AggregateSink {
         let row_fold_only = pack.is_some() || !measures.is_empty();
         // The union key by provenance (R2): head projection for a
         // hand-written rule set, the shared slot arrays for a
-        // DNF-derived one.
-        let union_spans = match regime {
-            DedupRegime::Union => Some(union_key_spans(&finds)),
-            DedupRegime::DnfUnion(spans) => Some(spans.to_vec()),
-            DedupRegime::Bindings | DedupRegime::Elided(_) => None,
+        // DNF-derived one. Live state is the arm, not a flattened product.
+        let (dedup, union_words) = match regime {
+            DedupRegime::Bindings => (
+                DedupState::Bindings {
+                    seen: WordMap::with_capacity_hint(scratch_words, hint),
+                },
+                0,
+            ),
+            DedupRegime::Union => {
+                let spans = union_key_spans(&finds);
+                let words: usize = spans.iter().map(|(_, width)| width).sum();
+                (
+                    DedupState::Union {
+                        seen: WordMap::with_capacity_hint(words, hint),
+                        spans,
+                    },
+                    words,
+                )
+            }
+            DedupRegime::DnfUnion(spans) => {
+                let spans = spans.to_vec();
+                let words: usize = spans.iter().map(|(_, width)| width).sum();
+                (
+                    DedupState::DnfUnion {
+                        seen: WordMap::with_capacity_hint(words, hint),
+                        spans,
+                    },
+                    words,
+                )
+            }
+            DedupRegime::Elided(witness) => (DedupState::Elided { witness }, 0),
         };
-        let union_words: usize = union_spans
-            .as_ref()
-            .map_or(0, |spans| spans.iter().map(|(_, width)| width).sum());
         // The group representation (finding 049): dense when the caller
         // proved every key word a small domain — the product is capped
         // at construction, so the table is at most `DENSE_GROUPS_CAP`
@@ -260,19 +270,11 @@ impl AggregateSink {
             }
         };
         Self {
-            distinct_witness,
-            dnf_rekey: matches!(regime, DedupRegime::DnfUnion(_)),
+            dedup,
             groups,
             key_scratch: vec![0; key_words],
             binding_scratch: vec![0; scratch_words],
-            // Single-rule: whole-binding key, elided when its own plan
-            // proves distinct bindings. Multi-rule: head-projection key,
-            // always retained as the union representation.
-            seen: distinct_witness.is_none().then(|| {
-                WordMap::with_capacity_hint(if union { union_words } else { scratch_words }, hint)
-            }),
             union_scratch: vec![0; union_words],
-            union_spans,
             acc_scratch: Vec::with_capacity(n_aggs),
             dedup_survivors: Vec::new(),
             scan_sources: Vec::with_capacity(n_aggs),
@@ -313,21 +315,24 @@ impl AggregateSink {
         self.group_spans
             .extend(self.finds.iter().filter_map(|f| match f {
                 SinkSpec::Var { slot, width } => Some((*slot, *width)),
-                SinkSpec::Agg { .. } | SinkSpec::Pack { .. } => None,
+                SinkSpec::Agg(_) | SinkSpec::Pack { .. } => None,
             }));
         // The Pack slot is the rule's (the head position is fixed;
         // validation aligned every rule's Pack term against it).
         self.pack = pack_slot(&self.finds);
-        if let Some(spans) = &mut self.union_spans {
-            spans.clear();
-            if self.dnf_rekey {
+        match &mut self.dedup {
+            DedupState::DnfUnion { spans, .. } => {
                 // DNF-derived provenance (R2): the caller supplies this
                 // rule's full slot array in `VarId` order — the shared
                 // vocabulary every disjunct reads identically.
+                spans.clear();
                 spans.extend_from_slice(shared_slots);
-            } else {
+            }
+            DedupState::Union { spans, .. } => {
+                spans.clear();
                 spans.extend(self.finds.iter().filter_map(union_span));
             }
+            DedupState::Bindings { .. } | DedupState::Elided { .. } => {}
         }
         self.binding_scratch.clear();
         self.binding_scratch
@@ -346,12 +351,7 @@ impl AggregateSink {
     /// distinct-bindings proof: every emit is first-seen).
     #[must_use]
     pub fn distinct_seen(&self) -> Option<usize> {
-        debug_assert_eq!(
-            self.seen.is_none(),
-            self.distinct_witness.is_some(),
-            "only a retained distinctness proof can remove the seen-set"
-        );
-        self.seen.as_ref().map(WordMap::len)
+        self.dedup.seen().map(WordMap::len)
     }
 
     /// Whether the binding seen-set is elided (the plan proved distinct
@@ -359,7 +359,7 @@ impl AggregateSink {
     #[cfg(test)]
     #[must_use]
     pub fn seen_elided(&self) -> bool {
-        self.distinct_witness.is_some()
+        matches!(self.dedup, DedupState::Elided { .. })
     }
 
     /// Whether the group table took the dense representation (finding
@@ -378,7 +378,7 @@ impl AggregateSink {
         self.groups.clear();
         self.accs.clear();
         self.ray = None;
-        if let Some(seen) = &mut self.seen {
+        if let Some(seen) = self.dedup.seen_mut() {
             seen.clear();
         }
     }
@@ -419,15 +419,9 @@ enum DedupRegime<'k> {
 fn union_span(find: &SinkSpec) -> Option<(usize, usize)> {
     match find {
         SinkSpec::Var { slot, width } => Some((*slot, *width)),
-        SinkSpec::Agg {
-            over_slot: Some(slot),
-            over_width,
-            ..
-        } => Some((*slot, *over_width)),
+        SinkSpec::Agg(AggSpec::Fold { slot, width, .. }) => Some((*slot, *width)),
         SinkSpec::Pack { slot } => Some((*slot, 2)),
-        SinkSpec::Agg {
-            over_slot: None, ..
-        } => None,
+        SinkSpec::Agg(AggSpec::Count) => None,
     }
 }
 

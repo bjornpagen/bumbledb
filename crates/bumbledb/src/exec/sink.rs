@@ -49,6 +49,61 @@ mod projection;
 #[cfg(test)]
 mod tests;
 
+/// A fold aggregate's operator, execution-side: exactly the ops that fold
+/// into an [`Acc`]. `Count` is the accumulator tag seeded from
+/// [`AggSpec::Count`]; a fold over a slot cannot spell it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FoldOp {
+    Sum,
+    Min,
+    Max,
+    Count,
+}
+
+/// Nullary Count vs a fold over a slot. Trusted layer: Count cannot
+/// carry a slot and folds cannot omit one (C1/C6). Hostile
+/// `FindTerm::Aggregate { over: Option }` stays on `ir.rs`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AggSpec {
+    Count,
+    Fold {
+        /// `Sum` / `Min` / `Max` — never `Count`.
+        op: FoldOp,
+        slot: usize,
+        width: usize,
+        /// Whether the input is I64 (its column word is the sign-flipped
+        /// biased form; Sum must decode before accumulating).
+        signed: bool,
+    },
+}
+
+impl AggSpec {
+    pub(in crate::exec::sink) fn seed_acc(self) -> Acc {
+        match self {
+            Self::Count => Acc::Count(0),
+            Self::Fold {
+                op: FoldOp::Sum,
+                signed: true,
+                ..
+            } => Acc::SumSigned(0),
+            Self::Fold {
+                op: FoldOp::Sum,
+                signed: false,
+                ..
+            } => Acc::SumUnsigned(0),
+            Self::Fold {
+                op: FoldOp::Min, ..
+            } => Acc::Min(u64::MAX),
+            Self::Fold {
+                op: FoldOp::Max, ..
+            } => Acc::Max(u64::MIN),
+            Self::Fold {
+                op: FoldOp::Count, ..
+            } => unreachable!("Count is AggSpec::Count"),
+        }
+    }
+}
+
 /// One find term in execution form: a projected slot span or a fold
 /// aggregate. Widths come from the plan's
 /// binding-slot layout (`ValidatedPlan::slots`) — never assumed 1.
@@ -74,16 +129,8 @@ pub enum FindSpec {
     /// finalize range check, like every Sum. Ray semantics as
     /// [`FindSpec::Duration`].
     AggDuration { op: FoldOp, slot: usize },
-    /// A fold aggregate over a slot span (`over_slot: None` for the
-    /// nullary Count; arithmetic folds are validated scalar).
-    Agg {
-        op: FoldOp,
-        over_slot: Option<usize>,
-        over_width: usize,
-        /// Whether the input is I64 (its column word is the sign-flipped
-        /// biased form; Sum must decode before accumulating).
-        signed: bool,
-    },
+    /// A fold aggregate: nullary Count, or Sum/Min/Max over a slot.
+    Agg(AggSpec),
     /// The coalescing fold (`Pack` — 20-query-ir § aggregation): the
     /// interval variable's two-slot span. Relation-shaped group state —
     /// per group the sink accumulates the claim list; finalize sorts by
@@ -102,25 +149,73 @@ pub enum FindSpec {
 enum SinkSpec {
     /// A projected/group-key slot span.
     Var { slot: usize, width: usize },
-    /// A fold over a slot span (`over_slot: None` for nullary Count).
-    Agg {
-        op: FoldOp,
-        over_slot: Option<usize>,
-        over_width: usize,
-        signed: bool,
-    },
+    /// A fold: Count contributes no slot; a Fold reads one.
+    Agg(AggSpec),
     /// A coalescing interval claim.
     Pack { slot: usize },
 }
 
-/// A fold aggregate's operator, execution-side: exactly the ops that fold
-/// into an [`Acc`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FoldOp {
-    Sum,
-    Min,
-    Max,
-    Count,
+/// Live dedup regime (R2). Construction mints the arm; `seen` lives only
+/// on Bindings/Union/DnfUnion, the witness only on Elided, and DNF vs
+/// head-projection is which union arm — not a sidecar bool.
+#[derive(Debug)]
+pub(in crate::exec::sink) enum DedupState {
+    Bindings { seen: WordMap<()> },
+    /// Head projection — hand-written multi-rule.
+    Union {
+        seen: WordMap<()>,
+        spans: Vec<(usize, usize)>,
+    },
+    /// VarId-ordered slots — DNF-derived multi-rule.
+    DnfUnion {
+        seen: WordMap<()>,
+        spans: Vec<(usize, usize)>,
+    },
+    Elided {
+        /// Plan proof that minted this arm. Retained as evidence; the
+        /// arm itself is the elision observable.
+        #[allow(dead_code)]
+        witness: crate::plan::fj::DistinctWitness,
+    },
+}
+
+impl DedupState {
+    /// `true` when this binding should fold (first-seen, or elided).
+    pub(in crate::exec::sink) fn consider(
+        &mut self,
+        binding_scratch: &[u64],
+        union_scratch: &mut Vec<u64>,
+    ) -> bool {
+        match self {
+            Self::Elided { .. } => true,
+            Self::Bindings { seen } => seen.insert(binding_scratch),
+            Self::Union { seen, spans } | Self::DnfUnion { seen, spans } => {
+                union_scratch.clear();
+                for &(slot, width) in spans.iter() {
+                    union_scratch.extend_from_slice(&binding_scratch[slot..slot + width]);
+                }
+                seen.insert(union_scratch)
+            }
+        }
+    }
+
+    pub(in crate::exec::sink) fn seen(&self) -> Option<&WordMap<()>> {
+        match self {
+            Self::Bindings { seen } | Self::Union { seen, .. } | Self::DnfUnion { seen, .. } => {
+                Some(seen)
+            }
+            Self::Elided { .. } => None,
+        }
+    }
+
+    pub(in crate::exec::sink) fn seen_mut(&mut self) -> Option<&mut WordMap<()>> {
+        match self {
+            Self::Bindings { seen } | Self::Union { seen, .. } | Self::DnfUnion { seen, .. } => {
+                Some(seen)
+            }
+            Self::Elided { .. } => None,
+        }
+    }
 }
 
 /// Decodes a binding word back to the i64 it encodes (the biased word form
@@ -194,7 +289,7 @@ fn extend_sources(finds: &[SinkSpec], measures: &[(usize, usize)], out: &mut Vec
                     out.extend((*slot..slot + width).map(ProjSource::Slot));
                 }
             }
-            SinkSpec::Agg { .. } | SinkSpec::Pack { .. } => {}
+            SinkSpec::Agg(_) | SinkSpec::Pack { .. } => {}
         }
     }
 }
@@ -325,14 +420,14 @@ enum Acc {
 /// signaled by mistake would be absorbed at its producing node.
 #[derive(Debug)]
 pub struct AggregateSink {
-    /// Evidence retained exactly when the binding seen-set is absent.
-    /// Construction cannot enter that regime without a plan proof.
-    distinct_witness: Option<crate::plan::fj::DistinctWitness>,
+    /// Live R2 regime: seen-set on Bindings/Union/DnfUnion, witness on
+    /// Elided. Construction mints the arm and keeps it.
+    dedup: DedupState,
     /// The measure-free sink specs in **derived-slot form**: construction
     /// parses every measure onto a derived binding-scratch word —
     /// `Duration { slot }` becomes `Var { slot: derived, width: 1 }` and
     /// `AggDuration { op, slot }` becomes an unsigned
-    /// `Agg { over_slot: derived }` — so group keys, dedup keys, folds,
+    /// `Agg(Fold { slot: derived })` — so group keys, dedup keys, folds,
     /// and finalize consume plain words with zero measure awareness. The
     /// representation move: the measure gets a word in the sink's row,
     /// not a branch in its folds.
@@ -379,34 +474,7 @@ pub struct AggregateSink {
     /// gather kernel or scan pushdown applies; batches route through
     /// the per-row scratch fold.
     row_fold_only: bool,
-    /// Binding dedup, elided (`None`) when the emitted key stream is
-    /// proven duplicate-free: single-rule, the plan's distinct-bindings
-    /// proof. A multi-rule sink always retains it. Single-rule key: the
-    /// whole slot array — an interval variable's two words are both
-    /// hashed (the `SlotWidth` layout). Multi-rule key: the head projection
-    /// ([`Self::union_spans`]).
-    seen: Option<WordMap<()>>,
-    /// The multi-rule union regime's dedup-key spans (`None` =
-    /// single-rule, key = the whole slot array), split by provenance
-    /// (ruled 2026-07-23, R2). Hand-written rule set: per head position
-    /// in head order, the slot span the position reads from THIS rule's
-    /// binding layout — group variables and fold inputs; the nullary
-    /// `Count` contributes nothing; the extracted words are the **head
-    /// projection**, rule-independent because the head is the rules'
-    /// only shared vocabulary (20-query-ir § aggregation, "aggregates
-    /// read the head"). DNF-derived rule set ([`Self::dnf_rekey`]): the
-    /// rule's **full slot array in `VarId` order** — the disjuncts of
-    /// one written rule share one variable scope, so the VarId-ordered
-    /// spans read the same binding tuple through every clone's own
-    /// layout and the fold domain never moves (the or-transparency
-    /// law). Re-aimed per rule by [`Self::aim`].
-    union_spans: Option<Vec<(usize, usize)>>,
-    /// The union key's provenance shape: `true` re-keys on the caller-
-    /// supplied shared slot arrays at [`Self::aim`] (a DNF-derived rule
-    /// set), `false` rebuilds the head projection from the finds (a
-    /// hand-written rule set). Meaningless without `union_spans`.
-    dnf_rekey: bool,
-    /// Head-projection key assembly scratch (union regime only).
+    /// Head-projection / DNF-span key assembly scratch (union regimes).
     union_scratch: Vec<u64>,
     key_scratch: Vec<u64>,
     binding_scratch: Vec<u64>,

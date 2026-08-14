@@ -356,12 +356,15 @@ fn var_spec(plan: &ValidatedPlan, var: u16) -> FindSpec {
 
 /// A scalar fold's spec.
 fn agg_spec(plan: &ValidatedPlan, op: FoldOp, over: Option<u16>, signed: bool) -> FindSpec {
-    FindSpec::Agg {
-        op,
-        over_slot: over.map(|v| plan.slot_of(VarId(v))),
-        over_width: over.map_or(1, |v| plan.width_of(VarId(v))),
-        signed,
-    }
+    FindSpec::Agg(match over {
+        None => AggSpec::Count,
+        Some(v) => AggSpec::Fold {
+            op,
+            slot: plan.slot_of(VarId(v)),
+            width: plan.width_of(VarId(v)),
+            signed,
+        },
+    })
 }
 
 /// Counters recording D2 skips.

@@ -1,7 +1,7 @@
 use crate::exec::colt::SuffixRun;
 use crate::exec::kernel;
 use crate::exec::run::{Bindings, Flow, LeafBatch, LeafScan, Sink};
-use crate::exec::sink::{Acc, AggregateSink, FoldOp, SinkSpec, word_to_i64};
+use crate::exec::sink::{Acc, AggSpec, AggregateSink, DedupState, FoldOp, SinkSpec, word_to_i64};
 use crate::image::ColumnView;
 
 impl Sink for AggregateSink {
@@ -19,7 +19,7 @@ impl Sink for AggregateSink {
     /// Partials are identity-seeded and merged at `end_scan`, so an
     /// empty scan creates no group row (matching the batch paths).
     fn begin_scan(&mut self, scan: &LeafScan<'_>) -> bool {
-        if self.seen.is_some() {
+        if !matches!(self.dedup, DedupState::Elided { .. }) {
             return false;
         }
         // Measures and Pack fold per row (derived words / claim lists
@@ -39,10 +39,13 @@ impl Sink for AggregateSink {
         }
         self.scan_sources.clear();
         for find in &self.finds {
-            let SinkSpec::Agg { over_slot, .. } = find else {
+            let SinkSpec::Agg(spec) = find else {
                 continue;
             };
-            let source = over_slot.and_then(|slot| scan.key_slots.iter().position(|k| *k == slot));
+            let source = match spec {
+                AggSpec::Count => None,
+                AggSpec::Fold { slot, .. } => scan.key_slots.iter().position(|k| *k == *slot),
+            };
             if let Some(word) = source {
                 // Aggregates fold integer columns; a byte-backed column
                 // here would be a validation hole — decline, don't trust.
@@ -59,14 +62,8 @@ impl Sink for AggregateSink {
         // bindings are constant for this node entry).
         self.acc_scratch.clear();
         for find in &self.finds {
-            if let SinkSpec::Agg { op, signed, .. } = find {
-                self.acc_scratch.push(match (op, signed) {
-                    (FoldOp::Sum, true) => Acc::SumSigned(0),
-                    (FoldOp::Sum, false) => Acc::SumUnsigned(0),
-                    (FoldOp::Min, _) => Acc::Min(u64::MAX),
-                    (FoldOp::Max, _) => Acc::Max(u64::MIN),
-                    (FoldOp::Count, _) => Acc::Count(0),
-                });
+            if let SinkSpec::Agg(spec) = find {
+                self.acc_scratch.push(spec.seed_acc());
             }
         }
         self.scan_count = 0;
@@ -80,7 +77,7 @@ impl Sink for AggregateSink {
         self.scan_count += run.len() as u64;
         let mut cursor = 0;
         for find in &self.finds {
-            let SinkSpec::Agg { op, .. } = find else {
+            let SinkSpec::Agg(spec) = find else {
                 continue;
             };
             let source = self.scan_sources[cursor];
@@ -91,6 +88,9 @@ impl Sink for AggregateSink {
             };
             let ColumnView::Words(col) = scan.colt.suffix_column(scan.level, word) else {
                 unreachable!("begin_scan declined byte columns")
+            };
+            let AggSpec::Fold { op, .. } = spec else {
+                unreachable!("accumulators are seeded per op; Count has no source")
             };
             match (op, acc, run) {
                 (FoldOp::Sum, Acc::SumSigned(total), SuffixRun::Identity { start, len }) => {
@@ -130,7 +130,7 @@ impl Sink for AggregateSink {
         // Finish the outer-sourced and Count partials.
         let mut cursor = 0;
         for find in &self.finds {
-            let SinkSpec::Agg { op, over_slot, .. } = find else {
+            let SinkSpec::Agg(spec) = find else {
                 continue;
             };
             let source = self.scan_sources[cursor];
@@ -139,25 +139,29 @@ impl Sink for AggregateSink {
             if source.is_some() {
                 continue;
             }
-            match (op, acc) {
-                (FoldOp::Count, Acc::Count(n)) => *n += count,
-                (FoldOp::Sum, Acc::SumSigned(total)) => {
-                    let slot = over_slot.expect("validated: Sum has a variable");
-                    *total += i128::from(word_to_i64(scan.bindings.get(slot))) * i128::from(count);
+            match spec {
+                AggSpec::Count => {
+                    let Acc::Count(n) = acc else {
+                        unreachable!("accumulators are seeded per op");
+                    };
+                    *n += count;
                 }
-                (FoldOp::Sum, Acc::SumUnsigned(total)) => {
-                    let slot = over_slot.expect("validated: Sum has a variable");
-                    *total += u128::from(scan.bindings.get(slot)) * u128::from(count);
-                }
-                (FoldOp::Min, Acc::Min(best)) => {
-                    let slot = over_slot.expect("validated: Min has a variable");
-                    *best = (*best).min(scan.bindings.get(slot));
-                }
-                (FoldOp::Max, Acc::Max(best)) => {
-                    let slot = over_slot.expect("validated: Max has a variable");
-                    *best = (*best).max(scan.bindings.get(slot));
-                }
-                _ => unreachable!("accumulators are seeded per op"),
+                AggSpec::Fold { op, slot, .. } => match (op, acc) {
+                    (FoldOp::Sum, Acc::SumSigned(total)) => {
+                        *total +=
+                            i128::from(word_to_i64(scan.bindings.get(*slot))) * i128::from(count);
+                    }
+                    (FoldOp::Sum, Acc::SumUnsigned(total)) => {
+                        *total += u128::from(scan.bindings.get(*slot)) * u128::from(count);
+                    }
+                    (FoldOp::Min, Acc::Min(best)) => {
+                        *best = (*best).min(scan.bindings.get(*slot));
+                    }
+                    (FoldOp::Max, Acc::Max(best)) => {
+                        *best = (*best).max(scan.bindings.get(*slot));
+                    }
+                    _ => unreachable!("accumulators are seeded per op"),
+                },
             }
         }
         // Merge the partials into the group's row (identity seeds make
@@ -199,7 +203,7 @@ impl Sink for AggregateSink {
             self.fold_batch_rows(batch);
             return Flow::Continue;
         }
-        match (self.seen.is_some(), self.cached_constant_group) {
+        match (!matches!(self.dedup, DedupState::Elided { .. }), self.cached_constant_group) {
             // Dedup required (the plan could not prove distinctness):
             // the seen-set pass runs per row, but the group probe still
             // hoists — surviving entries gather-fold like the elided

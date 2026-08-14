@@ -4,7 +4,7 @@
 //! outer+leaf key layout, leaf residuals included.
 
 use super::*;
-use crate::exec::sink::{AggregateSink, FindSpec, FoldOp};
+use crate::exec::sink::{AggSpec, AggregateSink, FindSpec, FoldOp};
 
 /// Hand-built two-node plan `[R(g)][R(x)]` over one occurrence — the
 /// dimension-bound shape whose leaf the probe pass pins per survivor.
@@ -30,18 +30,13 @@ fn finds(plan: &ValidatedPlan) -> Vec<FindSpec> {
             slot: plan.slot_of(VarId(0)),
             width: 1,
         },
-        FindSpec::Agg {
-            op: FoldOp::Count,
-            over_slot: None,
-            over_width: 1,
-            signed: false,
-        },
-        FindSpec::Agg {
+        FindSpec::Agg(AggSpec::Count),
+        FindSpec::Agg(AggSpec::Fold {
             op: FoldOp::Sum,
-            over_slot: Some(plan.slot_of(VarId(1))),
-            over_width: 1,
+            slot: plan.slot_of(VarId(1)),
+            width: 1,
             signed: false,
-        },
+        }),
     ]
 }
 
