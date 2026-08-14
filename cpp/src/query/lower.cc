@@ -52,13 +52,13 @@ template<class Ir>
 		out.var = var_id(numbers, term.variable);
 		break;
 	case query_term_form::param:
-	case query_term_form::param_set:
 		out.param = param_id(ir, term.param);
+		break;
+	case query_term_form::param_set:
+		out.param = param_id(ir, term.set.param);
 		break;
 	case query_term_form::literal:
 		out.literal = term.literal;
-		break;
-	case query_term_form::absent:
 		break;
 	}
 	return out;
@@ -78,7 +78,7 @@ consteval auto fold_uses(Ir& ir, rule_state const& state) -> void {
 				continue;
 			}
 			found = true;
-			if (ir.params[at].shape != use.shape) {
+			if (ir.params[at].form != use.form) {
 				query_param_is_used_at_two_shapes();
 			}
 			if (!(ir.params[at].domain == use.domain)) {
@@ -93,10 +93,8 @@ consteval auto fold_uses(Ir& ir, rule_state const& state) -> void {
 		}
 		ir.params[ir.param_count] = param_data{
 		    .name = use.name,
-		    .shape = use.shape,
+		    .form = use.form,
 		    .domain = use.domain,
-		    .point = use.point,
-		    .membership = use.membership,
 		    .member_count = use.member_count,
 		    .members = use.members,
 		};
@@ -190,7 +188,7 @@ template<class Ir>
 			interior_atom_omits_a_head_column();
 		}
 		auto const& bind = atom.binds[bound];
-		if (!(bind.cls == slot.answer) || bind.classed != slot.classed || (slot.classed && !(bind.law == slot.law))) {
+		if (!(bind.cls == slot.answer) || bind.classed() != slot.classed() || (slot.classed() && !(bind.law == slot.law))) {
 			interior_binding_joins_only_its_head_columns_class();
 		}
 		auto term = wire_term{};
@@ -371,7 +369,7 @@ consteval auto align_head(std::size_t head_count, std::array<find_data, max_quer
 		auto const& lead = head[index];
 		auto const& column = rule.finds[index];
 		if (!(lead.name == column.name) || lead.form != column.form || lead.op != column.op || !(lead.answer == column.answer) ||
-		    lead.classed != column.classed || (lead.classed && !(lead.law == column.law))) {
+		    lead.classed() != column.classed() || (lead.classed() && !(lead.law == column.law))) {
 			every_rule_of_a_query_must_derive_the_same_head();
 		}
 	}

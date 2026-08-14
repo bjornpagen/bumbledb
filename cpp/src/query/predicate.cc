@@ -34,9 +34,8 @@ template<class Point, class IntervalVar>
 		out.data.rhs = detail::param_term<Point>();
 		auto use = param_use{};
 		use.name = Point::name;
-		use.shape = param_shape::value;
+		use.form = param_form::point;
 		use.domain = field_class{element, 0};
-		use.point = true;
 		out.uses[0] = use;
 		out.use_count = 1;
 	} else if constexpr (detail::is_qvar_v<Point>) {
@@ -99,7 +98,7 @@ template<class Left, class Right>
 	if constexpr (detail::is_param_ref_v<Left>) {
 		auto use = param_use{};
 		use.name = Left::name;
-		use.shape = param_shape::value;
+		use.form = param_form::value;
 		use.domain = domain;
 		out.uses[out.use_count] = use;
 		++out.use_count;
@@ -107,7 +106,7 @@ template<class Left, class Right>
 	if constexpr (detail::is_param_ref_v<Right>) {
 		auto use = param_use{};
 		use.name = Right::name;
-		use.shape = param_shape::value;
+		use.form = param_form::value;
 		use.domain = domain;
 		out.uses[out.use_count] = use;
 		++out.use_count;
@@ -178,7 +177,7 @@ template<query_cmp Op, class Left, class Right>
 		} else if constexpr (is_param_ref_v<Side>) {
 			auto use = param_use{};
 			use.name = Side::name;
-			use.shape = param_shape::value;
+			use.form = param_form::value;
 			use.domain = domain;
 			out.uses[out.use_count] = use;
 			++out.use_count;
@@ -186,7 +185,7 @@ template<query_cmp Op, class Left, class Right>
 		} else if constexpr (is_set_param_ref_v<Side>) {
 			auto use = param_use{};
 			use.name = Side::name;
-			use.shape = param_shape::set;
+			use.form = param_form::set;
 			use.domain = domain;
 			out.uses[out.use_count] = use;
 			++out.use_count;

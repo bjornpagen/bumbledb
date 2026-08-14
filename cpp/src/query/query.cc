@@ -380,7 +380,7 @@ inline constexpr auto query_type_reflection = ^^T;
 }
 
 [[nodiscard]] consteval auto param_type_of(param_data const& parameter) -> std::meta::info {
-	if (parameter.shape == param_shape::set) {
+	if (parameter.form == param_form::set) {
 		return set_type_of(parameter.domain);
 	}
 	return param_scalar_type_of(parameter.domain);
@@ -416,7 +416,7 @@ struct query_params_types {
 	consteval {
 		auto specs = std::vector<std::meta::info>{};
 		for (auto index = std::size_t{0}; index != Query.param_count; ++index) {
-			if (Query.params[index].membership) {
+			if (Query.params[index].form == param_form::membership) {
 				continue;
 			}
 			specs.push_back(std::meta::data_member_spec(param_type_of(Query.params[index]),

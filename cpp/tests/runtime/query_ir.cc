@@ -128,9 +128,8 @@ static_assert(DownAt.head_count == 1);
 static_assert(DownAt.param_count == 1);
 
 static_assert(text_is(DownAt.params[0].name, "t"));
-static_assert(DownAt.params[0].shape == bdb::param_shape::value);
+static_assert(DownAt.params[0].form == bdb::param_form::point);
 static_assert(DownAt.params[0].domain == bdb::field_class{bdb::value_kind::i64, 0});
-static_assert(DownAt.params[0].point);
 
 static_assert(DownAt.rules[0].atom_count == 1);
 static_assert(DownAt.rules[0].atoms[0].source == bdb::atom_source::edb);
@@ -161,7 +160,7 @@ static_assert(std::same_as<decltype(std::declval<bdb::params_of<DownAt>>().t), s
 static_assert(Overlapping.param_count == 1);
 static_assert(text_is(Overlapping.params[0].name, "incident"));
 static_assert(Overlapping.params[0].domain == bdb::field_class{bdb::value_kind::interval_i64, 0});
-static_assert(!Overlapping.params[0].point);
+static_assert(Overlapping.params[0].form == bdb::param_form::value);
 static_assert(Overlapping.rules[0].condition_count == 1);
 static_assert(Overlapping.rules[0].conditions[0].op == bdb::query_cmp::allen);
 static_assert(Overlapping.rules[0].conditions[0].mask == bdb::allen::intersects.bits());

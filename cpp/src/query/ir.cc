@@ -20,29 +20,38 @@ inline constexpr std::size_t max_membership_handles = 8;
 
 /**
  * One structural literal payload (match/comparison literals). Strings
- * and bytes are deliberately absent: a query value must stay structural
+ * and bytes are unwritable here: a query value must stay structural
  * (NTTP-usable) — bind such values through params instead.
+ *
+ * `std::variant` is not NTTP-usable on the pinned GCC (non-public bases).
+ * A C union of scalars/aggregates is structural; probe recorded in sdk-011.
  */
 struct query_literal {
-	value_kind kind;
-	bool boolean;
-	std::uint64_t u64;
-	std::int64_t i64;
-	std::uint64_t u64_start;
-	std::uint64_t u64_end;
-	std::int64_t i64_start;
-	std::int64_t i64_end;
+	value_kind kind{};
+	union {
+		bool boolean;
+		std::uint64_t u64;
+		std::int64_t i64;
+		struct {
+			std::uint64_t start;
+			std::uint64_t end;
+		} u64_interval;
+		struct {
+			std::int64_t start;
+			std::int64_t end;
+		} i64_interval;
+	};
 };
 
 /**
- * A term's form (`ir::Term`, lowering.md §4.1). `absent` is the pattern
- * wildcard — an unmentioned field binds nothing. `param_set` is the ∈-set
- * binding: a closed-membership array lowers to it over a synthetic
- * content-addressed registry entry whose set is a program constant, never
- * carried by the execute-time params product (lowering.md §4.2).
+ * A term's form (`ir::Term`, lowering.md §4.1). Unmentioned pattern slots
+ * never become terms — the recorded IR is a binding list. `param_set` is
+ * the ∈-set binding: a closed-membership array lowers to it over a
+ * synthetic content-addressed registry entry whose set is a program
+ * constant, never carried by the execute-time params product
+ * (lowering.md §4.2).
  */
 enum class query_term_form : std::uint8_t {
-	absent,
 	variable,
 	param,
 	param_set,
@@ -50,19 +59,25 @@ enum class query_term_form : std::uint8_t {
 	measure,
 };
 
-/**
- * One builder-stage term: variables/measures ride their mint coordinate
- * (the identity `v(Relation).field` established), params their name. A
- * membership term additionally carries its pre-resolved handle row ids —
- * queries resolve handles host-side (lowering.md §7.8).
- */
-struct term_data {
-	query_term_form form;
-	coord_ref variable;
+/** Membership-array payload of a `param_set` term. */
+struct term_set {
 	name_text param;
-	query_literal literal;
 	std::size_t member_count;
 	std::array<std::uint64_t, max_membership_handles> members;
+};
+
+/**
+ * One recorded term: the form selects the live union arm. Pattern
+ * wildcards are not terms (sdk-009).
+ */
+struct term_data {
+	query_term_form form{};
+	union {
+		coord_ref variable;
+		name_text param;
+		term_set set;
+		query_literal literal;
+	};
 };
 
 /** One pattern binding as recorded: the sealed field ordinal + the term. */
@@ -114,8 +129,11 @@ struct interior_bind_data {
 	name_text column;
 	coord_ref variable;
 	field_class cls;
-	bool classed;
 	coord_ref law;
+
+	[[nodiscard]] constexpr auto classed() const -> bool {
+		return law.relation.length != 0;
+	}
 };
 
 /**
@@ -131,9 +149,10 @@ struct interior_atom_data {
 };
 
 /**
- * One rule-body item: the written interleave of match/where is preserved
- * so variable numbering walks body items in written order (lowering.md
- * §4.2), whatever bucket each item later lowers into.
+ * One rule-body item. `std::variant` ICEs GCC 17 in consteval template
+ * substitution when stored in `rule_data` (same NTTP-adjacent hole as
+ * sdk-024). A C union of the live arm is structural; polarity is the
+ * `body_form` tag (sdk-010).
  */
 enum class body_form : std::uint8_t {
 	atom,
@@ -144,10 +163,12 @@ enum class body_form : std::uint8_t {
 };
 
 struct body_item {
-	body_form form;
-	atom_data atom;
-	interior_atom_data interior;
-	condition_data condition;
+	body_form form{};
+	union {
+		atom_data atom;
+		interior_atom_data interior;
+		condition_data condition;
+	};
 };
 
 /**
@@ -182,31 +203,33 @@ struct find_data {
 	fold_form op;
 	term_data over;
 	field_class answer;
-	bool classed;
 	coord_ref law;
+
+	[[nodiscard]] constexpr auto classed() const -> bool {
+		return law.relation.length != 0;
+	}
 };
 
-/** A param's wire shape (lowering.md §4.2's registry entry). */
-enum class param_shape : std::uint8_t {
+/** A param's recorded form (lowering.md §4.2's registry entry). */
+enum class param_form : std::uint8_t {
 	value,
+	point,
 	set,
+	membership,
 };
 
 /**
- * One registered parameter: name, shape, the field-anchored bind domain
- * (the params-product member type AND the wire tag), and whether the
- * anchoring use was point-domain (an interval field's element under
- * point_in). A membership entry is a synthetic content-addressed set
- * param pre-resolved at build: it never appears in the params product,
- * and execution supplies its frozen set positionally from the query
- * constant.
+ * One registered parameter: name, form, and the field-anchored bind
+ * domain (the params-product member type AND the wire tag). `point` is
+ * an interval field's element under point_in. `membership` is a
+ * synthetic content-addressed set param pre-resolved at build: it never
+ * appears in the params product, and execution supplies its frozen set
+ * positionally from the query constant.
  */
 struct param_data {
 	name_text name;
-	param_shape shape;
+	param_form form;
 	field_class domain;
-	bool point;
-	bool membership;
 	std::size_t member_count;
 	std::array<std::uint64_t, max_membership_handles> members;
 };
@@ -214,10 +237,8 @@ struct param_data {
 /** One param use, recorded at the position that anchors it. */
 struct param_use {
 	name_text name;
-	param_shape shape;
+	param_form form;
 	field_class domain;
-	bool point;
-	bool membership;
 	std::size_t member_count;
 	std::array<std::uint64_t, max_membership_handles> members;
 };

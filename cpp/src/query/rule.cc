@@ -53,7 +53,7 @@ consteval auto record_match(rule_state& state, match_pattern_of<S, Facade> const
 	template for (constexpr auto index : index_array<members.size()>()) {
 		using Slot = [:std::meta::type_of(members[index]):];
 		auto const& slot = pattern.[:members[index]:];
-		if (slot.term.form == query_term_form::absent) {
+		if (!slot.mentioned) {
 			continue;
 		}
 		atom.bindings[atom.binding_count] = binding_data{
@@ -67,27 +67,22 @@ consteval auto record_match(rule_state& state, match_pattern_of<S, Facade> const
 		if (slot.term.form == query_term_form::param) {
 			auto use = param_use{};
 			use.name = slot.term.param;
-			use.shape = param_shape::value;
+			use.form = param_form::value;
 			use.domain = Slot::cls;
 			add_use(state, use);
 		}
 		if (slot.term.form == query_term_form::param_set) {
 			auto use = param_use{};
-			use.name = slot.term.param;
-			use.shape = param_shape::set;
+			use.name = slot.term.set.param;
+			use.form = slot.term.set.member_count != 0 ? param_form::membership : param_form::set;
 			use.domain = Slot::cls;
-			use.membership = slot.term.member_count != 0;
-			use.member_count = slot.term.member_count;
-			use.members = slot.term.members;
+			use.member_count = slot.term.set.member_count;
+			use.members = slot.term.set.members;
 			add_use(state, use);
 		}
 	}
-	state.items[state.item_count] = body_item{
-	    .form = form,
-	    .atom = atom,
-	    .interior = interior_atom_data{},
-	    .condition = condition_data{},
-	};
+	auto item = body_item{.form = form, .atom = atom};
+	state.items[state.item_count] = item;
 	++state.item_count;
 }
 
@@ -104,12 +99,8 @@ consteval auto record_interior(rule_state& state, interior_atom_data const& atom
 			add_bound(state, atom.binds[index].variable);
 		}
 	}
-	state.items[state.item_count] = body_item{
-	    .form = form,
-	    .atom = atom_data{},
-	    .interior = atom,
-	    .condition = condition_data{},
-	};
+	auto item = body_item{.form = form, .interior = atom};
+	state.items[state.item_count] = item;
 	++state.item_count;
 }
 
@@ -117,12 +108,8 @@ consteval auto record_condition(rule_state& state, cond_value const& cond) -> vo
 	if (state.item_count == state.items.size()) {
 		rule_has_too_many_conditions();
 	}
-	state.items[state.item_count] = body_item{
-	    .form = body_form::condition,
-	    .atom = atom_data{},
-	    .interior = interior_atom_data{},
-	    .condition = cond.data,
-	};
+	auto item = body_item{.form = body_form::condition, .condition = cond.data};
+	state.items[state.item_count] = item;
 	++state.item_count;
 	for (auto index = std::size_t{0}; index != cond.use_count; ++index) {
 		add_use(state, cond.uses[index]);
@@ -222,17 +209,17 @@ struct rule_chain {
 		template for (constexpr auto index : detail::index_array<members.size()>()) {
 			using Slot = [:std::meta::type_of(members[index]):];
 			auto const& slot = head.[:members[index]:];
-			if (slot.term.form != query_term_form::absent) {
+			if (slot.mentioned) {
 				if (out.find_count == max_query_finds) {
 					detail::rule_has_too_many_finds();
 				}
+				auto const classed = slot.form == find_form::measure ? false : Slot::classed;
 				out.finds[out.find_count] = find_data{
 				    .name = Slot::field_name,
 				    .form = slot.form,
 				    .over = slot.term,
 				    .answer = slot.form == find_form::measure ? field_class{value_kind::u64, 0} : Slot::cls,
-				    .classed = slot.form == find_form::measure ? false : Slot::classed,
-				    .law = Slot::law,
+				    .law = classed ? Slot::law : coord_ref{},
 				};
 				++out.find_count;
 			}
@@ -255,8 +242,7 @@ struct rule_chain {
 					    .form = find_form::measure,
 					    .over = detail::var_term<Inner>(),
 					    .answer = field_class{value_kind::u64, 0},
-					    .classed = false,
-					    .law = Inner::law,
+					    .law = {},
 					};
 				} else {
 					using Var = Payload;
@@ -265,8 +251,7 @@ struct rule_chain {
 					    .form = find_form::variable,
 					    .over = detail::var_term<Var>(),
 					    .answer = Var::cls,
-					    .classed = Var::classed,
-					    .law = Var::law,
+					    .law = Var::classed ? Var::law : coord_ref{},
 					};
 				}
 			} else {
@@ -295,8 +280,7 @@ private:
 			    .column = Bind::column,
 			    .variable = coord_ref{.relation = Var::relation_name, .field = Var::field_name},
 			    .cls = Var::cls,
-			    .classed = Var::classed,
-			    .law = Var::law,
+			    .law = Var::classed ? Var::law : coord_ref{},
 			};
 			++atom.bind_count;
 		};

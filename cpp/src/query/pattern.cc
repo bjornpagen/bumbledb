@@ -81,40 +81,32 @@ template<name_text VarRel, name_text VarField, field_class VarClass, name_text A
 
 template<class Var>
 [[nodiscard]] consteval auto var_term() -> term_data {
-	auto out = term_data{};
-	out.form = query_term_form::variable;
-	out.variable = coord_ref{.relation = Var::relation_name, .field = Var::field_name};
-	return out;
+	return term_data{
+	    .form = query_term_form::variable,
+	    .variable = coord_ref{.relation = Var::relation_name, .field = Var::field_name},
+	};
 }
 
 template<class Var>
 [[nodiscard]] consteval auto measure_term() -> term_data {
-	auto out = var_term<Var>();
-	out.form = query_term_form::measure;
-	return out;
+	return term_data{
+	    .form = query_term_form::measure,
+	    .variable = coord_ref{.relation = Var::relation_name, .field = Var::field_name},
+	};
 }
 
 template<class Param>
 [[nodiscard]] consteval auto param_term() -> term_data {
-	auto out = term_data{};
-	out.form = query_term_form::param;
-	out.param = Param::name;
-	return out;
+	return term_data{.form = query_term_form::param, .param = Param::name};
 }
 
 template<class Param>
 [[nodiscard]] consteval auto set_param_term() -> term_data {
-	auto out = term_data{};
-	out.form = query_term_form::param_set;
-	out.param = Param::name;
-	return out;
+	return term_data{.form = query_term_form::param_set, .set = {.param = Param::name}};
 }
 
 [[nodiscard]] consteval auto literal_term(query_literal literal) -> term_data {
-	auto out = term_data{};
-	out.form = query_term_form::literal;
-	out.literal = literal;
-	return out;
+	return term_data{.form = query_term_form::literal, .literal = literal};
 }
 
 /**
@@ -139,32 +131,27 @@ template<class Param>
  */
 template<class T>
 [[nodiscard]] consteval auto scalar_literal(value_kind kind, T value) -> query_literal {
-	auto out = query_literal{};
-	out.kind = kind;
 	if (kind == value_kind::boolean) {
-		out.boolean = static_cast<bool>(value);
-	} else if (kind == value_kind::u64) {
-		out.u64 = static_cast<std::uint64_t>(value);
-	} else {
-		out.i64 = static_cast<std::int64_t>(value);
+		return query_literal{.kind = kind, .boolean = static_cast<bool>(value)};
 	}
-	return out;
+	if (kind == value_kind::u64) {
+		return query_literal{.kind = kind, .u64 = static_cast<std::uint64_t>(value)};
+	}
+	return query_literal{.kind = kind, .i64 = static_cast<std::int64_t>(value)};
 }
 
 [[nodiscard]] consteval auto interval_literal(interval<std::uint64_t> value) -> query_literal {
-	auto out = query_literal{};
-	out.kind = value_kind::interval_u64;
-	out.u64_start = value.lo();
-	out.u64_end = value.hi();
-	return out;
+	return query_literal{
+	    .kind = value_kind::interval_u64,
+	    .u64_interval = {.start = value.lo(), .end = value.hi()},
+	};
 }
 
 [[nodiscard]] consteval auto interval_literal(interval<std::int64_t> value) -> query_literal {
-	auto out = query_literal{};
-	out.kind = value_kind::interval_i64;
-	out.i64_start = value.lo();
-	out.i64_end = value.hi();
-	return out;
+	return query_literal{
+	    .kind = value_kind::interval_i64,
+	    .i64_interval = {.start = value.lo(), .end = value.hi()},
+	};
 }
 
 consteval auto add_use(rule_state& state, param_use use) -> void {
@@ -211,6 +198,7 @@ struct binding_slot {
 	static constexpr std::size_t ordinal = Ordinal;
 	static constexpr field_class cls = Class;
 
+	bool mentioned = false;
 	term_data term{};
 
 	binding_slot() = default;
@@ -225,12 +213,14 @@ struct binding_slot {
 		static_assert(VCl == Classed && (!Classed || VLaw == Law),
 		              cross_class_message<VR, VF, VCl, VLaw, Relation, Field, Classed, Law>("bind"));
 		term = var_term<decltype(variable)>();
+		mentioned = true;
 	}
 
 	/** A scalar param binding, anchored at this field's domain. */
 	template<fixed_string Name>
 	consteval binding_slot(param_ref<Name> parameter) {
 		term = param_term<decltype(parameter)>();
+		mentioned = true;
 	}
 
 	/**
@@ -241,6 +231,7 @@ struct binding_slot {
 	template<fixed_string Name>
 	consteval binding_slot(set_param_ref<Name> parameter) {
 		term = set_param_term<decltype(parameter)>();
+		mentioned = true;
 	}
 
 	/** A bare literal at a fixed-width field (field-directed tagging). */
@@ -249,12 +240,14 @@ struct binding_slot {
 	             (Class.kind == value_kind::boolean || Class.kind == value_kind::u64 || Class.kind == value_kind::i64))
 	{
 		term = literal_term(scalar_literal(Class.kind, value));
+		mentioned = true;
 	}
 
 	consteval binding_slot(T value)
 	    requires(Class.kind == value_kind::interval_u64 || Class.kind == value_kind::interval_i64)
 	{
 		term = literal_term(interval_literal(value));
+		mentioned = true;
 	}
 
 	/**
@@ -268,6 +261,7 @@ struct binding_slot {
 	{
 		static_assert(HandleRoster == T::roster_name, handle_binding_message<HandleRoster, Handle, Relation, Field, T::roster_name>());
 		term = literal_term(scalar_literal(value_kind::u64, std::uint64_t{Index}));
+		mentioned = true;
 	}
 
 	/**
@@ -306,10 +300,16 @@ struct binding_slot {
 				membership_array_has_duplicate_handles();
 			}
 		}
-		term.form = query_term_form::param_set;
-		term.param = membership_param_name(T::roster_name, members, count);
-		term.member_count = count;
-		term.members = members;
+		term = term_data{
+		    .form = query_term_form::param_set,
+		    .set =
+		        {
+		            .param = membership_param_name(T::roster_name, members, count),
+		            .member_count = count,
+		            .members = members,
+		        },
+		};
+		mentioned = true;
 	}
 };
 

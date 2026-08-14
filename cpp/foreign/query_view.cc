@@ -59,8 +59,8 @@ consteval auto for_each_wire_rule(F&& f) -> void {
 		return out;
 	case value_kind::interval_u64:
 		out.kind = abi_tag(bdb_value_kind::BDB_VALUE_KIND_INTERVAL_U64);
-		out.interval_u64_start = literal.u64_start;
-		out.interval_u64_end = literal.u64_end;
+		out.interval_u64_start = literal.u64_interval.start;
+		out.interval_u64_end = literal.u64_interval.end;
 		return out;
 	case value_kind::string:
 	case value_kind::fixed_bytes:
@@ -68,8 +68,8 @@ consteval auto for_each_wire_rule(F&& f) -> void {
 		break;
 	}
 	out.kind = abi_tag(bdb_value_kind::BDB_VALUE_KIND_INTERVAL_I64);
-	out.interval_i64_start = literal.i64_start;
-	out.interval_i64_end = literal.i64_end;
+	out.interval_i64_start = literal.i64_interval.start;
+	out.interval_i64_end = literal.i64_interval.end;
 	return out;
 }
 
@@ -93,7 +93,6 @@ consteval auto for_each_wire_rule(F&& f) -> void {
 		out.var = term.var;
 		return out;
 	case query_term_form::literal:
-	case query_term_form::absent:
 		break;
 	}
 	out.kind = abi_tag(bdb_term_kind::BDB_TERM_KIND_LITERAL);
@@ -676,7 +675,7 @@ template<class Ir>
 [[nodiscard]] consteval auto membership_cell_total(Ir const& ir) -> std::size_t {
 	auto total = std::size_t{0};
 	for (auto index = std::size_t{0}; index != ir.param_count; ++index) {
-		if (ir.params[index].membership) {
+		if (ir.params[index].form == param_form::membership) {
 			total += ir.params[index].member_count;
 		}
 	}
@@ -695,7 +694,7 @@ template<auto Query>
 	auto at = std::size_t{0};
 	for (auto index = std::size_t{0}; index != Query.param_count; ++index) {
 		auto const& parameter = Query.params[index];
-		if (!parameter.membership) {
+		if (parameter.form != param_form::membership) {
 			continue;
 		}
 		for (auto member = std::size_t{0}; member != parameter.member_count; ++member) {
@@ -729,7 +728,7 @@ template<auto Query, class Params>
 	auto member_offset = std::size_t{0};
 	for (auto index = std::size_t{0}; index != Query.param_count; ++index) {
 		auto const& parameter = Query.params[index];
-		if (parameter.membership) {
+		if (parameter.form == param_form::membership) {
 			auto set = bdb_param{};
 			set.kind = abi_tag(bdb_param_kind::BDB_PARAM_KIND_SET);
 			set.set = membership_cells<Query>.data() + member_offset;

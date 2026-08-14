@@ -2,7 +2,7 @@
 
 - **Severity:** medium
 - **Tree:** sdk (cpp dialect)
-- **Status:** OPEN
+- **Status:** FIXED(57a755a0)
 - **Source:** audit/sdks.md #9
 - **Depends on:** sdk-011 (same structs; land together or per INDEX order)
 
