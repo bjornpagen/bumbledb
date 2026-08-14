@@ -152,8 +152,11 @@ type RuleItem =
 			readonly kind: "interior"
 			readonly target: DerivedTable
 			readonly bindings: ReadonlyArray<{ readonly key: string; readonly ref: AnyVar }>
-			/** `true` on a negated finished-table atom (`r.not(name, {...})`): probed through its anti-probe, binds nothing. */
-			readonly negated: boolean
+	  }
+	| {
+			readonly kind: "negatedInterior"
+			readonly target: DerivedTable
+			readonly bindings: ReadonlyArray<{ readonly key: string; readonly ref: AnyVar }>
 	  }
 	| { readonly kind: "cond"; readonly cond: CondData }
 

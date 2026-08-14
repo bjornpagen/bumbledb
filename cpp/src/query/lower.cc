@@ -235,9 +235,9 @@ template<class Ir>
 				}
 			}
 		}
-		if (item.form == body_form::interior_atom) {
+		if (item.form == body_form::interior_atom || item.form == body_form::negated_interior) {
 			if (self != no_interior) {
-				if (item.interior.negated) {
+				if (item.form == body_form::negated_interior) {
 					a_recursive_rule_negates_no_stratum();
 				}
 				if constexpr (requires { ir.rec; }) {
@@ -246,7 +246,7 @@ template<class Ir>
 					}
 				}
 			}
-			if (item.interior.negated) {
+			if (item.form == body_form::negated_interior) {
 				for (auto bind = std::size_t{0}; bind != item.interior.bind_count; ++bind) {
 					if (!is_bound(rule.state, item.interior.binds[bind].variable)) {
 						negated_atom_binds_a_variable_no_positive_atom_binds();
@@ -311,13 +311,13 @@ template<class Ir>
 				out.negated[out.negated_count] = atom;
 				++out.negated_count;
 			}
-		} else if (item.form == body_form::interior_atom) {
+		} else if (item.form == body_form::interior_atom || item.form == body_form::negated_interior) {
 			auto const id = interior_id_of(ir, item.interior.name);
 			if (id == no_interior) {
 				interior_atom_names_no_declared_table();
 			}
 			auto const atom = wire_interior_of(ir, numbers, item.interior, id);
-			if (item.interior.negated) {
+			if (item.form == body_form::negated_interior) {
 				if (out.negated_count == max_query_atoms) {
 					rule_has_too_many_atoms();
 				}

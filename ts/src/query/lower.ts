@@ -737,7 +737,7 @@ function advanceInterior(
 	state: RuleBuildState,
 	target: DerivedTable,
 	bindings: Readonly<Record<string, unknown>>,
-	negated: boolean
+	kind: "interior" | "negatedInterior"
 ): RuleBuildState {
 	const resolved: Array<{ readonly key: string; readonly ref: AnyVar }> = []
 	for (const [key, value] of Object.entries(bindings)) {
@@ -752,7 +752,7 @@ function advanceInterior(
 		resolved.push(Object.freeze({ key, ref: value }))
 	}
 	const bound = new Set(state.bound)
-	if (!negated) {
+	if (kind === "interior") {
 		for (const binding of resolved) {
 			bound.add(binding.ref)
 		}
@@ -760,7 +760,7 @@ function advanceInterior(
 	return Object.freeze({
 		items: Object.freeze([
 			...state.items,
-			Object.freeze({ kind: "interior" as const, target, bindings: Object.freeze(resolved), negated })
+			Object.freeze({ kind, target, bindings: Object.freeze(resolved) })
 		]),
 		bound,
 		paramUses: state.paramUses
@@ -981,9 +981,9 @@ function validateInterior(
 	context: ChainContext,
 	bound: ReadonlySet<AnyVar>,
 	item: {
+		readonly kind: "interior" | "negatedInterior"
 		readonly target: DerivedTable
 		readonly bindings: ReadonlyArray<{ readonly key: string; readonly ref: AnyVar }>
-		readonly negated: boolean
 	},
 	columns: readonly FindColumn[]
 ): void {
@@ -1010,7 +1010,7 @@ function validateInterior(
 		}
 	}
 	for (const binding of item.bindings) {
-		if (item.negated && !bound.has(binding.ref)) {
+		if (item.kind === "negatedInterior" && !bound.has(binding.ref)) {
 			throw errors.new(
 				`${label}: negated interior ${item.target.name} names the variable ${binding.ref.label}, but no positive atom of the rule binds it — a negated atom binds nothing, only rejects (the safety rule)`
 			)
@@ -1057,7 +1057,7 @@ function completeRule(context: ChainContext, state: RuleBuildState, rawColumns: 
 				}
 			}
 		}
-		if (item.kind === "interior") {
+		if (item.kind === "interior" || item.kind === "negatedInterior") {
 			validateInterior(context, state.bound, item, columns)
 		}
 		if (item.kind === "cond") {
@@ -1157,7 +1157,7 @@ function interiorAdvance(
 	name: string,
 	bindings: Readonly<Record<string, unknown>>
 ): RuleBuildState {
-	return advanceInterior(state, lookupDerived(context, name), bindings, false)
+	return advanceInterior(state, lookupDerived(context, name), bindings, "interior")
 }
 
 /**
@@ -1176,7 +1176,7 @@ function notInteriorAdvance(
 			`recursive ${context.self.name}: a recursive rule negates no table — self-negation is negation through the cycle (a finished set is what keeps the operator monotone), and a finished table's fold belongs in the main rules`
 		)
 	}
-	return advanceInterior(state, lookupDerived(context, name), bindings, true)
+	return advanceInterior(state, lookupDerived(context, name), bindings, "negatedInterior")
 }
 
 /** Classifies one find record per the context (interior and rec heads project bound variables only). */
@@ -2102,8 +2102,11 @@ function lowerRule(ctx: LowerContext, rule: RuleData): RuleIr {
 				break
 			}
 			case "interior": {
-				const bucket = item.negated ? negated : atoms
-				bucket.push(lowerInteriorAtom(ctx, item.target, item.bindings, ids))
+				atoms.push(lowerInteriorAtom(ctx, item.target, item.bindings, ids))
+				break
+			}
+			case "negatedInterior": {
+				negated.push(lowerInteriorAtom(ctx, item.target, item.bindings, ids))
 				break
 			}
 			case "cond": {

@@ -126,7 +126,6 @@ struct interior_bind_data {
  */
 struct interior_atom_data {
 	name_text name;
-	bool negated;
 	std::size_t bind_count;
 	std::array<interior_bind_data, max_query_finds> binds;
 };
@@ -140,6 +139,7 @@ enum class body_form : std::uint8_t {
 	atom,
 	negated_atom,
 	interior_atom,
+	negated_interior,
 	condition,
 };
 

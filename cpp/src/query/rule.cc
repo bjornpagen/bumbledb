@@ -40,7 +40,7 @@ template<fixed_string Column, class Var>
 inline constexpr bool is_interior_bind_v<interior_bind<Column, Var>> = true;
 
 template<class S, class Facade>
-consteval auto record_match(rule_state& state, match_pattern_of<S, Facade> const& pattern, bool negated) -> void {
+consteval auto record_match(rule_state& state, match_pattern_of<S, Facade> const& pattern, body_form form) -> void {
 	if (state.item_count == state.items.size()) {
 		rule_has_too_many_atoms();
 	}
@@ -61,7 +61,7 @@ consteval auto record_match(rule_state& state, match_pattern_of<S, Facade> const
 		    .term = slot.term,
 		};
 		++atom.binding_count;
-		if (slot.term.form == query_term_form::variable && !negated) {
+		if (slot.term.form == query_term_form::variable && form == body_form::atom) {
 			add_bound(state, slot.term.variable);
 		}
 		if (slot.term.form == query_term_form::param) {
@@ -83,7 +83,7 @@ consteval auto record_match(rule_state& state, match_pattern_of<S, Facade> const
 		}
 	}
 	state.items[state.item_count] = body_item{
-	    .form = negated ? body_form::negated_atom : body_form::atom,
+	    .form = form,
 	    .atom = atom,
 	    .interior = interior_atom_data{},
 	    .condition = condition_data{},
@@ -95,17 +95,17 @@ consteval auto record_match(rule_state& state, match_pattern_of<S, Facade> const
  * Records one derived-table atom (either polarity). A positive interior
  * atom binds its variables (grounding); a negated one binds nothing.
  */
-consteval auto record_interior(rule_state& state, interior_atom_data const& atom) -> void {
+consteval auto record_interior(rule_state& state, interior_atom_data const& atom, body_form form) -> void {
 	if (state.item_count == state.items.size()) {
 		rule_has_too_many_atoms();
 	}
-	if (!atom.negated) {
+	if (form == body_form::interior_atom) {
 		for (auto index = std::size_t{0}; index != atom.bind_count; ++index) {
 			add_bound(state, atom.binds[index].variable);
 		}
 	}
 	state.items[state.item_count] = body_item{
-	    .form = body_form::interior_atom,
+	    .form = form,
 	    .atom = atom_data{},
 	    .interior = atom,
 	    .condition = condition_data{},
@@ -151,7 +151,7 @@ struct rule_chain {
 		                                                 "facade (bdb::relation<...> or bdb::closed<...>)");
 		static_assert(detail::facade_in_schema<S, Facade>(), detail::foreign_relation_message<S, Facade>());
 		auto next = rule_chain<S, Facades..., Facade>{.state = state};
-		detail::record_match<S, Facade>(next.state, pattern, false);
+		detail::record_match<S, Facade>(next.state, pattern, body_form::atom);
 		return next;
 	}
 
@@ -168,7 +168,7 @@ struct rule_chain {
 		                                                 "facade (bdb::relation<...> or bdb::closed<...>)");
 		static_assert(detail::facade_in_schema<S, Facade>(), detail::foreign_relation_message<S, Facade>());
 		auto next = *this;
-		detail::record_match<S, Facade>(next.state, pattern, true);
+		detail::record_match<S, Facade>(next.state, pattern, body_form::negated_atom);
 		return next;
 	}
 
@@ -286,7 +286,6 @@ private:
 		static_assert(sizeof...(Binds) <= max_query_finds, "bumbledb interior(): the bindings exceed the head width");
 		auto atom = interior_atom_data{};
 		atom.name = detail::to_name_text(Name.view());
-		atom.negated = Negated;
 		[[maybe_unused]] auto const add = [&]<class Bind>() {
 			using Var = typename Bind::var;
 			static_assert(detail::is_qvar_v<Var>, "bumbledb bind(): the bound value must be a query "
@@ -303,7 +302,7 @@ private:
 		};
 		(add.template operator()<Binds>(), ...);
 		auto next = *this;
-		detail::record_interior(next.state, atom);
+		detail::record_interior(next.state, atom, Negated ? body_form::negated_interior : body_form::interior_atom);
 		return next;
 	}
 };
