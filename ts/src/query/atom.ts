@@ -84,17 +84,15 @@ type CmpTermData =
 	| { readonly kind: "measure"; readonly ref: AnyVar }
 	| { readonly kind: "literal"; readonly value: unknown }
 
-/** The `allen` mask position as runtime data. */
-type MaskData = { readonly kind: "literal"; readonly mask: number }
-
-/** One comparison condition as runtime data (`mask` present exactly for `allen`). */
-interface CmpData {
+/** One comparison condition as runtime data; the mask lives inside `allen`. */
+type CmpData = {
 	readonly kind: "cmp"
-	readonly op: CmpKind
-	readonly mask: MaskData | undefined
 	readonly lhs: CmpTermData
 	readonly rhs: CmpTermData
-}
+} & (
+	| { readonly op: { readonly kind: "allen"; readonly mask: number } }
+	| { readonly op: { readonly kind: Exclude<CmpKind, "allen"> } }
+)
 
 /** One condition-tree node as runtime data (`ir::ConditionTree`). */
 interface TreeData {
@@ -858,7 +856,6 @@ export type {
 	InteriorData,
 	IntervalSide,
 	IntervalVarOk,
-	MaskData,
 	MatchFields,
 	MatchOwner,
 	MatchShape,

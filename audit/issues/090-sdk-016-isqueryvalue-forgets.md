@@ -2,7 +2,7 @@
 
 - **Severity:** medium
 - **Tree:** sdk (ts)
-- **Status:** OPEN
+- **Status:** FIXED(23482d0f)
 - **Source:** audit/sdks.md #16
 - **Depends on:** sdk-006 (the branded-parse story defines what the seam should be)
 

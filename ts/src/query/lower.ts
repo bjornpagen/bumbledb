@@ -66,7 +66,6 @@ import type {
 	FindColumn,
 	FindEntryData,
 	InteriorData,
-	MaskData,
 	MatchFields,
 	MatchOwner,
 	MatchShape,
@@ -667,15 +666,19 @@ function condDataOf(cond: AnyCond, uses: ParamUse[]): CondData {
 		const rhs = cmpTermDataOf(cond.rhs)
 		sideUses(cond.op, lhs, rhs, uses)
 		sideUses(cond.op, rhs, lhs, uses)
-		let mask: MaskData | undefined
 		if (cond.op === "allen") {
 			const maskValue = cond.mask
 			if (typeof maskValue !== "number") {
 				throw errors.new("allen: the mask position takes a 13-bit mask number built from the ALLEN constants")
 			}
-			mask = Object.freeze({ kind: "literal" as const, mask: maskValue })
+			return Object.freeze({
+				kind: "cmp" as const,
+				op: { kind: "allen" as const, mask: maskValue },
+				lhs,
+				rhs
+			})
 		}
-		return Object.freeze({ kind: "cmp" as const, op: cond.op, mask, lhs, rhs })
+		return Object.freeze({ kind: "cmp" as const, op: { kind: cond.op }, lhs, rhs })
 	}
 	if (cond.cond === "tree") {
 		const children = cond.children.map(function lowerChild(child) {
@@ -940,8 +943,8 @@ function validateCond(context: ChainContext, bound: ReadonlySet<AnyVar>, cond: C
 			if (side.kind === "var") {
 				assertBound(label, bound, side.ref)
 				const roster = rosterOf(side.ref.field)
-				if (isOrderOp(cond.op) && roster !== undefined) {
-					throw closedOrderError(label, `the ${cond.op} side ${side.ref.label}`, roster.name)
+				if (isOrderOp(cond.op.kind) && roster !== undefined) {
+					throw closedOrderError(label, `the ${cond.op.kind} side ${side.ref.label}`, roster.name)
 				}
 			}
 			if (side.kind === "measure") {
@@ -949,14 +952,14 @@ function validateCond(context: ChainContext, bound: ReadonlySet<AnyVar>, cond: C
 				assertInterval(label, side.ref)
 			}
 		}
-		if ((cond.op === "eq" || cond.op === "ne") && cond.lhs.kind === "var" && cond.rhs.kind === "var") {
+		if ((cond.op.kind === "eq" || cond.op.kind === "ne") && cond.lhs.kind === "var" && cond.rhs.kind === "var") {
 			assertBound(label, bound, cond.lhs.ref)
 			assertBound(label, bound, cond.rhs.ref)
 			const lhs = mintSlotOf(context, cond.lhs.ref)
 			const rhs = mintSlotOf(context, cond.rhs.ref)
 			if (!fieldJoins(lhs, rhs)) {
 				throw errors.new(
-					`${label}: ${cond.op}(${cond.lhs.ref.label}, ${cond.rhs.ref.label}) unifies domain-unequal fields — ${cond.lhs.ref.label} bound at ${renderFieldKind(lhs)}, ${cond.rhs.ref.label} at ${renderFieldKind(rhs)} (a var joins only class-equal slots; bare pairs only with bare)`
+					`${label}: ${cond.op.kind}(${cond.lhs.ref.label}, ${cond.rhs.ref.label}) unifies domain-unequal fields — ${cond.lhs.ref.label} bound at ${renderFieldKind(lhs)}, ${cond.rhs.ref.label} at ${renderFieldKind(rhs)} (a var joins only class-equal slots; bare pairs only with bare)`
 				)
 			}
 		}
@@ -1549,30 +1552,13 @@ function makeRawQuery(
 	return value
 }
 
-/**
- * The query values' trusted admission seam (the {@link isTypedScope} pattern):
- * the checkable fact — the value was assembled over the identical theory —
- * is verified before the raw value is admitted at its typed face.
- */
-function isQueryValue<Rels extends SchemaRelations, Row, P extends ParamsRecord, Classes extends SchemaClasses>(
-	theory: Schema<Rels, Classes>,
-	value: RawQuery
-): value is RawQuery & Query<Rels, Row, P, Classes> {
-	return value.schema === theory
-}
-
-/** Assembles one typed query value (rules already completed). */
 function makeQuery<Rels extends SchemaRelations, Row, P extends ParamsRecord, Classes extends SchemaClasses>(
 	theory: Schema<Rels, Classes>,
 	interiors: readonly InteriorData[],
 	rec: RecData | null,
 	rules: readonly RuleData[]
 ): Query<Rels, Row, P, Classes> {
-	const raw = makeRawQuery(theory, interiors, rec, rules)
-	if (!isQueryValue<Rels, Row, P, Classes>(theory, raw)) {
-		throw errors.new("query value construction incomplete")
-	}
-	return raw
+	return makeRawQuery(theory, interiors, rec, rules) as unknown as Query<Rels, Row, P, Classes>
 }
 
 /** Collects one Interior from its builders. */
@@ -2009,22 +1995,17 @@ function cmpAnchorOf(ctx: LowerContext, sibling: CmpTermData): AnyField | "measu
 
 /** Lowers one comparison. */
 function lowerComparison(ctx: LowerContext, cmp: CmpData, ids: VarIds): ComparisonIr {
-	if (cmp.op === "allen") {
-		const maskData = cmp.mask
-		if (maskData === undefined) {
-			throw errors.new("query lowering: an allen comparison lost its mask")
-		}
-		const mask = maskData.mask
+	if (cmp.op.kind === "allen") {
 		return {
-			op: { kind: "allen", mask },
+			op: { kind: "allen", mask: cmp.op.mask },
 			lhs: lowerCmpTerm(ctx, cmp.lhs, cmp.rhs, ids, "allen"),
 			rhs: lowerCmpTerm(ctx, cmp.rhs, cmp.lhs, ids, "allen")
 		}
 	}
 	return {
-		op: { kind: cmp.op },
-		lhs: lowerCmpTerm(ctx, cmp.lhs, cmp.rhs, ids, cmp.op),
-		rhs: lowerCmpTerm(ctx, cmp.rhs, cmp.lhs, ids, cmp.op)
+		op: { kind: cmp.op.kind },
+		lhs: lowerCmpTerm(ctx, cmp.lhs, cmp.rhs, ids, cmp.op.kind),
+		rhs: lowerCmpTerm(ctx, cmp.rhs, cmp.lhs, ids, cmp.op.kind)
 	}
 }
 
