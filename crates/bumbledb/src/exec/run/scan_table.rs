@@ -54,7 +54,7 @@ impl Executor {
                 key_slots: &self.slot_map[node_idx][0],
                 bindings,
             };
-            if !sink.begin_scan(&scan) {
+            if sink.begin_scan(&scan) != super::ScanOffer::Open {
                 return None;
             }
             counters.node_entry(node_idx);

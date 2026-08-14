@@ -443,7 +443,6 @@ impl crate::exec::run::Sink for RayArbiter<'_> {
     fn emit_batch(
         &mut self,
         batch: &crate::exec::run::LeafBatch<'_>,
-        _stop_on_skip: bool,
     ) -> crate::exec::run::Flow {
         for &entry in batch.survivors {
             if self.ray.is_some() {

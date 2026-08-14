@@ -102,15 +102,17 @@ pub trait Sink {
     /// [`Sink::emit_batch`].
     fn emit(&mut self, bindings: &Bindings) -> Flow;
 
-    /// Emits every surviving element of a leaf batch. `stop_on_skip` is
-    /// the executor's translation of the leaf node's sink-relevance:
-    /// when true, the sink must stop at the first row whose per-row emit
-    /// would have signaled [`Flow::SkipSuffix`] and return `SkipSuffix`
-    /// (the executor unwinds — the batch's remaining rows bind nothing
-    /// sink-relevant, exactly the rows the recursive path never
-    /// visited); when false it must consume the entire batch and return
-    /// `Continue`. An empty batch returns `Continue`.
-    fn emit_batch(&mut self, batch: &LeafBatch<'_>, stop_on_skip: bool) -> Flow;
+    /// Consumes every surviving element of a leaf batch. Empty batch
+    /// returns `Continue`. Used when the node is `Forbidden` (rows are
+    /// sink-relevant) or the sink cannot skip.
+    fn emit_batch(&mut self, batch: &LeafBatch<'_>) -> Flow;
+
+    /// Licensed projection only: stop at the first row whose per-row
+    /// emit would have signaled [`Flow::SkipSuffix`]. Default is
+    /// [`Sink::emit_batch`] — aggregates inherit; they never skip.
+    fn emit_batch_until_skip(&mut self, batch: &LeafBatch<'_>) -> Flow {
+        self.emit_batch(batch)
+    }
 
     /// Whether this sink can ever signal [`Flow::SkipSuffix`]. D2 is
     /// legal for projections only; aggregate plans additionally mark
@@ -122,27 +124,50 @@ pub trait Sink {
         SkipCapability::Forbidden
     }
 
-    /// Opens a fused leaf scan. `false` — the
+    /// Opens a fused leaf scan. [`ScanOffer::Declined`] — the
     /// default, and an honest capability report, not a shim — sends the
-    /// executor to the batch path. A `true` return is followed by any
+    /// executor to the batch path. [`ScanOffer::Open`] is followed by any
     /// number of [`Sink::scan_run`] calls and exactly one
     /// [`Sink::end_scan`].
-    fn begin_scan(&mut self, scan: &LeafScan<'_>) -> bool {
+    fn begin_scan(&mut self, scan: &LeafScan<'_>) -> ScanOffer {
         let _ = scan;
-        false
+        ScanOffer::Declined
     }
 
     /// Folds one position run of an open scan.
     fn scan_run(&mut self, scan: &LeafScan<'_>, run: crate::exec::colt::SuffixRun<'_>) {
         let _ = (scan, run);
-        unreachable!("scan_run without begin_scan == true");
+        unreachable!("scan_run without ScanOffer::Open");
     }
 
     /// Closes an open scan (accumulator write-back). Returns the number
     /// of rows the scan consumed (introspection's `emits` accounting).
     fn end_scan(&mut self, scan: &LeafScan<'_>) -> u64 {
         let _ = scan;
-        unreachable!("end_scan without begin_scan == true");
+        unreachable!("end_scan without ScanOffer::Open");
+    }
+}
+
+/// Whether [`Sink::begin_scan`] opened a fused scan.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScanOffer {
+    Declined,
+    Open,
+}
+
+/// Emits a leaf batch under the two existing sums: Licensed suffix AND
+/// Licensed skip capability stop at first SkipSuffix; otherwise the
+/// whole batch is sink-relevant and must be consumed.
+fn emit_node_batch<S: Sink>(
+    sink: &mut S,
+    suffix_skip: crate::plan::fj::SuffixSkip,
+    batch: &LeafBatch<'_>,
+) -> Flow {
+    match (suffix_skip, sink.skip_capability()) {
+        (crate::plan::fj::SuffixSkip::Licensed, SkipCapability::Licensed) => {
+            sink.emit_batch_until_skip(batch)
+        }
+        _ => sink.emit_batch(batch),
     }
 }
 

@@ -1,6 +1,6 @@
 use crate::exec::colt::SuffixRun;
 use crate::exec::kernel;
-use crate::exec::run::{Bindings, Flow, LeafBatch, LeafScan, Sink};
+use crate::exec::run::{Bindings, Flow, LeafBatch, LeafScan, ScanOffer, Sink};
 use crate::exec::sink::{Acc, AggSpec, AggregateSink, DedupState, FoldOp, SinkSpec, word_to_i64};
 use crate::image::ColumnView;
 
@@ -18,15 +18,15 @@ impl Sink for AggregateSink {
     /// straight through the kernels with no key batch materialized.
     /// Partials are identity-seeded and merged at `end_scan`, so an
     /// empty scan creates no group row (matching the batch paths).
-    fn begin_scan(&mut self, scan: &LeafScan<'_>) -> bool {
+    fn begin_scan(&mut self, scan: &LeafScan<'_>) -> ScanOffer {
         if !matches!(self.dedup, DedupState::Elided { .. }) {
-            return false;
+            return ScanOffer::Declined;
         }
         // Measures and Pack fold per row (derived words / claim lists
         // — no fold kernel exists); their leaves stay on
         // the batch path.
         if self.row_fold_only {
-            return false;
+            return ScanOffer::Declined;
         }
         // Group spans checked word-wise: an interval group variable is
         // scan-constant only if neither of its words is a leaf key.
@@ -35,7 +35,7 @@ impl Sink for AggregateSink {
             .iter()
             .any(|(slot, width)| (*slot..slot + width).any(|word| scan.key_slots.contains(&word)))
         {
-            return false;
+            return ScanOffer::Declined;
         }
         self.scan_sources.clear();
         for find in &self.finds {
@@ -53,7 +53,7 @@ impl Sink for AggregateSink {
                     scan.colt.suffix_column(scan.level, word),
                     ColumnView::Words(_)
                 ) {
-                    return false;
+                    return ScanOffer::Declined;
                 }
             }
             self.scan_sources.push(source);
@@ -70,7 +70,7 @@ impl Sink for AggregateSink {
         super::groups::load_group_key(&mut self.key_scratch, &self.group_spans, |slot| {
             scan.bindings.get(slot)
         });
-        true
+        ScanOffer::Open
     }
 
     fn scan_run(&mut self, scan: &LeafScan<'_>, run: SuffixRun<'_>) {
@@ -184,10 +184,7 @@ impl Sink for AggregateSink {
         count
     }
 
-    fn emit_batch(&mut self, batch: &LeafBatch<'_>, stop_on_skip: bool) -> Flow {
-        // Aggregate plans mark every node sink-relevant, so the
-        // executor never asks a fold to stop on skip.
-        debug_assert!(!stop_on_skip, "folds never stop on skip");
+    fn emit_batch(&mut self, batch: &LeafBatch<'_>) -> Flow {
         if batch.survivors.is_empty() {
             return Flow::Continue;
         }

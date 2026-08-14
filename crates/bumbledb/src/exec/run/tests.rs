@@ -34,8 +34,7 @@ impl Sink for CollectSink {
         Flow::Continue
     }
 
-    fn emit_batch(&mut self, batch: &LeafBatch<'_>, stop_on_skip: bool) -> Flow {
-        debug_assert!(!stop_on_skip, "CollectSink never skips");
+    fn emit_batch(&mut self, batch: &LeafBatch<'_>) -> Flow {
         for &entry in batch.survivors {
             let row: Vec<u64> = (0..batch.bindings.slot_count())
                 .map(|slot| match batch.source_of(slot) {

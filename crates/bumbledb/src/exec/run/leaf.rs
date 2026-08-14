@@ -94,9 +94,7 @@ impl Executor {
                 key_slots,
                 bindings,
             };
-            let stop_on_skip = node.suffix_skip == crate::plan::fj::SuffixSkip::Licensed
-                && sink.skip_capability() == super::SkipCapability::Licensed;
-            let flow = sink.emit_batch(&batch, stop_on_skip);
+            let flow = super::emit_node_batch(sink, node.suffix_skip, &batch);
             counters.emit();
             counters.phase_end(node_idx, JoinPhase::Descend);
             if flow == Flow::SkipSuffix {
@@ -235,9 +233,9 @@ impl Executor {
                 key_slots,
                 bindings,
             };
-            // `stop_on_skip` is structurally false here (the contract
-            // tripwire above), so the sink consumes the whole batch.
-            let flow = sink.emit_batch(&batch, false);
+            // The contract tripwire above: this arm never Licensed-skips,
+            // so the sink consumes the whole batch.
+            let flow = sink.emit_batch(&batch);
             debug_assert_eq!(flow, Flow::Continue, "non-skipping sinks never skip");
             for _ in 0..scratch.survivors.len() {
                 counters.emit();

@@ -69,11 +69,20 @@ impl Sink for EitherSink {
     fn emit_batch(
         &mut self,
         batch: &crate::exec::run::LeafBatch<'_>,
-        stop_on_skip: bool,
     ) -> crate::exec::run::Flow {
         match self {
-            Self::Projection(sink) => sink.emit_batch(batch, stop_on_skip),
-            Self::Aggregate(sink) => sink.emit_batch(batch, stop_on_skip),
+            Self::Projection(sink) => sink.emit_batch(batch),
+            Self::Aggregate(sink) => sink.emit_batch(batch),
+        }
+    }
+
+    fn emit_batch_until_skip(
+        &mut self,
+        batch: &crate::exec::run::LeafBatch<'_>,
+    ) -> crate::exec::run::Flow {
+        match self {
+            Self::Projection(sink) => sink.emit_batch_until_skip(batch),
+            Self::Aggregate(sink) => sink.emit_batch_until_skip(batch),
         }
     }
 
@@ -84,7 +93,10 @@ impl Sink for EitherSink {
         }
     }
 
-    fn begin_scan(&mut self, scan: &crate::exec::run::LeafScan<'_>) -> bool {
+    fn begin_scan(
+        &mut self,
+        scan: &crate::exec::run::LeafScan<'_>,
+    ) -> crate::exec::run::ScanOffer {
         match self {
             Self::Projection(sink) => sink.begin_scan(scan),
             Self::Aggregate(sink) => sink.begin_scan(scan),
