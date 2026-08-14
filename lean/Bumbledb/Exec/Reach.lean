@@ -186,66 +186,6 @@ theorem reachOp_empty {C : Classify} {rec : LinearRec} {self : InteriorId}
       exact False.elim hu
   · exact Or.inl
 
-/-! ## Semi-naive, at the operator level -/
-
-theorem setExt {α : Type u} {s t : Set α} (h : ∀ a, s a ↔ t a) :
-    s = t :=
-  funext fun a => propext (h a)
-
-/-- The naive chain: start empty, keep everything, add everything
-the operator derives. -/
-def naiveIter {α : Type u} (T : Set α → Set α) : Nat → Set α
-  | 0 => fun _ => False
-  | k + 1 => fun a => naiveIter T k a ∨ T (naiveIter T k) a
-
-/-- The semi-naive chain: an accumulator and the frontier
-`new = T(acc) \ acc`. -/
-def semiNaiveIter {α : Type u} (T : Set α → Set α) :
-    Nat → Set α × Set α
-  | 0 => (fun _ => False, fun a => T (fun _ => False) a ∧ ¬ False)
-  | k + 1 =>
-    (fun a => (semiNaiveIter T k).1 a ∨ (semiNaiveIter T k).2 a,
-     fun a => T (fun b => (semiNaiveIter T k).1 b ∨
-         (semiNaiveIter T k).2 b) a ∧
-       ¬ ((semiNaiveIter T k).1 a ∨ (semiNaiveIter T k).2 a))
-
-theorem semiNaive_delta {α : Type u} (T : Set α → Set α) :
-    ∀ k, (semiNaiveIter T k).2 =
-      fun a => T (semiNaiveIter T k).1 a ∧ ¬ (semiNaiveIter T k).1 a
-  | 0 => rfl
-  | _ + 1 => rfl
-
-/-- **Semi-naive agrees with naive**: iterating on
-`new = T(acc) \ acc` walks exactly the naive chain. Instantiates at
-`T := reachOp C rec self I W ρ`. -/
-theorem semi_naive_agrees {α : Type u} (T : Set α → Set α) :
-    ∀ k, (semiNaiveIter T k).1 = naiveIter T k
-  | 0 => rfl
-  | k + 1 => by
-    have ih := semi_naive_agrees T k
-    show (fun a => (semiNaiveIter T k).1 a ∨ (semiNaiveIter T k).2 a)
-      = naiveIter T (k + 1)
-    rw [semiNaive_delta T k, ih]
-    refine setExt fun a => ?_
-    show naiveIter T k a ∨ (T (naiveIter T k) a ∧ ¬ naiveIter T k a) ↔
-      naiveIter T k a ∨ T (naiveIter T k) a
-    constructor
-    · rintro (h | ⟨h, -⟩)
-      · exact Or.inl h
-      · exact Or.inr h
-    · intro h
-      by_cases hk : naiveIter T k a
-      · exact Or.inl hk
-      · rcases h with h | h
-        · exact absurd h hk
-        · exact Or.inr ⟨h, hk⟩
-
-theorem semi_naive_same_fixpoint {α : Type u} (T : Set α → Set α)
-    (k : Nat) :
-    (fun a => (semiNaiveIter T k).1 a ∨ (semiNaiveIter T k).2 a) =
-      naiveIter T (k + 1) :=
-  semi_naive_agrees T (k + 1)
-
 /-! ## The candidate space -/
 
 /-- Every tuple of a given length over a domain. -/
@@ -286,17 +226,21 @@ theorem mem_allTuples {dom : List Value} :
                 fun w hw => hall w (List.mem_cons_of_mem _ hw)⟩, rfl⟩⟩
 
 /-- Active domain of a rec: filler plus stored columns and finished
-interior columns. Ignores the accumulating self (same as ignoring
-`idb` on the old program domain). -/
+interior columns. Ignores the accumulating self: its rows are already
+candidates. -/
+def LinearRec.nonSelfAtoms (rec : LinearRec) : List Atom :=
+  rec.baseRules.flatMap (·.atoms) ++
+    (rec.step.1 :: rec.step.2).flatMap (·.atoms)
+
 def recDom (rec : LinearRec) (self : InteriorId) (W : ListInstance)
     (V : InteriorTables) : List Value :=
+  let _ := self
   fillerValue ::
-    (rec.rules self).flatMap fun r =>
-      r.atoms.flatMap fun a =>
-        match a.source with
-        | .edb R => a.bindings.flatMap fun b => (W.facts R).map (· b.1)
-        | .interior C => a.bindings.flatMap fun b =>
-            (V C).flatMap fun t => (t[b.1.id]?).toList
+    rec.nonSelfAtoms.flatMap fun a =>
+      match a.source with
+      | .edb R => a.bindings.flatMap fun b => (W.facts R).map (· b.1)
+      | .interior C => a.bindings.flatMap fun b =>
+          (V C).flatMap fun t => (t[b.1.id]?).toList
 
 /-- Candidate tuples: the finite product at each rule's head length. -/
 def recCands (rec : LinearRec) (self : InteriorId) (W : ListInstance)
@@ -436,24 +380,21 @@ theorem evalRule_length {C : Classify} {W : ListInstance}
   simp
 
 theorem recDom_edb {rec : LinearRec} {self : InteriorId} {W : ListInstance}
-    {V : InteriorTables} {r : Rule} (hr : r ∈ rec.rules self) {a : Atom}
-    (ha : a ∈ r.atoms) {R : RelId} (hsrc : a.source = .edb R)
+    {V : InteriorTables} {a : Atom} (ha : a ∈ rec.nonSelfAtoms)
+    {R : RelId} (hsrc : a.source = .edb R)
     {b : FieldId × Term} (hb : b ∈ a.bindings) {f : Fact}
     (hf : f ∈ W.facts R) : f b.1 ∈ recDom rec self W V := by
-  refine List.mem_cons_of_mem _ (List.mem_flatMap.mpr ⟨r, hr,
-    List.mem_flatMap.mpr ⟨a, ha, ?_⟩⟩)
+  refine List.mem_cons_of_mem _ (List.mem_flatMap.mpr ⟨a, ha, ?_⟩)
   rw [hsrc]
   exact List.mem_flatMap.mpr ⟨b, hb, List.mem_map.mpr ⟨f, hf, rfl⟩⟩
 
 theorem recDom_interior {rec : LinearRec} {self : InteriorId}
-    {W : ListInstance} {V : InteriorTables} {r : Rule}
-    (hr : r ∈ rec.rules self) {a : Atom}
-    (ha : a ∈ r.atoms) {C : InteriorId} (hsrc : a.source = .interior C)
+    {W : ListInstance} {V : InteriorTables} {a : Atom}
+    (ha : a ∈ rec.nonSelfAtoms) {C : InteriorId} (hsrc : a.source = .interior C)
     {b : FieldId × Term} (hb : b ∈ a.bindings) {row : AnswerTuple}
     (hrow : row ∈ V C) {v : Value} (hv : row[b.1.id]? = some v) :
     v ∈ recDom rec self W V := by
-  refine List.mem_cons_of_mem _ (List.mem_flatMap.mpr ⟨r, hr,
-    List.mem_flatMap.mpr ⟨a, ha, ?_⟩⟩)
+  refine List.mem_cons_of_mem _ (List.mem_flatMap.mpr ⟨a, ha, ?_⟩)
   rw [hsrc]
   exact List.mem_flatMap.mpr ⟨b, hb, List.mem_flatMap.mpr
     ⟨row, hrow, by simp [hv]⟩⟩
@@ -482,21 +423,37 @@ theorem evalRule_in_cands {C : Classify} {W : ListInstance}
   | edb R =>
     rw [hsrc] at hf
     rw [← hfb]
-    exact recDom_edb hr ha hsrc hb hf
+    have haNS : a ∈ rec.nonSelfAtoms := by
+      rcases List.mem_append.mp hr with hbase | hstep
+      · exact List.mem_append.mpr (Or.inl (List.mem_flatMap.mpr ⟨r, hbase, ha⟩))
+      · obtain ⟨s, hs, rfl⟩ := List.mem_map.mp hstep
+        rcases List.mem_cons.mp ha with hself | haRest
+        · cases hself; nomatch hsrc
+        · exact List.mem_append.mpr (Or.inr (List.mem_flatMap.mpr ⟨s, hs, haRest⟩))
+    exact recDom_edb haNS hsrc hb hf
   | interior Q =>
     rw [hsrc] at hf
     obtain ⟨row, hrow, rfl⟩ := hf
     rw [← hfb]
     unfold InteriorTables.toEnv InteriorTables.update at hrow
-    by_cases hQ : Q = self
-    · rw [if_pos hQ] at hrow
+    by_cases hselfBind : Q = self
+    · rw [if_pos hselfBind] at hrow
       rcases tupleFact_mem_or_filler row b.1 with hmem | hfill
       · have hrowc : row ∈ recCands rec self W V := hacc row hrow
         obtain ⟨_, _, htup⟩ := List.mem_flatMap.mp hrowc
         exact (mem_allTuples.mp htup).2 _ hmem
       · rw [hfill]
         exact recDom_filler rec self W V
-    · rw [if_neg hQ] at hrow
+    · rw [if_neg hselfBind] at hrow
+      have haNS : a ∈ rec.nonSelfAtoms := by
+        rcases List.mem_append.mp hr with hbase | hstep
+        · exact List.mem_append.mpr (Or.inl (List.mem_flatMap.mpr ⟨r, hbase, ha⟩))
+        · obtain ⟨s, hs, rfl⟩ := List.mem_map.mp hstep
+          rcases List.mem_cons.mp ha with hself | haRest
+          · cases hself
+            injection hsrc with hQ
+            exact (hselfBind hQ.symm).elim
+          · exact List.mem_append.mpr (Or.inr (List.mem_flatMap.mpr ⟨s, hs, haRest⟩))
       cases hidx : row[b.1.id]? with
       | none =>
         have : tupleFact row b.1 = fillerValue := by
@@ -507,7 +464,7 @@ theorem evalRule_in_cands {C : Classify} {W : ListInstance}
         have : tupleFact row b.1 = w := by
           unfold tupleFact; simp [hidx]
         rw [this]
-        exact recDom_interior hr ha hsrc hb hrow hidx
+        exact recDom_interior haNS hsrc hb hrow hidx
 
 theorem evalList_in_cands {C : Classify} {W : ListInstance}
     {ρ : ParamEnv} {rec : LinearRec} {self : InteriorId} {V : InteriorTables}
@@ -523,21 +480,24 @@ theorem evalList_in_cands {C : Classify} {W : ListInstance}
 theorem evalRule_base_in_cands {C : Classify} {W : ListInstance}
     {ρ : ParamEnv} {rec : LinearRec} {self : InteriorId} {V : InteriorTables}
     {r : Rule}
-    (hr : r ∈ rec.rules self) (hsafe : Safe r) {t : AnswerTuple}
+    (hr : r ∈ rec.baseRules) (hsafe : Safe r) {t : AnswerTuple}
     (ht : t ∈ evalRule C W V ρ r) :
     t ∈ recCands rec self W V := by
   have hans : t ∈ ruleAnswers C r (sourceDen W.den V.toEnv) ρ :=
     evalRule_sound ht
   have hlen : t.length = r.finds.length := evalRule_length ht
-  refine List.mem_flatMap.mpr ⟨r, hr, mem_allTuples.mpr ⟨hlen, fun v hv => ?_⟩⟩
+  refine List.mem_flatMap.mpr ⟨r, List.mem_append.mpr (Or.inl hr),
+    mem_allTuples.mpr ⟨hlen, fun v hv => ?_⟩⟩
   have hdom := antijoin_over_active_domain hsafe t hans v hv
   obtain ⟨a, ha, f, hf0, b, hb, hfb⟩ := hdom
   have hf : f ∈ sourceDen W.den V.toEnv a.source := hf0
+  have haNS : a ∈ rec.nonSelfAtoms :=
+    List.mem_append.mpr (Or.inl (List.mem_flatMap.mpr ⟨r, hr, ha⟩))
   cases hsrc : a.source with
   | edb R =>
     rw [hsrc] at hf
     rw [← hfb]
-    exact recDom_edb hr ha hsrc hb hf
+    exact recDom_edb haNS hsrc hb hf
   | interior Q =>
     rw [hsrc] at hf
     obtain ⟨row, hrow, rfl⟩ := hf
@@ -552,7 +512,7 @@ theorem evalRule_base_in_cands {C : Classify} {W : ListInstance}
       have : tupleFact row b.1 = w := by
         unfold tupleFact; simp [hidx]
       rw [this]
-      exact recDom_interior hr ha hsrc hb hrow hidx
+      exact recDom_interior haNS hsrc hb hrow hidx
 
 theorem evalList_base_in_cands {C : Classify} {W : ListInstance}
     {ρ : ParamEnv} {rec : LinearRec} {self : InteriorId} {V : InteriorTables}
@@ -561,8 +521,7 @@ theorem evalList_base_in_cands {C : Classify} {W : ListInstance}
     (ht : t ∈ evalList C W V ρ rec.baseRules) :
     t ∈ recCands rec self W V := by
   obtain ⟨r, hr, ht'⟩ := List.mem_flatMap.mp ht
-  exact evalRule_base_in_cands (List.mem_append.mpr (Or.inl hr))
-    (hsafe r hr) ht'
+  exact evalRule_base_in_cands hr (hsafe r hr) ht'
 
 theorem mem_reachStep_op {C : Classify} {W : ListInstance} {ρ : ParamEnv}
     {rec : LinearRec} {self : InteriorId} {V : InteriorTables}

@@ -9,6 +9,7 @@ import Bumbledb.Exec.Sweep
 import Bumbledb.Exec.Dedup
 import Bumbledb.Exec.Rewrites
 import Bumbledb.Exec.Reach
+import Bumbledb.Exec.SemiNaive
 import Bumbledb.Txn
 import Bumbledb.Txn.Fresh
 import Bumbledb.Decide
