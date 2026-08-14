@@ -23,11 +23,10 @@ impl<S> PreparedQuery<'_, S> {
             PreparedRule::FreeJoin(rule) => {
                 rule.executor = Executor::with_batch_size(&rule.plan, batch);
             }
-            PreparedRule::Recursive(rule) => {
-                rule.variant.rule.executor =
-                    Executor::with_batch_size(&rule.variant.rule.plan, batch);
-            }
             PreparedRule::KeyProbe(_) => {}
+        });
+        self.visit_rec_arms_mut(|arm| {
+            arm.rule.executor = Executor::with_batch_size(&arm.rule.plan, batch);
         });
     }
 

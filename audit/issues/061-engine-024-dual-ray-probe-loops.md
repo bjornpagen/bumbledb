@@ -2,7 +2,7 @@
 
 - **Severity:** medium
 - **Tree:** engine
-- **Status:** OPEN
+- **Status:** FIXED(1af537e5)
 - **Source:** audit/engine.md F24
 - **Depends on:** engine-001 (probes become per-stage data), engine-013 (image fill unified)
 

@@ -2,7 +2,7 @@
 
 - **Severity:** low
 - **Tree:** engine
-- **Status:** OPEN
+- **Status:** FIXED(4c21fafd)
 - **Source:** adversarial pass (not in audit/engine.md; traced from docs findings that teach "the predicate the query defines")
 - **Depends on:** engine-005/engine-006 (witness/sealing restructure first, to avoid renaming a type mid-churn)
 

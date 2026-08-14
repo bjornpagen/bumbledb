@@ -165,6 +165,10 @@ pub struct PlanOccurrence {
     /// skip eliminated occurrences, and PRD 12's introspection reads the
     /// `Eliminated` marks directly.
     pub role: Role,
+    /// Derived-bind role from the normalized occurrence. `None` is EDB;
+    /// `run_join` and `fill_plan_images` dispatch on this, never on the
+    /// complement of an EDB source.
+    pub bind: Option<crate::ir::normalize::BindRole>,
     /// The field each variable reads from.
     pub vars: Vec<(FieldId, VarId)>,
     /// Probeable equalities, ordered by field id (deterministic plans).

@@ -109,23 +109,37 @@ pub(super) fn random_query_tagged(rng: &mut Rng, cfg: GenConfig) -> (Query, Shap
 }
 
 /// CQ-only reconstructer. Seeded corpus replay (`conformance` 246
-/// files) must keep this RNG stream (C1). engine-020 mixes interiors/rec
-/// into [`random_query`] for stamp/fuzz/contradict; this function stays
-/// the frozen CQ draw.
+/// files) must keep this RNG stream (C1).
 #[must_use]
 pub fn random_cq_query(rng: &mut Rng, cfg: GenConfig) -> Query {
     random_query_tagged(rng, cfg).0
 }
 
-/// One seeded random valid query over the target ledger schema. The
-/// grammar is schema-specific by design ([`crate::querygen::target`] is
-/// the seam); the config bounds dressing literals (and recomputes
-/// in-vocabulary hits — Bytes extrefs, interval windows) so predicates
-/// select real subsets.
-///
-/// Today this is the CQ draw. engine-020 retargets the randomized
-/// entry to `QueryClass`; corpus reconstructers keep [`random_cq_query`].
+/// The randomized entry for stamp/fuzz/contradict/opgen: one class
+/// coin-flip, then a CQ shape or an interiors/rec shape. Corpus
+/// reconstructers keep [`random_cq_query`] / [`super::random_reach_query`].
 #[must_use]
 pub fn random_query(rng: &mut Rng, cfg: GenConfig) -> Query {
-    random_cq_query(rng, cfg)
+    match QueryClass::draw(rng) {
+        QueryClass::Cq => random_cq_query(rng, cfg),
+        QueryClass::Derived => super::random_reach_query(rng, cfg).0,
+    }
+}
+
+enum QueryClass {
+    Cq,
+    Derived,
+}
+
+impl QueryClass {
+    fn draw(rng: &mut Rng) -> Self {
+        // 1/8 derived so stamp/fuzz explore interiors/rec without
+        // drowning the CQ distribution the coverage contract pins
+        // through [`random_query_tagged`].
+        if rng.range(8) == 0 {
+            Self::Derived
+        } else {
+            Self::Cq
+        }
+    }
 }

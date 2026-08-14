@@ -7,7 +7,7 @@ impl CountingCounters {
     /// Converts one rule's counted execution into the stable stats
     /// surface — the source of truth `Report` renders from and
     /// `Snapshot::profile` returns (one of these per rule; the rule loop
-    /// assembles the program-level `ExecutionStats`). The schema resolves
+    /// assembles the query-level `ExecutionStats`). The schema resolves
     /// relation names and renders each eliminated occurrence's licensing
     /// statement (`schema/render.rs`). `pinned` is the rule's rendered
     /// pin record (the statistics its estimates derive from), carried

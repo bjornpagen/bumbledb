@@ -16,10 +16,10 @@
 //! value functions) comes from that one module — a schema change lands
 //! there without touching the grammar.
 //!
-//! The **reach/interiors arm** ([`random_reach_query`],
-//! `shapes_recursive.rs`) is its own entry beside [`random_query`], not
-//! a [`Shape`] row: it emits `Query`s (interiors + optional Rec + main)
-//! that prepare through `db.prepare`.
+//! [`random_query`] is the one randomized entry (stamp/fuzz/contradict/
+//! opgen): it draws [`QueryClass`] then a CQ [`Shape`] or an
+//! interiors/rec shape. [`random_cq_query`] and [`random_reach_query`]
+//! stay the frozen corpus reconstructers (C1).
 
 use bumbledb::{AllenMask, Atom, CmpOp, Comparison, FieldId, FindTerm, RelationId, VarId};
 

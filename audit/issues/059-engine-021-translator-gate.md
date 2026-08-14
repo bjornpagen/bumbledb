@@ -2,7 +2,7 @@
 
 - **Severity:** medium
 - **Tree:** engine (bench translator)
-- **Status:** OPEN
+- **Status:** FIXED(5bdc1f10)
 - **Source:** audit/engine.md F21
 - **Depends on:** none (bench-local; parallel-safe)
 

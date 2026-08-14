@@ -239,7 +239,7 @@ fn the_hand_coalesce_matches_pack() {
     let query = (family.query)();
     let mut prepared = db.prepare(&query).expect("prepare");
     let types: Vec<bumbledb::schema::ValueType> = prepared
-        .predicate()
+        .signature()
         .columns
         .iter()
         .map(|column| column.ty.clone())

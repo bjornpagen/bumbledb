@@ -95,7 +95,7 @@ fn residual_bindings_memoize_under_lru() {
 /// share the image Arc by construction — one `IMAGE_BUILD` however many
 /// rules read the relation — and each occurrence's filtered view
 /// memoizes per (generation, resolved filters), so a repeat execution
-/// of the whole program rebuilds nothing in any rule.
+/// of the whole query rebuilds nothing in any rule.
 #[test]
 fn rules_share_the_image_and_memoize_every_rules_views() {
     use crate::ir::HeadTerm;
@@ -582,7 +582,7 @@ fn prepare_lights_the_normalization_sub_passes() {
 /// Lane I2 — validation's interior, formerly dark under the single
 /// `VALIDATE` span: the query path records one rule-set lowering span
 /// and one strict per-rule pass span, both nested inside `VALIDATE`,
-/// each charged its rule work; the program-only passes never fire here.
+/// each charged its rule work; the query-only passes never fire here.
 #[test]
 fn prepare_lights_the_validation_interior() {
     use crate::obs;

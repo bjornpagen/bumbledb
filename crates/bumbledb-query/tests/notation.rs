@@ -471,8 +471,8 @@ fn scalar_comparisons_round_trip() {
 /// `p0` name under `recursive`, main rules render bare, dense interior
 /// atoms render as bare idents — and that normalized text reparses to
 /// the same bytes.
-const ORG_REACH_NORMALIZED: &str = "recursive p0(v0, v1) | OrgParent(child: v0, parent: v1);\n\
-     recursive p0(v0, v2) | OrgParent(child: v0, parent: v1), p0(v1, v2);\n\
+const ORG_REACH_NORMALIZED: &str = "rec(v0, v1) | OrgParent(child: v0, parent: v1);\n\
+     rec(v0, v2) | OrgParent(child: v0, parent: v1), p0(v1, v2);\n\
      (v0, v1) | p0(v0, v1);";
 
 #[test]
@@ -623,7 +623,7 @@ fn sparse_and_selection_positions_round_trip() {
         interior posted(id, account, amount) | Posting(id, account, amount);
         (x) | posted(2: x, 0 in ?wanted);
     });
-    let sparse_normalized = "interior p0(v0, v1, v2) | Posting(id: v0, account: v1, amount: v2);\n\
+    let sparse_normalized = "interior 0(v0, v1, v2) | Posting(id: v0, account: v1, amount: v2);\n\
          (v0) | p0(2: v0, 0 in ?0);";
     assert_eq!(pin("sparse-positions", Ledger, &sparse), sparse_normalized);
     let sparse_reparsed = query!(Ledger {
@@ -642,7 +642,7 @@ fn sparse_and_selection_positions_round_trip() {
         interior acct(id, currency) | Account(id, currency);
         (a) | acct(0: a, 1 == Currency::Usd);
     });
-    let selected_normalized = "interior p0(v0, v1) | Account(id: v0, currency: v1);\n\
+    let selected_normalized = "interior 0(v0, v1) | Account(id: v0, currency: v1);\n\
          (v0) | p0(0: v0, 1 == 0);";
     assert_eq!(
         pin("selected-positions", Ledger, &selected),
@@ -905,9 +905,9 @@ fn primer_shaped_reach_diagonal_golden() {
     });
     assert_eq!(
         pin("primer-reach-diagonal", Primer, &cycle),
-        "recursive p0(v0, v2) | Produces(grp: v0, capability: v1), \
+        "rec(v0, v2) | Produces(grp: v0, capability: v1), \
 Requires(consumer: v2, capability: v1, state == Upheld), v0 != v2;\n\
-recursive p0(v0, v3) | Produces(grp: v0, capability: v1), \
+rec(v0, v3) | Produces(grp: v0, capability: v1), \
 Requires(consumer: v2, capability: v1, state == Upheld), \
 Requires(consumer: v3, state == Upheld), p0(v2, v3), v0 != v2;\n\
 (v0) | Grp(id: v0), p0(v0, v0);"

@@ -1,12 +1,14 @@
 use super::{
-    Context, InteriorSignatures, ParamKind, Predicate, RuleTyping, TypeSlot, ValidatedInterior,
-    ValidatedMain, ValidatedQuery, ValidatedRec,
+    Context, InteriorSignatures, NonEmpty, ParamKind, RuleTyping, Signature, TypeSlot,
+    ValidatedBaseArm, ValidatedInterior, ValidatedMain, ValidatedQuery, ValidatedRec,
+    ValidatedRecArm,
 };
 use crate::error::ValidationError;
-use crate::ir::normalize::{LoweredRule, collapse, disjunct_count, distribute, nesting_depth};
+use crate::ir::normalize::OccId;
+use crate::ir::normalize::{collapse, disjunct_count, distribute, nesting_depth, LoweredRule};
 use crate::ir::{
-    AggOp, ConditionTree, FindTerm, InteriorId, MAX_CONDITION_DEPTH, MAX_RULES, ParamId, Query,
-    Rec, Term, VarId,
+    AggOp, FindTerm, InteriorId, ParamId, Query, Rec, Term, VarId,
+    MAX_CONDITION_DEPTH, MAX_RULES,
 };
 use crate::schema::Schema;
 use bumbledb_theory::schema::ValueType;
@@ -34,8 +36,7 @@ pub fn validate(schema: &Schema, query: &Query) -> Result<ValidatedQuery, Valida
     }
 
     let mut params = ParamTables::default();
-    let mut arities: Vec<usize> = Vec::with_capacity(derived);
-    let mut sealed: Vec<Option<Predicate>> = Vec::with_capacity(derived);
+    let mut sealed: Vec<Signature> = Vec::with_capacity(query.interiors.len());
     let mut interiors_out = Vec::with_capacity(query.interiors.len());
     let mut rule_count = 0u64;
 
@@ -58,22 +59,22 @@ pub fn validate(schema: &Schema, query: &Query) -> Result<ValidatedQuery, Valida
         let typings = type_rules(
             schema,
             &InteriorSignatures {
-                arities: &arities,
-                sealed: &sealed,
+                interiors: &sealed,
+                rec: None,
                 reader: Some(id),
                 derived_count: derived,
             },
             &interior.head,
             &lowered,
             &mut params,
+            false,
         )?;
         rule_count += typings.len() as u64;
-        let predicate = super::Predicate::derive(&lowered[0], &typings[0]);
-        arities.push(interior.head.len());
-        sealed.push(Some(predicate.clone()));
+        let predicate = super::Signature::derive(&lowered[0], &typings[0]);
+        sealed.push(predicate.clone());
         interiors_out.push(ValidatedInterior {
             lowered,
-            predicate,
+            signature: predicate,
             rules: typings,
         });
     }
@@ -86,34 +87,33 @@ pub fn validate(schema: &Schema, query: &Query) -> Result<ValidatedQuery, Valida
         let (base, rec_low) = lower_rec_pool(rec)?;
         refuse_derived_head(&rec.head, &base, id)?;
         refuse_derived_head(&rec.head, &rec_low, id)?;
-        arities.push(rec.head.len());
-        sealed.push(None);
         let base_typing = type_rules(
             schema,
             &InteriorSignatures {
-                arities: &arities,
-                sealed: &sealed,
+                interiors: &sealed,
+                rec: None,
                 reader: None,
                 derived_count: derived,
             },
             &rec.head,
             &base,
             &mut params,
+            true,
         )?;
         rule_count += base_typing.len() as u64;
-        let predicate = super::Predicate::derive(&base[0], &base_typing[0]);
-        *sealed.last_mut().expect("rec slot pushed") = Some(predicate.clone());
+        let predicate = super::Signature::derive(&base[0], &base_typing[0]);
         let rec_typing = type_rules(
             schema,
             &InteriorSignatures {
-                arities: &arities,
-                sealed: &sealed,
+                interiors: &sealed,
+                rec: Some(&predicate),
                 reader: None,
                 derived_count: derived,
             },
             &rec.head,
             &rec_low,
             &mut params,
+            true,
         )?;
         let base_row = input_row(&base[0], &base_typing[0]);
         for (rule_idx, (rule, typing)) in rec_low.iter().zip(&rec_typing).enumerate() {
@@ -126,18 +126,38 @@ pub fn validate(schema: &Schema, query: &Query) -> Result<ValidatedQuery, Valida
             }
         }
         rule_count += rec_typing.len() as u64;
-        measure_in_rec(rec)?;
-        Some(ValidatedRec {
-            base,
-            rec: rec_low,
-            predicate,
-            base_typing,
-            rec_typing,
-        })
+        let base_arms = NonEmpty::from_vec(
+            base.into_iter()
+                .zip(base_typing)
+                .map(|(rule, typing)| ValidatedBaseArm { rule, typing })
+                .collect(),
+        )
+        .expect("roster/lower refused empty base");
+        let rec_arms = NonEmpty::from_vec(
+            rec_low
+                .into_iter()
+                .zip(rec_typing)
+                .map(|(rule, typing)| ValidatedRecArm {
+                    self_occ: rec_arm_self_occ(&rule, id),
+                    rule,
+                    typing,
+                })
+                .collect(),
+        )
+        .expect("roster/lower refused empty rec");
+        Some((
+            id,
+            ValidatedRec {
+                base: base_arms,
+                rec: rec_arms,
+                signature: predicate,
+            },
+        ))
     } else {
         None
     };
 
+    let rec_pred = rec_out.as_ref().map(|(_, rec)| rec.signature());
     let lowered = lower_rules(
         &query.head,
         &query.rules,
@@ -147,17 +167,18 @@ pub fn validate(schema: &Schema, query: &Query) -> Result<ValidatedQuery, Valida
     let typings = type_rules(
         schema,
         &InteriorSignatures {
-            arities: &arities,
-            sealed: &sealed,
+            interiors: &sealed,
+            rec: rec_pred,
             reader: None,
             derived_count: derived,
         },
         &query.head,
         &lowered,
         &mut params,
+        false,
     )?;
     rule_count += typings.len() as u64;
-    let predicate = super::Predicate::derive(&lowered[0], &typings[0]);
+    let predicate = super::Signature::derive(&lowered[0], &typings[0]);
 
     let mut rules_span = crate::obs::span(
         crate::obs::names::VALIDATE_RULES,
@@ -167,21 +188,34 @@ pub fn validate(schema: &Schema, query: &Query) -> Result<ValidatedQuery, Valida
     rules_span.end();
 
     params.check_masks_and_density()?;
-    Ok(ValidatedQuery {
-        interiors: interiors_out,
-        rec: rec_out,
-        main: ValidatedMain {
-            lowered,
-            predicate,
-            rules: typings,
+    let set_params = params
+        .param_kinds
+        .iter()
+        .filter_map(|(param, kind)| matches!(kind, ParamKind::Set).then_some(*param))
+        .collect();
+    let main = ValidatedMain {
+        lowered,
+        signature: predicate,
+        rules: typings,
+    };
+    Ok(match rec_out {
+        None => ValidatedQuery::Cq {
+            interiors: interiors_out,
+            main,
+            param_types: params.param_types,
+            set_params,
+            point_params: params.point_params,
         },
-        param_types: params.param_types,
-        set_params: params
-            .param_kinds
-            .iter()
-            .filter_map(|(param, kind)| matches!(kind, ParamKind::Set).then_some(*param))
-            .collect(),
-        point_params: params.point_params,
+        Some((rec_id, rec)) => ValidatedQuery::Reach {
+            interiors: interiors_out,
+            rec,
+            main,
+            rec_id,
+            derived_count: u32::try_from(derived).expect("derived count fits u32"),
+            param_types: params.param_types,
+            set_params,
+            point_params: params.point_params,
+        },
     })
 }
 
@@ -194,12 +228,13 @@ fn type_rules(
     head: &[crate::ir::HeadTerm],
     lowered: &[LoweredRule],
     params: &mut ParamTables,
+    rec_body: bool,
 ) -> Result<Vec<RuleTyping>, ValidationError> {
     let mut pinned_row: Vec<ValueType> = Vec::new();
     let mut rules = Vec::with_capacity(lowered.len());
     for (rule_idx, rule) in lowered.iter().enumerate() {
         check_head_alignment(head, rule, rule_idx)?;
-        let (typing, ctx) = validate_rule(schema, sigs, rule)?;
+        let (typing, ctx) = validate_rule(schema, sigs, rule, rec_body)?;
         let row = input_row(rule, &typing);
         if rule_idx == 0 {
             pinned_row = row;
@@ -240,9 +275,22 @@ fn refuse_derived_head(
     Ok(())
 }
 
+/// The unique positive self-atom's occurrence on a lowered rec arm —
+/// positives first, same numbering normalize later mints as [`OccId`].
+fn rec_arm_self_occ(rule: &LoweredRule, rec_id: InteriorId) -> OccId {
+    let idx = rule
+        .atoms
+        .iter()
+        .position(|atom| atom.source.interior() == Some(rec_id))
+        .expect("roster proved unique self");
+    OccId(u16::try_from(idx).expect("occurrence count fits u16"))
+}
+
 /// Rec structural roster, on the written (pre-DNF) rules, in declaration
 /// order: empty lists, self in base, missing/nonlinear self, negation.
-fn rec_roster(rec: &Rec, rec_id: InteriorId) -> Result<(), ValidationError> {
+/// Returns each rec arm's unique positive self-atom index (the proof
+/// stored on the witness as `self_occ` after lowering).
+fn rec_roster(rec: &Rec, rec_id: InteriorId) -> Result<Vec<usize>, ValidationError> {
     if rec.base.is_empty() {
         return Err(ValidationError::EmptyRecursiveBase);
     }
@@ -255,13 +303,20 @@ fn rec_roster(rec: &Rec, rec_id: InteriorId) -> Result<(), ValidationError> {
             return Err(ValidationError::SelfInBase);
         }
     }
+    let mut self_at = Vec::with_capacity(rec.rec.len());
     for rule in &rec.rec {
-        let selves = rule.atoms.iter().filter(|atom| is_self(atom)).count();
-        if selves == 0 {
-            return Err(ValidationError::RecArmMissingSelf);
+        let mut found = None;
+        for (index, atom) in rule.atoms.iter().enumerate() {
+            if is_self(atom) {
+                if found.is_some() {
+                    return Err(ValidationError::NonlinearRecArm);
+                }
+                found = Some(index);
+            }
         }
-        if selves >= 2 {
-            return Err(ValidationError::NonlinearRecArm);
+        match found {
+            None => return Err(ValidationError::RecArmMissingSelf),
+            Some(index) => self_at.push(index),
         }
     }
     let negated = rec
@@ -272,35 +327,7 @@ fn rec_roster(rec: &Rec, rec_id: InteriorId) -> Result<(), ValidationError> {
     if negated {
         return Err(ValidationError::NegationInRec);
     }
-    Ok(())
-}
-
-/// Measure comparisons in rec **bodies** — per-rule may already have
-/// refused a binding (`DurationInBinding`); a legal comparison shape
-/// is this item.
-fn measure_in_rec(rec: &Rec) -> Result<(), ValidationError> {
-    let has_measure = |tree: &ConditionTree| -> bool { tree_has_measure(tree) };
-    if rec
-        .base
-        .iter()
-        .chain(&rec.rec)
-        .flat_map(|rule| &rule.conditions)
-        .any(has_measure)
-    {
-        return Err(ValidationError::MeasureInRec);
-    }
-    Ok(())
-}
-
-fn tree_has_measure(tree: &ConditionTree) -> bool {
-    match tree {
-        ConditionTree::Leaf(cmp) => {
-            matches!(cmp.lhs, Term::Measure(_)) || matches!(cmp.rhs, Term::Measure(_))
-        }
-        ConditionTree::And(children) | ConditionTree::Or(children) => {
-            children.iter().any(tree_has_measure)
-        }
-    }
+    Ok(self_at)
 }
 
 /// Rec pool lowering: one [`MAX_RULES`] on `base.len() + rec.len()` and
@@ -337,6 +364,11 @@ fn lower_rec_pool(rec: &Rec) -> Result<(Vec<LoweredRule>, Vec<LoweredRule>), Val
     }
     let base = distribute_list(&rec.base);
     let rec_low = distribute_list(&rec.rec);
+    // Written-empty arms are refused in `rec_roster` (`EmptyRecursiveBase` /
+    // `EmptyRecursiveStep`). A nonempty written arm can still DNF to
+    // nothing — `Or([])` is false, `distribute` yields zero rules — and
+    // that is a distinct fact, observed here, with the same locked names
+    // (tests pin both stages to those variants).
     if base.is_empty() {
         return Err(ValidationError::EmptyRecursiveBase);
     }
@@ -483,6 +515,7 @@ fn validate_rule(
     schema: &Schema,
     interiors: &InteriorSignatures<'_>,
     rule: &LoweredRule,
+    rec_body: bool,
 ) -> Result<(RuleTyping, Context), ValidationError> {
     if rule.atoms.is_empty() {
         return Err(ValidationError::NoPositiveAtoms);
@@ -500,6 +533,13 @@ fn validate_rule(
     let mut ctx = Context::default();
     ctx.check_atoms(schema, interiors, rule)?;
     let classified = ctx.check_comparisons(rule)?;
+    if rec_body
+        && rule.conditions.iter().any(|cmp| {
+            matches!(cmp.lhs, Term::Measure(_)) || matches!(cmp.rhs, Term::Measure(_))
+        })
+    {
+        return Err(ValidationError::MeasureInRec);
+    }
     ctx.check_membership_domains()?;
     let group_key: BTreeSet<VarId> = rule
         .finds
@@ -532,7 +572,7 @@ fn validate_rule(
 /// One rule's positional INPUT contribution to the alignment check: a
 /// variable position carries the variable's type; an aggregate position
 /// its fold input type (the nullary `Count` is `U64`).
-/// Alignment-only — the signature is [`super::Predicate::derive`].
+/// Alignment-only — the signature is [`super::Signature::derive`].
 fn input_row(rule: &LoweredRule, typing: &RuleTyping) -> Vec<ValueType> {
     let var_type = |var: &VarId| typing.var_types[var].clone();
     rule.finds

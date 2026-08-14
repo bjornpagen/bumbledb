@@ -227,7 +227,7 @@ pub fn sample_ours(db: &Db<Ledger>, probe: &Probe, sets: &[Draw]) -> Result<Prob
         .prepare(&query)
         .map_err(|e| format!("{}: prepare: {e:?}", probe.name))?;
     let types: Vec<bumbledb::schema::ValueType> = prepared
-        .predicate()
+        .signature()
         .columns
         .iter()
         .map(|column| column.ty.clone())

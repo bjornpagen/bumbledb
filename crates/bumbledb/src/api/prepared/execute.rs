@@ -1,5 +1,5 @@
 use super::{
-    Answers, BindValue, KeyProbeRule, PreparedBody, PreparedQuery, PreparedRule, ValueType,
+    Answers, BindValue, KeyProbeRule, PreparedPipeline, PreparedQuery, PreparedRule, ValueType,
 };
 
 use crate::error::Result;
@@ -35,7 +35,7 @@ impl<S> PreparedQuery<'_, S> {
         self.check_snapshot(txn)?;
         let mut execute_span = obs::span(obs::names::EXECUTE, obs::Category::Execute);
         out.clear();
-        out.arity = self.predicate.columns.len();
+        out.arity = self.signature.columns.len();
         {
             let _s = obs::span(obs::names::BIND_PARAMS, obs::Category::Execute);
             self.bind_params(txn, params)?;
@@ -63,7 +63,7 @@ impl<S> PreparedQuery<'_, S> {
         self.check_snapshot(txn)?;
         let mut execute_span = obs::span(obs::names::EXECUTE, obs::Category::Execute);
         out.clear();
-        out.arity = self.predicate.columns.len();
+        out.arity = self.signature.columns.len();
         {
             let _s = obs::span(obs::names::BIND_PARAMS, obs::Category::Execute);
             self.bind_param_args(txn, args)?;
@@ -81,32 +81,13 @@ impl<S> PreparedQuery<'_, S> {
         cache: &ImageCache,
         out: &mut Answers,
     ) -> Result<()> {
-        // The statically-empty program (ir/normalize/fold.rs): params
-        // were bound above — bind errors surfaced — and nothing else exists to run: no sink reset, no
-        // rule loop, no image, no view bind, no finalize; the cleared
-        // buffer IS the empty result (docs/architecture/40-execution.md
-        // § access paths). Always the whole program: this variant is
-        // built only when every rule died.
-        // Statically-empty **main** with no interiors: bind errors
-        // already surfaced; nothing to run. Interiors-only with a dead
-        // main still runs the preamble (an interior can be the only
-        // measure site).
-        if self.interiors.is_empty() && matches!(self.body, PreparedBody::Empty) {
-            return Ok(());
-        }
-        // The point fast lane: interiors empty AND a single main
-        // key-probe. A key-probe inside a multi-rule main or after
-        // interiors keeps the sink path.
-        if self.interiors.is_empty()
-            && matches!(
-                self.body.rules(),
-                [PreparedRule::KeyProbe(KeyProbeRule {
-                    key_probe_finds: Some(_),
-                    ..
-                })]
-            )
-        {
+        // Direct lane and empty Cq are parsed at build / are the
+        // zero-iteration loop — not re-detected per call.
+        if self.key_probe_direct {
             return self.execute_key_probe_direct(txn, out);
+        }
+        if self.pipeline.is_empty_cq() {
+            return Ok(());
         }
         // Phase attribution engages only under an active obs capture
         // (docs/architecture/60-validation.md): timing runs — even obs
@@ -122,6 +103,17 @@ impl<S> PreparedQuery<'_, S> {
         } else {
             self.run_rules(txn, cache, &mut NoopCounters)?
         };
+        self.finish_sink(txn, ran, out)
+    }
+
+    /// Drain the sink into `out` after the shared rule loop. Empty
+    /// short-circuit (nothing ran) skips finalize.
+    pub(super) fn finish_sink(
+        &mut self,
+        txn: &ReadTxn<'_>,
+        ran: bool,
+        out: &mut Answers,
+    ) -> Result<()> {
         // The sink-side measure poison (a ray reached a projected or
         // folded `Duration`): the engine's one runtime type error,
         // raised before finalize — never a partial result. Executor-side
@@ -138,7 +130,7 @@ impl<S> PreparedQuery<'_, S> {
             &mut self.answer_scratch,
             &mut self.resolve_memo,
             txn,
-            &self.predicate.columns,
+            &self.signature.columns,
             out,
         )
     }
@@ -158,26 +150,95 @@ impl<S> PreparedQuery<'_, S> {
         counters: &mut C,
     ) -> Result<bool> {
         // Interiors then rec (if any) then main. Interiors-only never
-        // enters the reach driver (`run_derived` branches on body).
-        if !self.interiors.is_empty() || matches!(self.body, PreparedBody::Reach(_)) {
+        // enters the reach driver (`run_derived` is the Cq derived phase
+        // and the Reach interiors+rec phase).
+        let has_derived = match &self.pipeline {
+            PreparedPipeline::Cq { interiors, .. } => !interiors.is_empty(),
+            PreparedPipeline::Reach { .. } => true,
+        };
+        if has_derived {
             let derived_ran = self.run_derived(txn, cache, counters)?;
-            if matches!(self.body, PreparedBody::Empty) {
+            if self.pipeline.main_rules().is_empty() {
                 return Ok(derived_ran);
             }
-            // Rec present: main rules live on the driver; interiors-only
-            // falls through to the main rule loop below.
         }
-        if matches!(self.body, PreparedBody::Empty) {
+        if self.pipeline.main_rules().is_empty() {
             return Ok(false);
         }
         self.sink.reset();
         let mut ran = false;
-        let rule_count = self.body.rules().len();
+        let rule_count = self.pipeline.main_rules().len();
         for rule_idx in 0..rule_count {
             ran |= self.run_rule(rule_idx, txn, cache, counters)?;
         }
         if ran {
             self.run_ray_probes(txn, cache, counters)?;
+        }
+        Ok(ran)
+    }
+
+    /// CQ profile's counted rule loop: the same derived → main → ray
+    /// protocol as [`Self::run_rules`], with per-main-rule
+    /// [`crate::exec::introspection::CountingCounters`] so node stats
+    /// land on the counted surface.
+    pub(super) fn run_rules_cq_profile(
+        &mut self,
+        txn: &ReadTxn<'_>,
+        cache: &ImageCache,
+        rule_stats: &mut Vec<crate::api::stats::RuleStats>,
+    ) -> Result<bool> {
+        use crate::exec::introspection::CountingCounters;
+        let has_derived = match &self.pipeline {
+            PreparedPipeline::Cq { interiors, .. } => !interiors.is_empty(),
+            PreparedPipeline::Reach { .. } => true,
+        };
+        if has_derived {
+            let derived_ran = self.run_derived(txn, cache, &mut NoopCounters)?;
+            if self.pipeline.main_rules().is_empty() {
+                return Ok(derived_ran);
+            }
+        }
+        if self.pipeline.main_rules().is_empty() {
+            return Ok(false);
+        }
+        self.sink.reset();
+        let mut ran = false;
+        let rule_count = self.pipeline.main_rules().len();
+        rule_stats.reserve(rule_count);
+        for rule_idx in 0..rule_count {
+            let seen_before = self.sink.distinct_seen().unwrap_or(0);
+            let mut counters = match &self.pipeline.main_rules()[rule_idx] {
+                PreparedRule::FreeJoin(rule) => CountingCounters::new(&rule.plan),
+                PreparedRule::KeyProbe(_) => CountingCounters::for_key_probe(),
+            };
+            ran |= self.run_rule(rule_idx, txn, cache, &mut counters)?;
+            let emitted = Counters::emits(&counters);
+            let newly_seen = self
+                .sink
+                .distinct_seen()
+                .map_or(emitted, |seen| (seen - seen_before) as u64);
+            let absorbed = emitted - newly_seen;
+            rule_stats.push(match &self.pipeline.main_rules()[rule_idx] {
+                PreparedRule::FreeJoin(rule) => counters.into_rule_stats(
+                    &rule.plan,
+                    self.schema,
+                    self.rule_pinned_rows(rule_idx),
+                    absorbed,
+                ),
+                PreparedRule::KeyProbe(rule) => crate::api::stats::RuleStats {
+                    distinct_bindings: rule.distinct_witness.is_some(),
+                    nodes: Vec::new(),
+                    eliminated: Vec::new(),
+                    folded: Vec::new(),
+                    pinned: Vec::new(),
+                    emitted,
+                    absorbed,
+                    key_probe: Some(crate::api::stats::KeyProbeStats { hit: emitted > 0 }),
+                },
+            });
+        }
+        if ran {
+            self.run_ray_probes(txn, cache, &mut NoopCounters)?;
         }
         Ok(ran)
     }
@@ -192,65 +253,18 @@ impl<S> PreparedQuery<'_, S> {
         cache: &ImageCache,
         counters: &mut C,
     ) -> Result<()> {
-        let fast_eligible = self.unresolved_literals == 0 && self.params.is_empty();
-        let mut latched = 0u32;
-        for set in &mut self.ray_probes {
-            // `str` literals in the verdict's leaves latch to their
-            // dictionary words (append-only: a hit is final; a miss
-            // evaluates as the never-minted sentinel this execution).
-            set.verdict.resolve_interns(txn)?;
-            let super::RayProbeSet { verdict, probes } = set;
-            for probe in probes {
-                let resolved =
-                    if fast_eligible && probe.rule.resolution == super::ResolutionState::Complete {
-                        true
-                    } else {
-                        let complete = resolve_filters(
-                            txn,
-                            &mut probe.rule.plan,
-                            &self.resolved_params,
-                            &self.missed_params,
-                            &mut probe.rule.resolved_filters,
-                            &mut probe.rule.resolved_selections,
-                            &mut latched,
-                        )?;
-                        probe.rule.resolution = if complete {
-                            super::ResolutionState::Complete
-                        } else {
-                            super::ResolutionState::Pending
-                        };
-                        complete
-                    };
-                if !resolved {
-                    continue; // an Eq-anchored miss: the probe is empty
-                }
-                self.bindings.resize(probe.rule.plan.slot_count());
-                let mut arbiter = crate::exec::verdict::RayArbiter::new(
-                    verdict,
-                    &self.resolved_params,
-                    probe.measured_slot,
-                );
-                let mut no_retired = Vec::new();
-                run_join(
-                    &probe.rule.plan,
-                    self.schema,
-                    txn,
-                    cache,
-                    &mut probe.rule.executor,
-                    &mut self.bindings,
-                    &probe.rule.resolved_filters,
-                    &probe.rule.resolved_selections,
-                    &mut probe.rule.memo,
-                    &[],
-                    &mut no_retired,
-                    &mut arbiter,
-                    counters,
-                )?;
-                if let Some([start, end]) = arbiter.measure_of_ray() {
-                    return Err(crate::error::Error::MeasureOfRay { start, end });
-                }
-            }
-        }
+        let latched = super::reach::run_ray_probe_sets(
+            &mut self.ray_probes,
+            None,
+            self.schema,
+            txn,
+            cache,
+            &self.resolved_params,
+            &self.missed_params,
+            self.unresolved_literals == 0 && self.params.is_empty(),
+            &mut self.bindings,
+            counters,
+        )?;
         self.unresolved_literals = self.unresolved_literals.saturating_sub(latched);
         Ok(())
     }
@@ -277,13 +291,13 @@ impl<S> PreparedQuery<'_, S> {
         let seen_before = self.sink.distinct_seen().unwrap_or(0);
         // Re-aim per rule only where a switch exists: a single-rule sink
         // is built aimed, and the hot single-rule path stays untouched.
-        let rule_count = self.body.rules().len();
+        let rule_count = self.pipeline.main_rules().len();
         if rule_count > 1 {
-            let rule = &self.body.rules()[rule_idx];
+            let rule = &self.pipeline.main_rules()[rule_idx];
             self.sink
                 .aim(rule.finds(), rule.slot_count(), rule.dedup_spans());
         }
-        let slot_count = self.body.rules()[rule_idx].slot_count();
+        let slot_count = self.pipeline.main_rules()[rule_idx].slot_count();
         self.bindings.resize(slot_count);
         // The fully-latched fast path: zero pending literals and zero
         // params of any shape means the resolved tables were written
@@ -294,11 +308,8 @@ impl<S> PreparedQuery<'_, S> {
         let mut retired = std::mem::take(&mut self.derived.retired);
         let fast_eligible = self.unresolved_literals == 0 && self.params.is_empty();
         let mut latched = 0u32;
-        let rules = self.body.rules_mut();
+        let rules = self.pipeline.main_rules_mut();
         let ran = match &mut rules[rule_idx] {
-            PreparedRule::Recursive(_) => {
-                unreachable!("recursive rules run under the reach driver, never the main rule loop")
-            }
             PreparedRule::KeyProbe(rule) => {
                 execute_key_probe(
                     &rule.plan,
@@ -404,17 +415,17 @@ impl<S> PreparedQuery<'_, S> {
     }
 
     /// The point fast lane's body: probe + fetch +
-    /// direct cell decode, no sink machinery.
-    fn execute_key_probe_direct(&mut self, txn: &ReadTxn<'_>, out: &mut Answers) -> Result<()> {
-        let [
-            PreparedRule::KeyProbe(KeyProbeRule {
-                plan: key_probe,
-                key_probe_finds: Some(key_probe_finds),
-                ..
-            }),
-        ] = self.body.rules()
+    /// direct cell decode, no sink machinery. The lane was parsed at
+    /// build (`key_probe_direct`); this does not re-gate.
+    pub(super) fn execute_key_probe_direct(&mut self, txn: &ReadTxn<'_>, out: &mut Answers) -> Result<()> {
+        debug_assert!(self.key_probe_direct);
+        let PreparedRule::KeyProbe(KeyProbeRule {
+            plan: key_probe,
+            key_probe_finds: Some(key_probe_finds),
+            ..
+        }) = &self.pipeline.main_rules()[0]
         else {
-            return Ok(());
+            unreachable!("key_probe_direct parsed at build");
         };
         self.resolve_memo.clear();
         let Some(fact) = crate::exec::dispatch::key_probe_fact(

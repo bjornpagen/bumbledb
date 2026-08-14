@@ -12,7 +12,7 @@
 //! Within one version, identical schema fingerprint, canonical query,
 //! parameter types, and feature set produce byte-identical output. Any
 //! content or ordering change must increment `INTROSPECTION_VERSION`.
-//! Sections have fixed order; rules retain program order, nodes retain plan
+//! Sections have fixed order; rules retain query order, nodes retain plan
 //! order, and dead, subsumed, and unresolved-literal diagnostics retain
 //! statement order. No unordered collection feeds the rendered surface.
 //!
@@ -61,13 +61,13 @@ pub struct CountingCounters {
     emits: u64,
 }
 
-/// Driver-level counters for a fixpoint execution
+/// Driver-level counters for a reach execution
 /// (docs/architecture/40-execution.md § the linear reach driver): the
-/// per-stratum, per-round delta sizes and union accounting the driver
-/// reports through the `Counters` seam's fixpoint hooks. Node-level
-/// methods are deliberate no-ops — the driver runs many differently
-/// shaped plan units under one counter, so the counted surface here is
-/// the round structure, not per-node row counts.
+/// per-round delta sizes and union accounting the driver reports through
+/// the `Counters` seam's fixpoint hooks. Node-level methods are
+/// deliberate no-ops — the driver runs many differently shaped plan
+/// units under one counter, so the counted surface here is the round
+/// structure (`stats.reach`), not per-node row counts.
 #[derive(Debug, Default)]
 pub struct ReachCounters {
     emits: u64,
@@ -75,25 +75,31 @@ pub struct ReachCounters {
     rounds: Vec<crate::api::stats::RoundStats>,
 }
 
-/// The introspection report: per-rule plan renderings plus the counted
-/// execution — per-rule node stats under the head-level union
-/// accounting (docs/architecture/40-execution.md § the rule loop).
-/// `Display` formats lazily — nothing here ran inside the hot loops.
+/// The introspection report: a pipeline-shaped body plus the counted
+/// execution. `Display` formats lazily — nothing here ran inside the
+/// hot loops.
 #[derive(Debug)]
 pub struct IntrospectionReport<'p> {
-    /// Query and predicate header for the public artifact. Low-level
+    /// Query and signature header for the public artifact. Low-level
     /// executor tests omit it while retaining the same versioned body.
     pub header: Option<IntrospectionHeader>,
-    /// Per plan unit, aligned with `stats.rules` for query-shaped
-    /// programs. A fixpoint program's units (every predicate's rules, a
-    /// recursive rule as its delta variants) carry labels below and no
-    /// per-unit counted stats — the counted surface is `stats.strata`.
-    pub rules: Vec<RulePlan<'p>>,
-    /// Fixpoint unit labels, parallel to `rules`
-    /// (`predicate p0 rule 1 delta variant 0`); empty for query-shaped
-    /// programs, whose label is the rule index.
-    pub unit_labels: Vec<String>,
+    /// Pipeline-shaped plans: Cq plans align with `stats.rules()`;
+    /// Reach units carry their labels and no per-unit counted stats.
+    pub body: ReportBody<'p>,
     pub stats: crate::api::stats::ExecutionStats,
+}
+
+/// Plans matching the prepared pipeline. Reach labels are
+/// `reach base {i}`, `reach rec {i} (delta occ {d})`, `main {i}`.
+#[derive(Debug)]
+pub enum ReportBody<'p> {
+    Cq {
+        plans: Vec<RulePlan<'p>>,
+    },
+    Reach {
+        rec_id: crate::ir::InteriorId,
+        units: Vec<(String, RulePlan<'p>)>,
+    },
 }
 
 /// Owned public header rendered before the plan sections.
@@ -111,7 +117,7 @@ pub enum RulePlan<'p> {
     KeyProbe(&'p KeyProbePlan),
     /// The Free Join engine.
     FreeJoin(&'p ValidatedPlan),
-    /// The statically-empty program (`ir/normalize/fold.rs`): every
+    /// The statically-empty query (`ir/normalize/fold.rs`): every
     /// rule refuted on constants at prepare — nothing runs, and the
     /// per-rule killing conditions print from `stats.dead`.
     Empty,

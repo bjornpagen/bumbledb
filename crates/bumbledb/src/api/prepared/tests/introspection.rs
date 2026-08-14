@@ -99,11 +99,11 @@ fn the_stats_surface_carries_the_pinned_rows() {
         )
         .expect("profile");
     assert_eq!(
-        stats.rules[0].pinned.len(),
+        stats.rules()[0].pinned.len(),
         1,
         "one participating occurrence"
     );
-    let pin = &stats.rules[0].pinned[0];
+    let pin = &stats.rules()[0].pinned[0];
     assert_eq!(pin.occurrence, 0);
     assert_eq!(pin.relation, "Posting");
     assert_eq!(pin.rows, 3, "the S count read at prepare");
@@ -145,7 +145,7 @@ fn the_stats_surface_carries_the_pinned_rows() {
         .profile(&txn, &cache, &[ParamArg::Scalar(BindValue::U64(1))])
         .expect("profile");
     assert!(
-        stats.rules[0].pinned.is_empty(),
+        stats.rules()[0].pinned.is_empty(),
         "key probes read no statistics"
     );
 }
@@ -180,7 +180,7 @@ fn profile_returns_structured_stats_matching_the_execution() {
         .expect("profile");
     assert_eq!(answers.len(), 2);
     assert_eq!(stats.emits, 2);
-    let rule = &stats.rules[0];
+    let rule = &stats.rules()[0];
     assert!(rule.key_probe.is_none());
     assert_eq!(rule.emitted, 2);
     assert_eq!(rule.absorbed, 0, "distinct rows: nothing absorbed");
@@ -225,16 +225,16 @@ fn profile_returns_structured_stats_matching_the_execution() {
         .profile(&txn, &cache, &[ParamArg::Scalar(BindValue::U64(1))])
         .expect("profile");
     assert_eq!(answers.len(), 1);
-    assert!(stats.rules[0].nodes.is_empty());
+    assert!(stats.rules()[0].nodes.is_empty());
     assert_eq!(
-        stats.rules[0].key_probe,
+        stats.rules()[0].key_probe,
         Some(crate::api::stats::KeyProbeStats { hit: true })
     );
     let (_, stats) = key_probe
         .profile(&txn, &cache, &[ParamArg::Scalar(BindValue::U64(999))])
         .expect("profile");
     assert_eq!(
-        stats.rules[0].key_probe,
+        stats.rules()[0].key_probe,
         Some(crate::api::stats::KeyProbeStats { hit: false })
     );
 }

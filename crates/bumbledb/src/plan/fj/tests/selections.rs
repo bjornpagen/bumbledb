@@ -104,6 +104,7 @@ fn a_leaked_eq_filter_fails_selection_validation() {
         occ_id: OccId(3),
         source: crate::ir::AtomSource::Edb(RelationId(0)),
         role: crate::ir::normalize::Role::Positive,
+        bind: None,
         vars: vec![],
         selections: vec![],
         filters: vec![FilterPredicate::Compare {

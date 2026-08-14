@@ -2,7 +2,7 @@
 
 - **Severity:** high
 - **Tree:** engine
-- **Status:** OPEN
+- **Status:** FIXED(9c77c002)
 - **Source:** audit/engine.md F12
 - **Depends on:** engine-001 (stats mirror the pipeline sum)
 

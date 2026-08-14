@@ -17,13 +17,12 @@ impl ReachCounters {
 
     /// The collected round records, round 0 = base.
     #[must_use]
-    pub fn into_reach(self, rules: Vec<crate::api::stats::RuleStats>) -> ReachStats {
+    pub fn into_reach(self) -> ReachStats {
         debug_assert!(
             self.pending_delta == 0 || !self.rounds.is_empty(),
             "every reported delta belongs to a closed round"
         );
         ReachStats {
-            rules,
             rounds: self.rounds,
         }
     }

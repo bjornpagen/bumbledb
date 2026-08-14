@@ -151,6 +151,7 @@ fn occurrence(vars: &[(u16, u16)], filters: Vec<FilterPredicate>) -> Occurrence 
         occ_id: OccId(0),
         source: crate::ir::AtomSource::Edb(REL),
         role: Role::Positive,
+        bind: None,
         vars: vars.iter().map(|(f, v)| (FieldId(*f), VarId(*v))).collect(),
         filters,
     }

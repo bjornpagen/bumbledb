@@ -2,7 +2,7 @@ use super::{Answers, Cell, EitherSink, ResolveMemo, ValueType};
 
 use crate::error::Result;
 use crate::exec::sink::ProjectionSink;
-use crate::ir::validate::PredicateColumn;
+use crate::ir::validate::SignatureColumn;
 use crate::storage::env::ReadTxn;
 
 /// Drains the sink into the result buffer, decoding words by result type
@@ -17,7 +17,7 @@ use crate::storage::env::ReadTxn;
 /// per find, never a bare column index.
 ///
 /// The projection drain fills **column-major**: the type dispatch runs
-/// once per column per finalize, not per cell (the `PredicateColumn`
+/// once per column per finalize, not per cell (the `SignatureColumn`
 /// roster is sealed at validation — the per-column writer is the match
 /// arm, and each arm's row loop is monomorphic). Cells stay row-major
 /// (`answer * arity + column`) — only the fill order is columnar, so
@@ -43,7 +43,7 @@ pub(super) fn finalize(
     answer_scratch: &mut Vec<u64>,
     memo: &mut ResolveMemo,
     txn: &ReadTxn<'_>,
-    columns: &[PredicateColumn],
+    columns: &[SignatureColumn],
     out: &mut Answers,
 ) -> Result<()> {
     memo.clear();
@@ -80,7 +80,7 @@ fn fill_resolved_answers(
     out: &mut Answers,
     txn: &ReadTxn<'_>,
     memo: &mut ResolveMemo,
-    columns: &[PredicateColumn],
+    columns: &[SignatureColumn],
     sink: &ProjectionSink,
 ) -> Result<()> {
     let arity = columns.len();
@@ -162,7 +162,7 @@ fn push_resolved_answer(
     out: &mut Answers,
     txn: &ReadTxn<'_>,
     memo: &mut ResolveMemo,
-    columns: &[PredicateColumn],
+    columns: &[SignatureColumn],
     answer: &[u64],
 ) -> Result<()> {
     let mut word = 0;

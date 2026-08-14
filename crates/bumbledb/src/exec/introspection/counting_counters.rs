@@ -26,7 +26,7 @@ impl CountingCounters {
     }
 
     /// A node-less counter for a key-probe rule inside a multi-rule
-    /// program: only the emit count exists (the union accounting — one
+    /// query: only the emit count exists (the union accounting — one
     /// probe, at most one emit); no join ever runs, so the per-node
     /// tables stay empty and unindexed.
     #[must_use]

@@ -3,14 +3,14 @@
 //! predicate's signature derivation, the ONE place result-column types
 //! come from.
 
-use super::{AggKind, Context, Predicate, PredicateColumn, RuleTyping};
+use super::{AggKind, Context, RuleTyping, Signature, SignatureColumn};
 use crate::error::ValidationError;
 use crate::ir::normalize::LoweredRule;
 use crate::ir::{AggOp, FindTerm, VarId};
 use bumbledb_theory::schema::ValueType;
 use std::collections::BTreeSet;
 
-impl Predicate {
+impl Signature {
     /// Derives the signature from one rule's find terms and resolved
     /// typing — called exactly once, at validation, on rule 0 (the
     /// per-rule alignment already proved every rule derives the same
@@ -21,22 +21,22 @@ impl Predicate {
             .finds
             .iter()
             .map(|term| match term {
-                FindTerm::Var(var) => PredicateColumn {
+                FindTerm::Var(var) => SignatureColumn {
                     ty: var_type(var),
                     op: None,
                 },
                 // The measure positions are u64 by definition (|[s, e)| =
                 // e − s — 20-query-ir § the measure): projected plain,
                 // folded under the fold's kind.
-                FindTerm::Measure(_) => PredicateColumn {
+                FindTerm::Measure(_) => SignatureColumn {
                     ty: ValueType::U64,
                     op: None,
                 },
-                FindTerm::AggregateMeasure { op, .. } => PredicateColumn {
+                FindTerm::AggregateMeasure { op, .. } => SignatureColumn {
                     ty: ValueType::U64,
                     op: Some(AggKind::of(*op)),
                 },
-                FindTerm::Aggregate { op, over } => PredicateColumn {
+                FindTerm::Aggregate { op, over } => SignatureColumn {
                     ty: match op {
                         AggOp::Count => ValueType::U64,
                         AggOp::Sum | AggOp::Min | AggOp::Max | AggOp::Pack => {

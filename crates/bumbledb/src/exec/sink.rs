@@ -4,7 +4,7 @@
 //! `20-query-ir.md`).
 //!
 //! **The sinks are where union lives** (docs/architecture/40-execution.md
-//! § the rule loop): one sink hears every rule of a program, its seen-set
+//! § the rule loop): one sink hears every rule of a query, its seen-set
 //! spanning rules — reset once per execution, never per rule — so a later
 //! rule re-deriving a head fact is absorbed exactly like a within-rule
 //! duplicate. No merge node, no concat-then-dedup pass exists anywhere
@@ -28,7 +28,7 @@
 //! to one account are two distinct bindings (their fresh ids differ), so
 //! `Sum(amount) by account` is 200, under ANY spelling of the rule's
 //! conditions (`or` included — the DNF re-key above). Only a
-//! hand-written multi-rule program coarsens the domain to the head
+//! hand-written multi-rule query coarsens the domain to the head
 //! projection. The stated footgun: joining a
 //! multiplicity-adding relation multiplies the binding set, exactly as in
 //! SQL.

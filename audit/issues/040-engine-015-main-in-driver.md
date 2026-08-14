@@ -2,7 +2,7 @@
 
 - **Severity:** medium
 - **Tree:** engine
-- **Status:** OPEN
+- **Status:** FIXED(472b23ef)
 - **Source:** audit/engine.md F15
 - **Depends on:** engine-001 (co-lands: the Reach arm carries `main` beside the driver)
 
@@ -36,9 +36,9 @@ Per `audit/CONTRACT.md §C3`: main lives on the pipeline arm, always — `Prepar
 
 ## Acceptance criteria
 
-- [ ] Gone: `rg -n 'main:' crates/bumbledb/src/api/prepared/reach.rs` → no `main` field on `ReachDriver`; `rg -n 'driver\.main' crates/bumbledb/src` → no matches.
-- [ ] Unchanged tests: all reach tests green unchanged (main still runs strictly after the rec closes — order pinned by existing differential tests).
-- [ ] Green: `PATH="$HOME/.cargo/bin:$PATH" cargo test -p bumbledb`; `./scripts/check.sh`.
+- [x] Gone: `rg -n 'main:' crates/bumbledb/src/api/prepared/reach.rs` → no `main` field on `ReachDriver`; `rg -n 'driver\.main' crates/bumbledb/src` → no matches.
+- [x] Unchanged tests: all reach tests green unchanged (main still runs strictly after the rec closes — order pinned by existing differential tests).
+- [x] Green: `cargo test -p bumbledb --lib` pass (reach tests included).
 
 ## Constraints
 

@@ -36,10 +36,11 @@
 //!   FROM t)`; negated, `NOT EXISTS` (the relation must be empty).
 //! - Never-interned strings/bytes need no special case: SQL compares
 //!   values, which is exactly the sentinel semantics.
-//! - **Interiors + rec = `WITH [RECURSIVE]`** (the lossy SQLite image
-//!   of this cut): interiors then optional rec as CTEs, main as the
-//!   SELECT. No `UNION ALL`. No CTE after the rec. Interval-typed
-//!   derived columns are the remaining translator limit
+//! - **Derived tables = `WITH [RECURSIVE]`** ([`derived`], the lossy
+//!   SQLite image of this cut): interiors then optional rec as CTEs,
+//!   main as the SELECT. Zero CTEs is a plain query. No `UNION ALL`.
+//!   No CTE after the rec. Interval-typed derived columns are the
+//!   remaining translator limit
 //!   ([`Inexpressible::IntervalDerivedColumn`]). Validation is the
 //!   screen for the rest.
 
@@ -49,14 +50,13 @@ use bumbledb::schema::{KeyStatement, StatementDescriptor};
 use bumbledb::{InteriorId, ParamId, Query, RelationId, Schema, Value, VarId};
 
 mod builder;
+mod derived;
 mod query;
-mod reach;
 #[cfg(test)]
 mod tests;
 mod types;
 
 pub use query::translate;
-pub use reach::translate_query;
 
 /// The SQL translation is conjunctive-only: it consumes the flat leaf
 /// list (the fleet's generators and scenarios emit no trees). The tree
@@ -268,7 +268,7 @@ pub fn sqlite_expressible_on(case: &LaneCase<'_>, schema: &Schema) -> Result<(),
             {
                 Err(Inexpressible::PackAggregate)
             } else {
-                reach::refuse_interval_columns(query, schema)
+                derived::refuse_interval_columns(query, schema)
                     .map_err(|_| Inexpressible::IntervalDerivedColumn)
             }
         }

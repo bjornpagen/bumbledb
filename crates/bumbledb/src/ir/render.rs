@@ -145,17 +145,16 @@ pub fn render(schema: &Schema, query: &Query) -> String {
             if !out.is_empty() {
                 out.push('\n');
             }
-            let _ = write!(out, "interior p{id}");
+            let _ = write!(out, "interior {id}");
             render_rule(&mut out, schema, &refs, rule);
         }
     }
     if let Some(rec) = &query.rec {
-        let id = query.interiors.len();
         for rule in rec.base.iter().chain(&rec.rec) {
             if !out.is_empty() {
                 out.push('\n');
             }
-            let _ = write!(out, "recursive p{id}");
+            out.push_str("rec");
             render_rule(&mut out, schema, &refs, rule);
         }
     }

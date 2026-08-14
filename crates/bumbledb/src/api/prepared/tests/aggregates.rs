@@ -94,7 +94,7 @@ fn interval_find_round_trips_through_answers() {
     });
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
     let types: Vec<ValueType> = prepared
-        .predicate()
+        .signature()
         .columns
         .iter()
         .map(|column| column.ty.clone())

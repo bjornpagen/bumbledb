@@ -527,7 +527,7 @@ pub fn verify_family(
         .prepare(&query)
         .map_err(|e| format!("{}: prepare: {e:?}", family.name))?;
     let types: Vec<bumbledb::schema::ValueType> = prepared
-        .predicate()
+        .signature()
         .columns
         .iter()
         .map(|column| column.ty.clone())
@@ -658,7 +658,7 @@ pub fn bench_families(
         let translated = translate(&query, schema(), &[])
             .map_err(|e| format!("{}: translate: {e}", family.name))?;
         let types: Vec<bumbledb::schema::ValueType> = prepared
-            .predicate()
+            .signature()
             .columns
             .iter()
             .map(|column| column.ty.clone())

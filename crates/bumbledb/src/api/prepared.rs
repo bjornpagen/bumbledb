@@ -16,7 +16,7 @@ use crate::exec::dispatch::KeyProbePlan;
 use crate::exec::run::{Bindings, Executor};
 use crate::exec::sink::{AggregateSink, FindSpec, ProjectionSink};
 use crate::image::view::{Const, FilterPredicate};
-use crate::ir::validate::Predicate;
+use crate::ir::validate::Signature;
 use crate::plan::fj::ValidatedPlan;
 use crate::schema::Schema;
 use bumbledb_theory::schema::ValueType;
@@ -188,7 +188,7 @@ pub struct PreparedQuery<'s, S> {
     /// — checked first at every execution entry.
     env_instance: u64,
     /// The rule-disjointness proof (docs/architecture/40-execution.md
-    /// § set semantics): `Some` iff the program's rules are provably
+    /// § set semantics): `Some` iff the query's rules are provably
     /// pairwise disjoint, carrying the witness — the (relation, field)
     /// whose differing pinned literals forbid cross-rule head
     /// collisions. `None` for single-rule programs and unproven pairs.
@@ -206,30 +206,26 @@ pub struct PreparedQuery<'s, S> {
     /// prepare with the killing condition — `rules` below holds only the
     /// live ones. Readers: introspection and the structured stats.
     dead: Vec<crate::api::stats::DeadRule>,
-    /// Per rule, in rule order: the rule's validated plan plus its
-    /// plan-shaped execution scratch — the whole plan pipeline ran per
-    /// rule at prepare. Execution runs interiors, then rec, then main
-    /// **sequentially**. Main rules share the ONE sink below
-    /// (docs/architecture/40-execution.md § the rule loop): the sink
-    /// resets once per execution, never per rule, and its seen-set
-    /// spanning rules is the entire implementation of ∪ — no merge
-    /// node, no concat-then-dedup pass exists.
-    pub(crate) interiors: Vec<PreparedInterior>,
-    pub(crate) body: PreparedBody,
-    /// Rec-round budget. Inert when `rec` is `None` (rounds never
-    /// advance). Host-settable on every prepared query.
-    rounds_budget: u32,
+    /// Interiors then rec then main, as one pipeline sum: interiors
+    /// live inside each arm, never as a sidecar. Dead main is
+    /// `Cq { rules: [] }` — Empty is not a variant. Main rules share
+    /// the ONE sink below (docs/architecture/40-execution.md § the
+    /// rule loop): the sink resets once per execution, never per rule,
+    /// and its seen-set spanning rules is the entire implementation of
+    /// ∪ — no merge node, no concat-then-dedup pass exists.
+    pub(crate) pipeline: PreparedPipeline,
     /// Derived-tuples budget. Judged after each interior and between
-    /// rec rounds. Host-settable on every prepared query.
+    /// rec rounds. Host-settable on every prepared query. The rounds
+    /// axis lives on [`PreparedPipeline::Reach`].
     tuples_budget: u64,
     /// Finished derived images (interiors then rec) plus per-occurrence
     /// bind scratch for `run_join`'s Interior arm.
-    derived: crate::api::prepared::reach::DerivedScratch,
-    /// The predicate the query defines ([`Predicate`] — the signature
-    /// authority), sealed at validation and cloned here at prepare. It
-    /// sits BESIDE the body because `PreparedBody::Empty` still has an
-    /// arity and buffer types (the empty path's `out.arity` reads it).
-    predicate: Predicate,
+    derived: crate::api::prepared::reach::DerivedImages,
+    /// The signature the query defines, sealed at validation and cloned
+    /// here at prepare. It sits beside the pipeline because a dead-main
+    /// Cq still has an arity and buffer types (the empty path's
+    /// `out.arity` reads it).
+    signature: Signature,
     /// Dense per-param bind contracts (validation rejects id gaps): one
     /// sum carries scalar/set/mask shape, element type, and point-domain
     /// status without parallel flags.
@@ -290,6 +286,11 @@ pub struct PreparedQuery<'s, S> {
     /// [`Self::rendered_query`] diagnostic accessor. Cold data: read only
     /// on diagnostic surfaces, never on the warm path.
     rendered: String,
+    /// Direct point-lane parsed at build: a Cq with no interiors and
+    /// exactly one key probe whose finds are all plain variables.
+    /// Execute and profile consume this flag; they do not re-match the
+    /// pipeline at run time.
+    key_probe_direct: bool,
     /// Marker: a prepared query is single-threaded scratch (`Cell` makes
     /// it `!Sync`), pinned to schema `S` (`fn() -> S` keeps auto-traits
     /// independent of `S`).
@@ -307,23 +308,63 @@ pub(crate) struct PreparedInterior {
     pub(super) ray_probes: Vec<RayProbeSet>,
 }
 
-/// The prepared main body. Emptiness is a property of the main union,
-/// not a sentinel rule impersonating one of its disjuncts. Interior
-/// units live on [`PreparedQuery::interiors`], never here.
-/// Interiors-only is `Rules` or `Empty` — never `Reach`.
-pub(crate) enum PreparedBody {
-    /// Every **main** rule was statically refuted. Binding still runs
-    /// so errors surface; the interior preamble still runs when
-    /// interiors are nonempty. Execution of main touches no sink.
-    Empty,
-    /// Main rules; `rec` is `None`.
-    Rules(Vec<PreparedRule>),
-    /// Rec is present. Interiors-only never builds this.
-    Reach(Box<reach::ReachDriver>),
+/// One prepared pipeline. Interiors are data in both arms (the CQ is
+/// the empty prefix). Statically-dead main is `rules: []` — Empty is
+/// not a variant; the empty fast path is the zero-iteration loop.
+pub(crate) enum PreparedPipeline {
+    Cq {
+        interiors: Vec<PreparedInterior>,
+        rules: Vec<PreparedRule>,
+    },
+    Reach {
+        interiors: Vec<PreparedInterior>,
+        driver: Box<reach::ReachDriver>,
+        main: Vec<PreparedRule>,
+        rounds_budget: u32,
+        rec_id: crate::ir::InteriorId,
+        derived_count: u32,
+    },
+}
+
+impl PreparedPipeline {
+    pub(super) fn interiors(&self) -> &[PreparedInterior] {
+        match self {
+            Self::Cq { interiors, .. } | Self::Reach { interiors, .. } => interiors,
+        }
+    }
+
+    pub(super) fn interiors_mut(&mut self) -> &mut Vec<PreparedInterior> {
+        match self {
+            Self::Cq { interiors, .. } | Self::Reach { interiors, .. } => interiors,
+        }
+    }
+
+    pub(super) fn main_rules(&self) -> &[PreparedRule] {
+        match self {
+            Self::Cq { rules, .. } => rules,
+            Self::Reach { main, .. } => main,
+        }
+    }
+
+    pub(super) fn main_rules_mut(&mut self) -> &mut [PreparedRule] {
+        match self {
+            Self::Cq { rules, .. } => rules,
+            Self::Reach { main, .. } => main,
+        }
+    }
+
+    /// No interiors and no surviving main rules — the zero-iteration Cq.
+    pub(super) fn is_empty_cq(&self) -> bool {
+        matches!(
+            self,
+            Self::Cq { interiors, rules } if interiors.is_empty() && rules.is_empty()
+        )
+    }
 }
 
 /// One rule's prepared artifact. Its kind carries exactly the scratch that
-/// kind can consume.
+/// kind can consume. Rec arms are [`RecArm`], inhabitable only in
+/// [`reach::ReachDriver::rec`].
 #[expect(
     clippy::large_enum_variant,
     reason = "the decided representation keeps rule scratch inline; programs contain at most the validated rule cap"
@@ -331,34 +372,17 @@ pub(crate) enum PreparedBody {
 pub(crate) enum PreparedRule {
     FreeJoin(FreeJoinRule),
     KeyProbe(KeyProbeRule),
-    /// A rec arm: the unique positive self-atom is the delta
-    /// occurrence. Extra EDB / interior atoms are accumulated/EDB,
-    /// never a second delta. Runs only under [`PreparedBody::Reach`],
-    /// in rounds ≥ 1.
-    Recursive(RecursiveRule),
 }
 
-/// A rec arm's one delta variant: the unique positive self-atom is the
-/// delta occurrence — bound per round to the previous round's frontier
-/// — and every other Interior occurrence is a finished interior or the
-/// accumulated rec. No k-variant minting.
-struct RecursiveRule {
-    variant: DeltaVariant,
-}
-
-/// One delta variant: the marked occurrence and its own fully prepared
-/// rule artifact — plan, executor, memo, resolved-filter scratch — from
-/// the ordinary per-rule pipeline, the delta and accumulated
-/// occurrences costed on the selectivity ladder's floors (the
-/// param-plan precedent; `plan/selectivity.rs`). Pinned at prepare: no
-/// round ever re-plans.
-struct DeltaVariant {
-    /// The delta occurrence — bound to Δᵣ₋₁'s transient image.
+/// One rec arm: the unique positive self-atom is the delta occurrence.
+/// Extra EDB / interior atoms are accumulated/EDB, never a second
+/// delta. Inhabitable only in [`reach::ReachDriver::rec`].
+pub(crate) struct RecArm {
     delta: crate::ir::normalize::OccId,
     rule: FreeJoinRule,
 }
 
-struct FreeJoinRule {
+pub(crate) struct FreeJoinRule {
     plan: ValidatedPlan,
     executor: Executor,
     /// The rule's head projection: per head position, the output spec
@@ -425,7 +449,7 @@ struct RayProbe {
     measured_slot: usize,
 }
 
-struct KeyProbeRule {
+pub(crate) struct KeyProbeRule {
     plan: KeyProbePlan,
     distinct_witness: Option<crate::plan::fj::DistinctWitness>,
     finds: Vec<FindSpec>,
@@ -437,78 +461,94 @@ struct KeyProbeRule {
     key_probe_finds: Option<Vec<(bumbledb_theory::schema::FieldId, ValueType)>>,
 }
 
-impl PreparedBody {
-    fn rules(&self) -> &[PreparedRule] {
-        match self {
-            Self::Empty => &[],
-            Self::Rules(rules) => rules,
-            Self::Reach(driver) => &driver.main,
-        }
-    }
-
-    fn rules_mut(&mut self) -> &mut [PreparedRule] {
-        match self {
-            Self::Empty => &mut [],
-            Self::Rules(rules) => rules,
-            Self::Reach(driver) => &mut driver.main,
-        }
-    }
-}
-
 impl<S> PreparedQuery<'_, S> {
     fn visit_rules(&self, mut visit: impl FnMut(&PreparedRule)) {
-        for interior in &self.interiors {
-            for rule in &interior.rules {
-                visit(rule);
-            }
-        }
-        match &self.body {
-            PreparedBody::Empty => {}
-            PreparedBody::Rules(rules) => {
+        match &self.pipeline {
+            PreparedPipeline::Cq { interiors, rules } => {
+                for interior in interiors {
+                    for rule in &interior.rules {
+                        visit(rule);
+                    }
+                }
                 for rule in rules {
                     visit(rule);
                 }
             }
-            PreparedBody::Reach(driver) => {
+            PreparedPipeline::Reach {
+                interiors,
+                driver,
+                main,
+                ..
+            } => {
+                for interior in interiors {
+                    for rule in &interior.rules {
+                        visit(rule);
+                    }
+                }
                 for rule in &driver.base {
                     visit(rule);
                 }
-                for rule in &driver.rec {
-                    visit(rule);
-                }
-                for rule in &driver.main {
+                for rule in main {
                     visit(rule);
                 }
             }
         }
     }
 
-    /// Every prepared rule this query carries — interiors, rec base/rec
-    /// arms, then main. Cold surfaces only (the batch-size test
-    /// affordance).
+    /// Every prepared rule this query carries — interiors, rec base,
+    /// then main. Rec arms are [`RecArm`], visited via
+    /// [`Self::visit_rec_arms_mut`]. Cold surfaces only (the batch-size
+    /// test affordance).
     fn visit_rules_mut(&mut self, mut visit: impl FnMut(&mut PreparedRule)) {
-        for interior in &mut self.interiors {
-            for rule in &mut interior.rules {
-                visit(rule);
-            }
-        }
-        match &mut self.body {
-            PreparedBody::Empty => {}
-            PreparedBody::Rules(rules) => {
+        match &mut self.pipeline {
+            PreparedPipeline::Cq { interiors, rules } => {
+                for interior in interiors {
+                    for rule in &mut interior.rules {
+                        visit(rule);
+                    }
+                }
                 for rule in rules {
                     visit(rule);
                 }
             }
-            PreparedBody::Reach(driver) => {
+            PreparedPipeline::Reach {
+                interiors,
+                driver,
+                main,
+                ..
+            } => {
+                for interior in interiors {
+                    for rule in &mut interior.rules {
+                        visit(rule);
+                    }
+                }
                 for rule in &mut driver.base {
                     visit(rule);
                 }
-                for rule in &mut driver.rec {
+                for rule in main {
                     visit(rule);
                 }
-                for rule in &mut driver.main {
-                    visit(rule);
-                }
+            }
+        }
+    }
+
+    fn visit_rec_arms_mut(&mut self, mut visit: impl FnMut(&mut RecArm)) {
+        if let PreparedPipeline::Reach { driver, .. } = &mut self.pipeline {
+            for arm in &mut driver.rec {
+                visit(arm);
+            }
+        }
+    }
+
+    fn visit_free_join(&self, mut visit: impl FnMut(&FreeJoinRule)) {
+        self.visit_rules(|rule| {
+            if let PreparedRule::FreeJoin(fj) = rule {
+                visit(fj);
+            }
+        });
+        if let PreparedPipeline::Reach { driver, .. } = &self.pipeline {
+            for arm in &driver.rec {
+                visit(&arm.rule);
             }
         }
     }
@@ -519,8 +559,6 @@ impl PreparedRule {
         match self {
             Self::FreeJoin(rule) => &rule.finds,
             Self::KeyProbe(rule) => &rule.finds,
-            // Variants project one head: any variant speaks for the rule.
-            Self::Recursive(rule) => &rule.variant.rule.finds,
         }
     }
 
@@ -528,9 +566,6 @@ impl PreparedRule {
         match self {
             Self::FreeJoin(rule) => rule.plan.slot_count(),
             Self::KeyProbe(rule) => rule.plan.slot_count(),
-            // One rule, one variable scope: every variant shares the
-            // rule's slot layout (plans reorder nodes, never slots).
-            Self::Recursive(rule) => rule.variant.rule.plan.slot_count(),
         }
     }
 
@@ -538,9 +573,6 @@ impl PreparedRule {
         match self {
             Self::FreeJoin(rule) => rule.plan.distinct_witness(),
             Self::KeyProbe(rule) => rule.distinct_witness,
-            // A recursive rule reads its own predicate's transient set —
-            // no key coverage exists (`plan/fj/provably_distinct.rs`).
-            Self::Recursive(_) => None,
         }
     }
 
@@ -550,11 +582,6 @@ impl PreparedRule {
         match self {
             Self::FreeJoin(rule) => &rule.dedup_spans,
             Self::KeyProbe(rule) => &rule.dedup_spans,
-            // One rule, one variable scope: every variant shares the
-            // rule's slot layout (plans reorder nodes, never slots) —
-            // and a recursive rule's head is projection-shaped anyway
-            // (folds are refused through cycles).
-            Self::Recursive(rule) => &rule.variant.rule.dedup_spans,
         }
     }
 
@@ -562,9 +589,6 @@ impl PreparedRule {
         match self {
             Self::FreeJoin(rule) => &rule.pinned,
             Self::KeyProbe(_) => &[],
-            // Variants pin the same stored statistics (the same reads,
-            // per variant): variant 0 speaks for the rule.
-            Self::Recursive(rule) => &rule.variant.rule.pinned,
         }
     }
 }

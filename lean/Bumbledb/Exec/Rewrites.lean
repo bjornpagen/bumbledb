@@ -54,7 +54,7 @@ the identity variable mapping.
 * **The subsumption sweep** — `plan/ground.rs::subsume` (classical
   UCQ minimization restricted to the normalized-form witness;
   `plan/ground.rs::subsumes`, the ordered-pair check), wired after
-  grounding at `api/prepared/build.rs::ground_program`: the deleted
+  grounding at `api/prepared/build.rs::ground_main`: the deleted
   rules are filtered out of the prepared program. Modeled:
   `SubsumeWitness`, `subsume_containment`, `RewriteStep.subsume` — the
   sixth rewrite, in the chain (the discharge record below).
@@ -99,7 +99,7 @@ the identity variable mapping.
   occurrences only.
 * **Rule subsumption is MODELED — the sixth rewrite, discharged**
   (2026-07-15; `plan/ground.rs::subsume`, wired at
-  `api/prepared/build.rs::ground_program`): after grounding, a rule
+  `api/prepared/build.rs::ground_main`): after grounding, a rule
   whose normalized body contains a sibling's — identical `finds`,
   identical participating-atom multiset with the keeper's per-atom
   filters ⊆ the candidate's, the keeper's residual sets ⊆ the
@@ -1082,7 +1082,7 @@ theorem chained_elimination_sound {C : Classify} {I : Instance}
 /-! ## Item 2b — the subsumption sweep: rule deletion under containment
 
 `plan/ground.rs::subsume`, wired after grounding at
-`api/prepared/build.rs::ground_program`: rule K subsumes rule D when,
+`api/prepared/build.rs::ground_main`: rule K subsumes rule D when,
 after elimination, K's normalized body equals D's modulo the filters
 elimination removed — identical head projection, identical
 participating-atom multisets with K's per-atom filters ⊆ D's, K's
@@ -2347,7 +2347,7 @@ inductive RewriteStep (T : Theory) (C : Classify) :
       (h : StaticallyEmpty C r) :
       RewriteStep T C (Query.plain n (pre ++ r :: post)) (Query.plain n (pre ++ post))
   /-- The subsumption deletion (`plan/ground.rs::subsume`, wired at
-  `api/prepared/build.rs::ground_program`): a rule the witness proves
+  `api/prepared/build.rs::ground_main`): a rule the witness proves
   covered by a KEPT sibling is deleted from the program — the sixth
   denotation-affecting rewrite, in the chain. The keeper's membership
   (`hk`) is the sweep's own discipline made a premise: a deleted rule

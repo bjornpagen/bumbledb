@@ -368,7 +368,7 @@ pub fn verify_family(
         .prepare(&query)
         .map_err(|e| format!("{}: prepare: {e:?}", family.name))?;
     let types: Vec<bumbledb::schema::ValueType> = prepared
-        .predicate()
+        .signature()
         .columns
         .iter()
         .map(|column| column.ty.clone())
@@ -469,6 +469,13 @@ pub fn bench_families(
             (ours, ghz_ours)
         };
 
+        let exec = {
+            let args = param_args(&draws[0]);
+            let (_, stats) = db
+                .read(|snap| snap.profile(&mut prepared, &args))
+                .map_err(|e| format!("{}: profile: {e:?}", family.name))?;
+            Some(crate::driver::exec_digest(&stats))
+        };
         let mut mirror = sqlite_run::PreparedFamily::new(
             &conn,
             &translated(),
@@ -499,7 +506,7 @@ pub fn bench_families(
             theirs: theirs.stats,
             ratio_p50,
             alloc: alloc_report,
-            exec: None, // the profile path is query-shaped; rec queries skip it
+            exec,
             ghz: Some(merged.into()),
             p50_norm: ours.p50_norm,
         });

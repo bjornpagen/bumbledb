@@ -144,7 +144,7 @@ fn the_du_arm_union_proves_and_an_unselected_arm_unproves() {
 }
 
 /// introspection names the proof — `disjoint_rules: proven (Item.kind)` — and
-/// the structured stats carry the same witness; the unproven program
+/// the structured stats carry the same witness; the unproven query
 /// says so.
 #[test]
 fn introspection_names_the_disjointness_witness() {
@@ -247,7 +247,7 @@ fn a_fold_over_a_proven_disjoint_union_absorbs_nothing() {
         Some(4),
         "all four head projections inhabit the spanning set"
     );
-    assert!(stats.rules.iter().all(|rule| rule.absorbed == 0));
+    assert!(stats.rules().iter().all(|rule| rule.absorbed == 0));
     // The naive model: fold domain = ∪ head-projected bindings; per
     // group (id) the projection is the singleton (id, payload), so the
     // Sum is the payload and the kind-2 item never appears.
@@ -311,7 +311,7 @@ fn a_three_arm_union_absorbs_nothing_across_rules() {
         "all three pairs share the witness"
     );
     let (out, stats) = prepared.profile(&txn, &cache, &[]).expect("profile");
-    assert!(stats.rules.iter().all(|rule| rule.absorbed == 0));
+    assert!(stats.rules().iter().all(|rule| rule.absorbed == 0));
     let mut answers: Vec<(u64, u64)> = (0..out.len())
         .map(|answer| {
             let (AnswerValue::U64(id), AnswerValue::U64(payload)) =

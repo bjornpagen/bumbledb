@@ -34,7 +34,7 @@ use bumbledb::{AtomSource, InteriorId, Query, Rec, RelationId, Rule, Term, Value
 use crate::corpus_gen::Rng;
 use crate::naive::Tuple;
 use crate::querygen::{self, target};
-use crate::translate::{Inexpressible, LaneCase, sqlite_expressible, translate_query};
+use crate::translate::{Inexpressible, LaneCase, sqlite_expressible, translate};
 
 use super::{MAX_ANSWER_ROWS, NAIVE_BUDGET_MS, World, push_fact, strings_block, world_blocks};
 
@@ -236,7 +236,7 @@ fn sqlite_answers(world: &World, query: &Query) -> BTreeSet<Tuple> {
             .expect("insert");
         }
     }
-    let translated = translate_query(query, target::schema(), &[]).expect("translates");
+    let translated = translate(query, target::schema(), &[]).expect("translates");
     let arity = query.head.len();
     let mut statement = conn.prepare(&translated.sql).expect("prepare");
     let rows = statement

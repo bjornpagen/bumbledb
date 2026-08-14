@@ -200,7 +200,7 @@ fn deep_chain_closure_matches_naive_across_repeat_executions_and_commits() {
 /// whose base is Link and whose step joins the interior: the rec round
 /// loop reads the interior's FINISHED image every round while appending
 /// its own accumulator. Two recursive SCCs are unwritable this cut;
-/// this is the interiors-then-rec path the two-strata program became.
+/// this is the interiors-then-rec path the reach query became.
 #[test]
 fn a_finished_interior_feeds_a_linear_rec() {
     let dir = common::TempDir::new("hunt-interior-then-rec");
@@ -346,7 +346,7 @@ fn a_fold_over_the_finished_closure_matches_naive_counts() {
 #[test]
 #[expect(
     clippy::too_many_lines,
-    reason = "one four-column recursive program spelled whole, clearer kept together"
+    reason = "one four-column reach query spelled whole, clearer kept together"
 )]
 fn typed_payload_propagates_through_the_recursive_accumulator() {
     let dir = common::TempDir::new("hunt-typed-payload");

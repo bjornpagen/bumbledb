@@ -542,7 +542,7 @@ fn mutate(rng: &mut Rng, query: &mut Query) {
                     .push((Gauntlet::BUSY_PERSON, Term::Measure(VarId(1))));
             }
         }
-        // The empty program / the empty head.
+        // The empty query / the empty head.
         12 => {
             if rng.chance(2) {
                 query.rules.clear();

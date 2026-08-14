@@ -168,3 +168,24 @@ fn a_full_verify_at_s_succeeds() {
     assert!(!stamp_matches(&other, &stamp_path));
     let _ = std::fs::remove_dir_all(&config.out_dir);
 }
+
+/// bench-003: the mixed `random_query` entry feeds the stamp. A default
+/// randomized batch must include interiors/rec — not a second reach loop.
+#[test]
+fn the_default_randomized_batch_draws_an_interiors_or_rec_query() {
+    let cfg = GenConfig {
+        seed: 1,
+        scale: Scale::S,
+    };
+    let mut rng = crate::corpus_gen::Rng::new(cfg.seed ^ 0x0112_0001);
+    let derived = (0..DEFAULT_RANDOM_CASES)
+        .filter(|_| {
+            let query = crate::querygen::random_query(&mut rng, cfg);
+            !query.interiors.is_empty() || query.rec.is_some()
+        })
+        .count();
+    assert!(
+        derived > 0,
+        "DEFAULT_RANDOM_CASES mixed random_query draws must include interiors/rec (got {derived})"
+    );
+}

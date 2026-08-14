@@ -44,7 +44,7 @@ impl<V: Copy> WordMap<V> {
     /// insertion order is preserved across growth (the dense rule), so
     /// round r's frontier is exactly the entries in `[watermark, len)`.
     /// A cold reader — no flag, no branch, no state on the emit path; a
-    /// non-recursive program cannot observe it.
+    /// watermark lives on the rec sink's seen-set; a CQ query cannot observe it.
     pub fn iter_since(&self, since: usize) -> impl Iterator<Item = (&[u64], &V)> {
         self.dense[since.min(self.dense.len())..]
             .iter()

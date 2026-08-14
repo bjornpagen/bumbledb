@@ -1,4 +1,4 @@
-//! The program-shape roster: empty rule set, the rule cap, head
+//! The query-shape roster: empty rule set, the rule cap, head
 //! alignment (arity, shape, type), per-rule variable scoping, and
 //! query-global params — the rules-IR additions, each with its typed
 //! error (`docs/architecture/20-query-ir.md`, the rules shape).
@@ -184,7 +184,7 @@ fn variables_are_rule_scoped_so_one_var_id_may_differ_in_type() {
     assert_eq!(witness.rule(0).var_type(VarId(0)), &ValueType::U64);
     assert_eq!(witness.rule(1).var_type(VarId(0)), &ValueType::I64);
     let types: Vec<ValueType> = witness
-        .predicate()
+        .signature()
         .columns
         .iter()
         .map(|column| column.ty.clone())
@@ -261,7 +261,7 @@ fn param_density_is_judged_across_the_whole_program() {
 #[test]
 fn the_single_rule_program_is_the_degenerate_case() {
     // `Query::single` derives the head from the rule's own find shape;
-    // an explicit head+rules spelling of the same program validates to a
+    // an explicit head+rules spelling of the same query validates to a
     // byte-identical witness (the artifact equality the port is pinned
     // by).
     let rule = account_rule(0);
@@ -304,7 +304,7 @@ fn amount_tree_rule(conditions: Vec<ConditionTree>) -> Rule {
 }
 
 /// `(a ∨ b) ∧ (c ∨ d)` distributes to exactly four rules — DNF of a
-/// query is a set of rules, and the witness carries the Or-free program
+/// query is a set of rules, and the witness carries the Or-free query
 /// (each lowered rule's conditions are that disjunct's two leaves).
 #[test]
 fn dnf_distributes_or_pairs_to_four_rules() {
@@ -367,7 +367,7 @@ fn duplicate_rules_after_distribution_collapse() {
 }
 
 /// The empty combinations keep their algebraic readings: `And([])` is
-/// true (one rule, no conditions); a program whose every disjunction is
+/// true (one rule, no conditions); a query whose every disjunction is
 /// `Or([])` is constant false — it lowers to the empty union, rejected
 /// as the empty rule set. A nested term distributes whole.
 #[test]

@@ -2,7 +2,7 @@
 
 - **Severity:** low
 - **Tree:** engine
-- **Status:** OPEN
+- **Status:** FIXED(9c77c002)
 - **Source:** audit/engine.md F33
 - **Depends on:** engine-012/engine-029 (share the single `INTROSPECTION_VERSION` bump)
 

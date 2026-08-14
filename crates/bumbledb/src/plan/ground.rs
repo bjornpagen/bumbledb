@@ -399,7 +399,7 @@ pub(crate) struct Subsumption {
     pub by: usize,
 }
 
-/// Rule subsumption over the grounded program — classical UCQ
+/// Rule subsumption over the grounded query — classical UCQ
 /// minimization restricted to the cheap witness the DNF path actually
 /// produces (docs/architecture/40-execution.md § planner): rule K
 /// subsumes rule D when, after elimination, K's normalized body equals

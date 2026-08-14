@@ -4,7 +4,7 @@
 //! a fixed cyclic graph, held against every oracle that can run a
 //! Query — the naive interiors-then-rec-then-main eval
 //! ([`NaiveDb::query`]), the `SQLite` recursive lane
-//! ([`translate_query`] executed against the same facts), and the
+//! ([`translate`] executed against the same facts), and the
 //! ENGINE's reach driver. The recursive conformance corpus
 //! (`crate::conformance`) carries the Lean side
 //! (`lean/Bumbledb/Exec/Reach.lean: evalQueryList`) over the Tiny
@@ -21,7 +21,7 @@ use bumbledb::{
 
 use crate::fixture::field;
 use crate::naive::{Delta, NaiveDb, Tuple};
-use crate::translate::{LaneCase, sqlite_expressible_on, translate_query};
+use crate::translate::{LaneCase, sqlite_expressible_on, translate};
 
 /// The goldens' graph descriptor: `Node(id)`, `Edge(src, dst)` — no
 /// statements (nothing here judges writes; the graphs are fixed data).
@@ -187,7 +187,7 @@ fn sqlite_answers(nodes: u64, edges: &[(u64, u64)], query: &Query) -> BTreeSet<T
         )
         .expect("insert edge");
     }
-    let translated = translate_query(query, &schema, &[]).expect("translates");
+    let translated = translate(query, &schema, &[]).expect("translates");
     let arity = query.head.len();
     let mut statement = conn.prepare(&translated.sql).expect("prepare");
     let rows = statement

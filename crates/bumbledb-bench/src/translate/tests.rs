@@ -1164,7 +1164,7 @@ fn closure_query() -> Query {
 fn the_linear_closure_matches_its_hand_written_golden() {
     let query = closure_query();
     assert_eq!(sqlite_expressible(&LaneCase::Query(&query)), Ok(()));
-    let t = translate_query(&query, schema(), &[]).expect("translates");
+    let t = translate(&query, schema(), &[]).expect("translates");
     assert_eq!(t.sql, goldens::CLOSURE);
     assert!(t.params.is_empty());
 }
@@ -1187,7 +1187,7 @@ fn negation_of_finished_rec_matches_its_hand_written_golden() {
         conditions: vec![],
     }];
     assert_eq!(sqlite_expressible(&LaneCase::Query(&query)), Ok(()));
-    let t = translate_query(&query, schema(), &[]).expect("translates");
+    let t = translate(&query, schema(), &[]).expect("translates");
     assert_eq!(t.sql, goldens::CLOSURE_ROOTS);
 }
 
@@ -1240,7 +1240,7 @@ fn the_parameterized_reachable_set_matches_its_hand_written_golden() {
         }],
     };
     assert_eq!(sqlite_expressible(&LaneCase::Query(&query)), Ok(()));
-    let t = translate_query(&query, schema(), &[]).expect("translates");
+    let t = translate(&query, schema(), &[]).expect("translates");
     assert_eq!(t.sql, goldens::CLOSURE_FROM_PARAM);
     assert_eq!(
         t.params,
@@ -1290,6 +1290,6 @@ fn interval_derived_columns_error_by_name() {
         sqlite_expressible(&LaneCase::Query(&query)),
         Err(Inexpressible::IntervalDerivedColumn)
     );
-    let err = translate_query(&query, schema(), &[]).unwrap_err();
+    let err = translate(&query, schema(), &[]).unwrap_err();
     assert!(err.contains("interval-typed derived column"), "{err}");
 }

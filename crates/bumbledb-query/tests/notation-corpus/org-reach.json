@@ -3,6 +3,6 @@
   "builder": false,
   "productions": ["recursive", "interior-ordered-dense"],
   "notation": "recursive reach(c, a) | OrgParent(child: c, parent: a);\nrecursive reach(c, a) | OrgParent(child: c, parent: m), reach(m, a);\n(c, a) | reach(c, a);",
-  "normalized": "recursive p0(v0, v1) | OrgParent(child: v0, parent: v1);\nrecursive p0(v0, v2) | OrgParent(child: v0, parent: v1), p0(v1, v2);\n(v0, v1) | p0(v0, v1);",
+  "normalized": "rec(v0, v1) | OrgParent(child: v0, parent: v1);\nrec(v0, v2) | OrgParent(child: v0, parent: v1), p0(v1, v2);\n(v0, v1) | p0(v0, v1);",
   "query": {"interiors":[],"rec":{"head":[{"kind":"var"},{"kind":"var"}],"base":[{"finds":[{"kind":"var","var":0},{"kind":"var","var":1}],"atoms":[{"source":{"kind":"edb","relation":10},"bindings":[[0,{"kind":"var","var":0}],[1,{"kind":"var","var":1}]]}],"negated":[],"conditions":[]}],"rec":[{"finds":[{"kind":"var","var":0},{"kind":"var","var":2}],"atoms":[{"source":{"kind":"edb","relation":10},"bindings":[[0,{"kind":"var","var":0}],[1,{"kind":"var","var":1}]]},{"source":{"kind":"interior","interior":0},"bindings":[[0,{"kind":"var","var":1}],[1,{"kind":"var","var":2}]]}],"negated":[],"conditions":[]}]},"head":[{"kind":"var"},{"kind":"var"}],"rules":[{"finds":[{"kind":"var","var":0},{"kind":"var","var":1}],"atoms":[{"source":{"kind":"interior","interior":0},"bindings":[[0,{"kind":"var","var":0}],[1,{"kind":"var","var":1}]]}],"negated":[],"conditions":[]}]}
 }

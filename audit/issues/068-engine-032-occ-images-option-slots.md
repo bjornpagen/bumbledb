@@ -2,7 +2,7 @@
 
 - **Severity:** medium
 - **Tree:** engine
-- **Status:** OPEN
+- **Status:** FIXED(6a9f47d2)
 - **Source:** audit/engine.md F32
 - **Depends on:** engine-013 (the unified layout owns these fields), engine-010 (the consumer)
 

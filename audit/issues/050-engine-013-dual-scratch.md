@@ -2,7 +2,7 @@
 
 - **Severity:** medium
 - **Tree:** engine
-- **Status:** OPEN
+- **Status:** FIXED(6a9f47d2)
 - **Source:** audit/engine.md F13
 - **Depends on:** engine-001 (scratch lives on the pipeline arms); engine-010/032 build on this layout
 

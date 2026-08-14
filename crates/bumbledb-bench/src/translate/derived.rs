@@ -1,7 +1,8 @@
-//! `Query` interiors + rec → `WITH [RECURSIVE]` (lossy SQLite image of
-//! this cut). Interiors emit as `interior{id}` CTEs in declaration order;
-//! rec is `rec`. Main is the SELECT. No UNION ALL. No CTE after the rec
-//! — `CLOSURE_ROOTS` inlines the anti-join into main.
+//! Derived tables → `WITH [RECURSIVE]` (lossy SQLite image of this
+//! cut). Interiors emit as `interior{id}` CTEs in declaration order;
+//! rec is `rec`. Main is the SELECT. Zero CTEs is a plain query — the
+//! same SQL as the old CQ path. No UNION ALL. No CTE after the rec —
+//! `CLOSURE_ROOTS` inlines the anti-join into main.
 
 use bumbledb::ir::{FindTerm, Rec};
 use bumbledb::{AtomSource, InteriorId, ParamId, Query, Rule, Schema, Term, Value};
@@ -9,11 +10,12 @@ use bumbledb::{AtomSource, InteriorId, ParamId, Query, Rule, Schema, Term, Value
 use super::query::{SharedParams, arm_body, rule_core};
 use super::{Translated, VarCols, derived_cte_name};
 
-/// Translate interiors then optional rec then main as `WITH [RECURSIVE]`.
+/// Translate a Query: derived tables as CTEs in declaration order, then
+/// main. Zero CTEs → no `WITH` clause (the CQ path).
 ///
 /// # Errors
 ///
-/// Interval-typed derived columns, or anything [`super::query::translate`]
+/// Interval-typed derived columns, or anything [`super::query::translate_rules`]
 /// names on a rule.
 pub fn translate_query(
     query: &Query,
@@ -21,9 +23,8 @@ pub fn translate_query(
     sets: &[(ParamId, Vec<Value>)],
 ) -> Result<Translated, String> {
     refuse_interval_columns(query, schema)?;
-    let rec = rec_id(query);
     let mut params = SharedParams::default();
-    params.rec = rec;
+    params.rec = rec_id(query);
     let mut ctes: Vec<String> = Vec::new();
     for (index, interior) in query.interiors.iter().enumerate() {
         ctes.push(cte_from_rules(
@@ -36,8 +37,13 @@ pub fn translate_query(
         )?);
     }
     if let Some(rec) = &query.rec {
-        let rec_id = query.interiors.len();
-        ctes.push(rec_cte(rec_id, rec, schema, sets, &mut params)?);
+        ctes.push(rec_cte(
+            query.interiors.len(),
+            rec,
+            schema,
+            sets,
+            &mut params,
+        )?);
     }
     let main = main_select(&query.rules, schema, sets, &mut params)?;
     if ctes.is_empty() {
@@ -46,8 +52,7 @@ pub fn translate_query(
             params: params.params,
         });
     }
-    let recursive = query.rec.is_some();
-    let with = if recursive {
+    let with = if query.rec.is_some() {
         format!("WITH RECURSIVE {}", ctes.join(", "))
     } else {
         format!("WITH {}", ctes.join(", "))

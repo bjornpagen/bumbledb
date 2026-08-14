@@ -4,7 +4,7 @@
 
 use super::*;
 use crate::image::{ColumnSpan, ColumnWidth};
-use crate::ir::normalize::normalize;
+use crate::ir::normalize::normalize_predicate;
 use crate::ir::validate::validate as validate_ir;
 use crate::ir::{Atom, CmpOp, Comparison, ConditionTree, FindTerm, Query, Rule, Term};
 use crate::plan::planner::{OccStats, plan};
@@ -98,7 +98,7 @@ fn stats(rows_and_distincts: &[(u64, &[(u16, u64)])]) -> Vec<OccStats> {
 /// stats, lower, factor, validate into the witness.
 fn witness(schema: &Schema, query: &Query, occ_stats: &[OccStats]) -> ValidatedPlan {
     let validated = validate_ir(schema, query).expect("valid query");
-    let normalized = normalize(schema, &validated).remove(0);
+    let normalized = normalize_predicate(schema, &validated, &[]).remove(0);
     let join_order = plan(&normalized, schema, occ_stats);
     let mut fj_plan = binary2fj(&normalized, &join_order);
     factor(&mut fj_plan);

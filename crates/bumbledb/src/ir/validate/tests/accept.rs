@@ -350,7 +350,7 @@ fn accepts_pack_and_pins_the_interval_result_type() {
     );
     let witness = validate(&schema(), &query).expect("valid");
     let types: Vec<ValueType> = witness
-        .predicate()
+        .signature()
         .columns
         .iter()
         .map(|column| column.ty.clone())

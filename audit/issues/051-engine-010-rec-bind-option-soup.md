@@ -2,7 +2,7 @@
 
 - **Severity:** high
 - **Tree:** engine
-- **Status:** OPEN
+- **Status:** FIXED(6a9f47d2)
 - **Source:** audit/engine.md F10
 - **Depends on:** engine-013 (unified derived-images layout), engine-001
 

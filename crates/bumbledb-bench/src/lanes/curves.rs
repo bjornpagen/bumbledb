@@ -584,7 +584,7 @@ fn curve_point<S>(
         .prepare(&bundle.query)
         .map_err(|e| format!("{name}: prepare: {e:?}"))?;
     let types: Vec<ValueType> = prepared
-        .predicate()
+        .signature()
         .columns
         .iter()
         .map(|column| column.ty.clone())
@@ -762,7 +762,7 @@ fn warmth_panel<S: bumbledb::Theory + Copy>(
             .prepare(&bundle.query)
             .map_err(|e| format!("warmth prepare: {e:?}"))?;
         prepared
-            .predicate()
+            .signature()
             .columns
             .iter()
             .map(|column| column.ty.clone())
@@ -1552,7 +1552,7 @@ mod tests {
         let bundle = calendar_bundle("busy_scan", &cfg).expect("bundle");
         let mut prepared = db.prepare(&bundle.query).expect("prepare");
         let types: Vec<ValueType> = prepared
-            .predicate()
+            .signature()
             .columns
             .iter()
             .map(|column| column.ty.clone())
