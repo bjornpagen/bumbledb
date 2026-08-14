@@ -375,10 +375,10 @@ def decodeReachRule (j : Json) : Except String Query.Rule := do
     (decodeCondition 64)
   return { finds, atoms, negated, conditions }
 
-/-- One named interior: arity plus deriving rules. -/
+/-- One named interior: rules; JSON `arity` is parsed and discarded. -/
 def decodeInterior (j : Json) : Except String Query.Interior := do
-  return { arity := ← natKey j "arity",
-           rules := ← (← (← j.getObjVal? "rules").getArr?).toList.mapM
+  let _ ← natKey j "arity"
+  return { rules := ← (← (← j.getObjVal? "rules").getArr?).toList.mapM
              decodeReachRule }
 
 /-- One base arm: refuse negation and a self-atom. -/
@@ -427,15 +427,15 @@ def decodeRec (selfId : Query.InteriorId) (j : Json) :
 def decodeReachQuery (j : Json) : Except String Query.Query := do
   let interiors ← (← (← j.getObjVal? "interiors").getArr?).toList.mapM
     decodeInterior
-  let arity ← natKey j "arity"
+  let _ ← natKey j "arity"
   let rules ← (← (← j.getObjVal? "rules").getArr?).toList.mapM
     decodeReachRule
   match objKey? j "rec" with
-  | none => return .cq interiors arity rules
-  | some .null => return .cq interiors arity rules
+  | none => return .cq interiors rules
+  | some .null => return .cq interiors rules
   | some r =>
     let rec ← decodeRec ⟨interiors.length⟩ r
-    return .reach interiors rec arity rules
+    return .reach interiors rec rules
 
 /-- One decoded reach case: the world (open instance + ground axioms
 merged), the Query, the parameters, and the agreed answers. -/

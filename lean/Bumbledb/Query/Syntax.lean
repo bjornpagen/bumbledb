@@ -15,8 +15,8 @@ query. Syntax only — meaning lives in `Bumbledb.Query.Denotation` and
 
 * **Finds are projected variables.** `Rule.finds : List VarId`;
   aggregate and measure find positions are PRD 05's folds over the
-  binding sets PRD 04 denotes, so the head degenerates to its arity
-  (`Query.arity` — every `HeadTerm` is `Var` at this level; the
+  binding sets PRD 04 denotes, so the head degenerates to projected
+  variables (every `HeadTerm` is `Var` at this level; the
   var-free head-shape row arrives with the aggregate ops). Interior
   and rec heads are projection-shaped BY CONSTRUCTION here; the
   engine roster that refuses `Aggregate` / `Measure` finds on those
@@ -89,7 +89,7 @@ law restated for the reach operator, not a new rule
 
 `InteriorId` / `AtomSource` / `Interior` / `LinearRec` / `Query` are
 the IR. Empty-prefix `.cq` is a CQ; `.reach` carries `LinearRec`.
-Interiors are ordinary, possibly-empty data in both arms. Linearity
+Interiors are plain, possibly-empty data in both arms. No-self-in-base
 and no-negation-in-rec are structural on `LinearRec` — base arms
 cannot mention self or negation; a step arm carries the unique
 positive self-atom as `selfBindings`. Recorded shapes:
@@ -114,8 +114,7 @@ positive self-atom as `selfBindings`. Recorded shapes:
   site that knows that id.
 * **`Query` is a two-arm sum.** Constructor names `cq`/`reach` — a
   field or constructor named `rec` collides with Lean's recursor
-  (`T.rec`). Accessors `Query.interiors` / `Query.arity` /
-  `Query.rules` are total by match. There is no `Query.rec` accessor.
+  (`T.rec`). Accessors `Query.interiors` / `Query.rules` are total by match. There is no `Query.rec` accessor.
 -/
 
 namespace Bumbledb.Query
@@ -262,9 +261,8 @@ structure Rule where
   conditions : List Condition
 
 /-- A named interior: a finite CQ (union of CQs), evaluated once.
-Declaration order is topological order. -/
+Declaration order is topological order. Head width is `finds.length`. -/
 structure Interior where
-  arity : Nat
   rules : List Rule
 
 /-- A base arm of a linear rec: negation is unrepresentable, and there
@@ -335,33 +333,29 @@ theorem LinearRec.stepRules_self_atom (self : InteriorId) (rec : LinearRec)
 one linear rec plus main. **Denotation of a Query is `evalQuery`**
 (`Bumbledb.Exec.Reach`); the union of a rule list is `rulesAnswers`.
 Set semantics means there is exactly one union per rule-list — no bag
-distinction exists or is representable. The main head is its arity at
-this level (every head position is a projected variable — recorded
-narrowing; PRD 05 restores the shape row). Two arms; interiors are a
+distinction exists or is representable. The main head is projected
+variables at this level (recorded narrowing; PRD 05 restores the shape
+row). Two arms; interiors are a
 possibly-empty prefix in both. Constructor `rec` is unavailable
 (recursor collision). -/
 inductive Query where
-  | cq    (interiors : List Interior) (arity : Nat) (rules : List Rule)
-  | reach (interiors : List Interior) (r : LinearRec) (arity : Nat) (rules : List Rule)
+  | cq    (interiors : List Interior) (rules : List Rule)
+  | reach (interiors : List Interior) (r : LinearRec) (rules : List Rule)
 
 def Query.interiors : Query → List Interior
-  | .cq interiors _ _ => interiors
-  | .reach interiors _ _ _ => interiors
-
-def Query.arity : Query → Nat
-  | .cq _ arity _ => arity
-  | .reach _ _ arity _ => arity
+  | .cq interiors _ => interiors
+  | .reach interiors _ _ => interiors
 
 def Query.rules : Query → List Rule
-  | .cq _ _ rules => rules
-  | .reach _ _ _ rules => rules
+  | .cq _ rules => rules
+  | .reach _ _ rules => rules
 
 /-- Every rule of every interior, the rec (via `toRule`), and main —
 the quantification surface the theorems range over. -/
 def Query.allRules : Query → List Rule
-  | .cq interiors _ rules =>
+  | .cq interiors rules =>
       interiors.flatMap Interior.rules ++ rules
-  | .reach interiors r _ rules =>
+  | .reach interiors r rules =>
       interiors.flatMap Interior.rules ++
         r.allRules ⟨interiors.length⟩ ++ rules
 
