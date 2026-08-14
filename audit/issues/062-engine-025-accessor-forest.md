@@ -2,7 +2,7 @@
 
 - **Severity:** medium
 - **Tree:** engine
-- **Status:** OPEN
+- **Status:** FIXED(472b23ef)
 - **Source:** audit/engine.md F25
 - **Depends on:** engine-001, engine-002 (this is their acceptance surface on `prepared.rs:458-569`)
 

@@ -2,7 +2,7 @@
 
 - **Severity:** medium
 - **Tree:** engine
-- **Status:** OPEN
+- **Status:** FIXED(1af537e5)
 - **Source:** audit/engine.md F26
 - **Depends on:** engine-002 (the two-variant rule enum)
 

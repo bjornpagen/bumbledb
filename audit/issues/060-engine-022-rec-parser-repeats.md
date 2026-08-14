@@ -2,7 +2,7 @@
 
 - **Severity:** medium
 - **Tree:** engine
-- **Status:** OPEN
+- **Status:** FIXED(1af537e5)
 - **Source:** audit/engine.md F22
 - **Depends on:** engine-005 (the typed `ValidatedRec` is the parse's output), engine-004 (owns the emptiness-check split)
 

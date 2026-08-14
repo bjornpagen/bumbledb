@@ -2,7 +2,7 @@
 
 - **Severity:** medium
 - **Tree:** engine
-- **Status:** OPEN
+- **Status:** FIXED(fd3f2634)
 - **Source:** audit/engine.md F27
 - **Depends on:** engine-005 (same witness types), engine-004 (same nonempty carrier decision)
 
