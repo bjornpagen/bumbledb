@@ -338,24 +338,34 @@ enum HeadTerm {
 /// How a parsed rule was introduced: a keyword, or a bare main rule.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum RuleKind {
-    Bare,
     Interior,
     Recursive,
 }
 
 /// One parsed rule: the keyword (or bare main) carries the name.
 enum ParsedRule {
-    Bare { head: Vec<HeadTerm>, items: Vec<Item> },
-    Interior { name: Name, head: Vec<HeadTerm>, items: Vec<Item> },
-    Recursive { name: Name, head: Vec<HeadTerm>, items: Vec<Item> },
+    Bare {
+        head: Vec<HeadTerm>,
+        items: Vec<Item>,
+    },
+    Interior {
+        name: Name,
+        head: Vec<HeadTerm>,
+        items: Vec<Item>,
+    },
+    Recursive {
+        name: Name,
+        head: Vec<HeadTerm>,
+        items: Vec<Item>,
+    },
 }
 
 impl ParsedRule {
     fn head(&self) -> &[HeadTerm] {
         match self {
-            Self::Bare { head, .. } | Self::Interior { head, .. } | Self::Recursive { head, .. } => {
-                head
-            }
+            Self::Bare { head, .. }
+            | Self::Interior { head, .. }
+            | Self::Recursive { head, .. } => head,
         }
     }
 
@@ -1138,6 +1148,10 @@ fn parse_derived_name(tokens: &mut Tokens, kind: RuleKind, kw_span: Span) -> Par
 /// (head) | body ;`, `rec (head) | body ;`, or a bare `(head) | body ;`.
 /// A named head without the keyword is the former named-head sneak — a
 /// spanned compile error.
+#[expect(
+    clippy::too_many_lines,
+    reason = "one rule is one grammar production; splitting hides the keyword/head/body sequence"
+)]
 fn parse_rule(tokens: &mut Tokens) -> Parse<ParsedRule> {
     let intro = match tokens.peek() {
         Some(TokenTree::Ident(_)) => {
@@ -1500,7 +1514,7 @@ fn interior_style(atom: &Atom) -> Parse<BindingStyle> {
 struct Emitter<'a> {
     theory: &'a str,
     params: Params,
-    /// Macro-local derived-table names in InteriorId order: interiors
+    /// Macro-local derived-table names in `InteriorId` order: interiors
     /// first, then the rec if present (`InteriorId(interiors.len())`).
     /// Names never survive expansion — the emitted IR carries bare
     /// `InteriorId`s. Empty for an all-bare query.
@@ -1828,11 +1842,9 @@ impl Emitter<'_> {
                 "::bumbledb::FindTerm::Measure(::bumbledb::VarId({}))",
                 scope.head_var(name)?
             ),
-            HeadTerm::Count => {
-                "::bumbledb::FindTerm::Aggregate { op: ::bumbledb::AggOp::Count, \
+            HeadTerm::Count => "::bumbledb::FindTerm::Aggregate { op: ::bumbledb::AggOp::Count, \
                      over: ::std::option::Option::None }"
-                    .to_string()
-            }
+                .to_string(),
             HeadTerm::Agg { op, over } => format!(
                 "::bumbledb::FindTerm::Aggregate {{ op: ::bumbledb::AggOp::{}, \
                      over: ::std::option::Option::Some(::bumbledb::VarId({})) }}",
@@ -1948,6 +1960,10 @@ enum Phase {
 /// Groups consecutive same-name interiors / recursive lines and splits
 /// rec arms by whether a body atom names the rec. Exhaustive
 /// compile errors for this cut live here.
+#[expect(
+    clippy::too_many_lines,
+    reason = "phase machine plus exhaustive compile errors for this cut live in one walk"
+)]
 fn classify(
     parsed: Vec<ParsedRule>,
     block: Span,

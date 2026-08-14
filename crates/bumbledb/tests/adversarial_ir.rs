@@ -724,7 +724,7 @@ fn adversarial_query_with_interiors_never_panics() {
     assert_eq!(ok + rejected, SWEEP / 2);
 }
 
-/// 100_000 interiors is legal if each list respects `MAX_RULES` — slow
+/// `100_000` interiors is legal if each list respects `MAX_RULES` — slow
 /// validate, not a typed `TooManyCtes`. Must not panic.
 #[test]
 fn a_hundred_thousand_interiors_is_not_too_many_ctes() {
@@ -763,19 +763,19 @@ fn a_hundred_thousand_interiors_is_not_too_many_ctes() {
             conditions: vec![],
         }],
     };
-    let outcome = catch_unwind(AssertUnwindSafe(|| {
+    let result = catch_unwind(AssertUnwindSafe(|| {
         bumbledb::ir::validate::validate(&schema, &query).map(|_| ())
-    }));
-    match outcome {
-        Ok(Ok(())) => {}
-        Ok(Err(err)) => {
+    }))
+    .unwrap_or_else(|_| panic!("validate panicked on interiors.len() == 100_000"));
+    match result {
+        Ok(()) => {}
+        Err(err) => {
             let msg = format!("{err:?}");
             assert!(
                 !msg.contains("TooManyCtes"),
                 "100_000 interiors must not invent TooManyCtes: {err:?}"
             );
         }
-        Err(_) => panic!("validate panicked on interiors.len() == 100_000"),
     }
 }
 

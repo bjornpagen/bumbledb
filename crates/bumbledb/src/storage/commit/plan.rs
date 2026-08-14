@@ -119,12 +119,14 @@ impl<'d> FactOp<'d> {
         }
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn fact_hash(&self) -> &'d [u8; 32] {
         match *self {
             Self::Delete { fact_hash, .. } | Self::Insert { fact_hash, .. } => fact_hash,
         }
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn determinants(&self) -> &[DeterminantOp] {
         match self {
             Self::Delete { determinants, .. } | Self::Insert { determinants, .. } => determinants,
@@ -137,6 +139,7 @@ impl<'d> FactOp<'d> {
         }
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn capacity_edges(&self) -> &[MarkEdgeOp] {
         match self {
             Self::Insert { capacity_edges, .. } => capacity_edges,
@@ -388,6 +391,10 @@ struct FactScratch {
 #[expect(
     clippy::too_many_arguments,
     reason = "the one per-fact derivation chokepoint; every input is load-bearing"
+)]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one fact derives determinants, edges, and capacity together"
 )]
 fn fact_op<'d>(
     schema: &Schema,

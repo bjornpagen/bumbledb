@@ -531,8 +531,7 @@ impl TransientImage {
     {
         debug_assert!(filled <= row_count, "seen-sets never shrink");
         let framed = match self {
-            Self::Empty { capacity } => *capacity,
-            Self::Occupied { capacity, .. } => *capacity,
+            Self::Empty { capacity } | Self::Occupied { capacity, .. } => *capacity,
         };
         let reusable = match self {
             Self::Occupied { image, capacity } if row_count <= *capacity => {

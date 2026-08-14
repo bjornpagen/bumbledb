@@ -72,7 +72,8 @@ impl Colt {
                 while base < n {
                     let take = FORCE_BATCH.min(n - base);
                     positions.clear();
-                    positions.extend((base..base + take).map(|idx| self.bound_view().position_at(idx)));
+                    positions
+                        .extend((base..base + take).map(|idx| self.bound_view().position_at(idx)));
                     self.force_run(&mut m, level, &positions, &mut keys);
                     base += take;
                 }

@@ -134,8 +134,9 @@ pub(crate) fn occurrence_stats(
     if let Some(role) = occurrence.bind {
         let floor = match role {
             crate::ir::normalize::BindRole::RecDelta => DELTA_PLANNING_ROWS,
-            crate::ir::normalize::BindRole::Finished
-            | crate::ir::normalize::BindRole::RecAcc => ACCUMULATED_PLANNING_ROWS,
+            crate::ir::normalize::BindRole::Finished | crate::ir::normalize::BindRole::RecAcc => {
+                ACCUMULATED_PLANNING_ROWS
+            }
         }
         .max(1);
         return Ok(OccStats {
@@ -148,7 +149,7 @@ pub(crate) fn occurrence_stats(
                 .collect(),
         });
     }
-    let relation = occurrence.relation();
+    let relation = occurrence.source.edb().expect("bind None is EDB");
     let image = cache.peek(txn, relation)?;
     let mut var_distincts = Vec::with_capacity(occurrence.vars.len());
     for (field, var) in &occurrence.vars {
@@ -996,7 +997,8 @@ mod tests {
             "P3 report population: D2 emits one set witness per root origin, so final est/actual is not a count-accuracy bound"
         );
         assert_eq!(
-            narrow_stats.rules()[0].absorbed, 21,
+            narrow_stats.rules()[0].absorbed,
+            21,
             "24 emits collapse to 3 x rows"
         );
     }

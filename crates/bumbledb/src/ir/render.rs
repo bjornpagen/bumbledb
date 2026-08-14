@@ -158,11 +158,9 @@ pub fn render(schema: &Schema, query: &Query) -> String {
             render_rule(&mut out, schema, &refs, rule);
         }
     }
-    for (index, rule) in query.rules.iter().enumerate() {
-        if !out.is_empty() || index > 0 {
-            if !out.is_empty() {
-                out.push('\n');
-            }
+    for rule in &query.rules {
+        if !out.is_empty() {
+            out.push('\n');
         }
         render_rule(&mut out, schema, &refs, rule);
     }

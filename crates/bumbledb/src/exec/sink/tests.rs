@@ -356,16 +356,13 @@ fn var_spec(plan: &ValidatedPlan, var: u16) -> FindSpec {
     }
 }
 
-/// A scalar fold's spec.
-fn agg_spec(plan: &ValidatedPlan, op: FoldOp, over: Option<u16>, signed: bool) -> FindSpec {
-    FindSpec::Agg(match over {
-        None => AggSpec::Count,
-        Some(v) => AggSpec::Fold {
-            op,
-            slot: plan.slot_of(VarId(v)),
-            width: plan.width_of(VarId(v)),
-            signed,
-        },
+/// A scalar fold's spec. Count is [`AggSpec::Count`], not a `FoldOp`.
+fn agg_spec(plan: &ValidatedPlan, op: FoldOp, over: u16, signed: bool) -> FindSpec {
+    FindSpec::Agg(AggSpec::Fold {
+        op,
+        slot: plan.slot_of(VarId(over)),
+        width: plan.width_of(VarId(over)),
+        signed,
     })
 }
 

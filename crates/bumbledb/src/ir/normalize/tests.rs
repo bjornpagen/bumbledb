@@ -158,7 +158,13 @@ fn repeated_variable_lowers_and_executes_through_the_evaluator() {
     // Exactly the a == b rows survive.
     let ids: Vec<u64> = filtered
         .positions()
-        .map(|p| filtered.bound().expect("apply binds").image().column_words(0)[p as usize])
+        .map(|p| {
+            filtered
+                .bound()
+                .expect("apply binds")
+                .image()
+                .column_words(0)[p as usize]
+        })
         .collect();
     assert_eq!(ids.len(), 2);
     assert!(!ids.contains(&2));

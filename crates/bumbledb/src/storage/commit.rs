@@ -78,6 +78,7 @@ pub enum CommitReport {
     Changed { new_generation: GenerationId },
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 impl CommitReport {
     /// Whether this commit advanced the generation clock.
     #[must_use]

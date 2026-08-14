@@ -17,10 +17,7 @@ fn sum_distinguishes_bound_fresh_ids_and_collapses_unbound_ones() {
         vec![],
     );
     let plan = planned(&schema, &normalized_bound, &[0], &[1]);
-    let finds = vec![
-        var_spec(&plan, 1),
-        agg_spec(&plan, FoldOp::Sum, Some(2), true),
-    ];
+    let finds = vec![var_spec(&plan, 1), agg_spec(&plan, FoldOp::Sum, 2, true)];
     let rows = run_aggregate(&plan, &views[..1], finds).expect("rows");
     assert_eq!(rows, vec![vec![7, i64_to_word(200)]]);
 
@@ -32,10 +29,7 @@ fn sum_distinguishes_bound_fresh_ids_and_collapses_unbound_ones() {
         vec![],
     );
     let plan = planned(&schema, &normalized_unbound, &[0], &[0]);
-    let finds = vec![
-        var_spec(&plan, 0),
-        agg_spec(&plan, FoldOp::Sum, Some(1), true),
-    ];
+    let finds = vec![var_spec(&plan, 0), agg_spec(&plan, FoldOp::Sum, 1, true)];
     let rows = run_aggregate(&plan, &views[..1], finds).expect("rows");
     assert_eq!(rows, vec![vec![7, i64_to_word(100)]]);
 }
@@ -58,10 +52,7 @@ fn joining_a_three_tag_relation_triples_the_sum() {
         vec![],
     );
     let plan = planned(&schema, &normalized, &[0, 1], &[1]);
-    let finds = vec![
-        var_spec(&plan, 1),
-        agg_spec(&plan, FoldOp::Sum, Some(2), true),
-    ];
+    let finds = vec![var_spec(&plan, 1), agg_spec(&plan, FoldOp::Sum, 2, true)];
     let rows = run_aggregate(&plan, &views, finds).expect("rows");
     assert_eq!(rows, vec![vec![7, i64_to_word(300)]]);
 }
@@ -79,12 +70,8 @@ fn witnessed_elision_matches_the_seen_set_path() {
     );
     let plan = planned(&schema, &normalized, &[0], &[1]);
     assert!(plan.distinct_witness().is_some(), "fresh ids are bound");
-    let finds = |plan: &ValidatedPlan| {
-        vec![
-            var_spec(plan, 1),
-            agg_spec(plan, FoldOp::Sum, Some(2), true),
-        ]
-    };
+    let finds =
+        |plan: &ValidatedPlan| vec![var_spec(plan, 1), agg_spec(plan, FoldOp::Sum, 2, true)];
 
     // Elided path (as the plan proves) vs forced seen-set path.
     let mut colts = colts_for(&plan, &views);
@@ -135,8 +122,8 @@ fn global_aggregate_over_empty_input_yields_zero_rows() {
     );
     let plan = planned(&schema, &normalized, &[0], &[]);
     let finds = vec![
-        agg_spec(&plan, FoldOp::Sum, Some(1), true),
-        agg_spec(&plan, FoldOp::Count, None, false),
+        agg_spec(&plan, FoldOp::Sum, 1, true),
+        FindSpec::Agg(AggSpec::Count),
     ];
     let rows = run_aggregate(&plan, &views[..1], finds).expect("rows");
     // The empty set — not a [NULL] or [0] row (documented divergence

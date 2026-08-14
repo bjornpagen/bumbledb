@@ -72,9 +72,7 @@ fn identity_main(arity: u16, rec_id: u32) -> Rule {
         (0..arity).map(fv).collect(),
         vec![interior(
             rec_id,
-            &(0..arity)
-                .map(|i| (i, v(i)))
-                .collect::<Vec<_>>(),
+            &(0..arity).map(|i| (i, v(i))).collect::<Vec<_>>(),
         )],
         vec![],
     )
@@ -83,7 +81,11 @@ fn identity_main(arity: u16, rec_id: u32) -> Rule {
 fn closure_rec() -> Rec {
     Rec {
         head: vec![HeadTerm::Var, HeadTerm::Var],
-        base: vec![projection(vec![fv(0), fv(1)], vec![edge(v(0), v(1))], vec![])],
+        base: vec![projection(
+            vec![fv(0), fv(1)],
+            vec![edge(v(0), v(1))],
+            vec![],
+        )],
         rec: vec![projection(
             vec![fv(0), fv(2)],
             vec![edge(v(0), v(1)), interior(0, &[(0, v(1)), (1, v(2))])],
@@ -214,16 +216,17 @@ fn primer_reach_xx() -> Query {
 fn interiors_dag() -> Query {
     let copy = Interior {
         head: vec![HeadTerm::Var, HeadTerm::Var],
-        rules: vec![projection(vec![fv(0), fv(1)], vec![edge(v(0), v(1))], vec![])],
+        rules: vec![projection(
+            vec![fv(0), fv(1)],
+            vec![edge(v(0), v(1))],
+            vec![],
+        )],
     };
     let hop = Interior {
         head: vec![HeadTerm::Var, HeadTerm::Var],
         rules: vec![projection(
             vec![fv(0), fv(2)],
-            vec![
-                interior(0, &[(0, v(0)), (1, v(1))]),
-                edge(v(1), v(2)),
-            ],
+            vec![interior(0, &[(0, v(0)), (1, v(1))]), edge(v(1), v(2))],
             vec![],
         )],
     };
@@ -243,7 +246,11 @@ fn interiors_anti_join() -> Query {
     Query {
         interiors: vec![Interior {
             head: vec![HeadTerm::Var, HeadTerm::Var],
-            rules: vec![projection(vec![fv(0), fv(1)], vec![edge(v(0), v(1))], vec![])],
+            rules: vec![projection(
+                vec![fv(0), fv(1)],
+                vec![edge(v(0), v(1))],
+                vec![],
+            )],
         }],
         rec: None,
         head: vec![HeadTerm::Var],
@@ -262,7 +269,11 @@ fn many_interiors() -> Query {
     let interiors = (0..17)
         .map(|_| Interior {
             head: vec![HeadTerm::Var, HeadTerm::Var],
-            rules: vec![projection(vec![fv(0), fv(1)], vec![edge(v(0), v(1))], vec![])],
+            rules: vec![projection(
+                vec![fv(0), fv(1)],
+                vec![edge(v(0), v(1))],
+                vec![],
+            )],
         })
         .collect();
     Query {
@@ -301,11 +312,9 @@ impl RecursiveVariant {
     pub fn coverage_class(self) -> &'static str {
         match self {
             Self::InteriorsDag | Self::InteriorsAntiJoin | Self::ManyInteriors => "interiors",
-            Self::Linear
-            | Self::Negation
-            | Self::Fold
-            | Self::EmptyDelta
-            | Self::PrimerReachXx => "recursive",
+            Self::Linear | Self::Negation | Self::Fold | Self::EmptyDelta | Self::PrimerReachXx => {
+                "recursive"
+            }
         }
     }
 }

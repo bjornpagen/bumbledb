@@ -311,11 +311,7 @@ impl InteriorSignatures<'_> {
     /// iff the id is `>= derived_count`; [`ValidationError::InteriorNotPrior`]
     /// iff the reader is interior *i* and the target is `j >= i` (even
     /// when `j < derived_count`).
-    pub(super) fn screen(
-        &self,
-        atom: usize,
-        interior: InteriorId,
-    ) -> Result<(), ValidationError> {
+    pub(super) fn screen(&self, atom: usize, interior: InteriorId) -> Result<(), ValidationError> {
         let index = usize::try_from(interior.0).expect("64-bit usize");
         if index >= self.derived_count {
             return Err(ValidationError::UnknownInterior { atom, interior });
@@ -337,7 +333,8 @@ impl InteriorSignatures<'_> {
         if index < self.interiors.len() {
             &self.interiors[index]
         } else {
-            self.rec.expect("screen admitted this id; rec base never reads self")
+            self.rec
+                .expect("screen admitted this id; rec base never reads self")
         }
     }
 
@@ -557,6 +554,10 @@ impl ValidatedMain {
 /// Rec-absence is [`Self::Cq`]; rec-presence is [`Self::Reach`]. Cq
 /// callers never see rec accessors.
 #[derive(Debug)]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "Reach carries the rec witness inline; Cq is the empty-rec arm, not a box"
+)]
 pub enum ValidatedQuery {
     /// No rec: interiors (possibly empty) and main.
     Cq {

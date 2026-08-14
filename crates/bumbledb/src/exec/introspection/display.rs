@@ -4,6 +4,10 @@ use crate::plan::fj::ValidatedPlan;
 use std::fmt;
 
 impl fmt::Display for IntrospectionReport<'_> {
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one report shape: header then body arms in declaration order"
+    )]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(
             f,

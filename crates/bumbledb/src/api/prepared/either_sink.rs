@@ -66,10 +66,7 @@ impl Sink for EitherSink {
         }
     }
 
-    fn emit_batch(
-        &mut self,
-        batch: &crate::exec::run::LeafBatch<'_>,
-    ) -> crate::exec::run::Flow {
+    fn emit_batch(&mut self, batch: &crate::exec::run::LeafBatch<'_>) -> crate::exec::run::Flow {
         match self {
             Self::Projection(sink) => sink.emit_batch(batch),
             Self::Aggregate(sink) => sink.emit_batch(batch),
@@ -93,10 +90,7 @@ impl Sink for EitherSink {
         }
     }
 
-    fn begin_scan(
-        &mut self,
-        scan: &crate::exec::run::LeafScan<'_>,
-    ) -> crate::exec::run::ScanOffer {
+    fn begin_scan(&mut self, scan: &crate::exec::run::LeafScan<'_>) -> crate::exec::run::ScanOffer {
         match self {
             Self::Projection(sink) => sink.begin_scan(scan),
             Self::Aggregate(sink) => sink.begin_scan(scan),

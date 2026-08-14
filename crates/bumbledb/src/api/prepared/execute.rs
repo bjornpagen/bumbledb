@@ -417,7 +417,11 @@ impl<S> PreparedQuery<'_, S> {
     /// The point fast lane's body: probe + fetch +
     /// direct cell decode, no sink machinery. The lane was parsed at
     /// build (`key_probe_direct`); this does not re-gate.
-    pub(super) fn execute_key_probe_direct(&mut self, txn: &ReadTxn<'_>, out: &mut Answers) -> Result<()> {
+    pub(super) fn execute_key_probe_direct(
+        &mut self,
+        txn: &ReadTxn<'_>,
+        out: &mut Answers,
+    ) -> Result<()> {
         debug_assert!(self.key_probe_direct);
         let PreparedRule::KeyProbe(KeyProbeRule {
             plan: key_probe,

@@ -157,4 +157,3 @@ fn an_empty_first_delta_stops_at_the_base_round() {
         "the closure of a star IS its edge set",
     );
 }
-

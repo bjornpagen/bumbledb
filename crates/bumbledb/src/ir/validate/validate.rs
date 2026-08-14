@@ -5,10 +5,9 @@ use super::{
 };
 use crate::error::ValidationError;
 use crate::ir::normalize::OccId;
-use crate::ir::normalize::{collapse, disjunct_count, distribute, nesting_depth, LoweredRule};
+use crate::ir::normalize::{LoweredRule, collapse, disjunct_count, distribute, nesting_depth};
 use crate::ir::{
-    AggOp, FindTerm, InteriorId, ParamId, Query, Rec, Term, VarId,
-    MAX_CONDITION_DEPTH, MAX_RULES,
+    AggOp, FindTerm, InteriorId, MAX_CONDITION_DEPTH, MAX_RULES, ParamId, Query, Rec, Term, VarId,
 };
 use crate::schema::Schema;
 use bumbledb_theory::schema::ValueType;
@@ -29,6 +28,14 @@ use std::collections::{BTreeMap, BTreeSet};
 /// A distinct [`ValidationError`] per roster item; see the module docs.
 /// Rule-local payloads name positions inside the first failing
 /// **lowered** rule of the first failing rule-list.
+///
+/// # Panics
+///
+/// Never: interior ids are `u32`-checked above before the `expect`.
+#[expect(
+    clippy::too_many_lines,
+    reason = "one validation walk: interiors, rec, main, then the sealed witness"
+)]
 pub fn validate(schema: &Schema, query: &Query) -> Result<ValidatedQuery, ValidationError> {
     let derived = query.interiors.len() + usize::from(query.rec.is_some());
     if u32::try_from(derived).is_err() {
@@ -534,9 +541,10 @@ fn validate_rule(
     ctx.check_atoms(schema, interiors, rule)?;
     let classified = ctx.check_comparisons(rule)?;
     if rec_body
-        && rule.conditions.iter().any(|cmp| {
-            matches!(cmp.lhs, Term::Measure(_)) || matches!(cmp.rhs, Term::Measure(_))
-        })
+        && rule
+            .conditions
+            .iter()
+            .any(|cmp| matches!(cmp.lhs, Term::Measure(_)) || matches!(cmp.rhs, Term::Measure(_)))
     {
         return Err(ValidationError::MeasureInRec);
     }

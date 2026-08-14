@@ -2,9 +2,7 @@ use super::{BoundView, Colt, Cursor, NodeRef, NodeState, Positions, SelectionLev
 
 impl Colt {
     pub(super) fn bound_view(&self) -> &BoundView {
-        self.view
-            .bound()
-            .expect("execute binds the COLT view")
+        self.view.bound().expect("execute binds the COLT view")
     }
     /// Builds the root over a view: O(1) — nothing decodes until a force.
     /// `selections` are the occurrence's Eq-constant selection levels, in

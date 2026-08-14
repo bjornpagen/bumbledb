@@ -1,14 +1,14 @@
 use super::{ReportBody, *};
 use crate::api::stats::{ExecutionStats, RuleStats};
-use crate::encoding::{encode_fact, ValueRef};
+use crate::encoding::{ValueRef, encode_fact};
 use crate::exec::colt::Colt;
 use crate::exec::dispatch::classify;
 use crate::exec::run::{Bindings, Executor, NoopCounters};
 use crate::exec::sink::ProjectionSink;
-use crate::image::view::{apply, Const, FilterPredicate};
+use crate::image::view::{Const, FilterPredicate, apply};
 use crate::ir::normalize::{AntiProbe, NormalizedQuery, OccId, Occurrence, Role, SlotWidth};
 use crate::ir::{CmpOp, VarId};
-use crate::plan::fj::{binary2fj, factor, validate, ValidatedPlan};
+use crate::plan::fj::{ValidatedPlan, binary2fj, factor, validate};
 use crate::plan::planner::JoinOrder;
 use crate::schema::Schema;
 use crate::schema::ValidateDescriptor as _;
@@ -23,7 +23,7 @@ use bumbledb_theory::schema::{
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-fn cq_report<'p>(plan: RulePlan<'p>, rule: RuleStats) -> IntrospectionReport<'p> {
+fn cq_report(plan: RulePlan<'_>, rule: RuleStats) -> IntrospectionReport<'_> {
     let emits = rule.emitted;
     IntrospectionReport {
         header: None,

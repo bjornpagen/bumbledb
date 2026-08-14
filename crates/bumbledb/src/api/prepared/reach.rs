@@ -73,6 +73,7 @@ impl OccImages {
 
 /// How a derived occurrence binds this round. Rec carries both images
 /// so delta-without-acc is unrepresentable.
+#[derive(Clone, Copy)]
 enum DerivedBind<'a> {
     Finished,
     Rec {
@@ -94,8 +95,7 @@ pub(super) struct DerivedImages {
 
 impl DerivedImages {
     fn begin(&mut self, derived_count: usize) {
-        self.working
-            .resize_with(derived_count, Default::default);
+        self.working.resize_with(derived_count, Default::default);
         self.published.clear();
         self.occ_images.clear();
         self.retired.clear();
@@ -262,8 +262,7 @@ impl<S> PreparedQuery<'_, S> {
                     .stash_finished(i, &types, &self.pipeline.interiors()[i].sink);
                 if ran {
                     let latched = {
-                        let sets =
-                            &mut self.pipeline.interiors_mut()[i].ray_probes;
+                        let sets = &mut self.pipeline.interiors_mut()[i].ray_probes;
                         run_ray_probe_sets(
                             sets,
                             Some(&mut self.derived),
@@ -277,8 +276,7 @@ impl<S> PreparedQuery<'_, S> {
                             counters,
                         )?
                     };
-                    self.unresolved_literals =
-                        self.unresolved_literals.saturating_sub(latched);
+                    self.unresolved_literals = self.unresolved_literals.saturating_sub(latched);
                 }
             }
             interiors_span.set_args(n_interiors as u64, interior_emits);
@@ -440,12 +438,12 @@ fn run_reach<C: Counters>(
             driver.sink.answers_since(since),
         );
         let filled = driver.scratch.acc_filled[flip];
-        let round_acc = driver.scratch.acc_mut().append(
-            &driver.field_types,
-            filled,
-            len,
-            |from| driver.sink.answers_since(from),
-        );
+        let round_acc = driver
+            .scratch
+            .acc_mut()
+            .append(&driver.field_types, filled, len, |from| {
+                driver.sink.answers_since(from)
+            });
         driver.scratch.acc_filled[flip] = len;
         driver.scratch.flip = !driver.scratch.flip;
         driver.scratch.watermark = len;

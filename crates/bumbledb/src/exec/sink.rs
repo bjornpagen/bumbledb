@@ -50,15 +50,13 @@ mod projection;
 mod tests;
 
 /// A fold aggregate's operator, execution-side: exactly the ops that fold
-/// into an [`Acc`]. `Count` is the accumulator tag seeded from
-/// [`AggSpec::Count`]; a fold over a slot cannot spell it.
+/// over a slot into an [`Acc`]. Nullary [`AggSpec::Count`] is a sibling
+/// arm, not a `FoldOp`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FoldOp {
     Sum,
     Min,
     Max,
-    /// Acc tag seeded from [`AggSpec::Count`]; a fold over a slot cannot spell it.
-    Count,
 }
 
 /// Nullary Count vs a fold over a slot. Trusted layer: Count cannot
@@ -98,9 +96,6 @@ impl AggSpec {
             Self::Fold {
                 op: FoldOp::Max, ..
             } => Acc::Max(u64::MIN),
-            Self::Fold {
-                op: FoldOp::Count, ..
-            } => unreachable!("Count is AggSpec::Count"),
         }
     }
 }

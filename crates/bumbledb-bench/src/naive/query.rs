@@ -288,10 +288,7 @@ impl NaiveDb {
         let rec_id = sets.len();
         sets.push(BTreeSet::new());
         loop {
-            let preds = DerivedWorld {
-                sets,
-                interval,
-            };
+            let preds = DerivedWorld { sets, interval };
             let mut next = self.rows_for(&rec.head, &rec.base, params, &preds)?;
             next.extend(self.rows_for(&rec.head, &rec.rec, params, &preds)?);
             if next == sets[rec_id] {
@@ -305,12 +302,7 @@ impl NaiveDb {
     /// One named interior / rec's column interval flags, sealed from
     /// the first rule against already-sealed prior tables. Rec seals
     /// from `base` (base never reads the rec).
-    fn seal_intervals(
-        &self,
-        head: &[HeadTerm],
-        rules: &[Rule],
-        prior: &[Vec<bool>],
-    ) -> Vec<bool> {
+    fn seal_intervals(&self, head: &[HeadTerm], rules: &[Rule], prior: &[Vec<bool>]) -> Vec<bool> {
         let Some(rule) = rules.first() else {
             return vec![false; head.len()];
         };

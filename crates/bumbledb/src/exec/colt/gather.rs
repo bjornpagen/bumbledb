@@ -166,7 +166,9 @@ impl Colt {
                     return true;
                 }
                 match &self.view {
-                    View::Bound(BoundView::Survivors { positions, .. }) => f(SuffixRun::Positions(positions)),
+                    View::Bound(BoundView::Survivors { positions, .. }) => {
+                        f(SuffixRun::Positions(positions));
+                    }
                     _ => f(SuffixRun::Identity {
                         start: 0,
                         len: self.view.len(),

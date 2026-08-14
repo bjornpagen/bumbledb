@@ -123,6 +123,10 @@ impl Applier<'_, '_> {
     /// invariant the plan was derived from — a live `M` entry means
     /// storage disagrees with what the plan *proved*, unambiguously
     /// corruption (docs/architecture/50-storage.md).
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one insert walks keys, edges, and capacity in declaration order"
+    )]
     pub(super) fn insert_fact(&mut self, op: &FactOp<'_>) -> Result<()> {
         let FactOp::Insert {
             relation: rel,

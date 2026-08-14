@@ -291,7 +291,8 @@ fn prepare_witnessed<'s, S>(
             unreachable!("a Reach driver is prepared only from a Reach witness")
         }
     };
-    let key_probe_direct = match &pipeline {
+    let key_probe_direct = matches!(
+        &pipeline,
         PreparedPipeline::Cq { interiors, rules }
             if interiors.is_empty()
                 && matches!(
@@ -300,12 +301,8 @@ fn prepare_witnessed<'s, S>(
                         key_probe_finds: Some(_),
                         ..
                     })]
-                ) =>
-        {
-            true
-        }
-        _ => false,
-    };
+                )
+    );
     Ok(PreparedQuery {
         schema,
         env_instance: txn.env_instance(),
@@ -687,8 +684,12 @@ fn prepare_rule(
     prepare_rule_variant(txn, cache, schema, rule, normalized, columns, signatures)
 }
 
-/// Prepare one rec arm: stamp the unique self-occurrence as RecDelta
-/// and every other self-read as RecAcc before statistics run.
+/// Prepare one rec arm: stamp the unique self-occurrence as `RecDelta`
+/// and every other self-read as `RecAcc` before statistics run.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the rec-arm pipeline's inputs are clearer unpacked"
+)]
 fn prepare_rec_arm(
     txn: &ReadTxn<'_>,
     cache: &ImageCache,
@@ -740,10 +741,6 @@ fn stamp_rec_bind(
 /// [`prepare_rule`] / [`prepare_rec_arm`] shared tail: classify →
 /// statistics → DP → lowering → plan validation. Rec-arm bind roles
 /// are already stamped on the occurrences.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the per-rule pipeline's inputs are clearer unpacked"
-)]
 fn prepare_rule_variant(
     txn: &ReadTxn<'_>,
     cache: &ImageCache,
@@ -805,7 +802,7 @@ fn prepare_rule_variant(
             )?);
             continue;
         }
-        let relation = occurrence.relation();
+        let relation = occurrence.source.edb().expect("bind None is EDB");
         let rows = crate::plan::selectivity::relation_rows(txn, schema, relation)?;
         let occ_stats =
             crate::plan::selectivity::occurrence_stats(txn, cache, schema, occurrence, rows)?;
@@ -1003,7 +1000,11 @@ fn prepare_ray_probe(
         let rows = if occurrence.bind.is_some() {
             0
         } else {
-            crate::plan::selectivity::relation_rows(txn, schema, occurrence.relation())?
+            crate::plan::selectivity::relation_rows(
+                txn,
+                schema,
+                occurrence.source.edb().expect("bind None is EDB"),
+            )?
         };
         stats.push(crate::plan::selectivity::occurrence_stats(
             txn, cache, schema, occurrence, rows,

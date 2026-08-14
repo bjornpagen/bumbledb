@@ -32,10 +32,10 @@ fn constant_group_batches_fold_once_per_run() {
     let finds = |plan: &ValidatedPlan| {
         vec![
             var_spec(plan, 1),
-            agg_spec(plan, FoldOp::Sum, Some(2), true),
-            agg_spec(plan, FoldOp::Count, None, false),
-            agg_spec(plan, FoldOp::Min, Some(2), true),
-            agg_spec(plan, FoldOp::Max, Some(2), true),
+            agg_spec(plan, FoldOp::Sum, 2, true),
+            FindSpec::Agg(AggSpec::Count),
+            agg_spec(plan, FoldOp::Min, 2, true),
+            agg_spec(plan, FoldOp::Max, 2, true),
         ]
     };
     // The fast path (elided) vs the per-row seen path, across sizes.
@@ -109,8 +109,8 @@ fn dedup_constant_group_collapses_duplicates_before_folding() {
     let finds = |plan: &ValidatedPlan| {
         vec![
             var_spec(plan, 0),
-            agg_spec(plan, FoldOp::Sum, Some(1), true),
-            agg_spec(plan, FoldOp::Count, None, false),
+            agg_spec(plan, FoldOp::Sum, 1, true),
+            FindSpec::Agg(AggSpec::Count),
         ]
     };
     for batch in [1usize, 2, 128] {
@@ -212,8 +212,8 @@ fn count_only_dedup_folds_without_survivor_collection() {
     let finds = |plan: &ValidatedPlan| {
         vec![
             var_spec(plan, 0),
-            agg_spec(plan, FoldOp::Count, None, false),
-            agg_spec(plan, FoldOp::Sum, Some(0), false),
+            FindSpec::Agg(AggSpec::Count),
+            agg_spec(plan, FoldOp::Sum, 0, false),
         ]
     };
     for batch in [1usize, 2, 128] {
@@ -264,12 +264,8 @@ fn constant_over_slot_folds_value_times_count() {
         vec![],
     );
     let plan = two_node_plan(&schema, &normalized, &[1], &[0, 2], &[0, 1, 2]);
-    let finds = |plan: &ValidatedPlan| {
-        vec![
-            var_spec(plan, 1),
-            agg_spec(plan, FoldOp::Sum, Some(1), false),
-        ]
-    };
+    let finds =
+        |plan: &ValidatedPlan| vec![var_spec(plan, 1), agg_spec(plan, FoldOp::Sum, 1, false)];
     // Overflow parity: the batch path and the per-row path yield the
     // same typed error (big x 5 > u64::MAX).
     for distinct in [true, false] {
@@ -342,8 +338,8 @@ fn aggregate_leaf_batches_match_the_scalar_fold_at_the_boundary() {
     let finds = |plan: &ValidatedPlan| {
         vec![
             var_spec(plan, 1),
-            agg_spec(plan, FoldOp::Sum, Some(2), true),
-            agg_spec(plan, FoldOp::Count, None, false),
+            agg_spec(plan, FoldOp::Sum, 2, true),
+            FindSpec::Agg(AggSpec::Count),
         ]
     };
     for batch in [1usize, 2, 7, 128] {
@@ -422,10 +418,7 @@ fn interval_group_keys_span_both_words() {
     );
     let plan = planned(&schema, &normalized, &[0], &[2]);
     for distinct in [true, false] {
-        let finds = vec![
-            var_spec(&plan, 2),
-            agg_spec(&plan, FoldOp::Count, None, false),
-        ];
+        let finds = vec![var_spec(&plan, 2), FindSpec::Agg(AggSpec::Count)];
         let mut got = run_aggregate_distinct(&plan, &views, finds, distinct).expect("rows");
         got.sort_unstable();
         assert_eq!(

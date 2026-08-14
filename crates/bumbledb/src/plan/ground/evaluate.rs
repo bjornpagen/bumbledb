@@ -731,6 +731,10 @@ pub(crate) fn folded_picture(
 
 /// One prepare-resolved filter's picture (unresolvable shapes never
 /// reach a folded occurrence's list).
+#[expect(
+    clippy::too_many_lines,
+    reason = "one arm per FilterPredicate kind; splitting hides totality"
+)]
 fn render_filter(out: &mut String, relation: &Relation, filter: &FilterPredicate) {
     use crate::ir::normalize::{decoded_interval, decoded_scalar, render_const};
     let name = |field: &FieldId| relation.field(*field).name.as_ref();

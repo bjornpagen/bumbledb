@@ -1,6 +1,6 @@
 use super::{
-    BatchToken, BoundView, Colt, Cursor, DENSE_TOKEN_TAG, NodeRef, NodeState, Positions, STALE_EPOCH,
-    STALE_TOKEN, Slot, TOKEN_EPOCH_MASK, TOKEN_PAYLOAD_MASK, View, unpack_child,
+    BatchToken, BoundView, Colt, Cursor, DENSE_TOKEN_TAG, NodeRef, NodeState, Positions,
+    STALE_EPOCH, STALE_TOKEN, Slot, TOKEN_EPOCH_MASK, TOKEN_PAYLOAD_MASK, View, unpack_child,
 };
 
 impl Colt {

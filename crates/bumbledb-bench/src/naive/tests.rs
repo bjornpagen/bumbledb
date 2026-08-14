@@ -4,9 +4,9 @@
 
 mod closed;
 mod dnf;
-mod reach;
 mod judgment;
 mod query;
+mod reach;
 
 /// The independence law, grep-enforced: the model shares the engine's
 /// *types*, never its algorithms or compiled representations — no

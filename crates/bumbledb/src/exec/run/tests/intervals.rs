@@ -349,6 +349,10 @@ fn membership_schema() -> Schema {
 /// the join. Returns exactly the events whose time falls in the payroll
 /// interval — both boundaries asserted (start in, end out).
 #[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one fixture asserts both interval boundaries of the membership join"
+)]
 fn membership_point_var_join_keeps_exactly_the_contained_events() {
     let dir = TempDir::new("run-membership");
     let schema = membership_schema();
