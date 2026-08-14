@@ -46,5 +46,6 @@ pub mod trace_out;
 pub mod translate;
 pub mod tripwires;
 pub mod verify;
+pub(crate) mod walk;
 pub mod windowed;
 pub mod writebench;
