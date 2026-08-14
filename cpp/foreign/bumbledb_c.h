@@ -598,7 +598,7 @@ typedef struct bdb_interior {
   size_t rule_count;
 } bdb_interior;
 
-// One linear recursive SCC: base arms and rec arms.
+// One linear rec: base arms and rec arms.
 typedef struct bdb_rec {
   const struct bdb_head_term *head;
   size_t head_count;

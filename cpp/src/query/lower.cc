@@ -242,7 +242,7 @@ template<class Ir>
 		if (item.form == body_form::interior_atom || item.form == body_form::negated_interior) {
 			if (self != no_interior) {
 				if (item.form == body_form::negated_interior) {
-					a_recursive_rule_negates_no_stratum();
+					a_recursive_rule_does_not_negate_a_derived_table();
 				}
 				if constexpr (requires { ir.rec; }) {
 					if (!(item.interior.name == ir.rec.name)) {

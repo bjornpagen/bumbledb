@@ -73,9 +73,6 @@ namespace bdb::detail {
 template<class Payload>
 [[nodiscard]] consteval auto payload_supported() -> bool {
 	auto const members = payload_members(^^Payload);
-	if (members.size() > max_closed_columns) {
-		return false;
-	}
 	for (auto const member : members) {
 		if (!payload_column_supported(member)) {
 			return false;
@@ -94,9 +91,6 @@ template<class Payload>
 template<class Payload>
 [[nodiscard]] consteval auto payload_message(std::string_view name) -> std::string {
 	auto const members = payload_members(^^Payload);
-	if (members.size() > max_closed_columns) {
-		return closed_subject(name) + ": the payload exceeds max_closed_columns";
-	}
 	for (auto const member : members) {
 		auto const field = wire_field_name(member);
 		if (!payload_column_supported(member)) {
@@ -284,7 +278,7 @@ struct closed_types {
 template<fixed_string Name, class Payload, class... Members>
 [[nodiscard]] consteval auto mint_closed(Members const&... members) -> typename closed_types<Name, Payload, Members...>::Facade {
 	static_assert(handles_distinct<Members...>(), duplicate_handle_message<Members...>(Name.view()));
-	static_assert(sizeof...(Members) <= max_closed_handles, "bumbledb closed(): the vocabulary exceeds max_closed_handles");
+	static_assert(sizeof...(Members) <= max_extension_rows, "bumbledb closed(): the vocabulary exceeds MAX_EXTENSION_ROWS");
 	static_assert(payload_supported<Payload>(), payload_message<Payload>(Name.view()));
 	static_assert(handles_avoid_facade_names<Payload, Members...>(), reserved_handle_message<Payload, Members...>(Name.view()));
 

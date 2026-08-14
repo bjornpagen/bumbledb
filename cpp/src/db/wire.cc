@@ -146,7 +146,7 @@ template<Theory S>
 				auto values = std::vector<foreign::owned_literal>{};
 				values.reserve(data->column_count);
 				for (auto column = std::size_t{0}; column != data->column_count; ++column) {
-					values.push_back(owned_axiom_of(data->axioms[handle * max_closed_columns + column]));
+					values.push_back(owned_axiom_of(data->axioms[handle * data->column_count + column]));
 				}
 				rows.push_back(foreign::owned_closed_row{
 				    .handle = std::string{data->handles[handle].view()},

@@ -410,7 +410,7 @@ fn seed_service_outage(db: *mut bdb_db, name: &str, window: (i64, i64)) -> u64 {
 }
 
 // ---------------------------------------------------------------------------
-// The DownAt program (§39), as C views
+// The DownAt query (§39), as C views
 // ---------------------------------------------------------------------------
 
 fn blank_agg() -> bdb_agg_op {
@@ -1081,7 +1081,7 @@ fn prepare_execute_scalar_param_and_decode() {
     let id = seed_service_outage(db, "down-at", (10, 20));
     seed_service_outage(db, "up-at", (100, 200));
 
-    let prepared = with_down_at_query(|program| prepare(db, program));
+    let prepared = with_down_at_query(|query| prepare(db, query));
     let answers = bdb_answers_new();
 
     let (status, error) = db_read(db, |snap| {
@@ -1179,7 +1179,7 @@ fn execute_set_param_decodes_strings() {
     let _beta = seed_service_outage(db, "beta", (10, 20));
     let gamma = seed_service_outage(db, "gamma", (20, 30));
 
-    let prepared = with_names_of_query(|program| prepare(db, program));
+    let prepared = with_names_of_query(|query| prepare(db, query));
     let answers = bdb_answers_new();
 
     let (status, error) = db_read(db, |snap| {
@@ -1559,7 +1559,7 @@ fn prepared_exclusive_execute_and_destroy() {
 
     let dir = temp_store("prepared-excl");
     let db = create_uptime(&dir);
-    let prepared = with_down_at_query(|program| prepare(db, program));
+    let prepared = with_down_at_query(|query| prepare(db, query));
     let answers = bdb_answers_new();
     let (status, error) = db_read(db, |snap| {
         unsafe {

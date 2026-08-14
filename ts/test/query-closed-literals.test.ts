@@ -11,7 +11,7 @@
  * the closed surface, a membership array at an ordinary field — arrays
  * are CLOSED-ONLY by owner ruling, ordinary membership is `r.inSet`); the
  * LOWERING GOLDENS — a name literal lowers to the exact IR the old bigint
- * spelling produced (deep-equal against the pinned program), and a
+ * spelling produced (deep-equal against the pinned query), and a
  * membership array lowers BYTE-IDENTICAL to the same set spelled
  * `r.inSet` (the existing set/word-set form the engine folds; the SDK
  * supplies the translated members itself at execute); the SELECTION
@@ -127,14 +127,14 @@ describe("query literals, params & membership arrays over closed references", fu
 		)
 	}
 
-	test("a handle-name literal matches, and lowers to the EXACT program the old bigint spelling produced", function nameLiteral() {
+	test("a handle-name literal matches, and lowers to the EXACT query the old bigint spelling produced", function nameLiteral() {
 		const crits = query(Oncall).rule(function rule(r) {
 			const inc = v(Incident)
 			return r.match(Incident, { id: inc.id, sev: "Crit" }).find({ i: inc.id })
 		})
 		// The lowering golden: "Crit" translates to declaration-order id 2n
-		// and crosses tagged u64 — the wire program is the old `sev: 2n`
-		// spelling's program, position for position (queries cross ids,
+		// and crosses tagged u64 — the wire IR is the old `sev: 2n`
+		// spelling's query, position for position (queries cross ids,
 		// never handle names).
 		assert.deepStrictEqual(lowerQuery(crits), {
 			interiors: [],
@@ -170,7 +170,7 @@ describe("query literals, params & membership arrays over closed references", fu
 			const inc = v(Incident)
 			return r.match(Incident, { id: inc.id, sev: r.inSet("members") }).find({ i: inc.id })
 		})
-		// The wire-program golden, BYTE-compared: one paramSet term over the
+		// The wire-IR golden, BYTE-compared: one paramSet term over the
 		// one dense ParamId — the array IS the existing set/word-set form,
 		// its members folded by the SDK at execute.
 		assert.equal(JSON.stringify(lowerQuery(viaArray)), JSON.stringify(lowerQuery(viaInSet)))
@@ -314,7 +314,7 @@ describe("query literals, params & membership arrays over closed references", fu
 		assert.equal(
 			JSON.stringify(lowerQuery(reordered)),
 			JSON.stringify(lowerQuery(oneSpelling)),
-			"the wire program is the one-spelling program, byte for byte"
+			"the wire IR is the one-spelling query, byte for byte"
 		)
 		assert.deepEqual(incidents(run(reordered, {})), [3n, 4n, 5n])
 	})

@@ -173,8 +173,8 @@ struct rule_chain {
 
 	/**
 	 * The negated finished-table atom: rejects every binding the named
-	 * interior or finished rec extends (main rules only — a recursive rule
-	 * negates no stratum). Binds nothing.
+	 * interior or finished rec extends (main rules only — a rec arm does
+	 * not negate a derived table). Binds nothing.
 	 */
 	template<fixed_string Name, class... Binds>
 	[[nodiscard]] consteval auto not_interior(Binds... binds) const -> rule_chain {

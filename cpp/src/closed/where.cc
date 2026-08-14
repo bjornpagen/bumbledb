@@ -6,6 +6,7 @@ import :classify;
 import :coord;
 import :handle;
 import :spec;
+import :axioms;
 import :schema_member;
 
 namespace bdb::detail {
@@ -131,7 +132,7 @@ using where_pattern_of = typename detail::where_pattern_types<Facade>::Pattern;
 template<class Facade>
 struct selected {
 	std::size_t selection_count{};
-	std::array<selection_data, max_face_selections> selections{};
+	std::array<selection_data, max_extension_rows> selections{};
 };
 
 /**
@@ -154,7 +155,7 @@ template<class Facade>
 		using Slot = [:std::meta::type_of(members[index]):];
 		auto const& slot = pattern.[:members[index]:];
 		if (slot.literal.has_value()) {
-			if (out.selection_count == max_face_selections) {
+			if (out.selection_count == out.selections.size()) {
 				detail::face_has_too_many_selection_bindings();
 			}
 			auto binding = selection_data{};

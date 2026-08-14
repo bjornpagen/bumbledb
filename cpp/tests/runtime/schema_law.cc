@@ -143,6 +143,9 @@ static_assert(Rooms.statements[1].weight == bdb::weight_form::duration_field);
 static_assert(Rooms.statements[1].weight_field.view() == "span");
 static_assert(Rooms.statements[1].window.hi.lit == 720);
 
+inline constexpr auto WideVocab = bdb::closed<"WideVocab", "A", "B", "C", "D", "E", "F", "G", "H", "I">();
+static_assert(WideVocab.data.handle_count == 9);
+
 static_assert(bdb::within(std::uint64_t{3}).data.form == bdb::window_form::exact);
 static_assert(bdb::within(std::uint64_t{3}).data.lo.lit == 3);
 

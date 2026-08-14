@@ -257,7 +257,7 @@ pub struct bdb_interior {
     pub rule_count: usize,
 }
 
-/// One linear recursive SCC: base arms and rec arms.
+/// One linear rec: base arms and rec arms.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct bdb_rec {

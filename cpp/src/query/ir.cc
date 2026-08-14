@@ -93,7 +93,7 @@ struct binding_data {
 struct atom_data {
 	std::uint32_t relation;
 	std::size_t binding_count;
-	std::array<binding_data, max_relation_fields> bindings;
+	std::array<binding_data, max_query_vars> bindings;
 };
 
 /** The comparison operators the surface mints (`ir::CmpOp`). */
@@ -329,7 +329,7 @@ struct wire_atom {
 	atom_source source;
 	std::uint32_t id;
 	std::size_t binding_count;
-	std::array<wire_binding, max_relation_fields> bindings;
+	std::array<wire_binding, max_query_vars> bindings;
 };
 
 struct wire_condition {
@@ -460,7 +460,7 @@ auto negated_atom_binds_a_variable_no_positive_atom_binds() -> void;
 auto pack_stands_alone_never_beside_another_aggregate() -> void;
 auto interior_atom_names_no_declared_table() -> void;
 auto a_recursive_rule_matches_only_its_own_rec() -> void;
-auto a_recursive_rule_negates_no_stratum() -> void;
+auto a_recursive_rule_does_not_negate_a_derived_table() -> void;
 auto a_recursive_rule_head_projects_bound_variables_only() -> void;
 auto interior_atom_omits_a_head_column() -> void;
 auto interior_atom_binds_a_name_the_head_does_not_carry() -> void;

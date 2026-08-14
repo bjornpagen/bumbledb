@@ -1671,7 +1671,7 @@ function makeQueryStart<
 			arms: { readonly base: Base; readonly rec: Step }
 		): QueryStart<Rels, Classes, Flatten<P & BuildsParams<Base> & BuildsParams<Step>>, RecData> {
 			if (rec !== null) {
-				throw errors.new("query: a second recursive is unwritable — this cut admits one rec SCC")
+				throw errors.new("query: a second recursive is unwritable — this cut admits one linear rec")
 			}
 			if (interiors.some(function sameName(interior) { return interior.name === name })) {
 				throw errors.new(`query: interior and recursive share the name ${name}`)

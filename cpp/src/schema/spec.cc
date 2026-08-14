@@ -12,27 +12,6 @@ import :axioms;
 export namespace bdb {
 
 /**
- * Widest projection a statement face may spell (a Phase-C capacity; the
- * engine's own bound is far higher).
- */
-inline constexpr std::size_t max_projection_width = 8;
-
-/**
- * Most declared fields one relation may carry through this elaborator.
- */
-inline constexpr std::size_t max_relation_fields = 16;
-
-/**
- * Most σ/ψ bindings one statement face may carry.
- */
-inline constexpr std::size_t max_face_selections = 4;
-
-/**
- * Most literals one σ binding's set may carry.
- */
-inline constexpr std::size_t max_selection_literals = 4;
-
-/**
  * One semantic coordinate by name: the class-map currency ("Service.id"
  * as data). Structural and NTTP-friendly like everything here.
  */
@@ -68,7 +47,7 @@ struct field_data {
 struct relation_data {
 	name_text name;
 	std::size_t field_count;
-	std::array<field_data, max_relation_fields> fields;
+	std::array<field_data, max_extension_rows> fields;
 };
 
 /**
@@ -93,7 +72,7 @@ struct selection_literal {
 struct selection_data {
 	name_text field;
 	std::size_t literal_count;
-	std::array<selection_literal, max_selection_literals> literals;
+	std::array<selection_literal, max_extension_rows> literals;
 };
 
 /**
@@ -104,9 +83,9 @@ struct selection_data {
 struct side_data {
 	name_text relation;
 	std::size_t width;
-	std::array<name_text, max_projection_width> fields;
+	std::array<name_text, max_extension_rows> fields;
 	std::size_t selection_count;
-	std::array<selection_data, max_face_selections> selections;
+	std::array<selection_data, max_extension_rows> selections;
 };
 
 /**

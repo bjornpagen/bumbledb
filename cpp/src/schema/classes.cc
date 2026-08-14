@@ -19,7 +19,7 @@ inline constexpr bool is_statement_v = is_key_v<T> || is_containment_v<T> || is_
 /**
  * The :interval diagnostic convention (see :capacity's hook block).
  */
-auto relation_exceeds_max_relation_fields() -> void;
+auto relation_field_table_exceeds_flattened_storage() -> void;
 
 /**
  * One facade's flattened relation entry, read off its coordinate-shaped
@@ -40,8 +40,8 @@ template<class Facade>
 			if (out.field_count == 0) {
 				out.name = Coord::relation_name;
 			}
-			if (out.field_count == max_relation_fields) {
-				relation_exceeds_max_relation_fields();
+			if (out.field_count == out.fields.size()) {
+				relation_field_table_exceeds_flattened_storage();
 			}
 			out.fields[out.field_count] = field_data{
 			    .name = Coord::field_name,

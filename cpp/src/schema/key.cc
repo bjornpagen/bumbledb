@@ -56,7 +56,6 @@ template<class First, class... Rest>
 	              "(Relation.field)");
 	static_assert(detail::same_relation<First, Rest...>(),
 	              detail::span_message<First, Rest...>("key", "a key constrains one relation's own rows"));
-	static_assert(1 + sizeof...(Rest) <= max_projection_width, "bumbledb key(): the projection exceeds max_projection_width");
 	return {};
 }
 

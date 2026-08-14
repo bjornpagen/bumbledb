@@ -50,7 +50,7 @@ import type { FieldsShape } from "#relation.ts"
 /**
  * One atom-binding position as runtime data. A variable rides BY REFERENCE
  * (`ref`) — object identity is the join. `literalSet` is a membership
- * ARRAY at a closed-reference field, folded into the program.
+ * ARRAY at a closed-reference field, folded into the query.
  */
 type BindingTermData =
 	| { readonly kind: "var"; readonly ref: AnyVar }

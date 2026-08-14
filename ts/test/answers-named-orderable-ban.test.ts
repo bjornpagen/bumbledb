@@ -180,7 +180,7 @@ describe("answer rows arrive named + the orderable ban", function suite() {
 		])
 		// The SAME query's raw positional rows (the 0.3.0 bigint view) match
 		// the decoded rows modulo exactly the id → name translation — the
-		// wire program never moved, only the read seam speaks names now.
+		// wire IR never moved, only the read seam speaks names now.
 		const twin = runRaw(all, {}).map(function translate(raw): [bigint, string] {
 			const [n, s] = raw
 			if (typeof n !== "bigint" || typeof s !== "bigint") {
