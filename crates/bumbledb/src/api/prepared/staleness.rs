@@ -121,7 +121,7 @@ impl<S> PreparedQuery<'_, S> {
     /// occurrence, the statistics every node estimate derives from,
     /// with the relation name resolved.
     pub(super) fn rule_pinned_rows(&self, rule_idx: usize) -> Vec<crate::api::stats::PinnedRows> {
-        self.body.rules()[rule_idx]
+        self.pipeline.main_rules()[rule_idx]
             .pinned()
             .iter()
             .map(|pin| crate::api::stats::PinnedRows {

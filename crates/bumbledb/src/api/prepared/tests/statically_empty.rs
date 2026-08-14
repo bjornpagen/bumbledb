@@ -1,7 +1,8 @@
 //! Statically empty: condition folding at normalize (docs/architecture/
 //! 20-query-ir.md § normalization, 40-execution.md § access paths). A
 //! rule whose constant conditions are mutually unsatisfiable dies at
-//! prepare; a query of only dead main rules prepares to `PreparedBody::Empty`
+//! prepare; a query of only dead main rules prepares to a Cq pipeline
+//! with an empty main rule list
 //! — params bind first (errors surface), then nothing runs. The fold's
 //! set-preservation rides the folded/unfolded differential below.
 
@@ -145,11 +146,14 @@ fn a_dead_rule_beside_a_live_one_runs_the_live_one_only() {
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
     // The dead rule was deleted at prepare — only the live plan exists.
     assert_eq!(
-        prepared.body.rules().len(),
+        prepared.pipeline.main_rules().len(),
         1,
         "the dead rule prepared no plan"
     );
-    assert!(matches!(prepared.body.rules(), [PreparedRule::FreeJoin(_)]));
+    assert!(matches!(
+        prepared.pipeline.main_rules(),
+        [PreparedRule::FreeJoin(_)]
+    ));
 
     let out = prepared
         .execute_collect(&txn, &cache, &[])
@@ -224,7 +228,10 @@ fn the_empty_program_builds_no_image_and_binds_no_view() {
         rules: vec![by_kind_rule(3, contradiction())],
     };
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
-    assert!(matches!(prepared.body, PreparedBody::Empty));
+    assert!(matches!(
+        prepared.pipeline,
+        PreparedPipeline::Cq { ref rules, .. } if rules.is_empty()
+    ));
 
     obs::start_capture();
     let out = prepared

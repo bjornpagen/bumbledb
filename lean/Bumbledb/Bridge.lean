@@ -473,7 +473,7 @@ def ledger : List Obligation := [
 
   .row @Query.statically_empty_sound `Bumbledb.Query.statically_empty_sound
     "A statically refuted rule contributes the empty answer set on every instance — the verdict never consulted one."
-    "PreparedBody::Empty (crates/bumbledb/src/api/prepared.rs); NormalizedQuery::dead (crates/bumbledb/src/ir/normalize.rs)"
+    "PreparedPipeline (crates/bumbledb/src/api/prepared.rs); NormalizedQuery::dead (crates/bumbledb/src/ir/normalize.rs)"
     "the_empty_program_builds_no_image_and_binds_no_view (crates/bumbledb/src/api/prepared/tests/statically_empty.rs)",
 
   .row @Query.range_summary_replacement `Bumbledb.Query.range_summary_replacement
@@ -592,7 +592,7 @@ def ledger : List Obligation := [
 
   .row @Query.semi_naive_agrees.{0} `Bumbledb.Query.semi_naive_agrees
     "One delta occurrence per rec arm walks the naive chain; the spanning seen-set absorbs re-derivation."
-    "DeltaVariant (crates/bumbledb/src/api/prepared.rs); WordMap::iter_since (crates/bumbledb/src/exec/wordmap/clear.rs); TransientImage (crates/bumbledb/src/image/build.rs); answers_since (crates/bumbledb/src/exec/sink/projection/new.rs)"
+    "RecArm (crates/bumbledb/src/api/prepared.rs); WordMap::iter_since (crates/bumbledb/src/exec/wordmap/clear.rs); TransientImage (crates/bumbledb/src/image/build.rs); answers_since (crates/bumbledb/src/exec/sink/projection/new.rs)"
     "tree_closure_matches_the_hand_answer_on_every_oracle (crates/bumbledb-bench/src/differential/tests/recursive.rs)",
 
   /- ## The judgment conformance lane (Decide.lean) -/

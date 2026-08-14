@@ -354,7 +354,8 @@ pub struct NormalizedQuery {
     /// the grounding-evaluator (`plan/ground/evaluate.rs`, a closed atom
     /// whose prepare-time evaluation empties — `folded to ∅: …`). A dead
     /// rule is deleted at prepare (`api/prepared/build.rs`); a query
-    /// of only dead rules prepares to `PreparedBody::Empty`.
+    /// of only dead rules prepares to `PreparedPipeline::Cq` with an
+    /// empty main rule list.
     pub dead: Option<String>,
 }
 

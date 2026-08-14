@@ -261,7 +261,7 @@ fn an_empty_fold_prepares_the_statically_empty_program() {
 
     let mut prepared = prepare(&txn, &cache, &schema, &fold_query(99)).expect("prepare");
     assert!(
-        matches!(prepared.body, PreparedBody::Empty),
+        matches!(prepared.pipeline, PreparedPipeline::Cq { ref rules, .. } if rules.is_empty()),
         "no Kind row has rank 99: the rule died at prepare"
     );
     let out = prepared

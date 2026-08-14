@@ -135,7 +135,7 @@ fn walk_atoms() -> Vec<Atom> {
 /// One prepared rule's roles — asserting the marks so neither side of
 /// the differential is vacuously equal.
 fn plan_roles(prepared: &PreparedQuery<'_, ()>, rule: usize) -> Vec<Role> {
-    let PreparedRule::FreeJoin(rule) = &prepared.body.rules()[rule] else {
+    let PreparedRule::FreeJoin(rule) = &prepared.pipeline.main_rules()[rule] else {
         panic!("a two-atom query plans as Free Join");
     };
     rule.plan.occurrences().iter().map(|o| o.role).collect()
@@ -564,7 +564,7 @@ fn per_rule_elimination_marks_one_rule_only() {
     };
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
     assert_eq!(
-        prepared.body.rules().len(),
+        prepared.pipeline.main_rules().len(),
         2,
         "differing bodies never subsume"
     );
@@ -653,7 +653,7 @@ fn dnf_residue_subsumption_deletes_the_filtered_rule() {
     });
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
     assert_eq!(
-        prepared.body.rules().len(),
+        prepared.pipeline.main_rules().len(),
         1,
         "the subsumed disjunct is deleted"
     );
@@ -682,7 +682,7 @@ fn dnf_residue_subsumption_deletes_the_filtered_rule() {
     let mut disabled =
         with_grounding_disabled(|| prepare(&txn, &cache, &schema, &query)).expect("prepare");
     assert_eq!(
-        disabled.body.rules().len(),
+        disabled.pipeline.main_rules().len(),
         2,
         "the off switch covers both passes: no elimination, no deletion"
     );

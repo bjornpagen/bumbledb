@@ -2,7 +2,7 @@
 
 - **Severity:** medium
 - **Tree:** engine
-- **Status:** OPEN
+- **Status:** FIXED
 - **Source:** audit/engine.md F23
 - **Depends on:** engine-001 (co-lands — "`Empty` is not a variant" is a clause of the pipeline sum)
 
@@ -36,10 +36,10 @@ Per `audit/CONTRACT.md §C3`: **`Empty` is not a variant.** Dead main is `Pipeli
 
 ## Acceptance criteria
 
-- [ ] Gone: `rg -n 'PreparedBody::Empty|Pipeline::Empty' crates/bumbledb/src` → no matches; the contradictory comment block at `execute.rs:84-93` rewritten to the one-shape story.
-- [ ] Unchanged tests: `statically_empty.rs`, `folded.rs` suites pass UNCHANGED (same answers, same death records).
-- [ ] New lock: shared with engine-012 — dead-main + live-interiors profiling reports interior emits.
-- [ ] Green: `PATH="$HOME/.cargo/bin:$PATH" cargo test -p bumbledb`; `./scripts/check.sh`.
+- [x] Gone: `rg -n 'PreparedBody::Empty|Pipeline::Empty' crates/bumbledb/src` → no matches; the contradictory comment block at `execute.rs:84-93` rewritten to the one-shape story.
+- [x] Unchanged tests: `statically_empty.rs`, `folded.rs` suites pass UNCHANGED (same answers, same death records).
+- [x] New lock: shared with engine-012 — dead-main + live-interiors profiling reports interior emits.
+- [x] Green: `cargo test -p bumbledb --lib` pass (`statically_empty`, `folded`, new dead-main interior lock).
 
 ## Constraints
 

@@ -1,5 +1,5 @@
 use super::{
-    Answers, BindValue, KeyProbeRule, PreparedBody, PreparedQuery, PreparedRule, ValueType,
+    Answers, BindValue, KeyProbeRule, PreparedPipeline, PreparedQuery, PreparedRule, ValueType,
 };
 
 use crate::error::Result;
@@ -81,32 +81,38 @@ impl<S> PreparedQuery<'_, S> {
         cache: &ImageCache,
         out: &mut Answers,
     ) -> Result<()> {
-        // The statically-empty program (ir/normalize/fold.rs): params
-        // were bound above — bind errors surfaced — and nothing else exists to run: no sink reset, no
-        // rule loop, no image, no view bind, no finalize; the cleared
-        // buffer IS the empty result (docs/architecture/40-execution.md
-        // § access paths). Always the whole program: this variant is
-        // built only when every rule died.
         // Statically-empty **main** with no interiors: bind errors
         // already surfaced; nothing to run. Interiors-only with a dead
         // main still runs the preamble (an interior can be the only
-        // measure site).
-        if self.interiors.is_empty() && matches!(self.body, PreparedBody::Empty) {
-            return Ok(());
+        // measure site). Dead main is `Cq { rules: [] }` — Empty is not
+        // a variant; the empty fast path is the zero-iteration loop.
+        enum BoundShape {
+            Empty,
+            KeyProbeDirect,
+            Run,
         }
-        // The point fast lane: interiors empty AND a single main
-        // key-probe. A key-probe inside a multi-rule main or after
-        // interiors keeps the sink path.
-        if self.interiors.is_empty()
-            && matches!(
-                self.body.rules(),
-                [PreparedRule::KeyProbe(KeyProbeRule {
-                    key_probe_finds: Some(_),
-                    ..
-                })]
-            )
-        {
-            return self.execute_key_probe_direct(txn, out);
+        let shape = match &self.pipeline {
+            PreparedPipeline::Cq { interiors, rules } => {
+                match (interiors.as_slice(), rules.as_slice()) {
+                    ([], []) => BoundShape::Empty,
+                    (
+                        [],
+                        [
+                            PreparedRule::KeyProbe(KeyProbeRule {
+                                key_probe_finds: Some(_),
+                                ..
+                            }),
+                        ],
+                    ) => BoundShape::KeyProbeDirect,
+                    _ => BoundShape::Run,
+                }
+            }
+            PreparedPipeline::Reach { .. } => BoundShape::Run,
+        };
+        match shape {
+            BoundShape::Empty => return Ok(()),
+            BoundShape::KeyProbeDirect => return self.execute_key_probe_direct(txn, out),
+            BoundShape::Run => {}
         }
         // Phase attribution engages only under an active obs capture
         // (docs/architecture/60-validation.md): timing runs — even obs
@@ -158,21 +164,24 @@ impl<S> PreparedQuery<'_, S> {
         counters: &mut C,
     ) -> Result<bool> {
         // Interiors then rec (if any) then main. Interiors-only never
-        // enters the reach driver (`run_derived` branches on body).
-        if !self.interiors.is_empty() || matches!(self.body, PreparedBody::Reach(_)) {
+        // enters the reach driver (`run_derived` is the Cq derived phase
+        // and the Reach interiors+rec phase).
+        let has_derived = match &self.pipeline {
+            PreparedPipeline::Cq { interiors, .. } => !interiors.is_empty(),
+            PreparedPipeline::Reach { .. } => true,
+        };
+        if has_derived {
             let derived_ran = self.run_derived(txn, cache, counters)?;
-            if matches!(self.body, PreparedBody::Empty) {
+            if self.pipeline.main_rules().is_empty() {
                 return Ok(derived_ran);
             }
-            // Rec present: main rules live on the driver; interiors-only
-            // falls through to the main rule loop below.
         }
-        if matches!(self.body, PreparedBody::Empty) {
+        if self.pipeline.main_rules().is_empty() {
             return Ok(false);
         }
         self.sink.reset();
         let mut ran = false;
-        let rule_count = self.body.rules().len();
+        let rule_count = self.pipeline.main_rules().len();
         for rule_idx in 0..rule_count {
             ran |= self.run_rule(rule_idx, txn, cache, counters)?;
         }
@@ -277,13 +286,13 @@ impl<S> PreparedQuery<'_, S> {
         let seen_before = self.sink.distinct_seen().unwrap_or(0);
         // Re-aim per rule only where a switch exists: a single-rule sink
         // is built aimed, and the hot single-rule path stays untouched.
-        let rule_count = self.body.rules().len();
+        let rule_count = self.pipeline.main_rules().len();
         if rule_count > 1 {
-            let rule = &self.body.rules()[rule_idx];
+            let rule = &self.pipeline.main_rules()[rule_idx];
             self.sink
                 .aim(rule.finds(), rule.slot_count(), rule.dedup_spans());
         }
-        let slot_count = self.body.rules()[rule_idx].slot_count();
+        let slot_count = self.pipeline.main_rules()[rule_idx].slot_count();
         self.bindings.resize(slot_count);
         // The fully-latched fast path: zero pending literals and zero
         // params of any shape means the resolved tables were written
@@ -294,11 +303,8 @@ impl<S> PreparedQuery<'_, S> {
         let mut retired = std::mem::take(&mut self.derived.retired);
         let fast_eligible = self.unresolved_literals == 0 && self.params.is_empty();
         let mut latched = 0u32;
-        let rules = self.body.rules_mut();
+        let rules = self.pipeline.main_rules_mut();
         let ran = match &mut rules[rule_idx] {
-            PreparedRule::Recursive(_) => {
-                unreachable!("recursive rules run under the reach driver, never the main rule loop")
-            }
             PreparedRule::KeyProbe(rule) => {
                 execute_key_probe(
                     &rule.plan,
@@ -412,7 +418,7 @@ impl<S> PreparedQuery<'_, S> {
                 key_probe_finds: Some(key_probe_finds),
                 ..
             }),
-        ] = self.body.rules()
+        ] = self.pipeline.main_rules()
         else {
             return Ok(());
         };

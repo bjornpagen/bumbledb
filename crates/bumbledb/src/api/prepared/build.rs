@@ -1,20 +1,20 @@
 use super::{
     AggregateSink, Bindings, Colt, EitherSink, Executor, FindSpec, FreeJoinRule, KeyProbeRule,
-    OccurrencePin, PreparedBody, PreparedInterior, PreparedQuery, PreparedRule, ProjectionSink,
-    ResolveMemo, Schema, ValueType, ViewMemo, PARKED_SLOTS,
+    OccurrencePin, PARKED_SLOTS, PreparedInterior, PreparedPipeline, PreparedQuery, PreparedRule,
+    ProjectionSink, ResolveMemo, Schema, ValueType, ViewMemo,
 };
 
 use crate::error::Result;
 use crate::exec::dispatch::classify;
 use crate::image::cache::ImageCache;
 use crate::image::view::View;
-use crate::ir::normalize::{normalize_predicate, NormalizedQuery};
-use crate::ir::validate::{validate, RuleWitness};
+use crate::ir::normalize::{NormalizedQuery, normalize_predicate};
+use crate::ir::validate::{RuleWitness, validate};
 use crate::ir::{AggOp, FindTerm, Query};
 use crate::obs;
 use crate::plan::fj::{
-    binary2fj, factor, fold_split, gj_split, provably_disjoint_rules, provably_distinct,
-    DisjointWitness, DistinctWitness,
+    DisjointWitness, DistinctWitness, binary2fj, factor, fold_split, gj_split,
+    provably_disjoint_rules, provably_distinct,
 };
 use crate::plan::planner::plan as plan_order;
 use crate::storage::env::ReadTxn;
@@ -82,6 +82,7 @@ pub(crate) fn prepare<'s, S>(
 /// `docs/architecture/20-query-ir.md` § engine recursion).
 #[expect(
     clippy::too_many_lines,
+    clippy::too_many_arguments,
     reason = "the prepare pipeline reads as one protocol: normalize, ground, per-rule prepare, probes, artifacts"
 )]
 fn prepare_witnessed<'s, S>(
@@ -195,9 +196,9 @@ fn prepare_witnessed<'s, S>(
     // measured variable plus the rule's compiled verdict fold — the
     // mainline rules drop rays (a ray never Holds), so the probes are
     // the ONE place a Ray verdict is rendered, after the rule loop.
-    // A dead query skips them at execution (`PreparedBody::Empty` returns
-    // before the rule loop; a dead disjunct's constant refutation is a
-    // Fails leaf, so its verdict is never Ray anyway).
+    // A dead-main query with no interiors skips them at execution (the
+    // zero-iteration main loop; a dead disjunct's constant refutation is
+    // a Fails leaf, so its verdict is never Ray anyway).
     let ray_probes = if rules.is_empty() {
         Vec::new()
     } else {
@@ -216,8 +217,8 @@ fn prepare_witnessed<'s, S>(
         driver
             .base
             .iter()
-            .chain(&driver.rec)
             .map(PreparedRule::slot_count)
+            .chain(driver.rec.iter().map(|arm| arm.rule.plan.slot_count()))
     });
     let bindings = Bindings::new(
         rules
@@ -253,20 +254,22 @@ fn prepare_witnessed<'s, S>(
             })
             .sum::<u32>()
         + rec.as_ref().map_or(0, |driver| {
-            driver
-                .base
-                .iter()
-                .chain(&driver.rec)
-                .map(pending_literals)
-                .sum()
+            driver.base.iter().map(pending_literals).sum::<u32>()
+                + driver
+                    .rec
+                    .iter()
+                    .map(|arm| plan_pending_literals(&arm.rule.plan))
+                    .sum::<u32>()
         });
-    let body = if let Some(mut driver) = rec {
-        driver.main = rules;
-        PreparedBody::Reach(Box::new(driver))
-    } else if rules.is_empty() {
-        PreparedBody::Empty
+    let pipeline = if let Some(driver) = rec {
+        PreparedPipeline::Reach {
+            interiors,
+            driver: Box::new(driver),
+            main: rules,
+            rounds_budget: super::reach::DEFAULT_REACH_ROUNDS,
+        }
     } else {
-        PreparedBody::Rules(rules)
+        PreparedPipeline::Cq { interiors, rules }
     };
     Ok(PreparedQuery {
         schema,
@@ -274,9 +277,7 @@ fn prepare_witnessed<'s, S>(
         disjoint_rules,
         subsumed,
         dead,
-        interiors,
-        body,
-        rounds_budget: super::reach::DEFAULT_REACH_ROUNDS,
+        pipeline,
         tuples_budget: super::reach::DEFAULT_DERIVED_TUPLES,
         derived: super::reach::DerivedScratch::default(),
         predicate,
@@ -424,14 +425,28 @@ fn prepare_reach(
         let PreparedRule::FreeJoin(fj) = prepared else {
             unreachable!("an Interior-reading rec arm never classifies as a key probe")
         };
-        rec_rules.push(PreparedRule::Recursive(super::RecursiveRule {
-            variant: super::DeltaVariant { delta, rule: fj },
-        }));
+        rec_rules.push(super::RecArm { delta, rule: fj });
     }
     let units = base.len() + rec_rules.len();
-    let hint = output_hint(&base) + output_hint(&rec_rules);
-    let sink = base.first().or(rec_rules.first()).map_or_else(
-        || crate::exec::sink::ProjectionSink::with_capacity_hint(&[], 0, 0),
+    let hint = output_hint(&base)
+        + rec_rules
+            .iter()
+            .map(|arm| free_join_hint(&arm.rule))
+            .max()
+            .unwrap_or(0);
+    let sink = base.first().map_or_else(
+        || {
+            rec_rules.first().map_or_else(
+                || crate::exec::sink::ProjectionSink::with_capacity_hint(&[], 0, 0),
+                |first| {
+                    crate::exec::sink::ProjectionSink::with_capacity_hint(
+                        &first.rule.finds,
+                        first.rule.plan.slot_count(),
+                        hint,
+                    )
+                },
+            )
+        },
         |first| {
             crate::exec::sink::ProjectionSink::with_capacity_hint(
                 first.finds(),
@@ -443,7 +458,6 @@ fn prepare_reach(
     Ok(super::reach::ReachDriver {
         base,
         rec: rec_rules,
-        main: Vec::new(),
         field_types: columns.iter().map(|c| c.ty.type_desc()).collect(),
         sink,
         units,
@@ -487,23 +501,23 @@ fn output_hint(rules: &[PreparedRule]) -> usize {
     rules
         .iter()
         .map(|rule| match rule {
-            // Sink presizing: the last node's planner estimate bounds
-            // the binding stream the sink consumes.
-            PreparedRule::FreeJoin(rule) => {
-                let plan = &rule.plan;
-                usize::try_from(plan.estimates().last().copied().unwrap_or(0).min(1 << 21))
-                    .expect("clamped")
-            }
-            // Variant estimates share the floors; variant 0 speaks.
-            PreparedRule::Recursive(rule) => {
-                let plan = &rule.variant.rule.plan;
-                usize::try_from(plan.estimates().last().copied().unwrap_or(0).min(1 << 21))
-                    .expect("clamped")
-            }
+            PreparedRule::FreeJoin(rule) => free_join_hint(rule),
             PreparedRule::KeyProbe(_) => 1,
         })
         .max()
         .unwrap_or(0)
+}
+
+fn free_join_hint(rule: &super::FreeJoinRule) -> usize {
+    usize::try_from(
+        rule.plan
+            .estimates()
+            .last()
+            .copied()
+            .unwrap_or(0)
+            .min(1 << 21),
+    )
+    .expect("clamped")
 }
 
 /// The rule's `str` literals awaiting dictionary words — the latch
@@ -518,9 +532,6 @@ fn output_hint(rules: &[PreparedRule]) -> usize {
 fn pending_literals(rule: &PreparedRule) -> u32 {
     match rule {
         PreparedRule::FreeJoin(rule) => plan_pending_literals(&rule.plan),
-        // Each variant carries its own plan templates and latches
-        // independently — the counter sums them all.
-        PreparedRule::Recursive(rule) => plan_pending_literals(&rule.variant.rule.plan),
         PreparedRule::KeyProbe(_) => 0,
     }
 }
@@ -1089,9 +1100,6 @@ fn seal_dnf_spans(rules: &mut [PreparedRule]) {
                 spans.sort_unstable_by_key(|(var, ..)| *var);
                 spans
             }
-            // A recursive rule's head is projection-shaped (folds are
-            // refused through cycles) — no union key to seal.
-            PreparedRule::Recursive(_) => Vec::new(),
         }
     };
     let inventories: Vec<Vec<(crate::ir::VarId, usize, usize)>> =
@@ -1122,7 +1130,6 @@ fn seal_dnf_spans(rules: &mut [PreparedRule]) {
         match rule {
             PreparedRule::FreeJoin(rule) => rule.dedup_spans = spans,
             PreparedRule::KeyProbe(rule) => rule.dedup_spans = spans,
-            PreparedRule::Recursive(_) => {}
         }
     }
 }

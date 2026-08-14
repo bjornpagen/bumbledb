@@ -65,8 +65,8 @@ fn a_multi_rule_program_prepares_with_every_rules_plan() {
     let txn = env.read_txn().expect("txn");
 
     let prepared = prepare(&txn, &cache, &schema, &union_query()).expect("multi-rule builds");
-    assert_eq!(prepared.body.rules().len(), 2, "one plan per rule");
-    for rule in prepared.body.rules() {
+    assert_eq!(prepared.pipeline.main_rules().len(), 2, "one plan per rule");
+    for rule in prepared.pipeline.main_rules() {
         // Each rule went through the full pipeline: a real plan with the
         // rule's own occurrence scratch exists.
         let PreparedRule::FreeJoin(rule) = rule else {
@@ -452,7 +452,7 @@ fn an_or_spelled_fold_keeps_the_written_rules_full_binding_domain() {
     };
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
     assert_eq!(
-        prepared.body.rules().len(),
+        prepared.pipeline.main_rules().len(),
         2,
         "the or lowered to two disjunct rules"
     );
@@ -564,7 +564,7 @@ fn a_key_probe_rule_unions_through_the_sink() {
     };
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
     assert!(
-        matches!(prepared.body.rules()[1], PreparedRule::KeyProbe(_)),
+        matches!(prepared.pipeline.main_rules()[1], PreparedRule::KeyProbe(_)),
         "rule 1 classifies as the point fast path"
     );
     let out = prepared
