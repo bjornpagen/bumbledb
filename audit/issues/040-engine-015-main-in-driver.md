@@ -2,7 +2,7 @@
 
 - **Severity:** medium
 - **Tree:** engine
-- **Status:** FIXED
+- **Status:** FIXED(472b23ef)
 - **Source:** audit/engine.md F15
 - **Depends on:** engine-001 (co-lands: the Reach arm carries `main` beside the driver)
 

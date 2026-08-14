@@ -2,7 +2,7 @@
 
 - **Severity:** medium
 - **Tree:** engine
-- **Status:** FIXED
+- **Status:** FIXED(472b23ef)
 - **Source:** audit/engine.md F23
 - **Depends on:** engine-001 (co-lands — "`Empty` is not a variant" is a clause of the pipeline sum)
 

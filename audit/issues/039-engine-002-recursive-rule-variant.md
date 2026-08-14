@@ -2,7 +2,7 @@
 
 - **Severity:** high
 - **Tree:** engine
-- **Status:** FIXED
+- **Status:** FIXED(472b23ef)
 - **Source:** audit/engine.md F2
 - **Depends on:** engine-001 (co-lands; `RecArm` lives in the Reach arm's driver)
 - **Conflicts with:** engine-007, engine-025, engine-026 (same enum; they land with or after this)

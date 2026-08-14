@@ -2,7 +2,7 @@
 
 - **Severity:** high
 - **Tree:** engine
-- **Status:** FIXED
+- **Status:** FIXED(472b23ef)
 - **Source:** audit/engine.md F1
 - **Depends on:** none (foundation; co-lands with engine-002, engine-015)
 - **Conflicts with:** engine-008, engine-009, engine-012, engine-014, engine-023, engine-025, engine-029, engine-031 (same types; land after per INDEX)
