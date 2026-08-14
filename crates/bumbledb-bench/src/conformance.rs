@@ -92,13 +92,12 @@ use std::time::Instant;
 
 use bumbledb::schema::ValueType;
 use bumbledb::{
-    AggOp, AllenMask, Atom, Basic, CmpOp, Comparison, ConditionTree, Db, FieldId, FindTerm,
-    ParamId, Query, RelationId, Rule, Term, Value, VarId,
+    AggOp, AllenMask, Atom, AtomSource, Basic, CmpOp, Comparison, ConditionTree, Db, FieldId,
+    FindTerm, InteriorId, ParamId, Query, Rec, RelationId, Rule, Term, Value, VarId,
 };
 
 use crate::corpus_gen::{GenConfig, Rng, Scale};
 use crate::differential::{self, Answers};
-use crate::edb::EdbAtom;
 use crate::naive::{Delta, NaiveDb, ParamValue, Tuple};
 use crate::querygen::{self, ParamDraw, target};
 
@@ -162,7 +161,7 @@ impl Report {
 
 /// Why one candidate case is outside the lane's fragment.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Exclusion {
+pub(super) enum Exclusion {
     UnresolvedLiteral,
 }
 
@@ -591,12 +590,16 @@ fn push_find(out: &mut String, find: &FindTerm) {
     }
 }
 
-/// Whether `(relation, field)` is interval-typed in the target schema.
-fn field_is_interval(relation: RelationId, field: FieldId) -> bool {
-    matches!(
-        target::schema().relation(relation).field(field).value_type,
-        ValueType::Interval { .. }
-    )
+/// Whether `(atom, field)` is interval-typed. Interior (derived) columns
+/// are scalar in this corpus; the seeded serializer never sees one.
+fn field_is_interval(atom: &Atom, field: FieldId) -> bool {
+    match atom.source {
+        AtomSource::Edb(relation) => matches!(
+            target::schema().relation(relation).field(field).value_type,
+            ValueType::Interval { .. }
+        ),
+        AtomSource::Interior(_) => false,
+    }
 }
 
 /// One rule's variable count — the naive model's `count_vars`, walked
@@ -656,7 +659,7 @@ fn scalar_anchors(rule: &Rule, var_count: u16) -> Vec<bool> {
     for atom in &rule.atoms {
         for (field, term) in &atom.bindings {
             if let Term::Var(var) = term
-                && !field_is_interval(atom.relation(), *field)
+                && !field_is_interval(atom, *field)
             {
                 anchored[usize::from(var.0)] = true;
             }
@@ -712,7 +715,7 @@ fn lower_rule<'a>(rule: &'a Rule, params: &[ParamValue]) -> LoweredRule<'a> {
     for atom in &rule.atoms {
         let mut bindings = Vec::with_capacity(atom.bindings.len());
         for (field, term) in &atom.bindings {
-            if field_is_interval(atom.relation(), *field) && membership(term, &anchored, params) {
+            if field_is_interval(atom, *field) && membership(term, &anchored, params) {
                 let interval_var = VarId(fresh);
                 fresh += 1;
                 bindings.push((*field, Term::Var(interval_var)));
@@ -726,7 +729,7 @@ fn lower_rule<'a>(rule: &'a Rule, params: &[ParamValue]) -> LoweredRule<'a> {
             }
         }
         atoms.push(Atom {
-            source: bumbledb::AtomSource::Edb(atom.relation()),
+            source: atom.source,
             bindings,
         });
     }
@@ -746,7 +749,9 @@ fn mentioned(rules: &[LoweredRule<'_>]) -> BTreeSet<RelationId> {
     let mut set = BTreeSet::new();
     for rule in rules {
         for atom in rule.atoms.iter().chain(rule.negated.iter()) {
-            set.insert(atom.relation());
+            if let AtomSource::Edb(relation) = atom.source {
+                set.insert(relation);
+            }
         }
     }
     set
@@ -822,46 +827,7 @@ fn render_case(
         .map(|rule| lower_rule(rule, params))
         .collect();
 
-    // The query block.
-    let mut query_block = String::from("{\"rules\":[\n");
-    for (index, rule) in lowered.iter().enumerate() {
-        if index > 0 {
-            query_block.push_str(",\n");
-        }
-        query_block.push_str("{\"finds\":[");
-        for (position, find) in rule.finds.iter().enumerate() {
-            if position > 0 {
-                query_block.push(',');
-            }
-            push_find(&mut query_block, find);
-        }
-        query_block.push_str("],\n \"atoms\":[");
-        for (position, atom) in rule.atoms.iter().enumerate() {
-            if position > 0 {
-                query_block.push(',');
-            }
-            push_atom(world, &mut used, &mut query_block, atom)?;
-        }
-        query_block.push_str("],\n \"negated\":[");
-        for (position, atom) in rule.negated.iter().enumerate() {
-            if position > 0 {
-                query_block.push(',');
-            }
-            push_atom(world, &mut used, &mut query_block, atom)?;
-        }
-        query_block.push_str("],\n \"conditions\":[");
-        for (position, tree) in rule.conditions.iter().enumerate() {
-            if position > 0 {
-                query_block.push(',');
-            }
-            push_condition(world, &mut used, &mut query_block, tree)?;
-        }
-        // The surface width: the Lean fold domain reads `fullRow` at
-        // this width, projecting the membership lowering's fresh mints
-        // away (finding 087).
-        let _ = write!(query_block, "],\n \"width\":{}}}", rule.width);
-    }
-    query_block.push_str("\n]}");
+    let query_block = render_query_block(world, &mut used, QuerySpelling::Seeded(&lowered))?;
 
     // The params block.
     let mut params_block = String::from("[");
@@ -1015,14 +981,190 @@ fn strings_block(world: &World, used: &BTreeSet<u64>) -> String {
     strings_block
 }
 
-/// Serializes one atom.
+/// Frozen JSON spellings of one Query (C1): seeded omits empty
+/// interiors/rec/`head` and writes `"relation"`; reach writes
+/// interiors/rec/arity/rules and `edb`/`interior`. Dual spellings stay;
+/// dual renderer functions die.
+#[derive(Clone, Copy)]
+enum QuerySpelling<'a> {
+    Seeded(&'a [LoweredRule<'a>]),
+    Reach(&'a Query),
+}
+
+/// Reach-case arm of the one Query renderer.
+pub(super) fn render_reach_query_block(
+    world: &World,
+    used: &mut BTreeSet<u64>,
+    query: &Query,
+) -> Result<String, Exclusion> {
+    render_query_block(world, used, QuerySpelling::Reach(query))
+}
+
+/// The one Query renderer. Both corpus arms call this.
+fn render_query_block(
+    world: &World,
+    used: &mut BTreeSet<u64>,
+    spelling: QuerySpelling<'_>,
+) -> Result<String, Exclusion> {
+    let mut query_block = String::new();
+    match spelling {
+        QuerySpelling::Seeded(rules) => {
+            query_block.push_str("{\"rules\":[\n");
+            for (index, rule) in rules.iter().enumerate() {
+                if index > 0 {
+                    query_block.push_str(",\n");
+                }
+                query_block.push_str("{\"finds\":[");
+                for (position, find) in rule.finds.iter().enumerate() {
+                    if position > 0 {
+                        query_block.push(',');
+                    }
+                    push_find(&mut query_block, find);
+                }
+                query_block.push_str("],\n \"atoms\":[");
+                for (position, atom) in rule.atoms.iter().enumerate() {
+                    if position > 0 {
+                        query_block.push(',');
+                    }
+                    push_atom(world, used, &mut query_block, atom, "relation")?;
+                }
+                query_block.push_str("],\n \"negated\":[");
+                for (position, atom) in rule.negated.iter().enumerate() {
+                    if position > 0 {
+                        query_block.push(',');
+                    }
+                    push_atom(world, used, &mut query_block, atom, "relation")?;
+                }
+                query_block.push_str("],\n \"conditions\":[");
+                for (position, tree) in rule.conditions.iter().enumerate() {
+                    if position > 0 {
+                        query_block.push(',');
+                    }
+                    push_condition(world, used, &mut query_block, tree)?;
+                }
+                let _ = write!(query_block, "],\n \"width\":{}}}", rule.width);
+            }
+            query_block.push_str("\n]}");
+        }
+        QuerySpelling::Reach(query) => {
+            query_block.push_str("{\"interiors\":[");
+            for (index, interior) in query.interiors.iter().enumerate() {
+                if index > 0 {
+                    query_block.push(',');
+                }
+                let _ = write!(
+                    query_block,
+                    "{{\"arity\":{},\"rules\":",
+                    interior.head.len()
+                );
+                push_reach_rules(world, used, &mut query_block, &interior.rules)?;
+                query_block.push('}');
+            }
+            query_block.push_str("],\"rec\":");
+            match &query.rec {
+                Some(rec) => push_reach_rec(world, used, &mut query_block, rec)?,
+                None => query_block.push_str("null"),
+            }
+            let _ = write!(query_block, ",\"arity\":{},\"rules\":", query.head.len());
+            push_reach_rules(world, used, &mut query_block, &query.rules)?;
+            query_block.push('}');
+        }
+    }
+    Ok(query_block)
+}
+
+fn push_reach_rec(
+    world: &World,
+    used: &mut BTreeSet<u64>,
+    out: &mut String,
+    rec: &Rec,
+) -> Result<(), Exclusion> {
+    let _ = write!(out, "{{\"arity\":{},\"base\":", rec.head.len());
+    push_reach_rules(world, used, out, &rec.base)?;
+    out.push_str(",\"rec\":");
+    push_reach_rules(world, used, out, &rec.rec)?;
+    out.push('}');
+    Ok(())
+}
+
+fn push_reach_rules(
+    world: &World,
+    used: &mut BTreeSet<u64>,
+    out: &mut String,
+    rules: &[Rule],
+) -> Result<(), Exclusion> {
+    out.push('[');
+    for (position, rule) in rules.iter().enumerate() {
+        if position > 0 {
+            out.push(',');
+        }
+        push_reach_rule(world, used, out, rule)?;
+    }
+    out.push(']');
+    Ok(())
+}
+
+fn push_reach_rule(
+    world: &World,
+    used: &mut BTreeSet<u64>,
+    out: &mut String,
+    rule: &Rule,
+) -> Result<(), Exclusion> {
+    out.push_str("{\"finds\":[");
+    for (position, find) in rule.finds.iter().enumerate() {
+        if position > 0 {
+            out.push(',');
+        }
+        match find {
+            FindTerm::Var(var) => {
+                let _ = write!(out, "{}", var.0);
+            }
+            other => unreachable!("fold-bearing queries are excluded before render: {other:?}"),
+        }
+    }
+    out.push_str("],\"atoms\":[");
+    for (position, atom) in rule.atoms.iter().enumerate() {
+        if position > 0 {
+            out.push(',');
+        }
+        push_atom(world, used, out, atom, "edb")?;
+    }
+    out.push_str("],\"negated\":[");
+    for (position, atom) in rule.negated.iter().enumerate() {
+        if position > 0 {
+            out.push(',');
+        }
+        push_atom(world, used, out, atom, "edb")?;
+    }
+    out.push_str("],\"conditions\":[");
+    for (position, tree) in rule.conditions.iter().enumerate() {
+        if position > 0 {
+            out.push(',');
+        }
+        push_condition(world, used, out, tree)?;
+    }
+    out.push_str("]}");
+    Ok(())
+}
+
+/// Serializes one atom. `edb_key` is `"relation"` (seeded spelling) or
+/// `"edb"` (reach spelling) for `AtomSource::Edb`; interiors always
+/// write `"interior"`.
 fn push_atom(
     world: &World,
     used: &mut BTreeSet<u64>,
     out: &mut String,
     atom: &Atom,
+    edb_key: &str,
 ) -> Result<(), Exclusion> {
-    let _ = write!(out, "{{\"relation\":{},\"bindings\":[", atom.relation().0);
+    match atom.source {
+        AtomSource::Edb(relation) => {
+            let _ = write!(out, "{{\"{edb_key}\":{},\"bindings\":[", relation.0);
+        }
+        AtomSource::Interior(InteriorId(id)) => {
+            let _ = write!(out, "{{\"interior\":{id},\"bindings\":[");
+        }
+    }
     for (index, (field, term)) in atom.bindings.iter().enumerate() {
         if index > 0 {
             out.push(',');
@@ -1244,7 +1386,7 @@ fn hand_cases(cfg: GenConfig) -> Vec<HandCase> {
             params: vec![],
         },
         // Union with duplicate head answers across rules: one answer
-        // (`union_idempotent` at the program level).
+        // (`union_idempotent` at the query).
         HandCase {
             name: "hand-union-overlapping-rules",
             query: Query {
@@ -1524,7 +1666,7 @@ pub fn generate_corpus() -> (Report, Vec<(String, String)>) {
         let case_seed = CASE_SEED_BASE + attempt;
         attempt += 1;
         let mut rng = Rng::new(case_seed);
-        let query = querygen::random_query(&mut rng, world.cfg);
+        let query = querygen::random_cq_query(&mut rng, world.cfg);
         let draws = querygen::params_for(&query, &mut rng, world.cfg);
         let draw = usize::try_from(case_seed).expect("seed fits usize") % draws.len();
         let params = positional(&draws[draw]);
@@ -1660,7 +1802,7 @@ fn replay_case(worlds: &mut BTreeMap<u64, World>, name: &str, text: &str) -> Str
             let case_seed = read_u64(provenance, "case_seed");
             let draw = usize::try_from(read_u64(provenance, "draw")).expect("draw fits");
             let mut rng = Rng::new(case_seed);
-            let query = querygen::random_query(&mut rng, world.cfg);
+            let query = querygen::random_cq_query(&mut rng, world.cfg);
             let draws = querygen::params_for(&query, &mut rng, world.cfg);
             let params = positional(&draws[draw]);
             let line = format!(

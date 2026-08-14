@@ -16,7 +16,7 @@
 //!   (`finds : List VarId`). Fold-over-rec coverage is the naive
 //!   lane's alone.
 //! * **`SQLite` parity asserted where the translator admits**
-//!   ([`crate::translate::sqlite_reach_expressible`]): an expressible
+//!   ([`crate::translate::sqlite_expressible`]): an expressible
 //!   case is written only after naive and `SQLite` agree (a
 //!   disagreement panics — a trophy). Interval-typed derived columns
 //!   are the remaining translator limit; the generator's rec corpus
@@ -26,7 +26,6 @@
 //! The corpus queries read the org tree only (`Org`, `OrgParent`).
 
 use std::collections::BTreeSet;
-use std::fmt::Write as _;
 use std::time::Instant;
 
 use bumbledb::ir::FindTerm;
@@ -35,12 +34,9 @@ use bumbledb::{AtomSource, InteriorId, Query, Rec, RelationId, Rule, Term, Value
 use crate::corpus_gen::Rng;
 use crate::naive::Tuple;
 use crate::querygen::{self, target};
-use crate::translate::{Inexpressible, sqlite_reach_expressible, translate_query};
+use crate::translate::{Inexpressible, LaneCase, sqlite_expressible, translate_query};
 
-use super::{
-    MAX_ANSWER_ROWS, NAIVE_BUDGET_MS, World, push_condition, push_fact, push_term, strings_block,
-    world_blocks,
-};
+use super::{MAX_ANSWER_ROWS, NAIVE_BUDGET_MS, World, push_fact, strings_block, world_blocks};
 
 /// The seeded reach-case target (hand cases ride on top).
 pub const REACH_SEEDED_CASES: usize = 20;
@@ -108,19 +104,10 @@ fn query_mentioned(query: &Query) -> BTreeSet<RelationId> {
     set
 }
 
-fn all_rules(query: &Query) -> impl Iterator<Item = &Rule> {
-    query
-        .interiors
-        .iter()
-        .flat_map(|interior| interior.rules.iter())
-        .chain(query.rec.iter().flat_map(|rec| rec.base.iter().chain(&rec.rec)))
-        .chain(query.rules.iter())
-}
-
 /// Whether any rule carries a fold — outside the Lean reach cut's
 /// projection shape (module doc).
 fn carries_fold(query: &Query) -> bool {
-    all_rules(query).any(|rule| {
+    crate::walk::rules(query).any(|rule| {
         rule.finds.iter().any(|find| {
             matches!(
                 find,
@@ -128,108 +115,6 @@ fn carries_fold(query: &Query) -> bool {
             )
         })
     })
-}
-
-/// Serializes one reach rule (`finds` as the plain variable-id list).
-fn push_rule(
-    world: &World,
-    used: &mut BTreeSet<u64>,
-    out: &mut String,
-    rule: &Rule,
-) -> Result<(), super::Exclusion> {
-    out.push_str("{\"finds\":[");
-    for (position, find) in rule.finds.iter().enumerate() {
-        if position > 0 {
-            out.push(',');
-        }
-        match find {
-            FindTerm::Var(var) => {
-                let _ = write!(out, "{}", var.0);
-            }
-            other => unreachable!("fold-bearing queries are excluded before render: {other:?}"),
-        }
-    }
-    out.push_str("],\"atoms\":[");
-    for (position, atom) in rule.atoms.iter().enumerate() {
-        if position > 0 {
-            out.push(',');
-        }
-        push_reach_atom(world, used, out, atom)?;
-    }
-    out.push_str("],\"negated\":[");
-    for (position, atom) in rule.negated.iter().enumerate() {
-        if position > 0 {
-            out.push(',');
-        }
-        push_reach_atom(world, used, out, atom)?;
-    }
-    out.push_str("],\"conditions\":[");
-    for (position, tree) in rule.conditions.iter().enumerate() {
-        if position > 0 {
-            out.push(',');
-        }
-        push_condition(world, used, out, tree)?;
-    }
-    out.push_str("]}");
-    Ok(())
-}
-
-fn push_rules(
-    world: &World,
-    used: &mut BTreeSet<u64>,
-    out: &mut String,
-    rules: &[Rule],
-) -> Result<(), super::Exclusion> {
-    out.push('[');
-    for (position, rule) in rules.iter().enumerate() {
-        if position > 0 {
-            out.push(',');
-        }
-        push_rule(world, used, out, rule)?;
-    }
-    out.push(']');
-    Ok(())
-}
-
-/// Serializes one reach atom: the source arm spelled (`edb`/`interior`).
-fn push_reach_atom(
-    world: &World,
-    used: &mut BTreeSet<u64>,
-    out: &mut String,
-    atom: &bumbledb::Atom,
-) -> Result<(), super::Exclusion> {
-    match atom.source {
-        AtomSource::Edb(relation) => {
-            let _ = write!(out, "{{\"edb\":{},\"bindings\":[", relation.0);
-        }
-        AtomSource::Interior(InteriorId(id)) => {
-            let _ = write!(out, "{{\"interior\":{id},\"bindings\":[");
-        }
-    }
-    for (index, (field, term)) in atom.bindings.iter().enumerate() {
-        if index > 0 {
-            out.push(',');
-        }
-        let _ = write!(out, "[{},", field.0);
-        push_term(world, used, out, term)?;
-        out.push(']');
-    }
-    out.push_str("]}");
-    Ok(())
-}
-
-fn push_rec(
-    world: &World,
-    used: &mut BTreeSet<u64>,
-    out: &mut String,
-    rec: &Rec,
-) -> Result<(), super::Exclusion> {
-    let _ = write!(out, "{{\"arity\":{},\"base\":", rec.head.len());
-    push_rules(world, used, out, &rec.base)?;
-    out.push_str(",\"rec\":");
-    push_rules(world, used, out, &rec.rec)?;
-    out.push('}');
-    Ok(())
 }
 
 /// Serializes one full reach-case document.
@@ -242,23 +127,7 @@ fn render_reach_case(
 ) -> Result<String, super::Exclusion> {
     let mut used = BTreeSet::new();
 
-    let mut query_block = String::from("{\"interiors\":[");
-    for (index, interior) in query.interiors.iter().enumerate() {
-        if index > 0 {
-            query_block.push(',');
-        }
-        let _ = write!(query_block, "{{\"arity\":{},\"rules\":", interior.head.len());
-        push_rules(world, &mut used, &mut query_block, &interior.rules)?;
-        query_block.push('}');
-    }
-    query_block.push_str("],\"rec\":");
-    match &query.rec {
-        Some(rec) => push_rec(world, &mut used, &mut query_block, rec)?,
-        None => query_block.push_str("null"),
-    }
-    let _ = write!(query_block, ",\"arity\":{},\"rules\":", query.head.len());
-    push_rules(world, &mut used, &mut query_block, &query.rules)?;
-    query_block.push('}');
+    let query_block = super::render_reach_query_block(world, &mut used, query)?;
 
     let mut rows: Vec<String> = Vec::with_capacity(answers.len());
     for tuple in answers {
@@ -333,7 +202,7 @@ fn one_reach_case(
         "TROPHY (engine vs naive) on reach case {name}: triage per the fuzzing \
          charter\n{query:#?}"
     );
-    match sqlite_reach_expressible(query, target::schema()) {
+    match sqlite_expressible(&LaneCase::Query(query)) {
         Ok(()) => {
             let sqlite = sqlite_answers(world, query);
             assert_eq!(
@@ -559,7 +428,6 @@ pub(super) fn replay_reach_case(
         (query, line)
     };
     let mut report = ReachReport::default();
-    one_reach_case(world, name, &provenance_line, &query, &mut report).unwrap_or_else(|| {
-        panic!("reach case {name}: excluded on replay — stale corpus or trophy")
-    })
+    one_reach_case(world, name, &provenance_line, &query, &mut report)
+        .unwrap_or_else(|| panic!("reach case {name}: excluded on replay — stale corpus or trophy"))
 }
