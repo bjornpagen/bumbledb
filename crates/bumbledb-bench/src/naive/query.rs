@@ -167,14 +167,14 @@ enum SubstitutedTree {
     Or(Vec<SubstitutedTree>),
 }
 
-/// The derived-table reading of one query evaluation — finished
-/// interior and rec tables beside their column typing. A derived
+/// Finished derived tables — interiors in declaration order, then the
+/// rec's accumulating table — beside their column typing. A derived
 /// table's facts ARE its answer tuples, read positionally: `FieldId(i)`
 /// is head position `i`
 /// (`lean/Bumbledb/Query/Denotation.lean: tupleFact` — the positional
 /// addressing interiors and rec share). A plain query reads no
 /// derived tables: the empty world.
-pub(super) struct InteriorWorld<'a> {
+pub(super) struct DerivedWorld<'a> {
     /// Per derived table, the accumulated answer-tuple set.
     sets: &'a [BTreeSet<Tuple>],
     /// Per derived table, per head position: interval-typed? — the
@@ -186,7 +186,7 @@ pub(super) struct InteriorWorld<'a> {
 /// the finished derived tables.
 enum Src {
     Edb(usize),
-    Interior(usize),
+    Derived(usize),
 }
 
 /// One atom over substituted terms, each binding pre-tagged with whether
@@ -219,7 +219,7 @@ impl Env<'_> {
     fn facts(&self, src: &Src) -> &BTreeSet<Tuple> {
         match src {
             Src::Edb(relation) => &self.relations[*relation],
-            Src::Interior(pred) => &self.interiors[*pred],
+            Src::Derived(pred) => &self.interiors[*pred],
         }
     }
 }
@@ -254,7 +254,7 @@ impl NaiveDb {
         let mut sets: Vec<BTreeSet<Tuple>> = Vec::new();
         let mut interval: Vec<Vec<bool>> = Vec::new();
         for interior in &query.interiors {
-            let preds = InteriorWorld {
+            let preds = DerivedWorld {
                 sets: &sets,
                 interval: &interval,
             };
@@ -262,29 +262,44 @@ impl NaiveDb {
             interval.push(self.seal_intervals(&interior.head, &interior.rules, &interval));
             sets.push(rows);
         }
-        if let Some(rec) = &query.rec {
-            // Empty base ⇒ empty lfp is this iteration (`T(∅)=∅`).
-            interval.push(self.seal_intervals(&rec.head, &rec.base, &interval));
-            sets.push(BTreeSet::new());
-            let rec_id = sets.len() - 1;
-            loop {
-                let preds = InteriorWorld {
-                    sets: &sets,
-                    interval: &interval,
-                };
-                let mut next = self.rows_for(&rec.head, &rec.base, params, &preds)?;
-                next.extend(self.rows_for(&rec.head, &rec.rec, params, &preds)?);
-                if next == sets[rec_id] {
-                    break;
-                }
-                sets[rec_id] = next;
-            }
+        match &query.rec {
+            None => {}
+            Some(rec) => self.rec_lfp(rec, params, &mut sets, &mut interval)?,
         }
-        let preds = InteriorWorld {
+        let preds = DerivedWorld {
             sets: &sets,
             interval: &interval,
         };
         self.rows_for(&query.head, &query.rules, params, &preds)
+    }
+
+    /// Naive full-T(I) least fixpoint: re-evaluate base ∪ rec each
+    /// iteration until the rec table stops growing. `rec_id` is the
+    /// set index assigned here before the empty table is pushed.
+    fn rec_lfp(
+        &self,
+        rec: &bumbledb::Rec,
+        params: &[ParamValue],
+        sets: &mut Vec<BTreeSet<Tuple>>,
+        interval: &mut Vec<Vec<bool>>,
+    ) -> Result<(), QueryError> {
+        // Empty base ⇒ empty lfp is this iteration (`T(∅)=∅`).
+        interval.push(self.seal_intervals(&rec.head, &rec.base, interval));
+        let rec_id = sets.len();
+        sets.push(BTreeSet::new());
+        loop {
+            let preds = DerivedWorld {
+                sets,
+                interval,
+            };
+            let mut next = self.rows_for(&rec.head, &rec.base, params, &preds)?;
+            next.extend(self.rows_for(&rec.head, &rec.rec, params, &preds)?);
+            if next == sets[rec_id] {
+                break;
+            }
+            sets[rec_id] = next;
+        }
+        Ok(())
     }
 
     /// One named interior / rec's column interval flags, sealed from
@@ -337,7 +352,7 @@ impl NaiveDb {
         head: &[HeadTerm],
         rules: &[Rule],
         params: &[ParamValue],
-        preds: &InteriorWorld<'_>,
+        preds: &DerivedWorld<'_>,
     ) -> Result<BTreeSet<Tuple>, QueryError> {
         if let [rule] = rules {
             let bindings = self.rule_bindings(rule, params, preds)?;
@@ -367,7 +382,7 @@ impl NaiveDb {
         &self,
         rule: &Rule,
         params: &[ParamValue],
-        preds: &InteriorWorld<'_>,
+        preds: &DerivedWorld<'_>,
     ) -> Result<BTreeSet<Tuple>, QueryError> {
         let var_count = count_vars(rule);
         let mut scalar_anchored = vec![false; var_count];
@@ -428,7 +443,7 @@ impl NaiveDb {
         &self,
         rules: &[Rule],
         params: &[ParamValue],
-        preds: &InteriorWorld<'_>,
+        preds: &DerivedWorld<'_>,
     ) -> Result<BTreeSet<Tuple>, QueryError> {
         let head = &rules[0].finds;
         let mut domain: BTreeSet<Tuple> = BTreeSet::new();
@@ -514,11 +529,11 @@ impl NaiveDb {
         Ok(rows)
     }
 
-    fn flatten(&self, atom: &Atom, params: &[ParamValue], preds: &InteriorWorld<'_>) -> FlatAtom {
+    fn flatten(&self, atom: &Atom, params: &[ParamValue], preds: &DerivedWorld<'_>) -> FlatAtom {
         FlatAtom {
             src: match atom.source {
                 AtomSource::Edb(relation) => Src::Edb(relation.0 as usize),
-                AtomSource::Interior(id) => Src::Interior(id.0 as usize),
+                AtomSource::Interior(id) => Src::Derived(id.0 as usize),
             },
             bindings: atom
                 .bindings
@@ -551,7 +566,7 @@ impl NaiveDb {
         &self,
         atom: &Atom,
         field: bumbledb::FieldId,
-        preds: &InteriorWorld<'_>,
+        preds: &DerivedWorld<'_>,
     ) -> bool {
         match atom.source {
             AtomSource::Edb(relation) => self.edb_field_is_interval(relation, field),

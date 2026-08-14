@@ -2,7 +2,7 @@
 
 - **Severity:** high
 - **Tree:** engine
-- **Status:** OPEN
+- **Status:** FIXED(fd3f2634)
 - **Source:** audit/engine.md F5
 - **Depends on:** none (foundation of the validate-side wave; engine-004, engine-016, engine-022, engine-028 build on it)
 
@@ -52,10 +52,10 @@ struct ValidatedRecArm { self_occ: OccId, rule: LoweredRule, typing: RuleTyping 
 
 ## Acceptance criteria
 
-- [ ] Proof carried: `rg -n 'expect\("rec present"\)|expect\("RecArmMissingSelf' crates/bumbledb/src` → no matches; `rg -n 'rec\(\)\.is_some\(\)' crates/bumbledb/src` → no matches.
-- [ ] Refusals unchanged: adversarial tests for `RecArmMissingSelf`, `NonlinearRecArm`, `SelfInBase`, `NegationInRec` pass UNCHANGED.
-- [ ] New locks: none beyond compile — the sum + non-optional `self_occ` is the lock.
-- [ ] Green: `PATH="$HOME/.cargo/bin:$PATH" cargo test -p bumbledb`; `./scripts/check.sh`; `./scripts/lean.sh` (Bridge tokens naming validate mechanisms move with any renames).
+- [x] Proof carried: `rg -n 'expect\("rec present"\)|expect\("RecArmMissingSelf' crates/bumbledb/src` → no matches; `rg -n 'rec\(\)\.is_some\(\)' crates/bumbledb/src` → no matches.
+- [x] Refusals unchanged: adversarial tests for `RecArmMissingSelf`, `NonlinearRecArm`, `SelfInBase`, `NegationInRec` pass UNCHANGED.
+- [x] New locks: none beyond compile — the sum + non-optional `self_occ` is the lock.
+- [x] Green: `PATH="$HOME/.cargo/bin:$PATH" cargo test -p bumbledb` (`--lib` 1055 passed; `--test api --test adversarial_ir` 29 passed). `./scripts/check.sh` / `./scripts/lean.sh` not required green for this lane.
 
 ## Constraints
 

@@ -35,7 +35,7 @@ pub use dnf::{LoweredRule, collapse, disjunct_count, distribute, nesting_depth};
 pub use fold::with_fold_disabled;
 pub(crate) use fold::{decoded_interval, decoded_scalar, render_const};
 pub(crate) use lower_literal::{fixed_bytes_word_buf, lower_literal};
-pub use normalize::{normalize, normalize_predicate, normalize_ray_probe, normalize_rules};
+pub use normalize::{normalize_predicate, normalize_ray_probe, normalize_rules};
 
 /// Dense atom-occurrence id. Everything downstream (plan validity, trie
 /// schemas) quantifies over occurrences, never relation names — self-joins
@@ -91,6 +91,19 @@ pub struct FoldedMark {
     pub negated: bool,
 }
 
+/// How a derived occurrence binds at execution and planning. EDB
+/// occurrences carry `None` — the complement of EDB is this three-way
+/// role, not a single "not stored" path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BindRole {
+    /// A finished interior, or main/base's read of a finished rec.
+    Finished,
+    /// A rec arm's marked delta occurrence — one round's frontier.
+    RecDelta,
+    /// A rec arm's other self-read — the accumulated table.
+    RecAcc,
+}
+
 impl Role {
     /// **The** participates-in-planning predicate: whether the
     /// occurrence joins the plan — enters the DP, appears in subatoms,
@@ -134,6 +147,10 @@ pub struct Occurrence {
     /// (`plan/selectivity.rs` — the delta/accumulated floors).
     pub source: crate::ir::AtomSource,
     pub role: Role,
+    /// Derived-bind role, decided once past normalize. `None` is EDB.
+    /// Rec arms stamp [`BindRole::RecDelta`] / [`BindRole::RecAcc`] at
+    /// prepare; every other derived occurrence is [`BindRole::Finished`].
+    pub bind: Option<BindRole>,
     /// Distinct variables with the field each is read from (a repeated
     /// variable keeps its first field; later positions became filters).
     /// A membership-bound point variable is **not** a variable of the
@@ -354,7 +371,8 @@ pub struct NormalizedQuery {
     /// the grounding-evaluator (`plan/ground/evaluate.rs`, a closed atom
     /// whose prepare-time evaluation empties — `folded to ∅: …`). A dead
     /// rule is deleted at prepare (`api/prepared/build.rs`); a query
-    /// of only dead rules prepares to `PreparedBody::Empty`.
+    /// of only dead rules prepares to `PreparedPipeline::Cq` with an
+    /// empty main rule list.
     pub dead: Option<String>,
 }
 

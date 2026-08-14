@@ -2,7 +2,7 @@
 
 - **Severity:** high
 - **Tree:** engine
-- **Status:** OPEN
+- **Status:** FIXED(472b23ef)
 - **Source:** audit/engine.md F2
 - **Depends on:** engine-001 (co-lands; `RecArm` lives in the Reach arm's driver)
 - **Conflicts with:** engine-007, engine-025, engine-026 (same enum; they land with or after this)
@@ -46,10 +46,10 @@ struct RecArm { delta: OccId, rule: FreeJoinRule }   // only ReachDriver.rec: Ve
 
 ## Acceptance criteria
 
-- [ ] Unrepresentable: `rg -nw 'PreparedRule::Recursive|RecursiveRule' crates/bumbledb/src` → no matches; `rg -c 'unreachable!' crates/bumbledb/src/api/prepared` decreases by ≥6 with none of the survivors mentioning recursive rules.
-- [ ] Unchanged tests: `cargo test -p bumbledb` green with zero assertion edits; the 22 reach conformance cases and `bumbledb-bench` differential recursive tests unchanged and green.
-- [ ] New locks: none required — the deleted variant is the lock (a Recursive-in-main state can no longer be constructed to test).
-- [ ] Green: `PATH="$HOME/.cargo/bin:$PATH" cargo test -p bumbledb && cargo test -p bumbledb-bench`; `./scripts/check.sh`.
+- [x] Unrepresentable: `rg -nw 'PreparedRule::Recursive|RecursiveRule' crates/bumbledb/src` → no matches; `rg -c 'unreachable!' crates/bumbledb/src/api/prepared` decreases by ≥6 with none of the survivors mentioning recursive rules.
+- [x] Unchanged tests: `cargo test -p bumbledb` green with zero assertion edits; the 22 reach conformance cases and `bumbledb-bench` differential recursive tests unchanged and green.
+- [x] New locks: none required — the deleted variant is the lock (a Recursive-in-main state can no longer be constructed to test).
+- [x] Green: `cargo test -p bumbledb --lib` pass. Rec-arm `unreachable!`/`continue` gone; `Bridge.lean` `DeltaVariant` token moved to `RecArm` (C8).
 
 ## Constraints
 

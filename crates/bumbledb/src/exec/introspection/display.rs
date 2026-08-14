@@ -1,4 +1,4 @@
-use super::{IntrospectionReport, RulePlan};
+use super::{IntrospectionReport, ReportBody, RulePlan};
 use crate::exec::dispatch::KeyProbePlan;
 use crate::plan::fj::ValidatedPlan;
 use std::fmt;
@@ -17,78 +17,77 @@ impl fmt::Display for IntrospectionReport<'_> {
                 write!(f, "{pending}")?;
             }
         }
-        let multi = self.stats.rules.len() > 1;
-        for (rule_idx, rule) in self.rules.iter().enumerate() {
-            // Fixpoint plan units carry labels and no per-unit counted
-            // stats — their counted surface is the strata section
-            // below (docs/architecture/40-execution.md § the fixpoint
-            // driver).
-            let stats = self.stats.rules.get(rule_idx);
-            match self.unit_labels.get(rule_idx) {
-                Some(label) => writeln!(f, "{label}:")?,
-                None if multi => writeln!(f, "rule {rule_idx}:")?,
-                None => {}
-            }
-            match rule {
-                RulePlan::KeyProbe(plan) => fmt_key_probe(f, plan)?,
-                RulePlan::FreeJoin(plan) => fmt_free_join(f, plan, stats)?,
-                // The reasons — one per dead rule — print below with
-                // the death record (`stats.dead`).
-                RulePlan::Empty => writeln!(f, "access path: statically empty")?,
-            }
-            let Some(stats) = stats else { continue };
-            writeln!(
-                f,
-                "  distinct_bindings: {}",
-                if stats.distinct_bindings {
-                    "proven"
-                } else {
-                    "unproven"
+        let rec_id = match &self.body {
+            ReportBody::Reach { rec_id, .. } => Some(*rec_id),
+            ReportBody::Cq { .. } => None,
+        };
+        match &self.body {
+            ReportBody::Cq { plans } => {
+                let multi = self.stats.rules().len() > 1;
+                for (rule_idx, rule) in plans.iter().enumerate() {
+                    let stats = self.stats.rules().get(rule_idx);
+                    if multi {
+                        writeln!(f, "rule {rule_idx}:")?;
+                    }
+                    match rule {
+                        RulePlan::KeyProbe(plan) => fmt_key_probe(f, plan)?,
+                        RulePlan::FreeJoin(plan) => fmt_free_join(f, plan, stats, rec_id)?,
+                        RulePlan::Empty => writeln!(f, "access path: statically empty")?,
+                    }
+                    let Some(stats) = stats else { continue };
+                    writeln!(
+                        f,
+                        "  distinct_bindings: {}",
+                        if stats.distinct_bindings {
+                            "proven"
+                        } else {
+                            "unproven"
+                        }
+                    )?;
+                    writeln!(
+                        f,
+                        "  emitted bindings: {}, absorbed by the union seen-set: {}",
+                        stats.emitted, stats.absorbed,
+                    )?;
                 }
-            )?;
-            // The union accounting, per rule (docs/architecture/
-            // 40-execution.md § the rule loop): what this rule handed the
-            // shared sink and what the spanning seen-set absorbed.
-            writeln!(
-                f,
-                "  emitted bindings: {}, absorbed by the union seen-set: {}",
-                stats.emitted, stats.absorbed,
-            )?;
-        }
-        if multi {
-            let absorbed: u64 = self.stats.rules.iter().map(|r| r.absorbed).sum();
-            writeln!(
-                f,
-                "head union: {} emitted across {} rules, {} absorbed",
-                self.stats.emits,
-                self.rules.len(),
-                absorbed,
-            )?;
-            // The rule-disjointness proof (docs/architecture/
-            // 40-execution.md § set semantics): diagnostic knowledge names
-            // its witness (R, f), whose differing pinned literals forbid
-            // cross-rule head collisions.
-            match &self.stats.disjoint_rules {
-                Some(witness) => writeln!(
-                    f,
-                    "disjoint_rules: proven ({}.{})",
-                    witness.relation, witness.field,
-                )?,
-                None => writeln!(f, "disjoint_rules: unproven")?,
+                if multi {
+                    let absorbed: u64 = self.stats.rules().iter().map(|r| r.absorbed).sum();
+                    writeln!(
+                        f,
+                        "head union: {} emitted across {} rules, {} absorbed",
+                        self.stats.emits,
+                        plans.len(),
+                        absorbed,
+                    )?;
+                    match &self.stats.disjoint_rules {
+                        Some(witness) => writeln!(
+                            f,
+                            "disjoint_rules: proven ({}.{})",
+                            witness.relation, witness.field,
+                        )?,
+                        None => writeln!(f, "disjoint_rules: unproven")?,
+                    }
+                }
+            }
+            ReportBody::Reach { units, .. } => {
+                for (label, rule) in units {
+                    writeln!(f, "{label}:")?;
+                    match rule {
+                        RulePlan::KeyProbe(plan) => fmt_key_probe(f, plan)?,
+                        RulePlan::FreeJoin(plan) => fmt_free_join(f, plan, None, rec_id)?,
+                        RulePlan::Empty => writeln!(f, "access path: statically empty")?,
+                    }
+                }
             }
         }
-        // The interiors / reach section (docs/architecture/40-execution.md
-        // § the linear reach driver): per named interior, then optional
-        // reach rounds — round 0 is the rec's base arms — the delta size
-        // the frontier carried and the union accounting.
-        for interior in &self.stats.interiors {
+        for interior in self.stats.interiors() {
             writeln!(
                 f,
-                "interior p{}: {} emits",
+                "interior {}: {} emits",
                 interior.interior, interior.emits
             )?;
         }
-        if let Some(reach) = &self.stats.reach {
+        if let Some(reach) = self.stats.reach() {
             writeln!(f, "reach: {} rounds", reach.rounds.len())?;
             for (round_idx, round) in reach.rounds.iter().enumerate() {
                 write!(f, "  round {round_idx}:")?;
@@ -145,12 +144,14 @@ fn fmt_free_join(
     f: &mut fmt::Formatter<'_>,
     plan: &ValidatedPlan,
     stats: Option<&crate::api::stats::RuleStats>,
+    rec_id: Option<crate::ir::InteriorId>,
 ) -> fmt::Result {
     writeln!(f, "access path: free join ({} nodes)", plan.nodes().len())?;
     for (occ_idx, occurrence) in plan.occurrences().iter().enumerate() {
         let source = match occurrence.source {
             crate::ir::AtomSource::Edb(relation) => format!("relation {}", relation.0),
-            crate::ir::AtomSource::Interior(pred) => format!("predicate p{}", pred.0),
+            crate::ir::AtomSource::Interior(pred) if rec_id == Some(pred) => "rec".to_string(),
+            crate::ir::AtomSource::Interior(pred) => format!("interior {}", pred.0),
         };
         writeln!(
             f,
@@ -182,8 +183,8 @@ fn fmt_free_join(
         }
     }
     let Some(stats) = stats else {
-        // A fixpoint plan unit: the plan is the whole per-unit story;
-        // the counted stats live in the strata section.
+        // A Reach plan unit: the plan is the whole per-unit story;
+        // the counted stats live in the reach rounds.
         return Ok(());
     };
     // The grounding's marks (`plan/ground.rs`): occurrences the

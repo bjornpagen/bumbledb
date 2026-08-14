@@ -11,23 +11,7 @@ use crate::ir::{Atom, CmpOp, Term, Value, VarId};
 use crate::schema::Schema;
 use bumbledb_theory::schema::{FieldId, ValueType};
 
-/// Lowers the witness into paper form, rule by rule: one
-/// [`NormalizedQuery`] per rule, in rule order — the normalized artifact
-/// is a list because the query is a rule list. The query path: no `Interior`
-/// occurrence exists in a sealed [`ValidatedQuery`] (the query boundary
-/// has no predicate address space), so the signature surface is empty.
-///
-/// # Panics
-///
-/// Only on programmer-invariant violations already excluded by validation
-/// (e.g. a comparison variable bound by no atom).
-#[must_use]
-#[allow(dead_code)]
-pub fn normalize(schema: &Schema, query: &ValidatedQuery) -> Vec<NormalizedQuery> {
-    normalize_rules(schema, &[], query.rules())
-}
-
-/// [`normalize`] with the interiors/rec typing surface: `signatures`
+/// [`normalize_rules`] with the interiors/rec typing surface: `signatures`
 /// holds every derived table's sealed signature in `InteriorId` then rec
 /// order, and an
 /// `Interior` binding's field type reads the target's column — `FieldId(i)`
@@ -37,12 +21,12 @@ pub fn normalize(schema: &Schema, query: &ValidatedQuery) -> Vec<NormalizedQuery
 ///
 /// # Panics
 ///
-/// As [`normalize`].
+/// As [`normalize_rules`].
 #[must_use]
 pub fn normalize_predicate(
     schema: &Schema,
     query: &ValidatedQuery,
-    signatures: &[&crate::ir::validate::Predicate],
+    signatures: &[&crate::ir::validate::Signature],
 ) -> Vec<NormalizedQuery> {
     normalize_rules(schema, signatures, query.rules())
 }
@@ -51,7 +35,7 @@ pub fn normalize_predicate(
 #[must_use]
 pub fn normalize_rules<'a>(
     schema: &Schema,
-    signatures: &[&crate::ir::validate::Predicate],
+    signatures: &[&crate::ir::validate::Signature],
     rules: impl IntoIterator<Item = RuleWitness<'a>>,
 ) -> Vec<NormalizedQuery> {
     rules
@@ -64,7 +48,7 @@ pub fn normalize_rules<'a>(
 /// rule's own variable scope.
 fn normalize_rule(
     schema: &Schema,
-    signatures: &[&crate::ir::validate::Predicate],
+    signatures: &[&crate::ir::validate::Signature],
     rule: &RuleWitness<'_>,
 ) -> NormalizedQuery {
     normalize_rule_with(schema, signatures, rule, rule.classified_comparisons())
@@ -82,7 +66,7 @@ fn normalize_rule(
 #[must_use]
 pub fn normalize_ray_probe(
     schema: &Schema,
-    signatures: &[&crate::ir::validate::Predicate],
+    signatures: &[&crate::ir::validate::Signature],
     rule: &RuleWitness<'_>,
     measured: VarId,
 ) -> NormalizedQuery {
@@ -113,7 +97,7 @@ pub fn normalize_ray_probe(
 /// extra caller is the ray probe, whose comparisons are not the rule's.
 fn normalize_rule_with(
     schema: &Schema,
-    signatures: &[&crate::ir::validate::Predicate],
+    signatures: &[&crate::ir::validate::Signature],
     rule: &RuleWitness<'_>,
     comparisons: &[crate::ir::validate::ClassifiedComparison],
 ) -> NormalizedQuery {
@@ -237,7 +221,7 @@ fn is_membership(field_type: &ValueType, term_type: &ValueType) -> bool {
 )] // the two-pass binding walk, one arm per term kind
 fn lower_atom(
     schema: &Schema,
-    signatures: &[&crate::ir::validate::Predicate],
+    signatures: &[&crate::ir::validate::Signature],
     witness: &RuleWitness<'_>,
     idx: usize,
     role: Role,
@@ -375,6 +359,10 @@ fn lower_atom(
         occ_id,
         source: atom.source,
         role,
+        bind: match atom.source {
+            crate::ir::AtomSource::Edb(_) => None,
+            crate::ir::AtomSource::Interior(_) => Some(crate::ir::normalize::BindRole::Finished),
+        },
         vars,
         filters,
     }

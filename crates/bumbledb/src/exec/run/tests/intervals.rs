@@ -93,6 +93,7 @@ fn interval_pair_query(
             occ_id: OccId(0),
             source: crate::ir::AtomSource::Edb(RelationId(0)),
             role: Role::Positive,
+            bind: None,
             vars: vec![(FieldId(0), VarId(0)), (FieldId(1), VarId(1))],
             filters: vec![],
         },
@@ -100,6 +101,7 @@ fn interval_pair_query(
             occ_id: OccId(1),
             source: crate::ir::AtomSource::Edb(RelationId(1)),
             role: Role::Positive,
+            bind: None,
             vars: vec![(FieldId(0), VarId(2)), (FieldId(1), VarId(3))],
             filters: vec![],
         },
@@ -403,6 +405,7 @@ fn membership_point_var_join_keeps_exactly_the_contained_events() {
             occ_id: OccId(0),
             source: crate::ir::AtomSource::Edb(RelationId(0)),
             role: Role::Positive,
+            bind: None,
             vars: vec![(FieldId(0), x)],
             filters: vec![FilterPredicate::PointIn {
                 field: FieldId(1),
@@ -413,6 +416,7 @@ fn membership_point_var_join_keeps_exactly_the_contained_events() {
             occ_id: OccId(1),
             source: crate::ir::AtomSource::Edb(RelationId(1)),
             role: Role::Positive,
+            bind: None,
             vars: vec![(FieldId(0), x), (FieldId(1), t)],
             filters: vec![],
         },
@@ -576,6 +580,7 @@ fn membership_probe_reads_a_carried_cursor_across_middle_nodes() {
             occ_id: OccId(0),
             source: crate::ir::AtomSource::Edb(RelationId(0)),
             role: Role::Positive,
+            bind: None,
             vars: vec![(FieldId(0), x)],
             filters: vec![FilterPredicate::PointIn {
                 field: FieldId(1),
@@ -586,6 +591,7 @@ fn membership_probe_reads_a_carried_cursor_across_middle_nodes() {
             occ_id: OccId(1),
             source: crate::ir::AtomSource::Edb(RelationId(1)),
             role: Role::Positive,
+            bind: None,
             vars: vec![(FieldId(0), x), (FieldId(1), d)],
             filters: vec![],
         },
@@ -593,6 +599,7 @@ fn membership_probe_reads_a_carried_cursor_across_middle_nodes() {
             occ_id: OccId(2),
             source: crate::ir::AtomSource::Edb(RelationId(2)),
             role: Role::Positive,
+            bind: None,
             vars: vec![(FieldId(0), x), (FieldId(1), t)],
             filters: vec![],
         },
@@ -689,6 +696,7 @@ fn negated_membership_rejects_only_covered_events() {
             occ_id: OccId(0),
             source: crate::ir::AtomSource::Edb(RelationId(1)),
             role: Role::Positive,
+            bind: None,
             vars: vec![(FieldId(0), x), (FieldId(1), t)],
             filters: vec![],
         },
@@ -696,6 +704,7 @@ fn negated_membership_rejects_only_covered_events() {
             occ_id: OccId(1),
             source: crate::ir::AtomSource::Edb(RelationId(0)),
             role: Role::Negated,
+            bind: None,
             vars: vec![(FieldId(0), x)],
             filters: vec![FilterPredicate::PointIn {
                 field: FieldId(1),
@@ -909,6 +918,7 @@ fn keyed_span_query_between(masks: &[AllenMask], outer: u32, inner: u32) -> Norm
             occ_id: OccId(0),
             source: crate::ir::AtomSource::Edb(RelationId(outer)),
             role: Role::Positive,
+            bind: None,
             vars: vec![
                 (FieldId(0), VarId(0)),
                 (FieldId(1), VarId(1)),
@@ -920,6 +930,7 @@ fn keyed_span_query_between(masks: &[AllenMask], outer: u32, inner: u32) -> Norm
             occ_id: OccId(1),
             source: crate::ir::AtomSource::Edb(RelationId(inner)),
             role: Role::Positive,
+            bind: None,
             vars: vec![
                 (FieldId(0), VarId(3)),
                 (FieldId(1), VarId(1)),
@@ -1360,6 +1371,7 @@ fn const_side_touching_residuals_conjoin_into_one_window_query() {
             occ_id: OccId(occ),
             source: crate::ir::AtomSource::Edb(RelationId(u32::from(occ))),
             role: Role::Positive,
+            bind: None,
             vars: vec![
                 (FieldId(0), VarId(occ * 2)),
                 (FieldId(1), VarId(occ * 2 + 1)),
@@ -1499,6 +1511,7 @@ fn allen_masks_agree_with_the_naive_model_through_the_pipelined_pass() {
             occ_id: OccId(occ),
             source: crate::ir::AtomSource::Edb(RelationId(u32::from(occ))),
             role: Role::Positive,
+            bind: None,
             vars: vec![
                 (FieldId(0), VarId(occ * 2)),
                 (FieldId(1), VarId(occ * 2 + 1)),

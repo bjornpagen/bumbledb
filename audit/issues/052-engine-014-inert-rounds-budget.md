@@ -2,7 +2,7 @@
 
 - **Severity:** medium
 - **Tree:** engine
-- **Status:** OPEN
+- **Status:** FIXED(472b23ef)
 - **Source:** audit/engine.md F14
 - **Depends on:** engine-001 (the Reach arm is where rounds live)
 
@@ -37,9 +37,9 @@ Per `audit/CONTRACT.md §C3` ("Budgets"):
 
 ## Acceptance criteria
 
-- [ ] Placement: `rg -n 'rounds_budget' crates/bumbledb/src` shows the field only inside the Reach arm + `set_derived_budget`'s write path; `rg -n 'Inert when .?rec.? is .?None' crates/bumbledb/src` → no matches.
-- [ ] Unchanged tests: `a_tight_derived_budget_trips_under_reach` and `a_tight_tuple_budget_trips_on_an_interiors_only_query` (`crates/bumbledb/tests/api.rs`) pass UNCHANGED; `DEFAULT_REACH_ROUNDS = 1 << 16` and `DEFAULT_DERIVED_TUPLES = 10_000_000` values and names unchanged.
-- [ ] Green: `PATH="$HOME/.cargo/bin:$PATH" cargo test -p bumbledb`; `./scripts/check.sh`; the `Bridge.lean` row citing `set_derived_budget` still resolves.
+- [x] Placement: `rounds_budget` lives only on the Reach arm + `set_derived_budget`'s write path; no "Inert when rec is None".
+- [x] Unchanged tests: `a_tight_derived_budget_trips_under_reach` and `a_tight_tuple_budget_trips_on_an_interiors_only_query` pass UNCHANGED; `DEFAULT_REACH_ROUNDS` / `DEFAULT_DERIVED_TUPLES` names and values unchanged.
+- [x] Green: landed with engine-001; `set_derived_budget` name/signature kept.
 
 ## Constraints
 

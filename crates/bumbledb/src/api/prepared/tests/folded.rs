@@ -233,8 +233,8 @@ fn introspection_reports_the_fold_with_its_filters_and_handles() {
 
     let mut prepared = prepare(&txn, &cache, &schema, &fold_query(20)).expect("prepare");
     let (_, stats) = prepared.profile(&txn, &cache, &[]).expect("profile");
-    assert_eq!(stats.rules.len(), 1);
-    let folded = &stats.rules[0].folded;
+    assert_eq!(stats.rules().len(), 1);
+    let folded = &stats.rules()[0].folded;
     assert_eq!(folded.len(), 1);
     assert_eq!(folded[0].relation, "Kind");
     assert_eq!(folded[0].rendered, "Kind{rank == 20}");
@@ -248,8 +248,8 @@ fn introspection_reports_the_fold_with_its_filters_and_handles() {
 }
 
 /// |S| == 0 is the statically-empty channel: the rule dies at prepare
-/// with the evaluator's rendered reason, and an all-dead program
-/// prepares to the empty program.
+/// with the evaluator's rendered reason, and an all-dead query
+/// prepares to the statically-empty query.
 #[test]
 fn an_empty_fold_prepares_the_statically_empty_program() {
     let dir = TempDir::new("folded-empty");
@@ -261,7 +261,7 @@ fn an_empty_fold_prepares_the_statically_empty_program() {
 
     let mut prepared = prepare(&txn, &cache, &schema, &fold_query(99)).expect("prepare");
     assert!(
-        matches!(prepared.body, PreparedBody::Empty),
+        matches!(prepared.pipeline, PreparedPipeline::Cq { ref rules, .. } if rules.is_empty()),
         "no Kind row has rank 99: the rule died at prepare"
     );
     let out = prepared

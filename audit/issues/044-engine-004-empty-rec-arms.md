@@ -2,7 +2,7 @@
 
 - **Severity:** high
 - **Tree:** engine
-- **Status:** OPEN
+- **Status:** FIXED(bbf97d8e)
 - **Source:** audit/engine.md F4
 - **Depends on:** engine-005 (the typed `ValidatedRec` is where nonemptiness lives)
 
@@ -33,10 +33,10 @@ Per `audit/CONTRACT.md §C3`:
 
 ## Acceptance criteria
 
-- [ ] Witness cannot spell it: `rg -n 'base: Vec<LoweredRule>|rec: Vec<LoweredRule>' crates/bumbledb/src/ir/validate.rs` → no matches (nonempty carrier instead).
-- [ ] Unchanged tests: every adversarial test asserting `EmptyRecursiveBase`/`EmptyRecursiveStep` passes UNCHANGED (names and trigger inputs identical).
-- [ ] New locks: a unit test constructing (via the boundary) a rec whose step arm DNF-collapses to nothing, pinning today's observable error — write it BEFORE refactoring to capture current behavior.
-- [ ] Green: `PATH="$HOME/.cargo/bin:$PATH" cargo test -p bumbledb`; `./scripts/check.sh`.
+- [x] Witness cannot spell it: `rg -n 'base: Vec<LoweredRule>|rec: Vec<LoweredRule>' crates/bumbledb/src/ir/validate.rs` → no matches (nonempty carrier instead).
+- [x] Unchanged tests: every adversarial test asserting `EmptyRecursiveBase`/`EmptyRecursiveStep` passes UNCHANGED (names and trigger inputs identical).
+- [x] New locks: `a_rec_step_whose_dnf_is_empty_is_empty_recursive_step` pins today's `EmptyRecursiveStep` for a nonempty written arm whose DNF is `Or([])`.
+- [x] Green: `PATH="$HOME/.cargo/bin:$PATH" cargo test -p bumbledb --lib ir::validate` (127 passed).
 
 ## Constraints
 

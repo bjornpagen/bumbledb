@@ -2,7 +2,7 @@
 
 - **Severity:** medium
 - **Tree:** engine
-- **Status:** OPEN (scoped — the `AtomSource` re-encoding half is refused per CONTRACT §C1)
+- **Status:** FIXED(6a9f47d2) (scoped — the `AtomSource` re-encoding half is refused per CONTRACT §C1)
 - **Source:** audit/engine.md F17
 - **Depends on:** engine-010 (`DerivedBind` is the collapsing type), engine-018 (occurrence-level planning role)
 

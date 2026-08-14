@@ -673,7 +673,7 @@ impl Context {
         // immediately; a comparison against a variable types it via the
         // variable; param-only comparisons are already
         // `ConstantComparison`) — the roster item is discharged by
-        // representation, not by a check. The two whole-program param
+        // representation, not by a check. The two query-global param
         // rules — mask-vs-value conflicts and id density — are checked
         // after every rule contributed (params are query-global;
         // `validate::ParamTables`).

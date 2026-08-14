@@ -55,7 +55,7 @@ fn a_str_literal_latches_on_first_execution() {
         .expect("execute");
     assert_eq!(amounts(&out), vec![10]);
     assert_eq!(prepared.unresolved_literals, 0, "the hit latched");
-    let [PreparedRule::FreeJoin(rule)] = prepared.body.rules() else {
+    let [PreparedRule::FreeJoin(rule)] = prepared.pipeline.main_rules() else {
         panic!("free join fixture");
     };
     assert_eq!(rule.resolution, ResolutionState::Complete);
@@ -114,7 +114,7 @@ fn a_miss_stays_live_and_latches_after_interning() {
     );
     assert!(
         matches!(
-            prepared.body.rules(),
+            prepared.pipeline.main_rules(),
             [PreparedRule::FreeJoin(FreeJoinRule {
                 resolution: ResolutionState::Pending,
                 ..

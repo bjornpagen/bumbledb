@@ -855,7 +855,7 @@ fn cover_choice_iterates_the_selected_side() {
     assert_eq!(stats.emits, 140, "20 accounts x 7 holders reach the sink");
 
     // The join-variable node iterates the 7-key selected side...
-    let batch_entries: Vec<u64> = stats.rules[0]
+    let batch_entries: Vec<u64> = stats.rules()[0]
         .nodes
         .iter()
         .map(|n| n.batch_entries)
@@ -1535,7 +1535,7 @@ fn staleness_reports_drift_and_reprepare_resets_it() {
 /// always has.
 #[test]
 fn a_plain_query_executes_as_today() {
-    let dir = common::TempDir::new("api-degenerate-program");
+    let dir = common::TempDir::new("api-degenerate-query");
     let db = Db::create(dir.path(), Ledger).expect("create");
     db.write(|tx| {
         for (name, balances) in [("alice", vec![100, -25]), ("bob", vec![40])] {
@@ -1886,10 +1886,10 @@ fn reach_profile_reports_rounds_and_deltas() {
         let (answers, stats) = snap.profile(&mut prepared, &[])?;
         assert_eq!(answers.len(), 16, "the closure's hand answer");
         assert!(
-            stats.rules.is_empty(),
+            stats.rules().is_empty(),
             "per-unit node stats do not exist under the driver"
         );
-        let reach = stats.reach.as_ref().expect("rec populates reach stats");
+        let reach = stats.reach().expect("rec populates reach stats");
         assert!(reach.rounds[0].delta == 0, "round 0 has no delta");
         assert_eq!(reach.rounds[0].emitted, 7, "the base rule emits each edge");
         assert_eq!(reach.rounds[0].absorbed, 0);
@@ -1913,7 +1913,7 @@ fn reach_profile_reports_rounds_and_deltas() {
         );
         assert_eq!(stats.emits, 16, "emits is the main sink");
         let (_, report) = snap.introspect(&mut prepared, &[])?;
-        assert!(report.starts_with("introspection v4\n"), "{report}");
+        assert!(report.starts_with("introspection v5\n"), "{report}");
         assert!(report.contains("reach base 0:"), "{report}");
         assert!(report.contains("reach rec 0 (delta occ"), "{report}");
         assert!(report.contains("reach:"), "{report}");

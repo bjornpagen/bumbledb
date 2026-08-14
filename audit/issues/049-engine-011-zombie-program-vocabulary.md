@@ -2,7 +2,7 @@
 
 - **Severity:** high
 - **Tree:** engine
-- **Status:** OPEN
+- **Status:** FIXED(1af537e5)
 - **Source:** audit/engine.md F11
 - **Depends on:** engine-001, engine-012 (structural halves); the rename halves are parallel-safe
 

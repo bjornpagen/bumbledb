@@ -1,14 +1,14 @@
-use super::*;
-use crate::api::stats::ExecutionStats;
-use crate::encoding::{ValueRef, encode_fact};
+use super::{ReportBody, *};
+use crate::api::stats::{ExecutionStats, RuleStats};
+use crate::encoding::{encode_fact, ValueRef};
 use crate::exec::colt::Colt;
 use crate::exec::dispatch::classify;
 use crate::exec::run::{Bindings, Executor, NoopCounters};
 use crate::exec::sink::ProjectionSink;
-use crate::image::view::{Const, FilterPredicate, apply};
+use crate::image::view::{apply, Const, FilterPredicate};
 use crate::ir::normalize::{AntiProbe, NormalizedQuery, OccId, Occurrence, Role, SlotWidth};
 use crate::ir::{CmpOp, VarId};
-use crate::plan::fj::{ValidatedPlan, binary2fj, factor, validate};
+use crate::plan::fj::{binary2fj, factor, validate, ValidatedPlan};
 use crate::plan::planner::JoinOrder;
 use crate::schema::Schema;
 use crate::schema::ValidateDescriptor as _;
@@ -22,6 +22,15 @@ use bumbledb_theory::schema::{
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
+
+fn cq_report<'p>(plan: RulePlan<'p>, rule: RuleStats) -> IntrospectionReport<'p> {
+    let emits = rule.emitted;
+    IntrospectionReport {
+        header: None,
+        body: ReportBody::Cq { plans: vec![plan] },
+        stats: ExecutionStats::cq(vec![rule], Vec::new(), emits, None, Vec::new(), Vec::new()),
+    }
+}
 
 fn schema(relations: usize) -> Schema {
     SchemaDescriptor {
@@ -120,6 +129,7 @@ fn occurrence(occ: u16, relation: u32, vars: &[(u16, u16)]) -> Occurrence {
         occ_id: OccId(occ),
         source: crate::ir::AtomSource::Edb(RelationId(relation)),
         role: Role::Positive,
+        bind: None,
         vars: vars.iter().map(|(f, v)| (FieldId(*f), VarId(*v))).collect(),
         filters: vec![],
     }
@@ -129,6 +139,7 @@ fn occurrence(occ: u16, relation: u32, vars: &[(u16, u16)]) -> Occurrence {
 fn negated(occ: u16, relation: u32, vars: &[(u16, u16)]) -> Occurrence {
     Occurrence {
         role: Role::Negated,
+        bind: None,
         ..occurrence(occ, relation, vars)
     }
 }
@@ -205,21 +216,7 @@ fn estimates_and_actuals_populate_for_a_join_fixture() {
     assert_eq!(counters.emits(), 20);
     assert!(counters.actual_after(0) > 0);
     let rule = counters.into_rule_stats(&plan, &schema, Vec::new(), 0);
-    let report = IntrospectionReport {
-        header: None,
-        unit_labels: Vec::new(),
-        rules: vec![RulePlan::FreeJoin(&plan)],
-        stats: ExecutionStats {
-            introspection_version: crate::api::stats::INTROSPECTION_VERSION,
-            emits: rule.emitted,
-            rules: vec![rule],
-            disjoint_rules: None,
-            subsumed: Vec::new(),
-            dead: Vec::new(),
-            interiors: Vec::new(),
-            reach: None,
-        },
-    };
+    let report = cq_report(RulePlan::FreeJoin(&plan), rule);
     let text = format!("{report}");
     assert!(text.contains("estimated=5"));
     assert!(text.contains("emitted bindings: 20"));
@@ -285,21 +282,7 @@ fn the_skew_fixture_shows_the_expected_cover_choice() {
     assert_eq!(counters.cover_histogram(0, 1)[0], 1);
     assert_eq!(counters.cover_histogram(0, 0), [0, 0]);
     let rule = counters.into_rule_stats(&plan, &schema, Vec::new(), 0);
-    let report = IntrospectionReport {
-        header: None,
-        unit_labels: Vec::new(),
-        rules: vec![RulePlan::FreeJoin(&plan)],
-        stats: ExecutionStats {
-            introspection_version: crate::api::stats::INTROSPECTION_VERSION,
-            emits: rule.emitted,
-            rules: vec![rule],
-            disjoint_rules: None,
-            subsumed: Vec::new(),
-            dead: Vec::new(),
-            interiors: Vec::new(),
-            reach: None,
-        },
-    };
+    let report = cq_report(RulePlan::FreeJoin(&plan), rule);
     assert!(format!("{report}").contains("exact=1"));
 }
 
@@ -310,6 +293,7 @@ fn key_probe_queries_report_their_classification() {
         occ_id: OccId(0),
         source: crate::ir::AtomSource::Edb(RelationId(0)),
         role: Role::Positive,
+        bind: None,
         vars: vec![(FieldId(1), VarId(0))],
         filters: vec![FilterPredicate::Compare {
             field: FieldId(0),
@@ -318,30 +302,19 @@ fn key_probe_queries_report_their_classification() {
         }],
     }]);
     let key_probe = classify(&normalized, &schema).expect("key probe");
-    let report = IntrospectionReport {
-        header: None,
-        unit_labels: Vec::new(),
-        rules: vec![RulePlan::KeyProbe(&key_probe)],
-        stats: ExecutionStats {
-            introspection_version: crate::api::stats::INTROSPECTION_VERSION,
-            rules: vec![crate::api::stats::RuleStats {
-                distinct_bindings: true,
-                nodes: Vec::new(),
-                eliminated: Vec::new(),
-                folded: Vec::new(),
-                pinned: Vec::new(),
-                emitted: 0,
-                absorbed: 0,
-                key_probe: Some(crate::api::stats::KeyProbeStats { hit: true }),
-            }],
-            emits: 0,
-            disjoint_rules: None,
-            subsumed: Vec::new(),
-            dead: Vec::new(),
-            interiors: Vec::new(),
-            reach: None,
+    let report = cq_report(
+        RulePlan::KeyProbe(&key_probe),
+        RuleStats {
+            distinct_bindings: true,
+            nodes: Vec::new(),
+            eliminated: Vec::new(),
+            folded: Vec::new(),
+            pinned: Vec::new(),
+            emitted: 0,
+            absorbed: 0,
+            key_probe: Some(crate::api::stats::KeyProbeStats { hit: true }),
         },
-    };
+    );
     let text = format!("{report}");
     assert!(text.contains("key probe"));
     assert!(text.contains("key statement: 0"));
@@ -453,21 +426,7 @@ fn anti_probe_selectivity_populates_the_counted_execution() {
     let rule = counters.into_rule_stats(&plan, &schema, Vec::new(), 0);
     assert_eq!(rule.nodes[0].anti_probe_probed, 10);
     assert_eq!(rule.nodes[0].anti_probe_rejected, 3);
-    let report = IntrospectionReport {
-        header: None,
-        unit_labels: Vec::new(),
-        rules: vec![RulePlan::FreeJoin(&plan)],
-        stats: ExecutionStats {
-            introspection_version: crate::api::stats::INTROSPECTION_VERSION,
-            emits: rule.emitted,
-            rules: vec![rule],
-            disjoint_rules: None,
-            subsumed: Vec::new(),
-            dead: Vec::new(),
-            interiors: Vec::new(),
-            reach: None,
-        },
-    };
+    let report = cq_report(RulePlan::FreeJoin(&plan), rule);
     let text = format!("{report}");
     assert!(text.contains("anti-probes: 1 placed, probed=10 rejected=3"));
 }

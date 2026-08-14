@@ -87,7 +87,7 @@ pub(crate) const FIELDS_EQ_KEEP_DEN: u64 = 64;
 pub(crate) const PARAM_SET_PLANNING_ROWS: u64 = 16;
 
 /// The delta occurrence's planning row count (40-execution.md § the linear reach driver):
-/// a delta-variant plan's marked occurrence binds to one round's
+/// a rec arm's marked delta occurrence binds to one round's
 /// frontier, which the semi-naive rewrite exists to keep small — the
 /// floor prices it as the most selective thing in the rule, so the DP
 /// orders delta-first. Prepare-unknowable like param survivorship (the
@@ -103,11 +103,6 @@ pub(crate) const DELTA_PLANNING_ROWS: u64 = 1;
 /// accumulated read above the delta, small enough that a recursive rule
 /// still plans join-order around its stored atoms' real statistics.
 pub(crate) const ACCUMULATED_PLANNING_ROWS: u64 = 16;
-
-/// Finished-interior (and main's read of finished rec) planning row
-/// count: equal to the accumulated floor — the table is eval-once and
-/// prepare-unknowable, same class as a finished rec read.
-pub(crate) const INTERIOR_PLANNING_ROWS: u64 = ACCUMULATED_PLANNING_ROWS;
 
 /// One occurrence's planner statistics: the row-count estimate —
 /// `rows` divided by each Eq selection's distinct count (times the
@@ -127,17 +122,22 @@ pub(crate) fn occurrence_stats(
     occurrence: &Occurrence,
     rows: u64,
 ) -> crate::error::Result<OccStats> {
-    // THE GUARD (20-query-ir.md § engine recursion's consumer guards): an `Interior`
-    // occurrence's row count is prepare-unknowable — exactly like
-    // param-bound filter survivorship — so it pins no row counts and
-    // costs on the ladder's floors. The caller supplies the floor
-    // through `rows` ([`DELTA_PLANNING_ROWS`] for a variant's
-    // delta occurrence, [`ACCUMULATED_PLANNING_ROWS`] otherwise
-    // — `api/prepared/build.rs`); each bound variable's distinct count
-    // is the floor itself (a table of N rows has at most N distinct
-    // words per column).
-    let Some(relation) = occurrence.source.edb() else {
-        let floor = rows.max(1);
+    // THE GUARD (20-query-ir.md § engine recursion's consumer guards): a
+    // derived occurrence's row count is prepare-unknowable — exactly
+    // like param-bound filter survivorship — so it pins no row counts
+    // and costs on the ladder's floors. The occurrence's bind role
+    // picks the floor ([`DELTA_PLANNING_ROWS`] for a rec arm's marked
+    // delta occurrence, [`ACCUMULATED_PLANNING_ROWS`] for finished
+    // interiors, rec-accumulated reads, and main's finished-rec reads);
+    // each bound variable's distinct count is the floor itself (a table
+    // of N rows has at most N distinct words per column).
+    if let Some(role) = occurrence.bind {
+        let floor = match role {
+            crate::ir::normalize::BindRole::RecDelta => DELTA_PLANNING_ROWS,
+            crate::ir::normalize::BindRole::Finished
+            | crate::ir::normalize::BindRole::RecAcc => ACCUMULATED_PLANNING_ROWS,
+        }
+        .max(1);
         return Ok(OccStats {
             occ_id: occurrence.occ_id,
             rows: floor,
@@ -147,7 +147,8 @@ pub(crate) fn occurrence_stats(
                 .map(|(_, var)| (*var, floor))
                 .collect(),
         });
-    };
+    }
+    let relation = occurrence.relation();
     let image = cache.peek(txn, relation)?;
     let mut var_distincts = Vec::with_capacity(occurrence.vars.len());
     for (field, var) in &occurrence.vars {
@@ -492,6 +493,7 @@ mod tests {
             occ_id: OccId(0),
             source: crate::ir::AtomSource::Edb(occ_relation),
             role: Role::Positive,
+            bind: None,
             vars: vec![],
             filters: vec![FilterPredicate::Compare {
                 field: FieldId(field),
@@ -976,7 +978,7 @@ mod tests {
                 FindTerm::Var(VarId(2)),
             ],
         );
-        let full_pairs: Vec<_> = full_stats.rules[0]
+        let full_pairs: Vec<_> = full_stats.rules()[0]
             .nodes
             .iter()
             .map(|node| (node.estimate, node.actual))
@@ -988,7 +990,7 @@ mod tests {
         );
 
         let narrow_stats = cyclic_profile(&txn, &cache, &schema, vec![FindTerm::Var(VarId(0))]);
-        let narrow_pairs: Vec<_> = narrow_stats.rules[0]
+        let narrow_pairs: Vec<_> = narrow_stats.rules()[0]
             .nodes
             .iter()
             .map(|node| (node.estimate, node.actual))
@@ -999,7 +1001,7 @@ mod tests {
             "P3 report population: D2 emits one set witness per root origin, so final est/actual is not a count-accuracy bound"
         );
         assert_eq!(
-            narrow_stats.rules[0].absorbed, 21,
+            narrow_stats.rules()[0].absorbed, 21,
             "24 emits collapse to 3 x rows"
         );
     }

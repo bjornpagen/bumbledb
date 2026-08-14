@@ -191,6 +191,7 @@ fn occurrence(occ: u16, relation: u32, vars: &[(u16, u16)]) -> Occurrence {
         occ_id: OccId(occ),
         source: crate::ir::AtomSource::Edb(RelationId(relation)),
         role: Role::Positive,
+        bind: None,
         vars: vars.iter().map(|(f, v)| (FieldId(*f), VarId(*v))).collect(),
         filters: vec![],
     }
@@ -200,6 +201,7 @@ fn occurrence(occ: u16, relation: u32, vars: &[(u16, u16)]) -> Occurrence {
 fn negated(occ: u16, relation: u32, vars: &[(u16, u16)]) -> Occurrence {
     Occurrence {
         role: Role::Negated,
+        bind: None,
         ..occurrence(occ, relation, vars)
     }
 }

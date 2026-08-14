@@ -368,7 +368,7 @@ pub fn verify_family(
         .prepare(&query)
         .map_err(|e| format!("{}: prepare: {e:?}", family.name))?;
     let types: Vec<bumbledb::schema::ValueType> = prepared
-        .predicate()
+        .signature()
         .columns
         .iter()
         .map(|column| column.ty.clone())
@@ -499,7 +499,7 @@ pub fn bench_families(
             theirs: theirs.stats,
             ratio_p50,
             alloc: alloc_report,
-            exec: None, // the profile path is query-shaped; rec queries skip it
+            exec: None, // the profile path is CQ-shaped; reach queries skip it
             ghz: Some(merged.into()),
             p50_norm: ours.p50_norm,
         });

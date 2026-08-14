@@ -65,8 +65,8 @@ fn a_multi_rule_program_prepares_with_every_rules_plan() {
     let txn = env.read_txn().expect("txn");
 
     let prepared = prepare(&txn, &cache, &schema, &union_query()).expect("multi-rule builds");
-    assert_eq!(prepared.body.rules().len(), 2, "one plan per rule");
-    for rule in prepared.body.rules() {
+    assert_eq!(prepared.pipeline.main_rules().len(), 2, "one plan per rule");
+    for rule in prepared.pipeline.main_rules() {
         // Each rule went through the full pipeline: a real plan with the
         // rule's own occurrence scratch exists.
         let PreparedRule::FreeJoin(rule) = rule else {
@@ -76,13 +76,13 @@ fn a_multi_rule_program_prepares_with_every_rules_plan() {
     }
     assert_eq!(
         prepared
-            .predicate()
+            .signature()
             .columns
             .iter()
             .map(|column| &column.ty)
             .collect::<Vec<_>>(),
         vec![&ValueType::String, &ValueType::I64],
-        "the head's answer tuple types the program once"
+        "the head's answer tuple types the query once"
     );
 }
 
@@ -452,7 +452,7 @@ fn an_or_spelled_fold_keeps_the_written_rules_full_binding_domain() {
     };
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
     assert_eq!(
-        prepared.body.rules().len(),
+        prepared.pipeline.main_rules().len(),
         2,
         "the or lowered to two disjunct rules"
     );
@@ -478,7 +478,7 @@ fn an_or_spelled_fold_keeps_the_written_rules_full_binding_domain() {
     );
 }
 
-/// introspection over a program: per-rule node stats plus the head-level union
+/// introspection over a query: per-rule node stats plus the head-level union
 /// accounting — rule 1 re-derives the overlap and the report shows the
 /// absorption.
 #[test]
@@ -495,19 +495,19 @@ fn introspection_reports_per_rule_stats_and_the_union_accounting() {
         .profile(&txn, &cache, &[ParamArg::Scalar(BindValue::I64(0))])
         .expect("profile");
     assert_eq!(out.len(), 3, "the union");
-    assert_eq!(stats.rules.len(), 2, "per-rule stats");
+    assert_eq!(stats.rules().len(), 2, "per-rule stats");
     assert_eq!(stats.emits, 4, "2 + 2 bindings reached the sink");
     assert_eq!(
-        (stats.rules[0].emitted, stats.rules[0].absorbed),
+        (stats.rules()[0].emitted, stats.rules()[0].absorbed),
         (2, 0),
         "rule 0 seeds the union"
     );
     assert_eq!(
-        (stats.rules[1].emitted, stats.rules[1].absorbed),
+        (stats.rules()[1].emitted, stats.rules()[1].absorbed),
         (2, 1),
         "rule 1 re-derives ('b', 25) and the spanning seen-set absorbs it"
     );
-    for rule in &stats.rules {
+    for rule in stats.rules() {
         assert!(!rule.nodes.is_empty(), "per-rule node stats exist");
     }
 
@@ -526,7 +526,7 @@ fn introspection_reports_per_rule_stats_and_the_union_accounting() {
     );
 }
 
-/// A key-probe rule inside a program goes through the sink like any
+/// A key-probe rule inside a query goes through the sink like any
 /// other rule (the union must hear it): its re-derivation of another
 /// rule's row is absorbed.
 #[test]
@@ -564,7 +564,7 @@ fn a_key_probe_rule_unions_through_the_sink() {
     };
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
     assert!(
-        matches!(prepared.body.rules()[1], PreparedRule::KeyProbe(_)),
+        matches!(prepared.pipeline.main_rules()[1], PreparedRule::KeyProbe(_)),
         "rule 1 classifies as the point fast path"
     );
     let out = prepared

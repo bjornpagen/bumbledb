@@ -44,6 +44,7 @@ fn occurrence(occ: u16, relation: u32, vars: Vec<(u16, u16)>) -> Occurrence {
         occ_id: OccId(occ),
         source: crate::ir::AtomSource::Edb(RelationId(relation)),
         role: Role::Positive,
+        bind: None,
         vars: vars
             .into_iter()
             .map(|(f, v)| (FieldId(f), VarId(v)))
@@ -434,6 +435,7 @@ fn negated_occurrences_enter_no_dp_state() {
     ];
     occurrences.push(Occurrence {
         role: Role::Negated,
+        bind: None,
         ..occurrence(2, 2, vec![(1, 0)])
     });
     let query = normalized(occurrences);

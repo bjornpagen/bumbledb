@@ -231,7 +231,7 @@ fn grounding_shapes_eliminate_and_near_misses_refuse() {
         match variant {
             GroundVariant::Walk => {
                 assert_eq!(
-                    stats.rules[0].eliminated.len(),
+                    stats.rules()[0].eliminated.len(),
                     1,
                     "walk {i} must eliminate"
                 );
@@ -244,21 +244,21 @@ fn grounding_shapes_eliminate_and_near_misses_refuse() {
                     "ImportBatch"
                 };
                 assert_eq!(
-                    stats.rules[0].eliminated.len(),
+                    stats.rules()[0].eliminated.len(),
                     1,
                     "DU walk {i} must eliminate"
                 );
                 assert_eq!(
-                    stats.rules[0].eliminated[0].relation, fallen,
+                    stats.rules()[0].eliminated[0].relation, fallen,
                     "DU walk {i} fells the wrong side"
                 );
                 eliminated += 1;
             }
             GroundVariant::WalkExtraField | GroundVariant::DuMissingPhi => {
                 assert!(
-                    stats.rules[0].eliminated.is_empty(),
+                    stats.rules()[0].eliminated.is_empty(),
                     "near-miss {i} must refuse: {:?}",
-                    stats.rules[0].eliminated
+                    stats.rules()[0].eliminated
                 );
                 refused += 1;
             }
@@ -503,7 +503,7 @@ fn check_miss(
 )]
 fn the_recursive_arm_covers_its_contract_and_agrees_across_oracles() {
     use crate::naive::{Delta, NaiveDb};
-    use crate::translate::{sqlite_reach_expressible, translate_query};
+    use crate::translate::{sqlite_derived_expressible, translate};
 
     let cfg = GenConfig {
         seed: SEED,
@@ -576,14 +576,15 @@ fn the_recursive_arm_covers_its_contract_and_agrees_across_oracles() {
         assert_eq!(
             engine_rows,
             crate::differential::Answers::Ok(answers.clone()),
-            "query {i} ({variant:?}): engine and naive disagree\n{query:#?}"
+            "query {i} ({} {variant:?}): engine and naive disagree\n{query:#?}",
+            variant.coverage_class()
         );
 
-        match sqlite_reach_expressible(&query, target::schema()) {
+        match sqlite_derived_expressible(&query, target::schema()) {
             Ok(()) => {
                 tally.sqlite_expressible += 1;
                 let translated =
-                    translate_query(&query, target::schema(), &[]).expect("translates");
+                    translate(&query, target::schema(), &[]).expect("translates");
                 let arity = query.head.len();
                 let mut statement = conn.prepare(&translated.sql).expect("prepare");
                 let rows: std::collections::BTreeSet<crate::naive::Tuple> = statement

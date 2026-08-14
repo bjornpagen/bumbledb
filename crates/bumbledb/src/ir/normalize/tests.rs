@@ -94,7 +94,7 @@ fn w(value: i64) -> u64 {
 
 fn normalized(query: &Query) -> NormalizedQuery {
     let schema = schema();
-    let mut rules = normalize(&schema, &validate(&schema, query).expect("valid"));
+    let mut rules = normalize_predicate(&schema, &validate(&schema, query).expect("valid"), &[]);
     assert_eq!(rules.len(), 1, "these fixtures are one-rule programs");
     rules.remove(0)
 }
@@ -376,7 +376,7 @@ fn occurrence_vars_are_duplicate_free_over_generated_inputs() {
         let Ok(witness) = validate(&schema, &query) else {
             continue;
         };
-        let norm = &normalize(&schema, &witness)[0];
+        let norm = &normalize_predicate(&schema, &witness, &[])[0];
         for occurrence in &norm.occurrences {
             let mut seen = std::collections::BTreeSet::new();
             for (_, v) in &occurrence.vars {

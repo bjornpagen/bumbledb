@@ -2,7 +2,7 @@
 
 - **Severity:** medium
 - **Tree:** engine
-- **Status:** OPEN
+- **Status:** FIXED(9c77c002)
 - **Source:** audit/engine.md F29
 - **Depends on:** engine-012 (one stats/report reshape, one version bump), engine-001
 

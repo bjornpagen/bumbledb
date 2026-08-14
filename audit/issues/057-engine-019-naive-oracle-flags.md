@@ -2,7 +2,7 @@
 
 - **Severity:** medium
 - **Tree:** engine (bench oracle)
-- **Status:** OPEN
+- **Status:** FIXED(5bdc1f10)
 - **Source:** audit/engine.md F19
 - **Depends on:** none (bench-local; parallel-safe)
 

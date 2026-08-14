@@ -61,7 +61,7 @@ fn the_engine_agrees_with_the_naive_fixpoint() {
     let query = closure_query();
     let mut prepared = db.prepare(&query).expect("prepare");
     let types: Vec<bumbledb::schema::ValueType> = prepared
-        .predicate()
+        .signature()
         .columns
         .iter()
         .map(|column| column.ty.clone())

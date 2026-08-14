@@ -2,7 +2,7 @@
 
 - **Severity:** high
 - **Tree:** engine
-- **Status:** OPEN (scoped — the boundary re-encoding half is refused per CONTRACT §C1/§C2)
+- **Status:** FIXED(9c77c002) (accepted half; boundary re-encoding remains refused per CONTRACT §C1/§C2)
 - **Source:** audit/engine.md F3
 - **Depends on:** engine-005, engine-016 (the witness sum is where the stored ids live; engine-028 is a duplicate of this issue)
 

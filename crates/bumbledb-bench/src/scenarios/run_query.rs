@@ -99,7 +99,7 @@ pub(super) fn gate<'d>(
                 .prepare(&query)
                 .map_err(|e| format!("{}/{}: prepare: {e:?}", scenario.name, sq.name))?;
             let types: Vec<ValueType> = prepared
-                .predicate()
+                .signature()
                 .columns
                 .iter()
                 .map(|column| column.ty.clone())

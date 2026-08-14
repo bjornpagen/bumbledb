@@ -105,7 +105,7 @@ impl AggregateSink {
 /// spans' gathered words under the multi-rule regime — the head
 /// projection for a hand-written rule set, the `VarId`-ordered shared
 /// slot arrays for a DNF-derived one (R2) — or the whole slot array
-/// verbatim for a single-rule program. Both span shapes are
+/// verbatim for a single-rule query. Both span shapes are
 /// rule-independent: the head is the hand-written rules' only shared
 /// vocabulary, and DNF clones share one variable scope.
 pub(super) fn dedup_key<'k>(

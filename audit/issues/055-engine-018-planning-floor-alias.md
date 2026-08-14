@@ -2,7 +2,7 @@
 
 - **Severity:** medium
 - **Tree:** engine
-- **Status:** OPEN
+- **Status:** FIXED(6a9f47d2)
 - **Source:** audit/engine.md F18
 - **Depends on:** engine-007/engine-039 (the side channel dies with the rec-arm prepare split)
 

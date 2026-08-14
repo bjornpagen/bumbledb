@@ -294,6 +294,22 @@ pub struct RecursiveCoverage {
     pub preamble_ledger_trip: u64,
 }
 
+impl RecursiveVariant {
+    /// Coverage-report class. Interiors-only shapes are not recursive.
+    /// `Debug` names stay frozen for reach-case provenance.
+    #[must_use]
+    pub fn coverage_class(self) -> &'static str {
+        match self {
+            Self::InteriorsDag | Self::InteriorsAntiJoin | Self::ManyInteriors => "interiors",
+            Self::Linear
+            | Self::Negation
+            | Self::Fold
+            | Self::EmptyDelta
+            | Self::PrimerReachXx => "recursive",
+        }
+    }
+}
+
 pub fn recursive_coverage(query: &Query, variant: RecursiveVariant, tally: &mut RecursiveCoverage) {
     tally.queries += 1;
     match variant {

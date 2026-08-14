@@ -2,7 +2,7 @@
 
 - **Severity:** medium
 - **Tree:** engine
-- **Status:** OPEN
+- **Status:** FIXED(1af537e5)
 - **Source:** audit/engine.md F30
 - **Depends on:** none (deletion; parallel-safe)
 

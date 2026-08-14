@@ -2,7 +2,7 @@
 
 - **Severity:** medium
 - **Tree:** engine
-- **Status:** OPEN
+- **Status:** FIXED(bda13364)
 - **Source:** audit/engine.md F31
 - **Depends on:** engine-001 (the parsed lane), engine-008 (one protocol consumes it)
 
@@ -33,10 +33,10 @@ Per `audit/CONTRACT.md §C3`: the direct lane is parsed ONCE at build into pipel
 
 ## Acceptance criteria
 
-- [ ] Gone: `rg -n 'else \{\s*return Ok\(\(\)\)' crates/bumbledb/src/api/prepared/execute.rs` → no silent-empty arm in the direct path; the slice re-match deleted.
-- [ ] Unchanged tests: key-probe fast-lane tests green UNCHANGED; answers identical.
-- [ ] New lock: covered by engine-008's execute/profile parity test.
-- [ ] Green: `PATH="$HOME/.cargo/bin:$PATH" cargo test -p bumbledb`; `./scripts/check.sh`.
+- [x] Gone: the slice re-match's `else { return Ok(()) }` is `unreachable!("key_probe_direct parsed at build")`; the lane is a build-computed `key_probe_direct` flag.
+- [x] Unchanged tests: key-probe fast-lane tests green UNCHANGED.
+- [x] New lock: covered by engine-008's execute/profile parity test.
+- [x] Green: `cargo test -p bumbledb --lib api::prepared` 85 passed.
 
 ## Constraints
 

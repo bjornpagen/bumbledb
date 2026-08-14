@@ -2,7 +2,7 @@
 
 - **Severity:** medium
 - **Tree:** engine (bench generator)
-- **Status:** OPEN
+- **Status:** FIXED(5bdc1f10)
 - **Source:** audit/engine.md F20
 - **Depends on:** bench-004, bench-005 / engine-021 (randomized entry only; corpus reconstructers are C1-frozen and independent)
 

@@ -1524,7 +1524,7 @@ pub fn generate_corpus() -> (Report, Vec<(String, String)>) {
         let case_seed = CASE_SEED_BASE + attempt;
         attempt += 1;
         let mut rng = Rng::new(case_seed);
-        let query = querygen::random_query(&mut rng, world.cfg);
+        let query = querygen::random_cq_query(&mut rng, world.cfg);
         let draws = querygen::params_for(&query, &mut rng, world.cfg);
         let draw = usize::try_from(case_seed).expect("seed fits usize") % draws.len();
         let params = positional(&draws[draw]);
@@ -1660,7 +1660,7 @@ fn replay_case(worlds: &mut BTreeMap<u64, World>, name: &str, text: &str) -> Str
             let case_seed = read_u64(provenance, "case_seed");
             let draw = usize::try_from(read_u64(provenance, "draw")).expect("draw fits");
             let mut rng = Rng::new(case_seed);
-            let query = querygen::random_query(&mut rng, world.cfg);
+            let query = querygen::random_cq_query(&mut rng, world.cfg);
             let draws = querygen::params_for(&query, &mut rng, world.cfg);
             let params = positional(&draws[draw]);
             let line = format!(
