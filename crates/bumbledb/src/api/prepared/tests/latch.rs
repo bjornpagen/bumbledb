@@ -170,13 +170,15 @@ fn the_latch_fires_once_and_the_fast_path_skips_resolution() {
     assert_eq!(
         events
             .iter()
-            .filter(|e| e.name == obs::names::LITERAL_LATCH)
+            .filter(|e| e.name() == obs::names::LITERAL_LATCH)
             .count(),
         1,
         "one latch per distinct literal"
     );
     assert!(
-        events.iter().any(|e| e.name == obs::names::RESOLVE_FILTERS),
+        events
+            .iter()
+            .any(|e| e.name() == obs::names::RESOLVE_FILTERS),
         "the first execution resolves"
     );
 
@@ -187,11 +189,13 @@ fn the_latch_fires_once_and_the_fast_path_skips_resolution() {
     let events = obs::finish_capture();
     assert_eq!(amounts(&out), slow, "fast path, identical results");
     assert!(
-        !events.iter().any(|e| e.name == obs::names::LITERAL_LATCH),
+        !events.iter().any(|e| e.name() == obs::names::LITERAL_LATCH),
         "a latch fires once, ever"
     );
     assert!(
-        !events.iter().any(|e| e.name == obs::names::RESOLVE_FILTERS),
+        !events
+            .iter()
+            .any(|e| e.name() == obs::names::RESOLVE_FILTERS),
         "resolve_filters provably skipped"
     );
 }

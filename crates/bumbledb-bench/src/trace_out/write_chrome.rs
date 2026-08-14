@@ -9,31 +9,37 @@ fn write_event(out: &mut impl Write, event: &TraceEvent, tid: u32) -> std::io::R
     // asserted in tests); the shared json helpers escape regardless.
     let mut line = String::new();
     line.push_str("{\"name\":");
-    crate::json::push_str_lit(&mut line, event.name);
+    crate::json::push_str_lit(&mut line, event.name());
     line.push_str(",\"cat\":");
-    crate::json::push_str_lit(&mut line, event.cat.label());
-    if event.dur_ns == 0 {
-        line.push_str(",\"ph\":\"i\",\"ts\":");
-        crate::json::push_us(&mut line, event.start_ns);
-        line.push_str(",\"s\":\"t\"");
-    } else {
-        line.push_str(",\"ph\":\"X\",\"ts\":");
-        crate::json::push_us(&mut line, event.start_ns);
-        line.push_str(",\"dur\":");
-        crate::json::push_us(&mut line, event.dur_ns);
+    crate::json::push_str_lit(&mut line, event.cat().label());
+    match event {
+        TraceEvent::Point { start_ns, .. } => {
+            line.push_str(",\"ph\":\"i\",\"ts\":");
+            crate::json::push_us(&mut line, *start_ns);
+            line.push_str(",\"s\":\"t\"");
+        }
+        TraceEvent::Span {
+            start_ns, dur_ns, ..
+        } => {
+            line.push_str(",\"ph\":\"X\",\"ts\":");
+            crate::json::push_us(&mut line, *start_ns);
+            line.push_str(",\"dur\":");
+            crate::json::push_us(&mut line, *dur_ns);
+        }
     }
     let _ = write!(
         line,
         ",\"pid\":1,\"tid\":{tid},\"args\":{{\"a0\":{},\"a1\":{}}}}}",
-        event.a0, event.a1
+        event.a0(),
+        event.a1()
     );
     out.write_all(line.as_bytes())
 }
 
 /// Emits the Chrome Trace Event Format: one JSON array of complete
 /// events (`ph: "X"`, timestamps and durations in microseconds with
-/// three decimals) and instant events (`ph: "i"`) for zero-duration
-/// points. Engine events carry `tid` 1, harness events `tid` 2; file
+/// three decimals) and instant events (`ph: "i"`) for point
+/// events. Engine events carry `tid` 1, harness events `tid` 2; file
 /// order is start-time order (spans record at drop, so the capture
 /// arrives in end order and is re-sorted here).
 ///
@@ -50,7 +56,7 @@ pub fn write_chrome(
         .map(|e| (e, 1))
         .chain(harness.iter().map(|e| (e, 2)))
         .collect();
-    all.sort_by_key(|(e, _)| e.start_ns);
+    all.sort_by_key(|(e, _)| e.start_ns());
     out.write_all(b"[\n")?;
     for (index, (event, tid)) in all.iter().enumerate() {
         if index > 0 {

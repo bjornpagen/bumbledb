@@ -292,8 +292,8 @@ fn judgment_spans(events: &[obs::TraceEvent]) -> JudgmentSpans {
     let sum = |name: &str| -> u64 {
         events
             .iter()
-            .filter(|event| event.name == name)
-            .map(|event| event.dur_ns)
+            .filter(|event| event.name() == name)
+            .map(|event| event.dur_ns())
             .sum()
     };
     JudgmentSpans {

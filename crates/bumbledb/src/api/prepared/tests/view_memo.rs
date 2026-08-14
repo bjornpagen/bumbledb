@@ -38,11 +38,11 @@ fn residual_bindings_memoize_under_lru() {
         let events = obs::finish_capture();
         let builds = events
             .iter()
-            .filter(|e| e.name == obs::names::VIEW_BUILD)
+            .filter(|e| e.name() == obs::names::VIEW_BUILD)
             .count();
         let hits = events
             .iter()
-            .filter(|e| e.name == obs::names::VIEW_MEMO_HIT)
+            .filter(|e| e.name() == obs::names::VIEW_MEMO_HIT)
             .count();
         (builds, hits, answers_of(&out))
     };
@@ -145,14 +145,14 @@ fn rules_share_the_image_and_memoize_every_rules_views() {
     assert_eq!(amounts_of(&out), vec![10, 25]);
     assert_eq!(
         cold.iter()
-            .filter(|e| e.name == obs::names::IMAGE_BUILD)
+            .filter(|e| e.name() == obs::names::IMAGE_BUILD)
             .count(),
         1,
         "one image build across the rules — the Arc is shared by construction"
     );
     assert_eq!(
         cold.iter()
-            .filter(|e| e.name == obs::names::VIEW_BUILD)
+            .filter(|e| e.name() == obs::names::VIEW_BUILD)
             .count(),
         2,
         "each rule's occurrence builds its filtered view once"
@@ -164,12 +164,12 @@ fn rules_share_the_image_and_memoize_every_rules_views() {
         .execute_collect(&txn, &cache, &[])
         .expect("execute");
     let warm = obs::finish_capture();
-    let warm_names: Vec<&str> = warm.iter().map(|e| e.name).collect();
+    let warm_names: Vec<&str> = warm.iter().map(|e| e.name()).collect();
     assert!(!warm_names.contains(&obs::names::IMAGE_BUILD));
     assert!(!warm_names.contains(&obs::names::VIEW_BUILD));
     assert_eq!(
         warm.iter()
-            .filter(|e| e.name == obs::names::VIEW_MEMO_HIT)
+            .filter(|e| e.name() == obs::names::VIEW_MEMO_HIT)
             .count(),
         2,
         "both rules' views memoized"
@@ -207,7 +207,7 @@ fn a_generation_bump_invalidates_the_memo() {
         .expect("execute");
     let events = obs::finish_capture();
     assert!(
-        events.iter().any(|e| e.name == obs::names::VIEW_BUILD),
+        events.iter().any(|e| e.name() == obs::names::VIEW_BUILD),
         "the stale binding rebuilds in place"
     );
     assert_eq!(
@@ -230,7 +230,7 @@ fn read_path_traces_phases_memo_hits_and_key_probe() {
     let txn = env.read_txn().expect("txn");
 
     let names = |events: &[obs::TraceEvent]| -> Vec<&'static str> {
-        events.iter().map(|e| e.name).collect()
+        events.iter().map(|e| e.name()).collect()
     };
 
     // Prepare: the phase spans, exactly.
@@ -253,11 +253,11 @@ fn read_path_traces_phases_memo_hits_and_key_probe() {
     // Containment: every phase inside the outer prepare span.
     let outer = events
         .iter()
-        .find(|e| e.name == obs::names::PREPARE)
+        .find(|e| e.name() == obs::names::PREPARE)
         .expect("outer");
     for e in &events {
-        assert!(e.start_ns >= outer.start_ns);
-        assert!(e.start_ns + e.dur_ns <= outer.start_ns + outer.dur_ns);
+        assert!(e.start_ns() >= outer.start_ns());
+        assert!(e.start_ns() + e.dur_ns() <= outer.start_ns() + outer.dur_ns());
     }
 
     // First execute: builds views, no memo hits, row count in a0.
@@ -275,9 +275,9 @@ fn read_path_traces_phases_memo_hits_and_key_probe() {
     assert!(!first_names.contains(&obs::names::VIEW_MEMO_HIT));
     let exec = first
         .iter()
-        .find(|e| e.name == obs::names::EXECUTE)
+        .find(|e| e.name() == obs::names::EXECUTE)
         .expect("execute span");
-    assert_eq!(exec.a0, 2, "execute a0 carries the row count");
+    assert_eq!(exec.a0(), 2, "execute a0 carries the row count");
 
     // Second execute, same snapshot + params: memo hits only.
     obs::start_capture();
@@ -320,9 +320,9 @@ fn read_path_traces_phases_memo_hits_and_key_probe() {
     assert!(!key_probe_names.contains(&obs::names::JOIN));
     let probe = key_probe_events
         .iter()
-        .find(|e| e.name == obs::names::KEY_PROBE)
+        .find(|e| e.name() == obs::names::KEY_PROBE)
         .expect("probe");
-    assert_eq!(probe.a0, 1, "hit flag");
+    assert_eq!(probe.a0(), 1, "hit flag");
 
     // Nothing records without capture.
     prepared
@@ -402,7 +402,7 @@ fn closed_relation_views_stay_warm_across_generations() {
         obs::start_capture();
         let out = prepared.execute_collect(txn, &cache, &[]).expect("execute");
         let events = obs::finish_capture();
-        let count = |name: &'static str| events.iter().filter(|e| e.name == name).count();
+        let count = |name: &'static str| events.iter().filter(|e| e.name() == name).count();
         (
             count(obs::names::VIEW_BUILD),
             count(obs::names::VIEW_MEMO_HIT),
@@ -474,17 +474,17 @@ fn prepare_lights_the_planner_dp_and_selectivity_ladder() {
     let events = obs::finish_capture();
 
     let one = |name: &'static str| -> &obs::TraceEvent {
-        let hits: Vec<&obs::TraceEvent> = events.iter().filter(|e| e.name == name).collect();
+        let hits: Vec<&obs::TraceEvent> = events.iter().filter(|e| e.name() == name).collect();
         assert_eq!(hits.len(), 1, "exactly one {name}");
         hits[0]
     };
     let within = |inner: &obs::TraceEvent, outer: &obs::TraceEvent| {
         assert!(
-            inner.start_ns >= outer.start_ns
-                && inner.start_ns + inner.dur_ns <= outer.start_ns + outer.dur_ns,
+            inner.start_ns() >= outer.start_ns()
+                && inner.start_ns() + inner.dur_ns() <= outer.start_ns() + outer.dur_ns(),
             "{} nests inside {}",
-            inner.name,
-            outer.name,
+            inner.name(),
+            outer.name(),
         );
     };
 
@@ -494,9 +494,9 @@ fn prepare_lights_the_planner_dp_and_selectivity_ladder() {
     let plan_dp = one(obs::names::PLAN_DP);
     let densify = one(obs::names::PLAN_DENSIFY);
     let fill = one(obs::names::PLAN_FILL);
-    assert_eq!(densify.a0, 1, "one participating occurrence densified");
+    assert_eq!(densify.a0(), 1, "one participating occurrence densified");
     assert_eq!(
-        (fill.a0, fill.a1),
+        (fill.a0(), fill.a1()),
         (0, 0),
         "trivial DP evaluates no candidate"
     );
@@ -510,14 +510,14 @@ fn prepare_lights_the_planner_dp_and_selectivity_ladder() {
     let stats = one(obs::names::STATS);
     let rows = one(obs::names::RELATION_ROWS);
     assert_eq!(
-        (rows.a0, rows.a1),
+        (rows.a0(), rows.a1()),
         (u64::from(POSTING.0), 4),
         "Posting's stored rows"
     );
     within(rows, stats);
     let ladder: Vec<&obs::TraceEvent> = events
         .iter()
-        .filter(|e| e.name == obs::names::DISTINCT_LADDER)
+        .filter(|e| e.name() == obs::names::DISTINCT_LADDER)
         .collect();
     assert!(
         !ladder.is_empty(),
@@ -525,7 +525,8 @@ fn prepare_lights_the_planner_dp_and_selectivity_ladder() {
     );
     for rung in &ladder {
         assert_eq!(
-            rung.a0, 3,
+            rung.a0(),
+            3,
             "the floor rung — cold prepare, no key/image/containment"
         );
         within(rung, stats);
@@ -558,25 +559,25 @@ fn prepare_lights_the_normalization_sub_passes() {
 
     let outer = events
         .iter()
-        .find(|e| e.name == obs::names::NORMALIZE)
+        .find(|e| e.name() == obs::names::NORMALIZE)
         .expect("the NORMALIZE span");
     for name in [obs::names::PLACE_COMPARISONS, obs::names::NORMALIZE_FOLD] {
         let sub = events
             .iter()
-            .find(|e| e.name == name)
+            .find(|e| e.name() == name)
             .unwrap_or_else(|| panic!("missing {name}"));
         assert!(
-            sub.start_ns >= outer.start_ns
-                && sub.start_ns + sub.dur_ns <= outer.start_ns + outer.dur_ns,
+            sub.start_ns() >= outer.start_ns()
+                && sub.start_ns() + sub.dur_ns() <= outer.start_ns() + outer.dur_ns(),
             "{name} nests inside NORMALIZE",
         );
     }
     // A live single-atom rule folds to nothing dead.
     let fold = events
         .iter()
-        .find(|e| e.name == obs::names::NORMALIZE_FOLD)
+        .find(|e| e.name() == obs::names::NORMALIZE_FOLD)
         .expect("fold span");
-    assert_eq!(fold.a0, 0, "the rule is not statically empty");
+    assert_eq!(fold.a0(), 0, "the rule is not statically empty");
 }
 
 /// Lane I2 — validation's interior, formerly dark under the single
@@ -600,33 +601,33 @@ fn prepare_lights_the_validation_interior() {
 
     let outer = events
         .iter()
-        .find(|e| e.name == obs::names::VALIDATE)
+        .find(|e| e.name() == obs::names::VALIDATE)
         .expect("the VALIDATE span");
     let one = |name: &'static str| -> &obs::TraceEvent {
-        let hits: Vec<&obs::TraceEvent> = events.iter().filter(|e| e.name == name).collect();
+        let hits: Vec<&obs::TraceEvent> = events.iter().filter(|e| e.name() == name).collect();
         assert_eq!(hits.len(), 1, "exactly one {name}");
         hits[0]
     };
     for name in [obs::names::VALIDATE_LOWER, obs::names::VALIDATE_RULES] {
         let sub = one(name);
-        assert_eq!(sub.a0, 1, "{name}: the one-rule query's rule work");
+        assert_eq!(sub.a0(), 1, "{name}: the one-rule query's rule work");
         assert!(
-            sub.start_ns >= outer.start_ns
-                && sub.start_ns + sub.dur_ns <= outer.start_ns + outer.dur_ns,
+            sub.start_ns() >= outer.start_ns()
+                && sub.start_ns() + sub.dur_ns() <= outer.start_ns() + outer.dur_ns(),
             "{name} nests inside VALIDATE",
         );
     }
     // The stratify span is gone. SEAL still runs (declaration-order
     // interior sealing) even when interiors are empty.
     assert!(
-        events.iter().all(|e| e.name != "validate_stratify"),
+        events.iter().all(|e| e.name() != "validate_stratify"),
         "the stratify span must not appear",
     );
     let seal = events
         .iter()
-        .find(|e| e.name == obs::names::VALIDATE_SEAL)
+        .find(|e| e.name() == obs::names::VALIDATE_SEAL)
         .expect("VALIDATE_SEAL runs over interior count");
-    assert_eq!(seal.a0, 0, "no interiors");
+    assert_eq!(seal.a0(), 0, "no interiors");
 }
 
 /// Lane I2 — a rec query records declaration-order sealing beside the
@@ -684,26 +685,26 @@ fn rec_prepare_lights_sealing_and_the_rule_passes() {
 
     let outer = events
         .iter()
-        .find(|e| e.name == obs::names::VALIDATE)
+        .find(|e| e.name() == obs::names::VALIDATE)
         .expect("VALIDATE span");
     let one = |name: &'static str| -> &obs::TraceEvent {
-        let hits: Vec<&obs::TraceEvent> = events.iter().filter(|e| e.name == name).collect();
+        let hits: Vec<&obs::TraceEvent> = events.iter().filter(|e| e.name() == name).collect();
         assert_eq!(hits.len(), 1, "exactly one {name}");
         hits[0]
     };
     let within = |inner: &obs::TraceEvent| {
         assert!(
-            inner.start_ns >= outer.start_ns
-                && inner.start_ns + inner.dur_ns <= outer.start_ns + outer.dur_ns,
+            inner.start_ns() >= outer.start_ns()
+                && inner.start_ns() + inner.dur_ns() <= outer.start_ns() + outer.dur_ns(),
             "{} nests inside VALIDATE",
-            inner.name,
+            inner.name(),
         );
     };
 
     let seal = one(obs::names::VALIDATE_SEAL);
     within(seal);
     assert!(
-        events.iter().all(|e| e.name != "validate_stratify"),
+        events.iter().all(|e| e.name() != "validate_stratify"),
         "the stratify span must not appear",
     );
 }
@@ -746,24 +747,24 @@ fn execute_lights_the_batch_decode_and_filter_kernel() {
 
     let image_build = events
         .iter()
-        .find(|e| e.name == obs::names::IMAGE_BUILD)
+        .find(|e| e.name() == obs::names::IMAGE_BUILD)
         .expect("the cold build");
     let decode = events
         .iter()
-        .find(|e| e.name == obs::names::DECODE_BATCH)
+        .find(|e| e.name() == obs::names::DECODE_BATCH)
         .expect("the batch decode");
-    assert_eq!(decode.a0, 4, "every stored row decoded");
+    assert_eq!(decode.a0(), 4, "every stored row decoded");
     assert!(
-        decode.start_ns >= image_build.start_ns
-            && decode.start_ns + decode.dur_ns <= image_build.start_ns + image_build.dur_ns,
+        decode.start_ns() >= image_build.start_ns()
+            && decode.start_ns() + decode.dur_ns() <= image_build.start_ns() + image_build.dur_ns(),
         "the batch decode nests inside IMAGE_BUILD",
     );
 
     // At least one kernel scan swept the whole column — lanes = rows.
     let full_sweep = events
         .iter()
-        .filter(|e| e.name == obs::names::KERNEL_FILTER)
-        .any(|e| e.a0 == 4);
+        .filter(|e| e.name() == obs::names::KERNEL_FILTER)
+        .any(|e| e.a0() == 4);
     assert!(full_sweep, "a fixed-width kernel scanned all four lanes");
 }
 
@@ -797,19 +798,19 @@ fn same_shaped_occurrences_dedup_the_cold_rebuild() {
 
     let builds = events
         .iter()
-        .filter(|e| e.name == obs::names::VIEW_BUILD)
+        .filter(|e| e.name() == obs::names::VIEW_BUILD)
         .count();
     let dedups = events
         .iter()
-        .filter(|e| e.name == obs::names::VIEW_DEDUP)
+        .filter(|e| e.name() == obs::names::VIEW_DEDUP)
         .count();
     assert!(dedups >= 1, "at least one sibling clones the bound state");
     assert_eq!(builds + dedups, 3, "every occurrence binds exactly once");
     let selections = events
         .iter()
-        .find(|e| e.name == obs::names::SELECTIONS)
+        .find(|e| e.name() == obs::names::SELECTIONS)
         .expect("the batched selection-probe span");
-    assert_eq!(selections.a1, 1, "no probe short-circuited");
+    assert_eq!(selections.a1(), 1, "no probe short-circuited");
 
     let mut triples: Vec<(String, String, String)> = (0..out.len())
         .map(|answer| {

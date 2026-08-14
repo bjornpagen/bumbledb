@@ -128,17 +128,17 @@ fn selection_params_rotate_without_view_rebuilds() {
             assert!(!out.is_empty());
             view_builds += events
                 .iter()
-                .filter(|e| e.name == obs::names::VIEW_BUILD)
+                .filter(|e| e.name() == obs::names::VIEW_BUILD)
                 .count();
             memo_hits += events
                 .iter()
-                .filter(|e| e.name == obs::names::VIEW_MEMO_HIT)
+                .filter(|e| e.name() == obs::names::VIEW_MEMO_HIT)
                 .count();
             let probe = events
                 .iter()
-                .find(|e| e.name == obs::names::SELECT_PROBE)
+                .find(|e| e.name() == obs::names::SELECT_PROBE)
                 .expect("every execution probes");
-            assert_eq!(probe.a1, 1, "present keys hit");
+            assert_eq!(probe.a1(), 1, "present keys hit");
         }
     }
     assert_eq!(view_builds, 1, "one view build per generation");
@@ -152,7 +152,7 @@ fn selection_params_rotate_without_view_rebuilds() {
         .expect("execute");
     let events = obs::finish_capture();
     assert!(out.is_empty());
-    let names: Vec<&str> = events.iter().map(|e| e.name).collect();
+    let names: Vec<&str> = events.iter().map(|e| e.name()).collect();
     assert!(!names.contains(&obs::names::VIEW_BUILD), "{names:?}");
     assert!(!names.contains(&obs::names::SELECT_PROBE), "{names:?}");
     assert!(!names.contains(&obs::names::JOIN), "{names:?}");

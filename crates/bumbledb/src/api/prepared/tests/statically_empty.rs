@@ -197,7 +197,7 @@ fn a_dead_rule_opens_no_rule_span() {
     let events = obs::finish_capture();
     let rule_spans: Vec<&str> = events
         .iter()
-        .map(|e| e.name)
+        .map(|e| e.name())
         .filter(|name| name.starts_with("rule_"))
         .collect();
     assert_eq!(rule_spans, vec!["rule_0"], "one rule span: the live rule");
@@ -232,7 +232,7 @@ fn the_empty_program_builds_no_image_and_binds_no_view() {
         .expect("execute");
     let events = obs::finish_capture();
     assert_eq!(out.len(), 0);
-    let names: Vec<&str> = events.iter().map(|e| e.name).collect();
+    let names: Vec<&str> = events.iter().map(|e| e.name()).collect();
     for touched in [
         obs::names::IMAGE_BUILD,
         obs::names::CACHE_HIT,

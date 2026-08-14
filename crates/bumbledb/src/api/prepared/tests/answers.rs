@@ -149,7 +149,7 @@ fn finalize_resolves_each_distinct_intern_once() {
         let events = obs::finish_capture();
         let count = events
             .iter()
-            .filter(|e| e.name == obs::names::DICT_RESOLVE)
+            .filter(|e| e.name() == obs::names::DICT_RESOLVE)
             .count();
         (out, count)
     };

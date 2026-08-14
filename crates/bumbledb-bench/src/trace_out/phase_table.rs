@@ -13,14 +13,14 @@ pub fn render_phase_table(events: &[TraceEvent]) -> Option<String> {
 
     // (node, phase) -> (total_ns, calls); node 8 is the overflow bucket.
     let mut cells: Vec<(usize, usize, u64, u64)> = Vec::new();
-    for event in events.iter().filter(|e| e.cat == Category::Phase) {
+    for event in events.iter().filter(|e| e.cat() == Category::Phase) {
         // An accumulator name missing from the registry table is that
         // event's own defect (an engine ahead of the bench's registry
         // view) — skip the row, never suppress the whole table.
-        let Some((phase, node)) = parse_phase_name(event.name) else {
+        let Some((phase, node)) = parse_phase_name(event.name()) else {
             continue;
         };
-        cells.push((node, phase, event.a0, event.a1));
+        cells.push((node, phase, event.a0(), event.a1()));
     }
     if cells.is_empty() {
         return None;

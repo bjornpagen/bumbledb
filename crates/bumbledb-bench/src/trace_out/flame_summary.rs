@@ -14,15 +14,15 @@ impl FlameSummary {
         let mut by_name: std::collections::BTreeMap<&'static str, (Vec<u64>, u64)> =
             std::collections::BTreeMap::new();
         for (index, event) in sweep.spans.iter().enumerate() {
-            let entry = by_name.entry(event.name).or_default();
-            entry.0.push(event.dur_ns);
-            entry.1 += event.dur_ns - sweep.child_ns[index];
+            let entry = by_name.entry(event.name()).or_default();
+            entry.0.push(event.dur_ns());
+            entry.1 += event.dur_ns() - sweep.child_ns[index];
         }
         for event in events
             .iter()
-            .filter(|e| e.dur_ns == 0 && e.cat != Category::Phase)
+            .filter(|e| matches!(e, TraceEvent::Point { cat, .. } if *cat != Category::Phase))
         {
-            by_name.entry(event.name).or_default().0.push(0);
+            by_name.entry(event.name()).or_default().0.push(0);
         }
 
         let mut rows: Vec<FlameRow> = by_name
@@ -42,8 +42,8 @@ impl FlameSummary {
         rows.sort_by_key(|row| std::cmp::Reverse((row.self_ns, row.name)));
 
         let wall_ns = match (
-            events.iter().map(|e| e.start_ns).min(),
-            events.iter().map(|e| e.start_ns + e.dur_ns).max(),
+            events.iter().map(|e| e.start_ns()).min(),
+            events.iter().map(|e| e.start_ns() + e.dur_ns()).max(),
         ) {
             (Some(start), Some(end)) => end - start,
             _ => 0,

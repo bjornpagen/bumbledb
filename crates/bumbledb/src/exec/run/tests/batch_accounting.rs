@@ -254,9 +254,9 @@ fn pump_gather_windows_are_attributed() {
     for name in ["jp_gather_n0", "jp_gather_n1"] {
         let event = events
             .iter()
-            .find(|e| e.name == name)
+            .find(|e| e.name() == name)
             .unwrap_or_else(|| panic!("{name} attributed"));
-        assert!(event.a1 > 0, "{name} counts its windows");
+        assert!(event.a1() > 0, "{name} counts its windows");
     }
 }
 

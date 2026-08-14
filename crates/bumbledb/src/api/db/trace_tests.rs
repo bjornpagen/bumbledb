@@ -25,7 +25,7 @@ fn schema() -> SchemaDescriptor {
 const R: RelationId = RelationId(0);
 
 fn names(events: &[obs::TraceEvent]) -> Vec<&'static str> {
-    events.iter().map(|e| e.name).collect()
+    events.iter().map(|e| e.name()).collect()
 }
 
 /// The write-path capture contract.
@@ -62,9 +62,9 @@ fn write_path_traces_phases_with_counts() {
                 obs::names::COUNTERS_FLUSH,
                 obs::names::LMDB_COMMIT,
             ]
-            .contains(&e.name)
+            .contains(&e.name())
         })
-        .map(|e| e.name)
+        .map(|e| e.name())
         .collect();
     assert_eq!(
         phase_order,
@@ -78,11 +78,11 @@ fn write_path_traces_phases_with_counts() {
         ],
         "the canonical order, recorded in drop order per phase"
     );
-    let by_name = |n: &str| events.iter().find(|e| e.name == n).expect("phase");
-    assert_eq!(by_name(obs::names::APPLY_DELETES).a0, 1);
-    assert_eq!(by_name(obs::names::APPLY_INSERTS).a0, 3);
-    assert_eq!(by_name(obs::names::COMMIT).a0, 1, "commit changed flag");
-    assert_eq!(by_name(obs::names::WRITE_TXN).a0, 1, "committed flag");
+    let by_name = |n: &str| events.iter().find(|e| e.name() == n).expect("phase");
+    assert_eq!(by_name(obs::names::APPLY_DELETES).a0(), 1);
+    assert_eq!(by_name(obs::names::APPLY_INSERTS).a0(), 3);
+    assert_eq!(by_name(obs::names::COMMIT).a0(), 1, "commit changed flag");
+    assert_eq!(by_name(obs::names::WRITE_TXN).a0(), 1, "committed flag");
 
     // A net-no-op write: commit_noop, no phase spans.
     obs::start_capture();
@@ -174,9 +174,9 @@ fn a_redundant_insert_costs_zero_source_side_probes() {
     let events = obs::finish_capture();
     let source = events
         .iter()
-        .find(|e| e.name == obs::names::JUDGMENT_SOURCE)
+        .find(|e| e.name() == obs::names::JUDGMENT_SOURCE)
         .expect("judgment span");
-    assert_eq!(source.a0, 0, "zero probes for the redundant insert");
+    assert_eq!(source.a0(), 0, "zero probes for the redundant insert");
 
     // Contrast: a genuinely added source costs exactly its one probe.
     obs::start_capture();
@@ -189,9 +189,9 @@ fn a_redundant_insert_costs_zero_source_side_probes() {
     let events = obs::finish_capture();
     let source = events
         .iter()
-        .find(|e| e.name == obs::names::JUDGMENT_SOURCE)
+        .find(|e| e.name() == obs::names::JUDGMENT_SOURCE)
         .expect("judgment span");
-    assert_eq!(source.a0, 1, "one probe for the genuine insert");
+    assert_eq!(source.a0(), 1, "one probe for the genuine insert");
 }
 
 /// A fresh-only no-op commit does not move
@@ -289,11 +289,11 @@ fn bulk_load_traces_one_span_per_chunk() {
     assert_eq!(loaded, n);
     let chunks: Vec<&obs::TraceEvent> = events
         .iter()
-        .filter(|e| e.name == obs::names::BULK_CHUNK)
+        .filter(|e| e.name() == obs::names::BULK_CHUNK)
         .collect();
     assert_eq!(chunks.len(), 3);
-    assert_eq!(chunks.iter().map(|c| c.a0).sum::<u64>(), n);
-    assert_eq!(chunks.iter().map(|c| c.a1).sum::<u64>(), n);
+    assert_eq!(chunks.iter().map(|c| c.a0()).sum::<u64>(), n);
+    assert_eq!(chunks.iter().map(|c| c.a1()).sum::<u64>(), n);
 }
 
 /// `compact`'s durability chain runs to its end. Power-loss semantics
@@ -318,9 +318,9 @@ fn compact_records_its_completed_durability_chain() {
     let events = obs::finish_capture();
     let durable = events
         .iter()
-        .find(|e| e.name == obs::names::COMPACT_DURABLE)
+        .find(|e| e.name() == obs::names::COMPACT_DURABLE)
         .expect("the durability-chain event");
-    assert_eq!(durable.a0, 2, "dest dirent + parent dirent, both synced");
+    assert_eq!(durable.a0(), 2, "dest dirent + parent dirent, both synced");
 }
 
 /// `Db::create`'s birth dirent chain (finding 022) — compact's pin,
@@ -336,9 +336,9 @@ fn create_records_its_completed_durability_chain() {
     let events = obs::finish_capture();
     let durable = events
         .iter()
-        .find(|e| e.name == obs::names::CREATE_DURABLE)
+        .find(|e| e.name() == obs::names::CREATE_DURABLE)
         .expect("the durability-chain event");
-    assert_eq!(durable.a0, 2, "store dirent + parent dirent, both synced");
+    assert_eq!(durable.a0(), 2, "store dirent + parent dirent, both synced");
 }
 
 /// Exactly one burn per termination (`EscapedIdBurn`): an `Err`-aborted
@@ -377,11 +377,11 @@ fn an_aborted_write_burns_escaped_ids_exactly_once_panic_included() {
         (
             events
                 .iter()
-                .filter(|e| e.name == obs::names::COUNTERS_FLUSH)
+                .filter(|e| e.name() == obs::names::COUNTERS_FLUSH)
                 .count(),
             events
                 .iter()
-                .filter(|e| e.name == obs::names::LMDB_COMMIT)
+                .filter(|e| e.name() == obs::names::LMDB_COMMIT)
                 .count(),
         )
     };
@@ -459,9 +459,9 @@ fn verify_store_traces_every_namespace_pass_in_order() {
                 obs::names::VERIFY_FRESH,
                 obs::names::VERIFY_DICT,
             ]
-            .contains(&e.name)
+            .contains(&e.name())
         })
-        .map(|e| e.name)
+        .map(|e| e.name())
         .collect();
     assert_eq!(
         pass_order,
@@ -479,13 +479,17 @@ fn verify_store_traces_every_namespace_pass_in_order() {
     );
     let outer = events
         .iter()
-        .find(|e| e.name == obs::names::VERIFY_STORE)
+        .find(|e| e.name() == obs::names::VERIFY_STORE)
         .expect("the outer sweep span");
-    assert_eq!(outer.a0, 0, "a clean store raises no findings");
+    assert_eq!(outer.a0(), 0, "a clean store raises no findings");
     for e in &events {
-        assert!(e.start_ns >= outer.start_ns);
-        assert!(e.start_ns + e.dur_ns <= outer.start_ns + outer.dur_ns);
-        assert_eq!(e.a0, 0, "every pass raised zero findings on a clean store");
+        assert!(e.start_ns() >= outer.start_ns());
+        assert!(e.start_ns() + e.dur_ns() <= outer.start_ns() + outer.dur_ns());
+        assert_eq!(
+            e.a0(),
+            0,
+            "every pass raised zero findings on a clean store"
+        );
     }
 }
 
@@ -506,9 +510,9 @@ fn an_aborting_write_records_no_lmdb_commit() {
     assert!(!ns.contains(&obs::names::LMDB_COMMIT), "{ns:?}");
     let write_txn = events
         .iter()
-        .find(|e| e.name == obs::names::WRITE_TXN)
+        .find(|e| e.name() == obs::names::WRITE_TXN)
         .expect("write_txn span");
-    assert_eq!(write_txn.a0, 0, "aborted flag");
+    assert_eq!(write_txn.a0(), 0, "aborted flag");
 }
 
 /// The snapshot point-read surface is lit (the formerly wholly dark
@@ -567,8 +571,8 @@ fn point_reads_trace_hits_and_misses() {
     let events = obs::finish_capture();
     let point_reads: Vec<u64> = events
         .iter()
-        .filter(|e| e.name == obs::names::POINT_READ)
-        .map(|e| e.a0)
+        .filter(|e| e.name() == obs::names::POINT_READ)
+        .map(|e| e.a0())
         .collect();
     assert_eq!(
         point_reads,

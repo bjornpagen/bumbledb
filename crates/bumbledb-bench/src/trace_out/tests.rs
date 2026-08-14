@@ -1,11 +1,21 @@
 use super::*;
 
 fn span(name: &'static str, cat: Category, start_ns: u64, dur_ns: u64, a0: u64) -> TraceEvent {
-    TraceEvent {
+    TraceEvent::Span {
         name,
         cat,
         start_ns,
         dur_ns,
+        a0,
+        a1: 0,
+    }
+}
+
+fn point(name: &'static str, cat: Category, start_ns: u64, a0: u64) -> TraceEvent {
+    TraceEvent::Point {
+        name,
+        cat,
+        start_ns,
         a0,
         a1: 0,
     }
@@ -17,7 +27,7 @@ fn the_chrome_writer_is_golden_and_structurally_valid() {
         span("prepare", Category::Prepare, 1000, 2500, 0),
         span("execute", Category::Execute, 4000, 10000, 7),
         span("join", Category::Execute, 5000, 8000, 0),
-        span("cache_hit", Category::Cache, 6000, 0, 3),
+        point("cache_hit", Category::Cache, 6000, 3),
     ];
     let harness = vec![span("sample", Category::Harness, 900, 15000, 0)];
     let mut out = Vec::new();
@@ -154,7 +164,7 @@ fn fold_stacks_collapses_identical_sibling_stacks() {
         span("execute", Category::Execute, 0, 100_000, 0),
         span("join", Category::Execute, 10_000, 20_000, 0),
         span("join", Category::Execute, 40_000, 30_000, 0),
-        span("cache_hit", Category::Cache, 50_000, 0, 3),
+        point("cache_hit", Category::Cache, 50_000, 3),
     ];
     let folded = fold_stacks(&events);
     let expected = "execute 50000\n\
@@ -176,8 +186,8 @@ fn fold_stacks_charges_phase_accumulators_under_their_join() {
     let events = vec![
         span("execute", Category::Execute, 0, 100_000, 0),
         span("join", Category::Execute, 10_000, 50_000, 0),
-        span("jp_probe_n0", Category::Phase, 70_000, 0, 30_000),
-        span("jp_iter_n0", Category::Phase, 70_001, 0, 10_000),
+        point("jp_probe_n0", Category::Phase, 70_000, 30_000),
+        point("jp_iter_n0", Category::Phase, 70_001, 10_000),
     ];
     let expected = "execute 50000\n\
                     execute;join 10000\n\
@@ -189,7 +199,7 @@ fn fold_stacks_charges_phase_accumulators_under_their_join() {
     // containing its stamp — attribution, not identification.
     let joinless = vec![
         span("execute", Category::Execute, 0, 100_000, 0),
-        span("jp_hash_n1", Category::Phase, 5_000, 0, 20_000),
+        point("jp_hash_n1", Category::Phase, 5_000, 20_000),
     ];
     let expected = "execute 80000\n\
                     execute;jp_hash_n1 20000\n";
@@ -213,15 +223,15 @@ fn an_unregistered_phase_event_never_suppresses_the_phase_table() {
     // used to vanish whole.
     let registered = bumbledb::obs::names::JOIN_PHASE[0][0];
     let events = vec![
-        span(registered, Category::Phase, 0, 0, 10_000),
-        span("jp_unregistered_nX", Category::Phase, 0, 0, 5_000),
+        point(registered, Category::Phase, 0, 10_000),
+        point("jp_unregistered_nX", Category::Phase, 0, 5_000),
     ];
     let table = render_phase_table(&events).expect("the registered row still renders");
     assert!(table.contains(registered), "{table}");
     assert!(!table.contains("jp_unregistered_nX"), "{table}");
 
     // Nothing registered at all still means no table.
-    let alien = vec![span("jp_unregistered_nX", Category::Phase, 0, 0, 5_000)];
+    let alien = vec![point("jp_unregistered_nX", Category::Phase, 0, 5_000)];
     assert!(render_phase_table(&alien).is_none());
 }
 
@@ -298,7 +308,7 @@ fn a_real_containment_walk_capture_summarizes_to_the_execute_span() {
     }
     let (_, events) = crate::harness::traced_sample(&mut run).expect("traced");
     let (engine, harness) = split_harness(events);
-    let names: std::collections::HashSet<&str> = engine.iter().map(|event| event.name).collect();
+    let names: std::collections::HashSet<&str> = engine.iter().map(|event| event.name()).collect();
     assert!(names.contains("execute"), "{names:?}");
     assert!(names.contains("join"), "{names:?}");
     assert!(

@@ -206,7 +206,7 @@ fn a_folded_occurrence_builds_no_image_and_binds_no_view() {
         .execute_collect(&txn, &cache, &[])
         .expect("execute");
     let events = obs::finish_capture();
-    let count = |name: &str| events.iter().filter(|e| e.name == name).count();
+    let count = |name: &str| events.iter().filter(|e| e.name() == name).count();
     assert_eq!(
         count(obs::names::VIEW_BUILD),
         1,
