@@ -85,7 +85,7 @@ type Pins = [
 	Expect<Equal<(typeof ROSTERS.atomSource)[number], AtomSourceIr["kind"]>>,
 	Expect<Equal<(typeof ROSTERS.cmpOp)[number], CmpOpIr["kind"]>>,
 	Expect<Equal<(typeof ROSTERS.condition)[number], ConditionTreeIr["kind"]>>,
-	Expect<Equal<(typeof ROSTERS.direction)[number], Exclude<Violation["direction"], undefined>>>,
+	Expect<Equal<(typeof ROSTERS.direction)[number], Extract<Violation, { readonly kind: "containment" }>["direction"]>>,
 	Expect<Equal<(typeof ROSTERS.param)[number], Exclude<QueryParam["kind"], TaggedValue["kind"]>>>,
 	Expect<Equal<(typeof ROSTERS.value)[number], ValueSpec["kind"]>>
 ]

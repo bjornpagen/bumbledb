@@ -110,10 +110,7 @@ interface RuleIr {
 }
 
 /** One find term (mirrors `ir::FindTerm`). Count carries no `over`; folds require it. */
-type FoldOpIr =
-	| { readonly kind: "sum" }
-	| { readonly kind: "min" }
-	| { readonly kind: "max" }
+type FoldOpIr = { readonly kind: "sum" } | { readonly kind: "min" } | { readonly kind: "max" }
 
 type ArgOpIr = FoldOpIr | { readonly kind: "pack" }
 
@@ -635,6 +632,7 @@ function bridged<T>(context: string, run: () => T): T {
 
 export type {
 	AggOpIr,
+	ArgOpIr,
 	AtomIr,
 	AtomSourceIr,
 	CmpOpIr,
@@ -649,7 +647,6 @@ export type {
 	FactValue,
 	FindTermIr,
 	FoldOpIr,
-	ArgOpIr,
 	HeadOpIr,
 	HeadTermIr,
 	InteriorIr,

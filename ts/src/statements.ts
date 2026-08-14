@@ -462,9 +462,9 @@ export type {
 	CapacityStatement,
 	ContainedStatement,
 	ContainmentData,
-	MirrorsData,
 	KeyData,
 	KeyStatement,
+	MirrorsData,
 	Statement,
 	StatementData
 }

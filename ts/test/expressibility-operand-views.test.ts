@@ -49,24 +49,16 @@ import * as path from "node:path"
 import { after, describe, test } from "node:test"
 
 import type { Db as DbValue } from "#index.ts"
-import {
-	closed,
-	contained,
-	Db,
-	key,
-	ne,
-	on,
-	query,
-	relation,
-	renderStatement,
-	schema,
-	str,
-	u64,
-	v
-} from "#index.ts"
+import { closed, contained, Db, key, ne, on, query, relation, renderStatement, schema, str, u64, v } from "#index.ts"
 
 function byPos<T extends { readonly pos: bigint }>(left: T, right: T): number {
-	return left.pos < right.pos ? -1 : left.pos > right.pos ? 1 : 0
+	if (left.pos < right.pos) {
+		return -1
+	}
+	if (left.pos > right.pos) {
+		return 1
+	}
+	return 0
 }
 
 const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bumbledb-operand-"))

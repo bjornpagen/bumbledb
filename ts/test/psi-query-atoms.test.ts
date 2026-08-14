@@ -315,7 +315,13 @@ describe("ψ query atoms over closed relations", function suite() {
 		})
 		assert.deepEqual(
 			[...answers].sort(function asc(left, right) {
-				return left < right ? -1 : left > right ? 1 : 0
+				if (left < right) {
+					return -1
+				}
+				if (left > right) {
+					return 1
+				}
+				return 0
 			}),
 			[3n, 5n]
 		)

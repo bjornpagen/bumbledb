@@ -78,5 +78,5 @@ function findFamily(find: FindTermIr): "var" | "aggregate" {
 	}
 }
 
-export { parseQueryIr }
 export type { ParsedQuery }
+export { parseQueryIr }

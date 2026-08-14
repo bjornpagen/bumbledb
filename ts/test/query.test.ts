@@ -117,7 +117,13 @@ const ids = {
 /** Sorts a bigint array ascending (answers are sets; the host sorts via the one comparator owner). */
 function sorted(values: readonly bigint[]): bigint[] {
 	return [...values].sort(function asc(left, right) {
-		return left < right ? -1 : left > right ? 1 : 0
+		if (left < right) {
+			return -1
+		}
+		if (left > right) {
+			return 1
+		}
+		return 0
 	})
 }
 

@@ -314,7 +314,11 @@ describe("marshal edges and lifecycle sanity against a real store", async functi
 		assert.strictEqual(forward.statement, specialMirror)
 		assert.equal(forward.kind, "containment")
 		assert.equal(forward.canonical, renderStatement(specialMirror))
+		if (forward.kind !== "containment") {
+			throw new Error("expected containment")
+		}
 		assert.ok(forward.direction !== undefined, "a containment violation carries its direction")
+		assert.ok("orientation" in forward, "a mirrors slot carries orientation")
 		assert.equal(forward.orientation, "written", "the violated slot is the written orientation")
 
 		/**
@@ -332,7 +336,11 @@ describe("marshal edges and lifecycle sanity against a real store", async functi
 		const reverse = must(seeded.violations[0])
 		assert.strictEqual(reverse.statement, specialMirror)
 		assert.equal(reverse.canonical, renderStatement(specialMirror))
+		if (reverse.kind !== "containment") {
+			throw new Error("expected containment")
+		}
 		assert.ok(reverse.direction !== undefined)
+		assert.ok("orientation" in reverse, "a mirrors slot carries orientation")
 		assert.equal(reverse.orientation, "mirrored", "the violated slot is the mirrored partner")
 	})
 

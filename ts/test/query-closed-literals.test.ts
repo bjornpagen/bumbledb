@@ -81,7 +81,13 @@ const INCIDENT_ID = 2
 /** Sorts one bigint column for a set-equality comparison (answers are sets; the host sorts). */
 function sorted(values: readonly bigint[]): bigint[] {
 	return [...values].sort(function asc(left, right) {
-		return left < right ? -1 : left > right ? 1 : 0
+		if (left < right) {
+			return -1
+		}
+		if (left > right) {
+			return 1
+		}
+		return 0
 	})
 }
 

@@ -564,7 +564,7 @@ describe("ffi round trip against a real store", function suite() {
 						conditions: []
 					}
 				]
-			} as ParsedQuery)
+			} as unknown as ParsedQuery)
 		}, /Count carries no over/)
 	})
 

@@ -425,6 +425,9 @@ describe("the repair loop against the real theory", function repairLoop() {
 		assert.ok(statements.has(laws.grpMemberGrpRef), "the membership containment is cited")
 		assert.ok(statements.has(laws.programGrpRef), "the program containment is cited")
 		for (const violation of violations) {
+			if (violation.kind !== "containment") {
+				continue
+			}
 			assert.ok(violation.direction !== undefined, "containment violations carry a direction")
 		}
 		assert.deepEqual(db.scan(grp), before)

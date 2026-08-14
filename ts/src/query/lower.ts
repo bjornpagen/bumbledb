@@ -80,15 +80,7 @@ import { allen, and, eq, ge, gt, le, lt, ne, not, or, pointIn } from "#query/ato
 import type { CheckFind, CheckRecFind, FindShape, HeadRecordOf, RowOfFind } from "#query/find.ts"
 import { count, max, min, pack, sum } from "#query/find.ts"
 import { parseQueryIr } from "#query/parse-ir.ts"
-import type {
-	AnyVar,
-	ClassedField,
-	Flatten,
-	InferredOf,
-	ParamEntry,
-	ParamsRecord,
-	ShapeOf
-} from "#query/scope.ts"
+import type { AnyVar, ClassedField, Flatten, InferredOf, ParamEntry, ParamsRecord, ShapeOf } from "#query/scope.ts"
 import {
 	fieldJoins,
 	inferred,
@@ -165,9 +157,7 @@ type RecBuild<Rels extends SchemaRelations, Classes extends SchemaClasses = Sche
 type BuiltRule<F> = F extends (r: never) => infer RV ? RV : never
 
 /** The intersected params record of a tuple of rule builds. */
-type BuildsParams<Builds extends readonly ((r: never) => AnyRuleValue)[]> = ShapeOf<
-	ParamsOf<BuiltRule<Builds[number]>>
->
+type BuildsParams<Builds extends readonly ((r: never) => AnyRuleValue)[]> = ShapeOf<ParamsOf<BuiltRule<Builds[number]>>>
 
 /**
  * The term/predicate/aggregate constructor vocabulary every rule builder
@@ -761,10 +751,7 @@ function advanceInterior(
 		}
 	}
 	return Object.freeze({
-		items: Object.freeze([
-			...state.items,
-			Object.freeze({ kind, target, bindings: Object.freeze(resolved) })
-		]),
+		items: Object.freeze([...state.items, Object.freeze({ kind, target, bindings: Object.freeze(resolved) })]),
 		bound,
 		paramUses: state.paramUses
 	})
@@ -1136,9 +1123,7 @@ function lookupDerived(context: ChainContext, name: string): DerivedTable {
 	}
 	if (context.rec !== null && context.rec.name === name) {
 		if (context.kind === "interior") {
-			throw errors.new(
-				`interior ${context.self}: interiors cannot read the rec — this cut's interiors are a prefix`
-			)
+			throw errors.new(`interior ${context.self}: interiors cannot read the rec — this cut's interiors are a prefix`)
 		}
 		if (context.kind === "rec-base") {
 			throw errors.new(
@@ -1191,10 +1176,7 @@ function findColumns(context: ChainContext, entries: Readonly<Record<string, unk
 			continue
 		}
 		if (derivedHead && !(isTerm(entry) && entry[term] === "var")) {
-			const who =
-				context.kind === "interior"
-					? `interior ${context.self}`
-					: `recursive ${context.self.name}`
+			const who = context.kind === "interior" ? `interior ${context.self}` : `recursive ${context.self.name}`
 			throw errors.new(
 				`${who}: a recursive head projects bound variables only — aggregates and the measure read finished sets (unwritable here)`
 			)
@@ -1638,11 +1620,7 @@ function makeQueryStart<
 	Classes extends SchemaClasses,
 	P extends ParamsRecord,
 	Rec extends RecData | null
->(
-	theory: Schema<Rels, Classes>,
-	interiors: readonly InteriorData[],
-	rec: Rec
-): QueryStart<Rels, Classes, P, Rec> {
+>(theory: Schema<Rels, Classes>, interiors: readonly InteriorData[], rec: Rec): QueryStart<Rels, Classes, P, Rec> {
 	const env: DerivedEnv = { interiors, rec }
 	const start = {
 		interior<const Builds extends readonly InteriorBuild<Rels, Classes>[]>(
@@ -1654,7 +1632,11 @@ function makeQueryStart<
 					"query: interior after recursive is unwritable — declaration order is interiors, then rec, then main"
 				)
 			}
-			if (interiors.some(function sameName(interior) { return interior.name === name })) {
+			if (
+				interiors.some(function sameName(interior) {
+					return interior.name === name
+				})
+			) {
 				throw errors.new(`query: interior ${name} is already declared — names are unique`)
 			}
 			if (name.length === 0) {
@@ -1673,7 +1655,11 @@ function makeQueryStart<
 			if (rec !== null) {
 				throw errors.new("query: a second recursive is unwritable — this cut admits one linear rec")
 			}
-			if (interiors.some(function sameName(interior) { return interior.name === name })) {
+			if (
+				interiors.some(function sameName(interior) {
+					return interior.name === name
+				})
+			) {
 				throw errors.new(`query: interior and recursive share the name ${name}`)
 			}
 			if (name.length === 0) {
@@ -1690,12 +1676,7 @@ function makeQueryStart<
 			build: (r: QueryRuleScope<Rels, Classes>) => RV
 		): Query<Rels, RowOf<RV>, Flatten<P & ParamsOf<RV>>, Classes> {
 			const built = build(makeQueryRuleScope<Rels, Classes>(theory, env))
-			return makeQuery<Rels, RowOf<RV>, Flatten<P & ParamsOf<RV>>, Classes>(
-				theory,
-				interiors,
-				rec,
-				[built.rule]
-			)
+			return makeQuery<Rels, RowOf<RV>, Flatten<P & ParamsOf<RV>>, Classes>(theory, interiors, rec, [built.rule])
 		}
 	}
 	Object.freeze(start)

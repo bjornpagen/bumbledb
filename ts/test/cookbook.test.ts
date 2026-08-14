@@ -216,7 +216,13 @@ function must<T>(value: T | undefined): T {
 /** Sorts a bigint array ascending (answers are sets; the host sorts via the one comparator owner). */
 function sorted(values: readonly bigint[]): bigint[] {
 	return [...values].sort(function asc(left, right) {
-		return left < right ? -1 : left > right ? 1 : 0
+		if (left < right) {
+			return -1
+		}
+		if (left > right) {
+			return 1
+		}
+		return 0
 	})
 }
 
@@ -1164,10 +1170,7 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 		// the read's selector (statement identity is the membership rule).
 		const courseGrpKey = key(Course, ["grp"])
 
-		const KeyedRead = schema("KeyedRead", { Grp, Course }, [
-			contained(on(Course, "grp"), on(Grp, "id")),
-			courseGrpKey
-		])
+		const KeyedRead = schema("KeyedRead", { Grp, Course }, [contained(on(Course, "grp"), on(Grp, "id")), courseGrpKey])
 
 		const { db } = await admit("r30-keyed-read", KeyedRead)
 
