@@ -326,10 +326,10 @@ operator" is implementable at all. Bridge: the projection and
 aggregate sinks' seen-sets (`exec/sink.rs` — the module doc's
 "the sinks are where union lives"); `union_idempotent` is the same
 fact at the denotation level. -/
-theorem seenfold_is_set_semantics {C : Classify} {q : Query}
+theorem seenfold_is_set_semantics {C : Classify} {rules : List Rule}
     {I : Instance} {ρ : ParamEnv} {l : List AnswerTuple}
-    (henum : ∀ t, t ∈ l ↔ t ∈ rulesAnswers C q.rules (edbEnv I) ρ) :
-    (∀ t, t ∈ seenFold l ↔ t ∈ rulesAnswers C q.rules (edbEnv I) ρ) ∧
+    (henum : ∀ t, t ∈ l ↔ t ∈ rulesAnswers C rules (edbEnv I) ρ) :
+    (∀ t, t ∈ seenFold l ↔ t ∈ rulesAnswers C rules (edbEnv I) ρ) ∧
       (seenFold l).Nodup :=
   ⟨fun t => mem_seenFold.trans (henum t), seenFold_nodup l⟩
 
@@ -512,9 +512,9 @@ theorem distinct_witness_licence {γ : Type} {r : Rule} {I : Instance}
 approximates: no answer tuple derives from two different rules of the
 program (pairwise over rule positions, so a literally duplicated rule
 is NOT disjoint from itself — `union_idempotent` owns that case). -/
-def DisjointArms (C : Classify) (q : Query) (I : Instance)
+def DisjointArms (C : Classify) (rules : List Rule) (I : Instance)
     (ρ : ParamEnv) : Prop :=
-  q.rules.Pairwise fun r r' =>
+  rules.Pairwise fun r r' =>
     ∀ t, t ∈ ruleAnswers C r (edbEnv I) ρ → t ∉ ruleAnswers C r' (edbEnv I) ρ
 
 /-- The induction behind the licence, over plain rule lists: per-arm
@@ -575,16 +575,16 @@ refutation (docs/architecture/40-execution.md § set semantics,
 representation on the clock, and that record is doc-side authority,
 cited here, not restated. This theorem proves the elision SOUND; the
 docs record why sound is not the same as worth it. -/
-theorem disjoint_witness_licence {C : Classify} {q : Query}
+theorem disjoint_witness_licence {C : Classify} {rules : List Rule}
     {I : Instance} {ρ : ParamEnv}
-    (DisjointWitness : DisjointArms C q I ρ)
+    (DisjointWitness : DisjointArms C rules I ρ)
     {arms : List (List AnswerTuple)}
-    (hlen : arms.length = q.rules.length)
-    (henum : ∀ p, p ∈ arms.zip q.rules →
+    (hlen : arms.length = rules.length)
+    (henum : ∀ p, p ∈ arms.zip rules →
       (∀ t, t ∈ p.1 ↔ t ∈ ruleAnswers C p.2 (edbEnv I) ρ) ∧ p.1.Nodup) :
     arms.flatten.Nodup ∧
       seenFold arms.flatten = arms.flatten ∧
-      ∀ t, t ∈ arms.flatten ↔ t ∈ rulesAnswers C q.rules (edbEnv I) ρ := by
+      ∀ t, t ∈ arms.flatten ↔ t ∈ rulesAnswers C rules (edbEnv I) ρ := by
   obtain ⟨hnd, hmem⟩ := disjoint_flatten hlen henum DisjointWitness
   exact ⟨hnd, seenFold_eq_of_nodup hnd,
     fun t => (hmem t).trans mem_rulesAnswers.symm⟩
@@ -608,16 +608,16 @@ DNF-derived rule set re-keys on the shared slot array instead (ruled
 2026-07-23, R2), and the aggregate-object form this projection-head
 statement deliberately does not carry is `union_regime_agg_heads`
 (the union-fold section below). -/
-theorem union_regime_head_projection {C : Classify} {q : Query}
+theorem union_regime_head_projection {C : Classify} {rules : List Rule}
     {I : Instance} {ρ : ParamEnv} {ε : Type} (events : List ε)
     (rule : ε → Rule) (bind : ε → Assignment)
     (hvalid : ∀ e, e ∈ events →
-      rule e ∈ q.rules ∧ derives C (rule e) (edbEnv I) ρ (bind e))
-    (hcomplete : ∀ r, r ∈ q.rules → ∀ σ, derives C r (edbEnv I) ρ σ →
+      rule e ∈ rules ∧ derives C (rule e) (edbEnv I) ρ (bind e))
+    (hcomplete : ∀ r, r ∈ rules → ∀ σ, derives C r (edbEnv I) ρ σ →
       ((r.finds.map σ : AnswerTuple) ∈
         events.map fun e => (rule e).finds.map (bind e))) :
     (∀ t, t ∈ seenFold (events.map fun e => (rule e).finds.map (bind e))
-        ↔ t ∈ rulesAnswers C q.rules (edbEnv I) ρ) ∧
+        ↔ t ∈ rulesAnswers C rules (edbEnv I) ρ) ∧
       (seenFold (events.map fun e =>
         (rule e).finds.map (bind e))).Nodup := by
   refine ⟨fun t => ?_, seenFold_nodup _⟩
@@ -674,9 +674,9 @@ def ArmPin (R : RelId) (fld : FieldId) (K : List FieldId)
 /-- The check, program-level: one witness discharging every rule pair
 — `plan/fj/provably_disjoint.rs::provably_disjoint_rules`
 ("pairwise over all rules; one witness for every pair"). -/
-def ProvablyDisjointRules (q : Query) (R : RelId) (fld : FieldId)
+def ProvablyDisjointRules (rules : List Rule) (R : RelId) (fld : FieldId)
     (K : List FieldId) : Prop :=
-  q.rules.Pairwise (ArmPin R fld K)
+  rules.Pairwise (ArmPin R fld K)
 
 /-- The pair soundness: equal head answers force the two pinned facts
 through the key onto ONE fact of `R`, whose `fld` cannot equal two
@@ -722,11 +722,11 @@ only mint of `DisjointWitness`; the semantic key premise is the
 schema-declared `Functionality` the check reads (the
 `keys().iter().any` of `key_flows_to_common_head`), discharged on
 committed instances by PRD 03's `holds`. -/
-theorem syntactic_disjointness_sound {C : Classify} {q : Query}
+theorem syntactic_disjointness_sound {C : Classify} {rules : List Rule}
     {I : Instance} {ρ : ParamEnv} {R : RelId} {fld : FieldId}
     {K : List FieldId} (hkey : Functionality (I R) K)
-    (hsyn : ProvablyDisjointRules q R fld K) :
-    DisjointArms C q I ρ :=
+    (hsyn : ProvablyDisjointRules rules R fld K) :
+    DisjointArms C rules I ρ :=
   hsyn.imp fun hpin => armPin_disjoint hkey hpin
 
 /-! ## The aggregate face of elimination — one extension per binding

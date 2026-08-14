@@ -2304,31 +2304,31 @@ refusal, the `Enforcement::ScalarProbe` screen in
 `plan/ground.rs::removable`); `holds` cashes them into the semantic
 containment at execution. -/
 inductive RewriteStep (T : Theory) (C : Classify) :
-    Query → Query → Prop where
+    List Rule → List Rule → Prop where
   /-- The grounding fold: one rule rewritten
   (`Role::Folded`, the membership attachment). -/
-  | ground {n : Nat} {pre post : List Rule} {r r' : Rule}
+  | ground {pre post : List Rule} {r r' : Rule}
       (h : groundRewrite T r = .inl r') :
-      RewriteStep T C (Query.cq [] n (pre ++ r :: post)) (Query.cq [] n (pre ++ r' :: post))
+      RewriteStep T C (pre ++ r :: post) (pre ++ r' :: post)
   /-- The grounding refutation: the dead rule deleted at prepare
   (`folded to ∅`). -/
-  | groundDead {n : Nat} {pre post : List Rule} {r : Rule}
+  | groundDead {pre post : List Rule} {r : Rule}
       {g : Grounded} (h : groundRewrite T r = .inr g) :
-      RewriteStep T C (Query.cq [] n (pre ++ r :: post)) (Query.cq [] n (pre ++ post))
+      RewriteStep T C (pre ++ r :: post) (pre ++ post)
   /-- The containment elimination (`Role::Eliminated(statement)`). -/
-  | eliminate {n : Nat} {pre post : List Rule} {r r' : Rule}
+  | eliminate {pre post : List Rule} {r r' : Rule}
       {a b : Atom} {Ra Rb : RelId} {X Y : List FieldId} {φ ψ : Selection}
       (ha : a.source = .edb Ra) (hb : b.source = .edb Rb)
       (hs : ElimStep r r' a b X Y φ ψ)
       (hdecl : Statement.containment ⟨Ra, X, φ⟩ ⟨Rb, Y, ψ⟩ ∈ T.statements)
       (hsrc : T.header.intervalSplit Ra X = none)
       (htgt : T.header.intervalSplit Rb Y = none) :
-      RewriteStep T C (Query.cq [] n (pre ++ r :: post)) (Query.cq [] n (pre ++ r' :: post))
+      RewriteStep T C (pre ++ r :: post) (pre ++ r' :: post)
   /-- The chained containment elimination — the discharged-source arm
   (`chain_reaches`, the support forest): the support pair and the
   elimination it licenses land as ONE composed step, the
   acyclic-support premise (`hroot`) named. -/
-  | eliminateChained {n : Nat} {pre post : List Rule} {r r₁ r₂ : Rule}
+  | eliminateChained {pre post : List Rule} {r r₁ r₂ : Rule}
       {a b c : Atom} {Ra Rb Rc : RelId} {X₁ Y₁ X₂ Y₂ : List FieldId}
       {φ₁ ψ₁ φ₂ ψ₂ : Selection}
       (ha : a.source = .edb Ra) (hb : b.source = .edb Rb) (hc : c.source = .edb Rc)
@@ -2341,11 +2341,11 @@ inductive RewriteStep (T : Theory) (C : Classify) :
       (htgt₁ : T.header.intervalSplit Rb Y₁ = none)
       (hsrc₂ : T.header.intervalSplit Rb X₂ = none)
       (htgt₂ : T.header.intervalSplit Rc Y₂ = none) :
-      RewriteStep T C (Query.cq [] n (pre ++ r :: post)) (Query.cq [] n (pre ++ r₂ :: post))
+      RewriteStep T C (pre ++ r :: post) (pre ++ r₂ :: post)
   /-- The statically-empty kill (`NormalizedQuery::dead`). -/
-  | kill {n : Nat} {pre post : List Rule} {r : Rule}
+  | kill {pre post : List Rule} {r : Rule}
       (h : StaticallyEmpty C r) :
-      RewriteStep T C (Query.cq [] n (pre ++ r :: post)) (Query.cq [] n (pre ++ post))
+      RewriteStep T C (pre ++ r :: post) (pre ++ post)
   /-- The subsumption deletion (`plan/ground.rs::subsume`, wired at
   `api/prepared/build.rs::ground_program`): a rule the witness proves
   covered by a KEPT sibling is deleted from the program — the sixth
@@ -2354,9 +2354,9 @@ inductive RewriteStep (T : Theory) (C : Classify) :
   neither subsumes nor re-enters, so the keeper of every recorded
   `Subsumption` survives to the output program. Purely syntactic — no
   theory premise: the containment holds on EVERY instance. -/
-  | subsume {n : Nat} {pre post : List Rule} {d k : Rule}
+  | subsume {pre post : List Rule} {d k : Rule}
       (hw : SubsumeWitness k d) (hk : k ∈ pre ++ post) :
-      RewriteStep T C (Query.cq [] n (pre ++ d :: post)) (Query.cq [] n (pre ++ post))
+      RewriteStep T C (pre ++ d :: post) (pre ++ post)
 
 /-- Replacing one rule by an answer-equal rule preserves the query's
 answers — the union reads members only. -/
@@ -2453,10 +2453,10 @@ theorem rulesAnswers_drop_covered {C : Classify} {I : Instance}
 holds the theory and agrees with its ground axioms — items 1, 2, 2b
 and 4, lifted to the program (the subsumption arm needs neither
 premise: its containment is instance-blind). -/
-theorem step_preserves {T : Theory} {C : Classify} {q q' : Query}
-    (hstep : RewriteStep T C q q') {I : Instance} {ρ : ParamEnv}
+theorem step_preserves {T : Theory} {C : Classify} {rs rs' : List Rule}
+    (hstep : RewriteStep T C rs rs') {I : Instance} {ρ : ParamEnv}
     (hI : holds T I) (hax : AgreesWithAxioms T I) :
-    ∀ t, t ∈ rulesAnswers C q.rules (edbEnv I) ρ ↔ t ∈ rulesAnswers C q'.rules (edbEnv I) ρ := by
+    ∀ t, t ∈ rulesAnswers C rs (edbEnv I) ρ ↔ t ∈ rulesAnswers C rs' (edbEnv I) ρ := by
   cases hstep with
   | ground h =>
     rename_i r _
@@ -2466,7 +2466,7 @@ theorem step_preserves {T : Theory} {C : Classify} {q q' : Query}
     exact this.symm
   | groundDead h =>
     exact rulesAnswers_drop_at fun t => ground_refuted_empty h hax ρ t
-  | @eliminate n pre post r r' a b Ra Rb X Y φ ψ ha hb hs hdecl hsrc htgt =>
+  | @eliminate pre post r r' a b Ra Rb X Y φ ψ ha hb hs hdecl hsrc htgt =>
     refine rulesAnswers_congr_at fun t => ?_
     have hj := hI _ hdecl
     simp only [Statement.judgment, hsrc, htgt] at hj
@@ -2476,7 +2476,7 @@ theorem step_preserves {T : Theory} {C : Classify} {q q' : Query}
       intro f; rw [hb]; simp [edbEnv, sourceDen]; exact den_agrees hax Rb f
     exact (elimination_sound hs
       (containment_transfer hA hB hj.2) t).symm
-  | @eliminateChained n pre post r r₁ r₂ a b c Ra Rb Rc X₁ Y₁ X₂ Y₂ φ₁ ψ₁ φ₂ ψ₂
+  | @eliminateChained pre post r r₁ r₂ a b c Ra Rb Rc X₁ Y₁ X₂ Y₂ φ₁ ψ₁ φ₂ ψ₂
       ha hb hc hs₁ hs₂ hroot hdecl₁ hdecl₂ hsrc₁ htgt₁ hsrc₂ htgt₂ =>
     refine rulesAnswers_congr_at fun t => ?_
     have hj₁ := hI _ hdecl₁
@@ -2503,10 +2503,10 @@ theorem step_preserves {T : Theory} {C : Classify} {q q' : Query}
 /-- A rewrite sequence: any chain of the rewrites (grounding, kill,
 elimination — the chained composed step included — and the
 subsumption deletion). -/
-inductive Rewrites (T : Theory) (C : Classify) : Query → Query → Prop
-  | refl (q : Query) : Rewrites T C q q
-  | step {q q' q'' : Query} (h : RewriteStep T C q q')
-      (rest : Rewrites T C q' q'') : Rewrites T C q q''
+inductive Rewrites (T : Theory) (C : Classify) : List Rule → List Rule → Prop
+  | refl (rs : List Rule) : Rewrites T C rs rs
+  | step {rs rs' rs'' : List Rule} (h : RewriteStep T C rs rs')
+      (rest : Rewrites T C rs' rs'') : Rewrites T C rs rs''
 
 /-- **Item 5 — `rewrite_composition`.** ANY sequence of grounding,
 elimination (chained-source pairs included), subsumption deletion and
@@ -2516,12 +2516,12 @@ licence to chain, all six rewrites in the chain (the subsumption
 deletion's admission is 2026-07-15's discharge — the module doc's
 record). Falls out of items 1, 2, 2b and 4 by induction over the
 chain, one rewrite per step. -/
-theorem rewrite_composition {T : Theory} {C : Classify} {q q' : Query}
-    (h : Rewrites T C q q') {I : Instance} {ρ : ParamEnv}
+theorem rewrite_composition {T : Theory} {C : Classify} {rs rs' : List Rule}
+    (h : Rewrites T C rs rs') {I : Instance} {ρ : ParamEnv}
     (hI : holds T I) (hax : AgreesWithAxioms T I) :
-    ∀ t, t ∈ rulesAnswers C q.rules (edbEnv I) ρ ↔ t ∈ rulesAnswers C q'.rules (edbEnv I) ρ := by
+    ∀ t, t ∈ rulesAnswers C rs (edbEnv I) ρ ↔ t ∈ rulesAnswers C rs' (edbEnv I) ρ := by
   induction h with
-  | refl q => exact fun t => Iff.rfl
+  | refl rs => exact fun t => Iff.rfl
   | step hstep _ ih =>
     exact fun t => (step_preserves hstep hI hax t).trans (ih t)
 

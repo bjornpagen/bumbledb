@@ -696,6 +696,17 @@ def InteriorEnv.update (W : InteriorEnv) (c : InteriorId)
     (X : Set AnswerTuple) : InteriorEnv :=
   fun d => if d = c then X else W d
 
+theorem InteriorEnv.update_congr {W W' : InteriorEnv} {c : InteriorId}
+    {X Y : Set AnswerTuple}
+    (hW : ∀ d t, t ∈ W d ↔ t ∈ W' d)
+    (hX : ∀ t, t ∈ X ↔ t ∈ Y) :
+    ∀ d t, t ∈ W.update c X d ↔ t ∈ W'.update c Y d := by
+  intro d t
+  unfold InteriorEnv.update
+  by_cases hd : d = c
+  · simp [hd, hX]
+  · simp [hd, hW]
+
 /-- What an atom source denotes: a stored relation reads the instance;
 a derived table reads the environment through the tuple-fact
 reading. An unread interior id is the empty fact set. -/
@@ -983,63 +994,76 @@ theorem answer_identity_canonical {C : Classify} {r : Rule}
 
 /-! ## Theorem 9 — the denotation reads ONE instance -/
 
-/-- The stored relations a query's main rules mention, positive and
-negated. Interior sources are not stored relations. -/
-def Query.relations (q : Query) : List RelId :=
-  q.rules.flatMap fun r =>
-    (r.atoms ++ r.negated).filterMap fun a => a.source.edb?
+/-- The stored relations a rule mentions, positive and negated. -/
+def Rule.relations (r : Rule) : List RelId :=
+  (r.atoms ++ r.negated).filterMap fun a => a.source.edb?
 
-/-- **Theorem 9.** The denotation is a function of ONE `Instance` —
-the signature of `rulesAnswers` over `edbEnv` IS the structural note
-(no mixed-instance evaluation is writable), and this theorem makes it
-checkable: two instances agreeing on every mentioned relation yield
-identical answers, i.e. the denotation reads nothing else. Interior
-atoms under `edbEnv` are empty on both sides.
-Bridge: snapshot isolation — an execution runs against one storage
-snapshot (`crate::Db::query` pins one read transaction); PRD 09 owns
-the transaction side. -/
-theorem snapshot_single {q : Query} {I J : Instance} (C : Classify)
-    (ρ : ParamEnv) (h : ∀ R, R ∈ q.relations → I R = J R) :
-    ∀ t, t ∈ rulesAnswers C q.rules (edbEnv I) ρ ↔
-      t ∈ rulesAnswers C q.rules (edbEnv J) ρ := by
-  have hder : ∀ r, r ∈ q.rules → ∀ σ,
-      derives C r (edbEnv I) ρ σ ↔ derives C r (edbEnv J) ρ σ := by
-    intro r hr σ
-    have hsrc : ∀ a, (a ∈ r.atoms ∨ a ∈ r.negated) →
-        ∀ f, f ∈ edbEnv I a.source ↔ f ∈ edbEnv J a.source := by
-      intro a ha f
-      cases hsrc : a.source with
-      | interior C =>
-        simp [edbEnv, sourceDen, InteriorEnv.empty]
-      | edb R =>
-        have hmem : R ∈ q.relations := by
-          refine List.mem_flatMap.mpr ⟨r, hr, ?_⟩
-          refine List.mem_filterMap.mpr ⟨a, ?_, by simp [AtomSource.edb?, hsrc]⟩
-          exact List.mem_append.mpr ha
-        show f ∈ I R ↔ f ∈ J R
-        rw [h R hmem]
-    unfold derives
-    constructor
-    · rintro ⟨hatoms, hneg, hconds⟩
-      refine ⟨fun a ha => ?_, fun a ha hex => ?_, hconds⟩
-      · obtain ⟨f, hf, hm⟩ := hatoms a ha
-        exact ⟨f, (hsrc a (Or.inl ha) f).mp hf, hm⟩
-      · obtain ⟨f, hf, hm⟩ := hex
-        exact hneg a ha ⟨f, (hsrc a (Or.inr ha) f).mpr hf, hm⟩
-    · rintro ⟨hatoms, hneg, hconds⟩
-      refine ⟨fun a ha => ?_, fun a ha hex => ?_, hconds⟩
-      · obtain ⟨f, hf, hm⟩ := hatoms a ha
-        exact ⟨f, (hsrc a (Or.inl ha) f).mpr hf, hm⟩
-      · obtain ⟨f, hf, hm⟩ := hex
-        exact hneg a ha ⟨f, (hsrc a (Or.inr ha) f).mp hf, hm⟩
+/-- The stored relations a query mentions across interiors, rec arms,
+and main. Interior sources are not stored relations. -/
+def Query.relations (q : Query) : List RelId :=
+  q.allRules.flatMap Rule.relations
+
+theorem mem_relations {q : Query} {r : Rule} {R : RelId}
+    (hr : r ∈ q.allRules) (hR : R ∈ r.relations) : R ∈ q.relations :=
+  List.mem_flatMap.mpr ⟨r, hr, hR⟩
+
+theorem sourceDen_instance_env {I J : Instance} {X Y : InteriorEnv}
+    {src : AtomSource}
+    (hedb : ∀ R, src = .edb R → I R = J R)
+    (henv : ∀ C, src = .interior C → ∀ t, t ∈ X C ↔ t ∈ Y C) :
+    ∀ f, f ∈ sourceDen I X src ↔ f ∈ sourceDen J Y src := by
+  intro f
+  cases src with
+  | edb R =>
+    have hR := hedb R rfl
+    simp [sourceDen, hR]
+  | interior C =>
+    exact exists_congr fun t => and_congr_left fun _ => henv C rfl t
+
+theorem derives_instance_env {C : Classify} {r : Rule} {I J : Instance}
+    {X Y : InteriorEnv} {ρ : ParamEnv}
+    (hedb : ∀ R, R ∈ r.relations → I R = J R)
+    (henv : ∀ c t, t ∈ X c ↔ t ∈ Y c) :
+    ∀ σ, derives C r (sourceDen I X) ρ σ ↔ derives C r (sourceDen J Y) ρ σ := by
+  intro σ
+  have hsrc : ∀ a, (a ∈ r.atoms ∨ a ∈ r.negated) →
+      ∀ f, f ∈ sourceDen I X a.source ↔ f ∈ sourceDen J Y a.source := by
+    intro a ha f
+    refine sourceDen_instance_env (fun R hR => ?_) (fun C _ => henv C) f
+    apply hedb
+    refine List.mem_filterMap.mpr ⟨a, List.mem_append.mpr ha, ?_⟩
+    simp [AtomSource.edb?, hR]
+  unfold derives
+  constructor
+  · rintro ⟨hatoms, hneg, hconds⟩
+    refine ⟨fun a ha => ?_, fun a ha hex => ?_, hconds⟩
+    · obtain ⟨f, hf, hm⟩ := hatoms a ha
+      exact ⟨f, (hsrc a (Or.inl ha) f).mp hf, hm⟩
+    · obtain ⟨f, hf, hm⟩ := hex
+      exact hneg a ha ⟨f, (hsrc a (Or.inr ha) f).mpr hf, hm⟩
+  · rintro ⟨hatoms, hneg, hconds⟩
+    refine ⟨fun a ha => ?_, fun a ha hex => ?_, hconds⟩
+    · obtain ⟨f, hf, hm⟩ := hatoms a ha
+      exact ⟨f, (hsrc a (Or.inl ha) f).mpr hf, hm⟩
+    · obtain ⟨f, hf, hm⟩ := hex
+      exact hneg a ha ⟨f, (hsrc a (Or.inr ha) f).mp hf, hm⟩
+
+theorem rulesAnswers_instance_env {C : Classify} {rules : List Rule}
+    {I J : Instance} {X Y : InteriorEnv} {ρ : ParamEnv}
+    (hedb : ∀ r, r ∈ rules → ∀ R, R ∈ r.relations → I R = J R)
+    (henv : ∀ c t, t ∈ X c ↔ t ∈ Y c) :
+    ∀ t, t ∈ rulesAnswers C rules (sourceDen I X) ρ ↔
+      t ∈ rulesAnswers C rules (sourceDen J Y) ρ := by
   intro t
   constructor
   · intro ht
     obtain ⟨r, hr, σ, hd, hproj⟩ := mem_rulesAnswers.mp ht
-    exact mem_rulesAnswers.mpr ⟨r, hr, σ, (hder r hr σ).mp hd, hproj⟩
+    exact mem_rulesAnswers.mpr
+      ⟨r, hr, σ, (derives_instance_env (hedb r hr) henv σ).mp hd, hproj⟩
   · intro ht
     obtain ⟨r, hr, σ, hd, hproj⟩ := mem_rulesAnswers.mp ht
-    exact mem_rulesAnswers.mpr ⟨r, hr, σ, (hder r hr σ).mpr hd, hproj⟩
+    exact mem_rulesAnswers.mpr
+      ⟨r, hr, σ, (derives_instance_env (hedb r hr) henv σ).mpr hd, hproj⟩
 
 /-! ## Decidable instances — the executable half's toolkit
 

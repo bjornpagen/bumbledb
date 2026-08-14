@@ -1033,5 +1033,111 @@ theorem evalQuery_empty_rules {C : Classify} {q : Query} {I : Instance}
     simp [Query.rules] at hr
     simp [evalQuery, hr, mem_rulesAnswers] at ht
 
+theorem getElem?_mem {α} {l : List α} {i : Nat} {a : α}
+    (h : l[i]? = some a) : a ∈ l :=
+  List.mem_of_getElem? h
+
+theorem evalInteriorsAt_instance {C : Classify} {defs : List Interior}
+    {I J : Instance} {ρ : ParamEnv}
+    (h : ∀ d, d ∈ defs → ∀ r, r ∈ d.rules → ∀ R, R ∈ r.relations → I R = J R) :
+    ∀ n c t,
+      t ∈ evalInteriorsAt C defs I ρ n c ↔
+      t ∈ evalInteriorsAt C defs J ρ n c := by
+  intro n
+  induction n with
+  | zero =>
+    intro c t
+    simp [evalInteriorsAt]
+  | succ n ih =>
+    intro c t
+    simp only [evalInteriorsAt]
+    by_cases hlt : c.id < n
+    · simp [dif_pos hlt, ih]
+    · simp [dif_neg hlt]
+      by_cases heq : c.id = n
+      · simp [heq]
+        cases hdef : defs[n]? with
+        | none => simp
+        | some d =>
+          simp
+          exact rulesAnswers_instance_env
+            (fun r hr R hR => h d (getElem?_mem hdef) r hr R hR) ih t
+      · simp [heq]
+
+theorem lfpS_congr {α} {T U : Set α → Set α}
+    (h : ∀ X a, a ∈ T X ↔ a ∈ U X) :
+    ∀ a, a ∈ lfpS T ↔ a ∈ lfpS U := by
+  intro a
+  constructor
+  · intro hT Y hpre
+    exact hT Y fun b hb => hpre b ((h Y b).mp hb)
+  · intro hU Y hpre
+    exact hU Y fun b hb => hpre b ((h Y b).mpr hb)
+
+theorem reachOp_instance {C : Classify} {rec : LinearRec} {self : InteriorId}
+    {I J : Instance} {W W' : InteriorEnv} {ρ : ParamEnv}
+    (hedb : ∀ r, r ∈ rec.allRules self → ∀ R, R ∈ r.relations → I R = J R)
+    (henv : ∀ c t, t ∈ W c ↔ t ∈ W' c) :
+    ∀ X X', (∀ t, t ∈ X ↔ t ∈ X') → ∀ t,
+      t ∈ reachOp C rec self I W ρ X ↔ t ∈ reachOp C rec self J W' ρ X' := by
+  intro X X' hX t
+  have hbase : ∀ r, r ∈ rec.baseRules → ∀ R, R ∈ r.relations → I R = J R :=
+    fun r hr => hedb r (List.mem_append.mpr (Or.inl hr))
+  have hstep : ∀ r, r ∈ rec.stepRules self → ∀ R, R ∈ r.relations → I R = J R :=
+    fun r hr => hedb r (List.mem_append.mpr (Or.inr hr))
+  unfold reachOp
+  exact or_congr
+    (rulesAnswers_instance_env hbase henv t)
+    (rulesAnswers_instance_env hstep (InteriorEnv.update_congr henv hX) t)
+
+theorem reachDen_instance {C : Classify} {rec : LinearRec} {self : InteriorId}
+    {I J : Instance} {W W' : InteriorEnv} {ρ : ParamEnv}
+    (hedb : ∀ r, r ∈ rec.allRules self → ∀ R, R ∈ r.relations → I R = J R)
+    (henv : ∀ c t, t ∈ W c ↔ t ∈ W' c) :
+    ∀ t, t ∈ reachDen C rec self I W ρ ↔ t ∈ reachDen C rec self J W' ρ :=
+  lfpS_congr fun X a =>
+    reachOp_instance hedb henv X X (fun (_ : AnswerTuple) => Iff.rfl) a
+
+/-- **Theorem 9.** The denotation is a function of ONE `Instance`:
+two instances agreeing on every mentioned stored relation yield
+identical answers. Interior and rec tables are determined by those
+relations. Bridge: snapshot isolation — an execution runs against one
+storage snapshot (`crate::Db::query` pins one read transaction); PRD 09
+owns the transaction side. -/
+theorem snapshot_single {q : Query} {I J : Instance} (C : Classify)
+    (ρ : ParamEnv) (h : ∀ R, R ∈ q.relations → I R = J R) :
+    ∀ t, t ∈ evalQuery C q I ρ ↔ t ∈ evalQuery C q J ρ := by
+  intro t
+  cases q with
+  | cq interiors arity rules =>
+    simp only [evalQuery]
+    have hW := evalInteriorsAt_instance (C := C) (ρ := ρ)
+      (fun d hd r hr R hR => h R (mem_relations
+        (mem_allRules_interior (q := .cq interiors arity rules)
+          (by simpa [Query.interiors] using hd) hr) hR))
+      interiors.length
+    exact rulesAnswers_instance_env
+      (fun r hr R hR => h R (mem_relations
+        (mem_allRules_main (q := .cq interiors arity rules)
+          (by simpa [Query.rules] using hr)) hR))
+      hW t
+  | reach interiors rec arity rules =>
+    simp only [evalQuery]
+    have hW := evalInteriorsAt_instance (C := C) (ρ := ρ)
+      (fun d hd r hr R hR => h R (mem_relations
+        (mem_allRules_interior (q := .reach interiors rec arity rules)
+          (by simpa [Query.interiors] using hd) hr) hR))
+      interiors.length
+    have hrec := reachDen_instance (C := C) (ρ := ρ)
+      (fun r hr R hR => h R (mem_relations
+        (mem_allRules_rec (interiors := interiors) (rec := rec)
+          (arity := arity) (rules := rules) hr) hR))
+      hW
+    exact rulesAnswers_instance_env
+      (fun r hr R hR => h R (mem_relations
+        (mem_allRules_main (q := .reach interiors rec arity rules)
+          (by simpa [Query.rules] using hr)) hR))
+      (InteriorEnv.update_congr hW hrec) t
+
 end Bumbledb.Query
 
