@@ -229,6 +229,12 @@ impl fmt::Display for CorruptionError {
                 relation.0
             ),
             Self::MalformedValue(kind) => write!(f, "malformed stored value: {kind}"),
+            Self::EphemeralDirtyArmed => write!(
+                f,
+                "ephemeral dirty marker armed — the store's last session never proved its sync"
+            ),
+            Self::DictReverseIdReuse => write!(f, "dict reverse id reuse"),
+            Self::DescriptorRoundTrip => write!(f, "descriptor round trip"),
             Self::NonUtf8Intern(id) => write!(f, "intern id {id}: stored bytes are not UTF-8"),
             Self::NonzeroFixedBytesPad(tail) => write!(
                 f,

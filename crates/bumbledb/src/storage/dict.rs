@@ -95,9 +95,9 @@ pub(crate) fn put_pending(txn: &mut WriteTxn<'_>, raw: &[u8], id: u64) -> Result
         raw,
     ) {
         Ok(()) => Ok(()),
-        Err(heed::Error::Mdb(heed::MdbError::KeyExist)) => Err(Error::Corruption(
-            CorruptionError::MalformedValue("dict reverse id reuse"),
-        )),
+        Err(heed::Error::Mdb(heed::MdbError::KeyExist)) => {
+            Err(Error::Corruption(CorruptionError::DictReverseIdReuse))
+        }
         Err(other) => Err(other.into()),
     }
 }

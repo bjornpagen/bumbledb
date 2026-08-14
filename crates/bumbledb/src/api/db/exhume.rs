@@ -78,9 +78,7 @@ pub fn exhume(path: &Path) -> Result<Exhumed> {
     // "the exhumed schema is the creating schema" a checked fact, never
     // an assumption.
     if canonical_descriptor(&schema) != parts.descriptor {
-        return Err(Error::Corruption(CorruptionError::MalformedValue(
-            "descriptor round trip",
-        )));
+        return Err(Error::Corruption(CorruptionError::DescriptorRoundTrip));
     }
     Ok(Exhumed {
         db: Db::assemble(parts.env, schema),

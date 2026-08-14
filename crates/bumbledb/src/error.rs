@@ -98,9 +98,18 @@ pub enum CorruptionError {
         witness: u64,
     },
     /// A stored value (a counter, row id, or dictionary id) failed to
-    /// decode; the static string names which kind — a diagnosis, not a
-    /// formatted payload.
+    /// decode; the static string names which width — a diagnosis, not a
+    /// formatted payload. Lifecycle and integrity kinds are named
+    /// variants, not strings in this arm.
     MalformedValue(&'static str),
+    /// An ephemeral dirty marker was armed at exhume: the store's last
+    /// session never proved its sync (wipe vs investigate).
+    EphemeralDirtyArmed,
+    /// The dictionary reverse map already holds this minted id.
+    DictReverseIdReuse,
+    /// The exhumed descriptor decoded, then failed to re-encode to the
+    /// persisted bytes.
+    DescriptorRoundTrip,
     /// A stored string's bytes are not UTF-8 — distinct from a dangling id
     /// (the reverse entry exists; its content is mojibake).
     NonUtf8Intern(u64),
@@ -601,7 +610,7 @@ pub enum ValidationError {
         position: usize,
     },
     /// A nullary `Count` in a fold-free head of a hand-written 2+-rule
-    /// program (ruled 2026-07-23, R1): under the head-projection law a
+    /// query (ruled 2026-07-23, R1): under the head-projection law a
     /// fold-free head admits one projection per group, so the Count is
     /// definitionally the constant 1 — an uninformative query, made
     /// unrepresentable. The modeling answer: one Count per disjunct,
