@@ -280,12 +280,12 @@ struct query_value : query_ir<NI, HasRec, NR> {
 
 		auto const self = NI;
 		next.rec.base_count = base_count;
-		for (auto index = std::size_t{0}; index != base_count; ++index) {
-			next.rec.base[index] = detail::lower_rule(next, base_rules[index], self);
-		}
 		next.rec.rec_count = rec_count;
+		for (auto index = std::size_t{0}; index != base_count; ++index) {
+			next.rec.rules[index] = detail::lower_rule(next, base_rules[index], self);
+		}
 		for (auto index = std::size_t{0}; index != rec_count; ++index) {
-			next.rec.rec[index] = detail::lower_rule(next, rec_rules[index], self);
+			next.rec.rules[base_count + index] = detail::lower_rule(next, rec_rules[index], self);
 		}
 		return next;
 	}

@@ -2,7 +2,7 @@
 
 - **Severity:** low
 - **Tree:** sdk (cpp foreign)
-- **Status:** OPEN
+- **Status:** FIXED(54f6fb9f)
 - **Source:** audit/sdks.md #21
 - **Depends on:** none (two-line fix; parallel-safe)
 

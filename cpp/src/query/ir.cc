@@ -7,8 +7,8 @@ import :spec;
 
 export namespace bdb {
 
-/** Builder capacities: SDK bounds only — the engine's own caps are far higher. */
-inline constexpr std::size_t max_query_rules = 4;
+/** Engine `MAX_RULES` (`crates/bumbledb/src/ir.rs`) — the one rule-list cap. */
+inline constexpr std::size_t max_query_rules = 16;
 inline constexpr std::size_t max_query_atoms = 8;
 inline constexpr std::size_t max_query_conditions = 8;
 inline constexpr std::size_t max_query_finds = 8;
@@ -340,17 +340,17 @@ struct interior_ir {
 };
 
 /**
- * One lowered linear rec: name, sealed head, base arms, rec arms.
- * `base_count + rec_count` is one pool against `max_query_rules`.
+ * One lowered linear rec: name, sealed head, and one pooled rule array.
+ * Rec arms start at `base_count`; `base_count + rec_count` is the pool
+ * against `max_query_rules` (engine `MAX_RULES`).
  */
 struct rec_ir {
 	name_text name;
 	std::size_t head_count;
 	std::array<find_data, max_query_finds> head;
 	std::size_t base_count;
-	std::array<wire_rule, max_query_rules> base;
 	std::size_t rec_count;
-	std::array<wire_rule, max_query_rules> rec;
+	std::array<wire_rule, max_query_rules> rules;
 };
 
 /**

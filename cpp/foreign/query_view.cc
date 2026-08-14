@@ -25,11 +25,8 @@ consteval auto for_each_wire_rule(F&& f) -> void {
 		}
 	}
 	if constexpr (requires { Query.rec; }) {
-		for (auto rule = std::size_t{0}; rule != Query.rec.base_count; ++rule) {
-			f(Query.rec.base[rule]);
-		}
-		for (auto rule = std::size_t{0}; rule != Query.rec.rec_count; ++rule) {
-			f(Query.rec.rec[rule]);
+		for (auto rule = std::size_t{0}; rule != Query.rec.base_count + Query.rec.rec_count; ++rule) {
+			f(Query.rec.rules[rule]);
 		}
 	}
 	for (auto rule = std::size_t{0}; rule != Query.rules.size(); ++rule) {
@@ -443,8 +440,8 @@ template<auto Query>
 inline constexpr auto query_heads = make_heads<Query>();
 
 template<auto Query>
-[[nodiscard]] consteval auto make_interiors() -> std::array<bdb_interior, Query.interiors.size() == 0 ? 1 : Query.interiors.size()> {
-	auto out = std::array<bdb_interior, Query.interiors.size() == 0 ? 1 : Query.interiors.size()>{};
+[[nodiscard]] consteval auto make_interiors() -> std::array<bdb_interior, Query.interiors.size()> {
+	auto out = std::array<bdb_interior, Query.interiors.size()>{};
 	auto rule_offset = std::size_t{0};
 	auto head_offset = std::size_t{0};
 	for (auto index = std::size_t{0}; index != Query.interiors.size(); ++index) {

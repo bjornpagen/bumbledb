@@ -213,6 +213,28 @@ static_assert(NamedDownAt.rules[0].finds[0].over == 2);
 static_assert(NamedDownAt.head[0].answer == bdb::field_class{bdb::value_kind::string, 0});
 static_assert(std::same_as<decltype(std::declval<bdb::row_of<NamedDownAt>>().name), std::string>);
 
+namespace {
+
+consteval auto mid_rule() {
+	return [](auto r) consteval {
+		auto vars = r.vars(Service);
+		return r.match(Service, {.id = vars.id}).find({.id = vars.id});
+	};
+}
+
+}
+
+inline constexpr auto FiveInterior =
+    bdb::query(Uptime)
+        .interior<"mid">(mid_rule(), mid_rule(), mid_rule(), mid_rule(), mid_rule())
+        .rule([](auto r) consteval {
+	        auto vars = r.vars(Service);
+	        return r.template interior<"mid">(bdb::bind<"id">(vars.id)).find({}, bdb::as<"id">(vars.id));
+        });
+
+static_assert(FiveInterior.interiors.size() == 1);
+static_assert(FiveInterior.interiors[0].rule_count == 5);
+
 auto main() -> int {
 	std::println("pass: recipe-1 query IR lowers to the lower.ts shape "
 	             "(vars/atoms/conditions/params/head, all pinned)");
