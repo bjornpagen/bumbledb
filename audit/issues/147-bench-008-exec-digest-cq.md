@@ -2,7 +2,7 @@
 
 - **Severity:** medium
 - **Tree:** bench
-- **Status:** OPEN
+- **Status:** FIXED(fa0bfe92)
 - **Source:** audit/bench.md F8
 - **Depends on:** engine-012 (stats shaped like the pipeline sum)
 
