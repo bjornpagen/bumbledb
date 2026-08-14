@@ -77,17 +77,53 @@ pub enum Const {
     },
 }
 
+/// View-evaluator point word: a resolved literal or a bind-time param.
+/// Plan/exec membership probes keep [`ResolvedWordSource::Var`] on the
+/// shared enum; a view-level [`FilterPredicate::PointIn`] cannot spell it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ViewWordSource {
+    Word(u64),
+    Param(crate::ir::ParamId),
+}
+
+/// [`FilterPredicate::DurationCompare`]'s constant side — a u64 word or a
+/// bind-time param. Same shape as [`ViewWordSource`]; a distinct name so
+/// the filter site documents the measure, not a membership point.
+pub type WordOrParam = ViewWordSource;
+
+/// [`FilterPredicate::AnyPointIn`]'s set: a bind-time param-set marker or
+/// its resolved word list. The param slice still holds [`Const::WordSet`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SetConst {
+    ParamSet(crate::ir::ParamId),
+    WordSet(Vec<u64>),
+}
+
+/// [`FilterPredicate::FieldAllen`] / [`FilterPredicate::FieldWithin`]
+/// constant side: an interval literal or a bind-time param. The param
+/// slice still holds [`Const::Interval`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum IntervalConst {
+    Interval { start: u64, end: u64 },
+    Param(crate::ir::ParamId),
+}
+
 /// Where a lowered point word comes from, per execution: an encoded
 /// literal word (resolved at lowering), a bound param's word (resolved at
 /// bind), or a bound variable's slot word (a membership binding whose
 /// point variable is bound by another occurrence — evaluated once the
 /// variable is bound; the point-membership scan of
 /// `docs/architecture/40-execution.md`). A `Var` source never reaches the
-/// view evaluator: plan validation routes it into the executor's
-/// membership probes (`PlanNode::point_probes` for positive occurrences,
-/// the anti-probe's point checks for negated ones), because a view is
-/// built per execution while a variable binds per join row.
+/// view evaluator: plan validation routes [`FilterPredicate::PointVar`]
+/// into the executor's membership probes (`PlanNode::point_probes` for
+/// positive occurrences, the anti-probe's point checks for negated ones),
+/// because a view is built per execution while a variable binds per join
+/// row.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(
+    dead_code,
+    reason = "plan/exec membership probes keep Var; view filters use ViewWordSource"
+)]
 pub enum ResolvedWordSource {
     Word(u64),
     Param(crate::ir::ParamId),
@@ -137,15 +173,22 @@ pub enum FilterPredicate {
     /// binding, and of `PointIn(field, point-constant)`).
     PointIn {
         field: FieldId,
-        point: ResolvedWordSource,
+        point: ViewWordSource,
+    },
+    /// Var-sourced point membership: plan validation lifts this into
+    /// membership probes and strips it from the view filter list. The
+    /// view evaluator never sees it.
+    PointVar {
+        field: FieldId,
+        var: crate::ir::VarId,
     },
     /// Point-set membership in the interval field: any element of the
     /// bound set lies in the interval (`Term::ParamSet` on an interval
     /// field — `docs/architecture/20-query-ir.md`, § param sets). `set`
-    /// is [`Const::ParamSet`] in the lowered template and resolves to a
-    /// [`Const::WordSet`] per execution, exactly like a `Compare`
+    /// is [`SetConst::ParamSet`] in the lowered template and resolves to a
+    /// [`SetConst::WordSet`] per execution, exactly like a `Compare`
     /// constant.
-    AnyPointIn { field: FieldId, set: Const },
+    AnyPointIn { field: FieldId, set: SetConst },
     /// Same-atom `Allen` over two interval fields:
     /// `classify(left, right) ∈ mask` — four endpoint words and the mask,
     /// the whole algebra as one shape.
@@ -160,7 +203,7 @@ pub enum FilterPredicate {
     /// `classify(field, other) ∈ mask`.
     FieldAllen {
         field: FieldId,
-        other: Const,
+        other: IntervalConst,
         mask: MaskConst,
     },
     /// Same-atom `PointIn` with a point field (the predicate form of the
@@ -172,7 +215,10 @@ pub enum FilterPredicate {
     /// `outer.start ≤ f AND f < outer.end`. `outer` is `Interval`/`Param`
     /// by construction; the field is scalar by construction (an interval
     /// field under a constant is [`FilterPredicate::FieldAllen`]).
-    FieldWithin { field: FieldId, outer: Const },
+    FieldWithin {
+        field: FieldId,
+        outer: IntervalConst,
+    },
     /// The measure against a constant: `(end − start) <op> value` over
     /// the interval field's two encoded column words — one subtraction,
     /// exact for both element types (the encodings are unit-spaced
@@ -195,7 +241,7 @@ pub enum FilterPredicate {
     DurationCompare {
         field: FieldId,
         op: CmpOp,
-        value: Const,
+        value: WordOrParam,
     },
     /// The same-atom measure comparison: `(end − start) <op> scalar`
     /// where the u64 side is another field of the same fact (the

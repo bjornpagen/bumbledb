@@ -93,7 +93,7 @@ use std::collections::BTreeSet;
 
 use crate::allen::classify_bounds;
 use crate::encoding::field_bytes;
-use crate::image::view::{Const, FilterPredicate, ResolvedWordSource};
+use crate::image::view::{Const, FilterPredicate, IntervalConst, ViewWordSource};
 use crate::ir::normalize::{FoldedMark, NormalizedQuery, Role};
 use crate::ir::render::{literal, mask_names};
 use crate::ir::{CmpOp, VarId};
@@ -440,7 +440,7 @@ fn parse_filter(filter: &FilterPredicate) -> Option<ResolvableFilter> {
         }
         FilterPredicate::PointIn {
             field,
-            point: ResolvedWordSource::Word(point),
+            point: ViewWordSource::Word(point),
         } => Some(ResolvableFilter::PointIn {
             field: *field,
             point: *point,
@@ -453,7 +453,7 @@ fn parse_filter(filter: &FilterPredicate) -> Option<ResolvableFilter> {
         }
         FilterPredicate::FieldWithin {
             field,
-            outer: Const::Interval { start, end },
+            outer: IntervalConst::Interval { start, end },
         } => Some(ResolvableFilter::Within {
             field: *field,
             start: *start,
@@ -466,7 +466,7 @@ fn parse_filter(filter: &FilterPredicate) -> Option<ResolvableFilter> {
         }),
         FilterPredicate::FieldAllen {
             field,
-            other: Const::Interval { start, end },
+            other: IntervalConst::Interval { start, end },
             mask,
         } => Some(ResolvableFilter::Allen {
             field: *field,
@@ -479,6 +479,7 @@ fn parse_filter(filter: &FilterPredicate) -> Option<ResolvableFilter> {
         // which normalization lowers to fixed filter shapes.
         FilterPredicate::FieldsCompare { .. }
         | FilterPredicate::PointIn { .. }
+        | FilterPredicate::PointVar { .. }
         | FilterPredicate::AnyPointIn { .. }
         | FilterPredicate::FieldAllen { .. }
         | FilterPredicate::FieldWithin { .. }
@@ -779,7 +780,7 @@ fn render_filter(out: &mut String, relation: &Relation, filter: &FilterPredicate
             out.push_str(name(right));
         }
         FilterPredicate::PointIn { field, point } => {
-            let ResolvedWordSource::Word(point) = point else {
+            let ViewWordSource::Word(point) = point else {
                 render_unparsed_filter(out, filter);
                 return;
             };
@@ -796,7 +797,7 @@ fn render_filter(out: &mut String, relation: &Relation, filter: &FilterPredicate
             out.push_str(name(interval));
         }
         FilterPredicate::FieldWithin { field, outer } => {
-            let Const::Interval { start, end } = outer else {
+            let IntervalConst::Interval { start, end } = outer else {
                 render_unparsed_filter(out, filter);
                 return;
             };
@@ -821,7 +822,7 @@ fn render_filter(out: &mut String, relation: &Relation, filter: &FilterPredicate
             out.push(')');
         }
         FilterPredicate::FieldAllen { field, other, mask } => {
-            let (mask, Const::Interval { start, end }) = (mask, other) else {
+            let (mask, IntervalConst::Interval { start, end }) = (mask, other) else {
                 render_unparsed_filter(out, filter);
                 return;
             };
@@ -837,6 +838,7 @@ fn render_filter(out: &mut String, relation: &Relation, filter: &FilterPredicate
             out.push(')');
         }
         FilterPredicate::AnyPointIn { .. }
+        | FilterPredicate::PointVar { .. }
         | FilterPredicate::DurationCompare { .. }
         | FilterPredicate::DurationFieldsCompare { .. } => {
             render_unparsed_filter(out, filter);

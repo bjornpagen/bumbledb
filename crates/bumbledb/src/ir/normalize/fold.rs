@@ -44,7 +44,7 @@ use std::collections::BTreeMap;
 
 use super::Occurrence;
 use crate::encoding::decode_i64;
-use crate::image::view::{Const, FilterPredicate, ResolvedWordSource};
+use crate::image::view::{Const, FilterPredicate, IntervalConst, ViewWordSource};
 use crate::ir::render::{literal, mask_names};
 use crate::ir::{CmpOp, Value};
 use crate::schema::{Relation, Schema};
@@ -326,7 +326,7 @@ fn interval_contradictions(
     for filter in filters {
         if let FilterPredicate::FieldAllen {
             field,
-            other: Const::Interval { start, end },
+            other: IntervalConst::Interval { start, end },
             mask,
         } = filter
             && *mask == AllenMask::EQUALS
@@ -343,7 +343,7 @@ fn interval_contradictions(
             // needed.
             FilterPredicate::FieldAllen {
                 field,
-                other: Const::Interval { start, end },
+                other: IntervalConst::Interval { start, end },
                 mask,
             } => {
                 if let Some(pin) = interval_pins.get(field)
@@ -371,7 +371,7 @@ fn interval_contradictions(
             // Rule (f): a constant point against the pinned interval.
             FilterPredicate::PointIn {
                 field,
-                point: ResolvedWordSource::Word(point),
+                point: ViewWordSource::Word(point),
             } => {
                 if let Some(pin) = interval_pins.get(field)
                     && point_outside(*pin, *point)
@@ -383,7 +383,7 @@ fn interval_contradictions(
             // interval.
             FilterPredicate::FieldWithin {
                 field,
-                outer: Const::Interval { start, end },
+                outer: IntervalConst::Interval { start, end },
             } => {
                 if let Some(Const::Word(point)) = eqs.get(field)
                     && point_outside((*start, *end), *point)

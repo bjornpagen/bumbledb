@@ -2,7 +2,9 @@ use super::{
     IntervalWord, Occurrence, PlacedAllen, PlacedComparison, PlacedDuration, PlacedWordComparison,
     VarWord, lower_literal::lower_literal, lower_literal::point_word,
 };
-use crate::image::view::{Const, FilterPredicate, MaskConst, ResolvedWordSource};
+use crate::image::view::{
+    Const, FilterPredicate, IntervalConst, MaskConst, ViewWordSource, WordOrParam,
+};
 use crate::ir::validate::{ClassifiedComparison, DurationOperand, SealedConst};
 use crate::ir::{CmpOp, VarId};
 use bumbledb_theory::allen::AllenMask;
@@ -12,6 +14,22 @@ use bumbledb_theory::schema::FieldId;
 /// pending intern, `bytes<N>` self-encodes, intervals lower to their two
 /// column words — [`lower_literal`] owns every case; a param stays a
 /// bind-time marker.
+fn sealed_interval(constant: &SealedConst) -> IntervalConst {
+    match sealed_const(constant) {
+        Const::Interval { start, end } => IntervalConst::Interval { start, end },
+        Const::Param(param) => IntervalConst::Param(param),
+        _ => unreachable!("validated: Allen/within constants are intervals"),
+    }
+}
+
+fn sealed_word(constant: &SealedConst) -> WordOrParam {
+    match sealed_const(constant) {
+        Const::Word(word) => WordOrParam::Word(word),
+        Const::Param(param) => WordOrParam::Param(param),
+        _ => unreachable!("validated: measure constants are u64 words"),
+    }
+}
+
 fn sealed_const(constant: &SealedConst) -> Const {
     match constant {
         SealedConst::Param(param) => Const::Param(*param),
@@ -172,7 +190,7 @@ pub(super) fn place_comparisons(
                     .filters
                     .push(FilterPredicate::FieldAllen {
                         field,
-                        other: sealed_const(other),
+                        other: sealed_interval(other),
                         mask: *mask,
                     });
             }
@@ -207,8 +225,8 @@ pub(super) fn place_comparisons(
             ClassifiedComparison::PointInVarPoint { interval, point } => {
                 let (occurrence, field) = field_of(occurrences, *interval);
                 let point = match point {
-                    SealedConst::Param(param) => ResolvedWordSource::Param(*param),
-                    SealedConst::Literal(value) => ResolvedWordSource::Word(point_word(value)),
+                    SealedConst::Param(param) => ViewWordSource::Param(*param),
+                    SealedConst::Literal(value) => ViewWordSource::Word(point_word(value)),
                 };
                 occurrences[occurrence]
                     .filters
@@ -222,7 +240,7 @@ pub(super) fn place_comparisons(
                     .filters
                     .push(FilterPredicate::FieldWithin {
                         field,
-                        outer: sealed_const(outer),
+                        outer: sealed_interval(outer),
                     });
             }
             // The measure, operator sealed measure-on-left: constant and
@@ -291,7 +309,7 @@ fn place_duration(
                 .push(FilterPredicate::DurationCompare {
                     field: interval_field,
                     op,
-                    value: sealed_const(value),
+                    value: sealed_word(value),
                 });
         }
     }

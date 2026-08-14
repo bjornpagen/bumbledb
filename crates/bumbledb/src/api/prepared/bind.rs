@@ -4,7 +4,7 @@ use super::{
 };
 
 use crate::error::{Error, Result};
-use crate::image::view::ResolvedWordSource;
+use crate::image::view::{IntervalConst, SetConst, ViewWordSource, WordOrParam};
 use crate::ir::{CmpOp, ParamId, Value};
 use crate::obs;
 use crate::storage::dict;
@@ -608,35 +608,35 @@ fn resolve_filter_into(
         }
         FilterPredicate::PointIn { field, point } => {
             let word = match point {
-                ResolvedWordSource::Word(word) => *word,
+                ViewWordSource::Word(word) => *word,
                 // Point params are numeric (interval elements are
                 // U64/I64) — never a dictionary miss.
-                ResolvedWordSource::Param(param) => match &params[usize::from(param.0)] {
+                ViewWordSource::Param(param) => match &params[usize::from(param.0)] {
                     Const::Word(word) => *word,
-                    _ => unreachable!("validated: a point param resolves to a word"),
+                    _ => unreachable!("param slice: a point param resolves to a word"),
                 },
-                ResolvedWordSource::Var(_) => {
-                    unreachable!("plan validation routes var points to membership probes")
-                }
             };
             *dst = FilterPredicate::PointIn {
                 field: *field,
-                point: ResolvedWordSource::Word(word),
+                point: ViewWordSource::Word(word),
             };
         }
+        FilterPredicate::PointVar { .. } => {
+            unreachable!("plan validation routes var points to membership probes")
+        }
         FilterPredicate::AnyPointIn { field, set } => {
-            let Const::ParamSet(param) = set else {
+            let SetConst::ParamSet(param) = set else {
                 unreachable!("templates carry ParamSet markers")
             };
             // An empty point set matches nothing; the occurrence's view
             // empties and the join answers (no short-circuit needed —
             // and none would be sound for a negated occurrence).
             let Const::WordSet(words) = &params[usize::from(param.0)] else {
-                unreachable!("validated: a set param resolves to a word set")
+                unreachable!("param slice: a set param resolves to a word set")
             };
             if let FilterPredicate::AnyPointIn {
                 field: dst_field,
-                set: Const::WordSet(dst_words),
+                set: SetConst::WordSet(dst_words),
             } = dst
             {
                 *dst_field = *field;
@@ -645,15 +645,20 @@ fn resolve_filter_into(
             } else {
                 *dst = FilterPredicate::AnyPointIn {
                     field: *field,
-                    set: Const::WordSet(words.clone()),
+                    set: SetConst::WordSet(words.clone()),
                 };
             }
         }
         FilterPredicate::FieldWithin { field, outer } => {
             let resolved = match outer {
-                Const::Interval { .. } => outer.clone(),
-                Const::Param(param) => params[usize::from(param.0)].clone(),
-                _ => unreachable!("validated: the outer side is an interval constant"),
+                IntervalConst::Interval { .. } => outer.clone(),
+                IntervalConst::Param(param) => match &params[usize::from(param.0)] {
+                    Const::Interval { start, end } => IntervalConst::Interval {
+                        start: *start,
+                        end: *end,
+                    },
+                    _ => unreachable!("param slice: the outer side is an interval"),
+                },
             };
             *dst = FilterPredicate::FieldWithin {
                 field: *field,
@@ -674,9 +679,14 @@ fn resolve_filter_into(
         }
         FilterPredicate::FieldAllen { field, other, mask } => {
             let resolved = match other {
-                Const::Interval { .. } => other.clone(),
-                Const::Param(param) => params[usize::from(param.0)].clone(),
-                _ => unreachable!("validated: the Allen constant side is an interval"),
+                IntervalConst::Interval { .. } => other.clone(),
+                IntervalConst::Param(param) => match &params[usize::from(param.0)] {
+                    Const::Interval { start, end } => IntervalConst::Interval {
+                        start: *start,
+                        end: *end,
+                    },
+                    _ => unreachable!("param slice: the Allen constant side is an interval"),
+                },
             };
             *dst = FilterPredicate::FieldAllen {
                 field: *field,
@@ -689,9 +699,11 @@ fn resolve_filter_into(
         // operators have no Eq short-circuit).
         FilterPredicate::DurationCompare { field, op, value } => {
             let resolved = match value {
-                Const::Word(_) => value.clone(),
-                Const::Param(param) => params[usize::from(param.0)].clone(),
-                _ => unreachable!("validated: a measure compares against a u64 word"),
+                WordOrParam::Word(_) => *value,
+                WordOrParam::Param(param) => match &params[usize::from(param.0)] {
+                    Const::Word(word) => WordOrParam::Word(*word),
+                    _ => unreachable!("param slice: a measure compares against a u64 word"),
+                },
             };
             *dst = FilterPredicate::DurationCompare {
                 field: *field,

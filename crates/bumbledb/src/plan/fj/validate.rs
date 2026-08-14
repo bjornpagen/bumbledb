@@ -1,11 +1,11 @@
 use super::{
+    FjPlan, PlanError, PlanOccurrence, PointProbe, ValidatedPlan,
     check_occurrence_coverage::check_occurrence_coverage, check_selections,
-    derive_nodes::derive_nodes, provably_distinct::provably_distinct, split_filters, FjPlan,
-    PlanError, PlanOccurrence, PointProbe, ValidatedPlan,
+    derive_nodes::derive_nodes, provably_distinct::provably_distinct, split_filters,
 };
-use crate::image::view::{FilterPredicate, ResolvedWordSource};
-use crate::ir::normalize::{NormalizedQuery, Occurrence, Role, SlotWidth};
+use crate::image::view::FilterPredicate;
 use crate::ir::VarId;
+use crate::ir::normalize::{NormalizedQuery, Occurrence, Role, SlotWidth};
 use crate::schema::Schema;
 use bumbledb_theory::schema::FieldId;
 use std::collections::BTreeSet;
@@ -21,10 +21,7 @@ fn point_filters_of(occurrence: &Occurrence) -> Vec<(FieldId, VarId)> {
         .filters
         .iter()
         .filter_map(|filter| match filter {
-            FilterPredicate::PointIn {
-                field,
-                point: ResolvedWordSource::Var(var),
-            } => Some((*field, *var)),
+            FilterPredicate::PointVar { field, var } => Some((*field, *var)),
             _ => None,
         })
         .collect()
@@ -33,13 +30,7 @@ fn point_filters_of(occurrence: &Occurrence) -> Vec<(FieldId, VarId)> {
 /// Whether a filter is a var-sourced membership (the complement of
 /// [`point_filters_of`]'s selection).
 fn is_point_filter(filter: &FilterPredicate) -> bool {
-    matches!(
-        filter,
-        FilterPredicate::PointIn {
-            point: ResolvedWordSource::Var(_),
-            ..
-        }
-    )
+    matches!(filter, FilterPredicate::PointVar { .. })
 }
 
 /// The execution-facing occurrence table. Trie schemas: a positive
@@ -74,11 +65,13 @@ fn build_occurrences(
                 Role::Negated => {
                     let occ_vars: BTreeSet<VarId> =
                         occurrence.vars.iter().map(|(_, v)| *v).collect();
-                    vec![slots
-                        .iter()
-                        .map(|(v, _)| *v)
-                        .filter(|v| occ_vars.contains(v))
-                        .collect()]
+                    vec![
+                        slots
+                            .iter()
+                            .map(|(v, _)| *v)
+                            .filter(|v| occ_vars.contains(v))
+                            .collect(),
+                    ]
                 }
                 Role::Eliminated(_) | Role::Folded(_) => Vec::new(),
             };
@@ -227,7 +220,7 @@ pub fn validate(
     clippy::too_many_lines,
     reason = "the linear table or protocol is clearer kept together"
 )] // the placement rules read in order;
-   // each attaches one residual kind
+// each attaches one residual kind
 pub fn validate_with_signatures(
     plan: &FjPlan,
     normalized: &NormalizedQuery,

@@ -2,7 +2,7 @@ use super::*;
 use crate::encoding::{ValueRef, encode_fact};
 use crate::exec::run::Bindings;
 use crate::exec::sink::{AggregateSink, FindSpec, FoldOp, ProjectionSink};
-use crate::image::view::ResolvedWordSource;
+use crate::image::view::ViewWordSource;
 use crate::ir::normalize::{NormalizedQuery, OccId, Occurrence, PlacedComparison, Role, SlotWidth};
 use crate::ir::{CmpOp, ParamId, VarId};
 use crate::schema::Schema;
@@ -385,7 +385,7 @@ fn a_membership_binding_is_not_a_key_cover() {
             eq_filter(0, Const::Word(1)),
             FilterPredicate::PointIn {
                 field: FieldId(1),
-                point: ResolvedWordSource::Word(7),
+                point: ViewWordSource::Word(7),
             },
         ],
     ));
@@ -437,7 +437,7 @@ fn full_fact_binding_takes_the_membership_path() {
             eq_filter(0, Const::Word(2)),
             FilterPredicate::PointIn {
                 field: FieldId(1),
-                point: ResolvedWordSource::Word(7),
+                point: ViewWordSource::Word(7),
             },
         ],
     ));

@@ -1,5 +1,5 @@
 use super::{KeyProbePlan, KeyProbeVar};
-use crate::image::view::{Const, FilterPredicate, ResolvedWordSource};
+use crate::image::view::{Const, FilterPredicate};
 use crate::ir::CmpOp;
 use crate::ir::normalize::NormalizedQuery;
 use crate::schema::{Relation, Schema};
@@ -66,10 +66,7 @@ pub fn classify(normalized: &NormalizedQuery, schema: &Schema) -> Option<KeyProb
                 value: Const::ParamSet(_) | Const::WordSet(_),
                 ..
             } | FilterPredicate::AnyPointIn { .. }
-                | FilterPredicate::PointIn {
-                    point: ResolvedWordSource::Var(_),
-                    ..
-                }
+                | FilterPredicate::PointVar { .. }
         )
     }) {
         return None;

@@ -6,7 +6,7 @@
 //! § normalization; 40-execution, § access paths).
 
 use super::*;
-use crate::image::view::{FilterPredicate, ResolvedWordSource};
+use crate::image::view::FilterPredicate;
 use crate::ir::normalize::{IntervalWord, PlacedAllen, PlacedWordComparison, SlotWidth, VarWord};
 use bumbledb_theory::allen::AllenMask;
 use bumbledb_theory::schema::ValueType;
@@ -404,9 +404,9 @@ fn membership_point_var_join_keeps_exactly_the_contained_events() {
             source: crate::ir::AtomSource::Edb(RelationId(0)),
             role: Role::Positive,
             vars: vec![(FieldId(0), x)],
-            filters: vec![FilterPredicate::PointIn {
+            filters: vec![FilterPredicate::PointVar {
                 field: FieldId(1),
-                point: ResolvedWordSource::Var(t),
+                var: t,
             }],
         },
         Occurrence {
@@ -577,9 +577,9 @@ fn membership_probe_reads_a_carried_cursor_across_middle_nodes() {
             source: crate::ir::AtomSource::Edb(RelationId(0)),
             role: Role::Positive,
             vars: vec![(FieldId(0), x)],
-            filters: vec![FilterPredicate::PointIn {
+            filters: vec![FilterPredicate::PointVar {
                 field: FieldId(1),
-                point: ResolvedWordSource::Var(t),
+                var: t,
             }],
         },
         Occurrence {
@@ -697,9 +697,9 @@ fn negated_membership_rejects_only_covered_events() {
             source: crate::ir::AtomSource::Edb(RelationId(0)),
             role: Role::Negated,
             vars: vec![(FieldId(0), x)],
-            filters: vec![FilterPredicate::PointIn {
+            filters: vec![FilterPredicate::PointVar {
                 field: FieldId(1),
-                point: ResolvedWordSource::Var(t),
+                var: t,
             }],
         },
     ];

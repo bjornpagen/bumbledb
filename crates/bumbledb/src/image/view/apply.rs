@@ -8,7 +8,7 @@ use crate::image::{ColumnView, ColumnWidth, RelationImage};
 use crate::ir::CmpOp;
 use bumbledb_theory::schema::FieldId;
 
-use super::{Const, FilterPredicate, MaskConst, ResolvedWordSource, View};
+use super::{Const, FilterPredicate, IntervalConst, MaskConst, SetConst, View, ViewWordSource};
 
 /// Resolves a filter constant through the bind-time param slice: `Param`
 /// and `ParamSet` markers index it; everything else is already column form.
@@ -16,6 +16,26 @@ fn resolve<'a>(value: &'a Const, params: &'a [Const]) -> &'a Const {
     match value {
         Const::Param(param) | Const::ParamSet(param) => &params[usize::from(param.0)],
         other => other,
+    }
+}
+
+fn resolve_interval(value: &IntervalConst, params: &[Const]) -> (u64, u64) {
+    match value {
+        IntervalConst::Interval { start, end } => (*start, *end),
+        IntervalConst::Param(param) => match &params[usize::from(param.0)] {
+            Const::Interval { start, end } => (*start, *end),
+            _ => unreachable!("param slice: interval param resolves to an interval"),
+        },
+    }
+}
+
+fn resolve_word(value: &ViewWordSource, params: &[Const]) -> u64 {
+    match value {
+        ViewWordSource::Word(word) => *word,
+        ViewWordSource::Param(param) => match &params[usize::from(param.0)] {
+            Const::Word(word) => *word,
+            _ => unreachable!("param slice: word param resolves to a word"),
+        },
     }
 }
 
@@ -55,29 +75,21 @@ fn word_at(image: &RelationImage, field: FieldId, position: usize) -> u64 {
     }
 }
 
-/// The resolved point word of a membership filter. A var-sourced point
-/// never reaches the view evaluator: plan validation routes it into the
-/// executor's membership probes (the point-membership scan runs inside
-/// the join, once the variable is bound — `docs/architecture/
-/// 40-execution.md`; the routing is [`ResolvedWordSource`]'s doc).
-fn point_word(point: &ResolvedWordSource, params: &[Const]) -> u64 {
-    match point {
-        ResolvedWordSource::Word(word) => *word,
-        ResolvedWordSource::Param(param) => match &params[usize::from(param.0)] {
-            Const::Word(word) => *word,
-            _ => unreachable!("validated: a point param resolves to a word"),
-        },
-        ResolvedWordSource::Var(_) => {
-            unreachable!("var-sourced points are the executor's membership probes")
-        }
-    }
+/// The resolved point word of a membership filter. Var-sourced points
+/// never reach the view evaluator: they live on [`FilterPredicate::PointVar`]
+/// and plan validation routes them into membership probes.
+fn point_word(point: &ViewWordSource, params: &[Const]) -> u64 {
+    resolve_word(point, params)
 }
 
 /// The resolved word set behind a set constant (sorted, deduplicated).
-fn word_set<'a>(set: &'a Const, params: &'a [Const]) -> &'a [u64] {
-    match resolve(set, params) {
-        Const::WordSet(words) => words,
-        _ => unreachable!("validated: a set resolves to a word set"),
+fn word_set<'a>(set: &'a SetConst, params: &'a [Const]) -> &'a [u64] {
+    match set {
+        SetConst::WordSet(words) => words,
+        SetConst::ParamSet(param) => match &params[usize::from(param.0)] {
+            Const::WordSet(words) => words,
+            _ => unreachable!("param slice: set param resolves to a word set"),
+        },
     }
 }
 
@@ -189,6 +201,9 @@ fn row_matches(
             let (start, end) = interval_at(image, *field, position);
             point_in(start, end, point_word(point, params))
         }
+        FilterPredicate::PointVar { .. } => {
+            unreachable!("plan routes var points to membership probes")
+        }
         FilterPredicate::AnyPointIn { field, set } => {
             let (start, end) = interval_at(image, *field, position);
             // Sorted set: the smallest element ≥ start decides membership.
@@ -210,25 +225,22 @@ fn row_matches(
         }
         FilterPredicate::FieldAllen { field, other, mask } => {
             let (f_start, f_end) = interval_at(image, *field, position);
-            let Const::Interval { start, end } = resolve(other, params) else {
-                unreachable!("validated: the Allen constant side is an interval")
-            };
-            mask_of(*mask, params)
-                .contains(crate::allen::classify_bounds(&f_start, &f_end, start, end))
+            let (start, end) = resolve_interval(other, params);
+            mask_of(*mask, params).contains(crate::allen::classify_bounds(
+                &f_start, &f_end, &start, &end,
+            ))
         }
         FilterPredicate::FieldsPointIn { interval, point } => {
             let (start, end) = interval_at(image, *interval, position);
             point_in(start, end, word_at(image, *point, position))
         }
         FilterPredicate::FieldWithin { field, outer } => {
-            let Const::Interval { start, end } = resolve(outer, params) else {
-                unreachable!("validated: the outer side is an interval constant")
-            };
+            let (start, end) = resolve_interval(outer, params);
             match scalar_or_pair(image, *field, position) {
                 // A scalar field: point membership in the outer interval
                 // (the field is scalar by construction — an interval
                 // field under a constant is `FieldAllen`).
-                Operand::Word(word) => point_in(*start, *end, word),
+                Operand::Word(word) => point_in(start, end, word),
                 Operand::Pair(..) | Operand::Byte(_) | Operand::Block { .. } => {
                     unreachable!("validated: within-comparands are scalar words")
                 }
@@ -354,9 +366,7 @@ fn refine_measure(
 ) -> View {
     match predicate {
         FilterPredicate::DurationCompare { field, op, value } => {
-            let Const::Word(bound) = resolve(value, params) else {
-                unreachable!("validated: a measure compares against a u64 word")
-            };
+            let bound = resolve_word(value, params);
             // The order operator as an inclusive duration range — the
             // subtraction feeds the existing range machinery.
             let (lo, hi) = match op {
@@ -364,12 +374,12 @@ fn refine_measure(
                     Some(hi) => (0, hi),
                     None => (1, 0), // dur < 0: empty (lo > hi keeps nothing)
                 },
-                CmpOp::Le => (0, *bound),
+                CmpOp::Le => (0, bound),
                 CmpOp::Gt => match bound.checked_add(1) {
                     Some(lo) => (lo, u64::MAX),
                     None => (1, 0), // dur > MAX: empty
                 },
-                CmpOp::Ge => (*bound, u64::MAX),
+                CmpOp::Ge => (bound, u64::MAX),
                 _ => unreachable!("validated: measures compare under order operators"),
             };
             let (starts, ends) = interval_columns(image, *field);
@@ -574,9 +584,7 @@ fn kernel_scan(
             return true;
         }
         FilterPredicate::FieldWithin { field, outer } => {
-            let Const::Interval { start, end } = resolve(outer, params) else {
-                unreachable!("validated: the outer side is an interval constant")
-            };
+            let (start, end) = resolve_interval(outer, params);
             let span = image.span(*field);
             // A scalar field within the constant interval: point
             // membership is the range scan `[start, end - 1]` (the
@@ -587,7 +595,7 @@ fn kernel_scan(
             let ColumnView::Words(words) = image.column(usize::from(span.first_column)) else {
                 unreachable!("a word span covers a word column")
             };
-            crate::exec::kernel::filter_range_u64(words, *start, *end - 1, out);
+            crate::exec::kernel::filter_range_u64(words, start, end - 1, out);
             return true;
         }
         // The Allen kinds: dense stride-1 endpoint columns through the
@@ -609,14 +617,12 @@ fn kernel_scan(
         }
         FilterPredicate::FieldAllen { field, other, mask } => {
             let (starts, ends) = interval_columns(image, *field);
-            let Const::Interval { start, end } = resolve(other, params) else {
-                unreachable!("validated: the Allen constant side is an interval")
-            };
+            let (start, end) = resolve_interval(other, params);
             crate::exec::kernel::allen_filter_columns_const(
                 starts,
                 ends,
-                *start,
-                *end,
+                start,
+                end,
                 mask_of(*mask, params),
                 out,
             );
@@ -625,7 +631,9 @@ fn kernel_scan(
         // Same-fact comparisons read two varying columns per position —
         // no constant side, no kernel shape; the scalar loop evaluates
         // them.
-        FilterPredicate::FieldsCompare { .. } | FilterPredicate::FieldsPointIn { .. } => {
+        FilterPredicate::FieldsCompare { .. }
+        | FilterPredicate::FieldsPointIn { .. }
+        | FilterPredicate::PointVar { .. } => {
             return false;
         }
         // The measure kinds never reach the infallible machinery: they

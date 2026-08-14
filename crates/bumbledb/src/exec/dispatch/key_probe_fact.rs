@@ -1,7 +1,7 @@
 use super::KeyProbePlan;
 use super::fact_word::{FactOperand, fact_operand};
 use crate::error::Result;
-use crate::image::view::{Const, FilterPredicate, ResolvedWordSource};
+use crate::image::view::{Const, FilterPredicate, IntervalConst, ViewWordSource};
 use crate::ir::CmpOp;
 use crate::obs;
 use crate::schema::Schema;
@@ -86,18 +86,24 @@ fn const_operand(txn: &ReadTxn<'_>, value: &Const, params: &[Const]) -> Result<F
     }
 }
 
-/// A membership filter's resolved point word (never var-sourced here:
-/// classification routes var points to Free Join).
-fn point_word(point: &ResolvedWordSource, params: &[Const]) -> u64 {
-    match point {
-        ResolvedWordSource::Word(word) => *word,
-        ResolvedWordSource::Param(param) => match &params[usize::from(param.0)] {
-            Const::Word(word) => *word,
-            _ => unreachable!("validated: a point param resolves to a word"),
+fn interval_const(value: &IntervalConst, params: &[Const]) -> (u64, u64) {
+    match value {
+        IntervalConst::Interval { start, end } => (*start, *end),
+        IntervalConst::Param(param) => match &params[usize::from(param.0)] {
+            Const::Interval { start, end } => (*start, *end),
+            _ => unreachable!("param slice: interval param resolves to an interval"),
         },
-        ResolvedWordSource::Var(_) => {
-            unreachable!("classification: a var-sourced point never reaches the key-probe path")
-        }
+    }
+}
+
+/// A membership filter's resolved point word.
+fn point_word(point: &ViewWordSource, params: &[Const]) -> u64 {
+    match point {
+        ViewWordSource::Word(word) => *word,
+        ViewWordSource::Param(param) => match &params[usize::from(param.0)] {
+            Const::Word(word) => *word,
+            _ => unreachable!("param slice: a point param resolves to a word"),
+        },
     }
 }
 
@@ -199,9 +205,7 @@ fn fact_matches(
         }
         FilterPredicate::FieldAllen { field, other, mask } => {
             let (f_start, f_end) = pair(*field)?;
-            let FactOperand::Pair(start, end) = const_operand(txn, other, params)? else {
-                unreachable!("validated: the Allen constant side is an interval")
-            };
+            let (start, end) = interval_const(other, params);
             crate::image::view::mask_of(*mask, params).contains(crate::allen::classify_bounds(
                 &f_start, &f_end, &start, &end,
             ))
@@ -211,15 +215,16 @@ fn fact_matches(
             point_in(start, end, word(*point)?)
         }
         FilterPredicate::FieldWithin { field, outer } => {
-            let FactOperand::Pair(start, end) = const_operand(txn, outer, params)? else {
-                unreachable!("validated: the outer side is an interval constant")
-            };
+            let (start, end) = interval_const(outer, params);
             match operand(*field)? {
                 FactOperand::Word(w) => point_in(start, end, w),
                 FactOperand::Pair(..) | FactOperand::Block { .. } => {
                     unreachable!("validated: within-comparands are scalar words")
                 }
             }
+        }
+        FilterPredicate::PointVar { .. } => {
+            unreachable!("classification: a var-sourced point never reaches the key-probe path")
         }
         // Measure filters disqualify key-probe classification (`classify`):
         // their evaluation is fallible and filter-ordered — the filtered

@@ -265,6 +265,7 @@ fn occurrence_estimate(
             // validation admits order operators only, so the range class
             // is exact, not a default).
             FilterPredicate::PointIn { .. }
+            | FilterPredicate::PointVar { .. }
             | FilterPredicate::AnyPointIn { .. }
             | FilterPredicate::FieldsPointIn { .. }
             | FilterPredicate::FieldWithin { .. }

@@ -1,5 +1,5 @@
 use super::*;
-use crate::image::view::{FilterPredicate, ResolvedWordSource};
+use crate::image::view::FilterPredicate;
 use bumbledb_theory::schema::ValueType;
 
 /// The batched membership probe at a MIDDLE node (`probe_pass`'s point
@@ -133,9 +133,9 @@ fn middle_node_membership_batches_pinned_rows_and_walks_fanouts() {
             source: crate::ir::AtomSource::Edb(RelationId(0)),
             role: Role::Positive,
             vars: vec![(FieldId(0), x)],
-            filters: vec![FilterPredicate::PointIn {
+            filters: vec![FilterPredicate::PointVar {
                 field: FieldId(1),
-                point: ResolvedWordSource::Var(t),
+                var: t,
             }],
         },
         Occurrence {
