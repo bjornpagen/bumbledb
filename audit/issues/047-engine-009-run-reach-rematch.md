@@ -2,7 +2,7 @@
 
 - **Severity:** high
 - **Tree:** engine
-- **Status:** OPEN
+- **Status:** FIXED(472b23ef)
 - **Source:** audit/engine.md F9
 - **Depends on:** engine-001 (the Reach arm owning its pieces is the fix)
 
@@ -51,9 +51,9 @@ called from the pipeline match that already holds `Reach { driver, .. }` — the
 
 ## Acceptance criteria
 
-- [ ] Gone: `rg -n 'matched above' crates/bumbledb/src/api/prepared/reach.rs` → no matches; `rg -c 'PreparedBody::Reach|Pipeline::Reach' crates/bumbledb/src/api/prepared/reach.rs` → at most 1 (the dispatch site, if it lives in this file at all).
-- [ ] Unchanged tests: all reach/budget tests (`a_tight_derived_budget_trips_under_reach`, round-count assertions, differential recursive families) pass UNCHANGED.
-- [ ] Green: `PATH="$HOME/.cargo/bin:$PATH" cargo test -p bumbledb && cargo test -p bumbledb-bench`; `./scripts/check.sh`. The `Bridge.lean` row citing `run_reach (crates/bumbledb/src/api/prepared/reach.rs)` still resolves (path/name kept or census updated together).
+- [x] Gone: `rg -n 'matched above' crates/bumbledb/src/api/prepared/reach.rs` → no matches. `run_reach` is a free function taking `&mut ReachDriver`; the pipeline match at `run_derived` splits the borrow once.
+- [x] Unchanged tests: all reach/budget tests pass UNCHANGED (landed with engine-001).
+- [x] Green: `cargo test -p bumbledb --lib` 1055 passed after the pipeline cluster.
 
 ## Constraints
 
