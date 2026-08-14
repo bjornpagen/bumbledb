@@ -385,6 +385,37 @@ impl ValidatedInterior {
     }
 }
 
+/// A nonempty list: first plus rest. Empty rec arms are roster refusals
+/// ([`ValidationError::EmptyRecursiveBase`] /
+/// [`ValidationError::EmptyRecursiveStep`]); the witness cannot spell them.
+#[derive(Debug)]
+pub(crate) struct NonEmpty<T> {
+    first: T,
+    rest: Vec<T>,
+}
+
+impl<T> NonEmpty<T> {
+    fn from_vec(items: Vec<T>) -> Option<Self> {
+        let mut iter = items.into_iter();
+        let first = iter.next()?;
+        Some(Self {
+            first,
+            rest: iter.collect(),
+        })
+    }
+
+    fn len(&self) -> usize {
+        1 + self.rest.len()
+    }
+
+    fn get(&self, index: usize) -> Option<&T> {
+        match index {
+            0 => Some(&self.first),
+            n => self.rest.get(n - 1),
+        }
+    }
+}
+
 /// One lowered rec *base* arm: the rule plus its typing. Base arms
 /// cannot name self ([`ValidationError::SelfInBase`]).
 #[derive(Debug)]
@@ -417,8 +448,8 @@ impl ValidatedRecArm {
 /// Unconstructible outside this module.
 #[derive(Debug)]
 pub struct ValidatedRec {
-    base: Vec<ValidatedBaseArm>,
-    rec: Vec<ValidatedRecArm>,
+    base: NonEmpty<ValidatedBaseArm>,
+    rec: NonEmpty<ValidatedRecArm>,
     predicate: Predicate,
 }
 
@@ -441,10 +472,10 @@ impl ValidatedRec {
         self.rec.len()
     }
 
-    /// The rec step arms, each carrying `self_occ`.
+    /// One rec step arm, each carrying `self_occ`.
     #[must_use]
-    pub(crate) fn arms(&self) -> &[ValidatedRecArm] {
-        &self.rec
+    pub(crate) fn arm(&self, index: usize) -> &ValidatedRecArm {
+        self.rec.get(index).expect("index in range")
     }
 
     /// One rec base-arm rule.
@@ -454,7 +485,7 @@ impl ValidatedRec {
         query: &'a ValidatedQuery,
         index: usize,
     ) -> RuleWitness<'a> {
-        let arm = &self.base[index];
+        let arm = self.base.get(index).expect("index in range");
         RuleWitness {
             rule: &arm.rule,
             typing: &arm.typing,
@@ -469,7 +500,7 @@ impl ValidatedRec {
         query: &'a ValidatedQuery,
         index: usize,
     ) -> RuleWitness<'a> {
-        let arm = &self.rec[index];
+        let arm = self.rec.get(index).expect("index in range");
         RuleWitness {
             rule: &arm.rule,
             typing: &arm.typing,

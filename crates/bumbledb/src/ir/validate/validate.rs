@@ -1,6 +1,7 @@
 use super::{
-    Context, InteriorSignatures, ParamKind, Predicate, RuleTyping, TypeSlot, ValidatedBaseArm,
-    ValidatedInterior, ValidatedMain, ValidatedQuery, ValidatedRec, ValidatedRecArm,
+    Context, InteriorSignatures, NonEmpty, ParamKind, Predicate, RuleTyping, TypeSlot,
+    ValidatedBaseArm, ValidatedInterior, ValidatedMain, ValidatedQuery, ValidatedRec,
+    ValidatedRecArm,
 };
 use crate::error::ValidationError;
 use crate::ir::normalize::OccId;
@@ -123,20 +124,25 @@ pub fn validate(schema: &Schema, query: &Query) -> Result<ValidatedQuery, Valida
         }
         rule_count += rec_typing.len() as u64;
         measure_in_rec(rec)?;
-        let base_arms = base
-            .into_iter()
-            .zip(base_typing)
-            .map(|(rule, typing)| ValidatedBaseArm { rule, typing })
-            .collect();
-        let rec_arms = rec_low
-            .into_iter()
-            .zip(rec_typing)
-            .map(|(rule, typing)| ValidatedRecArm {
-                self_occ: rec_arm_self_occ(&rule, id),
-                rule,
-                typing,
-            })
-            .collect();
+        let base_arms = NonEmpty::from_vec(
+            base.into_iter()
+                .zip(base_typing)
+                .map(|(rule, typing)| ValidatedBaseArm { rule, typing })
+                .collect(),
+        )
+        .expect("roster/lower refused empty base");
+        let rec_arms = NonEmpty::from_vec(
+            rec_low
+                .into_iter()
+                .zip(rec_typing)
+                .map(|(rule, typing)| ValidatedRecArm {
+                    self_occ: rec_arm_self_occ(&rule, id),
+                    rule,
+                    typing,
+                })
+                .collect(),
+        )
+        .expect("roster/lower refused empty rec");
         Some((
             id,
             ValidatedRec {
@@ -382,6 +388,11 @@ fn lower_rec_pool(rec: &Rec) -> Result<(Vec<LoweredRule>, Vec<LoweredRule>), Val
     }
     let base = distribute_list(&rec.base);
     let rec_low = distribute_list(&rec.rec);
+    // Written-empty arms are refused in `rec_roster` (`EmptyRecursiveBase` /
+    // `EmptyRecursiveStep`). A nonempty written arm can still DNF to
+    // nothing — `Or([])` is false, `distribute` yields zero rules — and
+    // that is a distinct fact, observed here, with the same locked names
+    // (tests pin both stages to those variants).
     if base.is_empty() {
         return Err(ValidationError::EmptyRecursiveBase);
     }

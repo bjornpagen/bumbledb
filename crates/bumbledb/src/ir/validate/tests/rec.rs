@@ -1,7 +1,7 @@
 //! Rec roster: one linear SCC, empty/self/nonlinear/negation/measure.
 
 use super::*;
-use crate::ir::{AtomSource, HeadTerm, Interior, InteriorId, Rec};
+use crate::ir::{AtomSource, ConditionTree, HeadTerm, Interior, InteriorId, Rec};
 
 fn interior_atom(id: u32, bindings: Vec<(u16, Term)>) -> crate::ir::Atom {
     crate::ir::Atom {
@@ -68,6 +68,27 @@ fn rejects_empty_recursive_base() {
         ),
     );
     assert_eq!(expect_err(&query), ValidationError::EmptyRecursiveBase);
+}
+
+#[test]
+fn a_rec_step_whose_dnf_is_empty_is_empty_recursive_step() {
+    let query = reach_query(
+        vec![rule(
+            vec![FindTerm::Var(VarId(0))],
+            vec![atom(ACCOUNT, vec![(0, var(0))])],
+        )],
+        vec![Rule {
+            finds: vec![FindTerm::Var(VarId(0))],
+            atoms: vec![interior_atom(0, vec![(0, var(0))])],
+            negated: vec![],
+            conditions: vec![ConditionTree::Or(vec![])],
+        }],
+        rule(
+            vec![FindTerm::Var(VarId(0))],
+            vec![interior_atom(0, vec![(0, var(0))])],
+        ),
+    );
+    assert_eq!(expect_err(&query), ValidationError::EmptyRecursiveStep);
 }
 
 #[test]
