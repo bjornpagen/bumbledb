@@ -659,9 +659,8 @@ pub struct Executor {
     /// Residual-surviving positions of one scan run (leaf residuals
     /// filter positions before the sink folds them).
     scan_filter: Vec<u32>,
-    /// The pipelined executor's shape tables:
-    /// `Some` for every multi-node plan — the one executor.
-    pipe: Option<PipeTables>,
+    /// One-node vs multi-node execution, structural at construction.
+    drive: Drive,
     /// D2 origin cancellation, epoch-stamped:
     /// `cancelled[origin] == cancel_epoch` marks a dead subtree. Grows
     /// to the per-execution origin high-water and is never cleared.
@@ -701,6 +700,14 @@ enum Poison {
     /// granularity in `probe_pass`):
     /// [`crate::error::Error::Overflow`].
     OriginOverflow,
+}
+
+/// One-node vs multi-node drive. Construction mints the arm; execute
+/// matches once. `Rc` shares the immutable tables with pump/probe_pass
+/// so the arm stays Pipeline — no take/put.
+enum Drive {
+    Leaf,
+    Pipeline(std::rc::Rc<PipeTables>),
 }
 
 /// The pipelined executor's static shape tables:

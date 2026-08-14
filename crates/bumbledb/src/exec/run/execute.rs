@@ -1,8 +1,8 @@
 //! Executor construction and the per-execution entry point.
 
 use super::{
-    AntiProbeSpec, BATCH, Bindings, Colt, Counters, Cursor, Executor, LeafPrecompute, NodeScratch,
-    PipeTables, PlacedAllen, PlacedComparison, PlacedDuration, PlacedWordComparison,
+    AntiProbeSpec, BATCH, Bindings, Colt, Counters, Cursor, Drive, Executor, LeafPrecompute,
+    NodeScratch, PipeTables, PlacedAllen, PlacedComparison, PlacedDuration, PlacedWordComparison,
     PointProbeSpec, Sink, ValidatedPlan,
 };
 
@@ -303,7 +303,11 @@ impl Executor {
             leaf_const_residuals: leaf.const_residuals,
             leaf_row: leaf.row,
             scan_filter: Vec::new(),
-            pipe: (plan.nodes().len() >= 2).then(|| PipeTables::of(plan)),
+            drive: if plan.nodes().len() >= 2 {
+                Drive::Pipeline(std::rc::Rc::new(PipeTables::of(plan)))
+            } else {
+                Drive::Leaf
+            },
             cancelled: Vec::new(),
             cancel_epoch: 0,
             next_origin: 0,
@@ -377,10 +381,13 @@ impl Executor {
         // pipeline — probes batch ACROSS parent entries, D2 skips cancel
         // origins — and single-node plans are one leaf pass. The
         // recursive per-survivor executor is gone.
-        if self.pipe.is_some() {
-            self.run_pipeline(plan, colts, bindings, sink, counters);
-        } else {
-            self.run_node(plan, 0, colts, bindings, sink, counters);
+        match &self.drive {
+            Drive::Pipeline(_) => {
+                self.run_pipeline(plan, colts, bindings, sink, counters);
+            }
+            Drive::Leaf => {
+                self.run_node(plan, 0, colts, bindings, sink, counters);
+            }
         }
         // The poison drain: set-once, so the first typed stop IS the
         // execution's one honest answer — no precedence to adjudicate.
@@ -407,7 +414,10 @@ impl Executor {
         sink: &mut S,
         counters: &mut C,
     ) {
-        let tables = self.pipe.take().expect("dispatched on Some");
+        let tables = match &self.drive {
+            Drive::Pipeline(tables) => std::rc::Rc::clone(tables),
+            Drive::Leaf => unreachable!("dispatched on Pipeline"),
+        };
         let slot_count = bindings.slot_count();
         for scratch in &mut self.scratch {
             scratch.pending_bindings.clear();
@@ -438,6 +448,5 @@ impl Executor {
                 self.pump(&tables, plan, i, colts, bindings, sink, counters);
             }
         }
-        self.pipe = Some(tables);
     }
 }

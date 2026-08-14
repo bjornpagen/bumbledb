@@ -404,7 +404,10 @@ fn residuals_compact_survivors_before_the_sibling_probes() {
     let mut sink = CollectSink::default();
     let mut counters = Order::default();
     let mut executor = Executor::with_batch_size(&plan, 128);
-    assert!(executor.pipe.is_some(), "two nodes pipeline");
+    assert!(
+        matches!(executor.drive, super::super::Drive::Pipeline(_)),
+        "two nodes pipeline"
+    );
     executor
         .execute(&plan, &mut colts, &mut bindings, &mut sink, &mut counters)
         .expect("execute");
@@ -465,7 +468,7 @@ fn residuals_compact_survivors_before_the_sibling_probes() {
     let mut counters = Order::default();
     let mut executor = Executor::with_batch_size(&plan, 128);
     assert!(
-        executor.pipe.is_none(),
+        matches!(executor.drive, super::super::Drive::Leaf),
         "one factored node runs the leaf pass"
     );
     executor

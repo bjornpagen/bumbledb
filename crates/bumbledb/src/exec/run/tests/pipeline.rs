@@ -53,7 +53,10 @@ fn pipelined_executor_matches_oracle() {
         }
         for batch in [1usize, 2, 127, 128, 129, 1024] {
             let mut executor = Executor::with_batch_size(&pipe_plan, batch);
-            assert!(executor.pipe.is_some(), "pipeline dispatched");
+            assert!(
+                matches!(executor.drive, super::super::Drive::Pipeline(_)),
+                "pipeline dispatched"
+            );
             let mut colts = colts_for(&pipe_plan, &views);
             let mut bindings = Bindings::new(pipe_plan.slot_count());
             let mut sink = CollectSink::default();
@@ -138,7 +141,10 @@ fn pipelined_middle_nodes_probe_in_cross_parent_batches() {
     let sinks = all_vars(&normalized);
     let plan = planned_with_sinks(&normalized, &schema, &[0, 1, 2], &sinks);
     let mut executor = Executor::new(&plan);
-    assert!(executor.pipe.is_some());
+    assert!(matches!(
+        executor.drive,
+        super::super::Drive::Pipeline(_)
+    ));
     let mut colts = colts_for(&plan, &views);
     let mut bindings = Bindings::new(plan.slot_count());
     let mut sink = CollectSink::default();
@@ -232,7 +238,10 @@ fn zero_binding_gate_yields_one_entry_not_the_relation() {
             let dir = TempDir::new(&format!("run-gate-{}-{}", order[2], usize::from(present)));
             let views = views_of(&dir, &schema, &[r.clone(), gate_rows, t.clone()]);
             let mut executor = Executor::new(&plan);
-            assert!(executor.pipe.is_some(), "three nodes pipeline");
+            assert!(
+                matches!(executor.drive, super::super::Drive::Pipeline(_)),
+                "three nodes pipeline"
+            );
             let mut colts = colts_for(&plan, &views);
             let mut bindings = Bindings::new(plan.slot_count());
             let mut sink = CollectSink::default();

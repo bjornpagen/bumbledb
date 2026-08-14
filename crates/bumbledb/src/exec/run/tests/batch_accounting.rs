@@ -237,7 +237,10 @@ fn pump_gather_windows_are_attributed() {
     let sinks = all_vars(&normalized);
     let plan = planned_with_sinks(&normalized, &schema, &[0, 1, 2], &sinks);
     let mut executor = Executor::new(&plan);
-    assert!(executor.pipe.is_some(), "pipeline dispatched");
+            assert!(
+                matches!(executor.drive, super::super::Drive::Pipeline(_)),
+                "pipeline dispatched"
+            );
     let mut colts = colts_for(&plan, &views);
     let mut bindings = Bindings::new(plan.slot_count());
     let mut sink = CollectSink::default();
@@ -314,7 +317,10 @@ fn zero_yield_draws_are_not_batches() {
     let sinks = all_vars(&normalized);
     let plan = planned_with_sinks(&normalized, &schema, &[0, 1, 2], &sinks);
     let mut executor = Executor::with_batch_size(&plan, 4);
-    assert!(executor.pipe.is_some(), "pipeline dispatched");
+            assert!(
+                matches!(executor.drive, super::super::Drive::Pipeline(_)),
+                "pipeline dispatched"
+            );
     let mut colts = colts_for(&plan, &views);
     let mut bindings = Bindings::new(plan.slot_count());
     let mut sink = CollectSink::default();
