@@ -567,7 +567,7 @@ def ledger : List Obligation := [
 
   .row @Query.evalLinearReach_eq_lfp `Bumbledb.Query.evalLinearReach_eq_lfp
     "The executable reach lists exactly reachDen."
-    "translate_query (crates/bumbledb-bench/src/translate/program.rs)"
+    "translate_query (crates/bumbledb-bench/src/translate/reach.rs)"
     "lean/conformance/cases",
 
   .row @Query.evalLinearReach_eq_lfp `Bumbledb.Query.evalLinearReach_eq_lfp
