@@ -72,7 +72,7 @@ impl Violation {
     /// The violated law's name.
     fn law(&self) -> &'static str {
         match self {
-            Self::Functionality { .. } => "functionality",
+            Self::Functionality(_) => "functionality",
             Self::Containment { .. } => "containment",
             Self::Capacity { .. } => "capacity",
         }
@@ -91,14 +91,14 @@ impl Violation {
                 direction: Direction::TargetRequired,
                 ..
             } => " (target side)",
-            Self::Functionality { .. } | Self::Capacity { .. } => "",
+            Self::Functionality(_) | Self::Capacity { .. } => "",
         }
     }
 
     /// The factual tail after the em-dash: what happened.
     fn tail(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Functionality { .. } => write!(f, "two live facts claim one key"),
+            Self::Functionality(_) => write!(f, "two live facts claim one key"),
             Self::Containment {
                 direction: Direction::SourceUnsatisfied,
                 ..
@@ -229,6 +229,12 @@ impl fmt::Display for CorruptionError {
                 relation.0
             ),
             Self::MalformedValue(kind) => write!(f, "malformed stored value: {kind}"),
+            Self::EphemeralDirtyArmed => write!(
+                f,
+                "ephemeral dirty marker armed — the store's last session never proved its sync"
+            ),
+            Self::DictReverseIdReuse => write!(f, "dict reverse id reuse"),
+            Self::DescriptorRoundTrip => write!(f, "descriptor round trip"),
             Self::NonUtf8Intern(id) => write!(f, "intern id {id}: stored bytes are not UTF-8"),
             Self::NonzeroFixedBytesPad(tail) => write!(
                 f,

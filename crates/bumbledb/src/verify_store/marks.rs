@@ -9,7 +9,7 @@
 
 use crate::encoding::encode_u64;
 use crate::error::{Error, Result, Violation};
-use crate::schema::Enforcement;
+use crate::schema::CapacityEnforcement;
 use crate::storage::commit::judgment;
 
 use super::{StoreFinding, Sweep};
@@ -22,14 +22,15 @@ pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
     // axiom's id encoding is the parent tuple, and the commit path's own
     // capacity check measures its child group.
     for (index, statement) in schema.capacities().iter().enumerate() {
-        let Enforcement::Closed { .. } = &statement.enforcement else {
+        let CapacityEnforcement::Closed { .. } = &statement.enforcement else {
             continue;
         };
         let capacity_id =
             crate::schema::CapacityId(u16::try_from(index).expect("statement count fits u16"));
         let rows = schema
             .relation(statement.target.relation)
-            .extension()
+            .body()
+            .closed_rows()
             .expect("the Closed enforcement arm resolves only against a closed target");
         for row_index in 0..rows.len() {
             let parent = encode_u64(u64::try_from(row_index).expect("row index fits u64"));

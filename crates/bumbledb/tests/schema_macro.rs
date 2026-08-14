@@ -1162,10 +1162,7 @@ mod keyed_equality {
         assert!(matches!(
             error,
             Error::CommitRejected { violations }
-                if matches!(violations.as_slice(), [Violation::Functionality {
-                    statement: StatementId(1),
-                    ..
-                }])
+                if matches!(violations.as_slice(), [Violation::Functionality(fv)] if fv.statement() == StatementId(1))
         ));
     }
 }
@@ -1227,15 +1224,9 @@ mod redundant_superkey_warning {
         assert!(matches!(
             violations.as_slice(),
             [
-                Violation::Functionality {
-                    statement: StatementId(0),
-                    ..
-                },
-                Violation::Functionality {
-                    statement: StatementId(1),
-                    ..
-                }
-            ]
+                Violation::Functionality(a),
+                Violation::Functionality(b),
+            ] if a.statement() == StatementId(0) && b.statement() == StatementId(1)
         ));
     }
 }
@@ -1294,8 +1285,9 @@ mod extension_forms {
             StatementView::Capacity(_, _)
         ));
         let cap = &schema.capacities()[0];
-        assert_eq!((cap.lo, cap.hi), (1, Some(Bound::Lit(3))));
-        assert_eq!(cap.weight, Weight::Unit);
+        assert_eq!(cap.lo, 1);
+        assert_eq!(cap.hi.to_bound(), Some(Bound::Lit(3)));
+        assert_eq!(cap.weight.to_weight(), Weight::Unit);
         assert_eq!(cap.target.relation, Tracker::PARENT);
         assert_eq!(cap.source.relation, Tracker::TASK);
         assert_eq!(
@@ -1306,12 +1298,15 @@ mod extension_forms {
             )]
         );
         let star = &schema.capacities()[1];
-        assert_eq!((star.lo, star.hi), (2, None));
-        assert_eq!(star.weight, Weight::Unit);
+        assert_eq!(star.lo, 2);
+        assert_eq!(star.hi.to_bound(), None);
+        assert_eq!(star.weight.to_weight(), Weight::Unit);
         let exact = &schema.capacities()[2];
-        assert_eq!((exact.lo, exact.hi), (4, Some(Bound::Lit(4))));
+        assert_eq!(exact.lo, 4);
+        assert_eq!(exact.hi.to_bound(), Some(Bound::Lit(4)));
         let exclusion = &schema.capacities()[3];
-        assert_eq!((exclusion.lo, exclusion.hi), (0, Some(Bound::Lit(0))));
+        assert_eq!(exclusion.lo, 0);
+        assert_eq!(exclusion.hi.to_bound(), Some(Bound::Lit(0)));
     }
 
     /// The capacity statement's descriptor is target-left as declared:
@@ -1432,9 +1427,16 @@ mod capacity_forms {
         // Duration weight, the weighted floor.
         let caps = schema.capacities();
         assert_eq!(caps.len(), 3);
-        assert_eq!(caps[0].hi, Some(Bound::TargetField(Grid::POOL_SUPPLY)));
-        assert_eq!(caps[1].weight, Weight::DurationOf(Grid::DEVICE_BOOKED));
-        assert_eq!((caps[2].lo, caps[2].hi), (1, None));
+        assert_eq!(
+            caps[0].hi.to_bound(),
+            Some(Bound::TargetField(Grid::POOL_SUPPLY))
+        );
+        assert_eq!(
+            caps[1].weight.to_weight(),
+            Weight::DurationOf(Grid::DEVICE_BOOKED)
+        );
+        assert_eq!(caps[2].lo, 1);
+        assert_eq!(caps[2].hi.to_bound(), None);
         // And through the real boundary: `Db::create` validates the same
         // descriptor.
         let dir = crate::common::TempDir::new("macro-capacity-forms");
@@ -1527,7 +1529,8 @@ mod radix_literals {
         );
         let schema = descriptor.validate().expect("the declared schema is valid");
         let cap = &schema.capacities()[0];
-        assert_eq!((cap.lo, cap.hi), (2, Some(Bound::Lit(4))));
+        assert_eq!(cap.lo, 2);
+        assert_eq!(cap.hi.to_bound(), Some(Bound::Lit(4)));
         assert_eq!(
             cap.source.selection[..],
             [(Radix::TASK_STATE, LiteralSet::One(Value::U64(15)))]
@@ -1997,10 +2000,7 @@ mod element_domain_typing {
             matches!(
                 &error,
                 Error::CommitRejected { violations }
-                    if matches!(violations.as_slice(), [Violation::Functionality {
-                        statement: StatementId(2),
-                        ..
-                    }])
+                    if matches!(violations.as_slice(), [Violation::Functionality(fv)] if fv.statement() == StatementId(2))
             ),
             "the pointwise key convicts the overlap, got {error:?}"
         );

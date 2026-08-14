@@ -226,6 +226,23 @@ const META_STORE_KIND: &[u8] = &[4];
 /// this one).
 const META_SCHEMA_DESCRIPTOR: &[u8] = &[5];
 
+/// Three live environment modes (R17/R18): durable writer, ephemeral
+/// writer, exhume reader. Disk [`StoreKind`] stays the persisted sum.
+pub(crate) enum EnvMode {
+    Durable {
+        lock: std::fs::File,
+    },
+    Ephemeral {
+        /// Held until `Environment` drops; never read. Must outlive `env`
+        /// (fields drop in declaration order) so another handle cannot
+        /// acquire the path while heed still has it open.
+        #[allow(dead_code)]
+        lock: std::fs::File,
+        dirty_marker: std::path::PathBuf,
+    },
+    Exhume,
+}
+
 /// The LMDB substrate: environment plus the three named databases.
 ///
 /// On a durable store, durability is LMDB defaults — fsync per commit;
@@ -245,20 +262,9 @@ pub struct Environment {
     /// environment's snapshots — the generation clock knows whose clock
     /// it is.
     instance: u64,
-    /// The exclusive advisory lock on `<dir>/bumbledb.lock`, held for the
-    /// environment's lifetime; dropping the handle releases it. Writers
-    /// only — the lock law is a writer law (R17): the read-only lane
-    /// ([`Environment::exhume`]) opens `MDB_RDONLY`, can corrupt
-    /// nothing, and takes none.
-    _lock: Option<std::fs::File>,
-    /// The ephemeral kind's on-disk dirty marker
-    /// (`<dir>/ephemeral.dirty` — the crash contract, ruled 2026-07-23,
-    /// R18), `Some` only on an ephemeral environment: set synced at
-    /// open, cleared at clean close (this handle's drop, after one
-    /// forced data sync) — the kind's only fsyncs, bracketing its
-    /// lifetime. A reopen that finds it set wipes and re-initializes:
-    /// the possibly-torn store is never opened at all.
-    dirty_marker: Option<std::path::PathBuf>,
+    /// Writer lock vs exhume vs ephemeral marker — one sum, not two
+    /// independent Options.
+    mode: EnvMode,
     /// Process-lifetime escaped `Q` high-water: once `alloc` has handed
     /// an id to the host, this floor never retreats in this process —
     /// even when the counters-only disk flush fails
@@ -283,14 +289,19 @@ pub struct Environment {
 /// never proven.
 impl Drop for Environment {
     fn drop(&mut self) {
-        let Some(marker) = self.dirty_marker.take() else {
-            return;
+        // Match the ephemeral arm without moving the writer lock. Fields
+        // drop in declaration order (`env` before `mode`), so the lock
+        // must still be held while heed closes — otherwise another
+        // handle can acquire it and surface `EnvAlreadyOpened`.
+        let dirty_marker = match &mut self.mode {
+            EnvMode::Ephemeral { dirty_marker, .. } => std::mem::take(dirty_marker),
+            EnvMode::Durable { .. } | EnvMode::Exhume => return,
         };
         if self.env.force_sync().is_err() {
             return;
         }
-        if std::fs::remove_file(&marker).is_ok() {
-            let _ = sync_dirent_chain(marker.parent().unwrap_or(std::path::Path::new(".")));
+        if std::fs::remove_file(&dirty_marker).is_ok() {
+            let _ = sync_dirent_chain(dirty_marker.parent().unwrap_or(std::path::Path::new(".")));
         }
     }
 }
@@ -394,8 +405,7 @@ impl Environment {
         meta: Database<Bytes, Bytes>,
         data: Database<Bytes, Bytes>,
         dict: Database<Bytes, Bytes>,
-        lock: Option<std::fs::File>,
-        dirty_marker: Option<std::path::PathBuf>,
+        mode: EnvMode,
     ) -> Self {
         Self {
             env,
@@ -403,12 +413,25 @@ impl Environment {
             data,
             dict,
             instance: NEXT_INSTANCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
-            _lock: lock,
-            dirty_marker,
+            mode,
             escaped_fresh: Mutex::new(BTreeMap::new()),
             pending_fresh_flush: Mutex::new(BTreeMap::new()),
             #[cfg(test)]
             fail_fresh_flush: AtomicU32::new(0),
+        }
+    }
+
+    /// Arm the ephemeral dirty marker after a successful ephemeral open.
+    /// The writer lock is already held from Durable assemble.
+    pub(super) fn arm_ephemeral(&mut self, dirty_marker: std::path::PathBuf) {
+        match std::mem::replace(&mut self.mode, EnvMode::Exhume) {
+            EnvMode::Durable { lock } => {
+                self.mode = EnvMode::Ephemeral { lock, dirty_marker };
+            }
+            other => {
+                self.mode = other;
+                unreachable!("ephemeral open always holds the writer lock");
+            }
         }
     }
 

@@ -7,7 +7,7 @@ use crate::error::{CorruptionError, Error, Result};
 
 use super::open_env::{OpenLane, open_env};
 use super::read_meta::{check_format_version, read_fingerprint, read_store_kind};
-use super::{Environment, META_SCHEMA_DESCRIPTOR, StoreKind};
+use super::{EnvMode, Environment, META_SCHEMA_DESCRIPTOR, StoreKind};
 
 /// What [`Environment::exhume`] hands the API layer: the opened
 /// environment plus the raw self-description the store carries — the
@@ -74,9 +74,7 @@ impl Environment {
         // until the error vocabulary grows one — error.rs sits outside
         // the storage estate.)
         if kind == StoreKind::Ephemeral && super::dirty_marker_path(path).try_exists()? {
-            return Err(Error::Corruption(CorruptionError::MalformedValue(
-                "ephemeral dirty marker armed — the store's last session never proved its sync",
-            )));
+            return Err(Error::Corruption(CorruptionError::EphemeralDirtyArmed));
         }
         let data: Database<Bytes, Bytes> = env
             .open_database(&rtxn, Some("_data"))?
@@ -94,12 +92,7 @@ impl Environment {
         // writes nothing, so the read-only lane stays read-only.
         rtxn.commit()?;
         Ok(ExhumedEnvironment {
-            env: Self::assemble(
-                env, meta, data, dict,
-                // The lock law is a writer law (R17): the read-only lane
-                // holds none.
-                None, None,
-            ),
+            env: Self::assemble(env, meta, data, dict, EnvMode::Exhume),
             kind,
             fingerprint,
             descriptor,

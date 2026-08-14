@@ -2,7 +2,7 @@
 
 - **Severity:** medium
 - **Tree:** schema
-- **Status:** OPEN
+- **Status:** FIXED(0d6108f2)
 - **Source:** audit/storage-schema.md F18
 - **Depends on:** none
 - **Conflicts with:** none (descriptor-side accessor; schema-001 is the sealed relation)

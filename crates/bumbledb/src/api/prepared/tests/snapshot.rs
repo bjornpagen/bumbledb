@@ -107,7 +107,7 @@ fn prepare_emits_no_image_events() {
     obs::start_capture();
     let mut prepared = prepare(&txn, &cache, &schema, &by_account_query()).expect("prepare");
     let events = obs::finish_capture();
-    let names: Vec<&str> = events.iter().map(|e| e.name).collect();
+    let names: Vec<&str> = events.iter().map(|e| e.name()).collect();
     assert!(
         !names.contains(&obs::names::IMAGE_BUILD),
         "prepare built an image: {names:?}"
@@ -122,7 +122,7 @@ fn prepare_emits_no_image_events() {
         .execute_collect(&txn, &cache, &[BindValue::U64(7), BindValue::I64(-100)])
         .expect("execute");
     let events = obs::finish_capture();
-    let names: Vec<&str> = events.iter().map(|e| e.name).collect();
+    let names: Vec<&str> = events.iter().map(|e| e.name()).collect();
     assert!(
         names.contains(&obs::names::IMAGE_BUILD),
         "the first execution pays the build: {names:?}"

@@ -6,7 +6,7 @@ use bumbledb::obs::{Category, TraceEvent};
 /// by (filter, sort, stack walk, direct-child charging — previously
 /// spelled twice, drift-prone).
 pub(super) struct Sweep<'a> {
-    /// The real spans (positive duration, `Category::Phase` excluded),
+    /// The real spans (`TraceEvent::Span`, `Category::Phase` excluded),
     /// sorted parent-before-child.
     pub(super) spans: Vec<&'a TraceEvent>,
     /// Each span's direct parent, as an index into `spans`; `None` at
@@ -19,7 +19,7 @@ pub(super) struct Sweep<'a> {
 
 /// The one containment sweep. Phase accumulators are synthetic point
 /// events (their `a0` is a duration total, not a timestamped span) —
-/// containment math must not see them — and zero-duration events have
+/// containment math must not see them — and point events have
 /// nothing to charge or enclose.
 ///
 /// Containment is positional: spans re-sorted by `(start, -end)` and
@@ -34,12 +34,12 @@ pub(super) fn sweep(events: &[TraceEvent]) -> Sweep<'_> {
     let mut spans: Vec<(usize, &TraceEvent)> = events
         .iter()
         .enumerate()
-        .filter(|(_, e)| e.dur_ns > 0 && e.cat != Category::Phase)
+        .filter(|(_, e)| matches!(e, TraceEvent::Span { cat, .. } if *cat != Category::Phase))
         .collect();
     spans.sort_by_key(|&(recorded, e)| {
         (
-            e.start_ns,
-            std::cmp::Reverse(e.start_ns + e.dur_ns),
+            e.start_ns(),
+            std::cmp::Reverse(e.start_ns() + e.dur_ns()),
             std::cmp::Reverse(recorded),
         )
     });
@@ -50,7 +50,7 @@ pub(super) fn sweep(events: &[TraceEvent]) -> Sweep<'_> {
     let mut stack: Vec<usize> = Vec::new();
     for (index, event) in spans.iter().enumerate() {
         while let Some(&top) = stack.last() {
-            if spans[top].start_ns + spans[top].dur_ns <= event.start_ns {
+            if spans[top].start_ns() + spans[top].dur_ns() <= event.start_ns() {
                 stack.pop();
             } else {
                 break;
@@ -58,7 +58,7 @@ pub(super) fn sweep(events: &[TraceEvent]) -> Sweep<'_> {
         }
         if let Some(&enclosing) = stack.last() {
             parent[index] = Some(enclosing);
-            child_ns[enclosing] += event.dur_ns;
+            child_ns[enclosing] += event.dur_ns();
         }
         stack.push(index);
     }

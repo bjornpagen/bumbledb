@@ -47,20 +47,74 @@ impl Category {
     }
 }
 
-/// One recorded span or point event (`dur_ns == 0` ⇒ point event). The
-/// two payload args' meanings are defined per name in [`names`].
-/// The time fields are nanoseconds in every drained event; inside a
-/// live capture buffer they hold raw anchor-relative ticks until
-/// [`finish_capture`] converts once per event, off the measured
-/// windows (the `PhaseTimers` discipline).
+/// One recorded span or point event. The two payload args' meanings are
+/// defined per name in [`names`]. The time fields are nanoseconds in
+/// every drained event; inside a live capture buffer they hold raw
+/// anchor-relative ticks until [`finish_capture`] converts once per
+/// event, off the measured windows (the `PhaseTimers` discipline).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct TraceEvent {
-    pub name: &'static str,
-    pub cat: Category,
-    pub start_ns: u64,
-    pub dur_ns: u64,
-    pub a0: u64,
-    pub a1: u64,
+pub enum TraceEvent {
+    Span {
+        name: &'static str,
+        cat: Category,
+        start_ns: u64,
+        dur_ns: u64,
+        a0: u64,
+        a1: u64,
+    },
+    Point {
+        name: &'static str,
+        cat: Category,
+        start_ns: u64,
+        a0: u64,
+        a1: u64,
+    },
+}
+
+impl TraceEvent {
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Span { name, .. } | Self::Point { name, .. } => name,
+        }
+    }
+
+    #[must_use]
+    pub const fn cat(self) -> Category {
+        match self {
+            Self::Span { cat, .. } | Self::Point { cat, .. } => cat,
+        }
+    }
+
+    #[must_use]
+    pub const fn start_ns(self) -> u64 {
+        match self {
+            Self::Span { start_ns, .. } | Self::Point { start_ns, .. } => start_ns,
+        }
+    }
+
+    /// Span duration, or `0` at Chrome-trace export for a point event.
+    #[must_use]
+    pub const fn dur_ns(self) -> u64 {
+        match self {
+            Self::Span { dur_ns, .. } => dur_ns,
+            Self::Point { .. } => 0,
+        }
+    }
+
+    #[must_use]
+    pub const fn a0(self) -> u64 {
+        match self {
+            Self::Span { a0, .. } | Self::Point { a0, .. } => a0,
+        }
+    }
+
+    #[must_use]
+    pub const fn a1(self) -> u64 {
+        match self {
+            Self::Span { a1, .. } | Self::Point { a1, .. } => a1,
+        }
+    }
 }
 
 /// The instrumentation-point name registry: every span/event name lives
@@ -523,8 +577,17 @@ mod imp {
         // in-buffer events carry raw anchor-relative ticks in the two
         // time fields until the capture ends.
         for event in &mut events {
-            event.start_ns = fastclock::ticks_to_ns(event.start_ns);
-            event.dur_ns = fastclock::ticks_to_ns(event.dur_ns);
+            match event {
+                TraceEvent::Span {
+                    start_ns, dur_ns, ..
+                } => {
+                    *start_ns = fastclock::ticks_to_ns(*start_ns);
+                    *dur_ns = fastclock::ticks_to_ns(*dur_ns);
+                }
+                TraceEvent::Point { start_ns, .. } => {
+                    *start_ns = fastclock::ticks_to_ns(*start_ns);
+                }
+            }
         }
         events
     }
@@ -569,7 +632,7 @@ mod imp {
         fn drop(&mut self) {
             if let Some(live) = self.live.take() {
                 // Tick-valued time fields until the drain converts.
-                record(TraceEvent {
+                record(TraceEvent::Span {
                     name: live.name,
                     cat: live.cat,
                     start_ns: live.start_ticks,
@@ -639,11 +702,10 @@ pub fn event(name: &'static str, cat: Category, a0: u64, a1: u64) {
     if imp::capturing() {
         // Tick-valued time fields until the drain converts.
         let now = imp::now_ticks();
-        imp::record(TraceEvent {
+        imp::record(TraceEvent::Point {
             name,
             cat,
             start_ns: now,
-            dur_ns: 0,
             a0,
             a1,
         });

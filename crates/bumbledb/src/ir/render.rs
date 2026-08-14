@@ -79,7 +79,7 @@ impl ClosedRefs {
             let target = &statement.target;
             let target_closed = schema
                 .relation_checked(target.relation)
-                .is_some_and(Relation::is_closed);
+                .is_some_and(|rel| rel.body().closed_rows().is_some());
             if target_closed
                 && target.projection.as_ref() == [FieldId(0)]
                 && let [field] = source.projection.as_ref()
@@ -88,7 +88,7 @@ impl ClosedRefs {
             }
         }
         for (index, relation) in schema.relations().iter().enumerate() {
-            if relation.is_closed() {
+            if relation.body().closed_rows().is_some() {
                 let id = RelationId(u32::try_from(index).expect("relation count fits u32"));
                 map.insert((id, FieldId(0)), id);
             }
@@ -121,7 +121,7 @@ impl ClosedRefs {
         let Value::U64(word) = value else {
             return None;
         };
-        let rows = schema.relation_checked(closed)?.extension()?;
+        let rows = schema.relation_checked(closed)?.body().closed_rows()?;
         match usize::try_from(*word).ok().and_then(|row| rows.get(row)) {
             Some(row) => Some(row.handle.to_string()),
             None => Some(format!(

@@ -225,7 +225,7 @@ pub const NS_STAT: u8 = b'S';
 #[inline]
 pub fn debug_assert_ordinary(schema: &crate::schema::Schema, relation: RelationId) {
     debug_assert!(
-        !schema.relation(relation).is_closed(),
+        schema.relation(relation).body().closed_rows().is_none(),
         "no F/M/U/R namespace entry may name closed relation {relation:?}"
     );
 }

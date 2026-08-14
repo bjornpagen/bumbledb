@@ -38,16 +38,16 @@ use std::ops::Bound;
 
 use heed::{AnyTls, RoTxn};
 
-use super::plan::{CommitPlan, EdgeOp};
+use super::plan::{CommitPlan, EdgeOp, FactOp};
 use super::{decode_row_id, fact_by_row};
 use crate::encoding::{FactLayout, encode_u64, field_bytes, field_word_bytes};
 use crate::error::{CorruptionError, Direction, Error, Result, Violation, Violations};
 use crate::interval::sweep::{Continuation, sweep};
 use crate::obs;
 use crate::schema::{
-    AxiomIndex, Bound as CapacityBound, CapacityId, CapacityStatement, CompiledCheck,
-    ContainmentId, DisjointDeterminantProof, Enforcement, IntervalTail, KeyId, Schema,
-    StatementView, Weight,
+    AxiomIndex, BoundCeiling, CapacityEnforcement, CapacityId, CapacityStatement, CompiledCheck,
+    ContainmentId, DisjointDeterminantProof, Enforcement, IntervalTail, KeyForm, KeyId, Schema,
+    SealedBound, SealedWeight, StatementView,
 };
 use crate::storage::delta::WriteDelta;
 use crate::storage::env::{ReadTxn, WriteTxn};
@@ -122,13 +122,14 @@ pub(crate) fn child_weight(
     layout: &FactLayout,
     fact: &[u8],
 ) -> Result<u64> {
-    measure_weight(
-        statement.weight,
-        statement.weight_tail,
-        layout,
-        fact,
-        statement.id,
-    )
+    measure_weight(statement.weight, layout, fact, statement.id)
+}
+
+fn exceeds_ceiling(measure: u128, hi: BoundCeiling) -> bool {
+    match hi {
+        BoundCeiling::Unbounded => false,
+        BoundCeiling::Finite(n) => measure > u128::from(n),
+    }
 }
 
 /// The ONE weight arithmetic behind [`child_weight`] — spelled over the
@@ -138,28 +139,24 @@ pub(crate) fn child_weight(
 /// engine definition, never an inline re-implementation
 /// (`docs/architecture/60-validation.md` § one mechanism per law).
 pub(crate) fn measure_weight(
-    weight: Weight,
-    weight_tail: Option<IntervalTail>,
+    weight: SealedWeight,
     layout: &FactLayout,
     fact: &[u8],
     statement: bumbledb_theory::schema::StatementId,
 ) -> Result<u64> {
     match weight {
-        Weight::Unit => Ok(1),
-        Weight::Field(field) => Ok(u64::from_be_bytes(field_word_bytes(
+        SealedWeight::Unit => Ok(1),
+        SealedWeight::Field(field) => Ok(u64::from_be_bytes(field_word_bytes(
             fact,
             layout,
             usize::from(field.0),
         ))),
-        Weight::DurationOf(field) => {
-            let tail = weight_tail.expect("validate seals a tail for every Duration weight");
-            interval_measure(
-                tail,
-                field_bytes(fact, layout, usize::from(field.0)),
-                statement,
-                fact,
-            )
-        }
+        SealedWeight::Duration { field, tail } => interval_measure(
+            tail,
+            field_bytes(fact, layout, usize::from(field.0)),
+            statement,
+            fact,
+        ),
     }
 }
 
@@ -170,30 +167,24 @@ pub(crate) fn measure_weight(
 /// passes through; a dependent bound reads the named TARGET-row field —
 /// u64 word or interval measure — off the holder fact in hand.
 pub(crate) fn resolve_bound(
-    bound: Option<CapacityBound>,
-    bound_tail: Option<IntervalTail>,
+    bound: SealedBound,
     layout: &FactLayout,
     parent_fact: &[u8],
     statement: bumbledb_theory::schema::StatementId,
-) -> Result<Option<u64>> {
+) -> Result<BoundCeiling> {
     match bound {
-        None => Ok(None),
-        Some(CapacityBound::Lit(n)) => Ok(Some(n)),
-        Some(CapacityBound::TargetField(field)) => Ok(Some(u64::from_be_bytes(field_word_bytes(
+        SealedBound::Unbounded => Ok(BoundCeiling::Unbounded),
+        SealedBound::Lit(n) => Ok(BoundCeiling::Finite(n)),
+        SealedBound::TargetField(field) => Ok(BoundCeiling::Finite(u64::from_be_bytes(
+            field_word_bytes(parent_fact, layout, usize::from(field.0)),
+        ))),
+        SealedBound::Duration { field, tail } => interval_measure(
+            tail,
+            field_bytes(parent_fact, layout, usize::from(field.0)),
+            statement,
             parent_fact,
-            layout,
-            usize::from(field.0),
-        )))),
-        Some(CapacityBound::TargetDuration(field)) => {
-            let tail = bound_tail.expect("validate seals a tail for every Duration bound");
-            interval_measure(
-                tail,
-                field_bytes(parent_fact, layout, usize::from(field.0)),
-                statement,
-                parent_fact,
-            )
-            .map(Some)
-        }
+        )
+        .map(BoundCeiling::Finite),
     }
 }
 
@@ -207,7 +198,7 @@ pub(crate) fn expected_slot_weight(
     layout: &FactLayout,
     fact: &[u8],
 ) -> Result<Option<u64>> {
-    if matches!(statement.weight, Weight::Unit) {
+    if matches!(statement.weight, SealedWeight::Unit) {
         return Ok(None);
     }
     Ok(Some(child_weight(statement, layout, fact)?))
@@ -463,12 +454,12 @@ pub(super) fn check_source(
     // order — and the surviving witness, now the KEY-LEAST violator per
     // citation (`tests/witness_stability.rs`, the licensed flip) — is
     // deterministic whatever the sort algorithm does with equal keys.
-    let edge_count = plan.inserts.iter().map(|op| op.edges.len()).sum();
+    let edge_count = plan.inserts.iter().map(|op| op.edges().len()).sum();
     let mut worklist: Vec<(&EdgeOp, &[u8])> = Vec::with_capacity(edge_count);
     worklist.extend(
         plan.inserts
             .iter()
-            .flat_map(|op| op.edges.iter().map(|edge| (edge, op.fact))),
+            .flat_map(|op| op.edges().iter().map(|edge| (edge, op.fact()))),
     );
     worklist.sort_unstable_by(|(a, a_fact), (b, b_fact)| {
         (a.containment, &a.key_bytes, *a_fact).cmp(&(b.containment, &b.key_bytes, *b_fact))
@@ -504,21 +495,28 @@ pub(super) fn check_source(
             key_bytes: &edge.key_bytes,
             fact_bytes,
             direction: Direction::SourceUnsatisfied,
-            source_tail: schema.source_tail(statement),
         };
         let outcome = match &statement.enforcement {
             Enforcement::ScalarProbe { .. } => {
                 checker.check_scalar_sorted(&probe, &mut sorted_gets)
             }
-            Enforcement::IntervalCoverage { disjoint, .. } => {
-                checker.check_coverage(*disjoint, &probe)
-            }
+            Enforcement::IntervalCoverage {
+                disjoint,
+                source_tail,
+                ..
+            } => checker.check_coverage(*disjoint, *source_tail, &probe),
             Enforcement::Closed { .. } => unreachable!("classified above"),
         };
         collect(outcome, violations)?;
     }
     for op in &plan.inserts {
-        for membership in &op.memberships {
+        let FactOp::Insert {
+            memberships, fact, ..
+        } = op
+        else {
+            continue;
+        };
+        for membership in memberships {
             let statement = schema.containment(membership.containment);
             let Enforcement::Closed { members } = &statement.enforcement else {
                 continue;
@@ -530,7 +528,7 @@ pub(super) fn check_source(
                 violations.push(Violation::Containment {
                     statement: statement.id,
                     direction: Direction::SourceUnsatisfied,
-                    fact: op.fact.into(),
+                    fact: (*fact).into(),
                 });
             }
         }
@@ -624,7 +622,7 @@ pub(super) fn check_target(
                 scanned += 1;
                 counted = true;
             }
-            if let Enforcement::IntervalCoverage { .. } = &statement.enforcement {
+            if let Enforcement::IntervalCoverage { source_tail, .. } = &statement.enforcement {
                 // Interval form: conservatively scan the whole prefix
                 // group and filter by intersection. An optimized lower
                 // bound would need the maximum source-interval length,
@@ -636,9 +634,7 @@ pub(super) fn check_target(
                 let target_tail = schema
                     .key_tail(key_statement)
                     .expect("an interval dependent resolves a pointwise key");
-                let source_tail = schema
-                    .source_tail(statement)
-                    .expect("an interval containment has an interval source position");
+                let source_tail = *source_tail;
                 let (ts, te) = target_tail
                     .words(&determinant[determinant.len() - target_tail.bytes()..])
                     .ok_or(Error::Corruption(CorruptionError::MalformedValue(
@@ -677,7 +673,12 @@ pub(super) fn check_target(
                         affected.insert((dependent.containment, k));
                     }
                 }
-            } else if schema.relation(statement.source.relation).is_closed() {
+            } else if schema
+                .relation(statement.source.relation)
+                .body()
+                .closed_rows()
+                .is_some()
+            {
                 // Domain quantification: a constant source writes no `R`
                 // edges — the surviving sources ARE the sealed
                 // extension's φ-rows, scanned directly (≤256 rows, the
@@ -750,6 +751,7 @@ pub(super) fn check_target(
         let Enforcement::IntervalCoverage {
             target_key,
             disjoint,
+            source_tail,
             ..
         } = &statement.enforcement
         else {
@@ -772,9 +774,11 @@ pub(super) fn check_target(
             key_bytes,
             fact_bytes,
             direction: Direction::TargetRequired,
-            source_tail: schema.source_tail(statement),
         };
-        collect(checker.check_coverage(*disjoint, &probe), violations)?;
+        collect(
+            checker.check_coverage(*disjoint, *source_tail, &probe),
+            violations,
+        )?;
     }
     span.set_args(scanned, 0);
     span.end();
@@ -829,7 +833,7 @@ pub(crate) fn capacity_child_image<'a>(
     out: &'a mut DeterminantImage,
 ) -> &'a DeterminantImage {
     match &statement.enforcement {
-        Enforcement::ScalarProbe {
+        CapacityEnforcement::ScalarProbe {
             key_permutation, ..
         } => keys::permuted_determinant_image(
             layout,
@@ -841,11 +845,8 @@ pub(crate) fn capacity_child_image<'a>(
         // A closed target's one probe-able identity is the synthetic id:
         // the projection is a single field, so statement order IS
         // determinant order.
-        Enforcement::Closed { .. } => {
+        CapacityEnforcement::Closed { .. } => {
             keys::determinant_image(layout, &statement.source.projection, fact, out)
-        }
-        Enforcement::IntervalCoverage { .. } => {
-            unreachable!("capacity statements refuse interval positions in projections at the gate")
         }
     }
 }
@@ -876,7 +877,7 @@ fn establishing_fact<'t>(
     determinant: &[u8],
 ) -> Result<&'t [u8]> {
     let statement = schema.key(key);
-    if statement.fresh_row {
+    if statement.form().as_fresh_row().is_some() {
         return fact_by_row(
             data,
             txn.raw(),
@@ -927,7 +928,7 @@ fn closed_source_survivor(
     let layout = relation.layout();
     let phi = &plan.selections.containment(containment_id).source;
     let mut derived = keys::DeterminantImage::scratch_with_capacity(determinant.len());
-    for row in relation.extension()? {
+    for row in relation.body().closed_rows()? {
         if !satisfies(phi, layout, &row.fact) {
             continue;
         }
@@ -963,11 +964,6 @@ pub(crate) struct Probe<'a> {
     pub(crate) fact_bytes: &'a [u8],
     /// Which side's judgment a miss convicts.
     pub(crate) direction: Direction,
-    /// Coverage probes only: how `key_bytes`' trailing interval reads —
-    /// the SOURCE field's encoding (16-byte `start ‖ end`, or the
-    /// 8-byte fixed start whose end is the source type's width).
-    /// `None` on scalar probes.
-    pub(crate) source_tail: Option<IntervalTail>,
 }
 
 impl Probe<'_> {
@@ -1106,7 +1102,7 @@ impl<'a> Checker<'a> {
     /// included.
     pub(crate) fn check_scalar(&mut self, probe: &Probe<'_>) -> Result<()> {
         let target_key = self.schema.key(probe.target_key);
-        if target_key.fresh_row {
+        if target_key.form().as_fresh_row().is_some() {
             let Some(fact) = self.fresh_row_fact(probe.target_relation, probe.key_bytes)? else {
                 return Err(probe.unsatisfied());
             };
@@ -1131,7 +1127,7 @@ impl<'a> Checker<'a> {
     /// ([`check_source`]'s sort provides exactly that).
     fn check_scalar_sorted(&mut self, probe: &Probe<'_>, gets: &mut SortedGets<'a>) -> Result<()> {
         let target_key = self.schema.key(probe.target_key);
-        if target_key.fresh_row {
+        if target_key.form().as_fresh_row().is_some() {
             let f_len = keys::fact_key(
                 &mut self.key,
                 probe.target_relation,
@@ -1176,6 +1172,7 @@ impl<'a> Checker<'a> {
     pub(crate) fn check_coverage(
         &mut self,
         disjoint: DisjointDeterminantProof,
+        source_tail: IntervalTail,
         probe: &Probe<'_>,
     ) -> Result<()> {
         disjoint.authorize_coverage();
@@ -1189,9 +1186,6 @@ impl<'a> Checker<'a> {
         // other-width) side of one element — and the walk is width-blind
         // by construction, because both tails parse to order-preserving
         // words (`docs/architecture/30-dependencies.md` § Q1).
-        let source_tail = probe
-            .source_tail
-            .expect("coverage probes carry their source tail");
         let target_tail = self
             .schema
             .key_tail(target_key)
@@ -1304,67 +1298,67 @@ impl<'a> Checker<'a> {
         parent_key: &[u8],
     ) -> Result<()> {
         let parent_fact: &[u8] = match &statement.enforcement {
-            Enforcement::ScalarProbe { target_key, .. } => {
+            CapacityEnforcement::ScalarProbe { target_key, .. } => {
                 let key_statement = self.schema.key(*target_key);
                 // A fresh-row parent key has no `U` tree (R16): the
                 // parent tuple IS the `F` row id, one get, the value the
                 // holder itself — nothing to defer.
-                let fact = if key_statement.fresh_row {
-                    let Some(fact) = self.fresh_row_fact(statement.target.relation, parent_key)?
-                    else {
-                        return Ok(());
-                    };
-                    fact
-                } else {
-                    let u_len = keys::determinant_key(
-                        &mut self.key,
-                        statement.target.relation,
-                        key_statement.id,
-                        parent_key,
-                    );
-                    let Some(value) = self.data.get(self.txn, &self.key[..u_len])? else {
-                        return Ok(());
-                    };
-                    let row_id = decode_row_id(value)?;
-                    // The holder's fact bytes are needed eagerly only by
-                    // ψ and by a dependent bound. An empty-ψ
-                    // literal-bound statement judges its whole hot path
-                    // from the `U` probe and the `R` walk alone — its
-                    // `F` get defers to the conviction (cold) path,
-                    // where the violation payload requires it anyway.
-                    let needs_fact = !matches!(checks.target, SelectionCheck::Empty)
-                        || matches!(
-                            statement.hi,
-                            Some(CapacityBound::TargetField(_) | CapacityBound::TargetDuration(_))
-                        );
-                    if !needs_fact {
-                        // ψ is Empty by construction, so the determinant
-                        // hit alone proves the holder; the bound is
-                        // literal or absent, resolved fact-free.
-                        let hi = match statement.hi {
-                            None => None,
-                            Some(CapacityBound::Lit(n)) => Some(n),
-                            Some(_) => {
-                                unreachable!("a dependent bound forces the eager holder fetch")
-                            }
+                let fact = match key_statement.form() {
+                    KeyForm::FreshRow { .. } => {
+                        let Some(fact) =
+                            self.fresh_row_fact(statement.target.relation, parent_key)?
+                        else {
+                            return Ok(());
                         };
-                        let measure =
-                            self.measure_children(statement, &checks.source, parent_key, hi)?;
-                        if measure < u128::from(statement.lo)
-                            || hi.is_some_and(|hi| measure > u128::from(hi))
-                        {
-                            let parent_fact = self.row_fact(statement.target.relation, row_id)?;
-                            return Err(Error::CommitRejected {
-                                violations: Violations::one(Violation::Capacity {
-                                    statement: statement.id,
-                                    fact: parent_fact.into(),
-                                    measure,
-                                }),
-                            });
-                        }
-                        return Ok(());
+                        fact
                     }
-                    self.row_fact(statement.target.relation, row_id)?
+                    KeyForm::Scalar | KeyForm::Pointwise { .. } => {
+                        let u_len = keys::determinant_key(
+                            &mut self.key,
+                            statement.target.relation,
+                            key_statement.id,
+                            parent_key,
+                        );
+                        let Some(value) = self.data.get(self.txn, &self.key[..u_len])? else {
+                            return Ok(());
+                        };
+                        let row_id = decode_row_id(value)?;
+                        // The holder's fact bytes are needed eagerly only by
+                        // ψ and by a dependent bound. An empty-ψ
+                        // literal-bound statement judges its whole hot path
+                        // from the `U` probe and the `R` walk alone — its
+                        // `F` get defers to the conviction (cold) path,
+                        // where the violation payload requires it anyway.
+                        let needs_fact = !matches!(checks.target, SelectionCheck::Empty)
+                            || statement.hi.needs_parent_fact();
+                        if !needs_fact {
+                            // ψ is Empty by construction, so the determinant
+                            // hit alone proves the holder; the bound is
+                            // literal or unbounded, resolved fact-free.
+                            let hi = match statement.hi {
+                                SealedBound::Unbounded => BoundCeiling::Unbounded,
+                                SealedBound::Lit(n) => BoundCeiling::Finite(n),
+                                SealedBound::TargetField(_) | SealedBound::Duration { .. } => {
+                                    unreachable!("a dependent bound forces the eager holder fetch")
+                                }
+                            };
+                            let measure =
+                                self.measure_children(statement, &checks.source, parent_key, hi)?;
+                            if measure < u128::from(statement.lo) || exceeds_ceiling(measure, hi) {
+                                let parent_fact =
+                                    self.row_fact(statement.target.relation, row_id)?;
+                                return Err(Error::CommitRejected {
+                                    violations: Violations::one(Violation::Capacity {
+                                        statement: statement.id,
+                                        fact: parent_fact.into(),
+                                        measure,
+                                    }),
+                                });
+                            }
+                            return Ok(());
+                        }
+                        self.row_fact(statement.target.relation, row_id)?
+                    }
                 };
                 let layout = self.schema.relation(statement.target.relation).layout();
                 if !satisfies(&checks.target, layout, fact) {
@@ -1374,7 +1368,7 @@ impl<'a> Checker<'a> {
             }
             // A closed parent: the member set IS the ψ-selected roster,
             // and the parent tuple is the axiom's 8-byte id encoding.
-            Enforcement::Closed { members } => {
+            CapacityEnforcement::Closed { members } => {
                 let Ok(word) = <[u8; 8]>::try_from(parent_key) else {
                     return Err(Error::Corruption(CorruptionError::MalformedValue(
                         "capacity parent key width",
@@ -1387,15 +1381,11 @@ impl<'a> Checker<'a> {
                 let rows = self
                     .schema
                     .relation(statement.target.relation)
-                    .extension()
+                    .body()
+                    .closed_rows()
                     .expect("the Closed enforcement arm resolves only against a closed target");
                 let index = usize::try_from(id).expect("a contained axiom index fits usize");
                 &rows[index].fact
-            }
-            Enforcement::IntervalCoverage { .. } => {
-                unreachable!(
-                    "capacity statements refuse interval positions in projections at the gate"
-                )
             }
         };
         // Dependent bounds resolve from the holder fact already in hand
@@ -1404,7 +1394,7 @@ impl<'a> Checker<'a> {
         // C10 refusal naming the parent row.
         let hi = self.resolve_hi(statement, parent_fact)?;
         let measure = self.measure_children(statement, &checks.source, parent_key, hi)?;
-        if measure < u128::from(statement.lo) || hi.is_some_and(|hi| measure > u128::from(hi)) {
+        if measure < u128::from(statement.lo) || exceeds_ceiling(measure, hi) {
             return Err(Error::CommitRejected {
                 violations: Violations::one(Violation::Capacity {
                     statement: statement.id,
@@ -1422,15 +1412,13 @@ impl<'a> Checker<'a> {
     /// TARGET-row field — u64 word or interval measure — off the fact
     /// bytes already fetched for the ψ check. Delegates to
     /// [`resolve_bound`], the one engine definition.
-    fn resolve_hi(&self, statement: &CapacityStatement, parent_fact: &[u8]) -> Result<Option<u64>> {
+    fn resolve_hi(
+        &self,
+        statement: &CapacityStatement,
+        parent_fact: &[u8],
+    ) -> Result<BoundCeiling> {
         let layout = self.schema.relation(statement.target.relation).layout();
-        resolve_bound(
-            statement.hi,
-            statement.bound_tail,
-            layout,
-            parent_fact,
-            statement.id,
-        )
+        resolve_bound(statement.hi, layout, parent_fact, statement.id)
     }
 
     /// One parent's child-group measure: the ordered walk of the capacity
@@ -1456,11 +1444,11 @@ impl<'a> Checker<'a> {
         statement: &CapacityStatement,
         phi: &SelectionCheck,
         parent_key: &[u8],
-        hi: Option<u64>,
+        hi: BoundCeiling,
     ) -> Result<u128> {
         let source = self.schema.relation(statement.source.relation);
         let layout = source.layout();
-        if let Some(rows) = source.extension() {
+        if let Some(rows) = source.body().closed_rows() {
             let mut derived = DeterminantImage::scratch_with_capacity(parent_key.len());
             let mut measure = 0u128;
             for row in rows {
@@ -1476,9 +1464,10 @@ impl<'a> Checker<'a> {
         }
         // Floor-only clip: with no ceiling, `sum ≥ lo` is final — the
         // running sum is monotone under non-negative weights (C12).
-        let floor_only_decided =
-            |measure: u128| hi.is_none() && measure >= u128::from(statement.lo);
-        let unit = matches!(statement.weight, Weight::Unit);
+        let floor_only_decided = |measure: u128| {
+            matches!(hi, BoundCeiling::Unbounded) && measure >= u128::from(statement.lo)
+        };
+        let unit = matches!(statement.weight, SealedWeight::Unit);
         let p_len = keys::reverse_prefix(&mut self.key, statement.id, parent_key);
         let bounds: (Bound<&[u8]>, Bound<&[u8]>) =
             (Bound::Included(&self.key[..p_len]), Bound::Unbounded);

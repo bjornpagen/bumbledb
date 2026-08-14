@@ -81,7 +81,7 @@
 
 use std::collections::BTreeSet;
 
-use crate::image::view::{Const, FilterPredicate, ResolvedWordSource};
+use crate::image::view::{Const, FilterPredicate};
 use crate::ir::normalize::{NormalizedQuery, Occurrence, Role, lower_literal};
 use crate::ir::{AtomSource, CmpOp, FindTerm, VarId};
 use crate::schema::{Enforcement, Schema};
@@ -381,10 +381,7 @@ fn var_is_dead(
                 && !occ.filters.iter().any(|filter| {
                     matches!(
                         filter,
-                        FilterPredicate::PointIn {
-                            point: ResolvedWordSource::Var(v),
-                            ..
-                        } if *v == var
+                        FilterPredicate::PointVar { var: v, .. } if *v == var
                     )
                 }))
     })

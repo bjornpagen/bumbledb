@@ -2,7 +2,7 @@
 
 - **Severity:** medium
 - **Tree:** schema
-- **Status:** OPEN
+- **Status:** FIXED(4c89c712)
 - **Source:** audit/storage-schema.md F15
 - **Depends on:** none
 - **Conflicts with:** none

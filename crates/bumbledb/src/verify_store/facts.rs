@@ -10,7 +10,7 @@
 
 use crate::encoding::{TypeDesc, decode_field, fact_hash, field_word_bytes};
 use crate::error::{CorruptionError, Direction, Error, Result, Violation, Violations};
-use crate::schema::{AxiomIndex, Enforcement};
+use crate::schema::{AxiomIndex, CapacityEnforcement, Enforcement};
 use crate::storage::commit::judgment;
 use crate::storage::keys::{self, DeterminantImage, KeyBuf, MAX_KEY};
 use bumbledb_theory::schema::RelationId;
@@ -41,7 +41,7 @@ pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
         // have no rows in the store — so the entry's existence is the
         // finding (never tallied: the counter pass reconciles facts that
         // may legally exist).
-        if relation.is_closed() {
+        if relation.body().closed_rows().is_some() {
             s.push(StoreFinding::ClosedRelationEntry {
                 relation: rel,
                 key: key.into(),
@@ -127,7 +127,7 @@ pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
         // The one id allocator (R16): on a fresh-keyed relation the F row
         // id IS the first fresh field's value — a disagreement is the
         // merged mint's own desync class.
-        if let Some(field) = relation.fresh_row_field() {
+        if let Some(field) = schema.fresh_mint_field(rel) {
             let fresh = u64::from_be_bytes(field_word_bytes(fact, layout, usize::from(field.0)));
             if fresh != row_id {
                 s.push(StoreFinding::FreshRowDesync {
@@ -144,7 +144,7 @@ pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
         // (R16; the U pass convicts any entry that exists under it).
         for &key_id in relation.keys() {
             let statement = schema.key(key_id);
-            if statement.fresh_row {
+            if statement.form().as_fresh_row().is_some() {
                 continue;
             }
             keys::determinant_image(layout, &statement.projection, fact, &mut determinant);
@@ -254,7 +254,7 @@ fn check_marks(
     }
     for &capacity_id in relation.capacity_targets() {
         let statement = schema.capacity(capacity_id);
-        let Enforcement::ScalarProbe { target_key, .. } = &statement.enforcement else {
+        let CapacityEnforcement::ScalarProbe { target_key, .. } = &statement.enforcement else {
             continue; // closed parents re-check in the marks pass
         };
         {
@@ -372,13 +372,14 @@ fn check_outgoing(
             key_bytes: determinant.as_bytes(),
             fact_bytes: fact,
             direction: Direction::TargetRequired,
-            source_tail: schema.source_tail(statement),
         };
         let judged = match &statement.enforcement {
             Enforcement::ScalarProbe { .. } => checker.check_scalar(&probe),
-            Enforcement::IntervalCoverage { disjoint, .. } => {
-                checker.check_coverage(*disjoint, &probe)
-            }
+            Enforcement::IntervalCoverage {
+                disjoint,
+                source_tail,
+                ..
+            } => checker.check_coverage(*disjoint, *source_tail, &probe),
             Enforcement::Closed { .. } => unreachable!("classified above"),
         };
         if missing_edge {
@@ -433,7 +434,7 @@ fn check_extension_sources(
     let schema = s.schema;
     let mut determinant = DeterminantImage::scratch();
     for relation in schema.relations() {
-        let Some(rows) = relation.extension() else {
+        let Some(rows) = relation.body().closed_rows() else {
             continue;
         };
         let layout = relation.layout();
@@ -470,9 +471,6 @@ fn check_extension_sources(
                             key_bytes: determinant.as_bytes(),
                             fact_bytes: &row.fact,
                             direction: Direction::TargetRequired,
-                            // Scalar probes carry no interval tail (and a
-                            // closed source can have none at validate).
-                            source_tail: None,
                         })
                     }
                     Enforcement::IntervalCoverage { .. } => {

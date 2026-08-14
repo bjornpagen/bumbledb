@@ -53,12 +53,15 @@ fn the_schema_is_statement_complete() {
     assert_eq!(s.relations().len(), 12);
     for rel in 0..ids::RELATIONS {
         assert!(
-            !s.relation(bumbledb::RelationId(rel)).is_closed(),
+            s.relation(bumbledb::RelationId(rel))
+                .body()
+                .closed_rows()
+                .is_none(),
             "every writable relation precedes the closed vocabulary"
         );
     }
     for rel in [ids::RSVP, ids::CLAIM_ARM] {
-        assert!(s.relation(rel).is_closed());
+        assert!(s.relation(rel).body().closed_rows().is_some());
     }
 
     let mut autos = 0;
@@ -67,9 +70,14 @@ fn the_schema_is_statement_complete() {
     let mut pointwise = Vec::new();
     let mut containments = Vec::new();
     for statement in s.keys() {
-        if statement.pointwise() {
+        if statement.form().is_pointwise() {
             pointwise.push(statement.relation);
-        } else if s.relation(statement.relation).is_closed() {
+        } else if s
+            .relation(statement.relation)
+            .body()
+            .closed_rows()
+            .is_some()
+        {
             closed_keys += 1;
         } else {
             // The fresh auto-keys lead; the declared scalar keys are

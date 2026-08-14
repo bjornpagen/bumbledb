@@ -47,12 +47,12 @@ fn the_twin_theories_validate_and_differ_only_in_capacity_laws() {
     let exclusion = &windowed.capacities()[1];
     assert_eq!(
         exclusion.weight,
-        bumbledb::schema::Weight::Unit,
+        bumbledb::schema::SealedWeight::Unit,
         "the count instance, explicitly"
     );
     assert_eq!(
         (exclusion.lo, exclusion.hi),
-        (0, Some(bumbledb::schema::Bound::Lit(0))),
+        (0, bumbledb::schema::SealedBound::Lit(0)),
         "the {{0}} window"
     );
 }

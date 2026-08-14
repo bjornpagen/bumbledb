@@ -72,7 +72,7 @@ impl WriteDelta<'_> {
                 continue;
             }
             let relation = self.schema.relation(*rel);
-            let Some(field) = relation.fresh_row_field() else {
+            let Some(field) = self.schema.fresh_mint_field(*rel) else {
                 continue;
             };
             let row_id = u64::from_be_bytes(crate::encoding::field_word_bytes(

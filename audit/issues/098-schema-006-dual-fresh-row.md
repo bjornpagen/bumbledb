@@ -2,7 +2,7 @@
 
 - **Severity:** medium
 - **Tree:** schema
-- **Status:** OPEN
+- **Status:** FIXED(cc808db7)
 - **Source:** audit/storage-schema.md F14
 - **Depends on:** schema-002
 - **Conflicts with:** schema-001 (ordinary-arm `fresh` field)

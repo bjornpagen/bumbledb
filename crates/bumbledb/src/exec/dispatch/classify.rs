@@ -1,5 +1,5 @@
 use super::{KeyProbePlan, KeyProbeVar};
-use crate::image::view::{Const, FilterPredicate, ResolvedWordSource};
+use crate::image::view::{Const, FilterPredicate};
 use crate::ir::CmpOp;
 use crate::ir::normalize::NormalizedQuery;
 use crate::schema::{Relation, Schema};
@@ -66,10 +66,7 @@ pub fn classify(normalized: &NormalizedQuery, schema: &Schema) -> Option<KeyProb
                 value: Const::ParamSet(_) | Const::WordSet(_),
                 ..
             } | FilterPredicate::AnyPointIn { .. }
-                | FilterPredicate::PointIn {
-                    point: ResolvedWordSource::Var(_),
-                    ..
-                }
+                | FilterPredicate::PointVar { .. }
         )
     }) {
         return None;
@@ -97,7 +94,7 @@ pub fn classify(normalized: &NormalizedQuery, schema: &Schema) -> Option<KeyProb
     // storage is the theory (`docs/architecture/50-storage.md` § virtual
     // relations) — so even a fully key-bound single atom classifies as
     // Free Join and hits the synthesized image.
-    if relation.is_closed() {
+    if relation.body().closed_rows().is_some() {
         return None;
     }
     let kind = key_probe_candidate(relation, schema, &value_of)?;

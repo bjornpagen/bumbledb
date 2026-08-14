@@ -61,7 +61,7 @@ pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
         }
         // Closed sources never commit (writes refused), so an R edge
         // naming one is corruption — the F pass's exemption, mirrored.
-        if schema.relation(source_rel).is_closed() {
+        if schema.relation(source_rel).body().closed_rows().is_some() {
             s.push(StoreFinding::ClosedRelationEntry {
                 relation: source_rel,
                 key: key.into(),

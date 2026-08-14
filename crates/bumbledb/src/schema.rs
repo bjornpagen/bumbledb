@@ -184,25 +184,33 @@ impl Theory for SchemaDescriptor {
     }
 }
 
-/// The trailing interval encoding of a pointwise determinant or an
-/// interval-final projection: how many encoded bytes the interval
-/// position occupies and how its exclusive end derives. The general type
-/// stores both order-preserving halves; a fixed-width type stores the
-/// START word only — the width is the type's, and the bias of both
+/// Trailing interval encoding of a sealed projection (CONTRACT C9):
+/// general stores both order-preserving halves; a fixed-width type stores
+/// the START word only — the width is the type's, and the bias of both
 /// element encodings is additive, so `start_word + w` IS the encoded end
 /// (`lean/Bumbledb/Values.lean: encode_fixed_order_u64`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct IntervalTail {
-    /// `Some(w)` = the fixed width; `None` = general (`start ‖ end`).
-    pub(crate) width: Option<u64>,
+pub(crate) enum IntervalTail {
+    /// `start ‖ end` — 16 trailing bytes.
+    General,
+    /// Fixed width `w` — 8 trailing bytes (the start word).
+    Fixed { width: u64 },
 }
 
 impl IntervalTail {
+    /// Parse the descriptor width Option into the sealed encoding.
+    pub(crate) const fn from_width(width: Option<u64>) -> Self {
+        match width {
+            None => Self::General,
+            Some(width) => Self::Fixed { width },
+        }
+    }
+
     /// Trailing encoded bytes: 16 general, 8 fixed.
     pub(crate) const fn bytes(self) -> usize {
-        match self.width {
-            None => 16,
-            Some(_) => 8,
+        match self {
+            Self::General => 16,
+            Self::Fixed { .. } => 8,
         }
     }
 
@@ -215,13 +223,13 @@ impl IntervalTail {
         if tail.len() != self.bytes() {
             return None;
         }
-        match self.width {
-            None => {
+        match self {
+            Self::General => {
                 let start = u64::from_be_bytes(tail[..8].try_into().ok()?);
                 let end = u64::from_be_bytes(tail[8..].try_into().ok()?);
                 Some((start, end))
             }
-            Some(width) => {
+            Self::Fixed { width } => {
                 let bytes: [u8; 8] = tail.try_into().ok()?;
                 crate::encoding::decode_fixed_interval_start(bytes, width).ok()
             }
@@ -239,19 +247,7 @@ impl Schema {
         reason = "the schema is the witness's minting authority — readers go through it"
     )]
     pub(crate) fn key_tail(&self, key: &KeyStatement) -> Option<IntervalTail> {
-        key.tail
-    }
-
-    /// The interval-tail descriptor of a containment's SOURCE projection
-    /// — the shape of the reverse-edge key-bytes tail (the source fact's
-    /// interval encodes at its own field's width). A read of the sealed
-    /// witness, as [`Schema::key_tail`].
-    #[expect(
-        clippy::unused_self,
-        reason = "the schema is the witness's minting authority — readers go through it"
-    )]
-    pub(crate) fn source_tail(&self, statement: &ContainmentStatement) -> Option<IntervalTail> {
-        statement.source_tail
+        key.tail()
     }
 }
 
@@ -291,6 +287,9 @@ pub(crate) enum Enforcement {
         target_key: KeyId,
         key_permutation: Box<[u16]>,
         disjoint: DisjointDeterminantProof,
+        /// SOURCE projection encoding; the target tail stays on
+        /// [`KeyForm::Pointwise`].
+        source_tail: IntervalTail,
     },
     /// A closed target's stage-1-known answer set.
     Closed { members: MemberSet },
@@ -305,6 +304,42 @@ impl Enforcement {
                 Some(*target_key)
             }
             Self::Closed { .. } => None,
+        }
+    }
+}
+
+/// Capacity's two-arm target plan (CONTRACT C9). Containments keep
+/// three-arm [`Enforcement`]; capacity projections refuse interval
+/// positions, so coverage is unrepresentable here.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum CapacityEnforcement {
+    /// Probe an ordinary parent key for one scalar tuple.
+    ScalarProbe {
+        target_key: KeyId,
+        key_permutation: Box<[u16]>,
+    },
+    /// A closed parent's stage-1-known answer set.
+    Closed { members: MemberSet },
+}
+
+impl CapacityEnforcement {
+    /// Convert the shared target-key plan after capacity's projection
+    /// interval refusal: coverage cannot arise.
+    pub(crate) fn from_resolved(enforcement: Enforcement) -> Self {
+        match enforcement {
+            Enforcement::ScalarProbe {
+                target_key,
+                key_permutation,
+            } => Self::ScalarProbe {
+                target_key,
+                key_permutation,
+            },
+            Enforcement::Closed { members } => Self::Closed { members },
+            Enforcement::IntervalCoverage { .. } => {
+                unreachable!(
+                    "capacity statements refuse interval positions in projections at the gate"
+                )
+            }
         }
     }
 }
@@ -394,7 +429,32 @@ pub(crate) struct CompiledSides {
     pub(crate) target: Box<[CompiledCheck]>,
 }
 
-/// One sealed key statement: `R(X) -> R` with its enforcement flag.
+/// The sealed key form: three behaviors, three arms. Fresh-row ×
+/// pointwise is unrepresentable; the disjointness proof lives on the
+/// Pointwise arm that needs it (CONTRACT C9).
+#[allow(private_interfaces)]
+#[derive(Debug)]
+pub enum KeyForm {
+    /// The relation's FIRST fresh field's auto-key (the one id allocator,
+    /// `docs/architecture/50-storage.md` § key layout; ruled 2026-07-23,
+    /// R16): its determinant IS the `F` row id, it maintains no `U` tree,
+    /// and its functionality judgment is the `F` put-conflict itself.
+    /// Probes against it read `F` directly — one B-tree descent. One
+    /// word by type. The statement's `projection` is that one field.
+    FreshRow { field: FieldId },
+    /// A scalar (interval-free) functionality.
+    Scalar,
+    /// An interval-final functionality. The trailing encoding and the
+    /// disjointness proof the gate derived travel with the arm — no
+    /// consumer re-walks the projection, and no boolean licenses the
+    /// sweep.
+    Pointwise {
+        tail: IntervalTail,
+        disjoint: DisjointDeterminantProof,
+    },
+}
+
+/// One sealed key statement: `R(X) -> R` with its form.
 #[derive(Debug)]
 pub struct KeyStatement {
     /// Materialized-order identity. It is fingerprint-pinned and embedded in
@@ -402,28 +462,50 @@ pub struct KeyStatement {
     pub id: StatementId,
     pub relation: RelationId,
     pub projection: Box<[FieldId]>,
-    /// The trailing interval encoding of a pointwise key's determinant,
-    /// sealed from the validator's own derivation (`Some` = the key
-    /// carries an interval, necessarily final, so its enforcement uses
-    /// an ordered-neighbor probe; `None` = scalar). The staging law
-    /// applied to the checker: no consumer re-walks the projection, and
-    /// no boolean licenses the sweep — the tail IS the evidence.
-    pub(crate) tail: Option<IntervalTail>,
-    /// The relation's FIRST fresh field's auto-key (the one id allocator,
-    /// `docs/architecture/50-storage.md` § key layout; ruled 2026-07-23,
-    /// R16): its determinant IS the `F` row id, it maintains no `U` tree,
-    /// and its functionality judgment is the `F` put-conflict itself.
-    /// Probes against it read `F` directly — one B-tree descent.
-    pub fresh_row: bool,
+    pub(crate) form: KeyForm,
 }
 
 impl KeyStatement {
-    /// Whether the key carries an interval position — the public face of
-    /// the sealed tail (`tail.is_some()`; the tail itself is the
-    /// crate-internal enforcement shape).
+    /// The form this statement sealed as — match, don't re-test flags.
     #[must_use]
-    pub fn pointwise(&self) -> bool {
-        self.tail.is_some()
+    pub fn form(&self) -> &KeyForm {
+        &self.form
+    }
+
+    /// The trailing interval encoding of a Pointwise key; `None` on the
+    /// other arms.
+    #[must_use]
+    pub(crate) fn tail(&self) -> Option<IntervalTail> {
+        match &self.form {
+            KeyForm::Pointwise { tail, .. } => Some(*tail),
+            KeyForm::FreshRow { .. } | KeyForm::Scalar => None,
+        }
+    }
+}
+
+impl KeyForm {
+    /// The mint field when this key is [`KeyForm::FreshRow`].
+    #[must_use]
+    pub const fn as_fresh_row(&self) -> Option<FieldId> {
+        match *self {
+            Self::FreshRow { field } => Some(field),
+            Self::Scalar | Self::Pointwise { .. } => None,
+        }
+    }
+
+    /// Whether this key is [`KeyForm::Pointwise`].
+    #[must_use]
+    pub const fn is_pointwise(&self) -> bool {
+        matches!(self, Self::Pointwise { .. })
+    }
+
+    /// The trailing encoding when this key is [`KeyForm::Pointwise`].
+    #[must_use]
+    pub(crate) const fn as_pointwise(&self) -> Option<IntervalTail> {
+        match *self {
+            Self::Pointwise { tail, .. } => Some(tail),
+            Self::FreshRow { .. } | Self::Scalar => None,
+        }
     }
 }
 
@@ -439,12 +521,6 @@ pub struct ContainmentStatement {
     /// Both sides' σ literals, compiled once at validate. This is total:
     /// keys cannot reach a containment value.
     pub(crate) checks: CompiledSides,
-    /// The SOURCE projection's trailing interval encoding — the shape of
-    /// the reverse-edge key-bytes tail (the source fact's interval
-    /// encodes at its own field's width); `None` = scalar sides. Sealed
-    /// from the validator's derivation, as [`KeyStatement`]'s tail, so
-    /// the per-probe judgment walks no projection.
-    pub(crate) source_tail: Option<IntervalTail>,
     /// The `==` partner: the containment whose NORMALIZED sides (the one
     /// statement identity — selections sorted, literal sets canonical)
     /// are exactly this statement's normalized sides swapped, anywhere in
@@ -463,6 +539,65 @@ pub struct ContainmentStatement {
     pub mirror: Option<StatementId>,
 }
 
+/// Sealed capacity measure (CONTRACT C9): Duration carries its tail
+/// in-arm. [`Weight::Unit`] is a case, not an absence.
+#[allow(private_interfaces)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SealedWeight {
+    Unit,
+    Field(FieldId),
+    Duration { field: FieldId, tail: IntervalTail },
+}
+
+impl SealedWeight {
+    /// The descriptor-facing spelling — fingerprint and render.
+    #[must_use]
+    pub const fn to_weight(self) -> Weight {
+        match self {
+            Self::Unit => Weight::Unit,
+            Self::Field(field) => Weight::Field(field),
+            Self::Duration { field, .. } => Weight::DurationOf(field),
+        }
+    }
+}
+
+/// Sealed capacity ceiling (CONTRACT C9): `*` is [`SealedBound::Unbounded`],
+/// not a missing bound. Duration carries its tail in-arm.
+#[allow(private_interfaces)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SealedBound {
+    Unbounded,
+    Lit(u64),
+    TargetField(FieldId),
+    Duration { field: FieldId, tail: IntervalTail },
+}
+
+impl SealedBound {
+    /// The descriptor-facing spelling (`None` = `*`).
+    #[must_use]
+    pub const fn to_bound(self) -> Option<Bound> {
+        match self {
+            Self::Unbounded => None,
+            Self::Lit(n) => Some(Bound::Lit(n)),
+            Self::TargetField(field) => Some(Bound::TargetField(field)),
+            Self::Duration { field, .. } => Some(Bound::TargetDuration(field)),
+        }
+    }
+
+    /// Whether resolving this ceiling needs the parent fact bytes.
+    #[must_use]
+    pub(crate) const fn needs_parent_fact(self) -> bool {
+        matches!(self, Self::TargetField(_) | Self::Duration { .. })
+    }
+}
+
+/// A resolved capacity ceiling: unbounded vs a finite measure.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BoundCeiling {
+    Unbounded,
+    Finite(u64),
+}
+
 /// One sealed capacity statement: `B(Y | ψ) <=[w]{lo..hi} A(X | φ)`.
 /// Accepted at declaration with its sealed target-key plan handle
 /// (the same probe-ability rule containments resolve —
@@ -475,36 +610,27 @@ pub struct CapacityStatement {
     /// Materialized-order identity. It is not an arena index.
     pub id: StatementId,
     pub target: Side,
-    /// The measure of one source fact; [`Weight::Unit`] is the count
-    /// instance (the surviving `<={lo..hi}` utterance).
-    pub weight: Weight,
+    /// The measure of one source fact; [`SealedWeight::Unit`] is the count
+    /// instance (the surviving `<={lo..hi}` utterance). Duration tails
+    /// live in-arm (CONTRACT C9).
+    pub weight: SealedWeight,
     /// The inclusive lower measure bound — a literal by representation
     /// (C6: dependent floors are unrepresentable).
     pub lo: u64,
-    /// The inclusive upper measure bound; `None` is `*`. A dependent
-    /// bound resolves by name against TARGET's whole field roster (C1),
-    /// per touched parent at judge time.
-    pub hi: Option<Bound>,
+    /// The inclusive upper measure bound; [`SealedBound::Unbounded`] is `*`.
+    pub hi: SealedBound,
     pub source: Side,
-    /// The target-key plan handle (`ScalarProbe` or `Closed`; capacity
-    /// projections refuse interval positions, so `IntervalCoverage` is
-    /// unreachable). Consumed by the commit judge's touched-parent probe
+    /// The target-key plan handle: [`CapacityEnforcement::ScalarProbe`]
+    /// or [`CapacityEnforcement::Closed`]. Interval coverage is
+    /// unrepresentable — capacity projections refuse interval positions
+    /// at the gate. Consumed by the commit judge's touched-parent probe
     /// and the sweeper's global re-verification
     /// (`storage/commit/judgment.rs::check_capacities`).
-    pub(crate) enforcement: Enforcement,
+    pub(crate) enforcement: CapacityEnforcement,
     /// Both sides' σ bindings, compiled once at validate — resolved per
     /// commit into [`crate::storage::commit::judgment::Selections`]
     /// exactly as containments' are.
     pub(crate) checks: CompiledSides,
-    /// A `DurationOf` weight's sealed interval encoding (the SOURCE
-    /// field's trailing shape — how the measure `end − start` reads off
-    /// canonical fact bytes); `None` for unit and u64-field weights.
-    /// Sealed from the validator's derivation (the `source_tail`
-    /// precedent), so no judge re-walks the field roster.
-    pub(crate) weight_tail: Option<IntervalTail>,
-    /// A `TargetDuration` bound's sealed interval encoding (the TARGET
-    /// field's trailing shape); `None` for literal and u64-field bounds.
-    pub(crate) bound_tail: Option<IntervalTail>,
 }
 
 /// The global materialized-order spine: a [`StatementId`] selects one typed
@@ -548,19 +674,40 @@ pub struct SealedRow {
     pub fact: Box<[u8]>,
 }
 
+/// The sealed relation kind (CONTRACT C9). Shared layout lives on
+/// [`Relation`]; the kind-carrying payloads (`fresh` vs `extension`)
+/// live in the arms. Closed cannot be written.
+#[derive(Debug)]
+pub enum RelationBody {
+    /// An ordinary row-store. `fresh` is the [`KeyForm::FreshRow`] key
+    /// when this relation is the one id allocator's mint (R16); `None`
+    /// means row ids mint from the `S` high-water.
+    Ordinary { fresh: Option<KeyId> },
+    /// Ground axioms, frozen by the fingerprint, virtual in storage.
+    /// A closed relation's `fields` open with the synthetic (`id`, U64)
+    /// field, so determinants, statements, and queries address the
+    /// handle's id uniformly at [`FieldId`] 0
+    /// (`docs/architecture/10-data-model.md` § closed relations).
+    Closed { extension: Box<[SealedRow]> },
+}
+
+impl RelationBody {
+    /// Closed extension rows; ordinary has none.
+    #[must_use]
+    pub fn closed_rows(&self) -> Option<&[SealedRow]> {
+        match self {
+            Self::Closed { extension } => Some(extension),
+            Self::Ordinary { .. } => None,
+        }
+    }
+}
+
 /// One relation of a validated schema.
 #[derive(Debug)]
 pub struct Relation {
     name: Box<str>,
     fields: Box<[FieldDescriptor]>,
     layout: FactLayout,
-    /// The sealed extension of a closed relation (`None` = ordinary): rows
-    /// pre-encoded at validate, in declaration order — row id = index. A
-    /// closed relation's `fields` open with the synthetic (`id`, U64)
-    /// field, so determinants, statements, and queries address the handle's id
-    /// uniformly at [`FieldId`] 0 (`docs/architecture/10-data-model.md`
-    /// § closed relations).
-    extension: Option<Box<[SealedRow]>>,
     /// `Functionality` statements on this relation, in materialized order.
     keys: Box<[KeyId]>,
     /// `Containment` statements whose source is this relation.
@@ -573,12 +720,7 @@ pub struct Relation {
     /// a delta parent touches its own key tuple
     /// (`lean/Bumbledb/Txn/DeltaRestriction.lean: touchedParents`).
     capacity_targets: Box<[CapacityId]>,
-    /// The FIRST `Fresh`-generation field, if any — the one id allocator's
-    /// mint field (R16, `docs/architecture/50-storage.md` § key layout): on
-    /// a fresh-keyed relation this field's value IS the `F` row id, `Q` is
-    /// the one mint, and no `S` row-id high-water exists. Its auto-key is
-    /// the [`KeyStatement`] carrying `fresh_row`.
-    fresh_row_field: Option<FieldId>,
+    body: RelationBody,
 }
 
 /// The sealed schema witness. Unconstructible except through
@@ -776,5 +918,17 @@ impl Schema {
     #[must_use]
     pub fn dependents_checked(&self, id: KeyId) -> Option<&[ContainmentId]> {
         self.dependents.get(usize::from(id.0)).map(AsRef::as_ref)
+    }
+
+    /// The mint field of an ordinary fresh-keyed relation (R16), read
+    /// off [`KeyForm::FreshRow`]. Closed and fresh-less relations have
+    /// none — one site names the field (CONTRACT C9 / schema-006).
+    #[must_use]
+    pub(crate) fn fresh_mint_field(&self, id: RelationId) -> Option<FieldId> {
+        let key = self.relation(id).fresh_key()?;
+        match self.key(key).form() {
+            KeyForm::FreshRow { field } => Some(*field),
+            KeyForm::Scalar | KeyForm::Pointwise { .. } => None,
+        }
     }
 }

@@ -92,7 +92,7 @@ use std::collections::BTreeSet;
 
 use crate::allen::classify_bounds;
 use crate::encoding::field_bytes;
-use crate::image::view::{Const, FilterPredicate, ResolvedWordSource};
+use crate::image::view::{Const, FilterPredicate, IntervalConst, ViewWordSource};
 use crate::ir::normalize::{FoldedMark, NormalizedQuery, Role};
 use crate::ir::render::{literal, mask_names};
 use crate::ir::{CmpOp, VarId};
@@ -139,7 +139,7 @@ fn fold_positive(
         return false;
     };
     let relation = schema.relation(relation_id);
-    if relation.extension().is_none() {
+    if relation.body().closed_rows().is_none() {
         return false; // ordinary relations have no stage-0 rows
     }
     let Some(filters) = parse_resolvable(&occurrence.filters) else {
@@ -207,7 +207,7 @@ fn fold_negated(normalized: &mut NormalizedQuery, schema: &Schema, c_idx: usize)
         return false;
     };
     let relation = schema.relation(relation_id);
-    let Some(rows) = relation.extension() else {
+    let Some(rows) = relation.body().closed_rows() else {
         return false;
     };
     let Some(filters) = parse_resolvable(&occurrence.filters) else {
@@ -431,7 +431,7 @@ fn parse_filter(filter: &FilterPredicate) -> Option<ResolvableFilter> {
         }
         FilterPredicate::PointIn {
             field,
-            point: ResolvedWordSource::Word(point),
+            point: ViewWordSource::Word(point),
         } => Some(ResolvableFilter::PointIn {
             field: *field,
             point: *point,
@@ -444,7 +444,7 @@ fn parse_filter(filter: &FilterPredicate) -> Option<ResolvableFilter> {
         }
         FilterPredicate::FieldWithin {
             field,
-            outer: Const::Interval { start, end },
+            outer: IntervalConst::Interval { start, end },
         } => Some(ResolvableFilter::Within {
             field: *field,
             start: *start,
@@ -457,7 +457,7 @@ fn parse_filter(filter: &FilterPredicate) -> Option<ResolvableFilter> {
         }),
         FilterPredicate::FieldAllen {
             field,
-            other: Const::Interval { start, end },
+            other: IntervalConst::Interval { start, end },
             mask,
         } => Some(ResolvableFilter::Allen {
             field: *field,
@@ -470,6 +470,7 @@ fn parse_filter(filter: &FilterPredicate) -> Option<ResolvableFilter> {
         // which normalization lowers to fixed filter shapes.
         FilterPredicate::FieldsCompare { .. }
         | FilterPredicate::PointIn { .. }
+        | FilterPredicate::PointVar { .. }
         | FilterPredicate::AnyPointIn { .. }
         | FilterPredicate::FieldAllen { .. }
         | FilterPredicate::FieldWithin { .. }
@@ -573,7 +574,8 @@ fn containment_into_id(
 pub(crate) fn surviving_ids(relation: &Relation, filters: &[ResolvableFilter]) -> Vec<u64> {
     let layout = relation.layout();
     relation
-        .extension()
+        .body()
+        .closed_rows()
         .expect("callers checked closedness")
         .iter()
         .enumerate()
@@ -743,10 +745,14 @@ fn render_filter(out: &mut String, relation: &Relation, filter: &FilterPredicate
             // The relation's own id position holds row ids — print the
             // handles (a membership set as a handle set), never numbers.
             match value {
-                Const::Word(word) if *field == FieldId(0) && relation.is_closed() => {
+                Const::Word(word)
+                    if *field == FieldId(0) && relation.body().closed_rows().is_some() =>
+                {
                     push_handle(out, relation, *word);
                 }
-                Const::WordSet(words) if *field == FieldId(0) && relation.is_closed() => {
+                Const::WordSet(words)
+                    if *field == FieldId(0) && relation.body().closed_rows().is_some() =>
+                {
                     out.push('{');
                     for (index, word) in words.iter().enumerate() {
                         if index > 0 {
@@ -765,7 +771,7 @@ fn render_filter(out: &mut String, relation: &Relation, filter: &FilterPredicate
             out.push_str(name(right));
         }
         FilterPredicate::PointIn { field, point } => {
-            let ResolvedWordSource::Word(point) = point else {
+            let ViewWordSource::Word(point) = point else {
                 render_unparsed_filter(out, filter);
                 return;
             };
@@ -782,7 +788,7 @@ fn render_filter(out: &mut String, relation: &Relation, filter: &FilterPredicate
             out.push_str(name(interval));
         }
         FilterPredicate::FieldWithin { field, outer } => {
-            let Const::Interval { start, end } = outer else {
+            let IntervalConst::Interval { start, end } = outer else {
                 render_unparsed_filter(out, filter);
                 return;
             };
@@ -807,7 +813,7 @@ fn render_filter(out: &mut String, relation: &Relation, filter: &FilterPredicate
             out.push(')');
         }
         FilterPredicate::FieldAllen { field, other, mask } => {
-            let (mask, Const::Interval { start, end }) = (mask, other) else {
+            let (mask, IntervalConst::Interval { start, end }) = (mask, other) else {
                 render_unparsed_filter(out, filter);
                 return;
             };
@@ -823,6 +829,7 @@ fn render_filter(out: &mut String, relation: &Relation, filter: &FilterPredicate
             out.push(')');
         }
         FilterPredicate::AnyPointIn { .. }
+        | FilterPredicate::PointVar { .. }
         | FilterPredicate::DurationCompare { .. }
         | FilterPredicate::DurationFieldsCompare { .. } => {
             render_unparsed_filter(out, filter);
@@ -844,7 +851,8 @@ fn render_unparsed_filter(out: &mut String, filter: &FilterPredicate) {
 /// engine never learns host newtype names).
 pub(crate) fn push_handle(out: &mut String, relation: &Relation, id: u64) {
     let row = relation
-        .extension()
+        .body()
+        .closed_rows()
         .and_then(|rows| usize::try_from(id).ok().and_then(|index| rows.get(index)));
     if let Some(row) = row {
         out.push_str(&row.handle);

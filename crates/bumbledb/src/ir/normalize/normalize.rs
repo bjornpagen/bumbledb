@@ -5,7 +5,7 @@ use super::{
     lower_literal::{lower_literal, point_word},
     place_comparisons::place_comparisons,
 };
-use crate::image::view::{Const, FilterPredicate, ResolvedWordSource};
+use crate::image::view::{Const, FilterPredicate, SetConst, ViewWordSource};
 use crate::ir::validate::{RuleWitness, ValidatedQuery};
 use crate::ir::{Atom, CmpOp, Term, Value, VarId};
 use crate::schema::Schema;
@@ -281,9 +281,9 @@ fn lower_atom(
                             interval: *field,
                             point: *point_field,
                         },
-                        None => FilterPredicate::PointIn {
+                        None => FilterPredicate::PointVar {
                             field: *field,
-                            point: ResolvedWordSource::Var(*var),
+                            var: *var,
                         },
                     });
                 } else {
@@ -307,7 +307,7 @@ fn lower_atom(
                 if is_membership(field_type, witness.param_type(*param)) {
                     filters.push(FilterPredicate::PointIn {
                         field: *field,
-                        point: ResolvedWordSource::Param(*param),
+                        point: ViewWordSource::Param(*param),
                     });
                 } else {
                     filters.push(FilterPredicate::Compare {
@@ -323,7 +323,7 @@ fn lower_atom(
                     // type): any element in the field's interval.
                     filters.push(FilterPredicate::AnyPointIn {
                         field: *field,
-                        set: Const::ParamSet(*param),
+                        set: SetConst::ParamSet(*param),
                     });
                 } else {
                     // The selection-level set marker: an Eq compare the
@@ -344,7 +344,7 @@ fn lower_atom(
                 if membership {
                     filters.push(FilterPredicate::PointIn {
                         field: *field,
-                        point: ResolvedWordSource::Word(point_word(value)),
+                        point: ViewWordSource::Word(point_word(value)),
                     });
                 } else {
                     filters.push(FilterPredicate::Compare {

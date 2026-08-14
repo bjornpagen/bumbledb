@@ -3,7 +3,7 @@ use super::{
     check_occurrence_coverage::check_occurrence_coverage, check_selections,
     derive_nodes::derive_nodes, provably_distinct::provably_distinct, split_filters,
 };
-use crate::image::view::{FilterPredicate, ResolvedWordSource};
+use crate::image::view::FilterPredicate;
 use crate::ir::VarId;
 use crate::ir::normalize::{NormalizedQuery, Occurrence, Role, SlotWidth};
 use crate::schema::Schema;
@@ -21,10 +21,7 @@ fn point_filters_of(occurrence: &Occurrence) -> Vec<(FieldId, VarId)> {
         .filters
         .iter()
         .filter_map(|filter| match filter {
-            FilterPredicate::PointIn {
-                field,
-                point: ResolvedWordSource::Var(var),
-            } => Some((*field, *var)),
+            FilterPredicate::PointVar { field, var } => Some((*field, *var)),
             _ => None,
         })
         .collect()
@@ -33,13 +30,7 @@ fn point_filters_of(occurrence: &Occurrence) -> Vec<(FieldId, VarId)> {
 /// Whether a filter is a var-sourced membership (the complement of
 /// [`point_filters_of`]'s selection).
 fn is_point_filter(filter: &FilterPredicate) -> bool {
-    matches!(
-        filter,
-        FilterPredicate::PointIn {
-            point: ResolvedWordSource::Var(_),
-            ..
-        }
-    )
+    matches!(filter, FilterPredicate::PointVar { .. })
 }
 
 /// The execution-facing occurrence table. Trie schemas: a positive

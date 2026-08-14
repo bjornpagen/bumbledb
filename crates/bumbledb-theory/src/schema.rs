@@ -427,14 +427,36 @@ pub struct RelationDescriptor {
 /// One slot of a relation's SEALED shape — the numbering every dynamic
 /// row, statement projection, and manifest field id addresses: a closed
 /// relation's synthetic (`id`, u64) handle field at sealed ordinal 0
-/// (`declared: None` — validation mints it; no [`FieldDescriptor`]
-/// exists), then the declared fields in declaration order.
+/// (no [`FieldDescriptor`] exists), then the declared fields in
+/// declaration order. Synthetic vs declared is a sum, not a missing
+/// descriptor.
 #[derive(Debug, Clone, Copy)]
-pub struct SealedField<'a> {
-    pub name: &'a str,
-    pub value_type: &'a ValueType,
-    /// The declared descriptor — `None` exactly at the synthetic id.
-    pub declared: Option<&'a FieldDescriptor>,
+pub enum SealedField<'a> {
+    /// Closed-relation handle: name `"id"`, type [`ValueType::U64`].
+    SyntheticId,
+    /// A field the descriptor named.
+    Declared(&'a FieldDescriptor),
+}
+
+impl<'a> SealedField<'a> {
+    /// Field name: `"id"` on the synthetic handle.
+    #[must_use]
+    pub fn name(self) -> &'a str {
+        match self {
+            Self::SyntheticId => "id",
+            Self::Declared(field) => &field.name,
+        }
+    }
+
+    /// Field type: [`ValueType::U64`] on the synthetic handle.
+    #[must_use]
+    pub fn value_type(self) -> &'a ValueType {
+        const SYNTHETIC_ID_TYPE: &ValueType = &ValueType::U64;
+        match self {
+            Self::SyntheticId => SYNTHETIC_ID_TYPE,
+            Self::Declared(field) => &field.value_type,
+        }
+    }
 }
 
 impl RelationDescriptor {
@@ -455,20 +477,11 @@ impl RelationDescriptor {
     /// (`bumbledb::schema::validate`), and the codec decode that
     /// re-parses it (`bumbledb::schema::descriptor_codec`).
     pub fn sealed_fields(&self) -> impl Iterator<Item = SealedField<'_>> {
-        const SYNTHETIC_ID_TYPE: &ValueType = &ValueType::U64;
         self.extension
             .is_some()
-            .then_some(SealedField {
-                name: "id",
-                value_type: SYNTHETIC_ID_TYPE,
-                declared: None,
-            })
+            .then_some(SealedField::SyntheticId)
             .into_iter()
-            .chain(self.fields.iter().map(|field| SealedField {
-                name: &field.name,
-                value_type: &field.value_type,
-                declared: Some(field),
-            }))
+            .chain(self.fields.iter().map(SealedField::Declared))
     }
 }
 
@@ -504,9 +517,8 @@ impl SchemaDescriptor {
             // relation's declared fields sit at declared idx + 1), so the
             // enumeration index IS the sealed ordinal — no offset math.
             for (sealed_idx, slot) in relation.sealed_fields().enumerate() {
-                if slot
-                    .declared
-                    .is_some_and(|field| field.generation == Generation::Fresh)
+                if let SealedField::Declared(field) = slot
+                    && field.generation == Generation::Fresh
                 {
                     statements.push(StatementDescriptor::Functionality {
                         relation: RelationId(

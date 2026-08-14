@@ -2,7 +2,7 @@
 
 - **Severity:** medium
 - **Tree:** err
-- **Status:** OPEN
+- **Status:** FIXED(f074a598)
 - **Source:** audit/storage-schema.md F17
 - **Depends on:** none
 - **Conflicts with:** store-003 (exhume armed-marker site)

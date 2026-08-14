@@ -238,7 +238,7 @@ mod tests {
         let mut containments = Vec::new();
         let mut pointwise = 0;
         for statement in schema.keys() {
-            if statement.pointwise() {
+            if statement.form().is_pointwise() {
                 pointwise += 1;
                 assert_eq!(statement.relation, ids::MANDATE);
             } else {
@@ -300,12 +300,15 @@ mod tests {
         assert_eq!(s.relations().len(), 12);
         for rel in 0..ids::RELATIONS {
             assert!(
-                !s.relation(bumbledb::RelationId(rel)).is_closed(),
+                s.relation(bumbledb::RelationId(rel))
+                    .body()
+                    .closed_rows()
+                    .is_none(),
                 "every writable relation precedes the closed vocabulary"
             );
         }
         for rel in [ids::CURRENCY, ids::SOURCE, ids::TAG] {
-            assert!(s.relation(rel).is_closed());
+            assert!(s.relation(rel).body().closed_rows().is_some());
         }
         assert_eq!(
             s.relation(ids::POSTING).field(ids::posting::AT).name,

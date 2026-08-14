@@ -71,9 +71,28 @@ pub struct Applied<'env> {
 /// storage generation (the 50-storage doc's cache-advance subscriber; the
 /// 70-api doc wires it).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CommitReport {
-    pub changed: bool,
-    pub new_generation: GenerationId,
+pub enum CommitReport {
+    /// Counters-only / empty delta: the generation clock did not move.
+    Noop { generation: GenerationId },
+    /// Logical state changed: images keyed on this generation.
+    Changed { new_generation: GenerationId },
+}
+
+impl CommitReport {
+    /// Whether this commit advanced the generation clock.
+    #[must_use]
+    pub const fn changed(self) -> bool {
+        matches!(self, Self::Changed { .. })
+    }
+
+    /// Generation after this commit — unchanged on [`Self::Noop`].
+    #[must_use]
+    pub const fn generation(self) -> GenerationId {
+        match self {
+            Self::Noop { generation } => generation,
+            Self::Changed { new_generation } => new_generation,
+        }
+    }
 }
 
 /// Working state threaded through phases 1-2: the transaction, the row-id

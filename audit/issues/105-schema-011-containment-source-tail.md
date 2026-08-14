@@ -2,7 +2,7 @@
 
 - **Severity:** medium
 - **Tree:** schema
-- **Status:** OPEN
+- **Status:** FIXED(4c89c712)
 - **Source:** adversarial validation of storage-schema F2/F3 leftovers (not in the dump as its own F)
 - **Depends on:** none (IntervalTail enum is schema-005; can land the Option-into-arm first)
 - **Conflicts with:** none (ContainmentStatement / `Enforcement::IntervalCoverage` only; schema-004 is capacity)

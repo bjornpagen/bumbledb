@@ -101,7 +101,7 @@ fn canonical_bytes(schema: &Schema, out: &mut Vec<u8>) {
         // order — the sealed pre-encoded fact bytes, whose per-value shape
         // is a function of the field types already in the stream. The tag
         // keeps ordinary and closed relations from aliasing.
-        match relation.extension() {
+        match relation.body().closed_rows() {
             None => out.push(0),
             Some(rows) => {
                 out.push(1);
@@ -135,7 +135,7 @@ fn canonical_bytes(schema: &Schema, out: &mut Vec<u8>) {
             StatementView::Capacity(_, statement) => {
                 out.push(4);
                 put_side(out, schema, &statement.target);
-                match statement.weight {
+                match statement.weight.to_weight() {
                     Weight::Unit => out.push(0),
                     Weight::Field(field) => {
                         out.push(1);
@@ -147,7 +147,7 @@ fn canonical_bytes(schema: &Schema, out: &mut Vec<u8>) {
                     }
                 }
                 out.extend_from_slice(&statement.lo.to_le_bytes());
-                match statement.hi {
+                match statement.hi.to_bound() {
                     None => out.push(0),
                     Some(hi) => {
                         out.push(1);

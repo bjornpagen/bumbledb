@@ -4,6 +4,9 @@
 //! condition's refusal shape is easier to pin in isolation.
 
 use super::*;
+use crate::image::view::{
+    Const, FilterPredicate, IntervalConst, SetConst, ViewWordSource, WordOrParam,
+};
 use crate::ir::normalize::{NormalizedQuery, normalize_predicate};
 use crate::ir::validate::validate;
 use crate::ir::{Atom, Comparison, ConditionTree, FindTerm, HeadTerm, Query, Rule, Term, Value};
@@ -412,7 +415,7 @@ fn assert_structured_filters_parse() {
     assert_parse(
         FilterPredicate::PointIn {
             field: f,
-            point: ResolvedWordSource::Word(4),
+            point: ViewWordSource::Word(4),
         },
         Some(ResolvableFilter::PointIn { field: f, point: 4 }),
     );
@@ -429,7 +432,7 @@ fn assert_structured_filters_parse() {
     assert_parse(
         FilterPredicate::FieldWithin {
             field: f,
-            outer: Const::Interval { start: 2, end: 9 },
+            outer: IntervalConst::Interval { start: 2, end: 9 },
         },
         Some(ResolvableFilter::Within {
             field: f,
@@ -452,7 +455,7 @@ fn assert_structured_filters_parse() {
     assert_parse(
         FilterPredicate::FieldAllen {
             field: f,
-            other: Const::Interval { start: 2, end: 9 },
+            other: IntervalConst::Interval { start: 2, end: 9 },
             mask: AllenMask::BEFORE,
         },
         Some(ResolvableFilter::Allen {
@@ -531,29 +534,29 @@ fn assert_other_refusals() {
     for filter in [
         FilterPredicate::PointIn {
             field: f,
-            point: ResolvedWordSource::Param(crate::ir::ParamId(0)),
+            point: ViewWordSource::Param(crate::ir::ParamId(0)),
         },
-        FilterPredicate::PointIn {
+        FilterPredicate::PointVar {
             field: f,
-            point: ResolvedWordSource::Var(VarId(0)),
+            var: VarId(0),
         },
         FilterPredicate::AnyPointIn {
             field: f,
-            set: Const::ParamSet(crate::ir::ParamId(0)),
+            set: SetConst::ParamSet(crate::ir::ParamId(0)),
         },
         FilterPredicate::FieldAllen {
             field: f,
-            other: Const::Param(crate::ir::ParamId(0)),
+            other: IntervalConst::Param(crate::ir::ParamId(0)),
             mask: AllenMask::BEFORE,
         },
         FilterPredicate::FieldWithin {
             field: f,
-            outer: Const::Param(crate::ir::ParamId(0)),
+            outer: IntervalConst::Param(crate::ir::ParamId(0)),
         },
         FilterPredicate::DurationCompare {
             field: f,
             op: CmpOp::Ge,
-            value: Const::Word(2),
+            value: WordOrParam::Word(2),
         },
         FilterPredicate::DurationFieldsCompare {
             interval: f,
@@ -603,7 +606,7 @@ fn parsed_evaluator_agrees_with_the_pinned_extension_id_sets() {
             RelationId(CAL),
             vec![FilterPredicate::PointIn {
                 field: FieldId(1),
-                point: ResolvedWordSource::Word(3),
+                point: ViewWordSource::Word(3),
             }],
             vec![0],
         ),
@@ -611,7 +614,7 @@ fn parsed_evaluator_agrees_with_the_pinned_extension_id_sets() {
             RelationId(CAL),
             vec![FilterPredicate::FieldAllen {
                 field: FieldId(1),
-                other: Const::Interval { start: 6, end: 8 },
+                other: IntervalConst::Interval { start: 6, end: 8 },
                 mask: AllenMask::BEFORE,
             }],
             vec![0],

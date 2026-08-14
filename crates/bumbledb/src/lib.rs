@@ -133,7 +133,9 @@ pub use api::stats::{
     CoverStats, DeadRule, DisjointRules, EliminatedOccurrence, ExecutionStats, FoldedOccurrence,
     INTROSPECTION_VERSION, KeyProbeStats, NodeStats, PinnedRows, RuleStats, StatsBody,
 };
-pub use error::{Direction, Error, OverflowKind, Result, Violation, Violations};
+pub use error::{
+    Direction, Error, FunctionalityViolation, OverflowKind, Result, Violation, Violations,
+};
 pub use interval::Interval;
 /// The grounding's test-support off switch (`plan/ground.rs`): reachable only
 /// under the `ground-off` feature, which the bench crate's dual-run

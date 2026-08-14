@@ -147,11 +147,11 @@ impl ManifestDescriptor for SchemaDescriptor {
                             .sealed_fields()
                             .enumerate()
                             .map(|(field_idx, slot)| FieldManifest {
-                                name: slot.name.into(),
+                                name: slot.name().into(),
                                 id: FieldId(
                                     u16::try_from(field_idx).expect("field count fits u16"),
                                 ),
-                                value_type: slot.value_type.clone(),
+                                value_type: slot.value_type().clone(),
                             })
                             .collect(),
                         extension,

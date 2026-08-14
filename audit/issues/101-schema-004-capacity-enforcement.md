@@ -2,7 +2,7 @@
 
 - **Severity:** medium
 - **Tree:** schema
-- **Status:** OPEN
+- **Status:** FIXED(bb9f0869)
 - **Source:** audit/storage-schema.md F5
 - **Depends on:** none
 - **Conflicts with:** none (CapacityStatement.enforcement field only)

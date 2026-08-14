@@ -7,5 +7,5 @@ use bumbledb::obs::{Category, TraceEvent};
 pub fn split_harness(events: Vec<TraceEvent>) -> (Vec<TraceEvent>, Vec<TraceEvent>) {
     events
         .into_iter()
-        .partition(|event| event.cat != Category::Harness)
+        .partition(|event| event.cat() != Category::Harness)
 }

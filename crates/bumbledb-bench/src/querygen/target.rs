@@ -1038,7 +1038,7 @@ mod tests {
             matches!(
                 schema.statement(TAG_BUDGET),
                 StatementView::Capacity(_, statement)
-                    if statement.weight == bumbledb::schema::Weight::Field(ids::posting_tag::TAG)
+                    if statement.weight == bumbledb::schema::SealedWeight::Field(ids::posting_tag::TAG)
                         && statement.source.relation == ids::POSTING_TAG
                         && statement.target.relation == ids::POSTING
             ),

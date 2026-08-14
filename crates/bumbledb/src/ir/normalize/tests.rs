@@ -1,7 +1,9 @@
 use super::lower_literal::lower_literal;
 use super::*;
 use crate::encoding::{ValueRef, encode_fact, encode_i64};
-use crate::image::view::{Const, ResolvedWordSource};
+use crate::image::view::{
+    Const, FilterPredicate, IntervalConst, SetConst, ViewWordSource, WordOrParam,
+};
 use crate::ir::validate::validate;
 use crate::ir::{Atom, Comparison, ConditionTree, FindTerm, ParamId, Query, Rule, Term, Value};
 use crate::schema::Schema;
@@ -156,7 +158,7 @@ fn repeated_variable_lowers_and_executes_through_the_evaluator() {
     // Exactly the a == b rows survive.
     let ids: Vec<u64> = filtered
         .positions()
-        .map(|p| filtered.image().column_words(0)[p as usize])
+        .map(|p| filtered.bound().expect("apply binds").image().column_words(0)[p as usize])
         .collect();
     assert_eq!(ids.len(), 2);
     assert!(!ids.contains(&2));
@@ -462,7 +464,7 @@ fn constant_point_membership_lowers_to_point_in() {
         norm.occurrences[0].filters,
         vec![FilterPredicate::PointIn {
             field: P_DURING,
-            point: ResolvedWordSource::Word(w(5)),
+            point: ViewWordSource::Word(w(5)),
         }]
     );
 
@@ -487,7 +489,7 @@ fn constant_point_membership_lowers_to_point_in() {
         norm.occurrences[0].filters,
         vec![FilterPredicate::PointIn {
             field: P_DURING,
-            point: ResolvedWordSource::Param(ParamId(0)),
+            point: ViewWordSource::Param(ParamId(0)),
         }]
     );
 }
@@ -798,7 +800,7 @@ fn scalar_param_set_binding_is_the_selection_set_marker() {
         normalized(&point_set).occurrences[0].filters,
         vec![FilterPredicate::AnyPointIn {
             field: P_DURING,
-            set: Const::ParamSet(ParamId(0)),
+            set: SetConst::ParamSet(ParamId(0)),
         }]
     );
 }
@@ -855,9 +857,9 @@ fn cross_atom_membership_variable_lowers_to_point_in_over_the_binding() {
     assert_eq!(norm.occurrences[0].vars, vec![(P_EMP, VarId(1))]);
     assert_eq!(
         norm.occurrences[0].filters,
-        vec![FilterPredicate::PointIn {
+        vec![FilterPredicate::PointVar {
             field: P_DURING,
-            point: ResolvedWordSource::Var(VarId(0)),
+            var: VarId(0),
         }]
     );
     assert_eq!(norm.occurrences[1].vars, vec![(E_AT, VarId(0))]);
@@ -1086,7 +1088,7 @@ fn sweep_contains_param_placements() {
         normalized(&point_param).occurrences[0].filters,
         vec![FilterPredicate::PointIn {
             field: P_DURING,
-            point: ResolvedWordSource::Param(ParamId(0)),
+            point: ViewWordSource::Param(ParamId(0)),
         }]
     );
 
@@ -1106,7 +1108,7 @@ fn sweep_contains_param_placements() {
         normalized(&within_param).occurrences[0].filters,
         vec![FilterPredicate::FieldWithin {
             field: E_AT,
-            outer: Const::Param(ParamId(0)),
+            outer: IntervalConst::Param(ParamId(0)),
         }]
     );
 }
@@ -1140,7 +1142,7 @@ fn sweep_duration_placements() {
         vec![FilterPredicate::DurationCompare {
             field: P_DURING,
             op: CmpOp::Lt,
-            value: Const::Word(5),
+            value: WordOrParam::Word(5),
         }]
     );
 
@@ -1159,7 +1161,7 @@ fn sweep_duration_placements() {
         vec![FilterPredicate::DurationCompare {
             field: P_DURING,
             op: CmpOp::Le,
-            value: Const::Word(5),
+            value: WordOrParam::Word(5),
         }]
     );
 
@@ -1177,7 +1179,7 @@ fn sweep_duration_placements() {
         vec![FilterPredicate::DurationCompare {
             field: P_DURING,
             op: CmpOp::Le,
-            value: Const::Param(ParamId(0)),
+            value: WordOrParam::Param(ParamId(0)),
         }]
     );
 

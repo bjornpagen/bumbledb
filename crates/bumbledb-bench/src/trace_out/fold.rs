@@ -34,8 +34,8 @@ pub fn fold_stacks(events: &[TraceEvent]) -> String {
     let mut path_of: Vec<String> = vec![String::new(); sweep.spans.len()];
     for (index, event) in sweep.spans.iter().enumerate() {
         path_of[index] = match sweep.parent[index] {
-            Some(parent) => format!("{};{}", path_of[parent], event.name),
-            None => event.name.to_owned(),
+            Some(parent) => format!("{};{}", path_of[parent], event.name()),
+            None => event.name().to_owned(),
         };
     }
 
@@ -45,33 +45,34 @@ pub fn fold_stacks(events: &[TraceEvent]) -> String {
     let mut phase_ns = vec![0u64; sweep.spans.len()];
     for event in events
         .iter()
-        .filter(|e| e.cat == Category::Phase && e.dur_ns == 0)
+        .filter(|e| matches!(e, TraceEvent::Point { cat, .. } if *cat == Category::Phase))
     {
-        let stamp = event.start_ns;
+        let stamp = event.start_ns();
         let host = sweep
             .spans
             .iter()
-            .rposition(|s| s.name == names::JOIN && s.start_ns + s.dur_ns <= stamp)
+            .rposition(|s| s.name() == names::JOIN && s.start_ns() + s.dur_ns() <= stamp)
             .or_else(|| {
                 sweep
                     .spans
                     .iter()
-                    .rposition(|s| s.start_ns <= stamp && stamp < s.start_ns + s.dur_ns)
+                    .rposition(|s| s.start_ns() <= stamp && stamp < s.start_ns() + s.dur_ns())
             });
         let path = match host {
             Some(host) => {
-                phase_ns[host] += event.a0;
-                format!("{};{}", path_of[host], event.name)
+                phase_ns[host] += event.a0();
+                format!("{};{}", path_of[host], event.name())
             }
-            None => event.name.to_owned(),
+            None => event.name().to_owned(),
         };
-        *folded.entry(path).or_default() += event.a0;
+        *folded.entry(path).or_default() += event.a0();
     }
 
     for (index, event) in sweep.spans.iter().enumerate() {
         *folded
             .entry(std::mem::take(&mut path_of[index]))
-            .or_default() += (event.dur_ns - sweep.child_ns[index]).saturating_sub(phase_ns[index]);
+            .or_default() +=
+            (event.dur_ns() - sweep.child_ns[index]).saturating_sub(phase_ns[index]);
     }
 
     let mut out = String::new();

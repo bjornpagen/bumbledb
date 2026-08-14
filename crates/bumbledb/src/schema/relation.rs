@@ -2,7 +2,7 @@
 
 use super::{
     CapacityId, ContainmentId, FactLayout, FieldDescriptor, FieldId, IntervalTail, KeyId, Relation,
-    SealedRow, ValueType,
+    RelationBody, ValueType,
 };
 
 impl Relation {
@@ -11,20 +11,11 @@ impl Relation {
         &self.name
     }
 
-    /// The sealed ground axioms of a closed relation, in declaration order
-    /// (row id = index); `None` = ordinary. The option *is* the kind —
-    /// there is no relation-kind enum
-    /// (`docs/architecture/10-data-model.md` § closed relations).
+    /// The sealed kind: ordinary (optional fresh-row mint) or closed
+    /// (ground axioms). Match; do not re-test a flag (CONTRACT C9).
     #[must_use]
-    pub fn extension(&self) -> Option<&[SealedRow]> {
-        self.extension.as_deref()
-    }
-
-    /// Whether the relation is closed: rows are ground axioms — frozen by
-    /// the fingerprint, virtual in storage, write-refused.
-    #[must_use]
-    pub fn is_closed(&self) -> bool {
-        self.extension.is_some()
+    pub fn body(&self) -> &RelationBody {
+        &self.body
     }
 
     #[must_use]
@@ -69,13 +60,15 @@ impl Relation {
         &self.capacity_targets
     }
 
-    /// The first `Fresh`-generation field — the one id allocator's mint
-    /// field (R16, `docs/architecture/50-storage.md` § key layout): on a
-    /// fresh-keyed relation this field's value IS the `F` row id; `None`
-    /// means row ids mint from the `S` high-water.
+    /// The [`KeyForm::FreshRow`] key on an ordinary relation, if this
+    /// relation is the one id allocator's mint (R16). Closed relations
+    /// have none — identity is the handle.
     #[must_use]
-    pub(crate) fn fresh_row_field(&self) -> Option<FieldId> {
-        self.fresh_row_field
+    pub(crate) fn fresh_key(&self) -> Option<KeyId> {
+        match self.body {
+            RelationBody::Ordinary { fresh } => fresh,
+            RelationBody::Closed { .. } => None,
+        }
     }
 
     /// The interval-tail descriptor of a projection over this relation:
@@ -90,7 +83,7 @@ impl Relation {
         projection
             .iter()
             .find_map(|field| match self.field(*field).value_type {
-                ValueType::Interval { width, .. } => Some(IntervalTail { width }),
+                ValueType::Interval { width, .. } => Some(IntervalTail::from_width(width)),
                 _ => None,
             })
     }

@@ -364,11 +364,11 @@ fn deep_chain_reaches_node_three_at_runtime() {
     let (rows, events) = crate::harness::traced_sample(&mut run).expect("traced");
     assert!(rows > 0, "the suffix edge selects rows");
     assert!(
-        events.iter().any(|event| event.name.ends_with("_n3")),
+        events.iter().any(|event| event.name().ends_with("_n3")),
         "no node-3 phase fired: {:?}",
         events
             .iter()
-            .map(|event| event.name)
+            .map(|event| event.name())
             .collect::<std::collections::BTreeSet<_>>()
     );
     drop(db);

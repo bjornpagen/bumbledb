@@ -58,7 +58,7 @@ mod tests {
                 .expect("execute");
             obs::finish_capture()
                 .iter()
-                .filter(|e| e.name == event)
+                .filter(|e| e.name() == event)
                 .count()
         };
         assert!(
@@ -164,7 +164,7 @@ mod tests {
                     let events = obs::finish_capture();
                     let builds = events
                         .iter()
-                        .filter(|e| e.name == obs::names::VIEW_BUILD)
+                        .filter(|e| e.name() == obs::names::VIEW_BUILD)
                         .count();
                     assert_eq!(
                         builds, 0,
@@ -203,7 +203,7 @@ mod tests {
             .expect("first execute");
         let cold = obs::finish_capture()
             .iter()
-            .filter(|e| e.name == obs::names::DICT_RESOLVE)
+            .filter(|e| e.name() == obs::names::DICT_RESOLVE)
             .count();
         assert!(out.len() > 1, "a real result set");
         assert_eq!(cold, 1, "one distinct name, one descent on first touch");
@@ -221,7 +221,7 @@ mod tests {
             .expect("re-execute");
         let warm = obs::finish_capture()
             .iter()
-            .filter(|e| e.name == obs::names::DICT_RESOLVE)
+            .filter(|e| e.name() == obs::names::DICT_RESOLVE)
             .count();
         assert!(out.len() > 1, "a real result set");
         assert_eq!(warm, 0, "the persistent tier holds: zero descents warm");

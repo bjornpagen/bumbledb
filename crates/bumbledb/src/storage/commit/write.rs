@@ -111,10 +111,7 @@ pub fn commit(delta: WriteDelta<'_>, env: &Environment) -> Result<CommitReport> 
             let rtxn = env.read_txn()?;
             rtxn.generation()?
         };
-        return Ok(CommitReport {
-            changed: false,
-            new_generation: generation,
-        });
+        return Ok(CommitReport::Noop { generation });
     }
 
     crashpoint!("after-staging");
@@ -176,10 +173,7 @@ pub fn commit(delta: WriteDelta<'_>, env: &Environment) -> Result<CommitReport> 
                 txn.commit()?;
             }
             crashpoint!("after-commit");
-            Ok(CommitReport {
-                changed: true,
-                new_generation,
-            })
+            Ok(CommitReport::Changed { new_generation })
         })
     })();
     // The never-reissue law spans the abort: every aborted attempt still
@@ -268,18 +262,14 @@ fn decode_cited_facts(
     let mut cited: Vec<Box<[CitedFact]>> = Vec::with_capacity(violations.as_slice().len());
     for violation in violations.as_slice() {
         let (relation, facts): (_, Vec<&[u8]>) = match violation {
-            Violation::Functionality {
-                statement,
-                fact,
-                incumbent,
-            } => {
-                let StatementView::Key(_, key) = schema.statement(*statement) else {
+            Violation::Functionality(functionality) => {
+                let StatementView::Key(_, key) = schema.statement(functionality.statement()) else {
                     unreachable!("a Functionality citation names a key statement");
                 };
                 (
                     key.relation,
-                    std::iter::once(fact.as_ref())
-                        .chain(incumbent.as_deref())
+                    std::iter::once(functionality.fact())
+                        .chain(functionality.incumbent())
                         .collect(),
                 )
             }

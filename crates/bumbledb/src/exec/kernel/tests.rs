@@ -1260,7 +1260,7 @@ fn allen_dense_scans_record_one_batch_event() {
 
     let hits: Vec<&crate::obs::TraceEvent> = events
         .iter()
-        .filter(|e| e.name == crate::obs::names::KERNEL_ALLEN)
+        .filter(|e| e.name() == crate::obs::names::KERNEL_ALLEN)
         .collect();
     assert_eq!(
         hits.len(),
@@ -1269,7 +1269,7 @@ fn allen_dense_scans_record_one_batch_event() {
     );
     for (event, survivors) in hits.iter().zip([out.len(), out_const.len()]) {
         assert_eq!(
-            (event.a0, event.a1),
+            (event.a0(), event.a1()),
             (len as u64, survivors as u64),
             "lanes swept and survivors kept",
         );

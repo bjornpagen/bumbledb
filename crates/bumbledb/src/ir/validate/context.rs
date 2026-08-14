@@ -539,7 +539,11 @@ impl Context {
                         && let Term::Var(var) = term
                         && let Some(closed) = closed_refs.target(relation_id, *field)
                     {
-                        let rows = schema.relation(closed).extension().map_or(0, <[_]>::len);
+                        let rows = schema
+                            .relation(closed)
+                            .body()
+                            .closed_rows()
+                            .map_or(0, <[_]>::len);
                         self.closed_vars
                             .insert(*var, u16::try_from(rows).expect("extensions seal at ≤256"));
                     }

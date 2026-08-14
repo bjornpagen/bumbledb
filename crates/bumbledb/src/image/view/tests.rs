@@ -122,7 +122,7 @@ fn oracle(
 
 fn survivor_ids(view: &View) -> Vec<u64> {
     view.positions()
-        .map(|p| view.image().column_words(0)[p as usize])
+        .map(|p| view.bound().expect("apply binds").image().column_words(0)[p as usize])
         .collect()
 }
 
@@ -204,7 +204,7 @@ fn no_predicates_yield_the_all_variant() {
     let txn = env.read_txn().expect("txn");
     let image = build(&txn, &schema, R).expect("build");
     let view = apply(&image, &[], &[], Vec::new());
-    assert!(matches!(view, View::All(_)));
+    assert!(matches!(view, View::Bound(BoundView::All(_))));
     assert_eq!(view.len(), 50);
     let positions: Vec<u32> = view.positions().collect();
     assert_eq!(positions, (0..50).collect::<Vec<u32>>());
@@ -345,7 +345,7 @@ fn point_in_keeps_start_boundary_and_drops_end_boundary() {
     // (row 1, dies).
     let at_nine = vec![FilterPredicate::PointIn {
         field: P_DURING,
-        point: ResolvedWordSource::Word(w(9)),
+        point: ViewWordSource::Word(w(9)),
     }];
     assert_eq!(sorted_ids(&apply(&image, &at_nine, &[], Vec::new())), [2]);
 
@@ -353,7 +353,7 @@ fn point_in_keeps_start_boundary_and_drops_end_boundary() {
     // interior point of [1,3).
     let at_two = vec![FilterPredicate::PointIn {
         field: P_DURING,
-        point: ResolvedWordSource::Word(w(2)),
+        point: ViewWordSource::Word(w(2)),
     }];
     assert_eq!(
         sorted_ids(&apply(&image, &at_two, &[], Vec::new())),
@@ -363,7 +363,7 @@ fn point_in_keeps_start_boundary_and_drops_end_boundary() {
     // The same point through the bind-time param slice.
     let via_param = vec![FilterPredicate::PointIn {
         field: P_DURING,
-        point: ResolvedWordSource::Param(ParamId(0)),
+        point: ViewWordSource::Param(ParamId(0)),
     }];
     assert_eq!(
         sorted_ids(&apply(&image, &via_param, &[Const::Word(w(9))], Vec::new())),
@@ -377,7 +377,7 @@ fn any_point_in_matches_any_element_of_the_bound_set() {
     let image = interval_image(&dir);
     let predicates = vec![FilterPredicate::AnyPointIn {
         field: P_DURING,
-        set: Const::ParamSet(ParamId(0)),
+        set: SetConst::ParamSet(ParamId(0)),
     }];
 
     // {-4, 10}: -4 lies in [-5,2) (row 3), 10 in [9,12) (row 2).
@@ -463,7 +463,7 @@ fn field_within_is_scalar_membership_in_the_constant_interval() {
     // (at == 2 survives, at == 9 dies).
     let scalar_within = vec![FilterPredicate::FieldWithin {
         field: P_AT,
-        outer: Const::Interval {
+        outer: IntervalConst::Interval {
             start: w(2),
             end: w(9),
         },
@@ -521,7 +521,7 @@ fn measure_filters_keep_the_pooled_buffer_and_refine_in_order() {
     let dur_lt = |bound: u64| FilterPredicate::DurationCompare {
         field: P_DURING,
         op: CmpOp::Lt,
-        value: Const::Word(bound),
+        value: WordOrParam::Word(bound),
     };
 
     // All-measure: the caller's pooled buffer seeds the survivors (051).

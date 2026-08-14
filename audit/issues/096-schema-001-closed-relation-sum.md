@@ -2,7 +2,7 @@
 
 - **Severity:** high
 - **Tree:** schema
-- **Status:** OPEN
+- **Status:** FIXED(cc808db7)
 - **Source:** audit/storage-schema.md F1
 - **Depends on:** none (foundation; image-001, store-002 land after)
 - **Conflicts with:** schema-006, image-001 (same sealed `Relation`; land this first). Not schema-009 (`SealedField` is the theory descriptor view).

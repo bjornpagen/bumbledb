@@ -461,18 +461,13 @@ fn statement_violations_surface_from_commit_through_the_public_api() {
     let bumbledb::Error::CommitRejected { ref violations } = err else {
         panic!("expected CommitRejected, got {err}");
     };
-    let [
-        bumbledb::Violation::Functionality {
-            statement, fact, ..
-        },
-    ] = violations.as_slice()
-    else {
+    let [bumbledb::Violation::Functionality(fv)] = violations.as_slice() else {
         panic!("expected one key citation, got {violations:?}");
     };
     // Materialized order: Holder.id's fresh auto-key, Account.id's
     // fresh auto-key, then the declared containment.
-    assert_eq!(*statement, StatementId(1));
-    assert!(!fact.is_empty());
+    assert_eq!(fv.statement(), StatementId(1));
+    assert!(!fv.fact().is_empty());
     // The rendered diagnostic cites the statement in the algebra.
     let rendered = format!("{}", err.display_with(&ledger_schema()));
     assert!(rendered.contains("Account(id) -> Account"), "{rendered}");

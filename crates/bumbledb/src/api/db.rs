@@ -492,7 +492,7 @@ impl<S> WriteTx<'_, S> {
     /// surface's own shape check.
     fn refuse_closed(&self, relation: RelationId) -> Result<()> {
         match self.schema.relation_checked(relation) {
-            Some(rel) if rel.is_closed() => {
+            Some(rel) if rel.body().closed_rows().is_some() => {
                 Err(crate::error::Error::ClosedRelationWrite { relation })
             }
             _ => Ok(()),

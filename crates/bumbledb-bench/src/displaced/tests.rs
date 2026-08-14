@@ -117,8 +117,8 @@ fn the_engine_trace_pins_the_forced_map_and_its_memoization() {
     let first = traced_execute();
     let forces: Vec<(u64, u64)> = first
         .iter()
-        .filter(|e| e.name == obs::names::COLT_FORCE)
-        .map(|e| (e.a0, e.a1))
+        .filter(|e| e.name() == obs::names::COLT_FORCE)
+        .map(|e| (e.a0(), e.a1()))
         .collect();
     assert_eq!(
         forces,
@@ -129,12 +129,12 @@ fn the_engine_trace_pins_the_forced_map_and_its_memoization() {
         "two forces: the hub tag prefix, then all spoke positions at the pinned distinct hub keys"
     );
     assert!(
-        first.iter().any(|e| e.name == obs::names::IMAGE_BUILD),
+        first.iter().any(|e| e.name() == obs::names::IMAGE_BUILD),
         "the first execute decodes the images"
     );
 
     let second = traced_execute();
-    let count = |name: &str| second.iter().filter(|e| e.name == name).count();
+    let count = |name: &str| second.iter().filter(|e| e.name() == name).count();
     assert!(
         count(obs::names::VIEW_MEMO_HIT) > 0,
         "the second execute rides the view memo"

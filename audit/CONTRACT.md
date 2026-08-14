@@ -224,3 +224,34 @@ conformance + three-way comparator) and `scripts/check.sh` define
 green. Bridge.lean mechanism/instrument tokens move WITH engine
 renames; docs' `lean/…` citations move WITH Lean renames. Assertions
 are never weakened to pass.
+
+---
+
+## C9. Sealed schema sums
+
+C1 does **not** freeze these trees. After `SchemaDescriptor::validate`,
+every trusted schema layer is a sum. The hostile descriptor stays a
+product: `RelationDescriptor.extension: Option` is the boundary spelling
+(schema-010) so validate can refuse `EmptyExtension` / `StrOnClosedRelation`
+/ … by name. The witness parses:
+
+* **Relation:** `RelationBody::Ordinary { fresh: Option<KeyId> }` |
+  `Closed { extension }` — closedness is not an Option beside the
+  ordinary fields. Closed relations are not writable. Shared layout
+  fields may sit outside the sum; `fresh` vs `extension` must not.
+* **Keys:** `KeyForm::FreshRow | Scalar | Pointwise` — FreshRow cannot
+  be pointwise; `DisjointDeterminantProof` lives on the Pointwise arm.
+  The ordinary relation's mint is that FreshRow key (or `None`), not a
+  second `fresh_row` bool / `fresh_row_field` that must agree.
+* **Capacity measure/window:** `SealedWeight` / `SealedBound` carry
+  Duration tails **in-arm**. `Unit` and `Unbounded` are cases, not
+  absences (descriptor `hi: Option<Bound>` may keep the hostile `*`
+  spelling).
+* **Capacity enforcement:** `CapacityEnforcement::{ScalarProbe, Closed}`
+  — containments keep three-arm `Enforcement`; `IntervalCoverage` is
+  unrepresentable on a capacity. Containment `IntervalCoverage` carries
+  `source_tail` (schema-011).
+
+Do **not** number a corruption-variant clause C10: `capacity-laws` C10
+is ray-Duration refusal (`Error::CapacityRayMeasure`). Named
+`CorruptionError` arms (err-004) land under C1–C8.

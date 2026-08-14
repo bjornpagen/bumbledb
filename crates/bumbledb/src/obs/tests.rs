@@ -16,22 +16,33 @@ fn nested_spans_record_containment_in_drop_order() {
     assert_eq!(events.len(), 2);
     // Drop order: inner lands first.
     let (inner, outer) = (&events[0], &events[1]);
-    assert_eq!(inner.name, "inner");
-    assert_eq!(outer.name, "outer");
-    assert_eq!((inner.a0, inner.a1), (7, 9));
-    assert_eq!(outer.a0, 42, "set_args landed");
-    assert!(outer.start_ns <= inner.start_ns);
-    assert!(inner.start_ns + inner.dur_ns <= outer.start_ns + outer.dur_ns);
+    assert_eq!(inner.name(), "inner");
+    assert_eq!(outer.name(), "outer");
+    assert_eq!((inner.a0(), inner.a1()), (7, 9));
+    assert_eq!(outer.a0(), 42, "set_args landed");
+    assert!(outer.start_ns() <= inner.start_ns());
+    assert!(inner.start_ns() + inner.dur_ns() <= outer.start_ns() + outer.dur_ns());
 }
 
 #[test]
-fn point_events_record_zero_duration_and_args() {
+fn point_events_record_as_points_with_args() {
     start_capture();
     event("tick", Category::Cache, 3, 4);
     let events = finish_capture();
     assert_eq!(events.len(), 1);
-    assert_eq!(events[0].dur_ns, 0);
-    assert_eq!((events[0].a0, events[0].a1), (3, 4));
+    assert!(
+        matches!(
+            events[0],
+            TraceEvent::Point {
+                name: "tick",
+                a0: 3,
+                a1: 4,
+                ..
+            }
+        ),
+        "{:?}",
+        events[0]
+    );
 }
 
 #[test]
@@ -103,8 +114,8 @@ fn nested_start_capture_extends_instead_of_discarding() {
         2,
         "no event was destroyed by the nested start"
     );
-    assert_eq!(events[0].name, "before");
-    assert_eq!(events[1].name, "after");
+    assert_eq!(events[0].name(), "before");
+    assert_eq!(events[1].name(), "after");
     assert!(!capturing(), "one finish drains the whole capture");
 }
 
@@ -118,6 +129,6 @@ fn sequential_captures_are_independent() {
     let b = finish_capture();
     assert_eq!(a.len(), 1);
     assert_eq!(b.len(), 1);
-    assert_eq!(a[0].name, "first");
-    assert_eq!(b[0].name, "second");
+    assert_eq!(a[0].name(), "first");
+    assert_eq!(b[0].name(), "second");
 }

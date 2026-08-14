@@ -17,14 +17,15 @@
 //! reads. On a **fresh-keyed** relation the insert row id IS derivable —
 //! the first fresh field's value is the `F` row id (the one id
 //! allocator, `docs/architecture/50-storage.md` § key layout; R16) — so
-//! the plan carries it ([`FactOp::fresh_row`]). The plan owns key
+//! the plan carries it on [`FactOp::Insert`]). The plan owns key
 //! material and check sets; the applier keeps the remaining id plumbing
 //! and the desync probes; the judgment keeps the final-state probes.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::schema::{
-    AxiomIndex, CapacityId, ContainmentId, Enforcement, IntervalTail, KeyId, Schema, Weight,
+    AxiomIndex, CapacityEnforcement, CapacityId, ContainmentId, Enforcement, IntervalTail, KeyId,
+    Schema,
 };
 use crate::storage::delta::{Disposition, WriteDelta};
 use crate::storage::keys::{self, DeterminantImage};
@@ -81,49 +82,80 @@ pub(crate) struct CapacityCheck {
     pub(crate) parent: DeterminantImage,
 }
 
-/// Everything derivable about one fact's application.
-pub(crate) struct FactOp<'d> {
-    pub(crate) relation: RelationId,
-    /// The canonical fact bytes (identity = bytes, `10-data-model.md`).
-    pub(crate) fact: &'d [u8],
-    /// The fact's blake3 hash, borrowed from the delta's map key — the
-    /// delta computed it once to record the disposition, so the `M` key
-    /// derivation at apply is free (the applier never re-hashes).
-    pub(crate) fact_hash: &'d [u8; 32],
-    /// The one id allocator's derivation on a fresh-keyed relation (R16):
-    /// the first fresh field's value IS the `F` row id, and the named
-    /// statement's functionality judgment is the `F` put-conflict.
-    /// `None` = fresh-less; the applier mints from the `S` high-water.
-    pub(crate) fresh_row: Option<FreshRowOp>,
-    /// One per key statement of the relation, materialized order — the
-    /// fresh-row auto-key excepted: it maintains no `U` tree (its entry
-    /// would transcribe `F`), so no determinant op exists for it.
-    pub(crate) determinants: Box<[DeterminantOp]>,
-    /// One per outgoing containment whose source selection the fact
-    /// satisfies — a fact outside σ has no edge, by design.
-    pub(crate) edges: Box<[EdgeOp]>,
-    /// One per outgoing **closed-target** containment whose source
-    /// selection the fact satisfies: no determinant bytes, no `R` traffic —
-    /// the compiled member set is the whole plan, and the judgment is
-    /// one AND and one test on the insert side
-    /// (`docs/architecture/30-dependencies.md`). Dead weight on a
-    /// delete op (removing a reference cannot violate an inclusion);
-    /// only the insert-side judgment consumes it.
-    pub(crate) memberships: Box<[MembershipOp]>,
-    /// One per capacity statement whose source (child) is this relation
-    /// and whose φ the fact satisfies — the capacity `R` edge, written
-    /// exactly as a containment edge (`docs/architecture/50-storage.md`
-    /// § key layout: the child-group measure walk's reader).
-    pub(crate) capacity_edges: Box<[MarkEdgeOp]>,
+/// Everything derivable about one fact's application. Insert and delete
+/// are different arms: delete cannot carry memberships, a fresh-row
+/// derivation, or a capacity weight.
+pub(crate) enum FactOp<'d> {
+    Delete {
+        relation: RelationId,
+        fact: &'d [u8],
+        fact_hash: &'d [u8; 32],
+        determinants: Box<[DeterminantOp]>,
+        edges: Box<[EdgeOp]>,
+        capacity_keys: Box<[CapacityKeyOp]>,
+    },
+    Insert {
+        relation: RelationId,
+        fact: &'d [u8],
+        fact_hash: &'d [u8; 32],
+        fresh_row: Option<FreshRowOp>,
+        determinants: Box<[DeterminantOp]>,
+        edges: Box<[EdgeOp]>,
+        memberships: Box<[MembershipOp]>,
+        capacity_edges: Box<[MarkEdgeOp]>,
+    },
+}
+
+impl<'d> FactOp<'d> {
+    pub(crate) fn relation(&self) -> RelationId {
+        match *self {
+            Self::Delete { relation, .. } | Self::Insert { relation, .. } => relation,
+        }
+    }
+
+    pub(crate) fn fact(&self) -> &'d [u8] {
+        match *self {
+            Self::Delete { fact, .. } | Self::Insert { fact, .. } => fact,
+        }
+    }
+
+    pub(crate) fn fact_hash(&self) -> &'d [u8; 32] {
+        match *self {
+            Self::Delete { fact_hash, .. } | Self::Insert { fact_hash, .. } => fact_hash,
+        }
+    }
+
+    pub(crate) fn determinants(&self) -> &[DeterminantOp] {
+        match self {
+            Self::Delete { determinants, .. } | Self::Insert { determinants, .. } => determinants,
+        }
+    }
+
+    pub(crate) fn edges(&self) -> &[EdgeOp] {
+        match self {
+            Self::Delete { edges, .. } | Self::Insert { edges, .. } => edges,
+        }
+    }
+
+    pub(crate) fn capacity_edges(&self) -> &[MarkEdgeOp] {
+        match self {
+            Self::Insert { capacity_edges, .. } => capacity_edges,
+            Self::Delete { .. } => &[],
+        }
+    }
+}
+
+/// Delete-side capacity `R` key material — no weight; removal is key-only.
+pub(crate) struct CapacityKeyOp {
+    pub(crate) statement: StatementId,
+    pub(crate) key_bytes: DeterminantImage,
 }
 
 /// One capacity `R` edge of one fact: the statement-scoped key material,
 /// KEY-symmetric between the insert put and the delete removal (the
-/// applier consumes it exactly as a containment [`EdgeOp`]; the delete
-/// removal is key-only, so a delete op's `weight` is `None` by
-/// construction — never derived: the derive is fallible on a weighted
-/// statement, and a value the applier never reads must not be able to
-/// refuse the delete).
+/// applier consumes it exactly as a containment [`EdgeOp`]). The delete
+/// arm carries [`CapacityKeyOp`] instead — key-only, no weight — so a
+/// fallible weighted derive cannot refuse a delete.
 pub(crate) struct MarkEdgeOp {
     /// Prederived statement identity for the schema-free byte applier.
     pub(crate) statement: StatementId,
@@ -148,18 +180,43 @@ pub(crate) struct FreshRowOp {
 }
 
 /// One key statement's determinant material for one fact.
-pub(crate) struct DeterminantOp {
-    /// The `Functionality` statement.
-    pub(crate) statement: StatementId,
-    /// The projected fields' canonical encodings in statement order
-    /// ([`keys::determinant_image`]) — the `U` key's determinant segment.
-    pub(crate) determinant: DeterminantImage,
+pub(crate) enum DeterminantOp {
+    /// Scalar key: exact `U` put is the functionality judgment.
+    Scalar {
+        statement: StatementId,
+        determinant: DeterminantImage,
+    },
     /// Interval-carrying key: the exact `U` put cannot detect overlap, so
     /// the insert additionally runs the ordered-neighbor probe — the
     /// tail descriptor says how the determinant's trailing interval
     /// reads (16-byte `start ‖ end`, or the 8-byte fixed start whose end
-    /// is the type's width). `None` = scalar key.
-    pub(crate) pointwise: Option<IntervalTail>,
+    /// is the type's width).
+    Pointwise {
+        statement: StatementId,
+        determinant: DeterminantImage,
+        tail: IntervalTail,
+    },
+}
+
+impl DeterminantOp {
+    pub(crate) fn statement(&self) -> StatementId {
+        match *self {
+            Self::Scalar { statement, .. } | Self::Pointwise { statement, .. } => statement,
+        }
+    }
+
+    pub(crate) fn determinant(&self) -> &DeterminantImage {
+        match self {
+            Self::Scalar { determinant, .. } | Self::Pointwise { determinant, .. } => determinant,
+        }
+    }
+
+    pub(crate) fn tail(&self) -> Option<IntervalTail> {
+        match *self {
+            Self::Pointwise { tail, .. } => Some(tail),
+            Self::Scalar { .. } => None,
+        }
+    }
 }
 
 /// One closed-target containment of one fact: the membership judgment's
@@ -288,7 +345,7 @@ pub(crate) fn plan_commit<'d>(
     }
     let inserts = inserts.into_boxed_slice();
     let mut inserted: Vec<(RelationId, &[u8])> = Vec::with_capacity(inserts.len());
-    inserted.extend(inserts.iter().map(|op| (op.relation, op.fact)));
+    inserted.extend(inserts.iter().map(|op| (op.relation(), op.fact())));
     inserted.sort_unstable();
     let target_checks = target_checks(
         schema,
@@ -363,23 +420,26 @@ fn fact_op<'d>(
         // allocator, R16): its determinant IS the `F` row id, and the
         // `F` put-conflict is its functionality judgment — the applier
         // takes the derived id and the statement to convict.
-        if statement.fresh_row {
-            let word = crate::encoding::field_word_bytes(
-                fact,
-                layout,
-                usize::from(statement.projection[0].0),
-            );
-            fresh_row = Some(FreshRowOp {
-                statement: statement.id,
-                row_id: u64::from_be_bytes(word),
-            });
+        if let Some(field) = statement.form().as_fresh_row() {
+            if disposition == Disposition::Insert {
+                let word = crate::encoding::field_word_bytes(fact, layout, usize::from(field.0));
+                fresh_row = Some(FreshRowOp {
+                    statement: statement.id,
+                    row_id: u64::from_be_bytes(word),
+                });
+            }
             continue;
         }
-        determinants.push(DeterminantOp {
-            statement: statement.id,
-            determinant: scratch.image.clone(),
-            // The sealed tail, copied — validation minted it once.
-            pointwise: statement.tail,
+        determinants.push(match statement.form().as_pointwise() {
+            Some(tail) => DeterminantOp::Pointwise {
+                statement: statement.id,
+                determinant: scratch.image.clone(),
+                tail,
+            },
+            None => DeterminantOp::Scalar {
+                statement: statement.id,
+                determinant: scratch.image.clone(),
+            },
         });
     }
     let determinants = determinants.into_boxed_slice();
@@ -417,15 +477,17 @@ fn fact_op<'d>(
                 });
             }
             Enforcement::Closed { .. } => {
-                let word = crate::encoding::field_word_bytes(
-                    fact,
-                    layout,
-                    usize::from(statement.source.projection[0].0),
-                );
-                scratch.memberships.push(MembershipOp {
-                    containment: containment_id,
-                    axiom: AxiomIndex::try_from(u64::from_be_bytes(word)).ok(),
-                });
+                if disposition == Disposition::Insert {
+                    let word = crate::encoding::field_word_bytes(
+                        fact,
+                        layout,
+                        usize::from(statement.source.projection[0].0),
+                    );
+                    scratch.memberships.push(MembershipOp {
+                        containment: containment_id,
+                        axiom: AxiomIndex::try_from(u64::from_be_bytes(word)).ok(),
+                    });
+                }
             }
         }
     }
@@ -438,15 +500,32 @@ fn fact_op<'d>(
         touched_parents,
         scratch,
     )?;
-    Ok(FactOp {
-        relation: rel,
-        fact,
-        fact_hash: hash,
-        fresh_row,
-        determinants,
-        edges: scratch.edges.drain(..).collect(),
-        memberships: scratch.memberships.drain(..).collect(),
-        capacity_edges,
+    Ok(match disposition {
+        Disposition::Delete => FactOp::Delete {
+            relation: rel,
+            fact,
+            fact_hash: hash,
+            determinants,
+            edges: scratch.edges.drain(..).collect(),
+            capacity_keys: capacity_edges
+                .into_vec()
+                .into_iter()
+                .map(|edge| CapacityKeyOp {
+                    statement: edge.statement,
+                    key_bytes: edge.key_bytes,
+                })
+                .collect(),
+        },
+        Disposition::Insert => FactOp::Insert {
+            relation: rel,
+            fact,
+            fact_hash: hash,
+            fresh_row,
+            determinants,
+            edges: scratch.edges.drain(..).collect(),
+            memberships: scratch.memberships.drain(..).collect(),
+            capacity_edges,
+        },
     })
 }
 
@@ -487,12 +566,13 @@ fn mark_ops(
             // the derive is fallible on a weighted statement (a
             // ray-valued Duration weight refuses), and a value the
             // applier never reads must not be able to refuse a delete.
-            let weight =
-                if matches!(statement.weight, Weight::Unit) || disposition == Disposition::Delete {
-                    None
-                } else {
-                    Some(child_weight(statement, layout, fact)?)
-                };
+            let weight = if matches!(statement.weight, crate::schema::SealedWeight::Unit)
+                || disposition == Disposition::Delete
+            {
+                None
+            } else {
+                Some(child_weight(statement, layout, fact)?)
+            };
             scratch.capacity_edges.push(MarkEdgeOp {
                 statement: statement.id,
                 key_bytes: scratch.image.clone(),
@@ -506,7 +586,7 @@ fn mark_ops(
     // reach a fact op (writes refused), so only the keyed arm exists here.
     for &capacity_id in relation.capacity_targets() {
         let statement = schema.capacity(capacity_id);
-        if let Enforcement::ScalarProbe { target_key, .. } = &statement.enforcement
+        if let CapacityEnforcement::ScalarProbe { target_key, .. } = &statement.enforcement
             && satisfies(&selections.capacity(capacity_id).target, layout, fact)
         {
             let key_statement = schema.key(*target_key);

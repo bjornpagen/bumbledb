@@ -51,7 +51,7 @@ pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
                 // only where no fresh field does — a fresh-keyed
                 // relation's mint is Q, so a stored high-water is a
                 // namespace violation whatever its value.
-                if s.schema.relation(rel).fresh_row_field().is_some() {
+                if s.schema.fresh_mint_field(rel).is_some() {
                     s.malformed(key, "S high-water on a fresh-keyed relation");
                 } else if let Some(tally) = s.tallies.get(&rel)
                     && stored <= tally.max_row_id
@@ -80,7 +80,7 @@ pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
             // S high-water (the one id allocator, R16 — its mint is Q,
             // judged by the Q pass's ratchet law).
             let water = (!seen.contains(&(rel, HIGH_WATER))
-                && s.schema.relation(rel).fresh_row_field().is_none())
+                && s.schema.fresh_mint_field(rel).is_none())
             .then_some(StoreFinding::RowIdHighWaterLow {
                 relation: rel,
                 stored: 0,

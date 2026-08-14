@@ -469,7 +469,7 @@ pub fn commit_cluster_sqlite(
 fn cites_functionality(violations: &bumbledb::Violations) -> bool {
     violations
         .iter()
-        .any(|violation| matches!(violation, bumbledb::Violation::Functionality { .. }))
+        .any(|violation| matches!(violation, bumbledb::Violation::Functionality(_)))
 }
 
 /// Whether the sealed violation set carries a Containment citation.

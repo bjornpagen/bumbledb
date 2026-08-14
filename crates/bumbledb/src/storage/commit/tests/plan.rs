@@ -271,7 +271,7 @@ fn plan_of<'d>(
 /// share bytes).
 fn op_for<'a, 'd>(ops: &'a [FactOp<'d>], rel: RelationId, fact: &[u8]) -> &'a FactOp<'d> {
     ops.iter()
-        .find(|op| op.relation == rel && op.fact == fact)
+        .find(|op| op.relation() == rel && op.fact() == fact)
         .expect("an op exists for every net disposition")
 }
 
@@ -281,9 +281,13 @@ fn assert_determinant(
     determinant: &[u8],
     pointwise: bool,
 ) {
-    assert_eq!(op.statement, statement);
-    assert_eq!(&*op.determinant, determinant, "determinant bytes");
-    assert_eq!(op.pointwise.is_some(), pointwise, "pointwise marker");
+    assert_eq!(op.statement(), statement);
+    assert_eq!(
+        op.determinant().as_bytes(),
+        determinant,
+        "determinant bytes"
+    );
+    assert_eq!(op.tail().is_some(), pointwise, "pointwise marker");
 }
 
 fn assert_edge(schema: &Schema, edge: &EdgeOp, statement: StatementId, key_bytes: &[u8]) {
@@ -313,12 +317,12 @@ fn scalar_and_pointwise_determinants_carry_exact_bytes() {
     assert!(plan.deletes.is_empty());
     assert_eq!(plan.inserts.len(), 2);
     let account_op = op_for(&plan.inserts, ACCOUNT, &a);
-    assert_eq!(account_op.relation, ACCOUNT);
-    let [determinant] = &*account_op.determinants else {
+    assert_eq!(account_op.relation(), ACCOUNT);
+    let [determinant] = account_op.determinants() else {
         panic!("one key statement");
     };
     assert_determinant(determinant, ACCOUNT_KEY, &encode_u64(7), false);
-    assert!(account_op.edges.is_empty(), "Account has no outgoing");
+    assert!(account_op.edges().is_empty(), "Account has no outgoing");
 
     // The pointwise determinant: scalar prefix ‖ the interval's whole 16 bytes,
     // marked for the ordered-neighbor probe.
@@ -328,7 +332,7 @@ fn scalar_and_pointwise_determinants_carry_exact_bytes() {
     room_determinant.extend_from_slice(&encode_interval_u64(
         bumbledb_theory::Interval::<u64>::new(10, 20).expect("nonempty interval"),
     ));
-    let [determinant] = &*room_op.determinants else {
+    let [determinant] = room_op.determinants() else {
         panic!("one key statement");
     };
     assert_determinant(determinant, ROOM_KEY, &room_determinant, true);
@@ -353,9 +357,9 @@ fn fact_ops_carry_the_delta_computed_hash() {
         &[(ACCOUNT, b.clone())],
     );
     let deleted = op_for(&plan.deletes, ACCOUNT, &a);
-    assert_eq!(deleted.fact_hash, &crate::encoding::fact_hash(&a));
+    assert_eq!(deleted.fact_hash(), &crate::encoding::fact_hash(&a));
     let inserted = op_for(&plan.inserts, ACCOUNT, &b);
-    assert_eq!(inserted.fact_hash, &crate::encoding::fact_hash(&b));
+    assert_eq!(inserted.fact_hash(), &crate::encoding::fact_hash(&b));
 }
 
 #[test]
@@ -378,7 +382,7 @@ fn plan_ops_land_in_relation_then_hash_order() {
     let order: Vec<(RelationId, [u8; 32])> = plan
         .deletes
         .iter()
-        .map(|op| (op.relation, *op.fact_hash))
+        .map(|op| (op.relation(), *op.fact_hash()))
         .collect();
     let mut sorted = order.clone();
     sorted.sort_unstable();
@@ -402,12 +406,12 @@ fn source_selection_gates_the_edges() {
     );
 
     // Inside σ: one edge, projection bytes in target key order.
-    let [edge] = &*op_for(&plan.inserts, REPORT, &urgent).edges else {
+    let [edge] = op_for(&plan.inserts, REPORT, &urgent).edges() else {
         panic!("one satisfied containment");
     };
     assert_edge(&schema, edge, REPORT_ACCOUNT, &encode_u64(5));
     // Outside σ: no edge, so no R put and no source probe — by absence.
-    assert!(op_for(&plan.inserts, REPORT, &calm).edges.is_empty());
+    assert!(op_for(&plan.inserts, REPORT, &calm).edges().is_empty());
 }
 
 #[test]
@@ -426,11 +430,11 @@ fn pair_statements_edge_their_own_directions() {
     );
 
     // The == pair is two statements; each side owes exactly its own probe.
-    let [edge] = &*op_for(&plan.inserts, PARENT, &p).edges else {
+    let [edge] = op_for(&plan.inserts, PARENT, &p).edges() else {
         panic!("one outgoing statement");
     };
     assert_edge(&schema, edge, TOTALITY, &encode_u64(4));
-    let [edge] = &*op_for(&plan.inserts, CHILD, &c).edges else {
+    let [edge] = op_for(&plan.inserts, CHILD, &c).edges() else {
         panic!("one outgoing statement");
     };
     assert_edge(&schema, edge, ARM, &encode_u64(4));
@@ -451,7 +455,7 @@ fn edge_key_bytes_land_in_target_key_order() {
     let mut expected = Vec::new();
     expected.extend_from_slice(&encode_u64(2)); // q -> Combo.x
     expected.extend_from_slice(&encode_u64(1)); // p -> Combo.y
-    let [edge] = &*op_for(&plan.inserts, LINK, &l).edges else {
+    let [edge] = op_for(&plan.inserts, LINK, &l).edges() else {
         panic!("one outgoing statement");
     };
     assert_edge(&schema, edge, LINK_COMBO, &expected);
@@ -471,7 +475,7 @@ fn interval_edges_are_marked_for_the_coverage_walk() {
     expected.extend_from_slice(&encode_interval_u64(
         bumbledb_theory::Interval::<u64>::new(12, 15).expect("nonempty interval"),
     ));
-    let [edge] = &*op_for(&plan.inserts, STAY, &s).edges else {
+    let [edge] = op_for(&plan.inserts, STAY, &s).edges() else {
         panic!("one outgoing statement");
     };
     assert_edge(&schema, edge, STAY_ROOM, &expected);
@@ -494,8 +498,8 @@ fn delete_ops_carry_the_byte_symmetric_edges() {
     let plan = plan_of(&env, &mut delta, &[(REPORT, r.clone())], &[]);
     assert!(plan.inserts.is_empty());
     let op = op_for(&plan.deletes, REPORT, &r);
-    assert!(op.determinants.is_empty(), "Report has no key statements");
-    let [edge] = &*op.edges else {
+    assert!(op.determinants().is_empty(), "Report has no key statements");
+    let [edge] = op.edges() else {
         panic!("one satisfied containment");
     };
     assert_edge(&schema, edge, REPORT_ACCOUNT, &encode_u64(5));

@@ -11,8 +11,8 @@ impl<S> Db<S> {
     ///
     /// Validation is [`crate::ir::validate::validate`] on `&Query`
     /// only. Interiors evaluate once, then an optional rec least
-    /// fixpoint, then main. A query whose `rec` is `None` never enters
-    /// the reach driver. At execution a derived table may raise the
+    /// fixpoint, then main. A query without a rec never enters the
+    /// reach driver. At execution a derived table may raise the
     /// typed [`crate::error::Error::DerivedBudgetExceeded`]
     /// ([`PreparedQuery::set_derived_budget`] is the host policy knob).
     ///

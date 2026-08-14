@@ -128,7 +128,7 @@ pub(super) fn run_join<S: crate::exec::run::Sink, C: crate::exec::run::Counters>
         };
         // A closed relation's view binds to the theory identity rather
         // than a fabricated storage generation, so no commit can stale it.
-        let generation = if schema.relation(relation).is_closed() {
+        let generation = if schema.relation(relation).body().closed_rows().is_some() {
             ViewGeneration::Closed
         } else {
             ViewGeneration::Storage(txn_generation)

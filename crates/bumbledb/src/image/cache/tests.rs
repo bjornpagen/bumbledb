@@ -44,7 +44,7 @@ fn insert_one(env: &Environment, schema: &Schema, x: u64) -> bool {
     let mut delta = WriteDelta::new(schema);
     delta.insert(&view, R, &fact(schema, x)).expect("insert");
     drop(view);
-    commit(delta, env).expect("commit").changed
+    commit(delta, env).expect("commit").changed()
 }
 
 #[test]
@@ -316,9 +316,9 @@ fn commit_and_advance(
     let dirty = delta.dirty_relations();
     let floors = delta.inserted_floors();
     let report = commit(delta, env).expect("commit");
-    assert!(report.changed, "the fixture commits are state-changing");
-    cache.advance(report.new_generation, &dirty, &floors);
-    report.new_generation
+    assert!(report.changed(), "the fixture commits are state-changing");
+    cache.advance(report.generation(), &dirty, &floors);
+    report.generation()
 }
 
 /// The two images agree through the only read surface — `row_count` and
@@ -411,8 +411,8 @@ fn commit_and_advance_one(env: &Environment, cache: &ImageCache, delta: WriteDel
     let dirty = delta.dirty_relations();
     let floors = delta.inserted_floors();
     let report = commit(delta, env).expect("commit");
-    assert!(report.changed);
-    cache.advance(report.new_generation, &dirty, &floors);
+    assert!(report.changed());
+    cache.advance(report.generation(), &dirty, &floors);
 }
 
 /// `advance` drops the entries of relations the commit deleted from
@@ -623,8 +623,8 @@ fn a_count_below_the_base_is_typed_corruption_never_a_skip() {
     delta.delete(&view, R, &fact(&schema, 1)).expect("delete");
     drop(view);
     let report = commit(delta, &env).expect("commit");
-    assert!(report.changed);
-    cache.advance(report.new_generation, &[], &[]);
+    assert!(report.changed());
+    cache.advance(report.generation(), &[], &[]);
 
     let txn = env.read_txn().expect("txn");
     let err = cache

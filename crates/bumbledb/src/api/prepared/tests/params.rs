@@ -160,7 +160,7 @@ fn param_word_memo_hits_are_final_and_misses_never_memoize() {
         let events = obs::finish_capture();
         let hits = events
             .iter()
-            .filter(|e| e.name == obs::names::PARAM_WORD_MEMO)
+            .filter(|e| e.name() == obs::names::PARAM_WORD_MEMO)
             .count();
         (amounts_of(&out), hits)
     };

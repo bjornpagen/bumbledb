@@ -1,5 +1,5 @@
 use super::*;
-use crate::image::view::{FilterPredicate, ResolvedWordSource};
+use crate::image::view::FilterPredicate;
 use bumbledb_theory::schema::ValueType;
 
 /// The batched membership probe at a MIDDLE node (`probe_pass`'s point
@@ -134,9 +134,9 @@ fn middle_node_membership_batches_pinned_rows_and_walks_fanouts() {
             role: Role::Positive,
             bind: None,
             vars: vec![(FieldId(0), x)],
-            filters: vec![FilterPredicate::PointIn {
+            filters: vec![FilterPredicate::PointVar {
                 field: FieldId(1),
-                point: ResolvedWordSource::Var(t),
+                var: t,
             }],
         },
         Occurrence {
@@ -260,9 +260,9 @@ fn pump_gather_windows_are_attributed() {
     for name in ["jp_gather_n0", "jp_gather_n1"] {
         let event = events
             .iter()
-            .find(|e| e.name == name)
+            .find(|e| e.name() == name)
             .unwrap_or_else(|| panic!("{name} attributed"));
-        assert!(event.a1 > 0, "{name} counts its windows");
+        assert!(event.a1() > 0, "{name} counts its windows");
     }
 }
 

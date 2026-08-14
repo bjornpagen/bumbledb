@@ -945,7 +945,7 @@ fn world_blocks(
             "{{\"id\":{},\"name\":\"{}\",\"closed\":{},\"fields\":[",
             relation.0,
             descriptor.name(),
-            descriptor.is_closed()
+            descriptor.body().closed_rows().is_some()
         );
         for (position, field) in descriptor.fields().iter().enumerate() {
             if position > 0 {
@@ -963,12 +963,12 @@ fn world_blocks(
             .iter()
             .map(|field| field.value_type.clone())
             .collect();
-        let facts: Vec<Vec<Value>> = if descriptor.is_closed() {
+        let facts: Vec<Vec<Value>> = if descriptor.body().closed_rows().is_some() {
             closed_facts(relation)
         } else {
             target::corpus_relation_rows(world.cfg, relation).collect()
         };
-        let block = if descriptor.is_closed() {
+        let block = if descriptor.body().closed_rows().is_some() {
             closed_count += 1;
             if closed_count > 1 {
                 axioms_block.push_str(",\n");

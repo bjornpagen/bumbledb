@@ -2,7 +2,7 @@
 
 - **Severity:** medium
 - **Tree:** err
-- **Status:** OPEN
+- **Status:** FIXED(ba8ef508)
 - **Source:** audit/storage-schema.md F11
 - **Depends on:** none
 - **Conflicts with:** err-002 (cited-facts parallel array)

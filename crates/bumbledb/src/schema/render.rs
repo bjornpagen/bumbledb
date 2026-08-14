@@ -7,6 +7,7 @@
 //! Rendering allocates; it runs only in `Display`/diagnostic contexts
 //! (`crate::error`), never on a write or query path.
 
+use std::collections::BTreeMap;
 use std::fmt;
 
 use super::{
@@ -23,21 +24,78 @@ use crate::error::{Direction, Violation, Violations};
 /// carries them, and the offending facts as named decoded values
 /// (`docs/architecture/30-dependencies.md` § rendering the rejection).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RenderedViolation {
-    pub statement: StatementId,
-    pub kind: StatementKind,
-    /// The statement in canonical spelling ([`render_declared`] — the
-    /// single renderer, never a second stringifier).
-    pub spelling: String,
-    /// A containment citation's violated side; `None` for keys and
-    /// capacity statements.
-    pub direction: Option<Direction>,
-    /// A capacity citation's witnessed child-group measure (u128 whole —
-    /// ruled 2026-07-24, C3); `None` otherwise.
-    pub measure: Option<u128>,
-    /// The offending facts — the violation's fact, then its incumbent
-    /// where one exists — as named decoded values.
-    pub facts: Vec<RenderedFact>,
+pub enum RenderedViolation {
+    Functionality {
+        statement: StatementId,
+        spelling: String,
+        facts: Vec<RenderedFact>,
+    },
+    Containment {
+        statement: StatementId,
+        spelling: String,
+        direction: Direction,
+        facts: Vec<RenderedFact>,
+    },
+    Capacity {
+        statement: StatementId,
+        spelling: String,
+        measure: u128,
+        facts: Vec<RenderedFact>,
+    },
+}
+
+impl RenderedViolation {
+    #[must_use]
+    pub fn statement(&self) -> StatementId {
+        match *self {
+            Self::Functionality { statement, .. }
+            | Self::Containment { statement, .. }
+            | Self::Capacity { statement, .. } => statement,
+        }
+    }
+
+    #[must_use]
+    pub fn kind(&self) -> StatementKind {
+        match self {
+            Self::Functionality { .. } => StatementKind::Functionality,
+            Self::Containment { .. } => StatementKind::Containment,
+            Self::Capacity { .. } => StatementKind::Capacity,
+        }
+    }
+
+    #[must_use]
+    pub fn spelling(&self) -> &str {
+        match self {
+            Self::Functionality { spelling, .. }
+            | Self::Containment { spelling, .. }
+            | Self::Capacity { spelling, .. } => spelling,
+        }
+    }
+
+    #[must_use]
+    pub fn facts(&self) -> &[RenderedFact] {
+        match self {
+            Self::Functionality { facts, .. }
+            | Self::Containment { facts, .. }
+            | Self::Capacity { facts, .. } => facts,
+        }
+    }
+
+    #[must_use]
+    pub fn direction(&self) -> Option<Direction> {
+        match self {
+            Self::Containment { direction, .. } => Some(*direction),
+            Self::Functionality { .. } | Self::Capacity { .. } => None,
+        }
+    }
+
+    #[must_use]
+    pub fn measure(&self) -> Option<u128> {
+        match self {
+            Self::Capacity { measure, .. } => Some(*measure),
+            Self::Functionality { .. } | Self::Containment { .. } => None,
+        }
+    }
 }
 
 /// One offending fact with its names resolved: the relation name and one
@@ -81,52 +139,50 @@ pub fn render_rejection(
         .citations()
         .map(|(violation, cited)| {
             let statement = violation.statement();
-            let (kind, direction, measure) = match violation {
-                Violation::Functionality { .. } => (StatementKind::Functionality, None, None),
-                Violation::Containment { direction, .. } => {
-                    (StatementKind::Containment, Some(*direction), None)
-                }
-                Violation::Capacity { measure, .. } => {
-                    (StatementKind::Capacity, None, Some(*measure))
-                }
+            let spelling = if usize::from(statement.0) < materialized.len() {
+                render_materialized(descriptor, &materialized, &mirrors, statement)
+            } else {
+                format!("statement#{}", statement.0)
             };
-            RenderedViolation {
-                statement,
-                kind,
-                // Guarded, not indexed: a statement id beyond this
-                // descriptor's materialized roster (a foreign
-                // descriptor) renders as a placeholder — the declared
-                // renderer's own convention, kept total.
-                spelling: if usize::from(statement.0) < materialized.len() {
-                    render_materialized(descriptor, &materialized, &mirrors, statement)
-                } else {
-                    format!("statement#{}", statement.0)
+            let facts = cited
+                .iter()
+                .map(|fact| RenderedFact {
+                    relation: names
+                        .relation_name(fact.relation)
+                        .map_or_else(|| format!("relation#{}", fact.relation.0).into(), Box::from),
+                    fields: fact
+                        .values
+                        .iter()
+                        .enumerate()
+                        .map(|(idx, value)| {
+                            let field = FieldId(u16::try_from(idx).expect("field count fits u16"));
+                            let name = names.field(fact.relation, field).map_or_else(
+                                || format!("field#{}", field.0).into(),
+                                |descriptor| descriptor.name.clone(),
+                            );
+                            (name, value.clone())
+                        })
+                        .collect(),
+                })
+                .collect();
+            match violation {
+                Violation::Functionality(_) => RenderedViolation::Functionality {
+                    statement,
+                    spelling,
+                    facts,
                 },
-                direction,
-                measure,
-                facts: cited
-                    .iter()
-                    .map(|fact| RenderedFact {
-                        relation: names.relation_name(fact.relation).map_or_else(
-                            || format!("relation#{}", fact.relation.0).into(),
-                            Box::from,
-                        ),
-                        fields: fact
-                            .values
-                            .iter()
-                            .enumerate()
-                            .map(|(idx, value)| {
-                                let field =
-                                    FieldId(u16::try_from(idx).expect("field count fits u16"));
-                                let name = names.field(fact.relation, field).map_or_else(
-                                    || format!("field#{}", field.0).into(),
-                                    |descriptor| descriptor.name.clone(),
-                                );
-                                (name, value.clone())
-                            })
-                            .collect(),
-                    })
-                    .collect(),
+                Violation::Containment { direction, .. } => RenderedViolation::Containment {
+                    statement,
+                    spelling,
+                    direction: *direction,
+                    facts,
+                },
+                Violation::Capacity { measure, .. } => RenderedViolation::Capacity {
+                    statement,
+                    spelling,
+                    measure: *measure,
+                    facts,
+                },
             }
         })
         .collect()
@@ -165,9 +221,9 @@ pub fn render(schema: &Schema, id: StatementId) -> String {
         },
         StatementView::Capacity(_, statement) => RenderedStatement::Capacity {
             target: &statement.target,
-            weight: statement.weight,
+            weight: statement.weight.to_weight(),
             lo: statement.lo,
-            hi: statement.hi,
+            hi: statement.hi.to_bound(),
             source: &statement.source,
         },
     };
@@ -212,7 +268,7 @@ pub fn render_declared(descriptor: &SchemaDescriptor, id: StatementId) -> String
 pub(super) fn render_materialized(
     descriptor: &SchemaDescriptor,
     materialized: &[StatementDescriptor],
-    mirrors: &[Option<StatementId>],
+    mirrors: &BTreeMap<StatementId, StatementId>,
     id: StatementId,
 ) -> String {
     let index = usize::from(id.0);
@@ -231,7 +287,7 @@ pub(super) fn render_materialized(
                 // A rejected declaration seals no `mirror` field to read,
                 // so the pairing comes from sealing's one identity
                 // ([`super::validate::mirror_links`]), pre-computed.
-                mirror: mirrors[index],
+                mirror: mirrors.get(&id).copied(),
             }
         }
         StatementDescriptor::Capacity {
@@ -319,7 +375,7 @@ impl Names for SealedNames<'_> {
             |id| {
                 self.0
                     .relation_checked(id)
-                    .is_some_and(super::Relation::is_closed)
+                    .is_some_and(|rel| rel.body().closed_rows().is_some())
             },
             relation,
             field,
@@ -327,7 +383,7 @@ impl Names for SealedNames<'_> {
     }
 
     fn handle(&self, closed: RelationId, id: u64) -> Option<String> {
-        let rows = self.0.relation_checked(closed)?.extension()?;
+        let rows = self.0.relation_checked(closed)?.body().closed_rows()?;
         usize::try_from(id)
             .ok()
             .and_then(|row| rows.get(row))

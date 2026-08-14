@@ -17,11 +17,13 @@ impl View {
         // boxing: exactly one arm is nonempty.
         let (all, survivors) = match self {
             Self::Unbound => (0..0u32, [].iter()),
-            Self::All(image) => (
+            Self::Bound(super::BoundView::All(image)) => (
                 0..u32::try_from(image.row_count()).expect("row_count < u32::MAX"),
                 [].iter(),
             ),
-            Self::Survivors { positions, .. } => (0..0u32, positions.iter()),
+            Self::Bound(super::BoundView::Survivors { positions, .. }) => {
+                (0..0u32, positions.iter())
+            }
         };
         all.chain(survivors.copied())
     }

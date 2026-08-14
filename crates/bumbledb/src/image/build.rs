@@ -200,7 +200,7 @@ pub(super) fn image_with_tolerance(
 pub fn build(txn: &ReadTxn<'_>, schema: &Schema, rel: RelationId) -> Result<Arc<RelationImage>> {
     let relation = schema.relation(rel);
     debug_assert!(
-        !relation.is_closed(),
+        relation.body().closed_rows().is_none(),
         "closed relations synthesize from the theory, never from a scan"
     );
     let layout = relation.layout();
@@ -312,7 +312,7 @@ pub fn append(
 ) -> Result<Arc<RelationImage>> {
     let relation = schema.relation(rel);
     debug_assert!(
-        !relation.is_closed(),
+        relation.body().closed_rows().is_none(),
         "closed relations synthesize from the theory, never from a scan"
     );
     let layout = relation.layout();
@@ -432,12 +432,22 @@ pub fn append(
 /// have all been dropped, the driver's ping-pong discipline — rewrites
 /// the slabs in place through `Arc::get_mut`, touching the allocator
 /// zero times.
-#[derive(Debug, Default)]
-pub struct TransientImage {
-    image: Option<Arc<RelationImage>>,
-    /// Rows the current allocation was framed for (column strides are
-    /// laid out at this count; `row_count` may sit below it).
-    capacity: usize,
+#[derive(Debug)]
+pub enum TransientImage {
+    /// No image yet; `capacity` is the last framed high-water (0 at new).
+    Empty { capacity: usize },
+    Occupied {
+        image: Arc<RelationImage>,
+        /// Rows the current allocation was framed for (column strides are
+        /// laid out at this count; `row_count` may sit below it).
+        capacity: usize,
+    },
+}
+
+impl Default for TransientImage {
+    fn default() -> Self {
+        Self::Empty { capacity: 0 }
+    }
 }
 
 impl TransientImage {
@@ -520,16 +530,21 @@ impl TransientImage {
         I: Iterator<Item = &'r [u64]>,
     {
         debug_assert!(filled <= row_count, "seen-sets never shrink");
-        let reusable = row_count <= self.capacity
-            && self
-                .image
-                .as_mut()
-                .is_some_and(|arc| Arc::get_mut(arc).is_some());
+        let framed = match self {
+            Self::Empty { capacity } => *capacity,
+            Self::Occupied { capacity, .. } => *capacity,
+        };
+        let reusable = match self {
+            Self::Occupied { image, capacity } if row_count <= *capacity => {
+                Arc::get_mut(image).is_some()
+            }
+            Self::Empty { .. } | Self::Occupied { .. } => false,
+        };
         let base = if reusable { filled } else { 0 };
         if !reusable {
             let capacity = match policy {
                 CapacityPolicy::Exact => row_count,
-                CapacityPolicy::Doubling => self.capacity.max(row_count.saturating_mul(2)),
+                CapacityPolicy::Doubling => framed.max(row_count.saturating_mul(2)),
             };
             let frame = allocate(field_types, capacity)
                 .expect("seen-set row counts sit far below the checked slab ceiling");
@@ -538,15 +553,20 @@ impl TransientImage {
             // selectivity floor guard), so a per-round counting pass
             // would be pure waste inside the fixpoint's warm loop.
             let distincts = super::distinct::uncounted_columns(&frame.columns);
-            self.image = Some(seal(row_count, frame, distincts));
-            self.capacity = capacity;
+            *self = Self::Occupied {
+                image: seal(row_count, frame, distincts),
+                capacity,
+            };
         }
-        let image = Arc::get_mut(self.image.as_mut().expect("filled above"))
-            .expect("a non-reusable slot was just replaced by a unique Arc");
-        image.row_count = row_count;
-        let filled_to = fill_encoded_rows(image, base, rows_since(base));
+        let Self::Occupied { image, .. } = self else {
+            unreachable!("fill just occupied the slot");
+        };
+        let image_mut =
+            Arc::get_mut(image).expect("a non-reusable slot was just replaced by a unique Arc");
+        image_mut.row_count = row_count;
+        let filled_to = fill_encoded_rows(image_mut, base, rows_since(base));
         debug_assert_eq!(filled_to, row_count, "the caller counted its rows");
-        Arc::clone(self.image.as_ref().expect("filled above"))
+        Arc::clone(image)
     }
 }
 
@@ -612,7 +632,8 @@ fn fill_encoded_rows<'r>(
 #[must_use]
 pub fn synthesize_closed(rel: RelationId, relation: &Relation) -> Arc<RelationImage> {
     let extension = relation
-        .extension()
+        .body()
+        .closed_rows()
         .expect("synthesize_closed takes a closed relation");
     let layout = relation.layout();
     let row_count = extension.len();
