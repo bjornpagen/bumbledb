@@ -333,13 +333,13 @@ None.
 
 ### Rewritten
 
-- `audit/issues/plan-001-folded-mark-discard.md`
-- `audit/issues/plan-003-relation-panic-interior.md`
-- `audit/issues/exec-003-begin-scan-bool.md`
+- `audit/issues/125-plan-001-folded-mark-discard.md`
+- `audit/issues/127-plan-003-relation-panic-interior.md`
+- `audit/issues/114-exec-003-begin-scan-bool.md`
 
 ### New files
 
-- `audit/issues/exec-017-absorb-option.md`
+- `audit/issues/124-exec-017-absorb-option.md`
 
 ### Remaining OPEN (this tree)
 

@@ -18,25 +18,22 @@ Fixes are product-code commits that cite issue ids. Do not assign
 | `CONTRACT.md` | Pinned decisions C1–C8. The only authority a fix implements. Proposed C9 (sealed schema sums) is recommended — pin it before schema fanout. Do not mint a CONTRACT C10 for corruption variants (`capacity-laws` already uses C10 for rays). |
 | `lean.md` / `engine.md` / `sdks.md` / `docs.md` | Wave-1 dumps (18 / 40 / 21 / 28). Historical; issues/ is the work list. |
 | `lean-rest.md` / `sdk-rest.md` / `plan-exec.md` / `storage-schema.md` / `bench.md` | Wave-2 dumps. Historical; issues/ is the work list. |
-| `issues/` | One file per finding (188). Naming: `lean-001`, `engine-001`, `sdk-001`, `docs-001`, plus `plan-` / `exec-` / `schema-` / `store-` / `image-` / `err-` / `bench-`. |
-| `issues/INDEX.md` | Fanout ledger: status, dependencies, waves, clusters. |
+| `issues/` | One file per finding (188). OPEN files are `NNN-id-slug.md` so `ls audit/issues` is the work queue. Ids (`lean-019`, `engine-001`, …) stay stable. DUPLICATE/WONTFIX are `9xx-…` after the OPEN sequence. |
+| `issues/INDEX.md` | Work-order table (topological) plus status, dependencies, tree appendix. |
 
 ## Gate (before the first product-code fix)
 
 - [x] Every wave-1 finding maps to one issue file (counts 18/40/21/28).
 - [x] Wave-2 dumps exploded (lean-rest 4, sdk-rest 7, plan-exec 24, storage-schema 25, bench 12).
 - [x] Duplicates are stubs (`DUPLICATE(id)`); C5 refusals and essential identities are `WONTFIX` or `OPEN (scoped)`.
-- [x] INDEX.md ids match filenames; dependencies are a DAG; every OPEN issue has a wave.
+- [x] INDEX.md ids match filenames; dependencies are a DAG; every OPEN issue has a seq (`ls audit/issues` order).
 - [x] Final-pass validation landed: Fix rewrites; four new findings (sdk-030, docs-030, exec-017, schema-011); lean-018 demoted DUPLICATE(lean-001). Ledger is DAG-complete; first product-code fix is still `lean-019`.
 - [ ] Fixer confirms the issue's Fix section cites CONTRACT.md C1–C8 (pin C9 in CONTRACT before schema fanout; do not invent a C10 — `capacity-laws` already uses C10 for rays).
 - [ ] Acceptance criteria are mechanical (the issue file's checkboxes).
 
-## Fanout (see INDEX.md for clusters)
+## Fanout (see INDEX.md work order)
 
-- **Wave 0:** `lean-019` (census token; un-reds `scripts/lean.sh`).
-- **Wave 1:** the sums — lean-001+002 ∥ engine-001+002+015+023 ∥ engine-005+006 ∥ sdk-001+002 ∥ schema-001+002 ∥ exec-001+002 ∥ sdk-023+024. Docs with no code deps may start.
-- **Wave 2:** everything that collapses once the sums exist.
-- **Wave 3:** sdk-018 compile-fail suite; docs-002/017 after engine-041; docs-012/027 after lean-008; docs-030 after engine-007/023.
+Work queue: `ls audit/issues` and the INDEX **Work order (topological)** table. Start at the top and go down — no waves to think about. First fix is seq **001 = lean-019** (census token; un-reds `scripts/lean.sh`). Co-landing clusters are adjacent (one commit). `9xx-` files are DUPLICATE/WONTFIX — do not assign them.
 
 Each fix commit names its issue ids and flips them to `FIXED(<sha>)` in the issue file and in INDEX.md.
 
