@@ -10,7 +10,7 @@ import :schema;
 import :query;
 import :manifest;
 import :prepared;
-import :foreign_program;
+import :query_view;
 import bumbledb_foreign;
 
 export namespace bdb {

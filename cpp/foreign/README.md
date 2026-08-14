@@ -13,8 +13,8 @@ Current residents:
 - `bridge.cc` re-exports the cbindgen C surface as a named-module partition.
 - `raii.cc` is the only translation unit that includes the generated C header
   and owns the FFI resources.
-- `program.cc` is quarantine code but a partition of module `bumbledb`
-  (`:foreign_program`): it consumes the query IR partitions, and a
+- `query_view.cc` is quarantine code but a partition of module `bumbledb`
+  (`:query_view`): it consumes the query IR partitions, and a
   `bumbledb_foreign` partition could not import them without a module cycle.
 - `../bridge/` is the Rust staticlib cargo builds; CMake treats cargo as the
   dependency tracker.

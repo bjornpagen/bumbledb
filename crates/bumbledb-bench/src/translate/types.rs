@@ -71,15 +71,14 @@ pub(super) fn infer(rule: &Rule, schema: &Schema) -> TermTypes {
     let mut types = TermTypes::default();
     for atom in rule.atoms.iter().chain(&rule.negated) {
         for (field, term) in &atom.bindings {
-            // An `Idb` column is scalar: the program lane translates
-            // scalar-shaped predicates only (`super::program` refuses
-            // interval-typed predicate columns before any rule renders).
+            // An interior/rec column is scalar: the translator refuses
+            // interval-typed derived columns before any rule renders.
             let interval_field = match atom.source {
                 bumbledb::AtomSource::Edb(relation) => matches!(
                     schema.relation(relation).fields()[usize::from(field.0)].value_type,
                     ValueType::Interval { .. }
                 ),
-                bumbledb::AtomSource::Idb(_) => false,
+                bumbledb::AtomSource::Interior(_) => false,
             };
             match term {
                 Term::Var(_) | Term::Param(_) if !interval_field => {

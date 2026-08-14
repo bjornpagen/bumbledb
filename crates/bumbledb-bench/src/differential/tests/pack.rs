@@ -303,6 +303,8 @@ fn multi_rule_pack_folds_the_union_differentially() {
         })],
     };
     let query = Query {
+        interiors: vec![],
+        rec: None,
         head: vec![
             bumbledb::HeadTerm::Var,
             bumbledb::HeadTerm::Aggregate(bumbledb::HeadOp::Pack),

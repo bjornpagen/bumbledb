@@ -485,22 +485,17 @@ fn check_miss(
 /// run, both duties (the shipping law's estate, all three oracles
 /// live):
 ///
-/// * every structural row ≥ 1 per run — linear self-recursion, a
-///   mutual pair, a non-linear rule, negation of a lower stratum, a
-///   fold over a recursive predicate from a higher stratum — re-derived
-///   from the programs themselves; the empty-Δ-at-round-1 boundary
-///   verified DYNAMICALLY (the base rules alone already denote the
-///   fixpoint);
-/// * every program passes the engine's whole program roster, prepares
-///   through `Db::prepare`, and EXECUTES under the fixpoint
-///   driver — the engine's answers set-equal to the naive stratified
-///   fixpoint on every program, and every `WITH
-///   RECURSIVE`-expressible one through `SQLite` too; the
-///   inexpressible classes are counted and reported, never silent;
-/// * the budget-trip row is ACTIVE and constructed, never hoped for: a
-///   closure program under a zero-round budget raises the typed
-///   `Error::FixpointBudgetExceeded`
-///   ([`RecursiveVariant::BUDGET_TRIP`]).
+/// * every structural row ≥ 1 per run — linear self-recursion,
+///   negation of finished rec in main, a fold over rec on main,
+///   empty-Δ, primer `reach(x,x)`, interiors DAG / anti-join /
+///   many-interiors (>16);
+/// * every query passes `validate`, prepares through `Db::prepare`,
+///   and executes; engine answers set-equal to naive on every query,
+///   and every translator-admitted one through `SQLite` too;
+/// * the budget-trip row is constructed: a linear closure under a
+///   one-round budget raises `DerivedBudgetExceeded` with rounds > 0;
+///   an interiors-only query under a zero-tuple budget trips at
+///   rounds: 0.
 #[test]
 #[expect(
     clippy::too_many_lines,
@@ -508,16 +503,13 @@ fn check_miss(
 )]
 fn the_recursive_arm_covers_its_contract_and_agrees_across_oracles() {
     use crate::naive::{Delta, NaiveDb};
-    use crate::translate::{Inexpressible, sqlite_program_expressible, translate_program};
+    use crate::translate::{sqlite_reach_expressible, translate_query};
 
     let cfg = GenConfig {
         seed: SEED,
         scale: Scale::Tiny,
     };
 
-    // The graph world, org rows only (the recursive shapes read Org and
-    // OrgParent alone): the naive model over the target descriptor, and
-    // SQLite over the mirrored DDL.
     let mut naive = NaiveDb::new(&target::descriptor());
     let mut delta = Delta::default();
     for rel in [target::ids::ORG, target::ids::ORG_PARENT] {
@@ -542,9 +534,6 @@ fn the_recursive_arm_covers_its_contract_and_agrees_across_oracles() {
             .expect("insert");
         }
     }
-    // The engine over the same org rows: the third oracle — programs
-    // prepare through `Db::prepare` and execute under the
-    // fixpoint driver.
     let dir = crate::fixture::TempDir::new("recursive-arm-engine");
     let engine = bumbledb::Db::create(dir.path(), target::descriptor()).expect("create engine");
     engine
@@ -560,37 +549,42 @@ fn the_recursive_arm_covers_its_contract_and_agrees_across_oracles() {
 
     let mut rng = Rng::new(SEED);
     let mut tally = RecursiveCoverage::default();
-    let mut budget_program: Option<bumbledb::Program> = None;
+    let mut budget_query: Option<bumbledb::Query> = None;
+    let mut preamble_query: Option<bumbledb::Query> = None;
     for i in 0..240u64 {
-        let (program, variant) = random_program(&mut rng, cfg);
-        recursive_coverage(&program, &mut tally);
-        if variant == RecursiveVariant::EmptyDelta {
-            tally.empty_delta_round_one += 1;
+        let (query, variant) = random_reach_query(&mut rng, cfg);
+        recursive_coverage(&query, variant, &mut tally);
+        if budget_query.is_none() && variant == RecursiveVariant::Linear {
+            budget_query = Some(query.clone());
         }
-        if budget_program.is_none() && variant == RecursiveVariant::Linear {
-            budget_program = Some(program.clone());
+        if preamble_query.is_none()
+            && matches!(
+                variant,
+                RecursiveVariant::InteriorsDag
+                    | RecursiveVariant::InteriorsAntiJoin
+                    | RecursiveVariant::ManyInteriors
+            )
+        {
+            preamble_query = Some(query.clone());
         }
 
         let answers = naive
-            .program(&program, &[])
-            .expect("recursive shapes raise no runtime error");
+            .query(&query, &[])
+            .expect("reach shapes raise no runtime error");
 
-        // The engine leg: the program prepares whole and executes under
-        // the fixpoint driver; answers set-equal to the model on EVERY
-        // generated program (the recursion differential's third oracle).
-        let engine_rows = crate::differential::engine_program(&engine, &program, &[]);
+        let engine_rows = crate::differential::engine_query(&engine, &query, &[]);
         assert_eq!(
             engine_rows,
             crate::differential::Answers::Ok(answers.clone()),
-            "program {i} ({variant:?}): engine and naive disagree\n{program:#?}"
+            "query {i} ({variant:?}): engine and naive disagree\n{query:#?}"
         );
 
-        match sqlite_program_expressible(&program) {
+        match sqlite_reach_expressible(&query, target::schema()) {
             Ok(()) => {
                 tally.sqlite_expressible += 1;
                 let translated =
-                    translate_program(&program, target::schema(), &[]).expect("translates");
-                let arity = program.predicates[usize::from(program.output.0)].head.len();
+                    translate_query(&query, target::schema(), &[]).expect("translates");
+                let arity = query.head.len();
                 let mut statement = conn.prepare(&translated.sql).expect("prepare");
                 let rows: std::collections::BTreeSet<crate::naive::Tuple> = statement
                     .query_map([], |row| {
@@ -606,105 +600,92 @@ fn the_recursive_arm_covers_its_contract_and_agrees_across_oracles() {
                     .collect();
                 assert_eq!(
                     rows, answers,
-                    "program {i} ({variant:?}): naive and SQLite disagree\n{}",
+                    "query {i} ({variant:?}): naive and SQLite disagree\n{}",
                     translated.sql
                 );
             }
-            Err(Inexpressible::NonLinearRecursion) => tally.sqlite_non_linear += 1,
-            Err(Inexpressible::MutualRecursion) => tally.sqlite_mutual += 1,
-            Err(Inexpressible::RecursiveFold) => tally.sqlite_fold += 1,
-            Err(other) => panic!("program {i}: unexpected routing {other:?}"),
+            Err(other) => panic!("query {i}: unexpected routing {other:?}"),
         }
 
-        // The empty-Δ boundary, verified dynamically: dropping the
-        // self-recursive rules changes nothing — round one derived
-        // nothing, by construction.
         if variant == RecursiveVariant::EmptyDelta {
-            let mut base_only = program.clone();
-            for (index, def) in base_only.predicates.iter_mut().enumerate() {
-                def.rules.retain(|rule| {
-                    !rule.atoms.iter().any(|atom| {
-                        atom.source
-                            == bumbledb::AtomSource::Idb(bumbledb::PredId(
-                                u16::try_from(index).expect("small"),
-                            ))
-                    })
-                });
+            let mut base_only = query.clone();
+            if let Some(rec) = &mut base_only.rec {
+                rec.rec.clear();
             }
             let base_answers = naive
-                .program(&base_only, &[])
+                .query(&base_only, &[])
                 .expect("base rules raise no runtime error");
             assert_eq!(
                 base_answers, answers,
-                "program {i}: the first delta was not empty\n{program:#?}"
+                "query {i}: the first delta was not empty\n{query:#?}"
             );
         }
     }
 
-    // The budget-trip row, CONSTRUCTED (the coverage contract's active
-    // form): a drawn linear closure under a zero-round budget raises
-    // the typed error; the widened budget then executes clean — the
-    // snapshot stays usable (`MeasureOfRay`'s error model).
     {
-        let program = budget_program.expect("the linear row is asserted ≥ 1 below");
+        let query = budget_query.expect("the linear row is asserted ≥ 1 below");
         let mut prepared = engine
-            .prepare(&program)
+            .prepare(&query)
             .expect("the drawn closure validates");
-        prepared.set_fixpoint_budget(0, u64::MAX);
+        prepared.set_derived_budget(1, u64::MAX);
         let error = engine
             .read(|snap| snap.execute_collect(&mut prepared, &[]).map(|_| ()))
-            .expect_err("a zero-round budget cannot close a nonempty closure");
+            .expect_err("a one-round budget cannot close a nonempty closure");
         assert!(
             matches!(
                 error,
-                bumbledb::Error::FixpointBudgetExceeded { rounds: 0, .. }
+                bumbledb::Error::DerivedBudgetExceeded { rounds, .. } if rounds > 0
             ),
-            "expected the typed budget error, got {error}"
+            "expected DerivedBudgetExceeded with rounds > 0, got {error}"
         );
-        prepared.set_fixpoint_budget(1 << 16, u64::MAX);
+        prepared.set_derived_budget(1 << 16, u64::MAX);
         engine
             .read(|snap| snap.execute_collect(&mut prepared, &[]).map(|_| ()))
             .expect("the widened budget closes the fixpoint");
         tally.budget_trip += 1;
     }
 
-    // The coverage-contract rows, ≥ 1 per run.
+    {
+        let query = preamble_query.expect("an interiors-only row is asserted ≥ 1 below");
+        let mut prepared = engine
+            .prepare(&query)
+            .expect("the drawn interiors query validates");
+        prepared.set_derived_budget(0, 0);
+        let error = engine
+            .read(|snap| snap.execute_collect(&mut prepared, &[]).map(|_| ()))
+            .expect_err("a zero-tuple budget trips on interiors");
+        assert!(
+            matches!(
+                error,
+                bumbledb::Error::DerivedBudgetExceeded { rounds: 0, .. }
+            ),
+            "expected DerivedBudgetExceeded {{ rounds: 0 }}, got {error}"
+        );
+        prepared.set_derived_budget(0, u64::MAX);
+        engine
+            .read(|snap| snap.execute_collect(&mut prepared, &[]).map(|_| ()))
+            .expect("tight rounds alone must not trip interiors-only");
+        tally.preamble_ledger_trip += 1;
+    }
+
     assert!(tally.linear_self_recursion > 0, "{tally:?}");
-    assert!(tally.mutual_pair > 0, "{tally:?}");
-    assert!(tally.non_linear_rule > 0, "{tally:?}");
-    assert!(tally.negation_of_lower_stratum > 0, "{tally:?}");
-    assert!(tally.fold_over_recursive > 0, "{tally:?}");
+    assert!(tally.negation_of_finished_rec > 0, "{tally:?}");
+    assert!(tally.fold_over_rec > 0, "{tally:?}");
     assert!(tally.empty_delta_round_one > 0, "{tally:?}");
-    // Predicate counts stay inside the 2–3 bound (the array indexes by
-    // count − 2; anything else panics in the tally), both inhabited.
-    assert!(
-        tally.predicate_counts[0] > 0 && tally.predicate_counts[1] > 0,
-        "{tally:?}"
-    );
-    // The SQLite routing: both sides of the gate inhabited, every
-    // inexpressible class counted.
+    assert!(tally.primer_reach_xx > 0, "{tally:?}");
+    assert!(tally.interiors_dag > 0, "{tally:?}");
+    assert!(tally.interiors_anti_join > 0, "{tally:?}");
+    assert!(tally.many_interiors > 0, "{tally:?}");
     assert!(tally.sqlite_expressible > 0, "{tally:?}");
-    assert!(
-        tally.sqlite_non_linear > 0 && tally.sqlite_mutual > 0 && tally.sqlite_fold > 0,
-        "{tally:?}"
-    );
     assert_eq!(
-        tally.programs,
-        tally.sqlite_expressible
-            + tally.sqlite_non_linear
-            + tally.sqlite_mutual
-            + tally.sqlite_fold,
-        "every program routed somewhere — nothing silently skipped"
+        tally.queries, tally.sqlite_expressible,
+        "every query routed through SQLite — nothing silently skipped"
     );
     assert!(tally.budget_trip > 0, "{tally:?}");
+    assert!(tally.preamble_ledger_trip > 0, "{tally:?}");
     eprintln!(
-        "recursive arm: {} programs, engine ⊇ naive on all — {} sqlite-expressible, \
-         {} non-linear, {} mutual, {} fold (naive-only, enumerated); {} budget trip(s) constructed",
-        tally.programs,
-        tally.sqlite_expressible,
-        tally.sqlite_non_linear,
-        tally.sqlite_mutual,
-        tally.sqlite_fold,
-        tally.budget_trip,
+        "recursive arm: {} queries, engine = naive on all — {} sqlite-expressible; \
+         {} budget trip(s), {} preamble ledger trip(s) constructed",
+        tally.queries, tally.sqlite_expressible, tally.budget_trip, tally.preamble_ledger_trip,
     );
 }

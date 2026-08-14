@@ -19,7 +19,7 @@ cpp/
 │              answers/, db/), GCC-only (reflective)
 ├── foreign/   quarantine zone: module `bumbledb_foreign` (:abi, :raii — the
 │              only code that sees the generated C header), the cargo-built
-│              bridge staticlib, and the :foreign_program partition of
+│              bridge staticlib, and the :query_view partition of
 │              `bumbledb`
 ├── bridge/    the Rust C-ABI bridge crate (cargo owns this graph)
 └── tests/     runtime/ (module surface), cookbook/ (r01–r32 fingerprint +

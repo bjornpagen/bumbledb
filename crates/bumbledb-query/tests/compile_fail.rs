@@ -160,7 +160,7 @@ fn compile_fail_fixtures() {
     let _ = std::fs::remove_dir_all(&out_dir);
     // The roster covers every deliberate spanned refusal: typo'd
     // relation, typo'd field, ambiguous punning, ?param in a head, `:-`
-    // anywhere, a program without bare output rules, an explicitly
+    // anywhere, a query with no bare main rule, an explicitly
     // indexed dense predicate list, mixed bare + indexed predicate
     // bindings, an UpperCamel predicate name, a lowercase relation
     // respelling, an atom under a condition tree, an empty tree node, a
@@ -170,5 +170,8 @@ fn compile_fail_fixtures() {
     // negative `u64`, a foreign integer suffix, a binding's `in` without
     // its ?param, a numeric label on a relation atom, a third Arg
     // position after the key.
-    assert_eq!(seen, 24, "the compile-fail roster has twenty-four fixtures");
+    assert_eq!(
+        seen, 33,
+        "the compile-fail roster has thirty-three fixtures"
+    );
 }

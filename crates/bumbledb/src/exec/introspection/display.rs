@@ -81,21 +81,19 @@ impl fmt::Display for IntrospectionReport<'_> {
         // § the fixpoint driver): per recursive stratum, per round —
         // round 0 is the stratum's non-recursive rules — the delta rows
         // each predicate's frontier carried and the union accounting.
-        for stratum in &self.stats.strata {
+        for interior in &self.stats.interiors {
             writeln!(
                 f,
-                "stratum {}: {} rounds",
-                stratum.stratum,
-                stratum.rounds.len()
+                "interior p{}: {} emits",
+                interior.interior, interior.emits
             )?;
-            for (round_idx, round) in stratum.rounds.iter().enumerate() {
+        }
+        if let Some(reach) = &self.stats.reach {
+            writeln!(f, "reach: {} rounds", reach.rounds.len())?;
+            for (round_idx, round) in reach.rounds.iter().enumerate() {
                 write!(f, "  round {round_idx}:")?;
-                if !round.deltas.is_empty() {
-                    write!(f, " delta")?;
-                    for delta in &round.deltas {
-                        write!(f, " p{}={}", delta.predicate, delta.rows)?;
-                    }
-                    write!(f, ";")?;
+                if round.delta > 0 {
+                    write!(f, " delta {};", round.delta)?;
                 }
                 writeln!(f, " emitted {}, absorbed {}", round.emitted, round.absorbed)?;
             }
@@ -152,7 +150,7 @@ fn fmt_free_join(
     for (occ_idx, occurrence) in plan.occurrences().iter().enumerate() {
         let source = match occurrence.source {
             crate::ir::AtomSource::Edb(relation) => format!("relation {}", relation.0),
-            crate::ir::AtomSource::Idb(pred) => format!("predicate p{}", pred.0),
+            crate::ir::AtomSource::Interior(pred) => format!("predicate p{}", pred.0),
         };
         writeln!(
             f,

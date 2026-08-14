@@ -58,7 +58,7 @@ const ROSTERS = {
 	aggregateOp: ["sum", "min", "max", "count", "pack"],
 	headTerm: ["var", "aggregate"],
 	findTerm: ["var", "aggregate", "measure", "aggregateMeasure"],
-	atomSource: ["edb", "idb"],
+	atomSource: ["edb", "interior"],
 	cmpOp: ["eq", "ne", "lt", "le", "gt", "ge", "allen", "pointIn"],
 	condition: ["leaf", "and", "or"],
 	direction: ["sourceUnsatisfied", "targetRequired"],

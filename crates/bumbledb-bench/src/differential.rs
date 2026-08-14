@@ -35,10 +35,6 @@ pub enum Op {
         query: Query,
         params: Vec<ParamValue>,
     },
-    Program {
-        program: bumbledb::Program,
-        params: Vec<ParamValue>,
-    },
 }
 
 /// One write's outcome, on either side: committed, or aborted with the
@@ -74,9 +70,10 @@ pub enum Answers {
     Ok(BTreeSet<Tuple>),
     Overflow,
     MeasureOfRay,
-    /// [`bumbledb::Error::FixpointBudgetExceeded`] — a typed execution
-    /// error (`MeasureOfRay`'s model), carried as identity.
-    FixpointBudget,
+    /// [`bumbledb::Error::DerivedBudgetExceeded`] — a typed execution
+    /// error (`MeasureOfRay`'s model), carried as identity. Naive is
+    /// unbudgeted, so an engine trip is a readable divergence.
+    DerivedBudget,
 }
 
 /// The first disagreement: which op, and what each side said.
@@ -92,11 +89,6 @@ pub enum Divergence {
         engine: Answers,
         naive: Answers,
     },
-    Program {
-        op: usize,
-        engine: Answers,
-        naive: Answers,
-    },
 }
 
 /// What a clean run exercised — callers assert the stream actually
@@ -106,7 +98,6 @@ pub struct Summary {
     pub commits: u64,
     pub aborts: u64,
     pub queries: u64,
-    pub programs: u64,
 }
 
 /// Replays the ops in order against both sides.
@@ -156,22 +147,6 @@ pub fn run<S>(db: &Db<S>, naive: &mut NaiveDb, ops: &[Op]) -> Result<Summary, Di
                     });
                 }
                 summary.queries += 1;
-            }
-            Op::Program { program, params } => {
-                let engine = engine_program(db, program, params);
-                let model = match naive.program(program, params) {
-                    Ok(answers) => Answers::Ok(answers),
-                    Err(QueryError::Overflow { .. }) => Answers::Overflow,
-                    Err(QueryError::MeasureOfRay) => Answers::MeasureOfRay,
-                };
-                if engine != model {
-                    return Err(Divergence::Program {
-                        op: index,
-                        engine,
-                        naive: model,
-                    });
-                }
-                summary.programs += 1;
             }
         }
     }
@@ -323,47 +298,8 @@ pub(crate) fn engine_query<S>(db: &Db<S>, query: &Query, params: &[ParamValue]) 
         ),
         Err(Error::Overflow { .. }) => Answers::Overflow,
         Err(Error::MeasureOfRay { .. }) => Answers::MeasureOfRay,
-        // A `Query` is non-recursive by validation (`Idb` atoms refuse at
-        // the query boundary), so the budget trip is unreachable here —
-        // it belongs to the program leg below.
+        Err(Error::DerivedBudgetExceeded { .. }) => Answers::DerivedBudget,
         Err(other) => panic!("engine refused a differential query: {other:?}"),
-    }
-}
-
-/// One program through the engine's fixpoint driver, as an [`Answers`]
-/// verdict — the recursive differential's engine leg (the shipping law
-/// closed: the engine joins naive and `SQLite` on every generated
-/// program, every closure golden, and the checked-in conformance
-/// corpus). Typed execution errors — the budget trip included — are
-/// verdicts, so a trip is a readable divergence against the deliberately
-/// unbudgeted naive fixpoint, never a harness crash. Panics only on a
-/// refusal outside the defined roster: a generated recursive program
-/// validates by construction.
-pub(crate) fn engine_program<S>(
-    db: &Db<S>,
-    program: &bumbledb::Program,
-    params: &[ParamValue],
-) -> Answers {
-    let mut prepared = db.prepare(program).expect("differential programs validate");
-    let args = crate::families::param_args(params);
-    let outcome = db.read(|snap| snap.execute_collect_args(&mut prepared, &args));
-    match outcome {
-        Ok(buffer) => Answers::Ok(
-            buffer
-                .answers()
-                .map(|answer| {
-                    Tuple(
-                        (0..buffer.arity())
-                            .map(|column| owned_value(answer.get(column)))
-                            .collect(),
-                    )
-                })
-                .collect(),
-        ),
-        Err(Error::Overflow { .. }) => Answers::Overflow,
-        Err(Error::MeasureOfRay { .. }) => Answers::MeasureOfRay,
-        Err(Error::FixpointBudgetExceeded { .. }) => Answers::FixpointBudget,
-        Err(other) => panic!("engine refused a differential program: {other:?}"),
     }
 }
 

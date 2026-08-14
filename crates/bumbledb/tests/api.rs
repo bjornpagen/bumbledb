@@ -6,7 +6,10 @@
 //! the export → bulk-import ETL round trip on both lanes (`bulk_load`
 //! typed, `bulk_load_dyn` dynamic).
 
-use bumbledb::ir::{AggOp, Atom, FindTerm, ParamId, Query, Rule, Term, Value, VarId};
+use bumbledb::ir::{
+    AggOp, Atom, AtomSource, FindTerm, HeadTerm, Interior, InteriorId, ParamId, Query, Rec, Rule,
+    Term, Value, VarId,
+};
 use bumbledb::schema::FieldId;
 use bumbledb::schema::ValidateDescriptor as _;
 use bumbledb::{
@@ -1528,14 +1531,10 @@ fn staleness_reports_drift_and_reprepare_resets_it() {
     .expect("shrunk read");
 }
 
-/// The degenerate-equivalence contract (20-query-ir.md § engine recursion; the
-/// theorem is `lean/Bumbledb/Exec/Fixpoint.lean: degenerate_embedding`):
-/// a one-predicate, no-`Idb` `Program` prepares through the ONE unified
-/// `Db::prepare` entry — the query-shaped dispatch routes it into the
-/// output predicate's ordinary query pipeline — and executes identically
-/// to its `Query` form, end to end.
+/// A plain Query (empty interiors, no rec) prepares and executes as it
+/// always has — the Program embedding is gone.
 #[test]
-fn a_degenerate_program_executes_as_its_query() {
+fn a_plain_query_executes_as_today() {
     let dir = common::TempDir::new("api-degenerate-program");
     let db = Db::create(dir.path(), Ledger).expect("create");
     db.write(|tx| {
@@ -1556,151 +1555,44 @@ fn a_degenerate_program_executes_as_its_query() {
     .expect("write");
 
     let query = join_query();
-    let mut as_query = db.prepare(&query).expect("prepare query");
-    let mut as_program = db
-        .prepare(&bumbledb::Program::from(query))
-        .expect("prepare degenerate program");
+    let mut prepared = db.prepare(&query).expect("prepare query");
     db.read(|snap| {
-        let query_answers = snap.execute_collect(&mut as_query, &[])?;
-        let program_answers = snap.execute_collect(&mut as_program, &[])?;
+        let answers = snap.execute_collect(&mut prepared, &[])?;
+        assert_eq!(answers.len(), 3);
+        let again = snap.execute_collect(&mut prepared, &[])?;
         assert_eq!(
-            name_amount_answers(&query_answers),
-            name_amount_answers(&program_answers),
-            "the degenerate program IS its query"
-        );
-        assert_eq!(query_answers.len(), 3);
-        // The byte-identity check: a no-`Idb` program takes ZERO new
-        // code paths — the unified `prepare` routes the degenerate form
-        // through `prepare` verbatim, so the introspection reports (the
-        // rendered query, the plans, the counted stats) are the same
-        // bytes.
-        let (_, query_report) = snap.introspect(&mut as_query, &[])?;
-        let (_, program_report) = snap.introspect(&mut as_program, &[])?;
-        assert_eq!(
-            query_report, program_report,
-            "the degenerate program's artifact is byte-identical to its query's"
+            name_amount_answers(&answers),
+            name_amount_answers(&again),
+            "a plain query is stable across executions"
         );
         Ok(())
     })
     .expect("read");
 }
 
-/// Params are program-global — ONE binding surface across predicates
-/// (20-query-ir.md § engine recursion) — and the degenerate (no-`Idb`)
-/// prepare arm must enforce exactly the surface the fixpoint arm does:
-/// a no-`Idb` program whose output predicate is locally gapped but
-/// program-globally dense prepares cleanly (no spurious `ParamIdGap`
-/// from a query-roster re-judgment), and a param used only by an
-/// interior predicate stays in the bind contract (execute demands the
-/// unified table, never the output predicate's local slice).
-#[test]
-fn a_degenerate_programs_bind_contract_is_program_global() {
-    use bumbledb::ir::{AtomSource, PredId, PredicateDef, Program};
-
-    /// `p(balance) | Account(id == ?param, balance)`.
-    fn point_pred(param: u16) -> PredicateDef {
-        let rule = Rule {
-            finds: vec![FindTerm::Var(VarId(0))],
-            atoms: vec![Atom {
-                source: AtomSource::Edb(Account::RELATION),
-                bindings: vec![
-                    (FieldId(0), Term::Param(ParamId(param))),
-                    (FieldId(2), Term::Var(VarId(0))),
-                ],
-            }],
-            negated: vec![],
-            conditions: vec![],
-        };
-        PredicateDef {
-            head: rule.head(),
-            rules: vec![rule],
-        }
+fn identity_main(arity: u16) -> Rule {
+    Rule {
+        finds: (0..arity).map(|i| FindTerm::Var(VarId(i))).collect(),
+        atoms: vec![Atom {
+            source: AtomSource::Interior(InteriorId(0)),
+            bindings: (0..arity)
+                .map(|i| (FieldId(i), Term::Var(VarId(i))))
+                .collect(),
+        }],
+        negated: vec![],
+        conditions: vec![],
     }
-
-    let dir = common::TempDir::new("api-degenerate-global-params");
-    let db = Db::create(dir.path(), Ledger).expect("create");
-    let account = db
-        .write(|tx| {
-            let holder: HolderId = tx.alloc()?;
-            tx.insert(&Holder {
-                id: holder,
-                name: "ada",
-            })?;
-            let id: AccountId = tx.alloc()?;
-            tx.insert(&Account {
-                id,
-                holder,
-                balance: 42,
-            })?;
-            Ok(id)
-        })
-        .expect("seed");
-
-    // Output uses ?1 only, the interior predicate uses ?0: locally
-    // gapped, program-globally dense — the roster accepts it, so must
-    // the degenerate prepare arm.
-    let gapped_locally = Program {
-        predicates: vec![point_pred(1), point_pred(0)],
-        output: PredId(0),
-    };
-    let mut prepared = db
-        .prepare(&gapped_locally)
-        .expect("a roster-valid no-Idb program prepares");
-
-    // Output uses ?0 only, ?1 lives in the interior predicate: the bind
-    // contract keeps both — the one binding surface.
-    let interior_only = Program {
-        predicates: vec![point_pred(0), point_pred(1)],
-        output: PredId(0),
-    };
-    let mut prepared_interior = db.prepare(&interior_only).expect("prepare");
-
-    db.read(|snap| {
-        // The gapped-locally program binds the full surface; its output
-        // filters on ?1.
-        let answers = snap.execute_collect(
-            &mut prepared,
-            &[BindValue::U64(0), BindValue::U64(account.0)],
-        )?;
-        assert_eq!(answers.len(), 1, "?1 selects the seeded account");
-
-        // The interior-only param is still demanded: one param is a
-        // typed count mismatch against the program-global table...
-        let err = snap
-            .execute_collect(&mut prepared_interior, &[BindValue::U64(account.0)])
-            .expect_err("the unified table demands both params");
-        assert!(
-            matches!(
-                err,
-                bumbledb::Error::ParamCountMismatch {
-                    expected: 2,
-                    supplied: 1,
-                }
-            ),
-            "unexpected: {err:?}"
-        );
-        // ...and the full surface executes.
-        let answers = snap.execute_collect(
-            &mut prepared_interior,
-            &[BindValue::U64(account.0), BindValue::U64(7)],
-        )?;
-        assert_eq!(answers.len(), 1, "?0 selects the seeded account");
-        Ok(())
-    })
-    .expect("read");
 }
 
-/// Recursion at the public surface (the deleted R1 fence's ground): a
-/// roster-clean recursive program prepares and executes under the
-/// fixpoint driver (`api/prepared/fixpoint.rs`), and the self-loop
-/// closure `p0(x) | Account(id: x); p0(x) | p0(x)` denotes exactly the
-/// base rule's set — the recursive rule re-derives, the seen-set
-/// absorbs, the fixpoint closes in one growing round
-/// (`lean/Bumbledb/Exec/Fixpoint.lean: program_eval_sound`).
+/// Recursion at the public surface: a roster-clean linear rec prepares
+/// and executes under the reach driver, and the self-loop
+/// `p0(x) | Account(id: x); p0(x) | p0(x)` denotes exactly the base
+/// rule's set — the rec arm re-derives, the seen-set absorbs, the
+/// fixpoint closes in one growing round
+/// (`lean/Bumbledb/Exec/Reach.lean: evalLinearReach_eq_lfp`).
 #[test]
 fn prepare_executes_recursion_under_the_driver() {
-    use bumbledb::ir::{AtomSource, HeadTerm};
-    let dir = common::TempDir::new("api-program-driver");
+    let dir = common::TempDir::new("api-reach-driver");
     let db = Db::create(dir.path(), Ledger).expect("create");
     db.write(|tx| {
         let holder: HolderId = tx.alloc()?;
@@ -1732,20 +1624,23 @@ fn prepare_executes_recursion_under_the_driver() {
     let recursive = Rule {
         finds: vec![FindTerm::Var(VarId(0))],
         atoms: vec![Atom {
-            source: AtomSource::Idb(bumbledb::PredId(0)),
+            source: AtomSource::Interior(InteriorId(0)),
             bindings: vec![(FieldId(0), Term::Var(VarId(0)))],
         }],
         negated: vec![],
         conditions: vec![],
     };
-    let program = bumbledb::Program {
-        predicates: vec![bumbledb::PredicateDef {
+    let query = Query {
+        interiors: vec![],
+        rec: Some(Rec {
             head: vec![HeadTerm::Var],
-            rules: vec![base.clone(), recursive],
-        }],
-        output: bumbledb::PredId(0),
+            base: vec![base.clone()],
+            rec: vec![recursive],
+        }),
+        head: vec![HeadTerm::Var],
+        rules: vec![identity_main(1)],
     };
-    let mut recursive_prepared = db.prepare(&program).expect("recursion executes");
+    let mut recursive_prepared = db.prepare(&query).expect("recursion executes");
     let mut base_prepared = db.prepare(&Query::single(base)).expect("prepare base");
     db.read(|snap| {
         let closure = snap.execute_collect(&mut recursive_prepared, &[])?;
@@ -1779,10 +1674,10 @@ bumbledb::schema! {
     }
 }
 
-/// The transitive-closure program over [`Graph`]:
-/// `p0(x, z) | GraphEdge(x, z); p0(x, z) | GraphEdge(x, y), p0(y, z)`.
-fn closure_program() -> bumbledb::Program {
-    use bumbledb::ir::{AtomSource, HeadTerm};
+/// The transitive-closure query over [`Graph`]:
+/// `recursive p0(x, z) | GraphEdge(x, z); p0(x, z) | GraphEdge(x, y), p0(y, z)`
+/// with identity main.
+fn closure_query() -> Query {
     let edge = |a: u16, b: u16| Atom {
         source: AtomSource::Edb(GraphEdge::RELATION),
         bindings: vec![
@@ -1790,34 +1685,86 @@ fn closure_program() -> bumbledb::Program {
             (FieldId(1), Term::Var(VarId(b))),
         ],
     };
-    bumbledb::Program {
-        predicates: vec![bumbledb::PredicateDef {
+    Query {
+        interiors: vec![],
+        rec: Some(Rec {
             head: vec![HeadTerm::Var, HeadTerm::Var],
-            rules: vec![
-                Rule {
-                    finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
-                    atoms: vec![edge(0, 1)],
-                    negated: vec![],
-                    conditions: vec![],
-                },
-                Rule {
-                    finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(2))],
-                    atoms: vec![
-                        edge(0, 1),
-                        Atom {
-                            source: AtomSource::Idb(bumbledb::PredId(0)),
-                            bindings: vec![
-                                (FieldId(0), Term::Var(VarId(1))),
-                                (FieldId(1), Term::Var(VarId(2))),
-                            ],
-                        },
-                    ],
-                    negated: vec![],
-                    conditions: vec![],
-                },
-            ],
+            base: vec![Rule {
+                finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
+                atoms: vec![edge(0, 1)],
+                negated: vec![],
+                conditions: vec![],
+            }],
+            rec: vec![Rule {
+                finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(2))],
+                atoms: vec![
+                    edge(0, 1),
+                    Atom {
+                        source: AtomSource::Interior(InteriorId(0)),
+                        bindings: vec![
+                            (FieldId(0), Term::Var(VarId(1))),
+                            (FieldId(1), Term::Var(VarId(2))),
+                        ],
+                    },
+                ],
+                negated: vec![],
+                conditions: vec![],
+            }],
+        }),
+        head: vec![HeadTerm::Var, HeadTerm::Var],
+        rules: vec![identity_main(2)],
+    }
+}
+
+/// Primer-shaped cycle detector: linear `reach(from, to)` with extra EDB
+/// on the step arm, then main `reach(x, x)`. Empty answers = DAG.
+fn primer_reach_xx() -> Query {
+    let edge = |a: u16, b: u16| Atom {
+        source: AtomSource::Edb(GraphEdge::RELATION),
+        bindings: vec![
+            (FieldId(0), Term::Var(VarId(a))),
+            (FieldId(1), Term::Var(VarId(b))),
+        ],
+    };
+    Query {
+        interiors: vec![],
+        rec: Some(Rec {
+            head: vec![HeadTerm::Var, HeadTerm::Var],
+            base: vec![Rule {
+                finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
+                atoms: vec![edge(0, 1)],
+                negated: vec![],
+                conditions: vec![],
+            }],
+            rec: vec![Rule {
+                finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(2))],
+                atoms: vec![
+                    edge(0, 1),
+                    Atom {
+                        source: AtomSource::Interior(InteriorId(0)),
+                        bindings: vec![
+                            (FieldId(0), Term::Var(VarId(1))),
+                            (FieldId(1), Term::Var(VarId(2))),
+                        ],
+                    },
+                ],
+                negated: vec![],
+                conditions: vec![],
+            }],
+        }),
+        head: vec![HeadTerm::Var],
+        rules: vec![Rule {
+            finds: vec![FindTerm::Var(VarId(0))],
+            atoms: vec![Atom {
+                source: AtomSource::Interior(InteriorId(0)),
+                bindings: vec![
+                    (FieldId(0), Term::Var(VarId(0))),
+                    (FieldId(1), Term::Var(VarId(0))),
+                ],
+            }],
+            negated: vec![],
+            conditions: vec![],
         }],
-        output: bumbledb::PredId(0),
     }
 }
 
@@ -1850,8 +1797,8 @@ fn recursive_answers_agree_scalar_and_vectorized() {
             })
             .collect()
     };
-    let mut vectorized = db.prepare(&closure_program()).expect("prepare");
-    let mut scalar = db.prepare(&closure_program()).expect("prepare");
+    let mut vectorized = db.prepare(&closure_query()).expect("prepare");
+    let mut scalar = db.prepare(&closure_query()).expect("prepare");
     scalar.set_batch_size(1);
     db.read(|snap| {
         let vectorized = pairs(&snap.execute_collect(&mut vectorized, &[])?);
@@ -1884,16 +1831,48 @@ fn recursive_answers_agree_scalar_and_vectorized() {
     .expect("read");
 }
 
-/// The fixpoint observability surface (docs/architecture/40-execution.md
-/// § observability): `profile` on a recursive program reports the
-/// driver's per-stratum, per-round delta sizes and union accounting
-/// through the `Counters` seam's fixpoint hooks, and `introspect`
-/// renders labeled plan units plus the stratum section — counted paths
-/// only; the release execute path monomorphizes `NoopCounters` and
-/// reports nothing.
+/// Primer-shaped `reach(x, x)`: empty on a DAG, nonempty once a cycle
+/// exists. Main is the diagonal of the finished rec, not a named interior.
 #[test]
-fn fixpoint_profile_reports_strata_rounds_and_deltas() {
-    let dir = common::TempDir::new("api-fixpoint-profile");
+fn primer_shaped_reach_xx_is_empty_on_a_dag() {
+    let dir = common::TempDir::new("api-primer-reach-xx");
+    let db = Db::create(dir.path(), Graph).expect("create");
+    db.write(|tx| {
+        for (src, dst) in [(0, 1), (1, 2), (2, 3)] {
+            tx.insert(&GraphEdge { src, dst })?;
+        }
+        Ok(())
+    })
+    .expect("write");
+    let mut prepared = db.prepare(&primer_reach_xx()).expect("prepare");
+    db.read(|snap| {
+        let answers = snap.execute_collect(&mut prepared, &[])?;
+        assert!(answers.is_empty(), "a DAG has no reach(x, x)");
+        Ok(())
+    })
+    .expect("read");
+
+    db.write(|tx| {
+        tx.insert(&GraphEdge { src: 3, dst: 0 })?;
+        Ok(())
+    })
+    .expect("close the cycle");
+    db.read(|snap| {
+        let answers = snap.execute_collect(&mut prepared, &[])?;
+        assert!(!answers.is_empty(), "a cycle produces reach(x, x)");
+        Ok(())
+    })
+    .expect("read after cycle");
+}
+
+/// The reach observability surface: `profile` on a rec query reports
+/// per-round delta sizes and union accounting through the `Counters`
+/// seam's reach hooks, and `introspect` renders labeled plan units plus
+/// the reach section — counted paths only; the release execute path
+/// monomorphizes `NoopCounters` and reports nothing.
+#[test]
+fn reach_profile_reports_rounds_and_deltas() {
+    let dir = common::TempDir::new("api-reach-profile");
     let db = Db::create(dir.path(), Graph).expect("create");
     db.write(|tx| {
         for (src, dst) in [(0, 1), (1, 2), (2, 3), (3, 4), (1, 5), (5, 6), (2, 6)] {
@@ -1902,7 +1881,7 @@ fn fixpoint_profile_reports_strata_rounds_and_deltas() {
         Ok(())
     })
     .expect("write");
-    let mut prepared = db.prepare(&closure_program()).expect("prepare");
+    let mut prepared = db.prepare(&closure_query()).expect("prepare");
     db.read(|snap| {
         let (answers, stats) = snap.profile(&mut prepared, &[])?;
         assert_eq!(answers.len(), 16, "the closure's hand answer");
@@ -1910,27 +1889,16 @@ fn fixpoint_profile_reports_strata_rounds_and_deltas() {
             stats.rules.is_empty(),
             "per-unit node stats do not exist under the driver"
         );
-        // One recursive stratum, its rounds in order: round 0 is the
-        // base rule (no delta images), each later round's delta is the
-        // previous round's newly seen rows, and the converging round
-        // derives nothing new.
-        assert_eq!(stats.strata.len(), 1, "one predicate, one stratum");
-        let stratum = &stats.strata[0];
-        assert_eq!(stratum.stratum, 0);
-        assert!(stratum.rounds[0].deltas.is_empty(), "round 0 has no delta");
-        assert_eq!(
-            stratum.rounds[0].emitted, 7,
-            "the base rule emits each edge"
-        );
-        assert_eq!(stratum.rounds[0].absorbed, 0);
+        let reach = stats.reach.as_ref().expect("rec populates reach stats");
+        assert!(reach.rounds[0].delta == 0, "round 0 has no delta");
+        assert_eq!(reach.rounds[0].emitted, 7, "the base rule emits each edge");
+        assert_eq!(reach.rounds[0].absorbed, 0);
         let mut new_rows = Vec::new();
-        for (idx, round) in stratum.rounds.iter().enumerate() {
+        for (idx, round) in reach.rounds.iter().enumerate() {
             if idx > 0 {
-                assert_eq!(round.deltas.len(), 1, "one predicate carries a delta");
-                assert_eq!(round.deltas[0].predicate, 0);
-                let prev = &stratum.rounds[idx - 1];
+                let prev = &reach.rounds[idx - 1];
                 assert_eq!(
-                    round.deltas[0].rows,
+                    round.delta,
                     prev.emitted - prev.absorbed,
                     "a round's delta is the previous round's newly seen rows"
                 );
@@ -1943,35 +1911,55 @@ fn fixpoint_profile_reports_strata_rounds_and_deltas() {
             16,
             "newly seen across rounds is exactly the closure"
         );
-        assert_eq!(
-            stats.emits,
-            stratum.rounds.iter().map(|r| r.emitted).sum::<u64>(),
-            "whole-program emits are the per-round sum"
-        );
-        // The rendered report tells the same story: the version marker,
-        // labeled plan units, and the stratum section.
+        assert_eq!(stats.emits, 16, "emits is the main sink");
         let (_, report) = snap.introspect(&mut prepared, &[])?;
-        assert!(report.starts_with("introspection v3\n"), "{report}");
-        assert!(report.contains("predicate p0 rule 0:"), "{report}");
-        assert!(
-            report.contains("predicate p0 rule 1 delta variant 0"),
-            "{report}"
-        );
-        assert!(report.contains("stratum 0:"), "{report}");
-        assert!(report.contains("round 1: delta p0=7; emitted "), "{report}");
+        assert!(report.starts_with("introspection v4\n"), "{report}");
+        assert!(report.contains("reach base 0:"), "{report}");
+        assert!(report.contains("reach rec 0 (delta occ"), "{report}");
+        assert!(report.contains("reach:"), "{report}");
+        assert!(report.contains("round 1: delta 7;"), "{report}");
         Ok(())
     })
     .expect("read");
 }
 
-/// The fixpoint budget at the public surface: a one-round budget trips
-/// on a two-round closure with the typed execution error — constructed,
-/// not hoped for (`Error::FixpointBudgetExceeded`, `MeasureOfRay`'s
-/// error model: ids and counts, the snapshot stays usable).
+/// A one-round budget trips on a multi-round closure with the typed
+/// execution error — constructed, not hoped for
+/// (`Error::DerivedBudgetExceeded`, `MeasureOfRay`'s error model: ids
+/// and counts, the snapshot stays usable). `rounds > 0`: the rec ran.
 #[test]
-fn a_tight_fixpoint_budget_trips_with_the_typed_error() {
-    use bumbledb::ir::{AtomSource, HeadTerm};
-    let dir = common::TempDir::new("api-program-budget");
+fn a_tight_derived_budget_trips_under_reach() {
+    let dir = common::TempDir::new("api-reach-budget");
+    let db = Db::create(dir.path(), Graph).expect("create");
+    db.write(|tx| {
+        for (src, dst) in [(0, 1), (1, 2), (2, 3), (3, 4)] {
+            tx.insert(&GraphEdge { src, dst })?;
+        }
+        Ok(())
+    })
+    .expect("write");
+    let mut prepared = db.prepare(&closure_query()).expect("recursion executes");
+    prepared.set_derived_budget(1, u64::MAX);
+    let error = db
+        .read(|snap| snap.execute_collect(&mut prepared, &[]).map(|_| ()))
+        .expect_err("a one-round budget cannot close a diameter-4 closure");
+    assert!(
+        matches!(
+            error,
+            bumbledb::Error::DerivedBudgetExceeded { rounds, .. } if rounds > 0
+        ),
+        "expected DerivedBudgetExceeded with rounds > 0, got: {error}"
+    );
+    prepared.set_derived_budget(16, u64::MAX);
+    db.read(|snap| snap.execute_collect(&mut prepared, &[]).map(|_| ()))
+        .expect("the widened budget closes the fixpoint");
+}
+
+/// Named interiors (no rec) still execute: a copy-through interior is
+/// the same answers as the EDB scan. Tight rounds alone must not trip.
+#[test]
+fn a_tight_tuple_budget_trips_on_an_interiors_only_query() {
+    let dir = common::TempDir::new("api-interiors-budget");
     let db = Db::create(dir.path(), Ledger).expect("create");
     db.write(|tx| {
         let holder: HolderId = tx.alloc()?;
@@ -1990,51 +1978,45 @@ fn a_tight_fixpoint_budget_trips_with_the_typed_error() {
         Ok(())
     })
     .expect("write");
-
-    let base = Rule {
-        finds: vec![FindTerm::Var(VarId(0))],
-        atoms: vec![Atom {
-            source: AtomSource::Edb(Account::RELATION),
-            bindings: vec![(FieldId(0), Term::Var(VarId(0)))],
-        }],
-        negated: vec![],
-        conditions: vec![],
-    };
-    let recursive = Rule {
-        finds: vec![FindTerm::Var(VarId(0))],
-        atoms: vec![Atom {
-            source: AtomSource::Idb(bumbledb::PredId(0)),
-            bindings: vec![(FieldId(0), Term::Var(VarId(0)))],
-        }],
-        negated: vec![],
-        conditions: vec![],
-    };
-    let program = bumbledb::Program {
-        predicates: vec![bumbledb::PredicateDef {
-            head: vec![HeadTerm::Var],
-            rules: vec![base, recursive],
-        }],
-        output: bumbledb::PredId(0),
-    };
-    let mut prepared = db.prepare(&program).expect("recursion executes");
-    prepared.set_fixpoint_budget(0, u64::MAX);
+    let query = interiors_only_accounts();
+    let mut prepared = db.prepare(&query).expect("prepare");
+    prepared.set_derived_budget(0, 0);
     let error = db
         .read(|snap| snap.execute_collect(&mut prepared, &[]).map(|_| ()))
-        .expect_err("a zero-round budget cannot close a nonempty fixpoint");
+        .expect_err("a zero-tuple budget trips on a nonempty interior");
     assert!(
         matches!(
             error,
-            bumbledb::Error::FixpointBudgetExceeded {
-                stratum: 0,
-                rounds: 0,
-                ..
-            }
+            bumbledb::Error::DerivedBudgetExceeded { rounds: 0, tuples } if tuples > 0
         ),
-        "expected the typed budget error, got: {error}"
+        "expected DerivedBudgetExceeded {{ rounds: 0 }}, got: {error}"
     );
-    // The snapshot stays usable — MeasureOfRay's model: the same
-    // prepared query executes clean once the budget admits the rounds.
-    prepared.set_fixpoint_budget(16, u64::MAX);
-    db.read(|snap| snap.execute_collect(&mut prepared, &[]).map(|_| ()))
-        .expect("the widened budget closes the fixpoint");
+    // Tight rounds alone must not trip an interiors-only query.
+    prepared.set_derived_budget(0, u64::MAX);
+    db.read(|snap| {
+        let answers = snap.execute_collect(&mut prepared, &[])?;
+        assert_eq!(answers.len(), 3, "three accounts copy through");
+        Ok(())
+    })
+    .expect("the tuples axis is the only tripwire");
+}
+
+fn interiors_only_accounts() -> Query {
+    Query {
+        interiors: vec![Interior {
+            head: vec![HeadTerm::Var],
+            rules: vec![Rule {
+                finds: vec![FindTerm::Var(VarId(0))],
+                atoms: vec![Atom {
+                    source: AtomSource::Edb(Account::RELATION),
+                    bindings: vec![(FieldId(0), Term::Var(VarId(0)))],
+                }],
+                negated: vec![],
+                conditions: vec![],
+            }],
+        }],
+        rec: None,
+        head: vec![HeadTerm::Var],
+        rules: vec![identity_main(1)],
+    }
 }

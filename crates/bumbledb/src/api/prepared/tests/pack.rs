@@ -337,6 +337,8 @@ fn multi_rule_pack_folds_the_union() {
         })],
     };
     let query = Query {
+        interiors: vec![],
+        rec: None,
         head: vec![
             crate::ir::HeadTerm::Var,
             crate::ir::HeadTerm::Aggregate(crate::ir::HeadOp::Pack),

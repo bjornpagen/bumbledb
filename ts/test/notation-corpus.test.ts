@@ -1,17 +1,17 @@
 /**
  * The notation conformance corpus, TS replay (PRD-M4): the checked-in
  * corpus (`crates/bumbledb-query/tests/notation-corpus/`) pins one
- * (notation ⇄ ProgramIr JSON) pair per case, byte-authored by the Rust
+ * (notation ⇄ QueryIr JSON) pair per case, byte-authored by the Rust
  * suite; this suite replays the SAME documents from the other host —
  * every `"builder": true` case is constructed in the query builder and
- * its lowered `ProgramIr` must `JSON.stringify` to exactly the pinned
- * `program` bytes; every `"builder": false` case (the spellings the
- * builder's laws refuse — an idb head position bound only by the idb
- * atom, sparse positions, position selections) is written as hand IR and
- * held to the same byte equality, and the skipped-from-builder count is
- * asserted EXACTLY, so a silent skip is impossible. Every case's program
- * — both flags — must be ACCEPTED by `dbPrepare` against a store of the
- * corpus theory, and that theory is declared here structurally (the laws
+ * its lowered `QueryIr` must `JSON.stringify` to exactly the pinned
+ * `query` bytes; every `"builder": false` case (the spellings the
+ * builder's laws refuse — an interior head position bound only by the
+ * interior atom, sparse positions, position selections) is written as
+ * hand IR and held to the same byte equality, and the skipped-from-builder
+ * count is asserted EXACTLY, so a silent skip is impossible. Every case's
+ * query — both flags — must be ACCEPTED by `dbPrepare` against a store of
+ * the corpus theory, and that theory is declared here structurally (the laws
  * type the columns) yet pins to the same engine fingerprint as the Rust
  * `schema!` declaration (`schema-fingerprint.txt` — the T5 mechanism,
  * one line), so the corpus schemas cannot drift. A disagreement is a
@@ -27,12 +27,11 @@ import { closed } from "#closed.ts"
 import { on } from "#face.ts"
 import { i64, interval, str, u64 } from "#fields.ts"
 import { lower } from "#lower.ts"
-import type { DbHandle, ProgramIr } from "#native.ts"
+import type { DbHandle, QueryIr } from "#native.ts"
 import { native } from "#native.ts"
 import { ALLEN } from "#query/atom.ts"
 import type { AnyQuery } from "#query/lower.ts"
 import { lowerQuery, query } from "#query/lower.ts"
-import { program } from "#query/predicate.ts"
 import { v } from "#query/scope.ts"
 import { relation } from "#relation.ts"
 import { schema } from "#schema.ts"
@@ -100,7 +99,7 @@ const ORG_PARENT_ID = 10
 /**
  * The corpus normalization (documented in the corpus README): every id
  * is a JSON number; every `bigint` payload renders as its decimal
- * string. `JSON.stringify` with this replacer over a `ProgramIr` value
+ * string. `JSON.stringify` with this replacer over a `QueryIr` value
  * produces exactly the bytes the Rust encoder pins.
  */
 function bigintAsDecimalString(_key: string, value: unknown): unknown {
@@ -109,7 +108,7 @@ function bigintAsDecimalString(_key: string, value: unknown): unknown {
 
 /**
  * Every `"builder": true` case, constructed in the query builder — one
- * entry per corpus case, the construction the pinned `program` bytes
+ * entry per corpus case, the construction the pinned `query` bytes
  * must equal after lowering.
  */
 const constructions: Readonly<Record<string, AnyQuery>> = {
@@ -209,29 +208,28 @@ const constructions: Readonly<Record<string, AnyQuery>> = {
 			const { id } = v(Account)
 			return r.match(Account, { id, currency: "Eur" }).find({ id })
 		}),
-	"org-reach-rooted": program(Ledger, (p) => {
-		const declared = p.rec("reach")
-		// One head name across both rules (the TS alignment law names
-		// columns; the notation's `o`/`p` are macro-local and erased —
-		// the lowered IR is identical either way). Head keys name the idb
-		// join positions: rooted's rule-0 head column is `n`, so both idb
-		// records bind `{ n: <var> }`.
-		const rooted = declared.rule((r) => {
-			const { id: n } = v(Org)
-			return r
-				.match(Org, { id: n })
-				.where(r.eq(n, r.param("root")))
-				.find({ n })
+	"org-reach-rooted": query(Ledger)
+		.recursive("reach", {
+			base: [
+				(r) => {
+					const { id: n } = v(Org)
+					return r
+						.match(Org, { id: n })
+						.where(r.eq(n, r.param("root")))
+						.find({ n })
+				}
+			],
+			rec: [
+				(r) => {
+					const { child: c, parent: n } = v(OrgParent)
+					return r.match(OrgParent, { child: c, parent: n }).interior("reach", { n: c }).find({ n })
+				}
+			]
 		})
-		const reach = rooted.rule((r) => {
-			const { child: c, parent: n } = v(OrgParent)
-			return r.match(OrgParent, { child: c, parent: n }).idb(rooted, { n: c }).find({ n })
-		})
-		return p.output((r) => {
+		.rule((r) => {
 			const { id: p2 } = v(Org)
-			return r.match(Org, { id: p2 }).idb(reach, { n: p2 }).find({ p: p2 })
+			return r.match(Org, { id: p2 }).interior("reach", { n: p2 }).find({ p: p2 })
 		})
-	})
 }
 
 /** One positional variable term (assignable at both term and find positions). */
@@ -240,79 +238,77 @@ function posVar(id: number): { readonly kind: "var"; readonly var: number } {
 }
 
 /**
- * The `"builder": false` cases as HAND-WRITTEN `ProgramIr` — the spellings
- * the builder's laws refuse (an idb head position bound only by the idb
- * atom; sparse idb positions; idb position selections). A host writing IR
- * by hand is exactly the story these pins tell: the bytes must still
- * equal the corpus, and the engine must still prepare them.
+ * The `"builder": false` cases as HAND-WRITTEN `QueryIr` — the spellings
+ * the builder's laws refuse (an interior head position bound only by the
+ * interior atom; sparse interior positions; interior position selections).
+ * A host writing IR by hand is exactly the story these pins tell: the bytes
+ * must still equal the corpus, and the engine must still prepare them.
  */
-const handWritten: Readonly<Record<string, ProgramIr>> = {
+const handWritten: Readonly<Record<string, QueryIr>> = {
 	"org-reach": {
-		predicates: [
+		interiors: [],
+		rec: {
+			head: [{ kind: "var" }, { kind: "var" }],
+			base: [
+				{
+					finds: [posVar(0), posVar(1)],
+					atoms: [
+						{
+							source: { kind: "edb", relation: ORG_PARENT_ID },
+							bindings: [
+								[0, posVar(0)],
+								[1, posVar(1)]
+							]
+						}
+					],
+					negated: [],
+					conditions: []
+				}
+			],
+			rec: [
+				{
+					finds: [posVar(0), posVar(2)],
+					atoms: [
+						{
+							source: { kind: "edb", relation: ORG_PARENT_ID },
+							bindings: [
+								[0, posVar(0)],
+								[1, posVar(1)]
+							]
+						},
+						{
+							source: { kind: "interior", interior: 0 },
+							bindings: [
+								[0, posVar(1)],
+								[1, posVar(2)]
+							]
+						}
+					],
+					negated: [],
+					conditions: []
+				}
+			]
+		},
+		head: [{ kind: "var" }, { kind: "var" }],
+		rules: [
 			{
-				head: [{ kind: "var" }, { kind: "var" }],
-				rules: [
+				finds: [posVar(0), posVar(1)],
+				atoms: [
 					{
-						finds: [posVar(0), posVar(1)],
-						atoms: [
-							{
-								source: { kind: "edb", relation: ORG_PARENT_ID },
-								bindings: [
-									[0, posVar(0)],
-									[1, posVar(1)]
-								]
-							}
-						],
-						negated: [],
-						conditions: []
-					},
-					{
-						finds: [posVar(0), posVar(2)],
-						atoms: [
-							{
-								source: { kind: "edb", relation: ORG_PARENT_ID },
-								bindings: [
-									[0, posVar(0)],
-									[1, posVar(1)]
-								]
-							},
-							{
-								source: { kind: "idb", pred: 0 },
-								bindings: [
-									[0, posVar(1)],
-									[1, posVar(2)]
-								]
-							}
-						],
-						negated: [],
-						conditions: []
+						source: { kind: "interior", interior: 0 },
+						bindings: [
+							[0, posVar(0)],
+							[1, posVar(1)]
+						]
 					}
-				]
-			},
-			{
-				head: [{ kind: "var" }, { kind: "var" }],
-				rules: [
-					{
-						finds: [posVar(0), posVar(1)],
-						atoms: [
-							{
-								source: { kind: "idb", pred: 0 },
-								bindings: [
-									[0, posVar(0)],
-									[1, posVar(1)]
-								]
-							}
-						],
-						negated: [],
-						conditions: []
-					}
-				]
+				],
+				negated: [],
+				conditions: []
 			}
-		],
-		output: 1
+		]
 	},
 	"posted-sparse": {
-		predicates: [
+		interiors: [
 			{
 				head: [{ kind: "var" }, { kind: "var" }, { kind: "var" }],
 				rules: [
@@ -332,31 +328,29 @@ const handWritten: Readonly<Record<string, ProgramIr>> = {
 						conditions: []
 					}
 				]
-			},
-			{
-				head: [{ kind: "var" }],
-				rules: [
-					{
-						finds: [posVar(0)],
-						atoms: [
-							{
-								source: { kind: "idb", pred: 0 },
-								bindings: [
-									[2, posVar(0)],
-									[0, { kind: "paramSet", param: 0 }]
-								]
-							}
-						],
-						negated: [],
-						conditions: []
-					}
-				]
 			}
 		],
-		output: 1
+		rec: null,
+		head: [{ kind: "var" }],
+		rules: [
+			{
+				finds: [posVar(0)],
+				atoms: [
+					{
+						source: { kind: "interior", interior: 0 },
+						bindings: [
+							[2, posVar(0)],
+							[0, { kind: "paramSet", param: 0 }]
+						]
+					}
+				],
+				negated: [],
+				conditions: []
+			}
+		]
 	},
 	"usd-selected": {
-		predicates: [
+		interiors: [
 			{
 				head: [{ kind: "var" }, { kind: "var" }],
 				rules: [
@@ -375,42 +369,37 @@ const handWritten: Readonly<Record<string, ProgramIr>> = {
 						conditions: []
 					}
 				]
-			},
-			{
-				head: [{ kind: "var" }],
-				rules: [
-					{
-						finds: [posVar(0)],
-						atoms: [
-							{
-								source: { kind: "idb", pred: 0 },
-								bindings: [
-									[0, posVar(0)],
-									// The WIRE is raw: "Usd" lowers to its declaration-order
-									// row id (Currency: Usd 0, Eur 1, Gbp 2) — the name↔id
-									// bijection is the SDK's, above this seam.
-									[1, { kind: "literal", value: { kind: "u64", value: 0n } }]
-								]
-							}
-						],
-						negated: [],
-						conditions: []
-					}
-				]
 			}
 		],
-		output: 1
+		rec: null,
+		head: [{ kind: "var" }],
+		rules: [
+			{
+				finds: [posVar(0)],
+				atoms: [
+					{
+						source: { kind: "interior", interior: 0 },
+						bindings: [
+							[0, posVar(0)],
+							// The WIRE is raw: "Usd" lowers to its declaration-order
+							// row id (Currency: Usd 0, Eur 1, Gbp 2) — the name↔id
+							// bijection is the SDK's, above this seam.
+							[1, { kind: "literal", value: { kind: "u64", value: 0n } }]
+						]
+					}
+				],
+				negated: [],
+				conditions: []
+			}
+		]
 	}
 }
-
 /** One parsed corpus document (the fields this replayer reads). */
 interface CorpusDoc {
 	readonly name: string
 	readonly builder: boolean
-	readonly program: unknown
+	readonly query: unknown
 }
-
-/** Parses and shape-checks one corpus document. */
 function docOf(file: string): CorpusDoc {
 	const text = fs.readFileSync(path.join(corpusDir, file), "utf8")
 	const parsed: unknown = JSON.parse(text)
@@ -423,11 +412,11 @@ function docOf(file: string): CorpusDoc {
 	if (!("builder" in parsed) || typeof parsed.builder !== "boolean") {
 		assert.fail(`${file}: a corpus document carries the builder flag`)
 	}
-	if (!("program" in parsed)) {
-		assert.fail(`${file}: a corpus document pins a program`)
+	if (!("query" in parsed)) {
+		assert.fail(`${file}: a corpus document pins a query`)
 	}
 	assert.equal(`${parsed.name}.json`, file, `${file}: the document name is the file name`)
-	return { name: parsed.name, builder: parsed.builder, program: parsed.program }
+	return { name: parsed.name, builder: parsed.builder, query: parsed.query }
 }
 
 describe("the notation conformance corpus (TS replay)", () => {
@@ -446,11 +435,11 @@ describe("the notation conformance corpus (TS replay)", () => {
 		fs.rmSync(tmpRoot, { recursive: true, force: true })
 	})
 
-	/** Prepares one corpus program; refusal fails the case by name. */
-	function prepared(name: string, ir: ProgramIr): void {
+	/** Prepares one corpus query; refusal fails the case by name. */
+	function prepared(name: string, ir: QueryIr): void {
 		const result = native.dbPrepare(db, ir)
 		if (!result.ok) {
-			assert.fail(`case ${name}: dbPrepare refused the corpus program: ${result.message}`)
+			assert.fail(`case ${name}: dbPrepare refused the corpus query: ${result.message}`)
 		}
 		native.preparedClose(result.prepared)
 	}
@@ -476,7 +465,7 @@ describe("the notation conformance corpus (TS replay)", () => {
 		let skipped = 0
 		for (const file of files) {
 			const doc = docOf(file)
-			const pinned = JSON.stringify(doc.program)
+			const pinned = JSON.stringify(doc.query)
 			if (doc.builder) {
 				const construction = constructions[doc.name]
 				if (construction === undefined) {
@@ -486,7 +475,7 @@ describe("the notation conformance corpus (TS replay)", () => {
 				assert.equal(
 					JSON.stringify(ir, bigintAsDecimalString),
 					pinned,
-					`case ${doc.name}: the builder lowering equals the pinned ProgramIr bytes`
+					`case ${doc.name}: the builder lowering equals the pinned QueryIr bytes`
 				)
 				prepared(doc.name, ir)
 			} else {
@@ -498,7 +487,7 @@ describe("the notation conformance corpus (TS replay)", () => {
 				assert.equal(
 					JSON.stringify(ir, bigintAsDecimalString),
 					pinned,
-					`case ${doc.name}: the hand-written ProgramIr equals the pinned bytes`
+					`case ${doc.name}: the hand-written QueryIr equals the pinned bytes`
 				)
 				prepared(doc.name, ir)
 			}

@@ -1,11 +1,11 @@
 use super::{
-    FjPlan, PlanError, PlanOccurrence, PointProbe, ValidatedPlan,
     check_occurrence_coverage::check_occurrence_coverage, check_selections,
-    derive_nodes::derive_nodes, provably_distinct::provably_distinct, split_filters,
+    derive_nodes::derive_nodes, provably_distinct::provably_distinct, split_filters, FjPlan,
+    PlanError, PlanOccurrence, PointProbe, ValidatedPlan,
 };
 use crate::image::view::{FilterPredicate, ResolvedWordSource};
-use crate::ir::VarId;
 use crate::ir::normalize::{NormalizedQuery, Occurrence, Role, SlotWidth};
+use crate::ir::VarId;
 use crate::schema::Schema;
 use bumbledb_theory::schema::FieldId;
 use std::collections::BTreeSet;
@@ -74,13 +74,11 @@ fn build_occurrences(
                 Role::Negated => {
                     let occ_vars: BTreeSet<VarId> =
                         occurrence.vars.iter().map(|(_, v)| *v).collect();
-                    vec![
-                        slots
-                            .iter()
-                            .map(|(v, _)| *v)
-                            .filter(|v| occ_vars.contains(v))
-                            .collect(),
-                    ]
+                    vec![slots
+                        .iter()
+                        .map(|(v, _)| *v)
+                        .filter(|v| occ_vars.contains(v))
+                        .collect()]
                 }
                 Role::Eliminated(_) | Role::Folded(_) => Vec::new(),
             };
@@ -100,7 +98,7 @@ fn build_occurrences(
                 })
                 .collect();
             // The field→column shape: a stored relation's layout, or —
-            // for an `Idb` occurrence — the target predicate's sealed
+            // for an `Interior` occurrence — the target predicate's sealed
             // signature columns (`FieldId(i)` is head position `i`, the
             // positional reading `lean/Bumbledb/Exec/Fixpoint.lean:
             // tupleFact` promises; the transient image is built with
@@ -112,7 +110,7 @@ fn build_occurrences(
                         .map(|idx| layout.field_type(idx))
                         .collect()
                 }
-                crate::ir::AtomSource::Idb(pred) => signatures[usize::from(pred.0)]
+                crate::ir::AtomSource::Interior(pred) => signatures[pred.index()]
                     .columns
                     .iter()
                     .map(|column| column.ty.type_desc())
@@ -198,7 +196,7 @@ fn earliest_bound_node(bound: &[BTreeSet<VarId>], vars: &[VarId]) -> Option<usiz
 /// node — impossible for plans over the planner's occurrence cap — or a
 /// normalized query whose slot-width map misses a variable).
 /// The query-path entry: the empty `Idb` signature surface (a sealed
-/// `ValidatedQuery` carries no `Idb` occurrence). Test observability —
+/// `ValidatedQuery` carries no `Interior` occurrence). Test observability —
 /// production rules route through [`validate_with_signatures`].
 #[cfg(test)]
 pub fn validate(
@@ -211,12 +209,12 @@ pub fn validate(
     validate_with_signatures(plan, normalized, schema, &[], estimates, sink_vars)
 }
 
-/// [`validate`] with the program's `Idb` signature surface: an `Idb`
-/// occurrence's field→column spans derive from the target predicate's
-/// sealed columns (in `PredId` order) instead of a stored relation's
+/// [`validate`] with the interiors/rec signature surface: an `Interior`
+/// occurrence's field→column spans derive from the target table's
+/// sealed columns (in `InteriorId` then rec order) instead of a stored relation's
 /// layout — everything else is the conjunctive validation, verbatim.
 /// The query path passes the empty surface through [`validate`]: a
-/// sealed `ValidatedQuery` carries no `Idb` occurrence.
+/// sealed `ValidatedQuery` carries no `Interior` occurrence.
 ///
 /// # Errors
 ///
@@ -229,7 +227,7 @@ pub fn validate(
     clippy::too_many_lines,
     reason = "the linear table or protocol is clearer kept together"
 )] // the placement rules read in order;
-// each attaches one residual kind
+   // each attaches one residual kind
 pub fn validate_with_signatures(
     plan: &FjPlan,
     normalized: &NormalizedQuery,

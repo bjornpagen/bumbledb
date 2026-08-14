@@ -134,7 +134,7 @@ fn fold_positive(
 ) -> bool {
     let occurrence = &normalized.occurrences[c_idx];
     // THE GUARD (20-query-ir.md § engine recursion's consumer guards): sealed
-    // extensions exist only for closed stored relations, so an `Idb`
+    // extensions exist only for closed stored relations, so an `Interior`
     // occurrence has no stage-0 rows and never folds.
     let Some(relation_id) = occurrence.source.edb() else {
         return false;

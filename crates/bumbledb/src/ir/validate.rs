@@ -85,29 +85,28 @@ use crate::allen::AllenMask;
 use crate::error::ValidationError;
 use crate::image::view::MaskConst;
 use crate::ir::normalize::LoweredRule;
-use crate::ir::{CmpOp, FindTerm, ParamId, PredId, Value, VarId};
+use crate::ir::{CmpOp, FindTerm, InteriorId, ParamId, Value, VarId};
 use bumbledb_theory::schema::{FieldId, IntervalElement, ValueType};
 
 mod context;
 mod finds;
-mod strata;
 #[expect(
     clippy::module_inception,
     reason = "the nested module owns the operation named by its parent"
 )]
 mod validate;
 
-pub use validate::{validate, validate_program};
+pub use validate::validate;
 
 /// The predicate a query defines — anonymous (names live in the host,
 /// exactly like relations pre-`as`), its typed output signature derived
 /// ONCE at validation and sealed. The single authority for sink
 /// construction, result-buffer typing, finalize's all-words decision,
-/// and introspection's header. Referenced only by [`PredId`], from
-/// inside the same [`crate::ir::Program`] — the named-view refusal
-/// stands (no stored, named, or cross-program reference exists), and
-/// the one reference form is the recursion cut's `Idb` atom, typed
-/// against these sealed columns.
+/// and introspection's header. Referenced only by [`InteriorId`], from
+/// inside the same [`crate::ir::Query`] — the named-view refusal stands
+/// (no stored, named, or cross-query reference exists), and the one
+/// reference form is the `Interior` atom, typed against these sealed
+/// columns.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Predicate {
     /// The signature: one column per head position, in head order.
@@ -276,146 +275,163 @@ pub(crate) enum DurationOperand {
     Const(SealedConst),
 }
 
-/// The `Idb` typing surface handed to the per-rule roster: per-predicate
-/// head arities (always known — `PredicateDef.head`), and the sealed
-/// signatures the program-level sealing loop has derived so far. An
-/// `Idb` anchor resolves against the target's sealed column exactly as
-/// an `Edb` anchor resolves against its stored field
-/// ([`Context::check_atoms`]). The query path passes [`IdbSignatures::EMPTY`]:
-/// a plain query's rules carry no `Idb` occurrence (an `Idb`-carrying
-/// query routes through [`validate_program`] as the degenerate
-/// embedding).
-pub(super) struct IdbSignatures<'a> {
-    /// Per-predicate arity — the address space `FieldId`s are checked
-    /// against.
+/// The interior typing surface handed to the per-rule roster: sealed
+/// column types, indexed by [`InteriorId`], filled in declaration
+/// order before the rec, rec after interiors, main last. An `Interior`
+/// anchor resolves against the target's sealed column exactly as an
+/// `Edb` anchor resolves against its stored field
+/// ([`Context::check_atoms`]).
+pub(super) struct InteriorSignatures<'a> {
+    /// Per-derived-table arity — the address space `FieldId`s are
+    /// checked against.
     arities: &'a [usize],
-    /// Per-predicate sealed signature; `None` while the sealing loop is
-    /// still deriving the target. [`validate::validate_program`] invokes
-    /// the rule roster only on rules whose targets are all sealed, so a
-    /// `None` read is a typed refusal, never a panic — validation stays
-    /// total on hostile programs.
+    /// Per-derived-table sealed signature. Interiors seal in
+    /// declaration order; rec seals from base then rec arms. A `None`
+    /// slot is a table not yet sealed — hostile reads are typed
+    /// ([`ValidationError::UnknownInterior`]), never a panic.
     sealed: &'a [Option<Predicate>],
+    /// The reading interior's id, if this rule-list is an interior
+    /// ([`ValidationError::InteriorNotPrior`]); `None` for rec and main
+    /// (out-of-range is [`ValidationError::UnknownInterior`]).
+    reader: Option<InteriorId>,
+    /// `interiors.len() + rec.is_some()` — the well-formedness screen's
+    /// address space, independent of how many signatures have sealed.
+    derived_count: usize,
 }
 
-impl IdbSignatures<'_> {
-    /// The query path's empty surface: no predicates are addressable.
-    pub(super) const EMPTY: IdbSignatures<'static> = IdbSignatures {
-        arities: &[],
-        sealed: &[],
-    };
-
+impl InteriorSignatures<'_> {
     /// The binding-independent source screen: the target names a real
-    /// predicate of the address space (a zero-binding `Idb` gate never
-    /// reaches [`IdbSignatures::column`], so the screen runs per atom).
-    fn screen(&self, atom: usize, pred: PredId) -> Result<(), ValidationError> {
-        if usize::from(pred.0) >= self.arities.len() {
-            return Err(ValidationError::UnknownPredicate { atom, pred });
+    /// derived table (a zero-binding `Interior` gate never reaches
+    /// [`InteriorSignatures::column`], so the screen runs per atom).
+    fn screen(&self, atom: usize, interior: InteriorId) -> Result<(), ValidationError> {
+        let index = usize::try_from(interior.0).expect("64-bit usize");
+        if index >= self.derived_count {
+            return Err(ValidationError::UnknownInterior { atom, interior });
+        }
+        if let Some(at) = self.reader {
+            let at_idx = usize::try_from(at.0).expect("64-bit usize");
+            if index >= at_idx {
+                return Err(ValidationError::InteriorNotPrior { interior, at });
+            }
         }
         Ok(())
     }
 
-    /// The sealed type of one `Idb` binding position — the roster's
-    /// unknown-`PredId` and arity items, totally typed.
+    /// The sealed type of one `Interior` binding position — the roster's
+    /// unknown-id and arity items, totally typed.
     fn column(
         &self,
         atom: usize,
-        pred: PredId,
+        interior: InteriorId,
         field: FieldId,
     ) -> Result<&ValueType, ValidationError> {
-        let index = usize::from(pred.0);
+        self.screen(atom, interior)?;
+        let index = usize::try_from(interior.0).expect("64-bit usize");
         let Some(arity) = self.arities.get(index) else {
-            return Err(ValidationError::UnknownPredicate { atom, pred });
+            return Err(ValidationError::UnknownInterior { atom, interior });
         };
         if usize::from(field.0) >= *arity {
-            return Err(ValidationError::PredicateColumnOutOfRange { atom, field });
+            return Err(ValidationError::InteriorColumnOutOfRange { atom, field });
         }
         match self.sealed.get(index).and_then(Option::as_ref) {
             Some(predicate) => predicate
                 .columns
                 .get(usize::from(field.0))
                 .map(|column| &column.ty)
-                .ok_or(ValidationError::PredicateColumnOutOfRange { atom, field }),
-            None => Err(ValidationError::UnresolvedPredicateSignature { pred }),
+                .ok_or(ValidationError::InteriorColumnOutOfRange { atom, field }),
+            None => Err(ValidationError::UnknownInterior { atom, interior }),
         }
     }
 }
 
-/// The sealed program witness: one per-predicate [`ValidatedQuery`]
-/// (the same one signature derivation, quantified over predicates —
-/// 20-query-ir.md § engine recursion) plus the program's answer predicate and the
-/// stratification witness the strata judge computed (`lean/Bumbledb/
-/// Query/Syntax.lean: Program.StratifiedBy` — the SCC condensation's
-/// topological index per predicate). Unconstructible outside this
-/// module, like [`ValidatedQuery`].
-///
-/// Params are **program-global**: one binding surface across every
-/// predicate, unified exactly as rules unify within one query; each
-/// per-predicate witness carries the program-wide tables.
+/// One sealed interior: lowered rules, signature, per-rule typing.
+/// Unconstructible outside this module.
 #[derive(Debug)]
-pub struct ValidatedProgram {
-    /// One sealed witness per predicate, in `PredId` order.
-    predicates: Vec<ValidatedQuery>,
-    /// The program's answer predicate.
-    output: PredId,
-    /// The stratification witness: `strata[p]` is predicate `p`'s
-    /// stratum (positive edges non-increasing, negated edges strictly
-    /// decreasing — the judged form).
-    strata: Box<[u16]>,
+pub struct ValidatedInterior {
+    lowered: Vec<LoweredRule>,
+    predicate: Predicate,
+    rules: Vec<RuleTyping>,
 }
 
-impl ValidatedProgram {
-    /// The program's answer predicate.
+impl ValidatedInterior {
+    /// This interior's sealed signature.
     #[must_use]
-    pub fn output(&self) -> PredId {
-        self.output
+    pub fn predicate(&self) -> &Predicate {
+        &self.predicate
     }
 
-    /// One predicate's sealed witness.
-    ///
-    /// # Panics
-    ///
-    /// On a programmer-invariant violation: a `PredId` at or beyond the
-    /// validated predicate count.
+    /// Lowered-rule count.
     #[must_use]
-    pub fn witness(&self, pred: PredId) -> &ValidatedQuery {
-        &self.predicates[usize::from(pred.0)]
-    }
-
-    /// The answer predicate's sealed witness — what the degenerate
-    /// (no-`Idb`) program prepares as (`prepare_program`'s embedding
-    /// branch), and the fixpoint program's result-typing authority.
-    #[must_use]
-    pub fn output_witness(&self) -> &ValidatedQuery {
-        self.witness(self.output)
-    }
-
-    /// The stratification witness, per predicate — the SCC
-    /// condensation's topological index (test observability; the
-    /// driver consumes it in R6).
-    #[must_use]
-    pub fn strata(&self) -> &[u16] {
-        &self.strata
+    pub fn rule_count(&self) -> usize {
+        self.rules.len()
     }
 }
 
-/// The sealed witness: the query plus the derived tables downstream layers
-/// trust. Unconstructible outside this module.
+/// The sealed rec SCC: base then rec arms, one signature.
+/// Unconstructible outside this module.
+#[derive(Debug)]
+pub struct ValidatedRec {
+    base: Vec<LoweredRule>,
+    rec: Vec<LoweredRule>,
+    predicate: Predicate,
+    base_typing: Vec<RuleTyping>,
+    rec_typing: Vec<RuleTyping>,
+}
+
+impl ValidatedRec {
+    /// The rec's sealed signature.
+    #[must_use]
+    pub fn predicate(&self) -> &Predicate {
+        &self.predicate
+    }
+
+    /// Lowered base-arm count.
+    #[must_use]
+    pub fn base_count(&self) -> usize {
+        self.base_typing.len()
+    }
+
+    /// Lowered rec-arm count.
+    #[must_use]
+    pub fn rec_count(&self) -> usize {
+        self.rec_typing.len()
+    }
+}
+
+/// The sealed main query: lowered rules, answer signature, per-rule typing.
+/// Unconstructible outside this module.
+#[derive(Debug)]
+pub struct ValidatedMain {
+    lowered: Vec<LoweredRule>,
+    predicate: Predicate,
+    rules: Vec<RuleTyping>,
+}
+
+impl ValidatedMain {
+    /// The answer head's sealed signature.
+    #[must_use]
+    pub fn predicate(&self) -> &Predicate {
+        &self.predicate
+    }
+
+    /// Lowered main-rule count.
+    #[must_use]
+    pub fn rule_count(&self) -> usize {
+        self.rules.len()
+    }
+}
+
+/// The sealed witness: interiors, optional rec, main, plus the
+/// query-global param tables. Unconstructible outside this module.
 ///
 /// Variables are rule-scoped, so their typing lives per rule
-/// ([`RuleWitness`]); params are query-global, so their tables live here
-/// once — unified across the rules' own typing fixpoints.
+/// ([`RuleTyping`]); params are query-global, so their tables live here
+/// once — unified across every interior, rec arm, and main rule.
 #[derive(Debug)]
 pub struct ValidatedQuery {
-    /// The lowered program: Or-free rules, one per DNF disjunct of the
-    /// input rules (duplicates collapsed) — the artifact everything
-    /// downstream reads. No `Or` survives validation.
-    lowered: Vec<LoweredRule>,
-    /// The predicate the query defines, derived once from rule 0 after
-    /// every rule was checked to derive the same signature (the per-rule
-    /// positional alignment below).
-    predicate: Predicate,
-    /// Per rule, in rule order: its variable typing and group key.
-    rules: Vec<RuleTyping>,
+    interiors: Vec<ValidatedInterior>,
+    rec: Option<ValidatedRec>,
+    main: ValidatedMain,
     param_types: BTreeMap<ParamId, ValueType>,
     /// Param ids bound as sets (`Term::ParamSet`); their entry in
     /// `param_types` is the *element* type.
@@ -442,33 +458,109 @@ struct RuleTyping {
 }
 
 impl ValidatedQuery {
-    /// The predicate this query defines (see [`Predicate`]): the sealed
-    /// signature every downstream consumer reads — no other derivation
-    /// of the answer types exists.
+    /// Named interiors in declaration order.
     #[must_use]
-    pub fn predicate(&self) -> &Predicate {
-        &self.predicate
+    pub fn interiors(&self) -> &[ValidatedInterior] {
+        &self.interiors
     }
 
-    /// One rule's slice of the witness — the unit the per-rule pipeline
-    /// (normalize → grounding → plan) consumes.
+    /// The rec SCC, if any.
+    #[must_use]
+    pub fn rec(&self) -> Option<&ValidatedRec> {
+        self.rec.as_ref()
+    }
+
+    /// The main/answer witness.
+    #[must_use]
+    pub fn main(&self) -> &ValidatedMain {
+        &self.main
+    }
+
+    /// The answer head's sealed signature — [`ValidatedMain`]'s
+    /// predicate. Downstream result typing reads this, never an
+    /// interior or rec signature.
+    #[must_use]
+    pub fn predicate(&self) -> &Predicate {
+        self.main.predicate()
+    }
+
+    /// One **main** rule's slice of the witness — the unit the per-rule
+    /// pipeline (normalize → grounding → plan) consumes for the answer
+    /// head.
     ///
     /// # Panics
     ///
     /// On a programmer-invariant violation: an index at or beyond
-    /// [`Self::rule_count`].
+    /// the main rule count.
     #[must_use]
     pub fn rule(&self, index: usize) -> RuleWitness<'_> {
+        self.main_rule(index)
+    }
+
+    /// One main rule.
+    #[must_use]
+    pub(crate) fn main_rule(&self, index: usize) -> RuleWitness<'_> {
         RuleWitness {
-            rule: &self.lowered[index],
-            typing: &self.rules[index],
+            rule: &self.main.lowered[index],
+            typing: &self.main.rules[index],
             query: self,
         }
     }
 
-    /// Every rule's witness slice, in rule order.
+    /// One interior rule.
+    #[must_use]
+    pub(crate) fn interior_rule(&self, interior: usize, index: usize) -> RuleWitness<'_> {
+        let inner = &self.interiors[interior];
+        RuleWitness {
+            rule: &inner.lowered[index],
+            typing: &inner.rules[index],
+            query: self,
+        }
+    }
+
+    /// One rec base-arm rule.
+    #[must_use]
+    pub(crate) fn rec_base_rule(&self, index: usize) -> RuleWitness<'_> {
+        let rec = self.rec.as_ref().expect("rec present");
+        RuleWitness {
+            rule: &rec.base[index],
+            typing: &rec.base_typing[index],
+            query: self,
+        }
+    }
+
+    /// One rec step-arm rule.
+    #[must_use]
+    pub(crate) fn rec_step_rule(&self, index: usize) -> RuleWitness<'_> {
+        let rec = self.rec.as_ref().expect("rec present");
+        RuleWitness {
+            rule: &rec.rec[index],
+            typing: &rec.rec_typing[index],
+            query: self,
+        }
+    }
+
+    /// Every **main** rule's witness slice, in rule order.
     pub fn rules(&self) -> impl Iterator<Item = RuleWitness<'_>> {
-        (0..self.rules.len()).map(|index| self.rule(index))
+        (0..self.main.rules.len()).map(|index| self.main_rule(index))
+    }
+
+    /// Every rule of one interior, in rule order.
+    pub(crate) fn interior_rules(&self, interior: usize) -> impl Iterator<Item = RuleWitness<'_>> {
+        let n = self.interiors[interior].rules.len();
+        (0..n).map(move |index| self.interior_rule(interior, index))
+    }
+
+    /// Every rec base arm, in declaration order.
+    pub(crate) fn rec_base_rules(&self) -> impl Iterator<Item = RuleWitness<'_>> {
+        let n = self.rec.as_ref().map_or(0, |r| r.base_typing.len());
+        (0..n).map(|index| self.rec_base_rule(index))
+    }
+
+    /// Every rec step arm, in declaration order.
+    pub(crate) fn rec_step_rules(&self) -> impl Iterator<Item = RuleWitness<'_>> {
+        let n = self.rec.as_ref().map_or(0, |r| r.rec_typing.len());
+        (0..n).map(|index| self.rec_step_rule(index))
     }
 
     /// The resolved type of a scalar param (for a set param this is the

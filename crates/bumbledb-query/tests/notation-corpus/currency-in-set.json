@@ -4,5 +4,5 @@
   "productions": ["in-param"],
   "notation": "(id) | Account(id, currency in ?currencies);",
   "normalized": "(v0) | Account(id: v0, currency in ?0);",
-  "program": {"predicates":[{"head":[{"kind":"var"}],"rules":[{"finds":[{"kind":"var","var":0}],"atoms":[{"source":{"kind":"edb","relation":4},"bindings":[[0,{"kind":"var","var":0}],[2,{"kind":"paramSet","param":0}]]}],"negated":[],"conditions":[]}]}],"output":0}
+  "query": {"interiors":[],"rec":null,"head":[{"kind":"var"}],"rules":[{"finds":[{"kind":"var","var":0}],"atoms":[{"source":{"kind":"edb","relation":4},"bindings":[[0,{"kind":"var","var":0}],[2,{"kind":"paramSet","param":0}]]}],"negated":[],"conditions":[]}]}
 }

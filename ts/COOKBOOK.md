@@ -52,7 +52,6 @@ import {
 	not,
 	on,
 	pointIn,
-	program,
 	query,
 	ref,
 	relation,
@@ -1179,14 +1178,15 @@ const Gravestones = schema("Gravestones", { Step, Score, ActiveRun, Usage, Event
 
 Guarantee: host discipline for the loop — the finite `seen` set proves
 termination for the host run; the engine-native form beside it executes
-whole under the fixpoint driver, budget-bounded
-(`lean/Bumbledb/Exec/Fixpoint.lean: program_eval_sound`).
+whole under the linear reach driver, budget-bounded
+(`lean/Bumbledb/Exec/Reach.lean: evalLinearReach_eq_lfp` /
+`evalQuery_sound`).
 
 Reachability, in two dialects. The host-loop idiom remains the depth-bounded
 answer: the loop runs depth-many rounds and each round is one ∈-set query —
 an `inSet` probe, microsecond-class. The frontier discipline below *is*
 semi-naive evaluation's Δ, spent where a loop is a loop: the host. The
-engine-native form is the same closure as one stratified `program()`.
+engine-native form is the same closure as one query with `recursive`.
 
 ```ts
 const Node = relation("Node", { id: u64.fresh, name: str })
@@ -1237,68 +1237,65 @@ for (;;) {
 Termination is the host's theorem: `seen` grows strictly or the loop breaks,
 inside a finite node set. When the idiom's costs bite — **unbounded or large
 depth**, or **closure composed into a larger plan** — write the engine-native
-form instead: `?root` seeds the predicate, and the output is the finished
-set's own identity projection (an `idb` atom is a positive occurrence, so it
+form instead: `?root` seeds the rec, and the main rule is the finished
+set's own identity projection (an interior atom is a positive occurrence, so it
 grounds its variables — no re-grounding join over a domain relation exists):
 
 ```ts
-const reach = program(Closure, (p) => {
-	const rec = p.rec("reach")
-	const seeded = rec
-		.rule((r) => {
-			const { id: c } = v(Node)
-			return r
-				.match(Node, { id: c })
-				.where(eq(c, r.param("root")))
-				.find({ c })
-		})
-		.rule((r) => {
-			const { child: c, parent } = v(Parent)
-			return r
-				.match(Parent, { child: c, parent })
-				.idb(rec, { c: parent })
-				.find({ c })
-		})
-	return p.output((r) => {
-		const { id: c } = v(Node)
-		return r.idb(seeded, { c }).find({ c })
+const reach = query(Closure)
+	.recursive("reach", {
+		base: [
+			(r) => {
+				const { id: c } = v(Node)
+				return r
+					.match(Node, { id: c })
+					.where(eq(c, r.param("root")))
+					.find({ c })
+			}
+		],
+		rec: [
+			(r) => {
+				const { child: c, parent } = v(Parent)
+				return r.match(Parent, { child: c, parent }).interior("reach", { c: parent }).find({ c })
+			}
+		]
 	})
-})
+	.rule((r) => {
+		const { id: c } = v(Node)
+		return r.interior("reach", { c }).find({ c })
+	})
 const reachPrepared = db.prepare(reach)
 ```
 
-The complement is one `r.not` away — negation **of** a finished stratum is
-engine-legal (the strata judge refuses only negation *through* a cycle), so
+The complement is one `r.not` away — negation **of** a finished rec is
+engine-legal (negation in rec is refused), so
 "every node the closure never reached" runs in-plan through the engine's
-anti-probe, never as a host-side set difference — the same program with the
-output rule:
+anti-probe, never as a host-side set difference — the same query with the
+main rule:
 
 ```ts
-const unreached = program(Closure, (p) => {
-	const rec = p.rec("reach")
-	const seeded = rec
-		.rule((r) => {
-			const { id: c } = v(Node)
-			return r
-				.match(Node, { id: c })
-				.where(eq(c, r.param("root")))
-				.find({ c })
-		})
-		.rule((r) => {
-			const { child: c, parent } = v(Parent)
-			return r
-				.match(Parent, { child: c, parent })
-				.idb(rec, { c: parent })
-				.find({ c })
-		})
-	return p.output((r) => {
-		const { id: c } = v(Node)
-		return r
-			.match(Node, { id: c })
-			.where(r.not(seeded, { c }))
-			.find({ c })
+const unreached = query(Closure)
+	.recursive("reach", {
+		base: [
+			(r) => {
+				const { id: c } = v(Node)
+				return r
+					.match(Node, { id: c })
+					.where(eq(c, r.param("root")))
+					.find({ c })
+			}
+		],
+		rec: [
+			(r) => {
+				const { child: c, parent } = v(Parent)
+				return r.match(Parent, { child: c, parent }).interior("reach", { c: parent }).find({ c })
+			}
+		]
 	})
-})
+	.rule((r) => {
+		const { id: c } = v(Node)
+		return r.match(Node, { id: c }).where(r.not("reach", { c })).find({ c })
+	})
 ```
 
 (the test drives both dialects and asserts the same reachable sets, root for
@@ -1311,16 +1308,16 @@ composition has no engine form.
 
 Guarantee: host discipline + runtime aggregate semantics — the host computes
 closure, then one checked `sum` (`lean/Bumbledb/Query/Aggregates.lean:
-checkedSum_sound`); the engine-native form folds over a *finished* lower
-stratum, the one aggregation shape the strata roster admits.
+checkedSum_sound`); the engine-native form folds over a finished rec,
+the one aggregation shape the rec roster admits.
 
 The ledger workload's real recursion case, in the same two dialects: a
 hierarchical chart of accounts and a subtree rollup. The host composition —
 recipe 24's loop accumulates the subtree's ∈-set, then **one `sum` query over
 the accumulated set** folds the postings. The engine aggregates, the host
-composes (aggregates never nest). The engine-native form is one program:
-aggregation *through* a cycle is refused, but a fold over a recursive
-predicate from a **higher stratum** reads a finished set and is ordinary.
+composes (aggregates never nest). The engine-native form is one query:
+aggregation *through* a cycle is refused, but a fold over a finished rec
+from main reads a finished set and is ordinary.
 
 ```ts
 const Account = relation("Account", { id: u64.fresh, name: str })
@@ -1346,33 +1343,33 @@ const subtreeRollup = query(Accounts).rule((r) => {
 	const { id, minor } = v(Posting)
 	return r.match(Posting, { id, account: r.inSet("subtree"), minor }).find({ total: r.sum(minor) })
 })
-// The engine-native form: the closure stratum converges first, then the
-// output's fold runs once over the finished subtree.
-const nativeRollup = program(Accounts, (p) => {
-	const sub = p.rec("sub")
-	const seeded = sub
-		.rule((r) => {
-			const { id: a } = v(Account)
-			return r
-				.match(Account, { id: a })
-				.where(eq(a, r.param("root")))
-				.find({ a })
-		})
-		.rule((r) => {
-			const { child: a, parent } = v(AccountParent)
-			return r
-				.match(AccountParent, { child: a, parent })
-				.idb(sub, { a: parent })
-				.find({ a })
-		})
-	return p.output((r) => {
+// The engine-native form: the rec converges first, then the
+// main fold runs once over the finished subtree.
+const nativeRollup = query(Accounts)
+	.recursive("sub", {
+		base: [
+			(r) => {
+				const { id: a } = v(Account)
+				return r
+					.match(Account, { id: a })
+					.where(eq(a, r.param("root")))
+					.find({ a })
+			}
+		],
+		rec: [
+			(r) => {
+				const { child: a, parent } = v(AccountParent)
+				return r.match(AccountParent, { child: a, parent }).interior("sub", { a: parent }).find({ a })
+			}
+		]
+	})
+	.rule((r) => {
 		const { id, account: a, minor } = v(Posting)
 		return r
 			.match(Posting, { id, account: a, minor })
-			.idb(seeded, { a })
+			.interior("sub", { a })
 			.find({ total: r.sum(minor) })
 	})
-})
 ```
 
 ## 26. Exact partition

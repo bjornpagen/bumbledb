@@ -19,20 +19,16 @@ impl<S> PreparedQuery<'_, S> {
     /// no-knobs surface (`docs/architecture/00-product.md`).
     #[doc(hidden)]
     pub fn set_batch_size(&mut self, batch: usize) {
-        for rule in self.program.all_rules_mut() {
-            match rule {
-                PreparedRule::FreeJoin(rule) => {
-                    rule.executor = Executor::with_batch_size(&rule.plan, batch);
-                }
-                PreparedRule::Recursive(rule) => {
-                    for variant in &mut rule.variants {
-                        variant.rule.executor =
-                            Executor::with_batch_size(&variant.rule.plan, batch);
-                    }
-                }
-                PreparedRule::KeyProbe(_) => {}
+        self.visit_rules_mut(|rule| match rule {
+            PreparedRule::FreeJoin(rule) => {
+                rule.executor = Executor::with_batch_size(&rule.plan, batch);
             }
-        }
+            PreparedRule::Recursive(rule) => {
+                rule.variant.rule.executor =
+                    Executor::with_batch_size(&rule.variant.rule.plan, batch);
+            }
+            PreparedRule::KeyProbe(_) => {}
+        });
     }
 
     /// The identity check at every execution entry (`execute` and

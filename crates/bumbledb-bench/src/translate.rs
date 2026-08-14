@@ -36,10 +36,12 @@
 //!   FROM t)`; negated, `NOT EXISTS` (the relation must be empty).
 //! - Never-interned strings/bytes need no special case: SQL compares
 //!   values, which is exactly the sentinel semantics.
-//! - **Programs = `WITH RECURSIVE`** ([`program`], the recursive lane):
-//!   one CTE per predicate, linear self-recursion under `UNION`; the
-//!   non-linear/mutual/fold classes join the enumerated
-//!   [`Inexpressible`] set — counted, reported, never silent.
+//! - **Interiors + rec = `WITH [RECURSIVE]`** ([`program`], the lossy
+//!   SQLite image of this cut): interiors then optional rec as CTEs,
+//!   main as the SELECT. No `UNION ALL`. No CTE after the rec.
+//!   Interval-typed derived columns are the remaining translator
+//!   limit ([`Inexpressible::IntervalDerivedColumn`]). Validation is
+//!   the screen for the rest.
 
 use std::collections::BTreeMap;
 
@@ -53,7 +55,7 @@ mod query;
 mod tests;
 mod types;
 
-pub use program::{sqlite_program_expressible, translate_program};
+pub use program::{sqlite_reach_expressible, translate_query};
 pub use query::translate;
 
 /// The SQL translation is conjunctive-only: it consumes the flat leaf
@@ -218,28 +220,10 @@ pub enum Inexpressible {
     /// SUM + correlated-subselect pattern), which prices enforcement,
     /// never renders the pinned verdict.
     CapacityJudgment,
-    /// A program rule reading its own predicate through two or more
-    /// atoms — the non-linear form. `SQLite`'s recursive CTE admits
-    /// exactly one reference to the recursive table per arm, and an
-    /// emulation would test the emulation, not the translation. Naive+
-    /// Lean territory by decision
-    /// (`docs/architecture/60-validation.md` § the two oracles).
-    NonLinearRecursion,
-    /// Two predicates reading each other — mutual recursion. `SQLite`'s
-    /// `WITH RECURSIVE` has no mutually recursive CTE form.
-    MutualRecursion,
-    /// A fold anywhere in a program — aggregation over recursive
-    /// strata. The program lane routes every program fold naive-side
-    /// whole (the degenerate no-`Idb` aggregate program is the plain
-    /// query lane's, so nothing translatable is lost).
-    RecursiveFold,
-    /// A rule negating its own predicate — the shape the engine's
-    /// stratification fence refuses (`NegationThroughCycle`). The gate
-    /// mirrors the fence so a raw `Program` handed straight to the
-    /// translator lands here as a typed routing, never as a recursive
-    /// CTE whose arm names its own table inside `NOT EXISTS` (which
-    /// `SQLite` rejects at prepare — a harness panic, not a verdict).
-    SelfNegation,
+    /// An interval-typed derived (interior or rec) column. The
+    /// translator's remaining limit; the generator's rec corpus is
+    /// scalar-shaped.
+    IntervalDerivedColumn,
 }
 
 /// The `SQLite` lane's expressibility gate. Every remaining query

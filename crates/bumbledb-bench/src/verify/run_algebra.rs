@@ -97,6 +97,8 @@ fn rules_ops(sizes: &Sizes) -> Vec<Op> {
         conditions: vec![leaf(CmpOp::Ge, var(1), Term::Literal(Value::I64(floor)))],
     };
     let assemble = |rules: Vec<Rule>| Query {
+        interiors: vec![],
+        rec: None,
         head: rules[0].head(),
         rules,
     };
@@ -419,6 +421,8 @@ fn order_op(rng: &mut Rng) -> CmpOp {
 /// one asserted to be exactly the enumerated `PackAggregate` routing.
 fn pack_and_measure_ops() -> (Vec<Op>, u64) {
     let pack = |rules: Vec<Rule>| Query {
+        interiors: vec![],
+        rec: None,
         head: rules[0].head(),
         rules,
     };
@@ -632,6 +636,8 @@ fn parity_cases() -> Vec<(&'static str, Query, Expected)> {
                 conditions: vec![leaf(CmpOp::Ge, var(1), Term::Literal(Value::I64(floor)))],
             };
             let q = Query {
+                interiors: vec![],
+                rec: None,
                 head: arm(0).head(),
                 rules: vec![arm(0), arm(1)],
             };

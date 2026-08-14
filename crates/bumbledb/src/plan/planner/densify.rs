@@ -74,7 +74,7 @@ pub(super) fn densify(
             // scalar prefix then fails full-set coverage in `estimate`:
             // two facts may share the prefix with disjoint intervals,
             // so prefix agreement certifies no fanout bound.
-            // An `Idb` occurrence has no keyed store — no fanout bound
+            // An `Interior` occurrence has no keyed store — no fanout bound
             // flows from key coverage; its rows already sit on the
             // ladder's delta/accumulated floors (`plan/selectivity.rs`).
             let pinned: std::collections::BTreeSet<bumbledb_theory::schema::FieldId> =

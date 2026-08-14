@@ -83,13 +83,9 @@ pub mod names {
     /// the program path (the predicate cap bounds it). (lowered rules
     /// produced, -)
     pub const VALIDATE_LOWER: &str = "validate_lower";
-    /// The program strata judge (`ir/validate/strata.rs`) — the SCC
-    /// condensation and its safety roster, program path only.
-    /// (predicates judged, strata assigned)
-    pub const VALIDATE_STRATIFY: &str = "validate_stratify";
-    /// The program signature-sealing loop — chaotic iteration, bounded
-    /// by the predicate cap, program path only. (sealing passes run —
-    /// the final no-progress pass included, a1 predicates sealed)
+    /// The signature-sealing pass — declaration-order interior sealing
+    /// (one span over interior count, never a chaotic loop).
+    /// (interiors sealed, -)
     pub const VALIDATE_SEAL: &str = "validate_seal";
     /// The strict per-rule roster pass — every lowered rule through the
     /// typing fixpoint with all signatures anchored: one span per
@@ -159,37 +155,16 @@ pub mod names {
     // The cap and the table move together, or the rule loop's span
     // lookup would panic on a legal program.
     const _: () = assert!(crate::ir::MAX_RULES == RULE.len());
-    /// One recursive stratum's round loop, under the execute span — the
-    /// `rule_N` convention: the condensation index rides in the name
-    /// (strata count ≤ `crate::ir::MAX_PREDICATES` = 16 bounds it).
-    /// (rounds run, derived tuples at close) — both zero on uncounted
-    /// paths.
-    pub const STRATUM: [&str; 16] = [
-        "stratum_0",
-        "stratum_1",
-        "stratum_2",
-        "stratum_3",
-        "stratum_4",
-        "stratum_5",
-        "stratum_6",
-        "stratum_7",
-        "stratum_8",
-        "stratum_9",
-        "stratum_10",
-        "stratum_11",
-        "stratum_12",
-        "stratum_13",
-        "stratum_14",
-        "stratum_15",
-    ];
-    // The predicate cap and the table move together, or the driver's
-    // span lookup would panic on a legal program.
-    const _: () = assert!(crate::ir::MAX_PREDICATES == STRATUM.len());
-    /// One fixpoint round under its stratum span — round 0 is the
-    /// stratum's non-recursive rules; the round index is the span's
-    /// position under its stratum (rounds are budget-bounded, not
-    /// cap-bounded, so no name table exists). (bindings emitted,
-    /// absorbed by the spanning seen-sets.)
+    /// The interior preamble under the execute span. (interior count,
+    /// derived tuples emitted across interiors)
+    pub const INTERIORS: &str = "interiors";
+    /// The rec least-fixpoint under the execute span. (rounds run,
+    /// derived tuples at close)
+    pub const REACH: &str = "reach";
+    /// One reach round under the REACH span — round 0 is the base
+    /// arms; the round index is the span's position under REACH
+    /// (rounds are budget-bounded, not cap-bounded, so no name table
+    /// exists). (bindings emitted, absorbed by the spanning seen-set.)
     pub const FIXPOINT_ROUND: &str = "fixpoint_round";
     /// Parameter binding. (-, -)
     pub const BIND_PARAMS: &str = "bind_params";

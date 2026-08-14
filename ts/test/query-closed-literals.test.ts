@@ -137,28 +137,25 @@ describe("query literals, params & membership arrays over closed references", fu
 		// spelling's program, position for position (queries cross ids,
 		// never handle names).
 		assert.deepStrictEqual(lowerQuery(crits), {
-			predicates: [
+			interiors: [],
+			rec: null,
+			head: [{ kind: "var" }],
+			rules: [
 				{
-					head: [{ kind: "var" }],
-					rules: [
+					finds: [{ kind: "var", var: 0 }],
+					atoms: [
 						{
-							finds: [{ kind: "var", var: 0 }],
-							atoms: [
-								{
-									source: { kind: "edb", relation: INCIDENT_ID },
-									bindings: [
-										[0, { kind: "var", var: 0 }],
-										[1, { kind: "literal", value: { kind: "u64", value: 2n } }]
-									]
-								}
-							],
-							negated: [],
-							conditions: []
+							source: { kind: "edb", relation: INCIDENT_ID },
+							bindings: [
+								[0, { kind: "var", var: 0 }],
+								[1, { kind: "literal", value: { kind: "u64", value: 2n } }]
+							]
 						}
-					]
+					],
+					negated: [],
+					conditions: []
 				}
-			],
-			output: 0
+			]
 		})
 		// The same rows the 0.3.0 bigint twin (`sev: 2n`) answered over this store.
 		assert.deepEqual(incidents(run(crits, {})), [3n, 5n])

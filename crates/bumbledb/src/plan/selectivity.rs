@@ -104,6 +104,11 @@ pub(crate) const DELTA_PLANNING_ROWS: u64 = 1;
 /// still plans join-order around its stored atoms' real statistics.
 pub(crate) const ACCUMULATED_PLANNING_ROWS: u64 = 16;
 
+/// Finished-interior (and main's read of finished rec) planning row
+/// count: equal to the accumulated floor — the table is eval-once and
+/// prepare-unknowable, same class as a finished rec read.
+pub(crate) const INTERIOR_PLANNING_ROWS: u64 = ACCUMULATED_PLANNING_ROWS;
+
 /// One occurrence's planner statistics: the row-count estimate —
 /// `rows` divided by each Eq selection's distinct count (times the
 /// set-size assumption for set-bound positions) and each
@@ -122,7 +127,7 @@ pub(crate) fn occurrence_stats(
     occurrence: &Occurrence,
     rows: u64,
 ) -> crate::error::Result<OccStats> {
-    // THE GUARD (20-query-ir.md § engine recursion's consumer guards): an `Idb`
+    // THE GUARD (20-query-ir.md § engine recursion's consumer guards): an `Interior`
     // occurrence's row count is prepare-unknowable — exactly like
     // param-bound filter survivorship — so it pins no row counts and
     // costs on the ladder's floors. The caller supplies the floor

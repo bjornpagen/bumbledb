@@ -39,7 +39,7 @@ inline constexpr auto classification = std::array<KindTransience, 29>{{
     {.kind = bdb::ErrorKind::Param, .transient = false},
     {.kind = bdb::ErrorKind::MeasureOfRay, .transient = false},
     {.kind = bdb::ErrorKind::CapacityRayMeasure, .transient = false},
-    {.kind = bdb::ErrorKind::FixpointBudgetExceeded, .transient = false},
+    {.kind = bdb::ErrorKind::DerivedBudgetExceeded, .transient = false},
     {.kind = bdb::ErrorKind::Overflow, .transient = false},
     {.kind = bdb::ErrorKind::ResultBytesOverflow, .transient = false},
     {.kind = bdb::ErrorKind::Corruption, .transient = false},

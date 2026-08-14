@@ -7,7 +7,7 @@ use bumbledb::AggOp;
 use bumbledb::AllenMask;
 use bumbledb::ir::{Atom, CmpOp, Comparison, ConditionTree, FindTerm, Rule, Term};
 use bumbledb::schema::{IntervalElement, RelationDescriptor, SchemaDescriptor, Side, ValueType};
-use bumbledb::{FieldId, PredId, PredicateDef, Program};
+use bumbledb::{FieldId, HeadTerm, InteriorId, Rec};
 
 /// Relation and field ids for the test ledger below — declaration order
 /// is the id order, no magic numbers in query constructions.
@@ -971,6 +971,8 @@ fn a_multi_rule_projection_is_one_select_distinct_per_rule_joined_by_union() {
     // One SELECT DISTINCT per rule, joined by UNION — set union, the
     // systematized rules translation.
     let query = Query {
+        interiors: vec![],
+        rec: None,
         head: vec![bumbledb::HeadTerm::Var],
         rules: vec![
             Rule {
@@ -1029,6 +1031,8 @@ fn a_multi_rule_aggregate_folds_over_the_unioned_head_projection() {
         conditions,
     };
     let query = Query {
+        interiors: vec![],
+        rec: None,
         head: arm(vec![]).head(),
         rules: vec![
             arm(vec![]),
@@ -1070,6 +1074,8 @@ fn a_param_repeated_across_rules_keeps_one_positional_slot() {
         conditions: vec![],
     };
     let query = Query {
+        interiors: vec![],
+        rec: None,
         head: vec![bumbledb::HeadTerm::Var],
         rules: vec![arm(ids::posting::ACCOUNT), arm(ids::posting::INSTRUMENT)],
     };
@@ -1103,244 +1109,154 @@ fn a_duration_find_is_end_minus_start_on_the_stored_columns() {
     );
 }
 
-/// The linear transitive closure over `OrgParent` — the program
-/// fixtures the recursive tests share (base arm + one-recursive-atom
-/// arm, the exact shape the linearity gate admits).
-fn closure_program() -> Program {
-    Program {
-        predicates: vec![PredicateDef {
-            head: vec![bumbledb::HeadTerm::Var, bumbledb::HeadTerm::Var],
-            rules: vec![
-                Rule {
-                    finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
-                    atoms: vec![Atom {
+/// The linear transitive closure over `OrgParent` — identity main over
+/// the rec (base arm + one-recursive-atom arm).
+fn closure_query() -> Query {
+    Query {
+        interiors: vec![],
+        rec: Some(Rec {
+            head: vec![HeadTerm::Var, HeadTerm::Var],
+            base: vec![Rule {
+                finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
+                atoms: vec![Atom {
+                    source: bumbledb::AtomSource::Edb(ids::ORG_PARENT),
+                    bindings: vec![
+                        (ids::org_parent::CHILD, var(0)),
+                        (ids::org_parent::PARENT, var(1)),
+                    ],
+                }],
+                negated: vec![],
+                conditions: vec![],
+            }],
+            rec: vec![Rule {
+                finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(2))],
+                atoms: vec![
+                    Atom {
                         source: bumbledb::AtomSource::Edb(ids::ORG_PARENT),
                         bindings: vec![
                             (ids::org_parent::CHILD, var(0)),
                             (ids::org_parent::PARENT, var(1)),
                         ],
-                    }],
-                    negated: vec![],
-                    conditions: vec![],
-                },
-                Rule {
-                    finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(2))],
-                    atoms: vec![
-                        Atom {
-                            source: bumbledb::AtomSource::Edb(ids::ORG_PARENT),
-                            bindings: vec![
-                                (ids::org_parent::CHILD, var(0)),
-                                (ids::org_parent::PARENT, var(1)),
-                            ],
-                        },
-                        Atom {
-                            source: bumbledb::AtomSource::Idb(PredId(0)),
-                            bindings: vec![(FieldId(0), var(1)), (FieldId(1), var(2))],
-                        },
-                    ],
-                    negated: vec![],
-                    conditions: vec![],
-                },
-            ],
+                    },
+                    Atom {
+                        source: bumbledb::AtomSource::Interior(InteriorId(0)),
+                        bindings: vec![(FieldId(0), var(1)), (FieldId(1), var(2))],
+                    },
+                ],
+                negated: vec![],
+                conditions: vec![],
+            }],
+        }),
+        head: vec![HeadTerm::Var, HeadTerm::Var],
+        rules: vec![Rule {
+            finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
+            atoms: vec![Atom {
+                source: bumbledb::AtomSource::Interior(InteriorId(0)),
+                bindings: vec![(FieldId(0), var(0)), (FieldId(1), var(1))],
+            }],
+            negated: vec![],
+            conditions: vec![],
         }],
-        output: PredId(0),
     }
 }
 
 #[test]
 fn the_linear_closure_matches_its_hand_written_golden() {
-    let program = closure_program();
-    assert_eq!(sqlite_program_expressible(&program), Ok(()));
-    let t = translate_program(&program, schema(), &[]).expect("translates");
+    let query = closure_query();
+    assert_eq!(sqlite_reach_expressible(&query, schema()), Ok(()));
+    let t = translate_query(&query, schema(), &[]).expect("translates");
     assert_eq!(t.sql, goldens::CLOSURE);
     assert!(t.params.is_empty());
 }
 
 #[test]
-fn negation_of_a_lower_stratum_matches_its_hand_written_golden() {
-    // p1(x) :- Org(id = x), ¬p0(c0 = x) — the stratified two-CTE form.
-    let mut program = closure_program();
-    program.predicates.push(PredicateDef {
-        head: vec![bumbledb::HeadTerm::Var],
-        rules: vec![Rule {
-            finds: vec![FindTerm::Var(VarId(0))],
-            atoms: vec![Atom {
-                source: bumbledb::AtomSource::Edb(ids::ORG),
-                bindings: vec![(ids::org::ID, var(0))],
-            }],
-            negated: vec![Atom {
-                source: bumbledb::AtomSource::Idb(PredId(0)),
-                bindings: vec![(FieldId(0), var(0))],
-            }],
-            conditions: vec![],
+fn negation_of_finished_rec_matches_its_hand_written_golden() {
+    // Main: Org(id = x), ¬p0(c0 = x) — anti-join inlined in the SELECT.
+    let mut query = closure_query();
+    query.head = vec![HeadTerm::Var];
+    query.rules = vec![Rule {
+        finds: vec![FindTerm::Var(VarId(0))],
+        atoms: vec![Atom {
+            source: bumbledb::AtomSource::Edb(ids::ORG),
+            bindings: vec![(ids::org::ID, var(0))],
         }],
-    });
-    program.output = PredId(1);
-    assert_eq!(sqlite_program_expressible(&program), Ok(()));
-    let t = translate_program(&program, schema(), &[]).expect("translates");
+        negated: vec![Atom {
+            source: bumbledb::AtomSource::Interior(InteriorId(0)),
+            bindings: vec![(FieldId(0), var(0))],
+        }],
+        conditions: vec![],
+    }];
+    assert_eq!(sqlite_reach_expressible(&query, schema()), Ok(()));
+    let t = translate_query(&query, schema(), &[]).expect("translates");
     assert_eq!(t.sql, goldens::CLOSURE_ROOTS);
 }
 
 #[test]
 fn the_parameterized_reachable_set_matches_its_hand_written_golden() {
-    // p0(a) :- OrgParent(child = ?0, parent = a).
-    // p0(a) :- OrgParent(child = x, parent = a), p0(c0 = x).
-    let program = Program {
-        predicates: vec![PredicateDef {
-            head: vec![bumbledb::HeadTerm::Var],
-            rules: vec![
-                Rule {
-                    finds: vec![FindTerm::Var(VarId(0))],
-                    atoms: vec![Atom {
+    let query = Query {
+        interiors: vec![],
+        rec: Some(Rec {
+            head: vec![HeadTerm::Var],
+            base: vec![Rule {
+                finds: vec![FindTerm::Var(VarId(0))],
+                atoms: vec![Atom {
+                    source: bumbledb::AtomSource::Edb(ids::ORG_PARENT),
+                    bindings: vec![
+                        (ids::org_parent::CHILD, Term::Param(ParamId(0))),
+                        (ids::org_parent::PARENT, var(0)),
+                    ],
+                }],
+                negated: vec![],
+                conditions: vec![],
+            }],
+            rec: vec![Rule {
+                finds: vec![FindTerm::Var(VarId(1))],
+                atoms: vec![
+                    Atom {
                         source: bumbledb::AtomSource::Edb(ids::ORG_PARENT),
                         bindings: vec![
-                            (ids::org_parent::CHILD, Term::Param(ParamId(0))),
-                            (ids::org_parent::PARENT, var(0)),
+                            (ids::org_parent::CHILD, var(0)),
+                            (ids::org_parent::PARENT, var(1)),
                         ],
-                    }],
-                    negated: vec![],
-                    conditions: vec![],
-                },
-                Rule {
-                    finds: vec![FindTerm::Var(VarId(1))],
-                    atoms: vec![
-                        Atom {
-                            source: bumbledb::AtomSource::Edb(ids::ORG_PARENT),
-                            bindings: vec![
-                                (ids::org_parent::CHILD, var(0)),
-                                (ids::org_parent::PARENT, var(1)),
-                            ],
-                        },
-                        Atom {
-                            source: bumbledb::AtomSource::Idb(PredId(0)),
-                            bindings: vec![(FieldId(0), var(0))],
-                        },
-                    ],
-                    negated: vec![],
-                    conditions: vec![],
-                },
-            ],
-        }],
-        output: PredId(0),
-    };
-    assert_eq!(sqlite_program_expressible(&program), Ok(()));
-    let t = translate_program(&program, schema(), &[]).expect("translates");
-    assert_eq!(t.sql, goldens::CLOSURE_FROM_PARAM);
-    assert_eq!(
-        t.params,
-        vec![ParamSlot::Whole(ParamId(0))],
-        "one placeholder, shared across the program's arms"
-    );
-}
-
-/// The recursive gate is the enumerated set: non-linear rules, mutual
-/// recursion, and program folds route to the naive lane by name —
-/// counted, reported, never silent.
-#[test]
-fn the_recursive_inexpressible_set_is_enumerated() {
-    // Non-linear: p0(x, z) :- p0(x, y), p0(y, z) beside the base arm —
-    // two references to the recursive table in one rule.
-    let mut non_linear = closure_program();
-    non_linear.predicates[0].rules[1] = Rule {
-        finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(2))],
-        atoms: vec![
-            Atom {
-                source: bumbledb::AtomSource::Idb(PredId(0)),
-                bindings: vec![(FieldId(0), var(0)), (FieldId(1), var(1))],
-            },
-            Atom {
-                source: bumbledb::AtomSource::Idb(PredId(0)),
-                bindings: vec![(FieldId(0), var(1)), (FieldId(1), var(2))],
-            },
-        ],
-        negated: vec![],
-        conditions: vec![],
-    };
-    assert_eq!(
-        sqlite_program_expressible(&non_linear),
-        Err(Inexpressible::NonLinearRecursion)
-    );
-
-    // Mutual: p0 reads p1 and p1 reads p0 (each with a base arm).
-    let arm = |source: bumbledb::AtomSource| Rule {
-        finds: vec![FindTerm::Var(VarId(0))],
-        atoms: vec![Atom {
-            source,
-            bindings: vec![(FieldId(0), var(0))],
-        }],
-        negated: vec![],
-        conditions: vec![],
-    };
-    let mutual = Program {
-        predicates: vec![
-            PredicateDef {
-                head: vec![bumbledb::HeadTerm::Var],
-                rules: vec![
-                    arm(bumbledb::AtomSource::Edb(ids::ORG)),
-                    arm(bumbledb::AtomSource::Idb(PredId(1))),
+                    },
+                    Atom {
+                        source: bumbledb::AtomSource::Interior(InteriorId(0)),
+                        bindings: vec![(FieldId(0), var(0))],
+                    },
                 ],
-            },
-            PredicateDef {
-                head: vec![bumbledb::HeadTerm::Var],
-                rules: vec![
-                    arm(bumbledb::AtomSource::Edb(ids::ORG)),
-                    arm(bumbledb::AtomSource::Idb(PredId(0))),
-                ],
-            },
-        ],
-        output: PredId(0),
-    };
-    assert_eq!(
-        sqlite_program_expressible(&mutual),
-        Err(Inexpressible::MutualRecursion)
-    );
-
-    // A fold anywhere in a program: Count over the closure from a
-    // higher stratum — naive+Lean territory whole.
-    let mut fold = closure_program();
-    fold.predicates.push(PredicateDef {
-        head: vec![
-            bumbledb::HeadTerm::Var,
-            bumbledb::HeadTerm::Aggregate(bumbledb::HeadOp::Count),
-        ],
+                negated: vec![],
+                conditions: vec![],
+            }],
+        }),
+        head: vec![HeadTerm::Var],
         rules: vec![Rule {
-            finds: vec![
-                FindTerm::Var(VarId(0)),
-                FindTerm::Aggregate {
-                    op: AggOp::Count,
-                    over: None,
-                },
-            ],
+            finds: vec![FindTerm::Var(VarId(0))],
             atoms: vec![Atom {
-                source: bumbledb::AtomSource::Idb(PredId(0)),
+                source: bumbledb::AtomSource::Interior(InteriorId(0)),
                 bindings: vec![(FieldId(0), var(0))],
             }],
             negated: vec![],
             conditions: vec![],
         }],
-    });
-    fold.output = PredId(1);
+    };
+    assert_eq!(sqlite_reach_expressible(&query, schema()), Ok(()));
+    let t = translate_query(&query, schema(), &[]).expect("translates");
+    assert_eq!(t.sql, goldens::CLOSURE_FROM_PARAM);
     assert_eq!(
-        sqlite_program_expressible(&fold),
-        Err(Inexpressible::RecursiveFold)
+        t.params,
+        vec![ParamSlot::Whole(ParamId(0))],
+        "one placeholder, shared across the rec's arms"
     );
 }
 
-/// The two documented translator limits past the gate error by name: a
-/// recursive predicate with no base rule, and an interval-typed
-/// predicate column.
+/// Interval-typed derived columns remain the translator's named limit.
 #[test]
-fn program_translator_limits_error_by_name() {
-    let mut baseless = closure_program();
-    baseless.predicates[0].rules.remove(0);
-    let err = translate_program(&baseless, schema(), &[]).unwrap_err();
-    assert!(err.contains("no base rule"), "{err}");
-
-    // An interval column carried through a predicate head.
-    let interval_column = Program {
-        predicates: vec![PredicateDef {
-            head: vec![bumbledb::HeadTerm::Var],
-            rules: vec![Rule {
+fn interval_derived_columns_error_by_name() {
+    let query = Query {
+        interiors: vec![],
+        rec: Some(Rec {
+            head: vec![HeadTerm::Var],
+            base: vec![Rule {
                 finds: vec![FindTerm::Var(VarId(0))],
                 atoms: vec![Atom {
                     source: bumbledb::AtomSource::Edb(ids::MANDATE),
@@ -1349,9 +1265,31 @@ fn program_translator_limits_error_by_name() {
                 negated: vec![],
                 conditions: vec![],
             }],
+            rec: vec![Rule {
+                finds: vec![FindTerm::Var(VarId(0))],
+                atoms: vec![Atom {
+                    source: bumbledb::AtomSource::Interior(InteriorId(0)),
+                    bindings: vec![(FieldId(0), var(0))],
+                }],
+                negated: vec![],
+                conditions: vec![],
+            }],
+        }),
+        head: vec![HeadTerm::Var],
+        rules: vec![Rule {
+            finds: vec![FindTerm::Var(VarId(0))],
+            atoms: vec![Atom {
+                source: bumbledb::AtomSource::Interior(InteriorId(0)),
+                bindings: vec![(FieldId(0), var(0))],
+            }],
+            negated: vec![],
+            conditions: vec![],
         }],
-        output: PredId(0),
     };
-    let err = translate_program(&interval_column, schema(), &[]).unwrap_err();
-    assert!(err.contains("interval-typed predicate column"), "{err}");
+    assert_eq!(
+        sqlite_reach_expressible(&query, schema()),
+        Err(Inexpressible::IntervalDerivedColumn)
+    );
+    let err = translate_query(&query, schema(), &[]).unwrap_err();
+    assert!(err.contains("interval-typed derived column"), "{err}");
 }

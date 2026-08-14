@@ -175,7 +175,7 @@ fn removable(
         // quantify over stored relations permanently
         // (`docs/architecture/30-dependencies.md`, the stored-relations
         // decision — undecidable predicate containment is the
-        // rationale), so an `Idb` occurrence never pairs with a
+        // rationale), so an `Interior` occurrence never pairs with a
         // containment side: the comparison against the statement's
         // `Edb` source discharges a law, not a convenience.
         for (b_idx, b) in normalized.occurrences.iter().enumerate() {

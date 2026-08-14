@@ -140,40 +140,32 @@ impl ClosedRefs {
 pub fn render(schema: &Schema, query: &Query) -> String {
     let refs = ClosedRefs::build(schema);
     let mut out = String::new();
-    for (index, rule) in query.rules.iter().enumerate() {
-        if index > 0 {
-            out.push('\n');
-        }
-        render_rule(&mut out, schema, &refs, rule);
-    }
-    out
-}
-
-/// Renders a program in the rule notation, predicates in `PredId`
-/// order: an interior predicate's rules carry its synthesized name
-/// (`p{id}` — the `v{id}`/`?{id}` convention extended; predicate names
-/// are a text-layer sidecar the IR never stores), and the **output
-/// predicate's rules are bare** — bare rules ARE the output in the
-/// notation, so the rendered form of a macro-written program is its
-/// own fixed point. Total like [`render`]: a raw-IR program whose
-/// output reads itself renders `p{id}` body references the notation
-/// cannot spell (the notation names the recursive predicate and
-/// projects from it) — rendering hides nothing, and the round-trip law
-/// is pinned on the notation's image, not on arbitrary IR.
-#[must_use]
-pub fn render_program(schema: &Schema, program: &crate::ir::Program) -> String {
-    let refs = ClosedRefs::build(schema);
-    let mut out = String::new();
-    for (index, def) in program.predicates.iter().enumerate() {
-        for rule in &def.rules {
+    for (id, interior) in query.interiors.iter().enumerate() {
+        for rule in &interior.rules {
             if !out.is_empty() {
                 out.push('\n');
             }
-            if index != usize::from(program.output.0) {
-                let _ = write!(out, "p{index}");
-            }
+            let _ = write!(out, "interior p{id}");
             render_rule(&mut out, schema, &refs, rule);
         }
+    }
+    if let Some(rec) = &query.rec {
+        let id = query.interiors.len();
+        for rule in rec.base.iter().chain(&rec.rec) {
+            if !out.is_empty() {
+                out.push('\n');
+            }
+            let _ = write!(out, "recursive p{id}");
+            render_rule(&mut out, schema, &refs, rule);
+        }
+    }
+    for (index, rule) in query.rules.iter().enumerate() {
+        if !out.is_empty() || index > 0 {
+            if !out.is_empty() {
+                out.push('\n');
+            }
+        }
+        render_rule(&mut out, schema, &refs, rule);
     }
     out
 }
@@ -267,7 +259,7 @@ fn atom_item(schema: &Schema, refs: &ClosedRefs, atom: &Atom, negated: bool) -> 
     }
     source_name(&mut out, schema, atom.source);
     out.push('(');
-    let ordered_dense = matches!(atom.source, crate::ir::AtomSource::Idb(_))
+    let ordered_dense = matches!(atom.source, crate::ir::AtomSource::Interior(_))
         && atom
             .bindings
             .iter()
@@ -515,21 +507,21 @@ fn param_name(out: &mut String, param: ParamId) {
 }
 
 /// An atom source: the relation's name for `Edb`; the synthesized
-/// `p{id}` for `Idb` (the `v{id}`/`?{id}` convention extended —
-/// predicate names are a text-layer sidecar the IR never carries; the
-/// macro's names resolve locally and lower to bare `PredId`s).
+/// `p{id}` for `Interior` (the `v{id}`/`?{id}` convention extended —
+/// interior names are a text-layer sidecar the IR never carries; the
+/// macro's names resolve locally and lower to bare `InteriorId`s).
 fn source_name(out: &mut String, schema: &Schema, source: crate::ir::AtomSource) {
     match source {
         crate::ir::AtomSource::Edb(relation) => relation_name(out, schema, relation),
-        crate::ir::AtomSource::Idb(pred) => {
+        crate::ir::AtomSource::Interior(pred) => {
             let _ = write!(out, "p{}", pred.0);
         }
     }
 }
 
 /// A binding's field position: the schema name for `Edb`; the numeric
-/// head position for `Idb` (`FieldId(i)` addresses the target
-/// predicate's column `i` — positional, never nominal; the indexed
+/// head position for `Interior` (`FieldId(i)` addresses the target
+/// table's column `i` — positional, never nominal; the indexed
 /// spelling is sparse/selection's — a dense in-order variable-only atom
 /// renders bare in [`atom_item`], the ordered form).
 fn source_field_name(
@@ -540,7 +532,7 @@ fn source_field_name(
 ) {
     match source {
         crate::ir::AtomSource::Edb(relation) => field_name(out, schema, relation, field),
-        crate::ir::AtomSource::Idb(_) => {
+        crate::ir::AtomSource::Interior(_) => {
             let _ = write!(out, "{}", field.0);
         }
     }

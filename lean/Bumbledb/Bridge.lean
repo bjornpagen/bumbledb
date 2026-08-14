@@ -548,26 +548,26 @@ def ledger : List Obligation := [
   .row @Query.evalQuery_plain `Bumbledb.Query.evalQuery_plain
     "A query with empty interiors and no rec denotes the union of its main rules over the instance."
     "validate (crates/bumbledb/src/ir/validate.rs); prepare (crates/bumbledb/src/api/prepared/build.rs)"
-    "a_degenerate_program_executes_as_its_query (crates/bumbledb/tests/api.rs)",
+    "a_plain_query_executes_as_today (crates/bumbledb/tests/api.rs)",
 
   .row @Query.wellFormed_interior_reads_real `Bumbledb.Query.wellFormed_interior_reads_real
     "Every interior source an accepted query reads names a real interior or the rec."
     "validate (crates/bumbledb/src/ir/validate.rs); ValidationError::UnknownInterior (crates/bumbledb/src/error.rs)"
-    "rejects_a_negated_phantom_interior (crates/bumbledb/src/ir/validate/tests.rs)",
+    "rejects_a_negated_phantom_read (crates/bumbledb/src/ir/validate/tests/interior.rs)",
 
   .row @Query.reachOp_mono `Bumbledb.Query.reachOp_mono
     "Linearity and the roster's no-negation-in-rec premise make the reach operator monotone (the wall is the self case)."
     "NegationInRec (crates/bumbledb/src/error.rs); NonlinearRecArm (crates/bumbledb/src/error.rs)"
-    "rejects_negation_in_rec (crates/bumbledb/src/ir/validate/tests.rs); odd_not_monotone (lean/Bumbledb/Countermodels.lean)",
+    "rejects_negation_in_rec (crates/bumbledb/src/ir/validate/tests/rec.rs)",
 
   .row @Query.reach_den_finite `Bumbledb.Query.reach_den_finite
     "Rec heads project bound variables, so the lfp is a finite subset of the active domain."
     "MeasureInInterior (crates/bumbledb/src/error.rs); AggregateInInterior (crates/bumbledb/src/error.rs)"
-    "rejects_a_measure_in_a_rec_head (crates/bumbledb/src/ir/validate/tests.rs); succ_prefixed_infinite (lean/Bumbledb/Countermodels.lean)",
+    "rejects_measure_in_interior_on_rec_head (crates/bumbledb/src/ir/validate/tests/rec.rs)",
 
   .row @Query.evalLinearReach_eq_lfp `Bumbledb.Query.evalLinearReach_eq_lfp
     "The executable reach lists exactly reachDen."
-    "evalQueryList (lean/Bumbledb/Exec/Reach.lean); translate_query (crates/bumbledb-bench/src/translate.rs)"
+    "translate_query (crates/bumbledb-bench/src/translate/program.rs)"
     "lean/conformance/cases",
 
   .row @Query.evalLinearReach_eq_lfp `Bumbledb.Query.evalLinearReach_eq_lfp
@@ -577,7 +577,7 @@ def ledger : List Obligation := [
 
   .row @Query.evalQuery_sound `Bumbledb.Query.evalQuery_sound
     "Interior DAG once, optional reachDen, then main rulesAnswers — listed by evalQueryList."
-    "run_interiors (crates/bumbledb/src/api/prepared.rs); run_reach (crates/bumbledb/src/api/prepared/reach.rs)"
+    "run_derived (crates/bumbledb/src/api/prepared/reach.rs); run_reach (crates/bumbledb/src/api/prepared/reach.rs)"
     "docs/cookbook.md",
 
   .row @Query.evalQuery_empty_rules `Bumbledb.Query.evalQuery_empty_rules

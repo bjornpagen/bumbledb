@@ -13,9 +13,9 @@ bumbledb::schema! {
     }
 }
 
-pub fn q() -> bumbledb::Program {
+pub fn q() -> bumbledb::Query {
     bumbledb_query::query!(Org {
-        pred(c, p) | Parent(child: c, parent: p);
+        interior pred(c, p) | Parent(child: c, parent: p);
         (x) | pred(0: x, 1 == Usd);
     })
 }

@@ -462,7 +462,7 @@ impl Context {
     /// negation is a position, not a kind of atom, so the occurrence
     /// numbering (positives first, then negated) is the only difference a
     /// diagnostic shows. An `Edb` binding anchors at the stored field's
-    /// type; an `Idb` binding anchors at the target predicate's sealed
+    /// type; an `Interior` binding anchors at the target predicate's sealed
     /// column — the SAME bivalent membership rule reads through both (an
     /// interval-typed predicate column participates in point membership
     /// exactly as an interval field does; 20-query-ir.md § engine recursion). Ends
@@ -471,7 +471,7 @@ impl Context {
     pub(super) fn check_atoms(
         &mut self,
         schema: &Schema,
-        idb: &super::IdbSignatures<'_>,
+        interiors: &super::InteriorSignatures<'_>,
         rule: &LoweredRule,
     ) -> Result<(), ValidationError> {
         // The closed-reference position table (`ir/render::ClosedRefs` —
@@ -496,13 +496,12 @@ impl Context {
                     }
                 }
                 // The source screen, binding-independent: a zero-binding
-                // `Idb` gate must refuse against the address space too
-                // (the per-binding `column` reads below never run for
-                // it). On the QUERY path the space is empty
-                // ([`super::IdbSignatures::EMPTY`]) — a bare query has
-                // no predicate address space, and recursion's surface
-                // is the program boundary.
-                crate::ir::AtomSource::Idb(pred) => idb.screen(occ_idx, pred)?,
+                // `Interior` gate must refuse against the address space
+                // too (the per-binding `column` reads below never run
+                // for it).
+                crate::ir::AtomSource::Interior(interior) => {
+                    interiors.screen(occ_idx, interior)?;
+                }
             }
             for (binding_idx, (field, term)) in atom.bindings.iter().enumerate() {
                 if atom.bindings[..binding_idx].iter().any(|(f, _)| f == field) {
@@ -522,7 +521,9 @@ impl Context {
                         }
                         &relation.field(*field).value_type
                     }
-                    crate::ir::AtomSource::Idb(pred) => idb.column(occ_idx, pred, *field)?,
+                    crate::ir::AtomSource::Interior(interior) => {
+                        interiors.column(occ_idx, interior, *field)?
+                    }
                 };
                 if let ValueType::Interval { element, width } = field_type {
                     self.check_interval_binding(occ_idx, negated, *field, *element, *width, term)?;
@@ -532,7 +533,7 @@ impl Context {
                     // the order wall (R4) with the sealed extension's
                     // row count — the proven dense group domain (049).
                     // The words are declaration indices, not semantics.
-                    // `Idb` columns carry plain types — closedness is a
+                    // `Interior` columns carry plain types — closedness is a
                     // stored-relation fact.
                     if let crate::ir::AtomSource::Edb(relation_id) = atom.source
                         && let Term::Var(var) = term

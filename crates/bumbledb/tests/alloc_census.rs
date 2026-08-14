@@ -29,8 +29,8 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use bumbledb::ir::{
-    AggOp, Atom, AtomSource, CmpOp, Comparison, FindTerm, HeadTerm, ParamId, Query, Rule, Term,
-    Value, VarId,
+    AggOp, Atom, AtomSource, CmpOp, Comparison, FindTerm, HeadTerm, Interior, InteriorId, ParamId,
+    Query, Rec, Rule, Term, Value, VarId,
 };
 use bumbledb::schema::{
     Bound, FieldDescriptor, FieldId, Generation, RelationDescriptor, RelationId, SchemaDescriptor,
@@ -535,6 +535,8 @@ fn chain_query(atoms: u16, conds: u16, rules: u16) -> Query {
             .collect(),
     };
     Query {
+        interiors: vec![],
+        rec: None,
         head: vec![HeadTerm::Var, HeadTerm::Var],
         rules: (0..rules).map(|r| rule(u64::from(r))).collect(),
     }
@@ -740,9 +742,9 @@ fn marks_query() -> Query {
     })
 }
 
-/// The recursive closure program over the Account holder graph, edge set
+/// The recursive closure query over the Account holder graph, edge set
 /// capped by `?0` (the gate's recursive family verbatim).
-fn recursive_program() -> bumbledb::Program {
+fn recursive_query() -> Query {
     let account = |a: u16, h: u16| {
         edb(
             ACCOUNT,
@@ -757,51 +759,93 @@ fn recursive_program() -> bumbledb::Program {
         lhs: Term::Var(VarId(0)),
         rhs: Term::Param(ParamId(0)),
     });
-    bumbledb::Program {
-        predicates: vec![
-            bumbledb::PredicateDef {
-                head: vec![HeadTerm::Var, HeadTerm::Var],
-                rules: vec![
-                    Rule {
-                        finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
-                        atoms: vec![account(0, 1)],
-                        negated: vec![],
-                        conditions: vec![cap.clone()],
-                    },
-                    Rule {
-                        finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(2))],
-                        atoms: vec![
-                            account(0, 1),
-                            Atom {
-                                source: AtomSource::Idb(bumbledb::PredId(0)),
-                                bindings: vec![
-                                    (FieldId(0), Term::Var(VarId(1))),
-                                    (FieldId(1), Term::Var(VarId(2))),
-                                ],
-                            },
+    Query {
+        interiors: vec![],
+        rec: Some(Rec {
+            head: vec![HeadTerm::Var, HeadTerm::Var],
+            base: vec![Rule {
+                finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
+                atoms: vec![account(0, 1)],
+                negated: vec![],
+                conditions: vec![cap.clone()],
+            }],
+            rec: vec![Rule {
+                finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(2))],
+                atoms: vec![
+                    account(0, 1),
+                    Atom {
+                        source: AtomSource::Interior(InteriorId(0)),
+                        bindings: vec![
+                            (FieldId(0), Term::Var(VarId(1))),
+                            (FieldId(1), Term::Var(VarId(2))),
                         ],
-                        negated: vec![],
-                        conditions: vec![cap],
                     },
                 ],
-            },
-            bumbledb::PredicateDef {
-                head: vec![HeadTerm::Var],
-                rules: vec![Rule {
-                    finds: vec![FindTerm::Var(VarId(0))],
-                    atoms: vec![Atom {
-                        source: AtomSource::Idb(bumbledb::PredId(0)),
-                        bindings: vec![
-                            (FieldId(0), Term::Var(VarId(0))),
-                            (FieldId(1), Term::Var(VarId(1))),
-                        ],
-                    }],
-                    negated: vec![],
-                    conditions: vec![],
-                }],
-            },
+                negated: vec![],
+                conditions: vec![cap],
+            }],
+        }),
+        head: vec![HeadTerm::Var],
+        rules: vec![Rule {
+            finds: vec![FindTerm::Var(VarId(0))],
+            atoms: vec![Atom {
+                source: AtomSource::Interior(InteriorId(0)),
+                bindings: vec![
+                    (FieldId(0), Term::Var(VarId(0))),
+                    (FieldId(1), Term::Var(VarId(1))),
+                ],
+            }],
+            negated: vec![],
+            conditions: vec![],
+        }],
+    }
+}
+
+fn interiors_only_query() -> Query {
+    let join = Rule {
+        finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
+        atoms: vec![
+            edb(
+                POSTING,
+                vec![
+                    (FieldId(1), Term::Var(VarId(2))),
+                    (FieldId(2), Term::Var(VarId(1))),
+                ],
+            ),
+            edb(
+                ACCOUNT,
+                vec![
+                    (FieldId(0), Term::Var(VarId(2))),
+                    (FieldId(1), Term::Var(VarId(0))),
+                ],
+            ),
         ],
-        output: bumbledb::PredId(1),
+        negated: vec![],
+        conditions: vec![ConditionTree::Leaf(Comparison {
+            op: CmpOp::Ge,
+            lhs: Term::Var(VarId(1)),
+            rhs: Term::Param(ParamId(0)),
+        })],
+    };
+    Query {
+        interiors: vec![Interior {
+            head: vec![HeadTerm::Var, HeadTerm::Var],
+            rules: vec![join],
+        }],
+        rec: None,
+        head: vec![HeadTerm::Var, HeadTerm::Var],
+        rules: vec![Rule {
+            finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
+            atoms: vec![Atom {
+                source: AtomSource::Interior(InteriorId(0)),
+                bindings: vec![
+                    (FieldId(0), Term::Var(VarId(0))),
+                    (FieldId(1), Term::Var(VarId(1))),
+                ],
+            }],
+            negated: vec![],
+            conditions: vec![],
+        }],
     }
 }
 
@@ -887,11 +931,11 @@ fn flow_prepare(db: &Db<SchemaDescriptor>) {
     measured("prepare", "chain a=4 c=2 r=2 (attributed)", true, || {
         drop(db.prepare(&q).expect("prepare"));
     });
-    let p = recursive_program();
+    let p = recursive_query();
     for _ in 0..2 {
         drop(db.prepare(&p).expect("prepare"));
     }
-    measured("prepare", "recursive program (attributed)", true, || {
+    measured("prepare", "recursive query (attributed)", true, || {
         drop(db.prepare(&p).expect("prepare"));
     });
     let q = join_query();
@@ -1044,6 +1088,13 @@ fn cold_and_warm(
 
 fn flow_execute(db: &Db<SchemaDescriptor>) {
     cold_and_warm(db, "join", &join_query(), &[BindValue::I64(0)], true);
+    cold_and_warm(
+        db,
+        "interiors-only",
+        &interiors_only_query(),
+        &[BindValue::I64(0)],
+        false,
+    );
     cold_and_warm(db, "aggregate sum/count", &aggregate_query(), &[], false);
     cold_and_warm(db, "string/Ne", &string_query(), &[], false);
     cold_and_warm(db, "pack", &pack_query(), &[], true);
@@ -1064,10 +1115,10 @@ fn flow_execute(db: &Db<SchemaDescriptor>) {
 
     // The fixpoint driver: cold executions at increasing caps — rounds
     // ride the holder chain, so allocation-per-round is the slope.
-    let program = recursive_program();
+    let query = recursive_query();
     for cap in [110u64, 120, 140, 164] {
         db.read(|snap| {
-            let mut prepared = db.prepare(&program)?;
+            let mut prepared = db.prepare(&query)?;
             let mut out = Answers::new();
             let rounds = cap.saturating_sub(100).max(1);
             measured(

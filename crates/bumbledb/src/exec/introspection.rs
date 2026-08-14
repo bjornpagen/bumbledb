@@ -29,8 +29,8 @@ use crate::plan::fj::ValidatedPlan;
 mod counters;
 mod counting_counters;
 mod display;
-mod fixpoint_counters;
 mod into_stats;
+mod reach_counters;
 #[cfg(test)]
 mod tests;
 
@@ -69,12 +69,10 @@ pub struct CountingCounters {
 /// shaped plan units under one counter, so the counted surface here is
 /// the round structure, not per-node row counts.
 #[derive(Debug, Default)]
-pub struct FixpointCounters {
+pub struct ReachCounters {
     emits: u64,
-    /// Deltas reported since the last round closed (`fixpoint_round`
-    /// bundles them into that round's record).
-    pending_deltas: Vec<crate::api::stats::DeltaRows>,
-    strata: Vec<crate::api::stats::StratumStats>,
+    pending_delta: u64,
+    rounds: Vec<crate::api::stats::RoundStats>,
 }
 
 /// The introspection report: per-rule plan renderings plus the counted

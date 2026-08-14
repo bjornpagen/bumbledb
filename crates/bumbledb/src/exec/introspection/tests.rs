@@ -216,7 +216,8 @@ fn estimates_and_actuals_populate_for_a_join_fixture() {
             disjoint_rules: None,
             subsumed: Vec::new(),
             dead: Vec::new(),
-            strata: Vec::new(),
+            interiors: Vec::new(),
+            reach: None,
         },
     };
     let text = format!("{report}");
@@ -295,7 +296,8 @@ fn the_skew_fixture_shows_the_expected_cover_choice() {
             disjoint_rules: None,
             subsumed: Vec::new(),
             dead: Vec::new(),
-            strata: Vec::new(),
+            interiors: Vec::new(),
+            reach: None,
         },
     };
     assert!(format!("{report}").contains("exact=1"));
@@ -336,7 +338,8 @@ fn key_probe_queries_report_their_classification() {
             disjoint_rules: None,
             subsumed: Vec::new(),
             dead: Vec::new(),
-            strata: Vec::new(),
+            interiors: Vec::new(),
+            reach: None,
         },
     };
     let text = format!("{report}");
@@ -461,7 +464,8 @@ fn anti_probe_selectivity_populates_the_counted_execution() {
             disjoint_rules: None,
             subsumed: Vec::new(),
             dead: Vec::new(),
-            strata: Vec::new(),
+            interiors: Vec::new(),
+            reach: None,
         },
     };
     let text = format!("{report}");

@@ -68,6 +68,22 @@ bdb_compile_fail_case(query_find_unbound_variable
     "find_head_variable_is_not_bound_in_this_rule"
 )
 
+bdb_compile_fail_case(query_interior_after_main
+    "interior_or_recursive_after_a_main_rule"
+)
+
+bdb_compile_fail_case(query_interior_after_recursive
+    "interior_after_recursive"
+)
+
+bdb_compile_fail_case(query_second_recursive
+    "a_second_recursive_is_refused"
+)
+
+bdb_compile_fail_case(query_duplicate_interior
+    "interior_names_must_be_distinct"
+)
+
 bdb_compile_fail_case(closed_handle_wrong_vocabulary
     "handle \"Deterministic\" of closed relation \"Kind\" cannot bind coordinate \"Ticket.priority\""
 )

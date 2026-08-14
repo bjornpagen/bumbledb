@@ -782,64 +782,60 @@ impl fmt::Display for ValidationError {
             Self::TooManyVariables { count } => {
                 write!(f, "{count} distinct variables exceed the 128-bit bitset")
             }
-            Self::TooManyPredicates { count } => {
-                write!(f, "{count} predicates exceed the program cap")
+            Self::InteriorIdOverflow { count } => {
+                write!(f, "{count} derived tables overflow InteriorId")
             }
-            Self::UnknownOutputPredicate { pred } => {
-                write!(f, "output predicate p{} is not in the program", pred.0)
+            Self::EmptyInterior { interior } => {
+                write!(f, "interior p{} has no rules", interior.0)
             }
-            Self::UnknownPredicate { atom, pred } => {
+            Self::EmptyRecursiveBase => {
+                write!(f, "recursive block has no base arms — that lfp is empty")
+            }
+            Self::EmptyRecursiveStep => {
+                write!(f, "recursive block has no rec arms — write an interior")
+            }
+            Self::SelfInBase => {
+                write!(f, "a base arm names the recursive predicate")
+            }
+            Self::RecArmMissingSelf => {
+                write!(f, "a rec arm does not name the recursive predicate")
+            }
+            Self::NonlinearRecArm => {
+                write!(f, "a rec arm names the recursive predicate more than once")
+            }
+            Self::NegationInRec => {
+                write!(f, "negation inside the recursive block")
+            }
+            Self::UnknownInterior { atom, interior } => {
                 write!(
                     f,
-                    "atom {atom}: predicate p{} is not in the program",
-                    pred.0
+                    "atom {atom}: interior p{} is not in the query",
+                    interior.0
                 )
             }
-            Self::PredicateColumnOutOfRange { atom, field } => write!(
+            Self::InteriorColumnOutOfRange { atom, field } => write!(
                 f,
-                "atom {atom}: head position {} is beyond the target predicate's arity",
+                "atom {atom}: head position {} is beyond the target interior's arity",
                 field.0
             ),
-            Self::NegationThroughCycle { pred, via } => write!(
+            Self::InteriorNotPrior { interior, at } => write!(
                 f,
-                "predicate p{} negates p{} inside its own recursive component — \
-                 negation reads finished lower strata only",
-                pred.0, via.0
+                "interior p{} reads p{} which is not a prior interior",
+                at.0, interior.0
             ),
-            Self::AggregationThroughCycle { pred, via } => write!(
+            Self::AggregateInInterior { interior } => write!(
                 f,
-                "predicate p{}'s fold reads p{} inside its own recursive component — \
-                 aggregation reads finished lower strata only",
-                pred.0, via.0
+                "interior p{} folds — interior and rec heads project bound variables only",
+                interior.0
             ),
-            Self::MeasureInRecursiveHead { pred } => write!(
+            Self::MeasureInInterior { interior } => write!(
                 f,
-                "recursive predicate p{} projects a Duration — recursive heads \
-                 project bound variables only",
-                pred.0
+                "interior p{} projects a Duration — interior and rec heads project bound variables only",
+                interior.0
             ),
-            Self::UnresolvedPredicateSignature { pred } => write!(
-                f,
-                "predicate p{}'s signature never resolves — every rule's types \
-                 depend on its own recursive component",
-                pred.0
-            ),
-            Self::AggregateInteriorPredicate { pred } => write!(
-                f,
-                "predicate p{} folds below the output — a fold's answers \
-                 materialize only at the output predicate's finalize; \
-                 aggregate over the finished predicate from the output \
-                 instead",
-                pred.0
-            ),
-            Self::MeasureInteriorPredicate { pred } => write!(
-                f,
-                "predicate p{} projects a Duration below the output — the \
-                 executable program class keeps interior heads to bound \
-                 variables; project the interval and measure it at the \
-                 output instead",
-                pred.0
-            ),
+            Self::MeasureInRec => {
+                write!(f, "a measure site inside the recursive block")
+            }
         }
     }
 }
@@ -993,15 +989,11 @@ impl fmt::Display for Error {
                 statement.0,
                 fact.len()
             ),
-            Self::FixpointBudgetExceeded {
-                stratum,
-                rounds,
-                tuples,
-            } => write!(
+            Self::DerivedBudgetExceeded { rounds, tuples } => write!(
                 f,
-                "fixpoint budget exceeded: stratum {stratum} ran {rounds} rounds and \
-                 derived {tuples} tuples — raise the budget \
-                 (PreparedQuery::set_fixpoint_budget) or bound the closure"
+                "derived-tuples budget exceeded: {rounds} rec rounds and \
+                 {tuples} derived tuples — raise the budget \
+                 (PreparedQuery::set_derived_budget) or bound the closure"
             ),
             Self::Overflow(super::OverflowKind::Aggregate { find }) => {
                 write!(f, "find {find}: aggregate result exceeds its type")

@@ -86,6 +86,8 @@ fn arm_rule(kind: u8) -> Rule {
 
 fn du_query(rules: Vec<Rule>) -> Query {
     Query {
+        interiors: vec![],
+        rec: None,
         head: vec![HeadTerm::Var, HeadTerm::Var],
         rules,
     }
@@ -226,6 +228,8 @@ fn a_fold_over_a_proven_disjoint_union_absorbs_nothing() {
         conditions: vec![],
     };
     let query = Query {
+        interiors: vec![],
+        rec: None,
         head: vec![HeadTerm::Var, HeadTerm::Aggregate(HeadOp::Sum)],
         rules: vec![rule(0), rule(1)],
     };
@@ -272,6 +276,8 @@ fn a_fold_over_a_proven_disjoint_union_absorbs_nothing() {
         rule
     };
     let refused = Query {
+        interiors: vec![],
+        rec: None,
         head: vec![HeadTerm::Var, HeadTerm::Aggregate(HeadOp::Count)],
         rules: vec![count_rule(0), count_rule(1)],
     };

@@ -26,8 +26,8 @@ use bumbledb::schema::spec::{
 use bumbledb::schema::{IntervalElement, StatementDescriptor, ValueType};
 use bumbledb::{
     AggOp, AllenMask, AnswerValue, Answers, Atom, AtomSource, CmpOp, Comparison, ConditionTree,
-    ExecutionStats, FieldId, FindTerm, HeadOp, HeadTerm, Interval, Manifest, ParamId, PredId,
-    PredicateDef, Program, RelationId, RenderedViolation, Rule, SchemaDescriptor, SchemaSpec,
+    ExecutionStats, FieldId, FindTerm, HeadOp, HeadTerm, Interior, InteriorId, Interval, Manifest,
+    ParamId, Query, Rec, RelationId, RenderedViolation, Rule, SchemaDescriptor, SchemaSpec,
     StatementId, StatementKind, Term, Value, VarId,
 };
 use napi::bindgen_prelude::{
@@ -758,9 +758,9 @@ fn atom_in(obj: &Object) -> napi::Result<Atom> {
             req::<f64>(&source, "relation", "edb source")?,
             "edb relation",
         )?)),
-        tags::atom_source::IDB => AtomSource::Idb(PredId(u16_id(
-            ordinal(req::<f64>(&source, "pred", "idb source")?, "idb pred")?,
-            "idb pred",
+        tags::atom_source::INTERIOR => AtomSource::Interior(InteriorId(ordinal(
+            req::<f64>(&source, "interior", "interior source")?,
+            "interior id",
         )?)),
         other => {
             return Err(err(format!(
@@ -894,38 +894,69 @@ fn rule_in(obj: &Object) -> napi::Result<Rule> {
     })
 }
 
-/// The whole program IR, mirroring `bumbledb::ir::Program` 1:1: relations,
-/// fields, and predicates by numeric id — the TS layer resolves names
+fn head_in(obj: &Object, ctx: &str) -> napi::Result<Vec<HeadTerm>> {
+    let head: Array = req(obj, "head", ctx)?;
+    let mut head_terms = Vec::with_capacity(head.len() as usize);
+    for head_index in 0..head.len() {
+        let term = req_at::<Object>(&head, head_index, ctx)?;
+        head_terms.push(head_term_in(&term)?);
+    }
+    Ok(head_terms)
+}
+
+fn rules_in(obj: &Object, key: &str, ctx: &str) -> napi::Result<Vec<Rule>> {
+    let rules: Array = req(obj, key, ctx)?;
+    let mut rule_list = Vec::with_capacity(rules.len() as usize);
+    for rule_index in 0..rules.len() {
+        let rule = req_at::<Object>(&rules, rule_index, ctx)?;
+        rule_list.push(rule_in(&rule)?);
+    }
+    Ok(rule_list)
+}
+
+/// The whole query IR, mirroring `bumbledb::ir::Query` 1:1: relations,
+/// fields, and interiors by numeric id — the TS layer resolves names
 /// through the manifest and sends ids; the bridge never sees names here.
-pub(crate) fn program_in(obj: &Object) -> napi::Result<Program> {
-    let predicates: Array = req(obj, "predicates", "program")?;
-    let mut predicate_defs = Vec::with_capacity(predicates.len() as usize);
-    for index in 0..predicates.len() {
-        let predicate = req_at::<Object>(&predicates, index, "program predicates")?;
-        let head: Array = req(&predicate, "head", "predicate")?;
-        let mut head_terms = Vec::with_capacity(head.len() as usize);
-        for head_index in 0..head.len() {
-            let term = req_at::<Object>(&head, head_index, "predicate head")?;
-            head_terms.push(head_term_in(&term)?);
-        }
-        let rules: Array = req(&predicate, "rules", "predicate")?;
-        let mut rule_list = Vec::with_capacity(rules.len() as usize);
-        for rule_index in 0..rules.len() {
-            let rule = req_at::<Object>(&rules, rule_index, "predicate rules")?;
-            rule_list.push(rule_in(&rule)?);
-        }
-        predicate_defs.push(PredicateDef {
-            head: head_terms,
-            rules: rule_list,
+pub(crate) fn query_in(obj: &Object) -> napi::Result<Query> {
+    let interiors_arr: Array = req(obj, "interiors", "query")?;
+    let mut interiors = Vec::with_capacity(interiors_arr.len() as usize);
+    for index in 0..interiors_arr.len() {
+        let interior = req_at::<Object>(&interiors_arr, index, "query interiors")?;
+        interiors.push(Interior {
+            head: head_in(&interior, "interior head")?,
+            rules: rules_in(&interior, "rules", "interior rules")?,
         });
     }
-    let output = PredId(u16_id(
-        ordinal(req::<f64>(obj, "output", "program")?, "program output")?,
-        "program output",
-    )?);
-    Ok(Program {
-        predicates: predicate_defs,
-        output,
+    let rec = match obj.get::<Unknown>("rec")? {
+        None => None,
+        Some(value) => match value.get_type()? {
+            JsType::Undefined | JsType::Null => None,
+            JsType::Object => {
+                // SAFETY: `get_type` just proved this value is a JS object.
+                #[expect(
+                    unsafe_code,
+                    reason = "napi declares `Unknown::cast` unsafe; fenced by get_type"
+                )]
+                let rec_obj: Object = unsafe { value.cast()? };
+                Some(Rec {
+                    head: head_in(&rec_obj, "rec head")?,
+                    base: rules_in(&rec_obj, "base", "rec base")?,
+                    rec: rules_in(&rec_obj, "rec", "rec arms")?,
+                })
+            }
+            other => {
+                return Err(err(format!(
+                    "bumbledb marshal: `rec` in query must be an object or null, got {}",
+                    js_type_name(other)
+                )));
+            }
+        },
+    };
+    Ok(Query {
+        interiors,
+        rec,
+        head: head_in(obj, "query head")?,
+        rules: rules_in(obj, "rules", "query rules")?,
     })
 }
 
@@ -1281,29 +1312,37 @@ impl ToNapiValue for ExplainWire {
             rules.push(explain_rule_out(&env_handle, rule)?);
         }
         root.set("rules", rules)?;
-        let mut strata = Vec::with_capacity(stats.strata.len());
-        for stratum in stats.strata {
-            let mut stratum_obj = Object::new(&env_handle)?;
-            stratum_obj.set("stratum", u32::from(stratum.stratum))?;
-            let mut rounds = Vec::with_capacity(stratum.rounds.len());
-            for round in stratum.rounds {
+        let mut interiors = Vec::with_capacity(stats.interiors.len());
+        for interior in stats.interiors {
+            let mut interior_obj = Object::new(&env_handle)?;
+            interior_obj.set("interior", interior.interior)?;
+            let mut interior_rules = Vec::with_capacity(interior.rules.len());
+            for rule in interior.rules {
+                interior_rules.push(explain_rule_out(&env_handle, rule)?);
+            }
+            interior_obj.set("rules", interior_rules)?;
+            interior_obj.set("emits", interior.emits)?;
+            interiors.push(interior_obj);
+        }
+        root.set("interiors", interiors)?;
+        if let Some(reach) = stats.reach {
+            let mut reach_obj = Object::new(&env_handle)?;
+            let mut reach_rules = Vec::with_capacity(reach.rules.len());
+            for rule in reach.rules {
+                reach_rules.push(explain_rule_out(&env_handle, rule)?);
+            }
+            reach_obj.set("rules", reach_rules)?;
+            let mut rounds = Vec::with_capacity(reach.rounds.len());
+            for round in reach.rounds {
                 let mut round_obj = Object::new(&env_handle)?;
-                let mut deltas = Vec::with_capacity(round.deltas.len());
-                for delta in round.deltas {
-                    let mut obj = Object::new(&env_handle)?;
-                    obj.set("predicate", u32::from(delta.predicate))?;
-                    obj.set("rows", delta.rows)?;
-                    deltas.push(obj);
-                }
-                round_obj.set("deltas", deltas)?;
+                round_obj.set("delta", round.delta)?;
                 round_obj.set("emitted", round.emitted)?;
                 round_obj.set("absorbed", round.absorbed)?;
                 rounds.push(round_obj);
             }
-            stratum_obj.set("rounds", rounds)?;
-            strata.push(stratum_obj);
+            reach_obj.set("rounds", rounds)?;
+            root.set("reach", reach_obj)?;
         }
-        root.set("strata", strata)?;
         // SAFETY: `env` is the live environment napi handed this very call,
         // and `root` was created against it.
         unsafe { Object::to_napi_value(env, root) }

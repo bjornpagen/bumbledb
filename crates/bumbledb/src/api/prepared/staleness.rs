@@ -95,10 +95,10 @@ impl<S> PreparedQuery<'_, S> {
     #[doc(hidden)]
     pub fn staleness(&self, snap: &Snapshot<'_, S>) -> Result<Staleness> {
         self.check_snapshot(snap.txn())?;
-        let per_occurrence = self
-            .program
-            .all_rules()
-            .flat_map(super::PreparedRule::pinned)
+        let mut pins = Vec::new();
+        self.visit_rules(|rule| pins.extend(rule.pinned().iter().copied()));
+        let per_occurrence = pins
+            .iter()
             .map(|pin| {
                 let live = relation_rows(snap.txn(), self.schema, pin.relation)?;
                 Ok(OccurrenceDrift {
@@ -121,7 +121,7 @@ impl<S> PreparedQuery<'_, S> {
     /// occurrence, the statistics every node estimate derives from,
     /// with the relation name resolved.
     pub(super) fn rule_pinned_rows(&self, rule_idx: usize) -> Vec<crate::api::stats::PinnedRows> {
-        self.program.rules()[rule_idx]
+        self.body.rules()[rule_idx]
             .pinned()
             .iter()
             .map(|pin| crate::api::stats::PinnedRows {

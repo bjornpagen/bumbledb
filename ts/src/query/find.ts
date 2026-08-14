@@ -136,8 +136,7 @@ type CheckFind<F extends FindShape> = {
 
 /**
  * The validated find record of a RECURSIVE rule: every entry must be a plain
- * variable (aggregates and the measure are unwritable in a recursive head —
- * the strata quarantine).
+ * variable (aggregates and the measure are unwritable in a rec head).
  */
 type CheckRecFind<F extends FindShape> = {
 	readonly [K in keyof F]: F[K] extends AnyVar ? F[K] : never
@@ -168,7 +167,7 @@ type RowOfFind<F extends FindShape> = { readonly [K in keyof F]: FindValue<F[K]>
 /**
  * The head signature of a recursive rule's find record as classed mint
  * slots (descriptor + law-computed class), keyed by column name — the
- * signature an `idb` join pairs against (`F` is variable-only there).
+ * signature an interior join pairs against (`F` is variable-only there).
  */
 type HeadRecordOf<Classes extends SchemaClasses, F extends FindShape> = {
 	readonly [K in keyof F]: F[K] extends AnyVar ? MintSlotOf<Classes, F[K]> : never

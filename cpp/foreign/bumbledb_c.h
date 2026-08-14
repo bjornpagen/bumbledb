@@ -79,7 +79,7 @@ typedef enum bdb_error_kind {
   BDB_ERROR_KIND_PARAM,
   BDB_ERROR_KIND_MEASURE_OF_RAY,
   BDB_ERROR_KIND_CAPACITY_RAY_MEASURE,
-  BDB_ERROR_KIND_FIXPOINT_BUDGET_EXCEEDED,
+  BDB_ERROR_KIND_DERIVED_BUDGET_EXCEEDED,
   BDB_ERROR_KIND_OVERFLOW,
   BDB_ERROR_KIND_RESULT_BYTES_OVERFLOW,
   BDB_ERROR_KIND_CORRUPTION,
@@ -213,11 +213,11 @@ typedef enum bdb_find_term_kind {
   BDB_FIND_TERM_KIND_AGGREGATE_MEASURE,
 } bdb_find_term_kind;
 
-// An atom source's tag: a stored relation (`Edb`) or a predicate of the
-// same program (`Idb`).
+// An atom source's tag: a stored relation (`Edb`) or a derived table of
+// the same query (`Interior` — an interior or the rec).
 typedef enum bdb_atom_source_kind {
   BDB_ATOM_SOURCE_KIND_EDB,
-  BDB_ATOM_SOURCE_KIND_IDB,
+  BDB_ATOM_SOURCE_KIND_INTERIOR,
 } bdb_atom_source_kind;
 
 // A term's tag (`bumbledb::ir::Term`).
@@ -543,11 +543,11 @@ typedef struct bdb_binding {
   struct bdb_term term;
 } bdb_binding;
 
-// One atom. `relation` is read for `Edb`, `pred` for `Idb`.
+// One atom. `relation` is read for `Edb`, `interior` for `Interior`.
 typedef struct bdb_atom {
   uint32_t source_kind;
   uint32_t relation;
-  uint16_t pred;
+  uint32_t interior;
   const struct bdb_binding *bindings;
   size_t binding_count;
 } bdb_atom;
@@ -590,21 +590,35 @@ typedef struct bdb_rule {
   size_t condition_count;
 } bdb_rule;
 
-// One predicate: the head shape its rules align against, and the rules.
-typedef struct bdb_predicate {
+// One named interior: a finite CQ (union of conjunctive rules).
+typedef struct bdb_interior {
   const struct bdb_head_term *head;
   size_t head_count;
   const struct bdb_rule *rules;
   size_t rule_count;
-} bdb_predicate;
+} bdb_interior;
 
-// The whole program: predicates (`pred` = index) and the output
-// predicate. A query is the one-predicate program with `output == 0`.
-typedef struct bdb_program {
-  const struct bdb_predicate *predicates;
-  size_t predicate_count;
-  uint16_t output;
-} bdb_program;
+// One linear recursive SCC: base arms and rec arms.
+typedef struct bdb_rec {
+  const struct bdb_head_term *head;
+  size_t head_count;
+  const struct bdb_rule *base;
+  size_t base_count;
+  const struct bdb_rule *rec;
+  size_t rec_count;
+} bdb_rec;
+
+// The whole query: named interiors, at most one rec, then the main
+// answer. `rec` is nullable (`NULL` = no rec).
+typedef struct bdb_query {
+  const struct bdb_interior *interiors;
+  size_t interior_count;
+  const struct bdb_rec *rec;
+  const struct bdb_head_term *head;
+  size_t head_count;
+  const struct bdb_rule *rules;
+  size_t rule_count;
+} bdb_query;
 
 #ifdef __cplusplus
 extern "C" {
@@ -866,13 +880,13 @@ enum bdb_status bdb_error_get_violation(const struct bdb_error *error,
 // misuse.
 enum bdb_status bdb_error_destroy(struct bdb_error *error);
 
-// Prepares a program against the database: the engine validates,
+// Prepares a query against the database: the engine validates,
 // normalizes, reads statistics, and plans ONCE; the returned handle is
 // reusable across snapshots of this database (`&mut` per execution —
 // one execution at a time; the handle is not thread-shareable).
 // Validation (roster) failures are `BDB_ERROR_KIND_VALIDATION`.
 enum bdb_status bdb_db_prepare(const struct bdb_db *db,
-                               const struct bdb_program *program,
+                               const struct bdb_query *query,
                                struct bdb_prepared **out_prepared,
                                struct bdb_error **out_error);
 

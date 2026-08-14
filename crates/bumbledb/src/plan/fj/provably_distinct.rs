@@ -39,7 +39,7 @@ pub(crate) fn provably_distinct(
         .iter()
         .filter(|occurrence| occurrence.role.participates())
         .all(|occurrence| {
-            // An `Idb` occurrence carries no keys — a predicate is a
+            // An `Interior` occurrence carries no keys — a predicate is a
             // transient answer set, not a keyed store — so no rule
             // reading one can prove distinct bindings through key
             // coverage (40-execution.md § the fixpoint driver: cross-round re-derivation

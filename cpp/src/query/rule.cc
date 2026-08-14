@@ -13,32 +13,19 @@ import :aggregate;
 export namespace bdb {
 
 /**
- * A recursive predicate's reference tag: names the rec an `.idb`/
- * `.not_idb` atom targets (resolution to the dense PredId happens at
- * program assembly).
- */
-template<fixed_string Name>
-struct pred_tag {
-	static constexpr name_text name = detail::to_name_text(Name.view());
-};
-
-template<fixed_string Name>
-inline constexpr auto pred = pred_tag<Name>{};
-
-/**
- * One named binding of a recursive atom: the target head column BY NAME,
+ * One named binding of an interior/rec atom: the target head column BY NAME,
  * the bound variable as the value.
  */
 template<fixed_string Column, class Var>
-struct idb_bind {
+struct interior_bind {
 	using var = Var;
 	static constexpr name_text column = detail::to_name_text(Column.view());
 };
 
 template<fixed_string Column, class Var>
-[[nodiscard]] consteval auto bind(Var) -> idb_bind<Column, Var> {
+[[nodiscard]] consteval auto bind(Var) -> interior_bind<Column, Var> {
 	static_assert(detail::is_qvar_v<Var>, "bumbledb bind(): the argument must be a query variable "
-	                                      "(vars.field) — idb bindings are variable terms only");
+	                                      "(vars.field) — interior bindings are variable terms only");
 	return {};
 }
 
@@ -47,10 +34,10 @@ template<fixed_string Column, class Var>
 namespace bdb::detail {
 
 template<class T>
-inline constexpr bool is_idb_bind_v = false;
+inline constexpr bool is_interior_bind_v = false;
 
 template<fixed_string Column, class Var>
-inline constexpr bool is_idb_bind_v<idb_bind<Column, Var>> = true;
+inline constexpr bool is_interior_bind_v<interior_bind<Column, Var>> = true;
 
 template<class S, class Facade>
 consteval auto record_match(rule_state& state, match_pattern_of<S, Facade> const& pattern, bool negated) -> void {
@@ -98,17 +85,17 @@ consteval auto record_match(rule_state& state, match_pattern_of<S, Facade> const
 	state.items[state.item_count] = body_item{
 	    .form = negated ? body_form::negated_atom : body_form::atom,
 	    .atom = atom,
-	    .idb = idb_atom_data{},
+	    .interior = interior_atom_data{},
 	    .condition = condition_data{},
 	};
 	++state.item_count;
 }
 
 /**
- * Records one recursive atom (either polarity). A positive idb atom binds
- * its variables (grounding); a negated one binds nothing.
+ * Records one derived-table atom (either polarity). A positive interior
+ * atom binds its variables (grounding); a negated one binds nothing.
  */
-consteval auto record_idb(rule_state& state, idb_atom_data const& atom) -> void {
+consteval auto record_interior(rule_state& state, interior_atom_data const& atom) -> void {
 	if (state.item_count == state.items.size()) {
 		rule_has_too_many_atoms();
 	}
@@ -118,9 +105,9 @@ consteval auto record_idb(rule_state& state, idb_atom_data const& atom) -> void 
 		}
 	}
 	state.items[state.item_count] = body_item{
-	    .form = body_form::idb_atom,
+	    .form = body_form::interior_atom,
 	    .atom = atom_data{},
-	    .idb = atom,
+	    .interior = atom,
 	    .condition = condition_data{},
 	};
 	++state.item_count;
@@ -133,7 +120,7 @@ consteval auto record_condition(rule_state& state, cond_value const& cond) -> vo
 	state.items[state.item_count] = body_item{
 	    .form = body_form::condition,
 	    .atom = atom_data{},
-	    .idb = idb_atom_data{},
+	    .interior = interior_atom_data{},
 	    .condition = cond.data,
 	};
 	++state.item_count;
@@ -186,25 +173,25 @@ struct rule_chain {
 	}
 
 	/**
-	 * One positive recursive atom: grounds this rule against the named
-	 * predicate's set and binds its variables. Inside a rec's own rules
-	 * only the rec itself may be named; output rules join any finished
-	 * stratum. Every head column of the target must be bound exactly once
-	 * (judged at program assembly).
+	 * One positive derived-table atom: grounds this rule against the named
+	 * interior or rec and binds its variables. Inside a rec's own rules
+	 * only the rec itself may be named; main and interior rules join any
+	 * earlier table. Every head column of the target must be bound exactly
+	 * once (judged at query assembly).
 	 */
 	template<fixed_string Name, class... Binds>
-	[[nodiscard]] consteval auto idb(pred_tag<Name>, Binds... binds) const -> rule_chain {
-		return with_idb<Name, false>(binds...);
+	[[nodiscard]] consteval auto interior(Binds... binds) const -> rule_chain {
+		return with_interior<Name, false>(binds...);
 	}
 
 	/**
-	 * The negated finished-stratum atom: rejects every binding the
-	 * finished stratum extends (output rules only — a recursive rule
+	 * The negated finished-table atom: rejects every binding the named
+	 * interior or finished rec extends (main rules only — a recursive rule
 	 * negates no stratum). Binds nothing.
 	 */
 	template<fixed_string Name, class... Binds>
-	[[nodiscard]] consteval auto not_idb(pred_tag<Name>, Binds... binds) const -> rule_chain {
-		return with_idb<Name, true>(binds...);
+	[[nodiscard]] consteval auto not_interior(Binds... binds) const -> rule_chain {
+		return with_interior<Name, true>(binds...);
 	}
 
 	/** Conjoins conditions (each a predicate value). */
@@ -284,19 +271,19 @@ struct rule_chain {
 
 private:
 	template<fixed_string Name, bool Negated, class... Binds>
-	[[nodiscard]] consteval auto with_idb(Binds...) const -> rule_chain {
-		static_assert((detail::is_idb_bind_v<Binds> && ...), "bumbledb idb(): every binding must be spelled "
-		                                                     "bdb::bind<\"column\">(variable)");
-		static_assert(sizeof...(Binds) <= max_query_finds, "bumbledb idb(): the bindings exceed the head width");
-		auto atom = idb_atom_data{};
-		atom.pred = detail::to_name_text(Name.view());
+	[[nodiscard]] consteval auto with_interior(Binds...) const -> rule_chain {
+		static_assert((detail::is_interior_bind_v<Binds> && ...), "bumbledb interior(): every binding must be spelled "
+		                                                          "bdb::bind<\"column\">(variable)");
+		static_assert(sizeof...(Binds) <= max_query_finds, "bumbledb interior(): the bindings exceed the head width");
+		auto atom = interior_atom_data{};
+		atom.name = detail::to_name_text(Name.view());
 		atom.negated = Negated;
 		[[maybe_unused]] auto const add = [&]<class Bind>() {
 			using Var = typename Bind::var;
 			static_assert(detail::is_qvar_v<Var>, "bumbledb bind(): the bound value must be a query "
-			                                      "variable (vars.field) — idb bindings are variable terms "
-			                                      "only");
-			atom.binds[atom.bind_count] = idb_bind_data{
+			                                      "variable (vars.field) — interior bindings are variable "
+			                                      "terms only");
+			atom.binds[atom.bind_count] = interior_bind_data{
 			    .column = Bind::column,
 			    .variable = coord_ref{.relation = Var::relation_name, .field = Var::field_name},
 			    .cls = Var::cls,
@@ -307,7 +294,7 @@ private:
 		};
 		(add.template operator()<Binds>(), ...);
 		auto next = *this;
-		detail::record_idb(next.state, atom);
+		detail::record_interior(next.state, atom);
 		return next;
 	}
 };

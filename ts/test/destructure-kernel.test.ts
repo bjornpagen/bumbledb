@@ -20,7 +20,6 @@ import { on } from "#face.ts"
 import { interval, str, u64 } from "#fields.ts"
 import type { QueryParams, QueryRow, QueryRuleScope } from "#query/lower.ts"
 import { lowerQuery, query } from "#query/lower.ts"
-import { program } from "#query/predicate.ts"
 import { v } from "#query/scope.ts"
 import { relation } from "#relation.ts"
 import { schema } from "#schema.ts"
@@ -96,7 +95,7 @@ test("v() mints a fresh batch per call — two batches are two variables in one 
 		return r.match(Holder, { id: a.id }).match(Account, { holder: b.id }).find({ x: a.id, y: b.id })
 	})
 	const ir = lowerQuery(q)
-	const rule = ir.predicates[ir.predicates.length - 1]?.rules[0]
+	const rule = ir.rules[0]
 	assert.ok(rule !== undefined)
 	assert.deepEqual(rule.finds, [
 		{ kind: "var", var: 0 },
@@ -112,23 +111,20 @@ test("reusing one var reference across binding positions IS the join — one Var
 		return r.match(Holder, { id: h.id }).match(Account, { holder: h.id }).find({ h: h.id })
 	})
 	assert.deepEqual(lowerQuery(q), {
-		predicates: [
+		interiors: [],
+		rec: null,
+		head: [{ kind: "var" }],
+		rules: [
 			{
-				head: [{ kind: "var" }],
-				rules: [
-					{
-						finds: [{ kind: "var", var: 0 }],
-						atoms: [
-							{ source: { kind: "edb", relation: HOLDER_ID }, bindings: [[0, { kind: "var", var: 0 }]] },
-							{ source: { kind: "edb", relation: ACCOUNT_ID }, bindings: [[1, { kind: "var", var: 0 }]] }
-						],
-						negated: [],
-						conditions: []
-					}
-				]
+				finds: [{ kind: "var", var: 0 }],
+				atoms: [
+					{ source: { kind: "edb", relation: HOLDER_ID }, bindings: [[0, { kind: "var", var: 0 }]] },
+					{ source: { kind: "edb", relation: ACCOUNT_ID }, bindings: [[1, { kind: "var", var: 0 }]] }
+				],
+				negated: [],
+				conditions: []
 			}
-		],
-		output: 0
+		]
 	})
 })
 
@@ -202,29 +198,36 @@ test("aggregates ride find over var references: count, sum, min, max, pack, dura
 	assert.ok(db.prepare(durationFoldQ))
 })
 
-test("the recursive program ports: rec find + named idb record lower and prepare", function recPorts() {
-	const reachable = program(Theory, function build(p) {
-		const reach = p.rec("reach")
-		const seeded = reach
-			.rule(function rule(r) {
-				const n = v(Holder)
-				return r
-					.match(Holder, { id: n.id })
-					.where(r.eq(n.id, r.param("root")))
-					.find({ c: n.id })
-			})
-			.rule(function rule(r) {
-				const e = v(Parent)
-				return r.match(Parent, { child: e.child, parent: e.parent }).idb(reach, { c: e.parent }).find({ c: e.child })
-			})
-		return p.output(function rule(r) {
-			const h = v(Holder)
-			return r.match(Holder, { id: h.id }).idb(seeded, { c: h.id }).find({ c: h.id })
+test("the recursive query ports: rec find + named interior record lower and prepare", function recPorts() {
+	const reachable = query(Theory)
+		.recursive("reach", {
+			base: [
+				function rule(r) {
+					const n = v(Holder)
+					return r
+						.match(Holder, { id: n.id })
+						.where(r.eq(n.id, r.param("root")))
+						.find({ c: n.id })
+				}
+			],
+			rec: [
+				function rule(r) {
+					const e = v(Parent)
+					return r
+						.match(Parent, { child: e.child, parent: e.parent })
+						.interior("reach", { c: e.parent })
+						.find({ c: e.child })
+				}
+			]
 		})
-	})
+		.rule(function rule(r) {
+			const h = v(Holder)
+			return r.match(Holder, { id: h.id }).interior("reach", { c: h.id }).find({ c: h.id })
+		})
 	type Pin = Expect<Equal<QueryParams<typeof reachable>, { readonly root: bigint }>>
 	const ir = lowerQuery(reachable)
-	assert.equal(ir.predicates.length, 2)
+	assert.equal(ir.interiors.length, 0)
+	assert.ok(ir.rec !== null)
 	const prepared = db.prepare(reachable)
 	const rows = db.execute(prepared, { root: 1n })
 	assert.deepEqual(
@@ -279,6 +282,8 @@ test("params stay string-named: param/inSet register by first use and execute un
 			.find({ id: h.id })
 	})
 	type Pin = Expect<Equal<QueryParams<typeof paramQ>, { readonly minRank: bigint }>>
+	const pin: Pin = true
+	assert.ok(pin)
 	assert.deepEqual(
 		paramQ.data.params.map(function nameOf(p) {
 			return p.name

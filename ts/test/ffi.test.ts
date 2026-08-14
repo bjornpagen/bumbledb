@@ -15,7 +15,7 @@ import * as os from "node:os"
 import * as path from "node:path"
 import { after, describe, test } from "node:test"
 
-import type { DbHandle, FactValue, Manifest, PreparedHandle, ProgramIr, SnapshotHandle } from "#native.ts"
+import type { DbHandle, FactValue, Manifest, PreparedHandle, QueryIr, SnapshotHandle } from "#native.ts"
 import { native } from "#native.ts"
 import type { SchemaSpec } from "#spec.ts"
 
@@ -455,47 +455,56 @@ describe("ffi round trip against a real store", function suite() {
 	})
 
 	test("recursive closure query computes the reachable set", function closure() {
-		const program: ProgramIr = {
-			predicates: [
+		const queryIr: QueryIr = {
+			interiors: [],
+			rec: {
+				head: [{ kind: "var" }],
+				base: [
+					{
+						finds: [{ kind: "var", var: 0 }],
+						atoms: [
+							{
+								source: { kind: "edb", relation: EDGE },
+								bindings: [
+									[0, { kind: "param", param: 0 }],
+									[1, { kind: "var", var: 0 }]
+								]
+							}
+						],
+						negated: [],
+						conditions: []
+					}
+				],
+				rec: [
+					{
+						finds: [{ kind: "var", var: 1 }],
+						atoms: [
+							{ source: { kind: "interior", interior: 0 }, bindings: [[0, { kind: "var", var: 0 }]] },
+							{
+								source: { kind: "edb", relation: EDGE },
+								bindings: [
+									[0, { kind: "var", var: 0 }],
+									[1, { kind: "var", var: 1 }]
+								]
+							}
+						],
+						negated: [],
+						conditions: []
+					}
+				]
+			},
+			head: [{ kind: "var" }],
+			rules: [
 				{
-					head: [{ kind: "var" }],
-					rules: [
-						{
-							finds: [{ kind: "var", var: 0 }],
-							atoms: [
-								{
-									source: { kind: "edb", relation: EDGE },
-									bindings: [
-										[0, { kind: "param", param: 0 }],
-										[1, { kind: "var", var: 0 }]
-									]
-								}
-							],
-							negated: [],
-							conditions: []
-						},
-						{
-							finds: [{ kind: "var", var: 1 }],
-							atoms: [
-								{ source: { kind: "idb", pred: 0 }, bindings: [[0, { kind: "var", var: 0 }]] },
-								{
-									source: { kind: "edb", relation: EDGE },
-									bindings: [
-										[0, { kind: "var", var: 0 }],
-										[1, { kind: "var", var: 1 }]
-									]
-								}
-							],
-							negated: [],
-							conditions: []
-						}
-					]
+					finds: [{ kind: "var", var: 0 }],
+					atoms: [{ source: { kind: "interior", interior: 0 }, bindings: [[0, { kind: "var", var: 0 }]] }],
+					negated: [],
+					conditions: []
 				}
-			],
-			output: 0
+			]
 		}
-		const preparedResult = native.dbPrepare(db, program)
-		assert.ok(preparedResult.ok, "the recursive program prepares")
+		const preparedResult = native.dbPrepare(db, queryIr)
+		assert.ok(preparedResult.ok, "the recursive query prepares")
 		prepared = preparedResult.prepared
 
 		const snap = snapshot()
@@ -521,21 +530,18 @@ describe("ffi round trip against a real store", function suite() {
 	})
 
 	test("dbPrepare returns roster errors as data", function irError() {
-		const bogus: ProgramIr = {
-			predicates: [
+		const bogus: QueryIr = {
+			interiors: [],
+			rec: null,
+			head: [{ kind: "var" }],
+			rules: [
 				{
-					head: [{ kind: "var" }],
-					rules: [
-						{
-							finds: [{ kind: "var", var: 0 }],
-							atoms: [{ source: { kind: "edb", relation: 999 }, bindings: [[0, { kind: "var", var: 0 }]] }],
-							negated: [],
-							conditions: []
-						}
-					]
+					finds: [{ kind: "var", var: 0 }],
+					atoms: [{ source: { kind: "edb", relation: 999 }, bindings: [[0, { kind: "var", var: 0 }]] }],
+					negated: [],
+					conditions: []
 				}
-			],
-			output: 0
+			]
 		}
 		const outcome = native.dbPrepare(db, bogus)
 		assert.ok(!outcome.ok)

@@ -151,7 +151,7 @@ pub struct RelationImage {
     /// open-addressed pass plus a 2×rows scratch allocation per column,
     /// paid by every cold prepare and again by every re-prepare after a
     /// commit) no longer exists. Transient fixpoint images stay
-    /// uncounted — the planner never costs them (the `Idb` floor guard).
+    /// uncounted — the planner never costs them (the `Interior` floor guard).
     distincts: Box<[distinct::DistinctState]>,
     /// The field→column map (one span per field, in declaration order).
     spans: Box<[ColumnSpan]>,

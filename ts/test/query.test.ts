@@ -6,7 +6,7 @@
  * (renames are real), params still STRING-named. A multi-atom domain-equal
  * join with a param, negation as a safe anti-join, a union of two rules (set
  * semantics dedup), `count()` with implicit grouping, the recursive closure
- * and the finished-stratum aggregate fold as one stratified `program()`,
+ * and the finished-table aggregate fold as one query with `recursive`,
  * point membership (literal, param, and `pointIn` — the one spelling),
  * `allen` with a literal and a bound mask, ∈-set params, the or-tree,
  * deterministic lowering (same query built twice → deeply-equal IR), the
@@ -44,7 +44,6 @@ import { native } from "#native.ts"
 import { ALLEN } from "#query/atom.ts"
 import type { AnyQuery, Query, QueryParams, QueryRow } from "#query/lower.ts"
 import { lowerQuery, query } from "#query/lower.ts"
-import { program } from "#query/predicate.ts"
 import { decodeAnswers, wireParams } from "#query/run.ts"
 import type { Param, ParamsRecord } from "#query/scope.ts"
 import { v } from "#query/scope.ts"
@@ -280,7 +279,7 @@ describe("the query surface against a real store", function suite() {
 					const { id: x } = v(Account)
 					return r.match(Account, { id: x }).find({ x })
 				})
-		}, /unions domain-unequal fields/)
+		}, /a head column joins only class-equal slots/)
 
 		// The class-equal union stays writable: Account.holder is in the
 		// "Holder.id" class by law, so both rules feed one id space.
@@ -308,26 +307,30 @@ describe("the query surface against a real store", function suite() {
 		/**
 		 * Rule 0 seals c at Holder.id (class "Holder.id"); a second rule
 		 * binding c at the BARE Holder.rank would pollute every downstream
-		 * idb join (which class-checks against rule 0 alone): a rank value
+		 * id-space join (which class-checks against rule 0 alone): a rank value
 		 * equal to a holder id would make that holder "reachable". The same
 		 * bare-pairs-only-with-bare wall every reuse site enforces.
 		 */
 		assert.throws(function pollutedRecHead() {
-			program(Ledger, (p) => {
-				const reach = p.rec("reach")
-				reach.rule((r) => {
+			query(Ledger)
+				.recursive("reach", {
+					base: [
+						(r) => {
+							const { id: c } = v(Holder)
+							return r.match(Holder, { id: c }).find({ c })
+						}
+					],
+					rec: [
+						(r) => {
+							const { id: h, rank: c } = v(Holder)
+							return r.match(Holder, { id: h, rank: c }).find({ c })
+						}
+					]
+				})
+				.rule((r) => {
 					const { id: c } = v(Holder)
-					return r.match(Holder, { id: c }).find({ c })
+					return r.match(Holder, { id: c }).interior("reach", { c }).find({ c })
 				})
-				reach.rule((r) => {
-					const { id: h, rank: c } = v(Holder)
-					return r.match(Holder, { id: h, rank: c }).find({ c })
-				})
-				return p.output((r) => {
-					const { id: c } = v(Holder)
-					return r.match(Holder, { id: c }).idb(reach, { c }).find({ c })
-				})
-			})
 		}, /joins only class-equal slots/)
 	})
 
@@ -351,26 +354,29 @@ describe("the query surface against a real store", function suite() {
 		assert.ok(pin)
 	})
 
-	test("the recursive closure runs as one stratified program", function closure() {
-		const reachable = program(Ledger, (p) => {
-			const reach = p.rec("reach")
-			const seeded = reach
-				.rule((r) => {
-					const { id: c } = v(Holder)
-					return r
-						.match(Holder, { id: c })
-						.where(r.eq(c, r.param("root")))
-						.find({ c })
-				})
-				.rule((r) => {
-					const { child: c, parent: m } = v(Parent)
-					return r.match(Parent, { child: c, parent: m }).idb(reach, { c: m }).find({ c })
-				})
-			return p.output((r) => {
-				const { id: c } = v(Holder)
-				return r.match(Holder, { id: c }).idb(seeded, { c }).find({ c })
+	test("the recursive closure runs as one query", function closure() {
+		const reachable = query(Ledger)
+			.recursive("reach", {
+				base: [
+					(r) => {
+						const { id: c } = v(Holder)
+						return r
+							.match(Holder, { id: c })
+							.where(r.eq(c, r.param("root")))
+							.find({ c })
+					}
+				],
+				rec: [
+					(r) => {
+						const { child: c, parent: m } = v(Parent)
+						return r.match(Parent, { child: c, parent: m }).interior("reach", { c: m }).find({ c })
+					}
+				]
 			})
-		})
+			.rule((r) => {
+				const { id: c } = v(Holder)
+				return r.match(Holder, { id: c }).interior("reach", { c }).find({ c })
+			})
 		type ParamsPin = Expect<Equal<QueryParams<typeof reachable>, { readonly root: bigint }>>
 		const fromAda = run(reachable, { root: ids.ada })
 		assert.deepEqual(
@@ -395,29 +401,32 @@ describe("the query surface against a real store", function suite() {
 		assert.ok(pin)
 	})
 
-	test("a finished-stratum aggregate fold sums over the closure (recipe 25's form)", function finishedStratumFold() {
-		const reachBalance = program(Ledger, (p) => {
-			const reach = p.rec("reach")
-			const seeded = reach
-				.rule((r) => {
-					const { id: c } = v(Holder)
-					return r
-						.match(Holder, { id: c })
-						.where(r.eq(c, r.param("root")))
-						.find({ c })
-				})
-				.rule((r) => {
-					const { child: c, parent: m } = v(Parent)
-					return r.match(Parent, { child: c, parent: m }).idb(reach, { c: m }).find({ c })
-				})
-			return p.output((r) => {
+	test("a finished-rec aggregate fold sums over the closure (recipe 25's form)", function finishedRecFold() {
+		const reachBalance = query(Ledger)
+			.recursive("reach", {
+				base: [
+					(r) => {
+						const { id: c } = v(Holder)
+						return r
+							.match(Holder, { id: c })
+							.where(r.eq(c, r.param("root")))
+							.find({ c })
+					}
+				],
+				rec: [
+					(r) => {
+						const { child: c, parent: m } = v(Parent)
+						return r.match(Parent, { child: c, parent: m }).interior("reach", { c: m }).find({ c })
+					}
+				]
+			})
+			.rule((r) => {
 				const { holder: a, balance: m } = v(Account)
 				return r
 					.match(Account, { holder: a, balance: m })
-					.idb(seeded, { c: a })
+					.interior("reach", { c: a })
 					.find({ m: r.sum(m) })
 			})
-		})
 		type RowPin = Expect<Equal<QueryRow<typeof reachBalance>, { readonly m: bigint }>>
 		const total = run(reachBalance, { root: ids.ada })
 		assert.deepEqual(total, [{ m: 24n }], "5 + 7 (ada) + 3 (grace) + 9 (kurt)")
@@ -711,8 +720,8 @@ describe("the query surface against a real store", function suite() {
 				.find({ x: a.child, y: b.child })
 		})
 		const lowered = lowerQuery(twoParents)
-		const outputRule = lowered.predicates[lowered.output]?.rules[0]
-		assert.ok(outputRule !== undefined, "the output predicate carries the one rule")
+		const outputRule = lowered.rules[0]
+		assert.ok(outputRule !== undefined, "the main query carries the one rule")
 		const findVars = outputRule.finds.map(function idOf(entry) {
 			assert.equal(entry.kind, "var", "both find entries project a variable")
 			return entry.kind === "var" ? entry.var : -1
@@ -1103,7 +1112,8 @@ describe("the query surface against a real store", function suite() {
 			const { id: acct, holder: h } = v(Account)
 			return r.match(Account, { id: acct, holder: h }).match(Holder, { id: h }).find({ acct })
 		})
-		assert.equal(lowerQuery(sameClass).predicates.length, 1)
+		assert.equal(lowerQuery(sameClass).interiors.length, 0)
+		assert.equal(lowerQuery(sameClass).rec, null)
 
 		// 2. Cross-class pairing fails at the use site (compile) and at construction (runtime twin).
 		assert.throws(function crossClass() {
@@ -1149,126 +1159,209 @@ describe("the query surface against a real store", function suite() {
 	})
 
 	test("RECURSION FENCES: the cut is typed and the quarantine unwritable", function recursionFences() {
-		// Mutual recursion is unwritable — a recursive rule's idb accepts only the rec itself.
-		assert.throws(function mutualRecursion() {
-			program(Ledger, (p) => {
-				const a = p.rec("a")
-				const b = p.rec("b")
-				a.rule((r) => {
-					const { child: c, parent: m } = v(Parent)
-					return (
-						r
-							.match(Parent, { child: c, parent: m })
-							// @ts-expect-error — the self-recursion-only cut: rec "a" cannot reference rec "b"
-							.idb(b, { h: m })
-							.find({ c })
-					)
+		// Two recursive names are unwritable — this cut admits one rec SCC.
+		assert.throws(function twoRecursives() {
+			query(Ledger)
+				.recursive("a", {
+					base: [
+						(r) => {
+							const { id: h } = v(Holder)
+							return r.match(Holder, { id: h }).find({ h })
+						}
+					],
+					rec: [
+						(r) => {
+							const { child: c, parent: m } = v(Parent)
+							return r.match(Parent, { child: c, parent: m }).interior("a", { h: m }).find({ h: c })
+						}
+					]
 				})
-				b.rule((r) => {
+				.recursive("b", {
+					base: [
+						(r) => {
+							const { id: h } = v(Holder)
+							return r.match(Holder, { id: h }).find({ h })
+						}
+					],
+					rec: [
+						(r) => {
+							const { child: c, parent: m } = v(Parent)
+							return r.match(Parent, { child: c, parent: m }).interior("b", { h: m }).find({ h: c })
+						}
+					]
+				})
+		}, /second recursive/)
+
+		assert.throws(function interiorAfterRecursive() {
+			query(Ledger)
+				.recursive("reach", {
+					base: [
+						(r) => {
+							const { id: h } = v(Holder)
+							return r.match(Holder, { id: h }).find({ h })
+						}
+					],
+					rec: [
+						(r) => {
+							const { child: c, parent: m } = v(Parent)
+							return r.match(Parent, { child: c, parent: m }).interior("reach", { h: m }).find({ h: c })
+						}
+					]
+				})
+				.interior("mid", (r) => {
 					const { id: h } = v(Holder)
 					return r.match(Holder, { id: h }).find({ h })
 				})
-				return p.output((r) => {
-					const { id: h } = v(Holder)
-					return r.match(Holder, { id: h }).idb(b, { h }).find({ h })
-				})
-			})
-		}, /self-recursion-only cut/)
+		}, /interior after recursive/)
 
-		// An aggregate (or the measure) in a recursive head is unwritable — the strata quarantine.
-		assert.throws(function aggregateThroughCycle() {
-			program(Ledger, (p) => {
-				const reach = p.rec("reach")
-				reach.rule((r) => {
-					const { holder: h, balance: b } = v(Account)
-					return (
-						r
-							.match(Account, { holder: h, balance: b })
-							// @ts-expect-error — a recursive head projects bound variables only
-							.find({ b: r.sum(b) })
-					)
-				})
-				return p.output((r) => {
+		assert.throws(function interiorAfterMain() {
+			query(Ledger)
+				.rule((r) => {
 					const { id: h } = v(Holder)
-					return r.match(Holder, { id: h }).idb(reach, { b: h }).find({ h })
+					return r.match(Holder, { id: h }).find({ h })
 				})
+				// @ts-expect-error — interiors precede main rules
+				.interior("mid", (r) => {
+					const { id: h } = v(Holder)
+					return r.match(Holder, { id: h }).find({ h })
+				})
+		}, /after a main rule/)
+
+		assert.throws(function duplicateInterior() {
+			query(Ledger)
+				.interior("mid", (r) => {
+					const { id: h } = v(Holder)
+					return r.match(Holder, { id: h }).find({ h })
+				})
+				.interior("mid", (r) => {
+					const { id: h } = v(Holder)
+					return r.match(Holder, { id: h }).find({ h })
+				})
+		}, /already declared/)
+
+		// An aggregate (or the measure) in a recursive head is unwritable.
+		assert.throws(function aggregateThroughCycle() {
+			query(Ledger).recursive("reach", {
+				base: [
+					(r) => {
+						const { holder: h, balance: b } = v(Account)
+						return (
+							r
+								.match(Account, { holder: h, balance: b })
+								// @ts-expect-error — a recursive head projects bound variables only
+								.find({ b: r.sum(b) })
+						)
+					}
+				],
+				rec: [
+					(r) => {
+						const { child: c, parent: m } = v(Parent)
+						return r.match(Parent, { child: c, parent: m }).interior("reach", { b: m }).find({ b: c })
+					}
+				]
 			})
 		}, /projects bound variables only/)
 
-		// An idb atom GROUNDS its variables (019: a positive occurrence, the
-		// engine's own representation) — the idb-only identity projection of a
-		// finished stratum builds with no re-grounding join. The class wall
-		// stands: an idb binding still joins only class-equal slots.
-		const identityProjection = program(Ledger, (p) => {
-			const reach = p.rec("reach")
-			const seeded = reach.rule((r) => {
-				const { id: h } = v(Holder)
-				return r.match(Holder, { id: h }).find({ h })
+		// An interior atom GROUNDS its variables — the interior-only identity
+		// projection of a finished rec builds with no re-grounding join. The
+		// class wall stands: an interior binding still joins only class-equal slots.
+		const identityProjection = query(Ledger)
+			.recursive("reach", {
+				base: [
+					(r) => {
+						const { id: h } = v(Holder)
+						return r.match(Holder, { id: h }).find({ h })
+					}
+				],
+				rec: [
+					(r) => {
+						const { child: c, parent: m } = v(Parent)
+						return r.match(Parent, { child: c, parent: m }).interior("reach", { h: m }).find({ h: c })
+					}
+				]
 			})
-			return p.output((r) => {
+			.rule((r) => {
 				const { id: h } = v(Holder)
-				return r.idb(seeded, { h }).find({ h })
+				return r.interior("reach", { h }).find({ h })
 			})
-		})
-		assert.ok(identityProjection, "the idb-only output rule is spellable — no re-grounding join exists")
-		assert.throws(function classUnequalIdbVar() {
-			program(Ledger, (p) => {
-				const reach = p.rec("reach")
-				const seeded = reach.rule((r) => {
-					const { id: h } = v(Holder)
-					return r.match(Holder, { id: h }).find({ h })
+		assert.ok(identityProjection, "the interior-only main rule is spellable — no re-grounding join exists")
+		assert.throws(function classUnequalInteriorVar() {
+			query(Ledger)
+				.recursive("reach", {
+					base: [
+						(r) => {
+							const { id: h } = v(Holder)
+							return r.match(Holder, { id: h }).find({ h })
+						}
+					],
+					rec: [
+						(r) => {
+							const { child: c, parent: m } = v(Parent)
+							return r.match(Parent, { child: c, parent: m }).interior("reach", { h: m }).find({ h: c })
+						}
+					]
 				})
-				return p.output((r) => {
+				.rule((r) => {
 					const { id: acct } = v(Account)
-					return (
-						r
-							// @ts-expect-error — Account.id is class-unequal to reach's Holder.id head column
-							.idb(seeded, { h: acct })
-							.find({ h: acct })
-					)
+					return r.interior("reach", { h: acct }).find({ h: acct })
 				})
-			})
 		}, /joins the variable/)
 
-		// Negation of a finished stratum binds nothing — its variables must be
+		// Negation of a finished table binds nothing — its variables must be
 		// positively bound (the same safety rule as EDB negation)...
-		assert.throws(function unboundNegatedIdbVar() {
-			program(Ledger, (p) => {
-				const reach = p.rec("reach")
-				const seeded = reach.rule((r) => {
-					const { id: h } = v(Holder)
-					return r.match(Holder, { id: h }).find({ h })
+		assert.throws(function unboundNegatedInteriorVar() {
+			query(Ledger)
+				.recursive("reach", {
+					base: [
+						(r) => {
+							const { id: h } = v(Holder)
+							return r.match(Holder, { id: h }).find({ h })
+						}
+					],
+					rec: [
+						(r) => {
+							const { child: c, parent: m } = v(Parent)
+							return r.match(Parent, { child: c, parent: m }).interior("reach", { h: m }).find({ h: c })
+						}
+					]
 				})
-				return p.output((r) => {
+				.rule((r) => {
 					const { id: h } = v(Holder)
 					const { id: ghost } = v(Holder)
 					return r
 						.match(Holder, { id: h })
-						.where(r.not(seeded, { h: ghost }))
+						.where(r.not("reach", { h: ghost }))
 						.find({ h })
 				})
-			})
-		}, /negated idb reach names the variable/)
+		}, /negated interior reach names the variable/)
 		// ...and inside a recursive rule it is negation through the cycle, refused.
 		assert.throws(function negationThroughCycle() {
-			program(Ledger, (p) => {
-				const reach = p.rec("reach")
-				reach.rule((r) => {
-					const { id: h } = v(Holder)
-					return r.match(Holder, { id: h }).where(r.not(reach, { h })).find({ h })
+			query(Ledger)
+				.recursive("reach", {
+					base: [
+						(r) => {
+							const { id: h } = v(Holder)
+							return r.match(Holder, { id: h }).find({ h })
+						}
+					],
+					rec: [
+						(r) => {
+							const { id: h } = v(Holder)
+							return r.match(Holder, { id: h }).where(r.not("reach", { h })).find({ h })
+						}
+					]
 				})
-				return p.output((r) => {
+				.rule((r) => {
 					const { id: h } = v(Holder)
-					return r.idb(reach, { h }).find({ h })
+					return r.interior("reach", { h }).find({ h })
 				})
-			})
 		}, /negation through the cycle/)
 
-		// idb in a plain query is a construction error (and the scope carries no idb to spell).
 		const plain = query(Ledger).rule((r) => {
 			const { id: h } = v(Holder)
 			return r.match(Holder, { id: h }).find({ h })
 		})
-		assert.equal("idb" in plain.data, false, "a plain query's data carries rules, not predicates")
+		assert.equal(plain.data.interiors.length, 0, "a plain query carries no interiors")
+		assert.equal(plain.data.rec, null, "a plain query carries no rec")
 	})
 })

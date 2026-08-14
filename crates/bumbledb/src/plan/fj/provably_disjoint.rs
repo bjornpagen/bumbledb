@@ -57,7 +57,7 @@ pub fn provably_disjoint_rules(
         .iter()
         .filter(|occurrence| occurrence.role.participates())
         .flat_map(|occurrence| {
-            // Candidate pins name stored relations only: an `Idb`
+            // Candidate pins name stored relations only: an `Interior`
             // occurrence's extension is execution-local, so its pinned
             // literals prove nothing about cross-rule head collisions.
             let stored = occurrence.source.edb();

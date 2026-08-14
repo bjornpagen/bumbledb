@@ -18,8 +18,8 @@
 use bumbledb::schema::ValidateDescriptor as _;
 use std::collections::BTreeSet;
 
-use bumbledb::ir::render::{render, render_program};
-use bumbledb::ir::{Program, Value};
+use bumbledb::ir::Value;
+use bumbledb::ir::render::render;
 use bumbledb::{
     AnswerValue, Answers, BindValue, Db, Fact, ParamArg, PreparedQuery, Query, Schema, Snapshot,
     Theory,
@@ -63,7 +63,7 @@ macro_rules! recipe {
             /// recipe's theory and renders it — the `pin()` discipline.
             pub fn pin() -> Vec<String> {
                 crate::pin_all(concat!("cookbook-pin-", stringify!($m)), $theory, &[$(
-                    crate::PinnedQuery::from(bumbledb_query::query!($theory { $($q)* }))
+                    bumbledb_query::query!($theory { $($q)* })
                 ),*])
             }
         }
@@ -561,11 +561,11 @@ recipe!(r24, Closure, {
 }, queries {
     children: { (c) | Parent(child: c, parent in ?frontier); }
         => "(v0) | Parent(child: v0, parent in ?0);";
-    native: { reach(c) | Node(id: c), c == ?root;
-              reach(c) | Parent(child: c, parent: m), reach(m);
+    native: { recursive reach(c) | Node(id: c), c == ?root;
+              recursive reach(c) | Parent(child: c, parent: m), reach(m);
               (c) | reach(c); }
-        => "p0(v0) | Node(id: v0), v0 == ?0;\n\
-            p0(v0) | Parent(child: v0, parent: v1), p0(v1);\n\
+        => "recursive p0(v0) | Node(id: v0), v0 == ?0;\n\
+            recursive p0(v0) | Parent(child: v0, parent: v1), p0(v1);\n\
             (v0) | p0(v0);";
 });
 
@@ -585,11 +585,11 @@ recipe!(r25, Accounts, {
     AccountParent(parent) <= Account(id);
     Posting(account) <= Account(id);
 }, queries {
-    native: { sub(a) | Account(id: a), a == ?root;
-              sub(a) | AccountParent(child: a, parent: p), sub(p);
+    native: { recursive sub(a) | Account(id: a), a == ?root;
+              recursive sub(a) | AccountParent(child: a, parent: p), sub(p);
               (total: Sum(minor)) | Posting(id, account: a, minor), sub(a); }
-        => "p0(v0) | Account(id: v0), v0 == ?0;\n\
-            p0(v0) | AccountParent(child: v0, parent: v1), p0(v1);\n\
+        => "recursive p0(v0) | Account(id: v0), v0 == ?0;\n\
+            recursive p0(v0) | AccountParent(child: v0, parent: v1), p0(v1);\n\
             (Sum(v2)) | Posting(id: v0, account: v1, minor: v2), p0(v1);";
     children: { (c) | AccountParent(child: c, parent in ?frontier); }
         => "(v0) | AccountParent(child: v0, parent in ?0);";
@@ -848,7 +848,7 @@ fn doc_headings() -> Vec<(usize, String)> {
 /// One doc recipe's `rust` fences, classified: the ONE schema fence (starts
 /// `bumbledb::schema!`) and its query fences (`let <name> = query!(...)`),
 /// in doc order — a query fence may precede its schema fence (recipe 25's
-/// engine-native program sits in the prose above the block).
+/// engine-native recursive query sits in the prose above the block).
 struct DocRecipe {
     number: usize,
     schema: String,
@@ -1556,24 +1556,8 @@ fn r29_coalescing_insensitivity_and_width_by_type() {
     assert!(matches!(error, bumbledb::Error::FactShape(_)));
 }
 
-/// One compiled doc query, either shape `query!` lowers to: the bare-rule
-/// `ir::Query` or the named-head `ir::Program` (recipe 24/25's closures).
-enum PinnedQuery {
-    Query(Query),
-    Program(Program),
-}
-
-impl From<Query> for PinnedQuery {
-    fn from(query: Query) -> Self {
-        Self::Query(query)
-    }
-}
-
-impl From<Program> for PinnedQuery {
-    fn from(program: Program) -> Self {
-        Self::Program(program)
-    }
-}
+/// One compiled doc query. Every `query!` lowers to `ir::Query`.
+type PinnedQuery = Query;
 
 /// Renders after proving each query real: every query fence of one recipe,
 /// prepared against one `Db` of its theory (prepare runs the validation
@@ -1587,15 +1571,9 @@ fn pin_all<S: Theory + Copy>(tag: &str, theory: S, queries: &[PinnedQuery]) -> V
     let schema: Schema = theory.descriptor().validate().expect("a landed theory");
     queries
         .iter()
-        .map(|pinned| match pinned {
-            PinnedQuery::Query(query) => {
-                db.prepare(query).expect("the cookbook query validates");
-                render(&schema, query)
-            }
-            PinnedQuery::Program(program) => {
-                db.prepare(program).expect("the cookbook program validates");
-                render_program(&schema, program)
-            }
+        .map(|query| {
+            db.prepare(query).expect("the cookbook query validates");
+            render(&schema, query)
         })
         .collect()
 }
@@ -1603,7 +1581,7 @@ fn pin_all<S: Theory + Copy>(tag: &str, theory: S, queries: &[PinnedQuery]) -> V
 /// Every doc query fence compiles via `query!`, prepares against a real
 /// store of its recipe's schema, and round-trips through `ir::render` to
 /// its pinned golden — the `pin()` law over the whole query roster,
-/// recipe 24/25's programs included.
+/// recipe 24/25's recursive queries included.
 #[test]
 fn every_doc_query_compiles_prepares_and_round_trips() {
     for (i, recipe) in ROSTER.iter().enumerate() {
@@ -1802,12 +1780,11 @@ fn r24_closure_idiom_reaches_the_exact_set() {
     });
     let mut prepared = db.prepare(&children).expect("prepare the frontier query");
     // The engine-native form (recipe 24's second dialect): the same
-    // closure as one stratified program — the named head declares the
-    // predicate, the ?root param seeds it, the bare rule is the output
-    // — executed whole under the fixpoint driver.
+    // closure as one linear rec — `recursive` seeds and steps, the bare
+    // rule is main — executed whole under the reach driver.
     let native = query!(r24::Closure {
-        reach(c) | Node(id: c), c == ?root;
-        reach(c) | Parent(child: c, parent: m), reach(m);
+        recursive reach(c) | Node(id: c), c == ?root;
+        recursive reach(c) | Parent(child: c, parent: m), reach(m);
         (c) | reach(c);
     });
     let mut native_q = db
@@ -1901,13 +1878,12 @@ fn r25_subtree_rollup_matches_the_hand_computed_sum() {
     });
     let mut frontier_q = db.prepare(&children).expect("prepare the frontier query");
     let mut rollup_q = db.prepare(&rollup).expect("prepare the rollup");
-    // The engine-native form (recipe 25's second dialect): the closure
-    // stratum converges first, then the output's fold runs once over the
-    // finished subtree — aggregation OF a lower stratum, the one shape
-    // the strata roster admits.
+    // The engine-native form (recipe 25's second dialect): the rec
+    // converges first, then the main fold runs once over the finished
+    // subtree — aggregation of a finished table, not through the cycle.
     let native = query!(r25::Accounts {
-        sub(a) | Account(id: a), a == ?root;
-        sub(a) | AccountParent(child: a, parent: p), sub(p);
+        recursive sub(a) | Account(id: a), a == ?root;
+        recursive sub(a) | AccountParent(child: a, parent: p), sub(p);
         (total: Sum(minor)) | Posting(id, account: a, minor), sub(a);
     });
     let mut native_q = db
@@ -1949,7 +1925,7 @@ fn r25_subtree_rollup_matches_the_hand_computed_sum() {
         let all = reachable(snap, &mut frontier_q, ids[0].0)?;
         assert_eq!(sum_over(snap, &mut rollup_q, &all)?, 16_432);
         // Both dialects fold one subtree — the composed idiom and the
-        // engine-native program agree, root for root.
+        // engine-native recursive query agree, root for root.
         assert_eq!(native_sum(snap, &mut native_q, ids[1].0)?, 6_432);
         assert_eq!(native_sum(snap, &mut native_q, ids[0].0)?, 16_432);
         Ok(())

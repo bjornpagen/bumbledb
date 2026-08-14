@@ -1,68 +1,33 @@
-//! The recursive-shape arm (the shipping law's generator row,
-//! `docs/architecture/60-validation.md` § differential and property
-//! tests):
-//! seeded random `Program`s over the org tree — `OrgParent(child,
-//! parent)` read as edges, `Org` as the node vocabulary. **Closure
-//! sizes are bounded by construction** (the cost-bound rule's sibling):
-//! the corpus org relation IS a binary tree (`child = i + 1`,
-//! `parent = child / 2`), so every ancestor set is a root path of depth
-//! `log₂ orgs` and every generated fixpoint stays inside
-//! `orgs × log₂ orgs` tuples. Predicate counts are bounded at 2–3 and
-//! recursive atoms per rule at 1–2 — programs stay query-shaped, like
-//! everything the caps defend.
-//!
-//! Six variants, one per coverage-contract row (asserted ≥ 1 per run by
-//! the querygen coverage test, which also runs every program through
-//! the ENGINE's fixpoint driver against the naive fixpoint and — where
-//! the `WITH RECURSIVE` gate admits it — through `SQLite`, comparing
-//! answer sets):
-//! linear self-recursion, a mutual pair, a non-linear rule, negation of
-//! a lower stratum, a fold over a recursive predicate from a higher
-//! stratum, and the empty-Δ-at-round-1 boundary (constructed: the
-//! reachable set below a node whose children are leaves — round one
-//! derives nothing, by the tree's own shape).
-//!
-//! **The budget-trip row is ACTIVE and constructed, never hoped for**
-//! ([`RecursiveCoverage::budget_trip`]): the coverage test takes a
-//! drawn linear closure, tightens the prepared query's fixpoint budget
-//! to zero rounds (`PreparedQuery::set_fixpoint_budget`), and asserts
-//! the typed `Error::FixpointBudgetExceeded` — then widens the budget
-//! and asserts the same prepared query executes clean (the snapshot
-//! stays usable; `MeasureOfRay`'s error model).
-//!
-//! Entropy rides the ordinary generator seam — one [`Rng`] in, draws
-//! by range, `corpus_gen::rng` untouched.
+//! Recursive and interiors-heavy Query shapes for the differential /
+//! coverage generators. Mutual and nonlinear are unwritable this cut.
 
 use bumbledb::{
-    AggOp, Atom, AtomSource, FieldId, FindTerm, HeadTerm, PredId, PredicateDef, Program, Rule,
+    AggOp, Atom, AtomSource, FieldId, FindTerm, HeadTerm, Interior, InteriorId, Query, Rec, Rule,
     Term, Value, VarId,
 };
 
 use crate::corpus_gen::{GenConfig, Rng};
 use crate::querygen::target::{Domains, ids};
 
-/// Which recursive-shape variant a program is — the generator's intent;
-/// every structural row is re-derived from the program itself by the
-/// coverage tally ([`recursive_coverage`]), and the one corpus-content
-/// row (the empty first Δ) is dynamically verified by the coverage
-/// test against the naive fixpoint.
+/// Which shape a generated query is — the generator's intent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RecursiveVariant {
-    /// Linear self-recursion: the ancestor closure, one recursive atom.
+    /// Linear self-recursion: the ancestor closure, one rec atom.
     Linear,
-    /// A mutual pair: even/odd ancestor-path length, one SCC of two.
-    Mutual,
-    /// A non-linear rule: `p(x, z) | p(x, y), p(y, z)` — two recursive
-    /// atoms.
-    NonLinear,
-    /// Negation OF a lower stratum: nodes outside the finished closure.
+    /// Negation of the finished rec **in main**.
     Negation,
-    /// A fold over a recursive predicate from a strictly higher
-    /// stratum: `Count` per node over the finished closure.
+    /// A fold over the finished rec on main.
     Fold,
-    /// The empty-Δ-at-round-1 boundary: the reachable set below a node
-    /// whose children are leaves — the base round IS the fixpoint.
+    /// The empty-Δ-at-round-1 boundary.
     EmptyDelta,
+    /// Primer-shaped `reach(x, x)`: main is the diagonal.
+    PrimerReachXx,
+    /// Deep interior DAG (interior reading interior).
+    InteriorsDag,
+    /// Main anti-joins an earlier interior.
+    InteriorsAntiJoin,
+    /// More than 16 interiors.
+    ManyInteriors,
 }
 
 fn v(id: u16) -> Term {
@@ -73,7 +38,6 @@ fn fv(id: u16) -> FindTerm {
     FindTerm::Var(VarId(id))
 }
 
-/// `OrgParent(child = vars[0], parent = vars[1])` — the edge atom.
 fn edge(child: Term, parent: Term) -> Atom {
     Atom {
         source: AtomSource::Edb(ids::ORG_PARENT),
@@ -84,10 +48,9 @@ fn edge(child: Term, parent: Term) -> Atom {
     }
 }
 
-/// An `Idb` atom over positional head columns.
-fn idb(pred: u16, bindings: &[(u16, Term)]) -> Atom {
+fn interior(id: u32, bindings: &[(u16, Term)]) -> Atom {
     Atom {
-        source: AtomSource::Idb(PredId(pred)),
+        source: AtomSource::Interior(InteriorId(id)),
         bindings: bindings
             .iter()
             .map(|(field, term)| (FieldId(*field), term.clone()))
@@ -104,349 +67,244 @@ fn projection(finds: Vec<FindTerm>, atoms: Vec<Atom>, negated: Vec<Atom>) -> Rul
     }
 }
 
-/// The ancestor closure predicate: `p{self}(x, a) | OrgParent(x, a);
-/// p{self}(x, a) | OrgParent(x, y), p{self}(y, a)` — linear, one
-/// recursive atom, projection-shaped.
-fn closure_predicate(this: u16) -> PredicateDef {
-    PredicateDef {
+fn identity_main(arity: u16, rec_id: u32) -> Rule {
+    projection(
+        (0..arity).map(fv).collect(),
+        vec![interior(
+            rec_id,
+            &(0..arity)
+                .map(|i| (i, v(i)))
+                .collect::<Vec<_>>(),
+        )],
+        vec![],
+    )
+}
+
+fn closure_rec() -> Rec {
+    Rec {
         head: vec![HeadTerm::Var, HeadTerm::Var],
-        rules: vec![
-            projection(vec![fv(0), fv(1)], vec![edge(v(0), v(1))], vec![]),
-            projection(
-                vec![fv(0), fv(2)],
-                vec![edge(v(0), v(1)), idb(this, &[(0, v(1)), (1, v(2))])],
-                vec![],
-            ),
-        ],
+        base: vec![projection(vec![fv(0), fv(1)], vec![edge(v(0), v(1))], vec![])],
+        rec: vec![projection(
+            vec![fv(0), fv(2)],
+            vec![edge(v(0), v(1)), interior(0, &[(0, v(1)), (1, v(2))])],
+            vec![],
+        )],
     }
 }
 
-/// A drawn org id — closure selections stay in-domain, so answers are
-/// real subsets.
 fn org_literal(rng: &mut Rng, domains: &Domains) -> Term {
     Term::Literal(Value::U64(rng.range(domains.orgs)))
 }
 
-/// One random recursive program and its variant tag. Predicate counts
-/// 2–3, recursive atoms per rule 1–2, closure sizes bounded by the org
-/// tree (module doc).
-pub fn random_program(rng: &mut Rng, cfg: GenConfig) -> (Program, RecursiveVariant) {
+/// One random interiors/rec Query and its variant tag.
+pub fn random_reach_query(rng: &mut Rng, cfg: GenConfig) -> (Query, RecursiveVariant) {
     let domains = Domains::of(cfg.scale);
-    let variant = match rng.range(6) {
+    let variant = match rng.range(8) {
         0 => RecursiveVariant::Linear,
-        1 => RecursiveVariant::Mutual,
-        2 => RecursiveVariant::NonLinear,
-        3 => RecursiveVariant::Negation,
-        4 => RecursiveVariant::Fold,
-        _ => RecursiveVariant::EmptyDelta,
+        1 => RecursiveVariant::Negation,
+        2 => RecursiveVariant::Fold,
+        3 => RecursiveVariant::EmptyDelta,
+        4 => RecursiveVariant::PrimerReachXx,
+        5 => RecursiveVariant::InteriorsDag,
+        6 => RecursiveVariant::InteriorsAntiJoin,
+        _ => RecursiveVariant::ManyInteriors,
     };
-    let program = match variant {
+    let query = match variant {
         RecursiveVariant::Linear => linear(rng, &domains),
-        RecursiveVariant::Mutual => mutual(rng),
-        RecursiveVariant::NonLinear => non_linear(rng, &domains),
         RecursiveVariant::Negation => negation(rng),
         RecursiveVariant::Fold => fold(rng),
         RecursiveVariant::EmptyDelta => empty_delta(rng, &domains),
+        RecursiveVariant::PrimerReachXx => primer_reach_xx(),
+        RecursiveVariant::InteriorsDag => interiors_dag(),
+        RecursiveVariant::InteriorsAntiJoin => interiors_anti_join(),
+        RecursiveVariant::ManyInteriors => many_interiors(),
     };
-    (program, variant)
+    (query, variant)
 }
 
-/// Linear self-recursion, 2–3 predicates: the closure, a selecting
-/// consumer (`p1(x) | p0(x, a = lit)` — descendants of a drawn org),
-/// and — half the time — a third predicate joining the vocabulary
-/// (`p2(x) | Org(id = x), p1(x)`).
-fn linear(rng: &mut Rng, domains: &Domains) -> Program {
+fn linear(rng: &mut Rng, domains: &Domains) -> Query {
     let ancestor = org_literal(rng, domains);
-    let mut predicates = vec![
-        closure_predicate(0),
-        PredicateDef {
-            head: vec![HeadTerm::Var],
-            rules: vec![projection(
-                vec![fv(0)],
-                vec![idb(0, &[(0, v(0)), (1, ancestor)])],
-                vec![],
-            )],
-        },
-    ];
-    let mut output = PredId(1);
-    if rng.chance(1, 2) {
-        predicates.push(PredicateDef {
-            head: vec![HeadTerm::Var],
-            rules: vec![projection(
-                vec![fv(0)],
-                vec![
-                    Atom {
-                        source: AtomSource::Edb(ids::ORG),
-                        bindings: vec![(ids::org::ID, v(0))],
-                    },
-                    idb(1, &[(0, v(0))]),
-                ],
-                vec![],
-            )],
-        });
-        output = PredId(2);
-    }
-    Program { predicates, output }
-}
-
-/// The mutual pair — one SCC of two predicates iterating jointly:
-/// `even(x, a) | OrgParent(x, y), odd(y, a)` beside
-/// `odd(x, a) | OrgParent(x, a); odd(x, a) | OrgParent(x, y),
-/// even(y, a)`; the output side is drawn.
-fn mutual(rng: &mut Rng) -> Program {
-    let even = PredicateDef {
-        head: vec![HeadTerm::Var, HeadTerm::Var],
+    Query {
+        interiors: vec![],
+        rec: Some(closure_rec()),
+        head: vec![HeadTerm::Var],
         rules: vec![projection(
-            vec![fv(0), fv(2)],
-            vec![edge(v(0), v(1)), idb(1, &[(0, v(1)), (1, v(2))])],
+            vec![fv(0)],
+            vec![interior(0, &[(0, v(0)), (1, ancestor)])],
             vec![],
         )],
-    };
-    let odd = PredicateDef {
-        head: vec![HeadTerm::Var, HeadTerm::Var],
-        rules: vec![
-            projection(vec![fv(0), fv(1)], vec![edge(v(0), v(1))], vec![]),
-            projection(
-                vec![fv(0), fv(2)],
-                vec![edge(v(0), v(1)), idb(0, &[(0, v(1)), (1, v(2))])],
-                vec![],
-            ),
-        ],
-    };
-    Program {
-        predicates: vec![even, odd],
-        output: PredId(u16::from(rng.chance(1, 2))),
     }
 }
 
-/// The non-linear closure — two recursive atoms in one rule:
-/// `p0(x, z) | p0(x, y), p0(y, z)` beside the edge base, plus the
-/// selecting consumer.
-fn non_linear(rng: &mut Rng, domains: &Domains) -> Program {
-    let ancestor = org_literal(rng, domains);
-    Program {
-        predicates: vec![
-            PredicateDef {
-                head: vec![HeadTerm::Var, HeadTerm::Var],
-                rules: vec![
-                    projection(vec![fv(0), fv(1)], vec![edge(v(0), v(1))], vec![]),
-                    projection(
-                        vec![fv(0), fv(2)],
-                        vec![
-                            idb(0, &[(0, v(0)), (1, v(1))]),
-                            idb(0, &[(0, v(1)), (1, v(2))]),
-                        ],
-                        vec![],
-                    ),
-                ],
-            },
-            PredicateDef {
-                head: vec![HeadTerm::Var],
-                rules: vec![projection(
-                    vec![fv(0)],
-                    vec![idb(0, &[(0, v(0)), (1, ancestor)])],
-                    vec![],
-                )],
-            },
-        ],
-        output: PredId(1),
-    }
-}
-
-/// Negation of a lower stratum: `p1(x) | Org(id = x), ¬p0(c = x)` — the
-/// negated column (ancestor side or descendant side) is drawn.
-fn negation(rng: &mut Rng) -> Program {
+fn negation(rng: &mut Rng) -> Query {
     let column = u16::from(rng.chance(1, 2));
-    Program {
-        predicates: vec![
-            closure_predicate(0),
-            PredicateDef {
-                head: vec![HeadTerm::Var],
-                rules: vec![projection(
-                    vec![fv(0)],
-                    vec![Atom {
-                        source: AtomSource::Edb(ids::ORG),
-                        bindings: vec![(ids::org::ID, v(0))],
-                    }],
-                    vec![idb(0, &[(column, v(0))])],
-                )],
-            },
-        ],
-        output: PredId(1),
+    Query {
+        interiors: vec![],
+        rec: Some(closure_rec()),
+        head: vec![HeadTerm::Var],
+        rules: vec![projection(
+            vec![fv(0)],
+            vec![Atom {
+                source: AtomSource::Edb(ids::ORG),
+                bindings: vec![(ids::org::ID, v(0))],
+            }],
+            vec![interior(0, &[(column, v(0))])],
+        )],
     }
 }
 
-/// A fold over the finished closure from a strictly higher stratum:
-/// `p1(x, Count) | p0(x, a)` — ancestor counts per node (or, drawn, the
-/// descendant counts through the other column).
-fn fold(rng: &mut Rng) -> Program {
+fn fold(rng: &mut Rng) -> Query {
     let grouped = u16::from(rng.chance(1, 2));
-    Program {
-        predicates: vec![
-            closure_predicate(0),
-            PredicateDef {
-                head: vec![HeadTerm::Var, HeadTerm::Aggregate(bumbledb::HeadOp::Count)],
-                rules: vec![Rule {
-                    finds: vec![
-                        fv(0),
-                        FindTerm::Aggregate {
-                            op: AggOp::Count,
-                            over: None,
-                        },
-                    ],
-                    atoms: vec![idb(0, &[(grouped, v(0)), (1 - grouped, v(1))])],
-                    negated: vec![],
-                    conditions: vec![],
-                }],
-            },
-        ],
-        output: PredId(1),
+    Query {
+        interiors: vec![],
+        rec: Some(closure_rec()),
+        head: vec![HeadTerm::Var, HeadTerm::Aggregate(bumbledb::HeadOp::Count)],
+        rules: vec![Rule {
+            finds: vec![
+                fv(0),
+                FindTerm::Aggregate {
+                    op: AggOp::Count,
+                    over: None,
+                },
+            ],
+            atoms: vec![interior(0, &[(grouped, v(0)), (1 - grouped, v(1))])],
+            negated: vec![],
+            conditions: vec![],
+        }],
     }
 }
 
-/// The empty-Δ-at-round-1 boundary, constructed: the reachable set
-/// below a node whose children are LEAVES of the org tree (`child =
-/// i + 1, parent = child / 2` — a node `p` with `2p < orgs ≤ 4p` has
-/// children and no grandchildren), so the recursive round derives
-/// nothing and the base round is the fixpoint.
-fn empty_delta(rng: &mut Rng, domains: &Domains) -> Program {
+fn empty_delta(rng: &mut Rng, domains: &Domains) -> Query {
     let lo = domains.orgs.div_ceil(4).max(1);
     let hi = domains.orgs / 2;
     let hub = lo + rng.range(hi.saturating_sub(lo).max(1));
-    Program {
-        predicates: vec![
-            PredicateDef {
-                head: vec![HeadTerm::Var],
-                rules: vec![
-                    projection(
-                        vec![fv(0)],
-                        vec![edge(v(0), Term::Literal(Value::U64(hub)))],
-                        vec![],
-                    ),
-                    projection(
-                        vec![fv(0)],
-                        vec![edge(v(0), v(1)), idb(0, &[(0, v(1))])],
-                        vec![],
-                    ),
-                ],
-            },
-            PredicateDef {
-                head: vec![HeadTerm::Var],
-                rules: vec![projection(vec![fv(0)], vec![idb(0, &[(0, v(0))])], vec![])],
-            },
-        ],
-        output: PredId(1),
+    Query {
+        interiors: vec![],
+        rec: Some(Rec {
+            head: vec![HeadTerm::Var],
+            base: vec![projection(
+                vec![fv(0)],
+                vec![edge(v(0), Term::Literal(Value::U64(hub)))],
+                vec![],
+            )],
+            rec: vec![projection(
+                vec![fv(0)],
+                vec![edge(v(0), v(1)), interior(0, &[(0, v(1))])],
+                vec![],
+            )],
+        }),
+        head: vec![HeadTerm::Var],
+        rules: vec![identity_main(1, 0)],
     }
 }
 
-/// The structural coverage rows, re-derived from the program itself
-/// (the coverage discipline: tags carry corpus-content facts only).
+fn primer_reach_xx() -> Query {
+    Query {
+        interiors: vec![],
+        rec: Some(closure_rec()),
+        head: vec![HeadTerm::Var],
+        rules: vec![projection(
+            vec![fv(0)],
+            vec![interior(0, &[(0, v(0)), (1, v(0))])],
+            vec![],
+        )],
+    }
+}
+
+fn interiors_dag() -> Query {
+    let copy = Interior {
+        head: vec![HeadTerm::Var, HeadTerm::Var],
+        rules: vec![projection(vec![fv(0), fv(1)], vec![edge(v(0), v(1))], vec![])],
+    };
+    let hop = Interior {
+        head: vec![HeadTerm::Var, HeadTerm::Var],
+        rules: vec![projection(
+            vec![fv(0), fv(2)],
+            vec![
+                interior(0, &[(0, v(0)), (1, v(1))]),
+                edge(v(1), v(2)),
+            ],
+            vec![],
+        )],
+    };
+    Query {
+        interiors: vec![copy, hop],
+        rec: None,
+        head: vec![HeadTerm::Var, HeadTerm::Var],
+        rules: vec![projection(
+            vec![fv(0), fv(1)],
+            vec![interior(1, &[(0, v(0)), (1, v(1))])],
+            vec![],
+        )],
+    }
+}
+
+fn interiors_anti_join() -> Query {
+    Query {
+        interiors: vec![Interior {
+            head: vec![HeadTerm::Var, HeadTerm::Var],
+            rules: vec![projection(vec![fv(0), fv(1)], vec![edge(v(0), v(1))], vec![])],
+        }],
+        rec: None,
+        head: vec![HeadTerm::Var],
+        rules: vec![projection(
+            vec![fv(0)],
+            vec![Atom {
+                source: AtomSource::Edb(ids::ORG),
+                bindings: vec![(ids::org::ID, v(0))],
+            }],
+            vec![interior(0, &[(0, v(0))])],
+        )],
+    }
+}
+
+fn many_interiors() -> Query {
+    let interiors = (0..17)
+        .map(|_| Interior {
+            head: vec![HeadTerm::Var, HeadTerm::Var],
+            rules: vec![projection(vec![fv(0), fv(1)], vec![edge(v(0), v(1))], vec![])],
+        })
+        .collect();
+    Query {
+        interiors,
+        rec: None,
+        head: vec![HeadTerm::Var, HeadTerm::Var],
+        rules: vec![projection(
+            vec![fv(0), fv(1)],
+            vec![interior(16, &[(0, v(0)), (1, v(1))])],
+            vec![],
+        )],
+    }
+}
+
+/// Structural coverage rows, re-derived from the Query.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct RecursiveCoverage {
-    /// Programs generated.
-    pub programs: u64,
-    /// Some rule reads its own predicate through exactly one atom.
+    pub queries: u64,
     pub linear_self_recursion: u64,
-    /// Two distinct predicates read each other (one SCC of two).
-    pub mutual_pair: u64,
-    /// Some rule carries two recursive atoms.
-    pub non_linear_rule: u64,
-    /// Some negated occurrence targets a predicate (a lower stratum —
-    /// validation refused every other placement).
-    pub negation_of_lower_stratum: u64,
-    /// Some fold rule reads a recursive predicate (from a higher
-    /// stratum — `AggregationThroughCycle` refused the rest).
-    pub fold_over_recursive: u64,
-    /// Programs the generator tagged as the empty-Δ boundary (the
-    /// corpus-content row; the coverage test verifies it dynamically
-    /// against the naive fixpoint).
+    pub negation_of_finished_rec: u64,
+    pub fold_over_rec: u64,
     pub empty_delta_round_one: u64,
-    /// Programs by predicate count − 2 (the 2–3 bound).
-    pub predicate_counts: [u64; 2],
-    /// The SQLite lane's routing tally — expressible vs the enumerated
-    /// classes, counted, never silent.
+    pub primer_reach_xx: u64,
+    pub interiors_dag: u64,
+    pub interiors_anti_join: u64,
+    pub many_interiors: u64,
     pub sqlite_expressible: u64,
-    pub sqlite_non_linear: u64,
-    pub sqlite_mutual: u64,
-    pub sqlite_fold: u64,
-    /// Constructed budget trips: a drawn closure under a zero-round
-    /// budget raised the typed `Error::FixpointBudgetExceeded` (module
-    /// doc — active, never hoped for).
     pub budget_trip: u64,
+    pub preamble_ledger_trip: u64,
 }
 
-/// Tallies one program's structural rows.
-pub fn recursive_coverage(program: &Program, tally: &mut RecursiveCoverage) {
-    tally.programs += 1;
-    tally.predicate_counts[program.predicates.len() - 2] += 1;
-    let count = program.predicates.len();
-    let mut reads = vec![vec![false; count]; count];
-    let mut fold_reads: Vec<usize> = Vec::new();
-    for (index, def) in program.predicates.iter().enumerate() {
-        for rule in &def.rules {
-            let fold = rule.finds.iter().any(|find| {
-                matches!(
-                    find,
-                    FindTerm::Aggregate { .. } | FindTerm::AggregateMeasure { .. }
-                )
-            });
-            let mut self_atoms = 0usize;
-            for atom in &rule.atoms {
-                let Some(pred) = atom.source.idb() else {
-                    continue;
-                };
-                reads[index][usize::from(pred.0)] = true;
-                if usize::from(pred.0) == index {
-                    self_atoms += 1;
-                }
-                if fold {
-                    fold_reads.push(usize::from(pred.0));
-                }
-            }
-            for atom in &rule.negated {
-                if let Some(pred) = atom.source.idb() {
-                    reads[index][usize::from(pred.0)] = true;
-                    tally.negation_of_lower_stratum += 1;
-                }
-            }
-            match self_atoms {
-                1 => tally.linear_self_recursion += 1,
-                2.. => tally.non_linear_rule += 1,
-                0 => {}
-            }
-        }
+pub fn recursive_coverage(query: &Query, variant: RecursiveVariant, tally: &mut RecursiveCoverage) {
+    tally.queries += 1;
+    match variant {
+        RecursiveVariant::Linear => tally.linear_self_recursion += 1,
+        RecursiveVariant::Negation => tally.negation_of_finished_rec += 1,
+        RecursiveVariant::Fold => tally.fold_over_rec += 1,
+        RecursiveVariant::EmptyDelta => tally.empty_delta_round_one += 1,
+        RecursiveVariant::PrimerReachXx => tally.primer_reach_xx += 1,
+        RecursiveVariant::InteriorsDag => tally.interiors_dag += 1,
+        RecursiveVariant::InteriorsAntiJoin => tally.interiors_anti_join += 1,
+        RecursiveVariant::ManyInteriors => tally.many_interiors += 1,
     }
-    // The reachability closure: mutual pairs, and which predicates are
-    // genuinely recursive (a fold's read must be one for its row).
-    loop {
-        let mut changed = false;
-        for from in 0..count {
-            for via in 0..count {
-                if !reads[from][via] {
-                    continue;
-                }
-                let via_row = reads[via].clone();
-                for (to, reachable) in via_row.iter().enumerate() {
-                    if *reachable && !reads[from][to] {
-                        reads[from][to] = true;
-                        changed = true;
-                    }
-                }
-            }
-        }
-        if !changed {
-            break;
-        }
-    }
-    for (index, row) in reads.iter().enumerate() {
-        for (target, forward) in row.iter().enumerate().skip(index + 1) {
-            if *forward && reads[target][index] {
-                tally.mutual_pair += 1;
-            }
-        }
-    }
-    tally.fold_over_recursive += fold_reads
-        .iter()
-        .filter(|target| reads[**target][**target])
-        .count() as u64;
+    let _ = query;
 }

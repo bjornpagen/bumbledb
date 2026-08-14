@@ -40,7 +40,7 @@ enum class ErrorKind : std::uint8_t {
 	Param,
 	MeasureOfRay,
 	CapacityRayMeasure,
-	FixpointBudgetExceeded,
+	DerivedBudgetExceeded,
 	Overflow,
 	ResultBytesOverflow,
 	Corruption,
@@ -131,7 +131,7 @@ static_assert(mirrors(ErrorKind::BulkLoad, abi::bdb_error_kind::BDB_ERROR_KIND_B
 static_assert(mirrors(ErrorKind::Param, abi::bdb_error_kind::BDB_ERROR_KIND_PARAM));
 static_assert(mirrors(ErrorKind::MeasureOfRay, abi::bdb_error_kind::BDB_ERROR_KIND_MEASURE_OF_RAY));
 static_assert(mirrors(ErrorKind::CapacityRayMeasure, abi::bdb_error_kind::BDB_ERROR_KIND_CAPACITY_RAY_MEASURE));
-static_assert(mirrors(ErrorKind::FixpointBudgetExceeded, abi::bdb_error_kind::BDB_ERROR_KIND_FIXPOINT_BUDGET_EXCEEDED));
+static_assert(mirrors(ErrorKind::DerivedBudgetExceeded, abi::bdb_error_kind::BDB_ERROR_KIND_DERIVED_BUDGET_EXCEEDED));
 static_assert(mirrors(ErrorKind::Overflow, abi::bdb_error_kind::BDB_ERROR_KIND_OVERFLOW));
 static_assert(mirrors(ErrorKind::ResultBytesOverflow, abi::bdb_error_kind::BDB_ERROR_KIND_RESULT_BYTES_OVERFLOW));
 static_assert(mirrors(ErrorKind::Corruption, abi::bdb_error_kind::BDB_ERROR_KIND_CORRUPTION));
@@ -205,7 +205,7 @@ public:
 		case ErrorKind::Param:
 		case ErrorKind::MeasureOfRay:
 		case ErrorKind::CapacityRayMeasure:
-		case ErrorKind::FixpointBudgetExceeded:
+		case ErrorKind::DerivedBudgetExceeded:
 		case ErrorKind::Overflow:
 		case ErrorKind::ResultBytesOverflow:
 		case ErrorKind::Corruption:

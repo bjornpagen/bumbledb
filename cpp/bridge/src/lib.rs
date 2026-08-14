@@ -257,9 +257,7 @@ pub(crate) fn slice_in<'a, T>(ptr: *const T, count: usize) -> BridgeResult<&'a [
     if ptr.is_null() {
         return Err(Fail::Misuse);
     }
-    let bytes = count
-        .checked_mul(size_of::<T>())
-        .ok_or(Fail::Misuse)?;
+    let bytes = count.checked_mul(size_of::<T>()).ok_or(Fail::Misuse)?;
     if bytes > isize::MAX as usize {
         return Err(Fail::Misuse);
     }

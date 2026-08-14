@@ -9,7 +9,7 @@
 mod convert;
 mod display;
 
-use crate::ir::{ParamId, PredId, VarId};
+use crate::ir::{InteriorId, ParamId, VarId};
 use crate::schema::KeyId;
 use crate::schema::fingerprint::SchemaFingerprint;
 use bumbledb_theory::schema::{FieldId, RelationId, StatementId, ValueType};
@@ -844,111 +844,59 @@ pub enum ValidationError {
         count: usize,
     },
 
-    // --- The program roster (20-query-ir.md § engine recursion; the strata judge
-    // and the well-formedness screen, `ir/validate/strata.rs`) ---
-    /// The predicate-count cap ([`crate::ir::MAX_PREDICATES`]) — the
-    /// program sibling of [`ValidationError::TooManyRules`].
-    TooManyPredicates {
+    // --- Interiors and rec (20-query-ir.md § interiors / rec; 01-language.md roster) ---
+    /// Derived-table count (`interiors.len() + rec.is_some()`) does not
+    /// fit `u32` — id-width, not a product cap. Counted with `usize`
+    /// before any [`crate::ir::InteriorId`] is constructed.
+    InteriorIdOverflow {
         count: usize,
     },
-    /// The program's `output` names no predicate — the answer position
-    /// of the well-formedness screen.
-    UnknownOutputPredicate {
-        pred: PredId,
+    /// An [`crate::ir::Interior`] with zero rules — not
+    /// [`ValidationError::EmptyRuleSet`] (that name is the main query).
+    EmptyInterior {
+        interior: InteriorId,
     },
-    /// An `Idb` atom names a predicate outside the program — the
-    /// well-formedness screen (`lean/Bumbledb/Query/Syntax.lean:
-    /// Program.WellFormed`, spent by `lean/Bumbledb/Exec/Fixpoint.lean:
-    /// wellFormed_reads_real`): without it a phantom `idb` read denotes
-    /// the empty fact set, and a NEGATED phantom read would be
-    /// vacuously satisfied — the stratification witness never refuses
-    /// the shape, so the screen must. `atom` is the occurrence index
-    /// (positives first, then negated) inside the failing rule.
-    UnknownPredicate {
+    /// `Rec.base` is empty: a constantly-empty rec (math: `T(∅) = ∅`).
+    EmptyRecursiveBase,
+    /// `Rec.rec` is empty: that is an interior — write an interior.
+    EmptyRecursiveStep,
+    /// A base arm whose body names the rec (positive or negated).
+    SelfInBase,
+    /// A rec arm with zero positive self-atoms.
+    RecArmMissingSelf,
+    /// A rec arm with two or more positive self-atoms.
+    NonlinearRecArm,
+    /// A negated atom anywhere in the rec SCC (base or rec, EDB or
+    /// interior or self). Self-negation is the wall; finished-table
+    /// negation is this-cut scope.
+    NegationInRec,
+    /// An `Interior` atom names a derived table outside the query.
+    UnknownInterior {
         atom: usize,
-        pred: PredId,
+        interior: InteriorId,
     },
-    /// An `Idb` binding's `FieldId` sits at or beyond the target
-    /// predicate's arity — head positions are the whole address space
-    /// (the arity roster item beside the screen; `FieldId(i)` is column
-    /// `i`, positional, never nominal).
-    PredicateColumnOutOfRange {
+    /// An `Interior` binding's `FieldId` sits at or beyond the target
+    /// derived head's arity.
+    InteriorColumnOutOfRange {
         atom: usize,
         field: FieldId,
     },
-    /// A negated atom whose target shares the atom's own SCC — negation
-    /// through a cycle. Negation *of* lower strata is legal: a lower
-    /// stratum is a finished set before this stratum's operator runs,
-    /// which is exactly what keeps the operator monotone
-    /// (`lean/Bumbledb/Exec/Fixpoint.lean: stratumOp_mono` spends the
-    /// strictly-lower premise; `lean/Bumbledb/Countermodels.lean:
-    /// odd_not_monotone` is the wall without it).
-    NegationThroughCycle {
-        pred: PredId,
-        via: PredId,
+    /// Interior `at` reads `interior` where `interior ≥ at`, or any
+    /// interior reads the rec id.
+    InteriorNotPrior {
+        interior: InteriorId,
+        at: InteriorId,
     },
-    /// A fold in a head whose rule body reads the head's own SCC —
-    /// aggregation through a cycle. Aggregation *of* lower strata is
-    /// legal for the same reason negation is: an `Idb` atom under a
-    /// fold reads a finished set.
-    AggregationThroughCycle {
-        pred: PredId,
-        via: PredId,
+    /// A fold on an interior or rec **head** (bound-var law).
+    AggregateInInterior {
+        interior: InteriorId,
     },
-    /// A `Measure` find in a recursive predicate's head. Two
-    /// derivations (20-query-ir.md § engine recursion): the safety theorem requires
-    /// recursive heads to project **bound** variables — the measure is
-    /// a computation, not a binding — and the error-timing ruling: the
-    /// round at which a ray reaches a recursive head would depend on
-    /// iteration order, so the same store would error after differing
-    /// partial work. The measure over a *lower* stratum from a
-    /// non-recursive head stays legal.
-    MeasureInRecursiveHead {
-        pred: PredId,
+    /// A measure find on an interior or rec **head**.
+    MeasureInInterior {
+        interior: InteriorId,
     },
-    /// A predicate whose signature never seals: every one of its rules
-    /// reads a same-SCC predicate whose own signature is still
-    /// underived, so some column's type is anchored only through the
-    /// cycle (e.g. `p(x) | p(x)` — no stored column ever names `x`'s
-    /// type). The signature fixpoint's honest bottom.
-    UnresolvedPredicateSignature {
-        pred: PredId,
-    },
-    /// A fold- or fold-measure-headed predicate below the program's
-    /// output. The executable program class is the Lean cut's
-    /// (`lean/Bumbledb/Query/Syntax.lean: PRule` — `finds : List VarId`,
-    /// so a program-level fold head is unrepresentable in the model;
-    /// `lean/Bumbledb/Exec/Fixpoint.lean: evalProgram` computes
-    /// projection heads only): an interior predicate's answers are a
-    /// transient word-row table read by `Idb` occurrences, and a fold's
-    /// answers only materialize at finalize — the OUTPUT predicate,
-    /// where the ordinary head-owned sink and finalize already live.
-    /// Aggregation *of* lower strata therefore stays legal exactly as
-    /// 20-query-ir.md § engine recursion records it (a fold rule reading finished
-    /// `Idb` sets), while a fold predicate *feeding* another predicate
-    /// is refused with this typed error. A projected `Measure` head is
-    /// NOT a fold — it is a value column (u64 per row) — but it is
-    /// likewise interior-refused, with its own typed error
-    /// ([`Self::MeasureInteriorPredicate`]).
-    AggregateInteriorPredicate {
-        pred: PredId,
-    },
-    /// A `Measure` find in an interior (non-output) predicate's head,
-    /// recursive or not. The executable program class is the Lean cut's
-    /// (`lean/Bumbledb/Query/Syntax.lean: PRule` — `finds : List VarId`,
-    /// so an interior measure head is unrepresentable in the model;
-    /// `lean/Bumbledb/Exec/Fixpoint.lean: evalProgram` computes
-    /// projection heads only): the engine narrows to the model rather
-    /// than executing a class with zero oracle coverage. The measure at
-    /// the OUTPUT predicate's head stays legal — it evaluates on the
-    /// query surface exactly as a degenerate program does, where the
-    /// `MeasureOfRay` timing ruling already lives. The recursive form is
-    /// caught first by the strata roster
-    /// ([`Self::MeasureInRecursiveHead`]); this error names the
-    /// non-recursive interior remainder.
-    MeasureInteriorPredicate {
-        pred: PredId,
-    },
+    /// A measure site in a rec **body** (comparison / binding).
+    MeasureInRec,
 }
 
 /// Which side of a containment statement the commit-time judgment found
@@ -1449,31 +1397,25 @@ pub enum Error {
         /// bound-carrying TARGET fact, canonical bytes.
         fact: Box<[u8]>,
     },
-    /// A stratum's fixpoint crossed the driver's iteration/tuple budget
-    /// — the one new trust boundary the recursion campaign added
-    /// (`docs/architecture/40-execution.md` § the fixpoint driver).
-    /// Termination is a
-    /// theorem of the validation roster
-    /// (`lean/Bumbledb/Exec/Fixpoint.lean: program_den_finite`), but
-    /// the fixpoint's *size* is data-shaped: a foreign query may
-    /// legally demand a quadratic closure, and an unbounded round count
-    /// crossing the trust boundary is what the recorded v0 OS-backstop
-    /// argument never priced. On `MeasureOfRay`'s model: aborts the
-    /// query, the snapshot stays usable, the payload is ids and counts
-    /// — never strings. Policy stays host-owned
-    /// ([`crate::PreparedQuery::set_fixpoint_budget`] — the staleness
-    /// doctrine verbatim: the engine ships the typed condition, never a
-    /// threshold loop); the documented default
-    /// ([`crate::api::prepared::fixpoint::DEFAULT_FIXPOINT_ROUNDS`] /
-    /// [`crate::api::prepared::fixpoint::DEFAULT_FIXPOINT_TUPLES`])
-    /// exists so the boundary is never unguarded.
-    FixpointBudgetExceeded {
-        /// The stratum whose fixpoint crossed the budget (the SCC
-        /// condensation index, `ir/validate/strata.rs`).
-        stratum: u16,
-        /// Rounds the stratum had run when the budget tripped.
+    /// A derived-tuples budget crossed — interiors and rec share one
+    /// ledger (`docs/architecture/40-execution.md` § the reach driver).
+    /// Termination of the rec is a theorem of the validation roster
+    /// (`lean/Bumbledb/Exec/Reach.lean: reach_den_finite`), but derived
+    /// *size* is data-shaped: a foreign query may legally demand a
+    /// quadratic closure, and an unbounded table crossing the trust
+    /// boundary is what the recorded v0 OS-backstop argument never
+    /// priced. On `MeasureOfRay`'s model: aborts the query, the snapshot
+    /// stays usable, the payload is counts — never strings. Policy stays
+    /// host-owned ([`crate::PreparedQuery::set_derived_budget`]); the
+    /// documented default
+    /// ([`crate::api::prepared::reach::DEFAULT_REACH_ROUNDS`] /
+    /// [`crate::api::prepared::reach::DEFAULT_DERIVED_TUPLES`]) exists so
+    /// the boundary is never unguarded. `rounds` is rec rounds so far
+    /// (`0` on an interiors-only / preamble trip).
+    DerivedBudgetExceeded {
+        /// Rec rounds run when the budget tripped (`0` if no rec ran).
         rounds: u32,
-        /// Distinct tuples the stratum's predicates had derived.
+        /// Distinct derived tuples (interior emits plus rec table).
         tuples: u64,
     },
     /// A computed value crossed its representation — valid input whose

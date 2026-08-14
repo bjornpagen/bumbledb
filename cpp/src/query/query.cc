@@ -1,6 +1,6 @@
 /**
  * The coordinate-typed query builder: rules lower during constant
- * evaluation to the flattened `query_ir` that :foreign_program presents
+ * evaluation to the flattened `query_ir` that :query_view presents
  * to the bridge, mirroring the TS builder's lowering exactly (lowering.md
  * §4.2). Also the product synthesis off the query value — the answer-row
  * product (`row_of`) and the params product (`params_of`).
@@ -70,23 +70,45 @@ struct rule_scope {
 	}
 
 	/**
-	 * Starts the rule body with one positive recursive atom (an idb atom
-	 * grounds its variables — the finished set's identity projection
-	 * needs no re-grounding join).
+	 * Starts the rule body with one positive derived-table atom (an
+	 * interior atom grounds its variables — the finished set's identity
+	 * projection needs no re-grounding join).
 	 */
 	template<fixed_string Name, class... Binds>
-	[[nodiscard]] consteval auto idb(pred_tag<Name> tag, Binds... binds) const -> rule_chain<S> {
-		return rule_chain<S>{}.idb(tag, binds...);
+	[[nodiscard]] consteval auto interior(Binds... binds) const -> rule_chain<S> {
+		return rule_chain<S>{}.template interior<Name>(binds...);
 	}
+};
+
+/**
+ * Tagged pack of base arms for `query_value::recursive`.
+ */
+template<class... Builds>
+struct base {
+	std::tuple<Builds...> builds;
+	consteval base(Builds... builds_) : builds{std::tuple{builds_...}} {}
+};
+
+/**
+ * Tagged pack of rec arms for `query_value::recursive`.
+ */
+template<class... Builds>
+struct rec {
+	std::tuple<Builds...> builds;
+	consteval rec(Builds... builds_) : builds{std::tuple{builds_...}} {}
 };
 
 /**
  * A whole query as one structural literal: the lowered IR rides the value
  * (NTTP-friendly — `db.prepare<DownAt>()`), the schema ties the type.
- * `.rule` appends one rule; every rule must derive the same head.
+ * Named interiors are a variadic pack (`NI`); `.rule` appends one main
+ * rule; every main rule must derive the same head.
  */
-template<class S>
+template<class S, std::size_t NI = 0>
 struct query_value {
+	std::array<interior_ir, NI> interiors{};
+	bool has_rec = false;
+	rec_ir rec{};
 	query_ir ir{};
 
 	template<class Build>
@@ -96,7 +118,179 @@ struct query_value {
 		              "bumbledb query.rule(): the rule body must end in .find(...)");
 		auto next = *this;
 		if constexpr (std::same_as<std::remove_cvref_t<decltype(result)>, rule_data>) {
-			detail::append_rule(next.ir, result);
+			detail::append_rule(next.ir, next.interiors, next.has_rec, next.rec, result);
+		}
+		return next;
+	}
+
+	/**
+	 * Declares one named interior (finite CQ, eval once). Multiple
+	 * builders = set union. Names unique; interior after recursive or
+	 * after a main rule is a consteval error.
+	 */
+	template<fixed_string Name, class... Builds>
+	[[nodiscard]] consteval auto interior(Builds... builds) const -> query_value<S, NI + 1> {
+		static_assert(sizeof...(Builds) >= 1, "bumbledb query.interior(): an interior needs at least one rule");
+		static_assert(sizeof...(Builds) <= max_query_rules, "bumbledb query.interior(): too many rules for one interior");
+		if (has_rec) {
+			detail::interior_after_recursive();
+		}
+		if (ir.rule_count != 0) {
+			detail::interior_or_recursive_after_a_main_rule();
+		}
+		auto const name = detail::to_name_text(Name.view());
+		for (auto index = std::size_t{0}; index != NI; ++index) {
+			if (interiors[index].name == name) {
+				detail::interior_names_must_be_distinct();
+			}
+		}
+
+		auto rules = std::array<rule_data, max_query_rules>{};
+		auto rule_count = std::size_t{0};
+		auto const add = [&](auto const& build) {
+			auto const result = build(rule_scope<S>{});
+			static_assert(std::same_as<std::remove_cvref_t<decltype(result)>, rule_data>,
+			              "bumbledb query.interior(): the rule body must end in .find(...)");
+			if constexpr (std::same_as<std::remove_cvref_t<decltype(result)>, rule_data>) {
+				rules[rule_count] = result;
+				++rule_count;
+			}
+		};
+		(add(builds), ...);
+
+		auto next = query_value<S, NI + 1>{};
+		for (auto index = std::size_t{0}; index != NI; ++index) {
+			next.interiors[index] = interiors[index];
+		}
+		next.ir = ir;
+
+		for (auto index = std::size_t{0}; index != rule_count; ++index) {
+			detail::fold_uses(next.ir, rules[index].state);
+		}
+
+		auto const& seal = rules[0];
+		next.interiors[NI].name = name;
+		next.interiors[NI].head_count = seal.find_count;
+		for (auto column = std::size_t{0}; column != seal.find_count; ++column) {
+			next.interiors[NI].head[column] = seal.finds[column];
+		}
+		for (auto index = std::size_t{1}; index != rule_count; ++index) {
+			detail::align_head(next.interiors[NI].head_count, next.interiors[NI].head, rules[index]);
+		}
+
+		auto const tables = detail::derived_tables<NI>{
+		    .interiors = interiors,
+		    .has_rec = false,
+		    .rec = rec,
+		};
+		next.interiors[NI].rule_count = rule_count;
+		for (auto index = std::size_t{0}; index != rule_count; ++index) {
+			next.interiors[NI].rules[index] = detail::lower_rule(next.ir, tables, rules[index], detail::no_interior);
+		}
+		return next;
+	}
+
+	/**
+	 * Declares the (at most one) linear rec: two tagged packs, base then
+	 * rec. Main rules follow via `.rule`. A second recursive, or
+	 * recursive after a main rule, is a consteval error.
+	 */
+	template<fixed_string Name, class... BaseBuilds, class... RecBuilds>
+	[[nodiscard]] consteval auto recursive(bdb::base<BaseBuilds...> const& bases, bdb::rec<RecBuilds...> const& recs) const
+	    -> query_value {
+		static_assert(sizeof...(BaseBuilds) >= 1, "bumbledb query.recursive(): needs at least one base rule");
+		static_assert(sizeof...(RecBuilds) >= 1, "bumbledb query.recursive(): needs at least one rec rule");
+		static_assert(sizeof...(BaseBuilds) + sizeof...(RecBuilds) <= max_query_rules,
+		              "bumbledb query.recursive(): base and rec arms together exceed max_query_rules");
+		if (has_rec) {
+			detail::a_second_recursive_is_refused();
+		}
+		if (ir.rule_count != 0) {
+			detail::interior_or_recursive_after_a_main_rule();
+		}
+		auto const name = detail::to_name_text(Name.view());
+		for (auto index = std::size_t{0}; index != NI; ++index) {
+			if (interiors[index].name == name) {
+				detail::interior_names_must_be_distinct();
+			}
+		}
+
+		auto base_rules = std::array<rule_data, max_query_rules>{};
+		auto base_count = std::size_t{0};
+		auto rec_rules = std::array<rule_data, max_query_rules>{};
+		auto rec_count = std::size_t{0};
+		auto const add_base = [&](auto const& build) {
+			auto const result = build(rule_scope<S>{});
+			static_assert(std::same_as<std::remove_cvref_t<decltype(result)>, rule_data>,
+			              "bumbledb query.recursive(): a base rule body must end in .find(...)");
+			if constexpr (std::same_as<std::remove_cvref_t<decltype(result)>, rule_data>) {
+				base_rules[base_count] = result;
+				++base_count;
+			}
+		};
+		auto const add_rec = [&](auto const& build) {
+			auto const result = build(rule_scope<S>{});
+			static_assert(std::same_as<std::remove_cvref_t<decltype(result)>, rule_data>,
+			              "bumbledb query.recursive(): a rec rule body must end in .find(...)");
+			if constexpr (std::same_as<std::remove_cvref_t<decltype(result)>, rule_data>) {
+				rec_rules[rec_count] = result;
+				++rec_count;
+			}
+		};
+		std::apply(
+		    [&](auto const&... builds) {
+			    (add_base(builds), ...);
+		    },
+		    bases.builds);
+		std::apply(
+		    [&](auto const&... builds) {
+			    (add_rec(builds), ...);
+		    },
+		    recs.builds);
+		if (base_count == 0) {
+			detail::recursive_needs_at_least_one_base_rule();
+		}
+		if (rec_count == 0) {
+			detail::recursive_needs_at_least_one_rec_rule();
+		}
+
+		auto next = *this;
+		next.has_rec = true;
+		next.rec.name = name;
+
+		for (auto index = std::size_t{0}; index != base_count; ++index) {
+			detail::fold_uses(next.ir, base_rules[index].state);
+		}
+		for (auto index = std::size_t{0}; index != rec_count; ++index) {
+			detail::fold_uses(next.ir, rec_rules[index].state);
+		}
+
+		auto const& seal = base_rules[0];
+		next.rec.head_count = seal.find_count;
+		for (auto column = std::size_t{0}; column != seal.find_count; ++column) {
+			next.rec.head[column] = seal.finds[column];
+		}
+		for (auto index = std::size_t{1}; index != base_count; ++index) {
+			detail::align_head(next.rec.head_count, next.rec.head, base_rules[index]);
+		}
+		for (auto index = std::size_t{0}; index != rec_count; ++index) {
+			detail::align_head(next.rec.head_count, next.rec.head, rec_rules[index]);
+		}
+
+		auto sealed = next.rec;
+		auto const tables = detail::derived_tables<NI>{
+		    .interiors = next.interiors,
+		    .has_rec = true,
+		    .rec = sealed,
+		};
+		auto const self = NI;
+		next.rec.base_count = base_count;
+		for (auto index = std::size_t{0}; index != base_count; ++index) {
+			next.rec.base[index] = detail::lower_rule(next.ir, tables, base_rules[index], self);
+		}
+		next.rec.rec_count = rec_count;
+		for (auto index = std::size_t{0}; index != rec_count; ++index) {
+			next.rec.rec[index] = detail::lower_rule(next.ir, tables, rec_rules[index], self);
 		}
 		return next;
 	}

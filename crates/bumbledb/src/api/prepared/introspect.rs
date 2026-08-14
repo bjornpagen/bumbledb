@@ -1,6 +1,6 @@
-use super::{Answers, ParamArg, PreparedQuery, PreparedRule, Program};
+use super::{Answers, ParamArg, PreparedBody, PreparedQuery, PreparedRule};
 
-use crate::api::stats::{ExecutionStats, KeyProbeStats, RuleStats};
+use crate::api::stats::{ExecutionStats, InteriorStats, KeyProbeStats, RuleStats};
 use crate::error::Result;
 use crate::exec::introspection::{
     CountingCounters, IntrospectionHeader, IntrospectionReport, RulePlan,
@@ -38,9 +38,9 @@ impl<S> PreparedQuery<'_, S> {
         // each under a label naming its (predicate, rule, variant);
         // the counted surface is the per-stratum round section
         // (`stats.strata`), never per-unit node stats.
-        let (rules, unit_labels) = match &self.program {
-            Program::Empty => (vec![RulePlan::Empty], Vec::new()),
-            Program::Rules(rules) => {
+        let (rules, unit_labels) = match &self.body {
+            PreparedBody::Empty => (vec![RulePlan::Empty], Vec::new()),
+            PreparedBody::Rules(rules) => {
                 let mut plans = Vec::new();
                 for rule in rules {
                     match rule {
@@ -51,36 +51,54 @@ impl<S> PreparedQuery<'_, S> {
                             plans.push(RulePlan::FreeJoin(&rule.plan));
                         }
                         PreparedRule::Recursive(_) => {
-                            unreachable!("recursive rules live under Program::Fixpoint")
+                            unreachable!("recursive rules live under PreparedBody::Reach")
                         }
                     }
                 }
                 (plans, Vec::new())
             }
-            Program::Fixpoint(program) => {
+            PreparedBody::Reach(driver) => {
                 let mut plans = Vec::new();
                 let mut labels = Vec::new();
-                for (pred_idx, pred) in program.predicates.iter().enumerate() {
-                    for (rule_idx, rule) in pred.rules.iter().enumerate() {
-                        match rule {
-                            PreparedRule::KeyProbe(rule) => {
-                                plans.push(RulePlan::KeyProbe(&rule.plan));
-                                labels.push(format!("predicate p{pred_idx} rule {rule_idx}"));
-                            }
-                            PreparedRule::FreeJoin(rule) => {
-                                plans.push(RulePlan::FreeJoin(&rule.plan));
-                                labels.push(format!("predicate p{pred_idx} rule {rule_idx}"));
-                            }
-                            PreparedRule::Recursive(rule) => {
-                                for (variant_idx, variant) in rule.variants.iter().enumerate() {
-                                    plans.push(RulePlan::FreeJoin(&variant.rule.plan));
-                                    labels.push(format!(
-                                        "predicate p{pred_idx} rule {rule_idx} delta variant \
-                                         {variant_idx} (delta occ {})",
-                                        variant.delta.0
-                                    ));
-                                }
-                            }
+                for (rule_idx, rule) in driver.base.iter().enumerate() {
+                    match rule {
+                        PreparedRule::KeyProbe(rule) => {
+                            plans.push(RulePlan::KeyProbe(&rule.plan));
+                            labels.push(format!("reach base {rule_idx}"));
+                        }
+                        PreparedRule::FreeJoin(rule) => {
+                            plans.push(RulePlan::FreeJoin(&rule.plan));
+                            labels.push(format!("reach base {rule_idx}"));
+                        }
+                        PreparedRule::Recursive(_) => {
+                            unreachable!("base arms are never Recursive")
+                        }
+                    }
+                }
+                for (rule_idx, rule) in driver.rec.iter().enumerate() {
+                    match rule {
+                        PreparedRule::Recursive(rule) => {
+                            plans.push(RulePlan::FreeJoin(&rule.variant.rule.plan));
+                            labels.push(format!(
+                                "reach rec {rule_idx} (delta occ {})",
+                                rule.variant.delta.0
+                            ));
+                        }
+                        _ => unreachable!("rec arms are Recursive"),
+                    }
+                }
+                for (rule_idx, rule) in driver.main.iter().enumerate() {
+                    match rule {
+                        PreparedRule::KeyProbe(rule) => {
+                            plans.push(RulePlan::KeyProbe(&rule.plan));
+                            labels.push(format!("main {rule_idx}"));
+                        }
+                        PreparedRule::FreeJoin(rule) => {
+                            plans.push(RulePlan::FreeJoin(&rule.plan));
+                            labels.push(format!("main {rule_idx}"));
+                        }
+                        PreparedRule::Recursive(_) => {
+                            unreachable!("main rules are never Recursive")
                         }
                     }
                 }
@@ -112,19 +130,15 @@ impl<S> PreparedQuery<'_, S> {
             return None;
         }
         let mut literals = Vec::new();
-        let free_join_plans = self.program.all_rules().flat_map(|rule| match rule {
-            PreparedRule::FreeJoin(rule) => std::slice::from_ref(rule)
-                .iter()
-                .map(|rule| &rule.plan)
-                .collect::<Vec<_>>(),
-            PreparedRule::Recursive(rule) => rule
-                .variants
-                .iter()
-                .map(|variant| &variant.rule.plan)
-                .collect(),
-            PreparedRule::KeyProbe(_) => Vec::new(),
-        });
-        for plan in free_join_plans {
+        self.visit_rules(|rule| {
+            let plan = match rule {
+                PreparedRule::FreeJoin(rule) => Some(&rule.plan),
+                PreparedRule::Recursive(rule) => Some(&rule.variant.rule.plan),
+                PreparedRule::KeyProbe(_) => None,
+            };
+            let Some(plan) = plan else {
+                return;
+            };
             for occurrence in plan
                 .occurrences()
                 .iter()
@@ -151,7 +165,7 @@ impl<S> PreparedQuery<'_, S> {
                     }
                 }
             }
-        }
+        });
         Some(format!(
             "pending literals: {} — an unresolved Eq literal empties its rule at execution until latched\n",
             literals.join(", ")
@@ -197,20 +211,20 @@ impl<S> PreparedQuery<'_, S> {
         // The statically-empty program mirrors `run_bound`'s
         // short-circuit: bind (errors surface), then nothing runs and
         // nothing is counted — the death record is the whole story.
-        if matches!(self.program, Program::Empty) {
+        if self.interiors.is_empty() && matches!(self.body, PreparedBody::Empty) {
             self.bind_param_args(txn, params)?;
             return Ok((out, self.empty_stats()));
         }
         // The single-rule key-probe program keeps its fast lane:
         // `execute_args` dispatches it whole, and the stats are the
         // probe's outcome.
-        if matches!(self.program.rules(), [PreparedRule::KeyProbe(_)]) {
+        if self.interiors.is_empty() && matches!(self.body.rules(), [PreparedRule::KeyProbe(_)]) {
             self.execute_args(txn, cache, params, &mut out)?;
             let emitted = out.len() as u64;
             let stats = ExecutionStats {
                 introspection_version: crate::api::stats::INTROSPECTION_VERSION,
                 rules: vec![RuleStats {
-                    distinct_bindings: self.program.rules()[0].distinct_witness().is_some(),
+                    distinct_bindings: self.body.rules()[0].distinct_witness().is_some(),
                     nodes: Vec::new(),
                     // A key probe is a single-atom query: the grounding has
                     // nothing to pair and nothing to fold, so no marks
@@ -234,7 +248,8 @@ impl<S> PreparedQuery<'_, S> {
                 // records.
                 subsumed: self.subsumed.clone(),
                 dead: self.dead.clone(),
-                strata: Vec::new(),
+                interiors: Vec::new(),
+                reach: None,
             };
             return Ok((out, stats));
         }
@@ -245,9 +260,9 @@ impl<S> PreparedQuery<'_, S> {
         // (docs/architecture/40-execution.md § the fixpoint driver).
         // Per-unit node stats deliberately do not exist: one counter
         // spans many differently shaped plan units.
-        if matches!(self.program, Program::Fixpoint(_)) {
+        if matches!(self.body, PreparedBody::Reach(_)) {
             self.bind_param_args(txn, params)?;
-            let mut counters = crate::exec::introspection::FixpointCounters::new();
+            let mut counters = crate::exec::introspection::ReachCounters::new();
             let ran = self.run_rules(txn, cache, &mut counters)?;
             if let Some([start, end]) = self.sink.measure_of_ray() {
                 return Err(crate::error::Error::MeasureOfRay { start, end });
@@ -262,7 +277,7 @@ impl<S> PreparedQuery<'_, S> {
                     &mut out,
                 )?;
             }
-            let emits = counters.total_emits();
+            let emits = out.len() as u64;
             let stats = ExecutionStats {
                 introspection_version: crate::api::stats::INTROSPECTION_VERSION,
                 rules: Vec::new(),
@@ -270,7 +285,8 @@ impl<S> PreparedQuery<'_, S> {
                 disjoint_rules: None,
                 subsumed: self.subsumed.clone(),
                 dead: self.dead.clone(),
-                strata: counters.into_strata(),
+                interiors: self.interior_stats(),
+                reach: Some(counters.into_reach(Vec::new())),
             };
             return Ok((out, stats));
         }
@@ -278,19 +294,23 @@ impl<S> PreparedQuery<'_, S> {
         // spanning is the union), then the rule loop with per-rule
         // counting instrumentation; finalize only if some rule ran (a
         // fully short-circuited program counted nothing and has nothing
-        // to drain).
+        // to drain). Interiors-only runs the preamble first so main
+        // Interior atoms see finished images — never via `run_reach`.
         self.bind_param_args(txn, params)?;
+        if !self.interiors.is_empty() {
+            self.run_derived(txn, cache, &mut crate::exec::run::NoopCounters)?;
+        }
         self.sink.reset();
-        let rule_count = self.program.rules().len();
+        let rule_count = self.body.rules().len();
         let mut rule_stats = Vec::with_capacity(rule_count);
         let mut ran = false;
         for rule_idx in 0..rule_count {
             let seen_before = self.sink.distinct_seen().unwrap_or(0);
-            let mut counters = match &self.program.rules()[rule_idx] {
+            let mut counters = match &self.body.rules()[rule_idx] {
                 PreparedRule::FreeJoin(rule) => CountingCounters::new(&rule.plan),
                 PreparedRule::KeyProbe(_) => CountingCounters::for_key_probe(),
                 PreparedRule::Recursive(_) => {
-                    unreachable!("recursive rules live under Program::Fixpoint, handled above")
+                    unreachable!("recursive rules live under PreparedBody::Reach, handled above")
                 }
             };
             ran |= self.run_rule(rule_idx, txn, cache, &mut counters)?;
@@ -303,7 +323,7 @@ impl<S> PreparedQuery<'_, S> {
                 .distinct_seen()
                 .map_or(emitted, |seen| (seen - seen_before) as u64);
             let absorbed = emitted - newly_seen;
-            rule_stats.push(match &self.program.rules()[rule_idx] {
+            rule_stats.push(match &self.body.rules()[rule_idx] {
                 PreparedRule::FreeJoin(rule) => counters.into_rule_stats(
                     &rule.plan,
                     self.schema,
@@ -321,7 +341,7 @@ impl<S> PreparedQuery<'_, S> {
                     key_probe: Some(KeyProbeStats { hit: emitted > 0 }),
                 },
                 PreparedRule::Recursive(_) => {
-                    unreachable!("recursive rules live under Program::Fixpoint, handled above")
+                    unreachable!("recursive rules live under PreparedBody::Reach, handled above")
                 }
             });
         }
@@ -350,9 +370,22 @@ impl<S> PreparedQuery<'_, S> {
                 disjoint_rules: self.disjoint_rules_stat(),
                 subsumed: self.subsumed.clone(),
                 dead: self.dead.clone(),
-                strata: Vec::new(),
+                interiors: self.interior_stats(),
+                reach: None,
             },
         ))
+    }
+
+    fn interior_stats(&self) -> Vec<InteriorStats> {
+        self.interiors
+            .iter()
+            .enumerate()
+            .map(|(i, interior)| InteriorStats {
+                interior: u32::try_from(i).expect("InteriorIdOverflow screened at validate"),
+                rules: Vec::new(),
+                emits: interior.sink.len() as u64,
+            })
+            .collect()
     }
 
     /// The statically-empty program's counted execution: every count is
@@ -376,7 +409,8 @@ impl<S> PreparedQuery<'_, S> {
             disjoint_rules: None,
             subsumed: self.subsumed.clone(),
             dead: self.dead.clone(),
-            strata: Vec::new(),
+            interiors: Vec::new(),
+            reach: None,
         }
     }
 
@@ -387,7 +421,7 @@ impl<S> PreparedQuery<'_, S> {
     /// its spanning head-projection seen-set is the union representation.
     #[must_use]
     pub fn distinct_bindings(&self) -> bool {
-        match self.program.rules() {
+        match self.body.rules() {
             [rule] => rule.distinct_witness().is_some(),
             _ => false,
         }

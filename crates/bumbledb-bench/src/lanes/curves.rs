@@ -6,7 +6,7 @@
 //! registry over the EXISTING family definitions — `triangle` and
 //! `point` from [`crate::families`] (point is the crud/point-regime key
 //! probe), `busy_scan` from [`crate::calendar::families`], and
-//! `closure_fanout` over [`crate::closure::closure_program`] (the
+//! `closure_fanout` over [`crate::closure::closure_query`] (the
 //! rings-shaped recursive mass family — the transitive-closure world).
 //! Zero new query semantics; only corpus scale is parameterized, the
 //! closure world through the lane-owned [`curve_sizes`] ladder so the
@@ -73,7 +73,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use bumbledb::schema::ValueType;
-use bumbledb::{Answers, Db, ParamId, Program, RelationId, Value};
+use bumbledb::{Answers, Db, ParamId, Query, RelationId, Value};
 
 use crate::calendar::corpus_gen::CalSizes;
 use crate::clockproxy;
@@ -427,14 +427,13 @@ fn closure_translated() -> Translated {
     }
 }
 
-/// One (family, scale) unit of work, fully resolved: the engine program
-/// (queries embed through the degenerate `From<Query> for Program`),
+/// One (family, scale) unit of work, fully resolved: the engine query,
 /// the family's existing draws, the canonical `SQLite` twin, the
 /// optional hand twin, and the world's fact count. All four families
 /// draw scalars only, so the canonical SQL is one statement per point,
 /// prepared once and rebound per draw.
 struct Bundle {
-    program: Program,
+    query: Query,
     draws: Vec<Draw>,
     canonical: Translated,
     hand: Option<Translated>,
@@ -465,7 +464,7 @@ fn ledger_bundle(name: &str, cfg: &GenConfig) -> Result<Bundle, String> {
     let canonical = translate(&query, crate::schema::schema(), &set_bindings(&draws[0]))
         .map_err(|e| format!("{name}: translate: {e}"))?;
     Ok(Bundle {
-        program: Program::from(query),
+        query,
         draws,
         canonical,
         hand: None,
@@ -486,7 +485,7 @@ fn calendar_bundle(name: &str, cfg: &GenConfig) -> Result<Bundle, String> {
         params: BUSY_SCAN_HAND_SLOTS.to_vec(),
     });
     Ok(Bundle {
-        program: Program::from(query),
+        query,
         draws,
         canonical,
         hand,
@@ -497,7 +496,7 @@ fn calendar_bundle(name: &str, cfg: &GenConfig) -> Result<Bundle, String> {
 fn closure_bundle(scale: Scale) -> Bundle {
     let sizes = curve_sizes(scale);
     Bundle {
-        program: closure::closure_program(),
+        query: closure::closure_query(),
         draws: closure_curve_params(&sizes),
         canonical: closure_translated(),
         hand: None,
@@ -582,7 +581,7 @@ fn curve_point<S>(
 ) -> Result<CurvePoint, String> {
     eprintln!("curves: {name} at {scale_label}");
     let mut prepared = db
-        .prepare(&bundle.program)
+        .prepare(&bundle.query)
         .map_err(|e| format!("{name}: prepare: {e:?}"))?;
     let types: Vec<ValueType> = prepared
         .predicate()
@@ -760,7 +759,7 @@ fn warmth_panel<S: bumbledb::Theory + Copy>(
     let types: Vec<ValueType> = {
         let db = open_db()?;
         let prepared = db
-            .prepare(&bundle.program)
+            .prepare(&bundle.query)
             .map_err(|e| format!("warmth prepare: {e:?}"))?;
         prepared
             .predicate()
@@ -778,7 +777,7 @@ fn warmth_panel<S: bumbledb::Theory + Copy>(
         let args = param_args(draw);
         let db = open_db()?;
         let mut prepared = db
-            .prepare(&bundle.program)
+            .prepare(&bundle.query)
             .map_err(|e| format!("warmth prepare: {e:?}"))?;
         let mut buffer = Answers::new();
         let start = Instant::now();
@@ -803,7 +802,7 @@ fn warmth_panel<S: bumbledb::Theory + Copy>(
     let ours_memoized = {
         let db = open_db()?;
         let mut prepared = db
-            .prepare(&bundle.program)
+            .prepare(&bundle.query)
             .map_err(|e| format!("warmth prepare: {e:?}"))?;
         let mut rotation = Rotation::new(bundle.draws.clone());
         let mut buffer = Answers::new();
@@ -1551,7 +1550,7 @@ mod tests {
             .expect("open cal store");
         let conn = open_for_bench(&paths.cal_oracle).expect("open cal oracle");
         let bundle = calendar_bundle("busy_scan", &cfg).expect("bundle");
-        let mut prepared = db.prepare(&bundle.program).expect("prepare");
+        let mut prepared = db.prepare(&bundle.query).expect("prepare");
         let types: Vec<ValueType> = prepared
             .predicate()
             .columns

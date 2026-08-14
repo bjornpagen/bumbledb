@@ -8,14 +8,21 @@
 //! it, round-trip goldens pin the two together):
 //!
 //! ```text
-//! query   := rule+                       // two or more rules denote set union
-//! rule    := [pred] '(' head ')' '|' body ';'
-//!                                        // a named head declares a predicate; bare
-//!                                        //   rules ARE the output predicate — an
-//!                                        //   all-bare query is today's one-predicate
-//!                                        //   program, lowered to ir::Query verbatim
-//!                                        //   (text-level backward compatibility);
-//!                                        //   any named head lowers to ir::Program
+//! query     := interior* recblock? main
+//! interior  := 'interior' pred '(' head ')' '|' body ';'
+//! recblock  := 'recursive' pred '(' head ')' '|' body ';'
+//! main      := barerule+
+//! barerule  := '(' head ')' '|' body ';'
+//!                                        // consecutive `interior pred(...)` lines
+//!                                        //   union into one Interior; consecutive
+//!                                        //   `recursive pred(...)` lines union into
+//!                                        //   one Rec (a line whose body has an atom
+//!                                        //   naming pred is a rec arm, else base);
+//!                                        //   an all-bare query is Query with empty
+//!                                        //   interiors and rec: None — text-level
+//!                                        //   backward compatibility; a named head
+//!                                        //   without `interior` / `recursive` is a
+//!                                        //   compile error (the former Program sneak)
 //! head    := headterm (',' headterm)*
 //! headterm:= var | [name ':'] agg        // named positions become result columns
 //! agg     := Sum(t) | Min(t) | Max(t) | Count | Pack(v)
@@ -31,11 +38,11 @@
 //!          | 'or'  '(' cond (',' cond)* ')'  //   leaves only (ruled 2026-07-23, R9)
 //! atom    := Relation '(' binding (',' binding)* ')'
 //!          | pred '(' var (',' var)* ')'
-//!                                        // ordered dense: a body atom may name a
-//!                                        //   predicate where it names a relation;
-//!                                        //   bare idents bind its head POSITIONS
-//!                                        //   left to right from 0 — positional,
-//!                                        //   never nominal
+//!                                        // ordered dense: a body atom may name an
+//!                                        //   interior or the rec where it names a
+//!                                        //   relation; bare idents bind its head
+//!                                        //   POSITIONS left to right from 0 —
+//!                                        //   positional, never nominal
 //!          | pred '(' pbind (',' pbind)* ')'
 //!                                        // indexed: the sparse/selection forms;
 //!                                        //   never mixed with the bare form, and an
@@ -54,9 +61,9 @@
 //! pred    := lowercase ident             // macro-LOCAL: resolved at expansion, never
 //!                                        //   in the IR or the fingerprint; relations
 //!                                        //   are UpperCamel, so a predicate spelled
-//!                                        //   like a relation is unwritable; `and` and
-//!                                        //   `or` are the condition grammar's reserved
-//!                                        //   words
+//!                                        //   like a relation is unwritable; `and`,
+//!                                        //   `or`, `interior`, and `recursive` are
+//!                                        //   reserved
 //! ```
 //!
 //! **Condition trees are notation (ruled 2026-07-23, R9):** `and(...)`/
@@ -331,10 +338,19 @@ enum HeadTerm {
     },
 }
 
+/// How a parsed rule was introduced: a keyword, or a bare main rule.
+enum RuleKind {
+    Bare,
+    Interior,
+    Recursive,
+}
+
 struct ParsedRule {
-    /// The rule's predicate name (`path(x, z) | …`) — macro-local, the
-    /// text layer's sidecar; `None` for a bare rule (the output
-    /// predicate's spelling).
+    /// `interior` / `recursive` / a bare main rule. Named heads without
+    /// a keyword never survive the parse.
+    kind: RuleKind,
+    /// The derived-table name (`interior mid(x)` / `recursive reach(c)`)
+    /// — macro-local sidecar; `None` for a bare main rule.
     name: Option<Name>,
     head: Vec<HeadTerm>,
     items: Vec<Item>,
@@ -1034,13 +1050,50 @@ fn parse_item(tokens: &mut Tokens) -> Parse<Item> {
     Ok(Item::Cond(Cond::Leaf(finish_term_leaf(tokens, lhs)?)))
 }
 
-/// Parses one rule: `[pred] (head) | body ;` — a leading lowercase
-/// ident names the rule's predicate (macro-local; bare rules are the
-/// output predicate).
+/// A derived-table name: lowercase, not a reserved word.
+fn validate_pred_name(name: &Name) -> Parse<()> {
+    if name.text == "and"
+        || name.text == "or"
+        || name.text == "interior"
+        || name.text == "recursive"
+    {
+        return fail(
+            name.span,
+            format!(
+                "query!: `{}` is reserved — `and`/`or` are the condition grammar, \
+                 `interior`/`recursive` introduce derived tables \
+                 (docs/architecture/20-query-ir.md § the query notation)",
+                name.text
+            ),
+        );
+    }
+    if !name
+        .text
+        .chars()
+        .next()
+        .is_some_and(|c| c.is_ascii_lowercase())
+    {
+        return fail(
+            name.span,
+            format!(
+                "query!: predicate names begin lowercase (`{}`) — UpperCamel \
+                 names are relations, so a predicate spelled like a relation \
+                 is unwritable (docs/architecture/20-query-ir.md § the query \
+                 notation)",
+                name.text
+            ),
+        );
+    }
+    Ok(())
+}
+
+/// Parses one rule: `interior pred (head) | body ;`, `recursive pred
+/// (head) | body ;`, or a bare `(head) | body ;`. A named head without
+/// the keyword is the former Program sneak — a spanned compile error.
 fn parse_rule(tokens: &mut Tokens) -> Parse<ParsedRule> {
-    let name = match tokens.peek() {
+    let (kind, name) = match tokens.peek() {
         Some(TokenTree::Ident(_)) => {
-            let name = expect_ident(tokens, "a rule")?;
+            let ident = expect_ident(tokens, "a rule")?;
             if peek_punct(tokens, ':') {
                 // `pred :- …` must not parse — the refusal fires before
                 // the head-group error would.
@@ -1051,37 +1104,58 @@ fn parse_rule(tokens: &mut Tokens) -> Parse<ParsedRule> {
                 }
                 return fail(span, "query!: expected the named rule's head `(…)`");
             }
-            if !name
-                .text
-                .chars()
-                .next()
-                .is_some_and(|c| c.is_ascii_lowercase())
-            {
-                return fail(
-                    name.span,
-                    format!(
-                        "query!: predicate names begin lowercase (`{}`) — UpperCamel \
-                         names are relations, so a predicate spelled like a relation \
-                         is unwritable (docs/architecture/20-query-ir.md § the query \
-                         notation)",
-                        name.text
-                    ),
-                );
+            match ident.text.as_str() {
+                "and" | "or" => {
+                    return fail(
+                        ident.span,
+                        format!(
+                            "query!: `{}` is the condition grammar's reserved word — \
+                             a predicate cannot take either tree name \
+                             (docs/architecture/20-query-ir.md § the query notation)",
+                            ident.text
+                        ),
+                    );
+                }
+                "interior" | "recursive" => {
+                    let kind = if ident.text == "interior" {
+                        RuleKind::Interior
+                    } else {
+                        RuleKind::Recursive
+                    };
+                    let pred = expect_ident(tokens, "a predicate name")?;
+                    validate_pred_name(&pred)?;
+                    (kind, Some(pred))
+                }
+                _ => {
+                    if !ident
+                        .text
+                        .chars()
+                        .next()
+                        .is_some_and(|c| c.is_ascii_lowercase())
+                    {
+                        return fail(
+                            ident.span,
+                            format!(
+                                "query!: predicate names begin lowercase (`{}`) — UpperCamel \
+                                 names are relations, so a predicate spelled like a relation \
+                                 is unwritable (docs/architecture/20-query-ir.md § the query \
+                                 notation)",
+                                ident.text
+                            ),
+                        );
+                    }
+                    return fail(
+                        ident.span,
+                        format!(
+                            "query!: named heads require `interior` or `recursive` — \
+                             write `interior {}(...)` or `recursive {}(...)`",
+                            ident.text, ident.text
+                        ),
+                    );
+                }
             }
-            if name.text == "and" || name.text == "or" {
-                return fail(
-                    name.span,
-                    format!(
-                        "query!: `{}` is the condition grammar's reserved word — \
-                         a predicate cannot take either tree name \
-                         (docs/architecture/20-query-ir.md § the query notation)",
-                        name.text
-                    ),
-                );
-            }
-            Some(name)
         }
-        _ => None,
+        _ => (RuleKind::Bare, None),
     };
     let (head_group, head_span) = take_paren_group(tokens, "a rule head `(…)`")?;
     let head = parse_head(head_group)?;
@@ -1135,7 +1209,12 @@ fn parse_rule(tokens: &mut Tokens) -> Parse<ParsedRule> {
             };
         }
     }
-    Ok(ParsedRule { name, head, items })
+    Ok(ParsedRule {
+        kind,
+        name,
+        head,
+        items,
+    })
 }
 
 // ---------------------------------------------------------------------
@@ -1280,14 +1359,14 @@ impl Scope {
     }
 }
 
-/// A predicate atom's binding style: `Some(true)` when every binding is
+/// An interior/rec atom's binding style: `Some(true)` when every binding is
 /// bare (the ordered dense spelling), `Some(false)` when every binding
 /// carries a numeric position label (the sparse/selection spellings),
 /// `None` for an empty binding list. Refuses a bare digit (a variable
-/// is an ident), a named label (predicate columns are positions), and
+/// is an ident), a named label (derived columns are positions), and
 /// the two styles mixed — the second style's first occurrence carries
 /// the mixing diagnostic.
-fn idb_style(atom: &Atom) -> Parse<Option<bool>> {
+fn interior_style(atom: &Atom) -> Parse<Option<bool>> {
     let mut style: Option<bool> = None;
     for binding in &atom.bindings {
         let (Binding::Pun(field)
@@ -1340,11 +1419,11 @@ fn idb_style(atom: &Atom) -> Parse<Option<bool>> {
 struct Emitter<'a> {
     theory: &'a str,
     params: Params,
-    /// The macro-local predicate table: named head → `PredId` (group
-    /// order, first appearance). Names never survive expansion — the
-    /// emitted IR carries bare `PredId`s, so no name enters the
-    /// fingerprint. Empty for an all-bare query.
-    predicates: Vec<(String, u16)>,
+    /// Macro-local derived-table names in InteriorId order: interiors
+    /// first, then the rec if present (`InteriorId(interiors.len())`).
+    /// Names never survive expansion — the emitted IR carries bare
+    /// `InteriorId`s. Empty for an all-bare query.
+    derived: Vec<String>,
 }
 
 impl Emitter<'_> {
@@ -1433,8 +1512,8 @@ impl Emitter<'_> {
         })
     }
 
-    /// A predicate atom as an `Atom` expression: an `Idb` source whose
-    /// bindings address head positions (`FieldId(i)` is the target's
+    /// An interior/rec atom as an `Atom` expression: an `Interior` source
+    /// whose bindings address head positions (`FieldId(i)` is the target's
     /// column `i` — positional, never nominal). Two spellings, one
     /// meaning each: bare idents are ORDERED DENSE variable bindings,
     /// positions assigned left to right from 0 (`reach(m, a)` lowers to
@@ -1442,8 +1521,8 @@ impl Emitter<'_> {
     /// selection forms (`2: x`, `0 == …`, `0 in ?p`). The two never mix,
     /// and an explicitly indexed dense in-order variable list is refused
     /// — canonical utterance, one spelling per meaning.
-    fn idb_atom(&mut self, scope: &mut Scope, atom: &Atom, pred: u16) -> Parse<String> {
-        if idb_style(atom)? == Some(true) {
+    fn interior_atom(&mut self, scope: &mut Scope, atom: &Atom, interior: u32) -> Parse<String> {
+        if interior_style(atom)? == Some(true) {
             // Ordered dense: positions assigned left to right from 0.
             let mut bindings = String::new();
             for (position, binding) in atom.bindings.iter().enumerate() {
@@ -1454,7 +1533,7 @@ impl Emitter<'_> {
                 let _ = write!(bindings, "(::bumbledb::FieldId({position}), {term}),");
             }
             return Ok(format!(
-                "::bumbledb::Atom {{ source: ::bumbledb::AtomSource::Idb(::bumbledb::PredId({pred})), bindings: ::std::vec![{bindings}] }}"
+                "::bumbledb::Atom {{ source: ::bumbledb::AtomSource::Interior(::bumbledb::InteriorId({interior})), bindings: ::std::vec![{bindings}] }}"
             ));
         }
         // Indexed labels. An explicit dense in-order variable list is the
@@ -1514,24 +1593,24 @@ impl Emitter<'_> {
             let _ = write!(bindings, "(::bumbledb::FieldId({position}), {term}),");
         }
         Ok(format!(
-            "::bumbledb::Atom {{ source: ::bumbledb::AtomSource::Idb(::bumbledb::PredId({pred})), bindings: ::std::vec![{bindings}] }}"
+            "::bumbledb::Atom {{ source: ::bumbledb::AtomSource::Interior(::bumbledb::InteriorId({interior})), bindings: ::std::vec![{bindings}] }}"
         ))
     }
 
-    /// One atom as an `Atom` expression — a predicate of this program by
+    /// One atom as an `Atom` expression — a derived table of this query by
     /// macro-local name, else the relation and every field through the
     /// theory's id constants. The case partition is total (finding 054):
-    /// a lowercase name IS a predicate, so one absent from the table is
+    /// a lowercase name IS a derived table, so one absent from the table is
     /// an unknown predicate, never a relation respelled — `parent(…)`
     /// must not resolve to `Parent`'s constants.
     fn atom(&mut self, scope: &mut Scope, atom: &Atom) -> Parse<String> {
-        if let Some(pred) = self
-            .predicates
+        if let Some(interior) = self
+            .derived
             .iter()
-            .find(|(name, _)| *name == atom.relation.text)
-            .map(|(_, pred)| *pred)
+            .position(|name| *name == atom.relation.text)
+            .and_then(|index| u32::try_from(index).ok())
         {
-            return self.idb_atom(scope, atom, pred);
+            return self.interior_atom(scope, atom, interior);
         }
         if atom
             .relation
@@ -1762,6 +1841,191 @@ fn parse_theory(tokens: &mut Tokens) -> Parse<String> {
     Ok(theory)
 }
 
+/// Whether a rule body names `pred` as a positive or negated atom.
+fn names_pred(rule: &ParsedRule, pred: &str) -> bool {
+    rule.items.iter().any(|item| match item {
+        Item::Atom(atom) | Item::Negated(atom) => atom.relation.text == pred,
+        Item::Cond(_) => false,
+    })
+}
+
+struct InteriorGroup {
+    name: Name,
+    rules: Vec<ParsedRule>,
+}
+
+struct RecGroup {
+    name: Name,
+    base: Vec<ParsedRule>,
+    rec: Vec<ParsedRule>,
+}
+
+enum Phase {
+    Interiors,
+    Rec,
+    Main,
+}
+
+/// Groups consecutive same-name interiors / recursive lines and splits
+/// rec arms by whether a body atom names the rec predicate. Exhaustive
+/// compile errors for this cut live here.
+fn classify(
+    parsed: Vec<ParsedRule>,
+    block: Span,
+) -> Parse<(Vec<InteriorGroup>, Option<RecGroup>, Vec<ParsedRule>)> {
+    let mut interiors: Vec<InteriorGroup> = Vec::new();
+    let mut rec: Option<RecGroup> = None;
+    let mut main: Vec<ParsedRule> = Vec::new();
+    let mut phase = Phase::Interiors;
+    for rule in parsed {
+        match rule.kind {
+            RuleKind::Interior => {
+                let name = rule.name.clone().expect("interior rules carry a name");
+                if matches!(phase, Phase::Rec) {
+                    return fail(
+                        name.span,
+                        "query!: `interior` cannot follow `recursive` — declaration \
+                         order is interiors, then rec, then main",
+                    );
+                }
+                if matches!(phase, Phase::Main) {
+                    return fail(
+                        name.span,
+                        "query!: `interior` cannot follow a bare rule — declaration \
+                         order is interiors, then rec, then main",
+                    );
+                }
+                if rec
+                    .as_ref()
+                    .is_some_and(|group| group.name.text == name.text)
+                {
+                    return fail(
+                        name.span,
+                        format!(
+                            "query!: `{0}` cannot be both `interior` and `recursive` — \
+                             derived names are unique",
+                            name.text
+                        ),
+                    );
+                }
+                if let Some(last) = interiors.last_mut()
+                    && last.name.text == name.text
+                {
+                    last.rules.push(rule);
+                    continue;
+                }
+                if interiors.iter().any(|group| group.name.text == name.text) {
+                    return fail(
+                        name.span,
+                        format!(
+                            "query!: interior `{0}` is not consecutive — write every \
+                             `interior {0}(...)` line together",
+                            name.text
+                        ),
+                    );
+                }
+                interiors.push(InteriorGroup {
+                    name,
+                    rules: vec![rule],
+                });
+            }
+            RuleKind::Recursive => {
+                let name = rule.name.clone().expect("recursive rules carry a name");
+                if matches!(phase, Phase::Main) {
+                    return fail(
+                        name.span,
+                        "query!: `recursive` cannot follow a bare rule — declaration \
+                         order is interiors, then rec, then main",
+                    );
+                }
+                phase = Phase::Rec;
+                if interiors.iter().any(|group| group.name.text == name.text) {
+                    return fail(
+                        name.span,
+                        format!(
+                            "query!: `{0}` cannot be both `interior` and `recursive` — \
+                             derived names are unique",
+                            name.text
+                        ),
+                    );
+                }
+                let is_rec_arm = names_pred(&rule, &name.text);
+                match &mut rec {
+                    None => {
+                        let mut group = RecGroup {
+                            name,
+                            base: Vec::new(),
+                            rec: Vec::new(),
+                        };
+                        if is_rec_arm {
+                            group.rec.push(rule);
+                        } else {
+                            group.base.push(rule);
+                        }
+                        rec = Some(group);
+                    }
+                    Some(existing) if existing.name.text == name.text => {
+                        if is_rec_arm {
+                            existing.rec.push(rule);
+                        } else {
+                            existing.base.push(rule);
+                        }
+                    }
+                    Some(_) => {
+                        return fail(
+                            name.span,
+                            "query!: at most one `recursive` name this cut — two \
+                             recursive predicates are unwritable",
+                        );
+                    }
+                }
+            }
+            RuleKind::Bare => {
+                phase = Phase::Main;
+                main.push(rule);
+            }
+        }
+    }
+    if main.is_empty() {
+        return fail(
+            block,
+            "query!: a query needs a bare main rule — `interior` / `recursive` \
+             declare derived tables; the answer is the unnamed rules",
+        );
+    }
+    if let Some(group) = &rec {
+        if group.base.is_empty() {
+            return fail(
+                group.name.span,
+                format!(
+                    "query!: `recursive {}` has no base arm — a line whose body \
+                     does not name `{}` is a base arm",
+                    group.name.text, group.name.text
+                ),
+            );
+        }
+        if group.rec.is_empty() {
+            return fail(
+                group.name.span,
+                format!(
+                    "query!: `recursive {}` has no rec arm — a line whose body \
+                     names `{}` (positive or negated) is a rec arm",
+                    group.name.text, group.name.text
+                ),
+            );
+        }
+    }
+    Ok((interiors, rec, main))
+}
+
+fn emit_rules(emitter: &mut Emitter<'_>, rules: &[ParsedRule]) -> Parse<String> {
+    let mut out = String::new();
+    for rule in rules {
+        let _ = write!(out, "{},", emitter.rule(rule)?);
+    }
+    Ok(out)
+}
+
 fn expand(input: TokenStream) -> Parse<String> {
     let mut tokens: Tokens = input.into_iter().peekable();
     let theory = parse_theory(&mut tokens)?;
@@ -1779,89 +2043,68 @@ fn expand(input: TokenStream) -> Parse<String> {
     if parsed.is_empty() {
         return fail(group.span(), "query!: a query needs at least one rule");
     }
-    // Predicate groups in first-appearance order — the `PredId`
-    // assignment (bare rules are one group: the output predicate).
-    let mut groups: Vec<Option<String>> = Vec::new();
-    for rule in &parsed {
-        let key = rule.name.as_ref().map(|name| name.text.clone());
-        if !groups.contains(&key) {
-            groups.push(key);
-        }
+    let (interiors, rec, main) = classify(parsed, group.span())?;
+    let mut derived: Vec<String> = interiors
+        .iter()
+        .map(|group| group.name.text.clone())
+        .collect();
+    if let Some(group) = &rec {
+        derived.push(group.name.text.clone());
     }
     let mut emitter = Emitter {
         theory: &theory,
         params: Params::default(),
-        predicates: groups
-            .iter()
-            .enumerate()
-            .filter_map(|(index, name)| {
-                name.clone()
-                    .map(|name| (name, u16::try_from(index).expect("MAX_RULES bounds groups")))
-            })
-            .collect(),
+        derived,
     };
-    // The all-bare query lowers to `ir::Query` exactly as it always has
-    // — text-level backward compatibility is a representation fact, not
-    // a promise.
-    if emitter.predicates.is_empty() {
-        let mut rules = String::new();
-        for rule in &parsed {
-            let _ = write!(rules, "{},", emitter.rule(rule)?);
-        }
-        return Ok(format!(
-            "{{ let rules = ::std::vec![{rules}]; \
-                 let head = ::bumbledb::Rule::head(&rules[0]); \
-                 ::bumbledb::Query {{ head, rules }} }}"
-        ));
-    }
-    // Named heads present: the program form. Bare rules ARE the output
-    // predicate; a program of only named rules has no output to answer.
-    let Some(output) = groups.iter().position(Option::is_none) else {
-        return fail(
-            group.span(),
-            "query!: a program's output rules are written bare — name the \
-             interior predicates, leave the output's rules unnamed \
-             (docs/architecture/20-query-ir.md § the query notation)",
-        );
-    };
-    // Rules emit in SOURCE order — named `?param` ids are dense by first
-    // occurrence in the text, the one order both `PredId`s (group first
-    // appearance) and `ParamId`s derive from; grouping is pure bucketing
-    // of already-emitted strings.
-    let mut group_rules: Vec<String> = vec![String::new(); groups.len()];
-    for rule in &parsed {
-        let key = rule.name.as_ref().map(|name| name.text.clone());
-        let bucket = groups
-            .iter()
-            .position(|existing| *existing == key)
-            .expect("every rule was bucketed");
-        let _ = write!(group_rules[bucket], "{},", emitter.rule(rule)?);
-    }
+    // Param ids mint in IR walk order: interiors, rec base, rec arms, main.
     let mut lets = String::new();
-    let mut defs = String::new();
-    for (index, rules) in group_rules.iter().enumerate() {
+    let mut interior_defs = String::new();
+    for (index, group) in interiors.iter().enumerate() {
+        let rules = emit_rules(&mut emitter, &group.rules)?;
         let _ = write!(
             lets,
             "let p{index}_rules = ::std::vec![{rules}]; \
              let p{index}_head = ::bumbledb::Rule::head(&p{index}_rules[0]); "
         );
         let _ = write!(
-            defs,
-            "::bumbledb::PredicateDef {{ head: p{index}_head, rules: p{index}_rules }},"
+            interior_defs,
+            "::bumbledb::Interior {{ head: p{index}_head, rules: p{index}_rules }},"
         );
     }
+    let rec_expr = if let Some(group) = &rec {
+        let rec_index = interiors.len();
+        let base = emit_rules(&mut emitter, &group.base)?;
+        let step = emit_rules(&mut emitter, &group.rec)?;
+        let _ = write!(
+            lets,
+            "let p{rec_index}_base = ::std::vec![{base}]; \
+             let p{rec_index}_rec = ::std::vec![{step}]; \
+             let p{rec_index}_head = ::bumbledb::Rule::head(&p{rec_index}_base[0]); "
+        );
+        format!(
+            "::std::option::Option::Some(::bumbledb::Rec {{ \
+                 head: p{rec_index}_head, base: p{rec_index}_base, rec: p{rec_index}_rec }})"
+        )
+    } else {
+        "::std::option::Option::None".to_owned()
+    };
+    let main_rules = emit_rules(&mut emitter, &main)?;
     Ok(format!(
-        "{{ {lets}::bumbledb::Program {{ predicates: ::std::vec![{defs}], \
-             output: ::bumbledb::PredId({output}) }} }}"
+        "{{ {lets}let rules = ::std::vec![{main_rules}]; \
+             let head = ::bumbledb::Rule::head(&rules[0]); \
+             ::bumbledb::Query {{ \
+                 interiors: ::std::vec![{interior_defs}], \
+                 rec: {rec_expr}, \
+                 head, \
+                 rules }} }}"
     ))
 }
 
 /// The query notation, lowered at compile time to the `ir::Query` value
-/// — or, when any rule carries a named head, to the `ir::Program` value
 /// (docs/architecture/20-query-ir.md § the query notation — the grammar
 /// is the module doc's block, normative there). Names check through the
-/// theory's id constants; predicate names are macro-local and never
-/// survive expansion (the IR carries bare `PredId`s); everything
+/// theory's id constants; derived-table names are macro-local and never
+/// survive expansion (the IR carries bare `InteriorId`s); everything
 /// semantic beyond names surfaces as the validation roster's typed
 /// errors at `Db::prepare`.
 ///
@@ -1870,12 +2113,12 @@ fn expand(input: TokenStream) -> Parse<String> {
 ///     (person, during) | Busy(person, during), Allen(during, INTERSECTS, ?window);
 ///     (person, during) | Ooo(person, during),  Allen(during, INTERSECTS, ?window);
 /// });
-/// // The program form: named heads declare predicates, a body atom may
+/// // `recursive` / `interior` declare derived tables; a body atom may
 /// // name one (bare idents bind head POSITIONS, ordered dense — left to
-/// // right from 0), bare rules are the output.
+/// // right from 0); bare rules are the main query.
 /// let reachable = bumbledb_query::query!(Ledger {
-///     reach(c, a) | OrgParent(child: c, parent: a);
-///     reach(c, a) | OrgParent(child: c, parent: m), reach(m, a);
+///     recursive reach(c, a) | OrgParent(child: c, parent: a);
+///     recursive reach(c, a) | OrgParent(child: c, parent: m), reach(m, a);
 ///     (c, a) | reach(c, a);
 /// });
 /// ```

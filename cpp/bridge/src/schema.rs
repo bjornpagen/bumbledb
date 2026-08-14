@@ -5,12 +5,12 @@
 //! `SchemaSpec::descriptor()` remains the canonical lowering; this module
 //! judges nothing.
 
+use bumbledb::SchemaSpec;
 use bumbledb::schema::spec::{
     BoundSpec, CapacityWindowSpec, ClosedSpec, FieldSpec, LiteralSetSpec, LiteralSpec,
     RelationSpec, RowSpec, SideSpec, StatementSpec, WeightSpec,
 };
 use bumbledb::schema::{IntervalElement, ValueType};
-use bumbledb::SchemaSpec;
 
 use crate::error::fail_shape;
 use crate::value::{bdb_string_view, bdb_value, value_in};
@@ -143,7 +143,11 @@ pub enum bdb_weight_kind {
     DurationField,
 }
 
-c_tag!(bdb_weight_kind { Unit, Field, DurationField });
+c_tag!(bdb_weight_kind {
+    Unit,
+    Field,
+    DurationField
+});
 
 /// A capacity weight; `field` is read for `Field`/`DurationField`.
 #[repr(C)]
@@ -162,7 +166,11 @@ pub enum bdb_bound_kind {
     DurationField,
 }
 
-c_tag!(bdb_bound_kind { Lit, Field, DurationField });
+c_tag!(bdb_bound_kind {
+    Lit,
+    Field,
+    DurationField
+});
 
 /// One capacity bound; `lit` for `Lit`, `field` for
 /// `Field`/`DurationField`.
@@ -183,7 +191,11 @@ pub enum bdb_capacity_window_kind {
     Floor,
 }
 
-c_tag!(bdb_capacity_window_kind { Exact, Range, Floor });
+c_tag!(bdb_capacity_window_kind {
+    Exact,
+    Range,
+    Floor
+});
 
 /// One capacity window: `Exact` reads `lo` as the exact bound; `Floor`
 /// reads `lo`; `Range` reads `lo` and `hi`.
@@ -204,7 +216,11 @@ pub enum bdb_statement_spec_kind {
     Capacity,
 }
 
-c_tag!(bdb_statement_spec_kind { Fd, Containment, Capacity });
+c_tag!(bdb_statement_spec_kind {
+    Fd,
+    Containment,
+    Capacity
+});
 
 /// One dependency statement. `Fd` reads `fd_relation` +
 /// `fd_projection`; `Containment` reads `source`/`target`/`bidirectional`;
@@ -315,7 +331,11 @@ fn literal_set_in(view: &bdb_literal_set) -> BridgeResult<LiteralSetSpec> {
     })
 }
 
-fn names_in(views: *const bdb_string_view, count: usize, what: &str) -> BridgeResult<Vec<Box<str>>> {
+fn names_in(
+    views: *const bdb_string_view,
+    count: usize,
+    what: &str,
+) -> BridgeResult<Vec<Box<str>>> {
     slice_in(views, count)?
         .iter()
         .map(|view| Ok(view.as_str(what)?.into()))
@@ -334,7 +354,11 @@ fn side_in(view: &bdb_side) -> BridgeResult<SideSpec> {
         .collect::<BridgeResult<Vec<_>>>()?;
     Ok(SideSpec {
         relation: view.relation.as_str("side relation name")?.into(),
-        projection: names_in(view.projection, view.projection_count, "projection field name")?,
+        projection: names_in(
+            view.projection,
+            view.projection_count,
+            "projection field name",
+        )?,
         selection,
     })
 }
@@ -401,10 +425,7 @@ fn relation_in(view: &bdb_relation_spec) -> BridgeResult<RelationSpec> {
             Ok(FieldSpec {
                 name: field.name.as_str("field name")?.into(),
                 value_type: value_type_in(&field.value_type)?,
-                newtype: field
-                    .newtype
-                    .as_opt_str("field newtype")?
-                    .map(Into::into),
+                newtype: field.newtype.as_opt_str("field newtype")?.map(Into::into),
                 fresh: bool_in(field.fresh)?,
             })
         })

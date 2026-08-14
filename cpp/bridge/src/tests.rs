@@ -13,20 +13,19 @@ use std::ffi::c_void;
 use std::path::PathBuf;
 use std::ptr::{null, null_mut};
 
-use bumbledb::schema::StatementDescriptor;
 use bumbledb::RelationId;
+use bumbledb::schema::StatementDescriptor;
 
 use crate::answers::{
     bdb_answers_arity, bdb_answers_clear, bdb_answers_destroy, bdb_answers_get, bdb_answers_len,
     bdb_answers_new, bdb_snapshot_execute,
 };
 use crate::db::{
-    bdb_db, bdb_db_bulk_load, bdb_db_create, bdb_db_destroy, bdb_db_ephemeral,
-    bdb_db_fingerprint, bdb_db_open, bdb_db_read, bdb_db_write, bdb_db_write_from,
-    bdb_fingerprint, bdb_row_set, bdb_row_set_arity, bdb_row_set_destroy, bdb_row_set_get,
-    bdb_row_set_len, bdb_row_view, bdb_snapshot_contains, bdb_snapshot_get, bdb_snapshot_ref,
-    bdb_snapshot_scan, bdb_tx_alloc, bdb_tx_contains, bdb_tx_delete, bdb_tx_get, bdb_tx_insert,
-    bdb_tx_ref, test_only_trigger_panic,
+    bdb_db, bdb_db_bulk_load, bdb_db_create, bdb_db_destroy, bdb_db_ephemeral, bdb_db_fingerprint,
+    bdb_db_open, bdb_db_read, bdb_db_write, bdb_db_write_from, bdb_fingerprint, bdb_row_set,
+    bdb_row_set_arity, bdb_row_set_destroy, bdb_row_set_get, bdb_row_set_len, bdb_row_view,
+    bdb_snapshot_contains, bdb_snapshot_get, bdb_snapshot_ref, bdb_snapshot_scan, bdb_tx_alloc,
+    bdb_tx_contains, bdb_tx_delete, bdb_tx_get, bdb_tx_insert, bdb_tx_ref, test_only_trigger_panic,
 };
 use crate::error::{
     bdb_error, bdb_error_destroy, bdb_error_get_bulk_committed, bdb_error_get_generation_moved,
@@ -34,17 +33,16 @@ use crate::error::{
     bdb_error_violation_count, bdb_statement_kind, bdb_violation,
 };
 use crate::query::{
-    bdb_atom, bdb_atom_source_kind, bdb_binding, bdb_cmp_op, bdb_cmp_op_kind, bdb_comparison,
-    bdb_condition, bdb_condition_kind, bdb_db_prepare, bdb_find_term, bdb_find_term_kind,
-    bdb_head_op, bdb_head_term, bdb_head_term_kind, bdb_prepared,
-    bdb_prepared_destroy, bdb_program, bdb_rule, bdb_term, bdb_term_kind, bdb_agg_op,
-    bdb_predicate,
+    bdb_agg_op, bdb_atom, bdb_atom_source_kind, bdb_binding, bdb_cmp_op, bdb_cmp_op_kind,
+    bdb_comparison, bdb_condition, bdb_condition_kind, bdb_db_prepare, bdb_find_term,
+    bdb_find_term_kind, bdb_head_op, bdb_head_term, bdb_head_term_kind, bdb_prepared,
+    bdb_prepared_destroy, bdb_query, bdb_rule, bdb_term, bdb_term_kind,
 };
 use crate::schema::{
-    bdb_field_spec, bdb_relation_spec, bdb_schema_spec, bdb_side, bdb_statement_spec,
+    bdb_bound, bdb_bound_kind, bdb_capacity_window, bdb_capacity_window_kind, bdb_field_spec,
+    bdb_interval_element, bdb_relation_spec, bdb_schema_spec, bdb_side, bdb_statement_spec,
     bdb_statement_spec_kind, bdb_value_type, bdb_value_type_kind, bdb_weight, bdb_weight_kind,
-    bdb_bound, bdb_bound_kind, bdb_capacity_window, bdb_capacity_window_kind,
-    bdb_interval_element, schema_spec_in,
+    schema_spec_in,
 };
 use crate::value::{bdb_param, bdb_param_kind, bdb_string_view, bdb_value, bdb_value_kind};
 use crate::{bdb_callback_control, bdb_status};
@@ -100,10 +98,8 @@ fn v_interval_i64(start: i64, end: i64) -> bdb_value {
 
 /// A fresh store directory under the system temp root.
 fn temp_store(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!(
-        "bumbledb-cpp-bridge-{}-{name}",
-        std::process::id()
-    ));
+    let dir =
+        std::env::temp_dir().join(format!("bumbledb-cpp-bridge-{}-{name}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("temp store dir");
     dir
@@ -459,7 +455,7 @@ fn cmp_op(kind: bdb_cmp_op_kind) -> bdb_cmp_op {
 /// `DownAt(t) = { service | Outage(service, window), t in window }` —
 /// one Edb atom over Outage, a `PointIn` condition (interval lhs, point
 /// rhs), one projected find.
-fn with_down_at_program<R>(f: impl FnOnce(&bdb_program) -> R) -> R {
+fn with_down_at_query<R>(f: impl FnOnce(&bdb_query) -> R) -> R {
     let bindings = [
         bdb_binding {
             field: OUTAGE_SERVICE,
@@ -473,7 +469,7 @@ fn with_down_at_program<R>(f: impl FnOnce(&bdb_program) -> R) -> R {
     let atoms = [bdb_atom {
         source_kind: u32::from(bdb_atom_source_kind::Edb),
         relation: OUTAGE,
-        pred: 0,
+        interior: 0,
         bindings: bindings.as_ptr(),
         binding_count: bindings.len(),
     }];
@@ -499,23 +495,21 @@ fn with_down_at_program<R>(f: impl FnOnce(&bdb_program) -> R) -> R {
         condition_count: conditions.len(),
     }];
     let head = [head_var()];
-    let predicates = [bdb_predicate {
+    let query = bdb_query {
+        interiors: null(),
+        interior_count: 0,
+        rec: null(),
         head: head.as_ptr(),
         head_count: head.len(),
         rules: rules.as_ptr(),
         rule_count: rules.len(),
-    }];
-    let program = bdb_program {
-        predicates: predicates.as_ptr(),
-        predicate_count: predicates.len(),
-        output: 0,
     };
-    f(&program)
+    f(&query)
 }
 
 /// `NamesOf(ids) = { name | Service(id, name), id in ids }` — the set
 /// param lane plus a string find.
-fn with_names_of_program<R>(f: impl FnOnce(&bdb_program) -> R) -> R {
+fn with_names_of_query<R>(f: impl FnOnce(&bdb_query) -> R) -> R {
     let bindings = [
         bdb_binding {
             field: 0,
@@ -529,7 +523,7 @@ fn with_names_of_program<R>(f: impl FnOnce(&bdb_program) -> R) -> R {
     let atoms = [bdb_atom {
         source_kind: u32::from(bdb_atom_source_kind::Edb),
         relation: SERVICE,
-        pred: 0,
+        interior: 0,
         bindings: bindings.as_ptr(),
         binding_count: bindings.len(),
     }];
@@ -545,24 +539,22 @@ fn with_names_of_program<R>(f: impl FnOnce(&bdb_program) -> R) -> R {
         condition_count: 0,
     }];
     let head = [head_var()];
-    let predicates = [bdb_predicate {
+    let query = bdb_query {
+        interiors: null(),
+        interior_count: 0,
+        rec: null(),
         head: head.as_ptr(),
         head_count: head.len(),
         rules: rules.as_ptr(),
         rule_count: rules.len(),
-    }];
-    let program = bdb_program {
-        predicates: predicates.as_ptr(),
-        predicate_count: predicates.len(),
-        output: 0,
     };
-    f(&program)
+    f(&query)
 }
 
-fn prepare(db: *mut bdb_db, program: &bdb_program) -> *mut bdb_prepared {
+fn prepare(db: *mut bdb_db, query: &bdb_query) -> *mut bdb_prepared {
     let mut prepared: *mut bdb_prepared = null_mut();
     let mut error: *mut bdb_error = null_mut();
-    let status = bdb_db_prepare(db, program, &raw mut prepared, &raw mut error);
+    let status = bdb_db_prepare(db, query, &raw mut prepared, &raw mut error);
     assert_eq!(status, bdb_status::Ok, "prepare: {}", err_text(error));
     prepared
 }
@@ -770,9 +762,8 @@ fn insert_delete_contains_get_dyn() {
         let mut name = bdb_value::blank(bdb_value_kind::Bool);
         assert_eq!(bdb_row_set_get(row, 0, 1, &raw mut name), bdb_status::Ok);
         assert_eq!(name.kind, u32::from(bdb_value_kind::String));
-        let text = unsafe {
-            std::slice::from_raw_parts(name.string_value.data, name.string_value.len)
-        };
+        let text =
+            unsafe { std::slice::from_raw_parts(name.string_value.data, name.string_value.len) };
         assert_eq!(text, b"api");
         assert_eq!(bdb_row_set_destroy(row), bdb_status::Ok);
 
@@ -944,7 +935,12 @@ fn write_from_ok_and_generation_moved() {
             );
             bdb_callback_control::Ok
         });
-        assert_eq!(status, bdb_status::Ok, "interleaved write: {}", err_text(error));
+        assert_eq!(
+            status,
+            bdb_status::Ok,
+            "interleaved write: {}",
+            err_text(error)
+        );
 
         let mut entered = false;
         let (status, error) = db_write_from(db, snap, |_tx| {
@@ -1086,7 +1082,7 @@ fn prepare_execute_scalar_param_and_decode() {
     let id = seed_service_outage(db, "down-at", (10, 20));
     seed_service_outage(db, "up-at", (100, 200));
 
-    let prepared = with_down_at_program(|program| prepare(db, program));
+    let prepared = with_down_at_query(|program| prepare(db, program));
     let answers = bdb_answers_new();
 
     let (status, error) = db_read(db, |snap| {
@@ -1113,7 +1109,10 @@ fn prepare_execute_scalar_param_and_decode() {
         assert_eq!(bdb_answers_len(answers), 1);
         assert_eq!(bdb_answers_arity(answers), 1);
         let mut cell = bdb_value::blank(bdb_value_kind::Bool);
-        assert_eq!(bdb_answers_get(answers, 0, 0, &raw mut cell), bdb_status::Ok);
+        assert_eq!(
+            bdb_answers_get(answers, 0, 0, &raw mut cell),
+            bdb_status::Ok
+        );
         assert_eq!(cell.kind, u32::from(bdb_value_kind::U64));
         assert_eq!(cell.u64_value, id);
         assert_eq!(
@@ -1181,7 +1180,7 @@ fn execute_set_param_decodes_strings() {
     let _beta = seed_service_outage(db, "beta", (10, 20));
     let gamma = seed_service_outage(db, "gamma", (20, 30));
 
-    let prepared = with_names_of_program(|program| prepare(db, program));
+    let prepared = with_names_of_query(|program| prepare(db, program));
     let answers = bdb_answers_new();
 
     let (status, error) = db_read(db, |snap| {
@@ -1210,7 +1209,10 @@ fn execute_set_param_decodes_strings() {
         let mut names = Vec::new();
         for row in 0..2 {
             let mut cell = bdb_value::blank(bdb_value_kind::Bool);
-            assert_eq!(bdb_answers_get(answers, row, 0, &raw mut cell), bdb_status::Ok);
+            assert_eq!(
+                bdb_answers_get(answers, row, 0, &raw mut cell),
+                bdb_status::Ok
+            );
             assert_eq!(cell.kind, u32::from(bdb_value_kind::String));
             let text = unsafe {
                 std::slice::from_raw_parts(cell.string_value.data, cell.string_value.len)
@@ -1271,9 +1273,8 @@ fn pointwise_key_violation_is_commit_rejected_and_renderable() {
         bdb_status::Ok
     );
     assert_eq!(violation.kind, bdb_statement_kind::Functionality);
-    let spelling = unsafe {
-        std::slice::from_raw_parts(violation.spelling.data, violation.spelling.len)
-    };
+    let spelling =
+        unsafe { std::slice::from_raw_parts(violation.spelling.data, violation.spelling.len) };
     let spelling = std::str::from_utf8(spelling).expect("utf-8 spelling");
     assert!(
         spelling.contains("Outage"),
@@ -1417,7 +1418,12 @@ fn null_out_db_is_misuse_and_does_not_lock_the_path() {
         assert!(error.is_null());
         let mut db: *mut bdb_db = null_mut();
         let status = bdb_db_create(path, spec, &raw mut db, &raw mut error);
-        assert_eq!(status, bdb_status::Ok, "create after null out: {}", err_text(error));
+        assert_eq!(
+            status,
+            bdb_status::Ok,
+            "create after null out: {}",
+            err_text(error)
+        );
         assert_eq!(bdb_db_destroy(db), bdb_status::Ok);
     });
 }
@@ -1451,7 +1457,11 @@ fn bulk_load_null_out_committed_does_not_commit() {
             "scan: {}",
             err_text(error)
         );
-        assert_eq!(bdb_row_set_len(rows), 0, "null out_committed must not import");
+        assert_eq!(
+            bdb_row_set_len(rows),
+            0,
+            "null out_committed must not import"
+        );
         assert_eq!(bdb_row_set_destroy(rows), bdb_status::Ok);
         bdb_callback_control::Ok
     });
@@ -1503,7 +1513,12 @@ fn invalid_callback_control_is_misuse() {
     let dir = temp_store("bad-control");
     let db = create_uptime(&dir);
     let mut error: *mut bdb_error = null_mut();
-    let status = bdb_db_read(db, Some(invalid_callback_control), null_mut(), &raw mut error);
+    let status = bdb_db_read(
+        db,
+        Some(invalid_callback_control),
+        null_mut(),
+        &raw mut error,
+    );
     assert_eq!(status, bdb_status::Misuse);
     assert!(error.is_null());
     assert_eq!(bdb_db_destroy(db), bdb_status::Ok);
@@ -1530,14 +1545,7 @@ fn slice_overflow_and_unaligned_are_misuse() {
 
         let bytes = [0u8; 64];
         let unaligned = bytes.as_ptr().wrapping_add(1).cast::<bdb_value>();
-        let status = bdb_tx_insert(
-            tx,
-            SERVICE,
-            unaligned,
-            1,
-            &raw mut changed,
-            &raw mut error,
-        );
+        let status = bdb_tx_insert(tx, SERVICE, unaligned, 1, &raw mut changed, &raw mut error);
         assert_eq!(status, bdb_status::Misuse);
         assert!(error.is_null());
         bdb_callback_control::Abort
@@ -1552,7 +1560,7 @@ fn prepared_exclusive_execute_and_destroy() {
 
     let dir = temp_store("prepared-excl");
     let db = create_uptime(&dir);
-    let prepared = with_down_at_program(|program| prepare(db, program));
+    let prepared = with_down_at_query(|program| prepare(db, program));
     let answers = bdb_answers_new();
     let (status, error) = db_read(db, |snap| {
         unsafe {

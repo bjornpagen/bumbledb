@@ -63,7 +63,12 @@ pub fn random_query(rng: &mut Rng) -> Query {
             .map(|_| random_find(rng).head_term())
             .collect(),
     };
-    Query { head, rules }
+    Query {
+        interiors: vec![],
+        rec: None,
+        head,
+        rules,
+    }
 }
 
 /// The acceptance-biased draw: one atom over a real target relation,

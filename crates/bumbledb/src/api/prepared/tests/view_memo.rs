@@ -127,6 +127,8 @@ fn rules_share_the_image_and_memoize_every_rules_views() {
         })],
     };
     let query = Query {
+        interiors: vec![],
+        rec: None,
         head: vec![HeadTerm::Var],
         rules: vec![rule(3), rule(7)],
     };
@@ -613,70 +615,78 @@ fn prepare_lights_the_validation_interior() {
             "{name} nests inside VALIDATE",
         );
     }
-    // The program-only passes have no query-path site.
-    for name in [obs::names::VALIDATE_STRATIFY, obs::names::VALIDATE_SEAL] {
-        assert!(
-            events.iter().all(|e| e.name != name),
-            "{name} is program-path-only",
-        );
-    }
+    // STRATIFY died with Program. SEAL still runs (declaration-order
+    // interior sealing) even when interiors are empty.
+    assert!(
+        events
+            .iter()
+            .all(|e| e.name != obs::names::VALIDATE_STRATIFY),
+        "VALIDATE_STRATIFY is deleted",
+    );
+    let seal = events
+        .iter()
+        .find(|e| e.name == obs::names::VALIDATE_SEAL)
+        .expect("VALIDATE_SEAL runs over interior count");
+    assert_eq!(seal.a0, 0, "no interiors");
 }
 
-/// Lane I2 — the program path's validation interior: `prepare` of a
-/// recursive one-predicate program records the strata judge and the
-/// signature-sealing loop beside the lowering and strict-rule passes,
-/// all nested inside a `VALIDATE` span (formerly the program path had
-/// no `VALIDATE` span at all).
+/// Lane I2 — a rec query records declaration-order sealing beside the
+/// lowering and strict-rule passes, all nested inside VALIDATE.
 #[test]
-fn program_prepare_lights_the_strata_judge_and_sealing_loop() {
-    use crate::ir::{Atom, AtomSource, HeadTerm, PredId, PredicateDef, Program};
+fn rec_prepare_lights_sealing_and_the_rule_passes() {
     use crate::obs;
 
-    let dir = TempDir::new("prepared-trace-validate-program");
+    let dir = TempDir::new("prepared-trace-validate-rec");
     let schema = schema();
     let env = Environment::create(dir.path(), &schema).expect("create");
     insert_postings(&env, &schema, &[(1, 7, "a", 100)]);
     let cache = ImageCache::new(&schema);
     let txn = env.read_txn().expect("txn");
 
-    // The linear closure shape: `p0(x) | Posting(account: x)` and
-    // `p0(x) | p0(x)` — one predicate, one stratum, two rules.
-    let program = Program {
-        predicates: vec![PredicateDef {
+    let query = Query {
+        interiors: vec![],
+        rec: Some(Rec {
             head: vec![HeadTerm::Var],
-            rules: vec![
-                Rule {
-                    finds: vec![FindTerm::Var(VarId(0))],
-                    atoms: vec![Atom {
-                        source: AtomSource::Edb(POSTING),
-                        bindings: vec![(FieldId(1), Term::Var(VarId(0)))],
-                    }],
-                    negated: vec![],
-                    conditions: vec![],
-                },
-                Rule {
-                    finds: vec![FindTerm::Var(VarId(0))],
-                    atoms: vec![Atom {
-                        source: AtomSource::Idb(PredId(0)),
-                        bindings: vec![(FieldId(0), Term::Var(VarId(0)))],
-                    }],
-                    negated: vec![],
-                    conditions: vec![],
-                },
-            ],
+            base: vec![Rule {
+                finds: vec![FindTerm::Var(VarId(0))],
+                atoms: vec![Atom {
+                    source: AtomSource::Edb(POSTING),
+                    bindings: vec![(FieldId(1), Term::Var(VarId(0)))],
+                }],
+                negated: vec![],
+                conditions: vec![],
+            }],
+            rec: vec![Rule {
+                finds: vec![FindTerm::Var(VarId(0))],
+                atoms: vec![Atom {
+                    source: AtomSource::Interior(InteriorId(0)),
+                    bindings: vec![(FieldId(0), Term::Var(VarId(0)))],
+                }],
+                negated: vec![],
+                conditions: vec![],
+            }],
+        }),
+        head: vec![HeadTerm::Var],
+        rules: vec![Rule {
+            finds: vec![FindTerm::Var(VarId(0))],
+            atoms: vec![Atom {
+                source: AtomSource::Interior(InteriorId(0)),
+                bindings: vec![(FieldId(0), Term::Var(VarId(0)))],
+            }],
+            negated: vec![],
+            conditions: vec![],
         }],
-        output: PredId(0),
     };
 
     obs::start_capture();
     let _prepared: PreparedQuery<'_, ()> =
-        super::super::prepare_program(&txn, &cache, &schema, &program).expect("prepare");
+        super::super::prepare(&txn, &cache, &schema, &query).expect("prepare");
     let events = obs::finish_capture();
 
     let outer = events
         .iter()
         .find(|e| e.name == obs::names::VALIDATE)
-        .expect("the program path's VALIDATE span");
+        .expect("VALIDATE span");
     let one = |name: &'static str| -> &obs::TraceEvent {
         let hits: Vec<&obs::TraceEvent> = events.iter().filter(|e| e.name == name).collect();
         assert_eq!(hits.len(), 1, "exactly one {name}");
@@ -691,30 +701,14 @@ fn program_prepare_lights_the_strata_judge_and_sealing_loop() {
         );
     };
 
-    // One predicate lowers once: two written rules, two lowered rules.
-    let lower = one(obs::names::VALIDATE_LOWER);
-    assert_eq!(lower.a0, 2, "both rules lower");
-    within(lower);
-    // One predicate, one stratum.
-    let stratify = one(obs::names::VALIDATE_STRATIFY);
-    assert_eq!(
-        (stratify.a0, stratify.a1),
-        (1, 1),
-        "one predicate, one stratum"
-    );
-    within(stratify);
-    // Pass 1 seals p0 from its all-`Edb` rule; pass 2 finds no progress.
     let seal = one(obs::names::VALIDATE_SEAL);
-    assert_eq!(
-        (seal.a0, seal.a1),
-        (2, 1),
-        "two passes, one predicate sealed"
-    );
     within(seal);
-    // The strict pass validates both rules under the sealed signature.
-    let rules = one(obs::names::VALIDATE_RULES);
-    assert_eq!(rules.a0, 2, "both rules through the strict pass");
-    within(rules);
+    assert!(
+        events
+            .iter()
+            .all(|e| e.name != obs::names::VALIDATE_STRATIFY),
+        "VALIDATE_STRATIFY is deleted",
+    );
 }
 
 /// Lane I2 — the columnar batch decode (formerly invisible inside

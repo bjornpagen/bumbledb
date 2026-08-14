@@ -22,24 +22,15 @@ pub use bumbledb_theory::Value;
 /// against the naive model's direct tree evaluation.
 pub use normalize::{LoweredRule, distribute};
 
-/// The rule-count cap: a query is a program of at most this many rules,
-/// rejected at validation (`ValidationError::TooManyRules`). Counted
-/// independently of the per-rule occurrence cap
-/// ([`crate::plan::planner::MAX_OCCURRENCES`]): rules are planned one at a
-/// time, so the roster bounds the program's breadth here and each rule's
-/// width there.
+/// The rule-count cap: each `Interior.rules` list and the main
+/// `Query.rules` independently, and the rec SCC as one pool
+/// (`base.len() + rec.len()`), rejected at validation
+/// (`ValidationError::TooManyRules`). Counted independently of the
+/// per-rule occurrence cap ([`crate::plan::planner::MAX_OCCURRENCES`]):
+/// rules are planned one at a time, so the roster bounds each
+/// rule-list's breadth here and each rule's width there. There is no
+/// interior-count cap.
 pub const MAX_RULES: usize = 16;
-
-/// The predicate-count cap: a [`Program`] holds at most this many
-/// predicates, rejected at validation
-/// (`ValidationError::TooManyPredicates`). A product decision, not a
-/// provisional limit (`docs/architecture/20-query-ir.md` § engine
-/// recursion): the cap keeps programs query-shaped so pin-at-prepare,
-/// the selectivity ladder, and the allocation high-water contract stay
-/// meaningful — the engine is never a rule-program runtime. Counted
-/// independently of [`MAX_RULES`] (per predicate) and the per-rule
-/// occurrence cap: breadth here, rule count there, width below.
-pub const MAX_PREDICATES: usize = 16;
 
 /// The condition-tree nesting cap: a [`ConditionTree`] deeper than this
 /// is rejected at validation (`ValidationError::ConditionNestingTooDeep`)
@@ -54,28 +45,43 @@ pub const MAX_PREDICATES: usize = 16;
 /// blowup cap ([`MAX_RULES`]) already limits leaves per disjunct.
 pub const MAX_CONDITION_DEPTH: usize = 64;
 
-/// Dense predicate id — the index into a [`Program`]'s predicate list
-/// (`lean/Bumbledb/Query/Syntax.lean: PredId`; `Program.predicates` is
-/// the address space). A **separate identity from
-/// [`crate::schema::RelationId`]**, deliberately: statements quantify
-/// over stored relations permanently (`docs/architecture/
-/// 30-dependencies.md`, the stored-relations decision), no statement
-/// form carries a `PredId` position, and the two never pun.
+/// Dense derived-table id — an index into a [`Query`]'s interiors,
+/// with the optional rec occupying `InteriorId(interiors.len())`
+/// (`lean/Bumbledb/Query/Syntax.lean: InteriorId`). Same width as
+/// [`crate::schema::RelationId`], deliberately: a **separate identity**,
+/// never a pun. Statements quantify over stored relations only
+/// (`docs/architecture/30-dependencies.md`); no statement form carries
+/// an `InteriorId` position. Construction never panics: a derived-table
+/// count that does not fit `u32` is [`crate::error::ValidationError::InteriorIdOverflow`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct PredId(pub u16);
+pub struct InteriorId(pub u32);
+
+impl InteriorId {
+    /// Index into the derived-table signature / image slice.
+    ///
+    /// # Panics
+    ///
+    /// Never on a 64-bit target: `u32` always fits `usize`. The crate
+    /// is 64-bit only; this is a programmer invariant, not an IR
+    /// overflow (`InteriorIdOverflow` is judged before any
+    /// `InteriorId` is minted).
+    #[must_use]
+    pub(crate) fn index(self) -> usize {
+        usize::try_from(self.0).expect("crate is 64-bit")
+    }
+}
 
 /// Where an atom draws its facts: a stored (EDB) relation, or a
-/// predicate of the same program (IDB) — the recursion cut's
-/// one-line sum (`lean/Bumbledb/Query/Syntax.lean: AtomSource`),
-/// landing inhabited because the fixpoint semantics beside it consumes
-/// both arms. An `Idb` atom's bindings address **head positions**
-/// positionally — `FieldId(i)` is the target predicate's column `i`,
-/// typed by its sealed signature column — through the same `FieldId`
-/// reading (`FieldId` is already positional, never nominal).
+/// derived table of the same query (an interior, or the rec)
+/// (`lean/Bumbledb/Query/Syntax.lean: AtomSource`). An `Interior`
+/// atom's bindings address **head positions** positionally —
+/// `FieldId(i)` is the target derived head's column `i`, typed by its
+/// sealed signature column — through the same `FieldId` reading
+/// (`FieldId` is already positional, never nominal).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum AtomSource {
     Edb(RelationId),
-    Idb(PredId),
+    Interior(InteriorId),
 }
 
 impl AtomSource {
@@ -84,18 +90,17 @@ impl AtomSource {
     pub fn edb(self) -> Option<RelationId> {
         match self {
             Self::Edb(relation) => Some(relation),
-            Self::Idb(_) => None,
+            Self::Interior(_) => None,
         }
     }
 
-    /// The predicate this source reads, if any — the dependency
-    /// graph's projection (`lean/Bumbledb/Query/Syntax.lean:
-    /// AtomSource.idb?`).
+    /// The derived table this source reads, if any — an interior or
+    /// the rec (`lean/Bumbledb/Query/Syntax.lean: AtomSource.interior?`).
     #[must_use]
-    pub fn idb(self) -> Option<PredId> {
+    pub fn interior(self) -> Option<InteriorId> {
         match self {
             Self::Edb(_) => None,
-            Self::Idb(pred) => Some(pred),
+            Self::Interior(interior) => Some(interior),
         }
     }
 }
@@ -141,11 +146,10 @@ pub enum Term {
 /// the wildcard. An atom with zero bindings is legal and means a
 /// nonemptiness gate on the source.
 ///
-/// The source position is [`AtomSource`] — the recursion cut
-/// (`Atom.relation` → `Atom.source`,
-/// `docs/architecture/20-query-ir.md` § engine recursion): an `Edb` atom reads a stored relation exactly as ever; an `Idb`
-/// atom reads a predicate of the same [`Program`], its `FieldId`s
-/// addressing the target's head positions.
+/// The source position is [`AtomSource`]: an `Edb` atom reads a stored
+/// relation exactly as ever; an `Interior` atom reads a derived table
+/// of the same [`Query`] (an earlier interior, or the rec from main),
+/// its `FieldId`s addressing the target's head positions.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Atom {
     pub source: AtomSource,
@@ -405,131 +409,73 @@ impl Rule {
     }
 }
 
-/// A query: a non-recursive Datalog program — one head, a non-empty set
-/// of conjunctive rules (`docs/architecture/20-query-ir.md`, normative).
+/// A named interior: a finite CQ (union of conjunctive rules), evaluated
+/// **once**, not an lfp (`lean/Bumbledb/Query/Syntax.lean: Interior`).
+/// Declaration order is topological order: interior `i` may read
+/// `Interior(j)` only for `j < i`. Heads are bound variables only.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Interior {
+    /// Bound-variable positions only (every [`HeadTerm::Var`]).
+    pub head: Vec<HeadTerm>,
+    /// At least one rule, at most [`MAX_RULES`]; union; bodies: EDB ∪
+    /// earlier interiors.
+    pub rules: Vec<Rule>,
+}
+
+/// One linear recursive SCC: base arms (no self atom) and rec arms
+/// (exactly one positive self-atom each)
+/// (`lean/Bumbledb/Query/Syntax.lean: Rec`). The rec's `InteriorId` is
+/// `interiors.len()` after the overflow check. `base.len() + rec.len()`
+/// is one pool against [`MAX_RULES`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Rec {
+    /// Bound-variable positions only.
+    pub head: Vec<HeadTerm>,
+    /// At least one; no self atom.
+    pub base: Vec<Rule>,
+    /// At least one; each arm: exactly one positive self-atom.
+    pub rec: Vec<Rule>,
+}
+
+/// A query: named interiors (a DAG, eval once), at most one linear rec
+/// SCC, then the main answer (`docs/architecture/20-query-ir.md`,
+/// `lean/Bumbledb/Query/Syntax.lean: Query`).
 ///
-/// **Denotation: the set union of the rules' denotations.** Set semantics
-/// means there is exactly one union — no bag distinction exists or is
-/// representable. Disjunction is data, never an execution node: a mask
-/// inside a condition, a set inside a position, rules at the top — the
-/// three confinements; a cross-atom OR inside one rule is refused
-/// representation (DNF lowering recovers it as rules).
+/// **Denotation:** interiors then rec lfp then main
+/// (`lean/Bumbledb/Query/Denotation.lean: evalQuery`). Set semantics
+/// means there is exactly one union per rule-list — no bag distinction
+/// exists or is representable. Disjunction is data, never an execution
+/// node.
 ///
-/// The single-rule query is the degenerate case and embeds the
-/// conjunctive query unchanged ([`Query::single`]) — and the query is
-/// itself the degenerate [`Program`]: a one-predicate, no-`Idb` program,
-/// field for field (`lean/Bumbledb/Exec/Fixpoint.lean:
-/// degenerate_embedding`; the `From<Query> for Program` impl is the
-/// embedding).
+/// The single-rule query is the conjunctive query unchanged
+/// ([`Query::single`]): empty interiors, no rec.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Query {
-    /// The find shape (arity + aggregate ops) every rule aligns against,
-    /// position by position; at least one term, duplicates within a rule
-    /// rejected at validation. The positional type row is computed at
-    /// validation and pinned in the witness.
+    /// DAG, declaration order; no count cap. Empty is legal.
+    pub interiors: Vec<Interior>,
+    /// At most one recursive SCC this cut.
+    pub rec: Option<Rec>,
+    /// The find shape (arity + aggregate ops) every **main** rule aligns
+    /// against, position by position; at least one term, duplicates
+    /// within a rule rejected at validation. The positional type row is
+    /// computed at validation and pinned in the witness.
     pub head: Vec<HeadTerm>,
-    /// At least one rule, at most [`MAX_RULES`].
+    /// Main rules: at least one, at most [`MAX_RULES`]. Empty main is
+    /// [`crate::error::ValidationError::EmptyRuleSet`].
     pub rules: Vec<Rule>,
 }
 
 impl Query {
-    /// The degenerate one-rule program — the conjunctive query, with the
-    /// head derived from the rule's own find shape.
+    /// The conjunctive query — empty interiors, no rec, head derived
+    /// from the rule's own find shape.
     #[must_use]
     pub fn single(rule: Rule) -> Self {
         Self {
+            interiors: vec![],
+            rec: None,
             head: rule.head(),
             rules: vec![rule],
         }
-    }
-}
-
-/// One predicate of a [`Program`]: today's [`Query`] verbatim — the head
-/// shape its rules align against, and the rules deriving it
-/// (`lean/Bumbledb/Query/Syntax.lean: PredicateDef`). Pure data, like
-/// everything in this module.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PredicateDef {
-    /// The find shape (arity + aggregate ops) every rule of this
-    /// predicate aligns against — exactly [`Query::head`].
-    pub head: Vec<HeadTerm>,
-    /// At least one rule, at most [`MAX_RULES`] — exactly
-    /// [`Query::rules`], with `Idb` atoms now writable in bodies.
-    pub rules: Vec<Rule>,
-}
-
-/// A program: a predicate list (`PredId` = index) and the answer
-/// predicate (`lean/Bumbledb/Query/Syntax.lean: Program`) — a query one
-/// step past the fixpoint refusal: a head is usable as a body atom by
-/// naming its [`PredId`] in an [`AtomSource::Idb`] position. The
-/// degenerate form is today's [`Query`] — one predicate, no `Idb` atom
-/// (`lean/Bumbledb/Exec/Fixpoint.lean: degenerate_embedding`).
-///
-/// Pure data, no behavior, no builder — the surface ruling holds
-/// unamended; the trust-boundary law extends its roster
-/// (`ir/validate`'s program roster: the well-formedness screen, the
-/// strata judge, and the per-predicate rule roster). At most
-/// [`MAX_PREDICATES`] predicates.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Program {
-    /// The predicates; a [`PredId`] is an index into this list.
-    pub predicates: Vec<PredicateDef>,
-    /// The program's answer predicate — the one whose fixpoint the
-    /// program's answers are.
-    pub output: PredId,
-}
-
-impl From<Query> for Program {
-    /// The degenerate embedding (the [`Query::single`] precedent, one
-    /// level up): a query is the one-predicate program with itself as
-    /// the output — field for field, no `Idb` atom introduced
-    /// (`lean/Bumbledb/Query/Syntax.lean: Query.toProgram`;
-    /// `lean/Bumbledb/Exec/Fixpoint.lean: degenerate_embedding` is the
-    /// denotation-equality theorem).
-    fn from(query: Query) -> Self {
-        Self {
-            predicates: vec![PredicateDef {
-                head: query.head,
-                rules: query.rules,
-            }],
-            output: PredId(0),
-        }
-    }
-}
-
-/// A borrowed query-or-program at the prepare boundary —
-/// [`crate::Db::prepare`]'s one argument (`impl Into<ProgramRef<'_>>`),
-/// so `db.prepare(&query)` and `db.prepare(&program)` land on the ONE
-/// entry point. Borrowed by decision, not convenience: an owned
-/// `impl Into<Program>` was rejected because the `&Query → Program`
-/// conversion would clone an **unvalidated** condition tree — a
-/// recursive `Clone`/`Drop` ahead of the iterative nesting screen, which
-/// is exactly the stack exhaustion the trust-boundary law exists to
-/// refuse (`20-query-ir.md` § validation boundary). Hostile IR is
-/// touched by nothing before validation; the owned embedding
-/// (`From<Query> for Program`) remains for hosts building programs from
-/// queries they own.
-#[derive(Debug, Clone, Copy)]
-pub enum ProgramRef<'p> {
-    /// A query — the degenerate one-predicate program, prepared through
-    /// the query pipeline byte for byte
-    /// (`lean/Bumbledb/Exec/Fixpoint.lean: degenerate_embedding`).
-    Query(&'p Query),
-    /// A program — validated under the program roster; a no-`Idb`
-    /// program routes back into the query pipeline as its output
-    /// predicate's query.
-    Program(&'p Program),
-}
-
-impl<'p> From<&'p Query> for ProgramRef<'p> {
-    fn from(query: &'p Query) -> Self {
-        Self::Query(query)
-    }
-}
-
-impl<'p> From<&'p Program> for ProgramRef<'p> {
-    fn from(program: &'p Program) -> Self {
-        Self::Program(program)
     }
 }
 

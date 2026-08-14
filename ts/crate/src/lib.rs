@@ -1371,15 +1371,14 @@ outcome_to_napi!(PrepareOutcome {
     IrError(message) => { "ok": false, "kind": "irError", "message": message },
 });
 
-/// Prepares a program (IR as plain data, ids only — a query is the
-/// one-predicate program; the TS layer embeds it before calling). Roster
+/// Prepares a query (IR as plain data, ids only). Roster
 /// (validation) errors return as data; statistics-read failures throw.
 #[napi]
-pub fn db_prepare(db: &External<DbHandle>, program: Object) -> napi::Result<PrepareOutcome> {
+pub fn db_prepare(db: &External<DbHandle>, query: Object) -> napi::Result<PrepareOutcome> {
     let inner = live(&db.inner, "db")?;
-    let program = marshal::program_in(&program)?;
+    let query = marshal::query_in(&query)?;
     let engine = Arc::clone(&inner.db);
-    let prepared = match engine.prepare(&program) {
+    let prepared = match engine.prepare(&query) {
         Ok(prepared) => prepared,
         Err(Error::Validation(error)) => return Ok(PrepareOutcome::IrError(error.to_string())),
         Err(error) => return Err(throw_engine(&error)),
@@ -1413,7 +1412,7 @@ pub fn db_prepare(db: &External<DbHandle>, program: Object) -> napi::Result<Prep
 /// `{ kind: "set", values }` binds a param set). The engine's flat
 /// `Answers` carrier crosses the worker channel whole and each cell
 /// decodes ONCE here (the one-copy crossing); column order = the
-/// program's head order; answers are a set — the host sorts.
+/// query's head order; answers are a set — the host sorts.
 #[napi]
 pub fn prepared_execute(
     prepared: &External<PreparedHandle>,

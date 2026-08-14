@@ -128,7 +128,7 @@ fn allocate_with(
 /// the slabs are warm ([`super::distinct::count_columns`]), the append
 /// path extends the base's persisted state (O(tail), exact), and the
 /// transient fixpoint slots stay uncounted (the planner never costs
-/// them — the `Idb` floor guard).
+/// them — the `Interior` floor guard).
 fn seal(
     row_count: usize,
     frame: Frame,
@@ -534,7 +534,7 @@ impl TransientImage {
             let frame = allocate(field_types, capacity)
                 .expect("seen-set row counts sit far below the checked slab ceiling");
             // Transient images stay UNCOUNTED: the planner never costs
-            // them (an `Idb` occurrence pins no statistics — the
+            // them (an `Interior` occurrence pins no statistics — the
             // selectivity floor guard), so a per-round counting pass
             // would be pure waste inside the fixpoint's warm loop.
             let distincts = super::distinct::uncounted_columns(&frame.columns);

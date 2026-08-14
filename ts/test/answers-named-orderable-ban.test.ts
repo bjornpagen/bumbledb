@@ -8,7 +8,7 @@
  * here: the runtime rows (strict-equality against the roster, and
  * value-for-value the 0.3.0 bigint twin modulo the translation — the raw
  * positional rows re-decoded by hand); the rec-head plumb (an output rule's
- * idb-joined closed column decodes named — every idb var is EDB-bound in
+ * interior-joined closed column decodes named — every interior var is EDB-bound in
  * its own rule, so the descriptor always survives the head); the
  * out-of-roster pointed throw
  * (shared with H2's fact decode — one bijection, two call sites); COUNTING
@@ -38,7 +38,6 @@ import type { DbHandle } from "#native.ts"
 import { native } from "#native.ts"
 import type { Query, QueryParams, QueryRow } from "#query/lower.ts"
 import { lowerQuery, query } from "#query/lower.ts"
-import { program } from "#query/predicate.ts"
 import { decodeAnswers, wireParams } from "#query/run.ts"
 import type { ParamsRecord } from "#query/scope.ts"
 import { v } from "#query/scope.ts"
@@ -203,34 +202,37 @@ describe("answer rows arrive named + the orderable ban", function suite() {
 		assert.equal(pins.length, 1)
 	})
 
-	test("the rec-head plumb: an output rule's idb-joined closed column decodes named (the descriptor survives the head)", function recHead() {
-		// Every idb var is EDB-bound in its OWN rule (an idb atom is a join
-		// position, the boundness law), so the output rule's `varFields`
+	test("the rec-head plumb: a main rule's interior-joined closed column decodes named (the descriptor survives the head)", function recHead() {
+		// Every interior-bound var is EDB-bound in its OWN rule (an interior atom is a join
+		// position, the boundness law), so the main rule's `varFields`
 		// always carries the closed descriptor — the plumb succeeds through
-		// recursion outputs by construction, no bigint limitation remains.
-		const reach = program(Oncall, (p) => {
-			const seen = p.rec("seen")
-			const seeded = seen
-				.rule((r) => {
-					const { id, sev } = v(Incident)
-					return r.match(Incident, { id, sev }).where(r.eq(id, 1n)).find({ n: id, s: sev })
-				})
-				.rule((r) => {
-					const e = v(Edge)
-					const near = v(Incident)
-					const far = v(Incident)
-					return r
-						.match(Edge, { src: e.src, dst: e.dst })
-						.match(Incident, { id: e.dst, sev: near.sev })
-						.match(Incident, { id: e.src, sev: far.sev })
-						.idb(seen, { n: e.src, s: far.sev })
-						.find({ n: e.dst, s: near.sev })
-				})
-			return p.output((r) => {
-				const { id, sev } = v(Incident)
-				return r.match(Incident, { id, sev }).idb(seeded, { n: id, s: sev }).find({ n: id, s: sev })
+		// rec outputs by construction, no bigint limitation remains.
+		const reach = query(Oncall)
+			.recursive("seen", {
+				base: [
+					(r) => {
+						const { id, sev } = v(Incident)
+						return r.match(Incident, { id, sev }).where(r.eq(id, 1n)).find({ n: id, s: sev })
+					}
+				],
+				rec: [
+					(r) => {
+						const e = v(Edge)
+						const near = v(Incident)
+						const far = v(Incident)
+						return r
+							.match(Edge, { src: e.src, dst: e.dst })
+							.match(Incident, { id: e.dst, sev: near.sev })
+							.match(Incident, { id: e.src, sev: far.sev })
+							.interior("seen", { n: e.src, s: far.sev })
+							.find({ n: e.dst, s: near.sev })
+					}
+				]
 			})
-		})
+			.rule((r) => {
+				const { id, sev } = v(Incident)
+				return r.match(Incident, { id, sev }).interior("seen", { n: id, s: sev }).find({ n: id, s: sev })
+			})
 		type RecRowPin = Expect<
 			Equal<QueryRow<typeof reach>, { readonly n: bigint; readonly s: "Info" | "Warn" | "Crit" | "Fatal" }>
 		>
@@ -361,7 +363,7 @@ describe("answer rows arrive named + the orderable ban", function suite() {
 					const { id, pri } = v(Incident)
 					return r.match(Incident, { id, pri }).find({ n: id, k: pri })
 				})
-		}, /the answer column k is a Sev reference in rule 0 but a Priority reference in rule 1 \(one column decodes through one roster\)/)
+		}, /the head column k is a Sev reference in rule 0 but a Priority reference in rule 1 \(one column decodes through one roster\)/)
 		assert.throws(function closedAgainstBare() {
 			query(Oncall)
 				.rule((r) => {
@@ -372,7 +374,7 @@ describe("answer rows arrive named + the orderable ban", function suite() {
 					const { id } = v(Incident)
 					return r.match(Incident, { id }).find({ k: id })
 				})
-		}, /the answer column k is a Sev reference in rule 0 but a bare value in rule 1/)
+		}, /the head column k is a Sev reference in rule 0 but a bare value in rule 1/)
 	})
 
 	test("an out-of-roster id on answer decode throws pointed through the marshal's ONE bijection (shared with fact decode)", function outsideRoster() {

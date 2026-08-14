@@ -2,7 +2,7 @@
 //! [`crate::ir::validate::ValidatedQuery`] **rule by rule** into the
 //! paper-form conjunctive queries execution consumes — the normalized
 //! artifact is a list, one [`NormalizedQuery`] per rule, because the query
-//! is a program. Each rule lowers exactly as the conjunctive query did:
+//! is a rule list. Each rule lowers exactly as the conjunctive query did:
 //! distinct-variable atom
 //! occurrences (positive and negated, one table with a [`Role`]), per-atom
 //! filters (membership and interval conditions included), and the residual
@@ -35,7 +35,7 @@ pub use dnf::{LoweredRule, collapse, disjunct_count, distribute, nesting_depth};
 pub use fold::with_fold_disabled;
 pub(crate) use fold::{decoded_interval, decoded_scalar, render_const};
 pub(crate) use lower_literal::{fixed_bytes_word_buf, lower_literal};
-pub use normalize::{normalize, normalize_predicate, normalize_ray_probe};
+pub use normalize::{normalize, normalize_predicate, normalize_ray_probe, normalize_rules};
 
 /// Dense atom-occurrence id. Everything downstream (plan validity, trie
 /// schemas) quantifies over occurrences, never relation names — self-joins
@@ -127,7 +127,7 @@ pub struct Occurrence {
     /// The atom's source, carried through lowering verbatim
     /// (`docs/architecture/20-query-ir.md` § engine recursion's consumer guards:
     /// filters and residuals are slot/word-shaped and indifferent to
-    /// it). An `Idb` occurrence reads a predicate of the same program:
+    /// it). An `Interior` occurrence reads a predicate of the same program:
     /// its field types are the target's sealed signature columns, its
     /// execution bind is the fixpoint driver's transient image
     /// (`api/prepared/run_join.rs`), and it pins no statistics
@@ -148,18 +148,18 @@ impl Occurrence {
     /// The stored relation this occurrence reads — the accessor for
     /// callers whose occurrences are stored-relation-only **by their own
     /// prior guard** (the key-probe classifier and the grounding refuse
-    /// `Idb` rules before reading it). Source-aware consumers match on
+    /// `Interior` rules before reading it). Source-aware consumers match on
     /// [`Occurrence::source`].
     ///
     /// # Panics
     ///
-    /// On an `Idb` occurrence — the caller asserted a stored-relation
+    /// On an `Interior` occurrence — the caller asserted a stored-relation
     /// occurrence.
     #[must_use]
     pub fn relation(&self) -> RelationId {
         match self.source {
             crate::ir::AtomSource::Edb(relation) => relation,
-            crate::ir::AtomSource::Idb(_) => {
+            crate::ir::AtomSource::Interior(_) => {
                 unreachable!("caller asserted a stored-relation (Edb) occurrence")
             }
         }
@@ -353,8 +353,8 @@ pub struct NormalizedQuery {
     /// fold (`fold.rs`, mutually unsatisfiable constant conditions) and
     /// the grounding-evaluator (`plan/ground/evaluate.rs`, a closed atom
     /// whose prepare-time evaluation empties — `folded to ∅: …`). A dead
-    /// rule is deleted at prepare (`api/prepared/build.rs`); a program
-    /// of only dead rules prepares to `Program::Empty`.
+    /// rule is deleted at prepare (`api/prepared/build.rs`); a query
+    /// of only dead rules prepares to `PreparedBody::Empty`.
     pub dead: Option<String>,
 }
 

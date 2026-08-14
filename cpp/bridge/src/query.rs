@@ -1,17 +1,17 @@
-//! The query/program IR crossing and the prepared-query handle.
+//! The query IR crossing and the prepared-query handle.
 //!
 //! The C view structs mirror `bumbledb::ir` 1:1 — relations, fields, and
-//! predicates by numeric id (the C++ layer resolves names at compile time
+//! interiors by numeric id (the C++ layer resolves names at compile time
 //! and sends ids; the bridge never sees names here) — exactly the shape
-//! the Node bridge's `marshal::program_in` reads off JS objects. The
+//! the Node bridge's `marshal::query_in` reads off JS objects. The
 //! engine's IR validator remains the trust boundary at `bdb_db_prepare`.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use bumbledb::{
-    AggOp, AllenMask, Atom, AtomSource, CmpOp, Comparison, ConditionTree, FieldId,
-    FindTerm, HeadOp, HeadTerm, ParamId, PredId, PredicateDef, PreparedQuery, Program,
-    RelationId, Rule, SchemaDescriptor, Term, VarId,
+    AggOp, AllenMask, Atom, AtomSource, CmpOp, Comparison, ConditionTree, FieldId, FindTerm,
+    HeadOp, HeadTerm, Interior, InteriorId, ParamId, PreparedQuery, Query, Rec, RelationId, Rule,
+    SchemaDescriptor, Term, VarId,
 };
 
 use crate::db::{Engine, bdb_db};
@@ -65,24 +65,24 @@ pub struct bdb_binding {
     pub term: bdb_term,
 }
 
-/// An atom source's tag: a stored relation (`Edb`) or a predicate of the
-/// same program (`Idb`).
+/// An atom source's tag: a stored relation (`Edb`) or a derived table of
+/// the same query (`Interior` — an interior or the rec).
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum bdb_atom_source_kind {
     Edb,
-    Idb,
+    Interior,
 }
 
-c_tag!(bdb_atom_source_kind { Edb, Idb });
+c_tag!(bdb_atom_source_kind { Edb, Interior });
 
-/// One atom. `relation` is read for `Edb`, `pred` for `Idb`.
+/// One atom. `relation` is read for `Edb`, `interior` for `Interior`.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct bdb_atom {
     pub source_kind: u32,
     pub relation: u32,
-    pub pred: u16,
+    pub interior: u32,
     pub bindings: *const bdb_binding,
     pub binding_count: usize,
 }
@@ -99,7 +99,13 @@ pub enum bdb_head_op {
     Pack,
 }
 
-c_tag!(bdb_head_op { Sum, Min, Max, Count, Pack });
+c_tag!(bdb_head_op {
+    Sum,
+    Min,
+    Max,
+    Count,
+    Pack
+});
 
 /// One rule-scoped aggregate op.
 #[repr(C)]
@@ -240,28 +246,44 @@ pub struct bdb_rule {
     pub condition_count: usize,
 }
 
-/// One predicate: the head shape its rules align against, and the rules.
+/// One named interior: a finite CQ (union of conjunctive rules).
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub struct bdb_predicate {
+pub struct bdb_interior {
     pub head: *const bdb_head_term,
     pub head_count: usize,
     pub rules: *const bdb_rule,
     pub rule_count: usize,
 }
 
-/// The whole program: predicates (`pred` = index) and the output
-/// predicate. A query is the one-predicate program with `output == 0`.
+/// One linear recursive SCC: base arms and rec arms.
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub struct bdb_program {
-    pub predicates: *const bdb_predicate,
-    pub predicate_count: usize,
-    pub output: u16,
+pub struct bdb_rec {
+    pub head: *const bdb_head_term,
+    pub head_count: usize,
+    pub base: *const bdb_rule,
+    pub base_count: usize,
+    pub rec: *const bdb_rule,
+    pub rec_count: usize,
+}
+
+/// The whole query: named interiors, at most one rec, then the main
+/// answer. `rec` is nullable (`NULL` = no rec).
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct bdb_query {
+    pub interiors: *const bdb_interior,
+    pub interior_count: usize,
+    pub rec: *const bdb_rec,
+    pub head: *const bdb_head_term,
+    pub head_count: usize,
+    pub rules: *const bdb_rule,
+    pub rule_count: usize,
 }
 
 // ---------------------------------------------------------------------------
-// IR marshal (the ts bridge's program_in, off C views)
+// IR marshal (the ts bridge's query_in, off C views)
 // ---------------------------------------------------------------------------
 
 fn term_in(view: &bdb_term) -> BridgeResult<Term> {
@@ -277,7 +299,7 @@ fn term_in(view: &bdb_term) -> BridgeResult<Term> {
 fn atom_in(view: &bdb_atom) -> BridgeResult<Atom> {
     let source = match tag_in::<bdb_atom_source_kind>(view.source_kind)? {
         bdb_atom_source_kind::Edb => AtomSource::Edb(RelationId(view.relation)),
-        bdb_atom_source_kind::Idb => AtomSource::Idb(PredId(view.pred)),
+        bdb_atom_source_kind::Interior => AtomSource::Interior(InteriorId(view.interior)),
     };
     let bindings = slice_in(view.bindings, view.binding_count)?
         .iter()
@@ -324,7 +346,8 @@ fn find_term_in(view: &bdb_find_term) -> BridgeResult<FindTerm> {
 }
 
 fn mask_in(op: bdb_cmp_op) -> BridgeResult<AllenMask> {
-    AllenMask::new(op.mask).ok_or_else(|| fail_shape(&format!("invalid allen mask bits {}", op.mask)))
+    AllenMask::new(op.mask)
+        .ok_or_else(|| fail_shape(&format!("invalid allen mask bits {}", op.mask)))
 }
 
 fn comparison_in(view: &bdb_comparison) -> BridgeResult<Comparison> {
@@ -365,10 +388,7 @@ fn condition_in(view: &bdb_condition, depth: usize) -> BridgeResult<ConditionTre
     })
 }
 
-fn condition_children(
-    view: &bdb_condition,
-    depth: usize,
-) -> BridgeResult<Vec<ConditionTree>> {
+fn condition_children(view: &bdb_condition, depth: usize) -> BridgeResult<Vec<ConditionTree>> {
     slice_in(view.children, view.child_count)?
         .iter()
         .map(|child| condition_in(child, depth + 1))
@@ -396,34 +416,62 @@ fn rule_in(view: &bdb_rule) -> BridgeResult<Rule> {
     })
 }
 
-/// The whole inbound program, copied into the engine's owned `Program`
-/// before `prepare`.
-pub(crate) fn program_in(view: &bdb_program) -> BridgeResult<Program> {
-    let predicates = slice_in(view.predicates, view.predicate_count)?
+fn head_in(head: *const bdb_head_term, count: usize) -> BridgeResult<Vec<HeadTerm>> {
+    slice_in(head, count)?
         .iter()
-        .map(|predicate| {
-            Ok(PredicateDef {
-                head: slice_in(predicate.head, predicate.head_count)?
-                    .iter()
-                    .map(|term| {
-                        Ok(match tag_in::<bdb_head_term_kind>(term.kind)? {
-                            bdb_head_term_kind::Var => HeadTerm::Var,
-                            bdb_head_term_kind::Aggregate => {
-                                HeadTerm::Aggregate(head_op_in(term.op)?)
-                            }
-                        })
-                    })
-                    .collect::<BridgeResult<Vec<_>>>()?,
-                rules: slice_in(predicate.rules, predicate.rule_count)?
-                    .iter()
-                    .map(rule_in)
-                    .collect::<BridgeResult<Vec<_>>>()?,
+        .map(|term| {
+            Ok(match tag_in::<bdb_head_term_kind>(term.kind)? {
+                bdb_head_term_kind::Var => HeadTerm::Var,
+                bdb_head_term_kind::Aggregate => HeadTerm::Aggregate(head_op_in(term.op)?),
             })
         })
+        .collect()
+}
+
+fn rules_in(rules: *const bdb_rule, count: usize) -> BridgeResult<Vec<Rule>> {
+    slice_in(rules, count)?.iter().map(rule_in).collect()
+}
+
+fn interior_in(view: &bdb_interior) -> BridgeResult<Interior> {
+    Ok(Interior {
+        head: head_in(view.head, view.head_count)?,
+        rules: rules_in(view.rules, view.rule_count)?,
+    })
+}
+
+fn rec_in(view: &bdb_rec) -> BridgeResult<Rec> {
+    Ok(Rec {
+        head: head_in(view.head, view.head_count)?,
+        base: rules_in(view.base, view.base_count)?,
+        rec: rules_in(view.rec, view.rec_count)?,
+    })
+}
+
+/// The whole inbound query, copied into the engine's owned `Query`
+/// before `prepare`.
+pub(crate) fn query_in(view: &bdb_query) -> BridgeResult<Query> {
+    let interiors = slice_in(view.interiors, view.interior_count)?
+        .iter()
+        .map(interior_in)
         .collect::<BridgeResult<Vec<_>>>()?;
-    Ok(Program {
-        predicates,
-        output: PredId(view.output),
+    let rec = if view.rec.is_null() {
+        None
+    } else {
+        // SAFETY: non-null was just checked; the header contract sizes
+        // the pointee as one initialized `bdb_rec` that outlives this call.
+        #[expect(
+            unsafe_code,
+            reason = "nullable rec pointer: NULL is None; non-NULL is one bdb_rec \
+                      alive for the call (header contract)"
+        )]
+        let rec_view = unsafe { &*view.rec };
+        Some(rec_in(rec_view)?)
+    };
+    Ok(Query {
+        interiors,
+        rec,
+        head: head_in(view.head, view.head_count)?,
+        rules: rules_in(view.rules, view.rule_count)?,
     })
 }
 
@@ -458,26 +506,29 @@ pub(crate) fn enter_execute(flag: &AtomicBool) -> BridgeResult<InExecuteReset<'_
     Ok(InExecuteReset(flag))
 }
 
-/// Prepares a program against the database: the engine validates,
+/// Prepares a query against the database: the engine validates,
 /// normalizes, reads statistics, and plans ONCE; the returned handle is
 /// reusable across snapshots of this database (`&mut` per execution —
 /// one execution at a time; the handle is not thread-shareable).
 /// Validation (roster) failures are `BDB_ERROR_KIND_VALIDATION`.
 #[unsafe(no_mangle)]
-#[expect(unsafe_code, reason = "extern export: the unsafe(no_mangle) ABI attribute")]
+#[expect(
+    unsafe_code,
+    reason = "extern export: the unsafe(no_mangle) ABI attribute"
+)]
 pub extern "C" fn bdb_db_prepare(
     db: *const bdb_db,
-    program: *const bdb_program,
+    query: *const bdb_query,
     out_prepared: *mut *mut bdb_prepared,
     out_error: *mut *mut bdb_error,
 ) -> bdb_status {
     guard(out_error, || {
         require_out(out_prepared)?;
         let handle = ref_in(db)?;
-        let program = program_in(ref_in(program)?)?;
+        let query = query_in(ref_in(query)?)?;
         let engine = std::sync::Arc::clone(&handle.db);
         let prepared = engine
-            .prepare(&program)
+            .prepare(&query)
             .map_err(|error| fail_engine(error, Some(&handle.descriptor)))?;
         // SAFETY of the lifetime erasure: the prepared query borrows
         // schema and cache data owned by the engine behind `engine` (an
@@ -510,7 +561,10 @@ pub extern "C" fn bdb_db_prepare(
 
 /// Releases a prepared query (its plan, memo, and engine reference).
 #[unsafe(no_mangle)]
-#[expect(unsafe_code, reason = "extern export: the unsafe(no_mangle) ABI attribute")]
+#[expect(
+    unsafe_code,
+    reason = "extern export: the unsafe(no_mangle) ABI attribute"
+)]
 pub extern "C" fn bdb_prepared_destroy(prepared: *mut bdb_prepared) -> bdb_status {
     guard(std::ptr::null_mut(), || {
         let handle = ref_in(prepared)?;

@@ -26,7 +26,10 @@ pub struct bdb_answers {
 
 /// Mints an empty answers carrier (never fails; owns nothing yet).
 #[unsafe(no_mangle)]
-#[expect(unsafe_code, reason = "extern export: the unsafe(no_mangle) ABI attribute")]
+#[expect(
+    unsafe_code,
+    reason = "extern export: the unsafe(no_mangle) ABI attribute"
+)]
 pub extern "C" fn bdb_answers_new() -> *mut bdb_answers {
     guard_value(std::ptr::null_mut(), || {
         box_out(bdb_answers {
@@ -37,7 +40,10 @@ pub extern "C" fn bdb_answers_new() -> *mut bdb_answers {
 
 /// Empties the carrier, retaining capacity (the zero-alloc reuse path).
 #[unsafe(no_mangle)]
-#[expect(unsafe_code, reason = "extern export: the unsafe(no_mangle) ABI attribute")]
+#[expect(
+    unsafe_code,
+    reason = "extern export: the unsafe(no_mangle) ABI attribute"
+)]
 pub extern "C" fn bdb_answers_clear(answers: *mut bdb_answers) -> bdb_status {
     guard(std::ptr::null_mut(), || {
         mut_in(answers)?.answers.clear();
@@ -47,7 +53,10 @@ pub extern "C" fn bdb_answers_clear(answers: *mut bdb_answers) -> bdb_status {
 
 /// Number of answers (0 for a null handle).
 #[unsafe(no_mangle)]
-#[expect(unsafe_code, reason = "extern export: the unsafe(no_mangle) ABI attribute")]
+#[expect(
+    unsafe_code,
+    reason = "extern export: the unsafe(no_mangle) ABI attribute"
+)]
 pub extern "C" fn bdb_answers_len(answers: *const bdb_answers) -> usize {
     guard_value(0, || match ref_in(answers) {
         Ok(answers) => answers.answers.len(),
@@ -58,7 +67,10 @@ pub extern "C" fn bdb_answers_len(answers: *const bdb_answers) -> usize {
 /// Number of columns — the executed query's find terms, in order (0 for
 /// a null handle).
 #[unsafe(no_mangle)]
-#[expect(unsafe_code, reason = "extern export: the unsafe(no_mangle) ABI attribute")]
+#[expect(
+    unsafe_code,
+    reason = "extern export: the unsafe(no_mangle) ABI attribute"
+)]
 pub extern "C" fn bdb_answers_arity(answers: *const bdb_answers) -> usize {
     guard_value(0, || match ref_in(answers) {
         Ok(answers) => answers.answers.arity(),
@@ -71,7 +83,10 @@ pub extern "C" fn bdb_answers_arity(answers: *const bdb_answers) -> usize {
 /// Bounds-checked bridge-side: `BDB_STATUS_MISUSE` out of range, never a
 /// panic.
 #[unsafe(no_mangle)]
-#[expect(unsafe_code, reason = "extern export: the unsafe(no_mangle) ABI attribute")]
+#[expect(
+    unsafe_code,
+    reason = "extern export: the unsafe(no_mangle) ABI attribute"
+)]
 pub extern "C" fn bdb_answers_get(
     answers: *const bdb_answers,
     row: usize,
@@ -91,7 +106,10 @@ pub extern "C" fn bdb_answers_get(
 
 /// Frees the carrier (invalidating every view borrowed from it).
 #[unsafe(no_mangle)]
-#[expect(unsafe_code, reason = "extern export: the unsafe(no_mangle) ABI attribute")]
+#[expect(
+    unsafe_code,
+    reason = "extern export: the unsafe(no_mangle) ABI attribute"
+)]
 pub extern "C" fn bdb_answers_destroy(answers: *mut bdb_answers) -> bdb_status {
     guard(std::ptr::null_mut(), || {
         drop(box_in(answers)?);
@@ -107,7 +125,10 @@ pub extern "C" fn bdb_answers_destroy(answers: *mut bdb_answers) -> bdb_status {
 /// snapshot of a different database is the engine's own typed
 /// `BDB_ERROR_KIND_FOREIGN_PREPARED`.
 #[unsafe(no_mangle)]
-#[expect(unsafe_code, reason = "extern export: the unsafe(no_mangle) ABI attribute")]
+#[expect(
+    unsafe_code,
+    reason = "extern export: the unsafe(no_mangle) ABI attribute"
+)]
 pub extern "C" fn bdb_snapshot_execute(
     snapshot: *const bdb_snapshot_ref,
     prepared: *mut bdb_prepared,

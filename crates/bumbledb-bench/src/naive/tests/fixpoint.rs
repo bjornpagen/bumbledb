@@ -11,8 +11,8 @@ use std::collections::BTreeSet;
 
 use bumbledb::schema::{RelationDescriptor, SchemaDescriptor, ValueType};
 use bumbledb::{
-    AggOp, Atom, AtomSource, FieldId, FindTerm, HeadTerm, PredId, PredicateDef, Program, Rule,
-    Term, Value, VarId,
+    AggOp, Atom, AtomSource, FieldId, FindTerm, HeadTerm, InteriorId, Query, Rec, Rule, Term,
+    Value, VarId,
 };
 
 use crate::fixture::field;
@@ -62,9 +62,9 @@ fn edge_atom(src: u16, dst: u16) -> Atom {
     }
 }
 
-fn idb_atom(pred: u16, bindings: &[(u16, u16)]) -> Atom {
+fn interior_atom(id: u32, bindings: &[(u16, u16)]) -> Atom {
     Atom {
-        source: AtomSource::Idb(PredId(pred)),
+        source: AtomSource::Interior(InteriorId(id)),
         bindings: bindings
             .iter()
             .map(|(field, var)| (FieldId(*field), v(*var)))
@@ -81,6 +81,10 @@ fn projection(finds: &[u16], atoms: Vec<Atom>, negated: Vec<Atom>) -> Rule {
     }
 }
 
+fn identity_pair_main() -> Rule {
+    projection(&[0, 1], vec![interior_atom(0, &[(0, 0), (1, 1)])], vec![])
+}
+
 fn rows(values: &[&[u64]]) -> BTreeSet<Tuple> {
     values
         .iter()
@@ -88,128 +92,71 @@ fn rows(values: &[&[u64]]) -> BTreeSet<Tuple> {
         .collect()
 }
 
-/// The transitive closure over `Edge` — the shared fixture.
-fn closure_predicate() -> PredicateDef {
-    PredicateDef {
-        head: vec![HeadTerm::Var, HeadTerm::Var],
-        rules: vec![
-            projection(&[0, 1], vec![edge_atom(0, 1)], vec![]),
-            projection(
+/// Linear closure: identity main over the rec.
+fn closure_query() -> Query {
+    Query {
+        interiors: vec![],
+        rec: Some(Rec {
+            head: vec![HeadTerm::Var, HeadTerm::Var],
+            base: vec![projection(&[0, 1], vec![edge_atom(0, 1)], vec![])],
+            rec: vec![projection(
                 &[0, 2],
-                vec![edge_atom(0, 1), idb_atom(0, &[(0, 1), (1, 2)])],
+                vec![edge_atom(0, 1), interior_atom(0, &[(0, 1), (1, 2)])],
                 vec![],
-            ),
-        ],
+            )],
+        }),
+        head: vec![HeadTerm::Var, HeadTerm::Var],
+        rules: vec![identity_pair_main()],
     }
 }
 
-/// The degenerate embedding: a no-`Idb` one-predicate program denotes
-/// exactly the query (`lean/Bumbledb/Exec/Fixpoint.lean:
-/// degenerate_embedding`).
-#[test]
-fn the_degenerate_program_is_the_query() {
-    let naive = world(3, &[(1, 0), (2, 1)]);
-    let rule = projection(&[0, 1], vec![edge_atom(0, 1)], vec![]);
-    let query = bumbledb::Query::single(rule);
-    let program = Program::from(query.clone());
-    assert_eq!(
-        naive.program(&program, &[]).expect("no runtime error"),
-        naive.query(&query, &[]).expect("no runtime error"),
-    );
-}
-
-/// A mutual pair — even/odd path length from the root's edge relation —
-/// iterates jointly in ONE stratum: `even(x, z) | Edge(x, y),
-/// odd(y, z)` beside `odd(x, y) | Edge(x, y); odd(x, z) | Edge(x, y),
-/// even(y, z)`, over the chain `3 → 2 → 1 → 0`. Hand answer: odd hops
-/// are the odd-length descents, even the even-length ones.
-#[test]
-fn a_mutual_pair_iterates_jointly() {
-    let naive = world(4, &[(3, 2), (2, 1), (1, 0)]);
-    let even = PredicateDef {
-        head: vec![HeadTerm::Var, HeadTerm::Var],
-        rules: vec![projection(
-            &[0, 2],
-            vec![edge_atom(0, 1), idb_atom(1, &[(0, 1), (1, 2)])],
-            vec![],
-        )],
-    };
-    let odd = PredicateDef {
-        head: vec![HeadTerm::Var, HeadTerm::Var],
-        rules: vec![
-            projection(&[0, 1], vec![edge_atom(0, 1)], vec![]),
-            projection(
-                &[0, 2],
-                vec![edge_atom(0, 1), idb_atom(0, &[(0, 1), (1, 2)])],
-                vec![],
-            ),
-        ],
-    };
-    let mut program = Program {
-        predicates: vec![even, odd],
-        output: PredId(1),
-    };
-    // Odd-length paths down the chain: the three edges and 3 → 0.
-    assert_eq!(
-        naive.program(&program, &[]).expect("no runtime error"),
-        rows(&[&[3, 2], &[2, 1], &[1, 0], &[3, 0]]),
-    );
-    // Even-length paths: the two 2-hop descents.
-    program.output = PredId(0);
-    assert_eq!(
-        naive.program(&program, &[]).expect("no runtime error"),
-        rows(&[&[3, 1], &[2, 0]]),
-    );
-}
-
-/// A fold over a recursive predicate from a strictly higher stratum:
-/// `p1(x, Count) | p0(x, y)` counts each node's reachable set AFTER the
-/// closure finishes — the count of a finished set, never of a growing
-/// one.
+/// A fold over a finished rec: `Count` per source over the closure.
 #[test]
 fn a_fold_reads_the_finished_fixpoint() {
     let naive = world(4, &[(1, 0), (2, 1), (3, 1)]);
-    let program = Program {
-        predicates: vec![
-            closure_predicate(),
-            PredicateDef {
-                head: vec![HeadTerm::Var, HeadTerm::Aggregate(bumbledb::HeadOp::Count)],
-                rules: vec![Rule {
-                    finds: vec![
-                        FindTerm::Var(VarId(0)),
-                        FindTerm::Aggregate {
-                            op: AggOp::Count,
-                            over: None,
-                        },
-                    ],
-                    atoms: vec![idb_atom(0, &[(0, 0), (1, 1)])],
-                    negated: vec![],
-                    conditions: vec![],
-                }],
-            },
-        ],
-        output: PredId(1),
+    let query = Query {
+        interiors: vec![],
+        rec: Some(Rec {
+            head: vec![HeadTerm::Var, HeadTerm::Var],
+            base: vec![projection(&[0, 1], vec![edge_atom(0, 1)], vec![])],
+            rec: vec![projection(
+                &[0, 2],
+                vec![edge_atom(0, 1), interior_atom(0, &[(0, 1), (1, 2)])],
+                vec![],
+            )],
+        }),
+        head: vec![HeadTerm::Var, HeadTerm::Aggregate(bumbledb::HeadOp::Count)],
+        rules: vec![Rule {
+            finds: vec![
+                FindTerm::Var(VarId(0)),
+                FindTerm::Aggregate {
+                    op: AggOp::Count,
+                    over: None,
+                },
+            ],
+            atoms: vec![interior_atom(0, &[(0, 0), (1, 1)])],
+            negated: vec![],
+            conditions: vec![],
+        }],
     };
     // Ancestor counts: 1 → {0}, 2 → {1, 0}, 3 → {1, 0}.
     assert_eq!(
-        naive.program(&program, &[]).expect("no runtime error"),
+        naive.query(&query, &[]).expect("no runtime error"),
         rows(&[&[1, 1], &[2, 2], &[3, 2]]),
     );
 }
 
-/// The empty-Δ-at-round-1 boundary: on a star graph (every edge into
-/// the hub, no onward edge) the recursive rule derives nothing in round
-/// one, and the fixpoint is exactly the base round.
+/// The empty-Δ-at-round-1 boundary: on a star graph the rec arm derives
+/// nothing in round one, and the fixpoint is exactly the base round.
 #[test]
 fn an_empty_first_delta_stops_at_the_base_round() {
     let naive = world(4, &[(1, 0), (2, 0), (3, 0)]);
-    let program = Program {
-        predicates: vec![closure_predicate()],
-        output: PredId(0),
-    };
     assert_eq!(
-        naive.program(&program, &[]).expect("no runtime error"),
+        naive
+            .query(&closure_query(), &[])
+            .expect("no runtime error"),
         rows(&[&[1, 0], &[2, 0], &[3, 0]]),
         "the closure of a star IS its edge set",
     );
 }
+

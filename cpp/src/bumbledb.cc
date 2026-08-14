@@ -1,5 +1,5 @@
 /**
- * The one import an application needs. The :foreign_program partition is
+ * The one import an application needs. The :query_view partition is
  * quarantine code by nature but lives in this module: it consumes the
  * query IR partitions, and a partition of bumbledb_foreign could not
  * import them without a module cycle.
@@ -43,7 +43,6 @@ export import :head;
 export import :rule;
 export import :lower;
 export import :query;
-export import :program;
 export import :decode;
 export import :answers;
 export import :answers_row;
@@ -54,4 +53,4 @@ export import :prepared;
 export import :snapshot;
 export import :tx;
 export import :db;
-export import :foreign_program;
+export import :query_view;

@@ -96,7 +96,7 @@ pub(super) fn run_join<S: crate::exec::run::Sink, C: crate::exec::run::Counters>
         if occurrence.source.edb().is_none() {
             let image = idb_images[occ_idx]
                 .as_ref()
-                .expect("the fixpoint driver supplies every Idb occurrence's image");
+                .expect("the fixpoint driver supplies every Interior occurrence's image");
             let mut build_span = obs::span_args(
                 obs::names::VIEW_BUILD,
                 obs::Category::Execute,
@@ -118,7 +118,7 @@ pub(super) fn run_join<S: crate::exec::run::Sink, C: crate::exec::run::Counters>
             memo.spare_buffers[occ_idx] = old.recycle();
             debug_assert!(
                 memo.generation[occ_idx].is_none(),
-                "an Idb occurrence never enters the memo's generation table"
+                "an Interior occurrence never enters the memo's generation table"
             );
             continue;
         }

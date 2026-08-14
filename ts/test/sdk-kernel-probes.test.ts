@@ -80,7 +80,7 @@ test("pointIn() with a literal interval operand lowers to PointIn (interval-left
 			.find({ h: holder, t: at })
 	})
 	const ir = lowerQuery(q)
-	const conditions = ir.predicates[0]?.rules[0]?.conditions
+	const conditions = ir.rules[0]?.conditions
 	assert.ok(conditions !== undefined && conditions.length === 1)
 	const leaf = conditions[0]
 	assert.ok(leaf !== undefined && leaf.kind === "leaf")
@@ -129,7 +129,8 @@ test("a param value no rule places never registers — the query lowers under it
 	const inferrred: QueryParams<typeof q> = {}
 	assert.deepEqual(inferrred, {})
 	const ir = lowerQuery(q)
-	assert.equal(ir.predicates.length, 1, "the ghost never reaches the IR")
+	assert.equal(ir.interiors.length, 0, "the ghost never reaches the IR")
+	assert.equal(ir.rec, null, "the ghost never reaches the IR")
 })
 
 test("closed() admits every legal handle name as pure roster data", function protoHandle() {

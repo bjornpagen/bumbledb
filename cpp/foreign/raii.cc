@@ -635,15 +635,15 @@ public:
 	}
 
 	/**
-	 * Prepares a program IR view against the store: the engine
+	 * Prepares a query IR view against the store: the engine
 	 * validates, normalizes, reads statistics, and plans ONCE; the
 	 * returned handle is reusable across snapshots of this database. The
 	 * view graph is copied by the bridge before this returns.
 	 */
-	[[nodiscard]] auto prepare(bdb_program const& program) const -> std::expected<prepared_handle, error_handle> {
+	[[nodiscard]] auto prepare(bdb_query const& query) const -> std::expected<prepared_handle, error_handle> {
 		bdb_prepared* prepared = nullptr;
 		bdb_error* error = nullptr;
-		auto const status = bdb_db_prepare(raw_, &program, &prepared, &error);
+		auto const status = bdb_db_prepare(raw_, &query, &prepared, &error);
 		return value_outcome(status, error, prepared).transform([](bdb_prepared* owned) {
 			return prepared_handle{owned};
 		});

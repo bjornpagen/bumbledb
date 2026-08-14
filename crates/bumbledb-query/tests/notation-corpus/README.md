@@ -1,14 +1,14 @@
 # The notation conformance corpus (PRD-M4) — one grammar, two replayers
 
-One JSON document per case: a (notation ⇄ `ProgramIr` JSON) pair that BOTH
+One JSON document per case: a (notation ⇄ `QueryIr` JSON) pair that BOTH
 hosts replay mechanically. The Rust side
 (`crates/bumbledb-query/tests/notation_corpus.rs`) `query!`-compiles each
 case's notation, proves it real against a `Db` of the corpus theory,
 round-trips it through `ir::render`, and byte-pins the whole document; the
 TS side (`ts/test/notation-corpus.test.ts`) constructs the same query in
-the builder (or writes the `ProgramIr` by hand where the builder cannot
-spell it), asserts `JSON.stringify` equality against the pinned `program`,
-and `dbPrepare`s every case's program against a store of the same theory.
+the builder (or writes the `QueryIr` by hand where the builder cannot
+spell it), asserts `JSON.stringify` equality against the pinned `query`,
+and `dbPrepare`s every case's query against a store of the same theory.
 
 **The law: a disagreement is a trophy, not a merge conflict.** If the two
 replayers ever pin different bytes for one case, that is a macro bug, a
@@ -31,21 +31,24 @@ triage; never "fix" the corpus to make a disagreement go away.
                                         //   to the compiled tokens
   "normalized": "(v0) | Mandate(…);",   // render(lower(notation)) — reparses
                                         //   to the identical IR (the fixed point)
-  "program": { "predicates": […],       // the ProgramIr JSON (below), compact —
-               "output": 0 }            //   the exact bytes both sides compare
+  "query": { "interiors": [],            // the QueryIr JSON (below), compact —
+             "rec": null,                //   the exact bytes both sides compare
+             "head": […],
+             "rules": […] }
 }
 ```
 
-## The `ProgramIr` wire shape
+## The `QueryIr` wire shape
 
-The interchange format is the napi bridge's `ProgramIr` — `ts/src/native.ts`
-declares it; `ts/crate/src/marshal.rs::program_in` mirrors `ir::Program`
-1:1. A plain query is its degenerate one-predicate program
-(`From<Query> for Program`). Normatively, with key order exactly as the TS
-lowering's object literals insert it (`ts/src/query/lower.ts`):
+The interchange format is the napi bridge's `QueryIr` — `ts/src/native.ts`
+declares it; `ts/crate/src/marshal.rs::query_in` mirrors `ir::Query`
+1:1. An all-bare query has empty `interiors` and `rec: null`. Normatively,
+with key order exactly as the TS lowering's object literals insert it
+(`ts/src/query/lower.ts`):
 
-- program — `{"predicates": [predicate…], "output": N}`
-- predicate — `{"head": [headTerm…], "rules": [rule…]}`
+- query — `{"interiors": [interior…], "rec": null | rec, "head": [headTerm…], "rules": [rule…]}`
+- interior — `{"head": [headTerm…], "rules": [rule…]}`
+- rec — `{"head": [headTerm…], "base": [rule…], "rec": [rule…]}`
 - headTerm — `{"kind":"var"}` |
   `{"kind":"aggregate","op":"sum"|"min"|"max"|"count"|"pack"}`
 - rule — `{"finds":[…],"atoms":[…],"negated":[…],"conditions":[…]}`
@@ -55,8 +58,8 @@ lowering's object literals insert it (`ts/src/query/lower.ts`):
   `{"kind":"aggregateMeasure","op":AGG,"over":N}`
 - AGG — `{"kind":"sum"}` | `{"kind":"min"}` | `{"kind":"max"}` |
   `{"kind":"count"}` | `{"kind":"pack"}`
-- atom — `{"source":{"kind":"edb","relation":N}|{"kind":"idb","pred":N},
-  "bindings":[[fieldId, term]…]}` (an idb atom's field ids address head
+- atom — `{"source":{"kind":"edb","relation":N}|{"kind":"interior","interior":N},
+  "bindings":[[fieldId, term]…]}` (an interior atom's field ids address head
   POSITIONS; binding order is written order)
 - term — `{"kind":"var","var":N}` | `{"kind":"param","param":N}` |
   `{"kind":"paramSet","param":N}` | `{"kind":"literal","value":V}` |
@@ -74,11 +77,11 @@ lowering's object literals insert it (`ts/src/query/lower.ts`):
   `{"kind":"intervalU64","start":"3","end":"10"}` |
   `{"kind":"intervalI64","start":"-3","end":"10"}`
 
-**Integer normalization**: every id (relation, field, predicate, variable,
-param, output) and every mask is a JSON NUMBER; every `Value` scalar
+**Integer normalization**: every id (relation, field, interior, variable,
+param) and every mask is a JSON NUMBER; every `Value` scalar
 (u64/i64 payloads, interval endpoints) is a decimal STRING — the TS side
 carries them as `bigint` and the corpus normalization is
-`JSON.stringify(programIr, (k, v) => typeof v === "bigint" ? v.toString() : v)`,
+`JSON.stringify(queryIr, (k, v) => typeof v === "bigint" ? v.toString() : v)`,
 which renders a bigint as its decimal string. This was verified against
 the running TS lowering, not assumed. `bytes<N>` literals are refused
 representation (a `Uint8Array` does not `JSON.stringify` canonically);
@@ -121,10 +124,10 @@ production fails the test, as does a case naming an unknown production.
 | `duration` | the measure: `Duration(v)` finds, folds, and comparisons |
 | `named-columns` | `name: Agg(…)` head naming (call-site only; the IR is positional) |
 | `multi-rule-union` | several rules, one head — set union |
-| `program-recursion` | named heads + `rec` rules (`reach(…) \| …`) |
-| `idb-ordered-dense` | dense in-order predicate bindings written BARE (`reach(m, a)`) |
-| `idb-sparse` | a sparse predicate position (`2: x`) |
-| `idb-position-selection` | a position selection / membership (`1 == …`, `0 in ?p`) |
+| `recursive` | `recursive pred(...)` lines union into one Rec |
+| `interior-ordered-dense` | dense in-order interior bindings written BARE (`reach(m, a)`) |
+| `interior-sparse` | a sparse interior position (`2: x`) |
+| `interior-position-selection` | a position selection / membership (`1 == …`, `0 in ?p`) |
 
 ## Regeneration and replay
 
@@ -133,7 +136,7 @@ production fails the test, as does a case naming an unknown production.
   byte-identical from the case table; every case validated against a real
   store; the render fixed point; the production enumeration.
 - TS replay: `node --test test/notation-corpus.test.ts` from `ts/` —
-  builder-constructed `ProgramIr` equality, the exact skipped-count
+  builder-constructed `QueryIr` equality, the exact skipped-count
   assertion, `dbPrepare` acceptance for every case, the fingerprint pin.
 - Regenerate (after editing the case table):
   `cargo test -p bumbledb-query regenerate_the_notation_corpus -- --ignored`

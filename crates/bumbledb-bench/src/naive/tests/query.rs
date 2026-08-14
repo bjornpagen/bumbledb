@@ -416,6 +416,8 @@ fn a_query_denotes_the_set_union_of_its_rules_denotations() {
         conditions: vec![],
     };
     let query = Query {
+        interiors: vec![],
+        rec: None,
         head: vec![bumbledb::HeadTerm::Var],
         rules: vec![by_account(7), by_account(8)],
     };
@@ -451,6 +453,8 @@ fn variables_are_rule_scoped_in_the_model_too() {
         })],
     };
     let query = Query {
+        interiors: vec![],
+        rec: None,
         head: vec![bumbledb::HeadTerm::Var],
         rules: vec![first, second],
     };
@@ -484,6 +488,8 @@ fn a_multi_rule_aggregate_folds_over_the_union_projected_to_the_head() {
         conditions: vec![],
     };
     let query = Query {
+        interiors: vec![],
+        rec: None,
         head: vec![bumbledb::HeadTerm::Aggregate(bumbledb::HeadOp::Sum)],
         rules: vec![sum_of(7), sum_of(8)],
     };

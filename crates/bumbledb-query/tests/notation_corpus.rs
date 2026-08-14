@@ -1,10 +1,10 @@
 //! The notation conformance corpus (PRD-M4): one grammar, mechanically
 //! refereed. Every case in `tests/notation-corpus/` is a
-//! (notation ⇄ `ProgramIr` JSON) pair both hosts replay — this suite
+//! (notation ⇄ `QueryIr` JSON) pair both hosts replay — this suite
 //! `query!`-compiles each case's notation, proves it real against a `Db`
 //! of the corpus theory, pins the render fixed point, and encodes the
 //! lowered IR to exactly the JSON the TS SDK produces by
-//! `JSON.stringify` of its `ProgramIr` value
+//! `JSON.stringify` of its `QueryIr` value
 //! (`ts/test/notation-corpus.test.ts` is the other replayer). The corpus
 //! README states the law: a disagreement is a trophy, not a merge
 //! conflict.
@@ -19,12 +19,12 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 use std::path::PathBuf;
 
-use bumbledb::ir::render::{render, render_program};
+use bumbledb::ir::render::render;
 use bumbledb::ir::{HeadOp, HeadTerm};
 use bumbledb::schema::ValidateDescriptor as _;
 use bumbledb::{
-    AggOp, Atom, AtomSource, CmpOp, Comparison, ConditionTree, Db, FindTerm, PredicateDef, Program,
-    Query, Rule, Schema, Term, Theory, Value,
+    AggOp, Atom, AtomSource, CmpOp, Comparison, ConditionTree, Db, FindTerm, Interior, Query, Rec,
+    Rule, Schema, Term, Theory, Value,
 };
 use bumbledb_query::query;
 
@@ -129,25 +129,15 @@ fn pin<S: Theory + Copy>(tag: &str, theory: S, query: &Query) -> String {
     render(&schema, query)
 }
 
-/// [`pin`]'s program twin.
-fn pin_program<S: Theory + Copy>(tag: &str, theory: S, program: &Program) -> String {
-    let dir = TempDir::new(&unique_tag(tag));
-    let db = Db::create(dir.path(), theory).expect("create the corpus theory's store");
-    db.prepare(program)
-        .unwrap_or_else(|error| panic!("case {tag}: the corpus program validates: {error:?}"));
-    let schema: Schema = theory.descriptor().validate().expect("a landed theory");
-    render_program(&schema, program)
-}
-
 // ---------------------------------------------------------------------
-// The deterministic `ir::Program` → JSON encoder: exactly the documented
+// The deterministic `ir::Query` → JSON encoder: exactly the documented
 // wire shape — the key order the TS lowering's object literals insert
 // (`ts/src/query/lower.ts`) and the corpus normalization for integers
 // (ids/masks as JSON numbers; every `Value` scalar as a decimal STRING,
 // because the TS side crosses u64/i64 as `bigint` and the corpus
 // stringify replacer renders a bigint as its decimal string). Verified,
 // not assumed: the TS replayer asserts `JSON.stringify` equality of its
-// own `ProgramIr` against these bytes.
+// own `QueryIr` against these bytes.
 // ---------------------------------------------------------------------
 
 /// JSON string escaping (the `JSON.stringify` subset the corpus needs).
@@ -244,7 +234,9 @@ fn find_json(find: &FindTerm) -> String {
 fn atom_json(atom: &Atom) -> String {
     let source = match atom.source {
         AtomSource::Edb(relation) => format!("{{\"kind\":\"edb\",\"relation\":{}}}", relation.0),
-        AtomSource::Idb(pred) => format!("{{\"kind\":\"idb\",\"pred\":{}}}", pred.0),
+        AtomSource::Interior(interior) => {
+            format!("{{\"kind\":\"interior\",\"interior\":{}}}", interior.0)
+        }
     };
     let bindings = atom
         .bindings
@@ -345,16 +337,16 @@ fn head_term_json(term: HeadTerm) -> String {
     }
 }
 
-fn predicate_json(predicate: &PredicateDef) -> String {
+fn interior_json(interior: &Interior) -> String {
     format!(
         "{{\"head\":[{}],\"rules\":[{}]}}",
-        predicate
+        interior
             .head
             .iter()
             .map(|term| head_term_json(*term))
             .collect::<Vec<_>>()
             .join(","),
-        predicate
+        interior
             .rules
             .iter()
             .map(rule_json)
@@ -363,19 +355,45 @@ fn predicate_json(predicate: &PredicateDef) -> String {
     )
 }
 
-/// The whole program, compact — byte-for-byte what the TS side's
-/// `JSON.stringify(programIr, bigintAsDecimalString)` produces.
-fn program_json(program: &Program) -> String {
+fn rec_json(rec: &Rec) -> String {
     format!(
-        "{{\"predicates\":[{}],\"output\":{}}}",
-        program
-            .predicates
+        "{{\"head\":[{}],\"base\":[{}],\"rec\":[{}]}}",
+        rec.head
             .iter()
-            .map(predicate_json)
+            .map(|term| head_term_json(*term))
             .collect::<Vec<_>>()
             .join(","),
-        program.output.0
+        rec.base.iter().map(rule_json).collect::<Vec<_>>().join(","),
+        rec.rec.iter().map(rule_json).collect::<Vec<_>>().join(",")
     )
+}
+
+/// The whole query, compact — byte-for-byte what the TS side's
+/// `JSON.stringify(queryIr, bigintAsDecimalString)` produces.
+fn query_json(query: &Query) -> String {
+    let interiors = query
+        .interiors
+        .iter()
+        .map(interior_json)
+        .collect::<Vec<_>>()
+        .join(",");
+    let rec = query
+        .rec
+        .as_ref()
+        .map_or_else(|| "null".to_owned(), rec_json);
+    let head = query
+        .head
+        .iter()
+        .map(|term| head_term_json(*term))
+        .collect::<Vec<_>>()
+        .join(",");
+    let rules = query
+        .rules
+        .iter()
+        .map(rule_json)
+        .collect::<Vec<_>>()
+        .join(",");
+    format!("{{\"interiors\":[{interiors}],\"rec\":{rec},\"head\":[{head}],\"rules\":[{rules}]}}")
 }
 
 // ---------------------------------------------------------------------
@@ -387,7 +405,7 @@ fn program_json(program: &Program) -> String {
 struct Case {
     name: &'static str,
     /// Whether the TS query BUILDER can construct this case (`false` =
-    /// hand-written `ProgramIr` on the TS side; still `dbPrepare`d).
+    /// hand-written `QueryIr` on the TS side; still `dbPrepare`d).
     builder: bool,
     /// The grammar productions this case is coverage for.
     productions: &'static [&'static str],
@@ -396,8 +414,8 @@ struct Case {
     notation: &'static str,
     /// The render of the lowered IR — the fixed-point text.
     normalized: String,
-    /// The compact `ProgramIr` JSON.
-    program_json: String,
+    /// The compact `QueryIr` JSON.
+    query_json: String,
 }
 
 /// Whitespace-erased comparison key: ties a pinned string to compiled
@@ -407,8 +425,7 @@ fn strip(text: &str) -> String {
 }
 
 macro_rules! corpus_case {
-    // A plain query case (always TS-builder-expressible in this corpus).
-    ($cases:ident, query, $name:literal, [$($production:literal),+ $(,)?], $notation:literal,
+    ($cases:ident, $builder:expr, $name:literal, [$($production:literal),+ $(,)?], $notation:literal,
      { $($src:tt)+ }, { $($norm:tt)+ } $(,)?) => {{
         let lowered = query!(Ledger { $($src)+ });
         let reparsed = query!(Ledger { $($norm)+ });
@@ -430,47 +447,14 @@ macro_rules! corpus_case {
             "case {}: the compiled normalized tokens are the render's own output",
             $name
         );
-        let encoded = program_json(&Program::from(lowered));
-        $cases.push(Case {
-            name: $name,
-            builder: true,
-            productions: &[$($production),+],
-            notation: $notation,
-            normalized,
-            program_json: encoded,
-        });
-    }};
-    // A program case; `builder` says whether the TS builder can spell it.
-    ($cases:ident, program($builder:literal), $name:literal, [$($production:literal),+ $(,)?], $notation:literal,
-     { $($src:tt)+ }, { $($norm:tt)+ } $(,)?) => {{
-        let lowered = query!(Ledger { $($src)+ });
-        let reparsed = query!(Ledger { $($norm)+ });
-        assert_eq!(
-            reparsed, lowered,
-            "case {}: the normalized text reparses to the identical IR",
-            $name
-        );
-        assert_eq!(
-            strip($notation),
-            strip(stringify!($($src)+)),
-            "case {}: the pinned notation is the compiled source",
-            $name
-        );
-        let normalized = pin_program($name, Ledger, &lowered);
-        assert_eq!(
-            strip(&normalized),
-            strip(stringify!($($norm)+)),
-            "case {}: the compiled normalized tokens are the render's own output",
-            $name
-        );
-        let encoded = program_json(&lowered);
+        let encoded = query_json(&lowered);
         $cases.push(Case {
             name: $name,
             builder: $builder,
             productions: &[$($production),+],
             notation: $notation,
             normalized,
-            program_json: encoded,
+            query_json: encoded,
         });
     }};
 }
@@ -483,31 +467,31 @@ macro_rules! corpus_case {
 fn cases() -> Vec<Case> {
     let mut cases: Vec<Case> = Vec::new();
 
-    corpus_case!(cases, query, "holder-names",
+    corpus_case!(cases, true, "holder-names",
         ["punning", "field-var"],
         "(name) | Holder(id: h, name);",
         { (name) | Holder(id: h, name); },
         { (v1) | Holder(id: v0, name: v1); });
 
-    corpus_case!(cases, query, "amount-selection",
+    corpus_case!(cases, true, "amount-selection",
         ["eq-literal"],
         "(id) | Posting(id, amount == -100);",
         { (id) | Posting(id, amount == -100); },
         { (v0) | Posting(id: v0, amount == -100); });
 
-    corpus_case!(cases, query, "usd-accounts",
+    corpus_case!(cases, true, "usd-accounts",
         ["eq-handle"],
         "(id) | Account(id, currency == Usd);",
         { (id) | Account(id, currency == Usd); },
         { (v0) | Account(id: v0, currency == Usd); });
 
-    corpus_case!(cases, query, "account-selection-param",
+    corpus_case!(cases, true, "account-selection-param",
         ["eq-param"],
         "(id) | Posting(id, account == ?acct);",
         { (id) | Posting(id, account == ?acct); },
         { (v0) | Posting(id: v0, account == ?0); });
 
-    corpus_case!(cases, query, "scalar-comparisons",
+    corpus_case!(cases, true, "scalar-comparisons",
         ["ne", "lt", "le", "gt", "ge"],
         "(id) | Posting(id, entry, account, instrument, amount, at), \
          id == ?wanted, entry != 0, account < 10, instrument <= 10, amount > -10, at >= -10;",
@@ -517,73 +501,73 @@ fn cases() -> Vec<Case> {
         { (v0) | Posting(id: v0, entry: v1, account: v2, instrument: v3, amount: v4, at: v5),
                  v0 == ?0, v1 != 0, v2 < 10, v3 <= 10, v4 > -10, v5 >= -10; });
 
-    corpus_case!(cases, query, "currency-in-set",
+    corpus_case!(cases, true, "currency-in-set",
         ["in-param"],
         "(id) | Account(id, currency in ?currencies);",
         { (id) | Account(id, currency in ?currencies); },
         { (v0) | Account(id: v0, currency in ?0); });
 
-    corpus_case!(cases, query, "mandate-point-membership",
+    corpus_case!(cases, true, "mandate-point-membership",
         ["point-in"],
         "(org) | Mandate(org, active), ?today in active;",
         { (org) | Mandate(org, active), ?today in active; },
         { (v0) | Mandate(org: v0, active: v1), ?0 in v1; });
 
-    corpus_case!(cases, query, "mandate-window",
+    corpus_case!(cases, true, "mandate-window",
         ["allen-literal-mask"],
         "(org) | Mandate(org, active), Allen(active, INTERSECTS, ?window);",
         { (org) | Mandate(org, active), Allen(active, INTERSECTS, ?window); },
         { (v0) | Mandate(org: v0, active: v1), Allen(v1, INTERSECTS, ?0); });
 
-    corpus_case!(cases, query, "mandate-adjacent",
+    corpus_case!(cases, true, "mandate-adjacent",
         ["allen-mask-union"],
         "(org) | Mandate(org, active), Allen(active, BEFORE|MEETS, ?window);",
         { (org) | Mandate(org, active), Allen(active, BEFORE|MEETS, ?window); },
         { (v0) | Mandate(org: v0, active: v1), Allen(v1, BEFORE|MEETS, ?0); });
 
-    corpus_case!(cases, query, "dormant-holders",
+    corpus_case!(cases, true, "dormant-holders",
         ["negation"],
         "(holder) | Account(id: a, holder), !Posting(account: a);",
         { (holder) | Account(id: a, holder), !Posting(account: a); },
         { (v1) | Account(id: v0, holder: v1), !Posting(account: v0); });
 
-    corpus_case!(cases, query, "balances",
+    corpus_case!(cases, true, "balances",
         ["agg-sum", "agg-count", "named-columns"],
         "(account, total: Sum(amount), n: Count) | Posting(account, amount);",
         { (account, total: Sum(amount), n: Count) | Posting(account, amount); },
         { (v0, Sum(v1), Count) | Posting(account: v0, amount: v1); });
 
-    corpus_case!(cases, query, "amount-floor",
+    corpus_case!(cases, true, "amount-floor",
         ["agg-min"],
         "(account, lo: Min(amount)) | Posting(account, amount);",
         { (account, lo: Min(amount)) | Posting(account, amount); },
         { (v0, Min(v1)) | Posting(account: v0, amount: v1); });
 
-    corpus_case!(cases, query, "amount-ceiling",
+    corpus_case!(cases, true, "amount-ceiling",
         ["agg-max"],
         "(account, hi: Max(amount)) | Posting(account, amount);",
         { (account, hi: Max(amount)) | Posting(account, amount); },
         { (v0, Max(v1)) | Posting(account: v0, amount: v1); });
 
-    corpus_case!(cases, query, "mandate-pack",
+    corpus_case!(cases, true, "mandate-pack",
         ["agg-pack"],
         "(org, busy: Pack(active)) | Mandate(org, active);",
         { (org, busy: Pack(active)) | Mandate(org, active); },
         { (v0, Pack(v1)) | Mandate(org: v0, active: v1); });
 
-    corpus_case!(cases, query, "mandate-durations",
+    corpus_case!(cases, true, "mandate-durations",
         ["duration"],
         "(org, Duration(active)) | Mandate(org, active);",
         { (org, Duration(active)) | Mandate(org, active); },
         { (v0, Duration(v1)) | Mandate(org: v0, active: v1); });
 
-    corpus_case!(cases, query, "long-mandates",
+    corpus_case!(cases, true, "long-mandates",
         ["duration"],
         "(org, Sum(Duration(active))) | Mandate(org, active), Duration(active) >= 3600;",
         { (org, Sum(Duration(active))) | Mandate(org, active), Duration(active) >= 3600; },
         { (v0, Sum(Duration(v1))) | Mandate(org: v0, active: v1), Duration(v1) >= 3600; });
 
-    corpus_case!(cases, query, "usd-or-eur-accounts",
+    corpus_case!(cases, true, "usd-or-eur-accounts",
         ["multi-rule-union"],
         "(id) | Account(id, currency == Usd);\n\
          (id) | Account(id, currency == Eur);",
@@ -592,50 +576,50 @@ fn cases() -> Vec<Case> {
         { (v0) | Account(id: v0, currency == Usd);
           (v0) | Account(id: v0, currency == Eur); });
 
-    corpus_case!(cases, program(true), "org-reach-rooted",
-        ["program-recursion", "idb-ordered-dense"],
-        "reach(o) | Org(id: o), o == ?root;\n\
-         reach(p) | OrgParent(child: c, parent: p), reach(c);\n\
+    corpus_case!(cases, true, "org-reach-rooted",
+        ["recursive", "interior-ordered-dense"],
+        "recursive reach(o) | Org(id: o), o == ?root;\n\
+         recursive reach(p) | OrgParent(child: c, parent: p), reach(c);\n\
          (p) | Org(id: p), reach(p);",
-        { reach(o) | Org(id: o), o == ?root;
-          reach(p) | OrgParent(child: c, parent: p), reach(c);
+        { recursive reach(o) | Org(id: o), o == ?root;
+          recursive reach(p) | OrgParent(child: c, parent: p), reach(c);
           (p) | Org(id: p), reach(p); },
-        { p0(v0) | Org(id: v0), v0 == ?0;
-          p0(v1) | OrgParent(child: v0, parent: v1), p0(v0);
+        { recursive p0(v0) | Org(id: v0), v0 == ?0;
+          recursive p0(v1) | OrgParent(child: v0, parent: v1), p0(v0);
           (v0) | Org(id: v0), p0(v0); });
 
     // The classic two-column closure: the recursive rule binds its head's
-    // second position through the idb atom alone, which the TS builder's
-    // join-position law (idb vars must be relation-bound) cannot spell —
-    // hand-written `ProgramIr` on the TS side, still prepared.
-    corpus_case!(cases, program(false), "org-reach",
-        ["program-recursion", "idb-ordered-dense"],
-        "reach(c, a) | OrgParent(child: c, parent: a);\n\
-         reach(c, a) | OrgParent(child: c, parent: m), reach(m, a);\n\
+    // second position through the interior atom alone, which the TS builder's
+    // join-position law (interior vars must be relation-bound) cannot spell —
+    // hand-written `QueryIr` on the TS side, still prepared.
+    corpus_case!(cases, false, "org-reach",
+        ["recursive", "interior-ordered-dense"],
+        "recursive reach(c, a) | OrgParent(child: c, parent: a);\n\
+         recursive reach(c, a) | OrgParent(child: c, parent: m), reach(m, a);\n\
          (c, a) | reach(c, a);",
-        { reach(c, a) | OrgParent(child: c, parent: a);
-          reach(c, a) | OrgParent(child: c, parent: m), reach(m, a);
+        { recursive reach(c, a) | OrgParent(child: c, parent: a);
+          recursive reach(c, a) | OrgParent(child: c, parent: m), reach(m, a);
           (c, a) | reach(c, a); },
-        { p0(v0, v1) | OrgParent(child: v0, parent: v1);
-          p0(v0, v2) | OrgParent(child: v0, parent: v1), p0(v1, v2);
+        { recursive p0(v0, v1) | OrgParent(child: v0, parent: v1);
+          recursive p0(v0, v2) | OrgParent(child: v0, parent: v1), p0(v1, v2);
           (v0, v1) | p0(v0, v1); });
 
-    corpus_case!(cases, program(false), "posted-sparse",
-        ["idb-sparse", "idb-position-selection"],
-        "posted(id, account, amount) | Posting(id, account, amount);\n\
+    corpus_case!(cases, false, "posted-sparse",
+        ["interior-sparse", "interior-position-selection"],
+        "interior posted(id, account, amount) | Posting(id, account, amount);\n\
          (x) | posted(2: x, 0 in ?wanted);",
-        { posted(id, account, amount) | Posting(id, account, amount);
+        { interior posted(id, account, amount) | Posting(id, account, amount);
           (x) | posted(2: x, 0 in ?wanted); },
-        { p0(v0, v1, v2) | Posting(id: v0, account: v1, amount: v2);
+        { interior p0(v0, v1, v2) | Posting(id: v0, account: v1, amount: v2);
           (v0) | p0(2: v0, 0 in ?0); });
 
-    corpus_case!(cases, program(false), "usd-selected",
-        ["idb-position-selection"],
-        "acct(id, currency) | Account(id, currency);\n\
+    corpus_case!(cases, false, "usd-selected",
+        ["interior-position-selection"],
+        "interior acct(id, currency) | Account(id, currency);\n\
          (a) | acct(0: a, 1 == Currency::Usd);",
-        { acct(id, currency) | Account(id, currency);
+        { interior acct(id, currency) | Account(id, currency);
           (a) | acct(0: a, 1 == Currency::Usd); },
-        { p0(v0, v1) | Account(id: v0, currency: v1);
+        { interior p0(v0, v1) | Account(id: v0, currency: v1);
           (v0) | p0(0: v0, 1 == 0); });
 
     cases
@@ -668,10 +652,10 @@ const REQUIRED_PRODUCTIONS: &[&str] = &[
     "duration",
     "named-columns",
     "multi-rule-union",
-    "program-recursion",
-    "idb-ordered-dense",
-    "idb-sparse",
-    "idb-position-selection",
+    "recursive",
+    "interior-ordered-dense",
+    "interior-sparse",
+    "interior-position-selection",
 ];
 
 /// One case's checked-in document, byte for byte: pretty header fields
@@ -685,13 +669,13 @@ fn document(case: &Case) -> String {
         .collect::<Vec<_>>()
         .join(", ");
     format!(
-        "{{\n  \"name\": {},\n  \"builder\": {},\n  \"productions\": [{}],\n  \"notation\": {},\n  \"normalized\": {},\n  \"program\": {}\n}}\n",
+        "{{\n  \"name\": {},\n  \"builder\": {},\n  \"productions\": [{}],\n  \"notation\": {},\n  \"normalized\": {},\n  \"query\": {}\n}}\n",
         json_string(case.name),
         case.builder,
         productions,
         json_string(case.notation),
         json_string(&case.normalized),
-        case.program_json
+        case.query_json
     )
 }
 

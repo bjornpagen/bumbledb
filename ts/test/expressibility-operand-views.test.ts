@@ -411,3 +411,62 @@ describe("expressibility: the primer's prompt-operand view as rules and laws", f
 		assert.deepEqual(second, first, "two executions sort to one sequence — deterministic")
 	})
 })
+
+describe("primer cycle detector: recursive reach(x,x) on a DAG is empty", function primerCycle() {
+	const State = closed("State", ["Upheld", "Broken"])
+	const Node = relation("Grp", { id: u64.fresh })
+	const Produces = relation("Produces", { grp: u64, capability: u64 })
+	const Requires = relation("Requires", { consumer: u64, capability: u64, state: State.id })
+	const Primer = schema("Primer", { State, Grp: Node, Produces, Requires }, [
+		contained(on(Produces, "grp"), on(Node, "id")),
+		contained(on(Requires, "consumer"), on(Node, "id")),
+		contained(on(Requires, "state"), on(State, "id"))
+	])
+
+	const requiresCycleQuery = query(Primer)
+		.recursive("reach", {
+			base: [
+				function edge(r) {
+					const { grp: from, capability: cap } = v(Produces)
+					const { consumer: to } = v(Requires)
+					return r
+						.match(Produces, { grp: from, capability: cap })
+						.match(Requires, { consumer: to, capability: cap, state: "Upheld" })
+						.where(ne(from, to))
+						.find({ from, to })
+				}
+			],
+			rec: [
+				function step(r) {
+					const { grp: from, capability: cap } = v(Produces)
+					const midReq = v(Requires)
+					const { consumer: to } = v(Requires)
+					return r
+						.match(Produces, { grp: from, capability: cap })
+						.match(Requires, { consumer: midReq.consumer, capability: cap, state: "Upheld" })
+						.match(Requires, { consumer: to, state: "Upheld" })
+						.where(ne(from, midReq.consumer))
+						.interior("reach", { from: midReq.consumer, to })
+						.find({ from, to })
+				}
+			]
+		})
+		.rule(function diagonal(r) {
+			const { id: node } = v(Node)
+			return r.match(Node, { id: node }).interior("reach", { from: node, to: node }).find({ node })
+		})
+
+	test("empty answers on a DAG — the lattice has no cycle", async function dagIsEmpty() {
+		const primerDir = path.join(tmpRoot, "primer-store")
+		const db = await Db.create(primerDir, Primer)
+		const seeded = db.write(function seedDag(tx) {
+			const a = tx.insert(Node, {})
+			const b = tx.insert(Node, {})
+			tx.insert(Produces, { grp: a.id, capability: 1n })
+			tx.insert(Requires, { consumer: b.id, capability: 1n, state: "Upheld" })
+		})
+		assert.ok(seeded.ok, "a one-edge DAG lands")
+		const rows = db.execute(db.prepare(requiresCycleQuery), {})
+		assert.deepEqual(rows, [], "empty answers = DAG")
+	})
+})

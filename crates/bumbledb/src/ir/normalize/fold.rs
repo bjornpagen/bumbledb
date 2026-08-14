@@ -224,7 +224,7 @@ fn point_outside(interval: (u64, u64), point: u64) -> bool {
 /// rules, then emission — the folded summaries replace their constituent
 /// order filters in place.
 fn fold_occurrence(schema: &Schema, occurrence: &mut Occurrence) -> Option<String> {
-    // An `Idb` occurrence is left unfolded: the contradiction pictures
+    // An `Interior` occurrence is left unfolded: the contradiction pictures
     // print stored field names, and constant contradictions on predicate
     // columns are the rare shape — skipping is sound (the fold is an
     // optimization; the rule just executes and denotes ∅ honestly).

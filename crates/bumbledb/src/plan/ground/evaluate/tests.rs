@@ -831,6 +831,8 @@ fn multi_rule_programs_fold_per_rule_independently() {
         conditions: vec![],
     };
     let query = Query {
+        interiors: vec![],
+        rec: None,
         head: vec![HeadTerm::Var],
         rules: vec![fold_rule, refusing_rule],
     };

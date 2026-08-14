@@ -194,7 +194,7 @@ pub(super) fn extend_columns(
 }
 
 /// Uncounted states for images the planner never costs — the fixpoint
-/// driver's transient images (`Idb` occurrences pin no row counts: the
+/// driver's transient images (`Interior` occurrences pin no row counts: the
 /// selectivity guard costs recursion on the ladder's floors, so
 /// `distinct_count` is unreachable there).
 pub(super) fn uncounted_columns(columns: &[Column]) -> Box<[DistinctState]> {

@@ -41,7 +41,7 @@ type ExhumeHandle = { readonly __brand: "bumbledb.exhume" }
  */
 type TxHandle = { readonly __brand: "bumbledb.tx" }
 
-/** One prepared query/program (plan pinned at prepare). */
+/** One prepared query (plan pinned at prepare). */
 type PreparedHandle = { readonly __brand: "bumbledb.prepared" }
 
 /** A half-open interval `[start, end)` as it crosses the boundary. */
@@ -71,20 +71,28 @@ type TaggedValue = ValueSpec
 type QueryParam = TaggedValue | { readonly kind: "set"; readonly values: readonly TaggedValue[] }
 
 /**
- * The IR mirror (`bumbledb::ir`, 1:1): relations, fields, predicates, and
+ * The IR mirror (`bumbledb::ir`, 1:1): relations, fields, interiors, and
  * params by NUMERIC id — the SDK resolves names through the manifest and
- * sends ids; the bridge never sees names in queries. A plain query is sent
- * as its degenerate one-predicate program.
+ * sends ids; the bridge never sees names in queries.
  */
-interface ProgramIr {
-	readonly predicates: readonly PredicateDefIr[]
-	readonly output: number
-}
-
-/** One predicate: the head shape its rules align against, and the rules. */
-interface PredicateDefIr {
+interface QueryIr {
+	readonly interiors: readonly InteriorIr[]
+	readonly rec: RecIr | null
 	readonly head: readonly HeadTermIr[]
 	readonly rules: readonly RuleIr[]
+}
+
+/** One named interior: the head shape its rules align against, and the rules. */
+interface InteriorIr {
+	readonly head: readonly HeadTermIr[]
+	readonly rules: readonly RuleIr[]
+}
+
+/** The optional linear rec: shared head, base arms, rec arms. */
+interface RecIr {
+	readonly head: readonly HeadTermIr[]
+	readonly base: readonly RuleIr[]
+	readonly rec: readonly RuleIr[]
 }
 
 /** One head position: a plain variable slot or an aggregate-op kind. */
@@ -116,10 +124,10 @@ type AggOpIr =
 	| { readonly kind: "count" }
 	| { readonly kind: "pack" }
 
-/** Where an atom draws its facts: a stored relation or a program predicate. */
+/** Where an atom draws its facts: a stored relation or a derived table. */
 type AtomSourceIr =
 	| { readonly kind: "edb"; readonly relation: number }
-	| { readonly kind: "idb"; readonly pred: number }
+	| { readonly kind: "interior"; readonly interior: number }
 
 /**
  * One atom: named-field bindings as `[fieldId, term]` pairs; absence of a
@@ -340,7 +348,8 @@ interface Explain {
 	readonly subsumed: ReadonlyArray<Readonly<Record<string, unknown>>>
 	readonly dead: ReadonlyArray<Readonly<Record<string, unknown>>>
 	readonly rules: ReadonlyArray<Readonly<Record<string, unknown>>>
-	readonly strata: ReadonlyArray<Readonly<Record<string, unknown>>>
+	readonly interiors: ReadonlyArray<Readonly<Record<string, unknown>>>
+	readonly reach?: Readonly<Record<string, unknown>>
 }
 
 interface Native {
@@ -485,13 +494,13 @@ interface Native {
 	txAbort(tx: TxHandle): void
 
 	/**
-	 * Prepares a program (IR as data, ids only; plan pinned at prepare).
+	 * Prepares a query (IR as data, ids only; plan pinned at prepare).
 	 * Roster errors return as data.
 	 */
-	dbPrepare(db: DbHandle, program: ProgramIr): PrepareResult
+	dbPrepare(db: DbHandle, query: QueryIr): PrepareResult
 	/**
 	 * Executes against a snapshot with positional params. One-copy owned
-	 * rows out, column order = the program's head order; answers are a set
+	 * rows out, column order = the query's head order; answers are a set
 	 * — the host sorts.
 	 */
 	preparedExecute(prepared: PreparedHandle, snap: SnapshotHandle, params: readonly QueryParam[]): FactValue[][]
@@ -614,6 +623,7 @@ export type {
 	FindTermIr,
 	HeadOpIr,
 	HeadTermIr,
+	InteriorIr,
 	IntervalValue,
 	Manifest,
 	ManifestField,
@@ -622,11 +632,11 @@ export type {
 	ManifestStatement,
 	Native,
 	OccurrenceDrift,
-	PredicateDefIr,
 	PreparedHandle,
 	PrepareResult,
-	ProgramIr,
+	QueryIr,
 	QueryParam,
+	RecIr,
 	RuleIr,
 	SnapshotHandle,
 	SnapshotOpened,

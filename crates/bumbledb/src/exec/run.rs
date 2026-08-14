@@ -217,22 +217,19 @@ pub trait Counters {
     }
     /// A D2 subtree skip propagated through this node.
     fn skip(&mut self, node: usize);
-    /// One predicate's frontier rows entering a fixpoint round's delta
-    /// image (the driver, `api/prepared/fixpoint.rs`): fires once per
-    /// stratum predicate per round ≥ 1, before the round's variants
-    /// run. Default no-op — the release path counts nothing.
+    /// One predicate's frontier rows entering a reach round's delta
+    /// image (`api/prepared/reach.rs`): fires once per round ≥ 1,
+    /// before the round's rec arms run. Default no-op.
     #[inline]
-    fn fixpoint_delta(&mut self, predicate: u16, rows: u64) {
-        let _ = (predicate, rows);
+    fn fixpoint_delta(&mut self, rows: u64) {
+        let _ = rows;
     }
-    /// A fixpoint round closed (the driver's union accounting): the
-    /// bindings the round's runs emitted and the re-derivations the
-    /// spanning seen-sets absorbed. Round 0 is the stratum's
-    /// non-recursive rules; its `fixpoint_delta` count is zero. Default
-    /// no-op — populated on counted paths only.
+    /// A reach round closed: the bindings the round's runs emitted and
+    /// the re-derivations the spanning seen-set absorbed. Round 0 is
+    /// the base arms; its `fixpoint_delta` count is zero. Default no-op.
     #[inline]
-    fn fixpoint_round(&mut self, stratum: u16, emitted: u64, absorbed: u64) {
-        let _ = (stratum, emitted, absorbed);
+    fn fixpoint_round(&mut self, emitted: u64, absorbed: u64) {
+        let _ = (emitted, absorbed);
     }
     /// A timed phase segment opens/closes (default no-op: only the trace
     /// harness's [`PhaseTimers`] implements these; hot-path cost when

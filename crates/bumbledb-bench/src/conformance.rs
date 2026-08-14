@@ -27,12 +27,11 @@
 //!   fuzzing charter, `docs/architecture/60-validation.md`); this test
 //!   reports, it never fixes.
 //!
-//! The RECURSIVE arm ([`program`], `program-*.json`) rides the same
-//! corpus and comparator: program cases run the engine's landed
-//! fixpoint driver against the naive fixpoint on build AND replay
-//! (finding 070), `SQLite` corroborating where its `WITH RECURSIVE`
-//! gate admits, judged by the proved
-//! `lean/Bumbledb/Exec/Fixpoint.lean: evalProgram` — three-way like
+//! The RECURSIVE arm ([`program`], `reach-*.json`) rides the same
+//! corpus and comparator: reach cases run the engine against the naive
+//! interiors-then-rec-then-main eval on build AND replay, `SQLite`
+//! corroborating where the translator admits, judged by
+//! `lean/Bumbledb/Exec/Reach.lean: evalQueryList` — three-way like
 //! its query and judgment siblings.
 //!
 //! ## Scope fences (each counted in [`Report`], never silent)
@@ -1121,7 +1120,7 @@ fn execute_case(
     );
     match engine {
         Answers::Ok(answers) => (Some(answers), naive_ms),
-        Answers::Overflow | Answers::MeasureOfRay | Answers::FixpointBudget => (None, naive_ms),
+        Answers::Overflow | Answers::MeasureOfRay | Answers::DerivedBudget => (None, naive_ms),
     }
 }
 
@@ -1249,6 +1248,8 @@ fn hand_cases(cfg: GenConfig) -> Vec<HandCase> {
         HandCase {
             name: "hand-union-overlapping-rules",
             query: Query {
+                interiors: vec![],
+                rec: None,
                 head: vec![bumbledb::HeadTerm::Var],
                 rules: vec![
                     rule(
@@ -1565,7 +1566,7 @@ pub fn corpus_dir() -> PathBuf {
 pub fn write_corpus(dir: &Path) -> Report {
     let (report, cases) = generate_corpus();
     let program_world = build_world(WORLD_SEEDS[0]);
-    let (program_report, program_cases) = program::generate_program_corpus(&program_world);
+    let (program_report, program_cases) = program::generate_reach_corpus(&program_world);
     eprintln!("{}", program_report.coverage_line());
     std::fs::create_dir_all(dir).expect("create the corpus directory");
     for entry in std::fs::read_dir(dir).expect("list the corpus directory") {
@@ -1622,8 +1623,8 @@ pub fn replay_checked_in_corpus() -> usize {
         let text = std::fs::read_to_string(path).expect("read a corpus case");
         let document = if name.starts_with("judgment-") {
             judgment::replay_judgment_case(&name)
-        } else if name.starts_with("program-") {
-            program::replay_program_case(&mut worlds, &name, &text)
+        } else if name.starts_with("reach-") {
+            program::replay_reach_case(&mut worlds, &name, &text)
         } else {
             replay_case(&mut worlds, &name, &text)
         };
@@ -1824,14 +1825,14 @@ mod tests {
         eprintln!("{}", report.coverage_line());
     }
 
-    /// Regenerates the RECURSIVE arm's `program-*.json` cases only —
+    /// Regenerates the RECURSIVE arm's `reach-*.json` cases only —
     /// the query and judgment cases keep their bytes (their wall-clock
     /// budgets were measured at their own build time and never
     /// re-measure on replay).
     #[test]
-    #[ignore = "regenerates the checked-in program cases; run deliberately"]
+    #[ignore = "regenerates the checked-in reach cases; run deliberately"]
     fn regenerate_the_recursive_conformance_corpus() {
-        let report = program::write_program_corpus(&corpus_dir());
+        let report = program::write_reach_corpus(&corpus_dir());
         eprintln!("{}", report.coverage_line());
     }
 

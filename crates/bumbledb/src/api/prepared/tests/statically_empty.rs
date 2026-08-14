@@ -1,7 +1,7 @@
 //! Statically empty: condition folding at normalize (docs/architecture/
 //! 20-query-ir.md § normalization, 40-execution.md § access paths). A
 //! rule whose constant conditions are mutually unsatisfiable dies at
-//! prepare; a program of only dead rules prepares to `Program::Empty`
+//! prepare; a program of only dead rules prepares to `PreparedBody::Empty`
 //! — params bind first (errors surface), then nothing runs. The fold's
 //! set-preservation rides the folded/unfolded differential below.
 
@@ -137,20 +137,19 @@ fn a_dead_rule_beside_a_live_one_runs_the_live_one_only() {
     let txn = env.read_txn().expect("txn");
 
     let query = Query {
+        interiors: vec![],
+        rec: None,
         head: vec![HeadTerm::Var],
         rules: vec![by_kind_rule(3, contradiction()), by_kind_rule(7, vec![])],
     };
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
     // The dead rule was deleted at prepare — only the live plan exists.
     assert_eq!(
-        prepared.program.rules().len(),
+        prepared.body.rules().len(),
         1,
         "the dead rule prepared no plan"
     );
-    assert!(matches!(
-        prepared.program.rules(),
-        [PreparedRule::FreeJoin(_)]
-    ));
+    assert!(matches!(prepared.body.rules(), [PreparedRule::FreeJoin(_)]));
 
     let out = prepared
         .execute_collect(&txn, &cache, &[])
@@ -185,6 +184,8 @@ fn a_dead_rule_opens_no_rule_span() {
     let txn = env.read_txn().expect("txn");
 
     let query = Query {
+        interiors: vec![],
+        rec: None,
         head: vec![HeadTerm::Var],
         rules: vec![by_kind_rule(3, contradiction()), by_kind_rule(7, vec![])],
     };
@@ -217,11 +218,13 @@ fn the_empty_program_builds_no_image_and_binds_no_view() {
     let txn = env.read_txn().expect("txn");
 
     let query = Query {
+        interiors: vec![],
+        rec: None,
         head: vec![HeadTerm::Var],
         rules: vec![by_kind_rule(3, contradiction())],
     };
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
-    assert!(matches!(prepared.program, Program::Empty));
+    assert!(matches!(prepared.body, PreparedBody::Empty));
 
     obs::start_capture();
     let out = prepared

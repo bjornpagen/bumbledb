@@ -114,6 +114,8 @@ fn projection_rule(relation: RelationId) -> Rule {
 fn calendar_union_golden() {
     let rule = projection_rule(BUSY);
     let query = Query {
+        interiors: vec![],
+        rec: None,
         head: rule.head(),
         rules: vec![rule, projection_rule(OOO)],
     };

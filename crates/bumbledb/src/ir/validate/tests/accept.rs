@@ -385,6 +385,8 @@ fn accepts_pack_across_rules() {
         conditions: vec![],
     };
     let query = Query {
+        interiors: vec![],
+        rec: None,
         head: vec![
             crate::ir::HeadTerm::Var,
             crate::ir::HeadTerm::Aggregate(crate::ir::HeadOp::Pack),

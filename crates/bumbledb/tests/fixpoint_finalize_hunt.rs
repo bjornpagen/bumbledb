@@ -12,7 +12,9 @@
 
 use std::collections::BTreeSet;
 
-use bumbledb::ir::{Atom, AtomSource, FindTerm, HeadTerm, Query, Rule, Term, VarId};
+use bumbledb::ir::{
+    Atom, AtomSource, FindTerm, HeadTerm, Interior, InteriorId, Query, Rec, Rule, Term, VarId,
+};
 use bumbledb::schema::FieldId;
 use bumbledb::{AnswerValue, Answers, Db, Fact, Interval};
 
@@ -58,11 +60,15 @@ fn link_atom(src: u16, dst: u16) -> Atom {
     }
 }
 
-fn idb_atom(pred: u16, src: u16, dst: u16) -> Atom {
+fn interior_atom(id: u32, src: u16, dst: u16) -> Atom {
     Atom {
-        source: AtomSource::Idb(bumbledb::PredId(pred)),
+        source: AtomSource::Interior(InteriorId(id)),
         bindings: vec![(FieldId(0), v(src)), (FieldId(1), v(dst))],
     }
+}
+
+fn identity_pair_main() -> Rule {
+    pair_rule((0, 1), vec![interior_atom(0, 0, 1)])
 }
 
 fn pair_rule(finds: (u16, u16), atoms: Vec<Atom>) -> Rule {
@@ -74,20 +80,23 @@ fn pair_rule(finds: (u16, u16), atoms: Vec<Atom>) -> Rule {
     }
 }
 
-/// `p0(x, z) | Edge(x, z); p0(x, z) | Edge(x, y), p0(y, z)` — the
-/// right-linear closure: on a diameter-`d` graph the driver runs ~`d`
-/// rounds, so the accumulator appends and the delta ping-pong flip many
-/// times within one execution.
-fn closure_program() -> bumbledb::Program {
-    bumbledb::Program {
-        predicates: vec![bumbledb::PredicateDef {
+/// `recursive p0(x, z) | Edge(x, z); p0(x, z) | Edge(x, y), p0(y, z)` —
+/// the right-linear closure with identity main: on a diameter-`d` graph
+/// the driver runs ~`d` rounds, so the accumulator appends and the delta
+/// ping-pong flip many times within one execution.
+fn closure_query() -> Query {
+    Query {
+        interiors: vec![],
+        rec: Some(Rec {
             head: vec![HeadTerm::Var, HeadTerm::Var],
-            rules: vec![
-                pair_rule((0, 1), vec![edge_atom(0, 1)]),
-                pair_rule((0, 2), vec![edge_atom(0, 1), idb_atom(0, 1, 2)]),
-            ],
-        }],
-        output: bumbledb::PredId(0),
+            base: vec![pair_rule((0, 1), vec![edge_atom(0, 1)])],
+            rec: vec![pair_rule(
+                (0, 2),
+                vec![edge_atom(0, 1), interior_atom(0, 1, 2)],
+            )],
+        }),
+        head: vec![HeadTerm::Var, HeadTerm::Var],
+        rules: vec![identity_pair_main()],
     }
 }
 
@@ -145,7 +154,7 @@ fn deep_chain_closure_matches_naive_across_repeat_executions_and_commits() {
     .expect("write");
 
     let expected = naive_closure(&edges);
-    let mut prepared = db.prepare(&closure_program()).expect("prepare");
+    let mut prepared = db.prepare(&closure_query()).expect("prepare");
     db.read(|snap| {
         for run in 0..3 {
             let got = answer_pairs(&snap.execute_collect(&mut prepared, &[])?);
@@ -187,15 +196,14 @@ fn deep_chain_closure_matches_naive_across_repeat_executions_and_commits() {
     .expect("read");
 }
 
-/// Two recursive strata: `p1` (interior) is the Edge closure; the output
-/// is `out(x, z) | Link(x, z); out(x, z) | p1(x, y), out(y, z)` — the
-/// output's round loop reads the interior's FINISHED image every round
-/// while appending its own accumulator, so a finished-slot alias or a
-/// stale append floor at the strata boundary diverges from the naive
-/// two-level fixpoint.
+/// A finished named interior (finite Edge copy) feeding a linear rec
+/// whose base is Link and whose step joins the interior: the rec round
+/// loop reads the interior's FINISHED image every round while appending
+/// its own accumulator. Two recursive SCCs are unwritable this cut;
+/// this is the interiors-then-rec path the two-strata program became.
 #[test]
-fn two_recursive_strata_match_the_naive_two_level_fixpoint() {
-    let dir = common::TempDir::new("hunt-two-strata");
+fn a_finished_interior_feeds_a_linear_rec() {
+    let dir = common::TempDir::new("hunt-interior-then-rec");
     let db = Db::create(dir.path(), Hunt).expect("create");
     let edges: BTreeSet<(u64, u64)> = (0..12)
         .map(|n| (n, n + 1))
@@ -213,12 +221,11 @@ fn two_recursive_strata_match_the_naive_two_level_fixpoint() {
     })
     .expect("write");
 
-    // out = lfp( Link ∪ closure(Edge) ∘ out )
-    let closed = naive_closure(&edges);
+    // out = lfp( Link ∪ Edge ∘ out )
     let mut expected: BTreeSet<(u64, u64)> = links.clone();
     loop {
         let mut next = expected.clone();
-        for &(x, y) in &closed {
+        for &(x, y) in &edges {
             for &(a, z) in expected.iter().filter(|(a, _)| *a == y) {
                 debug_assert_eq!(a, y);
                 next.insert((x, z));
@@ -230,36 +237,29 @@ fn two_recursive_strata_match_the_naive_two_level_fixpoint() {
         expected = next;
     }
 
-    let program = bumbledb::Program {
-        predicates: vec![
-            // PredId(0): the output, recursive through itself, reading
-            // PredId(1) from the stratum below.
-            bumbledb::PredicateDef {
-                head: vec![HeadTerm::Var, HeadTerm::Var],
-                rules: vec![
-                    pair_rule((0, 1), vec![link_atom(0, 1)]),
-                    pair_rule((0, 2), vec![idb_atom(1, 0, 1), idb_atom(0, 1, 2)]),
-                ],
-            },
-            // PredId(1): the interior Edge closure (its own recursive
-            // stratum, finished before the output's opens).
-            bumbledb::PredicateDef {
-                head: vec![HeadTerm::Var, HeadTerm::Var],
-                rules: vec![
-                    pair_rule((0, 1), vec![edge_atom(0, 1)]),
-                    pair_rule((0, 2), vec![edge_atom(0, 1), idb_atom(1, 1, 2)]),
-                ],
-            },
-        ],
-        output: bumbledb::PredId(0),
+    let query = Query {
+        interiors: vec![Interior {
+            head: vec![HeadTerm::Var, HeadTerm::Var],
+            rules: vec![pair_rule((0, 1), vec![edge_atom(0, 1)])],
+        }],
+        rec: Some(Rec {
+            head: vec![HeadTerm::Var, HeadTerm::Var],
+            base: vec![pair_rule((0, 1), vec![link_atom(0, 1)])],
+            rec: vec![pair_rule(
+                (0, 2),
+                vec![interior_atom(0, 0, 1), interior_atom(1, 1, 2)],
+            )],
+        }),
+        head: vec![HeadTerm::Var, HeadTerm::Var],
+        rules: vec![pair_rule((0, 1), vec![interior_atom(1, 0, 1)])],
     };
-    let mut prepared = db.prepare(&program).expect("prepare");
+    let mut prepared = db.prepare(&query).expect("prepare");
     db.read(|snap| {
         for run in 0..3 {
             let got = answer_pairs(&snap.execute_collect(&mut prepared, &[])?);
             assert_eq!(
                 got, expected,
-                "two-strata program differs from the naive fixpoint on run {run}"
+                "interior-then-rec differs from the naive fixpoint on run {run}"
             );
         }
         Ok(())
@@ -267,94 +267,10 @@ fn two_recursive_strata_match_the_naive_two_level_fixpoint() {
     .expect("read");
 }
 
-/// Mutual recursion in ONE stratum (odd/even path parity): two seen-sets
-/// grow at different rates under one round loop, so per-member
-/// watermarks, per-member accumulator floors, and cross-member
-/// delta/accumulated binds all get exercised in the same rounds. The
-/// naive parity fixpoint is the oracle; an off-by-one-round frontier or
-/// a crossed accumulator half changes the parity sets.
-#[test]
-fn mutual_recursion_parity_matches_the_naive_fixpoint() {
-    let dir = common::TempDir::new("hunt-mutual");
-    let db = Db::create(dir.path(), Hunt).expect("create");
-    // A chain with an odd cycle: parity sets overlap without being equal.
-    let edges: BTreeSet<(u64, u64)> = (0..10)
-        .map(|n| (n, n + 1))
-        .chain([(10, 8), (8, 6), (6, 10), (4, 0)])
-        .collect();
-    db.write(|tx| {
-        for &(src, dst) in &edges {
-            tx.insert(&Edge { src, dst })?;
-        }
-        Ok(())
-    })
-    .expect("write");
-
-    // odd(x,z)  | Edge(x,z);  odd(x,z) | even(x,y), Edge(y,z)
-    // even(x,z) | odd(x,y), Edge(y,z)
-    let (mut odd, mut even) = (BTreeSet::<(u64, u64)>::new(), BTreeSet::<(u64, u64)>::new());
-    loop {
-        let mut next_odd = odd.clone();
-        let mut next_even = even.clone();
-        next_odd.extend(edges.iter().copied());
-        for &(x, y) in &even {
-            for &(a, z) in edges.iter().filter(|(a, _)| *a == y) {
-                debug_assert_eq!(a, y);
-                next_odd.insert((x, z));
-            }
-        }
-        for &(x, y) in &odd {
-            for &(a, z) in edges.iter().filter(|(a, _)| *a == y) {
-                debug_assert_eq!(a, y);
-                next_even.insert((x, z));
-            }
-        }
-        if next_odd == odd && next_even == even {
-            break;
-        }
-        odd = next_odd;
-        even = next_even;
-    }
-
-    let program_with_output = |output: u16| bumbledb::Program {
-        predicates: vec![
-            // PredId(0): odd-length reachability.
-            bumbledb::PredicateDef {
-                head: vec![HeadTerm::Var, HeadTerm::Var],
-                rules: vec![
-                    pair_rule((0, 1), vec![edge_atom(0, 1)]),
-                    pair_rule((0, 2), vec![idb_atom(1, 0, 1), edge_atom(1, 2)]),
-                ],
-            },
-            // PredId(1): even-length (≥ 2) reachability.
-            bumbledb::PredicateDef {
-                head: vec![HeadTerm::Var, HeadTerm::Var],
-                rules: vec![pair_rule((0, 2), vec![idb_atom(0, 0, 1), edge_atom(1, 2)])],
-            },
-        ],
-        output: bumbledb::PredId(output),
-    };
-    let mut odd_prepared = db.prepare(&program_with_output(0)).expect("prepare odd");
-    let mut even_prepared = db.prepare(&program_with_output(1)).expect("prepare even");
-    db.read(|snap| {
-        for run in 0..2 {
-            let got_odd = answer_pairs(&snap.execute_collect(&mut odd_prepared, &[])?);
-            assert_eq!(got_odd, odd, "odd parity differs from naive on run {run}");
-            let got_even = answer_pairs(&snap.execute_collect(&mut even_prepared, &[])?);
-            assert_eq!(
-                got_even, even,
-                "even parity differs from naive on run {run}"
-            );
-        }
-        Ok(())
-    })
-    .expect("read");
-}
-
-/// A fold at the output head over a finished recursive interior: the
-/// aggregate drain (`finalize_into` → `push_resolved_answer`) runs on rows
-/// grouped from the interior closure's finished image — per-source
-/// reachable-set counts, against the naive closure's group counts.
+/// A fold at the output head over a finished rec: the aggregate drain
+/// (`finalize_into` → `push_resolved_answer`) runs on rows grouped from
+/// the rec's finished image — per-source reachable-set counts, against
+/// the naive closure's group counts.
 #[test]
 fn a_fold_over_the_finished_closure_matches_naive_counts() {
     let dir = common::TempDir::new("hunt-fold");
@@ -373,34 +289,31 @@ fn a_fold_over_the_finished_closure_matches_naive_counts() {
         *expected.entry(x).or_insert(0) += 1;
     }
 
-    let program = bumbledb::Program {
-        predicates: vec![
-            bumbledb::PredicateDef {
-                head: vec![HeadTerm::Var, HeadTerm::Var],
-                rules: vec![
-                    pair_rule((0, 1), vec![edge_atom(0, 1)]),
-                    pair_rule((0, 2), vec![edge_atom(0, 1), idb_atom(0, 1, 2)]),
-                ],
-            },
-            bumbledb::PredicateDef {
-                head: vec![HeadTerm::Var, HeadTerm::Aggregate(bumbledb::HeadOp::Count)],
-                rules: vec![Rule {
-                    finds: vec![
-                        FindTerm::Var(VarId(0)),
-                        FindTerm::Aggregate {
-                            op: bumbledb::ir::AggOp::Count,
-                            over: None,
-                        },
-                    ],
-                    atoms: vec![idb_atom(0, 0, 1)],
-                    negated: vec![],
-                    conditions: vec![],
-                }],
-            },
-        ],
-        output: bumbledb::PredId(1),
+    let query = Query {
+        interiors: vec![],
+        rec: Some(Rec {
+            head: vec![HeadTerm::Var, HeadTerm::Var],
+            base: vec![pair_rule((0, 1), vec![edge_atom(0, 1)])],
+            rec: vec![pair_rule(
+                (0, 2),
+                vec![edge_atom(0, 1), interior_atom(0, 1, 2)],
+            )],
+        }),
+        head: vec![HeadTerm::Var, HeadTerm::Aggregate(bumbledb::HeadOp::Count)],
+        rules: vec![Rule {
+            finds: vec![
+                FindTerm::Var(VarId(0)),
+                FindTerm::Aggregate {
+                    op: bumbledb::ir::AggOp::Count,
+                    over: None,
+                },
+            ],
+            atoms: vec![interior_atom(0, 0, 1)],
+            negated: vec![],
+            conditions: vec![],
+        }],
     };
-    let mut prepared = db.prepare(&program).expect("prepare");
+    let mut prepared = db.prepare(&query).expect("prepare");
     db.read(|snap| {
         for run in 0..2 {
             let answers = snap.execute_collect(&mut prepared, &[])?;
@@ -417,53 +330,6 @@ fn a_fold_over_the_finished_closure_matches_naive_counts() {
                 .collect();
             assert_eq!(got.len(), answers.len(), "one group per source");
             assert_eq!(got, expected, "fold over closure differs on run {run}");
-        }
-        Ok(())
-    })
-    .expect("read");
-}
-
-/// The doubling closure — `p0(x, z) | Edge(x, z); p0(x, z) | p0(x, y),
-/// p0(y, z)` — puts the SAME predicate in one rule body twice: two delta
-/// variants whose image fill must discriminate the delta occurrence from
-/// the accumulated one by `OccId`, not by predicate. A crossed slot
-/// (delta bound where accumulated belongs, or both to one half) loses
-/// derivations or re-derives stale frontiers; the naive closure catches
-/// either.
-#[test]
-fn doubling_closure_with_two_same_predicate_occurrences_matches_naive() {
-    let dir = common::TempDir::new("hunt-doubling");
-    let db = Db::create(dir.path(), Hunt).expect("create");
-    let edges: BTreeSet<(u64, u64)> = (0..33)
-        .map(|n| (n, n + 1))
-        .chain([(33, 12), (20, 2)])
-        .collect();
-    db.write(|tx| {
-        for &(src, dst) in &edges {
-            tx.insert(&Edge { src, dst })?;
-        }
-        Ok(())
-    })
-    .expect("write");
-    let expected = naive_closure(&edges);
-    let program = bumbledb::Program {
-        predicates: vec![bumbledb::PredicateDef {
-            head: vec![HeadTerm::Var, HeadTerm::Var],
-            rules: vec![
-                pair_rule((0, 1), vec![edge_atom(0, 1)]),
-                pair_rule((0, 2), vec![idb_atom(0, 0, 1), idb_atom(0, 1, 2)]),
-            ],
-        }],
-        output: bumbledb::PredId(0),
-    };
-    let mut prepared = db.prepare(&program).expect("prepare");
-    db.read(|snap| {
-        for run in 0..3 {
-            let got = answer_pairs(&snap.execute_collect(&mut prepared, &[])?);
-            assert_eq!(
-                got, expected,
-                "doubling closure differs from naive on run {run}"
-            );
         }
         Ok(())
     })
@@ -501,54 +367,72 @@ fn typed_payload_propagates_through_the_recursive_accumulator() {
 
     // out(x, n, f, s) | Item(id: x, name: n, flag: f, span: s)
     // out(y, n, f, s) | out(x, n, f, s), Edge(x, y)
-    let program = bumbledb::Program {
-        predicates: vec![bumbledb::PredicateDef {
+    let query = Query {
+        interiors: vec![],
+        rec: Some(Rec {
             head: vec![HeadTerm::Var, HeadTerm::Var, HeadTerm::Var, HeadTerm::Var],
-            rules: vec![
-                Rule {
-                    finds: vec![
-                        FindTerm::Var(VarId(0)),
-                        FindTerm::Var(VarId(1)),
-                        FindTerm::Var(VarId(2)),
-                        FindTerm::Var(VarId(3)),
+            base: vec![Rule {
+                finds: vec![
+                    FindTerm::Var(VarId(0)),
+                    FindTerm::Var(VarId(1)),
+                    FindTerm::Var(VarId(2)),
+                    FindTerm::Var(VarId(3)),
+                ],
+                atoms: vec![Atom {
+                    source: AtomSource::Edb(Item::RELATION),
+                    bindings: vec![
+                        (FieldId(0), v(0)), // id
+                        (FieldId(3), v(1)), // name
+                        (FieldId(2), v(2)), // flag
+                        (FieldId(5), v(3)), // span
                     ],
-                    atoms: vec![Atom {
-                        source: AtomSource::Edb(Item::RELATION),
+                }],
+                negated: vec![],
+                conditions: vec![],
+            }],
+            rec: vec![Rule {
+                finds: vec![
+                    FindTerm::Var(VarId(4)),
+                    FindTerm::Var(VarId(1)),
+                    FindTerm::Var(VarId(2)),
+                    FindTerm::Var(VarId(3)),
+                ],
+                atoms: vec![
+                    Atom {
+                        source: AtomSource::Interior(InteriorId(0)),
                         bindings: vec![
-                            (FieldId(0), v(0)), // id
-                            (FieldId(3), v(1)), // name
-                            (FieldId(2), v(2)), // flag
-                            (FieldId(5), v(3)), // span
+                            (FieldId(0), v(0)),
+                            (FieldId(1), v(1)),
+                            (FieldId(2), v(2)),
+                            (FieldId(3), v(3)),
                         ],
-                    }],
-                    negated: vec![],
-                    conditions: vec![],
-                },
-                Rule {
-                    finds: vec![
-                        FindTerm::Var(VarId(4)),
-                        FindTerm::Var(VarId(1)),
-                        FindTerm::Var(VarId(2)),
-                        FindTerm::Var(VarId(3)),
-                    ],
-                    atoms: vec![
-                        Atom {
-                            source: AtomSource::Idb(bumbledb::PredId(0)),
-                            bindings: vec![
-                                (FieldId(0), v(0)),
-                                (FieldId(1), v(1)),
-                                (FieldId(2), v(2)),
-                                (FieldId(3), v(3)),
-                            ],
-                        },
-                        edge_atom(0, 4),
-                    ],
-                    negated: vec![],
-                    conditions: vec![],
-                },
+                    },
+                    edge_atom(0, 4),
+                ],
+                negated: vec![],
+                conditions: vec![],
+            }],
+        }),
+        head: vec![HeadTerm::Var, HeadTerm::Var, HeadTerm::Var, HeadTerm::Var],
+        rules: vec![Rule {
+            finds: vec![
+                FindTerm::Var(VarId(0)),
+                FindTerm::Var(VarId(1)),
+                FindTerm::Var(VarId(2)),
+                FindTerm::Var(VarId(3)),
             ],
+            atoms: vec![Atom {
+                source: AtomSource::Interior(InteriorId(0)),
+                bindings: vec![
+                    (FieldId(0), v(0)),
+                    (FieldId(1), v(1)),
+                    (FieldId(2), v(2)),
+                    (FieldId(3), v(3)),
+                ],
+            }],
+            negated: vec![],
+            conditions: vec![],
         }],
-        output: bumbledb::PredId(0),
     };
 
     // The naive oracle: each item row lands on its own node and every
@@ -575,7 +459,7 @@ fn typed_payload_propagates_through_the_recursive_accumulator() {
         })
         .collect();
 
-    let mut prepared = db.prepare(&program).expect("prepare");
+    let mut prepared = db.prepare(&query).expect("prepare");
     db.read(|snap| {
         for run in 0..3 {
             let answers = snap.execute_collect(&mut prepared, &[])?;
@@ -627,20 +511,20 @@ fn a_budget_abort_leaves_the_prepared_handle_correct() {
     })
     .expect("write");
     let expected = naive_closure(&edges);
-    let mut prepared = db.prepare(&closure_program()).expect("prepare");
-    prepared.set_fixpoint_budget(2, u64::MAX);
+    let mut prepared = db.prepare(&closure_query()).expect("prepare");
+    prepared.set_derived_budget(2, u64::MAX);
     db.read(|snap| {
         let err = snap
             .execute_collect(&mut prepared, &[])
             .expect_err("a 24-round closure trips a 2-round budget");
         assert!(
-            matches!(err, bumbledb::Error::FixpointBudgetExceeded { .. }),
+            matches!(err, bumbledb::Error::DerivedBudgetExceeded { .. }),
             "typed budget error, got {err:?}"
         );
         Ok(())
     })
     .expect("read");
-    prepared.set_fixpoint_budget(1 << 16, 10_000_000);
+    prepared.set_derived_budget(1 << 16, 10_000_000);
     db.read(|snap| {
         for run in 0..2 {
             let got = answer_pairs(&snap.execute_collect(&mut prepared, &[])?);
@@ -687,36 +571,44 @@ fn alternating_param_envelopes_reuse_the_pools_correctly() {
             .collect()
     };
 
-    let program = bumbledb::Program {
-        predicates: vec![bumbledb::PredicateDef {
+    let query = Query {
+        interiors: vec![],
+        rec: Some(Rec {
             head: vec![HeadTerm::Var],
-            rules: vec![
-                Rule {
-                    finds: vec![FindTerm::Var(VarId(0))],
-                    atoms: vec![Atom {
-                        source: AtomSource::Edb(Edge::RELATION),
-                        bindings: vec![(FieldId(0), Term::Param(ParamId(0))), (FieldId(1), v(0))],
-                    }],
-                    negated: vec![],
-                    conditions: vec![],
-                },
-                Rule {
-                    finds: vec![FindTerm::Var(VarId(1))],
-                    atoms: vec![
-                        Atom {
-                            source: AtomSource::Idb(bumbledb::PredId(0)),
-                            bindings: vec![(FieldId(0), v(0))],
-                        },
-                        edge_atom(0, 1),
-                    ],
-                    negated: vec![],
-                    conditions: vec![],
-                },
-            ],
+            base: vec![Rule {
+                finds: vec![FindTerm::Var(VarId(0))],
+                atoms: vec![Atom {
+                    source: AtomSource::Edb(Edge::RELATION),
+                    bindings: vec![(FieldId(0), Term::Param(ParamId(0))), (FieldId(1), v(0))],
+                }],
+                negated: vec![],
+                conditions: vec![],
+            }],
+            rec: vec![Rule {
+                finds: vec![FindTerm::Var(VarId(1))],
+                atoms: vec![
+                    Atom {
+                        source: AtomSource::Interior(InteriorId(0)),
+                        bindings: vec![(FieldId(0), v(0))],
+                    },
+                    edge_atom(0, 1),
+                ],
+                negated: vec![],
+                conditions: vec![],
+            }],
+        }),
+        head: vec![HeadTerm::Var],
+        rules: vec![Rule {
+            finds: vec![FindTerm::Var(VarId(0))],
+            atoms: vec![Atom {
+                source: AtomSource::Interior(InteriorId(0)),
+                bindings: vec![(FieldId(0), v(0))],
+            }],
+            negated: vec![],
+            conditions: vec![],
         }],
-        output: bumbledb::PredId(0),
     };
-    let mut prepared = db.prepare(&program).expect("prepare");
+    let mut prepared = db.prepare(&query).expect("prepare");
     db.read(|snap| {
         // big → small → empty → big → small: every transition where a
         // stale pooled suffix or floor could leak rows.

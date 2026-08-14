@@ -5,7 +5,8 @@ use crate::encoding::{ValueRef, encode_fact};
 use crate::error::Error;
 use crate::image::cache::ImageCache;
 use crate::ir::{
-    Atom, CmpOp, Comparison, ConditionTree, FindTerm, Query, Rule, Term, Value, VarId,
+    Atom, AtomSource, CmpOp, Comparison, ConditionTree, FindTerm, HeadTerm, Interior, InteriorId,
+    Query, Rule, Term, Value, VarId,
 };
 use crate::storage::commit::commit;
 use crate::storage::delta::WriteDelta;
@@ -28,6 +29,7 @@ mod latch;
 mod measure;
 mod pack;
 mod params;
+mod reach;
 mod rules;
 mod selection;
 mod sets;

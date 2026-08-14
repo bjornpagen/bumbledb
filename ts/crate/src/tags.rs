@@ -283,7 +283,7 @@ wire_tags! {
     /// `bumbledb::AtomSource` (`atom_in`).
     mod atom_source for AtomSource {
         EDB: AtomSource::Edb(_) => "edb",
-        IDB: AtomSource::Idb(_) => "idb",
+        INTERIOR: AtomSource::Interior(_) => "interior",
     }
 }
 

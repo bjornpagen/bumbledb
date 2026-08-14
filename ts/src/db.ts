@@ -411,7 +411,7 @@ interface Db<Rels extends SchemaRelations> {
 	 * Prepares a query value built against THIS schema (identity is the
 	 * membership rule): lowers it to the engine IR, pins the plan, and
 	 * returns the typed {@link Prepared} value. Every IR roster refusal —
-	 * rule caps, strata legality, type rules — is the ENGINE's typed
+	 * rule caps, rec roster, type rules — is the ENGINE's typed
 	 * judgment and throws here carrying its message intact.
 	 */
 	prepare<Row, Params extends ParamsRecord>(q: Query<Rels, Row, Params>): Prepared<Rels, Row, Params>
@@ -1283,9 +1283,9 @@ function openDb<Rels extends SchemaRelations>(handle: DbHandle, theory: Schema<R
 				`query was built against schema ${q.schema.name}, not the identical schema value this store opened with — schema identity is the membership rule`
 			)
 		}
-		const program = lowerQuery(q)
-		const outcome = bridged("prepare bumbledb program", function callPrepare() {
-			return native.dbPrepare(handle, program)
+		const queryIr = lowerQuery(q)
+		const outcome = bridged("prepare bumbledb query", function callPrepare() {
+			return native.dbPrepare(handle, queryIr)
 		})
 		if (!outcome.ok) {
 			throw errors.new(`bumbledb ${outcome.kind} (prepare): ${outcome.message}`)

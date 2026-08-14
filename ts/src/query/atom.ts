@@ -23,9 +23,9 @@
  * wall only.
  *
  * This module also owns the plain runtime DATA a built rule is made of
- * (`RuleData`/`RecData` and friends): frozen values the lowering walks —
- * pure data (variable references included), so lowering stays a pure,
- * stable function of the query value.
+ * (`RuleData`/`InteriorData`/`RecData` and friends): frozen values the
+ * lowering walks — pure data (variable references included), so lowering
+ * stays a pure, stable function of the query value.
  */
 
 import * as errors from "@superbuilders/errors"
@@ -40,12 +40,11 @@ import type {
 	MatchOwner,
 	MintSlotOf,
 	Param,
-	ParamsRecord,
 	ParamValueAt,
 	SetParam,
 	ShapeOf
 } from "#query/scope.ts"
-import { inferred, isTerm, term } from "#query/scope.ts"
+import { isTerm, term } from "#query/scope.ts"
 import type { FieldsShape } from "#relation.ts"
 
 /**
@@ -131,7 +130,7 @@ type FindEntryData =
  * intervals), and — when that slot is a closed reference —
  * the roster the decode lifts row ids back to handle NAMES through
  * (`undefined` on every bare column). The slice is SDK-side marshaling data
- * only: the wire `ProgramIr` never carries it.
+ * only: the wire `QueryIr` never carries it.
  */
 interface FindColumn {
 	readonly name: string
@@ -141,18 +140,19 @@ interface FindColumn {
 }
 
 /**
- * One body item of a rule, in written order. The idb join is a NAMED record
- * over the rec's head keys (`key`) bound to local variables (`ref`) — the
- * typed wall a record's unordered keys would otherwise lose.
+ * One body item of a rule, in written order. An interior join is a NAMED
+ * record over the derived table's head keys (`key`) bound to local
+ * variables (`ref`) — the typed wall a record's unordered keys would
+ * otherwise lose.
  */
 type RuleItem =
 	| { readonly kind: "atom"; readonly atom: AtomData }
 	| { readonly kind: "negated"; readonly atom: AtomData }
 	| {
-			readonly kind: "idb"
-			readonly rec: RecData
+			readonly kind: "interior"
+			readonly target: DerivedTable
 			readonly bindings: ReadonlyArray<{ readonly key: string; readonly ref: AnyVar }>
-			/** `true` on a negated finished-stratum atom (`r.not(rec, {...})`): probed through its anti-probe, binds nothing. */
+			/** `true` on a negated finished-table atom (`r.not(name, {...})`): probed through its anti-probe, binds nothing. */
 			readonly negated: boolean
 	  }
 	| { readonly kind: "cond"; readonly cond: CondData }
@@ -178,15 +178,27 @@ interface RuleData {
 	readonly paramUses: readonly ParamUse[]
 }
 
+/** One named interior's runtime description — identity keys the dense `InteriorId` at lowering. */
+interface InteriorData {
+	readonly name: string
+	readonly finds: readonly FindColumn[]
+	readonly rules: readonly RuleData[]
+}
+
 /**
- * One recursive predicate's runtime description — identity keys the dense
- * `PredId` at lowering. `rules` is appended by `rec.rule(...)` and sealed
- * (frozen) when the program's output is declared.
+ * The optional linear rec's runtime description — identity keys the dense
+ * `InteriorId` (`interiors.length`) at lowering. Base and rec arms are
+ * sealed when `q.recursive` returns.
  */
 interface RecData {
 	readonly name: string
-	readonly rules: RuleData[]
+	readonly finds: readonly FindColumn[]
+	readonly base: readonly RuleData[]
+	readonly rec: readonly RuleData[]
 }
+
+/** A named derived table (an interior or the rec) as `.interior(name)` / `r.not(name)` resolve it. */
+type DerivedTable = InteriorData | RecData
 
 /**
  * What a binding position of field `F` accepts: a bare structural literal
@@ -283,31 +295,15 @@ interface NotAtom<R extends MatchOwner, B> {
 }
 
 /**
- * A recursive predicate as a NEGATION target — the structural half of the
- * rec reference (`data` carries rules, never fields, so an EDB or closed
- * owner can never match it and the `not()` overloads stay disjoint).
+ * One negated finished-table atom — negation OF an interior or of the
+ * finished rec is engine-legal in main (a finished set is a set), and
+ * this value is its one spelling: `r.not("reach", { c })`. Binds nothing,
+ * only rejects — every variable it names must be positively bound in the
+ * rule (the same safety rule as EDB negation).
  */
-interface RecTarget {
+interface NotInteriorAtom<B> {
+	readonly cond: "notInterior"
 	readonly name: string
-	readonly data: RecData
-	readonly [inferred]?: { readonly params: ParamsRecord; readonly head: HeadShapeOf }
-}
-
-/** The head signature a threaded rec target carries (`undefined` before its first rule seals one). */
-type HeadShapeOf = Readonly<Record<string, ClassedField>> | undefined
-
-/**
- * One negated FINISHED-STRATUM atom — negation OF a lower stratum is
- * engine-legal (the strata judge refuses only negation *through* a cycle:
- * a finished set is what keeps the operator monotone), and this value is
- * its one spelling: `r.not(reach, { c })` in an output rule rejects every
- * binding the finished stratum extends, through the engine's anti-probe.
- * Binds nothing, only rejects — every variable it names must be positively
- * bound in the rule (the same safety rule as EDB negation).
- */
-interface NotIdbAtom<Target extends RecTarget, B> {
-	readonly cond: "notIdb"
-	readonly target: Target
 	readonly bindings: B
 }
 
@@ -320,11 +316,11 @@ type AnyTreeChild = AnyCmp | Tree<readonly AnyTreeChild[]>
 /** Any negated-atom value. */
 type AnyNotAtom = NotAtom<MatchOwner, unknown>
 
-/** Any negated finished-stratum value. */
-type AnyNotIdbAtom = NotIdbAtom<RecTarget, unknown>
+/** Any negated finished-table value. */
+type AnyNotInteriorAtom = NotInteriorAtom<unknown>
 
-/** Any `.where` input: a comparison, a condition tree, or a negated atom (EDB, closed, or finished stratum). */
-type AnyCond = AnyCmp | Tree<readonly AnyTreeChild[]> | AnyNotAtom | AnyNotIdbAtom
+/** Any `.where` input: a comparison, a condition tree, or a negated atom (EDB, closed, or finished table). */
+type AnyCond = AnyCmp | Tree<readonly AnyTreeChild[]> | AnyNotAtom | AnyNotInteriorAtom
 
 /** What `eq`'s right side accepts (`ParamSet` is `Eq`-only — the IR's rule). */
 type EqRight = AnyVar | Param<string> | SetParam<string> | bigint | string | boolean | Uint8Array | IntervalValue
@@ -511,33 +507,23 @@ function or<const C extends readonly AnyTreeChild[]>(...children: C): Tree<C> {
  * nothing, only rejects: every variable it names must be positively bound
  * in the rule, a construction-time wall (the engine's safety refusal stands
  * behind it). A CLOSED owner is legal here too — and so is a FINISHED
- * STRATUM: `not(reach, { c })` in an output rule negates the rec's
- * finished set (a named record over its head keys, variables only — the
- * same wall `idb()` holds), the one spelling of the engine-legal
- * complement query (`(n) | Node(id: n), !reach(n);` on the Rust surface).
+ * TABLE: `not("reach", { c })` in a main rule negates the rec's finished
+ * set (a named record over its head keys, variables only), the one
+ * spelling of the engine-legal complement query.
  */
 function not<R extends MatchOwner, const B extends MatchShape<MatchFields<R>>>(relation: R, bindings: B): NotAtom<R, B>
-function not<Target extends RecTarget, const B extends Readonly<Record<string, AnyVar>>>(
-	target: Target,
+function not<const Name extends string, const B extends Readonly<Record<string, AnyVar>>>(
+	name: Name,
 	bindings: B
-): NotIdbAtom<Target, B>
+): NotInteriorAtom<B>
 function not(
-	relation: MatchOwner | RecTarget,
+	relation: MatchOwner | string,
 	bindings: Readonly<Record<string, unknown>>
-): NotAtom<MatchOwner, unknown> | NotIdbAtom<RecTarget, unknown> {
-	if (isRecTarget(relation)) {
-		return Object.freeze({ cond: "notIdb" as const, target: relation, bindings })
+): NotAtom<MatchOwner, unknown> | NotInteriorAtom<unknown> {
+	if (typeof relation === "string") {
+		return Object.freeze({ cond: "notInterior" as const, name: relation, bindings })
 	}
 	return Object.freeze({ cond: "not" as const, relation, bindings })
-}
-
-/**
- * THE negation-target discriminant: a rec's runtime data carries its rules,
- * a relation's its fields (and a closed relation's its handle roster) — the
- * shapes are disjoint by construction, so the dispatch is total.
- */
-function isRecTarget(value: MatchOwner | RecTarget): value is RecTarget {
-	return "rules" in value.data
 }
 
 /**
@@ -722,48 +708,15 @@ type NotOk<Classes extends SchemaClasses, F extends FieldsShape, CR, B> = false 
 	? false
 	: true
 
-/** Reads a rec target's sealed head signature off its inference slot (`undefined` on an unthreaded handle). */
-type RecHeadOf<T> = T extends { readonly [inferred]?: infer S }
-	? Exclude<S, undefined> extends { readonly head: infer H }
-		? H
-		: undefined
-	: undefined
-
-/** Reads a rec target's params record off its inference slot. */
-type RecParamsOf<T> = T extends { readonly [inferred]?: infer S }
-	? Exclude<S, undefined> extends { readonly params: infer P }
-		? P
-		: never
-	: never
-
-/** One negated finished-stratum position's judgment: a variable, class-equal to its head slot when the head is carried. */
-type NotIdbBindingOk<Classes extends SchemaClasses, HeadSlot, V> = V extends AnyVar
-	? HeadSlot extends ClassedField
-		? JoinOk<HeadSlot, MintSlotOf<Classes, V>> extends true
-			? true
-			: false
-		: true
-	: false
+/** One negated finished-table position's judgment: a variable. */
+type NotInteriorBindingOk<V> = V extends AnyVar ? true : false
 
 /**
- * The whole negated finished-stratum atom's judgment — the negation twin of
- * the `idb()` chain's `CheckIdbBindings`: when the target carries its head
- * (a threaded rec handle), the bindings record's key set must EXACTLY equal
- * the head's and each variable must be class-equal to its head slot; an
- * unthreaded handle still takes variables only.
+ * The whole negated finished-table atom's judgment — variables only;
+ * arity and class against the named table's head are construction-time
+ * (the name is a string, so the head is not a type-level fact).
  */
-type NotIdbOk<Classes extends SchemaClasses, Head, B> =
-	Head extends Readonly<Record<string, ClassedField>>
-		? [keyof B] extends [keyof Head]
-			? [keyof Head] extends [keyof B]
-				? false extends { [K in keyof B]: NotIdbBindingOk<Classes, Head[K & keyof Head], B[K]> }[keyof B]
-					? false
-					: true
-				: false
-			: false
-		: false extends { [K in keyof B]: B[K] extends AnyVar ? true : false }[keyof B]
-			? false
-			: true
+type NotInteriorOk<B> = false extends { [K in keyof B]: NotInteriorBindingOk<B[K]> }[keyof B] ? false : true
 
 /**
  * One condition's judgment — the type-level twin of the engine's comparison
@@ -791,8 +744,8 @@ type CondOkBool<Classes extends SchemaClasses, C> = [AnyTreeChild] extends [C]
 			? false extends CondOkBool<Classes, Ch[number]>
 				? false
 				: true
-			: C extends NotIdbAtom<infer T extends RecTarget, infer B>
-				? NotIdbOk<Classes, RecHeadOf<T>, B>
+			: C extends NotInteriorAtom<infer B>
+				? NotInteriorOk<B>
 				: C extends NotAtom<infer R extends MatchOwner, infer B>
 					? NotOk<Classes, MatchFields<R>, ClassRecordOf<Classes, R["name"]>, B>
 					: false
@@ -844,8 +797,8 @@ type CondParams<C> = [AnyTreeChild] extends [C]
 						: never
 		: C extends Tree<infer Ch extends readonly AnyTreeChild[]>
 			? CondParams<Ch[number]>
-			: C extends NotIdbAtom<infer T extends RecTarget, unknown>
-				? RecParamsOf<T>
+			: C extends NotInteriorAtom<unknown>
+				? never
 				: C extends NotAtom<infer R extends MatchOwner, infer B>
 					? BindParams<MatchFields<R>, B>
 					: never
@@ -878,8 +831,10 @@ export type {
 	CondOkBool,
 	CondParams,
 	CondParamsShape,
+	DerivedTable,
 	FindColumn,
 	FindEntryData,
+	InteriorData,
 	IntervalSide,
 	IntervalVarOk,
 	MaskData,
@@ -887,14 +842,13 @@ export type {
 	MatchOwner,
 	MatchShape,
 	NotAtom,
-	NotIdbAtom,
+	NotInteriorAtom,
 	NumericVarOk,
 	OrderSide,
 	OrderVarOk,
 	ParamUse,
 	PointSide,
 	RecData,
-	RecTarget,
 	RuleData,
 	RuleItem,
 	SlotAt,

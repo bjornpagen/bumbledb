@@ -1,6 +1,6 @@
 use super::*;
 use crate::error::ValidationError;
-use crate::ir::{ConditionTree, FindTerm, Query, Rule, Term};
+use crate::ir::{ConditionTree, FindTerm, ParamId, Query, Rule, Term};
 use crate::schema::Schema;
 use crate::schema::ValidateDescriptor as _;
 use bumbledb_theory::schema::{
@@ -8,7 +8,8 @@ use bumbledb_theory::schema::{
 };
 
 mod accept;
-mod program;
+mod interior;
+mod rec;
 mod reject;
 mod rules;
 mod signature;

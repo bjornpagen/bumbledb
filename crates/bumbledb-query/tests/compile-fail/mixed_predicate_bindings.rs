@@ -13,9 +13,9 @@ bumbledb::schema! {
     }
 }
 
-pub fn q() -> bumbledb::Program {
+pub fn q() -> bumbledb::Query {
     bumbledb_query::query!(Org {
-        reach(c, a) | Parent(child: c, parent: a);
+        interior reach(c, a) | Parent(child: c, parent: a);
         (c, a) | reach(c, 1: a);
     })
 }

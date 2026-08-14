@@ -48,6 +48,8 @@ fn by_account_rule(account: u64) -> Rule {
 /// under one `amount >= ?0` param.
 fn union_query() -> Query {
     Query {
+        interiors: vec![],
+        rec: None,
         head: vec![HeadTerm::Var, HeadTerm::Var],
         rules: vec![by_account_rule(3), by_account_rule(7)],
     }
@@ -63,8 +65,8 @@ fn a_multi_rule_program_prepares_with_every_rules_plan() {
     let txn = env.read_txn().expect("txn");
 
     let prepared = prepare(&txn, &cache, &schema, &union_query()).expect("multi-rule builds");
-    assert_eq!(prepared.program.rules().len(), 2, "one plan per rule");
-    for rule in prepared.program.rules() {
+    assert_eq!(prepared.body.rules().len(), 2, "one plan per rule");
+    for rule in prepared.body.rules() {
         // Each rule went through the full pipeline: a real plan with the
         // rule's own occurrence scratch exists.
         let PreparedRule::FreeJoin(rule) = rule else {
@@ -204,6 +206,8 @@ fn aggregates_fold_the_union_of_head_projected_bindings() {
         conditions: vec![],
     };
     let query = Query {
+        interiors: vec![],
+        rec: None,
         head: vec![
             HeadTerm::Aggregate(crate::ir::HeadOp::Sum),
             HeadTerm::Aggregate(crate::ir::HeadOp::Count),
@@ -255,6 +259,8 @@ fn a_grouped_fold_absorbs_the_cross_rule_duplicate() {
         conditions: vec![],
     };
     let query = Query {
+        interiors: vec![],
+        rec: None,
         head: vec![HeadTerm::Var, HeadTerm::Aggregate(crate::ir::HeadOp::Sum)],
         rules: vec![rule(3), rule(7)],
     };
@@ -317,6 +323,8 @@ fn the_all_count_head_across_rules_is_the_typed_validation_refusal() {
         conditions: vec![],
     };
     let query = Query {
+        interiors: vec![],
+        rec: None,
         head: vec![HeadTerm::Aggregate(crate::ir::HeadOp::Count)],
         rules: vec![rule(3), rule(7)],
     };
@@ -364,6 +372,8 @@ fn a_grouped_count_head_across_rules_is_the_typed_validation_refusal() {
         conditions: vec![],
     };
     let query = Query {
+        interiors: vec![],
+        rec: None,
         head: vec![HeadTerm::Var, HeadTerm::Aggregate(crate::ir::HeadOp::Count)],
         rules: vec![rule(3), rule(7)],
     };
@@ -432,6 +442,8 @@ fn an_or_spelled_fold_keeps_the_written_rules_full_binding_domain() {
         ])],
     };
     let query = Query {
+        interiors: vec![],
+        rec: None,
         head: vec![
             HeadTerm::Aggregate(crate::ir::HeadOp::Sum),
             HeadTerm::Aggregate(crate::ir::HeadOp::Count),
@@ -440,7 +452,7 @@ fn an_or_spelled_fold_keeps_the_written_rules_full_binding_domain() {
     };
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
     assert_eq!(
-        prepared.program.rules().len(),
+        prepared.body.rules().len(),
         2,
         "the or lowered to two disjunct rules"
     );
@@ -545,12 +557,14 @@ fn a_key_probe_rule_unions_through_the_sink() {
     let mut rule0 = by_account_rule(3);
     rule0.conditions.clear(); // no param: the key-probe rule binds none
     let query = Query {
+        interiors: vec![],
+        rec: None,
         head: vec![HeadTerm::Var, HeadTerm::Var],
         rules: vec![rule0, key_probe_rule],
     };
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
     assert!(
-        matches!(prepared.program.rules()[1], PreparedRule::KeyProbe(_)),
+        matches!(prepared.body.rules()[1], PreparedRule::KeyProbe(_)),
         "rule 1 classifies as the point fast path"
     );
     let out = prepared

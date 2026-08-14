@@ -34,46 +34,54 @@ pub fn translate(
     schema: &Schema,
     sets: &[(ParamId, Vec<Value>)],
 ) -> Result<Translated, String> {
+    if !query.interiors.is_empty() || query.rec.is_some() {
+        return super::program::translate_query(query, schema, sets);
+    }
     let mut params = SharedParams::default();
-    if let [rule] = query.rules.as_slice() {
-        let b = rule_core(rule, schema, sets, &mut params)?;
-        let sql = single_rule_sql(rule, &b)?;
-        return Ok(Translated {
-            sql,
-            params: params.params,
-        });
-    }
-    let aggregated = query.rules[0].finds.iter().any(|f| {
-        matches!(
-            f,
-            FindTerm::Aggregate { .. } | FindTerm::AggregateMeasure { .. }
-        )
-    });
-    let mut arms: Vec<String> = Vec::new();
-    for rule in &query.rules {
-        let b = rule_core(rule, schema, sets, &mut params)?;
-        arms.push(if aggregated {
-            head_projection_sql(rule, &b)?
-        } else {
-            projection_sql(&rule.finds, &b)?
-        });
-    }
-    let sql = if aggregated {
-        union_fold_sql(&query.rules[0].finds, &arms)?
-    } else {
-        // One `SELECT DISTINCT` per rule joined by `UNION` — set union.
-        arms.join(" UNION ")
-    };
+    let sql = translate_rules(&query.rules, schema, sets, &mut params)?;
     Ok(Translated {
         sql,
         params: params.params,
     })
 }
 
+/// Translate a rule-list (plain query or WITH-main) into SQL.
+pub(super) fn translate_rules(
+    rules: &[Rule],
+    schema: &Schema,
+    sets: &[(ParamId, Vec<Value>)],
+    params: &mut SharedParams,
+) -> Result<String, String> {
+    if let [rule] = rules {
+        let b = rule_core(rule, schema, sets, params)?;
+        return single_rule_sql(rule, &b);
+    }
+    let aggregated = rules[0].finds.iter().any(|f| {
+        matches!(
+            f,
+            FindTerm::Aggregate { .. } | FindTerm::AggregateMeasure { .. }
+        )
+    });
+    let mut arms: Vec<String> = Vec::new();
+    for rule in rules {
+        let b = rule_core(rule, schema, sets, params)?;
+        arms.push(if aggregated {
+            head_projection_sql(rule, &b)?
+        } else {
+            projection_sql(&rule.finds, &b)?
+        });
+    }
+    if aggregated {
+        union_fold_sql(&rules[0].finds, &arms)
+    } else {
+        Ok(arms.join(" UNION "))
+    }
+}
+
 /// The query-global positional param space, threaded through the
 /// per-rule builders (a param repeated across rules keeps one `?N`).
-/// Programs share it too: every CTE arm draws from one `?N` space
-/// (`super::program`).
+/// Interiors and rec share it too: every CTE arm draws from one `?N`
+/// space (`super::program`).
 #[derive(Default)]
 pub(super) struct SharedParams {
     index: BTreeMap<ParamSlot, usize>,

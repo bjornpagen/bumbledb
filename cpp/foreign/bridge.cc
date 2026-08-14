@@ -75,8 +75,9 @@ export using ::bdb_cmp_op;
 export using ::bdb_comparison;
 export using ::bdb_condition;
 export using ::bdb_rule;
-export using ::bdb_predicate;
-export using ::bdb_program;
+export using ::bdb_interior;
+export using ::bdb_rec;
+export using ::bdb_query;
 
 export using ::bdb_read_callback;
 export using ::bdb_write_callback;

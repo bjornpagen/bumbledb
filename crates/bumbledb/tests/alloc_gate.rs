@@ -21,7 +21,8 @@
 
 use bumbledb::alloc_counter;
 use bumbledb::ir::{
-    AggOp, Atom, CmpOp, Comparison, FindTerm, ParamId, Query, Rule, Term, Value, VarId,
+    AggOp, Atom, AtomSource, CmpOp, Comparison, FindTerm, HeadTerm, Interior, InteriorId, ParamId,
+    Query, Rec, Rule, Term, Value, VarId,
 };
 use bumbledb::schema::{
     Bound, FieldDescriptor, FieldId, Generation, RelationDescriptor, RelationId, SchemaDescriptor,
@@ -569,15 +570,12 @@ fn escalation_query() -> Query {
 /// fixpoint driver — the allocation contract's iteration-shape axis):
 /// `p0(a, h) | Account(id: a, holder: h), a <= ?0;
 ///  p0(a, h2) | Account(id: a, holder: h), a <= ?0, p0(h, h2);
-///  p1(x) | p0(x, _)` — an interior recursive closure (its own
-/// projection seen-set, per-round delta/accumulated transient images,
-/// the delta-variant plan) under a non-recursive output that reads the
-/// FINISHED closure (the finished-image slot). The `?0` cap bounds the
-/// admitted edge set, so the fixpoint's size — and every per-round
-/// image slab — scales with the parameter: rotation exercises the
-/// steady state, the cap ladder the escalation window.
-fn recursive_program() -> bumbledb::Program {
-    use bumbledb::ir::{AtomSource, HeadTerm};
+///  main(x) | p0(x, _)` — a linear rec under a non-recursive output that
+/// reads the finished closure. The `?0` cap bounds the admitted edge
+/// set, so the rec's size — and every per-round image slab — scales
+/// with the parameter: rotation exercises the steady state, the cap
+/// ladder the escalation window.
+fn recursive_query() -> Query {
     let account = |a: u16, h: u16| Atom {
         source: AtomSource::Edb(ACCOUNT),
         bindings: vec![
@@ -590,51 +588,95 @@ fn recursive_program() -> bumbledb::Program {
         lhs: Term::Var(VarId(0)),
         rhs: Term::Param(ParamId(0)),
     });
-    bumbledb::Program {
-        predicates: vec![
-            bumbledb::PredicateDef {
-                head: vec![bumbledb::ir::HeadTerm::Var, HeadTerm::Var],
-                rules: vec![
-                    Rule {
-                        finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
-                        atoms: vec![account(0, 1)],
-                        negated: vec![],
-                        conditions: vec![cap.clone()],
-                    },
-                    Rule {
-                        finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(2))],
-                        atoms: vec![
-                            account(0, 1),
-                            Atom {
-                                source: AtomSource::Idb(bumbledb::PredId(0)),
-                                bindings: vec![
-                                    (FieldId(0), Term::Var(VarId(1))),
-                                    (FieldId(1), Term::Var(VarId(2))),
-                                ],
-                            },
+    Query {
+        interiors: vec![],
+        rec: Some(Rec {
+            head: vec![HeadTerm::Var, HeadTerm::Var],
+            base: vec![Rule {
+                finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
+                atoms: vec![account(0, 1)],
+                negated: vec![],
+                conditions: vec![cap.clone()],
+            }],
+            rec: vec![Rule {
+                finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(2))],
+                atoms: vec![
+                    account(0, 1),
+                    Atom {
+                        source: AtomSource::Interior(InteriorId(0)),
+                        bindings: vec![
+                            (FieldId(0), Term::Var(VarId(1))),
+                            (FieldId(1), Term::Var(VarId(2))),
                         ],
-                        negated: vec![],
-                        conditions: vec![cap],
                     },
                 ],
+                negated: vec![],
+                conditions: vec![cap],
+            }],
+        }),
+        head: vec![HeadTerm::Var],
+        rules: vec![Rule {
+            finds: vec![FindTerm::Var(VarId(0))],
+            atoms: vec![Atom {
+                source: AtomSource::Interior(InteriorId(0)),
+                bindings: vec![
+                    (FieldId(0), Term::Var(VarId(0))),
+                    (FieldId(1), Term::Var(VarId(1))),
+                ],
+            }],
+            negated: vec![],
+            conditions: vec![],
+        }],
+    }
+}
+
+/// The join shape as a named interior, identity main — interiors-only
+/// (no rec, never the reach driver). Same param envelope as [`join_query`].
+fn interiors_only_query() -> Query {
+    let join = Rule {
+        finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
+        atoms: vec![
+            Atom {
+                source: AtomSource::Edb(POSTING),
+                bindings: vec![
+                    (FieldId(1), Term::Var(VarId(2))),
+                    (FieldId(2), Term::Var(VarId(1))),
+                ],
             },
-            bumbledb::PredicateDef {
-                head: vec![HeadTerm::Var],
-                rules: vec![Rule {
-                    finds: vec![FindTerm::Var(VarId(0))],
-                    atoms: vec![Atom {
-                        source: AtomSource::Idb(bumbledb::PredId(0)),
-                        bindings: vec![
-                            (FieldId(0), Term::Var(VarId(0))),
-                            (FieldId(1), Term::Var(VarId(1))),
-                        ],
-                    }],
-                    negated: vec![],
-                    conditions: vec![],
-                }],
+            Atom {
+                source: AtomSource::Edb(ACCOUNT),
+                bindings: vec![
+                    (FieldId(0), Term::Var(VarId(2))),
+                    (FieldId(1), Term::Var(VarId(0))),
+                ],
             },
         ],
-        output: bumbledb::PredId(1),
+        negated: vec![],
+        conditions: vec![ConditionTree::Leaf(Comparison {
+            op: CmpOp::Ge,
+            lhs: Term::Var(VarId(1)),
+            rhs: Term::Param(ParamId(0)),
+        })],
+    };
+    Query {
+        interiors: vec![Interior {
+            head: vec![HeadTerm::Var, HeadTerm::Var],
+            rules: vec![join],
+        }],
+        rec: None,
+        head: vec![HeadTerm::Var, HeadTerm::Var],
+        rules: vec![Rule {
+            finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
+            atoms: vec![Atom {
+                source: AtomSource::Interior(InteriorId(0)),
+                bindings: vec![
+                    (FieldId(0), Term::Var(VarId(0))),
+                    (FieldId(1), Term::Var(VarId(1))),
+                ],
+            }],
+            negated: vec![],
+            conditions: vec![],
+        }],
     }
 }
 
@@ -671,6 +713,8 @@ fn union_rules_query() -> Query {
         })],
     };
     Query {
+        interiors: vec![],
+        rec: None,
         head: vec![bumbledb::HeadTerm::Var, bumbledb::HeadTerm::Var],
         rules: vec![rule(CmpOp::Ge), rule(CmpOp::Le)],
     }
@@ -716,6 +760,8 @@ fn union_aggregate_query() -> Query {
         })],
     };
     Query {
+        interiors: vec![],
+        rec: None,
         head: vec![
             bumbledb::HeadTerm::Var,
             bumbledb::HeadTerm::Aggregate(bumbledb::HeadOp::Sum),
@@ -1235,6 +1281,11 @@ fn zero_warm_allocation_gate() {
                 &join_params,
             );
         }
+        // Interiors-only: the join shape as a named interior, identity
+        // main. Same param envelope as join; never enters the reach driver.
+        let mut interiors_only = db.prepare(&interiors_only_query())?;
+        gate("interiors-only", &mut interiors_only, snap, &join_params);
+
         // String columns, PendingIntern-under-Ne, and the narrow
         // projection (SkipSuffix live); Min/Max aggregates. Params are
         // empty: these gate the literal-resolution and byte-heap paths.
@@ -1361,7 +1412,7 @@ fn zero_warm_allocation_gate() {
             .iter()
             .map(|cap| vec![BindValue::U64(*cap)])
             .collect();
-        let mut recursive = db.prepare(&recursive_program())?;
+        let mut recursive = db.prepare(&recursive_query())?;
         gate("recursive", &mut recursive, snap, &recursive_params);
 
         // The high-water window (docs/architecture/40-execution.md § CI
@@ -1380,7 +1431,7 @@ fn zero_warm_allocation_gate() {
             .iter()
             .map(|cap| vec![BindValue::U64(*cap)])
             .collect();
-        let mut recursive_escalation_q = db.prepare(&recursive_program())?;
+        let mut recursive_escalation_q = db.prepare(&recursive_query())?;
         escalation_gate(
             "recursive-escalation",
             &mut recursive_escalation_q,

@@ -260,6 +260,8 @@ fn measure_queries() -> Vec<(Query, Vec<ParamValue>)> {
         // measure collapse).
         (
             Query {
+                interiors: vec![],
+                rec: None,
                 head: vec![bumbledb::HeadTerm::Var],
                 rules: vec![
                     Rule {

@@ -2,9 +2,8 @@
 //! (docs/architecture/60-validation.md § the two oracles).
 //!
 //! An obviously-correct in-memory implementation of the data model, both
-//! judgments, and the full query semantics — programs included: the
-//! naive stratified fixpoint ([`NaiveDb::program`], the shipping
-//! law's naive oracle —
+//! judgments, and the full query semantics — interiors then rec lfp then
+//! main ([`NaiveDb::query`], the shipping law's naive oracle —
 //! `docs/architecture/60-validation.md` § the two oracles) — nested
 //! loops and `BTreeSet`s,
 //! zero cleverness. It shares the engine's *types* (`bumbledb::ir`,

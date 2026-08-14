@@ -50,6 +50,8 @@ pub(super) fn rules(rng: &mut Rng, domains: &Domains) -> (Query, RulesVariant) {
 
 fn assemble(rules: Vec<Rule>) -> Query {
     Query {
+        interiors: vec![],
+        rec: None,
         head: rules[0].head(),
         rules,
     }

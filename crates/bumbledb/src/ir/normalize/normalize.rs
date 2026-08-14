@@ -1,9 +1,9 @@
 use std::collections::BTreeMap;
 
 use super::{
-    AntiProbe, NormalizedQuery, OccId, Occurrence, Role, SlotWidth,
     lower_literal::{lower_literal, point_word},
     place_comparisons::place_comparisons,
+    AntiProbe, NormalizedQuery, OccId, Occurrence, Role, SlotWidth,
 };
 use crate::image::view::{Const, FilterPredicate, ResolvedWordSource};
 use crate::ir::validate::{RuleWitness, ValidatedQuery};
@@ -22,15 +22,17 @@ use bumbledb_theory::schema::{FieldId, ValueType};
 /// Only on programmer-invariant violations already excluded by validation
 /// (e.g. a comparison variable bound by no atom).
 #[must_use]
+#[allow(dead_code)]
 pub fn normalize(schema: &Schema, query: &ValidatedQuery) -> Vec<NormalizedQuery> {
-    normalize_predicate(schema, query, &[])
+    normalize_rules(schema, &[], query.rules())
 }
 
-/// [`normalize`] with the program's `Idb` typing surface: `signatures`
-/// holds every predicate's sealed signature in `PredId` order, and an
-/// `Idb` binding's field type reads the target's column — `FieldId(i)`
+/// [`normalize`] with the interiors/rec typing surface: `signatures`
+/// holds every derived table's sealed signature in `InteriorId` then rec
+/// order, and an
+/// `Interior` binding's field type reads the target's column — `FieldId(i)`
 /// is head position `i` (`docs/architecture/20-query-ir.md` § engine recursion; the
-/// positional reading `lean/Bumbledb/Exec/Fixpoint.lean: tupleFact`
+/// positional reading `lean/Bumbledb/Exec/Reach.lean: tupleFact`
 /// promises). Everything else is the conjunctive lowering, verbatim.
 ///
 /// # Panics
@@ -42,8 +44,18 @@ pub fn normalize_predicate(
     query: &ValidatedQuery,
     signatures: &[&crate::ir::validate::Predicate],
 ) -> Vec<NormalizedQuery> {
-    query
-        .rules()
+    normalize_rules(schema, signatures, query.rules())
+}
+
+/// Lowers an arbitrary rule list against `signatures` (`InteriorId` order).
+#[must_use]
+pub fn normalize_rules<'a>(
+    schema: &Schema,
+    signatures: &[&crate::ir::validate::Predicate],
+    rules: impl IntoIterator<Item = RuleWitness<'a>>,
+) -> Vec<NormalizedQuery> {
+    rules
+        .into_iter()
         .map(|rule| normalize_rule(schema, signatures, &rule))
         .collect()
 }
@@ -163,23 +175,21 @@ fn normalize_rule_with(
     // (docs/architecture/20-query-ir.md, § normalization step 5) — across
     // every residual kind: whole-value, decomposed word, and Allen mask
     // comparisons.
-    debug_assert!(
-        residuals
-            .iter()
-            .map(|r| (r.lhs, r.rhs))
-            .chain(word_residuals.iter().map(|r| (r.lhs.var, r.rhs.var)))
-            .chain(allen_residuals.iter().map(|r| (r.lhs, r.rhs)))
-            .chain(duration_residuals.iter().map(|r| (r.interval, r.scalar)))
-            .all(|(lhs, rhs)| {
-                !occurrences
-                    .iter()
-                    .filter(|occ| occ.role.participates())
-                    .any(|occ| {
-                        occ.vars.iter().any(|(_, v)| *v == lhs)
-                            && occ.vars.iter().any(|(_, v)| *v == rhs)
-                    })
-            })
-    );
+    debug_assert!(residuals
+        .iter()
+        .map(|r| (r.lhs, r.rhs))
+        .chain(word_residuals.iter().map(|r| (r.lhs.var, r.rhs.var)))
+        .chain(allen_residuals.iter().map(|r| (r.lhs, r.rhs)))
+        .chain(duration_residuals.iter().map(|r| (r.interval, r.scalar)))
+        .all(|(lhs, rhs)| {
+            !occurrences
+                .iter()
+                .filter(|occ| occ.role.participates())
+                .any(|occ| {
+                    occ.vars.iter().any(|(_, v)| *v == lhs)
+                        && occ.vars.iter().any(|(_, v)| *v == rhs)
+                })
+        }));
 
     // The statically-empty fold (fold.rs), last: with every comparison
     // placed, each participating occurrence's constant filters fold per
@@ -234,7 +244,7 @@ fn lower_atom(
     atom: &Atom,
 ) -> Occurrence {
     let occ_id = OccId(u16::try_from(idx).expect("validated: occurrence count fits u16"));
-    // Field types come from the stored relation, or — for an `Idb` atom
+    // Field types come from the stored relation, or — for an `Interior` atom
     // — from the target's sealed signature columns (`FieldId(i)` is head
     // position `i`, typed by `Predicate.columns[i].ty`; the literal
     // encodings are value-driven, so a predicate column lowers exactly
@@ -244,8 +254,8 @@ fn lower_atom(
             crate::ir::AtomSource::Edb(relation_id) => {
                 &schema.relation(relation_id).field(field).value_type
             }
-            crate::ir::AtomSource::Idb(pred) => {
-                &signatures[usize::from(pred.0)].columns[usize::from(field.0)].ty
+            crate::ir::AtomSource::Interior(pred) => {
+                &signatures[pred.index()].columns[usize::from(field.0)].ty
             }
         }
     };

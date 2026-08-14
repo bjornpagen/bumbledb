@@ -86,7 +86,7 @@ function isAnswerRow<Row>(
 }
 
 /**
- * Decodes positional answer rows (column order = the program's head order
+ * Decodes positional answer rows (column order = the query's head order
  * = the select's written order) to named, frozen row objects of bare
  * structural values. A closed column lifts its row id back to the handle
  * NAME through the marshal's bijection — an out-of-roster id is the same

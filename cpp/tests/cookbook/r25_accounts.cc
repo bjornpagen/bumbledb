@@ -52,31 +52,32 @@ inline constexpr auto SubtreeRollup = bdb::query(Accounts).rule([](auto r) const
 	    .find({}, bdb::sum<"total">(vars.minor));
 });
 
-inline constexpr auto NativeRollup = bdb::program(
-    Accounts,
-    bdb::rec<"sub">(
-        [](auto r) consteval {
-	        auto vars = r.vars(Account);
-	        return r.match(Account, {.id = vars.id}).where(bdb::eq(vars.id, bdb::param<"root">())).find({}, bdb::as<"a">(vars.id));
-        },
-        [](auto r) consteval {
-	        auto vars = r.vars(AccountParent);
-	        return r.match(AccountParent, {.child = vars.child, .parent = vars.parent})
-	            .idb(bdb::pred<"sub">, bdb::bind<"a">(vars.parent))
-	            .find({}, bdb::as<"a">(vars.child));
-        }),
-    bdb::output([](auto r) consteval {
-	    auto vars = r.vars(Posting);
-	    return r
-	        .match(Posting,
-	               {
-	                   .id = vars.id,
-	                   .account = vars.account,
-	                   .minor = vars.minor,
-	               })
-	        .idb(bdb::pred<"sub">, bdb::bind<"a">(vars.account))
-	        .find({}, bdb::sum<"total">(vars.minor));
-    }));
+inline constexpr auto NativeRollup = bdb::query(Accounts)
+                                         .recursive<"sub">(
+                                             bdb::base{[](auto r) consteval {
+	                                             auto vars = r.vars(Account);
+	                                             return r.match(Account, {.id = vars.id})
+	                                                 .where(bdb::eq(vars.id, bdb::param<"root">()))
+	                                                 .find({}, bdb::as<"a">(vars.id));
+                                             }},
+                                             bdb::rec{[](auto r) consteval {
+	                                             auto vars = r.vars(AccountParent);
+	                                             return r.match(AccountParent, {.child = vars.child, .parent = vars.parent})
+	                                                 .template interior<"sub">(bdb::bind<"a">(vars.parent))
+	                                                 .find({}, bdb::as<"a">(vars.child));
+                                             }})
+                                         .rule([](auto r) consteval {
+	                                         auto vars = r.vars(Posting);
+	                                         return r
+	                                             .match(Posting,
+	                                                    {
+	                                                        .id = vars.id,
+	                                                        .account = vars.account,
+	                                                        .minor = vars.minor,
+	                                                    })
+	                                             .template interior<"sub">(bdb::bind<"a">(vars.account))
+	                                             .find({}, bdb::sum<"total">(vars.minor));
+                                         });
 
 namespace {
 
@@ -268,7 +269,7 @@ auto run_cases(std::string_view fixtures_path, std::vector<CaseResult>& results)
 	results.push_back(CaseResult{
 	    .name = "frontierStep / subtreeRollup / nativeRollup all prepare "
 	            "through the engine validator (∈-set probe, ∈-set + sum "
-	            "fold, fold over a finished lower stratum)",
+	            "fold, fold over a finished rec)",
 	    .passed = step.has_value() && rollup.has_value() && native.has_value(),
 	});
 	if (!step.has_value() || !rollup.has_value() || !native.has_value()) {
@@ -288,7 +289,7 @@ auto run_cases(std::string_view fixtures_path, std::vector<CaseResult>& results)
 	auto const from_root = host_rollup<FrontierStep, SubtreeRollup>(*db, *step, *rollup, ids->root);
 	auto native_root = db->execute(*native, {.root = ids->root});
 	results.push_back(CaseResult{
-	    .name = "root's rollup: host composition and native program both "
+	    .name = "root's rollup: host composition and native recursive query both "
 	            "answer 85 (equal postings both count)",
 	    .passed = from_root.has_value() && *from_root == 85 && native_root.has_value() && native_root->size() == 1 &&
 	              native_root->rows().front().total == 85,
@@ -297,7 +298,7 @@ auto run_cases(std::string_view fixtures_path, std::vector<CaseResult>& results)
 	auto const from_eng = host_rollup<FrontierStep, SubtreeRollup>(*db, *step, *rollup, ids->eng);
 	auto native_eng = db->execute(*native, {.root = ids->eng});
 	results.push_back(CaseResult{
-	    .name = "eng's rollup: host composition and native program both "
+	    .name = "eng's rollup: host composition and native recursive query both "
 	            "answer 70",
 	    .passed = from_eng.has_value() && *from_eng == 70 && native_eng.has_value() && native_eng->size() == 1 &&
 	              native_eng->rows().front().total == 70,

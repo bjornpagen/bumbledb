@@ -12,10 +12,10 @@
 //! variants; `BDB_ERROR_KIND_PANIC` is bridge-synthesized (§30), never
 //! engine-originated.
 
-use bumbledb::{Error, SchemaDescriptor, render_rejection};
+use bumbledb::{render_rejection, Error, SchemaDescriptor};
 
 use crate::value::bdb_string_view;
-use crate::{Fail, bdb_status, box_in, guard, guard_value, out, ref_in};
+use crate::{bdb_status, box_in, guard, guard_value, out, ref_in, Fail};
 
 /// The C error kind — one constant per engine error family, plus the
 /// bridge-synthesized `Panic`.
@@ -44,7 +44,7 @@ pub enum bdb_error_kind {
     Param,
     MeasureOfRay,
     CapacityRayMeasure,
-    FixpointBudgetExceeded,
+    DerivedBudgetExceeded,
     Overflow,
     ResultBytesOverflow,
     Corruption,
@@ -144,7 +144,7 @@ fn kind_of(error: &Error) -> bdb_error_kind {
         | Error::PointParamAtCeiling { .. } => bdb_error_kind::Param,
         Error::MeasureOfRay { .. } => bdb_error_kind::MeasureOfRay,
         Error::CapacityRayMeasure { .. } => bdb_error_kind::CapacityRayMeasure,
-        Error::FixpointBudgetExceeded { .. } => bdb_error_kind::FixpointBudgetExceeded,
+        Error::DerivedBudgetExceeded { .. } => bdb_error_kind::DerivedBudgetExceeded,
         Error::Overflow(_) => bdb_error_kind::Overflow,
         Error::ResultBytesOverflow => bdb_error_kind::ResultBytesOverflow,
         Error::Corruption(_) => bdb_error_kind::Corruption,
@@ -185,9 +185,7 @@ impl bdb_error {
                             bumbledb::StatementKind::Functionality => {
                                 bdb_statement_kind::Functionality
                             }
-                            bumbledb::StatementKind::Containment => {
-                                bdb_statement_kind::Containment
-                            }
+                            bumbledb::StatementKind::Containment => bdb_statement_kind::Containment,
                             bumbledb::StatementKind::Capacity => bdb_statement_kind::Capacity,
                         },
                         spelling: rendered.spelling,
@@ -273,7 +271,10 @@ pub(crate) fn fail_locked(message: &str) -> Fail {
 /// carry a status, and `Panic` is the one kind that always means "stop
 /// trusting this process's bridge state".
 #[unsafe(no_mangle)]
-#[expect(unsafe_code, reason = "extern export: the unsafe(no_mangle) ABI attribute")]
+#[expect(
+    unsafe_code,
+    reason = "extern export: the unsafe(no_mangle) ABI attribute"
+)]
 pub extern "C" fn bdb_error_get_kind(error: *const bdb_error) -> bdb_error_kind {
     guard_value(bdb_error_kind::Panic, || match ref_in(error) {
         Ok(error) => error.kind,
@@ -285,7 +286,10 @@ pub extern "C" fn bdb_error_get_kind(error: *const bdb_error) -> bdb_error_kind 
 /// `bdb_error_destroy`). UTF-8, NOT NUL-terminated — the length is the
 /// contract.
 #[unsafe(no_mangle)]
-#[expect(unsafe_code, reason = "extern export: the unsafe(no_mangle) ABI attribute")]
+#[expect(
+    unsafe_code,
+    reason = "extern export: the unsafe(no_mangle) ABI attribute"
+)]
 pub extern "C" fn bdb_error_get_message(
     error: *const bdb_error,
     out_message: *mut bdb_string_view,
@@ -300,7 +304,10 @@ pub extern "C" fn bdb_error_get_message(
 /// The `GenerationMoved` payload: the witnessed and current generations.
 /// `BDB_STATUS_MISUSE` when the error is not `BDB_ERROR_KIND_GENERATION_MOVED`.
 #[unsafe(no_mangle)]
-#[expect(unsafe_code, reason = "extern export: the unsafe(no_mangle) ABI attribute")]
+#[expect(
+    unsafe_code,
+    reason = "extern export: the unsafe(no_mangle) ABI attribute"
+)]
 pub extern "C" fn bdb_error_get_generation_moved(
     error: *const bdb_error,
     out_witnessed: *mut u64,
@@ -319,7 +326,10 @@ pub extern "C" fn bdb_error_get_generation_moved(
 /// the failure. `BDB_STATUS_MISUSE` when the error is
 /// not `BDB_ERROR_KIND_BULK_LOAD`.
 #[unsafe(no_mangle)]
-#[expect(unsafe_code, reason = "extern export: the unsafe(no_mangle) ABI attribute")]
+#[expect(
+    unsafe_code,
+    reason = "extern export: the unsafe(no_mangle) ABI attribute"
+)]
 pub extern "C" fn bdb_error_get_bulk_committed(
     error: *const bdb_error,
     out_committed: *mut u64,
@@ -335,7 +345,10 @@ pub extern "C" fn bdb_error_get_bulk_committed(
 /// The rendered violation count of a `BDB_ERROR_KIND_COMMIT_REJECTED` error
 /// (0 for every other kind, and for a null handle).
 #[unsafe(no_mangle)]
-#[expect(unsafe_code, reason = "extern export: the unsafe(no_mangle) ABI attribute")]
+#[expect(
+    unsafe_code,
+    reason = "extern export: the unsafe(no_mangle) ABI attribute"
+)]
 pub extern "C" fn bdb_error_violation_count(error: *const bdb_error) -> usize {
     guard_value(0, || match ref_in(error) {
         Ok(error) => error.violations.len(),
@@ -347,7 +360,10 @@ pub extern "C" fn bdb_error_violation_count(error: *const bdb_error) -> usize {
 /// valid until `bdb_error_destroy`). Bounds-checked:
 /// `BDB_STATUS_MISUSE` past [`bdb_error_violation_count`].
 #[unsafe(no_mangle)]
-#[expect(unsafe_code, reason = "extern export: the unsafe(no_mangle) ABI attribute")]
+#[expect(
+    unsafe_code,
+    reason = "extern export: the unsafe(no_mangle) ABI attribute"
+)]
 pub extern "C" fn bdb_error_get_violation(
     error: *const bdb_error,
     index: usize,
@@ -383,7 +399,10 @@ pub extern "C" fn bdb_error_get_violation(
 /// Frees an error. Exactly once per owned error; a null pointer is
 /// misuse.
 #[unsafe(no_mangle)]
-#[expect(unsafe_code, reason = "extern export: the unsafe(no_mangle) ABI attribute")]
+#[expect(
+    unsafe_code,
+    reason = "extern export: the unsafe(no_mangle) ABI attribute"
+)]
 pub extern "C" fn bdb_error_destroy(error: *mut bdb_error) -> bdb_status {
     guard(std::ptr::null_mut(), || {
         drop(box_in(error)?);

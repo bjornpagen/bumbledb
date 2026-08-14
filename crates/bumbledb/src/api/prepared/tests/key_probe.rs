@@ -37,7 +37,7 @@ fn key_probe_fast_lane_hits_misses_and_type_errors() {
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepares");
     assert!(
         matches!(
-            prepared.program.rules(),
+            prepared.body.rules(),
             [PreparedRule::KeyProbe(KeyProbeRule {
                 key_probe_finds: Some(_),
                 ..
@@ -99,7 +99,7 @@ fn a_key_probe_prepare_and_execute_build_no_image() {
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepares");
     assert!(
         matches!(
-            prepared.program.rules(),
+            prepared.body.rules(),
             [PreparedRule::KeyProbe(KeyProbeRule {
                 key_probe_finds: Some(_),
                 ..
@@ -142,10 +142,7 @@ fn key_probe_queries_flow_through_the_same_surface() {
     });
     let txn = env.read_txn().expect("txn");
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
-    assert!(matches!(
-        prepared.program.rules(),
-        [PreparedRule::KeyProbe(_)]
-    ));
+    assert!(matches!(prepared.body.rules(), [PreparedRule::KeyProbe(_)]));
     let out = prepared
         .execute_collect(&txn, &cache, &[])
         .expect("execute");
@@ -258,10 +255,7 @@ fn pointwise_key_point_lookup_uses_key_probe_and_is_image_free() {
         bumbledb_theory::Interval::<u64>::new(5, 10).expect("nonempty interval"),
     )));
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
-    assert!(matches!(
-        prepared.program.rules(),
-        [PreparedRule::KeyProbe(_)]
-    ));
+    assert!(matches!(prepared.body.rules(), [PreparedRule::KeyProbe(_)]));
 
     let out = prepared
         .execute_collect(&txn, &cache, &[])
@@ -319,7 +313,7 @@ fn a_membership_bound_single_atom_query_stays_free_join() {
     let query = booking_query(Term::Literal(Value::U64(7)));
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
     assert!(
-        matches!(prepared.program.rules(), [PreparedRule::FreeJoin(_)]),
+        matches!(prepared.body.rules(), [PreparedRule::FreeJoin(_)]),
         "membership binding is not a key cover"
     );
 
@@ -424,10 +418,7 @@ fn full_fact_membership_lookup_with_an_interval_field_is_image_free() {
         })
     };
     let mut prepared = prepare(&txn, &cache, &schema, &count_stay((5, 10))).expect("prepare");
-    assert!(matches!(
-        prepared.program.rules(),
-        [PreparedRule::KeyProbe(_)]
-    ));
+    assert!(matches!(prepared.body.rules(), [PreparedRule::KeyProbe(_)]));
     let (_, report) = prepared.introspect(&txn, &cache, &[]).expect("introspect");
     assert!(report.contains("full-fact membership probe"), "{report}");
 
@@ -511,10 +502,7 @@ fn intern_miss_param_on_the_fast_path_is_empty_not_an_error() {
         conditions: vec![],
     });
     let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
-    assert!(matches!(
-        prepared.program.rules(),
-        [PreparedRule::KeyProbe(_)]
-    ));
+    assert!(matches!(prepared.body.rules(), [PreparedRule::KeyProbe(_)]));
 
     let out = prepared
         .execute_collect(&txn, &cache, &[BindValue::Str("ghost")])
@@ -624,10 +612,7 @@ fn a_corrupt_fixed_width_start_through_the_key_probe_is_corruption_not_a_panic()
         // Sanity: the healthy fact answers through the fast lane.
         let txn = env.read_txn().expect("txn");
         let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
-        assert!(matches!(
-            prepared.program.rules(),
-            [PreparedRule::KeyProbe(_)]
-        ));
+        assert!(matches!(prepared.body.rules(), [PreparedRule::KeyProbe(_)]));
         let out = prepared.execute_collect(&txn, &cache, &[]).expect("hit");
         assert_eq!(out.len(), 1);
         assert_eq!(out.get(0, 1), AnswerValue::U64(100));
@@ -707,7 +692,7 @@ fn a_corrupt_fixed_width_start_through_the_key_probe_is_corruption_not_a_panic()
     let txn = env.read_txn().expect("txn");
     let mut prepared = prepare(&txn, &cache, &schema, &scan).expect("prepare");
     assert!(
-        !matches!(prepared.program.rules(), [PreparedRule::KeyProbe(_)]),
+        !matches!(prepared.body.rules(), [PreparedRule::KeyProbe(_)]),
         "the all-vars scan must not take the key-probe lane"
     );
     let err = prepared

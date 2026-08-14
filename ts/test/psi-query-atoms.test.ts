@@ -274,43 +274,40 @@ describe("ψ query atoms over closed relations", function suite() {
 				.find({ i: inc.id })
 		})
 		assert.deepStrictEqual(lowerQuery(golden), {
-			predicates: [
+			interiors: [],
+			rec: null,
+			head: [{ kind: "var" }],
+			rules: [
 				{
-					head: [{ kind: "var" }],
-					rules: [
+					finds: [{ kind: "var", var: 0 }],
+					atoms: [
 						{
-							finds: [{ kind: "var", var: 0 }],
-							atoms: [
-								{
-									source: { kind: "edb", relation: INCIDENT_ID },
-									bindings: [
-										[0, { kind: "var", var: 0 }],
-										[1, { kind: "var", var: 1 }]
-									]
-								},
-								{
-									source: { kind: "edb", relation: SEV_ID },
-									bindings: [
-										[0, { kind: "var", var: 1 }],
-										[1, { kind: "literal", value: { kind: "bool", value: true } }]
-									]
-								}
-							],
-							negated: [
-								{
-									source: { kind: "edb", relation: SEV_ID },
-									bindings: [
-										[0, { kind: "var", var: 1 }],
-										[2, { kind: "literal", value: { kind: "u64", value: 4n } }]
-									]
-								}
-							],
-							conditions: []
+							source: { kind: "edb", relation: INCIDENT_ID },
+							bindings: [
+								[0, { kind: "var", var: 0 }],
+								[1, { kind: "var", var: 1 }]
+							]
+						},
+						{
+							source: { kind: "edb", relation: SEV_ID },
+							bindings: [
+								[0, { kind: "var", var: 1 }],
+								[1, { kind: "literal", value: { kind: "bool", value: true } }]
+							]
 						}
-					]
+					],
+					negated: [
+						{
+							source: { kind: "edb", relation: SEV_ID },
+							bindings: [
+								[0, { kind: "var", var: 1 }],
+								[2, { kind: "literal", value: { kind: "u64", value: 4n } }]
+							]
+						}
+					],
+					conditions: []
 				}
-			],
-			output: 0
+			]
 		})
 		// The golden shape is also the engine's: paging incidents minus rank-4 severities = the Crit incidents.
 		const answers = run(golden, {}).map(function id(row) {

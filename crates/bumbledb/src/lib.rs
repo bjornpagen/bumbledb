@@ -152,8 +152,8 @@ pub use storage::env::StoreKind;
 // module-path scavenger hunt.
 pub use ir::{
     AggOp, Atom, AtomSource, CmpOp, Comparison, ConditionTree, FindTerm, HeadOp, HeadTerm,
-    MAX_CONDITION_DEPTH, MAX_PREDICATES, MAX_RULES, ParamId, PredId, PredicateDef, Program,
-    ProgramRef, Query, Rule, Term, Value, VarId,
+    Interior, InteriorId, MAX_CONDITION_DEPTH, MAX_RULES, ParamId, Query, Rec, Rule, Term, Value,
+    VarId,
 };
 // The bindings roster (docs/architecture/70-api.md § the SchemaSpec
 // bindings contract): everything a foreign-host bridge needs, reachable

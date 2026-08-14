@@ -1,5 +1,5 @@
 # The one SDK module: internals are partitions, so outsiders physically cannot import them; CMake scans partition dependencies from the one FILE_SET.
-# The :foreign_program partition is added to this target from foreign/CMakeLists.txt.
+# The :query_view partition is added to this target from foreign/CMakeLists.txt.
 add_library(bumbledb)
 
 target_sources(bumbledb
@@ -45,7 +45,6 @@ target_sources(bumbledb
             query/rule.cc
             query/lower.cc
             query/query.cc
-            query/program.cc
             answers/decode.cc
             answers/answers.cc
             answers/row.cc

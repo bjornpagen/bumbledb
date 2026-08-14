@@ -164,7 +164,7 @@ if(NOT BDB_LINT_GRAPH)
     add_subdirectory(src)
 endif()
 
-# foreign/ belongs to both graphs and must come after src/: it adds :foreign_program to the bumbledb target in the production graph.
+# foreign/ belongs to both graphs and must come after src/: it adds :query_view to the bumbledb target in the production graph.
 add_subdirectory(foreign)
 
 enable_testing()

@@ -31,46 +31,50 @@ inline constexpr auto Step = bdb::query(Closure).rule([](auto r) consteval {
 	    .find({}, bdb::as<"c">(vars.child));
 });
 
-inline constexpr auto Reach = bdb::program(
-    Closure,
-    bdb::rec<"reach">(
-        [](auto r) consteval {
-	        auto vars = r.vars(Node);
-	        return r.match(Node, {.id = vars.id}).where(bdb::eq(vars.id, bdb::param<"root">())).find({}, bdb::as<"c">(vars.id));
-        },
-        [](auto r) consteval {
-	        auto vars = r.vars(Parent);
-	        return r.match(Parent, {.child = vars.child, .parent = vars.parent})
-	            .idb(bdb::pred<"reach">, bdb::bind<"c">(vars.parent))
-	            .find({}, bdb::as<"c">(vars.child));
-        }),
-    bdb::output([](auto r) consteval {
-	    auto vars = r.vars(Node);
-	    return r.idb(bdb::pred<"reach">, bdb::bind<"c">(vars.id)).find({}, bdb::as<"c">(vars.id));
-    }));
+inline constexpr auto Reach = bdb::query(Closure)
+                                  .recursive<"reach">(
+                                      bdb::base{[](auto r) consteval {
+	                                      auto vars = r.vars(Node);
+	                                      return r.match(Node, {.id = vars.id})
+	                                          .where(bdb::eq(vars.id, bdb::param<"root">()))
+	                                          .find({}, bdb::as<"c">(vars.id));
+                                      }},
+                                      bdb::rec{[](auto r) consteval {
+	                                      auto vars = r.vars(Parent);
+	                                      return r.match(Parent, {.child = vars.child, .parent = vars.parent})
+	                                          .template interior<"reach">(bdb::bind<"c">(vars.parent))
+	                                          .find({}, bdb::as<"c">(vars.child));
+                                      }})
+                                  .rule([](auto r) consteval {
+	                                  auto vars = r.vars(Node);
+	                                  return r.template interior<"reach">(bdb::bind<"c">(vars.id)).find({}, bdb::as<"c">(vars.id));
+                                  });
 
 inline constexpr auto Roots = bdb::query(Closure).rule([](auto r) consteval {
 	auto node = r.vars(Node);
 	return r.match(Node, {.id = node.id}).not_match(Parent, {.child = node.id}).find({}, bdb::as<"c">(node.id));
 });
 
-inline constexpr auto Unreached = bdb::program(
-    Closure,
-    bdb::rec<"reach">(
-        [](auto r) consteval {
-	        auto vars = r.vars(Node);
-	        return r.match(Node, {.id = vars.id}).where(bdb::eq(vars.id, bdb::param<"root">())).find({}, bdb::as<"c">(vars.id));
-        },
-        [](auto r) consteval {
-	        auto vars = r.vars(Parent);
-	        return r.match(Parent, {.child = vars.child, .parent = vars.parent})
-	            .idb(bdb::pred<"reach">, bdb::bind<"c">(vars.parent))
-	            .find({}, bdb::as<"c">(vars.child));
-        }),
-    bdb::output([](auto r) consteval {
-	    auto vars = r.vars(Node);
-	    return r.match(Node, {.id = vars.id}).not_idb(bdb::pred<"reach">, bdb::bind<"c">(vars.id)).find({}, bdb::as<"c">(vars.id));
-    }));
+inline constexpr auto Unreached = bdb::query(Closure)
+                                      .recursive<"reach">(
+                                          bdb::base{[](auto r) consteval {
+	                                          auto vars = r.vars(Node);
+	                                          return r.match(Node, {.id = vars.id})
+	                                              .where(bdb::eq(vars.id, bdb::param<"root">()))
+	                                              .find({}, bdb::as<"c">(vars.id));
+                                          }},
+                                          bdb::rec{[](auto r) consteval {
+	                                          auto vars = r.vars(Parent);
+	                                          return r.match(Parent, {.child = vars.child, .parent = vars.parent})
+	                                              .template interior<"reach">(bdb::bind<"c">(vars.parent))
+	                                              .find({}, bdb::as<"c">(vars.child));
+                                          }})
+                                      .rule([](auto r) consteval {
+	                                      auto vars = r.vars(Node);
+	                                      return r.match(Node, {.id = vars.id})
+	                                          .template not_interior<"reach">(bdb::bind<"c">(vars.id))
+	                                          .find({}, bdb::as<"c">(vars.id));
+                                      });
 
 namespace {
 
@@ -222,7 +226,7 @@ auto run_cases(std::string_view fixtures_path, std::vector<CaseResult>& results)
 	auto roots = db->prepare<Roots>();
 	results.push_back(CaseResult{
 	    .name = "step / reach / unreached / roots all prepare through the "
-	            "engine validator (∈-set, recursion, stratum negation, "
+	            "engine validator (∈-set, recursion, rec negation, "
 	            "EDB anti-join)",
 	    .passed = step.has_value() && reach.has_value() && unreached.has_value() && roots.has_value(),
 	});
@@ -292,7 +296,7 @@ auto run_cases(std::string_view fixtures_path, std::vector<CaseResult>& results)
 	}
 	std::ranges::sort(outside);
 	results.push_back(CaseResult{
-	    .name = "negation of the finished stratum answers the complement "
+	    .name = "negation of the finished rec answers the complement "
 	            "(scan minus closure)",
 	    .passed =
 	        complement.has_value() && scanned.has_value() && *complement == outside && *complement == std::vector<std::uint64_t>{ids->lone},

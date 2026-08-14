@@ -87,9 +87,9 @@ pub fn classify(normalized: &NormalizedQuery, schema: &Schema) -> Option<KeyProb
         })
     };
 
-    // An `Idb` occurrence never key-probes: a predicate has no `U`
+    // An `Interior` occurrence never key-probes: a predicate has no `U`
     // determinants and no `M` entries — its storage is the fixpoint
-    // driver's transient image — so an `Idb`-reading rule always keeps
+    // driver's transient image — so an `Interior`-reading rule always keeps
     // the Free Join path.
     let relation = schema.relation(occurrence.source.edb()?);
     // A closed relation has no `U` determinants and no `M` entries — its

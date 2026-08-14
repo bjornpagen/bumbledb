@@ -5,7 +5,7 @@ use crate::corpus_gen::{GenConfig, Scale};
 use crate::families::param_args;
 use crate::naive::{Delta, NaiveDb, ParamValue};
 
-use super::{ClosSizes, Reachability, all, closure_program, ids, load_stores, relation_rows};
+use super::{ClosSizes, Reachability, all, closure_query, ids, load_stores, relation_rows};
 
 const CFG: GenConfig = GenConfig {
     seed: 1,
@@ -38,8 +38,8 @@ fn the_corpus_shape_is_closed_form() {
 }
 
 /// Naive parity — the semantic oracle for the recursion surface: the
-/// engine's fixpoint answers equal [`NaiveDb::program`]'s stratified
-/// fixpoint on the Tiny corpus, every family x draw (misses included).
+/// engine's reach answers equal [`NaiveDb::query`]'s lfp on the Tiny
+/// corpus, every family x draw (misses included).
 #[test]
 fn the_engine_agrees_with_the_naive_fixpoint() {
     let dir = scratch("naive");
@@ -58,8 +58,8 @@ fn the_engine_agrees_with_the_naive_fixpoint() {
         naive.apply(&delta).expect("naive load");
     }
 
-    let program = closure_program();
-    let mut prepared = db.prepare(&program).expect("prepare");
+    let query = closure_query();
+    let mut prepared = db.prepare(&query).expect("prepare");
     let types: Vec<bumbledb::schema::ValueType> = prepared
         .predicate()
         .columns
@@ -74,7 +74,7 @@ fn the_engine_agrees_with_the_naive_fixpoint() {
                 .expect("execute");
             let mut ours = compare::from_answers(&buffer, &types);
             ours.sort();
-            let model = naive.program(&program, &draw).expect("naive program");
+            let model = naive.query(&query, &draw).expect("naive query");
             let mut theirs: Vec<Vec<Owned>> = model
                 .into_iter()
                 .map(|tuple| {
@@ -120,8 +120,8 @@ fn closure_counts_match_the_shapes() {
     let dir = scratch("counts");
     let sizes = ClosSizes::of(CFG.scale);
     let (db, _conn) = load_stores(&dir, CFG, crate::storemode::StoreMode::Durable).expect("stores");
-    let program = closure_program();
-    let mut prepared = db.prepare(&program).expect("prepare");
+    let query = closure_query();
+    let mut prepared = db.prepare(&query).expect("prepare");
     let mut buffer = Answers::new();
     let count = |db: &Db<Reachability>,
                  prepared: &mut bumbledb::PreparedQuery<'_, Reachability>,

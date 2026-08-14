@@ -48,12 +48,12 @@ if(BDB_LINT_GRAPH)
     )
 endif()
 
-# program.cc is quarantine code but a partition of MODULE bumbledb (:foreign_program): it consumes the query IR partitions, and a bumbledb_foreign partition could not import them without a module cycle.
+# query_view.cc is quarantine code but a partition of MODULE bumbledb (:query_view): it consumes the query IR partitions, and a bumbledb_foreign partition could not import them without a module cycle.
 if(NOT BDB_LINT_GRAPH)
     target_sources(bumbledb
         PUBLIC
             FILE_SET CXX_MODULES
             FILES
-                program.cc
+                query_view.cc
     )
 endif()

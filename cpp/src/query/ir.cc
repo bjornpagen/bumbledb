@@ -15,12 +15,6 @@ inline constexpr std::size_t max_query_finds = 8;
 inline constexpr std::size_t max_query_params = 8;
 inline constexpr std::size_t max_query_vars = 32;
 
-/**
- * Most recursive predicates one program may declare (the engine's own
- * MAX_PREDICATES is 16; lowering.md §4.1).
- */
-inline constexpr std::size_t max_program_recs = 4;
-
 /** Most handles one closed-membership array may spell in a match record. */
 inline constexpr std::size_t max_membership_handles = 8;
 
@@ -112,11 +106,11 @@ struct condition_data {
 };
 
 /**
- * One named binding of a recursive (IDB) atom: the target head column by
- * name, the variable (IDB bindings are variable terms only), and the
+ * One named binding of an interior/rec atom: the target head column by
+ * name, the variable (interior bindings are variable terms only), and the
  * variable's class facts for the head-slot join wall.
  */
-struct idb_bind_data {
+struct interior_bind_data {
 	name_text column;
 	coord_ref variable;
 	field_class cls;
@@ -125,16 +119,16 @@ struct idb_bind_data {
 };
 
 /**
- * One recursive atom as recorded: the rec's name (resolved to its dense
- * PredId at program assembly), polarity, and the named bindings. The
- * binds are placed and numbered in the target's head order at assembly —
- * `FieldId(i)` = head position i (lowering.md §4.2).
+ * One derived-table atom as recorded: the target's name (resolved to its
+ * dense InteriorId at query assembly), polarity, and the named bindings.
+ * The binds are placed and numbered in the target's head order at
+ * assembly — `FieldId(i)` = head position i.
  */
-struct idb_atom_data {
-	name_text pred;
+struct interior_atom_data {
+	name_text name;
 	bool negated;
 	std::size_t bind_count;
-	std::array<idb_bind_data, max_query_finds> binds;
+	std::array<interior_bind_data, max_query_finds> binds;
 };
 
 /**
@@ -145,14 +139,14 @@ struct idb_atom_data {
 enum class body_form : std::uint8_t {
 	atom,
 	negated_atom,
-	idb_atom,
+	interior_atom,
 	condition,
 };
 
 struct body_item {
 	body_form form;
 	atom_data atom;
-	idb_atom_data idb;
+	interior_atom_data interior;
 	condition_data condition;
 };
 
@@ -178,8 +172,8 @@ enum class fold_form : std::uint8_t {
 /**
  * One find column: the answer column name, the term shape, the answer
  * cell's structural class (the row-product synthesis input), and —
- * variable finds — the column's law class (the IDB head-slot join wall's
- * data).
+ * variable finds — the column's law class (the interior-head-slot join
+ * wall's data).
  */
 struct find_data {
 	name_text name;
@@ -246,7 +240,7 @@ struct rule_data {
 };
 
 /**
- * One numbered term of the wire IR :foreign_program reads: dense
+ * One numbered term of the wire IR :query_view reads: dense
  * rule-scoped var ids, dense query-global param ids (registry order =
  * positional bind order — lowering.md §5.1).
  */
@@ -263,14 +257,14 @@ struct wire_binding {
 };
 
 /**
- * One numbered atom: an EDB atom (`idb == false`, `relation` read) or a
- * recursive IDB atom (`idb == true`, `pred` read — the target's dense
- * PredId; bindings address head positions).
+ * One numbered atom: an EDB atom (`interior == false`, `relation` read)
+ * or a derived-table atom (`interior == true`, `interior_id` read — the
+ * target's dense InteriorId; bindings address head positions).
  */
 struct wire_atom {
 	std::uint32_t relation;
-	bool idb;
-	std::uint16_t pred;
+	bool interior;
+	std::uint32_t interior_id;
 	std::size_t binding_count;
 	std::array<wire_binding, max_relation_fields> bindings;
 };
@@ -309,11 +303,11 @@ struct wire_rule {
 };
 
 /**
- * One lowered recursive predicate: its name (idb resolution + walls), its
+ * One lowered named interior: its name (atom resolution + walls), its
  * head (rule 0's finds — the sealed signature), and its numbered rules.
  */
-struct pred_ir {
-	name_text head_name;
+struct interior_ir {
+	name_text name;
 	std::size_t rule_count;
 	std::array<wire_rule, max_query_rules> rules;
 	std::size_t head_count;
@@ -321,11 +315,25 @@ struct pred_ir {
 };
 
 /**
- * The whole lowered query/program: the recs in declaration order (`PredId`
- * = index), the output predicate's rules/head (a plain query is the
- * degenerate no-rec program, `output = 0` — lowering.md §4.1), plus the
- * head columns (row-product synthesis) and the param registry
- * (params-product synthesis, recs' uses folded first — §4.2).
+ * One lowered linear rec: name, sealed head, base arms, rec arms.
+ * `base_count + rec_count` is one pool against `max_query_rules`.
+ */
+struct rec_ir {
+	name_text name;
+	std::size_t head_count;
+	std::array<find_data, max_query_finds> head;
+	std::size_t base_count;
+	std::array<wire_rule, max_query_rules> base;
+	std::size_t rec_count;
+	std::array<wire_rule, max_query_rules> rec;
+};
+
+/**
+ * The main answer of a lowered query: rules, head, and the param
+ * registry (params-product synthesis — interiors' uses folded first,
+ * then rec base, then rec arms, then main). Named interiors and the
+ * optional rec ride `query_value`, not this struct: they are a variadic
+ * pack, not a fixed array.
  */
 struct query_ir {
 	std::size_t rule_count;
@@ -334,8 +342,6 @@ struct query_ir {
 	std::array<find_data, max_query_finds> head;
 	std::size_t param_count;
 	std::array<param_data, max_query_params> params;
-	std::size_t rec_count;
-	std::array<pred_ir, max_program_recs> recs;
 };
 
 /**
@@ -376,16 +382,18 @@ auto find_head_names_must_be_distinct() -> void;
 auto every_rule_of_a_query_must_derive_the_same_head() -> void;
 auto negated_atom_binds_a_variable_no_positive_atom_binds() -> void;
 auto pack_stands_alone_never_beside_another_aggregate() -> void;
-auto a_recursive_atom_requires_a_program() -> void;
-auto idb_atom_names_no_declared_rec() -> void;
+auto interior_atom_names_no_declared_table() -> void;
 auto a_recursive_rule_matches_only_its_own_rec() -> void;
 auto a_recursive_rule_negates_no_stratum() -> void;
 auto a_recursive_rule_head_projects_bound_variables_only() -> void;
-auto idb_atom_omits_a_head_column() -> void;
-auto idb_atom_binds_a_name_the_head_does_not_carry() -> void;
-auto idb_binding_joins_only_its_head_columns_class() -> void;
-auto program_rec_names_must_be_distinct() -> void;
-auto program_rec_defines_at_least_one_rule() -> void;
-auto program_has_too_many_recs() -> void;
+auto interior_atom_omits_a_head_column() -> void;
+auto interior_atom_binds_a_name_the_head_does_not_carry() -> void;
+auto interior_binding_joins_only_its_head_columns_class() -> void;
+auto interior_names_must_be_distinct() -> void;
+auto interior_after_recursive() -> void;
+auto interior_or_recursive_after_a_main_rule() -> void;
+auto a_second_recursive_is_refused() -> void;
+auto recursive_needs_at_least_one_base_rule() -> void;
+auto recursive_needs_at_least_one_rec_rule() -> void;
 
 }

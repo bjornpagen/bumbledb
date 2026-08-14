@@ -110,17 +110,15 @@ pub struct bdb_row_view {
 /// tag (`bdb_callback_control`); unknown values are `BDB_STATUS_MISUSE`.
 /// A C++ exception thrown from the function is converted to Abort by
 /// the foreign trampoline and never unwinds into Rust.
-pub type bdb_read_callback = Option<
-    unsafe extern "C" fn(context: *mut c_void, snapshot: *const bdb_snapshot_ref) -> u32,
->;
+pub type bdb_read_callback =
+    Option<unsafe extern "C" fn(context: *mut c_void, snapshot: *const bdb_snapshot_ref) -> u32>;
 
 /// The write callback: synchronous, on the calling thread, with a tx ref
 /// valid only until it returns. `Ok` commits the delta (the engine judges
 /// dependencies against the final state); `Abort` drops it — LMDB never
 /// saw a fact. Throw-to-Abort as [`bdb_read_callback`].
-pub type bdb_write_callback = Option<
-    unsafe extern "C" fn(context: *mut c_void, transaction: *mut bdb_tx_ref) -> u32,
->;
+pub type bdb_write_callback =
+    Option<unsafe extern "C" fn(context: *mut c_void, transaction: *mut bdb_tx_ref) -> u32>;
 
 // ---------------------------------------------------------------------------
 // Ref plumbing
@@ -411,7 +409,9 @@ fn call_write_callback(
                   signature"
     )]
     // SAFETY: as `call_read_callback`.
-    let raw = unsafe { bdb_invoke_write_callback(callback, context, (&raw const *transaction).cast_mut()) };
+    let raw = unsafe {
+        bdb_invoke_write_callback(callback, context, (&raw const *transaction).cast_mut())
+    };
     tag_in(raw)
 }
 
@@ -455,7 +455,10 @@ fn open_with(
 /// Creates a fresh DURABLE store at `path` from a schema spec. Schema
 /// resolution/validation failures are `BDB_ERROR_KIND_SCHEMA`.
 #[unsafe(no_mangle)]
-#[expect(unsafe_code, reason = "extern export: the unsafe(no_mangle) ABI attribute")]
+#[expect(
+    unsafe_code,
+    reason = "extern export: the unsafe(no_mangle) ABI attribute"
+)]
 pub extern "C" fn bdb_db_create(
     path: bdb_string_view,
     spec: *const bdb_schema_spec,
@@ -468,7 +471,10 @@ pub extern "C" fn bdb_db_create(
 /// Opens an existing durable store, verifying format version, store
 /// kind, and schema fingerprint (`BDB_ERROR_KIND_SCHEMA_MISMATCH` on drift).
 #[unsafe(no_mangle)]
-#[expect(unsafe_code, reason = "extern export: the unsafe(no_mangle) ABI attribute")]
+#[expect(
+    unsafe_code,
+    reason = "extern export: the unsafe(no_mangle) ABI attribute"
+)]
 pub extern "C" fn bdb_db_open(
     path: bdb_string_view,
     spec: *const bdb_schema_spec,
@@ -482,7 +488,10 @@ pub extern "C" fn bdb_db_open(
 /// machine crash loses the store by the kind's own claim — every other
 /// semantic is identical to a durable store).
 #[unsafe(no_mangle)]
-#[expect(unsafe_code, reason = "extern export: the unsafe(no_mangle) ABI attribute")]
+#[expect(
+    unsafe_code,
+    reason = "extern export: the unsafe(no_mangle) ABI attribute"
+)]
 pub extern "C" fn bdb_db_ephemeral(
     path: bdb_string_view,
     spec: *const bdb_schema_spec,
@@ -496,7 +505,10 @@ pub extern "C" fn bdb_db_ephemeral(
 /// (the `Arc` below the boundary), so the environment — and its exclusive
 /// lock — releases when the last of them is destroyed.
 #[unsafe(no_mangle)]
-#[expect(unsafe_code, reason = "extern export: the unsafe(no_mangle) ABI attribute")]
+#[expect(
+    unsafe_code,
+    reason = "extern export: the unsafe(no_mangle) ABI attribute"
+)]
 pub extern "C" fn bdb_db_destroy(db: *mut bdb_db) -> bdb_status {
     guard(std::ptr::null_mut(), || {
         let handle = ref_in(db)?;
@@ -516,7 +528,10 @@ pub extern "C" fn bdb_db_destroy(db: *mut bdb_db) -> bdb_status {
 /// functions re-run on the already-admitted descriptor; the bridge only
 /// hex-encodes the 32 bytes.
 #[unsafe(no_mangle)]
-#[expect(unsafe_code, reason = "extern export: the unsafe(no_mangle) ABI attribute")]
+#[expect(
+    unsafe_code,
+    reason = "extern export: the unsafe(no_mangle) ABI attribute"
+)]
 pub extern "C" fn bdb_db_fingerprint(
     db: *const bdb_db,
     out_fingerprint: *mut bdb_fingerprint,
@@ -550,7 +565,10 @@ pub extern "C" fn bdb_db_fingerprint(
 /// snapshot ref is invalidated when the callback returns.
 /// `BDB_STATUS_ABORTED` when the callback returned `Abort`.
 #[unsafe(no_mangle)]
-#[expect(unsafe_code, reason = "extern export: the unsafe(no_mangle) ABI attribute")]
+#[expect(
+    unsafe_code,
+    reason = "extern export: the unsafe(no_mangle) ABI attribute"
+)]
 pub extern "C" fn bdb_db_read(
     db: *const bdb_db,
     callback: bdb_read_callback,
@@ -634,7 +652,10 @@ fn write_with(
 /// Re-entrant writes on this handle are refused with
 /// `BDB_ERROR_KIND_ENVIRONMENT_LOCKED` before the engine's assertion.
 #[unsafe(no_mangle)]
-#[expect(unsafe_code, reason = "extern export: the unsafe(no_mangle) ABI attribute")]
+#[expect(
+    unsafe_code,
+    reason = "extern export: the unsafe(no_mangle) ABI attribute"
+)]
 pub extern "C" fn bdb_db_write(
     db: *const bdb_db,
     callback: bdb_write_callback,
@@ -643,9 +664,7 @@ pub extern "C" fn bdb_db_write(
 ) -> bdb_status {
     guard(out_error, || {
         let handle = ref_in(db)?;
-        write_with(handle, callback, context, |engine, body| {
-            engine.write(body)
-        })
+        write_with(handle, callback, context, |engine, body| engine.write(body))
     })
 }
 
@@ -656,7 +675,10 @@ pub extern "C" fn bdb_db_write(
 /// `BDB_ERROR_KIND_GENERATION_MOVED` (payload: witnessed/current); retry is
 /// host policy.
 #[unsafe(no_mangle)]
-#[expect(unsafe_code, reason = "extern export: the unsafe(no_mangle) ABI attribute")]
+#[expect(
+    unsafe_code,
+    reason = "extern export: the unsafe(no_mangle) ABI attribute"
+)]
 pub extern "C" fn bdb_db_write_from(
     db: *const bdb_db,
     snapshot: *const bdb_snapshot_ref,
@@ -682,7 +704,10 @@ pub extern "C" fn bdb_db_write_from(
 /// order; shape violations are typed `BDB_ERROR_KIND_FACT_SHAPE` — nothing is
 /// judged until commit.
 #[unsafe(no_mangle)]
-#[expect(unsafe_code, reason = "extern export: the unsafe(no_mangle) ABI attribute")]
+#[expect(
+    unsafe_code,
+    reason = "extern export: the unsafe(no_mangle) ABI attribute"
+)]
 pub extern "C" fn bdb_tx_insert(
     transaction: *const bdb_tx_ref,
     relation: u32,
@@ -707,7 +732,10 @@ pub extern "C" fn bdb_tx_insert(
 /// Records a delete into the delta; `out_changed` = whether the final
 /// state changed.
 #[unsafe(no_mangle)]
-#[expect(unsafe_code, reason = "extern export: the unsafe(no_mangle) ABI attribute")]
+#[expect(
+    unsafe_code,
+    reason = "extern export: the unsafe(no_mangle) ABI attribute"
+)]
 pub extern "C" fn bdb_tx_delete(
     transaction: *const bdb_tx_ref,
     relation: u32,
@@ -732,7 +760,10 @@ pub extern "C" fn bdb_tx_delete(
 /// Final-state membership (base + pending delta — the view the commit
 /// judgment judges, which is what makes check-then-act race-free).
 #[unsafe(no_mangle)]
-#[expect(unsafe_code, reason = "extern export: the unsafe(no_mangle) ABI attribute")]
+#[expect(
+    unsafe_code,
+    reason = "extern export: the unsafe(no_mangle) ABI attribute"
+)]
 pub extern "C" fn bdb_tx_contains(
     transaction: *const bdb_tx_ref,
     relation: u32,
@@ -758,7 +789,10 @@ pub extern "C" fn bdb_tx_contains(
 /// statement's projection order). A hit writes a one-row
 /// [`bdb_row_set`] the caller owns; a miss writes null.
 #[unsafe(no_mangle)]
-#[expect(unsafe_code, reason = "extern export: the unsafe(no_mangle) ABI attribute")]
+#[expect(
+    unsafe_code,
+    reason = "extern export: the unsafe(no_mangle) ABI attribute"
+)]
 pub extern "C" fn bdb_tx_get(
     transaction: *const bdb_tx_ref,
     relation: u32,
@@ -791,7 +825,10 @@ pub extern "C" fn bdb_tx_get(
 /// surface carries no witness type (ids at this surface are data; a
 /// mis-aimed pair is typed `BDB_ERROR_KIND_FACT_SHAPE`).
 #[unsafe(no_mangle)]
-#[expect(unsafe_code, reason = "extern export: the unsafe(no_mangle) ABI attribute")]
+#[expect(
+    unsafe_code,
+    reason = "extern export: the unsafe(no_mangle) ABI attribute"
+)]
 pub extern "C" fn bdb_tx_alloc(
     transaction: *const bdb_tx_ref,
     relation: u32,
@@ -821,7 +858,10 @@ pub extern "C" fn bdb_tx_alloc(
 
 /// Committed-state membership of one dynamic fact (sealed field order).
 #[unsafe(no_mangle)]
-#[expect(unsafe_code, reason = "extern export: the unsafe(no_mangle) ABI attribute")]
+#[expect(
+    unsafe_code,
+    reason = "extern export: the unsafe(no_mangle) ABI attribute"
+)]
 pub extern "C" fn bdb_snapshot_contains(
     snapshot: *const bdb_snapshot_ref,
     relation: u32,
@@ -845,7 +885,10 @@ pub extern "C" fn bdb_snapshot_contains(
 /// (`key_values` in the statement's projection order). A hit writes a
 /// one-row [`bdb_row_set`] the caller owns; a miss writes null.
 #[unsafe(no_mangle)]
-#[expect(unsafe_code, reason = "extern export: the unsafe(no_mangle) ABI attribute")]
+#[expect(
+    unsafe_code,
+    reason = "extern export: the unsafe(no_mangle) ABI attribute"
+)]
 pub extern "C" fn bdb_snapshot_get(
     snapshot: *const bdb_snapshot_ref,
     relation: u32,
@@ -874,7 +917,10 @@ pub extern "C" fn bdb_snapshot_get(
 /// one owned [`bdb_row_set`] crossing, iterated C++-side — never one FFI
 /// call per cell (§37).
 #[unsafe(no_mangle)]
-#[expect(unsafe_code, reason = "extern export: the unsafe(no_mangle) ABI attribute")]
+#[expect(
+    unsafe_code,
+    reason = "extern export: the unsafe(no_mangle) ABI attribute"
+)]
 pub extern "C" fn bdb_snapshot_scan(
     snapshot: *const bdb_snapshot_ref,
     relation: u32,
@@ -909,7 +955,10 @@ pub extern "C" fn bdb_snapshot_scan(
 /// cause in the message). The importer owns dependency ordering: a
 /// bidirectional statement cluster must land within one chunk.
 #[unsafe(no_mangle)]
-#[expect(unsafe_code, reason = "extern export: the unsafe(no_mangle) ABI attribute")]
+#[expect(
+    unsafe_code,
+    reason = "extern export: the unsafe(no_mangle) ABI attribute"
+)]
 pub extern "C" fn bdb_db_bulk_load(
     db: *const bdb_db,
     relation: u32,
@@ -954,7 +1003,10 @@ pub extern "C" fn bdb_db_bulk_load(
 
 /// Number of rows.
 #[unsafe(no_mangle)]
-#[expect(unsafe_code, reason = "extern export: the unsafe(no_mangle) ABI attribute")]
+#[expect(
+    unsafe_code,
+    reason = "extern export: the unsafe(no_mangle) ABI attribute"
+)]
 pub extern "C" fn bdb_row_set_len(rows: *const bdb_row_set) -> usize {
     guard_value(0, || match ref_in(rows) {
         Ok(rows) => rows.rows.len(),
@@ -965,7 +1017,10 @@ pub extern "C" fn bdb_row_set_len(rows: *const bdb_row_set) -> usize {
 /// The row's cell count (sealed field order — every row of one scan has
 /// the relation's arity).
 #[unsafe(no_mangle)]
-#[expect(unsafe_code, reason = "extern export: the unsafe(no_mangle) ABI attribute")]
+#[expect(
+    unsafe_code,
+    reason = "extern export: the unsafe(no_mangle) ABI attribute"
+)]
 pub extern "C" fn bdb_row_set_arity(rows: *const bdb_row_set, row: usize) -> usize {
     guard_value(0, || match ref_in(rows) {
         Ok(rows) => rows.rows.get(row).map_or(0, Vec::len),
@@ -976,7 +1031,10 @@ pub extern "C" fn bdb_row_set_arity(rows: *const bdb_row_set, row: usize) -> usi
 /// One cell, viewed — string/bytes payloads BORROW the row set and die
 /// with it. Bounds-checked: `BDB_STATUS_MISUSE` out of range.
 #[unsafe(no_mangle)]
-#[expect(unsafe_code, reason = "extern export: the unsafe(no_mangle) ABI attribute")]
+#[expect(
+    unsafe_code,
+    reason = "extern export: the unsafe(no_mangle) ABI attribute"
+)]
 pub extern "C" fn bdb_row_set_get(
     rows: *const bdb_row_set,
     row: usize,
@@ -997,7 +1055,10 @@ pub extern "C" fn bdb_row_set_get(
 
 /// Frees a row set (invalidating every view borrowed from it).
 #[unsafe(no_mangle)]
-#[expect(unsafe_code, reason = "extern export: the unsafe(no_mangle) ABI attribute")]
+#[expect(
+    unsafe_code,
+    reason = "extern export: the unsafe(no_mangle) ABI attribute"
+)]
 pub extern "C" fn bdb_row_set_destroy(rows: *mut bdb_row_set) -> bdb_status {
     guard(std::ptr::null_mut(), || {
         drop(box_in(rows)?);

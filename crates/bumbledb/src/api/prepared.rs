@@ -27,8 +27,8 @@ mod build;
 mod either_sink;
 mod execute;
 mod finalize;
-pub(crate) mod fixpoint;
 mod introspect;
+pub(crate) mod reach;
 mod resolve_memo;
 mod run_join;
 mod staleness;
@@ -37,7 +37,7 @@ mod view_memo;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use self::build::{prepare, prepare_program};
+pub(crate) use self::build::prepare;
 use self::staleness::OccurrencePin;
 pub use self::staleness::{OccurrenceDrift, Staleness};
 
@@ -208,15 +208,26 @@ pub struct PreparedQuery<'s, S> {
     dead: Vec<crate::api::stats::DeadRule>,
     /// Per rule, in rule order: the rule's validated plan plus its
     /// plan-shaped execution scratch — the whole plan pipeline ran per
-    /// rule at prepare. Execution runs the rules **sequentially** into
-    /// the ONE sink below (docs/architecture/40-execution.md § the rule
-    /// loop): the sink resets once per execution, never per rule, and
-    /// its seen-set spanning rules is the entire implementation of ∪ —
-    /// no merge node, no concat-then-dedup pass exists.
-    program: Program,
+    /// rule at prepare. Execution runs interiors, then rec, then main
+    /// **sequentially**. Main rules share the ONE sink below
+    /// (docs/architecture/40-execution.md § the rule loop): the sink
+    /// resets once per execution, never per rule, and its seen-set
+    /// spanning rules is the entire implementation of ∪ — no merge
+    /// node, no concat-then-dedup pass exists.
+    pub(crate) interiors: Vec<PreparedInterior>,
+    pub(crate) body: PreparedBody,
+    /// Rec-round budget. Inert when `rec` is `None` (rounds never
+    /// advance). Host-settable on every prepared query.
+    rounds_budget: u32,
+    /// Derived-tuples budget. Judged after each interior and between
+    /// rec rounds. Host-settable on every prepared query.
+    tuples_budget: u64,
+    /// Finished derived images (interiors then rec) plus per-occurrence
+    /// bind scratch for `run_join`'s Interior arm.
+    derived: crate::api::prepared::reach::DerivedScratch,
     /// The predicate the query defines ([`Predicate`] — the signature
     /// authority), sealed at validation and cloned here at prepare. It
-    /// sits BESIDE the program because `Program::Empty` still has an
+    /// sits BESIDE the body because `PreparedBody::Empty` still has an
     /// arity and buffer types (the empty path's `out.arity` reads it).
     predicate: Predicate,
     /// Dense per-param bind contracts (validation rejects id gaps): one
@@ -285,20 +296,30 @@ pub struct PreparedQuery<'s, S> {
     marker: std::marker::PhantomData<PreparedMarker<S>>,
 }
 
-/// The prepared program. Emptiness is a property of the whole union, not
-/// a sentinel rule impersonating one of its disjuncts.
-enum Program {
-    /// Every rule was statically refuted. Binding still runs so errors
-    /// surface; execution touches no sink, image, view, or plan.
+/// One named interior's prepared artifact: its rule loop, projection
+/// sink, and ray probes. Evaluated once, in declaration order, before
+/// rec and main. A dead interior is the empty table.
+pub(crate) struct PreparedInterior {
+    pub(super) rules: Vec<PreparedRule>,
+    pub(super) sink: ProjectionSink,
+    pub(super) field_types: Vec<bumbledb_theory::TypeDesc>,
+    pub(super) units: usize,
+    pub(super) ray_probes: Vec<RayProbeSet>,
+}
+
+/// The prepared main body. Emptiness is a property of the main union,
+/// not a sentinel rule impersonating one of its disjuncts. Interior
+/// units live on [`PreparedQuery::interiors`], never here.
+/// Interiors-only is `Rules` or `Empty` — never `Reach`.
+pub(crate) enum PreparedBody {
+    /// Every **main** rule was statically refuted. Binding still runs
+    /// so errors surface; the interior preamble still runs when
+    /// interiors are nonempty. Execution of main touches no sink.
     Empty,
+    /// Main rules; `rec` is `None`.
     Rules(Vec<PreparedRule>),
-    /// A genuinely recursive program (at least one `Idb` atom): the
-    /// per-stratum fixpoint driver's artifact
-    /// (`api/prepared/fixpoint.rs`; 40-execution.md § the fixpoint driver). A no-`Idb`
-    /// program never builds this — the degenerate embedding prepares
-    /// its output predicate as the query it is, byte for byte
-    /// (`lean/Bumbledb/Exec/Fixpoint.lean: degenerate_embedding`).
-    Fixpoint(Box<fixpoint::FixpointProgram>),
+    /// Rec is present. Interiors-only never builds this.
+    Reach(Box<reach::ReachDriver>),
 }
 
 /// One rule's prepared artifact. Its kind carries exactly the scratch that
@@ -307,28 +328,22 @@ enum Program {
     clippy::large_enum_variant,
     reason = "the decided representation keeps rule scratch inline; programs contain at most the validated rule cap"
 )]
-enum PreparedRule {
+pub(crate) enum PreparedRule {
     FreeJoin(FreeJoinRule),
     KeyProbe(KeyProbeRule),
-    /// A recursive rule (≥ 1 same-stratum `Idb` atom): its k
-    /// delta-variant plans, minted by one prepare-time parse and
-    /// consumed totally by the fixpoint driver — `ResolvableFilter`'s
-    /// parse-don't-classify discipline (40-execution.md § the fixpoint driver). Runs only
-    /// under [`Program::Fixpoint`], in rounds ≥ 1 of its stratum.
+    /// A rec arm: the unique positive self-atom is the delta
+    /// occurrence. Extra EDB / interior atoms are accumulated/EDB,
+    /// never a second delta. Runs only under [`PreparedBody::Reach`],
+    /// in rounds ≥ 1.
     Recursive(RecursiveRule),
 }
 
-/// A recursive rule's typed variant sum (40-execution.md § the fixpoint driver): variant
-/// *i* marks recursive atom *i* the delta occurrence — bound per round
-/// to the previous round's frontier — and every other same-stratum atom
-/// the accumulated predicate. No new/old split exists: cross-variant
-/// and cross-round re-derivation is absorbed by the predicate's
-/// spanning seen-set, the same argument that makes D2's late
-/// cancellation harmless (set semantics: over-derivation skews cost,
-/// never results — `lean/Bumbledb/Exec/Fixpoint.lean:
-/// semi_naive_agrees` is the operator-level face).
+/// A rec arm's one delta variant: the unique positive self-atom is the
+/// delta occurrence — bound per round to the previous round's frontier
+/// — and every other Interior occurrence is a finished interior or the
+/// accumulated rec. No k-variant minting.
 struct RecursiveRule {
-    variants: Box<[DeltaVariant]>,
+    variant: DeltaVariant,
 }
 
 /// One delta variant: the marked occurrence and its own fully prepared
@@ -393,7 +408,7 @@ struct FreeJoinRule {
 /// `MeasureOfRay`. Groups form on the mint set (`RuleWitness::minted`),
 /// so every written rule folds exactly its own disjuncts even across a
 /// cross-written collapse.
-struct RayProbeSet {
+pub(crate) struct RayProbeSet {
     /// The written rule's Kleene fold, compiled against the probes'
     /// shared slot layout (one written rule, one variable scope).
     verdict: crate::exec::verdict::CompiledVerdict,
@@ -422,38 +437,79 @@ struct KeyProbeRule {
     key_probe_finds: Option<Vec<(bumbledb_theory::schema::FieldId, ValueType)>>,
 }
 
-impl Program {
+impl PreparedBody {
     fn rules(&self) -> &[PreparedRule] {
         match self {
-            Self::Empty | Self::Fixpoint(_) => &[],
+            Self::Empty => &[],
             Self::Rules(rules) => rules,
+            Self::Reach(driver) => &driver.main,
         }
     }
 
-    /// Every prepared rule the program carries, across representations —
-    /// a fixpoint program's rules in predicate order. Cold surfaces only
-    /// (staleness, introspection headers, the batch-size test affordance).
-    fn all_rules(&self) -> Box<dyn Iterator<Item = &PreparedRule> + '_> {
+    fn rules_mut(&mut self) -> &mut [PreparedRule] {
         match self {
-            Self::Empty => Box::new(std::iter::empty()),
-            Self::Rules(rules) => Box::new(rules.iter()),
-            Self::Fixpoint(program) => {
-                Box::new(program.predicates.iter().flat_map(|pred| pred.rules.iter()))
+            Self::Empty => &mut [],
+            Self::Rules(rules) => rules,
+            Self::Reach(driver) => &mut driver.main,
+        }
+    }
+}
+
+impl<S> PreparedQuery<'_, S> {
+    fn visit_rules(&self, mut visit: impl FnMut(&PreparedRule)) {
+        for interior in &self.interiors {
+            for rule in &interior.rules {
+                visit(rule);
+            }
+        }
+        match &self.body {
+            PreparedBody::Empty => {}
+            PreparedBody::Rules(rules) => {
+                for rule in rules {
+                    visit(rule);
+                }
+            }
+            PreparedBody::Reach(driver) => {
+                for rule in &driver.base {
+                    visit(rule);
+                }
+                for rule in &driver.rec {
+                    visit(rule);
+                }
+                for rule in &driver.main {
+                    visit(rule);
+                }
             }
         }
     }
 
-    /// [`Program::all_rules`], mutably (the batch-size test affordance).
-    fn all_rules_mut(&mut self) -> Box<dyn Iterator<Item = &mut PreparedRule> + '_> {
-        match self {
-            Self::Empty => Box::new(std::iter::empty()),
-            Self::Rules(rules) => Box::new(rules.iter_mut()),
-            Self::Fixpoint(program) => Box::new(
-                program
-                    .predicates
-                    .iter_mut()
-                    .flat_map(|pred| pred.rules.iter_mut()),
-            ),
+    /// Every prepared rule this query carries — interiors, rec base/rec
+    /// arms, then main. Cold surfaces only (the batch-size test
+    /// affordance).
+    fn visit_rules_mut(&mut self, mut visit: impl FnMut(&mut PreparedRule)) {
+        for interior in &mut self.interiors {
+            for rule in &mut interior.rules {
+                visit(rule);
+            }
+        }
+        match &mut self.body {
+            PreparedBody::Empty => {}
+            PreparedBody::Rules(rules) => {
+                for rule in rules {
+                    visit(rule);
+                }
+            }
+            PreparedBody::Reach(driver) => {
+                for rule in &mut driver.base {
+                    visit(rule);
+                }
+                for rule in &mut driver.rec {
+                    visit(rule);
+                }
+                for rule in &mut driver.main {
+                    visit(rule);
+                }
+            }
         }
     }
 }
@@ -464,7 +520,7 @@ impl PreparedRule {
             Self::FreeJoin(rule) => &rule.finds,
             Self::KeyProbe(rule) => &rule.finds,
             // Variants project one head: any variant speaks for the rule.
-            Self::Recursive(rule) => &rule.variants[0].rule.finds,
+            Self::Recursive(rule) => &rule.variant.rule.finds,
         }
     }
 
@@ -474,7 +530,7 @@ impl PreparedRule {
             Self::KeyProbe(rule) => rule.plan.slot_count(),
             // One rule, one variable scope: every variant shares the
             // rule's slot layout (plans reorder nodes, never slots).
-            Self::Recursive(rule) => rule.variants[0].rule.plan.slot_count(),
+            Self::Recursive(rule) => rule.variant.rule.plan.slot_count(),
         }
     }
 
@@ -498,7 +554,7 @@ impl PreparedRule {
             // rule's slot layout (plans reorder nodes, never slots) —
             // and a recursive rule's head is projection-shaped anyway
             // (folds are refused through cycles).
-            Self::Recursive(rule) => &rule.variants[0].rule.dedup_spans,
+            Self::Recursive(rule) => &rule.variant.rule.dedup_spans,
         }
     }
 
@@ -508,7 +564,7 @@ impl PreparedRule {
             Self::KeyProbe(_) => &[],
             // Variants pin the same stored statistics (the same reads,
             // per variant): variant 0 speaks for the rule.
-            Self::Recursive(rule) => &rule.variants[0].rule.pinned,
+            Self::Recursive(rule) => &rule.variant.rule.pinned,
         }
     }
 }

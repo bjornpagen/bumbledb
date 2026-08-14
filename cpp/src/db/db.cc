@@ -12,7 +12,7 @@ import :write;
 import :prepared;
 import :snapshot;
 import :tx;
-import :foreign_program;
+import :query_view;
 import bumbledb_foreign;
 
 namespace bdb::detail {
@@ -271,14 +271,14 @@ public:
 
 	/**
 	 * Prepares one compile-time query value against this store. The
-	 * query already lowered to a static program-IR view graph during
+	 * query already lowered to a static query-IR view graph during
 	 * constant evaluation; the engine's IR validator remains the trust
 	 * boundary — compile-time validation supplements it, never replaces
 	 * it.
 	 */
 	template<auto Query>
 	[[nodiscard]] auto prepare() const -> std::expected<Prepared<Query>, Error> {
-		return handle_.prepare(foreign::program_of<Query>)
+		return handle_.prepare(foreign::query_of<Query>)
 		    .transform([](foreign::prepared_handle handle) {
 			    return Prepared<Query>{std::move(handle)};
 		    })

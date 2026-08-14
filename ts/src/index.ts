@@ -12,7 +12,8 @@
  * variables minted by `v()` and joined by OBJECT REFERENCE (reuse is the
  * join), the head a `find` RECORD whose keys name the answer columns
  * (renames are real), params still STRING-named, plus negation,
- * conditions, aggregates, and stratified recursion via `program()`/`rec` —
+ * conditions, aggregates, and interiors / one linear rec via
+ * `q.interior` / `q.recursive` —
  * `db.prepare` as a plain value; the comparison/connective builders are
  * also free exports, and the free names `eq`/`not`/`and`/`or` collide with
  * common host identifiers — import aliasing is the answer; the SDK does
@@ -109,13 +110,14 @@ export { bool, bytes, i64, interval, span, str, u64 } from "#fields.ts"
 export type { ClassesOf, ClassWall, LawfulStatements, RelationClasses, SchemaClasses } from "#law.ts"
 export { lower, lowerClosed, lowerRelation } from "#lower.ts"
 export type { KeyFact, Minted } from "#marshal.ts"
-export type { FactValue, ProgramIr, StatementKindTag } from "#native.ts"
+export type { FactValue, QueryIr, StatementKindTag } from "#native.ts"
 
 export type {
 	AnyCond,
 	BindingInput,
 	Cmp,
 	FindColumn,
+	InteriorData,
 	MatchShape,
 	NotAtom,
 	RecData,
@@ -127,8 +129,6 @@ export type { Agg, FindEntry } from "#query/find.ts"
 export type {
 	AnyQuery,
 	AnyRuleValue,
-	OutputRuleChain,
-	OutputRuleScope,
 	Query,
 	QueryData,
 	QueryParams,
@@ -137,15 +137,12 @@ export type {
 	QueryRuleChain,
 	QueryRuleScope,
 	QueryStart,
-	RecRef,
 	RecRuleChain,
 	RecRuleScope,
 	RuleValue,
 	TermOps
 } from "#query/lower.ts"
 export { lowerQuery, query } from "#query/lower.ts"
-export type { ProgramScope, Rec } from "#query/predicate.ts"
-export { program } from "#query/predicate.ts"
 export type {
 	ClassedField,
 	Duration,

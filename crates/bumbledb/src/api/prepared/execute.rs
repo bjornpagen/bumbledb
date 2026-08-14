@@ -1,4 +1,6 @@
-use super::{Answers, BindValue, KeyProbeRule, PreparedQuery, PreparedRule, Program, ValueType};
+use super::{
+    Answers, BindValue, KeyProbeRule, PreparedBody, PreparedQuery, PreparedRule, ValueType,
+};
 
 use crate::error::Result;
 use crate::exec::dispatch::execute_key_probe;
@@ -85,21 +87,25 @@ impl<S> PreparedQuery<'_, S> {
         // buffer IS the empty result (docs/architecture/40-execution.md
         // § access paths). Always the whole program: this variant is
         // built only when every rule died.
-        if matches!(self.program, Program::Empty) {
+        // Statically-empty **main** with no interiors: bind errors
+        // already surfaced; nothing to run. Interiors-only with a dead
+        // main still runs the preamble (an interior can be the only
+        // measure site).
+        if self.interiors.is_empty() && matches!(self.body, PreparedBody::Empty) {
             return Ok(());
         }
-        // The point fast lane, single-rule programs only: one probe, one
-        // fetch, cells decoded straight into the buffer — no sink, no
-        // bindings, no finalize pass. Aggregate-find key_probes (rare) and
-        // key-probe rules inside multi-rule programs keep the sink path (the
-        // union must hear them).
-        if matches!(
-            self.program.rules(),
-            [PreparedRule::KeyProbe(KeyProbeRule {
-                key_probe_finds: Some(_),
-                ..
-            })]
-        ) {
+        // The point fast lane: interiors empty AND a single main
+        // key-probe. A key-probe inside a multi-rule main or after
+        // interiors keeps the sink path.
+        if self.interiors.is_empty()
+            && matches!(
+                self.body.rules(),
+                [PreparedRule::KeyProbe(KeyProbeRule {
+                    key_probe_finds: Some(_),
+                    ..
+                })]
+            )
+        {
             return self.execute_key_probe_direct(txn, out);
         }
         // Phase attribution engages only under an active obs capture
@@ -151,28 +157,25 @@ impl<S> PreparedQuery<'_, S> {
         cache: &ImageCache,
         counters: &mut C,
     ) -> Result<bool> {
-        // A recursive program takes the per-stratum fixpoint driver
-        // (`fixpoint.rs`); the non-recursive rule loop below is
-        // untouched — the degenerate form never reaches the driver
-        // (`prepare_program` prepares a no-`Idb` program as its output
-        // predicate's query, byte for byte).
-        if matches!(self.program, Program::Fixpoint(_)) {
-            return self.run_fixpoint(txn, cache, counters);
+        // Interiors then rec (if any) then main. Interiors-only never
+        // enters the reach driver (`run_derived` branches on body).
+        if !self.interiors.is_empty() || matches!(self.body, PreparedBody::Reach(_)) {
+            let derived_ran = self.run_derived(txn, cache, counters)?;
+            if matches!(self.body, PreparedBody::Empty) {
+                return Ok(derived_ran);
+            }
+            // Rec present: main rules live on the driver; interiors-only
+            // falls through to the main rule loop below.
+        }
+        if matches!(self.body, PreparedBody::Empty) {
+            return Ok(false);
         }
         self.sink.reset();
         let mut ran = false;
-        let rule_count = self.program.rules().len();
+        let rule_count = self.body.rules().len();
         for rule_idx in 0..rule_count {
             ran |= self.run_rule(rule_idx, txn, cache, counters)?;
         }
-        // The ray-probe pass (the Kleene verdict algebra, ruled
-        // 2026-07-23, R6): the rules above never render Ray — measure
-        // filters and residuals drop rays, because a ray never Holds —
-        // so each written rule's probes enumerate its ray-carrying
-        // bindings here and the compiled fold arbitrates; the first
-        // Ray verdict is the typed `MeasureOfRay`. Skipped when
-        // nothing ran: a probe shares the short-circuited rule's
-        // selections and would empty identically.
         if ran {
             self.run_ray_probes(txn, cache, counters)?;
         }
@@ -274,28 +277,27 @@ impl<S> PreparedQuery<'_, S> {
         let seen_before = self.sink.distinct_seen().unwrap_or(0);
         // Re-aim per rule only where a switch exists: a single-rule sink
         // is built aimed, and the hot single-rule path stays untouched.
-        let rule_count = self.program.rules().len();
+        let rule_count = self.body.rules().len();
         if rule_count > 1 {
-            let rule = &self.program.rules()[rule_idx];
+            let rule = &self.body.rules()[rule_idx];
             self.sink
                 .aim(rule.finds(), rule.slot_count(), rule.dedup_spans());
         }
-        // The rule-shared binding-slot scratch, sized to this rule's
-        // layout (capacity is the high-water across all rules).
-        let slot_count = self.program.rules()[rule_idx].slot_count();
+        let slot_count = self.body.rules()[rule_idx].slot_count();
         self.bindings.resize(slot_count);
         // The fully-latched fast path: zero pending literals and zero
         // params of any shape means the resolved tables were written
         // once and are final — `resolve_filters` is skipped entirely
         // (one cold branch; the latch only removes work).
+        self.fill_main_images(rule_idx);
+        let occ_images = std::mem::take(&mut self.derived.occ_images);
+        let mut retired = std::mem::take(&mut self.derived.retired);
         let fast_eligible = self.unresolved_literals == 0 && self.params.is_empty();
         let mut latched = 0u32;
-        let Program::Rules(rules) = &mut self.program else {
-            return Ok(false);
-        };
+        let rules = self.body.rules_mut();
         let ran = match &mut rules[rule_idx] {
             PreparedRule::Recursive(_) => {
-                unreachable!("recursive rules run under the fixpoint driver, never the rule loop")
+                unreachable!("recursive rules run under the reach driver, never the main rule loop")
             }
             PreparedRule::KeyProbe(rule) => {
                 execute_key_probe(
@@ -346,7 +348,6 @@ impl<S> PreparedQuery<'_, S> {
                     // the hot path. No `Idb` image slice (and so no
                     // retired-buffer pool): a query-path plan carries
                     // only stored occurrences.
-                    let mut no_retired = Vec::new();
                     match &mut self.sink {
                         super::EitherSink::Projection(s) => run_join(
                             plan,
@@ -358,8 +359,8 @@ impl<S> PreparedQuery<'_, S> {
                             &rule.resolved_filters,
                             &rule.resolved_selections,
                             &mut rule.memo,
-                            &[],
-                            &mut no_retired,
+                            &occ_images,
+                            &mut retired,
                             s,
                             counters,
                         )?,
@@ -373,8 +374,8 @@ impl<S> PreparedQuery<'_, S> {
                             &rule.resolved_filters,
                             &rule.resolved_selections,
                             &mut rule.memo,
-                            &[],
-                            &mut no_retired,
+                            &occ_images,
+                            &mut retired,
                             s.as_mut(),
                             counters,
                         )?,
@@ -397,6 +398,8 @@ impl<S> PreparedQuery<'_, S> {
         // real seen-set delta — the honest args there are (0, 0).
         rule_span.set_args(emitted, emitted.saturating_sub(newly_seen));
         self.unresolved_literals = self.unresolved_literals.saturating_sub(latched);
+        self.derived.occ_images = occ_images;
+        self.derived.retired = retired;
         Ok(ran)
     }
 
@@ -409,7 +412,7 @@ impl<S> PreparedQuery<'_, S> {
                 key_probe_finds: Some(key_probe_finds),
                 ..
             }),
-        ] = self.program.rules()
+        ] = self.body.rules()
         else {
             return Ok(());
         };

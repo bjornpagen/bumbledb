@@ -1,74 +1,65 @@
-//! The conformance lane's RECURSIVE arm (the shipping law,
+//! The conformance lane's REACH arm (the shipping law,
 //! `docs/architecture/60-validation.md` § the two oracles):
-//! `evalProgram` — the proved fueled fixpoint,
-//! `lean/Bumbledb/Exec/Fixpoint.lean: program_eval_sound` — judges the
-//! same program cases the naive fixpoint and the `SQLite` recursive
-//! lane already agree on: the THIRD oracle was wired for recursion
-//! before the engine ran one program, and now holds the landed
-//! fixpoint driver to the same cases.
+//! `evalQueryList` — interiors then rec lfp then main,
+//! `lean/Bumbledb/Exec/Reach.lean` — judges the same Query cases the
+//! naive eval and the `SQLite` recursive lane already agree on.
 //!
-//! One `program-*.json` case per document (format:
-//! `lean/conformance/README.md` § program cases): the shared
-//! theory/instance blocks, the program (predicates as `{arity, rules}`,
-//! rule heads as plain variable-id lists — `PRule.finds : List VarId`),
-//! the recorded stratification witness (the Rust side computes ONE
-//! witness, `NaiveDb`'s relaxation; the denotation is
-//! witness-independent — the recorded narrowing in `Exec/Fixpoint.lean`),
-//! and the agreed answers.
+//! One `reach-*.json` case per document (format:
+//! `lean/conformance/README.md` § reach cases): the shared
+//! theory/instance blocks, the Query (`interiors` / `rec` / main
+//! `rules`; atoms `edb` / `interior`), and the agreed answers. No
+//! `predicates` / `output` / `strata` / `idb`.
 //!
-//! ## Scope fences (counted in [`ProgramReport`], never silent)
+//! ## Scope fences (counted in [`ReachReport`], never silent)
 //!
-//! * **Folds excluded**: `PRule.finds` is a variable list — the Lean
-//!   program cut is projection-shaped (fold-over-recursive coverage is
-//!   the naive lane's alone, exactly as `Pack` is on the query side).
-//! * **`SQLite` parity asserted where the `WITH RECURSIVE` gate
-//!   admits** ([`crate::translate::sqlite_program_expressible`]): an
-//!   expressible case is written only after naive and `SQLite` agree
-//!   (a disagreement panics — a trophy). Mutual and non-linear cases
-//!   are naive-attested and still written: the Lean side judges them
-//!   too, which is precisely the coverage `SQLite` cannot give.
+//! * **Folds excluded**: Lean reach rules are projection-shaped
+//!   (`finds : List VarId`). Fold-over-rec coverage is the naive
+//!   lane's alone.
+//! * **`SQLite` parity asserted where the translator admits**
+//!   ([`crate::translate::sqlite_reach_expressible`]): an expressible
+//!   case is written only after naive and `SQLite` agree (a
+//!   disagreement panics — a trophy). Interval-typed derived columns
+//!   are the remaining translator limit; the generator's rec corpus
+//!   is scalar-shaped.
 //! * The query lane's slow/wide budgets apply unchanged.
 //!
-//! The corpus programs read the org tree only (`Org`, `OrgParent` —
-//! closure sizes bounded by construction, the generator's own rule),
-//! asserted per case so the `SQLite` twin world stays two tables.
+//! The corpus queries read the org tree only (`Org`, `OrgParent`).
 
 use std::collections::BTreeSet;
 use std::fmt::Write as _;
 use std::time::Instant;
 
 use bumbledb::ir::FindTerm;
-use bumbledb::{AtomSource, Program, RelationId, Rule, Term, Value};
+use bumbledb::{AtomSource, InteriorId, Query, Rec, RelationId, Rule, Term, Value};
 
 use crate::corpus_gen::Rng;
 use crate::naive::Tuple;
 use crate::querygen::{self, target};
-use crate::translate::{Inexpressible, sqlite_program_expressible, translate_program};
+use crate::translate::{Inexpressible, sqlite_reach_expressible, translate_query};
 
 use super::{
     MAX_ANSWER_ROWS, NAIVE_BUDGET_MS, World, push_condition, push_fact, push_term, strings_block,
     world_blocks,
 };
 
-/// The seeded program-case target (hand cases ride on top).
-pub const PROGRAM_SEEDED_CASES: usize = 24;
+/// The seeded reach-case target (hand cases ride on top).
+pub const REACH_SEEDED_CASES: usize = 20;
 
 /// Per-case seed base for the recursive arm — disjoint from the query
 /// lane's, recorded in each case's provenance for the replay.
-pub const PROGRAM_CASE_SEED_BASE: u64 = 0x0014_0000;
+pub const REACH_CASE_SEED_BASE: u64 = 0x0014_0000;
 
 /// The recursive arm's coverage report — every exclusion named and
 /// counted (the no-silent-caps rule).
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub struct ProgramReport {
-    /// Candidate programs attempted.
+pub struct ReachReport {
+    /// Candidate queries attempted.
     pub attempted: u64,
     /// Cases written to the corpus.
     pub written: u64,
-    /// Written cases the `SQLite` lane also attested (the rest are
-    /// naive-attested: mutual and non-linear shapes).
+    /// Written cases the `SQLite` lane also attested.
     pub sqlite_attested: u64,
-    /// A fold-bearing program — outside `PRule`'s projection shape.
+    /// A fold-bearing query — outside Lean's projection shape.
     pub excluded_fold: u64,
     /// Naive wall time over the query lane's budget.
     pub excluded_slow: u64,
@@ -76,12 +67,12 @@ pub struct ProgramReport {
     pub excluded_wide: u64,
 }
 
-impl ProgramReport {
+impl ReachReport {
     /// The coverage line the builder and comparator log.
     #[must_use]
     pub fn coverage_line(&self) -> String {
         format!(
-            "conformance recursive arm: {}/{} written ({} sqlite-attested; excluded: \
+            "conformance reach arm: {}/{} written ({} sqlite-attested; excluded: \
              {} fold, {} slow, {} wide)",
             self.written,
             self.attempted,
@@ -93,39 +84,53 @@ impl ProgramReport {
     }
 }
 
-/// The stored relations a program mentions (`Edb` atoms, positive and
+/// The stored relations a query mentions (`Edb` atoms, positive and
 /// negated).
-fn program_mentioned(program: &Program) -> BTreeSet<RelationId> {
+fn query_mentioned(query: &Query) -> BTreeSet<RelationId> {
     let mut set = BTreeSet::new();
-    for def in &program.predicates {
-        for rule in &def.rules {
+    let mut visit = |rules: &[Rule]| {
+        for rule in rules {
             for atom in rule.atoms.iter().chain(&rule.negated) {
                 if let AtomSource::Edb(relation) = atom.source {
                     set.insert(relation);
                 }
             }
         }
+    };
+    for interior in &query.interiors {
+        visit(&interior.rules);
     }
+    if let Some(rec) = &query.rec {
+        visit(&rec.base);
+        visit(&rec.rec);
+    }
+    visit(&query.rules);
     set
 }
 
-/// Whether any rule carries a fold — outside the Lean program cut's
+fn all_rules(query: &Query) -> impl Iterator<Item = &Rule> {
+    query
+        .interiors
+        .iter()
+        .flat_map(|interior| interior.rules.iter())
+        .chain(query.rec.iter().flat_map(|rec| rec.base.iter().chain(&rec.rec)))
+        .chain(query.rules.iter())
+}
+
+/// Whether any rule carries a fold — outside the Lean reach cut's
 /// projection shape (module doc).
-fn carries_fold(program: &Program) -> bool {
-    program.predicates.iter().any(|def| {
-        def.rules.iter().any(|rule| {
-            rule.finds.iter().any(|find| {
-                matches!(
-                    find,
-                    FindTerm::Aggregate { .. } | FindTerm::AggregateMeasure { .. }
-                )
-            })
+fn carries_fold(query: &Query) -> bool {
+    all_rules(query).any(|rule| {
+        rule.finds.iter().any(|find| {
+            matches!(
+                find,
+                FindTerm::Aggregate { .. } | FindTerm::AggregateMeasure { .. }
+            )
         })
     })
 }
 
-/// Serializes one program rule (`finds` as the plain variable-id list —
-/// `PRule.finds : List VarId`).
+/// Serializes one reach rule (`finds` as the plain variable-id list).
 fn push_rule(
     world: &World,
     used: &mut BTreeSet<u64>,
@@ -141,7 +146,7 @@ fn push_rule(
             FindTerm::Var(var) => {
                 let _ = write!(out, "{}", var.0);
             }
-            other => unreachable!("fold-bearing programs are excluded before render: {other:?}"),
+            other => unreachable!("fold-bearing queries are excluded before render: {other:?}"),
         }
     }
     out.push_str("],\"atoms\":[");
@@ -149,14 +154,14 @@ fn push_rule(
         if position > 0 {
             out.push(',');
         }
-        push_program_atom(world, used, out, atom)?;
+        push_reach_atom(world, used, out, atom)?;
     }
     out.push_str("],\"negated\":[");
     for (position, atom) in rule.negated.iter().enumerate() {
         if position > 0 {
             out.push(',');
         }
-        push_program_atom(world, used, out, atom)?;
+        push_reach_atom(world, used, out, atom)?;
     }
     out.push_str("],\"conditions\":[");
     for (position, tree) in rule.conditions.iter().enumerate() {
@@ -169,9 +174,25 @@ fn push_rule(
     Ok(())
 }
 
-/// Serializes one program atom: the source arm spelled (`edb`/`idb`),
-/// bindings as the query lane's `[field, term]` pairs.
-fn push_program_atom(
+fn push_rules(
+    world: &World,
+    used: &mut BTreeSet<u64>,
+    out: &mut String,
+    rules: &[Rule],
+) -> Result<(), super::Exclusion> {
+    out.push('[');
+    for (position, rule) in rules.iter().enumerate() {
+        if position > 0 {
+            out.push(',');
+        }
+        push_rule(world, used, out, rule)?;
+    }
+    out.push(']');
+    Ok(())
+}
+
+/// Serializes one reach atom: the source arm spelled (`edb`/`interior`).
+fn push_reach_atom(
     world: &World,
     used: &mut BTreeSet<u64>,
     out: &mut String,
@@ -181,8 +202,8 @@ fn push_program_atom(
         AtomSource::Edb(relation) => {
             let _ = write!(out, "{{\"edb\":{},\"bindings\":[", relation.0);
         }
-        AtomSource::Idb(pred) => {
-            let _ = write!(out, "{{\"idb\":{},\"bindings\":[", pred.0);
+        AtomSource::Interior(InteriorId(id)) => {
+            let _ = write!(out, "{{\"interior\":{id},\"bindings\":[");
         }
     }
     for (index, (field, term)) in atom.bindings.iter().enumerate() {
@@ -197,41 +218,47 @@ fn push_program_atom(
     Ok(())
 }
 
-/// Serializes one full program-case document (module doc: the shared
-/// world blocks, the program, the recorded stratification witness, the
-/// agreed answers).
-fn render_program_case(
+fn push_rec(
+    world: &World,
+    used: &mut BTreeSet<u64>,
+    out: &mut String,
+    rec: &Rec,
+) -> Result<(), super::Exclusion> {
+    let _ = write!(out, "{{\"arity\":{},\"base\":", rec.head.len());
+    push_rules(world, used, out, &rec.base)?;
+    out.push_str(",\"rec\":");
+    push_rules(world, used, out, &rec.rec)?;
+    out.push('}');
+    Ok(())
+}
+
+/// Serializes one full reach-case document.
+fn render_reach_case(
     world: &World,
     name: &str,
     provenance: &str,
-    program: &Program,
+    query: &Query,
     answers: &BTreeSet<Tuple>,
 ) -> Result<String, super::Exclusion> {
     let mut used = BTreeSet::new();
 
-    let mut program_block = String::from("{\"predicates\":[\n");
-    for (index, def) in program.predicates.iter().enumerate() {
+    let mut query_block = String::from("{\"interiors\":[");
+    for (index, interior) in query.interiors.iter().enumerate() {
         if index > 0 {
-            program_block.push_str(",\n");
+            query_block.push(',');
         }
-        let _ = write!(program_block, "{{\"arity\":{},\"rules\":[", def.head.len());
-        program_block.push('\n');
-        for (position, rule) in def.rules.iter().enumerate() {
-            if position > 0 {
-                program_block.push_str(",\n");
-            }
-            push_rule(world, &mut used, &mut program_block, rule)?;
-        }
-        program_block.push_str("\n]}");
+        let _ = write!(query_block, "{{\"arity\":{},\"rules\":", interior.head.len());
+        push_rules(world, &mut used, &mut query_block, &interior.rules)?;
+        query_block.push('}');
     }
-    let strata = crate::naive::query::model_strata(program);
-    let strata_block: Vec<String> = strata.iter().map(ToString::to_string).collect();
-    let _ = write!(
-        program_block,
-        "\n],\"output\":{},\"strata\":[{}]}}",
-        program.output.0,
-        strata_block.join(",")
-    );
+    query_block.push_str("],\"rec\":");
+    match &query.rec {
+        Some(rec) => push_rec(world, &mut used, &mut query_block, rec)?,
+        None => query_block.push_str("null"),
+    }
+    let _ = write!(query_block, ",\"arity\":{},\"rules\":", query.head.len());
+    push_rules(world, &mut used, &mut query_block, &query.rules)?;
+    query_block.push('}');
 
     let mut rows: Vec<String> = Vec::with_capacity(answers.len());
     for tuple in answers {
@@ -243,53 +270,53 @@ fn render_program_case(
     let answers_block = if rows.is_empty() {
         String::from("[]")
     } else {
-        format!("[\n{}\n]", rows.join(",\n"))
+        format!("[{}]", rows.join(","))
     };
 
     let (relations_block, instance_block, axioms_block) =
-        world_blocks(world, &mut used, program_mentioned(program))?;
+        world_blocks(world, &mut used, query_mentioned(query))?;
     let strings_block = strings_block(world, &used);
 
     Ok(format!(
         "{{\n\"case\":\"{name}\",\n\"provenance\":{provenance},\n\"strings\":{strings_block},\n\
          \"theory\":{{\"relations\":{relations_block},\n\"ground_axioms\":{axioms_block}}},\n\
-         \"instance\":{instance_block},\n\"program\":{program_block},\n\"params\":[],\n\
+         \"instance\":{instance_block},\n\"query\":{query_block},\n\"params\":[],\n\
          \"answers\":{answers_block}\n}}\n"
     ))
 }
 
-/// One candidate program through the pipeline: naive (timed, budgeted),
-/// the `SQLite` twin where the gate admits (agreement asserted — a
-/// disagreement is a TROPHY and panics), then the serialized document
-/// or the counted exclusion.
+/// One candidate query through the pipeline: naive (timed, budgeted),
+/// the `SQLite` twin where the translator admits (agreement asserted —
+/// a disagreement is a TROPHY and panics), then the serialized
+/// document or the counted exclusion.
 ///
 /// # Panics
 ///
-/// On a naive-vs-`SQLite` disagreement, or a program mentioning
+/// On a naive-vs-`SQLite` disagreement, or a query mentioning
 /// relations outside the org tree (the corpus fence, module doc).
-fn one_program_case(
+fn one_reach_case(
     world: &World,
     name: &str,
     provenance: &str,
-    program: &Program,
-    report: &mut ProgramReport,
+    query: &Query,
+    report: &mut ReachReport,
 ) -> Option<String> {
     report.attempted += 1;
-    if carries_fold(program) {
+    if carries_fold(query) {
         report.excluded_fold += 1;
         return None;
     }
     assert!(
-        program_mentioned(program)
+        query_mentioned(query)
             .iter()
             .all(|relation| *relation == target::ids::ORG || *relation == target::ids::ORG_PARENT),
-        "program case {name} leaves the org tree — the corpus fence"
+        "reach case {name} leaves the org tree — the corpus fence"
     );
     let started = Instant::now();
     let answers = world
         .naive
-        .program(program, &[])
-        .expect("org-tree programs raise no runtime error");
+        .query(query, &[])
+        .expect("org-tree queries raise no runtime error");
     let naive_ms = started.elapsed().as_millis();
     if naive_ms > NAIVE_BUDGET_MS {
         report.excluded_slow += 1;
@@ -299,42 +326,33 @@ fn one_program_case(
         report.excluded_wide += 1;
         return None;
     }
-    // The engine leg, mirroring the query and judgment arms: the landed
-    // fixpoint driver is held to every corpus case on build AND replay
-    // (finding 070 — the lane names itself three-way; now it is).
-    let engine = crate::differential::engine_program(&world.db, program, &[]);
+    let engine = crate::differential::engine_query(&world.db, query, &[]);
     assert_eq!(
         engine,
         crate::differential::Answers::Ok(answers.clone()),
-        "TROPHY (engine vs naive) on program case {name}: triage per the fuzzing \
-         charter\n{program:#?}"
+        "TROPHY (engine vs naive) on reach case {name}: triage per the fuzzing \
+         charter\n{query:#?}"
     );
-    match sqlite_program_expressible(program) {
+    match sqlite_reach_expressible(query, target::schema()) {
         Ok(()) => {
-            let sqlite = sqlite_answers(world, program);
+            let sqlite = sqlite_answers(world, query);
             assert_eq!(
                 sqlite, answers,
-                "TROPHY (naive vs SQLite) on program case {name}: triage per the fuzzing \
-                 charter\n{program:#?}"
+                "TROPHY (naive vs SQLite) on reach case {name}: triage per the fuzzing \
+                 charter\n{query:#?}"
             );
             report.sqlite_attested += 1;
         }
-        Err(
-            Inexpressible::MutualRecursion
-            | Inexpressible::NonLinearRecursion
-            | Inexpressible::RecursiveFold,
-        ) => {}
-        Err(other) => unreachable!("program routing hit a judgment class: {other:?}"),
+        Err(Inexpressible::IntervalDerivedColumn) => {}
+        Err(other) => unreachable!("reach routing hit a judgment class: {other:?}"),
     }
-    let document = render_program_case(world, name, provenance, program, &answers)
-        .expect("org-tree programs stay inside the format");
+    let document = render_reach_case(world, name, provenance, query, &answers)
+        .expect("org-tree queries stay inside the format");
     report.written += 1;
     Some(document)
 }
 
-/// The `SQLite` twin: the org tables mirrored fresh from the corpus
-/// stream, the translated `WITH RECURSIVE` executed.
-fn sqlite_answers(world: &World, program: &Program) -> BTreeSet<Tuple> {
+fn sqlite_answers(world: &World, query: &Query) -> BTreeSet<Tuple> {
     let conn = rusqlite::Connection::open_in_memory().expect("sqlite");
     for statement in crate::sqlmap::schema_ddl(target::schema()) {
         conn.execute(&statement, []).expect("ddl");
@@ -349,8 +367,8 @@ fn sqlite_answers(world: &World, program: &Program) -> BTreeSet<Tuple> {
             .expect("insert");
         }
     }
-    let translated = translate_program(program, target::schema(), &[]).expect("translates");
-    let arity = program.predicates[usize::from(program.output.0)].head.len();
+    let translated = translate_query(query, target::schema(), &[]).expect("translates");
+    let arity = query.head.len();
     let mut statement = conn.prepare(&translated.sql).expect("prepare");
     let rows = statement
         .query_map([], |row| {
@@ -365,17 +383,15 @@ fn sqlite_answers(world: &World, program: &Program) -> BTreeSet<Tuple> {
     rows.map(|row| row.expect("row decodes")).collect()
 }
 
-/// One hand-picked program case.
-struct HandProgram {
+struct HandReach {
     name: &'static str,
-    program: Program,
+    query: Query,
 }
 
-/// The hand roster: the ancestor closure whole, negation of the
-/// finished closure stratum, and the mutual even/odd pair (naive- and
-/// Lean-judged — the coverage `SQLite` cannot give).
-fn hand_programs() -> Vec<HandProgram> {
-    use bumbledb::{Atom, FieldId, HeadTerm, PredId, PredicateDef, VarId};
+/// The hand roster: the ancestor closure whole, and negation of the
+/// finished rec in main. Mutual is unwritable this cut.
+fn hand_queries() -> Vec<HandReach> {
+    use bumbledb::{Atom, FieldId, HeadTerm, VarId};
     let v = |id: u16| Term::Var(VarId(id));
     let fv = |id: u16| FindTerm::Var(VarId(id));
     let edge = |child: Term, parent: Term| Atom {
@@ -385,8 +401,8 @@ fn hand_programs() -> Vec<HandProgram> {
             (target::ids::org_parent::PARENT, parent),
         ],
     };
-    let idb = |pred: u16, bindings: Vec<(u16, Term)>| Atom {
-        source: AtomSource::Idb(PredId(pred)),
+    let interior = |id: u32, bindings: Vec<(u16, Term)>| Atom {
+        source: AtomSource::Interior(InteriorId(id)),
         bindings: bindings
             .into_iter()
             .map(|(field, term)| (FieldId(field), term))
@@ -398,109 +414,81 @@ fn hand_programs() -> Vec<HandProgram> {
         negated,
         conditions: vec![],
     };
-    let closure = PredicateDef {
+    let rec = Rec {
         head: vec![HeadTerm::Var, HeadTerm::Var],
-        rules: vec![
-            rule(vec![fv(0), fv(1)], vec![edge(v(0), v(1))], vec![]),
-            rule(
-                vec![fv(0), fv(2)],
-                vec![edge(v(0), v(1)), idb(0, vec![(0, v(1)), (1, v(2))])],
-                vec![],
-            ),
-        ],
+        base: vec![rule(vec![fv(0), fv(1)], vec![edge(v(0), v(1))], vec![])],
+        rec: vec![rule(
+            vec![fv(0), fv(2)],
+            vec![edge(v(0), v(1)), interior(0, vec![(0, v(1)), (1, v(2))])],
+            vec![],
+        )],
     };
     vec![
-        HandProgram {
-            name: "program-hand-closure",
-            program: Program {
-                predicates: vec![closure.clone()],
-                output: PredId(0),
+        HandReach {
+            name: "reach-hand-closure",
+            query: Query {
+                interiors: vec![],
+                rec: Some(rec.clone()),
+                head: vec![HeadTerm::Var, HeadTerm::Var],
+                rules: vec![rule(
+                    vec![fv(0), fv(1)],
+                    vec![interior(0, vec![(0, v(0)), (1, v(1))])],
+                    vec![],
+                )],
             },
         },
-        HandProgram {
-            name: "program-hand-unreached",
-            program: Program {
-                predicates: vec![
-                    closure,
-                    PredicateDef {
-                        head: vec![HeadTerm::Var],
-                        rules: vec![rule(
-                            vec![fv(0)],
-                            vec![Atom {
-                                source: AtomSource::Edb(target::ids::ORG),
-                                bindings: vec![(target::ids::org::ID, v(0))],
-                            }],
-                            vec![idb(0, vec![(1, v(0))])],
-                        )],
-                    },
-                ],
-                output: PredId(1),
-            },
-        },
-        HandProgram {
-            name: "program-hand-mutual",
-            program: Program {
-                predicates: vec![
-                    PredicateDef {
-                        head: vec![HeadTerm::Var, HeadTerm::Var],
-                        rules: vec![rule(
-                            vec![fv(0), fv(2)],
-                            vec![edge(v(0), v(1)), idb(1, vec![(0, v(1)), (1, v(2))])],
-                            vec![],
-                        )],
-                    },
-                    PredicateDef {
-                        head: vec![HeadTerm::Var, HeadTerm::Var],
-                        rules: vec![
-                            rule(vec![fv(0), fv(1)], vec![edge(v(0), v(1))], vec![]),
-                            rule(
-                                vec![fv(0), fv(2)],
-                                vec![edge(v(0), v(1)), idb(0, vec![(0, v(1)), (1, v(2))])],
-                                vec![],
-                            ),
-                        ],
-                    },
-                ],
-                output: PredId(1),
+        HandReach {
+            name: "reach-hand-unreached",
+            query: Query {
+                interiors: vec![],
+                rec: Some(rec),
+                head: vec![HeadTerm::Var],
+                rules: vec![rule(
+                    vec![fv(0)],
+                    vec![Atom {
+                        source: AtomSource::Edb(target::ids::ORG),
+                        bindings: vec![(target::ids::org::ID, v(0))],
+                    }],
+                    vec![interior(0, vec![(1, v(0))])],
+                )],
             },
         },
     ]
 }
 
-/// The recursive corpus, deterministically: the hand programs, then
-/// seeded generator programs (replayed from `Rng::new(case_seed)`,
-/// recorded in provenance) until [`PROGRAM_SEEDED_CASES`] are written.
-/// Returns the report and the `(file name, document)` pairs.
+/// The recursive corpus, deterministically: the hand queries, then
+/// seeded generator queries (replayed from `Rng::new(case_seed)`,
+/// recorded in provenance) until [`REACH_SEEDED_CASES`] are written.
 ///
 /// # Panics
 ///
-/// On a naive-vs-`SQLite` trophy ([`one_program_case`]).
+/// On a naive-vs-`SQLite` trophy ([`one_reach_case`]).
 #[must_use]
-pub fn generate_program_corpus(world: &World) -> (ProgramReport, Vec<(String, String)>) {
-    let mut report = ProgramReport::default();
+pub fn generate_reach_corpus(world: &World) -> (ReachReport, Vec<(String, String)>) {
+    let mut report = ReachReport::default();
     let mut cases: Vec<(String, String)> = Vec::new();
-    for hand in hand_programs() {
+    for hand in hand_queries() {
         let provenance = format!(
             "{{\"hand\":\"{}\",\"world_seed\":{}}}",
             hand.name, world.cfg.seed
         );
-        let document = one_program_case(world, hand.name, &provenance, &hand.program, &mut report)
-            .unwrap_or_else(|| panic!("hand program {} must be expressible", hand.name));
+        let document = one_reach_case(world, hand.name, &provenance, &hand.query, &mut report)
+            .unwrap_or_else(|| panic!("hand query {} must be expressible", hand.name));
         cases.push((format!("{}.json", hand.name), document));
     }
     let mut attempt = 0u64;
     let mut written = 0usize;
-    while written < PROGRAM_SEEDED_CASES {
-        let case_seed = PROGRAM_CASE_SEED_BASE + attempt;
+    while written < REACH_SEEDED_CASES {
+        let case_seed = REACH_CASE_SEED_BASE + attempt;
         attempt += 1;
         let mut rng = Rng::new(case_seed);
-        let (program, variant) = querygen::random_program(&mut rng, world.cfg);
-        let name = format!("program-seeded-{written:04}");
+        let (query, variant) = querygen::random_reach_query(&mut rng, world.cfg);
+        let name = format!("reach-seeded-{written:04}");
         let provenance = format!(
             "{{\"world_seed\":{},\"case_seed\":{case_seed},\"variant\":\"{variant:?}\"}}",
             world.cfg.seed
         );
-        if let Some(document) = one_program_case(world, &name, &provenance, &program, &mut report) {
+        if let Some(document) = one_reach_case(world, &name, &provenance, &query, &mut report) {
             cases.push((format!("{name}.json"), document));
             written += 1;
         }
@@ -508,18 +496,16 @@ pub fn generate_program_corpus(world: &World) -> (ProgramReport, Vec<(String, St
     (report, cases)
 }
 
-/// Regenerates the `program-*.json` cases in place, leaving the query
-/// and judgment cases untouched — the recursive arm regenerates
-/// independently (its generator and format can move without
-/// re-measuring the query lane's wall-clock budgets).
+/// Regenerates the `reach-*.json` cases in place, leaving the query
+/// and judgment cases untouched.
 ///
 /// # Panics
 ///
 /// On filesystem failures, or a naive-vs-`SQLite` trophy.
 #[must_use = "the coverage report is the recorded number"]
-pub fn write_program_corpus(dir: &std::path::Path) -> ProgramReport {
+pub fn write_reach_corpus(dir: &std::path::Path) -> ReachReport {
     let world = super::build_world(super::WORLD_SEEDS[0]);
-    let (report, cases) = generate_program_corpus(&world);
+    let (report, cases) = generate_reach_corpus(&world);
     std::fs::create_dir_all(dir).expect("create the corpus directory");
     for entry in std::fs::read_dir(dir).expect("list the corpus directory") {
         let path = entry.expect("corpus dir entry").path();
@@ -527,54 +513,53 @@ pub fn write_program_corpus(dir: &std::path::Path) -> ProgramReport {
             && path
                 .file_name()
                 .and_then(|name| name.to_str())
-                .is_some_and(|name| name.starts_with("program-"));
+                .is_some_and(|name| name.starts_with("reach-"));
         if stale {
-            std::fs::remove_file(&path).expect("clear a stale program case");
+            std::fs::remove_file(&path).expect("clear a stale reach case");
         }
     }
     for (name, document) in &cases {
-        std::fs::write(dir.join(name), document).expect("write a program case");
+        std::fs::write(dir.join(name), document).expect("write a reach case");
     }
     report
 }
 
-/// One program case's fresh document from its recorded provenance —
+/// One reach case's fresh document from its recorded provenance —
 /// the replay half ([`super::replay_checked_in_corpus`] dispatches
-/// `program-*` files here). Naive re-runs fresh, the `SQLite` parity
-/// re-asserts where expressible, and the caller holds the bytes.
-pub(super) fn replay_program_case(
+/// `reach-*` files here).
+pub(super) fn replay_reach_case(
     worlds: &mut std::collections::BTreeMap<u64, World>,
     name: &str,
     text: &str,
 ) -> String {
-    let parsed = crate::json::parse(text).expect("a program case parses as JSON");
+    let parsed = crate::json::parse(text).expect("a reach case parses as JSON");
     let provenance = parsed
         .get("provenance")
-        .expect("a program case records provenance");
+        .expect("a reach case records provenance");
     let world_seed = super::read_u64(provenance, "world_seed");
     let world = worlds
         .entry(world_seed)
         .or_insert_with(|| super::build_world(world_seed));
-    let (program, provenance_line) = if provenance.get("hand").and_then(crate::json::Value::as_str)
+    let (query, provenance_line) = if provenance.get("hand").and_then(crate::json::Value::as_str)
         == Some(name)
     {
-        let hand = hand_programs()
+        let hand = hand_queries()
             .into_iter()
             .find(|hand| hand.name == name)
-            .unwrap_or_else(|| panic!("unknown hand program {name}: stale corpus"));
+            .unwrap_or_else(|| panic!("unknown hand reach {name}: stale corpus"));
         let line = format!("{{\"hand\":\"{name}\",\"world_seed\":{world_seed}}}");
-        (hand.program, line)
+        (hand.query, line)
     } else {
         let case_seed = super::read_u64(provenance, "case_seed");
         let mut rng = Rng::new(case_seed);
-        let (program, variant) = querygen::random_program(&mut rng, world.cfg);
+        let (query, variant) = querygen::random_reach_query(&mut rng, world.cfg);
         let line = format!(
             "{{\"world_seed\":{world_seed},\"case_seed\":{case_seed},\"variant\":\"{variant:?}\"}}"
         );
-        (program, line)
+        (query, line)
     };
-    let mut report = ProgramReport::default();
-    one_program_case(world, name, &provenance_line, &program, &mut report).unwrap_or_else(|| {
-        panic!("program case {name}: excluded on replay — stale corpus or trophy")
+    let mut report = ReachReport::default();
+    one_reach_case(world, name, &provenance_line, &query, &mut report).unwrap_or_else(|| {
+        panic!("reach case {name}: excluded on replay — stale corpus or trophy")
     })
 }

@@ -155,7 +155,7 @@ pub struct PlanOccurrence {
     /// (`docs/architecture/20-query-ir.md` § engine recursion's consumer
     /// guards): an
     /// `Edb` occurrence binds through the image cache and the view memo
-    /// as ever; an `Idb` occurrence binds to the fixpoint driver's
+    /// as ever; an `Interior` occurrence binds to the fixpoint driver's
     /// per-round transient image (`api/prepared/run_join.rs` — never
     /// the cache, never the memo), its `spans` derived from the target
     /// predicate's sealed signature columns.
@@ -218,19 +218,19 @@ pub struct PlanOccurrence {
 impl PlanOccurrence {
     /// The stored relation this occurrence reads — for callers whose
     /// occurrences are stored-relation-only by their own prior guard
-    /// (the key-probe classifier refuses `Idb` rules before minting a
+    /// (the key-probe classifier refuses `Interior` rules before minting a
     /// [`KeyProbePlan`]). Source-aware consumers match on
     /// [`PlanOccurrence::source`].
     ///
     /// # Panics
     ///
-    /// On an `Idb` occurrence — the caller asserted a stored-relation
+    /// On an `Interior` occurrence — the caller asserted a stored-relation
     /// occurrence.
     #[must_use]
     pub fn relation(&self) -> RelationId {
         match self.source {
             crate::ir::AtomSource::Edb(relation) => relation,
-            crate::ir::AtomSource::Idb(_) => {
+            crate::ir::AtomSource::Interior(_) => {
                 unreachable!("caller asserted a stored-relation (Edb) occurrence")
             }
         }

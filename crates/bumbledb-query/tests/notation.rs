@@ -209,17 +209,6 @@ fn pin<S: Theory + Copy>(tag: &str, theory: S, query: &Query) -> String {
     render(&schema, query)
 }
 
-/// [`pin`]'s program twin: prepared through the program boundary, then
-/// rendered by `render_program` (interior predicates `p{id}`, output
-/// bare).
-fn pin_program<S: Theory + Copy>(tag: &str, theory: S, program: &bumbledb::Program) -> String {
-    let dir = TempDir::new(tag);
-    let db = Db::create(dir.path(), theory).expect("create the theory's store");
-    db.prepare(program).expect("the golden program validates");
-    let schema: Schema = theory.descriptor().validate().expect("a landed theory");
-    bumbledb::ir::render::render_program(&schema, program)
-}
-
 /// The calendar union example: Busy ∪ Ooo is
 /// the Claim relation's two arms — two rules, one head, a window param.
 /// The qualified handle spelling (`ClaimKind::Busy`) resolves through the
@@ -475,57 +464,52 @@ fn scalar_comparisons_round_trip() {
     );
 }
 
-/// The named-head program (the notation's recursion form): named heads
-/// declare predicates, a body atom names one (bare idents bind head
-/// POSITIONS, ordered dense — left to right from 0, positional never
-/// nominal), and bare rules ARE the output. The org-hierarchy closure
-/// over `OrgParent`, rendered: interior rules carry the synthesized
-/// `p0` name, output rules render bare, dense predicate atoms render
-/// as bare idents — and that normalized text reparses to the same
-/// bytes.
-const ORG_REACH_NORMALIZED: &str = "p0(v0, v1) | OrgParent(child: v0, parent: v1);\n\
-     p0(v0, v2) | OrgParent(child: v0, parent: v1), p0(v1, v2);\n\
+/// The `recursive` form (the notation's one linear rec): consecutive
+/// `recursive` lines union into one Rec (a line whose body names the
+/// pred is a rec arm, else base); bare rules are main. The org-hierarchy
+/// closure over `OrgParent`, rendered: rec rules carry the synthesized
+/// `p0` name under `recursive`, main rules render bare, dense interior
+/// atoms render as bare idents — and that normalized text reparses to
+/// the same bytes.
+const ORG_REACH_NORMALIZED: &str = "recursive p0(v0, v1) | OrgParent(child: v0, parent: v1);\n\
+     recursive p0(v0, v2) | OrgParent(child: v0, parent: v1), p0(v1, v2);\n\
      (v0, v1) | p0(v0, v1);";
 
 #[test]
-fn named_head_program_golden() {
+fn recursive_reach_golden() {
     let reachable = query!(Ledger {
-        reach(c, a) | OrgParent(child: c, parent: a);
-        reach(c, a) | OrgParent(child: c, parent: m), reach(m, a);
+        recursive reach(c, a) | OrgParent(child: c, parent: a);
+        recursive reach(c, a) | OrgParent(child: c, parent: m), reach(m, a);
         (c, a) | reach(c, a);
     });
-    assert_eq!(
-        pin_program("org-reach", Ledger, &reachable),
-        ORG_REACH_NORMALIZED
-    );
+    assert_eq!(pin("org-reach", Ledger, &reachable), ORG_REACH_NORMALIZED);
 }
 
 #[test]
-fn named_head_normalized_text_is_a_fixed_point() {
+fn recursive_normalized_text_is_a_fixed_point() {
     let reparsed = query!(Ledger {
-        p0(v0, v1) | OrgParent(child: v0, parent: v1);
-        p0(v0, v2) | OrgParent(child: v0, parent: v1), p0(v1, v2);
+        recursive p0(v0, v1) | OrgParent(child: v0, parent: v1);
+        recursive p0(v0, v2) | OrgParent(child: v0, parent: v1), p0(v1, v2);
         (v0, v1) | p0(v0, v1);
     });
     assert_eq!(
-        pin_program("org-reach-fixed-point", Ledger, &reparsed),
+        pin("org-reach-fixed-point", Ledger, &reparsed),
         ORG_REACH_NORMALIZED
     );
 }
 
-/// The program lowering pinned as data: predicate names are macro-local
-/// and never enter the IR — the emitted value carries bare `PredId`s,
-/// `Idb` sources, and head-position `FieldId`s, exactly what a host
-/// writes by hand. The ordered dense spelling IS that lowering:
-/// `reach(m, a)` is bindings `[(0, m), (1, a)]`, positions left to
-/// right from 0.
+/// The recursive lowering pinned as data: names are macro-local and
+/// never enter the IR — the emitted value carries bare `InteriorId`s,
+/// `Interior` sources, and head-position `FieldId`s. The rec id is
+/// `InteriorId(interiors.len())`. The ordered dense spelling IS that
+/// lowering: `reach(m, a)` is bindings `[(0, m), (1, a)]`.
 #[test]
-fn named_head_program_lowers_to_the_exact_ir() {
+fn recursive_lowers_to_the_exact_ir() {
     use bumbledb::ir::HeadTerm;
-    use bumbledb::{Atom, AtomSource, FieldId, FindTerm, PredId, Rule, Term, VarId};
+    use bumbledb::{Atom, AtomSource, FieldId, FindTerm, InteriorId, Rec, Rule, Term, VarId};
     let lowered = query!(Ledger {
-        reach(c, a) | OrgParent(child: c, parent: a);
-        reach(c, a) | OrgParent(child: c, parent: m), reach(m, a);
+        recursive reach(c, a) | OrgParent(child: c, parent: a);
+        recursive reach(c, a) | OrgParent(child: c, parent: m), reach(m, a);
         (c, a) | reach(c, a);
     });
     let parent_atom = |child: u16, parent: u16| Atom {
@@ -536,7 +520,7 @@ fn named_head_program_lowers_to_the_exact_ir() {
         ],
     };
     let reach_atom = |a: u16, b: u16| Atom {
-        source: AtomSource::Idb(PredId(0)),
+        source: AtomSource::Interior(InteriorId(0)),
         bindings: vec![
             (FieldId(0), Term::Var(VarId(a))),
             (FieldId(1), Term::Var(VarId(b))),
@@ -548,43 +532,34 @@ fn named_head_program_lowers_to_the_exact_ir() {
         negated: vec![],
         conditions: vec![],
     };
-    let expected = bumbledb::Program {
-        predicates: vec![
-            bumbledb::PredicateDef {
-                head: vec![HeadTerm::Var, HeadTerm::Var],
-                rules: vec![
-                    rule([0, 1], vec![parent_atom(0, 1)]),
-                    rule([0, 2], vec![parent_atom(0, 1), reach_atom(1, 2)]),
-                ],
-            },
-            bumbledb::PredicateDef {
-                head: vec![HeadTerm::Var, HeadTerm::Var],
-                rules: vec![rule([0, 1], vec![reach_atom(0, 1)])],
-            },
-        ],
-        output: PredId(1),
+    let expected = bumbledb::Query {
+        interiors: vec![],
+        rec: Some(Rec {
+            head: vec![HeadTerm::Var, HeadTerm::Var],
+            base: vec![rule([0, 1], vec![parent_atom(0, 1)])],
+            rec: vec![rule([0, 2], vec![parent_atom(0, 1), reach_atom(1, 2)])],
+        }),
+        head: vec![HeadTerm::Var, HeadTerm::Var],
+        rules: vec![rule([0, 1], vec![reach_atom(0, 1)])],
     };
     assert_eq!(lowered, expected);
 }
 
-/// Named params get dense ids by first occurrence in SOURCE order,
-/// query-global — never by group-emission order (finding 015): rules of
-/// one predicate may interleave around another group, the host binds
-/// positionally against the text it wrote, and a permutation between
-/// same-typed params is silent wrong bindings no roster can catch.
-/// `?root` (source-first, in the output rule) must take id 0 even though
-/// the `reach` group emits first.
+/// Named params get dense ids by first occurrence in IR walk order —
+/// interiors, then rec base, then rec arms, then main. Consecutive
+/// `recursive` lines union; non-consecutive reuse is a compile error, so
+/// groups cannot interleave around main.
 #[test]
-fn interleaved_groups_mint_param_ids_in_source_order() {
+fn rec_then_main_mint_param_ids_in_walk_order() {
     use bumbledb::ir::HeadTerm;
     use bumbledb::{
-        Atom, AtomSource, CmpOp, Comparison, ConditionTree, FieldId, FindTerm, ParamId, PredId,
-        Rule, Term, VarId,
+        Atom, AtomSource, CmpOp, Comparison, ConditionTree, FieldId, FindTerm, InteriorId, ParamId,
+        Rec, Rule, Term, VarId,
     };
     let lowered = query!(Ledger {
-        reach(c, a) | OrgParent(child: c, parent: a);
+        recursive reach(c, a) | OrgParent(child: c, parent: a);
+        recursive reach(c, a) | OrgParent(child: c, parent: m), reach(m, a), a != ?skip;
         (c, a) | reach(c, a), c == ?root;
-        reach(c, a) | OrgParent(child: c, parent: m), reach(m, a), a != ?skip;
     });
     let parent_atom = |child: u16, parent: u16| Atom {
         source: AtomSource::Edb(Ledger::ORG_PARENT),
@@ -594,7 +569,7 @@ fn interleaved_groups_mint_param_ids_in_source_order() {
         ],
     };
     let reach_atom = |a: u16, b: u16| Atom {
-        source: AtomSource::Idb(PredId(0)),
+        source: AtomSource::Interior(InteriorId(0)),
         bindings: vec![
             (FieldId(0), Term::Var(VarId(a))),
             (FieldId(1), Term::Var(VarId(b))),
@@ -613,31 +588,25 @@ fn interleaved_groups_mint_param_ids_in_source_order() {
         negated: vec![],
         conditions,
     };
-    let expected = bumbledb::Program {
-        predicates: vec![
-            bumbledb::PredicateDef {
-                head: vec![HeadTerm::Var, HeadTerm::Var],
-                rules: vec![
-                    rule([0, 1], vec![parent_atom(0, 1)], vec![]),
-                    rule(
-                        [0, 2],
-                        vec![parent_atom(0, 1), reach_atom(1, 2)],
-                        // `?skip` is second in source order: ParamId(1).
-                        vec![cond(CmpOp::Ne, 2, 1)],
-                    ),
-                ],
-            },
-            bumbledb::PredicateDef {
-                head: vec![HeadTerm::Var, HeadTerm::Var],
-                rules: vec![rule(
-                    [0, 1],
-                    vec![reach_atom(0, 1)],
-                    // `?root` is first in source order: ParamId(0).
-                    vec![cond(CmpOp::Eq, 0, 0)],
-                )],
-            },
-        ],
-        output: PredId(1),
+    let expected = bumbledb::Query {
+        interiors: vec![],
+        rec: Some(Rec {
+            head: vec![HeadTerm::Var, HeadTerm::Var],
+            base: vec![rule([0, 1], vec![parent_atom(0, 1)], vec![])],
+            rec: vec![rule(
+                [0, 2],
+                vec![parent_atom(0, 1), reach_atom(1, 2)],
+                // rec arms walk before main: `?skip` is ParamId(0).
+                vec![cond(CmpOp::Ne, 2, 0)],
+            )],
+        }),
+        head: vec![HeadTerm::Var, HeadTerm::Var],
+        rules: vec![rule(
+            [0, 1],
+            vec![reach_atom(0, 1)],
+            // `?root` in main is second: ParamId(1).
+            vec![cond(CmpOp::Eq, 0, 1)],
+        )],
     };
     assert_eq!(lowered, expected);
 }
@@ -645,27 +614,24 @@ fn interleaved_groups_mint_param_ids_in_source_order() {
 /// The indexed spellings survive for what the ordered form cannot say —
 /// sparse positions (`2: x`), position selections (`1 == …`), and
 /// position set membership (`0 in ?p`) — and render as `i:`/selection
-/// forms while dense predicate atoms render bare. Both normalized texts
+/// forms while dense interior atoms render bare. Both normalized texts
 /// reparse to their own bytes: the fixed-point law holds on both sides
-/// of the split.
+/// of the split. `interior` is the non-recursive derived table.
 #[test]
 fn sparse_and_selection_positions_round_trip() {
     let sparse = query!(Ledger {
-        posted(id, account, amount) | Posting(id, account, amount);
+        interior posted(id, account, amount) | Posting(id, account, amount);
         (x) | posted(2: x, 0 in ?wanted);
     });
-    let sparse_normalized = "p0(v0, v1, v2) | Posting(id: v0, account: v1, amount: v2);\n\
+    let sparse_normalized = "interior p0(v0, v1, v2) | Posting(id: v0, account: v1, amount: v2);\n\
          (v0) | p0(2: v0, 0 in ?0);";
-    assert_eq!(
-        pin_program("sparse-positions", Ledger, &sparse),
-        sparse_normalized
-    );
+    assert_eq!(pin("sparse-positions", Ledger, &sparse), sparse_normalized);
     let sparse_reparsed = query!(Ledger {
-        p0(v0, v1, v2) | Posting(id: v0, account: v1, amount: v2);
+        interior p0(v0, v1, v2) | Posting(id: v0, account: v1, amount: v2);
         (v0) | p0(2: v0, 0 in ?0);
     });
     assert_eq!(
-        pin_program("sparse-positions-fixed-point", Ledger, &sparse_reparsed),
+        pin("sparse-positions-fixed-point", Ledger, &sparse_reparsed),
         sparse_normalized
     );
 
@@ -673,21 +639,21 @@ fn sparse_and_selection_positions_round_trip() {
     // written qualified; the renderer prints the row id by value (the
     // handle's home is the field-carrying selection form).
     let selected = query!(Ledger {
-        acct(id, currency) | Account(id, currency);
+        interior acct(id, currency) | Account(id, currency);
         (a) | acct(0: a, 1 == Currency::Usd);
     });
-    let selected_normalized = "p0(v0, v1) | Account(id: v0, currency: v1);\n\
+    let selected_normalized = "interior p0(v0, v1) | Account(id: v0, currency: v1);\n\
          (v0) | p0(0: v0, 1 == 0);";
     assert_eq!(
-        pin_program("selected-positions", Ledger, &selected),
+        pin("selected-positions", Ledger, &selected),
         selected_normalized
     );
     let selected_reparsed = query!(Ledger {
-        p0(v0, v1) | Account(id: v0, currency: v1);
+        interior p0(v0, v1) | Account(id: v0, currency: v1);
         (v0) | p0(0: v0, 1 == 0);
     });
     assert_eq!(
-        pin_program("selected-positions-fixed-point", Ledger, &selected_reparsed),
+        pin("selected-positions-fixed-point", Ledger, &selected_reparsed),
         selected_normalized
     );
 }
@@ -893,5 +859,57 @@ fn interval_literals_compile_prepare_and_render() {
     assert_eq!(
         pin("interval-literal-eq", IntervalLit, &eq),
         "(v0) | R(x: v0, w == 1..2);"
+    );
+}
+
+/// Primer-shaped cycle detector: linear `reach(from, to)` with extra EDB
+/// on the step arm; main is `reach(x, x)` — a join of the finished rec,
+/// not a second SCC. Empty answers = DAG. In-tree lock; the Primer repo
+/// recut is out of this cut.
+mod primer {
+    bumbledb::schema! {
+        pub Primer;
+
+        closed relation State as StateId = { Upheld, Broken };
+
+        relation Grp {
+            id: u64 as GrpId, fresh,
+        }
+        relation Produces {
+            grp: u64 as GrpId,
+            capability: u64,
+        }
+        relation Requires {
+            consumer: u64 as GrpId,
+            capability: u64,
+            state: u64 as StateId,
+        }
+
+        Produces(grp) <= Grp(id);
+        Requires(consumer) <= Grp(id);
+        Requires(state) <= State(id);
+    }
+}
+
+use primer::{Primer, State};
+
+#[test]
+fn primer_shaped_reach_diagonal_golden() {
+    let cycle = query!(Primer {
+        recursive reach(from, to) | Produces(grp: from, capability: cap),
+            Requires(consumer: to, capability: cap, state == State::Upheld), from != to;
+        recursive reach(from, to) | Produces(grp: from, capability: cap),
+            Requires(consumer: mid, capability: cap, state == State::Upheld),
+            Requires(consumer: to, state == State::Upheld), from != mid, reach(mid, to);
+        (node) | Grp(id: node), reach(node, node);
+    });
+    assert_eq!(
+        pin("primer-reach-diagonal", Primer, &cycle),
+        "recursive p0(v0, v2) | Produces(grp: v0, capability: v1), \
+Requires(consumer: v2, capability: v1, state == Upheld), v0 != v2;\n\
+recursive p0(v0, v3) | Produces(grp: v0, capability: v1), \
+Requires(consumer: v2, capability: v1, state == Upheld), \
+Requires(consumer: v3, state == Upheld), p0(v2, v3), v0 != v2;\n\
+(v0) | Grp(id: v0), p0(v0, v0);"
     );
 }

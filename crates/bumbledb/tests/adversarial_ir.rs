@@ -22,8 +22,8 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use bumbledb::{
     AggOp, AllenMask, Atom, AtomSource, CmpOp, Comparison, ConditionTree, Db, FieldId, FindTerm,
-    MAX_CONDITION_DEPTH, MAX_RULES, ParamId, PredId, PredicateDef, Program, Query, RelationId,
-    Rule, Term, Value, VarId,
+    HeadTerm, Interior, InteriorId, MAX_CONDITION_DEPTH, MAX_RULES, ParamId, Query, Rec,
+    RelationId, Rule, Term, Value, VarId,
 };
 
 mod common;
@@ -167,19 +167,18 @@ fn atom(rng: &mut Rng) -> Atom {
     }
 }
 
-/// Mostly stored relations; sometimes a predicate source — in range,
-/// just past, or absurd — so the sweep drives the program roster (the
-/// well-formedness screen, the strata judge, the signature fixpoint)
-/// and the fixpoint prepare pipeline with hostile `Idb` shapes too.
+/// Mostly stored relations; sometimes an interior source — in range,
+/// just past, or absurd — so the sweep drives the interior roster
+/// (unknown id, not-prior, overflow) with hostile `Interior` shapes too.
 fn atom_source(rng: &mut Rng) -> AtomSource {
     if rng.chance(4) {
-        let pred = match rng.below(4) {
+        let id = match rng.below(4) {
             0 => 0,
             1 => 1,
             2 => 4,
-            _ => u16::MAX,
+            _ => u32::MAX,
         };
-        AtomSource::Idb(PredId(pred))
+        AtomSource::Interior(InteriorId(id))
     } else {
         AtomSource::Edb(relation_id(rng))
     }
@@ -273,24 +272,39 @@ fn random_query(rng: &mut Rng) -> Query {
             .map(|_| find_term(rng).head_term())
             .collect(),
     };
-    Query { head, rules }
+    Query {
+        interiors: if rng.chance(4) {
+            (0..rng.below(4)).map(|_| random_interior(rng)).collect()
+        } else {
+            vec![]
+        },
+        rec: if rng.chance(5) {
+            Some(random_rec(rng))
+        } else {
+            None
+        },
+        head,
+        rules,
+    }
 }
 
-fn random_program(rng: &mut Rng) -> Program {
-    let predicates = (0..rng.below(4))
-        .map(|_| {
-            let rules: Vec<Rule> = (0..rng.below(3)).map(|_| random_rule(rng)).collect();
-            let head = match rules.first() {
-                Some(rule) if rng.chance(2) => rule.head(),
-                _ => (0..rng.below(4))
-                    .map(|_| find_term(rng).head_term())
-                    .collect(),
-            };
-            PredicateDef { head, rules }
-        })
-        .collect();
-    let output = PredId(u16::try_from(rng.below(5)).expect("small"));
-    Program { predicates, output }
+fn random_interior(rng: &mut Rng) -> Interior {
+    Interior {
+        head: (0..rng.below(3))
+            .map(|_| find_term(rng).head_term())
+            .collect(),
+        rules: (0..rng.below(3)).map(|_| random_rule(rng)).collect(),
+    }
+}
+
+fn random_rec(rng: &mut Rng) -> Rec {
+    Rec {
+        head: (0..rng.below(3))
+            .map(|_| find_term(rng).head_term())
+            .collect(),
+        base: (0..rng.below(3)).map(|_| random_rule(rng)).collect(),
+        rec: (0..rng.below(3)).map(|_| random_rule(rng)).collect(),
+    }
 }
 
 // --- the mutation lane -------------------------------------------------
@@ -335,6 +349,8 @@ fn plausible_query(rng: &mut Rng) -> Query {
             let busy = projection(BUSY, Gauntlet::BUSY_PERSON, Gauntlet::BUSY_DURING);
             let ooo = projection(OOO, Gauntlet::OOO_PERSON, Gauntlet::OOO_DURING);
             Query {
+                interiors: vec![],
+                rec: None,
                 head: busy.head(),
                 rules: vec![busy, ooo],
             }
@@ -632,40 +648,33 @@ fn adversarial_ir_never_panics() {
     assert_eq!(ok + rejected, SWEEP);
 }
 
-/// The program half of the sweep (validation totality on hostile
-/// `Program` data — the trust-boundary law extended to the R1 cut):
-/// random programs over hostile predicate/relation ids in one lane, and
-/// plausible queries embedded as programs with injected `Idb` reads in
-/// the other, driven through `Db::prepare`. Every outcome must
-/// be `Ok` or a typed error — an accepted `Idb`-carrying program now
-/// runs the whole per-predicate prepare pipeline (delta variants
-/// included), so the sweep covers the planner side of recursion too.
+/// Hostile Query interiors and rec: random interiors/rec plus plausible
+/// queries with injected Interior reads, driven through `Db::prepare`.
+/// Every outcome must be `Ok` or a typed error — never a panic, never
+/// `TooManyCtes` (that name is gone; interior count is uncapped).
 #[test]
-fn adversarial_program_never_panics() {
-    let dir = common::TempDir::new("adversarial-program");
+fn adversarial_query_with_interiors_never_panics() {
+    let dir = common::TempDir::new("adversarial-interiors");
     let db = Db::create(dir.path(), Gauntlet).expect("create");
 
     let mut ok = 0u64;
     let mut rejected = 0u64;
     for seed in 0..SWEEP / 2 {
         let mut rng = Rng::new(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15));
-        let program = if seed % 2 == 0 {
-            random_program(&mut rng)
+        let query = if seed % 2 == 0 {
+            random_query(&mut rng)
         } else {
             let mut query = plausible_query(&mut rng);
             for _ in 0..rng.below(3) {
                 mutate(&mut rng, &mut query);
             }
-            let mut program = Program::from(query);
             if rng.chance(2) {
-                // Inject a predicate read — self-recursion or a phantom
-                // target — into a random rule position.
-                let target = PredId(u16::try_from(rng.below(3)).expect("small"));
+                let target = InteriorId(u32::try_from(rng.below(3)).expect("small"));
                 let read = Atom {
-                    source: AtomSource::Idb(target),
+                    source: AtomSource::Interior(target),
                     bindings: vec![(FieldId(0), Term::Var(VarId(0)))],
                 };
-                let rules = &mut program.predicates[0].rules;
+                let rules = &mut query.rules;
                 let slot =
                     usize::try_from(rng.below(u64::try_from(rules.len()).expect("small").max(1)))
                         .expect("small");
@@ -677,28 +686,97 @@ fn adversarial_program_never_panics() {
                     }
                 }
             }
-            program
+            if rng.chance(3) {
+                query.interiors.push(random_interior(&mut rng));
+            }
+            if rng.chance(4) {
+                query.rec = Some(random_rec(&mut rng));
+            }
+            query
         };
-        let outcome = catch_unwind(AssertUnwindSafe(|| db.prepare(&program).map(|_| ())));
+        let rendered = db.render_query(&query);
+        let outcome = catch_unwind(AssertUnwindSafe(|| db.prepare(&query).map(|_| ())));
         #[expect(
             clippy::match_wild_err_arm,
             reason = "the test intentionally rejects every non-target error uniformly"
         )]
         match outcome {
             Ok(Ok(())) => ok += 1,
-            Ok(Err(_)) => rejected += 1,
+            Ok(Err(err)) => {
+                let msg = format!("{err:?}");
+                assert!(
+                    !msg.contains("TooManyCtes"),
+                    "TooManyCtes must not return (seed {seed}): {err}"
+                );
+                rejected += 1;
+            }
             Err(_) => panic!(
-                "prepare panicked on program IR data (seed {seed}) — the trust-boundary                  law is violated by:
-{program:#?}"
+                "prepare panicked on IR data (seed {seed}) — the trust-boundary law is \
+                 violated by:\n{rendered}\n{query:#?}"
             ),
         }
     }
-    assert!(ok > 0, "no generated program validated — vacuous sweep");
+    assert!(ok > 0, "no generated query validated — vacuous sweep");
     assert!(
         rejected > 0,
-        "no generated program was rejected — vacuous sweep"
+        "no generated query was rejected — vacuous sweep"
     );
     assert_eq!(ok + rejected, SWEEP / 2);
+}
+
+/// 100_000 interiors is legal if each list respects `MAX_RULES` — slow
+/// validate, not a typed `TooManyCtes`. Must not panic.
+#[test]
+fn a_hundred_thousand_interiors_is_not_too_many_ctes() {
+    use bumbledb::Theory;
+    use bumbledb::schema::ValidateDescriptor as _;
+    let schema = Gauntlet
+        .descriptor()
+        .validate()
+        .expect("the test schema is valid");
+    let rule = Rule {
+        finds: vec![FindTerm::Var(VarId(0))],
+        atoms: vec![Atom {
+            source: AtomSource::Edb(BUSY),
+            bindings: vec![(Gauntlet::BUSY_PERSON, Term::Var(VarId(0)))],
+        }],
+        negated: vec![],
+        conditions: vec![],
+    };
+    let interiors: Vec<Interior> = (0..100_000)
+        .map(|_| Interior {
+            head: vec![HeadTerm::Var],
+            rules: vec![rule.clone()],
+        })
+        .collect();
+    let query = Query {
+        interiors,
+        rec: None,
+        head: vec![HeadTerm::Var],
+        rules: vec![Rule {
+            finds: vec![FindTerm::Var(VarId(0))],
+            atoms: vec![Atom {
+                source: AtomSource::Interior(InteriorId(99_999)),
+                bindings: vec![(FieldId(0), Term::Var(VarId(0)))],
+            }],
+            negated: vec![],
+            conditions: vec![],
+        }],
+    };
+    let outcome = catch_unwind(AssertUnwindSafe(|| {
+        bumbledb::ir::validate::validate(&schema, &query).map(|_| ())
+    }));
+    match outcome {
+        Ok(Ok(())) => {}
+        Ok(Err(err)) => {
+            let msg = format!("{err:?}");
+            assert!(
+                !msg.contains("TooManyCtes"),
+                "100_000 interiors must not invent TooManyCtes: {err:?}"
+            );
+        }
+        Err(_) => panic!("validate panicked on interiors.len() == 100_000"),
+    }
 }
 
 /// Hostile nesting alone, far past the sweep's per-query depth: a deep

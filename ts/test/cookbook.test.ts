@@ -53,7 +53,6 @@ import {
 	not,
 	on,
 	pointIn,
-	program,
 	query,
 	ref,
 	relation,
@@ -913,50 +912,56 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 			const { child: c } = v(Parent)
 			return r.match(Parent, { child: c, parent: r.inSet("frontier") }).find({ c })
 		})
-		// The same closure, one stratified program under the fixpoint driver
-		// (?root seeds the predicate; the output is the finished set's own
-		// identity projection — an idb atom is a positive occurrence, so it
+		// The same closure, one query under the reach driver
+		// (?root seeds the rec; the main rule is the finished set's own
+		// identity projection — an interior atom is a positive occurrence, so it
 		// grounds its variables and no re-grounding join exists):
-		const reach = program(Closure, (p) => {
-			const rec = p.rec("reach")
-			const seeded = rec
-				.rule((r) => {
-					const { id: c } = v(Node)
-					return r
-						.match(Node, { id: c })
-						.where(eq(c, r.param("root")))
-						.find({ c })
-				})
-				.rule((r) => {
-					const { child: c, parent } = v(Parent)
-					return r.match(Parent, { child: c, parent }).idb(rec, { c: parent }).find({ c })
-				})
-			return p.output((r) => {
-				const { id: c } = v(Node)
-				return r.idb(seeded, { c }).find({ c })
+		const reach = query(Closure)
+			.recursive("reach", {
+				base: [
+					(r) => {
+						const { id: c } = v(Node)
+						return r
+							.match(Node, { id: c })
+							.where(eq(c, r.param("root")))
+							.find({ c })
+					}
+				],
+				rec: [
+					(r) => {
+						const { child: c, parent } = v(Parent)
+						return r.match(Parent, { child: c, parent }).interior("reach", { c: parent }).find({ c })
+					}
+				]
 			})
-		})
-		// The complement — negation OF the finished stratum is engine-legal
-		// (the strata judge refuses only negation *through* a cycle):
-		const unreached = program(Closure, (p) => {
-			const rec = p.rec("reach")
-			const seeded = rec
-				.rule((r) => {
-					const { id: c } = v(Node)
-					return r
-						.match(Node, { id: c })
-						.where(eq(c, r.param("root")))
-						.find({ c })
-				})
-				.rule((r) => {
-					const { child: c, parent } = v(Parent)
-					return r.match(Parent, { child: c, parent }).idb(rec, { c: parent }).find({ c })
-				})
-			return p.output((r) => {
+			.rule((r) => {
 				const { id: c } = v(Node)
-				return r.match(Node, { id: c }).where(r.not(seeded, { c })).find({ c })
+				return r.interior("reach", { c }).find({ c })
 			})
-		})
+		// The complement — negation OF the finished rec is engine-legal
+		// (negation in rec is refused):
+		const unreached = query(Closure)
+			.recursive("reach", {
+				base: [
+					(r) => {
+						const { id: c } = v(Node)
+						return r
+							.match(Node, { id: c })
+							.where(eq(c, r.param("root")))
+							.find({ c })
+					}
+				],
+				rec: [
+					(r) => {
+						const { child: c, parent } = v(Parent)
+						return r.match(Parent, { child: c, parent }).interior("reach", { c: parent }).find({ c })
+					}
+				]
+			})
+			.rule((r) => {
+				const { id: c } = v(Node)
+				return r.match(Node, { id: c }).where(r.not("reach", { c })).find({ c })
+			})
 
 		const { db } = await admit("r24-closure", Closure)
 		const stepPrepared = db.prepare(step)
@@ -1004,7 +1009,7 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 		assert.deepEqual(
 			sorted(complement),
 			sorted(everyNode.filter((id) => !seen.has(id))),
-			"negation of the finished stratum answers the complement"
+			"negation of the finished rec answers the complement"
 		)
 	})
 
@@ -1029,30 +1034,33 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 			const { id, minor } = v(Posting)
 			return r.match(Posting, { id, account: r.inSet("subtree"), minor }).find({ total: r.sum(minor) })
 		})
-		// The engine-native form: the closure stratum converges first, then the
-		// output's fold runs once over the finished subtree.
-		const nativeRollup = program(Accounts, (p) => {
-			const sub = p.rec("sub")
-			const seeded = sub
-				.rule((r) => {
-					const { id: a } = v(Account)
-					return r
-						.match(Account, { id: a })
-						.where(eq(a, r.param("root")))
-						.find({ a })
-				})
-				.rule((r) => {
-					const { child: a, parent } = v(AccountParent)
-					return r.match(AccountParent, { child: a, parent }).idb(sub, { a: parent }).find({ a })
-				})
-			return p.output((r) => {
+		// The engine-native form: the rec converges first, then the
+		// main fold runs once over the finished subtree.
+		const nativeRollup = query(Accounts)
+			.recursive("sub", {
+				base: [
+					(r) => {
+						const { id: a } = v(Account)
+						return r
+							.match(Account, { id: a })
+							.where(eq(a, r.param("root")))
+							.find({ a })
+					}
+				],
+				rec: [
+					(r) => {
+						const { child: a, parent } = v(AccountParent)
+						return r.match(AccountParent, { child: a, parent }).interior("sub", { a: parent }).find({ a })
+					}
+				]
+			})
+			.rule((r) => {
 				const { id, account: a, minor } = v(Posting)
 				return r
 					.match(Posting, { id, account: a, minor })
-					.idb(seeded, { a })
+					.interior("sub", { a })
 					.find({ total: r.sum(minor) })
 			})
-		})
 
 		const { db } = await admit("r25-accounts", Accounts)
 		assert.ok(db.prepare(frontierStep))

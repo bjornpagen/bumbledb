@@ -5,7 +5,7 @@
 //! corpus world whose EDGE SHAPES are the point — one deep chain (the
 //! depth axis: one new tuple per round, the round-overhead price) and
 //! one wide tree (the fanout axis: frontier width, few rounds) — driven
-//! through `Db::prepare` (`AtomSource::Idb`, the delta-variant
+//! through `Db::prepare` (`AtomSource::Interior`, the delta-variant
 //! plans, the finished-image slot) against `SQLite`'s recursive CTE.
 //!
 //! Discipline mirrors the primary suite: seeded corpus regenerated per
@@ -23,8 +23,8 @@ use bumbledb::schema::ValidateDescriptor as _;
 use std::path::Path;
 
 use bumbledb::{
-    Answers, Atom, Db, FindTerm, ParamId, PredId, PredicateDef, Program, RelationId, Rule, Term,
-    Value, VarId,
+    Answers, Atom, Db, FindTerm, InteriorId, ParamId, Query, Rec, RelationId, Rule, Term, Value,
+    VarId,
 };
 
 use crate::corpus_gen::{GenConfig, Scale};
@@ -169,73 +169,63 @@ pub fn relation_rows(sizes: ClosSizes, rel: RelationId) -> Box<dyn Iterator<Item
     }
 }
 
-/// The transitive-closure program from a param anchor:
+/// The transitive-closure query from a param anchor:
 /// `Reach(x) | Edge(src = ?0, dst = x);
 ///  Reach(y) | Reach(x), Edge(src = x, dst = y);
-///  Q(x) | Reach(x)` — the recursive interior under a non-recursive
-/// output reading the FINISHED closure (the finished-image slot), the
-/// exact shape the alloc gate pins.
+///  Q(x) | Reach(x)` — identity main over the finished rec.
 #[must_use]
-pub fn closure_program() -> Program {
+pub fn closure_query() -> Query {
     use bumbledb::ir::{AtomSource, HeadTerm};
     let edge = |src: Term, dst: Term| Atom {
         source: AtomSource::Edb(ids::EDGE),
         bindings: vec![(ids::edge::SRC, src), (ids::edge::DST, dst)],
     };
-    Program {
-        predicates: vec![
-            PredicateDef {
-                head: vec![HeadTerm::Var],
-                rules: vec![
-                    Rule {
-                        finds: vec![FindTerm::Var(VarId(0))],
-                        atoms: vec![edge(Term::Param(ParamId(0)), Term::Var(VarId(0)))],
-                        negated: vec![],
-                        conditions: vec![],
-                    },
-                    Rule {
-                        finds: vec![FindTerm::Var(VarId(1))],
-                        atoms: vec![
-                            Atom {
-                                source: AtomSource::Idb(PredId(0)),
-                                bindings: vec![(bumbledb::FieldId(0), Term::Var(VarId(0)))],
-                            },
-                            edge(Term::Var(VarId(0)), Term::Var(VarId(1))),
-                        ],
-                        negated: vec![],
-                        conditions: vec![],
-                    },
-                ],
-            },
-            PredicateDef {
-                head: vec![HeadTerm::Var],
-                rules: vec![Rule {
-                    finds: vec![FindTerm::Var(VarId(0))],
-                    atoms: vec![Atom {
-                        source: AtomSource::Idb(PredId(0)),
+    Query {
+        interiors: vec![],
+        rec: Some(Rec {
+            head: vec![HeadTerm::Var],
+            base: vec![Rule {
+                finds: vec![FindTerm::Var(VarId(0))],
+                atoms: vec![edge(Term::Param(ParamId(0)), Term::Var(VarId(0)))],
+                negated: vec![],
+                conditions: vec![],
+            }],
+            rec: vec![Rule {
+                finds: vec![FindTerm::Var(VarId(1))],
+                atoms: vec![
+                    Atom {
+                        source: AtomSource::Interior(InteriorId(0)),
                         bindings: vec![(bumbledb::FieldId(0), Term::Var(VarId(0)))],
-                    }],
-                    negated: vec![],
-                    conditions: vec![],
-                }],
-            },
-        ],
-        output: PredId(1),
+                    },
+                    edge(Term::Var(VarId(0)), Term::Var(VarId(1))),
+                ],
+                negated: vec![],
+                conditions: vec![],
+            }],
+        }),
+        head: vec![HeadTerm::Var],
+        rules: vec![Rule {
+            finds: vec![FindTerm::Var(VarId(0))],
+            atoms: vec![Atom {
+                source: AtomSource::Interior(InteriorId(0)),
+                bindings: vec![(bumbledb::FieldId(0), Term::Var(VarId(0)))],
+            }],
+            negated: vec![],
+            conditions: vec![],
+        }],
     }
 }
 
 /// The recursive CTE the mirror runs — `UNION` (not `UNION ALL`) is the
-/// set-semantics twin of the fixpoint's seen-set.
+/// set-semantics twin of the rec's seen-set.
 pub const CLOSURE_SQL: &str = "WITH RECURSIVE reach(n) AS (SELECT \"dst\" FROM \"Edge\" WHERE \"src\" = ?1 UNION SELECT e.\"dst\" FROM \"Edge\" AS e, reach AS r WHERE e.\"src\" = r.n) SELECT n FROM reach";
 
-/// One closure family: a program (not a query — the recursion surface),
-/// its seeded anchors, and the hand-written recursive-CTE mirror (the
-/// translator cannot express `Idb` atoms; the hand SQL is the
-/// `free_busy` precedent, verified row-identical before any timing).
+/// One closure family: a Query (interiors empty, one rec, identity
+/// main), its seeded anchors, and the hand-written recursive-CTE mirror.
 pub struct ClosureFamily {
     pub name: &'static str,
     pub kind: Kind,
-    pub program: fn() -> Program,
+    pub query: fn() -> Query,
     pub params: fn(&GenConfig) -> Vec<Draw>,
     pub sql: &'static str,
     pub param_policy: &'static str,
@@ -280,7 +270,7 @@ pub fn all() -> &'static [ClosureFamily] {
         ClosureFamily {
             name: "closure_depth",
             kind: Kind::Report,
-            program: closure_program,
+            query: closure_query,
             params: depth_params,
             sql: CLOSURE_SQL,
             param_policy: "The chain head (chain-length rounds), the midpoint, the tail, + 1 miss.",
@@ -288,7 +278,7 @@ pub fn all() -> &'static [ClosureFamily] {
         ClosureFamily {
             name: "closure_fanout",
             kind: Kind::Report,
-            program: closure_program,
+            query: closure_query,
             params: fanout_params,
             sql: CLOSURE_SQL,
             param_policy: "The tree root (fanout^depth frontier), a depth-1 subtree, a leaf, + 1 miss.",
@@ -373,9 +363,9 @@ pub fn verify_family(
     family: &ClosureFamily,
     draws: &[Draw],
 ) -> Result<(), String> {
-    let program = (family.program)();
+    let query = (family.query)();
     let mut prepared = db
-        .prepare(&program)
+        .prepare(&query)
         .map_err(|e| format!("{}: prepare: {e:?}", family.name))?;
     let types: Vec<bumbledb::schema::ValueType> = prepared
         .predicate()
@@ -441,9 +431,9 @@ pub fn bench_families(
         // Verify before time — row-identical or refuse to measure.
         verify_family(&db, &conn, family, &draws)?;
 
-        let program = (family.program)();
+        let query = (family.query)();
         let mut prepared = db
-            .prepare(&program)
+            .prepare(&query)
             .map_err(|e| format!("{}: prepare: {e:?}", family.name))?;
         let mut rotation = Rotation::new(draws.clone());
         let mut buffer = Answers::new();
@@ -509,7 +499,7 @@ pub fn bench_families(
             theirs: theirs.stats,
             ratio_p50,
             alloc: alloc_report,
-            exec: None, // the profile path is query-shaped; programs skip it
+            exec: None, // the profile path is query-shaped; rec queries skip it
             ghz: Some(merged.into()),
             p50_norm: ours.p50_norm,
         });

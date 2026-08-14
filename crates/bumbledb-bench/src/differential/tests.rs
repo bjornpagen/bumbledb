@@ -482,6 +482,8 @@ fn queries() -> Vec<(Query, Vec<ParamValue>)> {
         // loop, differentially pinned against the model's set union).
         (
             Query {
+                interiors: vec![],
+                rec: None,
                 head: vec![HeadTerm::Var],
                 rules: vec![
                     Rule {
@@ -513,6 +515,8 @@ fn queries() -> Vec<(Query, Vec<ParamValue>)> {
         // 20-query-ir § aggregation).
         (
             Query {
+                interiors: vec![],
+                rec: None,
                 head: vec![
                     HeadTerm::Aggregate(HeadOp::Sum),
                     HeadTerm::Aggregate(HeadOp::Count),
@@ -546,6 +550,8 @@ fn queries() -> Vec<(Query, Vec<ParamValue>)> {
         // reads the shared slot).
         (
             Query {
+                interiors: vec![],
+                rec: None,
                 head: vec![HeadTerm::Var],
                 rules: vec![
                     Rule {

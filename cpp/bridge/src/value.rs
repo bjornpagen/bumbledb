@@ -322,8 +322,7 @@ pub(crate) fn bind_value(value: &Value) -> BridgeResult<BindValue<'_>> {
         Value::U64(v) => BindValue::U64(*v),
         Value::I64(v) => BindValue::I64(*v),
         Value::String(bytes) => BindValue::Str(
-            std::str::from_utf8(bytes)
-                .map_err(|_| fail_shape("non-UTF-8 string param"))?,
+            std::str::from_utf8(bytes).map_err(|_| fail_shape("non-UTF-8 string param"))?,
         ),
         Value::FixedBytes(bytes) => BindValue::FixedBytes(bytes),
         Value::IntervalU64(interval) => BindValue::IntervalU64(interval.start(), interval.end()),
@@ -332,9 +331,7 @@ pub(crate) fn bind_value(value: &Value) -> BridgeResult<BindValue<'_>> {
 }
 
 /// Owned params to the engine's positional bind arguments.
-pub(crate) fn param_args(
-    params: &[OwnedParam],
-) -> BridgeResult<Vec<bumbledb::ParamArg<'_>>> {
+pub(crate) fn param_args(params: &[OwnedParam]) -> BridgeResult<Vec<bumbledb::ParamArg<'_>>> {
     params
         .iter()
         .map(|param| match param {
