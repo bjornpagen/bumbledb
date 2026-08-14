@@ -145,7 +145,7 @@ impl Environment {
                 return Err(e);
             }
         };
-        opened.dirty_marker = Some(marker);
+        opened.arm_ephemeral(marker);
         Ok(opened)
     }
 

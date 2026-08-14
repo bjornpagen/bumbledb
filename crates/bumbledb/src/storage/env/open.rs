@@ -11,7 +11,7 @@ use super::open_env::{OpenLane, open_env};
 use super::read_meta::{
     MetaBlock, check_fingerprint, check_format_version, classify_meta_block, read_store_kind,
 };
-use super::{Environment, StoreKind};
+use super::{EnvMode, Environment, StoreKind};
 
 impl Environment {
     /// Opens an existing DURABLE environment, verifying the storage
@@ -102,6 +102,12 @@ impl Environment {
             )?;
         }
         wtxn.commit()?;
-        Ok(Self::assemble(env, meta, data, dict, Some(lock), None))
+        Ok(Self::assemble(
+            env,
+            meta,
+            data,
+            dict,
+            EnvMode::Durable { lock },
+        ))
     }
 }
