@@ -84,7 +84,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::allen::AllenMask;
 use crate::error::ValidationError;
 use crate::image::view::MaskConst;
-use crate::ir::normalize::LoweredRule;
+use crate::ir::normalize::{LoweredRule, OccId};
 use crate::ir::{CmpOp, FindTerm, InteriorId, ParamId, Value, VarId};
 use bumbledb_theory::schema::{FieldId, IntervalElement, ValueType};
 
@@ -276,26 +276,29 @@ pub(crate) enum DurationOperand {
 }
 
 /// The interior typing surface handed to the per-rule roster: sealed
-/// column types, indexed by [`InteriorId`], filled in declaration
-/// order before the rec, rec after interiors, main last. An `Interior`
-/// anchor resolves against the target's sealed column exactly as an
-/// `Edb` anchor resolves against its stored field
-/// ([`Context::check_atoms`]).
+/// column types, indexed by [`InteriorId`]. The phase is the slice
+/// extent, not a hole in it: interiors already sealed sit in
+/// [`Self::interiors`]; the rec predicate is a second slice (present
+/// only when rec arms or main type against it). An `Interior` anchor
+/// resolves against the target's sealed column exactly as an `Edb`
+/// anchor resolves against its stored field ([`Context::check_atoms`]).
 pub(super) struct InteriorSignatures<'a> {
-    /// Per-derived-table arity — the address space `FieldId`s are
-    /// checked against.
-    arities: &'a [usize],
-    /// Per-derived-table sealed signature. Interiors seal in
-    /// declaration order; rec seals from base then rec arms. A `None`
-    /// slot is a table not yet sealed — hostile reads are typed
-    /// ([`ValidationError::UnknownInterior`]), never a panic.
-    sealed: &'a [Option<Predicate>],
+    /// Already-sealed interiors in declaration order. Interior *i*
+    /// types against `&sealed[..i]`; rec base types against the full
+    /// interiors slice (the rec's own predicate is not yet present).
+    interiors: &'a [Predicate],
+    /// The rec predicate, present when typing rec arms or a reach
+    /// query's main. Absent while typing interiors and rec base — a
+    /// self-atom in base is [`ValidationError::SelfInBase`] at the
+    /// roster, before typing.
+    rec: Option<&'a Predicate>,
     /// The reading interior's id, if this rule-list is an interior
     /// ([`ValidationError::InteriorNotPrior`]); `None` for rec and main
     /// (out-of-range is [`ValidationError::UnknownInterior`]).
     reader: Option<InteriorId>,
-    /// `interiors.len() + rec.is_some()` — the well-formedness screen's
-    /// address space, independent of how many signatures have sealed.
+    /// `interiors.len() + rec.is_some()` on the *boundary* query — the
+    /// well-formedness screen's address space, independent of how many
+    /// signatures have sealed.
     derived_count: usize,
 }
 
@@ -303,7 +306,16 @@ impl InteriorSignatures<'_> {
     /// The binding-independent source screen: the target names a real
     /// derived table (a zero-binding `Interior` gate never reaches
     /// [`InteriorSignatures::column`], so the screen runs per atom).
-    fn screen(&self, atom: usize, interior: InteriorId) -> Result<(), ValidationError> {
+    ///
+    /// Two named refusals, one each: [`ValidationError::UnknownInterior`]
+    /// iff the id is `>= derived_count`; [`ValidationError::InteriorNotPrior`]
+    /// iff the reader is interior *i* and the target is `j >= i` (even
+    /// when `j < derived_count`).
+    pub(super) fn screen(
+        &self,
+        atom: usize,
+        interior: InteriorId,
+    ) -> Result<(), ValidationError> {
         let index = usize::try_from(interior.0).expect("64-bit usize");
         if index >= self.derived_count {
             return Err(ValidationError::UnknownInterior { atom, interior });
@@ -317,30 +329,36 @@ impl InteriorSignatures<'_> {
         Ok(())
     }
 
-    /// The sealed type of one `Interior` binding position — the roster's
-    /// unknown-id and arity items, totally typed.
+    /// The sealed predicate for a derived id that [`Self::screen`] has
+    /// already admitted. Rec base never looks up the rec slot (self in
+    /// base is a roster refusal).
+    fn lookup(&self, interior: InteriorId) -> &Predicate {
+        let index = usize::try_from(interior.0).expect("64-bit usize");
+        if index < self.interiors.len() {
+            &self.interiors[index]
+        } else {
+            self.rec.expect("screen admitted this id; rec base never reads self")
+        }
+    }
+
+    /// The sealed type of one `Interior` binding position. Precondition:
+    /// [`Self::screen`] already ran for this atom (the roster's
+    /// unknown-id item). Does not re-screen.
     fn column(
         &self,
         atom: usize,
         interior: InteriorId,
         field: FieldId,
     ) -> Result<&ValueType, ValidationError> {
-        self.screen(atom, interior)?;
-        let index = usize::try_from(interior.0).expect("64-bit usize");
-        let Some(arity) = self.arities.get(index) else {
-            return Err(ValidationError::UnknownInterior { atom, interior });
-        };
-        if usize::from(field.0) >= *arity {
-            return Err(ValidationError::InteriorColumnOutOfRange { atom, field });
-        }
-        match self.sealed.get(index).and_then(Option::as_ref) {
-            Some(predicate) => predicate
-                .columns
-                .get(usize::from(field.0))
-                .map(|column| &column.ty)
-                .ok_or(ValidationError::InteriorColumnOutOfRange { atom, field }),
-            None => Err(ValidationError::UnknownInterior { atom, interior }),
-        }
+        debug_assert!(
+            self.screen(atom, interior).is_ok(),
+            "check_atoms screens before column"
+        );
+        self.lookup(interior)
+            .columns
+            .get(usize::from(field.0))
+            .map(|column| &column.ty)
+            .ok_or(ValidationError::InteriorColumnOutOfRange { atom, field })
     }
 }
 
@@ -367,15 +385,41 @@ impl ValidatedInterior {
     }
 }
 
+/// One lowered rec *base* arm: the rule plus its typing. Base arms
+/// cannot name self ([`ValidationError::SelfInBase`]).
+#[derive(Debug)]
+pub struct ValidatedBaseArm {
+    rule: LoweredRule,
+    typing: RuleTyping,
+}
+
+/// One lowered rec *step* arm: the unique positive self-atom's
+/// occurrence ([`Self::self_occ`]) plus the rule and its typing.
+/// Missing/nonlinear self are roster refusals; the witness cannot
+/// spell them.
+#[derive(Debug)]
+pub struct ValidatedRecArm {
+    self_occ: OccId,
+    rule: LoweredRule,
+    typing: RuleTyping,
+}
+
+impl ValidatedRecArm {
+    /// The unique positive self-atom's occurrence — the proof
+    /// `rec_roster` found, stored so prepare never re-searches.
+    #[must_use]
+    pub(crate) fn self_occ(&self) -> OccId {
+        self.self_occ
+    }
+}
+
 /// The sealed rec SCC: base then rec arms, one signature.
 /// Unconstructible outside this module.
 #[derive(Debug)]
 pub struct ValidatedRec {
-    base: Vec<LoweredRule>,
-    rec: Vec<LoweredRule>,
+    base: Vec<ValidatedBaseArm>,
+    rec: Vec<ValidatedRecArm>,
     predicate: Predicate,
-    base_typing: Vec<RuleTyping>,
-    rec_typing: Vec<RuleTyping>,
 }
 
 impl ValidatedRec {
@@ -388,13 +432,65 @@ impl ValidatedRec {
     /// Lowered base-arm count.
     #[must_use]
     pub fn base_count(&self) -> usize {
-        self.base_typing.len()
+        self.base.len()
     }
 
     /// Lowered rec-arm count.
     #[must_use]
     pub fn rec_count(&self) -> usize {
-        self.rec_typing.len()
+        self.rec.len()
+    }
+
+    /// The rec step arms, each carrying `self_occ`.
+    #[must_use]
+    pub(crate) fn arms(&self) -> &[ValidatedRecArm] {
+        &self.rec
+    }
+
+    /// One rec base-arm rule.
+    #[must_use]
+    pub(crate) fn base_rule<'a>(
+        &'a self,
+        query: &'a ValidatedQuery,
+        index: usize,
+    ) -> RuleWitness<'a> {
+        let arm = &self.base[index];
+        RuleWitness {
+            rule: &arm.rule,
+            typing: &arm.typing,
+            query,
+        }
+    }
+
+    /// One rec step-arm rule.
+    #[must_use]
+    pub(crate) fn step_rule<'a>(
+        &'a self,
+        query: &'a ValidatedQuery,
+        index: usize,
+    ) -> RuleWitness<'a> {
+        let arm = &self.rec[index];
+        RuleWitness {
+            rule: &arm.rule,
+            typing: &arm.typing,
+            query,
+        }
+    }
+
+    /// Every rec base arm, in declaration order.
+    pub(crate) fn base_rules<'a>(
+        &'a self,
+        query: &'a ValidatedQuery,
+    ) -> impl Iterator<Item = RuleWitness<'a>> {
+        (0..self.base.len()).map(|index| self.base_rule(query, index))
+    }
+
+    /// Every rec step arm, in declaration order.
+    pub(crate) fn step_rules<'a>(
+        &'a self,
+        query: &'a ValidatedQuery,
+    ) -> impl Iterator<Item = RuleWitness<'a>> {
+        (0..self.rec.len()).map(|index| self.step_rule(query, index))
     }
 }
 
@@ -421,26 +517,43 @@ impl ValidatedMain {
     }
 }
 
-/// The sealed witness: interiors, optional rec, main, plus the
-/// query-global param tables. Unconstructible outside this module.
+/// The sealed witness: query-global param tables plus a shape sum.
+/// Unconstructible outside this module.
 ///
 /// Variables are rule-scoped, so their typing lives per rule
 /// ([`RuleTyping`]); params are query-global, so their tables live here
 /// once — unified across every interior, rec arm, and main rule.
+/// Rec-absence is [`Self::Cq`]; rec-presence is [`Self::Reach`]. Cq
+/// callers never see rec accessors.
 #[derive(Debug)]
-pub struct ValidatedQuery {
-    interiors: Vec<ValidatedInterior>,
-    rec: Option<ValidatedRec>,
-    main: ValidatedMain,
-    param_types: BTreeMap<ParamId, ValueType>,
-    /// Param ids bound as sets (`Term::ParamSet`); their entry in
-    /// `param_types` is the *element* type.
-    set_params: BTreeSet<ParamId>,
-    /// Element-typed params meeting an interval position (membership
-    /// bindings and `PointIn` operands): their values are points, so the
-    /// point-domain law (`docs/architecture/10-data-model.md`) forbids the
-    /// domain ceiling — enforced at bind, where the value exists.
-    point_params: BTreeSet<ParamId>,
+pub enum ValidatedQuery {
+    /// No rec: interiors (possibly empty) and main.
+    Cq {
+        interiors: Vec<ValidatedInterior>,
+        main: ValidatedMain,
+        param_types: BTreeMap<ParamId, ValueType>,
+        /// Param ids bound as sets (`Term::ParamSet`); their entry in
+        /// `param_types` is the *element* type.
+        set_params: BTreeSet<ParamId>,
+        /// Element-typed params meeting an interval position (membership
+        /// bindings and `PointIn` operands): their values are points, so the
+        /// point-domain law (`docs/architecture/10-data-model.md`) forbids the
+        /// domain ceiling — enforced at bind, where the value exists.
+        point_params: BTreeSet<ParamId>,
+    },
+    /// Rec present: interiors, the rec SCC, and main. `rec_id` and
+    /// `derived_count` are stored once at validate (engine-003's accepted
+    /// half / engine-028).
+    Reach {
+        interiors: Vec<ValidatedInterior>,
+        rec: ValidatedRec,
+        main: ValidatedMain,
+        rec_id: InteriorId,
+        derived_count: u32,
+        param_types: BTreeMap<ParamId, ValueType>,
+        set_params: BTreeSet<ParamId>,
+        point_params: BTreeSet<ParamId>,
+    },
 }
 
 /// One rule's derived typing tables — rule-scoped by definition.
@@ -461,19 +574,17 @@ impl ValidatedQuery {
     /// Named interiors in declaration order.
     #[must_use]
     pub fn interiors(&self) -> &[ValidatedInterior] {
-        &self.interiors
-    }
-
-    /// The rec SCC, if any.
-    #[must_use]
-    pub fn rec(&self) -> Option<&ValidatedRec> {
-        self.rec.as_ref()
+        match self {
+            Self::Cq { interiors, .. } | Self::Reach { interiors, .. } => interiors,
+        }
     }
 
     /// The main/answer witness.
     #[must_use]
     pub fn main(&self) -> &ValidatedMain {
-        &self.main
+        match self {
+            Self::Cq { main, .. } | Self::Reach { main, .. } => main,
+        }
     }
 
     /// The answer head's sealed signature — [`ValidatedMain`]'s
@@ -481,7 +592,7 @@ impl ValidatedQuery {
     /// interior or rec signature.
     #[must_use]
     pub fn predicate(&self) -> &Predicate {
-        self.main.predicate()
+        self.main().predicate()
     }
 
     /// One **main** rule's slice of the witness — the unit the per-rule
@@ -500,9 +611,10 @@ impl ValidatedQuery {
     /// One main rule.
     #[must_use]
     pub(crate) fn main_rule(&self, index: usize) -> RuleWitness<'_> {
+        let main = self.main();
         RuleWitness {
-            rule: &self.main.lowered[index],
-            typing: &self.main.rules[index],
+            rule: &main.lowered[index],
+            typing: &main.rules[index],
             query: self,
         }
     }
@@ -510,7 +622,7 @@ impl ValidatedQuery {
     /// One interior rule.
     #[must_use]
     pub(crate) fn interior_rule(&self, interior: usize, index: usize) -> RuleWitness<'_> {
-        let inner = &self.interiors[interior];
+        let inner = &self.interiors()[interior];
         RuleWitness {
             rule: &inner.lowered[index],
             typing: &inner.rules[index],
@@ -518,49 +630,34 @@ impl ValidatedQuery {
         }
     }
 
-    /// One rec base-arm rule.
-    #[must_use]
-    pub(crate) fn rec_base_rule(&self, index: usize) -> RuleWitness<'_> {
-        let rec = self.rec.as_ref().expect("rec present");
-        RuleWitness {
-            rule: &rec.base[index],
-            typing: &rec.base_typing[index],
-            query: self,
-        }
-    }
-
-    /// One rec step-arm rule.
-    #[must_use]
-    pub(crate) fn rec_step_rule(&self, index: usize) -> RuleWitness<'_> {
-        let rec = self.rec.as_ref().expect("rec present");
-        RuleWitness {
-            rule: &rec.rec[index],
-            typing: &rec.rec_typing[index],
-            query: self,
-        }
-    }
-
     /// Every **main** rule's witness slice, in rule order.
     pub fn rules(&self) -> impl Iterator<Item = RuleWitness<'_>> {
-        (0..self.main.rules.len()).map(|index| self.main_rule(index))
+        let n = self.main().rules.len();
+        (0..n).map(|index| self.main_rule(index))
     }
 
     /// Every rule of one interior, in rule order.
     pub(crate) fn interior_rules(&self, interior: usize) -> impl Iterator<Item = RuleWitness<'_>> {
-        let n = self.interiors[interior].rules.len();
+        let n = self.interiors()[interior].rules.len();
         (0..n).map(move |index| self.interior_rule(interior, index))
     }
 
-    /// Every rec base arm, in declaration order.
-    pub(crate) fn rec_base_rules(&self) -> impl Iterator<Item = RuleWitness<'_>> {
-        let n = self.rec.as_ref().map_or(0, |r| r.base_typing.len());
-        (0..n).map(|index| self.rec_base_rule(index))
+    fn param_types_map(&self) -> &BTreeMap<ParamId, ValueType> {
+        match self {
+            Self::Cq { param_types, .. } | Self::Reach { param_types, .. } => param_types,
+        }
     }
 
-    /// Every rec step arm, in declaration order.
-    pub(crate) fn rec_step_rules(&self) -> impl Iterator<Item = RuleWitness<'_>> {
-        let n = self.rec.as_ref().map_or(0, |r| r.rec_typing.len());
-        (0..n).map(|index| self.rec_step_rule(index))
+    fn set_params_set(&self) -> &BTreeSet<ParamId> {
+        match self {
+            Self::Cq { set_params, .. } | Self::Reach { set_params, .. } => set_params,
+        }
+    }
+
+    fn point_params_set(&self) -> &BTreeSet<ParamId> {
+        match self {
+            Self::Cq { point_params, .. } | Self::Reach { point_params, .. } => point_params,
+        }
     }
 
     /// The resolved type of a scalar param (for a set param this is the
@@ -573,20 +670,20 @@ impl ValidatedQuery {
     /// witness anchored every param).
     #[must_use]
     pub fn param_type(&self, param: ParamId) -> &ValueType {
-        &self.param_types[&param]
+        &self.param_types_map()[&param]
     }
 
     /// Every param with its resolved type, in id order (bind-time checking,
     /// The 40-execution doc). A set param's type is its *element* type.
     pub fn param_types(&self) -> impl Iterator<Item = (ParamId, &ValueType)> {
-        self.param_types.iter().map(|(p, t)| (*p, t))
+        self.param_types_map().iter().map(|(p, t)| (*p, t))
     }
 
     /// The params bound as sets (`Term::ParamSet`) — bind-time expects a
     /// slice of values of the element type for each.
     #[must_use]
     pub fn set_params(&self) -> &BTreeSet<ParamId> {
-        &self.set_params
+        self.set_params_set()
     }
 
     /// The point-position params: element-typed at an interval position
@@ -595,7 +692,7 @@ impl ValidatedQuery {
     /// ray's ∞ (the point-domain law).
     #[must_use]
     pub fn point_params(&self) -> &BTreeSet<ParamId> {
-        &self.point_params
+        self.point_params_set()
     }
 }
 

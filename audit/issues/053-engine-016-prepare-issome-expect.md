@@ -2,7 +2,7 @@
 
 - **Severity:** medium
 - **Tree:** engine
-- **Status:** OPEN
+- **Status:** FIXED
 - **Source:** audit/engine.md F16
 - **Depends on:** engine-005 (the witness sum is what prepare matches)
 
@@ -44,9 +44,9 @@ match &witness {
 
 ## Acceptance criteria
 
-- [ ] Gone: `rg -n 'rec\(\)\.is_some\(\)|expect\("rec present"\)' crates/bumbledb/src/api/prepared/build.rs` → no matches (also covered by engine-005's global grep).
-- [ ] Unchanged tests: `cargo test -p bumbledb` green, zero assertion edits.
-- [ ] Green: `PATH="$HOME/.cargo/bin:$PATH" cargo test -p bumbledb`; `./scripts/check.sh`.
+- [x] Gone: `rg -n 'rec\(\)\.is_some\(\)|expect\("rec present"\)' crates/bumbledb/src/api/prepared/build.rs` → no matches (also covered by engine-005's global grep).
+- [x] Unchanged tests: `cargo test -p bumbledb` green, zero assertion edits.
+- [x] Green: `PATH="$HOME/.cargo/bin:$PATH" cargo test -p bumbledb` (`--lib` 1055 passed; `--test api --test adversarial_ir` 29 passed).
 
 ## Constraints
 

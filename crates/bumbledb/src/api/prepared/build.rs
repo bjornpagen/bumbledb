@@ -1,20 +1,20 @@
 use super::{
     AggregateSink, Bindings, Colt, EitherSink, Executor, FindSpec, FreeJoinRule, KeyProbeRule,
-    OccurrencePin, PARKED_SLOTS, PreparedInterior, PreparedPipeline, PreparedQuery, PreparedRule,
-    ProjectionSink, ResolveMemo, Schema, ValueType, ViewMemo,
+    OccurrencePin, PreparedInterior, PreparedPipeline, PreparedQuery, PreparedRule, ProjectionSink,
+    ResolveMemo, Schema, ValueType, ViewMemo, PARKED_SLOTS,
 };
 
 use crate::error::Result;
 use crate::exec::dispatch::classify;
 use crate::image::cache::ImageCache;
 use crate::image::view::View;
-use crate::ir::normalize::{NormalizedQuery, normalize_predicate};
-use crate::ir::validate::{RuleWitness, validate};
+use crate::ir::normalize::{normalize_predicate, NormalizedQuery};
+use crate::ir::validate::{validate, RuleWitness, ValidatedQuery};
 use crate::ir::{AggOp, FindTerm, Query};
 use crate::obs;
 use crate::plan::fj::{
-    DisjointWitness, DistinctWitness, binary2fj, factor, fold_split, gj_split,
-    provably_disjoint_rules, provably_distinct,
+    binary2fj, factor, fold_split, gj_split, provably_disjoint_rules, provably_distinct,
+    DisjointWitness, DistinctWitness,
 };
 use crate::plan::planner::plan as plan_order;
 use crate::storage::env::ReadTxn;
@@ -58,11 +58,20 @@ pub(crate) fn prepare<'s, S>(
         )?);
         signatures.push(witness.interiors()[i].predicate());
     }
-    let rec = if witness.rec().is_some() {
-        signatures.push(witness.rec().expect("rec present").predicate());
-        Some(prepare_reach(txn, cache, schema, &witness, &signatures)?)
-    } else {
-        None
+    let rec = match &witness {
+        ValidatedQuery::Cq { .. } => None,
+        ValidatedQuery::Reach { rec, rec_id, .. } => {
+            signatures.push(rec.predicate());
+            Some(prepare_reach(
+                txn,
+                cache,
+                schema,
+                &witness,
+                rec,
+                *rec_id,
+                &signatures,
+            )?)
+        }
     };
     prepare_witnessed(
         txn,
@@ -367,15 +376,13 @@ fn prepare_reach(
     cache: &ImageCache,
     schema: &Schema,
     witness: &crate::ir::validate::ValidatedQuery,
+    rec: &crate::ir::validate::ValidatedRec,
+    rec_id: crate::ir::InteriorId,
     signatures: &[&crate::ir::validate::Predicate],
 ) -> Result<super::reach::ReachDriver> {
-    let rec = witness.rec().expect("rec present");
     let columns = &rec.predicate().columns;
-    let rec_id = crate::ir::InteriorId(
-        u32::try_from(witness.interiors().len()).expect("overflow judged at validate"),
-    );
-    let base_w: Vec<_> = witness.rec_base_rules().collect();
-    let rec_w: Vec<_> = witness.rec_step_rules().collect();
+    let base_w: Vec<_> = rec.base_rules(witness).collect();
+    let rec_w: Vec<_> = rec.step_rules(witness).collect();
     let base_norm =
         crate::ir::normalize::normalize_rules(schema, signatures, base_w.iter().copied());
     let rec_norm = crate::ir::normalize::normalize_rules(schema, signatures, rec_w.iter().copied());
@@ -405,13 +412,14 @@ fn prepare_reach(
         if normalized_rule.dead.is_some() {
             continue;
         }
-        let delta = normalized_rule
-            .occurrences
-            .iter()
-            .filter(|occ| occ.role.participates())
-            .find(|occ| occ.source.interior() == Some(rec_id))
-            .map(|occ| occ.occ_id)
-            .expect("RecArmMissingSelf judged at validate");
+        let delta = rec.arms()[rule_idx].self_occ();
+        debug_assert!(
+            normalized_rule
+                .occurrences
+                .iter()
+                .any(|occ| { occ.occ_id == delta && occ.source.interior() == Some(rec_id) }),
+            "self_occ is the rec atom normalize numbered"
+        );
         let prepared = prepare_rule_variant(
             txn,
             cache,

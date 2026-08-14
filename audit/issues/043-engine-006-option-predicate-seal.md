@@ -2,7 +2,7 @@
 
 - **Severity:** high
 - **Tree:** engine
-- **Status:** OPEN
+- **Status:** FIXED
 - **Source:** audit/engine.md F6
 - **Depends on:** none (validate-internal; parallel-safe with engine-005, same files — coordinate)
 
@@ -39,9 +39,9 @@ Per `audit/CONTRACT.md §C3` ("Sealing"): the phase is the slice's extent, not a
 
 ## Acceptance criteria
 
-- [ ] Gone: `rg -n 'Option<Predicate>' crates/bumbledb/src/ir/validate.rs` → no matches; `UnknownInterior` is constructed only for `id >= derived_count`; `InteriorNotPrior` stays the reader-`j >= i` screen (`rg -n 'UnknownInterior|InteriorNotPrior' crates/bumbledb/src/ir/validate.rs`).
-- [ ] Unchanged tests: every adversarial/validate test asserting `UnknownInterior`, `InteriorNotPrior`, `InteriorColumnOutOfRange`, `SelfInBase` passes UNCHANGED (same inputs → same error names).
-- [ ] Green: `PATH="$HOME/.cargo/bin:$PATH" cargo test -p bumbledb`; `./scripts/check.sh`.
+- [x] Gone: `rg -n 'Option<Predicate>' crates/bumbledb/src/ir/validate.rs` → no matches; `UnknownInterior` is constructed only for `id >= derived_count`; `InteriorNotPrior` stays the reader-`j >= i` screen (`rg -n 'UnknownInterior|InteriorNotPrior' crates/bumbledb/src/ir/validate.rs`).
+- [x] Unchanged tests: every adversarial/validate test asserting `UnknownInterior`, `InteriorNotPrior`, `InteriorColumnOutOfRange`, `SelfInBase` passes UNCHANGED (same inputs → same error names).
+- [x] Green: `PATH="$HOME/.cargo/bin:$PATH" cargo test -p bumbledb` (`--lib` 1055 passed; `--test api --test adversarial_ir` 29 passed).
 
 ## Constraints
 
