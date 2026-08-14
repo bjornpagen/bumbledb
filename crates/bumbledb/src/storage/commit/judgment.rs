@@ -45,9 +45,9 @@ use crate::error::{CorruptionError, Direction, Error, Result, Violation, Violati
 use crate::interval::sweep::{Continuation, sweep};
 use crate::obs;
 use crate::schema::{
-    AxiomIndex, Bound as CapacityBound, CapacityId, CapacityStatement, CompiledCheck,
-    ContainmentId, DisjointDeterminantProof, Enforcement, IntervalTail, KeyId, Schema,
-    StatementView, Weight,
+    AxiomIndex, BoundCeiling, CapacityId, CapacityStatement, CompiledCheck, ContainmentId,
+    DisjointDeterminantProof, Enforcement, IntervalTail, KeyId, Schema, SealedBound, SealedWeight,
+    StatementView,
 };
 use crate::storage::delta::WriteDelta;
 use crate::storage::env::{ReadTxn, WriteTxn};
@@ -122,13 +122,14 @@ pub(crate) fn child_weight(
     layout: &FactLayout,
     fact: &[u8],
 ) -> Result<u64> {
-    measure_weight(
-        statement.weight,
-        statement.weight_tail,
-        layout,
-        fact,
-        statement.id,
-    )
+    measure_weight(statement.weight, layout, fact, statement.id)
+}
+
+fn exceeds_ceiling(measure: u128, hi: BoundCeiling) -> bool {
+    match hi {
+        BoundCeiling::Unbounded => false,
+        BoundCeiling::Finite(n) => measure > u128::from(n),
+    }
 }
 
 /// The ONE weight arithmetic behind [`child_weight`] — spelled over the
@@ -138,28 +139,24 @@ pub(crate) fn child_weight(
 /// engine definition, never an inline re-implementation
 /// (`docs/architecture/60-validation.md` § one mechanism per law).
 pub(crate) fn measure_weight(
-    weight: Weight,
-    weight_tail: Option<IntervalTail>,
+    weight: SealedWeight,
     layout: &FactLayout,
     fact: &[u8],
     statement: bumbledb_theory::schema::StatementId,
 ) -> Result<u64> {
     match weight {
-        Weight::Unit => Ok(1),
-        Weight::Field(field) => Ok(u64::from_be_bytes(field_word_bytes(
+        SealedWeight::Unit => Ok(1),
+        SealedWeight::Field(field) => Ok(u64::from_be_bytes(field_word_bytes(
             fact,
             layout,
             usize::from(field.0),
         ))),
-        Weight::DurationOf(field) => {
-            let tail = weight_tail.expect("validate seals a tail for every Duration weight");
-            interval_measure(
-                tail,
-                field_bytes(fact, layout, usize::from(field.0)),
-                statement,
-                fact,
-            )
-        }
+        SealedWeight::Duration { field, tail } => interval_measure(
+            tail,
+            field_bytes(fact, layout, usize::from(field.0)),
+            statement,
+            fact,
+        ),
     }
 }
 
@@ -170,30 +167,24 @@ pub(crate) fn measure_weight(
 /// passes through; a dependent bound reads the named TARGET-row field —
 /// u64 word or interval measure — off the holder fact in hand.
 pub(crate) fn resolve_bound(
-    bound: Option<CapacityBound>,
-    bound_tail: Option<IntervalTail>,
+    bound: SealedBound,
     layout: &FactLayout,
     parent_fact: &[u8],
     statement: bumbledb_theory::schema::StatementId,
-) -> Result<Option<u64>> {
+) -> Result<BoundCeiling> {
     match bound {
-        None => Ok(None),
-        Some(CapacityBound::Lit(n)) => Ok(Some(n)),
-        Some(CapacityBound::TargetField(field)) => Ok(Some(u64::from_be_bytes(field_word_bytes(
+        SealedBound::Unbounded => Ok(BoundCeiling::Unbounded),
+        SealedBound::Lit(n) => Ok(BoundCeiling::Finite(n)),
+        SealedBound::TargetField(field) => Ok(BoundCeiling::Finite(u64::from_be_bytes(
+            field_word_bytes(parent_fact, layout, usize::from(field.0)),
+        ))),
+        SealedBound::Duration { field, tail } => interval_measure(
+            tail,
+            field_bytes(parent_fact, layout, usize::from(field.0)),
+            statement,
             parent_fact,
-            layout,
-            usize::from(field.0),
-        )))),
-        Some(CapacityBound::TargetDuration(field)) => {
-            let tail = bound_tail.expect("validate seals a tail for every Duration bound");
-            interval_measure(
-                tail,
-                field_bytes(parent_fact, layout, usize::from(field.0)),
-                statement,
-                parent_fact,
-            )
-            .map(Some)
-        }
+        )
+        .map(BoundCeiling::Finite),
     }
 }
 
@@ -207,7 +198,7 @@ pub(crate) fn expected_slot_weight(
     layout: &FactLayout,
     fact: &[u8],
 ) -> Result<Option<u64>> {
-    if matches!(statement.weight, Weight::Unit) {
+    if matches!(statement.weight, SealedWeight::Unit) {
         return Ok(None);
     }
     Ok(Some(child_weight(statement, layout, fact)?))
@@ -1338,26 +1329,21 @@ impl<'a> Checker<'a> {
                     // `F` get defers to the conviction (cold) path,
                     // where the violation payload requires it anyway.
                     let needs_fact = !matches!(checks.target, SelectionCheck::Empty)
-                        || matches!(
-                            statement.hi,
-                            Some(CapacityBound::TargetField(_) | CapacityBound::TargetDuration(_))
-                        );
+                        || statement.hi.needs_parent_fact();
                     if !needs_fact {
                         // ψ is Empty by construction, so the determinant
                         // hit alone proves the holder; the bound is
-                        // literal or absent, resolved fact-free.
+                        // literal or unbounded, resolved fact-free.
                         let hi = match statement.hi {
-                            None => None,
-                            Some(CapacityBound::Lit(n)) => Some(n),
-                            Some(_) => {
+                            SealedBound::Unbounded => BoundCeiling::Unbounded,
+                            SealedBound::Lit(n) => BoundCeiling::Finite(n),
+                            SealedBound::TargetField(_) | SealedBound::Duration { .. } => {
                                 unreachable!("a dependent bound forces the eager holder fetch")
                             }
                         };
                         let measure =
                             self.measure_children(statement, &checks.source, parent_key, hi)?;
-                        if measure < u128::from(statement.lo)
-                            || hi.is_some_and(|hi| measure > u128::from(hi))
-                        {
+                        if measure < u128::from(statement.lo) || exceeds_ceiling(measure, hi) {
                             let parent_fact = self.row_fact(statement.target.relation, row_id)?;
                             return Err(Error::CommitRejected {
                                 violations: Violations::one(Violation::Capacity {
@@ -1410,7 +1396,7 @@ impl<'a> Checker<'a> {
         // C10 refusal naming the parent row.
         let hi = self.resolve_hi(statement, parent_fact)?;
         let measure = self.measure_children(statement, &checks.source, parent_key, hi)?;
-        if measure < u128::from(statement.lo) || hi.is_some_and(|hi| measure > u128::from(hi)) {
+        if measure < u128::from(statement.lo) || exceeds_ceiling(measure, hi) {
             return Err(Error::CommitRejected {
                 violations: Violations::one(Violation::Capacity {
                     statement: statement.id,
@@ -1428,15 +1414,13 @@ impl<'a> Checker<'a> {
     /// TARGET-row field — u64 word or interval measure — off the fact
     /// bytes already fetched for the ψ check. Delegates to
     /// [`resolve_bound`], the one engine definition.
-    fn resolve_hi(&self, statement: &CapacityStatement, parent_fact: &[u8]) -> Result<Option<u64>> {
+    fn resolve_hi(
+        &self,
+        statement: &CapacityStatement,
+        parent_fact: &[u8],
+    ) -> Result<BoundCeiling> {
         let layout = self.schema.relation(statement.target.relation).layout();
-        resolve_bound(
-            statement.hi,
-            statement.bound_tail,
-            layout,
-            parent_fact,
-            statement.id,
-        )
+        resolve_bound(statement.hi, layout, parent_fact, statement.id)
     }
 
     /// One parent's child-group measure: the ordered walk of the capacity
@@ -1462,7 +1446,7 @@ impl<'a> Checker<'a> {
         statement: &CapacityStatement,
         phi: &SelectionCheck,
         parent_key: &[u8],
-        hi: Option<u64>,
+        hi: BoundCeiling,
     ) -> Result<u128> {
         let source = self.schema.relation(statement.source.relation);
         let layout = source.layout();
@@ -1482,9 +1466,10 @@ impl<'a> Checker<'a> {
         }
         // Floor-only clip: with no ceiling, `sum ≥ lo` is final — the
         // running sum is monotone under non-negative weights (C12).
-        let floor_only_decided =
-            |measure: u128| hi.is_none() && measure >= u128::from(statement.lo);
-        let unit = matches!(statement.weight, Weight::Unit);
+        let floor_only_decided = |measure: u128| {
+            matches!(hi, BoundCeiling::Unbounded) && measure >= u128::from(statement.lo)
+        };
+        let unit = matches!(statement.weight, SealedWeight::Unit);
         let p_len = keys::reverse_prefix(&mut self.key, statement.id, parent_key);
         let bounds: (Bound<&[u8]>, Bound<&[u8]>) =
             (Bound::Included(&self.key[..p_len]), Bound::Unbounded);

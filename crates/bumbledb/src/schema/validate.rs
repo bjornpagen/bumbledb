@@ -18,8 +18,8 @@ use super::{
     ContainmentStatement, DisjointDeterminantProof, Enforcement, FactLayout, FieldDescriptor,
     FieldId, Generation, IntervalTail, KeyForm, KeyId, KeyStatement, LiteralSet, MemberSet,
     Relation, RelationBody, RelationDescriptor, RelationId, Schema, SchemaDescriptor,
-    SchemaWarning, Side, StatementDescriptor, StatementId, StatementRef, ValueMismatch, ValueType,
-    Weight, value_matches,
+    SchemaWarning, SealedBound, SealedWeight, Side, StatementDescriptor, StatementId, StatementRef,
+    ValueMismatch, ValueType, Weight, value_matches,
 };
 use crate::encoding::{field_bytes, field_word_bytes};
 use crate::error::{SchemaError, StatementErrorKind, TargetKeyCandidate};
@@ -225,9 +225,9 @@ impl ValidateDescriptor for SchemaDescriptor {
                     capacities.push(CapacityStatement {
                         id,
                         target: canonical_side(target),
-                        weight: *weight,
+                        weight: sealed.weight,
                         lo: *lo,
-                        hi: *hi,
+                        hi: sealed.hi,
                         source: canonical_side(source),
                         enforcement: sealed.enforcement,
                         checks: CompiledSides {
@@ -240,8 +240,6 @@ impl ValidateDescriptor for SchemaDescriptor {
                                 &relations[target.relation.0 as usize].fields,
                             ),
                         },
-                        weight_tail: sealed.weight_tail,
-                        bound_tail: sealed.bound_tail,
                     });
                     StatementRef::Capacity(capacity_id)
                 }
@@ -780,8 +778,8 @@ fn validate_containment(
 /// don't validate: no judge re-walks the field rosters).
 struct SealedCapacity {
     enforcement: Enforcement,
-    weight_tail: Option<IntervalTail>,
-    bound_tail: Option<IntervalTail>,
+    weight: SealedWeight,
+    hi: SealedBound,
 }
 
 /// Roster "capacity …" lines: `B(Y | ψ) <=[w]{lo..hi} A(X | φ)` under
@@ -868,8 +866,8 @@ fn validate_capacity(
     // has no interval measure to read. The accepted Duration weight
     // seals its interval tail — how `end − start` reads off canonical
     // fact bytes — so no judge re-walks the roster.
-    let weight_tail = match weight {
-        Weight::Unit => None,
+    let sealed_weight = match weight {
+        Weight::Unit => SealedWeight::Unit,
         Weight::Field(field) => {
             let descriptor = known_field(id, source.relation, field, relations)?;
             if descriptor.value_type != ValueType::U64 {
@@ -879,7 +877,7 @@ fn validate_capacity(
                 }
                 .at(id));
             }
-            None
+            SealedWeight::Field(field)
         }
         Weight::DurationOf(field) => {
             let descriptor = known_field(id, source.relation, field, relations)?;
@@ -890,7 +888,10 @@ fn validate_capacity(
                 }
                 .at(id));
             };
-            Some(IntervalTail { width })
+            SealedWeight::Duration {
+                field,
+                tail: IntervalTail { width },
+            }
         }
     };
 
@@ -906,8 +907,9 @@ fn validate_capacity(
     // weights: a Duration weight against it is the same mixing read the
     // other way. Literal windows stay dimensionless — a Duration weight
     // under a literal ceiling is the legal calendar shape.
-    let bound_tail = match hi {
-        None | Some(Bound::Lit(_)) => None,
+    let sealed_hi = match hi {
+        None => SealedBound::Unbounded,
+        Some(Bound::Lit(n)) => SealedBound::Lit(n),
         Some(Bound::TargetField(field)) => {
             let descriptor = known_field(id, target.relation, field, relations)?;
             if descriptor.value_type != ValueType::U64 {
@@ -920,7 +922,7 @@ fn validate_capacity(
             if matches!(weight, Weight::DurationOf(_)) {
                 return Err(StatementErrorKind::CapacityDimensionMixing { field }.at(id));
             }
-            None
+            SealedBound::TargetField(field)
         }
         Some(Bound::TargetDuration(field)) => {
             let descriptor = known_field(id, target.relation, field, relations)?;
@@ -934,7 +936,10 @@ fn validate_capacity(
             if !matches!(weight, Weight::DurationOf(_)) {
                 return Err(StatementErrorKind::CapacityDimensionMixing { field }.at(id));
             }
-            Some(IntervalTail { width })
+            SealedBound::Duration {
+                field,
+                tail: IntervalTail { width },
+            }
         }
     };
 
@@ -971,9 +976,8 @@ fn validate_capacity(
             // inline re-implementation. Sealed rows hold canonical bytes
             // and the extension gate refuses ray and inverted intervals,
             // so the engine's measure refusals are unreachable here.
-            let resolved_hi: Option<u64> = crate::storage::commit::judgment::resolve_bound(
-                hi,
-                bound_tail,
+            let resolved_hi = crate::storage::commit::judgment::resolve_bound(
+                sealed_hi,
                 &target_relation.layout,
                 &parent.fact,
                 id,
@@ -998,8 +1002,7 @@ fn validate_capacity(
                     .map(|child| {
                         u128::from(
                             crate::storage::commit::judgment::measure_weight(
-                                weight,
-                                weight_tail,
+                                sealed_weight,
                                 source_layout,
                                 &child.fact,
                                 id,
@@ -1008,7 +1011,11 @@ fn validate_capacity(
                         )
                     })
                     .sum();
-            if measure < u128::from(lo) || resolved_hi.is_some_and(|hi| measure > u128::from(hi)) {
+            let over = match resolved_hi {
+                crate::schema::BoundCeiling::Unbounded => false,
+                crate::schema::BoundCeiling::Finite(hi) => measure > u128::from(hi),
+            };
+            if measure < u128::from(lo) || over {
                 return Err(StatementErrorKind::ClosedStatementRefuted {
                     relation: target.relation,
                     row: row_idx,
@@ -1020,8 +1027,8 @@ fn validate_capacity(
 
     Ok(SealedCapacity {
         enforcement,
-        weight_tail,
-        bound_tail,
+        weight: sealed_weight,
+        hi: sealed_hi,
     })
 }
 

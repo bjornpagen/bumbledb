@@ -2,7 +2,7 @@
 
 - **Severity:** high
 - **Tree:** schema
-- **Status:** OPEN
+- **Status:** FIXED(cc808db7)
 - **Source:** audit/storage-schema.md F2
 - **Depends on:** none (co-lands with schema-006)
 - **Conflicts with:** schema-006, store-002 (same flags; land the sum first)

@@ -630,7 +630,8 @@ fn a_capacity_statement_over_a_declared_key_validates() {
     assert_eq!(schema.capacities().len(), 1);
     let window = schema.capacity(CapacityId(0));
     assert_eq!(window.id, StatementId(1));
-    assert_eq!((window.lo, window.hi), (1, Some(Bound::Lit(3))));
+    assert_eq!(window.lo, 1);
+    assert_eq!(window.hi.to_bound(), Some(Bound::Lit(3)));
     // The spine resolves the materialized id to the typed arena arm.
     assert!(matches!(
         schema.statement(StatementId(1)),
@@ -653,7 +654,7 @@ fn a_star_window_validates_with_no_ceiling() {
         side(RelationId(0), &[FieldId(0)]),
     ));
     let schema = decl.validate().expect("the floored window validates");
-    assert_eq!(schema.capacity(CapacityId(0)).hi, None);
+    assert_eq!(schema.capacity(CapacityId(0)).hi.to_bound(), None);
 }
 
 /// `{0}` — the exclusion window: lo = hi = 0 is a legal exact count
@@ -668,12 +669,10 @@ fn an_exclusion_window_validates() {
         side(RelationId(0), &[FieldId(0)]),
     ));
     let schema = decl.validate().expect("the exclusion passes the gate");
+    assert_eq!(schema.capacity(CapacityId(0)).lo, 0);
     assert_eq!(
-        (
-            schema.capacity(CapacityId(0)).lo,
-            schema.capacity(CapacityId(0)).hi
-        ),
-        (0, Some(Bound::Lit(0)))
+        schema.capacity(CapacityId(0)).hi.to_bound(),
+        Some(Bound::Lit(0))
     );
 }
 
@@ -786,10 +785,13 @@ fn a_weighted_capacity_with_a_dependent_bound_validates() {
     ));
     let schema = decl.validate().expect("the power budget passes the gate");
     let statement = schema.capacity(CapacityId(0));
-    assert_eq!(statement.weight, Weight::Field(FieldId(1)));
-    assert_eq!(statement.hi, Some(Bound::TargetField(FieldId(1))));
-    assert_eq!(statement.weight_tail, None);
-    assert_eq!(statement.bound_tail, None);
+    assert_eq!(statement.weight.to_weight(), Weight::Field(FieldId(1)));
+    assert_eq!(
+        statement.hi.to_bound(),
+        Some(Bound::TargetField(FieldId(1)))
+    );
+    assert!(matches!(statement.weight, SealedWeight::Field(_)));
+    assert!(matches!(statement.hi, SealedBound::TargetField(_)));
 }
 
 /// `Pool(id) <=[Duration(busy)]{0..Duration(span)} Device(pool)` — the
@@ -807,8 +809,8 @@ fn a_calendar_capacity_validates_and_seals_its_tails() {
     ));
     let schema = decl.validate().expect("the calendar law passes the gate");
     let statement = schema.capacity(CapacityId(0));
-    assert!(statement.weight_tail.is_some());
-    assert!(statement.bound_tail.is_some());
+    assert!(matches!(statement.weight, SealedWeight::Duration { .. }));
+    assert!(matches!(statement.hi, SealedBound::Duration { .. }));
 }
 
 /// `<=[w]{1..*}` — the weighted floor of 1 is LEGAL: "positive total"
@@ -848,8 +850,11 @@ fn a_duration_weight_under_a_literal_ceiling_validates() {
     ));
     let schema = decl.validate().expect("hours under a literal budget");
     let statement = schema.capacity(CapacityId(0));
-    assert!(statement.weight_tail.is_some());
-    assert_eq!(statement.bound_tail, None);
+    assert!(matches!(
+        statement.weight,
+        super::super::SealedWeight::Duration { .. }
+    ));
+    assert!(matches!(statement.hi, super::super::SealedBound::Lit(_)));
 }
 
 /// Both sides constant under a weight and a dependent ceiling, the

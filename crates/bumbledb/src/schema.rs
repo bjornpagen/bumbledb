@@ -510,6 +510,65 @@ pub struct ContainmentStatement {
     pub mirror: Option<StatementId>,
 }
 
+/// Sealed capacity measure (CONTRACT C9): Duration carries its tail
+/// in-arm. [`Weight::Unit`] is a case, not an absence.
+#[allow(private_interfaces)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SealedWeight {
+    Unit,
+    Field(FieldId),
+    Duration { field: FieldId, tail: IntervalTail },
+}
+
+impl SealedWeight {
+    /// The descriptor-facing spelling — fingerprint and render.
+    #[must_use]
+    pub const fn to_weight(self) -> Weight {
+        match self {
+            Self::Unit => Weight::Unit,
+            Self::Field(field) => Weight::Field(field),
+            Self::Duration { field, .. } => Weight::DurationOf(field),
+        }
+    }
+}
+
+/// Sealed capacity ceiling (CONTRACT C9): `*` is [`SealedBound::Unbounded`],
+/// not a missing bound. Duration carries its tail in-arm.
+#[allow(private_interfaces)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SealedBound {
+    Unbounded,
+    Lit(u64),
+    TargetField(FieldId),
+    Duration { field: FieldId, tail: IntervalTail },
+}
+
+impl SealedBound {
+    /// The descriptor-facing spelling (`None` = `*`).
+    #[must_use]
+    pub const fn to_bound(self) -> Option<Bound> {
+        match self {
+            Self::Unbounded => None,
+            Self::Lit(n) => Some(Bound::Lit(n)),
+            Self::TargetField(field) => Some(Bound::TargetField(field)),
+            Self::Duration { field, .. } => Some(Bound::TargetDuration(field)),
+        }
+    }
+
+    /// Whether resolving this ceiling needs the parent fact bytes.
+    #[must_use]
+    pub(crate) const fn needs_parent_fact(self) -> bool {
+        matches!(self, Self::TargetField(_) | Self::Duration { .. })
+    }
+}
+
+/// A resolved capacity ceiling: unbounded vs a finite measure.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BoundCeiling {
+    Unbounded,
+    Finite(u64),
+}
+
 /// One sealed capacity statement: `B(Y | ψ) <=[w]{lo..hi} A(X | φ)`.
 /// Accepted at declaration with its sealed target-key plan handle
 /// (the same probe-ability rule containments resolve —
@@ -522,16 +581,15 @@ pub struct CapacityStatement {
     /// Materialized-order identity. It is not an arena index.
     pub id: StatementId,
     pub target: Side,
-    /// The measure of one source fact; [`Weight::Unit`] is the count
-    /// instance (the surviving `<={lo..hi}` utterance).
-    pub weight: Weight,
+    /// The measure of one source fact; [`SealedWeight::Unit`] is the count
+    /// instance (the surviving `<={lo..hi}` utterance). Duration tails
+    /// live in-arm (CONTRACT C9).
+    pub weight: SealedWeight,
     /// The inclusive lower measure bound — a literal by representation
     /// (C6: dependent floors are unrepresentable).
     pub lo: u64,
-    /// The inclusive upper measure bound; `None` is `*`. A dependent
-    /// bound resolves by name against TARGET's whole field roster (C1),
-    /// per touched parent at judge time.
-    pub hi: Option<Bound>,
+    /// The inclusive upper measure bound; [`SealedBound::Unbounded`] is `*`.
+    pub hi: SealedBound,
     pub source: Side,
     /// The target-key plan handle (`ScalarProbe` or `Closed`; capacity
     /// projections refuse interval positions, so `IntervalCoverage` is
@@ -543,15 +601,6 @@ pub struct CapacityStatement {
     /// commit into [`crate::storage::commit::judgment::Selections`]
     /// exactly as containments' are.
     pub(crate) checks: CompiledSides,
-    /// A `DurationOf` weight's sealed interval encoding (the SOURCE
-    /// field's trailing shape — how the measure `end − start` reads off
-    /// canonical fact bytes); `None` for unit and u64-field weights.
-    /// Sealed from the validator's derivation (the `source_tail`
-    /// precedent), so no judge re-walks the field roster.
-    pub(crate) weight_tail: Option<IntervalTail>,
-    /// A `TargetDuration` bound's sealed interval encoding (the TARGET
-    /// field's trailing shape); `None` for literal and u64-field bounds.
-    pub(crate) bound_tail: Option<IntervalTail>,
 }
 
 /// The global materialized-order spine: a [`StatementId`] selects one typed

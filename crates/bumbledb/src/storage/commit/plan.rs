@@ -24,7 +24,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::schema::{
-    AxiomIndex, CapacityId, ContainmentId, Enforcement, IntervalTail, KeyId, Schema, Weight,
+    AxiomIndex, CapacityId, ContainmentId, Enforcement, IntervalTail, KeyId, Schema,
 };
 use crate::storage::delta::{Disposition, WriteDelta};
 use crate::storage::keys::{self, DeterminantImage};
@@ -513,12 +513,13 @@ fn mark_ops(
             // the derive is fallible on a weighted statement (a
             // ray-valued Duration weight refuses), and a value the
             // applier never reads must not be able to refuse a delete.
-            let weight =
-                if matches!(statement.weight, Weight::Unit) || disposition == Disposition::Delete {
-                    None
-                } else {
-                    Some(child_weight(statement, layout, fact)?)
-                };
+            let weight = if matches!(statement.weight, crate::schema::SealedWeight::Unit)
+                || disposition == Disposition::Delete
+            {
+                None
+            } else {
+                Some(child_weight(statement, layout, fact)?)
+            };
             scratch.capacity_edges.push(MarkEdgeOp {
                 statement: statement.id,
                 key_bytes: scratch.image.clone(),

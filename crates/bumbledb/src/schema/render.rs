@@ -165,9 +165,9 @@ pub fn render(schema: &Schema, id: StatementId) -> String {
         },
         StatementView::Capacity(_, statement) => RenderedStatement::Capacity {
             target: &statement.target,
-            weight: statement.weight,
+            weight: statement.weight.to_weight(),
             lo: statement.lo,
-            hi: statement.hi,
+            hi: statement.hi.to_bound(),
             source: &statement.source,
         },
     };
