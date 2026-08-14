@@ -2,7 +2,7 @@
 
 - **Severity:** high
 - **Tree:** docs
-- **Status:** OPEN
+- **Status:** FIXED(654c4062)
 - **Source:** audit/docs.md F17
 - **Depends on:** engine-041 (`Predicate` → `Signature`, `predicate()` → `signature()`) — the doc cites the method by name
 
@@ -20,8 +20,8 @@ Per `audit/CONTRACT.md §C7` + the §C3 signature-naming amendment: after engine
 
 ## Acceptance criteria
 
-- [ ] Gone: `rg -n 'predicate\(\)|the predicate the query defines' docs/architecture/70-api.md` → no matches.
-- [ ] Buffer-typing-authority claim unchanged; the cross-reference to `20-query-ir.md` points at docs-002's rewritten section.
+- [x] Gone: `rg -n 'predicate\(\)|the predicate the query defines' docs/architecture/70-api.md` → no matches.
+- [x] Buffer-typing-authority claim unchanged; the cross-reference to `20-query-ir.md` points at docs-002's rewritten section.
 
 ## Constraints
 

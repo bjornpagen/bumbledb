@@ -2,7 +2,7 @@
 
 - **Severity:** high
 - **Tree:** docs
-- **Status:** OPEN
+- **Status:** FIXED(a52be97a)
 - **Source:** audit/docs.md F12
 - **Depends on:** lean-008 (one decoder, `CQuery` deleted) — this doc must describe the post-fix corpus truthfully
 
@@ -20,8 +20,8 @@ Per `audit/CONTRACT.md §C7` + §C8: "Seeded cases are `Query` values (`interior
 
 ## Acceptance criteria
 
-- [ ] Gone: `rg -n 'CQuery' docs/architecture/60-validation.md` → no matches.
-- [ ] The 246-seeded/22-reach counts and case-file names unchanged.
+- [x] Gone: `rg -n 'CQuery' docs/architecture/60-validation.md` → no matches.
+- [x] The 246-seeded/22-reach counts and case-file names unchanged.
 
 ## Constraints
 

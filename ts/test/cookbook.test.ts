@@ -1159,46 +1159,46 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 
 	test("30. the keyed read — the key law made callable, on every scope", async function r30() {
 		const Grp = relation("Grp", { id: u64.fresh, label: str })
-		const Program = relation("Program", { id: u64.fresh, grp: u64, title: str })
-		// The law: one program per group — hold the statement VALUE, it is
+		const Course = relation("Course", { id: u64.fresh, grp: u64, title: str })
+		// The law: one course per group — hold the statement VALUE, it is
 		// the read's selector (statement identity is the membership rule).
-		const programGrpKey = key(Program, ["grp"])
+		const courseGrpKey = key(Course, ["grp"])
 
-		const KeyedRead = schema("KeyedRead", { Grp, Program }, [
-			contained(on(Program, "grp"), on(Grp, "id")),
-			programGrpKey
+		const KeyedRead = schema("KeyedRead", { Grp, Course }, [
+			contained(on(Course, "grp"), on(Grp, "id")),
+			courseGrpKey
 		])
 
 		const { db } = await admit("r30-keyed-read", KeyedRead)
 
-		const minted: { grp?: bigint; program?: bigint } = {}
+		const minted: { grp?: bigint; course?: bigint } = {}
 		const seeded = db.write(function seed(tx) {
 			const g = tx.insert(Grp, { label: "algebra" })
-			const p = tx.insert(Program, { grp: g.id, title: "linear equations" })
+			const p = tx.insert(Course, { grp: g.id, title: "linear equations" })
 			minted.grp = g.id
-			minted.program = p.id
+			minted.course = p.id
 		})
 		assert.ok(seeded.ok, "the seed commits")
 		const grp = must(minted.grp)
-		const program = must(minted.program)
+		const course = must(minted.course)
 
 		// db.get, 3-arg — the declared key statement selects the read:
-		const byGroup = db.get(Program, programGrpKey, { grp })
+		const byGroup = db.get(Course, courseGrpKey, { grp })
 		assert.ok(byGroup, "the declared key answers the typed point read")
-		assert.equal(byGroup.id, program)
+		assert.equal(byGroup.id, course)
 		assert.equal(byGroup.title, "linear equations")
 
 		// The primary 2-arg form — the fresh field IS the primary key:
-		const byId = db.get(Program, { id: program })
+		const byId = db.get(Course, { id: course })
 		assert.ok(byId, "the fresh field answers the primary point read")
 		assert.equal(byId.grp, grp)
 
 		// snap.get — the same spelling inside a read scope (the symmetry rule):
 		assert.equal(
 			db.read(function inScope(snap) {
-				return snap.get(Program, programGrpKey, { grp })?.id
+				return snap.get(Course, courseGrpKey, { grp })?.id
 			}),
-			program,
+			course,
 			"the read scope agrees with the standalone spelling"
 		)
 
@@ -1206,11 +1206,11 @@ describe("the SDK cookbook — every recipe compiles, admits, and lowers", funct
 		// (read-your-writes), through the key statement and the primary form:
 		const mutated = db.write(function mutate(tx) {
 			const g = tx.insert(Grp, { label: "geometry" })
-			const p = tx.insert(Program, { grp: g.id, title: "proofs" })
-			const pending = tx.get(Program, programGrpKey, { grp: g.id })
+			const p = tx.insert(Course, { grp: g.id, title: "proofs" })
+			const pending = tx.get(Course, courseGrpKey, { grp: g.id })
 			assert.ok(pending, "the pending insert answers through the declared key")
 			assert.equal(pending.id, p.id)
-			assert.equal(tx.get(Program, { id: p.id })?.title, "proofs", "the primary form agrees pre-commit")
+			assert.equal(tx.get(Course, { id: p.id })?.title, "proofs", "the primary form agrees pre-commit")
 		})
 		assert.ok(mutated.ok, "the keyed read-modify-write commits")
 	})

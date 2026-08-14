@@ -20,10 +20,10 @@ next-but-one rung).
 - **Strong form (interior HAVING — an aggregate feeding another rule):
   REJECTED.** Reverses the creation-quarantine ruling verbatim ("a created
   value never re-enters a derivation"); refused today by name
-  (`AggregateInteriorPredicate`). Not a feature — a doctrine reversal.
+  (`AggregateInInterior`; measure finds likewise `MeasureInInterior`) — folds and measure finds are legal only at the main head. Not a feature — a doctrine reversal.
 - **Weak form (filter an output head's fold before emit): FEASIBLE AND
   CHEAP** — head-level `having` list in the IR, one word-compare before
-  `AggregateSink::finalize_into`, zero stratification impact, no new Lean
+  `AggregateSink::finalize_into`, no change to `NegationInRec` / the one linear rec, no new Lean
   axioms, SQLite oracles it natively. PRD-ready design parked in
   `docs/research/aggregate-comparisons.md` (IR slot, validation roster,
   notation shapes, corpus cases).
@@ -297,7 +297,7 @@ by trigger 1(b) above:
 - `confusablePairKey` — intra-row `a < b` normalization.
 - The serialization census folds (`macroOrder`, string-keyed counting) —
   sequence folds with no query spelling, host-residence by citation.
-- The idb re-grounding tax (an idb atom is a join position) — engine law,
+- An `Interior` atom is a join position (the re-grounding tax) — engine law,
   documented, ~6 recursive queries carry one extra `.match`.
 - Keyed-get/typed lookup for task-by-(kind, subject) — the anyOf
   investigation's "what primer actually needs" aside; smallest of the set

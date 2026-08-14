@@ -2,7 +2,7 @@
 
 - **Severity:** high
 - **Tree:** docs
-- **Status:** OPEN
+- **Status:** FIXED(b87f3ad9)
 - **Source:** audit/docs.md F11
 - **Depends on:** none (prose; parallel-safe — own file)
 

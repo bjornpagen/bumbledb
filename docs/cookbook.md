@@ -963,8 +963,8 @@ let queued = query!(Jobs {
 });
 ```
 
-**Insert-select**: query source answers, insert the derived facts — the
-data-modifying CTE with its premises witnessed instead of locked.
+**Insert-select**: query source answers, insert the derived facts,
+`write_from` witnessing the snapshot.
 **Read-modify-write, key-shaped**: WriteTx point reads (get/contains) see
 the final state — per-fact premises need no earlier snapshot witness.
 
@@ -1116,7 +1116,7 @@ one linear rec (`20-query-ir.md` § engine recursion): `recursive` declares
 the rec, the bare rule is the required main, and the driver runs the rounds
 inside one plan (`40-execution.md` § the linear reach driver). Primer-shaped
 `reach(x, x)` is the same family — linear rec plus a main join of the
-finished table, not a second SCC.
+finished table, not a second rec.
 
 ```rust
 bumbledb::schema! {
@@ -1480,8 +1480,8 @@ keyed point read answers exactly that fact or nothing, on both scopes
 (`crates/bumbledb/tests/keyed_get.rs`).
 
 The key is a **law**, and the read surface is that law made callable. The
-schema says `Program(grp) -> Program` — one program per group — so "the
-program of a group" is a well-posed question with at most one answer, and
+schema says `Course(grp) -> Course` — one course per group — so "the
+course of a group" is a well-posed question with at most one answer, and
 the store already enforces that on every commit:
 
 ```rust
@@ -1489,32 +1489,32 @@ bumbledb::schema! {
     pub KeyedRead;
 
     relation Grp     { id: u64 as GrpId, fresh, label: str }
-    relation Program {
-        id: u64 as ProgramId, fresh,
+    relation Course {
+        id: u64 as CourseId, fresh,
         grp: u64 as GrpId,
         title: str,
     }
 
-    Program(grp) <= Grp(id);
-    Program(grp) -> Program;    // one program per group — the callable law
+    Course(grp) <= Grp(id);
+    Course(grp) -> Course;    // one course per group — the callable law
 }
 ```
 
 Every declared `R(x, ..) -> R` on an ordinary relation emits a generated
 **key struct** named by the derived-name rule (`{R}By{Fields}`, each snake
-segment Pascal-cased) — here `ProgramByGrp { grp }` — implementing `Key`
+segment Pascal-cased) — here `CourseByGrp { grp }` — implementing `Key`
 with its statement id computed at expansion. The point read is that struct
-handed to `get` on either scope: `snap.get(ProgramByGrp { grp })` inside
-`db.read`, and `tx.get(ProgramByGrp { grp })` inside `db.write`, where the
+handed to `get` on either scope: `snap.get(CourseByGrp { grp })` inside
+`db.read`, and `tx.get(CourseByGrp { grp })` inside `db.write`, where the
 transaction side answers the FINAL state (base plus pending delta:
 read-your-writes, a pending delete answers `None`). The fresh newtype is
 the primary key made callable the same way: `snap.get(id)` / `tx.get(id)`
-through a `ProgramId` value reads the one `Program` fact that minted it.
+through a `CourseId` value reads the one `Course` fact that minted it.
 A wrong column, wrong newtype, or wrong relation is a compile error, never
 a runtime shape check.
 
 The anti-pattern this recipe retires: a scan-and-find where a key law
-exists — `snap.scan_facts::<Program>()` folded host-side, hunting for a
+exists — `snap.scan_facts::<Course>()` folded host-side, hunting for a
 `grp` — re-derives in the host what the store already enforces. The
 uniqueness the fold quietly assumes IS the declared FD; spell the law and
 the point read comes with it.

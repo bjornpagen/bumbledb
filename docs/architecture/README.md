@@ -79,19 +79,18 @@ laws).
   set). Two least fixpoints, two drivers, or one Query with `List Rec`.
   *Trigger: a workload where host two-prepares is the pain (not a translator
   gap).*
-- **Mutual-linear** (one SCC, several names, each rule ≤1 rec atom). Same
-  class as self-rec; even/odd encodes as one linear predicate with a parity
-  column. Refused this cut so Tarjan / k-variants / multi-pred scratch stay
-  gone. *Trigger: a sighted query that is unnatural as one name **and** is
-  still linear.* Admitting it is a new IR (not `Option<Rec>`), not a
-  resurrection of a predicate table.
+- **Mutual-linear** (several names, each rule ≤1 rec atom). Same
+  class as self-rec; even/odd encodes as one linear rec with a parity
+  column. Admitting it is a new IR (`List Rec` or named recs), not
+  `Option<Rec>`. *Trigger: a sighted query that is unnatural as one name **and** is
+  still linear.*
 - **Named interior of a finished rec** (inlining-equivalent, up to
   `MAX_RULES` / DNF caps: unfolding a k-rule view into m main rules is k·m
   conjunctive rules against main's pool, so a wide today-legal view over a
   rec can have no this-cut image). This cut inlines into main. *Trigger:
   two main-shaped queries over one rec that want to share a named
   projection without a second prepare, **or** an inline image that exceeds
-  the main pool — still not a second SCC.*
+  the main pool — still not a second rec.*
 - **Nonlinear rec at L** (`P(x,z) ← P(x,y), P(y,z)`). Semi-naive still
   agrees; it is a worse TC algorithm at 10⁷ / 10 ms (k FJ plans × |Acc|).
   *Trigger: a measured L-scale query where the linear encoding is unnatural
@@ -100,8 +99,8 @@ laws).
   negated in a rec arm). Monotone — the negated source is constant in the
   operator's argument (`lean/Bumbledb/Exec/Reach.lean: reachOp_mono` does
   not witness against it). Refused this cut so `NegationInRec` covers the
-  whole SCC, the driver keeps one negation path, and `recLinear` stays one
-  line. *Trigger: a workload whose during-walk exclusion cannot be written
+  one rec, the driver keeps one negation path, and linearity of the one rec
+  stays structural. *Trigger: a workload whose during-walk exclusion cannot be written
   positively.* Admitting it weakens `reachOp_mono`'s premise to
   no-negated-self; the wall (self) is untouched.
 - **Declared range/stabbing accelerators**: time-range, point-membership, and
@@ -227,6 +226,5 @@ re-litigated by accident:
   folds create at the answer boundary only; future interval operators must be
   lattice-closed (`20-query-ir.md` § the creation quarantine).
 - **Queries stay query-shaped** — interiors + one linear rec, budgeted; the
-  caps are product decisions; no rule-program
-  runtime, no stored rules, no magic sets; a deductive database is a named
+  caps are product decisions; no stored rules, no magic sets; a deductive database is a named
   non-goal (`20-query-ir.md` § engine recursion, `00-product.md`).

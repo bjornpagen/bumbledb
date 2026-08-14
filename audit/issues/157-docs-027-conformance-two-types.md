@@ -2,7 +2,7 @@
 
 - **Severity:** high
 - **Tree:** docs (lean README)
-- **Status:** OPEN
+- **Status:** FIXED(a52be97a)
 - **Source:** audit/docs.md F27
 - **Depends on:** lean-008 (one decoder; `CQuery`/`plainQuery` deleted) — this README describes the decode pipeline
 
@@ -20,9 +20,9 @@ Per `audit/CONTRACT.md §C7` + §C8, after lean-008: "Every case carries a `Quer
 
 ## Acceptance criteria
 
-- [ ] Gone: `rg -n 'CQuery|plainQuery' lean/conformance/README.md` → no matches.
-- [ ] Case counts (246 seeded + 22 reach = 268) and JSON key documentation match the frozen corpus exactly.
-- [ ] `./scripts/lean.sh` green (README changes can't break it, but the fixer confirms the described pipeline is the shipped one).
+- [x] Gone: `rg -n 'CQuery|plainQuery' lean/conformance/README.md` → no matches.
+- [x] Case counts (246 seeded + 22 reach = 268) and JSON key documentation match the frozen corpus exactly.
+- [x] `./scripts/lean.sh` green (README changes can't break it, but the fixer confirms the described pipeline is the shipped one).
 
 ## Constraints
 

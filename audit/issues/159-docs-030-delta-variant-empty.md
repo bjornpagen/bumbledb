@@ -2,7 +2,7 @@
 
 - **Severity:** medium
 - **Tree:** docs
-- **Status:** OPEN
+- **Status:** FIXED(a52be97a)
 - **Source:** adversarial pass (final validation; not in audit/docs.md)
 - **Depends on:** engine-007 (`DeltaVariant` dies), engine-023 (`Empty` is not a variant) — this doc describes the post-fix prepared object. Do **not** re-file those engine issues.
 
@@ -30,9 +30,9 @@ Per `audit/CONTRACT.md §C3` + §C7, after those engine issues:
 
 ## Acceptance criteria
 
-- [ ] Gone: `rg -n 'DeltaVariant|PreparedBody::Empty' docs/architecture/20-query-ir.md docs/architecture/40-execution.md` → no matches.
-- [ ] The reach-driver facts (one delta occurrence per rec arm, no k-variant mint, interiors-only skips the driver) survive under C3 names.
-- [ ] No code changes in this issue.
+- [x] Gone: `rg -n 'DeltaVariant|PreparedBody::Empty' docs/architecture/20-query-ir.md docs/architecture/40-execution.md` → no matches.
+- [x] The reach-driver facts (one delta occurrence per rec arm, no k-variant mint, interiors-only skips the driver) survive under C3 names.
+- [x] No code changes in this issue.
 
 ## Constraints
 

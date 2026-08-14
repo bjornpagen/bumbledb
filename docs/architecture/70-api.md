@@ -506,9 +506,9 @@ is the consumer that names its shape.)
 - `db.read(|snap| ...)` — one LMDB read snapshot; executes *prepared* queries.
   `db.prepare(&query)` is the ONE prepare entry (the unified-prepare ruling,
   frozen 2026-07-15): it takes `&Query` — pin-at-prepare, `40-execution.md`.
-  A query with empty interiors and no rec prepares as today's query plus two
-  empty fields (`lean/Bumbledb/Exec/Reach.lean: evalQuery_plain`); interiors
-  run as a preamble (`PreparedBody::Rules` or `Empty`); a rec query executes
+  Empty interiors and `rec: None` is an ordinary `Query`
+  (`lean/Bumbledb/Exec/Reach.lean: evalQuery_cq`); interiors
+  run as a preamble (`PreparedPipeline::Cq`); a rec query executes
   under the linear reach driver with the host-settable budget
   `prepared.set_derived_budget(rounds, tuples)` — the tuples axis judges
   every query, the rounds axis is rec-only (`40-execution.md` § the linear
@@ -659,8 +659,8 @@ retries a strict subset — exactly `GenerationMoved` — because rerunning the
 callback cannot free a reader slot.
 
 The writer mutex serializes write *transactions*, not read-compute-write
-*sequences*: query-driven writes — update-where-predicate, insert-select,
-everything SQL spells with data-modifying CTEs — must read on a snapshot first,
+*sequences*: query-driven writes — update-where, insert-select —
+must read on a snapshot first,
 then write, and two host threads interleaving snapshot-read → compute → write can
 clobber each other's premises. The answer is representation, not control flow: a
 snapshot already knows its generation, so *nothing changed since I looked* is a
@@ -708,8 +708,7 @@ proposition the commit checks in one integer compare.
   - *Update-where:* query the matching facts on a snapshot, compute their
     replacements, `write_from(&snap)` doing `delete(old); insert(new)` per fact.
   - *Insert-select:* query the source answers, compute the derived facts,
-    `write_from(&snap)` inserting them — the data-modifying-CTE shapes with the
-    premises witnessed instead of locked.
+    `write_from(&snap)` inserting them — premises witnessed instead of locked.
   - *Derived-relation maintenance:* re-run the deriving query, diff against the
     stored relation's current facts, `write_from(&snap)` applying the diff — the
     materialized-view refresh as an ordinary witnessed write
@@ -750,14 +749,18 @@ proposition the commit checks in one integer compare.
   Inserting a schema-A struct into a schema-B database — or executing a prepared
   query against another schema's snapshot — is a **compile error**, closing the
   cross-schema `RelationId`-aliasing hole that a width mismatch only caught by
-  luck. Inference hides the parameter at call sites; same-schema/different-
-  environment confusion stays a runtime check (`ForeignPreparedQuery`).
+  luck. Inference hides the parameter at call sites. A prepared query is
+  bound to the preparing environment, a process-runtime fact no static type
+  can carry across processes; the horizon representation is branding
+  `PreparedQuery` with an environment/generation witness so a foreign
+  snapshot fails at the CALL type where the host language can express it.
+  Today the engine detects it at execute (`ForeignPreparedQuery`).
 - Query answers: one concrete `Answers` carrier (decided: columnar cells + a byte heap,
   no caller-buffer trait) — answers of decoded values (String decoded from intern
   ids at materialization, into the buffer's byte heap; `bytes<N>` re-assembled
   from its inline slot words with no dictionary touch; intervals as start/end word
   pairs), an `answers()` iterator, and column metadata via
-  `PreparedQuery::predicate()` — the predicate the query defines
+  `PreparedQuery::signature()` — the sealed main signature (answer columns + folds)
   (`20-query-ir.md` § the query shape) is the **buffer-typing authority**:
   one signature column per head position, result type plus producing fold,
   sealed at validation and read by every consumer (the buffer itself stays
@@ -1203,7 +1206,7 @@ engine-first change, and nothing re-enters without a new ruling.
   2026-07-17) — lands as its own engine-first change, not built here.** The
   strongest row of the census: every declared `key()` FD in the consumer is
   re-implemented host-side as `scan().find()` or a hand-built map — the
-  driver looks up program-by-grp, task-by-(kind, subject), objective-by-ref,
+  driver looks up the group-keyed relation, task-by-(kind, subject), objective-by-ref,
   strandEdge-by-pair, and sheet-by-grade that way (`driver/dispatch.ts`,
   `driver/mint.ts`, `driver/driver.ts`), and ETL shadows its declared key FDs
   (`programGrpKey`, `scheduleCapsuleKey`, `receiptSheetKey`) with five host

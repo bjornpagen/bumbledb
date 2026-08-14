@@ -7,7 +7,7 @@ struct GrpRow {
 	std::string label;
 };
 
-struct ProgramRow {
+struct CourseRow {
 	[[= bdb::fresh]] std::uint64_t id;
 
 	std::uint64_t grp;
@@ -15,15 +15,15 @@ struct ProgramRow {
 };
 
 inline constexpr auto Grp = bdb::relation<"Grp", GrpRow>;
-inline constexpr auto Program = bdb::relation<"Program", ProgramRow>;
+inline constexpr auto Course = bdb::relation<"Course", CourseRow>;
 
-inline constexpr auto program_grp_key = bdb::key(Program.grp);
+inline constexpr auto course_grp_key = bdb::key(Course.grp);
 
-inline constexpr auto KeyedRead = bdb::schema<"KeyedRead">(Grp, Program,
+inline constexpr auto KeyedRead = bdb::schema<"KeyedRead">(Grp, Course,
 
-                                                           bdb::contained(bdb::on(Program.grp), bdb::on(Grp.id)),
+                                                           bdb::contained(bdb::on(Course.grp), bdb::on(Grp.id)),
 
-                                                           program_grp_key);
+                                                           course_grp_key);
 
 namespace {
 
@@ -101,7 +101,7 @@ struct CaseResult {
 
 struct SeedIds {
 	std::uint64_t grp;
-	std::uint64_t program;
+	std::uint64_t course;
 };
 
 [[nodiscard]] auto seed(bdb::Db& db) -> std::optional<SeedIds> {
@@ -116,11 +116,11 @@ struct SeedIds {
 			        return tx.insert(Grp, GrpRow{.id = minted, .label = std::string{"algebra"}});
 		        })
 		        .and_then([&](bool) {
-			        return tx.alloc(Program.id);
+			        return tx.alloc(Course.id);
 		        })
 		        .and_then([&](std::uint64_t minted) {
-			        ids.program = minted;
-			        return tx.insert(Program, ProgramRow{.id = minted, .grp = ids.grp, .title = std::string{"linear equations"}});
+			        ids.course = minted;
+			        return tx.insert(Course, CourseRow{.id = minted, .grp = ids.grp, .title = std::string{"linear equations"}});
 		        });
 		if (!rows_land.has_value()) {
 			return std::unexpected{std::move(rows_land).error()};
@@ -165,32 +165,32 @@ auto run_cases(std::string_view fixtures_path, std::vector<CaseResult>& results)
 
 	auto const ids = seed(*db);
 	results.push_back(CaseResult{
-	    .name = "the seed commits (one group, one program)",
+	    .name = "the seed commits (one group, one course)",
 	    .passed = ids.has_value(),
 	});
 	if (!ids.has_value()) {
 		return;
 	}
 
-	auto const by_group = db->get(Program, program_grp_key, {.grp = ids->grp});
+	auto const by_group = db->get(Course, course_grp_key, {.grp = ids->grp});
 	results.push_back(CaseResult{
-	    .name = "db.get(Program, programGrpKey, {grp}) answers the typed "
+	    .name = "db.get(Course, courseGrpKey, {grp}) answers the typed "
 	            "point read",
 	    .passed = by_group.has_value() && by_group->has_value() && (*by_group)->len() == 1 &&
-	              cell_is_u64(**by_group, {.row = 0, .column = 0}, ids->program) &&
+	              cell_is_u64(**by_group, {.row = 0, .column = 0}, ids->course) &&
 	              cell_is_text(**by_group, {.row = 0, .column = 2}, "linear equations"),
 	});
 
-	auto const by_id = db->get(Program, {.id = ids->program});
+	auto const by_id = db->get(Course, {.id = ids->course});
 	results.push_back(CaseResult{
-	    .name = "db.get(Program, {id}) answers the primary point read",
+	    .name = "db.get(Course, {id}) answers the primary point read",
 	    .passed =
 	        by_id.has_value() && by_id->has_value() && (*by_id)->len() == 1 && cell_is_u64(**by_id, {.row = 0, .column = 1}, ids->grp),
 	});
 
 	auto const via_snap = db->read([&](bdb::Snapshot& snap) -> std::expected<bool, bdb::Error> {
-		return snap.get(Program, program_grp_key, {.grp = ids->grp}).transform([&](std::optional<bdb::RowSet> rows) {
-			return rows.has_value() && rows->len() == 1 && cell_is_u64(*rows, {.row = 0, .column = 0}, ids->program);
+		return snap.get(Course, course_grp_key, {.grp = ids->grp}).transform([&](std::optional<bdb::RowSet> rows) {
+			return rows.has_value() && rows->len() == 1 && cell_is_u64(*rows, {.row = 0, .column = 0}, ids->course);
 		});
 	});
 	results.push_back(CaseResult{
@@ -209,22 +209,22 @@ auto run_cases(std::string_view fixtures_path, std::vector<CaseResult>& results)
 			                     return tx.insert(Grp, GrpRow{.id = minted, .label = std::string{"geometry"}});
 		                     })
 		                     .and_then([&](bool) {
-			                     return tx.alloc(Program.id);
+			                     return tx.alloc(Course.id);
 		                     })
 		                     .and_then([&](std::uint64_t minted) {
 			                     proofs = minted;
-			                     return tx.insert(Program, ProgramRow{.id = minted, .grp = geometry, .title = std::string{"proofs"}});
+			                     return tx.insert(Course, CourseRow{.id = minted, .grp = geometry, .title = std::string{"proofs"}});
 		                     });
 		if (!rows_land.has_value()) {
 			return std::unexpected{std::move(rows_land).error()};
 		}
 		auto witnesses = PendingReads{};
-		auto keyed = tx.get(Program, program_grp_key, {.grp = geometry});
+		auto keyed = tx.get(Course, course_grp_key, {.grp = geometry});
 		if (!keyed.has_value()) {
 			return std::unexpected{std::move(keyed).error()};
 		}
 		witnesses.keyed_saw_pending = keyed->has_value() && (*keyed)->len() == 1 && cell_is_u64(**keyed, {.row = 0, .column = 0}, proofs);
-		auto primary = tx.get(Program, {.id = proofs});
+		auto primary = tx.get(Course, {.id = proofs});
 		if (!primary.has_value()) {
 			return std::unexpected{std::move(primary).error()};
 		}

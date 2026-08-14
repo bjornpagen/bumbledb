@@ -2,7 +2,7 @@
 
 - **Severity:** medium
 - **Tree:** docs
-- **Status:** OPEN
+- **Status:** FIXED(b87f3ad9)
 - **Source:** audit/docs.md F6
 - **Depends on:** lean-002 (`recLinear` dies; linearity is structural on `LinearRec` — do not cite `recLinear` as the surviving judge)
 

@@ -704,14 +704,14 @@ recipe!(r30, KeyedRead, {
     pub KeyedRead;
 
     relation Grp     { id: u64 as GrpId, fresh, label: str }
-    relation Program {
-        id: u64 as ProgramId, fresh,
+    relation Course {
+        id: u64 as CourseId, fresh,
         grp: u64 as GrpId,
         title: str,
     }
 
-    Program(grp) <= Grp(id);
-    Program(grp) -> Program;
+    Course(grp) <= Grp(id);
+    Course(grp) -> Course;
 });
 
 recipe!(r31, Racks, {
@@ -2184,18 +2184,18 @@ fn r28_migration_is_etl() {
     assert_eq!(answers, expected, "the v1 facts answer under the v2 theory");
 }
 
-/// Recipe 30: the keyed read — the declared law `Program(grp) -> Program`
-/// made callable. The generated key struct (`ProgramByGrp`, the
+/// Recipe 30: the keyed read — the declared law `Course(grp) -> Course`
+/// made callable. The generated key struct (`CourseByGrp`, the
 /// `{R}By{Fields}` derived-name rule) answers on BOTH scopes, the fresh
 /// newtype reads the primary form, and a determinant nobody wrote misses
 /// cleanly — the recipe's taught spellings, exercised verbatim.
 #[test]
 fn r30_keyed_read_reads_through_the_law_on_both_scopes() {
-    use r30::{Grp, GrpId, KeyedRead, Program, ProgramByGrp, ProgramId};
+    use r30::{Course, CourseByGrp, CourseId, Grp, GrpId, KeyedRead};
 
     let dir = TempDir::new("r30-keyed-read");
     let db = Db::create(dir.path(), KeyedRead).expect("create the KeyedRead store");
-    let (grp, empty_grp, program) = db
+    let (grp, empty_grp, course) = db
         .write(|tx| {
             let grp: GrpId = tx.alloc()?;
             tx.insert(&Grp {
@@ -2207,37 +2207,37 @@ fn r30_keyed_read_reads_through_the_law_on_both_scopes() {
                 id: empty_grp,
                 label: "geometry",
             })?;
-            let program: ProgramId = tx.alloc()?;
-            tx.insert(&Program {
-                id: program,
+            let course: CourseId = tx.alloc()?;
+            tx.insert(&Course {
+                id: course,
                 grp,
                 title: "linear equations",
             })?;
-            Ok((grp, empty_grp, program))
+            Ok((grp, empty_grp, course))
         })
         .expect("seed the keyed-read store");
 
     db.read(|snap| {
         // The law made callable: the doc's snapshot spelling.
         assert_eq!(
-            snap.get(ProgramByGrp { grp })?,
-            Some(Program {
-                id: program,
+            snap.get(CourseByGrp { grp })?,
+            Some(Course {
+                id: course,
                 grp,
                 title: "linear equations",
             })
         );
         // The fresh newtype is the primary key made callable.
         assert_eq!(
-            snap.get(program)?,
-            Some(Program {
-                id: program,
+            snap.get(course)?,
+            Some(Course {
+                id: course,
                 grp,
                 title: "linear equations",
             })
         );
-        // A group with no program misses cleanly — no fold, no assumption.
-        assert_eq!(snap.get(ProgramByGrp { grp: empty_grp })?, None);
+        // A group with no course misses cleanly — no fold, no assumption.
+        assert_eq!(snap.get(CourseByGrp { grp: empty_grp })?, None);
         Ok(())
     })
     .expect("snapshot keyed reads");
@@ -2245,13 +2245,13 @@ fn r30_keyed_read_reads_through_the_law_on_both_scopes() {
     // The same spellings inside the write transaction answer the final state.
     db.write(|tx| {
         let found = tx
-            .get(ProgramByGrp { grp })?
+            .get(CourseByGrp { grp })?
             .expect("the law answers in write scope");
-        assert_eq!(found.id, program);
+        assert_eq!(found.id, course);
         assert_eq!(
-            tx.get(program)?,
-            Some(Program {
-                id: program,
+            tx.get(course)?,
+            Some(Course {
+                id: course,
                 grp,
                 title: "linear equations",
             })

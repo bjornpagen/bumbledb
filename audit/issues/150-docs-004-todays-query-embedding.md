@@ -2,7 +2,7 @@
 
 - **Severity:** medium
 - **Tree:** docs
-- **Status:** OPEN
+- **Status:** FIXED(b87f3ad9)
 - **Source:** audit/docs.md F4
 - **Depends on:** lean-001 (the Query sum deletes `evalQuery_plain` / `Query.Plain`; this doc must not cite them as the destination)
 

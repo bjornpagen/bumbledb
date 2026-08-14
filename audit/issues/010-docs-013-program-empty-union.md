@@ -2,7 +2,7 @@
 
 - **Severity:** high
 - **Tree:** docs
-- **Status:** OPEN
+- **Status:** FIXED(b87f3ad9)
 - **Source:** audit/docs.md F13
 - **Depends on:** none (prose; same file as docs-012/014 — one fixer may take 60-validation.md)
 

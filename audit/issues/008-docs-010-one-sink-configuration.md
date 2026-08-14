@@ -2,7 +2,7 @@
 
 - **Severity:** medium
 - **Tree:** docs
-- **Status:** OPEN
+- **Status:** FIXED(b87f3ad9)
 - **Source:** audit/docs.md F10
 - **Depends on:** none (prose; same file as docs-001..010; describes the shape engine-001 formalizes — safe to fix now, the SENTENCE is wrong against shipping code too)
 

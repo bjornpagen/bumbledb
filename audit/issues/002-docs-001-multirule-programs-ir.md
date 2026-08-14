@@ -2,7 +2,7 @@
 
 - **Severity:** high
 - **Tree:** docs
-- **Status:** OPEN
+- **Status:** FIXED(b87f3ad9)
 - **Source:** audit/docs.md F1
 - **Depends on:** none (prose; parallel-safe within `docs/architecture/20-query-ir.md` — coordinate with docs-002..010 which edit the same file; one fixer may take all of 20-query-ir)
 

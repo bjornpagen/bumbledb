@@ -2,7 +2,7 @@
 
 - **Severity:** medium
 - **Tree:** docs
-- **Status:** OPEN
+- **Status:** FIXED(b87f3ad9)
 - **Source:** audit/docs.md F15
 - **Depends on:** lean-001 (`evalQuery_plain` dies; do not keep it as the API sentence's citation)
 
