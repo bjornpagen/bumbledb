@@ -60,7 +60,7 @@
 //! term    := var | ?param | literal
 //! pred    := lowercase ident             // macro-LOCAL: resolved at expansion, never
 //!                                        //   in the IR or the fingerprint; relations
-//!                                        //   are UpperCamel, so a predicate spelled
+//!                                        //   are UpperCamel, so an interior/rec spelled
 //!                                        //   like a relation is unwritable; `and`,
 //!                                        //   `or`, `interior`, and `recursive` are
 //!                                        //   reserved
@@ -330,12 +330,9 @@ impl AggOp {
 enum HeadTerm {
     Var(Name),
     Measure(Name),
-    Agg {
-        op: AggOp,
-        over: Option<Name>,
-        /// The aggregated term is `Duration(v)` (Sum/Min/Max only).
-        measure: bool,
-    },
+    Count,
+    Agg { op: AggOp, over: Name },
+    AggMeasure { op: AggOp, over: Name },
 }
 
 /// How a parsed rule was introduced: a keyword, or a bare main rule.
@@ -346,15 +343,29 @@ enum RuleKind {
     Recursive,
 }
 
-struct ParsedRule {
-    /// `interior` / `recursive` / a bare main rule. Named heads without
-    /// a keyword never survive the parse.
-    kind: RuleKind,
-    /// The derived-table name (`interior mid(x)` / `recursive reach(c)`)
-    /// — macro-local sidecar; `None` for a bare main rule.
-    name: Option<Name>,
-    head: Vec<HeadTerm>,
-    items: Vec<Item>,
+/// One parsed rule: the keyword (or bare main) carries the name.
+enum ParsedRule {
+    Bare { head: Vec<HeadTerm>, items: Vec<Item> },
+    Interior { name: Name, head: Vec<HeadTerm>, items: Vec<Item> },
+    Recursive { name: Name, head: Vec<HeadTerm>, items: Vec<Item> },
+}
+
+impl ParsedRule {
+    fn head(&self) -> &[HeadTerm] {
+        match self {
+            Self::Bare { head, .. } | Self::Interior { head, .. } | Self::Recursive { head, .. } => {
+                head
+            }
+        }
+    }
+
+    fn items(&self) -> &[Item] {
+        match self {
+            Self::Bare { items, .. }
+            | Self::Interior { items, .. }
+            | Self::Recursive { items, .. } => items,
+        }
+    }
 }
 
 // ---------------------------------------------------------------------
@@ -594,11 +605,7 @@ fn agg_op(name: &str) -> Option<AggOp> {
 /// three folds — the grammar's `t := v | Duration(v)`).
 fn parse_agg(tokens: &mut Tokens, op: AggOp) -> Parse<HeadTerm> {
     if op == AggOp::Count {
-        return Ok(HeadTerm::Agg {
-            op,
-            over: None,
-            measure: false,
-        });
+        return Ok(HeadTerm::Count);
     }
     let (mut arg, _) = take_paren_group(tokens, "the aggregate's argument")?;
     let first = expect_ident(&mut arg, "a variable")?;
@@ -623,10 +630,10 @@ fn parse_agg(tokens: &mut Tokens, op: AggOp) -> Parse<HeadTerm> {
     if let Some(extra) = arg.next() {
         return fail(extra.span(), "query!: the aggregate takes one argument");
     }
-    Ok(HeadTerm::Agg {
-        op,
-        over: Some(over),
-        measure,
+    Ok(if measure {
+        HeadTerm::AggMeasure { op, over }
+    } else {
+        HeadTerm::Agg { op, over }
     })
 }
 
@@ -735,10 +742,10 @@ fn parse_sel_value(tokens: &mut Tokens) -> Parse<SelValue> {
     Ok(SelValue::Lit(parse_lit(tokens)?))
 }
 
-/// One binding's field label: a field name, or — in a predicate atom —
+/// One binding's field label: a field name, or — in an interior/rec atom —
 /// a head position (`2: x`, the sparse/selection spelling; `FieldId(i)`
 /// is positional, never nominal). Which one is legal is the atom's
-/// source's business, decided at emission (the predicate table exists
+/// source's business, decided at emission (the derived-table list exists
 /// only after every rule has parsed — mutual recursion reads forward).
 fn expect_field_label(tokens: &mut Tokens) -> Parse<Name> {
     match tokens.peek() {
@@ -1078,8 +1085,8 @@ fn validate_pred_name(name: &Name) -> Parse<()> {
         return fail(
             name.span,
             format!(
-                "query!: predicate names begin lowercase (`{}`) — UpperCamel \
-                 names are relations, so a predicate spelled like a relation \
+                "query!: derived-table names begin lowercase (`{}`) — UpperCamel \
+                 names are relations, so an interior/rec spelled like a relation \
                  is unwritable (docs/architecture/20-query-ir.md § the query \
                  notation)",
                 name.text
@@ -1132,7 +1139,7 @@ fn parse_derived_name(tokens: &mut Tokens, kind: RuleKind, kw_span: Span) -> Par
 /// A named head without the keyword is the former named-head sneak — a
 /// spanned compile error.
 fn parse_rule(tokens: &mut Tokens) -> Parse<ParsedRule> {
-    let (kind, name) = match tokens.peek() {
+    let intro = match tokens.peek() {
         Some(TokenTree::Ident(_)) => {
             let ident = expect_ident(tokens, "a rule")?;
             if peek_punct(tokens, ':') {
@@ -1151,7 +1158,7 @@ fn parse_rule(tokens: &mut Tokens) -> Parse<ParsedRule> {
                         ident.span,
                         format!(
                             "query!: `{}` is the condition grammar's reserved word — \
-                             a predicate cannot take either tree name \
+                             an interior/rec cannot take either tree name \
                              (docs/architecture/20-query-ir.md § the query notation)",
                             ident.text
                         ),
@@ -1164,7 +1171,7 @@ fn parse_rule(tokens: &mut Tokens) -> Parse<ParsedRule> {
                         RuleKind::Recursive
                     };
                     let pred = parse_derived_name(tokens, kind, ident.span)?;
-                    (kind, Some(pred))
+                    Some((kind == RuleKind::Interior, pred))
                 }
                 _ => {
                     if !ident
@@ -1176,8 +1183,8 @@ fn parse_rule(tokens: &mut Tokens) -> Parse<ParsedRule> {
                         return fail(
                             ident.span,
                             format!(
-                                "query!: predicate names begin lowercase (`{}`) — UpperCamel \
-                                 names are relations, so a predicate spelled like a relation \
+                                "query!: derived-table names begin lowercase (`{}`) — UpperCamel \
+                                 names are relations, so an interior/rec spelled like a relation \
                                  is unwritable (docs/architecture/20-query-ir.md § the query \
                                  notation)",
                                 ident.text
@@ -1195,7 +1202,7 @@ fn parse_rule(tokens: &mut Tokens) -> Parse<ParsedRule> {
                 }
             }
         }
-        _ => (RuleKind::Bare, None),
+        _ => None,
     };
     let (head_group, head_span) = take_paren_group(tokens, "a rule head `(…)`")?;
     let head = parse_head(head_group)?;
@@ -1249,11 +1256,10 @@ fn parse_rule(tokens: &mut Tokens) -> Parse<ParsedRule> {
             };
         }
     }
-    Ok(ParsedRule {
-        kind,
-        name,
-        head,
-        items,
+    Ok(match intro {
+        None => ParsedRule::Bare { head, items },
+        Some((true, name)) => ParsedRule::Interior { name, head, items },
+        Some((false, name)) => ParsedRule::Recursive { name, head, items },
     })
 }
 
@@ -1302,45 +1308,61 @@ fn screaming_snake(name: &str) -> String {
 /// The query-global param table: one spelling style per query — named
 /// (dense by first occurrence) or positional (`?N`, verbatim — the
 /// renderer's spelling).
-#[derive(Default)]
+enum ParamStyle {
+    Empty,
+    Named(Vec<String>),
+    Index,
+}
+
 struct Params {
-    named: Vec<String>,
-    saw_named: bool,
-    saw_index: bool,
+    style: ParamStyle,
+}
+
+impl Default for Params {
+    fn default() -> Self {
+        Self {
+            style: ParamStyle::Empty,
+        }
+    }
 }
 
 impl Params {
     fn resolve(&mut self, param: &Param) -> Parse<u16> {
         match param {
             Param::Named(name) => {
-                if self.saw_index {
+                if matches!(self.style, ParamStyle::Index) {
                     return fail(
                         name.span,
                         "query!: named and positional ?params cannot mix — \
                          pick one spelling per query",
                     );
                 }
-                self.saw_named = true;
-                let position = self
-                    .named
+                if matches!(self.style, ParamStyle::Empty) {
+                    self.style = ParamStyle::Named(vec![name.text.clone()]);
+                    return Ok(0);
+                }
+                let ParamStyle::Named(named) = &mut self.style else {
+                    unreachable!("Empty and Index returned above");
+                };
+                let position = named
                     .iter()
                     .position(|existing| *existing == name.text)
                     .unwrap_or_else(|| {
-                        self.named.push(name.text.clone());
-                        self.named.len() - 1
+                        named.push(name.text.clone());
+                        named.len() - 1
                     });
                 u16::try_from(position)
                     .map_or_else(|_| fail(name.span, "query!: too many params"), Ok)
             }
             Param::Index { index, span } => {
-                if self.saw_named {
+                if matches!(self.style, ParamStyle::Named(_)) {
                     return fail(
                         *span,
                         "query!: named and positional ?params cannot mix — \
                          pick one spelling per query",
                     );
                 }
-                self.saw_index = true;
+                self.style = ParamStyle::Index;
                 Ok(*index)
             }
         }
@@ -1399,15 +1421,20 @@ impl Scope {
     }
 }
 
-/// An interior/rec atom's binding style: `Some(true)` when every binding is
-/// bare (the ordered dense spelling), `Some(false)` when every binding
-/// carries a numeric position label (the sparse/selection spellings),
-/// `None` for an empty binding list. Refuses a bare digit (a variable
-/// is an ident), a named label (derived columns are positions), and
-/// the two styles mixed — the second style's first occurrence carries
-/// the mixing diagnostic.
-fn interior_style(atom: &Atom) -> Parse<Option<bool>> {
-    let mut style: Option<bool> = None;
+/// An interior/rec atom's binding style. Mixing is unrepresentable —
+/// the second style's first occurrence carries the mixing diagnostic.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum BindingStyle {
+    Empty,
+    Bare,
+    Numeric,
+}
+
+/// Walks an interior/rec atom's bindings into one style. Refuses a bare
+/// digit (a variable is an ident), a named label (derived columns are
+/// positions), and the two styles mixed.
+fn interior_style(atom: &Atom) -> Parse<BindingStyle> {
+    let mut style = BindingStyle::Empty;
     for binding in &atom.bindings {
         let (Binding::Pun(field)
         | Binding::Var { field, .. }
@@ -1422,7 +1449,7 @@ fn interior_style(atom: &Atom) -> Parse<Option<bool>> {
         if bare && numeric {
             return fail(
                 field.span,
-                "query!: a bare predicate binding is a variable (`reach(m, a)` — \
+                "query!: a bare interior/rec binding is a variable (`reach(m, a)` — \
                  ordered dense, positions left to right from 0); a position \
                  label takes a form (`2: x`, `0 == …`, `0 in ?p`)",
             );
@@ -1431,7 +1458,7 @@ fn interior_style(atom: &Atom) -> Parse<Option<bool>> {
             return fail(
                 field.span,
                 format!(
-                    "query!: `{}` — a predicate atom's bindings address head \
+                    "query!: `{}` — an interior/rec atom's bindings address head \
                      positions, never names: ordered dense is bare \
                      (`reach(m, a)`), sparse and selection are indexed \
                      (`2: x`, `0 == …`)",
@@ -1439,18 +1466,32 @@ fn interior_style(atom: &Atom) -> Parse<Option<bool>> {
                 ),
             );
         }
+        let next = if bare {
+            BindingStyle::Bare
+        } else {
+            BindingStyle::Numeric
+        };
         match style {
-            None => style = Some(bare),
-            Some(first) if first != bare => {
+            BindingStyle::Empty => style = next,
+            BindingStyle::Bare if !bare => {
                 return fail(
                     field.span,
                     "query!: bare idents and indexed labels cannot mix in one \
-                     predicate atom — ordered dense bindings are all bare \
+                     interior/rec atom — ordered dense bindings are all bare \
                      (`reach(m, a)`); sparse and selection bindings are all \
                      indexed (`2: x`, `0 == …`)",
                 );
             }
-            Some(_) => {}
+            BindingStyle::Numeric if bare => {
+                return fail(
+                    field.span,
+                    "query!: bare idents and indexed labels cannot mix in one \
+                     interior/rec atom — ordered dense bindings are all bare \
+                     (`reach(m, a)`); sparse and selection bindings are all \
+                     indexed (`2: x`, `0 == …`)",
+                );
+            }
+            BindingStyle::Bare | BindingStyle::Numeric => {}
         }
     }
     Ok(style)
@@ -1562,7 +1603,7 @@ impl Emitter<'_> {
     /// and an explicitly indexed dense in-order variable list is refused
     /// — canonical utterance, one spelling per meaning.
     fn interior_atom(&mut self, scope: &mut Scope, atom: &Atom, interior: u32) -> Parse<String> {
-        if interior_style(atom)? == Some(true) {
+        if interior_style(atom)? == BindingStyle::Bare {
             // Ordered dense: positions assigned left to right from 0.
             let mut bindings = String::new();
             for (position, binding) in atom.bindings.iter().enumerate() {
@@ -1590,7 +1631,7 @@ impl Emitter<'_> {
             };
             return fail(
                 field.span,
-                "query!: dense in-order predicate bindings are written bare — \
+                "query!: dense in-order interior/rec bindings are written bare — \
                  `reach(m, a)`, positions left to right from 0; `i: v` is the \
                  sparse spelling (`2: x`)",
             );
@@ -1613,7 +1654,7 @@ impl Emitter<'_> {
                     return fail(
                         handle.span,
                         "query!: a bare handle resolves through the field-named host \
-                         enum, and a predicate position has no field name — qualify \
+                         enum, and an interior/rec position has no field name — qualify \
                          it (`Kind::Focus`)",
                     );
                 }
@@ -1641,7 +1682,7 @@ impl Emitter<'_> {
     /// macro-local name, else the relation and every field through the
     /// theory's id constants. The case partition is total (finding 054):
     /// a lowercase name IS a derived table, so one absent from the table is
-    /// an unknown predicate, never a relation respelled — `parent(…)`
+    /// an unknown derived table, never a relation respelled — `parent(…)`
     /// must not resolve to `Parent`'s constants.
     fn atom(&mut self, scope: &mut Scope, atom: &Atom) -> Parse<String> {
         if let Some(interior) = self
@@ -1662,8 +1703,8 @@ impl Emitter<'_> {
             return fail(
                 atom.relation.span,
                 format!(
-                    "query!: unknown predicate `{}` — lowercase names are \
-                     predicates and resolve macro-locally; relations are \
+                    "query!: unknown derived table `{}` — lowercase names are \
+                     interiors or the rec, resolved macro-locally; relations are \
                      UpperCamel (docs/architecture/20-query-ir.md § the \
                      query notation)",
                     atom.relation.text
@@ -1694,7 +1735,7 @@ impl Emitter<'_> {
                 return fail(
                     field.span,
                     format!(
-                        "query!: `{}` — numeric labels address a predicate atom's \
+                        "query!: `{}` — numeric labels address an interior/rec atom's \
                          head positions; a relation's fields are named",
                         field.text
                     ),
@@ -1787,25 +1828,23 @@ impl Emitter<'_> {
                 "::bumbledb::FindTerm::Measure(::bumbledb::VarId({}))",
                 scope.head_var(name)?
             ),
-            HeadTerm::Agg { op, over, measure } => {
-                let op_expr = format!("::bumbledb::AggOp::{}", op.ir_name());
-                match over {
-                    None => format!(
-                        "::bumbledb::FindTerm::Aggregate {{ op: {op_expr}, \
-                             over: ::std::option::Option::None }}"
-                    ),
-                    Some(name) if *measure => format!(
-                        "::bumbledb::FindTerm::AggregateMeasure {{ op: {op_expr}, \
-                             over: ::bumbledb::VarId({}) }}",
-                        scope.head_var(name)?
-                    ),
-                    Some(name) => format!(
-                        "::bumbledb::FindTerm::Aggregate {{ op: {op_expr}, \
-                             over: ::std::option::Option::Some(::bumbledb::VarId({})) }}",
-                        scope.head_var(name)?
-                    ),
-                }
+            HeadTerm::Count => {
+                "::bumbledb::FindTerm::Aggregate { op: ::bumbledb::AggOp::Count, \
+                     over: ::std::option::Option::None }"
+                    .to_string()
             }
+            HeadTerm::Agg { op, over } => format!(
+                "::bumbledb::FindTerm::Aggregate {{ op: ::bumbledb::AggOp::{}, \
+                     over: ::std::option::Option::Some(::bumbledb::VarId({})) }}",
+                op.ir_name(),
+                scope.head_var(over)?
+            ),
+            HeadTerm::AggMeasure { op, over } => format!(
+                "::bumbledb::FindTerm::AggregateMeasure {{ op: ::bumbledb::AggOp::{}, \
+                     over: ::bumbledb::VarId({}) }}",
+                op.ir_name(),
+                scope.head_var(over)?
+            ),
         })
     }
 
@@ -1817,7 +1856,7 @@ impl Emitter<'_> {
         let mut atoms = String::new();
         let mut negated = String::new();
         let mut conditions = String::new();
-        for item in &rule.items {
+        for item in rule.items() {
             match item {
                 Item::Atom(atom) => {
                     let _ = write!(atoms, "{},", self.atom(&mut scope, atom)?);
@@ -1831,7 +1870,7 @@ impl Emitter<'_> {
             }
         }
         let mut finds = String::new();
-        for term in &rule.head {
+        for term in rule.head() {
             let _ = write!(finds, "{},", Self::find(&scope, term)?);
         }
         Ok(format!(
@@ -1883,7 +1922,7 @@ fn parse_theory(tokens: &mut Tokens) -> Parse<String> {
 
 /// Whether a rule body names `pred` as a positive or negated atom.
 fn names_pred(rule: &ParsedRule, pred: &str) -> bool {
-    rule.items.iter().any(|item| match item {
+    rule.items().iter().any(|item| match item {
         Item::Atom(atom) | Item::Negated(atom) => atom.relation.text == pred,
         Item::Cond(_) => false,
     })
@@ -1907,7 +1946,7 @@ enum Phase {
 }
 
 /// Groups consecutive same-name interiors / recursive lines and splits
-/// rec arms by whether a body atom names the rec predicate. Exhaustive
+/// rec arms by whether a body atom names the rec. Exhaustive
 /// compile errors for this cut live here.
 fn classify(
     parsed: Vec<ParsedRule>,
@@ -1918,9 +1957,13 @@ fn classify(
     let mut main: Vec<ParsedRule> = Vec::new();
     let mut phase = Phase::Interiors;
     for rule in parsed {
-        match rule.kind {
-            RuleKind::Interior => {
-                let name = rule.name.clone().expect("interior rules carry a name");
+        match rule {
+            ParsedRule::Interior { name, head, items } => {
+                let rule = ParsedRule::Interior {
+                    name: name.clone(),
+                    head,
+                    items,
+                };
                 if matches!(phase, Phase::Rec) {
                     return fail(
                         name.span,
@@ -1969,8 +2012,12 @@ fn classify(
                     rules: vec![rule],
                 });
             }
-            RuleKind::Recursive => {
-                let name = rule.name.clone().expect("recursive rules carry a name");
+            ParsedRule::Recursive { name, head, items } => {
+                let rule = ParsedRule::Recursive {
+                    name: name.clone(),
+                    head,
+                    items,
+                };
                 if matches!(phase, Phase::Main) {
                     return fail(
                         name.span,
@@ -2019,15 +2066,15 @@ fn classify(
                     Some(_) => {
                         return fail(
                             name.span,
-                            "query!: at most one `recursive` name this cut — two \
-                             recursive predicates are unwritable",
+                            "query!: at most one `recursive` name this cut — a \
+                             second recursive is unwritable",
                         );
                     }
                 }
             }
-            RuleKind::Bare => {
+            ParsedRule::Bare { head, items } => {
                 phase = Phase::Main;
-                main.push(rule);
+                main.push(ParsedRule::Bare { head, items });
             }
         }
     }

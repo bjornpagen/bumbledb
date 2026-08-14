@@ -3,6 +3,7 @@ export module bumbledb:face;
 import std;
 import :name;
 import :spec;
+import :axioms;
 import :schema_member;
 import :where;
 
@@ -22,7 +23,7 @@ struct face {
 	static constexpr std::array<name_text, width> projection{First::field_name, Rest::field_name...};
 
 	std::size_t selection_count{};
-	std::array<selection_data, max_face_selections> selections{};
+	std::array<selection_data, max_extension_rows> selections{};
 };
 
 /**
@@ -35,7 +36,6 @@ template<class First, class... Rest>
 	              "(Relation.field)");
 	static_assert(detail::same_relation<First, Rest...>(),
 	              detail::span_message<First, Rest...>("on", "a face projects one relation's columns"));
-	static_assert(1 + sizeof...(Rest) <= max_projection_width, "bumbledb on(): the projection exceeds max_projection_width");
 	return {};
 }
 
@@ -50,7 +50,6 @@ template<class Facade, class First, class... Rest>
 	static_assert(detail::same_relation<First, Rest...>(),
 	              detail::span_message<First, Rest...>("on", "a face projects one relation's columns"));
 	static_assert(detail::member_relation_of<Facade>() == First::relation_name, detail::selected_projection_message<Facade, First>());
-	static_assert(1 + sizeof...(Rest) <= max_projection_width, "bumbledb on(): the projection exceeds max_projection_width");
 	auto out = face<First, Rest...>{};
 	out.selection_count = source.selection_count;
 	out.selections = source.selections;

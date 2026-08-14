@@ -11,7 +11,7 @@
 //!
 //! The checked-in documents are byte-pinned: the whole file is
 //! recomputed from the case table and compared byte-identical, so
-//! editing any case's notation, normalized text, or program fails here.
+//! editing any case's notation, normalized text, or query JSON fails here.
 //! Regenerate after adding a case:
 //! `cargo test -p bumbledb-query regenerate_the_notation_corpus -- --ignored`.
 
@@ -659,7 +659,7 @@ const REQUIRED_PRODUCTIONS: &[&str] = &[
 ];
 
 /// One case's checked-in document, byte for byte: pretty header fields
-/// for hand-reading, the program compact (the exact `JSON.stringify`
+/// for hand-reading, the query compact (the exact `JSON.stringify`
 /// bytes the TS replayer compares against).
 fn document(case: &Case) -> String {
     let productions = case
@@ -702,7 +702,7 @@ fn ledger_fingerprint_hex() -> String {
 }
 
 /// Every checked-in case document replays byte-identical from the case
-/// table: editing a case's notation, normalized text, or program fails
+/// table: editing a case's notation, normalized text, or query JSON fails
 /// here (and each case has already validated against a real store and
 /// round-tripped through the renderer inside [`cases`]).
 #[test]

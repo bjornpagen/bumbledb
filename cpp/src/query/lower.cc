@@ -31,7 +31,8 @@ struct numberer {
  * Requires every param use folded before numbering — a miss is then
  * unreachable by construction.
  */
-[[nodiscard]] consteval auto param_id(query_ir const& ir, name_text name) -> std::uint16_t {
+template<class Ir>
+[[nodiscard]] consteval auto param_id(Ir const& ir, name_text name) -> std::uint16_t {
 	for (auto index = std::size_t{0}; index != ir.param_count; ++index) {
 		if (ir.params[index].name == name) {
 			return static_cast<std::uint16_t>(index);
@@ -41,7 +42,8 @@ struct numberer {
 	return 0;
 }
 
-[[nodiscard]] consteval auto wire_term_of(query_ir const& ir, numberer& numbers, term_data const& term) -> wire_term {
+template<class Ir>
+[[nodiscard]] consteval auto wire_term_of(Ir const& ir, numberer& numbers, term_data const& term) -> wire_term {
 	auto out = wire_term{};
 	out.form = term.form;
 	switch (term.form) {
@@ -50,13 +52,13 @@ struct numberer {
 		out.var = var_id(numbers, term.variable);
 		break;
 	case query_term_form::param:
-	case query_term_form::param_set:
 		out.param = param_id(ir, term.param);
+		break;
+	case query_term_form::param_set:
+		out.param = param_id(ir, term.set.param);
 		break;
 	case query_term_form::literal:
 		out.literal = term.literal;
-		break;
-	case query_term_form::absent:
 		break;
 	}
 	return out;
@@ -66,7 +68,8 @@ struct numberer {
  * The param registry fold: the first use mints the dense ParamId; one
  * name keeps one shape and one anchored domain.
  */
-consteval auto fold_uses(query_ir& ir, rule_state const& state) -> void {
+template<class Ir>
+consteval auto fold_uses(Ir& ir, rule_state const& state) -> void {
 	for (auto index = std::size_t{0}; index != state.use_count; ++index) {
 		auto const& use = state.uses[index];
 		auto found = false;
@@ -75,7 +78,7 @@ consteval auto fold_uses(query_ir& ir, rule_state const& state) -> void {
 				continue;
 			}
 			found = true;
-			if (ir.params[at].shape != use.shape) {
+			if (ir.params[at].form != use.form) {
 				query_param_is_used_at_two_shapes();
 			}
 			if (!(ir.params[at].domain == use.domain)) {
@@ -90,10 +93,8 @@ consteval auto fold_uses(query_ir& ir, rule_state const& state) -> void {
 		}
 		ir.params[ir.param_count] = param_data{
 		    .name = use.name,
-		    .shape = use.shape,
+		    .form = use.form,
 		    .domain = use.domain,
-		    .point = use.point,
-		    .membership = use.membership,
 		    .member_count = use.member_count,
 		    .members = use.members,
 		};
@@ -110,41 +111,44 @@ consteval auto fold_uses(query_ir& ir, rule_state const& state) -> void {
 
 inline constexpr std::size_t no_interior = ~std::size_t{0};
 
-template<std::size_t NI>
-struct derived_tables {
-	std::array<interior_ir, NI> const& interiors;
-	bool has_rec;
-	rec_ir const& rec;
-};
-
-template<std::size_t NI>
-[[nodiscard]] consteval auto interior_id_of(derived_tables<NI> const& tables, name_text name) -> std::size_t {
-	for (auto index = std::size_t{0}; index != NI; ++index) {
-		if (tables.interiors[index].name == name) {
+template<class Ir>
+[[nodiscard]] consteval auto interior_id_of(Ir const& ir, name_text name) -> std::size_t {
+	for (auto index = std::size_t{0}; index != ir.interiors.size(); ++index) {
+		if (ir.interiors[index].name == name) {
 			return index;
 		}
 	}
-	if (tables.has_rec && tables.rec.name == name) {
-		return NI;
+	if constexpr (requires { ir.rec; }) {
+		if (ir.rec.name == name) {
+			return ir.interiors.size();
+		}
 	}
 	return no_interior;
 }
 
-template<std::size_t NI>
-[[nodiscard]] consteval auto sealed_head_of(derived_tables<NI> const& tables, std::size_t id)
+template<class Ir>
+[[nodiscard]] consteval auto sealed_head_of(Ir const& ir, std::size_t id)
     -> std::array<find_data, max_query_finds> const& {
-	if (id < NI) {
-		return tables.interiors[id].head;
+	if constexpr (requires { ir.rec; }) {
+		if (id < ir.interiors.size()) {
+			return ir.interiors[id].head;
+		}
+		return ir.rec.head;
+	} else {
+		return ir.interiors[id].head;
 	}
-	return tables.rec.head;
 }
 
-template<std::size_t NI>
-[[nodiscard]] consteval auto sealed_head_count(derived_tables<NI> const& tables, std::size_t id) -> std::size_t {
-	if (id < NI) {
-		return tables.interiors[id].head_count;
+template<class Ir>
+[[nodiscard]] consteval auto sealed_head_count(Ir const& ir, std::size_t id) -> std::size_t {
+	if constexpr (requires { ir.rec; }) {
+		if (id < ir.interiors.size()) {
+			return ir.interiors[id].head_count;
+		}
+		return ir.rec.head_count;
+	} else {
+		return ir.interiors[id].head_count;
 	}
-	return tables.rec.head_count;
 }
 
 /**
@@ -153,14 +157,14 @@ template<std::size_t NI>
  * every head column bound exactly once — and each bind's variable must
  * join its head column's class.
  */
-template<std::size_t NI>
+template<class Ir>
 [[nodiscard]] consteval auto wire_interior_of(
-    derived_tables<NI> const& tables, numberer& numbers, interior_atom_data const& atom, std::size_t id) -> wire_atom {
-	auto const& head = sealed_head_of(tables, id);
-	auto const head_count = sealed_head_count(tables, id);
+    Ir const& ir, numberer& numbers, interior_atom_data const& atom, std::size_t id) -> wire_atom {
+	auto const& head = sealed_head_of(ir, id);
+	auto const head_count = sealed_head_count(ir, id);
 	auto out = wire_atom{};
-	out.interior = true;
-	out.interior_id = static_cast<std::uint32_t>(id);
+	out.source = atom_source::interior;
+	out.id = static_cast<std::uint32_t>(id);
 	for (auto index = std::size_t{0}; index != atom.bind_count; ++index) {
 		auto known = false;
 		for (auto column = std::size_t{0}; column != head_count; ++column) {
@@ -184,7 +188,7 @@ template<std::size_t NI>
 			interior_atom_omits_a_head_column();
 		}
 		auto const& bind = atom.binds[bound];
-		if (!(bind.cls == slot.answer) || bind.classed != slot.classed || (slot.classed && !(bind.law == slot.law))) {
+		if (!(bind.cls == slot.answer) || bind.classed() != slot.classed() || (slot.classed() && !(bind.law == slot.law))) {
 			interior_binding_joins_only_its_head_columns_class();
 		}
 		auto term = wire_term{};
@@ -209,9 +213,8 @@ template<std::size_t NI>
  * order, interior binds in head order — then the finds last, where an
  * Arg key numbers before its carried value.
  */
-template<std::size_t NI>
-[[nodiscard]] consteval auto lower_rule(
-    query_ir const& ir, derived_tables<NI> const& tables, rule_data const& rule, std::size_t self) -> wire_rule {
+template<class Ir>
+[[nodiscard]] consteval auto lower_rule(Ir const& ir, rule_data const& rule, std::size_t self) -> wire_rule {
 	if (rule.find_count == 0) {
 		rule_finds_nothing();
 	}
@@ -219,8 +222,14 @@ template<std::size_t NI>
 	for (auto index = std::size_t{0}; index != rule.state.item_count; ++index) {
 		auto const& item = rule.state.items[index];
 		if (item.form == body_form::condition) {
-			if (!term_is_bound_var(rule.state, item.condition.lhs) || !term_is_bound_var(rule.state, item.condition.rhs)) {
-				where_condition_variable_is_not_bound_in_this_rule();
+			for (auto node = std::size_t{0}; node != item.condition.node_count; ++node) {
+				auto const& cond = item.condition.nodes[node];
+				if (cond.form != condition_form::leaf) {
+					continue;
+				}
+				if (!term_is_bound_var(rule.state, cond.lhs) || !term_is_bound_var(rule.state, cond.rhs)) {
+					where_condition_variable_is_not_bound_in_this_rule();
+				}
 			}
 		}
 		if (item.form == body_form::negated_atom) {
@@ -230,16 +239,18 @@ template<std::size_t NI>
 				}
 			}
 		}
-		if (item.form == body_form::interior_atom) {
+		if (item.form == body_form::interior_atom || item.form == body_form::negated_interior) {
 			if (self != no_interior) {
-				if (item.interior.negated) {
-					a_recursive_rule_negates_no_stratum();
+				if (item.form == body_form::negated_interior) {
+					a_recursive_rule_does_not_negate_a_derived_table();
 				}
-				if (!(item.interior.name == tables.rec.name)) {
-					a_recursive_rule_matches_only_its_own_rec();
+				if constexpr (requires { ir.rec; }) {
+					if (!(item.interior.name == ir.rec.name)) {
+						a_recursive_rule_matches_only_its_own_rec();
+					}
 				}
 			}
-			if (item.interior.negated) {
+			if (item.form == body_form::negated_interior) {
 				for (auto bind = std::size_t{0}; bind != item.interior.bind_count; ++bind) {
 					if (!is_bound(rule.state, item.interior.binds[bind].variable)) {
 						negated_atom_binds_a_variable_no_positive_atom_binds();
@@ -255,14 +266,15 @@ template<std::size_t NI>
 		if (self != no_interior && column.form != find_form::variable) {
 			a_recursive_rule_head_projects_bound_variables_only();
 		}
-		if (column.form != find_form::variable) {
+		if (column.form == find_form::aggregate || column.form == find_form::aggregate_measure) {
 			if (column.op == fold_form::pack) {
 				++pack_count;
 			} else {
 				++fold_count;
 			}
 		}
-		if (column.has_over && !term_is_bound_var(rule.state, column.over)) {
+		auto const carries_over = column.form != find_form::aggregate || column.op != fold_form::count;
+		if (carries_over && !term_is_bound_var(rule.state, column.over)) {
 			find_head_variable_is_not_bound_in_this_rule();
 		}
 		for (auto other = std::size_t{0}; other != index; ++other) {
@@ -281,7 +293,8 @@ template<std::size_t NI>
 		auto const& item = rule.state.items[index];
 		if (item.form == body_form::atom || item.form == body_form::negated_atom) {
 			auto atom = wire_atom{};
-			atom.relation = item.atom.relation;
+			atom.source = atom_source::edb;
+			atom.id = item.atom.relation;
 			atom.binding_count = item.atom.binding_count;
 			for (auto binding = std::size_t{0}; binding != item.atom.binding_count; ++binding) {
 				atom.bindings[binding] = wire_binding{
@@ -302,13 +315,13 @@ template<std::size_t NI>
 				out.negated[out.negated_count] = atom;
 				++out.negated_count;
 			}
-		} else if (item.form == body_form::interior_atom) {
-			auto const id = interior_id_of(tables, item.interior.name);
+		} else if (item.form == body_form::interior_atom || item.form == body_form::negated_interior) {
+			auto const id = interior_id_of(ir, item.interior.name);
 			if (id == no_interior) {
 				interior_atom_names_no_declared_table();
 			}
-			auto const atom = wire_interior_of(tables, numbers, item.interior, id);
-			if (item.interior.negated) {
+			auto const atom = wire_interior_of(ir, numbers, item.interior, id);
+			if (item.form == body_form::negated_interior) {
 				if (out.negated_count == max_query_atoms) {
 					rule_has_too_many_atoms();
 				}
@@ -322,17 +335,51 @@ template<std::size_t NI>
 				++out.atom_count;
 			}
 		} else {
-			if (out.condition_count == max_query_conditions) {
-				rule_has_too_many_conditions();
-			}
-			out.conditions[out.condition_count] = wire_condition{
-			    .op = item.condition.op,
-			    .mask = item.condition.mask,
-			    .lhs = wire_term_of(ir, numbers, item.condition.lhs),
-			    .rhs = wire_term_of(ir, numbers, item.condition.rhs),
-			};
 			++out.condition_count;
+			out.condition_node_count += item.condition.node_count;
+			for (auto node = std::size_t{0}; node != item.condition.node_count; ++node) {
+				auto const& cond = item.condition.nodes[node];
+				if (cond.form != condition_form::leaf) {
+					continue;
+				}
+				(void)wire_term_of(ir, numbers, cond.lhs);
+				(void)wire_term_of(ir, numbers, cond.rhs);
+			}
 		}
+	}
+	if (out.condition_node_count > max_query_conditions) {
+		rule_has_too_many_conditions();
+	}
+	auto root_at = std::size_t{0};
+	auto desc_at = out.condition_count;
+	for (auto index = std::size_t{0}; index != rule.state.item_count; ++index) {
+		auto const& item = rule.state.items[index];
+		if (item.form != body_form::condition) {
+			continue;
+		}
+		auto const& tree = item.condition;
+		auto const desc_begin = desc_at;
+		auto const map = [&](std::size_t old) -> std::size_t { return old == 0 ? root_at : desc_begin + old - 1; };
+		auto wire_one = [&](condition_node const& node) {
+			auto wired = wire_condition{
+			    .form = node.form,
+			    .op = node.op,
+			    .mask = node.mask,
+			    .child_begin = node.child_count == 0 ? 0 : map(node.child_begin),
+			    .child_count = node.child_count,
+			};
+			if (node.form == condition_form::leaf) {
+				wired.lhs = wire_term_of(ir, numbers, node.lhs);
+				wired.rhs = wire_term_of(ir, numbers, node.rhs);
+			}
+			return wired;
+		};
+		out.conditions[root_at] = wire_one(tree.nodes[0]);
+		for (auto k = std::size_t{1}; k != tree.node_count; ++k) {
+			out.conditions[desc_at] = wire_one(tree.nodes[k]);
+			++desc_at;
+		}
+		++root_at;
 	}
 	out.find_count = rule.find_count;
 	for (auto index = std::size_t{0}; index != rule.find_count; ++index) {
@@ -340,8 +387,8 @@ template<std::size_t NI>
 		auto find = wire_find{};
 		find.form = column.form;
 		find.op = column.op;
-		find.has_over = column.has_over;
-		if (column.has_over) {
+		auto const carries_over = column.form != find_form::aggregate || column.op != fold_form::count;
+		if (carries_over) {
 			find.over = var_id(numbers, column.over.variable);
 		}
 		out.finds[index] = find;
@@ -362,32 +409,24 @@ consteval auto align_head(std::size_t head_count, std::array<find_data, max_quer
 		auto const& lead = head[index];
 		auto const& column = rule.finds[index];
 		if (!(lead.name == column.name) || lead.form != column.form || lead.op != column.op || !(lead.answer == column.answer) ||
-		    lead.classed != column.classed || (lead.classed && !(lead.law == column.law))) {
+		    lead.classed() != column.classed() || (lead.classed() && !(lead.law == column.law))) {
 			every_rule_of_a_query_must_derive_the_same_head();
 		}
 	}
 }
 
 /** The main-query append (one answer rule; interiors and rec already in scope). */
-template<std::size_t NI>
-consteval auto append_rule(
-    query_ir& ir,
-    std::array<interior_ir, NI> const& interiors,
-    bool has_rec,
-    rec_ir const& rec,
-    rule_data const& rule) -> void {
-	if (ir.rule_count == max_query_rules) {
-		query_has_too_many_rules();
-	}
+template<class Ir>
+consteval auto append_rule(Ir& ir, rule_data const& rule) -> void {
 	if (rule.find_count == 0) {
 		rule_finds_nothing();
 	}
 
 	fold_uses(ir, rule.state);
-	auto const tables = derived_tables<NI>{.interiors = interiors, .has_rec = has_rec, .rec = rec};
-	auto const out = lower_rule(ir, tables, rule, no_interior);
+	auto const out = lower_rule(ir, rule, no_interior);
 
-	if (ir.rule_count == 0) {
+	auto const slot = ir.rules.size() - 1;
+	if (slot == 0) {
 		ir.head_count = rule.find_count;
 		for (auto index = std::size_t{0}; index != rule.find_count; ++index) {
 			ir.head[index] = rule.finds[index];
@@ -396,8 +435,7 @@ consteval auto append_rule(
 		align_head(ir.head_count, ir.head, rule);
 	}
 
-	ir.rules[ir.rule_count] = out;
-	++ir.rule_count;
+	ir.rules[slot] = out;
 }
 
 }

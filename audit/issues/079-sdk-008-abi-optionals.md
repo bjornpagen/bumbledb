@@ -2,7 +2,7 @@
 
 - **Severity:** high
 - **Tree:** sdk (C ABI bridge + ts crate)
-- **Status:** OPEN
+- **Status:** FIXED(c234ee9b)
 - **Source:** audit/sdks.md #8
 - **Depends on:** none at the bridge; the `has_over` death coordinates with sdk-004 (cpp dialect) and sdk-006 (TS `FindTermIr` split)
 

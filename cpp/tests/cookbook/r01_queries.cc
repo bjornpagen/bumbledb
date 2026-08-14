@@ -108,6 +108,20 @@ inline constexpr auto LongOutages = bdb::query(Uptime).rule([](auto r) consteval
 	    });
 });
 
+inline constexpr auto LongOrShort = bdb::query(Uptime).rule([](auto r) consteval {
+	auto vars = r.vars(Outage);
+	return r
+	    .match(Outage,
+	           {
+	               .service = vars.service,
+	               .window = vars.window,
+	           })
+	    .where(r.Or(bdb::ge(r.duration(vars.window), std::uint64_t{100}), bdb::lt(r.duration(vars.window), std::uint64_t{80})))
+	    .find({
+	        .service = vars.service,
+	    });
+});
+
 namespace {
 
 [[nodiscard]] auto make_store_dir() -> std::optional<std::filesystem::path> {
@@ -312,6 +326,26 @@ auto run_cases(std::vector<CaseResult>& results) -> void {
 	results.push_back(CaseResult{
 	    .name = "longOutages (duration >= 100) answers {search}",
 	    .passed = long_services.has_value() && *long_services == std::vector{ids->search},
+	});
+
+	auto long_or_short = db->prepare<LongOrShort>();
+	auto either_services = long_or_short.has_value()
+	                           ? db->read([&](bdb::Snapshot& snap) -> std::expected<std::vector<std::uint64_t>, bdb::Error> {
+		                             return snap.execute(*long_or_short, {}).transform([](bdb::Answers<LongOrShort> answers) {
+			                             auto services = std::vector<std::uint64_t>{};
+			                             for (auto const& row : answers.rows()) {
+				                             services.push_back(row.service);
+			                             }
+			                             std::ranges::sort(services);
+			                             return services;
+		                             });
+	                             })
+	                           : std::expected<std::vector<std::uint64_t>, bdb::Error>{std::unexpected{std::move(long_or_short).error()}};
+	auto expected_either = std::vector{ids->search, ids->api};
+	std::ranges::sort(expected_either);
+	results.push_back(CaseResult{
+	    .name = "longOrShort (or-tree: duration >= 100 or < 80) answers {search, api}",
+	    .passed = either_services.has_value() && *either_services == expected_either,
 	});
 
 	auto named = db->prepare<NamedDownAt>();

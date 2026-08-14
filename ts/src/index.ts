@@ -110,7 +110,7 @@ export { bool, bytes, i64, interval, span, str, u64 } from "#fields.ts"
 export type { ClassesOf, ClassWall, LawfulStatements, RelationClasses, SchemaClasses } from "#law.ts"
 export { lower, lowerClosed, lowerRelation } from "#lower.ts"
 export type { KeyFact, Minted } from "#marshal.ts"
-export type { FactValue, QueryIr, StatementKindTag } from "#native.ts"
+export type { FactValue, ParsedQuery, QueryIr, StatementKindTag } from "#native.ts"
 
 export type {
 	AnyCond,
@@ -143,6 +143,7 @@ export type {
 	TermOps
 } from "#query/lower.ts"
 export { lowerQuery, query } from "#query/lower.ts"
+export { parseQueryIr } from "#query/parse-ir.ts"
 export type {
 	ClassedField,
 	Duration,

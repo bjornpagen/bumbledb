@@ -28,26 +28,24 @@ template<class Point, class IntervalVar>
 	constexpr auto element = IntervalVar::cls.kind == value_kind::interval_u64 ? value_kind::u64 : value_kind::i64;
 
 	auto out = cond_value{};
-	out.data.op = query_cmp::point_in;
-	out.data.lhs = detail::var_term<IntervalVar>();
+	out.data = leaf_condition(query_cmp::point_in, 0, detail::var_term<IntervalVar>(), {});
 	if constexpr (detail::is_param_ref_v<Point>) {
-		out.data.rhs = detail::param_term<Point>();
+		out.data.nodes[0].rhs = detail::param_term<Point>();
 		auto use = param_use{};
 		use.name = Point::name;
-		use.shape = param_shape::value;
+		use.form = param_form::point;
 		use.domain = field_class{element, 0};
-		use.point = true;
 		out.uses[0] = use;
 		out.use_count = 1;
 	} else if constexpr (detail::is_qvar_v<Point>) {
 		static_assert(Point::cls.kind == element,
 		              detail::kind_mismatch_message<Point::relation_name, Point::field_name, Point::cls, IntervalVar::relation_name,
 		                                            IntervalVar::field_name, field_class{element, 0}>("be the point of"));
-		out.data.rhs = detail::var_term<Point>();
+		out.data.nodes[0].rhs = detail::var_term<Point>();
 	} else {
 		static_assert(std::integral<Point>, "bumbledb point_in(): the point side is a param, a bound "
 		                                    "variable, or an integer literal");
-		out.data.rhs = detail::literal_term(detail::scalar_literal(element, point));
+		out.data.nodes[0].rhs = detail::literal_term(detail::scalar_literal(element, point));
 	}
 	return out;
 }
@@ -92,14 +90,11 @@ template<class Left, class Right>
 	};
 
 	auto out = cond_value{};
-	out.data.op = query_cmp::allen;
-	out.data.mask = mask.bits();
-	out.data.lhs = side(left);
-	out.data.rhs = side(right);
+	out.data = leaf_condition(query_cmp::allen, mask.bits(), side(left), side(right));
 	if constexpr (detail::is_param_ref_v<Left>) {
 		auto use = param_use{};
 		use.name = Left::name;
-		use.shape = param_shape::value;
+		use.form = param_form::value;
 		use.domain = domain;
 		out.uses[out.use_count] = use;
 		++out.use_count;
@@ -107,7 +102,7 @@ template<class Left, class Right>
 	if constexpr (detail::is_param_ref_v<Right>) {
 		auto use = param_use{};
 		use.name = Right::name;
-		use.shape = param_shape::value;
+		use.form = param_form::value;
 		use.domain = domain;
 		out.uses[out.use_count] = use;
 		++out.use_count;
@@ -169,7 +164,6 @@ template<query_cmp Op, class Left, class Right>
 	}
 
 	auto out = cond_value{};
-	out.data.op = Op;
 	auto const side = [&]<class Side>(Side value) -> term_data {
 		if constexpr (is_qvar_v<Side>) {
 			return var_term<Side>();
@@ -178,7 +172,7 @@ template<query_cmp Op, class Left, class Right>
 		} else if constexpr (is_param_ref_v<Side>) {
 			auto use = param_use{};
 			use.name = Side::name;
-			use.shape = param_shape::value;
+			use.form = param_form::value;
 			use.domain = domain;
 			out.uses[out.use_count] = use;
 			++out.use_count;
@@ -186,7 +180,7 @@ template<query_cmp Op, class Left, class Right>
 		} else if constexpr (is_set_param_ref_v<Side>) {
 			auto use = param_use{};
 			use.name = Side::name;
-			use.shape = param_shape::set;
+			use.form = param_form::set;
 			use.domain = domain;
 			out.uses[out.use_count] = use;
 			++out.use_count;
@@ -204,8 +198,7 @@ template<query_cmp Op, class Left, class Right>
 			return literal_term(scalar_literal(domain.kind, value));
 		}
 	};
-	out.data.lhs = side(left);
-	out.data.rhs = side(right);
+	out.data = leaf_condition(Op, 0, side(left), side(right));
 	return out;
 }
 
@@ -241,6 +234,83 @@ template<class Left, class Right>
 template<class Left, class Right>
 [[nodiscard]] consteval auto ge(Left left, Right right) -> cond_value {
 	return detail::comparison_of<query_cmp::ge>(left, right);
+}
+
+namespace detail {
+
+template<condition_form Form, class... Conds>
+[[nodiscard]] consteval auto combine_conditions(Conds const&... conds) -> cond_value {
+	static_assert((std::same_as<std::remove_cvref_t<Conds>, cond_value> && ...),
+	              "bumbledb And/Or: every argument must be a condition value "
+	              "(bdb::eq / bdb::And / bdb::Or / ...)");
+	constexpr auto n = sizeof...(Conds);
+	if (1 + n > max_query_conditions) {
+		rule_has_too_many_conditions();
+	}
+	auto out = cond_value{};
+	out.data.nodes[0].form = Form;
+	out.data.nodes[0].child_begin = 1;
+	out.data.nodes[0].child_count = n;
+	auto desc_at = std::size_t{1 + n};
+	auto child_index = std::size_t{0};
+	auto absorb = [&](cond_value const& child) {
+		if (desc_at + (child.data.node_count > 0 ? child.data.node_count - 1 : 0) > max_query_conditions) {
+			rule_has_too_many_conditions();
+		}
+		auto const root_at = std::size_t{1 + child_index};
+		auto const desc_begin = desc_at;
+		auto const map = [&](std::size_t old) -> std::size_t { return old == 0 ? root_at : desc_begin + old - 1; };
+		auto copy_node = [&](condition_node node) {
+			if (node.child_count != 0) {
+				node.child_begin = map(node.child_begin);
+			}
+			return node;
+		};
+		out.data.nodes[root_at] = copy_node(child.data.nodes[0]);
+		for (auto k = std::size_t{1}; k != child.data.node_count; ++k) {
+			out.data.nodes[desc_at] = copy_node(child.data.nodes[k]);
+			++desc_at;
+		}
+		for (auto u = std::size_t{0}; u != child.use_count; ++u) {
+			if (out.use_count == out.uses.size()) {
+				query_has_too_many_params();
+			}
+			out.uses[out.use_count] = child.uses[u];
+			++out.use_count;
+		}
+		++child_index;
+	};
+	(absorb(conds), ...);
+	out.data.node_count = desc_at;
+	if (out.data.node_count > max_query_conditions) {
+		rule_has_too_many_conditions();
+	}
+	return out;
+}
+
+}
+
+/**
+ * Conjunction node of the input condition grammar (`ConditionTree::And`).
+ * The rule's condition list is already a conjunction — `And` exists for
+ * nesting under `Or`, and the empty combination keeps the IR's algebraic
+ * reading (`And([])` is true). Named `And` because `and` is a C++
+ * alternative token.
+ */
+template<class... Conds>
+[[nodiscard]] consteval auto And(Conds const&... conds) -> cond_value {
+	return detail::combine_conditions<condition_form::and_node>(conds...);
+}
+
+/**
+ * Disjunction node of the input condition grammar (`ConditionTree::Or`) —
+ * the one place the surface admits a nested OR; validation distributes it
+ * to DNF rules engine-side. `Or([])` keeps its algebraic reading (false).
+ * Named `Or` because `or` is a C++ alternative token.
+ */
+template<class... Conds>
+[[nodiscard]] consteval auto Or(Conds const&... conds) -> cond_value {
+	return detail::combine_conditions<condition_form::or_node>(conds...);
 }
 
 }

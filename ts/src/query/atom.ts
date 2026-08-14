@@ -50,7 +50,7 @@ import type { FieldsShape } from "#relation.ts"
 /**
  * One atom-binding position as runtime data. A variable rides BY REFERENCE
  * (`ref`) — object identity is the join. `literalSet` is a membership
- * ARRAY at a closed-reference field, folded into the program.
+ * ARRAY at a closed-reference field, folded into the query.
  */
 type BindingTermData =
 	| { readonly kind: "var"; readonly ref: AnyVar }
@@ -84,17 +84,15 @@ type CmpTermData =
 	| { readonly kind: "measure"; readonly ref: AnyVar }
 	| { readonly kind: "literal"; readonly value: unknown }
 
-/** The `allen` mask position as runtime data. */
-type MaskData = { readonly kind: "literal"; readonly mask: number }
-
-/** One comparison condition as runtime data (`mask` present exactly for `allen`). */
-interface CmpData {
+/** One comparison condition as runtime data; the mask lives inside `allen`. */
+type CmpData = {
 	readonly kind: "cmp"
-	readonly op: CmpKind
-	readonly mask: MaskData | undefined
 	readonly lhs: CmpTermData
 	readonly rhs: CmpTermData
-}
+} & (
+	| { readonly op: { readonly kind: "allen"; readonly mask: number } }
+	| { readonly op: { readonly kind: Exclude<CmpKind, "allen"> } }
+)
 
 /** One condition-tree node as runtime data (`ir::ConditionTree`). */
 interface TreeData {
@@ -152,8 +150,11 @@ type RuleItem =
 			readonly kind: "interior"
 			readonly target: DerivedTable
 			readonly bindings: ReadonlyArray<{ readonly key: string; readonly ref: AnyVar }>
-			/** `true` on a negated finished-table atom (`r.not(name, {...})`): probed through its anti-probe, binds nothing. */
-			readonly negated: boolean
+	  }
+	| {
+			readonly kind: "negatedInterior"
+			readonly target: DerivedTable
+			readonly bindings: ReadonlyArray<{ readonly key: string; readonly ref: AnyVar }>
 	  }
 	| { readonly kind: "cond"; readonly cond: CondData }
 
@@ -185,20 +186,38 @@ interface InteriorData {
 	readonly rules: readonly RuleData[]
 }
 
+/** A nonempty frozen list — empty base/rec/finds are unrepresentable on RecData. */
+type NonEmpty<T> = readonly [T, ...T[]]
+
+/**
+ * Name-only rec identity used while base arms are in flight. Rec-base
+ * arms cannot read the rec; they must not observe a head.
+ */
+interface RecHandle {
+	readonly name: string
+}
+
+/**
+ * Rec identity plus the sealed head, used while rec arms are in flight
+ * and as the target those arms capture.
+ */
+interface RecHead {
+	readonly name: string
+	readonly finds: NonEmpty<FindColumn>
+}
+
 /**
  * The optional linear rec's runtime description — identity keys the dense
  * `InteriorId` (`interiors.length`) at lowering. Base and rec arms are
- * sealed when `q.recursive` returns.
+ * nonempty by type and sealed in one assignment.
  */
-interface RecData {
-	readonly name: string
-	readonly finds: readonly FindColumn[]
-	readonly base: readonly RuleData[]
-	readonly rec: readonly RuleData[]
+interface RecData extends RecHead {
+	readonly base: NonEmpty<RuleData>
+	readonly rec: NonEmpty<RuleData>
 }
 
 /** A named derived table (an interior or the rec) as `.interior(name)` / `r.not(name)` resolve it. */
-type DerivedTable = InteriorData | RecData
+type DerivedTable = InteriorData | RecHead
 
 /**
  * What a binding position of field `F` accepts: a bare structural literal
@@ -837,7 +856,6 @@ export type {
 	InteriorData,
 	IntervalSide,
 	IntervalVarOk,
-	MaskData,
 	MatchFields,
 	MatchOwner,
 	MatchShape,
@@ -849,6 +867,8 @@ export type {
 	ParamUse,
 	PointSide,
 	RecData,
+	RecHandle,
+	RecHead,
 	RuleData,
 	RuleItem,
 	SlotAt,

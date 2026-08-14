@@ -96,7 +96,14 @@ function lowerStatement(statement: Statement): StatementSpec {
 				kind: "containment",
 				source: lowerFace(data.source),
 				target: lowerFace(data.target),
-				bidirectional: data.bidirectional
+				bidirectional: false
+			}
+		case "mirrors":
+			return {
+				kind: "containment",
+				source: lowerFace(data.source),
+				target: lowerFace(data.target),
+				bidirectional: true
 			}
 		case "capacity":
 			return {

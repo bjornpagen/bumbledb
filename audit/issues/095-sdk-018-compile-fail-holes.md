@@ -2,7 +2,7 @@
 
 - **Severity:** medium
 - **Tree:** sdk (cpp + ts test suites)
-- **Status:** OPEN
+- **Status:** FIXED(9527e64e)
 - **Source:** audit/sdks.md #18
 - **Depends on:** sdk-001 (cpp phase machine), sdk-004 (measure find), sdk-005 (ts phase type), sdk-013 (condition trees) — this issue is their TEST deliverable; it lands last in the SDK wave.
 

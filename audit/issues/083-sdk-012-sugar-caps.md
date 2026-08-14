@@ -2,7 +2,7 @@
 
 - **Severity:** medium
 - **Tree:** sdk (cpp dialect)
-- **Status:** OPEN
+- **Status:** FIXED(54f6fb9f)
 - **Source:** audit/sdks.md #12
 - **Depends on:** sdk-001 (NR in the template changes what needs a cap at all)
 

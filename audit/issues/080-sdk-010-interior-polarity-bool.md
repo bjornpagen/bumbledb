@@ -2,7 +2,7 @@
 
 - **Severity:** medium
 - **Tree:** sdk (cpp dialect + ts)
-- **Status:** OPEN
+- **Status:** FIXED(88e8954f)
 - **Source:** audit/sdks.md #10
 - **Depends on:** none (parallel-safe; textual overlap with sdk-009/011 in cpp ir.cc/rule.cc)
 

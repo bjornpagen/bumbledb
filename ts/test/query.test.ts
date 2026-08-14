@@ -1159,59 +1159,40 @@ describe("the query surface against a real store", function suite() {
 	})
 
 	test("RECURSION FENCES: the cut is typed and the quarantine unwritable", function recursionFences() {
-		// Two recursive names are unwritable — this cut admits one rec SCC.
+		const afterRec = query(Ledger).recursive("a", {
+			base: [
+				(r) => {
+					const { id: h } = v(Holder)
+					return r.match(Holder, { id: h }).find({ h })
+				}
+			],
+			rec: [
+				(r) => {
+					const { child: c, parent: m } = v(Parent)
+					return r.match(Parent, { child: c, parent: m }).interior("a", { h: m }).find({ h: c })
+				}
+			]
+		})
+		type SecondRecPin = Expect<Equal<(typeof afterRec)["recursive"], never>>
+		type InteriorAfterRecPin = Expect<Equal<(typeof afterRec)["interior"], never>>
+		void (0 as unknown as SecondRecPin)
+		void (0 as unknown as InteriorAfterRecPin)
+		function unwritableAfterRec() {
+			// @ts-expect-error — a second recursive is unwritable
+			afterRec.recursive("b", { base: [], rec: [] })
+			// @ts-expect-error — interiors cannot follow a recursive
+			afterRec.interior("mid")
+		}
+		void unwritableAfterRec
+
 		assert.throws(function twoRecursives() {
-			query(Ledger)
-				.recursive("a", {
-					base: [
-						(r) => {
-							const { id: h } = v(Holder)
-							return r.match(Holder, { id: h }).find({ h })
-						}
-					],
-					rec: [
-						(r) => {
-							const { child: c, parent: m } = v(Parent)
-							return r.match(Parent, { child: c, parent: m }).interior("a", { h: m }).find({ h: c })
-						}
-					]
-				})
-				.recursive("b", {
-					base: [
-						(r) => {
-							const { id: h } = v(Holder)
-							return r.match(Holder, { id: h }).find({ h })
-						}
-					],
-					rec: [
-						(r) => {
-							const { child: c, parent: m } = v(Parent)
-							return r.match(Parent, { child: c, parent: m }).interior("b", { h: m }).find({ h: c })
-						}
-					]
-				})
+			const untyped: { recursive(name: string, arms: object): unknown } = afterRec
+			untyped.recursive("b", { base: [], rec: [] })
 		}, /second recursive/)
 
 		assert.throws(function interiorAfterRecursive() {
-			query(Ledger)
-				.recursive("reach", {
-					base: [
-						(r) => {
-							const { id: h } = v(Holder)
-							return r.match(Holder, { id: h }).find({ h })
-						}
-					],
-					rec: [
-						(r) => {
-							const { child: c, parent: m } = v(Parent)
-							return r.match(Parent, { child: c, parent: m }).interior("reach", { h: m }).find({ h: c })
-						}
-					]
-				})
-				.interior("mid", (r) => {
-					const { id: h } = v(Holder)
-					return r.match(Holder, { id: h }).find({ h })
-				})
+			const untyped: { interior(name: string, ...builds: unknown[]): unknown } = afterRec
+			untyped.interior("mid")
 		}, /interior after recursive/)
 
 		assert.throws(function interiorAfterMain() {
@@ -1285,6 +1266,12 @@ describe("the query surface against a real store", function suite() {
 				return r.interior("reach", { h }).find({ h })
 			})
 		assert.ok(identityProjection, "the interior-only main rule is spellable — no re-grounding join exists")
+		const rec = identityProjection.data.rec
+		assert.ok(rec !== null, "the recursive query seals a RecData")
+		assert.ok(rec.base.length >= 1, "sealed RecData cannot carry an empty base")
+		assert.ok(rec.rec.length >= 1, "sealed RecData cannot carry an empty rec")
+		assert.ok(rec.finds.length >= 1, "arm scopes never observe empty rec finds — the head is sealed before rec arms")
+		assert.ok(Object.isFrozen(rec), "RecData is sealed in one assignment")
 		assert.throws(function classUnequalInteriorVar() {
 			query(Ledger)
 				.recursive("reach", {

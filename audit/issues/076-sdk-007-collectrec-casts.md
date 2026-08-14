@@ -2,7 +2,7 @@
 
 - **Severity:** high
 - **Tree:** sdk (ts)
-- **Status:** OPEN
+- **Status:** FIXED(0f288bcf)
 - **Source:** audit/sdks.md #7
 - **Depends on:** none (localized; textual overlap with sdk-005 in lower.ts)
 

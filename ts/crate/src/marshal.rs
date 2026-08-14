@@ -725,17 +725,30 @@ fn find_term_in(obj: &Object) -> napi::Result<FindTerm> {
         tags::find_term::MEASURE => Ok(FindTerm::Measure(var_in(obj, "var", "measure find")?)),
         tags::find_term::AGGREGATE => {
             let op: Object = req(obj, "op", "aggregate find")?;
-            let over = match obj.get::<f64>("over")? {
-                None => None,
-                Some(over) => Some(VarId(u16_id(
-                    ordinal(over, "aggregate over")?,
-                    "aggregate over",
-                )?)),
-            };
-            Ok(FindTerm::Aggregate {
-                op: agg_op_in(&op)?,
-                over,
-            })
+            let op = agg_op_in(&op)?;
+            match op {
+                AggOp::Count => {
+                    if obj.get::<f64>("over")?.is_some() {
+                        return Err(err("bumbledb marshal: Count carries no over".to_string()));
+                    }
+                    Ok(FindTerm::Aggregate {
+                        op: AggOp::Count,
+                        over: None,
+                    })
+                }
+                fold => {
+                    let over = obj.get::<f64>("over")?.ok_or_else(|| {
+                        err("bumbledb marshal: fold aggregate requires over".to_string())
+                    })?;
+                    Ok(FindTerm::Aggregate {
+                        op: fold,
+                        over: Some(VarId(u16_id(
+                            ordinal(over, "aggregate over")?,
+                            "aggregate over",
+                        )?)),
+                    })
+                }
+            }
         }
         tags::find_term::AGGREGATE_MEASURE => {
             let op: Object = req(obj, "op", "aggregateMeasure find")?;

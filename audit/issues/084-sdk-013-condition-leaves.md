@@ -2,7 +2,7 @@
 
 - **Severity:** medium
 - **Tree:** sdk (cpp dialect)
-- **Status:** OPEN
+- **Status:** FIXED(4be27043)
 - **Source:** audit/sdks.md #13
 - **Depends on:** sdk-011 (condition data reshapes with the variant campaign)
 

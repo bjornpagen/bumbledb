@@ -2,7 +2,7 @@
 
 - **Severity:** medium
 - **Tree:** sdk (cpp dialect)
-- **Status:** OPEN
+- **Status:** FIXED(57a755a0)
 - **Source:** audit/sdks.md #11
 - **Depends on:** sdk-001/002 (the IR restructure); sdk-009 lands inside this reshape
 

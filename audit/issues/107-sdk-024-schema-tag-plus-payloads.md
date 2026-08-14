@@ -2,7 +2,7 @@
 
 - **Severity:** medium
 - **Tree:** sdk (cpp schema + foreign/raii)
-- **Status:** OPEN
+- **Status:** FIXED(24d201c9)
 - **Source:** audit/sdk-rest.md #2
 - **Depends on:** sdk-023 (the IR restructure); sdk-026 lands inside the statement-form reshape
 - **Conflicts with:** sdk-023, sdk-025, sdk-026 (same files)

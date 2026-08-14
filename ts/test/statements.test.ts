@@ -657,8 +657,7 @@ describe("schema() construction boundary", function describeSchemaBoundary() {
 		const forgedData = {
 			kind: "containment" as const,
 			source: on(Account, "holder").data,
-			target: on(Kind, "id").data,
-			bidirectional: false
+			target: on(Kind, "id").data
 		}
 		assert.throws(function forgedIntoSchema() {
 			schema("Forge", { Kind, Holder, Account, SavingsTerms }, [

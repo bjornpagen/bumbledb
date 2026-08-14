@@ -15,8 +15,9 @@ import * as os from "node:os"
 import * as path from "node:path"
 import { after, describe, test } from "node:test"
 
-import type { DbHandle, FactValue, Manifest, PreparedHandle, QueryIr, SnapshotHandle } from "#native.ts"
+import type { DbHandle, FactValue, Manifest, ParsedQuery, PreparedHandle, QueryIr, SnapshotHandle } from "#native.ts"
 import { native } from "#native.ts"
+import { parseQueryIr } from "#query/parse-ir.ts"
 import type { SchemaSpec } from "#spec.ts"
 
 const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bumbledb-ffi-"))
@@ -503,7 +504,7 @@ describe("ffi round trip against a real store", function suite() {
 				}
 			]
 		}
-		const preparedResult = native.dbPrepare(db, queryIr)
+		const preparedResult = native.dbPrepare(db, parseQueryIr(queryIr))
 		assert.ok(preparedResult.ok, "the recursive query prepares")
 		prepared = preparedResult.prepared
 
@@ -543,10 +544,28 @@ describe("ffi round trip against a real store", function suite() {
 				}
 			]
 		}
-		const outcome = native.dbPrepare(db, bogus)
+		const outcome = native.dbPrepare(db, parseQueryIr(bogus))
 		assert.ok(!outcome.ok)
 		assert.equal(outcome.kind, "irError")
 		assert.notEqual(outcome.message, "")
+	})
+
+	test("count_with_over_is_refused", function countWithOver() {
+		assert.throws(function marshalCountOver() {
+			native.dbPrepare(db, {
+				interiors: [],
+				rec: null,
+				head: [{ kind: "aggregate", op: "count" }],
+				rules: [
+					{
+						finds: [{ kind: "aggregate", op: { kind: "count" }, over: 0 }],
+						atoms: [],
+						negated: [],
+						conditions: []
+					}
+				]
+			} as ParsedQuery)
+		}, /Count carries no over/)
 	})
 
 	test("the generation witness: moved as data, fresh witness commits", function witness() {

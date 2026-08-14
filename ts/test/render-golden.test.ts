@@ -182,6 +182,7 @@ function kindTag(statement: Statement): StatementKindTag {
 		case "key":
 			return "functionality"
 		case "containment":
+		case "mirrors":
 			return "containment"
 		case "capacity":
 			return "capacity"
@@ -222,7 +223,7 @@ function expectedSlots(theory: AnySchema): Slot[] {
 	for (const statement of theory.statements) {
 		const slot: Slot = { kind: kindTag(statement), spelling: renderStatement(statement) }
 		slots.push(slot)
-		if (statement.data.kind === "containment" && statement.data.bidirectional) {
+		if (statement.data.kind === "mirrors") {
 			slots.push(slot)
 		}
 	}

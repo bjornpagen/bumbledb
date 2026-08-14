@@ -7,8 +7,8 @@ import :spec;
 
 export namespace bdb {
 
-/** Builder capacities: SDK bounds only — the engine's own caps are far higher. */
-inline constexpr std::size_t max_query_rules = 4;
+/** Engine `MAX_RULES` (`crates/bumbledb/src/ir.rs`) — the one rule-list cap. */
+inline constexpr std::size_t max_query_rules = 16;
 inline constexpr std::size_t max_query_atoms = 8;
 inline constexpr std::size_t max_query_conditions = 8;
 inline constexpr std::size_t max_query_finds = 8;
@@ -20,29 +20,38 @@ inline constexpr std::size_t max_membership_handles = 8;
 
 /**
  * One structural literal payload (match/comparison literals). Strings
- * and bytes are deliberately absent: a query value must stay structural
+ * and bytes are unwritable here: a query value must stay structural
  * (NTTP-usable) — bind such values through params instead.
+ *
+ * `std::variant` is not NTTP-usable on the pinned GCC (non-public bases).
+ * A C union of scalars/aggregates is structural; probe recorded in sdk-011.
  */
 struct query_literal {
-	value_kind kind;
-	bool boolean;
-	std::uint64_t u64;
-	std::int64_t i64;
-	std::uint64_t u64_start;
-	std::uint64_t u64_end;
-	std::int64_t i64_start;
-	std::int64_t i64_end;
+	value_kind kind{};
+	union {
+		bool boolean;
+		std::uint64_t u64;
+		std::int64_t i64;
+		struct {
+			std::uint64_t start;
+			std::uint64_t end;
+		} u64_interval;
+		struct {
+			std::int64_t start;
+			std::int64_t end;
+		} i64_interval;
+	};
 };
 
 /**
- * A term's form (`ir::Term`, lowering.md §4.1). `absent` is the pattern
- * wildcard — an unmentioned field binds nothing. `param_set` is the ∈-set
- * binding: a closed-membership array lowers to it over a synthetic
- * content-addressed registry entry whose set is a program constant, never
- * carried by the execute-time params product (lowering.md §4.2).
+ * A term's form (`ir::Term`, lowering.md §4.1). Unmentioned pattern slots
+ * never become terms — the recorded IR is a binding list. `param_set` is
+ * the ∈-set binding: a closed-membership array lowers to it over a
+ * synthetic content-addressed registry entry whose set is a program
+ * constant, never carried by the execute-time params product
+ * (lowering.md §4.2).
  */
 enum class query_term_form : std::uint8_t {
-	absent,
 	variable,
 	param,
 	param_set,
@@ -50,19 +59,25 @@ enum class query_term_form : std::uint8_t {
 	measure,
 };
 
-/**
- * One builder-stage term: variables/measures ride their mint coordinate
- * (the identity `v(Relation).field` established), params their name. A
- * membership term additionally carries its pre-resolved handle row ids —
- * queries resolve handles host-side (lowering.md §7.8).
- */
-struct term_data {
-	query_term_form form;
-	coord_ref variable;
+/** Membership-array payload of a `param_set` term. */
+struct term_set {
 	name_text param;
-	query_literal literal;
 	std::size_t member_count;
 	std::array<std::uint64_t, max_membership_handles> members;
+};
+
+/**
+ * One recorded term: the form selects the live union arm. Pattern
+ * wildcards are not terms (sdk-009).
+ */
+struct term_data {
+	query_term_form form{};
+	union {
+		coord_ref variable;
+		name_text param;
+		term_set set;
+		query_literal literal;
+	};
 };
 
 /** One pattern binding as recorded: the sealed field ordinal + the term. */
@@ -78,7 +93,7 @@ struct binding_data {
 struct atom_data {
 	std::uint32_t relation;
 	std::size_t binding_count;
-	std::array<binding_data, max_relation_fields> bindings;
+	std::array<binding_data, max_query_vars> bindings;
 };
 
 /** The comparison operators the surface mints (`ir::CmpOp`). */
@@ -94,16 +109,54 @@ enum class query_cmp : std::uint8_t {
 };
 
 /**
- * One leaf condition. `point_in` stores interval-LEFT, point-RIGHT
- * whatever the surface argument order; `mask` is the literal 13-bit Allen
- * word (allen conditions only).
+ * A condition node's form (`ir::ConditionTree`): a comparison leaf, or
+ * an n-ary And/Or whose children are a contiguous range in the same
+ * pool. C++ cannot name the combinators `and`/`or` (alternative tokens);
+ * the surface spells them `And`/`Or`.
+ */
+enum class condition_form : std::uint8_t {
+	leaf,
+	and_node,
+	or_node,
+};
+
+/**
+ * One condition-tree node. Leaf payload (`op`/`mask`/`lhs`/`rhs`) is live
+ * when `form == leaf`; `child_begin`/`child_count` index sibling roots in
+ * the same pool when `form` is And/Or. `point_in` stores interval-LEFT,
+ * point-RIGHT whatever the surface argument order; `mask` is the literal
+ * 13-bit Allen word (allen leaves only).
+ */
+struct condition_node {
+	condition_form form{};
+	query_cmp op{};
+	std::uint16_t mask{};
+	term_data lhs{};
+	term_data rhs{};
+	std::size_t child_begin{};
+	std::size_t child_count{};
+};
+
+/**
+ * One `.where` argument as a tree: root at `nodes[0]`, descendants packed
+ * with sibling roots contiguous (`child_begin`/`child_count`). A leaf is
+ * `node_count == 1`.
  */
 struct condition_data {
-	query_cmp op;
-	std::uint16_t mask;
-	term_data lhs;
-	term_data rhs;
+	std::size_t node_count{1};
+	std::array<condition_node, max_query_conditions> nodes{};
 };
+
+[[nodiscard]] consteval auto leaf_condition(query_cmp op, std::uint16_t mask, term_data lhs, term_data rhs) -> condition_data {
+	auto out = condition_data{};
+	out.node_count = 1;
+	out.nodes[0].form = condition_form::leaf;
+	out.nodes[0].op = op;
+	out.nodes[0].mask = mask;
+	out.nodes[0].lhs = lhs;
+	out.nodes[0].rhs = rhs;
+	return out;
+}
 
 /**
  * One named binding of an interior/rec atom: the target head column by
@@ -114,8 +167,11 @@ struct interior_bind_data {
 	name_text column;
 	coord_ref variable;
 	field_class cls;
-	bool classed;
 	coord_ref law;
+
+	[[nodiscard]] constexpr auto classed() const -> bool {
+		return law.relation.length != 0;
+	}
 };
 
 /**
@@ -126,28 +182,31 @@ struct interior_bind_data {
  */
 struct interior_atom_data {
 	name_text name;
-	bool negated;
 	std::size_t bind_count;
 	std::array<interior_bind_data, max_query_finds> binds;
 };
 
 /**
- * One rule-body item: the written interleave of match/where is preserved
- * so variable numbering walks body items in written order (lowering.md
- * §4.2), whatever bucket each item later lowers into.
+ * One rule-body item. `std::variant` ICEs GCC 17 in consteval template
+ * substitution when stored in `rule_data` (same NTTP-adjacent hole as
+ * sdk-024). A C union of the live arm is structural; polarity is the
+ * `body_form` tag (sdk-010).
  */
 enum class body_form : std::uint8_t {
 	atom,
 	negated_atom,
 	interior_atom,
+	negated_interior,
 	condition,
 };
 
 struct body_item {
-	body_form form;
-	atom_data atom;
-	interior_atom_data interior;
-	condition_data condition;
+	body_form form{};
+	union {
+		atom_data atom;
+		interior_atom_data interior;
+		condition_data condition;
+	};
 };
 
 /**
@@ -157,6 +216,7 @@ struct body_item {
 enum class find_form : std::uint8_t {
 	variable,
 	aggregate,
+	measure,
 	aggregate_measure,
 };
 
@@ -181,32 +241,33 @@ struct find_data {
 	fold_form op;
 	term_data over;
 	field_class answer;
-	bool has_over;
-	bool classed;
 	coord_ref law;
+
+	[[nodiscard]] constexpr auto classed() const -> bool {
+		return law.relation.length != 0;
+	}
 };
 
-/** A param's wire shape (lowering.md §4.2's registry entry). */
-enum class param_shape : std::uint8_t {
+/** A param's recorded form (lowering.md §4.2's registry entry). */
+enum class param_form : std::uint8_t {
 	value,
+	point,
 	set,
+	membership,
 };
 
 /**
- * One registered parameter: name, shape, the field-anchored bind domain
- * (the params-product member type AND the wire tag), and whether the
- * anchoring use was point-domain (an interval field's element under
- * point_in). A membership entry is a synthetic content-addressed set
- * param pre-resolved at build: it never appears in the params product,
- * and execution supplies its frozen set positionally from the query
- * constant.
+ * One registered parameter: name, form, and the field-anchored bind
+ * domain (the params-product member type AND the wire tag). `point` is
+ * an interval field's element under point_in. `membership` is a
+ * synthetic content-addressed set param pre-resolved at build: it never
+ * appears in the params product, and execution supplies its frozen set
+ * positionally from the query constant.
  */
 struct param_data {
 	name_text name;
-	param_shape shape;
+	param_form form;
 	field_class domain;
-	bool point;
-	bool membership;
 	std::size_t member_count;
 	std::array<std::uint64_t, max_membership_handles> members;
 };
@@ -214,10 +275,8 @@ struct param_data {
 /** One param use, recorded at the position that anchors it. */
 struct param_use {
 	name_text name;
-	param_shape shape;
+	param_form form;
 	field_class domain;
-	bool point;
-	bool membership;
 	std::size_t member_count;
 	std::array<std::uint64_t, max_membership_handles> members;
 };
@@ -257,34 +316,41 @@ struct wire_binding {
 };
 
 /**
- * One numbered atom: an EDB atom (`interior == false`, `relation` read)
- * or a derived-table atom (`interior == true`, `interior_id` read — the
- * target's dense InteriorId; bindings address head positions).
+ * One numbered atom: one source tag and one payload id — EDB reads a
+ * RelationId, interior reads a dense InteriorId. Bindings address head
+ * positions on an interior atom.
  */
+enum class atom_source : std::uint8_t {
+	edb,
+	interior,
+};
+
 struct wire_atom {
-	std::uint32_t relation;
-	bool interior;
-	std::uint32_t interior_id;
+	atom_source source;
+	std::uint32_t id;
 	std::size_t binding_count;
-	std::array<wire_binding, max_relation_fields> bindings;
+	std::array<wire_binding, max_query_vars> bindings;
 };
 
 struct wire_condition {
-	query_cmp op;
-	std::uint16_t mask;
-	wire_term lhs;
-	wire_term rhs;
+	condition_form form{};
+	query_cmp op{};
+	std::uint16_t mask{};
+	wire_term lhs{};
+	wire_term rhs{};
+	std::size_t child_begin{};
+	std::size_t child_count{};
 };
 
 /**
- * One numbered find term. `over` is read for variable/measure columns and
- * for aggregates with `has_over` (nullary `count` has none).
+ * One numbered find term. `over` is the projected var for variable/measure
+ * columns and the fold input for aggregates that take one; nullary `count`
+ * does not read it.
  */
 struct wire_find {
 	find_form form;
 	fold_form op;
 	std::uint16_t over;
-	bool has_over;
 };
 
 /**
@@ -297,6 +363,7 @@ struct wire_rule {
 	std::size_t negated_count;
 	std::array<wire_atom, max_query_atoms> negated;
 	std::size_t condition_count;
+	std::size_t condition_node_count;
 	std::array<wire_condition, max_query_conditions> conditions;
 	std::size_t find_count;
 	std::array<wire_find, max_query_finds> finds;
@@ -315,43 +382,52 @@ struct interior_ir {
 };
 
 /**
- * One lowered linear rec: name, sealed head, base arms, rec arms.
- * `base_count + rec_count` is one pool against `max_query_rules`.
+ * One lowered linear rec: name, sealed head, and one pooled rule array.
+ * Rec arms start at `base_count`; `base_count + rec_count` is the pool
+ * against `max_query_rules` (engine `MAX_RULES`).
  */
 struct rec_ir {
 	name_text name;
 	std::size_t head_count;
 	std::array<find_data, max_query_finds> head;
 	std::size_t base_count;
-	std::array<wire_rule, max_query_rules> base;
 	std::size_t rec_count;
-	std::array<wire_rule, max_query_rules> rec;
-};
-
-/**
- * The main answer of a lowered query: rules, head, and the param
- * registry (params-product synthesis — interiors' uses folded first,
- * then rec base, then rec arms, then main). Named interiors and the
- * optional rec ride `query_value`, not this struct: they are a variadic
- * pack, not a fixed array.
- */
-struct query_ir {
-	std::size_t rule_count;
 	std::array<wire_rule, max_query_rules> rules;
-	std::size_t head_count;
-	std::array<find_data, max_query_finds> head;
-	std::size_t param_count;
-	std::array<param_data, max_query_params> params;
 };
 
 /**
- * One built condition value (a `.where` argument): the leaf comparison
+ * One lowered query: interiors, optional rec (a member only on the
+ * rec-present specialization), main rules, head, and the param registry
+ * (params-product synthesis — interiors' uses folded first, then rec
+ * base, then rec arms, then main). Counts `NI` / `NR` are the pack
+ * lengths; `HasRec` is the rec arm.
+ */
+template<std::size_t NI, std::size_t NR>
+struct query_body {
+	std::array<interior_ir, NI> interiors{};
+	std::array<wire_rule, NR> rules{};
+	std::size_t head_count{};
+	std::array<find_data, max_query_finds> head{};
+	std::size_t param_count{};
+	std::array<param_data, max_query_params> params{};
+};
+
+template<std::size_t NI, bool HasRec, std::size_t NR>
+struct query_ir : query_body<NI, NR> {};
+
+template<std::size_t NI, std::size_t NR>
+struct query_ir<NI, true, NR> : query_body<NI, NR> {
+	rec_ir rec{};
+};
+
+/**
+ * One built condition value (a `.where` argument): the condition tree
  * plus the param uses its construction anchored.
  */
 struct cond_value {
 	condition_data data;
 	std::size_t use_count;
-	std::array<param_use, 2> uses;
+	std::array<param_use, max_query_params * 4> uses;
 };
 
 }
@@ -384,15 +460,12 @@ auto negated_atom_binds_a_variable_no_positive_atom_binds() -> void;
 auto pack_stands_alone_never_beside_another_aggregate() -> void;
 auto interior_atom_names_no_declared_table() -> void;
 auto a_recursive_rule_matches_only_its_own_rec() -> void;
-auto a_recursive_rule_negates_no_stratum() -> void;
+auto a_recursive_rule_does_not_negate_a_derived_table() -> void;
 auto a_recursive_rule_head_projects_bound_variables_only() -> void;
 auto interior_atom_omits_a_head_column() -> void;
 auto interior_atom_binds_a_name_the_head_does_not_carry() -> void;
 auto interior_binding_joins_only_its_head_columns_class() -> void;
 auto interior_names_must_be_distinct() -> void;
-auto interior_after_recursive() -> void;
-auto interior_or_recursive_after_a_main_rule() -> void;
-auto a_second_recursive_is_refused() -> void;
 auto recursive_needs_at_least_one_base_rule() -> void;
 auto recursive_needs_at_least_one_rec_rule() -> void;
 

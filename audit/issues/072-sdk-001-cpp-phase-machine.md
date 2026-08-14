@@ -2,7 +2,7 @@
 
 - **Severity:** high
 - **Tree:** sdk (cpp dialect)
-- **Status:** OPEN
+- **Status:** FIXED(0c77b514)
 - **Source:** audit/sdks.md #1
 - **Depends on:** none (foundation for the cpp tree; co-lands with sdk-002, sdk-019; sdk-012/018 build on it)
 - **Conflicts with:** sdk-002, sdk-009, sdk-011, sdk-012, sdk-019 (same files; land per INDEX order)

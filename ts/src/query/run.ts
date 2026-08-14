@@ -39,7 +39,7 @@ function wireValue(entry: ParamEntry, context: string, value: unknown): TaggedVa
  * is a typed error naming the param; values tag by the anchoring use's
  * structural type; a set param takes a readonly array (the empty set is
  * legal and matches nothing — the engine's rule). A MEMBERSHIP-ARRAY
- * entry (`membership` present — a literal set folded into the program) is
+ * entry (`membership` present — a literal set folded into the query) is
  * a program constant the registry already resolved through the one
  * roster-verification point at BUILD time: it crosses as its prebuilt
  * frozen `{ kind: "set", values }` by reference — the host's params object

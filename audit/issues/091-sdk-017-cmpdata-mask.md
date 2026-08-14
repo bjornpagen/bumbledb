@@ -2,7 +2,7 @@
 
 - **Severity:** medium
 - **Tree:** sdk (ts)
-- **Status:** OPEN
+- **Status:** FIXED(23482d0f)
 - **Source:** audit/sdks.md #17
 - **Depends on:** none (localized; parallel-safe)
 

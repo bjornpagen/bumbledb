@@ -2,7 +2,7 @@
 
 - **Severity:** high
 - **Tree:** sdk (ts)
-- **Status:** OPEN
+- **Status:** FIXED(558dac6e)
 - **Source:** audit/sdks.md #6
 - **Depends on:** sdk-005 (same files; the branded parse is the phase machine's output side)
 

@@ -38,7 +38,6 @@ static_assert(!Uptime.relation_table[0].fields[1].fresh);
 static_assert(Uptime.relation_table[1].fields[1].kind == bdb::value_kind::interval_i64);
 
 static_assert(Uptime.statements[0].form == bdb::statement_form::containment);
-static_assert(!Uptime.statements[0].bidirectional);
 static_assert(Uptime.statements[0].source.relation.view() == "Outage");
 static_assert(Uptime.statements[0].source.fields[0].view() == "service");
 static_assert(Uptime.statements[0].target.relation.view() == "Service");
@@ -137,11 +136,13 @@ inline constexpr auto Rooms = bdb::schema<"Rooms">(Room, Booking,
                                                    bdb::capacity(bdb::on(Room.id), bdb::weigh(bdb::duration(Booking.span)),
                                                                  bdb::within(std::uint64_t{0}, std::uint64_t{720}), bdb::on(Booking.room)));
 
-static_assert(Rooms.statements[0].form == bdb::statement_form::containment);
-static_assert(Rooms.statements[0].bidirectional);
+static_assert(Rooms.statements[0].form == bdb::statement_form::mirrors);
 static_assert(Rooms.statements[1].weight == bdb::weight_form::duration_field);
 static_assert(Rooms.statements[1].weight_field.view() == "span");
 static_assert(Rooms.statements[1].window.hi.lit == 720);
+
+inline constexpr auto WideVocab = bdb::closed<"WideVocab", "A", "B", "C", "D", "E", "F", "G", "H", "I">();
+static_assert(WideVocab.data.handle_count == 9);
 
 static_assert(bdb::within(std::uint64_t{3}).data.form == bdb::window_form::exact);
 static_assert(bdb::within(std::uint64_t{3}).data.lo.lit == 3);
@@ -171,7 +172,7 @@ struct CaseResult {
 	    },
 	    CaseResult{
 	        .name = "mirrors stays one bidirectional statement",
-	        .passed = Rooms.statements[0].bidirectional && Rooms.statement_count == 2,
+	        .passed = Rooms.statements[0].form == bdb::statement_form::mirrors && Rooms.statement_count == 2,
 	    },
 	};
 }

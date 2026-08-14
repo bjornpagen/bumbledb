@@ -6,6 +6,7 @@ import :classify;
 import :coord;
 import :handle;
 import :spec;
+import :axioms;
 import :schema_member;
 
 namespace bdb::detail {
@@ -28,8 +29,7 @@ template<class T, name_text Relation, name_text Field, field_class Class>
 struct where_slot {
 	static constexpr name_text field_name = Field;
 
-	bool bound{};
-	selection_literal literal{};
+	std::optional<selection_literal> literal{};
 
 	where_slot() = default;
 
@@ -39,15 +39,17 @@ struct where_slot {
 	consteval where_slot(T value)
 	    requires(!is_closed_ref_v<T> &&
 	             (Class.kind == value_kind::boolean || Class.kind == value_kind::u64 || Class.kind == value_kind::i64))
-	    : bound{true} {
-		literal.kind = Class.kind;
+	{
+		auto lit = selection_literal{};
+		lit.kind = Class.kind;
 		if constexpr (Class.kind == value_kind::boolean) {
-			literal.boolean = value;
+			lit.boolean = value;
 		} else if constexpr (Class.kind == value_kind::u64) {
-			literal.u64 = value;
+			lit.u64 = value;
 		} else {
-			literal.i64 = value;
+			lit.i64 = value;
 		}
+		literal = lit;
 	}
 
 	/**
@@ -58,10 +60,12 @@ struct where_slot {
 	template<name_text HandleRoster, name_text Handle, std::uint64_t Index>
 	consteval where_slot(handle_value<HandleRoster, Handle, Index>)
 	    requires is_closed_ref_v<T>
-	    : bound{true} {
+	{
 		static_assert(HandleRoster == T::roster_name, handle_crosses_vocabulary_message(HandleRoster, Handle, T::roster_name));
-		literal.is_handle = true;
-		literal.handle = Handle;
+		auto lit = selection_literal{};
+		lit.is_handle = true;
+		lit.handle = Handle;
+		literal = lit;
 	}
 };
 
@@ -128,7 +132,7 @@ using where_pattern_of = typename detail::where_pattern_types<Facade>::Pattern;
 template<class Facade>
 struct selected {
 	std::size_t selection_count{};
-	std::array<selection_data, max_face_selections> selections{};
+	std::array<selection_data, max_extension_rows> selections{};
 };
 
 /**
@@ -150,14 +154,14 @@ template<class Facade>
 	template for (constexpr auto index : detail::index_array<members.size()>()) {
 		using Slot = [:std::meta::type_of(members[index]):];
 		auto const& slot = pattern.[:members[index]:];
-		if (slot.bound) {
-			if (out.selection_count == max_face_selections) {
+		if (slot.literal.has_value()) {
+			if (out.selection_count == out.selections.size()) {
 				detail::face_has_too_many_selection_bindings();
 			}
 			auto binding = selection_data{};
 			binding.field = Slot::field_name;
 			binding.literal_count = 1;
-			binding.literals[0] = slot.literal;
+			binding.literals[0] = *slot.literal;
 			out.selections[out.selection_count] = binding;
 			++out.selection_count;
 		}

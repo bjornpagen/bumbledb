@@ -7,15 +7,11 @@ import :classify;
 export namespace bdb {
 
 /**
- * Most handles one closed vocabulary may declare through this frontend —
- * a Phase-F capacity; the engine's bound is far higher.
+ * Engine `MAX_EXTENSION_ROWS` (`crates/bumbledb-theory/src/schema.rs`) —
+ * the one closed-vocabulary size. Flattened NTTP arrays use this number
+ * as storage; live counts are pack lengths.
  */
-inline constexpr std::size_t max_closed_handles = 8;
-
-/**
- * Most payload columns one closed vocabulary may declare.
- */
-inline constexpr std::size_t max_closed_columns = 4;
+inline constexpr std::size_t max_extension_rows = 256;
 
 /**
  * One ground-axiom literal, flattened structural. The schema-lane wire
@@ -37,14 +33,16 @@ struct axiom_literal {
  */
 struct closed_info {
 	std::size_t handle_count{};
-	std::array<name_text, max_closed_handles> handles{};
+	std::array<name_text, max_extension_rows> handles{};
 	std::size_t column_count{};
-	std::array<axiom_literal, max_closed_handles * max_closed_columns> axioms{};
+	std::array<axiom_literal, max_extension_rows * 16> axioms{};
 };
 
 }
 
 namespace bdb::detail {
+
+auto closed_extension_exceeds_flattened_storage() -> void;
 
 /**
  * The flattened wire carrier: handles + axiom literals off the payload
@@ -60,10 +58,13 @@ template<fixed_string Name, class Payload, std::size_t Count>
 	constexpr auto columns =
 	    std::define_static_array(std::meta::nonstatic_data_members_of(^^Payload, std::meta::access_context::current()));
 	out.column_count = columns.size();
+	if (Count * out.column_count > out.axioms.size()) {
+		closed_extension_exceeds_flattened_storage();
+	}
 	template for (constexpr auto column : index_array<columns.size()>()) {
 		constexpr auto cls = classify(std::meta::type_of(columns[column])).value_or(field_class{value_kind::u64, 0});
 		for (auto handle = std::size_t{0}; handle != Count; ++handle) {
-			auto& literal = out.axioms[handle * max_closed_columns + column];
+			auto& literal = out.axioms[handle * out.column_count + column];
 			auto const& value = payloads[handle].[:columns[column]:];
 			literal.kind = cls.kind;
 			if constexpr (cls.kind == value_kind::boolean) {

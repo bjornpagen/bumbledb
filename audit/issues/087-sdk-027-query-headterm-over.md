@@ -2,7 +2,7 @@
 
 - **Severity:** medium
 - **Tree:** sdk (rust macros)
-- **Status:** OPEN
+- **Status:** FIXED(c3c2884b)
 - **Source:** audit/sdk-rest.md #5
 - **Depends on:** none (own crate; the engine FindTerm four-case is already the target). Coordinate message-wise with sdk-004 / sdk-008 (`has_over` death) but this file does not touch the ABI.
 - **Conflicts with:** none (macros crate; sdk-014/015 are adjacent in the same file — land with or after them to avoid merge noise)

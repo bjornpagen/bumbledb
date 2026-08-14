@@ -21,7 +21,9 @@ struct find_slot {
 	static constexpr bool classed = Classed;
 	static constexpr coord_ref law = Law;
 
+	bool mentioned = false;
 	term_data term{};
+	find_form form = find_form::variable;
 
 	find_slot() = default;
 
@@ -31,6 +33,17 @@ struct find_slot {
 		static_assert(VCl == Classed && (!Classed || VLaw == Law),
 		              cross_class_message<VR, VF, VCl, VLaw, Relation, Field, Classed, Law>("answer at"));
 		term = var_term<decltype(variable)>();
+		form = find_form::variable;
+		mentioned = true;
+	}
+
+	template<class Var>
+	consteval find_slot(measure_ref<Var>) {
+		static_assert(is_qvar_v<Var>, "bumbledb find(): Duration(v) projects an interval variable's measure");
+		static_assert(Var::cls == Class, kind_mismatch_message<Var::relation_name, Var::field_name, Var::cls, Relation, Field, Class>("answer at"));
+		term = var_term<Var>();
+		form = find_form::measure;
+		mentioned = true;
 	}
 };
 

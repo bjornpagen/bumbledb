@@ -138,11 +138,11 @@ function verifyHandles(name: string, statement: Statement, rendered: string): vo
 function closedTargetOf(statements: readonly Statement[], owner: string, field: string): string | undefined {
 	for (const statement of statements) {
 		const data = statement.data
-		if (data.kind !== "containment") {
+		if (data.kind !== "containment" && data.kind !== "mirrors") {
 			continue
 		}
 		const pairs: Array<readonly [FaceData, FaceData]> = [[data.source, data.target]]
-		if (data.bidirectional) {
+		if (data.kind === "mirrors") {
 			pairs.push([data.target, data.source])
 		}
 		for (const [source, target] of pairs) {

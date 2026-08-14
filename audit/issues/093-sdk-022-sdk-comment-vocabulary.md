@@ -2,7 +2,7 @@
 
 - **Severity:** low
 - **Tree:** sdk (cpp + ts + rust macros)
-- **Status:** OPEN
+- **Status:** FIXED(ab28ac2d)
 - **Source:** adversarial pass (not in audit/sdks.md)
 - **Depends on:** none (prose/strings; land after sdk-005 to avoid churn on lower.ts)
 

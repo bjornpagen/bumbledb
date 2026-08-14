@@ -70,7 +70,12 @@ interface ContainmentData<Src extends FaceData = FaceData, Tgt extends FaceData 
 	readonly kind: "containment"
 	readonly source: Src
 	readonly target: Tgt
-	readonly bidirectional: boolean
+}
+
+interface MirrorsData<Src extends FaceData = FaceData, Tgt extends FaceData = FaceData> {
+	readonly kind: "mirrors"
+	readonly source: Src
+	readonly target: Tgt
 }
 
 /**
@@ -88,7 +93,7 @@ interface CapacityData<Tgt extends FaceData = FaceData, Src extends FaceData = F
 }
 
 /** One statement's runtime description, tagged by form. */
-type StatementData = KeyData<AnyRelation, readonly string[]> | ContainmentData | CapacityData
+type StatementData = KeyData<AnyRelation, readonly string[]> | ContainmentData | MirrorsData | CapacityData
 
 /**
  * The admission brand — a module-private symbol, deliberately unexported
@@ -128,7 +133,7 @@ function isStatement(value: unknown): value is Statement {
  * {@link Statement}.
  */
 interface ContainedStatement<Src extends FaceData, Tgt extends FaceData> extends Statement {
-	readonly data: ContainmentData<Src, Tgt>
+	readonly data: ContainmentData<Src, Tgt> | MirrorsData<Src, Tgt>
 }
 
 /** A capacity statement as a TYPED value — the {@link ContainedStatement} of the capacity form. */
@@ -247,8 +252,7 @@ function contained<A extends AnyFace, B extends AnyFace>(
 	const data: ContainmentData<A["data"], B["data"]> = Object.freeze({
 		kind: "containment",
 		source: source.data,
-		target: target.data,
-		bidirectional: false
+		target: target.data
 	})
 	const statement = Object.freeze({ data, [admitted]: true as const })
 	assertArityAgreement(data.source, data.target, statement)
@@ -269,11 +273,10 @@ function mirrors<A extends AnyFace, B extends AnyFace>(
 	source: A,
 	target: B & SameArity<A, B> & SameShapes<A, B>
 ): ContainedStatement<A["data"], B["data"]> {
-	const data: ContainmentData<A["data"], B["data"]> = Object.freeze({
-		kind: "containment",
+	const data: MirrorsData<A["data"], B["data"]> = Object.freeze({
+		kind: "mirrors",
 		source: source.data,
-		target: target.data,
-		bidirectional: true
+		target: target.data
 	})
 	const statement = Object.freeze({ data, [admitted]: true as const })
 	assertArityAgreement(data.source, data.target, statement)
@@ -445,10 +448,10 @@ function renderStatement(statement: Statement): string {
 	switch (data.kind) {
 		case "key":
 			return `${data.owner.name}(${data.projection.join(", ")}) -> ${data.owner.name}`
-		case "containment": {
-			const operator = data.bidirectional ? "==" : "<="
-			return `${renderFace(data.source)} ${operator} ${renderFace(data.target)}`
-		}
+		case "containment":
+			return `${renderFace(data.source)} <= ${renderFace(data.target)}`
+		case "mirrors":
+			return `${renderFace(data.source)} == ${renderFace(data.target)}`
 		case "capacity":
 			return `${renderFace(data.target)} <=${renderWeight(data.weight)}${renderCapacityWindow(data.window)} ${renderFace(data.source)}`
 	}
@@ -459,6 +462,7 @@ export type {
 	CapacityStatement,
 	ContainedStatement,
 	ContainmentData,
+	MirrorsData,
 	KeyData,
 	KeyStatement,
 	Statement,

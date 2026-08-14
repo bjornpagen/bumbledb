@@ -2,7 +2,7 @@
 
 - **Severity:** medium
 - **Tree:** sdk (cpp schema + closed)
-- **Status:** OPEN
+- **Status:** FIXED(ab28ac2d)
 - **Source:** audit/sdk-rest.md #3
 - **Depends on:** sdk-023 (a sum may change what needs a cap at all)
 - **Conflicts with:** sdk-023, sdk-024 (same files; land after or with them)

@@ -1,7 +1,7 @@
-//! A bare handle resolves through the FIELD-named host enum, and a
-//! predicate head position has no field name — the qualified spelling
+//! A bare handle resolves through the FIELD-named host enum, and an
+//! interior/rec head position has no field name — the qualified spelling
 //! is the one writable form at an indexed position.
-//@ error: a predicate position has no field name
+//@ error: an interior/rec position has no field name
 //@ line: 19
 
 bumbledb::schema! {

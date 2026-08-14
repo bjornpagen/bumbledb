@@ -2,7 +2,7 @@
 
 - **Severity:** medium
 - **Tree:** sdk (cpp schema + ts statements)
-- **Status:** OPEN
+- **Status:** FIXED(bfaf20cb)
 - **Source:** audit/sdk-rest.md #4
 - **Depends on:** sdk-024 (C++ `statement_data` reshape); TS half is parallel-safe
 - **Conflicts with:** sdk-024 (same C++ files)

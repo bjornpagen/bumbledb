@@ -1,7 +1,7 @@
-//! Dense in-order predicate bindings are written bare (`reach(m, a)`)
+//! Dense in-order interior/rec bindings are written bare (`reach(m, a)`)
 //! — the ordered form is the one dense spelling, so an explicitly
 //! indexed dense in-order variable list is refused.
-//@ error: dense in-order predicate bindings are written bare
+//@ error: dense in-order interior/rec bindings are written bare
 //@ line: 19
 
 bumbledb::schema! {

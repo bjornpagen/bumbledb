@@ -78,15 +78,15 @@ struct Measure {
 };
 
 /**
- * One rendered violation of a rejected commit — ownership-closed: the
- * spelling is copied out of the error, so it outlives the Error.
+ * One rendered violation: the common citation plus a payload that is live
+ * only on the matching arm (direction for containment, measure for
+ * capacity). ABI `has_measure` stays on the wire (sdk-008).
  */
 struct Violation {
 	std::uint16_t statement;
 	StatementKind kind;
 	std::string spelling;
-	ViolationDirection direction;
-	std::optional<Measure> measure;
+	std::variant<std::monostate, ViolationDirection, Measure> payload;
 };
 
 struct GenerationMoved {
@@ -256,12 +256,18 @@ public:
 			if (!copy.has_value()) {
 				break;
 			}
+			auto const kind = static_cast<StatementKind>(std::to_underlying(copy->kind));
+			auto payload = std::variant<std::monostate, ViolationDirection, Measure>{std::monostate{}};
+			if (kind == StatementKind::Containment) {
+				payload = static_cast<ViolationDirection>(std::to_underlying(copy->direction));
+			} else if (kind == StatementKind::Capacity) {
+				payload = Measure{.lo = copy->measure_lo, .hi = copy->measure_hi};
+			}
 			rendered.push_back(Violation{
 			    .statement = copy->statement,
-			    .kind = static_cast<StatementKind>(std::to_underlying(copy->kind)),
+			    .kind = kind,
 			    .spelling = std::move(copy->spelling),
-			    .direction = static_cast<ViolationDirection>(std::to_underlying(copy->direction)),
-			    .measure = copy->has_measure ? std::optional{Measure{.lo = copy->measure_lo, .hi = copy->measure_hi}} : std::nullopt,
+			    .payload = payload,
 			});
 		}
 		return rendered;

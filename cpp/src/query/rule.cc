@@ -40,7 +40,7 @@ template<fixed_string Column, class Var>
 inline constexpr bool is_interior_bind_v<interior_bind<Column, Var>> = true;
 
 template<class S, class Facade>
-consteval auto record_match(rule_state& state, match_pattern_of<S, Facade> const& pattern, bool negated) -> void {
+consteval auto record_match(rule_state& state, match_pattern_of<S, Facade> const& pattern, body_form form) -> void {
 	if (state.item_count == state.items.size()) {
 		rule_has_too_many_atoms();
 	}
@@ -53,7 +53,7 @@ consteval auto record_match(rule_state& state, match_pattern_of<S, Facade> const
 	template for (constexpr auto index : index_array<members.size()>()) {
 		using Slot = [:std::meta::type_of(members[index]):];
 		auto const& slot = pattern.[:members[index]:];
-		if (slot.term.form == query_term_form::absent) {
+		if (!slot.mentioned) {
 			continue;
 		}
 		atom.bindings[atom.binding_count] = binding_data{
@@ -61,33 +61,28 @@ consteval auto record_match(rule_state& state, match_pattern_of<S, Facade> const
 		    .term = slot.term,
 		};
 		++atom.binding_count;
-		if (slot.term.form == query_term_form::variable && !negated) {
+		if (slot.term.form == query_term_form::variable && form == body_form::atom) {
 			add_bound(state, slot.term.variable);
 		}
 		if (slot.term.form == query_term_form::param) {
 			auto use = param_use{};
 			use.name = slot.term.param;
-			use.shape = param_shape::value;
+			use.form = param_form::value;
 			use.domain = Slot::cls;
 			add_use(state, use);
 		}
 		if (slot.term.form == query_term_form::param_set) {
 			auto use = param_use{};
-			use.name = slot.term.param;
-			use.shape = param_shape::set;
+			use.name = slot.term.set.param;
+			use.form = slot.term.set.member_count != 0 ? param_form::membership : param_form::set;
 			use.domain = Slot::cls;
-			use.membership = slot.term.member_count != 0;
-			use.member_count = slot.term.member_count;
-			use.members = slot.term.members;
+			use.member_count = slot.term.set.member_count;
+			use.members = slot.term.set.members;
 			add_use(state, use);
 		}
 	}
-	state.items[state.item_count] = body_item{
-	    .form = negated ? body_form::negated_atom : body_form::atom,
-	    .atom = atom,
-	    .interior = interior_atom_data{},
-	    .condition = condition_data{},
-	};
+	auto item = body_item{.form = form, .atom = atom};
+	state.items[state.item_count] = item;
 	++state.item_count;
 }
 
@@ -95,21 +90,17 @@ consteval auto record_match(rule_state& state, match_pattern_of<S, Facade> const
  * Records one derived-table atom (either polarity). A positive interior
  * atom binds its variables (grounding); a negated one binds nothing.
  */
-consteval auto record_interior(rule_state& state, interior_atom_data const& atom) -> void {
+consteval auto record_interior(rule_state& state, interior_atom_data const& atom, body_form form) -> void {
 	if (state.item_count == state.items.size()) {
 		rule_has_too_many_atoms();
 	}
-	if (!atom.negated) {
+	if (form == body_form::interior_atom) {
 		for (auto index = std::size_t{0}; index != atom.bind_count; ++index) {
 			add_bound(state, atom.binds[index].variable);
 		}
 	}
-	state.items[state.item_count] = body_item{
-	    .form = body_form::interior_atom,
-	    .atom = atom_data{},
-	    .interior = atom,
-	    .condition = condition_data{},
-	};
+	auto item = body_item{.form = form, .interior = atom};
+	state.items[state.item_count] = item;
 	++state.item_count;
 }
 
@@ -117,12 +108,8 @@ consteval auto record_condition(rule_state& state, cond_value const& cond) -> vo
 	if (state.item_count == state.items.size()) {
 		rule_has_too_many_conditions();
 	}
-	state.items[state.item_count] = body_item{
-	    .form = body_form::condition,
-	    .atom = atom_data{},
-	    .interior = interior_atom_data{},
-	    .condition = cond.data,
-	};
+	auto item = body_item{.form = body_form::condition, .condition = cond.data};
+	state.items[state.item_count] = item;
 	++state.item_count;
 	for (auto index = std::size_t{0}; index != cond.use_count; ++index) {
 		add_use(state, cond.uses[index]);
@@ -151,7 +138,7 @@ struct rule_chain {
 		                                                 "facade (bdb::relation<...> or bdb::closed<...>)");
 		static_assert(detail::facade_in_schema<S, Facade>(), detail::foreign_relation_message<S, Facade>());
 		auto next = rule_chain<S, Facades..., Facade>{.state = state};
-		detail::record_match<S, Facade>(next.state, pattern, false);
+		detail::record_match<S, Facade>(next.state, pattern, body_form::atom);
 		return next;
 	}
 
@@ -168,7 +155,7 @@ struct rule_chain {
 		                                                 "facade (bdb::relation<...> or bdb::closed<...>)");
 		static_assert(detail::facade_in_schema<S, Facade>(), detail::foreign_relation_message<S, Facade>());
 		auto next = *this;
-		detail::record_match<S, Facade>(next.state, pattern, true);
+		detail::record_match<S, Facade>(next.state, pattern, body_form::negated_atom);
 		return next;
 	}
 
@@ -186,8 +173,8 @@ struct rule_chain {
 
 	/**
 	 * The negated finished-table atom: rejects every binding the named
-	 * interior or finished rec extends (main rules only — a recursive rule
-	 * negates no stratum). Binds nothing.
+	 * interior or finished rec extends (main rules only — a rec arm does
+	 * not negate a derived table). Binds nothing.
 	 */
 	template<fixed_string Name, class... Binds>
 	[[nodiscard]] consteval auto not_interior(Binds... binds) const -> rule_chain {
@@ -222,19 +209,17 @@ struct rule_chain {
 		template for (constexpr auto index : detail::index_array<members.size()>()) {
 			using Slot = [:std::meta::type_of(members[index]):];
 			auto const& slot = head.[:members[index]:];
-			if (slot.term.form != query_term_form::absent) {
+			if (slot.mentioned) {
 				if (out.find_count == max_query_finds) {
 					detail::rule_has_too_many_finds();
 				}
+				auto const classed = slot.form == find_form::measure ? false : Slot::classed;
 				out.finds[out.find_count] = find_data{
 				    .name = Slot::field_name,
-				    .form = find_form::variable,
-				    .op = fold_form::sum,
+				    .form = slot.form,
 				    .over = slot.term,
-				    .answer = Slot::cls,
-				    .has_over = true,
-				    .classed = Slot::classed,
-				    .law = Slot::law,
+				    .answer = slot.form == find_form::measure ? field_class{value_kind::u64, 0} : Slot::cls,
+				    .law = classed ? Slot::law : coord_ref{},
 				};
 				++out.find_count;
 			}
@@ -249,17 +234,26 @@ struct rule_chain {
 				detail::rule_has_too_many_finds();
 			}
 			if constexpr (detail::is_named_find_v<Extra>) {
-				using Var = typename Extra::var;
-				out.finds[out.find_count] = find_data{
-				    .name = Extra::column_name,
-				    .form = find_form::variable,
-				    .op = fold_form::sum,
-				    .over = detail::var_term<Var>(),
-				    .answer = Var::cls,
-				    .has_over = true,
-				    .classed = Var::classed,
-				    .law = Var::law,
-				};
+				using Payload = typename Extra::var;
+				if constexpr (detail::is_measure_ref_v<Payload>) {
+					using Inner = typename Payload::over;
+					out.finds[out.find_count] = find_data{
+					    .name = Extra::column_name,
+					    .form = find_form::measure,
+					    .over = detail::var_term<Inner>(),
+					    .answer = field_class{value_kind::u64, 0},
+					    .law = {},
+					};
+				} else {
+					using Var = Payload;
+					out.finds[out.find_count] = find_data{
+					    .name = Extra::column_name,
+					    .form = find_form::variable,
+					    .over = detail::var_term<Var>(),
+					    .answer = Var::cls,
+					    .law = Var::classed ? Var::law : coord_ref{},
+					};
+				}
 			} else {
 				out.finds[out.find_count] = detail::fold_find_of<Extra>();
 			}
@@ -277,7 +271,6 @@ private:
 		static_assert(sizeof...(Binds) <= max_query_finds, "bumbledb interior(): the bindings exceed the head width");
 		auto atom = interior_atom_data{};
 		atom.name = detail::to_name_text(Name.view());
-		atom.negated = Negated;
 		[[maybe_unused]] auto const add = [&]<class Bind>() {
 			using Var = typename Bind::var;
 			static_assert(detail::is_qvar_v<Var>, "bumbledb bind(): the bound value must be a query "
@@ -287,14 +280,13 @@ private:
 			    .column = Bind::column,
 			    .variable = coord_ref{.relation = Var::relation_name, .field = Var::field_name},
 			    .cls = Var::cls,
-			    .classed = Var::classed,
-			    .law = Var::law,
+			    .law = Var::classed ? Var::law : coord_ref{},
 			};
 			++atom.bind_count;
 		};
 		(add.template operator()<Binds>(), ...);
 		auto next = *this;
-		detail::record_interior(next.state, atom);
+		detail::record_interior(next.state, atom, Negated ? body_form::negated_interior : body_form::interior_atom);
 		return next;
 	}
 };

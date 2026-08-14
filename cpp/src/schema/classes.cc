@@ -19,7 +19,7 @@ inline constexpr bool is_statement_v = is_key_v<T> || is_containment_v<T> || is_
 /**
  * The :interval diagnostic convention (see :capacity's hook block).
  */
-auto relation_exceeds_max_relation_fields() -> void;
+auto relation_field_table_exceeds_flattened_storage() -> void;
 
 /**
  * One facade's flattened relation entry, read off its coordinate-shaped
@@ -34,15 +34,14 @@ template<class Facade>
 	constexpr auto members = std::define_static_array(std::meta::nonstatic_data_members_of(^^Facade, std::meta::access_context::current()));
 
 	auto out = relation_data{};
-	out.closed = is_closed_facade_type(^^Facade);
 	template for (constexpr auto index : index_array<members.size()>()) {
 		if constexpr (is_coordinate_like_type(std::meta::type_of(members[index]))) {
 			using Coord = [:std::meta::type_of(members[index]):];
 			if (out.field_count == 0) {
 				out.name = Coord::relation_name;
 			}
-			if (out.field_count == max_relation_fields) {
-				relation_exceeds_max_relation_fields();
+			if (out.field_count == out.fields.size()) {
+				relation_field_table_exceeds_flattened_storage();
 			}
 			out.fields[out.field_count] = field_data{
 			    .name = Coord::field_name,
@@ -62,6 +61,39 @@ template<class Facade>
 	constexpr auto members = std::define_static_array(std::meta::nonstatic_data_members_of(^^Facade, std::meta::access_context::current()));
 	using FirstCoord = [:std::meta::type_of(members[0]):];
 	return FirstCoord::relation_name;
+}
+
+template<class... Args>
+[[nodiscard]] consteval auto closed_count() -> std::size_t {
+	return (std::size_t{0} + ... + (is_closed_facade<Args>() ? 1U : 0U));
+}
+
+template<class... Args>
+[[nodiscard]] consteval auto closed_indices() -> std::array<std::size_t, closed_count<Args...>()> {
+	auto out = std::array<std::size_t, closed_count<Args...>()>{};
+	auto relation = std::size_t{0};
+	auto closed = std::size_t{0};
+	auto const add = [&]<class A>() {
+		if constexpr (is_member<A>()) {
+			if constexpr (is_closed_facade<A>()) {
+				out[closed] = relation;
+				++closed;
+			}
+			++relation;
+		}
+	};
+	(add.template operator()<Args>(), ...);
+	return out;
+}
+
+template<std::size_t ClosedCount>
+[[nodiscard]] constexpr auto relation_is_closed(std::array<std::size_t, ClosedCount> const& closed_at, std::size_t relation) -> bool {
+	for (auto const at : closed_at) {
+		if (at == relation) {
+			return true;
+		}
+	}
+	return false;
 }
 
 template<class... Args>
@@ -126,10 +158,9 @@ template<class Statement>
 			out.source.fields[position] = Statement::projection[position];
 		}
 	} else if constexpr (is_containment_v<Statement>) {
-		out.form = statement_form::containment;
+		out.form = Statement::bidirectional ? statement_form::mirrors : statement_form::containment;
 		out.source = side_of<typename Statement::source_face>();
 		out.target = side_of<typename Statement::target_face>();
-		out.bidirectional = Statement::bidirectional;
 	} else {
 		out.form = statement_form::capacity;
 		out.target = side_of<typename Statement::target_face>();
@@ -157,7 +188,13 @@ template<class... Args>
 
 template<class... Args>
 [[nodiscard]] consteval auto analyze_schema() -> law_verdict<coord_count<Args...>()> {
-	return analyze<coord_count<Args...>()>(relation_table<Args...>(), statement_shapes<Args...>());
+	auto const relations = relation_table<Args...>();
+	auto const closed_at = closed_indices<Args...>();
+	auto closed = std::array<bool, relation_count<Args...>()>{};
+	for (auto index = std::size_t{0}; index != relations.size(); ++index) {
+		closed[index] = relation_is_closed(closed_at, index);
+	}
+	return analyze<coord_count<Args...>()>(relations, closed, statement_shapes<Args...>());
 }
 
 [[nodiscard]] consteval auto schema_subject(std::string_view name) -> std::string {
@@ -189,8 +226,8 @@ template<class... Args>
 		}
 		return out + ")";
 	}
-	if (data.form == statement_form::containment) {
-		auto const constructor = data.bidirectional ? "mirrors(" : "contained(";
+	if (data.form == statement_form::containment || data.form == statement_form::mirrors) {
+		auto const constructor = data.form == statement_form::mirrors ? "mirrors(" : "contained(";
 		return constructor + render_side(data.source) + ", " + render_side(data.target) + ")";
 	}
 	return "capacity(" + render_side(data.target) + ", ..., " + render_side(data.source) + ")";

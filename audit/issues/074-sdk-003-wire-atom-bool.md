@@ -2,7 +2,7 @@
 
 - **Severity:** high
 - **Tree:** sdk (cpp dialect)
-- **Status:** OPEN
+- **Status:** FIXED(cf078d08fb60b50dbde6cc1221231b0ca5fc0fee)
 - **Source:** audit/sdks.md #3
 - **Depends on:** none (parallel-safe within cpp; textual overlap with sdk-001/002 in lower.cc/query_view.cc)
 

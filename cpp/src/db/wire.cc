@@ -124,12 +124,13 @@ template<Theory S>
 [[nodiscard]] auto owned_relations_of(S const& theory) -> std::vector<foreign::owned_relation> {
 	auto relations = std::vector<foreign::owned_relation>{};
 	relations.reserve(theory.relation_table.size());
-	for (auto const& relation : theory.relation_table) {
-		auto const first_field = relation.closed ? std::size_t{1} : std::size_t{0};
+	for (auto index = std::size_t{0}; index != theory.relation_table.size(); ++index) {
+		auto const& relation = theory.relation_table[index];
+		auto const first_field = theory.relation_is_closed(index) ? std::size_t{1} : std::size_t{0};
 		auto fields = std::vector<foreign::owned_field>{};
 		fields.reserve(relation.field_count - first_field);
-		for (auto index = first_field; index != relation.field_count; ++index) {
-			auto const& field = relation.fields[index];
+		for (auto field_index = first_field; field_index != relation.field_count; ++field_index) {
+			auto const& field = relation.fields[field_index];
 			fields.push_back(foreign::owned_field{
 			    .name = std::string{field.name.view()},
 			    .value_type = wire_type_of(field),
@@ -138,18 +139,17 @@ template<Theory S>
 			});
 		}
 		auto closed = std::optional<foreign::owned_closed>{};
-		if (relation.closed) {
-			auto const& data = relation.closed_data;
+		if (auto const* data = theory.closed_of(index)) {
 			auto rows = std::vector<foreign::owned_closed_row>{};
-			rows.reserve(data.handle_count);
-			for (auto handle = std::size_t{0}; handle != data.handle_count; ++handle) {
+			rows.reserve(data->handle_count);
+			for (auto handle = std::size_t{0}; handle != data->handle_count; ++handle) {
 				auto values = std::vector<foreign::owned_literal>{};
-				values.reserve(data.column_count);
-				for (auto column = std::size_t{0}; column != data.column_count; ++column) {
-					values.push_back(owned_axiom_of(data.axioms[handle * max_closed_columns + column]));
+				values.reserve(data->column_count);
+				for (auto column = std::size_t{0}; column != data->column_count; ++column) {
+					values.push_back(owned_axiom_of(data->axioms[handle * data->column_count + column]));
 				}
 				rows.push_back(foreign::owned_closed_row{
-				    .handle = std::string{data.handles[handle].view()},
+				    .handle = std::string{data->handles[handle].view()},
 				    .values = std::move(values),
 				});
 			}
@@ -228,10 +228,11 @@ template<Theory S>
 			break;
 		}
 		case statement_form::containment:
+		case statement_form::mirrors:
 			statements.push_back(foreign::owned_containment{
 			    .source = owned_side_of(statement.source),
 			    .target = owned_side_of(statement.target),
-			    .bidirectional = statement.bidirectional,
+			    .bidirectional = statement.form == statement_form::mirrors,
 			});
 			break;
 		case statement_form::capacity: {

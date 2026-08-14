@@ -277,6 +277,7 @@ public:
 	 * it.
 	 */
 	template<auto Query>
+	    requires (Query.rules.size() >= 1)
 	[[nodiscard]] auto prepare() const -> std::expected<Prepared<Query>, Error> {
 		return handle_.prepare(foreign::query_of<Query>)
 		    .transform([](foreign::prepared_handle handle) {
