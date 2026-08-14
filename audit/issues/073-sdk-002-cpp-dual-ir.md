@@ -2,7 +2,7 @@
 
 - **Severity:** high
 - **Tree:** sdk (cpp dialect)
-- **Status:** OPEN
+- **Status:** FIXED(0c77b514)
 - **Source:** audit/sdks.md #2
 - **Depends on:** co-lands with sdk-001 (same restructure)
 

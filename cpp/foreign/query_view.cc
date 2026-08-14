@@ -24,7 +24,7 @@ consteval auto for_each_wire_rule(F&& f) -> void {
 			f(Query.interiors[index].rules[rule]);
 		}
 	}
-	if (Query.has_rec) {
+	if constexpr (requires { Query.rec; }) {
 		for (auto rule = std::size_t{0}; rule != Query.rec.base_count; ++rule) {
 			f(Query.rec.base[rule]);
 		}
@@ -32,8 +32,8 @@ consteval auto for_each_wire_rule(F&& f) -> void {
 			f(Query.rec.rec[rule]);
 		}
 	}
-	for (auto rule = std::size_t{0}; rule != Query.ir.rule_count; ++rule) {
-		f(Query.ir.rules[rule]);
+	for (auto rule = std::size_t{0}; rule != Query.rules.size(); ++rule) {
+		f(Query.rules[rule]);
 	}
 }
 
@@ -248,10 +248,10 @@ template<auto Query>
 	for (auto index = std::size_t{0}; index != Query.interiors.size(); ++index) {
 		total += Query.interiors[index].head_count;
 	}
-	if (Query.has_rec) {
+	if constexpr (requires { Query.rec; }) {
 		total += Query.rec.head_count;
 	}
-	total += Query.ir.head_count;
+	total += Query.head_count;
 	return total;
 }
 
@@ -423,14 +423,14 @@ template<auto Query>
 			++at;
 		}
 	}
-	if (Query.has_rec) {
+	if constexpr (requires { Query.rec; }) {
 		for (auto column = std::size_t{0}; column != Query.rec.head_count; ++column) {
 			out[at] = head_term_of(Query.rec.head[column]);
 			++at;
 		}
 	}
-	for (auto column = std::size_t{0}; column != Query.ir.head_count; ++column) {
-		out[at] = head_term_of(Query.ir.head[column]);
+	for (auto column = std::size_t{0}; column != Query.head_count; ++column) {
+		out[at] = head_term_of(Query.head[column]);
 		++at;
 	}
 	return out;
@@ -495,12 +495,13 @@ template<auto Query>
 }
 
 template<auto Query>
+    requires requires { Query.rec; }
 inline constexpr auto query_rec = make_rec<Query>();
 
 template<auto Query>
 [[nodiscard]] consteval auto main_rule_offset() -> std::size_t {
 	auto offset = rec_rule_offset<Query>();
-	if (Query.has_rec) {
+	if constexpr (requires { Query.rec; }) {
 		offset += Query.rec.base_count + Query.rec.rec_count;
 	}
 	return offset;
@@ -509,7 +510,7 @@ template<auto Query>
 template<auto Query>
 [[nodiscard]] consteval auto main_head_offset() -> std::size_t {
 	auto offset = rec_head_offset<Query>();
-	if (Query.has_rec) {
+	if constexpr (requires { Query.rec; }) {
 		offset += Query.rec.head_count;
 	}
 	return offset;
@@ -518,6 +519,15 @@ template<auto Query>
 }
 
 export namespace bdb::foreign {
+
+template<auto Query>
+[[nodiscard]] consteval auto rec_ptr() -> bdb_rec const* {
+	if constexpr (requires { Query.rec; }) {
+		return &query_rec<Query>;
+	} else {
+		return nullptr;
+	}
+}
 
 /**
  * The whole lowered query as ONE static constant view graph: interiors
@@ -529,11 +539,11 @@ template<auto Query>
 inline constexpr auto query_of = bdb_query{
     .interiors = Query.interiors.size() == 0 ? nullptr : query_interiors<Query>.data(),
     .interior_count = Query.interiors.size(),
-    .rec = Query.has_rec ? &query_rec<Query> : nullptr,
-    .head = Query.ir.head_count == 0 ? nullptr : query_heads<Query>.data() + main_head_offset<Query>(),
-    .head_count = Query.ir.head_count,
-    .rules = Query.ir.rule_count == 0 ? nullptr : query_rules<Query>.data() + main_rule_offset<Query>(),
-    .rule_count = Query.ir.rule_count,
+    .rec = rec_ptr<Query>(),
+    .head = Query.head_count == 0 ? nullptr : query_heads<Query>.data() + main_head_offset<Query>(),
+    .head_count = Query.head_count,
+    .rules = Query.rules.size() == 0 ? nullptr : query_rules<Query>.data() + main_rule_offset<Query>(),
+    .rule_count = Query.rules.size(),
 };
 
 [[nodiscard]] inline auto wire_param(bool value) -> bdb_param {
@@ -658,7 +668,8 @@ template<class Params>
 
 namespace bdb::foreign {
 
-[[nodiscard]] consteval auto membership_cell_total(query_ir const& ir) -> std::size_t {
+template<class Ir>
+[[nodiscard]] consteval auto membership_cell_total(Ir const& ir) -> std::size_t {
 	auto total = std::size_t{0};
 	for (auto index = std::size_t{0}; index != ir.param_count; ++index) {
 		if (ir.params[index].membership) {
@@ -675,11 +686,11 @@ namespace bdb::foreign {
  * storage, like the rest of the program view graph.
  */
 template<auto Query>
-[[nodiscard]] consteval auto make_membership_cells() -> std::array<bdb_value, membership_cell_total(Query.ir)> {
-	auto out = std::array<bdb_value, membership_cell_total(Query.ir)>{};
+[[nodiscard]] consteval auto make_membership_cells() -> std::array<bdb_value, membership_cell_total(Query)> {
+	auto out = std::array<bdb_value, membership_cell_total(Query)>{};
 	auto at = std::size_t{0};
-	for (auto index = std::size_t{0}; index != Query.ir.param_count; ++index) {
-		auto const& parameter = Query.ir.params[index];
+	for (auto index = std::size_t{0}; index != Query.param_count; ++index) {
+		auto const& parameter = Query.params[index];
 		if (!parameter.membership) {
 			continue;
 		}
@@ -707,13 +718,13 @@ export namespace bdb::foreign {
  * cells and must outlive the execute call.
  */
 template<auto Query, class Params>
-[[nodiscard]] auto wire_params_for(Params const& params, param_scratch& scratch) -> std::array<bdb_param, Query.ir.param_count> {
+[[nodiscard]] auto wire_params_for(Params const& params, param_scratch& scratch) -> std::array<bdb_param, Query.param_count> {
 	auto const scalars = wire_params(params, scratch);
-	auto out = std::array<bdb_param, Query.ir.param_count>{};
+	auto out = std::array<bdb_param, Query.param_count>{};
 	auto scalar_index = std::size_t{0};
 	auto member_offset = std::size_t{0};
-	for (auto index = std::size_t{0}; index != Query.ir.param_count; ++index) {
-		auto const& parameter = Query.ir.params[index];
+	for (auto index = std::size_t{0}; index != Query.param_count; ++index) {
+		auto const& parameter = Query.params[index];
 		if (parameter.membership) {
 			auto set = bdb_param{};
 			set.kind = abi_tag(bdb_param_kind::BDB_PARAM_KIND_SET);

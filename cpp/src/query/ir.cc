@@ -329,19 +329,28 @@ struct rec_ir {
 };
 
 /**
- * The main answer of a lowered query: rules, head, and the param
- * registry (params-product synthesis — interiors' uses folded first,
- * then rec base, then rec arms, then main). Named interiors and the
- * optional rec ride `query_value`, not this struct: they are a variadic
- * pack, not a fixed array.
+ * One lowered query: interiors, optional rec (a member only on the
+ * rec-present specialization), main rules, head, and the param registry
+ * (params-product synthesis — interiors' uses folded first, then rec
+ * base, then rec arms, then main). Counts `NI` / `NR` are the pack
+ * lengths; `HasRec` is the rec arm.
  */
-struct query_ir {
-	std::size_t rule_count;
-	std::array<wire_rule, max_query_rules> rules;
-	std::size_t head_count;
-	std::array<find_data, max_query_finds> head;
-	std::size_t param_count;
-	std::array<param_data, max_query_params> params;
+template<std::size_t NI, std::size_t NR>
+struct query_body {
+	std::array<interior_ir, NI> interiors{};
+	std::array<wire_rule, NR> rules{};
+	std::size_t head_count{};
+	std::array<find_data, max_query_finds> head{};
+	std::size_t param_count{};
+	std::array<param_data, max_query_params> params{};
+};
+
+template<std::size_t NI, bool HasRec, std::size_t NR>
+struct query_ir : query_body<NI, NR> {};
+
+template<std::size_t NI, std::size_t NR>
+struct query_ir<NI, true, NR> : query_body<NI, NR> {
+	rec_ir rec{};
 };
 
 /**
@@ -390,9 +399,6 @@ auto interior_atom_omits_a_head_column() -> void;
 auto interior_atom_binds_a_name_the_head_does_not_carry() -> void;
 auto interior_binding_joins_only_its_head_columns_class() -> void;
 auto interior_names_must_be_distinct() -> void;
-auto interior_after_recursive() -> void;
-auto interior_or_recursive_after_a_main_rule() -> void;
-auto a_second_recursive_is_refused() -> void;
 auto recursive_needs_at_least_one_base_rule() -> void;
 auto recursive_needs_at_least_one_rec_rule() -> void;
 

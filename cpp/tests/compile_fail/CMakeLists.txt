@@ -69,15 +69,15 @@ bdb_compile_fail_case(query_find_unbound_variable
 )
 
 bdb_compile_fail_case(query_interior_after_main
-    "interior_or_recursive_after_a_main_rule"
+    "no matching function for call"
 )
 
 bdb_compile_fail_case(query_interior_after_recursive
-    "interior_after_recursive"
+    "no matching function for call"
 )
 
 bdb_compile_fail_case(query_second_recursive
-    "a_second_recursive_is_refused"
+    "no matching function for call"
 )
 
 bdb_compile_fail_case(query_duplicate_interior
