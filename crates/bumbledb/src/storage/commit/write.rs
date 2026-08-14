@@ -111,10 +111,7 @@ pub fn commit(delta: WriteDelta<'_>, env: &Environment) -> Result<CommitReport> 
             let rtxn = env.read_txn()?;
             rtxn.generation()?
         };
-        return Ok(CommitReport {
-            changed: false,
-            new_generation: generation,
-        });
+        return Ok(CommitReport::Noop { generation });
     }
 
     crashpoint!("after-staging");
@@ -176,10 +173,7 @@ pub fn commit(delta: WriteDelta<'_>, env: &Environment) -> Result<CommitReport> 
                 txn.commit()?;
             }
             crashpoint!("after-commit");
-            Ok(CommitReport {
-                changed: true,
-                new_generation,
-            })
+            Ok(CommitReport::Changed { new_generation })
         })
     })();
     // The never-reissue law spans the abort: every aborted attempt still

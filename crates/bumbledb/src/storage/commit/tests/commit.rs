@@ -97,8 +97,8 @@ fn delete_and_reinsert_of_a_committed_fact_commits_as_an_empty_delta() {
     drop(view);
     assert!(delta.is_empty());
     let report = commit(delta, &env).expect("commit");
-    assert!(!report.changed);
-    assert_eq!(report.new_generation.value(), 1);
+    assert!(!report.changed());
+    assert_eq!(report.generation().value(), 1);
     let rtxn = env.read_txn().expect("txn");
     assert_eq!(rtxn.generation().expect("generation").value(), 1);
 }
@@ -122,8 +122,8 @@ fn insert_and_delete_of_an_absent_fact_commits_as_an_empty_delta() {
     drop(view);
     assert!(delta.is_empty());
     let report = commit(delta, &env).expect("commit");
-    assert!(!report.changed);
-    assert_eq!(report.new_generation.value(), 1);
+    assert!(!report.changed());
+    assert_eq!(report.generation().value(), 1);
     let rtxn = env.read_txn().expect("txn");
     assert_eq!(rtxn.generation().expect("generation").value(), 1);
 }
@@ -146,8 +146,8 @@ fn tx_id_advances_once_per_state_changing_commit_only() {
     assert!(!delta.insert(&view, TARGET, &f).expect("insert"));
     drop(view);
     let report = commit(delta, &env).expect("commit");
-    assert!(!report.changed);
-    assert_eq!(report.new_generation.value(), 1);
+    assert!(!report.changed());
+    assert_eq!(report.generation().value(), 1);
     {
         let rtxn = env.read_txn().expect("txn");
         assert_eq!(rtxn.generation().expect("generation").value(), 1);
@@ -249,8 +249,8 @@ fn a_noop_commit_flushes_escaped_fresh_ids_and_nothing_else() {
     delta.intern_str(&view, "ghost").expect("intern");
     drop(view);
     let report = commit(delta, &env).expect("commit");
-    assert!(!report.changed);
-    assert_eq!(report.new_generation.value(), 1);
+    assert!(!report.changed());
+    assert_eq!(report.generation().value(), 1);
 
     let rtxn = env.read_txn().expect("txn");
     assert_eq!(rtxn.generation().expect("generation").value(), 1, "no bump");
@@ -311,7 +311,7 @@ fn a_pure_noop_transaction_touches_neither_tx_id_nor_q_marks() {
     );
     drop(view);
     let report = commit(delta, &env).expect("commit");
-    assert!(!report.changed);
+    assert!(!report.changed());
 
     let rtxn = env.read_txn().expect("txn");
     assert_eq!(

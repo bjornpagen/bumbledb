@@ -320,14 +320,14 @@ impl<S> Db<S> {
         let report = commit(delta, &self.env)?;
         txn_span.set_args(1, 0);
         txn_span.end();
-        if report.changed {
+        if let crate::storage::commit::CommitReport::Changed { new_generation } = report {
             // The one commit → cache wiring point (`50-storage.md`):
             // entries of relations this commit deleted from — or
             // inserted into below a retained base's boundary (the one
             // id allocator's non-tail arm, R16) — are stale the moment
             // the new generation exists; every other entry is retained
             // as an append base (`ImageCache::advance`).
-            self.cache.advance(report.new_generation, &dirty, &floors);
+            self.cache.advance(new_generation, &dirty, &floors);
             // Invalidate any snapshot parked mid-write by a concurrent
             // reader: the next read must begin fresh.
             CommitSeq::advance(&self.commit_seq, Ordering::Release);
