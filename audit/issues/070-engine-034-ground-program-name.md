@@ -2,7 +2,7 @@
 
 - **Severity:** low
 - **Tree:** engine
-- **Status:** OPEN
+- **Status:** FIXED(43e0360f)
 - **Source:** audit/engine.md F34
 - **Depends on:** none (rename; parallel-safe — textual overlap with engine-001 in build.rs)
 
