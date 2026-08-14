@@ -290,8 +290,18 @@ template<auto Query>
 inline constexpr auto query_bindings = make_bindings<Query>();
 
 [[nodiscard]] consteval auto atom_source_of(wire_atom const& atom) -> std::uint32_t {
-	return abi_tag(atom.interior ? bdb_atom_source_kind::BDB_ATOM_SOURCE_KIND_INTERIOR
-	                             : bdb_atom_source_kind::BDB_ATOM_SOURCE_KIND_EDB);
+	return abi_tag(atom.source == atom_source::interior ? bdb_atom_source_kind::BDB_ATOM_SOURCE_KIND_INTERIOR
+	                                                    : bdb_atom_source_kind::BDB_ATOM_SOURCE_KIND_EDB);
+}
+
+[[nodiscard]] consteval auto atom_of(wire_atom const& source, bdb_binding const* bindings) -> bdb_atom {
+	return bdb_atom{
+	    .source_kind = atom_source_of(source),
+	    .relation = source.source == atom_source::edb ? source.id : 0,
+	    .interior = source.source == atom_source::interior ? source.id : 0,
+	    .bindings = bindings,
+	    .binding_count = source.binding_count,
+	};
 }
 
 template<auto Query>
@@ -302,13 +312,7 @@ template<auto Query>
 	for_each_wire_rule<Query>([&](wire_rule const& wire) {
 		for (auto atom = std::size_t{0}; atom != wire.atom_count; ++atom) {
 			auto const& source = wire.atoms[atom];
-			out[at] = bdb_atom{
-			    .source_kind = atom_source_of(source),
-			    .relation = source.relation,
-			    .interior = source.interior_id,
-			    .bindings = source.binding_count == 0 ? nullptr : query_bindings<Query>.data() + binding_offset,
-			    .binding_count = source.binding_count,
-			};
+			out[at] = atom_of(source, source.binding_count == 0 ? nullptr : query_bindings<Query>.data() + binding_offset);
 			binding_offset += source.binding_count;
 			++at;
 		}
@@ -333,13 +337,7 @@ template<auto Query>
 		}
 		for (auto atom = std::size_t{0}; atom != wire.negated_count; ++atom) {
 			auto const& source = wire.negated[atom];
-			out[at] = bdb_atom{
-			    .source_kind = atom_source_of(source),
-			    .relation = source.relation,
-			    .interior = source.interior_id,
-			    .bindings = source.binding_count == 0 ? nullptr : query_bindings<Query>.data() + binding_offset,
-			    .binding_count = source.binding_count,
-			};
+			out[at] = atom_of(source, source.binding_count == 0 ? nullptr : query_bindings<Query>.data() + binding_offset);
 			binding_offset += source.binding_count;
 			++at;
 		}

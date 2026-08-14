@@ -117,7 +117,8 @@ static_assert(DownAt.params[0].domain == bdb::field_class{bdb::value_kind::i64, 
 static_assert(DownAt.params[0].point);
 
 static_assert(DownAt.rules[0].atom_count == 1);
-static_assert(DownAt.rules[0].atoms[0].relation == 1);
+static_assert(DownAt.rules[0].atoms[0].source == bdb::atom_source::edb);
+static_assert(DownAt.rules[0].atoms[0].id == 1);
 static_assert(DownAt.rules[0].atoms[0].binding_count == 2);
 static_assert(DownAt.rules[0].atoms[0].bindings[0].field == 0);
 static_assert(DownAt.rules[0].atoms[0].bindings[0].term.form == bdb::query_term_form::variable);
@@ -176,7 +177,8 @@ static_assert(LongOutages.rules[0].conditions[0].rhs.literal.kind == bdb::value_
 static_assert(LongOutages.rules[0].conditions[0].rhs.literal.u64 == 100);
 
 static_assert(NamedDownAt.rules[0].atom_count == 2);
-static_assert(NamedDownAt.rules[0].atoms[1].relation == 0);
+static_assert(NamedDownAt.rules[0].atoms[1].source == bdb::atom_source::edb);
+static_assert(NamedDownAt.rules[0].atoms[1].id == 0);
 static_assert(NamedDownAt.rules[0].atoms[1].binding_count == 2);
 static_assert(NamedDownAt.rules[0].atoms[1].bindings[0].field == 0);
 static_assert(NamedDownAt.rules[0].atoms[1].bindings[0].term.var == 0);

@@ -257,14 +257,18 @@ struct wire_binding {
 };
 
 /**
- * One numbered atom: an EDB atom (`interior == false`, `relation` read)
- * or a derived-table atom (`interior == true`, `interior_id` read — the
- * target's dense InteriorId; bindings address head positions).
+ * One numbered atom: one source tag and one payload id — EDB reads a
+ * RelationId, interior reads a dense InteriorId. Bindings address head
+ * positions on an interior atom.
  */
+enum class atom_source : std::uint8_t {
+	edb,
+	interior,
+};
+
 struct wire_atom {
-	std::uint32_t relation;
-	bool interior;
-	std::uint32_t interior_id;
+	atom_source source;
+	std::uint32_t id;
 	std::size_t binding_count;
 	std::array<wire_binding, max_relation_fields> bindings;
 };

@@ -165,8 +165,8 @@ template<class Ir>
 	auto const& head = sealed_head_of(ir, id);
 	auto const head_count = sealed_head_count(ir, id);
 	auto out = wire_atom{};
-	out.interior = true;
-	out.interior_id = static_cast<std::uint32_t>(id);
+	out.source = atom_source::interior;
+	out.id = static_cast<std::uint32_t>(id);
 	for (auto index = std::size_t{0}; index != atom.bind_count; ++index) {
 		auto known = false;
 		for (auto column = std::size_t{0}; column != head_count; ++column) {
@@ -288,7 +288,8 @@ template<class Ir>
 		auto const& item = rule.state.items[index];
 		if (item.form == body_form::atom || item.form == body_form::negated_atom) {
 			auto atom = wire_atom{};
-			atom.relation = item.atom.relation;
+			atom.source = atom_source::edb;
+			atom.id = item.atom.relation;
 			atom.binding_count = item.atom.binding_count;
 			for (auto binding = std::size_t{0}; binding != item.atom.binding_count; ++binding) {
 				atom.bindings[binding] = wire_binding{
