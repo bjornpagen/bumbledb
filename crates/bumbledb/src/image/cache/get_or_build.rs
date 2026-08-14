@@ -3,7 +3,7 @@
 //! no append base survives, by column copy plus tail decode when one
 //! does, and at zero copy when the relation was untouched.
 
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use crate::error::{CorruptionError, Error, Result};
 use crate::image::{RelationImage, append, build, synthesize_closed};
@@ -74,8 +74,8 @@ impl ImageCache {
         schema: &Schema,
         rel: RelationId,
     ) -> Result<Arc<RelationImage>> {
-        if self.closed_slot(rel).is_some() {
-            return Ok(self.get_or_synthesize(schema, rel));
+        if let Some(slot) = self.closed_slot(rel) {
+            return Ok(self.get_or_synthesize(schema, rel, slot));
         }
         let generation = txn.generation()?;
         let key = (rel, generation);
@@ -261,13 +261,12 @@ impl ImageCache {
     /// built into its `OnceLock` slot on first touch. Losers of an init
     /// race block on the winner's synthesis (`OnceLock::get_or_init`) and
     /// adopt its Arc — exactly one build per slot per process, ever.
-    ///
-    /// # Panics
-    ///
-    /// Only on a programmer-invariant violation: `rel` is not closed
-    /// (the caller probed `closed_slot` first).
-    fn get_or_synthesize(&self, schema: &Schema, rel: RelationId) -> Arc<RelationImage> {
-        let slot = self.closed_slot(rel).expect("caller probed closed_slot");
+    fn get_or_synthesize(
+        &self,
+        schema: &Schema,
+        rel: RelationId,
+        slot: &OnceLock<Arc<RelationImage>>,
+    ) -> Arc<RelationImage> {
         if let Some(image) = slot.get() {
             self.counters.hit();
             crate::obs::event(

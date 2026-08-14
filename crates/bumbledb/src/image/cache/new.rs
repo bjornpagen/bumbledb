@@ -5,6 +5,7 @@ use std::sync::{Mutex, OnceLock};
 
 use crate::schema::Schema;
 use crate::storage::env::GenerationId;
+use bumbledb_theory::schema::RelationId;
 
 use super::{CacheInner, ImageCache, stats};
 
@@ -14,25 +15,21 @@ impl ImageCache {
     /// closed relation, in declaration order (the closed slot).
     #[must_use]
     pub fn new(schema: &Schema) -> Self {
-        let mut count = 0u32;
-        let closed_slots: Box<[Option<u32>]> = schema
+        let closed_ids: Box<[RelationId]> = schema
             .relations()
             .iter()
-            .map(|relation| {
-                relation.body().closed_rows().is_some().then(|| {
-                    let slot = count;
-                    count += 1;
-                    slot
-                })
-            })
+            .enumerate()
+            .filter(|(_, relation)| relation.body().closed_rows().is_some())
+            .map(|(idx, _)| RelationId(u32::try_from(idx).expect("relation count fits u32")))
             .collect();
+        let closed = (0..closed_ids.len()).map(|_| OnceLock::new()).collect();
         Self {
             inner: Mutex::new(CacheInner {
                 map: HashMap::new(),
                 newest: GenerationId::initial(),
             }),
-            closed_slots,
-            closed: (0..count).map(|_| OnceLock::new()).collect(),
+            closed_ids,
+            closed,
             counters: stats::CacheCounters::new(),
         }
     }
