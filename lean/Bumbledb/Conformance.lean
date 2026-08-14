@@ -183,7 +183,9 @@ structure CRule where
   087). Absent in a case file: the decoded rule's own ceiling. -/
   width : Option Nat
 
-/-- One decoded query. -/
+/-- One decoded query: a `.cq` body (empty interiors) plus the head-shape
+row, R2 `dnf` mark, and optional surface width that `Query` does not
+carry. -/
 structure CQuery where
   rules : List CRule
   /-- The serializer's derivation mark (`"dnf": true`): the rule list
@@ -191,6 +193,11 @@ structure CQuery where
   the shared width (ruled 2026-07-23, R2 — `dnf_rekey_transparent`).
   Absent: hand-written rules, the head-projection law. -/
   dnf : Bool
+
+/-- The proved-type body: empty-prefix `.cq`, one rule list. Head
+shapes stay on `CRule.finds`; `Rule.finds` stays the PRD 04 narrowing. -/
+def CQuery.body (q : CQuery) : Query.Query :=
+  .cq [] (q.rules.map (·.body))
 
 /-- One positional parameter. -/
 inductive PVal where
@@ -379,15 +386,23 @@ def decodeCondition : Nat → Json → Except String Query.Condition
       return .or (← (← cs.getArr?).toList.mapM (decodeCondition fuel))
     .error "unknown condition node"
 
-/-- One atom: a relation with `[field, term]` binding pairs. -/
+/-- One atom: `relation` (seeded) or `edb`/`interior` (reach) spellings
+of the one `AtomSource`. -/
 def decodeAtom (j : Json) : Except String Query.Atom := do
-  let relation ← natKey j "relation"
+  let source : Query.AtomSource ←
+    if let some r := objKey? j "relation" then
+      pure (.edb ⟨← r.getNat?⟩)
+    else if let some r := objKey? j "edb" then
+      pure (.edb ⟨← r.getNat?⟩)
+    else if let some c := objKey? j "interior" then
+      pure (.interior ⟨← c.getNat?⟩)
+    else .error "atom expects relation, edb, or interior"
   let bindings ← (← (← j.getObjVal? "bindings").getArr?).toList.mapM
     fun pair => do
       match (← pair.getArr?).toList with
       | [f, t] => return ((⟨← f.getNat?⟩ : FieldId), ← decodeTerm t)
       | _ => .error "binding expects [field, term]"
-  return { source := .edb ⟨relation⟩, bindings }
+  return { source, bindings }
 
 /-- One head position. -/
 def decodeFind (j : Json) : Except String CFind := do
@@ -921,14 +936,6 @@ def CFind.isAgg : CFind → Bool
   | .agg _ => true
   | _ => false
 
-/-- The plain-projection reading of a decoded query, for the proved
-path: every head position a variable, the head restored into each
-rule's `finds`. -/
-def plainQuery (q : CQuery) : Query.Query :=
-  Query.Query.cq []
-    (q.rules.map fun r =>
-      { r.body with finds := r.finds.filterMap CFind.plainVar? })
-
 /-- The plain-projection evaluator: join + surface anti-join + head
 projection — `evalList`'s pipeline with AntiProbe on negated atoms. -/
 def evalPlain (h : Header) (W : Query.ListInstance) (ρ : Query.ParamEnv)
@@ -943,7 +950,7 @@ anti-join (`evalPlain` — AntiProbe on negated membership; coincides
 with `evalList` on membership-free negation), and the
 aggregate/measure head shapes run the recorded glue over the same
 join states. -/
-def evalQuery (h : Header) (W : Query.ListInstance) (ρ : Query.ParamEnv)
+def evalSeeded (h : Header) (W : Query.ListInstance) (ρ : Query.ParamEnv)
     (q : CQuery) : Except String (List (List Value)) :=
   match q.rules with
   | [] => .error "a query needs at least one rule"
@@ -981,7 +988,7 @@ def checkCase (text : String) :
     Except String (Option (List String × List String)) := do
   let json ← Json.parse text
   let case ← decodeCase json
-  let evaluated ← evalQuery case.header case.world case.env case.query
+  let evaluated ← evalSeeded case.header case.world case.env case.query
   let want := canonical case.expected
   let got := canonical evaluated
   if want == got then

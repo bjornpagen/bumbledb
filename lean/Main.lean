@@ -346,31 +346,14 @@ open Conformance
 
 /-! ## Decoding — the reach interchange format into Query -/
 
-/-- One reach atom: the source arm spelled (`edb`/`interior`), bindings
-as the query lane's `[field, term]` pairs. Never a stored `relation`
-key on this arm. -/
-def decodeReachAtom (j : Json) : Except String Query.Atom := do
-  let source : Query.AtomSource ←
-    if let some r := objKey? j "edb" then
-      pure (.edb ⟨← r.getNat?⟩)
-    else if let some c := objKey? j "interior" then
-      pure (.interior ⟨← c.getNat?⟩)
-    else .error "reach atom expects edb or interior"
-  let bindings ← (← (← j.getObjVal? "bindings").getArr?).toList.mapM
-    fun pair => do
-      match (← pair.getArr?).toList with
-      | [f, t] => return ((⟨← f.getNat?⟩ : FieldId), ← decodeTerm t)
-      | _ => Except.error "binding expects [field, term]"
-  return { source, bindings }
-
 /-- One reach rule — finds are raw variable ids (`List VarId`). -/
 def decodeReachRule (j : Json) : Except String Query.Rule := do
   let finds ← (← (← j.getObjVal? "finds").getArr?).toList.mapM
     fun n => do pure (⟨← n.getNat?⟩ : Query.VarId)
   let atoms ← (← (← j.getObjVal? "atoms").getArr?).toList.mapM
-    decodeReachAtom
+    decodeAtom
   let negated ←
-    (← (← j.getObjVal? "negated").getArr?).toList.mapM decodeReachAtom
+    (← (← j.getObjVal? "negated").getArr?).toList.mapM decodeAtom
   let conditions ← (← (← j.getObjVal? "conditions").getArr?).toList.mapM
     (decodeCondition 64)
   return { finds, atoms, negated, conditions }
