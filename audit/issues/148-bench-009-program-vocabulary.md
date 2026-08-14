@@ -2,7 +2,7 @@
 
 - **Severity:** low
 - **Tree:** bench
-- **Status:** OPEN
+- **Status:** FIXED(7ef4b2ad)
 - **Source:** audit/bench.md F9
 - **Depends on:** none (prose; parallel-safe). Skip sites owned by bench-002 (irgen) and bench-007 (closure) if those land first.
 

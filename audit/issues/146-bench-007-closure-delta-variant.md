@@ -2,7 +2,7 @@
 
 - **Severity:** medium
 - **Tree:** bench
-- **Status:** OPEN
+- **Status:** FIXED(7ef4b2ad)
 - **Source:** audit/bench.md F7
 - **Depends on:** none (prose; parallel-safe). The `exec: None` skip at line 502 is engine-011 / engine-008 — not this id.
 

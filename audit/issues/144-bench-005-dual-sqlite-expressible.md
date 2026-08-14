@@ -2,7 +2,7 @@
 
 - **Severity:** medium
 - **Tree:** bench
-- **Status:** OPEN
+- **Status:** FIXED(deff26c0)
 - **Source:** audit/bench.md F5
 - **Depends on:** engine-021 (the reach-named gate merges into this one function; land together or this after)
 

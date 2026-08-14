@@ -2,7 +2,7 @@
 
 - **Severity:** medium
 - **Tree:** bench
-- **Status:** OPEN
+- **Status:** FIXED(0b725ddf)
 - **Source:** audit/bench.md F4
 - **Depends on:** none (land **before** engine-020's randomized entry; today these paths never see Interior atoms and the panic is latent)
 
