@@ -2,7 +2,7 @@
 
 - **Severity:** high
 - **Tree:** engine
-- **Status:** FIXED
+- **Status:** FIXED(bbf97d8e)
 - **Source:** audit/engine.md F4
 - **Depends on:** engine-005 (the typed `ValidatedRec` is where nonemptiness lives)
 

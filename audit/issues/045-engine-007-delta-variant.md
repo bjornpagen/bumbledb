@@ -2,7 +2,7 @@
 
 - **Severity:** high
 - **Tree:** engine
-- **Status:** FIXED
+- **Status:** FIXED(0eb89cae)
 - **Source:** audit/engine.md F7
 - **Depends on:** engine-002 (RecArm is the replacement type; co-lands)
 
