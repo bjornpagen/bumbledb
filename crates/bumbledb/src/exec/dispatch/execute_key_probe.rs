@@ -8,7 +8,7 @@ use crate::storage::env::ReadTxn;
 /// Executes the key probe: key bytes from constants, one `U`/`M` get,
 /// one `F` fetch, remaining filters on the fact bytes, then the single
 /// binding through the ordinary sink (sinks are reused, not special-cased
-/// — a key-probe rule inside a multi-rule program unions through the same
+/// — a key-probe rule inside a multi-rule query unions through the same
 /// spanning seen-set as every other rule). The emit is counted like a
 /// join emit (the rule loop's union accounting). Multi-word variables
 /// (intervals, bytes<N>) occupy their whole slot span.

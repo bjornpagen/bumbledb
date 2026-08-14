@@ -207,7 +207,7 @@ fn a_dead_rule_opens_no_rule_span() {
     assert_eq!(rule_spans, vec!["rule_0"], "one rule span: the live rule");
 }
 
-/// The `[shape]` leg: the empty program touches no image and binds no view
+/// The `[shape]` leg: the empty query touches no image and binds no view
 /// — the obs counters that would record either stay silent.
 #[cfg(feature = "trace")]
 #[test]
@@ -248,7 +248,7 @@ fn the_empty_program_builds_no_image_and_binds_no_view() {
     ] {
         assert!(
             !names.contains(&touched),
-            "the empty program must not reach {touched}: {names:?}"
+            "the empty query must not reach {touched}: {names:?}"
         );
     }
 }

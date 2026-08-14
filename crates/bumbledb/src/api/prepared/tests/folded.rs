@@ -248,8 +248,8 @@ fn introspection_reports_the_fold_with_its_filters_and_handles() {
 }
 
 /// |S| == 0 is the statically-empty channel: the rule dies at prepare
-/// with the evaluator's rendered reason, and an all-dead program
-/// prepares to the empty program.
+/// with the evaluator's rendered reason, and an all-dead query
+/// prepares to the statically-empty query.
 #[test]
 fn an_empty_fold_prepares_the_statically_empty_program() {
     let dir = TempDir::new("folded-empty");

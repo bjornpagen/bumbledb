@@ -7,7 +7,7 @@ use crate::error::ValidationError;
 use crate::ir::normalize::OccId;
 use crate::ir::normalize::{collapse, disjunct_count, distribute, nesting_depth, LoweredRule};
 use crate::ir::{
-    AggOp, ConditionTree, FindTerm, InteriorId, ParamId, Query, Rec, Term, VarId,
+    AggOp, FindTerm, InteriorId, ParamId, Query, Rec, Term, VarId,
     MAX_CONDITION_DEPTH, MAX_RULES,
 };
 use crate::schema::Schema;
@@ -67,6 +67,7 @@ pub fn validate(schema: &Schema, query: &Query) -> Result<ValidatedQuery, Valida
             &interior.head,
             &lowered,
             &mut params,
+            false,
         )?;
         rule_count += typings.len() as u64;
         let predicate = super::Signature::derive(&lowered[0], &typings[0]);
@@ -97,6 +98,7 @@ pub fn validate(schema: &Schema, query: &Query) -> Result<ValidatedQuery, Valida
             &rec.head,
             &base,
             &mut params,
+            true,
         )?;
         rule_count += base_typing.len() as u64;
         let predicate = super::Signature::derive(&base[0], &base_typing[0]);
@@ -111,6 +113,7 @@ pub fn validate(schema: &Schema, query: &Query) -> Result<ValidatedQuery, Valida
             &rec.head,
             &rec_low,
             &mut params,
+            true,
         )?;
         let base_row = input_row(&base[0], &base_typing[0]);
         for (rule_idx, (rule, typing)) in rec_low.iter().zip(&rec_typing).enumerate() {
@@ -123,7 +126,6 @@ pub fn validate(schema: &Schema, query: &Query) -> Result<ValidatedQuery, Valida
             }
         }
         rule_count += rec_typing.len() as u64;
-        measure_in_rec(rec)?;
         let base_arms = NonEmpty::from_vec(
             base.into_iter()
                 .zip(base_typing)
@@ -173,6 +175,7 @@ pub fn validate(schema: &Schema, query: &Query) -> Result<ValidatedQuery, Valida
         &query.head,
         &lowered,
         &mut params,
+        false,
     )?;
     rule_count += typings.len() as u64;
     let predicate = super::Signature::derive(&lowered[0], &typings[0]);
@@ -225,12 +228,13 @@ fn type_rules(
     head: &[crate::ir::HeadTerm],
     lowered: &[LoweredRule],
     params: &mut ParamTables,
+    rec_body: bool,
 ) -> Result<Vec<RuleTyping>, ValidationError> {
     let mut pinned_row: Vec<ValueType> = Vec::new();
     let mut rules = Vec::with_capacity(lowered.len());
     for (rule_idx, rule) in lowered.iter().enumerate() {
         check_head_alignment(head, rule, rule_idx)?;
-        let (typing, ctx) = validate_rule(schema, sigs, rule)?;
+        let (typing, ctx) = validate_rule(schema, sigs, rule, rec_body)?;
         let row = input_row(rule, &typing);
         if rule_idx == 0 {
             pinned_row = row;
@@ -324,34 +328,6 @@ fn rec_roster(rec: &Rec, rec_id: InteriorId) -> Result<Vec<usize>, ValidationErr
         return Err(ValidationError::NegationInRec);
     }
     Ok(self_at)
-}
-
-/// Measure comparisons in rec **bodies** — per-rule may already have
-/// refused a binding (`DurationInBinding`); a legal comparison shape
-/// is this item.
-fn measure_in_rec(rec: &Rec) -> Result<(), ValidationError> {
-    let has_measure = |tree: &ConditionTree| -> bool { tree_has_measure(tree) };
-    if rec
-        .base
-        .iter()
-        .chain(&rec.rec)
-        .flat_map(|rule| &rule.conditions)
-        .any(has_measure)
-    {
-        return Err(ValidationError::MeasureInRec);
-    }
-    Ok(())
-}
-
-fn tree_has_measure(tree: &ConditionTree) -> bool {
-    match tree {
-        ConditionTree::Leaf(cmp) => {
-            matches!(cmp.lhs, Term::Measure(_)) || matches!(cmp.rhs, Term::Measure(_))
-        }
-        ConditionTree::And(children) | ConditionTree::Or(children) => {
-            children.iter().any(tree_has_measure)
-        }
-    }
 }
 
 /// Rec pool lowering: one [`MAX_RULES`] on `base.len() + rec.len()` and
@@ -539,6 +515,7 @@ fn validate_rule(
     schema: &Schema,
     interiors: &InteriorSignatures<'_>,
     rule: &LoweredRule,
+    rec_body: bool,
 ) -> Result<(RuleTyping, Context), ValidationError> {
     if rule.atoms.is_empty() {
         return Err(ValidationError::NoPositiveAtoms);
@@ -556,6 +533,13 @@ fn validate_rule(
     let mut ctx = Context::default();
     ctx.check_atoms(schema, interiors, rule)?;
     let classified = ctx.check_comparisons(rule)?;
+    if rec_body
+        && rule.conditions.iter().any(|cmp| {
+            matches!(cmp.lhs, Term::Measure(_)) || matches!(cmp.rhs, Term::Measure(_))
+        })
+    {
+        return Err(ValidationError::MeasureInRec);
+    }
     ctx.check_membership_domains()?;
     let group_key: BTreeSet<VarId> = rule
         .finds

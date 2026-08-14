@@ -1,5 +1,5 @@
 use super::*;
-use crate::ir::normalize::{NormalizedQuery, OccId, normalize};
+use crate::ir::normalize::{NormalizedQuery, OccId, normalize_predicate};
 use crate::ir::validate::validate;
 use crate::ir::{Atom, Comparison, ConditionTree, Query, Rule, Term, Value};
 use crate::plan::planner::{OccStats, plan};
@@ -52,7 +52,7 @@ fn containment(
 /// Runs the full honest pipeline: validate → normalize → grounding.
 fn grounded(schema: &Schema, query: &Query) -> NormalizedQuery {
     let witness = validate(schema, query).expect("valid fixture query");
-    let mut normalized = normalize(schema, &witness).remove(0);
+    let mut normalized = normalize_predicate(schema, &witness, &[]).remove(0);
     ground(&mut normalized, schema, &query.rules[0].finds);
     normalized
 }
@@ -147,7 +147,7 @@ fn the_off_switch_bypasses_the_rewrite() {
     let schema = walk_schema();
     let query = walk_query();
     let witness = validate(&schema, &query).expect("valid fixture query");
-    let mut normalized = normalize(&schema, &witness).remove(0);
+    let mut normalized = normalize_predicate(&schema, &witness, &[]).remove(0);
     with_grounding_disabled(|| ground(&mut normalized, &schema, &query.rules[0].finds));
     assert_eq!(roles(&normalized), vec![Role::Positive, Role::Positive]);
     ground(&mut normalized, &schema, &query.rules[0].finds);
@@ -685,12 +685,12 @@ fn an_interval_typed_pair_refuses() {
     assert_eq!(roles(&normalized), vec![Role::Positive, Role::Positive]);
 }
 
-/// The whole grounded program: validate → normalize → grounding per rule,
+/// The whole grounded query: validate → normalize → grounding per rule,
 /// returning each rule's normalized form with its finds — the
 /// subsumption pass's exact inputs.
 fn grounded_main(schema: &Schema, query: &Query) -> (Vec<NormalizedQuery>, Vec<Vec<FindTerm>>) {
     let witness = validate(schema, query).expect("valid fixture query");
-    let mut rules = normalize(schema, &witness);
+    let mut rules = normalize_predicate(schema, &witness, &[]);
     let finds: Vec<Vec<FindTerm>> = (0..rules.len())
         .map(|idx| witness.rule(idx).rule().finds.clone())
         .collect();

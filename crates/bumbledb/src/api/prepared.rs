@@ -188,7 +188,7 @@ pub struct PreparedQuery<'s, S> {
     /// — checked first at every execution entry.
     env_instance: u64,
     /// The rule-disjointness proof (docs/architecture/40-execution.md
-    /// § set semantics): `Some` iff the program's rules are provably
+    /// § set semantics): `Some` iff the query's rules are provably
     /// pairwise disjoint, carrying the witness — the (relation, field)
     /// whose differing pinned literals forbid cross-rule head
     /// collisions. `None` for single-rule programs and unproven pairs.

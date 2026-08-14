@@ -196,9 +196,8 @@ fn earliest_bound_node(bound: &[BTreeSet<VarId>], vars: &[VarId]) -> Option<usiz
 /// Only on programmer-invariant violations (more than 256 subatoms in one
 /// node — impossible for plans over the planner's occurrence cap — or a
 /// normalized query whose slot-width map misses a variable).
-/// The query-path entry: the empty Interior signature surface (a sealed
-/// `ValidatedQuery` carries no `Interior` occurrence). Test observability —
-/// production rules route through [`validate_with_signatures`].
+/// Test convenience: EDB-only fixtures pass no derived signatures.
+/// Production rules route through [`validate_with_signatures`].
 #[cfg(test)]
 pub fn validate(
     plan: &FjPlan,
@@ -214,8 +213,8 @@ pub fn validate(
 /// occurrence's field→column spans derive from the target table's
 /// sealed columns (in `InteriorId` then rec order) instead of a stored relation's
 /// layout — everything else is the conjunctive validation, verbatim.
-/// The query path passes the empty surface through [`validate`]: a
-/// sealed `ValidatedQuery` carries no `Interior` occurrence.
+/// Test fixtures that are EDB-only pass the empty surface through
+/// [`validate`].
 ///
 /// # Errors
 ///

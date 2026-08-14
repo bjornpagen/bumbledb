@@ -601,7 +601,7 @@ pub enum ValidationError {
         position: usize,
     },
     /// A nullary `Count` in a fold-free head of a hand-written 2+-rule
-    /// program (ruled 2026-07-23, R1): under the head-projection law a
+    /// query (ruled 2026-07-23, R1): under the head-projection law a
     /// fold-free head admits one projection per group, so the Count is
     /// definitionally the constant 1 — an uninformative query, made
     /// unrepresentable. The modeling answer: one Count per disjunct,

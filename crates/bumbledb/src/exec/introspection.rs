@@ -12,7 +12,7 @@
 //! Within one version, identical schema fingerprint, canonical query,
 //! parameter types, and feature set produce byte-identical output. Any
 //! content or ordering change must increment `INTROSPECTION_VERSION`.
-//! Sections have fixed order; rules retain program order, nodes retain plan
+//! Sections have fixed order; rules retain query order, nodes retain plan
 //! order, and dead, subsumed, and unresolved-literal diagnostics retain
 //! statement order. No unordered collection feeds the rendered surface.
 //!
@@ -117,7 +117,7 @@ pub enum RulePlan<'p> {
     KeyProbe(&'p KeyProbePlan),
     /// The Free Join engine.
     FreeJoin(&'p ValidatedPlan),
-    /// The statically-empty program (`ir/normalize/fold.rs`): every
+    /// The statically-empty query (`ir/normalize/fold.rs`): every
     /// rule refuted on constants at prepare — nothing runs, and the
     /// per-rule killing conditions print from `stats.dead`.
     Empty,

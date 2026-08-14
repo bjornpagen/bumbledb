@@ -144,7 +144,7 @@ fn the_du_arm_union_proves_and_an_unselected_arm_unproves() {
 }
 
 /// introspection names the proof — `disjoint_rules: proven (Item.kind)` — and
-/// the structured stats carry the same witness; the unproven program
+/// the structured stats carry the same witness; the unproven query
 /// says so.
 #[test]
 fn introspection_names_the_disjointness_witness() {

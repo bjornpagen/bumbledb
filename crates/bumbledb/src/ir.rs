@@ -175,7 +175,7 @@ pub struct Atom {
 /// non-aggregated find variables. Across rules the domain splits by
 /// provenance (ruled 2026-07-23, R2): a DNF-derived rule set keeps the
 /// written rule's full binding set (surface `or` is fold-transparent),
-/// while a hand-written multi-rule program folds the union of the rules'
+/// while a hand-written multi-rule query folds the union of the rules'
 /// binding sets projected to the head — the head is the only shared
 /// vocabulary — with the fold-free nullary `Count` refused there (R1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

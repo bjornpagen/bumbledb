@@ -20,7 +20,7 @@ pub struct ExecutionStats {
     /// per-rule `emitted` on a Cq; the answer count on Reach).
     pub emits: u64,
     /// The rule-disjointness proof (docs/architecture/40-execution.md
-    /// § set semantics): `Some` iff the program's rules are provably
+    /// § set semantics): `Some` iff the query's rules are provably
     /// pairwise disjoint, naming the witness. `None` for single-rule
     /// programs, Reach, and unproven pairs.
     pub disjoint_rules: Option<DisjointRules>,

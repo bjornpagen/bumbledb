@@ -616,7 +616,7 @@ impl fmt::Display for ValidationError {
             Self::CountAcrossRules { rules } => write!(
                 f,
                 "nullary Count in a fold-free head of a hand-written {rules}-rule \
-                 program: the head projection admits one row per group, so the Count \
+                 query: the head projection admits one row per group, so the Count \
                  is the constant 1 — write one Count query per disjunct and merge in \
                  the host"
             ),

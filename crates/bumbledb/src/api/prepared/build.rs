@@ -118,7 +118,7 @@ fn prepare_witnessed<'s, S>(
 
     // The predicate the query defines, sealed at validation (the ONE
     // signature derivation) — it exists even when every rule below dies,
-    // so the empty program still types its result columns.
+    // so the empty query still types its result columns.
     let predicate = witness.signature().clone();
     let mut rules = Vec::with_capacity(survivors.len());
     // Written-rule provenance per surviving rule (R2): the sink regime
@@ -152,7 +152,7 @@ fn prepare_witnessed<'s, S>(
             signatures,
         )?);
     }
-    // A program deletion (subsumption or rule death) shrank to at most
+    // A query deletion (subsumption or rule death) shrank to at most
     // one live rule has no pair left to prove (the stats surface's
     // single-rule contract; pairwise over a superset held regardless).
     let disjoint_rules = (rules.len() > 1).then_some(disjoint_rules).flatten();
@@ -614,7 +614,7 @@ fn param_specs(witness: &crate::ir::validate::ValidatedQuery) -> Vec<super::Para
     params
 }
 
-/// The theory's program rewrite (`plan/ground.rs`): the
+/// The theory's query rewrite (`plan/ground.rs`): the
 /// elimination-and-evaluation fixpoint per rule, independently — after
 /// normalization and before statistics and the DP
 /// (docs/architecture/40-execution.md planner placement), with no
@@ -1355,7 +1355,7 @@ fn group_radixes(rule: &RuleWitness<'_>) -> Vec<u16> {
 
 /// Builds the sink matching the head shape (the variant is fixed per
 /// prepared query — an enum, not `dyn`), aimed at rule 0's binding
-/// layout. The program regime structurally selects single-rule binding
+/// layout. The query regime structurally selects single-rule binding
 /// dedup, witnessed elision, or the mandatory union seen-set — keyed by
 /// provenance (R2). `dense_groups` is the single-rule dense group
 /// domain proof (049); empty keeps the open-domain map.

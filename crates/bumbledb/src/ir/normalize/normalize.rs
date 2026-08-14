@@ -11,23 +11,7 @@ use crate::ir::{Atom, CmpOp, Term, Value, VarId};
 use crate::schema::Schema;
 use bumbledb_theory::schema::{FieldId, ValueType};
 
-/// Lowers the witness into paper form, rule by rule: one
-/// [`NormalizedQuery`] per rule, in rule order — the normalized artifact
-/// is a list because the query is a rule list. The query path: no `Interior`
-/// occurrence exists in a sealed [`ValidatedQuery`] (the query boundary
-/// has no predicate address space), so the signature surface is empty.
-///
-/// # Panics
-///
-/// Only on programmer-invariant violations already excluded by validation
-/// (e.g. a comparison variable bound by no atom).
-#[must_use]
-#[allow(dead_code)]
-pub fn normalize(schema: &Schema, query: &ValidatedQuery) -> Vec<NormalizedQuery> {
-    normalize_rules(schema, &[], query.rules())
-}
-
-/// [`normalize`] with the interiors/rec typing surface: `signatures`
+/// [`normalize_rules`] with the interiors/rec typing surface: `signatures`
 /// holds every derived table's sealed signature in `InteriorId` then rec
 /// order, and an
 /// `Interior` binding's field type reads the target's column — `FieldId(i)`
@@ -37,7 +21,7 @@ pub fn normalize(schema: &Schema, query: &ValidatedQuery) -> Vec<NormalizedQuery
 ///
 /// # Panics
 ///
-/// As [`normalize`].
+/// As [`normalize_rules`].
 #[must_use]
 pub fn normalize_predicate(
     schema: &Schema,

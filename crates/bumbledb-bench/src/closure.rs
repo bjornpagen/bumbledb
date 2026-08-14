@@ -499,7 +499,7 @@ pub fn bench_families(
             theirs: theirs.stats,
             ratio_p50,
             alloc: alloc_report,
-            exec: None, // the profile path is query-shaped; rec queries skip it
+            exec: None, // the profile path is CQ-shaped; reach queries skip it
             ghz: Some(merged.into()),
             p50_norm: ours.p50_norm,
         });

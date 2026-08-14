@@ -25,7 +25,7 @@
 //! a rule — the structural term count past [`crate::ir::MAX_RULES`] is
 //! the typed `DnfExceedsRules { produced, cap }` (judged before
 //! materializing), duplicate rules collapse by normalized-form equality,
-//! and a program whose every disjunction is empty is the empty union
+//! and a query whose every disjunction is empty is the empty union
 //! (`EmptyRuleSet`). Everything below — and everything downstream —
 //! reads the Or-free [`LoweredRule`]s; rule indices in diagnostics and
 //! in the witness are **lowered-rule** indices.

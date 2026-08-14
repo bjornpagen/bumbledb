@@ -234,7 +234,7 @@ pub(super) fn run_join<S: crate::exec::run::Sink, C: crate::exec::run::Counters>
 /// The occurrence-dedup scan: an occurrence other than `occ` whose
 /// *active* binding is exactly (`generation`, occ's resolved residual
 /// filters) over the same relation with the same trie orientation
-/// ([`crate::exec::colt::Colt::same_shape`]). Idb and discharged
+/// ([`crate::exec::colt::Colt::same_shape`]). Derived and discharged
 /// occurrences never bind a generation, so the generation check
 /// excludes them for free. O(occurrences) compares, only inside the
 /// sanctioned rebuild window — the warm path never gets here.

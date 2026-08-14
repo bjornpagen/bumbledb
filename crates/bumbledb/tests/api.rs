@@ -1535,7 +1535,7 @@ fn staleness_reports_drift_and_reprepare_resets_it() {
 /// always has.
 #[test]
 fn a_plain_query_executes_as_today() {
-    let dir = common::TempDir::new("api-degenerate-program");
+    let dir = common::TempDir::new("api-degenerate-query");
     let db = Db::create(dir.path(), Ledger).expect("create");
     db.write(|tx| {
         for (name, balances) in [("alice", vec![100, -25]), ("bob", vec![40])] {

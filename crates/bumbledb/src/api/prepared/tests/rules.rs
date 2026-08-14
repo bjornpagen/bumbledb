@@ -82,7 +82,7 @@ fn a_multi_rule_program_prepares_with_every_rules_plan() {
             .map(|column| &column.ty)
             .collect::<Vec<_>>(),
         vec![&ValueType::String, &ValueType::I64],
-        "the head's answer tuple types the program once"
+        "the head's answer tuple types the query once"
     );
 }
 
@@ -478,7 +478,7 @@ fn an_or_spelled_fold_keeps_the_written_rules_full_binding_domain() {
     );
 }
 
-/// introspection over a program: per-rule node stats plus the head-level union
+/// introspection over a query: per-rule node stats plus the head-level union
 /// accounting — rule 1 re-derives the overlap and the report shows the
 /// absorption.
 #[test]
@@ -526,7 +526,7 @@ fn introspection_reports_per_rule_stats_and_the_union_accounting() {
     );
 }
 
-/// A key-probe rule inside a program goes through the sink like any
+/// A key-probe rule inside a query goes through the sink like any
 /// other rule (the union must hear it): its re-derivation of another
 /// rule's row is absorbed.
 #[test]

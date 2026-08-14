@@ -71,7 +71,7 @@ impl ProjectionSink {
                 extend_sources(&self.finds, &self.measures, sources);
             }
             // Head alignment makes a regime change impossible in valid
-            // multi-rule programs. Stay total defensively; this cold
+            // multi-rule queries. Stay total defensively; this cold
             // replacement may allocate only for malformed internal data.
             (sources, _) => *sources = sources_of(&self.finds, &self.measures),
         }

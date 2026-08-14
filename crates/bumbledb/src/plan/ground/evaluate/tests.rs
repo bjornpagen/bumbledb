@@ -4,7 +4,7 @@
 //! condition's refusal shape is easier to pin in isolation.
 
 use super::*;
-use crate::ir::normalize::{NormalizedQuery, normalize};
+use crate::ir::normalize::{NormalizedQuery, normalize_predicate};
 use crate::ir::validate::validate;
 use crate::ir::{Atom, Comparison, ConditionTree, FindTerm, HeadTerm, Query, Rule, Term, Value};
 use crate::plan::ground::{ground, with_grounding_disabled};
@@ -148,7 +148,7 @@ fn var(id: u16) -> Term {
 /// grounding (elimination and evaluation in the one fixpoint).
 fn grounded(schema: &Schema, query: &Query) -> NormalizedQuery {
     let witness = validate(schema, query).expect("valid fixture query");
-    let mut normalized = normalize(schema, &witness).remove(0);
+    let mut normalized = normalize_predicate(schema, &witness, &[]).remove(0);
     ground(&mut normalized, schema, &query.rules[0].finds);
     normalized
 }
@@ -217,7 +217,7 @@ fn the_off_switch_bypasses_the_evaluator() {
     let schema = theory();
     let query = selected_fold_query(20);
     let witness = validate(&schema, &query).expect("valid fixture query");
-    let mut normalized = normalize(&schema, &witness).remove(0);
+    let mut normalized = normalize_predicate(&schema, &witness, &[]).remove(0);
     with_grounding_disabled(|| ground(&mut normalized, &schema, &query.rules[0].finds));
     assert_eq!(roles(&normalized), vec![Role::Positive, Role::Positive]);
     assert!(attached_sets(&normalized, 0).is_empty());
@@ -837,7 +837,7 @@ fn multi_rule_programs_fold_per_rule_independently() {
         rules: vec![fold_rule, refusing_rule],
     };
     let witness = validate(&schema, &query).expect("valid fixture query");
-    let mut rules = normalize(&schema, &witness);
+    let mut rules = normalize_predicate(&schema, &witness, &[]);
     for (idx, rule) in rules.iter_mut().enumerate() {
         ground(rule, &schema, &witness.rule(idx).rule().finds);
     }

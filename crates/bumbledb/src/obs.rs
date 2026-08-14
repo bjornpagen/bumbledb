@@ -153,7 +153,7 @@ pub mod names {
         "rule_9", "rule_10", "rule_11", "rule_12", "rule_13", "rule_14", "rule_15",
     ];
     // The cap and the table move together, or the rule loop's span
-    // lookup would panic on a legal program.
+    // lookup would panic on a legal query.
     const _: () = assert!(crate::ir::MAX_RULES == RULE.len());
     /// The interior preamble under the execute span. (interior count,
     /// derived tuples emitted across interiors)

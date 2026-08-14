@@ -253,66 +253,18 @@ impl<S> PreparedQuery<'_, S> {
         cache: &ImageCache,
         counters: &mut C,
     ) -> Result<()> {
-        let fast_eligible = self.unresolved_literals == 0 && self.params.is_empty();
-        let mut latched = 0u32;
-        for set in &mut self.ray_probes {
-            // `str` literals in the verdict's leaves latch to their
-            // dictionary words (append-only: a hit is final; a miss
-            // evaluates as the never-minted sentinel this execution).
-            set.verdict.resolve_interns(txn)?;
-            let super::RayProbeSet { verdict, probes } = set;
-            for probe in probes {
-                let resolved =
-                    if fast_eligible && probe.rule.resolution == super::ResolutionState::Complete {
-                        true
-                    } else {
-                        let complete = resolve_filters(
-                            txn,
-                            &mut probe.rule.plan,
-                            &self.resolved_params,
-                            &self.missed_params,
-                            &mut probe.rule.resolved_filters,
-                            &mut probe.rule.resolved_selections,
-                            &mut latched,
-                        )?;
-                        probe.rule.resolution = if complete {
-                            super::ResolutionState::Complete
-                        } else {
-                            super::ResolutionState::Pending
-                        };
-                        complete
-                    };
-                if !resolved {
-                    continue; // an Eq-anchored miss: the probe is empty
-                }
-                self.bindings.resize(probe.rule.plan.slot_count());
-                let mut arbiter = crate::exec::verdict::RayArbiter::new(
-                    verdict,
-                    &self.resolved_params,
-                    probe.measured_slot,
-                );
-                let mut no_retired = Vec::new();
-                let empty_images = super::reach::OccImages::default();
-                run_join(
-                    &probe.rule.plan,
-                    self.schema,
-                    txn,
-                    cache,
-                    &mut probe.rule.executor,
-                    &mut self.bindings,
-                    &probe.rule.resolved_filters,
-                    &probe.rule.resolved_selections,
-                    &mut probe.rule.memo,
-                    &empty_images,
-                    &mut no_retired,
-                    &mut arbiter,
-                    counters,
-                )?;
-                if let Some([start, end]) = arbiter.measure_of_ray() {
-                    return Err(crate::error::Error::MeasureOfRay { start, end });
-                }
-            }
-        }
+        let latched = super::reach::run_ray_probe_sets(
+            &mut self.ray_probes,
+            None,
+            self.schema,
+            txn,
+            cache,
+            &self.resolved_params,
+            &self.missed_params,
+            self.unresolved_literals == 0 && self.params.is_empty(),
+            &mut self.bindings,
+            counters,
+        )?;
         self.unresolved_literals = self.unresolved_literals.saturating_sub(latched);
         Ok(())
     }

@@ -257,7 +257,7 @@ impl<S> PreparedQuery<'_, S> {
             .collect()
     }
 
-    /// The statically-empty program's counted execution: every count is
+    /// The statically-empty query's counted execution: every count is.
     /// honestly zero — nothing ran, nothing was read — and the death
     /// record (`stats.dead`) carries the per-rule killing conditions.
     fn empty_stats(&self) -> ExecutionStats {
@@ -273,8 +273,8 @@ impl<S> PreparedQuery<'_, S> {
 
     /// Whether the aggregate sink's binding seen-set is elided
     /// (40-execution) — the regime observable for the batch-fold fast
-    /// path. A single-rule program may elide under its plan's
-    /// distinct-bindings proof. A multi-rule program always returns false:
+    /// path. A single-rule query may elide under its plan's
+    /// distinct-bindings proof. A multi-rule query always returns false:
     /// its spanning head-projection seen-set is the union representation.
     #[must_use]
     pub fn distinct_bindings(&self) -> bool {
@@ -284,7 +284,7 @@ impl<S> PreparedQuery<'_, S> {
         }
     }
 
-    /// Whether the program's rules are provably pairwise disjoint
+    /// Whether the query's rules are provably pairwise disjoint
     /// (docs/architecture/40-execution.md § set semantics). This is
     /// diagnostic knowledge, not an executor switch: the measured
     /// cross-rule optimization was reverted. Always `false` for

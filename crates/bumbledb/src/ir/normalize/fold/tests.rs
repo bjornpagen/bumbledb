@@ -1,4 +1,4 @@
-use super::super::{OccId, Role, normalize};
+use super::super::{OccId, Role, normalize_predicate};
 use super::*;
 use crate::encoding::encode_i64;
 use crate::ir::validate::validate;
@@ -189,7 +189,7 @@ fn a_point_at_the_interval_start_survives() {
 // the verdict, and the off switch.
 
 fn one_rule(schema: &Schema, query: &Query) -> super::super::NormalizedQuery {
-    let mut rules = normalize(schema, &validate(schema, query).expect("valid"));
+    let mut rules = normalize_predicate(schema, &validate(schema, query).expect("valid"), &[]);
     assert_eq!(rules.len(), 1, "one-rule fixtures");
     rules.remove(0)
 }
