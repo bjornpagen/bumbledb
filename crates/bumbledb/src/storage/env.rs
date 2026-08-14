@@ -233,6 +233,10 @@ pub(crate) enum EnvMode {
         lock: std::fs::File,
     },
     Ephemeral {
+        /// Held until `Environment` drops; never read. Must outlive `env`
+        /// (fields drop in declaration order) so another handle cannot
+        /// acquire the path while heed still has it open.
+        #[allow(dead_code)]
         lock: std::fs::File,
         dirty_marker: std::path::PathBuf,
     },
@@ -285,10 +289,13 @@ pub struct Environment {
 /// never proven.
 impl Drop for Environment {
     fn drop(&mut self) {
-        let EnvMode::Ephemeral { dirty_marker, .. } =
-            std::mem::replace(&mut self.mode, EnvMode::Exhume)
-        else {
-            return;
+        // Match the ephemeral arm without moving the writer lock. Fields
+        // drop in declaration order (`env` before `mode`), so the lock
+        // must still be held while heed closes — otherwise another
+        // handle can acquire it and surface `EnvAlreadyOpened`.
+        let dirty_marker = match &mut self.mode {
+            EnvMode::Ephemeral { dirty_marker, .. } => std::mem::take(dirty_marker),
+            EnvMode::Durable { .. } | EnvMode::Exhume => return,
         };
         if self.env.force_sync().is_err() {
             return;
