@@ -2,7 +2,7 @@
 
 - **Severity:** high
 - **Tree:** lean
-- **Status:** OPEN (scoped — the `Vector`-tuple half is refused per CONTRACT §C5)
+- **Status:** FIXED(e134b917)
 - **Source:** audit/lean.md H6
 - **Depends on:** lean-001, lean-002 (the fields live on the types those issues rewrite; land with or after)
 
@@ -42,9 +42,9 @@ Per `audit/CONTRACT.md §C4` ("Arity"):
 
 ## Acceptance criteria
 
-- [ ] Gone: `rg -n 'arity' lean/Bumbledb/Query/Syntax.lean` → no `Interior.arity`/rec-arity fields (main arity only if the documented exception is taken); `rg -n 'Rec.arity|\.arity' lean/Bumbledb/Exec/Reach.lean` → no matches.
-- [ ] Unchanged: 268-case conformance green with the corpus byte-identical (`arity` keys still parsed or checked, never required absent); the narrowing note at `Reach.lean:20-24` deleted (nothing left to narrow).
-- [ ] Commands green: `cd lean && lake build`; `lake exe conformance conformance/cases` (268, 0); no `sorry`/`admit`.
+- [x] Gone: `rg -n 'arity' lean/Bumbledb/Query/Syntax.lean` → no `Interior.arity`/rec-arity fields (main arity only if the documented exception is taken); `rg -n 'Rec.arity|\.arity' lean/Bumbledb/Exec/Reach.lean` → no matches.
+- [x] Unchanged: 268-case conformance green with the corpus byte-identical (`arity` keys still parsed or checked, never required absent); the narrowing note at `Reach.lean:20-24` deleted (nothing left to narrow).
+- [x] Commands green: `cd lean && lake build`; `lake exe conformance conformance/cases` (268, 0); no `sorry`/`admit`.
 
 ## Constraints
 

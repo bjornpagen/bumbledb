@@ -123,59 +123,18 @@ theorem sourceDen_toEnv_update (W : ListInstance) (T : InteriorTables)
 
 /-! ## Interiors — `evalInteriors` -/
 
-/-- Finished interior tables after the first `n` defs (declaration
-order). `evalInteriorsAt … 0` is empty. `evalInteriorsAt … (k+1)`
-writes `InteriorId ⟨k⟩` from `defs[k]?` against the prefix env.
-Call `evalInteriorsAt … defs.length` to finish every interior. -/
-def evalInteriorsAt (C : Classify) (defs : List Interior) (I : Instance)
-    (ρ : ParamEnv) : Nat → InteriorEnv
-  | 0 => InteriorEnv.empty
-  | n + 1 =>
-    let prev := evalInteriorsAt C defs I ρ n
-    fun c t =>
-      if h : c.id < n then
-        prev c t
-      else if c.id = n then
-        match defs[n]? with
-        | some d => t ∈ rulesAnswers C d.rules (sourceDen I prev) ρ
-        | none => False
-      else False
+/-- Declaration-order fold. Slot `⟨i⟩` is the publish id of the `i`th
+interior; a later or unknown id is empty because it was never updated. -/
+def evalInteriorsFold (C : Classify) (I : Instance) (ρ : ParamEnv) :
+    Nat → List Interior → InteriorEnv → InteriorEnv
+  | _, [], W => W
+  | i, d :: ds, W =>
+      evalInteriorsFold C I ρ (i + 1) ds
+        (W.update ⟨i⟩ (fun t => t ∈ rulesAnswers C d.rules (sourceDen I W) ρ))
 
-def evalInteriors (C : Classify) (q : Query) (I : Instance) (ρ : ParamEnv) :
-    InteriorEnv :=
-  evalInteriorsAt C q.interiors I ρ q.interiors.length
-
-theorem evalInteriorsAt_zero (C : Classify) (defs : List Interior)
-    (I : Instance) (ρ : ParamEnv) :
-    evalInteriorsAt C defs I ρ 0 = InteriorEnv.empty := rfl
-
-theorem evalInteriorsAt_stable {C : Classify} {defs : List Interior}
-    {I : Instance} {ρ : ParamEnv} :
-    ∀ {n : Nat}, n ≥ defs.length →
-      ∀ c, c.id < defs.length →
-        evalInteriorsAt C defs I ρ n c =
-          evalInteriorsAt C defs I ρ defs.length c
-  | 0, hge, c, hc => by
-    have : defs.length = 0 := Nat.eq_zero_of_le_zero hge
-    exact absurd (this ▸ hc) (Nat.not_lt_zero _)
-  | n + 1, hge, c, hc => by
-    by_cases heq : n + 1 = defs.length
-    · rw [heq]
-    · have hle : defs.length ≤ n :=
-        Nat.le_of_lt_succ (Nat.lt_of_le_of_ne hge (Ne.symm heq))
-      have hlt : c.id < n := Nat.lt_of_lt_of_le hc hle
-      have hrec :=
-        evalInteriorsAt_stable (C := C) (I := I) (ρ := ρ) (n := n) hle c hc
-      funext t
-      change (if h : c.id < n then evalInteriorsAt C defs I ρ n c t
-        else if c.id = n then
-          match defs[n]? with
-          | some d => t ∈ rulesAnswers C d.rules
-              (sourceDen I (evalInteriorsAt C defs I ρ n)) ρ
-          | none => False
-        else False) = evalInteriorsAt C defs I ρ defs.length c t
-      rw [dif_pos hlt]
-      exact congrFun hrec t
+def evalInteriors (C : Classify) (defs : List Interior) (I : Instance)
+    (ρ : ParamEnv) : InteriorEnv :=
+  evalInteriorsFold C I ρ 0 defs InteriorEnv.empty
 
 /-! ## Reach — `reachOp`, `reachDen` -/
 
@@ -723,10 +682,9 @@ def evalQuery (C : Classify) (q : Query) (I : Instance) (ρ : ParamEnv) :
     Set AnswerTuple :=
   match q with
   | .cq interiors rules =>
-      rulesAnswers C rules
-        (sourceDen I (evalInteriorsAt C interiors I ρ interiors.length)) ρ
+      rulesAnswers C rules (sourceDen I (evalInteriors C interiors I ρ)) ρ
   | .reach interiors rec rules =>
-      let V := evalInteriorsAt C interiors I ρ interiors.length
+      let V := evalInteriors C interiors I ρ
       let self : InteriorId := ⟨interiors.length⟩
       rulesAnswers C rules
         (sourceDen I (V.update self (reachDen C rec self I V ρ))) ρ
@@ -752,170 +710,61 @@ def evalQueryList (C : Classify) (W : ListInstance) (ρ : ParamEnv)
       let self : InteriorId := ⟨interiors.length⟩
       evalList C W (T₀.update self (evalLinearReach C W ρ rec self T₀)) ρ rules
 
-theorem getElem?_of_drop_cons {α} {l : List α} {i : Nat} {a : α}
-    {as : List α} (h : l.drop i = a :: as) : l[i]? = some a := by
-  induction i generalizing l with
-  | zero =>
-    cases l with
-    | nil => cases h
-    | cons b bs =>
-      have h' : b :: bs = a :: as := by simpa using h
-      cases h'
-      rfl
-  | succ i ih =>
-    cases l with
-    | nil => cases h
-    | cons _ _ =>
-      simp at h
-      exact ih h
-
-theorem evalInteriorsAt_agree_prefix {C : Classify} {defs : List Interior}
-    {I : Instance} {ρ : ParamEnv} {n : Nat} {c : InteriorId}
-    (hlt : c.id < n) :
-    evalInteriorsAt C defs I ρ (n + 1) c =
-      evalInteriorsAt C defs I ρ n c := by
-  funext t
-  change (if h : c.id < n then evalInteriorsAt C defs I ρ n c t
-    else _) = _
-  rw [dif_pos hlt]
-
-theorem InteriorId.eq_mk (c : InteriorId) (n : Nat) : c = ⟨n⟩ ↔ c.id = n := by
-  cases c; simp
-
-/-- Stage `n` has written only `InteriorId ⟨k⟩` for `k < n`. -/
-theorem evalInteriorsAt_out {C : Classify} {defs : List Interior}
-    {I : Instance} {ρ : ParamEnv} {n : Nat} {c : InteriorId}
-    (hge : n ≤ c.id) (t : AnswerTuple) :
-    ¬ evalInteriorsAt C defs I ρ n c t := by
-  induction n with
-  | zero =>
-    simp [evalInteriorsAt, InteriorEnv.empty]
-  | succ n _ =>
-    have hnlt : ¬ c.id < n :=
-      Nat.not_lt_of_ge (Nat.le_trans (Nat.le_succ n) hge)
-    have hne : c.id ≠ n := Nat.ne_of_gt (Nat.lt_of_succ_le hge)
-    change ¬ (if h : c.id < n then evalInteriorsAt C defs I ρ n c t
-      else if c.id = n then
-        match defs[n]? with
-        | some d => t ∈ rulesAnswers C d.rules
-            (sourceDen I (evalInteriorsAt C defs I ρ n)) ρ
-        | none => False
-      else False)
-    simp [hnlt, hne]
-
-/-- One `go` step: write `defs[i]` into `T` and agree with stage `i+1`. -/
-theorem evalInteriorTables_step {C : Classify} {W : ListInstance}
-    {ρ : ParamEnv} {defs : List Interior} {i : Nat} {d : Interior}
-    {T : InteriorTables}
-    (hget : defs[i]? = some d)
-    (hT : ∀ c t, t ∈ T c ↔ evalInteriorsAt C defs W.den ρ i c t)
-    (hsafe : ∀ r, r ∈ d.rules → Safe r)
-    (hwt : ∀ r, r ∈ d.rules → r.WellTyped) :
-    ∀ c t, t ∈ (T.update ⟨i⟩ (evalList C W T ρ d.rules)) c ↔
-      evalInteriorsAt C defs W.den ρ (i + 1) c t := by
-  intro c t
-  rcases Nat.lt_trichotomy c.id i with hlt | heq | hgt
-  · have hne : c ≠ ⟨i⟩ := mt (InteriorId.eq_mk c i).mp (Nat.ne_of_lt hlt)
-    have hleft : (T.update ⟨i⟩ (evalList C W T ρ d.rules)) c = T c := by
-      simp [InteriorTables.update, hne]
-    have hright :=
-      congrFun (evalInteriorsAt_agree_prefix (C := C) (defs := defs)
-        (I := W.den) (ρ := ρ) (n := i) (c := c) hlt) t
-    rw [hleft, hright]
-    exact hT c t
-  · have hc : c = ⟨i⟩ := (InteriorId.eq_mk c i).mpr heq
-    have hnlt : ¬ c.id < i := by
-      rw [heq]
-      exact Nat.lt_irrefl _
-    have hleft : (T.update ⟨i⟩ (evalList C W T ρ d.rules)) c =
-        evalList C W T ρ d.rules := by
-      simp [InteriorTables.update, hc]
-    change t ∈ (T.update ⟨i⟩ (evalList C W T ρ d.rules)) c ↔
-      (if h : c.id < i then evalInteriorsAt C defs W.den ρ i c t
-        else if c.id = i then
-          match defs[i]? with
-          | some d' => t ∈ rulesAnswers C d'.rules
-              (sourceDen W.den (evalInteriorsAt C defs W.den ρ i)) ρ
-          | none => False
-        else False)
-    rw [hleft, dif_neg hnlt, if_pos heq, hget]
-    exact (eval_sound (C := C) (W := W) (ρ := ρ) (T := T) hsafe hwt t).trans
-      (rulesAnswers_congr (sourceDen_congr hT) t)
-  · have hne : c ≠ ⟨i⟩ := mt (InteriorId.eq_mk c i).mp (Nat.ne_of_gt hgt)
-    have hnlt : ¬ c.id < i := Nat.not_lt_of_gt hgt
-    have hnei : c.id ≠ i := Nat.ne_of_gt hgt
-    have hleft : (T.update ⟨i⟩ (evalList C W T ρ d.rules)) c = T c := by
-      simp [InteriorTables.update, hne]
-    change t ∈ (T.update ⟨i⟩ (evalList C W T ρ d.rules)) c ↔
-      (if h : c.id < i then evalInteriorsAt C defs W.den ρ i c t
-        else if c.id = i then
-          match defs[i]? with
-          | some d' => t ∈ rulesAnswers C d'.rules
-              (sourceDen W.den (evalInteriorsAt C defs W.den ρ i)) ρ
-          | none => False
-        else False)
-    rw [hleft, dif_neg hnlt, if_neg hnei]
-    constructor
-    · intro ht
-      exact (evalInteriorsAt_out (Nat.le_of_lt hgt) t) ((hT c t).mp ht)
-    · intro hf
-      exact False.elim hf
-
-/-- `go` from index `i` over `defs.drop i` agrees with stage
-`i + suffix.length`. -/
 theorem evalInteriorTables_go_sound {C : Classify} {W : ListInstance}
-    {ρ : ParamEnv} {defs : List Interior} :
-    ∀ (i : Nat) (suffix : List Interior) (T : InteriorTables),
-      defs.drop i = suffix →
-      (∀ c t, t ∈ T c ↔ evalInteriorsAt C defs W.den ρ i c t) →
+    {ρ : ParamEnv} :
+    ∀ (i : Nat) (suffix : List Interior) (T : InteriorTables) (E : InteriorEnv),
+      (∀ c t, t ∈ T.toEnv c ↔ t ∈ E c) →
       (∀ d, d ∈ suffix → ∀ r, r ∈ d.rules → Safe r) →
       (∀ d, d ∈ suffix → ∀ r, r ∈ d.rules → r.WellTyped) →
-      ∀ c t, t ∈ evalInteriorTables.go C W ρ i suffix T c ↔
-        evalInteriorsAt C defs W.den ρ (i + suffix.length) c t
-  | i, [], T, _, hT, _, _ => by
+      ∀ c t, t ∈ (evalInteriorTables.go C W ρ i suffix T).toEnv c ↔
+        t ∈ evalInteriorsFold C W.den ρ i suffix E c
+  | _, [], T, E, hTE, _, _ => by
     intro c t
-    simpa [evalInteriorTables.go] using hT c t
-  | i, d :: ds, T, hdrop, hT, hsafe, hwt => by
-    have hget : defs[i]? = some d := getElem?_of_drop_cons hdrop
-    have hT' :=
-      evalInteriorTables_step (C := C) (W := W) (ρ := ρ) (defs := defs)
-        (i := i) (d := d) (T := T) hget hT
+    simpa [evalInteriorTables.go, evalInteriorsFold] using hTE c t
+  | i, d :: ds, T, E, hTE, hsafe, hwt => by
+    have hrows : ∀ t, t ∈ evalList C W T ρ d.rules ↔
+        t ∈ rulesAnswers C d.rules (sourceDen W.den E) ρ := by
+      intro t
+      exact (eval_sound (C := C) (W := W) (ρ := ρ) (T := T)
         (fun r hr => hsafe d List.mem_cons_self r hr)
-        (fun r hr => hwt d List.mem_cons_self r hr)
-    have hdrop' : defs.drop (i + 1) = ds := by
-      have h1 : (defs.drop i).drop 1 = ds := by
-        rw [hdrop]; rfl
-      have h2 : (defs.drop i).drop 1 = defs.drop (i + 1) :=
-        List.drop_drop (i := 1) (j := i) (l := defs)
-      exact h2.symm.trans h1
-    have ih :=
-      evalInteriorTables_go_sound (C := C) (W := W) (ρ := ρ) (defs := defs)
-        (i + 1) ds (T.update ⟨i⟩ (evalList C W T ρ d.rules)) hdrop' hT'
-        (fun d' hd' => hsafe d' (List.mem_cons_of_mem _ hd'))
-        (fun d' hd' => hwt d' (List.mem_cons_of_mem _ hd'))
+        (fun r hr => hwt d List.mem_cons_self r hr) t).trans
+        (rulesAnswers_congr (sourceDen_congr hTE) t)
+    have hTE' : ∀ c t,
+        t ∈ (T.update ⟨i⟩ (evalList C W T ρ d.rules)).toEnv c ↔
+        t ∈ E.update ⟨i⟩ (fun u =>
+          u ∈ rulesAnswers C d.rules (sourceDen W.den E) ρ) c := by
+      intro c t
+      exact (InteriorTables.toEnv_update T ⟨i⟩
+          (evalList C W T ρ d.rules) c t).trans
+        (InteriorEnv.update_congr hTE hrows c t)
     intro c t
-    have hlen : i + (d :: ds).length = i + 1 + ds.length := by
-      simp [Nat.add_comm, Nat.add_left_comm]
-    rw [evalInteriorTables.go, hlen]
-    exact ih c t
+    rw [evalInteriorTables.go, evalInteriorsFold]
+    exact evalInteriorTables_go_sound (i + 1) ds
+      (T.update ⟨i⟩ (evalList C W T ρ d.rules))
+      (E.update ⟨i⟩ (fun u =>
+        u ∈ rulesAnswers C d.rules (sourceDen W.den E) ρ))
+      hTE'
+      (fun d' hd' => hsafe d' (List.mem_cons_of_mem _ hd'))
+      (fun d' hd' => hwt d' (List.mem_cons_of_mem _ hd')) c t
 
-/-- Interior DAG: `evalInteriorTables` lists `evalInteriorsAt` at
-`defs.length`. Premises: `Safe` / `WellTyped` on every interior rule
-(`eval_sound` at each declaration-order write). -/
+/-- Interior DAG: `evalInteriorTables` lists the declaration-order fold.
+Premises: `Safe` / `WellTyped` on every interior rule (`eval_sound` at
+each write). -/
 theorem evalInteriorTables_sound {C : Classify} {W : ListInstance}
     {ρ : ParamEnv} {defs : List Interior}
     (hsafe : ∀ d, d ∈ defs → ∀ r, r ∈ d.rules → Safe r)
     (hwt : ∀ d, d ∈ defs → ∀ r, r ∈ d.rules → r.WellTyped) :
     ∀ c t, t ∈ evalInteriorTables C W ρ defs c ↔
-      evalInteriorsAt C defs W.den ρ defs.length c t := by
+      t ∈ evalInteriors C defs W.den ρ c := by
   intro c t
-  simpa [evalInteriorTables] using
-    evalInteriorTables_go_sound (C := C) (W := W) (ρ := ρ) (defs := defs)
-      0 defs InteriorTables.empty (by simp)
-      (by
-        intro c t
-        simp [InteriorTables.empty, evalInteriorsAt, InteriorEnv.empty])
-      hsafe hwt c t
+  change t ∈ (evalInteriorTables.go C W ρ 0 defs InteriorTables.empty).toEnv c ↔
+    t ∈ evalInteriorsFold C W.den ρ 0 defs InteriorEnv.empty c
+  exact evalInteriorTables_go_sound (C := C) (W := W) (ρ := ρ)
+    0 defs InteriorTables.empty InteriorEnv.empty
+    (fun c t => by
+      change (t ∈ ([] : List AnswerTuple)) ↔ False
+      simp)
+    hsafe hwt c t
 
 theorem mem_allRules_interior {q : Query} {d : Interior}
     (hd : d ∈ q.interiors) {r : Rule} (hr : r ∈ d.rules) :
@@ -1006,7 +855,7 @@ theorem evalQuery_sound {C : Classify} {W : ListInstance} {ρ : ParamEnv}
     · subst hc
       simp only [↓reduceIte]
       have henv : T₀.toEnv =
-          evalInteriorsAt C interiors W.den ρ interiors.length := by
+          evalInteriors C interiors W.den ρ := by
         funext d v
         exact propext (hT0 d v)
       rw [← henv]
@@ -1019,7 +868,7 @@ theorem evalQuery_cq (C : Classify) (rules : List Rule)
     (I : Instance) (ρ : ParamEnv) :
     evalQuery C (.cq [] rules) I ρ =
       rulesAnswers C rules (edbEnv I) ρ := by
-  simp [evalQuery, evalInteriorsAt, edbEnv]
+  simp [evalQuery, evalInteriors, evalInteriorsFold, edbEnv]
 
 theorem evalQuery_empty_rules {C : Classify} {q : Query} {I : Instance}
     {ρ : ParamEnv} (hr : q.rules = []) :
@@ -1033,36 +882,33 @@ theorem evalQuery_empty_rules {C : Classify} {q : Query} {I : Instance}
     simp [Query.rules] at hr
     simp [evalQuery, hr, mem_rulesAnswers] at ht
 
-theorem getElem?_mem {α} {l : List α} {i : Nat} {a : α}
-    (h : l[i]? = some a) : a ∈ l :=
-  List.mem_of_getElem? h
+theorem evalInteriorsFold_instance {C : Classify} {I J : Instance}
+    {ρ : ParamEnv} {ds : List Interior}
+    (h : ∀ d, d ∈ ds → ∀ r, r ∈ d.rules → ∀ R, R ∈ r.relations → I R = J R) :
+    ∀ i W W',
+      (∀ c t, t ∈ W c ↔ t ∈ W' c) →
+      ∀ c t,
+        t ∈ evalInteriorsFold C I ρ i ds W c ↔
+        t ∈ evalInteriorsFold C J ρ i ds W' c := by
+  induction ds with
+  | nil =>
+    intro i W W' hWW c t
+    simpa [evalInteriorsFold] using hWW c t
+  | cons d ds ih =>
+    intro i W W' hWW c t
+    simp only [evalInteriorsFold]
+    refine ih (fun d' hd' => h d' (List.mem_cons_of_mem _ hd'))
+      (i + 1) _ _ ?_ c t
+    exact InteriorEnv.update_congr hWW
+      (rulesAnswers_instance_env
+        (fun r hr R hR => h d List.mem_cons_self r hr R hR) hWW)
 
-theorem evalInteriorsAt_instance {C : Classify} {defs : List Interior}
+theorem evalInteriors_instance {C : Classify} {defs : List Interior}
     {I J : Instance} {ρ : ParamEnv}
     (h : ∀ d, d ∈ defs → ∀ r, r ∈ d.rules → ∀ R, R ∈ r.relations → I R = J R) :
-    ∀ n c t,
-      t ∈ evalInteriorsAt C defs I ρ n c ↔
-      t ∈ evalInteriorsAt C defs J ρ n c := by
-  intro n
-  induction n with
-  | zero =>
-    intro c t
-    simp [evalInteriorsAt]
-  | succ n ih =>
-    intro c t
-    simp only [evalInteriorsAt]
-    by_cases hlt : c.id < n
-    · simp [dif_pos hlt, ih]
-    · simp [dif_neg hlt]
-      by_cases heq : c.id = n
-      · simp [heq]
-        cases hdef : defs[n]? with
-        | none => simp
-        | some d =>
-          simp
-          exact rulesAnswers_instance_env
-            (fun r hr R hR => h d (getElem?_mem hdef) r hr R hR) ih t
-      · simp [heq]
+    ∀ c t, t ∈ evalInteriors C defs I ρ c ↔ t ∈ evalInteriors C defs J ρ c :=
+  evalInteriorsFold_instance h 0 InteriorEnv.empty InteriorEnv.empty
+    (fun _ _ => Iff.rfl)
 
 theorem lfpS_congr {α} {T U : Set α → Set α}
     (h : ∀ X a, a ∈ T X ↔ a ∈ U X) :
@@ -1111,11 +957,10 @@ theorem snapshot_single {q : Query} {I J : Instance} (C : Classify)
   cases q with
   | cq interiors rules =>
     simp only [evalQuery]
-    have hW := evalInteriorsAt_instance (C := C) (ρ := ρ)
+    have hW := evalInteriors_instance (C := C) (ρ := ρ)
       (fun d hd r hr R hR => h R (mem_relations
         (mem_allRules_interior (q := .cq interiors rules)
           (by simpa [Query.interiors] using hd) hr) hR))
-      interiors.length
     exact rulesAnswers_instance_env
       (fun r hr R hR => h R (mem_relations
         (mem_allRules_main (q := .cq interiors rules)
@@ -1123,11 +968,10 @@ theorem snapshot_single {q : Query} {I J : Instance} (C : Classify)
       hW t
   | reach interiors rec rules =>
     simp only [evalQuery]
-    have hW := evalInteriorsAt_instance (C := C) (ρ := ρ)
+    have hW := evalInteriors_instance (C := C) (ρ := ρ)
       (fun d hd r hr R hR => h R (mem_relations
         (mem_allRules_interior (q := .reach interiors rec rules)
           (by simpa [Query.interiors] using hd) hr) hR))
-      interiors.length
     have hrec := reachDen_instance (C := C) (ρ := ρ)
       (fun r hr R hR => h R (mem_relations
         (mem_allRules_rec (interiors := interiors) (rec := rec)
