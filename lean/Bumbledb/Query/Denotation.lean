@@ -1001,11 +1001,12 @@ def Rule.relations (r : Rule) : List RelId :=
 /-- The stored relations a query mentions across interiors, rec arms,
 and main. Interior sources are not stored relations. -/
 def Query.relations (q : Query) : List RelId :=
-  q.allRules.flatMap Rule.relations
-
-theorem mem_relations {q : Query} {r : Rule} {R : RelId}
-    (hr : r ∈ q.allRules) (hR : R ∈ r.relations) : R ∈ q.relations :=
-  List.mem_flatMap.mpr ⟨r, hr, hR⟩
+  match q with
+  | .cq interiors rules =>
+    (interiors.flatMap Interior.rules ++ rules).flatMap Rule.relations
+  | .reach interiors rec rules =>
+    (interiors.flatMap Interior.rules ++ rec.rules ⟨interiors.length⟩ ++
+      rules).flatMap Rule.relations
 
 theorem sourceDen_instance_env {I J : Instance} {X Y : InteriorEnv}
     {src : AtomSource}

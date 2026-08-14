@@ -305,7 +305,7 @@ def LinearRec.baseRules (r : LinearRec) : List Rule :=
 def LinearRec.stepRules (self : InteriorId) (r : LinearRec) : List Rule :=
   (r.step.1 :: r.step.2).map (RecStep.toRule self)
 
-def LinearRec.allRules (self : InteriorId) (r : LinearRec) : List Rule :=
+def LinearRec.rules (self : InteriorId) (r : LinearRec) : List Rule :=
   r.baseRules ++ r.stepRules self
 
 theorem RecRule.toRule_negated (r : RecRule) : r.toRule.negated = [] := rfl
@@ -349,15 +349,6 @@ def Query.interiors : Query → List Interior
 def Query.rules : Query → List Rule
   | .cq _ rules => rules
   | .reach _ _ rules => rules
-
-/-- Every rule of every interior, the rec (via `toRule`), and main —
-the quantification surface the theorems range over. -/
-def Query.allRules : Query → List Rule
-  | .cq interiors rules =>
-      interiors.flatMap Interior.rules ++ rules
-  | .reach interiors r rules =>
-      interiors.flatMap Interior.rules ++
-        r.allRules ⟨interiors.length⟩ ++ rules
 
 /-! ## Variable occurrence — the raw material of `Safe` -/
 
