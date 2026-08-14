@@ -16,7 +16,7 @@
 //!   (`finds : List VarId`). Fold-over-rec coverage is the naive
 //!   lane's alone.
 //! * **`SQLite` parity asserted where the translator admits**
-//!   ([`crate::translate::sqlite_reach_expressible`]): an expressible
+//!   ([`crate::translate::sqlite_derived_expressible`]): an expressible
 //!   case is written only after naive and `SQLite` agree (a
 //!   disagreement panics — a trophy). Interval-typed derived columns
 //!   are the remaining translator limit; the generator's rec corpus
@@ -35,7 +35,7 @@ use bumbledb::{AtomSource, InteriorId, Query, Rec, RelationId, Rule, Term, Value
 use crate::corpus_gen::Rng;
 use crate::naive::Tuple;
 use crate::querygen::{self, target};
-use crate::translate::{Inexpressible, sqlite_reach_expressible, translate_query};
+use crate::translate::{Inexpressible, sqlite_derived_expressible, translate};
 
 use super::{
     MAX_ANSWER_ROWS, NAIVE_BUDGET_MS, World, push_condition, push_fact, push_term, strings_block,
@@ -333,7 +333,7 @@ fn one_reach_case(
         "TROPHY (engine vs naive) on reach case {name}: triage per the fuzzing \
          charter\n{query:#?}"
     );
-    match sqlite_reach_expressible(query, target::schema()) {
+    match sqlite_derived_expressible(query, target::schema()) {
         Ok(()) => {
             let sqlite = sqlite_answers(world, query);
             assert_eq!(
@@ -367,7 +367,7 @@ fn sqlite_answers(world: &World, query: &Query) -> BTreeSet<Tuple> {
             .expect("insert");
         }
     }
-    let translated = translate_query(query, target::schema(), &[]).expect("translates");
+    let translated = translate(query, target::schema(), &[]).expect("translates");
     let arity = query.head.len();
     let mut statement = conn.prepare(&translated.sql).expect("prepare");
     let rows = statement

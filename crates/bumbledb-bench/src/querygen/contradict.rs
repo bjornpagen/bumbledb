@@ -5,21 +5,25 @@
 //! because folding is set-preserving by construction and a semantic fold
 //! would diverge here first.
 
-use bumbledb::{CmpOp, Comparison, ConditionTree, FieldId, Query, RelationId, Rule, Term, Value};
+use bumbledb::{
+    AtomSource, CmpOp, Comparison, ConditionTree, FieldId, Query, RelationId, Rule, Term, Value,
+};
 
 use crate::corpus_gen::{GenConfig, Rng};
-use crate::edb::EdbAtom;
 use crate::querygen::target::ids;
+use crate::walk;
 
 /// A generated query whose EVERY rule carries a constant contradiction
-/// on one of its integer variables — the whole program denotes ∅
+/// on one of its integer variables — the whole query denotes ∅
 /// regardless of data. Redraws until every rule offers an integer
 /// binding to poison (the shapes provide one in practice; the loop is
-/// the honest fallback, seeded and terminating).
+/// the honest fallback, seeded and terminating). Derived queries are
+/// skipped until every interiors/rec/main arm can be poisoned — planting
+/// main only would leave the lfp nonempty.
 pub fn contradiction_query(rng: &mut Rng, cfg: GenConfig) -> Query {
     loop {
         let mut query = crate::querygen::random_query(rng, cfg);
-        if query.rules.iter_mut().all(|rule| plant(rule, rng)) {
+        if walk::every_rule_mut(&mut query, |rule| plant(rule, rng)) {
             return query;
         }
     }
@@ -31,8 +35,11 @@ pub fn contradiction_query(rng: &mut Rng, cfg: GenConfig) -> Query {
 /// (twin `Eq`, empty range, `Eq` outside the folded range).
 fn plant(rule: &mut Rule, rng: &mut Rng) -> bool {
     let Some((var, signed)) = rule.atoms.iter().find_map(|atom| {
+        let AtomSource::Edb(relation) = atom.source else {
+            return None;
+        };
         atom.bindings.iter().find_map(|(field, term)| match term {
-            Term::Var(var) => int_field(atom.relation(), *field).map(|signed| (*var, signed)),
+            Term::Var(var) => int_field(relation, *field).map(|signed| (*var, signed)),
             _ => None,
         })
     }) else {

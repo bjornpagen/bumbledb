@@ -34,15 +34,7 @@ pub fn translate(
     schema: &Schema,
     sets: &[(ParamId, Vec<Value>)],
 ) -> Result<Translated, String> {
-    if !query.interiors.is_empty() || query.rec.is_some() {
-        return super::reach::translate_query(query, schema, sets);
-    }
-    let mut params = SharedParams::default();
-    let sql = translate_rules(&query.rules, schema, sets, &mut params)?;
-    Ok(Translated {
-        sql,
-        params: params.params,
-    })
+    super::derived::translate_query(query, schema, sets)
 }
 
 /// Translate a rule-list (plain query or WITH-main) into SQL.

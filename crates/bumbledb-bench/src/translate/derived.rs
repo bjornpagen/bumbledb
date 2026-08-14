@@ -1,6 +1,7 @@
-//! `Query` interiors + rec → `WITH [RECURSIVE]` (lossy SQLite image of
-//! this cut). Interiors emit as `p{id}` CTEs in declaration order; rec
-//! is `p{interiors.len()}`. Main is the SELECT. No UNION ALL. No CTE
+//! Derived tables → `WITH [RECURSIVE]` (lossy SQLite image of this
+//! cut). Interiors emit as `p{id}` CTEs in declaration order; rec is
+//! `p{interiors.len()}`. Main is the SELECT. Zero CTEs is a plain
+//! query — the same SQL as the old CQ path. No UNION ALL. No CTE
 //! after the rec — CLOSURE_ROOTS inlines the anti-join into main.
 
 use bumbledb::ir::{FindTerm, Rec};
@@ -11,15 +12,19 @@ use super::{Translated, VarCols};
 
 /// Interval-typed derived columns are the remaining translator limit
 /// (the four rec gates died with the stratified IR). Validation is the screen.
-pub fn sqlite_reach_expressible(query: &Query, schema: &Schema) -> Result<(), super::Inexpressible> {
+pub fn sqlite_derived_expressible(
+    query: &Query,
+    schema: &Schema,
+) -> Result<(), super::Inexpressible> {
     refuse_interval_columns(query, schema).map_err(|_| super::Inexpressible::IntervalDerivedColumn)
 }
 
-/// Translate interiors then optional rec then main as `WITH [RECURSIVE]`.
+/// Translate a Query: derived tables as CTEs in declaration order, then
+/// main. Zero CTEs → no `WITH` clause (the CQ path).
 ///
 /// # Errors
 ///
-/// Interval-typed derived columns, or anything [`super::query::translate`]
+/// Interval-typed derived columns, or anything [`super::query::translate_rules`]
 /// names on a rule.
 pub fn translate_query(
     query: &Query,
@@ -27,6 +32,7 @@ pub fn translate_query(
     sets: &[(ParamId, Vec<Value>)],
 ) -> Result<Translated, String> {
     refuse_interval_columns(query, schema)?;
+    let rec = query.rec.as_ref();
     let mut params = SharedParams::default();
     let mut ctes: Vec<String> = Vec::new();
     for (index, interior) in query.interiors.iter().enumerate() {
@@ -39,7 +45,7 @@ pub fn translate_query(
             &mut params,
         )?);
     }
-    if let Some(rec) = &query.rec {
+    if let Some(rec) = rec {
         let rec_id = query.interiors.len();
         ctes.push(rec_cte(rec_id, rec, schema, sets, &mut params)?);
     }
@@ -50,8 +56,7 @@ pub fn translate_query(
             params: params.params,
         });
     }
-    let recursive = query.rec.is_some();
-    let with = if recursive {
+    let with = if rec.is_some() {
         format!("WITH RECURSIVE {}", ctes.join(", "))
     } else {
         format!("WITH {}", ctes.join(", "))

@@ -36,12 +36,13 @@
 //!   FROM t)`; negated, `NOT EXISTS` (the relation must be empty).
 //! - Never-interned strings/bytes need no special case: SQL compares
 //!   values, which is exactly the sentinel semantics.
-//! - **Interiors + rec = `WITH [RECURSIVE]`** ([`reach`], the lossy
+//! - **Derived tables = `WITH [RECURSIVE]`** ([`derived`], the lossy
 //!   SQLite image of this cut): interiors then optional rec as CTEs,
-//!   main as the SELECT. No `UNION ALL`. No CTE after the rec.
-//!   Interval-typed derived columns are the remaining translator
-//!   limit ([`Inexpressible::IntervalDerivedColumn`]). Validation is
-//!   the screen for the rest.
+//!   main as the SELECT. Zero CTEs is a plain query. No `UNION ALL`.
+//!   No CTE after the rec. Interval-typed derived columns are the
+//!   remaining translator limit
+//!   ([`Inexpressible::IntervalDerivedColumn`]). Validation is the
+//!   screen for the rest.
 
 use std::collections::BTreeMap;
 
@@ -49,13 +50,13 @@ use bumbledb::schema::{KeyStatement, StatementDescriptor};
 use bumbledb::{ParamId, Query, RelationId, Schema, Value, VarId};
 
 mod builder;
-mod reach;
+mod derived;
 mod query;
 #[cfg(test)]
 mod tests;
 mod types;
 
-pub use reach::{sqlite_reach_expressible, translate_query};
+pub use derived::sqlite_derived_expressible;
 pub use query::translate;
 
 /// The SQL translation is conjunctive-only: it consumes the flat leaf

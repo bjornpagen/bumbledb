@@ -133,7 +133,12 @@ fn folded(db: &Db<SchemaDescriptor>, query: &Query) -> Vec<bumbledb::FoldedOccur
     let (_, stats) = db
         .read(|snap| snap.profile(&mut prepared, &[]))
         .expect("profile executes");
-    stats.into_cq_rules().swap_remove(0).folded
+    stats
+        .into_cq_rules()
+        .into_iter()
+        .next()
+        .map(|rule| rule.folded)
+        .unwrap_or_default()
 }
 
 /// The dual run: folded, unfolded, and the model must produce one

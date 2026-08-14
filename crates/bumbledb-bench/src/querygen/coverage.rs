@@ -6,14 +6,14 @@
 
 use bumbledb::ir::Rule;
 use bumbledb::schema::{Generation, IntervalElement, ValueType};
-use bumbledb::{AggOp, Atom, Basic, CmpOp, FindTerm, Query, Term, VarId};
+use bumbledb::{AggOp, Atom, AtomSource, Basic, CmpOp, FindTerm, Query, Term, VarId};
 use std::collections::{HashMap, HashSet};
 
 use crate::corpus_gen::{GenConfig, Rng};
-use crate::edb::EdbAtom;
 use crate::querygen::construct::random_query_tagged;
 use crate::querygen::target::{self, ids};
 use crate::querygen::{ClosedVariant, Coverage, GenTags, GroundVariant, RulesVariant, Shape};
+use crate::walk;
 
 /// Whether an (op, type) cell is legal under the roster: `Eq`/`Ne` over
 /// all six types, order operators over the two integer types only,
@@ -66,11 +66,16 @@ struct Typing {
 }
 
 fn field_type(atom: &Atom, field: bumbledb::FieldId) -> ValueType {
-    target::schema()
-        .relation(atom.relation())
-        .field(field)
-        .value_type
-        .clone()
+    match atom.source {
+        AtomSource::Edb(relation) => target::schema()
+            .relation(relation)
+            .field(field)
+            .value_type
+            .clone(),
+        // Derived columns are positional and scalar in this grammar
+        // (interval-typed derived columns are translator-inexpressible).
+        AtomSource::Interior(_) => ValueType::U64,
+    }
 }
 
 fn typing(rule: &Rule) -> Typing {
@@ -93,7 +98,9 @@ fn typing(rule: &Rule) -> Typing {
             match term {
                 Term::Var(var) => {
                     t.var_types.entry(*var).or_insert(ty);
-                    t.var_pos.entry(*var).or_insert((atom.relation(), *field));
+                    if let AtomSource::Edb(relation) = atom.source {
+                        t.var_pos.entry(*var).or_insert((relation, *field));
+                    }
                 }
                 Term::Param(p) | Term::ParamSet(p) => {
                     t.scalar_params.insert(p.0);
@@ -123,7 +130,9 @@ fn typing(rule: &Rule) -> Typing {
             }
             if let Term::Var(var) = term {
                 t.var_types.entry(*var).or_insert(ty.clone());
-                t.var_pos.entry(*var).or_insert((atom.relation(), *field));
+                if let AtomSource::Edb(relation) = atom.source {
+                    t.var_pos.entry(*var).or_insert((relation, *field));
+                }
             }
         }
     }
@@ -407,7 +416,22 @@ impl Coverage {
                 self.negation_gate += 1;
                 continue;
             }
-            let relation = target::schema().relation(atom.relation());
+            let relation = match atom.source {
+                AtomSource::Edb(relation) => target::schema().relation(relation),
+                AtomSource::Interior(_) => {
+                    self.negation_open += 1;
+                    for (_, term) in &atom.bindings {
+                        match term {
+                            Term::Literal(_) => self.negation_literal += 1,
+                            Term::Param(_) => self.negation_param += 1,
+                            Term::ParamSet(_) => self.negation_set += 1,
+                            Term::Measure(_) => unreachable!("validated: no measure in bindings"),
+                            Term::Var(_) => {}
+                        }
+                    }
+                    continue;
+                }
+            };
             let key_covered = atom
                 .bindings
                 .iter()
@@ -416,7 +440,9 @@ impl Coverage {
                 self.negation_key_covered += 1;
             } else {
                 self.negation_open += 1;
-                if atom.relation() == ids::POSTING_TAG || atom.relation() == ids::POSTING {
+                if let AtomSource::Edb(rel) = atom.source
+                    && (rel == ids::POSTING_TAG || rel == ids::POSTING)
+                {
                     self.negation_multi_witness += 1;
                 }
             }
@@ -529,7 +555,7 @@ impl Coverage {
         let (mut has_membership, mut has_allen, mut has_negation, mut has_aggregate) =
             (false, false, false, false);
         let mut uses_set = false;
-        for (rule_idx, rule) in query.rules.iter().enumerate() {
+        for (rule_idx, rule) in walk::rules(query).enumerate() {
             self.gates += rule
                 .atoms
                 .iter()
