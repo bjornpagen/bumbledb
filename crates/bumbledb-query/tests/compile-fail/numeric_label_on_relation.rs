@@ -1,4 +1,4 @@
-//! Numeric labels address a predicate atom's head positions —
+//! Numeric labels address an interior/rec atom's head positions —
 //! positional, never nominal. A relation's fields are named, so a
 //! position label on a relation atom is refused at the label.
 //@ error: a relation's fields are named

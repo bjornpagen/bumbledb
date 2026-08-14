@@ -2,7 +2,7 @@
 
 - **Severity:** medium
 - **Tree:** sdk (rust macros)
-- **Status:** OPEN
+- **Status:** FIXED(c3c2884b)
 - **Source:** audit/sdks.md #15
 - **Depends on:** none (parallel-safe; same crate as sdk-014 — one fixer may take both)
 

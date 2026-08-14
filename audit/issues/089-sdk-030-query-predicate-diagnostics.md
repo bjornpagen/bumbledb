@@ -2,7 +2,7 @@
 
 - **Severity:** medium
 - **Tree:** sdk (rust macros)
-- **Status:** OPEN
+- **Status:** FIXED(c3c2884b)
 - **Source:** adversarial pass (final validation; not in audit/sdks.md / sdk-rest.md)
 - **Depends on:** none (string-only; same `lib.rs` as sdk-014/015/027/029 — land with them to avoid merge noise). engine-041 owns the engine type `Predicate` → `Signature`; this issue does not rename that type.
 - **Conflicts with:** sdk-014, sdk-015, sdk-027, sdk-029 (same file)

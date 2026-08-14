@@ -161,11 +161,11 @@ fn compile_fail_fixtures() {
     // The roster covers every deliberate spanned refusal: typo'd
     // relation, typo'd field, ambiguous punning, ?param in a head, `:-`
     // anywhere, a query with no bare main rule, an explicitly
-    // indexed dense predicate list, mixed bare + indexed predicate
-    // bindings, an UpperCamel predicate name, a lowercase relation
-    // respelling, an atom under a condition tree, an empty tree node, a
-    // predicate taking a reserved tree name, a dropped body comma, param
-    // mixing in both directions, a bare handle at a predicate position,
+    // indexed dense interior/rec list, mixed bare + indexed interior/rec
+    // bindings, an UpperCamel derived-table name, a lowercase relation
+    // respelling, an atom under a condition tree, an empty tree node, an
+    // interior/rec taking a reserved tree name, a dropped body comma, param
+    // mixing in both directions, a bare handle at an interior/rec position,
     // the measure under a non-fold op, an unbound head variable, a
     // negative `u64`, a foreign integer suffix, a binding's `in` without
     // its ?param, a numeric label on a relation atom, a third Arg

@@ -1,8 +1,8 @@
 //! The case partition is total in BOTH directions: lowercase names are
-//! predicates, so a relation respelled lowercase is an unknown
-//! predicate, never a silent resolution to the UpperCamel constants —
+//! interiors or the rec, so a relation respelled lowercase is an unknown
+//! derived table, never a silent resolution to the UpperCamel constants —
 //! `uppercase_predicate_name.rs` is the mirror fixture.
-//@ error: unknown predicate `parent`
+//@ error: unknown derived table `parent`
 //@ line: 19
 
 bumbledb::schema! {

@@ -2,7 +2,7 @@
 
 - **Severity:** low
 - **Tree:** sdk (rust macros)
-- **Status:** OPEN
+- **Status:** FIXED(c3c2884b)
 - **Source:** audit/sdk-rest.md #7
 - **Depends on:** none (parse-local; same file as sdk-014/015/027 — land with them to avoid merge noise)
 - **Conflicts with:** sdk-014, sdk-015, sdk-027 (same `lib.rs`)

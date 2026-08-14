@@ -1,4 +1,4 @@
-//! Bare idents and indexed labels never mix in one predicate atom:
+//! Bare idents and indexed labels never mix in one interior/rec atom:
 //! ordered dense bindings are all bare (`reach(m, a)`); sparse and
 //! selection bindings are all indexed (`2: x`, `0 == …`).
 //@ error: bare idents and indexed labels cannot mix
