@@ -1177,6 +1177,13 @@ describe("the query surface against a real store", function suite() {
 		type InteriorAfterRecPin = Expect<Equal<(typeof afterRec)["interior"], never>>
 		void (0 as unknown as SecondRecPin)
 		void (0 as unknown as InteriorAfterRecPin)
+		function unwritableAfterRec() {
+			// @ts-expect-error — a second recursive is unwritable
+			afterRec.recursive("b", { base: [], rec: [] })
+			// @ts-expect-error — interiors cannot follow a recursive
+			afterRec.interior("mid")
+		}
+		void unwritableAfterRec
 
 		assert.throws(function twoRecursives() {
 			const untyped: { recursive(name: string, arms: object): unknown } = afterRec
