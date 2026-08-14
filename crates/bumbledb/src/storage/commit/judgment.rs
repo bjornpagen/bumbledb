@@ -38,7 +38,7 @@ use std::ops::Bound;
 
 use heed::{AnyTls, RoTxn};
 
-use super::plan::{CommitPlan, EdgeOp};
+use super::plan::{CommitPlan, EdgeOp, FactOp};
 use super::{decode_row_id, fact_by_row};
 use crate::encoding::{FactLayout, encode_u64, field_bytes, field_word_bytes};
 use crate::error::{CorruptionError, Direction, Error, Result, Violation, Violations};
@@ -454,12 +454,12 @@ pub(super) fn check_source(
     // order — and the surviving witness, now the KEY-LEAST violator per
     // citation (`tests/witness_stability.rs`, the licensed flip) — is
     // deterministic whatever the sort algorithm does with equal keys.
-    let edge_count = plan.inserts.iter().map(|op| op.edges.len()).sum();
+    let edge_count = plan.inserts.iter().map(|op| op.edges().len()).sum();
     let mut worklist: Vec<(&EdgeOp, &[u8])> = Vec::with_capacity(edge_count);
     worklist.extend(
         plan.inserts
             .iter()
-            .flat_map(|op| op.edges.iter().map(|edge| (edge, op.fact))),
+            .flat_map(|op| op.edges().iter().map(|edge| (edge, op.fact()))),
     );
     worklist.sort_unstable_by(|(a, a_fact), (b, b_fact)| {
         (a.containment, &a.key_bytes, *a_fact).cmp(&(b.containment, &b.key_bytes, *b_fact))
@@ -510,7 +510,13 @@ pub(super) fn check_source(
         collect(outcome, violations)?;
     }
     for op in &plan.inserts {
-        for membership in &op.memberships {
+        let FactOp::Insert {
+            memberships, fact, ..
+        } = op
+        else {
+            continue;
+        };
+        for membership in memberships {
             let statement = schema.containment(membership.containment);
             let Enforcement::Closed { members } = &statement.enforcement else {
                 continue;
@@ -522,7 +528,7 @@ pub(super) fn check_source(
                 violations.push(Violation::Containment {
                     statement: statement.id,
                     direction: Direction::SourceUnsatisfied,
-                    fact: op.fact.into(),
+                    fact: (*fact).into(),
                 });
             }
         }

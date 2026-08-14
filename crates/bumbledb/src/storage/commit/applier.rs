@@ -12,8 +12,19 @@ impl Applier<'_, '_> {
     /// `M` entry means storage disagrees with what the plan *proved*,
     /// unambiguously corruption (docs/architecture/50-storage.md).
     pub(super) fn delete_fact(&mut self, op: &FactOp<'_>) -> Result<()> {
-        let rel = op.relation;
-        let m_len = keys::membership_key(&mut self.key, rel, op.fact_hash);
+        let FactOp::Delete {
+            relation: rel,
+            fact_hash,
+            determinants,
+            edges,
+            capacity_keys,
+            ..
+        } = op
+        else {
+            unreachable!("phase 1 applies delete ops");
+        };
+        let rel = *rel;
+        let m_len = keys::membership_key(&mut self.key, rel, fact_hash);
         // One cursor descent serves the `M` read AND its delete: the
         // inclusive single-key range positions on exactly the entry (a
         // greater key falls past the end bound and reads as the same
@@ -57,7 +68,7 @@ impl Applier<'_, '_> {
                 row_id,
             }));
         }
-        for determinant in &op.determinants {
+        for determinant in determinants {
             let u_len = keys::determinant_key(
                 &mut self.key,
                 rel,
@@ -78,7 +89,7 @@ impl Applier<'_, '_> {
         // every statement's edges; the class is deferred to the offline
         // sweeper, `Db::verify_store` (docs/architecture/50-storage.md,
         // R-delete verification).
-        for edge in &op.edges {
+        for edge in edges {
             let r_len =
                 keys::reverse_key(&mut self.key, edge.statement, &edge.key_bytes, rel, row_id);
             self.data.delete(self.txn.raw_mut(), &self.key[..r_len])?;
@@ -86,8 +97,8 @@ impl Applier<'_, '_> {
         // Capacity edges delete KEY-symmetrically with their puts,
         // exactly as containment edges do (and share the same
         // blind-delete asymmetry the sweeper compensates for) — the
-        // removal is key-only, so the plan's delete-side weight is unread.
-        for edge in &op.capacity_edges {
+        // removal is key-only; Delete carries no weight to unread.
+        for edge in capacity_keys {
             let r_len =
                 keys::reverse_key(&mut self.key, edge.statement, &edge.key_bytes, rel, row_id);
             self.data.delete(self.txn.raw_mut(), &self.key[..r_len])?;
@@ -113,13 +124,26 @@ impl Applier<'_, '_> {
     /// storage disagrees with what the plan *proved*, unambiguously
     /// corruption (docs/architecture/50-storage.md).
     pub(super) fn insert_fact(&mut self, op: &FactOp<'_>) -> Result<()> {
-        let rel = op.relation;
+        let FactOp::Insert {
+            relation: rel,
+            fact,
+            fact_hash,
+            fresh_row,
+            determinants,
+            edges,
+            capacity_edges,
+            ..
+        } = op
+        else {
+            unreachable!("phase 2 applies insert ops");
+        };
+        let rel = *rel;
         // The row id resolves BEFORE the membership put so the `M`
         // pre-existence probe and the `M` put fold into one
         // `NO_OVERWRITE` descent below — `self.key` is free scratch
         // until the membership derivation.
         let mut skip_puts = false;
-        let row_id = match &op.fresh_row {
+        let row_id = match fresh_row {
             Some(fresh) => {
                 let f_len = keys::fact_key(&mut self.key, rel, fresh.row_id);
                 if self.data.get(self.txn.raw(), &self.key[..f_len])?.is_some() {
@@ -129,7 +153,7 @@ impl Applier<'_, '_> {
                     // (the fact itself already landed). One `M` get
                     // disambiguates — exactly the probe the hot path
                     // folded into the `NO_OVERWRITE` put below.
-                    let m_len = keys::membership_key(&mut self.key, rel, op.fact_hash);
+                    let m_len = keys::membership_key(&mut self.key, rel, fact_hash);
                     if self.data.get(self.txn.raw(), &self.key[..m_len])?.is_some() {
                         return Err(Error::Corruption(CorruptionError::DispositionDesync {
                             relation: rel,
@@ -137,7 +161,7 @@ impl Applier<'_, '_> {
                     }
                     self.violations.push(Violation::Functionality {
                         statement: fresh.statement,
-                        fact: op.fact.into(),
+                        fact: (*fact).into(),
                         incumbent: None,
                     });
                     skip_puts = true;
@@ -147,7 +171,7 @@ impl Applier<'_, '_> {
             None => self.next_row_id(rel)?,
         };
         if !skip_puts {
-            let m_len = keys::membership_key(&mut self.key, rel, op.fact_hash);
+            let m_len = keys::membership_key(&mut self.key, rel, fact_hash);
             // The pre-existence probe IS the put: `NO_OVERWRITE` surfaces an
             // occupied `M` key as `KeyExist` in the same descent the put
             // pays anyway — one root-to-leaf walk, not two.
@@ -167,11 +191,11 @@ impl Applier<'_, '_> {
             }
             crashpoint!("mid-write-m");
             let f_len = keys::fact_key(&mut self.key, rel, row_id);
-            self.put_data(f_len, op.fact)?;
+            self.put_data(f_len, fact)?;
             crashpoint!("mid-write-f");
         }
 
-        for determinant in &op.determinants {
+        for determinant in determinants {
             let u_len = keys::determinant_key(
                 &mut self.key,
                 rel,
@@ -199,14 +223,14 @@ impl Applier<'_, '_> {
                 };
                 self.violations.push(Violation::Functionality {
                     statement: determinant.statement(),
-                    fact: op.fact.into(),
+                    fact: (*fact).into(),
                     incumbent,
                 });
                 continue;
             }
             if skip_puts {
                 if let Some(tail) = determinant.tail() {
-                    self.probe_neighbors(rel, determinant.statement(), u_len, tail, op.fact)?;
+                    self.probe_neighbors(rel, determinant.statement(), u_len, tail, fact)?;
                 }
                 continue;
             }
@@ -216,13 +240,13 @@ impl Applier<'_, '_> {
                 // The exact put cannot detect overlap — only equality —
                 // so a pointwise key additionally probes its ordered
                 // neighbors within the scalar-prefix group.
-                self.probe_neighbors(rel, determinant.statement(), u_len, tail, op.fact)?;
+                self.probe_neighbors(rel, determinant.statement(), u_len, tail, fact)?;
             }
         }
         if skip_puts {
             return Ok(());
         }
-        for edge in &op.edges {
+        for edge in edges {
             let r_len =
                 keys::reverse_key(&mut self.key, edge.statement, &edge.key_bytes, rel, row_id);
             self.put_data(r_len, &[])?;
@@ -238,7 +262,7 @@ impl Applier<'_, '_> {
         // Covered by the `mid-write-r` crashpoint above: an R put
         // boundary is one named point, whichever statement kind wrote
         // the edge.
-        for edge in &op.capacity_edges {
+        for edge in capacity_edges {
             let r_len =
                 keys::reverse_key(&mut self.key, edge.statement, &edge.key_bytes, rel, row_id);
             match edge.weight {

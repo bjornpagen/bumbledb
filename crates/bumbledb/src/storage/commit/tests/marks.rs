@@ -519,7 +519,7 @@ fn delete_ops_never_derive_the_capacity_value_slot() {
     let [op] = &*plan.inserts else {
         panic!("one insert op");
     };
-    let [edge] = &*op.capacity_edges else {
+    let [edge] = op.capacity_edges() else {
         panic!("one capacity edge");
     };
     assert_eq!(edge.weight, Some(60), "the insert op derives the slot");
@@ -536,10 +536,12 @@ fn delete_ops_never_derive_the_capacity_value_slot() {
     let [op] = &*plan.deletes else {
         panic!("one delete op");
     };
-    let [edge] = &*op.capacity_edges else {
+    let crate::storage::commit::plan::FactOp::Delete { capacity_keys, .. } = op else {
+        panic!("delete arm");
+    };
+    let [_] = &**capacity_keys else {
         panic!("one capacity edge");
     };
-    assert_eq!(edge.weight, None, "the delete op never derives");
 }
 
 /// Sum within bounds: weights sum, not count — three devices measuring
