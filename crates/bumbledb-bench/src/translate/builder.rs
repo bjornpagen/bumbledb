@@ -118,12 +118,12 @@ fn set_side(comparison: &Comparison) -> Option<(ParamId, &Term)> {
 
 impl Builder<'_> {
     /// The FROM-clause name of one atom's source: the schema relation,
-    /// or — for an interior/rec atom — its derived table's CTE (`p{id}`;
-    /// the reach template, [`super::reach`]).
+    /// or — for an interior/rec atom — its derived table's CTE
+    /// (`interior{id}` / `rec`).
     fn source_table(&self, atom: &Atom) -> String {
         match atom.source {
             bumbledb::AtomSource::Edb(relation) => self.schema.relation(relation).name().to_owned(),
-            bumbledb::AtomSource::Interior(id) => format!("p{}", id.0),
+            bumbledb::AtomSource::Interior(id) => super::derived_cte_name(id, self.rec),
         }
     }
 

@@ -165,7 +165,7 @@ pub(super) fn random_lane<S>(
                         break 'random;
                     }
                 }
-                Err(Inexpressible::PackAggregate) => {
+                Err(Inexpressible::PackAggregate | Inexpressible::IntervalDerivedColumn) => {
                     naive_routed.push(differential::Op::Query {
                         query: query.clone(),
                         params: positional(&draw),

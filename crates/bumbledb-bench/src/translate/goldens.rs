@@ -146,15 +146,15 @@ pub const MANDATE_OVERLAP: &str = "SELECT DISTINCT t0.\"account\", t1.\"account\
 /// closure — the linear transitive closure over `OrgParent` read as
 /// edges, identity main over the rec: one recursive CTE, base arm
 /// first, the recursive table referenced once, `UNION` (not `UNION
-/// ALL`), identity main `SELECT DISTINCT … FROM p0`.
-pub const CLOSURE: &str = "WITH RECURSIVE p0(c0, c1) AS (SELECT t0.\"child\" AS c0, t0.\"parent\" AS c1 FROM \"OrgParent\" AS t0 UNION SELECT t0.\"child\" AS c0, t1.\"c1\" AS c1 FROM \"OrgParent\" AS t0, \"p0\" AS t1 WHERE t0.\"parent\" = t1.\"c0\") SELECT DISTINCT t0.\"c0\", t0.\"c1\" FROM \"p0\" AS t0";
+/// ALL`), identity main `SELECT DISTINCT … FROM rec`.
+pub const CLOSURE: &str = "WITH RECURSIVE rec(c0, c1) AS (SELECT t0.\"child\" AS c0, t0.\"parent\" AS c1 FROM \"OrgParent\" AS t0 UNION SELECT t0.\"child\" AS c0, t1.\"c1\" AS c1 FROM \"OrgParent\" AS t0, \"rec\" AS t1 WHERE t0.\"parent\" = t1.\"c0\") SELECT DISTINCT t0.\"c0\", t0.\"c1\" FROM \"rec\" AS t0";
 
 /// `closure_roots` — main anti-joins the finished rec: `Org(id = x),
-/// ¬p0(c0 = x)`. One rec CTE; the anti-join is inlined in the main
+/// ¬rec(c0 = x)`. One rec CTE; the anti-join is inlined in the main
 /// SELECT (`NOT EXISTS`), not a second CTE after rec.
-pub const CLOSURE_ROOTS: &str = "WITH RECURSIVE p0(c0, c1) AS (SELECT t0.\"child\" AS c0, t0.\"parent\" AS c1 FROM \"OrgParent\" AS t0 UNION SELECT t0.\"child\" AS c0, t1.\"c1\" AS c1 FROM \"OrgParent\" AS t0, \"p0\" AS t1 WHERE t0.\"parent\" = t1.\"c0\") SELECT DISTINCT t0.\"id\" FROM \"Org\" AS t0 WHERE NOT EXISTS (SELECT 1 FROM \"p0\" AS n0 WHERE n0.\"c0\" = t0.\"id\")";
+pub const CLOSURE_ROOTS: &str = "WITH RECURSIVE rec(c0, c1) AS (SELECT t0.\"child\" AS c0, t0.\"parent\" AS c1 FROM \"OrgParent\" AS t0 UNION SELECT t0.\"child\" AS c0, t1.\"c1\" AS c1 FROM \"OrgParent\" AS t0, \"rec\" AS t1 WHERE t0.\"parent\" = t1.\"c0\") SELECT DISTINCT t0.\"id\" FROM \"Org\" AS t0 WHERE NOT EXISTS (SELECT 1 FROM \"rec\" AS n0 WHERE n0.\"c0\" = t0.\"id\")";
 
 /// `closure_from_param` — the parameterized reachable set, identity
 /// main over the rec. One positional placeholder shared across the
 /// rec's arms (the query-global param space).
-pub const CLOSURE_FROM_PARAM: &str = "WITH RECURSIVE p0(c0) AS (SELECT t0.\"parent\" AS c0 FROM \"OrgParent\" AS t0 WHERE t0.\"child\" = ?1 UNION SELECT t0.\"parent\" AS c0 FROM \"OrgParent\" AS t0, \"p0\" AS t1 WHERE t0.\"child\" = t1.\"c0\") SELECT DISTINCT t0.\"c0\" FROM \"p0\" AS t0";
+pub const CLOSURE_FROM_PARAM: &str = "WITH RECURSIVE rec(c0) AS (SELECT t0.\"parent\" AS c0 FROM \"OrgParent\" AS t0 WHERE t0.\"child\" = ?1 UNION SELECT t0.\"parent\" AS c0 FROM \"OrgParent\" AS t0, \"rec\" AS t1 WHERE t0.\"child\" = t1.\"c0\") SELECT DISTINCT t0.\"c0\" FROM \"rec\" AS t0";
