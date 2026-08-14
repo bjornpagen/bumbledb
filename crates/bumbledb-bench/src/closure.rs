@@ -1,7 +1,7 @@
 //! The recursion/closure lane — the roster extension's measurement
 //! infrastructure for the landed recursion vocabulary
 //! (`docs/architecture/20-query-ir.md` § engine recursion,
-//! `docs/architecture/40-execution.md` § the fixpoint driver): a third
+//! `docs/architecture/40-execution.md` § the linear reach driver): a third
 //! corpus world whose EDGE SHAPES are the point — one deep chain (the
 //! depth axis: one new tuple per round, the round-overhead price) and
 //! one wide tree (the fanout axis: frontier width, few rounds) — driven

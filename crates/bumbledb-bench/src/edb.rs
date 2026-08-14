@@ -7,7 +7,7 @@
 use bumbledb::{Atom, RelationId};
 
 pub trait EdbAtom {
-    /// The stored relation this atom reads. Panics on an `Idb` atom —
+    /// Panics on an `Interior` atom —
     /// none exists on the paths that import this trait.
     fn relation(&self) -> RelationId;
 }

@@ -1935,8 +1935,8 @@ fn rejects_interval_positions_across_element_domains_whatever_the_widths() {
 /// refuses the id-width caps typed. The declaration counts here are
 /// host-supplied data at the public `Db::create` trust boundary, and
 /// the query boundary's own caps are all typed refusals
-/// (`ValidationError::TooManyRules` / `TooManyPredicates` /
-/// `TooManyAtoms` / `TooManyVariables`) — the schema boundary now
+/// (`ValidationError::TooManyRules` / `TooManyAtoms` /
+/// `TooManyVariables`) — the schema boundary now
 /// matches the engine's typed-refusal law
 /// (`lean/Bumbledb/Admission.lean`: acceptance and refusal are a typed
 /// gate verdict, never a crash). The caps landed as

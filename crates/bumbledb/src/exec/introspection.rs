@@ -62,7 +62,7 @@ pub struct CountingCounters {
 }
 
 /// Driver-level counters for a fixpoint execution
-/// (docs/architecture/40-execution.md § the fixpoint driver): the
+/// (docs/architecture/40-execution.md § the linear reach driver): the
 /// per-stratum, per-round delta sizes and union accounting the driver
 /// reports through the `Counters` seam's fixpoint hooks. Node-level
 /// methods are deliberate no-ops — the driver runs many differently

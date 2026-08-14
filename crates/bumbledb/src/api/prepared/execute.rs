@@ -345,7 +345,7 @@ impl<S> PreparedQuery<'_, S> {
                     rule.executor.bind_allen_masks(&self.resolved_params);
                     // One match per execution: the executor monomorphizes
                     // per concrete sink type — no per-emit enum branch on
-                    // the hot path. No `Idb` image slice (and so no
+                    // the hot path. No Interior image slice (and so no
                     // retired-buffer pool): a query-path plan carries
                     // only stored occurrences.
                     match &mut self.sink {

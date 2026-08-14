@@ -40,7 +40,7 @@ impl<V: Copy> WordMap<V> {
     /// The dense insertion-order **suffix**: `(key words, value, dense
     /// index)` for every entry inserted at or after `since` — the
     /// frontier watermark's one hook (`docs/architecture/40-execution.md`
-    /// § the fixpoint driver):
+    /// § the linear reach driver):
     /// insertion order is preserved across growth (the dense rule), so
     /// round r's frontier is exactly the entries in `[watermark, len)`.
     /// A cold reader — no flag, no branch, no state on the emit path; a

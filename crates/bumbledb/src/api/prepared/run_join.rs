@@ -82,7 +82,7 @@ pub(super) fn run_join<S: crate::exec::run::Sink, C: crate::exec::run::Counters>
         if occurrence.role.discharged() {
             continue;
         }
-        // The `Idb` bind (40-execution.md § the fixpoint driver): a transient image is
+        // The Interior bind (40-execution.md § the linear reach driver): a transient image is
         // valid for ONE ROUND of ONE EXECUTION — a lifetime the
         // generation vocabulary cannot express — so it lives entirely
         // outside the view-memo axiom's machinery: never
@@ -92,11 +92,11 @@ pub(super) fn run_join<S: crate::exec::run::Sink, C: crate::exec::run::Counters>
         // `Colt::reset`, survivor buffers recycled through the existing
         // `spare_buffers` ping-pong — and every generation-keyed
         // mechanism never learns recursion exists
-        // (`docs/architecture/40-execution.md` § the fixpoint driver).
+        // (`docs/architecture/40-execution.md` § the linear reach driver).
         if occurrence.source.edb().is_none() {
             let image = idb_images[occ_idx]
                 .as_ref()
-                .expect("the fixpoint driver supplies every Interior occurrence's image");
+                .expect("the reach driver supplies every Interior occurrence's image");
             let mut build_span = obs::span_args(
                 obs::names::VIEW_BUILD,
                 obs::Category::Execute,
@@ -227,7 +227,7 @@ pub(super) fn run_join<S: crate::exec::run::Sink, C: crate::exec::run::Counters>
     let _join = obs::span(obs::names::JOIN, obs::Category::Execute);
     // The executor monomorphizes per concrete sink type — callers match
     // their sink enum once per execution BEFORE this call (`run_rule`'s
-    // `EitherSink` match; the fixpoint driver's per-predicate sinks), so
+    // `EitherSink` match; the reach driver's rec and interior sinks), so
     // no per-emit enum branch exists on the hot path.
     executor.execute(plan, &mut memo.colts, bindings, sink, counters)?;
     Ok(())

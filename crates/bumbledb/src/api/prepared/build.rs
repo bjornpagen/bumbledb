@@ -653,11 +653,11 @@ fn prepare_rule(
     )
 }
 
-/// [`prepare_rule`] with the program surface: the sealed signatures
-/// (`Idb` occurrences' field→column spans) and — for one delta variant
-/// of a recursive rule — the marked delta occurrence, whose statistics
-/// take the ladder's delta floor while other `Idb` occurrences take the
-/// accumulated floor (`plan/selectivity.rs`; 40-execution.md § the fixpoint driver, the
+/// [`prepare_rule`] with interiors/rec: the sealed signatures
+/// (`Interior` occurrences' field→column spans) and — for one delta variant
+/// of a rec arm — the marked delta occurrence, whose statistics
+/// take the ladder's delta floor while other `Interior` occurrences take the
+/// accumulated floor (`plan/selectivity.rs`; 40-execution.md § the linear reach driver, the
 /// param-plan precedent). The query path passes the empty surface.
 #[expect(
     clippy::too_many_arguments,
@@ -686,7 +686,7 @@ fn prepare_rule_variant(
             plan,
             distinct_witness,
             finds,
-            // Written by `seal_dnf_spans` iff the program is a
+            // Written by `seal_dnf_spans` iff the query is a
             // DNF-derived union; empty (and never read) otherwise.
             dedup_spans: Box::default(),
             key_probe_finds,
@@ -712,7 +712,7 @@ fn prepare_rule_variant(
         .iter()
         .filter(|o| o.role.participates())
     {
-        // An `Idb` occurrence pins nothing (20-query-ir.md § engine recursion's
+        // An `Interior` occurrence pins nothing (20-query-ir.md § engine recursion's
         // consumer table): its row count is prepare-unknowable, so it
         // reads no row counter and costs on the selectivity ladder's
         // floors — the delta floor for the variant's marked occurrence,
@@ -798,7 +798,7 @@ fn prepare_rule_variant(
         plan,
         executor,
         finds,
-        // Written by `seal_dnf_spans` iff the program is a DNF-derived
+        // Written by `seal_dnf_spans` iff the query is a DNF-derived
         // union; empty (and never read) otherwise.
         dedup_spans: Box::default(),
         resolved_filters: vec![Vec::new(); occurrence_count],

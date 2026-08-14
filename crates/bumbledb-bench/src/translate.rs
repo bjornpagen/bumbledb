@@ -36,7 +36,7 @@
 //!   FROM t)`; negated, `NOT EXISTS` (the relation must be empty).
 //! - Never-interned strings/bytes need no special case: SQL compares
 //!   values, which is exactly the sentinel semantics.
-//! - **Interiors + rec = `WITH [RECURSIVE]`** ([`program`], the lossy
+//! - **Interiors + rec = `WITH [RECURSIVE]`** ([`reach`], the lossy
 //!   SQLite image of this cut): interiors then optional rec as CTEs,
 //!   main as the SELECT. No `UNION ALL`. No CTE after the rec.
 //!   Interval-typed derived columns are the remaining translator
@@ -49,13 +49,13 @@ use bumbledb::schema::{KeyStatement, StatementDescriptor};
 use bumbledb::{ParamId, Query, RelationId, Schema, Value, VarId};
 
 mod builder;
-mod program;
+mod reach;
 mod query;
 #[cfg(test)]
 mod tests;
 mod types;
 
-pub use program::{sqlite_reach_expressible, translate_query};
+pub use reach::{sqlite_reach_expressible, translate_query};
 pub use query::translate;
 
 /// The SQL translation is conjunctive-only: it consumes the flat leaf

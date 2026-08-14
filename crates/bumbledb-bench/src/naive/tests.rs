@@ -4,7 +4,7 @@
 
 mod closed;
 mod dnf;
-mod fixpoint;
+mod reach;
 mod judgment;
 mod query;
 

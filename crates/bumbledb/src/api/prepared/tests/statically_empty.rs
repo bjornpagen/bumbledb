@@ -1,7 +1,7 @@
 //! Statically empty: condition folding at normalize (docs/architecture/
 //! 20-query-ir.md § normalization, 40-execution.md § access paths). A
 //! rule whose constant conditions are mutually unsatisfiable dies at
-//! prepare; a program of only dead rules prepares to `PreparedBody::Empty`
+//! prepare; a query of only dead main rules prepares to `PreparedBody::Empty`
 //! — params bind first (errors surface), then nothing runs. The fold's
 //! set-preservation rides the folded/unfolded differential below.
 

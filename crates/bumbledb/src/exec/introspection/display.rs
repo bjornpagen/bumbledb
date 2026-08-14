@@ -77,10 +77,10 @@ impl fmt::Display for IntrospectionReport<'_> {
                 None => writeln!(f, "disjoint_rules: unproven")?,
             }
         }
-        // The fixpoint round section (docs/architecture/40-execution.md
-        // § the fixpoint driver): per recursive stratum, per round —
-        // round 0 is the stratum's non-recursive rules — the delta rows
-        // each predicate's frontier carried and the union accounting.
+        // The interiors / reach section (docs/architecture/40-execution.md
+        // § the linear reach driver): per named interior, then optional
+        // reach rounds — round 0 is the rec's base arms — the delta size
+        // the frontier carried and the union accounting.
         for interior in &self.stats.interiors {
             writeln!(
                 f,

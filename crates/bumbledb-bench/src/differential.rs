@@ -57,14 +57,12 @@ pub enum ConditionalVerdict {
     Moved { witnessed: u64, current: u64 },
 }
 
-/// One query's or program's outcome, on either side: the answer set, or
-/// one of the defined typed runtime errors (aggregate overflow; the
-/// measure of a ray — the engine's one runtime type error; and the
-/// fixpoint budget trip, reachable only through the program leg — a
-/// `Query` is non-recursive by validation, so [`engine_query`] can
-/// never render it. The naive fixpoint is deliberately unbudgeted, so
-/// an engine trip surfaces as a readable divergence, never a harness
-/// crash).
+/// One query's outcome, on either side: the answer set, or one of the
+/// defined typed runtime errors (aggregate overflow; the measure of a
+/// ray — the engine's one runtime type error; and
+/// [`bumbledb::Error::DerivedBudgetExceeded`] on a derived-tuples trip.
+/// Naive reach is deliberately unbudgeted, so an engine trip surfaces
+/// as a readable divergence, never a harness crash).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Answers {
     Ok(BTreeSet<Tuple>),

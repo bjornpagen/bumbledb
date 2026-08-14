@@ -1,10 +1,8 @@
-//! The naive stratified fixpoint's own landmarks
-//! (`lean/Bumbledb/Exec/Fixpoint.lean` is the truth): the degenerate
-//! program IS the query, a mutual pair iterates jointly under one round
-//! loop, a fold over a recursive predicate reads the finished fixpoint
-//! from a strictly higher stratum, and the empty-Δ-at-round-1 boundary
-//! stops after the base round. The naive-vs-SQLite closure goldens live
-//! with the comparison runners (`crate::differential::tests::recursive`
+//! The naive linear-reach landmarks
+//! (`lean/Bumbledb/Exec/Reach.lean` is the truth): a fold over a
+//! finished rec reads the closed lfp from main, and the empty-Δ-at-round-1
+//! boundary stops after the base round. The naive-vs-SQLite closure
+//! goldens live with the comparison runners (`crate::differential::tests::recursive`
 //! — nothing under `naive/` may touch another oracle).
 
 use std::collections::BTreeSet;

@@ -413,7 +413,7 @@ pub fn append(
     Ok(seal(row_count, frame, distincts))
 }
 
-/// One pooled transient-image slot (40-execution.md § the fixpoint driver): the fixpoint
+/// One pooled transient-image slot (40-execution.md § the linear reach driver): the fixpoint
 /// driver's per-round delta and accumulated images, built on the
 /// [`synthesize_closed`] precedent — the image machinery is
 /// source-agnostic after decode, and here the source is cheaper still:

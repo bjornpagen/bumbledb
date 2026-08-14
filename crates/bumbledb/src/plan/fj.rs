@@ -155,7 +155,7 @@ pub struct PlanOccurrence {
     /// (`docs/architecture/20-query-ir.md` § engine recursion's consumer
     /// guards): an
     /// `Edb` occurrence binds through the image cache and the view memo
-    /// as ever; an `Interior` occurrence binds to the fixpoint driver's
+    /// as ever; an `Interior` occurrence binds to the reach driver's
     /// per-round transient image (`api/prepared/run_join.rs` — never
     /// the cache, never the memo), its `spans` derived from the target
     /// predicate's sealed signature columns.

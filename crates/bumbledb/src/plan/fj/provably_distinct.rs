@@ -42,7 +42,7 @@ pub(crate) fn provably_distinct(
             // An `Interior` occurrence carries no keys — a predicate is a
             // transient answer set, not a keyed store — so no rule
             // reading one can prove distinct bindings through key
-            // coverage (40-execution.md § the fixpoint driver: cross-round re-derivation
+            // coverage (40-execution.md § the linear reach driver: cross-round re-derivation
             // is the seen-set's job regardless).
             let Some(stored) = occurrence.source.edb() else {
                 return false;

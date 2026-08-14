@@ -86,7 +86,7 @@ pub(crate) const FIELDS_EQ_KEEP_DEN: u64 = 64;
 /// above a scalar equality.
 pub(crate) const PARAM_SET_PLANNING_ROWS: u64 = 16;
 
-/// The delta occurrence's planning row count (40-execution.md § the fixpoint driver):
+/// The delta occurrence's planning row count (40-execution.md § the linear reach driver):
 /// a delta-variant plan's marked occurrence binds to one round's
 /// frontier, which the semi-naive rewrite exists to keep small — the
 /// floor prices it as the most selective thing in the rule, so the DP
@@ -94,10 +94,10 @@ pub(crate) const PARAM_SET_PLANNING_ROWS: u64 = 16;
 /// param-plan precedent); pinned at prepare, never re-planned.
 pub(crate) const DELTA_PLANNING_ROWS: u64 = 1;
 
-/// The accumulated/finished predicate occurrence's planning row count
-/// (40-execution.md § the fixpoint driver): a same-stratum non-delta occurrence binds to
-/// the predicate's whole accumulated set, and a lower-stratum
-/// occurrence to its finished set — larger than a frontier, still
+/// The accumulated/finished derived-table occurrence's planning row count
+/// (40-execution.md § the linear reach driver): a rec-arm non-delta occurrence binds to
+/// the rec's whole accumulated set, and a finished-interior
+/// occurrence to its eval-once table — larger than a frontier, still
 /// prepare-unknowable. A floor-style constant like
 /// [`PARAM_SET_PLANNING_ROWS`]: big enough to price the
 /// accumulated read above the delta, small enough that a recursive rule

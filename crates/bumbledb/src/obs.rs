@@ -79,8 +79,8 @@ pub mod names {
     // per rule or per candidate; rule work rides the pass span's args.
 
     /// One rule-set lowering — shape roster, DNF distribution, collapse
-    /// (`lower_rules`): once on the query path, once per predicate on
-    /// the program path (the predicate cap bounds it). (lowered rules
+    /// (`lower_rules`): once per interior, once for the rec pool, once
+    /// for main. (lowered rules
     /// produced, -)
     pub const VALIDATE_LOWER: &str = "validate_lower";
     /// The signature-sealing pass — declaration-order interior sealing

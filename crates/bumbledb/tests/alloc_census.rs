@@ -428,7 +428,7 @@ fn wide_schema(n: u16) -> SchemaDescriptor {
 }
 
 /// The holder chain length (accounts 100..100+CHAIN with holder = id+1):
-/// the fixpoint driver's round count rides this.
+/// the reach driver's round count rides this.
 const CHAIN: u64 = 64;
 
 fn populate(db: &Db<SchemaDescriptor>) {
@@ -1113,7 +1113,7 @@ fn flow_execute(db: &Db<SchemaDescriptor>) {
         false,
     );
 
-    // The fixpoint driver: cold executions at increasing caps — rounds
+    // The reach driver: cold executions at increasing caps — rounds
     // ride the holder chain, so allocation-per-round is the slope.
     let query = recursive_query();
     for cap in [110u64, 120, 140, 164] {

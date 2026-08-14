@@ -118,8 +118,8 @@ fn set_side(comparison: &Comparison) -> Option<(ParamId, &Term)> {
 
 impl Builder<'_> {
     /// The FROM-clause name of one atom's source: the schema relation,
-    /// or — for a program atom — its predicate's CTE (`p{id}`; the
-    /// program template, [`super::program`]).
+    /// or — for an interior/rec atom — its derived table's CTE (`p{id}`;
+    /// the reach template, [`super::reach`]).
     fn source_table(&self, atom: &Atom) -> String {
         match atom.source {
             bumbledb::AtomSource::Edb(relation) => self.schema.relation(relation).name().to_owned(),
@@ -128,8 +128,8 @@ impl Builder<'_> {
     }
 
     /// One bound field's (column name, interval-typed?): the declared
-    /// schema field, or a predicate CTE's positional column (`c{i}` —
-    /// scalar by the program lane's shape gate: interval-typed predicate
+    /// schema field, or a derived CTE's positional column (`c{i}` —
+    /// scalar by the reach lane's shape gate: interval-typed derived
     /// columns are refused before any rule renders).
     fn source_column(&self, atom: &Atom, field: bumbledb::FieldId) -> (String, bool) {
         match atom.source {

@@ -38,8 +38,8 @@ pub struct ExecutionStats {
     /// Rules the statically-empty fold refuted at prepare
     /// (`ir/normalize/fold.rs`): each carries its killing condition —
     /// introspection's `statically empty: rule N: <picture>` line. Indices are
-    /// lowered-rule indices, exactly as `subsumed`; a program of only
-    /// dead rules represented by an empty prepared program.
+    /// lowered-rule indices, exactly as `subsumed`; a query of only
+    /// dead main rules represented by an empty prepared body.
     pub dead: Vec<DeadRule>,
     /// Named interiors in declaration order. Empty when the query has
     /// none. Structured stats **are** the interiors block — there is no

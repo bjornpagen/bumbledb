@@ -100,7 +100,7 @@ fn build_occurrences(
             // The field→column shape: a stored relation's layout, or —
             // for an `Interior` occurrence — the target predicate's sealed
             // signature columns (`FieldId(i)` is head position `i`, the
-            // positional reading `lean/Bumbledb/Exec/Fixpoint.lean:
+            // positional reading `lean/Bumbledb/Query/Denotation.lean:
             // tupleFact` promises; the transient image is built with
             // exactly these types, so the spans agree by construction).
             let field_types: Vec<bumbledb_theory::TypeDesc> = match occurrence.source {
@@ -195,7 +195,7 @@ fn earliest_bound_node(bound: &[BTreeSet<VarId>], vars: &[VarId]) -> Option<usiz
 /// Only on programmer-invariant violations (more than 256 subatoms in one
 /// node — impossible for plans over the planner's occurrence cap — or a
 /// normalized query whose slot-width map misses a variable).
-/// The query-path entry: the empty `Idb` signature surface (a sealed
+/// The query-path entry: the empty Interior signature surface (a sealed
 /// `ValidatedQuery` carries no `Interior` occurrence). Test observability —
 /// production rules route through [`validate_with_signatures`].
 #[cfg(test)]

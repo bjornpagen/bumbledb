@@ -127,9 +127,9 @@ pub struct Occurrence {
     /// The atom's source, carried through lowering verbatim
     /// (`docs/architecture/20-query-ir.md` § engine recursion's consumer guards:
     /// filters and residuals are slot/word-shaped and indifferent to
-    /// it). An `Interior` occurrence reads a predicate of the same program:
+    /// it). An `Interior` occurrence reads a derived table of the same query:
     /// its field types are the target's sealed signature columns, its
-    /// execution bind is the fixpoint driver's transient image
+    /// execution bind is the reach driver's transient image
     /// (`api/prepared/run_join.rs`), and it pins no statistics
     /// (`plan/selectivity.rs` — the delta/accumulated floors).
     pub source: crate::ir::AtomSource,

@@ -1,6 +1,6 @@
 //! Literal query semantics by nested loops
 //! (`docs/architecture/20-query-ir.md`, normative). The model evaluates a
-//! *validated* query — a program of rules — **from the definition: the
+//! *validated* query — a union of conjunctive rules — **from the definition: the
 //! query denotes the set union of its rules' denotations.** Per rule:
 //! params substituted first (params are query-global; variables are
 //! rule-scoped), then the cross product of the positive atoms enumerated
@@ -167,23 +167,23 @@ enum SubstitutedTree {
     Or(Vec<SubstitutedTree>),
 }
 
-/// The predicate reading of one program evaluation — the fixpoint's
-/// working sets beside their column typing. A predicate's facts ARE its
-/// answer tuples, read positionally: `FieldId(i)` is head position `i`
-/// (`lean/Bumbledb/Exec/Fixpoint.lean: tupleFact` — the positional
-/// addressing the program cut promised). A plain query reads no
-/// predicates: the empty world.
-pub(super) struct PredWorld<'a> {
-    /// Per predicate, the accumulated answer-tuple set.
+/// The derived-table reading of one query evaluation — finished
+/// interior and rec tables beside their column typing. A derived
+/// table's facts ARE its answer tuples, read positionally: `FieldId(i)`
+/// is head position `i`
+/// (`lean/Bumbledb/Query/Denotation.lean: tupleFact` — the positional
+/// addressing interiors and rec share). A plain query reads no
+/// derived tables: the empty world.
+pub(super) struct InteriorWorld<'a> {
+    /// Per derived table, the accumulated answer-tuple set.
     sets: &'a [BTreeSet<Tuple>],
-    /// Per predicate, per head position: interval-typed? — the
-    /// membership typing rule read through predicate columns.
+    /// Per derived table, per head position: interval-typed? — the
+    /// membership typing rule read through sealed interior columns.
     interval: &'a [Vec<bool>],
 }
 
 /// A resolved atom source: an index into the stored relations or into
-/// the predicate sets — the model's plain-data twin of the Lean even/odd
-/// source coding (a device there, an enum here).
+/// the finished derived tables.
 enum Src {
     Edb(usize),
     Interior(usize),
@@ -199,8 +199,8 @@ struct FlatAtom {
 /// Everything enumeration reads.
 struct Env<'a> {
     relations: &'a [BTreeSet<Tuple>],
-    /// The predicate sets an `Idb` occurrence reads (empty for queries).
-    predicates: &'a [BTreeSet<Tuple>],
+    /// The derived tables an `Interior` occurrence reads (empty for a plain query).
+    interiors: &'a [BTreeSet<Tuple>],
     atoms: Vec<FlatAtom>,
     negated: Vec<FlatAtom>,
     /// The rule's predicate trees, conjoined — evaluated directly.
@@ -219,7 +219,7 @@ impl Env<'_> {
     fn facts(&self, src: &Src) -> &BTreeSet<Tuple> {
         match src {
             Src::Edb(relation) => &self.relations[*relation],
-            Src::Interior(pred) => &self.predicates[*pred],
+            Src::Interior(pred) => &self.interiors[*pred],
         }
     }
 }
@@ -254,7 +254,7 @@ impl NaiveDb {
         let mut sets: Vec<BTreeSet<Tuple>> = Vec::new();
         let mut interval: Vec<Vec<bool>> = Vec::new();
         for interior in &query.interiors {
-            let preds = PredWorld {
+            let preds = InteriorWorld {
                 sets: &sets,
                 interval: &interval,
             };
@@ -268,7 +268,7 @@ impl NaiveDb {
             sets.push(BTreeSet::new());
             let rec_id = sets.len() - 1;
             loop {
-                let preds = PredWorld {
+                let preds = InteriorWorld {
                     sets: &sets,
                     interval: &interval,
                 };
@@ -280,7 +280,7 @@ impl NaiveDb {
                 sets[rec_id] = next;
             }
         }
-        let preds = PredWorld {
+        let preds = InteriorWorld {
             sets: &sets,
             interval: &interval,
         };
@@ -337,7 +337,7 @@ impl NaiveDb {
         head: &[HeadTerm],
         rules: &[Rule],
         params: &[ParamValue],
-        preds: &PredWorld<'_>,
+        preds: &InteriorWorld<'_>,
     ) -> Result<BTreeSet<Tuple>, QueryError> {
         if let [rule] = rules {
             let bindings = self.rule_bindings(rule, params, preds)?;
@@ -367,7 +367,7 @@ impl NaiveDb {
         &self,
         rule: &Rule,
         params: &[ParamValue],
-        preds: &PredWorld<'_>,
+        preds: &InteriorWorld<'_>,
     ) -> Result<BTreeSet<Tuple>, QueryError> {
         let var_count = count_vars(rule);
         let mut scalar_anchored = vec![false; var_count];
@@ -382,7 +382,7 @@ impl NaiveDb {
         }
         let env = Env {
             relations: &self.relations,
-            predicates: preds.sets,
+            interiors: preds.sets,
             atoms: rule
                 .atoms
                 .iter()
@@ -428,7 +428,7 @@ impl NaiveDb {
         &self,
         rules: &[Rule],
         params: &[ParamValue],
-        preds: &PredWorld<'_>,
+        preds: &InteriorWorld<'_>,
     ) -> Result<BTreeSet<Tuple>, QueryError> {
         let head = &rules[0].finds;
         let mut domain: BTreeSet<Tuple> = BTreeSet::new();
@@ -514,7 +514,7 @@ impl NaiveDb {
         Ok(rows)
     }
 
-    fn flatten(&self, atom: &Atom, params: &[ParamValue], preds: &PredWorld<'_>) -> FlatAtom {
+    fn flatten(&self, atom: &Atom, params: &[ParamValue], preds: &InteriorWorld<'_>) -> FlatAtom {
         FlatAtom {
             src: match atom.source {
                 AtomSource::Edb(relation) => Src::Edb(relation.0 as usize),
@@ -551,7 +551,7 @@ impl NaiveDb {
         &self,
         atom: &Atom,
         field: bumbledb::FieldId,
-        preds: &PredWorld<'_>,
+        preds: &InteriorWorld<'_>,
     ) -> bool {
         match atom.source {
             AtomSource::Edb(relation) => self.edb_field_is_interval(relation, field),

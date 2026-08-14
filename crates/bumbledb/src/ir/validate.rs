@@ -5,7 +5,7 @@
 //! The roster, transcribed from `docs/architecture/20-query-ir.md` and
 //! checked off in code order below — it is exhaustive by contract.
 //!
-//! The program shape first (rules are validated one at a time; every
+//! The query shape first (rules are validated one at a time; every
 //! rule-local diagnostic names a position inside the first failing rule):
 //!
 //!  0. empty rule set; more than [`crate::ir::MAX_RULES`] rules (counted
@@ -14,7 +14,7 @@
 //!     against the head position by position — rule 0's resolved type row
 //!     pins the head's positional types, and every later rule must agree)
 //!
-//! Between the program shape and the per-rule roster, first the
+//! Between the query shape and the per-rule roster, first the
 //! **nesting boundary check**: condition trees deeper than
 //! [`crate::ir::MAX_CONDITION_DEPTH`] are the typed
 //! `ConditionNestingTooDeep` — judged by an iterative depth walk before

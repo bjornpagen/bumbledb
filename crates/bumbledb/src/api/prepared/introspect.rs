@@ -257,7 +257,7 @@ impl<S> PreparedQuery<'_, S> {
         // driver-level counter: the counted surface is per-stratum,
         // per-round — delta sizes and the union accounting — through
         // the `Counters` seam's fixpoint hooks
-        // (docs/architecture/40-execution.md § the fixpoint driver).
+        // (docs/architecture/40-execution.md § the linear reach driver).
         // Per-unit node stats deliberately do not exist: one counter
         // spans many differently shaped plan units.
         if matches!(self.body, PreparedBody::Reach(_)) {

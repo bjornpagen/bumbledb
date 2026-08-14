@@ -14,7 +14,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 /// Validates a query against the schema, yielding the sealed witness.
 ///
-/// The roster, in order (`proposals/01-language.md`): derived-table
+/// The roster, in order (`docs/architecture/20-query-ir.md`): derived-table
 /// id-width; then each interior, the rec pool, and main independently
 /// through the query-shape checks (empty, [`MAX_RULES`], nesting, DNF,
 /// head alignment) and the per-rule roster, sealing interiors in

@@ -91,9 +91,9 @@ impl ProjectionSink {
         self.seen.iter().map(|(key, ())| key)
     }
 
-    /// The dense insertion-order suffix `[watermark, len)` — the fixpoint
+    /// The dense insertion-order suffix `[watermark, len)` — the reach
     /// driver's frontier read (`docs/architecture/40-execution.md` § the
-    /// fixpoint driver): the frontier IS this seen-set with a per-round
+    /// linear reach driver): the frontier IS this seen-set with a per-round
     /// watermark, one `usize` and a dense-suffix walk
     /// ([`WordMap::iter_since`]); no flag, no branch, no state on the
     /// emit path. Cold — read once per round, never per tuple.

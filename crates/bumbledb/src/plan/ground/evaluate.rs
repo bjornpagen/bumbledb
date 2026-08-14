@@ -205,7 +205,7 @@ fn fold_positive(
 /// fold — direction pinned there and by the tests).
 fn fold_negated(normalized: &mut NormalizedQuery, schema: &Schema, c_idx: usize) -> bool {
     let occurrence = &normalized.occurrences[c_idx];
-    // The positive fold's `Idb` guard, verbatim: no sealed extension,
+    // The positive fold's Interior guard, verbatim: no sealed extension,
     // no stage-0 rows, no fold (20-query-ir.md § engine recursion's consumer guards).
     let Some(relation_id) = occurrence.source.edb() else {
         return false;

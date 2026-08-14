@@ -27,7 +27,7 @@
 //!   fuzzing charter, `docs/architecture/60-validation.md`); this test
 //!   reports, it never fixes.
 //!
-//! The RECURSIVE arm ([`program`], `reach-*.json`) rides the same
+//! The RECURSIVE arm ([`reach`], `reach-*.json`) rides the same
 //! corpus and comparator: reach cases run the engine against the naive
 //! interiors-then-rec-then-main eval on build AND replay, `SQLite`
 //! corroborating where the translator admits, judged by
@@ -83,7 +83,7 @@
 //! `differential::engine_query` sufficed (recorded per the PRD).
 
 pub mod judgment;
-pub mod program;
+pub mod reach;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
@@ -921,7 +921,7 @@ fn render_case(
 }
 
 /// The theory + instance + ground-axiom blocks for one
-/// mentioned-relation set — the shared tail of the query and program
+/// mentioned-relation set — the shared tail of the query and reach
 /// serializers (the recursive arm's cases carry the identical world
 /// shape).
 fn world_blocks(
@@ -1565,9 +1565,9 @@ pub fn corpus_dir() -> PathBuf {
 #[must_use = "the coverage report is the recorded number"]
 pub fn write_corpus(dir: &Path) -> Report {
     let (report, cases) = generate_corpus();
-    let program_world = build_world(WORLD_SEEDS[0]);
-    let (program_report, program_cases) = program::generate_reach_corpus(&program_world);
-    eprintln!("{}", program_report.coverage_line());
+    let reach_world = build_world(WORLD_SEEDS[0]);
+    let (reach_report, reach_cases) = reach::generate_reach_corpus(&reach_world);
+    eprintln!("{}", reach_report.coverage_line());
     std::fs::create_dir_all(dir).expect("create the corpus directory");
     for entry in std::fs::read_dir(dir).expect("list the corpus directory") {
         let path = entry.expect("corpus dir entry").path();
@@ -1578,7 +1578,7 @@ pub fn write_corpus(dir: &Path) -> Report {
     for (name, document) in cases
         .iter()
         .chain(&judgment::generate_judgment_corpus())
-        .chain(&program_cases)
+        .chain(&reach_cases)
     {
         std::fs::write(dir.join(name), document).expect("write a corpus case");
     }
@@ -1624,7 +1624,7 @@ pub fn replay_checked_in_corpus() -> usize {
         let document = if name.starts_with("judgment-") {
             judgment::replay_judgment_case(&name)
         } else if name.starts_with("reach-") {
-            program::replay_reach_case(&mut worlds, &name, &text)
+            reach::replay_reach_case(&mut worlds, &name, &text)
         } else {
             replay_case(&mut worlds, &name, &text)
         };
@@ -1832,13 +1832,13 @@ mod tests {
     #[test]
     #[ignore = "regenerates the checked-in reach cases; run deliberately"]
     fn regenerate_the_recursive_conformance_corpus() {
-        let report = program::write_reach_corpus(&corpus_dir());
+        let report = reach::write_reach_corpus(&corpus_dir());
         eprintln!("{}", report.coverage_line());
     }
 
     /// Regenerates the JUDGMENT arm's `judgment-*.json` cases only —
     /// the fixtures are deterministic (hand-authored, no wall-clock
-    /// budgets), so this is safe on any machine; the query and program
+    /// budgets), so this is safe on any machine; the query and reach
     /// cases keep their bytes.
     #[test]
     #[ignore = "regenerates the checked-in judgment cases; run deliberately"]

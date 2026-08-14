@@ -567,7 +567,7 @@ fn escalation_query() -> Query {
 }
 
 /// The recursive family (docs/architecture/40-execution.md § the
-/// fixpoint driver — the allocation contract's iteration-shape axis):
+/// linear reach driver — the allocation contract's iteration-shape axis):
 /// `p0(a, h) | Account(id: a, holder: h), a <= ?0;
 ///  p0(a, h2) | Account(id: a, holder: h), a <= ?0, p0(h, h2);
 ///  main(x) | p0(x, _)` — a linear rec under a non-recursive output that
@@ -1402,7 +1402,7 @@ fn zero_warm_allocation_gate() {
         );
 
         // The recursive family, steady state (docs/architecture/
-        // 40-execution.md § the fixpoint driver): rotating edge caps —
+        // 40-execution.md § the linear reach driver): rotating edge caps —
         // per-round delta transient refills, the accumulated halves'
         // suffix appends (`TransientImage::append`), the interior
         // seen-set, the finished-image slot, and the frontier watermark

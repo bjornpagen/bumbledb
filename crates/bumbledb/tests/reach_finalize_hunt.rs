@@ -1,8 +1,8 @@
 //! Targeted differential tests over the freshest recursion/finalize
-//! machinery: the fixpoint driver's incremental accumulator
-//! (`api/prepared/fixpoint.rs` + `image/build.rs: TransientImage::append`
+//! machinery: the reach driver's incremental accumulator
+//! (`api/prepared/reach.rs` + `image/build.rs: TransientImage::append`
 //! — append floors, watermark drift, ping-pong halves across many
-//! rounds, finished-slot reads across strata, repeat executions on one
+//! rounds, finished-interior reads, repeat executions on one
 //! prepared handle) and the column-major finalize
 //! (`api/prepared/finalize.rs` — strided cell writes, byte-heap ranges
 //! for interned strings across columns, interval two-word cells, the
