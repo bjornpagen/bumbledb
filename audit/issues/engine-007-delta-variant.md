@@ -35,7 +35,7 @@ A newtype around a single value is the residue of k-variant minting (Insight 2: 
 Per `audit/CONTRACT.md §C3`: `RecArm { delta: OccId, rule: FreeJoinRule }` (engine-002) replaces `RecursiveRule`+`DeltaVariant`; every `.variant.` path becomes a direct field read. Sweep the vocabulary:
 
 - Delete the "delta variants" / "per-stratum" / "`stats.strata`" prose at `introspect.rs:36-40` and `exec/introspection.rs:87-94`; describe what exists: rec arms with one marked delta occurrence, counted surface `stats.reach.rounds`.
-- `prepare_rule` stops being a wrapper that passes `delta: None` into `prepare_rule_variant`; the rec arm gets its own entry `prepare_rec_arm(..., delta: OccId) -> RecArm` (engine-039 owns the split; this issue owns deleting the `variant` vocabulary from names: `prepare_rule_variant` renames).
+- `prepare_rule` stops being a wrapper that passes `delta: None` into `prepare_rule_variant`; the rec arm gets its own entry `prepare_rec_arm(..., delta: OccId) -> RecArm`. `delta: Option<OccId>` leaves every signature (absorbs engine.md F39).
 - Introspection labels keep `reach rec {i} (delta occ {d})` — already variant-free; only the comments lie.
 - `plan/selectivity.rs:89-94` comment "a delta-variant plan's marked occurrence" reworded to "a rec arm's marked delta occurrence".
 

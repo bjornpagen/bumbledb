@@ -4,7 +4,7 @@
 - **Tree:** engine
 - **Status:** OPEN (scoped — the boundary re-encoding half is refused per CONTRACT §C1/§C2)
 - **Source:** audit/engine.md F3
-- **Depends on:** engine-005, engine-016, engine-028 (the witness sum and stored ids ARE the fix)
+- **Depends on:** engine-005, engine-016 (the witness sum is where the stored ids live; engine-028 is a duplicate of this issue)
 
 ## The bug
 
@@ -35,7 +35,7 @@ Dijkstra: the off-by-one lives in the numbering. "Last id, if the Option is Some
 
 Scoped per `audit/CONTRACT.md §C2`:
 
-- **Accepted half:** the id is computed ONCE, at validate, and stored: the witness (engine-005's `ValidatedQuery::Reach` arm) carries `rec_id: InteriorId` and `derived_count: u32` as data (engine-028); prepare copies them into the `PreparedPipeline::Reach` arm; execute/render/introspect read the stored value. The bench naive/translate oracles read `query.interiors.len()` from the *boundary* object — legal there (it is the boundary numbering) but each computes it exactly once at its own entry, with engine-019/021 restructuring those.
+- **Accepted half:** the id is computed ONCE, at validate, and stored: the witness (engine-005's `ValidatedQuery::Reach` arm) carries `rec_id: InteriorId` and `derived_count: u32` as data; prepare copies them into the `PreparedPipeline::Reach` arm; execute/render/introspect read the stored value. No site re-derives `len() + usize::from(is_some())`; the overflow `expect("overflow judged at validate")` sites die. The bench naive/translate oracles read `query.interiors.len()` from the *boundary* object — legal there (it is the boundary numbering) but each computes it exactly once at its own entry, with engine-019/021 restructuring those.
 - **Refused half (do NOT attempt):** re-encoding the boundary as `derived: Vec<Derived>` / `enum AtomSource { Edb, Derived(DerivedId) }` — refused per CONTRACT §C1: the hostile boundary `Query { interiors, rec: Option<Rec>, head, rules }`, the JSON corpus, the C ABI, and the TS wire type stay shape-unchanged; `Option<Rec>` IS the sum's boundary spelling. The engine-internal sums (witness, prepared) are where absence stops being a flag.
 
 ## Acceptance criteria
@@ -48,4 +48,4 @@ Scoped per `audit/CONTRACT.md §C2`:
 ## Constraints
 
 - Semantics identical; `InteriorIdOverflow` stays the boundary refusal name.
-- Lands after engine-005/engine-016/engine-028 (mostly their acceptance checklist, plus render/bench single-site cleanups).
+- Lands after engine-005/engine-016 (mostly their acceptance checklist, plus render/bench single-site cleanups). Absorbs engine.md F28.

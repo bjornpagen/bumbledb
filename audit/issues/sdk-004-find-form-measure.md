@@ -4,7 +4,7 @@
 - **Tree:** sdk (cpp dialect)
 - **Status:** OPEN
 - **Source:** audit/sdks.md #4
-- **Depends on:** none (parallel-safe; sdk-020 lands inside this change)
+- **Depends on:** none (parallel-safe; dummy Var `op` filler is this change — sdks.md #20)
 
 ## The bug
 

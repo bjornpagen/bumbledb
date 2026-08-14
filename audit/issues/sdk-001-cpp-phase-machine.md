@@ -52,4 +52,4 @@ Dialect law backs this: AGENTS.md §27 forbids state machines as independent boo
 ## Constraints
 
 - Semantics identical: the engine IR and C ABI shapes DO NOT change here (sdk-008 owns the ABI find-term change). Locked names (`DerivedBudgetExceeded`, `set_derived_budget`, `DEFAULT_DERIVED_TUPLES`, `DEFAULT_REACH_ROUNDS`) untouched. No Program vocabulary; no new caps (sdk-012 deletes SDK caps — coordinate, don't add).
-- Co-lands with sdk-002 (one IR struct) and sdk-019 (lowering reads `if constexpr (HasRec)`).
+- Co-lands with sdk-002 (one IR struct). Lowering (`derived_tables`, `query_view`) reads `if constexpr (HasRec)` — no runtime bool (absorbs sdks.md #19).

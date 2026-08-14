@@ -1,151 +1,186 @@
-# Issue index — the fix campaign ledger
+# Issue index — fanout ledger
 
-Reconciliation against the wave-1 dumps: lean 18/18, engine 40/40,
-sdks 21/21, docs 28/28 — every finding maps to exactly one file
-below. Wave-2 additions: proc-01, eng-F41, lean-W1, sdk-22, sdk-23.
-**Total: 112 files — 107 OPEN, 4 DUPLICATE, 1 REFUSED-BY-CONTRACT.**
+112 files (one per wave-1 finding plus five adversarial). Dump reconciliation: lean 18/18, engine 40/40, sdk 21/21, docs 28/28.
 
-Statuses flip to `FIXED(sha)` here AND in each issue file as fixes
-land. The Gate (audit/README.md § Phase B) must be fully checked
-before the first fix commit.
+**Assign only OPEN.** 98 OPEN, 12 DUPLICATE, 2 WONTFIX. A fixer who lands a parent does not open the duplicate.
 
-## Waves
+| Status | Ids |
+|---|---|
+| WONTFIX | lean-013 (C5 R-DENSE), engine-037 (`Query::single` is correct) |
+| DUPLICATE | lean-012→001, lean-014→004, lean-016→005, lean-017→002; engine-028→003, engine-035→011, engine-036→026, engine-038→012, engine-039→007, engine-040→013; sdk-019→001, sdk-020→004 |
 
-- **Wave 0** — the sums + the red gate. `proc-01` lands first and
-  alone (one line; un-reds `scripts/lean.sh` for everyone).
-  Then two parallel workers: ENG-CORE (eng-F01…F07 as one coherent
-  representation change per C2/C3) and LEAN-CORE (lean-H1 + lean-H2
-  per C4).
-- **Wave 1** — per-tree downstream, parallel within and across
-  trees once that tree's wave 0 lands.
-- **Wave 2** — SDKs. Independent of engine internals (C1 pins the
-  boundary); may run in parallel with wave 1. Three workers:
-  CPP (sdk-01,02,03,04,09,10,11,12,13,19,20,21,23 + sdk-08 with the
-  bridge), TS (sdk-05,06,07,16,17,22), MACRO (sdk-14,15). sdk-18
-  (compile-fail suite) closes the wave.
-- **Wave 3** — docs, last (final names exist). One worker.
+Every OPEN file is the unit of work: bug + citations, why, CONTRACT citation, mechanical acceptance, constraints. Doctrine: `audit/00-representation-is-the-essence.md`. Authority: `audit/CONTRACT.md` C1–C8. Locked names: `DerivedBudgetExceeded`, `set_derived_budget`, `DEFAULT_DERIVED_TUPLES`, `DEFAULT_REACH_ROUNDS`. Corpus JSON, `ir.rs::Query`, C ABI shapes frozen (C1). Assertions never weakened.
 
-## Ledger
+## Fanout
 
-| id | title | sev | status | blocked-by | blocks | wave |
-|---|---|---|---|---|---|---|
-| proc-01 | Bridge census token → deleted translate/program.rs; lean gate RED | high | OPEN | — | all (gate) | 0 |
-| lean-H1 | Query sum (cq/reach) | high | OPEN | — | H3 H4 H5 M1 M2 M3 M6 M8 L4 | 0 |
-| lean-H2 | typed LinearRec | high | OPEN | — | H3 H6 M5 L1 L3 | 0 |
-| lean-H3 | rec-identity dual coords (C5 split) | high | OPEN | H1 H2 | — | 1 |
-| lean-H4 | WellFormed bundle death (C5 split) | high | OPEN | H1 M1 | — | 1 |
-| lean-H5 | one rule-list theory | high | OPEN | H1 | L2 | 1 |
-| lean-H6 | orphan arity (C5 split) | high | OPEN | H1 H2 | — | 1 |
-| lean-M1 | interiors fold, no Nat stage | med | OPEN | H1 | H4 | 1 |
-| lean-M2 | one decoder / one atom grammar | med | OPEN | H1 | — | 1 |
-| lean-M3 | allRules + inversions die | med | OPEN | H1 | — | 1 |
-| lean-M4 | iterators leave meaning module | med | OPEN | — | — | 1 |
-| lean-M5 | recDom drops idb coordinate | med | OPEN | H2 | — | 1 |
-| lean-M6 | Option-rec flag-site cleanup | med | OPEN | H1 | — | 1 |
-| lean-M7 | total InteriorEnv | med | REFUSED-BY-CONTRACT(C5) | — | — | — |
-| lean-M8 | edbOnly / hostile-plain prose | med | OPEN | H1 | — | 1 |
-| lean-L1 | odd_not_stratified name | low | OPEN | H2 | — | 1 |
-| lean-L2 | RewriteStep orphan Nat | low | OPEN | H5 | — | 1 |
-| lean-L3 | selfCount guards | low | DUPLICATE(lean-H2) | H2 | — | — |
-| lean-L4 | empty-rules theorem restated | low | OPEN | H1 | — | 1 |
-| lean-W1 | lean prose "program" sweep | low | OPEN | H1 H5 | — | 1 |
-| eng-F01 | PreparedPipeline sum | high | OPEN | — | F08 F09 F12 F14 F15 F23 F24 F26 F29 F31 | 0 |
-| eng-F02 | RecArm type; Recursive variant dies | high | OPEN | — | F07 F25 F26 | 0 |
-| eng-F03 | rec id / derived count stored once (+F28) | high | OPEN | — | F17 | 0 |
-| eng-F04 | witness rec arms nonempty | high | OPEN | — | F22 | 0 |
-| eng-F05 | witness sum + self_occ | high | OPEN | — | F16 F22 | 0 |
-| eng-F06 | sealing slices, no Option holes | high | OPEN | — | — | 0 |
-| eng-F07 | DeltaVariant death | high | OPEN | F02 | F18 F39 | 0 |
-| eng-F08 | one execute/profile protocol | high | OPEN | F01 | F29 F31 | 1 |
-| eng-F09 | run_reach single match | high | OPEN | F01 | — | 1 |
-| eng-F10 | DerivedBind sum; idb_* renames | high | OPEN | F13 | — | 1 |
-| eng-F11 | load-bearing zombie vocab / false invariants | high | OPEN | F01 | — | 1 |
-| eng-F12 | ExecutionStats sum (+F38) | high | OPEN | F01 | F29 | 1 |
-| eng-F13 | one DerivedImages layout | med | OPEN | F01 | F10 F32 F40 | 1 |
-| eng-F14 | rounds_budget on Reach arm | med | OPEN | F01 | — | 1 |
-| eng-F15 | main out of ReachDriver | med | OPEN | F01 | — | 1 |
-| eng-F16 | prepare matches witness sum | med | OPEN | F05 | — | 1 |
-| eng-F17 | bind roles, not edb().is_none() | med | OPEN | F03 | — | 1 |
-| eng-F18 | selectivity floors on occurrence | med | OPEN | F07 | — | 1 |
-| eng-F19 | naive DerivedWorld | med | OPEN | — | — | 1 |
-| eng-F20 | querygen shape sum | med | OPEN | — | — | 1 |
-| eng-F21 | translator one path | med | OPEN | — | — | 1 |
-| eng-F22 | one rec parser (3 walks → 1) | med | OPEN | F04 F05 | — | 1 |
-| eng-F23 | Empty is not a variant | med | OPEN | F01 | — | 1 |
-| eng-F24 | one ray-probe loop | med | OPEN | F01 | — | 1 |
-| eng-F25 | accessor forest deletes | med | OPEN | F02 | — | 1 |
-| eng-F26 | rule enum per sink discipline | med | OPEN | F01 F02 | F36 | 1 |
-| eng-F27 | nonempty witness lists | med | OPEN | — | — | 1 |
-| eng-F28 | derived-count restated | med | DUPLICATE(eng-F03) | F03 | — | — |
-| eng-F29 | ReportBody sum | med | OPEN | F01 F08 F12 | — | 1 |
-| eng-F30 | dead normalize() + false claim | med | OPEN | — | — | 1 |
-| eng-F31 | key-probe lane parsed once | med | OPEN | F01 F08 | — | 1 |
-| eng-F32 | occ_images dense, no Options | med | OPEN | F13 | — | 1 |
-| eng-F33 | render/display vocab | low | OPEN | F03 F11 | docs | 1 |
-| eng-F34 | ground_main rename | low | OPEN | — | — | 1 |
-| eng-F35 | engine prose sweep (wave-2 expanded) | low | OPEN | F01 F07 F10 F11 F34 F41 | — | 1 |
-| eng-F36 | either-sink marker deletion | low | OPEN | F26 | — | 1 |
-| eng-F37 | Query::single recorded non-violation | low | DUPLICATE(eng-F01, eng-F08) | — | — | — |
-| eng-F38 | stats/JSON drift | low | DUPLICATE(eng-F12) | F12 | — | — |
-| eng-F39 | prepare_rec_arm entry | low | OPEN | F07 | — | 1 |
-| eng-F40 | PingPong layout | low | OPEN | F13 | — | 1 |
-| eng-F41 | Predicate → Signature rename (wave-2) | low | OPEN | F05 | docs-F02 docs-F17 | 1 |
-| sdk-01 | C++ phase machine | high | OPEN | — | 02 18 19 | 2 |
-| sdk-02 | one C++ IR | high | OPEN | 01 | — | 2 |
-| sdk-03 | wire_atom sum | high | OPEN | — | — | 2 |
-| sdk-04 | find_form Measure | high | OPEN | — | 08 20 | 2 |
-| sdk-05 | TS phase in the type | high | OPEN | — | 18 | 2 |
-| sdk-06 | branded ParsedQuery / find sum | high | OPEN | — | — | 2 |
-| sdk-07 | collectRec one assignment | high | OPEN | — | — | 2 |
-| sdk-08 | ABI has_over death + marshal parse | high | OPEN | 04 | — | 2 |
-| sdk-09 | wildcard = absence | med | OPEN | — | — | 2 |
-| sdk-10 | interior polarity sum | med | OPEN | — | — | 2 |
-| sdk-11 | variant builder IR | med | OPEN | — | — | 2 |
-| sdk-12 | sugar caps die | med | OPEN | — | — | 2 |
-| sdk-13 | condition trees in dialect | med | OPEN | — | — | 2 |
-| sdk-14 | ParsedRule sum | med | OPEN | — | — | 2 |
-| sdk-15 | param style sum | med | OPEN | — | — | 2 |
-| sdk-16 | isQueryValue honest | med | OPEN | — | — | 2 |
-| sdk-17 | CmpData op sum | med | OPEN | — | — | 2 |
-| sdk-18 | compile-fail suite closes wave | med | OPEN | 01 04 05 13 | — | 2 |
-| sdk-19 | derived_tables if constexpr | med | OPEN | 01 | — | 2 |
-| sdk-20 | dummy op filler dies | low | OPEN | 04 | — | 2 |
-| sdk-21 | array<T,0> | low | OPEN | — | — | 2 |
-| sdk-22 | TS prose sweep (wave-2) | low | OPEN | — | — | 2 |
-| sdk-23 | C++ prose sweep (wave-2) | low | OPEN | — | — | 2 |
-| docs-F01 | multi-rule programs → queries | high | OPEN | — | — | 3 |
-| docs-F02 | main ≠ predicate | high | OPEN | eng-F41 | — | 3 |
-| docs-F03 | rec ≠ SCC | high | OPEN | — | — | 3 |
-| docs-F04 | today's-query embedding (IR) | med | OPEN | — | — | 3 |
-| docs-F05 | deleted cap names | med | OPEN | — | — | 3 |
-| docs-F06 | Tarjan denial | med | OPEN | lean-H2 | — | 3 |
-| docs-F07 | fuel hyphen ghost | med | OPEN | — | — | 3 |
-| docs-F08 | program renderer denial | med | OPEN | — | — | 3 |
-| docs-F09 | former-sneak history | med | OPEN | — | — | 3 |
-| docs-F10 | one sink per list | med | OPEN | — | — | 3 |
-| docs-F11 | execution chapter program ×8 | high | OPEN | — | — | 3 |
-| docs-F12 | CQuery arm | high | OPEN | lean-M2 | — | 3 |
-| docs-F13 | empty-union program | high | OPEN | — | — | 3 |
-| docs-F14 | cte-list residue | low | OPEN | — | — | 3 |
-| docs-F15 | today's-query (API) | med | OPEN | — | — | 3 |
-| docs-F16 | data-modifying CTE (API) | med | OPEN | — | — | 3 |
-| docs-F17 | predicate() buffer authority | high | OPEN | eng-F41 | — | 3 |
-| docs-F18 | ForeignPreparedQuery horizon | med | OPEN | — | — | 3 |
-| docs-F19 | cpp-lowering caps/today's-query | med | OPEN | — | — | 3 |
-| docs-F20 | output-last denial | high | OPEN | — | — | 3 |
-| docs-F21 | OPEN items in SCC coords | med | OPEN | — | — | 3 |
-| docs-F22 | cookbook CTE import | med | OPEN | — | — | 3 |
-| docs-F23 | cookbook Program relation (+ts/cpp fixtures) | low | OPEN | — | — | 3 |
-| docs-F24 | stale AggregateInteriorPredicate | high | OPEN | — | — | 3 |
-| docs-F25 | zero stratification impact | high | OPEN | lean-H2 | — | 3 |
-| docs-F26 | idb re-grounding tax | high | OPEN | — | — | 3 |
-| docs-F27 | conformance two types | high | OPEN | lean-M2 | — | 3 |
-| docs-F28 | never-idb negation | med | OPEN | — | — | 3 |
+**Wave 0 — one line, first.** `lean-019` un-reds `scripts/lean.sh`. Every later issue that lists that script as green waits on it.
 
-## Definition of green (every fix commit)
+**Wave 1 — foundations (parallel; one fixer per cluster).**
 
-`bash scripts/check.sh` AND `bash scripts/lean.sh` (after proc-01
-un-reds it), plus the tree-local suites each issue names. Assertions
-are never weakened; corpus JSON never regenerates; locked names
-(`DerivedBudgetExceeded`, `set_derived_budget`,
-`DEFAULT_DERIVED_TUPLES`, `DEFAULT_REACH_ROUNDS`) never move.
+| Cluster | OPEN issues | Notes |
+|---|---|---|
+| Lean sum | lean-001 + lean-002 | one commit |
+| Engine pipeline | engine-001 + engine-002 + engine-015 + engine-023 | one commit |
+| Engine witness | engine-005 + engine-006 | same files; coordinate |
+| Engine bench | engine-019, engine-020, engine-021, engine-030 | four independent |
+| Engine rename | engine-034 | `ground_program` → `ground_main` |
+| C++ phase | sdk-001 + sdk-002 | one commit; lowering `has_rec` included |
+| C++ independents | sdk-003, sdk-004, sdk-010, sdk-021 | 004 owns Measure + dummy Var op |
+| TS phase | sdk-005; sdk-007, sdk-017 | 007 same file as 005 — coordinate |
+| Macros | sdk-014, sdk-015 | one fixer may take both |
+| Docs, no code deps | docs-001, 003–011, 013–016, 018–026, 028, 029 | group by file: 20-query-ir, 40-execution, 60-validation, 70-api, 75-cpp-lowering, README, cookbook, feature-register, conformance README |
+
+**Wave 2 — after that tree's wave-1 cluster lands.**
+
+- Lean: lean-003, 004, 005, 006, 007, 008, 009, 010, 011, 015, 018; lean-020 last (comment sweep).
+- Engine on witness: engine-003, 004, 016, 022, 027, 041.
+- Engine on pipeline: engine-007, 008, 009, 011, 012, 013, 014, 018, 024, 025, 026, 031.
+- Engine on 013: engine-010, 017, 032.
+- Introspection (one `INTROSPECTION_VERSION` bump): engine-029 + engine-033 with engine-012.
+- SDK: sdk-006 then sdk-016; sdk-008 with sdk-004 (ABI `has_over`); sdk-009, 011, 012, 013 after 001/002; sdk-022 after 005.
+
+**Wave 3 — closers.**
+
+- sdk-018 — compile-fail suite after 001/004/005/012/013.
+- docs-002 + docs-017 after engine-041 (`Signature` / `signature()`).
+- docs-012 + docs-027 after lean-008 (one decoder).
+
+Cross-tree edges: engine-041 → docs-002/017; lean-008 → docs-012/027; sdk-008 ↔ sdk-004 (one ABI commit). Same-file issues: one fixer or strict order.
+
+## All issues
+
+### lean (20)
+
+| Id | Title | Sev | Status | Depends on |
+|---|---|---|---|---|
+| lean-001 | `Query` product with `Option Rec` → inductive sum | high | OPEN | lean-002 (one change) |
+| lean-002 | untyped `Rec` → typed `LinearRec` | high | OPEN | none (with lean-001) |
+| lean-003 | dual rec-identity coordinates | high | OPEN (scoped, §C5) | lean-001, 002 |
+| lean-004 | unspent `WellFormed` bundle | high | OPEN (scoped, §C5) | lean-001 |
+| lean-005 | two denotations | high | OPEN | lean-001 |
+| lean-006 | orphan arity fields | high | OPEN (scoped, §C5) | lean-001, 002 |
+| lean-007 | staged interior eval → fold | med | OPEN | lean-001 (file conflict) |
+| lean-008 | two decoders / `CQuery` | med | OPEN | lean-001, 002 |
+| lean-009 | `allRules` flatten | med | OPEN | lean-001 |
+| lean-010 | naive iterators in the meaning | med | OPEN | lean-002 |
+| lean-011 | `recDom` / idb vocabulary | med | OPEN | lean-002 |
+| lean-012 | Option-rec flag | med | DUPLICATE(lean-001) | — |
+| lean-013 | total InteriorEnv | med | WONTFIX (§C5) | — |
+| lean-014 | `edbOnly` flag | med | DUPLICATE(lean-004) | — |
+| lean-015 | `odd_not_stratified` name | low | OPEN | lean-002 |
+| lean-016 | RewriteStep dummy arity | low | DUPLICATE(lean-005) | — |
+| lean-017 | selfCount unpack | low | DUPLICATE(lean-002) | — |
+| lean-018 | empty-rules rec-answer surprise | low | OPEN | lean-001 |
+| lean-019 | Bridge cites deleted `translate/program.rs` | high | OPEN | **first** |
+| lean-020 | "rec SCC" in Lean comments | low | OPEN | after 001/002 |
+
+### engine (41)
+
+| Id | Title | Sev | Status | Depends on |
+|---|---|---|---|---|
+| engine-001 | interiors beside `PreparedBody` → pipeline sum | high | OPEN | none (w/ 002, 015, 023) |
+| engine-002 | `PreparedRule::Recursive` → `RecArm` | high | OPEN | 001 (co-lands) |
+| engine-003 | rec id `len()` pun; store once | high | OPEN (scoped, §C1/C2) | 005, 016 |
+| engine-004 | empty rec arms on the witness | high | OPEN | 005 |
+| engine-005 | witness sum + `self_occ` | high | OPEN | none |
+| engine-006 | `Option<Predicate>` sealing holes | high | OPEN | none (coord. w/ 005) |
+| engine-007 | `DeltaVariant` → `prepare_rec_arm` | high | OPEN | 002 |
+| engine-008 | execute/profile fork | high | OPEN | 001 |
+| engine-009 | `run_reach` re-matches | high | OPEN | 001 |
+| engine-010 | rec-bind Option soup | high | OPEN | 013, 001 |
+| engine-011 | zombie Program vocab + false invariant | high | OPEN | 001, 012 |
+| engine-012 | `ExecutionStats` product | high | OPEN | 001 |
+| engine-013 | one `DerivedImages` + PingPong | med | OPEN | 001 |
+| engine-014 | `rounds_budget` on Reach only | med | OPEN | 001 |
+| engine-015 | main not in the driver | med | OPEN | 001 (co-lands) |
+| engine-016 | prepare `is_some`/`expect` | med | OPEN | 005 |
+| engine-017 | `edb().is_none()` bind | med | OPEN (scoped, §C1) | 010, 018 |
+| engine-018 | planning-floor alias | med | OPEN | 007 |
+| engine-019 | naive oracle flags | med | OPEN | none |
+| engine-020 | querygen side entry | med | OPEN | none |
+| engine-021 | translator two-flag gate | med | OPEN | none |
+| engine-022 | rec parser three walks | med | OPEN | 005, 004 |
+| engine-023 | `Empty` not a variant | med | OPEN | 001 (co-lands) |
+| engine-024 | dual ray-probe loops | med | OPEN | 001, 013 |
+| engine-025 | accessor forest | med | OPEN | 001, 002 |
+| engine-026 | rule enum per sink | med | OPEN | 002 |
+| engine-027 | nonempty witness lists | med | OPEN | 005, 004 |
+| engine-028 | derived-count restated | med | DUPLICATE(engine-003) | — |
+| engine-029 | `unit_labels` as mode bit | med | OPEN | 012, 001 |
+| engine-030 | dead `normalize()` | med | OPEN | none |
+| engine-031 | key-probe rematch → `Ok(())` | med | OPEN | 001, 008 |
+| engine-032 | `occ_images` Option slots | med | OPEN | 013, 010 |
+| engine-033 | `predicate p{id}` strings | low | OPEN | 012/029 (one bump) |
+| engine-034 | `ground_program` → `ground_main` | low | OPEN | none |
+| engine-035 | "program" in tests | low | DUPLICATE(engine-011) | — |
+| engine-036 | `_either_sink_marker` | low | DUPLICATE(engine-026) | — |
+| engine-037 | `Query::single` is correct | low | WONTFIX | — |
+| engine-038 | stats/JSON drift | low | DUPLICATE(engine-012) | — |
+| engine-039 | `delta: Option<OccId>` | low | DUPLICATE(engine-007) | — |
+| engine-040 | ping-pong "Size 1" | low | DUPLICATE(engine-013) | — |
+| engine-041 | `Predicate` → `Signature` | low | OPEN | 005/006 |
+
+### sdk (22)
+
+| Id | Title | Sev | Status | Depends on |
+|---|---|---|---|---|
+| sdk-001 | C++ `query_value` phase machine | high | OPEN | none (w/ 002) |
+| sdk-002 | one C++ IR | high | OPEN | 001 (co-lands) |
+| sdk-003 | `wire_atom` bool + both ids | high | OPEN | none |
+| sdk-004 | `find_form` Measure (+ dummy Var op) | high | OPEN | none |
+| sdk-005 | TS `QueryStart` phase | high | OPEN | none |
+| sdk-006 | branded `ParsedQuery` | high | OPEN | 005 |
+| sdk-007 | `collectRec` casts | high | OPEN | none (file w/ 005) |
+| sdk-008 | ABI `has_over` + marshal parse | high | OPEN | coord. 004, 006 |
+| sdk-009 | wildcard as `absent` | med | OPEN | 011 |
+| sdk-010 | interior polarity bool | med | OPEN | none |
+| sdk-011 | tag-plus-all-payloads IR | med | OPEN | 001/002 |
+| sdk-012 | sugar caps | med | OPEN | 001 |
+| sdk-013 | condition trees | med | OPEN | 011 |
+| sdk-014 | `ParsedRule` sum | med | OPEN | none |
+| sdk-015 | param style two bools | med | OPEN | none |
+| sdk-016 | `isQueryValue` forgets | med | OPEN | 006 |
+| sdk-017 | `CmpData.mask` | med | OPEN | none |
+| sdk-018 | compile-fail suite | med | OPEN | 001/004/005/012/013 — last |
+| sdk-019 | `derived_tables` rec flag | med | DUPLICATE(sdk-001) | — |
+| sdk-020 | dummy Var `op` | low | DUPLICATE(sdk-004) | — |
+| sdk-021 | empty-interiors dummy array | low | OPEN | none |
+| sdk-022 | SDK comment vocabulary | low | OPEN | after 005 |
+
+### docs (29)
+
+| Id | Title | Sev | Status | Depends on |
+|---|---|---|---|---|
+| docs-001 | "multi-rule programs" (20-query-ir) | high | OPEN | none |
+| docs-002 | main as anonymous predicate | high | OPEN | engine-041 |
+| docs-003 | rec as SCC | high | OPEN | none |
+| docs-004 | "today's query" embedding (IR) | med | OPEN | none |
+| docs-005 | deleted cap names (IR) | med | OPEN | none |
+| docs-006 | "not a Tarjan condensation" | med | OPEN | none |
+| docs-007 | fuel hyphen ghost | med | OPEN | none |
+| docs-008 | "no program renderer" | med | OPEN | none |
+| docs-009 | "former named-head sneak" | med | OPEN | none |
+| docs-010 | one-sink contradiction | med | OPEN | none |
+| docs-011 | "program" in 40-execution | high | OPEN | none |
+| docs-012 | "CQuery arm" | high | OPEN | lean-008 |
+| docs-013 | "program whose every disjunct vanishes" | high | OPEN | none |
+| docs-014 | "cte-list" emission | low | OPEN | none |
+| docs-015 | "today's query" on prepare | med | OPEN | none |
+| docs-016 | "data-modifying CTEs" (API) | med | OPEN | none |
+| docs-017 | `predicate()` buffer authority | high | OPEN | engine-041 |
+| docs-018 | ForeignPreparedQuery horizon | med | OPEN | none |
+| docs-019 | cpp-lowering caps / today's query | med | OPEN | none |
+| docs-020 | output-last denial | high | OPEN | none |
+| docs-021 | README OPEN items in SCC coords | med | OPEN | none |
+| docs-022 | cookbook CTE | med | OPEN | none |
+| docs-023 | cookbook `Program` relation | low | OPEN | none |
+| docs-024 | `AggregateInteriorPredicate` | high | OPEN | none |
+| docs-025 | "zero stratification impact" | high | OPEN | none |
+| docs-026 | "idb re-grounding tax" | high | OPEN | none |
+| docs-027 | conformance two types | high | OPEN | lean-008 |
+| docs-028 | "never idb" | med | OPEN | none |
+| docs-029 | cookbook "not a second SCC" | low | OPEN | none |
+
+## Green (every OPEN fix commit)
+
+`bash scripts/check.sh` and `bash scripts/lean.sh` (after lean-019), plus the tree-local suites the issue names. Corpus unchanged. Locked names unchanged.

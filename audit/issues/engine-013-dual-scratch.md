@@ -4,7 +4,7 @@
 - **Tree:** engine
 - **Status:** OPEN
 - **Source:** audit/engine.md F13
-- **Depends on:** engine-001 (scratch lives on the pipeline arms); engine-010/032/040 build on this layout
+- **Depends on:** engine-001 (scratch lives on the pipeline arms); engine-010/032 build on this layout
 
 ## The bug
 
@@ -39,7 +39,7 @@ Dual layout, dual `None` (Insight 2 + Hoare's null): the same protocol (fill a t
 Per `audit/CONTRACT.md §C3` ("Binds/scratch"):
 
 - One `DerivedImages` owning, per derived id, a working `TransientImage` and — after that table closes — a published `Arc<RelationImage>` (publication modeled so a published image is `Arc`, not `Option<Arc>`: e.g. the publish step returns/records the `Arc` and binds read a slice of published tables only up to the current phase; a `Vec<Arc>` grown in seal order is the natural shape — interior 0..n, then rec).
-- Rec ping-pong is a `PingPong { a: TransientImage, b: TransientImage, flip: bool }` (or two named fields) of the same working/published pair — engine-040's comment fix rides this.
+- Rec ping-pong is a `PingPong { a: TransientImage, b: TransientImage, flip: bool }` (or two named fields) of the same working/published pair. The "Size 1" comment on a `[; 2]` array dies with `ReachScratch` (absorbs engine.md F40).
 - `round_delta`/`round_acc` become LOCALS in `run_reach` (they are consumed within the round), not persistent fields.
 - `watermark`, `acc_filled` stay (essential semi-naive bookkeeping) — attach them to the ping-pong.
 

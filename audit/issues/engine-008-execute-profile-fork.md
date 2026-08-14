@@ -4,7 +4,7 @@
 - **Tree:** engine
 - **Status:** OPEN
 - **Source:** audit/engine.md F8
-- **Depends on:** engine-001 (the pipeline sum is the shared shape), engine-031 (fast lane parsed once)
+- **Depends on:** engine-001 (the pipeline sum is the shared shape). engine-031 is the key-probe rematch that this protocol unification makes deletable — land 031 after, not as a cycle.
 
 ## The bug
 

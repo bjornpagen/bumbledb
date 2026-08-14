@@ -4,7 +4,7 @@
 - **Tree:** engine
 - **Status:** OPEN
 - **Source:** audit/engine.md F26
-- **Depends on:** engine-002 (the two-variant rule enum), engine-036 (the dead import falls out)
+- **Depends on:** engine-002 (the two-variant rule enum)
 
 ## The bug
 
@@ -30,10 +30,10 @@ Per `audit/CONTRACT.md §C3`: with engine-002, interior/base lists are `Vec<Prep
 
 ## Acceptance criteria
 
-- [ ] Gone: `rg -n 'unreachable!\("handled above"\)' crates/bumbledb/src/api/prepared/reach.rs` → no matches; no Recursive arm anywhere in reach.rs (covered by engine-002's grep).
+- [ ] Gone: `rg -n 'unreachable!\("handled above"\)' crates/bumbledb/src/api/prepared/reach.rs` → no matches; no Recursive arm anywhere in reach.rs (covered by engine-002's grep); `rg -n '_either_sink_marker|use .*EitherSink' crates/bumbledb/src/api/prepared/reach.rs` → no matches.
 - [ ] Unchanged tests: interior/rec answers byte-identical across the suites; aggregate-in-main behavior untouched.
 - [ ] Green: `PATH="$HOME/.cargo/bin:$PATH" cargo test -p bumbledb`; `./scripts/check.sh`.
 
 ## Constraints
 
-- Projection-only derived sinks are semantics (folds through cycles refused) — unchanged. Rides engine-002.
+- Projection-only derived sinks are semantics (folds through cycles refused) — unchanged. Rides engine-002. Absorbs engine.md F36 (`_either_sink_marker` and the unused `EitherSink` import).
