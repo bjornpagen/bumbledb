@@ -231,7 +231,7 @@ fn grounding_shapes_eliminate_and_near_misses_refuse() {
         match variant {
             GroundVariant::Walk => {
                 assert_eq!(
-                    stats.rules[0].eliminated.len(),
+                    stats.rules()[0].eliminated.len(),
                     1,
                     "walk {i} must eliminate"
                 );
@@ -244,21 +244,21 @@ fn grounding_shapes_eliminate_and_near_misses_refuse() {
                     "ImportBatch"
                 };
                 assert_eq!(
-                    stats.rules[0].eliminated.len(),
+                    stats.rules()[0].eliminated.len(),
                     1,
                     "DU walk {i} must eliminate"
                 );
                 assert_eq!(
-                    stats.rules[0].eliminated[0].relation, fallen,
+                    stats.rules()[0].eliminated[0].relation, fallen,
                     "DU walk {i} fells the wrong side"
                 );
                 eliminated += 1;
             }
             GroundVariant::WalkExtraField | GroundVariant::DuMissingPhi => {
                 assert!(
-                    stats.rules[0].eliminated.is_empty(),
+                    stats.rules()[0].eliminated.is_empty(),
                     "near-miss {i} must refuse: {:?}",
-                    stats.rules[0].eliminated
+                    stats.rules()[0].eliminated
                 );
                 refused += 1;
             }

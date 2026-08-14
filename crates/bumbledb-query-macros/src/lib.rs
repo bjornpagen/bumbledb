@@ -339,6 +339,7 @@ enum HeadTerm {
 }
 
 /// How a parsed rule was introduced: a keyword, or a bare main rule.
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum RuleKind {
     Bare,
     Interior,
@@ -1056,6 +1057,7 @@ fn validate_pred_name(name: &Name) -> Parse<()> {
         || name.text == "or"
         || name.text == "interior"
         || name.text == "recursive"
+        || name.text == "rec"
     {
         return fail(
             name.span,
@@ -1087,9 +1089,48 @@ fn validate_pred_name(name: &Name) -> Parse<()> {
     Ok(())
 }
 
+/// The derived-table name after `interior` / `recursive` / `rec`.
+/// Render's prefixes (`interior {id}` / `rec`) are the nameless spellings:
+/// an integer after `interior`, or the head group immediately after `rec`.
+fn parse_derived_name(tokens: &mut Tokens, kind: RuleKind, kw_span: Span) -> Parse<Name> {
+    match tokens.peek() {
+        Some(TokenTree::Ident(_)) => {
+            let pred = expect_ident(tokens, "a predicate name")?;
+            validate_pred_name(&pred)?;
+            Ok(pred)
+        }
+        Some(TokenTree::Literal(lit)) if kind == RuleKind::Interior => {
+            let text = lit.to_string();
+            if text.chars().all(|c| c.is_ascii_digit()) {
+                let span = lit.span();
+                tokens.next();
+                Ok(Name {
+                    text: format!("p{text}"),
+                    span,
+                })
+            } else {
+                fail(
+                    lit.span(),
+                    "query!: expected an interior id after `interior`",
+                )
+            }
+        }
+        Some(TokenTree::Group(_)) if kind == RuleKind::Recursive => Ok(Name {
+            text: "rec".into(),
+            span: kw_span,
+        }),
+        Some(other) => fail(
+            other.span(),
+            "query!: expected a predicate name, an interior id, or a rec head",
+        ),
+        None => fail(kw_span, "query!: expected a predicate name or a rec head"),
+    }
+}
+
 /// Parses one rule: `interior pred (head) | body ;`, `recursive pred
-/// (head) | body ;`, or a bare `(head) | body ;`. A named head without
-/// the keyword is the former named-head sneak — a spanned compile error.
+/// (head) | body ;`, `rec (head) | body ;`, or a bare `(head) | body ;`.
+/// A named head without the keyword is the former named-head sneak — a
+/// spanned compile error.
 fn parse_rule(tokens: &mut Tokens) -> Parse<ParsedRule> {
     let (kind, name) = match tokens.peek() {
         Some(TokenTree::Ident(_)) => {
@@ -1116,14 +1157,13 @@ fn parse_rule(tokens: &mut Tokens) -> Parse<ParsedRule> {
                         ),
                     );
                 }
-                "interior" | "recursive" => {
+                "interior" | "recursive" | "rec" => {
                     let kind = if ident.text == "interior" {
                         RuleKind::Interior
                     } else {
                         RuleKind::Recursive
                     };
-                    let pred = expect_ident(tokens, "a predicate name")?;
-                    validate_pred_name(&pred)?;
+                    let pred = parse_derived_name(tokens, kind, ident.span)?;
                     (kind, Some(pred))
                 }
                 _ => {
@@ -1949,7 +1989,12 @@ fn classify(
                         ),
                     );
                 }
-                let is_rec_arm = names_pred(&rule, &name.text);
+                let self_atom = if name.text == "rec" {
+                    format!("p{}", interiors.len())
+                } else {
+                    name.text.clone()
+                };
+                let is_rec_arm = names_pred(&rule, &self_atom);
                 match &mut rec {
                     None => {
                         let mut group = RecGroup {
@@ -2049,7 +2094,11 @@ fn expand(input: TokenStream) -> Parse<String> {
         .map(|group| group.name.text.clone())
         .collect();
     if let Some(group) = &rec {
-        derived.push(group.name.text.clone());
+        if group.name.text == "rec" {
+            derived.push(format!("p{}", interiors.len()));
+        } else {
+            derived.push(group.name.text.clone());
+        }
     }
     let mut emitter = Emitter {
         theory: &theory,

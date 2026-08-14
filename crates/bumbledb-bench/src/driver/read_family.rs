@@ -13,7 +13,7 @@ fn exec_digest(stats: &bumbledb::ExecutionStats) -> report::ExecDigest {
     use std::fmt::Write as _;
     let mut worst = 1.0_f64;
     let mut covers = String::new();
-    for (index, node) in stats.rules.iter().flat_map(|r| &r.nodes).enumerate() {
+    for (index, node) in stats.rules().iter().flat_map(|r| &r.nodes).enumerate() {
         #[expect(
             clippy::cast_precision_loss,
             reason = "reporting accepts lossy integer-to-float conversion"
@@ -40,7 +40,7 @@ fn exec_digest(stats: &bumbledb::ExecutionStats) -> report::ExecDigest {
         worst_estimate_factor: worst,
         covers,
         emitted: stats.emits,
-        absorbed: stats.rules.iter().map(|rule| rule.absorbed).sum(),
+        absorbed: stats.rules().iter().map(|rule| rule.absorbed).sum(),
     }
 }
 

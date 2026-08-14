@@ -131,7 +131,7 @@ pub use api::prepared::{OccurrenceDrift, Staleness};
 #[doc(hidden)]
 pub use api::stats::{
     CoverStats, DeadRule, DisjointRules, EliminatedOccurrence, ExecutionStats, FoldedOccurrence,
-    INTROSPECTION_VERSION, KeyProbeStats, NodeStats, PinnedRows, RuleStats,
+    INTROSPECTION_VERSION, KeyProbeStats, NodeStats, PinnedRows, RuleStats, StatsBody,
 };
 pub use error::{Direction, Error, OverflowKind, Result, Violation, Violations};
 pub use interval::Interval;

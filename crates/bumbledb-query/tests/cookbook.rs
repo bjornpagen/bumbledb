@@ -564,8 +564,8 @@ recipe!(r24, Closure, {
     native: { recursive reach(c) | Node(id: c), c == ?root;
               recursive reach(c) | Parent(child: c, parent: m), reach(m);
               (c) | reach(c); }
-        => "recursive p0(v0) | Node(id: v0), v0 == ?0;\n\
-            recursive p0(v0) | Parent(child: v0, parent: v1), p0(v1);\n\
+        => "rec(v0) | Node(id: v0), v0 == ?0;\n\
+            rec(v0) | Parent(child: v0, parent: v1), p0(v1);\n\
             (v0) | p0(v0);";
 });
 
@@ -588,8 +588,8 @@ recipe!(r25, Accounts, {
     native: { recursive sub(a) | Account(id: a), a == ?root;
               recursive sub(a) | AccountParent(child: a, parent: p), sub(p);
               (total: Sum(minor)) | Posting(id, account: a, minor), sub(a); }
-        => "recursive p0(v0) | Account(id: v0), v0 == ?0;\n\
-            recursive p0(v0) | AccountParent(child: v0, parent: v1), p0(v1);\n\
+        => "rec(v0) | Account(id: v0), v0 == ?0;\n\
+            rec(v0) | AccountParent(child: v0, parent: v1), p0(v1);\n\
             (Sum(v2)) | Posting(id: v0, account: v1, minor: v2), p0(v1);";
     children: { (c) | AccountParent(child: c, parent in ?frontier); }
         => "(v0) | AccountParent(child: v0, parent in ?0);";

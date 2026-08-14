@@ -136,7 +136,9 @@ impl<S> PreparedQuery<'_, S> {
     ) -> Result<bool> {
         let derived_count = match &self.pipeline {
             PreparedPipeline::Cq { interiors, .. } => interiors.len(),
-            PreparedPipeline::Reach { interiors, .. } => interiors.len() + 1,
+            PreparedPipeline::Reach { derived_count, .. } => {
+                usize::try_from(*derived_count).expect("derived_count stored at validate")
+            }
         };
         self.derived.begin(derived_count);
         let fast_eligible = self.unresolved_literals == 0 && self.params.is_empty();
@@ -211,11 +213,11 @@ impl<S> PreparedQuery<'_, S> {
         let rec_ran = match &mut self.pipeline {
             PreparedPipeline::Reach {
                 driver,
-                interiors,
+                rec_id,
                 rounds_budget,
                 ..
             } => {
-                let rec_id = interiors.len();
+                let rec_id = usize::try_from(rec_id.0).expect("rec_id stored at validate");
                 run_reach(
                     driver,
                     rec_id,

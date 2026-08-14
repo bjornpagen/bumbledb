@@ -28,12 +28,12 @@ use bumbledb::{
     AggOp, AllenMask, AnswerValue, Answers, Atom, AtomSource, CmpOp, Comparison, ConditionTree,
     ExecutionStats, FieldId, FindTerm, HeadOp, HeadTerm, Interior, InteriorId, Interval, Manifest,
     ParamId, Query, Rec, RelationId, RenderedViolation, Rule, SchemaDescriptor, SchemaSpec,
-    StatementId, StatementKind, Term, Value, VarId,
+    StatementId, StatementKind, StatsBody, Term, Value, VarId,
 };
 use napi::bindgen_prelude::{
-    Array, BigInt, Env, FromNapiValue, Object, ToNapiValue, Uint8Array, i64n,
+    i64n, Array, BigInt, Env, FromNapiValue, Object, ToNapiValue, Uint8Array,
 };
-use napi::{Unknown, ValueType as JsType, sys};
+use napi::{sys, Unknown, ValueType as JsType};
 
 use crate::tags;
 
@@ -1307,31 +1307,25 @@ impl ToNapiValue for ExplainWire {
             dead.push(obj);
         }
         root.set("dead", dead)?;
-        let mut rules = Vec::with_capacity(stats.rules.len());
-        for rule in stats.rules {
+        let (rule_stats, interior_stats, reach_stats) = match stats.body {
+            StatsBody::Cq { rules, interiors } => (rules, interiors, None),
+            StatsBody::Reach { interiors, reach } => (Vec::new(), interiors, Some(reach)),
+        };
+        let mut rules = Vec::with_capacity(rule_stats.len());
+        for rule in rule_stats {
             rules.push(explain_rule_out(&env_handle, rule)?);
         }
         root.set("rules", rules)?;
-        let mut interiors = Vec::with_capacity(stats.interiors.len());
-        for interior in stats.interiors {
+        let mut interiors = Vec::with_capacity(interior_stats.len());
+        for interior in interior_stats {
             let mut interior_obj = Object::new(&env_handle)?;
             interior_obj.set("interior", interior.interior)?;
-            let mut interior_rules = Vec::with_capacity(interior.rules.len());
-            for rule in interior.rules {
-                interior_rules.push(explain_rule_out(&env_handle, rule)?);
-            }
-            interior_obj.set("rules", interior_rules)?;
             interior_obj.set("emits", interior.emits)?;
             interiors.push(interior_obj);
         }
         root.set("interiors", interiors)?;
-        if let Some(reach) = stats.reach {
+        if let Some(reach) = reach_stats {
             let mut reach_obj = Object::new(&env_handle)?;
-            let mut reach_rules = Vec::with_capacity(reach.rules.len());
-            for rule in reach.rules {
-                reach_rules.push(explain_rule_out(&env_handle, rule)?);
-            }
-            reach_obj.set("rules", reach_rules)?;
             let mut rounds = Vec::with_capacity(reach.rounds.len());
             for round in reach.rounds {
                 let mut round_obj = Object::new(&env_handle)?;

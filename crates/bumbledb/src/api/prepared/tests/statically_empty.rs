@@ -162,7 +162,7 @@ fn a_dead_rule_beside_a_live_one_runs_the_live_one_only() {
 
     // The death record names the killing condition — introspection's line.
     let (_, stats) = prepared.profile(&txn, &cache, &[]).expect("profile");
-    assert_eq!(stats.rules.len(), 1, "stats cover the live rule only");
+    assert_eq!(stats.rules().len(), 1, "stats cover the live rule only");
     assert_eq!(stats.dead.len(), 1);
     assert_eq!(stats.dead[0].rule, 0);
     assert_eq!(stats.dead[0].rendered, "Event: score > 5 ∧ score < 3");

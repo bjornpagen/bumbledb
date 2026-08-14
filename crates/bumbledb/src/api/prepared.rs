@@ -321,6 +321,8 @@ pub(crate) enum PreparedPipeline {
         driver: Box<reach::ReachDriver>,
         main: Vec<PreparedRule>,
         rounds_budget: u32,
+        rec_id: crate::ir::InteriorId,
+        derived_count: u32,
     },
 }
 

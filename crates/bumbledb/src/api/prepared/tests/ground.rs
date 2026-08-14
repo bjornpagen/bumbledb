@@ -300,7 +300,7 @@ fn the_du_fixture_introspection_pins_the_eliminated_line() {
 
     let (_, stats) = prepared.profile(&txn, &cache, &[]).expect("profile");
     assert_eq!(
-        stats.rules[0].eliminated,
+        stats.rules()[0].eliminated,
         vec![crate::api::stats::EliminatedOccurrence {
             occurrence: 1,
             relation: "Grading".into(),

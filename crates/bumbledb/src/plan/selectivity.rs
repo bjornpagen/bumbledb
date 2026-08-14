@@ -976,7 +976,7 @@ mod tests {
                 FindTerm::Var(VarId(2)),
             ],
         );
-        let full_pairs: Vec<_> = full_stats.rules[0]
+        let full_pairs: Vec<_> = full_stats.rules()[0]
             .nodes
             .iter()
             .map(|node| (node.estimate, node.actual))
@@ -988,7 +988,7 @@ mod tests {
         );
 
         let narrow_stats = cyclic_profile(&txn, &cache, &schema, vec![FindTerm::Var(VarId(0))]);
-        let narrow_pairs: Vec<_> = narrow_stats.rules[0]
+        let narrow_pairs: Vec<_> = narrow_stats.rules()[0]
             .nodes
             .iter()
             .map(|node| (node.estimate, node.actual))
@@ -999,7 +999,7 @@ mod tests {
             "P3 report population: D2 emits one set witness per root origin, so final est/actual is not a count-accuracy bound"
         );
         assert_eq!(
-            narrow_stats.rules[0].absorbed, 21,
+            narrow_stats.rules()[0].absorbed, 21,
             "24 emits collapse to 3 x rows"
         );
     }

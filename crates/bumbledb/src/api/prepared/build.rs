@@ -270,15 +270,26 @@ fn prepare_witnessed<'s, S>(
                     .map(|arm| plan_pending_literals(&arm.rule.plan))
                     .sum::<u32>()
         });
-    let pipeline = if let Some(driver) = rec {
-        PreparedPipeline::Reach {
+    let pipeline = match (rec, witness) {
+        (
+            Some(driver),
+            crate::ir::validate::ValidatedQuery::Reach {
+                rec_id,
+                derived_count,
+                ..
+            },
+        ) => PreparedPipeline::Reach {
             interiors,
             driver: Box::new(driver),
             main: rules,
             rounds_budget: super::reach::DEFAULT_REACH_ROUNDS,
+            rec_id: *rec_id,
+            derived_count: *derived_count,
+        },
+        (None, _) => PreparedPipeline::Cq { interiors, rules },
+        (Some(_), crate::ir::validate::ValidatedQuery::Cq { .. }) => {
+            unreachable!("a Reach driver is prepared only from a Reach witness")
         }
-    } else {
-        PreparedPipeline::Cq { interiors, rules }
     };
     let key_probe_direct = match &pipeline {
         PreparedPipeline::Cq { interiors, rules }

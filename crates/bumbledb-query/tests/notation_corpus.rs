@@ -584,8 +584,8 @@ fn cases() -> Vec<Case> {
         { recursive reach(o) | Org(id: o), o == ?root;
           recursive reach(p) | OrgParent(child: c, parent: p), reach(c);
           (p) | Org(id: p), reach(p); },
-        { recursive p0(v0) | Org(id: v0), v0 == ?0;
-          recursive p0(v1) | OrgParent(child: v0, parent: v1), p0(v0);
+        { rec(v0) | Org(id: v0), v0 == ?0;
+          rec(v1) | OrgParent(child: v0, parent: v1), p0(v0);
           (v0) | Org(id: v0), p0(v0); });
 
     // The classic two-column closure: the recursive rule binds its head's
@@ -600,8 +600,8 @@ fn cases() -> Vec<Case> {
         { recursive reach(c, a) | OrgParent(child: c, parent: a);
           recursive reach(c, a) | OrgParent(child: c, parent: m), reach(m, a);
           (c, a) | reach(c, a); },
-        { recursive p0(v0, v1) | OrgParent(child: v0, parent: v1);
-          recursive p0(v0, v2) | OrgParent(child: v0, parent: v1), p0(v1, v2);
+        { rec(v0, v1) | OrgParent(child: v0, parent: v1);
+          rec(v0, v2) | OrgParent(child: v0, parent: v1), p0(v1, v2);
           (v0, v1) | p0(v0, v1); });
 
     corpus_case!(cases, false, "posted-sparse",
@@ -610,7 +610,7 @@ fn cases() -> Vec<Case> {
          (x) | posted(2: x, 0 in ?wanted);",
         { interior posted(id, account, amount) | Posting(id, account, amount);
           (x) | posted(2: x, 0 in ?wanted); },
-        { interior p0(v0, v1, v2) | Posting(id: v0, account: v1, amount: v2);
+        { interior 0(v0, v1, v2) | Posting(id: v0, account: v1, amount: v2);
           (v0) | p0(2: v0, 0 in ?0); });
 
     corpus_case!(cases, false, "usd-selected",
@@ -619,7 +619,7 @@ fn cases() -> Vec<Case> {
          (a) | acct(0: a, 1 == Currency::Usd);",
         { interior acct(id, currency) | Account(id, currency);
           (a) | acct(0: a, 1 == Currency::Usd); },
-        { interior p0(v0, v1) | Account(id: v0, currency: v1);
+        { interior 0(v0, v1) | Account(id: v0, currency: v1);
           (v0) | p0(0: v0, 1 == 0); });
 
     cases

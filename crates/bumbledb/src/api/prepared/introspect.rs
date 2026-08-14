@@ -2,7 +2,7 @@ use super::{Answers, ParamArg, PreparedPipeline, PreparedQuery, PreparedRule};
 
 use crate::api::stats::{ExecutionStats, InteriorStats, KeyProbeStats, RuleStats};
 use crate::error::Result;
-use crate::exec::introspection::{IntrospectionHeader, IntrospectionReport, RulePlan};
+use crate::exec::introspection::{IntrospectionHeader, IntrospectionReport, ReportBody, RulePlan};
 use crate::image::cache::ImageCache;
 use crate::image::view::{Const, FilterPredicate};
 use crate::storage::env::ReadTxn;
@@ -28,10 +28,10 @@ impl<S> PreparedQuery<'_, S> {
     ) -> Result<(Answers, String)> {
         let (out, stats) = self.profile(txn, cache, params)?;
         let pending = self.pending_literal_note();
-        let (rules, unit_labels) = match &self.pipeline {
-            PreparedPipeline::Cq { rules, .. } if rules.is_empty() => {
-                (vec![RulePlan::Empty], Vec::new())
-            }
+        let body = match &self.pipeline {
+            PreparedPipeline::Cq { rules, .. } if rules.is_empty() => ReportBody::Cq {
+                plans: vec![RulePlan::Empty],
+            },
             PreparedPipeline::Cq { rules, .. } => {
                 let mut plans = Vec::new();
                 for rule in rules {
@@ -44,40 +44,39 @@ impl<S> PreparedQuery<'_, S> {
                         }
                     }
                 }
-                (plans, Vec::new())
+                ReportBody::Cq { plans }
             }
-            PreparedPipeline::Reach { driver, main, .. } => {
-                let mut plans = Vec::new();
-                let mut labels = Vec::new();
+            PreparedPipeline::Reach {
+                driver,
+                main,
+                rec_id,
+                ..
+            } => {
+                let mut units = Vec::new();
                 for (rule_idx, rule) in driver.base.iter().enumerate() {
-                    match rule {
-                        PreparedRule::KeyProbe(rule) => {
-                            plans.push(RulePlan::KeyProbe(&rule.plan));
-                            labels.push(format!("reach base {rule_idx}"));
-                        }
-                        PreparedRule::FreeJoin(rule) => {
-                            plans.push(RulePlan::FreeJoin(&rule.plan));
-                            labels.push(format!("reach base {rule_idx}"));
-                        }
-                    }
+                    let plan = match rule {
+                        PreparedRule::KeyProbe(rule) => RulePlan::KeyProbe(&rule.plan),
+                        PreparedRule::FreeJoin(rule) => RulePlan::FreeJoin(&rule.plan),
+                    };
+                    units.push((format!("reach base {rule_idx}"), plan));
                 }
                 for (rule_idx, arm) in driver.rec.iter().enumerate() {
-                    plans.push(RulePlan::FreeJoin(&arm.rule.plan));
-                    labels.push(format!("reach rec {rule_idx} (delta occ {})", arm.delta.0));
+                    units.push((
+                        format!("reach rec {rule_idx} (delta occ {})", arm.delta.0),
+                        RulePlan::FreeJoin(&arm.rule.plan),
+                    ));
                 }
                 for (rule_idx, rule) in main.iter().enumerate() {
-                    match rule {
-                        PreparedRule::KeyProbe(rule) => {
-                            plans.push(RulePlan::KeyProbe(&rule.plan));
-                            labels.push(format!("main {rule_idx}"));
-                        }
-                        PreparedRule::FreeJoin(rule) => {
-                            plans.push(RulePlan::FreeJoin(&rule.plan));
-                            labels.push(format!("main {rule_idx}"));
-                        }
-                    }
+                    let plan = match rule {
+                        PreparedRule::KeyProbe(rule) => RulePlan::KeyProbe(&rule.plan),
+                        PreparedRule::FreeJoin(rule) => RulePlan::FreeJoin(&rule.plan),
+                    };
+                    units.push((format!("main {rule_idx}"), plan));
                 }
-                (plans, labels)
+                ReportBody::Reach {
+                    rec_id: *rec_id,
+                    units,
+                }
             }
         };
         let report = IntrospectionReport {
@@ -86,8 +85,7 @@ impl<S> PreparedQuery<'_, S> {
                 predicate: self.predicate.to_string(),
                 pending_literal: pending,
             }),
-            rules,
-            unit_labels,
+            body,
             stats,
         };
         // After the version marker, the report opens with the query in the rule notation
@@ -188,9 +186,8 @@ impl<S> PreparedQuery<'_, S> {
             self.execute_key_probe_direct(txn, &mut out)?;
             let emitted = out.len() as u64;
             let distinct_bindings = self.pipeline.main_rules()[0].distinct_witness().is_some();
-            let stats = ExecutionStats {
-                introspection_version: crate::api::stats::INTROSPECTION_VERSION,
-                rules: vec![RuleStats {
+            let stats = ExecutionStats::cq(
+                vec![RuleStats {
                     distinct_bindings,
                     nodes: Vec::new(),
                     eliminated: Vec::new(),
@@ -202,13 +199,12 @@ impl<S> PreparedQuery<'_, S> {
                         hit: !out.is_empty(),
                     }),
                 }],
-                emits: emitted,
-                disjoint_rules: None,
-                subsumed: self.subsumed.clone(),
-                dead: self.dead.clone(),
-                interiors: Vec::new(),
-                reach: None,
-            };
+                Vec::new(),
+                emitted,
+                None,
+                self.subsumed.clone(),
+                self.dead.clone(),
+            );
             return Ok((out, stats));
         }
         if self.pipeline.is_empty_cq() {
@@ -220,16 +216,13 @@ impl<S> PreparedQuery<'_, S> {
                 let ran = self.run_rules(txn, cache, &mut counters)?;
                 self.finish_sink(txn, ran, &mut out)?;
                 let emits = out.len() as u64;
-                let stats = ExecutionStats {
-                    introspection_version: crate::api::stats::INTROSPECTION_VERSION,
-                    rules: Vec::new(),
+                let stats = ExecutionStats::reach_body(
+                    self.interior_stats(),
+                    counters.into_reach(),
                     emits,
-                    disjoint_rules: None,
-                    subsumed: self.subsumed.clone(),
-                    dead: self.dead.clone(),
-                    interiors: self.interior_stats(),
-                    reach: Some(counters.into_reach(Vec::new())),
-                };
+                    self.subsumed.clone(),
+                    self.dead.clone(),
+                );
                 Ok((out, stats))
             }
             PreparedPipeline::Cq { .. } => {
@@ -239,16 +232,14 @@ impl<S> PreparedQuery<'_, S> {
                 let emits = rule_stats.iter().map(|rule| rule.emitted).sum();
                 Ok((
                     out,
-                    ExecutionStats {
-                        introspection_version: crate::api::stats::INTROSPECTION_VERSION,
-                        rules: rule_stats,
+                    ExecutionStats::cq(
+                        rule_stats,
+                        self.interior_stats(),
                         emits,
-                        disjoint_rules: self.disjoint_rules_stat(),
-                        subsumed: self.subsumed.clone(),
-                        dead: self.dead.clone(),
-                        interiors: self.interior_stats(),
-                        reach: None,
-                    },
+                        self.disjoint_rules_stat(),
+                        self.subsumed.clone(),
+                        self.dead.clone(),
+                    ),
                 ))
             }
         }
@@ -261,7 +252,6 @@ impl<S> PreparedQuery<'_, S> {
             .enumerate()
             .map(|(i, interior)| InteriorStats {
                 interior: u32::try_from(i).expect("InteriorIdOverflow screened at validate"),
-                rules: Vec::new(),
                 emits: interior.sink.len() as u64,
             })
             .collect()
@@ -271,26 +261,14 @@ impl<S> PreparedQuery<'_, S> {
     /// honestly zero — nothing ran, nothing was read — and the death
     /// record (`stats.dead`) carries the per-rule killing conditions.
     fn empty_stats(&self) -> ExecutionStats {
-        ExecutionStats {
-            introspection_version: crate::api::stats::INTROSPECTION_VERSION,
-            rules: vec![RuleStats {
-                distinct_bindings: false,
-                nodes: Vec::new(),
-                eliminated: Vec::new(),
-                folded: Vec::new(),
-                pinned: Vec::new(),
-                emitted: 0,
-                absorbed: 0,
-                key_probe: None,
-            }],
-            emits: 0,
-            // An empty program has no pair to prove.
-            disjoint_rules: None,
-            subsumed: self.subsumed.clone(),
-            dead: self.dead.clone(),
-            interiors: Vec::new(),
-            reach: None,
-        }
+        ExecutionStats::cq(
+            Vec::new(),
+            Vec::new(),
+            0,
+            None,
+            self.subsumed.clone(),
+            self.dead.clone(),
+        )
     }
 
     /// Whether the aggregate sink's binding seen-set is elided

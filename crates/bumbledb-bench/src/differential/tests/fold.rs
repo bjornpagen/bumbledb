@@ -130,10 +130,10 @@ fn stores(
 /// public profile surface.
 fn folded(db: &Db<SchemaDescriptor>, query: &Query) -> Vec<bumbledb::FoldedOccurrence> {
     let mut prepared = db.prepare(query).expect("fixture queries validate");
-    let (_, mut stats) = db
+    let (_, stats) = db
         .read(|snap| snap.profile(&mut prepared, &[]))
         .expect("profile executes");
-    stats.rules.swap_remove(0).folded
+    stats.into_cq_rules().swap_remove(0).folded
 }
 
 /// The dual run: folded, unfolded, and the model must produce one

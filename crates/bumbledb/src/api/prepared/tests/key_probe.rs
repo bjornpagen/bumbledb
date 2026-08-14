@@ -280,7 +280,7 @@ fn pointwise_key_point_lookup_uses_key_probe_and_is_image_free() {
     let (answers, stats) = prepared.profile(&txn, &cache, &[]).expect("profile");
     assert_eq!(answers.len(), 1);
     assert_eq!(
-        stats.rules[0].key_probe,
+        stats.rules()[0].key_probe,
         Some(crate::api::stats::KeyProbeStats { hit: true })
     );
     let near = booking_query(Term::Literal(Value::IntervalU64(
@@ -290,7 +290,7 @@ fn pointwise_key_point_lookup_uses_key_probe_and_is_image_free() {
     let (answers, stats) = near.profile(&txn, &cache, &[]).expect("profile");
     assert_eq!(answers.len(), 0);
     assert_eq!(
-        stats.rules[0].key_probe,
+        stats.rules()[0].key_probe,
         Some(crate::api::stats::KeyProbeStats { hit: false })
     );
     #[cfg(feature = "trace")]
@@ -325,10 +325,10 @@ fn a_membership_bound_single_atom_query_stays_free_join() {
 
     let (answers, stats) = prepared.profile(&txn, &cache, &[]).expect("profile");
     assert!(
-        stats.rules[0].key_probe.is_none(),
+        stats.rules()[0].key_probe.is_none(),
         "the scan+filter path, not the key_probe"
     );
-    assert!(!stats.rules[0].nodes.is_empty());
+    assert!(!stats.rules()[0].nodes.is_empty());
     assert_eq!(answers.len(), 1);
     assert_eq!(answers.get(0, 0), AnswerValue::U64(100));
 
@@ -537,7 +537,7 @@ fn execute_and_profile_agree_on_an_aggregate_key_probe() {
     assert_eq!(executed.len(), profiled.len());
     assert_eq!(executed.get(0, 0), profiled.get(0, 0));
     assert_eq!(
-        stats.rules[0].key_probe,
+        stats.rules()[0].key_probe,
         Some(crate::api::stats::KeyProbeStats { hit: true }),
         "counted path still names the key-probe classification; it did not fabricate a direct-lane miss/hit from out.len() alone"
     );

@@ -6,59 +6,124 @@
 //! instrumentation; allocation-sanctioned exactly like `introspect`).
 
 /// The version shared by rendered and structured plan introspection.
-pub const INTROSPECTION_VERSION: u16 = 4;
+pub const INTROSPECTION_VERSION: u16 = 5;
 
-/// One execution's counted statistics: per-rule node stats under the
-/// head-level union accounting (docs/architecture/40-execution.md § the
-/// rule loop — one sink hears every rule; its seen-set spanning rules is
-/// the union). The single-rule program is the one-element list.
+/// One execution's counted statistics. The body is a sum matching the
+/// prepared pipeline: `reach` exists exactly on the Reach arm; interiors
+/// exist on both; dead main is `Cq { rules: [] }` plus [`Self::dead`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExecutionStats {
     /// The introspection contract version. Any content or ordering change
     /// to either surface increments this value and the rendered marker.
     pub introspection_version: u16,
-    /// Per rule, in rule order.
-    pub rules: Vec<RuleStats>,
     /// Bindings emitted to the sink across all rules (the sum of the
-    /// per-rule `emitted`).
+    /// per-rule `emitted` on a Cq; the answer count on Reach).
     pub emits: u64,
     /// The rule-disjointness proof (docs/architecture/40-execution.md
     /// § set semantics): `Some` iff the program's rules are provably
     /// pairwise disjoint, naming the witness. `None` for single-rule
-    /// programs and unproven pairs. This is diagnostic knowledge; the
-    /// spanning seen-set stays in either case.
+    /// programs, Reach, and unproven pairs.
     pub disjoint_rules: Option<DisjointRules>,
-    /// Rules the subsumption pass deleted at prepare (`plan/ground.rs`):
-    /// after per-rule elimination the subsuming rule's normalized body
-    /// contains the deleted rule's, so the union loses nothing. Indices
-    /// are lowered-rule indices (the DNF-distributed program validation
-    /// diagnostics use) — the per-rule list above holds only survivors,
-    /// in order.
+    /// Rules the subsumption pass deleted at prepare (`plan/ground.rs`).
     pub subsumed: Vec<SubsumedRule>,
     /// Rules the statically-empty fold refuted at prepare
-    /// (`ir/normalize/fold.rs`): each carries its killing condition —
-    /// introspection's `statically empty: rule N: <picture>` line. Indices are
-    /// lowered-rule indices, exactly as `subsumed`; a query of only
-    /// dead main rules represented by an empty prepared body.
+    /// (`ir/normalize/fold.rs`).
     pub dead: Vec<DeadRule>,
-    /// Named interiors in declaration order. Empty when the query has
-    /// none. Structured stats **are** the interiors block — there is no
-    /// parallel span-or-stats fork.
-    pub interiors: Vec<InteriorStats>,
-    /// The reach driver's counted rounds. `None` iff the query has no
-    /// rec (interiors-only never enters the driver). Populated on
-    /// counted paths only — the release executor's `NoopCounters`
-    /// records nothing.
-    pub reach: Option<ReachStats>,
+    /// Pipeline-shaped counted body.
+    pub body: StatsBody,
 }
 
-/// One named interior's counted rule loop.
+/// The counted body: interiors in both arms; `reach` only on Reach.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StatsBody {
+    Cq {
+        rules: Vec<RuleStats>,
+        interiors: Vec<InteriorStats>,
+    },
+    Reach {
+        interiors: Vec<InteriorStats>,
+        reach: ReachStats,
+    },
+}
+
+impl ExecutionStats {
+    /// Cq per-rule stats; empty on Reach (Reach does not grow a
+    /// main-rule table).
+    #[must_use]
+    pub fn rules(&self) -> &[RuleStats] {
+        match &self.body {
+            StatsBody::Cq { rules, .. } => rules,
+            StatsBody::Reach { .. } => &[],
+        }
+    }
+
+    /// Named interiors in declaration order.
+    #[must_use]
+    pub fn interiors(&self) -> &[InteriorStats] {
+        match &self.body {
+            StatsBody::Cq { interiors, .. } | StatsBody::Reach { interiors, .. } => interiors,
+        }
+    }
+
+    /// The reach rounds, present exactly on the Reach arm.
+    #[must_use]
+    pub fn reach(&self) -> Option<&ReachStats> {
+        match &self.body {
+            StatsBody::Reach { reach, .. } => Some(reach),
+            StatsBody::Cq { .. } => None,
+        }
+    }
+
+    /// Cq per-rule stats, consumed. Empty on Reach.
+    #[must_use]
+    pub fn into_cq_rules(self) -> Vec<RuleStats> {
+        match self.body {
+            StatsBody::Cq { rules, .. } => rules,
+            StatsBody::Reach { .. } => Vec::new(),
+        }
+    }
+
+    pub(crate) fn cq(
+        rules: Vec<RuleStats>,
+        interiors: Vec<InteriorStats>,
+        emits: u64,
+        disjoint_rules: Option<DisjointRules>,
+        subsumed: Vec<SubsumedRule>,
+        dead: Vec<DeadRule>,
+    ) -> Self {
+        Self {
+            introspection_version: INTROSPECTION_VERSION,
+            emits,
+            disjoint_rules,
+            subsumed,
+            dead,
+            body: StatsBody::Cq { rules, interiors },
+        }
+    }
+
+    pub(crate) fn reach_body(
+        interiors: Vec<InteriorStats>,
+        reach: ReachStats,
+        emits: u64,
+        subsumed: Vec<SubsumedRule>,
+        dead: Vec<DeadRule>,
+    ) -> Self {
+        Self {
+            introspection_version: INTROSPECTION_VERSION,
+            emits,
+            disjoint_rules: None,
+            subsumed,
+            dead,
+            body: StatsBody::Reach { interiors, reach },
+        }
+    }
+}
+
+/// One named interior's counted emits. No ghost per-interior rule table.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InteriorStats {
     /// The interior's [`crate::ir::InteriorId`].
     pub interior: u32,
-    /// That interior's surviving rules, in declaration order.
-    pub rules: Vec<RuleStats>,
     /// Bindings emitted to that interior's projection sink.
     pub emits: u64,
 }
@@ -66,8 +131,6 @@ pub struct InteriorStats {
 /// The rec SCC's counted round loop (`api/prepared/reach.rs`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReachStats {
-    /// Rec rules: base arms then rec arms, declaration order.
-    pub rules: Vec<RuleStats>,
     /// The rounds that ran, in order: round 0 is the base arms (no
     /// delta image yet), rounds ≥ 1 the Δ. The last entry is the
     /// converging round — every emission absorbed, or nothing emitted.

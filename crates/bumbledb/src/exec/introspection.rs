@@ -75,23 +75,31 @@ pub struct ReachCounters {
     rounds: Vec<crate::api::stats::RoundStats>,
 }
 
-/// The introspection report: per-rule plan renderings plus the counted
-/// execution — per-rule node stats under the head-level union
-/// accounting (docs/architecture/40-execution.md § the rule loop).
-/// `Display` formats lazily — nothing here ran inside the hot loops.
+/// The introspection report: a pipeline-shaped body plus the counted
+/// execution. `Display` formats lazily — nothing here ran inside the
+/// hot loops.
 #[derive(Debug)]
 pub struct IntrospectionReport<'p> {
-    /// Query and predicate header for the public artifact. Low-level
+    /// Query and signature header for the public artifact. Low-level
     /// executor tests omit it while retaining the same versioned body.
     pub header: Option<IntrospectionHeader>,
-    /// Per plan unit, aligned with `stats.rules` for CQ pipelines. Rec
-    /// arms carry labels below (`reach rec {i} (delta occ {d})`) and no
-    /// per-unit counted stats — the counted surface is `stats.reach`.
-    pub rules: Vec<RulePlan<'p>>,
-    /// Rec-arm labels, parallel to `rules`; empty for CQ pipelines,
-    /// whose label is the rule index.
-    pub unit_labels: Vec<String>,
+    /// Pipeline-shaped plans: Cq plans align with `stats.rules()`;
+    /// Reach units carry their labels and no per-unit counted stats.
+    pub body: ReportBody<'p>,
     pub stats: crate::api::stats::ExecutionStats,
+}
+
+/// Plans matching the prepared pipeline. Reach labels are
+/// `reach base {i}`, `reach rec {i} (delta occ {d})`, `main {i}`.
+#[derive(Debug)]
+pub enum ReportBody<'p> {
+    Cq {
+        plans: Vec<RulePlan<'p>>,
+    },
+    Reach {
+        rec_id: crate::ir::InteriorId,
+        units: Vec<(String, RulePlan<'p>)>,
+    },
 }
 
 /// Owned public header rendered before the plan sections.
