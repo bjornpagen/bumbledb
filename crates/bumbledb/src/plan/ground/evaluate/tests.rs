@@ -154,7 +154,11 @@ fn grounded(schema: &Schema, query: &Query) -> NormalizedQuery {
 }
 
 fn roles(normalized: &NormalizedQuery) -> Vec<Role> {
-    normalized.occurrences.iter().map(|o| o.role).collect()
+    normalized
+        .occurrences
+        .iter()
+        .map(|o| o.role.clone())
+        .collect()
 }
 
 /// The plan-constant sets attached to one occurrence's filter list.
@@ -173,8 +177,12 @@ fn attached_sets(normalized: &NormalizedQuery, idx: usize) -> Vec<Vec<u64>> {
         .collect()
 }
 
-fn folded(ids: u16, negated: bool) -> Role {
-    Role::Folded(FoldedMark { ids, negated })
+fn folded(relation: u32, survivors: &[u64], negated: bool) -> Role {
+    Role::Folded(FoldedMark::of(
+        bumbledb_theory::schema::RelationId(relation),
+        survivors.to_vec(),
+        negated,
+    ))
 }
 
 /// `Q(i, v) :- Item(id = i, kind = x, score = v), Kind(id = x, rank == 20)`.
@@ -199,7 +207,7 @@ fn a_filtered_closed_atom_folds_to_a_membership_set() {
     let normalized = grounded(&schema, &selected_fold_query(20));
     assert_eq!(
         roles(&normalized),
-        vec![Role::Positive, folded(2, false)],
+        vec![Role::Positive, folded(KIND, &[1, 2], false)],
         "the Kind occurrence folded with |S| = 2"
     );
     assert_eq!(
@@ -258,7 +266,10 @@ fn a_dead_payload_variable_folds() {
         conditions: vec![],
     });
     let normalized = grounded(&schema, &query);
-    assert_eq!(roles(&normalized), vec![Role::Positive, folded(4, false)]);
+    assert_eq!(
+        roles(&normalized),
+        vec![Role::Positive, folded(KIND, &[0, 1, 2, 3], false)]
+    );
     assert_eq!(attached_sets(&normalized, 0), vec![vec![0, 1, 2, 3]]);
 }
 
@@ -629,7 +640,10 @@ fn a_negated_closed_atom_folds_to_the_complement() {
         conditions: vec![],
     });
     let normalized = grounded(&schema, &query);
-    assert_eq!(roles(&normalized), vec![Role::Positive, folded(2, true)]);
+    assert_eq!(
+        roles(&normalized),
+        vec![Role::Positive, folded(KIND, &[1, 2], true)]
+    );
     assert_eq!(
         attached_sets(&normalized, 0),
         vec![vec![0, 3]],
@@ -682,7 +696,10 @@ fn a_negated_atom_over_an_empty_set_deletes_and_rejects_nothing() {
         conditions: vec![],
     });
     let normalized = grounded(&schema, &query);
-    assert_eq!(roles(&normalized), vec![Role::Positive, folded(0, true)]);
+    assert_eq!(
+        roles(&normalized),
+        vec![Role::Positive, folded(KIND, &[], true)]
+    );
     assert!(attached_sets(&normalized, 0).is_empty());
     assert!(normalized.anti_probes.is_empty());
     assert!(normalized.dead.is_none(), "the rule is NOT empty");
@@ -724,7 +741,10 @@ fn a_satisfied_var_less_gate_deletes_outright() {
         conditions: vec![],
     });
     let normalized = grounded(&schema, &query);
-    assert_eq!(roles(&normalized), vec![Role::Positive, folded(2, false)]);
+    assert_eq!(
+        roles(&normalized),
+        vec![Role::Positive, folded(KIND, &[1, 2], false)]
+    );
     assert!(attached_sets(&normalized, 0).is_empty());
     assert!(normalized.dead.is_none());
 }
@@ -841,7 +861,10 @@ fn multi_rule_programs_fold_per_rule_independently() {
     for (idx, rule) in rules.iter_mut().enumerate() {
         ground(rule, &schema, &witness.rule(idx).rule().finds);
     }
-    assert_eq!(roles(&rules[0]), vec![Role::Positive, folded(2, false)]);
+    assert_eq!(
+        roles(&rules[0]),
+        vec![Role::Positive, folded(KIND, &[1, 2], false)]
+    );
     assert_eq!(attached_sets(&rules[0], 0), vec![vec![1, 2]]);
     assert_eq!(
         roles(&rules[1]),
@@ -869,7 +892,10 @@ fn interval_filters_evaluate_against_the_sealed_extension() {
         conditions: vec![],
     });
     let normalized = grounded(&schema, &membership);
-    assert_eq!(roles(&normalized), vec![Role::Positive, folded(1, false)]);
+    assert_eq!(
+        roles(&normalized),
+        vec![Role::Positive, folded(CAL, &[0], false)]
+    );
     assert_eq!(attached_sets(&normalized, 0), vec![vec![0]]);
 
     // Allen(span, BEFORE, 6..8): X = 2..5 is before, Y = 5..9 covers.
@@ -891,7 +917,10 @@ fn interval_filters_evaluate_against_the_sealed_extension() {
         })],
     });
     let normalized = grounded(&schema, &allen);
-    assert_eq!(roles(&normalized), vec![Role::Positive, folded(1, false)]);
+    assert_eq!(
+        roles(&normalized),
+        vec![Role::Positive, folded(CAL, &[0], false)]
+    );
     assert_eq!(attached_sets(&normalized, 0), vec![vec![0]]);
 }
 
@@ -921,7 +950,11 @@ fn a_second_closed_atom_folds_over_the_first_folds_set() {
     let normalized = grounded(&schema, &query);
     assert_eq!(
         roles(&normalized),
-        vec![Role::Positive, folded(2, false), folded(2, false)],
+        vec![
+            Role::Positive,
+            folded(KIND, &[1, 2], false),
+            folded(KIND, &[1, 2], false)
+        ],
         "both closed occurrences fold (the second sees the first's set as a filter)"
     );
     // The Item occurrence carries both memberships; their conjunction

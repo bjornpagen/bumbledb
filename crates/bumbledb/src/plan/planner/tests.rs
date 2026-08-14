@@ -115,7 +115,7 @@ fn order_cost(
             .fold(0u128, |acc, (_, v)| acc | 1 << var_index[v])
     };
     let key_sets = |i: usize| -> Vec<u128> {
-        let relation = schema.relation(occ(i).relation());
+        let relation = schema.relation(occ(i).source.edb().expect("fixture"));
         relation
             .keys()
             .iter()

@@ -1,11 +1,11 @@
 use super::{
+    FjPlan, PlanError, PlanOccurrence, PointProbe, ValidatedPlan,
     check_occurrence_coverage::check_occurrence_coverage, check_selections,
-    derive_nodes::derive_nodes, provably_distinct::provably_distinct, split_filters, FjPlan,
-    PlanError, PlanOccurrence, PointProbe, ValidatedPlan,
+    derive_nodes::derive_nodes, provably_distinct::provably_distinct, split_filters,
 };
 use crate::image::view::{FilterPredicate, ResolvedWordSource};
-use crate::ir::normalize::{NormalizedQuery, Occurrence, Role, SlotWidth};
 use crate::ir::VarId;
+use crate::ir::normalize::{NormalizedQuery, Occurrence, Role, SlotWidth};
 use crate::schema::Schema;
 use bumbledb_theory::schema::FieldId;
 use std::collections::BTreeSet;
@@ -63,7 +63,7 @@ fn build_occurrences(
         .occurrences
         .iter()
         .map(|occurrence| {
-            let trie_schema: Vec<Vec<VarId>> = match occurrence.role {
+            let trie_schema: Vec<Vec<VarId>> = match &occurrence.role {
                 Role::Positive => plan
                     .nodes
                     .iter()
@@ -74,11 +74,13 @@ fn build_occurrences(
                 Role::Negated => {
                     let occ_vars: BTreeSet<VarId> =
                         occurrence.vars.iter().map(|(_, v)| *v).collect();
-                    vec![slots
-                        .iter()
-                        .map(|(v, _)| *v)
-                        .filter(|v| occ_vars.contains(v))
-                        .collect()]
+                    vec![
+                        slots
+                            .iter()
+                            .map(|(v, _)| *v)
+                            .filter(|v| occ_vars.contains(v))
+                            .collect(),
+                    ]
                 }
                 Role::Eliminated(_) | Role::Folded(_) => Vec::new(),
             };
@@ -141,7 +143,7 @@ fn build_occurrences(
                 .filter(|f| !is_point_filter(f))
                 .cloned()
                 .collect();
-            let (selections, filters) = match occurrence.role {
+            let (selections, filters) = match &occurrence.role {
                 Role::Positive => split_filters(&view_filters),
                 Role::Negated | Role::Folded(_) => (Vec::new(), view_filters),
                 Role::Eliminated(_) => (Vec::new(), Vec::new()),
@@ -149,7 +151,7 @@ fn build_occurrences(
             PlanOccurrence {
                 occ_id: occurrence.occ_id,
                 source: occurrence.source,
-                role: occurrence.role,
+                role: occurrence.role.clone(),
                 vars: occurrence.vars.clone(),
                 selections,
                 filters,
@@ -227,7 +229,7 @@ pub fn validate(
     clippy::too_many_lines,
     reason = "the linear table or protocol is clearer kept together"
 )] // the placement rules read in order;
-   // each attaches one residual kind
+// each attaches one residual kind
 pub fn validate_with_signatures(
     plan: &FjPlan,
     normalized: &NormalizedQuery,

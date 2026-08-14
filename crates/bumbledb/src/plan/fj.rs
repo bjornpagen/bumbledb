@@ -15,7 +15,7 @@ use crate::ir::normalize::{
     AntiProbe, OccId, PlacedAllen, PlacedComparison, PlacedDuration, PlacedWordComparison, Role,
     SlotWidth,
 };
-use bumbledb_theory::schema::{FieldId, RelationId};
+use bumbledb_theory::schema::FieldId;
 
 mod binary2fj;
 mod check_occurrence_coverage;
@@ -213,28 +213,6 @@ pub struct PlanOccurrence {
     /// wordmap keys tuples, and this is the key-width bookkeeping it
     /// reads.
     pub key_widths: Vec<u16>,
-}
-
-impl PlanOccurrence {
-    /// The stored relation this occurrence reads — for callers whose
-    /// occurrences are stored-relation-only by their own prior guard
-    /// (the key-probe classifier refuses `Interior` rules before minting a
-    /// [`KeyProbePlan`]). Source-aware consumers match on
-    /// [`PlanOccurrence::source`].
-    ///
-    /// # Panics
-    ///
-    /// On an `Interior` occurrence — the caller asserted a stored-relation
-    /// occurrence.
-    #[must_use]
-    pub fn relation(&self) -> RelationId {
-        match self.source {
-            crate::ir::AtomSource::Edb(relation) => relation,
-            crate::ir::AtomSource::Interior(_) => {
-                unreachable!("caller asserted a stored-relation (Edb) occurrence")
-            }
-        }
-    }
 }
 
 /// One validated node.

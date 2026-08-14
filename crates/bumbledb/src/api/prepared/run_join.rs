@@ -122,7 +122,12 @@ pub(super) fn run_join<S: crate::exec::run::Sink, C: crate::exec::run::Counters>
             );
             continue;
         }
-        let relation = occurrence.relation();
+        let relation = match occurrence.source {
+            crate::ir::AtomSource::Edb(relation) => relation,
+            crate::ir::AtomSource::Interior(_) => {
+                unreachable!("Interior continued above")
+            }
+        };
         // A closed relation's view binds to the theory identity rather
         // than a fabricated storage generation, so no commit can stale it.
         let generation = if schema.relation(relation).is_closed() {
@@ -247,7 +252,9 @@ fn dedup_source(
     generation: ViewGeneration,
     resolved_filters: &[Vec<FilterPredicate>],
 ) -> Option<usize> {
-    let relation = plan.occurrences()[occ].relation();
+    let crate::ir::AtomSource::Edb(relation) = plan.occurrences()[occ].source else {
+        return None;
+    };
     plan.occurrences()
         .iter()
         .enumerate()

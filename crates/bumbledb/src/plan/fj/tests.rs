@@ -4,7 +4,8 @@ use crate::plan::planner::JoinOrder;
 use crate::schema::Schema;
 use crate::schema::ValidateDescriptor as _;
 use bumbledb_theory::schema::{
-    FieldDescriptor, FieldId, Generation, RelationDescriptor, SchemaDescriptor, ValueType,
+    FieldDescriptor, FieldId, Generation, RelationDescriptor, RelationId, SchemaDescriptor,
+    ValueType,
 };
 use std::collections::BTreeMap;
 

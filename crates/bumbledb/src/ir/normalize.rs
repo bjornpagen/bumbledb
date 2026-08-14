@@ -68,7 +68,7 @@ pub struct OccId(pub u16);
 ///   occurrence's own role no longer does. The filters stay on the
 ///   occurrence (introspection renders them); nothing downstream resolves,
 ///   probes, or scans them.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Role {
     Positive,
     Negated,
@@ -76,19 +76,40 @@ pub enum Role {
     Folded(FoldedMark),
 }
 
-/// The evaluator's mark (`plan/ground/evaluate.rs`): the introspection record
-/// of a fold, kept `Copy`-small — the id set itself was attached to the
-/// sibling occurrences' filter lists at fold time and needs no second
-/// home here.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct FoldedMark {
-    /// `|S|` — how many sealed extension rows satisfied the occurrence's
-    /// filters (≤ the 256-row extension cap, hence `u16`).
-    pub ids: u16,
-    /// Whether the folded occurrence was negated: the attached set is
-    /// then the COMPLEMENT (extension minus `S`) and introspection prints the
-    /// `!` polarity the role no longer carries.
-    pub negated: bool,
+/// The evaluator's mark (`plan/ground/evaluate.rs`): polarity as a sum,
+/// σ-survivors (n ≤ 256) and the stored relation the fold ran against.
+/// Not `Copy` — the parsed id list is the diagnostic source of truth.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FoldedMark {
+    /// σ-survivors (`evaluate.rs` `surviving_ids`).
+    Positive {
+        relation: RelationId,
+        survivors: Box<[u64]>,
+    },
+    /// Same σ-survivors, not the complement attached to sibling binders.
+    /// Empty box = deleted anti-probe.
+    Negated {
+        relation: RelationId,
+        survivors: Box<[u64]>,
+    },
+}
+
+impl FoldedMark {
+    pub(crate) fn of(relation: RelationId, survivors: Vec<u64>, negated: bool) -> Self {
+        assert!(survivors.len() <= 256, "extensions cap at 256 rows");
+        let survivors = survivors.into_boxed_slice();
+        if negated {
+            Self::Negated {
+                relation,
+                survivors,
+            }
+        } else {
+            Self::Positive {
+                relation,
+                survivors,
+            }
+        }
+    }
 }
 
 impl Role {
@@ -100,7 +121,7 @@ impl Role {
     /// planner, stats, and witness iteration routes through this one
     /// match.
     #[must_use]
-    pub fn participates(self) -> bool {
+    pub fn participates(&self) -> bool {
         matches!(self, Self::Positive)
     }
 
@@ -112,7 +133,7 @@ impl Role {
     /// execution-side skip routes through this one predicate
     /// (`api/prepared/{bind,build,run_join}.rs`).
     #[must_use]
-    pub fn discharged(self) -> bool {
+    pub fn discharged(&self) -> bool {
         matches!(self, Self::Eliminated(_) | Self::Folded(_))
     }
 }
@@ -142,28 +163,6 @@ pub struct Occurrence {
     pub vars: Vec<(FieldId, VarId)>,
     /// Per-occurrence filters, evaluated at the source (filtered view).
     pub filters: Vec<FilterPredicate>,
-}
-
-impl Occurrence {
-    /// The stored relation this occurrence reads — the accessor for
-    /// callers whose occurrences are stored-relation-only **by their own
-    /// prior guard** (the key-probe classifier and the grounding refuse
-    /// `Interior` rules before reading it). Source-aware consumers match on
-    /// [`Occurrence::source`].
-    ///
-    /// # Panics
-    ///
-    /// On an `Interior` occurrence — the caller asserted a stored-relation
-    /// occurrence.
-    #[must_use]
-    pub fn relation(&self) -> RelationId {
-        match self.source {
-            crate::ir::AtomSource::Edb(relation) => relation,
-            crate::ir::AtomSource::Interior(_) => {
-                unreachable!("caller asserted a stored-relation (Edb) occurrence")
-            }
-        }
-    }
 }
 
 /// A comparison whose sides are variables — evaluated inside the join at
