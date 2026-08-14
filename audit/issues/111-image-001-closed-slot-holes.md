@@ -2,7 +2,7 @@
 
 - **Severity:** high
 - **Tree:** image
-- **Status:** OPEN
+- **Status:** FIXED(25285802)
 - **Source:** audit/storage-schema.md F4
 - **Depends on:** schema-001
 - **Conflicts with:** none (cache layout; lands after the relation sum)

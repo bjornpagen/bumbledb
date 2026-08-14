@@ -2,7 +2,7 @@
 
 - **Severity:** medium
 - **Tree:** store
-- **Status:** OPEN
+- **Status:** FIXED(c51881ab)
 - **Source:** audit/storage-schema.md F8
 - **Depends on:** schema-001, schema-002
 - **Conflicts with:** none (call sites; lands after the sums)

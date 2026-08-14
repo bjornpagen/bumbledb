@@ -2,7 +2,7 @@
 
 - **Severity:** low
 - **Tree:** err
-- **Status:** OPEN
+- **Status:** FIXED(f074a598)
 - **Source:** audit/storage-schema.md F22
 - **Depends on:** none
 - **Conflicts with:** none

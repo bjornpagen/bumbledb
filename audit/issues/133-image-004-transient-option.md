@@ -2,7 +2,7 @@
 
 - **Severity:** low
 - **Tree:** image
-- **Status:** OPEN
+- **Status:** FIXED(228ef446)
 - **Source:** audit/storage-schema.md F21
 - **Depends on:** none
 - **Conflicts with:** none
