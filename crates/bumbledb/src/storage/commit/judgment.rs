@@ -495,15 +495,16 @@ pub(super) fn check_source(
             key_bytes: &edge.key_bytes,
             fact_bytes,
             direction: Direction::SourceUnsatisfied,
-            source_tail: schema.source_tail(statement),
         };
         let outcome = match &statement.enforcement {
             Enforcement::ScalarProbe { .. } => {
                 checker.check_scalar_sorted(&probe, &mut sorted_gets)
             }
-            Enforcement::IntervalCoverage { disjoint, .. } => {
-                checker.check_coverage(*disjoint, &probe)
-            }
+            Enforcement::IntervalCoverage {
+                disjoint,
+                source_tail,
+                ..
+            } => checker.check_coverage(*disjoint, *source_tail, &probe),
             Enforcement::Closed { .. } => unreachable!("classified above"),
         };
         collect(outcome, violations)?;
@@ -615,7 +616,7 @@ pub(super) fn check_target(
                 scanned += 1;
                 counted = true;
             }
-            if let Enforcement::IntervalCoverage { .. } = &statement.enforcement {
+            if let Enforcement::IntervalCoverage { source_tail, .. } = &statement.enforcement {
                 // Interval form: conservatively scan the whole prefix
                 // group and filter by intersection. An optimized lower
                 // bound would need the maximum source-interval length,
@@ -627,9 +628,7 @@ pub(super) fn check_target(
                 let target_tail = schema
                     .key_tail(key_statement)
                     .expect("an interval dependent resolves a pointwise key");
-                let source_tail = schema
-                    .source_tail(statement)
-                    .expect("an interval containment has an interval source position");
+                let source_tail = *source_tail;
                 let (ts, te) = target_tail
                     .words(&determinant[determinant.len() - target_tail.bytes()..])
                     .ok_or(Error::Corruption(CorruptionError::MalformedValue(
@@ -746,6 +745,7 @@ pub(super) fn check_target(
         let Enforcement::IntervalCoverage {
             target_key,
             disjoint,
+            source_tail,
             ..
         } = &statement.enforcement
         else {
@@ -768,9 +768,11 @@ pub(super) fn check_target(
             key_bytes,
             fact_bytes,
             direction: Direction::TargetRequired,
-            source_tail: schema.source_tail(statement),
         };
-        collect(checker.check_coverage(*disjoint, &probe), violations)?;
+        collect(
+            checker.check_coverage(*disjoint, *source_tail, &probe),
+            violations,
+        )?;
     }
     span.set_args(scanned, 0);
     span.end();
@@ -956,11 +958,6 @@ pub(crate) struct Probe<'a> {
     pub(crate) fact_bytes: &'a [u8],
     /// Which side's judgment a miss convicts.
     pub(crate) direction: Direction,
-    /// Coverage probes only: how `key_bytes`' trailing interval reads —
-    /// the SOURCE field's encoding (16-byte `start ‖ end`, or the
-    /// 8-byte fixed start whose end is the source type's width).
-    /// `None` on scalar probes.
-    pub(crate) source_tail: Option<IntervalTail>,
 }
 
 impl Probe<'_> {
@@ -1169,6 +1166,7 @@ impl<'a> Checker<'a> {
     pub(crate) fn check_coverage(
         &mut self,
         disjoint: DisjointDeterminantProof,
+        source_tail: IntervalTail,
         probe: &Probe<'_>,
     ) -> Result<()> {
         disjoint.authorize_coverage();
@@ -1182,9 +1180,6 @@ impl<'a> Checker<'a> {
         // other-width) side of one element — and the walk is width-blind
         // by construction, because both tails parse to order-preserving
         // words (`docs/architecture/30-dependencies.md` § Q1).
-        let source_tail = probe
-            .source_tail
-            .expect("coverage probes carry their source tail");
         let target_tail = self
             .schema
             .key_tail(target_key)

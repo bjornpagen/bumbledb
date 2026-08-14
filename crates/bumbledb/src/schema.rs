@@ -249,18 +249,6 @@ impl Schema {
     pub(crate) fn key_tail(&self, key: &KeyStatement) -> Option<IntervalTail> {
         key.tail()
     }
-
-    /// The interval-tail descriptor of a containment's SOURCE projection
-    /// — the shape of the reverse-edge key-bytes tail (the source fact's
-    /// interval encodes at its own field's width). A read of the sealed
-    /// witness, as [`Schema::key_tail`].
-    #[expect(
-        clippy::unused_self,
-        reason = "the schema is the witness's minting authority — readers go through it"
-    )]
-    pub(crate) fn source_tail(&self, statement: &ContainmentStatement) -> Option<IntervalTail> {
-        statement.source_tail
-    }
 }
 
 /// Validator-minted evidence that a functionality's interval position is
@@ -299,6 +287,9 @@ pub(crate) enum Enforcement {
         target_key: KeyId,
         key_permutation: Box<[u16]>,
         disjoint: DisjointDeterminantProof,
+        /// SOURCE projection encoding; the target tail stays on
+        /// [`KeyForm::Pointwise`].
+        source_tail: IntervalTail,
     },
     /// A closed target's stage-1-known answer set.
     Closed { members: MemberSet },
@@ -530,12 +521,6 @@ pub struct ContainmentStatement {
     /// Both sides' σ literals, compiled once at validate. This is total:
     /// keys cannot reach a containment value.
     pub(crate) checks: CompiledSides,
-    /// The SOURCE projection's trailing interval encoding — the shape of
-    /// the reverse-edge key-bytes tail (the source fact's interval
-    /// encodes at its own field's width); `None` = scalar sides. Sealed
-    /// from the validator's derivation, as [`KeyStatement`]'s tail, so
-    /// the per-probe judgment walks no projection.
-    pub(crate) source_tail: Option<IntervalTail>,
     /// The `==` partner: the containment whose NORMALIZED sides (the one
     /// statement identity — selections sorted, literal sets canonical)
     /// are exactly this statement's normalized sides swapped, anywhere in

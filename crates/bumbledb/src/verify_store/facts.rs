@@ -372,13 +372,14 @@ fn check_outgoing(
             key_bytes: determinant.as_bytes(),
             fact_bytes: fact,
             direction: Direction::TargetRequired,
-            source_tail: schema.source_tail(statement),
         };
         let judged = match &statement.enforcement {
             Enforcement::ScalarProbe { .. } => checker.check_scalar(&probe),
-            Enforcement::IntervalCoverage { disjoint, .. } => {
-                checker.check_coverage(*disjoint, &probe)
-            }
+            Enforcement::IntervalCoverage {
+                disjoint,
+                source_tail,
+                ..
+            } => checker.check_coverage(*disjoint, *source_tail, &probe),
             Enforcement::Closed { .. } => unreachable!("classified above"),
         };
         if missing_edge {
@@ -470,9 +471,6 @@ fn check_extension_sources(
                             key_bytes: determinant.as_bytes(),
                             fact_bytes: &row.fact,
                             direction: Direction::TargetRequired,
-                            // Scalar probes carry no interval tail (and a
-                            // closed source can have none at validate).
-                            source_tail: None,
                         })
                     }
                     Enforcement::IntervalCoverage { .. } => {

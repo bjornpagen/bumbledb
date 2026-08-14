@@ -13,6 +13,8 @@
 //! selection nor a Y side, so both shapes are unrepresentable rather than
 //! rejected.
 
+use std::collections::BTreeMap;
+
 use super::{
     AxiomIndex, Bound, CapacityEnforcement, CapacityId, CapacityStatement, CompiledCheck,
     CompiledSides, ContainmentId, ContainmentStatement, DisjointDeterminantProof, Enforcement,
@@ -191,11 +193,6 @@ impl ValidateDescriptor for SchemaDescriptor {
                                 &relations[target.relation.0 as usize].fields,
                             ),
                         },
-                        // The source side's trailing interval shape,
-                        // derived here once (the positional type match
-                        // makes the sides' interval positions identical).
-                        source_tail: relations[source.relation.0 as usize]
-                            .interval_tail(&source.projection),
                         mirror: mirror_of(&normalized, idx),
                     });
                     StatementRef::Containment(containment_id)
@@ -325,12 +322,19 @@ pub(super) fn mirror_of(normalized: &[StatementDescriptor], index: usize) -> Opt
 
 /// Every statement's `==` partner over the one normalized identity — the
 /// render-side pre-pass: ONE normalization of the whole materialized list
-/// and one link table, so a manifest or rejection render never
-/// re-materializes, re-normalizes, or re-searches per statement.
-pub(super) fn mirror_links(descriptors: &[StatementDescriptor]) -> Vec<Option<StatementId>> {
+/// and one containments-only link table. Keys and capacities cannot have
+/// a partner, so they do not occupy holes.
+pub(super) fn mirror_links(
+    descriptors: &[StatementDescriptor],
+) -> BTreeMap<StatementId, StatementId> {
     let normalized: Vec<StatementDescriptor> = descriptors.iter().map(normalize).collect();
     (0..normalized.len())
-        .map(|index| mirror_of(&normalized, index))
+        .filter_map(|index| {
+            let StatementDescriptor::Containment { .. } = &normalized[index] else {
+                return None;
+            };
+            mirror_of(&normalized, index).map(|partner| (statement_id(index), partner))
+        })
         .collect()
 }
 
@@ -732,7 +736,14 @@ fn validate_containment(
         .at(id));
     }
 
-    let resolved = resolve_target_key(id, target, &target_projection, relations, descriptors)?;
+    let resolved = resolve_target_key(
+        id,
+        target,
+        &target_projection,
+        relations,
+        descriptors,
+        relations[source.relation.0 as usize].interval_tail(&source.projection),
+    )?;
 
     // Both sides constant: the judgment is decidable here, and a theory
     // whose axioms refute its own statement has no model to commit — the
@@ -950,6 +961,7 @@ fn validate_capacity(
         &target_projection,
         relations,
         descriptors,
+        None,
     )?);
 
     // Both sides constant: the measure judgment is decidable here — per
@@ -1365,6 +1377,7 @@ fn resolve_target_key(
     target_projection: &Projection<'_>,
     relations: &[Relation],
     descriptors: &[StatementDescriptor],
+    source_tail: Option<IntervalTail>,
 ) -> Result<Enforcement, SchemaError> {
     let target_relation = &relations[target.relation.0 as usize];
 
@@ -1474,10 +1487,14 @@ fn resolve_target_key(
         else {
             unreachable!("a set-equal interval projection resolves to a pointwise key")
         };
+        let Some(source_tail) = source_tail else {
+            unreachable!("positional type match: a coverage target implies an interval source");
+        };
         Ok(Enforcement::IntervalCoverage {
             target_key,
             key_permutation,
             disjoint,
+            source_tail,
         })
     } else {
         Ok(Enforcement::ScalarProbe {

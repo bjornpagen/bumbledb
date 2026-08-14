@@ -7,6 +7,7 @@
 //! Rendering allocates; it runs only in `Display`/diagnostic contexts
 //! (`crate::error`), never on a write or query path.
 
+use std::collections::BTreeMap;
 use std::fmt;
 
 use super::{
@@ -212,7 +213,7 @@ pub fn render_declared(descriptor: &SchemaDescriptor, id: StatementId) -> String
 pub(super) fn render_materialized(
     descriptor: &SchemaDescriptor,
     materialized: &[StatementDescriptor],
-    mirrors: &[Option<StatementId>],
+    mirrors: &BTreeMap<StatementId, StatementId>,
     id: StatementId,
 ) -> String {
     let index = usize::from(id.0);
@@ -231,7 +232,7 @@ pub(super) fn render_materialized(
                 // A rejected declaration seals no `mirror` field to read,
                 // so the pairing comes from sealing's one identity
                 // ([`super::validate::mirror_links`]), pre-computed.
-                mirror: mirrors[index],
+                mirror: mirrors.get(&id).copied(),
             }
         }
         StatementDescriptor::Capacity {
