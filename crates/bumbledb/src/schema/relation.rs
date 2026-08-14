@@ -83,7 +83,7 @@ impl Relation {
         projection
             .iter()
             .find_map(|field| match self.field(*field).value_type {
-                ValueType::Interval { width, .. } => Some(IntervalTail { width }),
+                ValueType::Interval { width, .. } => Some(IntervalTail::from_width(width)),
                 _ => None,
             })
     }

@@ -595,12 +595,10 @@ fn validate_functionality(
     // collision probe below and the sealed witness both consume it.
     let tail = interval_position.map(|pos| {
         let idx = usize::from(projection.ordered()[pos].0);
-        IntervalTail {
-            width: match relation.fields[idx].value_type {
-                ValueType::Interval { width, .. } => width,
-                _ => unreachable!("interval_positions found an interval field"),
-            },
-        }
+        IntervalTail::from_width(match relation.fields[idx].value_type {
+            ValueType::Interval { width, .. } => width,
+            _ => unreachable!("interval_positions found an interval field"),
+        })
     });
 
     // Roster "duplicate statements", FD form: one field *set* per relation
@@ -890,7 +888,7 @@ fn validate_capacity(
             };
             SealedWeight::Duration {
                 field,
-                tail: IntervalTail { width },
+                tail: IntervalTail::from_width(width),
             }
         }
     };
@@ -938,7 +936,7 @@ fn validate_capacity(
             }
             SealedBound::Duration {
                 field,
-                tail: IntervalTail { width },
+                tail: IntervalTail::from_width(width),
             }
         }
     };

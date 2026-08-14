@@ -184,25 +184,33 @@ impl Theory for SchemaDescriptor {
     }
 }
 
-/// The trailing interval encoding of a pointwise determinant or an
-/// interval-final projection: how many encoded bytes the interval
-/// position occupies and how its exclusive end derives. The general type
-/// stores both order-preserving halves; a fixed-width type stores the
-/// START word only — the width is the type's, and the bias of both
+/// Trailing interval encoding of a sealed projection (CONTRACT C9):
+/// general stores both order-preserving halves; a fixed-width type stores
+/// the START word only — the width is the type's, and the bias of both
 /// element encodings is additive, so `start_word + w` IS the encoded end
 /// (`lean/Bumbledb/Values.lean: encode_fixed_order_u64`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct IntervalTail {
-    /// `Some(w)` = the fixed width; `None` = general (`start ‖ end`).
-    pub(crate) width: Option<u64>,
+pub(crate) enum IntervalTail {
+    /// `start ‖ end` — 16 trailing bytes.
+    General,
+    /// Fixed width `w` — 8 trailing bytes (the start word).
+    Fixed { width: u64 },
 }
 
 impl IntervalTail {
+    /// Parse the descriptor width Option into the sealed encoding.
+    pub(crate) const fn from_width(width: Option<u64>) -> Self {
+        match width {
+            None => Self::General,
+            Some(width) => Self::Fixed { width },
+        }
+    }
+
     /// Trailing encoded bytes: 16 general, 8 fixed.
     pub(crate) const fn bytes(self) -> usize {
-        match self.width {
-            None => 16,
-            Some(_) => 8,
+        match self {
+            Self::General => 16,
+            Self::Fixed { .. } => 8,
         }
     }
 
@@ -215,13 +223,13 @@ impl IntervalTail {
         if tail.len() != self.bytes() {
             return None;
         }
-        match self.width {
-            None => {
+        match self {
+            Self::General => {
                 let start = u64::from_be_bytes(tail[..8].try_into().ok()?);
                 let end = u64::from_be_bytes(tail[8..].try_into().ok()?);
                 Some((start, end))
             }
-            Some(width) => {
+            Self::Fixed { width } => {
                 let bytes: [u8; 8] = tail.try_into().ok()?;
                 crate::encoding::decode_fixed_interval_start(bytes, width).ok()
             }
