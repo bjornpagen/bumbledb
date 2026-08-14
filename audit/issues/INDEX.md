@@ -17,7 +17,7 @@ Primary interface: `ls audit/issues` and this table. Start at seq **001** and go
 
 | Seq | Id | Title | Sev | Depends on | Notes |
 |---|---|---|---|---|---|
-| 001 | lean-019 | Bridge cites deleted `translate/program.rs` | high | — | Wave 0 / first; un-reds `scripts/lean.sh` |
+| 001 | lean-019 | Bridge cites deleted `translate/program.rs` | high | — | first; un-reds `scripts/lean.sh` |
 | 002 | docs-001 | "multi-rule programs" (20-query-ir) | high | — |  |
 | 003 | docs-003 | rec as SCC | high | — |  |
 | 004 | docs-005 | deleted cap names (IR) | med | — |  |
@@ -179,7 +179,7 @@ Primary interface: `ls audit/issues` and this table. Start at seq **001** and go
 
 ## Cycles broken
 
-Do not invent an order through a cycle; INDEX cluster/wave grouping wins.
+Do not invent an order through a cycle; INDEX cluster grouping wins.
 
 1. **lean-001 ↔ lean-002.** Issue 001 lists 002 as a dependency; they are one commit. Queue: **001 then 002** adjacent (INDEX: 002 may be immediately after 001).
 2. **engine-020 ↔ bench-004** (and **bench-003 ↔ bench-004**). engine-020's issue depends on bench-004; bench-004's issue says land *before* 020; bench-003's issue depends on 004. INDEX: engine-020 independent; bench-003 after 020; bench-004 after 020/003. Queue uses INDEX: **020 → 003 → 004**. Dropped 020's issue-file deps on 004/005/021 and 003's deps on 004/005.
