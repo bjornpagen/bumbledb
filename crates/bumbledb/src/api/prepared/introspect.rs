@@ -40,11 +40,6 @@ impl<S> PreparedQuery<'_, S> {
     ) -> Result<(Answers, String)> {
         let (out, stats) = self.profile(txn, cache, params)?;
         let pending = self.pending_literal_note();
-        // A fixpoint program reports every predicate's plan units in
-        // predicate order — a recursive rule as its delta variants —
-        // each under a label naming its (predicate, rule, variant);
-        // the counted surface is the per-stratum round section
-        // (`stats.strata`), never per-unit node stats.
         let (rules, unit_labels) = match &self.pipeline {
             PreparedPipeline::Cq { rules, .. } if rules.is_empty() => {
                 (vec![RulePlan::Empty], Vec::new())

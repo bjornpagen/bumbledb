@@ -87,7 +87,7 @@ pub(crate) const FIELDS_EQ_KEEP_DEN: u64 = 64;
 pub(crate) const PARAM_SET_PLANNING_ROWS: u64 = 16;
 
 /// The delta occurrence's planning row count (40-execution.md § the linear reach driver):
-/// a delta-variant plan's marked occurrence binds to one round's
+/// a rec arm's marked delta occurrence binds to one round's
 /// frontier, which the semi-naive rewrite exists to keep small — the
 /// floor prices it as the most selective thing in the rule, so the DP
 /// orders delta-first. Prepare-unknowable like param survivorship (the

@@ -61,13 +61,13 @@ pub struct CountingCounters {
     emits: u64,
 }
 
-/// Driver-level counters for a fixpoint execution
+/// Driver-level counters for a reach execution
 /// (docs/architecture/40-execution.md § the linear reach driver): the
-/// per-stratum, per-round delta sizes and union accounting the driver
-/// reports through the `Counters` seam's fixpoint hooks. Node-level
-/// methods are deliberate no-ops — the driver runs many differently
-/// shaped plan units under one counter, so the counted surface here is
-/// the round structure, not per-node row counts.
+/// per-round delta sizes and union accounting the driver reports through
+/// the `Counters` seam's fixpoint hooks. Node-level methods are
+/// deliberate no-ops — the driver runs many differently shaped plan
+/// units under one counter, so the counted surface here is the round
+/// structure (`stats.reach`), not per-node row counts.
 #[derive(Debug, Default)]
 pub struct ReachCounters {
     emits: u64,
@@ -84,14 +84,12 @@ pub struct IntrospectionReport<'p> {
     /// Query and predicate header for the public artifact. Low-level
     /// executor tests omit it while retaining the same versioned body.
     pub header: Option<IntrospectionHeader>,
-    /// Per plan unit, aligned with `stats.rules` for query-shaped
-    /// programs. A fixpoint program's units (every predicate's rules, a
-    /// recursive rule as its delta variants) carry labels below and no
-    /// per-unit counted stats — the counted surface is `stats.strata`.
+    /// Per plan unit, aligned with `stats.rules` for CQ pipelines. Rec
+    /// arms carry labels below (`reach rec {i} (delta occ {d})`) and no
+    /// per-unit counted stats — the counted surface is `stats.reach`.
     pub rules: Vec<RulePlan<'p>>,
-    /// Fixpoint unit labels, parallel to `rules`
-    /// (`predicate p0 rule 1 delta variant 0`); empty for query-shaped
-    /// programs, whose label is the rule index.
+    /// Rec-arm labels, parallel to `rules`; empty for CQ pipelines,
+    /// whose label is the rule index.
     pub unit_labels: Vec<String>,
     pub stats: crate::api::stats::ExecutionStats,
 }

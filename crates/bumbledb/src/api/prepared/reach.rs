@@ -1,8 +1,8 @@
 //! The linear-reach driver (`docs/architecture/40-execution.md` § the
 //! linear reach driver): one rec SCC, interiors then
 //! rec then main. Round 0 runs the base arms through the ordinary rule
-//! loop; rounds ≥ 1 run each rec arm's one delta variant against the
-//! watermark frontier. An empty Δ ends the rec
+//! loop; rounds ≥ 1 run each rec arm against the watermark frontier
+//! (the unique self-atom is the marked delta occurrence). An empty Δ ends the rec
 //! (`lean/Bumbledb/Exec/Reach.lean: evalLinearReach_eq_lfp`).
 //! Interiors-only never enters this module's loop.
 

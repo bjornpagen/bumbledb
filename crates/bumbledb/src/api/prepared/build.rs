@@ -412,7 +412,7 @@ fn prepare_reach(
         if normalized_rule.dead.is_some() {
             continue;
         }
-        let delta = rec.arms()[rule_idx].self_occ();
+        let delta = rec.arm(rule_idx).self_occ();
         debug_assert!(
             normalized_rule
                 .occurrences
@@ -420,7 +420,7 @@ fn prepare_reach(
                 .any(|occ| { occ.occ_id == delta && occ.source.interior() == Some(rec_id) }),
             "self_occ is the rec atom normalize numbered"
         );
-        let prepared = prepare_rule_variant(
+        rec_rules.push(prepare_rec_arm(
             txn,
             cache,
             schema,
@@ -428,12 +428,8 @@ fn prepare_reach(
             &normalized_rule,
             columns,
             signatures,
-            Some(delta),
-        )?;
-        let PreparedRule::FreeJoin(fj) = prepared else {
-            unreachable!("an Interior-reading rec arm never classifies as a key probe")
-        };
-        rec_rules.push(super::RecArm { delta, rule: fj });
+            delta,
+        )?);
     }
     let units = base.len() + rec_rules.len();
     let hint = output_hint(&base)
@@ -668,16 +664,49 @@ fn prepare_rule(
     signatures: &[&crate::ir::validate::Predicate],
 ) -> Result<PreparedRule> {
     prepare_rule_variant(
-        txn, cache, schema, rule, normalized, columns, signatures, None,
+        txn,
+        cache,
+        schema,
+        rule,
+        normalized,
+        columns,
+        signatures,
+        |_| false,
     )
 }
 
-/// [`prepare_rule`] with interiors/rec: the sealed signatures
-/// (`Interior` occurrences' field→column spans) and — for one delta variant
-/// of a rec arm — the marked delta occurrence, whose statistics
-/// take the ladder's delta floor while other `Interior` occurrences take the
-/// accumulated floor (`plan/selectivity.rs`; 40-execution.md § the linear reach driver, the
-/// param-plan precedent). The query path passes the empty surface.
+/// Prepare one rec arm: the unique self-occurrence is the marked delta
+/// (its statistics take the ladder's delta floor; other `Interior`
+/// occurrences take the accumulated floor).
+fn prepare_rec_arm(
+    txn: &ReadTxn<'_>,
+    cache: &ImageCache,
+    schema: &Schema,
+    rule: &RuleWitness<'_>,
+    normalized: &NormalizedQuery,
+    columns: &[crate::ir::validate::PredicateColumn],
+    signatures: &[&crate::ir::validate::Predicate],
+    delta: crate::ir::normalize::OccId,
+) -> Result<super::RecArm> {
+    let prepared = prepare_rule_variant(
+        txn,
+        cache,
+        schema,
+        rule,
+        normalized,
+        columns,
+        signatures,
+        |occ| occ == delta,
+    )?;
+    let PreparedRule::FreeJoin(fj) = prepared else {
+        unreachable!("an Interior-reading rec arm never classifies as a key probe")
+    };
+    Ok(super::RecArm { delta, rule: fj })
+}
+
+/// [`prepare_rule`] / [`prepare_rec_arm`] shared tail: classify →
+/// statistics → DP → lowering → plan validation. `is_delta` marks the
+/// rec arm's self-occurrence (always false on the CQ path).
 #[expect(
     clippy::too_many_arguments,
     reason = "the per-rule pipeline's inputs are clearer unpacked"
@@ -690,7 +719,7 @@ fn prepare_rule_variant(
     normalized: &NormalizedQuery,
     columns: &[crate::ir::validate::PredicateColumn],
     signatures: &[&crate::ir::validate::Predicate],
-    delta: Option<crate::ir::normalize::OccId>,
+    is_delta: impl Fn(crate::ir::normalize::OccId) -> bool,
 ) -> Result<PreparedRule> {
     let distinct_witness = provably_distinct(normalized, schema);
     // Classification first: a key probe needs no statistics or planning.
@@ -734,12 +763,12 @@ fn prepare_rule_variant(
         // An `Interior` occurrence pins nothing (20-query-ir.md § engine recursion's
         // consumer table): its row count is prepare-unknowable, so it
         // reads no row counter and costs on the selectivity ladder's
-        // floors — the delta floor for the variant's marked occurrence,
+        // floors — the delta floor for the rec arm's marked occurrence,
         // the accumulated floor for every other predicate read — the
         // staleness surface already knows the shape (negated and
         // grounding-discharged occurrences carry no pin today).
         let Some(relation) = occurrence.source.edb() else {
-            let floor = if delta == Some(occurrence.occ_id) {
+            let floor = if is_delta(occurrence.occ_id) {
                 crate::plan::selectivity::DELTA_PLANNING_ROWS
             } else {
                 crate::plan::selectivity::INTERIOR_PLANNING_ROWS

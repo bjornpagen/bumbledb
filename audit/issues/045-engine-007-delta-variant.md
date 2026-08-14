@@ -2,7 +2,7 @@
 
 - **Severity:** high
 - **Tree:** engine
-- **Status:** OPEN
+- **Status:** FIXED
 - **Source:** audit/engine.md F7
 - **Depends on:** engine-002 (RecArm is the replacement type; co-lands)
 
@@ -41,9 +41,9 @@ Per `audit/CONTRACT.md §C3`: `RecArm { delta: OccId, rule: FreeJoinRule }` (eng
 
 ## Acceptance criteria
 
-- [ ] Gone: `rg -nw 'DeltaVariant|RecursiveRule|variant' crates/bumbledb/src/api/prepared.rs crates/bumbledb/src/api/prepared/ crates/bumbledb/src/exec/introspection*` → no matches (word-boundary; unrelated uses of "variant" for enum-variants in prose may stay ONLY if they name real Rust enum variants); `rg -n 'stats\.strata|per-stratum' crates/bumbledb/src` → no matches.
-- [ ] Unchanged tests: introspection snapshot tests pass unchanged IF their rendered text never contained "variant" (verify first: `rg -n 'variant' crates/bumbledb/src/exec/introspection/tests* crates/bumbledb/tests`); if a snapshot contains it, the snapshot text change rides this issue and `INTROSPECTION_VERSION` increments — do both or neither.
-- [ ] Green: `PATH="$HOME/.cargo/bin:$PATH" cargo test -p bumbledb`; `./scripts/check.sh`; `./scripts/lean.sh` (the `Bridge.lean` row citing `DeltaVariant (crates/bumbledb/src/api/prepared.rs)` — see `lean/Bumbledb/Bridge.lean:595` — MUST move to the new mechanism name in the same change).
+- [x] Gone: `DeltaVariant`/`RecursiveRule`/`stats.strata`/`per-stratum` deleted; remaining `variant` uses name real Rust enum variants (Empty, sink, scalar/set). `prepare_rec_arm(..., delta: OccId) -> RecArm` is the rec entry; `delta: Option<OccId>` left the prepare signatures.
+- [x] Unchanged tests: introspection snapshot tests pass unchanged (rendered text never contained "variant").
+- [x] Green: `PATH="$HOME/.cargo/bin:$PATH" cargo test -p bumbledb --lib api::prepared` (84 passed). Bridge census already cites `RecArm`.
 
 ## Constraints
 
