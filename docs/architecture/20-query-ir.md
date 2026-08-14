@@ -1079,7 +1079,7 @@ not verbatim — `0x64` lowers, renders, and reparses as `100`.
 
 **`interior` / `recursive` are the notation's derived-table form — bare
 rules ARE the main query.** A named head without either keyword is a
-compile error (the former Program sneak). `interior mid(x) | Edge(src: x);`
+compile error (the former named-head sneak). `interior mid(x) | Edge(src: x);`
 declares a named interior; `recursive reach(c) | …;` declares the rec;
 `(c) | reach(c);` is the required main. A body atom naming `pred` is an
 `Interior` atom whose bindings address **head positions** — positional,

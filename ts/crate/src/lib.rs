@@ -44,7 +44,7 @@
 //!
 //! Domain outcomes are DATA (`{ ok: … }` results): schema errors,
 //! fingerprint mismatches, commit rejections with their full violation
-//! rendering, generation moves, IR validation errors. Programming and shape
+//! rendering, generation moves, IR validation errors. Language and shape
 //! errors THROW: marshaling mismatches (naming relation/field/expected/got),
 //! use-after-close, engine `FactShape`/storage errors.
 

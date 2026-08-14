@@ -1,6 +1,7 @@
 #![cfg(feature = "trace")] // every test here reads obs captures
 
 use super::*;
+use crate::ir::Rec;
 
 /// The view-memo LRU (docs/architecture/40-execution.md): four rotating residual bindings
 /// all memoize; a fifth evicts exactly the least recently used.
@@ -615,13 +616,11 @@ fn prepare_lights_the_validation_interior() {
             "{name} nests inside VALIDATE",
         );
     }
-    // STRATIFY died with Program. SEAL still runs (declaration-order
+    // The stratify span is gone. SEAL still runs (declaration-order
     // interior sealing) even when interiors are empty.
     assert!(
-        events
-            .iter()
-            .all(|e| e.name != obs::names::VALIDATE_STRATIFY),
-        "VALIDATE_STRATIFY is deleted",
+        events.iter().all(|e| e.name != "validate_stratify"),
+        "the stratify span must not appear",
     );
     let seal = events
         .iter()
@@ -704,10 +703,8 @@ fn rec_prepare_lights_sealing_and_the_rule_passes() {
     let seal = one(obs::names::VALIDATE_SEAL);
     within(seal);
     assert!(
-        events
-            .iter()
-            .all(|e| e.name != obs::names::VALIDATE_STRATIFY),
-        "VALIDATE_STRATIFY is deleted",
+        events.iter().all(|e| e.name != "validate_stratify"),
+        "the stratify span must not appear",
     );
 }
 

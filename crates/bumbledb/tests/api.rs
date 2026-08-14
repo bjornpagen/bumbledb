@@ -1532,7 +1532,7 @@ fn staleness_reports_drift_and_reprepare_resets_it() {
 }
 
 /// A plain Query (empty interiors, no rec) prepares and executes as it
-/// always has — the Program embedding is gone.
+/// always has.
 #[test]
 fn a_plain_query_executes_as_today() {
     let dir = common::TempDir::new("api-degenerate-program");

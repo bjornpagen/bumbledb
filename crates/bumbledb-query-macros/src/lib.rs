@@ -22,7 +22,7 @@
 //!                                        //   interiors and rec: None — text-level
 //!                                        //   backward compatibility; a named head
 //!                                        //   without `interior` / `recursive` is a
-//!                                        //   compile error (the former Program sneak)
+//!                                        //   compile error (the former named-head sneak)
 //! head    := headterm (',' headterm)*
 //! headterm:= var | [name ':'] agg        // named positions become result columns
 //! agg     := Sum(t) | Min(t) | Max(t) | Count | Pack(v)
@@ -1089,7 +1089,7 @@ fn validate_pred_name(name: &Name) -> Parse<()> {
 
 /// Parses one rule: `interior pred (head) | body ;`, `recursive pred
 /// (head) | body ;`, or a bare `(head) | body ;`. A named head without
-/// the keyword is the former Program sneak — a spanned compile error.
+/// the keyword is the former named-head sneak — a spanned compile error.
 fn parse_rule(tokens: &mut Tokens) -> Parse<ParsedRule> {
     let (kind, name) = match tokens.peek() {
         Some(TokenTree::Ident(_)) => {

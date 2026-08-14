@@ -10,7 +10,7 @@ use super::query::{SharedParams, arm_body, rule_core};
 use super::{Translated, VarCols};
 
 /// Interval-typed derived columns are the remaining translator limit
-/// (the four Program gates died with Program). Validation is the screen.
+/// (the four rec gates died with the stratified IR). Validation is the screen.
 pub fn sqlite_reach_expressible(query: &Query, schema: &Schema) -> Result<(), super::Inexpressible> {
     refuse_interval_columns(query, schema).map_err(|_| super::Inexpressible::IntervalDerivedColumn)
 }

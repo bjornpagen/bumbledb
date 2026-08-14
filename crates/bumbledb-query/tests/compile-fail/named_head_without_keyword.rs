@@ -1,4 +1,4 @@
-//! A named head without `interior` / `recursive` is the former Program
+//! A named head without `interior` / `recursive` is the former named-head
 //! sneak — refused at the name, telling the author to write the keyword.
 //@ error: named heads require `interior` or `recursive`
 //@ line: 17
