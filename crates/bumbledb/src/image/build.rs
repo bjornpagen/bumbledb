@@ -200,7 +200,7 @@ pub(super) fn image_with_tolerance(
 pub fn build(txn: &ReadTxn<'_>, schema: &Schema, rel: RelationId) -> Result<Arc<RelationImage>> {
     let relation = schema.relation(rel);
     debug_assert!(
-        !relation.is_closed(),
+        relation.body().closed_rows().is_none(),
         "closed relations synthesize from the theory, never from a scan"
     );
     let layout = relation.layout();
@@ -312,7 +312,7 @@ pub fn append(
 ) -> Result<Arc<RelationImage>> {
     let relation = schema.relation(rel);
     debug_assert!(
-        !relation.is_closed(),
+        relation.body().closed_rows().is_none(),
         "closed relations synthesize from the theory, never from a scan"
     );
     let layout = relation.layout();
@@ -612,7 +612,8 @@ fn fill_encoded_rows<'r>(
 #[must_use]
 pub fn synthesize_closed(rel: RelationId, relation: &Relation) -> Arc<RelationImage> {
     let extension = relation
-        .extension()
+        .body()
+        .closed_rows()
         .expect("synthesize_closed takes a closed relation");
     let layout = relation.layout();
     let row_count = extension.len();

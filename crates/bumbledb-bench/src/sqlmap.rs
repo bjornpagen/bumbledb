@@ -47,7 +47,7 @@ pub(crate) fn field_columns(field: &FieldDescriptor) -> Vec<(String, &'static st
 /// auto-key statement becomes the table's PRIMARY KEY — no separate
 /// index exists or is expected.
 fn rowid_alias(relation: &Relation) -> Option<&str> {
-    if relation.is_closed() {
+    if relation.body().closed_rows().is_some() {
         return relation.fields().first().map(|field| &*field.name);
     }
     relation
@@ -94,7 +94,7 @@ fn index_plan(schema: &Schema) -> Vec<IndexSpec> {
                 if covered_by_rowid {
                     continue;
                 }
-                let key = !statement.pointwise();
+                let key = !statement.form().is_pointwise();
                 plan.push(IndexSpec {
                     table: rel.name().to_owned(),
                     name: format!("{}_{}_s{sid}", if key { "uq" } else { "ix" }, rel.name()),
@@ -115,7 +115,7 @@ fn index_plan(schema: &Schema) -> Vec<IndexSpec> {
                 // A closed source (domain quantification) draws no probe
                 // index: the mirrored extension table is ≤256 rows and
                 // its id is already the PRIMARY KEY.
-                if rel.is_closed() {
+                if rel.body().closed_rows().is_some() {
                     continue;
                 }
                 plan.push(IndexSpec {

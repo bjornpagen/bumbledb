@@ -1312,7 +1312,12 @@ fn a_stored_row_for_a_closed_relation_is_the_finding() {
     };
     let db = Db::create(dir.path(), decl).expect("create");
     let currency = RelationId(0);
-    let fact = db.schema().relation(currency).extension().expect("closed")[0]
+    let fact = db
+        .schema()
+        .relation(currency)
+        .body()
+        .closed_rows()
+        .expect("closed")[0]
         .fact
         .to_vec();
     let f = key(|b| keys::fact_key(b, currency, 0));
@@ -1360,7 +1365,13 @@ fn membership_and_determinant_entries_for_a_closed_relation_are_findings() {
     let dir = TempDir::new("verify-closed-m-u");
     let db = Db::create(dir.path(), decl).expect("create");
     let currency = RelationId(0);
-    let fact = &db.schema().relation(currency).extension().expect("closed")[0].fact;
+    let fact = &db
+        .schema()
+        .relation(currency)
+        .body()
+        .closed_rows()
+        .expect("closed")[0]
+        .fact;
     let m = key(|b| keys::membership_key(b, currency, &fact_hash(fact)));
     let u = key(|b| keys::determinant_key(b, currency, StatementId(0), &encode_u64(0)));
     raw_write(&db, |txn| {
@@ -1553,7 +1564,8 @@ fn an_uncovered_domain_quantification_is_a_judgment_violation() {
     let severities = db
         .schema()
         .relation(RelationId(0))
-        .extension()
+        .body()
+        .closed_rows()
         .expect("closed");
     let expected: Vec<StoreFinding> = severities
         .iter()
@@ -1721,7 +1733,12 @@ fn a_closed_parent_capacity_group_is_remeasured_by_the_marks_pass() {
             "the fixture wrote this capacity edge"
         );
     });
-    let parent_fact: Box<[u8]> = db.schema().relation(pool).extension().expect("closed")[0]
+    let parent_fact: Box<[u8]> = db
+        .schema()
+        .relation(pool)
+        .body()
+        .closed_rows()
+        .expect("closed")[0]
         .fact
         .clone();
     let findings = db.verify_store().expect("verify").findings;

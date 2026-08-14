@@ -41,7 +41,7 @@ pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
         // have no rows in the store — so the entry's existence is the
         // finding (never tallied: the counter pass reconciles facts that
         // may legally exist).
-        if relation.is_closed() {
+        if relation.body().closed_rows().is_some() {
             s.push(StoreFinding::ClosedRelationEntry {
                 relation: rel,
                 key: key.into(),
@@ -127,7 +127,7 @@ pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
         // The one id allocator (R16): on a fresh-keyed relation the F row
         // id IS the first fresh field's value — a disagreement is the
         // merged mint's own desync class.
-        if let Some(field) = relation.fresh_row_field() {
+        if let Some(field) = schema.fresh_mint_field(rel) {
             let fresh = u64::from_be_bytes(field_word_bytes(fact, layout, usize::from(field.0)));
             if fresh != row_id {
                 s.push(StoreFinding::FreshRowDesync {
@@ -144,7 +144,7 @@ pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
         // (R16; the U pass convicts any entry that exists under it).
         for &key_id in relation.keys() {
             let statement = schema.key(key_id);
-            if statement.fresh_row {
+            if statement.form().as_fresh_row().is_some() {
                 continue;
             }
             keys::determinant_image(layout, &statement.projection, fact, &mut determinant);
@@ -433,7 +433,7 @@ fn check_extension_sources(
     let schema = s.schema;
     let mut determinant = DeterminantImage::scratch();
     for relation in schema.relations() {
-        let Some(rows) = relation.extension() else {
+        let Some(rows) = relation.body().closed_rows() else {
             continue;
         };
         let layout = relation.layout();

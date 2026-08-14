@@ -148,18 +148,43 @@ pub(crate) struct FreshRowOp {
 }
 
 /// One key statement's determinant material for one fact.
-pub(crate) struct DeterminantOp {
-    /// The `Functionality` statement.
-    pub(crate) statement: StatementId,
-    /// The projected fields' canonical encodings in statement order
-    /// ([`keys::determinant_image`]) — the `U` key's determinant segment.
-    pub(crate) determinant: DeterminantImage,
+pub(crate) enum DeterminantOp {
+    /// Scalar key: exact `U` put is the functionality judgment.
+    Scalar {
+        statement: StatementId,
+        determinant: DeterminantImage,
+    },
     /// Interval-carrying key: the exact `U` put cannot detect overlap, so
     /// the insert additionally runs the ordered-neighbor probe — the
     /// tail descriptor says how the determinant's trailing interval
     /// reads (16-byte `start ‖ end`, or the 8-byte fixed start whose end
-    /// is the type's width). `None` = scalar key.
-    pub(crate) pointwise: Option<IntervalTail>,
+    /// is the type's width).
+    Pointwise {
+        statement: StatementId,
+        determinant: DeterminantImage,
+        tail: IntervalTail,
+    },
+}
+
+impl DeterminantOp {
+    pub(crate) fn statement(&self) -> StatementId {
+        match *self {
+            Self::Scalar { statement, .. } | Self::Pointwise { statement, .. } => statement,
+        }
+    }
+
+    pub(crate) fn determinant(&self) -> &DeterminantImage {
+        match self {
+            Self::Scalar { determinant, .. } | Self::Pointwise { determinant, .. } => determinant,
+        }
+    }
+
+    pub(crate) fn tail(&self) -> Option<IntervalTail> {
+        match *self {
+            Self::Pointwise { tail, .. } => Some(tail),
+            Self::Scalar { .. } => None,
+        }
+    }
 }
 
 /// One closed-target containment of one fact: the membership judgment's
@@ -363,23 +388,24 @@ fn fact_op<'d>(
         // allocator, R16): its determinant IS the `F` row id, and the
         // `F` put-conflict is its functionality judgment — the applier
         // takes the derived id and the statement to convict.
-        if statement.fresh_row {
-            let word = crate::encoding::field_word_bytes(
-                fact,
-                layout,
-                usize::from(statement.projection[0].0),
-            );
+        if let Some(field) = statement.form().as_fresh_row() {
+            let word = crate::encoding::field_word_bytes(fact, layout, usize::from(field.0));
             fresh_row = Some(FreshRowOp {
                 statement: statement.id,
                 row_id: u64::from_be_bytes(word),
             });
             continue;
         }
-        determinants.push(DeterminantOp {
-            statement: statement.id,
-            determinant: scratch.image.clone(),
-            // The sealed tail, copied — validation minted it once.
-            pointwise: statement.tail,
+        determinants.push(match statement.form().as_pointwise() {
+            Some(tail) => DeterminantOp::Pointwise {
+                statement: statement.id,
+                determinant: scratch.image.clone(),
+                tail,
+            },
+            None => DeterminantOp::Scalar {
+                statement: statement.id,
+                determinant: scratch.image.clone(),
+            },
         });
     }
     let determinants = determinants.into_boxed_slice();

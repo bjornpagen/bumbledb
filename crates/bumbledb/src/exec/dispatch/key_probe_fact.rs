@@ -267,13 +267,12 @@ pub(crate) fn key_probe_fact<'t>(
     // reads `F` directly — an honest miss, one descent.
     let fact = if let Some(statement) = plan.statement
         && let Some(crate::schema::StatementView::Key(_, key)) = schema.statement_checked(statement)
-        && key.fresh_row
+        && key.form().as_fresh_row().is_some()
     {
-        let row_id = u64::from_be_bytes(
-            key_scratch[read::DETERMINANT_KEY_HEADER..]
-                .try_into()
-                .expect("a fresh-row determinant is one u64 word"),
-        );
+        let row_id = match <[u8; 8]>::try_from(&key_scratch[read::DETERMINANT_KEY_HEADER..]) {
+            Ok(word) => u64::from_be_bytes(word),
+            Err(_) => unreachable!("KeyForm::FreshRow determinant is one encoded u64"),
+        };
         read::fact_at(txn, schema, plan.relation, row_id)?
     } else if plan.statement.is_some() {
         match read::determinant_row_for_key(txn, key_scratch)? {

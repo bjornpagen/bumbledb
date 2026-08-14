@@ -319,7 +319,7 @@ impl Names for SealedNames<'_> {
             |id| {
                 self.0
                     .relation_checked(id)
-                    .is_some_and(super::Relation::is_closed)
+                    .is_some_and(|rel| rel.body().closed_rows().is_some())
             },
             relation,
             field,
@@ -327,7 +327,7 @@ impl Names for SealedNames<'_> {
     }
 
     fn handle(&self, closed: RelationId, id: u64) -> Option<String> {
-        let rows = self.0.relation_checked(closed)?.extension()?;
+        let rows = self.0.relation_checked(closed)?.body().closed_rows()?;
         usize::try_from(id)
             .ok()
             .and_then(|row| rows.get(row))

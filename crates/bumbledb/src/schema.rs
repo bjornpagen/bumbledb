@@ -239,7 +239,7 @@ impl Schema {
         reason = "the schema is the witness's minting authority — readers go through it"
     )]
     pub(crate) fn key_tail(&self, key: &KeyStatement) -> Option<IntervalTail> {
-        key.tail
+        key.tail()
     }
 
     /// The interval-tail descriptor of a containment's SOURCE projection
@@ -394,7 +394,32 @@ pub(crate) struct CompiledSides {
     pub(crate) target: Box<[CompiledCheck]>,
 }
 
-/// One sealed key statement: `R(X) -> R` with its enforcement flag.
+/// The sealed key form: three behaviors, three arms. Fresh-row ×
+/// pointwise is unrepresentable; the disjointness proof lives on the
+/// Pointwise arm that needs it (CONTRACT C9).
+#[allow(private_interfaces)]
+#[derive(Debug)]
+pub enum KeyForm {
+    /// The relation's FIRST fresh field's auto-key (the one id allocator,
+    /// `docs/architecture/50-storage.md` § key layout; ruled 2026-07-23,
+    /// R16): its determinant IS the `F` row id, it maintains no `U` tree,
+    /// and its functionality judgment is the `F` put-conflict itself.
+    /// Probes against it read `F` directly — one B-tree descent. One
+    /// word by type. The statement's `projection` is that one field.
+    FreshRow { field: FieldId },
+    /// A scalar (interval-free) functionality.
+    Scalar,
+    /// An interval-final functionality. The trailing encoding and the
+    /// disjointness proof the gate derived travel with the arm — no
+    /// consumer re-walks the projection, and no boolean licenses the
+    /// sweep.
+    Pointwise {
+        tail: IntervalTail,
+        disjoint: DisjointDeterminantProof,
+    },
+}
+
+/// One sealed key statement: `R(X) -> R` with its form.
 #[derive(Debug)]
 pub struct KeyStatement {
     /// Materialized-order identity. It is fingerprint-pinned and embedded in
@@ -402,28 +427,50 @@ pub struct KeyStatement {
     pub id: StatementId,
     pub relation: RelationId,
     pub projection: Box<[FieldId]>,
-    /// The trailing interval encoding of a pointwise key's determinant,
-    /// sealed from the validator's own derivation (`Some` = the key
-    /// carries an interval, necessarily final, so its enforcement uses
-    /// an ordered-neighbor probe; `None` = scalar). The staging law
-    /// applied to the checker: no consumer re-walks the projection, and
-    /// no boolean licenses the sweep — the tail IS the evidence.
-    pub(crate) tail: Option<IntervalTail>,
-    /// The relation's FIRST fresh field's auto-key (the one id allocator,
-    /// `docs/architecture/50-storage.md` § key layout; ruled 2026-07-23,
-    /// R16): its determinant IS the `F` row id, it maintains no `U` tree,
-    /// and its functionality judgment is the `F` put-conflict itself.
-    /// Probes against it read `F` directly — one B-tree descent.
-    pub fresh_row: bool,
+    pub(crate) form: KeyForm,
 }
 
 impl KeyStatement {
-    /// Whether the key carries an interval position — the public face of
-    /// the sealed tail (`tail.is_some()`; the tail itself is the
-    /// crate-internal enforcement shape).
+    /// The form this statement sealed as — match, don't re-test flags.
     #[must_use]
-    pub fn pointwise(&self) -> bool {
-        self.tail.is_some()
+    pub fn form(&self) -> &KeyForm {
+        &self.form
+    }
+
+    /// The trailing interval encoding of a Pointwise key; `None` on the
+    /// other arms.
+    #[must_use]
+    pub(crate) fn tail(&self) -> Option<IntervalTail> {
+        match &self.form {
+            KeyForm::Pointwise { tail, .. } => Some(*tail),
+            KeyForm::FreshRow { .. } | KeyForm::Scalar => None,
+        }
+    }
+}
+
+impl KeyForm {
+    /// The mint field when this key is [`KeyForm::FreshRow`].
+    #[must_use]
+    pub const fn as_fresh_row(&self) -> Option<FieldId> {
+        match *self {
+            Self::FreshRow { field } => Some(field),
+            Self::Scalar | Self::Pointwise { .. } => None,
+        }
+    }
+
+    /// Whether this key is [`KeyForm::Pointwise`].
+    #[must_use]
+    pub const fn is_pointwise(&self) -> bool {
+        matches!(self, Self::Pointwise { .. })
+    }
+
+    /// The trailing encoding when this key is [`KeyForm::Pointwise`].
+    #[must_use]
+    pub(crate) const fn as_pointwise(&self) -> Option<IntervalTail> {
+        match *self {
+            Self::Pointwise { tail, .. } => Some(tail),
+            Self::FreshRow { .. } | Self::Scalar => None,
+        }
     }
 }
 
@@ -548,19 +595,40 @@ pub struct SealedRow {
     pub fact: Box<[u8]>,
 }
 
+/// The sealed relation kind (CONTRACT C9). Shared layout lives on
+/// [`Relation`]; the kind-carrying payloads (`fresh` vs `extension`)
+/// live in the arms. Closed cannot be written.
+#[derive(Debug)]
+pub enum RelationBody {
+    /// An ordinary row-store. `fresh` is the [`KeyForm::FreshRow`] key
+    /// when this relation is the one id allocator's mint (R16); `None`
+    /// means row ids mint from the `S` high-water.
+    Ordinary { fresh: Option<KeyId> },
+    /// Ground axioms, frozen by the fingerprint, virtual in storage.
+    /// A closed relation's `fields` open with the synthetic (`id`, U64)
+    /// field, so determinants, statements, and queries address the
+    /// handle's id uniformly at [`FieldId`] 0
+    /// (`docs/architecture/10-data-model.md` § closed relations).
+    Closed { extension: Box<[SealedRow]> },
+}
+
+impl RelationBody {
+    /// Closed extension rows; ordinary has none.
+    #[must_use]
+    pub fn closed_rows(&self) -> Option<&[SealedRow]> {
+        match self {
+            Self::Closed { extension } => Some(extension),
+            Self::Ordinary { .. } => None,
+        }
+    }
+}
+
 /// One relation of a validated schema.
 #[derive(Debug)]
 pub struct Relation {
     name: Box<str>,
     fields: Box<[FieldDescriptor]>,
     layout: FactLayout,
-    /// The sealed extension of a closed relation (`None` = ordinary): rows
-    /// pre-encoded at validate, in declaration order — row id = index. A
-    /// closed relation's `fields` open with the synthetic (`id`, U64)
-    /// field, so determinants, statements, and queries address the handle's id
-    /// uniformly at [`FieldId`] 0 (`docs/architecture/10-data-model.md`
-    /// § closed relations).
-    extension: Option<Box<[SealedRow]>>,
     /// `Functionality` statements on this relation, in materialized order.
     keys: Box<[KeyId]>,
     /// `Containment` statements whose source is this relation.
@@ -573,12 +641,7 @@ pub struct Relation {
     /// a delta parent touches its own key tuple
     /// (`lean/Bumbledb/Txn/DeltaRestriction.lean: touchedParents`).
     capacity_targets: Box<[CapacityId]>,
-    /// The FIRST `Fresh`-generation field, if any — the one id allocator's
-    /// mint field (R16, `docs/architecture/50-storage.md` § key layout): on
-    /// a fresh-keyed relation this field's value IS the `F` row id, `Q` is
-    /// the one mint, and no `S` row-id high-water exists. Its auto-key is
-    /// the [`KeyStatement`] carrying `fresh_row`.
-    fresh_row_field: Option<FieldId>,
+    body: RelationBody,
 }
 
 /// The sealed schema witness. Unconstructible except through
@@ -776,5 +839,17 @@ impl Schema {
     #[must_use]
     pub fn dependents_checked(&self, id: KeyId) -> Option<&[ContainmentId]> {
         self.dependents.get(usize::from(id.0)).map(AsRef::as_ref)
+    }
+
+    /// The mint field of an ordinary fresh-keyed relation (R16), read
+    /// off [`KeyForm::FreshRow`]. Closed and fresh-less relations have
+    /// none — one site names the field (CONTRACT C9 / schema-006).
+    #[must_use]
+    pub(crate) fn fresh_mint_field(&self, id: RelationId) -> Option<FieldId> {
+        let key = self.relation(id).fresh_key()?;
+        match self.key(key).form() {
+            KeyForm::FreshRow { field } => Some(*field),
+            KeyForm::Scalar | KeyForm::Pointwise { .. } => None,
+        }
     }
 }

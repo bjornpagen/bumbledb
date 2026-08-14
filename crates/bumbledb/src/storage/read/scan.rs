@@ -1,5 +1,5 @@
 use crate::error::{CorruptionError, Error, Result};
-use crate::schema::{Relation, Schema};
+use crate::schema::Schema;
 use crate::storage::env::ReadTxn;
 use crate::storage::keys::{self, KeyBuf, MAX_KEY};
 use bumbledb_theory::schema::RelationId;
@@ -57,7 +57,10 @@ pub fn scan<'txn>(
     schema: &'txn Schema,
     rel: RelationId,
 ) -> Result<impl Iterator<Item = Result<(u64, &'txn [u8])>>> {
-    if let Some(extension) = schema.relation_checked(rel).and_then(Relation::extension) {
+    if let Some(extension) = schema
+        .relation_checked(rel)
+        .and_then(|r| r.body().closed_rows())
+    {
         return Ok(Scan::Closed(
             extension
                 .iter()
@@ -100,7 +103,7 @@ pub fn scan_from<'txn>(
     debug_assert!(
         schema
             .relation_checked(rel)
-            .and_then(Relation::extension)
+            .and_then(|r| r.body().closed_rows())
             .is_none(),
         "closed relations synthesize from the theory and never append"
     );

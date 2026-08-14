@@ -34,7 +34,7 @@ pub(crate) fn relation_rows(
     schema: &Schema,
     relation: bumbledb_theory::schema::RelationId,
 ) -> crate::error::Result<u64> {
-    let rows = match schema.relation(relation).extension() {
+    let rows = match schema.relation(relation).body().closed_rows() {
         Some(rows) => u64::try_from(rows.len()).expect("bounded extension"),
         None => read::row_count(txn, relation)?,
     };

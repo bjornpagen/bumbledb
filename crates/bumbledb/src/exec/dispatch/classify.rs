@@ -96,7 +96,7 @@ pub fn classify(normalized: &NormalizedQuery, schema: &Schema) -> Option<KeyProb
     // storage is the theory (`docs/architecture/50-storage.md` § virtual
     // relations) — so even a fully key-bound single atom classifies as
     // Free Join and hits the synthesized image.
-    if relation.is_closed() {
+    if relation.body().closed_rows().is_some() {
         return None;
     }
     let (statement, key_fields) = key_probe_candidate(relation, schema, &value_of)?;

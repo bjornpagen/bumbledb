@@ -35,7 +35,7 @@ pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
         };
         // Closed relations have no rows in the store: presence is the
         // finding (the F pass's exemption, mirrored).
-        if relation.is_closed() {
+        if relation.body().closed_rows().is_some() {
             s.push(StoreFinding::ClosedRelationEntry {
                 relation: rel,
                 key: key.into(),
@@ -56,7 +56,7 @@ pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
         // The one id allocator (R16): a fresh-row auto-key maintains no
         // `U` tree — its entry would transcribe `F` — so the entry's
         // very existence is the finding.
-        if statement.fresh_row {
+        if statement.form().as_fresh_row().is_some() {
             s.push(StoreFinding::FreshRowDeterminantEntry {
                 relation: rel,
                 statement: sid,

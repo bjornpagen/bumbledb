@@ -103,11 +103,10 @@ pub(super) fn encode_determinant_with(
 /// row id — schema validation seals the auto-key's projection as the
 /// one u64 fresh field, so the word is total.
 pub(super) fn fresh_row_id(determinant: &[u8]) -> u64 {
-    u64::from_be_bytes(
-        determinant
-            .try_into()
-            .expect("a fresh-row determinant is one u64 word"),
-    )
+    let Ok(word) = <[u8; 8]>::try_from(determinant) else {
+        unreachable!("KeyForm::FreshRow determinant is one encoded u64");
+    };
+    u64::from_be_bytes(word)
 }
 
 /// A **closed** relation's determinant lookup: virtual storage holds no
@@ -121,7 +120,7 @@ pub(super) fn closed_fact_by_determinant<'rel>(
     statement: &KeyStatement,
     determinant: &[u8],
 ) -> Option<&'rel [u8]> {
-    let extension = rel.extension()?;
+    let extension = rel.body().closed_rows()?;
     let mut derived =
         crate::storage::keys::DeterminantImage::scratch_with_capacity(determinant.len());
     for row in extension {
@@ -342,7 +341,7 @@ impl<S> WriteTx<'_, S> {
         if !self.encode_dyn(rel, values, InternMode::Resolve)? {
             return Ok(false);
         }
-        if let Some(extension) = self.schema.relation(rel).extension() {
+        if let Some(extension) = self.schema.relation(rel).body().closed_rows() {
             let fact = self.scratch.as_slice();
             return Ok(extension.iter().any(|row| row.fact.as_ref() == fact));
         }
@@ -363,13 +362,13 @@ impl<S> WriteTx<'_, S> {
         let rel = self.schema.relation(relation);
         let statement = self.schema.key(key);
         let determinant = &u_key[read::DETERMINANT_KEY_HEADER..];
-        if rel.is_closed() {
+        if rel.body().closed_rows().is_some() {
             return Ok(closed_fact_by_determinant(rel, statement, determinant));
         }
         match self.delta.determinant_overlay(key, determinant) {
             Some(DeterminantOverlay::Present(bytes)) => Ok(Some(bytes)),
             Some(DeterminantOverlay::Absent) => Ok(None),
-            None if statement.fresh_row => {
+            None if statement.form().as_fresh_row().is_some() => {
                 read::fact_at(&self.view, self.schema, relation, fresh_row_id(determinant))
             }
             None => read::fact_for_key(&self.view, self.schema, relation, u_key),

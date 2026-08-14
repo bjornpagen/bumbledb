@@ -137,7 +137,7 @@ impl ImageCache {
         // value (every committed row id sits strictly below it; a later
         // commit landing UNDER it is the non-tail insert `advance`
         // evicts on), a fresh-less relation's the `S` high-water.
-        let row_id_next = match schema.relation(rel).fresh_row_field() {
+        let row_id_next = match schema.fresh_mint_field(rel) {
             Some(field) => crate::storage::delta::read_fresh_next(txn, rel, field)?,
             None => read::row_id_high_water(txn, rel)?,
         };

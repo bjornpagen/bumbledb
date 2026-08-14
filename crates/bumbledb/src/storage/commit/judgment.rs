@@ -677,7 +677,12 @@ pub(super) fn check_target(
                         affected.insert((dependent.containment, k));
                     }
                 }
-            } else if schema.relation(statement.source.relation).is_closed() {
+            } else if schema
+                .relation(statement.source.relation)
+                .body()
+                .closed_rows()
+                .is_some()
+            {
                 // Domain quantification: a constant source writes no `R`
                 // edges — the surviving sources ARE the sealed
                 // extension's φ-rows, scanned directly (≤256 rows, the
@@ -876,7 +881,7 @@ fn establishing_fact<'t>(
     determinant: &[u8],
 ) -> Result<&'t [u8]> {
     let statement = schema.key(key);
-    if statement.fresh_row {
+    if statement.form().as_fresh_row().is_some() {
         return fact_by_row(
             data,
             txn.raw(),
@@ -927,7 +932,7 @@ fn closed_source_survivor(
     let layout = relation.layout();
     let phi = &plan.selections.containment(containment_id).source;
     let mut derived = keys::DeterminantImage::scratch_with_capacity(determinant.len());
-    for row in relation.extension()? {
+    for row in relation.body().closed_rows()? {
         if !satisfies(phi, layout, &row.fact) {
             continue;
         }
@@ -1106,7 +1111,7 @@ impl<'a> Checker<'a> {
     /// included.
     pub(crate) fn check_scalar(&mut self, probe: &Probe<'_>) -> Result<()> {
         let target_key = self.schema.key(probe.target_key);
-        if target_key.fresh_row {
+        if target_key.form().as_fresh_row().is_some() {
             let Some(fact) = self.fresh_row_fact(probe.target_relation, probe.key_bytes)? else {
                 return Err(probe.unsatisfied());
             };
@@ -1131,7 +1136,7 @@ impl<'a> Checker<'a> {
     /// ([`check_source`]'s sort provides exactly that).
     fn check_scalar_sorted(&mut self, probe: &Probe<'_>, gets: &mut SortedGets<'a>) -> Result<()> {
         let target_key = self.schema.key(probe.target_key);
-        if target_key.fresh_row {
+        if target_key.form().as_fresh_row().is_some() {
             let f_len = keys::fact_key(
                 &mut self.key,
                 probe.target_relation,
@@ -1309,7 +1314,7 @@ impl<'a> Checker<'a> {
                 // A fresh-row parent key has no `U` tree (R16): the
                 // parent tuple IS the `F` row id, one get, the value the
                 // holder itself — nothing to defer.
-                let fact = if key_statement.fresh_row {
+                let fact = if key_statement.form().as_fresh_row().is_some() {
                     let Some(fact) = self.fresh_row_fact(statement.target.relation, parent_key)?
                     else {
                         return Ok(());
@@ -1387,7 +1392,8 @@ impl<'a> Checker<'a> {
                 let rows = self
                     .schema
                     .relation(statement.target.relation)
-                    .extension()
+                    .body()
+                    .closed_rows()
                     .expect("the Closed enforcement arm resolves only against a closed target");
                 let index = usize::try_from(id).expect("a contained axiom index fits usize");
                 &rows[index].fact
@@ -1460,7 +1466,7 @@ impl<'a> Checker<'a> {
     ) -> Result<u128> {
         let source = self.schema.relation(statement.source.relation);
         let layout = source.layout();
-        if let Some(rows) = source.extension() {
+        if let Some(rows) = source.body().closed_rows() {
             let mut derived = DeterminantImage::scratch_with_capacity(parent_key.len());
             let mut measure = 0u128;
             for row in rows {

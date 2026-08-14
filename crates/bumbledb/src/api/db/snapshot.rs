@@ -150,7 +150,7 @@ impl<S> Snapshot<'_, S> {
             if !fact.encode_read(self, &mut scratch.bytes)? {
                 return Ok(false);
             }
-            if let Some(extension) = self.schema.relation(F::RELATION).extension() {
+            if let Some(extension) = self.schema.relation(F::RELATION).body().closed_rows() {
                 return Ok(extension
                     .iter()
                     .any(|row| row.fact.as_ref() == scratch.bytes.as_slice()));
@@ -188,7 +188,7 @@ impl<S> Snapshot<'_, S> {
                 return Ok(false);
             }
             crate::encoding::encode_fact(&scratch.refs, relation.layout(), &mut scratch.bytes);
-            if let Some(extension) = relation.extension() {
+            if let Some(extension) = relation.body().closed_rows() {
                 return Ok(extension
                     .iter()
                     .any(|row| row.fact.as_ref() == scratch.bytes.as_slice()));
@@ -258,13 +258,13 @@ impl<S> Snapshot<'_, S> {
                 return Ok(false);
             }
             let rel = self.schema.relation(relation);
-            let bytes = if rel.is_closed() {
+            let bytes = if rel.body().closed_rows().is_some() {
                 super::get::closed_fact_by_determinant(
                     rel,
                     statement,
                     &key_bytes[read::DETERMINANT_KEY_HEADER..],
                 )
-            } else if statement.fresh_row {
+            } else if statement.form().as_fresh_row().is_some() {
                 // The fresh-row auto-key reads `F` directly: its
                 // determinant IS the row id (R16).
                 read::fact_at(
@@ -330,13 +330,13 @@ impl<S> Snapshot<'_, S> {
                 return Ok(None);
             }
             let rel = self.schema.relation(relation);
-            let bytes = if rel.is_closed() {
+            let bytes = if rel.body().closed_rows().is_some() {
                 super::get::closed_fact_by_determinant(
                     rel,
                     statement,
                     &key_bytes[read::DETERMINANT_KEY_HEADER..],
                 )
-            } else if statement.fresh_row {
+            } else if statement.form().as_fresh_row().is_some() {
                 // The fresh-row auto-key reads `F` directly: its
                 // determinant IS the row id (R16).
                 read::fact_at(

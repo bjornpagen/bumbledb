@@ -61,8 +61,8 @@ impl Applier<'_, '_> {
             let u_len = keys::determinant_key(
                 &mut self.key,
                 rel,
-                determinant.statement,
-                determinant.determinant.as_bytes(),
+                determinant.statement(),
+                determinant.determinant().as_bytes(),
             );
             if !self.data.delete(self.txn.raw_mut(), &self.key[..u_len])? {
                 return Err(Error::Corruption(CorruptionError::MembershipDesync {
@@ -175,8 +175,8 @@ impl Applier<'_, '_> {
             let u_len = keys::determinant_key(
                 &mut self.key,
                 rel,
-                determinant.statement,
-                determinant.determinant.as_bytes(),
+                determinant.statement(),
+                determinant.determinant().as_bytes(),
             );
             // Every delete already landed and the insert set is
             // deduplicated, so an occupied determinant here is a genuine
@@ -188,7 +188,7 @@ impl Applier<'_, '_> {
             // later conflicts against these exact bytes convict the same
             // statement), next determinant.
             if let Some(value) = self.data.get(self.txn.raw(), &self.key[..u_len])? {
-                let incumbent = if determinant.pointwise.is_some() {
+                let incumbent = if determinant.tail().is_some() {
                     let incumbent_row = decode_row_id(value)?;
                     Some(
                         fact_by_row(self.data, self.txn.raw(), self.schema, rel, incumbent_row)?
@@ -198,25 +198,25 @@ impl Applier<'_, '_> {
                     None
                 };
                 self.violations.push(Violation::Functionality {
-                    statement: determinant.statement,
+                    statement: determinant.statement(),
                     fact: op.fact.into(),
                     incumbent,
                 });
                 continue;
             }
             if skip_puts {
-                if let Some(tail) = determinant.pointwise {
-                    self.probe_neighbors(rel, determinant.statement, u_len, tail, op.fact)?;
+                if let Some(tail) = determinant.tail() {
+                    self.probe_neighbors(rel, determinant.statement(), u_len, tail, op.fact)?;
                 }
                 continue;
             }
             self.put_data(u_len, row_id.to_le_bytes().as_slice())?;
             crashpoint!("mid-write-u");
-            if let Some(tail) = determinant.pointwise {
+            if let Some(tail) = determinant.tail() {
                 // The exact put cannot detect overlap — only equality —
                 // so a pointwise key additionally probes its ordered
                 // neighbors within the scalar-prefix group.
-                self.probe_neighbors(rel, determinant.statement, u_len, tail, op.fact)?;
+                self.probe_neighbors(rel, determinant.statement(), u_len, tail, op.fact)?;
             }
         }
         if skip_puts {

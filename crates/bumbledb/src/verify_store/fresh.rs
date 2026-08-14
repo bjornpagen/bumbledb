@@ -46,7 +46,7 @@ pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
         };
         // Closed relations appear in no namespace — the entry's very
         // existence is the finding (the F pass's exemption, mirrored).
-        if relation.is_closed() {
+        if relation.body().closed_rows().is_some() {
             s.push(StoreFinding::ClosedRelationEntry {
                 relation: rel,
                 key: key.into(),

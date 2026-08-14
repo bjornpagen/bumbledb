@@ -282,7 +282,11 @@ fn deleting_the_last_handler_for_a_severity_aborts() {
     let schema = schema();
     let severity_high = {
         // The sealed axiom's canonical bytes — the violation payload.
-        let rows = schema.relation(SEVERITY).extension().expect("closed");
+        let rows = schema
+            .relation(SEVERITY)
+            .body()
+            .closed_rows()
+            .expect("closed");
         rows[2].fact.to_vec()
     };
     assert_violation(

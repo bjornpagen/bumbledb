@@ -19,7 +19,7 @@ impl ImageCache {
             .relations()
             .iter()
             .map(|relation| {
-                relation.is_closed().then(|| {
+                relation.body().closed_rows().is_some().then(|| {
                     let slot = count;
                     count += 1;
                     slot

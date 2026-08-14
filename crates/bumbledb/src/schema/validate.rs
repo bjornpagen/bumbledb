@@ -16,10 +16,10 @@
 use super::{
     AxiomIndex, Bound, CapacityId, CapacityStatement, CompiledCheck, CompiledSides, ContainmentId,
     ContainmentStatement, DisjointDeterminantProof, Enforcement, FactLayout, FieldDescriptor,
-    FieldId, Generation, IntervalTail, KeyId, KeyStatement, LiteralSet, MemberSet, Relation,
-    RelationDescriptor, RelationId, Schema, SchemaDescriptor, SchemaWarning, Side,
-    StatementDescriptor, StatementId, StatementRef, ValueMismatch, ValueType, Weight,
-    value_matches,
+    FieldId, Generation, IntervalTail, KeyForm, KeyId, KeyStatement, LiteralSet, MemberSet,
+    Relation, RelationBody, RelationDescriptor, RelationId, Schema, SchemaDescriptor,
+    SchemaWarning, Side, StatementDescriptor, StatementId, StatementRef, ValueMismatch, ValueType,
+    Weight, value_matches,
 };
 use crate::encoding::{field_bytes, field_word_bytes};
 use crate::error::{SchemaError, StatementErrorKind, TargetKeyCandidate};
@@ -143,18 +143,26 @@ impl ValidateDescriptor for SchemaDescriptor {
                         id,
                         relation: *relation,
                         projection: projection.clone(),
-                        // The tail the gate derived, sealed — never
-                        // re-walked by a consumer.
-                        tail: match evidence {
-                            FunctionalityEvidence::Pointwise(_, tail) => Some(tail),
-                            FunctionalityEvidence::Scalar => None,
+                        form: match evidence {
+                            FunctionalityEvidence::Pointwise(disjoint, tail) => {
+                                KeyForm::Pointwise { tail, disjoint }
+                            }
+                            FunctionalityEvidence::Scalar => {
+                                // The first fresh field's auto-key
+                                // (unique per relation —
+                                // DuplicateStatement refuses a second
+                                // spelling): the one id allocator's
+                                // key form, R16.
+                                let mint = first_fresh_field(&relations[relation.0 as usize]);
+                                if projection.len() == 1 && mint == Some(projection[0]) {
+                                    KeyForm::FreshRow {
+                                        field: projection[0],
+                                    }
+                                } else {
+                                    KeyForm::Scalar
+                                }
+                            }
                         },
-                        // The first fresh field's auto-key (unique per
-                        // relation — DuplicateStatement refuses a second
-                        // spelling): the one id allocator's key form, R16.
-                        fresh_row: projection.len() == 1
-                            && relations[relation.0 as usize].fresh_row_field()
-                                == Some(projection[0]),
                     });
                     StatementRef::Key(key_id)
                 }
@@ -251,7 +259,7 @@ impl ValidateDescriptor for SchemaDescriptor {
             order.push(sealed);
         }
 
-        for (((relation, keys), outgoing), (capacity_sources, capacity_targets)) in relations
+        for (((relation, rel_keys), outgoing), (capacity_sources, capacity_targets)) in relations
             .iter_mut()
             .zip(relation_keys)
             .zip(relation_outgoing)
@@ -261,10 +269,15 @@ impl ValidateDescriptor for SchemaDescriptor {
                     .zip(relation_capacity_targets),
             )
         {
-            relation.keys = keys.into_boxed_slice();
+            relation.keys = rel_keys.into_boxed_slice();
             relation.outgoing = outgoing.into_boxed_slice();
             relation.capacity_sources = capacity_sources.into_boxed_slice();
             relation.capacity_targets = capacity_targets.into_boxed_slice();
+            if let RelationBody::Ordinary { fresh } = &mut relation.body {
+                *fresh = relation.keys.iter().copied().find(|&key_id| {
+                    matches!(keys[usize::from(key_id.0)].form, KeyForm::FreshRow { .. })
+                });
+            }
         }
 
         Ok(Schema {
@@ -635,7 +648,7 @@ fn validate_functionality(
     // equal projected bytes; a pointwise key collides when the scalar
     // prefix agrees and the intervals share a point — the ordered-neighbor
     // probe's judgment, run over ≤256 sealed rows instead of a determinant.
-    if let Some(rows) = relation.extension.as_deref() {
+    if let Some(rows) = relation.body.closed_rows() {
         let layout = &relation.layout;
         let scalar_len = projection.ordered().len() - usize::from(interval_position.is_some());
         for (row_idx, row) in rows.iter().enumerate() {
@@ -702,8 +715,14 @@ fn validate_containment(
     // sighting). One check covers both sides: the pair gate's positional
     // type match makes the sides' interval positions identical.
     let target_fields = &relations[target.relation.0 as usize].fields;
-    let source_closed = relations[source.relation.0 as usize].extension.is_some();
-    let target_closed = relations[target.relation.0 as usize].extension.is_some();
+    let source_closed = matches!(
+        relations[source.relation.0 as usize].body,
+        RelationBody::Closed { .. }
+    );
+    let target_closed = matches!(
+        relations[target.relation.0 as usize].body,
+        RelationBody::Closed { .. }
+    );
     if (source_closed || target_closed)
         && !interval_positions(target_fields, &target.projection).is_empty()
     {
@@ -726,7 +745,7 @@ fn validate_containment(
     // the target can shrink).
     if let (Enforcement::Closed { members }, Some(rows)) = (
         &resolved,
-        relations[source.relation.0 as usize].extension.as_deref(),
+        relations[source.relation.0 as usize].body.closed_rows(),
     ) {
         let layout = &relations[source.relation.0 as usize].layout;
         let phi = compiled_checks(
@@ -933,12 +952,12 @@ fn validate_capacity(
     // ends). The cited row is the parent axiom whose group fails.
     if let (Enforcement::Closed { .. }, Some(source_rows)) = (
         &enforcement,
-        relations[source.relation.0 as usize].extension.as_deref(),
+        relations[source.relation.0 as usize].body.closed_rows(),
     ) {
         let target_relation = &relations[target.relation.0 as usize];
         let target_rows = target_relation
-            .extension
-            .as_deref()
+            .body
+            .closed_rows()
             .expect("the Closed enforcement arm resolves only against a closed target");
         let source_layout = &relations[source.relation.0 as usize].layout;
         let phi = compiled_checks(&source.selection, source_fields);
@@ -1348,7 +1367,7 @@ fn resolve_target_key(
     // the refused field set, and the rule here is closedness, not key
     // absence. ψ folds against the sealed extension here and never
     // exists at commit.
-    if let Some(rows) = target_relation.extension.as_deref() {
+    if let Some(rows) = target_relation.body.closed_rows() {
         if target.projection.len() != 1 || target.projection[0] != FieldId(0) {
             return Err(StatementErrorKind::ClosedTargetNotHandle {
                 target: target.relation,
@@ -1655,29 +1674,34 @@ fn validate_relation(
             .collect::<Vec<_>>(),
     );
 
-    let extension = match extension {
-        None => None,
-        Some(rows) => Some(validate_extension(rel_id, &fields, &layout, &rows)?),
+    let body = match extension {
+        None => RelationBody::Ordinary { fresh: None },
+        Some(rows) => RelationBody::Closed {
+            extension: validate_extension(rel_id, &fields, &layout, &rows)?,
+        },
     };
-
-    // The one id allocator's mint field (R16): the FIRST fresh field's
-    // value IS the `F` row id; its auto-key seals `fresh_row` below.
-    let fresh_row_field = fields
-        .iter()
-        .position(|f| f.generation == Generation::Fresh)
-        .map(|idx| FieldId(u16::try_from(idx).expect("field count fits u16")));
 
     Ok(Relation {
         name,
         fields: fields.into_boxed_slice(),
         layout,
-        extension,
         keys: Box::new([]),
         outgoing: Box::new([]),
         capacity_sources: Box::new([]),
         capacity_targets: Box::new([]),
-        fresh_row_field,
+        body,
     })
+}
+
+/// The FIRST `Fresh`-generation field of a relation — used only while
+/// sealing keys, before the ordinary arm's `fresh: Option<KeyId>` is
+/// minted. Closed relations refuse Fresh fields, so this is `None` there.
+fn first_fresh_field(relation: &Relation) -> Option<FieldId> {
+    relation
+        .fields()
+        .iter()
+        .position(|f| f.generation == Generation::Fresh)
+        .map(|idx| FieldId(u16::try_from(idx).expect("field count fits u16")))
 }
 
 /// The extension roster (`docs/architecture/10-data-model.md` § closed

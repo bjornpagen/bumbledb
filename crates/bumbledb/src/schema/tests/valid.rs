@@ -50,8 +50,8 @@ fn a_redundant_pointwise_superkey_seals_with_a_warning() {
         .expect("a redundant superkey remains accepted");
 
     assert_eq!(schema.keys().len(), 2, "both keys remain sealed");
-    assert!(!schema.key(KeyId(0)).pointwise());
-    assert!(schema.key(KeyId(1)).pointwise());
+    assert!(!schema.key(KeyId(0)).form().is_pointwise());
+    assert!(schema.key(KeyId(1)).form().is_pointwise());
     assert_eq!(
         schema.warnings(),
         &[SchemaWarning::RedundantSuperkey {
@@ -243,7 +243,7 @@ fn example_schema_resolves_exactly() {
     .validate()
     .expect("the 30-dependencies example schema is valid");
 
-    assert!(schema.keys().iter().all(|key| !key.pointwise()));
+    assert!(schema.keys().iter().all(|key| !key.form().is_pointwise()));
     let probe = |target_key: u16| Enforcement::ScalarProbe {
         target_key: KeyId(target_key),
         key_permutation: Box::new([0]),
@@ -313,7 +313,7 @@ fn pointwise_key_and_containment_resolve() {
     .validate()
     .expect("pointwise key and coverage containment are valid");
 
-    assert!(schema.key(KeyId(0)).pointwise());
+    assert!(schema.key(KeyId(0)).form().is_pointwise());
     assert!(matches!(
         schema.containment(ContainmentId(0)).enforcement,
         Enforcement::IntervalCoverage {
@@ -435,7 +435,7 @@ fn a_closed_relation_seals_pre_encoded_ground_axioms() {
     .validate()
     .expect("a closed relation validates");
     let relation = schema.relation(RelationId(0));
-    assert!(relation.is_closed());
+    assert!(relation.body().closed_rows().is_some());
     // The synthetic id field opens the sealed list; declared columns
     // shift by one — determinants, statements, and queries address FieldId(0)
     // uniformly.
@@ -446,7 +446,7 @@ fn a_closed_relation_seals_pre_encoded_ground_axioms() {
     assert_eq!(relation.layout().fact_width(), 16);
     // Rows sealed as full canonical fact bytes (id ‖ values), encoded
     // once at validate and never again.
-    let rows = relation.extension().expect("closed");
+    let rows = relation.body().closed_rows().expect("closed");
     assert_eq!(rows.len(), 2);
     assert_eq!(rows[0].handle.as_ref(), "Usd");
     assert_eq!(rows[1].handle.as_ref(), "Eur");
@@ -1009,8 +1009,8 @@ fn mixed_width_interval_positions_of_one_element_domain_resolve() {
     }
     .validate()
     .expect("mixed widths of one element domain validate (Q1)");
-    assert!(schema.key(KeyId(0)).pointwise());
-    assert!(schema.key(KeyId(1)).pointwise());
+    assert!(schema.key(KeyId(0)).form().is_pointwise());
+    assert!(schema.key(KeyId(1)).form().is_pointwise());
     assert!(matches!(
         schema.containment(ContainmentId(0)).enforcement,
         Enforcement::IntervalCoverage { .. }

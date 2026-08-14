@@ -140,7 +140,7 @@ fn fold_positive(
         return false;
     };
     let relation = schema.relation(relation_id);
-    if relation.extension().is_none() {
+    if relation.body().closed_rows().is_none() {
         return false; // ordinary relations have no stage-0 rows
     }
     let Some(filters) = parse_resolvable(&occurrence.filters) else {
@@ -211,7 +211,7 @@ fn fold_negated(normalized: &mut NormalizedQuery, schema: &Schema, c_idx: usize)
         return false;
     };
     let relation = schema.relation(relation_id);
-    let Some(rows) = relation.extension() else {
+    let Some(rows) = relation.body().closed_rows() else {
         return false;
     };
     let Some(filters) = parse_resolvable(&occurrence.filters) else {
@@ -582,7 +582,8 @@ fn containment_into_id(
 pub(crate) fn surviving_ids(relation: &Relation, filters: &[ResolvableFilter]) -> Vec<u64> {
     let layout = relation.layout();
     relation
-        .extension()
+        .body()
+        .closed_rows()
         .expect("callers checked closedness")
         .iter()
         .enumerate()
@@ -752,10 +753,14 @@ fn render_filter(out: &mut String, relation: &Relation, filter: &FilterPredicate
             // The relation's own id position holds row ids — print the
             // handles (a membership set as a handle set), never numbers.
             match value {
-                Const::Word(word) if *field == FieldId(0) && relation.is_closed() => {
+                Const::Word(word)
+                    if *field == FieldId(0) && relation.body().closed_rows().is_some() =>
+                {
                     push_handle(out, relation, *word);
                 }
-                Const::WordSet(words) if *field == FieldId(0) && relation.is_closed() => {
+                Const::WordSet(words)
+                    if *field == FieldId(0) && relation.body().closed_rows().is_some() =>
+                {
                     out.push('{');
                     for (index, word) in words.iter().enumerate() {
                         if index > 0 {
@@ -853,7 +858,8 @@ fn render_unparsed_filter(out: &mut String, filter: &FilterPredicate) {
 /// engine never learns host newtype names).
 pub(crate) fn push_handle(out: &mut String, relation: &Relation, id: u64) {
     let row = relation
-        .extension()
+        .body()
+        .closed_rows()
         .and_then(|rows| usize::try_from(id).ok().and_then(|index| rows.get(index)));
     if let Some(row) = row {
         out.push_str(&row.handle);

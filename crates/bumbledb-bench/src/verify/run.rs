@@ -254,7 +254,7 @@ pub(super) fn load_target_stores(
         // A closed table's synthetic id is already the PRIMARY KEY;
         // its payload columns get the same per-column indexes as any
         // ordinary table (≤256 rows — pure win, never timed).
-        let skip_id = usize::from(relation.is_closed());
+        let skip_id = usize::from(relation.body().closed_rows().is_some());
         for field in relation.fields().iter().skip(skip_id) {
             let columns = if matches!(
                 field.value_type,

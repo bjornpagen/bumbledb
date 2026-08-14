@@ -1142,7 +1142,11 @@ fn assert_r26_schema_shape() {
     let schema = r26::validate().expect("the five-statement schema validates");
     assert_eq!(schema.keys().len(), 3);
     assert_eq!(
-        schema.keys().iter().filter(|key| key.pointwise()).count(),
+        schema
+            .keys()
+            .iter()
+            .filter(|key| key.form().is_pointwise())
+            .count(),
         2
     );
     for statement in [StatementId(4), StatementId(5)] {

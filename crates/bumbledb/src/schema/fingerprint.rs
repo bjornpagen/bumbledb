@@ -101,7 +101,7 @@ fn canonical_bytes(schema: &Schema, out: &mut Vec<u8>) {
         // order — the sealed pre-encoded fact bytes, whose per-value shape
         // is a function of the field types already in the stream. The tag
         // keeps ordinary and closed relations from aliasing.
-        match relation.extension() {
+        match relation.body().closed_rows() {
             None => out.push(0),
             Some(rows) => {
                 out.push(1);
