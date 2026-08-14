@@ -550,8 +550,8 @@ def ledger : List Obligation := [
     "validate (crates/bumbledb/src/ir/validate.rs); prepare (crates/bumbledb/src/api/prepared/build.rs)"
     "a_plain_query_executes_as_today (crates/bumbledb/tests/api.rs)",
 
-  .row @Query.wellFormed_interior_reads_real `Bumbledb.Query.wellFormed_interior_reads_real
-    "Every interior source an accepted query reads names a real interior or the rec."
+  .row @Query.sourceDen_phantom_empty `Bumbledb.Query.sourceDen_phantom_empty
+    "A phantom interior read against the empty environment is empty."
     "validate (crates/bumbledb/src/ir/validate.rs); ValidationError::UnknownInterior (crates/bumbledb/src/error.rs)"
     "rejects_a_negated_phantom_read (crates/bumbledb/src/ir/validate/tests/interior.rs)",
 

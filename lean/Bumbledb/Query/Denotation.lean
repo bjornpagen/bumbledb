@@ -707,6 +707,14 @@ def sourceDen (I : Instance) (W : InteriorEnv) : AtomSource → Set Fact
 def edbEnv (I : Instance) : AtomSource → Set Fact :=
   sourceDen I InteriorEnv.empty
 
+/-- A phantom interior read against the empty environment is empty.
+The engine's `UnknownInterior` refusal is the screen; Lean keeps
+phantom-empty. -/
+theorem sourceDen_phantom_empty (I : Instance) (C : InteriorId) (f : Fact) :
+    ¬ f ∈ sourceDen I InteriorEnv.empty (.interior C) := by
+  rintro ⟨t, ht, _⟩
+  exact ht
+
 /-- The body judgment: an assignment derives when every positive atom
 has a matching fact in the source environment, NO fact matches any
 negated atom — **the anti-join**: negation denotes `¬∃` over the
@@ -802,36 +810,6 @@ theorem InteriorEnv.update_le {W : InteriorEnv} {c : InteriorId}
     exact h t ht
   · rw [if_neg hd] at ht ⊢
     exact ht
-
-/-- Recover the EDB-only reading under `r.edbOnly`. -/
-theorem derives_edb {C : Classify} {r : Rule} {I : Instance}
-    {ρ : ParamEnv} {σ : Assignment}
-    (hedb : r.edbOnly) :
-    derives C r (edbEnv I) ρ σ ↔
-      (∀ a, a ∈ r.atoms → ∃ R f, a.source = .edb R ∧ f ∈ I R ∧
-        Matches f a σ ρ) ∧
-      (∀ a, a ∈ r.negated → ¬ ∃ R f, a.source = .edb R ∧ f ∈ I R ∧
-        Matches f a σ ρ) ∧
-      (∀ t, t ∈ r.conditions → Condition.holds C ρ σ t) := by
-  constructor
-  · rintro ⟨hpos, hneg, hcond⟩
-    refine ⟨fun a ha => ?_, fun a ha hex => ?_, hcond⟩
-    · obtain ⟨R, hR⟩ := hedb a (Or.inl ha)
-      obtain ⟨f, hf, hm⟩ := hpos a ha
-      refine ⟨R, f, hR, ?_, hm⟩
-      simpa [edbEnv, sourceDen, hR] using hf
-    · obtain ⟨R, f, hR, hf, hm⟩ := hex
-      refine hneg a ha ⟨f, ?_, hm⟩
-      simpa [edbEnv, sourceDen, hR] using hf
-  · rintro ⟨hpos, hneg, hcond⟩
-    refine ⟨fun a ha => ?_, fun a ha hex => ?_, hcond⟩
-    · obtain ⟨R, f, hR, hf, hm⟩ := hpos a ha
-      refine ⟨f, ?_, hm⟩
-      simpa [edbEnv, sourceDen, hR] using hf
-    · obtain ⟨f, hf, hm⟩ := hex
-      obtain ⟨R, hR⟩ := hedb a (Or.inr ha)
-      refine hneg a ha ⟨R, f, hR, ?_, hm⟩
-      simpa [edbEnv, sourceDen, hR] using hf
 
 /-! ## Theorem 3 — the anti-join stays on the active domain -/
 

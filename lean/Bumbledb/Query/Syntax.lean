@@ -64,15 +64,12 @@ query. Syntax only — meaning lives in `Bumbledb.Query.Denotation` and
   syntax or assumes only `Safe`/`WellTyped`, so a
   rejected-but-denotable query simply never reaches execution.
 * **The unknown-interior gap, recorded LOUDLY, with its screen.** A
-  rule reading `interior k` with `k` outside `derivedCount` reads the
-  EMPTY fact set: a positive phantom read kills its rule, but a
-  NEGATED phantom read is vacuously satisfied. The screen is
-  `Query.WellFormed` (`sourcesInRange`); the engine's refusal is
-  `ValidationError::UnknownInterior`. Empty-prefix `.cq` does **not**
-  rewrite atoms to `.edb` — hostile `Interior` atoms on a CQ fail
-  `sourcesInRange`. The `Exec/Reach.lean` agreement theorems are
-  exact equalities with or without the screen — both the denotation
-  and the evaluator read a phantom as empty — so the premise belongs
+  rule reading `interior k` with `k` outside the interiors (and rec,
+  when present) reads the EMPTY fact set: a positive phantom read
+  kills its rule, but a NEGATED phantom read is vacuously satisfied.
+  The engine's refusal is `ValidationError::UnknownInterior`. Lean
+  keeps phantom-empty — the `Exec/Reach.lean` agreement theorems are
+  exact equalities with or without a screen, so the premise belongs
   to acceptance readings, not to the agreement.
 
 ## The creation-quarantine gravestones (law text; the full record is
@@ -368,19 +365,6 @@ def Query.allRules : Query → List Rule
       interiors.flatMap Interior.rules ++
         r.allRules ⟨interiors.length⟩ ++ rules
 
-/-- How many derived tables the query names (interiors, plus the rec
-on the reach arm). -/
-def Query.derivedCount : Query → Nat
-  | .cq interiors _ _ => interiors.length
-  | .reach interiors _ _ _ => interiors.length + 1
-
-/-- Every atom of the rule — positive or negated — reads a stored
-relation. Hostile `Interior` atoms on an empty-prefix `.cq` fail
-`sourcesInRange`; this is the acceptance screen `plain_wellFormed`
-spends. -/
-def Rule.edbOnly (r : Rule) : Prop :=
-  ∀ a, (a ∈ r.atoms ∨ a ∈ r.negated) → ∃ R, a.source = .edb R
-
 /-! ## Variable occurrence — the raw material of `Safe` -/
 
 /-- The variables a term mentions. A measure term mentions its
@@ -494,44 +478,5 @@ def Rule.WellTyped (r : Rule) : Prop :=
   (∀ a, (a ∈ r.atoms ∨ a ∈ r.negated) →
     ∀ b, b ∈ a.bindings → ¬ b.2.isMeasure) ∧
   (∀ t, t ∈ r.conditions → t.wellShaped)
-
-/-! ## Well-formedness — one linear rec -/
-
-/-- Interior sources a rule reads (both polarities). -/
-def Rule.interiorReads (r : Rule) : List InteriorId :=
-  (r.atoms ++ r.negated).filterMap fun a => a.source.interior?
-
-/-- Interior sources a rule reads positively. -/
-def Rule.positiveInteriorReads (r : Rule) : List InteriorId :=
-  r.atoms.filterMap fun a => a.source.interior?
-
-/-- Every interior source names a real named interior or the rec. -/
-def Query.sourcesInRange (q : Query) : Prop :=
-  ∀ r, r ∈ q.allRules → ∀ a, (a ∈ r.atoms ∨ a ∈ r.negated) →
-    ∀ C, a.source = .interior C → C.id < q.derivedCount
-
-/-- Interior `i` reads only strictly earlier interiors. The rec id is
-never `< i`. -/
-def Query.interiorsDag (q : Query) : Prop :=
-  ∀ (i : Nat) (d : Interior), q.interiors[i]? = some d → ∀ r, r ∈ d.rules →
-    ∀ (C : InteriorId), C ∈ r.interiorReads → C.id < i
-
-def Query.WellFormed (q : Query) : Prop :=
-  q.sourcesInRange ∧ q.interiorsDag
-
-/-- An empty-prefix `.cq` of all-EDB rules is well-formed: no interior
-sources, empty interiors. Hostile `Interior` atoms fail
-`sourcesInRange` (`derivedCount = 0`). -/
-theorem Query.plain_wellFormed (arity : Nat) (rules : List Rule)
-    (hedb : ∀ r, r ∈ rules → r.edbOnly) :
-    (Query.cq [] arity rules).WellFormed := by
-  refine ⟨?src, ?dag⟩
-  · intro r hr a ha C hsrc
-    have hr' : r ∈ rules := by
-      simpa [Query.allRules, Query.interiors, Query.rules] using hr
-    obtain ⟨R, hR⟩ := hedb r hr' a ha
-    exact nomatch (hR.symm.trans hsrc)
-  · intro i d hi
-    simp [Query.interiors] at hi
 
 end Bumbledb.Query

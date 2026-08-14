@@ -177,16 +177,6 @@ theorem evalInteriorsAt_stable {C : Classify} {defs : List Interior}
       rw [dif_pos hlt]
       exact congrFun hrec t
 
-/-- Every interior source an accepted query reads names a real
-interior or the rec. Replaces `wellFormed_reads_real`. Bridge:
-`ValidationError::UnknownInterior`. -/
-theorem wellFormed_interior_reads_real {q : Query} (hwf : q.WellFormed)
-    {r : Rule} (hr : r ∈ q.allRules) {a : Atom}
-    (ha : a ∈ r.atoms ∨ a ∈ r.negated) {C : InteriorId}
-    (hsrc : a.source = .interior C) :
-    C.id < q.derivedCount :=
-  hwf.1 r hr a ha C hsrc
-
 /-! ## Reach — `reachOp`, `reachDen` -/
 
 /-- The reach operator. Base does not see `X`. Step arms see `X` at
@@ -956,8 +946,7 @@ theorem mem_allRules_main {q : Query} {r : Rule} (hr : r ∈ q.rules) :
     exact Or.inr (Or.inr hr)
 
 /-- Interior DAG once, optional `reachDen`, then main `rulesAnswers` —
-listed by `evalQueryList`. Premises: `Safe` / `WellTyped` per rule,
-not full `WellFormed`. -/
+listed by `evalQueryList`. Premises: `Safe` / `WellTyped` per rule. -/
 theorem evalQuery_sound {C : Classify} {W : ListInstance} {ρ : ParamEnv}
     {q : Query}
     (hsafe : ∀ r, r ∈ q.allRules → Safe r)

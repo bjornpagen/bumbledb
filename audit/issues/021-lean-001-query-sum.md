@@ -2,7 +2,7 @@
 
 - **Severity:** high
 - **Tree:** lean
-- **Status:** OPEN
+- **Status:** FIXED(c8af2915)
 - **Source:** audit/lean.md H1
 - **Depends on:** lean-002 (must land as ONE change with it — the `reach` constructor carries `LinearRec`)
 - **Conflicts with:** lean-003, lean-004, lean-006, lean-007, lean-009 (same files; land after or fold in per INDEX order)
@@ -82,12 +82,12 @@ Contract delta from the audit's sketch: TWO arms, not three — interiors are or
 
 ## Acceptance criteria
 
-- [ ] Unrepresentable/gone: `rg -nw 'Query\.Plain|Query\.plain|recId|evalQuery_plain|evalQueryList_plain' lean --glob '!conformance/cases/**'` → no matches; `rg -n 'match q\.rec|q\.rec\.isSome|Option Rec' lean` → no matches.
-- [ ] Unchanged behavior: `lean/conformance/cases/**` byte-identical (`git status` clean there); `evalQuery_sound`, `evalQuery_empty_rules`, `reach_den_finite` survive restated with the same mathematical content (agreement of the listed evaluator with the set denotation; empty main denotes ∅).
-- [ ] Bridge honest: `rg -n '@Query.evalQuery_plain' lean/Bumbledb/Bridge.lean` → no matches (row retargeted, not deleted); `rg -n 'evalQuery_empty_rules' lean/Bumbledb/Bridge.lean` still a row; every remaining `@` reference elaborates.
-- [ ] Module doc: `rg -n 'two empty fields|Query\\.plain' lean/Bumbledb/Query/Syntax.lean` → no matches.
-- [ ] New locks: none required beyond the surviving theorems; the sum itself is the lock.
-- [ ] Commands green: `cd lean && lake build` (zero errors); `lake exe conformance conformance/cases` → 268 cases, 0 disagreements; no `sorry`/`admit` tokens anywhere under lean/; no `axiom` declarations.
+- [x] Unrepresentable/gone: `rg -nw 'Query\.Plain|Query\.plain|recId|evalQuery_plain|evalQueryList_plain' lean --glob '!conformance/cases/**'` → no matches; `rg -n 'match q\.rec|q\.rec\.isSome|Option Rec' lean` → no matches.
+- [x] Unchanged behavior: `lean/conformance/cases/**` byte-identical (`git status` clean there); `evalQuery_sound`, `evalQuery_empty_rules`, `reach_den_finite` survive restated with the same mathematical content (agreement of the listed evaluator with the set denotation; empty main denotes ∅).
+- [x] Bridge honest: `rg -n '@Query.evalQuery_plain' lean/Bumbledb/Bridge.lean` → no matches (row retargeted, not deleted); `rg -n 'evalQuery_empty_rules' lean/Bumbledb/Bridge.lean` still a row; every remaining `@` reference elaborates.
+- [x] Module doc: `rg -n 'two empty fields|Query\\.plain' lean/Bumbledb/Query/Syntax.lean` → no matches.
+- [x] New locks: none required beyond the surviving theorems; the sum itself is the lock.
+- [x] Commands green: `cd lean && lake build` (zero errors); `lake exe conformance conformance/cases` → 268 cases, 0 disagreements; no `sorry`/`admit` tokens anywhere under lean/; no `axiom` declarations.
 
 ## Constraints
 
