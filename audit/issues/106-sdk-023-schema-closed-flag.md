@@ -2,7 +2,7 @@
 
 - **Severity:** high
 - **Tree:** sdk (cpp schema)
-- **Status:** OPEN
+- **Status:** FIXED(24d201c9)
 - **Source:** audit/sdk-rest.md #1
 - **Depends on:** none (schema-lane foundation; co-lands with sdk-024 on `spec.cc`)
 - **Conflicts with:** sdk-024, sdk-025 (same files; land per INDEX order)

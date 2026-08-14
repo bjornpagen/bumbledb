@@ -21,11 +21,14 @@ namespace bdb::detail {
  * gets, but every statement holds its slot so the ids stay aligned with
  * the engine's materialized order.
  */
-struct StatementRow {
-	bool is_key;
+struct KeyRow {
 	std::string relation;
 	std::vector<std::string> projection;
 };
+
+struct OtherRow {};
+
+using StatementRow = std::variant<KeyRow, OtherRow>;
 
 /**
  * Statement rows are present on the schema lane only — the pre-schema
@@ -51,10 +54,11 @@ struct Manifest {
 	[[nodiscard]] auto resolve_key(std::string_view relation, std::span<std::string_view const> projection) const
 	    -> std::optional<std::uint16_t> {
 		for (auto const& [index, row] : std::views::enumerate(statement_rows)) {
-			if (!row.is_key || row.relation != relation || row.projection.size() != projection.size()) {
+			auto const* key = std::get_if<KeyRow>(&row);
+			if (key == nullptr || key->relation != relation || key->projection.size() != projection.size()) {
 				continue;
 			}
-			if (std::ranges::equal(row.projection, projection)) {
+			if (std::ranges::equal(key->projection, projection)) {
 				return static_cast<std::uint16_t>(index);
 			}
 		}
@@ -68,7 +72,7 @@ struct Manifest {
 	 */
 	[[nodiscard]] auto resolve_primary(std::string_view relation) const -> std::optional<std::uint16_t> {
 		for (auto const& [index, row] : std::views::enumerate(statement_rows)) {
-			if (row.is_key && row.relation == relation) {
+			if (auto const* key = std::get_if<KeyRow>(&row); key != nullptr && key->relation == relation) {
 				return static_cast<std::uint16_t>(index);
 			}
 		}
@@ -137,36 +141,36 @@ template<Theory S>
 			if (!field.fresh) {
 				continue;
 			}
-			manifest.statement_rows.push_back(StatementRow{
-			    .is_key = true,
+			manifest.statement_rows.push_back(KeyRow{
 			    .relation = std::string{relation.name.view()},
 			    .projection = {std::string{field.name.view()}},
 			});
 		}
 	}
-	for (auto const& relation : theory.relation_table) {
-		if (!relation.closed) {
+	for (auto index = std::size_t{0}; index != theory.relation_table.size(); ++index) {
+		if (!theory.relation_is_closed(index)) {
 			continue;
 		}
-		manifest.statement_rows.push_back(StatementRow{
-		    .is_key = true,
+		auto const& relation = theory.relation_table[index];
+		manifest.statement_rows.push_back(KeyRow{
 		    .relation = std::string{relation.name.view()},
 		    .projection = {std::string{"id"}},
 		});
 	}
 	for (auto const& statement : theory.statements) {
-		auto row = StatementRow{
-		    .is_key = statement.form == statement_form::key,
-		    .relation = std::string{statement.source.relation.view()},
-		    .projection = {},
-		};
-		if (row.is_key) {
+		if (statement.form == statement_form::key) {
+			auto row = KeyRow{
+			    .relation = std::string{statement.source.relation.view()},
+			    .projection = {},
+			};
 			row.projection.reserve(statement.source.width);
 			for (auto index = std::size_t{0}; index != statement.source.width; ++index) {
 				row.projection.emplace_back(statement.source.fields[index].view());
 			}
+			manifest.statement_rows.push_back(std::move(row));
+		} else {
+			manifest.statement_rows.push_back(OtherRow{});
 		}
-		manifest.statement_rows.push_back(std::move(row));
 	}
 	return manifest;
 }

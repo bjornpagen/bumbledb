@@ -34,7 +34,6 @@ template<class Facade>
 	constexpr auto members = std::define_static_array(std::meta::nonstatic_data_members_of(^^Facade, std::meta::access_context::current()));
 
 	auto out = relation_data{};
-	out.closed = is_closed_facade_type(^^Facade);
 	template for (constexpr auto index : index_array<members.size()>()) {
 		if constexpr (is_coordinate_like_type(std::meta::type_of(members[index]))) {
 			using Coord = [:std::meta::type_of(members[index]):];
@@ -62,6 +61,39 @@ template<class Facade>
 	constexpr auto members = std::define_static_array(std::meta::nonstatic_data_members_of(^^Facade, std::meta::access_context::current()));
 	using FirstCoord = [:std::meta::type_of(members[0]):];
 	return FirstCoord::relation_name;
+}
+
+template<class... Args>
+[[nodiscard]] consteval auto closed_count() -> std::size_t {
+	return (std::size_t{0} + ... + (is_closed_facade<Args>() ? 1U : 0U));
+}
+
+template<class... Args>
+[[nodiscard]] consteval auto closed_indices() -> std::array<std::size_t, closed_count<Args...>()> {
+	auto out = std::array<std::size_t, closed_count<Args...>()>{};
+	auto relation = std::size_t{0};
+	auto closed = std::size_t{0};
+	auto const add = [&]<class A>() {
+		if constexpr (is_member<A>()) {
+			if constexpr (is_closed_facade<A>()) {
+				out[closed] = relation;
+				++closed;
+			}
+			++relation;
+		}
+	};
+	(add.template operator()<Args>(), ...);
+	return out;
+}
+
+template<std::size_t ClosedCount>
+[[nodiscard]] constexpr auto relation_is_closed(std::array<std::size_t, ClosedCount> const& closed_at, std::size_t relation) -> bool {
+	for (auto const at : closed_at) {
+		if (at == relation) {
+			return true;
+		}
+	}
+	return false;
 }
 
 template<class... Args>
@@ -157,7 +189,13 @@ template<class... Args>
 
 template<class... Args>
 [[nodiscard]] consteval auto analyze_schema() -> law_verdict<coord_count<Args...>()> {
-	return analyze<coord_count<Args...>()>(relation_table<Args...>(), statement_shapes<Args...>());
+	auto const relations = relation_table<Args...>();
+	auto const closed_at = closed_indices<Args...>();
+	auto closed = std::array<bool, relation_count<Args...>()>{};
+	for (auto index = std::size_t{0}; index != relations.size(); ++index) {
+		closed[index] = relation_is_closed(closed_at, index);
+	}
+	return analyze<coord_count<Args...>()>(relations, closed, statement_shapes<Args...>());
 }
 
 [[nodiscard]] consteval auto schema_subject(std::string_view name) -> std::string {

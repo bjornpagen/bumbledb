@@ -60,15 +60,15 @@ struct field_data {
  * One relation of the flattened table, declaration order throughout.
  * A CLOSED member's `fields` are its SEALED roster — the synthetic `id`
  * at index 0, declared payload columns shifted +1 (lowering.md §1.11);
- * the wire lane skips index 0 and reads `closed_data` for the sealed
- * extension (declared columns only cross as FieldSpecs — §7.3).
+ * the wire lane skips index 0 and reads the parallel closed table for
+ * the sealed extension (declared columns only cross as FieldSpecs — §7.3).
+ * Ordinary relations do not carry a closed payload (std::variant /
+ * std::optional are not NTTP-structural on this toolchain).
  */
 struct relation_data {
 	name_text name;
 	std::size_t field_count;
 	std::array<field_data, max_relation_fields> fields;
-	bool closed;
-	closed_info closed_data;
 };
 
 /**

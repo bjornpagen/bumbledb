@@ -62,6 +62,7 @@ template<std::size_t CoordCount, std::size_t RelationCount>
  */
 template<std::size_t CoordCount, std::size_t RelationCount, std::size_t StatementCount>
 [[nodiscard]] consteval auto analyze(std::array<relation_data, RelationCount> const& relations,
+                       std::array<bool, RelationCount> const& closed,
                        std::array<statement_data, StatementCount> const& statements) -> law_verdict<CoordCount> {
 	auto verdict = law_verdict<CoordCount>{};
 	auto const coords = coord_roster<CoordCount>(relations);
@@ -69,9 +70,9 @@ template<std::size_t CoordCount, std::size_t RelationCount, std::size_t Statemen
 	auto fresh = std::array<bool, CoordCount>{};
 	{
 		auto index = std::size_t{0};
-		for (auto const& relation : relations) {
-			for (auto field = std::size_t{0}; field != relation.field_count; ++field) {
-				fresh[index] = relation.fields[field].fresh || (relation.closed && field == 0);
+		for (auto relation = std::size_t{0}; relation != relations.size(); ++relation) {
+			for (auto field = std::size_t{0}; field != relations[relation].field_count; ++field) {
+				fresh[index] = relations[relation].fields[field].fresh || (closed[relation] && field == 0);
 				++index;
 			}
 		}

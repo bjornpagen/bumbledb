@@ -15,6 +15,7 @@ import :classify;
 import :spec;
 import :schema_member;
 import :closed_facade;
+import :axioms;
 import :contained;
 import :capacity;
 import :classes;
@@ -106,6 +107,7 @@ struct schema_value {
 	static constexpr std::size_t relation_count = detail::relation_count<Args...>();
 	static constexpr std::size_t statement_count = detail::statement_count<Args...>();
 	static constexpr std::size_t coordinate_count = detail::coord_count<Args...>();
+	static constexpr std::size_t closed_count = detail::closed_count<Args...>();
 
 	/**
 	 * The schema's name (diagnostics only; never on the wire).
@@ -128,6 +130,13 @@ struct schema_value {
 	 * Relations/fields in declaration order — the wire lane's source.
 	 */
 	std::array<relation_data, relation_count> relation_table;
+
+	/**
+	 * Parallel closed table: `closed_at[i]` is a relation_table index,
+	 * `closed[i]` its sealed extension. Ordinary relations have no slot.
+	 */
+	std::array<std::size_t, closed_count> closed_at;
+	std::array<closed_info, closed_count> closed;
 
 	/**
 	 * DECLARED statements only, written order (lowering.md §2.1/§7.1).
@@ -154,6 +163,19 @@ struct schema_value {
 
 	[[nodiscard]] static consteval auto member_class_map() -> std::array<class_entry, coordinate_count> {
 		return detail::analyze_schema<Args...>().classes;
+	}
+
+	[[nodiscard]] constexpr auto relation_is_closed(std::size_t index) const -> bool {
+		return detail::relation_is_closed(closed_at, index);
+	}
+
+	[[nodiscard]] constexpr auto closed_of(std::size_t index) const -> closed_info const* {
+		for (auto slot = std::size_t{0}; slot != closed_count; ++slot) {
+			if (closed_at[slot] == index) {
+				return &closed[slot];
+			}
+		}
+		return nullptr;
 	}
 
 	/**
@@ -207,6 +229,8 @@ template<fixed_string Name, class... Args>
 	    .schema_name = detail::to_name_text(Name.view()),
 	    .relations = {},
 	    .relation_table = detail::relation_table<Args...>(),
+	    .closed_at = detail::closed_indices<Args...>(),
+	    .closed = {},
 	    .statements = detail::statement_shapes<Args...>(),
 	    .classes = detail::analyze_schema<Args...>().classes,
 	};
@@ -231,7 +255,12 @@ template<fixed_string Name, class... Args>
 			++index;
 		} else {
 			if constexpr (detail::is_closed_facade<A>()) {
-				out.relation_table[relation_index].closed_data = argument.data;
+				for (auto slot = std::size_t{0}; slot != out.closed_count; ++slot) {
+					if (out.closed_at[slot] == relation_index) {
+						out.closed[slot] = argument.data;
+						break;
+					}
+				}
 			}
 			++relation_index;
 		}
