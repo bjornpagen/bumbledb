@@ -34,11 +34,10 @@ fn scalar_key_conflict_in_one_delta_aborts_with_the_statement_id() {
             &err,
             Error::CommitRejected { violations } if matches!(
                 violations.as_slice(),
-                [Violation::Functionality {
+                [Violation::Functionality(crate::error::FunctionalityViolation::Scalar {
                     statement: KEYED_KEY,
-                    incumbent: None,
                     fact,
-                }] if **fact == a[..] || **fact == b[..]
+                })] if **fact == a[..] || **fact == b[..]
             )
         ),
         "{err:?}"
@@ -65,11 +64,10 @@ fn scalar_key_conflict_across_deltas_aborts_with_the_statement_id() {
             &err,
             Error::CommitRejected { violations } if matches!(
                 violations.as_slice(),
-                [Violation::Functionality {
+                [Violation::Functionality(crate::error::FunctionalityViolation::Scalar {
                     statement: KEYED_KEY,
-                    incumbent: None,
                     fact,
-                }] if **fact == contender[..]
+                })] if **fact == contender[..]
             )
         ),
         "{err:?}"

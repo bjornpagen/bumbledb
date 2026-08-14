@@ -159,11 +159,12 @@ impl Applier<'_, '_> {
                             relation: rel,
                         }));
                     }
-                    self.violations.push(Violation::Functionality {
-                        statement: fresh.statement,
-                        fact: (*fact).into(),
-                        incumbent: None,
-                    });
+                    self.violations.push(Violation::Functionality(
+                        crate::error::FunctionalityViolation::Scalar {
+                            statement: fresh.statement,
+                            fact: (*fact).into(),
+                        },
+                    ));
                     skip_puts = true;
                 }
                 fresh.row_id
@@ -221,11 +222,18 @@ impl Applier<'_, '_> {
                 } else {
                     None
                 };
-                self.violations.push(Violation::Functionality {
-                    statement: determinant.statement(),
-                    fact: (*fact).into(),
-                    incumbent,
-                });
+                self.violations
+                    .push(Violation::Functionality(match incumbent {
+                        Some(incumbent) => crate::error::FunctionalityViolation::Pointwise {
+                            statement: determinant.statement(),
+                            fact: (*fact).into(),
+                            incumbent,
+                        },
+                        None => crate::error::FunctionalityViolation::Scalar {
+                            statement: determinant.statement(),
+                            fact: (*fact).into(),
+                        },
+                    }));
                 continue;
             }
             if skip_puts {
@@ -381,11 +389,13 @@ impl Applier<'_, '_> {
         // Cold aborting path: name the incumbent by its fact bytes via
         // row_id → F get (errors carry facts, never row ids).
         let incumbent = fact_by_row(self.data, self.txn.raw(), self.schema, rel, row)?;
-        self.violations.push(Violation::Functionality {
-            statement,
-            fact: fact_bytes.into(),
-            incumbent: Some(incumbent.into()),
-        });
+        self.violations.push(Violation::Functionality(
+            crate::error::FunctionalityViolation::Pointwise {
+                statement,
+                fact: fact_bytes.into(),
+                incumbent: incumbent.into(),
+            },
+        ));
         Ok(())
     }
 

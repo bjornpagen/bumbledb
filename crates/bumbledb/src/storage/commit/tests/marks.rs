@@ -1135,10 +1135,10 @@ fn key_violation_preempts_the_capacity_judgment() {
     let Error::CommitRejected { violations } = &err else {
         panic!("expected a rejected commit, got {err:?}");
     };
-    let [Violation::Functionality { statement, .. }] = violations.as_slice() else {
+    let [Violation::Functionality(fv)] = violations.as_slice() else {
         panic!("expected the lone key citation, got {violations:?}");
     };
-    assert_eq!(*statement, HOLDER_KEY);
+    assert_eq!(fv.statement(), HOLDER_KEY);
 }
 
 /// A mixed statement-phase rejection carries containment AND capacity

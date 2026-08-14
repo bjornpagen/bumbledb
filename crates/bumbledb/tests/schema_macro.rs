@@ -1162,10 +1162,7 @@ mod keyed_equality {
         assert!(matches!(
             error,
             Error::CommitRejected { violations }
-                if matches!(violations.as_slice(), [Violation::Functionality {
-                    statement: StatementId(1),
-                    ..
-                }])
+                if matches!(violations.as_slice(), [Violation::Functionality(fv)] if fv.statement() == StatementId(1))
         ));
     }
 }
@@ -1227,15 +1224,9 @@ mod redundant_superkey_warning {
         assert!(matches!(
             violations.as_slice(),
             [
-                Violation::Functionality {
-                    statement: StatementId(0),
-                    ..
-                },
-                Violation::Functionality {
-                    statement: StatementId(1),
-                    ..
-                }
-            ]
+                Violation::Functionality(a),
+                Violation::Functionality(b),
+            ] if a.statement() == StatementId(0) && b.statement() == StatementId(1)
         ));
     }
 }
@@ -2009,10 +2000,7 @@ mod element_domain_typing {
             matches!(
                 &error,
                 Error::CommitRejected { violations }
-                    if matches!(violations.as_slice(), [Violation::Functionality {
-                        statement: StatementId(2),
-                        ..
-                    }])
+                    if matches!(violations.as_slice(), [Violation::Functionality(fv)] if fv.statement() == StatementId(2))
             ),
             "the pointwise key convicts the overlap, got {error:?}"
         );

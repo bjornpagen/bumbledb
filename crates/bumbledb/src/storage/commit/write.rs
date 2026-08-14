@@ -262,18 +262,14 @@ fn decode_cited_facts(
     let mut cited: Vec<Box<[CitedFact]>> = Vec::with_capacity(violations.as_slice().len());
     for violation in violations.as_slice() {
         let (relation, facts): (_, Vec<&[u8]>) = match violation {
-            Violation::Functionality {
-                statement,
-                fact,
-                incumbent,
-            } => {
-                let StatementView::Key(_, key) = schema.statement(*statement) else {
+            Violation::Functionality(functionality) => {
+                let StatementView::Key(_, key) = schema.statement(functionality.statement()) else {
                     unreachable!("a Functionality citation names a key statement");
                 };
                 (
                     key.relation,
-                    std::iter::once(fact.as_ref())
-                        .chain(incumbent.as_deref())
+                    std::iter::once(functionality.fact())
+                        .chain(functionality.incumbent())
                         .collect(),
                 )
             }

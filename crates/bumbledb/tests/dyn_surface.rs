@@ -340,21 +340,21 @@ fn a_rejection_renders_statement_spelling_kind_and_decoded_facts() {
 
     let rendered = render_rejection(&Graph.descriptor(), &violations);
     assert_eq!(rendered.len(), 2);
-    assert_eq!(rendered[0].statement, EDGE_DST_CONTAINMENT);
-    assert_eq!(rendered[0].kind, StatementKind::Containment);
-    assert_eq!(rendered[0].spelling, "Edge(dst) <= Node(id)");
-    assert_eq!(rendered[0].facts[0].relation.as_ref(), "Edge");
+    assert_eq!(rendered[0].statement(), EDGE_DST_CONTAINMENT);
+    assert_eq!(rendered[0].kind(), StatementKind::Containment);
+    assert_eq!(rendered[0].spelling(), "Edge(dst) <= Node(id)");
+    assert_eq!(rendered[0].facts()[0].relation.as_ref(), "Edge");
     assert_eq!(
-        rendered[0].facts[0].fields[1],
+        rendered[0].facts()[0].fields[1],
         ("dst".into(), Value::U64(9999))
     );
-    assert_eq!(rendered[1].statement, OUTDEGREE_CAPACITY);
-    assert_eq!(rendered[1].kind, StatementKind::Capacity);
-    assert_eq!(rendered[1].spelling, "Node(id) <={0..2} Edge(src)");
-    assert_eq!(rendered[1].measure, Some(3));
-    assert_eq!(rendered[1].facts[0].relation.as_ref(), "Node");
+    assert_eq!(rendered[1].statement(), OUTDEGREE_CAPACITY);
+    assert_eq!(rendered[1].kind(), StatementKind::Capacity);
+    assert_eq!(rendered[1].spelling(), "Node(id) <={0..2} Edge(src)");
+    assert_eq!(rendered[1].measure(), Some(3));
+    assert_eq!(rendered[1].facts()[0].relation.as_ref(), "Node");
     assert_eq!(
-        rendered[1].facts[0].fields[1],
+        rendered[1].facts()[0].fields[1],
         (
             "title".into(),
             Value::String(Box::from("provisional-title".as_bytes()))
@@ -383,10 +383,7 @@ fn an_fd_rejection_renders_the_key_form() {
     assert!(
         matches!(
             cited,
-            [Violation::Functionality {
-                statement: NODE_KEY,
-                ..
-            }]
+            [Violation::Functionality(fv)] if fv.statement() == NODE_KEY
         ),
         "one key citation: {cited:?}"
     );
@@ -399,11 +396,11 @@ fn an_fd_rejection_renders_the_key_form() {
     );
 
     let rendered = render_rejection(&Graph.descriptor(), &violations);
-    assert_eq!(rendered[0].kind, StatementKind::Functionality);
-    assert_eq!(rendered[0].spelling, "Node(id) -> Node");
-    assert_eq!(rendered[0].direction, None);
+    assert_eq!(rendered[0].kind(), StatementKind::Functionality);
+    assert_eq!(rendered[0].spelling(), "Node(id) -> Node");
+    assert_eq!(rendered[0].direction(), None);
     assert_eq!(
-        rendered[0].facts[0].fields[0],
+        rendered[0].facts()[0].fields[0],
         ("id".into(), Value::U64(ids[0]))
     );
 }

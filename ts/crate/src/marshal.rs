@@ -1197,16 +1197,8 @@ pub struct ViolationWire {
 
 impl ViolationWire {
     pub(crate) fn from_rendered(rendered: RenderedViolation) -> Self {
-        Self {
-            statement: rendered.statement.0,
-            kind: rendered.kind,
-            canonical: rendered.spelling,
-            direction: rendered
-                .direction
-                .map(|direction| tags::direction::tag(&direction)),
-            measure: rendered.measure,
-            facts: rendered
-                .facts
+        let facts = |facts: Vec<bumbledb::RenderedFact>| {
+            facts
                 .into_iter()
                 .map(|fact| {
                     (
@@ -1217,7 +1209,47 @@ impl ViolationWire {
                             .collect(),
                     )
                 })
-                .collect(),
+                .collect()
+        };
+        match rendered {
+            RenderedViolation::Functionality {
+                statement,
+                spelling,
+                facts: rendered_facts,
+            } => Self {
+                statement: statement.0,
+                kind: StatementKind::Functionality,
+                canonical: spelling,
+                direction: None,
+                measure: None,
+                facts: facts(rendered_facts),
+            },
+            RenderedViolation::Containment {
+                statement,
+                spelling,
+                direction,
+                facts: rendered_facts,
+            } => Self {
+                statement: statement.0,
+                kind: StatementKind::Containment,
+                canonical: spelling,
+                direction: Some(tags::direction::tag(&direction)),
+                measure: None,
+                facts: facts(rendered_facts),
+            },
+            RenderedViolation::Capacity {
+                statement,
+                spelling,
+                measure,
+                facts: rendered_facts,
+            } => Self {
+                statement: statement.0,
+                kind: StatementKind::Capacity,
+                canonical: spelling,
+                direction: None,
+                measure: Some(measure),
+                facts: facts(rendered_facts),
+            },
         }
     }
 }

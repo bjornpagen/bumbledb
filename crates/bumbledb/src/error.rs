@@ -932,15 +932,7 @@ pub enum Violation {
     /// facts claim one key — the same determinant bytes (scalar put-conflict),
     /// or overlapping intervals within one scalar-prefix group (the
     /// pointwise neighbor probe).
-    Functionality {
-        statement: StatementId,
-        /// The fact whose insert violated the statement.
-        fact: Box<[u8]>,
-        /// The already-standing fact, for the pointwise arm — the probe
-        /// names both parties. `None` for a scalar put-conflict, where
-        /// the determinant bytes inside `fact` already identify the collision.
-        incumbent: Option<Box<[u8]>>,
-    },
+    Functionality(FunctionalityViolation),
     /// A `Containment` statement violated by the final state
     /// (`docs/architecture/30-dependencies.md` § judged on final states).
     /// `fact` is canonical source-fact bytes on either side: the judgment
@@ -974,14 +966,54 @@ pub enum Violation {
     },
 }
 
+/// Scalar put-conflict vs pointwise neighbor probe — two conviction
+/// shapes, not an optional incumbent.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FunctionalityViolation {
+    /// The determinant bytes inside `fact` already identify the collision.
+    Scalar {
+        statement: StatementId,
+        fact: Box<[u8]>,
+    },
+    /// The probe names both parties.
+    Pointwise {
+        statement: StatementId,
+        fact: Box<[u8]>,
+        incumbent: Box<[u8]>,
+    },
+}
+
+impl FunctionalityViolation {
+    #[must_use]
+    pub fn statement(&self) -> StatementId {
+        match *self {
+            Self::Scalar { statement, .. } | Self::Pointwise { statement, .. } => statement,
+        }
+    }
+
+    #[must_use]
+    pub fn fact(&self) -> &[u8] {
+        match self {
+            Self::Scalar { fact, .. } | Self::Pointwise { fact, .. } => fact,
+        }
+    }
+
+    #[must_use]
+    pub fn incumbent(&self) -> Option<&[u8]> {
+        match self {
+            Self::Scalar { .. } => None,
+            Self::Pointwise { incumbent, .. } => Some(incumbent),
+        }
+    }
+}
+
 impl Violation {
     /// The violated statement.
     #[must_use]
     pub fn statement(&self) -> StatementId {
         match self {
-            Self::Functionality { statement, .. }
-            | Self::Containment { statement, .. }
-            | Self::Capacity { statement, .. } => *statement,
+            Self::Functionality(functionality) => functionality.statement(),
+            Self::Containment { statement, .. } | Self::Capacity { statement, .. } => *statement,
         }
     }
 
@@ -993,9 +1025,8 @@ impl Violation {
     /// count of facts convicting it.
     fn citation(&self) -> (StatementId, Option<Direction>) {
         match self {
-            Self::Functionality { statement, .. } | Self::Capacity { statement, .. } => {
-                (*statement, None)
-            }
+            Self::Functionality(functionality) => (functionality.statement(), None),
+            Self::Capacity { statement, .. } => (*statement, None),
             Self::Containment {
                 statement,
                 direction,
@@ -1044,14 +1075,14 @@ pub struct CitedFact {
 /// rejection from plain data without the typed fact structs
 /// (`docs/architecture/30-dependencies.md` § rendering the rejection).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Violations {
-    citations: Box<[Violation]>,
-    /// Per citation, its decoded cited facts (the violation's `fact`,
-    /// then `incumbent` where one exists) — parallel to `citations`.
-    /// Empty until the commit boundary's decode pass attaches it: the
-    /// collectors seal bytes only (they run per probe, before the
-    /// complete set exists), and the one rejection exit decorates once.
-    cited: Box<[Box<[CitedFact]>]>,
+pub enum Violations {
+    /// Collectors, sweeper, and decorate-failure: citations without decoded facts.
+    Citations(Box<[Violation]>),
+    /// The commit-boundary decode pass attached cited facts; lengths equal.
+    Decorated {
+        citations: Box<[Violation]>,
+        cited: Box<[Box<[CitedFact]>]>,
+    },
 }
 
 impl Violations {
@@ -1065,20 +1096,14 @@ impl Violations {
         }
         found.sort_by_key(Violation::citation);
         found.dedup_by_key(|violation| violation.citation());
-        Some(Self {
-            citations: found.into_boxed_slice(),
-            cited: Box::new([]),
-        })
+        Some(Self::Citations(found.into_boxed_slice()))
     }
 
     /// The singleton set — a lone violation is trivially sealed. The
     /// judgment probes convict through this shape and the collectors
     /// flatten it ([`Violations::seal`] re-sorts the union).
     pub(crate) fn one(violation: Violation) -> Self {
-        Self {
-            citations: Box::new([violation]),
-            cited: Box::new([]),
-        }
+        Self::Citations(Box::new([violation]))
     }
 
     /// Attaches the decode pass's cited facts, one list per citation —
@@ -1091,21 +1116,34 @@ impl Violations {
     /// walks [`Violations::as_slice`], so a mismatch is a programmer
     /// error, never data.
     pub(crate) fn attach_cited(self, cited: Vec<Box<[CitedFact]>>) -> Self {
+        let citations = self.into_citations();
         assert_eq!(
             cited.len(),
-            self.citations.len(),
+            citations.len(),
             "cited-fact lists are parallel to citations"
         );
-        Self {
-            citations: self.citations,
+        Self::Decorated {
+            citations,
             cited: cited.into_boxed_slice(),
+        }
+    }
+
+    fn into_citations(self) -> Box<[Violation]> {
+        match self {
+            Self::Citations(citations) | Self::Decorated { citations, .. } => citations,
+        }
+    }
+
+    fn citations_slice(&self) -> &[Violation] {
+        match self {
+            Self::Citations(citations) | Self::Decorated { citations, .. } => citations,
         }
     }
 
     /// Every violation, in citation order.
     #[must_use]
     pub fn as_slice(&self) -> &[Violation] {
-        &self.citations
+        self.citations_slice()
     }
 
     /// The decoded cited facts of the citation at `index` — the
@@ -1114,12 +1152,15 @@ impl Violations {
     /// findings) and for an out-of-range index.
     #[must_use]
     pub fn cited_facts(&self, index: usize) -> &[CitedFact] {
-        self.cited.get(index).map_or(&[], AsRef::as_ref)
+        match self {
+            Self::Citations(_) => &[],
+            Self::Decorated { cited, .. } => cited.get(index).map_or(&[], AsRef::as_ref),
+        }
     }
 
     /// Iterates citations paired with their decoded cited facts.
     pub fn citations(&self) -> impl Iterator<Item = (&Violation, &[CitedFact])> {
-        self.citations
+        self.citations_slice()
             .iter()
             .enumerate()
             .map(|(index, violation)| (violation, self.cited_facts(index)))
@@ -1127,7 +1168,7 @@ impl Violations {
 
     /// Iterates the violations, in citation order.
     pub fn iter(&self) -> std::slice::Iter<'_, Violation> {
-        self.citations.iter()
+        self.citations_slice().iter()
     }
 }
 
@@ -1136,7 +1177,7 @@ impl IntoIterator for Violations {
     type IntoIter = std::vec::IntoIter<Violation>;
 
     fn into_iter(self) -> Self::IntoIter {
-        self.citations.into_vec().into_iter()
+        self.into_citations().into_vec().into_iter()
     }
 }
 
@@ -1145,7 +1186,7 @@ impl<'a> IntoIterator for &'a Violations {
     type IntoIter = std::slice::Iter<'a, Violation>;
 
     fn into_iter(self) -> Self::IntoIter {
-        self.citations.iter()
+        self.citations_slice().iter()
     }
 }
 

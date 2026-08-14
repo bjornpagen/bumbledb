@@ -72,7 +72,7 @@ impl Violation {
     /// The violated law's name.
     fn law(&self) -> &'static str {
         match self {
-            Self::Functionality { .. } => "functionality",
+            Self::Functionality(_) => "functionality",
             Self::Containment { .. } => "containment",
             Self::Capacity { .. } => "capacity",
         }
@@ -91,14 +91,14 @@ impl Violation {
                 direction: Direction::TargetRequired,
                 ..
             } => " (target side)",
-            Self::Functionality { .. } | Self::Capacity { .. } => "",
+            Self::Functionality(_) | Self::Capacity { .. } => "",
         }
     }
 
     /// The factual tail after the em-dash: what happened.
     fn tail(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Functionality { .. } => write!(f, "two live facts claim one key"),
+            Self::Functionality(_) => write!(f, "two live facts claim one key"),
             Self::Containment {
                 direction: Direction::SourceUnsatisfied,
                 ..

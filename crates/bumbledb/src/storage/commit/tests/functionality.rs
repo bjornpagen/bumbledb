@@ -63,21 +63,18 @@ fn assert_in_delta_violation(result: crate::error::Result<()>, a: &[u8], b: &[u8
         panic!("expected a rejected commit, got {err:?}");
     };
     let [
-        Violation::Functionality {
+        Violation::Functionality(crate::error::FunctionalityViolation::Pointwise {
             statement,
             fact,
             incumbent,
-        },
+        }),
     ] = violations.as_slice()
     else {
         panic!("expected one key citation, got {violations:?}");
     };
     assert_eq!(*statement, BOOKING_KEY);
-    let incumbent = incumbent
-        .as_deref()
-        .expect("pointwise arm names both facts");
     assert!(
-        (**fact == *a && incumbent == b) || (**fact == *b && incumbent == a),
+        (**fact == *a && **incumbent == *b) || (**fact == *b && **incumbent == *a),
         "violation names {fact:?} against {incumbent:?}"
     );
 }
@@ -90,18 +87,18 @@ fn assert_cross_delta_violation(result: crate::error::Result<()>, first: &[u8], 
         panic!("expected a rejected commit, got {err:?}");
     };
     let [
-        Violation::Functionality {
+        Violation::Functionality(crate::error::FunctionalityViolation::Pointwise {
             statement,
             fact,
             incumbent,
-        },
+        }),
     ] = violations.as_slice()
     else {
         panic!("expected one key citation, got {violations:?}");
     };
     assert_eq!(*statement, BOOKING_KEY);
     assert_eq!(**fact, *second);
-    assert_eq!(incumbent.as_deref(), Some(first));
+    assert_eq!(&**incumbent, first);
 }
 
 // ---------- the matrix: violating cells ----------
@@ -332,11 +329,7 @@ fn assert_fresh_row_violation(err: &crate::error::Error, facts: &[&[u8]]) {
         panic!("expected a rejected commit, got {err:?}");
     };
     let [
-        Violation::Functionality {
-            statement,
-            fact,
-            incumbent: None,
-        },
+        Violation::Functionality(crate::error::FunctionalityViolation::Scalar { statement, fact }),
     ] = violations.as_slice()
     else {
         panic!("expected one fresh-row key citation, got {violations:?}");
@@ -589,10 +582,7 @@ fn a_decode_failure_on_decoration_keeps_commit_rejected() {
     assert!(
         matches!(
             violations.as_slice(),
-            [Violation::Functionality {
-                statement: BOOKING_KEY,
-                ..
-            }]
+            [Violation::Functionality(fv)] if fv.statement() == BOOKING_KEY
         ),
         "{violations:?}"
     );
