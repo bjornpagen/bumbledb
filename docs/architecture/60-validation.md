@@ -95,10 +95,10 @@ iteration), then evaluating main (`NaiveDb::query`). Staying on the
 plain chain loses nothing (`lean/Bumbledb/Exec/Reach.lean:
 semi_naive_agrees`) and keeps the trust root definitional. The SQLite
 lane is a **lossy translator of this cut**: it emits SQL
-`WITH [RECURSIVE]` then the whole cte-list because that is what SQLite
-speaks (`translate::translate_query`, hand-written goldens beside the
-query forms). That SQL is not a grammar for the language and not a field
-in the IR. Mutual-linear and nonlinear shapes are unwritable this cut,
+`WITH [RECURSIVE]` (SQLite's spelling of interiors + rec + main;
+`translate::translate_query`, hand-written goldens beside the query
+forms). That SQL is not a grammar for the language and not a field in
+the IR. Mutual-linear and nonlinear shapes are unwritable this cut,
 so their former inexpressible-set rows are unreachable, not a denotation
 reason; interval-typed derived columns remain a translator limit. The
 Lean lane judges the checked-in `reach-*.json` cases with
@@ -203,7 +203,8 @@ verdicts compare *whole* — the judgment verdict with statement id and `Directi
 runner, and the roster rejections against the naive model's own
 from-the-definition computation: a cap-exceeding condition tree must be
 `DnfExceedsRules` with `produced` equal to the naive DNF width (leaf = 1, `And` =
-product, `Or` = sum), a program whose every disjunct vanishes is the empty union,
+product, `Or` = sum), a query whose every main disjunct vanishes is the empty union
+(`EmptyRuleSet`),
 and the vacuous masks (EMPTY and FULL) are the mask-population rejections. A
 case where both sides error *unexpectedly* stays a bundle — agreement-in-error
 must not impersonate verification.
@@ -796,7 +797,7 @@ no per-family sentence, nothing.
   multi-aggregate find
   lists; and **duplicate-witness data that exercises the D2 subtree skip and the
   aggregate-sink binding dedup** (the two places a set-semantics bug would hide).
-  The algebra families extend the same contract: **multi-rule programs** at arm
+  The algebra families extend the same contract: **multi-rule queries** at arm
   counts 2–4 — provably-disjoint arms (distinct closed-reference selections on one
   discriminant, with the proof visible diagnostically and the spanning union
   exercised against the oracles' plain union), overlapping arms with duplicate
@@ -855,13 +856,13 @@ no per-family sentence, nothing.
   width bound (plus the first over-width diagnostic), including reordered keys,
   selections on either side, and keyed-equality refusal shapes.
 - **The algebra oracle cases in every verify run** (the naive lane's extension):
-  multi-rule programs replayed engine-vs-naive, the naive model evaluating rules
+  multi-rule queries replayed engine-vs-naive, the naive model evaluating rules
   **directly** — the union of per-rule binding sets from the definition, sharing
   no lowering, kernel, or sweep code with the engine (the independence law: the
   model imports the engine's *types* only); seeded random condition **trees to
   depth 3**, the naive model evaluating the *input tree* while the engine
   evaluates the lowered rules — the differential is the DNF-lowering proof — with
-  the cap-exceeders and vanished programs in the error-parity cases above;
+  the cap-exceeders and vanished queries in the error-parity cases above;
   **`Pack`** answers (grouped, global, and the multi-rule union fold) naive-only per
   the expressibility gate; the **measure's rays** (`MeasureOfRay` on both sides,
   typed, and the `Allen(DISJOINT)` ray predicate keeping the same query

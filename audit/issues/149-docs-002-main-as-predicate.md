@@ -3,6 +3,7 @@
 - **Severity:** high
 - **Tree:** docs
 - **Status:** OPEN
+- **Lane note (`audit/docs`, 2026-08-14):** blocked until engine-041 lands on another branch. Left OPEN; this lane did not rewrite the `Predicate` / `predicate()` citations.
 - **Source:** audit/docs.md F2
 - **Depends on:** engine-041 (the `Predicate` → `Signature` type rename; this doc cites the type by name)
 

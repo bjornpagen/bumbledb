@@ -3,6 +3,7 @@
 - **Severity:** high
 - **Tree:** docs
 - **Status:** OPEN
+- **Lane note (`audit/docs`, 2026-08-14):** blocked until engine-041 lands on another branch. Left OPEN; `PreparedQuery::predicate()` is unchanged.
 - **Source:** audit/docs.md F17
 - **Depends on:** engine-041 (`Predicate` → `Signature`, `predicate()` → `signature()`) — the doc cites the method by name
 

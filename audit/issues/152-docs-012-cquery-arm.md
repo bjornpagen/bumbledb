@@ -3,6 +3,7 @@
 - **Severity:** high
 - **Tree:** docs
 - **Status:** OPEN
+- **Lane note (`audit/docs`, 2026-08-14):** blocked until lean-008 (and bench-001 twin) land on another branch. Left OPEN; `CQuery` wording in `60-validation.md` is unchanged.
 - **Source:** audit/docs.md F12
 - **Depends on:** lean-008 (one decoder, `CQuery` deleted) — this doc must describe the post-fix corpus truthfully
 

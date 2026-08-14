@@ -3,6 +3,7 @@
 - **Severity:** high
 - **Tree:** docs (lean README)
 - **Status:** OPEN
+- **Lane note (`audit/docs`, 2026-08-14):** blocked until lean-008 (and bench-001 twin) land on another branch. Left OPEN. docs-028's `idb` negation in the same README was independent and landed on this branch.
 - **Source:** audit/docs.md F27
 - **Depends on:** lean-008 (one decoder; `CQuery`/`plainQuery` deleted) — this README describes the decode pipeline
 

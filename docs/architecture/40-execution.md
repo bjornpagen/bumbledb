@@ -311,14 +311,14 @@ stream computes exactly the answer set
   has its own witness — deliberately distinct
   from the measured cross-rule elision refutation below.
 - **Rule-disjointness knowledge:** `plan/fj/provably_disjoint.rs` recognizes a
-  multi-rule program whose heads are provably pairwise disjoint — the witness
+  multi-rule query whose heads are provably pairwise disjoint — the witness
   form and its soundness are
   `lean/Bumbledb/Exec/Dedup.lean: syntactic_disjointness_sound` (conservative
   and pairwise by design: params, sets, and mixed constant forms pin nothing;
   the elision the witness could license is `disjoint_witness_licence`). The
   DU-arm union is exactly this shape. Plan introspection retains the knowledge
   as `disjoint_rules: proven (R.f)`, but execution always keeps one seen-set
-  spanning a multi-rule program, keyed by provenance (§ the rule loop; ruled
+  spanning a multi-rule query, keyed by provenance (§ the rule loop; ruled
   2026-07-23, R2).
 
   **Refutation — cross-rule dedup removal.** Three pre-isolation scale-S runs
@@ -342,7 +342,7 @@ binds only variables outside the projection set — the emitted fact cannot chan
 the pipeline cancels that binding's origin below its absorb node on the sink's first-emit
 signal. The skip is **never legal under
 an aggregate sink** (any new bound variable multiplies the binding set the fold is
-defined over). **The skip is per-rule**: each rule of a program executes its own plan,
+defined over). **The skip is per-rule**: each rule of a query executes its own plan,
 so a skip unwinds inside that rule only and never crosses rules — a later rule
 re-deriving the same head fact is absorbed by the spanning seen-set (§ the rule loop),
 which is what makes the skip's early exit harmless under union. **Reverses if:**
@@ -365,7 +365,7 @@ rules **sequentially** into **one sink**: the sink resets once per execution, ne
 per rule, and its dedup machinery spanning rules is the *entire* implementation of set
 union — one sink hearing several rules computes exactly the query union
 (`lean/Bumbledb/Exec/Dedup.lean: union_regime_head_projection` for hand-written
-programs, `dnf_rekey_transparent` for DNF-derived rule sets — the provenance
+queries, `dnf_rekey_transparent` for DNF-derived rule sets — the provenance
 split below). **Union is not an
 operator** — no merge node, no concat-then-dedup pass exists
 anywhere in the executor; disjunction at the top is the rule list. Inter-rule parallelism
@@ -373,7 +373,7 @@ is not attempted: it is inter-query parallelism's job (the concurrency contract 
 and stays a non-goal.
 
 - **Dedup keys split by provenance (ruled 2026-07-23, R2).** A **hand-written
-  multi-rule program** keys the **head projection**, never the rule's slot
+  multi-rule query** keys the **head projection**, never the rule's slot
   array — its binding-slot layouts are per-rule (a `VarId` is rule-scoped
   across written rules, so a full-binding key has no cross-rule meaning) and
   the head is the only shared vocabulary; the key law is
@@ -388,7 +388,7 @@ and stays a non-goal.
   written-rule provenance (`20-query-ir.md` § the input condition grammar)
   is what the re-keyed dedup reads. The projection sink keys the projected
   find tuple (head-shaped already); the multi-rule aggregate sink keys per
-  its provenance — for a hand-written program the **head projection**: per
+  its provenance — for a hand-written query the **head projection**: per
   head position, the words the position reads from the rule's binding (group
   variables and fold inputs; the nullary `Count` contributes nothing).
   The single-rule aggregate keys the full slot array (its fold domain is the rule's
@@ -409,7 +409,7 @@ and stays a non-goal.
   the view memo). A rule whose `Eq`-anchored constant misses the dictionary
   short-circuits **that rule only** — a rule is one disjunct.
 - **Key-probe rules** union through the sink like any other rule; the direct
-  no-sink decode lane applies only to the single-rule key-probe program (the union must
+  no-sink decode lane applies only to the single-rule key-probe query (the union must
   hear every rule).
 - **The ray-probe pass (ruled 2026-07-23, R6).** The rule loop never renders
   the Ray verdict: a measure filter or residual DROPS a ray (a ray never
@@ -459,8 +459,8 @@ naive chain; this driver is the semi-naive realization
 Termination is the roster theorem
 (`lean/Bumbledb/Exec/Reach.lean: reach_den_finite`). Interiors-only never
 enters the driver: `PreparedBody` is `Rules` or `Empty`, never `Reach`
-(`lean/Bumbledb/Exec/Reach.lean: evalQuery_plain` is the empty-interiors
-empty-rec case; interiors-only is the preamble plus that same rule loop).
+(`lean/Bumbledb/Exec/Reach.lean: evalQuery` is the rec-absent constructor
+case; interiors-only is the preamble plus that same rule loop).
 
 - **The delta rewrite is one plan per rec arm, not bookkeeping**
   (`DeltaVariant`, `api/prepared.rs`): the unique positive self-atom is
@@ -712,8 +712,8 @@ CQ-homomorphism minimization is NP-hard, so the witness never searches
 variable mappings — `VarId`s must already agree, which is exactly what
 DNF-cloned rules provide. Deleting a rule
 never changes the head (the head-alignment invariant is re-checked after
-deletion), a program shrunk to one rule sheds its union machinery like any
-single-rule program, plan introspection reports deleted rules with the subsuming rule's
+deletion), a query shrunk to one rule sheds its union machinery like any
+single-rule query, plan introspection reports deleted rules with the subsuming rule's
 index (lowered-rule indices) beside the per-rule eliminated atoms, and the
 differential off-switch covers both passes.
 
@@ -1042,7 +1042,7 @@ and the grounding's eliminated occurrences — read straight off the plan's
 Det(grading)`) — plus the **head-level union accounting**: per rule, bindings
 emitted to the shared sink vs absorbed by the spanning seen-set (absorbed =
 emitted − newly-seen: two O(1) reads per rule, no per-tuple cost; an elided
-seen-set absorbs nothing by proof), — multi-rule programs — the
+seen-set absorbs nothing by proof), — multi-rule queries — the
 rule-disjointness line naming its witness (`disjoint_rules: proven (R.f)`,
 or `unproven`), and the subsumption record: rules deleted at prepare, each
 with its subsuming rule's index (`subsumed: rule 0 by rule 1`, lowered-rule

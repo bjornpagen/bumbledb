@@ -297,8 +297,8 @@ A reach case carries a Query with `interiors` / `rec` / main `rules`
 (`Bumbledb/Query/Syntax.lean`) instead of a CQuery. The Lean side
 decodes it and runs `evalQueryList` (`Bumbledb/Exec/Reach.lean`;
 `evalQuery_sound` is its agreement with `evalQuery`) against the
-recorded answers. Atoms on this arm are `edb` / `interior` (never
-`idb`, never a stored `relation` key). `rec` may be JSON `null` or
+recorded answers. Atoms are `edb` / `interior`. `FieldId` on an interior
+atom addresses a derived head position. `rec` may be JSON `null` or
 omitted for interiors-only; the recut corpus has a rec on every file.
 One-predicate rec queries become `interiors = []`, `rec = some`, and
 an identity main of the same arity — empty `rules` denotes `∅`. Rec

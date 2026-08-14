@@ -52,10 +52,10 @@ conjunctive rules. The head owns the find shape (arity, aggregate ops, and
 the output typing — the predicate below, sealed at validation); each rule
 is a conjunct (positive atoms, negated atoms, conditions) whose find terms
 align against the head position by position. The single-rule query is the
-degenerate case and embeds the conjunctive query unchanged
-(`Query::single`); a query with empty `interiors` and no rec is today's
-query plus two empty fields
-(`lean/Bumbledb/Exec/Reach.lean: evalQuery_plain`).
+degenerate case (`Query::single`). Empty interiors and `rec: None` is the
+rec-absent constructor of `Query` (`cq`: interiors are a possibly-empty
+prefix) — a constructor case of `evalQuery`, not an embedding of a prior
+type.
 
 - **Main defines one anonymous predicate; rules derive it.** The head is
   its definition, and its typed **signature** is the answer-type tuple: one
@@ -93,27 +93,28 @@ query plus two empty fields
 
 `Query { interiors, rec, head, rules }` is the IR
 (`crates/bumbledb/src/ir.rs`). Named interiors are a DAG in declaration
-order, each a finite CQ evaluated once. `rec` is at most one linear SCC
+order, each a finite CQ evaluated once. `rec` is at most one linear rec
 — `Rec { head, base, rec }` — whose denotation is `reachDen = lfpS`
-(`lean/Bumbledb/Exec/Reach.lean: reachDen`). Main is today's query: one
-head, ≥1 rule, folds, measures, negation. `evalQuery` is main
-`rulesAnswers` over the finished environment. `Db::prepare` takes
-`&Query` only. A query with empty `interiors` and no rec is today's
-query plus two empty fields
-(`lean/Bumbledb/Exec/Reach.lean: evalQuery_plain`) — not an embedding
-into another type. An `AtomSource::Interior` atom's bindings address
-**head positions**: `FieldId(i)` is the target derived table's column
-`i`, typed by its sealed signature column — positional, never nominal,
-and the membership typing rule reads through it unchanged (an
-interval-typed derived column participates in point membership exactly
-as an interval field does). Interior `i` has `InteriorId(i)`; the rec,
-if present, has `InteriorId(interiors.len() as u32)` after the overflow
-check. There is no `MAX_CTES` / `MAX_INTERIORS` / `TooManyCtes`.
+(`lean/Bumbledb/Exec/Reach.lean: reachDen`). Main is: one head, ≥1 rule,
+folds, measures, negation. `evalQuery` is main `rulesAnswers` over the
+finished environment. `Db::prepare` takes `&Query` only. Empty interiors
+and `rec: None` is the rec-absent constructor of `Query` (`cq`) — a
+constructor case of `evalQuery`, not an embedding of a prior type. An
+`AtomSource::Interior` atom's bindings address **head positions**:
+`FieldId(i)` is the target derived table's column `i`, typed by its
+sealed signature column — positional, never nominal, and the membership
+typing rule reads through it unchanged (an interval-typed derived column
+participates in point membership exactly as an interval field does).
+Interior `i` has `InteriorId(i)`; the rec, if present, has
+`InteriorId(interiors.len() as u32)` after the overflow check.
+Derived-table count is `u32` width (`InteriorIdOverflow`). There is no
+interior-count product cap.
 
 **Validation is one roster on `Query`.** Each interior seals in
 declaration order; rec seals from base then rec arms; main last. Params
-are query-global. The rec roster (`lean/Bumbledb/Query/Syntax.lean:
-Query.recLinear`) is the judge, not a Tarjan condensation:
+are query-global. The one rec's well-formedness is structural (exactly
+one positive self-atom per rec arm in the typed rec; nonempty base and
+step):
 
 - **The well-formedness screen** — every `Interior` source names a real
   derived table and addresses within its arity
@@ -128,7 +129,7 @@ Query.recLinear`) is the judge, not a Tarjan condensation:
   (`lean/Bumbledb/Exec/Reach.lean: reach_den_finite`;
   `lean/Bumbledb/Countermodels.lean: succ_prefixed_infinite` is the wall
   when a head creates values). `NegationInRec` refuses every negated
-  atom in the rec SCC (self is the wall —
+  atom in that rec (self is the wall —
   `lean/Bumbledb/Countermodels.lean: odd_not_monotone`; anti-join of a
   finished table in a rec arm is monotone and refused here, OPEN, not
   the wall). A fold or measure find on an interior or rec head is
@@ -181,7 +182,7 @@ carried in the host's frontier, one intersection per hop
 
 **The ruling that survives — queries stay query-shaped.** `MAX_RULES`
 (16) applies uniformly to every rule-list: each `Interior.rules`
-independently, main independently, and the rec SCC as **one** pool
+independently, main independently, and the rec as **one** pool
 (`base.len() + rec.len() ≤ MAX_RULES`). There is no interior-count cap.
 Work is bounded by that rule-size law plus the derived-tuples ledger
 (`DEFAULT_DERIVED_TUPLES`; `40-execution.md` § the linear reach
@@ -205,8 +206,9 @@ here. **Reverses if:** never — the identity is the thesis.
 **Walls, this cut, and OPEN, in one paragraph.** Bound rec heads
 (creation quarantine) and no negation or aggregation through the cycle
 — the rec's own table under `!` or a fold — are walls, as are
-fuel-is-not-denotation (`reachDen` is `lfpS`; the budget is a resource
-abort), rec-is-never-the-answer (`evalQuery` is main `rulesAnswers`;
+that denotation is `reachDen = lfpS` (the derived-tuples / rounds budget is a
+resource abort (`DerivedBudgetExceeded`) — incompleteness versus
+`evalQuery`, not a semantic parameter), rec-is-never-the-answer (`evalQuery` is main `rulesAnswers`;
 empty main denotes `∅` even when `reachDen` is huge —
 `lean/Bumbledb/Exec/Reach.lean: evalQuery_empty_rules`), not-a-Datalog-
 runtime, and no bags. This cut is one linear `Rec`, interiors as a DAG
@@ -263,7 +265,7 @@ rejects (`lean/Bumbledb/Query/Denotation.lean: Safe`,
 is `lean/Bumbledb/Countermodels.lean: unsafe_rule_infinite`). Literals, params,
 param sets, and membership bindings are all legal inside negated atoms. Within one
 rule-list there is no reach concern — a head is never a body atom
-there; the rec roster refuses negation in the rec SCC (`NegationInRec`)
+there; `NegationInRec` refuses negation in that rec
 and main may anti-join a finished interior or the finished rec
 (§ engine recursion). Negated
 atoms contribute no
@@ -295,7 +297,7 @@ join costume.
   variable scope, one layout, so the full binding set is shared vocabulary),
   and disjunction widens membership without ever changing a fold domain —
   the `Sum` above answers 200 under any spelling of its conditions, `or`
-  included. **Hand-written multi-rule programs keep the head-projection
+  included. **Hand-written multi-rule queries keep the head-projection
   law**: variables are rule-scoped and layouts differ, so the head is the
   only shared vocabulary — the fold domain is the union of the rules'
   binding sets projected to the head, and distinct bindings projecting to
@@ -371,7 +373,7 @@ join costume.
 ```rust
 Query {
     interiors:  Vec<Interior>,        // DAG, declaration order; no count cap
-    rec:        Option<Rec>,          // at most one linear SCC
+    rec:        Option<Rec>,          // at most one linear rec
     head:       Vec<HeadTerm>,        // MAIN answer shape
     rules:      Vec<Rule>,            // MAIN; ≥1 at validate, ≤ MAX_RULES (16)
 }
@@ -891,7 +893,7 @@ query.
 
 **The rec / interior roster** (`validate`; § engine recursion) wraps the
 same per-list machinery: `InteriorIdOverflow` (derived-table count does not
-fit `u32` — id-width, not a product 16; there is no `TooManyCtes`), the
+fit `u32` — id-width, not a product 16), the
 well-formedness screen (`UnknownInterior`, `InteriorColumnOutOfRange`,
 `InteriorNotPrior`), the rec roster (`EmptyInterior`, `EmptyRecursiveBase`,
 `EmptyRecursiveStep`, `SelfInBase`, `RecArmMissingSelf`, `NonlinearRecArm`,
@@ -966,8 +968,7 @@ notation's normative grammar block is § the query notation, below; the renderer
 emits it.) When the write-side surface is data, the renderer **is** the pretty
 syntax — ergonomics on the side that costs nothing and crosses every boundary.
 The renderer emits `interior p{id}(...) | ...;` then `recursive p{id}(...) | ...;`
-then bare main rules — total, and golden-pinned. There is no separate program
-renderer.
+then bare main rules — total, and golden-pinned.
 
 **Handles print as handles.** A literal word at a closed-reference position — a
 binding on a field whose declared containment targets a closed relation's id, or
@@ -1078,8 +1079,8 @@ normalizes to **canonical decimal**: the round-trip law is canonical-form,
 not verbatim — `0x64` lowers, renders, and reparses as `100`.
 
 **`interior` / `recursive` are the notation's derived-table form — bare
-rules ARE the main query.** A named head without either keyword is a
-compile error (the former named-head sneak). `interior mid(x) | Edge(src: x);`
+rules ARE the main query.** A named head requires `interior` or `recursive`.
+Bare rules are the main query. `interior mid(x) | Edge(src: x);`
 declares a named interior; `recursive reach(c) | …;` declares the rec;
 `(c) | reach(c);` is the required main. A body atom naming `pred` is an
 `Interior` atom whose bindings address **head positions** — positional,
@@ -1095,8 +1096,8 @@ begin lowercase, so a derived table spelled like a relation is unwritable
 lines is a macro error — bare rules are the output, so every existing
 all-bare query lowers to `Query { interiors: vec![], rec: None, head,
 rules }` and denotes what it denoted
-(`lean/Bumbledb/Exec/Reach.lean: evalQuery_plain` is that sentence as a
-theorem). Names are a **macro-local sidecar**, exactly as variable names
+(`lean/Bumbledb/Exec/Reach.lean: evalQuery` is that sentence as a
+constructor case). Names are a **macro-local sidecar**, exactly as variable names
 are: resolution happens at expansion, the emitted `Query` carries bare
 `InteriorId`s, and no name ever enters the IR, the fingerprint, or any
 engine surface. The renderer prints interiors as `interior p{id}(...)` and
@@ -1144,10 +1145,10 @@ the text; `70-api.md` § the TypeScript SDK.)
 A `ValidatedQuery` is planned once into a `PreparedQuery` — the reusable object the
 zero-allocation contract is written against (`40-execution.md`). The plan
 pipeline (statistics → DP → lowering → plan validation) runs **per rule**:
-the prepared query holds one validated plan per rule and **one** sink
-configuration, owned by the head — execution is the rule loop driving
-every rule's plan into that sink, whose seen-set spanning rules is the
-union (`40-execution.md` § the rule loop). **Plans pin the
+the prepared query holds one plan per rule of each list and one sink per
+list. Each rule-list has its own sink: interiors in declaration order,
+then the rec, then main. Main's sink is the answer. Each list's seen-set
+spanning that list's rules is the union (`40-execution.md` § the rule loop). **Plans pin the
 statistics read at prepare time and are never invalidated by writes**; stale plans are
 accepted at this scale, and re-preparation is explicit. The compensating control is
 `PreparedQuery::staleness` (`70-api.md`): the pinned per-occurrence fact counts survive

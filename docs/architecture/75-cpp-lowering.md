@@ -426,9 +426,9 @@ field-declaration order").
 - `Rec { head, base, rec }` — bound-var head; both lists nonempty;
   `base.len() + rec.len() ≤ MAX_RULES`.
 - `Query { interiors, rec: Option<Rec>, head, rules }` (ir.rs). Main
-  `rules` ≥1 at validate, ≤ `MAX_RULES`. Empty `interiors` and `rec:
-  None` is today's query plus two empty fields. Caps: `MAX_RULES = 16`
-  per rule-list (rec pooled); **no `MAX_CTES` / `MAX_PREDICATES`**;
+  `rules` ≥1 at validate, ≤ `MAX_RULES`. Empty interiors and `rec: None`
+  is the rec-absent constructor of `Query`. Caps: `MAX_RULES = 16`
+  per list (rec pooled). No interior-count cap.
   `MAX_CONDITION_DEPTH = 64`.
 
 Wire mirror (what the bridge takes, 1:1 — `ts/src/native.ts`):
@@ -455,8 +455,9 @@ value lowers to deeply-equal IR every time.
 - **Relation ordinals**: relation name → its declaration index in the
   schema's relation record.
 - **Query shape**: interiors in declaration order, then optional rec,
-  then main. There is no output-last predicate slot and no
-  `output = recs.length`.
+  then main. Wire shape is `QueryIr { interiors, rec, head, rules }`.
+  Evaluation order is interiors, optional rec, main. Main is `head` +
+  `rules`.
 - **Variable numbering**: per rule,
   a fresh numberer keyed on the variable OBJECT REFERENCE assigns dense ids
   by FIRST OCCURRENCE during the lowering walk. The walk order is: body
@@ -693,7 +694,7 @@ out-of-roster id is a pointed error, never a fallback.
     the written walk (body items in written order, EDB bindings in written
     property order at sealed ordinals, interior bindings in head order, finds
     last); params by first-use registry order = positional bind order;
-    interiors then rec then main — no output-last predicate slot
+    interiors then rec then main
     (query/lower.ts).
 14. **Point/interval tagging**: field-directed at bindings, sibling-directed
     (op-aware at `pointIn`) at comparisons and params; `pointIn` lowers
