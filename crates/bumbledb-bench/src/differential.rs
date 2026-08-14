@@ -166,8 +166,8 @@ pub fn cited(violations: &bumbledb::Violations) -> Vec<Violation> {
         .as_slice()
         .iter()
         .map(|violation| match violation {
-            bumbledb::Violation::Functionality { statement, .. } => Violation::Functionality {
-                statement: *statement,
+            bumbledb::Violation::Functionality(fv) => Violation::Functionality {
+                statement: fv.statement(),
             },
             bumbledb::Violation::Containment {
                 statement,

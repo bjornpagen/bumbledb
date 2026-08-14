@@ -1,4 +1,4 @@
-use bumbledb::schema::{Bound, ValidateDescriptor as _, Weight};
+use bumbledb::schema::{SealedBound, SealedWeight, ValidateDescriptor as _};
 use bumbledb::{Db, FieldId, Theory as _, Value};
 
 use crate::differential::{self, Op, Verdict};
@@ -93,10 +93,10 @@ fn the_twin_theories_validate_and_pin_the_weighted_shapes() {
     assert_eq!(budgeted.capacities().len(), 1, "the power budget");
     assert_eq!(control.capacities().len(), 0, "the control carries none");
     let budget = &budgeted.capacities()[0];
-    assert_eq!(budget.weight, Weight::Field(FieldId(2)), "[watts]");
+    assert_eq!(budget.weight, SealedWeight::Field(FieldId(2)), "[watts]");
     assert_eq!(
         (budget.lo, budget.hi),
-        (0, Some(Bound::TargetField(FieldId(1)))),
+        (0, SealedBound::TargetField(FieldId(1))),
         "{{0..supply}} — the dependent ceiling"
     );
 
@@ -106,14 +106,18 @@ fn the_twin_theories_validate_and_pin_the_weighted_shapes() {
         .expect("the calendar twin validates");
     assert_eq!(rooms.capacities().len(), 1, "the calendar law");
     let law = &rooms.capacities()[0];
-    assert_eq!(
-        law.weight,
-        Weight::DurationOf(FieldId(2)),
+    assert!(
+        matches!(
+            law.weight,
+            SealedWeight::Duration { field, .. } if field == FieldId(2)
+        ),
         "[Duration(booked)]"
     );
-    assert_eq!(
-        (law.lo, law.hi),
-        (0, Some(Bound::TargetDuration(FieldId(1)))),
+    assert!(
+        matches!(
+            law.hi,
+            SealedBound::Duration { field, .. } if field == FieldId(1)
+        ),
         "{{0..Duration(span)}}"
     );
 }

@@ -1,5 +1,5 @@
 use bumbledb::Theory as _;
-use bumbledb::schema::{Bound, Generation, StatementDescriptor, ValueType, Weight};
+use bumbledb::schema::{Generation, SealedBound, SealedWeight, StatementDescriptor, ValueType};
 use bumbledb::{Db, RelationId, Value};
 
 use crate::corpus_gen::Scale;
@@ -84,12 +84,12 @@ fn the_lawful_schema_validates_and_carries_every_statement_family() {
     let statement = &schema.capacities()[0];
     assert_eq!(
         statement.weight,
-        Weight::Unit,
+        SealedWeight::Unit,
         "the count instance, explicitly"
     );
     assert_eq!(
         (statement.lo, statement.hi),
-        (0, Some(Bound::Lit(8))),
+        (0, SealedBound::Lit(8)),
         "the {{0..8}} window"
     );
 
