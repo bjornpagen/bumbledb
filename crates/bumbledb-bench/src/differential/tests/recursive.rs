@@ -21,7 +21,7 @@ use bumbledb::{
 
 use crate::fixture::field;
 use crate::naive::{Delta, NaiveDb, Tuple};
-use crate::translate::{sqlite_derived_expressible, translate};
+use crate::translate::{LaneCase, sqlite_expressible_on, translate};
 
 /// The goldens' graph descriptor: `Node(id)`, `Edge(src, dst)` — no
 /// statements (nothing here judges writes; the graphs are fixed data).
@@ -253,7 +253,7 @@ fn oracle_answers(
     query: &Query,
 ) -> Vec<(&'static str, BTreeSet<Tuple>)> {
     assert_eq!(
-        sqlite_derived_expressible(query, &graph_schema()),
+        sqlite_expressible_on(&LaneCase::Query(query), &graph_schema()),
         Ok(()),
         "the goldens' queries stay inside the SQLite lane"
     );
@@ -526,7 +526,7 @@ fn interval_typed_interior_columns_agree_engine_vs_naive() {
             "TROPHY (engine vs naive) on the interval-interior {name} face"
         );
         assert_eq!(
-            sqlite_derived_expressible(query, &schema),
+            sqlite_expressible_on(&LaneCase::Query(query), &schema),
             Err(crate::translate::Inexpressible::IntervalDerivedColumn),
             "interval derived columns remain the translator limit"
         );

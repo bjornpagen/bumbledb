@@ -152,3 +152,32 @@ fn closure_counts_match_the_shapes() {
     drop(db);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// bench-008: a profiled rec query digests reach rounds, not `exec: None`.
+#[test]
+fn a_profiled_closure_query_digests_reach_rounds() {
+    let dir = scratch("digest");
+    let sizes = ClosSizes::of(CFG.scale);
+    let db = Db::create(&dir, Reachability).expect("create");
+    for rel in [ids::NODE, ids::EDGE] {
+        db.bulk_load_dyn(rel, relation_rows(sizes, rel))
+            .expect("load");
+    }
+    let query = closure_query();
+    let mut prepared = db.prepare(&query).expect("prepare");
+    let draw = crate::families::scalar_draw(vec![Value::U64(0)]);
+    let args = param_args(&draw);
+    let (_, stats) = db
+        .read(|snap| snap.profile(&mut prepared, &args))
+        .expect("profile");
+    let digest = crate::driver::exec_digest(&stats);
+    assert!(
+        digest.covers.contains("rec:r"),
+        "reach digest names rounds, got {:?}",
+        digest.covers
+    );
+    assert!(digest.emitted > 0, "the chain head emits");
+    drop(prepared);
+    drop(db);
+    let _ = std::fs::remove_dir_all(&dir);
+}

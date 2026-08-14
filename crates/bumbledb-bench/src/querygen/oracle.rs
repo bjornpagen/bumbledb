@@ -10,8 +10,8 @@ use bumbledb::{AtomSource, FieldId, ParamId, Query, RelationId, Term, Value};
 
 use crate::corpus_gen::{GenConfig, Rng};
 use crate::querygen::target::{self, AMOUNT_LEVELS, AMOUNT_STEP, Domains, ids};
-use crate::walk;
 use crate::querygen::{DrawKind, PARAM_DRAWS, dress, interval_data};
+use crate::walk;
 
 /// The large set size: one past the executor's batch width (128), so a
 /// single set spans a full batch plus a straggler lane.
@@ -61,7 +61,7 @@ pub(super) fn param_anchors(query: &Query) -> Vec<ParamAnchor> {
         )
     };
     let mut count = 0u16;
-    for rule in &query.rules {
+    for rule in walk::rules(query) {
         for atom in rule.atoms.iter().chain(&rule.negated) {
             for (_, term) in &atom.bindings {
                 if let Term::Param(p) | Term::ParamSet(p) = term {

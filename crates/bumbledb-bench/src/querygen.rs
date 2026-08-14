@@ -103,7 +103,7 @@ enum Shape {
     /// The discriminated-union one-sided walk, both `==` directions,
     /// plus the missing-φ near-miss.
     DuWalk,
-    /// Multi-rule programs (`shapes_rules.rs`): rule counts 2–4,
+    /// Multi-rule queries (`shapes_rules.rs`): rule counts 2–4,
     /// overlapping and provably-disjoint arm sets (DU-arm unions),
     /// duplicate head answers across
     /// rules, and the rules ∧ aggregate union fold.
@@ -364,7 +364,7 @@ pub struct Coverage {
     /// Boundary-shape ladder rungs (equal/adjacent/nested/ray) drawn by
     /// the shapes' interval literals.
     pub ladder: [u64; 4],
-    /// Multi-rule programs by arm count (2/3/4) and by variant; the
+    /// Multi-rule queries by arm count (2/3/4) and by variant; the
     /// duplicate-head DU twin counts under overlap.
     pub rules_arms: [u64; 3],
     pub rules_disjoint: u64,

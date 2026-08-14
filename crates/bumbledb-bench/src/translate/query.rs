@@ -78,6 +78,7 @@ pub(super) fn translate_rules(
 pub(super) struct SharedParams {
     index: BTreeMap<ParamSlot, usize>,
     pub(super) params: Vec<ParamSlot>,
+    pub(super) rec: Option<bumbledb::InteriorId>,
 }
 
 /// Builds one rule's core (FROM entries, WHERE conjuncts, variable
@@ -99,6 +100,7 @@ pub(super) fn rule_core<'q>(
         columns: BTreeMap::new(),
         param_index: std::mem::take(&mut params.index),
         params: std::mem::take(&mut params.params),
+        rec: params.rec,
     };
     for atom in &rule.atoms {
         b.render_atom(atom)?;

@@ -13,8 +13,8 @@
 //! confirm them).
 
 use bumbledb::{
-    AggOp, AllenMask, Atom, CmpOp, Comparison, ConditionTree, FieldId, FindTerm, ParamId, Query,
-    RelationId, Rule, Term, Value, VarId,
+    AggOp, AllenMask, Atom, AtomSource, CmpOp, Comparison, ConditionTree, FieldId, FindTerm,
+    Interior, InteriorId, ParamId, Query, Rec, RelationId, Rule, Term, Value, VarId,
 };
 
 use super::Rng;
@@ -36,8 +36,8 @@ const PARAM_SPAN: u64 = 4;
 
 /// A structurally-free query: every shape the IR type can spell is
 /// reachable by some byte string — zero rules, misaligned heads, deep
-/// condition spines. Valid and invalid programs both arise; the verdict
-/// is the engine's.
+/// condition spines, interiors, rec. Valid and invalid queries both
+/// arise; the verdict is the engine's.
 pub fn random_query(rng: &mut Rng) -> Query {
     // Half the draws start from a coherent single-atom core so the
     // ACCEPTED verdict class stays reachable (a fully free draw almost
@@ -46,7 +46,7 @@ pub fn random_query(rng: &mut Rng) -> Query {
     if rng.chance(1, 2) {
         return plausible(rng);
     }
-    // Mostly small programs; the occasional wide one reaches
+    // Mostly small queries; the occasional wide one reaches
     // `TooManyRules` (the cap is 16).
     let rule_count = if rng.chance(1, 32) {
         17 + rng.range(4)
@@ -55,7 +55,7 @@ pub fn random_query(rng: &mut Rng) -> Query {
     };
     let rules: Vec<Rule> = (0..rule_count).map(|_| random_rule(rng)).collect();
     // Mostly the first rule's own head shape (deeper roster lines need
-    // the program shape to pass); the free draw keeps the misalignment
+    // the query shape to pass); the free draw keeps the misalignment
     // rejections reachable.
     let head = match rules.first() {
         Some(rule) if rng.chance(7, 8) => rule.head(),
@@ -63,9 +63,15 @@ pub fn random_query(rng: &mut Rng) -> Query {
             .map(|_| random_find(rng).head_term())
             .collect(),
     };
+    let interiors = if rng.chance(1, 4) {
+        (0..rng.range(4)).map(|_| random_interior(rng)).collect()
+    } else {
+        vec![]
+    };
+    let rec = rng.chance(1, 4).then(|| random_rec(rng));
     Query {
-        interiors: vec![],
-        rec: None,
+        interiors,
+        rec,
         head,
         rules,
     }
@@ -172,11 +178,37 @@ fn random_agg(rng: &mut Rng) -> AggOp {
 }
 
 fn random_atom(rng: &mut Rng) -> Atom {
+    let source = if rng.chance(3, 4) {
+        AtomSource::Edb(relation(rng))
+    } else {
+        AtomSource::Interior(InteriorId(
+            u32::try_from(rng.range(5)).expect("interior id fits u32"),
+        ))
+    };
     Atom {
-        source: bumbledb::AtomSource::Edb(relation(rng)),
+        source,
         bindings: (0..rng.range(4))
             .map(|_| (field(rng), random_term(rng)))
             .collect(),
+    }
+}
+
+fn random_interior(rng: &mut Rng) -> Interior {
+    Interior {
+        head: (0..rng.range(4))
+            .map(|_| random_find(rng).head_term())
+            .collect(),
+        rules: (0..rng.range(3)).map(|_| random_rule(rng)).collect(),
+    }
+}
+
+fn random_rec(rng: &mut Rng) -> Rec {
+    Rec {
+        head: (0..rng.range(4))
+            .map(|_| random_find(rng).head_term())
+            .collect(),
+        base: (0..rng.range(3)).map(|_| random_rule(rng)).collect(),
+        rec: (0..rng.range(3)).map(|_| random_rule(rng)).collect(),
     }
 }
 
@@ -348,8 +380,12 @@ mod tests {
         let db = bumbledb::Db::create(&dir, target::Target).expect("create");
         let mut accepted = 0u32;
         let mut rejected = 0u32;
+        let mut saw_interiors = false;
+        let mut saw_rec = false;
         for seed in 0..512 {
             let query = random_query(&mut Rng::new(seed));
+            saw_interiors |= !query.interiors.is_empty();
+            saw_rec |= query.rec.is_some();
             match db.prepare(&query) {
                 Ok(_) => accepted += 1,
                 Err(_) => rejected += 1,
@@ -359,6 +395,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         assert!(accepted > 0, "no accepted query in 512 seeds");
         assert!(rejected > 0, "no rejected query in 512 seeds");
+        assert!(saw_interiors, "no interiors-bearing query in 512 seeds");
+        assert!(saw_rec, "no rec-bearing query in 512 seeds");
         eprintln!("mix: {accepted} accepted / {rejected} rejected");
     }
 }

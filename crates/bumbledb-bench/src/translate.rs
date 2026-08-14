@@ -47,7 +47,7 @@
 use std::collections::BTreeMap;
 
 use bumbledb::schema::{KeyStatement, StatementDescriptor};
-use bumbledb::{ParamId, Query, RelationId, Schema, Value, VarId};
+use bumbledb::{InteriorId, ParamId, Query, RelationId, Schema, Value, VarId};
 
 mod builder;
 mod derived;
@@ -56,7 +56,6 @@ mod query;
 mod tests;
 mod types;
 
-pub use derived::sqlite_derived_expressible;
 pub use query::translate;
 
 /// The SQL translation is conjunctive-only: it consumes the flat leaf
@@ -177,6 +176,18 @@ struct Builder<'q> {
     /// [`ParamSlot`] → positional index (params may repeat; one `?N` each).
     param_index: BTreeMap<ParamSlot, usize>,
     params: Vec<ParamSlot>,
+    /// Rec identity when the query has a rec (C2: `interiors.len()`).
+    rec: Option<InteriorId>,
+}
+
+/// CTE identifier: `interior{id}` for interiors, `rec` for the rec.
+#[must_use]
+pub(super) fn derived_cte_name(id: InteriorId, rec: Option<InteriorId>) -> String {
+    if rec == Some(id) {
+        "rec".to_owned()
+    } else {
+        format!("interior{}", id.0)
+    }
 }
 
 /// One case the differential harness may route to the `SQLite` lane: a
@@ -227,17 +238,27 @@ pub enum Inexpressible {
     IntervalDerivedColumn,
 }
 
-/// The `SQLite` lane's expressibility gate. Every remaining query
-/// construct translates — negation, membership, param sets, remaining
-/// folds — so a `Query` arm without a `Pack` head is unconditionally
-/// expressible; Pack and the dependency judgments are the naive lane's
-/// alone.
+/// The `SQLite` lane's expressibility gate. Pack heads and interval-typed
+/// derived columns are inexpressible; everything else on a `Query`
+/// translates. Callers do not choose a gate by shape — one function,
+/// Pack then interval-derived-column. Judgments stay naive-only.
 ///
 /// # Errors
 ///
-/// The [`Inexpressible`] case: a `Pack`-bearing query, or the judgment
-/// kind for a write-side statement verdict.
+/// The [`Inexpressible`] case: a `Pack`-bearing query, an interval-typed
+/// derived column, or the judgment kind for a write-side statement verdict.
 pub fn sqlite_expressible(case: &LaneCase<'_>) -> Result<(), Inexpressible> {
+    sqlite_expressible_on(case, crate::querygen::target::schema())
+}
+
+/// [`sqlite_expressible`] against a caller-supplied schema (graph / interval
+/// fixtures). Same criterion; the schema types derived columns.
+///
+/// # Errors
+///
+/// The [`Inexpressible`] case: a `Pack`-bearing query, an interval-typed
+/// derived column, or the judgment kind for a write-side statement verdict.
+pub fn sqlite_expressible_on(case: &LaneCase<'_>, schema: &Schema) -> Result<(), Inexpressible> {
     match case {
         LaneCase::Query(query) => {
             if query
@@ -247,7 +268,8 @@ pub fn sqlite_expressible(case: &LaneCase<'_>) -> Result<(), Inexpressible> {
             {
                 Err(Inexpressible::PackAggregate)
             } else {
-                Ok(())
+                derived::refuse_interval_columns(query, schema)
+                    .map_err(|_| Inexpressible::IntervalDerivedColumn)
             }
         }
         LaneCase::Judgment(StatementDescriptor::Functionality { .. }) => {

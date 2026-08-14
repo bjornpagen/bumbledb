@@ -1,7 +1,7 @@
 use bumbledb::{CmpOp, Comparison, FieldId, RelationId, Term, Value};
 
 use crate::corpus_gen::{GenConfig, Rng};
-use crate::edb::EdbAtom;
+use crate::edb::builder_relation;
 use crate::querygen::dress_posting::dress_posting;
 use crate::querygen::target::{self, Domains, ids};
 use crate::querygen::{Builder, DRESS_PCT, interval_data};
@@ -184,7 +184,7 @@ pub(super) fn dress(b: &mut Builder, rng: &mut Rng, cfg: GenConfig, domains: &Do
             .map(|(index, _)| index)
             .collect();
         let atom = dressable[usize::try_from(rng.range(dressable.len() as u64)).expect("small")];
-        match b.atoms[atom].relation() {
+        match builder_relation(&b.atoms[atom]) {
             ids::POSTING => dress_posting(b, rng, atom, domains),
             ids::ACCOUNT => {
                 if rng.chance(1, 2) {

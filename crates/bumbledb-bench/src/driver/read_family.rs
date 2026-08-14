@@ -1,4 +1,4 @@
-use bumbledb::{Answers, Db, Query};
+use bumbledb::{Answers, Db, Query, RuleStats, StatsBody};
 
 use crate::calendar;
 use crate::families::{Draw, Kind, has_sets, param_args, set_bindings};
@@ -9,11 +9,40 @@ use crate::{clockproxy, families, report, sqlite_run, trace_out};
 
 use super::BenchRun;
 
-fn exec_digest(stats: &bumbledb::ExecutionStats) -> report::ExecDigest {
+/// Pipeline-shaped execution digest. CQ: main-rule covers and absorbed.
+/// Reach: interior emits + reach rounds — not `stats.rules` as a
+/// universal table.
+pub(crate) fn exec_digest(stats: &bumbledb::ExecutionStats) -> report::ExecDigest {
+    match &stats.body {
+        StatsBody::Cq { rules, .. } => cq_digest(stats.emits, rules),
+        StatsBody::Reach { interiors, reach } => {
+            use std::fmt::Write as _;
+            let mut covers = String::new();
+            for (index, interior) in interiors.iter().enumerate() {
+                if index > 0 {
+                    covers.push(' ');
+                }
+                let _ = write!(covers, "i{}:e{}", interior.interior, interior.emits);
+            }
+            if !covers.is_empty() {
+                covers.push(' ');
+            }
+            let _ = write!(covers, "rec:r{}", reach.rounds.len());
+            report::ExecDigest {
+                worst_estimate_factor: 1.0,
+                covers,
+                emitted: stats.emits,
+                absorbed: reach.rounds.iter().map(|round| round.absorbed).sum(),
+            }
+        }
+    }
+}
+
+fn cq_digest(emits: u64, rules: &[RuleStats]) -> report::ExecDigest {
     use std::fmt::Write as _;
     let mut worst = 1.0_f64;
     let mut covers = String::new();
-    for (index, node) in stats.rules().iter().flat_map(|r| &r.nodes).enumerate() {
+    for (index, node) in rules.iter().flat_map(|r| &r.nodes).enumerate() {
         #[expect(
             clippy::cast_precision_loss,
             reason = "reporting accepts lossy integer-to-float conversion"
@@ -39,8 +68,8 @@ fn exec_digest(stats: &bumbledb::ExecutionStats) -> report::ExecDigest {
     report::ExecDigest {
         worst_estimate_factor: worst,
         covers,
-        emitted: stats.emits,
-        absorbed: stats.rules().iter().map(|rule| rule.absorbed).sum(),
+        emitted: emits,
+        absorbed: rules.iter().map(|rule| rule.absorbed).sum(),
     }
 }
 

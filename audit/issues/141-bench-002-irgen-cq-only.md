@@ -2,7 +2,7 @@
 
 - **Severity:** high
 - **Tree:** bench
-- **Status:** OPEN
+- **Status:** FIXED(d6194934)
 - **Source:** audit/bench.md F2
 - **Depends on:** none (fuzz-local; parallel-safe)
 

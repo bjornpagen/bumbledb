@@ -2,7 +2,7 @@
 
 - **Severity:** medium
 - **Tree:** bench
-- **Status:** OPEN
+- **Status:** FIXED(deff26c0)
 - **Source:** audit/bench.md F6
 - **Depends on:** engine-021 (the one WITH path is renamed once; goldens move with it)
 

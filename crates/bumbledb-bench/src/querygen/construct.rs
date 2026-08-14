@@ -57,7 +57,7 @@ fn build(rng: &mut Rng, shape: Shape, cfg: GenConfig, domains: &Domains) -> Buil
         Shape::ClosedJoin => closed_join(&mut b, rng),
         Shape::GroundFold => ground_fold(&mut b, rng),
         Shape::Pack => pack(&mut b, rng),
-        Shape::Rules => unreachable!("multi-rule programs assemble their own query"),
+        Shape::Rules => unreachable!("multi-rule queries assemble their own query"),
     }
     // The grounding and closed shapes are their own deliberate dressing: a
     // random predicate or negated probe landing on the target atom
@@ -80,7 +80,7 @@ pub(super) fn random_query_tagged(rng: &mut Rng, cfg: GenConfig) -> (Query, Shap
     let domains = Domains::of(cfg.scale);
     let shape = shape_of(rng);
     if shape == Shape::Rules {
-        // Multi-rule programs bypass the single-rule Builder: variables
+        // Multi-rule queries bypass the single-rule Builder: variables
         // are rule-scoped, so each arm carries its own scope and the
         // shape assembles the `Query` itself (dressing and negation are
         // deliberately withheld, like the grounding shapes — the variants'

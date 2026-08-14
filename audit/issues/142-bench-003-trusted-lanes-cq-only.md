@@ -2,7 +2,7 @@
 
 - **Severity:** high
 - **Tree:** bench
-- **Status:** OPEN
+- **Status:** FIXED(fa0bfe92)
 - **Source:** audit/bench.md F3
 - **Depends on:** engine-020 (randomized entry), bench-004, bench-005 (or the mixed entry panics / mis-routes)
 

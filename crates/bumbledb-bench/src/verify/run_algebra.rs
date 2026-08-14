@@ -1,7 +1,7 @@
 //! The algebra oracle rows of the naive lane (one obligation per landed
 //! representation, judged before anything is timed):
 //!
-//! - **Rules**: multi-rule programs replayed engine-vs-naive — the
+//! - **Rules**: multi-rule queries replayed engine-vs-naive — the
 //!   naive model evaluates the rules *directly* (union of per-rule
 //!   binding sets, no engine sink mechanics) — disjoint vocabulary-selected
 //!   arms, overlapping arms with duplicate head answers,
@@ -23,7 +23,7 @@
 //!   differential runner's `Answers` verdict), and the `Allen(DISJOINT)`
 //!   ray filter keeping the same query answers.
 //! - **Error parity** ([`error_parity`]): cap-exceeding DNF, the
-//!   vanished program (every disjunct empty), and the vacuous masks
+//!   vanished query (every disjunct empty), and the vacuous masks
 //!   (EMPTY and FULL) — the engine's typed validation verdict compared
 //!   against the naive model's own from-the-definition computation.
 
@@ -146,7 +146,7 @@ fn rules_ops(sizes: &Sizes) -> Vec<Op> {
 
 /// The DNF rows: seeded random trees to depth 3 over one `Posting`
 /// scope — the naive model evaluates the tree, the engine the lowered
-/// rules. Child counts stay ≥ 1: the vanished-program shapes (empty
+/// rules. Child counts stay ≥ 1: the vanished-query shapes (empty
 /// disjunctions) are [`error_parity`]'s, where both sides *reject*.
 /// A random tree to `depth`, every node with ≥ 1 child (the vanished
 /// shapes are constructed deliberately, never drawn).
@@ -599,8 +599,8 @@ fn parity_cases() -> Vec<(&'static str, Query, Expected)> {
         },
         (
             // The empty disjunction is false; conjoined with anything the
-            // rule vanishes, and a one-rule program vanishes whole.
-            "vanished program (empty Or)",
+            // rule vanishes, and a one-rule query vanishes whole.
+            "vanished query (empty Or)",
             Query::single(posting_rule(vec![
                 ConditionTree::Or(vec![]),
                 account_leaf(0),
@@ -651,7 +651,7 @@ fn parity_cases() -> Vec<(&'static str, Query, Expected)> {
     ]
 }
 
-/// Cap-exceeding DNF, the vanished program, and the vacuous masks:
+/// Cap-exceeding DNF, the vanished query, and the vacuous masks:
 /// both sides must reject, verdict identity included
 /// (`docs/architecture/60-validation.md` § error parity). The engine's
 /// verdict is its typed `ValidationError`; the naive side computes the
@@ -677,7 +677,7 @@ pub(super) fn error_parity<S, T>(db: &Db<S>, run: &mut Run<'_, T>) {
                 bumbledb::error::ValidationError::DnfExceedsRules { produced, cap }
                     if produced == naive_width && naive_width > cap
             ),
-            // The vanished program surfaces as the empty union.
+            // The vanished query surfaces as the empty union.
             Expected::Vanished => {
                 dnf_width(&q.rules[0]) == 0
                     && matches!(verdict, bumbledb::error::ValidationError::EmptyRuleSet)

@@ -1163,7 +1163,7 @@ fn closure_query() -> Query {
 #[test]
 fn the_linear_closure_matches_its_hand_written_golden() {
     let query = closure_query();
-    assert_eq!(sqlite_derived_expressible(&query, schema()), Ok(()));
+    assert_eq!(sqlite_expressible(&LaneCase::Query(&query)), Ok(()));
     let t = translate(&query, schema(), &[]).expect("translates");
     assert_eq!(t.sql, goldens::CLOSURE);
     assert!(t.params.is_empty());
@@ -1171,7 +1171,7 @@ fn the_linear_closure_matches_its_hand_written_golden() {
 
 #[test]
 fn negation_of_finished_rec_matches_its_hand_written_golden() {
-    // Main: Org(id = x), ¬p0(c0 = x) — anti-join inlined in the SELECT.
+    // Main: Org(id = x), ¬rec(c0 = x) — anti-join inlined in the SELECT.
     let mut query = closure_query();
     query.head = vec![HeadTerm::Var];
     query.rules = vec![Rule {
@@ -1186,7 +1186,7 @@ fn negation_of_finished_rec_matches_its_hand_written_golden() {
         }],
         conditions: vec![],
     }];
-    assert_eq!(sqlite_derived_expressible(&query, schema()), Ok(()));
+    assert_eq!(sqlite_expressible(&LaneCase::Query(&query)), Ok(()));
     let t = translate(&query, schema(), &[]).expect("translates");
     assert_eq!(t.sql, goldens::CLOSURE_ROOTS);
 }
@@ -1239,7 +1239,7 @@ fn the_parameterized_reachable_set_matches_its_hand_written_golden() {
             conditions: vec![],
         }],
     };
-    assert_eq!(sqlite_derived_expressible(&query, schema()), Ok(()));
+    assert_eq!(sqlite_expressible(&LaneCase::Query(&query)), Ok(()));
     let t = translate(&query, schema(), &[]).expect("translates");
     assert_eq!(t.sql, goldens::CLOSURE_FROM_PARAM);
     assert_eq!(
@@ -1287,7 +1287,7 @@ fn interval_derived_columns_error_by_name() {
         }],
     };
     assert_eq!(
-        sqlite_derived_expressible(&query, schema()),
+        sqlite_expressible(&LaneCase::Query(&query)),
         Err(Inexpressible::IntervalDerivedColumn)
     );
     let err = translate(&query, schema(), &[]).unwrap_err();

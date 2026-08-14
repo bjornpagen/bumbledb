@@ -1,23 +1,14 @@
 //! Derived tables → `WITH [RECURSIVE]` (lossy SQLite image of this
-//! cut). Interiors emit as `p{id}` CTEs in declaration order; rec is
-//! `p{interiors.len()}`. Main is the SELECT. Zero CTEs is a plain
-//! query — the same SQL as the old CQ path. No UNION ALL. No CTE
-//! after the rec — CLOSURE_ROOTS inlines the anti-join into main.
+//! cut). Interiors emit as `interior{id}` CTEs in declaration order;
+//! rec is `rec`. Main is the SELECT. Zero CTEs is a plain query — the
+//! same SQL as the old CQ path. No UNION ALL. No CTE after the rec —
+//! `CLOSURE_ROOTS` inlines the anti-join into main.
 
 use bumbledb::ir::{FindTerm, Rec};
 use bumbledb::{AtomSource, InteriorId, ParamId, Query, Rule, Schema, Term, Value};
 
 use super::query::{SharedParams, arm_body, rule_core};
-use super::{Translated, VarCols};
-
-/// Interval-typed derived columns are the remaining translator limit
-/// (the four rec gates died with the stratified IR). Validation is the screen.
-pub fn sqlite_derived_expressible(
-    query: &Query,
-    schema: &Schema,
-) -> Result<(), super::Inexpressible> {
-    refuse_interval_columns(query, schema).map_err(|_| super::Inexpressible::IntervalDerivedColumn)
-}
+use super::{Translated, VarCols, derived_cte_name};
 
 /// Translate a Query: derived tables as CTEs in declaration order, then
 /// main. Zero CTEs → no `WITH` clause (the CQ path).
@@ -32,8 +23,8 @@ pub fn translate_query(
     sets: &[(ParamId, Vec<Value>)],
 ) -> Result<Translated, String> {
     refuse_interval_columns(query, schema)?;
-    let rec = query.rec.as_ref();
     let mut params = SharedParams::default();
+    params.rec = rec_id(query);
     let mut ctes: Vec<String> = Vec::new();
     for (index, interior) in query.interiors.iter().enumerate() {
         ctes.push(cte_from_rules(
@@ -45,9 +36,14 @@ pub fn translate_query(
             &mut params,
         )?);
     }
-    if let Some(rec) = rec {
-        let rec_id = query.interiors.len();
-        ctes.push(rec_cte(rec_id, rec, schema, sets, &mut params)?);
+    if let Some(rec) = &query.rec {
+        ctes.push(rec_cte(
+            query.interiors.len(),
+            rec,
+            schema,
+            sets,
+            &mut params,
+        )?);
     }
     let main = main_select(&query.rules, schema, sets, &mut params)?;
     if ctes.is_empty() {
@@ -56,7 +52,7 @@ pub fn translate_query(
             params: params.params,
         });
     }
-    let with = if rec.is_some() {
+    let with = if query.rec.is_some() {
         format!("WITH RECURSIVE {}", ctes.join(", "))
     } else {
         format!("WITH {}", ctes.join(", "))
@@ -78,23 +74,25 @@ fn cte_from_rules(
     let arms = rule_arms(rules, schema, sets, params)?;
     let columns: Vec<String> = (0..head.len()).map(|column| format!("c{column}")).collect();
     Ok(format!(
-        "p{index}({}) AS ({})",
+        "{}({}) AS ({})",
+        derived_cte_name(
+            InteriorId(u32::try_from(index).expect("interior id fits u32")),
+            params.rec
+        ),
         columns.join(", "),
         arms.join(" UNION ")
     ))
 }
 
 fn rec_cte(
-    rec_id: usize,
+    _rec_id: usize,
     rec: &Rec,
     schema: &Schema,
     sets: &[(ParamId, Vec<Value>)],
     params: &mut SharedParams,
 ) -> Result<String, String> {
     if rec.base.is_empty() && !rec.rec.is_empty() {
-        return Err(format!(
-            "recursive predicate p{rec_id} has no base rule (its fixpoint is empty)"
-        ));
+        return Err("recursive CTE rec has no base rule (its fixpoint is empty)".into());
     }
     let mut arms = rule_arms(&rec.base, schema, sets, params)?;
     arms.extend(rule_arms(&rec.rec, schema, sets, params)?);
@@ -102,7 +100,7 @@ fn rec_cte(
         .map(|column| format!("c{column}"))
         .collect();
     Ok(format!(
-        "p{rec_id}({}) AS ({})",
+        "rec({}) AS ({})",
         columns.join(", "),
         arms.join(" UNION ")
     ))
@@ -154,10 +152,27 @@ fn main_select(
     super::query::translate_rules(rules, schema, sets, params)
 }
 
-fn refuse_interval_columns(query: &Query, schema: &Schema) -> Result<(), String> {
+fn rec_id(query: &Query) -> Option<InteriorId> {
+    query
+        .rec
+        .is_some()
+        .then(|| InteriorId(u32::try_from(query.interiors.len()).expect("interior id fits u32")))
+}
+
+/// Interval-typed derived columns are the remaining translator limit.
+///
+/// # Errors
+///
+/// An interior or rec head column whose type is interval.
+pub fn refuse_interval_columns(query: &Query, schema: &Schema) -> Result<(), String> {
     let mut flags: Vec<Vec<bool>> = Vec::new();
     for interior in &query.interiors {
-        flags.push(head_intervals(&interior.head, &interior.rules, schema, &flags));
+        flags.push(head_intervals(
+            &interior.head,
+            &interior.rules,
+            schema,
+            &flags,
+        ));
         if flags.last().is_some_and(|row| row.iter().any(|b| *b)) {
             return Err(
                 "interval-typed derived column (the recursive lane is scalar-shaped)".into(),

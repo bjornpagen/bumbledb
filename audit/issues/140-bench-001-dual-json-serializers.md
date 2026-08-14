@@ -2,7 +2,7 @@
 
 - **Severity:** high
 - **Tree:** bench
-- **Status:** OPEN
+- **Status:** FIXED(8536b3df)
 - **Source:** audit/bench.md F1
 - **Depends on:** none (encoder-local; lean-008 is the decoder twin — land in either order if corpus stays byte-identical; docs-027 describes this split)
 

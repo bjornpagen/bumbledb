@@ -2,7 +2,7 @@ use bumbledb::{
     Atom, ConditionTree, FieldId, FindTerm, ParamId, Query, RelationId, Rule, Term, VarId,
 };
 
-use crate::edb::EdbAtom;
+use crate::edb::builder_relation;
 use crate::querygen::Builder;
 
 impl Builder {
@@ -39,7 +39,7 @@ impl Builder {
     /// membership anchors select by (relation, field), never by hope).
     pub(super) fn bind_var(&mut self, atom: usize, field: FieldId) -> VarId {
         let var = self.fresh_var();
-        let relation = self.atoms[atom].relation();
+        let relation = builder_relation(&self.atoms[atom]);
         self.bind(atom, field, Term::Var(var));
         self.bound.push(var);
         self.anchors.push((var, relation, field));

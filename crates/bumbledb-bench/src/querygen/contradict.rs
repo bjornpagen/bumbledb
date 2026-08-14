@@ -33,7 +33,7 @@ pub fn contradiction_query(rng: &mut Rng, cfg: GenConfig) -> Query {
 /// integer field gains a pair of mutually unsatisfiable constant
 /// comparisons, drawn from the fold's own contradiction vocabulary
 /// (twin `Eq`, empty range, `Eq` outside the folded range).
-fn plant(rule: &mut Rule, rng: &mut Rng) -> bool {
+pub(super) fn plant(rule: &mut Rule, rng: &mut Rng) -> bool {
     let Some((var, signed)) = rule.atoms.iter().find_map(|atom| {
         let AtomSource::Edb(relation) = atom.source else {
             return None;

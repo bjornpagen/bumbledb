@@ -124,7 +124,7 @@ fn the_coverage_contract_holds_at_a_thousand() {
         ("ladder_adjacent", cov.ladder[1]),
         ("ladder_nested", cov.ladder[2]),
         ("ladder_ray", cov.ladder[3]),
-        // Multi-rule programs: every arm count and every variant.
+        // Multi-rule queries: every arm count and every variant.
         ("rules_two_arms", cov.rules_arms[0]),
         ("rules_three_arms", cov.rules_arms[1]),
         ("rules_four_arms", cov.rules_arms[2]),
@@ -249,7 +249,8 @@ fn grounding_shapes_eliminate_and_near_misses_refuse() {
                     "DU walk {i} must eliminate"
                 );
                 assert_eq!(
-                    stats.rules()[0].eliminated[0].relation, fallen,
+                    stats.rules()[0].eliminated[0].relation,
+                    fallen,
                     "DU walk {i} fells the wrong side"
                 );
                 eliminated += 1;
@@ -503,7 +504,7 @@ fn check_miss(
 )]
 fn the_recursive_arm_covers_its_contract_and_agrees_across_oracles() {
     use crate::naive::{Delta, NaiveDb};
-    use crate::translate::{sqlite_derived_expressible, translate};
+    use crate::translate::{LaneCase, sqlite_expressible, translate};
 
     let cfg = GenConfig {
         seed: SEED,
@@ -580,11 +581,10 @@ fn the_recursive_arm_covers_its_contract_and_agrees_across_oracles() {
             variant.coverage_class()
         );
 
-        match sqlite_derived_expressible(&query, target::schema()) {
+        match sqlite_expressible(&LaneCase::Query(&query)) {
             Ok(()) => {
                 tally.sqlite_expressible += 1;
-                let translated =
-                    translate(&query, target::schema(), &[]).expect("translates");
+                let translated = translate(&query, target::schema(), &[]).expect("translates");
                 let arity = query.head.len();
                 let mut statement = conn.prepare(&translated.sql).expect("prepare");
                 let rows: std::collections::BTreeSet<crate::naive::Tuple> = statement
@@ -625,9 +625,7 @@ fn the_recursive_arm_covers_its_contract_and_agrees_across_oracles() {
 
     {
         let query = budget_query.expect("the linear row is asserted ≥ 1 below");
-        let mut prepared = engine
-            .prepare(&query)
-            .expect("the drawn closure validates");
+        let mut prepared = engine.prepare(&query).expect("the drawn closure validates");
         prepared.set_derived_budget(1, u64::MAX);
         let error = engine
             .read(|snap| snap.execute_collect(&mut prepared, &[]).map(|_| ()))
@@ -689,4 +687,81 @@ fn the_recursive_arm_covers_its_contract_and_agrees_across_oracles() {
          {} budget trip(s), {} preamble ledger trip(s) constructed",
         tally.queries, tally.sqlite_expressible, tally.budget_trip, tally.preamble_ledger_trip,
     );
+}
+
+/// A rec query whose only param lives on a base arm — `params_for` must
+/// bind it (walking interiors/rec/main, not just `query.rules`).
+#[test]
+fn params_for_binds_a_param_that_lives_only_on_the_rec_base() {
+    use bumbledb::{
+        Atom, AtomSource, FindTerm, HeadTerm, InteriorId, ParamId, Query, Rec, Rule, Term, VarId,
+    };
+
+    let query = Query {
+        interiors: vec![],
+        rec: Some(Rec {
+            head: vec![HeadTerm::Var],
+            base: vec![Rule {
+                finds: vec![FindTerm::Var(VarId(0))],
+                atoms: vec![Atom {
+                    source: AtomSource::Edb(target::ids::ORG_PARENT),
+                    bindings: vec![
+                        (target::ids::org_parent::CHILD, Term::Param(ParamId(0))),
+                        (target::ids::org_parent::PARENT, Term::Var(VarId(0))),
+                    ],
+                }],
+                negated: vec![],
+                conditions: vec![],
+            }],
+            rec: vec![Rule {
+                finds: vec![FindTerm::Var(VarId(1))],
+                atoms: vec![
+                    Atom {
+                        source: AtomSource::Edb(target::ids::ORG_PARENT),
+                        bindings: vec![
+                            (target::ids::org_parent::CHILD, Term::Var(VarId(0))),
+                            (target::ids::org_parent::PARENT, Term::Var(VarId(1))),
+                        ],
+                    },
+                    Atom {
+                        source: AtomSource::Interior(InteriorId(0)),
+                        bindings: vec![(bumbledb::FieldId(0), Term::Var(VarId(0)))],
+                    },
+                ],
+                negated: vec![],
+                conditions: vec![],
+            }],
+        }),
+        head: vec![HeadTerm::Var],
+        rules: vec![Rule {
+            finds: vec![FindTerm::Var(VarId(0))],
+            atoms: vec![Atom {
+                source: AtomSource::Interior(InteriorId(0)),
+                bindings: vec![(bumbledb::FieldId(0), Term::Var(VarId(0)))],
+            }],
+            negated: vec![],
+            conditions: vec![],
+        }],
+    };
+    let anchors = param_anchors(&query);
+    assert_eq!(anchors.len(), 1, "the base-arm param is visible");
+    let mut rng = Rng::new(SEED);
+    let draws = params_for(&query, &mut rng, CFG);
+    assert_eq!(draws.len(), 4);
+    for draw in &draws {
+        assert_eq!(draw.scalars.len() + draw.sets.len(), 1);
+    }
+}
+
+/// Coverage tallies and contradiction planting must not panic on an
+/// interiors-or-rec query (Interior atoms are a match, not `relation()`).
+#[test]
+fn contradict_planting_does_not_panic_on_a_reach_query() {
+    let mut rng = Rng::new(SEED);
+    let (mut query, _) = random_reach_query(&mut rng, CFG);
+    let _ = crate::walk::every_rule_mut(&mut query, |rule| {
+        let _ = super::contradict::plant(rule, &mut rng);
+        true
+    });
+    let _ = contradiction_query(&mut rng, CFG);
 }

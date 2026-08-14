@@ -627,3 +627,26 @@ pub fn coverage(n: u64, seed: u64, cfg: GenConfig) -> Coverage {
     }
     cov
 }
+
+#[cfg(test)]
+mod reach_walk {
+    use super::*;
+    use crate::corpus_gen::{GenConfig, Rng, Scale};
+    use crate::querygen::random_reach_query;
+    use crate::walk;
+
+    #[test]
+    fn typing_and_record_do_not_panic_on_a_reach_query() {
+        let mut rng = Rng::new(12);
+        let cfg = GenConfig {
+            seed: 1,
+            scale: Scale::S,
+        };
+        let (query, _) = random_reach_query(&mut rng, cfg);
+        for rule in walk::rules(&query) {
+            let _ = typing(rule);
+        }
+        let mut cov = Coverage::default();
+        cov.record(&query, Shape::KeyProbe, GenTags::default());
+    }
+}
