@@ -166,7 +166,7 @@ fn meets_chain_params(cfg: &GenConfig) -> Vec<Draw> {
     ]
 }
 
-/// `rsvp_union` — **times the DU whole-read: a three-rule program, one
+/// `rsvp_union` — **times the DU whole-read: a three-rule family, one
 /// rule per RSVP arm through one spanning union seen-set** (rules as
 /// data, one sink, and cross-rule set semantics). The distinct `rsvp`
 /// selections still prove the arms disjoint and introspection reports that

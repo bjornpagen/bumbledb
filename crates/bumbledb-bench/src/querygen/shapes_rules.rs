@@ -1,4 +1,4 @@
-//! The multi-rule shapes: programs of 2–4 rules over one head
+//! The multi-rule shapes: queries of 2–4 rules over one head
 //! (`docs/architecture/20-query-ir.md`, the rules shape — disjunction as
 //! data at the top). Three variants, each holding one obligation:
 //!

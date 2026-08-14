@@ -5,8 +5,8 @@
 //! corpus world whose EDGE SHAPES are the point — one deep chain (the
 //! depth axis: one new tuple per round, the round-overhead price) and
 //! one wide tree (the fanout axis: frontier width, few rounds) — driven
-//! through `Db::prepare` (`AtomSource::Interior`, the delta-variant
-//! plans, the finished-image slot) against `SQLite`'s recursive CTE.
+//! through `Db::prepare` (`AtomSource::Interior`, the reach pipeline,
+//! the finished-image slot) against `SQLite`'s recursive CTE.
 //!
 //! Discipline mirrors the primary suite: seeded corpus regenerated per
 //! run (never stored), verify-before-time (every family × draw is
@@ -262,7 +262,7 @@ fn fanout_params(cfg: &GenConfig) -> Vec<Draw> {
     ]
 }
 
-/// The closure registry: two families, one program, two corpus shapes
+/// The closure registry: two families, one Query, two corpus shapes
 /// selected by anchor — depth against fanout on the same driver.
 #[must_use]
 pub fn all() -> &'static [ClosureFamily] {
