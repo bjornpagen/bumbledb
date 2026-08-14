@@ -925,7 +925,7 @@ def CFind.isAgg : CFind → Bool
 path: every head position a variable, the head restored into each
 rule's `finds`. -/
 def plainQuery (q : CQuery) : Query.Query :=
-  Query.Query.plain ((q.rules.head?.map (·.finds.length)).getD 0)
+  Query.Query.cq [] ((q.rules.head?.map (·.finds.length)).getD 0)
     (q.rules.map fun r =>
       { r.body with finds := r.finds.filterMap CFind.plainVar? })
 

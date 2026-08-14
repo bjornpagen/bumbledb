@@ -545,7 +545,7 @@ def ledger : List Obligation := [
 
   /- ## The interiors/reach cut (Exec/Reach.lean) -/
 
-  .row @Query.evalQuery_plain `Bumbledb.Query.evalQuery_plain
+  .row @Query.evalQuery_cq `Bumbledb.Query.evalQuery_cq
     "A query with empty interiors and no rec denotes the union of its main rules over the instance."
     "validate (crates/bumbledb/src/ir/validate.rs); prepare (crates/bumbledb/src/api/prepared/build.rs)"
     "a_plain_query_executes_as_today (crates/bumbledb/tests/api.rs)",
@@ -556,7 +556,7 @@ def ledger : List Obligation := [
     "rejects_a_negated_phantom_read (crates/bumbledb/src/ir/validate/tests/interior.rs)",
 
   .row @Query.reachOp_mono `Bumbledb.Query.reachOp_mono
-    "Linearity and the roster's no-negation-in-rec premise make the reach operator monotone (the wall is the self case)."
+    "Negation is unrepresentable in LinearRec, so the reach operator is monotone (the wall is the self case)."
     "NegationInRec (crates/bumbledb/src/error.rs); NonlinearRecArm (crates/bumbledb/src/error.rs)"
     "rejects_negation_in_rec (crates/bumbledb/src/ir/validate/tests/rec.rs)",
 
@@ -581,7 +581,7 @@ def ledger : List Obligation := [
     "docs/cookbook.md",
 
   .row @Query.evalQuery_empty_rules `Bumbledb.Query.evalQuery_empty_rules
-    "Empty main denotes the empty set; the rec is never the answer."
+    "Main's rulesAnswers over [] is the empty union; a reach arm's finished table is an environment entry, never the conclusion."
     "EmptyRuleSet (crates/bumbledb/src/error.rs)"
     "lean/conformance/cases",
 

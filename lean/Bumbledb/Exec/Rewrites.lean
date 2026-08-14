@@ -2309,12 +2309,12 @@ inductive RewriteStep (T : Theory) (C : Classify) :
   (`Role::Folded`, the membership attachment). -/
   | ground {n : Nat} {pre post : List Rule} {r r' : Rule}
       (h : groundRewrite T r = .inl r') :
-      RewriteStep T C (Query.plain n (pre ++ r :: post)) (Query.plain n (pre ++ r' :: post))
+      RewriteStep T C (Query.cq [] n (pre ++ r :: post)) (Query.cq [] n (pre ++ r' :: post))
   /-- The grounding refutation: the dead rule deleted at prepare
   (`folded to ∅`). -/
   | groundDead {n : Nat} {pre post : List Rule} {r : Rule}
       {g : Grounded} (h : groundRewrite T r = .inr g) :
-      RewriteStep T C (Query.plain n (pre ++ r :: post)) (Query.plain n (pre ++ post))
+      RewriteStep T C (Query.cq [] n (pre ++ r :: post)) (Query.cq [] n (pre ++ post))
   /-- The containment elimination (`Role::Eliminated(statement)`). -/
   | eliminate {n : Nat} {pre post : List Rule} {r r' : Rule}
       {a b : Atom} {Ra Rb : RelId} {X Y : List FieldId} {φ ψ : Selection}
@@ -2323,7 +2323,7 @@ inductive RewriteStep (T : Theory) (C : Classify) :
       (hdecl : Statement.containment ⟨Ra, X, φ⟩ ⟨Rb, Y, ψ⟩ ∈ T.statements)
       (hsrc : T.header.intervalSplit Ra X = none)
       (htgt : T.header.intervalSplit Rb Y = none) :
-      RewriteStep T C (Query.plain n (pre ++ r :: post)) (Query.plain n (pre ++ r' :: post))
+      RewriteStep T C (Query.cq [] n (pre ++ r :: post)) (Query.cq [] n (pre ++ r' :: post))
   /-- The chained containment elimination — the discharged-source arm
   (`chain_reaches`, the support forest): the support pair and the
   elimination it licenses land as ONE composed step, the
@@ -2341,11 +2341,11 @@ inductive RewriteStep (T : Theory) (C : Classify) :
       (htgt₁ : T.header.intervalSplit Rb Y₁ = none)
       (hsrc₂ : T.header.intervalSplit Rb X₂ = none)
       (htgt₂ : T.header.intervalSplit Rc Y₂ = none) :
-      RewriteStep T C (Query.plain n (pre ++ r :: post)) (Query.plain n (pre ++ r₂ :: post))
+      RewriteStep T C (Query.cq [] n (pre ++ r :: post)) (Query.cq [] n (pre ++ r₂ :: post))
   /-- The statically-empty kill (`NormalizedQuery::dead`). -/
   | kill {n : Nat} {pre post : List Rule} {r : Rule}
       (h : StaticallyEmpty C r) :
-      RewriteStep T C (Query.plain n (pre ++ r :: post)) (Query.plain n (pre ++ post))
+      RewriteStep T C (Query.cq [] n (pre ++ r :: post)) (Query.cq [] n (pre ++ post))
   /-- The subsumption deletion (`plan/ground.rs::subsume`, wired at
   `api/prepared/build.rs::ground_program`): a rule the witness proves
   covered by a KEPT sibling is deleted from the program — the sixth
@@ -2356,7 +2356,7 @@ inductive RewriteStep (T : Theory) (C : Classify) :
   theory premise: the containment holds on EVERY instance. -/
   | subsume {n : Nat} {pre post : List Rule} {d k : Rule}
       (hw : SubsumeWitness k d) (hk : k ∈ pre ++ post) :
-      RewriteStep T C (Query.plain n (pre ++ d :: post)) (Query.plain n (pre ++ post))
+      RewriteStep T C (Query.cq [] n (pre ++ d :: post)) (Query.cq [] n (pre ++ post))
 
 /-- Replacing one rule by an answer-equal rule preserves the query's
 answers — the union reads members only. -/

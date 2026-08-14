@@ -1370,14 +1370,14 @@ theorem disjunctive_window_not_literal_conjunction :
 
 Two countermodels fence the linear reach's two premises:
 
-* **The odd loop** — `p ← ¬p`, a rec arm whose negated atom names
-  `self` (`selfCount = 0`). Not `recLinear` (`odd_not_stratified`),
-  and honestly so: the operator is NOT monotone (`odd_not_monotone`),
-  its naive rounds oscillate (`odd_rounds_oscillate` — the empty
-  table derives, the derived table underives), and NO table is a
-  fixpoint (`odd_no_fixpoint`) — there is no consistent semantics to
-  assign, which is why `Exec/Reach.lean: reachOp_mono` carries
-  linearity and `negated = []` as its premise rather than as a
+* **The odd loop** — `p ← ¬p`, a rule whose negated atom names
+  `self`. Unrepresentable in `LinearRec` syntax (negation cannot
+  inhabit a rec arm). The operator is NOT monotone
+  (`odd_not_monotone`), its naive rounds oscillate
+  (`odd_rounds_oscillate` — the empty table derives, the derived
+  table underives), and NO table is a fixpoint (`odd_no_fixpoint`) —
+  there is no consistent semantics to assign, which is why
+  `Exec/Reach.lean: reachOp_mono` is structural rather than a
   convention.
 
 * **The successor operator** — value invention in a rule head,
@@ -1403,31 +1403,22 @@ safety is not the broken premise here. -/
 def oddRecRule : Query.Rule :=
   { finds := [], atoms := [], negated := [oddAtom], conditions := [] }
 
-/-- Illegal rec: empty base, rec arm is negated self (`selfCount = 0`). -/
-def oddRec : Query.Rec := Query.Rec.mk 0 [] [oddRecRule]
-
-def oddQuery : Query.Query := Query.Query.mk [] (some oddRec) 0 []
-
-/-- **No recLinear witness**: empty base, and the rec arm negates
-self. The name keeps the wall; the statement is `¬ recLinear`. -/
-theorem odd_not_stratified : ¬ oddQuery.recLinear := by
-  intro h
-  unfold Query.Query.recLinear at h
-  simp [oddQuery, Query.Query.rec, Query.Query.mk, oddRec,
-    Query.Rec.mk, Query.Rec.base] at h
-
-/-- The odd loop's reach operator (any classifier, instance, and
-parameter environment — the query reads none of them). -/
+/-- The odd loop's operator (any classifier, instance, and
+parameter environment — the query reads none of them). Restated as a
+raw set operator: empty base, negated self, no bindings. Unwritable
+as `LinearRec` syntax. -/
 def oddOp (C : Query.Classify) (I : Instance) (ρ : Query.ParamEnv) :
     Set Query.AnswerTuple → Set Query.AnswerTuple :=
-  Query.reachOp C oddRec oddSelf I Query.InteriorEnv.empty ρ
+  fun X t =>
+    t ∈ Query.rulesAnswers C [oddRecRule]
+      (Query.sourceDen I (Query.InteriorEnv.empty.update oddSelf X)) ρ
 
 /-- An empty table derives: nothing matches the negated atom. -/
 theorem odd_step_of_empty (C : Query.Classify) (I : Instance)
     (ρ : Query.ParamEnv) {X : Set Query.AnswerTuple}
     (hX : ∀ t, ¬ t ∈ X) : [] ∈ oddOp C I ρ X := by
-  unfold oddOp Query.reachOp
-  refine Or.inr ⟨oddRecRule, List.mem_singleton.mpr rfl,
+  unfold oddOp
+  refine ⟨oddRecRule, List.mem_singleton.mpr rfl,
     ⟨fun _ => ⟨.bool, false⟩, ⟨?_, ?_, ?_⟩, rfl⟩⟩
   · intro a ha
     exact absurd ha (by simp [oddRecRule])
@@ -1449,19 +1440,16 @@ theorem odd_step_of_nonempty (C : Query.Classify) (I : Instance)
     {t₀ : Query.AnswerTuple} (h0 : t₀ ∈ X) :
     ∀ t, ¬ t ∈ oddOp C I ρ X := by
   intro t ht
-  rcases ht with hbase | hrec
-  · obtain ⟨r, hr, -⟩ := hbase
-    simp [oddRec, Query.Rec.base, Query.Rec.mk] at hr
-  · obtain ⟨r, hr, ⟨σ, ⟨-, hneg, -⟩, -⟩⟩ := hrec
-    have hrr : r = oddRecRule := List.mem_singleton.mp hr
-    subst hrr
-    refine hneg oddAtom (List.mem_singleton.mpr rfl)
-      ⟨Query.tupleFact t₀, ⟨t₀, ?_, rfl⟩, ?_⟩
-    · unfold Query.InteriorEnv.update
-      rw [if_pos rfl]
-      exact h0
-    · intro b hb
-      exact absurd hb (by simp [oddAtom])
+  obtain ⟨r, hr, ⟨σ, ⟨-, hneg, -⟩, -⟩⟩ := ht
+  have hrr : r = oddRecRule := List.mem_singleton.mp hr
+  subst hrr
+  refine hneg oddAtom (List.mem_singleton.mpr rfl)
+    ⟨Query.tupleFact t₀, ⟨t₀, ?_, rfl⟩, ?_⟩
+  · unfold Query.InteriorEnv.update
+    rw [if_pos rfl]
+    exact h0
+  · intro b hb
+    exact absurd hb (by simp [oddAtom])
 
 /-- **The naive rounds oscillate**: round one derives the head from
 the empty table; round two, fed round one's table, underives it —

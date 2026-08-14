@@ -17,11 +17,9 @@ the same class as `ResultBytesOverflow` vs `rulesAnswers`.
 
 ## Narrowings recorded (law 5)
 
-* **`evalLinearReach` candidates.** The spec names
-  `allTuples recDom rec.arity`. The proved evaluator uses the finite
-  union of `allTuples recDom r.finds.length` over `base ++ rec`, so
-  agreement does not assume head-arity equals `Rec.arity`. When they
-  agree the two lists cover the same tuples.
+* **`evalLinearReach` candidates.** The proved evaluator uses the finite
+  union of `allTuples recDom r.finds.length` over `baseRules ++
+  stepRules`, so agreement sizes heads from `finds.length`.
 * **Private `fueledLoop_fixpoint`.** Inflation (`acc ⊆ step acc`) is
   an invariant hypothesis, not a property of every list. Public
   `reachStep` stays `T(acc) = base ++ rec(acc)` as specified; the
@@ -191,64 +189,46 @@ theorem wellFormed_interior_reads_real {q : Query} (hwf : q.WellFormed)
 
 /-! ## Reach — `reachOp`, `reachDen` -/
 
-/-- The reach operator. Base does not see `X`. Rec arms see `X` at
-`self` and finished interiors in `W`. -/
-def reachOp (C : Classify) (rec : Rec) (self : InteriorId)
+/-- The reach operator. Base does not see `X`. Step arms see `X` at
+`self` and finished interiors in `W`. Negation is unrepresentable in
+`LinearRec`, so monotonicity is structural. -/
+def reachOp (C : Classify) (rec : LinearRec) (self : InteriorId)
     (I : Instance) (W : InteriorEnv) (ρ : ParamEnv)
     (X : Set AnswerTuple) : Set AnswerTuple :=
   fun t =>
-    t ∈ rulesAnswers C rec.base (sourceDen I W) ρ ∨
-    t ∈ rulesAnswers C rec.rec (sourceDen I (W.update self X)) ρ
+    t ∈ rulesAnswers C rec.baseRules (sourceDen I W) ρ ∨
+    t ∈ rulesAnswers C (rec.stepRules self) (sourceDen I (W.update self X)) ρ
 
-def reachDen (C : Classify) (rec : Rec) (self : InteriorId)
+def reachDen (C : Classify) (rec : LinearRec) (self : InteriorId)
     (I : Instance) (W : InteriorEnv) (ρ : ParamEnv) : Set AnswerTuple :=
   lfpS (reachOp C rec self I W ρ)
 
-theorem selfCount_eq_one_mem {r : Rule} {self : InteriorId}
-    (h : r.selfCount self = 1) :
-    ∃ a, a ∈ r.atoms ∧ a.source = .interior self := by
-  have hf : (r.atoms.filter fun a =>
-      decide (a.source = .interior self)).length = 1 := h
-  cases hfil : r.atoms.filter fun a =>
-      decide (a.source = .interior self) with
-  | nil =>
-    simp [hfil] at hf
-  | cons a rest =>
-    have ha : a ∈ r.atoms.filter fun a =>
-        decide (a.source = .interior self) := by
-      rw [hfil]
-      exact List.mem_cons_self
-    have ⟨hmem, hdec⟩ := List.mem_filter.mp ha
-    exact ⟨a, hmem, of_decide_eq_true hdec⟩
-
-/-- Linearity and the roster's no-negation-in-rec premise make the
-reach operator monotone. The wall is the self case
-(`Countermodels.odd_not_monotone`); do not cite this theorem as
-evidence that finished-table negation in a rec arm is non-monotone. -/
-theorem reachOp_mono {C : Classify} {rec : Rec} {self : InteriorId}
-    {I : Instance} {W : InteriorEnv} {ρ : ParamEnv}
-    (hlin : ∀ r, r ∈ rec.rec → r.selfCount self = 1 ∧ r.negated = []) :
+/-- The roster's no-negation-in-rec is structural on `LinearRec`, so
+the reach operator is monotone with no extra premise. The wall is the
+self case (`Countermodels.odd_not_monotone`); do not cite this theorem
+as evidence that finished-table negation in a rec arm is non-monotone. -/
+theorem reachOp_mono {C : Classify} {rec : LinearRec} {self : InteriorId}
+    {I : Instance} {W : InteriorEnv} {ρ : ParamEnv} :
     MonoS (reachOp C rec self I W ρ) := by
   intro X Y hXY t ht
   rcases ht with hbase | hrec
   · exact Or.inl hbase
   · refine Or.inr (rulesAnswers_mono_pos
       (sourceDen_mono (InteriorEnv.update_le hXY))
-      (fun r hr => (hlin r hr).2) t hrec)
+      (fun r hr => LinearRec.stepRules_negated self rec hr) t hrec)
 
 /-- Round 0 is base: a positive self-atom against an empty table
 derives nothing, so `rec(∅) = ∅` and `T(∅) = base`. -/
-theorem reachOp_empty {C : Classify} {rec : Rec} {self : InteriorId}
-    {I : Instance} {W : InteriorEnv} {ρ : ParamEnv}
-    (hpos : ∀ r, r ∈ rec.rec → r.selfCount self = 1) :
+theorem reachOp_empty {C : Classify} {rec : LinearRec} {self : InteriorId}
+    {I : Instance} {W : InteriorEnv} {ρ : ParamEnv} :
     ∀ t, t ∈ reachOp C rec self I W ρ (fun _ => False) ↔
-         t ∈ rulesAnswers C rec.base (sourceDen I W) ρ := by
+         t ∈ rulesAnswers C rec.baseRules (sourceDen I W) ρ := by
   intro t
   constructor
   · rintro (hbase | hrec)
     · exact hbase
     · obtain ⟨r, hr, ⟨σ, ⟨hpos', -, -⟩, -⟩⟩ := mem_rulesAnswers.mp hrec
-      obtain ⟨a, ha, hsrc⟩ := selfCount_eq_one_mem (hpos r hr)
+      obtain ⟨a, ha, hsrc⟩ := LinearRec.stepRules_self_atom self rec hr
       obtain ⟨f, hf, -⟩ := hpos' a ha
       rw [hsrc] at hf
       obtain ⟨u, hu, -⟩ := hf
@@ -359,9 +339,10 @@ theorem mem_allTuples {dom : List Value} :
 /-- Active domain of a rec: filler plus stored columns and finished
 interior columns. Ignores the accumulating self (same as ignoring
 `idb` on the old program domain). -/
-def recDom (rec : Rec) (W : ListInstance) (V : InteriorTables) : List Value :=
+def recDom (rec : LinearRec) (self : InteriorId) (W : ListInstance)
+    (V : InteriorTables) : List Value :=
   fillerValue ::
-    (rec.base ++ rec.rec).flatMap fun r =>
+    (rec.allRules self).flatMap fun r =>
       r.atoms.flatMap fun a =>
         match a.source with
         | .edb R => a.bindings.flatMap fun b => (W.facts R).map (· b.1)
@@ -369,10 +350,10 @@ def recDom (rec : Rec) (W : ListInstance) (V : InteriorTables) : List Value :=
             (V C).flatMap fun t => (t[b.1.id]?).toList
 
 /-- Candidate tuples: the finite product at each rule's head length. -/
-def recCands (rec : Rec) (W : ListInstance) (V : InteriorTables) :
-    List AnswerTuple :=
-  (rec.base ++ rec.rec).flatMap fun r =>
-    allTuples (recDom rec W V) r.finds.length
+def recCands (rec : LinearRec) (self : InteriorId) (W : ListInstance)
+    (V : InteriorTables) : List AnswerTuple :=
+  (rec.allRules self).flatMap fun r =>
+    allTuples (recDom rec self W V) r.finds.length
 
 /-! ## Private termination metric -/
 
@@ -480,23 +461,23 @@ end FueledLoop
 /-- Naive step: `T(acc) = base ∪ rec(acc)`. List concat is the union;
 membership is the set. This is **not** the engine's delta loop. -/
 def reachStep (C : Classify) (W : ListInstance) (ρ : ParamEnv)
-    (rec : Rec) (self : InteriorId) (V : InteriorTables)
+    (rec : LinearRec) (self : InteriorId) (V : InteriorTables)
     (base : List AnswerTuple) (acc : List AnswerTuple) :
     List AnswerTuple :=
   let T := V.update self acc
-  base ++ evalList C W T ρ rec.rec
+  base ++ evalList C W T ρ (rec.stepRules self)
 
 def evalLinearReach (C : Classify) (W : ListInstance) (ρ : ParamEnv)
-    (rec : Rec) (self : InteriorId) (V : InteriorTables) : List AnswerTuple :=
-  let base := evalList C W V ρ rec.base
-  let cands := recCands rec W V
+    (rec : LinearRec) (self : InteriorId) (V : InteriorTables) : List AnswerTuple :=
+  let base := evalList C W V ρ rec.baseRules
+  let cands := recCands rec self W V
   fueledLoop (reachStep C W ρ rec self V base) (cands.length + 1) []
 
 theorem mem_reachStep {C : Classify} {W : ListInstance} {ρ : ParamEnv}
-    {rec : Rec} {self : InteriorId} {V : InteriorTables}
+    {rec : LinearRec} {self : InteriorId} {V : InteriorTables}
     {base acc : List AnswerTuple} {t : AnswerTuple} :
     t ∈ reachStep C W ρ rec self V base acc ↔
-      t ∈ base ∨ t ∈ evalList C W (V.update self acc) ρ rec.rec := by
+      t ∈ base ∨ t ∈ evalList C W (V.update self acc) ρ (rec.stepRules self) := by
   simp [reachStep, List.mem_append]
 
 theorem evalRule_length {C : Classify} {W : ListInstance}
@@ -505,40 +486,42 @@ theorem evalRule_length {C : Classify} {W : ListInstance}
   obtain ⟨σp, -, rfl⟩ := List.mem_map.mp ht
   simp
 
-theorem recDom_edb {rec : Rec} {W : ListInstance} {V : InteriorTables}
-    {r : Rule} (hr : r ∈ rec.base ++ rec.rec) {a : Atom}
+theorem recDom_edb {rec : LinearRec} {self : InteriorId} {W : ListInstance}
+    {V : InteriorTables} {r : Rule} (hr : r ∈ rec.allRules self) {a : Atom}
     (ha : a ∈ r.atoms) {R : RelId} (hsrc : a.source = .edb R)
     {b : FieldId × Term} (hb : b ∈ a.bindings) {f : Fact}
-    (hf : f ∈ W.facts R) : f b.1 ∈ recDom rec W V := by
+    (hf : f ∈ W.facts R) : f b.1 ∈ recDom rec self W V := by
   refine List.mem_cons_of_mem _ (List.mem_flatMap.mpr ⟨r, hr,
     List.mem_flatMap.mpr ⟨a, ha, ?_⟩⟩)
   rw [hsrc]
   exact List.mem_flatMap.mpr ⟨b, hb, List.mem_map.mpr ⟨f, hf, rfl⟩⟩
 
-theorem recDom_interior {rec : Rec} {W : ListInstance} {V : InteriorTables}
-    {r : Rule} (hr : r ∈ rec.base ++ rec.rec) {a : Atom}
+theorem recDom_interior {rec : LinearRec} {self : InteriorId}
+    {W : ListInstance} {V : InteriorTables} {r : Rule}
+    (hr : r ∈ rec.allRules self) {a : Atom}
     (ha : a ∈ r.atoms) {C : InteriorId} (hsrc : a.source = .interior C)
     {b : FieldId × Term} (hb : b ∈ a.bindings) {row : AnswerTuple}
     (hrow : row ∈ V C) {v : Value} (hv : row[b.1.id]? = some v) :
-    v ∈ recDom rec W V := by
+    v ∈ recDom rec self W V := by
   refine List.mem_cons_of_mem _ (List.mem_flatMap.mpr ⟨r, hr,
     List.mem_flatMap.mpr ⟨a, ha, ?_⟩⟩)
   rw [hsrc]
   exact List.mem_flatMap.mpr ⟨b, hb, List.mem_flatMap.mpr
     ⟨row, hrow, by simp [hv]⟩⟩
 
-theorem recDom_filler (rec : Rec) (W : ListInstance) (V : InteriorTables) :
-    fillerValue ∈ recDom rec W V :=
+theorem recDom_filler (rec : LinearRec) (self : InteriorId)
+    (W : ListInstance) (V : InteriorTables) :
+    fillerValue ∈ recDom rec self W V :=
   List.mem_cons_self ..
 
 theorem evalRule_in_cands {C : Classify} {W : ListInstance}
-    {ρ : ParamEnv} {rec : Rec} {self : InteriorId} {V : InteriorTables}
+    {ρ : ParamEnv} {rec : LinearRec} {self : InteriorId} {V : InteriorTables}
     {acc : List AnswerTuple} {r : Rule}
-    (hr : r ∈ rec.base ++ rec.rec)
+    (hr : r ∈ rec.allRules self)
     (hsafe : Safe r)
-    (hacc : ∀ u, u ∈ acc → u ∈ recCands rec W V) {t : AnswerTuple}
+    (hacc : ∀ u, u ∈ acc → u ∈ recCands rec self W V) {t : AnswerTuple}
     (ht : t ∈ evalRule C W (V.update self acc) ρ r) :
-    t ∈ recCands rec W V := by
+    t ∈ recCands rec self W V := by
   have hans : t ∈ ruleAnswers C r
       (sourceDen W.den (V.update self acc).toEnv) ρ := evalRule_sound ht
   have hlen : t.length = r.finds.length := evalRule_length ht
@@ -557,21 +540,20 @@ theorem evalRule_in_cands {C : Classify} {W : ListInstance}
     rw [← hfb]
     unfold InteriorTables.toEnv InteriorTables.update at hrow
     by_cases hQ : Q = self
-    · subst hQ
-      rw [if_pos rfl] at hrow
+    · rw [if_pos hQ] at hrow
       rcases tupleFact_mem_or_filler row b.1 with hmem | hfill
-      · have hrowc : row ∈ recCands rec W V := hacc row hrow
+      · have hrowc : row ∈ recCands rec self W V := hacc row hrow
         obtain ⟨_, _, htup⟩ := List.mem_flatMap.mp hrowc
         exact (mem_allTuples.mp htup).2 _ hmem
       · rw [hfill]
-        exact recDom_filler rec W V
+        exact recDom_filler rec self W V
     · rw [if_neg hQ] at hrow
       cases hidx : row[b.1.id]? with
       | none =>
         have : tupleFact row b.1 = fillerValue := by
           unfold tupleFact; simp [hidx]
         rw [this]
-        exact recDom_filler rec W V
+        exact recDom_filler rec self W V
       | some w =>
         have : tupleFact row b.1 = w := by
           unfold tupleFact; simp [hidx]
@@ -579,21 +561,22 @@ theorem evalRule_in_cands {C : Classify} {W : ListInstance}
         exact recDom_interior hr ha hsrc hb hrow hidx
 
 theorem evalList_in_cands {C : Classify} {W : ListInstance}
-    {ρ : ParamEnv} {rec : Rec} {self : InteriorId} {V : InteriorTables}
+    {ρ : ParamEnv} {rec : LinearRec} {self : InteriorId} {V : InteriorTables}
     {acc : List AnswerTuple} {rules : List Rule}
-    (hrules : ∀ r, r ∈ rules → r ∈ rec.base ++ rec.rec)
+    (hrules : ∀ r, r ∈ rules → r ∈ rec.allRules self)
     (hsafe : ∀ r, r ∈ rules → Safe r)
-    (hacc : ∀ u, u ∈ acc → u ∈ recCands rec W V) {t : AnswerTuple}
+    (hacc : ∀ u, u ∈ acc → u ∈ recCands rec self W V) {t : AnswerTuple}
     (ht : t ∈ evalList C W (V.update self acc) ρ rules) :
-    t ∈ recCands rec W V := by
+    t ∈ recCands rec self W V := by
   obtain ⟨r, hr, ht'⟩ := List.mem_flatMap.mp ht
   exact evalRule_in_cands (hrules r hr) (hsafe r hr) hacc ht'
 
 theorem evalRule_base_in_cands {C : Classify} {W : ListInstance}
-    {ρ : ParamEnv} {rec : Rec} {V : InteriorTables} {r : Rule}
-    (hr : r ∈ rec.base ++ rec.rec) (hsafe : Safe r) {t : AnswerTuple}
+    {ρ : ParamEnv} {rec : LinearRec} {self : InteriorId} {V : InteriorTables}
+    {r : Rule}
+    (hr : r ∈ rec.allRules self) (hsafe : Safe r) {t : AnswerTuple}
     (ht : t ∈ evalRule C W V ρ r) :
-    t ∈ recCands rec W V := by
+    t ∈ recCands rec self W V := by
   have hans : t ∈ ruleAnswers C r (sourceDen W.den V.toEnv) ρ :=
     evalRule_sound ht
   have hlen : t.length = r.finds.length := evalRule_length ht
@@ -615,7 +598,7 @@ theorem evalRule_base_in_cands {C : Classify} {W : ListInstance}
       have : tupleFact row b.1 = fillerValue := by
         unfold tupleFact; simp [hidx]
       rw [this]
-      exact recDom_filler rec W V
+      exact recDom_filler rec self W V
     | some w =>
       have : tupleFact row b.1 = w := by
         unfold tupleFact; simp [hidx]
@@ -623,22 +606,23 @@ theorem evalRule_base_in_cands {C : Classify} {W : ListInstance}
       exact recDom_interior hr ha hsrc hb hrow hidx
 
 theorem evalList_base_in_cands {C : Classify} {W : ListInstance}
-    {ρ : ParamEnv} {rec : Rec} {V : InteriorTables} {t : AnswerTuple}
-    (hsafe : ∀ r, r ∈ rec.base → Safe r)
-    (ht : t ∈ evalList C W V ρ rec.base) :
-    t ∈ recCands rec W V := by
+    {ρ : ParamEnv} {rec : LinearRec} {self : InteriorId} {V : InteriorTables}
+    {t : AnswerTuple}
+    (hsafe : ∀ r, r ∈ rec.baseRules → Safe r)
+    (ht : t ∈ evalList C W V ρ rec.baseRules) :
+    t ∈ recCands rec self W V := by
   obtain ⟨r, hr, ht'⟩ := List.mem_flatMap.mp ht
   exact evalRule_base_in_cands (List.mem_append.mpr (Or.inl hr))
     (hsafe r hr) ht'
 
 theorem mem_reachStep_op {C : Classify} {W : ListInstance} {ρ : ParamEnv}
-    {rec : Rec} {self : InteriorId} {V : InteriorTables}
-    (hsafeB : ∀ r, r ∈ rec.base → Safe r)
-    (hwtB : ∀ r, r ∈ rec.base → r.WellTyped)
-    (hsafeR : ∀ r, r ∈ rec.rec → Safe r)
-    (hwtR : ∀ r, r ∈ rec.rec → r.WellTyped)
+    {rec : LinearRec} {self : InteriorId} {V : InteriorTables}
+    (hsafeB : ∀ r, r ∈ rec.baseRules → Safe r)
+    (hwtB : ∀ r, r ∈ rec.baseRules → r.WellTyped)
+    (hsafeR : ∀ r, r ∈ rec.stepRules self → Safe r)
+    (hwtR : ∀ r, r ∈ rec.stepRules self → r.WellTyped)
     {acc : List AnswerTuple} {t : AnswerTuple} :
-    t ∈ reachStep C W ρ rec self V (evalList C W V ρ rec.base) acc ↔
+    t ∈ reachStep C W ρ rec self V (evalList C W V ρ rec.baseRules) acc ↔
       t ∈ reachOp C rec self W.den V.toEnv ρ (fun u => u ∈ acc) := by
   rw [mem_reachStep]
   constructor
@@ -657,25 +641,24 @@ theorem mem_reachStep_op {C : Classify} {W : ListInstance} {ρ : ParamEnv}
 
 /-- The executable reach lists exactly `reachDen`. No fuel hypothesis. -/
 theorem evalLinearReach_eq_lfp {C : Classify} {W : ListInstance}
-    {ρ : ParamEnv} {rec : Rec} {self : InteriorId} {V : InteriorTables}
-    (hsafe : ∀ r, r ∈ rec.base ++ rec.rec → Safe r)
-    (hwt : ∀ r, r ∈ rec.base ++ rec.rec → r.WellTyped)
-    (hlin : ∀ r, r ∈ rec.rec → r.selfCount self = 1 ∧ r.negated = []) :
+    {ρ : ParamEnv} {rec : LinearRec} {self : InteriorId} {V : InteriorTables}
+    (hsafe : ∀ r, r ∈ rec.allRules self → Safe r)
+    (hwt : ∀ r, r ∈ rec.allRules self → r.WellTyped) :
     ∀ t, t ∈ evalLinearReach C W ρ rec self V ↔
          t ∈ reachDen C rec self W.den V.toEnv ρ := by
   intro t
-  let base := evalList C W V ρ rec.base
+  let base := evalList C W V ρ rec.baseRules
   let step := reachStep C W ρ rec self V base
-  let cands := recCands rec W V
+  let cands := recCands rec self W V
   let T := reachOp C rec self W.den V.toEnv ρ
-  have hm : MonoS T := reachOp_mono hlin
-  have hsafeB : ∀ r, r ∈ rec.base → Safe r :=
+  have hm : MonoS T := reachOp_mono
+  have hsafeB : ∀ r, r ∈ rec.baseRules → Safe r :=
     fun r hr => hsafe r (List.mem_append.mpr (Or.inl hr))
-  have hwtB : ∀ r, r ∈ rec.base → r.WellTyped :=
+  have hwtB : ∀ r, r ∈ rec.baseRules → r.WellTyped :=
     fun r hr => hwt r (List.mem_append.mpr (Or.inl hr))
-  have hsafeR : ∀ r, r ∈ rec.rec → Safe r :=
+  have hsafeR : ∀ r, r ∈ rec.stepRules self → Safe r :=
     fun r hr => hsafe r (List.mem_append.mpr (Or.inr hr))
-  have hwtR : ∀ r, r ∈ rec.rec → r.WellTyped :=
+  have hwtR : ∀ r, r ∈ rec.stepRules self → r.WellTyped :=
     fun r hr => hwt r (List.mem_append.mpr (Or.inr hr))
   have hop :
       ∀ {acc t}, t ∈ reachStep C W ρ rec self V base acc ↔
@@ -734,27 +717,29 @@ theorem evalLinearReach_eq_lfp {C : Classify} {W : ListInstance}
     exact lfpS_le hpre t ht
 
 theorem reach_den_finite (C : Classify) (W : ListInstance) (ρ : ParamEnv)
-    (rec : Rec) (self : InteriorId) (V : InteriorTables)
-    (hsafe : ∀ r, r ∈ rec.base ++ rec.rec → Safe r)
-    (hwt : ∀ r, r ∈ rec.base ++ rec.rec → r.WellTyped)
-    (hlin : ∀ r, r ∈ rec.rec → r.selfCount self = 1 ∧ r.negated = []) :
+    (rec : LinearRec) (self : InteriorId) (V : InteriorTables)
+    (hsafe : ∀ r, r ∈ rec.allRules self → Safe r)
+    (hwt : ∀ r, r ∈ rec.allRules self → r.WellTyped) :
     (reachDen C rec self W.den V.toEnv ρ).Finite :=
   ⟨evalLinearReach C W ρ rec self V,
-    fun t => (evalLinearReach_eq_lfp hsafe hwt hlin t).symm⟩
+    fun t => (evalLinearReach_eq_lfp hsafe hwt t).symm⟩
 
 /-! ## `evalQuery` — the denotation of a Query -/
 
-/-- Match `q.rec` only. Do not match `recId` beside it. -/
+/-- One function by constructor cases. The `reach` case is the one site
+that computes the rec's id (`⟨interiors.length⟩`) and publishes the
+finished table there. -/
 def evalQuery (C : Classify) (q : Query) (I : Instance) (ρ : ParamEnv) :
     Set AnswerTuple :=
-  let V := evalInteriors C q I ρ
-  let V' :=
-    match q.rec with
-    | none => V
-    | some rec =>
-        let self : InteriorId := ⟨q.interiors.length⟩
-        V.update self (reachDen C rec self I V ρ)
-  rulesAnswers C q.rules (sourceDen I V') ρ
+  match q with
+  | .cq interiors _ rules =>
+      rulesAnswers C rules
+        (sourceDen I (evalInteriorsAt C interiors I ρ interiors.length)) ρ
+  | .reach interiors rec _ rules =>
+      let V := evalInteriorsAt C interiors I ρ interiors.length
+      let self : InteriorId := ⟨interiors.length⟩
+      rulesAnswers C rules
+        (sourceDen I (V.update self (reachDen C rec self I V ρ))) ρ
 
 def evalInteriorTables.go (C : Classify) (W : ListInstance) (ρ : ParamEnv) :
     Nat → List Interior → InteriorTables → InteriorTables
@@ -769,14 +754,13 @@ def evalInteriorTables (C : Classify) (W : ListInstance) (ρ : ParamEnv)
 
 def evalQueryList (C : Classify) (W : ListInstance) (ρ : ParamEnv)
     (q : Query) : List AnswerTuple :=
-  let T₀ := evalInteriorTables C W ρ q.interiors
-  let T :=
-    match q.rec with
-    | none => T₀
-    | some rec =>
-        let self : InteriorId := ⟨q.interiors.length⟩
-        T₀.update self (evalLinearReach C W ρ rec self T₀)
-  evalList C W T ρ q.rules
+  match q with
+  | .cq interiors _ rules =>
+      evalList C W (evalInteriorTables C W ρ interiors) ρ rules
+  | .reach interiors rec _ rules =>
+      let T₀ := evalInteriorTables C W ρ interiors
+      let self : InteriorId := ⟨interiors.length⟩
+      evalList C W (T₀.update self (evalLinearReach C W ρ rec self T₀)) ρ rules
 
 theorem getElem?_of_drop_cons {α} {l : List α} {i : Nat} {a : α}
     {as : List α} (h : l.drop i = a :: as) : l[i]? = some a := by
@@ -946,100 +930,94 @@ theorem evalInteriorTables_sound {C : Classify} {W : ListInstance}
 theorem mem_allRules_interior {q : Query} {d : Interior}
     (hd : d ∈ q.interiors) {r : Rule} (hr : r ∈ d.rules) :
     r ∈ q.allRules := by
-  unfold Query.allRules
-  exact List.mem_append.mpr <| Or.inl <| List.mem_append.mpr <| Or.inl <|
-    List.mem_flatMap.mpr ⟨d, hd, hr⟩
+  cases q with
+  | cq interiors arity rules =>
+    simp [Query.allRules, Query.interiors] at hd ⊢
+    exact Or.inl ⟨d, hd, hr⟩
+  | reach interiors rec arity rules =>
+    simp [Query.allRules, Query.interiors] at hd ⊢
+    exact Or.inl ⟨d, hd, hr⟩
 
-theorem mem_allRules_rec {q : Query} {rec : Rec} (hrec : q.rec = some rec)
-    {r : Rule} (hr : r ∈ rec.base ++ rec.rec) :
-    r ∈ q.allRules := by
-  unfold Query.allRules
-  rw [hrec]
-  exact List.mem_append.mpr <| Or.inl <| List.mem_append.mpr <| Or.inr hr
+theorem mem_allRules_rec {interiors : List Interior} {rec : LinearRec}
+    {arity : Nat} {rules : List Rule} {r : Rule}
+    (hr : r ∈ rec.allRules ⟨interiors.length⟩) :
+    r ∈ Query.allRules (.reach interiors rec arity rules) := by
+  simp [Query.allRules]
+  exact Or.inr (Or.inl hr)
 
 theorem mem_allRules_main {q : Query} {r : Rule} (hr : r ∈ q.rules) :
     r ∈ q.allRules := by
-  unfold Query.allRules
-  exact List.mem_append.mpr (Or.inr hr)
-
-theorem recLinear_arms {q : Query} {rec : Rec}
-    (hlin : q.recLinear) (hrec : q.rec = some rec) :
-    ∀ r, r ∈ rec.rec → r.selfCount ⟨q.interiors.length⟩ = 1 ∧ r.negated = [] := by
-  unfold Query.recLinear at hlin
-  rw [hrec] at hlin
-  intro r hr
-  exact ⟨(hlin.2.2.2.1 r hr).1,
-    hlin.2.2.2.2 r (List.mem_append.mpr (Or.inr hr))⟩
+  cases q with
+  | cq interiors arity rules =>
+    simp [Query.allRules, Query.rules] at hr ⊢
+    exact Or.inr hr
+  | reach interiors rec arity rules =>
+    simp [Query.allRules, Query.rules] at hr ⊢
+    exact Or.inr (Or.inr hr)
 
 /-- Interior DAG once, optional `reachDen`, then main `rulesAnswers` —
-listed by `evalQueryList`. Premises: `Safe` / `WellTyped` / `recLinear`,
+listed by `evalQueryList`. Premises: `Safe` / `WellTyped` per rule,
 not full `WellFormed`. -/
 theorem evalQuery_sound {C : Classify} {W : ListInstance} {ρ : ParamEnv}
     {q : Query}
     (hsafe : ∀ r, r ∈ q.allRules → Safe r)
-    (hwt : ∀ r, r ∈ q.allRules → r.WellTyped)
-    (hlin : q.recLinear) :
+    (hwt : ∀ r, r ∈ q.allRules → r.WellTyped) :
     ∀ t, t ∈ evalQueryList C W ρ q ↔ t ∈ evalQuery C q W.den ρ := by
   intro t
-  have hinterS : ∀ d, d ∈ q.interiors → ∀ r, r ∈ d.rules → Safe r :=
-    fun d hd r hr => hsafe r (mem_allRules_interior hd hr)
-  have hinterW : ∀ d, d ∈ q.interiors → ∀ r, r ∈ d.rules → r.WellTyped :=
-    fun d hd r hr => hwt r (mem_allRules_interior hd hr)
-  have hT0 :=
-    evalInteriorTables_sound (C := C) (W := W) (ρ := ρ) hinterS hinterW
-  have hmainS : ∀ r, r ∈ q.rules → Safe r :=
-    fun r hr => hsafe r (mem_allRules_main hr)
-  have hmainW : ∀ r, r ∈ q.rules → r.WellTyped :=
-    fun r hr => hwt r (mem_allRules_main hr)
-  cases hrec : q.rec with
-  | none =>
-    have hlist : evalQueryList C W ρ q =
-        evalList C W (evalInteriorTables C W ρ q.interiors) ρ q.rules := by
-      unfold evalQueryList
-      rw [hrec]
-    have hden : evalQuery C q W.den ρ =
-        rulesAnswers C q.rules
-          (sourceDen W.den (evalInteriors C q W.den ρ)) ρ := by
-      unfold evalQuery
-      rw [hrec]
-    rw [hlist, hden]
+  cases q with
+  | cq interiors arity rules =>
+    have hinterS : ∀ d, d ∈ interiors → ∀ r, r ∈ d.rules → Safe r :=
+      fun d hd r hr => hsafe r (mem_allRules_interior
+        (q := .cq interiors arity rules) (by simpa [Query.interiors] using hd) hr)
+    have hinterW : ∀ d, d ∈ interiors → ∀ r, r ∈ d.rules → r.WellTyped :=
+      fun d hd r hr => hwt r (mem_allRules_interior
+        (q := .cq interiors arity rules) (by simpa [Query.interiors] using hd) hr)
+    have hT0 :=
+      evalInteriorTables_sound (C := C) (W := W) (ρ := ρ) hinterS hinterW
+    have hmainS : ∀ r, r ∈ rules → Safe r :=
+      fun r hr => hsafe r (mem_allRules_main (q := .cq interiors arity rules)
+        (by simpa [Query.rules] using hr))
+    have hmainW : ∀ r, r ∈ rules → r.WellTyped :=
+      fun r hr => hwt r (mem_allRules_main (q := .cq interiors arity rules)
+        (by simpa [Query.rules] using hr))
     refine (eval_sound (C := C) (W := W) (ρ := ρ)
-      (T := evalInteriorTables C W ρ q.interiors) hmainS hmainW t).trans
+      (T := evalInteriorTables C W ρ interiors) hmainS hmainW t).trans
       (rulesAnswers_congr (sourceDen_congr hT0) t)
-  | some rec =>
-    let self : InteriorId := ⟨q.interiors.length⟩
-    let T₀ := evalInteriorTables C W ρ q.interiors
-    have harmsr := recLinear_arms hlin hrec
-    have hrecS : ∀ r, r ∈ rec.base ++ rec.rec → Safe r :=
-      fun r hr => hsafe r (mem_allRules_rec hrec hr)
-    have hrecW : ∀ r, r ∈ rec.base ++ rec.rec → r.WellTyped :=
-      fun r hr => hwt r (mem_allRules_rec hrec hr)
+  | reach interiors rec arity rules =>
+    let T₀ := evalInteriorTables C W ρ interiors
+    have hinterS : ∀ d, d ∈ interiors → ∀ r, r ∈ d.rules → Safe r :=
+      fun d hd r hr => hsafe r (mem_allRules_interior
+        (q := .reach interiors rec arity rules) (by simpa [Query.interiors] using hd) hr)
+    have hinterW : ∀ d, d ∈ interiors → ∀ r, r ∈ d.rules → r.WellTyped :=
+      fun d hd r hr => hwt r (mem_allRules_interior
+        (q := .reach interiors rec arity rules) (by simpa [Query.interiors] using hd) hr)
+    have hT0 :=
+      evalInteriorTables_sound (C := C) (W := W) (ρ := ρ) hinterS hinterW
+    have hmainS : ∀ r, r ∈ rules → Safe r :=
+      fun r hr => hsafe r (mem_allRules_main (q := .reach interiors rec arity rules)
+        (by simpa [Query.rules] using hr))
+    have hmainW : ∀ r, r ∈ rules → r.WellTyped :=
+      fun r hr => hwt r (mem_allRules_main (q := .reach interiors rec arity rules)
+        (by simpa [Query.rules] using hr))
+    have hrecS : ∀ r, r ∈ rec.allRules ⟨interiors.length⟩ → Safe r :=
+      fun r hr => hsafe r (mem_allRules_rec hr)
+    have hrecW : ∀ r, r ∈ rec.allRules ⟨interiors.length⟩ → r.WellTyped :=
+      fun r hr => hwt r (mem_allRules_rec hr)
     have hreach := evalLinearReach_eq_lfp (C := C) (W := W) (ρ := ρ)
-      (V := T₀) hrecS hrecW harmsr
-    have hlist : evalQueryList C W ρ q =
-        evalList C W (T₀.update self (evalLinearReach C W ρ rec self T₀))
-          ρ q.rules := by
-      unfold evalQueryList
-      rw [hrec]
-    have hden : evalQuery C q W.den ρ =
-        rulesAnswers C q.rules
-          (sourceDen W.den
-            ((evalInteriors C q W.den ρ).update self
-              (reachDen C rec self W.den (evalInteriors C q W.den ρ) ρ))) ρ := by
-      unfold evalQuery
-      rw [hrec]
-    rw [hlist, hden]
+      (rec := rec) (self := ⟨interiors.length⟩) (V := T₀) hrecS hrecW
     refine (eval_sound (C := C) (W := W) (ρ := ρ)
-      (T := T₀.update self (evalLinearReach C W ρ rec self T₀))
+      (T := T₀.update ⟨interiors.length⟩
+        (evalLinearReach C W ρ rec ⟨interiors.length⟩ T₀))
       hmainS hmainW t).trans (rulesAnswers_congr ?_ t)
     intro s f
     apply sourceDen_congr
     intro c u
     unfold InteriorTables.toEnv InteriorTables.update InteriorEnv.update
-    by_cases hc : c = self
+    by_cases hc : c = ⟨interiors.length⟩
     · subst hc
       simp only [↓reduceIte]
-      have henv : T₀.toEnv = evalInteriors C q W.den ρ := by
+      have henv : T₀.toEnv =
+          evalInteriorsAt C interiors W.den ρ interiors.length := by
         funext d v
         exact propext (hT0 d v)
       rw [← henv]
@@ -1047,26 +1025,24 @@ theorem evalQuery_sound {C : Classify} {W : ListInstance} {ρ : ParamEnv}
     · simp only [hc, ↓reduceIte]
       exact hT0 c u
 
-theorem evalQuery_plain (C : Classify) (q : Query) (I : Instance)
-    (ρ : ParamEnv) (hp : q.Plain) :
-    ∀ t, t ∈ evalQuery C q I ρ ↔
-         t ∈ rulesAnswers C q.rules (edbEnv I) ρ := by
-  intro t
-  obtain ⟨hinter, hrec⟩ := hp
-  simp [evalQuery, evalInteriors, hinter, hrec, evalInteriorsAt, edbEnv]
-
-theorem evalQueryList_plain {C : Classify} {W : ListInstance} {ρ : ParamEnv}
-    {q : Query} (hp : q.Plain) :
-    evalQueryList C W ρ q = evalList C W InteriorTables.empty ρ q.rules := by
-  obtain ⟨hinter, hrec⟩ := hp
-  simp [evalQueryList, evalInteriorTables, hinter, hrec,
-    evalInteriorTables.go]
+/-- Empty-prefix `.cq` denotes the union of its main rules over the instance. -/
+theorem evalQuery_cq (C : Classify) (arity : Nat) (rules : List Rule)
+    (I : Instance) (ρ : ParamEnv) :
+    evalQuery C (.cq [] arity rules) I ρ =
+      rulesAnswers C rules (edbEnv I) ρ := by
+  simp [evalQuery, evalInteriorsAt, edbEnv]
 
 theorem evalQuery_empty_rules {C : Classify} {q : Query} {I : Instance}
     {ρ : ParamEnv} (hr : q.rules = []) :
     ∀ t, t ∉ evalQuery C q I ρ := by
   intro t ht
-  simp [evalQuery, hr, mem_rulesAnswers] at ht
+  cases q with
+  | cq interiors arity rules =>
+    simp [Query.rules] at hr
+    simp [evalQuery, hr, mem_rulesAnswers] at ht
+  | reach interiors rec arity rules =>
+    simp [Query.rules] at hr
+    simp [evalQuery, hr, mem_rulesAnswers] at ht
 
 end Bumbledb.Query
 
