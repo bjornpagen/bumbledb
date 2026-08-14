@@ -375,6 +375,10 @@ fn lower_atom(
         occ_id,
         source: atom.source,
         role,
+        bind: match atom.source {
+            crate::ir::AtomSource::Edb(_) => None,
+            crate::ir::AtomSource::Interior(_) => Some(crate::ir::normalize::BindRole::Finished),
+        },
         vars,
         filters,
     }

@@ -400,6 +400,7 @@ fn a_negated_occurrence_contradiction_is_no_rule_verdict() {
         occ_id: OccId(0),
         source: crate::ir::AtomSource::Edb(R),
         role: Role::Negated,
+        bind: None,
         vars: vec![],
         filters: filters.clone(),
     }];
@@ -433,6 +434,7 @@ fn an_empty_word_set_kills_and_a_word_set_eq_intersection_kills() {
         occ_id: OccId(0),
         source: crate::ir::AtomSource::Edb(R),
         role: Role::Positive,
+        bind: None,
         vars: vec![],
         filters,
     };

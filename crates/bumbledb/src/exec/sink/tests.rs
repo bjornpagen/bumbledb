@@ -229,6 +229,7 @@ fn occurrence(occ: u16, relation: RelationId, vars: &[(u16, u16)]) -> Occurrence
         occ_id: OccId(occ),
         source: crate::ir::AtomSource::Edb(relation),
         role: Role::Positive,
+        bind: None,
         vars: vars.iter().map(|(f, v)| (FieldId(*f), VarId(*v))).collect(),
         filters: vec![],
     }

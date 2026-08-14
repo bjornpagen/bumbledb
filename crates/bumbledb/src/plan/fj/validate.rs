@@ -150,6 +150,7 @@ fn build_occurrences(
                 occ_id: occurrence.occ_id,
                 source: occurrence.source,
                 role: occurrence.role,
+                bind: occurrence.bind,
                 vars: occurrence.vars.clone(),
                 selections,
                 filters,

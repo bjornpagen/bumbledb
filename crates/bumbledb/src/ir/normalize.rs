@@ -91,6 +91,19 @@ pub struct FoldedMark {
     pub negated: bool,
 }
 
+/// How a derived occurrence binds at execution and planning. EDB
+/// occurrences carry `None` — the complement of EDB is this three-way
+/// role, not a single "not stored" path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BindRole {
+    /// A finished interior, or main/base's read of a finished rec.
+    Finished,
+    /// A rec arm's marked delta occurrence — one round's frontier.
+    RecDelta,
+    /// A rec arm's other self-read — the accumulated table.
+    RecAcc,
+}
+
 impl Role {
     /// **The** participates-in-planning predicate: whether the
     /// occurrence joins the plan — enters the DP, appears in subatoms,
@@ -134,6 +147,10 @@ pub struct Occurrence {
     /// (`plan/selectivity.rs` — the delta/accumulated floors).
     pub source: crate::ir::AtomSource,
     pub role: Role,
+    /// Derived-bind role, decided once past normalize. `None` is EDB.
+    /// Rec arms stamp [`BindRole::RecDelta`] / [`BindRole::RecAcc`] at
+    /// prepare; every other derived occurrence is [`BindRole::Finished`].
+    pub bind: Option<BindRole>,
     /// Distinct variables with the field each is read from (a repeated
     /// variable keeps its first field; later positions became filters).
     /// A membership-bound point variable is **not** a variable of the

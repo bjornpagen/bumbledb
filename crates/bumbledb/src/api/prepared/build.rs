@@ -314,7 +314,7 @@ fn prepare_witnessed<'s, S>(
         dead,
         pipeline,
         tuples_budget: super::reach::DEFAULT_DERIVED_TUPLES,
-        derived: super::reach::DerivedScratch::default(),
+        derived: super::reach::DerivedImages::default(),
         signature: predicate,
         params,
         resolved_params: Vec::new(),
@@ -440,13 +440,6 @@ fn prepare_reach(
             continue;
         }
         let delta = rec.arm(rule_idx).self_occ();
-        debug_assert!(
-            normalized_rule
-                .occurrences
-                .iter()
-                .any(|occ| { occ.occ_id == delta && occ.source.interior() == Some(rec_id) }),
-            "self_occ is the rec atom normalize numbered"
-        );
         rec_rules.push(prepare_rec_arm(
             txn,
             cache,
@@ -455,6 +448,7 @@ fn prepare_reach(
             &normalized_rule,
             columns,
             signatures,
+            rec_id,
             delta,
         )?);
     }
@@ -492,7 +486,7 @@ fn prepare_reach(
         field_types: columns.iter().map(|c| c.ty.type_desc()).collect(),
         sink,
         units,
-        scratch: super::reach::ReachScratch::default(),
+        scratch: super::reach::RecPingPong::default(),
     })
 }
 
@@ -690,21 +684,11 @@ fn prepare_rule(
     columns: &[crate::ir::validate::SignatureColumn],
     signatures: &[&crate::ir::validate::Signature],
 ) -> Result<PreparedRule> {
-    prepare_rule_variant(
-        txn,
-        cache,
-        schema,
-        rule,
-        normalized,
-        columns,
-        signatures,
-        |_| false,
-    )
+    prepare_rule_variant(txn, cache, schema, rule, normalized, columns, signatures)
 }
 
-/// Prepare one rec arm: the unique self-occurrence is the marked delta
-/// (its statistics take the ladder's delta floor; other `Interior`
-/// occurrences take the accumulated floor).
+/// Prepare one rec arm: stamp the unique self-occurrence as RecDelta
+/// and every other self-read as RecAcc before statistics run.
 fn prepare_rec_arm(
     txn: &ReadTxn<'_>,
     cache: &ImageCache,
@@ -713,27 +697,49 @@ fn prepare_rec_arm(
     normalized: &NormalizedQuery,
     columns: &[crate::ir::validate::SignatureColumn],
     signatures: &[&crate::ir::validate::Signature],
+    rec_id: crate::ir::InteriorId,
     delta: crate::ir::normalize::OccId,
 ) -> Result<super::RecArm> {
-    let prepared = prepare_rule_variant(
-        txn,
-        cache,
-        schema,
-        rule,
-        normalized,
-        columns,
-        signatures,
-        |occ| occ == delta,
-    )?;
+    let mut normalized = normalized.clone();
+    stamp_rec_bind(&mut normalized, rec_id, delta);
+    debug_assert!(
+        normalized
+            .occurrences
+            .iter()
+            .any(|occ| occ.bind == Some(crate::ir::normalize::BindRole::RecDelta)),
+        "self_occ is the rec atom normalize numbered"
+    );
+    let prepared =
+        prepare_rule_variant(txn, cache, schema, rule, &normalized, columns, signatures)?;
     let PreparedRule::FreeJoin(fj) = prepared else {
         unreachable!("an Interior-reading rec arm never classifies as a key probe")
     };
     Ok(super::RecArm { delta, rule: fj })
 }
 
+fn stamp_rec_bind(
+    normalized: &mut NormalizedQuery,
+    rec_id: crate::ir::InteriorId,
+    delta: crate::ir::normalize::OccId,
+) {
+    for occ in &mut normalized.occurrences {
+        let Some(id) = occ.source.interior() else {
+            continue;
+        };
+        if id != rec_id {
+            continue;
+        }
+        occ.bind = Some(if occ.occ_id == delta {
+            crate::ir::normalize::BindRole::RecDelta
+        } else {
+            crate::ir::normalize::BindRole::RecAcc
+        });
+    }
+}
+
 /// [`prepare_rule`] / [`prepare_rec_arm`] shared tail: classify →
-/// statistics → DP → lowering → plan validation. `is_delta` marks the
-/// rec arm's self-occurrence (always false on the CQ path).
+/// statistics → DP → lowering → plan validation. Rec-arm bind roles
+/// are already stamped on the occurrences.
 #[expect(
     clippy::too_many_arguments,
     reason = "the per-rule pipeline's inputs are clearer unpacked"
@@ -746,7 +752,6 @@ fn prepare_rule_variant(
     normalized: &NormalizedQuery,
     columns: &[crate::ir::validate::SignatureColumn],
     signatures: &[&crate::ir::validate::Signature],
-    is_delta: impl Fn(crate::ir::normalize::OccId) -> bool,
 ) -> Result<PreparedRule> {
     let distinct_witness = provably_distinct(normalized, schema);
     // Classification first: a key probe needs no statistics or planning.
@@ -787,24 +792,20 @@ fn prepare_rule_variant(
         .iter()
         .filter(|o| o.role.participates())
     {
-        // An `Interior` occurrence pins nothing (20-query-ir.md § engine recursion's
-        // consumer table): its row count is prepare-unknowable, so it
-        // reads no row counter and costs on the selectivity ladder's
-        // floors — the delta floor for the rec arm's marked occurrence,
-        // the accumulated floor for every other predicate read — the
-        // staleness surface already knows the shape (negated and
-        // grounding-discharged occurrences carry no pin today).
-        let Some(relation) = occurrence.source.edb() else {
-            let floor = if is_delta(occurrence.occ_id) {
-                crate::plan::selectivity::DELTA_PLANNING_ROWS
-            } else {
-                crate::plan::selectivity::INTERIOR_PLANNING_ROWS
-            };
+        // A derived occurrence pins nothing (20-query-ir.md § engine
+        // recursion's consumer table): its row count is prepare-
+        // unknowable, so it reads no row counter and costs on the
+        // selectivity ladder's floors — the occurrence's bind role
+        // picks delta vs accumulated. The staleness surface already
+        // knows the shape (negated and grounding-discharged
+        // occurrences carry no pin today).
+        if occurrence.bind.is_some() {
             stats.push(crate::plan::selectivity::occurrence_stats(
-                txn, cache, schema, occurrence, floor,
+                txn, cache, schema, occurrence, 0,
             )?);
             continue;
-        };
+        }
+        let relation = occurrence.relation();
         let rows = crate::plan::selectivity::relation_rows(txn, schema, relation)?;
         let occ_stats =
             crate::plan::selectivity::occurrence_stats(txn, cache, schema, occurrence, rows)?;
@@ -999,9 +1000,10 @@ fn prepare_ray_probe(
         .iter()
         .filter(|o| o.role.participates())
     {
-        let rows = match occurrence.source.edb() {
-            Some(relation) => crate::plan::selectivity::relation_rows(txn, schema, relation)?,
-            None => crate::plan::selectivity::INTERIOR_PLANNING_ROWS,
+        let rows = if occurrence.bind.is_some() {
+            0
+        } else {
+            crate::plan::selectivity::relation_rows(txn, schema, occurrence.relation())?
         };
         stats.push(crate::plan::selectivity::occurrence_stats(
             txn, cache, schema, occurrence, rows,

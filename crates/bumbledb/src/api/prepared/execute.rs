@@ -292,6 +292,7 @@ impl<S> PreparedQuery<'_, S> {
                     probe.measured_slot,
                 );
                 let mut no_retired = Vec::new();
+                let empty_images = super::reach::OccImages::default();
                 run_join(
                     &probe.rule.plan,
                     self.schema,
@@ -302,7 +303,7 @@ impl<S> PreparedQuery<'_, S> {
                     &probe.rule.resolved_filters,
                     &probe.rule.resolved_selections,
                     &mut probe.rule.memo,
-                    &[],
+                    &empty_images,
                     &mut no_retired,
                     &mut arbiter,
                     counters,

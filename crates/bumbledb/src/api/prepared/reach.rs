@@ -41,26 +41,62 @@ pub(crate) struct ReachDriver {
     pub(super) field_types: Vec<TypeDesc>,
     pub(super) sink: crate::exec::sink::ProjectionSink,
     pub(super) units: usize,
-    pub(super) scratch: ReachScratch,
+    pub(super) scratch: RecPingPong,
 }
 
-/// Finished derived images (interiors then rec) plus the per-occurrence
-/// bind scratch `run_join`'s Interior arm consumes. Interior count is
-/// data — not a 16-slot array.
+/// Per-occurrence derived images for one plan unit. Only live derived
+/// occurrences have a slot — EDB and discharged occurrences are absent,
+/// not `None`.
 #[derive(Default)]
-pub(super) struct DerivedScratch {
-    finished_slot: Vec<TransientImage>,
-    finished: Vec<Option<Arc<RelationImage>>>,
-    pub(super) occ_images: Vec<Option<Arc<RelationImage>>>,
+pub(super) struct OccImages {
+    slots: Vec<(usize, Arc<RelationImage>)>,
+}
+
+impl OccImages {
+    pub(super) fn clear(&mut self) {
+        self.slots.clear();
+    }
+
+    fn insert(&mut self, occ_idx: usize, image: Arc<RelationImage>) {
+        self.slots.push((occ_idx, image));
+    }
+
+    pub(super) fn image(&self, occ_idx: usize) -> &Arc<RelationImage> {
+        for (i, img) in &self.slots {
+            if *i == occ_idx {
+                return img;
+            }
+        }
+        unreachable!("fill_plan_images wrote every live derived occurrence")
+    }
+}
+
+/// How a derived occurrence binds this round. Rec carries both images
+/// so delta-without-acc is unrepresentable.
+enum DerivedBind<'a> {
+    Finished,
+    Rec {
+        delta: &'a Arc<RelationImage>,
+        acc: &'a Arc<RelationImage>,
+    },
+}
+
+/// One derived-image protocol: a working transient per derived id, a
+/// seal-ordered published `Arc` grown as each table closes, and the
+/// per-occurrence bind scratch `run_join` consumes.
+#[derive(Default)]
+pub(super) struct DerivedImages {
+    working: Vec<TransientImage>,
+    published: Vec<Arc<RelationImage>>,
+    pub(super) occ_images: OccImages,
     pub(super) retired: Vec<Vec<u32>>,
 }
 
-impl DerivedScratch {
+impl DerivedImages {
     fn begin(&mut self, derived_count: usize) {
-        self.finished_slot
+        self.working
             .resize_with(derived_count, Default::default);
-        self.finished.clear();
-        self.finished.resize(derived_count, None);
+        self.published.clear();
         self.occ_images.clear();
         self.retired.clear();
     }
@@ -71,31 +107,52 @@ impl DerivedScratch {
         field_types: &[TypeDesc],
         sink: &ProjectionSink,
     ) -> Arc<RelationImage> {
-        let image = self.finished_slot[id].refill(field_types, sink.len(), sink.answers_since(0));
-        self.finished[id] = Some(image.clone());
+        debug_assert_eq!(
+            self.published.len(),
+            id,
+            "derived tables seal in declaration order"
+        );
+        let image = self.working[id].refill(field_types, sink.len(), sink.answers_since(0));
+        self.published.push(image.clone());
         image
     }
 }
 
-/// Rec ping-pong: delta vs accumulated of the one SCC. Size 1.
+/// Rec ping-pong: two working transients each for Δ and accumulated,
+/// flipped each round so buffers recycle. `round_delta` / `round_acc`
+/// are locals in [`run_reach`], not fields.
 #[derive(Default)]
-pub(super) struct ReachScratch {
-    delta: [TransientImage; 2],
-    acc: [TransientImage; 2],
+pub(super) struct RecPingPong {
+    delta_a: TransientImage,
+    delta_b: TransientImage,
+    acc_a: TransientImage,
+    acc_b: TransientImage,
     acc_filled: [usize; 2],
     flip: bool,
     watermark: usize,
-    round_delta: Option<Arc<RelationImage>>,
-    round_acc: Option<Arc<RelationImage>>,
 }
 
-impl ReachScratch {
+impl RecPingPong {
     fn begin(&mut self) {
         self.acc_filled = [0; 2];
         self.flip = false;
         self.watermark = 0;
-        self.round_delta = None;
-        self.round_acc = None;
+    }
+
+    fn delta_mut(&mut self) -> &mut TransientImage {
+        if self.flip {
+            &mut self.delta_b
+        } else {
+            &mut self.delta_a
+        }
+    }
+
+    fn acc_mut(&mut self) -> &mut TransientImage {
+        if self.flip {
+            &mut self.acc_b
+        } else {
+            &mut self.acc_a
+        }
     }
 }
 
@@ -259,7 +316,7 @@ impl<S> PreparedQuery<'_, S> {
         for set in &mut sets {
             set.verdict.resolve_interns(txn)?;
             for probe in &mut set.probes {
-                fill_plan_images(&probe.rule.plan, &mut self.derived, None, None, None);
+                fill_plan_images(&probe.rule.plan, &mut self.derived, DerivedBind::Finished);
                 let resolved =
                     if fast_eligible && probe.rule.resolution == super::ResolutionState::Complete {
                         true
@@ -322,7 +379,7 @@ impl<S> PreparedQuery<'_, S> {
             self.derived.occ_images.clear();
             return;
         };
-        fill_plan_images(plan, &mut self.derived, None, None, None);
+        fill_plan_images(plan, &mut self.derived, DerivedBind::Finished);
     }
 }
 
@@ -342,7 +399,7 @@ fn run_reach<C: Counters>(
     rec_id: usize,
     rounds_budget: u32,
     tuples_budget: u64,
-    derived: &mut DerivedScratch,
+    derived: &mut DerivedImages,
     bindings: &mut Bindings,
     determinant_key: &mut Vec<u8>,
     schema: &Schema,
@@ -430,31 +487,30 @@ fn run_reach<C: Counters>(
         let flip = usize::from(driver.scratch.flip);
         let since = driver.scratch.watermark;
         counters.fixpoint_delta((len - since) as u64);
-        driver.scratch.round_delta = Some(driver.scratch.delta[flip].refill(
+        let round_delta = driver.scratch.delta_mut().refill(
             &driver.field_types,
             len - since,
             driver.sink.answers_since(since),
-        ));
+        );
         let filled = driver.scratch.acc_filled[flip];
-        driver.scratch.round_acc = Some(driver.scratch.acc[flip].append(
+        let round_acc = driver.scratch.acc_mut().append(
             &driver.field_types,
             filled,
             len,
             |from| driver.sink.answers_since(from),
-        ));
+        );
         driver.scratch.acc_filled[flip] = len;
         driver.scratch.flip = !driver.scratch.flip;
         driver.scratch.watermark = len;
 
-        let rec_delta = driver.scratch.round_delta.clone();
-        let rec_acc = driver.scratch.round_acc.clone();
         for arm_idx in 0..driver.rec.len() {
             fill_plan_images(
                 &driver.rec[arm_idx].rule.plan,
                 derived,
-                Some(rec_id),
-                rec_delta.as_ref(),
-                rec_acc.as_ref(),
+                DerivedBind::Rec {
+                    delta: &round_delta,
+                    acc: &round_acc,
+                },
             );
             ran |= run_free_join_into_projection(
                 ctx,
@@ -496,7 +552,7 @@ fn unbind_interior_views(interior: &mut PreparedInterior, retired: &mut Vec<Vec<
 
 fn unbind_interior_rule(rule: &mut super::FreeJoinRule, retired: &mut Vec<Vec<u32>>) {
     for (occ_idx, occurrence) in rule.plan.occurrences().iter().enumerate() {
-        if occurrence.role.discharged() || occurrence.source.edb().is_some() {
+        if occurrence.role.discharged() || occurrence.bind.is_none() {
             continue;
         }
         let old = rule.memo.colts[occ_idx].reset(crate::image::view::View::Unbound);
@@ -510,7 +566,7 @@ fn unbind_interior_rule(rule: &mut super::FreeJoinRule, retired: &mut Vec<Vec<u3
     }
 }
 
-fn fill_finished_images(rule: &PreparedRule, derived: &mut DerivedScratch) {
+fn fill_finished_images(rule: &PreparedRule, derived: &mut DerivedImages) {
     let plan = match rule {
         PreparedRule::FreeJoin(rule) => &rule.plan,
         PreparedRule::KeyProbe(_) => {
@@ -518,55 +574,43 @@ fn fill_finished_images(rule: &PreparedRule, derived: &mut DerivedScratch) {
             return;
         }
     };
-    fill_plan_images(plan, derived, None, None, None);
+    fill_plan_images(plan, derived, DerivedBind::Finished);
 }
 
 fn fill_plan_images(
     plan: &crate::plan::fj::ValidatedPlan,
-    derived: &mut DerivedScratch,
-    rec_id: Option<usize>,
-    rec_delta: Option<&Arc<RelationImage>>,
-    rec_acc: Option<&Arc<RelationImage>>,
+    derived: &mut DerivedImages,
+    bind: DerivedBind<'_>,
 ) {
     derived.occ_images.clear();
-    derived.occ_images.resize(plan.occurrences().len(), None);
     for (occ_idx, occurrence) in plan.occurrences().iter().enumerate() {
         if occurrence.role.discharged() {
             continue;
         }
-        let Some(target) = occurrence.source.interior() else {
-            continue;
+        let image = match occurrence.bind {
+            None => continue,
+            Some(crate::ir::normalize::BindRole::Finished) => {
+                let q = occurrence
+                    .source
+                    .interior()
+                    .expect("Finished bind is a derived occurrence")
+                    .index();
+                derived.published[q].clone()
+            }
+            Some(crate::ir::normalize::BindRole::RecDelta) => match bind {
+                DerivedBind::Rec { delta, .. } => delta.clone(),
+                DerivedBind::Finished => {
+                    unreachable!("RecDelta is stamped only on rec arms")
+                }
+            },
+            Some(crate::ir::normalize::BindRole::RecAcc) => match bind {
+                DerivedBind::Rec { acc, .. } => acc.clone(),
+                DerivedBind::Finished => {
+                    unreachable!("RecAcc is stamped only on rec arms")
+                }
+            },
         };
-        let q = target.index();
-        let image = if rec_id == Some(q) {
-            if rec_delta.is_some() && rec_acc.is_some() {
-                // Rec self: the caller marks the delta occurrence by
-                // filling after this helper for the delta occ. Here we
-                // default to accumulated; the delta occ is overwritten
-                // below when rec_delta is present for that occ_id.
-                rec_acc.cloned()
-            } else {
-                derived.finished[q].clone()
-            }
-        } else {
-            derived.finished[q].clone()
-        };
-        derived.occ_images[occ_idx] = image;
-    }
-    if let (Some(rec_id), Some(delta_img)) = (rec_id, rec_delta) {
-        for (occ_idx, occurrence) in plan.occurrences().iter().enumerate() {
-            if occurrence.role.discharged() {
-                continue;
-            }
-            let Some(target) = occurrence.source.interior() else {
-                continue;
-            };
-            if target.index() == rec_id {
-                // Unique self-atom is the delta — overwrite acc default.
-                derived.occ_images[occ_idx] = Some(delta_img.clone());
-            }
-        }
-        let _ = rec_acc;
+        derived.occ_images.insert(occ_idx, image);
     }
 }
 
@@ -580,7 +624,7 @@ fn run_into_projection<C: Counters>(
     rules: &mut [PreparedRule],
     rule_idx: usize,
     units: usize,
-    occ_images: &[Option<Arc<RelationImage>>],
+    occ_images: &OccImages,
     retired: &mut Vec<Vec<u32>>,
     sink: &mut ProjectionSink,
     bindings: &mut Bindings,
@@ -623,7 +667,7 @@ fn run_free_join_into_projection<C: Counters>(
     ctx: RunCtx<'_>,
     rule: &mut FreeJoinRule,
     units: usize,
-    occ_images: &[Option<Arc<RelationImage>>],
+    occ_images: &OccImages,
     retired: &mut Vec<Vec<u32>>,
     sink: &mut ProjectionSink,
     bindings: &mut Bindings,

@@ -220,7 +220,7 @@ pub struct PreparedQuery<'s, S> {
     tuples_budget: u64,
     /// Finished derived images (interiors then rec) plus per-occurrence
     /// bind scratch for `run_join`'s Interior arm.
-    derived: crate::api::prepared::reach::DerivedScratch,
+    derived: crate::api::prepared::reach::DerivedImages,
     /// The signature the query defines, sealed at validation and cloned
     /// here at prepare. It sits beside the pipeline because a dead-main
     /// Cq still has an arity and buffer types (the empty path's

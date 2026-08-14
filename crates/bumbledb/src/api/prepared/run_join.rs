@@ -28,8 +28,8 @@ pub(super) fn run_join<S: crate::exec::run::Sink, C: crate::exec::run::Counters>
     resolved_filters: &[Vec<FilterPredicate>],
     resolved_selections: &[Vec<Vec<u64>>],
     memo: &mut ViewMemo,
-    idb_images: &[Option<std::sync::Arc<crate::image::RelationImage>>],
-    idb_retired: &mut Vec<Vec<u32>>,
+    derived_images: &super::reach::OccImages,
+    derived_retired: &mut Vec<Vec<u32>>,
     sink: &mut S,
     counters: &mut C,
 ) -> Result<()> {
@@ -93,10 +93,8 @@ pub(super) fn run_join<S: crate::exec::run::Sink, C: crate::exec::run::Counters>
         // `spare_buffers` ping-pong — and every generation-keyed
         // mechanism never learns recursion exists
         // (`docs/architecture/40-execution.md` § the linear reach driver).
-        if occurrence.source.edb().is_none() {
-            let image = idb_images[occ_idx]
-                .as_ref()
-                .expect("the reach driver supplies every Interior occurrence's image");
+        if occurrence.bind.is_some() {
+            let image = derived_images.image(occ_idx);
             let mut build_span = obs::span_args(
                 obs::names::VIEW_BUILD,
                 obs::Category::Execute,
@@ -105,7 +103,7 @@ pub(super) fn run_join<S: crate::exec::run::Sink, C: crate::exec::run::Counters>
             );
             let mut buffer = std::mem::take(&mut memo.spare_buffers[occ_idx]);
             if buffer.capacity() == 0
-                && let Some(pooled) = idb_retired.pop()
+                && let Some(pooled) = derived_retired.pop()
             {
                 // The entry unbind parked the second circulating
                 // survivor buffer (one spare slot, two buffers); the
