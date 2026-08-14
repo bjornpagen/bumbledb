@@ -8,7 +8,9 @@ use crate::image::{ColumnView, ColumnWidth, RelationImage};
 use crate::ir::CmpOp;
 use bumbledb_theory::schema::FieldId;
 
-use super::{Const, FilterPredicate, IntervalConst, MaskConst, SetConst, View, ViewWordSource};
+use super::{
+    BoundView, Const, FilterPredicate, IntervalConst, MaskConst, SetConst, View, ViewWordSource,
+};
 
 /// Resolves a filter constant through the bind-time param slice: `Param`
 /// and `ParamSet` markers index it; everything else is already column form.
@@ -330,7 +332,7 @@ pub fn apply(
     // caller's pooled survivor buffer stays in hand and seeds the first
     // refinement instead of being dropped for a fresh allocation.
     let (mut view, mut spare) = if predicates.iter().all(is_measure) {
-        (View::All(Arc::clone(image)), buf)
+        (View::Bound(BoundView::All(Arc::clone(image))), buf)
     } else {
         (apply_infallible(image, predicates, params, buf), Vec::new())
     };
@@ -384,7 +386,7 @@ fn refine_measure(
             };
             let (starts, ends) = interval_columns(image, *field);
             match view {
-                View::All(_) => {
+                View::Bound(BoundView::All(_)) => {
                     let mut positions = std::mem::take(spare);
                     positions.clear();
                     crate::exec::kernel::filter_duration_range_u64(
@@ -394,15 +396,15 @@ fn refine_measure(
                         hi,
                         &mut positions,
                     );
-                    View::Survivors {
+                    View::Bound(BoundView::Survivors {
                         image: Arc::clone(image),
                         positions,
-                    }
+                    })
                 }
-                View::Survivors {
+                View::Bound(BoundView::Survivors {
                     image: view_image,
                     mut positions,
-                } => {
+                }) => {
                     let mut cursor = 0usize;
                     for read in 0..positions.len() {
                         let p = positions[read] as usize;
@@ -412,10 +414,10 @@ fn refine_measure(
                             usize::from(end != u64::MAX && lo <= end - start && end - start <= hi);
                     }
                     positions.truncate(cursor);
-                    View::Survivors {
+                    View::Bound(BoundView::Survivors {
                         image: view_image,
                         positions,
-                    }
+                    })
                 }
                 View::Unbound => unreachable!("apply binds the view it filters"),
             }
@@ -437,14 +439,14 @@ fn refine_measure(
                 ColumnView::Bytes(_) => unreachable!("validated: the measure side is u64"),
             };
             let mut positions = match view {
-                View::All(_) => {
+                View::Bound(BoundView::All(_)) => {
                     let mut positions = std::mem::take(spare);
                     positions.clear();
                     positions
                         .extend(0..u32::try_from(image.row_count()).expect("positions fit u32"));
                     positions
                 }
-                View::Survivors { positions, .. } => positions,
+                View::Bound(BoundView::Survivors { positions, .. }) => positions,
                 View::Unbound => unreachable!("apply binds the view it filters"),
             };
             let mut cursor = 0usize;
@@ -455,10 +457,10 @@ fn refine_measure(
                 cursor += usize::from(end != u64::MAX && op.compare(&(end - start), &scalars[p]));
             }
             positions.truncate(cursor);
-            View::Survivors {
+            View::Bound(BoundView::Survivors {
                 image: Arc::clone(image),
                 positions,
-            }
+            })
         }
         _ => unreachable!("refine_measure takes the measure kinds"),
     }
@@ -476,7 +478,7 @@ fn apply_infallible(
     mut buf: Vec<u32>,
 ) -> View {
     if predicates.is_empty() {
-        return View::All(Arc::clone(image));
+        return View::Bound(BoundView::All(Arc::clone(image)));
     }
     let row_count = image.row_count();
     debug_assert!(u32::try_from(row_count).is_ok(), "positions fit u32");
@@ -510,10 +512,10 @@ fn apply_infallible(
             cursor += usize::from(keep);
         }
         buf.truncate(cursor);
-        return View::Survivors {
+        return View::Bound(BoundView::Survivors {
             image: Arc::clone(image),
             positions: buf,
-        };
+        });
     }
 
     buf.resize(row_count, 0);
@@ -530,10 +532,10 @@ fn apply_infallible(
         cursor += usize::from(keep);
     }
     buf.truncate(cursor);
-    View::Survivors {
+    View::Bound(BoundView::Survivors {
         image: Arc::clone(image),
         positions: buf,
-    }
+    })
 }
 
 /// An interval field's two word-column slices — the operand shape of

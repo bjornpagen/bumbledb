@@ -92,7 +92,7 @@ impl Colt {
     /// widen to u64 — binding slots are words everywhere).
     #[inline(always)]
     pub(super) fn word_at(&self, column: usize, position: u32) -> u64 {
-        match self.view.image().column(column) {
+        match self.bound_view().image().column(column) {
             ColumnView::Words(words) => words[position as usize],
             ColumnView::Bytes(bytes) => u64::from(bytes[position as usize]),
         }

@@ -1,4 +1,4 @@
-use super::{Colt, Cursor, NodeState, Positions, Slot, SuffixRun, View, unpack_child};
+use super::{BoundView, Colt, Cursor, NodeState, Positions, Slot, SuffixRun, View, unpack_child};
 use crate::image::ColumnView;
 
 impl Colt {
@@ -41,7 +41,7 @@ impl Colt {
         };
         match self.nodes[node.0 as usize] {
             NodeState::Unforced(Positions::Root) => {
-                (0..self.view.len()).any(|idx| check(self.view.position_at(idx)))
+                (0..self.view.len()).any(|idx| check(self.bound_view().position_at(idx)))
             }
             NodeState::Unforced(Positions::Chunks { first, .. }) => {
                 let mut chunk = first;
@@ -94,7 +94,7 @@ impl Colt {
 
     /// One column's words at pinned positions, view resolved once.
     fn gather_column(&self, col: usize, positions: &[u32], out: &mut [u64]) {
-        match self.view.image().column(col) {
+        match self.bound_view().image().column(col) {
             ColumnView::Words(words) => {
                 for (j, &position) in positions.iter().enumerate() {
                     out[j] = words[position as usize];
@@ -120,7 +120,7 @@ impl Colt {
     pub fn gather_row(&self, level: usize, position: u32, out: &mut [u64]) {
         let level = self.selection_levels + level;
         for (i, col) in self.schema_columns[level].iter().enumerate() {
-            out[i] = match self.view.image().column(*col) {
+            out[i] = match self.bound_view().image().column(*col) {
                 ColumnView::Words(words) => words[position as usize],
                 ColumnView::Bytes(bytes) => u64::from(bytes[position as usize]),
             };
@@ -132,7 +132,7 @@ impl Colt {
     /// batches.
     #[must_use]
     pub fn suffix_column(&self, level: usize, word: usize) -> ColumnView<'_> {
-        self.view
+        self.bound_view()
             .image()
             .column(self.schema_columns[self.selection_levels + level][word])
     }
@@ -166,7 +166,7 @@ impl Colt {
                     return true;
                 }
                 match &self.view {
-                    View::Survivors { positions, .. } => f(SuffixRun::Positions(positions)),
+                    View::Bound(BoundView::Survivors { positions, .. }) => f(SuffixRun::Positions(positions)),
                     _ => f(SuffixRun::Identity {
                         start: 0,
                         len: self.view.len(),
@@ -223,7 +223,7 @@ impl Colt {
     ) {
         let arity = self.arity_at(level);
         for (i, col) in self.schema_columns[level].iter().enumerate() {
-            match self.view.image().column(*col) {
+            match self.bound_view().image().column(*col) {
                 ColumnView::Words(words) => {
                     debug_assert!(segment.iter().all(|&p| (p as usize) < words.len()));
                     for (k, &position) in segment.iter().enumerate() {
@@ -274,7 +274,7 @@ impl Colt {
     ) {
         let arity = self.arity_at(level);
         for (i, col) in self.schema_columns[level].iter().enumerate() {
-            match self.view.image().column(*col) {
+            match self.bound_view().image().column(*col) {
                 ColumnView::Words(words) => {
                     let src = &words[start..start + take];
                     if arity == 1 {

@@ -1,5 +1,5 @@
 use super::{
-    BatchToken, Colt, Cursor, DENSE_TOKEN_TAG, NodeRef, NodeState, Positions, STALE_EPOCH,
+    BatchToken, BoundView, Colt, Cursor, DENSE_TOKEN_TAG, NodeRef, NodeState, Positions, STALE_EPOCH,
     STALE_TOKEN, Slot, TOKEN_EPOCH_MASK, TOKEN_PAYLOAD_MASK, View, unpack_child,
 };
 
@@ -136,7 +136,7 @@ impl Colt {
                     return (0, token);
                 }
                 match &self.view {
-                    View::Survivors { positions, .. } => {
+                    View::Bound(BoundView::Survivors { positions, .. }) => {
                         let segment = &positions[index..index + take];
                         self.gather_segment(level, segment, keys_out, children_out, 0);
                     }

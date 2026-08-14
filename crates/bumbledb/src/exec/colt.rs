@@ -25,7 +25,7 @@
 //! attribute.
 #![allow(clippy::inline_always)]
 
-use crate::image::view::View;
+pub(super) use crate::image::view::{BoundView, View};
 
 /// Positions per full chunk: bounded pointer traversal, independent loads
 /// within a chunk (the deviation from the paper's growable per-key vectors).

@@ -122,7 +122,7 @@ fn oracle(
 
 fn survivor_ids(view: &View) -> Vec<u64> {
     view.positions()
-        .map(|p| view.image().column_words(0)[p as usize])
+        .map(|p| view.bound().expect("apply binds").image().column_words(0)[p as usize])
         .collect()
 }
 
@@ -204,7 +204,7 @@ fn no_predicates_yield_the_all_variant() {
     let txn = env.read_txn().expect("txn");
     let image = build(&txn, &schema, R).expect("build");
     let view = apply(&image, &[], &[], Vec::new());
-    assert!(matches!(view, View::All(_)));
+    assert!(matches!(view, View::Bound(BoundView::All(_))));
     assert_eq!(view.len(), 50);
     let positions: Vec<u32> = view.positions().collect();
     assert_eq!(positions, (0..50).collect::<Vec<u32>>());

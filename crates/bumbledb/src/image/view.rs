@@ -255,17 +255,10 @@ pub enum FilterPredicate {
     },
 }
 
-/// A query-local view over an image: not yet bound to any generation
-/// (the state every COLT holds between prepare and its first execution
-/// — carrying *nothing*, so prepare pins no image), every position
-/// (unfiltered), or the filter's survivors. A three-variant
-/// representation, not a sentinel vector.
+/// A view bound to a generation: every position, or the filter's survivors.
+/// Prepare stores [`View::Unbound`]; the executor holds this after bind.
 #[derive(Debug)]
-pub enum View {
-    /// No image at all: the view has not been bound to a generation.
-    /// Unrepresentable as data that pins anything — a prepared query
-    /// holds only `Unbound` views until it executes.
-    Unbound,
+pub enum BoundView {
     /// Every position `0..row_count`.
     All(Arc<RelationImage>),
     /// The survivor positions, in ascending order.
@@ -275,36 +268,22 @@ pub enum View {
     },
 }
 
-impl View {
+impl BoundView {
     /// The underlying image.
-    ///
-    /// # Panics
-    ///
-    /// On a programmer-invariant violation: an unbound view has no image
-    /// — every execution path binds (or rebuilds) the view before any
-    /// probe or force can ask for one.
     #[must_use]
     pub fn image(&self) -> &Arc<RelationImage> {
         match self {
             Self::All(image) | Self::Survivors { image, .. } => image,
-            Self::Unbound => unreachable!("an unbound view has no image"),
         }
     }
 
-    /// Number of positions the view exposes (an unbound view exposes
-    /// none).
+    /// Number of positions the bound view exposes.
     #[must_use]
     pub fn len(&self) -> usize {
         match self {
-            Self::Unbound => 0,
             Self::All(image) => image.row_count(),
             Self::Survivors { positions, .. } => positions.len(),
         }
-    }
-
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
     }
 
     /// The image position at view index `idx` (reader: COLT root
@@ -316,9 +295,48 @@ impl View {
     #[must_use]
     pub fn position_at(&self, idx: usize) -> u32 {
         match self {
-            Self::Unbound => unreachable!("an unbound view has no positions"),
             Self::All(_) => u32::try_from(idx).expect("positions fit u32"),
             Self::Survivors { positions, .. } => positions[idx],
+        }
+    }
+}
+
+/// A query-local view over an image: not yet bound to any generation
+/// (the state every COLT holds between prepare and its first execution
+/// — carrying *nothing*, so prepare pins no image), or a [`BoundView`].
+/// A three-variant representation, not a sentinel vector.
+#[derive(Debug)]
+pub enum View {
+    /// No image at all: the view has not been bound to a generation.
+    /// Unrepresentable as data that pins anything — a prepared query
+    /// holds only `Unbound` views until it executes.
+    Unbound,
+    /// Bound to a generation — every position, or the filter's survivors.
+    Bound(BoundView),
+}
+
+impl View {
+    /// Number of positions the view exposes (an unbound view exposes
+    /// none).
+    #[must_use]
+    pub fn len(&self) -> usize {
+        match self {
+            Self::Unbound => 0,
+            Self::Bound(bound) => bound.len(),
+        }
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// The bound view, if this view has been bound to a generation.
+    #[must_use]
+    pub fn bound(&self) -> Option<&BoundView> {
+        match self {
+            Self::Unbound => None,
+            Self::Bound(bound) => Some(bound),
         }
     }
 
@@ -331,13 +349,13 @@ impl View {
         buffer.clear();
         match self {
             Self::Unbound => Self::Unbound,
-            Self::All(image) => Self::All(Arc::clone(image)),
-            Self::Survivors { image, positions } => {
+            Self::Bound(BoundView::All(image)) => Self::Bound(BoundView::All(Arc::clone(image))),
+            Self::Bound(BoundView::Survivors { image, positions }) => {
                 buffer.extend_from_slice(positions);
-                Self::Survivors {
+                Self::Bound(BoundView::Survivors {
                     image: Arc::clone(image),
                     positions: buffer,
-                }
+                })
             }
         }
     }
@@ -347,8 +365,8 @@ impl View {
     #[must_use]
     pub fn recycle(self) -> Vec<u32> {
         match self {
-            Self::Unbound | Self::All(_) => Vec::new(),
-            Self::Survivors { positions, .. } => positions,
+            Self::Unbound | Self::Bound(BoundView::All(_)) => Vec::new(),
+            Self::Bound(BoundView::Survivors { positions, .. }) => positions,
         }
     }
 }

@@ -1,6 +1,11 @@
-use super::{Colt, Cursor, NodeRef, NodeState, Positions, SelectionLevel, View};
+use super::{BoundView, Colt, Cursor, NodeRef, NodeState, Positions, SelectionLevel, View};
 
 impl Colt {
+    pub(super) fn bound_view(&self) -> &BoundView {
+        self.view
+            .bound()
+            .expect("execute binds the COLT view")
+    }
     /// Builds the root over a view: O(1) — nothing decodes until a force.
     /// `selections` are the occurrence's Eq-constant selection levels, in
     /// plan order (image columns plus set-ness — [`SelectionLevel`]);
