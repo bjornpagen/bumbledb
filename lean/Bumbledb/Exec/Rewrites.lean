@@ -55,7 +55,7 @@ the identity variable mapping.
   UCQ minimization restricted to the normalized-form witness;
   `plan/ground.rs::subsumes`, the ordered-pair check), wired after
   grounding at `api/prepared/build.rs::ground_program`: the deleted
-  rules are filtered out of the prepared program. Modeled:
+  rules are filtered out of the prepared pipeline. Modeled:
   `SubsumeWitness`, `subsume_containment`, `RewriteStep.subsume` — the
   sixth rewrite, in the chain (the discharge record below).
 * **The statically-empty fold** — `ir/normalize/fold.rs::fold`
@@ -104,7 +104,7 @@ the identity variable mapping.
   identical participating-atom multiset with the keeper's per-atom
   filters ⊆ the candidate's, the keeper's residual sets ⊆ the
   candidate's, and every keeper negated atom present in the candidate
-  — is DELETED from the prepared program. `SubsumeWitness` reads that
+  — is DELETED from the prepared pipeline. `SubsumeWitness` reads that
   witness in this level's vocabulary (a per-occurrence Eq filter is a
   literal binding, residuals are the rule's conditions): every keeper
   atom pairs with a candidate atom of the same relation whose binding
@@ -1586,7 +1586,7 @@ theorem emptyAt_no_answers {C : Classify} {ρ : ParamEnv} {r : Rule}
 
 /-- The refutation constructor is instance-INDEPENDENT: it verdicts
 every instance at once — exactly what licenses deleting the rule from
-the prepared program, where the miss licenses only this execution's
+the prepared pipeline, where the miss licenses only this execution's
 empty result. -/
 theorem emptyAt_refuted_everywhere {C : Classify} {r : Rule}
     (h : StaticallyEmpty C r) :
@@ -2284,7 +2284,7 @@ theory and agree with its ground axioms, so any sequence does. The
 theorem falls out of items 1, 2, 2b and 4 by rewriting, which is the
 shape check on their statements. -/
 
-/-- One prepare-time rewrite step on a program, at one rule. The
+/-- One prepare-time rewrite step on a rule list, at one rule. The
 elimination step carries the THEORY-side premises: the declared
 containment (in the statement's own `Bumbledb.Atom` shape) and
 condition 4's scalar splits (`Enforcement::ScalarProbe` — the interval
@@ -2336,11 +2336,11 @@ inductive RewriteStep (T : Theory) (C : Classify) :
       RewriteStep T C (pre ++ r :: post) (pre ++ post)
   /-- The subsumption deletion (`plan/ground.rs::subsume`, wired at
   `api/prepared/build.rs::ground_program`): a rule the witness proves
-  covered by a KEPT sibling is deleted from the program — the sixth
+  covered by a KEPT sibling is deleted from the rule list — the sixth
   denotation-affecting rewrite, in the chain. The keeper's membership
   (`hk`) is the sweep's own discipline made a premise: a deleted rule
   neither subsumes nor re-enters, so the keeper of every recorded
-  `Subsumption` survives to the output program. Purely syntactic — no
+  `Subsumption` survives to the output list. Purely syntactic — no
   theory premise: the containment holds on EVERY instance. -/
   | subsume {pre post : List Rule} {d k : Rule}
       (hw : SubsumeWitness k d) (hk : k ∈ pre ++ post) :
@@ -2410,7 +2410,7 @@ theorem rulesAnswers_drop_at {C : Classify} {I : Instance}
 /-- Deleting a rule whose answers a KEPT rule covers preserves the
 query's answers — `rulesAnswers_drop_at`'s covered sibling: the union
 loses nothing a survivor still supplies. The subsumption deletion's
-program-level face. -/
+query-level face. -/
 theorem rulesAnswers_drop_covered {C : Classify} {I : Instance}
     {ρ : ParamEnv} {pre post : List Rule} {d k : Rule}
     (hk : k ∈ pre ++ post)
@@ -2439,7 +2439,7 @@ theorem rulesAnswers_drop_covered {C : Classify} {I : Instance}
 
 /-- One step preserves the query's answers on every instance that
 holds the theory and agrees with its ground axioms — items 1, 2, 2b
-and 4, lifted to the program (the subsumption arm needs neither
+and 4, lifted to the rule list (the subsumption arm needs neither
 premise: its containment is instance-blind). -/
 theorem step_preserves {T : Theory} {C : Classify} {rs rs' : List Rule}
     (hstep : RewriteStep T C rs rs') {I : Instance} {ρ : ParamEnv}

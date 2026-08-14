@@ -285,7 +285,7 @@ def ledger : List Obligation := [
     "dnf_distributes_or_pairs_to_four_rules (crates/bumbledb/src/ir/validate/tests/rules.rs); dnf_residue_subsumption_deletes_the_filtered_rule (crates/bumbledb/src/api/prepared/tests/ground.rs)",
 
   .row @Query.union_idempotent `Bumbledb.Query.union_idempotent
-    "A duplicated rule adds nothing: duplicate derivations, one answer — set semantics at the program level."
+    "A duplicated rule adds nothing: duplicate derivations, one answer — set semantics at the query level."
     "exec/sink.rs::seen (crates/bumbledb/src/exec/sink.rs)"
     "an_overlapping_union_has_no_duplicates_and_host_concatenation_does (crates/bumbledb/src/api/prepared/tests/rules.rs)",
 
@@ -458,7 +458,7 @@ def ledger : List Obligation := [
     "a_containment_chain_eliminates_both_targets_in_fixpoint (crates/bumbledb/src/plan/ground/tests.rs); a_chained_elimination_executes_result_identical_to_the_disabled_plan (crates/bumbledb/src/api/prepared/tests/ground.rs)",
 
   .row @Query.subsume_containment `Bumbledb.Query.subsume_containment
-    "Under the subsumption witness the deleted rule's answers are contained in the kept sibling's on every instance, so the prepare-time deletion preserves the program union — the sixth rewrite, in the composition chain."
+    "Under the subsumption witness the deleted rule's answers are contained in the kept sibling's on every instance, so the prepare-time deletion preserves the query union — the sixth rewrite, in the composition chain."
     "subsume (crates/bumbledb/src/plan/ground.rs); subsumes (crates/bumbledb/src/plan/ground.rs); ground_program (crates/bumbledb/src/api/prepared/build.rs)"
     "the_dnf_residue_subsumes_the_filtered_rule (crates/bumbledb/src/plan/ground/tests.rs); dnf_residue_subsumption_deletes_the_filtered_rule (crates/bumbledb/src/api/prepared/tests/ground.rs)",
 

@@ -919,9 +919,9 @@ theorem dnf_preserves_denotation (C : Classify) (r : Rule)
 
 /-- **Theorem 6 (port of `ruleUnion_set_idempotent`).** A duplicated
 rule adds nothing: duplicate rules, duplicate derivations, ONE answer
-— set semantics at the program level. Bridge: the sinks are where
+— set semantics at the query level. Bridge: the sinks are where
 union lives (`exec/sink.rs`): one seen-set spans every rule of a
-program, reset once per execution, so a later rule re-deriving a head
+query, reset once per execution, so a later rule re-deriving a head
 fact is absorbed exactly like a within-rule duplicate; `dnf.rs::
 collapse` spends this at the representation level TOGETHER with
 theorem 6a — its dedup key reads condition lists as sets, so the

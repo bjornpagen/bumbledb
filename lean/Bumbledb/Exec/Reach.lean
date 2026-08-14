@@ -4,7 +4,7 @@ import Bumbledb.Query.Denotation
 # Exec/Reach — interior DAG, one linear reach, the query denotation
 
 Level 0: `evalInteriors`, `reachOp`, `reachDen = lfpS`, `evalQuery`.
-No fuel. No strata. The denotation is `evalQuery`.
+The denotation is `evalQuery`; the budget is a resource abort.
 
 Level 1: `evalLinearReach`, `evalQueryList`, proved equal to Level 0.
 `fueledLoop` is a **private** termination metric (`missingCount_le` is

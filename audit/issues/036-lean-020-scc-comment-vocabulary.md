@@ -28,8 +28,8 @@ Per `audit/CONTRACT.md §C7` vocabulary (it governs all prose, including Lean do
 
 ## Acceptance criteria
 
-- [ ] Gone: `rg -inw 'scc|tarjan|strata' lean/Bumbledb lean/Main.lean` → no matches.
-- [ ] Comment-only: `lake build` output identical; zero theorem/def/name changes; `./scripts/lean.sh` fully green (battery + census + 268-case conformance + comparator).
+- [x] Gone: `rg -inw 'scc|tarjan|strata' lean/Bumbledb lean/Main.lean` → no matches.
+- [x] Comment-only: `lake build` output identical; zero theorem/def/name changes; `./scripts/lean.sh` fully green (battery + census + 268-case conformance + comparator).
 
 ## Constraints
 
