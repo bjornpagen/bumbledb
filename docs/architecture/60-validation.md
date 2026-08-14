@@ -92,7 +92,7 @@ model evaluates a Query by materializing interior tables in declaration
 order, iterating `T(acc) = base ∪ rec(acc)` to least fixpoint when `rec`
 is present (no budget in the model; empty base ⇒ empty lfp is this
 iteration), then evaluating main (`NaiveDb::query`). Staying on the
-plain chain loses nothing (`lean/Bumbledb/Exec/Reach.lean:
+plain chain loses nothing (`lean/Bumbledb/Exec/SemiNaive.lean:
 semi_naive_agrees`) and keeps the trust root definitional. The SQLite
 lane is a **lossy translator of this cut**: it emits SQL
 `WITH [RECURSIVE]` (SQLite's spelling of interiors + rec + main;
@@ -101,10 +101,12 @@ forms). That SQL is not a grammar for the language and not a field in
 the IR. Mutual-linear and nonlinear shapes are unwritable this cut,
 so their former inexpressible-set rows are unreachable, not a denotation
 reason; interval-typed derived columns remain a translator limit. The
-Lean lane judges the checked-in `reach-*.json` cases with
-`evalQueryList` (`lean/Bumbledb/Exec/Reach.lean: evalQueryList`, sound
-against `evalQuery` by `lean/Bumbledb/Exec/Reach.lean: evalQuery_sound`);
-the CQuery arm (`seeded-*.json`) is unchanged. Each reach case is
+Lean lane judges every checked-in case as one `Query`
+(`lean/Bumbledb/Exec/Reach.lean: evalQueryList`, sound against
+`evalQuery` by `lean/Bumbledb/Exec/Reach.lean: evalQuery_sound`).
+Seeded cases are `Query` values (`interiors = []`, `rec = none`) in
+`seeded-*.json`. Reach cases are `Query` values with interiors / rec
+in `reach-*.json`. One type, one decoder. Each reach case is
 written only after the naive lfp — and SQLite, where the translator can
 speak the shape — agreed; the hand-verified closure goldens (a fixed
 tree, a fixed cyclic graph, the empty store) hold every reach-capable

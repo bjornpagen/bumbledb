@@ -78,12 +78,12 @@ mechanism names its reader; this is `U`/`M`'s read-side reader).
 constants (`20-query-ir.md`, § normalization) is deleted at prepare — sound on
 every instance, the verdict never consulted one
 (`lean/Bumbledb/Exec/Rewrites.lean: statically_empty_sound`); a query whose
-every main rule dies prepares to `PreparedBody::Empty`. A dead interior is
+every main rule dies prepares to `rules: []` on `PreparedPipeline::Cq`. A dead interior is
 the empty table (later readers see nothing). A dead main with live interiors
 still runs the interior preamble — bind errors still surface, and an interior
 measure comparison can Ray. Prepared
-execution has two rule kinds — key probe and Free Join — plus this
-query-level empty variant. Execution binds params first — bind errors still surface —
+execution has two rule kinds — key probe and Free Join. Statically-dead main
+is the empty rule list; the empty fast path is the zero-iteration loop. Execution binds params first — bind errors still surface —
 then, when interiors are empty, touches no images, binds no views, runs no
 join, and the result is the empty buffer. Plan introspection prints
 `access path: statically empty` plus each dead
@@ -447,7 +447,7 @@ driver (`api/prepared/reach.rs`) is `ReachDriver` over the existing
 run-rule machinery. Interiors eval once, in declaration order, into
 finished images. Round 0 of the rec is the base arms through the rule
 loop (`lean/Bumbledb/Exec/Reach.lean: reachOp_empty`). Round r ≥ 1 runs
-each rec arm's **one** `DeltaVariant` — the unique positive self-atom is
+each rec arm's **one** `RecArm` — the unique positive self-atom is
 the delta occurrence, bound to round r−1's frontier; extra EDB and
 interior atoms are accumulated, never a second delta — and an empty Δ
 ends the rec. Main then reads the finished rec image like an interior.
@@ -455,23 +455,23 @@ The driver computes the model's answers
 (`lean/Bumbledb/Exec/Reach.lean: evalLinearReach_eq_lfp`;
 `evalQuery_sound` is the query agreement). Lean `evalLinearReach` is the
 naive chain; this driver is the semi-naive realization
-(`lean/Bumbledb/Exec/Reach.lean: semi_naive_agrees` at `reachOp`).
+(`lean/Bumbledb/Exec/SemiNaive.lean: semi_naive_agrees` at `reachOp`).
 Termination is the roster theorem
 (`lean/Bumbledb/Exec/Reach.lean: reach_den_finite`). Interiors-only never
-enters the driver: `PreparedBody` is `Rules` or `Empty`, never `Reach`
-(`lean/Bumbledb/Exec/Reach.lean: evalQuery` is the rec-absent constructor
-case; interiors-only is the preamble plus that same rule loop).
+enters the driver: that is the `PreparedPipeline::Cq` arm (interiors then
+main). (`lean/Bumbledb/Exec/Reach.lean: evalQuery_cq` is the empty-prefix
+constructor case; interiors-only is the preamble plus that same rule loop).
 
 - **The delta rewrite is one plan per rec arm, not bookkeeping**
-  (`DeltaVariant`, `api/prepared.rs`): the unique positive self-atom is
-  the delta occurrence; there is no k-variant mint. Each variant is
+  (`RecArm`, `api/prepared.rs`): the unique positive self-atom is
+  the delta occurrence; there is no k-variant mint. Each arm is
   prepared once through the ordinary per-rule pipeline (pin-at-prepare;
   no round re-plans). There is **no new/old split**: cross-round
   re-derivation is absorbed by the rec sink's spanning seen-set — the
   same argument that makes D2's late cancellation harmless, and the
-  operator-level face is `lean/Bumbledb/Exec/Reach.lean:
+  operator-level face is `lean/Bumbledb/Exec/SemiNaive.lean:
   semi_naive_agrees` (iterating on `T(acc) \ acc` walks the naive chain
-  round for round). Variants are minted by one prepare-time parse and
+  round for round). Rec arms are prepared once at prepare time and
   consumed totally by the driver — `ResolvableFilter`'s discipline.
   Delta, accumulated, and finished-interior occurrences pin no
   statistics and cost on the selectivity ladder's floors
@@ -1049,7 +1049,7 @@ with its subsuming rule's index (`subsumed: rule 0 by rule 1`, lowered-rule
 indices — the per-rule sections are the survivors). When interiors or rec
 are present, the counted surface is that structure, not per-unit node stats
 spanning differently shaped plan units: plan units labeled (interior or rec,
-rule, delta variant), then `interiors:` in declaration order, then optional
+rule, rec arm), then `interiors:` in declaration order, then optional
 one `reach` — round 0 the base arms, rounds ≥ 1 the Δ — each round's delta
 rows and emitted/absorbed accounting, then main, reported through the same
 `Counters` seam's reach hooks (`api/prepared/reach.rs`;

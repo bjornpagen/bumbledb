@@ -54,8 +54,8 @@ is a conjunct (positive atoms, negated atoms, conditions) whose find terms
 align against the head position by position. The single-rule query is the
 degenerate case (`Query::single`). Empty interiors and `rec: None` is the
 rec-absent constructor of `Query` (`cq`: interiors are a possibly-empty
-prefix) — a constructor case of `evalQuery`, not an embedding of a prior
-type.
+prefix) — `lean/Bumbledb/Exec/Reach.lean: evalQuery_cq`, not an embedding
+of a prior type.
 
 - **Main defines one anonymous predicate; rules derive it.** The head is
   its definition, and its typed **signature** is the answer-type tuple: one
@@ -98,8 +98,9 @@ order, each a finite CQ evaluated once. `rec` is at most one linear rec
 (`lean/Bumbledb/Exec/Reach.lean: reachDen`). Main is: one head, ≥1 rule,
 folds, measures, negation. `evalQuery` is main `rulesAnswers` over the
 finished environment. `Db::prepare` takes `&Query` only. Empty interiors
-and `rec: None` is the rec-absent constructor of `Query` (`cq`) — a
-constructor case of `evalQuery`, not an embedding of a prior type. An
+and `rec: None` is the rec-absent constructor of `Query` (`cq`) —
+`lean/Bumbledb/Exec/Reach.lean: evalQuery_cq`, not an embedding of a
+prior type. An
 `AtomSource::Interior` atom's bindings address **head positions**:
 `FieldId(i)` is the target derived table's column `i`, typed by its
 sealed signature column — positional, never nominal, and the membership
@@ -118,8 +119,7 @@ step):
 
 - **The well-formedness screen** — every `Interior` source names a real
   derived table and addresses within its arity
-  (`lean/Bumbledb/Query/Syntax.lean: Query.WellFormed`, spent by
-  `lean/Bumbledb/Exec/Reach.lean: wellFormed_interior_reads_real`):
+  (`lean/Bumbledb/Query/Denotation.lean: sourceDen_phantom_empty`):
   without it a negated phantom read would be vacuously satisfied.
   Out of range is `UnknownInterior`. A forward or self interior read,
   or an interior reading the rec, is `InteriorNotPrior`.
@@ -142,9 +142,9 @@ step):
   (`lean/Bumbledb/Exec/Reach.lean: reachOp_mono`).
 
 **Execution.** Interiors-only never enters the reach driver
-(`PreparedBody::Rules` or `Empty`; `40-execution.md` § the linear reach
+(`PreparedPipeline::Cq`; `40-execution.md` § the linear reach
 driver). A rec query runs the interior preamble, then `ReachDriver`
-(round 0 = `reachOp_empty`, one `DeltaVariant` per rec arm), then main.
+(round 0 = `reachOp_empty`, one `RecArm` per rec arm), then main.
 The driver computes the model's answers
 (`lean/Bumbledb/Exec/Reach.lean: evalLinearReach_eq_lfp`;
 `evalQuery_sound` is the query agreement). Grounding rewrites refuse
@@ -1096,7 +1096,7 @@ begin lowercase, so a derived table spelled like a relation is unwritable
 lines is a macro error — bare rules are the output, so every existing
 all-bare query lowers to `Query { interiors: vec![], rec: None, head,
 rules }` and denotes what it denoted
-(`lean/Bumbledb/Exec/Reach.lean: evalQuery` is that sentence as a
+(`lean/Bumbledb/Exec/Reach.lean: evalQuery_cq` is that sentence as a
 constructor case). Names are a **macro-local sidecar**, exactly as variable names
 are: resolution happens at expansion, the emitted `Query` carries bare
 `InteriorId`s, and no name ever enters the IR, the fingerprint, or any

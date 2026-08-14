@@ -293,16 +293,17 @@ pinned pre-dedup by a unit test), and a two-key rejection
 
 ## Reach cases — the recursive third oracle
 
-A reach case carries a Query with `interiors` / `rec` / main `rules`
-(`Bumbledb/Query/Syntax.lean`) instead of a CQuery. The Lean side
-decodes it and runs `evalQueryList` (`Bumbledb/Exec/Reach.lean`;
-`evalQuery_sound` is its agreement with `evalQuery`) against the
-recorded answers. Atoms are `edb` / `interior`. `FieldId` on an interior
-atom addresses a derived head position. `rec` may be JSON `null` or
-omitted for interiors-only; the recut corpus has a rec on every file.
-One-predicate rec queries become `interiors = []`, `rec = some`, and
-an identity main of the same arity — empty `rules` denotes `∅`. Rec
-id is `interiors.length` (0 when interiors are empty).
+Every case carries a `Query`. Plain cases have empty `interiors` and
+`rec: null` (their atoms use the `relation` spelling of the EDB source).
+Reach cases fill those fields (atoms spell `edb`/`interior`). One type,
+one decoder. The Lean side decodes it and runs `evalQueryList`
+(`Bumbledb/Exec/Reach.lean`; `evalQuery_sound` is its agreement with
+`evalQuery`) against the recorded answers. Atoms are `edb` / `interior`.
+`FieldId` on an interior atom addresses a derived head position. `rec`
+may be JSON `null` or omitted for interiors-only; the recut corpus has a
+rec on every file. A rec with empty interiors and an identity main of
+the same arity — empty `rules` denotes `∅`. Rec id is
+`interiors.length` (0 when interiors are empty).
 
 Filename: `reach-hand-closure.json`, `reach-seeded-0001.json`, …
 Gaps in numbering (`0000`, `0003`, `0010`, `0021`) are the dropped
