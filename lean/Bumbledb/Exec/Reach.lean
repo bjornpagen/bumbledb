@@ -26,10 +26,6 @@ the same class as `ResultBytesOverflow` vs `rulesAnswers`.
   an invariant hypothesis, not a property of every list. Public
   `reachStep` stays `T(acc) = base ++ rec(acc)` as specified; the
   naive chain from `[]` is inflationary by `reachOp_mono`.
-* **`evalQuery_sound` interiors.** Proved under `q.interiors = []`
-  (the recut `reach-*.json` corpus). Nonempty interior DAG agreement
-  is the same `eval_sound` fold over `evalInteriorTables.go`; the
-  cons-branch length arithmetic is this-cut leftover, not a wall.
 -/
 
 namespace Bumbledb.Query
@@ -809,15 +805,143 @@ theorem evalInteriorsAt_agree_prefix {C : Classify} {defs : List Interior}
     else _) = _
   rw [dif_pos hlt]
 
+theorem InteriorId.eq_mk (c : InteriorId) (n : Nat) : c = ⟨n⟩ ↔ c.id = n := by
+  cases c; simp
+
+/-- Stage `n` has written only `InteriorId ⟨k⟩` for `k < n`. -/
+theorem evalInteriorsAt_out {C : Classify} {defs : List Interior}
+    {I : Instance} {ρ : ParamEnv} {n : Nat} {c : InteriorId}
+    (hge : n ≤ c.id) (t : AnswerTuple) :
+    ¬ evalInteriorsAt C defs I ρ n c t := by
+  induction n with
+  | zero =>
+    simp [evalInteriorsAt, InteriorEnv.empty]
+  | succ n _ =>
+    have hnlt : ¬ c.id < n :=
+      Nat.not_lt_of_ge (Nat.le_trans (Nat.le_succ n) hge)
+    have hne : c.id ≠ n := Nat.ne_of_gt (Nat.lt_of_succ_le hge)
+    change ¬ (if h : c.id < n then evalInteriorsAt C defs I ρ n c t
+      else if c.id = n then
+        match defs[n]? with
+        | some d => t ∈ rulesAnswers C d.rules
+            (sourceDen I (evalInteriorsAt C defs I ρ n)) ρ
+        | none => False
+      else False)
+    simp [hnlt, hne]
+
+/-- One `go` step: write `defs[i]` into `T` and agree with stage `i+1`. -/
+theorem evalInteriorTables_step {C : Classify} {W : ListInstance}
+    {ρ : ParamEnv} {defs : List Interior} {i : Nat} {d : Interior}
+    {T : InteriorTables}
+    (hget : defs[i]? = some d)
+    (hT : ∀ c t, t ∈ T c ↔ evalInteriorsAt C defs W.den ρ i c t)
+    (hsafe : ∀ r, r ∈ d.rules → Safe r)
+    (hwt : ∀ r, r ∈ d.rules → r.WellTyped) :
+    ∀ c t, t ∈ (T.update ⟨i⟩ (evalList C W T ρ d.rules)) c ↔
+      evalInteriorsAt C defs W.den ρ (i + 1) c t := by
+  intro c t
+  rcases Nat.lt_trichotomy c.id i with hlt | heq | hgt
+  · have hne : c ≠ ⟨i⟩ := mt (InteriorId.eq_mk c i).mp (Nat.ne_of_lt hlt)
+    have hleft : (T.update ⟨i⟩ (evalList C W T ρ d.rules)) c = T c := by
+      simp [InteriorTables.update, hne]
+    have hright :=
+      congrFun (evalInteriorsAt_agree_prefix (C := C) (defs := defs)
+        (I := W.den) (ρ := ρ) (n := i) (c := c) hlt) t
+    rw [hleft, hright]
+    exact hT c t
+  · have hc : c = ⟨i⟩ := (InteriorId.eq_mk c i).mpr heq
+    have hnlt : ¬ c.id < i := by
+      rw [heq]
+      exact Nat.lt_irrefl _
+    have hleft : (T.update ⟨i⟩ (evalList C W T ρ d.rules)) c =
+        evalList C W T ρ d.rules := by
+      simp [InteriorTables.update, hc]
+    change t ∈ (T.update ⟨i⟩ (evalList C W T ρ d.rules)) c ↔
+      (if h : c.id < i then evalInteriorsAt C defs W.den ρ i c t
+        else if c.id = i then
+          match defs[i]? with
+          | some d' => t ∈ rulesAnswers C d'.rules
+              (sourceDen W.den (evalInteriorsAt C defs W.den ρ i)) ρ
+          | none => False
+        else False)
+    rw [hleft, dif_neg hnlt, if_pos heq, hget]
+    exact (eval_sound (C := C) (W := W) (ρ := ρ) (T := T) hsafe hwt t).trans
+      (rulesAnswers_congr (sourceDen_congr hT) t)
+  · have hne : c ≠ ⟨i⟩ := mt (InteriorId.eq_mk c i).mp (Nat.ne_of_gt hgt)
+    have hnlt : ¬ c.id < i := Nat.not_lt_of_gt hgt
+    have hnei : c.id ≠ i := Nat.ne_of_gt hgt
+    have hleft : (T.update ⟨i⟩ (evalList C W T ρ d.rules)) c = T c := by
+      simp [InteriorTables.update, hne]
+    change t ∈ (T.update ⟨i⟩ (evalList C W T ρ d.rules)) c ↔
+      (if h : c.id < i then evalInteriorsAt C defs W.den ρ i c t
+        else if c.id = i then
+          match defs[i]? with
+          | some d' => t ∈ rulesAnswers C d'.rules
+              (sourceDen W.den (evalInteriorsAt C defs W.den ρ i)) ρ
+          | none => False
+        else False)
+    rw [hleft, dif_neg hnlt, if_neg hnei]
+    constructor
+    · intro ht
+      exact (evalInteriorsAt_out (Nat.le_of_lt hgt) t) ((hT c t).mp ht)
+    · intro hf
+      exact False.elim hf
+
+/-- `go` from index `i` over `defs.drop i` agrees with stage
+`i + suffix.length`. -/
+theorem evalInteriorTables_go_sound {C : Classify} {W : ListInstance}
+    {ρ : ParamEnv} {defs : List Interior} :
+    ∀ (i : Nat) (suffix : List Interior) (T : InteriorTables),
+      defs.drop i = suffix →
+      (∀ c t, t ∈ T c ↔ evalInteriorsAt C defs W.den ρ i c t) →
+      (∀ d, d ∈ suffix → ∀ r, r ∈ d.rules → Safe r) →
+      (∀ d, d ∈ suffix → ∀ r, r ∈ d.rules → r.WellTyped) →
+      ∀ c t, t ∈ evalInteriorTables.go C W ρ i suffix T c ↔
+        evalInteriorsAt C defs W.den ρ (i + suffix.length) c t
+  | i, [], T, _, hT, _, _ => by
+    intro c t
+    simpa [evalInteriorTables.go] using hT c t
+  | i, d :: ds, T, hdrop, hT, hsafe, hwt => by
+    have hget : defs[i]? = some d := getElem?_of_drop_cons hdrop
+    have hT' :=
+      evalInteriorTables_step (C := C) (W := W) (ρ := ρ) (defs := defs)
+        (i := i) (d := d) (T := T) hget hT
+        (fun r hr => hsafe d List.mem_cons_self r hr)
+        (fun r hr => hwt d List.mem_cons_self r hr)
+    have hdrop' : defs.drop (i + 1) = ds := by
+      have h1 : (defs.drop i).drop 1 = ds := by
+        rw [hdrop]; rfl
+      have h2 : (defs.drop i).drop 1 = defs.drop (i + 1) :=
+        List.drop_drop (i := 1) (j := i) (l := defs)
+      exact h2.symm.trans h1
+    have ih :=
+      evalInteriorTables_go_sound (C := C) (W := W) (ρ := ρ) (defs := defs)
+        (i + 1) ds (T.update ⟨i⟩ (evalList C W T ρ d.rules)) hdrop' hT'
+        (fun d' hd' => hsafe d' (List.mem_cons_of_mem _ hd'))
+        (fun d' hd' => hwt d' (List.mem_cons_of_mem _ hd'))
+    intro c t
+    have hlen : i + (d :: ds).length = i + 1 + ds.length := by
+      simp [Nat.add_comm, Nat.add_left_comm]
+    rw [evalInteriorTables.go, hlen]
+    exact ih c t
+
+/-- Interior DAG: `evalInteriorTables` lists `evalInteriorsAt` at
+`defs.length`. Premises: `Safe` / `WellTyped` on every interior rule
+(`eval_sound` at each declaration-order write). -/
 theorem evalInteriorTables_sound {C : Classify} {W : ListInstance}
     {ρ : ParamEnv} {defs : List Interior}
-    (hdefs : defs = []) :
+    (hsafe : ∀ d, d ∈ defs → ∀ r, r ∈ d.rules → Safe r)
+    (hwt : ∀ d, d ∈ defs → ∀ r, r ∈ d.rules → r.WellTyped) :
     ∀ c t, t ∈ evalInteriorTables C W ρ defs c ↔
       evalInteriorsAt C defs W.den ρ defs.length c t := by
-  subst hdefs
   intro c t
-  simp [evalInteriorTables, evalInteriorTables.go, InteriorTables.empty,
-    evalInteriorsAt, InteriorEnv.empty]
+  simpa [evalInteriorTables] using
+    evalInteriorTables_go_sound (C := C) (W := W) (ρ := ρ) (defs := defs)
+      0 defs InteriorTables.empty (by simp)
+      (by
+        intro c t
+        simp [InteriorTables.empty, evalInteriorsAt, InteriorEnv.empty])
+      hsafe hwt c t
 
 theorem mem_allRules_interior {q : Query} {d : Interior}
     (hd : d ∈ q.interiors) {r : Rule} (hr : r ∈ d.rules) :
@@ -854,12 +978,15 @@ theorem evalQuery_sound {C : Classify} {W : ListInstance} {ρ : ParamEnv}
     {q : Query}
     (hsafe : ∀ r, r ∈ q.allRules → Safe r)
     (hwt : ∀ r, r ∈ q.allRules → r.WellTyped)
-    (hlin : q.recLinear)
-    (hinteriors : q.interiors = []) :
+    (hlin : q.recLinear) :
     ∀ t, t ∈ evalQueryList C W ρ q ↔ t ∈ evalQuery C q W.den ρ := by
   intro t
+  have hinterS : ∀ d, d ∈ q.interiors → ∀ r, r ∈ d.rules → Safe r :=
+    fun d hd r hr => hsafe r (mem_allRules_interior hd hr)
+  have hinterW : ∀ d, d ∈ q.interiors → ∀ r, r ∈ d.rules → r.WellTyped :=
+    fun d hd r hr => hwt r (mem_allRules_interior hd hr)
   have hT0 :=
-    evalInteriorTables_sound (C := C) (W := W) (ρ := ρ) hinteriors
+    evalInteriorTables_sound (C := C) (W := W) (ρ := ρ) hinterS hinterW
   have hmainS : ∀ r, r ∈ q.rules → Safe r :=
     fun r hr => hsafe r (mem_allRules_main hr)
   have hmainW : ∀ r, r ∈ q.rules → r.WellTyped :=
