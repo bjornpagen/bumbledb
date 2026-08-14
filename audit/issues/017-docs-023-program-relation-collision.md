@@ -2,7 +2,7 @@
 
 - **Severity:** low
 - **Tree:** docs
-- **Status:** OPEN
+- **Status:** FIXED(b87f3ad9)
 - **Source:** audit/docs.md F23
 - **Depends on:** none (prose+example; same file as docs-022)
 

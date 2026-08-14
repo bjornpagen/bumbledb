@@ -2,7 +2,7 @@
 
 - **Severity:** low
 - **Tree:** docs
-- **Status:** OPEN
+- **Status:** FIXED(b87f3ad9)
 - **Source:** adversarial pass (not in audit/docs.md — F21's pattern, in the cookbook)
 - **Depends on:** none (prose; same file as docs-022/023)
 

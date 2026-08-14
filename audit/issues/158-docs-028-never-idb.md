@@ -2,7 +2,7 @@
 
 - **Severity:** medium
 - **Tree:** docs (lean README)
-- **Status:** OPEN
+- **Status:** FIXED(b87f3ad9)
 - **Source:** audit/docs.md F28
 - **Depends on:** none (prose; same file as docs-027 — land together)
 

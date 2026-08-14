@@ -2,7 +2,7 @@
 
 - **Severity:** medium
 - **Tree:** docs
-- **Status:** OPEN
+- **Status:** FIXED(b87f3ad9)
 - **Source:** audit/docs.md F16
 - **Depends on:** none (prose; same file as docs-015/017/18; sibling docs-022 fixes the cookbook copy)
 

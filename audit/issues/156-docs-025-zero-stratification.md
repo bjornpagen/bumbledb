@@ -2,7 +2,7 @@
 
 - **Severity:** high
 - **Tree:** docs
-- **Status:** OPEN
+- **Status:** FIXED(b87f3ad9)
 - **Source:** audit/docs.md F25
 - **Depends on:** lean-002 (`recLinear` is not the destination name in the rewrite)
 
