@@ -365,7 +365,7 @@ fn residuals_compact_survivors_before_the_sibling_probes() {
     impl Counters for Order {
         fn node_entry(&mut self, _: usize) {}
         fn batch(&mut self, _: usize, _: usize) {}
-        fn cover_choice(&mut self, _: usize, _: usize, _: bool) {}
+        fn cover_choice(&mut self, _: usize, _: usize, _: crate::exec::colt::KeyCount) {}
         fn probe_hash(&mut self, _: usize, _: usize) {}
         fn probe(&mut self, node: usize, _: usize, _: bool) {
             self.events.push(("probe", node));

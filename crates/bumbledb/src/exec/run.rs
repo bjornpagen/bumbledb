@@ -156,7 +156,7 @@ pub enum ScanOffer {
 }
 
 /// Emits a leaf batch under the two existing sums: Licensed suffix AND
-/// Licensed skip capability stop at first SkipSuffix; otherwise the
+/// Licensed skip capability stop at first `SkipSuffix`; otherwise the
 /// whole batch is sink-relevant and must be consumed.
 fn emit_node_batch<S: Sink>(
     sink: &mut S,
@@ -220,8 +220,9 @@ pub trait Counters {
     /// engaged" observable: at batch size B over N tuples this fires
     /// ~N/B times, not N times.
     fn batch(&mut self, node: usize, len: usize);
-    /// A cover was chosen: which subatom, and whether its count was Exact.
-    fn cover_choice(&mut self, node: usize, subatom: usize, exact: bool);
+    /// A cover was chosen: which subatom, and its [`KeyCount`] (Exact vs
+    /// Estimate — the tag, with magnitude unused by stats).
+    fn cover_choice(&mut self, node: usize, subatom: usize, count: KeyCount);
     /// Phase 1 computed one probe hash (ordering assertions: every hash of
     /// a batch precedes its first probe).
     fn probe_hash(&mut self, node: usize, subatom: usize);
@@ -337,7 +338,7 @@ impl Counters for PhaseTimers {
     #[inline]
     fn batch(&mut self, _: usize, _: usize) {}
     #[inline]
-    fn cover_choice(&mut self, _: usize, _: usize, _: bool) {}
+    fn cover_choice(&mut self, _: usize, _: usize, _: KeyCount) {}
     #[inline]
     fn probe_hash(&mut self, _: usize, _: usize) {}
     #[inline]
@@ -640,22 +641,10 @@ pub struct Executor {
     /// `residual_slots`.
     anti_probe_slots: Vec<Vec<AntiProbeSpec>>,
     scratch: Vec<NodeScratch>,
-    /// The leaf fast paths apply when the last node
-    /// has exactly one subatom — its cover is fixed, so the per-entry
+    /// The leaf fast paths apply when the last node is classified
+    /// [`LeafPrecompute::Fast`] — its cover is fixed, so the per-entry
     /// source resolution is precomputed here once.
-    leaf_single: bool,
-    /// Leaf residual value sources, fixed at construction (single-subatom
-    /// leaves only; `Batch` = leaf key word, `Slot` = outer binding).
-    leaf_residual_sources: Vec<(Source, Source)>,
-    /// The scan arm's residual partition, also fixed at construction
-    /// (zero-alloc warm contract: nothing recomputes per node entry):
-    /// per-position specs (at least one side reads a leaf column) and
-    /// batch-constant specs (both sides outer).
-    leaf_scan_residuals: Vec<(crate::ir::CmpOp, Source, Source)>,
-    leaf_const_residuals: Vec<(crate::ir::CmpOp, usize, usize)>,
-    /// One pinned row's gathered key words (the pinned-leaf elision's
-    /// only buffer).
-    leaf_row: Vec<u64>,
+    leaf: LeafPrecompute,
     /// Residual-surviving positions of one scan run (leaf residuals
     /// filter positions before the sink folds them).
     scan_filter: Vec<u32>,
@@ -667,18 +656,8 @@ pub struct Executor {
     cancelled: Vec<u32>,
     cancel_epoch: u32,
     next_origin: u32,
-    /// A skip crossed the virtual root: the whole execution is done.
-    /// The ONE stop condition every loop granularity checks — set
-    /// directly by the root-skip site (a skip is an answer, not an
-    /// error) and by [`Executor::poison`] for the typed errors.
-    all_cancelled: bool,
-    /// The typed early-stop, set-once ([`Executor::poison`]: first
-    /// poison wins; two can never coexist because the first breaks
-    /// every loop upstream) and drained by `execute` into the typed
-    /// error. One sum, not parallel flags: a site cannot set an error
-    /// without stopping, and `execute` cannot miss a kind — no `Result`
-    /// on the per-tuple path.
-    poison: Option<Poison>,
+    /// Running / root-skip / typed poison — one stop, one reason.
+    drive_state: DriveState,
     /// The leaf overlap enumeration's per-execution index cache
     /// (`overlap_leaf.rs`; reset per `execute` — group positions are
     /// only stable within one execution).
@@ -689,6 +668,12 @@ pub struct Executor {
     /// The overlap cache-key scratch: cover occurrence + bound prefix
     /// words (pooled).
     overlap_key: Vec<u64>,
+}
+
+enum DriveState {
+    Running,
+    SkipDone,
+    Poisoned(Poison),
 }
 
 /// A typed condition that stops the whole execution early — the poison
@@ -703,7 +688,7 @@ enum Poison {
 }
 
 /// One-node vs multi-node drive. Construction mints the arm; execute
-/// matches once. `Rc` shares the immutable tables with pump/probe_pass
+/// matches once. `Rc` shares the immutable tables with `pump`/`probe_pass`
 /// so the arm stays Pipeline — no take/put.
 enum Drive {
     Leaf,
@@ -721,13 +706,20 @@ struct PipeTables {
     /// later). Column order is the reverse index: occ → column is a
     /// search over this tiny list.
     carried: Vec<Vec<usize>>,
-    /// The D2 absorb node: the deepest sink-relevant
-    /// node — a leaf skip cancels the subtree of one of its elements.
-    /// `Some(N-1)` (the leaf itself) means skips never cross a node;
-    /// `None` means a skip ends the whole execution. Skips only exist
-    /// under sinks carrying `SkipCapability::Licensed`; cancellation is an optimization —
-    /// a late cancel re-emits rows the seen-set already holds.
-    absorb: Option<usize>,
+    /// The D2 absorb: deepest Forbidden node, or Root when every node
+    /// is Licensed — a leaf skip then ends the whole execution. Skips
+    /// only exist under sinks carrying `SkipCapability::Licensed`;
+    /// cancellation is an optimization — a late cancel re-emits rows
+    /// the seen-set already holds.
+    absorb: SkipAbsorb,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SkipAbsorb {
+    /// Every node is Licensed — a leaf skip ends the execution.
+    Root,
+    /// Deepest Forbidden node; skip at/below it cancels that origin.
+    Node(usize),
 }
 
 /// One anti-probe resolved for execution (docs/architecture/
@@ -764,12 +756,14 @@ struct PointProbeSpec {
 
 /// The single-subatom-leaf precompute: everything
 /// the leaf fast paths would otherwise re-derive per node entry.
-struct LeafPrecompute {
-    single: bool,
-    residual_sources: Vec<(Source, Source)>,
-    scan_residuals: Vec<(crate::ir::CmpOp, Source, Source)>,
-    const_residuals: Vec<(crate::ir::CmpOp, usize, usize)>,
-    row: Vec<u64>,
+enum LeafPrecompute {
+    Generic,
+    Fast {
+        residual_sources: Vec<(Source, Source)>,
+        scan_residuals: Vec<(crate::ir::CmpOp, Source, Source)>,
+        const_residuals: Vec<(crate::ir::CmpOp, usize, usize)>,
+        row: Vec<u64>,
+    },
 }
 
 mod anti_probe;

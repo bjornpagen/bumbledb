@@ -98,7 +98,7 @@ fn pipelined_middle_nodes_probe_in_cross_parent_batches() {
     impl Counters for ProbeBatches {
         fn node_entry(&mut self, _: usize) {}
         fn batch(&mut self, _: usize, _: usize) {}
-        fn cover_choice(&mut self, _: usize, _: usize, _: bool) {}
+        fn cover_choice(&mut self, _: usize, _: usize, _: crate::exec::colt::KeyCount) {}
         fn probe_hash(&mut self, _: usize, _: usize) {}
         fn probe(&mut self, node: usize, _: usize, _: bool) {
             if node == self.node {
@@ -141,10 +141,7 @@ fn pipelined_middle_nodes_probe_in_cross_parent_batches() {
     let sinks = all_vars(&normalized);
     let plan = planned_with_sinks(&normalized, &schema, &[0, 1, 2], &sinks);
     let mut executor = Executor::new(&plan);
-    assert!(matches!(
-        executor.drive,
-        super::super::Drive::Pipeline(_)
-    ));
+    assert!(matches!(executor.drive, super::super::Drive::Pipeline(_)));
     let mut colts = colts_for(&plan, &views);
     let mut bindings = Bindings::new(plan.slot_count());
     let mut sink = CollectSink::default();
@@ -196,7 +193,7 @@ fn zero_binding_gate_yields_one_entry_not_the_relation() {
     impl Counters for EmitCount {
         fn node_entry(&mut self, _: usize) {}
         fn batch(&mut self, _: usize, _: usize) {}
-        fn cover_choice(&mut self, _: usize, _: usize, _: bool) {}
+        fn cover_choice(&mut self, _: usize, _: usize, _: crate::exec::colt::KeyCount) {}
         fn probe_hash(&mut self, _: usize, _: usize) {}
         fn probe(&mut self, _: usize, _: usize, _: bool) {}
         fn residual(&mut self, _: usize, _: bool) {}
@@ -294,7 +291,7 @@ fn deep_nodes_accumulate_full_batches_across_pump_returns() {
     impl Counters for MaxPass {
         fn node_entry(&mut self, _: usize) {}
         fn batch(&mut self, _: usize, _: usize) {}
-        fn cover_choice(&mut self, _: usize, _: usize, _: bool) {}
+        fn cover_choice(&mut self, _: usize, _: usize, _: crate::exec::colt::KeyCount) {}
         fn probe_hash(&mut self, _: usize, _: usize) {}
         fn probe(&mut self, node: usize, _: usize, _: bool) {
             if node == 2 {

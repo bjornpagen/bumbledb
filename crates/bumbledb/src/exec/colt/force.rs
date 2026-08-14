@@ -125,7 +125,7 @@ impl Colt {
     #[must_use]
     pub fn same_shape(&self, other: &Colt) -> bool {
         self.selection_levels == other.selection_levels
-            && self.set_levels == other.set_levels
+            && self.selection_kinds == other.selection_kinds
             && self.schema_columns == other.schema_columns
     }
 
@@ -153,7 +153,7 @@ impl Colt {
         self.dense.clone_from(&other.dense);
         self.union_mark = other.union_mark;
         self.start = other.start;
-        self.selected = other.selected;
+        self.select_state = other.select_state;
         self.epoch = (self.epoch + 1) % 128;
         old
     }

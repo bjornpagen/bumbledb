@@ -208,10 +208,6 @@ impl AggregateSink {
             .filter(|f| matches!(f, SinkSpec::Agg(_)))
             .count();
         let pack = pack_slot(&finds);
-        // Measures fold per row too: their derived words exist only in
-        // the scratch row, so no gather kernel or scan pushdown can read
-        // them. Pack is set-valued group state — per-row as well.
-        let row_fold_only = pack.is_some() || !measures.is_empty();
         // The union key by provenance (R2): head projection for a
         // hand-written rule set, the shared slot arrays for a
         // DNF-derived one. Live state is the arm, not a flattened product.
@@ -283,7 +279,6 @@ impl AggregateSink {
             cached_constant_group: false,
             pack,
             pack_claims: Vec::new(),
-            row_fold_only,
             #[cfg(test)]
             group_probes: 0,
             group_spans,

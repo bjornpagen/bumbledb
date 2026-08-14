@@ -129,10 +129,7 @@ impl AggregateSink {
                     *n += count;
                 }
                 AggSpec::Fold {
-                    op,
-                    slot,
-                    signed,
-                    ..
+                    op, slot, signed, ..
                 } => match (op, acc) {
                     (FoldOp::Sum, Acc::SumSigned(total)) => {
                         debug_assert!(*signed);

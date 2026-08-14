@@ -121,14 +121,19 @@ impl fmt::Display for IntrospectionReport<'_> {
 fn fmt_key_probe(f: &mut fmt::Formatter<'_>, plan: &KeyProbePlan) -> fmt::Result {
     writeln!(f, "access path: key probe")?;
     writeln!(f, "  relation: {}", plan.relation.0)?;
-    match plan.statement {
-        Some(s) => writeln!(f, "  key statement: {}", s.0)?,
-        None => writeln!(f, "  full-fact membership probe")?,
+    match &plan.kind {
+        crate::exec::dispatch::KeyProbeKind::Uniqueness { statement, .. } => {
+            writeln!(f, "  key statement: {}", statement.0)?;
+        }
+        crate::exec::dispatch::KeyProbeKind::Membership { .. } => {
+            writeln!(f, "  full-fact membership probe")?;
+        }
     }
     writeln!(
         f,
         "  key fields: {:?}",
-        plan.key
+        plan.kind
+            .key()
             .iter()
             .map(|(field, _)| field.0)
             .collect::<Vec<_>>()

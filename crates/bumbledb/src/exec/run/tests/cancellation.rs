@@ -250,7 +250,7 @@ fn whole_execution_skip_stops_the_cover_draw_mid_entry() {
                 self.batches += 1;
             }
         }
-        fn cover_choice(&mut self, _: usize, _: usize, _: bool) {}
+        fn cover_choice(&mut self, _: usize, _: usize, _: crate::exec::colt::KeyCount) {}
         fn probe_hash(&mut self, _: usize, _: usize) {}
         fn probe(&mut self, _: usize, _: usize, _: bool) {}
         fn residual(&mut self, _: usize, _: bool) {}

@@ -32,7 +32,7 @@ impl Executor {
         // The leaf fast paths: pinned-row elision and
         // the scan-fold pushdown. A `None` decline falls through to the
         // generic batch machinery with no counters fired.
-        if self.leaf_single
+        if matches!(self.leaf, super::LeafPrecompute::Fast { .. })
             && let Some(flow) = self.run_leaf_fast(plan, node_idx, colts, bindings, sink, counters)
         {
             return flow;
@@ -49,7 +49,7 @@ impl Executor {
         counters.cover_choice(
             node_idx,
             cover_sub,
-            matches!(colts[cover_occ].key_count(cover_cursor), KeyCount::Exact(_)),
+            colts[cover_occ].key_count(cover_cursor),
         );
 
         // Word-level batch arity: an interval cover variable contributes
@@ -611,11 +611,8 @@ impl Executor {
                 key_slots: &self.slot_map[node_idx][cover_sub],
                 bindings,
             };
-            let batch_flow = super::emit_node_batch(
-                sink,
-                plan.nodes()[node_idx].suffix_skip,
-                &batch,
-            );
+            let batch_flow =
+                super::emit_node_batch(sink, plan.nodes()[node_idx].suffix_skip, &batch);
             // introspection's `emits` counts rows the sink consumed: the
             // whole batch, or exactly one when the first emit's skip
             // stopped it (identical to the recursive path's counts).

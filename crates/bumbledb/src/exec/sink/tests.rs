@@ -212,7 +212,8 @@ fn colts_for(plan: &ValidatedPlan, images: &[Arc<crate::image::RelationImage>]) 
                 .collect();
             Colt::new(
                 apply(
-                    &images[usize::try_from(occurrence.relation().0).expect("small")],
+                    &images[usize::try_from(occurrence.source.edb().expect("fixture").0)
+                        .expect("small")],
                     &[],
                     &[],
                     Vec::new(),
@@ -246,7 +247,7 @@ fn normalized(
     let slot_widths: BTreeMap<VarId, SlotWidth> = occurrences
         .iter()
         .flat_map(|o| {
-            let relation = schema.relation(o.relation());
+            let relation = schema.relation(o.source.edb().expect("fixture"));
             o.vars
                 .iter()
                 .map(move |(f, v)| (*v, SlotWidth::of(&relation.field(*f).value_type)))
@@ -376,7 +377,7 @@ struct SkipCounter {
 impl Counters for SkipCounter {
     fn batch(&mut self, _: usize, _: usize) {}
     fn node_entry(&mut self, _: usize) {}
-    fn cover_choice(&mut self, _: usize, _: usize, _: bool) {}
+    fn cover_choice(&mut self, _: usize, _: usize, _: crate::exec::colt::KeyCount) {}
     fn probe_hash(&mut self, _: usize, _: usize) {}
     fn probe(&mut self, _: usize, _: usize, _: bool) {}
     fn residual(&mut self, _: usize, _: bool) {}

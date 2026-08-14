@@ -10,18 +10,22 @@ impl Colt {
         let selection_levels = selections.len();
         let schema_columns: Vec<Vec<usize>> = selections
             .iter()
-            .map(|level| level.columns.clone())
+            .map(|level| level.columns().to_vec())
             .chain(join_schema)
             .collect();
         Self {
             view,
             selection_levels,
-            set_levels: selections.iter().map(|level| level.set).collect(),
+            selection_kinds: selections.iter().map(SelectionLevel::kind).collect(),
             union_mark: None,
             select_hits: Vec::new(),
             select_positions: Vec::new(),
             start: Cursor::Node(NodeRef(0)),
-            selected: selection_levels == 0,
+            select_state: if selection_levels == 0 {
+                super::SelectState::Vacuous
+            } else {
+                super::SelectState::Pending
+            },
             schema_columns,
             nodes: vec![NodeState::Unforced(Positions::Root)],
             chunks: Vec::new(),
@@ -46,12 +50,16 @@ impl Colt {
         Self {
             view: View::Unbound,
             selection_levels: self.selection_levels,
-            set_levels: self.set_levels.clone(),
+            selection_kinds: self.selection_kinds.clone(),
             union_mark: None,
             select_hits: Vec::new(),
             select_positions: Vec::new(),
             start: Cursor::Node(NodeRef(0)),
-            selected: self.selection_levels == 0,
+            select_state: if self.selection_levels == 0 {
+                super::SelectState::Vacuous
+            } else {
+                super::SelectState::Pending
+            },
             schema_columns: self.schema_columns.clone(),
             nodes: vec![NodeState::Unforced(Positions::Root)],
             chunks: Vec::new(),
@@ -84,7 +92,11 @@ impl Colt {
         self.dense.clear();
         self.union_mark = None;
         self.start = Cursor::Node(NodeRef(0));
-        self.selected = self.selection_levels == 0;
+        self.select_state = if self.selection_levels == 0 {
+            super::SelectState::Vacuous
+        } else {
+            super::SelectState::Pending
+        };
         // The epoch advance is what refuses cross-reset resume tokens
         // (the mint sites stamp it into bits 56-62; presentation
         // asserts equality). 7 bits, wrapping.

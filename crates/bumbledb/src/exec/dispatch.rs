@@ -38,18 +38,32 @@ pub struct KeyProbeVar {
     pub width: usize,
 }
 
+/// U vs M access path. Trusted layer: Option-as-tag is accidental.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum KeyProbeKind {
+    Uniqueness {
+        statement: StatementId,
+        key: Vec<(FieldId, Const)>,
+    },
+    Membership {
+        key: Vec<(FieldId, Const)>,
+    },
+}
+
+impl KeyProbeKind {
+    pub fn key(&self) -> &[(FieldId, Const)] {
+        match self {
+            Self::Uniqueness { key, .. } | Self::Membership { key } => key,
+        }
+    }
+}
+
 /// The point-lookup plan: one `U` determinant (or `M`-membership) get, one `F`
 /// fetch, a decode — no images, no COLT, no plan search.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KeyProbePlan {
     pub relation: RelationId,
-    /// The matched key (`Functionality`) statement, probed through its `U`
-    /// determinant index; `None` means every field is bound by value and the probe is
-    /// the full-fact `M` membership check.
-    pub statement: Option<StatementId>,
-    /// The key constants in determinant-byte order: the statement's projection
-    /// order for a `U` probe, field declaration order for the `M` path.
-    pub key: Vec<(FieldId, Const)>,
+    pub kind: KeyProbeKind,
     /// Filters not consumed by the key, checked on the fetched fact
     /// (fields outside the key's projection may still be constrained).
     pub remaining_filters: Vec<FilterPredicate>,

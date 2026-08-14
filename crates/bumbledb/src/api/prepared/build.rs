@@ -1,20 +1,20 @@
 use super::{
     AggregateSink, Bindings, Colt, EitherSink, Executor, FindSpec, FreeJoinRule, KeyProbeRule,
-    OccurrencePin, PreparedBody, PreparedInterior, PreparedQuery, PreparedRule, ProjectionSink,
-    ResolveMemo, Schema, ValueType, ViewMemo, PARKED_SLOTS,
+    OccurrencePin, PARKED_SLOTS, PreparedBody, PreparedInterior, PreparedQuery, PreparedRule,
+    ProjectionSink, ResolveMemo, Schema, ValueType, ViewMemo,
 };
 
 use crate::error::Result;
 use crate::exec::dispatch::classify;
 use crate::image::cache::ImageCache;
 use crate::image::view::View;
-use crate::ir::normalize::{normalize_predicate, NormalizedQuery};
-use crate::ir::validate::{validate, RuleWitness};
+use crate::ir::normalize::{NormalizedQuery, normalize_predicate};
+use crate::ir::validate::{RuleWitness, validate};
 use crate::ir::{AggOp, FindTerm, Query};
 use crate::obs;
 use crate::plan::fj::{
-    binary2fj, factor, fold_split, gj_split, provably_disjoint_rules, provably_distinct,
-    DisjointWitness, DistinctWitness,
+    DisjointWitness, DistinctWitness, binary2fj, factor, fold_split, gj_split,
+    provably_disjoint_rules, provably_distinct,
 };
 use crate::plan::planner::plan as plan_order;
 use crate::storage::env::ReadTxn;
@@ -1014,12 +1014,19 @@ fn build_view_memo(plan: &crate::plan::fj::ValidatedPlan) -> ViewMemo {
         let selections: Vec<crate::exec::colt::SelectionLevel> = occurrence
             .selections
             .iter()
-            .map(|s| crate::exec::colt::SelectionLevel {
-                columns: columns_of(s.field),
-                set: matches!(
+            .map(|s| {
+                if matches!(
                     s.value,
                     crate::image::view::Const::ParamSet(_) | crate::image::view::Const::WordSet(_)
-                ),
+                ) {
+                    crate::exec::colt::SelectionLevel::Set {
+                        columns: columns_of(s.field),
+                    }
+                } else {
+                    crate::exec::colt::SelectionLevel::Point {
+                        columns: columns_of(s.field),
+                    }
+                }
             })
             .collect();
         memo.colts

@@ -35,13 +35,7 @@ impl LeafPrecompute {
                 .iter()
                 .all(|v| width_of(*v) == 1);
         if !single {
-            return Self {
-                single,
-                residual_sources: Vec::new(),
-                scan_residuals: Vec::new(),
-                const_residuals: Vec::new(),
-                row: Vec::new(),
-            };
+            return Self::Generic;
         }
         let cover_vars = &plan.nodes()[last].subatoms[0].vars;
         let residual_sources: Vec<(Source, Source)> = residual_slots[last]
@@ -68,8 +62,7 @@ impl LeafPrecompute {
                 _ => scan_residuals.push((op, *lhs, *rhs)),
             }
         }
-        Self {
-            single,
+        Self::Fast {
             residual_sources,
             scan_residuals,
             const_residuals,

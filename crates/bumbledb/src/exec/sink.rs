@@ -57,6 +57,7 @@ pub enum FoldOp {
     Sum,
     Min,
     Max,
+    /// Acc tag seeded from [`AggSpec::Count`]; a fold over a slot cannot spell it.
     Count,
 }
 
@@ -160,7 +161,9 @@ enum SinkSpec {
 /// head-projection is which union arm — not a sidecar bool.
 #[derive(Debug)]
 pub(in crate::exec::sink) enum DedupState {
-    Bindings { seen: WordMap<()> },
+    Bindings {
+        seen: WordMap<()>,
+    },
     /// Head projection — hand-written multi-rule.
     Union {
         seen: WordMap<()>,
@@ -334,9 +337,9 @@ pub struct ProjectionSink {
     /// Per-slot leaf-batch sources, recomputed at batch entry —
     /// per-slot work, not per-row (the pointer-keyed
     /// skip-if-same-shape cache measured < 2%
-    /// at family level and was deleted): `Some(word)` reads the batch
-    /// keys, `None` the outer bindings.
-    batch_sources: Vec<Option<usize>>,
+    /// at family level and was deleted): `Key` reads the batch keys,
+    /// `Outer` the outer bindings.
+    batch_sources: Vec<crate::exec::run::LeafSource>,
     /// Row-major staging rows of one hoisted scan run — the
     /// column-outer gather's target, `run length × arity` words with
     /// retained capacity (the allocation contract's touched-data
@@ -411,6 +414,13 @@ enum Acc {
     Count(u64),
 }
 
+/// Where a scan-fold input reads. Count contributes no slot.
+#[derive(Debug, Clone, Copy)]
+enum FoldSource {
+    Outer,
+    Column(usize),
+}
+
 /// The aggregate sink: group map keyed by the group-key words, folding each
 /// distinct full binding exactly once. Never returns `SkipSuffix` — the
 /// skip is illegal under aggregation (any new bound variable multiplies
@@ -436,7 +446,7 @@ pub struct AggregateSink {
     /// interval variable's first slot) — computed once per row landing
     /// in `binding_scratch` (`fold_scratch_row`), ray-checked
     /// (`end == MAX` poisons [`Self::ray`]). Non-empty forces the
-    /// per-row fold arm (`row_fold_only`): derived words exist only in
+    /// per-row fold arm: derived words exist only in
     /// the scratch row, so no gather kernel or scan pushdown can read
     /// them.
     measures: Vec<(usize, usize)>,
@@ -468,12 +478,12 @@ pub struct AggregateSink {
     /// retained across executions, cleared at group creation). Memory is
     /// O(the group's claims) — the allocation contract's retained
     /// high-water scratch.
-    pack_claims: Vec<Vec<[u64; 2]>>,
     /// Measures and Pack fold per row — derived words exist only in
     /// the scratch row, and Pack's group state is a claim list, so no
     /// gather kernel or scan pushdown applies; batches route through
-    /// the per-row scratch fold.
-    row_fold_only: bool,
+    /// the per-row scratch fold. Tested as `pack.is_some() ||
+    /// !measures.is_empty()`, not a stored flag.
+    pack_claims: Vec<Vec<[u64; 2]>>,
     /// Head-projection / DNF-span key assembly scratch (union regimes).
     union_scratch: Vec<u64>,
     key_scratch: Vec<u64>,
@@ -485,10 +495,10 @@ pub struct AggregateSink {
     /// whose full binding was first-seen this batch, gather-folded after
     /// the dedup pass exactly like the elided path.
     dedup_survivors: Vec<u32>,
-    /// The open scan's per-aggregate leaf-word sources:
-    /// `Some(word)` folds a column, `None` finishes from the constant
-    /// outer value at `end_scan`.
-    scan_sources: Vec<Option<usize>>,
+    /// The open scan's per-fold leaf-word sources (Count contributes
+    /// no slot — it rides [`AggSpec::Count`]). `Column` folds a leaf
+    /// word; `Outer` finishes from the constant outer value at `end_scan`.
+    scan_sources: Vec<FoldSource>,
     /// Rows consumed by the open scan.
     scan_count: u64,
     /// The leaf-shape classification, recomputed at each batch entry

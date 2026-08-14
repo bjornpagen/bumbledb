@@ -32,7 +32,8 @@ impl ReachCounters {
 impl Counters for ReachCounters {
     fn node_entry(&mut self, _node: usize) {}
     fn batch(&mut self, _node: usize, _len: usize) {}
-    fn cover_choice(&mut self, _node: usize, _subatom: usize, _exact: bool) {}
+    fn cover_choice(&mut self, _node: usize, _subatom: usize, _count: crate::exec::colt::KeyCount) {
+    }
     fn probe_hash(&mut self, _node: usize, _subatom: usize) {}
     fn probe(&mut self, _node: usize, _subatom: usize, _hit: bool) {}
     fn residual(&mut self, _node: usize, _pass: bool) {}

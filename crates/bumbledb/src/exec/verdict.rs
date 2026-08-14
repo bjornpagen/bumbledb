@@ -440,10 +440,7 @@ impl crate::exec::run::Sink for RayArbiter<'_> {
         crate::exec::run::Flow::Continue
     }
 
-    fn emit_batch(
-        &mut self,
-        batch: &crate::exec::run::LeafBatch<'_>,
-    ) -> crate::exec::run::Flow {
+    fn emit_batch(&mut self, batch: &crate::exec::run::LeafBatch<'_>) -> crate::exec::run::Flow {
         for &entry in batch.survivors {
             if self.ray.is_some() {
                 break;

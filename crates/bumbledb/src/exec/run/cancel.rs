@@ -9,8 +9,9 @@ impl Executor {
     /// the stop, so no site can set an error without stopping or stop
     /// on an error `execute` never drains.
     pub(super) fn poison(&mut self, poison: Poison) {
-        self.poison.get_or_insert(poison);
-        self.all_cancelled = true; // stops the pump loops upstream
+        if !matches!(self.drive_state, super::DriveState::Poisoned(_)) {
+            self.drive_state = super::DriveState::Poisoned(poison);
+        }
     }
 
     /// Advances the per-execution cancellation epoch. On wrap-around

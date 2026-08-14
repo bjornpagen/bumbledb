@@ -243,8 +243,14 @@ fn fully_key_bound_single_atom_classifies_as_key_probe() {
         vec![eq_filter(0, Const::Word(5))], // id = 5, the fresh auto-key
     ));
     let plan = classify(&normalized, &schema).expect("key probe");
-    assert_eq!(plan.statement, Some(StatementId(0)));
-    assert_eq!(plan.key, vec![(FieldId(0), Const::Word(5))]);
+    assert!(matches!(
+        &plan.kind,
+        KeyProbeKind::Uniqueness {
+            statement: StatementId(0),
+            ..
+        }
+    ));
+    assert_eq!(plan.kind.key(), &[(FieldId(0), Const::Word(5))]);
     assert!(plan.remaining_filters.is_empty());
     assert_eq!(plan.slot_count(), 2);
 }
@@ -361,11 +367,17 @@ fn a_pointwise_key_covered_by_value_classifies_with_its_statement() {
         ],
     ));
     let plan = classify(&normalized, &schema).expect("key probe");
-    assert_eq!(plan.statement, Some(StatementId(0)));
+    assert!(matches!(
+        &plan.kind,
+        KeyProbeKind::Uniqueness {
+            statement: StatementId(0),
+            ..
+        }
+    ));
     // Key constants in statement projection order.
     assert_eq!(
-        plan.key,
-        vec![
+        plan.kind.key(),
+        &[
             (FieldId(0), Const::Word(1)),
             (FieldId(1), Const::Interval { start: 5, end: 10 }),
         ]
@@ -425,8 +437,8 @@ fn full_fact_binding_takes_the_membership_path() {
         ],
     ));
     let plan = classify(&normalized, &schema).expect("key probe");
-    assert_eq!(plan.statement, None);
-    assert_eq!(plan.key.len(), 2, "every field, declaration order");
+    assert!(matches!(plan.kind, KeyProbeKind::Membership { .. }));
+    assert_eq!(plan.kind.key().len(), 2, "every field, declaration order");
     assert!(plan.remaining_filters.is_empty());
 
     // A membership binding does not bind the interval field's value:
@@ -573,7 +585,13 @@ fn pointwise_key_probe_hit_is_byte_exact() {
         ],
     ));
     let plan = classify(&normalized, &schema).expect("key probe");
-    assert_eq!(plan.statement, Some(StatementId(0)));
+    assert!(matches!(
+        &plan.kind,
+        KeyProbeKind::Uniqueness {
+            statement: StatementId(0),
+            ..
+        }
+    ));
 
     let txn = env.read_txn().expect("txn");
     let mut key = Vec::new();
@@ -634,7 +652,10 @@ fn full_fact_membership_lookup_with_an_interval_field() {
         ],
     ));
     let plan = classify(&exact, &schema).expect("key probe");
-    assert_eq!(plan.statement, None, "the M path");
+    assert!(
+        matches!(plan.kind, KeyProbeKind::Membership { .. }),
+        "the M path"
+    );
     let txn = env.read_txn().expect("txn");
     let mut key = Vec::new();
     assert!(
@@ -697,10 +718,7 @@ fn aggregate_over_a_point_lookup_folds_one_binding() {
     let plan = classify(&normalized, &schema).expect("key probe");
     let txn = env.read_txn().expect("txn");
     let mut bindings = Bindings::new(1);
-    let mut sink = AggregateSink::new(
-        vec![FindSpec::Agg(AggSpec::Count)],
-        1,
-    );
+    let mut sink = AggregateSink::new(vec![FindSpec::Agg(AggSpec::Count)], 1);
     let mut key = Vec::new();
     execute_key_probe(
         &plan,

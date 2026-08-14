@@ -3,7 +3,7 @@ use crate::image::view::{Const, FilterPredicate, ResolvedWordSource};
 use crate::ir::CmpOp;
 use crate::ir::normalize::NormalizedQuery;
 use crate::schema::{Relation, Schema};
-use bumbledb_theory::schema::{FieldId, StatementId};
+use bumbledb_theory::schema::FieldId;
 
 /// Classifies a normalized query: `Some(KeyProbePlan)` iff it is key-probe
 /// eligible — exactly one atom occurrence (positive, so no negated atoms
@@ -91,7 +91,8 @@ pub fn classify(normalized: &NormalizedQuery, schema: &Schema) -> Option<KeyProb
     // determinants and no `M` entries — its storage is the fixpoint
     // driver's transient image — so an `Interior`-reading rule always keeps
     // the Free Join path.
-    let relation = schema.relation(occurrence.source.edb()?);
+    let relation_id = occurrence.source.edb()?;
+    let relation = schema.relation(relation_id);
     // A closed relation has no `U` determinants and no `M` entries — its
     // storage is the theory (`docs/architecture/50-storage.md` § virtual
     // relations) — so even a fully key-bound single atom classifies as
@@ -99,12 +100,8 @@ pub fn classify(normalized: &NormalizedQuery, schema: &Schema) -> Option<KeyProb
     if relation.is_closed() {
         return None;
     }
-    let (statement, key_fields) = key_probe_candidate(relation, schema, &value_of)?;
-
-    let key: Vec<(FieldId, Const)> = key_fields
-        .iter()
-        .map(|f| (*f, value_of(*f).expect("checked above")))
-        .collect();
+    let kind = key_probe_candidate(relation, schema, &value_of)?;
+    let key_fields: Vec<FieldId> = kind.key().iter().map(|(f, _)| *f).collect();
 
     // The slot layout over the decoded variables (the `SlotWidth` map,
     // exported by normalization).
@@ -126,9 +123,8 @@ pub fn classify(normalized: &NormalizedQuery, schema: &Schema) -> Option<KeyProb
         .collect();
 
     Some(KeyProbePlan {
-        relation: occurrence.relation(),
-        statement,
-        key,
+        relation: relation_id,
+        kind,
         remaining_filters: unconsumed_filters(&occurrence.filters, key_fields),
         vars,
     })
@@ -140,7 +136,7 @@ fn key_probe_candidate(
     relation: &Relation,
     schema: &Schema,
     value_of: &impl Fn(FieldId) -> Option<Const>,
-) -> Option<(Option<StatementId>, Vec<FieldId>)> {
+) -> Option<super::KeyProbeKind> {
     relation
         .keys()
         .iter()
@@ -153,7 +149,14 @@ fn key_probe_candidate(
         })
         .map(|id| {
             let key = schema.key(*id);
-            (Some(key.id), key.projection.to_vec())
+            super::KeyProbeKind::Uniqueness {
+                statement: key.id,
+                key: key
+                    .projection
+                    .iter()
+                    .map(|f| (*f, value_of(*f).expect("checked above")))
+                    .collect(),
+            }
         })
         .or_else(|| {
             let all: Vec<FieldId> = (0..relation.fields().len())
@@ -161,7 +164,12 @@ fn key_probe_candidate(
                 .collect();
             all.iter()
                 .all(|f| value_of(*f).is_some())
-                .then_some((None, all))
+                .then(|| super::KeyProbeKind::Membership {
+                    key: all
+                        .iter()
+                        .map(|f| (*f, value_of(*f).expect("checked above")))
+                        .collect(),
+                })
         })
 }
 

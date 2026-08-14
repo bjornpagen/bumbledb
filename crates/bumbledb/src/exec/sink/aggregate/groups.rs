@@ -1,5 +1,5 @@
 use crate::exec::run::{LeafBatch, LeafSource};
-use crate::exec::sink::{AggSpec, AggregateSink, GroupTable, SinkSpec};
+use crate::exec::sink::{AggregateSink, GroupTable, SinkSpec};
 
 /// Loads a group key, span-wise (the `SlotWidth` layout): each group
 /// variable contributes its full word span — never a bare width-1 read.

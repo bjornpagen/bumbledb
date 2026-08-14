@@ -237,10 +237,10 @@ fn pump_gather_windows_are_attributed() {
     let sinks = all_vars(&normalized);
     let plan = planned_with_sinks(&normalized, &schema, &[0, 1, 2], &sinks);
     let mut executor = Executor::new(&plan);
-            assert!(
-                matches!(executor.drive, super::super::Drive::Pipeline(_)),
-                "pipeline dispatched"
-            );
+    assert!(
+        matches!(executor.drive, super::super::Drive::Pipeline(_)),
+        "pipeline dispatched"
+    );
     let mut colts = colts_for(&plan, &views);
     let mut bindings = Bindings::new(plan.slot_count());
     let mut sink = CollectSink::default();
@@ -285,7 +285,7 @@ fn zero_yield_draws_are_not_batches() {
             self.entries += u64::try_from(len).expect("batch fits u64");
             self.zero_len += u64::from(len == 0);
         }
-        fn cover_choice(&mut self, _: usize, _: usize, _: bool) {}
+        fn cover_choice(&mut self, _: usize, _: usize, _: crate::exec::colt::KeyCount) {}
         fn probe_hash(&mut self, _: usize, _: usize) {}
         fn probe(&mut self, _: usize, _: usize, _: bool) {}
         fn residual(&mut self, _: usize, _: bool) {}
@@ -317,10 +317,10 @@ fn zero_yield_draws_are_not_batches() {
     let sinks = all_vars(&normalized);
     let plan = planned_with_sinks(&normalized, &schema, &[0, 1, 2], &sinks);
     let mut executor = Executor::with_batch_size(&plan, 4);
-            assert!(
-                matches!(executor.drive, super::super::Drive::Pipeline(_)),
-                "pipeline dispatched"
-            );
+    assert!(
+        matches!(executor.drive, super::super::Drive::Pipeline(_)),
+        "pipeline dispatched"
+    );
     let mut colts = colts_for(&plan, &views);
     let mut bindings = Bindings::new(plan.slot_count());
     let mut sink = CollectSink::default();

@@ -287,9 +287,38 @@ fn unpack_child(word: u64) -> Slot {
 /// is scalar or set, never both), so it lives in the trie's shape, not
 /// in the per-execution key data.
 #[derive(Debug, Clone)]
-pub struct SelectionLevel {
-    pub columns: Vec<usize>,
-    pub set: bool,
+pub enum SelectionLevel {
+    Point { columns: Vec<usize> },
+    Set { columns: Vec<usize> },
+}
+
+impl SelectionLevel {
+    fn columns(&self) -> &[usize] {
+        match self {
+            Self::Point { columns } | Self::Set { columns } => columns,
+        }
+    }
+
+    fn kind(&self) -> SelectionKind {
+        match self {
+            Self::Point { .. } => SelectionKind::Point,
+            Self::Set { .. } => SelectionKind::Set,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SelectionKind {
+    Point,
+    Set,
+}
+
+/// Selection-free tries are vacuous success, not a pretend-ran bit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SelectState {
+    Vacuous,
+    Pending,
+    Done,
 }
 
 /// Pool high-water snapshot taken just before a select builds its first
@@ -321,8 +350,8 @@ pub struct Colt {
     /// subtrie a view scan used to produce — built lazily, only for keys
     /// actually asked about.
     selection_levels: usize,
-    /// Per selection level: whether it is set-bound ([`SelectionLevel`]).
-    set_levels: Vec<bool>,
+    /// Per selection level: point-probe vs set-union ([`SelectionLevel`]).
+    selection_kinds: Vec<SelectionKind>,
     /// The union watermark of the current execution's set probes, if any
     /// ([`PoolMark`]).
     union_mark: Option<PoolMark>,
@@ -332,9 +361,8 @@ pub struct Colt {
     select_positions: Vec<u32>,
     /// The post-selection start cursor for the current execution.
     start: Cursor,
-    /// Whether [`Colt::select`] ran since the last reset (always true for
-    /// selection-free tries).
-    selected: bool,
+    /// Whether [`Colt::select`] is vacuous (no levels), pending, or done.
+    select_state: SelectState,
     /// Per trie level — selection levels first, then join levels — the
     /// image column index of each key variable. Public APIs take *join*
     /// levels; internal code indexes this directly.

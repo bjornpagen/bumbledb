@@ -45,10 +45,14 @@ impl Sink for ProjectionSink {
             return self.begin_scan_measured(scan);
         };
         for (i, slot) in sources.iter().enumerate() {
-            self.batch_sources[i] = scan.key_slots.iter().position(|k| k == slot);
+            self.batch_sources[i] = scan
+                .key_slots
+                .iter()
+                .position(|k| k == slot)
+                .map_or(LeafSource::Outer, LeafSource::Key);
         }
         for (i, slot) in sources.iter().enumerate() {
-            if self.batch_sources[i].is_none() {
+            if matches!(self.batch_sources[i], LeafSource::Outer) {
                 self.scratch[i] = scan.bindings.get(*slot);
             }
         }
@@ -86,7 +90,7 @@ impl Sink for ProjectionSink {
             let rows = &mut self.scan_rows;
             rows.resize(run.len() * arity, 0);
             for (i, source) in sources.iter().enumerate() {
-                if let Some(word) = *source {
+                if let LeafSource::Key(word) = *source {
                     match (scan.colt.suffix_column(scan.level, word), run) {
                         (ColumnView::Words(w), SuffixRun::Identity { start, len }) => {
                             for (k, value) in w[start..start + len].iter().enumerate() {
@@ -122,7 +126,7 @@ impl Sink for ProjectionSink {
         } else {
             run_positions(run, &mut |position: u32| {
                 for (i, source) in sources.iter().enumerate() {
-                    if let Some(word) = source {
+                    if let LeafSource::Key(word) = source {
                         scratch[i] = match scan.colt.suffix_column(scan.level, *word) {
                             ColumnView::Words(w) => w[position as usize],
                             ColumnView::Bytes(b) => u64::from(b[position as usize]),
@@ -150,13 +154,10 @@ impl ProjectionSink {
         // outer values refresh per batch (bindings vary per parent), the
         // row loop touches only the varying key words and the seen-set.
         for (i, source) in sources.iter().enumerate() {
-            self.batch_sources[i] = match batch.source_of(*source) {
-                LeafSource::Key(word) => Some(word),
-                LeafSource::Outer => None,
-            };
+            self.batch_sources[i] = batch.source_of(*source);
         }
         for (i, source) in sources.iter().enumerate() {
-            if self.batch_sources[i].is_none() {
+            if matches!(self.batch_sources[i], LeafSource::Outer) {
                 self.scratch[i] = batch.bindings.get(*source);
             }
         }
@@ -173,7 +174,7 @@ impl ProjectionSink {
         let seen = &mut self.seen;
         for &entry in batch.survivors {
             for (i, source) in batch_sources.iter().enumerate() {
-                if let Some(word) = source {
+                if let LeafSource::Key(word) = source {
                     scratch[i] = batch.key(entry, *word);
                 }
             }

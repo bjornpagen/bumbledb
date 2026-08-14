@@ -69,10 +69,7 @@ impl AggregateSink {
                     *n += 1;
                 }
                 AggSpec::Fold {
-                    op,
-                    slot,
-                    signed,
-                    ..
+                    op, slot, signed, ..
                 } => {
                     let word = self.binding_scratch[*slot];
                     match (op, acc) {

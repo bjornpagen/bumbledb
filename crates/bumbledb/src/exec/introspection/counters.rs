@@ -9,7 +9,8 @@ impl Counters for CountingCounters {
         self.batches[node][0] += 1;
         self.batches[node][1] += u64::try_from(len).expect("batch fits u64");
     }
-    fn cover_choice(&mut self, node: usize, subatom: usize, exact: bool) {
+    fn cover_choice(&mut self, node: usize, subatom: usize, count: crate::exec::colt::KeyCount) {
+        let exact = matches!(count, crate::exec::colt::KeyCount::Exact(_));
         self.cover_choices[node * self.stride + subatom][usize::from(!exact)] += 1;
     }
     fn probe_hash(&mut self, node: usize, subatom: usize) {

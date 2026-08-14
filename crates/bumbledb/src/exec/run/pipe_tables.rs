@@ -40,7 +40,8 @@ impl PipeTables {
         }
         let absorb = (0..n_nodes)
             .rev()
-            .find(|&m| plan.nodes()[m].suffix_skip == crate::plan::fj::SuffixSkip::Forbidden);
+            .find(|&m| plan.nodes()[m].suffix_skip == crate::plan::fj::SuffixSkip::Forbidden)
+            .map_or(super::SkipAbsorb::Root, super::SkipAbsorb::Node);
         Self {
             entry_level,
             carried,
