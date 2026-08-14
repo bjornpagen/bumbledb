@@ -45,9 +45,9 @@ use crate::error::{CorruptionError, Direction, Error, Result, Violation, Violati
 use crate::interval::sweep::{Continuation, sweep};
 use crate::obs;
 use crate::schema::{
-    AxiomIndex, BoundCeiling, CapacityId, CapacityStatement, CompiledCheck, ContainmentId,
-    DisjointDeterminantProof, Enforcement, IntervalTail, KeyId, Schema, SealedBound, SealedWeight,
-    StatementView,
+    AxiomIndex, BoundCeiling, CapacityEnforcement, CapacityId, CapacityStatement, CompiledCheck,
+    ContainmentId, DisjointDeterminantProof, Enforcement, IntervalTail, KeyId, Schema, SealedBound,
+    SealedWeight, StatementView,
 };
 use crate::storage::delta::WriteDelta;
 use crate::storage::env::{ReadTxn, WriteTxn};
@@ -825,7 +825,7 @@ pub(crate) fn capacity_child_image<'a>(
     out: &'a mut DeterminantImage,
 ) -> &'a DeterminantImage {
     match &statement.enforcement {
-        Enforcement::ScalarProbe {
+        CapacityEnforcement::ScalarProbe {
             key_permutation, ..
         } => keys::permuted_determinant_image(
             layout,
@@ -837,11 +837,8 @@ pub(crate) fn capacity_child_image<'a>(
         // A closed target's one probe-able identity is the synthetic id:
         // the projection is a single field, so statement order IS
         // determinant order.
-        Enforcement::Closed { .. } => {
+        CapacityEnforcement::Closed { .. } => {
             keys::determinant_image(layout, &statement.source.projection, fact, out)
-        }
-        Enforcement::IntervalCoverage { .. } => {
-            unreachable!("capacity statements refuse interval positions in projections at the gate")
         }
     }
 }
@@ -1300,7 +1297,7 @@ impl<'a> Checker<'a> {
         parent_key: &[u8],
     ) -> Result<()> {
         let parent_fact: &[u8] = match &statement.enforcement {
-            Enforcement::ScalarProbe { target_key, .. } => {
+            CapacityEnforcement::ScalarProbe { target_key, .. } => {
                 let key_statement = self.schema.key(*target_key);
                 // A fresh-row parent key has no `U` tree (R16): the
                 // parent tuple IS the `F` row id, one get, the value the
@@ -1365,7 +1362,7 @@ impl<'a> Checker<'a> {
             }
             // A closed parent: the member set IS the ψ-selected roster,
             // and the parent tuple is the axiom's 8-byte id encoding.
-            Enforcement::Closed { members } => {
+            CapacityEnforcement::Closed { members } => {
                 let Ok(word) = <[u8; 8]>::try_from(parent_key) else {
                     return Err(Error::Corruption(CorruptionError::MalformedValue(
                         "capacity parent key width",
@@ -1383,11 +1380,6 @@ impl<'a> Checker<'a> {
                     .expect("the Closed enforcement arm resolves only against a closed target");
                 let index = usize::try_from(id).expect("a contained axiom index fits usize");
                 &rows[index].fact
-            }
-            Enforcement::IntervalCoverage { .. } => {
-                unreachable!(
-                    "capacity statements refuse interval positions in projections at the gate"
-                )
             }
         };
         // Dependent bounds resolve from the holder fact already in hand

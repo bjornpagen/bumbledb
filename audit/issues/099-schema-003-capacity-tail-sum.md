@@ -2,7 +2,7 @@
 
 - **Severity:** high
 - **Tree:** schema
-- **Status:** OPEN
+- **Status:** FIXED(1f0110bd)
 - **Source:** audit/storage-schema.md F3
 - **Depends on:** none (co-lands with schema-008)
 - **Conflicts with:** schema-008 (same `CapacityStatement` constructor)

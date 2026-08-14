@@ -309,6 +309,42 @@ impl Enforcement {
     }
 }
 
+/// Capacity's two-arm target plan (CONTRACT C9). Containments keep
+/// three-arm [`Enforcement`]; capacity projections refuse interval
+/// positions, so coverage is unrepresentable here.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum CapacityEnforcement {
+    /// Probe an ordinary parent key for one scalar tuple.
+    ScalarProbe {
+        target_key: KeyId,
+        key_permutation: Box<[u16]>,
+    },
+    /// A closed parent's stage-1-known answer set.
+    Closed { members: MemberSet },
+}
+
+impl CapacityEnforcement {
+    /// Convert the shared target-key plan after capacity's projection
+    /// interval refusal: coverage cannot arise.
+    pub(crate) fn from_resolved(enforcement: Enforcement) -> Self {
+        match enforcement {
+            Enforcement::ScalarProbe {
+                target_key,
+                key_permutation,
+            } => Self::ScalarProbe {
+                target_key,
+                key_permutation,
+            },
+            Enforcement::Closed { members } => Self::Closed { members },
+            Enforcement::IntervalCoverage { .. } => {
+                unreachable!(
+                    "capacity statements refuse interval positions in projections at the gate"
+                )
+            }
+        }
+    }
+}
+
 /// Index of a ground axiom in a sealed closed extension. Arbitrary `u64`
 /// fact values narrow through [`TryFrom`]; values beyond `u16` are absent,
 /// and [`MemberSet::contains`] makes indices `256..=u16::MAX` absent too.
@@ -591,12 +627,13 @@ pub struct CapacityStatement {
     /// The inclusive upper measure bound; [`SealedBound::Unbounded`] is `*`.
     pub hi: SealedBound,
     pub source: Side,
-    /// The target-key plan handle (`ScalarProbe` or `Closed`; capacity
-    /// projections refuse interval positions, so `IntervalCoverage` is
-    /// unreachable). Consumed by the commit judge's touched-parent probe
+    /// The target-key plan handle: [`CapacityEnforcement::ScalarProbe`]
+    /// or [`CapacityEnforcement::Closed`]. Interval coverage is
+    /// unrepresentable — capacity projections refuse interval positions
+    /// at the gate. Consumed by the commit judge's touched-parent probe
     /// and the sweeper's global re-verification
     /// (`storage/commit/judgment.rs::check_capacities`).
-    pub(crate) enforcement: Enforcement,
+    pub(crate) enforcement: CapacityEnforcement,
     /// Both sides' σ bindings, compiled once at validate — resolved per
     /// commit into [`crate::storage::commit::judgment::Selections`]
     /// exactly as containments' are.

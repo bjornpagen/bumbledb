@@ -10,7 +10,7 @@
 
 use crate::encoding::{TypeDesc, decode_field, fact_hash, field_word_bytes};
 use crate::error::{CorruptionError, Direction, Error, Result, Violation, Violations};
-use crate::schema::{AxiomIndex, Enforcement};
+use crate::schema::{AxiomIndex, CapacityEnforcement, Enforcement};
 use crate::storage::commit::judgment;
 use crate::storage::keys::{self, DeterminantImage, KeyBuf, MAX_KEY};
 use bumbledb_theory::schema::RelationId;
@@ -254,7 +254,7 @@ fn check_marks(
     }
     for &capacity_id in relation.capacity_targets() {
         let statement = schema.capacity(capacity_id);
-        let Enforcement::ScalarProbe { target_key, .. } = &statement.enforcement else {
+        let CapacityEnforcement::ScalarProbe { target_key, .. } = &statement.enforcement else {
             continue; // closed parents re-check in the marks pass
         };
         {

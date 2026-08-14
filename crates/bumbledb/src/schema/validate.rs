@@ -14,12 +14,12 @@
 //! rejected.
 
 use super::{
-    AxiomIndex, Bound, CapacityId, CapacityStatement, CompiledCheck, CompiledSides, ContainmentId,
-    ContainmentStatement, DisjointDeterminantProof, Enforcement, FactLayout, FieldDescriptor,
-    FieldId, Generation, IntervalTail, KeyForm, KeyId, KeyStatement, LiteralSet, MemberSet,
-    Relation, RelationBody, RelationDescriptor, RelationId, Schema, SchemaDescriptor,
-    SchemaWarning, SealedBound, SealedWeight, Side, StatementDescriptor, StatementId, StatementRef,
-    ValueMismatch, ValueType, Weight, value_matches,
+    AxiomIndex, Bound, CapacityEnforcement, CapacityId, CapacityStatement, CompiledCheck,
+    CompiledSides, ContainmentId, ContainmentStatement, DisjointDeterminantProof, Enforcement,
+    FactLayout, FieldDescriptor, FieldId, Generation, IntervalTail, KeyForm, KeyId, KeyStatement,
+    LiteralSet, MemberSet, Relation, RelationBody, RelationDescriptor, RelationId, Schema,
+    SchemaDescriptor, SchemaWarning, SealedBound, SealedWeight, Side, StatementDescriptor,
+    StatementId, StatementRef, ValueMismatch, ValueType, Weight, value_matches,
 };
 use crate::encoding::{field_bytes, field_word_bytes};
 use crate::error::{SchemaError, StatementErrorKind, TargetKeyCandidate};
@@ -777,7 +777,7 @@ fn validate_containment(
 /// the interval tails a Duration weight or bound reads through (parse,
 /// don't validate: no judge re-walks the field rosters).
 struct SealedCapacity {
-    enforcement: Enforcement,
+    enforcement: CapacityEnforcement,
     weight: SealedWeight,
     hi: SealedBound,
 }
@@ -946,7 +946,13 @@ fn validate_capacity(
     // Probe-ability, the containment rule reused: Y resolves a declared
     // key of B (a closed target takes the member-set arm through the same
     // call — the closed-side mirror).
-    let enforcement = resolve_target_key(id, target, &target_projection, relations, descriptors)?;
+    let enforcement = CapacityEnforcement::from_resolved(resolve_target_key(
+        id,
+        target,
+        &target_projection,
+        relations,
+        descriptors,
+    )?);
 
     // Both sides constant: the measure judgment is decidable here — per
     // ψ-selected parent axiom, the φ-selected child axioms sharing its
@@ -955,7 +961,7 @@ fn validate_capacity(
     // (`lean/Bumbledb/Schema.lean: den_closed_constant`; a per-row
     // inverted resolved window refutes outright — no measure passes both
     // ends). The cited row is the parent axiom whose group fails.
-    if let (Enforcement::Closed { .. }, Some(source_rows)) = (
+    if let (CapacityEnforcement::Closed { .. }, Some(source_rows)) = (
         &enforcement,
         relations[source.relation.0 as usize].body.closed_rows(),
     ) {

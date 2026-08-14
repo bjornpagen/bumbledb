@@ -24,7 +24,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::schema::{
-    AxiomIndex, CapacityId, ContainmentId, Enforcement, IntervalTail, KeyId, Schema,
+    AxiomIndex, CapacityEnforcement, CapacityId, ContainmentId, Enforcement, IntervalTail, KeyId,
+    Schema,
 };
 use crate::storage::delta::{Disposition, WriteDelta};
 use crate::storage::keys::{self, DeterminantImage};
@@ -533,7 +534,7 @@ fn mark_ops(
     // reach a fact op (writes refused), so only the keyed arm exists here.
     for &capacity_id in relation.capacity_targets() {
         let statement = schema.capacity(capacity_id);
-        if let Enforcement::ScalarProbe { target_key, .. } = &statement.enforcement
+        if let CapacityEnforcement::ScalarProbe { target_key, .. } = &statement.enforcement
             && satisfies(&selections.capacity(capacity_id).target, layout, fact)
         {
             let key_statement = schema.key(*target_key);

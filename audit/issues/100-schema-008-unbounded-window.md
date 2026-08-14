@@ -2,7 +2,7 @@
 
 - **Severity:** medium
 - **Tree:** schema
-- **Status:** OPEN
+- **Status:** FIXED(1f0110bd)
 - **Source:** audit/storage-schema.md F16
 - **Depends on:** schema-003
 - **Conflicts with:** schema-003 (same constructor)

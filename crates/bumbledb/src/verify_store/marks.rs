@@ -9,7 +9,7 @@
 
 use crate::encoding::encode_u64;
 use crate::error::{Error, Result, Violation};
-use crate::schema::Enforcement;
+use crate::schema::CapacityEnforcement;
 use crate::storage::commit::judgment;
 
 use super::{StoreFinding, Sweep};
@@ -22,7 +22,7 @@ pub(super) fn sweep(s: &mut Sweep<'_, '_>) -> Result<()> {
     // axiom's id encoding is the parent tuple, and the commit path's own
     // capacity check measures its child group.
     for (index, statement) in schema.capacities().iter().enumerate() {
-        let Enforcement::Closed { .. } = &statement.enforcement else {
+        let CapacityEnforcement::Closed { .. } = &statement.enforcement else {
             continue;
         };
         let capacity_id =
