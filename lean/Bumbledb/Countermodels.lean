@@ -1909,13 +1909,13 @@ regression test (`40-execution.md` § the paper's core, the deviation
 paragraph). -/
 theorem loose_cover_rebinds (C : Query.Classify) (ρ : Query.ParamEnv) :
     [tri1, tri3, tri4]
-        ∈ Query.looseAnswers C triRule triLoosePlan triInst ρ ∧
+        ∈ Query.looseAnswers C triRule triLoosePlan (Query.edbEnv triInst) ρ ∧
     [tri1, tri3, tri4] ∉ Query.ruleAnswers C triRule (Query.edbEnv triInst) ρ := by
   constructor
   · refine ⟨triLooseOut, ?_, ?_, ?_, ?_⟩
-    · show triLooseOut ∈ Query.looseNodeStep triRule triInst ρ
+    · show triLooseOut ∈ Query.looseNodeStep triRule (Query.edbEnv triInst) ρ
         [[⟨0, [triA, triB]⟩]] [⟨1, [triB, triC]⟩, ⟨2, [triA, triC]⟩]
-        (Query.looseNodeStep triRule triInst ρ []
+        (Query.looseNodeStep triRule (Query.edbEnv triInst) ρ []
           [⟨0, [triA, triB]⟩] fun _ => True)
       refine ⟨triMid, ?_, ⟨1, [triB, triC]⟩, List.mem_cons_self,
         ?_, ?_, ?_⟩
