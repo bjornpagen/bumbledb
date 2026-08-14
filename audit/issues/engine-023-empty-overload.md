@@ -19,18 +19,19 @@
 // measure site).
 ```
 
-Two adjacent comments: "always the whole program" and "interiors-only with a dead main still runs the preamble". `run_rules` special-cases Empty twice (`execute.rs:164, 170`); `empty_stats` (`introspect.rs:394-414`) hardcodes `interiors: Vec::new()` — wrong for dead-main-with-live-interiors, whose interior emits vanish from stats.
+Two adjacent comments: "always the whole program" and "interiors-only with a dead main still runs the preamble". `run_rules` special-cases Empty twice (`execute.rs:164, 170`). `introspect` spells emptiness as a sentinel plan unit (`PreparedBody::Empty => (vec![RulePlan::Empty], …)` at `:42`) and `empty_stats` mints a phantom one-element `RuleStats` (`:397-406`). `empty_stats` is only reached when `interiors.is_empty() && Empty` (`:214`) — dead-main-with-live-interiors already reports `interior_stats()`. The overload is still the product; the stats hole is a regression waiting for a naive `Empty → empty_stats()` remap after engine-001, not a current observable.
 
 ## Why it's wrong
 
-One tag, three meanings, disambiguated by a sibling field (`interiors.is_empty()`) — Minsky's product again (Insight 4), and the honest confusion is already written down as two contradictory comments in one block (Insight 1). The stats hole (`empty_stats` assuming no interiors) is a real observable defect the overload caused.
+One tag, three meanings, disambiguated by a sibling field (`interiors.is_empty()`) — Minsky's product again (Insight 4), and the honest confusion is already written down as two contradictory comments in one block (Insight 1). Emptiness-as-sentinel (`RulePlan::Empty`, phantom `RuleStats`) is the same overload on the stats/introspection surface.
 
 ## The fix
 
 Per `audit/CONTRACT.md §C3`: **`Empty` is not a variant.** Dead main is `Pipeline::Cq { interiors, rules: vec![] }`; the empty fast path is the zero-iteration rule loop:
 
 - `run_bound`'s short-circuit becomes structural: `Cq { interiors: [], rules: [] }` has nothing to do after bind — and that's just what the zero-iteration loop does; keep an explicit early-return ONLY if the profiler shows the sink-reset/finalize skip matters, and then it tests the one parsed shape, not a tag+flag pair.
-- Dead-main-with-interiors runs the preamble (unchanged behavior) and REPORTS interior emits in stats (engine-012's `empty_stats` fix — behavior change in stats only, captured by the new lock there).
+- Dead-main-with-interiors runs the preamble (unchanged) and keeps reporting interior emits (already true today). After Empty dies, do not route that shape through `empty_stats`.
+- `RulePlan::Empty` is display-only: either drop it (zero plan units + `stats.dead`) or keep it as an introspection sentinel that is **not** a `PreparedPipeline` variant. Do not mint a phantom `RuleStats` row for a query with no surviving main rules.
 - The death record (`stats.dead`) remains the story for refuted rules.
 
 ## Acceptance criteria

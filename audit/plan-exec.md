@@ -281,12 +281,73 @@ Loops test `!= Running`. `execute` matches SkipDone vs Poisoned. Unpaired poison
 | Severity   | Count |
 |------------|------:|
 | high       |     2 |
-| med        |    11 |
+| med        |    12 |
 | low        |     2 |
 | duplicate  |     5 |
-| **OPEN**   | **15** |
-| **total**  | **20** |
+| **OPEN**   | **16** |
+| **total**  | **21** |
 
-High: F1–F2. Med: F3–F13. Low: F14–F15. Duplicate: F16–F20.
+High: F1–F2. Med: F3–F13 + exec-017 absorb. Low: F14–F15. Duplicate: F16–F20. Post-validation OPEN count is in the adversarial section below.
 
-Issue files: `plan-001`..`plan-008`, `exec-001`..`exec-016`. Duplicates are stubs. `INDEX.md` not edited.
+Issue files: `plan-001`..`plan-008`, `exec-001`..`exec-017`. Duplicates are stubs. `INDEX.md` not edited.
+
+---
+
+## Adversarial validation (2026-08-14)
+
+Citations opened against live `plan/` and `exec/`. No product-code edits. Wave-1 `api/prepared/*` engine-* parents still OPEN — duplicate stubs kept.
+
+### Verdicts
+
+| Id | Verdict | One line |
+|----|---------|----------|
+| plan-001 | REWRITE | Diagnosis holds (`FoldedMark { ids, negated }` at `ir/normalize.rs:84-92`; reparse `into_stats.rs:97-101`). Fix was a dual (`ids: u16` *and* a vec) and did not drop `Copy`. Mark is now polarity sum + capped σ-survivors + `RelationId`; `Role` loses `Copy`. |
+| plan-002 | KEEP | Two `pinned_fields` (`plan.rs:21-35` scalar-Eq only; `provably_disjoint.rs:117-126` every Eq). Verdicts agree today because `provably_different` returns false for sets; the dual is still the defect. |
+| plan-003 | REWRITE | Interior cannot reach `relation()` post-validate (ground/classify/selectivity/run_join guard first) — still a type-level hole. Sibling `Occurrence::relation()` (`ir/normalize.rs:159`) was uncited. Do not accept Interior as a relation id. |
+| plan-004 | already-DUPLICATE | engine-030 still OPEN; `validate.rs:198-217` still the false "no Interior" sentence. |
+| plan-005 | already-DUPLICATE | engine-018 still OPEN; `INTERIOR_PLANNING_ROWS` still aliases at `selectivity.rs:110`. |
+| plan-006 | already-DUPLICATE | engine-017 still OPEN; `edb() else` forest still in selectivity/densify/evaluate/provably_distinct/disjoint/classify. |
+| plan-007 | already-DUPLICATE | engine-034 still OPEN; `grounded_program` at `ground/tests.rs:691`, "grounded program" at `ground.rs:402`. |
+| plan-008 | already-DUPLICATE | engine-011 still OPEN; `multi_rule_programs_fold_per_rule_independently` at `evaluate/tests.rs:809`. |
+| exec-001 | KEEP | `FindSpec`/`SinkSpec` `Agg { over_slot: Option }` live at `sink.rs:77-86,102-114`; `over_slot.expect` at fold_row/fold_batch/aggregate sink. Hostile `ir.rs::FindTerm::Aggregate { over: Option }` stays (C1). |
+| exec-002 | KEEP | `DedupRegime` parsed at `aggregate/new.rs:398-408`, flattened onto `distinct_witness`/`seen`/`union_spans`/`dnf_rekey` (`sink.rs:328-408`). Live state is not the enum. Do not drop `DistinctWitness`. |
+| exec-003 | REWRITE | `begin_scan -> bool` + `unreachable!` holds. Dropping `stop_on_skip` and always SkipSuffix after first row would drop Forbidden-node batch rows (`run_node.rs:616-619`). Split methods / pass `SuffixSkip`; do not AND two sums into a bool. |
+| exec-004 | KEEP | `pipe: Option<PipeTables>` at `run.rs:639`; `take().expect` at `execute.rs:410`; stuffed back at `:441`. |
+| exec-005 | KEEP | `carried_col: Vec<Vec<Option<usize>>>` at `run.rs:692`; `vec![None; n_occ]` at `pipe_tables.rs:31`. |
+| exec-006 | KEEP | `KeyProbePlan.statement: Option<StatementId>` at `dispatch.rs:44-59`; `key_probe_fact.rs:255-287` re-tests the hole. |
+| exec-007 | KEEP | `batch_sources: Vec<Option<usize>>` at `sink.rs:244` after `LeafSource` exists (`run.rs:58-63`); `scan_sources` Count-as-None rides exec-001. |
+| exec-008 | KEEP | `LeafPrecompute.single: bool` plus ghost vecs (`run.rs:736-741`; `leaf_precompute.rs:37-44`); `run_node.rs:35` trusts the flag. |
+| exec-009 | KEEP | `SelectionLevel.set: bool` projected to `Colt.set_levels` (`colt.rs:290-325`; `colt/new.rs:19`); `selected = selection_levels == 0`. |
+| exec-010 | KEEP | `all_cancelled` + `poison: Option` at `run.rs:646-657`; D2 writes only the bool (`probe_pass.rs:670`); unpaired poison is representable. |
+| exec-011 | KEEP | `row_fold_only = pack.is_some() \|\| !measures.is_empty()` stored at `aggregate/new.rs:227`, tested at `aggregate/sink.rs:28,198`. |
+| exec-012 | KEEP | `cover_choice(..., exact: bool)` at `run.rs:199`; `KeyCount` exists at `colt.rs:52-57`; scan/leaf sites pass `false` (Estimate). |
+| exec-013 | already-DUPLICATE | engine-011 still OPEN; `wordmap/clear.rs:47` "non-recursive program"; `sink.rs:7,31` "program". |
+| exec-014 | already-DUPLICATE | engine-029 still OPEN; `unit_labels` emptiness mode at `introspection.rs:83-97`. |
+| exec-015 | already-DUPLICATE | engine-033 still OPEN; `display.rs:153` `predicate p{}`. |
+| exec-016 | already-DUPLICATE | engine-007 still OPEN; `introspection.rs:87-90` `stats.strata` / delta variants. |
+| exec-017 | NEW | `PipeTables.absorb: Option<usize>` (`run.rs:693-699`; `pipe_tables.rs:45-52`) is Root vs Node as a hole; `probe_pass.rs:667-670` re-decodes it. |
+
+### Deleted paths
+
+None.
+
+### Rewritten
+
+- `audit/issues/plan-001-folded-mark-discard.md`
+- `audit/issues/plan-003-relation-panic-interior.md`
+- `audit/issues/exec-003-begin-scan-bool.md`
+
+### New files
+
+- `audit/issues/exec-017-absorb-option.md`
+
+### Remaining OPEN (this tree)
+
+16 OPEN (plan-001..003, exec-001..012, exec-017) + 9 DUPLICATE stubs. Was 15 OPEN + 9 DUPLICATE.
+
+### CONTRACT tension
+
+- C1 keeps hostile `ir.rs::FindTerm::Aggregate { over: Option }`; exec-001 is the *trusted* `FindSpec`/`SinkSpec` sum. C1 does not freeze plan/exec trusted types.
+- C6 already named Count-vs-folds for SDKs; the engine never parsed the same split (exec-001).
+- C3 prepared sums stay engine-*; these issues do not re-open engine-001/002/007/011/017/018/029/030/033/034 as new OPENs.
+- Assertions never weakened: plan-001's `unwrap_or_default` dies, not becomes another silent empty; plan-003 does not replace `unreachable!` with a fallback; exec-003 must not change which batch rows a Forbidden node delivers.

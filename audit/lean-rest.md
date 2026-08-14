@@ -185,3 +185,16 @@ minted a fourth head inductive, and the comments still say
 "program". Aggregates, Txn, schema, admission, and the write-side
 modules are clean of this leftover. Dual coordinates die; no
 finding asks C5 to reverse R-DENSE.
+
+## Adversarial validation (2026-08-14)
+
+H1/M1/M2/L1 (lean-021..024) survive as OPEN. lean-021's Fix was
+rewritten: do **not** key `Header` by `AtomSource` or invent derived-head
+membership — `Syntax.lean:48-49` records interior membership as
+engine-only; `scalarAnchored` already takes `interior _ => false`. Kill
+`⟨0⟩`; interiors stay value-equality in Lean; key-probe interior stays
+unrepresentable. lean-023's Fix was rewritten: unify `HeadSlot` onto
+Aggregates (`AggOp`/`KeyTerm`), not `Conformance.CFind` (Dedup must not
+import the driver). No lean-025: Plan/Membership/HeadSlot/comments were
+the remainder coordinates; no additional representation defect in
+Txn/Admission/Oracle/Capacity/Subsumption/Values/Decide/Fresh.

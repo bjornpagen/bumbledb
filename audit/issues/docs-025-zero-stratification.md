@@ -4,7 +4,7 @@
 - **Tree:** docs
 - **Status:** OPEN
 - **Source:** audit/docs.md F25
-- **Depends on:** none (prose; same file as docs-024/026)
+- **Depends on:** lean-002 (`recLinear` is not the destination name in the rewrite)
 
 ## The bug
 
@@ -16,7 +16,7 @@ Stratum is a deleted coordinate (Insight 1): the living ledger measures a featur
 
 ## The fix
 
-Per `audit/CONTRACT.md §C7`: "no change to `recLinear` / `NegationInRec` / the one linear rec; no new Lean axioms."
+Per `audit/CONTRACT.md §C7`: "no change to `NegationInRec` / the one linear rec; no new Lean axioms." Do **not** keep `recLinear` (C4 / lean-002 deletes it; C7 wants the successor).
 
 ## Acceptance criteria
 

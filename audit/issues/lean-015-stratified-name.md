@@ -26,17 +26,17 @@ A name is a representation of intent (Insight 1); this one teaches readers that 
 
 Two cases, decided by lean-002's landing:
 
-- **After lean-002 (expected):** `oddRec`/`oddQuery` are unwritable in `LinearRec` syntax, so `odd_not_stratified` and its syntax inhabitants are DELETED. The operator-level walls stay verbatim (`oddOp`, `odd_not_monotone`, `odd_rounds_oscillate`, `odd_no_fixpoint`), and the section prose (`Countermodels.lean:1369-1393`) is rewritten to say the odd loop is now *unrepresentable* in rec syntax — the countermodel lives at the operator level, which is where its content always was. Update the `reachOp_mono` doc comment (`Exec/Reach.lean:224-227`) which cites `odd_not_stratified`'s neighborhood.
+- **After lean-002 (expected):** `oddRec` / `oddQuery` / `odd_not_stratified` are unwritable and DELETED. `oddOp` CANNOT stay `Query.reachOp C oddRec oddSelf` — `Rec` is gone. Restate `oddOp` as a raw set operator with the same math: a rule `{ finds := [], atoms := [], negated := [oddAtom], conditions := [] }` evaluated against `sourceDen I (empty.update oddSelf X)` (empty base, negated self, no bindings). Then restated `odd_step_of_empty` / `odd_step_of_nonempty` / `odd_not_monotone` / `odd_rounds_oscillate` / `odd_no_fixpoint` keep the same *conclusions* about that operator (empty derives; nonempty underives; not monotone; oscillates; no fixpoint). Section prose (`Countermodels.lean:1369-1393`) says the odd loop is unrepresentable in rec *syntax* — the countermodel lives at the operator level. Update the `reachOp_mono` doc (`Exec/Reach.lean:224-227`).
 - **If somehow landing before lean-002:** rename to `odd_not_recLinear`; no other change.
 
-Check `lean/Bumbledb/Bridge.lean` and `scripts/spec-census.sh` for tokens naming `odd_not_stratified` and move them with the change.
+`odd_not_stratified` is not a Bridge `@` token today (do not invent a row). Successor-chain theorems (`succOp_monotone`, `succ_chain_ascends`, `succ_prefixed_infinite`) are untouched here (they use `naiveIter` — lean-010).
 
 ## Acceptance criteria
 
 - [ ] Gone: `rg -nw 'odd_not_stratified|stratified' lean --glob '!conformance/cases/**'` → no matches (prose included).
-- [ ] Walls intact: `rg -nw 'odd_not_monotone|odd_rounds_oscillate|odd_no_fixpoint|succOp_monotone|succ_chain_ascends|succ_prefixed_infinite' lean/Bumbledb/Countermodels.lean` → all present, statements unchanged.
+- [ ] Walls intact: `rg -nw 'odd_not_monotone|odd_rounds_oscillate|odd_no_fixpoint|succOp_monotone|succ_chain_ascends|succ_prefixed_infinite' lean/Bumbledb/Countermodels.lean` → all present; odd-* conclusions unchanged (not monotone / oscillates / no fixpoint); `oddOp` is not defined via `Rec`.
 - [ ] Commands green: `cd lean && lake build`; `./scripts/spec-census.sh`; no `sorry`/`admit`.
 
 ## Constraints
 
-- The walls' mathematical content must not weaken — deletion is only legal for the *syntax* witness whose type died; every operator-level theorem survives verbatim.
+- The walls' mathematical content must not weaken — deletion is only legal for the *syntax* witness whose type died. `oddOp` is restated, not copied as `reachOp C oddRec`. Do not keep a `LinearRec` with a negated field to preserve `oddRec`.

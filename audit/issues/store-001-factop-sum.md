@@ -33,6 +33,8 @@ enum FactOp<'d> {
 
 Applier matches. Weight lives only on insert capacity edges (or `CapacityEdge::{Unit, Weighted(u64)}`).
 
+Delete does **not** need `fresh_row`: `delete_fact` (`applier.rs:14-95`) takes the row id from the `M` entry, then deletes `F`/`U`/`R`. Memberships are insert-only (`judgment.rs:520-536` walks `plan.inserts`). Omitting both from Delete is correct. Do not drop `determinants`/`edges`/`capacity` key-bytes from Delete — those removals are live.
+
 ## Acceptance criteria
 
 - [ ] Gone: the `memberships` "dead weight on a delete op" comment and the field on delete ops — `rg -n 'Dead weight on a delete' crates/bumbledb/src/storage/commit/plan.rs`.

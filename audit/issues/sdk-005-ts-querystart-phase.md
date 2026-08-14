@@ -47,4 +47,4 @@ Per `audit/CONTRACT.md §C6` (TS): `QueryStart<Rels, Classes, P, Rec extends Rec
 
 ## Constraints
 
-- Semantics identical; error message strings for the surviving runtime walls unchanged. No Program vocabulary. Coordinate with sdk-018 (this IS its TS half) and sdk-006 (same file, land per INDEX order).
+- Semantics identical. Surviving runtime walls (untyped/JS callers) keep their *meaning*; the SCC wording in `lower.ts:1636` ("this cut admits one rec SCC") is sdk-022's vocabulary fix — this issue must not pin that substring. No Program vocabulary. Coordinate with sdk-018 (this IS its TS half) and sdk-006 (same file, land per INDEX order).

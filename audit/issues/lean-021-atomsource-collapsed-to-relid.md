@@ -4,7 +4,7 @@
 - **Tree:** lean
 - **Status:** OPEN
 - **Source:** audit/lean-rest.md H1
-- **Depends on:** lean-001, lean-002 (interior field width is `finds.length` after lean-006; membership typing of interiors needs that)
+- **Depends on:** none for the ⟨0⟩ kill / key-probe (membership stays EDB). Coordinate with lean-022 (`keyProbeEval` / Plan take the same `F`).
 - **Conflicts with:** none (Membership.lean / Rewrites.lean KeyProbeShape were not in wave 1)
 
 ## The bug
@@ -51,7 +51,7 @@ def keyProbeEval ... :=
 
 An interior singleton-atom rule is "declared" iff relation 0 happens to carry key `K`, then evaluated against empty interior tables. `keyprobe_equiv_join` (`Rewrites.lean:1367-1369`) then equals `ruleAnswers` under `edbEnv`.
 
-`Typing.membership` returns `Bool`; every lemma re-tests it.
+`Typing.membership` returns `Bool`; every lemma re-tests it. A fourth reconstruction of "interiors have no RelId": `Conformance.scalarAnchored` (`Conformance.lean:539-541`) takes `| .interior _ => false` (never interval) — the recorded "interior membership is engine-only" narrowing (`Syntax.lean:48-49`) — while `SurfaceMatches` still consults relation 0's header. Two different lies for one constructor.
 
 ## Why it's wrong
 
@@ -59,24 +59,25 @@ Insight 4: two identities glued by a sentinel (`⟨0⟩`) admit states that are 
 
 ## The fix
 
-Per `audit/CONTRACT.md §C4` (one `AtomSource`; interiors are ordinary data) and §C7 (no Program/EDB-only coordinate after the parse):
+Per `audit/CONTRACT.md §C4` (one `AtomSource`) and the recorded narrowing `Syntax.lean:48-49` ("Membership stays EDB … Interior membership is engine-only"):
 
-- `Typing.membership` / `Header.fieldType` (or a derived-head observer) keyed by `AtomSource`. Interior field types come from the derived head after lean-002/006 (`finds.length` / the body's bindings), never `Header.sig ⟨0⟩`.
-- `AntiOccurrence.source : AtomSource`. Delete `relation : RelId`. The interior arm of `lowerNegated` is the same partition as the edb arm, against the interior's field types.
-- `KeyProbeShape.declared` is `a.source = .edb R ∧ Statement.functionality R K ∈ T.statements`. Interior key-probe is unrepresentable (stored-relation probe). `keyProbeEval` takes the same `F : AtomSource → Set Fact` as `ruleAnswers` — `InteriorTables.empty` as a mode bit dies.
-- Membership `Bool` screen becomes a parsed binding form (value vs membership) so `SurfaceMatches` does not re-test `Γ.membership` at every site. The `match a.source | .interior _ => ⟨0⟩` family is gone.
+**Do not invent Lean interior membership.** Keying `Header.fieldType` / `Typing.membership` by `AtomSource` and typing interiors against derived heads would add a denotation the spec recorded as engine-only and would disagree with `scalarAnchored`'s `interior _ => false`. That is a semantic change.
 
-`groundSplit`'s `interior _ => none` (Rewrites.lean:432) stays: interiors are not closed EDB extensions. That match is the sum, not a collapse.
+- Membership: kill the `⟨0⟩` sentinel. Interior `SurfaceMatches` is value-equality (`Matches`) — membership-free, same reading as `lowerNegated`'s current `filters := []` arm and as `scalarAnchored`. `Header` / `Typing.membership` stay `RelId`-indexed. Theorems already carry `hedb : ∃ R, a.source = .edb R` (`surfaceMatches_iff_antiMatches`); keep that gate. A parsed value-vs-membership binding form on the **EDB** arm is in scope (Insight 6) but must not grow an interior field-type observer.
+- `AntiOccurrence`: stop stuffing `relation := ⟨0⟩` on interiors. Sum or equivalent: EDB carries `RelId` + domain + filters; interior is membership-free domain (anti-join against the interior `AtomSource`, not against stored relation 0). `AntiMatches` on the EDB arm stays as today. `AntiOccurrence.rejects` must not take a `RelId` and an `AtomSource` that can disagree.
+- `KeyProbeShape.declared` is `a.source = .edb R ∧ Statement.functionality R K ∈ T.statements`. Interior key-probe is unrepresentable (stored-relation probe; Syntax.lean:100-103). `keyProbeEval` takes the same `F : AtomSource → Set Fact` as `ruleAnswers` — `InteriorTables.empty` as a mode bit dies. This half is the dual-coordinate kill; it does not add interior key-probe.
+
+`groundSplit`'s `interior _ => none` (Rewrites.lean:432) stays: interiors are not closed EDB extensions. That match is the sum, not a collapse. `Conformance.scalarAnchored`'s `interior _ => false` stays (it is the narrowing, not a third sentinel).
 
 ## Acceptance criteria
 
-- [ ] Gone: `rg -n 'interior _ => ⟨0⟩' lean/Bumbledb` → no matches; `rg -n 'AntiOccurrence' -A6 lean/Bumbledb/Query/Membership.lean` shows `source : AtomSource` (no `relation : RelId`); `rg -n 'Statement.functionality ⟨0⟩' lean` → no matches; `rg -n 'InteriorTables.empty' lean/Bumbledb/Exec/Rewrites.lean` → no matches in `keyProbeEval` / `keyprobe_equiv_join`.
-- [ ] Unchanged: `membership_lowering_preserves`, `membership_lowering_preserves_negated`, `keyprobe_equiv_join` survive restated with the same mathematical content (surface = lowered; probe = join under a stored key). 268-case conformance green; corpus frozen.
+- [ ] Gone: `rg -n 'interior _ => ⟨0⟩' lean/Bumbledb` → no matches; `rg -n 'Statement.functionality ⟨0⟩' lean` → no matches; `rg -n 'InteriorTables.empty' lean/Bumbledb/Exec/Rewrites.lean` → no matches in `keyProbeEval` / `keyprobe_equiv_join`. `AntiOccurrence` has no interior `relation : RelId` (sum, or `source : AtomSource` with filters empty on interior).
+- [ ] Unchanged: `membership_lowering_preserves` / `_negated` still EDB-only (same surface = lowered content); `keyprobe_equiv_join` still probe = join under a stored key. `scalarAnchored` still `interior _ => false`. No new interior-membership theorems. 268-case conformance green; corpus frozen.
 - [ ] Commands green: `cd lean && lake build`; `lake exe conformance conformance/cases` (268, 0); `./scripts/lean.sh` fully green (build + battery + census + corpus + comparator). No `sorry`/`admit`.
 
 ## Constraints
 
-- Semantics identical: bivalent membership on stored interval fields unchanged; phantom interior reads stay empty until a real interior environment is supplied (C5: identities stay dense `Nat`; no Fin-telescope).
-- No C5 split: dual coordinate dies; do not Fin-index `Header.sig`.
-- No Program vocabulary. Key-probe remains a stored-relation fast path (C3 engine `KeyProbe` is EDB). Lean-022 parameterizes Plan the same way; land membership/key-probe first or together.
+- Semantics identical: bivalent membership on stored interval fields unchanged; interior bindings in Lean stay value-equality (engine-only membership is not newly modeled). Phantom interior reads stay empty until a real interior environment is supplied (C5: identities stay dense `Nat`; no Fin-telescope).
+- No C5 split: dual coordinate dies; do not Fin-index `Header.sig`; do not add derived-head interval types.
+- No Program vocabulary. Key-probe remains a stored-relation fast path (C3 engine `KeyProbe` is EDB). Lean-022 parameterizes Plan with the same `F`.
 - Must not weaken `keyprobe_equiv_join`'s key uniqueness or `Safe` premises.

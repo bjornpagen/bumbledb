@@ -19,7 +19,7 @@ pub struct ExecutionStats {
 }
 ```
 
-Representable nonsense: `reach: Some` on interiors-only, `reach: None` on a Reach run, `interiors: []` on a query that ran interiors — `profile` assembles each combination with the same flag forest as execute (`introspect.rs:251-252, 281-290, 373-375, 412-413`). And the per-stage rule tables are ghosts kept from the strata design, never filled:
+Representable nonsense: `reach: Some` on interiors-only, `reach: None` on a Reach run, `interiors: []` on a query that ran interiors — `profile` assembles each combination with the same flag forest as execute (`introspect.rs:251-252, 281-290, 373-375`). And the per-stage rule tables are ghosts kept from the strata design, never filled:
 
 ```rust
 // introspect.rs:383-386 — interior_stats()
@@ -54,7 +54,8 @@ pub enum StatsBody {
 
 (Exact field placement may follow the code's needs; the LAW is: `reach` is not `Option` — it exists exactly on the Reach arm; interiors exist on both arms; the ghost `rules` fields on `InteriorStats`/`ReachStats` are DELETED, not populated — `InteriorStats { interior, emits }`, `ReachStats { rounds }`.)
 
-- `empty_stats` (`introspect.rs:394-415`) dies with `Empty` (engine-023): a dead-main Cq reports `rules: []` (or per-dead-rule records via `dead`) and its real interior emits — fixing the current bug where `empty_stats` hardcodes `interiors: Vec::new()` even when interiors ran.
+- `empty_stats` (`introspect.rs:394-415`) is **only** reached today when `interiors.is_empty() && Empty` (`introspect.rs:214`), so the hardcoded `interiors: Vec::new()` is not a current observable hole — dead-main-with-live-interiors already falls through to `interior_stats()`. After `Empty` dies (engine-023), do **not** route dead-main-with-interiors through a zero-interior stats constructor; report real interior emits. Also drop the phantom one-element `RuleStats` empty_stats currently mints for a query with zero surviving main rules — dead main is `rules: []` plus `stats.dead`.
+- Reach profile today sets `stats.rules: Vec::new()` (no main-rule node stats). Keep that observable: the Reach stats arm does not grow a main-rule table this issue.
 - This is a PUBLIC type change: `INTROSPECTION_VERSION` (currently 4) increments once, covering this + engine-029 + any engine-033 string changes — coordinate so the version bumps exactly once for the whole campaign.
 
 ## Acceptance criteria

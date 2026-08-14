@@ -30,16 +30,16 @@ The `None` slot is a *phase flag stuffed into the data* (Insight 5): the rec's s
 
 ## The fix
 
-Per `audit/CONTRACT.md §C3` ("Sealing"): the phase is the slice's extent, not a hole in it.
+Per `audit/CONTRACT.md §C3` ("Sealing"): the phase is the slice's extent, not a hole in it. **Named refusals stay as they fire today** — collapsing both screens into one `UnknownInterior` would change adversarial assertions.
 
-- Type interiors against `sealed: &[Predicate]` containing exactly the already-sealed tables in declaration order. Interior *i* types against `&sealed[..i]` — reading a later table is out-of-range by construction (`InteriorNotPrior` stays as the named refusal where the reader is an interior).
-- Type rec BASE against the full interiors slice (rec's own predicate not yet present — base-reads-rec is out-of-range, which is `SelfInBase`'s screen... keep `SelfInBase` as the explicit roster name for self-reads; the slice makes the *unsealed-read* impossible, the roster names the refusal).
+- Type interiors against `sealed: &[Predicate]` containing exactly the already-sealed tables in declaration order. Interior *i* types against `&sealed[..i]`. Keep **two** named screens, one each: `UnknownInterior` iff the id is `>= derived_count`; `InteriorNotPrior` iff the reader is interior *i* and the target is `j >= i` (even when `j < derived_count`). Slice extent makes the unsealed-`None` hole unrepresentable; it does **not** get to rename a later-but-in-range read.
+- Type rec BASE against the full interiors slice (rec's own predicate not yet present). `SelfInBase` stays the roster name for a base arm's self-atom, fired in `rec_roster` before typing; do not retarget those inputs to `UnknownInterior`.
 - Type rec ARMS and MAIN against `sealed + rec_predicate` (a second slice or a chained lookup — no `Option` in the element type).
-- `UnknownInterior` is exactly ONE check: out-of-range on the address space. `column` does not re-screen; its precondition is the screen `check_atoms` already ran (make it `debug_assert!` if belt-and-braces is wanted). The `arities` parallel array merges into the predicate slice (a `Predicate` knows its column count).
+- `column` does not re-screen; its precondition is the screen `check_atoms` already ran (make it `debug_assert!` if belt-and-braces is wanted). The `arities` parallel array merges into the predicate slice (a `Predicate` knows its column count).
 
 ## Acceptance criteria
 
-- [ ] Gone: `rg -n 'Option<Predicate>' crates/bumbledb/src/ir/validate.rs` → no matches; `column` contains no `UnknownInterior` construction (`rg -n 'UnknownInterior' crates/bumbledb/src/ir/validate.rs` shows only the one screen site).
+- [ ] Gone: `rg -n 'Option<Predicate>' crates/bumbledb/src/ir/validate.rs` → no matches; `UnknownInterior` is constructed only for `id >= derived_count`; `InteriorNotPrior` stays the reader-`j >= i` screen (`rg -n 'UnknownInterior|InteriorNotPrior' crates/bumbledb/src/ir/validate.rs`).
 - [ ] Unchanged tests: every adversarial/validate test asserting `UnknownInterior`, `InteriorNotPrior`, `InteriorColumnOutOfRange`, `SelfInBase` passes UNCHANGED (same inputs → same error names).
 - [ ] Green: `PATH="$HOME/.cargo/bin:$PATH" cargo test -p bumbledb`; `./scripts/check.sh`.
 

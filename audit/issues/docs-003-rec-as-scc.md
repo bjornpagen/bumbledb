@@ -25,4 +25,4 @@ Per `audit/CONTRACT.md §C7`: "`rec: Option<Rec>` — at most one linear rec." T
 
 ## Constraints
 
-- Prose only. `NegationInRec` and all locked names untouched. Note: the TS builder's runtime message "this cut admits one rec SCC" (`ts/src/query/lower.ts:1636`) is CODE, charged to sdk-005's file when it touches that line — do not edit code from this issue.
+- Prose only. `NegationInRec` and all locked names untouched. Note: the TS builder's runtime message "this cut admits one rec SCC" (`ts/src/query/lower.ts:1636`) is CODE, charged to sdk-022 — do not edit code from this issue.

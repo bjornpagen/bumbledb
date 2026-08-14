@@ -36,7 +36,7 @@ Scoped per `audit/CONTRACT.md §C1/§C3`:
 
 ## Acceptance criteria
 
-- [ ] Gone: `rg -n 'edb\(\)\.is_none\(\)' crates/bumbledb/src` → no matches; `rg -n '== Some\(rec_id\)|interior\(\) == Some' crates/bumbledb/src/api crates/bumbledb/src/plan` → no matches.
+- [ ] Gone: `rg -n 'edb\(\)\.is_none\(\)' crates/bumbledb/src` → no matches; `rg -n 'source\.edb\(\) else' crates/bumbledb/src/api crates/bumbledb/src/plan` → no matches used as the derived-bind / planning-floor dispatch (the `Some(relation)` arm that actually reads an EDB may stay); `rg -n '== Some\(rec_id\)|interior\(\) == Some' crates/bumbledb/src/api crates/bumbledb/src/plan` → no matches.
 - [ ] Boundary untouched: `ir.rs::AtomSource` shape and serde unchanged.
 - [ ] Unchanged tests: full engine + bench suites green unchanged.
 - [ ] Green: `PATH="$HOME/.cargo/bin:$PATH" cargo test -p bumbledb && cargo test -p bumbledb-bench`; `./scripts/check.sh`.

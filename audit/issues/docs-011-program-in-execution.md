@@ -15,6 +15,7 @@
 - `:376` "A **hand-written multi-rule program** keys the **head projection**"
 - `:1045` "— multi-rule programs — the"
 - plus "each rule of a program executes its own plan", "`union_regime_head_projection` for hand-written programs", "the single-rule key-probe program", "a program shrunk to one rule sheds its union machinery like any single-rule program".
+- `:462` also cites `evalQuery_plain` as "the empty-interiors empty-rec case" — docs-004's embedding, in this file. Same sweep.
 
 ## Why it's wrong
 
@@ -22,11 +23,11 @@ Dual vocabulary in the chapter that teaches execution (Insight 1): `Program` is 
 
 ## The fix
 
-Per `audit/CONTRACT.md §C7`: mechanical sweep — "multi-rule **query**" (or "main rule-list" where the sentence is main-specific); "hand-written vs DNF-derived rule sets of one `Query`"; "single-rule key-probe **query**"; "a query shrunk to one rule sheds its union machinery". Lock names (`union_regime_head_projection` etc.) DO NOT change — only the surrounding prose.
+Per `audit/CONTRACT.md §C7`: mechanical sweep — "multi-rule **query**" (or "main rule-list" where the sentence is main-specific); "hand-written vs DNF-derived rule sets of one `Query`"; "single-rule key-probe **query**"; "a query shrunk to one rule sheds its union machinery". `:462` → constructor case of `evalQuery`, not `evalQuery_plain` (lean-001 / C4). Lock names (`union_regime_head_projection` etc.) DO NOT change — only the surrounding prose. `DeltaVariant` / `PreparedBody::Empty` in this file are docs-030 (depend on engine-007/023) — do not rewrite them here into a third query type.
 
 ## Acceptance criteria
 
-- [ ] Gone: `rg -inw 'program|programs' docs/architecture/40-execution.md` → no matches naming a query (if a genuine non-query sense survives, list it in the commit message).
+- [ ] Gone: `rg -inw 'program|programs' docs/architecture/40-execution.md` → no matches naming a query (if a genuine non-query sense survives, list it in the commit message); `rg -n 'evalQuery_plain' docs/architecture/40-execution.md` → no matches.
 - [ ] All cited lock/test/theorem names byte-identical.
 
 ## Constraints

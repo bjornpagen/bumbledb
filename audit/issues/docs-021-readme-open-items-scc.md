@@ -4,7 +4,7 @@
 - **Tree:** docs
 - **Status:** OPEN
 - **Source:** audit/docs.md F21
-- **Depends on:** none (prose; parallel-safe — own file)
+- **Depends on:** lean-002 (`recLinear` dies — `:103` must not keep it as the OPEN item's lock)
 
 ## The bug
 
@@ -22,11 +22,11 @@ OPEN items are present-tense product surface (Insight 1): they define the refuse
 
 ## The fix
 
-Per `audit/CONTRACT.md §C7`: "Mutual-linear: several names, each rule ≤1 rec atom — a new IR (`List Rec` or named recs), not `Option<Rec>`. even/odd encodes as one linear rec with a parity column. Named interior of a finished rec is not a second rec. `NegationInRec` covers the one rec." Delete Tarjan / predicate-table / SCC framing (the "stay gone" claims can survive as "the condensation machinery stays deleted" ONCE, if the OPEN item genuinely needs the refusal recorded — prefer the positive statement).
+Per `audit/CONTRACT.md §C7`: "Mutual-linear: several names, each rule ≤1 rec atom — a new IR (`List Rec` or named recs), not `Option<Rec>`. even/odd encodes as one linear rec with a parity column. Named interior of a finished rec is not a second rec. `NegationInRec` covers the one rec." Delete Tarjan / predicate-table / SCC framing (the "stay gone" claims can survive as "the condensation machinery stays deleted" ONCE, if the OPEN item genuinely needs the refusal recorded — prefer the positive statement). `:103` "recLinear stays one line" → structural linearity of the one rec (do not keep `recLinear`).
 
 ## Acceptance criteria
 
-- [ ] Gone: `rg -in 'SCC|tarjan|predicate table|linear predicate' docs/architecture/README.md` → no matches.
+- [ ] Gone: `rg -in 'SCC|tarjan|predicate table|linear predicate|recLinear' docs/architecture/README.md` → no matches.
 - [ ] The OPEN/refused rulings themselves (what is refused this cut) semantically unchanged.
 
 ## Constraints

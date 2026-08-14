@@ -8,7 +8,7 @@
 
 ## The bug
 
-`lean/conformance/README.md:297` — "A reach case carries a Query with `interiors` / `rec` / main `rules` (`Bumbledb/Query/Syntax.lean`) instead of a CQuery." The README presents the interchange as two types: `CQuery` for `seeded-*.json`, `Query` for `reach-*.json`.
+`lean/conformance/README.md:297` — "A reach case carries a Query with `interiors` / `rec` / main `rules` (`Bumbledb/Query/Syntax.lean`) instead of a CQuery." The README presents the interchange as two types: `CQuery` for `seeded-*.json`, `Query` for `reach-*.json`. `:303` also teaches "One-predicate rec queries" — Datalog-predicate vocabulary for a rec-plus-identity-main shape.
 
 ## Why it's wrong
 
@@ -16,7 +16,7 @@ Dual representation taught as the corpus's shape (Insight 2): the architecture i
 
 ## The fix
 
-Per `audit/CONTRACT.md §C7` + §C8, after lean-008: "Every case carries a `Query`. Plain cases have empty `interiors` and `rec: null` (their atoms use the `relation` spelling of the EDB source). Reach cases fill those fields (atoms spell `edb`/`interior`). One type, one decoder." Delete every `CQuery`/`plainQuery` mention.
+Per `audit/CONTRACT.md §C7` + §C8, after lean-008: "Every case carries a `Query`. Plain cases have empty `interiors` and `rec: null` (their atoms use the `relation` spelling of the EDB source). Reach cases fill those fields (atoms spell `edb`/`interior`). One type, one decoder." Rec-plus-identity-main: "a rec with empty interiors and an identity main of the same arity — empty `rules` denotes `∅`." Delete every `CQuery`/`plainQuery`/`One-predicate` mention. Line 111 "the predicate form the typing rule" is comparison-predicate English (PointIn) — keep.
 
 ## Acceptance criteria
 

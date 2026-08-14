@@ -48,3 +48,4 @@ Containments keep three-arm `Enforcement`. The capacity `unreachable!` deletes.
 ## Constraints
 
 - Probe-ability rule reused verbatim (same `resolve_target_key` for ScalarProbe/Closed). Interval positions on capacity *projections* stay the typed roster refusal `CapacityIntervalPosition`.
+- Do **not** replace the `unreachable!` with a runtime skip / `continue`. The arm must become unrepresentable. Assertions never weakened.

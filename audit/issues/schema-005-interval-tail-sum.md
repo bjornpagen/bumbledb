@@ -43,4 +43,6 @@ enum IntervalTail { General, Fixed { width: u64 } }
 
 ## Constraints
 
-- Encoding bytes identical (16 general, 8 fixed; `start_word + w` is the encoded end). Q2 bound unchanged. Descriptor JSON/spec spellings need not change in the same commit if `ValueType` stays Option at the theory boundary — but the *sealed* tail must be the sum.
+- Encoding bytes identical (16 general, 8 fixed; `start_word + w` is the encoded end). Q2 bound unchanged.
+- Fingerprint tags stay: general = tag 6 ‖ element; fixed = tag 7 ‖ element ‖ width (`schema/fingerprint.rs:279-293`). A `ValueType` sum is isomorphic only if those tags do not move.
+- Descriptor JSON/spec spellings need not change in the same commit if `ValueType` stays Option at the theory boundary — but the *sealed* `IntervalTail` must be the sum. Do not treat descriptor `ValueType::Interval { width: Option }` as schema-010-hostile in the closedness sense: both encodings are valid types; the Option is still the worse spelling.

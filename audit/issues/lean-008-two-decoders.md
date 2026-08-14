@@ -45,19 +45,22 @@ One language, two representations: `CQuery` is a parallel query type with its ow
 
 Per `audit/CONTRACT.md §C4` ("One decoder"):
 
-- ONE atom decoder: `relation` (seeded spelling) and `edb`/`interior` (reach spelling) are two JSON spellings of the one `AtomSource` — a single `decodeAtom` accepts `relation` OR `edb`/`interior` keys and returns `Query.Atom`. Corpus unchanged.
-- ONE query type: the seeded lane decodes into `Query` (`.cq` arm after lean-001). Aggregate/measure head shapes (`CFind.agg`/measures) are the real gap — they are head-level, not rule-body-level: keep the head-shape layer as a thin wrapper AROUND `Query` (heads + the `Query` it projects), not a parallel query with its own rules/atoms/conditions. `plainQuery`'s lossy `filterMap` dies; plain-projection cases feed `evalQueryList` directly.
-- ONE evaluator entry: the conformance `evalQuery` (`Conformance.lean:946`) is renamed (it shadows the denotation's name) and becomes dispatch: plain-head cases → the PROVED `evalQueryList`; aggregate/measure cases → the recorded glue over the same join states, applied to the one query type. The DNF/union regimes keep their recorded rulings.
-- `Main.lean`'s reach lane reuses the shared decoder module; `decodeReachAtom`/`decodeAtom` merge.
+- ONE atom decoder: `relation` (seeded spelling) and `edb`/`interior` (reach spelling) are two JSON spellings of the one `AtomSource` — a single `decodeAtom` accepts `relation` OR `edb`/`interior` keys and returns `Query.Atom`. Corpus unchanged. `Main.lean`'s `decodeReachAtom` merges into that function.
+- ONE body type: seeded cases decode into `Query` (`.cq` after lean-001; interiors empty). Do **not** stuff aggregate finds into `Rule.finds` (`List VarId` — recorded PRD 04 narrowing). Keep a thin wrapper around that `Query` that carries (1) per-rule head shapes (`CFind` / successor), (2) the R2 `dnf : Bool` mark, (3) optional surface `width`. Those three are not in `Query` and must not be deleted. Renaming `CQuery` is fine; deleting the wrapper is not — `evalUnion` / `dnfBindings` / `ruleWidth` live on it.
+- DELETE `plainQuery` (`Conformance.lean:927-930`). It is dead (no callers) and its `filterMap CFind.plainVar?` would drop aggregate heads if anyone used it.
+- ONE evaluator *name*: rename Conformance's `evalQuery` (`:946`) so it no longer shadows the denotation. Dispatch stays:
+  - **Do not pipe every plain-projection case through `Query.evalQueryList`.** `ruleStates` (`:559-567`) uses `joinAtoms` (pre-lowered `Matches`) on positives and **surface** anti-join (`surfaceMatchesB`) on negated atoms, including membership. `evalList` uses `Matches` on both polarities. The module doc (`Conformance.lean:15-25`) records that they coincide only on membership-free negation; `eval_sound` names that fragment. Blindly switching to `evalQueryList` changes negated-membership answers (corpus includes them). Membership-free-negation plain cases MAY call `evalQueryList`; negated-membership cases keep `ruleStates` / `evalPlain` (or lower then `evalQueryList`). Aggregate/measure cases keep the recorded glue over the same join states. DNF/union regimes (R2) unchanged.
+- Reach cases (`Main.lean` `checkReachCase`) already run `Query.evalQueryList` on the proved type — keep that; share the atom decoder only.
 
 ## Acceptance criteria
 
-- [ ] Gone: `rg -nw 'CQuery|plainQuery|decodeReachAtom' lean --glob '!conformance/cases/**'` → no matches (head-shape wrapper may keep `CFind` for find-shapes only — it must not carry rules/atoms); `rg -n 'def evalQuery' lean/Bumbledb/Conformance.lean` → no match under that name.
-- [ ] One decoder: `rg -n 'relation' lean/Bumbledb/Conformance.lean lean/Main.lean` shows one shared atom-decode site.
-- [ ] Unchanged: ALL 268 cases green — 246 seeded + 22 reach — with corpus byte-identical; the plain-projection cases now exercise the proved `evalQueryList` (this is the point: strictly MORE cases flow through the proved path).
+- [ ] Gone: `rg -nw 'plainQuery|decodeReachAtom' lean --glob '!conformance/cases/**'` → no matches; `rg -n 'def evalQuery' lean/Bumbledb/Conformance.lean` → no match under that name. A wrapper type may remain (heads + `dnf` + `width` + the `Query` body); it must not duplicate atom/condition/rule-body types.
+- [ ] One decoder: one function accepts `relation` or `edb`/`interior`.
+- [ ] Unchanged: ALL 268 cases green — 246 seeded + 22 reach — corpus byte-identical. Negated-membership seeded cases still use the surface anti-join (or an explicit lowering). Membership-free plain cases may use `evalQueryList`.
 - [ ] Commands green: `cd lean && lake build`; `lake exe conformance conformance/cases` (268, 0); `./scripts/lean.sh` fully green (build + battery + census + corpus + comparator).
 
 ## Constraints
 
-- Corpus frozen. Aggregate/measure semantics identical (the recorded glue moves, not changes). DNF regime ruling (2026-07-23 R2) preserved verbatim.
-- No Program vocabulary.
+- Corpus frozen. Aggregate/measure semantics identical (the recorded glue moves, not changes). DNF regime ruling (2026-07-23 R2) preserved verbatim — the wrapper keeps `dnf` and `width`.
+- Do not treat `evalQueryList` as a drop-in for `evalPlain` on the membership roster.
+- No Program vocabulary. Do not re-file CQuery-as-second-decoder under a new id.

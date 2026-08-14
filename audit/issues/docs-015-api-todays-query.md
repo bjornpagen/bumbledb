@@ -4,7 +4,7 @@
 - **Tree:** docs
 - **Status:** OPEN
 - **Source:** audit/docs.md F15
-- **Depends on:** none (prose; same file as docs-016/017/018 — one fixer may take 70-api.md)
+- **Depends on:** lean-001 (`evalQuery_plain` dies; do not keep it as the API sentence's citation)
 
 ## The bug
 
@@ -16,11 +16,11 @@ docs-004's embedding framing, now on the embedding API (Insight 3): "today's que
 
 ## The fix
 
-Per `audit/CONTRACT.md §C7`: "`Db::prepare(&Query)` — empty interiors and `rec: None` is an ordinary `Query` (`evalQuery_plain`)." Match docs-004's chosen sentence.
+Per `audit/CONTRACT.md §C7` + §C4: "`Db::prepare(&Query)` — empty interiors and `rec: None` is an ordinary `Query`." Match docs-004's chosen sentence. Do **not** keep the `evalQuery_plain` citation (`70-api.md:510`) — cite `evalQuery`.
 
 ## Acceptance criteria
 
-- [ ] Gone: `rg -in "today's query" docs/architecture/70-api.md` → no matches.
+- [ ] Gone: `rg -in "today's query|evalQuery_plain" docs/architecture/70-api.md` → no matches.
 - [ ] Prepare-API facts unchanged.
 
 ## Constraints

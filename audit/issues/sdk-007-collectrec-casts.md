@@ -26,7 +26,7 @@ const env: DerivedEnv = { interiors, rec: recData }
 Object.freeze(recData)
 ```
 
-The type says sealed nonempty rec; construction inhabits the empty triple, then lies to the type system three times to backfill. Rule scopes built against `env.rec = recData` observe empty `finds` during the base walk.
+`RecData` (`atom.ts:193-198`) is *not* a nonempty type — `finds`/`base`/`rec` are plain `readonly T[]`, so `[]` is well-typed. Construction still inhabits the empty triple, then lies to the type system three times to backfill a value the comment calls sealed. Rule scopes built against `env.rec = recData` observe empty `finds` during the base walk. The nonempty invariant lives in the `baseBuilds.length === 0` throws (`:1566-1570`) and is thrown away.
 
 ## Why it's wrong
 
@@ -37,7 +37,7 @@ Parse-don't-validate inverted (Insight 6): the finished value is supposed to BE 
 Per `audit/CONTRACT.md §C6` (TS): build arrays first, seal once.
 
 - Introduce the two-phase TYPE the circularity actually needs: a `RecEnv`/`RecHandle` (name + deferred head resolution) that rule scopes accept during arm building — `makeRecRuleScope` takes the handle, not a `RecData`.
-- Then `const recData: RecData = Object.freeze({ name, finds, base: Object.freeze(base), rec: Object.freeze(rec) })` in ONE assignment. No `as`-casts, no mutation of a frozen-typed value.
+- Then `const recData: RecData = Object.freeze({ name, finds, base: Object.freeze(base), rec: Object.freeze(rec) })` in ONE assignment. No `as`-casts, no mutation of a frozen-typed value. Tighten `RecData` so empty `base`/`rec` are unrepresentable (tuple/`[RuleData, ...RuleData[]]`, or a branded nonempty array) — today the type does not actually say nonempty.
 - The essential circularity (rec arms resolve the rec's own head) lives in the handle, which the sealed `RecData` replaces at the end.
 
 ## Acceptance criteria

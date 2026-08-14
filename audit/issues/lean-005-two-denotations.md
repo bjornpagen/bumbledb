@@ -50,16 +50,18 @@ Two denotations inhabit the library: `evalQuery` (the real one) and `rulesAnswer
 
 Per `audit/CONTRACT.md §C4` ("One rule-list theory"):
 
-- Restate the rule-list theorems over `List Rule` + an environment: `seenfold_is_set_semantics`, `union_regime_head_projection` (and the neighboring union-regime/`disjoint_witness` family), dropping the `{q : Query}` binder — `henum : ∀ t, t ∈ l ↔ t ∈ rulesAnswers C rules (edbEnv I) ρ` etc. Callers pass `q.rules`.
-- `RewriteStep : Theory → Classify → List Rule → List Rule → Prop`; constructors relate `pre ++ r :: post` to `pre ++ r' :: post` directly; the `{n : Nat}` dies (this IS lean-016). `step_preserves` and `rewrites_compose` conclude over `rulesAnswers C rules (edbEnv I) ρ` with `rules : List Rule`.
-- Theorem 9: restate over the real denotation (after lean-001) — `Query.relations` walks ALL rule lists (interiors, rec arms, main), and `snapshot_single` concludes `∀ t, t ∈ evalQuery C q I ρ ↔ t ∈ evalQuery C q J ρ`. The proof lifts the per-rule-list congruence through the interior fold and `reachDen` (use `rulesAnswers_congr` / `sourceDen_congr` machinery already in `Reach.lean`).
-- The Bridge row for `snapshot_single` keeps its snapshot-isolation prose; mechanism column unchanged.
+- Restate the Dedup wrappers that currently take `{q : Query}` and then only read `q.rules` over `List Rule` + an environment:
+  - theorems: `seenfold_is_set_semantics` (`Dedup.lean:329`), `union_regime_head_projection` (`:611`), `disjoint_witness_licence` (`:578`), `syntactic_disjointness_sound` (`:725` — Bridge row `@Query.syntactic_disjointness_sound` at `Bridge.lean:437` must keep resolving).
+  - defs: `DisjointArms` (`Dedup.lean:515-518`, `q.rules.Pairwise`) and `ProvablyDisjointRules` (`:677-679`). `disjoint_flatten` (`:523`) is already over `List Rule` — that is the target shape. Callers pass `q.rules`.
+- `RewriteStep : Theory → Classify → List Rule → List Rule → Prop`; constructors relate `pre ++ r :: post` to `pre ++ r' :: post` directly; the `{n : Nat}` dies (this IS lean-016). `step_preserves` (`Rewrites.lean:2456`) and `rewrites_compose` conclude over `rulesAnswers C rules (edbEnv I) ρ` with `rules : List Rule`.
+- Theorem 9: restate over the real denotation (after lean-001) — `Query.relations` walks ALL rule lists (interiors, rec arms via `LinearRec`'s `toRule` lists, main), and `snapshot_single` concludes `∀ t, t ∈ evalQuery C q I ρ ↔ t ∈ evalQuery C q J ρ`. The proof lifts the per-rule-list congruence through the interior fold and `reachDen` (use `rulesAnswers_congr` / `sourceDen_congr` already in `Reach.lean`). Interior atoms that are not stored relations still contribute no `RelId` to `relations`; agreement on mentioned stored relations plus identical interior/rec tables (determined by those relations) is the content.
+- Bridge rows keep theorem NAMES resolving (`snapshot_single`, `seenfold_is_set_semantics`, `disjoint_witness_licence`, `syntactic_disjointness_sound`, `step_preserves`). Mechanism columns unchanged.
 
 ## Acceptance criteria
 
-- [ ] Gone: `rg -n 'RewriteStep.*Query → Query|Query\.plain n' lean/Bumbledb/Exec/Rewrites.lean` → no matches; `rg -n '\{q : Query\}' lean/Bumbledb/Exec/Dedup.lean` → no matches for the restated theorems.
+- [ ] Gone: `rg -n 'RewriteStep.*Query → Query|Query\\.plain n' lean/Bumbledb/Exec/Rewrites.lean` → no matches; `rg -n '\\{q : Query\\}' lean/Bumbledb/Exec/Dedup.lean` → no matches; `DisjointArms` / `ProvablyDisjointRules` take `List Rule` (or equivalent), not `Query`.
 - [ ] Real Theorem 9: `rg -n 'evalQuery' lean/Bumbledb/Query/Denotation.lean` (or the file `snapshot_single` moves to) shows `snapshot_single` concluding over `evalQuery`; `Query.relations` covers interior and rec rules (`rg -n 'def Query.relations' -A 6 lean` shows all three lists).
-- [ ] Unchanged: theorem NAMES survive (`seenfold_is_set_semantics`, `union_regime_head_projection`, `snapshot_single`, `step_preserves`, `rewrites_compose`) — Bridge rows keep resolving; 268-case conformance green.
+- [ ] Unchanged: theorem NAMES survive (`seenfold_is_set_semantics`, `union_regime_head_projection`, `snapshot_single`, `disjoint_witness_licence`, `syntactic_disjointness_sound`, `step_preserves`, `rewrites_compose`) — Bridge rows keep resolving; 268-case conformance green.
 - [ ] Commands green: `cd lean && lake build`; `lake exe conformance conformance/cases` (268, 0); no `sorry`/`admit`; `./scripts/spec-census.sh` green (census tokens follow the restatements).
 
 ## Constraints

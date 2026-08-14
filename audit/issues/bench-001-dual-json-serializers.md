@@ -16,7 +16,7 @@ let mut query_block = String::from("{\"rules\":[\n");
 let _ = write!(out, "{{\"relation\":{},\"bindings\":[", atom.relation().0);
 ```
 
-No `interiors`, no `rec`, no `head`. Atoms are `"relation"`. The reach twin (`conformance/reach.rs`, already filed as engine-038) emits `interiors` / `rec` / `arity` / `rules` with `edb` / `interior` atoms. One language, two serializers that cannot share a Query renderer.
+No `interiors`, no `rec`, no `head`. Atoms are `"relation"`. The reach twin is `conformance/reach.rs:236-261` (`render_reach_case`) — **this issue owns both emitters**. (engine-038 is a DUPLICATE stub of engine-012 about stats shape, not the encoder.) Atoms `edb` / `interior`; document keys `interiors` / `rec` / `arity` / `rules`. One language, two serializers that cannot share a Query renderer. lean-008 is the decoder twin.
 
 ## Why it's wrong
 

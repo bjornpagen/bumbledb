@@ -18,7 +18,7 @@ matches!(self.body.rules(),
 if self.interiors.is_empty() && matches!(self.body.rules(), [PreparedRule::KeyProbe(_)]) {
 ```
 
-So a single-rule aggregate key probe takes the sink path under `execute` and the direct path under `profile` — ANALYZE observes a different access path than execution uses.
+Profile's key-probe arm then calls `execute_args` (so the **query body** runs execute's path) and **fabricates** key-probe-shaped stats (`nodes: []`, `key_probe: Some(hit)`) for every single `KeyProbe`. A single-rule aggregate/measure key probe therefore executes via the sink path (`key_probe_finds` is `None`, so `run_bound` does not take the direct lane) while ANALYZE reports a key-probe access path. The counted surface lies about the path that ran.
 
 ## Why it's wrong
 
@@ -30,7 +30,7 @@ Per `audit/CONTRACT.md §C3`: ONE execution protocol parameterized by `Counters`
 
 - The access-path decision is made ONCE, at build, as pipeline data (engine-001's arms + engine-031's parsed direct lane). `run_bound` dispatches by matching the pipeline; `profile` calls the same dispatch with counting counters and assembles `ExecutionStats` from what the counters saw (engine-012's stats sum).
 - The direct key-probe lane is one predicate, tested nowhere at run time: `Pipeline::Cq { interiors: [], rules: [KeyProbe { key_probe_finds: Some(_) }] }` parsed at build into its own lane (or a build-computed property consumed by both callers).
-- Behavior note: today's `profile` fast lane is WIDER than execute's. The fix must converge both on execute's predicate (plain-var finds only) — this changes profile's counted access path for single aggregate key probes to match execution. That is the bug being fixed; capture it in the new lock below.
+- Behavior note: today's profile **stats** predicate is wider than execute's direct lane. Converge the counted access path on execute's predicate (plain-var finds only) — aggregate/measure single key probes keep the sink path and report sink-shaped stats. Capture that in the new lock below.
 
 ## Acceptance criteria
 

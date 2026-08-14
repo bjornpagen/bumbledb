@@ -403,3 +403,15 @@ The Rust `query!` suite actually pins the cutover (`named_head_without_keyword`,
 Not counted as defects: C ABI tagged structs as a *layout* (essential for C); absence of `bdb_program` / `program!` / `max_interiors`; `query!` named-head-without-keyword (the one compile-fail that actually encodes the cutover); TS `AtomSourceIr` as a sum.
 
 The repeating move: NI / `never`-after-main / `AtomSourceIr` show they know how to spend types on the Query cutover. Rec, main-emptiness, Measure, polarity, Count-nullary, and the public wire type were left as bools, optionals, and a second constructor. That is Program, still inhabitable, with the word scraped off.
+
+---
+
+## Final adversarial validation (2026-08-14)
+
+Verified against `cpp/src/query/{query,ir,rule,lower}.cc`, `cpp/foreign/{bumbledb_c.h,query_view.cc}`, `cpp/bridge/src/query.rs`, `ts/src/{native,query/lower,query/atom}.ts`, `ts/crate/src/marshal.rs`, `crates/bumbledb-query-macros/src/lib.rs`. No product-code edits.
+
+- sdk-001–018, 021 KEEP (large refactors stay). sdk-019 DUPLICATE(sdk-001), sdk-020 DUPLICATE(sdk-004).
+- REWRITE: sdk-004 (ABI `has_over` is sdk-008's C6 delta; dialect dies here). sdk-005 (do not pin SCC substring — sdk-022). sdk-007 (`RecData` is not actually a nonempty type). sdk-008 (**do not marshal-refuse empty rec/main** — C1 engine roster; `has_over` discriminator dies per C6). sdk-018 (`query_second_recursive.cc` already exists; do not add `query_recursive_twice.cc`). sdk-022 (ABI `bdb_rec` "SCC" comments + `a_recursive_rule_negates_no_stratum` trap name).
+- NEW: sdk-030 — `query!` diagnostics still say "predicate" (`lib.rs:1079+`).
+- C ABI `BDB_FIND_TERM_KIND_MEASURE` already exists (`bumbledb_c.h:211`); C++ `find_form` still has no `measure` (sdk-004). TS `FindTermIr` already has `measure` / `aggregateMeasure`; builder `AggData` is already a Count-vs-fold sum; the wire `over?: number` remains (sdk-006).
+- CONTRACT: C1 freezes `bdb_query` nullable `rec`. C6 blesses `has_over` death on `bdb_find_term` only. Count has no `over`; folds require it (sdk-004/008/027 aligned). No new caps. schema-001 ≠ sdk-023.

@@ -37,9 +37,10 @@ The domain definition itself (`recDom`, 362-369) walks `(rec.base ++ rec.rec)` a
 
 Per `audit/CONTRACT.md §C2/§C4`: after lean-002, a step arm's self-occurrence is `RecStep.selfBindings` — not an `.interior self` atom in `atoms`. Restate `recDom`/`recCands` over `LinearRec`:
 
-- `recDom` walks base arms' atoms + step arms' *non-self* atoms (plus, for column reads through `selfBindings`, the candidate tuples' own values — which is exactly the "ignores the accumulating self" fact, now by construction: self contributes no NEW domain values because its rows are already candidates).
-- `evalRule_in_cands`'s `by_cases hQ : Q = self` disappears for step arms: the self read is its own structural case (via `RecStep`), and finished-interior reads are the only `.interior` sources left in `atoms`.
-- Doc comment rewritten in present-tense vocabulary: "Ignores the accumulating self: its rows are candidates already." No `idb`, no "old program domain".
+- `recDom` walks base `toRule` atoms + step *non-self* atoms (EDB + finished interiors in `V`). Do not walk `selfBindings` as an `.interior self` source against `V` — `V self` is empty during candidate construction, which is why today's recDom already "ignores self".
+- Finiteness proof obligation (do not shrink the candidate space): `evalRule_in_cands` currently cases `Q = self` to take values from `acc` via `hacc : acc ⊆ recCands`. After the split, matching `selfBindings` against `acc` is its own case and MUST still conclude those values inhabit `recCands` because they come from `acc` (previous candidates / base), not from `recDom`'s `V`. Dropping that case without an equivalent lemma breaks `reach_den_finite`.
+- `evalRule_in_cands`'s `by_cases hQ : Q = self` disappears: finished-interior reads are the only `.interior` sources left in `atoms`.
+- Doc comment rewritten in present-tense vocabulary: "Ignores the accumulating self: its rows are already candidates." No `idb`, no "old program domain".
 
 ## Acceptance criteria
 

@@ -29,7 +29,9 @@ fresh_row: projection.len() == 1
     && relations[relation.0 as usize].fresh_row_field() == Some(projection[0]),
 ```
 
-`KeyStatement` (`schema.rs:397-428`) is then two independent flags — four states, three valid (fresh-row is U64, never an interval). `pointwise()` is `tail.is_some()`. Plan copies `pointwise: statement.tail` onto `DeterminantOp`. Judgment and point reads re-test `fresh_row`. `DisjointDeterminantProof` survives only on containment `Enforcement::IntervalCoverage`.
+`KeyStatement` (`schema.rs:397-428`) is then two independent flags — four states, three valid (fresh-row is U64, never an interval). `pointwise()` is `tail.is_some()`. Plan copies `pointwise: statement.tail` onto `DeterminantOp` (`storage/commit/plan.rs:378-383`). Judgment and point reads re-test `fresh_row`. `DisjointDeterminantProof` survives only on containment `Enforcement::IntervalCoverage`.
+
+The one-word expect lives at the probe sites, not in schema: `api/db/get.rs:109` and `exec/dispatch/key_probe_fact.rs:275` — `expect("a fresh-row determinant is one u64 word")`.
 
 ## Why it's wrong
 
@@ -37,7 +39,7 @@ Insight 6 — parse, don't validate: the gate learned Scalar vs Pointwise-with-p
 
 ## The fix
 
-Per proposed C9 (schema-001's CONTRACT gap), keep the sum on the witness:
+Implementable under C1–C8. Proposed C9 would pin this shape; this issue is not blocked on C9.
 
 ```rust
 enum KeyForm {
@@ -49,16 +51,19 @@ enum KeyForm {
 ```
 
 - `pointwise()` dies; consumers match `KeyForm`.
-- Plan/judgment/point-read match the form. No `expect("a fresh-row determinant is one u64 word")` — FreshRow is one word by type.
+- Plan/judgment/point-read match the form. FreshRow is one word by type — the `try_into().expect("a fresh-row determinant is one u64 word")` sites delete.
 - `DisjointDeterminantProof` stays on the Pointwise arm (containment `IntervalCoverage` already does this).
+- `DeterminantOp.pointwise: Option<IntervalTail>` dies with the copy; the insert neighbor-probe is a Pointwise-only field (or a Pointwise arm of the op).
 
 ## Acceptance criteria
 
 - [ ] Gone: `rg -n 'fresh_row: bool' crates/bumbledb/src/schema.rs`; `rg -n 'fn pointwise' crates/bumbledb/src/schema.rs`; `rg -n 'FunctionalityEvidence' crates/bumbledb/src/schema/validate.rs` → the evidence enum either *is* `KeyForm` or is inlined into it (no flatten).
 - [ ] Gone: `rg -n 'pointwise: statement.tail' crates/bumbledb/src/storage/commit/plan.rs`.
+- [ ] Gone: `rg -n 'a fresh-row determinant is one u64 word' crates/bumbledb/src`.
 - [ ] Unchanged tests: key/pointwise/fresh-row commit and point-read tests green, assertions untouched.
 - [ ] Green: `PATH="$HOME/.cargo/bin:$PATH" cargo test -p bumbledb`; `./scripts/check.sh`.
 
 ## Constraints
 
 - R16 one-id-allocator semantics identical (fresh field IS the `F` row id; no `U` tree). Pointwise neighbor probe unchanged. `KeyId` arena stays.
+- Do not make FreshRow pointwise-capable. Do not drop `IntervalTail` off the Pointwise arm and re-walk the projection.

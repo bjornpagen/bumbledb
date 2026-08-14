@@ -17,7 +17,7 @@ Insight 8 — the same module already made unit a case. `*` is the ceiling sibli
 
 ## The fix
 
-Per schema-003's `SealedBound::Unbounded`. Descriptor `hi: Option<Bound>` may stay the hostile `*` spelling (schema-010 analog). Witness parses. Judge matches Unbounded vs a resolved ceiling — no `is_some_and` on the window.
+Implementable under C1–C8 with schema-003 (not blocked on proposed CONTRACT C9). `SealedBound::Unbounded` is the witness spelling. Descriptor `hi: Option<Bound>` may stay the hostile `*` spelling (schema-010 analog). Witness parses. Judge matches Unbounded vs a resolved ceiling — no `is_some_and` on the window.
 
 ## Acceptance criteria
 

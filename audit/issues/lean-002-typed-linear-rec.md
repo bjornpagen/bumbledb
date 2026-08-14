@@ -70,7 +70,7 @@ structure RecRule where            -- base arm: negation unrepresentable, no sel
 structure RecStep where            -- step arm: THE unique positive self-atom, structural
   finds : List VarId
   selfBindings : List (FieldId × Term)
-  atoms : List Atom                -- the non-self atoms
+  atoms : List Atom                -- non-self atoms after the decoder split
   conditions : List Condition
 
 structure LinearRec where          -- nonempty by type; field named `rec` is unavailable (recursor)
@@ -78,11 +78,29 @@ structure LinearRec where          -- nonempty by type; field named `rec` is una
   step : RecStep × List RecStep
 ```
 
-- Semantics for accepted queries identical: base arms evaluate against EDB + finished interiors (self unbound reads empty, exactly as today's hostile phantom does); step arms evaluate with the self atom bound to the accumulating set (denotation) / delta (Level 1). A definitional lowering `RecRule.toRule : Rule` / `RecStep.toRule (self : InteriorId) : Rule` may feed the existing `ruleAnswers`/`evalRule` machinery — the point is the SOURCE type cannot spell nonlinearity, missing-self, or negation-in-rec.
-- `reachOp`/`reachDen`/`evalLinearReach`/`reachStep`/`recDom`/`recCands` (`Reach.lean:196-205, 359-375, 482-493`) take `LinearRec`; `reachOp_mono` loses `hlin`; `reachOp_empty` loses its `hpos` premise; `evalLinearReach_eq_lfp` and `reach_den_finite` (`Reach.lean:659-743`) lose `hlin`.
-- DELETE: `Rule.selfCount`, `Rule.hasNegatedSelf`, `Query.recLinear`, `recLinear_arms`, `selfCount_eq_one_mem` (lean-017 is this deletion), `Rec` and its accessors, `oddRec`/`oddQuery` as syntax (Countermodels keeps `odd_not_monotone`/`odd_rounds_oscillate`/`odd_no_fixpoint` at the OPERATOR level — see lean-015).
-- Decoder: `lean/Main.lean:385-391 decodeRec` parses the frozen JSON into `LinearRec` — the step arms' self atom is the positive atom whose `interior` id equals `interiors.length`; a reach case failing that parse is a decode error (none of the 22 checked-in reach cases do). Coordinate with lean-008. JSON unchanged.
-- `Bridge.lean` rows citing `reachOp_mono` etc. move with the restatements.
+C5 constraint (do not "fix" this with `recSelf` / `NonSelfAtom` / Fin): `AtomSource` stays `edb | interior InteriorId`. A hand-built `RecStep.atoms` can still mention `.interior self`. Linearity for *accepted* queries is the decoder parse plus `selfBindings` being the one self occurrence the evaluators use.
+
+**Lowering (required, or `reachOp_empty` / `evalRule` break):**
+
+```lean
+def RecRule.toRule (r : RecRule) : Rule :=
+  { finds := r.finds, atoms := r.atoms, negated := [], conditions := r.conditions }
+
+def RecStep.toRule (self : InteriorId) (r : RecStep) : Rule :=
+  { finds := r.finds
+    atoms := { source := .interior self, bindings := r.selfBindings } :: r.atoms
+    negated := []
+    conditions := r.conditions }
+```
+
+`reachOp` / `reachStep` / `evalLinearReach` feed `toRule` into the existing `rulesAnswers` / `evalList` machinery. Do NOT drop `selfBindings` from the atom list — `reachOp_empty` is "positive self against ∅ derives nothing", which needs that atom to exist. Empty `selfBindings` is still a legal self atom (nonemptiness gate).
+
+**Decoder (`lean/Main.lean:385-391 decodeRec`, JSON keys `base`/`rec` unchanged):** parse the frozen object into `LinearRec`. Let `selfId := interiors.length`. For each JSON base rule: refuse nonempty `negated` (`NegationInRec`), refuse any positive atom with `interior` id = `selfId` (`SelfInBase`), refuse empty `base`. For each JSON step rule: refuse nonempty `negated`; partition positive atoms into the unique `interior` atom whose id = `selfId` (its bindings become `selfBindings`) vs the rest (`RecStep.atoms`); missing self (`RecArmMissingSelf`) or extra self (`NonlinearRecArm`) is a decode error. None of the 22 checked-in reach cases fail this. Coordinate with lean-008.
+
+- Semantics for accepted queries identical: base evaluates against EDB + finished interiors; step evaluates with the reconstructed self atom bound to the accumulating set (denotation) / delta (Level 1).
+- `reachOp`/`reachDen`/`evalLinearReach`/`reachStep`/`recDom`/`recCands` (`Reach.lean:196-205, 359-375, 482-493`) take `LinearRec`; `reachOp_mono` loses `hlin` (monotonicity is `negated = []` from the type — today's `reachOp_mono` already spends only `hlin.2`, not `selfCount`); `reachOp_empty` loses `hpos` (self atom is `selfBindings`); `evalLinearReach_eq_lfp` and `reach_den_finite` (`Reach.lean:659-743`) lose `hlin`.
+- DELETE: `Rule.selfCount`, `Rule.hasNegatedSelf`, `Query.recLinear`, `recLinear_arms`, `selfCount_eq_one_mem` (lean-017 is this deletion), `Rec` and its accessors, `oddRec`/`oddQuery` as *syntax* (Countermodels keeps the operator-level walls — see lean-015; `oddOp` CANNOT stay `reachOp C oddRec` once `Rec` dies).
+- `Bridge.lean` `@Query.reachOp_mono` (`:558-561`) restates without a linearity premise; do not delete the row. NonlinearRecArm / NegationInRec stay the engine instruments.
 
 ## Acceptance criteria
 
@@ -95,4 +113,5 @@ structure LinearRec where          -- nonempty by type; field named `rec` is una
 
 - Semantics identical for accepted queries; walls unchanged (`odd_not_monotone` stays as the operator-level wall — the wall is real, only its syntax inhabitant dies); OPEN refusals unchanged.
 - Field name `rec` is unavailable (recursor collision) — `base`/`step` per CONTRACT §C4; JSON keys (`base`, `rec`) unchanged, decoder maps spelling → field.
-- Must land as one change with lean-001. No Program vocabulary; no new caps.
+- C5: do not add `recSelf` / `NonSelfAtom` / Fin-indexed atoms. Extra `.interior self` in `RecStep.atoms` stays a decoder-refused hand-construction; evaluators read self only through `selfBindings`.
+- Must land as one change with lean-001. No Program vocabulary; no new caps. `toRule` must include the reconstructed self atom or `reachOp_empty` is false.

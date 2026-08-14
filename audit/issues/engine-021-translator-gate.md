@@ -32,9 +32,9 @@ One translator input (a Query) is dispatched by a two-flag product to modules wh
 
 - [ ] One path: `rg -n 'interiors\.is_empty\(\) \|\| query\.rec\.is_some\(\)|!query\.interiors\.is_empty\(\) \|\| query\.rec\.is_some\(\)' crates/bumbledb-bench/src` → no matches; `rg -c 'rec\.is_some\(\)' crates/bumbledb-bench/src/translate` → ≤ 1.
 - [ ] Honest names: `rg -n 'sqlite_reach_expressible' crates/bumbledb-bench/src` → no matches (renamed); no module named `reach` translating interiors-only queries.
-- [ ] Unchanged: emitted SQL byte-identical on the whole differential corpus (the three-way comparator is the lock) — `PATH="$HOME/.cargo/bin:$PATH" cargo test -p bumbledb-bench` green with zero SQL-snapshot edits.
-- [ ] Green: `./scripts/check.sh`; `./scripts/lean.sh` (three-way comparator).
+- [ ] Unchanged: `WITH` vs `WITH RECURSIVE` choice and SELECT/UNION structure byte-identical on the whole differential corpus. CTE *identifiers* (`p{id}` → `interior{id}` / `rec`) are bench-006 — this issue does not rename them. If the two land together, goldens move once under bench-006; if this lands first, snapshots stay `p{id}`.
+- [ ] Green: `PATH="$HOME/.cargo/bin:$PATH" cargo test -p bumbledb-bench`; `./scripts/check.sh`; `./scripts/lean.sh` (three-way comparator — **answers** locked).
 
 ## Constraints
 
-- `WITH` vs `WITH RECURSIVE` semantics locked (SQLite requirement). SQL output must not change.
+- `WITH` vs `WITH RECURSIVE` semantics locked (SQLite requirement). `main_select` already delegates to `translate_rules`, so folding the CQ path through empty-CTE derived translation must not change CQ SQL. Identifier rename is bench-006, not this id.

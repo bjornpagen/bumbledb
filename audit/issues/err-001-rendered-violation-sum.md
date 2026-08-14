@@ -11,7 +11,7 @@
 
 `Violation` is already a sum. `render_rejection` (`schema/render.rs:84-92`) matches it, then stuffs the result into `RenderedViolation` (`render.rs:26-41`) where `direction: Option<Direction>` and `measure: Option<u128>` are independently optional. Functionality-with-measure and Capacity-with-direction are representable.
 
-This is the in-process `has_measure + payload` analog. Do **not** duplicate sdk-008 (`bdb_violation.has_measure` + two u64 words is C ABI essential; that issue is the bridge). `MeasureOfRay { start, end }` is the *right* shape (both words are the ray) and is not this bug.
+This is the in-process `has_measure + payload` analog. Do **not** duplicate sdk-008 (`bdb_violation.has_measure` + two u64 words is C ABI essential; that issue is the bridge). Do **not** steal sdk-028 (TS/C++ dialect products). `MeasureOfRay { start, end }` is the *right* shape (both words are the ray) and is not this bug.
 
 ## Why it's wrong
 
@@ -20,6 +20,8 @@ Insight 7 — tag-plus-all-payloads. The engine sum was parsed and forgotten. Bi
 ## The fix
 
 `audit/CONTRACT.md` C1 does not freeze this tree. C6/C7: C ABI `has_measure` stays (sdk-008). Engine `RenderedViolation` mirrors `Violation`'s sum (or is a `match` producing per-arm structs).
+
+NAPI `ts/crate/src/marshal.rs` `from_rendered` today copies `direction`/`measure` Options onto `ViolationWire`. After this lands, marshal flattens the engine sum onto that wire at the NAPI boundary (sdk-028 owns the TS/C++ *host* types). Do not keep the engine type flat "for marshal convenience."
 
 ## Acceptance criteria
 
@@ -30,4 +32,4 @@ Insight 7 — tag-plus-all-payloads. The engine sum was parsed and forgotten. Bi
 
 ## Constraints
 
-- Bindings-consumable facts (named decoded values) still attached. C ABI outbound flattening is sdk-008, not this issue. Do not change `MeasureOfRay`.
+- Bindings-consumable facts (named decoded values) still attached. C ABI outbound flattening is sdk-008, not this issue. TS/C++ dialect sums are sdk-028. Do not change `MeasureOfRay`.

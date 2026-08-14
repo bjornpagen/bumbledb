@@ -187,3 +187,16 @@ fn walk_rules(q: &Query) -> impl Iterator<Item = &Rule>
 `random_reach_query` as a public entry, `render_case` vs reach render, `sqlite_reach_expressible`, `EdbAtom` on `Atom`, and `params_for` walking only `query.rules` have nowhere to stand.
 
 Brooks: show the tables. This is the table. The `if we remembered the reach entry` forest is the flowchart it makes obsolete.
+
+---
+
+## Adversarial validation (2026-08-14)
+
+Citations opened against `conformance.rs` / `conformance/reach.rs`, `corpus_gen/irgen.rs`, `querygen.rs` / `shapes_recursive.rs` / `oracle.rs` / `contradict.rs`, `translate.rs` / `translate/reach.rs` / `builder.rs`, `closure.rs`, `driver/read_family.rs`. No issue deleted. Four bench files rewritten:
+
+- **F1 / bench-001:** owns **both** JSON emitters (`render_case` and `render_reach_case`). lean-008 is the decoder twin. engine-038 is *not* the encoder (it is a DUPLICATE stub of engine-012).
+- **F3 / bench-003:** stamp / opgen / contradict are the CQ-only hole. `conformance.rs:1527,1663` and `conformance/reach.rs:485,555` are C1 reconstructers — retargeting them regenerates the 268 files. Reach JSON coverage is already `reach-*.json`.
+- **F4 / bench-004:** land before the mixed generator. `contradict` planting only `query.rules` on a rec query would *not* denote ∅. `lower_rule` must not coerce `Interior` to `Edb`. CQ `params_for` RNG/anchors stay identical when interiors/rec are empty.
+- **F12 / bench-012:** coverage labels may call interiors-only rows interiors; `RecursiveVariant` Debug names stay (reach provenance).
+
+F5 (one `sqlite_expressible`) still co-lands with engine-021. F6 CTE names still change SQL *strings*, not answers. Dual *spellings* stay; dual *code* dies. No Program-shaped JSON found.

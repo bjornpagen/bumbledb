@@ -4,7 +4,7 @@
 - **Tree:** docs
 - **Status:** OPEN
 - **Source:** audit/docs.md F6
-- **Depends on:** none (prose; same file as docs-001..010)
+- **Depends on:** lean-002 (`recLinear` dies; linearity is structural on `LinearRec` — do not cite `recLinear` as the surviving judge)
 
 ## The bug
 
@@ -16,12 +16,12 @@ Same negation-of-retired-coordinate as docs-005 (Insight 1): Tarjan is the delet
 
 ## The fix
 
-Per `audit/CONTRACT.md §C7`: "`Query.recLinear` (`lean/Bumbledb/Query/Syntax.lean`) is the well-formedness of the one linear rec (exactly one positive self-atom per rec arm, …)." Drop the Tarjan clause.
+Per `audit/CONTRACT.md §C7` + §C4 (`recLinear` dies): "The one rec's well-formedness is structural (exactly one positive self-atom per rec arm in the typed rec; nonempty base and step)." Drop the Tarjan clause. Do **not** keep `Query.recLinear` as the destination name — C7 wants the successor, not the dying Lean identifier. `NegationInRec` and the well-formedness *content* stay.
 
 ## Acceptance criteria
 
-- [ ] Gone: `rg -in 'tarjan' docs/architecture/20-query-ir.md` → no matches.
-- [ ] The `recLinear` citation and the well-formedness content unchanged.
+- [ ] Gone: `rg -in 'tarjan|recLinear' docs/architecture/20-query-ir.md` → no matches.
+- [ ] The well-formedness content (one positive self-atom per rec arm, `NegationInRec`) unchanged.
 
 ## Constraints
 

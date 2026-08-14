@@ -11,6 +11,8 @@
 
 `View` (`image/view.rs:212-230`) is already the right three-variant sum ("not a sentinel vector"). Then `image()` and `position_at` are total over a type that includes `Unbound` and `unreachable!` (`view.rs:241-245,272-274`). Phase is in the data; methods pretend it isn't.
 
+`Unbound` is inhabited at those functions' callers: `Colt::new` (`exec/colt/new.rs:47`), `unbound_sibling` (`new.rs:47`), `reset` (`new.rs:75`), prepare (`api/prepared/build.rs:1026`), reach recycle (`api/prepared/reach.rs:486`). COLT `force`/`gather`/`count` then call `view.image()` / `position_at()`. This is not an uninhabited arm.
+
 ## Why it's wrong
 
 Insight 4 — Unbound is a real state of prepare-before-execute. Methods that panic on it are guards the sum already made unnecessary *if the executor held a bound view*.

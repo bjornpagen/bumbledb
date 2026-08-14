@@ -26,8 +26,8 @@ Per `audit/CONTRACT.md §C6` (C++): four `find_form` cases mirroring `FindTerm` 
 
 - `find_slot` accepts a `measure_ref` (the `Duration(w)` spelling) and records `find_form::measure`.
 - `find_of` maps `measure` → `BDB_FIND_TERM_KIND_MEASURE`.
-- `has_over` DIES: Count is the no-over aggregate case in the sum (aggregate op carries its over as payload where the op requires one); sdk-020's dummy `op` filler on Var heads dies in the same change.
-- Add a compile-SUCCESS test that projects a duration measure column and asserts the wire kind (there is currently neither a compile-fail nor a compile-success for it — sdk-018).
+- Dialect `has_over` DIES: Count is the no-over aggregate case in the sum (aggregate op carries its over as payload where the op requires one); sdk-020's dummy `op` filler on Var heads dies in the same change. The ABI `bdb_find_term.has_over` *field* is sdk-008's C6 delta — this issue must not remove or reorder that field on its own. `find_of` projects the four-case sum onto whatever encoding sdk-008 ships (`BDB_FIND_TERM_KIND_COUNT` or always-read-`over`).
+- Add a compile-SUCCESS test that projects a duration measure column and asserts the wire kind (there is currently neither a compile-fail nor a compile-success for it — sdk-018). The ABI already has `BDB_FIND_TERM_KIND_MEASURE` (`cpp/foreign/bumbledb_c.h:211`); the dialect never emits it.
 
 ## Acceptance criteria
 
@@ -38,4 +38,4 @@ Per `audit/CONTRACT.md §C6` (C++): four `find_form` cases mirroring `FindTerm` 
 
 ## Constraints
 
-- Semantics identical for existing queries (Var/Aggregate/AggregateMeasure wire bytes unchanged); the NEW capability is only the dialect gaining a spelling for an already-legal engine sentence — no engine change. Coordinate with sdk-008 (`has_over` at the ABI) so the two `has_over` deaths agree on the `bdb_find_term` shape.
+- Semantics identical for existing queries (Var/Aggregate/AggregateMeasure wire bytes unchanged until sdk-008 lands the ABI encoding); the NEW capability is only the dialect gaining a spelling for an already-legal engine sentence — no engine change. Count has no `over`; folds require it (C6) — same split as sdk-008 / sdk-027, not a third Count encoding. Do not change `bdb_query`'s nullable `rec` (C1).

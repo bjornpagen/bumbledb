@@ -328,6 +328,7 @@ enum SealedBound {
     Duration { field: FieldId, tail: IntervalTail },
 }
 enum CapacityEnforcement { ScalarProbe { .. }, Closed { members: MemberSet } }
+// Containments keep three-arm Enforcement; IntervalCoverage carries source_tail (schema-011).
 
 enum EnvMode { Durable { lock: File }, Ephemeral { lock: File, dirty_marker: PathBuf }, Exhume }
 ```
@@ -335,3 +336,28 @@ enum EnvMode { Durable { lock: File }, Ephemeral { lock: File, dirty_marker: Pat
 Closed cannot be written. Fresh-row cannot be pointwise. Duration cannot miss its tail. Capacity cannot spell interval coverage. Exhume cannot hold a dirty marker. `is_closed()`, `pointwise()`, `weight_tail.expect`, and `closed_slots[rel]` have nothing to test.
 
 Brooks: show the tables. This is the table. The `if rel.is_closed()` forest is the flowchart it makes obsolete.
+
+---
+
+## Adversarial validation (2026-08-14)
+
+Code-checked against `schema.rs`, `schema/{relation,validate,render}.rs`, `storage/{env,commit/{plan,applier,write,judgment}}.rs`, `image/{cache,view,build}.rs`, `api/db/{get,snapshot,prepare}.rs`, `error.rs`, `obs.rs`. Dump F1–F25 matched. No issue deleted.
+
+**Fix rewrites (diagnosis stood; naive Fix would break):**
+
+- schema-001 — C9 is a proposed pin, not a blocker. Typed `insert` compile-fail is not acceptance (`Fact::RELATION` is data). Dyn `ClosedRelationWrite` stays. Not in conflict with schema-009.
+- schema-002 / schema-003 / schema-008 — same C9 rule. schema-003's "C10" is capacity-laws rays (`CapacityRayMeasure`), not proposed CONTRACT corruption-C10.
+- schema-004 — do not replace `unreachable!` with a skip.
+- schema-005 — fingerprint tags 6/7 locked.
+- store-001 — Delete correctly omits `fresh_row`/`memberships` (`delete_fact` reads row id from `M`).
+- image-002 — split `ViewWordSource` off `ResolvedWordSource`; `Var` stays on plan/exec.
+- image-003 — KEEP: `Unbound` is inhabited (`Colt::new`/`reset`/`unbound_sibling`).
+- err-001 — engine sum; NAPI flattens at marshal (sdk-028 / sdk-008 stay).
+- err-003 — `CommitRejected` must remain representable without cited facts (`decorate_rejected` is best-effort; never swap the error kind).
+- err-004 — census added (`dict reverse id reuse`, `descriptor round trip`); do not number the proposed clause C10 (capacity-laws C10 exists).
+
+**New:** schema-011 — `ContainmentStatement.source_tail: Option` is `IntervalCoverage`'s sidecar (`judgment.rs:1192-1194,639-641`). Put the source tail in that arm. Target tail stays on `KeyForm::Pointwise`. Not sdk-023.
+
+**WONTFIX unchanged:** schema-010, store-004 (C7 / docs-018).
+
+**C9/C10 pin (recommendation only):** Pin C9 (sealed schema sums) before schema-001..008/011 fanout so fixers share one table. Do **not** pin an audit "C10" under that number — capacity-laws C10 is rays. Corruption variants can land under C1–C8 as named `CorruptionError` arms (err-004) without a new clause; if pinned, use a free number.

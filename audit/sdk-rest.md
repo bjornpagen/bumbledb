@@ -170,3 +170,11 @@ The repeating move: TS schema constructors and raii's `owned_statement` / `optio
 
 - **raii:** not clean. `owned_literal` / `owned_bound` / `owned_weight` / `owned_containment.bidirectional` / dummy `has_width` on `scalar_type` are dump #2 and #4. `violation_copy.has_measure` is sdk-008, not re-filed. The handle RAII, `owned_statement` variant, and `owned_relation.closed` optional are the parts that already collapsed.
 - **napi:** query marshal leftover is sdk-008 (not re-filed). Schema marshal parses closedness and statement/weight/window/literal kinds as sums — clean on that lane. Leftover is `ViolationWire`'s parallel `Option` payloads (dump #6).
+
+---
+
+## Final adversarial validation (2026-08-14)
+
+Verified `cpp/src/schema/spec.cc:66-72` (`bool closed` + `closed_info`), `:18-33` / `axioms.cc:13-18` sugar caps, `:163` `bidirectional`, `ts/src/statements.ts:73`, `ts/src/db.ts:125-132,440-451`, `cpp/src/error.cc:84-90`, macros `HeadTerm::Agg { over: Option, measure: bool }` at `lib.rs:330-338`, `interior_style` → `Option<bool>` at `:1369`. schema-001 (engine sealed `Relation` sum) is a different tree from sdk-023 (C++ `relation_data` closed flag) — both real, not merged.
+
+Wave-1 leftovers not re-filed. sdk-030 (`query!` "predicate" diagnostics) lives with the macros crate and is filed under the wave-1 prefix sequence, not here.

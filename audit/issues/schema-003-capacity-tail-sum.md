@@ -24,7 +24,7 @@ Insight 6 — the gate matched `Weight::DurationOf` and learned the `IntervalTai
 
 ## The fix
 
-Per proposed C9 (schema-001). Put the tail in the arm:
+Implementable under C1–C8. Proposed C9 would pin this shape; this issue is not blocked on C9. Put the tail in the arm:
 
 ```rust
 enum SealedWeight {
@@ -46,9 +46,11 @@ enum SealedBound {
 
 - [ ] Gone: `rg -n 'weight_tail: Option' crates/bumbledb/src/schema.rs`; `rg -n 'bound_tail: Option' crates/bumbledb/src/schema.rs`.
 - [ ] Gone: `rg -n 'expect\("validate seals a tail' crates/bumbledb/src/storage/commit/judgment.rs`.
-- [ ] Unchanged tests: capacity unit/field/Duration and bound-Duration commit tests green, assertions untouched. `CapacityRayMeasure` still the C10 refusal.
+- [ ] Unchanged tests: capacity unit/field/Duration and bound-Duration commit tests green, assertions untouched. `Error::CapacityRayMeasure` still the capacity-laws C10 (rays) refusal — that C10 is `docs/design/capacity-laws.md`, **not** proposed CONTRACT C10 (corruption variants).
 - [ ] Green: `PATH="$HOME/.cargo/bin:$PATH" cargo test -p bumbledb`; `./scripts/check.sh`.
 
 ## Constraints
 
 - `Weight::Unit` name and count-instance semantics locked (theory C4). Window `*` spelling at the descriptor may stay `hi: None` until schema-008 parses it on the witness. Measure arithmetic (`end − start` in encoded words) identical.
+- Do not drop tails and re-walk the field roster. Do not replace the Duration `expect` with a runtime skip of the measure.
+- Do not weaken assertions.

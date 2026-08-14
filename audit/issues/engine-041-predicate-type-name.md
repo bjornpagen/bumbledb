@@ -22,13 +22,15 @@ Names are representation (Insight 1): a sealed answer/interior *signature* named
 
 ## The fix
 
-Per `audit/CONTRACT.md §C3` (Signature naming amendment): mechanical rename `Predicate` → `Signature`, `PredicateColumn` → `SignatureColumn` (`validate.rs:152`), accessors `predicate()` → `signature()`, across `crates/bumbledb` and `crates/bumbledb-bench` (and any SDK crate re-exporting the symbol, in the same commit). The C ABI, wire types, boundary IR (`ir.rs`), and locked error/config names are untouched (§C1). `AtomSource::Interior` etc. are out of scope.
+Per `audit/CONTRACT.md §C3` (Signature naming amendment): mechanical rename of the **sealed signature type** `ir/validate::Predicate` → `Signature`, `PredicateColumn` → `SignatureColumn` (`validate.rs:152`), accessors `predicate()` → `signature()` including the public `PreparedQuery::predicate()` (`introspect.rs:460`) and `IntrospectionHeader.predicate: String` (rendered signature). Across `crates/bumbledb` and `crates/bumbledb-bench` (and any SDK crate re-exporting the symbol, in the same commit).
+
+Do **not** rename: `FilterPredicate`, DNF/condition "predicate" English, SQL WHERE "predicate columns", C ABI / wire types / boundary `ir.rs`, locked error/config names. `AtomSource::Interior` is out of scope.
 
 ## Acceptance criteria
 
-- [ ] Gone: `rg -nw 'Predicate|PredicateColumn' crates/bumbledb/src crates/bumbledb-bench/src` → no matches; `rg -n 'fn predicate\(' crates` → no matches.
+- [ ] Gone: `pub struct Predicate` / `pub struct PredicateColumn` / `fn predicate(` on the signature type and `PreparedQuery`. `rg -n 'struct Predicate\b|struct PredicateColumn\b|fn predicate\(' crates/bumbledb/src crates/bumbledb-bench/src` → no signature-type hits (`FilterPredicate` must still exist).
 - [ ] Unchanged tests: pure rename — all suites green with zero assertion edits; ABI and boundary IR byte-identical.
-- [ ] Green: `PATH="$HOME/.cargo/bin:$PATH" cargo test -p bumbledb && cargo test -p bumbledb-bench`; `./scripts/check.sh`; `./scripts/lean.sh` (any Bridge census token citing the old symbol moves in the same change — check `rg -n 'Predicate' lean/Bumbledb/Bridge.lean`).
+- [ ] Green: `PATH="$HOME/.cargo/bin:$PATH" cargo test -p bumbledb && cargo test -p bumbledb-bench`; `./scripts/check.sh`; `./scripts/lean.sh` (any Bridge census token citing the signature type moves in the same change — check `rg -n 'Predicate' lean/Bumbledb/Bridge.lean` and list non-signature leftovers in the commit).
 
 ## Constraints
 

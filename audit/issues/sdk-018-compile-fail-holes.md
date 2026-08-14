@@ -8,9 +8,10 @@
 
 ## The bug
 
-The Rust `query!` suite pins the cutover statically (`named_head_without_keyword`, phase order, one rec, nonempty base/rec, bare main required). C++ and TS do not:
+The Rust `query!` suite pins the cutover statically (`named_head_without_keyword`, phase order, one rec, nonempty base/rec, bare main required). C++ and TS do not pin **types**:
 
-- C++ (paths exist as consteval traps, not types): recursive-after-main has no fixture (`cpp/src/query/query.cc:208` fires `interior_or_recursive_after_a_main_rule`; `query_interior_after_main.cc` exists in `cpp/tests/compile_fail/`, no recursive twin). Interiors-only / rec-only `prepare<>` compiles (empty main is a typed value — sdk-001). `FindTerm::Measure` as a column is unwritable so NEITHER a compile-fail nor compile-success exists (sdk-004). Condition trees unwritable (sdk-013). Negation-in-rec is a runtime/consteval wall with no fixture.
+- C++ already has consteval-trap fixtures, which is not the same as a phase machine: `cpp/tests/compile_fail/query_second_recursive.cc`, `query_interior_after_recursive.cc`, `query_interior_after_main.cc`, `query_duplicate_interior.cc`. They compile the illegal *call* and fail inside `a_second_recursive_is_refused` / `interior_after_recursive` / `interior_or_recursive_after_a_main_rule`. After sdk-001 those methods leave the overload set; the same files should fail as ill-formed calls — do **not** add a second `query_recursive_twice.cc` (that is `query_second_recursive.cc`).
+- Still missing: recursive-after-main (`query.cc:208` fires `interior_or_recursive_after_a_main_rule` for `.recursive` too; no `query_recursive_after_main.cc` twin of `query_interior_after_main.cc`). Interiors-only / rec-only `prepare<>` compiles — `cpp/src/db/db.cc:279-281` is unconstrained `template<auto Query>` (empty main is a typed `query_value` — sdk-001). `FindTerm::Measure` as a column is unwritable so neither a compile-fail nor a compile-success exists (sdk-004). Condition trees unwritable (sdk-013). Negation-in-rec is a runtime/consteval wall with no fixture.
 - TS: second-recursive, interior-after-recursive, duplicate interior name, empty name are runtime throws (`ts/src/query/lower.ts:1614-1642`; `ts/test/query.test.ts:1161-1215`) while after-main IS `never` — inconsistent coordinates.
 
 ## Why it's wrong
@@ -19,9 +20,9 @@ A refusal that lives in a trap instead of a type has no regression net: nothing 
 
 ## The fix
 
-Once the phase machines land (sdk-001, sdk-005), the compile-fail suite IS the type. Add, named:
+Once the phase machines land (sdk-001, sdk-005), the compile-fail suite IS the type. Keep the existing trap fixtures (they become ill-formed-method tests). Add only the holes:
 
-- C++ `cpp/tests/compile_fail/`: `query_recursive_after_main.cc`, `query_recursive_twice.cc`, `query_prepare_without_main.cc`, `query_negation_in_rec.cc` (consteval-fail if that wall stays consteval); compile-SUCCESS: measure find column (sdk-004), condition tree (sdk-013), >4-rule interior (sdk-012).
+- C++ `cpp/tests/compile_fail/`: `query_recursive_after_main.cc`, `query_prepare_without_main.cc`, `query_negation_in_rec.cc` (consteval-fail if that wall stays consteval). Do not add `query_recursive_twice.cc`. Compile-SUCCESS: measure find column (sdk-004), condition tree (sdk-013), >4-rule interior (sdk-012).
 - TS: type tests (`@ts-expect-error` or `.test-d.ts`): second recursive, interior-after-recursive; runtime pins stay for the string-name walls TypeScript cannot see (duplicate/empty interior name — those are VALUE facts, correctly runtime).
 
 ## Acceptance criteria

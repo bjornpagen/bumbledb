@@ -4,7 +4,7 @@
 - **Tree:** lean
 - **Status:** OPEN
 - **Source:** audit/lean-rest.md M2
-- **Depends on:** lean-008 (`CFind` is the thin head wrapper around `Query`; unify onto it)
+- **Depends on:** none (unify onto Aggregates; coordinate with lean-008 so Conformance maps into that type rather than the reverse)
 - **Conflicts with:** none. Not DUPLICATE(lean-008): `CFind`/`CQuery` live in Conformance; `HeadSlot` is Dedup-local. Aggregates' `AggOp` is the recorded op inventory and stays.
 
 ## The bug
@@ -51,15 +51,23 @@ Insight 4: two coordinates for one head admit disagreement (union-key mask vs op
 
 ## The fix
 
-Per `audit/CONTRACT.md §C4` (one decoder / one query type; head-shape is a wrapper around `Query`, not a parallel IR) and §C6's find-shape sum (Count is its own kind):
+Per `audit/CONTRACT.md §C4` / §C6 (Count is its own kind):
 
-- Keep `AggOp` as the op inventory. After lean-008, `CFind` is the one head type the union law reads.
-- `HeadSlot` becomes a *function* of that type (`HeadSlot.of : CFind → …` or a view of `AggOp` + `KeyTerm`), not a constructor family. Delete the independent inductive.
-- `KeyTerm` may remain as the grouping-key view (`CFind.var`/`measure`) if it earns its keep as a function; it must not be a second source of truth.
+- Keep `AggOp` as the op inventory in `Query/Aggregates.lean`. Keep `KeyTerm` as the grouping-key view there (`var` / `measure`).
+- The union-key *quotient* is a **function** of that inventory, not a fourth inductive. Delete `inductive HeadSlot`. Example:
+
+  ```lean
+  def headSlot : (KeyTerm ⊕ AggOp) → …  -- or a small Find sum that lives in Aggregates
+  ```
+
+  Count → no key words; `sum`/`min`/`max`/`pack` → fold the `VarId`; `measureFold` → foldMeasure; `KeyTerm` → key. `keysOf` / `headRow` / `union_regime_agg_heads` take `List` of the Aggregates head type (or `List AggOp` plus key positions), applying the quotient as a function.
+- **Do not make `Exec/Dedup.lean` import `Conformance.lean`.** `CFind` is the decoder spelling of the same row (lean-008's wrapper). Conformance's `headRow` (`Conformance.lean:831`) should call the Aggregates/Dedup function after this lands — one executable reading, not a parallel definition. lean-008 may keep `CFind` as a thin decode layer that maps into the Aggregates sum.
+
+`HeadSlot.fold v` without a corresponding `AggOp` is exactly the illegal state this deletes; the union-key *reading* (Count contributes no words) stays as the function's Count case.
 
 ## Acceptance criteria
 
-- [ ] Gone: `rg -n 'inductive HeadSlot' lean` → no matches; union-key theorems (`headRow`, `keysOf`, `union_regime_agg_heads`) take `List CFind` or `List AggOp` (plus key positions), not a parallel inductive.
+- [ ] Gone: `rg -n 'inductive HeadSlot' lean` → no matches; union-key theorems (`headRow`, `keysOf`, `union_regime_agg_heads`) take the Aggregates head type (or `List AggOp` plus keys), not a parallel inductive. `Exec/Dedup.lean` does not import `Conformance.lean`.
 - [ ] Unchanged: `union_regime_agg_heads`, `agg_over_distinct_bindings`, `empty_global_no_answer` survive with the same content (Count contributes no union-key words; empty global aggregate is the empty answer set). 268-case conformance green.
 - [ ] Commands green: `cd lean && lake build`; `lake exe conformance conformance/cases` (268, 0); `./scripts/lean.sh` fully green. No `sorry`/`admit`.
 
@@ -67,4 +75,4 @@ Per `audit/CONTRACT.md §C4` (one decoder / one query type; head-shape is a wrap
 
 - Semantics identical: R1 (`CountAcrossRulesAccepted`) and R2 (`dnf_rekey_transparent`) unchanged. Count remains nullary (no dummy `over`).
 - No C5 split.
-- No Program vocabulary. Lands after lean-008 so the one head type exists; may fold `KeyTerm` in the same commit.
+- No Program vocabulary. May land with or after lean-008; Dedup unification does **not** wait on `CFind` existing as the spec type. Conformance maps into Aggregates, not the reverse.

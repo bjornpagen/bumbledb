@@ -372,3 +372,13 @@ The interchange still has two query types: `CQuery` for `seeded-*.json` / query 
 - `lean/README.md` — fuel is not a semantic parameter; linear-reach model is interiors + one rec. History’s “stratification lemma” is labeled History.
 - `docs/architecture/40-execution.md` § linear reach driver — interiors, then one linear reach, then main; budget as resource abort vs `evalQuery`. (The surrounding chapter still says “program”; that is F11.)
 - `proposals/` — no citations in scope.
+
+---
+
+## Final adversarial validation (2026-08-14)
+
+Citations opened. F1–F28 KEEP as docs-001–028 (docs-029 was the earlier adversarial F21 twin in the cookbook). REWRITE so Fixes do not teach dying Lean names: docs-004/015 drop `evalQuery_plain` (C4 / lean-001); docs-006/021/025 drop `recLinear` as destination (C4 / lean-002); docs-011 also sweeps `evalQuery_plain` in `40-execution.md`; docs-027 also kills "One-predicate rec queries".
+
+NEW docs-030: `20-query-ir.md:144-146` and `40-execution.md:81,450,466` still teach `DeltaVariant` / `PreparedBody::Empty` as current — depends on engine-007 / engine-023, not a re-file of those ids.
+
+`00-product.md` "rule program / stored rules → host loop" remains an obituary, not a finding. `docs/research/` archival. Do not re-file engine-041 (docs-002/017) or lean-008 (docs-012/027).

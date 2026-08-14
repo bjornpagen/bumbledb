@@ -426,3 +426,17 @@ enum QueryShape<I, R, M> {
 Interiors are data in both arms, not a sidecar. Rec cannot appear without `Rec`. Recursive rules cannot appear in main. `rec.is_some()` has nothing to test. `stats.strata`, `idb_images`, `DeltaVariant`, and `prepare_rule_variant` have nowhere to stand.
 
 Brooks: show the tables. This is the table. The `if rec.is_some()` forest is the flowchart it makes obsolete.
+
+---
+
+## Adversarial validation (2026-08-14)
+
+Citations opened against `ir.rs`, `api/prepared.rs`, `execute.rs`, `introspect.rs`, `reach.rs`, `build.rs`, `validate.rs`, `stats.rs`. No issue deleted. Eleven engine files rewritten so the Fix cannot break prepare/execute/corpus:
+
+- **F8 / engine-008:** profile's wide KeyProbe arm calls `execute_args` (execute's path) then *fabricates* key-probe stats — ANALYZE lies; it is not a second execution dispatch.
+- **F12 / F23:** `empty_stats` is only reached when `interiors.is_empty() && Empty`. Dead-main-with-live-interiors already reports `interior_stats()`. The Empty overload and ghost `rules` vecs stand; the "emits vanish" claim does not.
+- **F20:** a mixed `random_query` must not retarget `conformance.rs` / `conformance/reach.rs` reconstructers (`Rng::new(case_seed)`). That would change the 268 files (C1). `RecursiveVariant` Debug names are embedded in reach provenance.
+- **F6:** slice-extent sealing must keep `UnknownInterior` vs `InteriorNotPrior` vs `SelfInBase` as they fire today.
+- **F21:** `main_select` already calls `translate_rules`; folding CQ through empty CTEs is structure-preserving. CTE identifier rename is bench-006, not this finding.
+
+C3 pipeline sum (no `Empty` variant) remains the lever. F37 `Query::single` stays WONTFIX. F3/F17 stay scoped (boundary re-encoding refused).
