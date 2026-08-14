@@ -49,7 +49,7 @@ A `Query` is three parts, in evaluation order
 conjunctive rule-lists, each a finite CQ evaluated **once**; at most one
 linear `Rec`; and the **main** query — one head and a non-empty list of
 conjunctive rules. The head owns the find shape (arity, aggregate ops, and
-the output typing — the predicate below, sealed at validation); each rule
+the output typing — the signature below, sealed at validation); each rule
 is a conjunct (positive atoms, negated atoms, conditions) whose find terms
 align against the head position by position. The single-rule query is the
 degenerate case (`Query::single`). Empty interiors and `rec: None` is the
@@ -57,17 +57,17 @@ rec-absent constructor of `Query` (`cq`: interiors are a possibly-empty
 prefix) — `lean/Bumbledb/Exec/Reach.lean: evalQuery_cq`, not an embedding
 of a prior type.
 
-- **Main defines one anonymous predicate; rules derive it.** The head is
+- **Main owns the answer signature; rules derive it.** The head is
   its definition, and its typed **signature** is the answer-type tuple: one
   column per head position, each carrying the type that lands in the buffer
   (`Count` is U64 whatever it counted; the measure is
   U64; `Sum`/`Min`/`Max` carry their input's type; `Pack` its interval
   type) together with the fold
   producing it. It is derived **once**, at validation, and sealed in the
-  witness (`ir/validate`'s `Predicate`); sink construction, result-buffer
+  witness (`ir/validate`'s `Signature`); sink construction, result-buffer
   typing, finalize's column writers, and plan introspection's header all read that
   one object — no second derivation of the answer exists anywhere.
-  The predicate is anonymous and engine-internal (names live in the
+  The signature is unnamed and engine-internal (names live in the
   host, exactly like relations pre-`as`). Derived tables — interiors and
   the rec — are referenced by `InteriorId` from `AtomSource::Interior`
   (§ engine recursion), typed against their sealed columns. `RelId` /
@@ -874,7 +874,7 @@ whose term shape (variable vs aggregate-op kind) differs at a position, or
 whose resolved positional type differs from the pinned answer tuple (rule 0's
 resolved input types pin the head's positional tuple; every later rule must
 agree position by position — that alignment is *how* every rule derives
-the one predicate, whose signature the witness then seals from rule 0). Between the query shape and
+the answer signature, which the witness then seals from rule 0). Between the query shape and
 the per-rule roster, the **nesting boundary check** (trees deeper than
 `MAX_CONDITION_DEPTH` are the typed `ConditionNestingTooDeep`, judged
 iteratively before any recursive walk — the trust-boundary law above), then

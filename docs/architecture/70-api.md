@@ -760,7 +760,7 @@ proposition the commit checks in one integer compare.
   ids at materialization, into the buffer's byte heap; `bytes<N>` re-assembled
   from its inline slot words with no dictionary touch; intervals as start/end word
   pairs), an `answers()` iterator, and column metadata via
-  `PreparedQuery::predicate()` — the predicate the query defines
+  `PreparedQuery::signature()` — the sealed main signature (answer columns + folds)
   (`20-query-ir.md` § the query shape) is the **buffer-typing authority**:
   one signature column per head position, result type plus producing fold,
   sealed at validation and read by every consumer (the buffer itself stays
