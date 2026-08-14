@@ -43,7 +43,7 @@ import type {
 	FindTermIr,
 	HeadOpIr,
 	HeadTermIr,
-	QueryIr,
+	ParsedQuery,
 	QueryParam,
 	RuleIr,
 	TaggedValue,
@@ -80,6 +80,7 @@ import type {
 import { allen, and, eq, ge, gt, le, lt, ne, not, or, pointIn } from "#query/atom.ts"
 import type { CheckFind, CheckRecFind, FindShape, HeadRecordOf, RowOfFind } from "#query/find.ts"
 import { count, max, min, pack, sum } from "#query/find.ts"
+import { parseQueryIr } from "#query/parse-ir.ts"
 import type {
 	AnyVar,
 	ClassedField,
@@ -2126,7 +2127,7 @@ function lowerRule(ctx: LowerContext, rule: RuleData): RuleIr {
  * in declaration order, optional rec, then main. Every registered param must
  * carry a field anchor by now.
  */
-function lowerQuery(q: AnyQuery): QueryIr {
+function lowerQuery(q: AnyQuery): ParsedQuery {
 	const theory = q.schema
 	const relationIds = new Map<string, number>()
 	Object.keys(theory.relations).forEach(function assignOrdinal(name, index) {
@@ -2151,7 +2152,7 @@ function lowerQuery(q: AnyQuery): QueryIr {
 		params.set(entry.name, entry)
 	})
 	const ctx: LowerContext = { theory, relationIds, interiorIds, paramIds, params }
-	return {
+	return parseQueryIr({
 		interiors: q.data.interiors.map(function lowerInterior(interior) {
 			return {
 				head: interior.finds.map(headTermOf),
@@ -2176,7 +2177,7 @@ function lowerQuery(q: AnyQuery): QueryIr {
 		rules: q.data.rules.map(function lowerMainRule(rule) {
 			return lowerRule(ctx, rule)
 		})
-	}
+	})
 }
 
 export type {

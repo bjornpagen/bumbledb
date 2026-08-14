@@ -32,6 +32,7 @@ import { native } from "#native.ts"
 import { ALLEN } from "#query/atom.ts"
 import type { AnyQuery } from "#query/lower.ts"
 import { lowerQuery, query } from "#query/lower.ts"
+import { parseQueryIr } from "#query/parse-ir.ts"
 import { v } from "#query/scope.ts"
 import { relation } from "#relation.ts"
 import { schema } from "#schema.ts"
@@ -437,7 +438,7 @@ describe("the notation conformance corpus (TS replay)", () => {
 
 	/** Prepares one corpus query; refusal fails the case by name. */
 	function prepared(name: string, ir: QueryIr): void {
-		const result = native.dbPrepare(db, ir)
+		const result = native.dbPrepare(db, parseQueryIr(ir))
 		if (!result.ok) {
 			assert.fail(`case ${name}: dbPrepare refused the corpus query: ${result.message}`)
 		}

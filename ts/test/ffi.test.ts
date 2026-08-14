@@ -17,6 +17,7 @@ import { after, describe, test } from "node:test"
 
 import type { DbHandle, FactValue, Manifest, PreparedHandle, QueryIr, SnapshotHandle } from "#native.ts"
 import { native } from "#native.ts"
+import { parseQueryIr } from "#query/parse-ir.ts"
 import type { SchemaSpec } from "#spec.ts"
 
 const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bumbledb-ffi-"))
@@ -503,7 +504,7 @@ describe("ffi round trip against a real store", function suite() {
 				}
 			]
 		}
-		const preparedResult = native.dbPrepare(db, queryIr)
+		const preparedResult = native.dbPrepare(db, parseQueryIr(queryIr))
 		assert.ok(preparedResult.ok, "the recursive query prepares")
 		prepared = preparedResult.prepared
 
@@ -543,7 +544,7 @@ describe("ffi round trip against a real store", function suite() {
 				}
 			]
 		}
-		const outcome = native.dbPrepare(db, bogus)
+		const outcome = native.dbPrepare(db, parseQueryIr(bogus))
 		assert.ok(!outcome.ok)
 		assert.equal(outcome.kind, "irError")
 		assert.notEqual(outcome.message, "")

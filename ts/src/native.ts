@@ -109,12 +109,26 @@ interface RuleIr {
 	readonly conditions: readonly ConditionTreeIr[]
 }
 
-/** One find term (mirrors `ir::FindTerm`). */
+/** One find term (mirrors `ir::FindTerm`). Count carries no `over`; folds require it. */
+type FoldOpIr =
+	| { readonly kind: "sum" }
+	| { readonly kind: "min" }
+	| { readonly kind: "max" }
+
+type ArgOpIr = FoldOpIr | { readonly kind: "pack" }
+
 type FindTermIr =
 	| { readonly kind: "var"; readonly var: number }
-	| { readonly kind: "aggregate"; readonly op: AggOpIr; readonly over?: number }
+	| { readonly kind: "aggregate"; readonly op: { readonly kind: "count" } }
+	| { readonly kind: "aggregate"; readonly op: ArgOpIr; readonly over: number }
 	| { readonly kind: "measure"; readonly var: number }
-	| { readonly kind: "aggregateMeasure"; readonly op: AggOpIr; readonly over: number }
+	| { readonly kind: "aggregateMeasure"; readonly op: FoldOpIr; readonly over: number }
+
+/** Host brand: only {@link parseQueryIr} and `lowerQuery` inhabit this. Phantom — not a runtime key. */
+declare const parsedQueryBrand: unique symbol
+
+/** A `QueryIr` that passed the host shape parse (rec/main nonempty, aggregate finds split). */
+type ParsedQuery = QueryIr & { readonly [parsedQueryBrand]: true }
 
 /** One aggregate operator (mirrors `ir::AggOp`; Arg ops carry their key). */
 type AggOpIr =
@@ -497,7 +511,7 @@ interface Native {
 	 * Prepares a query (IR as data, ids only; plan pinned at prepare).
 	 * Roster errors return as data.
 	 */
-	dbPrepare(db: DbHandle, query: QueryIr): PrepareResult
+	dbPrepare(db: DbHandle, query: ParsedQuery): PrepareResult
 	/**
 	 * Executes against a snapshot with positional params. One-copy owned
 	 * rows out, column order = the query's head order; answers are a set
@@ -621,6 +635,8 @@ export type {
 	Explain,
 	FactValue,
 	FindTermIr,
+	FoldOpIr,
+	ArgOpIr,
 	HeadOpIr,
 	HeadTermIr,
 	InteriorIr,
@@ -632,6 +648,7 @@ export type {
 	ManifestStatement,
 	Native,
 	OccurrenceDrift,
+	ParsedQuery,
 	PreparedHandle,
 	PrepareResult,
 	QueryIr,
