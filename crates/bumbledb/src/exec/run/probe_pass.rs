@@ -330,7 +330,7 @@ impl Executor {
                 }
             }
             counters.phase_end(node_idx, JoinPhase::Hash);
-            let carried = tables.carried_col[node_idx][occ];
+            let carried = tables.carried_index(node_idx, occ);
             let start_cursor = colts[occ].start();
             // A first-appearance sibling probes the batch-constant start
             // cursor: force its map here, under the Force phase, like
@@ -414,7 +414,7 @@ impl Executor {
                 debug_assert_ne!(sub_idx, cover_sub, "distinct occs per node");
                 super::CursorSrc::Sibling(sub_idx)
             } else {
-                match tables.carried_col[node_idx][occ] {
+                match tables.carried_index(node_idx, occ) {
                     Some(col) => super::CursorSrc::Carried(col),
                     None => super::CursorSrc::Const(colt.start()),
                 }

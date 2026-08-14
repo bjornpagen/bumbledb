@@ -24,23 +24,19 @@ impl PipeTables {
         }
         let mut entry_level = Vec::with_capacity(n_nodes);
         let mut carried = Vec::with_capacity(n_nodes);
-        let mut carried_col = Vec::with_capacity(n_nodes);
         for node_idx in 0..n_nodes {
             let mut levels = Vec::with_capacity(n_occ);
             let mut occs = Vec::new();
-            let mut cols = vec![None; n_occ];
             for (occ, at) in appears.iter().enumerate() {
                 levels.push(at[..node_idx].iter().filter(|b| **b).count());
                 let before = at[..node_idx].iter().any(|b| *b);
                 let at_or_after = uses[occ][node_idx..].iter().any(|b| *b);
                 if before && at_or_after {
-                    cols[occ] = Some(occs.len());
                     occs.push(occ);
                 }
             }
             entry_level.push(levels);
             carried.push(occs);
-            carried_col.push(cols);
         }
         let absorb = (0..n_nodes)
             .rev()
@@ -48,8 +44,13 @@ impl PipeTables {
         Self {
             entry_level,
             carried,
-            carried_col,
             absorb,
         }
+    }
+
+    /// Column of `occ` in this node's carried list, if the occurrence is
+    /// carried here.
+    pub(super) fn carried_index(&self, node: usize, occ: usize) -> Option<usize> {
+        self.carried[node].iter().position(|&o| o == occ)
     }
 }

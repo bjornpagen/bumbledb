@@ -78,7 +78,7 @@ impl Executor {
             for &cover in &node.covers {
                 let sub_idx = usize::from(cover);
                 let occ = usize::from(node.subatoms[sub_idx].occ.0);
-                let cursor = match tables.carried_col[node_idx][occ] {
+                let cursor = match tables.carried_index(node_idx, occ) {
                     Some(col) => scratch.pending_cursors[entry * carried_w + col],
                     None => colts[occ].start(),
                 };
@@ -119,7 +119,7 @@ impl Executor {
                 fill = 0;
             }
             group = Some((cover_sub, cur_arity, cover_occ, cover_level));
-            let cover_cursor = match tables.carried_col[node_idx][cover_occ] {
+            let cover_cursor = match tables.carried_index(node_idx, cover_occ) {
                 Some(col) => scratch.pending_cursors[entry * carried_w + col],
                 None => colts[cover_occ].start(),
             };

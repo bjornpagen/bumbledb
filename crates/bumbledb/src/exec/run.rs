@@ -718,10 +718,9 @@ struct PipeTables {
     entry_level: Vec<Vec<usize>>,
     /// `[node]` — occurrences whose cursors pending entries carry INTO
     /// the node (advanced by an earlier node, used at this node or
-    /// later).
+    /// later). Column order is the reverse index: occ → column is a
+    /// search over this tiny list.
     carried: Vec<Vec<usize>>,
-    /// `[node][occ]` — the carried column, aligned with `carried[node]`.
-    carried_col: Vec<Vec<Option<usize>>>,
     /// The D2 absorb node: the deepest sink-relevant
     /// node — a leaf skip cancels the subtree of one of its elements.
     /// `Some(N-1)` (the leaf itself) means skips never cross a node;
