@@ -286,6 +286,11 @@ pub struct PreparedQuery<'s, S> {
     /// [`Self::rendered_query`] diagnostic accessor. Cold data: read only
     /// on diagnostic surfaces, never on the warm path.
     rendered: String,
+    /// Direct point-lane parsed at build: a Cq with no interiors and
+    /// exactly one key probe whose finds are all plain variables.
+    /// Execute and profile consume this flag; they do not re-match the
+    /// pipeline at run time.
+    key_probe_direct: bool,
     /// Marker: a prepared query is single-threaded scratch (`Cell` makes
     /// it `!Sync`), pinned to schema `S` (`fn() -> S` keeps auto-traits
     /// independent of `S`).
@@ -344,6 +349,14 @@ impl PreparedPipeline {
             Self::Cq { rules, .. } => rules,
             Self::Reach { main, .. } => main,
         }
+    }
+
+    /// No interiors and no surviving main rules — the zero-iteration Cq.
+    pub(super) fn is_empty_cq(&self) -> bool {
+        matches!(
+            self,
+            Self::Cq { interiors, rules } if interiors.is_empty() && rules.is_empty()
+        )
     }
 }
 

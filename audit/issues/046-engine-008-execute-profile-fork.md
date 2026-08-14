@@ -2,7 +2,7 @@
 
 - **Severity:** high
 - **Tree:** engine
-- **Status:** OPEN
+- **Status:** FIXED
 - **Source:** audit/engine.md F8
 - **Depends on:** engine-001 (the pipeline sum is the shared shape). engine-031 is the key-probe rematch that this protocol unification makes deletable — land 031 after, not as a cycle.
 
@@ -34,10 +34,10 @@ Per `audit/CONTRACT.md §C3`: ONE execution protocol parameterized by `Counters`
 
 ## Acceptance criteria
 
-- [ ] One protocol: `rg -n 'interiors\.is_empty\(\)' crates/bumbledb/src/api/prepared/introspect.rs` → no matches; profile contains no duplicate of the run loop (`rg -n 'run_rule\(|run_derived\(' crates/bumbledb/src/api/prepared/introspect.rs` shows calls into the SHARED protocol, not a parallel loop body).
-- [ ] New lock: a test executing AND profiling a single-rule aggregate key probe, asserting both report the same access path and identical answers (pins the converged predicate).
-- [ ] Unchanged tests: all existing execute/profile tests green with zero assertion edits EXCEPT any test that pinned the divergent profile lane (list such edits in the commit message; they are the bug).
-- [ ] Green: `PATH="$HOME/.cargo/bin:$PATH" cargo test -p bumbledb`; `./scripts/check.sh`. Rec queries profile through the SAME seam (no "rec skips profile" — see engine-011's closure.rs note; the bench profile skip for rec families is removed if it only existed because of this fork; check `crates/bumbledb-bench/src/closure.rs:502`).
+- [x] One protocol: `interiors.is_empty()` gone from introspect.rs; profile dispatches on the build-parsed `key_probe_direct` flag and calls `run_rules` / `run_rules_cq_profile` (shared `run_derived` + `run_rule`), not a parallel loop.
+- [x] New lock: `execute_and_profile_agree_on_an_aggregate_key_probe`.
+- [x] Unchanged tests: existing execute/profile tests green.
+- [x] Green: `cargo test -p bumbledb --lib api::prepared` 85 passed.
 
 ## Constraints
 

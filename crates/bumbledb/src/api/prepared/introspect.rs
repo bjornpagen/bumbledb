@@ -2,22 +2,10 @@ use super::{Answers, ParamArg, PreparedPipeline, PreparedQuery, PreparedRule};
 
 use crate::api::stats::{ExecutionStats, InteriorStats, KeyProbeStats, RuleStats};
 use crate::error::Result;
-use crate::exec::introspection::{
-    CountingCounters, IntrospectionHeader, IntrospectionReport, RulePlan,
-};
-use crate::exec::run::Counters;
+use crate::exec::introspection::{IntrospectionHeader, IntrospectionReport, RulePlan};
 use crate::image::cache::ImageCache;
 use crate::image::view::{Const, FilterPredicate};
 use crate::storage::env::ReadTxn;
-
-use super::finalize::finalize;
-
-enum ProfileShape {
-    Empty,
-    KeyProbe,
-    Reach,
-    Cq,
-}
 
 impl<S> PreparedQuery<'_, S> {
     /// Plan introspection (docs/architecture/40-execution.md): executes the query with counting instrumentation
@@ -168,6 +156,11 @@ impl<S> PreparedQuery<'_, S> {
     /// `introspect`. Takes the mixed [`ParamArg`] entry — execute-symmetry
     /// (R13): whatever `execute_args` binds, profiling binds.
     ///
+    /// One protocol with [`Self::execute`]: bind, then the same dispatch
+    /// (`key_probe_direct` / empty Cq / `run_rules`), parameterized by
+    /// counters. Profile does not fabricate a key-probe access path for
+    /// a rule that ran through the sink.
+    ///
     /// # Errors
     ///
     /// As [`Self::execute_args`].
@@ -175,10 +168,6 @@ impl<S> PreparedQuery<'_, S> {
     /// # Panics
     ///
     /// Only on programmer-invariant violations (plan/executor pairing).
-    #[expect(
-        clippy::too_many_lines,
-        reason = "the counted rule loop mirrors run_rules with per-rule accounting inline"
-    )]
     pub(crate) fn profile(
         &mut self,
         txn: &ReadTxn<'_>,
@@ -188,70 +177,48 @@ impl<S> PreparedQuery<'_, S> {
         self.check_snapshot(txn)?;
         let mut out = Answers::new();
         out.arity = self.predicate.columns.len();
-        // The statically-empty Cq (no interiors, no surviving main rules)
-        // mirrors `run_bound`'s short-circuit: bind (errors surface), then
-        // nothing runs and nothing is counted — the death record is the
-        // whole story. Dead-main with live interiors does not take this
-        // path: the preamble still runs and interior emits are counted.
-        let shape = match &self.pipeline {
-            PreparedPipeline::Cq { interiors, rules } => {
-                match (interiors.as_slice(), rules.as_slice()) {
-                    ([], []) => ProfileShape::Empty,
-                    ([], [PreparedRule::KeyProbe(_)]) => ProfileShape::KeyProbe,
-                    _ => ProfileShape::Cq,
-                }
-            }
-            PreparedPipeline::Reach { .. } => ProfileShape::Reach,
-        };
-        match shape {
-            ProfileShape::Empty => {
-                self.bind_param_args(txn, params)?;
-                return Ok((out, self.empty_stats()));
-            }
-            ProfileShape::KeyProbe => {
-                self.execute_args(txn, cache, params, &mut out)?;
-                let emitted = out.len() as u64;
-                let distinct_bindings = self.pipeline.main_rules()[0].distinct_witness().is_some();
-                let stats = ExecutionStats {
-                    introspection_version: crate::api::stats::INTROSPECTION_VERSION,
-                    rules: vec![RuleStats {
-                        distinct_bindings,
-                        nodes: Vec::new(),
-                        eliminated: Vec::new(),
-                        folded: Vec::new(),
-                        pinned: Vec::new(),
-                        emitted,
-                        absorbed: 0,
-                        key_probe: Some(KeyProbeStats {
-                            hit: !out.is_empty(),
-                        }),
-                    }],
-                    emits: emitted,
-                    disjoint_rules: None,
-                    subsumed: self.subsumed.clone(),
-                    dead: self.dead.clone(),
-                    interiors: Vec::new(),
-                    reach: None,
-                };
-                return Ok((out, stats));
-            }
-            ProfileShape::Reach => {
-                self.bind_param_args(txn, params)?;
+        {
+            let _s = crate::obs::span(
+                crate::obs::names::BIND_PARAMS,
+                crate::obs::Category::Execute,
+            );
+            self.bind_param_args(txn, params)?;
+        }
+        if self.key_probe_direct {
+            self.execute_key_probe_direct(txn, &mut out)?;
+            let emitted = out.len() as u64;
+            let distinct_bindings = self.pipeline.main_rules()[0].distinct_witness().is_some();
+            let stats = ExecutionStats {
+                introspection_version: crate::api::stats::INTROSPECTION_VERSION,
+                rules: vec![RuleStats {
+                    distinct_bindings,
+                    nodes: Vec::new(),
+                    eliminated: Vec::new(),
+                    folded: Vec::new(),
+                    pinned: Vec::new(),
+                    emitted,
+                    absorbed: 0,
+                    key_probe: Some(KeyProbeStats {
+                        hit: !out.is_empty(),
+                    }),
+                }],
+                emits: emitted,
+                disjoint_rules: None,
+                subsumed: self.subsumed.clone(),
+                dead: self.dead.clone(),
+                interiors: Vec::new(),
+                reach: None,
+            };
+            return Ok((out, stats));
+        }
+        if self.pipeline.is_empty_cq() {
+            return Ok((out, self.empty_stats()));
+        }
+        match &self.pipeline {
+            PreparedPipeline::Reach { .. } => {
                 let mut counters = crate::exec::introspection::ReachCounters::new();
                 let ran = self.run_rules(txn, cache, &mut counters)?;
-                if let Some([start, end]) = self.sink.measure_of_ray() {
-                    return Err(crate::error::Error::MeasureOfRay { start, end });
-                }
-                if ran {
-                    finalize(
-                        &mut self.sink,
-                        &mut self.answer_scratch,
-                        &mut self.resolve_memo,
-                        txn,
-                        &self.predicate.columns,
-                        &mut out,
-                    )?;
-                }
+                self.finish_sink(txn, ran, &mut out)?;
                 let emits = out.len() as u64;
                 let stats = ExecutionStats {
                     introspection_version: crate::api::stats::INTROSPECTION_VERSION,
@@ -263,85 +230,28 @@ impl<S> PreparedQuery<'_, S> {
                     interiors: self.interior_stats(),
                     reach: Some(counters.into_reach(Vec::new())),
                 };
-                return Ok((out, stats));
+                Ok((out, stats))
             }
-            ProfileShape::Cq => {}
+            PreparedPipeline::Cq { .. } => {
+                let mut rule_stats = Vec::new();
+                let ran = self.run_rules_cq_profile(txn, cache, &mut rule_stats)?;
+                self.finish_sink(txn, ran, &mut out)?;
+                let emits = rule_stats.iter().map(|rule| rule.emitted).sum();
+                Ok((
+                    out,
+                    ExecutionStats {
+                        introspection_version: crate::api::stats::INTROSPECTION_VERSION,
+                        rules: rule_stats,
+                        emits,
+                        disjoint_rules: self.disjoint_rules_stat(),
+                        subsumed: self.subsumed.clone(),
+                        dead: self.dead.clone(),
+                        interiors: self.interior_stats(),
+                        reach: None,
+                    },
+                ))
+            }
         }
-        // Bind once (params reach every rule), reset the sink once (the
-        // spanning is the union), then the rule loop with per-rule
-        // counting instrumentation; finalize only if some rule ran (a
-        // fully short-circuited query counted nothing and has nothing
-        // to drain). Interiors-only runs the preamble first so main
-        // Interior atoms see finished images — never via `run_reach`.
-        self.bind_param_args(txn, params)?;
-        if !self.pipeline.interiors().is_empty() {
-            self.run_derived(txn, cache, &mut crate::exec::run::NoopCounters)?;
-        }
-        self.sink.reset();
-        let rule_count = self.pipeline.main_rules().len();
-        let mut rule_stats = Vec::with_capacity(rule_count);
-        let mut ran = false;
-        for rule_idx in 0..rule_count {
-            let seen_before = self.sink.distinct_seen().unwrap_or(0);
-            let mut counters = match &self.pipeline.main_rules()[rule_idx] {
-                PreparedRule::FreeJoin(rule) => CountingCounters::new(&rule.plan),
-                PreparedRule::KeyProbe(_) => CountingCounters::for_key_probe(),
-            };
-            ran |= self.run_rule(rule_idx, txn, cache, &mut counters)?;
-            let emitted = Counters::emits(&counters);
-            let newly_seen = self
-                .sink
-                .distinct_seen()
-                .map_or(emitted, |seen| (seen - seen_before) as u64);
-            let absorbed = emitted - newly_seen;
-            rule_stats.push(match &self.pipeline.main_rules()[rule_idx] {
-                PreparedRule::FreeJoin(rule) => counters.into_rule_stats(
-                    &rule.plan,
-                    self.schema,
-                    self.rule_pinned_rows(rule_idx),
-                    absorbed,
-                ),
-                PreparedRule::KeyProbe(rule) => RuleStats {
-                    distinct_bindings: rule.distinct_witness.is_some(),
-                    nodes: Vec::new(),
-                    eliminated: Vec::new(),
-                    folded: Vec::new(),
-                    pinned: Vec::new(),
-                    emitted,
-                    absorbed,
-                    key_probe: Some(KeyProbeStats { hit: emitted > 0 }),
-                },
-            });
-        }
-        if ran {
-            // The ray-probe pass (R6), execute-parity: profiling a
-            // query whose Kleene verdict is Ray raises exactly like
-            // executing it. Uncounted — the arbiter consumes no
-            // answers and belongs to no rule's node table.
-            self.run_ray_probes(txn, cache, &mut crate::exec::run::NoopCounters)?;
-            finalize(
-                &mut self.sink,
-                &mut self.answer_scratch,
-                &mut self.resolve_memo,
-                txn,
-                &self.predicate.columns,
-                &mut out,
-            )?;
-        }
-        let emits = rule_stats.iter().map(|rule| rule.emitted).sum();
-        Ok((
-            out,
-            ExecutionStats {
-                introspection_version: crate::api::stats::INTROSPECTION_VERSION,
-                rules: rule_stats,
-                emits,
-                disjoint_rules: self.disjoint_rules_stat(),
-                subsumed: self.subsumed.clone(),
-                dead: self.dead.clone(),
-                interiors: self.interior_stats(),
-                reach: None,
-            },
-        ))
     }
 
     fn interior_stats(&self) -> Vec<InteriorStats> {

@@ -280,6 +280,21 @@ fn prepare_witnessed<'s, S>(
     } else {
         PreparedPipeline::Cq { interiors, rules }
     };
+    let key_probe_direct = match &pipeline {
+        PreparedPipeline::Cq { interiors, rules }
+            if interiors.is_empty()
+                && matches!(
+                    rules.as_slice(),
+                    [PreparedRule::KeyProbe(KeyProbeRule {
+                        key_probe_finds: Some(_),
+                        ..
+                    })]
+                ) =>
+        {
+            true
+        }
+        _ => false,
+    };
     Ok(PreparedQuery {
         schema,
         env_instance: txn.env_instance(),
@@ -302,6 +317,7 @@ fn prepare_witnessed<'s, S>(
         resolve_memo: ResolveMemo::new(),
         determinant_key: Vec::new(),
         rendered,
+        key_probe_direct,
         marker: std::marker::PhantomData,
     })
 }

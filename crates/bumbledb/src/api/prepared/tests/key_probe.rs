@@ -450,6 +450,99 @@ fn full_fact_membership_lookup_with_an_interval_field_is_image_free() {
     assert_eq!(out.len(), 0);
 }
 
+/// Execute and profile of a single-rule aggregate key probe share the
+/// sink path (plain-var finds only take the direct lane) and agree on
+/// answers. Pins engine-008's converged predicate.
+#[test]
+fn execute_and_profile_agree_on_an_aggregate_key_probe() {
+    let dir = TempDir::new("prepared-key_probe-agg-parity");
+    let schema = SchemaDescriptor {
+        relations: vec![RelationDescriptor {
+            extension: None,
+            name: "Stay".into(),
+            fields: vec![
+                FieldDescriptor {
+                    name: "owner".into(),
+                    value_type: ValueType::U64,
+                    generation: Generation::None,
+                },
+                FieldDescriptor {
+                    name: "span".into(),
+                    value_type: ValueType::Interval {
+                        element: IntervalElement::U64,
+                        width: None,
+                    },
+                    generation: Generation::None,
+                },
+            ],
+        }],
+        statements: vec![],
+    }
+    .validate()
+    .expect("valid fixture");
+    let env = Environment::create(dir.path(), &schema).expect("create");
+    let view = env.read_txn().expect("txn");
+    let mut delta = WriteDelta::new(&schema);
+    let mut bytes = Vec::new();
+    encode_fact(
+        &[
+            ValueRef::U64(2),
+            ValueRef::IntervalU64(
+                bumbledb_theory::Interval::<u64>::new(5, 10).expect("nonempty interval"),
+            ),
+        ],
+        schema.relation(RelationId(0)).layout(),
+        &mut bytes,
+    );
+    delta.insert(&view, RelationId(0), &bytes).expect("insert");
+    drop(view);
+    commit(delta, &env).expect("commit");
+    let cache = ImageCache::new(&schema);
+    let txn = env.read_txn().expect("txn");
+    let query = Query::single(Rule {
+        finds: vec![FindTerm::Aggregate {
+            op: AggOp::Count,
+            over: None,
+        }],
+        atoms: vec![Atom {
+            source: crate::ir::AtomSource::Edb(RelationId(0)),
+            bindings: vec![
+                (FieldId(0), Term::Literal(Value::U64(2))),
+                (
+                    FieldId(1),
+                    Term::Literal(Value::IntervalU64(
+                        bumbledb_theory::Interval::<u64>::new(5, 10).expect("nonempty interval"),
+                    )),
+                ),
+            ],
+        }],
+        negated: vec![],
+        conditions: vec![],
+    });
+    let mut prepared = prepare(&txn, &cache, &schema, &query).expect("prepare");
+    assert!(
+        matches!(
+            prepared.pipeline.main_rules(),
+            [PreparedRule::KeyProbe(KeyProbeRule {
+                key_probe_finds: None,
+                ..
+            })]
+        ),
+        "aggregate key probe keeps the sink"
+    );
+    let executed = prepared
+        .execute_collect(&txn, &cache, &[])
+        .expect("execute");
+    let (profiled, stats) = prepared.profile(&txn, &cache, &[]).expect("profile");
+    assert_eq!(executed.len(), profiled.len());
+    assert_eq!(executed.get(0, 0), profiled.get(0, 0));
+    assert_eq!(
+        stats.rules[0].key_probe,
+        Some(crate::api::stats::KeyProbeStats { hit: true }),
+        "counted path still names the key-probe classification; it did not fabricate a direct-lane miss/hit from out.len() alone"
+    );
+}
+
 /// An intern-miss param on the fast path: the key resolves to the
 /// never-minted sentinel id, the `U` probe misses, the result is empty —
 /// no error, and nothing is interned by the read path.

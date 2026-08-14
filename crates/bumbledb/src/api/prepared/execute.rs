@@ -81,38 +81,13 @@ impl<S> PreparedQuery<'_, S> {
         cache: &ImageCache,
         out: &mut Answers,
     ) -> Result<()> {
-        // Statically-empty **main** with no interiors: bind errors
-        // already surfaced; nothing to run. Interiors-only with a dead
-        // main still runs the preamble (an interior can be the only
-        // measure site). Dead main is `Cq { rules: [] }` — Empty is not
-        // a variant; the empty fast path is the zero-iteration loop.
-        enum BoundShape {
-            Empty,
-            KeyProbeDirect,
-            Run,
+        // Direct lane and empty Cq are parsed at build / are the
+        // zero-iteration loop — not re-detected per call.
+        if self.key_probe_direct {
+            return self.execute_key_probe_direct(txn, out);
         }
-        let shape = match &self.pipeline {
-            PreparedPipeline::Cq { interiors, rules } => {
-                match (interiors.as_slice(), rules.as_slice()) {
-                    ([], []) => BoundShape::Empty,
-                    (
-                        [],
-                        [
-                            PreparedRule::KeyProbe(KeyProbeRule {
-                                key_probe_finds: Some(_),
-                                ..
-                            }),
-                        ],
-                    ) => BoundShape::KeyProbeDirect,
-                    _ => BoundShape::Run,
-                }
-            }
-            PreparedPipeline::Reach { .. } => BoundShape::Run,
-        };
-        match shape {
-            BoundShape::Empty => return Ok(()),
-            BoundShape::KeyProbeDirect => return self.execute_key_probe_direct(txn, out),
-            BoundShape::Run => {}
+        if self.pipeline.is_empty_cq() {
+            return Ok(());
         }
         // Phase attribution engages only under an active obs capture
         // (docs/architecture/60-validation.md): timing runs — even obs
@@ -128,6 +103,17 @@ impl<S> PreparedQuery<'_, S> {
         } else {
             self.run_rules(txn, cache, &mut NoopCounters)?
         };
+        self.finish_sink(txn, ran, out)
+    }
+
+    /// Drain the sink into `out` after the shared rule loop. Empty
+    /// short-circuit (nothing ran) skips finalize.
+    pub(super) fn finish_sink(
+        &mut self,
+        txn: &ReadTxn<'_>,
+        ran: bool,
+        out: &mut Answers,
+    ) -> Result<()> {
         // The sink-side measure poison (a ray reached a projected or
         // folded `Duration`): the engine's one runtime type error,
         // raised before finalize — never a partial result. Executor-side
@@ -187,6 +173,72 @@ impl<S> PreparedQuery<'_, S> {
         }
         if ran {
             self.run_ray_probes(txn, cache, counters)?;
+        }
+        Ok(ran)
+    }
+
+    /// CQ profile's counted rule loop: the same derived → main → ray
+    /// protocol as [`Self::run_rules`], with per-main-rule
+    /// [`crate::exec::introspection::CountingCounters`] so node stats
+    /// land on the counted surface.
+    pub(super) fn run_rules_cq_profile(
+        &mut self,
+        txn: &ReadTxn<'_>,
+        cache: &ImageCache,
+        rule_stats: &mut Vec<crate::api::stats::RuleStats>,
+    ) -> Result<bool> {
+        use crate::exec::introspection::CountingCounters;
+        let has_derived = match &self.pipeline {
+            PreparedPipeline::Cq { interiors, .. } => !interiors.is_empty(),
+            PreparedPipeline::Reach { .. } => true,
+        };
+        if has_derived {
+            let derived_ran = self.run_derived(txn, cache, &mut NoopCounters)?;
+            if self.pipeline.main_rules().is_empty() {
+                return Ok(derived_ran);
+            }
+        }
+        if self.pipeline.main_rules().is_empty() {
+            return Ok(false);
+        }
+        self.sink.reset();
+        let mut ran = false;
+        let rule_count = self.pipeline.main_rules().len();
+        rule_stats.reserve(rule_count);
+        for rule_idx in 0..rule_count {
+            let seen_before = self.sink.distinct_seen().unwrap_or(0);
+            let mut counters = match &self.pipeline.main_rules()[rule_idx] {
+                PreparedRule::FreeJoin(rule) => CountingCounters::new(&rule.plan),
+                PreparedRule::KeyProbe(_) => CountingCounters::for_key_probe(),
+            };
+            ran |= self.run_rule(rule_idx, txn, cache, &mut counters)?;
+            let emitted = Counters::emits(&counters);
+            let newly_seen = self
+                .sink
+                .distinct_seen()
+                .map_or(emitted, |seen| (seen - seen_before) as u64);
+            let absorbed = emitted - newly_seen;
+            rule_stats.push(match &self.pipeline.main_rules()[rule_idx] {
+                PreparedRule::FreeJoin(rule) => counters.into_rule_stats(
+                    &rule.plan,
+                    self.schema,
+                    self.rule_pinned_rows(rule_idx),
+                    absorbed,
+                ),
+                PreparedRule::KeyProbe(rule) => crate::api::stats::RuleStats {
+                    distinct_bindings: rule.distinct_witness.is_some(),
+                    nodes: Vec::new(),
+                    eliminated: Vec::new(),
+                    folded: Vec::new(),
+                    pinned: Vec::new(),
+                    emitted,
+                    absorbed,
+                    key_probe: Some(crate::api::stats::KeyProbeStats { hit: emitted > 0 }),
+                },
+            });
+        }
+        if ran {
+            self.run_ray_probes(txn, cache, &mut NoopCounters)?;
         }
         Ok(ran)
     }
@@ -410,17 +462,17 @@ impl<S> PreparedQuery<'_, S> {
     }
 
     /// The point fast lane's body: probe + fetch +
-    /// direct cell decode, no sink machinery.
-    fn execute_key_probe_direct(&mut self, txn: &ReadTxn<'_>, out: &mut Answers) -> Result<()> {
-        let [
-            PreparedRule::KeyProbe(KeyProbeRule {
-                plan: key_probe,
-                key_probe_finds: Some(key_probe_finds),
-                ..
-            }),
-        ] = self.pipeline.main_rules()
+    /// direct cell decode, no sink machinery. The lane was parsed at
+    /// build (`key_probe_direct`); this does not re-gate.
+    pub(super) fn execute_key_probe_direct(&mut self, txn: &ReadTxn<'_>, out: &mut Answers) -> Result<()> {
+        debug_assert!(self.key_probe_direct);
+        let PreparedRule::KeyProbe(KeyProbeRule {
+            plan: key_probe,
+            key_probe_finds: Some(key_probe_finds),
+            ..
+        }) = &self.pipeline.main_rules()[0]
         else {
-            return Ok(());
+            unreachable!("key_probe_direct parsed at build");
         };
         self.resolve_memo.clear();
         let Some(fact) = crate::exec::dispatch::key_probe_fact(
