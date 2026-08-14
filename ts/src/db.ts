@@ -55,7 +55,6 @@ import type {
 	Manifest,
 	PreparedHandle,
 	SnapshotHandle,
-	StatementKindTag,
 	TxHandle,
 	Violation as WireViolation,
 	ViolationFact as WireViolationFact
@@ -122,15 +121,35 @@ interface OffendingFact<Rels extends SchemaRelations> {
  * `source <= target` slot as the statement was spelled, `mirrored` the
  * engine-materialized `target <= source` partner.
  */
-interface Violation<Rels extends SchemaRelations> {
-	readonly statement: Statement | undefined
-	readonly kind: StatementKindTag
-	readonly canonical: string
-	readonly direction?: "sourceUnsatisfied" | "targetRequired"
-	readonly orientation?: "written" | "mirrored"
-	readonly measure?: bigint
-	readonly facts: readonly OffendingFact<Rels>[]
-}
+type Violation<Rels extends SchemaRelations> =
+	| {
+			readonly kind: "functionality"
+			readonly statement?: Statement
+			readonly canonical: string
+			readonly facts: readonly OffendingFact<Rels>[]
+	  }
+	| {
+			readonly kind: "containment"
+			readonly statement?: Statement
+			readonly canonical: string
+			readonly direction: "sourceUnsatisfied" | "targetRequired"
+			readonly facts: readonly OffendingFact<Rels>[]
+	  }
+	| {
+			readonly kind: "containment"
+			readonly statement?: Statement
+			readonly canonical: string
+			readonly direction: "sourceUnsatisfied" | "targetRequired"
+			readonly orientation: "written" | "mirrored"
+			readonly facts: readonly OffendingFact<Rels>[]
+	  }
+	| {
+			readonly kind: "capacity"
+			readonly statement?: Statement
+			readonly canonical: string
+			readonly measure: bigint
+			readonly facts: readonly OffendingFact<Rels>[]
+	  }
 
 /**
  * The abandoned arm of a write result (ruled 2026-07-23, R10): present in
@@ -437,18 +456,16 @@ interface PrimaryKey {
  * engine-materialized implied keys), and — for functionality forms — the
  * key's owner and projection (what keyed point reads resolve through).
  */
-interface StatementEntry {
-	readonly kind: StatementKindTag
-	readonly statement: Statement | undefined
-	readonly key: { readonly owner: string; readonly projection: readonly string[] } | undefined
-	/**
-	 * The slot's orientation relative to the written statement — set exactly
-	 * for the two slots of a `mirrors` (`false` = the written `source <=
-	 * target`, `true` = the materialized `target <= source` partner), so a
-	 * violation can say WHICH side of the `==` was violated.
-	 */
-	readonly reversed?: boolean
-}
+type StatementEntry =
+	| {
+			readonly kind: "functionality"
+			readonly statement?: Statement
+			readonly owner: string
+			readonly projection: readonly string[]
+	  }
+	| { readonly kind: "containment"; readonly statement: Statement }
+	| { readonly kind: "mirrors"; readonly statement: Statement; readonly orientation: "written" | "mirrored" }
+	| { readonly kind: "capacity"; readonly statement: Statement }
 
 /**
  * Mirrors the engine's materialized statement order
@@ -486,8 +503,8 @@ function impliedKeyEntries(theory: AnySchema): StatementEntry[] {
 			if (isFreshField(declared.field)) {
 				entries.push({
 					kind: "functionality",
-					statement: undefined,
-					key: { owner: member.name, projection: [declared.name] }
+					owner: member.name,
+					projection: [declared.name]
 				})
 			}
 		}
@@ -496,8 +513,8 @@ function impliedKeyEntries(theory: AnySchema): StatementEntry[] {
 		if (isClosedMember(member)) {
 			entries.push({
 				kind: "functionality",
-				statement: undefined,
-				key: { owner: member.name, projection: ["id"] }
+				owner: member.name,
+				projection: ["id"]
 			})
 		}
 	}
@@ -518,21 +535,22 @@ function declaredEntries(statement: Statement): StatementEntry[] {
 				{
 					kind: "functionality",
 					statement,
-					key: { owner: data.owner.name, projection: data.projection }
+					owner: data.owner.name,
+					projection: data.projection
 				}
 			]
 		}
 		case "containment": {
-			if (data.bidirectional) {
-				return [
-					{ kind: "containment", statement, key: undefined, reversed: false },
-					{ kind: "containment", statement, key: undefined, reversed: true }
-				]
-			}
-			return [{ kind: "containment", statement, key: undefined }]
+			return [{ kind: "containment", statement }]
+		}
+		case "mirrors": {
+			return [
+				{ kind: "mirrors", statement, orientation: "written" },
+				{ kind: "mirrors", statement, orientation: "mirrored" }
+			]
 		}
 		case "capacity": {
-			return [{ kind: "capacity", statement, key: undefined }]
+			return [{ kind: "capacity", statement }]
 		}
 	}
 }
@@ -588,17 +606,6 @@ function selectKeyRead<R extends AnyRelation, P extends readonly string[], T>(
 	return byPrimary(keyOrStatement)
 }
 
-/** Maps a slot's reversal flag to the violation's `orientation` payload. */
-function orientationOf(reversed: boolean | undefined): "written" | "mirrored" | undefined {
-	if (reversed === undefined) {
-		return undefined
-	}
-	if (reversed) {
-		return "mirrored"
-	}
-	return "written"
-}
-
 /** The id-resolution tables one open builds: relation entries by name, statement slots by id. */
 interface Tables {
 	readonly relations: ReadonlyMap<string, RelationEntry>
@@ -624,9 +631,15 @@ function tablesOf(theory: AnySchema, manifest: Manifest): Tables {
 	}
 	manifest.statements.forEach(function verifySlot(statement, index) {
 		const entry = entries[index]
-		if (entry === undefined || statement.id !== index || entry.kind !== statement.kind) {
+		if (entry === undefined || statement.id !== index) {
 			throw errors.new(
 				`bumbledb manifest drift: statement ${statement.id} is ${statement.kind}, the SDK mirror at ${index} expected ${entry?.kind}`
+			)
+		}
+		const engineKind = entry.kind === "mirrors" ? "containment" : entry.kind
+		if (engineKind !== statement.kind) {
+			throw errors.new(
+				`bumbledb manifest drift: statement ${statement.id} is ${statement.kind}, the SDK mirror at ${index} expected ${engineKind}`
 			)
 		}
 	})
@@ -649,8 +662,8 @@ function tablesOf(theory: AnySchema, manifest: Manifest): Tables {
 		})
 		let primaryKey: PrimaryKey | undefined
 		entries.forEach(function firstOwnedKey(entry, index) {
-			if (primaryKey === undefined && entry.key !== undefined && entry.key.owner === relation.name) {
-				primaryKey = Object.freeze({ statementId: index, projection: entry.key.projection })
+			if (primaryKey === undefined && entry.kind === "functionality" && entry.owner === relation.name) {
+				primaryKey = Object.freeze({ statementId: index, projection: entry.projection })
 			}
 		})
 		relations.set(relation.name, Object.freeze({ id: relation.id, member, fieldIds, primaryKey }))
@@ -827,15 +840,32 @@ function openDb<Rels extends SchemaRelations>(handle: DbHandle, theory: Schema<R
 		if (entry === undefined) {
 			throw errors.new(`bumbledb violation cites unknown statement id ${wire.statementId}`)
 		}
-		return Object.freeze({
-			statement: entry.statement,
-			kind: wire.kind,
-			canonical: wire.canonical,
-			direction: wire.direction,
-			orientation: orientationOf(entry.reversed),
-			measure: wire.measure,
-			facts: Object.freeze(wire.facts.map(offendingFactOf))
-		})
+		const facts = Object.freeze(wire.facts.map(offendingFactOf))
+		const statement = entry.statement
+		const canonical = wire.canonical
+		if (entry.kind === "functionality") {
+			return Object.freeze({ kind: "functionality", statement, canonical, facts })
+		}
+		if (entry.kind === "capacity") {
+			if (wire.kind !== "capacity") {
+				throw errors.new(`bumbledb violation ${wire.statementId} is a capacity slot without a measure`)
+			}
+			return Object.freeze({ kind: "capacity", statement, canonical, measure: wire.measure, facts })
+		}
+		if (wire.kind !== "containment") {
+			throw errors.new(`bumbledb violation ${wire.statementId} is a containment slot without a direction`)
+		}
+		if (entry.kind === "mirrors") {
+			return Object.freeze({
+				kind: "containment",
+				statement,
+				canonical,
+				direction: wire.direction,
+				orientation: entry.orientation,
+				facts
+			})
+		}
+		return Object.freeze({ kind: "containment", statement, canonical, direction: wire.direction, facts })
 	}
 
 	/**
@@ -855,15 +885,15 @@ function openDb<Rels extends SchemaRelations>(handle: DbHandle, theory: Schema<R
 				`keyed get statement is not a declared statement of schema ${theory.name} — statement identity is the membership rule`
 			)
 		}
-		if (entry.kind !== "functionality" || entry.key === undefined) {
+		if (entry.kind !== "functionality") {
 			throw errors.new("keyed get takes a key() statement — containments and capacity statements key nothing")
 		}
-		if (entry.key.owner !== relation.name) {
+		if (entry.owner !== relation.name) {
 			throw errors.new(
-				`keyed get statement keys ${entry.key.owner}, not ${relation.name} — the statement must be a declared key of the relation it reads`
+				`keyed get statement keys ${entry.owner}, not ${relation.name} — the statement must be a declared key of the relation it reads`
 			)
 		}
-		return Object.freeze({ statementId, projection: entry.key.projection })
+		return Object.freeze({ statementId, projection: entry.projection })
 	}
 
 	function pointReadsOf(assertLive: () => void, reads: PointReads) {

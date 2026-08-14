@@ -158,10 +158,9 @@ template<class Statement>
 			out.source.fields[position] = Statement::projection[position];
 		}
 	} else if constexpr (is_containment_v<Statement>) {
-		out.form = statement_form::containment;
+		out.form = Statement::bidirectional ? statement_form::mirrors : statement_form::containment;
 		out.source = side_of<typename Statement::source_face>();
 		out.target = side_of<typename Statement::target_face>();
-		out.bidirectional = Statement::bidirectional;
 	} else {
 		out.form = statement_form::capacity;
 		out.target = side_of<typename Statement::target_face>();
@@ -227,8 +226,8 @@ template<class... Args>
 		}
 		return out + ")";
 	}
-	if (data.form == statement_form::containment) {
-		auto const constructor = data.bidirectional ? "mirrors(" : "contained(";
+	if (data.form == statement_form::containment || data.form == statement_form::mirrors) {
+		auto const constructor = data.form == statement_form::mirrors ? "mirrors(" : "contained(";
 		return constructor + render_side(data.source) + ", " + render_side(data.target) + ")";
 	}
 	return "capacity(" + render_side(data.target) + ", ..., " + render_side(data.source) + ")";

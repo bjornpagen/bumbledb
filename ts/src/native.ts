@@ -249,14 +249,27 @@ interface ViolationFact {
  * accumulates in u128 and the value crosses WHOLE as bigint (C3:
  * truncation is unrepresentable).
  */
-interface Violation {
-	readonly statementId: number
-	readonly kind: StatementKindTag
-	readonly canonical: string
-	readonly direction?: "sourceUnsatisfied" | "targetRequired"
-	readonly measure?: bigint
-	readonly facts: readonly ViolationFact[]
-}
+type Violation =
+	| {
+			readonly statementId: number
+			readonly kind: "functionality"
+			readonly canonical: string
+			readonly facts: readonly ViolationFact[]
+	  }
+	| {
+			readonly statementId: number
+			readonly kind: "containment"
+			readonly canonical: string
+			readonly direction: "sourceUnsatisfied" | "targetRequired"
+			readonly facts: readonly ViolationFact[]
+	  }
+	| {
+			readonly statementId: number
+			readonly kind: "capacity"
+			readonly canonical: string
+			readonly measure: bigint
+			readonly facts: readonly ViolationFact[]
+	  }
 
 /**
  * `dbCreate`/`dbOpen`'s domain outcome. `schemaError` spans both spec

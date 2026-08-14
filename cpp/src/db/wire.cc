@@ -228,10 +228,11 @@ template<Theory S>
 			break;
 		}
 		case statement_form::containment:
+		case statement_form::mirrors:
 			statements.push_back(foreign::owned_containment{
 			    .source = owned_side_of(statement.source),
 			    .target = owned_side_of(statement.target),
-			    .bidirectional = statement.bidirectional,
+			    .bidirectional = statement.form == statement_form::mirrors,
 			});
 			break;
 		case statement_form::capacity: {

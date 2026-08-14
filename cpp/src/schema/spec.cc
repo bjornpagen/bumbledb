@@ -94,6 +94,7 @@ struct side_data {
 enum class statement_form : std::uint8_t {
 	key,
 	containment,
+	mirrors,
 	capacity,
 };
 
@@ -139,7 +140,6 @@ struct statement_data {
 	statement_form form;
 	side_data source;
 	side_data target;
-	bool bidirectional;
 	weight_form weight;
 	name_text weight_field;
 	window_data window;

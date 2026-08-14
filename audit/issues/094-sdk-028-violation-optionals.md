@@ -2,7 +2,7 @@
 
 - **Severity:** medium
 - **Tree:** sdk (ts db/native + napi marshal + cpp error)
-- **Status:** OPEN
+- **Status:** FIXED(bfaf20cb)
 - **Source:** audit/sdk-rest.md #6
 - **Depends on:** none (answers/write path; parallel-safe with query issues). raii `has_measure` *copy* stays sdk-008.
 - **Conflicts with:** none at the dialect types; napi `ViolationWire` is the same file as sdk-008's query marshal — coordinate if both land.
