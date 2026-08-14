@@ -20,7 +20,7 @@ use crate::plan::planner::plan as plan_order;
 use crate::storage::env::ReadTxn;
 
 /// Prepares a query: the one-time pipeline, allocation-sanctioned.
-/// Validation and normalization see the whole program; everything after —
+/// Validation and normalization see the whole query; everything after —
 /// statistics, the DP, lowering, plan validation — runs **per rule**, and
 /// the prepared query carries one [`PreparedRule`] per rule under one
 /// head-owned sink configuration.
@@ -114,7 +114,7 @@ fn prepare_witnessed<'s, S>(
     // over a superset holds over whichever rules survive below.
     let disjoint_rules = disjointness(witness, &normalized, schema);
 
-    let (survivors, subsumed) = ground_program(normalized, witness, schema);
+    let (survivors, subsumed) = ground_main(normalized, witness, schema);
 
     // The predicate the query defines, sealed at validation (the ONE
     // signature derivation) — it exists even when every rule below dies,
@@ -636,7 +636,7 @@ fn param_specs(witness: &crate::ir::validate::ValidatedQuery) -> Vec<super::Para
 /// modulo eliminated filters is deleted — the union loses nothing.
 /// Returns the surviving rules with their lowered-rule indices plus
 /// the deletion record (the introspection surface).
-fn ground_program(
+fn ground_main(
     mut normalized: Vec<NormalizedQuery>,
     witness: &crate::ir::validate::ValidatedQuery,
     schema: &Schema,
@@ -1287,7 +1287,7 @@ fn key_probe_find_table(
 
 /// The rule-disjointness proof (docs/architecture/40-execution.md § set
 /// semantics) — retained as diagnostic knowledge for introspection, run over the
-/// whole program before the pipeline goes per-rule (the grounding rewrites
+/// whole query before the pipeline goes per-rule (the grounding rewrites
 /// occurrences but never the denotation, so the pre-grounding proof stands).
 /// Single-rule programs have no pair to prove.
 fn disjointness(

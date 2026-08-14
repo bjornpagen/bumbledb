@@ -458,7 +458,7 @@ def ledger : List Obligation := [
 
   .row @Query.subsume_containment `Bumbledb.Query.subsume_containment
     "Under the subsumption witness the deleted rule's answers are contained in the kept sibling's on every instance, so the prepare-time deletion preserves the program union — the sixth rewrite, in the composition chain."
-    "subsume (crates/bumbledb/src/plan/ground.rs); subsumes (crates/bumbledb/src/plan/ground.rs); ground_program (crates/bumbledb/src/api/prepared/build.rs)"
+    "subsume (crates/bumbledb/src/plan/ground.rs); subsumes (crates/bumbledb/src/plan/ground.rs); ground_main (crates/bumbledb/src/api/prepared/build.rs)"
     "the_dnf_residue_subsumes_the_filtered_rule (crates/bumbledb/src/plan/ground/tests.rs); dnf_residue_subsumption_deletes_the_filtered_rule (crates/bumbledb/src/api/prepared/tests/ground.rs)",
 
   .row @Query.keyprobe_equiv_join `Bumbledb.Query.keyprobe_equiv_join
