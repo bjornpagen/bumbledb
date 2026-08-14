@@ -2,7 +2,7 @@
 
 - **Severity:** medium
 - **Tree:** schema
-- **Status:** OPEN
+- **Status:** FIXED(84efd534)
 - **Source:** audit/storage-schema.md F6
 - **Depends on:** none
 - **Conflicts with:** schema-002, schema-003 (tail type; land the enum, they store it)

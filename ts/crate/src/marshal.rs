@@ -252,7 +252,7 @@ fn sealed_fields(
         })?;
     Ok(rel
         .sealed_fields()
-        .map(|slot| (Box::from(slot.name), slot.value_type.clone()))
+        .map(|slot| (Box::from(slot.name()), slot.value_type().clone()))
         .collect())
 }
 
