@@ -198,6 +198,16 @@ impl<S> PreparedQuery<'_, S> {
             }
         };
         self.derived.begin(derived_count);
+        // Main's Interior views still hold last execution's published
+        // Arcs; drop them before refill so TransientImage can get_mut.
+        {
+            let retired = &mut self.derived.retired;
+            for rule in self.pipeline.main_rules_mut() {
+                if let PreparedRule::FreeJoin(fj) = rule {
+                    unbind_interior_rule(fj, retired);
+                }
+            }
+        }
         let fast_eligible = self.unresolved_literals == 0 && self.params.is_empty();
         let mut latched = 0u32;
         let mut ran = false;
@@ -257,9 +267,11 @@ impl<S> PreparedQuery<'_, S> {
                         tuples: derived_tuples,
                     });
                 }
-                let types = self.pipeline.interiors()[i].field_types.clone();
-                self.derived
-                    .stash_finished(i, &types, &self.pipeline.interiors()[i].sink);
+                self.derived.stash_finished(
+                    i,
+                    &self.pipeline.interiors()[i].field_types,
+                    &self.pipeline.interiors()[i].sink,
+                );
                 if ran {
                     let latched = {
                         let sets = &mut self.pipeline.interiors_mut()[i].ray_probes;
