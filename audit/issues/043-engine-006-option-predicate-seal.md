@@ -2,7 +2,7 @@
 
 - **Severity:** high
 - **Tree:** engine
-- **Status:** FIXED
+- **Status:** FIXED(fd3f2634)
 - **Source:** audit/engine.md F6
 - **Depends on:** none (validate-internal; parallel-safe with engine-005, same files — coordinate)
 

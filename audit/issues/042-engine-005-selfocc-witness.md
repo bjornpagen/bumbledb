@@ -2,7 +2,7 @@
 
 - **Severity:** high
 - **Tree:** engine
-- **Status:** FIXED
+- **Status:** FIXED(fd3f2634)
 - **Source:** audit/engine.md F5
 - **Depends on:** none (foundation of the validate-side wave; engine-004, engine-016, engine-022, engine-028 build on it)
 

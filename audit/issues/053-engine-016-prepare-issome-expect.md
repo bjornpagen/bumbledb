@@ -2,7 +2,7 @@
 
 - **Severity:** medium
 - **Tree:** engine
-- **Status:** FIXED
+- **Status:** FIXED(fd3f2634)
 - **Source:** audit/engine.md F16
 - **Depends on:** engine-005 (the witness sum is what prepare matches)
 
